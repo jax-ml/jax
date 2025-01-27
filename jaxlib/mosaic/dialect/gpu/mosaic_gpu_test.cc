@@ -181,16 +181,16 @@ TEST_F(MosaicGpuTest, RuntimeFunctionsAreRegistered) {
 
   llvm::SmallVector<mlir::func::FuncOp> func_ops =
       llvm::to_vector(module_op->getBody()->getOps<mlir::func::FuncOp>());
-  EXPECT_EQ(func_ops.size(), 2);
+  EXPECT_EQ(func_ops.size(), 1);
 
   absl::flat_hash_set<std::string> func_names;
   for (mlir::func::FuncOp& func_op : func_ops) {
     func_names.insert(func_op.getSymName().str());
   }
 
-  EXPECT_THAT(func_names, UnorderedElementsAre(
-                              mosaic_gpu::kRuntimeTmaDescriptorInitializerName,
-                              mosaic_gpu::kRuntimeMemcpyAsyncH2DName));
+  EXPECT_THAT(
+      func_names,
+      UnorderedElementsAre(mosaic_gpu::kRuntimeTmaDescriptorInitializerName));
 }
 
 

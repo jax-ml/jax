@@ -1842,5 +1842,26 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     if compiled_stats is not None:
       self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
+  def test_primitive_with_multiple_outputs(self):
+    # Test for https://github.com/jax-ml/jax/issues/25841
+    shape = (128,)
+    inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+
+    def policy(prim, *args, **kwargs):
+      del args, kwargs
+      if prim.multiple_results:
+        return Offloadable("device", "pinned_host")
+      return Recompute
+
+    @functools.partial(remat, policy=policy)
+    def test_fn(x):
+      # Need any primitive with multiple outputs and a non-trivial grad.
+      x1, _ = jax.lax.approx_max_k(x, k=2)
+      return jnp.sum(x1)
+
+    fn = jax.grad(test_fn)
+    jax.jit(fn)(inp)  # doesn't crash
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

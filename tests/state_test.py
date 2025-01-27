@@ -545,7 +545,7 @@ class StateDischargeTest(jtu.JaxTestCase):
       return [a + 1]
     in_avals = [shaped_array_ref((), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     # Discharging should just turn this into a jaxpr that just adds 1.
     discharged_jaxpr, _ = discharge_state(stateful_jaxpr, consts)
     self.assertLen(discharged_jaxpr.invars, 1)
@@ -561,7 +561,7 @@ class StateDischargeTest(jtu.JaxTestCase):
       return [a + 1]
     in_avals = [shaped_array_ref((4, 3, 2), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     # Discharging should just turn this into a jaxpr that just adds 1.
     discharged_jaxpr, () = discharge_state(stateful_jaxpr, consts)
     self.assertLen(discharged_jaxpr.invars, 1)
@@ -595,7 +595,7 @@ class StateDischargeTest(jtu.JaxTestCase):
     in_avals = [shaped_array_ref((), jnp.dtype('float32')),
                 core.ShapedArray((), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     # Discharging should just turn this into a jaxpr that ignores the first
     # value and returns second value plus 1.
     discharged_jaxpr, _ = discharge_state(stateful_jaxpr, consts)
@@ -612,7 +612,7 @@ class StateDischargeTest(jtu.JaxTestCase):
       return []
     in_avals = [shaped_array_ref((4, 3, 2), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     # Discharging should just turn this into a jaxpr that just adds 1.
     discharged_jaxpr, () = discharge_state(stateful_jaxpr, consts)
     self.assertLen(discharged_jaxpr.invars, 1)
@@ -632,7 +632,7 @@ class StateDischargeTest(jtu.JaxTestCase):
       return []
     in_avals = [shaped_array_ref((4, 3), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     discharged_jaxpr, discharged_consts = discharge_state(
         stateful_jaxpr, consts)
     inval = jnp.arange(4 * 3, dtype=jnp.float32).reshape((4, 3))
@@ -666,7 +666,7 @@ class StateDischargeTest(jtu.JaxTestCase):
     in_avals = [shaped_array_ref((), jnp.dtype('float32')),
                 core.ShapedArray((), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     # Discharging should just turn this into a jaxpr that adds the first value,
     # second value, and 1.
     discharged_jaxpr, _ = discharge_state(stateful_jaxpr, consts)
@@ -684,7 +684,7 @@ class StateDischargeTest(jtu.JaxTestCase):
       return []
     in_avals = [shaped_array_ref((4, 3, 2), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     discharged_jaxpr, _ = discharge_state(stateful_jaxpr, consts)
     self.assertLen(discharged_jaxpr.invars, 1)
     self.assertLen(discharged_jaxpr.outvars, 1)
@@ -705,7 +705,7 @@ class StateDischargeTest(jtu.JaxTestCase):
       return []
     in_avals = [shaped_array_ref((4, 3), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     discharged_jaxpr, discharged_consts = discharge_state(
         stateful_jaxpr, consts)
     inval = jnp.arange(4 * 3, dtype=jnp.float32).reshape((4, 3))
@@ -719,7 +719,7 @@ class StateDischargeTest(jtu.JaxTestCase):
       return [a, b]
     in_avals = [shaped_array_ref((4,), jnp.dtype('float32'))]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     discharged_jaxpr, _ = discharge_state(stateful_jaxpr, consts)
     self.assertLen(discharged_jaxpr.invars, 1)
     self.assertLen(discharged_jaxpr.outvars, 3)
@@ -739,7 +739,7 @@ class StateDischargeTest(jtu.JaxTestCase):
         shaped_array_ref((4,), jnp.dtype('float32'))
         ]
     stateful_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
-                                                          in_avals)
+                                                              in_avals)
     discharged_jaxpr, _ = discharge_state(
         stateful_jaxpr, consts, should_discharge=[False, True])
     self.assertLen(discharged_jaxpr.invars, 2)
@@ -955,6 +955,7 @@ if CAN_USE_HYPOTHESIS:
     assert next(idx_, None) is None
     return idx
 
+  @jtu.thread_unsafe_test_class()  # hypothesis isn't thread-safe
   class StateHypothesisTest(jtu.JaxTestCase):
 
     @hp.given(get_vmap_params())
@@ -1495,7 +1496,22 @@ class RunStateTest(jtu.JaxTestCase):
   def test_can_stage_run_state(self):
     def f(x):
       return run_state(lambda _: None)(x)
+    jaxpr = jax.make_jaxpr(f)(2)
+    self.assertIsNotNone(jaxpr.jaxpr.debug_info)
+    self.assertIsNotNone(jaxpr.jaxpr.debug_info.func_src_info)
+
+  def test_can_stage_run_state_leaked_tracer_error(self):
+    leaks = []
+    def f(x):
+      def my_fun(x):
+        leaks.append(x)
+        return None
+      return run_state(my_fun)(x)
     _ = jax.make_jaxpr(f)(2)
+
+    with self.assertRaisesRegex(jax.errors.UnexpectedTracerError,
+                                "The function being traced when the value leaked was .*my_fun"):
+      jax.jit(lambda _: leaks[0])(1)
 
   def test_nested_run_state_captures_effects(self):
     def f(x):
@@ -1711,6 +1727,7 @@ if CAN_USE_HYPOTHESIS:
                     min_dim=max(f1.min_dim, f2.min_dim),
                     max_dim=min(f1.max_dim, f2.max_dim))
 
+  @jtu.thread_unsafe_test_class()  # because of hypothesis
   class RunStateHypothesisTest(jtu.JaxTestCase):
 
     @jax.legacy_prng_key('allow')

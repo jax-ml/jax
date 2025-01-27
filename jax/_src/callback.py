@@ -21,6 +21,7 @@ import logging
 from typing import Any
 
 import jax
+from jax._src import config
 from jax._src import core
 from jax._src import deprecations
 from jax._src import dispatch
@@ -158,8 +159,7 @@ def callback_batching_rule(
   new_args = [arg if dim is batching.not_mapped else
               batching.moveaxis(arg, dim, 0) for arg, dim in zip(args, dims)]
   batched_result_avals = tuple(
-      core.unmapped_aval(axis_size, core.no_axis_name, 0, aval)
-      for aval in result_avals)
+      core.unmapped_aval(axis_size, 0, aval) for aval in result_avals)
 
   # For FFI calls we must update the layouts. We handle the output layouts
   # here, but the input layout updates depend on the vmap_method parameter.
@@ -225,7 +225,9 @@ batching.primitive_batchers[pure_callback_p] = functools.partial(
 )
 
 
-def _callback_op_sharding(axis_context, sharding: SingleDeviceSharding | None):
+def _callback_op_sharding(
+    axis_context, sharding: SingleDeviceSharding | None, avals_out
+):
   if isinstance(axis_context, sharding_impls.SPMDAxisContext):
     # If we have fully manual sharding during lowering, that means the JAX
     # program has per-device semantics, so we run the callback on each device.
@@ -239,8 +241,18 @@ def _callback_op_sharding(axis_context, sharding: SingleDeviceSharding | None):
           "callbacks do not support specifying sharding inside spmd"
           " computations"
       )
-    op_sharding = xc.OpSharding()
-    op_sharding.type = xc.OpSharding.Type.MANUAL
+    if config.use_shardy_partitioner.value:
+      assert len(avals_out) == 1
+      op_sharding = sharding_impls.SdyArrayShardingList([
+          sharding_impls.SdyArraySharding(
+              mesh_shape=(),
+              dimension_shardings=[
+                  sharding_impls.SdyDimSharding(axes=[], is_closed=True)
+              ] * avals_out[0].ndim,
+              logical_device_ids=())])
+    else:
+      op_sharding = xc.OpSharding()  # type: ignore[assignment]
+      op_sharding.type = xc.OpSharding.Type.MANUAL
     return op_sharding
 
   if isinstance(axis_context, sharding_impls.ShardingContext):
@@ -268,10 +280,17 @@ def _callback_op_sharding(axis_context, sharding: SingleDeviceSharding | None):
     # If we have fully automatic sharding during lowering, that means the JAX
     # program has bulk array semantics, so we run the callback with a MAXIMAL
     # sharding and hence execute it only once on the full logical value).
-    op_sharding = xc.OpSharding()
-    op_sharding.type = xc.OpSharding.Type.MAXIMAL
-    op_sharding.tile_assignment_dimensions = [1]
-    op_sharding.tile_assignment_devices = [device_index]
+    if config.use_shardy_partitioner.value:
+      op_sharding = sharding_impls.SdyArrayShardingList([
+          sharding_impls.SdyArraySharding(
+              mesh_shape=(),
+              dimension_shardings=[],
+              logical_device_ids=(device_index,))])
+    else:
+      op_sharding = xc.OpSharding()  # type: ignore[assignment]
+      op_sharding.type = xc.OpSharding.Type.MAXIMAL
+      op_sharding.tile_assignment_dimensions = [1]
+      op_sharding.tile_assignment_devices = [device_index]
     return op_sharding
 
   # When there's no SPMD partitioning going on, don't annotate a sharding.
@@ -291,7 +310,8 @@ def pure_callback_lowering(
         )
     )
 
-  op_sharding = _callback_op_sharding(ctx.module_context.axis_context, sharding)
+  op_sharding = _callback_op_sharding(
+      ctx.module_context.axis_context, sharding, ctx.avals_out)
   result, _, _ = mlir.emit_python_callback(
       ctx,
       _callback,
@@ -329,7 +349,8 @@ def pure_callback(
 
   ``pure_callback`` enables calling a Python function in JIT-ed JAX functions.
   The input ``callback`` will be passed JAX arrays placed on a local CPU, and
-  it should also return JAX arrays on CPU.
+  it should also return JAX arrays on CPU. The ``callback`` function must not
+  include any calls back into JAX.
 
   The callback is treated as functionally pure, meaning it has no side-effects
   and its output value depends only on its argument values. As a consequence, it
@@ -361,8 +382,9 @@ def pure_callback(
   Args:
     callback: function to execute on the host. The callback is assumed to be a pure
       function (i.e. one without side-effects): if an impure function is passed, it
-      may behave in unexpected ways, particularly under transformation. The callable
-      will be passed PyTrees of arrays as arguments, and should return a PyTree of
+      may behave in unexpected ways, particularly under transformation.
+      Furthermore, the callback must not call into JAX. The callable will
+      be passed PyTrees of arrays as arguments, and should return a PyTree of
       arrays that matches ``result_shape_dtypes``.
     result_shape_dtypes: pytree whose leaves have ``shape`` and ``dtype`` attributes,
       whose structure matches the expected output of the callback function at runtime.
@@ -561,7 +583,8 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
         )
     )
 
-  op_sharding = _callback_op_sharding(ctx.module_context.axis_context, sharding)
+  op_sharding = _callback_op_sharding(
+      ctx.module_context.axis_context, sharding, ctx.avals_out)
   if ordered:
     token = ctx.tokens_in.get(_OrderedIOEffect)
     result, token, _ = mlir.emit_python_callback(
@@ -576,7 +599,7 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
     )
     ctx.set_tokens_out(mlir.TokenSet({_OrderedIOEffect: token}))
   else:
-    result, token, _ = mlir.emit_python_callback(
+    result, _, _ = mlir.emit_python_callback(
         ctx,
         _callback,
         None,
@@ -600,14 +623,15 @@ def io_callback(
     ordered: bool = False,
     **kwargs: Any,
 ):
-  """Calls an impure Python callback.
+  """Calls an impure Python callback. The callback function must not include any
+  calls back into JAX.
 
   For more explanation, see `External Callbacks`_.
 
   Args:
     callback: function to execute on the host. It is assumed to be an impure function.
       If ``callback`` is pure, using :func:`jax.pure_callback` instead may lead to
-      more efficient execution.
+      more efficient execution. The ``callback`` must not call into JAX.
     result_shape_dtypes: pytree whose leaves have ``shape`` and ``dtype`` attributes,
       whose structure matches the expected output of the callback function at runtime.
       :class:`jax.ShapeDtypeStruct` is often used to define leaf values.

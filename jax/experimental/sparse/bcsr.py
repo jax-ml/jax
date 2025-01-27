@@ -463,7 +463,7 @@ def bcsr_dot_general(lhs: BCSR | Array, rhs: Array, *,
                      dimension_numbers: DotDimensionNumbers,
                      precision: None = None,
                      preferred_element_type: None = None,
-                     out_type=None) -> Array:
+                     out_sharding=None) -> Array:
   """A general contraction operation.
 
   Args:
@@ -480,7 +480,7 @@ def bcsr_dot_general(lhs: BCSR | Array, rhs: Array, *,
     are sparse, the result will be sparse, of type BCSR. If either input is
     dense, the result will be dense, of type ndarray.
   """
-  del precision, out_type  # unused
+  del precision, out_sharding  # unused
   if isinstance(rhs, (np.ndarray, jax.Array)):
     if isinstance(lhs, (np.ndarray, jax.Array)):
       return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers,

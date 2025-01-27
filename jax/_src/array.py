@@ -41,7 +41,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension as xe
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    PmapSharding, SingleDeviceSharding, NamedSharding,
+    PmapSharding, SingleDeviceSharding,
     device_replica_id_map, hashed_index, num_addressable_indices, local_to_global_shape)  # pyformat: disable
 from jax._src.typing import ArrayLike, DLDeviceType
 from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method, cache
@@ -753,7 +753,8 @@ def make_array_from_callback(
   first_value = per_device_values[0]
   expected_dtype = first_value.dtype
   expected_shape = sharding.shard_shape(shape)
-  aval = core.ShapedArray(shape, expected_dtype)
+  aval = core.update_aval_with_sharding(
+      core.ShapedArray(shape, expected_dtype), sharding)
   _validate_shape_and_dtype_for_per_device_arrays(
       per_device_values,
       expected_shape=expected_shape,
@@ -1013,28 +1014,30 @@ def make_array_from_single_device_arrays(
   """
   # All input arrays should be committed. Checking it is expensive on
   # single-controller systems.
-  if any(isinstance(arr, core.Tracer) for arr in arrays):
-    raise ValueError(
-        "jax.make_array_from_single_device_arrays requires a list of concrete"
-        f" arrays as input. got types {set(map(type, arrays))}")
-  aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
+  aval = core.update_aval_with_sharding(
+      core.ShapedArray(shape, arrays[0].dtype, weak_type=False), sharding)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     return aval.dtype._rules.make_sharded_array(aval, sharding, arrays,
                                                 committed=True)
   # TODO(phawkins): ideally the cast() could be checked.
-  return ArrayImpl(aval, sharding, cast(Sequence[ArrayImpl], arrays),
-                   committed=True)
+  try:
+    return ArrayImpl(aval, sharding, cast(Sequence[ArrayImpl], arrays),
+                    committed=True)
+  except TypeError:
+    if not isinstance(arrays, Sequence):
+      raise TypeError("jax.make_array_from_single_device_arrays `arrays` "
+                      "argument must be a Sequence (list or tuple), but got "
+                      f"{type(arrays)}.")
+    if any(isinstance(arr, core.Tracer) for arr in arrays):
+      raise ValueError(
+          "jax.make_array_from_single_device_arrays requires a list of concrete"
+          f" arrays as input, but got types {set(map(type, arrays))}")
+    raise
 
 xla.canonicalize_dtype_handlers[ArrayImpl] = pxla.identity
 
 def _get_aval_array(self):
-  if config.sharding_in_types.value and isinstance(self.sharding, NamedSharding):
-    return self.aval.update(sharding=NamedSharding(
-        self.sharding.mesh.abstract_mesh,
-        self.sharding.spec._normalized_spec(self.ndim)))
-  else:
-    return self.aval
-
+  return core.update_aval_with_sharding(self.aval, self.sharding)
 core.pytype_aval_mappings[ArrayImpl] = _get_aval_array
 
 # TODO(jakevdp) replace this with true inheritance at the C++ level.
@@ -1179,6 +1182,7 @@ pxla.shard_arg_handlers[ArrayImpl] = _array_shard_arg
 
 
 def _array_global_result_handler(global_aval, out_sharding, committed):
+  global_aval = core.update_aval_with_sharding(global_aval, out_sharding)
   if global_aval.dtype == dtypes.float0:
     return lambda _: np.zeros(global_aval.shape, dtypes.float0)
   if dtypes.issubdtype(global_aval.dtype, dtypes.extended):
@@ -1205,8 +1209,12 @@ pxla.local_result_handlers[core.ShapedArray] = _array_local_result_handler
 # Token handlers
 
 def _token_shard_arg(xs, shardings, layouts, copy_semantics):
-  return _array_shard_arg([x._buf for x in xs], shardings, layouts,
-                          copy_semantics)
+  results = []
+  for x, sharding, layout in safe_zip(xs, shardings, layouts):
+    x.block_until_ready()
+    x = np.array([], dtype=bool)
+    results.append(api.device_put(x, Layout(layout, sharding)))
+  return results
 pxla.shard_arg_handlers[core.Token] = _token_shard_arg
 
 

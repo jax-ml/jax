@@ -17,6 +17,7 @@ from jax._src.typing import (
     Array, ArrayLike, DType, DTypeLike, DeprecatedArg,
     DimSize, DuckTypedArray, Shape, StaticScalar,
 )
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax.numpy import fft as fft, linalg as linalg
 from jax.sharding import Sharding as _Sharding
 import numpy as _np
@@ -371,6 +372,7 @@ def einsum(
     preferred_element_type: DTypeLike | None = ...,
     _use_xeinsum: builtins.bool = False,
     _dot_general: Callable[..., Array] = ...,
+    out_sharding: NamedSharding | P | None = ...,
 ) -> Array: ...
 
 @overload
@@ -384,6 +386,7 @@ def einsum(
     preferred_element_type: DTypeLike | None = ...,
     _use_xeinsum: builtins.bool = False,
     _dot_general: Callable[..., Array] = ...,
+    out_sharding: NamedSharding | P | None = ...,
 ) -> Array: ...
 @overload
 def einsum(
@@ -395,6 +398,7 @@ def einsum(
     preferred_element_type: DTypeLike | None = ...,
     _use_xeinsum: builtins.bool = ...,
     _dot_general: Callable[..., Array] = ...,
+    out_sharding: NamedSharding | P | None = ...,
 ) -> Array: ...
 
 @overload

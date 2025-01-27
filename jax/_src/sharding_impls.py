@@ -118,7 +118,6 @@ class SdyDimSharding:
   is_closed: bool
   priority: int | None = None
 
-  # NOTE: An MLIR context is required as a context manager.
   def build(self) -> sdy.DimensionShardingAttr:
     return sdy.DimensionShardingAttr.get(
         [sdy.AxisRefAttr.get(axis) for axis in self.axes],
@@ -144,7 +143,6 @@ class SdyArraySharding:
   logical_device_ids: tuple[int, ...] | None = None
   replicated_axes: tuple[str, ...] = ()
 
-  # NOTE: An MLIR context is required as a context manager.
   def build(self) -> sdy.TensorShardingAttr:
     if self.mesh_shape is None:
       mesh_attr = sdy.MeshAttr.get([])
@@ -169,6 +167,15 @@ class SdyArraySharding:
     return f"SdyArraySharding([{dim_sharding_repr}]{device_id_repr}{rar})"
 
 
+@dataclasses.dataclass
+class SdyArrayShardingList:
+  shardings: Sequence[SdyArraySharding]
+
+  def build(self) -> sdy.TensorShardingPerValueAttr:
+    return sdy.TensorShardingPerValueAttr.get(
+        [sharding.build() for sharding in self.shardings])
+
+
 @util.cache(max_size=4096, trace_context_in_key=False)
 def named_sharding_to_xla_hlo_sharding(
     self, num_dimensions: int) -> xc.HloSharding:
@@ -178,7 +185,7 @@ def named_sharding_to_xla_hlo_sharding(
 
   special_axes = {}
   mesh_manual_axes = {n for n, t in self.mesh._name_to_type.items()
-                      if t == mesh_lib.AxisTypes.Collective}
+                      if t == mesh_lib.AxisTypes.Manual}
   manual_axes = self._manual_axes.union(mesh_manual_axes)
   if manual_axes:
     axis_names = self.mesh.axis_names
@@ -441,7 +448,7 @@ def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArraySharding, mesh):
       used_axes.extend(d.axes)
     remaining_axes = set(mesh.axis_names) - set(used_axes)
     replicated_axes = tuple(r for r in remaining_axes
-                            if mesh._name_to_type[r] == mesh_lib.AxisTypes.User)
+                            if mesh._name_to_type[r] == mesh_lib.AxisTypes.Explicit)
     return SdyArraySharding(sdy_sharding.mesh_shape, dim_shardings,
                             sdy_sharding.logical_device_ids, replicated_axes)
   return sdy_sharding
@@ -1759,25 +1766,61 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
     sharding = NamedSharding(mesh_lib.get_abstract_mesh(), sharding)  # type: ignore
   else:
     if (check_mesh_consistency and
-        sharding.mesh != mesh_lib.get_abstract_mesh()):
+        sharding.mesh.abstract_mesh != mesh_lib.get_abstract_mesh()):
       raise ValueError(
           f'Context mesh {mesh_lib.get_abstract_mesh()} should match the mesh'
-          f' of sharding {sharding.mesh}. This error occurs at source: '
-          f' {source_info_util.summarize(source_info_util.current())}')
+          f' of sharding {sharding.mesh.abstract_mesh}. This error occurs at'
+          f' source:  {source_info_util.summarize(source_info_util.current())}')
+    if isinstance(sharding.mesh, mesh_lib.Mesh):
+      sharding = NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
 
   for s in flatten_spec(sharding.spec):
     if sharding.mesh._name_to_type[s] in {
-        mesh_lib.AxisTypes.Auto, mesh_lib.AxisTypes.Collective}:
+        mesh_lib.AxisTypes.Auto, mesh_lib.AxisTypes.Manual}:
       raise ValueError(
           'PartitionSpec cannot contain axis names that are of type Auto or'
-          f' Collective. Got PartitionSpec: {sharding.spec} with axis name:'
+          f' Manual. Got PartitionSpec: {sharding.spec} with axis name:'
           f' {s} or type: {sharding.mesh._name_to_type[s]}')
   return sharding
+
+TypeOfAxis = str | tuple[str, ...] | None
+
+def _normalize(axes: TypeOfAxis = None) -> tuple[str, ...]:
+  if axes is None:
+    return ()
+  return (axes,) if isinstance(axes, str) else axes
+
+def _get_axis_types(
+    auto_axes: TypeOfAxis = None, explicit_axes: TypeOfAxis = None,
+    manual_axes: TypeOfAxis = None):
+  if auto_axes is None and explicit_axes is None and manual_axes is None:
+    return None
+
+  auto_axes = _normalize(auto_axes)
+  explicit_axes = _normalize(explicit_axes)
+  manual_axes = _normalize(manual_axes)
+
+  aua, ea, ma = set(auto_axes), set(explicit_axes), set(manual_axes)
+  disjoint = aua.isdisjoint(ea) and aua.isdisjoint(ma) and ea.isdisjoint(ma)
+  if not disjoint:
+    raise ValueError(
+        f'{auto_axes=}, {explicit_axes=} and {manual_axes=} should be'
+        ' non-overlapping.')
+
+  out = {}
+  if auto_axes:
+    out.update({mesh_lib.AxisTypes.Auto: auto_axes})
+  if explicit_axes:
+    out.update({mesh_lib.AxisTypes.Explicit: explicit_axes})
+  if manual_axes:
+    out.update({mesh_lib.AxisTypes.Manual: manual_axes})
+  return out
 
 
 def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
               *, devices: Sequence[xc.Device] | None = None,
-              axis_types: mesh_lib.MeshAxisType | None = None) -> mesh_lib.Mesh:
+              auto_axes: TypeOfAxis = None, explicit_axes: TypeOfAxis = None,
+              manual_axes: TypeOfAxis = None) -> mesh_lib.Mesh:
   """Creates an efficient mesh with the shape and axis names specified.
 
   This function attempts to automatically compute a good mapping from a set of
@@ -1839,4 +1882,5 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   mesh_devices = mesh_utils.create_device_mesh(
       new_axis_shapes, devices,
       allow_split_physical_axes=allow_split_physical_axes)
+  axis_types = _get_axis_types(auto_axes, explicit_axes, manual_axes)
   return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)

@@ -20,6 +20,7 @@ import os
 from functools import partial
 from typing import Any
 
+from jax._src import api_util
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src.lax import lax
@@ -28,9 +29,9 @@ from jax._src import ad_util
 from jax._src import state
 from jax._src import util
 from jax._src.util import weakref_lru_cache, safe_map, partition_list
-from jax.api_util import flatten_fun_nokwargs
 from jax._src.interpreters import partial_eval as pe
-from jax.tree_util import tree_map, tree_unflatten
+from jax.tree_util import tree_map, tree_unflatten, keystr, PyTreeDef
+from jax._src.tree_util import equality_errors_pytreedef
 
 map, unsafe_map = safe_map, map
 
@@ -49,41 +50,48 @@ def _typecheck_param(prim, param, name, msg_required, pred):
     raise core.JaxprTypeError(msg)
 
 @weakref_lru_cache
-def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals,
-                              primitive_name: str | None = None):
-  wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  debug = pe.debug_info(fun, in_tree, out_tree, False,
-                        primitive_name or "<unknown>")
+def _initial_style_open_jaxpr(fun: Callable,
+                              in_tree: PyTreeDef,
+                              in_avals: Sequence[core.AbstractValue],
+                              debug_info: api_util.TracingDebugInfo):
+  wrapped_fun, out_tree = api_util.flatten_fun_nokwargs(
+      lu.wrap_init(fun, debug_info=debug_info),
+      in_tree)
   jaxpr, _, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
-      wrapped_fun, in_avals, debug)
+      wrapped_fun, in_avals, debug_info)
   return jaxpr, consts, out_tree(), attrs_tracked
 
 @weakref_lru_cache
-def _initial_style_jaxpr(fun: Callable, in_tree, in_avals,
-                         primitive_name: str | None = None):
+def _initial_style_jaxpr(fun: Callable,
+                         in_tree: PyTreeDef,
+                         in_avals: Sequence[core.AbstractValue],
+                         debug_info: api_util.TracingDebugInfo):
   jaxpr, consts, out_tree, () = _initial_style_open_jaxpr(
-      fun, in_tree, in_avals, primitive_name)
+      fun, in_tree, in_avals, debug_info)
   closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
   return closed_jaxpr, consts, out_tree
 
-def _initial_style_jaxpr_attrs(fun: Callable, in_tree, in_avals,
-                               primitive_name: str | None = None):
+def _initial_style_jaxpr_attrs(fun: Callable,
+                               in_tree: PyTreeDef,
+                               in_avals: Sequence[core.AbstractValue],
+                               debug_info: api_util.TracingDebugInfo):
   jaxpr, consts, out_tree, attrs_tracked = _initial_style_open_jaxpr(
-      fun, in_tree, in_avals, primitive_name)
+      fun, in_tree, in_avals, debug_info)
   closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
   return closed_jaxpr, consts, out_tree, attrs_tracked
 
 def _initial_style_jaxprs_with_common_consts(
-    funs: Sequence[Callable], in_tree, in_avals, primitive_name: str):
+    funs: Sequence[Callable],
+    in_tree: PyTreeDef, in_avals: Sequence[core.AbstractValue],
+    debug_infos: Sequence[api_util.TracingDebugInfo]):
   # When staging the branches of a conditional into jaxprs, constants are
   # extracted from each branch and converted to jaxpr arguments. To use the
   # staged jaxprs as the branches to a conditional *primitive*, we need for
   # their (input) signatures to match. This function "joins" the staged jaxprs:
   # for each one, it makes another that accepts *all* constants, but only uses
   # those that it needs (dropping the rest).
-
-  jaxpr_data = [_initial_style_open_jaxpr(fn, in_tree, in_avals, primitive_name)
-                for fn in funs]
+  jaxpr_data = [_initial_style_open_jaxpr(fn, in_tree, in_avals, debug_info)
+                for fn, debug_info in zip(funs, debug_infos)]
   if not jaxpr_data:
     return [], [], []
 
@@ -188,20 +196,28 @@ def _pad_jaxpr_constvars(jaxpr, i, canonical_ref_avals, canonical_ref_indices,
   jaxpr = jaxpr.replace(effects=effects)
   return core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
 
-def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
+def _check_tree_and_avals(what1, tree1, avals1, what2, tree2, avals2):
   """Raises TypeError if (tree1, avals1) does not match (tree2, avals2).
 
   Corresponding `tree` and `avals` must match in the sense that the number of
-  leaves in `tree` must be equal to the length of `avals`. `what` will be
-  prepended to details of the mismatch in TypeError.
+  leaves in `tree` must be equal to the length of `avals`. `what1` and
+  `what2` describe what the `tree1` and `tree2` represent.
   """
   if tree1 != tree2:
-    raise TypeError(
-        f"{what} must have same type structure, got {tree1} and {tree2}.")
+    errs = list(equality_errors_pytreedef(tree1, tree2))
+    msg = []
+    msg.append(
+        f"{what1} must have same type structure as {what2}, but there are differences: ")
+    for path, thing1, thing2, explanation in errs:
+      msg.append(
+          f"    * at output{keystr(tuple(path))}, {what1} has {thing1} and "
+          f"{what2} has {thing2}, so {explanation}")
+    raise TypeError('\n'.join(msg))
+
   if not all(map(core.typematch, avals1, avals2)):
     diff = tree_map(_show_diff, tree_unflatten(tree1, avals1),
                     tree_unflatten(tree2, avals2))
-    raise TypeError(f"{what} must have identical types, got\n{diff}.")
+    raise TypeError(f"{what1} and {what2} must have identical types, got\n{diff}.")
 
 def _check_tree(func_name, expected_name, actual_tree, expected_tree, has_aux=False):
   if has_aux:

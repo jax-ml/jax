@@ -202,7 +202,6 @@ def trace_context():
   return (axis_env_state.value, mesh_context_manager.value,
           xla_metadata_context_manager.value,
           abstract_mesh_context_manager.value,
-          device_context.value,
           compute_on_context_manager.value, enable_x64.value,
           numpy_rank_promotion.value, default_matmul_precision.value,
           dynamic_shapes.value,
@@ -820,8 +819,8 @@ axis_env_state = config_ext.Config((), include_in_jit_key=True)
 mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
 abstract_mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
 device_context = config_ext.Config((), include_in_jit_key=True)
-compute_on_context_manager = config_ext.Config((), include_in_jit_key=True)
-xla_metadata_context_manager = config_ext.Config((), include_in_jit_key=True)
+compute_on_context_manager = config_ext.Config(None, include_in_jit_key=True)
+xla_metadata_context_manager = config_ext.Config(None, include_in_jit_key=True)
 
 
 # TODO(b/214340779): remove flag when XLA:CPU is improved.
@@ -974,22 +973,6 @@ pmap_shmap_merge = bool_state(
     upgrade=True,
     help='If True, pmap and shard_map API will be merged.')
 
-# Remove after next JAX release on Jan 15, 2025.
-if hasattr(jax_jit.global_state(), 'enable_memories'):
-  def _update_jax_memories_global(val):
-    jax_jit.global_state().enable_memories = val
-
-  def _update_jax_memories_thread_local(val):
-    jax_jit.thread_local_state().enable_memories = val
-
-  enable_memories = bool_state(
-      'jax_enable_memories',
-      default=True,
-      upgrade=True,
-      update_global_hook=_update_jax_memories_global,
-      update_thread_local_hook=_update_jax_memories_thread_local,
-      help=("If True, will allow fetching memory kinds available on executable "
-            "and annotate Shardings with it."))
 
 spmd_mode = enum_state(
     name='jax_spmd_mode',
@@ -1042,7 +1025,7 @@ default_prng_impl = enum_state(
 
 threefry_partitionable = bool_state(
     name='jax_threefry_partitionable',
-    default=False,
+    default=True,
     upgrade=True,
     help=('Enables internal threefry PRNG implementation changes that '
           'render it automatically partitionable in some cases. Without this '

@@ -199,7 +199,7 @@ To install JAX along with appropriate versions of `jaxlib` and `libtpu`, you can
 the following in your cloud TPU VM:
 
 ```bash
-pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+pip install "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 ```
 
 For users of Colab (https://colab.research.google.com/), be sure you are
@@ -296,7 +296,7 @@ pip install -U --pre jax jaxlib libtpu requests -f https://storage.googleapis.co
 - NVIDIA GPU (CUDA 12):
 
 ```bash
-pip install -U --pre jax jaxlib jax-cuda12-plugin[with_cuda] jax-cuda12-pjrt -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
+pip install -U --pre jax jaxlib "jax-cuda12-plugin[with_cuda]" jax-cuda12-pjrt -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
 ```
 
 - NVIDIA GPU (CUDA 12) legacy:
@@ -322,7 +322,7 @@ still be installed directly via the URLs here. For example:
 
 ```bash
 # Install jaxlib on CPU via the wheel archive
-pip install jax[cpu]==0.3.25 -f https://storage.googleapis.com/jax-releases/jax_releases.html
+pip install "jax[cpu]==0.3.25" -f https://storage.googleapis.com/jax-releases/jax_releases.html
 
 # Install the jaxlib 0.3.25 CPU wheel directly
 pip install jaxlib==0.3.25 -f https://storage.googleapis.com/jax-releases/jax_releases.html

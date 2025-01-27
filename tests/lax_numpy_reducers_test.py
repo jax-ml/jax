@@ -27,7 +27,6 @@ import jax
 from jax import numpy as jnp
 
 from jax._src import config
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.util import NumpyComplexWarning
@@ -212,7 +211,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     @jtu.ignore_warning(category=NumpyComplexWarning)
     @jtu.ignore_warning(category=RuntimeWarning,
-                        message="mean of empty slice.*")
+                        message="Mean of empty slice.*")
     @jtu.ignore_warning(category=RuntimeWarning,
                         message="overflow encountered.*")
     def np_fun(x):
@@ -454,12 +453,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     x = jnp.zeros((10,), dtype)
     where = jnp.ones(10, dtype=int)
     func = getattr(jnp, rec.name)
-    def assert_warns_or_errors(msg):
-      if deprecations.is_accelerated("jax-numpy-reduction-non-boolean-where"):
-        return self.assertRaisesRegex(ValueError, msg)
-      else:
-        return self.assertWarnsRegex(DeprecationWarning, msg)
-    with assert_warns_or_errors(f"jnp.{rec.name}: where must be None or a boolean array"):
+    with self.assertDeprecationWarnsOrRaises("jax-numpy-reduction-non-boolean-where",
+                                             f"jnp.{rec.name}: where must be None or a boolean array"):
       func(x, where=where, initial=jnp.array(0, dtype=dtype))
 
   @jtu.sample_product(rec=JAX_REDUCER_WHERE_NO_INITIAL_RECORDS)
@@ -468,12 +463,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     x = jnp.zeros((10,), dtype)
     where = jnp.ones(10, dtype=int)
     func = getattr(jnp, rec.name)
-    def assert_warns_or_errors(msg):
-      if deprecations.is_accelerated("jax-numpy-reduction-non-boolean-where"):
-        return self.assertRaisesRegex(ValueError, msg)
-      else:
-        return self.assertWarnsRegex(DeprecationWarning, msg)
-    with assert_warns_or_errors(f"jnp.{rec.name}: where must be None or a boolean array"):
+    with self.assertDeprecationWarnsOrRaises("jax-numpy-reduction-non-boolean-where",
+                                             f"jnp.{rec.name}: where must be None or a boolean array"):
       func(x, where=where)
 
   @parameterized.parameters(itertools.chain.from_iterable(
@@ -756,13 +747,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   )
   def testQuantileDeprecatedArgs(self, op):
     func = getattr(jnp, op)
-    msg = f"The interpolation= argument to '{op}' is deprecated. "
-    def assert_warns_or_errors(msg=msg):
-      if deprecations.is_accelerated("jax-numpy-quantile-interpolation"):
-        return self.assertRaisesRegex(ValueError, msg)
-      else:
-        return self.assertWarnsRegex(DeprecationWarning, msg)
-    with assert_warns_or_errors(msg):
+    with self.assertDeprecationWarnsOrRaises("jax-numpy-quantile-interpolation",
+                                             f"The interpolation= argument to '{op}' is deprecated. "):
       func(jnp.arange(4), 0.5, interpolation='linear')
 
   @unittest.skipIf(not config.enable_x64.value, "test requires X64")

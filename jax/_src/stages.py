@@ -162,7 +162,8 @@ class Lowering(Protocol):
     """Compile and return a corresponding ``Executable``."""
     raise NotImplementedError
 
-  def as_text(self, dialect: str | None = None) -> str:
+  def as_text(self, dialect: str | None = None, *,
+              debug_info: bool = False) -> str:
     """A human-readable text representation of this lowering.
 
     Intended for visualization and debugging purposes. This need not be a valid
@@ -249,15 +250,13 @@ class XlaExecutable(Executable):
       else:
         raise
 
-    # TODO(b/384741132): this should return a single dict (I think returning a list
-    # was to support MPMD executables, which never fully landed).
-  def cost_analysis(self) -> list[dict[str, float]]:
+  def cost_analysis(self) -> dict[str, float]:
     xla_ext_exe = self.xla_extension_executable()
 
     # TODO(b/259255524): Unify/merge the two cost_analysis calls below.
     if hasattr(xla_ext_exe, "cost_analysis"):
       try:
-        return [xla_ext_exe.cost_analysis()]
+        return xla_ext_exe.cost_analysis()
       except xla_extension.XlaRuntimeError as e:
         msg, *_ = e.args
         if not (type(msg) is str and msg.startswith("UNIMPLEMENTED")):
@@ -275,11 +274,9 @@ class XlaExecutable(Executable):
             " were found)."
         )
 
-        return [
-            xla_extension.hlo_module_cost_analysis(
-                xla_ext_exe.client, hlo_modules[0]
-            )
-        ]
+        return xla_extension.hlo_module_cost_analysis(
+            xla_ext_exe.client, hlo_modules[0]
+        )
       except xla_extension.XlaRuntimeError as e:
         msg, *_ = e.args
         supported = not (type(msg) is str and
@@ -294,7 +291,7 @@ class XlaExecutable(Executable):
         and hasattr(self.unsafe_call, "compiled")
         and hasattr(self.unsafe_call.compiled, "cost_analysis")
     ):
-      return [self.unsafe_call.compiled.cost_analysis()]
+      return self.unsafe_call.compiled.cost_analysis()
 
     raise NotImplementedError(
         f"cost analysis unsupported on current XLA backend: {type(xla_ext_exe)}"
@@ -340,13 +337,18 @@ class XlaLowering(Lowering):
       self, compiler_options: CompilerOptions | None = None) -> Executable:
     raise NotImplementedError("must override")
 
-  def as_text(self, dialect: str | None = None) -> str:
+  def as_text(self, dialect: str | None = None,
+              *,
+              debug_info: bool = False) -> str:
     if dialect is None:
       dialect = "stablehlo"
     if dialect == "stablehlo":
-      return str(self.stablehlo())
+      return mlir.module_to_string(self.stablehlo(),
+                                   enable_debug_info=debug_info)
     elif dialect == "hlo":
-      return self.hlo().as_hlo_text()
+      print_opts = xc._xla.HloPrintOptions.short_parsable()
+      print_opts.print_metadata = debug_info
+      return self.hlo().as_hlo_module().to_string(print_opts)
     else:
       raise ValueError(f"unknown dialect: {dialect}")
 
@@ -675,16 +677,21 @@ class Lowered(Stage):
         no_kwargs=self._no_kwargs,
     )
 
-  def as_text(self, dialect: str | None = None) -> str:
+  def as_text(self, dialect: str | None = None, *,
+              debug_info: bool = False) -> str:
     """A human-readable text representation of this lowering.
 
     Intended for visualization and debugging purposes. This need not be a valid
-    nor reliable serialization. It is relayed directly to external callers.
+    nor reliable serialization.
+    Use `jax.export` if you want reliable and portable serialization.
 
     Args:
-      dialect: Optional string specifying a lowering dialect (e.g. "stablehlo")
+      dialect: Optional string specifying a lowering dialect (e.g. "stablehlo",
+        or "hlo").
+      debug_info: Whether to include debugging information,
+        e.g., source location.
     """
-    return self._lowering.as_text(dialect)
+    return self._lowering.as_text(dialect, debug_info=debug_info)
 
   def compiler_ir(self, dialect: str | None = None) -> Any | None:
     """An arbitrary object representation of this lowering.
@@ -692,12 +699,14 @@ class Lowered(Stage):
     Intended for debugging purposes. This is not a valid nor reliable
     serialization. The output has no guarantee of consistency across
     invocations.
+    Use `jax.export` if you want reliable and portable serialization.
 
     Returns ``None`` if unavailable, e.g. based on backend, compiler, or
     runtime.
 
     Args:
-      dialect: Optional string specifying a lowering dialect (e.g. "stablehlo")
+      dialect: Optional string specifying a lowering dialect (e.g. "stablehlo",
+        or "hlo").
     """
     try:
       return self._lowering.compiler_ir(dialect)

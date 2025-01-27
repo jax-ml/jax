@@ -199,6 +199,7 @@ class JetTracer(core.Tracer):
       return self
 
 class JetTrace(core.Trace):
+  __slots__ = ("tag", "parent_trace", "order")
 
   def __init__(self, tag, parent_trace, order):
     self.tag = tag

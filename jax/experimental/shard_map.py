@@ -538,7 +538,7 @@ def _shard_shaped_array(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
                     for i, sz in enumerate(aval.shape))
   if config.sharding_in_types.value:
     new_mesh = AbstractMesh(
-        mesh.shape_tuple, axis_types={AxisTypes.Collective: mesh.axis_names})
+        mesh.shape_tuple, axis_types={AxisTypes.Manual: mesh.axis_names})
     new_sharding = NamedSharding(new_mesh, P(*[None] * aval.ndim))
   else:
     new_sharding = None
@@ -622,9 +622,10 @@ def _rule_missing(prim: core.Primitive, *_, **__):
 
 # Lowering
 
+
 def _shardy_shard_map_sharding(
     ctx: mlir.LoweringRuleContext, mesh, auto, names, aval_in
-  ) -> ir.Attribute:
+) -> sharding_impls.SdyArraySharding:
   axes = {name: i for i, ns in names.items() for name in ns}
   ns = _make_scoped_manual_sharding(ctx, mesh, axes)
   if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
@@ -634,7 +635,7 @@ def _shardy_shard_map_sharding(
   if auto:
     for dim_sharding in sdy_sharding.dimension_shardings:
       dim_sharding.is_closed = False
-  return sdy_sharding.build()
+  return sdy_sharding
 
 
 def _shard_map_lowering_shardy(
@@ -642,12 +643,12 @@ def _shard_map_lowering_shardy(
   in_avals_ = [v.aval for v in jaxpr.invars]
   if isinstance(ctx.module_context.axis_context, sharding_impls.SPMDAxisContext):
     # Nested `ManualComputationOp`s cannot refer to axes that are already
-    # manual. So figure out what axes are free thus far and get the new axis
-    # context.
+    # manual. So figure out what axes are free thus far.
     free_axes = frozenset(mesh.axis_names) - ctx.module_context.axis_context.manual_axes
-    new_axis_context = sharding_impls.SPMDAxisContext(mesh, free_axes - auto)
+    shardy_manual_axes = free_axes - auto
   else:
-    new_axis_context = sharding_impls.SPMDAxisContext(
+    shardy_manual_axes = frozenset(mesh.axis_names) - auto
+  new_axis_context = sharding_impls.SPMDAxisContext(
         mesh, frozenset(mesh.axis_names) - auto)
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
   args = (*ctx.dim_var_values, *in_nodes)
@@ -655,7 +656,7 @@ def _shard_map_lowering_shardy(
   # The order of manual axes should match the order of mesh.axis_names to avoid
   # non-determinism issues.
   manual_axes = [a for a in mesh.axis_names
-                 if a in sub_ctx.axis_context.manual_axes]
+                 if a in shardy_manual_axes]
   if np.prod([mesh.shape[a] for a in manual_axes]) == 1:
     # No need for a `ManualComputationOp` if all manual axes are size 1.
     with core.extend_axis_env_nd(tuple(mesh.shape.items())):
@@ -664,12 +665,12 @@ def _shard_map_lowering_shardy(
           dim_var_values=ctx.dim_var_values)
     return out_nodes
 
-  in_shardings = sdy.TensorShardingPerValueAttr.get(map(
+  in_shardings = sharding_impls.SdyArrayShardingList(map(
       partial(_shardy_shard_map_sharding, ctx, mesh, auto),
-      in_names, ctx.avals_in))
-  out_shardings = sdy.TensorShardingPerValueAttr.get(map(
+      in_names, ctx.avals_in)).build()
+  out_shardings = sharding_impls.SdyArrayShardingList(map(
       partial(_shardy_shard_map_sharding, ctx, mesh, auto),
-      out_names, ctx.avals_out))
+      out_names, ctx.avals_out)).build()
   output_types = map(mlir.aval_to_ir_type, ctx.avals_out)
   manual_computation_op = sdy.ManualComputationOp(
       output_types, args, in_shardings, out_shardings,
@@ -853,6 +854,8 @@ def _rem_singleton(x): return x.reshape(x.shape[1:])
 def _add_singleton(x): return x.reshape(1, *x.shape)
 
 class ShardMapTrace(core.Trace):
+  __slots__ = ("mesh", "check")
+
   mesh: Mesh
   check: bool
 
@@ -1530,6 +1533,70 @@ def _shard_map_partial_eval(trace, shard_map_p, f, tracers, mesh, in_names,
   return pe.merge_lists(out_knowns, out_tracers, out_consts)
 pe.JaxprTrace.process_shard_map = _shard_map_partial_eval
 
+def _shard_map_linearize(trace, shard_map_p, f, tracers, mesh, in_names,
+                         out_names_thunk, check_rep, rewrite, auto):
+  primals, tangents = unzip2(map(trace.to_primal_tangent_pair, tracers))
+  nzs_in = tuple(type(t) is not ad.Zero for t in tangents)
+  f_primal, linearize_outs_thunk = ad.linearize_subtrace(f, trace.tag, nzs_in)
+  f_primal = _promote_scalar_residuals_lin(f_primal, linearize_outs_thunk)
+  tangent_in_names = [ax for ax, nz in zip(in_names, nzs_in) if nz]
+  all_names = _all_mesh_names_except_spmd(mesh, trace)
+
+  @as_hashable_function(closure=(linearize_outs_thunk))
+  def primal_out_names_thunk():
+    residual_avals, _, _ = linearize_outs_thunk()
+    out_names = out_names_thunk()
+    # This is incorrect so we set `check_rep=False` as we do in the JVP rule.
+    return (*({0: all_names} for _ in residual_avals), *out_names)
+  primal_params = dict(
+      mesh=mesh, in_names=in_names,
+      out_names_thunk=primal_out_names_thunk, check_rep=check_rep,
+      rewrite=rewrite, auto=auto)
+  all_primal_results = shard_map_p.bind_with_trace(
+      trace.parent_trace, (f_primal,) + tuple(primals), primal_params)
+  residual_avals, nzs_out, lin_jaxpr = linearize_outs_thunk()
+  num_residuals = len(residual_avals)
+  residuals = all_primal_results[:num_residuals]
+  primals_out = all_primal_results[num_residuals:]
+  args_to_promote = [getattr(aval, 'shape', ()) == () for aval in residual_avals]
+  lin_jaxpr = _promote_scalar_residuals_jaxpr(lin_jaxpr, args_to_promote)
+  out_names = out_names_thunk()
+  new_in_names = (*({0: all_names} for _ in residual_avals),
+                  *(ax for ax, nz in zip(in_names, nzs_in) if nz))
+  new_out_names = (*(ax for ax, nz in zip(out_names, nzs_out) if nz),)
+  @as_hashable_function(closure=(new_out_names))
+  def tangent_out_names_thunk():
+    return new_out_names
+  tangent_params = dict(
+      mesh=mesh, in_names=new_in_names,
+      out_names_thunk=tangent_out_names_thunk, check_rep=False,
+      rewrite=rewrite, auto=auto)
+
+  def f_tangent(*args):
+    residuals = args[:num_residuals]
+    nz_tangents = args[num_residuals:]
+    return core.eval_jaxpr(lin_jaxpr, (), *residuals, *nz_tangents)
+
+  nz_tangents_in = [t for (t, nz) in zip(tangents, nzs_in) if nz]
+  nz_tangents_out = shard_map_p.bind_with_trace(trace.tangent_trace,
+      (lu.wrap_init(f_tangent), *residuals, *nz_tangents_in), tangent_params)
+  nz_tangents_out_iter = iter(nz_tangents_out)
+  tangents_out = [next(nz_tangents_out_iter) if nz else ad.Zero.from_primal_value(primal)
+                  for nz, primal in zip(nzs_out, primals_out)]
+  return map(partial(ad.maybe_linearize_tracer, trace), primals_out, nzs_out, tangents_out)
+ad.LinearizeTrace.process_shard_map = _shard_map_linearize
+
+@lu.transformation2
+def _promote_scalar_residuals_lin(f, linearize_outs_thunk, *args, **kwargs):
+  ans = f(*args, **kwargs)
+  residual_avals, _, _ = linearize_outs_thunk()
+  num_residuals = len(residual_avals)
+  residuals = ans[:num_residuals]
+  primals = ans[num_residuals:]
+  residuals = tuple(jax.lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
+               for x in residuals)
+  return residuals + primals
+
 @lu.transformation2
 def _promote_scalar_residuals(f, *args, **kwargs):
   jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env) = f(*args, **kwargs)
@@ -1546,7 +1613,7 @@ def _promote_scalar_residuals_jaxpr(jaxpr, which):
     res, args = split_list(res_and_args, [len(jaxpr.constvars)])
     res = [_rem_singleton(x) if w else x for x, w in zip(res, which)]
     return core.eval_jaxpr(jaxpr, res, *args)
-  res_avals = [core.unmapped_aval(1, None, 0, v.aval) if w else v.aval
+  res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for v, w in zip(jaxpr.constvars, which)]
   in_avals = [*res_avals, *[v.aval for v in jaxpr.invars]]
   jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(fun, in_avals)
@@ -1673,7 +1740,7 @@ def _add_reshapes(which, jaxpr_known, jaxpr_staged):
     res_, ins = split_list(args, [len(which)])
     res = [_rem_singleton(x) if w else x for x, w in zip(res_, which_)]
     return core.eval_jaxpr(jaxpr_staged, (), *res, *ins)
-  res_avals = [core.unmapped_aval(1, None, 0, v.aval) if w else v.aval
+  res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for w, v in zip(which_, jaxpr_staged.invars[:len(which)])]
   avals_in = [*res_avals, *[v.aval for v in jaxpr_staged.invars[len(which):]]]
   jaxpr_staged, _, (), () = pe.trace_to_jaxpr_dynamic(staged, avals_in)
@@ -1832,6 +1899,8 @@ class RewriteTracer(core.Tracer):
   __repr__ = __str__  # for debuggers, like `p x`
 
 class RewriteTrace(core.Trace):
+  __slots__ = ("parent_trace", "tag", "mesh")
+
   parent_trace : core.Trace
   tag : core.TraceTag
   mesh: Mesh

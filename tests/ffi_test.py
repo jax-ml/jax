@@ -28,7 +28,6 @@ import jax.sharding as shd
 
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
 from jax._src.layout import DeviceLocalLayout
@@ -210,12 +209,8 @@ class FfiTest(jtu.JaxTestCase):
     def fun(x):
       return jax.ffi.ffi_call("test_ffi", x, x, param=0.5)
     msg = "Calling ffi_call directly with input arguments is deprecated"
-    if deprecations.is_accelerated("jax-ffi-call-args"):
-      with self.assertRaisesRegex(ValueError, msg):
-        jax.jit(fun).lower(jnp.ones(5))
-    else:
-      with self.assertWarnsRegex(DeprecationWarning, msg):
-        jax.jit(fun).lower(jnp.ones(5))
+    with self.assertDeprecationWarnsOrRaises("jax-ffi-call-args", msg):
+      jax.jit(fun).lower(jnp.ones(5))
 
   def test_input_output_aliases(self):
     def fun(x):

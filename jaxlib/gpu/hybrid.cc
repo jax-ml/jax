@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include "nanobind/nanobind.h"
+#include "absl/base/call_once.h"
 #include "jaxlib/cpu/lapack_kernels.h"
 #include "jaxlib/gpu/hybrid_kernels.h"
 #include "jaxlib/gpu/vendor.h"
@@ -27,21 +28,26 @@ namespace ffi = xla::ffi;
 namespace nb = nanobind;
 
 void GetLapackKernelsFromScipy() {
-  static bool initialized = false;  // Protected by GIL
-  if (initialized) return;
-  nb::module_ cython_blas = nb::module_::import_("scipy.linalg.cython_blas");
+  static absl::once_flag initialized;
+  // For reasons I'm not entirely sure of, if the import_ call is done inside
+  // the call_once scope, we sometimes observe deadlocks in the test suite.
+  // However it probably doesn't do much harm to just import them a second time,
+  // since that costs little more than a dictionary lookup or two.
   nb::module_ cython_lapack =
       nb::module_::import_("scipy.linalg.cython_lapack");
-  nb::dict lapack_capi = cython_lapack.attr("__pyx_capi__");
-  auto lapack_ptr = [&](const char* name) {
-    return nb::cast<nb::capsule>(lapack_capi[name]).data();
-  };
+  absl::call_once(initialized, [&]() {
+    nb::dict lapack_capi = cython_lapack.attr("__pyx_capi__");
+    auto lapack_ptr = [&](const char* name) {
+      return nb::cast<nb::capsule>(lapack_capi[name]).data();
+    };
 
-  AssignKernelFn<EigenvalueDecomposition<ffi::F32>>(lapack_ptr("sgeev"));
-  AssignKernelFn<EigenvalueDecomposition<ffi::F64>>(lapack_ptr("dgeev"));
-  AssignKernelFn<EigenvalueDecompositionComplex<ffi::C64>>(lapack_ptr("cgeev"));
-  AssignKernelFn<EigenvalueDecompositionComplex<ffi::C128>>(
-      lapack_ptr("zgeev"));
+    AssignKernelFn<EigenvalueDecomposition<ffi::F32>>(lapack_ptr("sgeev"));
+    AssignKernelFn<EigenvalueDecomposition<ffi::F64>>(lapack_ptr("dgeev"));
+    AssignKernelFn<EigenvalueDecompositionComplex<ffi::C64>>(
+        lapack_ptr("cgeev"));
+    AssignKernelFn<EigenvalueDecompositionComplex<ffi::C128>>(
+        lapack_ptr("zgeev"));
+  });
 }
 
 NB_MODULE(_hybrid, m) {

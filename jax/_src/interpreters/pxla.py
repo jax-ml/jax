@@ -25,7 +25,7 @@ import functools
 import itertools as it
 import logging
 import math
-from typing import Any, NamedTuple, TypeVar, Union, cast
+from typing import Any, NamedTuple, Union, cast
 import warnings
 
 import numpy as np
@@ -461,6 +461,7 @@ def _multi_pmap(f: Callable, info: EmapInfo, names: list[core.AxisName],
 FakePrimitive = namedtuple("FakePrimitive", ["multiple_results", "bind"])
 
 class MapTrace(core.Trace):
+  __slots__ = ("axis_name", "emap_info")
 
   def __init__(self, axis_name, emap_info):
     self.emap_info = emap_info
@@ -721,8 +722,8 @@ def stage_parallel_callable(
         "Finished tracing + transforming {fun_name} for pmap in {elapsed_time} sec",
         fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, out_sharded_avals, consts, _ = pe.trace_to_jaxpr_dynamic(
-          fun, sharded_avals, pe.debug_info_final(fun, "pmap"))
-  jaxpr = api_util.jaxpr_debug_info(jaxpr, orig_fun.debug_info)
+          fun, sharded_avals, pe.tracing_debug_info_final(fun, "pmap"))
+  jaxpr = api_util.add_jaxpr_debug_info(jaxpr, orig_fun.debug_info)
 
   assert len(out_sharded_avals) == len(pci.out_axes), (
       len(out_sharded_avals), len(pci.out_axes))
@@ -879,8 +880,8 @@ def lower_parallel_callable(
           replicated_args=replicated_args,
           arg_shardings=None,
           result_shardings=None,
-          arg_names=jaxpr.debug_info and jaxpr.debug_info.arg_names,
-          result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
+          arg_names=jaxpr._debug_info and jaxpr._debug_info.arg_names,
+          result_names=jaxpr._debug_info and jaxpr._debug_info.result_paths,
           num_replicas=replicas.num_global_replicas,
           lowering_parameters=lowering_parameters)
   return PmapComputation(lowering_result.module,
@@ -891,13 +892,12 @@ def lower_parallel_callable(
                          ordered_effects=ordered_effects,
                          keepalive=lowering_result.keepalive,
                          host_callbacks=lowering_result.host_callbacks,
-                         jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info,
+                         jaxpr_debug_info=closed_jaxpr.jaxpr._debug_info,
                          shape_poly_state=lowering_result.shape_poly_state)
 
 
-def _pmap_unmap_shaped_array(
-    size: int, axis_name: core.AxisName, axis: int | None, aval: ShapedArray
-  ) -> ShapedArray:
+def _pmap_unmap_shaped_array(size: int, axis: int | None, aval: ShapedArray
+                             ) -> ShapedArray:
   if axis is None: return aval
   elif type(axis) is int:
     return ShapedArray(tuple_update(aval.shape, axis, size), aval.dtype,
@@ -910,14 +910,14 @@ _pmap_aval_mapping_handlers: dict[type, AvalMapHandlerPair] = {
     ShapedArray:   (Any, _pmap_unmap_shaped_array),
 }
 
-def _pmap_unmapped_aval(size: core.AxisSize, axis_name, axis: int | None,
+def _pmap_unmapped_aval(size: core.AxisSize, axis: int | None,
                        aval: core.AbstractValue) -> core.AbstractValue:
   if not config.pmap_no_rank_reduction.value:
-    return core.unmapped_aval(size, axis_name, axis, aval)
+    return core.unmapped_aval(size, axis, aval)
 
   _, handler = _pmap_aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
-    return handler(size, axis_name, axis, aval)
+    return handler(size, axis, aval)
   else:
     raise TypeError(f"no unmapping handler for {aval} of type {type(aval)}")
 
@@ -1085,7 +1085,7 @@ class UnloadedPmapExecutable:
 
     local_unmapped_avals = [
         _cast_to_shaped_array(
-            _pmap_unmapped_aval(pci.axis_size, pci.axis_name, out_axis, aval))
+            _pmap_unmapped_aval(pci.axis_size, out_axis, aval))
         if out_axis is not None else aval
         for aval, out_axis in safe_zip(shards.out_sharded_avals, pci.out_axes)]
     out_specs = [
@@ -1349,7 +1349,7 @@ def _pmap_partial_eval_custom_params_updater(
   return new_params_known, new_params_staged
 
 def _pmap_partial_eval_custom_res_maker(params_known, aval):
-  return core.unmapped_aval(params_known['axis_size'], core.no_axis_name, 0, aval)
+  return core.unmapped_aval(params_known['axis_size'], 0, aval)
 
 def _pmap_dce_rule(used_outputs, eqn):
   # just like pe.dce_jaxpr_call_rule, except handles in_axes / out_axes
@@ -1396,6 +1396,12 @@ def xla_call_jvp_update_params(params, nz_tangents):
   new_donated_invars = (*donated_invars, *donated_tangents)
   return dict(params, donated_invars=new_donated_invars)
 
+def _xla_call_linearize_update_params(params, residual_avals, nz_tangents):
+  donated_invars_prev = params['donated_invars']
+  donated_invars = (*(False for _ in residual_avals),
+                    *(d for d, nz in zip(donated_invars_prev, nz_tangents) if nz))
+  return dict(params, donated_invars=donated_invars)
+
 def _xla_call_transpose_update_params(params, undef_primals, nonzero_cts):
   donated_invars = params['donated_invars']
   donated_primals = [d for d, u in zip(donated_invars, undef_primals) if not u]
@@ -1411,6 +1417,7 @@ pe.partial_eval_jaxpr_custom_rules[xla_pmap_p] = \
             res_aval=_pmap_partial_eval_custom_res_maker)
 pe.dce_rules[xla_pmap_p] = _pmap_dce_rule
 ad.call_param_updaters[xla_pmap_p] = xla_call_jvp_update_params
+ad.call_linearize_param_updaters[xla_pmap_p] = _xla_call_linearize_update_params
 ad.call_transpose_param_updaters[xla_pmap_p] = _xla_call_transpose_update_params
 
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
@@ -1826,7 +1833,7 @@ def _move_mutable_consts(
 def _discharge_internal_refs(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
   from jax._src.state.discharge import discharge_state
   jaxpr_, consts = discharge_state(jaxpr.jaxpr, jaxpr.consts)
-  jaxpr_._debug_info = jaxpr.jaxpr.debug_info
+  jaxpr_._debug_info = jaxpr.jaxpr._debug_info
   return core.ClosedJaxpr(jaxpr_, consts)
 
 
@@ -1964,8 +1971,8 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         result_shardings=out_mlir_shardings,
         in_layouts=in_layouts,
         out_layouts=out_layouts,
-        arg_names=jaxpr.debug_info and jaxpr.debug_info.arg_names,
-        result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
+        arg_names=jaxpr._debug_info and jaxpr._debug_info.arg_names,
+        result_names=jaxpr._debug_info and jaxpr._debug_info.result_paths,
         num_replicas=nreps,
         num_partitions=num_partitions,
         all_default_mem_kind=all_default_mem_kind,
@@ -2201,7 +2208,7 @@ def lower_sharding_computation(
   auto_spmd_lowering = check_if_any_auto(
       it.chain.from_iterable([in_shardings, out_shardings]))
 
-  all_args_info = AllArgsInfo(closed_jaxpr.in_avals, closed_jaxpr.jaxpr.debug_info)
+  all_args_info = AllArgsInfo(closed_jaxpr.in_avals, closed_jaxpr.jaxpr._debug_info)
 
   closed_jaxpr, donated_invars, kept_var_idx, name_stack = _dce_jaxpr(
       closed_jaxpr, api_name, fun_name, keep_unused, donated_invars,
@@ -2361,9 +2368,6 @@ def lower_sharding_computation(
       out_layouts=out_layouts,
       pmap_nreps=nreps,
       shape_poly_state=shape_poly_state,
-      # TODO(yashkatariya): Remove `all_default_mem_kind` after
-      # MemoryDescription works in OSS.
-      all_default_mem_kind=all_default_mem_kind,
       all_args_info=all_args_info,
       pgle_profiler=pgle_profiler,
       intermediate_shardings=unique_intermediate_shardings,
@@ -2435,21 +2439,15 @@ def get_out_shardings_from_executable(
     device_assignment: Sequence[xc.Device],
     num_out_avals: int,
     num_ordered_effects: int,
-    all_default_mem_kind: bool,
 ) -> Sequence[sharding_impls.GSPMDSharding] | None:
   from jax._src import pjit
 
-  # TODO(yashkatariya): Remove `all_default_mem_kind` branch after
-  # MemoryDescription works in OSS.
-  if all_default_mem_kind:
+  try:
+    omk = xla_executable.get_output_memory_kinds()[0]
+    if num_ordered_effects > 0:
+      omk = omk[num_ordered_effects:]
+  except:
     omk = [None] * num_out_avals
-  else:
-    try:
-      omk = xla_executable.get_output_memory_kinds()[0]
-      if num_ordered_effects > 0:
-        omk = omk[num_ordered_effects:]
-    except:
-      omk = [None] * num_out_avals
 
   assert len(omk) == num_out_avals, (len(omk), num_out_avals)
 
@@ -2525,39 +2523,29 @@ def _get_mesh_pspec_shardings_from_executable(
 
 _orig_out_sharding_handlers = {}
 
-_ShardingT = TypeVar("_ShardingT", bound=JSharding)
-
-
-def _register_out_sharding_handler(
-    sharding_cls: type[_ShardingT],
-    handler: Callable[[GSPMDSharding, _ShardingT], _ShardingT],
-) -> None:
-  _orig_out_sharding_handlers[sharding_cls] = handler
-
 def _gspmd_to_named_sharding(
     out_s: GSPMDSharding, orig_in_s: NamedSharding) -> NamedSharding:
+  assert isinstance(out_s, GSPMDSharding)
+  assert isinstance(orig_in_s, NamedSharding)
   assert isinstance(orig_in_s.mesh, Mesh)
   return sharding_impls._gspmd_to_named_sharding_via_mesh(out_s, orig_in_s.mesh)
-
-_register_out_sharding_handler(NamedSharding, _gspmd_to_named_sharding)
-
+_orig_out_sharding_handlers[NamedSharding] = _gspmd_to_named_sharding  # type: ignore
 
 def _gspmd_to_positional_sharding(
     out_s: GSPMDSharding, orig_in_s: PositionalSharding) -> PositionalSharding:
+  assert isinstance(out_s, GSPMDSharding)
+  assert isinstance(orig_in_s, PositionalSharding)
   return sharding_impls._op_sharding_to_pos_sharding(
       out_s._hlo_sharding, orig_in_s._device_assignment, out_s.memory_kind)
-
-_register_out_sharding_handler(
-    PositionalSharding, _gspmd_to_positional_sharding)
+_orig_out_sharding_handlers[PositionalSharding] = _gspmd_to_positional_sharding  # type: ignore
 
 def _gspmd_to_single_device_sharding(
     out_s: GSPMDSharding, orig_in_s: SingleDeviceSharding) -> SingleDeviceSharding:
+  assert isinstance(out_s, GSPMDSharding)
   assert isinstance(orig_in_s, SingleDeviceSharding)
   return SingleDeviceSharding(
       out_s._device_assignment[0], memory_kind=out_s.memory_kind)
-
-_register_out_sharding_handler(
-    SingleDeviceSharding, _gspmd_to_single_device_sharding)
+_orig_out_sharding_handlers[SingleDeviceSharding] = _gspmd_to_single_device_sharding  # type: ignore
 
 
 def _get_out_sharding_from_orig_sharding(
@@ -2601,7 +2589,13 @@ def maybe_recover_user_shardings(
     for i in intermediate_shardings:
       if i is not None and type(i) in _orig_out_sharding_handlers:
         return _get_out_sharding_from_orig_sharding(
-            new_shardings, new_avals, i, None)
+            new_shardings, [None] * len(new_shardings), i, None)
+
+  # For nullary cases like: `jit(lambda: ..., out_shardings=(None, sharding))`
+  for oi in new_shardings:
+    if oi is not None and type(oi) in _orig_out_sharding_handlers:
+      return _get_out_sharding_from_orig_sharding(
+          new_shardings, [None] * len(new_shardings), oi, None)
 
   if context_mesh is not None and not context_mesh.empty:
     return [sharding_impls._gspmd_to_named_sharding_via_mesh(n, context_mesh)
@@ -2778,11 +2772,11 @@ def _maybe_get_and_check_in_shardings(
 
 def _maybe_get_and_check_out_shardings(
     xla_executable, out_shardings, device_assignment, global_out_avals,
-    num_ordered_effects, all_default_mem_kind
+    num_ordered_effects
   ):
   out_shardings_xla = get_out_shardings_from_executable(
       xla_executable, device_assignment, len(global_out_avals),
-      num_ordered_effects, all_default_mem_kind)
+      num_ordered_effects)
   if out_shardings_xla is None:
     return out_shardings
 
@@ -2890,7 +2884,6 @@ class UnloadedMeshExecutable:
                pmap_nreps: int = 1,
                mut: MutationData | None = None,
                shape_poly_state: mlir.ShapePolyLoweringState | None = None,
-               all_default_mem_kind: bool = True,
                all_args_info: AllArgsInfo | None = None,
                pgle_profiler: profiler.PGLEProfiler | None = None,
                intermediate_shardings: Sequence[JSharding] | None = None,
@@ -2948,7 +2941,7 @@ class UnloadedMeshExecutable:
             len(ordered_effects))
         out_shardings = _maybe_get_and_check_out_shardings(
             xla_executable, out_shardings, tuple(da), global_out_avals,
-            len(ordered_effects), all_default_mem_kind)
+            len(ordered_effects))
       else:
         in_shardings, out_shardings, committed, da = _get_metadata_jit_pmap(
             xla_executable.local_devices(), len(in_shardings), len(out_shardings))

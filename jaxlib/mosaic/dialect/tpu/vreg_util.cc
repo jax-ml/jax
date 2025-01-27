@@ -209,4 +209,45 @@ LogicalResult maskNativeTilingVregs(ImplicitLocOpBuilder &builder,
   return success();
 }
 
+FailureOr<TypedValue<VectorType>> broadcastSubelements(
+    ImplicitLocOpBuilder &builder, TypedValue<VectorType> vec,
+    int subelement_idx, std::array<int64_t, 2> target_shape,
+    int hardware_generation) {
+  int bitwidth = vec.getType().getElementTypeBitWidth();
+  int packing = 32 / bitwidth;
+  if (subelement_idx < 0 || subelement_idx >= packing) {
+    return builder.emitError()
+           << "subelement_idx must be in [0, packing). subelement_idx: "
+           << subelement_idx << ", packing: " << packing;
+  }
+  if (packing == 1) {
+    return vec;
+  }
+  VectorType vreg_native_int_ty =
+      getNativeVregType(builder.getIntegerType(32), target_shape);
+  VectorType vreg_packed_int_ty =
+      getNativeVregType(builder.getIntegerType(bitwidth), target_shape);
+  // The chosen subelements must be in the low bits. High bits are unspecified.
+  Value src_vreg_int =
+      builder.create<tpu::BitcastVregOp>(vreg_native_int_ty, vec);
+  Value vreg_subelement_low = builder.create<arith::ShRUIOp>(
+      src_vreg_int,
+      getFullVector(builder, vreg_native_int_ty,
+                    builder.getI32IntegerAttr(subelement_idx * bitwidth)));
+  Value vreg_result_int;
+  if (hardware_generation >= 5) {
+    SmallVector<Value> packed_vregs(packing, vreg_subelement_low);
+    vreg_result_int = builder.create<tpu::PackSubelementsOp>(
+        vreg_packed_int_ty, packed_vregs, tpu::PackFormat::kInterleaved);
+  } else {
+    // This can be virtualized as a tree of shifts and ORs.
+    return builder.emitError()
+           << "broadcastSubelements not implemented for hardware generation "
+           << hardware_generation;
+  }
+  return cast<TypedValue<VectorType>>(
+      builder.create<tpu::BitcastVregOp>(vec.getType(), vreg_result_int)
+          .getResult());
+}
+
 }  // namespace mlir::tpu

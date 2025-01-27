@@ -27,9 +27,7 @@ import scipy.stats
 from jax._src import ad_checkpoint
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import test_util as jtu
-from jax._src.interpreters import mlir
 from jax._src.lib import cuda_versions
 from jax.test_util import check_grads
 from jax import nn
@@ -48,7 +46,7 @@ def _is_required_cudnn_version_satisfied(min_cudnn_version):
 
 def _check_cudnn_backend(fn, *args, **kwargs):
   lowered = jax.jit(fn).lower(*args, **kwargs)
-  hlo = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
+  hlo = lowered.as_text('stablehlo', debug_info=True)
   return '__cudnn$fmha' in hlo
 
 _cudnn_dbias_error = 'cuDNN only supports bias gradient'
@@ -225,7 +223,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     else:
       _, dbias_ref, _ = bwd_ref(x, bias, mask)
       _, dbias_ans, _ = bwd_ans(x, bias, mask)
-      self.assertAllClose(dbias_ans, dbias_ref, rtol=.02, atol=.02)
+      self.assertAllClose(dbias_ans, dbias_ref, rtol=0.1, atol=0.1)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
@@ -532,12 +530,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(actual, expected, check_dtypes=False)
 
   def testOneHotNonInteger(self):
-    def assert_warns_or_errors(msg):
-      if deprecations.is_accelerated("jax-nn-one-hot-float-input"):
-        return self.assertRaisesRegex(ValueError, msg)
-      else:
-        return self.assertWarnsRegex(DeprecationWarning, msg)
-    with assert_warns_or_errors("jax.nn.one_hot input should be integer-typed"):
+    with self.assertDeprecationWarnsOrRaises("jax-nn-one-hot-float-input",
+                                             "jax.nn.one_hot input should be integer-typed"):
       nn.one_hot(jnp.array([1.0]), 3)
 
   def testTanhExists(self):

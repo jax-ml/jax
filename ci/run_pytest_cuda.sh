@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-# Runs Pyest CPU tests. Requires the jaxlib, jax-cuda-plugin, and jax-cuda-pjrt
+# Runs Pyest CUDA tests. Requires the jaxlib, jax-cuda-plugin, and jax-cuda-pjrt
 # wheels to be present inside $JAXCI_OUTPUT_DIR (../dist)
 #
 # -e: abort script if one command fails
@@ -43,6 +43,7 @@ export PY_COLORS=1
 export JAX_SKIP_SLOW_TESTS=true
 export NCCL_DEBUG=WARN
 export TF_CPP_MIN_LOG_LEVEL=0
+export JAX_ENABLE_64="$JAXCI_ENABLE_X64"
 
 # Set the number of processes to run to be 4x the number of GPUs.
 export gpu_count=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
@@ -52,7 +53,7 @@ export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 export XLA_FLAGS=--xla_gpu_force_compilation_parallelism=1
 # End of test environment variable setup
 
-echo "Running GPU tests..."
+echo "Running CUDA tests..."
 "$JAXCI_PYTHON" -m pytest -n $num_processes --tb=short --maxfail=20 \
 tests examples \
 --deselect=tests/multi_device_test.py::MultiDeviceTest::test_computation_follows_data \

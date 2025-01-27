@@ -45,10 +45,12 @@ from jax._src.internal_test_util.export_back_compat_test_data import cpu_svd_lap
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_triangular_solve_blas_trsm
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_hessenberg_lapack_gehrd
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_tridiagonal_lapack_sytrd_hetrd
+from jax._src.internal_test_util.export_back_compat_test_data import cpu_tridiagonal_solve_lapack_gtsv
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_threefry2x32
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_pivots_to_permutation
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_cusolver_getrf
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_svd_cusolver_gesvd
+from jax._src.internal_test_util.export_back_compat_test_data import cuda_tridiagonal_cusolver_sytrd
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Eigh
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Lu
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_ApproxTopK
@@ -69,7 +71,6 @@ from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import cuda_versions
-from jax._src.lib import version as jaxlib_version
 
 config.parse_flags_with_absl()
 
@@ -142,6 +143,8 @@ class CompatTest(bctu.CompatTestBase):
         cuda_qr_cusolver_geqrf.data_2024_09_26,
         cuda_eigh_cusolver_syev.data_2024_09_30,
         cuda_svd_cusolver_gesvd.data_2024_10_08,
+        cpu_tridiagonal_solve_lapack_gtsv.data_2025_01_09,
+        cuda_tridiagonal_cusolver_sytrd.data_2025_01_09,
         rocm_qr_hipsolver_geqrf.data_2024_08_05,
         rocm_eigh_hipsolver_syev.data_2024_08_05,
         cpu_schur_lapack_gees.data_2023_07_16,
@@ -646,14 +649,11 @@ class CompatTest(bctu.CompatTestBase):
 
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_schur_results)
-    # TODO(b/344892332): Remove the check after the compatibility period.
-    has_xla_ffi_support = jaxlib_version >= (0, 4, 37)
-    if has_xla_ffi_support:
-      with config.export_ignore_forward_compatibility(True):
-        # FFI Kernel test
-        data = self.load_testdata(cpu_schur_lapack_gees.data_2024_11_29[dtype_name])
-        self.run_one_test(func, data, rtol=rtol, atol=atol,
-                          check_results=check_schur_results)
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(cpu_schur_lapack_gees.data_2024_11_29[dtype_name])
+      self.run_one_test(func, data, rtol=rtol, atol=atol,
+                        check_results=check_schur_results)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -742,14 +742,11 @@ class CompatTest(bctu.CompatTestBase):
 
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_triangular_solve_results)
-    # TODO(b/344892332): Remove the check after the compatibility period.
-    has_xla_ffi_support = jaxlib_version >= (0, 4, 37)
-    if has_xla_ffi_support:
-      with config.export_ignore_forward_compatibility(True):
-        # FFI Kernel test
-        data = self.load_testdata(cpu_triangular_solve_blas_trsm.data_2024_12_02[dtype_name])
-        self.run_one_test(func, data, rtol=rtol, atol=atol,
-                          check_results=check_triangular_solve_results)
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(cpu_triangular_solve_blas_trsm.data_2024_12_02[dtype_name])
+      self.run_one_test(func, data, rtol=rtol, atol=atol,
+                        check_results=check_triangular_solve_results)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -781,7 +778,6 @@ class CompatTest(bctu.CompatTestBase):
       )
       self.run_one_test(func, data, rtol=rtol, atol=atol)
 
-
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
@@ -805,15 +801,46 @@ class CompatTest(bctu.CompatTestBase):
         cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_09_03[dtype_name]
     )
     self.run_one_test(func, data, rtol=rtol, atol=atol)
-    # TODO(b/344892332): Remove the check after the compatibility period.
-    has_xla_ffi_support = jaxlib_version >= (0, 4, 37)
-    if has_xla_ffi_support:
-      with config.export_ignore_forward_compatibility(True):
-        # FFI Kernel test
-        data = self.load_testdata(
-            cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_12_01[dtype_name]
-        )
-        self.run_one_test(func, data, rtol=rtol, atol=atol)
+    with config.export_ignore_forward_compatibility(True):
+      # FFI Kernel test
+      data = self.load_testdata(
+          cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_12_01[dtype_name]
+      )
+      self.run_one_test(func, data, rtol=rtol, atol=atol)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64", "c64", "c128"))
+  @jax.default_matmul_precision("float32")
+  def test_cpu_tridiagonal_solve_lapack_gtsv(self, dtype_name):
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
+      self.skipTest("Test disabled for x32 mode")
+
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
+    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+    data = self.load_testdata(
+        cpu_tridiagonal_solve_lapack_gtsv.data_2025_01_09[dtype_name]
+    )
+    self.run_one_test(lax.linalg.tridiagonal_solve, data, rtol=rtol, atol=atol)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64", "c64", "c128"))
+  @jax.default_matmul_precision("float32")
+  def test_gpu_tridiagonal_solver_sytrd(self, dtype_name):
+    if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
+      self.skipTest("Test disabled for x32 mode")
+
+    def func(x):
+      return lax.linalg.tridiagonal(x, lower=True)
+
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
+    atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
+
+    data = self.load_testdata(
+        cuda_tridiagonal_cusolver_sytrd.data_2025_01_09[dtype_name]
+    )
+    self.run_one_test(func, data, rtol=rtol, atol=atol)
 
   def test_approx_top_k(self):
     def func():
@@ -825,16 +852,17 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data)
 
   def test_cuda_threefry2x32(self):
-    def func(x):
-      return jax.random.uniform(x, (2, 4), dtype=np.float32)
+    with config.threefry_partitionable(False):
+      def func(x):
+        return jax.random.uniform(x, (2, 4), dtype=np.float32)
 
-    # TODO(b/338022728): remove after 6 months
-    data = self.load_testdata(cuda_threefry2x32.data_2023_03_15)
-    self.run_one_test(func, data,
-                      expect_current_custom_calls=["cu_threefry2x32_ffi"])
+      # TODO(b/338022728): remove after 6 months
+      data = self.load_testdata(cuda_threefry2x32.data_2023_03_15)
+      self.run_one_test(func, data,
+                        expect_current_custom_calls=["cu_threefry2x32_ffi"])
 
-    data = self.load_testdata(cuda_threefry2x32.data_2024_07_30)
-    self.run_one_test(func, data)
+      data = self.load_testdata(cuda_threefry2x32.data_2024_07_30)
+      self.run_one_test(func, data)
 
   def test_sharding(self):
     # Tests "Sharding", "SPMDShardToFullShape", "SPMDFullToShardShape" on TPU

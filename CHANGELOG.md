@@ -16,6 +16,33 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## jax 0.5.0 (Jan 17, 2025)
+
+As of this release, JAX now uses
+[effort-based versioning](https://jax.readthedocs.io/en/latest/jep/25516-effver.html).
+Since this release makes a breaking change to PRNG key semantics that
+may require users to update their code, we are bumping the "meso" version of JAX
+to signify this.
+
+* Breaking changes
+  * Enable `jax_threefry_partitionable` by default (see
+    [the update note](https://github.com/jax-ml/jax/discussions/18480)).
+
+  * This release drops support for Mac x86 wheels. Mac ARM of course remains
+    supported. For a recent discussion, see
+    https://github.com/jax-ml/jax/discussions/22936.
+
+    Two key factors motivated this decision:
+    * The Mac x86 build (only) has a number of test failures and crashes. We
+      would prefer to ship no release than a broken release.
+    * Mac x86 hardware is end-of-life and cannot be easily obtained for
+      developers at this point. So it is difficult for us to fix this kind of
+      problem even if we wanted to.
+
+    We are open to readding support for Mac x86 if the community is willing
+    to help support that platform: in particular, we would need the JAX test
+    suite to pass cleanly on Mac x86 before we could ship releases again.
+
 * Changes:
   * The minimum NumPy version is now 1.25. NumPy 1.25 will remain the minimum
     supported version until June 2025.
@@ -24,6 +51,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.numpy.einsum` now defaults to `optimize='auto'` rather than
     `optimize='optimal'`. This avoids exponentially-scaling trace-time in
     the case of many arguments ({jax-issue}`#25214`).
+  * {func}`jax.numpy.linalg.solve` no longer supports batched 1D arguments
+    on the right hand side. To recover the previous behavior in these cases,
+    use `solve(a, b[..., None]).squeeze(-1)`.
 
 * New Features
   * {func}`jax.numpy.fft.fftn`, {func}`jax.numpy.fft.rfftn`,
@@ -32,6 +62,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {jax-issue}`#25606` for more details.
   * Support added for user defined state in the FFI via the new
     {func}`jax.ffi.register_ffi_type_id` function.
+  * The AOT lowering `.as_text()` method now supports the `debug_info` option
+    to include debugging information, e.g., source location, in the output.
 
 * Deprecations
   * From {mod}`jax.interpreters.xla`, `abstractify` and `pytype_aval_mappings`
@@ -54,6 +86,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     the array API directly.
 
 ## jax 0.4.38 (Dec 17, 2024)
+
+* Breaking Changes
+  * `XlaExecutable.cost_analysis` now returns a `dict[str, float]` (instead of a
+    single-element `list[dict[str, float]]`).
 
 * Changes:
   * `jax.tree.flatten_with_path` and `jax.tree.map_with_path` are added
@@ -82,6 +118,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## jax 0.4.37 (Dec 9, 2024)
 
 This is a patch release of jax 0.4.36. Only "jax" was released at this version.
+
+## jax 0.4.37
 
 * Bug fixes
   * Fixed a bug where `jit` would error if an argument was named `f` (#25329).

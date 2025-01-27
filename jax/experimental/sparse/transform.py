@@ -297,6 +297,8 @@ class SparseTracer(core.Tracer):
 
 class SparseTrace(core.Trace):
 
+  __slots__ = ("parent_trace", "tag", "spenv")
+
   def __init__(self, parent_trace, tag, spenv):
     self.parent_trace = parent_trace
     self.tag = tag
@@ -843,8 +845,9 @@ sparse_rules_bcoo[lax.scan_p] = _scan_sparse
 def _cond_sparse(spenv, pred, *operands, branches, **params):
   sp_branches, treedefs = zip(*(_sparsify_jaxpr(spenv, jaxpr, *operands)
                                 for jaxpr in branches))
-  _check_tree_and_avals("sparsified true_fun and false_fun output",
+  _check_tree_and_avals("sparsified true_fun output",
                         treedefs[0], sp_branches[0].out_avals,
+                        "sparsified false_fun output",
                         treedefs[1], sp_branches[1].out_avals)
   args, _ = tree_flatten(spvalues_to_arrays(spenv, (pred, *operands)))
   out_flat = lax.cond_p.bind(*args, branches=sp_branches, **params)

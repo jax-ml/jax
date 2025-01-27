@@ -77,7 +77,7 @@ jax_multiplatform_test(
     ],
     disable_configs = [
         "gpu_v100",
-        "gpu_x32",
+        "gpu_v100_x32",
         "gpu_a100",
         "gpu_p100",
         "gpu_p100_x32",
@@ -97,7 +97,7 @@ jax_multiplatform_test(
     ],
     disable_configs = [
         "gpu_v100",
-        "gpu_x32",
+        "gpu_v100_x32",
         "gpu_p100",
         "gpu_p100_x32",
     ],
@@ -108,9 +108,9 @@ jax_multiplatform_test(
         "gpu_h100_x32",
     ],
     shard_count = {
-        "cpu": 8,
-        "gpu": 8,
-        "tpu": 8,
+        "cpu": 16,
+        "gpu": 16,
+        "tpu": 16,
     },
     tags = [
         "noasan",  # Times out.
@@ -173,6 +173,7 @@ jax_multiplatform_test(
     enable_backends = [],
     enable_configs = [
         "gpu_h100_x32",
+        "gpu_h100",
     ],
     env = {
         "JAX_PALLAS_USE_MOSAIC_GPU": "1",
@@ -222,11 +223,11 @@ jax_multiplatform_test(
     name = "pallas_shape_poly_test",
     srcs = ["pallas_shape_poly_test.py"],
     disable_configs = [
-        "gpu_x32",
         "gpu_h100",
         "gpu_p100",
         "gpu_p100_x32",
-        "gpu_pjrt_c_api",
+        "gpu_v100_x32",
+        "gpu_p100_pjrt_c_api",
     ],
     enable_configs = [
         "gpu_a100_x32",
@@ -475,6 +476,24 @@ jax_multiplatform_test(
     name = "gpu_ops_test",
     srcs = [
         "gpu_ops_test.py",
+    ],
+    enable_backends = ["cpu"],
+    enable_configs = [
+        "gpu_a100_x32",
+        "gpu_h100_x32",
+    ],
+    shard_count = 15,
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_gpu",
+        "//jax:pallas_gpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
+    name = "gpu_paged_attention_test",
+    srcs = [
+        "gpu_paged_attention_test.py",
     ],
     enable_backends = ["cpu"],
     enable_configs = [

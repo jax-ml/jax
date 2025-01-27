@@ -1,6 +1,12 @@
 ``jax.experimental.sparse`` module
 ==================================
 
+.. note::
+
+   The methods in ``jax.experimental.sparse`` are experimental reference
+   implementations, and not recommended for use in performance-critical
+   applications.
+
 .. automodule:: jax.experimental.sparse
 
 .. currentmodule:: jax.experimental.sparse

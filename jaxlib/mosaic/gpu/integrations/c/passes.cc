@@ -16,11 +16,13 @@ limitations under the License.
 #include "jaxlib/mosaic/gpu/integrations/c/passes.h"
 
 #include "jaxlib/mosaic/gpu/launch_lowering.h"
+#include "jaxlib/mosaic/gpu/serde.h"
 
 extern "C" {
 
 void mlirMosaicGpuRegisterPasses() {
   mosaic::gpu::registerGpuLaunchLoweringPass();
+  mosaic::gpu::registerSerdePass();
 }
 
 }

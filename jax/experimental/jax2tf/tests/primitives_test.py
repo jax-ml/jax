@@ -174,7 +174,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         continue
       if p.name == "sharding_constraint":
         continue
-      if p.name == "sharding_cast":
+      if p.name == "mesh_cast":
+        continue
+      if p.name == "reshard":
         continue
       # TODO: Remove once tensorflow is 2.10.0 everywhere.
       if p.name == "optimization_barrier":

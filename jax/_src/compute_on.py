@@ -13,42 +13,37 @@
 # limitations under the License.
 
 from __future__ import annotations
-import threading
 from contextlib import contextmanager
 from jax._src import config
+from jax._src.lib import xla_client
 
-
-class ComputeOnContext(threading.local):
-
-  def __init__(self):
-    self.stack = []
-
-compute_on_context = ComputeOnContext()
+config_ext = xla_client._xla.config
 
 
 @contextmanager
-def extend_compute_type(c_type: str):
-  compute_on_context.stack.append(c_type)
-  config.compute_on_context_manager.set_local(
-      tuple(compute_on_context.stack))
+def extend_compute_type(c_type: str | None):
+  if c_type is None:
+    yield
+    return
+
+  prev = config.compute_on_context_manager.swap_local(c_type)
   try:
-    if len(set(filter(lambda x: x is not None, set(compute_on_context.stack)))) > 1:
+    if prev is not None and prev is not config_ext.unset and c_type != prev:
       raise NotImplementedError(
           'Nesting `compute_on` with different compute types is not supported'
-          f' yet. Current stack: {compute_on_context.stack}')
-    yield compute_on_context.stack[-1]
+          f' yet. Current compute_on type: {prev}')
+    yield c_type
   finally:
-    compute_on_context.stack.pop()
-    config.compute_on_context_manager.set_local(tuple(compute_on_context.stack))
+    config.compute_on_context_manager.set_local(prev)
 
 def current_compute_type() -> str | None:
-  return compute_on_context.stack[-1] if compute_on_context.stack else None
+  return config.compute_on_context_manager.value
 
 def _check_valid(c_type: str):
   if c_type not in {'device_host', 'device', 'tpu_sparsecore'}:
     raise ValueError(
-        'Invalid compute type received. Current supported values '
-        f'are `device_host`, `device` and `tpu_sparsecore`. Got {c_type}')
+        f'Invalid compute type {c_type}. Current supported values '
+        'are `device_host`, `device` and `tpu_sparsecore`.')
 
 @contextmanager
 def compute_on(compute_type: str):

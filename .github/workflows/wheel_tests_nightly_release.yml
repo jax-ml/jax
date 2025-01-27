@@ -1,0 +1,63 @@
+# CI - Wheel Tests (Nightly/Release)
+#
+# This workflow builds JAX artifacts and runs CPU/CUDA tests.
+#
+# It orchestrates the following:
+# 1. run-pytest-cpu:  Calls the `pytest_cpu.yml` workflow which downloads the jaxlib wheel that was
+#                     built by internal CI jobs and runs CPU tests.
+# 2. run-pytest-cuda: Calls the `pytest_cuda.yml` workflow which downloads the jaxlib and CUDA
+#                     artifacts that were built by internal CI jobs and runs the CUDA tests.
+name: CI - Wheel Tests (Nightly/Release)
+
+on:
+  workflow_dispatch:
+    inputs:
+      gcs_download_uri:
+        description: "GCS location URI from where the artifacts should be downloaded"
+        required: true
+        default: 'gs://jax-nightly-release-transient/nightly/latest'
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Don't install "jax" at head. Instead install the nightly/release "jax" wheels found in the
+  # GCS bucket.
+  JAXCI_INSTALL_JAX_CURRENT_COMMIT: "0"
+
+jobs:
+  run-pytest-cpu:
+    uses: ./.github/workflows/pytest_cpu.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
+          # that build the wheels.
+          runner: ["linux-x86-n2-64", "linux-arm64-t2a-48", "windows-x86-n2-64"]
+          python: ["3.10","3.11", "3.12", "3.13"]
+          enable-x64: [0]
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+      gcs_download_uri: ${{inputs.gcs_download_uri}}
+
+  run-pytest-cuda:
+    uses: ./.github/workflows/pytest_cuda.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
+          # that build the wheels.
+          runner: ["linux-x86-g2-48-l4-4gpu"]
+          python: ["3.10","3.11", "3.12", "3.13"]
+          cuda: ["12.3", "12.1"]
+          enable-x64: [0]
+    with:
+      runner: ${{ matrix.runner }}
+      python: ${{ matrix.python }}
+      cuda:  ${{ matrix.cuda }}
+      enable-x64:  ${{ matrix.enable-x64 }}
+      gcs_download_uri: ${{inputs.gcs_download_uri}}

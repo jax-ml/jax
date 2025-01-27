@@ -371,6 +371,7 @@ def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
 }
 
 // Integer packs are always signed at the moment.
+// Float to integer packing rounds to nearest even.
 def TPU_PackSubelementsOp : TPU_Op<"pack_subelements", [Pure, SameTypeOperands]> {
   let arguments = (ins
     Variadic<TPU_Vreg>:$sources,
@@ -386,6 +387,21 @@ def TPU_PackSubelementsOp : TPU_Op<"pack_subelements", [Pure, SameTypeOperands]>
     static ::mlir::SmallVector<::mlir::Value> getPaddedSources(::mlir::ValueRange sources, ::mlir::ArrayRef<int32_t> positions, int packing_factor);
   }];
   let hasVerifier = 1;
+}
+
+def TPU_RelayoutOp : TPU_Op<"relayout", [SameOperandsAndResultType]> {
+  let arguments = (ins AnyType:$input);
+  let results = (outs AnyType:$output);
+  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+}
+
+def TPU_PackMaskOp : TPU_Op<"pack_vmsk", [Pure, SameTypeOperands]> {
+  let arguments = (ins
+    VectorOfNonZeroRankOf<[I1]>: $low,
+    VectorOfNonZeroRankOf<[I1]>: $high
+  );
+  let results = (outs VectorOfNonZeroRankOf<[I1]>:$output);
+  let assemblyFormat = [{ $low `,` $high `,` attr-dict `:` type($low) `,` type($high) `->` type($output) }];
 }
 
 def TPU_GatherOp : TPU_Op<"gather", [Pure]> {
@@ -414,6 +430,26 @@ def TPU_DynamicGatherOp : TPU_Op<"dynamic_gather", [Pure]> {
   }];
 }
 
+def TPU_RoundingMode : I32EnumAttr<"RoundingMode", "Rounding mode", [
+  I32EnumAttrCase<"kTowardsZero", 0, "towards_zero">,
+  I32EnumAttrCase<"kToNearestEven", 1, "to_nearest_even">,
+]> {
+    let genSpecializedAttr = 0;
+    let cppNamespace = "::mlir::tpu";
+}
+
+def TPU_RoundingModeEnum : EnumAttr<TPU_Dialect, TPU_RoundingMode, "rounding_mode"> {
+    let assemblyFormat = "`<` $value `>`";
+}
+
+// Internal operation. All arith.fptosi operations that change the bitwidth
+// must be canonicalized to this operation.
+def TPU_FPToSIOp : TPU_Op<"fptosi", [Pure, ElementwiseMappable]> {
+  let arguments = (ins AnyVectorOfAnyRank:$input, TPU_RoundingModeEnum:$rounding_mode);
+  let results = (outs AnyVectorOfAnyRank:$output);
+  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+  let hasCanonicalizeMethod = 1;
+}
 
 def TPU_DotDimensionNumbersAttr : TPU_Attr<"DotDimensionNumbers", "dot_dimension_numbers"> {
   let parameters = (ins
@@ -517,12 +553,10 @@ def TPU_CreateMaskOp : TPU_Op<"create_mask", [Pure, SameVariadicOperandSize]> {
 
 def TPU_CreateSubelementMaskOp : TPU_Op<"create_subelement_mask", [Pure]> {
   let summary = "Create a mask masking contiguous rows of subelements.";
-  // TODO(tlongeri): Why don't we just get `num_subelems` from the result type?
-  //                 Taking a parameter and allowing a mismatch is confusing.
   let description = [{
     The "half-sublanes", "quarter-sublanes", etc. (unit is determined by
-    `num_subelems`) of the mask are masked in the range specified by `from` and
-    `to`.
+    the type of `output`) of the mask are masked in the range specified by
+    `from` and `to`.
 
     - If `from <= to`, the range `[from, to)` is set and the rest is unset.
     - If `to <= from`, the range `[to, from)` is unset and the rest is set.
@@ -532,7 +566,7 @@ def TPU_CreateSubelementMaskOp : TPU_Op<"create_subelement_mask", [Pure]> {
     Example:
 
     ```mlir
-    %msk = tpu.create_subelement_mask 3, 9, 2 : vector<8x128x2xi1>
+    %msk = tpu.create_subelement_mask 3, 9 : vector<8x128x2xi1>
     ```
 
     This creates a mask `%msk` where, for all `lane`s, `%msk[*][lane][*]` is:
@@ -547,12 +581,11 @@ def TPU_CreateSubelementMaskOp : TPU_Op<"create_subelement_mask", [Pure]> {
   }];
   let arguments = (ins
     I32Attr:$from,  // inclusive
-    I32Attr:$to,  // exclusive
-    I32Attr:$num_subelems
+    I32Attr:$to  // exclusive
   );
   let results = (outs AnyType:$output);  // Verify this is a vmsk with num_subelems
   let assemblyFormat = [{
-    $from `,` $to `,` $num_subelems attr-dict `:` type($output)
+    $from `,` $to attr-dict `:` type($output)
   }];
 }
 
@@ -784,6 +817,17 @@ def TPU_LogOp : TPU_Op<"log"> {
   let hasVerifier = 1;
 }
 
+def TPU_LogBufferOp : TPU_Op<"log_buffer"> {
+  let arguments = (ins
+    AnyMemRef:$input,
+    DenseI64ArrayAttr:$shape,
+    StrAttr:$tag
+  );
+  let results = (outs);
+  let assemblyFormat = [{ $tag attr-dict `:` $input `:` type($input) }];
+  let hasVerifier = 1;
+}
+
 def DebugAssertInsertionPass : Pass<"debug-assert-insertion", "::mlir::func::FuncOp"> {
   let dependentDialects = [
     "::mlir::func::FuncDialect",
@@ -833,6 +877,7 @@ def CanonicalizeMosaicPass : Pass<"tpu-canonicalize-mosaic", "::mlir::func::Func
   let constructor = "::mlir::tpu::createCanonicalizeMosaicPass()";
   let options = [
     Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
+    Option<"compatibility_mode", "compatibility-mode", "bool", /*default=*/"1", "">,
   ];
 }
 
@@ -861,6 +906,9 @@ def RelayoutInsertionPass : Pass<"tpu-relayout-insertion", "::mlir::func::FuncOp
   ];
   let constructor = "::mlir::tpu::createRelayoutInsertionPass()";
   let options = [
+    // If hardware_generation is not set, the default value of -1 will crash on
+    // runOnOperation.
+    Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
     Option<"lane_count", "lane-count", "int", /*default=*/"128", "">,
     Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
   ];

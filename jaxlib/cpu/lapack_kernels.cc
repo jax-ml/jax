@@ -354,6 +354,76 @@ template struct QrFactorization<ffi::DataType::F64>;
 template struct QrFactorization<ffi::DataType::C64>;
 template struct QrFactorization<ffi::DataType::C128>;
 
+//== Column Pivoting QR Factorization ==//
+
+// lapack geqp3
+template <ffi::DataType dtype>
+ffi::Error PivotingQrFactorization<dtype>::Kernel(
+    ffi::Buffer<dtype> x, ffi::Buffer<LapackIntDtype> jpvt,
+    ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<LapackIntDtype> jpvt_out,
+    ffi::ResultBuffer<dtype> tau) {
+  FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
+                       SplitBatch2D(x.dimensions()));
+  auto* x_out_data = x_out->typed_data();
+  auto* jpvt_out_data = jpvt_out->typed_data();
+  auto* tau_data = tau->typed_data();
+  lapack_int info;
+  const int64_t work_size = GetWorkspaceSize(x_rows, x_cols);
+  auto work_data = AllocateScratchMemory<dtype>(work_size);
+  constexpr bool is_complex_dtype = ffi::IsComplexType<dtype>();
+  std::unique_ptr<RealType[]> rwork_data;
+  if constexpr (is_complex_dtype) {
+    rwork_data = AllocateScratchMemory<ffi::ToReal(dtype)>(2 * x_cols);
+  }
+
+  CopyIfDiffBuffer(x, x_out);
+  CopyIfDiffBuffer(jpvt, jpvt_out);
+  FFI_ASSIGN_OR_RETURN(auto workspace_dim_v,
+                       MaybeCastNoOverflow<lapack_int>(work_size));
+  FFI_ASSIGN_OR_RETURN(auto x_rows_v, MaybeCastNoOverflow<lapack_int>(x_rows));
+  FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<lapack_int>(x_cols));
+  auto x_leading_dim_v = x_rows_v;
+
+  const int64_t x_out_step{x_rows * x_cols};
+  const int64_t jpvt_step{x_cols};
+  const int64_t tau_step{std::min(x_rows, x_cols)};
+  for (int64_t i = 0; i < batch_count; ++i) {
+    if constexpr (is_complex_dtype) {
+      fn(&x_rows_v, &x_cols_v, x_out_data, &x_leading_dim_v, jpvt_out_data,
+         tau_data, work_data.get(), &workspace_dim_v, rwork_data.get(), &info);
+    } else {
+      fn(&x_rows_v, &x_cols_v, x_out_data, &x_leading_dim_v, jpvt_out_data,
+         tau_data, work_data.get(), &workspace_dim_v, &info);
+    }
+    x_out_data += x_out_step;
+    jpvt_out_data += jpvt_step;
+    tau_data += tau_step;
+  }
+  return ffi::Error::Success();
+}
+
+template <ffi::DataType dtype>
+int64_t PivotingQrFactorization<dtype>::GetWorkspaceSize(lapack_int x_rows,
+                                                         lapack_int x_cols) {
+  ValueType optimal_size{};
+  lapack_int x_leading_dim_v = x_rows;
+  lapack_int info = 0;
+  lapack_int workspace_query = -1;
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    fn(&x_rows, &x_cols, nullptr, &x_leading_dim_v, nullptr, nullptr,
+       &optimal_size, &workspace_query, nullptr, &info);
+  } else {
+    fn(&x_rows, &x_cols, nullptr, &x_leading_dim_v, nullptr, nullptr,
+       &optimal_size, &workspace_query, &info);
+  }
+  return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
+}
+
+template struct PivotingQrFactorization<ffi::DataType::F32>;
+template struct PivotingQrFactorization<ffi::DataType::F64>;
+template struct PivotingQrFactorization<ffi::DataType::C64>;
+template struct PivotingQrFactorization<ffi::DataType::C128>;
+
 //== Orthogonal QR                                      ==//
 //== Computes orthogonal matrix Q from QR Decomposition ==//
 
@@ -1980,6 +2050,52 @@ template struct TridiagonalReduction<ffi::DataType::F64>;
 template struct TridiagonalReduction<ffi::DataType::C64>;
 template struct TridiagonalReduction<ffi::DataType::C128>;
 
+//== General Tridiagonal System Solver ==//
+
+// lapack gtsv
+
+template <ffi::DataType dtype>
+ffi::Error TridiagonalSolver<dtype>::Kernel(
+    ffi::Buffer<dtype> dl, ffi::Buffer<dtype> d, ffi::Buffer<dtype> du,
+    ffi::Buffer<dtype> b, ffi::ResultBuffer<dtype> dl_out,
+    ffi::ResultBuffer<dtype> d_out, ffi::ResultBuffer<dtype> du_out,
+    ffi::ResultBuffer<dtype> b_out, ffi::ResultBuffer<LapackIntDtype> info) {
+  FFI_ASSIGN_OR_RETURN((auto [batch_count, b_rows, b_cols]),
+                       SplitBatch2D(b.dimensions()));
+
+  CopyIfDiffBuffer(dl, dl_out);
+  CopyIfDiffBuffer(d, d_out);
+  CopyIfDiffBuffer(du, du_out);
+  CopyIfDiffBuffer(b, b_out);
+
+  auto* dl_out_data = dl_out->typed_data();
+  auto* d_out_data = d_out->typed_data();
+  auto* du_out_data = du_out->typed_data();
+  auto* b_out_data = b_out->typed_data();
+  auto* info_data = info->typed_data();
+
+  FFI_ASSIGN_OR_RETURN(auto b_rows_v, MaybeCastNoOverflow<lapack_int>(b_rows));
+  FFI_ASSIGN_OR_RETURN(auto b_cols_v, MaybeCastNoOverflow<lapack_int>(b_cols));
+
+  const int64_t b_out_step{b_rows * b_cols};
+  const int64_t d_step{b_rows};
+  for (int64_t i = 0; i < batch_count; ++i) {
+    fn(&b_rows_v, &b_cols_v, dl_out_data + 1, d_out_data, du_out_data,
+       b_out_data, &b_rows_v, info_data);
+    b_out_data += b_out_step;
+    dl_out_data += d_step;
+    d_out_data += d_step;
+    du_out_data += d_step;
+    ++info_data;
+  }
+  return ffi::Error::Success();
+}
+
+template struct TridiagonalSolver<ffi::DataType::F32>;
+template struct TridiagonalSolver<ffi::DataType::F64>;
+template struct TridiagonalSolver<ffi::DataType::C64>;
+template struct TridiagonalSolver<ffi::DataType::C128>;
+
 // FFI Definition Macros (by DataType)
 
 #define JAX_CPU_DEFINE_TRSM(name, data_type)               \
@@ -2010,6 +2126,16 @@ template struct TridiagonalReduction<ffi::DataType::C128>;
       ::xla::ffi::Ffi::Bind()                            \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)     \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/) \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*tau*/))
+
+#define JAX_CPU_DEFINE_GEQP3(name, data_type)                    \
+  XLA_FFI_DEFINE_HANDLER_SYMBOL(                                 \
+      name, PivotingQrFactorization<data_type>::Kernel,          \
+      ::xla::ffi::Ffi::Bind()                                    \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)             \
+          .Arg<::xla::ffi::Buffer<LapackIntDtype>>(/*jpvt*/)     \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)         \
+          .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*jpvt_out*/) \
           .Ret<::xla::ffi::Buffer<data_type>>(/*tau*/))
 
 #define JAX_CPU_DEFINE_ORGQR(name, data_type)          \
@@ -2155,6 +2281,20 @@ template struct TridiagonalReduction<ffi::DataType::C128>;
           .Ret<::xla::ffi::Buffer<data_type>>(/*tau*/)   \
           .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*info*/))
 
+#define JAX_CPU_DEFINE_GTSV(name, data_type)              \
+  XLA_FFI_DEFINE_HANDLER_SYMBOL(                          \
+      name, TridiagonalSolver<data_type>::Kernel,         \
+      ::xla::ffi::Ffi::Bind()                             \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*dl*/)     \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*d*/)      \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*du*/)     \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*b*/)      \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*dl_out*/) \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*d_out*/)  \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*du_out*/) \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*b_out*/)  \
+          .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*info*/))
+
 // FFI Handlers
 
 JAX_CPU_DEFINE_TRSM(lapack_strsm_ffi, ::xla::ffi::DataType::F32);
@@ -2171,6 +2311,11 @@ JAX_CPU_DEFINE_GEQRF(lapack_sgeqrf_ffi, ::xla::ffi::DataType::F32);
 JAX_CPU_DEFINE_GEQRF(lapack_dgeqrf_ffi, ::xla::ffi::DataType::F64);
 JAX_CPU_DEFINE_GEQRF(lapack_cgeqrf_ffi, ::xla::ffi::DataType::C64);
 JAX_CPU_DEFINE_GEQRF(lapack_zgeqrf_ffi, ::xla::ffi::DataType::C128);
+
+JAX_CPU_DEFINE_GEQP3(lapack_sgeqp3_ffi, ::xla::ffi::DataType::F32);
+JAX_CPU_DEFINE_GEQP3(lapack_dgeqp3_ffi, ::xla::ffi::DataType::F64);
+JAX_CPU_DEFINE_GEQP3(lapack_cgeqp3_ffi, ::xla::ffi::DataType::C64);
+JAX_CPU_DEFINE_GEQP3(lapack_zgeqp3_ffi, ::xla::ffi::DataType::C128);
 
 JAX_CPU_DEFINE_ORGQR(lapack_sorgqr_ffi, ::xla::ffi::DataType::F32);
 JAX_CPU_DEFINE_ORGQR(lapack_dorgqr_ffi, ::xla::ffi::DataType::F64);
@@ -2212,9 +2357,15 @@ JAX_CPU_DEFINE_GEHRD(lapack_dgehrd_ffi, ::xla::ffi::DataType::F64);
 JAX_CPU_DEFINE_GEHRD(lapack_cgehrd_ffi, ::xla::ffi::DataType::C64);
 JAX_CPU_DEFINE_GEHRD(lapack_zgehrd_ffi, ::xla::ffi::DataType::C128);
 
+JAX_CPU_DEFINE_GTSV(lapack_sgtsv_ffi, ::xla::ffi::DataType::F32);
+JAX_CPU_DEFINE_GTSV(lapack_dgtsv_ffi, ::xla::ffi::DataType::F64);
+JAX_CPU_DEFINE_GTSV(lapack_cgtsv_ffi, ::xla::ffi::DataType::C64);
+JAX_CPU_DEFINE_GTSV(lapack_zgtsv_ffi, ::xla::ffi::DataType::C128);
+
 #undef JAX_CPU_DEFINE_TRSM
 #undef JAX_CPU_DEFINE_GETRF
 #undef JAX_CPU_DEFINE_GEQRF
+#undef JAX_CPU_DEFINE_GEQP3
 #undef JAX_CPU_DEFINE_ORGQR
 #undef JAX_CPU_DEFINE_POTRF
 #undef JAX_CPU_DEFINE_GESDD
@@ -2227,5 +2378,6 @@ JAX_CPU_DEFINE_GEHRD(lapack_zgehrd_ffi, ::xla::ffi::DataType::C128);
 #undef JAX_CPU_DEFINE_GEES
 #undef JAX_CPU_DEFINE_GEES_COMPLEX
 #undef JAX_CPU_DEFINE_GEHRD
+#undef JAX_CPU_DEFINE_GTSV
 
 }  // namespace jax

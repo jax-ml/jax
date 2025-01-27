@@ -32,8 +32,7 @@ from jax._src import linear_util as lu
 from jax._src import effects
 from jax._src import source_info_util
 from jax._src import traceback_util
-from jax._src.api_util import (
-    flatten_fun, debug_info, fun_sourceinfo, fun_signature)
+from jax._src import api_util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -42,7 +41,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.traceback_util import api_boundary
-from jax._src.tree_util import tree_flatten, tree_unflatten, tree_structure
+from jax._src.tree_util import PyTreeDef, tree_flatten, tree_unflatten, tree_structure
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
 
@@ -324,8 +323,9 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
   @wraps(fun)
   @api_boundary
   def fun_remat(*args, **kwargs):
-    debug = debug_info("checkpoint / remat", fun_sourceinfo(fun),
-                       fun_signature(fun), args, kwargs, static_argnums, ())
+    debug = api_util.tracing_debug_info(
+        "checkpoint / remat", fun,
+        args, kwargs, static_argnums=static_argnums)
     fun_, args = _remat_static_argnums(fun, static_argnums, args)
     args_flat, in_tree = tree_flatten((args, kwargs))
     in_avals = [core.shaped_abstractify(x) for x in args_flat]
@@ -415,8 +415,12 @@ _dyn_args_fun_cached = weakref_lru_cache(_dyn_args_fun_uncached)
 # This helper is similar to those in control_flow/common.py, but with
 # remat-specific errors.
 @weakref_lru_cache
-def _trace_to_jaxpr(fun, in_tree, in_avals, debug):
-  flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
+def _trace_to_jaxpr(fun: Callable,
+                    in_tree: PyTreeDef,
+                    in_avals: Sequence[core.AbstractValue],
+                    debug: lu.TracingDebugInfo
+                    ) -> tuple[core.Jaxpr, Sequence[Any], PyTreeDef]:
+  flat_fun, out_tree = api_util.flatten_fun(lu.wrap_init(fun), in_tree)
   try:
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
   except core.ConcretizationTypeError as e:
@@ -435,13 +439,15 @@ def _trace_to_jaxpr(fun, in_tree, in_avals, debug):
 
 ### Utilities
 
-def saved_residuals(f, *args, **kwargs) -> list[tuple[core.AbstractValue, str]]:
+def saved_residuals(f: Callable,
+                    *args, **kwargs) -> list[tuple[core.AbstractValue, str]]:
   in_leaves, in_tree = tree_flatten((args, kwargs))
 
   def f_(*args):
     args, kwargs = tree_unflatten(in_tree, args)
     return f(*args, **kwargs)
 
+  debug_info = api_util.tracing_debug_info("saved_residuals", f, args, kwargs)
   out = api.make_jaxpr(lambda *args: api.linearize(f_, *args)[1],
                        return_shape=True)(*in_leaves)
   assert isinstance(out, tuple)
@@ -449,10 +455,10 @@ def saved_residuals(f, *args, **kwargs) -> list[tuple[core.AbstractValue, str]]:
   jaxpr = jaxpr_.jaxpr
   out_tree = lambda: tree_structure(out_shape)
   assert len(jaxpr.invars) == len(in_leaves)
-  dbg = pe.debug_info(f, in_tree, out_tree, True, "saved_residuals")
-  return _saved_residuals(jaxpr, dbg.arg_names)  # type: ignore
+  return _saved_residuals(jaxpr, debug_info.arg_names)
 
-def _saved_residuals(jaxpr, arg_names) -> list[tuple[core.AbstractValue, str]]:
+def _saved_residuals(jaxpr: core.Jaxpr,
+                     arg_names: tuple[str | None, ...]) -> list[tuple[core.AbstractValue, str]]:
   res_lits = [x for x in jaxpr.outvars if     isinstance(x, core.Literal)]
   res_vars = {x for x in jaxpr.outvars if not isinstance(x, core.Literal)}
 
@@ -467,7 +473,7 @@ def _saved_residuals(jaxpr, arg_names) -> list[tuple[core.AbstractValue, str]]:
 
   for i, v in enumerate(jaxpr.invars):
     if v in res_vars:
-      if arg_names is not None:
+      if arg_names[i] is not None:
         src = f'from the argument {arg_names[i]}'
       else:
         src = 'from the argument at flattened index {i}'
@@ -530,7 +536,8 @@ ad.primitive_jvps[remat_p] = remat_jvp
 
 effects.remat_allowed_effects.add_type(lax_internal.InOutFeedEffect)
 
-def remat_partial_eval(trace, *tracers, jaxpr, **params):
+def remat_partial_eval(trace: pe.JaxprTrace, *tracers: core.Tracer,
+                       jaxpr: core.Jaxpr, **params):
   assert not jaxpr.constvars
   disallowed_effects = effects.remat_allowed_effects.filter_not_in(jaxpr.effects)
   if disallowed_effects:
@@ -567,7 +574,7 @@ def remat_partial_eval(trace, *tracers, jaxpr, **params):
   # set up unknown outputs with a recipe to call remat
   res_tracers = map(trace.new_instantiated_const, residuals)
   _, tracers_staged = partition_list(in_used_staged, tracers)
-  in_jaxpr_tracers = res_tracers + map(trace.instantiate_const, tracers_staged)
+  in_jaxpr_tracers = res_tracers + map(trace.instantiate_const, tracers_staged)  # type: ignore
   out_jaxpr_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(x.aval), None)
                        for x in jaxpr_unknown.outvars]
   new_params = dict(params, jaxpr=jaxpr_unknown, differentiated=True)
@@ -582,7 +589,8 @@ def remat_partial_eval(trace, *tracers, jaxpr, **params):
       _, staged_unk = partition_list(in_used_staged, in_unknowns)
       res_invars, _ = partition_list(staged_unk, jaxpr_unknown.invars[num_res:])
       res_outvars = jaxpr_known.outvars[len(jaxpr_known.outvars) - num_res:]
-      body_res = _saved_residuals(jaxpr_known.replace(outvars=res_outvars), None)
+      body_res = _saved_residuals(jaxpr_known.replace(outvars=res_outvars),
+                                  ("",) * len(jaxpr_known.invars))
       logger.log(log_level,
                 'remat-decorated function ' +
                 'saving inputs with shapes:\n' * bool(res_invars) +

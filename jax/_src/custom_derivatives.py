@@ -30,8 +30,8 @@ from jax._src import traceback_util
 from jax._src.ad_util import (
     stop_gradient_p, SymbolicZero, Zero, zeros_like_aval)
 from jax._src.api_util import (
-    argnums_partial, flatten_fun_nokwargs, resolve_kwargs, fun_signature,
-    _arg_names)
+  argnums_partial, flatten_fun_nokwargs, resolve_kwargs, fun_signature,
+  _non_static_arg_names, prepend_static_args)
 from jax._src.errors import UnexpectedTracerError
 from jax._src.state.types import AbstractRef
 from jax._src.interpreters import ad
@@ -45,8 +45,8 @@ from jax._src.tree_util import (
     tree_flatten, tree_unflatten, tree_map, treedef_is_leaf, treedef_tuple,
     register_pytree_node_class, tree_leaves, tree_flatten_with_path,
     tree_leaves_with_path, keystr, treedef_children)
-from jax._src.util import (cache, safe_zip, safe_map, split_list, Unhashable,
-                           unzip2)
+from jax._src.util import (cache, safe_zip, safe_map, split_list, unzip2,
+                           weakref_lru_cache)
 
 
 traceback_util.register_exclusion(__file__)
@@ -253,7 +253,7 @@ class custom_jvp(Generic[ReturnValue]):
       f_, dyn_args = argnums_partial(lu.wrap_init(self.fun), diff_argnums, args,
                                      require_static_args_hashable=False)
       static_args = [args[i] for i in self.nondiff_argnums]
-      jvp = _add_args(lu.wrap_init(self.jvp), static_args)
+      jvp = prepend_static_args(lu.wrap_init(self.jvp), static_args)
     else:
       f_, dyn_args = lu.wrap_init(self.fun), args
       jvp = lu.wrap_init(self.jvp)
@@ -265,15 +265,6 @@ class custom_jvp(Generic[ReturnValue]):
                                       symbolic_zeros=self.symbolic_zeros)
     _, (out_tree, _) = lu.merge_linear_aux(out_type1, out_type2)
     return tree_unflatten(out_tree, out_flat)
-
-def _add_args(f, extra_args):
-  return _add_args_(f, tuple(Unhashable(arg) for arg in extra_args))
-
-@lu.transformation2
-def _add_args_(f, extra_args, *args, **kwargs):
-  extra_args = tuple(arg.val for arg in extra_args)
-  all_args = (extra_args + args)
-  return f(*all_args, **kwargs)
 
 @partial(lu.transformation_with_aux2, use_eq_store=True)
 def _flatten_jvp(f, store, primal_name, jvp_name, in_tree, maybe_out_type, *args):
@@ -425,6 +416,46 @@ def _custom_jvp_call_transpose(params, jaxpr, args, ct, _):
   del params
   return ad.backward_pass(jaxpr.jaxpr, None, jaxpr.consts, args, ct)
 ad.primitive_transposes[custom_jvp_call_p] = _custom_jvp_call_transpose
+
+@weakref_lru_cache
+def _cached_closed_call_dce_instantiate(jaxpr_, used_outputs: tuple[bool, ...]
+                            ) -> tuple[core.ClosedJaxpr, list[bool]]:
+  jaxpr, consts = jaxpr_.jaxpr, jaxpr_.consts
+  new_jaxpr, used_inputs = pe.dce_jaxpr(jaxpr, used_outputs, True)
+  return core.ClosedJaxpr(new_jaxpr, consts), used_inputs
+
+def _custom_jvp_call_dce(
+    used_outs: Sequence[bool], eqn: core.JaxprEqn
+) -> tuple[list[bool], core.JaxprEqn | None]:
+  if not any(used_outs) and not pe.has_effects(eqn):
+    return [False] * len(eqn.invars), None
+
+  call_jaxpr = eqn.params["call_jaxpr"]
+  jvp_jaxpr_thunk = eqn.params["jvp_jaxpr_thunk"]
+  # We must set instantiate=True because some inputs that are unused by the
+  # DCE'ed primal might be used in the JVP rule.
+  dce_call_jaxpr, used_ins = _cached_closed_call_dce_instantiate(
+      call_jaxpr, tuple(used_outs))
+  assert all(used_ins)
+
+  @pe._memoize
+  def dce_jvp_jaxpr_thunk(*in_zeros):
+    jvp_jaxpr, consts, out_zeros = jvp_jaxpr_thunk(*in_zeros)
+    dce_jvp_jaxpr, _ = pe.dce_jaxpr(jvp_jaxpr, [*used_outs, *used_outs], True)
+    dce_out_zeros = [v for used, v in zip(used_outs, out_zeros) if used]
+    return dce_jvp_jaxpr, consts, dce_out_zeros
+
+  outvars = [v for used, v in zip(used_outs, eqn.outvars) if used]
+  new_params = dict(
+      eqn.params,
+      call_jaxpr=dce_call_jaxpr,
+      jvp_jaxpr_thunk=dce_jvp_jaxpr_thunk,
+  )
+  new_eqn = pe.new_jaxpr_eqn(
+      eqn.invars, outvars, eqn.primitive, new_params, dce_call_jaxpr.effects,
+      eqn.source_info, eqn.ctx)
+  return used_ins, new_eqn
+pe.dce_rules[custom_jvp_call_p] = _custom_jvp_call_dce
 
 
 ### VJPs
@@ -604,7 +635,7 @@ class custom_vjp(Generic[ReturnValue]):
         static_args = [args[i] for i in self.nondiff_argnums]
         fwd_, _ = argnums_partial(lu.wrap_init(fwd), dyn_argnums, args,
                                  require_static_args_hashable=False)
-        bwd = _add_args(lu.wrap_init(self.bwd), static_args)
+        bwd = prepend_static_args(lu.wrap_init(self.bwd), static_args)
       else:
         f_, dyn_args = lu.wrap_init(self.fun), args
         fwd_, bwd = lu.wrap_init(fwd), lu.wrap_init(self.bwd)
@@ -636,7 +667,7 @@ def _check_for_aliased_refs(f, nondiff_argnums, args):
   for i, x in enumerate(leaves):
     if (isinstance((a := core.get_aval(x)), AbstractRef) and
         (dup_idx := refs.setdefault(id(core.get_referent(x)), i)) != i):
-      arg_names = _arg_names(fun_signature(f), args, {}, nondiff_argnums, ())
+      arg_names = _non_static_arg_names(fun_signature(f), args, {}, nondiff_argnums, ())
       if arg_names is None:
         arg_names = [f'flat index {j}' for j in range(len(leaves))]
       raise ValueError(
@@ -917,6 +948,61 @@ def _custom_vjp_call_jaxpr_vmap(
   out_dims = out_dims2[0] if out_dims2 else out_dims1
   return batched_outs, out_dims
 batching.fancy_primitive_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
+
+def _custom_vjp_call_jaxpr_dce(
+    used_outs: Sequence[bool], eqn: core.JaxprEqn
+) -> tuple[list[bool], core.JaxprEqn | None]:
+  if not any(used_outs) and not pe.has_effects(eqn):
+    return [False] * len(eqn.invars), None
+
+  fun_jaxpr = eqn.params["fun_jaxpr"]
+  fwd_jaxpr_thunk = eqn.params["fwd_jaxpr_thunk"]
+  bwd = eqn.params["bwd"]
+  out_trees = eqn.params["out_trees"]
+  symbolic_zeros = eqn.params["symbolic_zeros"]
+  dce_fun_jaxpr, used_ins = _cached_closed_call_dce_instantiate(
+      fun_jaxpr, tuple(used_outs))
+  assert all(used_ins)
+
+  @pe._memoize
+  def dce_fwd_jaxpr_thunk(*zeros):
+    fwd_jaxpr = core.ClosedJaxpr(*fwd_jaxpr_thunk(*zeros))
+    _, res_tree = out_trees()
+    num_res = res_tree.num_leaves
+    dce_fwd_jaxpr, _ = _cached_closed_call_dce_instantiate(
+        fwd_jaxpr, (True,) * num_res + tuple(used_outs))
+    return dce_fwd_jaxpr.jaxpr, dce_fwd_jaxpr.consts
+
+  @lu.wrap_init
+  def dce_bwd(*args):
+    _, res_tree = out_trees()
+    res, cts = split_list(args, [res_tree.num_leaves])
+    cts_ = iter(cts)
+    all_cts = []
+    for used, aval in zip(used_outs, fun_jaxpr.out_avals):
+      if used:
+        all_cts.append(next(cts_))
+      else:
+        ct_aval = aval.to_tangent_aval()
+        if symbolic_zeros:
+          all_cts.append(SymbolicZero(ct_aval))
+        else:
+          all_cts.append(zeros_like_aval(ct_aval))
+    assert next(cts_, None) is None
+    return bwd(*res, *all_cts)
+
+  outvars = [v for used, v in zip(used_outs, eqn.outvars) if used]
+  new_params = dict(
+      eqn.params,
+      fun_jaxpr=dce_fun_jaxpr,
+      fwd_jaxpr_thunk=dce_fwd_jaxpr_thunk,
+      bwd=dce_bwd.call_wrapped,
+  )
+  new_eqn = pe.new_jaxpr_eqn(
+      eqn.invars, outvars, eqn.primitive, new_params, dce_fun_jaxpr.effects,
+      eqn.source_info, eqn.ctx)
+  return used_ins, new_eqn
+pe.dce_rules[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_dce
 
 xla.register_initial_style_primitive(custom_vjp_call_jaxpr_p)
 

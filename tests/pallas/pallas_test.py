@@ -25,6 +25,7 @@ os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+import jax.export
 from jax import lax
 from jax import random
 from jax._src import api_util
@@ -729,6 +730,20 @@ class PallasCallTest(PallasBaseTest):
     )
     self.assertAllClose(dot_kernel(x, y), expected, atol=5e-2, rtol=5e-3)
 
+  @parameterized.parameters(jnp.int4, jnp.uint4)
+  def test_subbyte_load(self, dtype):
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest("`[u]int4` loads only supported on GPU.")
+
+    x = jnp.arange(-128, 128, dtype=jnp.int8)
+
+    @functools.partial(self.pallas_call, out_shape=x)
+    def copy_kernel(x_ref, o_ref):
+      o_ref[()] = x_ref[()].astype(jnp.int8)
+
+    expected = x.astype(dtype).astype(jnp.int8)
+    self.assertAllClose(copy_kernel(x.astype(dtype)), expected)
+
 
 class PallasCallInterpretTest(PallasCallTest):
   INTERPRET = True
@@ -951,8 +966,8 @@ class ApiErrorTest(PallasBaseTest):
                          in_specs=[pl.BlockSpec((4,), my_index_map)])
     with self.assertRaisesRegex(
         ValueError,
-        "Index map function my_index_map at .*pallas_test.py:.* for "
-        "x_ref must return 1 values to match .*"
+        "Index map function my_index_map at .*pallas_test.py.* "
+        "for x_ref must return 1 values to match .*"
         "Currently returning 2 values."):
       f(a)
 
@@ -966,8 +981,8 @@ class ApiErrorTest(PallasBaseTest):
                          in_specs=[pl.BlockSpec((4,), my_index_map)])
     with self.assertRaisesRegex(
         ValueError,
-        "Index map function my_index_map at .*pallas_test.py:.* for "
-        "x_ref must return integer scalars. Output\\[0\\] has "
+        "Index map function my_index_map at .*pallas_test.py.* "
+        "for x_ref must return integer scalars. Output\\[0\\] has "
         "type .*float"):
       f(a)
 
@@ -981,8 +996,8 @@ class ApiErrorTest(PallasBaseTest):
                          in_specs=[pl.BlockSpec((4,), my_index_map)])
     with self.assertRaisesRegex(
         ValueError,
-        "Index map function my_index_map at .*pallas_test.py:.* for "
-        "x_ref must return integer scalars. Output\\[0\\] has "
+        "Index map function my_index_map at .*pallas_test.py.* "
+        "for x_ref must return integer scalars. Output\\[0\\] has "
         "type .*int32\\[4\\]"):
       f(a)
 
@@ -2358,6 +2373,82 @@ class PallasCallNamedGridTest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(
         y, x + jnp.arange(4, dtype=jnp.int32)[:, None, None]
+    )
+
+
+class SymbolicPallasTest(PallasBaseTest):
+
+  def test_simple_symbolic_matmul_export(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("Not supported on GPU.")
+
+    def sym_matmul(x, y, symbolic_grid):
+      symbolic_grid = symbolic_grid.shape[0]
+      symbolic_x_0 = x.shape[0] // symbolic_grid
+      symbolic_y_1 = y.shape[1] // symbolic_grid
+
+      def x_ref_block_spec_mapping(i, j):
+        return (i, 0)
+
+      def y_ref_block_spec_mapping(i, j):
+        return (0, j)
+
+      def sym_matmul_kernel(x_ref, y_ref, z_ref):
+        z_ref[...] = x_ref[...] @ y_ref[...]
+
+      return pl.pallas_call(
+          sym_matmul_kernel,
+          out_shape=jax.ShapeDtypeStruct((symbolic_x_0, symbolic_y_1), x.dtype),
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=0,
+              in_specs=[
+                  pl.BlockSpec(
+                      (symbolic_x_0, x.shape[1]), x_ref_block_spec_mapping
+                  ),
+                  pl.BlockSpec(
+                      (y.shape[0], symbolic_y_1),
+                      y_ref_block_spec_mapping,
+                  ),
+              ],
+              out_specs=pl.BlockSpec(
+                  (symbolic_x_0, symbolic_y_1),
+                  lambda i, j: (i, j),
+              ),
+              grid=(symbolic_grid, symbolic_grid),
+          ),
+      )(x, y)
+
+    a, b, c, d, e = jax.export.symbolic_shape(
+        "m_dim, k_dim, n_dim, grid_size, unused_dim",
+        constraints=(
+            "mod(floordiv(m_dim, grid_size), 8) == 0",
+            "mod(k_dim, 128) == 0",
+            "mod(floordiv(n_dim, grid_size), 128) == 0",
+        ),
+    )
+    x = jax.ShapeDtypeStruct((a, b), jax.numpy.float32)
+    y = jax.ShapeDtypeStruct((b, c), jax.numpy.float32)
+
+    dummy_d = jax.ShapeDtypeStruct((d, e), jax.numpy.float32)
+
+    exported_module = pl.lower_as_mlir(
+        jax.jit(sym_matmul), x, y, dummy_d, dynamic_shapes=True
+    )
+    assert exported_module is not None
+    self.assertIn(
+        "tensor<?x?xf32>, %arg6: tensor<?x?xf32>, %arg7: tensor<?x?xf32>",
+        str(exported_module),
+    )
+    x = jax.ShapeDtypeStruct((128, 1024), jax.numpy.float32)
+    y = jax.ShapeDtypeStruct((1024, 512), jax.numpy.float32)
+    dummy_d = jax.ShapeDtypeStruct((1, 1), jax.numpy.float32)
+    exported_module = pl.lower_as_mlir(
+        jax.jit(sym_matmul), x, y, dummy_d, dynamic_shapes=False
+    )
+    assert exported_module is not None
+    self.assertIn(
+        "@sym_matmul(%arg0: tensor<128x1024xf32>, %arg1: tensor<1024x512xf32>",
+        str(exported_module),
     )
 
 

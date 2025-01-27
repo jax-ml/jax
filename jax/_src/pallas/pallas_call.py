@@ -1117,10 +1117,15 @@ def _pallas_call_batching_rule(
     # assert ragged_axis_length is not None
     args = (ragged_axis_length, *args)
   assert all(isinstance(aval, jax_core.ShapedArray) for aval in out_avals)
-  batched_out_avals = tuple(
-      aval.update(shape=tuple_insert(aval.shape, 0, axis_size))
-      for aval in out_avals
-  )
+
+  batched_out_avals = []
+  for aval in out_avals:
+    sharding = (aval.sharding.with_spec(tuple_insert(aval.sharding.spec, 0, None))
+                if config.sharding_in_types.value else None)
+    shape = tuple_insert(aval.shape, 0, axis_size)
+    batched_out_avals.append(aval.update(shape=shape, sharding=sharding))
+  batched_out_avals = tuple(batched_out_avals)  # type: ignore
+
   out = pallas_call_p.bind(
       *dynamic_grid_args,
       *args,
@@ -1340,8 +1345,8 @@ def pallas_call_checkify_rule(error: checkify.Error,
   jaxpr_flat_avals, jaxpr_in_tree = tree_util.tree_flatten(retrace_in_avals)
   wrapped_kernel_with_err, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(checked_kernel_fn), jaxpr_in_tree)
-  debug = pe.debug_info(
-    checked_kernel_fn, jaxpr_in_tree, out_tree_thunk, False, "checkify_pallas")
+  debug = api_util.tracing_debug_info("checkify_pallas", checked_kernel_fn,
+                                      retrace_in_avals, {})
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
     final_jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
         wrapped_kernel_with_err, jaxpr_flat_avals, debug)
@@ -1410,7 +1415,8 @@ def _trace_kernel_to_jaxpr(
   wrapped_kernel_fun = primitives.wrap_with_transforms(
       wrapped_kernel_fun, kernel_in_transforms
   )
-  debug = pe.debug_info(fun, kernel_in_tree, out_tree_thunk, False, "pallas_call")
+  fake_kernel_args = kernel_in_tree.unflatten(kernel_avals)
+  debug = api_util.tracing_debug_info("pallas_call", fun, fake_kernel_args, {})
   with grid_mapping.trace_env():
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_kernel_fun,
                                                      kernel_avals, debug)
@@ -1810,13 +1816,11 @@ def pallas_call(
     kernel_fun_sig = api_util.fun_signature(kernel)
     arg_names = None
     if kernel_fun_sig:
-      kernel_debug_info = api_util.debug_info(
+      kernel_debug_info = api_util.tracing_debug_info(
           "pallas_call kernel",
-           kernel_src_info,
-           kernel_fun_sig,
-           [1] * len(kernel_fun_sig.parameters), {}, (), ())
-      if kernel_debug_info:
-        arg_names = kernel_debug_info.arg_names
+           kernel,
+           [1] * len(kernel_fun_sig.parameters), {})
+      arg_names = kernel_debug_info.arg_names
       del kernel_debug_info
     in_origins = tuple(in_path_to_input_origin(p, arg_names)
                        for p in in_paths)
@@ -1909,6 +1913,10 @@ def in_path_to_input_origin(
   if isinstance(arg_idx, tree_util.SequenceKey) and arg_idx.idx < len(
       arg_names
   ):
+    if arg_names[arg_idx.idx] is None:
+      # TODO(necula): when is this needed?
+      # Repro: pallas_test:test_with_input_output_aliasing
+      return f"args{tree_util.keystr(in_path)}"
     return arg_names[arg_idx.idx] + tree_util.keystr(tuple(rest_path))
   else:
     return f"args{tree_util.keystr(tuple(in_path))}"

@@ -227,8 +227,7 @@ MLIR_CAPI_EXPORTED MlirTpuValueArray mlirTpuDisassemble(
     MlirValue val, MlirTpuI64TargetTuple target_shape);
 
 MLIR_CAPI_EXPORTED MlirLogicalResult
-mlirTpuApplyLayoutOp(int hardware_generation, MlirOperation op,
-                     MlirTpuI64TargetTuple target_shape);
+mlirTpuApplyLayoutOp(MlirTpuApplyVectorLayoutContext ctx, MlirOperation op);
 
 // Returns null on failure
 MLIR_CAPI_EXPORTED MlirValue

@@ -120,6 +120,7 @@ py_library(
     testonly = 1,
     srcs = [
         "_src/test_util.py",
+        "_src/test_warning_util.py",
     ],
     visibility = [
         ":internal",
@@ -198,6 +199,7 @@ py_library_providing_imports_info(
         "_src/callback.py",
         "_src/checkify.py",
         "_src/custom_batching.py",
+        "_src/custom_dce.py",
         "_src/custom_derivatives.py",
         "_src/custom_partitioning.py",
         "_src/custom_partitioning_sharding_rule.py",
@@ -361,6 +363,7 @@ pytype_strict_library(
     srcs = ["_src/basearray.py"],
     pytype_srcs = ["_src/basearray.pyi"],
     deps = [
+        ":partition_spec",
         ":sharding",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
@@ -632,6 +635,7 @@ pytype_strict_library(
         ":tpu_custom_call",
         "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:core",
+        "//jax/_src/pallas/mosaic:helpers",
         "//jax/_src/pallas/mosaic:lowering",
         "//jax/_src/pallas/mosaic:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/mosaic:pipeline",
@@ -794,6 +798,15 @@ pytype_library(
     ],
 )
 
+pytype_library(
+    name = "experimental_transfer",
+    srcs = ["experimental/transfer.py"],
+    deps = [
+        ":jax",
+        "//jax/_src/lib",
+    ],
+)
+
 pytype_strict_library(
     name = "pickle_util",
     srcs = ["_src/pickle_util.py"],
@@ -833,7 +846,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "compute_on",
     srcs = ["_src/compute_on.py"],
-    deps = [":config"],
+    deps = [
+        ":config",
+        "//jax/_src/lib",
+    ],
 )
 
 pytype_strict_library(
@@ -841,6 +857,7 @@ pytype_strict_library(
     srcs = ["_src/xla_metadata.py"],
     deps = [
         ":config",
+        "//jax/_src/lib",
     ],
 )
 

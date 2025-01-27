@@ -17,6 +17,7 @@
 from typing import Callable
 
 from absl.testing import parameterized
+import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
@@ -29,7 +30,9 @@ from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
-import jax.experimental.mosaic.gpu as mgpu
+from jax.experimental.mosaic import gpu as mgpu
+from jax.experimental.mosaic.gpu import layouts
+from jax.experimental.mosaic.gpu import utils as mgpu_utils
 
 _cext = mgpu.dialect._cext if mgpu.dialect is not None else None
 
@@ -72,7 +75,7 @@ def is_mosaic_gpu_op(op: ir.OpView) -> bool:
 
 
 def workgroup_ptr_ty() -> ir.Type:
-  workgroup_nvptx_address_space = mgpu.gpu_address_space_to_nvptx(
+  workgroup_nvptx_address_space = mgpu_utils.gpu_address_space_to_nvptx(
       gpu.AddressSpace.Workgroup
   )
   return ir.Type.parse(f"!llvm.ptr<{workgroup_nvptx_address_space}>")
@@ -83,6 +86,8 @@ class MosaicGpuTest(parameterized.TestCase):
   def setUp(self):
     if mgpu.dialect is None:
       raise self.skipTest("Test requires Mosaic GPU dialect")
+    if jax.version._version != jax.lib.__version__:
+      raise self.skipTest("Test requires matching jax and jaxlib versions")
     super().setUp()
     self.enter_context(_make_ir_context())
     self.enter_context(ir.Location.unknown())
@@ -305,11 +310,12 @@ class DialectTest(MosaicGpuTest):
 
   def test_async_load_op_slice_collective_must_be_unique(self):
     with ir.InsertionPoint(self.module.body):
+      i32 = ir.IntegerType.get_signless(32)
       func.FuncOp.from_py_func(
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
-          ir.IntegerType.get_signless(32),
+          i32,
           name="async_load",
       )(
           lambda source, destination, barrier, *indices: mgpu.dialect.async_load(
@@ -320,12 +326,8 @@ class DialectTest(MosaicGpuTest):
               slice_lengths=[4],
               transforms=ir.ArrayAttr.get([]),
               collective=ir.ArrayAttr.get([
-                  ir.Attribute.parse(
-                      f"#mosaic_gpu.dim<{mgpu.dialect.Dimension.x.name}>"
-                  ),
-                  ir.Attribute.parse(
-                      f"#mosaic_gpu.dim<{mgpu.dialect.Dimension.x.name}>"
-                  ),
+                  ir.IntegerAttr.get(i32, mgpu.dialect.Dimension.x),
+                  ir.IntegerAttr.get(i32, mgpu.dialect.Dimension.x),
               ]),
           )
       )
@@ -496,7 +498,7 @@ class DialectTest(MosaicGpuTest):
               accumulator,
               a,
               b,
-              swizzle=ir.Attribute.parse("#mosaic_gpu.swizzle<swizzle_64>"),
+              swizzle=mgpu.dialect.SwizzlingMode.k64ByteSwizzle,
           )
       )
 
@@ -518,7 +520,7 @@ class DialectTest(MosaicGpuTest):
               accumulator,
               a,
               b,
-              swizzle=ir.Attribute.parse("#mosaic_gpu.swizzle<swizzle_64>"),
+              swizzle=mgpu.dialect.SwizzlingMode.k64ByteSwizzle,
           )
       )
 
@@ -540,7 +542,7 @@ class DialectTest(MosaicGpuTest):
               accumulator,
               a,
               b,
-              swizzle=ir.Attribute.parse("#mosaic_gpu.swizzle<swizzle_64>"),
+              swizzle=mgpu.dialect.SwizzlingMode.k64ByteSwizzle,
           )
       )
 
@@ -563,7 +565,7 @@ class DialectTest(MosaicGpuTest):
               accumulator,
               a,
               b,
-              swizzle=ir.Attribute.parse("#mosaic_gpu.swizzle<swizzle_64>"),
+              swizzle=mgpu.dialect.SwizzlingMode.k64ByteSwizzle,
           )
       )
 
@@ -665,9 +667,7 @@ class DialectLoweringTest(MosaicGpuTest):
       ty = ir.VectorType.get(shape, elt_ty)
       load = vector.load(ty, ref, [zero_index, zero_index])
       load.owner.attributes["out_layouts"] = ir.ArrayAttr.get([
-          mgpu.to_strided_fragmented_layout_attr(
-              mgpu.WGStridedFragLayout.from_shaped_type(ty)
-          )
+          layouts.to_layout_attr(mgpu.WGStridedFragLayout.from_shaped_type(ty))
       ])
 
     mgpu.lower_mgpu_dialect(self.module, None)

@@ -23,7 +23,7 @@ import platform
 import unittest
 from unittest import mock
 from unittest import SkipTest
-import warnings
+import tempfile
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -39,6 +39,7 @@ from jax._src import distributed
 from jax._src import monitoring
 from jax._src import path as pathlib
 from jax._src import test_util as jtu
+from jax._src import test_warning_util
 from jax._src import xla_bridge
 from jax._src.compilation_cache_interface import CacheInterface
 from jax._src.lib import xla_client as xc
@@ -95,6 +96,7 @@ def clear_cache() -> None:
     cc._cache.clear()
 
 
+@jtu.thread_unsafe_test_class()  # mocking isn't thread-safe
 class CompilationCacheTestCase(jtu.JaxTestCase):
 
   def setUp(self):
@@ -197,6 +199,46 @@ class CompilationCacheTest(CompilationCacheTestCase):
     f(1.0)
     self.assertEqual(count_cache_items(), 2)
 
+  def test_set_cache_dir_after_backends_init(self):
+    # This a regression test for #25768
+    with config.compilation_cache_dir(None):
+      cc.reset_cache()
+      backend = xla_bridge.get_backend()
+
+      a = jnp.zeros((2,3))
+      self.assertFalse(cc.is_persistent_cache_enabled())
+      cache = cc._get_cache(backend)
+      self.assertIsNone(cache)  # Not able to create cache
+
+      with tempfile.TemporaryDirectory() as tmp_cache_dir:
+        with config.compilation_cache_dir(tmp_cache_dir):
+          f = jit(lambda x: x + 1)
+          f(a)  # Compile and cache
+          self.assertTrue(cc.is_persistent_cache_enabled())
+          cache = cc._get_cache(backend)
+          self.assertIsNotNone(cache)  # Cache is created
+
+  def test_enable_compilation_cache(self):
+    with tempfile.TemporaryDirectory() as tmp_cache_dir:
+      with (
+        config.enable_compilation_cache(False),
+        config.compilation_cache_dir(tmp_cache_dir)
+      ):
+        cc.reset_cache() # reset cache before testing
+        backend = xla_bridge.get_backend()
+        f = jit(lambda x: x + 1)
+        f(1)  # Compile and cache
+        cache = cc._get_cache(backend)
+        self.assertIsNone(cache) # Cache should not exist
+
+        with config.enable_compilation_cache(True):
+          cc.reset_cache()
+          backend = xla_bridge.get_backend()
+          g = jit(lambda x: x * 3)
+          g(2)
+          cache = cc._get_cache(backend)
+          self.assertIsNotNone(cache) # Cache should be initalized
+
   def test_xla_autofdo_profile_version(self):
     original_profile_version = config.jax_xla_profile_version.value
     with config.jax_xla_profile_version(original_profile_version + 1):
@@ -232,21 +274,20 @@ class CompilationCacheTest(CompilationCacheTestCase):
     with (
       config.raise_persistent_cache_errors(False),
       mock.patch.object(cc._get_cache(backend).__class__, "put") as mock_put,
-      warnings.catch_warnings(record=True) as w,
+      test_warning_util.record_warnings() as w,
     ):
-      warnings.simplefilter("always")
       mock_put.side_effect = RuntimeError("test error")
       self.assertEqual(f(2).item(), 4)
-      if len(w) != 1:
-        print("Warnings:", [str(w_) for w_ in w], flush=True)
-      self.assertLen(w, 1)
-      self.assertIn(
-          (
-              "Error writing persistent compilation cache entry "
-              "for 'jit__lambda_': RuntimeError: test error"
-          ),
-          str(w[0].message),
-      )
+    if len(w) != 1:
+      print("Warnings:", [str(w_) for w_ in w], flush=True)
+    self.assertLen(w, 1)
+    self.assertIn(
+        (
+            "Error writing persistent compilation cache entry "
+            "for 'jit__lambda_': RuntimeError: test error"
+        ),
+        str(w[0].message),
+    )
 
   def test_cache_read_warning(self):
     f = jit(lambda x: x * x)
@@ -255,23 +296,22 @@ class CompilationCacheTest(CompilationCacheTestCase):
     with (
       config.raise_persistent_cache_errors(False),
       mock.patch.object(cc._get_cache(backend).__class__, "get") as mock_get,
-      warnings.catch_warnings(record=True) as w,
+      test_warning_util.record_warnings() as w,
     ):
-      warnings.simplefilter("always")
       mock_get.side_effect = RuntimeError("test error")
       # Calling assertEqual with the jitted f will generate two PJIT
       # executables: Equal and the lambda function itself.
       self.assertEqual(f(2).item(), 4)
-      if len(w) != 1:
-        print("Warnings:", [str(w_) for w_ in w], flush=True)
-      self.assertLen(w, 1)
-      self.assertIn(
-          (
-              "Error reading persistent compilation cache entry "
-              "for 'jit__lambda_': RuntimeError: test error"
-          ),
-          str(w[0].message),
-      )
+    if len(w) != 1:
+      print("Warnings:", [str(w_) for w_ in w], flush=True)
+    self.assertLen(w, 1)
+    self.assertIn(
+        (
+            "Error reading persistent compilation cache entry "
+            "for 'jit__lambda_': RuntimeError: test error"
+        ),
+        str(w[0].message),
+    )
 
   def test_min_entry_size(self):
     with (
@@ -416,8 +456,6 @@ class CompilationCacheTest(CompilationCacheTestCase):
       self.assertFalse(msg_exists_in_logs(msg, log.records, logging.WARNING))
 
   def test_persistent_cache_miss_logging_with_explain(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/364547005): pure callbacks not supported by Shardy yet")
     with (config.explain_cache_misses(True),
           config.compilation_cache_dir("jax-cache")):
 
@@ -462,8 +500,6 @@ class CompilationCacheTest(CompilationCacheTestCase):
 
   def test_persistent_cache_miss_logging_with_no_explain(self):
     # test that cache failure messages do not get logged in WARNING
-    if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/364547005): pure callbacks not supported by Shardy yet")
     with (config.explain_cache_misses(False),
           config.compilation_cache_dir("jax-cache")):
       # omitting writing to cache because compilation is too fast
@@ -532,8 +568,6 @@ class CompilationCacheTest(CompilationCacheTestCase):
         executable.fingerprint, deserialized_executable.fingerprint)
 
   def test_persistent_cache_enable_xla_caches(self):
-    if jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("Test requires AutotuneCacheMode bindings")
     s = os.sep
     with config.compilation_cache_dir("jax-cache"):
       with config.persistent_cache_enable_xla_caches("none"):
@@ -604,8 +638,6 @@ class CompilationCacheDisabledTest(CompilationCacheTestCase):
       self.assertEqual(count_after_second_use, count_after_first_use)
 
   def test_persistent_cache_enable_xla_caches_disabled(self):
-    if jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("Test requires AutotuneCacheMode bindings")
     with config.enable_compilation_cache(False):
       compile_options = compiler.get_compile_options(
         num_replicas=1, num_partitions=1

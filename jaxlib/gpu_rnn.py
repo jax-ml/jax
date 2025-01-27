@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 import importlib
 
 import jaxlib.mlir.ir as ir
@@ -24,19 +25,33 @@ from .gpu_common_utils import GpuLibNotLinkedError
 
 for cuda_module_name in [".cuda", "jax_cuda12_plugin"]:
   try:
-    _rnn = importlib.import_module(f"{cuda_module_name}._rnn", package="jaxlib")
+    _cuda_rnn = importlib.import_module(f"{cuda_module_name}._rnn", package="jaxlib")
   except ImportError:
-    _rnn = None
+    _cuda_rnn = None
   else:
     break
 
-if _rnn:
-  for _name, _value in _rnn.registrations().items():
+if _cuda_rnn:
+  for _name, _value in _cuda_rnn.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform='CUDA')
-  compute_rnn_workspace_reserve_space_sizes = _rnn.compute_rnn_workspace_reserve_space_sizes
+  compute_rnn_workspace_reserve_space_sizes = _cuda_rnn.compute_rnn_workspace_reserve_space_sizes
 
 
-def cudnn_rnn_lowering(ctx, input, h_0, c_0, weights, seq_lengths, *,
+for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
+  try:
+    _hip_rnn = importlib.import_module(f"{rocm_module_name}._rnn", package="jaxlib")
+  except ImportError:
+    _hip_rnn = None
+  else:
+    break
+
+if _hip_rnn:
+  for _name, _value in _hip_rnn.registrations().items():
+    xla_client.register_custom_call_target(_name, _value, platform='ROCM')
+  compute_rnn_workspace_reserve_space_sizes = _hip_rnn.compute_rnn_workspace_reserve_space_sizes
+
+
+def _rnn_fwd_lowering(_rnn, platform, ctx, input, h_0, c_0, weights, seq_lengths, *,
                        input_size: int, hidden_size: int, num_layers: int,
                        dropout: bool, bidirectional: bool,
                        cudnn_allow_tf32: bool):
@@ -75,17 +90,19 @@ def cudnn_rnn_lowering(ctx, input, h_0, c_0, weights, seq_lengths, *,
                                      reserve_space_shape[0])
 
   i32_type = ir.IntegerType.get_signless(32)
-
   out = hlo.CustomCallOp(
       [output_type, h_0.type, c_0.type, workspace_type, reserve_space_type],
       [input, h_0, c_0, weights, seq_lengths],
-      call_target_name=ir.StringAttr.get('cudnn_rnn'),
+      call_target_name=ir.StringAttr.get(f"{platform}dnn_rnn"),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(opaque),
       api_version=ir.IntegerAttr.get(i32_type, 2),
       called_computations=ir.ArrayAttr.get([]),
   )
   return out.results[:-2] + out.results[-1:]  # drop workspace output
+
+cudnn_rnn_lowering = partial(_rnn_fwd_lowering, _cuda_rnn, "cu")
+miopen_rnn_lowering = partial(_rnn_fwd_lowering, _hip_rnn, "hip")
 
 
 def _hlo_zeros_f32(shape):
@@ -94,7 +111,7 @@ def _hlo_zeros_f32(shape):
           np.zeros(shape, dtype=np.float32), type=ir.F32Type.get()))
 
 
-def cudnn_rnn_bwd_lowering(ctx, dy, dhn, dcn, x, h0, c0, w, y,
+def _rnn_bwd_lowering(_rnn, platform, ctx, dy, dhn, dcn, x, h0, c0, w, y,
                            reserve_space, seq_lengths, *, input_size: int,
                            hidden_size: int, num_layers: int, dropout: bool,
                            bidirectional: bool, cudnn_allow_tf32: bool):
@@ -123,7 +140,7 @@ def cudnn_rnn_bwd_lowering(ctx, dy, dhn, dcn, x, h0, c0, w, y,
           dy, dhn, dcn, x, h0, c0, w, y, reserve_space, zeroed_dw,
           seq_lengths
       ],
-      call_target_name=ir.StringAttr.get('cudnn_rnn_bwd'),
+      call_target_name=ir.StringAttr.get(f"{platform}dnn_rnn_bwd"),
       has_side_effect=ir.BoolAttr.get(False),
       backend_config=ir.StringAttr.get(opaque),
       api_version=ir.IntegerAttr.get(i32_type, 2),
@@ -135,3 +152,6 @@ def cudnn_rnn_bwd_lowering(ctx, dy, dhn, dcn, x, h0, c0, w, y,
               operand_tuple_indices=[])
       ]))
   return out.results[:-1]  # drop workspace output
+
+cudnn_rnn_bwd_lowering = partial(_rnn_bwd_lowering, _cuda_rnn, "cu")
+miopen_rnn_bwd_lowering = partial(_rnn_bwd_lowering, _hip_rnn, "hip")

@@ -27,7 +27,6 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax import random
-from jax._src import config
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import state
@@ -85,14 +84,23 @@ def _random_value(key: jax.Array, shape_dtype: jax.ShapeDtypeStruct
   raise NotImplementedError(shape_dtype)
 
 
-_DTYPES = (
+_DTYPES_32BIT = (
     "float32",
-    "bfloat16",
     "int32",
+    "uint32",
+)
+# TODO(apaszke): Add 8-bit floats.
+_DTYPES_SUB_32BIT = (
+    "bfloat16",
     "int16",
     "int8",
+    "int4",
+    "uint16",
+    "uint8",
+    "uint4",
     "bool",
 )
+_DTYPES = (*_DTYPES_32BIT, *_DTYPES_SUB_32BIT)
 
 
 @hps.composite
@@ -538,59 +546,139 @@ class OpsTest(PallasBaseTest):
     out = self.pallas_call(kernel, out_shape=x_shape_dtype)(x)
     self.assertAllClose(out, func(x), atol=tol, rtol=tol)
 
-  @parameterized.product(from_dtype=_DTYPES, to_dtype=_DTYPES)
+  @parameterized.product(from_dtype=_DTYPES_32BIT, to_dtype=_DTYPES)
   @hp.given(hps.data())
-  def test_cast(self, from_dtype, to_dtype, data):
+  def test_cast_from_32bit(self, from_dtype, to_dtype, data):
     if from_dtype == to_dtype:
       self.skipTest("Unnecessary test")
     if jtu.is_device_tpu(version=4):
-      if from_dtype in {"int16", "int8"} or to_dtype in {"int16", "int8"}:
-        self.skipTest(
-            "Not supported: TPU generation doesn't support this cast."
-        )
+      if to_dtype in {"int8", "uint8", "int4", "uint4"}:
+        self.skipTest("Not supported on this TPU generation")
+      if to_dtype in {"int16", "uint16"} and not jtu.if_cloud_tpu_at_least(2025, 1, 18):
+        self.skipTest("Test requires libtpu from 2025/1/18 or later")
     if jtu.test_device_matches(["tpu"]) and jtu.get_tpu_version() < 4:
-      if from_dtype in {"int32", "float32", "bfloat16"} and to_dtype in {"int16", "int8"}:
-        self.skipTest(
-            "Not supported: TPU generation doesn't support this cast."
-        )
+      # Currently only casts between 32-bit types and to bf16 are supported.
+      if to_dtype not in {"int32", "uint32", "float32", "bfloat16"}:
+        self.skipTest("Not supported on this TPU generation")
+    if jtu.test_device_matches(["gpu"]) and to_dtype in {"int4", "uint4"}:
+      self.skipTest("int4/uint4 casts are buggy on GPU")  # b/391292861
+
+    # XLA does not specify the float->int conversion result for NaNs.
+    elements = dict(allow_nan=not jnp.issubdtype(to_dtype, jnp.integer))
+    x = data.draw(hnp.arrays(from_dtype, (8, 128), elements=elements))
+    x = jnp.asarray(x)
+    def kernel(x_ref, y_ref):
+      x = x_ref[...]
+      y = x.astype(to_dtype)
+      if to_dtype == jnp.bool:
+        y = y.astype(jnp.int32)
+      y_ref[...] = y
+    y_dtype = jnp.int32 if to_dtype == jnp.bool else to_dtype
+    try:
+      y = self.pallas_call(
+          kernel, out_shape=jax.ShapeDtypeStruct(x.shape, y_dtype))(x)
+    except Exception as e:
+      if "Unsupported cast" in e.args[0]:
+        self.skipTest("Unsupported cast")
+      raise
+    if to_dtype == jnp.bool:
+      y = y.astype(jnp.bool)
+    y_ref = x.astype(to_dtype)
+    if jnp.dtype(to_dtype) in map(jnp.dtype, (jnp.bfloat16, jnp.int4, jnp.uint4)):
+      y, y_ref = y.astype(np.float32), y_ref.astype(np.float32)
+    np.testing.assert_allclose(y, y_ref, atol=0., rtol=0.)
+
+  # Types narrower than 32-bit have few values so we test them exhaustively.
+  # We also take one more pass with random data just to ensure that we don't
+  # miss bugs that would be hidden due to exhaustive enumeration being in order.
+  @parameterized.product(from_dtype=_DTYPES_SUB_32BIT, to_dtype=_DTYPES, randomize=(False, True))
+  def test_cast_from_sub_32bit(self, from_dtype, to_dtype, randomize):
+    if from_dtype == to_dtype:
+      self.skipTest("Unnecessary test")
+    if jtu.is_device_tpu(version=4):
+      allowed_v4_cats = {("int16", "int32"): (2025, 1, 18)}
+      if (
+          from_dtype in {"int16", "int8", "uint16", "uint8", "int4", "uint4"}
+          or to_dtype in {"int8", "uint8", "int4", "uint4"}
+      ) and (from_dtype, to_dtype) not in allowed_v4_cats:
+        self.skipTest("Not supported on this TPU generation")
+      if minimum_libtpu_date := allowed_v4_cats.get((from_dtype, to_dtype), None):
+        if not jtu.if_cloud_tpu_at_least(*minimum_libtpu_date):
+          self.skipTest("Test requires a newer libtpu")
+      if to_dtype in {"int16", "uint16"} and not jtu.if_cloud_tpu_at_least(2025, 1, 18):
+        self.skipTest("Test requires libtpu from 2025/1/18 or later")
+    if jtu.test_device_matches(["tpu"]) and jtu.get_tpu_version() < 4:
+      self.skipTest("Not supported on this TPU generation")
+    if jtu.test_device_matches(["gpu"]) and to_dtype in {"int4", "uint4"}:
+      self.skipTest("int4/uint4 casts are buggy on GPU")  # b/391292861
+
+    from_int = np.issubdtype(np.dtype(from_dtype), np.integer)
+    to_int = np.issubdtype(np.dtype(to_dtype), np.integer)
+    if (
+        from_int and to_int and np.dtype(from_dtype).itemsize != 4
+        and not jtu.if_cloud_tpu_at_least(2025, 1, 12)
+    ):
+      self.skipTest("trunc from non-32 bit only implemented recently")
 
     # TODO(sharadmv,apaszke): add support for the following casts
-    if from_dtype == "int16" and to_dtype == "int8":
-      self.skipTest("Not supported: bad canonicalization")
-    if from_dtype == "int8" and to_dtype == "int16":
-      self.skipTest("Not supported: bad canonicalization")
-    if from_dtype == "bool" and to_dtype in {"int16", "int8"}:
+    if (from_dtype == "bool" and
+        to_dtype in {"int16", "int8", "int4", "uint16", "uint8", "uint4"}):
       self.skipTest("Not supported: cannot extend to sub-32 bit types")
 
-    if from_dtype == "bfloat16":
-      from_dtype = jnp.bfloat16
-    if to_dtype == "bfloat16":
-      to_dtype = jnp.bfloat16
+    def bitwidth(dtype):
+      if jnp.issubdtype(dtype, jnp.integer):
+        return jnp.iinfo(dtype).bits
+      elif jnp.issubdtype(dtype, jnp.floating):
+        return jnp.finfo(dtype).bits
+      else:
+        raise ValueError(f"Unsupported dtype: {dtype}")
 
-    if from_dtype == jnp.bfloat16:
-      x = jnp.asarray(data.draw(hnp.arrays(jnp.float32, (8, 128))))
-      x = x.astype(jnp.bfloat16)
+    if from_dtype != "bool":
+      from_bitwidth = bitwidth(from_dtype)
+      from_int_dtype = getattr(jnp, "uint" + str(from_bitwidth))
+      if randomize:
+        # randint has no support for 4 bit integers.
+        shape = (128, 128)
+        rand_int_dtype = getattr(jnp, "uint" + str(max(8, from_bitwidth)))
+        x = random.randint(
+            random.key(1234), shape, 0, 1 << from_bitwidth, rand_int_dtype
+        ).astype(from_int_dtype)
+        x = lax.bitcast_convert_type(x, from_dtype)
+      else:
+        x = jax.lax.bitcast_convert_type(
+            jnp.arange(1 << from_bitwidth, dtype=from_int_dtype), from_dtype
+        ).reshape(8, -1)
     else:
-      x = data.draw(hnp.arrays(from_dtype, (8, 128)))
-    x = jnp.asarray(x)
-    if from_dtype == jnp.dtype("bool"):
+      if randomize:
+        x = random.randint(random.key(234), (16, 16), 0, 1, jnp.int32) != 0
+      else:
+        x = jnp.asarray([[False, True], [True, False]], dtype="bool")
+    assert x.dtype == jnp.dtype(from_dtype)
+    # XLA does not specify the float->int conversion result for NaNs.
+    if jnp.issubdtype(from_dtype, jnp.floating):
+      x = x.at[jnp.isnan(x)].set(0)
+    if from_dtype == jnp.bool:
       x = x.astype(jnp.int32)
     def kernel(x_ref, y_ref):
       x = x_ref[...]
-      if from_dtype == jnp.dtype("bool"):
-        x = x.astype(jnp.dtype("bool"))
+      if from_dtype == jnp.bool:
+        x = x.astype(jnp.bool)
       y = x.astype(to_dtype)
-      if to_dtype == jnp.dtype("bool"):
+      if to_dtype == jnp.bool:
         y = y.astype(jnp.int32)
       y_ref[...] = y
-    if (y_dtype := to_dtype) == jnp.dtype("bool"):
-      y_dtype = jnp.int32
-    y = self.pallas_call(
-        kernel, out_shape=jax.ShapeDtypeStruct(x.shape, y_dtype))(x)
-    if to_dtype == jnp.dtype("bool"):
-      y = y.astype(jnp.dtype("bool"))
+    y_dtype = jnp.int32 if to_dtype == jnp.bool else to_dtype
+    try:
+      y = self.pallas_call(
+          kernel, out_shape=jax.ShapeDtypeStruct(x.shape, y_dtype))(x)
+    except Exception as e:
+      if "Unsupported cast" in e.args[0]:
+        self.skipTest("Unsupported cast")
+      raise
+    if to_dtype == jnp.bool:
+      y = y.astype(jnp.bool)
     y_ref = x.astype(to_dtype)
-    if to_dtype == jnp.bfloat16:
+    if jnp.dtype(to_dtype) in map(jnp.dtype, (jnp.bfloat16, jnp.int4, jnp.uint4)):
       y, y_ref = y.astype(np.float32), y_ref.astype(np.float32)
     np.testing.assert_allclose(y, y_ref, atol=0., rtol=0.)
 
@@ -1324,10 +1412,8 @@ class OpsTest(PallasBaseTest):
       "plgpu.TritonCompilerParams unavailable on Windows",
   )
   def test_debug_print(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/364547005): pure callbacks not supported by Shardy yet")
     if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on TPU")
+      self.skipTest("Test for TPU is covered in tpu_pallas_test.py")
 
     # TODO: this test flakes on gpu
     if jtu.test_device_matches(["gpu"]):
@@ -1354,7 +1440,7 @@ class OpsTest(PallasBaseTest):
   )
   def test_debug_print_with_values(self):
     if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not supported on TPU")
+      self.skipTest("Test for TPU is covered in tpu_pallas_test.py")
 
     # TODO: this test flakes on gpu
     if jtu.test_device_matches(["gpu"]):
@@ -2164,8 +2250,6 @@ class OpsInterpretTest(OpsTest):
   INTERPRET = True
 
   def test_debug_print(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/364547005): pure callbacks not supported by Shardy yet")
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),

@@ -1019,11 +1019,28 @@ _CPU_FFI_KERNELS = [
     "lapack_sgehrd_ffi", "lapack_dgehrd_ffi", "lapack_cgehrd_ffi", "lapack_zgehrd_ffi",
     "lapack_sgees_ffi", "lapack_dgees_ffi", "lapack_cgees_ffi", "lapack_zgees_ffi",
     "lapack_strsm_ffi", "lapack_dtrsm_ffi", "lapack_ctrsm_ffi", "lapack_ztrsm_ffi",
+    "lapack_sgtsv_ffi", "lapack_dgtsv_ffi", "lapack_cgtsv_ffi", "lapack_zgtsv_ffi",
+]
+_GPU_FFI_KERNELS = [
+    # lu on GPU
+    "cu_lu_pivots_to_permutation", "cusolver_getrf_ffi",
+    "hip_lu_pivots_to_permutation", "hipsolver_getrf_ffi",
+    # qr on GPU
+    "cusolver_geqrf_ffi", "cusolver_orgqr_ffi",
+    "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi",
+    # eigh on GPU
+    "cusolver_syevd_ffi", "hipsolver_syevd_ffi",
+    # svd on GPU
+    "cusolver_gesvd_ffi", "cusolver_gesvdj_ffi",
+    "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
+    # tridiagonal on GPU
+    "cusolver_sytrd_ffi",
 ]
 # These are the JAX custom call target names that are guaranteed to be stable.
 # Their backwards compatibility is tested by back_compat_test.py.
 _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     *_CPU_FFI_KERNELS,
+    *_GPU_FFI_KERNELS,
     "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
     "cu_threefry2x32", "cu_threefry2x32_ffi",
     # Triton IR does not guarantee stability.
@@ -1046,18 +1063,6 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "lapack_ssytrd", "lapack_dsytrd", "lapack_chetrd", "lapack_zhetrd",
     # hessenberg on CPU
     "lapack_sgehrd", "lapack_dgehrd", "lapack_cgehrd", "lapack_zgehrd",
-    # lu on GPU
-    "cu_lu_pivots_to_permutation", "cusolver_getrf_ffi",
-    "hip_lu_pivots_to_permutation", "hipsolver_getrf_ffi",
-    "cu_lu_pivots_to_permutation", "cusolver_getrf_ffi",
-    # qr on GPU
-    "cusolver_geqrf_ffi", "cusolver_orgqr_ffi",
-    "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi",
-    # eigh on GPU
-    "cusolver_syevd_ffi", "hipsolver_syevd_ffi",
-    # svd on GPU
-    "cusolver_gesvd_ffi", "cusolver_gesvdj_ffi",
-    "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
     # lu on TPU
     "LuDecomposition",
     # ApproxTopK on TPU

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import dataclasses
 import enum
 import math
 from typing import Any, Literal
@@ -108,10 +109,11 @@ def _copy_smem_to_gmem_lowering(
 def _extract_gmem_copy_params(transforms):
   if not transforms:
     return {}
-  if len(transforms) > 1:
-    raise NotImplementedError("Only one level of indexing on GMEM refs supported")
-  if not isinstance(indexer := transforms[0], indexing.NDIndexer):
-    raise NotImplementedError("Only indexing on GMEM refs supported")
+  for transform in transforms:
+    if not isinstance(transform, indexing.NDIndexer):
+      raise NotImplementedError(
+          "Non-indexing transforms on GMEM refs are not implemented.")
+  indexer = lowering.merge_indexers(transforms)
   return dict(
       gmem_slice=lowering._ndindexer_indices(indexer),
   )
@@ -632,10 +634,33 @@ def _wgmma_accumulator_deref_lowering(ctx: lowering.LoweringRuleContext, acc):
 
 class Layout(enum.Enum):
   #: [m, n] matrix, where m % 64 == 0 == n % 8.
-  WGMMA = mgpu.WGMMA_LAYOUT
+  WGMMA = mgpu.WGMMAFragLayout
   #: [m] matrix, where m % 64 == 0.
-  WGMMA_ROW = mgpu.WGMMA_ROW_LAYOUT
+  WGMMA_ROW = mgpu.WGMMARowFragLayout
 
+  WG_SPLAT = mgpu.WGSplatFragLayout
+  WG_STRIDED = mgpu.WGStridedFragLayout
+
+  def __call__(self, *args, **kwargs) -> ParameterizedLayout:
+    return ParameterizedLayout(self, args, kwargs)
+
+
+@dataclasses.dataclass(frozen=True)
+class ParameterizedLayout:
+  layout_cls: Layout
+  args: Sequence[Any]
+  kwargs: Any
+
+
+def _get_mgpu_layout(layout: Layout | ParameterizedLayout
+                     ) -> mgpu.FragmentedLayout:
+  if isinstance(layout, Layout):
+    return layout.value()
+  elif isinstance(layout, ParameterizedLayout):
+    return layout.layout_cls.value(*layout.args,
+                                   **layout.kwargs)
+  else:
+    raise TypeError(f"Unsupported layout: {layout}")
 
 layout_cast_p = jax_core.Primitive("layout_cast")
 
@@ -649,10 +674,10 @@ def _layout_cast_abstract_eval(x, new_layout):
 @lowering.register_lowering_rule(layout_cast_p)
 def _layout_cast_lowering(ctx: lowering.LoweringRuleContext, x, *, new_layout):
   del ctx  # Unused.
-  return x.to_layout(new_layout.value)
+  return x.to_layout(_get_mgpu_layout(new_layout))
 
 
-def layout_cast(x: Any, new_layout: Layout):
+def layout_cast(x: Any, new_layout: Layout | ParameterizedLayout):
   """Casts the layout of the given array."""
   return layout_cast_p.bind(x, new_layout=new_layout)
 
@@ -731,7 +756,7 @@ def _broadcasted_iota_lowering(
   return mgpu.FragmentedArray.splat(
       llvm_dialect.mlir_undef(mlir_dtype),
       shape,
-      layout.value,
+      _get_mgpu_layout(layout),
       is_signed=is_signed,
   ).foreach(
       lambda _, idx: cast(idx[dimension]),

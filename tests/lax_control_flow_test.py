@@ -29,7 +29,6 @@ import numpy as np
 import jax
 from jax._src import core
 from jax import dtypes
-from jax.errors import UnexpectedTracerError
 from jax import lax
 from jax import random
 from jax._src import test_util as jtu
@@ -589,6 +588,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     init = jnp.float32(10)
     self.assertEqual(fori_loop_with_static_upper_and_lower(init), init)
 
+
   def testForiLoopBatched(self):
     def body_fun(i, loop_carry):
       x, y = loop_carry
@@ -995,12 +995,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         re.escape("Pred must be a scalar, got (1.0, 1.0) of type <class 'tuple'>")):
       lax.cond((1., 1.), lambda top: 2., lambda fop: 3., 1.)
     with self.assertRaisesRegex(TypeError,
-        re.escape("true_fun and false_fun output must have same type structure, "
-                  f"got {jax.tree.structure(2.)} and {jax.tree.structure((3., 3.))}.")):
-      lax.cond(True, lambda top: 2., lambda fop: (3., 3.), 1.)
+        re.compile("true_fun output must have same type structure "
+                   "as false_fun output, but there are differences:.*"
+                   r"at output\['a'\], true_fun output has pytree leaf", re.DOTALL)):
+      lax.cond(True, lambda top: dict(a=2.), lambda fop: dict(a=(3., 3.)), 1.)
     with self.assertRaisesRegex(
         TypeError,
-        "true_fun and false_fun output must have identical types, got\n"
+        "true_fun output and false_fun output must have identical types, got\n"
         r"DIFFERENT ShapedArray\(float32\[1\]\) vs. "
         r"ShapedArray\(float32\[\].*\)."):
       lax.cond(True,
@@ -1023,16 +1024,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         re.escape("Empty branch sequence")):
       lax.switch(0, [], 1.)
     with self.assertRaisesRegex(TypeError,
-        re.escape("branch 0 and 1 outputs must have same type structure, "
-                  f"got {jax.tree.structure(2.)} and {jax.tree.structure((3., 3.))}.")):
-      lax.switch(1, [lambda _: 2., lambda _: (3., 3.)], 1.)
+        re.compile("branch 0 output must have same type structure "
+                   "as branch 1 output, but there are differences:.*"
+                   r"at output\['a'\], branch 0 output has pytree leaf", re.DOTALL)):
+      lax.switch(1, [lambda _: dict(a=2.), lambda _: dict(a=(3., 3.))], 1.)
     with self.assertRaisesRegex(
         TypeError,
-        "branch 0 and 1 outputs must have identical types, got\n"
-        r"DIFFERENT ShapedArray\(float32\[1\]\) "
-        r"vs. ShapedArray\(float32\[\].*\)."):
-      lax.switch(1, [lambda _: jnp.array([1.], jnp.float32),
-                     lambda _: jnp.float32(1.)],
+        "branch 0 output and branch 1 output must have identical types, got\n"
+        r"{'a': 'DIFFERENT ShapedArray\(float32\[1\]\) "
+        r"vs. ShapedArray\(float32\[\].*\)'}."):
+      lax.switch(1, [lambda _: dict(a=jnp.array([1.], jnp.float32)),
+                     lambda _: dict(a=jnp.float32(1.))],
                  1.)
 
   def testCondOneBranchConstant(self):
@@ -2136,6 +2138,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = jnp.array([])
     self.assertAllClose(ans, expected)
 
+  @jtu.thread_unsafe_test()  # Cache eviction means we might retrace
   def testCaching(self):
     def cond(x):
       assert python_should_be_executing
@@ -2732,22 +2735,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     self.assertAllClose(deriv(my_pow)(3.0, 1), 1.0, check_dtypes=False)
 
-  def test_unexpected_tracer_error(self):
-    with self.assertRaisesRegex(UnexpectedTracerError, "for while_loop"):
-      lst = []
-      def side_effecting_body(val):
-        lst.append(val)
-        return val+1
-      lax.while_loop(lambda x: x < 2, side_effecting_body, 1)
-      lst[0] += 1
-
-    with self.assertRaisesRegex(UnexpectedTracerError, "for scan"):
-      lst = []
-      def side_effecting_scan(carry, val):
-        lst.append(val)
-        return carry, val+1
-      lax.scan(side_effecting_scan, None, jnp.ones((2, 2)))
-      lst[0] += 1
 
   def test_while_loop_fixed_point_with_batched_pred_and_consts(self):
     def f(i, x):
@@ -3031,6 +3018,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(y, x)
     self.assertIsInstance(y, jax.Array)
 
+  @jtu.thread_unsafe_test()  # live_arrays count isn't thread-safe
   def test_cond_memory_leak(self):
     # https://github.com/jax-ml/jax/issues/12719
 

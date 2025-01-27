@@ -35,7 +35,6 @@ import threading
 import time
 from typing import Any, TextIO
 import unittest
-import warnings
 import zlib
 
 from absl.testing import absltest
@@ -45,10 +44,12 @@ from jax import lax
 from jax._src import api
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes as _dtypes
 from jax._src import lib as _jaxlib
 from jax._src import monitoring
+from jax._src import test_warning_util
 from jax._src import xla_bridge
 from jax._src import util
 from jax._src import mesh as mesh_lib
@@ -118,7 +119,7 @@ HYPOTHESIS_PROFILE = config.string_flag(
 )
 
 TEST_NUM_THREADS = config.int_flag(
-    'jax_test_num_threads', 0,
+    'jax_test_num_threads', int(os.getenv('JAX_TEST_NUM_THREADS', '0')),
     help='Number of threads to use for running tests. 0 means run everything '
     'in the main thread. Using > 1 thread is experimental.'
 )
@@ -1013,16 +1014,27 @@ if hasattr(util, 'Mutex'):
   _test_rwlock = util.Mutex()
 
   def _run_one_test(test: unittest.TestCase, result: ThreadSafeTestResult):
-    _test_rwlock.reader_lock()
-    try:
-      test(result)  # type: ignore
-    finally:
-      _test_rwlock.reader_unlock()
+    if getattr(test.__class__, "thread_hostile", False):
+      _test_rwlock.writer_lock()
+      try:
+        test(result)  # type: ignore
+      finally:
+        _test_rwlock.writer_unlock()
+    else:
+      _test_rwlock.reader_lock()
+      try:
+        test(result)  # type: ignore
+      finally:
+        _test_rwlock.reader_unlock()
 
 
   @contextmanager
-  def thread_hostile_test():
-    "Decorator for tests that are not thread-safe."
+  def thread_unsafe_test():
+    """Decorator for tests that are not thread-safe.
+
+    Note: this decorator (naturally) only applies to what it wraps, not to, say,
+    code in separate setUp() or tearDown() methods.
+    """
     if TEST_NUM_THREADS.value <= 0:
       yield
       return
@@ -1048,8 +1060,18 @@ else:
 
 
   @contextmanager
-  def thread_hostile_test():
+  def thread_unsafe_test():
     yield  # No reader-writer lock, so we get no parallelism.
+
+
+def thread_unsafe_test_class():
+  "Decorator that marks a TestCase class as thread-hostile."
+  def f(klass):
+    assert issubclass(klass, unittest.TestCase), type(klass)
+    klass.thread_hostile = True
+    return klass
+  return f
+
 
 class ThreadSafeTestResult:
   """
@@ -1074,9 +1096,10 @@ class ThreadSafeTestResult:
   def stopTest(self, test: unittest.TestCase):
     stop_time = time.time()
     with self.lock:
-      # We assume test_result is an ABSL _TextAndXMLTestResult, so we can
-      # override how it gets the time.
-      time_getter = self.test_result.time_getter
+      # If test_result is an ABSL _TextAndXMLTestResult we override how it gets
+      # the time. This affects the timing that shows up in the XML output
+      # consumed by CI.
+      time_getter = getattr(self.test_result, "time_getter", None)
       try:
         self.test_result.time_getter = lambda: self.start_time
         self.test_result.startTest(test)
@@ -1085,7 +1108,8 @@ class ThreadSafeTestResult:
         self.test_result.time_getter = lambda: stop_time
         self.test_result.stopTest(test)
       finally:
-        self.test_result.time_getter = time_getter
+        if time_getter is not None:
+          self.test_result.time_getter = time_getter
 
   def addSuccess(self, test: unittest.TestCase):
     self.actions.append(lambda: self.test_result.addSuccess(test))
@@ -1119,6 +1143,8 @@ class JaxTestSuite(unittest.TestSuite):
   def run(self, result: unittest.TestResult, debug: bool = False) -> unittest.TestResult:
     if TEST_NUM_THREADS.value <= 0:
       return super().run(result)
+
+    test_warning_util.install_threadsafe_warning_handlers()
 
     executor = ThreadPoolExecutor(TEST_NUM_THREADS.value)
     lock = threading.Lock()
@@ -1285,6 +1311,16 @@ class JaxTestCase(parameterized.TestCase):
   def rng(self):
     return self._rng
 
+  def assertDeprecationWarnsOrRaises(self, deprecation_id: str, message: str):
+    """Assert warning or error, depending on deprecation state.
+
+    For use with functions that call :func:`jax._src.deprecations.warn`.
+    """
+    if deprecations.is_accelerated(deprecation_id):
+      return self.assertRaisesRegex(ValueError, message)
+    else:
+      return self.assertWarnsRegex(DeprecationWarning, message)
+
   def assertArraysEqual(self, x, y, *, check_dtypes=True, err_msg='',
                         allow_object_dtype=False, verbose=True):
     """Assert that x and y arrays are exactly equal."""
@@ -1368,11 +1404,44 @@ class JaxTestCase(parameterized.TestCase):
     self.assertMultiLineEqual(expected_clean, what_clean,
                               msg=f"Found\n{what}\nExpecting\n{expected}")
 
+
   @contextmanager
   def assertNoWarnings(self):
-    with warnings.catch_warnings():
-      warnings.simplefilter("error")
+    with test_warning_util.raise_on_warnings():
       yield
+
+  # We replace assertWarns and assertWarnsRegex with functions that use the
+  # thread-safe warning utilities. Unlike the unittest versions these only
+  # function as context managers.
+  @contextmanager
+  def assertWarns(self, warning, *, msg=None):
+    with test_warning_util.record_warnings() as ws:
+      yield
+    for w in ws:
+      if not isinstance(w.message, warning):
+        continue
+      if msg is not None and msg not in str(w.message):
+        continue
+      return
+    self.fail(f"Expected warning not found {warning}:'{msg}', got "
+              f"{ws}")
+
+  @contextmanager
+  def assertWarnsRegex(self, warning, regex):
+    if regex is not None:
+        regex = re.compile(regex)
+
+    with test_warning_util.record_warnings() as ws:
+      yield
+    for w in ws:
+      if not isinstance(w.message, warning):
+        continue
+      if regex is not None and not regex.search(str(w.message)):
+        continue
+      return
+    self.fail(f"Expected warning not found {warning}:'{regex}', got "
+              f"{ws}")
+
 
   def _CompileAndCheck(self, fun, args_maker, *, check_dtypes=True, tol=None,
                        rtol=None, atol=None, check_cache_misses=True):
@@ -1449,11 +1518,7 @@ class BufferDonationTestCase(JaxTestCase):
     self.assertFalse(x.is_deleted())
 
 
-@contextmanager
-def ignore_warning(*, message='', category=Warning, **kw):
-  with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", message=message, category=category, **kw)
-    yield
+ignore_warning = test_warning_util.ignore_warning
 
 # -------------------- Mesh parametrization helpers --------------------
 
@@ -1484,12 +1549,12 @@ def with_and_without_mesh(f):
     ))(with_mesh_from_kwargs(f))
 
 def with_user_mesh(sizes, names, axis_types=None):
-  axis_types = ({mesh_lib.AxisTypes.User: names}
+  axis_types = ({mesh_lib.AxisTypes.Explicit: names}
                 if axis_types is None else axis_types)
   def decorator(fn):
     def mesh_fn(*args, **kwargs):
       mesh = create_mesh(sizes, names, axis_types=axis_types)
-      with mesh_lib.set_mesh(mesh):
+      with mesh_lib.use_mesh(mesh):
         return fn(*args, **kwargs, mesh=mesh)
     return mesh_fn
   return decorator
@@ -1504,7 +1569,15 @@ def create_mesh(mesh_shape, axis_names, iota_order=False, axis_types=None):
     mesh_devices = np.array(devices[:size]).reshape(mesh_shape)
     return jax.sharding.Mesh(mesh_devices, axis_names, axis_types=axis_types)
   else:
-    return jax.make_mesh(mesh_shape, axis_names, axis_types=axis_types)
+    if axis_types is None:
+      explicit_axes = auto_axes = manual_axes = None
+    else:
+      explicit_axes = axis_types.get(mesh_lib.AxisTypes.Explicit, None)
+      auto_axes = axis_types.get(mesh_lib.AxisTypes.Auto, None)
+      manual_axes = axis_types.get(mesh_lib.AxisTypes.Manual, None)
+    return jax.make_mesh(mesh_shape, axis_names, explicit_axes=explicit_axes,
+                         auto_axes=auto_axes,
+                         manual_axes=manual_axes)
 
 class _cached_property:
   null = object()
@@ -1543,6 +1616,8 @@ class _LazyDtypes:
       float_dtypes += [_dtypes.float8_e3m4]
     if _dtypes.float8_e4m3 is not None:
       float_dtypes += [_dtypes.float8_e4m3]
+    if _dtypes.float8_e8m0fnu is not None:
+      float_dtypes += [_dtypes.float8_e8m0fnu]
     return self.supported(float_dtypes)
 
   @_cached_property
@@ -1768,9 +1843,8 @@ def complex_plane_sample(dtype, size_re=10, size_im=None):
     logtiny = finfo.minexp / prec_dps_ratio
     axis_points = np.zeros(3 + 2 * size, dtype=finfo.dtype)
 
-    with warnings.catch_warnings():
+    with ignore_warning(category=RuntimeWarning):
       # Silence RuntimeWarning: overflow encountered in cast
-      warnings.simplefilter("ignore")
       half_neg_line = -np.logspace(logmin, logtiny, size, dtype=finfo.dtype)
       half_line = -half_neg_line[::-1]
       axis_points[-size - 1:-1] = half_line

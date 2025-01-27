@@ -50,7 +50,8 @@ from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
 from jax._src.sharding import Sharding as JSharding
 from jax._src.sharding_impls import (AUTO, NamedSharding,
-                                     modify_sdy_sharding_wrt_axis_types)
+                                     modify_sdy_sharding_wrt_axis_types,
+                                     SdyArraySharding, SdyArrayShardingList)
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
 from jax._src.lib.mlir import dialects, ir, passmanager
@@ -192,6 +193,8 @@ if dtypes.float8_e3m4 is not None:
   _dtype_to_ir_type[np.dtype(dtypes.float8_e3m4)] = ir.Float8E3M4Type.get
 if dtypes.float8_e4m3 is not None:
   _dtype_to_ir_type[np.dtype(dtypes.float8_e4m3)] = ir.Float8E4M3Type.get
+if dtypes.float8_e8m0fnu is not None:
+  _dtype_to_ir_type[np.dtype(dtypes.float8_e8m0fnu)] = ir.Float8E8M0FNUType.get
 
 def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
   if isinstance(dtype, core.bint):
@@ -1019,7 +1022,7 @@ def add_manual_axes(axis_ctx: sharding_impls.SPMDAxisContext, sharding, ndim):
 def _to_physical_op_sharding(
     ctx: ModuleContext,
     aval: core.AbstractValue, sharding: JSharding | AUTO | None,
-) -> xc.OpSharding | sharding_impls.SdyArraySharding | None:
+) -> xc.OpSharding | SdyArraySharding | None:
   if sharding is None:
     return None
   if isinstance(sharding, AUTO):
@@ -1749,7 +1752,7 @@ def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
   assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
   if config.use_shardy_partitioner.value:
     physical_ndim = core.physical_aval(aval).ndim
-    s = sharding_impls.SdyArraySharding(
+    s = SdyArraySharding(
         mesh_shape=None,
         dimension_shardings=[
             sharding_impls.SdyDimSharding(axes=[], is_closed=i >= aval.ndim)
@@ -2295,7 +2298,7 @@ def map_compute_type(c_type):
     return 'dense'
   elif c_type == 'tpu_sparsecore':
     return 'sparse'
-  raise ValueError('Invalid compute type received. Current supported values '
+  raise ValueError(f'Invalid compute type {c_type}. Current supported values '
                    'are `device_host`, `device` and `tpu_sparsecore')
 
 def wrap_compute_type_in_place(ctx, op):
@@ -2554,7 +2557,7 @@ def _wrap_with_spmd_op(name: str,
                        ctx: LoweringRuleContext,
                        x: ir.Value,
                        aval_out: core.AbstractValue,
-                       sharding: xc.OpSharding | sharding_impls.SdyArraySharding,
+                       sharding: xc.OpSharding | SdyArraySharding,
                        unspecified_dims: set[int] | None = None,
                        has_side_effect: bool = False,
                        allow_shardy_lowering: bool = False):
@@ -2593,7 +2596,7 @@ wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
 
 def lower_sharding_under_shit(ctx, op, aval, sharding_proto=None):
   # Don't emit a wsc under full manual mode to avoid increasing HLO size.
-  if aval.sharding.mesh._are_all_axes_collective:
+  if aval.sharding.mesh._are_all_axes_manual:
     return op
   if aval.sharding.mesh._are_all_axes_auto:
     return op
@@ -2615,7 +2618,7 @@ def lower_sharding_under_shit(ctx, op, aval, sharding_proto=None):
     return wrap_with_sharding_op(ctx, op, aval, proto, unspecified_dims)
 
 
-def set_sharding(op, sharding: xc.OpSharding | sharding_impls.SdyArraySharding):
+def set_sharding(op, sharding: xc.OpSharding | SdyArraySharding | SdyArrayShardingList):
   if config.use_shardy_partitioner.value:
     op.attributes["sdy.sharding"] = get_sharding_attr(sharding)
   else:
@@ -2623,7 +2626,7 @@ def set_sharding(op, sharding: xc.OpSharding | sharding_impls.SdyArraySharding):
 
 
 def get_sharding_attr(
-    sharding: xc.OpSharding | sharding_impls.SdyArraySharding
+    sharding: xc.OpSharding | SdyArraySharding | SdyArrayShardingList
 ) -> ir.Attribute:
   if config.use_shardy_partitioner.value:
     return sharding.build()  # type: ignore
@@ -2783,9 +2786,15 @@ RECV_FROM_HOST_TYPE = 3
 def is_empty_shape(s: core.Shape) -> bool:
   return any(d == 0 for d in s)
 
-def send_to_host(channel: int, token: hlo.TokenType, operand: Any,
-                 aval: core.ShapedArray, name: str, *,
-                 sharding: xc.OpSharding | None = None) -> ir.Value:
+
+def send_to_host(
+    channel: int,
+    token: hlo.TokenType,
+    operand: Any,
+    name: str,
+    *,
+    sharding: SdyArrayShardingList | xc.OpSharding | None = None,
+) -> ir.Value:
   channel_handle = hlo.ChannelHandle.get(channel, SEND_TO_HOST_TYPE)
   send_op = hlo.SendOp([operand], token, channel_handle,
                         is_host_transfer=ir.BoolAttr.get(True))
@@ -2794,13 +2803,27 @@ def send_to_host(channel: int, token: hlo.TokenType, operand: Any,
           _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
           _xla_host_transfer_rendezvous=ir.StringAttr.get(str(name))))
   if sharding is not None:
+    if config.use_shardy_partitioner.value:
+      # `SendOp`'s return type is a StableHLO `TokenType`. However JAX passed
+      # in the maximal sharding of the array type. Since a token has no rank,
+      # we need to create an equivalent sharding with no dimensions.
+      assert isinstance(sharding, SdyArrayShardingList)
+      assert len(sharding.shardings) == 1
+      sharding = SdyArrayShardingList([
+          SdyArraySharding(
+              mesh_shape=(), dimension_shardings=[],
+              logical_device_ids=sharding.shardings[0].logical_device_ids)])
     set_sharding(send_op, sharding)
   return send_op.result
 
 
-def receive_from_host(channel: int, token: hlo.TokenType,
-                      out_aval: core.ShapedArray, name: str, *,
-                      sharding: xc.OpSharding | None = None,
+def receive_from_host(
+    channel: int,
+    token: hlo.TokenType,
+    out_aval: core.ShapedArray,
+    name: str,
+    *,
+    sharding: SdyArrayShardingList | xc.OpSharding | None = None,
 ) -> tuple[ir.Value, ir.Value]:
   channel_handle = hlo.ChannelHandle.get(channel, RECV_FROM_HOST_TYPE)
   recv_op = hlo.RecvOp([aval_to_ir_type(out_aval),
@@ -2811,6 +2834,17 @@ def receive_from_host(channel: int, token: hlo.TokenType,
           _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
           _xla_host_transfer_rendezvous=ir.StringAttr.get(str(name))))
   if sharding is not None:
+    if config.use_shardy_partitioner.value:
+      assert isinstance(sharding, SdyArrayShardingList)
+      assert len(sharding.shardings) == 1
+      # `RecvOp`'s last argument is a `TokenType`. Since Shardy requires the
+      # number of shardings to match the number of results, but JAX only sees
+      # the array result, we need to add an equivalent sharding for the token.
+      sharding = SdyArrayShardingList([
+          sharding.shardings[0],
+          SdyArraySharding(
+              mesh_shape=(), dimension_shardings=[],
+              logical_device_ids=sharding.shardings[0].logical_device_ids)])
     set_sharding(recv_op, sharding)
   # Token should be at the end of the results
   result, token = recv_op.results
@@ -2828,7 +2862,7 @@ def _emit_tpu_python_callback(
     result_avals: Sequence[core.ShapedArray],
     result_shapes: Sequence[xc.Shape],
     *,
-    sharding: xc.OpSharding | None = None
+    sharding: SdyArrayShardingList | xc.OpSharding | None = None,
 ) -> tuple[Sequence[ir.Value], Any]:
   token = token or hlo.create_token()
   _wrapped_callback = callback
@@ -2848,14 +2882,14 @@ def _emit_tpu_python_callback(
     dummy_send_val = ir_constant(np.zeros(1, np.float32))
     operand_shapes = [*operand_shapes,
                       xla.aval_to_xla_shapes(dummy_send_aval)[0]]
-    token = send_to_host(send_channel, token, dummy_send_val, dummy_send_aval,
-                         callback.__name__, sharding=sharding)
+    token = send_to_host(send_channel, token, dummy_send_val, callback.__name__,
+                         sharding=sharding)
     send_channels.append(send_channel)
   else:
-    for operand, operand_aval in zip(operands, operand_avals):
+    for operand in operands:
       channel = ctx.module_context.new_channel()
-      token = send_to_host(channel, token, operand, operand_aval,
-                           callback.__name__, sharding=sharding)
+      token = send_to_host(channel, token, operand, callback.__name__,
+                           sharding=sharding)
       send_channels.append(channel)
 
   recv_channels = []
@@ -2872,6 +2906,7 @@ def _emit_tpu_python_callback(
       recv_channels, pickle_util.dumps)
   ctx.module_context.add_host_callback(ifrt_callback)
   return outputs, token
+
 
 def _layout_to_mlir_layout(minor_to_major: Sequence[int] | None):
   if minor_to_major is None:
@@ -2896,7 +2931,7 @@ def emit_python_callback(
     result_avals: Sequence[core.ShapedArray],
     *,
     has_side_effect: bool,
-    sharding: xc.OpSharding | None = None,
+    sharding: SdyArrayShardingList | xc.OpSharding | None = None,
     operand_layouts: Sequence[Sequence[int] | None] | None = None,
     result_layouts: Sequence[Sequence[int] | None] | None = None,
 ) -> tuple[Sequence[IrValues], Any, Any]:
@@ -3023,6 +3058,7 @@ def emit_python_callback(
   if token:
     token, *results = results
   return results, token, ifrt_callback
+
 
 def build_mlir_module_helper(
     closed_jaxpr: core.ClosedJaxpr, *, name: str,

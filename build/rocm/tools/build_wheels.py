@@ -35,7 +35,7 @@ import sys
 LOG = logging.getLogger(__name__)
 
 
-GPU_DEVICE_TARGETS = "gfx900 gfx906 gfx908 gfx90a gfx940 gfx941 gfx942 gfx1030 gfx1100"
+GPU_DEVICE_TARGETS = "gfx900 gfx906 gfx908 gfx90a gfx940 gfx941 gfx942 gfx1030 gfx1100 gfx1200 gfx1201"
 
 
 def build_rocm_path(rocm_version_str):

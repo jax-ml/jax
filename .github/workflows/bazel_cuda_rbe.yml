@@ -1,4 +1,4 @@
-name: CI - Bazel GPU tests (RBE)
+name: CI - Bazel CUDA tests (RBE)
 
 on:
   workflow_dispatch:
@@ -34,13 +34,13 @@ jobs:
       JAXCI_HERMETIC_PYTHON_VERSION: "3.12"
       JAXCI_ENABLE_X64: ${{ matrix.enable-x_64 }}
 
-    name: "Bazel single accelerator GPU tests (${{ matrix.runner }}, Python 3.12, x64=${{ matrix.enable-x_64 }})"
+    name: "Bazel single accelerator CUDA tests (${{ matrix.runner }}, Python 3.12, x64=${{ matrix.enable-x_64 }})"
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@main
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Run Bazel GPU Tests with RBE
-        run: ./ci/run_bazel_test_gpu_rbe.sh
+      - name: Run Bazel CUDA Tests with RBE
+        run: ./ci/run_bazel_test_cuda_rbe.sh

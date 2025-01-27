@@ -165,6 +165,14 @@ class VectorLayoutInferer {
         if (inferTrunc(&any_op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<tpu::FPToSIOp>(any_op);
+                 op &&
+                 cast<VectorType>(op.getOperand().getType())
+                         .getElementTypeBitWidth() >
+                     cast<VectorType>(op.getType()).getElementTypeBitWidth()) {
+        if (inferTrunc(&any_op).failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<arith::SelectOp>(any_op)) {
         auto true_ty = dyn_cast<VectorType>(op.getTrueValue().getType());
         auto false_ty = dyn_cast<VectorType>(op.getFalseValue().getType());
@@ -328,7 +336,8 @@ class VectorLayoutInferer {
           return failure();
         }
       } else if (mlir::tpu::extensions::canInferVectorLayout(any_op)) {
-        if (mlir::tpu::extensions::inferVectorLayout(any_op).failed()) {
+        if (mlir::tpu::extensions::inferVectorLayout(any_op, target_shape_)
+                .failed()) {
           return failure();
         }
       } else {
@@ -1696,15 +1705,6 @@ class VectorLayoutInferer {
     auto dst_ty = cast<VectorType>(op->getResult(0).getType());
     auto some_layout = getLayout(op->getOperand(0));
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
-    if (dyn_cast<arith::TruncFOp>(op)) {
-      TPU_CHECK_OP(src_ty.getElementTypeBitWidth() == 32 &&
-                       (dst_ty.getElementTypeBitWidth() == 16 ||
-                        dst_ty.getElementTypeBitWidth() == 8),
-                   "Only 32-bit to 8-bit or 16-bit truncation supported");
-    } else {
-      TPU_CHECK_OP(src_ty.getElementTypeBitWidth() == 32,
-                   "Only 32-bit truncation supported");
-    }
     auto &layout = *some_layout;
     bool select_native = allUsersRequireNativeTiling(op->getResult(0));
     // We might want to reconsider enabling native this aggressively in cases
@@ -1722,12 +1722,13 @@ class VectorLayoutInferer {
     } else {
       return op->emitOpError("Unsupported target bitwidth for truncation");
     }
-    auto src_layout = VectorLayout(32, layout.offsets(), default_tiling_,
-                                   layout.implicit_dim());
+    auto src_layout =
+        VectorLayout(layout.bitwidth(), layout.offsets(),
+                     nativeTiling(layout.bitwidth()), layout.implicit_dim());
     auto dst_layout = VectorLayout(
         dst_ty.getElementTypeBitWidth(), layout.offsets(),
         select_native ? nativeTiling(dst_ty.getElementTypeBitWidth())
-                      : default_tiling_,
+                      : src_layout.tiling(),
         layout.implicit_dim());
     setLayout(op, src_layout, dst_layout);
     return success();

@@ -23,7 +23,7 @@ import traceback
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
-from jax._src import config
+from jax import lax
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax.experimental import pallas as pl
@@ -48,11 +48,15 @@ def _fori_loop(force_while: bool, lb, ub, body, init):
   return jax.lax.fori_loop(lb, ub, body, init)
 
 
+def _sum_same_dtype(x):
+  # TODO(slebedev): Remove this once ``FragmentedArray`` supports
+  # ``reduce_sum`` for non-32-bit types.
+  return jnp.sum(x, dtype=x.dtype)
+
+
 class PallasTest(jtu.JaxTestCase):
 
   def setUp(self):
-    if config.enable_x64.value:
-      self.skipTest("Only works on x32 at the moment")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Only works on a GPU with capability >= sm90")
 
@@ -146,7 +150,7 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
     )
     def kernel(x_ref, y_ref, o_ref):
-      idx = jnp.sum(y_ref[...])
+      idx = _sum_same_dtype(y_ref[...])
       o_ref[...] = x_ref[idx]
 
     x = jnp.arange(4 * 128).reshape(4, 128).astype(jnp.float32)
@@ -280,6 +284,38 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
 
+  @parameterized.named_parameters(
+      {"testcase_name": "1d_none",
+       "shape": (256,), "indexers": (slice(0, 128), slice(None, 32))},
+      {"testcase_name": "1d_offset",
+       "shape": (256,), "indexers": (slice(32, 96), slice(0, 32))},
+      {"testcase_name": "2d_extract",
+       "shape": (64, 64), "indexers": (4, slice(0, 64))},
+      )
+  def test_copy_smem_to_gmem_with_multiple_gmem_indexers(self, shape, indexers):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        scratch_shapes=[plgpu.SMEM(shape, jnp.float32)],
+    )
+    def kernel(x_ref, o_ref_gmem, scratch_ref):
+      scratch_ref[...] = x_ref[...] + 1
+      plgpu.commit_smem()
+      for indexer in indexers:
+        scratch_ref = scratch_ref.at[indexer]
+        o_ref_gmem = o_ref_gmem.at[indexer]
+      plgpu.copy_smem_to_gmem(scratch_ref, o_ref_gmem)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jnp.arange(np.prod(shape)).astype(jnp.float32).reshape(*shape)
+    result = kernel(x)
+    ref = x + 1.0
+    for indexer in indexers:
+      result = result[indexer]
+      ref = ref[indexer]
+    np.testing.assert_array_equal(result, ref)
+
   @parameterized.product(indexer=[..., slice(128), slice(None, 128)])
   def test_copy_gmem_to_smem(self, indexer):
     @functools.partial(
@@ -301,8 +337,44 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
 
-  def test_ref_with_multiple_indexers(self):
-    x = jax.random.uniform(jax.random.key(0), (2, 64, 64))
+  @parameterized.named_parameters(
+      {"testcase_name": "1d_none",
+       "shape": (256,), "indexers": (slice(0, 128), slice(None, 32))},
+      {"testcase_name": "1d_offset",
+       "shape": (256,), "indexers": (slice(32, 96), slice(0, 32))},
+      {"testcase_name": "2d_extract",
+       "shape": (64, 64), "indexers": (4, slice(0, 64))},
+      )
+  def test_copy_gmem_to_smem_with_multiple_gmem_indexers(self, shape, indexers):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+        in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
+        scratch_shapes=[plgpu.SMEM(shape, jnp.float32),
+                        plgpu.Barrier(num_arrivals=1),
+                        ],
+    )
+    def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
+      scratch_ref_sliced = scratch_ref
+      for indexer in indexers:
+        scratch_ref_sliced = scratch_ref_sliced.at[indexer]
+        x_ref_gmem = x_ref_gmem.at[indexer]
+      plgpu.copy_gmem_to_smem(
+          x_ref_gmem, scratch_ref_sliced, barrier_ref
+      )
+      plgpu.barrier_wait(barrier_ref)
+      o_ref[...] = scratch_ref[...] + 1
+
+    x = jnp.arange(np.prod(shape)).astype(jnp.float32).reshape(*shape)
+    result = kernel(x)
+    ref = x + 1.0
+    for indexer in indexers:
+      result = result[indexer]
+      ref = ref[indexer]
+    np.testing.assert_array_equal(result, ref)
+
+  def test_gmem_to_smem_with_multiple_smem_indexers(self):
+    x = jax.random.uniform(jax.random.key(0), (2, 64, 64), dtype=jnp.float32)
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([64, 64], jnp.float32),
@@ -320,8 +392,8 @@ class PallasCallTest(PallasTest):
       o_ref[pl.ds(32, 32), :] = x_sliced[pl.ds(32, 32), :]
     np.testing.assert_array_equal(extract_x0(x), x[0])
 
-  def test_smem_multiple_indexers_with_transforms(self):
-    x = jnp.arange(512 * 512).reshape(512, 512)
+  def test_gmem_to_smem_with_multiple_smem_indexers_and_transforms(self):
+    x = jnp.arange(512 * 512, dtype=jnp.int32).reshape(512, 512)
     @functools.partial(
         pl.pallas_call,
         grid=(4, 4),
@@ -588,9 +660,9 @@ class PallasCallTest(PallasTest):
     )
     def kernel(x_ref, o_ref):
       del o_ref
-      pl.debug_print("x.sum() = {}", x_ref[...].sum())
+      pl.debug_print("x.sum() = {}", _sum_same_dtype(x_ref[...]))
 
-    x = jnp.arange(256)
+    x = jnp.arange(256, dtype=jnp.int32)
     with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
@@ -603,9 +675,9 @@ class PallasCallTest(PallasTest):
     )
     def kernel(x_ref, o_ref):
       del o_ref
-      pl.debug_print("x.sum() = {}", x_ref[...].sum() + 1)
+      pl.debug_print("x.sum() = {}", _sum_same_dtype(x_ref[...]) + 1)
 
-    x = jnp.arange(256)
+    x = jnp.arange(256, dtype=jnp.int32)
     with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
@@ -622,7 +694,7 @@ class PallasCallTest(PallasTest):
       del o_ref
       pl.debug_print("x: {}", x_ref[...])
 
-    x = jnp.arange(math.prod(in_shape)).reshape(in_shape)
+    x = jnp.arange(math.prod(in_shape), dtype=jnp.int32).reshape(in_shape)
     with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
@@ -651,7 +723,7 @@ class PallasCallTest(PallasTest):
       self.assertEqual(tmp.shape, (8, 128))
       o_ref[...] = tmp
 
-    inp = np.ones((8, 128))
+    inp = np.ones((8, 128), jnp.float32)
     f = pl.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -727,7 +799,7 @@ class PallasCallTest(PallasTest):
         grid=2,
     )
     def kernel(o_ref):
-      o_ref[...] = jnp.full(o_ref.shape, pl.num_programs(0))
+      o_ref[...] = jnp.full(o_ref.shape, pl.num_programs(0), o_ref.dtype)
 
     np.testing.assert_array_equal(
         kernel(),
@@ -760,6 +832,7 @@ class PallasCallTest(PallasTest):
 
   @parameterized.parameters(False, True)
   def test_fori_loop_array(self, force_while):
+
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
@@ -768,7 +841,7 @@ class PallasCallTest(PallasTest):
       # Equivalent to x_ref[...] + 2 + 3.
       o_ref[...] = _fori_loop(force_while, 2, 4, lambda i, x: x + i, x_ref[...])
 
-    x = jnp.arange(256).astype(jnp.int32)
+    x = jnp.arange(256, dtype=jnp.int32)
     np.testing.assert_array_equal(kernel(x), x + 2 + 3)
 
   @parameterized.parameters(False, True)
@@ -781,10 +854,11 @@ class PallasCallTest(PallasTest):
     def kernel(o_ref):
       # Equivalent to 2 + 3.
       o_ref[...] = jax.lax.broadcast(
-          _fori_loop(force_while, 2, 4, lambda i, x: x + i, 0), o_ref.shape
+          _fori_loop(force_while, 2, 4, lambda i, x: x + i, jnp.int32(0)),
+          o_ref.shape,
       )
 
-    np.testing.assert_array_equal(kernel(), jnp.full([256], 5, dtype=jnp.int32))
+    np.testing.assert_array_equal(kernel(), jnp.full([256], 5, jnp.int32))
 
   def test_fori_loop_dynamic_bounds(self):
 
@@ -817,11 +891,12 @@ class PallasCallTest(PallasTest):
 
       # Equivalent to 3 * (0 + 1).
       o_ref[...] = jax.lax.broadcast(
-          sum(_fori_loop(force_while, 2, 4, body, (0, 0, 0))), o_ref.shape
+          sum(_fori_loop(force_while, 2, 4, body, (jnp.int32(0),) * 3)),
+          o_ref.shape,
       )
 
     np.testing.assert_array_equal(
-        kernel(), jnp.full([256], 3 * (0 + 1), dtype=jnp.int32)
+        kernel(), jnp.full([256], 3 * (0 + 1), jnp.int32)
     )
 
   @parameterized.parameters(False, True)
@@ -850,7 +925,7 @@ class PallasCallTest(PallasTest):
 
       def cond(acc):
         _, last_o = acc
-        return last_o.sum() < 128*10
+        return _sum_same_dtype(last_o) < 128*10
 
       def body(acc):
         i, _ = acc
@@ -860,7 +935,7 @@ class PallasCallTest(PallasTest):
       _ = jax.lax.while_loop(cond, body, (0, o_ref[...]))
 
     np.testing.assert_array_equal(
-        kernel(jnp.ones([128, 128], jnp.int32)), jnp.full([128], 10)
+        kernel(jnp.ones([128, 128], jnp.int32)), jnp.full([128], 10, jnp.int32)
     )
 
   def test_while_loop_layout_mismatch(self):
@@ -869,14 +944,14 @@ class PallasCallTest(PallasTest):
     )
     def kernel(o_ref):
       def cond(acc):
-        return acc.sum() < 128
+        return _sum_same_dtype(acc) < 128
 
       def body(acc):
         del acc  # Unused.
 
         # We deliberately do a cast here to trigger a layout mismatch.
         return plgpu.layout_cast(
-            jnp.broadcast_to(0, o_ref.shape), plgpu.Layout.WGMMA_ROW
+            jnp.zeros(o_ref.shape, o_ref.dtype), plgpu.Layout.WGMMA_ROW
         )
 
       _ = jax.lax.while_loop(cond, body, o_ref[...])
@@ -890,7 +965,7 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
     )
     def kernel(x_ref, o_ref):
-      acc = x_ref[...].sum()
+      acc = _sum_same_dtype(x_ref[...])
       jax.lax.cond(
           acc % 2 == 0,
           lambda: pl.debug_print("acc * 2: {}", acc * 2),
@@ -898,7 +973,7 @@ class PallasCallTest(PallasTest):
       )
       o_ref[...] = jnp.broadcast_to(acc, o_ref.shape)
 
-    x = jnp.arange(256)
+    x = jnp.arange(256, dtype=jnp.int32)
     with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
@@ -910,7 +985,7 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
     )
     def kernel(x_ref, o_ref):
-      acc = x_ref[...].sum()
+      acc = _sum_same_dtype(x_ref[...])
       acc2, acc = jax.lax.cond(
           acc % 2 == 0,
           lambda: (acc * 2, acc),
@@ -918,7 +993,7 @@ class PallasCallTest(PallasTest):
       )
       o_ref[...] = jnp.broadcast_to(acc + acc2, o_ref.shape)
 
-    x = jnp.arange(256)
+    x = jnp.arange(256, dtype=jnp.int32)
     np.testing.assert_array_equal(kernel(x), jnp.broadcast_to(jnp.sum(x) * 3, [256]))
 
   @parameterized.parameters(jnp.float16, jnp.float32)
@@ -1208,9 +1283,9 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
     )
     def kernel(o_ref):
-      o_ref[...] = plgpu.layout_cast(jnp.full(shape, 42.0), plgpu.Layout.WGMMA)
+      o_ref[...] = plgpu.layout_cast(jnp.full(shape, 42.0, jnp.float32), plgpu.Layout.WGMMA)
 
-    x = jnp.full(shape, 42.0)
+    x = jnp.full(shape, 42.0, jnp.float32)
     np.testing.assert_array_equal(kernel(), x)
 
   def test_profiler(self):
@@ -1494,18 +1569,23 @@ class PipelineTest(PallasTest):
 
 class WarpSpecializedPipelineTest(PallasTest):
 
-  def test_pipelined_copy(self, m=512, n=512):
+  @parameterized.product(m=[512], n=[512],
+                         manual_consumed_barriers=[False, True])
+  def test_pipelined_copy(self, m, n, manual_consumed_barriers):
     x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float16)
     o = jnp.zeros((m, n), dtype=jnp.float16)
     blk_m = blk_n = 64
     o_last_block = jnp.zeros((blk_m, blk_n), dtype=jnp.float16)
 
-    def copy_kernel(x_smem, o_smem, o_last_block_smem):
+    def copy_kernel(x_smem, o_smem, o_last_block_smem, *consumed_barriers):
       # TODO(justinfu): Have each wg compute a separate slice
       # after multiple-indexers are supported.
       # This is currently a race, but the values written are the same.
       o_smem[...] = x_smem[...]
       o_last_block_smem[...] = x_smem[...]
+      if manual_consumed_barriers:
+        [x_barrier] = consumed_barriers
+        plgpu.barrier_arrive(x_barrier)
     block_spec = plgpu.GPUBlockSpec(
                 block_shape=(blk_m, blk_n),
                 index_map=lambda i, j: (i, j),
@@ -1518,6 +1598,7 @@ class WarpSpecializedPipelineTest(PallasTest):
         max_concurrent_steps=2,
         num_compute_wgs=2,
         wg_axis="wg",
+        manual_consumed_barriers=manual_consumed_barriers,
         in_specs=[block_spec],
         out_specs=[block_spec,
                    # Create an index-invariant output.
@@ -1591,6 +1672,74 @@ class WarpSpecializedPipelineTest(PallasTest):
     out = run_function(x, y, o)
     reference = x + y
     np.testing.assert_allclose(out, reference, atol=1e-4)
+
+  def test_carry_accumulate(self, m=256, n=256, num_compute_wgs=2):
+    blk_m = blk_n = 64
+    x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float32)
+    acc_init = jnp.zeros((blk_m, blk_n), dtype=jnp.float32)
+
+    def _scoped(acc_smem, x_gmem, acc_gmem):
+      def _compute_thread():
+        # Cast the init value to the same layout as x_smem, so the pipeline loop
+        # carry has a constant signature.
+        o_acc = plgpu.layout_cast(
+          jnp.full((blk_m, blk_n,), 0, dtype=jnp.float32),
+          plgpu.Layout.WG_STRIDED((blk_m, blk_n), vec_size=2))
+        carry_init = (o_acc,)
+        # Pass control to the pipeline emitter and return the final carry.
+        final_carry = (yield carry_init)
+        o_final, = final_carry
+        # Note that both compute WGs are doing identical work so the potential
+        # race condition on the store here won't affect the result.
+        acc_smem[...] = o_final
+        plgpu.commit_smem()
+        plgpu.copy_smem_to_gmem(acc_smem, acc_gmem)
+        plgpu.wait_smem_to_gmem(0)
+
+      def tiled_acc_kernel(x_smem, carry):
+        o_carry, = carry
+        new_carry = x_smem[...] + o_carry
+        return (new_carry,)
+
+      pipeline = mgpu_pipeline.emit_pipeline_warp_specialized(
+          tiled_acc_kernel,
+          grid=(m // blk_m, n // blk_n),
+          max_concurrent_steps=2,
+          num_compute_wgs=num_compute_wgs,
+          memory_registers=40,
+          wg_axis="wg",
+          carry_coroutine=_compute_thread,
+          in_specs=[
+              plgpu.GPUBlockSpec(
+                  block_shape=(blk_m, blk_n),
+                  index_map=lambda i, j: (i, j),
+                  transforms=[]),
+          ],
+          out_specs=[],
+      )
+      pipeline(x_gmem)
+
+    mesh = plgpu.GPUMesh(
+        grid=(1,),
+        num_threads=num_compute_wgs + 1,
+        axis_names=("_", "wg",),
+    )
+    def run(refs):
+      x_ref, acc_ref = refs
+      @pl.core_map(mesh)
+      def _kernel_entry():
+        pl.run_scoped(
+            functools.partial(_scoped, x_gmem=x_ref, acc_gmem=acc_ref),
+            plgpu.SMEM((blk_m, blk_n), jnp.float32)
+        )
+    @jax.jit
+    def run_function(x, acc):
+      _, out_acc = pl.run_state(run)((x, acc))
+      return out_acc
+    out_acc = run_function(x, acc_init)
+    ref = jnp.sum(jnp.stack(np.split(x, m // blk_m, axis=0)), axis=0)
+    ref = jnp.sum(jnp.stack(np.split(ref, n // blk_n, axis=1)), axis=0)
+    np.testing.assert_allclose(out_acc, ref, atol=1e-4)
 
 
 class CoreMapTest(PallasTest):
@@ -1688,6 +1837,120 @@ class CoreMapTest(PallasTest):
       y_init = jnp.zeros((2, 128), np.int32)
       return inner(y_init)
     np.testing.assert_array_equal(f(), np.repeat([0, 1], 128).reshape(2, 128))
+
+
+class ExamplesTest(PallasTest):
+
+  # Basic
+  def test_stage0(self):
+    def body(l_ref, r_ref, o_ref):
+      o_ref[...] = l_ref[...] + r_ref[...]
+
+    x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
+    out = plgpu.kernel(body, out_shape=x)(x, x)
+    np.testing.assert_allclose(out, x + x)
+
+  # Multi-block kernels
+  def test_stage1(self):
+    row_block = 64
+    def body(l_ref, r_ref, o_ref):
+      my_slice = pl.ds(lax.axis_index("rows") * row_block, row_block)
+      o_ref[my_slice] = l_ref[my_slice] + r_ref[my_slice]
+
+    x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
+    out = plgpu.kernel(body, out_shape=x, grid=(2,), axis_names=("rows",))(x, x)
+    np.testing.assert_allclose(out, x + x)
+
+  # Async copies
+  def test_stage3(self):
+    row_block, col_block = 64, 128
+    def body(l_ref, r_ref, o_ref):
+      my_slice = pl.ds(lax.axis_index("rows") * row_block, row_block)
+      def scoped(l_smem, r_smem, o_smem, barrier):
+        plgpu.copy_gmem_to_smem(l_ref.at[my_slice], l_smem, barrier)
+        plgpu.copy_gmem_to_smem(r_ref.at[my_slice], r_smem, barrier)
+        plgpu.barrier_wait(barrier)
+        o_smem[...] = l_smem[...] + r_smem[...]
+        plgpu.commit_smem()
+        plgpu.copy_smem_to_gmem(o_smem, o_ref.at[my_slice])
+        plgpu.wait_smem_to_gmem(0)
+      pl.run_scoped(
+          scoped,
+          *([plgpu.SMEM((row_block, col_block), jnp.float16)] * 3),
+          plgpu.Barrier(num_arrivals=2),
+      )
+
+    x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
+    out = plgpu.kernel(body, out_shape=x, grid=(2,), axis_names=("rows",))(x, x)
+    np.testing.assert_allclose(out, x + x)
+
+  # Pipelining
+  def test_stage4(self):
+    row_block, col_block = 64, 32
+    def body(l_ref, r_ref, o_ref):
+      def compute(l_smem, r_smem, o_smem):
+        o_smem[...] = l_smem[...] + r_smem[...]
+      r = lax.axis_index("rows")
+      block = pl.BlockSpec((row_block, col_block), lambda c: (r, c))
+      plgpu.emit_pipeline(
+          compute,
+          grid=(l_ref.shape[1] // col_block,),
+          in_specs=[block] * 2,
+          out_specs=[block],
+      )(l_ref, r_ref, o_ref)
+
+    x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
+    out = plgpu.kernel(body, out_shape=x, grid=(2,), axis_names=("rows",))(x, x)
+    np.testing.assert_allclose(out, x + x)
+
+  # Transforms
+  def test_stage5(self):
+    row_block, col_block = 64, 32
+    def body(l_ref, r_ref, o_ref):
+      def compute(l_smem, r_smem, o_smem):
+        o_smem[...] = l_smem[...] + r_smem[...]
+      r = lax.axis_index("rows")
+      block = plgpu.GPUBlockSpec(
+          (row_block, col_block), lambda c: (r, c),
+          transforms=(plgpu.TilingTransform((64, 32)), plgpu.SwizzleTransform(64)),
+      )
+      plgpu.emit_pipeline(
+          compute,
+          grid=(l_ref.shape[1] // col_block,),
+          in_specs=[block] * 2,
+          out_specs=[block],
+      )(l_ref, r_ref, o_ref)
+
+    x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
+    out = plgpu.kernel(body, out_shape=x, grid=(2,), axis_names=("rows",))(x, x)
+    np.testing.assert_allclose(out, x + x)
+
+  # WGMMA
+  def test_stage6(self):
+    m_block = n_block = 64
+    k_block = 32
+    def body(l_ref, r_ref, o_ref):
+      def compute(l_smem, r_smem, o_smem):
+        def do_wgmma(acc_ref):
+          plgpu.wgmma(acc_ref, l_smem, r_smem)
+          return acc_ref[...]
+        o_smem[...] += pl.run_scoped(do_wgmma, plgpu.ACC((m_block, n_block), jnp.float16))
+      m, n = lax.axis_index("m"), lax.axis_index("n")
+      lo_transforms = (plgpu.TilingTransform((64, 32)), plgpu.SwizzleTransform(64))
+      r_transforms = (plgpu.TilingTransform((32, 32)), plgpu.SwizzleTransform(64))
+      plgpu.emit_pipeline(
+          compute,
+          grid=(l_ref.shape[1] // k_block,),
+          in_specs=[plgpu.GPUBlockSpec((m_block, k_block), lambda k: (m, k), transforms=lo_transforms),
+                    plgpu.GPUBlockSpec((k_block, n_block), lambda k: (k, n), transforms=r_transforms)],
+          out_specs=[plgpu.GPUBlockSpec((m_block, n_block), lambda k: (m, n), transforms=lo_transforms)],
+      )(l_ref, r_ref, o_ref)
+
+    x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
+    out = plgpu.kernel(body, out_shape=x, grid=(2, 2), axis_names=("m", "n"))(x, x)
+    np.testing.assert_allclose(out, x @ x)
+
+  # TODO(apaszke): Clusters and multicast
 
 
 if __name__ == "__main__":

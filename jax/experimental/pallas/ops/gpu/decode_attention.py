@@ -211,6 +211,9 @@ def decode_attn_unbatched(
 
   # final round of flash
   m_next = m.max(axis=0)
+  # TODO(b/389925439): This barrier is necessary to prevent NaNs/invalid
+  # values appearing after JIT compilation.
+  m_next = lax.optimization_barrier(m_next)
   correction = jnp.exp(m - m_next[None])
   o = o * correction[:, :, None].astype(o.dtype)
   l_next = (l * correction).sum(axis=0)

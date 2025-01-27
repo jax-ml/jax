@@ -42,7 +42,6 @@ from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_structure, tree_transpose,
     tree_leaves, Partial, PyTreeDef, all_leaves, keystr, broadcast_prefix,
     prefix_errors, generate_key_paths, tree_flatten_with_path)
-from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -61,8 +60,8 @@ from jax._src.api_util import (
     flatten_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
     flatten_axes, donation_vector,
     rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
-    apply_flat_fun_nokwargs, check_callable, debug_info,
-    result_paths, flat_out_axes, debug_info_final, fun_sourceinfo)
+    apply_flat_fun_nokwargs, check_callable, tracing_debug_info,
+    result_paths, flat_out_axes, debug_info_final)
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
@@ -453,8 +452,9 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
       raise TypeError(f"differentiating with respect to {argnums=} requires at least "
                       f"{max_argnum + 1} positional arguments to be passed by the caller, "
                       f"but got only {len(args)} positional arguments.")
+    dbg = tracing_debug_info('value_and_grad', fun, args, kwargs)
 
-    f = lu.wrap_init(fun, kwargs)
+    f = lu.wrap_init(fun, params=kwargs, debug_info=dbg)
     f_partial, dyn_args = argnums_partial(f, argnums, args,
                                           require_static_args_hashable=False)
     for leaf in tree_leaves(dyn_args):
@@ -1398,11 +1398,9 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
   if in_devices is not None and len(in_devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
-  src = fun_sourceinfo(fun)
-  signature = api_util.fun_signature(fun)
-
-  dbg = debug_info('pmap', src, signature, args, kwargs,
-                   static_broadcasted_tuple, ())
+  dbg = tracing_debug_info(
+      'pmap', fun, args, kwargs,
+       static_argnums=static_broadcasted_tuple)
 
   f = lu.wrap_init(fun)
   if static_broadcasted_tuple:
@@ -1838,10 +1836,12 @@ def _lift_linearized(jaxpr, primal_avals, io_tree, out_pvals, consts, *py_args):
   def fun(*tangents):
     tangent_avals = list(map(core.get_aval, tangents))
     for primal_aval, tangent_aval in zip(primal_avals, tangent_avals):
-      if not core.typecompat(primal_aval.to_tangent_aval(), tangent_aval):
+      expected_tangent_aval  = primal_aval.to_tangent_aval()
+      if not core.typecompat(expected_tangent_aval, tangent_aval):
         raise ValueError("linearized function called on tangent values inconsistent with "
                          "the original primal values: "
-                         f"got {tangent_aval} for primal aval {primal_aval}")
+                         f"got tangent aval {tangent_aval} for primal aval {primal_aval} "
+                         f"but expected {expected_tangent_aval}")
     tangents_out = eval_jaxpr(jaxpr, consts, *tangents)
     tangents_out_ = iter(tangents_out)
     full_out = [pval.get_known() if pval.is_known() else next(tangents_out_)
@@ -2415,8 +2415,7 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
     raise ValueError("`devices` argument to `device_put_replicated must be "
                      "a non-empty sequence.")
   def _device_put_replicated(x):
-    aval = core.unmapped_aval(len(devices), core.no_axis_name, 0,
-                              core.get_aval(x))
+    aval = core.unmapped_aval(len(devices), 0, core.get_aval(x))
     assert isinstance(aval, ShapedArray)
     sharding_spec = sharding_specs.create_pmap_sharding_spec(aval.shape)
     if config.pmap_no_rank_reduction.value:
@@ -2560,9 +2559,10 @@ class ShapeDtypeStruct:
     return hash((self.shape, self.dtype, self.sharding, self.layout, self.weak_type))
 
 def _sds_aval_mapping(x):
-  return ShapedArray(
+  aval = ShapedArray(
       x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
       weak_type=x.weak_type)
+  return core.update_aval_with_sharding(aval, x.sharding)
 core.pytype_aval_mappings[ShapeDtypeStruct] = _sds_aval_mapping
 
 

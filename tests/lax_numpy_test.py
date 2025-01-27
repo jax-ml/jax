@@ -47,11 +47,9 @@ from jax.test_util import check_grads
 from jax._src import array
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import version as jaxlib_version
 from jax._src.util import safe_zip, NumpyComplexWarning, tuple_replace
 
 config.parse_flags_with_absl()
@@ -1061,13 +1059,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         jnp.clip(x, max=jnp.array([-1+5j]))
 
   def testClipDeprecatedArgs(self):
-    msg = "Passing arguments 'a', 'a_min' or 'a_max' to jax.numpy.clip is deprecated"
-    def assert_warns_or_errors(msg=msg):
-      if deprecations.is_accelerated("jax-numpy-clip-args"):
-        return self.assertRaisesRegex(ValueError, msg)
-      else:
-        return self.assertWarnsRegex(DeprecationWarning, msg)
-    with assert_warns_or_errors(msg):
+    with self.assertDeprecationWarnsOrRaises("jax-numpy-clip-args",
+                                             "Passing arguments 'a', 'a_min' or 'a_max' to jax.numpy.clip is deprecated"):
       jnp.clip(jnp.arange(4), a_min=2, a_max=3)
 
   def testHypotComplexInputError(self):
@@ -1572,8 +1565,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.skipTest(f"{dtype} gets promoted to {np.float16}, which is not supported.")
     elif rank == 2 and not jtu.test_device_matches(["cpu", "gpu"]):
       self.skipTest("Nonsymmetric eigendecomposition is only implemented on the CPU and GPU backends.")
-    if rank == 2 and jaxlib_version <= (0, 4, 35) and jtu.test_device_matches(["gpu"]):
-      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     tol = { np.int8: 2e-3, np.int32: 1e-3, np.float32: 1e-3, np.float64: 1e-6 }
     if jtu.test_device_matches(["tpu"]):
@@ -4186,13 +4177,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testAstypeComplexDowncast(self):
     x = jnp.array(2.0+1.5j, dtype='complex64')
-    msg = "Casting from complex to real dtypes.*"
-    def assert_warns_or_errors(msg=msg):
-      if deprecations.is_accelerated("jax-numpy-astype-complex-to-real"):
-        return self.assertRaisesRegex(ValueError, msg)
-      else:
-        return self.assertWarnsRegex(DeprecationWarning, msg)
-    with assert_warns_or_errors():
+    with self.assertDeprecationWarnsOrRaises("jax-numpy-astype-complex-to-real",
+                                             "Casting from complex to real dtypes.*"):
       x.astype('float32')
 
   @parameterized.parameters('int2', 'int4')
@@ -5581,8 +5567,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp.ones(2) + 3  # don't want to raise for scalars
 
     with jax.numpy_rank_promotion('warn'):
-      self.assertWarnsRegex(UserWarning, "Following NumPy automatic rank promotion for add on "
-                            r"shapes \(2,\) \(1, 2\).*", lambda: jnp.ones(2) + jnp.ones((1, 2)))
+      with self.assertWarnsRegex(
+        UserWarning,
+        "Following NumPy automatic rank promotion for add on shapes "
+        r"\(2,\) \(1, 2\).*"
+      ):
+        jnp.ones(2) + jnp.ones((1, 2))
       jnp.ones(2) + 3  # don't want to warn for scalars
 
   @unittest.skip("Test fails on CI, perhaps due to JIT caching")

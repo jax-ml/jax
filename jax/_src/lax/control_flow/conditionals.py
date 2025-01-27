@@ -25,8 +25,7 @@ from typing import Any, TypeVar
 
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
-from jax._src.api_util import (
-    _check_no_aliased_ref_args, _check_no_aliased_closed_over_refs)
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -135,20 +134,22 @@ def switch(index, branches: Sequence[Callable], *operands,
   if (config.disable_jit.value and core.is_concrete(index)):
     return branches[int(index)](*operands)
 
+  dbgs = [api_util.tracing_debug_info("switch", branch, operands, {})
+          for branch in branches]
   ops, ops_tree = tree_flatten(operands)
   ops_avals = tuple(map(core.get_aval, ops))
 
   if config.mutable_array_checks.value:
-    dbg = pe.debug_info(branches[0], ops_tree, None, False, 'switch')
-    _check_no_aliased_ref_args(dbg, ops_avals, ops)
+    api_util._check_no_aliased_ref_args(dbgs[0], ops_avals, ops)
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
-      branches, ops_tree, ops_avals, primitive_name='switch')
+      branches, ops_tree, ops_avals, dbgs)
   if config.mutable_array_checks.value:
-    _check_no_aliased_closed_over_refs(dbg, (*jaxprs[0].consts, *consts), ops)
+    api_util._check_no_aliased_closed_over_refs(dbgs[0], (*jaxprs[0].consts, *consts), ops)
   for i, (out_tree, jaxpr) in enumerate(zip(out_trees[1:], jaxprs[1:])):
-    _check_tree_and_avals(f"branch 0 and {i + 1} outputs",
+    _check_tree_and_avals("branch 0 output",
                           out_trees[0], jaxprs[0].out_avals,
+                          f"branch {i + 1} output",
                           out_tree, jaxpr.out_avals)
   joined_effects = core.join_effects(*(jaxpr.effects for jaxpr in jaxprs))
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
@@ -236,22 +237,25 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   ops, ops_tree = tree_flatten(operands)
   ops_avals = tuple(map(core.get_aval, ops))
 
+  dbg_true_fun = api_util.tracing_debug_info("cond", true_fun, operands, {})
   if config.mutable_array_checks.value:
-    dbg = pe.debug_info(true_fun, ops_tree, None, False, 'cond')
-    _check_no_aliased_ref_args(dbg, ops_avals, ops)
+    api_util._check_no_aliased_ref_args(dbg_true_fun, ops_avals, ops)
+  dbg_false_fun = api_util.tracing_debug_info("cond", false_fun, operands, {})
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
-      (true_fun, false_fun), ops_tree, ops_avals, 'cond')
+      (true_fun, false_fun), ops_tree, ops_avals,
+      [dbg_true_fun, dbg_false_fun])
   true_jaxpr, false_jaxpr = jaxprs
   if config.mutable_array_checks.value:
-    _check_no_aliased_closed_over_refs(dbg, (*true_jaxpr.consts, *consts), ops)
+    api_util._check_no_aliased_closed_over_refs(dbg_true_fun, (*true_jaxpr.consts, *consts), ops)
 
   out_tree, false_out_tree = out_trees
   if any(isinstance(out_aval, AbstractRef) for out_aval in
          true_jaxpr.out_avals + false_jaxpr.out_avals):
     raise ValueError("Cannot return `Ref`s from `cond`.")
 
-  _check_tree_and_avals("true_fun and false_fun output",
+  _check_tree_and_avals("true_fun output",
                         out_tree, true_jaxpr.out_avals,
+                        "false_fun output",
                         false_out_tree, false_jaxpr.out_avals)
   # prune passhtrough outputs
   true_fwds = pe._jaxpr_forwarding(true_jaxpr.jaxpr)
