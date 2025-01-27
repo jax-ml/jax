@@ -127,6 +127,12 @@ class custom_dce:
           "def_dce."
       )
     rule_name = util.fun_name(self.dce_rule)
+    debug = api_util.tracing_debug_info("custom_dce", self.fun,
+                                        args, {},
+                                        static_argnums=self.static_argnums)
+    debug_rule = api_util.tracing_debug_info("custom_dce_rule", self.dce_rule,
+                                             args, {},
+                                             static_argnums=self.static_argnums)
     args = api_util.resolve_kwargs(self.fun, args, kwargs)
     if self.static_argnums:
       static_argnums = set(self.static_argnums)
@@ -134,7 +140,7 @@ class custom_dce:
         check_for_tracers(args[i])
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
       fun, dyn_args = api_util.argnums_partial(
-          lu.wrap_init(self.fun),
+          lu.wrap_init(self.fun, debug_info=debug),
           dyn_argnums,
           args,
           require_static_args_hashable=False,
@@ -144,7 +150,7 @@ class custom_dce:
           lu.wrap_init(self.dce_rule), static_args
       )
     else:
-      fun = lu.wrap_init(self.fun)
+      fun = lu.wrap_init(self.fun, debug_info=debug)
       dce_rule = lu.wrap_init(self.dce_rule)
       dyn_args = args
 
@@ -169,11 +175,8 @@ class custom_dce:
           out_avals,
       )
       assert self.dce_rule is not None
-      debug = pe.tracing_debug_info(
-          self.dce_rule, in_tree, rule_out_tree, False, "custom_dce_rule"
-      )
       dce_jaxpr, _, dce_consts, () = pe.trace_to_jaxpr_dynamic(
-          flat_rule, in_avals, debug
+          flat_rule, in_avals, debug_rule
       )
 
       # This second round of DCE is used to work out which inputs are actually
@@ -188,9 +191,6 @@ class custom_dce:
 
       return core.ClosedJaxpr(dce_jaxpr, dce_consts), used_ins
 
-    debug = pe.tracing_debug_info(
-        self.fun, in_tree, out_tree, False, "custom_dce"
-    )
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
     closed_call = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
     out_avals = closed_call.out_avals

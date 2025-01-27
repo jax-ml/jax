@@ -32,7 +32,7 @@ from jax._src.ad_util import (Zero, instantiate, SymbolicZero,
 from jax._src.core import Trace, Tracer, TraceTag, AxisName
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_unflatten, tree_flatten,
-                                register_pytree_node)
+                                register_pytree_node, PyTreeDef)
 from jax._src.typing import Array
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list,
                            canonicalize_axis, moveaxis, as_hashable_function,
@@ -328,7 +328,8 @@ def is_vmappable(x: Any) -> bool:
   return type(x) is Jumble or type(x) in vmappables
 
 @lu.transformation_with_aux2
-def flatten_fun_for_vmap(f, store, in_tree, *args_flat):
+def flatten_fun_for_vmap(f: Callable,
+                         store: lu.Store, in_tree: PyTreeDef, *args_flat):
   py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
   ans = f(*py_args, **py_kwargs)
   ans, out_tree = tree_flatten(ans, is_leaf=is_vmappable)
@@ -591,7 +592,7 @@ def _batch_outer(f, axis_data, in_dims, *in_vals):
   return outs
 
 @lu.transformation2
-def _batch_inner(f, axis_data, out_dim_dests, tag, in_dims, *in_vals):
+def _batch_inner(f: Callable, axis_data, out_dim_dests, tag, in_dims, *in_vals):
   in_dims = in_dims() if callable(in_dims) else in_dims
   with core.take_current_trace() as parent_trace:
     trace = BatchTrace(parent_trace, tag, axis_data)

@@ -658,9 +658,12 @@ def clamp(min: ArrayLike, x: ArrayLike, max: ArrayLike) -> Array:
 
 
 @weakref_lru_cache
-def _trace_composite_to_jaxpr(fun, in_tree, in_avals, name: str):
+def _trace_composite_to_jaxpr(fun: Callable,
+                              in_tree: tree_util.PyTreeDef,
+                              in_avals: Sequence[core.AbstractValue],
+                              name: str,
+                              debug_info: api_util.TracingDebugInfo):
   flat_fun, out_tree = api_util.flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  debug_info = pe.tracing_debug_info(fun, in_tree, out_tree, False, "composite")
   jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug_info)
   if any(isinstance(c, core.Tracer) for c in consts):
     raise UnexpectedTracerError(
@@ -736,10 +739,12 @@ def composite(
   """
   @functools.wraps(decomposition)
   def _decorator(*args, **kwargs):
+    debug_info = api_util.tracing_debug_info("composite", decomposition,
+                                             args, kwargs)
     flat_args, in_tree = tree_util.tree_flatten(args)
     in_avals = tuple(core.get_aval(x) for x in flat_args)
     closed_jaxpr, out_tree = _trace_composite_to_jaxpr(
-        partial(decomposition, **kwargs), in_tree, in_avals, name
+        partial(decomposition, **kwargs), in_tree, in_avals, name, debug_info
     )
     out_flat = composite_p.bind(
         *flat_args,

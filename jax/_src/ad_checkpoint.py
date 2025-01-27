@@ -439,13 +439,15 @@ def _trace_to_jaxpr(fun: Callable,
 
 ### Utilities
 
-def saved_residuals(f, *args, **kwargs) -> list[tuple[core.AbstractValue, str]]:
+def saved_residuals(f: Callable,
+                    *args, **kwargs) -> list[tuple[core.AbstractValue, str]]:
   in_leaves, in_tree = tree_flatten((args, kwargs))
 
   def f_(*args):
     args, kwargs = tree_unflatten(in_tree, args)
     return f(*args, **kwargs)
 
+  debug_info = api_util.tracing_debug_info("saved_residuals", f, args, kwargs)
   out = api.make_jaxpr(lambda *args: api.linearize(f_, *args)[1],
                        return_shape=True)(*in_leaves)
   assert isinstance(out, tuple)
@@ -453,8 +455,7 @@ def saved_residuals(f, *args, **kwargs) -> list[tuple[core.AbstractValue, str]]:
   jaxpr = jaxpr_.jaxpr
   out_tree = lambda: tree_structure(out_shape)
   assert len(jaxpr.invars) == len(in_leaves)
-  dbg = pe.tracing_debug_info(f, in_tree, out_tree, True, "saved_residuals")
-  return _saved_residuals(jaxpr, dbg.arg_names)
+  return _saved_residuals(jaxpr, debug_info.arg_names)
 
 def _saved_residuals(jaxpr: core.Jaxpr,
                      arg_names: tuple[str | None, ...]) -> list[tuple[core.AbstractValue, str]]:

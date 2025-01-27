@@ -84,7 +84,8 @@ def apply_flat_fun(fun, io_tree, *py_args):
   return tree_unflatten(out_tree, ans)
 
 @lu.transformation_with_aux2
-def flatten_fun_nokwargs(f, store, in_tree, *args_flat):
+def flatten_fun_nokwargs(f: Callable, store: lu.Store,
+                         in_tree: PyTreeDef, *args_flat):
   py_args = tree_unflatten(in_tree, args_flat)
   ans = f(*py_args)
   ans, out_tree = tree_flatten(ans)
