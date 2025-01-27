@@ -434,6 +434,17 @@ def _dot_product_attention_bwd_rule(
   return grads
 
 def _fix_seqlen_offsets(q_seqlen, kv_seqlen, q_offsets, kv_offsets, query, key):
+  # fix seqlen and offsets to what cuDNN expects in sequence packing.
+  # cuDNN expects seqlen to have shape [S] where S is the total number of segments
+  # while the SDPA API accetps seqlen with shape [B, M] where B is the batch and M
+  # is the maximum number of segments of one batch. B x M is larger than S and seqlen
+  # is filled with -1 for padded regions. Therefore, we need to shift all non negative
+  # values to left side to form a correct seqlen. Similar layout is required for
+  # offsets tensors.
+  # cuDNN expects offsets to have offset for each segment starting from first segment
+  # while SDPA API accetps offsets to have offset for each segment starting from
+  # current batch, therefore we need to calculate accumulative offset of each segment
+  # starting from first segment.
   def _shift_to_left(x, fill_value):
     # shift any non-negative value to left
     # [[1, 3, -1, -1], [2, 3, 4, -1]]
@@ -1728,22 +1739,26 @@ def dot_product_attention(
     value: Values to be used in attention with a shape of BSNH or BNSH.
     bias: Bias to be added to logits with a shape of BNTS.
     mask: Mask used to filter out logits with a shape of BNTS.
-    q_seqlen: Non padded sequence length of Queries with a shape of B.
+    q_seqlen: Non padded sequence length of query with a shape of B.
       If q_offsets is set, q_seqlen should have shape [B,M] where M is the
-      maximum number of segments per batch. Fill the invalid entries with -1.
-    kv_seqlen: Non padded sequence length of Keys and Values with a shape of B.
+      maximum number of segments per batch. For batch that has less segments
+      than maximum segments, fill the padded entries with -1.
+    kv_seqlen: Non padded sequence length of key and value with a shape of B.
       If kv_offsets is set, kv_seqlen should have shape [B,M] where M is the
-      maximum number of segments per batch. Fill the invalid entries with -1.
-    q_offsets: offset of each segment packed in Queries with a shape of [B,M+1]
-      where M is the maximum number of segments per batch. Fill the invalid
-      entries with -1. E.g, if 2 batches has 3 and 2 segments respectively,
-      each segment has size 1, q_offsets = [[0,1,2,-1], [0,1,-1,-1]].
-      q_seqlen should be set to indicate the size of each segment.
-    kv_offsets: offset of each segment packed in Keys with a shape of [B,M+1]
-      where M is the maximum number of segments per batch. Fill the invalid
-      entries with -1. E.g, if 2 batches has 3 and 2 segments respectively,
-      each segment has size 1, kv_offsets = [[0,1,2,-1], [0,1,-1,-1]].
-      kv_seqlen should be set to indicate the size of each segment.
+      maximum number of segments per batch. For batch that has less segments
+      than maximum segments, fill the padded entries with -1.
+    q_offsets: offset of each segment packed in query with a shape of [B,M+1]
+      where M is the maximum number of segments per batch. For batch that has
+      less segments than maximum segments, fill the padded entries with -1.
+      E.g, if 2 batches has 3 and 2 segments respectively, each segment has
+      size 1, q_offsets = [[0,1,2,-1], [0,1,-1,-1]]. q_seqlen should be set
+      to indicate the size of each segment.
+    kv_offsets: offset of each segment packed in key with a shape of [B,M+1]
+      where M is the maximum number of segments per batch. For batch that has
+      less segments than maximum segments, fill the padded entries with -1.
+      E.g, if 2 batches has 3 and 2 segments respectively, each segment has
+      size 1, kv_offsets = [[0,1,2,-1], [0,1,-1,-1]]. kv_seqlen should be set
+      to indicate the size of each segment.
     scale: Scale for the query.
     dropout_rate: Dropout rate.
     qkv_layout: Layout string, with supported formats being BTNH, BNTH, BSNH,

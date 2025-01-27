@@ -616,6 +616,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_packed_layout(self):
+    if cudnn_version < 90600:
+      self.skipTest("Requires >= cuDNN 9.6.0")
     k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
     query = jax.random.normal(
         k1, (4, 512, 4, 64), dtype=jnp.bfloat16)
