@@ -37,6 +37,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import test_harnesses
 from jax import random
+from jax import numpy as jnp
 
 
 def make_disjunction_regexp(*parts: str) -> re.Pattern[str]:
@@ -79,7 +80,6 @@ class PrimitiveTest(jtu.JaxTestCase):
       message=("Using reduced precision for gradient of reduce-window min/max "
                "operator to work around missing XLA support for pair-reductions")
   )
-  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_prim(self, harness: test_harnesses.Harness):
     if "eigh_" in harness.fullname:
       self.skipTest("Eigenvalues are sorted and it is not correct to compare "
@@ -114,6 +114,7 @@ class PrimitiveTest(jtu.JaxTestCase):
       and harness.dtype in [np.float32]):
       tol = 1e-4
 
+    logging.info("xxx args = %s", args)
     self.export_and_compare_to_native(
       func_jax, *args,
       unimplemented_platforms=unimplemented_platforms,
@@ -201,6 +202,29 @@ class PrimitiveTest(jtu.JaxTestCase):
       shape = (4, 5)
       x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
       self.export_and_compare_to_native(f, x)
+
+  def test_random_categorical_failure(self):
+    # DO_NOT_SUBMIT: This test fails on GPU with jax_threefry_partionable=True
+    def f(x):
+      return jax.random.categorical(jax.random.key(42), x, 0)
+    shape = (5, 4)
+    dtype = jnp.bfloat16
+    # x = jtu.rand_default(self.rng())(shape, dtype)
+    x = np.array([[1.5625, 5.8125, 3.39062, -1.03906],
+                  [-2.54688, -0.408203, -0.992188, 3.34375],
+                  [0.462891, 1.1875, -2.96875, -6.53125],
+                  [0.871094, -3.51562, 2.25, 3.45312],
+                  [0.730469, -1.91406, 3.53125, -3.03125]], dtype=dtype)
+    res_native = f(x)
+    logging.info("xxx res_native = %s", res_native)
+    res_native_jit = jax.jit(f)(x)
+    self.assertAllClose(res_native, res_native_jit)
+
+    # f_exported = export.export(jax.jit(f),
+    #                            platforms=["cpu", "cuda", "tpu"])(x)
+    # res_exported = f_exported.call(x)
+    # self.assertAllClose(res_native, res_exported)
+    # self.export_and_compare_to_native(f, x)
 
 
 if __name__ == "__main__":
