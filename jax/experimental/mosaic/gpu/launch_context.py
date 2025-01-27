@@ -515,10 +515,10 @@ class LaunchContext:
       )
     if swizzle is not None and slice_shape[-1] != (swizzle * 8) // element_bitwidth:
       raise ValueError(
-          f"Async copies with {swizzle=} require last dimension of the slice to"
-          f" be exactly {swizzle} bytes"
-          f" ({(swizzle * 8) // element_bitwidth} elements), but got"
-          f" {slice_shape[-1]}"
+          f"Async copies with {swizzle=} require the last dimension of the"
+          f" slice to be exactly {swizzle} bytes i.e. "
+          f" {(swizzle * 8) // element_bitwidth} elements, but got"
+          f" {slice_shape[-1]} elements."
       )
     smem_ptr = utils.memref_ptr(smem_ref, memory_space=3)
     if gmem_ref is src_ref:
