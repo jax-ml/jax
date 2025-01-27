@@ -1084,7 +1084,7 @@ def norm(x: ArrayLike, ord: int | str | None = None,
     x: N-dimensional array for which the norm will be computed.
     ord: specify the kind of norm to take. Default is Frobenius norm for matrices,
       and the 2-norm for vectors. For other options, see Notes below.
-    axis: integer or sequence of integers specifying the axes over which the norm
+    axis: integer or 2-D sequence of integers specifying the axes over which the norm
       will be computed. Defaults to all axes of ``x``.
     keepdims: if True, the output array will have the same number of dimensions as
       the input, with the size of reduced axes replaced by ``1`` (default: False).
@@ -1202,7 +1202,8 @@ def norm(x: ArrayLike, ord: int | str | None = None,
       raise ValueError(f"Invalid order '{ord}' for matrix norm.")
   else:
     raise ValueError(
-        f"Invalid axis values ({axis}) for jnp.linalg.norm.")
+        f"Invalid axis values ({axis}) for jnp.linalg.norm, axis can take ",
+        "values 'None, integer or 2-D sequence of integers'")
 
 @overload
 def qr(a: ArrayLike, mode: Literal["r"]) -> Array: ...
