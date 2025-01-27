@@ -861,9 +861,7 @@ class ShardMapTest(jtu.JaxTestCase):
   @jtu.thread_unsafe_test()
   def test_debug_print_jit(self, jit):
     if config.use_shardy_partitioner.value:
-      self.skipTest(
-          'TODO(b/364547005): debug prints not supported by Shardy yet'
-      )
+      self.skipTest('TODO(b/384938613): Failing under shardy')
     mesh = Mesh(jax.devices(), ('i',))
 
     @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
@@ -2151,9 +2149,6 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(f(), np.arange(4, dtype=np.int32).reshape(-1, 1))
 
   def test_partial_auto_axis_index_degenerated_axis(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest('Shardy does not support full-to-shard.')
-
     mesh = jtu.create_mesh((1, 2), ('i', 'j'))
     out_sharding = NamedSharding(mesh, P('i', None))
 
@@ -2166,9 +2161,6 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(f(), np.arange(1, dtype=np.int32).reshape(-1, 1))
 
   def test_partial_auto_ppermute(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest('Shardy does not support full-to-shard.')
-
     mesh = jtu.create_mesh((4, 2), ('i', 'j'))
     x = jnp.arange(8.)
 
@@ -2188,8 +2180,6 @@ class ShardMapTest(jtu.JaxTestCase):
 
   # TODO(parkers,mattjj): get XLA to support this too
   # def test_partial_auto_all_to_all(self):
-  #   if config.use_shardy_partitioner.value:
-  #     self.skipTest('Shardy does not support anything.')
   #
   #   mesh = jtu.create_mesh((4, 2), ('i', 'j'))
   #   x = jnp.arange(128.).reshape(16, 8)
