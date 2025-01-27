@@ -255,6 +255,11 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
 
 class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
 
+  def setUp(self):
+    super().setUp()
+    if not jtu.is_device_tpu():
+      self.skipTest('Test requires TPU')
+
   @parameterized.parameters(('left',), ('right',))
   def test_interpret_remote_dma_ppermute(self, permutation):
     if jax.device_count() <= 1:
