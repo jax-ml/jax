@@ -16,6 +16,7 @@ Experimental Modules
 
     jax.experimental.checkify
     jax.experimental.compilation_cache
+    jax.experimental.custom_dce
     jax.experimental.custom_partitioning
     jax.experimental.jet
     jax.experimental.key_reuse

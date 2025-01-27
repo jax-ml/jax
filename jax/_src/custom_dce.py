@@ -75,9 +75,9 @@ class custom_dce:
     ...       x * jnp.sin(y) if used_outs[1] else None,
     ...   )
 
-  In this example, ``used_outs`` is a ``tuple`` with two ``bool``s indicating
-  which outputs are required. The DCE rule only computes the required outputs,
-  replacing the unused outputs with ``None``.
+  In this example, ``used_outs`` is a ``tuple`` with two ``bool`` values,
+  indicating which outputs are required. The DCE rule only computes the
+  required outputs, replacing the unused outputs with ``None``.
 
   If the ``static_argnums`` argument is provided to ``custom_dce``, the
   indicated arguments are treated as static when the function is traced, and
@@ -108,12 +108,12 @@ class custom_dce:
 
     Args:
       dce_rule: A function that takes (a) any arguments indicated as static
-        using ``static_argnums``, (b) a Pytree of ``bool``s (``used_outs``)
-        indicating which outputs should be computed, and (c) the rest of the
-        (non-static) arguments to the original function. The rule should return
-        a Pytree with with the same structure as the output of the original
-        function, but any unused outputs (as indicated by ``used_outs``) can be
-        replaced with ``None``.
+        using ``static_argnums``, (b) a Pytree of ``bool`` values
+        (``used_outs``) indicating which outputs should be computed, and (c)
+        the rest of the (non-static) arguments to the original function. The
+        rule should return a Pytree with with the same structure as the output
+        of the original function, but any unused outputs (as indicated by
+        ``used_outs``) can be replaced with ``None``.
     """
     self.dce_rule = dce_rule
     return dce_rule
