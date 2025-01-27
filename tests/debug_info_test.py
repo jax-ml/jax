@@ -239,7 +239,7 @@ class DebugInfoTest(jtu.JaxTestCase):
     self._saved_tracer = x
     return x
 
-  def test_jit_lower_arg_info(self):
+  def test_jit_lower_arg_names(self):
     def f(x, y, *args, **kwargs):
       return y['hi'] + args[1] + sum(kwargs.values())
 
@@ -257,7 +257,7 @@ class DebugInfoTest(jtu.JaxTestCase):
       self.assertNotIn(s, hlo_str)
 
   @parameterized.parameters([0, 2, [(0, 2)]])
-  def test_jit_lower_arg_info_static_argnums(self, static_argnums):
+  def test_jit_lower_arg_names_static_argnums(self, static_argnums):
     def f(x, y, *args, **kwargs):
       return y['hi'] + args[1] + sum(kwargs.values())
 
@@ -277,7 +277,7 @@ class DebugInfoTest(jtu.JaxTestCase):
       self.assertNotIn(s, hlo_str)
 
   @parameterized.parameters(['a', 'b', [('a', 'b')]])
-  def test_jit_lower_arg_info_static_argnames(self, static_argnames):
+  def test_jit_lower_arg_names_static_argnames(self, static_argnames):
     def f(x, y, *args, **kwargs):
       return y['hi'] + args[1] + kwargs['z'] + kwargs['w']
 
@@ -308,7 +308,7 @@ class DebugInfoTest(jtu.JaxTestCase):
     self.assertIn("jax.result_info = \"['a']\"", hlo_str)
     self.assertIn("jax.result_info = \"['b'][0][0]\"", hlo_str)
 
-  def test_jit_lower_compile_arg_type_mismatch(self):
+  def test_jit_lower_arg_names_with_error1(self):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
 
@@ -323,7 +323,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         r"Argument 'x' compiled with.*float32.*and called with.*int32.*",
         lambda: f_exe(x_i32))
 
-  def test_jit_bad_input(self):
+  def test_jit_lower_arg_names_with_error2(self):
     def f(x):
       return x
 
@@ -337,7 +337,7 @@ class DebugInfoTest(jtu.JaxTestCase):
       jax.jit(f)(jnp.int32)
 
   @jtu.thread_unsafe_test()  # logging is not thread-safe
-  def test_cache_miss_explanations(self):
+  def test_arg_names_cache_miss_explanations(self):
     @jax.jit
     def f(x, y):
       return jnp.sin(x) * y['hi']
@@ -397,7 +397,7 @@ class DebugInfoTest(jtu.JaxTestCase):
     self.assertIn("tracing context doesn't match", msg)
 
   @jtu.thread_unsafe_test()  # logging is not thread-safe
-  def test_cache_miss_explanations_new_function_in_loop(self):
+  def test_arg_names_cache_miss_explanations_new_function_in_loop(self):
     @jax.jit
     def f(x, y):
       return jnp.sin(x) * y['hi']
@@ -419,7 +419,7 @@ class DebugInfoTest(jtu.JaxTestCase):
       self.assertIn('another function defined on the same line', msg)
 
   @jtu.thread_unsafe_test()  # logging is not thread-safe
-  def test_cache_miss_explanations_unpacks_transforms(self):
+  def test_arg_names_cache_miss_explanations_unpacks_transforms(self):
     # Tests that the explain_tracing_cache_miss() function does not throw an
     # error when unpacking `transforms` with a length greater than 3.
     @jax.jit
@@ -440,7 +440,7 @@ class DebugInfoTest(jtu.JaxTestCase):
       for msg in cm.output:
         self.assertIn("TRACING CACHE MISS", msg)
 
-  def test_cache_miss_explanations_no_source_info(self):
+  def test_arg_names_cache_miss_explanations_no_source_info(self):
     # ``operator.add`` is a built-in function and does not have source info.
     with config.explain_cache_misses(True):
       jax.jit(operator.add)(42, 24)
