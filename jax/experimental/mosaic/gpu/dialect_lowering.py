@@ -227,6 +227,7 @@ def _mgpu_async_load_op_lowering_rule(
         barrier=barrier,
         arrive=load_op.arrive,
         uniform=False,
+        swizzle=load_op.swizzle.value,
     )
   return []
 
@@ -239,6 +240,7 @@ def _mgpu_async_store_op_lowering_rule(
   launch_context.async_copy(
       src_ref=store_op.source,
       dst_ref=store_op.destination,
+      swizzle=store_op.swizzle.value,
   )
   return []
 

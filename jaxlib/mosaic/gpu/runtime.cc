@@ -122,7 +122,7 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
   }
   cuuint32_t element_strides[5] = {1, 1, 1, 1, 1};
   CUtensorMapSwizzle swizzle;
-  if (swizzle_bytes == 0) {
+  if (swizzle_bytes == 16) {
     swizzle = CU_TENSOR_MAP_SWIZZLE_NONE;
   } else if (swizzle_bytes == 32) {
     swizzle = CU_TENSOR_MAP_SWIZZLE_32B;
