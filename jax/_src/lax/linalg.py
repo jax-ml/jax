@@ -758,8 +758,7 @@ def eig_abstract_eval(operand, *, compute_left_eigenvectors,
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
-    dtype = np.complex64 if dtypes.finfo(operand.dtype).bits == 32 else np.complex128
-    dtype = dtypes.canonicalize_dtype(dtype)
+    dtype = dtypes.canonicalize_dtype(dtypes.to_complex_dtype(operand.dtype))
     vl = vr = operand.update(shape=batch_dims + (n, n), dtype=dtype)
     w = operand.update(shape=batch_dims + (n,), dtype=dtype)
   else:
