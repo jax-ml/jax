@@ -1765,6 +1765,10 @@ def register_event_duration_listener(callback):
 def set_env(**kwargs):
   """Context manager to temporarily set/unset one or more environment variables.
 
+  Caution: setting environment variables is not thread-safe. If you use this
+  utility, you must annotate your test using, e.g., @thread_unsafe_test() or
+  @thread_unsafe_test_class().
+
   Examples:
 
     >>> import os

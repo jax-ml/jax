@@ -189,7 +189,7 @@ def check_sem_avals(
   ):
     raise ValueError(
         f"Must {name} semaphores of the following types:"
-        f" {allowed_semaphore_types}."
+        f" {allowed_semaphore_types}. Got {sem_dtype}."
     )
 
 

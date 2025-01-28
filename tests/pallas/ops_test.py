@@ -951,6 +951,8 @@ class OpsTest(PallasBaseTest):
       # TODO(apaszke): Remove after 12 weeks have passed.
       if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
         self.skipTest("Requires libtpu built at least on 2024-12-19")
+      if fn == jnp.exp2 and dtype == "bfloat16":
+        self.skipTest("TODO(b/392601160): test fails in CI")
 
     if (
         jtu.test_device_matches(["gpu"])
@@ -1650,7 +1652,10 @@ class OpsTest(PallasBaseTest):
     x = random.normal(k1, lhs_shape, dtype=dtype)
     y = random.normal(k2, rhs_shape, dtype=dtype)
     out = dot(x, y)
-    expected = jnp.dot(x.T if trans_x else x, y.T if trans_y else y)
+    # Pallas always accumulates in FP32, so we are explicit about
+    # preferred_element_type here.
+    expected = jnp.dot(x.T if trans_x else x, y.T if trans_y else y,
+                       preferred_element_type=jnp.float32).astype(dtype)
     np.testing.assert_allclose(
         out.astype(jnp.float32),
         expected.astype(jnp.float32),

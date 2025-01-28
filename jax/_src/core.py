@@ -1731,14 +1731,20 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
   return TypeError(msg)
 
+def _make_lengths_same(sharding, ndim):
+  if ndim > len(sharding.spec):
+    return sharding.with_spec(sharding.spec._normalized_spec(ndim))
+  if ndim < len(sharding.spec):
+    return sharding.with_spec(sharding.spec[:ndim])
+  assert False, "unreachable"
+
+
 # TODO(yashkatariya): Only works with User/Auto. Generalize it to work with
 # Collective too.
 def modify_spec_for_auto_manual(spec, mesh) -> P:
-  if all(s is None for s in spec):
-    return spec
   new_spec = []  # type: ignore
   for s in spec:
-    if s is None:
+    if not s:
       new_spec.append(s)
     else:
       temp_s = s[0] if isinstance(s, tuple) else s
@@ -1748,22 +1754,29 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
           else s)
   return P(*new_spec)
 
-def _maybe_modify_sharding(sharding):
+def _maybe_modify_sharding(sharding, ndim):
   if sharding.mesh._are_all_axes_explicit:
-    return sharding
-  new_spec = modify_spec_for_auto_manual(sharding.spec, sharding.mesh)
-  return sharding.with_spec(new_spec)
+    out = sharding
+  elif all(s is None for s in sharding.spec):
+    out = sharding
+  else:
+    out = sharding.with_spec(modify_spec_for_auto_manual(
+        sharding.spec, sharding.mesh))
+  if (len(out.spec) != ndim and
+      (out.mesh._are_all_axes_auto or out.mesh._are_all_axes_manual)):
+    out = _make_lengths_same(out, ndim)
+  return out
 
 
 def get_sharding(sharding, ndim):
   from jax._src.sharding_impls import NamedSharding  # type: ignore
 
   if sharding is not None:
-    if len(sharding.spec) != ndim:
+    out_s = _maybe_modify_sharding(sharding, ndim)
+    if len(out_s.spec) != ndim:
       raise ValueError(
           "Length of sharding.spec must be equal to aval's ndim. Got"
-          f" sharding.spec {sharding.spec} and aval.ndim {ndim}")
-    out_s = _maybe_modify_sharding(sharding)
+          f" sharding.spec {out_s.spec} and aval.ndim {ndim}")
   else:
     context_mesh = mesh_lib.get_abstract_mesh()
     if not context_mesh:

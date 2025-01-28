@@ -6368,6 +6368,17 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertTupleEqual(out2.sharding._device_assignment,
                           tuple(mesh2.devices.flat))
 
+  @jtu.with_user_mesh((2, 1), ('x', 'y'))
+  def test_svd(self, mesh):
+    np_inp = np.zeros([128, 128])
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P(None, None)))
+
+    @jax.jit
+    def f(x):
+      return jnp.linalg.norm(x, 2)
+
+    f(arr)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

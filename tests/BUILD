@@ -816,16 +816,12 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "pytorch_interoperability_test",
     srcs = ["pytorch_interoperability_test.py"],
-    backend_tags = {
-        "gpu": [
-            "noasan",  # TODO(b/392599624): torch fails to build.
-        ],
-    },
     enable_backends = [
         "cpu",
         "gpu",
     ],
     tags = [
+        "noasan",  # TODO(b/392599624): torch fails to build.
         "nomsan",  # TODO(b/355237462): msan false-positives in torch?
         "not_build:arm",
     ],

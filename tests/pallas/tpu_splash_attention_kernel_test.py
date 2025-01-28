@@ -292,6 +292,14 @@ def attn_logits_soft_cap_strategy() -> hps.SearchStrategy[float | None]:
   return hps.one_of(hps.just(None), hps.floats(min_value=1.0, max_value=50.0))
 
 
+def to_dynamic_mask(mask: mask_lib.MultiHeadMask) -> jax.Array:
+  q_seq_len, kv_seq_len = mask.masks[0].shape
+  full_mask_slice = (slice(0, q_seq_len), slice(0, kv_seq_len))
+  dynamic_mask = jnp.stack([m[full_mask_slice] for m in mask.masks], axis=0)
+
+  return dynamic_mask
+
+
 @jtu.with_config(jax_traceback_filtering="off")
 class PallasBaseTest(jtu.JaxTestCase):
   INTERPRET = False
@@ -322,9 +330,10 @@ class SplashAttentionTest(PallasBaseTest):
   @parameterized.product(
       is_mqa=(False, True),
       is_segmented=(False, True),
+      is_dynamic_mask=(False, True),
   )
   @hp.given(hps.data())
-  def test_splash_attention(self, is_mqa, is_segmented, data):
+  def test_splash_attention(self, is_mqa, is_segmented, is_dynamic_mask, data):
     seed = data.draw(seed_strategy())
     key = random.key(seed)
     k1, k2, k3 = random.split(key, 3)
@@ -353,6 +362,8 @@ class SplashAttentionTest(PallasBaseTest):
     attn_logits_soft_cap = data.draw(attn_logits_soft_cap_strategy())
     masks = data.draw(mha_mask_strategy(q_seq_len, kv_seq_len, num_q_heads))
     mask = mask_lib.MultiHeadMask(tuple(m.get_mask() for m in masks))
+    if is_dynamic_mask:
+      mask = to_dynamic_mask(mask)
     block_sizes = data.draw(block_sizes_strategy(q_seq_len, kv_seq_len))
 
     if is_mqa:
@@ -384,10 +395,11 @@ class SplashAttentionTest(PallasBaseTest):
   @parameterized.product(
       is_mqa=(False, True),
       is_segmented=(False, True),
+      is_dynamic_mask=(False, True),
   )
   @hp.given(hps.data())
   def test_splash_attention_fwd(
-      self, is_mqa, is_segmented, data
+      self, is_mqa, is_segmented, is_dynamic_mask, data
   ):
     seed = data.draw(seed_strategy())
     key = random.key(seed)
@@ -416,6 +428,8 @@ class SplashAttentionTest(PallasBaseTest):
     attn_logits_soft_cap = data.draw(attn_logits_soft_cap_strategy())
     masks = data.draw(mha_mask_strategy(q_seq_len, kv_seq_len, num_q_heads))
     mask = mask_lib.MultiHeadMask(tuple(m.get_mask() for m in masks))
+    if is_dynamic_mask:
+      mask = to_dynamic_mask(mask)
     block_sizes = data.draw(block_sizes_strategy(q_seq_len, kv_seq_len))
     if is_mqa:
       attn_ref = splash.make_masked_mqa_reference(mask)
@@ -531,10 +545,17 @@ class SplashAttentionTest(PallasBaseTest):
       is_segmented=(False, True),
       downcast_smem_data=(False, True),
       use_fused_bwd_kernel=(False, True),
+      use_dynamic_mask=(False, True),
   )
   @hp.given(hps.data())
   def test_splash_attention_bwd(
-      self, is_mqa, is_segmented, downcast_smem_data, use_fused_bwd_kernel, data
+      self,
+      is_mqa,
+      is_segmented,
+      downcast_smem_data,
+      use_fused_bwd_kernel,
+      use_dynamic_mask,
+      data,
   ):
     seed = data.draw(seed_strategy())
     key = random.key(seed)
@@ -563,6 +584,8 @@ class SplashAttentionTest(PallasBaseTest):
     attn_logits_soft_cap = data.draw(attn_logits_soft_cap_strategy())
     masks = data.draw(mha_mask_strategy(q_seq_len, kv_seq_len, num_q_heads))
     mask = mask_lib.MultiHeadMask(tuple(m.get_mask() for m in masks))
+    if use_dynamic_mask:
+      mask = to_dynamic_mask(mask)
     block_sizes = data.draw(
         block_sizes_strategy(q_seq_len, kv_seq_len, include_bwd_blocks=True,
                              use_fused_bwd_kernel=use_fused_bwd_kernel)

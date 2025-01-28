@@ -910,12 +910,8 @@ class PallasCallDMATest(PallasBaseTest):
       def body(dma_sems, sems):
         self.assertTupleEqual(dma_sems.shape, (4,))
         self.assertTupleEqual(sems.shape, (3,))
-        if self.INTERPRET:
-          self.assertTrue(jnp.issubdtype(dma_sems.dtype, jnp.integer))
-          self.assertTrue(jnp.issubdtype(sems.dtype, jnp.integer))
-        else:
-          self.assertTrue(jnp.issubdtype(dma_sems.dtype, pltpu.dma_semaphore))
-          self.assertTrue(jnp.issubdtype(sems.dtype, pltpu.semaphore))
+        self.assertTrue(jnp.issubdtype(dma_sems.dtype, pltpu.dma_semaphore))
+        self.assertTrue(jnp.issubdtype(sems.dtype, pltpu.semaphore))
       pl.run_scoped(
           body, pltpu.SemaphoreType.DMA((4,)), pltpu.SemaphoreType.REGULAR((3,))
       )
@@ -929,12 +925,8 @@ class PallasCallDMATest(PallasBaseTest):
     def kernel(y_ref, dma_sems, sems):
       self.assertTupleEqual(dma_sems.shape, (4,))
       self.assertTupleEqual(sems.shape, (3,))
-      if self.INTERPRET:
-        self.assertTrue(jnp.issubdtype(dma_sems.dtype, jnp.integer))
-        self.assertTrue(jnp.issubdtype(sems.dtype, jnp.integer))
-      else:
-        self.assertTrue(jnp.issubdtype(dma_sems.dtype, pltpu.dma_semaphore))
-        self.assertTrue(jnp.issubdtype(sems.dtype, pltpu.semaphore))
+      self.assertTrue(jnp.issubdtype(dma_sems.dtype, pltpu.dma_semaphore))
+      self.assertTrue(jnp.issubdtype(sems.dtype, pltpu.semaphore))
 
     jax.block_until_ready(
         self.pallas_call(
@@ -1591,7 +1583,7 @@ class PallasCallDMAInterpretTest(PallasCallDMATest):
     grid_spec = pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             scratch_shapes=(
-                [pltpu.SemaphoreType.DMA(4,)]
+                [pltpu.SemaphoreType.REGULAR(4,)]
             )
         )
     results = pl.pallas_call(

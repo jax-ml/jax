@@ -40,6 +40,7 @@ from jax._src.interpreters import mlir
 from jax._src.lax import control_flow
 from jax._src.lax import eigh as lax_eigh
 from jax._src.lax import lax as lax_internal
+from jax._src.partition_spec import PartitionSpec as P
 from jax._src.lax import svd as lax_svd
 from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
@@ -960,9 +961,20 @@ def _eigh_jacobi_abstract_eval(operand, *, lower, sort_eigenvalues):
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
+    if config.sharding_in_types.value:
+      batch_s = operand.sharding.spec[:-2]
+      ns = operand.sharding.spec[-1]
+      if ns is not None:
+        raise ValueError(f'n should be unsharded. Got n: {ns}'
+                         ' specs. Try marking their specs as None.')
+      w_s = operand.sharding.with_spec(P(*batch_s + (ns,)))
+      v_s = operand.sharding.with_spec(P(*batch_s + (ns, ns)))
+    else:
+      w_s, v_s = None, None
     w = operand.update(shape=batch_dims + (n,),
-                       dtype=lax_internal._complex_basetype(operand.dtype))
-    v = operand.update(shape=batch_dims + (n, n))
+                       dtype=lax_internal._complex_basetype(operand.dtype),
+                       sharding=w_s)
+    v = operand.update(shape=batch_dims + (n, n), sharding=v_s)
   else:
     w, v = operand, operand
   return w, v
@@ -1029,16 +1041,23 @@ def _eigh_abstract_eval(operand, *, lower, sort_eigenvalues, subset_by_index):
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
-    d = (
-        n
-        if subset_by_index is None
-        else subset_by_index[1] - subset_by_index[0]
-    )
-    v = operand.update(shape=batch_dims + (n, d))
+    d = (n if subset_by_index is None else
+         subset_by_index[1] - subset_by_index[0])
+    if config.sharding_in_types.value:
+      batch_s = operand.sharding.spec[:-2]
+      ns, ds = operand.sharding.spec[-1], None
+      if ns is not None:
+        raise ValueError(f'n should be unsharded. Got n: {ns} specs. Try '
+                         'marking their specs as None.')
+      v_s = operand.sharding.with_spec(P(*batch_s + (ns, ds)))
+      w_s = operand.sharding.with_spec(P(*batch_s + (ds,)))
+    else:
+      v_s, w_s = None, None
+    v = operand.update(shape=batch_dims + (n, d), sharding=v_s)
     w = operand.update(
         shape=batch_dims + (d,),
         dtype=lax_internal._complex_basetype(operand.dtype),
-    )
+        sharding=w_s)
   else:
     v, w = operand, operand
   return v, w
@@ -1249,6 +1268,24 @@ def _triangular_solve_shape_rule(a, b, *, left_side=False, **unused_kwargs):
     raise TypeError(msg.format(a.shape, b.shape))
   return b.shape
 
+def _triangular_solve_sharding_rule(a, b, *, left_side=False, **unused_kwargs):
+  a_spec, b_spec = a.sharding.spec, b.sharding.spec
+  if a_spec[-1] != a_spec[-2]:
+    raise TypeError(
+        "triangular_solve requires the last two dimensions of a to be equal "
+        f"in sharding, got a_spec of {a_spec}.")
+  if a_spec[:-2] != b_spec[:-2]:
+    raise TypeError(
+        "triangular_solve requires both arguments to have the same number "
+        f"of dimensions and equal batch shardings, got {a_spec} and {b_spec}.")
+  common_dim = -2 if left_side else -1
+  if a_spec[-1] != b_spec[common_dim]:
+    raise TypeError(
+        "Incompatible shardings for arguments to triangular_solve:"
+        f" {a_spec} and {b_spec}.")
+  return b.sharding
+
+
 def _triangular_solve_jvp_rule_a(
     g_a, ans, a, b, *, left_side, lower, transpose_a, conjugate_a,
     unit_diagonal):
@@ -1328,7 +1365,7 @@ def _triangular_solve_batching_rule(batched_args, batch_dims, *, left_side,
 
 triangular_solve_p = standard_primitive(
     _triangular_solve_shape_rule, _triangular_solve_dtype_rule,
-    'triangular_solve')
+    'triangular_solve', sharding_rule=_triangular_solve_sharding_rule)
 ad.defjvp2(triangular_solve_p,
            _triangular_solve_jvp_rule_a,
            lambda g_b, _, a, b, **kws: triangular_solve(a, g_b, **kws))
@@ -1346,10 +1383,13 @@ def _triangular_solve_lowering(
     transpose = "NO_TRANSPOSE"
   else:
     transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
-  return [hlo.triangular_solve(
-      a, b, ir.BoolAttr.get(left_side),
-      ir.BoolAttr.get(lower), ir.BoolAttr.get(unit_diagonal),
-      hlo.TransposeAttr.get(transpose))]
+  out = hlo.triangular_solve(a, b, ir.BoolAttr.get(left_side),
+                             ir.BoolAttr.get(lower),
+                             ir.BoolAttr.get(unit_diagonal),
+                             hlo.TransposeAttr.get(transpose))
+  if config.sharding_in_types.value:
+    return [mlir.lower_sharding_under_shit(ctx, out, out_aval)]
+  return [out]
 
 
 def _triangular_solve_cpu_lower(
@@ -1802,7 +1842,17 @@ def _geqrf_abstract_eval(operand):
   if operand.ndim < 2:
     raise ValueError("Argument to QR decomposition must have ndims >= 2")
   *batch_dims, m, n = operand.shape
-  taus = operand.update(shape=(*batch_dims, core.min_dim(m, n)))
+  if config.sharding_in_types.value:
+    spec = operand.sharding.spec
+    batch_s, ms, ns = spec[:-2], spec[-2], spec[-1]
+    if ms is not None or ns is not None:
+      raise ValueError(f'm and n should be unsharded. Got m: {ms} and n: {ns}'
+                       ' specs. Try marking their specs as None.')
+    taus_s = operand.sharding.with_spec(P(*(*batch_s, None)))
+  else:
+    taus_s = None
+  taus = operand.update(shape=(*batch_dims, core.min_dim(m, n)),
+                        sharding=taus_s)
   return operand, taus
 
 def _geqrf_batching_rule(batched_args, batch_dims):
@@ -2024,13 +2074,23 @@ def _qr_abstract_eval(operand, *, pivoting, full_matrices):
       raise ValueError("Argument to QR decomposition must have ndims >= 2")
     *batch_dims, m, n = operand.shape
     k = m if full_matrices else core.min_dim(m, n)
-    q = operand.update(shape=(*batch_dims, m, k))
-    r = operand.update(shape=(*batch_dims, k, n))
-    p = operand.update(shape=(*batch_dims, n), dtype=np.dtype(np.int32))
+    if config.sharding_in_types.value:
+      *batch_s, ms, ns = operand.sharding.spec
+      ks = None
+      if ms is not None or ns is not None:
+        raise ValueError(f'm and n should be unsharded. Got m: {ms} and n: {ns}'
+                         ' specs. Try marking their specs as None.')
+      q_s = operand.sharding.with_spec(P(*(*batch_s, ms, ks)))
+      r_s = operand.sharding.with_spec(P(*(*batch_s, ks, ns)))
+      p_s = operand.sharding.with_spec(P(*(*batch_s, ns)))
+    else:
+      q_s, r_s, p_s = None, None, None
+    q = operand.update(shape=(*batch_dims, m, k), sharding=q_s)
+    r = operand.update(shape=(*batch_dims, k, n), sharding=r_s)
+    p = operand.update(shape=(*batch_dims, n), dtype=np.dtype(np.int32),
+                       sharding=p_s)
   else:
-    q = operand
-    r = operand
-    p = operand
+    q, r, p = operand, operand, operand
   return (q, r, p) if pivoting else (q, r)
 
 def qr_jvp_rule(primals, tangents, *, pivoting, full_matrices):
@@ -2136,13 +2196,32 @@ def _svd_abstract_eval(operand, *, full_matrices, compute_uv, subset_by_index,
         raise ValueError("full_matrices and subset_by_index cannot both be set")
       rank = min(rank, subset_by_index[1] - subset_by_index[0])
 
+    if config.sharding_in_types.value:
+      batch_s = operand.sharding.spec[:-2]
+      ms = operand.sharding.spec[-2]
+      ns = operand.sharding.spec[-1]
+      if ms is not None or ns is not None:
+        raise ValueError(f'm and n should be unsharded. Got m: {ms} and n: {ns}'
+                         ' specs. Try marking their specs as None.')
+      rank_s = None
+      s_sharding = operand.sharding.with_spec(P(*batch_s + (rank_s,)))
+      u_sharding = operand.sharding.with_spec(
+          P(*batch_s + (ms, ms if full_matrices else rank_s)))
+      vt_sharding = operand.sharding.with_spec(
+          P(*batch_s + (ns if full_matrices else rank_s, ns)))
+    else:
+      s_sharding, u_sharding, vt_sharding = None, None, None
+
     s = operand.update(
         shape=batch_dims + (rank,),
         dtype=lax_internal._complex_basetype(operand.dtype),
+        sharding=s_sharding
     )
     if compute_uv:
-      u = operand.update(shape=batch_dims + (m, m if full_matrices else rank))
-      vt = operand.update(shape=batch_dims + (n if full_matrices else rank, n))
+      u = operand.update(shape=batch_dims + (m, m if full_matrices else rank),
+                         sharding=u_sharding)
+      vt = operand.update(shape=batch_dims + (n if full_matrices else rank, n),
+                          sharding=vt_sharding)
       return s, u, vt
     else:
       return s,

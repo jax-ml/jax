@@ -106,6 +106,7 @@ jax_multiplatform_test(
         "gpu_a100_x32",
         "gpu_h100",
         "gpu_h100_x32",
+        "tpu_v6e_1x1",
     ],
     shard_count = {
         "cpu": 16,
