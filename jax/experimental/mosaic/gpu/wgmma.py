@@ -19,15 +19,16 @@ import functools
 import itertools
 
 import jax
+from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import llvm
-from jaxlib.mlir.dialects import vector
 from jaxlib.mlir.dialects import nvvm
+from jaxlib.mlir.dialects import vector
 import numpy as np
 
-from . import utils
 from . import fragmented_array as fa
+from . import utils
 
 # mypy: ignore-errors
 
@@ -97,18 +98,18 @@ def create_descriptor(
     memref_arg,
     leading_byte_offset: int,
     stride_byte_offset: int,
-    swizzle: int | None,
+    swizzle: int | mgpu_dialect.SwizzlingMode | None,
     memory_space: int | None = None,
 ):
   i64 = ir.IntegerType.get_signless(64)
   ptr_val = llvm.ptrtoint(i64, utils.memref_ptr(memref_arg, memory_space))
-  if swizzle is None:
+  if swizzle is None or swizzle == mgpu_dialect.SwizzlingMode.kNoSwizzle:
     swizzle_encoding = 0
-  elif swizzle == 128:
+  elif swizzle == mgpu_dialect.SwizzlingMode.k128ByteSwizzle:
     swizzle_encoding = 1
-  elif swizzle == 64:
+  elif swizzle == mgpu_dialect.SwizzlingMode.k64ByteSwizzle:
     swizzle_encoding = 2
-  elif swizzle == 32:
+  elif swizzle == mgpu_dialect.SwizzlingMode.k32ByteSwizzle:
     swizzle_encoding = 3
   else:
     raise NotImplementedError(swizzle)

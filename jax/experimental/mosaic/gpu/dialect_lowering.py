@@ -35,6 +35,7 @@ from . import fragmented_array as fa
 from . import launch_context
 from . import layouts
 from . import utils
+from . import wgmma
 
 # mypy: ignore-errors
 
@@ -222,6 +223,19 @@ def _vector_store_op_lowering_rule(
 
   return []
 
+@_register_lowering(vector.SplatOp)
+def _vector_splat_op_lowering_rule(
+    _: LoweringContext, vector_splat_op: vector.SplatOp
+) -> Sequence[ir.Value]:
+
+  out_vec_ty = ir.VectorType(vector_splat_op.aggregate.type)
+  fragmented_array = fa.FragmentedArray.splat(
+      vector_splat_op.input,
+      tuple(out_vec_ty.shape),
+      layouts.from_layout_attr(vector_splat_op.attributes["out_layouts"][0]),
+  )
+  return [_fragmented_array_to_ir(fragmented_array, out_vec_ty)]
+
 
 @_register_lowering(mgpu.AsyncLoadOp)
 def _mgpu_async_load_op_lowering_rule(
@@ -269,6 +283,32 @@ def _arith_addf_op_lowering_rule(
           fragmented_array_lhs + fragmented_array_rhs, add.result.type
       )
   ]
+
+
+@_register_lowering(mgpu.WGMMAOp)
+def _mgpu_wgmma_op_lowering_rule(
+    _: LoweringContext, wgmma_op: mgpu.WGMMAOp
+) -> Sequence[ir.Value]:
+
+  # TODO(dasenov): Move the value -> accumulator conversion outisde of wgmma.
+  # The associated fence could be a little expensive and is not needed if the
+  # result a wgmma feeds into another wgmma (even in another loop step).
+  acc_in = _fragmented_array_from_ir(wgmma_op.accumulator)
+  regs = acc_in.to_layout(fa.WGMMA_LAYOUT)
+  acc = wgmma.WGMMAAccumulator.from_registers(regs)
+
+  a_operand = wgmma_op.a
+  if ir.VectorType.isinstance(a_operand.type):
+    a_operand = _fragmented_array_from_ir(a_operand)
+
+  new_acc = wgmma.wgmma(
+      acc,
+      a_operand,
+      wgmma_op.b,
+      swizzle=wgmma_op.swizzle.value,
+  )
+
+  return [_fragmented_array_to_ir(new_acc.value, wgmma_op.accumulator.type)]
 
 
 def instantiate_single_thread_predicates(module: ir.Module) -> LoweringContext:

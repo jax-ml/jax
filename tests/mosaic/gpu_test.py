@@ -2108,6 +2108,131 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
     self.assertArraysEqual(jax.jit(kernel)(x, y), x + y + y)
 
+  # TODO(dasenov): Add a test for kNoSwizzle, i.e. all swizzling modes.
+  @parameterized.parameters(mgpu_dialect.SwizzlingMode.k32ByteSwizzle,
+                            mgpu_dialect.SwizzlingMode.k64ByteSwizzle,
+                            mgpu_dialect.SwizzlingMode.k128ByteSwizzle)
+  def test_wgmma_kernel_with_tma(self, swizzle):
+    abtype = jnp.bfloat16
+    acctype = jnp.float32
+    groups_m = 4
+    groups_n = 1
+    groups_k = 1
+
+    def matmul(
+        ctx: launch_context.LaunchContext,
+        a_gmem_ref: ir.Value,
+        b_gmem_ref: ir.Value,
+        result_gmem_ref: ir.Value,
+        smem: list[ir.Value],
+    ):
+      del ctx
+      a_smem_ref, b_smem_ref, result_smem_ref, tma_barrier = smem
+
+      shape_a = ir.MemRefType(a_gmem_ref.type).shape
+      shape_b = ir.MemRefType(b_gmem_ref.type).shape
+      ab_elt_type = ir.MemRefType(a_gmem_ref.type).element_type
+      memref_bytes_a = utils.bytewidth(ab_elt_type) * math.prod(shape_a)
+      memref_bytes_b = utils.bytewidth(ab_elt_type) * math.prod(shape_b)
+
+      tma_barrier.arrive_expect_tx(
+        memref_bytes_a + memref_bytes_b,
+        single_thread_predicate(),
+      )
+
+      zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
+      # GMEM -> SMEM
+      mgpu_dialect.async_load(
+          source=a_gmem_ref,
+          destination=a_smem_ref,
+          barrier=tma_barrier.as_dialect_barrier_memref(),
+          indices=[zero_i32, zero_i32, zero_i32, zero_i32],
+          slice_lengths=shape_a,
+          transforms=ir.ArrayAttr.get([]),
+          collective=ir.ArrayAttr.get([]),
+          arrive=False,
+          swizzle=swizzle,
+      )
+      mgpu_dialect.async_load(
+          source=b_gmem_ref,
+          destination=b_smem_ref,
+          barrier=tma_barrier.as_dialect_barrier_memref(),
+          indices=[zero_i32, zero_i32, zero_i32, zero_i32],
+          slice_lengths=shape_b,
+          transforms=ir.ArrayAttr.get([]),
+          collective=ir.ArrayAttr.get([]),
+          arrive=False,
+          swizzle=swizzle,
+      )
+
+      tma_barrier.wait()
+
+      # Computation
+      shape_result = ir.MemRefType(result_gmem_ref.type).shape
+      result_elt_type = ir.MemRefType(result_gmem_ref.type).element_type
+      zero_acc = arith.constant(
+          result_elt_type, ir.FloatAttr.get(result_elt_type, 0.0)
+      )
+      accumulator = vector.splat(
+          ir.VectorType.get(shape_result, result_elt_type), zero_acc
+      )
+      result = mgpu_dialect.wgmma(
+          accumulator,
+          a_smem_ref,
+          b_smem_ref,
+          swizzle=swizzle,
+      )
+
+      # Registers -> SMEM
+      zero_index = arith.constant(ir.IndexType.get(), 0)
+      vector.store(result, result_smem_ref, [zero_index, zero_index])
+
+      # SMEM -> GMEM
+      mgpu_dialect.async_store(
+          source=result_smem_ref,
+          destination=result_gmem_ref,
+          indices=[zero_i32, zero_i32],
+          slice_lengths=shape_result,
+          transforms=ir.ArrayAttr.get([]),
+          swizzle=mgpu_dialect.SwizzlingMode.kNoSwizzle,
+      )
+      nvvm.cp_async_bulk_wait_group(0)
+
+    k = swizzle // np.dtype(abtype).itemsize
+    a_shape = (groups_m, groups_k, 64, k)
+    b_shape = (groups_k, groups_n, k, k)
+    result_shape = (groups_m * 64, groups_n * k)
+    a_jax_shape = jax.ShapeDtypeStruct(a_shape, abtype)
+    b_jax_shape = jax.ShapeDtypeStruct(b_shape, abtype)
+    result_jax_shape = jax.ShapeDtypeStruct(result_shape, acctype)
+    kernel = mgpu.as_gpu_kernel(
+        matmul,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(a_jax_shape, b_jax_shape),
+        out_shape=result_jax_shape,
+        smem_scratch_shape=[
+            a_jax_shape,
+            b_jax_shape,
+            result_jax_shape,
+            core.TMABarrier(1),
+        ],
+        thread_semantics=mgpu.ThreadSemantics.Warpgroup,
+    )
+
+    x = self.prng.uniform(-1, 1, a_shape).astype(abtype)
+    y = self.prng.uniform(-1, 1, b_shape).astype(abtype)
+
+    self.assertArraysAllClose(
+        jax.jit(kernel)(x, y),
+        np.matmul(
+            x.reshape((groups_m * 64, groups_k * k)),
+            y.reshape((groups_k * k, groups_n * k)),
+        ),
+        atol=1e-5,
+        rtol=1e-5,
+    )
+
 
 class UtilsTest(TestCase):
   @parameterized.parameters(
