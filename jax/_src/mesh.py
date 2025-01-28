@@ -120,6 +120,16 @@ def axis_types_to_names(name_to_type: dict[str, AxisTypes]):
     d[t].append(n)
   return {t: ns[0] if len(ns) == 1 else tuple(ns) for t, ns in d.items()}
 
+def to_axis_types_tuple(axis_types):
+  out = []
+  for t, names in axis_types.items():
+    if isinstance(names, tuple):
+      new_names = names[0] if len(names) == 1 else names
+    else:
+      new_names = names
+    out.append((t, new_names))
+  return tuple(out)
+
 
 _mesh_object_dict = {}  # type: ignore
 
@@ -200,7 +210,7 @@ class Mesh(contextlib.ContextDecorator):
 
     axis_types = ({AxisTypes.Auto: axis_names} if axis_types is None else
                   axis_types)
-    axis_types_tuple = tuple(axis_types.items())
+    axis_types_tuple = to_axis_types_tuple(axis_types)
     if len(axis_names_to_types(axis_types).keys()) != len(axis_names):
       raise ValueError(
           "Number of axis names in axis_types should match the number of"
@@ -405,7 +415,7 @@ class AbstractMesh:
       self._axis_names, self._axis_sizes = (), ()
     self.axis_types = ({AxisTypes.Auto: self._axis_names}
                        if axis_types is None else axis_types)
-    self._axis_types_tuple = tuple(self.axis_types.items())
+    self._axis_types_tuple = to_axis_types_tuple(self.axis_types)
     if len(self._name_to_type.keys()) != len(self._axis_names):
       raise ValueError(
           "Number of axis names in axis_types should match the number of"
@@ -424,7 +434,8 @@ class AbstractMesh:
             self._axis_types_tuple == other._axis_types_tuple)
 
   def __repr__(self):
-    mesh_repr = ", ".join(f"'{n}': {v}" for n, v in self.shape_tuple)
+    mesh_repr = (", ".join(f"'{n}': {v}" for n, v in self.shape_tuple)
+                 if self.shape_tuple else "()")
     atr = f", axis_types={self.axis_types}"
     return f"AbstractMesh({mesh_repr}{atr})"
 
@@ -537,8 +548,11 @@ def set_abstract_mesh(mesh: AbstractMesh):
   finally:
     jax_config.abstract_mesh_context_manager.set_local(prev_val)
 
+empty_abstract_mesh = AbstractMesh(())
+
 def get_abstract_mesh():
-  return jax_config.abstract_mesh_context_manager.value
+  val = jax_config.abstract_mesh_context_manager.value
+  return empty_abstract_mesh if val is None else val
 
 
 @contextlib.contextmanager

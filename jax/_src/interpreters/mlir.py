@@ -1663,8 +1663,10 @@ def lower_jaxpr_to_fun(
       flat_args = [
           replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
-              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # pytype: disable=attribute-error
-          for o, s, a in zip(flat_args, ir_arg_shardings, input_avals)
+              dtypes.issubdtype(a.dtype, dtypes.extended) and
+              (s is None or all_unconstrained(rs, a))) else o  # pytype: disable=attribute-error
+          for o, s, a, rs in zip(flat_args, ir_arg_shardings, input_avals,
+                                 arg_shardings)  # type: ignore
       ]
 
     _, token_args, unflattened_args = util.split_list(
@@ -1717,8 +1719,10 @@ def lower_jaxpr_to_fun(
       flat_outputs = [
           replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
-              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # pytype: disable=attribute-error
-          for o, s, a in zip(flat_outputs, ir_result_shardings, output_avals)
+              dtypes.issubdtype(a.dtype, dtypes.extended) and
+              (s is None or all_unconstrained(rs, a))) else o  # pytype: disable=attribute-error
+          for o, s, a, rs in zip(flat_outputs, ir_result_shardings, output_avals,
+                                 result_shardings)  # type: ignore
       ]
 
     func_dialect.return_(flat_outputs)
@@ -1917,7 +1921,8 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     source_info = eqn.source_info.replace(
         name_stack=name_stack + eqn.source_info.name_stack)
     loc = _source_info_to_location(ctx, eqn.primitive, source_info)
-    with source_info_util.user_context(eqn.source_info.traceback), loc:
+    with (source_info_util.user_context(eqn.source_info.traceback), loc,
+          eqn.ctx.manager):
       override_rule = get_override_lowering_rule(eqn.primitive)
       platform_rules: dict[str, LoweringRule] = {}
       default_rule: LoweringRule | None = None

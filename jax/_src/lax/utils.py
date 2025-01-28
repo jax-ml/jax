@@ -49,16 +49,15 @@ def _get_array_abstraction_level(a): return a.array_abstraction_level
 
 def call_sharding_rule(prim, rule, num_out, *avals, **kwargs):
   if config.sharding_in_types.value:
+    cur_mesh = mesh_lib.get_abstract_mesh()
+    if cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual:
+      return None if num_out is None else [None] * num_out
     if rule is None:
-      cur_mesh = mesh_lib.get_abstract_mesh()
-      if cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual:  # type: ignore
-        return None if num_out is None else [None] * num_out
-      else:
-        raise ValueError(
-            f'sharding rule for {prim.name} is not implemented. Please file a'
-            ' bug at https://github.com/jax-ml/jax/issues. You can work around'
-            ' this error by dropping that operation into full hidden sharding'
-            ' mode via: `jax.experimental.shard.hidden_axes(fun, out_shardings=...)`')
+      raise ValueError(
+          f'sharding rule for {prim.name} is not implemented. Please file a'
+          ' bug at https://github.com/jax-ml/jax/issues. You can work around'
+          ' this error by dropping that operation into full hidden sharding'
+          ' mode via: `jax.experimental.shard.hidden_axes(fun, out_shardings=...)`')
     return rule(*avals, **kwargs)
   return None if num_out is None else [None] * num_out
 

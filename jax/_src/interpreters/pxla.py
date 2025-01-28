@@ -2102,7 +2102,8 @@ def _get_num_devices(
   for s in shardings:
     if isinstance(s, UnspecifiedValue):
       continue
-    elif isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
+    elif (isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh) and
+          not s.mesh.empty):
       if abstract_mesh is not None and abstract_mesh != s.mesh:
         raise ValueError("AbstractMesh should be the same across all "
                          f"shardings. Got {abstract_mesh} and {s.mesh}")
@@ -2158,6 +2159,9 @@ def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
           donated_invars, out_shardings, out_layouts)
 
 def _concretize_abstract_out_shardings(shardings, avals, device_assignment):
+  if len(device_assignment) == 1:
+    return shardings
+
   np_dev = np.vectorize(lambda i: device_assignment[i],
                         otypes=[object])(np.arange(len(device_assignment)))
 
@@ -2170,11 +2174,14 @@ def _concretize_abstract_out_shardings(shardings, avals, device_assignment):
   out = []
   for s, a in zip(shardings, avals):
     if isinstance(s, UnspecifiedValue) and a.sharding is not None:
-      spec = (PartitionSpec(*[PartitionSpec.UNCONSTRAINED if sp is None else sp
-                              for sp in a.sharding.spec])
-              if a.sharding.mesh._any_axis_auto else a.sharding.spec)
-      out.append(NamedSharding(
-          _abstract_to_concrete_mesh(a.sharding.mesh), spec))
+      if a.sharding.mesh.empty:
+        out.append(s)
+      else:
+        spec = (PartitionSpec(*[PartitionSpec.UNCONSTRAINED if sp is None else sp
+                                for sp in a.sharding.spec])
+                if a.sharding.mesh._any_axis_auto else a.sharding.spec)
+        out.append(NamedSharding(
+            _abstract_to_concrete_mesh(a.sharding.mesh), spec))
     else:
       out.append(s)
   return tuple(out)
@@ -2792,7 +2799,10 @@ def _maybe_get_and_check_out_shardings(
       if (aval is not core.abstract_token and
           dtypes.issubdtype(aval.dtype, dtypes.extended)):
         xla_s = sharding_impls.logical_sharding(aval, xla_s)
-      new_out_shardings.append(_gspmd_to_named_sharding(xla_s, orig))  # type: ignore
+      try:
+        new_out_shardings.append(_gspmd_to_named_sharding(xla_s, orig))  # type: ignore
+      except:
+        new_out_shardings.append(xla_s)
     else:
       xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)
       orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)  # pytype: disable=attribute-error

@@ -622,8 +622,8 @@ def _infer_params_impl(
   attr_token = _attr_token(flat_fun, in_type)
 
   abstract_mesh = (
-      get_abstract_mesh_from_avals(in_type)
-      if not mesh_lib.get_abstract_mesh() else mesh_lib.get_abstract_mesh())
+      get_abstract_mesh_from_avals(in_avals)
+      if mesh_lib.get_abstract_mesh().empty else mesh_lib.get_abstract_mesh())
   with mesh_lib.set_abstract_mesh(abstract_mesh):
     jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
         flat_fun, in_type, attr_token, dbg,
@@ -677,13 +677,16 @@ def get_abstract_mesh_from_avals(in_avals):
     return None
   m = None
   for a in in_avals:
+    if a is core.abstract_token:
+      continue
+    if a.sharding.mesh.empty:  # type: ignore
+      continue
     if m is not None and m != a.sharding.mesh:
       raise ValueError(
           f'Mesh for all inputs should be equal. Got one mesh: {m} and'
           f' another mesh: {a.sharding.mesh}')
     m = a.sharding.mesh  # type: ignore
-  assert isinstance(m, AbstractMesh)
-  return m
+  return AbstractMesh(()) if m is None else m
 
 
 class InferParamsCacheEntry:
@@ -722,6 +725,10 @@ def _infer_params(
   else:
     resource_env = None
     pjit_mesh = None
+  if resource_env is not None and mesh_lib.get_concrete_mesh() is not None:
+    raise ValueError(
+        'Using `with mesh:` context manager and `jax.sharding.use_mesh`'
+        ' together is not allowed.')
 
   dbg = tracing_debug_info(
       'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
@@ -1561,6 +1568,8 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
     arg_s, committed = ((arg.sharding, getattr(arg, '_committed', True))
                         if hasattr(arg, 'sharding') and arg.sharding is not None
                         else (UNSPECIFIED, False))
+    if isinstance(arg_s, NamedSharding) and arg_s.mesh.empty:
+      arg_s, committed = UNSPECIFIED, False
     if isinstance(pjit_in_s, UnspecifiedValue):
       if isinstance(arg_s, UnspecifiedValue):
         resolved_in_shardings.append(arg_s)
@@ -1595,7 +1604,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
             'Please see the jax.Array migration guide for more information '
             'https://jax.readthedocs.io/en/latest/jax_array_migration.html#handling-of-host-local-inputs-to-pjit-like-batch-etc. '
             f'Got arg shape: {arg.shape}, arg value: {arg}')
-      if not isinstance(arg_s, UnspecifiedValue):
+      if not isinstance(arg_s, UnspecifiedValue) and arg_s.is_concrete:
         # jax.jit does not allow resharding across different memory kinds even
         # if the argument is uncommitted. Use jax.device_put for those cases,
         # either outside or inside jax.jit.
@@ -1789,7 +1798,10 @@ def _pjit_lower(
     pgle_profiler: profiler.PGLEProfiler | None):
   util.test_event("pjit_lower")
   if config.sharding_in_types.value:
-    mesh, api_name = mesh_lib.get_concrete_mesh(), 'jit'
+    if resource_env is not None:
+      mesh, api_name = resource_env.physical_mesh, 'pjit'
+    else:
+      mesh, api_name = mesh_lib.get_concrete_mesh(), 'jit'
   else:
     mesh, api_name = ((resource_env.physical_mesh, 'pjit')
                       if resource_env is not None else (None, 'jit'))
@@ -2683,18 +2695,17 @@ batching.skippable_batchers[sharding_constraint_p] = lambda _: ()
 # TODO(yashkatariya): Make shardings optional.
 def mesh_cast(xs, out_shardings):
   x_flat, treedef = tree_flatten(xs)
-  x_avals_flat = [core.shaped_abstractify(x) for x in x_flat]
   shardings_flat = flatten_axes("mesh_cast shardings", treedef, out_shardings)
   out_flat = [
       mesh_cast_p.bind(
-          x, src_sharding=x_aval.sharding,
-          dst_sharding=canonicalize_sharding(s, check_mesh_consistency=False))
-      for x, x_aval, s in safe_zip(x_flat, x_avals_flat, shardings_flat)
+          x, dst_sharding=canonicalize_sharding(s, check_mesh_consistency=False))
+      for x, s in safe_zip(x_flat, shardings_flat)
   ]
   return tree_unflatten(treedef, out_flat)
 
 mesh_cast_p = core.Primitive('mesh_cast')
-def _mesh_cast_abstract_eval(aval, src_sharding, dst_sharding):
+def _mesh_cast_abstract_eval(aval, dst_sharding):
+  src_sharding = aval.sharding
   if src_sharding.mesh.shape_tuple != dst_sharding.mesh.shape_tuple:
     raise ValueError(
         f'Mesh shape of the input {src_sharding.mesh.shape_tuple} does not'
@@ -2731,17 +2742,15 @@ def _mesh_cast_abstract_eval(aval, src_sharding, dst_sharding):
   return aval.update(sharding=dst_sharding)
 mesh_cast_p.def_abstract_eval(_mesh_cast_abstract_eval)
 
-def _mesh_cast_impl(x, src_sharding, dst_sharding):
-  return dispatch.apply_primitive(mesh_cast_p, x, src_sharding=src_sharding,
-                                  dst_sharding=dst_sharding)
+def _mesh_cast_impl(x, dst_sharding):
+  return dispatch.apply_primitive(mesh_cast_p, x, dst_sharding=dst_sharding)
 mesh_cast_p.def_impl(_mesh_cast_impl)
 
-def _mesh_cast_transpose_rule(ct, _, src_sharding, dst_sharding):
-  return [mesh_cast_p.bind(ct, src_sharding=dst_sharding,
-                               dst_sharding=src_sharding)]
+def _mesh_cast_transpose_rule(ct, x, dst_sharding):
+  return [mesh_cast_p.bind(ct, dst_sharding=x.aval.sharding)]
 ad.deflinear2(mesh_cast_p, _mesh_cast_transpose_rule)
 
-def _mesh_cast_hlo_lowering(ctx, x_node, *, src_sharding, dst_sharding):
+def _mesh_cast_hlo_lowering(ctx, x_node, *, dst_sharding):
   aval, = ctx.avals_in
   aval_out, = ctx.avals_out
   proto = (dst_sharding._to_sdy_sharding(aval.ndim)
@@ -2750,27 +2759,18 @@ def _mesh_cast_hlo_lowering(ctx, x_node, *, src_sharding, dst_sharding):
   return [mlir.lower_sharding_under_shit(ctx, x_node, aval_out, proto)]
 mlir.register_lowering(mesh_cast_p, _mesh_cast_hlo_lowering)
 
-# TODO(yashkatariya): Comment this in after vmap ShiT tests are added.
-# def _mesh_cast_batcher(axis_data, vals_in, dims_in, src_sharding,
-#                            dst_sharding):
-#   if axis_data.spmd_name is not None:
-#     used = {n for ns in dst_sharding.spec
-#             for n in (ns if isinstance(ns, tuple) else (ns,))}
-#     if set(axis_data.spmd_name) & used:
-#       raise ValueError(
-#           f'vmap spmd_axis_name {axis_data.spmd_name} cannot '
-#           f'appear in mesh_cast spec, but got spec {dst_sharding.spec}')
-#   x, = vals_in
-#   d, = dims_in
+def _mesh_cast_batcher(axis_data, vals_in, dims_in, dst_sharding):
+  assert axis_data.spmd_name is None
+  x, = vals_in
+  d, = dims_in
 
-#   val = None if axis_data.spmd_name is None else axis_data.spmd_name
-#   new_spec = PartitionSpec(*util.tuple_insert(dst_sharding.spec, d, val))
-#   vmapped_dst_sharding = NamedSharding(dst_sharding.mesh, new_spec)
-#   y = mesh_cast_p.bind(x, src_sharding=src_sharding,
-#                            dst_sharding=vmapped_dst_sharding)
-#   return y, d
-# batching.fancy_primitive_batchers[mesh_cast_p] = _mesh_cast_batcher
-# batching.skippable_batchers[mesh_cast_p] = lambda _: ()
+  val = None
+  new_spec = PartitionSpec(*util.tuple_insert(dst_sharding.spec, d, val))
+  vmapped_dst_sharding = NamedSharding(dst_sharding.mesh, new_spec)
+  y = mesh_cast_p.bind(x, dst_sharding=vmapped_dst_sharding)
+  return y, d
+batching.fancy_primitive_batchers[mesh_cast_p] = _mesh_cast_batcher
+batching.skippable_batchers[mesh_cast_p] = lambda _: ()
 
 # -------------------- reshard ------------------------------------
 
@@ -2782,13 +2782,13 @@ def reshard(xs, out_shardings):
   for x, x_aval, s in safe_zip(x_flat, x_avals_flat, shardings_flat):
     ds = canonicalize_sharding(s)
     ds = ds.with_spec(ds.spec._normalized_spec(x_aval.ndim))  # type: ignore
-    out_flat.append(reshard_p.bind(x, src_sharding=x_aval.sharding,
-                                   dst_sharding=ds))
+    out_flat.append(reshard_p.bind(x, dst_sharding=ds))
   return tree_unflatten(treedef, out_flat)
 
 reshard_p = core.Primitive('reshard')
 
-def _reshard_abstract_eval(aval, src_sharding, dst_sharding):
+def _reshard_abstract_eval(aval, dst_sharding):
+  src_sharding = aval.sharding
   if src_sharding.mesh.abstract_mesh != dst_sharding.mesh.abstract_mesh:
     raise ValueError(
         f'Mesh of the input {src_sharding.mesh.abstract_mesh} does not'
@@ -2797,17 +2797,15 @@ def _reshard_abstract_eval(aval, src_sharding, dst_sharding):
   return aval.update(sharding=dst_sharding)
 reshard_p.def_abstract_eval(_reshard_abstract_eval)
 
-def _reshard_impl(x, src_sharding, dst_sharding):
-  return dispatch.apply_primitive(reshard_p, x, src_sharding=src_sharding,
-                                  dst_sharding=dst_sharding)
+def _reshard_impl(x, dst_sharding):
+  return dispatch.apply_primitive(reshard_p, x, dst_sharding=dst_sharding)
 reshard_p.def_impl(_reshard_impl)
 
-def _reshard_transpose_rule(ct, _, src_sharding, dst_sharding):
-  return [reshard_p.bind(ct, src_sharding=dst_sharding,
-                         dst_sharding=src_sharding)]
+def _reshard_transpose_rule(ct, x, dst_sharding):
+  return [reshard_p.bind(ct, dst_sharding=x.aval.sharding)]
 ad.deflinear2(reshard_p, _reshard_transpose_rule)
 
-def _reshard_hlo_lowering(ctx, x_node, *, src_sharding, dst_sharding):
+def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding):
   aval, = ctx.avals_in
   aval_out, = ctx.avals_out
   proto = (dst_sharding._to_sdy_sharding(aval.ndim)

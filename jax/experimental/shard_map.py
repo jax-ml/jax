@@ -70,7 +70,6 @@ from jax._src.tree_util import (broadcast_prefix, prefix_errors, PyTreeDef,
                                 generate_key_paths, KeyPath)
 from jax.experimental.multihost_utils import (host_local_array_to_global_array,
                                               global_array_to_host_local_array)
-from jax._src.pjit import sharding_constraint_p
 
 P = PartitionSpec
 
@@ -473,6 +472,12 @@ shard_map_p = ShardMapPrimitive('shard_map')
 
 # Staging
 
+def _as_manual_mesh(mesh):
+  if config.sharding_in_types.value:
+    return AbstractMesh(
+        mesh.shape_tuple, axis_types={AxisTypes.Manual: mesh.axis_names})
+  return None
+
 def _shard_map_staging(
     trace: pe.DynamicJaxprTrace, prim: core.Primitive, f: lu.WrappedFun,
     in_tracers: Sequence[Any], *, mesh: Mesh,
@@ -485,8 +490,9 @@ def _shard_map_staging(
   in_tracers = map(trace.to_jaxpr_tracer, in_tracers)
   in_avals = [t.aval for t in in_tracers]
   in_avals_ = map(partial(_shard_aval, mesh), in_names, in_avals)
+  manual_mesh = _as_manual_mesh(mesh)
   with (core.extend_axis_env_nd(list(mesh.shape.items())),
-        set_abstract_mesh(pjit.get_abstract_mesh_from_avals(in_avals_))):
+        set_abstract_mesh(manual_mesh)):
     jaxpr, out_avals_, consts, () = pe.trace_to_jaxpr_dynamic(f, in_avals_)
   _check_names(out_names_thunk(), out_avals_)
   if check_rep:
@@ -502,7 +508,8 @@ def _shard_map_staging(
   constvars = map(trace.getvar, map(trace.to_jaxpr_tracer, consts))
   outvars = map(trace.makevar, out_tracers)
   in_names_staged = ({},) * len(consts) + tuple(in_names)  # type: ignore
-  with core.extend_axis_env_nd(list(mesh.shape.items())):
+  with (core.extend_axis_env_nd(list(mesh.shape.items())),
+        set_abstract_mesh(manual_mesh)):
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
   params = dict(mesh=mesh, in_names=in_names_staged,
                 out_names=tuple(out_names_thunk()), jaxpr=jaxpr,
@@ -552,7 +559,9 @@ def _unshard_shaped_array(mesh: Mesh, names: AxisNames,
                     for i, sz in enumerate(aval.shape))
   if config.sharding_in_types.value:
     spec = _names_to_pspec(names)._normalized_spec(aval.ndim)
-    new_sharding = NamedSharding(get_abstract_mesh(), spec)
+    new_mesh = (mesh.abstract_mesh if get_abstract_mesh().empty else
+                get_abstract_mesh())
+    new_sharding = NamedSharding(new_mesh, spec)
   else:
     new_sharding = None
   return aval.update(shape=new_shape, sharding=new_sharding)
@@ -787,7 +796,8 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
   del prim, auto
   if isinstance(mesh, AbstractMesh):
     mesh = get_mesh_from_args(args, mesh)
-  args = map(partial(_unmatch_spec, mesh), in_names, args)
+  args = map(partial(_unmatch_spec, mesh, context_mesh=get_abstract_mesh()),
+             in_names, args)
   in_rep = map(partial(_in_names_to_rep, mesh), in_names)
   outs, out_rep = _run_shmap(fun, mesh, args, in_rep, check_rep)
   out_avals = [core.mapped_aval(x.shape[0], 0, core.get_aval(x)) for x in outs]
@@ -798,13 +808,16 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
   return map(partial(_match_spec, mesh, check_rep), pspecs, outs)
 core.EvalTrace.process_shard_map = _shard_map_impl
 
-def _run_shmap(f, mesh, args, reps, check_rep):
-  trace = ShardMapTrace(mesh, check_rep)
+def _run_shmap(f, mesh, args, reps, check_rep, context_mesh=None):
+  context_mesh = get_abstract_mesh() if context_mesh is None else context_mesh
+  trace = ShardMapTrace(mesh, check_rep, context_mesh)
   in_tracers = map(partial(ShardMapTracer, trace), reps, args)
-  with core.set_current_trace(trace):
-    with core.extend_axis_env_nd(mesh.shape.items()):
-      ans = f.call_wrapped(*in_tracers)
-      outs, out_rep = unzip2(map(trace.to_val_rep_pair, ans))
+  manual_mesh = _as_manual_mesh(mesh)
+  with (core.set_current_trace(trace),
+        core.extend_axis_env_nd(mesh.shape.items()),
+        set_abstract_mesh(manual_mesh)):
+    ans = f.call_wrapped(*in_tracers)
+    outs, out_rep = unzip2(map(trace.to_val_rep_pair, ans))
   return outs, out_rep
 
 def _names_to_pspec(names: AxisNames) -> PartitionSpec:
@@ -812,8 +825,9 @@ def _names_to_pspec(names: AxisNames) -> PartitionSpec:
   unpack = lambda t: t[0] if t is not None and len(t) == 1 else t
   return PartitionSpec(*(unpack(names.get(i)) for i in range(ndmin)))
 
-def _unmatch_spec(mesh: Mesh, src: AxisNames, x: JaxType) -> JaxType:
-  with core.eval_context(), jax.disable_jit(False):
+def _unmatch_spec(mesh: Mesh, src: AxisNames, x: JaxType, context_mesh) -> JaxType:
+  with (core.eval_context(), jax.disable_jit(False),
+        set_abstract_mesh(context_mesh)):
     return jax.jit(HashablePartial(_unmatch, mesh, tuple(src.items())))(x)
 
 def _unmatch(mesh, src_tup, x):
@@ -850,18 +864,20 @@ def _match(mesh, check_rep, pspec, x):
   # TODO put back (?) needed for rep checking in eager? for now test rewrite
   return shard_map(_rem_singleton, mesh, (src,), pspec, check_rep=False)(x)
 
-def _rem_singleton(x): return x.reshape(x.shape[1:])
-def _add_singleton(x): return x.reshape(1, *x.shape)
+def _rem_singleton(x): return jnp.squeeze(x, axis=0)
+def _add_singleton(x): return jnp.expand_dims(x, axis=0)
 
 class ShardMapTrace(core.Trace):
-  __slots__ = ("mesh", "check")
+  __slots__ = ("mesh", "check", "context_mesh")
 
   mesh: Mesh
   check: bool
+  context_mesh: AbstractMesh
 
-  def __init__(self, mesh, check):
+  def __init__(self, mesh, check, context_mesh):
     self.mesh = mesh
     self.check = check
+    self.context_mesh = context_mesh
 
   def to_val_rep_pair(self, val):
     if isinstance(val, ShardMapTracer):
@@ -869,7 +885,7 @@ class ShardMapTrace(core.Trace):
     elif isinstance(val, Tracer):
       raise Exception("Shouldn't have any non-shard_map tracers")
     else:
-      val_ = _unmatch_spec(self.mesh, {}, val)
+      val_ = _unmatch_spec(self.mesh, {}, val, self.context_mesh)
       return val_, None
 
   def process_primitive(self, prim, tracers, params):
@@ -879,7 +895,8 @@ class ShardMapTrace(core.Trace):
       out_vals = eager_rule(self.mesh, *in_vals, **params)
     else:
       f = HashablePartial(_prim_applier, prim, tuple(params.items()), self.mesh)
-      with core.eval_context(), jax.disable_jit(False):
+      with (core.eval_context(), jax.disable_jit(False),
+            set_abstract_mesh(self.context_mesh)):
         out_vals = jax.jit(f)(*in_vals)
     rep_rule = _check_rules.get(prim, partial(_rule_missing, prim))
     out_rep = rep_rule(self.mesh, *in_rep, **params) if self.check else set()
@@ -910,7 +927,8 @@ class ShardMapTrace(core.Trace):
       raise NotImplementedError(msg)
     del prim, jvp, symbolic_zeros
     in_vals, in_rep = unzip2(map(self.to_val_rep_pair, tracers))
-    out_vals, out_rep = _run_shmap(fun, self.mesh, in_vals, in_rep, self.check)
+    out_vals, out_rep = _run_shmap(fun, self.mesh, in_vals, in_rep, self.check,
+                                   self.context_mesh)
     return map(partial(ShardMapTracer, self), out_rep, out_vals)
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
@@ -922,7 +940,8 @@ class ShardMapTrace(core.Trace):
       raise NotImplementedError(msg)
     del prim, fwd, bwd, out_trees, symbolic_zeros
     in_vals, in_rep = unzip2(map(self.to_val_rep_pair, tracers))
-    out_vals, out_rep = _run_shmap(fun, self.mesh, in_vals, in_rep, self.check)
+    out_vals, out_rep = _run_shmap(fun, self.mesh, in_vals, in_rep, self.check,
+                                   self.context_mesh)
     return map(partial(ShardMapTracer, self), out_rep, out_vals)
 
 
@@ -938,17 +957,23 @@ class ShardMapTracer(core.Tracer):
   @property
   def aval(self):
     aval = core.get_aval(self.val)
-    return core.mapped_aval(self._trace.mesh.size, 0, aval)
+    out = core.mapped_aval(self._trace.mesh.size, 0, aval)
+    if config.sharding_in_types.value:
+      new_sharding = NamedSharding(_as_manual_mesh(self._trace.mesh),
+                                   out.sharding.spec)  # type: ignore
+    else:
+      new_sharding = None
+    return out.update(sharding=new_sharding)
 
   def to_concrete_value(self):
     if self.rep == set(self._trace.mesh.axis_names):
-      with core.eval_context():
+      with core.eval_context(), set_abstract_mesh(self._trace.context_mesh):
         return core.to_concrete_value(self.val[0])
     else:
       return None
 
   def __str__(self) -> str:
-    with core.eval_context():
+    with core.eval_context(), set_abstract_mesh(self._trace.context_mesh):
       blocks = list(self.val)
     mesh = self._trace.mesh
     axis_names = f"({', '.join(map(str, mesh.axis_names))},)"
@@ -1135,7 +1160,7 @@ for o in it.chain(lax.__dict__.values(), slicing.__dict__.values(),
 
 for p in [control_flow.loops.cumsum_p, control_flow.loops.cumlogsumexp_p,
           control_flow.loops.cumprod_p, control_flow.loops.cummax_p,
-          control_flow.loops.cummin_p, sharding_constraint_p]:
+          control_flow.loops.cummin_p, pjit.sharding_constraint_p]:
   register_standard_check(p)
   register_standard_rewrite(p)
 
@@ -1706,11 +1731,11 @@ def _partial_eval_jaxpr_custom_rule(
                for var, w in zip(jaxpr_staged.invars[:num_res], which) if w]
   eqn_known = pe.new_jaxpr_eqn(ins_known, [*out_binders_known, *residuals],
                                eqn.primitive, params_known, jaxpr_known.effects,
-                               eqn.source_info)
+                               eqn.source_info, eqn.ctx)
   full_res = subs_list2(in_fwd, out_fwd, ins_known, out_binders_known, residuals)
   eqn_staged = pe.new_jaxpr_eqn([*full_res, *ins_staged], out_binders_staged,
                                 eqn.primitive, params_staged,
-                                jaxpr_staged.effects, eqn.source_info)
+                                jaxpr_staged.effects, eqn.source_info, eqn.ctx)
   assert len(eqn_staged.invars) == len(jaxpr_staged.invars)
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)
               if type(x) is core.Var and not inst]
@@ -1795,7 +1820,7 @@ def _shard_map_dce(used_outputs: list[bool], eqn: core.JaxprEqn
     new_eqn = pe.new_jaxpr_eqn(
         [v for v, used in zip(eqn.invars, used_inputs) if used],
         [x for x, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, effs, eqn.source_info)
+        eqn.primitive, new_params, effs, eqn.source_info, eqn.ctx)
     return used_inputs, new_eqn
 pe.dce_rules[shard_map_p] = _shard_map_dce
 

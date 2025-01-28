@@ -5554,8 +5554,9 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   # array([1, 2, 3])
   weak_type = dtype is None and dtypes.is_weakly_typed(object)
   if (config.sharding_in_types.value and device is None and
-      isinstance(object, Array)):
+      isinstance(object, core.Tracer)):
     sharding = object.aval.sharding
+    sharding = None if sharding.mesh.empty else sharding
   else:
     sharding = canonicalize_device_to_sharding(device)  # type: ignore
 

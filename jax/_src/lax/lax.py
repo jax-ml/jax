@@ -64,6 +64,7 @@ from jax._src.lax.utils import (
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.mesh import get_abstract_mesh
 from jax._src.sharding_impls import (PmapSharding, NamedSharding,
                                      PartitionSpec as P, canonicalize_sharding)
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
@@ -179,7 +180,7 @@ def _broadcast_shapes_uncached(*shapes):
     # Raise ValueError here for backward compatibility.
     raise ValueError(f"Incompatible shapes for broadcasting: shapes={list(shapes)}") from err
 
-def broadcast_shardings(*avals) -> NamedSharding:
+def broadcast_shardings(*avals):
   fst, *rst = avals
   if not rst:
     return fst.sharding
@@ -585,11 +586,8 @@ def _convert_element_type(
     new_dtype = np.dtype(new_dtype)
   new_dtype = dtypes.dtype(new_dtype, canonicalize=True)
 
-  if (config.sharding_in_types.value and sharding is None and
-      isinstance(operand, Array)):
-    sharding = operand.aval.sharding
-
-  sharding = canonicalize_sharding(sharding, check_mesh_consistency=False)  # type: ignore
+  if sharding is not None and not isinstance(sharding, Sharding):
+    raise ValueError(f'{sharding=} must be an instance of jax.sharding.Sharding')
 
   if (warn_on_complex_to_real_cast and
       dtypes.issubdtype(old_dtype, np.complexfloating) and
@@ -1373,6 +1371,7 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
     raise NotImplementedError(
         '`out_sharding` argument of `dot_general` only supports NamedSharding '
         'instances. Please file a bug if this is not enough for your use case.')
+  out_sharding = canonicalize_sharding(out_sharding)
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   cdims = (api_util._ensure_index_tuple(lhs_contract),
            api_util._ensure_index_tuple(rhs_contract))
@@ -1933,13 +1932,13 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
   fill_value = _convert_element_type(fill_value, dtype, weak_type)
   if (sharding is not None and not isinstance(sharding, PmapSharding) and
-      isinstance(fill_value, array.ArrayImpl) and
-      not config.sharding_in_types.value):
+      isinstance(fill_value, array.ArrayImpl) and sharding.is_concrete):
     broadcast_shape = sharding.shard_shape(shape)
     shard = broadcast(fill_value, broadcast_shape)
     return array.make_array_from_callback(shape, sharding, lambda _: shard)
 
-  if config.sharding_in_types.value and sharding is not None:
+  if (config.sharding_in_types.value and sharding is not None and
+      not sharding.is_concrete):
     return broadcast(fill_value, shape, sharding=sharding)
   else:
     return broadcast(fill_value, shape)
@@ -2150,7 +2149,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
     return dtype._rules.full(fill_shape, fill_value, dtype)  # type: ignore[union-attr]
 
   if (config.sharding_in_types.value and sharding is None and shape is None and
-      isinstance(x, Array)):
+      isinstance(x, core.Tracer)):
     sharding = x.aval.sharding
   else:
     # If `x` has a sharding but no `_committed` attribute
@@ -3184,6 +3183,13 @@ def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type,
 
 def _convert_element_type_sharding_rule(operand, *, new_dtype, weak_type,
                                         sharding):
+  if sharding is None:
+    return operand.sharding
+  if sharding.is_concrete:
+    if isinstance(sharding, NamedSharding):
+      return NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
+    else:
+      return None
   return sharding
 
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type,
@@ -3268,7 +3274,7 @@ convert_element_type_p = Primitive('convert_element_type')
 def _convert_element_type_bind_with_trace(trace, args, params):
   sharding = params['sharding']
   operand = core.Primitive.bind_with_trace(convert_element_type_p, trace, args, params)
-  if sharding is not None and not config.sharding_in_types.value:
+  if sharding is not None and sharding.is_concrete:
     with core.set_current_trace(trace):
       operand = pjit.with_sharding_constraint(operand, sharding)
   return operand
@@ -3303,8 +3309,6 @@ def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type,
     aval_in = aval_in.update(dtype=_real_dtype(aval_in.dtype))
   out = mlir.convert_hlo(ctx, operand, aval_in, aval_out)
   if config.sharding_in_types.value:
-    if sharding is not None:
-      assert aval_out.sharding == sharding
     return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
   return [out]
 
@@ -3734,8 +3738,12 @@ def _dot_batch_rule(
   else:
     rhs_shape = np.shape(rhs)
   if out_sharding is not None:
-    raise NotImplementedError("vmap with out_sharding is not supported. "
-                              "Please open an issue.")
+    cur_mesh = get_abstract_mesh()
+    if cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual:
+      out_sharding = None
+    else:
+      raise NotImplementedError("vmap with out_sharding is not supported. "
+                                "Please open an issue.")
   batched_out = invoke_prim(
       lhs,
       rhs,
@@ -4433,8 +4441,13 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
     dyn_limits.append(bound)
   new_shape = (stacked_size,) + _merge_dyn_shape(shape, dyn_limits)
   if sharding is not None:
-    raise NotImplementedError('Implement broadcast_in_dim_batch_rule')
-  result = broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions)
+    if sharding.mesh._are_all_axes_auto or sharding.mesh._are_all_axes_manual:
+      sharding = None
+    else:
+      raise NotImplementedError('Implement sharding support for '
+                                'broadcast_in_dim_batch_rule')
+  result = broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions,
+                            sharding=sharding)
   out_ragged_axes = [idx+1 for idx, s in enumerate(shape) if s is None]
   out_bdim = batching.make_batch_axis(
       result.ndim, 0, zip(out_ragged_axes, out_ragged_sizes))
@@ -5108,8 +5121,9 @@ def _reshape_transpose_rule(t, operand, *, new_sizes, dimensions, sharding):
     return [reshape(t, operand.aval.shape)]
   else:
     if config.sharding_in_types.value:
-      t_s = operand.sharding.with_spec(
-          tuple(map(str, np.take(operand.aval.sharding.spec, dimensions))))
+      t_s = operand.aval.sharding.with_spec(
+          tuple(map(lambda s: s if s is None else str(s),
+                    np.take(operand.aval.sharding.spec, dimensions))))
     else:
       t_s = None
     return [transpose(reshape(t, np.take(operand.aval.shape, dimensions),
@@ -5119,13 +5133,18 @@ def _reshape_transpose_rule(t, operand, *, new_sizes, dimensions, sharding):
 def _reshape_batch_rule(batched_args, batch_dims, *, new_sizes, dimensions,
                         sharding):
   if sharding is not None:
-    raise NotImplementedError
+    if sharding.mesh._are_all_axes_manual or sharding.mesh._are_all_axes_auto:
+      sharding = None
+    else:
+      raise NotImplementedError('reshape batch sharding support')
   operand, = batched_args
   bdim, = batch_dims
   operand = batching.moveaxis(operand, bdim, 0)
   if dimensions is not None:
     dimensions = (0,) + tuple(np.add(1, dimensions))
-  return reshape(operand, operand.shape[:1] + new_sizes, dimensions), 0
+  out = reshape(operand, operand.shape[:1] + new_sizes, dimensions,
+                sharding=sharding)
+  return out, 0
 
 
 def _reshape_lower(ctx, x, *dyn_shape, new_sizes, dimensions, sharding):
@@ -6689,16 +6708,18 @@ _zeros: Callable = partial(full_like, fill_value=0)
 
 def _zero(x):
   if config.sharding_in_types.value:
+    x_aval = core.get_aval(x)
     return full_like(x, shape=(), fill_value=0,
-                     sharding=x.aval.sharding.with_spec(P()))  # type: ignore
+                     sharding=x_aval.sharding.with_spec(P()))  # type: ignore
   return full_like(x, shape=(), fill_value=0)
 
 _ones: Callable = partial(full_like, fill_value=1)
 
 def _one(x):
   if config.sharding_in_types.value:
+    x_aval = core.get_aval(x)
     return full_like(x, shape=(), fill_value=1,
-                     sharding=x.aval.sharding.with_spec(P()))
+                     sharding=x_aval.sharding.with_spec(P()))
   return full_like(x, shape=(), fill_value=1)
 
 _twos: Callable = partial(full_like, fill_value=2)

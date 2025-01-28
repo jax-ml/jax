@@ -229,10 +229,12 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
       msg.format(', '.join(str(x) for x in xs_flat
                            if not hasattr(x, 'shape')))) from err
 
+  xs_avals = [core.get_aval(x) for x in xs_flat]
+
   if (config.sharding_in_types.value and
-      not all(x.aval.sharding.spec[0] is None for x in xs_flat)):
+      not all(a.sharding.spec[0] is None for a in xs_avals)):
     raise ValueError('0th dimension of all xs should be replicated. Got '
-                     f'{", ".join(str(x.aval.sharding.spec) for x in xs_flat)}')
+                     f'{", ".join(str(a.sharding.spec) for a in xs_avals)}')
 
   if length is not None:
     try:
@@ -270,7 +272,6 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     stacked_y = tree_map(stack, *maybe_reversed(ys))
     return carry, stacked_y
 
-  xs_avals = [core.get_aval(x) for x in xs_flat]
   x_avals = [core.mapped_aval(length, 0, aval) for aval in xs_avals]
   dbg_body = api_util.tracing_debug_info("scan", f, (init, xs), {})
 

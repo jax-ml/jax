@@ -591,8 +591,10 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
 
 def check_avals_context_mesh(avals, prim_name):
   if config.sharding_in_types.value:
+    cur_mesh = mesh_lib.get_abstract_mesh()
     for a in avals:
-      cur_mesh = mesh_lib.get_abstract_mesh()
+      if a.sharding.mesh.empty or cur_mesh.empty:
+        continue
       if a.sharding.mesh != cur_mesh:
         raise ValueError(
             f"For primitive {prim_name}, context mesh {cur_mesh} should match"
@@ -1778,11 +1780,11 @@ def get_sharding(sharding, ndim):
           "Length of sharding.spec must be equal to aval's ndim. Got"
           f" sharding.spec {out_s.spec} and aval.ndim {ndim}")
   else:
-    context_mesh = mesh_lib.get_abstract_mesh()
-    if not context_mesh:
+    cur_mesh = mesh_lib.get_abstract_mesh()
+    if cur_mesh.empty:
       raise RuntimeError("Please set the mesh via `jax.set_mesh` API.")
     assert sharding is None
-    out_s = NamedSharding(context_mesh, P(*[None] * ndim))
+    out_s = NamedSharding(cur_mesh, P(*[None] * ndim))
   if not isinstance(out_s.mesh, mesh_lib.AbstractMesh):
     raise ValueError("Mesh of an aval must be an AbstractMesh. "
                      f"Got {out_s.mesh} of type {type(out_s.mesh)}")
@@ -1923,6 +1925,11 @@ class DShapedArray(UnshapedArray):
     if weak_type is None:
       weak_type = self.weak_type
     return DShapedArray(shape, dtype, weak_type)
+
+  @property
+  def sharding(self):
+    from jax._src.sharding_impls import NamedSharding  # type: ignore
+    return NamedSharding(mesh_lib.AbstractMesh(()), P())
 
   def _len(self, tracer):
     return self.shape[0]

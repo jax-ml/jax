@@ -817,8 +817,8 @@ already_configured_with_absl = False
 trace_state = config_ext.Config(None, include_in_jit_key=True)
 axis_env_state = config_ext.Config((), include_in_jit_key=True)
 mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
-abstract_mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
-device_context = config_ext.Config((), include_in_jit_key=True)
+abstract_mesh_context_manager = config_ext.Config(None, include_in_jit_key=True)
+device_context = config_ext.Config(None, include_in_jit_key=True)
 compute_on_context_manager = config_ext.Config(None, include_in_jit_key=True)
 xla_metadata_context_manager = config_ext.Config(None, include_in_jit_key=True)
 

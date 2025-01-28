@@ -392,6 +392,12 @@ class NamedSharding(jsharding.Sharding):
     return not self.mesh.is_multi_process
 
   @property
+  def is_concrete(self) -> bool:
+    if isinstance(self.mesh, mesh_lib.AbstractMesh):
+      return False
+    return True
+
+  @property
   def addressable_devices(self) -> set[Device]:
     if isinstance(self.mesh, mesh_lib.AbstractMesh):
       raise ValueError('addressable_devices is not implemented for '
@@ -1761,14 +1767,18 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
     return sharding  # type: ignore
   if sharding is None:
     return sharding
+  # TODO(yashkatariya): Remove this after vmap + shit works.
+  if isinstance(sharding, NamedSharding) and sharding.mesh.empty:
+    return None
 
+  cur_mesh = mesh_lib.get_abstract_mesh()
   if isinstance(sharding, PartitionSpec):
-    sharding = NamedSharding(mesh_lib.get_abstract_mesh(), sharding)  # type: ignore
+    sharding = NamedSharding(cur_mesh, sharding)  # type: ignore
   else:
-    if (check_mesh_consistency and
-        sharding.mesh.abstract_mesh != mesh_lib.get_abstract_mesh()):
+    if (check_mesh_consistency and not cur_mesh.empty and
+        sharding.mesh.abstract_mesh != cur_mesh):
       raise ValueError(
-          f'Context mesh {mesh_lib.get_abstract_mesh()} should match the mesh'
+          f'Context mesh {cur_mesh} should match the mesh'
           f' of sharding {sharding.mesh.abstract_mesh}. This error occurs at'
           f' source:  {source_info_util.summarize(source_info_util.current())}')
     if isinstance(sharding.mesh, mesh_lib.Mesh):
