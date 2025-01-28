@@ -18,9 +18,13 @@ from __future__ import annotations
 import collections
 from collections.abc import Callable
 import functools
+import math
 from typing import NamedTuple
+
+import jax
 from jax import util as jax_util
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
+import jax.numpy as jnp
 import numpy as np
 
 # mypy: ignore-errors
@@ -65,10 +69,10 @@ class MaskInfo(NamedTuple):
       causal this is just np.arange(q_sequence_length).
   """
 
-  data_next: np.ndarray | None
-  mask_next: np.ndarray | None
-  block_mask: np.ndarray | None
-  partial_mask_blocks: np.ndarray | None
+  data_next: np.ndarray | jax.Array | None
+  mask_next: np.ndarray | jax.Array | None
+  block_mask: np.ndarray | jax.Array | None
+  partial_mask_blocks: np.ndarray | jax.Array | None
   q_sequence: np.ndarray | None
 
 
@@ -245,7 +249,7 @@ def _get_mask_info_for_shard(
     mask_next = np.zeros(output_shape, dtype=np.int32)
   data_next = np.zeros(output_shape, dtype=np.int32)
 
-  # If the mask is completelly zero'd out return freshly initialized outputs.
+  # If the mask is completely zero'd out return freshly initialized outputs.
   if not data_coords:
     return data_next, mask_next
 
@@ -302,6 +306,152 @@ def _get_mask_info_for_shard(
       mask_next[chunk_idx] = coords_to_partial_mask_block_index[coord_m_global]
 
   return data_next, mask_next
+
+
+def _process_dynamic_mask(
+    mask: jax.Array,
+    block_shape: tuple[int, int],
+    is_dkv: bool,
+    *,
+    downcast_smem_data: bool = True,
+    head_shards: int = 1,
+    q_seq_shards: int = 1,
+    shrink_grid: bool = True,
+) -> tuple[MaskInfo, None]:
+  """Similar to `_process_mask` but the mask must be a dynamic array.
+
+  Since the mask is dynamic, we can't know the exact number of partial mask
+  blocks at trace time. Therefore, the entire mask is materialized in
+  `partial_mask_blocks`.
+
+  Note that we can still populate MaskInfo to skip fully-masked blocks.
+
+  Args:
+    mask: A [head_count, q_seq_len, kv_seq_len] jax.Array representing the dense
+      mask to process.
+    block_shape: A Tuple[int, int] representing the shape of the Pallas grid
+      block.
+    is_dkv: True if we are processing the dKV mask
+    downcast_smem_data: If True, downcast the scalar-memory data of MaskInfo to
+      a data type smaller than np.int32 (if possible).
+    head_shards: Number of head shards of the mesh in which the kernel is
+      launched.
+    q_seq_shards: Number of Q sequence shards of the mesh in which the kernel is
+      launched.
+    shrink_grid: Whether or not we should apply the grid shrinking optimization. This is currently ignored.
+
+  Returns:
+    `MaskInfo`, a sparse representation of the dense mask.
+
+  Raises:
+    ValueError: if the input mask is invalid or the block sizes are not
+    compatible with the mask sizes.
+  """
+
+  del shrink_grid
+
+  # TODO(pobudzey): Properly support sharding.
+  if head_shards != 1 or q_seq_shards != 1:
+    raise ValueError('Dynamic mask processing does not support sharding.')
+
+  if len(mask.shape) != 3:
+    raise ValueError(f'Expected a 3-dim mask, instead got: {mask.shape}.')
+
+  if mask.dtype != jnp.bool:
+    raise ValueError(f'Expected a bool mask, instead got: {mask.dtype}.')
+
+  head_count, q_seq_len, kv_seq_len = mask.shape
+  q_block_size, kv_block_size = block_shape
+  q_blocks_count, q_mod = divmod(q_seq_len, q_block_size)
+  kv_blocks_count, kv_mod = divmod(kv_seq_len, kv_block_size)
+
+  if q_mod != 0:
+    raise ValueError(f'{q_block_size=} should divide {q_seq_len=}.')
+  if kv_mod != 0:
+    raise ValueError(f'{kv_block_size=} should divide {kv_seq_len=}.')
+
+  block_mask_shape = (
+      head_count,
+      q_blocks_count,
+      kv_blocks_count,
+  )
+
+  # Tile the last 2 dimensions of the mask into 2D tiles of size `block_shape`.
+  partial_mask_blocks = (
+      mask.reshape(
+          head_count,
+          q_blocks_count,
+          q_block_size,
+          kv_blocks_count,
+          kv_block_size,
+      )
+      .swapaxes(-2, -3)
+      .astype(np.bool_)
+  )
+
+  # The block mask is 2 for all blocks with all entries set to True and 1 for
+  # blocks with a mix of True and False entries.
+  is_full_mask = jnp.all(partial_mask_blocks, axis=(-1, -2))
+  is_empty_mask = jnp.logical_not(jnp.any(partial_mask_blocks, axis=(-1, -2)))
+
+  block_mask = jnp.ones(block_mask_shape, dtype=np.int32)
+  block_mask = jnp.where(is_full_mask, 2, block_mask)
+  block_mask = jnp.where(is_empty_mask, 0, block_mask)
+
+  # TODO(pobudzey): Return the next valid mask index instead of 0 for a more efficient pipeline.
+  mask_next = jnp.where(
+      jnp.logical_or(is_empty_mask, is_full_mask),
+      0,
+      jnp.arange(math.prod(block_mask_shape), dtype=np.int32).reshape(
+          block_mask_shape
+      ),
+  )
+
+  # data_next stores the index of the next non-empty data block in the sequence.
+  # The indices of empty blocks are set to 0 to avoid copying extra data when
+  # pipeling.
+  if is_dkv:
+    data_next = jnp.arange(q_blocks_count, dtype=np.int32)[None, :, None]
+  else:
+    data_next = jnp.arange(kv_blocks_count, dtype=np.int32)[None, None, :]
+  data_next = jnp.broadcast_to(data_next, block_mask_shape)
+  data_next = jnp.where(is_empty_mask, 0, data_next)
+
+  partial_mask_blocks = partial_mask_blocks.reshape(-1, *block_shape)
+  if is_dkv:
+    partial_mask_blocks = partial_mask_blocks.swapaxes(-1, -2)
+
+  def _downcast(array: jax.Array, max_value: int) -> jax.Array:
+    if array.size == 0:
+      return array
+
+    if array.dtype != np.int32:
+      raise ValueError(f'Expected int32 input, but got {array.dtype}.')
+
+    if max_value <= np.iinfo(np.int8).max:
+      return array.astype(np.int8)
+    elif max_value <= np.iinfo(np.int16).max:
+      return array.astype(np.int16)
+    else:
+      return array.astype(np.int32)
+
+  if downcast_smem_data:
+    block_mask = block_mask.astype(np.int8)  # values are in the range [0, 1, 2]
+    data_next = _downcast(
+      data_next, q_blocks_count if is_dkv else kv_blocks_count
+    )
+    mask_next = _downcast(mask_next, math.prod(block_mask_shape))
+
+  return (
+      MaskInfo(
+          data_next=data_next,
+          mask_next=mask_next,
+          block_mask=block_mask,
+          partial_mask_blocks=partial_mask_blocks,
+          q_sequence=None,
+      ),
+      None,
+  )
 
 
 # When used in a transformer network with multiple layers, the SplashAttention
@@ -410,7 +560,7 @@ def _process_mask(
     mask_id_to_heads[mask_id].append(head)
     mask_id_to_head_shards[mask_id].add(head_shard)
 
-  # If we have at most one unique mask per each head shard, then we can brodcast
+  # If we have at most one unique mask per each head shard, then we can broadcast
   # the mask to all the heads in the shard. This is the common case.
   # If we have more than one mask in each head shard, then the optimization
   # cannot kick in and we use one mask for each head.
@@ -699,9 +849,7 @@ def _process_mask(
           current_block_mask,
           current_data_next,
           current_mask_next,
-      ) in zip(
-          block_mask_shards, data_next_shards, mask_next_shards
-      ):
+      ) in zip(block_mask_shards, data_next_shards, mask_next_shards):
         # For dKV shrinking happens along axis Q (the rows of MaskInfo), for
         # fwd and dQ shrinking happens along axis KV (the columns of MaskInfo).
         if is_dkv:
@@ -924,3 +1072,6 @@ def _slice_mask_info(
 
 process_mask = functools.partial(_process_mask, is_dkv=False)
 process_mask_dkv = functools.partial(_process_mask, is_dkv=True)
+
+process_dynamic_mask = functools.partial(_process_dynamic_mask, is_dkv=False)
+process_dynamic_mask_dkv = functools.partial(_process_dynamic_mask, is_dkv=True)
