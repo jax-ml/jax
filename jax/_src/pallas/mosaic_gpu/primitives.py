@@ -634,9 +634,9 @@ def _wgmma_accumulator_deref_lowering(ctx: lowering.LoweringRuleContext, acc):
 
 class Layout(enum.Enum):
   #: [m, n] matrix, where m % 64 == 0 == n % 8.
-  WGMMA = mgpu.WGMMAFragLayout
+  WGMMA = mgpu.WGMMA_LAYOUT
   #: [m] matrix, where m % 64 == 0.
-  WGMMA_ROW = mgpu.WGMMARowFragLayout
+  WGMMA_ROW = mgpu.WGMMARowFragLayout()
 
   WG_SPLAT = mgpu.WGSplatFragLayout
   WG_STRIDED = mgpu.WGStridedFragLayout
@@ -655,7 +655,7 @@ class ParameterizedLayout:
 def _get_mgpu_layout(layout: Layout | ParameterizedLayout
                      ) -> mgpu.FragmentedLayout:
   if isinstance(layout, Layout):
-    return layout.value()
+    return layout.value
   elif isinstance(layout, ParameterizedLayout):
     return layout.layout_cls.value(*layout.args,
                                    **layout.kwargs)

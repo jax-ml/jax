@@ -226,7 +226,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
   @parameterized.parameters(
       mgpu.WGStridedFragLayout((32, 4), vec_size=1),
-      mgpu.WGMMAFragLayout(),
+      mgpu.WGMMA_LAYOUT,
   )
   def test_infer_layout_picks_non_splat_layout_over_splat_layout(
       self, layout
