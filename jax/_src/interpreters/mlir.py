@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 import dataclasses
 import functools
 from functools import partial
@@ -3298,3 +3298,112 @@ def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
   context = make_ir_context()
   with context:
     return ir.Module.parse(refined_module_str)
+
+
+FfiLayoutOptions = Sequence[int] | DeviceLocalLayout | None
+
+def aval_shape(aval: core.AbstractValue) -> core.Shape:
+  return () if aval is core.abstract_token else aval.shape  # pytype: disable=attribute-error
+
+
+def convert_layout_for_lowering(
+    aval: core.AbstractValue, layout: FfiLayoutOptions = None) -> Sequence[int]:
+  """Convert a layout to the minor-to-major order used by the custom call API."""
+  if layout is None:
+    return tuple(reversed(range(len(aval_shape(aval)))))
+  elif isinstance(layout, DeviceLocalLayout):
+    if layout._tiling is not None:
+      raise ValueError("The FFI does not support layouts with tiling")
+    return layout.major_to_minor[::-1]
+  else:
+    return tuple(layout)
+
+
+def build_ffi_lowering_function(
+    call_target_name: str,
+    *,
+    operand_layouts: Sequence[FfiLayoutOptions] | None = None,
+    result_layouts: Sequence[FfiLayoutOptions] | None = None,
+    backend_config: Mapping[str, ir.Attribute] | str | None = None,
+    **lowering_args: Any,
+) -> Callable[..., ir.Operation]:
+  """Build a lowering op for an foreign function interface (FFI) target.
+
+  By default, this lowering rule can use the input and output abstract values to
+  compute the input and output types and shapes for the custom call, assuming
+  row-major layouts.
+
+  Note that layouts passed to this function as tuples should be in
+  minor-to-major order (as expected by XLA) rather than major-to-minor as used
+  by :func:`~jax.ffi.ffi_call` and ``DeviceLocalLayout``.
+
+  If keyword arguments are passed to the lowering rule, these are treated as
+  attributes, and added to `backend_config`.
+
+  Args:
+    call_target_name: The name of the custom call target.
+    operand_layouts: A sequence of layouts (dimension orders) for each operand.
+      By default, the operands are assumed to be row-major.
+    result_layouts: A sequence of layouts (dimension orders) for each result.
+      By default, the results are assumed to be row-major.
+    backend_config: Configuration data for the custom call. Any keyword
+      arguments passed to the lowering rule will added to this dictionary.
+    lowering_args: Any other arguments to :func:`mlir.custom_call` will also be
+      passed through if provided as extra arguments to this function.
+  """
+
+  def _lowering_op(
+      ctx: LoweringRuleContext, *operands: ir.Value, **params: Any
+  ) -> ir.Operation:
+    kwargs = dict(lowering_args)
+    kwargs.setdefault("api_version", 4)
+    if kwargs["api_version"] >= 4:
+      if backend_config is not None and not isinstance(backend_config, dict):
+        raise ValueError(
+            "When api_version > 4, backend_config must be a dictionary."
+        )
+      kwargs["backend_config"] = dict(
+          backend_config or {},
+          **{k: ir_attribute(v) for k, v in params.items()},
+      )
+    else:
+      if params:
+        raise ValueError(
+            "The use of ffi_call attributes requires a custom call API version "
+            f"of at least 4; got api_version={kwargs['api_version']}."
+        )
+      kwargs["backend_config"] = backend_config
+    if "result_types" not in kwargs:
+      kwargs["result_types"] = [aval_to_ir_type(aval) for aval in ctx.avals_out]
+    if operand_layouts is None:
+      kwargs["operand_layouts"] = map(
+          convert_layout_for_lowering, ctx.avals_in
+      )
+    else:
+      kwargs["operand_layouts"] = [
+          convert_layout_for_lowering(*args)
+          for args in zip(ctx.avals_in, operand_layouts)
+      ]
+    if result_layouts is None:
+      kwargs["result_layouts"] = map(
+          convert_layout_for_lowering, ctx.avals_out
+      )
+    else:
+      kwargs["result_layouts"] = [
+          convert_layout_for_lowering(*args)
+          for args in zip(ctx.avals_out, result_layouts)
+      ]
+    if "result_shapes" not in kwargs and not all(
+        core.is_constant_shape(aval_shape(aval))
+        for aval in ctx.avals_out
+    ):
+      kwargs["result_shapes"] = [
+          shape_tensor(
+              eval_dynamic_shape_as_ivals(ctx, aval_shape(aval))
+          )
+          for aval in ctx.avals_out
+      ]
+
+    return custom_call(call_target_name, operands=operands, **kwargs)
+
+  return _lowering_op
