@@ -175,16 +175,12 @@ def custom_call(
   elif isinstance(backend_config, (str, bytes)):
     backend_config_attr = ir.StringAttr.get(backend_config)
   elif isinstance(backend_config, dict):
-    # TODO(necula): it seems that the CustomCallOp constructor requires that
-    # backend_config_attr be a string attribute, even though in some cases we
-    # need it to be a DictAttr, e.g., for ApproxTopK on TPU.
-    # "Verification failed: 'stablehlo.custom_call' op attribute 'backend_config' failed to satisfy constraint: string attribute"
-    # To workaround this limitation we first set it to the empty string and we
-    # use an unregistered attribute mhlo.backend_config to hold the DictAttr.
-    # We must also use api_version=1 to ensure that mhlo.backend_config is
-    # handled properly.
-    backend_config_attr = ir.StringAttr.get("")
-    api_version = 1
+    # Note: This implementation diverges from mlir.custom_call in that it only
+    # supports dictionary of {str, ir.Attribute} as input, while the
+    # mlir.custom_call supports {str, ir.Attribute | convertible_to_ir_attr}.
+    backend_config_attr = ir.DictAttr.get(backend_config)
+    # Typed FFI requires custom call version 4
+    api_version = 4
   else:
     raise ValueError("custom_call backend_config unexpected type: " + str(backend_config))
   attributes = dict(
@@ -242,7 +238,4 @@ def custom_call(
 
   op = hlo.CustomCallOp.build_generic(results=result_types, operands=operands,
                                       attributes=attributes)
-  if isinstance(backend_config, dict):
-    backend_config_attr = ir.DictAttr.get(backend_config)
-    op.operation.attributes["mhlo.backend_config"] = backend_config_attr
   return op

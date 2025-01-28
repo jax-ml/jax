@@ -100,7 +100,7 @@ class FfiTest(jtu.JaxTestCase):
     # serialized with the appropriate type.
     module = jax.jit(fun).lower(0.5).compiler_ir("stablehlo")
     op = self.find_custom_call_in_module(module)
-    config = op.attributes["mhlo.backend_config"]
+    config = op.attributes["backend_config"]
     self.assertIsInstance(config, mlir.ir.DictAttr)
     self.assertIn("param", config)
     with mlir.make_ir_context(), mlir.ir.Location.unknown():
