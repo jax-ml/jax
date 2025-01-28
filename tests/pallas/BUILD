@@ -418,6 +418,7 @@ jax_multiplatform_test(
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
+        "notap",  # this code has data race issues that XLA improvements unhide. b/392946030
         "notsan",  # Times out.
     ],
     deps = [
