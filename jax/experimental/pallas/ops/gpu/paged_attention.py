@@ -394,7 +394,8 @@ def paged_attention_reference(
   )  # [batch_size, num_kv_heads, kv_seq_len, head_dim]
 
   uncapped_logits = jnp.einsum(
-      "bkgd,bksd->bkgs", q_reshaped, k_transposed
+      "bkgd,bksd->bkgs", q_reshaped, k_transposed,
+      preferred_element_type=jnp.float32
   ).astype(jnp.float32)
 
   if attn_logits_soft_cap is not None:
@@ -410,7 +411,8 @@ def paged_attention_reference(
 
   weights = jax.nn.softmax(logits, axis=-1)
   o = jnp.einsum(
-      "bkgs,bksd->bkgd", weights, v_transposed.astype(jnp.float32)
+      "bkgs,bksd->bkgd", weights, v_transposed.astype(jnp.float32),
+      preferred_element_type=jnp.float32
   ).astype(q.dtype)
   o = o.reshape(q.shape)
 

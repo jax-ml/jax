@@ -553,8 +553,10 @@ class PallasCallTest(PallasBaseTest):
     k1, k2 = random.split(random.key(0))
     x = random.normal(k1, (m, k), dtype=dtype)
     y = random.normal(k2, (k, n), dtype=dtype)
-    out, expected = matmul(x, y, bm=bm, bn=bn, bk=bk, gm=gm,
-                           interpret=self.INTERPRET), jnp.matmul(x, y)
+    out = matmul(x, y, bm=bm, bn=bn, bk=bk, gm=gm,
+                 interpret=self.INTERPRET)
+    expected = jnp.matmul(
+            x, y, preferred_element_type=jnp.float32).astype(dtype)
     np.testing.assert_allclose(out, expected, atol=0.05, rtol=0.05)
 
   @parameterized.named_parameters(*[
@@ -576,8 +578,10 @@ class PallasCallTest(PallasBaseTest):
     k1, k2 = random.split(random.key(0))
     x = random.normal(k1, (m, k), dtype=dtype)
     y = random.normal(k2, (k, n), dtype=dtype)
-    out, expected = matmul_block_spec(x, y, bm=bm, bn=bn, bk=bk,
-                                      interpret=self.INTERPRET), jnp.matmul(x, y)
+    out = matmul_block_spec(x, y, bm=bm, bn=bn, bk=bk,
+                            interpret=self.INTERPRET)
+    expected = jnp.matmul(
+            x, y, preferred_element_type=jnp.float32).astype(dtype)
     np.testing.assert_allclose(out, expected, atol=0.05, rtol=0.05)
 
   @parameterized.named_parameters(*(
