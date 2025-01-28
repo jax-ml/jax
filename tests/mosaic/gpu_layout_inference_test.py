@@ -129,7 +129,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     def body(lhs, rhs):
       nonlocal add, splat
       splat = vector.SplatOp(rhs.type, lhs)
-      add = arith.AddFOp(splat, rhs)
+      add = arith.AddFOp(splat.result, rhs)
 
     with ir.InsertionPoint(self.module.body):
       shape = (16, 8)
@@ -265,7 +265,7 @@ class LayoutInferenceTest(parameterized.TestCase):
     def body(lhs, rhs):
       nonlocal add0, add1
       add0 = arith.AddFOp(lhs, rhs)
-      add1 = arith.AddFOp(add0, add0)
+      add1 = arith.AddFOp(add0.result, add0)
 
     with ir.InsertionPoint(self.module.body):
       shape = (32, 4)

@@ -113,7 +113,7 @@ def create_descriptor(
   else:
     raise NotImplementedError(swizzle)
   encoded_base_addr = llvm.LShrOp(
-      llvm.AndOp(ptr_val, c(0x3FFFF, i64)), c(4, i64)
+      llvm.AndOp(ptr_val, c(0x3FFFF, i64)).result, c(4, i64)
   )
   # We ignore the offset
   desc_const = (
@@ -123,7 +123,7 @@ def create_descriptor(
   desc = llvm.or_(
       arith.shli(c(swizzle_encoding, i64), c(62, i64)), c(desc_const, i64)
   )
-  desc = llvm.or_(encoded_base_addr, desc)
+  desc = llvm.or_(encoded_base_addr.result, desc)
   return desc
 
 
