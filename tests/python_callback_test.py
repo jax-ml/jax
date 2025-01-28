@@ -1340,6 +1340,11 @@ class IOCallbackTest(jtu.JaxTestCase):
 
     jax.vmap(f)(jnp.arange(3.))  # don't crash
     jax.effects_barrier()
+    self.assertAllClose(
+        x_lst,
+        [0.0, 1.0, 2.0, 0.0, 2.0, 4.0, 0.0, 1.0, 2.0, 0.0, 2.0, 4.0],
+        check_dtypes=False,
+    )
 
 
 if __name__ == "__main__":
