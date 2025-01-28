@@ -5165,18 +5165,28 @@ def _rev_shape_rule(operand, *, dimensions):
     raise TypeError(msg.format(dimensions, operand.ndim))
   return operand.shape
 
+def _rev_sharding_rule(operand, *, dimensions):
+  # TODO(yashkatariya): Will lead to data movement. Maybe just error out and
+  # require the operand to be unsharded?
+  return operand.sharding
+
 def _rev_batch_rule(batched_args, batch_dims, *, dimensions):
   operand, = batched_args
   bdim, = batch_dims
   new_dimensions = [i + 1 if i >= bdim else i for i in dimensions]
   return rev(operand, new_dimensions), bdim
 
-rev_p = standard_primitive(_rev_shape_rule, _input_dtype, 'rev')
+rev_p = standard_primitive(_rev_shape_rule, _input_dtype, 'rev',
+                           sharding_rule=_rev_sharding_rule)
 ad.deflinear2(rev_p, lambda t, _, dimensions: [rev(t, dimensions)])
 batching.primitive_batchers[rev_p] = _rev_batch_rule
 
 def _rev_lower(ctx, x, *, dimensions):
-  return [hlo.reverse(x, mlir.dense_int_array(dimensions))]
+  aval_out, = ctx.avals_out
+  out = hlo.reverse(x, mlir.dense_int_array(dimensions))
+  if config.sharding_in_types.value:
+    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
+  return [out]
 mlir.register_lowering(rev_p, _rev_lower)
 
 
@@ -5932,7 +5942,10 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
                     mlir.flatten_ir_values(operands),
                     dimension=mlir.i64_attr(dimension),
                     is_stable=ir.BoolAttr.get(is_stable))
-  scalar_avals = [aval.update(shape=()) for aval in ctx.avals_in]
+  scalar_s = (lambda a: a.sharding.with_spec(P())
+              if config.sharding_in_types.value else lambda _: None)
+  scalar_avals = [aval.update(shape=(), sharding=scalar_s(aval))
+                  for aval in ctx.avals_in]
   scalar_types = safe_map(mlir.aval_to_ir_type, scalar_avals)
   comparator = sort.comparator.blocks.append(
       *util.flatten(zip(scalar_types, scalar_types)))

@@ -1886,6 +1886,10 @@ def _gather_sharding_rule(operand, indices, *, dimension_numbers,
   cur_mesh = mesh_lib.get_abstract_mesh()
   if cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual:  # type: ignore
     return None
+  if (cur_mesh._are_all_axes_explicit and  # type: ignore
+      all(s is None for s in operand.sharding.spec) and
+      all(s is None for s in indices.sharding.spec)):
+    return None
   raise GatherShardingError(
       "Use `.at[...].get(out_sharding=)` to provide output PartitionSpec for"
       " the gather indexing.")
