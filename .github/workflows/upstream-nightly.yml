@@ -22,19 +22,14 @@ on:
 
 jobs:
   upstream-dev:
-    runs-on: ubuntu-20.04-16core
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: write  # for failed-build-issue
-    defaults:
-      run:
-        shell: bash -l {0}
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.13"]
-    outputs:
-      artifacts_availability: ${{ steps.status.outputs.ARTIFACTS_AVAILABLE }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       - name: Set up Python ${{ matrix.python-version }}
@@ -43,8 +38,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install JAX test requirements
         run: |
-          pip install -r build/test-requirements.txt
-          pip install pytest-reportlog
+          pip install .[ci] -r build/test-requirements.txt
       - name: Install numpy & scipy development versions
         run: |
           pip install \
@@ -56,9 +50,6 @@ jobs:
             scipy
           python -c "import numpy; print(f'{numpy.__version__=}')"
           python -c "import scipy; print(f'{scipy.__version__=}')"
-      - name: Install JAX
-        run: |
-          pip install .[ci]
       - name: Run tests
         if: success()
         id: status
@@ -73,12 +64,7 @@ jobs:
           echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
           echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
-          pytest -n auto --tb=short -rf --maxfail=20 \
-              --report-log output-${{ matrix.python-version }}-log.jsonl \
-              tests \
-              || (
-                echo 'ARTIFACTS_AVAILABLE=true' >> $GITHUB_OUTPUT && false
-              )
+          pytest -n auto --tb=short --maxfail=20 tests examples
       - name: Notify failed build
         uses: jayqi/failed-build-issue-action@1a893bbf43ef1c2a8705e2b115cd4f0fe3c5649b  # v1.2.0
         if: failure() && github.event.pull_request == null
