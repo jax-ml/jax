@@ -152,7 +152,7 @@ class DialectTest(MosaicGpuTest):
               ir.F32Type.get(),
               layout=ir.Attribute.parse("strided<[16, 1]>"),
           ),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.Type.parse("!mosaic_gpu.barrier"),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
           name="async_load",
@@ -179,7 +179,7 @@ class DialectTest(MosaicGpuTest):
       func.FuncOp.from_py_func(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F64Type.get()),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.Type.parse("!mosaic_gpu.barrier"),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
           name="async_load",
@@ -206,7 +206,7 @@ class DialectTest(MosaicGpuTest):
       func.FuncOp.from_py_func(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.Type.parse("!mosaic_gpu.barrier"),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
           name="async_load",
@@ -233,7 +233,7 @@ class DialectTest(MosaicGpuTest):
       func.FuncOp.from_py_func(
           ir.MemRefType.get([1, 4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4], ir.F32Type.get()),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.Type.parse("!mosaic_gpu.barrier"),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
           ir.IntegerType.get_signless(32),
@@ -261,7 +261,7 @@ class DialectTest(MosaicGpuTest):
       func.FuncOp.from_py_func(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.Type.parse("!mosaic_gpu.barrier"),
           ir.IntegerType.get_signless(32),
           name="async_load",
       )(
@@ -287,7 +287,7 @@ class DialectTest(MosaicGpuTest):
       func.FuncOp.from_py_func(
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([4], ir.F32Type.get()),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.Type.parse("!mosaic_gpu.barrier"),
           ir.IntegerType.get_signless(32),
           name="async_load",
       )(
@@ -314,7 +314,7 @@ class DialectTest(MosaicGpuTest):
       func.FuncOp.from_py_func(
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([4], ir.F32Type.get()),
-          ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
+          ir.Type.parse("!mosaic_gpu.barrier"),
           i32,
           name="async_load",
       )(

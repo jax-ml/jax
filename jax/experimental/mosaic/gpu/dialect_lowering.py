@@ -241,7 +241,7 @@ def _vector_splat_op_lowering_rule(
 def _mgpu_async_load_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncLoadOp
 ) -> Sequence[ir.Value]:
-  barrier = utils.BarrierRef.from_dialect_barrier_memref(load_op.barrier)
+  barrier = utils.BarrierRef.from_dialect_barrier(load_op.barrier)
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=load_op.source,
@@ -309,6 +309,31 @@ def _mgpu_wgmma_op_lowering_rule(
   )
 
   return [_fragmented_array_to_ir(new_acc.value, wgmma_op.accumulator.type)]
+
+
+@_register_lowering(mgpu.ArriveExpectTxOp)
+def _mgpu_arrive_expect_tx_op_lowering_rule(
+    ctx: LoweringContext, arrive_expect_tx_op: mgpu.ArriveExpectTxOp
+) -> Sequence[ir.Value]:
+
+  barrier = utils.BarrierRef.from_dialect_barrier(arrive_expect_tx_op.barrier)
+  barrier.arrive_expect_tx(
+      arrive_expect_tx_op.expect_tx.value,
+      ctx.single_thread_per_warpgroup_predicate,
+  )
+
+  return []
+
+
+@_register_lowering(mgpu.WaitOp)
+def _mgpu_wait_op_lowering_rule(
+    _: LoweringContext, wait_op: mgpu.WaitOp
+) -> Sequence[ir.Value]:
+
+  barrier = utils.BarrierRef.from_dialect_barrier(wait_op.barrier)
+  barrier.wait()
+
+  return []
 
 
 def instantiate_single_thread_predicates(module: ir.Module) -> LoweringContext:

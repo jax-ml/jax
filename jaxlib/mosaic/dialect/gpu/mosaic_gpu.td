@@ -72,6 +72,39 @@ def MosaicGPU_InitializeBarrierOp : Op<MosaicGPU_Dialect, "initialize_barrier",
   }];
 }
 
+def MosaicGPU_ArriveExpectTxOp : Op<MosaicGPU_Dialect, "arrive_expect_tx", []> {
+  let summary = "Executes an arrive.expect_tx operation on the given barrier.";
+  let description = [{
+    A single thread in the warpgroup will execute an `arrive.expect_tx`
+    operation on the provided barrier with the provided `expect_tx`.
+  }];
+
+  let arguments = (ins
+    MosaicGPU_Barrier:$barrier,
+    ConfinedAttr<I32Attr, [IntNonNegative]>:$expect_tx);
+
+  let assemblyFormat = [{
+    `barrier` `(` $barrier `:` type($barrier) `)`
+    $expect_tx
+    attr-dict
+  }];
+}
+
+def MosaicGPU_WaitOp : Op<MosaicGPU_Dialect, "wait", []> {
+  let summary = "Executes a wait operation on the given barrier.";
+  let description = [{
+    All threads in the warpgroup will block, waiting on the provided barrier
+    until all pending threads have arrived and all expected byte transfers have
+    been completed.
+  }];
+
+  let arguments = (ins MosaicGPU_Barrier:$barrier);
+  let assemblyFormat = [{
+    `barrier` `(` $barrier `:` type($barrier) `)`
+    attr-dict
+  }];
+}
+
 
 def MosaicGPU_WGStridedFragLayout : AttrDef<MosaicGPU_Dialect, "WGStridedFragLayout", []> {
   let summary = "Annotates an array that can be collapsed to 1D and sharded across threads.";
@@ -224,7 +257,7 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
   let arguments = (ins
     MemRefOf<[AnyType]>:$source,
     MemRefOf<[AnyType]>:$destination,
-    MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
+    MosaicGPU_Barrier:$barrier,
     Variadic<I32>:$indices,
     PtxPredicate:$predicate,
 
