@@ -26,6 +26,7 @@ from jax import lax
 from jax import tree_util
 from jax._src import ad_util
 from jax._src import api_util
+from jax._src import callback
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
@@ -811,7 +812,7 @@ batching.primitive_batchers[debug_print_p] = functools.partial(
 
 @functools.partial(mlir.register_lowering, debug_print_p)
 def debug_print_lowering_rule(ctx, *args, **params):
-  result, _, _ = mlir.emit_python_callback(
+  result, _, _ = callback.emit_python_callback(
       ctx,
       functools.partial(debug_print_p.impl, **params),
       None,
