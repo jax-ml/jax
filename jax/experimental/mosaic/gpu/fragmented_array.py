@@ -1048,6 +1048,7 @@ class FragmentedArray:
 
   # TODO(apaszke): Support JAX dtypes here as well?
   def astype(self, new_dtype: ir.Type, *, is_signed: bool | None = None):
+    i4 = ir.IntegerType.get_signless(4)
     i8 = ir.IntegerType.get_signless(8)
     i16 = ir.IntegerType.get_signless(16)
     i32 = ir.IntegerType.get_signless(32)
@@ -1060,15 +1061,51 @@ class FragmentedArray:
       return FragmentedArray(
           _registers=self.registers, _layout=self.layout, _is_signed=is_signed
       )
-    # XLA packs elements into bytes in big-endian order, while LLVM assumes the
-    # same endianness as the target machine (which is little for NVIDIA GPUs).
-    # We'll need to add specialized casting routines that flip the endianness.
-    if 1 < utils.bitwidth(cur_dtype) < 8 or 1 < utils.bitwidth(new_dtype) < 8:
-      raise NotImplementedError("Conversion involving sub-byte types unsupported", cur_dtype, new_dtype)
     reg_type = self.registers.flat[0].type
     is_vector_reg = ir.VectorType.isinstance(reg_type)
     reg_shape = tuple(ir.VectorType(reg_type).shape) if is_vector_reg else (1,)
     [vector_len] = reg_shape  # This is meant to be a 1D assertion.
+    if cur_dtype == i4 and self.is_signed and new_dtype == bf16 and vector_len == 2:
+      new_registers = np.empty_like(self.registers)
+      empty_vec_32 = llvm.mlir_undef(ir.VectorType.get((1,), i32))
+      for idx, reg in np.ndenumerate(self.registers):
+        reg_8 = vector.bitcast(ir.VectorType.get((1,), i8), reg)
+        # The algorithm here is largely the same as CUTLASS's
+        # NumericArrayConverter specialization for int4 -> bf16 casts.
+        # We modify it slightly, because we only extract 2 values, and we also
+        # flip them to account for XLA using big-endian packing into bytes.
+        # We first shift the value by 4 bits, to put the high int4 in low bits.
+        # The prmt then blends the two values together, by putting them into the
+        # low bits of each 16-bit subword of our register. Then, we use the lop3
+        # to zero any bits that don't belong to our int4s, and finally use the
+        # XOR to: (1) set the exponent bits to 0x43 (at which point the mantissa
+        # represents integer increments) and (2) flip the sign bit. If we
+        # interpret the 4 bits as uint4 after the flip, then we'll see that
+        # positive int4s will end up larger than negative int4s, with a bias of
+        # 8. Use use the sub to subtract the base (our initial exponent) and the
+        # bias coming from flipping the sign bit which is 136 (0x4308 as bits).
+        new_reg_32 = llvm.inline_asm(
+            i32,
+            [reg_8],
+            """
+            {
+            .reg .b32 s<4>;
+            shr.s32 s0, $1, 4;
+            prmt.b32 s1, $1, s0, 0xF0F4;
+            lop3.b32 s2, s1, 0x000F000F, 0x43084308, (0xf0 & 0xcc) ^ 0xaa;
+            mov.b32 s3, 0x43084308;
+            sub.bf16x2 $0, s2, s3;
+            }
+            """,
+            "=r,r",
+        )
+        new_vec_32 = llvm.insertelement(empty_vec_32, new_reg_32, c(0, i32))
+        new_registers[idx] = vector.bitcast(
+            ir.VectorType.get((vector_len,), new_dtype), new_vec_32
+        )
+      return FragmentedArray(
+          _registers=new_registers, _layout=self.layout, _is_signed=None
+      )
     if cur_dtype == i8 and self.is_signed and new_dtype == bf16 and vector_len in {2, 4}:
       new_registers = np.empty_like(self.registers)
       def upcast_to_bf16(reg, high):
@@ -1114,6 +1151,11 @@ class FragmentedArray:
           _registers=new_registers, _layout=self.layout, _is_signed=is_signed
       )
     # Generic path.
+    # XLA packs elements into bytes in big-endian order, while LLVM assumes the
+    # same endianness as the target machine (which is little for NVIDIA GPUs).
+    # We'll need to add specialized casting routines that flip the endianness.
+    if 1 < utils.bitwidth(cur_dtype) < 8 or 1 < utils.bitwidth(new_dtype) < 8:
+      raise NotImplementedError("Conversion involving sub-byte types unsupported")
     from_float = ir.FloatType.isinstance(cur_dtype)
     to_float = ir.FloatType.isinstance(new_dtype)
     from_integer = ir.IntegerType.isinstance(cur_dtype)

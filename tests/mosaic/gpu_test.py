@@ -562,10 +562,7 @@ class WGMMATest(TestCase):
       ("i8_bf16", jnp.int8, jnp.bfloat16),
       ("i8_i8", jnp.int8, jnp.int8),
       ("i4_i4", jnp.int4, jnp.int4),
-      # TODO(apaszke): This needs specialized casts to handle the fact that XLA
-      # packs int4 in big-endian order into bytes, which is the opposite of
-      # what LLVM expects...
-      # ("i4_bf16", jnp.int4, jnp.bfloat16),
+      ("i4_bf16", jnp.int4, jnp.bfloat16),
   )
   def test_convert_tiled(self, jax_dtype_from, jax_dtype_to):
     mlir_dtype_from = utils.dtype_to_ir_type(jax_dtype_from)
