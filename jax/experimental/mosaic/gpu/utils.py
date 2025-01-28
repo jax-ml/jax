@@ -334,8 +334,9 @@ def bytewidth(ty: ir.Type):
   assert bw % 8 == 0, ty
   return bw // 8
 
-def bitwidth(ty: ir.Type):
-  # The actual width of TF32 is 19 bits. However, sinc we need to treat it as
+
+def bitwidth_impl(ty: ir.Type):
+  # The actual width of TF32 is 19 bits. However, we need to treat it as
   # 32 bits for compatibility reasons. TF32 used to be 32 bits wide in upstream
   # MLIR, but it changed in
   # https://github.com/llvm/llvm-project/commit/67a1fdb014790a38a205d28e1748634de34471dd.
@@ -348,6 +349,13 @@ def bitwidth(ty: ir.Type):
   if dialect is not None and ir.Type.parse("!mosaic_gpu.barrier"):
     return MBARRIER_BYTES * 8
   raise NotImplementedError(ty)
+
+
+def bitwidth(ty: ir.Type):
+  result = bitwidth_impl(ty)
+  if result.bit_count() != 1:
+    raise ValueError(f"Only power of 2 bitwidths are supported, got: {result}")
+  return result
 
 
 @dataclasses.dataclass(frozen=True)

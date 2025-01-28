@@ -561,27 +561,43 @@ class WGMMATest(TestCase):
       ("bf16_i8", jnp.bfloat16, jnp.int8),
       ("i8_bf16", jnp.int8, jnp.bfloat16),
       ("i8_i8", jnp.int8, jnp.int8),
+      ("i4_i4", jnp.int4, jnp.int4),
+      # TODO(apaszke): This needs specialized casts to handle the fact that XLA
+      # packs int4 in big-endian order into bytes, which is the opposite of
+      # what LLVM expects...
+      # ("i4_bf16", jnp.int4, jnp.bfloat16),
   )
   def test_convert_tiled(self, jax_dtype_from, jax_dtype_to):
     mlir_dtype_from = utils.dtype_to_ir_type(jax_dtype_from)
     mlir_dtype_to = utils.dtype_to_ir_type(jax_dtype_to)
     m = 128
-    n = 256 // bytewidth(mlir_dtype_from)
+    n = 256 * 8 // bitwidth(mlir_dtype_from)
     def kernel(ctx, inp, out, smem):
       del ctx
       smem_from, smem_to = smem
       copy(inp, smem_from, swizzle=128)
       t = mgpu.FragmentedArray.load_tiled(
-          smem_from, swizzle=128, is_signed=utils.is_signed(jax_dtype_from)
+          smem_from,
+          swizzle=128,
+          is_signed=utils.is_signed(jax_dtype_from),
+          layout=fa._tiled_wgmma_layout((m, n))
       )
       t = t.astype(mlir_dtype_to, is_signed=utils.is_signed(jax_dtype_to))
       t.store_tiled(smem_to, swizzle=128)
       copy(smem_to, out, swizzle=128)
 
-    from_tiling = (64, 128 // bytewidth(mlir_dtype_from))
-    to_tiling = (64, 128 // bytewidth(mlir_dtype_to))
+    from_tiling = (64, 128 * 8 // bitwidth(mlir_dtype_from))
+    to_tiling = (64, 128 * 8 // bitwidth(mlir_dtype_to))
+    # We only test lossless conversions for now.
+    # TODO(apaszke): Test and fix failures that appear with lossy conversions.
+    int_sample_dtype = getattr(
+        jnp,
+        "int" + str(min(bitwidth(mlir_dtype_from), bitwidth(mlir_dtype_to))),
+    )
+    sample_iinfo = jnp.iinfo(int_sample_dtype)
     expected_raw = self.prng.integers(
-        low=-127, high=127, size=(m, n), dtype=np.int8
+        low=sample_iinfo.min, high=sample_iinfo.max,
+        size=(m, n), dtype=np.int32
     )
     expected = lambda jax_dtype, tiling: expected_raw.reshape(
         m // tiling[0], tiling[0], n // tiling[1], tiling[1]
