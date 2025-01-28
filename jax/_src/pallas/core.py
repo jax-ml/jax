@@ -324,22 +324,6 @@ def current_grid_env() -> GridEnv | None:
   return _pallas_tracing_env.grid_env_stack[-1]
 
 
-@contextlib.contextmanager
-def interpret_mode_env(interpret_mode: bool) -> Iterator[None]:
-  prev_interpret = _pallas_tracing_env.is_interpret_mode
-  if interpret_mode:
-    _pallas_tracing_env.is_interpret_mode = True
-  try:
-    yield
-  finally:
-    if interpret_mode:
-      _pallas_tracing_env.is_interpret_mode = prev_interpret
-
-def is_interpret_mode() -> bool:
-  """Returns whether the kernel is executing in interpret mode."""
-  return _pallas_tracing_env.is_interpret_mode
-
-
 class Mapped:
   """Used as a block shape dimension to denote a mapped dimension.
   A mapped dimension behaves like `1` except it is squeezed from the block.
