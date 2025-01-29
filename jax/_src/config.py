@@ -1716,3 +1716,21 @@ memory_fitting_effort = float_state(
     default=0.0,
     help='Effort for minimizing memory usage (higher means more effort), valid range [-1.0, 1.0].'
 )
+
+cpu_collectives_implementation = optional_enum_state(
+    name='jax_cpu_collectives_implementation',
+    enum_values=["gloo", "mpi", "megascale"],
+    default=None,
+    help=(
+        "Cross-process collective implementation used on CPU. Must be one of "
+        '("gloo", "mpi")'),
+)
+
+num_cpu_devices = int_state(
+    name="jax_num_cpu_devices",
+    default=-1,
+    help=(
+        "Number of CPU devices to use. If not provided, the value of "
+        "the XLA flag --xla_force_host_platform_device_count is used."
+        " Must be set before JAX is initialized."),
+)
