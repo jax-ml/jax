@@ -9,8 +9,8 @@ on:
     - cron: "0 12 * * *" # Daily at 12:00 UTC
   workflow_dispatch: # allows triggering the workflow run manually
   pull_request: # Automatically trigger on pull requests affecting this file
-    # branches:
-    #   - main
+    branches:
+      - main
     paths:
       - '**/workflows/tsan.yaml'
 
@@ -99,4 +99,6 @@ jobs:
               --test_env=TSAN_OPTIONS=halt_on_error=1,suppressions=$PWD/.github/workflows/tsan-suppressions.txt \
               --test_env=JAX_TEST_NUM_THREADS=8 \
               --test_output=errors \
+              --local_test_jobs=32 \
+              --test_timeout=600 \
               //tests:cpu_tests
