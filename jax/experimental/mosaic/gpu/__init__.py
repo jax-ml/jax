@@ -47,6 +47,7 @@ else:
 from .fragmented_array import (
     FragmentedArray as FragmentedArray,
     FragmentedLayout as FragmentedLayout,
+    TILED_LAYOUT_WGMMA as TILED_LAYOUT_WGMMA,
     WGMMA_LAYOUT as WGMMA_LAYOUT,
     WGMMA_ROW_LAYOUT as WGMMA_ROW_LAYOUT,
     WGMMAFragLayout as WGMMAFragLayout,

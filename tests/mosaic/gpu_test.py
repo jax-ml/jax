@@ -181,7 +181,7 @@ def copy(src: ir.Value, dst: ir.Value, swizzle: int | None = None):
   nvvm.fence_proxy(nvvm.ProxyKind.async_)
 
 
-def iota_tensor(m, n, dtype: jax.typing.DTypeLike):
+def iota_tensor(m, n, dtype: jax.typing.DTypeLike, tiled_layout=False):
   assert m % 64 == 0
   assert n % 8 == 0
   def c(i):
@@ -208,6 +208,8 @@ def iota_tensor(m, n, dtype: jax.typing.DTypeLike):
   t = mgpu.FragmentedArray(
       _registers=registers, _layout=mgpu.WGMMA_LAYOUT, _is_signed=True
   )
+  if tiled_layout:
+    t = t.to_layout(mgpu.TILED_LAYOUT_WGMMA)
   return t.astype(
       utils.dtype_to_ir_type(dtype), is_signed=utils.is_signed(dtype)
   )
@@ -261,12 +263,13 @@ class TestUtilTest(TestCase):
     y = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, x)(x)
     np.testing.assert_array_equal(y, x)
 
-  def test_iota_tensor(self):
+  @parameterized.parameters(False, True)
+  def test_iota_tensor(self, tiled_layout):
     m = n = 64
     def kernel(ctx, dst, _):
       f32 = ir.F32Type.get()
       index = ir.IndexType.get()
-      registers = iota_tensor(m, n, jnp.float32).registers
+      registers = iota_tensor(m, n, jnp.float32, tiled_layout).registers
       assert registers.size == 16, registers.size
       for i, vec_reg in enumerate(registers.flat):
         for j in range(2):
@@ -507,8 +510,9 @@ class WGMMATest(TestCase):
       dtype=[jnp.float32, jnp.float16, jnp.int8],
       swizzle=(32, 64, 128),
       num_col_tiles=(1, 2, 3),
+      tiled_layout=(False, True),
   )
-  def test_store_tiled(self, dtype, swizzle, num_col_tiles):
+  def test_store_tiled(self, dtype, swizzle, num_col_tiles, tiled_layout):
     mlir_dtype = utils.dtype_to_ir_type(dtype)
     if bytewidth(mlir_dtype) > 2 and swizzle == 32:
       self.skipTest("Not implemented")
@@ -518,7 +522,7 @@ class WGMMATest(TestCase):
     tiling = (64, col_tiling)
     def kernel(ctx, out, smem):
       del ctx
-      iota_tensor(m, n, dtype).store_tiled(smem, swizzle=swizzle)
+      iota_tensor(m, n, dtype, tiled_layout).store_tiled(smem, swizzle=swizzle)
       copy(smem, out, swizzle=swizzle)
     expected = (
         np.arange(m * n, dtype=dtype)
@@ -793,8 +797,9 @@ class WGMMATest(TestCase):
       rhs_transpose=(False, True),
       swizzle=(32, 64, 128),
       dtype=[jnp.float16, jnp.bfloat16],
+      tiled_layout=(False, True),
   )
-  def test_wgmma_reg_lhs(self, m, n, k_steps, rhs_transpose, swizzle, dtype):
+  def test_wgmma_reg_lhs(self, m, n, k_steps, rhs_transpose, swizzle, dtype, tiled_layout):
     index = ir.IndexType.get()
 
     row_major = mgpu.WGMMALayout.ROW_MAJOR
@@ -820,7 +825,7 @@ class WGMMATest(TestCase):
               swizzle=swizzle,
           )
       init_acc = mgpu.WGMMAAccumulator.zero(m=m, n=n)
-      lhs_regs = iota_tensor(m, k, dtype)
+      lhs_regs = iota_tensor(m, k, dtype, tiled_layout)
       acc = mgpu.wgmma(init_acc, lhs_regs, rhs_smem, b_order=rhs_order, swizzle=swizzle)
       nvvm.wgmma_commit_group_sync_aligned()
       nvvm.wgmma_wait_group_sync_aligned(0)
@@ -1286,8 +1291,11 @@ class TMATest(TestCase):
     y_mut[:shape[0], :shape[1]] = 0
     np.testing.assert_array_equal(y_mut, np.zeros_like(y_mut))
 
-  @parameterized.parameters(0, 1)
-  def test_tma_small_tile_store(self, small_dim):
+  @parameterized.product(
+      small_dim=(0, 1),
+      tiled_layout=(False, True),
+  )
+  def test_tma_small_tile_store(self, small_dim, tiled_layout):
     if small_dim == 0:
       shape = (4, 128)
     elif small_dim == 1:
@@ -1735,6 +1743,7 @@ class FragmentedArrayTest(TestCase):
   @parameterized.parameters(
       ([64 * 4], "WGMMA_ROW_LAYOUT"),
       ([64 * 4, 8 * 2], "WGMMA_LAYOUT"),
+      ([64 * 4, 8 * 2], "TILED_LAYOUT_WGMMA"),
   )
   def test_to_layout(self, shape, new_layout):
     def kernel(ctx, _):
@@ -1885,8 +1894,8 @@ class LayoutTest(TestCase):
     m, n = 128, col_tiling * num_col_tiles
     tiling = (64, col_tiling)
     tiled_layout = fa._tiled_wgmma_layout((m, n))
-    load_layout = tiled_layout if load_tiled else mgpu.WGMMA_LAYOUT
-    store_layout = tiled_layout if store_tiled else mgpu.WGMMA_LAYOUT
+    load_layout = tiled_layout if load_tiled else mgpu.TILED_LAYOUT_WGMMA
+    store_layout = tiled_layout if store_tiled else mgpu.TILED_LAYOUT_WGMMA
     if (not load_tiled or not store_tiled) and bw == 4 and swizzle == 32:
       self.skipTest("Old code path does not support this")
     def kernel(ctx, in_, out, smems):
