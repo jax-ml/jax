@@ -743,8 +743,15 @@ def promote_types(a: DTypeLike, b: DTypeLike) -> DType:
   b_tp = cast(JAXType, b if any(b is t for t in _weak_types) else np.dtype(b))
   return np.dtype(_least_upper_bound(config.numpy_dtype_promotion.value, a_tp, b_tp))
 
+
+def register_weak_scalar_type(typ: type):
+  """Register a scalar type as a weak type."""
+  _registered_weak_types.append(typ)
+_registered_weak_types: list[JAXType] = []
+
+
 def is_weakly_typed(x: Any) -> bool:
-  if type(x) in _weak_types:
+  if type(x) in _weak_types or type(x) in _registered_weak_types:
     return True
   try:
     return x.aval.weak_type
