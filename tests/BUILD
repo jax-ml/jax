@@ -1378,6 +1378,27 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "ragged_collective_test",
+    srcs = ["ragged_collective_test.py"],
+    disable_configs = [
+        "tpu_pjrt_c_api",
+    ],
+    enable_backends = [
+        "gpu",
+        "tpu",
+    ],
+    enable_configs = [
+        "gpu_p100x2_shardy",
+    ],
+    tags = [
+        "multiaccelerator",
+    ],
+    deps = [
+        "//jax:experimental",
+    ],
+)
+
+jax_multiplatform_test(
     name = "shard_map_test",
     srcs = ["shard_map_test.py"],
     enable_configs = [
