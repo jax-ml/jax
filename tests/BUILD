@@ -1585,6 +1585,16 @@ jax_py_test(
 )
 
 jax_py_test(
+    name = "source_mapper_test",
+    srcs = ["source_mapper_test.py"],
+    deps = [
+        "//jax",
+        "//jax:source_mapper",
+        "//jax:test_util",
+    ],
+)
+
+jax_py_test(
     name = "sourcemap_test",
     srcs = ["sourcemap_test.py"],
     deps = [

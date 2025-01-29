@@ -599,6 +599,20 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "source_mapper",
+    srcs = glob(include = ["experimental/source_mapper/**/*.py"]),
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        ":config",
+        ":core",
+        ":jax",
+        ":source_info_util",
+    ] + py_deps("absl/flags"),
+)
+
+pytype_strict_library(
     name = "pallas",
     srcs = glob(
         [
