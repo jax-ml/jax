@@ -241,7 +241,7 @@ def _vector_splat_op_lowering_rule(
 def _mgpu_async_load_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncLoadOp
 ) -> Sequence[ir.Value]:
-  barrier = utils.BarrierRef.from_dialect_barrier_memref(load_op.barrier)
+  barrier = utils.BarrierRef.from_dialect_barrier(load_op.barrier)
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=load_op.source,

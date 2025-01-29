@@ -20,7 +20,7 @@ import dataclasses
 import enum
 import functools
 import math
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import jax
 from jax import numpy as jnp
@@ -777,33 +777,35 @@ class BarrierRef:
         ptr, self.base_address, [self.offset], [DYNAMIC32], i64
     )
 
-  def as_dialect_barrier_memref(self) -> ir.Value:
-    shape = () if self.num_barriers == 1 else (self.num_barriers,)
-    return ptr_as_memref(
-        self.base_address,
-        ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier")),
-        ptr_memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE,
+  def as_dialect_barrier(self) -> ir.Value:
+    barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
+    conversion_cast = builtin.UnrealizedConversionCastOp(
+        [barrier_ty],
+        [self.base_address, self.offset, self.phases],
     )
+    conversion_cast.attributes["num_barriers"] = ir.IntegerAttr.get(
+        ir.IntegerType.get_signless(32), self.num_barriers
+    )
+    return conversion_cast.result
 
   @classmethod
-  def from_dialect_barrier_memref(cls, barrier: ir.Value):
+  def from_dialect_barrier(cls, barrier: ir.Value):
     """Creates a BarrierRef from a memref of a dialect barrier."""
-    memref_type = ir.MemRefType(barrier.type)
-    if memref_type.rank > 1 or memref_type.element_type != ir.Type.parse(
-        "!mosaic_gpu.barrier"
-    ):
-      raise ValueError(
-          "Expected a memref with rank 0 or 1 and element type "
-          f"!mosaic_gpu.barrier, but got {barrier.type}"
-      )
+    if barrier.type != ir.Type.parse("!mosaic_gpu.barrier"):
+      raise ValueError(f"Expected mosaic_gpu.barrier, but got {barrier.type}")
+
+    conversion_cast = cast(
+      builtin.UnrealizedConversionCastOp, barrier.owner.opview  # pytype: disable=attribute-error
+    )
+
+    if not isinstance(conversion_cast, builtin.UnrealizedConversionCastOp):
+      raise ValueError(f"{conversion_cast} is not a conversion_cast")
 
     return cls(
-        base_address=memref_ptr(
-            barrier, memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE
-        ),
-        offset=c(0, ir.IntegerType.get_signless(64)),
-        phases=None,
-        num_barriers=(1 if memref_type.rank == 0 else memref_type.shape[0]),
+        base_address=conversion_cast.operands[0],
+        offset=conversion_cast.operands[1],
+        phases=conversion_cast.operands[2],
+        num_barriers=conversion_cast.attributes["num_barriers"].value,
     )
 
 

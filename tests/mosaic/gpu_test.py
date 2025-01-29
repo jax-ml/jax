@@ -2029,8 +2029,8 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         smem: list[ir.Value],
     ):
       del ctx
-      a_smem_ref, b_smem_ref, result_smem_ref = smem[:3]
-      tma_barrier = smem[3]
+      a_smem_ref, b_smem_ref, result_smem_ref, tma_barrier = smem
+      dialect_barrier = tma_barrier.as_dialect_barrier()
       memref_type = ir.MemRefType(a_gmem_ref.type)
       shape = memref_type.shape
       elt_type = memref_type.element_type
@@ -2046,7 +2046,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       mgpu_dialect.async_load(
           source=a_gmem_ref,
           destination=a_smem_ref,
-          barrier=tma_barrier.as_dialect_barrier_memref(),
+          barrier=dialect_barrier,
           indices=[zero_i32, zero_i32],
           slice_lengths=shape,
           transforms=ir.ArrayAttr.get([]),
@@ -2057,7 +2057,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       mgpu_dialect.async_load(
           source=b_gmem_ref,
           destination=b_smem_ref,
-          barrier=tma_barrier.as_dialect_barrier_memref(),
+          barrier=dialect_barrier,
           indices=[zero_i32, zero_i32],
           slice_lengths=shape,
           transforms=ir.ArrayAttr.get([]),
@@ -2137,6 +2137,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     ):
       del ctx
       a_smem_ref, b_smem_ref, result_smem_ref, tma_barrier = smem
+      dialect_barrier = tma_barrier.as_dialect_barrier()
 
       shape_a = ir.MemRefType(a_gmem_ref.type).shape
       shape_b = ir.MemRefType(b_gmem_ref.type).shape
@@ -2154,7 +2155,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       mgpu_dialect.async_load(
           source=a_gmem_ref,
           destination=a_smem_ref,
-          barrier=tma_barrier.as_dialect_barrier_memref(),
+          barrier=dialect_barrier,
           indices=[zero_i32, zero_i32, zero_i32, zero_i32],
           slice_lengths=shape_a,
           transforms=ir.ArrayAttr.get([]),
@@ -2165,7 +2166,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       mgpu_dialect.async_load(
           source=b_gmem_ref,
           destination=b_smem_ref,
-          barrier=tma_barrier.as_dialect_barrier_memref(),
+          barrier=dialect_barrier,
           indices=[zero_i32, zero_i32, zero_i32, zero_i32],
           slice_lengths=shape_b,
           transforms=ir.ArrayAttr.get([]),
