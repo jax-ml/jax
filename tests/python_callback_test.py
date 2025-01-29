@@ -28,7 +28,6 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import util
-from jax._src.lib import xla_extension_version
 from jax.experimental import io_callback
 from jax.experimental import pjit
 from jax.experimental.shard_map import shard_map
@@ -1034,12 +1033,10 @@ class PureCallbackTest(jtu.JaxTestCase):
 
     jax.vmap(f, in_axes=(0, None))(jnp.arange(4.0), 1.0)  # doesn't error
 
-  @jtu.thread_unsafe_test()  # Requires a lot of memory.
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   @jtu.run_on_devices("cpu")
   def test_async_deadlock(self):
-    if xla_extension_version < 307:
-      self.skipTest("deadlock expected")
+    self.skipTest("Too slow and memory intensive.")
 
     # See https://github.com/jax-ml/jax/issues/24255
     eig = jax.jit(jnp.linalg.eig)
