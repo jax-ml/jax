@@ -437,6 +437,8 @@ def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   ref_primal, x_primal, *idx = primals
   assert isinstance(ref_primal.aval, AbstractRef)
   ref_tangent, x_tangent, *_ = tangents
+  if type(ref_tangent) is ad_util.Zero:
+    raise Exception("you're an idiot")
   assert isinstance(ref_tangent.aval, AbstractRef)
   x_tangent = ad_util.instantiate(x_tangent)
   return (swap_p.bind(ref_primal, x_primal, *idx, **params),
@@ -451,6 +453,45 @@ def addupdate_jvp_rule(primals: list[Any], tangents: list[Any], **params: Any):
   addupdate_p.bind(ref_tangent, x_tangent, *idx, **params)
   return [], []
 ad.primitive_jvps[addupdate_p] = addupdate_jvp_rule
+
+##  get/swap/addupdate linearize rules
+
+def _get_lin(tangent_nzs, ref, *idx, **params):
+  ref_nz, *idx_nzs = tangent_nzs
+  assert ref_nz and not any(idx_nzs)
+  out_primal = get_p.bind(ref, *idx, **params)
+  return out_primal, True, idx, \
+      lambda idx, ref_dot, *_: get_p.bind(ref_dot, *idx, **params)
+ad.primitive_linearizations[get_p] = _get_lin
+
+def _swap_lin(tangent_nzs, ref, val, *idx, **params):
+  ref_nz, val_nz, *idx_nzs = tangent_nzs
+  assert ref_nz and not any(idx_nzs)
+  out_primal = swap_p.bind(ref, val, *idx, **params)
+  if val_nz:
+    lin = lambda idx, ref_dot, val_dot, *_: \
+        swap_p.bind(ref_dot, val_dot, *idx, **params)
+  else:
+    lin = lambda idx, ref_dot, val_dot, *_: \
+        swap_p.bind(ref_dot, ad_util.zeros_like_aval(val_dot.aval), *idx, **params)
+  return out_primal, True, idx, lin
+ad.primitive_linearizations[swap_p] = _swap_lin
+
+def _mut_array_lin(tangent_nzs, init_val):
+  init_nz, = tangent_nzs
+  if init_nz:
+    lin = lambda _, val_dot: core.mutable_array_p.bind(val_dot)
+  else:
+    lin = lambda _, val_dot: \
+        core.mutable_array_p.bind(ad_util.zeros_like_aval(val_dot.aval))
+  return core.mutable_array_p.bind(init_val), True, (), lin
+ad.primitive_linearizations[core.mutable_array_p] = _mut_array_lin
+
+def _freeze_lin(tangent_nzs, ref):
+  ref_nz, = tangent_nzs
+  assert ref_nz
+  return core.freeze_p.bind(ref), True, (), lambda _, rf: core.freeze_p.bind(rf)
+ad.primitive_linearizations[core.freeze_p] = _freeze_lin
 
 ##  get/swap/addupdate transpose rules
 
@@ -657,5 +698,14 @@ mlir.register_lowering(
 
 # === AD rules for mutable arrays ===
 
-ad.defjvp(core.mutable_array_p, lambda g, _: core.mutable_array(g))
+def _mut_jvp(primals, tangents):
+  (init_val,), (init_val_dot,) = primals, tangents
+  primal_out = core.mutable_array_p.bind(init_val)
+  if type(init_val_dot) is ad_util.Zero:
+    tangent_out = core.mutable_array_p.bind(ad_util.zeros_like_aval(init_val_dot.aval))
+  else:
+    tangent_out = core.mutable_array_p.bind(init_val_dot)
+  return primal_out, tangent_out
+
+ad.primitive_jvps[core.mutable_array_p] = _mut_jvp
 ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))
