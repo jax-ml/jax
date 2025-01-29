@@ -45,9 +45,15 @@ export NCCL_DEBUG=WARN
 export TF_CPP_MIN_LOG_LEVEL=0
 export JAX_ENABLE_64="$JAXCI_ENABLE_X64"
 
-# Set the number of processes to run to be 4x the number of GPUs.
+# Set the number of processes to min(num_cpu_cores, gpu_count * $JAXCI_MAX_TESTS_PER_GPU)
+# We calculate JAXCI_MAX_TESTS_PER_GPU as memory_per_gpu_gb / 2gb
 export gpu_count=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
-export num_processes=`expr 4 \* $gpu_count`
+export num_processes=$((gpu_count * JAXCI_MAX_TESTS_PER_GPU))
+export num_cpu_cores=$(nproc)
+
+if [[ $num_cpu_cores -lt $num_processes ]]; then
+  num_processes=$num_cpu_cores
+fi
 
 export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 export XLA_FLAGS=--xla_gpu_force_compilation_parallelism=1
