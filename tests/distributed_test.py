@@ -65,7 +65,7 @@ class DistributedTest(jtu.JaxTestCase):
       thread.join()
 
   @jtu.sample_product(run_initialize=[True, False])
-  def test_is_initialized(self, run_initialize):
+  def test_is_distributed_initialized(self, run_initialize):
     # Run in subprocess to isolate side effects from jax.distributed.initialize which conflict with other 
     # tests. Unfortunately this can't be avoided by calling jax.distributed.shutdown, as the XLA backend 
     # will be warmed up, which yields a RuntimeError on subsequent calls to initialize.
