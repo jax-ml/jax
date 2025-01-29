@@ -951,7 +951,8 @@ def _scan_batching_rule(axis_data, args,
   consts_bdims, init_bdims, xs_bdims = split_list(dims, [num_consts, num_carry])
   new_consts = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
                 else x for x, d in zip(consts, consts_bdims)]
-  new_init = [batching.broadcast(x, axis_data.size, 0) if now_batched and not was_batched
+  new_init = [batching.broadcast(x, axis_data.size, 0, axis_data.explicit_mesh_axis)
+              if now_batched and not was_batched
               else batching.moveaxis(x, d, 0) if now_batched else x
               for x, d, was_batched, now_batched in
               zip(init, init_bdims, init_batched, carry_batched)]
@@ -1492,7 +1493,8 @@ def _while_loop_batching_rule(axis_data, args, dims, cond_nconsts, cond_jaxpr,
   new_init = []
   for x, old_axis, new_axis in zip(init, init_dims, carry_dims):
     if old_axis is batching.not_mapped and new_axis is not batching.not_mapped:
-      new_init.append(batching.broadcast(x, axis_data.size, new_axis))
+      new_init.append(batching.broadcast(x, axis_data.size, new_axis,
+                                         axis_data.explicit_mesh_axis))
     elif old_axis is batching.not_mapped and new_axis is batching.not_mapped:
       new_init.append(x)
     else:

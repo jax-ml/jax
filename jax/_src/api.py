@@ -815,8 +815,7 @@ def vmap(fun: F,
          out_axes: Any = 0,
          axis_name: AxisName | None = None,
          axis_size: int | None = None,
-         spmd_axis_name: AxisName | tuple[AxisName, ...] | None = None
-         ) -> F:
+         spmd_axis_name: AxisName | tuple[AxisName, ...] | None = None) -> F:
   """Vectorizing map. Creates a function which maps ``fun`` over argument axes.
 
   Args:
@@ -989,8 +988,15 @@ def vmap(fun: F,
     in_axes_flat = flatten_axes("vmap in_axes", in_tree, (in_axes, 0), kws=True)
     axis_size_ = (axis_size if axis_size is not None else
                   _mapped_axis_size(fun, in_tree, args_flat, in_axes_flat, "vmap"))
+    explicit_mesh_axis = _mapped_axis_spec(args_flat, in_axes_flat)
+    if spmd_axis_name is not None and explicit_mesh_axis is not None:
+      raise ValueError(
+          "Only one of spmd_axis_name or arrays sharded on `Explicit` mesh"
+          f" axis type is allowed. Got {spmd_axis_name=} and"
+          f" arrays sharded on {explicit_mesh_axis=}")
     try:
-      axis_data = batching.AxisData(axis_name, axis_size_, spmd_axis_name)
+      axis_data = batching.AxisData(axis_name, axis_size_, spmd_axis_name,
+                                    explicit_mesh_axis)
       out_flat = batching.batch(
           flat_fun, axis_data, in_axes_flat,
           lambda: flatten_axes("vmap out_axes", out_tree(), out_axes)
@@ -1006,6 +1012,28 @@ def vmap(fun: F,
     return tree_unflatten(out_tree(), out_flat)
 
   return cast(F, vmap_f)
+
+def _mapped_axis_spec(args_flat, in_axes_flat):
+  if not config.sharding_in_types.value:
+    return None
+
+  def _get_spec(arg, i):
+    try:
+      # Duck type arrays like BCOO arrays can be passed to vmap.
+      return shaped_abstractify(arg).sharding.spec[i]
+    except TypeError:
+      return None
+
+  temp_spec = None
+  for arg, i in zip(args_flat, in_axes_flat):
+    if i is not None:
+      spec = _get_spec(arg, i)
+      if temp_spec is not None and temp_spec != spec:
+        raise ValueError(
+            "Mapped away dimension of inputs passed to vmap should be sharded"
+            f" the same. Got inconsistent axis specs: {temp_spec} vs {spec}")
+      temp_spec = spec
+  return temp_spec
 
 def _mapped_axis_size(fn, tree, vals, dims, name):
   if not vals:

@@ -139,7 +139,7 @@ class Sharding:
   # Default implementations below that all subclasses will inherit.
 
   @property
-  def is_concrete(self) -> bool:
+  def _is_concrete(self) -> bool:
     return True
 
   @functools.cached_property

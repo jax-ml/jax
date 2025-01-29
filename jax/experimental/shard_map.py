@@ -1449,7 +1449,8 @@ def _shard_map_batch(
     new_in_names = [{**ns, d:spmd_axis_name} if d is not batching.not_mapped
                     else ns for ns, d in zip(new_in_names, in_dims)]
     new_size = trace.axis_data.size // prod(mesh.shape[n] for n in spmd_axis_name)
-    new_axis_data = batching.AxisData(trace.axis_data.name, new_size, trace.axis_data.spmd_name)
+    new_axis_data = batching.AxisData(trace.axis_data.name, new_size,
+                                      trace.axis_data.spmd_name, None)
   else:
     new_axis_data = trace.axis_data
   fun, out_dims = batching.batch_subtrace(fun, trace.tag, new_axis_data, tuple(in_dims))

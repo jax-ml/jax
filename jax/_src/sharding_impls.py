@@ -392,7 +392,7 @@ class NamedSharding(jsharding.Sharding):
     return not self.mesh.is_multi_process
 
   @property
-  def is_concrete(self) -> bool:
+  def _is_concrete(self) -> bool:
     if isinstance(self.mesh, mesh_lib.AbstractMesh):
       return False
     return True

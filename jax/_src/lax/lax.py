@@ -64,7 +64,6 @@ from jax._src.lax.utils import (
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.mesh import get_abstract_mesh
 from jax._src.sharding_impls import (PmapSharding, NamedSharding,
                                      PartitionSpec as P, canonicalize_sharding)
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
@@ -1932,13 +1931,13 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
   fill_value = _convert_element_type(fill_value, dtype, weak_type)
   if (sharding is not None and not isinstance(sharding, PmapSharding) and
-      isinstance(fill_value, array.ArrayImpl) and sharding.is_concrete):
+      isinstance(fill_value, array.ArrayImpl) and sharding._is_concrete):
     broadcast_shape = sharding.shard_shape(shape)
     shard = broadcast(fill_value, broadcast_shape)
     return array.make_array_from_callback(shape, sharding, lambda _: shard)
 
   if (config.sharding_in_types.value and sharding is not None and
-      not sharding.is_concrete):
+      not sharding._is_concrete):
     return broadcast(fill_value, shape, sharding=sharding)
   else:
     return broadcast(fill_value, shape)
@@ -3185,7 +3184,7 @@ def _convert_element_type_sharding_rule(operand, *, new_dtype, weak_type,
                                         sharding):
   if sharding is None:
     return operand.sharding
-  if sharding.is_concrete:
+  if sharding._is_concrete:
     if isinstance(sharding, NamedSharding):
       return NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
     else:
@@ -3274,7 +3273,7 @@ convert_element_type_p = Primitive('convert_element_type')
 def _convert_element_type_bind_with_trace(trace, args, params):
   sharding = params['sharding']
   operand = core.Primitive.bind_with_trace(convert_element_type_p, trace, args, params)
-  if sharding is not None and sharding.is_concrete:
+  if sharding is not None and sharding._is_concrete:
     with core.set_current_trace(trace):
       operand = pjit.with_sharding_constraint(operand, sharding)
   return operand
@@ -3703,6 +3702,7 @@ def _dot_batch_rule(
     unpack_args,
     unpack_dims,
     invoke_prim,
+    axis_data,
     batched_args,
     batch_dims,
     *,
@@ -3737,13 +3737,15 @@ def _dot_batch_rule(
     rhs_shape = batching.bdim_as_shape(rbd, rhs.shape)
   else:
     rhs_shape = np.shape(rhs)
+
+  result_batch_dim = batching.shape_as_bdim(
+      result_stack_dim,
+      _dot_general_shape_computation(lhs_shape, rhs_shape, new_dimension_numbers))
+
   if out_sharding is not None:
-    cur_mesh = get_abstract_mesh()
-    if cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual:
-      out_sharding = None
-    else:
-      raise NotImplementedError("vmap with out_sharding is not supported. "
-                                "Please open an issue.")
+    out_sharding = batching.get_sharding_for_vmap(
+        axis_data, out_sharding, result_batch_dim)
+
   batched_out = invoke_prim(
       lhs,
       rhs,
@@ -3752,9 +3754,6 @@ def _dot_batch_rule(
       preferred_element_type=preferred_element_type,
       out_sharding=out_sharding,
   )
-  result_batch_dim = batching.shape_as_bdim(
-      result_stack_dim,
-      _dot_general_shape_computation(lhs_shape, rhs_shape, new_dimension_numbers))
   return batched_out, result_batch_dim
 
 
@@ -3919,7 +3918,8 @@ _dot_general_batch_rule = functools.partial(
     _dot_general_batch_unpack_dims,
     dot_general,
 )
-batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
+batching.fancy_primitive_batchers[dot_general_p] = _dot_general_batch_rule
+batching.skippable_batchers[dot_general_p] = lambda _: ()
 pe.padding_rules[dot_general_p] = _dot_general_padding_rule
 core.pp_eqn_rules[dot_general_p] = _dot_general_pp_rule
 batching.ragged_prop_rules[dot_general_p] = _dot_general_ragged_prop_rule
@@ -4261,6 +4261,7 @@ def _ragged_dot_invoke_prim(
 
 
 def _ragged_dot_batch_rule(
+    axis_data,
     batched_args,
     batch_dims,
     *,
@@ -4274,6 +4275,7 @@ def _ragged_dot_batch_rule(
       _ragged_dot_batch_unpack_args,
       _ragged_dot_batch_unpack_dims,
       invoke,
+      axis_data,
       batched_args,
       batch_dims,
       dimension_numbers=_RAGGED_DOT_DOT_DIMENSION_NUMBERS,
@@ -4288,7 +4290,8 @@ ragged_dot_p = standard_primitive(_ragged_dot_shape_rule,
 ragged_dot_p.def_impl(partial(dispatch.apply_primitive, ragged_dot_p))
 ad.primitive_jvps[ragged_dot_p] = _ragged_dot_jvp_rule
 ad.primitive_transposes[ragged_dot_p] = _ragged_dot_transpose_rule
-batching.primitive_batchers[ragged_dot_p] = _ragged_dot_batch_rule
+batching.fancy_primitive_batchers[ragged_dot_p] = _ragged_dot_batch_rule
+batching.skippable_batchers[ragged_dot_p] = lambda _: ()
 
 def _ragged_dot_impl(
     lhs: Array,
@@ -4393,7 +4396,7 @@ def _broadcast_in_dim_transpose_rule(ct, operand, *dyn_shape,
   return ([expand_dims(_reduce_sum(ct, axes), unit_dims)] +
           [None] * len(dyn_shape))
 
-def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
+def _broadcast_in_dim_batch_rule(axis_data, batched_args, batch_dims, shape,
                                  broadcast_dimensions, sharding):
   # `dyn_shape` is the dynamic portion of the target shape.  `shape`
   # is the target shape, with `None` for dynamic sections.
@@ -4407,13 +4410,11 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
   if operand_bdim is not None:
     if isinstance(operand_bdim, RaggedAxis):
       stacked_axis = operand_bdim.stacked_axis
-    else:
-      stacked_axis = operand_bdim
-    new_operand = batching.moveaxis(operand, stacked_axis, 0)
-    if isinstance(operand_bdim, RaggedAxis):
       stacked_size = operand_bdim.size
     else:
+      stacked_axis = operand_bdim
       stacked_size = operand.shape[stacked_axis]
+    new_operand = batching.moveaxis(operand, stacked_axis, 0)
     new_broadcast_dimensions = (0,) + tuple(np.add(1, broadcast_dimensions))
   else:
     new_operand = operand
@@ -4440,12 +4441,10 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
         assert len(sizes) == stacked_size, msg
     dyn_limits.append(bound)
   new_shape = (stacked_size,) + _merge_dyn_shape(shape, dyn_limits)
+
   if sharding is not None:
-    if sharding.mesh._are_all_axes_auto or sharding.mesh._are_all_axes_manual:
-      sharding = None
-    else:
-      raise NotImplementedError('Implement sharding support for '
-                                'broadcast_in_dim_batch_rule')
+    sharding = batching.get_sharding_for_vmap(axis_data, sharding, 0)
+
   result = broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions,
                             sharding=sharding)
   out_ragged_axes = [idx+1 for idx, s in enumerate(shape) if s is None]
@@ -4569,7 +4568,8 @@ broadcast_in_dim_p = standard_primitive(
 broadcast_in_dim_p.def_abstract_eval(_broadcast_in_dim_abstract_eval)
 ad.primitive_jvps[broadcast_in_dim_p] = _broadcast_in_dim_jvp_rule
 ad.primitive_transposes[broadcast_in_dim_p] = _broadcast_in_dim_transpose_rule
-batching.primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
+batching.fancy_primitive_batchers[broadcast_in_dim_p] = _broadcast_in_dim_batch_rule
+batching.skippable_batchers[broadcast_in_dim_p] = lambda _: ()
 pe.forwarding_rules[broadcast_in_dim_p] = _broadcast_in_dim_fwd_rule
 pe.custom_partial_eval_rules[broadcast_in_dim_p] = _broadcast_in_dim_partial_eval
 pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
@@ -5130,18 +5130,17 @@ def _reshape_transpose_rule(t, operand, *, new_sizes, dimensions, sharding):
                               sharding=t_s),
                       np.argsort(dimensions))]
 
-def _reshape_batch_rule(batched_args, batch_dims, *, new_sizes, dimensions,
-                        sharding):
-  if sharding is not None:
-    if sharding.mesh._are_all_axes_manual or sharding.mesh._are_all_axes_auto:
-      sharding = None
-    else:
-      raise NotImplementedError('reshape batch sharding support')
+def _reshape_batch_rule(axis_data, batched_args, batch_dims, *, new_sizes,
+                        dimensions, sharding):
   operand, = batched_args
   bdim, = batch_dims
   operand = batching.moveaxis(operand, bdim, 0)
   if dimensions is not None:
     dimensions = (0,) + tuple(np.add(1, dimensions))
+
+  if sharding is not None:
+    sharding = batching.get_sharding_for_vmap(axis_data, sharding, 0)
+
   out = reshape(operand, operand.shape[:1] + new_sizes, dimensions,
                 sharding=sharding)
   return out, 0
@@ -5171,7 +5170,8 @@ def _reshape_staging_rule(
 reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
                                'reshape', sharding_rule=_reshape_sharding_rule)
 ad.deflinear2(reshape_p, _reshape_transpose_rule)
-batching.primitive_batchers[reshape_p] = _reshape_batch_rule
+batching.fancy_primitive_batchers[reshape_p] = _reshape_batch_rule
+batching.skippable_batchers[reshape_p] = lambda _: ()
 mlir.register_lowering(reshape_p, _reshape_lower)
 core.custom_typechecks[reshape_p] = _reshape_typecheck_rule
 pe.custom_staging_rules[reshape_p] = _reshape_staging_rule

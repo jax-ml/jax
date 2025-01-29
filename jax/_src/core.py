@@ -2417,10 +2417,10 @@ def mapped_aval(size: AxisSize, axis: int | None,
     raise TypeError(f"no mapping handler for {aval} of type {type(aval)}")
 
 def unmapped_aval(size: AxisSize, axis: int | None,
-                  aval: AbstractValue) -> AbstractValue:
+                  aval: AbstractValue, explicit_mesh_axis=None) -> AbstractValue:
   _, handler = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
-    return handler(size, axis, aval)
+    return handler(size, axis, explicit_mesh_axis, aval)
   else:
     raise TypeError(f"no unmapping handler for {aval} of type {type(aval)}")
 
@@ -2436,10 +2436,12 @@ def _map_shaped_array(
                      weak_type=aval.weak_type, sharding=sharding)
 
 def _unmap_shaped_array(
-    size: int, axis: int | None, aval: ShapedArray) -> ShapedArray:
+    size: int, axis: int | None, explicit_mesh_axis, aval: ShapedArray
+    ) -> ShapedArray:
   if axis is None: return aval
   elif type(axis) is int:
-    sharding = (aval.sharding.with_spec(tuple_insert(aval.sharding.spec, axis, None))
+    sharding = (aval.sharding.with_spec(tuple_insert(aval.sharding.spec, axis,
+                                                     explicit_mesh_axis))
                 if config.sharding_in_types.value else None)
     return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
                        weak_type=aval.weak_type, sharding=sharding)
@@ -2452,7 +2454,7 @@ def _map_dshaped_array(
                       aval.weak_type)
 
 def _unmap_dshaped_array(
-    size: AxisSize, axis: int | None, aval: DShapedArray
+    size: AxisSize, axis: int | None, explicit_mesh_axis, aval: DShapedArray
   ) -> DShapedArray:
   if axis is None: return aval
   elif type(axis) is int:
@@ -2465,7 +2467,7 @@ AvalMapHandlerPair = tuple[Callable, Callable]
 aval_mapping_handlers: dict[type, AvalMapHandlerPair] = {
     DShapedArray:   (_map_dshaped_array, _unmap_dshaped_array),
     ShapedArray:   (_map_shaped_array, _unmap_shaped_array),
-    AbstractToken: (lambda _, __, a: a, lambda _, __, a: a)
+    AbstractToken: (lambda _, __, a: a, lambda _, __, ____, a: a)
 }
 
 # When a mapped function is given no axis name, we generate a name object based

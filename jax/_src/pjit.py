@@ -1604,7 +1604,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
             'Please see the jax.Array migration guide for more information '
             'https://jax.readthedocs.io/en/latest/jax_array_migration.html#handling-of-host-local-inputs-to-pjit-like-batch-etc. '
             f'Got arg shape: {arg.shape}, arg value: {arg}')
-      if not isinstance(arg_s, UnspecifiedValue) and arg_s.is_concrete:
+      if not isinstance(arg_s, UnspecifiedValue) and arg_s._is_concrete:
         # jax.jit does not allow resharding across different memory kinds even
         # if the argument is uncommitted. Use jax.device_put for those cases,
         # either outside or inside jax.jit.
@@ -2763,10 +2763,8 @@ def _mesh_cast_batcher(axis_data, vals_in, dims_in, dst_sharding):
   assert axis_data.spmd_name is None
   x, = vals_in
   d, = dims_in
-
-  val = None
-  new_spec = PartitionSpec(*util.tuple_insert(dst_sharding.spec, d, val))
-  vmapped_dst_sharding = NamedSharding(dst_sharding.mesh, new_spec)
+  vmapped_dst_sharding = batching.get_sharding_for_vmap(
+      axis_data, dst_sharding, d)
   y = mesh_cast_p.bind(x, dst_sharding=vmapped_dst_sharding)
   return y, d
 batching.fancy_primitive_batchers[mesh_cast_p] = _mesh_cast_batcher
@@ -2813,6 +2811,17 @@ def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding):
            dst_sharding._to_xla_hlo_sharding(aval.ndim).to_proto())
   return [mlir.lower_sharding_under_shit(ctx, x_node, aval_out, proto)]
 mlir.register_lowering(reshard_p, _reshard_hlo_lowering)
+
+def _reshard_batcher(axis_data, vals_in, dims_in, dst_sharding):
+  assert axis_data.spmd_name is None
+  x, = vals_in
+  d, = dims_in
+  vmapped_dst_sharding = batching.get_sharding_for_vmap(
+      axis_data, dst_sharding, d)
+  y = reshard_p.bind(x, dst_sharding=vmapped_dst_sharding)
+  return y, d
+batching.fancy_primitive_batchers[reshard_p] = _reshard_batcher
+batching.skippable_batchers[reshard_p] = lambda _: ()
 
 # -------------------- auto and user mode -------------------------
 

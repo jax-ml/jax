@@ -465,7 +465,8 @@ def _linear_solve_batching_rule(axis_data, args, dims, const_lengths, jaxprs):
   ]
   # Broadcast out b if necessary
   new_b = [
-      batching.broadcast(x, axis_data.size, 0) if now_bat and not was_bat else
+      batching.broadcast(x, axis_data.size, 0, axis_data.explicit_mesh_axis)
+      if now_bat and not was_bat else
       batching.moveaxis(x, d, 0) if now_bat and d != 0 else x
       for x, d, was_bat, now_bat in zip(b, b_dims, orig_b_bat, b_bat)
   ]

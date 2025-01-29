@@ -291,7 +291,8 @@ def _for_vmap(axis_data, args, dims, *,
     batched = map(operator.or_, batched, out_batched)
   else:
     raise Exception("Invalid fixpoint")
-  args = [batching.broadcast(x, axis_data.size, 0) if now_bat and not was_bat
+  args = [batching.broadcast(x, axis_data.size, 0, axis_data.explicit_mesh_axis)
+          if now_bat and not was_bat
           else batching.moveaxis(x, d, 0) if now_bat else x
           for x, d, was_bat, now_bat in zip(args, dims, init_batched, batched)]
   batched_jaxpr_, _ = batching.batch_jaxpr(
