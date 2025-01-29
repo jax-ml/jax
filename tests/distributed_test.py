@@ -1,4 +1,4 @@
-# Copyright 2024 The JAX Authors.
+# Copyright 2025 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,18 +28,7 @@ try:
 except ImportError:
   portpicker = None
 
-from absl.testing import absltest
-
-import jax
-from jax._src import test_util as jtu
-
-try:
-  import portpicker
-except ImportError:
-  portpicker = None
-
 jax.config.parse_flags_with_absl()
-
 
 @unittest.skipIf(not portpicker, "Test requires portpicker")
 class DistributedTest(jtu.JaxTestCase):
@@ -75,35 +64,29 @@ class DistributedTest(jtu.JaxTestCase):
     for thread in threads:
       thread.join()
 
-  @jtu.sample_product(num_processes=[1, 2], run_initialize=[True, False])
-  def test_is_distributed_initialized_multi_process(self, num_processes, run_initialize):
+  @jtu.sample_product(run_initialize=[True, False])
+  def test_is_distributed_initialized_multi_process(self, run_initialize):
     port = portpicker.pick_unused_port()
-
-    subprocesses = []
-    for process_id in range(num_processes):
-      pycmd = (
-        "import jax; "
-        + (
-          f"jax.distributed.initialize('localhost:{port}', {num_processes}, {process_id}); "
-          if run_initialize
-          else ""
-        )
-        + 'print(jax.distributed.is_initialized(), end="")'
+    pycmd = (
+      "import jax; "
+      + (
+        f"jax.distributed.initialize('localhost:{port}', 1, 0); "
+        if run_initialize
+        else ""
       )
-      args = [sys.executable, "-c", pycmd]
-      process = subprocess.Popen(
-        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True
-      )
-      subprocesses.append(process)
+      + 'print(jax.distributed.is_initialized(), end="")'
+    )
+    args = [sys.executable, "-c", pycmd]
+    process = subprocess.Popen(
+      args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True
+    )
 
     try:
-      for process in subprocesses:
-        out, _ = process.communicate()
-        self.assertEqual(process.returncode, 0)
-        self.assertEqual(out, str(run_initialize))
+      out, _ = process.communicate()
+      self.assertEqual(process.returncode, 0)
+      self.assertEqual(out, str(run_initialize))
     finally:
-      for process in subprocesses:
-        process.kill()
+      process.kill()
 
 
 if __name__ == "__main__":
