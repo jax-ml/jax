@@ -359,6 +359,13 @@ def pure_callback(
   `jit`-decorated function has no data dependence on its value. Pure callbacks
   may also be reordered if data-dependence allows.
 
+  .. warning::
+
+     In the context of JAX transformations, Python exceptions should be
+     considered side-effects: this means that intentionally raising an error
+     within a `pure_callback` breaks the API contract, and the behavior of
+     the resulting program is undefined.
+
   When `vmap`-ed the behavior will depend on the value of the ``vmap_method``.
 
   * Calling :func:`~jax.vmap` on a callback without an explicit ``vmap_method``
@@ -440,7 +447,7 @@ def pure_callback(
     (4,) (4,)
     Array([1., 2., 3., 4.], dtype=float32)
 
-  .. _External Callbacks: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
+  .. _External Callbacks: https://jax.readthedocs.io/en/latest/external-callbacks.html
   """
   if not isinstance(vectorized, DeprecatedArg) and not vectorized is None:
     deprecations.warn(
