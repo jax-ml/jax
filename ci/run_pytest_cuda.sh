@@ -45,9 +45,9 @@ export NCCL_DEBUG=WARN
 export TF_CPP_MIN_LOG_LEVEL=0
 export JAX_ENABLE_64="$JAXCI_ENABLE_X64"
 
-# Set the number of processes to run to be 4x the number of GPUs.
+# Set the number of processes to run to be 3x the number of GPUs.
 export gpu_count=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
-export num_processes=`expr 4 \* $gpu_count`
+export num_processes=`expr 3 \* $gpu_count`
 
 export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 export XLA_FLAGS=--xla_gpu_force_compilation_parallelism=1
