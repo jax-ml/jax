@@ -1159,8 +1159,6 @@ def _ragged_all_to_all_lowering(
   split_count = len(replica_groups[0])
   if not all(split_count == len(g) for g in replica_groups):
     raise ValueError('Replica groups must be equally sized')
-  if len(replica_groups[0]) == 1:
-    return [operand]
 
   ragged_all_to_all_attrs = {
       "replica_groups": _replica_groups_hlo(replica_groups)

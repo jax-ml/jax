@@ -1390,6 +1390,10 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_p100x2_shardy",
     ],
+    shard_count = {
+        "gpu": 10,
+        "tpu": 10,
+    },
     tags = [
         "multiaccelerator",
     ],
