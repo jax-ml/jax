@@ -652,6 +652,7 @@ class ParallelCallableInfo:
   in_axes: Iterable[int | None]
   out_axes_thunk: Callable[[], Sequence[int | None]]
   avals: Sequence[core.AbstractValue]
+  debug_info: api_util.TracingDebugInfo | None
 
   @cached_property
   def local_devices(self):
@@ -722,8 +723,8 @@ def stage_parallel_callable(
         "Finished tracing + transforming {fun_name} for pmap in {elapsed_time} sec",
         fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, out_sharded_avals, consts, _ = pe.trace_to_jaxpr_dynamic(
-          fun, sharded_avals, pe.tracing_debug_info_final(fun, "pmap"))
-  jaxpr = api_util.add_jaxpr_debug_info(jaxpr, orig_fun.debug_info)
+          fun, sharded_avals, pci.debug_info)
+  jaxpr = api_util.add_jaxpr_debug_info(jaxpr, pci.debug_info)
 
   assert len(out_sharded_avals) == len(pci.out_axes), (
       len(out_sharded_avals), len(pci.out_axes))
@@ -757,7 +758,7 @@ def get_pmap_jaxpr(
 
   pci = ParallelCallableInfo(
       name, backend, axis_name, axis_size, global_axis_size, devices,
-      in_axes, out_axes_thunk, avals)
+      in_axes, out_axes_thunk, avals, fun.debug_info)
   with core.extend_axis_env_nd([(axis_name, axis_size)]):
     jaxpr, consts, replicas, shards = stage_parallel_callable(pci, fun)
   jaxpr = core.remove_named_axis_effects(jaxpr, {axis_name})
@@ -880,8 +881,8 @@ def lower_parallel_callable(
           replicated_args=replicated_args,
           arg_shardings=None,
           result_shardings=None,
-          arg_names=jaxpr._debug_info and jaxpr._debug_info.arg_names,
-          result_names=jaxpr._debug_info and jaxpr._debug_info.result_paths,
+          arg_names=jaxpr._debug_info and jaxpr._debug_info.safe_arg_names(len(jaxpr.invars)),
+          result_names=jaxpr._debug_info and jaxpr._debug_info.safe_result_paths(len(jaxpr.outvars)),
           num_replicas=replicas.num_global_replicas,
           lowering_parameters=lowering_parameters)
   return PmapComputation(lowering_result.module,
@@ -1971,8 +1972,8 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         result_shardings=out_mlir_shardings,
         in_layouts=in_layouts,
         out_layouts=out_layouts,
-        arg_names=jaxpr._debug_info and jaxpr._debug_info.arg_names,
-        result_names=jaxpr._debug_info and jaxpr._debug_info.result_paths,
+        arg_names=jaxpr._debug_info and jaxpr._debug_info.safe_arg_names(len(jaxpr.invars)),
+        result_names=jaxpr._debug_info and jaxpr._debug_info.safe_result_paths(len(jaxpr.outvars)),
         num_replicas=nreps,
         num_partitions=num_partitions,
         all_default_mem_kind=all_default_mem_kind,

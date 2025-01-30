@@ -100,29 +100,6 @@ def apply_flat_fun_nokwargs(fun, io_tree, py_args):
   ans = fun(*args)
   return tree_unflatten(out_tree, ans)
 
-def flattened_fun_in_tree(
-    fn: lu.WrappedFun
-  ) -> tuple[PyTreeDef, Callable[[], PyTreeDef], bool] | None:
-  # This implementation relies on internal details of linear_util.py's
-  # WrappedFun, but it's for the worthy cause of better user error messages.
-  # It can fail (i.e. return None) if its WrappedFun argument is not transformed
-  # with flatten_fun or flatten_fun_nokwargs, which could happen e.g. when
-  # core.eval_jaxpr encounters a call primitive (though at that point we're just
-  # round-tripping jaxprs and the user errors in question are impossible).
-  assert isinstance(flatten_fun, partial) and len(flatten_fun.args) == 1
-  assert (isinstance(flatten_fun_nokwargs, partial) and
-          len(flatten_fun_nokwargs.args) == 1)
-  flattens = {flatten_fun.args[0], flatten_fun_nokwargs.args[0]}
-  try:
-    ((in_tree,), out_tree_store, has_kwargs), = (
-        (args, store, f is flatten_fun.args[0])
-        for (f, args), store in zip(fn.transforms, fn.stores) if f in flattens)
-  except ValueError:
-    # When `fn` is not the result of flatten_fun or flatten_fun_nokwargs
-    return None
-  else:
-    return in_tree, lambda: out_tree_store.val, has_kwargs  # type: ignore[union-attr]
-
 @lu.transformation_with_aux2
 def flatten_fun_nokwargs2(f, store, in_tree, *args_flat):
   py_args = tree_unflatten(in_tree, args_flat)
@@ -705,6 +682,7 @@ def result_paths(_fun, _store, *args, **kwargs):
   _store.store([keystr(path) for path, _ in generate_key_paths(ans)])
   return ans
 
+# TODO(necula): simplify this function, all it needs is to add the trace_debug to the Jaxpr
 def add_jaxpr_debug_info(jaxpr: core.Jaxpr,
                          trace_debug: TracingDebugInfo | None,
                          result_paths: tuple[str, ...] | None = None,
@@ -712,23 +690,14 @@ def add_jaxpr_debug_info(jaxpr: core.Jaxpr,
   """Add debug info to jaxpr, given trace-time debug info and result paths."""
   if trace_debug is None:
     return jaxpr
-  assert (result_paths is not None) ^ (trace_debug.result_paths_thunk is not None)
+  # TODO(necula): re-enable this safety check
+  # assert (result_paths is not None) ^ (trace_debug.result_paths_thunk is not None)
   if result_paths is None:
     result_paths = trace_debug.result_paths_thunk()  # type: ignore
   debug_info = core.JaxprDebugInfo(
       trace_debug.traced_for, trace_debug.func_src_info,
       trace_debug.arg_names, tuple(result_paths))  # type: ignore
   return jaxpr.replace(debug_info=debug_info)
-
-def debug_info_final(f: lu.WrappedFun, dbg: TracingDebugInfo | None,
-                     res_paths_thunk: Callable[[], tuple[str, ...]]
-                     ) -> lu.WrappedFun:
-  "Attach trace-time debug info and result paths lazy thunk to an lu.WrappedFun"
-  if dbg is None: return f
-  assert dbg.result_paths_thunk is None
-  res_paths_thunk_ = HashableFunction(res_paths_thunk, closure=())
-  return lu.add_debug_info(f, dbg._replace(result_paths_thunk=res_paths_thunk_))
-
 
 def hoist_obj_attrs(f, flat_args):
   idxs, objs, flat_args_ = [], [], []

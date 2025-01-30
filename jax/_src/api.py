@@ -61,7 +61,7 @@ from jax._src.api_util import (
     flatten_axes, donation_vector,
     rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
     apply_flat_fun_nokwargs, check_callable, tracing_debug_info,
-    result_paths, flat_out_axes, debug_info_final)
+    result_paths, flat_out_axes)
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
@@ -1420,15 +1420,15 @@ def _get_global_axis_size(local_axis_size: int, in_devices, backend_name: str,
   return global_axis_size
 
 
-def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
+def _prepare_pmap(fun: Callable, in_axes, out_axes, static_broadcasted_tuple,
                   donate_tuple, in_devices, backend_name,
                   axis_size, args, kwargs):
   if in_devices is not None and len(in_devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
   dbg = tracing_debug_info(
-      'pmap', fun, args, kwargs,
-       static_argnums=static_broadcasted_tuple)
+      "pmap", fun, args, kwargs,
+      static_argnums=static_broadcasted_tuple)
 
   f = lu.wrap_init(fun)
   if static_broadcasted_tuple:
@@ -1478,9 +1478,10 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
   local_axis_size = _mapped_axis_size(fun, in_tree, args, in_axes_flat, "pmap")
 
   f, res_paths = result_paths(f)
+  dbg = dbg.add_result_paths(res_paths)
+  f = lu.add_debug_info(f, dbg)
   f, out_axes_thunk = flat_out_axes(f, out_axes)
   flat_fun, out_tree = flatten_fun(f, in_tree)
-  flat_fun = debug_info_final(flat_fun, dbg, res_paths)
 
   is_explicit_global_axis_size = axis_size is not None
   global_axis_size = _get_global_axis_size(local_axis_size, in_devices,

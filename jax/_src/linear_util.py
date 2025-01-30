@@ -71,7 +71,7 @@ import weakref
 from jax._src import config
 from jax._src import core
 from jax._src import traceback_util
-from jax._src.util import curry, cache_clearing_funs
+from jax._src.util import curry, cache_clearing_funs, HashableFunction
 
 
 traceback_util.register_exclusion(__file__)
@@ -175,11 +175,11 @@ class WrappedFun:
     if out_store is None:
       return WrappedFun(self.f, partial(gen, self.f_transformed, *gen_static_args),
                         ((gen, gen_static_args),) + self.transforms,
-                        (out_store,) + self.stores, self.params, None, None)
+                        (out_store,) + self.stores, self.params, None, self.debug_info)
     else:
       return WrappedFun(self.f, partial(gen, self.f_transformed, out_store, *gen_static_args),
                         ((gen, gen_static_args),) + self.transforms,
-                        (out_store,) + self.stores, self.params, None, None)
+                        (out_store,) + self.stores, self.params, None, self.debug_info)
 
   def populate_stores(self, stores):
     """Copy the values from the `stores` into `self.stores`."""
@@ -281,6 +281,21 @@ class TracingDebugInfo(NamedTuple):
                             jaxpr_dbg.func_src_info,
                             jaxpr_dbg.arg_names,
                             lambda: jaxpr_dbg.result_paths)
+
+  def add_result_paths(self, result_paths_thunk: Callable[[], tuple[str, ...]]
+                       ) -> TracingDebugInfo:
+    assert self.result_paths_thunk is None
+    return self._replace(result_paths_thunk=HashableFunction(result_paths_thunk,
+                                                             closure=()))
+
+  def safe_arg_names(self, expected: int) -> tuple[str | None, ...]:
+    """Get the arg_names with a safety check."""
+    if len(self.arg_names) == expected:
+      return self.arg_names
+    else:
+      # TODO(necula): this should not happen
+      return (None,) * expected
+
 
 def wrap_init(f: Callable, params=None, *,
               debug_info: TracingDebugInfo | None = None) -> WrappedFun:

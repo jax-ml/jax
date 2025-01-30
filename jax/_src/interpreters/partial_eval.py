@@ -35,7 +35,6 @@ from jax._src import profiler
 from jax._src import source_info_util
 from jax._src import compute_on
 from jax._src import xla_metadata as xla_metadata_lib
-from jax._src.api_util import (flattened_fun_in_tree, flatten_fun_nokwargs)
 from jax._src.core import (Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval,
                            AbstractValue, ClosedJaxpr, new_jaxpr_eqn,
                            Var, DropVar, Atom,
@@ -44,7 +43,7 @@ from jax._src.core import (Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval,
                            InputType, OutputType, get_referent, JaxprEqnContext)
 from jax._src.state.types import AbstractRef
 from jax._src import tree_util
-from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_unflatten,
+from jax._src.tree_util import (PyTreeDef, treedef_tuple,
                                 tree_flatten, tree_structure)
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
@@ -1913,8 +1912,7 @@ class DynamicJaxprTrace(core.Trace):
     implicit_tracers = _extract_implicit_args(self, f.in_type, explicit_tracers)
     in_tracers = map(self.to_jaxpr_tracer, [*implicit_tracers, *explicit_tracers])
     # TODO(mattjj): check in_tracers are consistent with f.in_type annotation
-    dbg = tracing_debug_info_final(f, call_primitive.name)
-    jaxpr, out_type, consts = trace_to_jaxpr_dynamic2(f, debug_info=dbg)
+    jaxpr, out_type, consts = trace_to_jaxpr_dynamic2(f)
     if params.get('inline', False):
       return core.eval_jaxpr(jaxpr, consts, *in_tracers,
                              propagate_source_info=False)
@@ -1940,7 +1938,8 @@ class DynamicJaxprTrace(core.Trace):
     self.frame.add_eqn(eqn)
     return [t for t, (_, keep) in zip(out_tracers, out_type) if keep]
 
-  def process_map(self, map_primitive, f, tracers, params):
+  def process_map(self, map_primitive, f: lu.WrappedFun,
+                  tracers: Sequence[core.Tracer], params):
     tracers = map(self.to_jaxpr_tracer, tracers)
     in_avals = [t.aval for t in tracers]
     axis_name, axis_size = params['axis_name'], params['axis_size']
@@ -1949,8 +1948,7 @@ class DynamicJaxprTrace(core.Trace):
                         for a, in_axis in zip(in_avals, params['in_axes'])]
     with core.extend_axis_env_nd([(axis_name, params["global_axis_size"])]):
       jaxpr, reduced_out_avals, consts, () = trace_to_jaxpr_dynamic(
-          f, reduced_in_avals,
-          debug_info=tracing_debug_info_final(f, map_primitive.name))
+          f, reduced_in_avals, f.debug_info)
       ordered_effects = effects.ordered_effects.filter_in(jaxpr.effects)
       if ordered_effects:
         raise ValueError("Ordered effects not supported for "
@@ -2050,7 +2048,7 @@ class DynamicJaxprTrace(core.Trace):
     closed_call_jaxpr = core.ClosedJaxpr(
         convert_constvars_jaxpr(call_jaxpr), ())
 
-    transpose_flat, in_tree2 = flatten_fun_nokwargs(
+    transpose_flat, in_tree2 = api_util.flatten_fun_nokwargs(
         lu.wrap_init(transpose), treedef_tuple((res_tree, out_tree)))
 
     # the following thunk evaluates to a pair: transpose_jaxpr, transpose_consts
@@ -2111,42 +2109,6 @@ def _jvp_jaxpr_zeros(f, store, in_zeros, zero_avals, *primal_tangent_avals):
   store.store(out_zeros)
   return [*out_primals, *out_nz_tangents]
 
-# Callers should be using linear_util.debug_info instead!
-def tracing_debug_info(
-    fn: Callable,
-    in_tree: PyTreeDef,
-    out_tree_thunk: Callable[[], PyTreeDef],
-    has_kwargs: bool,
-    traced_for: str
-) -> lu.TracingDebugInfo:
-  # TODO(necula): we should not need this function, and can use api_util.tracing_debug_info instead
-  # We just have to make sure we grad the debugging information when we have
-  # the unflattened args
-  # TODO(necula): in general we can just pretend the leaves are booleans, but
-  # when we use custom pytrees, the flattening functions may check the type
-  # of the argument
-  try:
-    dummy_args = tree_unflatten(in_tree, [False] * in_tree.num_leaves)  # type: ignore
-  except:
-    # TODO(necula): remove this catch-all. Repro in batching_test:test_basic_jit
-    dummy_args = ([False], {}) if has_kwargs else [False]
-  args, kwargs = dummy_args if has_kwargs else (dummy_args, {})  # type: ignore
-  def res_paths_thunk() -> tuple[str, ...]:
-    out_tree = out_tree_thunk()
-    dummy_result = tree_unflatten(out_tree, [False] * out_tree.num_leaves)
-    return tuple(tree_util.keystr(path)
-                 for path, _ in tree_util.generate_key_paths(dummy_result))
-  return api_util.tracing_debug_info(traced_for, fn, args, kwargs,
-                                     result_paths_thunk=res_paths_thunk)
-
-def tracing_debug_info_final(fn: lu.WrappedFun, traced_for: str) -> lu.TracingDebugInfo | None:
-  fn_trees = flattened_fun_in_tree(fn)
-  if fn_trees is None:
-    # TODO(necula): eliminate this branch
-    return lu.TracingDebugInfo(traced_for, api_util.fun_sourceinfo(fn.f),
-                               (None,), None)
-  in_tree, out_tree_thunk, has_kws = fn_trees
-  return tracing_debug_info(fn.f, in_tree, out_tree_thunk, has_kws, traced_for)
 
 @profiler.annotate_function
 def trace_to_jaxpr_dynamic(
