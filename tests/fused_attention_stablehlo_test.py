@@ -616,6 +616,13 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_packed_layout(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
+    try:
+      cudnn_version = check_cudnn_version()
+    except RuntimeError as e:
+      self.skipTest(str(e))
+      return
     if cudnn_version < 90600:
       self.skipTest("Requires >= cuDNN 9.6.0")
     k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)

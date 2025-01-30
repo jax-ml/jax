@@ -369,7 +369,7 @@ def check_is_flash_attention(
           )
 
         if is_packed and cudnn_version < 90600:
-          raise NotImplementedError(f"Packed layout requires cudnn version >= 9.6.")
+          raise NotImplementedError("Packed layout requires cudnn version >= 9.6.")
 
 def check_cudnn_version():
   # check if cuDNN is installed
