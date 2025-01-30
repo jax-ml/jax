@@ -733,6 +733,7 @@ def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
       raise ValueError(f"axis_index_groups can only be used with reductions over "
                        f"named axes, but got: {axes}")
   if config.sharding_in_types.value:
+    args = core.cast_from_auto_to_manual(args)
     core.check_avals_context_mesh(args, 'all_reduce')
     out_avals = [
         ShapedArray(lax._reduce_op_shape_rule(arg, axes=pos_axes), arg.dtype,

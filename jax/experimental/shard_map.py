@@ -799,7 +799,8 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
   args = map(partial(_unmatch_spec, mesh, context_mesh=get_abstract_mesh()),
              in_names, args)
   in_rep = map(partial(_in_names_to_rep, mesh), in_names)
-  outs, out_rep = _run_shmap(fun, mesh, args, in_rep, check_rep)
+  outs, out_rep = _run_shmap(fun, mesh, args, in_rep, check_rep,
+                             get_abstract_mesh())
   out_avals = [core.mapped_aval(x.shape[0], 0, core.get_aval(x)) for x in outs]
   _check_names(out_names_thunk(), out_avals)  # pytype: disable=wrong-arg-types
   if check_rep:
@@ -808,8 +809,7 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
   return map(partial(_match_spec, mesh, check_rep), pspecs, outs)
 core.EvalTrace.process_shard_map = _shard_map_impl
 
-def _run_shmap(f, mesh, args, reps, check_rep, context_mesh=None):
-  context_mesh = get_abstract_mesh() if context_mesh is None else context_mesh
+def _run_shmap(f, mesh, args, reps, check_rep, context_mesh):
   trace = ShardMapTrace(mesh, check_rep, context_mesh)
   in_tracers = map(partial(ShardMapTracer, trace), reps, args)
   manual_mesh = _as_manual_mesh(mesh)

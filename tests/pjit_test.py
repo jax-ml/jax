@@ -6521,6 +6521,16 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.shape, (4, 8))
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'x')))
 
+  @jtu.with_user_mesh((2,), ('x',), axis_types={AxisTypes.Auto: 'x'})
+  def test_shmap_close_over(self, mesh):
+    const = jnp.arange(8)
+    def f():
+      return const * 2
+
+    shmap_f = shard_map(f, mesh=mesh, in_specs=(), out_specs=P('x'))
+    shmap_f()  # doesn't crash
+    jax.jit(shmap_f)()  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

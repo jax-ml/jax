@@ -621,6 +621,20 @@ def check_avals_context_mesh(avals, prim_name):
             " error occurs at source: "
             f" {source_info_util.summarize(source_info_util.current())}")
 
+# TODO(yashkatariya, dougalm): Remove this and replace with canonicalize_value
+# function which casts scalar, numpy arrays, etc to jax arrays so that values
+# passed to primitives are always have avals, etc i.e. they are canonical and
+# also does mesh casting, etc
+def cast_from_auto_to_manual(avals):
+  if not config.sharding_in_types.value:
+    return avals
+
+  from jax._src.sharding_impls import NamedSharding  # type: ignore
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  return [a.update(sharding=NamedSharding(cur_mesh, P(*[None] * a.ndim)))
+          if (not a.sharding.mesh.empty and cur_mesh._are_all_axes_manual and
+              a.sharding.mesh._are_all_axes_auto)
+          else a for a in avals]
 
 # -------------------- tracing --------------------
 
