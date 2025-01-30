@@ -118,10 +118,6 @@ def _fragmented_array_from_ir(
   )
 
 
-# TODO(bchetioui): Remove this when minimum jaxlib version >= 0.4.36.
-# Jaxlib doesn't contain Mosaic GPU dialect bindings.
-InitializeBarrierOp = mgpu.InitializeBarrierOp if mgpu is not None else None
-
 def _register_lowering(
     op: str | Type[ir.OpView]
 ) -> Callable[[MlirLoweringRule], MlirLoweringRule]:
@@ -137,10 +133,10 @@ def _lowered_barrier_type() -> ir.Type:
   return ir.IntegerType.get_signless(64)
 
 
-@_register_lowering(InitializeBarrierOp)
+@_register_lowering(mgpu.InitializeBarrierOp)
 def _initialize_barrier_op_lowering_rule(
     ctx: LoweringContext,
-    initialize_barrier_op: InitializeBarrierOp,
+    initialize_barrier_op: mgpu.InitializeBarrierOp,
 ) -> Sequence[ir.Value]:
 
   shape = initialize_barrier_op.barriers_ref.type.shape
@@ -241,6 +237,7 @@ def _vector_splat_op_lowering_rule(
 def _mgpu_async_load_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncLoadOp
 ) -> Sequence[ir.Value]:
+  assert ctx.launch_context is not None
   barrier = utils.BarrierRef.from_dialect_barrier_memref(load_op.barrier)
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
@@ -259,6 +256,7 @@ def _mgpu_async_load_op_lowering_rule(
 def _mgpu_async_store_op_lowering_rule(
     ctx: LoweringContext, store_op: mgpu.AsyncStoreOp
 ) -> Sequence[ir.Value]:
+  assert ctx.launch_context is not None
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=store_op.source,
@@ -311,9 +309,9 @@ def _mgpu_wgmma_op_lowering_rule(
   return [_fragmented_array_to_ir(new_acc.value, wgmma_op.accumulator.type)]
 
 
-def instantiate_single_thread_predicates(module: ir.Module) -> LoweringContext:
-  block_predicate = None
-  warpgroup_predicate = None
+def single_thread_predicates(module: ir.Module) -> tuple[ir.Value, ir.Value]:
+  """Returns a single thread predicate per block and one per warpgroup."""
+  block_predicate = warpgroup_predicate = None
   for op in module.body.operations:
     for region in op.operation.regions:
       for block in region.blocks:
@@ -340,16 +338,22 @@ def instantiate_single_thread_predicates(module: ir.Module) -> LoweringContext:
 def lower_mgpu_dialect(
     module: ir.Module, launch_context: launch_context.LaunchContext | None
 ):
+  # TODO(bchetioui): rethink this API. It doesn't make sense to pass in a full
+  # module and to traverse all `gpu.LaunchOp`s if we have a `LaunchContext` that
+  # references a single `gpu.LaunchOp`.
+  #
+  # A `LaunchContext` should have all the information needed to lower a single
+  # kernel.
   module.context.append_dialect_registry(mlir_interpreter.upstream_dialects)
   module.context.load_all_available_dialects()
 
   lowered_operations: set[ir.Operation | ir.OpView] = set()
+
+  # TODO(bchetioui): fix tests to not have a test-only path polluting the API.
   if launch_context is None:  # this case is used in some tests
     block_predicate = warpgroup_predicate = None
   else:
-    block_predicate, warpgroup_predicate = instantiate_single_thread_predicates(
-        module
-    )
+    block_predicate, warpgroup_predicate = single_thread_predicates(module)
 
   ctx = LoweringContext(launch_context, block_predicate, warpgroup_predicate)
 
