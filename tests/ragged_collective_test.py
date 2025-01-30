@@ -33,6 +33,11 @@ config.parse_flags_with_absl()
 
 class RaggedCollectiveTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    super().setUp()
+    if jtu.test_device_matches(["cpu"]):
+      self.skipTest("ragged-all-to-all is not supported on CPU")
+
   @parameterized.named_parameters(
       dict(
           testcase_name='_single_axis_name', axis_name='x', mesh_axes=dict(x=2)
