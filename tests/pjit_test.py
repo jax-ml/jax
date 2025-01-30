@@ -5772,7 +5772,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return a
 
     out = f(arr, arr.T)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P('x',)))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
 
   def test_auto_user(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'),
