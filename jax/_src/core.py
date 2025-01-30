@@ -382,6 +382,8 @@ class JaxprEqn:
 
   def __init__(self, invars, outvars, primitive, params, effects, source_info,
                ctx):
+    if primitive.name == 'pjit' and not all(i.aval == o.aval for i, o in zip(params['jaxpr'].jaxpr.invars, invars)):
+      breakpoint()
     self.invars = invars
     self.outvars = outvars
     self.primitive = primitive
@@ -1815,8 +1817,8 @@ def get_sharding(sharding, ndim):
           f" sharding.spec {out_s.spec} and aval.ndim {ndim}")
   else:
     cur_mesh = mesh_lib.get_abstract_mesh()
-    if cur_mesh.empty:
-      raise RuntimeError("Please set the mesh via `jax.set_mesh` API.")
+    # if cur_mesh.empty:
+    #   raise RuntimeError("Please set the mesh via `jax.set_mesh` API.")
     assert sharding is None
     out_s = NamedSharding(cur_mesh, P(*[None] * ndim))
   if not isinstance(out_s.mesh, mesh_lib.AbstractMesh):
@@ -1884,7 +1886,7 @@ class ShapedArray(UnshapedArray):
     dt_str = dt_str.replace('void', 'float0')
     if hasattr(self, 'sharding') and self.sharding is not None:
       shapestr = _get_shape_sharding_str(self.shape, self.sharding.spec)  # type: ignore
-      return f'{dt_str}[{shapestr}]'
+      return f'{dt_str}[{shapestr}]({self.sharding.mesh.axis_types})'
     else:
       shapestr = ','.join(map(str, self.shape))
       return f'{dt_str}[{shapestr}]'

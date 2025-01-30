@@ -1026,14 +1026,24 @@ batching.skippable_batchers[psum2_p] = partial(lax_parallel._names_in_param, 'ax
 
 def _psum2_transpose_rule(cts, *args, axes, axis_index_groups):
   del args
+  # cts = [cast_if_necessary(x) for x in cts]
   return pbroadcast_p.bind(*cts, axes=axes, axis_index_groups=axis_index_groups)
 ad.deflinear2(psum2_p, _psum2_transpose_rule)
+
+# def cast_if_necessary(x):
+#   aval = core.get_aval(x)
+#   cur_mesh = get_abstract_mesh()
+#   print('#here', cur_mesh, aval)
+#   if cur_mesh._are_all_axes_manual and aval.sharding.mesh._are_all_axes_auto:
+#     return pjit.mesh_cast(x, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))
+#   return x
 
 # pbroadcast_p is exactly the transpose of psum2_p
 def pbroadcast(x, axis_name):
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if not axis_name: return x
   xs, treedef = tree_flatten(x)
+  # xs = [cast_if_necessary(x) for x in xs]
   ys = pbroadcast_p.bind(*xs, axes=axes, axis_index_groups=None)
   return tree_unflatten(treedef, ys)
 pbroadcast_p = core.Primitive('pbroadcast')

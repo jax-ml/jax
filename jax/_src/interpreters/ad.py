@@ -545,11 +545,13 @@ class JVPTracer(Tracer):
   __slots__ = ['primal', 'tangent']
 
   def __init__(self, trace, primal, tangent):
-    if config.enable_checks.value:
-      _primal_tangent_shapes_match(primal, tangent)
+    # if config.enable_checks.value:
+    _primal_tangent_shapes_match(primal, tangent)
     self._trace = trace
     self.primal = primal
     self.tangent = tangent
+    if not isinstance(self.primal, Tracer) and self.primal is 0.2:
+      breakpoint()
 
   @property
   def aval(self):
@@ -569,11 +571,9 @@ class JVPTracer(Tracer):
 
 def _primal_tangent_shapes_match(primal, tangent):
   if type(tangent) is not Zero:
-    primal_aval = get_aval(primal).strip_weak_type()
+    expected_tangent_aval = get_aval(primal).strip_weak_type().to_tangent_aval()
     tangent_aval = get_aval(tangent).strip_weak_type()
-    assert core.definitely_equal_shape(primal_aval.shape, tangent_aval.shape)
-    expected_tangent_dtype = core.primal_dtype_to_tangent_dtype(primal_aval.dtype)
-    assert expected_tangent_dtype == tangent_aval.dtype, (expected_tangent_dtype, tangent_aval.dtype)
+    assert tangent_aval == expected_tangent_aval
 
 call_param_updaters: dict[core.Primitive, Callable] = {}
 call_linearize_param_updaters: dict[core.Primitive, Callable] = {}
