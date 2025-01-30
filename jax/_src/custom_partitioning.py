@@ -455,11 +455,6 @@ class custom_partitioning:
   def def_partition(self, partition, infer_sharding_from_operands=None,
                     propagate_user_sharding=None, decode_shardings=True,
                     sharding_rule=None):
-    if config.use_shardy_partitioner.value:
-      infer_sharding_from_operands = None
-      propagate_user_sharding = None
-    else:
-      sharding_rule = None
     self.partition = partition
     self.propagate_user_sharding = propagate_user_sharding
     self.infer_sharding_from_operands = infer_sharding_from_operands
