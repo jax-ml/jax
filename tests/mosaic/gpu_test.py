@@ -2054,7 +2054,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           slice_lengths=shape,
           transforms=ir.ArrayAttr.get([]),
           collective=ir.ArrayAttr.get([]),
-          arrive=False,
           swizzle=swizzle,
       )
       mgpu_dialect.async_load(
@@ -2065,7 +2064,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           slice_lengths=shape,
           transforms=ir.ArrayAttr.get([]),
           collective=ir.ArrayAttr.get([]),
-          arrive=False,
           swizzle=swizzle,
       )
 
@@ -2165,7 +2163,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           slice_lengths=shape_a,
           transforms=ir.ArrayAttr.get([]),
           collective=ir.ArrayAttr.get([]),
-          arrive=False,
           swizzle=swizzle,
       )
       mgpu_dialect.async_load(
@@ -2176,7 +2173,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           slice_lengths=shape_b,
           transforms=ir.ArrayAttr.get([]),
           collective=ir.ArrayAttr.get([]),
-          arrive=False,
           swizzle=swizzle,
       )
 

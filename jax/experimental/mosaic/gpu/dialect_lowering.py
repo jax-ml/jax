@@ -251,7 +251,7 @@ def _mgpu_async_load_op_lowering_rule(
       src_ref=load_op.source,
       dst_ref=load_op.destination,
       barrier=barrier,
-      arrive=load_op.arrive,
+      arrive=False,
       uniform=True,
       swizzle=load_op.swizzle.value,
       predicate=ctx.single_thread_per_warpgroup_predicate,

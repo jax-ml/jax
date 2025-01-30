@@ -224,10 +224,8 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     the `destination` MemRef in SMEM. The `destination` MemRef in SMEM must be
     contiguous.
 
-    If `arrive` is true, the `arrive.expect-tx(expect_count)` operation will be
-    executed on the provided `barrier` before the copy is scheduled. Upon
-    completion of the copy, the `complete-tx(complete-count)` operation will
-    always be executed on the provided `barrier`.
+    Upon completion of the copy, the `complete-tx(complete-count)` operation
+    will always be executed on the provided `barrier`.
 
     The `indices` and `slice_lengths` inputs define what slice of the GMEM
     `source` corresponds to the SMEM `destination`. Both `indices` and
@@ -270,7 +268,6 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     DenseI64ArrayAttr:$slice_lengths,
     TypedArrayAttrBase<AnyAttrOf<[TileTransformAttr, TransposeTransformAttr]>, "transforms">:$transforms,
     DefaultValuedAttr<MosaicGPU_SwizzlingMode, "SwizzlingMode::kNoSwizzle">:$swizzle,
-    DefaultValuedAttr<BoolAttr, "true" >:$arrive,
     TypedArrayAttrBase<MosaicGPU_Dimension, "dimensions">:$collective
   );
 
