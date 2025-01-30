@@ -20,6 +20,7 @@ import functools
 import operator
 from typing import Sequence, Type, cast
 
+import jax
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
@@ -118,12 +119,18 @@ def _fragmented_array_from_ir(
   )
 
 
+# TODO(dasenov): Remove this when minimum jaxlib version >= 0.5.1.
+# Jaxlib doesn't contain the latest Mosaic GPU dialect bindings.
+WaitOp = mgpu.WaitOp if jax.version._version == jax.lib.__version__ else None
+ArriveExpectTxOp = mgpu.ArriveExpectTxOp if jax.version._version == jax.lib.__version__ else None
+
 def _register_lowering(
-    op: str | Type[ir.OpView]
+    op: str | Type[ir.OpView] | None
 ) -> Callable[[MlirLoweringRule], MlirLoweringRule]:
   def wrapper(f):
-    op_name = op if isinstance(op, str) else op.OPERATION_NAME  # pytype: disable=attribute-error
-    _lowerings[op_name] = f
+    if op is not None:
+      op_name = op if isinstance(op, str) else op.OPERATION_NAME  # pytype: disable=attribute-error
+      _lowerings[op_name] = f
     return f
 
   return wrapper
@@ -307,6 +314,31 @@ def _mgpu_wgmma_op_lowering_rule(
   )
 
   return [_fragmented_array_to_ir(new_acc.value, wgmma_op.accumulator.type)]
+
+
+@_register_lowering(ArriveExpectTxOp)
+def _mgpu_arrive_expect_tx_op_lowering_rule(
+    ctx: LoweringContext, arrive_expect_tx_op: ArriveExpectTxOp
+) -> Sequence[ir.Value]:
+
+  barrier = utils.BarrierRef.from_dialect_barrier_memref(arrive_expect_tx_op.barrier)
+  barrier.arrive_expect_tx(
+      arrive_expect_tx_op.expect_tx.value,
+      ctx.single_thread_per_warpgroup_predicate,
+  )
+
+  return []
+
+
+@_register_lowering(WaitOp)
+def _mgpu_wait_op_lowering_rule(
+    _: LoweringContext, wait_op: WaitOp
+) -> Sequence[ir.Value]:
+
+  barrier = utils.BarrierRef.from_dialect_barrier_memref(wait_op.barrier)
+  barrier.wait_parity(wait_op.parity)
+
+  return []
 
 
 def single_thread_predicates(module: ir.Module) -> tuple[ir.Value, ir.Value]:

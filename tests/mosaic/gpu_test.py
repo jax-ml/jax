@@ -2029,8 +2029,9 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         smem: list[ir.Value],
     ):
       del ctx
-      a_smem_ref, b_smem_ref, result_smem_ref = smem[:3]
-      tma_barrier = smem[3]
+      a_smem_ref, b_smem_ref, result_smem_ref, tma_barrier = smem
+      dialect_barrier = tma_barrier.as_dialect_barrier_memref()
+
       memref_type = ir.MemRefType(a_gmem_ref.type)
       shape = memref_type.shape
       elt_type = memref_type.element_type
@@ -2040,13 +2041,15 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       memref_bytes = utils.bytewidth(elt_type)  # Also correct if rank == 0
       for size in shape:
         memref_bytes *= size
-      tma_barrier.arrive_expect_tx(2 * memref_bytes, single_thread_predicate())
+      mgpu_dialect.arrive_expect_tx(
+          barrier=dialect_barrier, expect_tx=2 * memref_bytes
+      )
 
       # GMEM -> SMEM
       mgpu_dialect.async_load(
           source=a_gmem_ref,
           destination=a_smem_ref,
-          barrier=tma_barrier.as_dialect_barrier_memref(),
+          barrier=dialect_barrier,
           indices=[zero_i32, zero_i32],
           slice_lengths=shape,
           transforms=ir.ArrayAttr.get([]),
@@ -2057,7 +2060,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       mgpu_dialect.async_load(
           source=b_gmem_ref,
           destination=b_smem_ref,
-          barrier=tma_barrier.as_dialect_barrier_memref(),
+          barrier=dialect_barrier,
           indices=[zero_i32, zero_i32],
           slice_lengths=shape,
           transforms=ir.ArrayAttr.get([]),
@@ -2066,7 +2069,9 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           swizzle=swizzle,
       )
 
-      tma_barrier.wait()
+      parities = memref.load(tma_barrier.phases, [])
+      parity, _ = tma_barrier.update_parities(parities)
+      mgpu_dialect.wait(dialect_barrier, parity)
 
       zero_index = arith.constant(ir.IndexType.get(), 0)
 
@@ -2137,6 +2142,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     ):
       del ctx
       a_smem_ref, b_smem_ref, result_smem_ref, tma_barrier = smem
+      dialect_barrier = tma_barrier.as_dialect_barrier_memref()
 
       shape_a = ir.MemRefType(a_gmem_ref.type).shape
       shape_b = ir.MemRefType(b_gmem_ref.type).shape
@@ -2144,9 +2150,9 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       memref_bytes_a = utils.bytewidth(ab_elt_type) * math.prod(shape_a)
       memref_bytes_b = utils.bytewidth(ab_elt_type) * math.prod(shape_b)
 
-      tma_barrier.arrive_expect_tx(
-        memref_bytes_a + memref_bytes_b,
-        single_thread_predicate(),
+      mgpu_dialect.arrive_expect_tx(
+          barrier=dialect_barrier,
+          expect_tx=memref_bytes_a + memref_bytes_b,
       )
 
       zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
@@ -2154,7 +2160,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       mgpu_dialect.async_load(
           source=a_gmem_ref,
           destination=a_smem_ref,
-          barrier=tma_barrier.as_dialect_barrier_memref(),
+          barrier=dialect_barrier,
           indices=[zero_i32, zero_i32, zero_i32, zero_i32],
           slice_lengths=shape_a,
           transforms=ir.ArrayAttr.get([]),
@@ -2165,7 +2171,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       mgpu_dialect.async_load(
           source=b_gmem_ref,
           destination=b_smem_ref,
-          barrier=tma_barrier.as_dialect_barrier_memref(),
+          barrier=dialect_barrier,
           indices=[zero_i32, zero_i32, zero_i32, zero_i32],
           slice_lengths=shape_b,
           transforms=ir.ArrayAttr.get([]),
@@ -2174,7 +2180,9 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           swizzle=swizzle,
       )
 
-      tma_barrier.wait()
+      parities = memref.load(tma_barrier.phases, [])
+      parity, _ = tma_barrier.update_parities(parities)
+      mgpu_dialect.wait(dialect_barrier, parity)
 
       # Computation
       shape_result = ir.MemRefType(result_gmem_ref.type).shape
