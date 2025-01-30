@@ -595,6 +595,8 @@ def check_avals_context_mesh(avals, prim_name):
     for a in avals:
       if a.sharding.mesh.empty or cur_mesh.empty:
         continue
+      if a.sharding.mesh._are_all_axes_auto and cur_mesh._are_all_axes_auto:
+        continue
       if a.sharding.mesh != cur_mesh:
         raise ValueError(
             f"For primitive {prim_name}, context mesh {cur_mesh} should match"
@@ -1485,7 +1487,8 @@ def update_aval_with_sharding(aval, sharding):
   from jax._src.sharding_impls import NamedSharding  # type: ignore
   if config.sharding_in_types.value and isinstance(sharding, NamedSharding):
     aval = aval.update(sharding=NamedSharding(
-        sharding.mesh.abstract_mesh, sharding.spec._normalized_spec(aval.ndim)))
+        sharding.mesh.abstract_mesh,
+        sharding.spec._normalized_spec_for_aval(aval.ndim)))
   return aval
 
 
@@ -1735,7 +1738,7 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
 def _make_lengths_same(sharding, ndim):
   if ndim > len(sharding.spec):
-    return sharding.with_spec(sharding.spec._normalized_spec(ndim))
+    return sharding.with_spec(sharding.spec._normalized_spec_for_aval(ndim))
   if ndim < len(sharding.spec):
     return sharding.with_spec(sharding.spec[:ndim])
   assert False, "unreachable"
@@ -1929,7 +1932,7 @@ class DShapedArray(UnshapedArray):
   @property
   def sharding(self):
     from jax._src.sharding_impls import NamedSharding  # type: ignore
-    return NamedSharding(mesh_lib.AbstractMesh(()), P())
+    return NamedSharding(mesh_lib.empty_abstract_mesh, P())
 
   def _len(self, tracer):
     return self.shape[0]

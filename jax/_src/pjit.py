@@ -622,7 +622,7 @@ def _infer_params_impl(
   attr_token = _attr_token(flat_fun, in_type)
 
   abstract_mesh = (
-      get_abstract_mesh_from_avals(in_avals)
+      _get_abstract_mesh_from_avals(in_avals)
       if mesh_lib.get_abstract_mesh().empty else mesh_lib.get_abstract_mesh())
   with mesh_lib.set_abstract_mesh(abstract_mesh):
     jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
@@ -672,7 +672,7 @@ def _infer_params_impl(
                     donated_invars, dbg.arg_names if dbg else None, len(consts),
                     attrs_tracked, abstract_mesh), args_flat
 
-def get_abstract_mesh_from_avals(in_avals):
+def _get_abstract_mesh_from_avals(in_avals):
   if not config.sharding_in_types.value:
     return None
   m = None
@@ -682,11 +682,13 @@ def get_abstract_mesh_from_avals(in_avals):
     if a.sharding.mesh.empty:  # type: ignore
       continue
     if m is not None and m != a.sharding.mesh:
+      if m._are_all_axes_auto and a.sharding.mesh._are_all_axes_auto:
+        return mesh_lib.empty_abstract_mesh
       raise ValueError(
           f'Mesh for all inputs should be equal. Got one mesh: {m} and'
           f' another mesh: {a.sharding.mesh}')
     m = a.sharding.mesh  # type: ignore
-  return AbstractMesh(()) if m is None else m
+  return mesh_lib.empty_abstract_mesh if m is None else m
 
 
 class InferParamsCacheEntry:
@@ -2779,7 +2781,7 @@ def reshard(xs, out_shardings):
   out_flat = []
   for x, x_aval, s in safe_zip(x_flat, x_avals_flat, shardings_flat):
     ds = canonicalize_sharding(s)
-    ds = ds.with_spec(ds.spec._normalized_spec(x_aval.ndim))  # type: ignore
+    ds = ds.with_spec(ds.spec._normalized_spec_for_aval(x_aval.ndim))  # type: ignore
     out_flat.append(reshard_p.bind(x, dst_sharding=ds))
   return tree_unflatten(treedef, out_flat)
 

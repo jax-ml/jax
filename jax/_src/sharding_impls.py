@@ -37,7 +37,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.op_shardings import (
     are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated)
-from jax._src.partition_spec import PartitionSpec
+from jax._src.partition_spec import PartitionSpec, UnconstrainedSingleton
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 import numpy as np
 
@@ -1123,7 +1123,7 @@ class ParsedPartitionSpec:
         axis_spec = ()
       elif isinstance(axis_spec, (list, tuple)):
         axis_spec = tuple(axis_spec)
-      elif axis_spec == PartitionSpec.UNCONSTRAINED:
+      elif isinstance(axis_spec, UnconstrainedSingleton):
         if not allow_unconstrained_dims:
           raise ValueError(f"Unconstrained dims are not allowed: {entry}")
         axis_spec = None
@@ -1775,6 +1775,9 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
   if isinstance(sharding, PartitionSpec):
     sharding = NamedSharding(cur_mesh, sharding)  # type: ignore
   else:
+    if (sharding.mesh.abstract_mesh._are_all_axes_auto and
+        cur_mesh._are_all_axes_auto):
+      return sharding
     if (check_mesh_consistency and not cur_mesh.empty and
         sharding.mesh.abstract_mesh != cur_mesh):
       raise ValueError(

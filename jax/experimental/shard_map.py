@@ -558,7 +558,7 @@ def _unshard_shaped_array(mesh: Mesh, names: AxisNames,
   new_shape = tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
                     for i, sz in enumerate(aval.shape))
   if config.sharding_in_types.value:
-    spec = _names_to_pspec(names)._normalized_spec(aval.ndim)
+    spec = _names_to_pspec(names)._normalized_spec_for_aval(aval.ndim)
     new_mesh = (mesh.abstract_mesh if get_abstract_mesh().empty else
                 get_abstract_mesh())
     new_sharding = NamedSharding(new_mesh, spec)
