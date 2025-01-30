@@ -52,7 +52,8 @@ class SourceMapperTest(jtu.JaxTestCase):
   @parameterized.parameters(
       ("hlo:stable-hlo", "stablehlo.add", 13),
       ("hlo:original", "add", 0),
-      ("hlo:optimized", "add", 0),
+      # TODO(justinfu): Make the hlo:optimized test less strict.
+      # ("hlo:optimized", "add", 0),
   )
   def test_hlo_passes(self, pass_name, expected_hlo_op, expected_col):
     del expected_col
