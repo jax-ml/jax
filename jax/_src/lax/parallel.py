@@ -1193,25 +1193,33 @@ def _ragged_all_to_all_effectful_abstract_eval(
     raise ValueError("ragged_all_to_all output_offsets must be integer type.")
   if not dtypes.issubdtype(recv_sizes.dtype, np.integer):
     raise ValueError("ragged_all_to_all recv_sizes must be integer type.")
-  if len(input_offsets.shape) != 1 or input_offsets.shape[0] < 1:
+  if not (0 < input_offsets.ndim < 3) or any(
+      dim == 0 for dim in input_offsets.shape
+  ):
     raise ValueError(
-        "ragged_all_to_all input_offsets must be rank 1 with positive dimension"
-        " size, but got shape {}".format(input_offsets.shape)
+        "ragged_all_to_all input_offsets must be rank 1 or 2 with positive"
+        f" dimension size, but got shape {input_offsets.shape}"
     )
-  if len(send_sizes.shape) != 1 or send_sizes.shape[0] < 1:
+  if not (0 < send_sizes.ndim < 3) or any(
+      dim == 0 for dim in send_sizes.shape
+  ):
     raise ValueError(
-        "ragged_all_to_all send_sizes must be rank 1 with positive dimension"
-        " size, but got shape {}".format(send_sizes.shape)
+        "ragged_all_to_all send_sizes must be rank 1 or 2 with positive"
+        f" dimension size, but got shape {send_sizes.shape}"
     )
-  if len(output_offsets.shape) != 1 or output_offsets.shape[0] < 1:
+  if not (0 < output_offsets.ndim < 3) or any(
+      dim == 0 for dim in output_offsets.shape
+  ):
     raise ValueError(
-        "ragged_all_to_all output_offsets must be rank 1 with positive"
-        " dimension size, but got shape {}".format(output_offsets.shape)
+        "ragged_all_to_all output_offsets must be rank 1 or 2 with positive"
+        f" dimension size, but got shape {output_offsets.shape}"
     )
-  if len(recv_sizes.shape) != 1 or recv_sizes.shape[0] < 1:
+  if not (0 < recv_sizes.ndim < 3) or any(
+      dim == 0 for dim in recv_sizes.shape
+  ):
     raise ValueError(
-        "ragged_all_to_all recv_sizes must be rank 1 with positive dimension"
-        " size, but got shape {}".format(recv_sizes.shape)
+        "ragged_all_to_all recv_sizes must be rank 1 or 2 with positive"
+        f" dimension size, but got shape {recv_sizes.shape}"
     )
 
   _check_axis_names(axis_name)
