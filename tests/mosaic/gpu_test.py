@@ -1173,6 +1173,44 @@ class TMATest(TestCase):
     y = f(x)
     np.testing.assert_array_equal(y, x)
 
+  @parameterized.product(swizzle=(None, 128))
+  def test_tma_load_tiled_rounding(self, swizzle):
+    # TODO(apaszke): ptxas seems to freeze when generating code for copy with
+    # swizzle 32 and 64.
+    shape = (5, 32, 144)
+    dtype = jnp.float16
+    i1 = ir.IntegerType.get_signless(1)
+    index = ir.IndexType.get()
+    tiling = (32, (swizzle or 128) // jnp.dtype(dtype).itemsize)
+    rounded_shape = (*shape[:-1], shape[-1] // tiling[-1] * tiling[-1])
+    tiled_shape = tile_shape(rounded_shape, tiling)[:len(shape)]
+    def kernel(ctx, src, dst, scratch):
+      tmp, barrier = scratch
+      ctx.async_copy(
+          src_ref=src,
+          dst_ref=tmp,
+          swizzle=swizzle,
+          barrier=barrier,
+          gmem_transform=mgpu.TileTransform(
+              tiling, rounding=mgpu.Rounding.DOWN
+          ),
+      )
+      barrier.wait_parity(c(0, i1))
+      for idxs in np.ndindex(tiled_shape):
+        untiled_idxs, tiled_idxs = idxs[:-len(tiling)], idxs[-len(tiling):]
+        s = (
+            *untiled_idxs,
+            *(ds(c(ix * t, index), t) for ix, t in zip(tiled_idxs, tiling)),
+        )
+        copy(memref_slice(tmp, idxs), memref_slice(dst, s), swizzle=swizzle)
+    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    tmp_shape = jax.ShapeDtypeStruct(tile_shape(rounded_shape, tiling), dtype)
+    smem = (tmp_shape, mgpu.TMABarrier())
+    out_shape = jax.ShapeDtypeStruct(rounded_shape, dtype)
+    f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, out_shape, smem)
+    y = f(x)
+    np.testing.assert_array_equal(y, x[..., :rounded_shape[-1]])
+
   def test_tma_load_indexed_tiled(self):
     shape = (128, 2, 128)
     tiling = mgpu.TileTransform((32, 32))

@@ -28,6 +28,7 @@ from .core import (
 from .launch_context import (
     LaunchContext as LaunchContext,
     MemRefTransform as MemRefTransform,
+    Rounding as Rounding,
     TileTransform as TileTransform,
     TransposeTransform as TransposeTransform,
 )
