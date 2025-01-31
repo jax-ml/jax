@@ -34,6 +34,11 @@ race:py_digest_by_name
 
 # https://github.com/python/cpython/issues/128714
 race:func_get_annotations
+race:type_get_annotations
+
+# https://github.com/python/cpython/issues/129533
+race:PyGC_Disable
+race:PyGC_Enable
 
 # Races because the LAPACK and BLAS in our scipy isn't TSAN instrumented.
 race:heevd_ffi
