@@ -382,8 +382,8 @@ class JaxprEqn:
 
   def __init__(self, invars, outvars, primitive, params, effects, source_info,
                ctx):
-    if primitive.name == 'pjit' and not all(i.aval == o.aval for i, o in zip(params['jaxpr'].jaxpr.invars, invars)):
-      breakpoint()
+    # if primitive.name == 'pjit' and not all(i.aval == o.aval for i, o in zip(params['jaxpr'].jaxpr.invars, invars)):
+    #   breakpoint()
     self.invars = invars
     self.outvars = outvars
     self.primitive = primitive
@@ -612,10 +612,10 @@ def check_avals_context_mesh(avals, prim_name):
   if config.sharding_in_types.value:
     cur_mesh = mesh_lib.get_abstract_mesh()
     for a in avals:
-      if a.sharding.mesh.empty or cur_mesh.empty:
-        continue
-      if a.sharding.mesh._are_all_axes_auto and cur_mesh._are_all_axes_auto:
-        continue
+      # if a.sharding.mesh.empty or cur_mesh.empty:
+      #   continue
+      # if a.sharding.mesh._are_all_axes_auto and cur_mesh._are_all_axes_auto:
+      #   continue
       if a.sharding.mesh != cur_mesh:
         raise ValueError(
             f"For primitive {prim_name}, context mesh {cur_mesh} should match"
@@ -1816,11 +1816,10 @@ def get_sharding(sharding, ndim):
           "Length of sharding.spec must be equal to aval's ndim. Got"
           f" sharding.spec {out_s.spec} and aval.ndim {ndim}")
   else:
-    cur_mesh = mesh_lib.get_abstract_mesh()
     # if cur_mesh.empty:
     #   raise RuntimeError("Please set the mesh via `jax.set_mesh` API.")
     assert sharding is None
-    out_s = NamedSharding(cur_mesh, P(*[None] * ndim))
+    out_s = NamedSharding(mesh_lib.empty_abstract_mesh, P(*[None] * ndim))
   if not isinstance(out_s.mesh, mesh_lib.AbstractMesh):
     raise ValueError("Mesh of an aval must be an AbstractMesh. "
                      f"Got {out_s.mesh} of type {type(out_s.mesh)}")

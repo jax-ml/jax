@@ -2078,8 +2078,8 @@ def _pjit_jvp(primals_in, tangents_in,
               jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
               resource_env, donated_invars, name, keep_unused, inline,
               compiler_options_kvs):
-  if not all(core.get_aval(p).to_tangent_aval() == t.aval == a for p, t, a in zip(primals_in, tangents_in, jaxpr.in_avals)):
-    breakpoint()
+  # if not all(core.get_aval(p).to_tangent_aval() == t.aval == a for p, t, a in zip(primals_in, tangents_in, jaxpr.in_avals)):
+  #   breakpoint()
   if any(isinstance(c, core.MutableArray) for c in jaxpr.consts):
     jaxpr, mut_primals = pxla._move_mutable_consts(jaxpr)
     mut_tangents = map(ad_util.zeros_like_jaxval, mut_primals)
@@ -2117,8 +2117,13 @@ def _pjit_jvp(primals_in, tangents_in,
   primals_out, tangents_out = split_list(outputs, [len(jaxpr.jaxpr.outvars)])
   assert len(primals_out) == len(jaxpr.jaxpr.outvars)
   tangents_out_it = iter(tangents_out)
-  return primals_out, [next(tangents_out_it) if nz else ad.Zero(aval)
-                       for nz, aval in zip(is_nz_tangents_out, jaxpr.out_avals)]
+  tangents_out = [next(tangents_out_it) if nz else ad.Zero(aval)
+                  for nz, aval in zip(is_nz_tangents_out, jaxpr.out_avals)]
+  for p, t in zip(primals_out, tangents_out):
+    expected_tangent_aval = core.get_aval(p).strip_weak_type().to_tangent_aval()
+    tangent_aval = core.get_aval(t).strip_weak_type()
+    assert tangent_aval == expected_tangent_aval, breakpoint()
+  return primals_out, tangents_out
 ad.primitive_jvps[pjit_p] = _pjit_jvp
 
 
@@ -2177,8 +2182,8 @@ def _pjit_partial_eval(trace, *in_tracers,
                        jaxpr, in_shardings, out_shardings,
                        in_layouts, out_layouts, resource_env, donated_invars,
                        name, keep_unused, inline, compiler_options_kvs):
-  if not all(i.aval == o.aval for i, o in zip(jaxpr.jaxpr.invars, in_tracers)):
-    breakpoint()
+  # if not all(i.aval == o.aval for i, o in zip(jaxpr.jaxpr.invars, in_tracers)):
+  #   breakpoint()
   in_pvals = [t.pval for t in in_tracers]
 
   known_ins = tuple(pv.is_known() for pv in in_pvals)

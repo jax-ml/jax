@@ -4992,6 +4992,8 @@ def _split_on_one_axis(op_shape, new_sizes, name):
     return False, []
   i, j, count, out = 0, 0, 0, []
   while j < len(new_sizes):
+    try: op_shape[i] == new_sizes[j]
+    except IndexError: return False, []
     if op_shape[i] == new_sizes[j]:
       out.append(op_shape[i])
     else:

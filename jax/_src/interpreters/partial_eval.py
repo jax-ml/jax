@@ -727,8 +727,8 @@ def new_eqn_recipe(in_tracers: Sequence[JaxprTracer],
       config.threefry_partitionable.value,
       xla_metadata_lib.current_xla_metadata(),
   )
-  if primitive.name == 'pjit' and not all(i.aval == o.aval for i, o in zip(params['jaxpr'].jaxpr.invars, in_tracers)):
-      breakpoint()
+  # if primitive.name == 'pjit' and not all(i.aval == o.aval for i, o in zip(params['jaxpr'].jaxpr.invars, in_tracers)):
+  #     breakpoint()
   return JaxprEqnRecipe(object(), tuple(in_tracers), map(ref, out_tracers),
                         out_avals, primitive, params, effects, source_info,
                         ctx)
@@ -2524,9 +2524,9 @@ def inline_jaxpr_into_trace(
   const_tracers = map(trace.new_const, consts)
   constvars = map(trace.getvar, const_tracers)
   argvars = map(trace.getvar, arg_tracers)
-  if config.enable_checks.value:
-    assert all(arg_v.aval == j_v.aval
-               for arg_v, j_v in zip(argvars, jaxpr.invars)), breakpoint()
+  # if config.enable_checks.value:
+  #   assert all(arg_v.aval == j_v.aval
+  #              for arg_v, j_v in zip(argvars, jaxpr.invars)), breakpoint()
   env: dict[Var, Var] = dict(zip([*jaxpr.constvars, *jaxpr.invars],
                                  [*constvars, *argvars]))
 

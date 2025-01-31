@@ -43,6 +43,7 @@ from jax._src.mesh import AbstractMesh
 from jax._src.interpreters import partial_eval as pe
 from jax._src import linear_util as lu
 from jax._src import tree_util
+from jax._src import pjit
 import jax.numpy as jnp
 
 from jax.experimental.custom_partitioning import custom_partitioning
@@ -2776,10 +2777,16 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     no_sharding = [all(elt is None for elt in spec) for spec in in_specs]
     args, closed_over_args = partition_list(no_sharding, args)
     in_specs, _ = partition_list(no_sharding, in_specs)
+
+    def mesh_cast(x):
+      from jax._src import mesh as mesh_lib
+      mesh = mesh_lib.get_abstract_mesh()
+      return pjit.mesh_cast(x, NamedSharding(mesh, P()))
+
     def f(x, *closed_over_args):
       @partial(shard_map, mesh=mesh, in_specs=(*in_specs,), out_specs=out_specs)
       def g(*args):
-        args = [x * arg for arg in args]
+        args = [mesh_cast(x) * arg for arg in args]
         args = merge_lists(no_sharding, args, closed_over_args)
         return fun(*args)
       return g(*args)
