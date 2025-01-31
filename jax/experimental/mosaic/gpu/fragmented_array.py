@@ -1695,7 +1695,10 @@ class FragmentedArray:
       raise ValueError("Memory tiling must be a multiple of the register tiling")
     ref_tiling_suffix = ref_tiling_shape[-len(layout.base_tile_shape):]
     if any(t % wt for t, wt in zip(ref_tiling_suffix, layout.base_tile_shape)):
-      raise ValueError("Memory tiling must be a multiple of the register tiling")
+      raise ValueError(
+          f"Memory tiling ({ref_tiling_suffix}) must be a multiple of the"
+          f" register tiling ({layout.base_tile_shape})"
+      )
 
     elem_tiled_strides = list(tiling.tile_strides(tuple(ref_strides)))
     tiled_shape = list(tiling.tile_shape(tuple(ref_ty.shape)))
@@ -1728,7 +1731,7 @@ class FragmentedArray:
           " vector dimension"
       )
 
-    if swizzle not in {32, 64, 128}:
+    if swizzle not in {16, 32, 64, 128}:
       raise ValueError("Only swizzled transfers supported")
     # We will be computing the offsets in units of vectors, not elements,
     # to better support sub-byte types.

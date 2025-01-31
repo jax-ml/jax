@@ -1884,13 +1884,15 @@ class LayoutTest(TestCase):
       load_tiled=[False, True],
       store_tiled=[False, True],
       dtype=[jnp.int8, jnp.int16, jnp.int32],
-      swizzle=[32, 64, 128],
+      swizzle=[16, 32, 64, 128],
       num_col_tiles=[1, 2, 3],
   )
   def test_copy_tiled(self, load_tiled, store_tiled, dtype, swizzle, num_col_tiles):
     mlir_dtype = utils.dtype_to_ir_type(dtype)
     bw = bytewidth(mlir_dtype)
     col_tiling = swizzle // bw
+    if col_tiling % 8:
+      self.skipTest("WGMMA layout requires col_tiling % 8 == 0")
     m, n = 128, col_tiling * num_col_tiles
     tiling = (64, col_tiling)
     tiled_layout = fa._tiled_wgmma_layout((m, n))
