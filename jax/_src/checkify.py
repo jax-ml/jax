@@ -1202,7 +1202,7 @@ def checkify(f: Callable[..., Out],
     in_tree = jtu.tree_structure(((), {}))
     closed_f = lambda: f(*args, **kwargs)
     # stage:
-    debug = api_util.tracing_debug_info("checkify", f, args, kwargs)
+    debug = api_util.debug_info("checkify", f, args, kwargs)
     fun_, out_tree = api_util.flatten_fun(lu.wrap_init(closed_f,
                                                        debug_info=debug),
                                           in_tree)

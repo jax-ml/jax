@@ -127,12 +127,12 @@ class custom_dce:
           "def_dce."
       )
     rule_name = util.fun_name(self.dce_rule)
-    debug = api_util.tracing_debug_info("custom_dce", self.fun,
-                                        args, {},
-                                        static_argnums=self.static_argnums)
-    debug_rule = api_util.tracing_debug_info("custom_dce_rule", self.dce_rule,
-                                             args, {},
-                                             static_argnums=self.static_argnums)
+    debug = api_util.debug_info("custom_dce", self.fun,
+                                args, {},
+                                static_argnums=self.static_argnums)
+    debug_rule = api_util.debug_info("custom_dce_rule", self.dce_rule,
+                                     args, {},
+                                     static_argnums=self.static_argnums)
     args = api_util.resolve_kwargs(self.fun, args, kwargs)
     if self.static_argnums:
       static_argnums = set(self.static_argnums)

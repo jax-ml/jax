@@ -156,7 +156,7 @@ class WrappedFun:
                f_transformed: Callable,
                transforms,
                stores: tuple[Store | EqualStore | None, ...], params, in_type,
-               debug_info: TracingDebugInfo | None):
+               debug_info: DebugInfo | None):
     self.f = f
     self.f_transformed = f_transformed
     self.transforms = transforms
@@ -253,12 +253,10 @@ def fun_name(f):
   except:
     return str(f)
 
-class TracingDebugInfo(NamedTuple):
-  """Tracing-time debugging info about a func and its arguments.
-
-  Formed just before staging to a jaxpr and read in trace-time error messages.
-  """
+class DebugInfo(NamedTuple):
+  """Debugging info about a func, its arguments, and results."""
   traced_for: str             # e.g. 'jit', 'scan', etc
+
   # e.g. f'{fun.__name__} at {filename}:{lineno}' or {fun.__name__} if we have
   # no source location information. The first word is always the function name,
   # which may be '<unknown>'.
@@ -270,23 +268,25 @@ class TracingDebugInfo(NamedTuple):
   # e.g., tangent args in jax.jvp.
   arg_names: tuple[str | None, ...]
 
+  # The result paths are not available while we are tracing the function,
+  # instead we keep a thunk. Once we are done tracing, we use
+  # `self.resolve_result_paths()` to execute the thunk and replace the
+  # actual result paths.
   # e.g. ('[0]', '[1]', ...)
-  result_paths_thunk: Callable[[], tuple[str, ...]] | None
+  result_paths: tuple[str, ...] | Callable[[], tuple[str, ...]] | None
 
-  @classmethod
-  def from_jaxpr(cls, jaxpr: core.ClosedJaxpr) -> TracingDebugInfo | None:
-    jaxpr_dbg = jaxpr.jaxpr._debug_info
-    if jaxpr_dbg is None: return None
-    return TracingDebugInfo(jaxpr_dbg.traced_for,
-                            jaxpr_dbg.func_src_info,
-                            jaxpr_dbg.arg_names,
-                            lambda: jaxpr_dbg.result_paths)
+  def add_result_paths(self,
+                       result_paths_thunk: Callable[[], tuple[str, ...]]
+                       ) -> DebugInfo:
+    assert self.result_paths is None
+    return self._replace(result_paths=HashableFunction(result_paths_thunk,
+                                                       closure=()))
 
-  def add_result_paths(self, result_paths_thunk: Callable[[], tuple[str, ...]]
-                       ) -> TracingDebugInfo:
-    assert self.result_paths_thunk is None
-    return self._replace(result_paths_thunk=HashableFunction(result_paths_thunk,
-                                                             closure=()))
+  def resolve_result_paths(self) -> DebugInfo:
+    """Return a debug info with resolved result paths."""
+    if callable(self.result_paths):
+      return self._replace(result_paths=tuple(self.result_paths()))
+    return self
 
   def safe_arg_names(self, expected: int) -> tuple[str | None, ...]:
     """Get the arg_names with a safety check."""
@@ -296,9 +296,18 @@ class TracingDebugInfo(NamedTuple):
       # TODO(necula): this should not happen
       return (None,) * expected
 
+  def safe_result_paths(self, expected: int) -> tuple[str, ...]:
+    """Get the result paths with a safety check."""
+    assert not callable(self.result_paths), self
+    if self.result_paths is not None and len(self.result_paths) == expected:
+      return self.result_paths
+    else:
+      # TODO(necula): this should not happen
+      return ("",) * expected
+
 
 def wrap_init(f: Callable, params=None, *,
-              debug_info: TracingDebugInfo | None = None) -> WrappedFun:
+              debug_info: DebugInfo | None = None) -> WrappedFun:
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
   params_dict = {} if params is None else params
   params = () if params is None else tuple(sorted(params.items()))
@@ -341,7 +350,7 @@ def _check_input_type(in_type: core.InputType) -> None:
           provided[d.val] = True
   assert all(provided)
 
-def add_debug_info(f: WrappedFun, debug_info: TracingDebugInfo | None
+def add_debug_info(f: WrappedFun, debug_info: DebugInfo | None
                    ) -> WrappedFun:
   """Produce a new WrappedFun with debug_info attached."""
   assert f.debug_info is None

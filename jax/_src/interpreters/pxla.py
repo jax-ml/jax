@@ -652,7 +652,7 @@ class ParallelCallableInfo:
   in_axes: Iterable[int | None]
   out_axes_thunk: Callable[[], Sequence[int | None]]
   avals: Sequence[core.AbstractValue]
-  debug_info: api_util.TracingDebugInfo | None
+  debug_info: core.DebugInfo | None
 
   @cached_property
   def local_devices(self):
@@ -964,7 +964,7 @@ class UnloadedPmapExecutable:
   ordered_effects: list[core.Effect]
   keepalive: Sequence[Any]
   host_callbacks: Sequence[Any]
-  jaxpr_debug_info: core.JaxprDebugInfo
+  jaxpr_debug_info: core.DebugInfo
 
   def build_execute_fun(self):
     input_indices = []
@@ -1004,7 +1004,7 @@ class UnloadedPmapExecutable:
                ordered_effects: list[core.Effect],
                host_callbacks: list[Any],
                keepalive: Any,
-               jaxpr_debug_info: core.JaxprDebugInfo,
+               jaxpr_debug_info: core.DebugInfo,
                platforms: Sequence[str],
                shape_poly_state: mlir.ShapePolyLoweringState | None = None,
                compiler_options=None):
@@ -2127,7 +2127,7 @@ MaybeLayout = Sequence[Union[DeviceLocalLayout, AutoLayout, None]]
 class AllArgsInfo(NamedTuple):
   """Avals and debug_info for all arguments prior to DCE."""
   in_avals: Sequence[core.ShapedArray]
-  debug_info: core.JaxprDebugInfo | None
+  debug_info: core.DebugInfo | None
 
 
 @lru_cache(maxsize=2048)
@@ -3199,7 +3199,7 @@ def cc_shard_arg(x, sharding, layout):
 
 
 def check_arg_avals_for_call(ref_avals, arg_avals,
-                             jaxpr_debug_info: core.JaxprDebugInfo | None = None):
+                             jaxpr_debug_info: core.DebugInfo | None = None):
   if len(ref_avals) != len(arg_avals):
     raise TypeError(
         f"Computation compiled for {len(ref_avals)} inputs "
@@ -3258,7 +3258,7 @@ def check_array_xla_sharding_layout_match(
     args_after_dce,
     in_xla_shardings: Sequence[JSharding],
     in_xla_layouts: Sequence[DeviceLocalLayout],
-    jaxpr_debug_info: core.JaxprDebugInfo | None,
+    jaxpr_debug_info: core.DebugInfo | None,
     kept_var_idx: set[int]) -> None:
   from jax._src.array import ArrayImpl
   # jaxpr_debug_info.arg_names are before DCE, so need to DCE them.

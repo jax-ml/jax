@@ -1100,8 +1100,8 @@ def pallas_call_checkify_rule(error: checkify.Error,
   jaxpr_flat_avals, jaxpr_in_tree = tree_util.tree_flatten(retrace_in_avals)
   wrapped_kernel_with_err, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(checked_kernel_fn), jaxpr_in_tree)
-  debug = api_util.tracing_debug_info("checkify_pallas", checked_kernel_fn,
-                                      retrace_in_avals, {})
+  debug = api_util.debug_info("checkify_pallas", checked_kernel_fn,
+                              retrace_in_avals, {})
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
     final_jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
         wrapped_kernel_with_err, jaxpr_flat_avals, debug)
@@ -1167,7 +1167,7 @@ def _trace_kernel_to_jaxpr(
       wrapped_kernel_fun, kernel_in_transforms
   )
   fake_kernel_args = kernel_in_tree.unflatten(kernel_avals)
-  debug = api_util.tracing_debug_info("pallas_call", fun, fake_kernel_args, {})
+  debug = api_util.debug_info("pallas_call", fun, fake_kernel_args, {})
   with grid_mapping.trace_env():
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_kernel_fun,
                                                      kernel_avals, debug)
@@ -1568,7 +1568,7 @@ def pallas_call(
     kernel_fun_sig = api_util.fun_signature(kernel)
     arg_names = None
     if kernel_fun_sig:
-      kernel_debug_info = api_util.tracing_debug_info(
+      kernel_debug_info = api_util.debug_info(
           "pallas_call kernel",
            kernel,
            [1] * len(kernel_fun_sig.parameters), {})

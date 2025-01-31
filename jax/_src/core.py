@@ -82,31 +82,7 @@ EffectTypeSet = effects.EffectTypeSet
 no_effects: Effects = effects.no_effects
 
 
-# TODO(necula): make this an extension of TracingDebugInfo
-class JaxprDebugInfo(NamedTuple):
-  # An extension of lu.TracingDebugInfo; see comments there
-  traced_for: str
-  func_src_info: str
-  arg_names: tuple[str | None, ...]
-  # This is formed after tracing, when we have concrete `result_paths`
-  result_paths: tuple[str, ...]  # e.g. ('[0]', '[1]', ...)
-
-  def safe_arg_names(self, expected: int) -> tuple[str | None, ...]:
-    """Get the arg_names with a safety check."""
-    if len(self.arg_names) == expected:
-      return self.arg_names
-    else:
-      # TODO(necula): this should not happen
-      return (None,) * expected
-
-  def safe_result_paths(self, expected: int) -> tuple[str | None, ...]:
-    """Get the result_paths with a safety check."""
-    if len(self.result_paths) == expected:
-      return self.result_paths
-    else:
-      # TODO(necula): this should not happen
-      return ("",) * expected
-
+DebugInfo = lu.DebugInfo
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
@@ -117,7 +93,7 @@ class Jaxpr:
   _outvars: list[Atom]
   _eqns: list[JaxprEqn]
   _effects: Effects
-  _debug_info: JaxprDebugInfo | None
+  _debug_info: DebugInfo | None
 
   @property
   def constvars(self) -> list[Var]:
@@ -140,13 +116,13 @@ class Jaxpr:
     return self._effects
 
   @property
-  def debug_info(self) -> JaxprDebugInfo | None:
+  def debug_info(self) -> DebugInfo | None:
     return self._debug_info
 
   def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
                outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
                effects: Effects = no_effects,
-               debug_info: JaxprDebugInfo | None = None):
+               debug_info: DebugInfo | None = None):
     """
     Args:
       constvars: list of variables introduced for constants. Array constants are
@@ -157,14 +133,14 @@ class Jaxpr:
       eqns: list of equations.
       effects: set of effects. The effects on a jaxpr are a superset of the
         union of the effects for each equation.
-      debug_info: optional JaxprDebugInfo.
+      debug_info: optional DebugInfo.
     """
     self._constvars = list(constvars)
     self._invars = list(invars)
     self._outvars = list(outvars)
     self._eqns = list(eqns)
     self._effects = effects
-    self._debug_info = debug_info
+    self._debug_info = debug_info and debug_info.resolve_result_paths()
     # TODO(necula): re-enable these safety checks
     # assert (not debug_info or len(debug_info.arg_names) == len(invars)), (debug_info, invars)
     # assert (not debug_info or len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)

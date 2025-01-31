@@ -147,7 +147,7 @@ def _linearize_jaxpr(
     jaxpr: core.ClosedJaxpr,
     nonzeros: tuple[bool, ...]
   ) -> tuple[core.ClosedJaxpr, int, Sequence[bool], core.ClosedJaxpr]:
-  dbg = lu.TracingDebugInfo.from_jaxpr(jaxpr)
+  dbg = jaxpr.jaxpr.debug_info
   primal_trace = pe.DynamicJaxprTrace(dbg)
   tangent_trace = pe.DynamicJaxprTrace(dbg)
   lin_trace = LinearizeTrace(primal_trace, tangent_trace)

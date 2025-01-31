@@ -195,7 +195,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   def _create_jaxpr(init):
     init_flat = tree_leaves(init)
     _, in_tree = tree_flatten((init, xs))
-    dbg = api_util.tracing_debug_info("scan", f, (init, xs), {})
+    dbg = api_util.debug_info("scan", f, (init, xs), {})
     carry_avals = tuple(map(core.get_aval, init_flat))
     jaxpr, _, out_tree = _initial_style_jaxpr(
         f, in_tree, carry_avals + x_avals, dbg)

@@ -93,16 +93,16 @@ def custom_root(f: Callable,
   """
   guess_flat, in_args_tree = tree_flatten((initial_guess,))
   guess_avals = tuple(_map(core.get_aval, guess_flat))
-  f_debug = api_util.tracing_debug_info("custom_root", f, (initial_guess,), {})
+  f_debug = api_util.debug_info("custom_root", f, (initial_guess,), {})
   f_jaxpr, f_consts, out_tree = _initial_style_jaxpr(
       f, in_args_tree, guess_avals, f_debug)
 
   in_tree, = treedef_children(in_args_tree)
   _check_tree("f", "initial_guess", out_tree, in_tree, False)
 
-  solve_debug = api_util.tracing_debug_info("custom_root solve", solve,
-                                            (f, initial_guess), {},
-                                            static_argnums=(0,))
+  solve_debug = api_util.debug_info("custom_root solve", solve,
+                                    (f, initial_guess), {},
+                                    static_argnums=(0,))
   solve_jaxpr, solve_consts, solution_tree = _initial_style_jaxpr(
       partial(solve, f), in_args_tree, guess_avals, solve_debug)
   _check_tree("solve", "initial_guess", solution_tree, in_tree, has_aux)
@@ -111,10 +111,10 @@ def custom_root(f: Callable,
     unchecked_zeros, f_jvp = api.linearize(f, x)
     return tangent_solve(f_jvp, b)
 
-  tangent_solve_debug = api_util.tracing_debug_info("custom_root tangent_solve",
-                                                    tangent_solve,
-                                                    (f, initial_guess), {},
-                                                    static_argnums=(0,))
+  tangent_solve_debug = api_util.debug_info("custom_root tangent_solve",
+                                            tangent_solve,
+                                            (f, initial_guess), {},
+                                            static_argnums=(0,))
   l_and_s_jaxpr, l_and_s_consts, out_tree = _initial_style_jaxpr(
       linearize_and_solve, treedef_tuple((in_tree,) * 2), guess_avals * 2,
       tangent_solve_debug)
@@ -265,17 +265,17 @@ def custom_linear_solve(
 
     return f_aux if has_aux else f
 
-  matvec_debug = api_util.tracing_debug_info("custom_linear_solve",
-                                             matvec, (b,), {})
+  matvec_debug = api_util.debug_info("custom_linear_solve",
+                                     matvec, (b,), {})
   # no auxiliary data assumed for matvec
   matvec_jaxpr, matvec_consts, out_tree = _initial_style_jaxpr(
       _shape_checked(matvec, "matvec", False), in_args_tree, b_avals,
       matvec_debug)
   _check_tree("matvec", "b", out_tree, tree, False)
 
-  solve_debug = api_util.tracing_debug_info("custom_linear_solve solve",
-                                            solve, (matvec, b), {},
-                                            static_argnums=(0,))
+  solve_debug = api_util.debug_info("custom_linear_solve solve",
+                                    solve, (matvec, b), {},
+                                    static_argnums=(0,))
   solve_jaxpr, solve_consts, out_tree = _initial_style_jaxpr(
       _shape_checked(partial(solve, matvec), "solve", has_aux), in_args_tree, b_avals,
       solve_debug)
@@ -285,7 +285,7 @@ def custom_linear_solve(
     vecmat_jaxpr = tr_solve_jaxpr = None
     vecmat_consts = tr_solve_consts = []
   else:
-    transpose_solve_debug = api_util.tracing_debug_info(
+    transpose_solve_debug = api_util.debug_info(
         "custom_linear_solve transpose_solve", transpose_solve,
         (matvec, b), {}, static_argnums=(0,))
     if symmetric:
