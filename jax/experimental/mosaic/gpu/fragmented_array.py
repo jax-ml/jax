@@ -1178,7 +1178,7 @@ class FragmentedArray:
       if ir.IntegerType(cur_dtype).width > ir.IntegerType(new_dtype).width:
         convert = arith.trunci
       else:
-        convert = arith.extsi
+        convert = arith.extsi if self.is_signed else arith.extui
     elif from_integer and to_float:
       convert = arith.sitofp
     elif from_float and to_integer:

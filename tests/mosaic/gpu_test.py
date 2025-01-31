@@ -561,6 +561,47 @@ class WGMMATest(TestCase):
     )()
     np.testing.assert_array_equal(iota, expected)
 
+  def test_convert_bool_to_u8(self):
+    m, n = 128, 128
+    def kernel(ctx, dst, _):
+      i8 = ir.IntegerType.get_signless(8)
+      iota = iota_tensor(m, n, jnp.uint8)
+      (iota > 10).astype(i8, is_signed=False).store_untiled(dst)
+
+    out_shape = jax.ShapeDtypeStruct((m, n), jnp.int8)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    iota = np.arange(m * n, dtype=jnp.uint8).reshape(m, n)
+    np.testing.assert_array_equal(result, (iota > 10).astype(jnp.uint8))
+
+  @parameterized.parameters(
+      (jnp.uint8, jnp.uint16, 255),
+      (jnp.uint8, jnp.int16, 255),
+      (jnp.int8, jnp.uint16, -127),
+      (jnp.int8, jnp.int16, -127),
+  )
+  def test_convert_int_uint(self, from_dtype, to_dtype, value):
+    m, n = 1, 128
+    def kernel(ctx, dst, _):
+      i8 = ir.IntegerType.get_signless(8)
+      from_mlir_dtype = utils.dtype_to_ir_type(from_dtype)
+      to_mlir_dtype = utils.dtype_to_ir_type(to_dtype)
+      from_arr = mgpu.FragmentedArray.splat(
+          c(value, from_mlir_dtype),
+          (m, n),
+          is_signed=utils.is_signed(from_dtype),
+      )
+      to_arr = from_arr.astype(to_mlir_dtype, is_signed=utils.is_signed(to_dtype))
+      to_arr.store_untiled(dst)
+
+    out_shape = jax.ShapeDtypeStruct((m, n), to_dtype)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    expected = jnp.full((m, n), value, dtype=from_dtype).astype(to_dtype)
+    np.testing.assert_array_equal(result, expected)
+
   @parameterized.named_parameters(
       ("bf16_i8", jnp.bfloat16, jnp.int8),
       ("i8_bf16", jnp.int8, jnp.bfloat16),
@@ -1440,8 +1481,7 @@ class FragmentedArrayTest(TestCase):
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
     )()
-    # astype() uses extsi so i1=True becomes -1
-    np.testing.assert_array_equal(result == -1, expectation)
+    np.testing.assert_array_equal(result == 1, expectation)
 
   @parameterized.product(
       op=[operator.truediv, operator.floordiv, operator.mod],
