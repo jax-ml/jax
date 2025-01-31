@@ -79,6 +79,8 @@ T = TypeVar("T")
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
+export = util.set_module("jax.lax")
+
 def _matrix_transpose(x: Array) -> Array:
   assert x.ndim >= 2
   return transpose(x, [*range(x.ndim - 2), x.ndim - 1, x.ndim - 2])
@@ -148,8 +150,43 @@ def broadcast_shapes(*shapes: tuple[int, ...]) -> tuple[int, ...]: ...
 def broadcast_shapes(*shapes: tuple[int | core.Tracer, ...]
                      ) -> tuple[int | core.Tracer, ...]: ...
 
+@export
 def broadcast_shapes(*shapes):
-  """Returns the shape that results from NumPy broadcasting of `shapes`."""
+  """Returns the shape that results from NumPy broadcasting of `shapes`.
+
+  This follows the rules of `NumPy broadcasting`_.
+
+  Args:
+    shapes: one or more tuples of integers containing the shapes of arrays
+      to be broadcast.
+
+  Returns:
+    A tuple of integers representing the broadcasted shape.
+
+  Raises:
+    ValueError: if shapes are not broadcast-compatible.
+
+  See Also:
+    - :func:`jax.numpy.broadcast_shapes`: similar API in the JAX NumPy namespace
+
+  Examples:
+    Some examples of broadcasting compatible shapes:
+
+    >>> jnp.broadcast_shapes((1,), (4,))
+    (4,)
+    >>> jnp.broadcast_shapes((3, 1), (4,))
+    (3, 4)
+    >>> jnp.broadcast_shapes((3, 1), (1, 4), (5, 1, 1))
+    (5, 3, 4)
+
+    Error when attempting to broadcast incompatible shapes:
+
+    >>> jnp.broadcast_shapes((3, 1), (4, 1))  # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+    ValueError: Incompatible shapes for broadcasting: shapes=[(3, 1), (4, 1)]
+
+  .. _NumPy broadcasting: https://numpy.org/doc/stable/user/basics.broadcasting.html
+  """
   # NOTE: We have both cached and uncached versions to handle Tracers in shapes.
   try:
     return _broadcast_shapes_cached(*shapes)
@@ -237,47 +274,96 @@ def _dyn_shape_staging_rule(trace, prim, out_aval, *args, **params):
 
 ### traceables
 
+@export
 def neg(x: ArrayLike) -> Array:
-  r"""Elementwise negation: :math:`-x`."""
+  r"""Elementwise negation: :math:`-x`.
+
+  This function lowers directly to the `stablehlo.negate`_ operation.
+
+  Args:
+    x: input array
+
+  Returns:
+    Array of same shape and dtype as ``x``, containing the element-wise negative.
+
+  Notes:
+    For unsigned integer inputs, this function returns ``2 ** nbits - x``, where
+    ``nbits`` is the number of bits in the integer representation.
+
+  .. _stablehlo.negate: https://openxla.org/stablehlo/spec#negate
+  """
   return neg_p.bind(x)
 
+@export
 def sign(x: ArrayLike) -> Array:
   r"""Elementwise sign.
 
-  For floating-point inputs, returns
-  :math:`\mathrm{sign}(x) = \begin{cases}
-  -1 & x < 0\\
-  -0 & x = -0\\
-  \mathit{NaN} & x = \mathit{NaN}\\
-  +0 & x = +0\\
-  1 & x > 0
-  \end{cases}`
+  This function lowers directly to the `stablehlo.sign`_ operation.
 
-  For signed integer inputs, returns
-  :math:`\mathrm{sign}(x) = \begin{cases}
-  -1 & x < 0\\
-  0 & x = 0\\
-  1 & x > 0
-  \end{cases}`
+  Args:
+    x: input array
 
-  For complex inputs, returns the complex phase, i.e.
-  :math:`\mathrm{sign}(x) = \frac{x}{|x|}`.
+  Returns:
+    Array of same shape and dtype as ``x``, containing the sign
+    of the value, as defined in Notes below.
+
+  Notes:
+    For floating-point inputs, returns
+
+    .. math::
+
+       \mathrm{sign}(x) = \begin{cases}
+         -1 & x < 0\\
+         -0 & x = -0\\
+         \mathit{NaN} & x = \mathit{NaN}\\
+         +0 & x = +0\\
+         1 & x > 0
+      \end{cases}
+
+    For signed integer inputs, returns
+
+    .. math::
+
+       \mathrm{sign}(x) = \begin{cases}
+         -1 & x < 0\\
+         0 & x = 0\\
+         1 & x > 0
+       \end{cases}
+
+    For complex inputs, returns the complex phase, i.e.
+    :math:`\mathrm{sign}(x) = x / |x|`.
+
+  .. _stablehlo.sign: https://openxla.org/stablehlo/spec#sign
   """
   return sign_p.bind(x)
 
+@export
 def nextafter(x1: ArrayLike, x2: ArrayLike) -> Array:
-  r"""Returns the next representable value after `x1` in the direction of `x2`.
+  """Returns the next representable value after ``x1`` in the direction of ``x2``.
 
-  Note that in some environments flush-denormal-to-zero semantics is used.
-  This means that, around zero, this function returns strictly non-zero
-  values which appear as zero in any operations. Consider this example::
+  This function lowers directly to the ``chlo.next_after`` operation.
 
-    >>> jnp.nextafter(0, 1)  # denormal numbers are representable
-    Array(1.e-45, dtype=float32, weak_type=True)
-    >>> jnp.nextafter(0, 1) * 1  # but are flushed to zero
-    Array(0., dtype=float32, weak_type=True)
+  Args:
+    x1, x2: input arrays. Must have a matching floating-point dtypes. If neither is
+      a scalar, must have the same number of dimensions and be broadcast-compatible.
 
-  For the smallest usable (i.e. normal) float, use ``tiny`` of ``jnp.finfo``.
+  Returns:
+    Array of the same dtype and broadcasted shape of the inputs, containing the
+    next representable floating-point value after ``x1`` in the direction of
+    ``x2``.
+
+  Notes:
+    In some environments flush-denormal-to-zero semantics is used.
+    This means that, around zero, this function returns strictly non-zero
+    values which appear as zero in any operations. Consider this example::
+
+      >>> from jax import lax
+      >>> lax.nextafter(0.0, 1.0)  # denormal numbers are representable
+      Array(1.e-45, dtype=float32, weak_type=True)
+      >>> lax.nextafter(0.0, 1.0) * 1  # but are flushed to zero
+      Array(0., dtype=float32, weak_type=True)
+
+    For the smallest usable (i.e. normal) float, use ``tiny`` of ``jnp.finfo``.
   """
   return nextafter_p.bind(x1, x2)
 
