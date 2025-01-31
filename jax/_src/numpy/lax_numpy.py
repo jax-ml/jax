@@ -13407,7 +13407,6 @@ def place(arr: ArrayLike, mask: ArrayLike, vals: ArrayLike, *,
   """
   data, mask_arr, vals_arr = util.ensure_arraylike("place", arr, mask, vals)
   vals_arr = vals_arr.ravel()
-  data, mask_arr, vals_arr = asarray(arr), asarray(mask), ravel(vals)
   if inplace:
     raise ValueError(
       "jax.numpy.place cannot modify arrays in-place, because JAX arrays are immutable. "
