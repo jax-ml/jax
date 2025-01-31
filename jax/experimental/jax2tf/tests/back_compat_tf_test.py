@@ -23,6 +23,7 @@ import base64
 from collections.abc import Callable, Sequence
 import io
 import os
+import sys
 import tarfile
 
 from absl.testing import absltest
@@ -57,7 +58,10 @@ def deserialize_directory(serialized_string, output_directory):
 
   # Extract the tar archive to the output directory
   with tarfile.open(fileobj=io.BytesIO(tar_data), mode="r") as tar:
-    tar.extractall(output_directory)
+    if sys.version_info[:1] < (3, 12):
+      tar.extractall(output_directory)
+    else:
+      tar.extractall(output_directory, filter='data')
 
 
 class CompatTensoflowTest(bctu.CompatTestBase):
