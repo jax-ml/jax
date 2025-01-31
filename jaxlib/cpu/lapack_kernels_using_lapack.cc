@@ -86,6 +86,11 @@ jax::TridiagonalReduction<ffi::DataType::F64>::FnType dsytrd_;
 jax::TridiagonalReduction<ffi::DataType::C64>::FnType chetrd_;
 jax::TridiagonalReduction<ffi::DataType::C128>::FnType zhetrd_;
 
+jax::TridiagonalSolver<ffi::DataType::F32>::FnType sgtsv_;
+jax::TridiagonalSolver<ffi::DataType::F64>::FnType dgtsv_;
+jax::TridiagonalSolver<ffi::DataType::C64>::FnType cgtsv_;
+jax::TridiagonalSolver<ffi::DataType::C128>::FnType zgtsv_;
+
 }  // extern "C"
 
 namespace jax {
@@ -387,6 +392,11 @@ static auto init = []() -> int {
   AssignKernelFn<HessenbergDecomposition<ffi::DataType::F64>>(dgehrd_);
   AssignKernelFn<HessenbergDecomposition<ffi::DataType::C64>>(cgehrd_);
   AssignKernelFn<HessenbergDecomposition<ffi::DataType::C128>>(zgehrd_);
+
+  AssignKernelFn<TridiagonalSolver<ffi::DataType::F32>>(sgtsv_);
+  AssignKernelFn<TridiagonalSolver<ffi::DataType::F64>>(dgtsv_);
+  AssignKernelFn<TridiagonalSolver<ffi::DataType::C64>>(cgtsv_);
+  AssignKernelFn<TridiagonalSolver<ffi::DataType::C128>>(zgtsv_);
 
   return 0;
 }();

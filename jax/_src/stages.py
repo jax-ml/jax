@@ -250,15 +250,13 @@ class XlaExecutable(Executable):
       else:
         raise
 
-    # TODO(b/384741132): this should return a single dict (I think returning a list
-    # was to support MPMD executables, which never fully landed).
-  def cost_analysis(self) -> list[dict[str, float]]:
+  def cost_analysis(self) -> dict[str, float]:
     xla_ext_exe = self.xla_extension_executable()
 
     # TODO(b/259255524): Unify/merge the two cost_analysis calls below.
     if hasattr(xla_ext_exe, "cost_analysis"):
       try:
-        return [xla_ext_exe.cost_analysis()]
+        return xla_ext_exe.cost_analysis()
       except xla_extension.XlaRuntimeError as e:
         msg, *_ = e.args
         if not (type(msg) is str and msg.startswith("UNIMPLEMENTED")):
@@ -276,11 +274,9 @@ class XlaExecutable(Executable):
             " were found)."
         )
 
-        return [
-            xla_extension.hlo_module_cost_analysis(
-                xla_ext_exe.client, hlo_modules[0]
-            )
-        ]
+        return xla_extension.hlo_module_cost_analysis(
+            xla_ext_exe.client, hlo_modules[0]
+        )
       except xla_extension.XlaRuntimeError as e:
         msg, *_ = e.args
         supported = not (type(msg) is str and
@@ -295,7 +291,7 @@ class XlaExecutable(Executable):
         and hasattr(self.unsafe_call, "compiled")
         and hasattr(self.unsafe_call.compiled, "cost_analysis")
     ):
-      return [self.unsafe_call.compiled.cost_analysis()]
+      return self.unsafe_call.compiled.cost_analysis()
 
     raise NotImplementedError(
         f"cost analysis unsupported on current XLA backend: {type(xla_ext_exe)}"
@@ -741,7 +737,7 @@ class Traced(Stage):
                "_args_flat", "_arg_names", "_num_consts"]
 
   def __init__(self, jaxpr: core.ClosedJaxpr, args_info, fun_name, out_tree,
-               lower_callable, abstract_mesh=None,
+               lower_callable, abstract_mesh=mesh_lib.empty_abstract_mesh,
                args_flat=None, arg_names=None, num_consts: int = 0):
     self.jaxpr = jaxpr
     self.args_info = args_info

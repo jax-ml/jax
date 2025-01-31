@@ -241,7 +241,7 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
   rocm_group.add_argument(
       "--rocm_amdgpu_targets",
       type=str,
-      default="gfx900,gfx906,gfx908,gfx90a,gfx940,gfx941,gfx942,gfx1030,gfx1100",
+      default="gfx900,gfx906,gfx908,gfx90a,gfx940,gfx941,gfx942,gfx1030,gfx1100,gfx1200,gfx1201",
       help="A comma-separated list of ROCm amdgpu targets to support.",
   )
 
@@ -532,6 +532,7 @@ async def main():
 
   if "cuda" in args.wheels:
     wheel_build_command_base.append("--config=cuda")
+    wheel_build_command_base.append("--config=cuda_libraries_from_stubs")
     if args.use_clang:
       wheel_build_command_base.append(
           f"--action_env=CLANG_CUDA_COMPILER_PATH=\"{clang_path}\""

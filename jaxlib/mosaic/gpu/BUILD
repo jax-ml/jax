@@ -44,13 +44,16 @@ cc_library(
     srcs = [
         "launch_lowering.cc",
         "passes.cc",
+        "serde.cc",
     ],
     hdrs = [
         "launch_lowering.h",
         "passes.h",
+        "serde.h",
     ],
     deps = [
         "//jaxlib:pass_boilerplate",
+        "//jaxlib/mosaic:serde",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:FuncDialect",
@@ -178,12 +181,6 @@ nanobind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
-    linkopts = select({
-        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
-            "-Wl,-rpath,$$ORIGIN/../../../nvidia/cuda_runtime/lib",
-        ],
-        "//conditions:default": [],
-    }),
     deps = [
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/cuda:cuda_vendor",
@@ -200,12 +197,6 @@ cc_binary(
     name = "libmosaic_gpu_runtime.so",
     srcs = ["runtime.cc"],
     copts = ["-fvisibility=default"],
-    linkopts = select({
-        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
-            "-Wl,-rpath,$$ORIGIN/../../../nvidia/cuda_runtime/lib",
-        ],
-        "//conditions:default": [],
-    }),
     linkshared = 1,
     tags = [
         "manual",

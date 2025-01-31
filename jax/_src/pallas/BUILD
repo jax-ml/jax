@@ -32,6 +32,7 @@ py_library(
         "core.py",
         "cost_estimate.py",
         "helpers.py",
+        "hlo_interpreter.py",
         "pallas_call.py",
         "primitives.py",
         "utils.py",

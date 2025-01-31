@@ -45,13 +45,25 @@ export num_cpu_cores=$(nproc)
 if [[ $num_test_jobs -gt $num_cpu_cores ]]; then
   num_test_jobs=$num_cpu_cores
 fi
+
+# Use the Bazel remote cache to speed up builds. Pushes to the cache bucket is
+# limited to JAX's CI system.
+if [[ "$JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE" == 1 ]]; then
+  bazel_remote_cache="--config=public_cache_push"
+else
+  bazel_remote_cache="--config=public_cache"
+fi
 # End of test environment variables setup.
+
+# Don't abort the script if one command fails to ensure we run both test
+# commands below.
+set +e
 
 # Runs single accelerator tests with one GPU apiece.
 # It appears --run_under needs an absolute path.
 # The product of the `JAX_ACCELERATOR_COUNT`` and `JAX_TESTS_PER_ACCELERATOR`
 # should match the VM's CPU core count (set in `--local_test_jobs`).
-bazel test --config=ci_linux_x86_64_cuda \
+bazel test --config=ci_linux_x86_64_cuda "$bazel_remote_cache" \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --//jax:build_jaxlib=false \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
@@ -70,9 +82,12 @@ bazel test --config=ci_linux_x86_64_cuda \
       //tests:gpu_tests //tests:backend_independent_tests \
       //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests
 
+# Store the return value of the first bazel command.
+first_bazel_cmd_retval=$?
+
 echo "Running multi-accelerator tests (without RBE)..."
 # Runs multiaccelerator tests with all GPUs directly on the VM without RBE..
-bazel test --config=ci_linux_x86_64_cuda \
+bazel test --config=ci_linux_x86_64_cuda "$bazel_remote_cache" \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --//jax:build_jaxlib=false \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
@@ -85,3 +100,15 @@ bazel test --config=ci_linux_x86_64_cuda \
       --action_env=NCCL_DEBUG=WARN \
       --color=yes \
       //tests:gpu_tests //tests/pallas:gpu_tests
+
+# Store the return value of the second bazel command.
+second_bazel_cmd_retval=$?
+
+# Exit with failure if either command fails.
+if [[ $first_bazel_cmd_retval -ne 0 ]]; then
+  exit $first_bazel_cmd_retval
+elif [[ $second_bazel_cmd_retval -ne 0 ]]; then
+  exit $second_bazel_cmd_retval
+else
+  exit 0
+fi

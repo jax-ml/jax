@@ -22,7 +22,7 @@ import gzip
 import itertools
 import json
 import types
-from typing import Any, Union
+from typing import Any, Iterator, Union
 
 from jax._src import core
 from jax._src import util
@@ -33,7 +33,7 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 
-def all_eqns(jaxpr: core.Jaxpr):
+def all_eqns(jaxpr: core.Jaxpr) -> Iterator[tuple[core.Jaxpr, core.JaxprEqn]]:
   for eqn in jaxpr.eqns:
     yield (jaxpr, eqn)
   for subjaxpr in core.subjaxprs(jaxpr):

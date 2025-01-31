@@ -1,32 +1,37 @@
+# CI - Wheel Tests (Continuous)
+#
+# This workflow builds JAX artifacts and runs CPU/CUDA tests.
+#
+# It orchestrates the following:
+# 1. build-jaxlib-artifact: Calls the `build_artifacts.yml` workflow to build jaxlib and
+#                           uploads it to a GCS bucket.
+# 2. run-pytest-cpu:        Calls the `pytest_cpu.yml` workflow which downloads the jaxlib wheel
+#                           that was built in the previous step and runs CPU tests.
+# 3. build-cuda-artifacts:  Calls the `build_artifacts.yml` workflow to build CUDA artifacts and
+#                           uploads them to a GCS bucket.
+# 4. run-pytest-cuda:       Calls the `pytest_cuda.yml` workflow which downloads the jaxlib and CUDA
+#                           artifacts that were built in the previous steps and runs the CUDA tests.
+# 5. run-bazel-test-cuda:   Calls the `bazel_cuda_non_rbe.yml` workflow which downloads the jaxlib
+#                           and CUDA artifacts that were built in the previous steps and runs the
+#                           CUDA tests using Bazel.
+
 name: CI - Wheel Tests (Continuous)
 
 on:
-  pull_request:
-    branches:
-      - main
-  workflow_dispatch:
-    inputs:
-      halt-for-connection:
-        description: 'Should this workflow run wait for a remote connection?'
-        type: choice
-        required: true
-        default: 'no'
-        options:
-        - 'yes'
-        - 'no'
+  schedule:
+    - cron: "0 */2 * * *" # Run once every 2 hours
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
 
 jobs:
   build_jaxlib_artifact:
-    uses: ./.github/workflows/build_artifacts.yml      
+    uses: ./.github/workflows/build_artifacts.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-            # Runner and Python values need to match the matrix stategy in the CPU tests job
-            # Enable Windows after we have fixed the runner issue
+            # Runner OS and Python values need to match the matrix stategy in the CPU tests job
             runner: ["linux-x86-n2-16", "linux-arm64-t2a-48", "windows-x86-n2-16"]
             artifact: ["jaxlib"]
             python: ["3.10"]

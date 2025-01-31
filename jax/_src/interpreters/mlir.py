@@ -193,6 +193,8 @@ if dtypes.float8_e3m4 is not None:
   _dtype_to_ir_type[np.dtype(dtypes.float8_e3m4)] = ir.Float8E3M4Type.get
 if dtypes.float8_e4m3 is not None:
   _dtype_to_ir_type[np.dtype(dtypes.float8_e4m3)] = ir.Float8E4M3Type.get
+if dtypes.float8_e8m0fnu is not None:
+  _dtype_to_ir_type[np.dtype(dtypes.float8_e8m0fnu)] = ir.Float8E8M0FNUType.get
 
 def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
   if isinstance(dtype, core.bint):
@@ -1231,6 +1233,7 @@ def lower_jaxpr_to_module(
           'builtin.module(sdy-lift-inlined-meshes)')
       pipeline.run(ctx.module.operation)
 
+  util.test_event("mlir.collect_lowered_jaxprs", jaxpr, ctx.module)
   return LoweringResult(ctx.module, ctx.keepalives, ctx.host_callbacks,
                         ctx.shape_poly_state)
 
@@ -1661,8 +1664,10 @@ def lower_jaxpr_to_fun(
       flat_args = [
           replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
-              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # pytype: disable=attribute-error
-          for o, s, a in zip(flat_args, ir_arg_shardings, input_avals)
+              dtypes.issubdtype(a.dtype, dtypes.extended) and
+              (s is None or all_unconstrained(rs, a))) else o  # pytype: disable=attribute-error
+          for o, s, a, rs in zip(flat_args, ir_arg_shardings, input_avals,
+                                 arg_shardings)  # type: ignore
       ]
 
     _, token_args, unflattened_args = util.split_list(
@@ -1715,8 +1720,10 @@ def lower_jaxpr_to_fun(
       flat_outputs = [
           replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
-              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # pytype: disable=attribute-error
-          for o, s, a in zip(flat_outputs, ir_result_shardings, output_avals)
+              dtypes.issubdtype(a.dtype, dtypes.extended) and
+              (s is None or all_unconstrained(rs, a))) else o  # pytype: disable=attribute-error
+          for o, s, a, rs in zip(flat_outputs, ir_result_shardings, output_avals,
+                                 result_shardings)  # type: ignore
       ]
 
     func_dialect.return_(flat_outputs)
@@ -1915,7 +1922,8 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     source_info = eqn.source_info.replace(
         name_stack=name_stack + eqn.source_info.name_stack)
     loc = _source_info_to_location(ctx, eqn.primitive, source_info)
-    with source_info_util.user_context(eqn.source_info.traceback), loc:
+    with (source_info_util.user_context(eqn.source_info.traceback), loc,
+          eqn.ctx.manager):
       override_rule = get_override_lowering_rule(eqn.primitive)
       platform_rules: dict[str, LoweringRule] = {}
       default_rule: LoweringRule | None = None
@@ -2296,7 +2304,7 @@ def map_compute_type(c_type):
     return 'dense'
   elif c_type == 'tpu_sparsecore':
     return 'sparse'
-  raise ValueError('Invalid compute type received. Current supported values '
+  raise ValueError(f'Invalid compute type {c_type}. Current supported values '
                    'are `device_host`, `device` and `tpu_sparsecore')
 
 def wrap_compute_type_in_place(ctx, op):
@@ -2594,7 +2602,7 @@ wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
 
 def lower_sharding_under_shit(ctx, op, aval, sharding_proto=None):
   # Don't emit a wsc under full manual mode to avoid increasing HLO size.
-  if aval.sharding.mesh._are_all_axes_collective:
+  if aval.sharding.mesh._are_all_axes_manual:
     return op
   if aval.sharding.mesh._are_all_axes_auto:
     return op

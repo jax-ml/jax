@@ -1,16 +1,17 @@
+# CI - Pytest CPU
+#
+# This workflow runs the CPU tests with Pytest. It can only be triggered by other workflows via
+# `workflow_call`. It is used by the "CI - Wheel Tests" workflows to run the Pytest CPU tests.
+#
+# It consists of the following job:
+# run-tests:
+#    - Downloads the jaxlib wheel from a GCS bucket.
+#    - Executes the `run_pytest_cpu.sh` script, which performs the following actions:
+#      - Installs the downloaded jaxlib wheel.
+#      - Runs the CPU tests with Pytest.
 name: CI - Pytest CPU
 
 on:
-  workflow_dispatch:
-    inputs:
-      halt-for-connection:
-        description: 'Should this workflow run wait for a remote connection?'
-        type: choice
-        required: true
-        default: 'no'
-        options:
-        - 'yes'
-        - 'no'
   workflow_call:
     inputs:
       runner:
@@ -38,12 +39,11 @@ jobs:
   run-tests:
     defaults:
       run:
-        # Explicitly set the shell to bash to override the default Windows environment, i.e, cmd.
+        # Explicitly set the shell to bash to override Windows's default (cmd)
         shell: bash
-
     runs-on: ${{ inputs.runner }}
-    container: ${{ (contains(inputs.runner, 'linux-x86-n2') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
-                   (contains(inputs.runner, 'linux-x86-t2a') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') ||
+    container: ${{ (contains(inputs.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
+                   (contains(inputs.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') ||
                    (contains(inputs.runner, 'windows-x86') && null) }}
 
     name: "Pytest CPU (${{ inputs.runner }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
@@ -51,27 +51,21 @@ jobs:
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
       JAXCI_PYTHON: "python${{ inputs.python }}"
-      JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}
+      JAXCI_ENABLE_X64: "${{ inputs.enable-x64 }}"
 
-    
     steps:
-      - uses: actions/checkout@v4
-      # Halt for testing
-      - name: Wait For Connection
-        uses: google-ml-infra/actions/ci_connection@main
-        with:
-          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Set env vars for use in artifact download URL
         run: |
           os=$(uname -s | awk '{print tolower($0)}')
           arch=$(uname -m)
 
-          # Adjust os and arch for Windows x86
-          if [[  $os  =~ "msys_nt" ]] && [[  $arch  =~ "x86_64" ]]; then
+          # Adjust os and arch for Windows
+          if [[  $os  =~ "msys_nt" ]] && [[ $arch =~ "x86_64" ]]; then
             os="win"
             arch="amd64"
           fi
-          
+
           # Get the major and minor version of Python.
           # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.10, then python_major_minor=310
           python_major_minor=$(echo "$JAXCI_HERMETIC_PYTHON_VERSION" | tr -d '.')
@@ -79,18 +73,24 @@ jobs:
           echo "OS=${os}" >> $GITHUB_ENV
           echo "ARCH=${arch}" >> $GITHUB_ENV
           echo "PYTHON_MAJOR_MINOR=${python_major_minor}" >> $GITHUB_ENV
-      - name: Download the jaxlib wheel from GCS (non-Windows runs)
+      - name: Download jaxlib wheel from GCS (non-Windows runs)
         if: ${{ !contains(inputs.runner, 'windows-x86') }}
         run: >-
           mkdir -p $(pwd)/dist &&
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl $(pwd)/dist/
-      - name: Download the jaxlib wheel from GCS (Windows runs)
+          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+      - name: Download jaxlib wheel from GCS (Windows runs)
         if: ${{ contains(inputs.runner, 'windows-x86') }}
         shell: cmd
         run: >-
           mkdir dist &&
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl dist/
-      - name: Install dependencies
+          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
+      - name: Install Python dependencies
         run: $JAXCI_PYTHON -m pip install -r build/requirements.in
+      # Halt for testing
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@main
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
       - name: Run Pytest CPU tests
+        timeout-minutes: 60
         run: ./ci/run_pytest_cpu.sh

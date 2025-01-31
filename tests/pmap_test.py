@@ -1670,6 +1670,23 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     multi_step_pmap(jnp.zeros((device_count,)), count=1)
 
+  def test_typed_prng_key_sharded(self):
+    devices = jax.local_devices()
+
+    @partial(jax.pmap, in_axes=0, out_axes=0, axis_size=len(devices),
+             axis_name='i', devices=devices)
+    def fn(key):
+      return jax.random.fold_in(key, 0)
+
+    sharded_key = jax.random.split(jax.random.key(0), len(devices))
+    replicated_key = jax.random.key(1)
+
+    sharded_key = jax.device_put_sharded(jnp.unstack(sharded_key), devices)
+    replicated_key = jax.device_put_replicated(replicated_key, devices)
+
+    fn(sharded_key)
+    fn(replicated_key)
+
   def testArrayGetItem(self):
     f = lambda x: 2 * x
     f = self.pmap(f, axis_name='i')
@@ -2101,31 +2118,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     jaxpr_text = str(jaxpr)
     self.assertEqual(jaxpr_text.count(' sin '), 1)
     self.assertEqual(jaxpr_text.count(' cos '), 2)
-
-  def test_pmap_lower_arg_info(self):
-    def f(x, y, *args, **kwargs):
-      return y['hi'] + args[1] + sum(kwargs.values())
-
-    lowered = jax.pmap(f).lower(
-      {'hi': jnp.array([1.])}, {'hi': jnp.array([2.])}, jnp.array([3.]),
-      jnp.array([4.]), z=jnp.array([5.]), w=jnp.array([6.]))
-    hlo_str = lowered.as_text("stablehlo", debug_info=True)
-    self.assertNotIn("\"x\"", hlo_str)
-    self.assertIn("y['hi']", hlo_str)
-    self.assertIn("args[0]", hlo_str)
-    self.assertIn("args[1]", hlo_str)
-    self.assertIn("kwargs['z']", hlo_str)
-    self.assertIn("kwargs['w']", hlo_str)
-
-  def test_pmap_lower_result_info(self):
-    def f(x, y, z):
-      return {'a': x, 'b': [y]}
-
-    lowered = jax.pmap(f).lower(jnp.array([1.]), (jnp.array([2]),),
-                                [jnp.array([3])])
-    hlo_str = lowered.as_text("stablehlo", debug_info=True)
-    self.assertIn("jax.result_info = \"['a']\"", hlo_str)
-    self.assertIn("jax.result_info = \"['b'][0][0]\"", hlo_str)
 
   def test_axis_name_shadowing_with_vmap(self):
     # vmap-of-pmap with mismatched axis sizes

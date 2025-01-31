@@ -546,6 +546,9 @@ def _run_state_abstract_eval(*avals: core.AbstractValue, jaxpr: core.Jaxpr,
       nonlocal_effects.add(
           eff.replace(input_index=inner_to_outer_aval_mapping[eff.input_index])
       )
+  assert len(jaxpr.invars) == len(is_initialized)
+  if not all(is_initialized):
+    raise NotImplementedError  # Uninitialized refs are not in avals.
   return avals, nonlocal_effects
 run_state_p.def_effectful_abstract_eval(_run_state_abstract_eval)
 
@@ -846,7 +849,7 @@ def _run_state_partial_eval_custom(
       out = run_state_p.bind(*args, **staged_params)
       return out[num_res:]
     staged_call_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(staged,
-        [v.aval for v in res_staged_invars])
+                                                             [v.aval for v in res_staged_invars])
     eqn_staged = pe.new_jaxpr_eqn(res_staged_invars,
                                   staged_outvars,
                                   core.closed_call_p,
@@ -985,15 +988,18 @@ def _run_state_discharge_rule(in_avals: Sequence[core.AbstractValue],
   return new_invals, out_vals
 
 def initial_style_jaxpr(
-    fun: Callable, in_tree: PyTreeDef, in_avals: Sequence[core.AbstractValue]
+    fun: Callable, in_tree: PyTreeDef, in_avals: Sequence[core.AbstractValue],
+    dbg: api_util.TracingDebugInfo,
   ) -> tuple[core.Jaxpr, list[Any], PyTreeDef]:
-  return _initial_style_jaxpr(fun, in_tree, tuple(in_avals))
+  return _initial_style_jaxpr(fun, in_tree, tuple(in_avals), dbg)
 
 @weakref_lru_cache
-def _initial_style_jaxpr(fun, in_tree, in_avals):
+def _initial_style_jaxpr(fun: Callable,
+                         in_tree: api_util.PyTreeDef,
+                         in_avals: Sequence[core.AbstractValue],
+                         debug: api_util.TracingDebugInfo):
   fun_, out_tree_thunk = api_util.flatten_fun_nokwargs(lu.wrap_init(fun),
       tree_util.treedef_tuple((in_tree,)))
-  debug = pe.debug_info(fun_, in_tree, out_tree_thunk, False, 'run_state')
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun_, in_avals, debug)
   return jaxpr, consts, out_tree_thunk()
 
@@ -1001,10 +1007,11 @@ def _initial_style_jaxpr(fun, in_tree, in_avals):
 T = TypeVar('T')
 def run_state(f: Callable[..., None]) -> Callable[[T], T]:
   def wrapped(args):
+    dbg = api_util.tracing_debug_info("run_state", f, (args,), {})
     flat_args, in_tree = tree_util.tree_flatten(args)
     ref_avals, ref_args = unzip2(map(get_ref_aval_from_value, flat_args))
     # There may be some uninitialized values here in ref_args.
-    jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals)
+    jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals, dbg)
     jaxpr = hoist_consts_to_refs(jaxpr_)
     which_linear = (False,) * (len(consts) + len(ref_args))
     refs_is_initialized = tuple(r is not uninitialized for r in ref_args)
@@ -1020,9 +1027,10 @@ def run_state(f: Callable[..., None]) -> Callable[[T], T]:
 
 def run_state_reference(f: Callable[..., None]):
   def wrapped(args):
+    dbg = api_util.tracing_debug_info("run_state", f, (args,), {})
     flat_args, in_tree = tree_util.tree_flatten(args)
     ref_avals, ref_args = unzip2(map(get_ref_aval_from_value, flat_args))
-    jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals)
+    jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals, dbg)
     jaxpr = hoist_consts_to_refs(jaxpr_)
     discharged_jaxpr, discharged_consts = discharge_state(jaxpr, ())
 

@@ -27,6 +27,7 @@ from jax import lax
 
 from jax.experimental import shard_map
 from jax._src import api
+from jax._src import api_util
 from jax._src import ad_checkpoint
 from jax._src import linear_util as lu
 from jax._src import config
@@ -39,7 +40,6 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util as jtu
 from jax._src.ad_util import SymbolicZero
-from jax._src.api_util import flatten_fun
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -834,7 +834,7 @@ def checkify_while_body_jaxpr(
   new_body_f_ = lu.wrap_init(new_body_f)
   c_consts_avals = cond_jaxpr.in_avals[:c_consts_num]
   jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(new_body_f_, [*c_consts_avals,
-                                                         *body_jaxpr.in_avals])
+                                                             *body_jaxpr.in_avals])
   closed_jaxpr = pe.close_jaxpr(jaxpr)
   err_vals, err_tree = jtu.tree_flatten(error)
   err_vals = map(core.get_aval, err_vals)
@@ -1202,8 +1202,10 @@ def checkify(f: Callable[..., Out],
     in_tree = jtu.tree_structure(((), {}))
     closed_f = lambda: f(*args, **kwargs)
     # stage:
-    fun_, out_tree = flatten_fun(lu.wrap_init(closed_f), in_tree)
-    debug = pe.debug_info(closed_f, in_tree, out_tree, False, 'checkify')
+    debug = api_util.tracing_debug_info("checkify", f, args, kwargs)
+    fun_, out_tree = api_util.flatten_fun(lu.wrap_init(closed_f,
+                                                       debug_info=debug),
+                                          in_tree)
     jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(fun_, (), debug)
     jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr_))
     # checkify:

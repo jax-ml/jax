@@ -42,6 +42,7 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import lax_reference
 from jax._src import test_util as jtu
+from jax._src.errors import UnexpectedTracerError
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
@@ -4683,25 +4684,41 @@ class CompositeTest(jtu.JaxTestCase):
     ):
       grad(my_square)(1.0)
 
+  def test_composite_with_array_consts(self):
+    @partial(lax.composite, name="my.consts")
+    def my_consts(x, /, *, scale):
+      return jnp.round(x / scale)
+
+    scale = np.array([0.5, 0.4, 0.3], dtype=np.float32)
+    x = jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32)
+    self.assertAllClose(my_consts(x, scale=scale), jnp.round(x / scale))
+
+    # The constant must not appear as an extra input argument to the composite.
+    mlir_module = jax.jit(partial(my_consts, scale=scale)).lower(x).as_text()
+    self.assertIn(
+        "@my.consts(%arg0: tensor<3xf32>) -> tensor<3xf32>", mlir_module
+    )
+
+  def test_composite_with_tracer_consts(self):
+    def fun(x, scale):
+      @partial(lax.composite, name="my.consts")
+      def my_consts(y):
+        return jnp.round(y / scale)
+      return my_consts(x)
+
+    scale = jnp.array([0.5, 0.4, 0.3], dtype=jnp.float32)
+    x = jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32)
+    self.assertAllClose(fun(x, scale), jnp.round(x / scale))
+    self.assertAllClose(
+        jax.jit(partial(fun, scale=scale))(x), jnp.round(x / scale))
+    with self.assertRaisesRegex(
+        UnexpectedTracerError,
+        "Found a JAX Tracer as a constant in the decomposition for the "
+        "composite op 'my.consts'."):
+      jax.jit(fun)(x, scale)
+
 
 class RaggedTest(jtu.JaxTestCase):
-
-  def testRaggedAllToAll(self):
-    operand = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=jnp.float32)
-    output = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float32)
-    input_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
-    send_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
-    output_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
-    recv_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
-    mlir_module = jax.jit(lax.ragged_all_to_all).lower(
-        operand, output, input_offsets, send_sizes, output_offsets,
-        recv_sizes).as_text()
-    self.assertIn("stablehlo.custom_call @ragged_all_to_all", mlir_module)
-    self.assertIn(
-        "backend_config = {replica_groups = dense<[[0, 1, 2]]> :"
-        " tensor<1x3xi64>}}",
-        mlir_module,
-    )
 
   def testRaggedAllToAllErrors(self):
     operand = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=jnp.float32)
@@ -4710,117 +4727,111 @@ class RaggedTest(jtu.JaxTestCase):
     send_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
     output_offsets = jnp.array([0, 1, 3], dtype=jnp.int32)
     recv_sizes = jnp.array([1, 2, 3], dtype=jnp.int32)
-
-    with self.assertRaisesWithLiteralMatch(
-        ValueError,
-        "ragged_all_to_all input and output shapes must be equal, except for"
-        " the outermost dimension.",
-    ):
-      jax.jit(lax.ragged_all_to_all).lower(
-          operand,
-          jnp.array([[0.0], [0.0], [0.0], [0.0], [0.0]], dtype=jnp.float32),
-          input_offsets, send_sizes, output_offsets, recv_sizes)
+    axis_name = "x"
 
     with self.assertRaisesWithLiteralMatch(
         ValueError, "ragged_all_to_all input_offsets must be integer type."
     ):
-      jax.jit(lax.ragged_all_to_all).lower(
+      jax.jit(lax.ragged_all_to_all, static_argnames='axis_name').lower(
           operand, output, jnp.array([0.0, 1.0, 3.0], dtype=jnp.float32),
-          send_sizes, output_offsets, recv_sizes)
+          send_sizes, output_offsets, recv_sizes, axis_name=axis_name)
 
     with self.assertRaisesWithLiteralMatch(
         ValueError, "ragged_all_to_all send_sizes must be integer type."
     ):
-      jax.jit(lax.ragged_all_to_all).lower(
+      jax.jit(lax.ragged_all_to_all, static_argnames='axis_name').lower(
           operand, output, input_offsets,
           jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32), output_offsets,
-          recv_sizes)
+          recv_sizes, axis_name=axis_name)
 
     with self.assertRaisesWithLiteralMatch(
         ValueError, "ragged_all_to_all output_offsets must be integer type."
     ):
-      jax.jit(lax.ragged_all_to_all).lower(
+      jax.jit(lax.ragged_all_to_all, static_argnames='axis_name').lower(
           operand, output, input_offsets, send_sizes,
-          jnp.array([0.0, 1.0, 3.0], dtype=jnp.float32), recv_sizes)
+          jnp.array([0.0, 1.0, 3.0], dtype=jnp.float32), recv_sizes,
+          axis_name=axis_name)
 
     with self.assertRaisesWithLiteralMatch(
         ValueError, "ragged_all_to_all recv_sizes must be integer type."
     ):
-      jax.jit(lax.ragged_all_to_all).lower(
+      jax.jit(lax.ragged_all_to_all, static_argnames='axis_name').lower(
           operand, output, input_offsets, send_sizes, output_offsets,
-          jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32))
+          jnp.array([1.0, 2.0, 3.0], dtype=jnp.float32), axis_name=axis_name)
 
     with self.assertRaisesWithLiteralMatch(
         ValueError,
         "ragged_all_to_all input_offsets must be rank 1 with positive dimension"
         " size, but got shape (1, 3)",
     ):
-      jax.jit(lax.ragged_all_to_all).lower(
+      jax.jit(lax.ragged_all_to_all, static_argnames='axis_name').lower(
           operand, output, jnp.array([[0, 1, 3]], dtype=jnp.int32), send_sizes,
-          output_offsets, recv_sizes)
+          output_offsets, recv_sizes, axis_name=axis_name)
 
     with self.assertRaisesWithLiteralMatch(
         ValueError,
         "ragged_all_to_all input_offsets must be rank 1 with positive dimension"
         " size, but got shape (0,)",
     ):
-      jax.jit(lax.ragged_all_to_all).lower(
+      jax.jit(lax.ragged_all_to_all, static_argnames='axis_name').lower(
           operand, output, jnp.array([], dtype=jnp.int32), send_sizes,
-          output_offsets, recv_sizes)
+          output_offsets, recv_sizes, axis_name=axis_name)
 
     with self.assertRaisesWithLiteralMatch(
         ValueError,
         "ragged_all_to_all send_sizes must be rank 1 with positive dimension"
         " size, but got shape (1, 3)",
     ):
-      jax.jit(lax.ragged_all_to_all).lower(
+      jax.jit(lax.ragged_all_to_all, static_argnames='axis_name').lower(
           operand, output, input_offsets,
-          jnp.array([[1, 2, 3]], dtype=jnp.int32), output_offsets, recv_sizes)
+          jnp.array([[1, 2, 3]], dtype=jnp.int32), output_offsets, recv_sizes,
+          axis_name=axis_name)
 
     with self.assertRaisesWithLiteralMatch(
         ValueError,
         "ragged_all_to_all send_sizes must be rank 1 with positive dimension"
         " size, but got shape (0,)",
     ):
-      jax.jit(lax.ragged_all_to_all).lower(
+      jax.jit(lax.ragged_all_to_all, static_argnames='axis_name').lower(
           operand, output, input_offsets, jnp.array([], dtype=jnp.int32),
-          output_offsets, recv_sizes)
+          output_offsets, recv_sizes, axis_name=axis_name)
 
     with self.assertRaisesWithLiteralMatch(
         ValueError,
         "ragged_all_to_all output_offsets must be rank 1 with positive"
         " dimension size, but got shape (1, 3)",
     ):
-      jax.jit(lax.ragged_all_to_all).lower(
+      jax.jit(lax.ragged_all_to_all, static_argnames='axis_name').lower(
           operand, output, input_offsets, send_sizes,
-          jnp.array([[0, 1, 3]], dtype=jnp.int32), recv_sizes)
+          jnp.array([[0, 1, 3]], dtype=jnp.int32), recv_sizes,
+          axis_name=axis_name)
 
     with self.assertRaisesWithLiteralMatch(
         ValueError,
         "ragged_all_to_all output_offsets must be rank 1 with positive"
         " dimension size, but got shape (0,)",
     ):
-      jax.jit(lax.ragged_all_to_all).lower(
+      jax.jit(lax.ragged_all_to_all, static_argnames='axis_name').lower(
           operand, output, input_offsets, send_sizes,
-          jnp.array([], dtype=jnp.int32), recv_sizes)
+          jnp.array([], dtype=jnp.int32), recv_sizes, axis_name=axis_name)
 
     with self.assertRaisesWithLiteralMatch(
         ValueError,
         "ragged_all_to_all recv_sizes must be rank 1 with positive dimension"
         " size, but got shape (1, 3)",
     ):
-      jax.jit(lax.ragged_all_to_all).lower(
+      jax.jit(lax.ragged_all_to_all, static_argnames='axis_name').lower(
           operand, output, input_offsets, send_sizes, output_offsets,
-          jnp.array([[1, 2, 3]], dtype=jnp.int32))
+          jnp.array([[1, 2, 3]], dtype=jnp.int32), axis_name=axis_name)
 
     with self.assertRaisesWithLiteralMatch(
         ValueError,
         "ragged_all_to_all recv_sizes must be rank 1 with positive dimension"
         " size, but got shape (0,)",
     ):
-      jax.jit(lax.ragged_all_to_all).lower(
+      jax.jit(lax.ragged_all_to_all, static_argnames='axis_name').lower(
           operand, output, input_offsets, send_sizes, output_offsets,
-          jnp.array([], dtype=jnp.int32))
+          jnp.array([], dtype=jnp.int32), axis_name=axis_name)
 
   @jtu.sample_product(
       [

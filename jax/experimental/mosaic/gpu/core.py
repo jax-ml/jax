@@ -28,7 +28,9 @@ import weakref
 
 import jax
 from jax._src.interpreters import mlir
+from jax._src.lib import mosaic_gpu_dialect as dialect
 from jaxlib.mlir import ir
+from jaxlib.mlir import passmanager
 from jaxlib.mlir.dialects import builtin
 from jaxlib.mlir.dialects import func
 from jaxlib.mlir.dialects import gpu
@@ -36,8 +38,6 @@ from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import nvvm
 import numpy as np
-
-from jax._src.lib import mosaic_gpu_dialect as dialect  # noqa: F401
 
 if dialect is not None:
   from . import dialect_lowering
@@ -62,6 +62,9 @@ else:
 
 PTXAS_PATH = os.path.join(CUDA_ROOT, "bin/ptxas")
 NVDISASM_PATH = os.path.join(CUDA_ROOT, "bin/nvdisasm")
+
+# This tracks the latest Mosaic GPU IR version with a monthly delay.
+FWD_COMPAT_IR_VERSION = 1
 
 c = utils.c  # This is too common to fully qualify.
 
@@ -88,7 +91,7 @@ mosaic_gpu_p.multiple_results = True
 
 @mosaic_gpu_p.def_abstract_eval
 def _mosaic_gpu_abstract_eval(*_, module, out_types):
-  del module # Unused.
+  del module  # Unused.
   return [jax._src.core.ShapedArray(t.shape, t.dtype) for t in out_types]
 
 # TODO(apaszke): Implement a proper system for managing kernel lifetimes
@@ -103,22 +106,28 @@ def _mosaic_gpu_lowering_rule(
     input_output_aliases: tuple[tuple[int, int], ...] = (),
 ):
   assert len(out_types) == len(ctx.avals_out)
-  kernel_id = hashlib.sha256(module).digest()
+  module = _run_serde_pass(
+      module,
+      serialize=True,
+      ir_version=FWD_COMPAT_IR_VERSION if ctx.is_forward_compat() else None,
+  )
+  module_asm = module.operation.get_asm(binary=True, enable_debug_info=True)
+  kernel_id = hashlib.sha256(module_asm).digest()
   # Note that this is technically only a half measure. Someone might load a
   # compiled module with a hash collision from disk. But that's so unlikely with
   # SHA256 that it shouldn't be a problem.
   if (kernel_text := KNOWN_KERNELS.get(kernel_id, None)) is not None:
-    if kernel_text != module:
+    if kernel_text != module_asm:
       raise RuntimeError("Hash collision!")
   else:
-    KNOWN_KERNELS[kernel_id] = module
+    KNOWN_KERNELS[kernel_id] = module_asm
   op = mlir.custom_call(
       "mosaic_gpu",
       result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
       operands=args,
       operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
       result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
-      backend_config=kernel_id + module,
+      backend_config=kernel_id + module_asm,
       operand_output_aliases=dict(input_output_aliases),
   )
   return op.results
@@ -183,9 +192,7 @@ def _construct_smem_reftree(
     def get_barrier_ptr(num_barriers: int) -> ir.Value:
       nonlocal dynamic_smem_offset
       workgroup_nvptx_address_space = (
-          dialect_lowering.gpu_address_space_to_nvptx(
-              gpu.AddressSpace.Workgroup
-          )
+          utils.gpu_address_space_to_nvptx(gpu.AddressSpace.Workgroup)
       )
       smem_base_ptr = utils.memref_ptr(
           dynamic_smem, memory_space=workgroup_nvptx_address_space
@@ -427,6 +434,30 @@ def _lower_as_gpu_kernel(
   return module, out_shape, unwrap_output_tuple, launch_ctx, scratch_arr
 
 
+def _run_serde_pass(
+    module: ir.Module, *, serialize: bool, ir_version: int | None = None
+) -> ir.Module:
+  module = ir.Module.parse(
+      module.operation.get_asm(binary=True, enable_debug_info=True),
+      context=module.context,
+  )
+  pipeline = passmanager.PassManager.parse(
+      "builtin.module(mosaic_gpu-serde{serialize="
+      + str(serialize).lower()
+      + (f" target-version={ir_version}" if ir_version is not None else "")
+      + "})",
+      module.context,
+  )
+  allow_unregistered_dialects = module.context.allow_unregistered_dialects
+  module.context.allow_unregistered_dialects = True
+  try:
+    pipeline.run(module.operation)
+    module.operation.verify()
+  finally:
+    module.context.allow_unregistered_dialects = allow_unregistered_dialects
+  return module
+
+
 def _initialize_scratch(
     launch_ctx : launch_context.LaunchContext,
     scratch_arr: ir.Value,
@@ -457,10 +488,6 @@ def _declare_runtime_functions():
   func.FuncOp(
       "mosaic_gpu_init_tma_desc", init_tma_desc_type, visibility="private"
   )
-  memcpy_async_type = ir.FunctionType.get([ptr_ty, ptr_ty, i64, ptr_ty], [])
-  func.FuncOp(
-      "mosaic_gpu_memcpy_async_h2d", memcpy_async_type, visibility="private"
-  )
 
 
 def as_gpu_kernel(
@@ -474,6 +501,7 @@ def as_gpu_kernel(
     cluster: tuple[int, int, int] = (1, 1, 1),
     module_name: str = "unknown",
     kernel_name: str | None = None,
+    ir_version: int | None = None,
     thread_semantics: ThreadSemantics = ThreadSemantics.Lane,
 ):
   if isinstance(in_shape, list):
@@ -506,13 +534,8 @@ def as_gpu_kernel(
           f" {arg_treedef}, ({args=})"
       )
 
-  module_asm = module.operation.get_asm(binary=True, enable_debug_info=True)
-  def bind(*args):
-    return mosaic_gpu_p.bind(
-        *args,
-        out_types=out_shape,
-        module=module_asm,
-    )
+  def bind(*args) -> Any:
+    return mosaic_gpu_p.bind(*args, module=module, out_types=out_shape)
 
   if prof_spec is not None:
     @jax.jit

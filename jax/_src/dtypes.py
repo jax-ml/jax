@@ -93,6 +93,7 @@ class ExtendedDType(StrictABC):
 # TODO: remove Optional when minimum ml_dtypes version >= 0.5.0
 float8_e3m4: type[np.generic] | None = None
 float8_e4m3: type[np.generic] | None = None
+float8_e8m0fnu: type[np.generic] | None = None
 float8_e4m3b11fnuz: type[np.generic] = ml_dtypes.float8_e4m3b11fnuz
 float8_e4m3fn: type[np.generic] = ml_dtypes.float8_e4m3fn
 float8_e4m3fnuz: type[np.generic] = ml_dtypes.float8_e4m3fnuz
@@ -101,6 +102,7 @@ float8_e5m2fnuz: type[np.generic] = ml_dtypes.float8_e5m2fnuz
 
 _float8_e3m4_dtype: np.dtype | None = None
 _float8_e4m3_dtype: np.dtype | None = None
+_float8_e8m0fnu_dtype: np.dtype | None = None
 _float8_e4m3b11fnuz_dtype: np.dtype = np.dtype(float8_e4m3b11fnuz)
 _float8_e4m3fn_dtype: np.dtype = np.dtype(float8_e4m3fn)
 _float8_e4m3fnuz_dtype: np.dtype = np.dtype(float8_e4m3fnuz)
@@ -155,6 +157,12 @@ if hasattr(ml_dtypes, "float8_e3m4"):
   _custom_float_scalar_types.insert(0, float8_e3m4)  # type: ignore[arg-type]
   _custom_float_dtypes.insert(0, _float8_e3m4_dtype)
   _float8_dtypes.insert(0, _float8_e3m4_dtype)
+if hasattr(ml_dtypes, "float8_e8m0fnu"):
+  float8_e8m0fnu = ml_dtypes.float8_e8m0fnu
+  _float8_e8m0fnu_dtype = np.dtype(float8_e8m0fnu)
+  _custom_float_scalar_types.insert(0, float8_e8m0fnu)  # type: ignore[arg-type]
+  _custom_float_dtypes.insert(0, _float8_e8m0fnu_dtype)
+  _float8_dtypes.insert(0, _float8_e8m0fnu_dtype)
 
 # 2-bit integer support
 int2: type[np.generic] | None = None
@@ -735,8 +743,15 @@ def promote_types(a: DTypeLike, b: DTypeLike) -> DType:
   b_tp = cast(JAXType, b if any(b is t for t in _weak_types) else np.dtype(b))
   return np.dtype(_least_upper_bound(config.numpy_dtype_promotion.value, a_tp, b_tp))
 
+
+def register_weak_scalar_type(typ: type):
+  """Register a scalar type as a weak type."""
+  _registered_weak_types.append(typ)
+_registered_weak_types: list[JAXType] = []
+
+
 def is_weakly_typed(x: Any) -> bool:
-  if type(x) in _weak_types:
+  if type(x) in _weak_types or type(x) in _registered_weak_types:
     return True
   try:
     return x.aval.weak_type

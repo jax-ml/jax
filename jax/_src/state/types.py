@@ -320,6 +320,15 @@ class AbstractRef(core.AbstractValue):
           f"`Ref{{{self.inner_aval.str_short()}}} has no `dtype`."
       ) from None
 
+  @property
+  def sharding(self):
+    try:
+      return self.inner_aval.sharding  # pytype: disable=attribute-error
+    except AttributeError:
+      raise AttributeError(
+          f"`Ref{{{self.inner_aval.str_short()}}} has no `sharding`."
+      ) from None
+
   @core.aval_property
   def at(self):
     return RefIndexer(self)
@@ -367,9 +376,9 @@ class AbstractRef(core.AbstractValue):
 def _map_ref(size, axis, ref_aval):
   return AbstractRef(core.mapped_aval(size, axis, ref_aval.inner_aval))
 
-def _unmap_ref(size, axis_name, axis, ref_aval):
-  return AbstractRef(core.unmapped_aval(size, axis_name, axis,
-                                        ref_aval.inner_aval))
+def _unmap_ref(size, axis, explicit_mesh_axis, ref_aval):
+  return AbstractRef(core.unmapped_aval(
+      size, axis, ref_aval.inner_aval, explicit_mesh_axis))
 
 core.aval_mapping_handlers[AbstractRef] = (_map_ref, _unmap_ref)
 

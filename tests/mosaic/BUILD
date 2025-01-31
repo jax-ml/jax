@@ -35,7 +35,7 @@ jax_multiplatform_test(
     enable_backends = [],
     enable_configs = [
         "gpu_h100",
-        "gpu_h100_2gpu",
+        "gpu_h100x2",
     ],
     shard_count = 8,
     tags = ["multiaccelerator"],

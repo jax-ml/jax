@@ -19,11 +19,11 @@ from setuptools import setup, find_packages
 
 project_name = 'jax'
 
-_current_jaxlib_version = '0.4.38'
+_current_jaxlib_version = '0.5.0'
 # The following should be updated after each new jaxlib release.
-_latest_jaxlib_version_on_pypi = '0.4.38'
+_latest_jaxlib_version_on_pypi = '0.5.0'
 
-_libtpu_version = '0.0.7'
+_libtpu_version = '0.0.8'
 _libtpu_nightly_terminal_version = '0.1.dev20241010+nightly.cleanup'
 
 def load_version_module(pkg_path):
@@ -74,7 +74,7 @@ setup(
         'ci': [f'jaxlib=={_latest_jaxlib_version_on_pypi}'],
 
         # Cloud TPU VM jaxlib can be installed via:
-        # $ pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+        # $ pip install "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
         'tpu': [
           f'jaxlib>={_current_jaxlib_version},<={_jax_version}',
           # TODO(phawkins): remove the libtpu-nightly dependency in Q1 2025.

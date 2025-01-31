@@ -1,0 +1,61 @@
+# false-positive caused because we haven't tsan-instrumented libgcc_s. Multiple threads
+# are racing on a call to __register_frame_info(), but that function appears to be correctly locked internally.
+race:llvm::RuntimeDyldELF::registerEHFrames
+
+# https://github.com/python/cpython/issues/128050
+race:partial_vectorcall_fallback
+
+# https://github.com/python/cpython/issues/128100
+race:ensure_nonmanaged_dict
+
+# https://github.com/openxla/xla/issues/20686
+race:dnnl_sgemm
+
+# https://github.com/python/cpython/issues/128130
+race_top:run_eval_code_obj
+
+# Likely only happens when the process is crashing.
+race:dump_traceback
+
+# https://github.com/python/cpython/issues/128137
+# Fixed in Python 3.14, but not backported to 3.13.
+race:immortalize_interned
+
+# https://github.com/python/cpython/issues/128144
+# Fixed in Python 3.14, but not backported to 3.13.
+race_top:PyMember_GetOne
+
+# https://github.com/python/cpython/issues/128133
+# Fixed in Python 3.14, but not backported to 3.13.
+race:bytes_hash
+
+# https://github.com/python/cpython/issues/128657
+race:py_digest_by_name
+
+# https://github.com/python/cpython/issues/128714
+race:func_get_annotations
+
+# Races because the LAPACK and BLAS in our scipy isn't TSAN instrumented.
+race:heevd_ffi
+race:gesdd_ffi
+race:dscal_k_
+race:scal_k_
+race:gemm_beta
+race:gemm_oncopy
+
+
+# Races that are probably fixed
+# https://github.com/numpy/numpy/issues/28041
+# race:get_initial_from_ufunc
+#
+# https://github.com/numpy/numpy/issues/28042
+# race:PyArray_UpdateFlags
+#
+# https://github.com/python/cpython/issues/128717
+# race:Py_SetRecursionLimit
+#
+# https://github.com/numpy/numpy/issues/28143
+# race:PyArray_CheckFromAny_int
+
+# https://github.com/python/cpython/issues/128759
+# race:PyType_Modified

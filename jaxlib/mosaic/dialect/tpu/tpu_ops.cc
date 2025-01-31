@@ -30,6 +30,7 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "absl/log/check.h"
 #include "absl/strings/str_format.h"
+#include "mlir/include/mlir/Dialect/Math/IR/Math.h"
 #include "mlir/include/mlir/IR/Builders.h"
 #include "mlir/include/mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/include/mlir/IR/BuiltinTypes.h"
@@ -1053,6 +1054,16 @@ LogicalResult ShuffledStoreOp::canonicalize(ShuffledStoreOp op,
   return success();
 }
 
+LogicalResult FPToSIOp::canonicalize(FPToSIOp op, PatternRewriter &rewriter) {
+  if (auto round_op = op.getInput().getDefiningOp<mlir::math::RoundEvenOp>()) {
+    rewriter.replaceOpWithNewOp<tpu::FPToSIOp>(
+        op, op.getType(), round_op.getOperand(),
+        tpu::RoundingMode::kToNearestEven);
+    return success();
+  }
+  return failure();
+}
+
 LogicalResult ConcatenateOp::verify() {
   auto dimension = getDimension();
   if (getOperands().size() < 2) {
@@ -1130,6 +1141,15 @@ LogicalResult WeirdOp::verify() {
     if (!out_type.isInteger(1)) {
       return emitOpError("Output type must be I1 scalar");
     }
+  }
+  return success();
+}
+
+LogicalResult LogBufferOp::verify() {
+  const MemRefType input_type = getInput().getType();
+  if (input_type.getRank() != getShape().size()) {
+    return emitOpError(
+        "Shape must have the same length as the rank of the input");
   }
   return success();
 }

@@ -1,6 +1,8 @@
 (jep-9263)=
 # JEP 9263: Typed keys & pluggable RNGs
 
+<!--* freshness: { reviewed: '2025-01-13' } *-->
+
 *Jake VanderPlas, Roy Frostig*
 
 *August 2023*
@@ -172,7 +174,7 @@ random-bit generation operation):
 Array((), dtype=key<fry>) overlaying:
 [0 0]
 >>> jax.random.uniform(key, shape=(3,))
-Array([0.9653214 , 0.31468165, 0.63302994], dtype=float32)
+Array([0.947667  , 0.9785799 , 0.33229148], dtype=float32)
 
 >>> key = jax.random.key(0, impl='rbg')
 >>> key

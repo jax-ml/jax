@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict, deque, namedtuple
 from collections.abc import (Callable, Collection, Hashable, Iterable, Iterator,
                              Sequence, MutableSet, MutableMapping)
-from contextlib import contextmanager, ExitStack
+from contextlib import contextmanager
 from dataclasses import dataclass
 import functools
 from functools import partial, total_ordering
@@ -39,6 +39,7 @@ from jax._src import config
 from jax._src import effects
 from jax._src import compute_on
 from jax._src import mesh as mesh_lib
+from jax._src.mesh import AxisTypes
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
@@ -52,6 +53,7 @@ from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            partition_list, StrictABCMeta)
 import jax._src.pretty_printer as pp
 from jax._src.lib import jax_jit
+from jax._src.lib import xla_client
 from jax._src import traceback_util
 from jax._src.typing import Array, DimSize, Shape
 from jax._src import typing
@@ -61,6 +63,8 @@ traceback_util.register_exclusion(__file__)
 
 zip, unsafe_zip = safe_zip, zip
 map, unsafe_map = safe_map, map
+
+config_ext = xla_client._xla.config
 
 
 _TRACER_ERROR_NUM_TRACEBACK_FRAMES = config.int_flag(
@@ -77,11 +81,32 @@ Effects = effects.Effects
 EffectTypeSet = effects.EffectTypeSet
 no_effects: Effects = effects.no_effects
 
+
+# TODO(necula): make this an extension of TracingDebugInfo
 class JaxprDebugInfo(NamedTuple):
-  traced_for: str     # e.g. 'jit', 'scan', etc
-  func_src_info: str | None  # e.g. f'{fun.__name__} at {filename}:{lineno}'
-  arg_names: tuple[str | None, ...]     # e.g. ('args[0]', ... )
+  # An extension of lu.TracingDebugInfo; see comments there
+  traced_for: str
+  func_src_info: str
+  arg_names: tuple[str | None, ...]
+  # This is formed after tracing, when we have concrete `result_paths`
   result_paths: tuple[str, ...]  # e.g. ('[0]', '[1]', ...)
+
+  def safe_arg_names(self, expected: int) -> tuple[str | None, ...]:
+    """Get the arg_names with a safety check."""
+    if len(self.arg_names) == expected:
+      return self.arg_names
+    else:
+      # TODO(necula): this should not happen
+      return (None,) * expected
+
+  def safe_result_paths(self, expected: int) -> tuple[str | None, ...]:
+    """Get the result_paths with a safety check."""
+    if len(self.result_paths) == expected:
+      return self.result_paths
+    else:
+      # TODO(necula): this should not happen
+      return ("",) * expected
+
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
@@ -140,8 +165,9 @@ class Jaxpr:
     self._eqns = list(eqns)
     self._effects = effects
     self._debug_info = debug_info
-    assert (not debug_info or len(debug_info.arg_names) == len(invars) and
-            len(debug_info.result_paths) == len(outvars))
+    # TODO(necula): re-enable these safety checks
+    # assert (not debug_info or len(debug_info.arg_names) == len(invars)), (debug_info, invars)
+    # assert (not debug_info or len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
 
   def __str__(self):
     return str(self.pretty_print())
@@ -267,7 +293,59 @@ def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
     return eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts, *args)
 
 
+# This context manager is fairly hot, because it is frequently called for every
+# jaxpr equation.
+# This context manager is implemented as a class with explicit __enter__ and
+# __exit__ methods since a @contextlib.contextmanager is significantly slower.
+# We also in effect fuse four other context managers into one, mostly to
+# save allocations.
+class JaxprEqnContextManager:
+  __slots__ = ['context', 'prev_compute_type', 'prev_threefry_partitionable',
+               'prev_xla_metadata', 'prev_abstract_mesh']
+
+  def __init__(self, context):
+    self.context = context
+
+  def __enter__(self):
+    self.prev_compute_type = config.compute_on_context_manager.swap_local(
+        self.context.compute_type
+    )
+    if (
+        self.prev_compute_type is not None
+        and self.prev_compute_type is not config_ext.unset
+        and self.context.compute_type != self.prev_compute_type
+    ):
+      config.compute_on_context_manager.set_local(self.prev_compute_type)
+      raise NotImplementedError(
+          "Nesting `compute_on` with different compute types is not supported"
+          f" yet. Current compute_on type: {self.prev_compute_type}"
+      )
+
+    self.prev_threefry_partitionable = config.threefry_partitionable.swap_local(
+        self.context.threefry_partitionable
+    )
+    if self.context.xla_metadata:
+      self.prev_xla_metadata = config.xla_metadata_context_manager.get_local()
+      updated = xla_metadata_lib.update_metadata(
+          self.prev_xla_metadata, self.context.xla_metadata
+      )
+      config.xla_metadata_context_manager.set_local(updated)
+    self.prev_abstract_mesh = config.abstract_mesh_context_manager.swap_local(
+        self.context.cur_abstract_mesh
+    )
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    config.compute_on_context_manager.set_local(self.prev_compute_type)
+    config.threefry_partitionable.set_local(self.prev_threefry_partitionable)
+    if self.context.xla_metadata is not None:
+      config.xla_metadata_context_manager.set_local(self.prev_xla_metadata)
+    config.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
+
+
 class JaxprEqnContext:
+
+  __slots__ = ['compute_type', 'threefry_partitionable', 'xla_metadata',
+               'cur_abstract_mesh']
 
   def __init__(self, compute_type: str | None, threefry_partitionable: bool,
                xla_metadata=None):
@@ -275,20 +353,10 @@ class JaxprEqnContext:
     self.threefry_partitionable = threefry_partitionable
     self.cur_abstract_mesh = mesh_lib.get_abstract_mesh()
     self.xla_metadata = xla_metadata
-    self._managers = [
-        (compute_on.extend_compute_type, self.compute_type),
-        (config.threefry_partitionable.__call__, self.threefry_partitionable),
-        (mesh_lib.set_abstract_mesh, self.cur_abstract_mesh),
-        (xla_metadata_lib.set_xla_metadata, self.xla_metadata),
-    ]
 
   @property
-  @contextmanager
   def manager(self):
-    with ExitStack() as stack:
-      for manager, val in self._managers:
-        stack.enter_context(manager(val))
-      yield
+    return JaxprEqnContextManager(self)
 
   def __repr__(self):
     return (
@@ -540,8 +608,12 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
 
 def check_avals_context_mesh(avals, prim_name):
   if config.sharding_in_types.value:
+    cur_mesh = mesh_lib.get_abstract_mesh()
     for a in avals:
-      cur_mesh = mesh_lib.get_abstract_mesh()
+      if a.sharding.mesh.empty or cur_mesh.empty:
+        continue
+      if a.sharding.mesh._are_all_axes_auto and cur_mesh._are_all_axes_auto:
+        continue
       if a.sharding.mesh != cur_mesh:
         raise ValueError(
             f"For primitive {prim_name}, context mesh {cur_mesh} should match"
@@ -549,12 +621,27 @@ def check_avals_context_mesh(avals, prim_name):
             " error occurs at source: "
             f" {source_info_util.summarize(source_info_util.current())}")
 
+# TODO(yashkatariya, dougalm): Remove this and replace with canonicalize_value
+# function which casts scalar, numpy arrays, etc to jax arrays so that values
+# passed to primitives are always have avals, etc i.e. they are canonical and
+# also does mesh casting, etc
+def cast_from_auto_to_manual(avals):
+  if not config.sharding_in_types.value:
+    return avals
+
+  from jax._src.sharding_impls import NamedSharding  # type: ignore
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  return [a.update(sharding=NamedSharding(cur_mesh, P(*[None] * a.ndim)))
+          if (not a.sharding.mesh.empty and cur_mesh._are_all_axes_manual and
+              a.sharding.mesh._are_all_axes_auto)
+          else a for a in avals]
 
 # -------------------- tracing --------------------
 
 TracerType = TypeVar('TracerType', bound='Tracer')
 
 class Trace(Generic[TracerType]):
+  __slots__ = ("__weakref__", "_invalidated")
 
   def process_primitive(self, primitive, tracers, params):
     raise NotImplementedError("must override")
@@ -672,6 +759,9 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
   __slots__ = ['_trace', '_line_info']
   __hash__ = None  # type: ignore
 
+  _trace: Trace
+  _line_info: source_info_util.SourceInfo | None
+
   dtype = _aval_property('dtype')
   ndim = _aval_property('ndim')
   size = _aval_property('size')
@@ -726,9 +816,10 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
     # This attribute is part of the jax.Array API, but only defined on concrete arrays.
     # Raising a ConcretizationTypeError would make sense, but for backward compatibility
     # we raise an AttributeError so that hasattr() and getattr() work as expected.
-    raise AttributeError(self,
-      f"The 'sharding' attribute is not available on {self._error_repr()}."
-      f"{self._origin_msg()}")
+    raise AttributeError(
+        self,
+        f"The 'sharding' attribute is not available on {self._error_repr()}."
+        f"{self._origin_msg()}")
 
   @property
   def committed(self):
@@ -811,6 +902,12 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
   def __getattr__(self, name):
     # if the aval property raises an AttributeError, gets caught here
     assert not config.enable_checks.value or name != "aval"
+
+    if name == 'sharding':
+      raise AttributeError(
+        self,
+        f"The 'sharding' attribute is not available on {self._error_repr()}."
+        f"{self._origin_msg()}")
 
     try:
       attr = getattr(self.aval, name)
@@ -1072,13 +1169,22 @@ def take_current_trace():
     trace_ctx.set_trace(prev)
 
 @contextmanager
-def set_current_trace(new):
+def set_current_trace(trace, check_leaks=False):
   prev = trace_ctx.trace
   try:
-    trace_ctx.set_trace(new)
+    trace_ctx.set_trace(trace)
     yield
   finally:
     trace_ctx.set_trace(prev)
+    if check_leaks and config.check_tracer_leaks.value:
+      trace.invalidate()
+      trace_ref = ref(trace)
+      del trace
+      live_trace = trace_ref()
+      if live_trace is not None:
+        leaked_tracers = maybe_find_leaked_tracers(live_trace)
+        if leaked_tracers:
+          raise leaked_tracer_error("trace", live_trace, leaked_tracers)
 
 @contextmanager
 def extend_axis_env_nd(name_size_pairs : Iterable[tuple[AxisName, int]]):
@@ -1408,6 +1514,14 @@ def check_valid_jaxtype(x):
     raise TypeError(
       f"Value {x!r} of type {type(x)} is not a valid JAX type")
 
+def update_aval_with_sharding(aval, sharding):
+  from jax._src.sharding_impls import NamedSharding  # type: ignore
+  if config.sharding_in_types.value and isinstance(sharding, NamedSharding):
+    aval = aval.update(sharding=NamedSharding(
+        sharding.mesh.abstract_mesh,
+        sharding.spec._normalized_spec_for_aval(aval.ndim)))
+  return aval
+
 
 # We have three flavors of abstractification APIs here which each used to have
 # their own separate implementation. Now they're effectively the same, with the
@@ -1431,7 +1545,9 @@ def shaped_abstractify(x):
   if hasattr(x, '__jax_array__'):
     return shaped_abstractify(x.__jax_array__())
   if hasattr(x, 'dtype'):
-    return ShapedArray(np.shape(x), x.dtype, weak_type=getattr(x, 'weak_type', False))
+    aval = ShapedArray(np.shape(x), x.dtype,
+                       weak_type=getattr(x, 'weak_type', False))
+    return update_aval_with_sharding(aval, getattr(x, 'sharding', None))
   raise TypeError(
       f"Cannot interpret value of type {typ} as an abstract array; it "
       "does not have a dtype attribute")
@@ -1651,39 +1767,62 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
   return TypeError(msg)
 
+def _make_lengths_same(sharding, ndim):
+  if ndim > len(sharding.spec):
+    return sharding.with_spec(sharding.spec._normalized_spec_for_aval(ndim))
+  if ndim < len(sharding.spec):
+    return sharding.with_spec(sharding.spec[:ndim])
+  assert False, "unreachable"
+
+
 # TODO(yashkatariya): Only works with User/Auto. Generalize it to work with
 # Collective too.
-def _maybe_modify_sharding(sharding):
-  if mesh_lib.AxisTypes.Auto not in sharding.mesh.axis_types:
-    return sharding
-
-  new_spec = []
-  for s in sharding.spec:
-    if s is None:
+def modify_spec_for_auto_manual(spec, mesh) -> P:
+  new_spec = []  # type: ignore
+  for s in spec:
+    if not s:
       new_spec.append(s)
     else:
       temp_s = s[0] if isinstance(s, tuple) else s
       new_spec.append(
           None
-          if sharding.mesh._name_to_type[temp_s] == mesh_lib.AxisTypes.Auto else s)
-  return sharding.with_spec(new_spec)
+          if mesh._name_to_type[temp_s] in (AxisTypes.Auto, AxisTypes.Manual)
+          else s)
+  return P(*new_spec)
+
+def _maybe_modify_sharding(sharding, ndim):
+  if sharding.mesh._are_all_axes_explicit:
+    out = sharding
+  elif all(s is None for s in sharding.spec):
+    out = sharding
+  else:
+    out = sharding.with_spec(modify_spec_for_auto_manual(
+        sharding.spec, sharding.mesh))
+  if (len(out.spec) != ndim and
+      (out.mesh._are_all_axes_auto or out.mesh._are_all_axes_manual)):
+    out = _make_lengths_same(out, ndim)
+  return out
 
 
 def get_sharding(sharding, ndim):
   from jax._src.sharding_impls import NamedSharding  # type: ignore
 
   if sharding is not None:
-    if len(sharding.spec) != ndim:
+    out_s = _maybe_modify_sharding(sharding, ndim)
+    if len(out_s.spec) != ndim:
       raise ValueError(
           "Length of sharding.spec must be equal to aval's ndim. Got"
-          f" sharding.spec {sharding.spec} and aval.ndim {ndim}")
-    return _maybe_modify_sharding(sharding)
-
-  context_mesh = mesh_lib.get_abstract_mesh()
-  if not context_mesh:
-    raise RuntimeError("Please set the mesh via `jax.set_mesh` API.")
-  assert sharding is None
-  return NamedSharding(context_mesh, P(*[None] * ndim))
+          f" sharding.spec {out_s.spec} and aval.ndim {ndim}")
+  else:
+    cur_mesh = mesh_lib.get_abstract_mesh()
+    if cur_mesh.empty:
+      raise RuntimeError("Please set the mesh via `jax.set_mesh` API.")
+    assert sharding is None
+    out_s = NamedSharding(cur_mesh, P(*[None] * ndim))
+  if not isinstance(out_s.mesh, mesh_lib.AbstractMesh):
+    raise ValueError("Mesh of an aval must be an AbstractMesh. "
+                     f"Got {out_s.mesh} of type {type(out_s.mesh)}")
+  return out_s
 
 
 class ShapedArray(UnshapedArray):
@@ -1696,9 +1835,6 @@ class ShapedArray(UnshapedArray):
     self.weak_type = weak_type
     if config.sharding_in_types.value:
       self.sharding = get_sharding(sharding, len(self.shape))
-      if not isinstance(self.sharding.mesh, mesh_lib.AbstractMesh):
-        raise ValueError(
-            f"Mesh of an aval must be an AbstractMesh. Got {self.sharding.mesh}")
 
   def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
     if shape is None:
@@ -1772,14 +1908,6 @@ def _get_shape_sharding_str(shape, spec):
       out.append(f"{s1}@{s2}")
   return ','.join(out)
 
-def _get_abstract_sharding(val):
-  from jax._src.sharding_impls import NamedSharding  # pytype: disable=import-error
-
-  if (config.sharding_in_types.value and hasattr(val, 'sharding') and
-      isinstance(val.sharding, NamedSharding)):
-    return NamedSharding(val.sharding.mesh.abstract_mesh,
-                         val.sharding.spec._normalized_spec(val.ndim))
-  return None
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
   if isinstance(primal_dtype, dtypes.ExtendedDType):
@@ -1831,6 +1959,11 @@ class DShapedArray(UnshapedArray):
     if weak_type is None:
       weak_type = self.weak_type
     return DShapedArray(shape, dtype, weak_type)
+
+  @property
+  def sharding(self):
+    from jax._src.sharding_impls import NamedSharding  # type: ignore
+    return NamedSharding(mesh_lib.empty_abstract_mesh, P())
 
   def _len(self, tracer):
     return self.shape[0]
@@ -2317,11 +2450,11 @@ def mapped_aval(size: AxisSize, axis: int | None,
   else:
     raise TypeError(f"no mapping handler for {aval} of type {type(aval)}")
 
-def unmapped_aval(size: AxisSize, axis_name, axis: int | None,
-                  aval: AbstractValue) -> AbstractValue:
+def unmapped_aval(size: AxisSize, axis: int | None,
+                  aval: AbstractValue, explicit_mesh_axis=None) -> AbstractValue:
   _, handler = aval_mapping_handlers.get(type(aval), (None, None))
   if handler is not None:
-    return handler(size, axis_name, axis, aval)
+    return handler(size, axis, explicit_mesh_axis, aval)
   else:
     raise TypeError(f"no unmapping handler for {aval} of type {type(aval)}")
 
@@ -2337,11 +2470,12 @@ def _map_shaped_array(
                      weak_type=aval.weak_type, sharding=sharding)
 
 def _unmap_shaped_array(
-    size: int, axis_name: AxisName, axis: int | None, aval: ShapedArray
-  ) -> ShapedArray:
+    size: int, axis: int | None, explicit_mesh_axis, aval: ShapedArray
+    ) -> ShapedArray:
   if axis is None: return aval
   elif type(axis) is int:
-    sharding = (aval.sharding.with_spec(tuple_insert(aval.sharding.spec, axis, axis_name))
+    sharding = (aval.sharding.with_spec(tuple_insert(aval.sharding.spec, axis,
+                                                     explicit_mesh_axis))
                 if config.sharding_in_types.value else None)
     return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
                        weak_type=aval.weak_type, sharding=sharding)
@@ -2354,7 +2488,7 @@ def _map_dshaped_array(
                       aval.weak_type)
 
 def _unmap_dshaped_array(
-    size: AxisSize, axis_name: AxisName, axis: int | None, aval: DShapedArray
+    size: AxisSize, axis: int | None, explicit_mesh_axis, aval: DShapedArray
   ) -> DShapedArray:
   if axis is None: return aval
   elif type(axis) is int:
@@ -2367,7 +2501,7 @@ AvalMapHandlerPair = tuple[Callable, Callable]
 aval_mapping_handlers: dict[type, AvalMapHandlerPair] = {
     DShapedArray:   (_map_dshaped_array, _unmap_dshaped_array),
     ShapedArray:   (_map_shaped_array, _unmap_shaped_array),
-    AbstractToken: (lambda _, __, a: a, lambda _, __, ___, a: a)
+    AbstractToken: (lambda _, __, a: a, lambda _, __, ____, a: a)
 }
 
 # When a mapped function is given no axis name, we generate a name object based
@@ -2748,7 +2882,7 @@ def _check_map(ctx_factory, prim, in_avals, params):
     raise JaxprTypeError(f"Map primitive {prim} missing 'out_axes' parameter")
   out_axes = params["out_axes"]
 
-  binder_avals = [unmapped_aval(axis_size, axis_name, in_axis, v.aval)
+  binder_avals = [unmapped_aval(axis_size, in_axis, v.aval)
                   if in_axis is not None else v.aval
                   for v, in_axis in zip(call_jaxpr.invars, in_axes)]
   for binder_aval, in_aval in zip(binder_avals, in_avals):
@@ -2760,7 +2894,7 @@ def _check_map(ctx_factory, prim, in_avals, params):
     _check_jaxpr(ctx_factory, call_jaxpr)
 
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
-  out_avals = [unmapped_aval(axis_size, axis_name, out_axis, aval)
+  out_avals = [unmapped_aval(axis_size, out_axis, aval)
                if out_axis is not None else aval
                for aval, out_axis in zip(mapped_out_avals, out_axes)]
   return out_avals, filter_named_axis_effects(call_jaxpr.effects, {axis_name})

@@ -21,25 +21,24 @@ concurrency:
 
 jobs:
   run_tests:
+    if: github.event.repository.fork == false
+    runs-on: ${{ matrix.runner }}
+    container: 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest'
+    env:
+      JAXCI_HERMETIC_PYTHON_VERSION: "3.12"
+      JAXCI_ENABLE_X64: ${{ matrix.enable-x_64 }}
+# Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:
       matrix:
         runner: ["linux-x86-n2-16"]
         enable-x_64: [1, 0]
-
-    runs-on: ${{ matrix.runner }}
-    container: 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest'
-
-    env:
-      JAXCI_HERMETIC_PYTHON_VERSION: "3.12"
-      JAXCI_ENABLE_X64: ${{ matrix.enable-x_64 }}
-
-    name: "Bazel single accelerator GPU tests (${{ matrix.runner }}, Python 3.12, x64=${{ matrix.enable-x_64 }})"
-
+    name: "Bazel single accelerator CUDA tests (${{ matrix.runner }}, Python 3.12, x64=${{ matrix.enable-x_64 }})"
+# End Presubmit Naming Check github-cuda-presubmits
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@main
         with:
           halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Run Bazel GPU Tests with RBE
-        run: ./ci/run_bazel_test_gpu_rbe.sh
+      - name: Run Bazel CUDA Tests with RBE
+        run: ./ci/run_bazel_test_cuda_rbe.sh

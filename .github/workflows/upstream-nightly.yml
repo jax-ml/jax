@@ -22,19 +22,14 @@ on:
 
 jobs:
   upstream-dev:
-    runs-on: ubuntu-20.04-16core
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-      checks: write  # for upload-artifact
-    defaults:
-      run:
-        shell: bash -l {0}
+      issues: write  # for failed-build-issue
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.13"]
-    outputs:
-      artifacts_availability: ${{ steps.status.outputs.ARTIFACTS_AVAILABLE }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       - name: Set up Python ${{ matrix.python-version }}
@@ -43,8 +38,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install JAX test requirements
         run: |
-          pip install -r build/test-requirements.txt
-          pip install pytest-reportlog
+          pip install .[ci] -r build/test-requirements.txt
       - name: Install numpy & scipy development versions
         run: |
           pip install \
@@ -56,9 +50,6 @@ jobs:
             scipy
           python -c "import numpy; print(f'{numpy.__version__=}')"
           python -c "import scipy; print(f'{scipy.__version__=}')"
-      - name: Install JAX
-        run: |
-          pip install .[ci]
       - name: Run tests
         if: success()
         id: status
@@ -73,101 +64,9 @@ jobs:
           echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
           echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
-          pytest -n auto --tb=short -rf --maxfail=20 \
-              --report-log output-${{ matrix.python-version }}-log.jsonl \
-              tests \
-              || (
-                echo 'ARTIFACTS_AVAILABLE=true' >> $GITHUB_OUTPUT && false
-              )
-      - name: Upload artifacts
-        if: |
-          failure()
-          && steps.status.outcome == 'failure'
-          && github.event_name == 'schedule'
-          && github.repository == 'jax-ml/jax'
-        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b  # v4.5.0
-        with:
-          name: output-${{ matrix.python-version }}-log.jsonl
-          path: output-${{ matrix.python-version }}-log.jsonl
-          retention-days: 5
-
-  report:
-    name: report
-    needs: upstream-dev
-    permissions:
-      contents: read
-      issues: write
-    if: |
-      failure()
-      && github.event_name == 'schedule'
-      && needs.upstream-dev.outputs.artifacts_availability == 'true'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
-        with:
-          python-version: "3.x"
-      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16  # v4.1.8
-        with:
-          path: /tmp/workspace/logs
-      - name: install requirements
-        run: |
-          python -m pip install pytest
-      - name: Move all log files into a single directory
-        run: |
-          rsync -a /tmp/workspace/logs/output-*/ ./logs
-          ls -R ./logs
-          cat logs/*.jsonl > pytest-logs.txt
-          python .github/workflows/parse_logs.py pytest-logs.txt --outfile=parsed-logs.txt
-      - name: Report failures
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea  # v7.0.1
+          pytest -n auto --tb=short --maxfail=20 tests examples
+      - name: Notify failed build
+        uses: jayqi/failed-build-issue-action@1a893bbf43ef1c2a8705e2b115cd4f0fe3c5649b  # v1.2.0
+        if: failure() && github.event.pull_request == null
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            const parsed_logs = fs.readFileSync('parsed-logs.txt', 'utf8');
-            const title = "⚠️ Nightly upstream-dev CI failed ⚠️"
-            const workflow_url = `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
-            const issue_body = `[Workflow Run URL](${workflow_url})\n${parsed_logs}`
-            // Run GraphQL query against GitHub API to find the most recent open issue used for reporting failures
-            const query = `query($owner:String!, $name:String!, $creator:String!, $label:String!){
-              repository(owner: $owner, name: $name) {
-                issues(first: 1, states: OPEN, filterBy: {createdBy: $creator, labels: [$label]}, orderBy: {field: CREATED_AT, direction: DESC}) {
-                  edges {
-                    node {
-                      body
-                      id
-                      number
-                    }
-                  }
-                }
-              }
-            }`;
-            const variables = {
-                owner: context.repo.owner,
-                name: context.repo.repo,
-                label: 'CI',
-                creator: "github-actions[bot]"
-            }
-            const result = await github.graphql(query, variables)
-            // If no issue is open, create a new issue,
-            // else update the body of the existing issue.
-            if (result.repository.issues.edges.length === 0) {
-                github.rest.issues.create({
-                    owner: variables.owner,
-                    repo: variables.name,
-                    body: issue_body,
-                    title: title,
-                    labels: [variables.label]
-                })
-            } else {
-                github.rest.issues.update({
-                    owner: variables.owner,
-                    repo: variables.name,
-                    issue_number: result.repository.issues.edges[0].node.number,
-                    body: issue_body
-                })
-            }

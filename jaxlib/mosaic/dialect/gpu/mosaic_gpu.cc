@@ -231,12 +231,6 @@ void DeclareRuntimeFunctions(mlir::OpBuilder& builder) {
           builder.getFunctionType(
               TypeRange{ptr, ptr, i64, i64, ptr, ptr, i64, ptr}, TypeRange{}))
       .setVisibility(mlir::func::FuncOp::Visibility::Private);
-
-  builder
-      .create<mlir::func::FuncOp>(
-          builder.getUnknownLoc(), kRuntimeMemcpyAsyncH2DName,
-          builder.getFunctionType(TypeRange{ptr, ptr, i64, ptr}, TypeRange{}))
-      .setVisibility(mlir::func::FuncOp::Visibility::Private);
 }
 
 bool IsContiguous(mlir::MemRefType type) {
@@ -322,7 +316,7 @@ llvm::FailureOr<WGMMALayout> GetWgmmaLayout(mlir::Location loc,
     return emitError(loc, llvm::formatv(params...));
   };
 
-  auto [strides, offset] = mlir::getStridesAndOffset(type);
+  auto [strides, offset] = type.getStridesAndOffset();
 
   WGMMALayout layout = WGMMALayout::RowMajor;
   if (strides[3] == 1) {

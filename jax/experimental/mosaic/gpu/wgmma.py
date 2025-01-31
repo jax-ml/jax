@@ -19,20 +19,21 @@ import functools
 import itertools
 
 import jax
+from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import llvm
-from jaxlib.mlir.dialects import vector
 from jaxlib.mlir.dialects import nvvm
+from jaxlib.mlir.dialects import vector
 import numpy as np
 
-import jax.experimental.mosaic.gpu as mgpu
+from . import fragmented_array as fa
 from . import utils
 
 # mypy: ignore-errors
 
-c = mgpu.c
-bytewidth = mgpu.bytewidth
+c = utils.c
+bytewidth = utils.bytewidth
 
 
 @jax.tree_util.register_pytree_node_class
@@ -44,10 +45,10 @@ class WGMMAAccumulator:
   as a WGMMA accumulator. In particular, when created from a
   FragmentedArray, the necessary synchronization is inserted at construction.
   """
-  value: mgpu.FragmentedArray
+  value: fa.FragmentedArray
 
-  def __init__(self, *, _value: mgpu.FragmentedArray, _sync: bool = True):
-    if _value.layout != mgpu.WGMMA_LAYOUT:
+  def __init__(self, *, _value: fa.FragmentedArray, _sync: bool = True):
+    if _value.layout not in (fa.WGMMA_LAYOUT, fa.TILED_LAYOUT_WGMMA):
       raise ValueError("Only WGMMA layouts supported in WGMMAAccumulator")
     self.value = _value
     if _sync:
@@ -64,8 +65,8 @@ class WGMMAAccumulator:
       dtype = f32
     zero = arith.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
     return cls(
-        _value=mgpu.FragmentedArray.splat(
-            zero, (m, n), mgpu.WGMMA_LAYOUT, is_signed=is_signed
+        _value=fa.FragmentedArray.splat(
+            zero, (m, n), fa.WGMMA_LAYOUT, is_signed=is_signed
         )
     )
 
@@ -97,23 +98,23 @@ def create_descriptor(
     memref_arg,
     leading_byte_offset: int,
     stride_byte_offset: int,
-    swizzle: int | None,
+    swizzle: int | mgpu_dialect.SwizzlingMode | None,
     memory_space: int | None = None,
 ):
   i64 = ir.IntegerType.get_signless(64)
   ptr_val = llvm.ptrtoint(i64, utils.memref_ptr(memref_arg, memory_space))
-  if swizzle is None:
+  if swizzle is None or swizzle == mgpu_dialect.SwizzlingMode.kNoSwizzle:
     swizzle_encoding = 0
-  elif swizzle == 128:
+  elif swizzle == mgpu_dialect.SwizzlingMode.k128ByteSwizzle:
     swizzle_encoding = 1
-  elif swizzle == 64:
+  elif swizzle == mgpu_dialect.SwizzlingMode.k64ByteSwizzle:
     swizzle_encoding = 2
-  elif swizzle == 32:
+  elif swizzle == mgpu_dialect.SwizzlingMode.k32ByteSwizzle:
     swizzle_encoding = 3
   else:
     raise NotImplementedError(swizzle)
   encoded_base_addr = llvm.LShrOp(
-      llvm.AndOp(ptr_val, c(0x3FFFF, i64)), c(4, i64)
+      llvm.AndOp(ptr_val, c(0x3FFFF, i64)).result, c(4, i64)
   )
   # We ignore the offset
   desc_const = (
@@ -123,7 +124,7 @@ def create_descriptor(
   desc = llvm.or_(
       arith.shli(c(swizzle_encoding, i64), c(62, i64)), c(desc_const, i64)
   )
-  desc = llvm.or_(encoded_base_addr, desc)
+  desc = llvm.or_(encoded_base_addr.result, desc)
   return desc
 
 
@@ -171,11 +172,11 @@ def wgmma_m64(
   supports_transpose = bytewidth(element_type) == 2
   if not supports_transpose and (a_transpose or b_transpose):
     raise ValueError("Only f16 WGMMA supports transposes")
-  if a_in_regs := isinstance(a, mgpu.FragmentedArray):
+  if a_in_regs := isinstance(a, fa.FragmentedArray):
     if a.mlir_dtype != ir.F16Type.get() and a.mlir_dtype != ir.BF16Type.get():
       raise ValueError(f"Unsupported A register array dtype: {a.mlir_dtype}")
     # Column count must be equal to swizzle // bytewidth.
-    if a.layout != mgpu.WGMMA_LAYOUT or a.shape != (64, swizzle // 2):
+    if a.layout not in (fa.TILED_LAYOUT_WGMMA, fa.WGMMA_LAYOUT) or a.shape != (64, swizzle // 2):
       raise ValueError("Unsupported A register array layout")
     if a_k_stride is not None or a_transpose is not None:
       raise ValueError("Unsupported WGMMA features with A in registers")
@@ -310,7 +311,7 @@ def wgmma(
     a_order: WGMMALayout | None = None,
     b_order: WGMMALayout = WGMMALayout.ROW_MAJOR,
 ):
-  if a_in_regs := isinstance(a, mgpu.FragmentedArray):
+  if a_in_regs := isinstance(a, fa.FragmentedArray):
     a_element_type = a.mlir_dtype
     a_shape = a.shape
   else:
@@ -434,23 +435,23 @@ def wgmma(
           new_acc_regs[mi : mi + 1], a_mk, b_k, **wgmma_params
       )
   return WGMMAAccumulator(
-      _value=mgpu.FragmentedArray(
+      _value=fa.FragmentedArray(
           _registers=new_acc_regs,
-          _layout=mgpu.WGMMA_LAYOUT,
+          _layout=fa.WGMMA_LAYOUT,
           _is_signed=acc.value.is_signed,
       ),
       _sync=False,
   )
 
 
-def wgmma_fence(array: mgpu.FragmentedArray):
+def wgmma_fence(array: fa.FragmentedArray):
   """Fences the array construction from WGMMA instructions.
 
   LLVM treats in-register computation as pure and can move it after the fence,
   which is explicitly disallowed by the PTX programming model. For that reason,
   we insert an LLVM optimization barrier before the fence.
   """
-  array = mgpu.optimization_barrier(array)
+  array = fa.optimization_barrier(array)
   nvvm.wgmma_fence_aligned()
   return array
 

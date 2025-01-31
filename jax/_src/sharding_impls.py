@@ -37,7 +37,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.op_shardings import (
     are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated)
-from jax._src.partition_spec import PartitionSpec
+from jax._src.partition_spec import PartitionSpec, UnconstrainedSingleton
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 import numpy as np
 
@@ -185,7 +185,7 @@ def named_sharding_to_xla_hlo_sharding(
 
   special_axes = {}
   mesh_manual_axes = {n for n, t in self.mesh._name_to_type.items()
-                      if t == mesh_lib.AxisTypes.Collective}
+                      if t == mesh_lib.AxisTypes.Manual}
   manual_axes = self._manual_axes.union(mesh_manual_axes)
   if manual_axes:
     axis_names = self.mesh.axis_names
@@ -392,6 +392,12 @@ class NamedSharding(jsharding.Sharding):
     return not self.mesh.is_multi_process
 
   @property
+  def _is_concrete(self) -> bool:
+    if isinstance(self.mesh, mesh_lib.AbstractMesh):
+      return False
+    return True
+
+  @property
   def addressable_devices(self) -> set[Device]:
     if isinstance(self.mesh, mesh_lib.AbstractMesh):
       raise ValueError('addressable_devices is not implemented for '
@@ -448,7 +454,7 @@ def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArraySharding, mesh):
       used_axes.extend(d.axes)
     remaining_axes = set(mesh.axis_names) - set(used_axes)
     replicated_axes = tuple(r for r in remaining_axes
-                            if mesh._name_to_type[r] == mesh_lib.AxisTypes.User)
+                            if mesh._name_to_type[r] == mesh_lib.AxisTypes.Explicit)
     return SdyArraySharding(sdy_sharding.mesh_shape, dim_shardings,
                             sdy_sharding.logical_device_ids, replicated_axes)
   return sdy_sharding
@@ -1117,7 +1123,7 @@ class ParsedPartitionSpec:
         axis_spec = ()
       elif isinstance(axis_spec, (list, tuple)):
         axis_spec = tuple(axis_spec)
-      elif axis_spec == PartitionSpec.UNCONSTRAINED:
+      elif isinstance(axis_spec, UnconstrainedSingleton):
         if not allow_unconstrained_dims:
           raise ValueError(f"Unconstrained dims are not allowed: {entry}")
         axis_spec = None
@@ -1761,30 +1767,73 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
     return sharding  # type: ignore
   if sharding is None:
     return sharding
+  # TODO(yashkatariya): Remove this after vmap + shit works.
+  if isinstance(sharding, NamedSharding) and sharding.mesh.empty:
+    return None
 
+  cur_mesh = mesh_lib.get_abstract_mesh()
   if isinstance(sharding, PartitionSpec):
-    sharding = NamedSharding(mesh_lib.get_abstract_mesh(), sharding)  # type: ignore
+    sharding = NamedSharding(cur_mesh, sharding)  # type: ignore
   else:
-    if (check_mesh_consistency and
-        sharding.mesh != mesh_lib.get_abstract_mesh()):
+    if (sharding.mesh.abstract_mesh._are_all_axes_auto and
+        cur_mesh._are_all_axes_auto):
+      return sharding
+    if (check_mesh_consistency and not cur_mesh.empty and
+        sharding.mesh.abstract_mesh != cur_mesh):
       raise ValueError(
-          f'Context mesh {mesh_lib.get_abstract_mesh()} should match the mesh'
-          f' of sharding {sharding.mesh}. This error occurs at source: '
-          f' {source_info_util.summarize(source_info_util.current())}')
+          f'Context mesh {cur_mesh} should match the mesh'
+          f' of sharding {sharding.mesh.abstract_mesh}. This error occurs at'
+          f' source:  {source_info_util.summarize(source_info_util.current())}')
+    if isinstance(sharding.mesh, mesh_lib.Mesh):
+      sharding = NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
 
   for s in flatten_spec(sharding.spec):
     if sharding.mesh._name_to_type[s] in {
-        mesh_lib.AxisTypes.Auto, mesh_lib.AxisTypes.Collective}:
+        mesh_lib.AxisTypes.Auto, mesh_lib.AxisTypes.Manual}:
       raise ValueError(
           'PartitionSpec cannot contain axis names that are of type Auto or'
-          f' Collective. Got PartitionSpec: {sharding.spec} with axis name:'
+          f' Manual. Got PartitionSpec: {sharding.spec} with axis name:'
           f' {s} or type: {sharding.mesh._name_to_type[s]}')
   return sharding
+
+TypeOfAxis = str | tuple[str, ...] | None
+
+def _normalize(axes: TypeOfAxis = None) -> tuple[str, ...]:
+  if axes is None:
+    return ()
+  return (axes,) if isinstance(axes, str) else axes
+
+def _get_axis_types(
+    auto_axes: TypeOfAxis = None, explicit_axes: TypeOfAxis = None,
+    manual_axes: TypeOfAxis = None):
+  if auto_axes is None and explicit_axes is None and manual_axes is None:
+    return None
+
+  auto_axes = _normalize(auto_axes)
+  explicit_axes = _normalize(explicit_axes)
+  manual_axes = _normalize(manual_axes)
+
+  aua, ea, ma = set(auto_axes), set(explicit_axes), set(manual_axes)
+  disjoint = aua.isdisjoint(ea) and aua.isdisjoint(ma) and ea.isdisjoint(ma)
+  if not disjoint:
+    raise ValueError(
+        f'{auto_axes=}, {explicit_axes=} and {manual_axes=} should be'
+        ' non-overlapping.')
+
+  out = {}
+  if auto_axes:
+    out.update({mesh_lib.AxisTypes.Auto: auto_axes})
+  if explicit_axes:
+    out.update({mesh_lib.AxisTypes.Explicit: explicit_axes})
+  if manual_axes:
+    out.update({mesh_lib.AxisTypes.Manual: manual_axes})
+  return out
 
 
 def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
               *, devices: Sequence[xc.Device] | None = None,
-              axis_types: mesh_lib.MeshAxisType | None = None) -> mesh_lib.Mesh:
+              auto_axes: TypeOfAxis = None, explicit_axes: TypeOfAxis = None,
+              manual_axes: TypeOfAxis = None) -> mesh_lib.Mesh:
   """Creates an efficient mesh with the shape and axis names specified.
 
   This function attempts to automatically compute a good mapping from a set of
@@ -1846,4 +1895,5 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   mesh_devices = mesh_utils.create_device_mesh(
       new_axis_shapes, devices,
       allow_split_physical_axes=allow_split_physical_axes)
+  axis_types = _get_axis_types(auto_axes, explicit_axes, manual_axes)
   return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)

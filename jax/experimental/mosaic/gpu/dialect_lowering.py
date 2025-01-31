@@ -15,10 +15,12 @@
 """Lowering rules and pass for the MLIR Mosaic GPU dialect."""
 
 from collections.abc import Callable
+import dataclasses
 import functools
 import operator
 from typing import Sequence, Type, cast
 
+import jax
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
@@ -30,31 +32,43 @@ from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import vector
 import numpy as np
 
-from .fragmented_array import FragmentedArray, WGStridedFragLayout
-from .launch_context import LaunchContext
-from .layouts import from_strided_fragmented_layout_attr, has_any_layout_set, is_strided_fragmented_layout, should_have_layout, to_strided_fragmented_layout_attr
-from .utils import BarrierRef, c, memref_ptr, ptr_as_memref, single_thread_predicate
+from . import fragmented_array as fa
+from . import launch_context
+from . import layouts
+from . import utils
+from . import wgmma
 
 # mypy: ignore-errors
 
 
-MlirLoweringRule = Callable[[LaunchContext, ir.Operation | ir.OpView], Sequence[ir.Value]]
+@dataclasses.dataclass()
+class LoweringContext:
+  launch_context: launch_context.LaunchContext | None
+  single_thread_per_block_predicate: ir.Value | None
+  single_thread_per_warpgroup_predicate: ir.Value | None
+
+
+MlirLoweringRule = Callable[
+    [LoweringContext, ir.Operation | ir.OpView], Sequence[ir.Value]
+]
 
 
 _lowerings: dict[str, MlirLoweringRule] = {}
 
 
 def _fragmented_array_to_ir(
-    fragmented_array: FragmentedArray, ty: ir.Type
+    fragmented_array: fa.FragmentedArray, ty: ir.Type
 ) -> ir.Value:
-  if not isinstance(fragmented_array.layout, WGStridedFragLayout):
-    raise NotImplementedError(fragmented_array.layout)
-
   conversion_cast = builtin.UnrealizedConversionCastOp(
-      [ty], fragmented_array.registers.tolist()
+      [ty], fragmented_array.registers.flatten().tolist()
   )
 
-  conversion_cast.attributes["layout"] = to_strided_fragmented_layout_attr(
+  conversion_cast.attributes["registers_shape"] = ir.ArrayAttr.get([
+      ir.IntegerAttr.get(ir.IntegerType.get_signless(64), s)
+      for s in fragmented_array.registers.shape
+  ])
+
+  conversion_cast.attributes["layout"] = layouts.to_layout_attr(
       fragmented_array.layout
   )
 
@@ -68,7 +82,7 @@ def _fragmented_array_to_ir(
 # TODO(bchetioui): add code that verifies the layout is as inferred.
 def _fragmented_array_from_ir(
     fragmented_array_as_ir: ir.Value,
-) -> FragmentedArray:
+) -> fa.FragmentedArray:
 
   conversion_cast = cast(
       builtin.UnrealizedConversionCastOp, fragmented_array_as_ir.owner.opview  # pytype: disable=attribute-error
@@ -76,14 +90,6 @@ def _fragmented_array_from_ir(
 
   if not isinstance(conversion_cast, builtin.UnrealizedConversionCastOp):
     raise ValueError(f"{conversion_cast} is not a conversion_cast")
-
-  layout_attr = conversion_cast.attributes["layout"]
-
-  if not is_strided_fragmented_layout(layout_attr):
-    raise NotImplementedError(
-        f"Converting conversion_casts with layout {layout_attr} back to "
-        "FragmentedArrays is not supported."
-    )
 
   converted_outputs = builtin.unrealized_conversion_cast(
       [operand.type for operand in conversion_cast.operands],
@@ -98,29 +104,33 @@ def _fragmented_array_from_ir(
     attribute = cast(ir.NamedAttribute, attribute)
     reverse_conversion_cast.attributes[attribute.name] = attribute.attr
 
-  registers = np.array(list(converted_outputs))
-  layout = from_strided_fragmented_layout_attr(layout_attr)
+  registers = np.array(list(converted_outputs)).reshape(
+    [attr.value for attr in conversion_cast.attributes["registers_shape"]]
+  )
+  layout = layouts.from_layout_attr(conversion_cast.attributes["layout"])
 
   if ir.IntegerType.isinstance(conversion_cast.outputs[0].type):
     is_signed = bool(conversion_cast.attributes["is_signed"])
   else:
     is_signed = None
 
-  return FragmentedArray(
+  return fa.FragmentedArray(
       _registers=registers, _layout=layout, _is_signed=is_signed
   )
 
 
-# TODO(bchetioui): Remove this when minimum jaxlib version >= 0.4.36.
-# Jaxlib doesn't contain Mosaic GPU dialect bindings.
-InitializeBarrierOp = mgpu.InitializeBarrierOp if mgpu is not None else None
+# TODO(dasenov): Remove this when minimum jaxlib version >= 0.5.1.
+# Jaxlib doesn't contain the latest Mosaic GPU dialect bindings.
+WaitOp = mgpu.WaitOp if jax.version._version == jax.lib.__version__ else None
+ArriveExpectTxOp = mgpu.ArriveExpectTxOp if jax.version._version == jax.lib.__version__ else None
 
 def _register_lowering(
-    op: str | Type[ir.OpView]
+    op: str | Type[ir.OpView] | None
 ) -> Callable[[MlirLoweringRule], MlirLoweringRule]:
   def wrapper(f):
-    op_name = op if isinstance(op, str) else op.OPERATION_NAME  # pytype: disable=attribute-error
-    _lowerings[op_name] = f
+    if op is not None:
+      op_name = op if isinstance(op, str) else op.OPERATION_NAME  # pytype: disable=attribute-error
+      _lowerings[op_name] = f
     return f
 
   return wrapper
@@ -130,58 +140,49 @@ def _lowered_barrier_type() -> ir.Type:
   return ir.IntegerType.get_signless(64)
 
 
-def gpu_address_space_to_nvptx(address_space: gpu.AddressSpace) -> int:
-  match address_space:
-    case gpu.AddressSpace.Global:
-      return 1
-    case gpu.AddressSpace.Workgroup:
-      return 3
-    case _:
-      raise NotImplementedError(f"address_space not supported: {address_space}")
-
-
-@_register_lowering(InitializeBarrierOp)
+@_register_lowering(mgpu.InitializeBarrierOp)
 def _initialize_barrier_op_lowering_rule(
-    _: LaunchContext,
-    initialize_barrier_op: InitializeBarrierOp,
+    ctx: LoweringContext,
+    initialize_barrier_op: mgpu.InitializeBarrierOp,
 ) -> Sequence[ir.Value]:
 
   shape = initialize_barrier_op.barriers_ref.type.shape
   num_barriers = functools.reduce(operator.mul, shape, 1)
 
   i32 = ir.IntegerType.get_signless(32)
-  workgroup_nvptx_address_space = gpu_address_space_to_nvptx(
+  workgroup_nvptx_address_space = utils.gpu_address_space_to_nvptx(
       gpu.AddressSpace.Workgroup)
   ptr_ty = ir.Type.parse(f"!llvm.ptr<{workgroup_nvptx_address_space}>")
 
   lowered_barrier_type = _lowered_barrier_type()
 
-  predicate = single_thread_predicate(per_block=True)
   for i in range(num_barriers):
     nvvm.mbarrier_init_shared(
         llvm.getelementptr(ptr_ty, initialize_barrier_op.base_pointer, [], [i],
                            lowered_barrier_type),
-        c(initialize_barrier_op.arrival_count.value, i32),
-        predicate=predicate
+        utils.c(initialize_barrier_op.arrival_count.value, i32),
+        predicate=ctx.single_thread_per_block_predicate
     )
+
+  gpu.barrier()
 
   barrier_base_ptr = llvm.getelementptr(
       ir.Type.parse("!llvm.ptr"),
       initialize_barrier_op.base_pointer, [], [0], lowered_barrier_type)
 
-  return ptr_as_memref(
+  return utils.ptr_as_memref(
       barrier_base_ptr, initialize_barrier_op.barriers_ref.type),
 
 
 @_register_lowering(vector.LoadOp)
 def _vector_load_op_lowering_rule(
-    _: LaunchContext, vector_load_op: vector.LoadOp
+    _: LoweringContext, vector_load_op: vector.LoadOp
 ) -> Sequence[ir.Value]:
   (out_layout_attr,) = cast(
       ir.ArrayAttr, vector_load_op.attributes["out_layouts"]
   )
 
-  if not is_strided_fragmented_layout(out_layout_attr):
+  if not layouts.is_strided_fragmented_layout(out_layout_attr):
     raise ValueError(
         f"{vector_load_op} has an unsupported layout: {out_layout_attr}"
     )
@@ -198,24 +199,14 @@ def _vector_load_op_lowering_rule(
           f"for {vector_load_op}"
       )
 
-  fragmented_array = FragmentedArray.load_strided(vector_load_op.base)
+  fragmented_array = fa.FragmentedArray.load_strided(vector_load_op.base)
   return [_fragmented_array_to_ir(fragmented_array, vector_load_op.result.type)]
 
 
 @_register_lowering(vector.StoreOp)
 def _vector_store_op_lowering_rule(
-     _: LaunchContext, vector_store_op: vector.StoreOp
+     _: LoweringContext, vector_store_op: vector.StoreOp
 ) -> Sequence[ir.Value]:
-
-  in_layout_attr, *_ = cast(
-      ir.ArrayAttr, vector_store_op.attributes["in_layouts"]
-  )
-
-  if not is_strided_fragmented_layout(in_layout_attr):
-    raise ValueError(
-        f"{vector_store_op} has an unsupported layout: {in_layout_attr}"
-    )
-
   for i in vector_store_op.indices:
     index_defining_op = i.owner.opview
     if (
@@ -229,48 +220,64 @@ def _vector_store_op_lowering_rule(
       )
 
   fragmented_array = _fragmented_array_from_ir(vector_store_op.valueToStore)
+
+  # TODO(dasenov): This is not efficient for WGMMA layouts
   fragmented_array.store_untiled(vector_store_op.base)
 
   return []
 
+@_register_lowering(vector.SplatOp)
+def _vector_splat_op_lowering_rule(
+    _: LoweringContext, vector_splat_op: vector.SplatOp
+) -> Sequence[ir.Value]:
+
+  out_vec_ty = ir.VectorType(vector_splat_op.aggregate.type)
+  fragmented_array = fa.FragmentedArray.splat(
+      vector_splat_op.input,
+      tuple(out_vec_ty.shape),
+      layouts.from_layout_attr(vector_splat_op.attributes["out_layouts"][0]),
+  )
+  return [_fragmented_array_to_ir(fragmented_array, out_vec_ty)]
+
 
 @_register_lowering(mgpu.AsyncLoadOp)
 def _mgpu_async_load_op_lowering_rule(
-    launch_context: LaunchContext, load_op: mgpu.AsyncLoadOp
+    ctx: LoweringContext, load_op: mgpu.AsyncLoadOp
 ) -> Sequence[ir.Value]:
-  mem_space = gpu_address_space_to_nvptx(gpu.AddressSpace.Workgroup)
-
+  assert ctx.launch_context is not None
+  barrier = utils.BarrierRef.from_dialect_barrier_memref(load_op.barrier)
   # TODO(dasenov): Add support for the remaining op properties.
-  launch_context.async_copy(
+  ctx.launch_context.async_copy(
       src_ref=load_op.source,
       dst_ref=load_op.destination,
-      barrier=BarrierRef(
-          base_address=memref_ptr(load_op.barrier, memory_space=mem_space),
-          offset=c(0, ir.IntegerType.get_signless(64)),
-          phases=None,
-          num_barriers=1,
-      ),
-      arrive=load_op.arrive,
-      uniform=False,
+      barrier=barrier,
+      arrive=False,
+      uniform=True,
+      swizzle=load_op.swizzle.value,
+      predicate=ctx.single_thread_per_warpgroup_predicate,
   )
   return []
 
 
 @_register_lowering(mgpu.AsyncStoreOp)
 def _mgpu_async_store_op_lowering_rule(
-    launch_context: LaunchContext, store_op: mgpu.AsyncStoreOp
+    ctx: LoweringContext, store_op: mgpu.AsyncStoreOp
 ) -> Sequence[ir.Value]:
+  assert ctx.launch_context is not None
   # TODO(dasenov): Add support for the remaining op properties.
-  launch_context.async_copy(
+  ctx.launch_context.async_copy(
       src_ref=store_op.source,
       dst_ref=store_op.destination,
+      swizzle=store_op.swizzle.value,
+      uniform=True,
+      predicate=ctx.single_thread_per_warpgroup_predicate,
   )
   return []
 
 
 @_register_lowering(arith.AddFOp)
 def _arith_addf_op_lowering_rule(
-    _: LaunchContext, add: arith.AddFOp
+    _: LoweringContext, add: arith.AddFOp
 ) -> Sequence[ir.Value]:
 
   fragmented_array_lhs = _fragmented_array_from_ir(add.lhs)
@@ -283,11 +290,104 @@ def _arith_addf_op_lowering_rule(
   ]
 
 
-def lower_mgpu_dialect(module: ir.Module, launch_context: LaunchContext):
+@_register_lowering(mgpu.WGMMAOp)
+def _mgpu_wgmma_op_lowering_rule(
+    _: LoweringContext, wgmma_op: mgpu.WGMMAOp
+) -> Sequence[ir.Value]:
+
+  # TODO(dasenov): Move the value -> accumulator conversion outisde of wgmma.
+  # The associated fence could be a little expensive and is not needed if the
+  # result a wgmma feeds into another wgmma (even in another loop step).
+  acc_in = _fragmented_array_from_ir(wgmma_op.accumulator)
+  regs = acc_in.to_layout(fa.WGMMA_LAYOUT)
+  acc = wgmma.WGMMAAccumulator.from_registers(regs)
+
+  a_operand = wgmma_op.a
+  if ir.VectorType.isinstance(a_operand.type):
+    a_operand = _fragmented_array_from_ir(a_operand)
+
+  new_acc = wgmma.wgmma(
+      acc,
+      a_operand,
+      wgmma_op.b,
+      swizzle=wgmma_op.swizzle.value,
+  )
+
+  return [_fragmented_array_to_ir(new_acc.value, wgmma_op.accumulator.type)]
+
+
+@_register_lowering(ArriveExpectTxOp)
+def _mgpu_arrive_expect_tx_op_lowering_rule(
+    ctx: LoweringContext, arrive_expect_tx_op: ArriveExpectTxOp
+) -> Sequence[ir.Value]:
+
+  barrier = utils.BarrierRef.from_dialect_barrier_memref(arrive_expect_tx_op.barrier)
+  barrier.arrive_expect_tx(
+      arrive_expect_tx_op.expect_tx.value,
+      ctx.single_thread_per_warpgroup_predicate,
+  )
+
+  return []
+
+
+@_register_lowering(WaitOp)
+def _mgpu_wait_op_lowering_rule(
+    _: LoweringContext, wait_op: WaitOp
+) -> Sequence[ir.Value]:
+
+  barrier = utils.BarrierRef.from_dialect_barrier_memref(wait_op.barrier)
+  barrier.wait_parity(wait_op.parity)
+
+  return []
+
+
+def single_thread_predicates(module: ir.Module) -> tuple[ir.Value, ir.Value]:
+  """Returns a single thread predicate per block and one per warpgroup."""
+  block_predicate = warpgroup_predicate = None
+  for op in module.body.operations:
+    for region in op.operation.regions:
+      for block in region.blocks:
+        for sub_op in block.operations:
+          if sub_op.operation.name == "gpu.launch":
+            with ir.InsertionPoint.at_block_begin(
+                sub_op.operation.regions[0].blocks[0]
+            ):
+              assert block_predicate is None
+              block_predicate = utils.single_thread_predicate(per_block=True)
+              warpgroup_predicate = utils.single_thread_predicate(
+                  per_block=False
+              )
+
+  if block_predicate is None:
+    raise ValueError(
+        "No suitable function found to instantiate the single thread"
+        " predicates."
+    )
+
+  return block_predicate, warpgroup_predicate
+
+
+def lower_mgpu_dialect(
+    module: ir.Module, launch_context: launch_context.LaunchContext | None
+):
+  # TODO(bchetioui): rethink this API. It doesn't make sense to pass in a full
+  # module and to traverse all `gpu.LaunchOp`s if we have a `LaunchContext` that
+  # references a single `gpu.LaunchOp`.
+  #
+  # A `LaunchContext` should have all the information needed to lower a single
+  # kernel.
   module.context.append_dialect_registry(mlir_interpreter.upstream_dialects)
   module.context.load_all_available_dialects()
 
   lowered_operations: set[ir.Operation | ir.OpView] = set()
+
+  # TODO(bchetioui): fix tests to not have a test-only path polluting the API.
+  if launch_context is None:  # this case is used in some tests
+    block_predicate = warpgroup_predicate = None
+  else:
+    block_predicate, warpgroup_predicate = single_thread_predicates(module)
+
+  ctx = LoweringContext(launch_context, block_predicate, warpgroup_predicate)
 
   def _lower_op(op: ir.OpView):
     if op.name not in _lowerings:
@@ -295,10 +395,10 @@ def lower_mgpu_dialect(module: ir.Module, launch_context: LaunchContext):
     lowering_rule = _lowerings[op.name]
 
     # TODO(bchetioui): make sure all layouts are set here.
-    if should_have_layout(op) and not has_any_layout_set(op):
+    if layouts.should_have_layout(op) and not layouts.has_any_layout_set(op):
       raise ValueError(f"{op} is missing a layout and can not be lowered.")
 
-    new_results = lowering_rule(launch_context, op)
+    new_results = lowering_rule(ctx, op)
 
     for old, new in zip(op.results, new_results):
       old.replace_all_uses_with(new)

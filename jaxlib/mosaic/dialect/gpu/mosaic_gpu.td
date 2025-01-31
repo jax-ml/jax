@@ -72,6 +72,44 @@ def MosaicGPU_InitializeBarrierOp : Op<MosaicGPU_Dialect, "initialize_barrier",
   }];
 }
 
+def MosaicGPU_ArriveExpectTxOp : Op<MosaicGPU_Dialect, "arrive_expect_tx", []> {
+  let summary = "Executes an arrive.expect_tx operation on the given barrier.";
+  let description = [{
+    A single thread in the warpgroup will execute an `arrive.expect_tx`
+    operation on the provided barrier with the provided `expect_tx`.
+  }];
+
+  let arguments = (ins
+    MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
+    ConfinedAttr<I32Attr, [IntNonNegative]>:$expect_tx);
+
+  let assemblyFormat = [{
+    `barrier` `(` $barrier `:` type($barrier) `)`
+    $expect_tx
+    attr-dict
+  }];
+}
+
+def MosaicGPU_WaitOp : Op<MosaicGPU_Dialect, "wait", []> {
+  let summary = "Executes a wait operation on the given barrier.";
+  let description = [{
+    All threads in the warpgroup will block, waiting on the provided barrier
+    until:
+      - all pending threads have arrived on the barrier
+      - all expected byte transfers have been completed
+      - the barrier's parity matches the provided parity
+  }];
+
+  let arguments = (ins
+    MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
+    I1:$parity
+  );
+  let assemblyFormat = [{
+    `barrier` `(` $barrier `:` type($barrier) `)`
+    `parity` `(` $parity `:` type($parity) `)`
+    attr-dict
+  }];
+}
 
 def MosaicGPU_WGStridedFragLayout : AttrDef<MosaicGPU_Dialect, "WGStridedFragLayout", []> {
   let summary = "Annotates an array that can be collapsed to 1D and sharded across threads.";
@@ -104,6 +142,31 @@ def MosaicGPU_WGSplatFragLayout : AttrDef<MosaicGPU_Dialect, "WGSplatFragLayout"
   let assemblyFormat = "`<` $shape `>`";
 }
 
+def MosaicGPU_WGMMAFragLayout : AttrDef<MosaicGPU_Dialect, "WGMMAFragLayout", []> {
+  let summary = "2D array that can be tiled by supported WGMMA shapes.";
+  let description = [{
+    This layout annotates arrays that are fragmented across all threads in a
+    warpgroup that is executing a WGMMA operation. The shape of the array is
+    (m, n) where:
+      - m % 64 == 0
+      - n %  8 == 0
+  }];
+
+  let mnemonic = "WGMMAFragLayout";
+  let assemblyFormat = "";
+}
+
+def MosaicGPU_WGMMARowFragLayout : AttrDef<MosaicGPU_Dialect, "WGMMARowFragLayout", []> {
+  let summary = "1D array that is a row that can be tiled by supported WGMMA shapes.";
+  let description = [{
+    This layout is used to handle rows that are fragmented across all threads
+    in a warpgroup that is executing a WGMMA operation. The length of the array
+    must be divisible by 64.
+  }];
+
+  let mnemonic = "WGMMARowFragLayout";
+  let assemblyFormat = "";
+}
 
 // Note: This duplicates the Dimension enum in mlir/Dialect/GPU/IR/GPUOps.td
 // but it was not possible to reuse that definition. Including that file
@@ -116,27 +179,17 @@ def MosaicGPU_Dimension : I32EnumAttr<"Dimension",
       I32EnumAttrCase<"z", 2>
     ]>{
   let cppNamespace = "::mosaic_gpu";
-  let genSpecializedAttr = 0;
-}
-
-def MosaicGPU_DimensionAttr : EnumAttr<MosaicGPU_Dialect, MosaicGPU_Dimension, "dim"> {
-  let assemblyFormat = "`<` $value `>`";
 }
 
 def MosaicGPU_SwizzlingMode : I32EnumAttr<"SwizzlingMode",
     "What swizzling to use for a memory access.",
     [
-      I32EnumAttrCase<"kNoSwizzle", 16, "swizzle_none">,
-      I32EnumAttrCase<"k32ByteSwizzle", 32, "swizzle_32">,
-      I32EnumAttrCase<"k64ByteSwizzle", 64, "swizzle_64">,
-      I32EnumAttrCase<"k128ByteSwizzle", 128, "swizzle_128">
+      I32EnumAttrCase<"kNoSwizzle", 16>,
+      I32EnumAttrCase<"k32ByteSwizzle", 32>,
+      I32EnumAttrCase<"k64ByteSwizzle", 64>,
+      I32EnumAttrCase<"k128ByteSwizzle", 128>
     ]>{
   let cppNamespace = "::mosaic_gpu";
-  let genSpecializedAttr = 0;
-}
-
-def MosaicGPU_SwizzlingModeAttr : EnumAttr<MosaicGPU_Dialect, MosaicGPU_SwizzlingMode, "swizzle"> {
-  let assemblyFormat = "`<` $value `>`";
 }
 
 def TileTransformAttr : MosaicGPU_Attr<"TileTransform", "tile"> {
@@ -171,10 +224,8 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     the `destination` MemRef in SMEM. The `destination` MemRef in SMEM must be
     contiguous.
 
-    If `arrive` is true, the `arrive.expect-tx(expect_count)` operation will be
-    executed on the provided `barrier` before the copy is scheduled. Upon
-    completion of the copy, the `complete-tx(complete-count)` operation will
-    always be executed on the provided `barrier`.
+    Upon completion of the copy, the `complete-tx(complete-count)` operation
+    will always be executed on the provided `barrier`.
 
     The `indices` and `slice_lengths` inputs define what slice of the GMEM
     `source` corresponds to the SMEM `destination`. Both `indices` and
@@ -216,9 +267,8 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     // Attributes
     DenseI64ArrayAttr:$slice_lengths,
     TypedArrayAttrBase<AnyAttrOf<[TileTransformAttr, TransposeTransformAttr]>, "transforms">:$transforms,
-    DefaultValuedAttr<MosaicGPU_SwizzlingModeAttr, "SwizzlingMode::kNoSwizzle">:$swizzle,
-    DefaultValuedAttr<BoolAttr, "true" >:$arrive,
-    TypedArrayAttrBase<MosaicGPU_DimensionAttr, "dimensions">:$collective
+    DefaultValuedAttr<MosaicGPU_SwizzlingMode, "SwizzlingMode::kNoSwizzle">:$swizzle,
+    TypedArrayAttrBase<MosaicGPU_Dimension, "dimensions">:$collective
   );
 
   let assemblyFormat = [{
@@ -270,7 +320,7 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     // Attributes
     DenseI64ArrayAttr:$slice_lengths,
     TypedArrayAttrBase<AnyAttrOf<[TileTransformAttr, TransposeTransformAttr]>, "transforms">:$transforms,
-    DefaultValuedAttr<MosaicGPU_SwizzlingModeAttr, "SwizzlingMode::kNoSwizzle">:$swizzle
+    DefaultValuedAttr<MosaicGPU_SwizzlingMode, "SwizzlingMode::kNoSwizzle">:$swizzle
   );
 
   let assemblyFormat = [{
@@ -293,13 +343,12 @@ def MosaicGPU_WGMMALayout :
     I32EnumAttrCase<"ColumnMajor", 1>
   ]> {
   let cppNamespace = "::mosaic_gpu";
-  let genSpecializedAttr = 0;
 }
 
-def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", []> {
+def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
   let summary = "Multiply two matrices asyncronously using warpgroup level matrix multiply operations.";
   let description = [{
-    Schedules WGMMA operations that perform the following matrix multiple and
+    Schedules WGMMA operations that perform the following matrix multiply and
     accumulate:
 
       accumulator = a * b + accumulator
@@ -320,6 +369,8 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", []> {
       - accumulator: [groups_m * 64, groups_n * k]
     Where:
       - `k == swizzle/element_bytediwth` (for `kNoSwizzle`, `swizzle` is 16.)
+
+    The output has an identical shape and type as the input accumulator.
 
     The `accumulator` is always in registers and `b` is always in shared memory.
     The last two dimensions of any input in shared memory may be physically
@@ -345,14 +396,34 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", []> {
     MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b,
 
     // Attributes
-    DefaultValuedAttr<MosaicGPU_SwizzlingModeAttr, "SwizzlingMode::k128ByteSwizzle">:$swizzle
+    DefaultValuedAttr<MosaicGPU_SwizzlingMode, "SwizzlingMode::k128ByteSwizzle">:$swizzle
   );
+  let results = (outs VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>);
 
   let assemblyFormat = [{
     `accumulator` `(` $accumulator `:` type($accumulator) `)`
     `a` `(` $a `:` type($a) `)`
     `b` `(` $b `:` type($b) `)`
     attr-dict
+    `->` type(results)
+  }];
+
+  let extraClassDeclaration = [{
+    static llvm::LogicalResult inferReturnTypes(
+        mlir::MLIRContext *,
+        std::optional<mlir::Location> location,
+        mlir::ValueRange operands,
+        mlir::DictionaryAttr attributes,
+        mlir::OpaqueProperties properties,
+        mlir::RegionRange regions,
+        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
+      if (operands.empty()) {
+        return ::mlir::emitOptionalError(
+          location, "expected non-empty operands");
+      }
+      inferredReturnTypes.assign({operands[0].getType()});
+      return ::mlir::success();
+    }
   }];
 
   let hasVerifier = 1;

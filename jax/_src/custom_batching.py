@@ -28,7 +28,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
-from jax._src.api_util import flatten_fun_nokwargs, resolve_kwargs
+from jax._src import api_util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters.batching import not_mapped
@@ -141,16 +141,18 @@ class custom_vmap:
 
   @traceback_util.api_boundary
   def __call__(self, *args, **kwargs):
-    args = resolve_kwargs(self.fun, args, kwargs)
+    args = api_util.resolve_kwargs(self.fun, args, kwargs)
     fun_name = getattr(self.fun, "__name__", str(self.fun))
     if not self.vmap_rule:
       raise AttributeError(
           f"No batching rule defined for custom_vmap function {fun_name} "
           "using def_vmap.")
+    debug = api_util.tracing_debug_info("custom_vmap", self.fun, args, {})
     args_flat, in_tree = tree_flatten(args)
-    flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(self.fun), in_tree)
+    flat_fun, out_tree = api_util.flatten_fun_nokwargs(
+        lu.wrap_init(self.fun, debug_info=debug),
+        in_tree)
     in_avals = [core.get_aval(x) for x in args_flat]
-    debug = pe.debug_info(self.fun, in_tree, out_tree, False, "custom_vmap")
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
     in_tree = treedef_tuple((tree_structure(consts), in_tree))
@@ -215,7 +217,7 @@ def maybe_bdim_at_front(x, bdim):
 # axes instead of accepting and matching a given spec of output axes. Assumes
 # `f` is pytree-flattened
 def vmap_unrestricted(f: lu.WrappedFun, *args, in_axes, axis_name, axis_size):
-  axis_data = batching.AxisData(axis_name, axis_size, None)
+  axis_data = batching.AxisData(axis_name, axis_size, None, None)
   tag = core.TraceTag()
   f, out_axes = batching.batch_subtrace(f, tag, axis_data, in_axes)
   outs = f.call_wrapped(*args)
@@ -282,7 +284,7 @@ def custom_vmap_jvp(primals, tangents, *, call, rule, in_tree, out_tree):
     def to_vmap_over_extra_batched_dims(primals, tangents):
       return api.jvp(to_jvp, primals, tangents)
 
-    to_vmap_over_extra_batched_dims_flat, out_tree2 = flatten_fun_nokwargs(
+    to_vmap_over_extra_batched_dims_flat, out_tree2 = api_util.flatten_fun_nokwargs(
         lu.wrap_init(to_vmap_over_extra_batched_dims),
         tree_ps_ts)
 

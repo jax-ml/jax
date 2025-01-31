@@ -44,6 +44,7 @@ from jax import lax
 from jax._src import api
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes as _dtypes
 from jax._src import lib as _jaxlib
@@ -248,6 +249,8 @@ class EventThreadLocalState(threading.local):
     self.infer_params_fun_counts = None
     self.lower_jaxpr_to_fun_counts = None
 
+    self.collect_lowered_jaxprs = None
+
 thread_local_state = EventThreadLocalState()
 
 
@@ -280,6 +283,10 @@ def event_listener(name, *args):
     if lower_counts is not None:
       (fun,) = args
       lower_counts[fun] += 1
+  elif name == "mlir.collect_lowered_jaxprs":
+    collection = thread_local_state.collect_lowered_jaxprs
+    if collection is not None:
+      collection.append(args)
 
 
 util.test_event_listener = event_listener
@@ -334,6 +341,19 @@ def count_subjaxpr_to_hlo_conversion(fun_name):
     thread_local_state.lower_jaxpr_to_fun_counts = None
 
 
+@contextmanager
+def collect_lowered_jaxprs() -> Generator[Sequence[tuple[core.ClosedJaxpr,
+                                                         mlir.ir.Module]]]:
+  """
+  Collects all the pairs of (jaxpr, mlir_module) that are lowered.
+  """
+  assert thread_local_state.collect_lowered_jaxprs is None
+  collection: list[tuple[core.ClosedJaxpr, mlir.ir.Module]] = []
+  thread_local_state.collect_lowered_jaxprs = collection
+  try:
+    yield collection
+  finally:
+    thread_local_state.collect_lowered_jaxprs = None
 
 @contextmanager
 def assert_num_jit_and_pmap_compilations(times):
@@ -1310,6 +1330,16 @@ class JaxTestCase(parameterized.TestCase):
   def rng(self):
     return self._rng
 
+  def assertDeprecationWarnsOrRaises(self, deprecation_id: str, message: str):
+    """Assert warning or error, depending on deprecation state.
+
+    For use with functions that call :func:`jax._src.deprecations.warn`.
+    """
+    if deprecations.is_accelerated(deprecation_id):
+      return self.assertRaisesRegex(ValueError, message)
+    else:
+      return self.assertWarnsRegex(DeprecationWarning, message)
+
   def assertArraysEqual(self, x, y, *, check_dtypes=True, err_msg='',
                         allow_object_dtype=False, verbose=True):
     """Assert that x and y arrays are exactly equal."""
@@ -1538,12 +1568,12 @@ def with_and_without_mesh(f):
     ))(with_mesh_from_kwargs(f))
 
 def with_user_mesh(sizes, names, axis_types=None):
-  axis_types = ({mesh_lib.AxisTypes.User: names}
+  axis_types = ({mesh_lib.AxisTypes.Explicit: names}
                 if axis_types is None else axis_types)
   def decorator(fn):
     def mesh_fn(*args, **kwargs):
       mesh = create_mesh(sizes, names, axis_types=axis_types)
-      with mesh_lib.set_mesh(mesh):
+      with mesh_lib.use_mesh(mesh):
         return fn(*args, **kwargs, mesh=mesh)
     return mesh_fn
   return decorator
@@ -1558,7 +1588,15 @@ def create_mesh(mesh_shape, axis_names, iota_order=False, axis_types=None):
     mesh_devices = np.array(devices[:size]).reshape(mesh_shape)
     return jax.sharding.Mesh(mesh_devices, axis_names, axis_types=axis_types)
   else:
-    return jax.make_mesh(mesh_shape, axis_names, axis_types=axis_types)
+    if axis_types is None:
+      explicit_axes = auto_axes = manual_axes = None
+    else:
+      explicit_axes = axis_types.get(mesh_lib.AxisTypes.Explicit, None)
+      auto_axes = axis_types.get(mesh_lib.AxisTypes.Auto, None)
+      manual_axes = axis_types.get(mesh_lib.AxisTypes.Manual, None)
+    return jax.make_mesh(mesh_shape, axis_names, explicit_axes=explicit_axes,
+                         auto_axes=auto_axes,
+                         manual_axes=manual_axes)
 
 class _cached_property:
   null = object()
@@ -1597,6 +1635,8 @@ class _LazyDtypes:
       float_dtypes += [_dtypes.float8_e3m4]
     if _dtypes.float8_e4m3 is not None:
       float_dtypes += [_dtypes.float8_e4m3]
+    if _dtypes.float8_e8m0fnu is not None:
+      float_dtypes += [_dtypes.float8_e8m0fnu]
     return self.supported(float_dtypes)
 
   @_cached_property
@@ -1743,6 +1783,10 @@ def register_event_duration_listener(callback):
 @contextmanager
 def set_env(**kwargs):
   """Context manager to temporarily set/unset one or more environment variables.
+
+  Caution: setting environment variables is not thread-safe. If you use this
+  utility, you must annotate your test using, e.g., @thread_unsafe_test() or
+  @thread_unsafe_test_class().
 
   Examples:
 

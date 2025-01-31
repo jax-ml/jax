@@ -39,6 +39,7 @@ py_library(
 cc_library(
     name = "tpu_dialect",
     srcs = [
+        "dialect/tpu/array_util.cc",
         "dialect/tpu/layout.cc",
         "dialect/tpu/tpu_dialect.cc",
         "dialect/tpu/tpu_ops.cc",
@@ -49,6 +50,7 @@ cc_library(
         "dialect/tpu/transforms/*.cc",
     ]),
     hdrs = [
+        "dialect/tpu/array_util.h",
         "dialect/tpu/layout.h",
         "dialect/tpu/tpu_dialect.h",
         "dialect/tpu/util.h",
@@ -60,6 +62,7 @@ cc_library(
     deps = [
         ":tpu_inc_gen",
         "//jaxlib:pass_boilerplate",
+        "//jaxlib/mosaic:serde",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/hash",
@@ -72,6 +75,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ControlFlowDialect",
+        "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:Dialect",
         "@llvm-project//mlir:DialectUtils",
         "@llvm-project//mlir:FuncDialect",
@@ -248,10 +252,34 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "array_util_test",
+    srcs = ["dialect/tpu/array_util_test.cc"],
+    deps = [
+        ":tpu_dialect",
+        "//testing/base/public:gunit_main",
+        "@llvm-project//mlir:Support",
+        "@xla//xla:array",
+    ],
+)
+
 filegroup(
     name = "extension_srcs",
     srcs = [
         "dialect/tpu/transforms/extensions/apply_vector_layout_extensions.cc",
         "dialect/tpu/transforms/extensions/infer_vector_layout_extensions.cc",
+    ],
+)
+
+cc_library(
+    name = "serde",
+    srcs = ["serde.cc"],
+    hdrs = ["serde.h"],
+    # compatible with libtpu
+    deps = [
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:DataLayoutInterfaces",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
     ],
 )

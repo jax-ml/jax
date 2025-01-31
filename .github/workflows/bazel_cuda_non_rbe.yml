@@ -1,16 +1,17 @@
-name: CI - Bazel CUDA (non-RBE)
+# CI - Bazel CUDA tests (Non-RBE)
+#
+# This workflow runs the CUDA tests with Bazel. It can only be triggered by other workflows via
+# `workflow_call`. It is used by the `CI - Wheel Tests` workflows to run the Bazel CUDA tests.
+#
+# It consists of the following job:
+# run-tests:
+#    - Downloads the jaxlib and CUDA artifacts from a GCS bucket.
+#    - Executes the `run_bazel_test_cuda_non_rbe.sh` script, which performs the following actions:
+#      - Installs the downloaded wheel artifacts.
+#      - Runs the CUDA tests with Bazel.
+name: CI - Bazel CUDA tests (Non-RBE)
 
 on:
-  workflow_dispatch:
-    inputs:
-      halt-for-connection:
-        description: 'Should this workflow run wait for a remote connection?'
-        type: choice
-        required: true
-        default: 'no'
-        options:
-        - 'yes'
-        - 'no'
   workflow_call:
     inputs:
       runner:
@@ -38,27 +39,23 @@ on:
 jobs:
   run-tests:
     runs-on: ${{ inputs.runner }}
-
-    container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-rbe:latest"
+    container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/nosla-cuda12.3-cudnn9.1-ubuntu20.04-manylinux2014-multipython:latest"
 
     env:
-      JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
-      JAXCI_ENABLE_X64: "${{ inputs.enable-x64 }}"
+      JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
+      JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}
+      # Enable writing to the Bazel remote cache bucket.
+      JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE: "1"
 
-    name: "Bazel single accelerator and multi-accelerator GPU tests (Non RBE, ${{ inputs.runner }}, Python 3.11, x64=${{ inputs.enable-x64 }})"
+    name: "Bazel single accelerator and multi-accelerator CUDA tests (${{ inputs.runner }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
 
     steps:
-      - uses: actions/checkout@v3
-      # Halt for testing
-      - name: Wait For Connection
-        uses: google-ml-infra/actions/ci_connection@main
-        with:
-          halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Set PLATFORM env var for use in artifact download URL
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set env vars for use in artifact download URL
         run: |
           os=$(uname -s | awk '{print tolower($0)}')
           arch=$(uname -m)
-          
+
           # Get the major and minor version of Python.
           # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.10, then python_major_minor=310
           python_major_minor=$(echo "$JAXCI_HERMETIC_PYTHON_VERSION" | tr -d '.')
@@ -68,9 +65,15 @@ jobs:
           echo "PYTHON_MAJOR_MINOR=${python_major_minor}" >> $GITHUB_ENV
       - name: Download the wheel artifacts from GCS
         run: >-
-          mkdir -p $(pwd)/dist && 
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl $(pwd)/dist/ &&
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl $(pwd)/dist/ &&
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*cuda*pjrt*${OS}*${ARCH}*.whl $(pwd)/dist/
-      - name: Run Bazel tests
-        run: ./ci/run_bazel_test_gpu_non_rbe.sh 
+          mkdir -p $(pwd)/dist &&
+          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
+          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
+          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
+      # Halt for testing
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@main
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Run Bazel CUDA tests (Non-RBE)
+        timeout-minutes: 60
+        run: ./ci/run_bazel_test_cuda_non_rbe.sh

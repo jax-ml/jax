@@ -33,14 +33,15 @@ if sys.platform != "win32":
   from jax.experimental.pallas.ops.gpu import layer_norm
   from jax.experimental.pallas.ops.gpu import rms_norm
   from jax.experimental.pallas.ops.gpu import softmax
+  BlockSizes = attention.BlockSizes
 else:
   attention = None
   layer_norm = None
   rms_norm = None
   softmax = None
+  BlockSizes = None
 import jax.numpy as jnp
 import numpy as np
-
 
 # TODO(sharadmv): Update signatures of pallas_call to correct inputs/outputs.
 # pylint: disable=no-value-for-parameter
@@ -153,8 +154,11 @@ class FusedAttentionTest(PallasBaseTest):
       seq_len=(128, 384),
       num_heads=(1, 2, 8),
       head_dim=(32, 64, 128),
-      block_q=(64, 128),
-      block_k=(64, 128),
+      block_sizes=(
+        (("block_q", 128), ("block_k", 128)),
+        (("block_q", 64), ("block_k", 64)),
+        (("block_q", 64), ("block_k", 128)),
+      ),
       causal=(True, False),
       use_fwd=(True, False),
       use_segment_ids=(True, False),
@@ -166,8 +170,7 @@ class FusedAttentionTest(PallasBaseTest):
       seq_len,
       num_heads,
       head_dim,
-      block_q,
-      block_k,
+      block_sizes,
       causal,
       use_fwd,
       use_segment_ids,
@@ -196,8 +199,7 @@ class FusedAttentionTest(PallasBaseTest):
         v, _ = jax.vjp(
             functools.partial(
                 attention.mha,
-                block_q=block_q,
-                block_k=block_k,
+                block_sizes=BlockSizes(**dict(block_sizes)),
                 causal=causal,
                 segment_ids=segment_ids,
                 interpret=self.INTERPRET,
@@ -211,8 +213,7 @@ class FusedAttentionTest(PallasBaseTest):
     else:
       impl = functools.partial(
           attention.mha,
-          block_q=block_q,
-          block_k=block_k,
+          block_sizes=BlockSizes(**dict(block_sizes)),
           causal=causal,
           segment_ids=segment_ids,
           interpret=self.INTERPRET,
@@ -224,8 +225,34 @@ class FusedAttentionTest(PallasBaseTest):
   @jtu.sample_product(
       batch_size=(1, 2),
       seq_len=(128, 384),
-      num_heads=(1, 2, 4),
-      head_dim=(32,),
+      num_heads=(1, 2),
+      head_dim=(32, 64, 128,),
+      block_sizes=(
+          (
+              ("block_q", 128),
+              ("block_k", 128),
+              ("block_q_dkv", 128),
+              ("block_kv_dkv", 128),
+              ("block_q_dq", 128),
+              ("block_kv_dq", 128),
+          ),
+          (
+              ("block_q", 64),
+              ("block_k", 64),
+              ("block_q_dkv", 64),
+              ("block_kv_dkv", 64),
+              ("block_q_dq", 64),
+              ("block_kv_dq", 64),
+          ),
+          (
+              ("block_q", 64),
+              ("block_k", 128),
+              ("block_q_dkv", 64),
+              ("block_kv_dkv", 128),
+              ("block_q_dq", 128),
+              ("block_kv_dq", 64),
+          ),
+      ),
       causal=(True, False),
       use_segment_ids=(True, False),
   )
@@ -236,6 +263,7 @@ class FusedAttentionTest(PallasBaseTest):
       seq_len,
       num_heads,
       head_dim,
+      block_sizes,
       causal,
       use_segment_ids,
   ):
@@ -257,8 +285,12 @@ class FusedAttentionTest(PallasBaseTest):
       segment_ids = None
 
     def f(q, k, v):
-      return attention.mha(q, k, v, segment_ids, causal=causal,
-                           interpret=self.INTERPRET).sum()
+      return attention.mha(
+          q, k, v,
+          block_sizes=BlockSizes(**dict(block_sizes)),
+          causal=causal,
+          segment_ids=segment_ids,
+          interpret=self.INTERPRET).sum()
 
     def f_ref(q, k, v):
       return attention.mha_reference(q, k, v, segment_ids, causal=causal).sum()
@@ -266,9 +298,9 @@ class FusedAttentionTest(PallasBaseTest):
     dq, dk, dv = jax.grad(f, argnums=(0, 1, 2))(q, k, v)
     dq_ref, dk_ref, dv_ref = jax.grad(f_ref, argnums=(0, 1, 2))(q, k, v)
     # TODO(sharadmv): Fix test.
-    np.testing.assert_allclose(dq, dq_ref, atol=0.14)
-    np.testing.assert_allclose(dk, dk_ref, atol=0.14)
-    np.testing.assert_allclose(dv, dv_ref, atol=0.05)
+    self.assertAllClose(dq, dq_ref, atol=5e-2)
+    self.assertAllClose(dk, dk_ref, atol=5e-2)
+    self.assertAllClose(dv, dv_ref, atol=1e-3)
 
 
 class FusedAttentionInterpretTest(FusedAttentionTest):

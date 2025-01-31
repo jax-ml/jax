@@ -87,7 +87,7 @@ MATCHER_P2(IsConstantOpWithSplatOrScalarValue, type, value, "") {
         }
         return true;
       })
-      .template Default([&](auto attr) {
+      .Default([&](auto attr) {
         *result_listener << "Unsupported attribute type: " << debugString(attr);
         return false;
       });

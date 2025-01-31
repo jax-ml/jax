@@ -32,6 +32,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import util
+from jax._src import mesh as mesh_lib
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -1875,6 +1876,23 @@ def _gather_shape_computation(indices, dimension_numbers, slice_sizes):
               else next(indices_shape_gen) for i in range(output_shape_rank))
   return ans
 
+class GatherShardingError(Exception):
+  pass
+
+def _gather_sharding_rule(operand, indices, *, dimension_numbers,
+                          slice_sizes, unique_indices, indices_are_sorted,
+                          mode, fill_value):
+  # TODO(yashkatariya): Write a proper gather sharding rule.
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  if cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual:  # type: ignore
+    return None
+  if (cur_mesh._are_all_axes_explicit and  # type: ignore
+      all(s is None for s in operand.sharding.spec) and
+      all(s is None for s in indices.sharding.spec)):
+    return None
+  raise GatherShardingError(
+      "Use `.at[...].get(out_sharding=)` to provide output PartitionSpec for"
+      " the gather indexing.")
 
 def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
                  unique_indices, indices_are_sorted, fill_value,
@@ -2056,7 +2074,7 @@ def _gather_pad_rule(in_avals, out_avals, operand, indices, *,
 
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
-    weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0), sharding_rule=_gather_sharding_rule)
 ad.defjvp(gather_p, _gather_jvp_rule, None)
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule

@@ -57,8 +57,6 @@ from jax._src.interpreters.partial_eval import (
   dce_jaxpr_closed_call_rule as dce_jaxpr_closed_call_rule,
   dce_jaxpr_consts as dce_jaxpr_consts,
   dce_rules as dce_rules,
-  debug_info as debug_info,
-  debug_info_final as debug_info_final,
   def_trivial_padding as def_trivial_padding,
   forwarding_rules as forwarding_rules,
   has_effects as has_effects,

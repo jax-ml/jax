@@ -21,7 +21,7 @@ import operator
 from typing import Any, Generic, TypeVar
 
 from jax import lax
-from jax.api_util import flatten_fun_nokwargs
+from jax._src import api_util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -73,7 +73,7 @@ for_p.multiple_results = True
 def _trace_to_jaxpr_with_refs(f, state_tree: PyTreeDef,
                               state_avals: Sequence[core.AbstractValue]
                               ) -> tuple[core.Jaxpr, list[Any], PyTreeDef]:
-  f, out_tree_thunk = flatten_fun_nokwargs(
+  f, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(f), treedef_tuple((tree_structure(0), state_tree)))
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       f, state_avals)
@@ -195,10 +195,10 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   def _create_jaxpr(init):
     init_flat = tree_leaves(init)
     _, in_tree = tree_flatten((init, xs))
-
+    dbg = api_util.tracing_debug_info("scan", f, (init, xs), {})
     carry_avals = tuple(map(core.get_aval, init_flat))
     jaxpr, _, out_tree = _initial_style_jaxpr(
-        f, in_tree, carry_avals + x_avals, "scan")
+        f, in_tree, carry_avals + x_avals, dbg)
     return jaxpr, out_tree
   jaxpr, out_tree = _create_jaxpr(init)
   _, ys_avals = tree_unflatten(out_tree, jaxpr.out_avals)
@@ -291,7 +291,8 @@ def _for_vmap(axis_data, args, dims, *,
     batched = map(operator.or_, batched, out_batched)
   else:
     raise Exception("Invalid fixpoint")
-  args = [batching.broadcast(x, axis_data.size, 0) if now_bat and not was_bat
+  args = [batching.broadcast(x, axis_data.size, 0, axis_data.explicit_mesh_axis)
+          if now_bat and not was_bat
           else batching.moveaxis(x, d, 0) if now_bat else x
           for x, d, was_bat, now_bat in zip(args, dims, init_batched, batched)]
   batched_jaxpr_, _ = batching.batch_jaxpr(

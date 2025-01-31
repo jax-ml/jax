@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from functools import partial
 import inspect
-from typing import Any
+from typing import Any, Callable
 import weakref
 
 import numpy as np
@@ -288,17 +288,12 @@ class custom_partitioning:
     f.def_partition(partition, propagate_user_sharding,
                     infer_sharding_from_operands=infer_sharding_from_operands,
                     sharding_rule='i j -> 'i j')
-    When config.use_shardy_partitioner.value is True, the sharding_rule is
-    used; otherwise, propagate_user_sharding and infer_sharding_from_operands
-    are used.
-    Instead of using an Einsum-like notation string, sharding_rule can also be
-    a SdyShardingRule object, such as sharding_rule=SdyShardingRule(("i", "j"), ("i", "j")).
 
   The args to ``def_partition`` are as follows:
 
   * ``propagate_user_sharding``: Callable which takes the sharding of a user (in the dag)
-    and returns a suggestion for a new `NamedSharding`. The default
-    implementation is just to return the suggested sharding.
+    and returns a suggestion for a new `NamedSharding`. The default value is None.
+    A trivial implementation is just to return the input sharding.
   * ``partition``: Callable which takes the SPMD suggested partition shapes and
     partition specs and returns the mesh, a per-shard lowering function, and the final
     input and output sharding specs (the SPMD partitioner will repartition the
@@ -309,10 +304,16 @@ class custom_partitioning:
   * ``decode_shardings``: When set to True, convert input ``GSPMDSharding``s to
     ``NamedSharding`` if possible. This may not be possible if the user does not
     provide a contextual mesh.
-  * ``sharding_rule``: Either an SdyShardingRule object or an Einsum-like
-    notation string that describes the sharding rule. We borrow the idea from
-    the einops.rearrange string , to use a space separator between factors and
-    allow multiple letters factor names.
+  * ``sharding_rule``: an SdyShardingRule object, an Einsum-like notation string
+    that describes the sharding rule, or a Callable that produces either of
+    these. We borrow the idea from the einops.rearrange string , to use a space
+    separator between factors and allow multiple letters factor names. See
+    [jax-shardy-guide](https://colab.sandbox.google.com/github/openxla/shardy/blob/main/docs/getting_started_jax.ipynb)
+    for more details and examples on how to use this.
+
+  When config.use_shardy_partitioner.value is True, `sharding_rule` is used;
+  otherwise, `propagate_user_sharding` and `infer_sharding_from_operands` are
+  used.
 
   Positional arguments can be specified as static using static_argnums. JAX uses
   :code:`inspect.signature(fun)` to resolve these positional arguments.
@@ -451,25 +452,25 @@ class custom_partitioning:
 
   __getattr__: Any = custom_api_util.forward_attr
 
-  def def_partition(self, partition, infer_sharding_from_operands,
+  def def_partition(self, partition, infer_sharding_from_operands=None,
                     propagate_user_sharding=None, decode_shardings=True,
                     sharding_rule=None):
-    if config.use_shardy_partitioner.value:
-      infer_sharding_from_operands = None
-      propagate_user_sharding = None
-    else:
-      sharding_rule = None
     self.partition = partition
     self.propagate_user_sharding = propagate_user_sharding
     self.infer_sharding_from_operands = infer_sharding_from_operands
     self.decode_shardings = decode_shardings
-    self.sharding_rule = None if sharding_rule is None \
-      else sharding_rule if isinstance(sharding_rule, SdyShardingRule) \
-          else str_to_sdy_sharding_rule(sharding_rule)
+    if (sharding_rule is None or isinstance(sharding_rule, Callable) or
+        isinstance(sharding_rule, SdyShardingRule)):
+      self.sharding_rule = sharding_rule
+    else:
+      self.sharding_rule = str_to_sdy_sharding_rule(sharding_rule)
     return partition
 
   def __call__(self, *args, **kwargs):
     args = _resolve_kwargs(self.fun, args, kwargs)
+    debug = api_util.tracing_debug_info("custom_partitioning", self.fun,
+                                        args, kwargs,
+                                        static_argnums=self.static_argnums)
     if self.static_argnums:
       static_argnums = set(self.static_argnums)
       args = tuple(x if i in static_argnums else x for i, x in enumerate(args))
@@ -488,22 +489,30 @@ class custom_partitioning:
     args_flat, in_tree = tree_util.tree_flatten(dyn_args)
     flat_fun, out_tree = api_util.flatten_fun_nokwargs(f_, in_tree)
     in_avals = [core.get_aval(x) for x in args_flat]
-    debug = pe.debug_info(self.fun, in_tree, out_tree, False,
-                          "custom_partitioning")
     mesh = mesh_lib.thread_resources.env.physical_mesh
     with core.extend_axis_env_nd(mesh.shape.items()):
       jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
     assert not len(consts)
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+
+    propagate_user_sharding = None
+    infer_sharding_from_operands = None
+    sharding_rule = None
+    if config.use_shardy_partitioner.value:
+      sharding_rule = self.sharding_rule
+    else:
+      propagate_user_sharding = self.propagate_user_sharding
+      infer_sharding_from_operands = self.infer_sharding_from_operands
+
     out_flat = custom_partitioning_p.bind(
         *consts,
         *args_flat,
         call=closed_call,
         partition=self.partition,
-        propagate_user_sharding=self.propagate_user_sharding,
-        infer_sharding_from_operands=self.infer_sharding_from_operands,
+        propagate_user_sharding=propagate_user_sharding,
+        infer_sharding_from_operands=infer_sharding_from_operands,
         decode_shardings=self.decode_shardings,
-        sharding_rule=self.sharding_rule,
+        sharding_rule=sharding_rule,
         in_tree=in_tree,
         out_tree=out_tree(),
         static_args=static_args
@@ -575,7 +584,16 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       result_layouts=None)
   if sharding_rule is not None:
     value_types = [mlir.aval_to_ir_type(s) for s in call.in_avals]
-    out.attributes['sdy.sharding_rule'] = sdy_sharding_rule_to_mlir(sharding_rule, value_types, result_types)
+    if callable(sharding_rule):
+      sharding_rule = sharding_rule(mesh, value_types, result_types)
+      if isinstance(sharding_rule, str):
+        sharding_rule = str_to_sdy_sharding_rule(sharding_rule)
+      elif not isinstance(sharding_rule, SdyShardingRule):
+          raise ValueError("sharding_rule callable must produce either an "
+                           "SdyShardingRule object or an Einsum-like notation "
+                           "string.")
+    out.attributes['sdy.sharding_rule'] = sdy_sharding_rule_to_mlir(
+      sharding_rule, value_types, result_types)
   return out.results
 
 mlir.register_lowering(custom_partitioning_p,

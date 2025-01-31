@@ -297,6 +297,8 @@ class SparseTracer(core.Tracer):
 
 class SparseTrace(core.Trace):
 
+  __slots__ = ("parent_trace", "tag", "spenv")
+
   def __init__(self, parent_trace, tag, spenv):
     self.parent_trace = parent_trace
     self.tag = tag

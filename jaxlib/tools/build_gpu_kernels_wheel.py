@@ -140,12 +140,13 @@ def prepare_wheel_rocm(
   copy_runfiles(
       dst_dir=plugin_dir,
       src_files=[
-          f"__main__/jaxlib/rocm/_solver.{pyext}",
           f"__main__/jaxlib/rocm/_blas.{pyext}",
           f"__main__/jaxlib/rocm/_linalg.{pyext}",
           f"__main__/jaxlib/rocm/_prng.{pyext}",
+          f"__main__/jaxlib/rocm/_solver.{pyext}",
           f"__main__/jaxlib/rocm/_sparse.{pyext}",
           f"__main__/jaxlib/rocm/_hybrid.{pyext}",
+          f"__main__/jaxlib/rocm/_rnn.{pyext}",
           f"__main__/jaxlib/rocm/_triton.{pyext}",
           f"__main__/jaxlib/rocm_plugin_extension.{pyext}",
           "__main__/jaxlib/version.py",

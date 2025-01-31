@@ -72,6 +72,18 @@ typedef CUevent gpuEvent_t;
 typedef CUfunction gpuFunction_t;
 typedef cudnnHandle_t gpudnnHandle_t;
 typedef cudnnStatus_t gpudnnStatus_t;
+typedef cudnnRNNDescriptor_t gpudnnRNNDescriptor_t;
+typedef cudnnDropoutDescriptor_t gpudnnDropoutDescriptor_t;
+typedef cudnnTensorDescriptor_t gpudnnTensorDescriptor_t;
+typedef cudnnRNNDataDescriptor_t gpudnnRNNDataDescriptor_t;
+typedef cudnnRNNDataLayout_t gpudnnRNNDataLayout_t;
+typedef cudnnMathType_t gpudnnMathType_t;
+typedef cudnnDataType_t gpudnnDataType_t;
+typedef cudnnRNNInputMode_t gpudnnRNNInputMode_t;
+typedef cudnnDirectionMode_t gpudnnDirectionMode_t;
+typedef cudnnRNNBiasMode_t gpudnnRNNBiasMode_t;
+typedef cudnnRNNMode_t gpudnnRNNMode_t;
+typedef cudnnForwardMode_t gpudnnForwardMode_t;
 typedef CUmodule gpuModule_t;
 typedef cusolverDnHandle_t gpusolverDnHandle_t;
 typedef cusolverStatus_t gpusolverStatus_t;
@@ -114,9 +126,41 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUBLAS_STATUS_SUCCESS CUBLAS_STATUS_SUCCESS
 
 #define gpudnnCreate cudnnCreate
+#define gpudnnGetErrorString cudnnGetErrorString
+#define gpudnnCreateRNNDescriptor cudnnCreateRNNDescriptor
 #define gpudnnSetStream cudnnSetStream
+#define gpudnnDropoutGetStatesSize cudnnDropoutGetStatesSize
+#define gpudnnSetDropoutDescriptor cudnnSetDropoutDescriptor
+#define gpudnnDestroyRNNDescriptor cudnnDestroyRNNDescriptor
+#define gpudnnDestroyRNNDataDescriptor cudnnDestroyRNNDataDescriptor
+#define gpudnnDestroyTensorDescriptor cudnnDestroyTensorDescriptor
+#define gpudnnDestroyDropoutDescriptor cudnnDestroyDropoutDescriptor
+#define gpudnnRNNBackwardWeights cudnnRNNBackwardWeights_v8
+#define gpudnnRNNBackwardData cudnnRNNBackwardData_v8
+#define gpudnnGetRNNWeightSpaceSize cudnnGetRNNWeightSpaceSize
+#define gpudnnCreateTensorDescriptor cudnnCreateTensorDescriptor
+#define gpudnnSetTensorNdDescriptor cudnnSetTensorNdDescriptor
+#define gpudnnCreateRNNDataDescriptor cudnnCreateRNNDataDescriptor
+#define gpudnnSetRNNDataDescriptor cudnnSetRNNDataDescriptor
+#define gpudnnSetRNNDescriptor cudnnSetRNNDescriptor_v8
+#define gpudnnCreateDropoutDescriptor cudnnCreateDropoutDescriptor
+#define gpudnnGetRNNTempSpaceSizes cudnnGetRNNTempSpaceSizes
+#define gpudnnRNNForward cudnnRNNForward
 
 #define GPUDNN_STATUS_SUCCESS CUDNN_STATUS_SUCCESS
+#define GPUDNN_WGRAD_MODE_ADD CUDNN_WGRAD_MODE_ADD
+#define GPUDNN_RNN_ALGO_STANDARD CUDNN_RNN_ALGO_STANDARD
+#define GPUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED CUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED
+#define GPUDNN_RNN_PADDED_IO_ENABLED CUDNN_RNN_PADDED_IO_ENABLED
+#define GPUDNN_DEFAULT_MATH CUDNN_DEFAULT_MATH
+#define GPUDNN_FMA_MATH CUDNN_FMA_MATH
+#define GPUDNN_DATA_FLOAT CUDNN_DATA_FLOAT
+#define GPUDNN_LINEAR_INPUT CUDNN_LINEAR_INPUT
+#define GPUDNN_FWD_MODE_TRAINING CUDNN_FWD_MODE_TRAINING
+#define GPUDNN_UNIDIRECTIONAL CUDNN_UNIDIRECTIONAL
+#define GPUDNN_RNN_DOUBLE_BIAS CUDNN_RNN_DOUBLE_BIAS
+#define GPUDNN_LSTM CUDNN_LSTM
+#define GPUDNN_BIDIRECTIONAL CUDNN_BIDIRECTIONAL
 
 #define gpusolverDnCreate cusolverDnCreate
 #define gpusolverDnSetStream cusolverDnSetStream
@@ -364,6 +408,7 @@ constexpr uint32_t kNumThreadsPerWarp = 32;
 #include "rocm/include/hipblas/hipblas.h"
 #include "rocm/include/hipsolver/hipsolver.h"
 #include "rocm/include/hipsparse/hipsparse.h"
+#include "rocm/include/miopen/miopen.h"
 // IWYU pragma: end_exports
 
 #define JAX_GPU_NAMESPACE hip
@@ -372,6 +417,9 @@ constexpr uint32_t kNumThreadsPerWarp = 32;
 #define JAX_GPU_HAVE_SPARSE 1
 #define JAX_GPU_HAVE_64_BIT 0
 #define JAX_GPU_HAVE_FP8 0
+// TODO(Ruturaj4): Currently equivalent API does exist in
+// MIOpen lib. Remove when MIOpen support is complete.
+#define MIOPEN_STATUS_SUCCESS 0
 
 typedef hipFloatComplex gpuComplex;
 typedef hipDoubleComplex gpuDoubleComplex;
@@ -394,6 +442,19 @@ typedef hipStream_t gpuStream_t;
 typedef hipError_t gpuError_t;
 typedef hipEvent_t gpuEvent_t;
 typedef hipFunction_t gpuFunction_t;
+typedef miopenHandle_t gpudnnHandle_t;
+typedef miopenStatus_t gpudnnStatus_t;
+typedef miopenRNNDescriptor_t gpudnnRNNDescriptor_t;
+typedef miopenDropoutDescriptor_t gpudnnDropoutDescriptor_t;
+typedef miopenTensorDescriptor_t gpudnnTensorDescriptor_t;
+typedef miopenSeqTensorDescriptor_t gpudnnRNNDataDescriptor_t;
+typedef miopenRNNBaseLayout_t gpudnnRNNDataLayout_t;
+typedef miopenDataType_t gpudnnDataType_t;
+typedef miopenRNNInputMode_t gpudnnRNNInputMode_t;
+typedef miopenRNNDirectionMode_t gpudnnDirectionMode_t;
+typedef miopenRNNBiasMode_t gpudnnRNNBiasMode_t;
+typedef miopenRNNMode_t gpudnnRNNMode_t;
+typedef miopenRNNFWDMode_t gpudnnForwardMode_t;
 typedef hipModule_t gpuModule_t;
 typedef void gpuSyevjInfo;
 typedef hipsolverSyevjInfo_t gpuSyevjInfo_t;
@@ -431,6 +492,39 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpublasZsyrk hipblasZsyrk
 
 #define GPUBLAS_STATUS_SUCCESS HIPBLAS_STATUS_SUCCESS
+
+#define gpudnnCreate miopenCreate
+#define gpudnnGetErrorString miopenGetErrorString
+#define gpudnnSetStream miopenSetStream
+#define gpudnnCreateRNNDescriptor miopenCreateRNNDescriptor
+#define gpudnnDropoutGetStatesSize miopenDropoutGetStatesSize
+#define gpudnnSetDropoutDescriptor miopenSetDropoutDescriptor
+#define gpudnnDestroyRNNDescriptor miopenDestroyRNNDescriptor
+#define gpudnnDestroyRNNDataDescriptor miopenDestroySeqTensorDescriptor
+#define gpudnnDestroyTensorDescriptor miopenDestroyTensorDescriptor
+#define gpudnnDestroyDropoutDescriptor miopenDestroyDropoutDescriptor
+#define gpudnnRNNBackwardWeights miopenRNNBackwardWeightsSeqTensor
+#define gpudnnCreateRNNDataDescriptor miopenCreateSeqTensorDescriptor
+#define gpudnnRNNBackwardData miopenRNNBackwardSeqData
+#define gpudnnCreateTensorDescriptor miopenCreateTensorDescriptor
+#define gpudnnSetTensorNdDescriptor miopenSetTensorDescriptor
+#define gpudnnSetRNNDataDescriptor miopenSetRNNDataSeqTensorDescriptor
+#define gpudnnSetRNNDescriptor miopenSetRNNDescriptor_V2
+#define gpudnnCreateDropoutDescriptor miopenCreateDropoutDescriptor
+#define gpudnnGetRNNTempSpaceSizes miopenGetRNNTempSpaceSizes
+#define gpudnnRNNForward miopenRNNForward
+#define gpudnnGetRNNWeightSpaceSize miopenGetRNNParamsSize
+
+#define GPUDNN_STATUS_SUCCESS MIOPEN_STATUS_SUCCESS
+#define GPUDNN_RNN_ALGO_STANDARD miopenRNNdefault
+#define GPUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED miopenRNNDataSeqMajorPadded
+#define GPUDNN_DATA_FLOAT miopenFloat
+#define GPUDNN_LINEAR_INPUT miopenRNNlinear
+#define GPUDNN_FWD_MODE_TRAINING miopenRNNTraining
+#define GPUDNN_UNIDIRECTIONAL miopenRNNunidirection
+#define GPUDNN_RNN_DOUBLE_BIAS miopenRNNwithBias
+#define GPUDNN_LSTM miopenLSTM
+#define GPUDNN_BIDIRECTIONAL miopenRNNbidirection
 
 #define gpusolverDnCreate hipsolverCreate
 #define gpusolverDnSetStream hipsolverSetStream
@@ -563,6 +657,7 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPU_STREAM_CAPTURE_MODE_RELAXED hipStreamCaptureModeRelaxed
 #define GPU_STREAM_NON_BLOCKING hipStreamNonBlocking
 
+#define gpuMalloc hipMalloc
 #define gpuGetLastError hipGetLastError
 #define gpuGetErrorString hipGetErrorString
 #define gpuMemcpyAsync hipMemcpyAsync

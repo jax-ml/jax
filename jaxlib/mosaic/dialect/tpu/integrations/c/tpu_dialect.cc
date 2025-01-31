@@ -383,13 +383,10 @@ MlirTpuValueArray mlirTpuDisassemble(MlirTpuInsertionPoint insertion_point,
   return MlirTpuValueArrayFromXlaArray(std::move(failure_or_vals).value());
 }
 
-MlirLogicalResult mlirTpuApplyLayoutOp(int hardware_generation,
-                                       MlirOperation op,
-                                       MlirTpuI64TargetTuple target_shape) {
-  mlir::tpu::ApplyVectorLayoutContext ctx{
-      .hardware_generation = hardware_generation,
-      .target_shape = unwrap(target_shape)};
-  return wrap(mlir::tpu::applyLayoutOp(ctx, *unwrap(op)));
+MlirLogicalResult mlirTpuApplyLayoutOp(MlirTpuApplyVectorLayoutContext ctx,
+                                       MlirOperation op) {
+  mlir::tpu::ApplyVectorLayoutContext unwrapped_ctx = unwrap(ctx);
+  return wrap(mlir::tpu::applyLayoutOp(unwrapped_ctx, *unwrap(op)));
 }
 
 MlirValue mlirTpuRelayout(MlirTpuInsertionPoint insertion_point, MlirValue val,

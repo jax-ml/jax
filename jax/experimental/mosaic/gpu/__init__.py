@@ -28,20 +28,19 @@ from .core import (
 from .launch_context import (
     LaunchContext as LaunchContext,
     MemRefTransform as MemRefTransform,
+    Rounding as Rounding,
     TileTransform as TileTransform,
     TransposeTransform as TransposeTransform,
 )
 
 if dialect is not None:
   from .dialect_lowering import (
-      gpu_address_space_to_nvptx as gpu_address_space_to_nvptx,
       lower_mgpu_dialect as lower_mgpu_dialect,
   )
   from .layout_inference import (
       infer_layout as infer_layout,
   )
 else:
-  gpu_address_space_to_nvptx = None
   lower_mgpu_dialect = None
   infer_layout = None
 
@@ -49,17 +48,14 @@ else:
 from .fragmented_array import (
     FragmentedArray as FragmentedArray,
     FragmentedLayout as FragmentedLayout,
+    TILED_LAYOUT_WGMMA as TILED_LAYOUT_WGMMA,
     WGMMA_LAYOUT as WGMMA_LAYOUT,
     WGMMA_ROW_LAYOUT as WGMMA_ROW_LAYOUT,
+    WGMMAFragLayout as WGMMAFragLayout,
+    WGMMARowFragLayout as WGMMARowFragLayout,
     WGSplatFragLayout as WGSplatFragLayout,
     WGStridedFragLayout as WGStridedFragLayout,
     optimization_barrier as optimization_barrier,
-)
-from .layouts import (
-    from_strided_fragmented_layout_attr as from_strided_fragmented_layout_attr,
-    is_strided_fragmented_layout as is_strided_fragmented_layout,
-    to_splat_fragmented_layout_attr as to_splat_fragmented_layout_attr,
-    to_strided_fragmented_layout_attr as to_strided_fragmented_layout_attr,
 )
 from .utils import (
     BarrierRef as BarrierRef,
@@ -67,6 +63,7 @@ from .utils import (
     DynamicSlice as DynamicSlice,
     Partition as Partition,
     Partition1D as Partition1D,
+    bitwidth as bitwidth,
     bytewidth as bytewidth,
     c as c,
     commit_shared as commit_shared,

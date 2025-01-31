@@ -14,6 +14,7 @@
 """Tests for TPU specific operations within pallas_call."""
 
 import functools
+import math
 import sys
 import unittest
 
@@ -270,17 +271,13 @@ class OpsTest(PallasBaseTest):
     expected = expected.at[...].set(jnp.where(get_mask(x), 0.0, -1.0))
     np.testing.assert_array_equal(result, expected)
 
-  @parameterized.product(dtype=[jnp.float32, jnp.bfloat16, jnp.int8])
+  @parameterized.product(dtype=[jnp.float32, jnp.bfloat16, jnp.int16, jnp.int8])
   def test_cast_vector_to_mask(self, dtype):
-    if jtu.jaxlib_version() <= (0, 4, 39):
-      self.skipTest("Test requires non-32-bit selection support")
+    if not jtu.if_cloud_tpu_at_least(2025, 1, 22):
+      self.skipTest("Requires libtpu built after 2025-01-22")
     shape = (128, 128)
     bitwidth = pallas_utils.dtype_bitwidth(dtype)
-    if (
-        (jtu.get_tpu_version() > 5 and bitwidth < 8)
-        or (jtu.get_tpu_version() == 5 and bitwidth not in (8, 32))
-        or (jtu.get_tpu_version() < 5 and bitwidth < 32)
-    ):
+    if jtu.get_tpu_version() < 5 and bitwidth < 32:
       self.skipTest(
           f"Not implemented: cast vector to mask with bitwidth == {bitwidth}"
       )
@@ -335,22 +332,17 @@ class OpsTest(PallasBaseTest):
       dtype=[jnp.float32, jnp.bfloat16],
   )
   def test_i1_relayout_with_bitwidth_change(self, msk_dtype, dtype):
-    # TODO(jevinjiang): Remove after 12 weeks have passed.
-    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
-      self.skipTest("Requires libtpu built after 2024-12-19")
+    if not jtu.if_cloud_tpu_at_least(2025, 1, 25):
+      self.skipTest("Requires libtpu built after 2025-01-25")
     shape = (129, 129)
     msk_bitwidth = pallas_utils.dtype_bitwidth(msk_dtype)
     bitwidth = pallas_utils.dtype_bitwidth(dtype)
-    if (
-        (jtu.get_tpu_version() > 5 and msk_bitwidth < 8)
-        or (jtu.get_tpu_version() == 5 and msk_bitwidth not in (8, 32))
-        or (jtu.get_tpu_version() < 5 and msk_bitwidth < 32)
-    ):
+    if jtu.get_tpu_version() < 5 and msk_bitwidth < 32:
       self.skipTest(
           "Not implemented: cast vector to mask with bitwidth =="
           f" {msk_bitwidth}"
       )
-    if jtu.get_tpu_version() <= 5 and bitwidth < 32:
+    if jtu.get_tpu_version() < 5 and bitwidth < 32:
       self.skipTest(f"Not implemented: comparison with bitwidth == {bitwidth}")
 
     @functools.partial(
@@ -369,6 +361,33 @@ class OpsTest(PallasBaseTest):
     out = kernel(x, mask)
     expected = jnp.where(mask, x, jnp.zeros_like(x))
     self.assertArraysEqual(out, expected)
+
+  @parameterized.product(
+      target=(jnp.int8,),  # TODO(apaszke): Add int4.
+      round=(False, True),
+  )
+  def test_quantize(self, target, round):
+    if not jtu.if_cloud_tpu_at_least(2025, 1, 15):
+      self.skipTest("Requires libtpu built after 2025-01-15")
+    if not jtu.is_device_tpu_at_least(version=6):
+      self.skipTest("Requires TPUv6+")
+    shape = (256, 256)
+    # NOTE: 256 * 256 == 2 ** 16, so those are all bf16 values.
+    x = lax.bitcast_convert_type(
+        np.arange(math.prod(shape), dtype=jnp.uint16).reshape(shape),
+        jnp.bfloat16,
+    )
+
+    round_fn = jnp.rint if round else lambda x: x
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = round_fn(x_ref[...]).astype(target)
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(shape, target)
+    )(x)
+
+    ref = jax.jit(lambda x: round_fn(x).astype(target))(x)
+    np.testing.assert_array_equal(out, ref)
 
 
 class OpsInterpretTest(OpsTest):

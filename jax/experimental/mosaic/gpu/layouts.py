@@ -19,8 +19,7 @@ import itertools
 import re
 
 from jax._src.lib.mlir import ir
-
-from .fragmented_array import WGSplatFragLayout, WGStridedFragLayout
+from . import fragmented_array as fa
 
 
 _splat_fragmented_layout_attr_pattern = re.compile(
@@ -28,14 +27,14 @@ _splat_fragmented_layout_attr_pattern = re.compile(
 )
 
 
-def to_splat_fragmented_layout_attr(layout: WGSplatFragLayout) -> ir.Attribute:
+def to_splat_fragmented_layout_attr(layout: fa.WGSplatFragLayout) -> ir.Attribute:
   """Constructs a #mosaic_gpu.WGSplatFragLayout attribute from a WGSplatFragLayout."""
   return ir.Attribute.parse(
       f"#mosaic_gpu.WGSplatFragLayout<{list(layout.shape)}>"
   )
 
 
-def from_splat_fragmented_layout_attr(attr: ir.Attribute) -> WGSplatFragLayout:
+def from_splat_fragmented_layout_attr(attr: ir.Attribute) -> fa.WGSplatFragLayout:
   """Constructs a WGSplatFragLayout from a #mosaic_gpu.WGSplatFragLayout attribute.
 
   Raises:
@@ -48,13 +47,13 @@ def from_splat_fragmented_layout_attr(attr: ir.Attribute) -> WGSplatFragLayout:
         f"Expected a #mosaic_gpu.WGSplatFragLayout attribute, got {attr}"
     )
 
-  return WGSplatFragLayout(
+  return fa.WGSplatFragLayout(
       shape=tuple(int(s) for s in match.group("shape").split(","))
   )
 
 
 def is_splat_fragmented_layout(attr: ir.Attribute) -> bool:
-  return bool(re.search(_splat_fragmented_layout_attr_pattern, str(attr)))
+  return bool(_splat_fragmented_layout_attr_pattern.search(str(attr)))
 
 
 _strided_fragmented_layout_attr_pattern = re.compile(
@@ -63,7 +62,7 @@ _strided_fragmented_layout_attr_pattern = re.compile(
 )
 
 def to_strided_fragmented_layout_attr(
-    layout: WGStridedFragLayout,
+    layout: fa.WGStridedFragLayout,
 ) -> ir.Attribute:
   """Constructs a #mosaic_gpu.WGStridedFragLayout attribute from a WGStridedFragLayout."""
   return ir.Attribute.parse(
@@ -74,7 +73,7 @@ def to_strided_fragmented_layout_attr(
 
 def from_strided_fragmented_layout_attr(
     attr: ir.Attribute,
-) -> WGStridedFragLayout:
+) -> fa.WGStridedFragLayout:
   """Constructs a WGStridedFragLayout from a #mosaic_gpu.WGStridedFragLayout attribute.
 
   Raises:
@@ -87,14 +86,79 @@ def from_strided_fragmented_layout_attr(
         f"Expected a #mosaic_gpu.WGStridedFragLayout attribute, got {attr}"
     )
 
-  return WGStridedFragLayout(
+  return fa.WGStridedFragLayout(
       shape=tuple(int(s) for s in match.group("shape").split(",")),
       vec_size=int(match.group("vector_size")),
   )
 
 
 def is_strided_fragmented_layout(attr: ir.Attribute) -> bool:
-  return bool(re.search(_strided_fragmented_layout_attr_pattern, str(attr)))
+  return bool(_strided_fragmented_layout_attr_pattern.search(str(attr)))
+
+
+def to_layout_attr(
+    layout: (
+        fa.WGSplatFragLayout
+        | fa.WGStridedFragLayout
+        | fa.WGMMAFragLayout
+        | fa.WGMMARowFragLayout
+    ),
+) -> ir.Attribute:
+  """Constructs an MLIR attribute that corresponds to the given layout."""
+  match layout:
+    case fa.WGSplatFragLayout():
+      return to_splat_fragmented_layout_attr(layout)
+    case fa.WGStridedFragLayout():
+      return to_strided_fragmented_layout_attr(layout)
+    case fa.WGMMAFragLayout():
+      return ir.Attribute.parse("#mosaic_gpu.WGMMAFragLayout")
+    case fa.WGMMARowFragLayout():
+      return ir.Attribute.parse("#mosaic_gpu.WGMMARowFragLayout")
+    case _:
+      raise NotImplementedError(
+          f"Unsupported layout for conversion to MLIR attribute: {layout}"
+      )
+
+
+_wgmma_fragmented_layout_attr_pattern = re.compile(
+    r"^#mosaic_gpu.WGMMAFragLayout$"
+)
+
+
+def is_wgmma_fragmented_layout(attr: ir.Attribute) -> bool:
+  return bool(_wgmma_fragmented_layout_attr_pattern.search(str(attr)))
+
+
+_wgmma_row_fragmented_layout_attr_pattern = re.compile(
+    r"^#mosaic_gpu.WGMMARowFragLayout$"
+)
+
+
+def is_wgmma_row_fragmented_layout(attr: ir.Attribute) -> bool:
+  return bool(_wgmma_row_fragmented_layout_attr_pattern.search(str(attr)))
+
+
+def from_layout_attr(
+    attr: ir.Attribute,
+) -> (
+    fa.WGSplatFragLayout
+    | fa.WGStridedFragLayout
+    | fa.WGMMAFragLayout
+    | fa.WGMMARowFragLayout
+):
+  """Constructs a layout from an MLIR attribute."""
+  if is_splat_fragmented_layout(attr):
+    return from_splat_fragmented_layout_attr(attr)
+  elif is_strided_fragmented_layout(attr):
+    return from_strided_fragmented_layout_attr(attr)
+  elif is_wgmma_fragmented_layout(attr):
+    return fa.WGMMAFragLayout()
+  elif is_wgmma_row_fragmented_layout(attr):
+    return fa.WGMMARowFragLayout()
+  else:
+    raise NotImplementedError(
+        f"Unsupported layout for conversion from MLIR attribute: {attr}"
+    )
 
 
 def in_layouts(op: ir.OpView) -> Sequence[ir.Attribute]:

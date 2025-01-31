@@ -21,32 +21,26 @@ concurrency:
 
 jobs:
   run_tests:
-    defaults:
-      run:
-        # Explicitly set the shell to bash to override the default Windows environment, i.e, cmd.
-        shell: bash
+    if: github.event.repository.fork == false
+    runs-on: ${{ matrix.runner }}
+    container: ${{ (contains(matrix.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
+                   (contains(matrix.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') }}
+    env:
+      JAXCI_HERMETIC_PYTHON_VERSION: "3.12"
+      JAXCI_ENABLE_X64: ${{ matrix.enable-x_64 }}
+# Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
         runner: ["windows-x86-n2-16", "linux-x86-n2-16", "linux-arm64-t2a-16"]
         enable-x_64: [1, 0]
-
-    runs-on: ${{ matrix.runner }}
-    container: ${{ (contains(matrix.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
-                   (contains(matrix.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') ||
-                   (contains(matrix.runner, 'windows-x86') && null) }}
-
-    env:
-      JAXCI_HERMETIC_PYTHON_VERSION: "3.12"
-      JAXCI_ENABLE_X64: ${{ matrix.enable-x_64 }}
-
     name: "Bazel CPU tests (${{ matrix.runner }}, Python 3.12, x64=${{ matrix.enable-x_64 }})"
-
+# End Presubmit Naming Check github-cpu-presubmits
     steps:
-    - uses: actions/checkout@v3
-    - name: Wait For Connection
-      uses: google-ml-infra/actions/ci_connection@main
-      with:
-        halt-dispatch-input: ${{ inputs.halt-for-connection }}
-    - name: Run Bazel CPU Tests with RBE
-      run: ./ci/run_bazel_test_cpu_rbe.sh
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@main
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Run Bazel CPU Tests with RBE
+        run: ./ci/run_bazel_test_cpu_rbe.sh

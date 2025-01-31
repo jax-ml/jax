@@ -22,7 +22,7 @@ from jax import dtypes
 from jax import lax
 from jax._src.lib import xla_client
 from jax._src.util import safe_zip
-from jax._src.numpy.util import check_arraylike, promote_dtypes_inexact
+from jax._src.numpy.util import ensure_arraylike, promote_dtypes_inexact
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import ufuncs, reductions
 from jax._src.sharding import Sharding
@@ -49,8 +49,7 @@ def _fft_core(func_name: str, fft_type: lax.FftType, a: ArrayLike,
               s: Shape | None, axes: Sequence[int] | None,
               norm: str | None) -> Array:
   full_name = f"jax.numpy.fft.{func_name}"
-  check_arraylike(full_name, a)
-  arr = jnp.asarray(a)
+  arr = ensure_arraylike(full_name, a)
 
   if s is not None:
     s = tuple(map(operator.index, s))
@@ -1287,8 +1286,7 @@ def fftshift(x: ArrayLike, axes: None | int | Sequence[int] = None) -> Array:
     >>> jnp.fft.ifftshift(shifted_freq)
     Array([ 0. ,  0.2,  0.4, -0.4, -0.2], dtype=float32)
   """
-  check_arraylike("fftshift", x)
-  x = jnp.asarray(x)
+  x = ensure_arraylike("fftshift", x)
   shift: int | Sequence[int]
   if axes is None:
     axes = tuple(range(x.ndim))
@@ -1337,8 +1335,7 @@ def ifftshift(x: ArrayLike, axes: None | int | Sequence[int] = None) -> Array:
     >>> jnp.fft.ifftshift(shifted_freq)
     Array([ 0. ,  0.2,  0.4, -0.4, -0.2], dtype=float32)
   """
-  check_arraylike("ifftshift", x)
-  x = jnp.asarray(x)
+  x = ensure_arraylike("ifftshift", x)
   shift: int | Sequence[int]
   if axes is None:
     axes = tuple(range(x.ndim))

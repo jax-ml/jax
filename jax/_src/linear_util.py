@@ -71,7 +71,7 @@ import weakref
 from jax._src import config
 from jax._src import core
 from jax._src import traceback_util
-from jax._src.util import curry, cache_clearing_funs
+from jax._src.util import curry, cache_clearing_funs, HashableFunction
 
 
 traceback_util.register_exclusion(__file__)
@@ -152,7 +152,11 @@ class WrappedFun:
   """
   __slots__ = ("f", "f_transformed", "transforms", "stores", "params", "in_type", "debug_info")
 
-  def __init__(self, f, f_transformed, transforms, stores, params, in_type, debug_info):
+  def __init__(self, f: Callable,
+               f_transformed: Callable,
+               transforms,
+               stores: tuple[Store | EqualStore | None, ...], params, in_type,
+               debug_info: TracingDebugInfo | None):
     self.f = f
     self.f_transformed = f_transformed
     self.transforms = transforms
@@ -165,16 +169,17 @@ class WrappedFun:
   def __name__(self):
     return getattr(self.f, '__name__', '<unnamed wrapped function>')
 
-  def wrap(self, gen, gen_static_args, out_store) -> WrappedFun:
+  def wrap(self, gen, gen_static_args,
+           out_store: Store | EqualStore | None) -> WrappedFun:
     """Add another transform and its store."""
     if out_store is None:
       return WrappedFun(self.f, partial(gen, self.f_transformed, *gen_static_args),
                         ((gen, gen_static_args),) + self.transforms,
-                        (out_store,) + self.stores, self.params, None, None)
+                        (out_store,) + self.stores, self.params, None, self.debug_info)
     else:
       return WrappedFun(self.f, partial(gen, self.f_transformed, out_store, *gen_static_args),
                         ((gen, gen_static_args),) + self.transforms,
-                        (out_store,) + self.stores, self.params, None, None)
+                        (out_store,) + self.stores, self.params, None, self.debug_info)
 
   def populate_stores(self, stores):
     """Copy the values from the `stores` into `self.stores`."""
@@ -248,11 +253,56 @@ def fun_name(f):
   except:
     return str(f)
 
-def wrap_init(f, params=None) -> WrappedFun:
+class TracingDebugInfo(NamedTuple):
+  """Tracing-time debugging info about a func and its arguments.
+
+  Formed just before staging to a jaxpr and read in trace-time error messages.
+  """
+  traced_for: str             # e.g. 'jit', 'scan', etc
+  # e.g. f'{fun.__name__} at {filename}:{lineno}' or {fun.__name__} if we have
+  # no source location information. The first word is always the function name,
+  # which may be '<unknown>'.
+  func_src_info: str
+
+  # The paths of the flattened non-static argnames,
+  # e.g. ('x', 'dict_arg["a"]', ... ).
+  # Uses `None` for the args that do not correspond to user-named arguments,
+  # e.g., tangent args in jax.jvp.
+  arg_names: tuple[str | None, ...]
+
+  # e.g. ('[0]', '[1]', ...)
+  result_paths_thunk: Callable[[], tuple[str, ...]] | None
+
+  @classmethod
+  def from_jaxpr(cls, jaxpr: core.ClosedJaxpr) -> TracingDebugInfo | None:
+    jaxpr_dbg = jaxpr.jaxpr._debug_info
+    if jaxpr_dbg is None: return None
+    return TracingDebugInfo(jaxpr_dbg.traced_for,
+                            jaxpr_dbg.func_src_info,
+                            jaxpr_dbg.arg_names,
+                            lambda: jaxpr_dbg.result_paths)
+
+  def add_result_paths(self, result_paths_thunk: Callable[[], tuple[str, ...]]
+                       ) -> TracingDebugInfo:
+    assert self.result_paths_thunk is None
+    return self._replace(result_paths_thunk=HashableFunction(result_paths_thunk,
+                                                             closure=()))
+
+  def safe_arg_names(self, expected: int) -> tuple[str | None, ...]:
+    """Get the arg_names with a safety check."""
+    if len(self.arg_names) == expected:
+      return self.arg_names
+    else:
+      # TODO(necula): this should not happen
+      return (None,) * expected
+
+
+def wrap_init(f: Callable, params=None, *,
+              debug_info: TracingDebugInfo | None = None) -> WrappedFun:
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
   params_dict = {} if params is None else params
   params = () if params is None else tuple(sorted(params.items()))
-  return WrappedFun(f, partial(f, **params_dict), (), (), params, None, None)
+  return WrappedFun(f, partial(f, **params_dict), (), (), params, None, debug_info)
 
 
 def annotate(f: WrappedFun, in_type: core.InputType | None) -> WrappedFun:
@@ -291,15 +341,6 @@ def _check_input_type(in_type: core.InputType) -> None:
           provided[d.val] = True
   assert all(provided)
 
-
-class TracingDebugInfo(NamedTuple):
-  # Packages up trace/staging-time debug info about a func and its parameters,
-  # formed just before staging to a jaxpr and read in trace-time error messages.
-  traced_for: str             # e.g. 'jit', 'scan', etc
-  func_src_info: str | None   # e.g. f'{fun.__name__} at {filename}:{lineno}'
-  arg_names: tuple[str, ...]  # e.g. ('args[0]', ... )
-  result_paths: Callable[[], tuple[str, ...]] | None
-
 def add_debug_info(f: WrappedFun, debug_info: TracingDebugInfo | None
                    ) -> WrappedFun:
   """Produce a new WrappedFun with debug_info attached."""
@@ -324,8 +365,7 @@ def cache(call: Callable, *, explain: Callable | None = None):
 
   def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, new_cache := {})  # type: ignore
-    key = (fun.transforms, fun.params, fun.in_type, args, config.enable_x64.value,
-           config.default_device.value, config.trace_context())
+    key = (fun.transforms, fun.params, fun.in_type, args, config.trace_context())
     result = cache.get(key, None)
     if result is not None:
       ans, stores = result

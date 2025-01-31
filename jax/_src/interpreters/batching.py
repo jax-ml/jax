@@ -26,17 +26,19 @@ from jax._src import config
 from jax._src import core
 from jax._src import source_info_util
 from jax._src import linear_util as lu
+from jax._src.partition_spec import PartitionSpec as P
+from jax._src.sharding_impls import NamedSharding
 from jax._src.ad_util import (Zero, instantiate, SymbolicZero,
                               replace_rule_output_symbolic_zeros,
                               add_jaxvals, add_jaxvals_p)
 from jax._src.core import Trace, Tracer, TraceTag, AxisName
 from jax._src.interpreters import partial_eval as pe
 from jax._src.tree_util import (tree_unflatten, tree_flatten,
-                                register_pytree_node)
+                                register_pytree_node, PyTreeDef)
 from jax._src.typing import Array
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list,
                            canonicalize_axis, moveaxis, as_hashable_function,
-                           curry, memoize, weakref_lru_cache)
+                           curry, memoize, weakref_lru_cache, tuple_insert)
 
 
 map, unsafe_map = safe_map, map
@@ -223,7 +225,7 @@ def _update_annotation(
     if isinstance(d, RaggedAxis):
       raise NotImplementedError
     else:
-      new_avals.append(core.unmapped_aval(sz, axis_name, d, a))  # type: ignore
+      new_avals.append(core.unmapped_aval(sz, d, a))  # type: ignore
 
   mentioned = {d for a in new_avals if type(a) is core.DShapedArray
                for d in a.shape if type(d) is Name}
@@ -241,6 +243,7 @@ Vmappable = Any
 Elt = Any
 MapSpec = Any
 AxisSize = Any
+MeshAxis = Any
 GetIdx = Callable[[], Tracer]  # TODO(mattjj): revise this laziness
 ToEltHandler = Callable[[Callable, GetIdx, Vmappable, MapSpec], Elt]
 FromEltHandler = Callable[[Callable, AxisSize, Elt, MapSpec], Vmappable]
@@ -277,12 +280,12 @@ def to_elt(trace: Trace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> Elt:
 
 to_elt_handlers: dict[type, ToEltHandler] = {}
 
-def from_elt(trace: BatchTrace, axis_size: AxisSize, i: int,
-             x: Elt, spec: MapSpec) -> Vmappable:
+def from_elt(trace: BatchTrace, axis_size: AxisSize, mesh_axis: MeshAxis,
+             i: int, x: Elt, spec: MapSpec) -> Vmappable:
   handler = from_elt_handlers.get(type(x))
   if handler:
     def _cont(axis_size, elt, axis):
-      return from_elt(trace, axis_size, i, elt, axis)
+      return from_elt(trace, axis_size, mesh_axis, i, elt, axis)
     return handler(_cont, axis_size, x, spec)
   val, bdim = trace.to_batch_info(x)
   if type(bdim) is RaggedAxis:
@@ -292,7 +295,8 @@ def from_elt(trace: BatchTrace, axis_size: AxisSize, i: int,
     return _jumble_result(axis_size, bdim.stacked_axis, bdim.ragged_axes, val)
   else:
     try:
-      return matchaxis(trace.axis_data.name, axis_size, bdim, spec, val)
+      return matchaxis(trace.axis_data.name, axis_size, mesh_axis,
+                       bdim, spec, val)
     except SpecMatchError:
       raise SpecMatchError(i, x.batch_dim, spec) from None
 from_elt_handlers: dict[type, FromEltHandler] = {}
@@ -328,7 +332,8 @@ def is_vmappable(x: Any) -> bool:
   return type(x) is Jumble or type(x) in vmappables
 
 @lu.transformation_with_aux2
-def flatten_fun_for_vmap(f, store, in_tree, *args_flat):
+def flatten_fun_for_vmap(f: Callable,
+                         store: lu.Store, in_tree: PyTreeDef, *args_flat):
   py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
   ans = f(*py_args, **py_kwargs)
   ans, out_tree = tree_flatten(ans, is_leaf=is_vmappable)
@@ -440,7 +445,17 @@ class BatchTracer(Tracer):
 class AxisData:
   name : Any
   size : Any
+  # Only one of spmd_axis_name and explicit_mesh_axis is set.
   spmd_name : Any
+  explicit_mesh_axis: Any
+
+
+def get_sharding_for_vmap(axis_data, orig_sharding, axis):
+  if orig_sharding.mesh.empty:
+    return None
+  val = axis_data.explicit_mesh_axis
+  new_spec = P(*tuple_insert(orig_sharding.spec, axis, val))
+  return NamedSharding(orig_sharding.mesh, new_spec)
 
 
 class BatchTrace(Trace):
@@ -471,7 +486,8 @@ class BatchTrace(Trace):
         return p.bind_with_trace(self.parent_trace, vals_in, params)
       else:
         with core.set_current_trace(self.parent_trace):
-          val_out, dim_out = fancy_primitive_batchers[p](self.axis_data, vals_in, dims_in, **params)
+          val_out, dim_out = fancy_primitive_batchers[p](
+              self.axis_data, vals_in, dims_in, **params)
     elif args_not_mapped:
       # no-op shortcut
       return p.bind_with_trace(self.parent_trace, vals_in, params)
@@ -591,7 +607,7 @@ def _batch_outer(f, axis_data, in_dims, *in_vals):
   return outs
 
 @lu.transformation2
-def _batch_inner(f, axis_data, out_dim_dests, tag, in_dims, *in_vals):
+def _batch_inner(f: Callable, axis_data, out_dim_dests, tag, in_dims, *in_vals):
   in_dims = in_dims() if callable(in_dims) else in_dims
   with core.take_current_trace() as parent_trace:
     trace = BatchTrace(parent_trace, tag, axis_data)
@@ -604,8 +620,9 @@ def _batch_inner(f, axis_data, out_dim_dests, tag, in_dims, *in_vals):
       outs = f(*in_tracers)
 
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
-  out_vals = map(partial(from_elt, trace, axis_data.size), range(len(outs)),
-                 outs, out_dim_dests)
+  out_vals = map(partial(from_elt, trace, axis_data.size,
+                         axis_data.explicit_mesh_axis),
+                 range(len(outs)), outs, out_dim_dests)
 
   return out_vals, trace
 
@@ -638,7 +655,7 @@ def vtile(f_flat: lu.WrappedFun,
     outputs_flat = f(*map(tile_axis(tile_size=tile_size_), args_flat, in_axes_flat))
     return map(untile_axis, outputs_flat, out_axes_flat)
 
-  axis_data = AxisData(axis_name, tile_size, None)
+  axis_data = AxisData(axis_name, tile_size, None, None)
   return _map_to_tile(batch(f_flat, axis_data, in_axes_flat, out_axes_flat))
 
 ### API for batching functions with jaxpr type inputs and outputs
@@ -750,7 +767,8 @@ def _batch_jaxpr2(
       handle_ragged(closed_jaxpr.in_avals, dim, aval)
       if isinstance(dim, RaggedAxis) else (dim, aval)
       for dim, aval in zip(in_axes, closed_jaxpr.in_avals)])
-  avals_in2 = [core.unmapped_aval(axis_data.size, axis_data.name, b, aval)
+  avals_in2 = [core.unmapped_aval(axis_data.size, b, aval,
+                                  axis_data.explicit_mesh_axis)
                if b is not not_mapped else aval
                for aval, b in unsafe_zip(avals_in, in_axes2)]
   jaxpr_out, _, consts, () = pe.trace_to_jaxpr_dynamic(f, avals_in2)
@@ -787,7 +805,9 @@ def _batch_jaxpr_axes(closed_jaxpr, axis_data, in_axes, out_axes_dest):
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
   f, out_batched = _match_axes_jaxpr(f, axis_data, out_axes_dest, out_axes)
   f = _batch_jaxpr_outer(f, axis_data, in_axes)
-  avals_in = [core.unmapped_aval(axis_data.size, axis_data.name, b, aval) if b is not not_mapped
+  avals_in = [core.unmapped_aval(axis_data.size, b, aval,
+                                 axis_data.explicit_mesh_axis)
+              if b is not not_mapped
               else aval for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes)]
   jaxpr_out, _, consts, () = pe.trace_to_jaxpr_dynamic(f, avals_in)
   return core.ClosedJaxpr(jaxpr_out, consts), out_batched()
@@ -820,7 +840,8 @@ def _match_axes_jaxpr(f, store, axis_data, out_axes_dest, out_axes, trace, in_ax
   if len(out_axes_dest) != len(out_axes):
     out_axis_dest, = out_axes_dest
     out_axes_dest = [out_axis_dest] * len(out_axes)
-  out_vals = map(partial(matchaxis, axis_data.name, axis_data.size),
+  out_vals = map(partial(matchaxis, axis_data.name, axis_data.size,
+                         axis_data.explicit_mesh_axis),
                  out_axes, out_axes_dest, out_vals)
   out_batched = [dst is not None for dst in out_axes_dest]
   store.store(out_batched)
@@ -852,6 +873,7 @@ zero_if_mapped = ZeroIfMapped()
 @lu.transformation_with_aux2
 def batch_custom_jvp_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
   size = axis_data.size
+  mesh_axis = axis_data.explicit_mesh_axis
   with core.take_current_trace() as parent_trace:
     trace = BatchTrace(parent_trace, tag, axis_data)
     in_tracers = [val if dim is None else
@@ -868,9 +890,9 @@ def batch_custom_jvp_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
   out_primals, out_tangents = split_list(out_vals, [len(out_vals) // 2])
   out_primal_bds, out_tangent_bds = split_list(out_dims, [len(out_vals) // 2])
   out_dims = map(_merge_bdims, out_primal_bds, out_tangent_bds)
-  out_primals  = map(partial(matchaxis, trace.axis_data.name, size),
+  out_primals  = map(partial(matchaxis, trace.axis_data.name, size, mesh_axis),
                      out_primal_bds, out_dims,  out_primals)
-  out_tangents = map(partial(matchaxis, trace.axis_data.name, size),
+  out_tangents = map(partial(matchaxis, trace.axis_data.name, size, mesh_axis),
                      out_tangent_bds, out_dims, out_tangents)
   store.store(out_dims * 2)
   return out_primals + out_tangents
@@ -878,6 +900,7 @@ def batch_custom_jvp_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
 def batch_custom_vjp_bwd(bwd, tag, axis_data, in_dims, out_dim_dests):
   axis_size = axis_data.size
   axis_name = axis_data.name
+  mesh_axis = axis_data.explicit_mesh_axis
   def new_bwd(*args):
     in_dims_ = in_dims() if callable(in_dims) else in_dims
     args = [SymbolicZero(core.mapped_aval(axis_size, dim, x.aval))
@@ -886,19 +909,22 @@ def batch_custom_vjp_bwd(bwd, tag, axis_data, in_dims, out_dim_dests):
     in_dims_ = [None if type(x) is SymbolicZero else d
                 for x, d in zip(args, in_dims_)]
     bwd_, out_dims_thunk = batch_subtrace(lu.wrap_init(bwd), tag, axis_data, in_dims_)
-    bwd_ = _match_axes_and_sum(bwd_, axis_size, axis_name, out_dims_thunk,
-                               out_dim_dests)
+    bwd_ = _match_axes_and_sum(bwd_, axis_size, axis_name, mesh_axis,
+                               out_dims_thunk, out_dim_dests)
     return bwd_.call_wrapped(*args)
   return new_bwd
 
 @lu.transformation2
-def _match_axes_and_sum(f, axis_size, axis_name, out_dims_thunk, out_dim_dests, *in_vals):
+def _match_axes_and_sum(f, axis_size, axis_name, mesh_axis, out_dims_thunk,
+                        out_dim_dests, *in_vals):
   # this is like _match_axes, but we do reduce-sums as needed
   out_vals = f(*in_vals)
-  return map(partial(_matchaxis_symbolic_zeros, axis_name, axis_size, axis_name,
-                    sum_match=True), out_dims_thunk(), out_dim_dests, out_vals)
+  return map(partial(_matchaxis_symbolic_zeros, axis_name, axis_size, mesh_axis,
+                     axis_name, sum_match=True),
+             out_dims_thunk(), out_dim_dests, out_vals)
 
-def _matchaxis_symbolic_zeros(axis_name, sz, name, src, dst, x, sum_match=False):
+def _matchaxis_symbolic_zeros(axis_name, sz, mesh_axis, name, src, dst, x,
+                              sum_match=False):
   # Just like `matchaxis`, but handles symbolic zeros using ad_util.py
   # TODO(mattjj): dedup with matchaxis
   if isinstance(x, (Zero, SymbolicZero)):
@@ -906,15 +932,15 @@ def _matchaxis_symbolic_zeros(axis_name, sz, name, src, dst, x, sum_match=False)
       return x
     elif type(src) == type(dst) == int:
       aval = core.mapped_aval(sz, src, x.aval)
-      return Zero(core.unmapped_aval(sz, name, dst, aval))
+      return Zero(core.unmapped_aval(sz, dst, aval, mesh_axis))
     elif src is not_mapped and dst is not not_mapped:
-      return Zero(core.unmapped_aval(sz, name, dst, x.aval))
+      return Zero(core.unmapped_aval(sz, dst, x.aval, mesh_axis))
     elif dst is not_mapped and sum_match:
       return Zero(core.mapped_aval(sz, src, x.aval))
     else:
       raise ValueError((axis_name, x, src, dst))
   else:
-    return matchaxis(axis_name, sz, src, dst, x, sum_match=sum_match)
+    return matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=sum_match)
 
 
 ### utilities for defining primitives' batching rules
@@ -1056,13 +1082,19 @@ def move_stacked_axis(operand, bdim, dst):
 
 ### general utilities for manipulating axes on jaxpr types (not vmappables)
 
-def broadcast(x, sz, axis):
+def broadcast(x, sz, axis, mesh_axis=None):
   shape = list(np.shape(x))
   shape.insert(axis, sz)
   broadcast_dims = tuple(np.delete(np.arange(len(shape)), axis))
-  return jax.lax.broadcast_in_dim(x, shape, broadcast_dims)
+  if config.sharding_in_types.value:
+    x_aval = core.get_aval(x)
+    new_spec = P(*tuple_insert(x_aval.sharding.spec, axis, mesh_axis))
+    sharding = x_aval.sharding.with_spec(new_spec)
+  else:
+    sharding = None
+  return jax.lax.broadcast_in_dim(x, shape, broadcast_dims, sharding=sharding)
 
-def matchaxis(axis_name, sz, src, dst, x, sum_match=False):
+def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
   if dst == jumble_axis:
     x = bdim_at_front(x, src, sz)
     elt_ty = x.aval.update(shape=x.shape[1:])
@@ -1079,7 +1111,7 @@ def matchaxis(axis_name, sz, src, dst, x, sum_match=False):
   elif type(src) == type(dst) == int:
     return moveaxis(x, src, dst)
   elif src is not_mapped and dst is not not_mapped:
-    return broadcast(x, sz, canonicalize_axis(dst, np.ndim(x) + 1))
+    return broadcast(x, sz, canonicalize_axis(dst, np.ndim(x) + 1), mesh_axis)
   elif dst is not_mapped and sum_match:
     return x.sum(src)
   else:

@@ -57,7 +57,7 @@ module @jit_f attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 :
 >>> compiled = lowered.compile()
 
 >>> # Query for cost analysis, print FLOP estimate
->>> compiled.cost_analysis()[0]['flops']
+>>> compiled.cost_analysis()['flops']
 2.0
 
 >>> # Execute the compiled function!

@@ -74,5 +74,27 @@ fi
 if [[ $(uname -s) =~ "MSYS_NT" ]]; then
   echo 'Converting MSYS Linux-like paths to Windows paths (for Bazel, Python, etc.)'
   # Convert all "JAXCI.*DIR" variables
-  source <(python ./ci/utilities/convert_msys_paths_to_win_paths.py --convert $(env | grep "JAXCI.*DIR" | awk -F= '{print $1}'))
+  source <(python3 ./ci/utilities/convert_msys_paths_to_win_paths.py --convert $(env | grep "JAXCI.*DIR" | awk -F= '{print $1}'))
 fi
+
+function retry {
+  local cmd="$1"
+  local max_attempts=3
+  local attempt=1
+  local delay=10
+
+  while [[ $attempt -le $max_attempts ]] ; do
+    if eval "$cmd"; then
+      return 0
+    fi
+    echo "Attempt $attempt failed. Retrying in $delay seconds..."
+    sleep $delay # Prevent overloading
+
+    attempt=$((attempt + 1))
+  done
+  echo "$cmd failed after $max_attempts attempts."
+  exit 1
+}
+
+# Retry "bazel --version" 3 times to avoid flakiness when downloading bazel.
+retry "bazel --version"

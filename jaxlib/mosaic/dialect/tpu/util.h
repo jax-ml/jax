@@ -17,8 +17,10 @@
 #include "mlir/IR/Location.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "mlir/include/mlir/IR/Attributes.h"
+#include "mlir/include/mlir/IR/Diagnostics.h"
 #include "mlir/include/mlir/IR/Value.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
@@ -67,6 +69,32 @@
       return failure();        \
     }                          \
   } while (false)
+
+template <typename Op>
+class StatusToDiagnosticAdapter {
+ public:
+  // Returns an adapter that converts a non-OK absl::Status to an
+  // mlir::InFlightDiagnostic.
+  explicit StatusToDiagnosticAdapter(Op op) : op_(op) {}
+
+  // Converts a non-OK absl::Status to an mlir::InFlightDiagnostic.
+  mlir::InFlightDiagnostic operator()(const absl::Status &status) const {
+    return op_->emitOpError(status.ToString());
+  }
+
+ private:
+  Op op_;
+};
+
+// Returns a callable adapter that converts a non-OK absl::Status to an
+// mlir::InFlightDiagnostic.
+//
+// Example usage:
+// ASSIGN_OR_RETURN(T result, DoSomething(), _.With(StatusToDiagnostic(&op)));
+template <typename Op>
+inline StatusToDiagnosticAdapter<Op> StatusToDiagnostic(Op op) {
+  return StatusToDiagnosticAdapter<Op>(op);
+}
 
 namespace mlir::tpu {
 

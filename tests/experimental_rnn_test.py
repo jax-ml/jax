@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from functools import partial
-import unittest
 from absl.testing import absltest
 import numpy as np
 import jax
@@ -35,14 +34,13 @@ class RnnTest(jtu.JaxTestCase):
       num_layers=[1, 4],
       bidirectional=[True, False],
   )
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("cuda", "rocm")
   @jax.default_matmul_precision("float32")
   def test_lstm(self, batch_size: int, seq_len: int, input_size: int,
                 hidden_size: int, num_layers: int, bidirectional: bool):
-    # TODO(phawkins): Partially disable this on cudnn version per b/281071013
-    if (batch_size == 1 and seq_len == 4 and input_size == 1 and
-        hidden_size == 6 and num_layers == 4 and bidirectional == False):
-      self.skipTest("Test requires cudnn >= 8.8")
+    # TODO(ruturaj4): Bidirectional doesn't quite work well with rocm.
+    if bidirectional and jtu.is_device_rocm():
+      self.skipTest("Bidirectional mode is not available for ROCm.")
 
     num_directions = 2 if bidirectional else 1
     seq_length_key, root_key = jax.random.split(jax.random.PRNGKey(0))
@@ -62,6 +60,8 @@ class RnnTest(jtu.JaxTestCase):
     weights = rnn.init_lstm_weight(k4, input_size, hidden_size, num_layers,
                                    bidirectional)
     def f(weights, x, h_0, c_0):
+      if jtu.is_device_rocm():
+        weights = rnn.swap_lstm_gates(weights, input_size, hidden_size, num_layers, bidirectional)
       y, h, c = rnn.lstm(
         x,
         h_0,
@@ -179,7 +179,6 @@ class RnnTest(jtu.JaxTestCase):
       y_padded = y_ref[i, seq_lengths[i]:]
       np.testing.assert_allclose(y_padded, jnp.zeros_like(y_padded))
 
-  @unittest.skip('https://github.com/jax-ml/jax/issues/25825')
   @jtu.run_on_devices("cuda")
   def test_struct_encoding_determinism(self):
     def f(k1, k2, k3, k4):
