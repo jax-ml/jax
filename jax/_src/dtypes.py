@@ -31,6 +31,7 @@ import warnings
 
 import ml_dtypes
 import numpy as np
+import numpy.dtypes as np_dtypes
 
 from jax._src import config
 from jax._src.typing import Array, DType, DTypeLike
@@ -765,9 +766,11 @@ def is_python_scalar(x: Any) -> bool:
     return type(x) in python_scalar_dtypes
 
 def check_valid_dtype(dtype: DType) -> None:
-  if dtype not in _jax_dtype_set:
-    raise TypeError(f"Dtype {dtype} is not a valid JAX array "
-                    "type. Only arrays of numeric types are supported by JAX.")
+  if dtype not in _jax_dtype_set and not is_string_dtype(dtype):
+    raise TypeError(
+        f'Dtype {dtype} is not a valid JAX array '
+        'type. Only arrays of numeric types are supported by JAX.'
+    )  # 2DO fix message and adjust tests.
 
 def dtype(x: Any, *, canonicalize: bool = False) -> DType:
   """Return the dtype object for a value or type, optionally canonicalized based on X64 mode."""
@@ -870,8 +873,14 @@ def check_user_dtype_supported(dtype, fun_name=None):
       uint2,
       uint4
   ]
-  if np_dtype.kind not in "biufc" and not is_custom_dtype and not dtype == float0:
-    msg = f"JAX only supports number and bool dtypes, got dtype {dtype}"
+  if (
+      np_dtype.kind not in 'biufcT'
+      and not is_custom_dtype
+      and not dtype == float0
+  ):
+    msg = (
+        f'JAX only supports number, bool, and string dtypes, got dtype {dtype}'
+    )
     msg += f" in {fun_name}" if fun_name else ""
     raise TypeError(msg)
   if dtype is not None and np_dtype != canonicalize_dtype(np_dtype):
@@ -949,3 +958,9 @@ def short_dtype_name(dtype) -> str:
   else:
     return (dtype.name.replace('float', 'f').replace('uint'   , 'u')
                       .replace('int'  , 'i').replace('complex', 'c'))
+
+
+def is_string_dtype(dtype: DTypeLike | None) -> bool:
+  return hasattr(np_dtypes, 'StringDType') and isinstance(
+      dtype, np_dtypes.StringDType
+  )

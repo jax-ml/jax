@@ -1608,6 +1608,17 @@ jax_py_test(
 )
 
 jax_multiplatform_test(
+    name = "string_array_test",
+    srcs = ["string_array_test.py"],
+    # enable_backends = [],
+    # enable_configs = [
+    #     "cpu",
+    #     "gpu_p100x2",
+    #     "tpu_v5p_2x2",
+    # ],
+)
+
+jax_multiplatform_test(
     name = "cudnn_fusion_test",
     srcs = ["cudnn_fusion_test.py"],
     enable_backends = [],
@@ -1642,6 +1653,7 @@ exports_files(
         "shard_map_test.py",
         "transfer_guard_test.py",
         "layout_test.py",
+        "string_array_test.py",
     ],
     visibility = jax_test_file_visibility,
 )
