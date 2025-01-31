@@ -32,7 +32,7 @@ class XlaMetadata:
     return self.hash
 
   def __eq__(self, other):
-    return self.val == other.val
+    return other is not None and self.val == other.val
 
 
 def update_metadata(a, b: dict[str, Any]):
