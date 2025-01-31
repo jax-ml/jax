@@ -30,6 +30,7 @@ except ImportError:
 
 jax.config.parse_flags_with_absl()
 
+
 @unittest.skipIf(not portpicker, "Test requires portpicker")
 class DistributedTest(jtu.JaxTestCase):
   # TODO(phawkins): Enable after https://github.com/jax-ml/jax/issues/11222
@@ -55,7 +56,9 @@ class DistributedTest(jtu.JaxTestCase):
     def task(i):
       # We can't call the public APIs directly because they use global state.
       state = distributed.State()
-      state.initialize(coordinator_address=f"localhost:{port}", num_processes=n, process_id=i)
+      state.initialize(
+        coordinator_address=f"localhost:{port}", num_processes=n, process_id=i
+      )
       state.shutdown()
 
     threads = [threading.Thread(target=task, args=(i,)) for i in range(n)]
@@ -69,6 +72,7 @@ class DistributedTest(jtu.JaxTestCase):
     # Run in subprocess to isolate side effects from jax.distributed.initialize which conflict with other
     # tests. Unfortunately this can't be avoided by calling jax.distributed.shutdown, as the XLA backend
     # will be warmed up, which yields a RuntimeError on subsequent calls to initialize.
+    assert portpicker is not None
     port = portpicker.pick_unused_port()
     pycmd = "import jax; "
     if run_initialize:
@@ -77,7 +81,9 @@ class DistributedTest(jtu.JaxTestCase):
       pycmd += "assert not jax.distributed.is_initialized()"
 
     result = subprocess.run([sys.executable, "-c", pycmd], capture_output=True)
-    self.assertEqual(result.returncode, 0, msg = f"Test failed with:\n{result.stdout}\n{result.stderr}")
+    self.assertEqual(
+      result.returncode, 0, msg=f"Test failed with:\n{result.stdout}\n{result.stderr}"
+    )
 
 
 if __name__ == "__main__":
