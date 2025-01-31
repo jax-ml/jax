@@ -211,7 +211,7 @@ class ArrayImpl(basearray.Array):
       arrays = self._check_and_rearrange(arrays, self._sharding, self.aval)
     self._arrays = arrays  # type: ignore
 
-  if xla_extension_version >= 308:
+  if xla_extension_version >= 309:
     def _check_and_rearrange(self, arrays, sharding, aval):
       device_id_to_buffer = {_get_device(db).id: db for db in arrays}
 
