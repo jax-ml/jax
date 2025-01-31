@@ -365,28 +365,13 @@ def _numpy_scalar_attribute(val: Any) -> ir.Attribute:
   else:
     raise TypeError(f"Unsupported scalar attribute type: {type(val)}")
 
-_dtype_to_array_attr: dict[Any, AttributeHandler] = {
-  np.dtype(np.bool_): ir.DenseBoolArrayAttr.get,
-  np.dtype(np.float32): ir.DenseF32ArrayAttr.get,
-  np.dtype(np.float64): ir.DenseF64ArrayAttr.get,
-  np.dtype(np.int32): ir.DenseI32ArrayAttr.get,
-  np.dtype(np.int64): ir.DenseI64ArrayAttr.get,
-  np.dtype(np.int8): ir.DenseI8ArrayAttr.get,
-}
-
 def _numpy_array_attribute(x: np.ndarray | np.generic) -> ir.Attribute:
   shape = x.shape
   if x.dtype == np.bool_:
     x = np.packbits(x, bitorder='little')  # type: ignore
   x = np.ascontiguousarray(x)
-  builder = _dtype_to_array_attr.get(x.dtype, None)
-  # Array attributes only support 1D arrays. Fall back to creating dense
-  # elements attribute for higher dimensions.
-  if builder and len(shape) == 1:
-    return builder(x)
-  else:
-    element_type = dtype_to_ir_type(x.dtype)
-    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
+  element_type = dtype_to_ir_type(x.dtype)
+  return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
 
 def _numpy_array_attribute_handler(val: np.ndarray | np.generic) -> ir.Attribute:
   if 0 in val.strides and val.size > 0:
