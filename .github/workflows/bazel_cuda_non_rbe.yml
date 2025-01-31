@@ -32,7 +32,7 @@ on:
       gcs_download_uri:
         description: "GCS location URI from where the artifacts should be downloaded"
         required: true
-        default: 'gs://general-ml-ci-transient/jax-github-actions/jax-fork/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+        default: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
         type: string
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
