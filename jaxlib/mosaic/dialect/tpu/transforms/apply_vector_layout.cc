@@ -2923,6 +2923,67 @@ LogicalResult tpu_gather_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
+LogicalResult tpu_dynamic_gather_rule(RewriteContext &ctx, Operation &op,
+                                      const ArrayRef<Layout> layouts_in,
+                                      const ArrayRef<Layout> layouts_out) {
+  TPU_ASSERT_EQ_OP(layouts_in.size(), 2);
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
+  TPU_ASSERT_OP(layouts_in[0].has_value());
+  TPU_ASSERT_OP(layouts_in[1].has_value());
+  TPU_ASSERT_OP(layouts_out[0].has_value());
+  const VectorLayout &src_layout = *(layouts_in[0]);
+  const VectorLayout &idx_layout = *(layouts_in[1]);
+  const VectorLayout &out_layout = *(layouts_out[0]);
+
+  OpBuilder builder(&op);
+  auto dy_gather_op = cast<tpu::DynamicGatherOp>(op);
+
+  // TODO(jevinjiang): we need to think harder for general vector shape.
+  if (dy_gather_op.getType().getShape() !=
+      ArrayRef<int64_t>(ctx.target_shape)) {
+    return op.emitOpError(
+        "Not implemented: DynamicGatherOp only supports 32-bit VREG shape");
+  }
+
+  if (src_layout != out_layout || idx_layout != out_layout) {
+    return op.emitOpError(
+        "Not implemented: only support same layout for source, indices and "
+        "result");
+  }
+
+  if (!out_layout.hasNaturalTopology(ctx.target_shape)) {
+    return op.emitOpError(
+        "Not implemented: unsupported layout for DynamicGatherOp");
+  }
+
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> src_vregs,
+      disassemble(builder, src_layout, dy_gather_op.getSource(),
+                  ctx.target_shape));
+
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> idx_vregs,
+      disassemble(builder, idx_layout, dy_gather_op.getIndices(),
+                  ctx.target_shape));
+
+  TPU_ASSERT_EQ_OP(src_vregs.dimensions(), idx_vregs.dimensions());
+  TPU_ASSERT_EQ_OP(src_vregs.num_elements(), 1);
+
+  xla::Array<Value> out_vregs(src_vregs.dimensions());
+  out_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
+    *v = builder.create<tpu::DynamicGatherOp>(
+        op.getLoc(), src_vregs(idxs).getType(), src_vregs(idxs),
+        idx_vregs(idxs), dy_gather_op.getDimension());
+  });
+
+  dy_gather_op.replaceAllUsesWith(
+      assemble(builder, dy_gather_op.getResult().getType(), out_layout,
+               out_vregs, ctx.target_shape)
+          .getOperation());
+  dy_gather_op.erase();
+  return success();
+}
+
 LogicalResult tpu_region_rule(RewriteContext &ctx, Operation &op,
                               const ArrayRef<Layout> layouts_in,
                               const ArrayRef<Layout> layouts_out) {
@@ -4688,6 +4749,7 @@ const llvm::StringMap<rule_type> &rules() {
         {tpu::ConcatenateOp::getOperationName(), tpu_concatenate_rule},
         {tpu::IotaOp::getOperationName(), tpu_iota_rule},
         {tpu::GatherOp::getOperationName(), tpu_gather_rule},
+        {tpu::DynamicGatherOp::getOperationName(), tpu_dynamic_gather_rule},
         {tpu::LoadOp::getOperationName(), tpu_load_rule},
         {tpu::StoreOp::getOperationName(), tpu_store_rule},
         {tpu::StridedLoadOp::getOperationName(), tpu_strided_load_rule},
@@ -6838,7 +6900,7 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
     return elementwise_op_rule(ctx, op, layouts_in, layouts_out);
   }
   return op.emitError("Not implemented: Unsupported operation: ")
-         << op.getName();
+         << op.getName() << " in apply-vector-layout pass";
 }
 
 LogicalResult applyLayoutBlock(RewriteContext &ctx, Block &block) {
