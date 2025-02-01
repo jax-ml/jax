@@ -2087,6 +2087,70 @@ def _iota_lowering_rule(ctx: LoweringRuleContext, dtype, shape, dimension,
 lowering_rules[lax.iota_p] = _iota_lowering_rule
 
 
+def _gather_lowering_rule(
+    ctx: LoweringRuleContext,
+    x,
+    indices,
+    *,
+    dimension_numbers,
+    slice_sizes,
+    unique_indices,
+    indices_are_sorted,
+    mode,
+    fill_value,
+):
+  in_aval = ctx.avals_in[0]
+  indices_aval = ctx.avals_in[1]
+  out_aval = ctx.avals_out[0]
+
+  if len(in_aval.shape) != 2:
+    raise NotImplementedError("Only 2D gather is supported")
+  if pallas_utils.dtype_bitwidth(in_aval.dtype) != 32:
+    raise NotImplementedError("Only 32-bit gather is supported")
+  if in_aval.shape != indices_aval.shape[:-1] != out_aval.shape:
+    raise ValueError("Shape mismatch in input, indices and output")
+
+  out_type = aval_to_ir_type(
+      ctx.lowering_context.dynamic_shape_replacement_fn, out_aval
+  )
+  # During lowering jnp.take_along_axis to lax.gather, we append extra dimension
+  # to the end of the indices array. We should reshape it back to the original
+  # shape before lowering to Mosaic and rely on MLIR CSE to remove the reshapes.
+  assert indices_aval.shape == in_aval.shape + (1,)
+  recovered_indices = vector.shape_cast(
+      ir.VectorType.get(in_aval.shape, ir.IntegerType.get_signless(32)),
+      indices,
+  )
+  # Note: current support for lax.gather is still very limited.
+  del fill_value
+  if (
+      slice_sizes == (1, 1)
+      and not unique_indices
+      and not indices_are_sorted
+      and mode == lax.GatherScatterMode.FILL_OR_DROP
+  ):
+    if dimension_numbers == lax.GatherDimensionNumbers(
+        offset_dims=(),
+        collapsed_slice_dims=(0,),
+        start_index_map=(0,),
+        operand_batching_dims=(1,),
+        start_indices_batching_dims=(1,),
+    ):
+      return tpu.dynamic_gather(out_type, x, recovered_indices, 0)
+    if dimension_numbers == lax.GatherDimensionNumbers(
+        offset_dims=(),
+        collapsed_slice_dims=(1,),
+        start_index_map=(1,),
+        operand_batching_dims=(0,),
+        start_indices_batching_dims=(0,),
+    ):
+      return tpu.dynamic_gather(out_type, x, recovered_indices, 1)
+  raise NotImplementedError("Unsupported gather")
+
+
+lowering_rules[lax.gather_p] = _gather_lowering_rule
+
+
 def _transpose_lowering_rule(ctx: LoweringRuleContext, x, *, permutation):
   if permutation != (1, 0):
     raise NotImplementedError
