@@ -24,6 +24,7 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import mesh as mesh_lib
 from jax._src.util import safe_zip
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 
 zip, unsafe_zip = safe_zip, zip
 
@@ -51,7 +52,8 @@ def call_sharding_rule(prim, rule, num_out, *avals, **kwargs):
   if config.sharding_in_types.value:
     cur_mesh = mesh_lib.get_abstract_mesh()
     if cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual:
-      return None if num_out is None else [None] * num_out
+      s = NamedSharding(cur_mesh, P())
+      return s if num_out is None else [s] * num_out
     if rule is None:
       raise ValueError(
           f'sharding rule for {prim.name} is not implemented. Please file a'
@@ -68,12 +70,13 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
   weak_type = weak_type_rule(*avals, **kwargs)
   least_specialized = type(max(avals, key=_get_array_abstraction_level))
   if least_specialized is core.ShapedArray:
-    avals = core.cast_from_auto_to_manual(avals)
+    # avals = core.cast_from_auto_to_manual(avals)
     core.check_avals_context_mesh(avals, prim.name)
     out_aval = core.ShapedArray(
         shape_rule(*avals, **kwargs), dtype_rule(*avals, **kwargs),
         weak_type=weak_type,
         sharding=call_sharding_rule(prim, sharding_rule, None, *avals, **kwargs))
+    if str(prim) == 'mul': breakpoint()
     core.check_avals_context_mesh([out_aval], prim.name)
     return out_aval
   elif least_specialized is core.DShapedArray:
