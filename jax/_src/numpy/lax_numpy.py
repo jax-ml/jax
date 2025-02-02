@@ -9744,7 +9744,9 @@ def einsum(
 
   contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)
 
-  einsum = jit(_einsum, static_argnums=(1, 2, 3, 4, 5), inline=True)
+  # Note: replacing `...` with the actual parameter types for f `_einsum` would allow
+  #       the call on the final line of the function to be statically typechecked
+  einsum: Callable[..., Array] = jit(_einsum, static_argnums=(1, 2, 3, 4, 5), inline=True)
   if spec is not None:
     einsum = jax.named_call(einsum, name=spec)
   return einsum(operands, contractions, precision,
@@ -9849,7 +9851,7 @@ def _einsum(
     preferred_element_type,
     _dot_general=lax.dot_general,
     out_sharding=None,
-):
+) -> Array:
   if out_sharding is not None and not config.sharding_in_types.value:
     raise NotImplementedError("out_sharding only works when sharding_in_types "
                               "config is True.")
