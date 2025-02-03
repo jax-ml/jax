@@ -37,8 +37,10 @@ cc_library(
     deps = [
         "//jaxlib:ffi_helpers",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",

@@ -72,6 +72,21 @@ namespace jax {
 #define FFI_ASSIGN_OR_RETURN_ESCAPE_(...) FFI_ASSIGN_OR_RETURN_##__VA_ARGS__
 #define FFI_ASSIGN_OR_RETURN_FFI_ASSIGN_OR_RETURN_EMPTY
 
+#define FFI_ASSIGN_OR_RETURN_FUTURE(lhs, rhs) \
+  FFI_ASSIGN_OR_RETURN_FUTURE_IMPL_(          \
+      FFI_ASSIGN_OR_RETURN_CONCAT_(_status_or_value, __LINE__), lhs, rhs)
+
+#define FFI_ASSIGN_OR_RETURN_FUTURE_IMPL_(statusor, lhs, rhs) \
+  auto statusor = (rhs);                                      \
+  if (ABSL_PREDICT_FALSE(!statusor.ok())) {                   \
+    ::xla::ffi::Promise promise;                              \
+    ::xla::ffi::Future future(promise);                       \
+    promise.SetError(::jax::AsFfiError(statusor.status()));   \
+    return future;                                            \
+  }                                                           \
+  FFI_ASSIGN_OR_RETURN_UNPARENTHESIZE_IF_PARENTHESIZED(lhs) = \
+      (*std::move(statusor))
+
 template <typename T>
 inline absl::StatusOr<T> MaybeCastNoOverflow(
     std::int64_t value, const std::string& source = __FILE__) {

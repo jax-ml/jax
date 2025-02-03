@@ -254,7 +254,7 @@ def householder_product(a: ArrayLike, taus: ArrayLike) -> Array:
   return householder_product_p.bind(a, taus)
 
 
-def lu(x: ArrayLike) -> tuple[Array, Array, Array]:
+def lu(x: ArrayLike, *, min_chunk_size_per_thread: int | None = None) -> tuple[Array, Array, Array]:
   r"""LU decomposition with partial pivoting.
 
   Computes the matrix decomposition:
@@ -284,7 +284,7 @@ def lu(x: ArrayLike) -> tuple[Array, Array, Array]:
     swaps as a permutation, represented as an int32 array with shape
     ``[..., m]``.
   """
-  return lu_p.bind(x)
+  return lu_p.bind(x, min_chunk_size_per_thread=min_chunk_size_per_thread)
 
 
 def lu_pivots_to_permutation(pivots: ArrayLike, permutation_size: int) -> Array:
@@ -1401,7 +1401,7 @@ def _lu_python(x):
   return fn(x)
 
 
-def _lu_shape_rule(shape):
+def _lu_shape_rule(shape, **_):
   m, n = shape
   return shape, (core.min_dim(m, n),), (m,)
 
@@ -1411,10 +1411,10 @@ def _lu_dtype_rule(dtype, **_):
   return dtype, dtypes.dtype(np.int32), dtypes.dtype(np.int32)
 
 
-def _lu_jvp_rule(primals, tangents):
+def _lu_jvp_rule(primals, tangents, **kwargs):
   a, = primals
   a_dot, = tangents
-  lu, pivots, permutation = lu_p.bind(a)
+  lu, pivots, permutation = lu_p.bind(a, **kwargs)
 
   a_shape = np.shape(a)
   m, n = a_shape[-2:]
@@ -1460,21 +1460,26 @@ def _lu_jvp_rule(primals, tangents):
                                      ad_util.Zero.from_primal_value(permutation))
 
 
-def _lu_cpu_gpu_lowering(ctx, operand, *, target_name_prefix: str):
+def _lu_cpu_gpu_lowering(
+    ctx, operand, *, target_name_prefix: str,
+    min_chunk_size_per_thread: int | None):
   operand_aval, = ctx.avals_in
   out_aval, pivot_aval, perm_aval = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
   info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
   m = operand_aval.shape[-2]
 
+  params = {}
   if target_name_prefix == "cpu":
     target_name = lapack.prepare_lapack_call("getrf_ffi", operand_aval.dtype)
+    if min_chunk_size_per_thread is not None:
+      params["min_chunk_size_per_thread"] = np.int64(min_chunk_size_per_thread)
   else:
     target_name = f"{target_name_prefix}solver_getrf_ffi"
   rule = _linalg_ffi_lowering(target_name,
                               avals_out=[out_aval, pivot_aval, info_aval],
                               operand_output_aliases={0: 0})
-  lu, pivot, info = rule(ctx, operand)
+  lu, pivot, info = rule(ctx, operand, **params)
 
   # Subtract 1 from the pivot to get 0-based indices.
   pivot = hlo.subtract(pivot, mlir.full_like_aval(ctx, 1, pivot_aval))
@@ -1489,7 +1494,7 @@ def _lu_cpu_gpu_lowering(ctx, operand, *, target_name_prefix: str):
   return [lu, pivot, perm]
 
 
-def _lu_tpu_lowering_rule(ctx, operand):
+def _lu_tpu_lowering_rule(ctx, operand, **_):
   result_types = [
     mlir.aval_to_ir_type(ctx.avals_out[0]),
     mlir.aval_to_ir_type(ctx.avals_out[1]),

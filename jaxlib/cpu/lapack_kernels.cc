@@ -20,6 +20,7 @@ limitations under the License.
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <optional>
@@ -28,8 +29,10 @@ limitations under the License.
 #include <type_traits>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/call_once.h"
 #include "absl/base/dynamic_annotations.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/numbers.h"
 #include "absl/types/span.h"
 #include "jaxlib/ffi_helpers.h"
 #include "xla/ffi/api/c_api.h"
@@ -222,33 +225,105 @@ template struct Getrf<std::complex<double>>;
 
 // FFI Kernel
 
+std::optional<int64_t> GetMaxNumThreads() {
+  static std::optional<int64_t> max_num_threads;
+  absl::once_flag flag;
+  absl::call_once(
+      flag,
+      [](std::optional<int64_t>& max_num_threads) {
+        const char* num_threads_str = std::getenv("JAX_LAPACK_NUM_THREADS");
+        int64_t num_threads;
+        if (num_threads_str &&
+            absl::SimpleAtoi(num_threads_str, &num_threads)) {
+          max_num_threads = num_threads;
+        }
+      },
+      max_num_threads);
+  return max_num_threads;
+}
+
+template <typename F>
+ffi::Future EnqueueBatchedWork(ffi::ThreadPool thread_pool, int64_t size,
+                               int64_t step, F fn) {
+  int64_t num_threads = thread_pool.num_threads();
+  auto maybe_max_num_threads = GetMaxNumThreads();
+  if (maybe_max_num_threads.has_value()) {
+    num_threads = std::min(num_threads, maybe_max_num_threads.value());
+  }
+  num_threads = std::max(int64_t{1}, num_threads);
+  if (size <= step || num_threads == 1) {
+    ffi::Promise promise;
+    ffi::Future future(promise);
+    promise.SetAvailable();
+    fn(0, size);
+    return future;
+  }
+
+  // Limit the total number of tasks to at most the number of threads.
+  int64_t num_tasks = (size + step - 1) / step;
+  int64_t num_remain = 0;
+  if (num_tasks > num_threads) {
+    num_tasks = num_threads;
+    step = size / num_tasks;
+    num_remain = size % num_tasks;
+  }
+
+  ffi::CountDownPromise counter(num_tasks);
+  ffi::Future future(counter);
+  int64_t idx = 0;
+  for (int64_t task = 0; task < num_tasks; ++task) {
+    int64_t delta = step + int64_t{task < num_remain};
+    thread_pool.Schedule([idx, delta, size, fn, counter]() mutable {
+      fn(idx, std::min(size, idx + delta));
+      counter.CountDown();
+    });
+    idx += delta;
+  }
+  return future;
+}
+
 template <ffi::DataType dtype>
-ffi::Error LuDecomposition<dtype>::Kernel(
-    ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
-    ffi::ResultBuffer<LapackIntDtype> ipiv,
+ffi::Future LuDecomposition<dtype>::Kernel(
+    ffi::ThreadPool thread_pool, ffi::Dictionary attrs, ffi::Buffer<dtype> x,
+    ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<LapackIntDtype> ipiv,
     ffi::ResultBuffer<LapackIntDtype> info) {
-  FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
-                       SplitBatch2D(x.dimensions()));
+  FFI_ASSIGN_OR_RETURN_FUTURE((auto [batch_count, x_rows, x_cols]),
+                              SplitBatch2D(x.dimensions()));
+  FFI_ASSIGN_OR_RETURN_FUTURE(auto x_rows_v,
+                              MaybeCastNoOverflow<lapack_int>(x_rows));
+  FFI_ASSIGN_OR_RETURN_FUTURE(auto x_cols_v,
+                              MaybeCastNoOverflow<lapack_int>(x_cols));
+  auto x_leading_dim_v = x_rows_v;
+  const int64_t x_out_step{x_rows * x_cols};
+  const int64_t ipiv_step{std::min(x_rows, x_cols)};
+
   auto* x_out_data = x_out->typed_data();
   auto* ipiv_data = ipiv->typed_data();
   auto* info_data = info->typed_data();
-
   CopyIfDiffBuffer(x, x_out);
 
-  FFI_ASSIGN_OR_RETURN(auto x_rows_v, MaybeCastNoOverflow<lapack_int>(x_rows));
-  FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<lapack_int>(x_cols));
-  auto x_leading_dim_v = x_rows_v;
-
-  const int64_t x_out_step{x_rows * x_cols};
-  const int64_t ipiv_step{std::min(x_rows, x_cols)};
-  for (int64_t i = 0; i < batch_count; ++i) {
-    fn(&x_rows_v, &x_cols_v, x_out_data, &x_leading_dim_v, ipiv_data,
-       info_data);
-    x_out_data += x_out_step;
-    ipiv_data += ipiv_step;
-    ++info_data;
+  // This is the heuristic used by torch, and I did some experiments and it
+  // seems like a reasonable starting point.
+  float matrix_rank = static_cast<float>(std::min(x_rows, x_cols));
+  int64_t min_chunk_size_per_thread;
+  auto maybe_min_chunk_size_per_thread =
+      attrs.get<int64_t>("min_chunk_size_per_thread");
+  if (maybe_min_chunk_size_per_thread.has_value()) {
+    min_chunk_size_per_thread = maybe_min_chunk_size_per_thread.value();
+  } else {
+    min_chunk_size_per_thread = static_cast<int64_t>(
+        3200.0 / (matrix_rank * matrix_rank * matrix_rank));
   }
-  return ffi::Error::Success();
+  min_chunk_size_per_thread = std::max(int64_t{1}, min_chunk_size_per_thread);
+
+  return EnqueueBatchedWork(
+      thread_pool, batch_count, min_chunk_size_per_thread,
+      [=](int64_t start, int64_t end) mutable {
+        for (int64_t i = start; i < end; ++i) {
+          fn(&x_rows_v, &x_cols_v, x_out_data + i * x_out_step,
+             &x_leading_dim_v, ipiv_data + i * ipiv_step, info_data + i);
+        }
+      });
 }
 
 template struct LuDecomposition<ffi::DataType::F32>;
@@ -2115,6 +2190,8 @@ template struct TridiagonalSolver<ffi::DataType::C128>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                             \
       name, LuDecomposition<data_type>::Kernel,              \
       ::xla::ffi::Ffi::Bind()                                \
+          .Ctx<::xla::ffi::ThreadPool>()                     \
+          .Attrs()                                           \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)         \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)     \
           .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*ipiv*/) \
