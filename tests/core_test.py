@@ -295,6 +295,8 @@ class CoreTest(jtu.JaxTestCase):
 
   @jtu.thread_unsafe_test()  # gc isn't predictable when threaded
   def test_reference_cycles(self):
+    if jtu.TEST_NUM_THREADS.value > 1:
+      self.skipTest("Test does not work with multiple threads")
     gc.collect()
 
     def f(x):
@@ -313,6 +315,8 @@ class CoreTest(jtu.JaxTestCase):
 
   @jtu.thread_unsafe_test()  # gc isn't predictable when threaded
   def test_reference_cycles_jit(self):
+    if jtu.TEST_NUM_THREADS.value > 1:
+      self.skipTest("Test does not work with multiple threads")
     gc.collect()
 
     def f(x):

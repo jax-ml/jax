@@ -79,7 +79,6 @@ class PrimitiveTest(jtu.JaxTestCase):
       message=("Using reduced precision for gradient of reduce-window min/max "
                "operator to work around missing XLA support for pair-reductions")
   )
-  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_prim(self, harness: test_harnesses.Harness):
     if "eigh_" in harness.fullname:
       self.skipTest("Eigenvalues are sorted and it is not correct to compare "
@@ -158,7 +157,7 @@ class PrimitiveTest(jtu.JaxTestCase):
           lambda x: jax.device_put(x, device), args
       )
       logging.info("Running harness natively on %s", device)
-      native_res = func_jax(*device_args)
+      native_res = jax.jit(func_jax)(*device_args)
       logging.info("Running exported harness on %s", device)
       exported_res = exp.call(*device_args)
       if tol is not None:

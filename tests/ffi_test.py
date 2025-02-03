@@ -163,7 +163,7 @@ class FfiTest(jtu.JaxTestCase):
       return jax.ffi.ffi_call("test_ffi", x)(x, non_hashable_arg=np.arange(3))
     self.assertIn("HashableArray", str(jax.make_jaxpr(fun)(jnp.ones(5))))
     hlo = jax.jit(fun).lower(jnp.ones(5)).as_text()
-    self.assertIn("non_hashable_arg = array<i64: 0, 1, 2>", hlo)
+    self.assertIn("non_hashable_arg = dense<[0, 1, 2]> : tensor<3xi64>", hlo)
     with self.assertRaises(Exception) as manager:
       fun(jnp.ones(5))
     self.assertNotIsInstance(manager.exception, TypeError)

@@ -349,8 +349,7 @@ def pure_callback(
 
   ``pure_callback`` enables calling a Python function in JIT-ed JAX functions.
   The input ``callback`` will be passed JAX arrays placed on a local CPU, and
-  it should also return JAX arrays on CPU. The ``callback`` function must not
-  include any calls back into JAX.
+  it should also return JAX arrays on CPU.
 
   The callback is treated as functionally pure, meaning it has no side-effects
   and its output value depends only on its argument values. As a consequence, it
@@ -358,6 +357,13 @@ def pure_callback(
   :func:`~pmap`), or not to be called at all when e.g. the output of a
   `jit`-decorated function has no data dependence on its value. Pure callbacks
   may also be reordered if data-dependence allows.
+
+  .. warning::
+
+     In the context of JAX transformations, Python exceptions should be
+     considered side-effects: this means that intentionally raising an error
+     within a `pure_callback` breaks the API contract, and the behavior of
+     the resulting program is undefined.
 
   When `vmap`-ed the behavior will depend on the value of the ``vmap_method``.
 
@@ -382,9 +388,8 @@ def pure_callback(
   Args:
     callback: function to execute on the host. The callback is assumed to be a pure
       function (i.e. one without side-effects): if an impure function is passed, it
-      may behave in unexpected ways, particularly under transformation.
-      Furthermore, the callback must not call into JAX. The callable will
-      be passed PyTrees of arrays as arguments, and should return a PyTree of
+      may behave in unexpected ways, particularly under transformation. The callable
+      will be passed PyTrees of arrays as arguments, and should return a PyTree of
       arrays that matches ``result_shape_dtypes``.
     result_shape_dtypes: pytree whose leaves have ``shape`` and ``dtype`` attributes,
       whose structure matches the expected output of the callback function at runtime.
@@ -440,7 +445,7 @@ def pure_callback(
     (4,) (4,)
     Array([1., 2., 3., 4.], dtype=float32)
 
-  .. _External Callbacks: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
+  .. _External Callbacks: https://jax.readthedocs.io/en/latest/external-callbacks.html
   """
   if not isinstance(vectorized, DeprecatedArg) and not vectorized is None:
     deprecations.warn(
@@ -623,15 +628,14 @@ def io_callback(
     ordered: bool = False,
     **kwargs: Any,
 ):
-  """Calls an impure Python callback. The callback function must not include any
-  calls back into JAX.
+  """Calls an impure Python callback.
 
   For more explanation, see `External Callbacks`_.
 
   Args:
     callback: function to execute on the host. It is assumed to be an impure function.
       If ``callback`` is pure, using :func:`jax.pure_callback` instead may lead to
-      more efficient execution. The ``callback`` must not call into JAX.
+      more efficient execution.
     result_shape_dtypes: pytree whose leaves have ``shape`` and ``dtype`` attributes,
       whose structure matches the expected output of the callback function at runtime.
       :class:`jax.ShapeDtypeStruct` is often used to define leaf values.

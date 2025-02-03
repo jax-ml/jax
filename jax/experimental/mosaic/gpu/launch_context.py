@@ -16,6 +16,7 @@
 from collections.abc import Callable, Sequence
 import contextlib
 import dataclasses
+import enum
 import functools
 import math
 from typing import Any
@@ -59,6 +60,11 @@ class MemRefTransform:
     raise NotImplementedError("Subclasses should override this method")
 
 
+class Rounding(enum.Enum):
+  UP = enum.auto()
+  DOWN = enum.auto()
+
+
 @dataclasses.dataclass(frozen=True)
 class TileTransform(MemRefTransform):
   """Tiles a suffix of memref dimensions.
@@ -70,19 +76,34 @@ class TileTransform(MemRefTransform):
   shared memory.
   """
   tiling: tuple[int, ...]
+  rounding: Rounding | None = None
 
   def apply(self, ref: ir.Value) -> ir.Value:
     untiled_rank = ir.MemRefType(ref.type).rank
     tiling_rank = len(self.tiling)
     tiled_rank = untiled_rank + tiling_rank
     for t, d in zip(self.tiling[::-1], range(untiled_rank)[::-1]):
-      s = ir.MemRefType(ref.type).shape[d]
-      if s % t and s > t:
-        raise ValueError(
-            f"Dimension {d} must have size smaller or a multiple of its tiling"
-            f" {t}, but got {s}"
-        )
-      ref = utils.memref_unfold(ref, d, (None, min(t, s)))
+      ref_shape = ir.MemRefType(ref.type).shape
+      s = ref_shape[d]
+      if s > t:
+        if s % t:
+          match self.rounding:
+            case None:
+              raise ValueError(
+                  f"When no rounding mode is specified, dimension {d} must have"
+                  f" size smaller or a multiple of its tiling {t}, but got {s}"
+              )
+            case Rounding.UP:
+              raise NotImplementedError
+            case Rounding.DOWN:
+              slices = [slice(None)] * d
+              slices.append(slice(0, s // t * t))
+              ref = utils.memref_slice(ref, tuple(slices))
+            case _:
+              raise ValueError(f"Unknown rounding mode: {self.rounding}")
+      else:
+        t = s
+      ref = utils.memref_unfold(ref, d, (None, t))
     permutation = (
         *range(untiled_rank - tiling_rank),
         *range(untiled_rank - tiling_rank, tiled_rank, 2),
@@ -109,14 +130,17 @@ class TileTransform(MemRefTransform):
     # Note that this also checks that tiled dims are not squeezed. Their slice
     # size would be 1 if so.
     tiling_rank = len(self.tiling)
-    for size, tile_size in zip(shape[-tiling_rank:], self.tiling):
-      if size % tile_size:
-        raise ValueError(
-            f"Expected GMEM slice shape {shape} suffix to be a multiple of"
-            f" tiling {self.tiling}.\nIf you're using padded async copies, your"
-            " slice might need to extend out of bounds of the GMEM buffer (OOB"
-            " accesses will be skipped)."
-        )
+    if self.rounding is None:
+      for size, tile_size in zip(shape[-tiling_rank:], self.tiling):
+        if size % tile_size:
+          raise ValueError(
+              f"Expected GMEM slice shape {shape} suffix to be a multiple of"
+              f" tiling {self.tiling}.\nIf you're using padded async copies,"
+              " your slice might need to extend out of bounds of the GMEM"
+              " buffer (OOB accesses will be skipped)."
+          )
+    elif self.rounding != Rounding.DOWN:
+      raise NotImplementedError(self.rounding)
     return (
         *shape[:-tiling_rank],
         *(s // t for s, t in zip(shape[-tiling_rank:], self.tiling)),

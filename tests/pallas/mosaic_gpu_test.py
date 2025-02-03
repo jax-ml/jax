@@ -900,6 +900,25 @@ class PallasCallTest(PallasTest):
     )
 
   @parameterized.parameters(False, True)
+  def test_fori_loop_accumulator(self, force_while):
+    self.skip_unless_sm90a()
+
+    transforms = (plgpu.TilingTransform((64, 64)), plgpu.SwizzleTransform(128))
+    @functools.partial(
+        pl.pallas_call,
+        in_specs=[plgpu.GPUBlockSpec((64, 64), lambda: (0, 0), transforms=transforms)],
+        out_shape=jax.ShapeDtypeStruct((64, 64), jnp.float16),
+        out_specs=plgpu.GPUBlockSpec((64, 64), lambda: (0, 0)),
+    )
+    def kernel(i_ref, o_ref):
+      def scope(acc_ref):
+        return _fori_loop(force_while, 0, 4, lambda _, v: v + acc_ref[...], acc_ref[...])
+      o_ref[...] = pl.run_state(scope)(plgpu.ACC.init(i_ref[...]))
+
+    acc_ini = jnp.ones((64, 64), dtype=jnp.float16)
+    np.testing.assert_array_equal(kernel(acc_ini), jnp.full((64, 64), 5, dtype=jnp.float16))
+
+  @parameterized.parameters(False, True)
   def test_fori_loop_indexed_store(self, force_while):
     @functools.partial(
         pl.pallas_call,

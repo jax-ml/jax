@@ -49,16 +49,15 @@ def _get_array_abstraction_level(a): return a.array_abstraction_level
 
 def call_sharding_rule(prim, rule, num_out, *avals, **kwargs):
   if config.sharding_in_types.value:
+    cur_mesh = mesh_lib.get_abstract_mesh()
+    if cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual:
+      return None if num_out is None else [None] * num_out
     if rule is None:
-      cur_mesh = mesh_lib.get_abstract_mesh()
-      if cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual:  # type: ignore
-        return None if num_out is None else [None] * num_out
-      else:
-        raise ValueError(
-            f'sharding rule for {prim.name} is not implemented. Please file a'
-            ' bug at https://github.com/jax-ml/jax/issues. You can work around'
-            ' this error by dropping that operation into full hidden sharding'
-            ' mode via: `jax.experimental.shard.hidden_axes(fun, out_shardings=...)`')
+      raise ValueError(
+          f'sharding rule for {prim.name} is not implemented. Please file a'
+          ' bug at https://github.com/jax-ml/jax/issues. You can work around'
+          ' this error by dropping that operation into full hidden sharding'
+          ' mode via: `jax.experimental.shard.hidden_axes(fun, out_shardings=...)`')
     return rule(*avals, **kwargs)
   return None if num_out is None else [None] * num_out
 
@@ -69,6 +68,7 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
   weak_type = weak_type_rule(*avals, **kwargs)
   least_specialized = type(max(avals, key=_get_array_abstraction_level))
   if least_specialized is core.ShapedArray:
+    avals = core.cast_from_auto_to_manual(avals)
     core.check_avals_context_mesh(avals, prim.name)
     out_aval = core.ShapedArray(
         shape_rule(*avals, **kwargs), dtype_rule(*avals, **kwargs),
@@ -94,6 +94,7 @@ def standard_multi_result_abstract_eval(
   least_specialized = max(map(type, avals), key=_get_array_abstraction_level)
   weak_types = weak_type_rule(*avals, **kwargs)
   if least_specialized is core.ShapedArray:
+    avals = core.cast_from_auto_to_manual(avals)
     out_shapes = shape_rule(*avals, **kwargs)
     out_dtypes = dtype_rule(*avals, **kwargs)
     core.check_avals_context_mesh(avals, prim.name)

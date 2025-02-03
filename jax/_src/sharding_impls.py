@@ -37,7 +37,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.op_shardings import (
     are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated)
-from jax._src.partition_spec import PartitionSpec
+from jax._src.partition_spec import PartitionSpec, UnconstrainedSingleton
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 import numpy as np
 
@@ -390,6 +390,12 @@ class NamedSharding(jsharding.Sharding):
     # Speed up `is_fully_addressable` since there is a high chance that the
     # mesh across multiple NamedSharding objects will be the same.
     return not self.mesh.is_multi_process
+
+  @property
+  def _is_concrete(self) -> bool:
+    if isinstance(self.mesh, mesh_lib.AbstractMesh):
+      return False
+    return True
 
   @property
   def addressable_devices(self) -> set[Device]:
@@ -1117,7 +1123,7 @@ class ParsedPartitionSpec:
         axis_spec = ()
       elif isinstance(axis_spec, (list, tuple)):
         axis_spec = tuple(axis_spec)
-      elif axis_spec == PartitionSpec.UNCONSTRAINED:
+      elif isinstance(axis_spec, UnconstrainedSingleton):
         if not allow_unconstrained_dims:
           raise ValueError(f"Unconstrained dims are not allowed: {entry}")
         axis_spec = None
@@ -1761,14 +1767,21 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
     return sharding  # type: ignore
   if sharding is None:
     return sharding
+  # TODO(yashkatariya): Remove this after vmap + shit works.
+  if isinstance(sharding, NamedSharding) and sharding.mesh.empty:
+    return None
 
+  cur_mesh = mesh_lib.get_abstract_mesh()
   if isinstance(sharding, PartitionSpec):
-    sharding = NamedSharding(mesh_lib.get_abstract_mesh(), sharding)  # type: ignore
+    sharding = NamedSharding(cur_mesh, sharding)  # type: ignore
   else:
-    if (check_mesh_consistency and
-        sharding.mesh.abstract_mesh != mesh_lib.get_abstract_mesh()):
+    if (sharding.mesh.abstract_mesh._are_all_axes_auto and
+        cur_mesh._are_all_axes_auto):
+      return sharding
+    if (check_mesh_consistency and not cur_mesh.empty and
+        sharding.mesh.abstract_mesh != cur_mesh):
       raise ValueError(
-          f'Context mesh {mesh_lib.get_abstract_mesh()} should match the mesh'
+          f'Context mesh {cur_mesh} should match the mesh'
           f' of sharding {sharding.mesh.abstract_mesh}. This error occurs at'
           f' source:  {source_info_util.summarize(source_info_util.current())}')
     if isinstance(sharding.mesh, mesh_lib.Mesh):

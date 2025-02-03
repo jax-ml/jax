@@ -16,10 +16,13 @@ import sys
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
-from jax.experimental.pallas.ops.gpu import paged_attention
 import jax.numpy as jnp
 import numpy as np
 
+if sys.platform != "win32":
+  from jax.experimental.pallas.ops.gpu import paged_attention
+else:
+  paged_attention = None
 
 jax.config.parse_flags_with_absl()
 
@@ -57,7 +60,7 @@ def _generate_qkv(
 def _reconstruct_kv(block_tables: jax.Array, pages: jax.Array) -> jax.Array:
   def fn(_block_tables, _pages):
     head_dim = _pages.shape[-1]
-    out = _pages[ _block_tables]  # [max_num_blocks_per_seq, page_size, head_dim]
+    out = _pages[_block_tables]  # [max_num_blocks_per_seq, page_size, head_dim]
 
     return out.reshape(-1, head_dim)
 

@@ -389,6 +389,34 @@ class OpsTest(PallasBaseTest):
     ref = jax.jit(lambda x: round_fn(x).astype(target))(x)
     np.testing.assert_array_equal(out, ref)
 
+  @parameterized.product(axis=[0, 1])
+  def test_dynamic_gather_along_axis(self, axis):
+    if not jtu.if_cloud_tpu_at_least(2025, 2, 3):
+      self.skipTest("Requires libtpu built after 2025-02-03")
+    if (axis == 0 and not jtu.is_device_tpu_at_least(version=5)) or (
+        axis == 1 and not jtu.is_device_tpu_at_least(version=4)
+    ):
+      self.skipTest("Requires TPUv5+ for axis=0 and TPUv4+ for axis=1")
+    dtype = jnp.int32
+    shape = (8, 128)
+
+    def kernel(x, indices, out):
+      out[...] = jnp.take_along_axis(x[...], indices[...], axis)
+
+    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    idx = jax.random.randint(
+        key=jax.random.key(1234),
+        shape=shape,
+        minval=0,
+        maxval=shape[axis],
+        dtype=jnp.int32,
+    )
+    actual = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
+    )(x, idx)
+    expected = np.take_along_axis(x, idx, axis=axis)
+    np.testing.assert_array_equal(actual, expected)
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True

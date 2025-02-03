@@ -737,7 +737,7 @@ class Traced(Stage):
                "_args_flat", "_arg_names", "_num_consts"]
 
   def __init__(self, jaxpr: core.ClosedJaxpr, args_info, fun_name, out_tree,
-               lower_callable, abstract_mesh=None,
+               lower_callable, abstract_mesh=mesh_lib.empty_abstract_mesh,
                args_flat=None, arg_names=None, num_consts: int = 0):
     self.jaxpr = jaxpr
     self.args_info = args_info

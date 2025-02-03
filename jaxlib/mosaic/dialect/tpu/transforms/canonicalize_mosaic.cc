@@ -597,12 +597,8 @@ LogicalResult canonicalize_fptosi(const CanonicalizeContext &ctx,
     }
     // Need to clip values to match XLA
     auto clip = [&](Value x, Value low, Value high) {
-      auto is_small =
-          builder.create<arith::CmpFOp>(arith::CmpFPredicate::OLT, x, low);
-      x = builder.create<arith::SelectOp>(is_small, low, x);
-      auto is_large =
-          builder.create<arith::CmpFOp>(arith::CmpFPredicate::OGT, x, high);
-      x = builder.create<arith::SelectOp>(is_large, high, x);
+      x = builder.create<arith::MaximumFOp>(x, low);
+      x = builder.create<arith::MinimumFOp>(x, high);
       return x;
     };
     auto minval = builder.getF32FloatAttr(

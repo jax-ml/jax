@@ -951,8 +951,8 @@ class OpsTest(PallasBaseTest):
       # TODO(apaszke): Remove after 12 weeks have passed.
       if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
         self.skipTest("Requires libtpu built at least on 2024-12-19")
-      if fn == jnp.exp2 and dtype == "bfloat16":
-        self.skipTest("TODO(b/392601160): test fails in CI")
+      if fn == jnp.exp2 and dtype == "bfloat16" and not jtu.if_cloud_tpu_at_least(2025, 1, 31):
+        self.skipTest("Test requires newer libtpu")
 
     if (
         jtu.test_device_matches(["gpu"])

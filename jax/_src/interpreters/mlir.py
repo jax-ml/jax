@@ -365,28 +365,13 @@ def _numpy_scalar_attribute(val: Any) -> ir.Attribute:
   else:
     raise TypeError(f"Unsupported scalar attribute type: {type(val)}")
 
-_dtype_to_array_attr: dict[Any, AttributeHandler] = {
-  np.dtype(np.bool_): ir.DenseBoolArrayAttr.get,
-  np.dtype(np.float32): ir.DenseF32ArrayAttr.get,
-  np.dtype(np.float64): ir.DenseF64ArrayAttr.get,
-  np.dtype(np.int32): ir.DenseI32ArrayAttr.get,
-  np.dtype(np.int64): ir.DenseI64ArrayAttr.get,
-  np.dtype(np.int8): ir.DenseI8ArrayAttr.get,
-}
-
 def _numpy_array_attribute(x: np.ndarray | np.generic) -> ir.Attribute:
   shape = x.shape
   if x.dtype == np.bool_:
     x = np.packbits(x, bitorder='little')  # type: ignore
   x = np.ascontiguousarray(x)
-  builder = _dtype_to_array_attr.get(x.dtype, None)
-  # Array attributes only support 1D arrays. Fall back to creating dense
-  # elements attribute for higher dimensions.
-  if builder and len(shape) == 1:
-    return builder(x)
-  else:
-    element_type = dtype_to_ir_type(x.dtype)
-    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
+  element_type = dtype_to_ir_type(x.dtype)
+  return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
 
 def _numpy_array_attribute_handler(val: np.ndarray | np.generic) -> ir.Attribute:
   if 0 in val.strides and val.size > 0:
@@ -1233,6 +1218,7 @@ def lower_jaxpr_to_module(
           'builtin.module(sdy-lift-inlined-meshes)')
       pipeline.run(ctx.module.operation)
 
+  util.test_event("mlir.collect_lowered_jaxprs", jaxpr, ctx.module)
   return LoweringResult(ctx.module, ctx.keepalives, ctx.host_callbacks,
                         ctx.shape_poly_state)
 
@@ -1663,8 +1649,10 @@ def lower_jaxpr_to_fun(
       flat_args = [
           replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
-              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # pytype: disable=attribute-error
-          for o, s, a in zip(flat_args, ir_arg_shardings, input_avals)
+              dtypes.issubdtype(a.dtype, dtypes.extended) and
+              (s is None or all_unconstrained(rs, a))) else o  # pytype: disable=attribute-error
+          for o, s, a, rs in zip(flat_args, ir_arg_shardings, input_avals,
+                                 arg_shardings)  # type: ignore
       ]
 
     _, token_args, unflattened_args = util.split_list(
@@ -1717,8 +1705,10 @@ def lower_jaxpr_to_fun(
       flat_outputs = [
           replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
-              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # pytype: disable=attribute-error
-          for o, s, a in zip(flat_outputs, ir_result_shardings, output_avals)
+              dtypes.issubdtype(a.dtype, dtypes.extended) and
+              (s is None or all_unconstrained(rs, a))) else o  # pytype: disable=attribute-error
+          for o, s, a, rs in zip(flat_outputs, ir_result_shardings, output_avals,
+                                 result_shardings)  # type: ignore
       ]
 
     func_dialect.return_(flat_outputs)
@@ -1917,7 +1907,8 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     source_info = eqn.source_info.replace(
         name_stack=name_stack + eqn.source_info.name_stack)
     loc = _source_info_to_location(ctx, eqn.primitive, source_info)
-    with source_info_util.user_context(eqn.source_info.traceback), loc:
+    with (source_info_util.user_context(eqn.source_info.traceback), loc,
+          eqn.ctx.manager):
       override_rule = get_override_lowering_rule(eqn.primitive)
       platform_rules: dict[str, LoweringRule] = {}
       default_rule: LoweringRule | None = None

@@ -1243,6 +1243,13 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertArraysAllClose(samples2, jnp.array([jnp.nan, 0., jnp.nan, jnp.nan]), check_dtypes=False)
     self.assertArraysAllClose(samples3, jnp.array([jnp.nan, jnp.nan, jnp.nan]), check_dtypes=False)
 
+  def test_binomial_dtypes(self):
+    # Regression test for https://github.com/jax-ml/jax/pull/25688#discussion_r1938010569
+    key = jax.random.key(0)
+    n = jax.numpy.float16(100)
+    p = jax.numpy.float16(0.5)
+    jax.random.binomial(key, n, p)  # doesn't error
+
   def test_batched_key_errors(self):
     keys = lambda: jax.random.split(self.make_key(0))
     msg = "{} accepts a single key, but was given a key array of shape.*"

@@ -30,6 +30,7 @@ concurrency:
 jobs:
   cloud-tpu-test:
     if: github.event.repository.fork == false
+# Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
@@ -37,9 +38,8 @@ jobs:
           {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"}
         ]
         python-version: ["3.10"]
-
     name: "TPU test (jaxlib=head, ${{ matrix.tpu.type }})"
-
+# End Presubmit Naming Check github-tpu-presubmits
     env:
       JAXCI_PYTHON: python${{ matrix.python-version }}
       JAXCI_TPU_CORES: ${{ matrix.tpu.cores }}
@@ -52,7 +52,6 @@ jobs:
     defaults:
       run:
         shell: bash -ex {0}
-
     steps:
       # https://opensource.google/documentation/reference/github/services#actions
       # mandates using a specific commit for non-Google actions. We use

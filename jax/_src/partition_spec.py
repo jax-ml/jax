@@ -51,13 +51,13 @@ class PartitionSpec(tuple):
   def __reduce__(self):
     return (PartitionSpec, tuple(self))
 
-  def _normalized_spec(self, ndim: int) -> PartitionSpec:
+  def _normalized_spec_for_aval(self, ndim: int) -> PartitionSpec:
     out = []  # type: ignore
     for p in self:
       if p is None:
         out.append(None)
-      elif p == self.UNCONSTRAINED:
-        out.append(p)
+      elif isinstance(p, UnconstrainedSingleton):
+        out.append(None)
       elif isinstance(p, (list, tuple)):
         if len(p) == 1:
           out.append(p[0])

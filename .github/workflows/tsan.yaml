@@ -1,0 +1,125 @@
+name: CI - Free-threading and Thread Sanitizer (nightly)
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  schedule:
+    - cron: "0 12 * * *" # Daily at 12:00 UTC
+  workflow_dispatch: # allows triggering the workflow run manually
+  pull_request: # Automatically trigger on pull requests affecting this file
+    branches:
+      - main
+    paths:
+      - '**/workflows/tsan.yaml'
+
+jobs:
+  tsan:
+    runs-on: linux-x86-n2-64
+    container:
+      image: index.docker.io/library/ubuntu@sha256:b359f1067efa76f37863778f7b6d0e8d911e3ee8efa807ad01fbf5dc1ef9006b # ratchet:ubuntu:24.04
+    strategy:
+      fail-fast: false
+    defaults:
+      run:
+        shell: bash -l {0}
+    steps:
+      # Install git before actions/checkout as otherwise it will download the code with the GitHub
+      # REST API and therefore any subsequent git commands will fail.
+      - name: Install clang 18
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt update
+          apt install -y clang-18 libstdc++-14-dev build-essential libssl-dev \
+            zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl git \
+            libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
+            libffi-dev liblzma-dev
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: jax
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: python/cpython
+          path: cpython
+          ref: "3.13"
+
+      - name: Restore cached CPython with TSAN
+        id: cache-cpython-tsan-restore
+        uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: |
+            ./python-tsan.tgz
+          key: ${{ runner.os }}-cpython-tsan-${{ hashFiles('cpython/configure.ac') }}
+
+      - name: Build CPython with TSAN enabled
+        if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
+        run: |
+          cd cpython
+          mkdir ${GITHUB_WORKSPACE}/cpython-tsan
+          CC=clang-18 CXX=clang++-18 ./configure --prefix ${GITHUB_WORKSPACE}/cpython-tsan --disable-gil --with-thread-sanitizer
+          make -j64
+          make install -j64
+          # Check whether free-threading mode is enabled
+          PYTHON_GIL=0 ${GITHUB_WORKSPACE}/cpython-tsan/bin/python3 -c "import sys; assert not sys._is_gil_enabled()"
+
+          # Create archive to be used with bazel as hermetic python:
+          cd ${GITHUB_WORKSPACE} && tar -czpf python-tsan.tgz cpython-tsan
+
+      - name: Save CPython with TSAN
+        id: cache-cpython-tsan-save
+        if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: |
+            ./python-tsan.tgz
+          key: ${{ runner.os }}-cpython-tsan-${{ hashFiles('cpython/configure.ac') }}
+
+      - name: Build Jax and run tests
+        timeout-minutes: 120
+        env:
+          JAX_NUM_GENERATED_CASES: 1
+          JAX_ENABLE_X64: true
+          JAX_SKIP_SLOW_TESTS: true
+          PY_COLORS: 1
+        run: |
+          cd jax
+
+          export PYTHON_SHA256=($(sha256sum ${GITHUB_WORKSPACE}/python-tsan.tgz))
+          echo "Python sha256: ${PYTHON_SHA256}"
+
+          python3 -VV
+          python3 build/build.py build --configure_only \
+            --python_version=3.13-ft \
+            --bazel_options=--repo_env=HERMETIC_PYTHON_URL="file://${GITHUB_WORKSPACE}/python-tsan.tgz" \
+            --bazel_options=--repo_env=HERMETIC_PYTHON_SHA256=${PYTHON_SHA256} \
+            --bazel_options=--repo_env=HERMETIC_PYTHON_PREFIX="cpython-tsan/" \
+            --bazel_options=--color=yes \
+            --bazel_options=--copt=-fsanitize=thread \
+            --bazel_options=--linkopt="-fsanitize=thread" \
+            --bazel_options=--copt=-g \
+            --clang_path=/usr/bin/clang-18
+
+          # Apply a patch to numpy in requirements lock 3.13 ft to use the nightly version
+          git apply .github/workflows/requirements_lock_3_13_ft.patch
+
+          echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
+          echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
+          echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
+
+          # Set symlink to the bazel executable
+          bazel_exec=($(ls bazel-*))
+          ln -s ${bazel_exec} bazel
+
+          ./bazel test \
+              --test_env=JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES \
+              --test_env=JAX_ENABLE_X64=$JAX_ENABLE_X64 \
+              --test_env=JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS \
+              --test_env=PYTHON_GIL=0 \
+              --test_env=TSAN_OPTIONS=halt_on_error=1,suppressions=$PWD/.github/workflows/tsan-suppressions.txt \
+              --test_env=JAX_TEST_NUM_THREADS=8 \
+              --test_output=errors \
+              --local_test_jobs=32 \
+              --test_timeout=600 \
+              //tests:cpu_tests

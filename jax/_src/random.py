@@ -2432,7 +2432,7 @@ def _stirling_approx_tail(k):
       dtype=k.dtype,
   )
   use_tail_values = k <= 9
-  k = lax.clamp(0.0, k, 9.0)
+  k = lax.clamp(_lax_const(k, 0.0), k, _lax_const(k, 9.0))
   kp1sq = (k + 1) * (k + 1)
   approx = (1.0 / 12 - (1.0 / 360 - 1.0 / 1260 / kp1sq) / kp1sq) / (k + 1)
   k = jnp.floor(k)

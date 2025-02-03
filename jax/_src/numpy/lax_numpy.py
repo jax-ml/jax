@@ -5554,8 +5554,9 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   # array([1, 2, 3])
   weak_type = dtype is None and dtypes.is_weakly_typed(object)
   if (config.sharding_in_types.value and device is None and
-      isinstance(object, Array)):
+      isinstance(object, core.Tracer)):
     sharding = object.aval.sharding
+    sharding = None if sharding.mesh.empty else sharding
   else:
     sharding = canonicalize_device_to_sharding(device)  # type: ignore
 
@@ -9743,11 +9744,12 @@ def einsum(
 
   contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)
 
-  einsum = jit(_einsum, static_argnums=(1, 2, 3, 4, 5), inline=True)
+  jit_einsum = jit(_einsum, static_argnums=(1, 2, 3, 4, 5), inline=True)
   if spec is not None:
-    einsum = jax.named_call(einsum, name=spec)
-  return einsum(operands, contractions, precision,
-                preferred_element_type, _dot_general, out_sharding)
+    jit_einsum = jax.named_call(jit_einsum, name=spec)
+  operand_arrays = list(util.ensure_arraylike_tuple("einsum", operands))
+  return jit_einsum(operand_arrays, contractions, precision,
+                    preferred_element_type, _dot_general, out_sharding)
 
 
 # Enable other modules to override einsum_contact_path.
@@ -9842,7 +9844,7 @@ def _removechars(s, chars):
 
 
 def _einsum(
-    operands: Sequence,
+    operands: list[jax.Array],
     contractions: Sequence[tuple[tuple[int, ...], frozenset[str], str]],
     precision,
     preferred_element_type,
@@ -9858,7 +9860,6 @@ def _einsum(
         "`out_sharding` argument of `einsum` only supports NamedSharding"
         " instances. Please file a bug if this is not enough for your use case.")
   dtypes.check_user_dtype_supported(preferred_element_type, "einsum")
-  operands = list(map(asarray, operands))
   if preferred_element_type is None:
     preferred_element_type, output_weak_type = dtypes.result_type(*operands, return_weak_type_flag=True)
   else:
@@ -13406,7 +13407,6 @@ def place(arr: ArrayLike, mask: ArrayLike, vals: ArrayLike, *,
   """
   data, mask_arr, vals_arr = util.ensure_arraylike("place", arr, mask, vals)
   vals_arr = vals_arr.ravel()
-  data, mask_arr, vals_arr = asarray(arr), asarray(mask), ravel(vals)
   if inplace:
     raise ValueError(
       "jax.numpy.place cannot modify arrays in-place, because JAX arrays are immutable. "

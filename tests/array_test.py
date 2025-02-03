@@ -1044,7 +1044,6 @@ class ShardingTest(jtu.JaxTestCase):
       ("2d_mesh_tuple_empty",      (2, 1), P((),)),
       ("2d_mesh_x_none",           (2, 1), P(('x',), None)),
       ("2d_mesh_xy_none",          (2, 1), P(('x', 'y'), None)),
-      ("2d_mesh_none",             (2, 1), None),
       ("2d_mesh_x_tuple_empty",    (2, 1), P('x', (), (), ())),
       ("2d_mesh_3_tuple_empty",    (2, 1), P((), (), ())),
       ("3d_mesh2_x_none_none",     (1, 2, 4), P('x', None, None)),
@@ -1326,6 +1325,12 @@ class ShardingTest(jtu.JaxTestCase):
                                 axis_types={jax.sharding.AxisTypes.Auto: 'x'})
 
   def test_make_mesh_axis_types(self):
+    mesh1 = jax.sharding.AbstractMesh(
+        (('x', 2),), axis_types={jax.sharding.AxisTypes.Auto: 'x'})
+    mesh2 = jax.sharding.AbstractMesh(
+        (('x', 2),), axis_types={jax.sharding.AxisTypes.Auto: ('x',)})
+    self.assertEqual(mesh1, mesh2)
+
     mesh = jax.make_mesh((1, 1), ('x', 'y'))
     self.assertDictEqual(mesh.axis_types, {AxisTypes.Auto: ('x', 'y')})
 

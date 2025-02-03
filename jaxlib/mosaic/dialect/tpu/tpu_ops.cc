@@ -1202,6 +1202,19 @@ LogicalResult PackSubelementsOp::verify() {
   return success();
 }
 
+LogicalResult DynamicGatherOp::verify() {
+  if (getSource().getType() != getType()) {
+    return emitOpError("Expected source and result types must match");
+  }
+  if (getIndices().getType().getShape() != getIndices().getType().getShape()) {
+    return emitOpError("Expected indices and result shapes must match");
+  }
+  if (!getIndices().getType().getElementType().isInteger(32)) {
+    return emitOpError("Not implemented: Only i32 indices supported");
+  }
+  return success();
+}
+
 }  // namespace tpu
 }  // namespace mlir
 

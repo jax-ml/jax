@@ -783,12 +783,6 @@ class TestPromotionTables(jtu.JaxTestCase):
       {"testcase_name": f"_{jaxtype=}", "jaxtype": jaxtype}
       for jaxtype in dtypes._jax_types + dtypes._weak_types)
   def testJaxTypeFromVal(self, jaxtype):
-    from jax._src.export import shape_poly
-    if jaxtype is shape_poly._DimExpr:
-      # _DimExpr is actually totally fine - shape_poly registers it as
-      # fully polymorphic with integers, this is really more about the fact
-      # that the test here isn't relevant - not in how
-      self.skipTest("2+ year old bug, b/389681440")
     try:
       val = jaxtype(0)
     except TypeError:

@@ -418,6 +418,7 @@ jax_multiplatform_test(
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
+        "notap",  # this code has data race issues that XLA improvements unhide. b/392946030
         "notsan",  # Times out.
     ],
     deps = [
@@ -483,7 +484,12 @@ jax_multiplatform_test(
         "gpu_a100_x32",
         "gpu_h100_x32",
     ],
-    shard_count = 15,
+    shard_count = 20,
+    tags = [
+        "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
+    ],
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",

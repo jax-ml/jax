@@ -817,8 +817,8 @@ already_configured_with_absl = False
 trace_state = config_ext.Config(None, include_in_jit_key=True)
 axis_env_state = config_ext.Config((), include_in_jit_key=True)
 mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
-abstract_mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
-device_context = config_ext.Config((), include_in_jit_key=True)
+abstract_mesh_context_manager = config_ext.Config(None, include_in_jit_key=True)
+device_context = config_ext.Config(None, include_in_jit_key=True)
 compute_on_context_manager = config_ext.Config(None, include_in_jit_key=True)
 xla_metadata_context_manager = config_ext.Config(None, include_in_jit_key=True)
 
@@ -1715,4 +1715,22 @@ memory_fitting_effort = float_state(
     name='jax_memory_fitting_effort',
     default=0.0,
     help='Effort for minimizing memory usage (higher means more effort), valid range [-1.0, 1.0].'
+)
+
+cpu_collectives_implementation = optional_enum_state(
+    name='jax_cpu_collectives_implementation',
+    enum_values=["gloo", "mpi", "megascale"],
+    default=None,
+    help=(
+        "Cross-process collective implementation used on CPU. Must be one of "
+        '("gloo", "mpi")'),
+)
+
+num_cpu_devices = int_state(
+    name="jax_num_cpu_devices",
+    default=-1,
+    help=(
+        "Number of CPU devices to use. If not provided, the value of "
+        "the XLA flag --xla_force_host_platform_device_count is used."
+        " Must be set before JAX is initialized."),
 )

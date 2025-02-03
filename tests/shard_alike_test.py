@@ -58,7 +58,7 @@ class ShardAlikeTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp * np_inp * 4)
 
   def test_output_sharded_alike_input(self):
-    mesh = jtu.create_mesh((2, 1), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     np_inp = np.arange(16).reshape(8, 2)
     s = NamedSharding(mesh, P('x', 'y'))
     inp = jax.device_put(np_inp, s)
@@ -73,7 +73,7 @@ class ShardAlikeTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp * 2)
 
   def test_arange_shard_alike_jit(self):
-    mesh = jtu.create_mesh((2, 1), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     np_inp = np.arange(16).reshape(8, 2)
     s = NamedSharding(mesh, P('x', 'y'))
     inp = jax.device_put(np_inp, s)

@@ -249,11 +249,8 @@ def debug_callback(callback: Callable[..., None], *args: Any,
   possible while revealing as much about them as possible, such as which parts
   of the computation are duplicated or dropped.
 
-  Inside of the ``callback`` function there should not be a call back into JAX.
-
   Args:
-    callback: A Python callable returning None. The ``callback`` must not call
-      into JAX.
+    callback: A Python callable returning None.
     *args: The positional arguments to the callback.
     ordered: A keyword only argument used to indicate whether or not the
       staged out computation will enforce ordering of this callback w.r.t.

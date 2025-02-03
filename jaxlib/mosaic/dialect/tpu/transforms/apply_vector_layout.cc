@@ -60,6 +60,7 @@
 #include "mlir/include/mlir/IR/Builders.h"
 #include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/include/mlir/IR/OperationSupport.h"
+#include "jaxlib/mosaic/dialect/tpu/array_util.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/transforms/apply_vector_layout_extensions.h"
@@ -181,36 +182,6 @@ SmallVector<xla::Array<Value>> split(const xla::Array<Value> &vregs, int axis) {
   return chunks;
 };
 
-template <typename T>
-ArrayRef<T> XlaArrayToFlatArrayRef(xla::Array<T> xla_array) {
-  return ArrayRef<T>(xla_array.data(), xla_array.num_elements());
-}
-
-template <typename T, typename Range>
-xla::Array<T> XlaArrayFromShapeAndValues(ArrayRef<int64_t> sizes, Range vals) {
-  // TODO(tlongeri): is there no way to avoid default initialization in the
-  // constructor?
-  xla::Array<T> arr(sizes);
-  arr.SetValues(vals);
-  return arr;
-}
-
-bool incrementSliceIndex(const MutableArrayRef<int64_t> idx,
-                         const absl::Span<const int64_t> starts,
-                         const absl::Span<const int64_t> limits) {
-  const int64_t nd = idx.size();
-  CHECK_EQ(nd, starts.size());
-  CHECK_EQ(nd, limits.size());
-  for (int64_t i = nd - 1; i >= 0; --i) {
-    ++idx[i];
-    if (idx[i] < limits[i]) {
-      return true;
-    }
-    idx[i] = starts[i];
-  }
-  return false;
-}
-
 bool incrementIndex(const MutableArrayRef<int64_t> idx,
                     const absl::Span<const int64_t> limits) {
   const int64_t nd = idx.size();
@@ -223,58 +194,6 @@ bool incrementIndex(const MutableArrayRef<int64_t> idx,
     idx[i] = 0;
   }
   return false;
-}
-
-bool sliceIsEmpty(const absl::Span<const int64_t> starts,
-                  const absl::Span<const int64_t> limits) {
-  for (auto [s, l] : llvm::zip_equal(starts, limits)) {
-    CHECK_LE(s, l);
-    if (s == l) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// An alternative to xla::Array::UpdateSlice that takes a single value
-template <typename T>
-void updateSlice(xla::Array<T> &arr, const T &value,
-                 const absl::Span<const int64_t> starts,
-                 const absl::Span<const int64_t> limits) {
-  if (sliceIsEmpty(starts, limits)) {
-    return;
-  }
-  SmallVector<int64_t> idx(toArrayRef(starts));
-  do {
-    arr(idx) = value;
-  } while (incrementSliceIndex(idx, starts, limits));
-}
-
-// An alternative to xla::Array::UpdateSlice that takes a range of data
-template <typename T, typename Range>
-void updateSliceFromRange(xla::Array<T> &arr, Range data,
-                          const absl::Span<const int64_t> starts,
-                          const absl::Span<const int64_t> limits) {
-  if (sliceIsEmpty(starts, limits)) {
-    return;
-  }
-  SmallVector<int64_t> idx(toArrayRef(starts));
-  auto in_bounds = [&] {
-    for (int64_t i = 0; i < idx.size(); ++i) {
-      if (idx[i] >= arr.dim(i)) {
-        return false;
-      }
-    }
-    return true;
-  };
-  auto data_it = data.begin();
-  do {
-    if (in_bounds()) {
-      arr(idx) = *data_it;
-    }
-    ++data_it;
-  } while (incrementSliceIndex(idx, starts, limits));
-  CHECK(data_it == data.end());
 }
 
 FailureOr<int64_t> getIntConst(Value v, bool silent = false) {
@@ -3004,6 +2923,67 @@ LogicalResult tpu_gather_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
+LogicalResult tpu_dynamic_gather_rule(RewriteContext &ctx, Operation &op,
+                                      const ArrayRef<Layout> layouts_in,
+                                      const ArrayRef<Layout> layouts_out) {
+  TPU_ASSERT_EQ_OP(layouts_in.size(), 2);
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
+  TPU_ASSERT_OP(layouts_in[0].has_value());
+  TPU_ASSERT_OP(layouts_in[1].has_value());
+  TPU_ASSERT_OP(layouts_out[0].has_value());
+  const VectorLayout &src_layout = *(layouts_in[0]);
+  const VectorLayout &idx_layout = *(layouts_in[1]);
+  const VectorLayout &out_layout = *(layouts_out[0]);
+
+  OpBuilder builder(&op);
+  auto dy_gather_op = cast<tpu::DynamicGatherOp>(op);
+
+  // TODO(jevinjiang): we need to think harder for general vector shape.
+  if (dy_gather_op.getType().getShape() !=
+      ArrayRef<int64_t>(ctx.target_shape)) {
+    return op.emitOpError(
+        "Not implemented: DynamicGatherOp only supports 32-bit VREG shape");
+  }
+
+  if (src_layout != out_layout || idx_layout != out_layout) {
+    return op.emitOpError(
+        "Not implemented: only support same layout for source, indices and "
+        "result");
+  }
+
+  if (!out_layout.hasNaturalTopology(ctx.target_shape)) {
+    return op.emitOpError(
+        "Not implemented: unsupported layout for DynamicGatherOp");
+  }
+
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> src_vregs,
+      disassemble(builder, src_layout, dy_gather_op.getSource(),
+                  ctx.target_shape));
+
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> idx_vregs,
+      disassemble(builder, idx_layout, dy_gather_op.getIndices(),
+                  ctx.target_shape));
+
+  TPU_ASSERT_EQ_OP(src_vregs.dimensions(), idx_vregs.dimensions());
+  TPU_ASSERT_EQ_OP(src_vregs.num_elements(), 1);
+
+  xla::Array<Value> out_vregs(src_vregs.dimensions());
+  out_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
+    *v = builder.create<tpu::DynamicGatherOp>(
+        op.getLoc(), src_vregs(idxs).getType(), src_vregs(idxs),
+        idx_vregs(idxs), dy_gather_op.getDimension());
+  });
+
+  dy_gather_op.replaceAllUsesWith(
+      assemble(builder, dy_gather_op.getResult().getType(), out_layout,
+               out_vregs, ctx.target_shape)
+          .getOperation());
+  dy_gather_op.erase();
+  return success();
+}
+
 LogicalResult tpu_region_rule(RewriteContext &ctx, Operation &op,
                               const ArrayRef<Layout> layouts_in,
                               const ArrayRef<Layout> layouts_out) {
@@ -4769,6 +4749,7 @@ const llvm::StringMap<rule_type> &rules() {
         {tpu::ConcatenateOp::getOperationName(), tpu_concatenate_rule},
         {tpu::IotaOp::getOperationName(), tpu_iota_rule},
         {tpu::GatherOp::getOperationName(), tpu_gather_rule},
+        {tpu::DynamicGatherOp::getOperationName(), tpu_dynamic_gather_rule},
         {tpu::LoadOp::getOperationName(), tpu_load_rule},
         {tpu::StoreOp::getOperationName(), tpu_store_rule},
         {tpu::StridedLoadOp::getOperationName(), tpu_strided_load_rule},
@@ -6666,13 +6647,6 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
   }
   VectorType vty = v.getType();
   const bool is_mask = vty.getElementTypeBitWidth() == 1;
-  if (is_mask) {
-    if (src.bitwidth() != 32 || dst.bitwidth() != 32) {
-      return emitError(v.getLoc(),
-                       "Not implemented: mask relayout with non-32 bitwidth in "
-                       "vector layout");
-    }
-  }
   {
     // Replication imposes a replication constraint on the *logical* value of
     // the vector: When moving along a replicated axis, all elements must be
@@ -6707,21 +6681,22 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
       xla::Array<Value> src_tiles,
       disassemble(builder, src, v, target_shape, /*use_implicit_shape=*/true));
   if (is_mask) {
-    auto new_tile_ty =
-        getNativeVregOrVmaskType(builder.getI32Type(), 32, target_shape);
+    auto new_tile_ty = getNativeVregOrVmaskType(
+        builder.getIntegerType(bitwidth), bitwidth, target_shape);
     src_tiles.Each([&](const absl::Span<const int64_t> idx, Value *tile) {
       *tile =
           builder.create<arith::ExtUIOp>(tile->getLoc(), new_tile_ty, *tile);
     });
-    vty = VectorType::get(vty.getShape(), builder.getI32Type());
+    vty = VectorType::get(vty.getShape(), builder.getIntegerType(bitwidth));
   }
   auto assemble_with_mask_check = [&](xla::Array<Value> &tiles,
                                       bool use_implicit_shape = false) {
     if (is_mask) {
       auto zeros_tile = builder.create<arith::ConstantOp>(
           tiles.begin()->getLoc(),
-          DenseElementsAttr::get(cast<VectorType>(tiles.begin()->getType()),
-                                 builder.getI32IntegerAttr(0)));
+          DenseElementsAttr::get(
+              cast<VectorType>(tiles.begin()->getType()),
+              builder.getIntegerAttr(builder.getIntegerType(bitwidth), 0)));
       tiles.Each([&](const absl::Span<const int64_t> idx, Value *tile) {
         *tile = builder.create<arith::CmpIOp>(
             tile->getLoc(), arith::CmpIPredicate::ne, *tile, zeros_tile);
@@ -6776,9 +6751,7 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
         }
         *vreg = src_vregs(local_idx);
       });
-      return assemble(builder, vty, dst, std::move(dst_vregs), target_shape,
-                      /*use_implicit_shape=*/true)
-          .getResult();
+      return assemble_with_mask_check(dst_vregs, /*use_implicit_shape=*/true);
     }
     src_tiles.Reshape(dst.tileArrayImplicitShape(vty.getShape(), target_shape));
     return assemble_with_mask_check(src_tiles,
@@ -6927,7 +6900,7 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
     return elementwise_op_rule(ctx, op, layouts_in, layouts_out);
   }
   return op.emitError("Not implemented: Unsupported operation: ")
-         << op.getName();
+         << op.getName() << " in apply-vector-layout pass";
 }
 
 LogicalResult applyLayoutBlock(RewriteContext &ctx, Block &block) {

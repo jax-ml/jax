@@ -229,10 +229,12 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
       msg.format(', '.join(str(x) for x in xs_flat
                            if not hasattr(x, 'shape')))) from err
 
+  xs_avals = [core.get_aval(x) for x in xs_flat]
+
   if (config.sharding_in_types.value and
-      not all(x.aval.sharding.spec[0] is None for x in xs_flat)):
+      not all(a.sharding.spec[0] is None for a in xs_avals)):
     raise ValueError('0th dimension of all xs should be replicated. Got '
-                     f'{", ".join(str(x.aval.sharding.spec) for x in xs_flat)}')
+                     f'{", ".join(str(a.sharding.spec) for a in xs_avals)}')
 
   if length is not None:
     try:
@@ -270,7 +272,6 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     stacked_y = tree_map(stack, *maybe_reversed(ys))
     return carry, stacked_y
 
-  xs_avals = [core.get_aval(x) for x in xs_flat]
   x_avals = [core.mapped_aval(length, 0, aval) for aval in xs_avals]
   dbg_body = api_util.tracing_debug_info("scan", f, (init, xs), {})
 
@@ -950,7 +951,8 @@ def _scan_batching_rule(axis_data, args,
   consts_bdims, init_bdims, xs_bdims = split_list(dims, [num_consts, num_carry])
   new_consts = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
                 else x for x, d in zip(consts, consts_bdims)]
-  new_init = [batching.broadcast(x, axis_data.size, 0) if now_batched and not was_batched
+  new_init = [batching.broadcast(x, axis_data.size, 0, axis_data.explicit_mesh_axis)
+              if now_batched and not was_batched
               else batching.moveaxis(x, d, 0) if now_batched else x
               for x, d, was_batched, now_batched in
               zip(init, init_bdims, init_batched, carry_batched)]
@@ -1491,7 +1493,8 @@ def _while_loop_batching_rule(axis_data, args, dims, cond_nconsts, cond_jaxpr,
   new_init = []
   for x, old_axis, new_axis in zip(init, init_dims, carry_dims):
     if old_axis is batching.not_mapped and new_axis is not batching.not_mapped:
-      new_init.append(batching.broadcast(x, axis_data.size, new_axis))
+      new_init.append(batching.broadcast(x, axis_data.size, new_axis,
+                                         axis_data.explicit_mesh_axis))
     elif old_axis is batching.not_mapped and new_axis is batching.not_mapped:
       new_init.append(x)
     else:
@@ -1852,10 +1855,15 @@ def _while_typecheck(_, *in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,
         f'Effects not supported in `while`: {disallowed_effects}')
   return body_jaxpr.out_avals, joined_effects
 
-def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
+def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
                           cond_nconsts, body_nconsts):
   # TODO(sharadmv): enable supporting state effects in the cond
   if any(isinstance(eff, state.RefEffect) for eff in cond_jaxpr.effects):
+    raise NotImplementedError
+  cond_consts_discharge, body_consts_discharge, carry_discharge = split_list(
+      should_discharge, [cond_nconsts, body_nconsts])
+
+  if any(cond_consts_discharge):
     raise NotImplementedError
   cond_consts, body_consts, carry = split_list(args, [cond_nconsts, body_nconsts])
   cond_consts_avals, body_consts_avals, carry_avals = split_list(in_avals,
@@ -1863,7 +1871,10 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
                                                                   body_nconsts])
   # There shouldn't be any `Ref`s in the `cond` (because of our check above).
   assert not any(isinstance(aval, state.AbstractRef) for aval in cond_consts_avals)
-  is_ref = [isinstance(aval, state.AbstractRef) for aval in body_consts_avals]
+  is_ref = [
+      isinstance(aval, state.AbstractRef) and should
+      for aval, should in zip(body_consts_avals, body_consts_discharge)
+  ]
   remaining_body_consts, refs = partition_list(is_ref, body_consts)
   remaining_body_const_avals, ref_avals = partition_list(is_ref,
                                                          body_consts_avals)
@@ -1883,7 +1894,7 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
   # Therefore we need to rewrite the jaxpr to shuffle around the `Ref`s so that
   # they are part of the carry.
   discharged_body_jaxpr, discharged_consts = state_discharge.discharge_state(
-      body_jaxpr, ())
+      body_jaxpr, (), should_discharge=[*body_consts_discharge, *carry_discharge])
   if discharged_consts: raise NotImplementedError
 
   def new_body(*consts_refs_carry):
@@ -1940,7 +1951,7 @@ batching.fancy_primitive_batchers[while_p] = _while_loop_batching_rule
 pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
 mlir.register_lowering(while_p, _while_lowering)
 core.custom_typechecks[while_p] = _while_typecheck
-state_discharge.register_discharge_rule(while_p)(_while_discharge_rule)
+state_discharge.register_partial_discharge_rule(while_p)(_while_partial_discharge_rule)
 
 
 def _pred_bcast_select_hlo(ctx,
