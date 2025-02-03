@@ -2006,6 +2006,8 @@ class LayoutTest(TestCase):
     finally:
       if prev_dump is not None:
         os.environ["MOSAIC_GPU_DUMP_SASS"] = prev_dump
+      else:
+        del os.environ["MOSAIC_GPU_DUMP_SASS"]
     np.testing.assert_array_equal(iota, expected)
 
     # Verify that we don't use too many registers for the transfers.
