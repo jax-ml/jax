@@ -1499,7 +1499,14 @@ def _lower_jaxpr_to_for_loop(
   if arg_avals:
     out_avals = ctx.avals_out[-len(arg_avals):]
 
-  @mgpu.fori(length, [*map(_ensure_fa, args, arg_avals)])
+  is_acc = [isinstance(v, mgpu.WGMMAAccumulator) for v in args]
+  def as_fas(vals, avals):
+    if is_acc != [isinstance(v, mgpu.WGMMAAccumulator) for v in vals]:
+      raise ValueError("Unexpected loop carry w.r.t. accumulators.")
+
+    return [v if a else _ensure_fa(v, av) for a, v, av in zip(is_acc, vals, avals)]
+
+  @mgpu.fori(length, as_fas(args, arg_avals))
   def loop(loop_index, body_args):
     if has_loop_index:
       loop_index = arith_dialect.addi(loop_index, start)
@@ -1509,7 +1516,7 @@ def _lower_jaxpr_to_for_loop(
     outs = lower_jaxpr_to_mosaic_gpu(
         ctx.module_ctx, ctx.launch_ctx, jaxpr, jaxpr_args
     )
-    return map(_ensure_fa, outs, out_avals)
+    return as_fas(outs, out_avals)
 
   return loop.results
 
@@ -1631,7 +1638,10 @@ def _while_lowering_rule(
   _cond_avals, body_avals, carry_avals = util.split_list(
       ctx.avals_in, [cond_nconsts, body_nconsts]
   )
-  carry = map(_ensure_fa, carry, carry_avals)
+  carry = [
+      v if isinstance(v, mgpu.WGMMAAccumulator) else _ensure_fa(v, av)
+      for v, av in zip(carry, carry_avals)
+  ]
   # Flatten the carry to get a concatenated list of registers from each FA.
   # Note that the treedef is also used below to unflatten the body results.
   flat_carry, carry_treedef = jax.tree.flatten(carry)
@@ -1654,9 +1664,19 @@ def _while_lowering_rule(
     loop_out = lower_jaxpr_to_mosaic_gpu(
         ctx.module_ctx, ctx.launch_ctx, body_jaxpr.jaxpr, body_args
     )
-    loop_out = map(_ensure_fa, loop_out, carry_avals)
+    loop_out = [
+        v if isinstance(v, mgpu.WGMMAAccumulator) else _ensure_fa(v, av)
+        for v, av in zip(loop_out, carry_avals)
+    ]
     for idx, (carry_fa, out_fa) in enumerate(zip(carry, loop_out)):
-      if carry_fa.layout != out_fa.layout:
+      _is_acc = lambda x: isinstance(x, mgpu.WGMMAAccumulator)
+      if _is_acc(carry_fa) != _is_acc(out_fa):
+        raise ValueError(
+            f"The loop body output has unexpected accumulator type: output[{idx}]"
+            f" is {out_fa}, when it should be {carry_fa}."
+        )
+
+      if not _is_acc(out_fa) and carry_fa.layout != out_fa.layout:
         raise ValueError(
             f"The loop body output has unexpected layout: output[{idx}] has"
             f" layout {out_fa.layout}, when it should be {carry_fa.layout}."
