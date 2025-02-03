@@ -745,7 +745,7 @@ def _trace_composite_to_jaxpr(fun: Callable,
                               in_tree: tree_util.PyTreeDef,
                               in_avals: Sequence[core.AbstractValue],
                               name: str,
-                              debug_info: api_util.TracingDebugInfo):
+                              debug_info: core.DebugInfo):
   flat_fun, out_tree = api_util.flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug_info)
   if any(isinstance(c, core.Tracer) for c in consts):
@@ -822,8 +822,8 @@ def composite(
   """
   @functools.wraps(decomposition)
   def _decorator(*args, **kwargs):
-    debug_info = api_util.tracing_debug_info("composite", decomposition,
-                                             args, kwargs)
+    debug_info = api_util.debug_info("composite", decomposition,
+                                     args, kwargs)
     flat_args, in_tree = tree_util.tree_flatten(args)
     in_avals = tuple(core.get_aval(x) for x in flat_args)
     closed_jaxpr, out_tree = _trace_composite_to_jaxpr(

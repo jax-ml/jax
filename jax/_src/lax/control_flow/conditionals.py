@@ -134,7 +134,7 @@ def switch(index, branches: Sequence[Callable], *operands,
   if (config.disable_jit.value and core.is_concrete(index)):
     return branches[int(index)](*operands)
 
-  dbgs = [api_util.tracing_debug_info("switch", branch, operands, {})
+  dbgs = [api_util.debug_info("switch", branch, operands, {})
           for branch in branches]
   ops, ops_tree = tree_flatten(operands)
   ops_avals = tuple(map(core.get_aval, ops))
@@ -237,10 +237,10 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   ops, ops_tree = tree_flatten(operands)
   ops_avals = tuple(map(core.get_aval, ops))
 
-  dbg_true_fun = api_util.tracing_debug_info("cond", true_fun, operands, {})
+  dbg_true_fun = api_util.debug_info("cond", true_fun, operands, {})
   if config.mutable_array_checks.value:
     api_util._check_no_aliased_ref_args(dbg_true_fun, ops_avals, ops)
-  dbg_false_fun = api_util.tracing_debug_info("cond", false_fun, operands, {})
+  dbg_false_fun = api_util.debug_info("cond", false_fun, operands, {})
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
       (true_fun, false_fun), ops_tree, ops_avals,
       [dbg_true_fun, dbg_false_fun])

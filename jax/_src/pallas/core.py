@@ -413,9 +413,9 @@ class BlockSpec:
 
     fake_index_map_args, fake_index_map_kwargs = \
         index_map_tree.unflatten([False] * index_map_tree.num_leaves)
-    debug = api_util.tracing_debug_info("pallas_call index_map",
-                                        index_map_func, fake_index_map_args,
-                                        fake_index_map_kwargs)
+    debug = api_util.debug_info("pallas_call index_map",
+                                index_map_func, fake_index_map_args,
+                                fake_index_map_kwargs)
     flat_index_map_fun, index_map_out_tree_thunk = api_util.flatten_fun(
       lu.wrap_init(index_map_func, debug_info=debug), index_map_tree)
     index_map_src_info = NameAndSrcInfo.from_pallas_call(

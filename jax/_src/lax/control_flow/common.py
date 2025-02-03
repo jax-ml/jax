@@ -53,7 +53,7 @@ def _typecheck_param(prim, param, name, msg_required, pred):
 def _initial_style_open_jaxpr(fun: Callable,
                               in_tree: PyTreeDef,
                               in_avals: Sequence[core.AbstractValue],
-                              debug_info: api_util.TracingDebugInfo):
+                              debug_info: core.DebugInfo):
   wrapped_fun, out_tree = api_util.flatten_fun_nokwargs(
       lu.wrap_init(fun, debug_info=debug_info),
       in_tree)
@@ -65,7 +65,7 @@ def _initial_style_open_jaxpr(fun: Callable,
 def _initial_style_jaxpr(fun: Callable,
                          in_tree: PyTreeDef,
                          in_avals: Sequence[core.AbstractValue],
-                         debug_info: api_util.TracingDebugInfo):
+                         debug_info: core.DebugInfo):
   jaxpr, consts, out_tree, () = _initial_style_open_jaxpr(
       fun, in_tree, in_avals, debug_info)
   closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
@@ -74,7 +74,7 @@ def _initial_style_jaxpr(fun: Callable,
 def _initial_style_jaxpr_attrs(fun: Callable,
                                in_tree: PyTreeDef,
                                in_avals: Sequence[core.AbstractValue],
-                               debug_info: api_util.TracingDebugInfo):
+                               debug_info: core.DebugInfo):
   jaxpr, consts, out_tree, attrs_tracked = _initial_style_open_jaxpr(
       fun, in_tree, in_avals, debug_info)
   closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
@@ -83,7 +83,7 @@ def _initial_style_jaxpr_attrs(fun: Callable,
 def _initial_style_jaxprs_with_common_consts(
     funs: Sequence[Callable],
     in_tree: PyTreeDef, in_avals: Sequence[core.AbstractValue],
-    debug_infos: Sequence[api_util.TracingDebugInfo]):
+    debug_infos: Sequence[core.DebugInfo]):
   # When staging the branches of a conditional into jaxprs, constants are
   # extracted from each branch and converted to jaxpr arguments. To use the
   # staged jaxprs as the branches to a conditional *primitive*, we need for

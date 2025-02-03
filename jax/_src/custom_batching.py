@@ -147,7 +147,7 @@ class custom_vmap:
       raise AttributeError(
           f"No batching rule defined for custom_vmap function {fun_name} "
           "using def_vmap.")
-    debug = api_util.tracing_debug_info("custom_vmap", self.fun, args, {})
+    debug = api_util.debug_info("custom_vmap", self.fun, args, {})
     args_flat, in_tree = tree_flatten(args)
     flat_fun, out_tree = api_util.flatten_fun_nokwargs(
         lu.wrap_init(self.fun, debug_info=debug),

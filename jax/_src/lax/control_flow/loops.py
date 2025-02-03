@@ -273,7 +273,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     return carry, stacked_y
 
   x_avals = [core.mapped_aval(length, 0, aval) for aval in xs_avals]
-  dbg_body = api_util.tracing_debug_info("scan", f, (init, xs), {})
+  dbg_body = api_util.debug_info("scan", f, (init, xs), {})
 
   if config.mutable_array_checks.value:
     in_flat, in_tree = tree_flatten((init, xs))
@@ -1357,10 +1357,10 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   def _create_jaxpr(init_val):
     init_vals, in_tree = tree_flatten((init_val,))
     init_avals = tuple(_map(core.get_aval, init_vals))
-    cond_dbg = api_util.tracing_debug_info("while_cond", cond_fun, (init_val,), {})
+    cond_dbg = api_util.debug_info("while_cond", cond_fun, (init_val,), {})
     cond_jaxpr, cond_consts, cond_tree = _initial_style_jaxpr(
         cond_fun, in_tree, init_avals, cond_dbg)
-    body_dbg = api_util.tracing_debug_info("while_body", body_fun, (init_val,), {})
+    body_dbg = api_util.debug_info("while_body", body_fun, (init_val,), {})
     body_jaxpr, body_consts, body_tree = _initial_style_jaxpr(
         body_fun, in_tree, init_avals, body_dbg)
     if not treedef_is_leaf(cond_tree) or len(cond_jaxpr.out_avals) != 1:

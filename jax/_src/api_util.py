@@ -31,7 +31,6 @@ from jax._src.tree_util import (
     prefix_errors)
 from jax._src.tree_util import _replace_nones
 from jax._src import linear_util as lu
-from jax._src.linear_util import TracingDebugInfo
 from jax._src.util import (safe_map, WrapKwArgs, Hashable, HashableFunction,
                            Unhashable, safe_zip)
 from jax._src import traceback_util
@@ -582,7 +581,7 @@ def api_hook(fun, tag: str):
   return fun
 
 
-def tracing_debug_info(
+def debug_info(
     traced_for: str,
     fun: Callable,
     args: Sequence[Any],
@@ -594,14 +593,14 @@ def tracing_debug_info(
     # TODO(necula): check if we really need this, e.g., to speed up tracing.
     sourceinfo: str | None = None,
     signature: inspect.Signature | None = None,
-) -> TracingDebugInfo:
+) -> core.DebugInfo:
   if sourceinfo is None:
     sourceinfo = fun_sourceinfo(fun)
   if signature is None:
     signature = fun_signature(fun)
   arg_names = _non_static_arg_names(signature, args, kwargs, static_argnums,
                                     static_argnames)
-  return TracingDebugInfo(traced_for, sourceinfo, arg_names, result_paths_thunk)
+  return core.DebugInfo(traced_for, sourceinfo, arg_names, result_paths_thunk)
 
 
 def fun_signature(fun: Callable) -> inspect.Signature | None:
@@ -619,7 +618,7 @@ _fun_name_re = re.compile(r"(?:<built-in function (\S+)>)")
 
 # TODO(mattjj): make this function internal to this module
 def fun_sourceinfo(fun: Callable) -> str:
-  # See TracingDebugInfo.fun_src_info
+  # See DebugInfo.fun_src_info
   res = getattr(fun, "__fun_sourceinfo__", None)
   if res is not None: return res
   while isinstance(fun, partial):
@@ -684,20 +683,19 @@ def result_paths(_fun, _store, *args, **kwargs):
 
 # TODO(necula): simplify this function, all it needs is to add the trace_debug to the Jaxpr
 def add_jaxpr_debug_info(jaxpr: core.Jaxpr,
-                         trace_debug: TracingDebugInfo | None,
+                         debug: core.DebugInfo | None,
                          result_paths: tuple[str, ...] | None = None,
                          ) -> core.Jaxpr:
   """Add debug info to jaxpr, given trace-time debug info and result paths."""
-  if trace_debug is None:
+  if debug is None:
     return jaxpr
   # TODO(necula): re-enable this safety check
   # assert (result_paths is not None) ^ (trace_debug.result_paths_thunk is not None)
-  if result_paths is None:
-    result_paths = trace_debug.result_paths_thunk()  # type: ignore
-  debug_info = core.JaxprDebugInfo(
-      trace_debug.traced_for, trace_debug.func_src_info,
-      trace_debug.arg_names, tuple(result_paths))  # type: ignore
-  return jaxpr.replace(debug_info=debug_info)
+  if result_paths is not None:
+    debug = debug._replace(result_paths=tuple(result_paths))
+  else:
+    debug = debug.resolve_result_paths()
+  return jaxpr.replace(debug_info=debug)
 
 def hoist_obj_attrs(f, flat_args):
   idxs, objs, flat_args_ = [], [], []
