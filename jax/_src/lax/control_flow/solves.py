@@ -325,7 +325,7 @@ def _linear_solve_abstract_eval(*args, const_lengths, jaxprs):
   num_aux = len(jaxprs.solve.out_avals) - len(jaxprs.matvec.out_avals)
   if num_aux > 0:
     args_to_raise += tuple(jaxprs.solve.out_avals[-num_aux:])
-  return args_to_raise
+  return args_to_raise, jaxprs.solve.effects
 
 
 def _custom_linear_solve_impl(*args, const_lengths, jaxprs):
@@ -482,7 +482,7 @@ def _linear_solve_batching_rule(axis_data, args, dims, const_lengths, jaxprs):
 linear_solve_p = core.Primitive('custom_linear_solve')
 linear_solve_p.multiple_results = True
 linear_solve_p.def_impl(_custom_linear_solve_impl)
-linear_solve_p.def_abstract_eval(_linear_solve_abstract_eval)
+linear_solve_p.def_effectful_abstract_eval(_linear_solve_abstract_eval)
 ad.primitive_jvps[linear_solve_p] = _custom_linear_solve_jvp
 xla.register_initial_style_primitive(linear_solve_p)
 mlir.register_lowering(
