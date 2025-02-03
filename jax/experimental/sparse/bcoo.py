@@ -46,6 +46,7 @@ from jax._src import dispatch
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lax import lax as lax_internal
 from jax._src.lax.lax import (
   _const, ranges_like, remaining, _dot_general_batch_dim_nums, DotDimensionNumbers)
 from jax._src.lax.slicing import GatherDimensionNumbers, GatherScatterMode
@@ -2490,7 +2491,7 @@ class BCOO(JAXSparse):
 
   def __init__(self, args: tuple[Array, Array], *, shape: Sequence[int],
                indices_sorted: bool = False, unique_indices: bool = False):
-    self.data, self.indices = map(jnp.asarray, args)
+    self.data, self.indices = map(lax_internal.asarray, args)
     self.indices_sorted = indices_sorted
     self.unique_indices = unique_indices
     super().__init__(args, shape=tuple(shape))

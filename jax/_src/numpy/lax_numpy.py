@@ -185,6 +185,8 @@ class _ScalarMeta(type):
     return not (self == other)
 
   def __call__(self, x: Any) -> Array:
+    if isinstance(x, (Array, np.ndarray, np.number)):
+      return lax_internal.asarray(x).astype(self.dtype)
     return asarray(x, dtype=self.dtype)
 
   def __instancecheck__(self, instance: Any) -> bool:
@@ -5560,12 +5562,10 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   else:
     sharding = canonicalize_device_to_sharding(device)  # type: ignore
 
-  # Use device_put to avoid a copy for ndarray inputs.
   if (not copy and isinstance(object, np.ndarray) and
       (dtype is None or dtype == object.dtype) and (ndmin <= object.ndim) and
       device is None):
-    # Keep the output uncommitted.
-    return jax.device_put(object)
+    return lax_internal.asarray_p.bind(object)
 
   # For Python scalar literals, call coerce_to_array to catch any overflow
   # errors. We don't use dtypes.is_python_scalar because we don't want this
@@ -5633,7 +5633,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     out = np.asarray(object, dtype=dtype)
   elif isinstance(object, Array):
     assert object.aval is not None
-    out = _array_copy(object) if copy else object
+    out = _array_copy(object) if copy else lax_internal.asarray_p.bind(object)
   elif isinstance(object, (list, tuple)):
     if object:
       out = stack([asarray(elt, dtype=dtype) for elt in object])
@@ -12072,10 +12072,13 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
   # collapsed, after None axes have been removed. See below.
   x_advanced_axes: Sequence[int] | None = None
 
+  def _asarray(e: Sequence | ArrayLike) -> Array:
+    return asarray(e) if isinstance(e, Sequence) else lax_internal.asarray(e)
+
   if _is_advanced_int_indexer(idx):
     idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
     advanced_pairs = (
-      (asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
+      (_asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
       if isscalar(e) or isinstance(e, (Sequence, Array, np.ndarray)))
     if normalize_indices:
       advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
