@@ -21,7 +21,6 @@ concurrency:
 
 jobs:
   run_tests:
-    if: github.event.repository.fork == false
     runs-on: ${{ matrix.runner }}
     container: 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest'
     env:
