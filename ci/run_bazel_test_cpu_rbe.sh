@@ -37,13 +37,6 @@ source "ci/utilities/setup_build_environment.sh"
 os=$(uname -s | awk '{print tolower($0)}')
 arch=$(uname -m)
 
-# Adjust the values when running on Windows x86 to match the config in
-# .bazelrc
-if [[ $os =~ "msys_nt" ]] && [[ $arch == "x86_64" ]]; then
-  os="windows"
-  arch="amd64"
-fi
-
 # When running on Mac or Linux Aarch64, we only build the test targets and
 # not run them. These platforms do not have native RBE support so we
 # RBE cross-compile them on remote Linux x86 machines. As the tests still

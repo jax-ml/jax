@@ -1,9 +1,6 @@
 name: CI - Bazel CPU tests (RBE)
 
 on:
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       halt-for-connection:
@@ -14,6 +11,9 @@ on:
         options:
         - 'yes'
         - 'no'
+  pull_request:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -30,9 +30,8 @@ jobs:
       JAXCI_ENABLE_X64: ${{ matrix.enable-x_64 }}
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:
-      fail-fast: false # don't cancel all jobs on failure
       matrix:
-        runner: ["windows-x86-n2-16", "linux-x86-n2-16", "linux-arm64-t2a-16"]
+        runner: ["linux-x86-n2-16", "linux-arm64-c4a-16"]
         enable-x_64: [1, 0]
     name: "Bazel CPU tests (${{ matrix.runner }}, Python 3.12, x64=${{ matrix.enable-x_64 }})"
 # End Presubmit Naming Check github-cpu-presubmits

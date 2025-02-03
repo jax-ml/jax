@@ -69,29 +69,36 @@ on:
       python:
         description: "Which python version should the artifact be built for?"
         type: string
-        required: true
+        required: false
         default: "3.12"
       clone_main_xla:
-        description: "Should latest XLA be used? (1 to enable, 0 to disable)"
+        description: "Should latest XLA be used?"
         type: string
         required: false
         default: "0"
-      upload_artifacts:
+      upload_artifacts_to_gcs:
         description: "Should the artifacts be uploaded to a GCS bucket?"
-        required: false
-        default: false
+        required: true
+        default: true
         type: boolean
       gcs_upload_uri:
-        description: "GCS location URI to where the artifacts should be uploaded"
-        required: false
-        default: ' gs://general-ml-ci-transient/jax-github-actions/jax-fork/${{ github.workflow }}/${{ github.run_number }}'
+        description: "GCS location prefix to where the artifacts should be uploaded"
+        required: true
+        default: 'gs://general-ml-ci-transient/jax-github-actions/jax-fork/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
         type: string
+    outputs:
+      gcs_upload_uri:
+        description: "GCS location prefix to where the artifacts were uploaded"
+        value: ${{ jobs.build-artifacts.outputs.gcs_upload_uri }}
+
+permissions:
+  contents: read
 
 jobs:
-  build_artifacts:
+  build-artifacts:
     defaults:
       run:
-        # Explicitly set the shell to bash to override the default Windows environment, i.e, cmd.
+        # Explicitly set the shell to bash to override Windows's default (cmd)
         shell: bash
 
     runs-on: ${{ inputs.runner }}

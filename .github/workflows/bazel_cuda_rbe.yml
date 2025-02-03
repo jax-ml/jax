@@ -1,9 +1,6 @@
 name: CI - Bazel CUDA tests (RBE)
 
 on:
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       halt-for-connection:
@@ -14,6 +11,9 @@ on:
         options:
         - 'yes'
         - 'no'
+  pull_request:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
