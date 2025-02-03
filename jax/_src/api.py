@@ -39,9 +39,9 @@ from contextlib import contextmanager
 from jax._src import linear_util as lu
 from jax._src import stages
 from jax._src.tree_util import (
-    tree_map, tree_flatten, tree_unflatten, tree_structure, tree_transpose,
-    tree_leaves, Partial, PyTreeDef, all_leaves, keystr, broadcast_prefix,
-    prefix_errors, generate_key_paths, tree_flatten_with_path)
+    dispatch_registry, tree_map, tree_flatten, tree_unflatten, tree_structure,
+    tree_transpose, tree_leaves, Partial, PyTreeDef, all_leaves, keystr,
+    broadcast_prefix, prefix_errors, generate_key_paths, tree_flatten_with_path)
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -2358,11 +2358,28 @@ def device_put(
         assert not m and not d
         copy_semantics.append(dispatch.CopySemantics.COPY)
 
+    def _physicalize_sharding(xf, d):
+      if isinstance(d, xc.Device):
+        return d
+      if d is None or not hasattr(xf, "dtype") or not hasattr(xf, "aval"):
+        return d
+      if dtypes.issubdtype(xf.dtype, dtypes.extended):
+        return sharding_impls.physical_sharding(xf.aval, d)
+      return d
+
+    # Extract physical shardings for extended dtypes.
+    device_flat = [_physicalize_sharding(xf, d)
+                   for xf, d in zip(x_flat, device_flat)]
+
+    # Flatten again with the dispatch registry to handle extended dtypes.
+    x_flat, dispatch_treedef = dispatch_registry.flatten(x_flat)
+
     for xf, d in zip(x_flat, device_flat):  # type: ignore
       _check_sharding(shaped_abstractify(xf), d)
     out_flat = dispatch.device_put_p.bind(
         *x_flat, devices=device_flat, srcs=src_flat,
         copy_semantics=copy_semantics)
+    out_flat = dispatch_treedef.unflatten(out_flat)
     return tree_unflatten(treedef, out_flat)
 
 
