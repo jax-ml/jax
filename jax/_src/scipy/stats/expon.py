@@ -162,7 +162,7 @@ def logcdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     :func:`jax.scipy.stats.expon.logpdf`
     :func:`jax.scipy.stats.expon.logsf`
   """
-  x, loc, scale = promote_args_inexact("expon.cdf", x, loc, scale)
+  x, loc, scale = promote_args_inexact("expon.logcdf", x, loc, scale)
   neg_scaled_x = lax.div(lax.sub(loc, x), scale)
   return jnp.where(
     lax.lt(x, loc),
