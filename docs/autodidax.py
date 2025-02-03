@@ -123,7 +123,7 @@ def bind1(prim, *args, **params):
 # around calls to `bind`. These wrappers let us control how arguments are passed
 # to `bind`, and in particular we follow a handy internal convention: when we
 # call `bind`, we pass values representing array data as positional arguments,
-# and we pass metadata like the `axis` argument to `sum_p` via keyword. This
+# and we pass metadata like the `axis` argument to `reduce_sum_p` via keyword. This
 # calling convention simplifies some core logic (since e.g. instances of the
 # `Tracer` class to be defined below can only occur in positional arguments to
 # `bind`). The wrappers can also provide docstrings!
