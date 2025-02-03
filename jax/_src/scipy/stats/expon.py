@@ -123,9 +123,11 @@ def cdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     :func:`jax.scipy.stats.expon.logsf`
   """
   x, loc, scale = promote_args_inexact("expon.cdf", x, loc, scale)
-  scaled_x = lax.div(lax.sub(x, loc), scale)
+  neg_scaled_x = lax.div(lax.sub(loc, x), scale)
   return jnp.where(
-    lax.lt(x, loc), jnp.zeros_like(scaled_x), lax.neg(lax.expm1(lax.neg(scaled_x)))
+    lax.lt(x, loc),
+    jnp.zeros_like(neg_scaled_x),
+    lax.neg(lax.expm1(neg_scaled_x)),
   )
 
 
@@ -160,7 +162,13 @@ def logcdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     :func:`jax.scipy.stats.expon.logpdf`
     :func:`jax.scipy.stats.expon.logsf`
   """
-  return lax.log(cdf(x, loc, scale))
+  x, loc, scale = promote_args_inexact("expon.cdf", x, loc, scale)
+  neg_scaled_x = lax.div(lax.sub(loc, x), scale)
+  return jnp.where(
+    lax.lt(x, loc),
+    jnp.full_like(neg_scaled_x, -jnp.inf),
+    lax.log1p(lax.neg(lax.exp(neg_scaled_x))),
+  )
 
 
 def logsf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
@@ -195,8 +203,8 @@ def logsf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     :func:`jax.scipy.stats.expon.logsf`
   """
   x, loc, scale = promote_args_inexact("expon.sf", x, loc, scale)
-  scaled_x = lax.div(lax.sub(x, loc), scale)
-  return jnp.where(lax.lt(x, loc), jnp.zeros_like(scaled_x), lax.neg(scaled_x))
+  neg_scaled_x = lax.div(lax.sub(loc, x), scale)
+  return jnp.where(lax.lt(x, loc), jnp.zeros_like(neg_scaled_x), neg_scaled_x)
 
 
 def sf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
@@ -259,9 +267,9 @@ def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     :func:`jax.scipy.stats.expon.logsf`
   """
   q, loc, scale = promote_args_inexact("expon.ppf", q, loc, scale)
-  scaled_q = lax.div(lax.sub(q, loc), scale)
+  neg_scaled_q = lax.div(lax.sub(loc, q), scale)
   return jnp.where(
     jnp.isnan(q) | (q < 0) | (q > 1),
     jnp.nan,
-    lax.neg(lax.log1p(lax.neg(scaled_q))),
+    lax.neg(lax.log1p(neg_scaled_q)),
   )
