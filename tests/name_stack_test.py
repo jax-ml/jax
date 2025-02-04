@@ -217,7 +217,8 @@ class NameStackTransformationTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       with jax.named_scope('bar'):
-        return jnp.sin(x)
+        # return jnp.sin(x)
+        return jax.lax.sin(x)
     jaxpr = jax.make_jaxpr(f)(1.).jaxpr
     jaxpr_param = 'jaxpr'
 
