@@ -27,7 +27,6 @@ from typing import Any, Literal, Protocol
 import numpy as np
 
 import jax.numpy as jnp
-from jax import lax
 from jax import random
 from jax._src import core
 from jax._src import dtypes
@@ -607,12 +606,7 @@ def orthogonal(scale: RealNumeric = 1.0,
     if len(shape) < 2:
       raise ValueError("orthogonal initializer requires at least a 2D shape")
     n_rows, n_cols = math.prod(shape) // shape[column_axis], shape[column_axis]
-    matrix_shape = (n_cols, n_rows) if n_rows < n_cols else (n_rows, n_cols)
-    A = random.normal(key, matrix_shape, dtype)
-    Q, R = jnp.linalg.qr(A)
-    diag_sign = lax.broadcast_to_rank(jnp.sign(jnp.diag(R)), rank=Q.ndim)
-    Q *= diag_sign # needed for a uniform distribution
-    if n_rows < n_cols: Q = Q.T
+    Q = random.orthogonal(key, n_rows, (), dtype, n_cols)
     Q = jnp.reshape(Q, tuple(np.delete(shape, column_axis)) + (shape[column_axis],))
     Q = jnp.moveaxis(Q, -1, column_axis)
     return jnp.array(scale, dtype) * Q
