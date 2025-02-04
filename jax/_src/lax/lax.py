@@ -798,8 +798,9 @@ def _trace_composite_to_jaxpr(fun: Callable,
                               in_avals: Sequence[core.AbstractValue],
                               name: str,
                               debug_info: core.DebugInfo):
-  flat_fun, out_tree = api_util.flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug_info)
+  flat_fun, out_tree = api_util.flatten_fun_nokwargs(
+      lu.wrap_init(fun, debug_info=debug_info), in_tree)
+  jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
   if any(isinstance(c, core.Tracer) for c in consts):
     raise UnexpectedTracerError(
         "Found a JAX Tracer as a constant in the decomposition for the "

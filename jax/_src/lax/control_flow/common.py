@@ -58,7 +58,7 @@ def _initial_style_open_jaxpr(fun: Callable,
       lu.wrap_init(fun, debug_info=debug_info),
       in_tree)
   jaxpr, _, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
-      wrapped_fun, in_avals, debug_info)
+      wrapped_fun, in_avals)
   return jaxpr, consts, out_tree(), attrs_tracked
 
 @weakref_lru_cache

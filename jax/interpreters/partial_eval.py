@@ -86,9 +86,9 @@ from jax._src.interpreters.partial_eval import (
 
 
 # TODO(mattjj): remove temporary shim when trace_to_jaxpr_dynamic sig stabilizes
-def trace_to_jaxpr_dynamic(fun, in_avals, debug_info=None, *, keep_inputs=None):  # noqa
+def trace_to_jaxpr_dynamic(fun, in_avals, *, keep_inputs=None):  # noqa
   jaxpr, out_avals, consts, () = _trace_to_jaxpr_dynamic(
-      fun, in_avals, debug_info, keep_inputs=keep_inputs)
+      fun, in_avals, keep_inputs=keep_inputs)
   return jaxpr, out_avals, consts
 
 

@@ -1208,7 +1208,7 @@ def checkify(f: Callable[..., Out],
     fun_, out_tree = api_util.flatten_fun(lu.wrap_init(closed_f,
                                                        debug_info=debug),
                                           in_tree)
-    jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(fun_, (), debug)
+    jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(fun_, ())
     jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr_))
     # checkify:
     error, out_flat = checkify_jaxpr(jaxpr, errors, init_error, *consts)

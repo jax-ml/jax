@@ -1406,7 +1406,6 @@ def lower_jaxpr_to_fun(
     MLIR func op
   """
   util.test_event("lower_jaxpr_to_fun", name)
-
   # The first dimension variable may be the platform index
   num_dim_vars = len(ctx.shape_poly_state.dim_vars)
   dim_var_avals = [core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))] * num_dim_vars
