@@ -1524,7 +1524,9 @@ def _masked_swap_lowering_rule(
       1 if b is pallas_core.mapped else next(mem_slice_shape_iter)
       for b in ref_block_shape
   ]
-  mem_aval = aval_out.update(shape=tuple(mem_slice_shape), sharding=None)
+  mem_aval = aval_out.update(
+      shape=tuple(mem_slice_shape), sharding=jax_core.get_cur_mesh_sharding()
+  )
   mem_aval_shape = ctx.lowering_context.dynamic_shape_replacement_fn(
       mem_aval.shape
   )
@@ -3009,6 +3011,11 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
 
 
 lowering_rules[pjit.pjit_p] = _pjit_lowering_rule
+
+
+def _mesh_cast_lowering_rule(ctx, x, dst_sharding):
+  return x
+lowering_rules[pjit.mesh_cast_p] = _mesh_cast_lowering_rule
 
 
 def _custom_jvp_call_lowering_rule(

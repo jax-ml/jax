@@ -3326,7 +3326,7 @@ def _convert_element_type_sharding_rule(operand, *, new_dtype, weak_type,
     if isinstance(sharding, NamedSharding):
       return NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
     else:
-      return None
+      return core.get_cur_mesh_sharding()
   return sharding
 
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type,
@@ -6592,6 +6592,8 @@ def _iota_abstract_eval(*dyn_shape, dtype, shape, dimension, sharding):
   if (not dyn_shape and
       not any(isinstance(d, core.DArray) and
               type(core.get_aval(d).dtype) is core.bint for d in shape)):
+    if sharding is None:
+      sharding = core.get_cur_mesh_sharding(spec=core.P(*[None] * len(shape)))
     return ShapedArray(shape, dtype, sharding=sharding)
   # TODO(mattjj): unify DShapedArray with ShapedArray, and remove this code
   return core.DShapedArray(_merge_dyn_shape(shape, dyn_shape), dtype, False)

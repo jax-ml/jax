@@ -1021,7 +1021,7 @@ def _mapped_axis_spec(args_flat, in_axes_flat):
     try:
       # Duck type arrays like BCOO arrays can be passed to vmap.
       return shaped_abstractify(arg).sharding.spec[i]
-    except TypeError:
+    except (IndexError, TypeError):
       return None
 
   temp_spec = None
@@ -2235,7 +2235,7 @@ def _check_sharding(aval, s):
         f" invalid value: {s}")
   if isinstance(s, Sharding):
     if isinstance(aval, core.AbstractToken):
-      aval = core.token_shaped_array
+      aval = core.get_token_aval()
     if not isinstance(s, PmapSharding):
       pjit.pjit_check_aval_sharding(
           (s,), (aval,), None, "device_put args", allow_uneven_sharding=False)

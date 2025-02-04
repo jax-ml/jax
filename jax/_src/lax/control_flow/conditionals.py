@@ -561,7 +561,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   effects_known = _join_cond_effects(branches_known)
   eqn_known = pe.new_jaxpr_eqn(
       ins_known, [*out_binders_known, *res_binders], cond_p, params_known,
-      effects_known, eqn.source_info)
+      effects_known, eqn.source_info, eqn.ctx)
 
   # Build the staged eqn.
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
@@ -569,7 +569,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   effects_staged = _join_cond_effects(branches_staged)
   eqn_staged = pe.new_jaxpr_eqn(
       [eqn.invars[0], *res_binders, *eqn.invars[1:]], out_binders_staged,
-      cond_p, params_staged, effects_staged, eqn.source_info)
+      cond_p, params_staged, effects_staged, eqn.source_info, eqn.ctx)
 
   new_vars = [*new_inst, *res_binders]
   return eqn_known, eqn_staged, unks_out, inst_out, new_vars
@@ -684,7 +684,7 @@ def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
   new_eqn = pe.new_jaxpr_eqn(
       [v for v, used in zip(eqn.invars, [True, *used_inputs]) if used],
       [v for v, used in zip(eqn.outvars, used_outputs) if used],
-      eqn.primitive, new_params, new_effects, eqn.source_info)
+      eqn.primitive, new_params, new_effects, eqn.source_info, eqn.ctx)
 
   assert all(len(new_eqn.invars ) == 1 + len(jaxpr.in_avals )
              for jaxpr in new_params['branches'])

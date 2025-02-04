@@ -1479,7 +1479,6 @@ def check_aval_layout_compatibility(
 pjit_p = core.Primitive("pjit")
 pjit_p.multiple_results = True
 
-
 def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
   # If device or backend is set, return the default layout. This is because you
   # can pass arrays on cpu (with untiled layouts) to jit with backend='tpu'
@@ -2707,14 +2706,20 @@ def mesh_cast(xs, out_shardings):
   return tree_unflatten(treedef, out_flat)
 
 mesh_cast_p = core.Primitive('mesh_cast')
+mesh_cast_p.skip_canonicalization = True
 def _mesh_cast_abstract_eval(aval, dst_sharding):
   src_sharding = aval.sharding
+  if src_sharding == dst_sharding:
+    return aval
+  if src_sharding.mesh.empty or dst_sharding.mesh.empty:
+    return aval.update(sharding=dst_sharding)
   if src_sharding.mesh.shape_tuple != dst_sharding.mesh.shape_tuple:
     raise ValueError(
         f'Mesh shape of the input {src_sharding.mesh.shape_tuple} does not'
         ' match the mesh shape of the target sharding'
         f' {dst_sharding.mesh.shape_tuple} for shape {aval.str_short()}')
-  if src_sharding.mesh.axis_types == dst_sharding.mesh.axis_types:
+  if (src_sharding.mesh.axis_types == dst_sharding.mesh.axis_types and
+      src_sharding.spec != dst_sharding.spec):
     raise ValueError(
         'mesh_cast should only be used when AxisTypes changes between the'
         ' input mesh and the target mesh. Got src'
@@ -2746,7 +2751,9 @@ def _mesh_cast_abstract_eval(aval, dst_sharding):
 mesh_cast_p.def_abstract_eval(_mesh_cast_abstract_eval)
 
 def _mesh_cast_impl(x, dst_sharding):
-  return dispatch.apply_primitive(mesh_cast_p, x, dst_sharding=dst_sharding)
+  x_aval = core.shaped_abstractify(x)
+  with mesh_lib.set_abstract_mesh(x_aval.sharding.mesh):
+    return dispatch.apply_primitive(mesh_cast_p, x, dst_sharding=dst_sharding)
 mesh_cast_p.def_impl(_mesh_cast_impl)
 
 def _mesh_cast_transpose_rule(ct, x, dst_sharding):
@@ -2763,7 +2770,6 @@ def _mesh_cast_hlo_lowering(ctx, x_node, *, dst_sharding):
 mlir.register_lowering(mesh_cast_p, _mesh_cast_hlo_lowering)
 
 def _mesh_cast_batcher(axis_data, vals_in, dims_in, dst_sharding):
-  assert axis_data.spmd_name is None
   x, = vals_in
   d, = dims_in
   vmapped_dst_sharding = batching.get_sharding_for_vmap(

@@ -35,6 +35,7 @@ from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import effects
 from jax._src import pjit
+from jax._src import mesh as mesh_lib
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import traceback_util
@@ -966,7 +967,8 @@ def shard_map_error_check(
       raise ValueError(f'Unsupported aval type: {type(v)}')
     in_avals[i] = sharder(mesh, new_in_names[i], v)
 
-  with core.extend_axis_env_nd(mesh.shape.items()):
+  with (core.extend_axis_env_nd(mesh.shape.items()),
+        mesh_lib.set_abstract_mesh(shard_map._as_manual_mesh(mesh))):
     # jaxpr to checked_jaxpr
     checked_jaxpr, out_tree, _ = jaxpr_to_checkify_jaxpr(
         pe.close_jaxpr(jaxpr), enabled_errors, err_tree, *in_avals

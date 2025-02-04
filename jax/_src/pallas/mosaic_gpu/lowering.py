@@ -1121,6 +1121,9 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
       ctx.module_ctx, ctx.launch_ctx, jaxpr.jaxpr, args
   )
 
+@register_lowering_rule(pjit.mesh_cast_p)
+def _mesh_cast_lowering_rule(ctx, x, dst_sharding):
+  return x
 
 @register_lowering_rule(lax.slice_p)
 def _slice_lowering_rule(
