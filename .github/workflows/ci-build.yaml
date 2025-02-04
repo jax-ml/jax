@@ -73,19 +73,10 @@ jobs:
       uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Get pip cache dir
-      id: pip-cache
-      run: |
-        python -m pip install --upgrade pip wheel
-        echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
-    - name: pip cache
-      uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
-      with:
-        path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-py${{ matrix.python-version }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
     - name: Install dependencies
       run: |
-        pip install .[minimum-jaxlib] -r build/test-requirements.txt
+        pip install uv
+        uv pip install --system .[minimum-jaxlib] -r build/test-requirements.txt
 
     - name: Run tests
       env:
@@ -120,19 +111,10 @@ jobs:
       uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Get pip cache dir
-      id: pip-cache
-      run: |
-        python -m pip install --upgrade pip wheel
-        echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
-    - name: pip cache
-      uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57  # v4.2.0
-      with:
-        path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-pip-docs-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
     - name: Install dependencies
       run: |
-        pip install -r docs/requirements.txt
+        pip install uv
+        uv pip install --system -r docs/requirements.txt
     - name: Test documentation
       env:
         XLA_FLAGS: "--xla_force_host_platform_device_count=8"
@@ -163,19 +145,10 @@ jobs:
       uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Get pip cache dir
-      id: pip-cache
-      run: |
-        python -m pip install --upgrade pip wheel
-        echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
-    - name: pip cache
-      uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57  # v4.2.0
-      with:
-        path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-pip-docs-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
     - name: Install dependencies
       run: |
-        pip install -r docs/requirements.txt
+        pip install uv
+        uv pip install --system -r docs/requirements.txt
     - name: Render documentation
       run: |
         sphinx-build -j auto --color -W --keep-going -b html -D nb_execution_mode=off docs docs/build/html
@@ -198,19 +171,10 @@ jobs:
       uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Get pip cache dir
-      id: pip-cache
-      run: |
-        python -m pip install --upgrade pip wheel
-        echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
-    - name: pip cache
-      uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57  # v4.2.0
-      with:
-        path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-py${{ matrix.python-version }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
     - name: Install dependencies
       run: |
-        pip install .[minimum-jaxlib] tensorflow -r build/test-requirements.txt
+        pip install uv
+        uv pip install --system .[minimum-jaxlib] tensorflow -r build/test-requirements.txt
 
     - name: Run tests
       env:
