@@ -2129,7 +2129,11 @@ def _gather_lowering_rule(
       slice_sizes == (1, 1)
       and not unique_indices
       and not indices_are_sorted
-      and mode == lax.GatherScatterMode.FILL_OR_DROP
+      and mode
+      in (
+          lax.GatherScatterMode.FILL_OR_DROP,
+          lax.GatherScatterMode.PROMISE_IN_BOUNDS,
+      )
   ):
     if dimension_numbers == lax.GatherDimensionNumbers(
         offset_dims=(),

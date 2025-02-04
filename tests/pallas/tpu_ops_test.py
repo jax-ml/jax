@@ -389,10 +389,10 @@ class OpsTest(PallasBaseTest):
     ref = jax.jit(lambda x: round_fn(x).astype(target))(x)
     np.testing.assert_array_equal(out, ref)
 
-  @parameterized.product(axis=[0, 1])
-  def test_dynamic_gather_along_axis(self, axis):
-    if not jtu.if_cloud_tpu_at_least(2025, 2, 3):
-      self.skipTest("Requires libtpu built after 2025-02-03")
+  @parameterized.product(axis=[0, 1], mode=["promise_in_bounds", None])
+  def test_dynamic_gather_along_axis(self, axis, mode):
+    if not jtu.if_cloud_tpu_at_least(2025, 2, 5):
+      self.skipTest("Requires libtpu built after 2025-02-05")
     if (axis == 0 and not jtu.is_device_tpu_at_least(version=5)) or (
         axis == 1 and not jtu.is_device_tpu_at_least(version=4)
     ):
@@ -401,7 +401,7 @@ class OpsTest(PallasBaseTest):
     shape = (8, 128)
 
     def kernel(x, indices, out):
-      out[...] = jnp.take_along_axis(x[...], indices[...], axis)
+      out[...] = jnp.take_along_axis(x[...], indices[...], axis, mode=mode)
 
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
     idx = jax.random.randint(

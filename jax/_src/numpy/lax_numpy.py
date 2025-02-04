@@ -11649,7 +11649,8 @@ def take_along_axis(
   j = 0
   for i in range(rank):
     if i == axis_int:
-      indices = _normalize_index(indices, axis_size)
+      if mode != 'promise_in_bounds':
+        indices = _normalize_index(indices, axis_size)
       gather_indices.append(lax.reshape(indices, gather_index_shape))
       slice_sizes.append(1)
       start_index_map.append(i)
