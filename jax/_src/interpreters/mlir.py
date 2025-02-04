@@ -935,7 +935,7 @@ def sharded_aval(aval: core.AbstractValue,
     return aval
   if not isinstance(aval, (core.ShapedArray, core.DShapedArray)):
     raise NotImplementedError
-  return aval.update(sharding.shard_shape(aval.shape), sharding=None)  # type: ignore
+  return aval.update(sharding.shard_shape(aval.shape))  # type: ignore
 
 
 def eval_dynamic_shape(ctx: LoweringRuleContext,
@@ -1244,7 +1244,8 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
     input_output_aliases = list(input_output_aliases)
   # To match-up in-avals to out-avals we only care about the number of
   # bytes, so we strip off unrelated aval metadata (eg. the named shape)
-  strip_metadata = lambda a: a.strip_weak_type()
+  strip_metadata = lambda a: (a if a is core.abstract_token else
+                              core.ShapedArray(a.shape, a.dtype))
   avals_in = map(strip_metadata, avals_in)
   avals_out = map(strip_metadata, avals_out)
 
