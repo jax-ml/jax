@@ -54,10 +54,13 @@ from jax._src.sharding_impls import (AUTO, NamedSharding,
                                      SdyArraySharding, SdyArrayShardingList)
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects, ir, passmanager
 from jax._src.lib.mlir.dialects import func as func_dialect, hlo
 from jax._src.lib.mlir import register_jax_dialects
 from jax._src.state.types import AbstractRef
+
+# mypy: ignore-errors
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -469,11 +472,20 @@ def _traceback_to_location(ctx: ModuleContext, tb: xc.Traceback) -> ir.Location:
     loc = ctx.traceback_caches.location_cache.get(code_lasti, None)
     if loc is None:
       frame = source_info_util.raw_frame_to_frame(code, lasti)
-      file_loc = ir.Location.file(
-          get_canonical_source_file(frame.file_name, ctx.traceback_caches),
-          frame.start_line,
-          frame.start_column,
-      )
+      if xla_extension_version >= 309:
+        file_loc = ir.Location.file(
+            get_canonical_source_file(frame.file_name, ctx.traceback_caches),
+            frame.start_line,
+            frame.start_column,
+            frame.end_line,
+            frame.end_column,
+        )
+      else:
+        file_loc = ir.Location.file(
+            get_canonical_source_file(frame.file_name, ctx.traceback_caches),
+            frame.start_line,
+            frame.start_column,
+        )
       loc = ir.Location.name(frame.function_name, childLoc=file_loc)
       ctx.traceback_caches.location_cache[code_lasti] = loc
     frame_locs.append(loc)
