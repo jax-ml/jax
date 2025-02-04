@@ -37,8 +37,8 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
+from jax._src.pallas import helpers as pallas_helpers
 from jax._src.pallas import hlo_interpreter
-from jax._src.pallas import utils as pallas_utils
 from jax._src.state import discharge as state_discharge
 from jax._src.state import types as state_types
 from jax._src.util import (
@@ -739,7 +739,7 @@ def _pallas_call_batching_rule(
       # b_len_mod = jnp.equal(jnp.mod(b_len, val_at_ragged_dim), 0)
       # checkify.check(b_len_mod, "b_len % val_at_ragged_dim != 0")
 
-      @pallas_utils.when(run_kernel)
+      @pallas_helpers.when(run_kernel)
       def f():
         # Important! This allows us to trace the inner kernel with the correct
         # grid to preserve user program_id semantics. Ex: program_id(0) will

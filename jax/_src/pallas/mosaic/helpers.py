@@ -16,6 +16,7 @@
 
 import functools
 import jax
+from jax._src.pallas import helpers as pl_helpers
 from jax._src.pallas import primitives as pl_primitives
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import primitives as plm_primitives
@@ -55,3 +56,40 @@ def sync_copy(src_ref, dst_ref):
         src_ref,
         dst_ref,
     )
+
+
+def run_on_first_core(core_axis_name: str):
+  """Runs a function on the first core in a given axis."""
+  num_cores = jax.lax.psum(1, core_axis_name)
+  if num_cores == 1:
+    return lambda f: f()
+
+  def wrapped(f):
+    core_id = jax.lax.axis_index(core_axis_name)
+
+    @pl_helpers.when(core_id == 0)
+    @functools.wraps(f)
+    def _():
+      return f()
+
+  return wrapped
+
+
+def core_barrier(sem, *, core_axis_name: str):
+  """Synchronizes all cores in a given axis."""
+  num_cores = jax.lax.psum(1, core_axis_name)
+  core_id = jax.lax.axis_index(core_axis_name)
+
+  @pl_helpers.when(num_cores > 1)
+  def _():
+    with jax.named_scope("sync_cores"):
+
+      def signal_core(i):
+        # Don't signal ourself
+        @pl_helpers.when(core_id != i)
+        def _():
+          plm_primitives.semaphore_signal(sem, 1, core_index=i)
+
+      for i in range(num_cores):
+        signal_core(i)
+      plm_primitives.semaphore_wait(sem, num_cores - 1)
