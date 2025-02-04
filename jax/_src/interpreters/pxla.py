@@ -3198,8 +3198,15 @@ def cc_shard_arg(x, sharding, layout):
   return shard_args([sharding], [layout], [None], [x])[0]
 
 
+# Caches successful calls to check_arg_avals_for_call.
+_check_arg_avals_for_call_cache = {}
+
+
 def check_arg_avals_for_call(ref_avals, arg_avals,
                              jaxpr_debug_info: core.DebugInfo | None = None):
+  if (ref_avals, arg_avals) in _check_arg_avals_for_call_cache:
+    return
+
   if len(ref_avals) != len(arg_avals):
     raise TypeError(
         f"Computation compiled for {len(ref_avals)} inputs "
@@ -3227,6 +3234,8 @@ def check_arg_avals_for_call(ref_avals, arg_avals,
     raise TypeError(
         "Argument types differ from the types for which this computation was "
         f"compiled. {num_mismatch_str} mismatches are:\n{str_errors}")
+  else:
+    _check_arg_avals_for_call_cache.add((ref_avals, arg_avals))
 
 
 def _get_metadata_jit_pmap(local_devices, num_in_shardings, num_out_shardings):
