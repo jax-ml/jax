@@ -100,6 +100,7 @@ def create_descriptor(
     stride_byte_offset: int,
     swizzle: int | mgpu_dialect.SwizzlingMode | None,
     memory_space: int | None = None,
+    const_init: int = 0,
 ):
   i64 = ir.IntegerType.get_signless(64)
   ptr_val = llvm.ptrtoint(i64, utils.memref_ptr(memref_arg, memory_space))
@@ -118,7 +119,8 @@ def create_descriptor(
   )
   # We ignore the offset
   desc_const = (
-      (wgmma_encode(leading_byte_offset) << 16)
+      const_init
+      | (wgmma_encode(leading_byte_offset) << 16)
       | (wgmma_encode(stride_byte_offset) << 32)
   )
   desc = llvm.or_(
