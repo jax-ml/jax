@@ -1588,7 +1588,7 @@ class PipelineTest(PallasTest):
   def test_emit_pipeline_with_wgmma(self):
     self.skip_unless_sm90a()
 
-    m, n, k = 256, 256, 256
+    m, n, k = 256, 256, 1024
     dtype = jnp.float16
     key = jax.random.key(42)
     x = jax.random.uniform(key, shape=(m, k), dtype=dtype)
@@ -1606,15 +1606,19 @@ class PipelineTest(PallasTest):
     grid_k = k // tile_k
 
     def kernel(a_gmem, b_gmem, c_smem, acc_reg):
+      pid_m = pl.program_id(0)
+      pid_n = pl.program_id(1)
+
       def pipeline_body(a_smem, b_smem):
         plgpu.wgmma(acc_reg, a_smem, b_smem)
+        plgpu.wgmma_wait(1)
 
       plgpu.emit_pipeline(
           pipeline_body,
           in_specs=[
               plgpu.GPUBlockSpec(
                   (tile_m, tile_k),
-                  lambda i: (0, i),
+                  lambda k: (pid_m, k),
                   transforms=(
                       plgpu.TilingTransform((64, swizzle_elems)),
                       plgpu.SwizzleTransform(swizzle),
@@ -1622,7 +1626,7 @@ class PipelineTest(PallasTest):
               ),
               plgpu.GPUBlockSpec(
                   (tile_k, tile_n),
-                  lambda i: (i, 0),
+                  lambda k: (k, pid_n),
                   transforms=(
                       plgpu.TilingTransform((swizzle_elems, swizzle_elems)),
                       plgpu.SwizzleTransform(swizzle),
@@ -1633,8 +1637,7 @@ class PipelineTest(PallasTest):
           max_concurrent_steps=2,
           delay_release=1,
       )(a_gmem, b_gmem)
-
-      c_smem[...] = acc_reg[...]
+      c_smem[...] = acc_reg[...].astype(dtype)
 
     @jax.jit
     def matmul(a: jax.Array, b: jax.Array) -> jax.Array:
@@ -1647,11 +1650,11 @@ class PipelineTest(PallasTest):
           out_specs=pl.BlockSpec((tile_m, tile_n), lambda m, n: (m, n)),
           grid=(grid_m, grid_n),
           out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
-          scratch_shapes=[plgpu.ACC((tile_m, tile_n), dtype)],
+          scratch_shapes=[plgpu.ACC((tile_m, tile_n), jnp.float32)],
       )(a, b)
 
     res = matmul(x, y)
-    np.testing.assert_allclose(res, x @ y, rtol=0.4)
+    np.testing.assert_array_equal(res, x @ y)
 
 
 class WarpSpecializedPipelineTest(PallasTest):
