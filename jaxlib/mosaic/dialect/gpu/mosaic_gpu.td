@@ -142,7 +142,7 @@ def MosaicGPU_WGSplatFragLayout : AttrDef<MosaicGPU_Dialect, "WGSplatFragLayout"
   let assemblyFormat = "`<` $shape `>`";
 }
 
-def MosaicGPU_WGMMAFragLayout : AttrDef<MosaicGPU_Dialect, "WGMMAFragLayout", []> {
+def MosaicGPU_WGMMATiledLayout : AttrDef<MosaicGPU_Dialect, "WGMMATiledLayout", []> {
   let summary = "2D array that can be tiled by supported WGMMA shapes.";
   let description = [{
     This layout annotates arrays that are fragmented across all threads in a
@@ -152,7 +152,7 @@ def MosaicGPU_WGMMAFragLayout : AttrDef<MosaicGPU_Dialect, "WGMMAFragLayout", []
       - n %  8 == 0
   }];
 
-  let mnemonic = "WGMMAFragLayout";
+  let mnemonic = "WGMMATiledLayout";
   let assemblyFormat = "";
 }
 
