@@ -835,6 +835,11 @@ def tracers_to_jaxpr(
   return jaxpr, const_vals, env_vals
 
 @weakref_lru_cache
+def move_envvars(jaxpr: Jaxpr, which: tuple[bool, ...]) -> Jaxpr:
+  constvars, envvars = partition_list(which, jaxpr.constvars)
+  return jaxpr.replace(constvars=constvars, invars=[*envvars, *jaxpr.invars])
+
+@weakref_lru_cache
 def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
   """Moves the constvars to the start of invars."""
   config.enable_checks.value and core.check_jaxpr(jaxpr)
@@ -1824,7 +1829,7 @@ def _inline_literals(
 
 
 class DynamicJaxprTrace(core.Trace):
-  __slots__ = ("frame",)
+  __slots__ = ("frame", "tag")
 
   def __init__(self, debug_info: core.DebugInfo | None):
     self.frame = JaxprStackFrame(debug_info)
