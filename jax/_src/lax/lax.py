@@ -841,7 +841,8 @@ def _convert_element_type(
   if ((old_dtype, old_weak_type) == (new_dtype, weak_type) and
       isinstance(operand, Array) and
       not (isinstance(operand, core.Tracer) and core.is_concrete(operand)) and
-      (sharding is None or getattr(operand, 'sharding', None) == sharding)):
+      (sharding is None or
+       (sharding._is_concrete and getattr(operand, 'sharding', None) == sharding))):
     return operand
   else:
     return convert_element_type_p.bind(
