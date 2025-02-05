@@ -308,7 +308,7 @@ class custom_partitioning:
     that describes the sharding rule, or a Callable that produces either of
     these. We borrow the idea from the einops.rearrange string , to use a space
     separator between factors and allow multiple letters factor names. See
-    [jax-shardy-guide](https://colab.sandbox.google.com/github/openxla/shardy/blob/main/docs/getting_started_jax.ipynb)
+    `jax-shardy-guide <https://colab.sandbox.google.com/github/openxla/shardy/blob/main/docs/getting_started_jax.ipynb>`_
     for more details and examples on how to use this.
 
   When config.use_shardy_partitioner.value is True, `sharding_rule` is used;
