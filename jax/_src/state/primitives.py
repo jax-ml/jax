@@ -443,8 +443,8 @@ def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   ref_primal, x_primal, *idx = primals
   assert isinstance(ref_primal.aval, AbstractRef)
   ref_tangent, x_tangent, *_ = tangents
-  if type(ref_tangent) is ad_util.Zero:
-    raise Exception("you're an idiot")
+  # if type(ref_tangent) is ad_util.Zero:
+  #   raise Exception("you're an idiot")
   assert isinstance(ref_tangent.aval, AbstractRef)
   x_tangent = ad_util.instantiate(x_tangent)
   return (swap_p.bind(ref_primal, x_primal, *idx, **params),

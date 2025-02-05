@@ -763,11 +763,10 @@ class LinearizeTrace(Trace):
     # Remove when we replace the pmap implementation.
     f_tangent._pmap_tag = isinstance(call_primitive, core.MapPrimitive)
 
-    thing = lu.wrap_init(f_tangent, debug_info=lin_jaxpr.debug_info)
     nz_tangents_in = [t for (t, nz) in zip(tangents, nzs_in) if nz]
     nz_tangents_out = call_primitive.bind_with_trace(
         self.tangent_trace,
-        (thing,
+        (lu.wrap_init(f_tangent, debug_info=lin_jaxpr.debug_info),
          *residuals, *env, *nz_tangents_in), new_params)
     nz_tangents_out_iter = iter(nz_tangents_out)
     tangents_out = [next(nz_tangents_out_iter) if nz else Zero.from_primal_value(primal)
