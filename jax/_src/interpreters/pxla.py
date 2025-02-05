@@ -611,7 +611,6 @@ class MapTracer(core.Tracer):
     named_axes = [f"{k}={v}" for k, v in self.shard_axes.items()]
     return f"{self.val}{{{','.join(named_axes)}}}"
 
-@lu.cache
 def parallel_callable(fun: lu.WrappedFun,
                       backend_name: str | None,
                       axis_name: core.AxisName,

@@ -1870,7 +1870,6 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
   return wrapped
 
 
-@lu.cache
 def _cached_shard_map(flat_fun, mesh, in_axes_flat, out_axes_thunk, axis_name):
   in_specs = tuple(map(partial(_axis_to_spec, axis_name), in_axes_flat))
   out_specs = lambda: map(partial(_axis_to_spec, axis_name), out_axes_thunk())
