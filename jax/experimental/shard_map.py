@@ -29,6 +29,7 @@ import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec
 from jax._src import ad_checkpoint
 from jax._src import ad_util
+from jax._src import api_util
 from jax._src import callback
 from jax._src import config
 from jax._src import core
@@ -58,7 +59,6 @@ from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import (HashableFunction, HashablePartial, unzip2,
                            as_hashable_function, memoize, partition_list,
                            split_list, subs_list2)
-from jax.api_util import flatten_fun_nokwargs, argnums_partial
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -160,9 +160,10 @@ def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
   @util.wraps(f)
   @traceback_util.api_boundary
   def wrapped(*args):
-    fun = lu.wrap_init(f)
+    fun = lu.wrap_init(f,
+                       debug_info=api_util.debug_info("shard_map", f, args, {}))
     args_flat, in_tree = tree_flatten(args)
-    fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
+    fun, out_tree = api_util.flatten_fun_nokwargs(fun, in_tree)
     try: in_specs_flat = broadcast_prefix(in_specs, args,
                                           is_leaf=lambda x: x is None)
     except ValueError:
@@ -170,7 +171,7 @@ def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
       raise e('shard_map in_specs') from None
     dyn_argnums, in_specs_flat = unzip2((i, s) for i, s in enumerate(in_specs_flat)
                                         if s is not None)
-    fun, args_flat = argnums_partial(fun, dyn_argnums, args_flat, False)
+    fun, args_flat = api_util.argnums_partial(fun, dyn_argnums, args_flat, False)
     _check_specs_vs_args(f, mesh, in_tree, in_specs, dyn_argnums, in_specs_flat, args_flat)
     in_names_flat = tuple(map(_canonicalize_spec, in_specs_flat))
 
@@ -460,13 +461,16 @@ class ShardMapPrimitive(core.Primitive):
     return self._true_bind(*args, **params)
 
   def bind_with_trace(self, trace, fun_and_args, params):
+    fun: lu.WrappedFun
     fun, *args = fun_and_args
     return trace.process_shard_map(shard_map_p, fun, args, **params)
 
   def get_bind_params(self, params):
     new_params = dict(params)
-    jaxpr = new_params.pop('jaxpr')
-    subfun = lu.hashable_partial(lu.wrap_init(core.eval_jaxpr), jaxpr, ())
+    jaxpr: core.Jaxpr = new_params.pop('jaxpr')
+    subfun = lu.hashable_partial(lu.wrap_init(core.eval_jaxpr,
+                                              debug_info=jaxpr.debug_info),
+                                 jaxpr, ())
     axes = new_params.pop('out_names')
     new_params['out_names_thunk'] = HashableFunction(lambda: axes, closure=axes)
     return [subfun], new_params
@@ -1511,7 +1515,8 @@ def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_names,
   return [ad.JVPTracer(trace, p, t) for p, t in zip(primal_out, tangent_out)]
 ad.JVPTrace.process_shard_map = _shard_map_jvp
 
-def _shard_map_partial_eval(trace, shard_map_p, f, tracers, mesh, in_names,
+def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
+                            f: lu.WrappedFun, tracers, mesh, in_names,
                             out_names_thunk, check_rep, rewrite, auto):
   tracers = map(trace.to_jaxpr_tracer, tracers)
   in_pvals = [t.pval for t in tracers]
@@ -1519,7 +1524,7 @@ def _shard_map_partial_eval(trace, shard_map_p, f, tracers, mesh, in_names,
   unk_in_names, known_in_names = pe.partition_list(in_knowns, in_names)
   all_names = _all_mesh_names_except_spmd(mesh, trace)
   in_avals_sharded = map(partial(_shard_aval, mesh), unk_in_names, in_avals)
-  f = pe.trace_to_subjaxpr_nounits_fwd2(f, trace.tag, False)
+  f = pe.trace_to_subjaxpr_nounits_fwd2(f, trace.tag, f.debug_info, False)
   f = _promote_scalar_residuals(f)
   f_known, aux = pe.partial_eval_wrapper_nounits(
       f, (*in_knowns,), (*in_avals_sharded,))
@@ -1545,7 +1550,7 @@ def _shard_map_partial_eval(trace, shard_map_p, f, tracers, mesh, in_names,
   res_names = [known_in_names[f1] if f1 is not None else
                known_out_names_[f2] if f2 is not None else
                {0: all_names} for f1, f2 in zip(in_fwd, out_fwd)]
-  unk_in_names = (*res_names,) + ({},) * len(env) + (*unk_in_names,)
+  unk_in_names = (*res_names,) + ({},) * len(env) + (*unk_in_names,)  # type: ignore[assignment]
   const_tracers = map(trace.new_instantiated_const, res)
   env_tracers = map(trace.to_jaxpr_tracer, env)
   unk_arg_tracers = [t for t in tracers if not t.is_known()]
@@ -1628,7 +1633,7 @@ def _promote_scalar_residuals_lin(f, linearize_outs_thunk, *args, **kwargs):
   return residuals + primals
 
 @lu.transformation2
-def _promote_scalar_residuals(f, *args, **kwargs):
+def _promote_scalar_residuals(f: Callable, *args, **kwargs):
   jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env) = f(*args, **kwargs)
   which = [f1 is None and f2 is None and not v.aval.shape
            for f1, f2, v in zip(in_fwds, out_fwds, jaxpr.constvars)]
@@ -1686,7 +1691,7 @@ def _shard_map_transpose(out_cts, *args, jaxpr, mesh, in_names, out_names,
     return out
 
   fun_trans, nz_arg_cts = ad.nonzero_outputs(fun_trans)
-  fun_trans_flat, out_tree = flatten_fun_nokwargs(fun_trans, in_tree)
+  fun_trans_flat, out_tree = api_util.flatten_fun_nokwargs(fun_trans, in_tree)
 
   new_in_names = \
       [n for n, x in zip(out_names, out_cts) if type(x) is not ad.Zero] + \

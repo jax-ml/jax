@@ -1944,8 +1944,8 @@ def reduce(operands: Any,
     return tree_util.tree_unflatten(out_tree, out)
 
 @cache()
-def _reduction_jaxpr(computation, aval):
-  @lu.wrap_init
+def _reduction_jaxpr(computation: Callable,
+                     aval: core.AbstractValue):
   def comp(x, y):
     result = computation(x, y)
     if not (isinstance(result, core.Tracer) or core.valid_jaxtype(result)):
@@ -1954,7 +1954,11 @@ def _reduction_jaxpr(computation, aval):
           f"Reduction functions should only return an array.\n"
           f"Full return value: {result}")
     return (result,)
-  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(comp, (aval, aval))
+  comp_wrapped = lu.wrap_init(
+      comp,
+      debug_info=api_util.debug_info("reduction_jaxpr", computation,
+                                     (aval, aval), {}))
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(comp_wrapped, (aval, aval))
   if any(isinstance(c, core.Tracer) for c in consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "

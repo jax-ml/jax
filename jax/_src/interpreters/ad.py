@@ -68,7 +68,7 @@ def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True,
     return jvpfun(fun, instantiate, transform_stack), aux
 
 @lu.transformation2
-def jvpfun(f, instantiate, transform_stack, primals, tangents):
+def jvpfun(f: Callable, instantiate, transform_stack, primals, tangents):
   tag = core.TraceTag()
   tangents = [Zero.from_primal_value(t) if not isinstance(t, Zero)
               and dtype(t) == float0 else t for t in tangents]
@@ -106,7 +106,7 @@ def linearize_subtrace(_f: Callable, _store, _tag, nzs_in, *primals, **params):
   return tuple(consts) + tuple(out_primals)
 
 @lu.transformation2
-def jvp_subtrace(f, tag, primals, tangents):
+def jvp_subtrace(f: Callable, tag: core.TraceTag, primals, tangents):
   with core.take_current_trace() as parent_trace:
     trace = JVPTrace(parent_trace, tag)
     in_tracers = [maybe_jvp_tracer(trace, x, t)
@@ -778,7 +778,8 @@ def linearize_from_jvp(jvp, multiple_results, nonzeros,
     out_nz_tracers = [trace.to_jaxpr_tracer(r)
                       for (r, nz) in zip(out_tangents, out_nzs) if nz]
     in_tracers = [t for t, nz in zip(tangent_args, nonzeros) if nz]
-    jaxpr, out_consts, _ = pe.tracers_to_jaxpr(in_tracers, out_nz_tracers)
+    # TODO(necula): pass debug_info here
+    jaxpr, out_consts, _ = pe.tracers_to_jaxpr(in_tracers, out_nz_tracers, None)
 
     def linearized(residuals, *tangents):
       nz_tangents_in = [t for (t, nz) in zip(tangents, nonzeros) if nz]
@@ -932,13 +933,15 @@ def traceable(f, store, in_tree, *primals_and_tangents):
   return out_flat
 
 
-def call_transpose(primitive, params, call_jaxpr, args, ct, _):
+def call_transpose(primitive, params, call_jaxpr: core.Jaxpr, args, ct, _):
   if isinstance(call_jaxpr, core.ClosedJaxpr):
     call_jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
   else:
     consts = ()
   all_args, in_tree_def = tree_flatten((consts, args, ct))
-  fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr, False)
+  fun = lu.hashable_partial(lu.wrap_init(backward_pass,
+                                         debug_info=call_jaxpr.debug_info),
+                            call_jaxpr, False)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   update_params = call_transpose_param_updaters.get(primitive)
   if update_params:
@@ -950,7 +953,7 @@ def call_transpose(primitive, params, call_jaxpr, args, ct, _):
     res_invars, _ = partition_list(which_lin, call_jaxpr.invars)
     new_invars = [*res_invars, *call_jaxpr.outvars]
     dbidx_map = {v: core.DBIdx(i) for i, v in enumerate(new_invars)}
-    in_type = [(v.aval.update(shape=tuple(dbidx_map.get(d, d) for d in v.aval.shape))
+    in_type = [(v.aval.update(shape=tuple(dbidx_map.get(d, d) for d in v.aval.shape))  # type: ignore[arg-type]
                 if type(v.aval) is core.DShapedArray else v.aval, True) for v in new_invars]
     fun = lu.annotate(fun, tuple(in_type))
   out_flat = primitive.bind(fun, *all_args, **params)
@@ -1027,8 +1030,8 @@ def jvp_jaxpr(jaxpr: core.ClosedJaxpr, nonzeros: Sequence[bool],
 def _jvp_jaxpr(jaxpr: core.ClosedJaxpr,
                nonzeros: Sequence[bool], instantiate: Sequence[bool]):
   assert len(jaxpr.in_avals) == len(nonzeros)
-  debug_info = jaxpr.jaxpr.debug_info
-  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr), debug_info=debug_info)
+  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr),
+                   debug_info=jaxpr.jaxpr.debug_info)
   f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=instantiate, transform_stack=False),
                                         nonzeros)
   tangent_avals = [aval.to_tangent_aval() for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]

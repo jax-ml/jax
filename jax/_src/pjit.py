@@ -2352,7 +2352,8 @@ pe.partial_eval_jaxpr_custom_rules[pjit_p] = \
 
 
 @lu.cache
-def _pjit_transpose_trace(fun, in_avals):
+def _pjit_transpose_trace(fun: lu.WrappedFun,
+                          in_avals: Sequence[core.AbstractValue]):
   transpose_jaxpr, _, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
       fun, in_avals)
   transpose_jaxpr = core.ClosedJaxpr(transpose_jaxpr, consts)
@@ -2360,13 +2361,15 @@ def _pjit_transpose_trace(fun, in_avals):
 
 
 def _pjit_transpose(cts_in, *primals_in,
-                    jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
+                    jaxpr: core.ClosedJaxpr,
+                    in_shardings, out_shardings, in_layouts, out_layouts,
                     resource_env, donated_invars, name, keep_unused, inline,
                     compiler_options_kvs):
   def prune_type(ty, xs, maybe_zeros):
     return tuple(x for x, mz in zip(xs, maybe_zeros) if type(mz) is not ty)
 
-  body = lu.wrap_init(ad.closed_backward_pass)
+  body = lu.wrap_init(ad.closed_backward_pass,
+                      debug_info=jaxpr.jaxpr._debug_info)
   body = lu.hashable_partial(body, jaxpr, False)
   primals_and_nz_cts_in, in_treedef = tree_flatten((primals_in, cts_in))
   body, cts_out_treedef_thunk = flatten_fun_nokwargs(body, in_treedef)

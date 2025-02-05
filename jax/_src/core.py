@@ -2416,8 +2416,9 @@ call_p.def_impl(call_impl)
 class ClosedCallPrimitive(CallPrimitive):
   def get_bind_params(self, params):
     new_params = dict(params)
-    jaxpr = new_params.pop('call_jaxpr')
-    subfun = lu.wrap_init(partial(eval_jaxpr, jaxpr.jaxpr, jaxpr.consts))
+    jaxpr: ClosedJaxpr = new_params.pop('call_jaxpr')
+    subfun = lu.wrap_init(partial(eval_jaxpr, jaxpr.jaxpr, jaxpr.consts),
+                          debug_info=jaxpr.jaxpr.debug_info)
     return [subfun], new_params
 
 closed_call_p: ClosedCallPrimitive = ClosedCallPrimitive('closed_call')

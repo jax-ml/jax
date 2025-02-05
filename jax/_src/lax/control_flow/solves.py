@@ -334,7 +334,9 @@ def _custom_linear_solve_impl(*args, const_lengths, jaxprs):
   return x
 
 
-def _tangent_linear_map(func, params, params_dot, *x):
+def _tangent_linear_map(func: Callable, params, params_dot,
+                        debug_info: core.DebugInfo | None,
+                        *x):
   """Compute the tangent of a linear map.
 
   Assuming ``func(*params, *x)`` is linear in ``x`` and computes ``A @ x``,
@@ -342,7 +344,7 @@ def _tangent_linear_map(func, params, params_dot, *x):
   """
   assert any(type(p) is not ad_util.Zero for p in params_dot)
   zeros = _map(ad_util.Zero.from_primal_value, x)
-  _, out_tangent = ad.jvp(lu.wrap_init(func)).call_wrapped(
+  _, out_tangent = ad.jvp(lu.wrap_init(func, debug_info=debug_info)).call_wrapped(
       params + list(x), params_dot + zeros)
   return out_tangent
 
@@ -369,7 +371,8 @@ def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs):
     rhs = b_dot
   else:
     matvec_tangents = _tangent_linear_map(
-        core.jaxpr_as_fun(jaxprs.matvec), params.matvec, params_dot.matvec, *x_leaves)
+        core.jaxpr_as_fun(jaxprs.matvec), params.matvec, params_dot.matvec,
+        jaxprs.matvec.jaxpr.debug_info, *x_leaves)
     rhs = _map(ad.add_tangents, b_dot, _map(operator.neg, matvec_tangents))
 
   x_dot = linear_solve_p.bind(*(_flatten(params) + rhs), **kwargs)
