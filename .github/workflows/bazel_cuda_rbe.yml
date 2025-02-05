@@ -14,10 +14,15 @@ on:
   pull_request:
     branches:
       - main
+  push:
+    branches:
+      - main
+      - 'release/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  # Don't cancel in-progress jobs for main/release branches.
+  cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
 
 jobs:
   run_tests:
