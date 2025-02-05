@@ -34,6 +34,7 @@ import warnings
 import numpy as np
 
 from jax._src import ad_util
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
@@ -924,6 +925,11 @@ def unflatten_ir_values_like_types(xs: Iterable[ir.Value],
 
 _module_name_regex = re.compile(r"[^\w.-]")
 
+def sanitize_name(name: str) -> str:
+  """Ensure a name is usable as module or function name."""
+  return _module_name_regex.sub("_", name)
+
+
 def sharded_aval(aval: core.AbstractValue,
                  sharding: JSharding | AUTO | None) -> core.AbstractValue:
   """Returns the new aval sharded based on sharding proto."""
@@ -1186,7 +1192,7 @@ def lower_jaxpr_to_module(
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.
     attrs = ctx.module.operation.attributes
-    module_name = _module_name_regex.sub("_", module_name)
+    module_name = sanitize_name(module_name)
     attrs["sym_name"] = ir.StringAttr.get(module_name)
     attrs["mhlo.num_replicas"] = i32_attr(num_replicas)
     attrs["mhlo.num_partitions"] = i32_attr(num_partitions)
@@ -2156,7 +2162,8 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   as `avals_out`."""
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
     f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
-    wrapped_fun = lu.wrap_init(f, params)
+    wrapped_fun = lu.wrap_init(f, params,
+        debug_info=api_util.debug_info("lower_fun", fun, args, params))
     manager = (contextlib.nullcontext() if ctx.jaxpr_eqn_ctx is None else
                ctx.jaxpr_eqn_ctx.manager)
 

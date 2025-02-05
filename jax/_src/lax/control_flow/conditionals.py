@@ -327,7 +327,7 @@ def _cond_with_per_branch_args(pred,
                lambda op: false_fun(op[1]),
                (true_operand, false_operand))
 
-def _join_cond_effects(branches: Sequence[core.Jaxpr]) -> effects.Effects:
+def _join_cond_effects(branches: Sequence[core.ClosedJaxpr]) -> effects.Effects:
   joined_effects = set()
   for b in branches:
     for eff in b.effects:
@@ -337,7 +337,8 @@ def _join_cond_effects(branches: Sequence[core.Jaxpr]) -> effects.Effects:
       joined_effects.add(eff)
   return joined_effects
 
-def _cond_abstract_eval(*avals, branches, **_):
+def _cond_abstract_eval(*avals: core.AbstractValue,
+                        branches: Sequence[core.ClosedJaxpr], **_):
   joined_effects = _join_cond_effects(branches)
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
@@ -614,10 +615,11 @@ def _merge_branch_residuals(branch_res_avals):
 # This function augments branch outputs to agree with the merged residual
 # format: each branch is made to return zero-filled values in the places of
 # residual outputs that it does not populate.
-def _join_cond_outputs(jaxprs, all_res_avals, res_aval_indices_per_jaxpr,
+def _join_cond_outputs(jaxprs: Sequence[core.ClosedJaxpr],
+                       all_res_avals, res_aval_indices_per_jaxpr,
                        num_non_res_outputs):
-  def augment_jaxpr(jaxpr, res_indices):
-    @lu.wrap_init
+  def augment_jaxpr(jaxpr: core.ClosedJaxpr,
+                    res_indices):
     def f_aug(*args):
       outs_and_residuals = core.jaxpr_as_fun(jaxpr)(*args)
       outs, residuals = split_list(outs_and_residuals, [num_non_res_outputs])
@@ -625,19 +627,21 @@ def _join_cond_outputs(jaxprs, all_res_avals, res_aval_indices_per_jaxpr,
       aug_residuals = util.subvals(aug_residuals, zip(res_indices, residuals))
       return outs + list(aug_residuals)
 
-    return _make_closed_jaxpr(f_aug, jaxpr.in_avals)
+    wrapped_f_aug = lu.wrap_init(f_aug, debug_info=jaxpr.jaxpr.debug_info)
+    return _make_closed_jaxpr(wrapped_f_aug, jaxpr.in_avals)
 
   return tuple(map(augment_jaxpr, jaxprs, res_aval_indices_per_jaxpr))
 
 # This function augments branch inputs to agree with the merged residual format:
 # each branch is made to accept all residuals, even though it will ignore those
 # that it does not read.
-def _join_cond_pe_staged_jaxpr_inputs(jaxprs, all_res_avals,
+def _join_cond_pe_staged_jaxpr_inputs(jaxprs: Sequence[core.ClosedJaxpr],
+                                      all_res_avals,
                                       res_aval_indices_per_jaxpr):
   newvar = core.gensym(suffix='_')
   all_res_vars = map(newvar, all_res_avals)
 
-  def augment_jaxpr(jaxpr, res_indices):
+  def augment_jaxpr(jaxpr: core.ClosedJaxpr, res_indices) -> core.ClosedJaxpr:
     num_res = len(res_indices)
     res_vars = jaxpr.jaxpr.invars[:num_res]
     non_res_vars = jaxpr.jaxpr.invars[num_res:]
@@ -646,9 +650,9 @@ def _join_cond_pe_staged_jaxpr_inputs(jaxprs, all_res_avals,
     aug_invars = aug_res_vars + non_res_vars
     jaxpr_aug = core.Jaxpr(jaxpr.jaxpr.constvars, aug_invars,
                            jaxpr.jaxpr.outvars, jaxpr.jaxpr.eqns,
-                           jaxpr.jaxpr.effects)
-    jaxpr_aug = core.ClosedJaxpr(jaxpr_aug, jaxpr.consts)
-    return jaxpr_aug
+                           jaxpr.jaxpr.effects,
+                           jaxpr.jaxpr.debug_info)
+    return core.ClosedJaxpr(jaxpr_aug, jaxpr.consts)
 
   return tuple(map(augment_jaxpr, jaxprs, res_aval_indices_per_jaxpr))
 
@@ -679,8 +683,7 @@ def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
 
   # Finally, update parameters and form the new eqn.
   new_params = dict(eqn.params, branches=tuple(dce_branches))
-  new_effects = core.join_effects(*(b.effects for b in dce_branches))
-  new_effects = _join_cond_effects(dce_branches_)
+  new_effects = _join_cond_effects(dce_branches)
   new_eqn = pe.new_jaxpr_eqn(
       [v for v, used in zip(eqn.invars, [True, *used_inputs]) if used],
       [v for v, used in zip(eqn.outvars, used_outputs) if used],
@@ -693,10 +696,10 @@ def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
   return [True, *used_inputs], new_eqn
 
 
-def _transpose_cond_jaxpr(jaxpr, num_res):
+def _transpose_cond_jaxpr(jaxpr: core.ClosedJaxpr,
+                          num_res: int):
   res_avals, primal_avals = split_list(jaxpr.in_avals, [num_res])
 
-  @lu.wrap_init
   def transposed(*args):
     res, cts_out = split_list(args, [num_res])
     primals = res + [ad.UndefinedPrimal(aval) for aval in primal_avals]
@@ -705,7 +708,9 @@ def _transpose_cond_jaxpr(jaxpr, num_res):
     _, cts_in = split_list(cts_in, [num_res])
     return map(ad.instantiate_zeros, cts_in)
 
-  return _make_closed_jaxpr(transposed, res_avals + jaxpr.out_avals)
+  return _make_closed_jaxpr(lu.wrap_init(transposed,
+                                         debug_info=jaxpr.jaxpr.debug_info),
+                            res_avals + jaxpr.out_avals)
 
 def _cond_transpose(cts, *args, branches):
   index, *ops = args

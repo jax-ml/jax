@@ -240,7 +240,8 @@ def _check_tree(func_name, expected_name, actual_tree, expected_tree, has_aux=Fa
 def _prune_zeros(ts):
   return [t for t in ts if type(t) is not ad_util.Zero]
 
-def _make_closed_jaxpr(traceable: lu.WrappedFun, in_avals: Sequence[core.AbstractValue]):
+def _make_closed_jaxpr(traceable: lu.WrappedFun,
+                       in_avals: Sequence[core.AbstractValue]):
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(traceable, in_avals)
   return core.ClosedJaxpr(jaxpr, consts)
 

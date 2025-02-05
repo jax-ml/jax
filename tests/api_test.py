@@ -9520,8 +9520,11 @@ class CustomVJPTest(jtu.JaxTestCase):
     def fwd(x):
       return np.array([2.0])*x*x/np.array([1.0]), (x,)
 
-    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
     x = jnp.linspace(0, 5.0, 10)
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
+        fun, api_util.debug_info("custom_vjp fun", fun, (x,), {}),
+        fwd, api_util.debug_info("custom_vjp fwd", fwd, (x,), {}))
+
     self.assertAllClose(jax.jit(fwd)(x)[0], 2*x*x)  # Shouldn't hit custom DCE
     self.assertAllClose(jax.jit(lambda x: fwd(x)[0])(x), x)  # Should be DCEed
 
@@ -9530,8 +9533,10 @@ class CustomVJPTest(jtu.JaxTestCase):
       return (np.array([1.0])*x)[0]
     def fwd(x):
       return (np.array([2.0])*x*x/np.array([1.0]))[0], (x,)
-    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
     x = jnp.linspace(0, 5.0, 10)
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
+        fun, api_util.debug_info("custom_vjp fun", fun, (x,), {}),
+        fwd, api_util.debug_info("custom_vjp fwd", fwd, (x,), {}))
     self.assertAllClose(jax.jit(jax.vmap(fwd))(x)[0], 2*x*x)
     self.assertAllClose(jax.jit(lambda x: jax.vmap(fwd)(x)[0])(x), x)
 
@@ -9540,11 +9545,15 @@ class CustomVJPTest(jtu.JaxTestCase):
       return x
     def fwd(x):
       return x*x, (x,)
-    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
+
+    x = jnp.linspace(0, 5.0, 10)
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
+        fun, api_util.debug_info("custom_vjp fun", fun, (x,), {}),
+        fwd, api_util.debug_info("custom_vjp fwd", fwd, (x,), {}))
 
     def g(x):
       return jax.lax.cond(True, fwd, lambda x: (2.0 * x, (x,)), x)
-    x = jnp.linspace(0, 5.0, 10)
+
     self.assertAllClose(jax.jit(g)(x)[0], x*x)
     self.assertAllClose(jax.jit(lambda x: g(x)[0])(x), x)
 
@@ -9553,7 +9562,10 @@ class CustomVJPTest(jtu.JaxTestCase):
       return x**2
     def fwd_(x):
       return x*x, (x,)
-    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd_)
+
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
+        fun, api_util.debug_info("custom_vjp fun", fun, (3.2,), {}),
+        fwd_, api_util.debug_info("custom_vjp fwd", fwd_, (3.2,), {}))
     calc = jax.jvp(fwd, (3.2,), (1.0,))
     expected = jax.jvp(fwd_, (3.2,), (1.0,))
     self.assertAllClose(calc, expected)

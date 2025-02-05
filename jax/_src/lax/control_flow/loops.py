@@ -511,7 +511,7 @@ def _empty_array(prefix, length_spec, aval):
 
 eval_jaxpr_p = core.Primitive('eval_jaxpr')
 eval_jaxpr_p.multiple_results = True
-def _stage_jaxpr(trace, *tracers, jaxpr):
+def _stage_jaxpr(trace: pe.JaxprTrace, *tracers, jaxpr: core.ClosedJaxpr):
   params = dict(call_jaxpr=jaxpr)
   return trace.default_process_primitive(core.closed_call_p, tracers, params)
 pe.custom_staging_rules[eval_jaxpr_p] = _stage_jaxpr
