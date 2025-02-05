@@ -20,9 +20,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import llvm
-from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
-from jax._src.lib.mlir.dialects import vector
 from jax.experimental.mosaic import gpu as mgpu
 from jax.experimental.mosaic.gpu import c, ds, utils
 from jax.experimental.mosaic.gpu import tcgen05
@@ -65,18 +63,18 @@ def build_kernel(
 
   def kernel(ctx, a, b, d, smem):
     # TODO(apaszke): Use more SMEM slots to avoid oversynchronizing warps.
-    a_smem, b_smem, barriers, tmem_addr = smem
+    a_smem, b_smem, d_smem, barriers, tmem_addr = smem
     (ab_full_barrier, ab_empty_barrier, mma_done_barrier) = barriers
 
-    thread_idx = mgpu.thread_idx()
     warp_idx = mgpu.warp_idx(sync=True)
     warp_leader = nvvm.elect_sync(i1)
 
     is_warp = lambda i: arith.cmpi(arith.CmpIPredicate.eq, warp_idx, c(i, i32))
 
+    m_start = arith.muli(gpu.block_id(gpu.Dimension.y), c(tile_m,index))
+    n_start = arith.muli(gpu.block_id(gpu.Dimension.x), c(tile_n,index))
+
     with mgpu.when(arith.andi(is_warp(TMA_WARP), warp_leader)):
-      m_start = arith.muli(gpu.block_id(gpu.Dimension.y), c(tile_m,index))
-      n_start = arith.muli(gpu.block_id(gpu.Dimension.x), c(tile_n,index))
       @mgpu.fori(c(k_loop_iter, index), None)
       def _tma_body(ki, _):
         # TODO(apaszke): Use a predicate instead of a conditional.
@@ -103,9 +101,8 @@ def build_kernel(
         )
 
     with mgpu.when(is_warp(MMA_WARP)):
-      ncols = c(b_smem.type.shape[0], i32)
       tmem_addr_addr = utils.memref_ptr(tmem_addr, memory_space=3)
-      tcgen05.tmem_alloc(tmem_addr_addr, ncols)
+      tcgen05.tmem_alloc(tmem_addr_addr, tile_n)
       tcgen05.tmem_relinquish_alloc_permit()
       with mgpu.when(warp_leader):
         tmem_addr_value = llvm.load(ptr6, tmem_addr_addr)
@@ -144,26 +141,25 @@ def build_kernel(
           tcgen05.commit_arrive(barrier_ptr)
           return accumulate
 
-    # TODO(apaszke): Should we have a warpgroup that's dedicated to this store?
     gpu.barrier()
-
-    # TODO(apaszke): This has a very slow GMEM access pattern.
     mma_done_barrier.wait()
-    tmem_ptr = llvm.inttoptr(ptr6, memref.load(tmem_addr, [c(0,index)]))
-    vector_i32 = tcgen05.tmem_load(num=tile_n, tmem_addr=tmem_ptr)
-    vector_f32 = vector.bitcast(ir.VectorType.get(vector_i32.type.shape, f32), vector_i32)
-    wg_tidx = arith.remui(
-        arith.index_castui(index, thread_idx), c(utils.WARPGROUP_SIZE, index)
+
+    tmem_ref = tcgen05.TMEMRef.from_alloc(tmem_addr, tcgen05.TMEMLayout.D, tile_n, f32)
+    tmem_ref[:].astype(ir.F16Type.get()).store_tiled(d_smem, swizzle=128)
+    mgpu.commit_shared()
+    ctx.async_copy(
+        src_ref=d_smem,
+        dst_ref=d,
+        gmem_slice=(ds(m_start, tile_m), ds(n_start, tile_n)),
+        gmem_transform=mgpu.TileTransform((128, 64)),
+        swizzle=128,
     )
-    row = arith.addi(
-        arith.muli(gpu.block_id(gpu.Dimension.y), c(tile_m, index)), wg_tidx
-    )
-    column = arith.muli(gpu.block_id(gpu.Dimension.x), c(tile_n, index))
-    vector.store(vector_f32, d, [row, column])
+    ctx.await_async_copy(0)
 
   smem = (
       jax.ShapeDtypeStruct((tile_m, tile_k), jnp.float16),
       jax.ShapeDtypeStruct((tile_n, tile_k), jnp.float16),
+      jax.ShapeDtypeStruct(mgpu.tile_shape((tile_m, tile_n), (128, 64)), jnp.float16),
       [mgpu.Barrier(arrival_count=1)] * 3,
       jax.ShapeDtypeStruct((1,), np.uint32),  # TMEM address
   )
@@ -175,7 +171,7 @@ def build_kernel(
           jax.ShapeDtypeStruct((m, k), jnp.float16),
           jax.ShapeDtypeStruct((n, k), jnp.float16),
       ),
-      jax.ShapeDtypeStruct((m, n), jnp.float32),
+      jax.ShapeDtypeStruct((m, n), jnp.float16),
       smem,
   )
 
