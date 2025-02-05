@@ -306,11 +306,18 @@ def wgmma(
     a,
     b,
     *,
-    swizzle: int  = 128,
-    # Order only applies within each tile!
-    a_order: WGMMALayout | None = None,
-    b_order: WGMMALayout = WGMMALayout.ROW_MAJOR,
+    swizzle: int = 128,
 ):
+  """Perform acc += a @ b using the WGMMA instruction.
+
+  The expected memref shapes are:
+    a: (m, k, 64, S)
+    b: (k, n,  S, S)
+  where S = swizzle // bytewidth(element_type).
+
+  The refs must be contiguous or be contiguous except for having their two minor
+  dimensions swapped.
+  """
   if a_in_regs := isinstance(a, fa.FragmentedArray):
     a_element_type = a.mlir_dtype
     a_shape = a.shape
@@ -329,12 +336,23 @@ def wgmma(
   element_bytewidth = bytewidth(element_type)
   kn_tile = swizzle // element_bytewidth
 
-  groups_k, groups_n = b_ty.shape[:2]
-  k_group_size, n_group_size = (
-      b_ty.shape[2:] if b_order == WGMMALayout.ROW_MAJOR else b_ty.shape[:1:-1]
-  )
+  if b_ty.rank != 4:
+    raise ValueError(b_ty)
+  groups_k, groups_n, k_group_size, n_group_size = b_ty.shape
+  b_strides, _ = b_ty.get_strides_and_offset()
+  b_byte_strides = [s * element_bytewidth for s in b_strides]
+  b_k_byte_stride = b_byte_strides[0]
+  if b_byte_strides[1] != swizzle * kn_tile:
+    raise ValueError(b_byte_strides)
+  if b_byte_strides[2:] == [swizzle, element_bytewidth]:
+    b_order = WGMMALayout.ROW_MAJOR
+  elif b_byte_strides[2:] == [element_bytewidth, swizzle]:
+    b_order = WGMMALayout.COL_MAJOR
+  else:
+    raise ValueError(b_byte_strides)
+
   # Note that while this technically allows n to be smaller than kn_tile,
-  # the stride checks below will still enforce that the memory region is padded.
+  # the stride checks above will still enforce that the memory region is padded.
   # It might be possible to relax that requirement, but I haven't tested it.
   if n_group_size > kn_tile and n_group_size % kn_tile:
     raise ValueError(n_group_size, kn_tile)
@@ -349,18 +367,21 @@ def wgmma(
     if a_shape[1] // kn_tile != groups_k:
       raise ValueError(a_shape[1] // kn_tile, groups_k)
     groups_m = a_shape[0] // 64
-    if a_order is not None:
-      raise ValueError(
-          "a_order can only be specified when A is in shared memory"
-      )
+    a_order = None
   else:
     groups_m = a_shape[0]
     if a_shape[1] != groups_k:
       raise ValueError(a_shape[1], groups_k)
     if a_shape[2:] != [64, kn_tile]:
       raise ValueError(a_shape)
-    if a_order is None:
+    a_strides, _ = ir.MemRefType(a.type).get_strides_and_offset()
+    a_byte_strides = [s * element_bytewidth for s in a_strides]
+    if a_byte_strides[2:] == [swizzle, element_bytewidth]:
       a_order = WGMMALayout.ROW_MAJOR
+    elif a_byte_strides[2:] == [element_bytewidth, swizzle]:
+      a_order = WGMMALayout.COL_MAJOR
+    else:
+      raise ValueError(a_byte_strides)
 
   if a_order == WGMMALayout.COL_MAJOR and swizzle != 128:
     # Not sure what the layout is like, since the tiles aren't square.
@@ -410,14 +431,7 @@ def wgmma(
     a_strides, _ = ir.MemRefType(a.type).get_strides_and_offset()
     a_byte_strides = [s * element_bytewidth for s in a_strides]
     a_m_byte_stride, a_k_byte_stride = a_byte_strides[:2]
-    if a_byte_strides[2:] != [swizzle, element_bytewidth]:
-      raise ValueError(a_byte_strides)
   b_desc_base = create_descriptor(b, **b_desc_fields)
-  b_strides, _ = b_ty.get_strides_and_offset()
-  b_byte_strides = [s * element_bytewidth for s in b_strides]
-  b_k_byte_stride = b_byte_strides[0]
-  if b_byte_strides[1:] != [swizzle * kn_tile, swizzle, element_bytewidth]:
-    raise ValueError(b_byte_strides)
 
   i64 = ir.IntegerType.get_signless(64)
   new_acc_regs = acc.value.registers.copy()

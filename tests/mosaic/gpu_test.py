@@ -741,11 +741,6 @@ class WGMMATest(TestCase):
     assert m % 64 == 0 and n % nk_tile == 0
     index = ir.IndexType.get()
 
-    row_major = mgpu.WGMMALayout.ROW_MAJOR
-    col_major = mgpu.WGMMALayout.COL_MAJOR
-    lhs_order = col_major if lhs_transpose else row_major
-    rhs_order = col_major if rhs_transpose else row_major
-
     def kernel(ctx, lhs, rhs, out, scratch):
       lhs_smem, rhs_smem, barriers = scratch
       if tma_inputs:
@@ -798,10 +793,11 @@ class WGMMATest(TestCase):
                 swizzle=swizzle,
             )
       init_acc = mgpu.WGMMAAccumulator.zero(m=m, n=n, dtype=out_mlir_dtype)
-      acc = mgpu.wgmma(
-          init_acc, lhs_smem, rhs_smem,
-          a_order=lhs_order, b_order=rhs_order, swizzle=swizzle,
-      )
+      if lhs_transpose:
+        lhs_smem = memref_transpose(lhs_smem, (0, 1, 3, 2))
+      if rhs_transpose:
+        rhs_smem = memref_transpose(rhs_smem, (0, 1, 3, 2))
+      acc = mgpu.wgmma(init_acc, lhs_smem, rhs_smem, swizzle=swizzle)
       nvvm.wgmma_commit_group_sync_aligned()
       nvvm.wgmma_wait_group_sync_aligned(0)
       acc.value.store_untiled(out)
@@ -843,9 +839,6 @@ class WGMMATest(TestCase):
   def test_wgmma_reg_lhs(self, m, n, k_steps, rhs_transpose, swizzle, dtype, tiled_layout):
     index = ir.IndexType.get()
 
-    row_major = mgpu.WGMMALayout.ROW_MAJOR
-    col_major = mgpu.WGMMALayout.COL_MAJOR
-    rhs_order = col_major if rhs_transpose else row_major
     bytewidth = 2
     nk_tile = swizzle // bytewidth
     k = nk_tile * k_steps
@@ -867,7 +860,9 @@ class WGMMATest(TestCase):
           )
       init_acc = mgpu.WGMMAAccumulator.zero(m=m, n=n)
       lhs_regs = iota_tensor(m, k, dtype, tiled_layout)
-      acc = mgpu.wgmma(init_acc, lhs_regs, rhs_smem, b_order=rhs_order, swizzle=swizzle)
+      if rhs_transpose:
+        rhs_smem = memref_transpose(rhs_smem, (0, 1, 3, 2))
+      acc = mgpu.wgmma(init_acc, lhs_regs, rhs_smem, swizzle=swizzle)
       nvvm.wgmma_commit_group_sync_aligned()
       nvvm.wgmma_wait_group_sync_aligned(0)
       acc.value.store_untiled(out)
@@ -895,9 +890,6 @@ class WGMMATest(TestCase):
   def test_narrow_n(self, rhs_transpose, swizzle):
     m, n, k_steps = 64, 8, 2
 
-    row_major = mgpu.WGMMALayout.ROW_MAJOR
-    col_major = mgpu.WGMMALayout.COL_MAJOR
-    rhs_order = col_major if rhs_transpose else row_major
     bytewidth = 2
     nk_tile = swizzle // bytewidth
     k = nk_tile * k_steps
@@ -905,11 +897,9 @@ class WGMMATest(TestCase):
     def kernel(ctx, rhs, out, smem):
       rhs_smem, barrier = smem
       gmem_slice = (ds(0, k), ds(0, nk_tile))
-      smem_slice = (slice(None), slice(None), slice(None), ds(0, n))
       transform = (mgpu.TileTransform((nk_tile, nk_tile)),)
       if rhs_transpose:
         gmem_slice = gmem_slice[::-1]
-        smem_slice = (slice(None), slice(None), ds(0, n), slice(None))
         transform += (mgpu.TransposeTransform((1, 0, 2, 3)),)
       ctx.async_copy(
           src_ref=rhs,
@@ -922,8 +912,11 @@ class WGMMATest(TestCase):
       barrier.wait()
       init_acc = mgpu.WGMMAAccumulator.zero(m=m, n=n)
       lhs_regs = iota_tensor(m, k, jnp.float16)
+      if rhs_transpose:
+        rhs_smem = memref_transpose(rhs_smem, (0, 1, 3, 2))
+      smem_slice = (slice(None), slice(None), slice(None), ds(0, n))
       rhs_smem = memref_slice(rhs_smem, smem_slice)
-      acc = mgpu.wgmma(init_acc, lhs_regs, rhs_smem, b_order=rhs_order, swizzle=swizzle)
+      acc = mgpu.wgmma(init_acc, lhs_regs, rhs_smem, swizzle=swizzle)
       nvvm.wgmma_commit_group_sync_aligned()
       nvvm.wgmma_wait_group_sync_aligned(0)
       acc.value.store_untiled(out)

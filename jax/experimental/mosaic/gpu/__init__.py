@@ -87,6 +87,5 @@ from .utils import (
 )
 from .wgmma import (
     WGMMAAccumulator as WGMMAAccumulator,
-    WGMMALayout as WGMMALayout,
     wgmma as wgmma,
 )
