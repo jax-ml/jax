@@ -1923,6 +1923,8 @@ def reduce(operands: Any,
   is undefined.
   """
   flat_operands, operand_tree = tree_util.tree_flatten(operands)
+  comp_debug = api_util.debug_info("reduce comp", computation,
+                                   (init_values, init_values), {})
   flat_init_values, init_value_tree = tree_util.tree_flatten(init_values)
   if operand_tree != init_value_tree:
     raise ValueError('Operands must have the same tree structure as init_values:'
@@ -1939,7 +1941,7 @@ def reduce(operands: Any,
   else:
     flat_init_avals = safe_map(core.get_aval, flat_init_values)
     closed_jaxpr, out_tree = _variadic_reduction_jaxpr(
-        computation, tuple(flat_init_avals), init_value_tree)
+        computation, comp_debug, tuple(flat_init_avals), init_value_tree)
     out = reduce_p.bind(*flat_operands, *flat_init_values, computation=computation,
                         jaxpr=closed_jaxpr, dimensions=tuple(dimensions))
     return tree_util.tree_unflatten(out_tree, out)
@@ -1967,10 +1969,13 @@ def _reduction_jaxpr(computation: Callable,
   return jaxpr, tuple(consts)
 
 @cache()
-def _variadic_reduction_jaxpr(computation, flat_avals, aval_tree):
+def _variadic_reduction_jaxpr(computation: Callable[[Any, Any], Any],
+                              debug_info: core.DebugInfo,
+                              flat_avals,
+                              aval_tree: tree_util.PyTreeDef):
   avals = tree_util.tree_unflatten(aval_tree, flat_avals)
   flat_in_avals, in_tree = tree_util.tree_flatten((avals, avals))
-  comp = lu.wrap_init(computation)
+  comp = lu.wrap_init(computation, debug_info=debug_info)
   flat_comp, out_tree = api_util.flatten_fun_nokwargs(comp, in_tree)
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_comp, tuple(flat_in_avals))
   if any(isinstance(c, core.Tracer) for c in consts):
@@ -5921,7 +5926,7 @@ def _argminmax_dtype_rule(operand, *, axes, index_dtype):
 
 class _ArgMinMaxReducer:
 
-  def __init__(self, value_comparator):
+  def __init__(self, value_comparator: Callable[[Any, Any], Any]):
     self._value_comparator = value_comparator
 
   def __repr__(self):

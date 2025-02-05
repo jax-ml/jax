@@ -573,7 +573,11 @@ def jacfwd(fun: Callable, argnums: int | Sequence[int] = 0,
 
   @wraps(fun, docstr=docstr, argnums=argnums)
   def jacfun(*args, **kwargs):
-    f = lu.wrap_init(fun, kwargs)
+    f = lu.wrap_init(
+        fun, kwargs,
+        debug_info=debug_info(
+            "jacfwd", fun, args, kwargs,
+            static_argnums=(argnums,) if isinstance(argnums, int) else argnums))
     f_partial, dyn_args = argnums_partial(f, argnums, args,
                                           require_static_args_hashable=False)
     tree_map(partial(_check_input_dtype_jacfwd, holomorphic), dyn_args)
@@ -661,7 +665,11 @@ def jacrev(fun: Callable, argnums: int | Sequence[int] = 0,
 
   @wraps(fun, docstr=docstr, argnums=argnums)
   def jacfun(*args, **kwargs):
-    f = lu.wrap_init(fun, kwargs)
+    f = lu.wrap_init(
+        fun, kwargs,
+        debug_info=debug_info(
+            "jacrev", fun, args, kwargs,
+            static_argnums=(argnums,) if isinstance(argnums, int) else argnums))
     f_partial, dyn_args = argnums_partial(f, argnums, args,
                                           require_static_args_hashable=False)
     tree_map(partial(_check_input_dtype_jacrev, holomorphic, allow_int), dyn_args)
