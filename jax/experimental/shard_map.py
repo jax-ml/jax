@@ -1719,7 +1719,9 @@ def _partial_eval_jaxpr_custom_rule(
   idx_map = {id(v): i for i, v in enumerate(out_vars)}
   out_fwd = [idx_map.get(id(v)) for v in res_vars]
   which = [f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd)]
-  with core.extend_axis_env_nd(eqn.params['mesh'].shape.items()):
+  mesh = eqn.params['mesh']
+  with (core.extend_axis_env_nd(mesh.shape.items()),
+        set_abstract_mesh(_as_manual_mesh(mesh))):
     jaxpr_known = pe.prune_jaxpr_outputs(jaxpr_known, [True] * num_out_primals + which)
     jaxpr_known, jaxpr_staged = _add_reshapes(which, jaxpr_known, jaxpr_staged)
   jaxpr_known = core.remove_named_axis_effects(jaxpr_known, mesh.axis_names)
