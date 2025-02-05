@@ -18,11 +18,37 @@ load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load("//jaxlib:jax.bzl", "if_windows", "jax_py_test", "jax_wheel")
+load(
+    "@tsl//third_party/py:py_manylinux_compliance_test.bzl",
+    "verify_manylinux_compliance_test",
+)
+load(
+    "//jaxlib:jax.bzl",
+    "PLATFORM_TAGS_DICT",
+    "if_windows",
+    "jax_py_test",
+    "jax_wheel",
+    "pytype_strict_library",
+)
 
 licenses(["notice"])  # Apache 2
 
 package(default_visibility = ["//visibility:public"])
+
+genrule(
+    name = "platform_tags_py",
+    srcs = [],
+    outs = ["platform_tags.py"],
+    cmd = "echo 'PLATFORM_TAGS_DICT = %s' > $@;" % PLATFORM_TAGS_DICT,
+)
+
+pytype_strict_library(
+    name = "build_utils",
+    srcs = [
+        "build_utils.py",
+        ":platform_tags_py",
+    ],
+)
 
 py_binary(
     name = "build_wheel",
@@ -41,7 +67,7 @@ py_binary(
         "//jaxlib/mlir/_mlir_libs:jaxlib_mlir_capi.dll",
     ]),
     deps = [
-        "//jax/tools:build_utils",
+        ":build_utils",
         "@bazel_tools//tools/python/runfiles",
         "@pypi_build//:pkg",
         "@pypi_setuptools//:pkg",
@@ -99,7 +125,7 @@ py_binary(
         "//jax_plugins/rocm:__init__.py",
     ]),
     deps = [
-        "//jax/tools:build_utils",
+        ":build_utils",
         "@bazel_tools//tools/python/runfiles",
         "@pypi_build//:pkg",
         "@pypi_setuptools//:pkg",
@@ -128,7 +154,7 @@ py_binary(
         "//jax_plugins/rocm:plugin_setup.py",
     ]),
     deps = [
-        "//jax/tools:build_utils",
+        ":build_utils",
         "@bazel_tools//tools/python/runfiles",
         "@pypi_build//:pkg",
         "@pypi_setuptools//:pkg",
@@ -173,30 +199,73 @@ string_flag(
     build_setting_default = "",
 )
 
-config_setting(
-    name = "jaxlib_git_hash_nightly_or_release",
-    flag_values = {
-        ":jaxlib_git_hash": "nightly",
-    },
+string_flag(
+    name = "output_path",
+    build_setting_default = "dist",
 )
 
 jax_wheel(
     name = "jaxlib_wheel",
+    no_abi = False,
     wheel_binary = ":build_wheel",
+    wheel_name = "jaxlib",
 )
 
 jax_wheel(
     name = "jax_cuda_plugin_wheel",
     enable_cuda = True,
+    no_abi = False,
     # TODO(b/371217563) May use hermetic cuda version here.
     platform_version = "12",
     wheel_binary = ":build_gpu_kernels_wheel",
+    wheel_name = "jax_cuda12_plugin",
 )
 
 jax_wheel(
     name = "jax_cuda_pjrt_wheel",
     enable_cuda = True,
+    no_abi = True,
     # TODO(b/371217563) May use hermetic cuda version here.
     platform_version = "12",
     wheel_binary = ":build_gpu_plugin_wheel",
+    wheel_name = "jax_cuda12_pjrt",
+)
+
+AARCH64_MANYLINUX_TAG = "_".join(PLATFORM_TAGS_DICT[("Linux", "aarch64")])
+
+PPC64LE_MANYLINUX_TAG = "_".join(PLATFORM_TAGS_DICT[("Linux", "ppc64le")])
+
+X86_64_MANYLINUX_TAG = "_".join(PLATFORM_TAGS_DICT[("Linux", "x86_64")])
+
+verify_manylinux_compliance_test(
+    name = "jaxlib_manylinux_compliance_test",
+    aarch64_compliance_tag = AARCH64_MANYLINUX_TAG,
+    ppc64le_compliance_tag = PPC64LE_MANYLINUX_TAG,
+    test_tags = [
+        "manual",
+    ],
+    wheel = ":jaxlib_wheel",
+    x86_64_compliance_tag = X86_64_MANYLINUX_TAG,
+)
+
+verify_manylinux_compliance_test(
+    name = "jax_cuda_plugin_manylinux_compliance_test",
+    aarch64_compliance_tag = AARCH64_MANYLINUX_TAG,
+    ppc64le_compliance_tag = PPC64LE_MANYLINUX_TAG,
+    test_tags = [
+        "manual",
+    ],
+    wheel = ":jax_cuda_plugin_wheel",
+    x86_64_compliance_tag = X86_64_MANYLINUX_TAG,
+)
+
+verify_manylinux_compliance_test(
+    name = "jax_cuda_pjrt_manylinux_compliance_test",
+    aarch64_compliance_tag = AARCH64_MANYLINUX_TAG,
+    ppc64le_compliance_tag = PPC64LE_MANYLINUX_TAG,
+    test_tags = [
+        "manual",
+    ],
+    wheel = ":jax_cuda_pjrt_wheel",
+    x86_64_compliance_tag = X86_64_MANYLINUX_TAG,
 )
