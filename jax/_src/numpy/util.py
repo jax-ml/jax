@@ -24,6 +24,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src.lax import lax
+from jax._src.numpy import lax_numpy
 from jax._src.util import safe_zip, safe_map
 from jax._src.typing import Array, ArrayLike, DimSize, DType, DTypeLike, Shape
 
@@ -37,7 +38,7 @@ _dtype = partial(dtypes.dtype, canonicalize=True)
 def promote_shapes(fun_name: str, *args: ArrayLike) -> list[Array]:
   """Apply NumPy-style broadcasting, making args shape-compatible for lax.py."""
   if len(args) < 2:
-    return [lax.asarray(arg) for arg in args]
+    return [lax_numpy.asarray(arg) for arg in args]
   else:
     shapes = [np.shape(arg) for arg in args]
     if config.dynamic_shapes.value:
@@ -48,10 +49,10 @@ def promote_shapes(fun_name: str, *args: ArrayLike) -> list[Array]:
       return [_broadcast_to(arg, res_shape) for arg, shp in zip(args, shapes)]
     else:
       if all(len(shapes[0]) == len(s) for s in shapes[1:]):
-        return [lax.asarray(arg) for arg in args]  # no need for rank promotion, so rely on lax promotion
+        return [lax_numpy.asarray(arg) for arg in args]  # no need for rank promotion, so rely on lax promotion
       nonscalar_ranks = {len(shp) for shp in shapes if shp}
       if len(nonscalar_ranks) < 2:
-        return [lax.asarray(arg) for arg in args]  # rely on lax scalar promotion
+        return [lax_numpy.asarray(arg) for arg in args]  # rely on lax scalar promotion
       else:
         if config.numpy_rank_promotion.value != "allow":
           _rank_promotion_warning_or_error(fun_name, shapes)
@@ -78,7 +79,7 @@ def promote_dtypes(*args: ArrayLike) -> list[Array]:
   """Convenience function to apply Numpy argument dtype promotion."""
   # TODO(dougalm,mattjj): This is a performance bottleneck. Consider memoizing.
   if len(args) < 2:
-    return [lax.asarray(arg) for arg in args]
+    return [lax_numpy.asarray(arg) for arg in args]
   else:
     to_dtype, weak_type = dtypes._lattice_result_type(*args)
     to_dtype = dtypes.canonicalize_dtype(to_dtype, allow_extended_dtype=True)  # type: ignore[assignment]
@@ -245,7 +246,7 @@ def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
   avals = [core.shaped_abstractify(arg) for arg in args]
   shapes = [a.shape for a in avals]
   if not shapes or all(core.definitely_equal_shape(shapes[0], s) for s in shapes):
-    return [lax.asarray(arg) for arg in args]
+    return [lax_numpy.asarray(arg) for arg in args]
   result_shape = lax.broadcast_shapes(*shapes)
   result_sharding = (lax.broadcast_shardings(*avals)  # type: ignore
                      if config.sharding_in_types.value else None)
@@ -255,7 +256,7 @@ def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
 def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape, sharding=None
                   ) -> Array:
   check_arraylike("broadcast_to", arr)
-  arr = arr if isinstance(arr, Array) else lax.asarray(arr)
+  arr = arr if isinstance(arr, Array) else lax_numpy.asarray(arr)
   if not isinstance(shape, tuple) and np.ndim(shape) == 0:
     shape = (shape,)
   # check that shape is concrete
