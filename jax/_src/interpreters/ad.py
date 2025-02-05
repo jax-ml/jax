@@ -22,6 +22,7 @@ from functools import partial
 from typing import Any
 
 from jax._src import config
+from jax._src import dispatch
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
 from jax.tree_util import (tree_flatten, tree_unflatten,
@@ -360,8 +361,15 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
           cts_out = get_primitive_transpose(eqn.primitive)(
               params, call_jaxpr, invals, cts_in, cts_in_avals)
         else:
-          cts_out = get_primitive_transpose(eqn.primitive)(
-              cts_in, *invals, **eqn.params)
+          try:
+            cts_out = get_primitive_transpose(eqn.primitive)(
+                cts_in, *invals, **eqn.params)
+          except (FloatingPointError, ZeroDivisionError) as e:
+            msg = "When differentiating the code at the top of the callstack:"
+            if msg not in e.args[0]:
+              e.args = e.args[0] + f'\n{msg}',
+            e.args = e.args[0] + f'\n{source_info_util.summarize(eqn.source_info)}',
+            raise e from None
         cts_out = [Zero(v.aval) for v in eqn.invars] if cts_out is Zero else cts_out
         # FIXME: Some invars correspond to primals!
         map(partial(write_cotangent, eqn.primitive), eqn.invars, cts_out)
@@ -1003,7 +1011,20 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _):
   if update_params:
     new_params = update_params(new_params, map(is_undefined_primal, args),
                                [type(x) is not Zero for x in ct])
-  out_flat = primitive.bind(fun, *all_args, **new_params)
+
+  try:
+    out_flat = primitive.bind(fun, *all_args, **new_params)
+  except dispatch.InternalFloatingPointError as e:
+    print("Invalid nan value encountered in the backward pass of a jax.jit "
+          "function. Calling the de-optimized backward pass.")
+    try:
+      _ = backward_pass(call_jaxpr, None, {}, args, ct)
+    except (FloatingPointError, ZeroDivisionError) as e2:
+      raise e2 from None
+    else:
+      # If control reaches this line, we got a NaN on the output of `compiled`
+      # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
+      dispatch._raise_no_nan_in_deoptimized(e)
   arg_cts = tree_unflatten(out_tree(), out_flat)
 
   # The freevars are being fanned out (not mapped). During transpose the

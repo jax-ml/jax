@@ -12,16 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 import importlib
 
-import jaxlib.mlir.ir as ir
-
-import numpy as np
-
 from jaxlib import xla_client
-
-from .hlo_helpers import custom_call
 
 try:
   from .cuda import _blas as _cublas  # pytype: disable=import-error
@@ -129,27 +122,3 @@ def has_magma():
   if _hiphybrid:
     return _hiphybrid.has_magma()
   return False
-
-def _csrlsvqr_hlo(platform, gpu_solver, dtype, data,
-                  indices, indptr, b, tol, reorder):
-  """Sparse solver via QR decomposition. CUDA only."""
-  b_type = ir.RankedTensorType(b.type)
-  data_type = ir.RankedTensorType(data.type)
-
-  n = b_type.shape[0]
-  nnz = data_type.shape[0]
-  opaque = gpu_solver.build_csrlsvqr_descriptor(
-      np.dtype(dtype), n, nnz, reorder, tol
-  )
-
-  out = custom_call(
-      f"{platform}solver_csrlsvqr",  # call_target_name
-      result_types=[b.type],
-      operands=[data, indptr, indices, b],
-      backend_config=opaque,  # backend_config
-      operand_layouts=[(0,), (0,), (0,), (0,)],  # operand_layouts
-      result_layouts=[(0,)]  # result_layouts
-  ).results
-  return out
-
-cuda_csrlsvqr = partial(_csrlsvqr_hlo, "cu", _cusolver)
