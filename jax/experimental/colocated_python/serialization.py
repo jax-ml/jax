@@ -84,9 +84,14 @@ def _reduce_mesh(
       mesh_device_ids: np.ndarray, axis_names: Any
   ) -> jax.sharding.Mesh:
     cpu_device_map = _get_cpu_device_map()
-    mesh_devices = np.vectorize(lambda device_id: cpu_device_map[device_id])(
-        mesh_device_ids
-    )
+    try:
+      mesh_devices = np.vectorize(lambda device_id: cpu_device_map[device_id])(
+          mesh_device_ids
+      )
+    except KeyError as e:
+      raise ValueError(
+          "Invalid device ID. Mesh must contain only CPU devices."
+      ) from e
     return jax.sharding.Mesh(mesh_devices, axis_names)
 
   mesh_device_ids = np.vectorize(lambda d: d.id, otypes=[int])(mesh.devices)
@@ -98,9 +103,14 @@ def _reduce_device_list(
 ) -> tuple[Callable[..., DeviceList], Any]:
   def make_device_list(device_ids: Sequence[int]) -> DeviceList:
     cpu_device_map = _get_cpu_device_map()
-    devices = np.vectorize(lambda device_id: cpu_device_map[device_id])(
-        device_ids
-    )
+    try:
+      devices = np.vectorize(lambda device_id: cpu_device_map[device_id])(
+          device_ids
+      )
+    except KeyError as e:
+      raise ValueError(
+          "Invalid device ID. Device list must contain only CPU devices."
+      ) from e
     return DeviceList(tuple(devices))
 
   device_ids = [d.id for d in device_list]
@@ -113,7 +123,10 @@ def _reduce_single_device_sharding(
 
   def make_single_device_sharding(device_id: int):
     cpu_device_map = _get_cpu_device_map()
-    return jax.sharding.SingleDeviceSharding(cpu_device_map[device_id])
+    try:
+      return jax.sharding.SingleDeviceSharding(cpu_device_map[device_id])
+    except KeyError as e:
+      raise ValueError("Invalid device ID. Device must be a CPU device.") from e
 
   return make_single_device_sharding, (sharding.device_set.pop().id,)
 
