@@ -53,7 +53,6 @@ Random Samplers
     logistic
     lognormal
     maxwell
-    multinomial
     multivariate_normal
     normal
     orthogonal
