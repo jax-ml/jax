@@ -2005,8 +2005,8 @@ def vjp(
     raise NotImplementedError("reduce_axes argument to vjp is deprecated")
   del reduce_axes
   check_callable(fun)
-  wrapped_fun = lu.wrap_init(fun,
-                             debug_info=debug_info("vjp", fun, primals, {}))
+  wrapped_fun = lu.wrap_init(
+      fun, debug_info=debug_info("vjp", fun, primals, {}))
   return _vjp(wrapped_fun, *primals, has_aux=has_aux)
 
 def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
