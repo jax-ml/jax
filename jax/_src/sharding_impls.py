@@ -63,6 +63,7 @@ def _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes):
               f"Resource axis: {r} of {parsed_pspec.get_partition_spec()} "
               f"is not found in mesh: {tuple(mesh.shape.keys())}.")
         if r in _manual_axes:
+          breakpoint()
           raise ValueError(
               f"Axis: {r} of {parsed_pspec.get_partition_spec()} "
               f"is also found in manual_axes: {_manual_axes}.") from None

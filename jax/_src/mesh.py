@@ -134,7 +134,7 @@ def to_axis_types_tuple(axis_types, axis_names) -> tuple[AxisTypes, ...]:
 
 _mesh_object_dict = {}  # type: ignore
 
-MeshAxisType = dict[AxisTypes, str | tuple[str, ...]]
+MeshAxisType = dict[AxisTypes, core.AxisName | tuple[core.AxisName, ...]]
 
 class Mesh(contextlib.ContextDecorator):
   """Declare the hardware resources available in the scope of this manager.
