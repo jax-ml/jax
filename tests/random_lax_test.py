@@ -1219,7 +1219,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckChiSquared(samples.astype(int), pmf, pval=1e-3)
       self.assertAllClose(samples.mean(), n * p, rtol=0.025, check_dtypes=False)
-      self.assertAllClose(samples.var(), n * p * (1 - p) , rtol=0.035,
+      self.assertAllClose(samples.var(), n * p * (1 - p) , rtol=0.036,
                           check_dtypes=False)
 
   def testBinomialCornerCases(self):

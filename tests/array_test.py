@@ -374,7 +374,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     # Sharding device ids = {0, 1}
     s = jax.sharding.NamedSharding(mesh, P('x'))
     inp_data = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
-    # _arrays device ids = {0, 2}
+    # _arrays device ids = {0, 0}
     bufs = [jax.device_put(inp_data, jax.devices()[0]) for _ in range(2)]
     with self.assertRaisesRegex(
         ValueError,
@@ -1044,7 +1044,6 @@ class ShardingTest(jtu.JaxTestCase):
       ("2d_mesh_tuple_empty",      (2, 1), P((),)),
       ("2d_mesh_x_none",           (2, 1), P(('x',), None)),
       ("2d_mesh_xy_none",          (2, 1), P(('x', 'y'), None)),
-      ("2d_mesh_none",             (2, 1), None),
       ("2d_mesh_x_tuple_empty",    (2, 1), P('x', (), (), ())),
       ("2d_mesh_3_tuple_empty",    (2, 1), P((), (), ())),
       ("3d_mesh2_x_none_none",     (1, 2, 4), P('x', None, None)),

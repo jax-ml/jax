@@ -530,8 +530,8 @@ class AbstractMesh:
 
   @staticmethod
   def _extremely_unsafe_enter_tracing_context(mesh: AbstractMesh):
-    jax_config.abstract_mesh_context_manager.set_local(mesh)
-    return
+    prev = jax_config.abstract_mesh_context_manager.swap_local(mesh)
+    return prev
 
 
 # Create this indirection because pytype fails to recognize a property if a

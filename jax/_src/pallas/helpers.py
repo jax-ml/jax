@@ -49,3 +49,13 @@ class ArrayLike(Protocol):
 
 def empty_like(x: ArrayLike, *, memory_space: Any = None):
   return empty(x.shape, x.dtype, memory_space=memory_space)
+
+
+def when(condition):
+  def _wrapped(f):
+    if isinstance(condition, bool):
+      if condition:
+        f()
+    else:
+      jax.lax.cond(condition, f, lambda: None)
+  return _wrapped

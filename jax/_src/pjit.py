@@ -49,7 +49,7 @@ from jax._src import xla_bridge as xb
 from jax._src.api_util import (
   argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
   donation_vector, check_callable, resolve_argnums,
-  argnames_partial_except, tracing_debug_info, result_paths, add_jaxpr_debug_info,
+  argnames_partial_except, debug_info,
   hoist_obj_attrs, _check_no_aliased_ref_args,
   _check_no_aliased_closed_over_refs)
 from jax._src.interpreters import partial_eval as pe
@@ -548,7 +548,7 @@ def _infer_params_impl(
     ji: PjitInfo,
     pjit_mesh: mesh_lib.Mesh | None,
     resource_env: mesh_lib.ResourceEnv | None,
-    dbg: lu.TracingDebugInfo,
+    dbg: core.DebugInfo,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
     in_avals: tuple[core.AbstractValue, ...] | None,
@@ -567,9 +567,7 @@ def _infer_params_impl(
 
   axes_specs = _flat_axes_specs(ji.abstracted_axes, *args, **kwargs)
 
-  f = lu.wrap_init(fun)
-  f, res_paths = result_paths(f)
-  dbg = dbg and dbg.add_result_paths(result_paths_thunk=res_paths)
+  f = lu.wrap_init(fun, debug_info=dbg)
   f, dyn_args = argnums_partial_except(f, ji.static_argnums, args, allow_invalid=True)
   del args
 
@@ -618,7 +616,7 @@ def _infer_params_impl(
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
       in_shardings_treedef, in_shardings_leaves,
       ji.in_layouts_treedef, ji.in_layouts_leaves,
-      in_avals, in_tree, dbg, device_or_backend_set, have_kwargs)
+      in_avals, in_tree, flat_fun.debug_info, device_or_backend_set, have_kwargs)
 
   attr_token = _attr_token(flat_fun, in_type)
 
@@ -627,8 +625,7 @@ def _infer_params_impl(
       if mesh_lib.get_abstract_mesh().empty else mesh_lib.get_abstract_mesh())
   with mesh_lib.set_abstract_mesh(abstract_mesh):
     jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
-        flat_fun, in_type, attr_token, dbg,
-        HashableFunction(res_paths, closure=()),
+        flat_fun, in_type, attr_token,
         IgnoreKey(ji.inline))
     if config.mutable_array_checks.value:
       _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), explicit_args)
@@ -733,7 +730,7 @@ def _infer_params(
         'Using `with mesh:` context manager and `jax.sharding.use_mesh`'
         ' together is not allowed.')
 
-  dbg = tracing_debug_info(
+  dbg = debug_info(
       'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
       static_argnames=ji.static_argnames, sourceinfo=ji.fun_sourceinfo,
       signature=ji.fun_signature)
@@ -756,7 +753,7 @@ def _infer_params(
     entry.pjit_params = p
   return entry.pjit_params, entry.pjit_params.consts + dynargs
 
-def _infer_input_type(fun: Callable, dbg: lu.TracingDebugInfo | None,
+def _infer_input_type(fun: Callable, dbg: core.DebugInfo | None,
                       explicit_args) -> tuple[core.AbstractValue, ...]:
   avals = []
   try:
@@ -1171,17 +1168,18 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
 callsites: set[str] = set()
 
 def explain_tracing_cache_miss(
-    f: Callable, unseen_f: bool, cache: dict, key: tuple):
+    fun: lu.WrappedFun, unseen_f: bool, cache: dict, key: tuple):
   if config.check_tracer_leaks.value: return
 
   def unpack(key):
-    transforms, (), _, (in_type, _, debug_info, _, inline), *_, ctx = key
+    transforms, (), _, (in_type, _, inline), *_, ctx = key
     # TODO(dougalm,mattjj): enable cache miss explanation with attrs
     _, (_, (in_tree,)), *_ = transforms
-    return in_tree, in_type, debug_info, inline.val, ctx
-  in_tree, in_type, debug_info, inline, ctx = unpack(key)
+    return in_tree, in_type, inline.val, ctx
+  in_tree, in_type, inline, ctx = unpack(key)
   if inline: return
 
+  debug_info = fun.debug_info
   msg: list[str] = []
   p = msg.append
   done = lambda: logger.log(logging.WARNING, '\n'.join(msg))
@@ -1190,7 +1188,7 @@ def explain_tracing_cache_miss(
   p(f"TRACING CACHE MISS at {callsite} because:")
 
   # have we seen this function before at all?
-  fun_name = getattr(f, '__qualname__', f)
+  fun_name = getattr(fun.f, '__qualname__', fun.f)
   if debug_info is not None and debug_info.func_src_info:
     # TODO(necula): clean up the extraction of the source info
     _, *rest = debug_info.func_src_info.split(' at ')
@@ -1198,7 +1196,7 @@ def explain_tracing_cache_miss(
   else:
     src_info = ''
   if unseen_f:
-    p(f"  never seen function:\n    {fun_name} id={id(f)}{src_info}")
+    p(f"  never seen function:\n    {fun_name} id={id(fun.f)}{src_info}")
     if callsite in callsites:
       p("  but seen another function defined on the same line; maybe the function is\n"
         "  being re-defined repeatedly, preventing caching?")
@@ -1263,7 +1261,7 @@ def explain_tracing_cache_miss(
   # have we never seen these input types (eg shapes, dtypes) before?
   types_match = [k for k in trees_match if k[1] == in_type]
   if not types_match:
-    if len(in_type) < 5:
+    if len(in_type) < 5 and debug_info is not None:
       in_type_str = ':\n    {}'.format(',  '.join(
           f'{n}: {ty.str_short(short_dtypes=True)}'
           for n, ty in zip(debug_info.arg_names, in_type)))
@@ -1275,7 +1273,12 @@ def explain_tracing_cache_miss(
     num_mismatch = sum(map(op.ne, closest_ty, in_type))
     p(f"  closest seen input type signature has {num_mismatch} mismatches, including:")
     add_weak_type_hint = False
-    for name, ty1, ty2 in zip(debug_info.arg_names, closest_ty, in_type):
+    if debug_info:
+      arg_names = debug_info.safe_arg_names(len(in_type))
+    else:
+      arg_names = (None,) * len(in_type)
+
+    for name, ty1, ty2 in zip(arg_names, closest_ty, in_type):
       if ty1 != ty2:
         if type(ty1) == type(ty2) == core.ShapedArray:
           s1, s2 = ty1.str_short(True), ty2.str_short(True)
@@ -1302,8 +1305,6 @@ def _create_pjit_jaxpr(
     fun: lu.WrappedFun,
     in_type: core.InputType | Sequence[core.AbstractValue],
     attr_data: int,
-    debug_info: lu.TracingDebugInfo,
-    result_paths: Callable,
     ignored_inline: IgnoreKey
 ) -> tuple[core.ClosedJaxpr, list[Any], list[core.AbstractValue],
            list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
@@ -1317,16 +1318,12 @@ def _create_pjit_jaxpr(
       fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
     if config.dynamic_shapes.value:
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic2(
-          lu.annotate(fun, cast(core.InputType, in_type)), debug_info=debug_info)
+          lu.annotate(fun, cast(core.InputType, in_type)))
       attrs_tracked = []
     else:
       jaxpr, global_out_avals, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
-          fun, in_type, debug_info=debug_info)
+          fun, in_type)
       # assert attr_data is sentinel or attr_data matches attrs_tracked
-
-  # TODO(dougalm,mattjj): enable debug info with attrs_tracked
-  if not config.dynamic_shapes.value and not attrs_tracked:
-    jaxpr = add_jaxpr_debug_info(jaxpr, debug_info, result_paths())
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports
@@ -1346,7 +1343,7 @@ def _create_pjit_jaxpr(
 def _check_and_canonicalize_out_shardings(
     out_shardings_treedef, out_shardings_leaves, out_layouts_treedef,
     out_layouts_leaves, out_tree, out_avals,
-    debug_info: core.JaxprDebugInfo | None,
+    debug_info: core.DebugInfo | None,
     device_or_backend_set):
   orig_out_shardings = tree_unflatten(out_shardings_treedef, out_shardings_leaves)
   if isinstance(orig_out_shardings, (UnspecifiedValue, Sharding)):
@@ -1478,7 +1475,6 @@ def check_aval_layout_compatibility(
 
 pjit_p = core.Primitive("pjit")
 pjit_p.multiple_results = True
-
 
 def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
   # If device or backend is set, return the default layout. This is because you
@@ -1928,7 +1924,9 @@ def _pjit_abstract_eval(*args, jaxpr, out_shardings, **_):
 pjit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 
-def _pjit_cached_lower_jaxpr_to_fun(ctx, name, jaxpr, effects, in_shardings,
+def _pjit_cached_lower_jaxpr_to_fun(ctx: mlir.LoweringRuleContext,
+                                    name: str, jaxpr: core.ClosedJaxpr,
+                                    effects, in_shardings,
                                     out_shardings, in_layouts, out_layouts,
                                     api_name):
   mod_ctx = ctx.module_context
@@ -1959,7 +1957,8 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx, name, jaxpr, effects, in_shardings,
   return func
 
 
-def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
+def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
+                   jaxpr: core.ClosedJaxpr, in_shardings,
                    out_shardings, in_layouts, out_layouts, resource_env,
                    donated_invars, keep_unused, inline, compiler_options_kvs):
   effects = list(ctx.tokens_in.effects())
@@ -1987,8 +1986,10 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
 mlir.register_lowering(pjit_p, _pjit_lowering)
 
 
-def _pjit_batcher(axis_data, vals_in, dims_in,
-                  jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
+def _pjit_batcher(axis_data, vals_in,
+                  dims_in: tuple[int, ...],
+                  jaxpr: core.ClosedJaxpr,
+                  in_shardings, out_shardings, in_layouts, out_layouts,
                   resource_env, donated_invars, name, keep_unused, inline,
                   compiler_options_kvs):
   segment_lens, dims_in = batching.indirectify_ragged_axes(dims_in)
@@ -2037,7 +2038,8 @@ batching.ragged_prop_rules[pjit_p] = batching.ragged_mask_no_op_rule
 
 def _pjit_batcher_for_sharding(
     s: Sharding | UnspecifiedValue,
-    dim: int, spmd_axis_name: tuple[str, ...] | None, mesh, ndim: int):
+    dim: int | batching.RaggedAxis, spmd_axis_name: tuple[str, ...] | None, mesh,
+    ndim: int):
   if isinstance(s, UnspecifiedValue):
     return s
   hlo_s = s._to_xla_hlo_sharding(ndim)
@@ -2049,7 +2051,7 @@ def _pjit_batcher_for_sharding(
       return NamedSharding._from_parsed_pspec(s.mesh, parsed_pspec)
     new_op = hlo_s.to_proto().clone()
     tad = list(new_op.tile_assignment_dimensions)
-    tad.insert(dim, 1)
+    tad.insert(dim, 1)  # type: ignore
     new_op.tile_assignment_dimensions = tad
     new_gs = GSPMDSharding(
         s._device_assignment, new_op,
@@ -2171,8 +2173,9 @@ def _pjit_linearization(nzs, *primals_in, jaxpr,
 ad.primitive_linearizations[pjit_p] = _pjit_linearization
 
 
-def _pjit_partial_eval(trace, *in_tracers,
-                       jaxpr, in_shardings, out_shardings,
+def _pjit_partial_eval(trace: pe.JaxprTrace,
+                       *in_tracers,
+                       jaxpr: core.ClosedJaxpr, in_shardings, out_shardings,
                        in_layouts, out_layouts, resource_env, donated_invars,
                        name, keep_unused, inline, compiler_options_kvs):
   in_pvals = [t.pval for t in in_tracers]
@@ -2191,7 +2194,7 @@ def _pjit_partial_eval(trace, *in_tracers,
   else:
     known_jaxpr, unknown_jaxpr, unknown_outs, res_avals = \
         pe.partial_eval_jaxpr_nounits(jaxpr, unknown_ins, instantiate=False)
-  unknown_outs = tuple(unknown_outs)
+  unknown_outs = tuple(unknown_outs)  # type: ignore[assignment]
   known_outs = tuple(not uk for uk in unknown_outs)
   num_residuals = len(res_avals)
   res_shardings = (UNSPECIFIED,) * num_residuals
@@ -2282,7 +2285,7 @@ def _pjit_partial_eval(trace, *in_tracers,
   unknown_tracers_in = [t for t in in_tracers if not t.pval.is_known()]
   unknown_out_avals = unknown_jaxpr.out_avals
   unknown_tracers_out = [
-      pe.JaxprTracer(trace, pe.PartialVal.unknown(aval), None)
+      pe.JaxprTracer(trace, pe.PartialVal.unknown(aval), None)  # type: ignore
       for aval in unknown_out_avals
   ]
   eqn = pe.new_eqn_recipe((*unknown_tracers_in, *residual_tracers),
@@ -2707,14 +2710,20 @@ def mesh_cast(xs, out_shardings):
   return tree_unflatten(treedef, out_flat)
 
 mesh_cast_p = core.Primitive('mesh_cast')
+mesh_cast_p.skip_canonicalization = True
 def _mesh_cast_abstract_eval(aval, dst_sharding):
   src_sharding = aval.sharding
+  if src_sharding == dst_sharding:
+    return aval
+  if src_sharding.mesh.empty or dst_sharding.mesh.empty:
+    return aval.update(sharding=dst_sharding)
   if src_sharding.mesh.shape_tuple != dst_sharding.mesh.shape_tuple:
     raise ValueError(
         f'Mesh shape of the input {src_sharding.mesh.shape_tuple} does not'
         ' match the mesh shape of the target sharding'
         f' {dst_sharding.mesh.shape_tuple} for shape {aval.str_short()}')
-  if src_sharding.mesh.axis_types == dst_sharding.mesh.axis_types:
+  if (src_sharding.mesh.axis_types == dst_sharding.mesh.axis_types and
+      src_sharding.spec != dst_sharding.spec):
     raise ValueError(
         'mesh_cast should only be used when AxisTypes changes between the'
         ' input mesh and the target mesh. Got src'
@@ -2746,7 +2755,9 @@ def _mesh_cast_abstract_eval(aval, dst_sharding):
 mesh_cast_p.def_abstract_eval(_mesh_cast_abstract_eval)
 
 def _mesh_cast_impl(x, dst_sharding):
-  return dispatch.apply_primitive(mesh_cast_p, x, dst_sharding=dst_sharding)
+  x_aval = core.shaped_abstractify(x)
+  with mesh_lib.set_abstract_mesh(x_aval.sharding.mesh):
+    return dispatch.apply_primitive(mesh_cast_p, x, dst_sharding=dst_sharding)
 mesh_cast_p.def_impl(_mesh_cast_impl)
 
 def _mesh_cast_transpose_rule(ct, x, dst_sharding):
@@ -2763,7 +2774,6 @@ def _mesh_cast_hlo_lowering(ctx, x_node, *, dst_sharding):
 mlir.register_lowering(mesh_cast_p, _mesh_cast_hlo_lowering)
 
 def _mesh_cast_batcher(axis_data, vals_in, dims_in, dst_sharding):
-  assert axis_data.spmd_name is None
   x, = vals_in
   d, = dims_in
   vmapped_dst_sharding = batching.get_sharding_for_vmap(

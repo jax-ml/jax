@@ -42,7 +42,8 @@ def generate_sourcemaps(
     with tempfile.TemporaryDirectory() as work_dir:
       for pass_to_eval in passes:
         if pass_to_eval.compile_fn not in compile_cache:
-          pass_work_dir = os.path.join(work_dir, pass_to_eval.name)
+          dirname = pass_to_eval.name.replace(":", "__")
+          pass_work_dir = os.path.join(work_dir, dirname)
           os.makedirs(pass_work_dir, exist_ok=False)
           compile_result = pass_to_eval.compile_fn(
               pass_work_dir, f, args, kwargs

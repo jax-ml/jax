@@ -15,6 +15,7 @@
 load(
     "//jaxlib:jax.bzl",
     "jax_generate_backend_suites",
+    "jax_gpu_support_deps",
     "jax_multiplatform_test",
     "jax_py_test",
     "py_deps",
@@ -205,10 +206,28 @@ jax_multiplatform_test(
     ],
 )
 
+jax_py_test(
+    name = "export_pallas_test_cpu_only",
+    srcs = ["export_pallas_test.py"],
+    args = ["--jax_test_dut=cpu"],
+    main = "export_pallas_test.py",
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_gpu",  # build_cleaner: keep
+        "//jax:pallas_tpu",  # build_cleaner: keep
+        "//jax:test_util",
+    ] + jax_gpu_support_deps,
+)
+
 jax_multiplatform_test(
     name = "export_pallas_test",
     srcs = ["export_pallas_test.py"],
-    enable_backends = ["cpu"],
+    # Cross-compilation on CPU is tested separately.
+    disable_configs = [
+        "cpu",
+        "cpu_shardy",
+        "cpu_x32",
+    ],
     enable_configs = [
         "gpu_a100_x32",
     ],

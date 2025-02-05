@@ -6,7 +6,7 @@ concurrency:
 
 on:
   schedule:
-    - cron: "0 12 * * *" # Daily at 12:00 UTC
+    - cron: "0 5 * * *" # Daily at 05:00 UTC == 00:00 EST == 21:00 PST
   workflow_dispatch: # allows triggering the workflow run manually
   pull_request: # Automatically trigger on pull requests affecting this file
     branches:
@@ -72,7 +72,7 @@ jobs:
           # Create archive to be used with bazel as hermetic python:
           cd ${GITHUB_WORKSPACE} && tar -czpf python-tsan.tgz cpython-tsan
 
-      - name: Save CPython with TSAN
+      - name: Save TSAN CPython
         id: cache-cpython-tsan-save
         if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
@@ -102,9 +102,11 @@ jobs:
           # If we restored cpython from cache, we need to get python interpreter from python-tsan.tgz
           if [ ! -d ${GITHUB_WORKSPACE}/cpython-tsan/bin/ ]; then
             echo "Extract cpython from python-tsan.tgz"
+            pushd .
             ls ${GITHUB_WORKSPACE}/python-tsan.tgz
-            cd ${GITHUB_WORKSPACE} && tar -xvzf python-tsan.tgz
+            cd ${GITHUB_WORKSPACE} && tar -xzf python-tsan.tgz
             ls ${GITHUB_WORKSPACE}/cpython-tsan/bin/
+            popd
           fi
 
           export PATH=${GITHUB_WORKSPACE}/cpython-tsan/bin/:$PATH
@@ -172,7 +174,6 @@ jobs:
             --clang_path=/usr/bin/clang-18
 
           # Update the patch to use TSAN instrumented numpy
-
           sed -i "s|+--extra-index-url.*|+--extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/|" .github/workflows/requirements_lock_3_13_ft.patch
           cat .github/workflows/requirements_lock_3_13_ft.patch
 

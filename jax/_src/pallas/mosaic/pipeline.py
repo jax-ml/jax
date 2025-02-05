@@ -921,13 +921,18 @@ ARBITRARY = GridDimensionSemantics()
 
 def _partition_grid(
     grid: tuple[int | jax.Array, ...],
-    core_axis: int | None,
+    core_axis: int | str | None,
     dimension_semantics: tuple[GridDimensionSemantics, ...] | None,
 ) -> tuple[tuple[int | jax.Array, ...], tuple[int | jax.Array, ...]]:
   if core_axis is None:
     # We aren't partitioning the grid
     return grid, (0,) * len(grid)
-  num_cores = pl.num_programs(core_axis)
+  if isinstance(core_axis, int):
+    num_cores = pl.num_programs(core_axis)
+    core_id = pl.program_id(core_axis)
+  else:
+    num_cores = jax.lax.psum(1, core_axis)
+    core_id = jax.lax.axis_index(core_axis)
   # Check that num_cores is statically known
   if not isinstance(num_cores, int):
     raise NotImplementedError(
@@ -966,7 +971,7 @@ def _partition_grid(
         i for i in range(len(dimension_semantics)) if i in divisible_dimensions
     )
     partitioned_dim_size = grid[first_divisible_dimension] // num_cores
-    partitioned_dim_offset = pl.program_id(core_axis) * partitioned_dim_size
+    partitioned_dim_offset = core_id * partitioned_dim_size
     new_grid = jax_util.tuple_update(
         grid, first_divisible_dimension, partitioned_dim_size
     )
@@ -990,8 +995,7 @@ def _partition_grid(
     # We have some remainder iterations that we need to assign somewhere. We
     # know that rem < num_cores, so we can assign one extra iteration to each
     # core except for the last (num_cores - rem).
-    core_index = pl.program_id(core_axis)
-    num_iters = jnp.where(core_index < rem, base_num_iters + 1,
+    num_iters = jnp.where(core_id < rem, base_num_iters + 1,
                           base_num_iters)
     new_grid = jax_util.tuple_update(grid, partition_dimension, num_iters)
     # Ordinarily, we would compute the offset as:
@@ -999,9 +1003,9 @@ def _partition_grid(
     # However, since we have some cores that don't have an extra iteration, we
     # need to adjust the offset by `rem`.
     grid_offset = jnp.where(
-        core_index < rem,
-        core_index * num_iters,
-        core_index * base_num_iters + rem,
+        core_id < rem,
+        core_id * num_iters,
+        core_id * base_num_iters + rem,
     )
     offsets = jax_util.tuple_update(
         (0,) * len(grid), partition_dimension, grid_offset
@@ -1015,8 +1019,9 @@ def emit_pipeline(
     grid: tuple[int | jax.Array, ...],
     in_specs=None,
     out_specs=None,
-    should_accumulate_out=False,
+    should_accumulate_out: bool = False,
     core_axis: int | None = None,
+    core_axis_name: str | None = None,
     dimension_semantics: tuple[GridDimensionSemantics, ...] | None = None,
     trace_scopes: bool = True,
 ):
@@ -1039,6 +1044,8 @@ def emit_pipeline(
       as accumulators.
     core_axis: optional int, indicates whether or not to partition the grid
       along the core axis.
+    core_axis_name: optional str, indicates whether or not to partition the grid
+      along the core axis.
     dimension_semantics: optional tuple of GridDimensionSemantics (e.g. PARALLEL
       or ARBITRARY).
     trace_scopes: optional bool, indicates whether to annotate each region in
@@ -1049,7 +1056,10 @@ def emit_pipeline(
     raise ValueError(
         f"Grid must consist of Python integers and JAX Arrays: {grid_types}"
     )
-  grid, grid_offsets = _partition_grid(grid, core_axis, dimension_semantics)
+  if not (core_axis is None or core_axis_name is None):
+    raise ValueError("core_axis and core_axis_name cannot both be provided.")
+  core_axis_ = core_axis_name if core_axis is None else core_axis
+  grid, grid_offsets = _partition_grid(grid, core_axis_, dimension_semantics)
 
   num_steps = _grid_size(grid)
   if not isinstance(in_specs, (list, tuple)):

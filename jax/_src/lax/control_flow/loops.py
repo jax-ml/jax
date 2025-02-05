@@ -273,7 +273,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     return carry, stacked_y
 
   x_avals = [core.mapped_aval(length, 0, aval) for aval in xs_avals]
-  dbg_body = api_util.tracing_debug_info("scan", f, (init, xs), {})
+  dbg_body = api_util.debug_info("scan", f, (init, xs), {})
 
   if config.mutable_array_checks.value:
     in_flat, in_tree = tree_flatten((init, xs))
@@ -1357,10 +1357,10 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   def _create_jaxpr(init_val):
     init_vals, in_tree = tree_flatten((init_val,))
     init_avals = tuple(_map(core.get_aval, init_vals))
-    cond_dbg = api_util.tracing_debug_info("while_cond", cond_fun, (init_val,), {})
+    cond_dbg = api_util.debug_info("while_cond", cond_fun, (init_val,), {})
     cond_jaxpr, cond_consts, cond_tree = _initial_style_jaxpr(
         cond_fun, in_tree, init_avals, cond_dbg)
-    body_dbg = api_util.tracing_debug_info("while_body", body_fun, (init_val,), {})
+    body_dbg = api_util.debug_info("while_body", body_fun, (init_val,), {})
     body_jaxpr, body_consts, body_tree = _initial_style_jaxpr(
         body_fun, in_tree, init_avals, body_dbg)
     if not treedef_is_leaf(cond_tree) or len(cond_jaxpr.out_avals) != 1:
@@ -1368,7 +1368,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
       raise TypeError(msg.format(cond_tree))
     pred_aval = cond_jaxpr.out_avals[0]
     if (not isinstance(pred_aval, ShapedArray)
-        or pred_aval.strip_weak_type() != ShapedArray((), np.bool_)):
+        or ShapedArray(pred_aval.shape, pred_aval.dtype) != ShapedArray((), np.bool_)):
       msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
       raise TypeError(msg.format(cond_jaxpr.out_avals))
     return init_vals, init_avals, body_jaxpr, in_tree, cond_jaxpr, cond_consts, body_consts, body_tree
@@ -1855,10 +1855,15 @@ def _while_typecheck(_, *in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,
         f'Effects not supported in `while`: {disallowed_effects}')
   return body_jaxpr.out_avals, joined_effects
 
-def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
+def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
                           cond_nconsts, body_nconsts):
   # TODO(sharadmv): enable supporting state effects in the cond
   if any(isinstance(eff, state.RefEffect) for eff in cond_jaxpr.effects):
+    raise NotImplementedError
+  cond_consts_discharge, body_consts_discharge, carry_discharge = split_list(
+      should_discharge, [cond_nconsts, body_nconsts])
+
+  if any(cond_consts_discharge):
     raise NotImplementedError
   cond_consts, body_consts, carry = split_list(args, [cond_nconsts, body_nconsts])
   cond_consts_avals, body_consts_avals, carry_avals = split_list(in_avals,
@@ -1866,7 +1871,10 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
                                                                   body_nconsts])
   # There shouldn't be any `Ref`s in the `cond` (because of our check above).
   assert not any(isinstance(aval, state.AbstractRef) for aval in cond_consts_avals)
-  is_ref = [isinstance(aval, state.AbstractRef) for aval in body_consts_avals]
+  is_ref = [
+      isinstance(aval, state.AbstractRef) and should
+      for aval, should in zip(body_consts_avals, body_consts_discharge)
+  ]
   remaining_body_consts, refs = partition_list(is_ref, body_consts)
   remaining_body_const_avals, ref_avals = partition_list(is_ref,
                                                          body_consts_avals)
@@ -1886,7 +1894,7 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
   # Therefore we need to rewrite the jaxpr to shuffle around the `Ref`s so that
   # they are part of the carry.
   discharged_body_jaxpr, discharged_consts = state_discharge.discharge_state(
-      body_jaxpr, ())
+      body_jaxpr, (), should_discharge=[*body_consts_discharge, *carry_discharge])
   if discharged_consts: raise NotImplementedError
 
   def new_body(*consts_refs_carry):
@@ -1943,7 +1951,7 @@ batching.fancy_primitive_batchers[while_p] = _while_loop_batching_rule
 pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
 mlir.register_lowering(while_p, _while_lowering)
 core.custom_typechecks[while_p] = _while_typecheck
-state_discharge.register_discharge_rule(while_p)(_while_discharge_rule)
+state_discharge.register_partial_discharge_rule(while_p)(_while_partial_discharge_rule)
 
 
 def _pred_bcast_select_hlo(ctx,

@@ -24,6 +24,7 @@ import sys
 import subprocess
 import glob
 from collections.abc import Sequence
+from jaxlib.tools import platform_tags
 
 
 def is_windows() -> bool:
@@ -52,21 +53,11 @@ def copy_file(
 
 
 def platform_tag(cpu: str) -> str:
-  platform_name, cpu_name = {
-    ("Linux", "x86_64"): ("manylinux2014", "x86_64"),
-    ("Linux", "aarch64"): ("manylinux2014", "aarch64"),
-    ("Linux", "ppc64le"): ("manylinux2014", "ppc64le"),
-    ("Darwin", "x86_64"): ("macosx_10_14", "x86_64"),
-    ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
-    ("Windows", "AMD64"): ("win", "amd64"),
-  }[(platform.system(), cpu)]
+  platform_name, cpu_name = platform_tags.PLATFORM_TAGS_DICT[
+      (platform.system(), cpu)
+  ]
   return f"{platform_name}_{cpu_name}"
 
-def get_githash(jaxlib_git_hash):
-  if jaxlib_git_hash != "" and os.path.isfile(jaxlib_git_hash):
-    with open(jaxlib_git_hash, "r") as f:
-      return f.readline().strip()
-  return jaxlib_git_hash
 
 def build_wheel(
     sources_path: str, output_path: str, package_name: str, git_hash: str = ""

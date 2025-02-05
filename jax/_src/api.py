@@ -57,11 +57,11 @@ from jax._src import pjit
 from jax._src import xla_bridge as xb
 from jax._src.core import eval_jaxpr, shaped_abstractify, ShapedArray
 from jax._src.api_util import (
-    flatten_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
-    flatten_axes, donation_vector,
-    rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
-    apply_flat_fun_nokwargs, check_callable, tracing_debug_info,
-    result_paths, flat_out_axes)
+  flatten_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
+  flatten_axes, donation_vector,
+  rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
+  apply_flat_fun_nokwargs, check_callable, debug_info,
+  flat_out_axes)
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
@@ -452,7 +452,7 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
       raise TypeError(f"differentiating with respect to {argnums=} requires at least "
                       f"{max_argnum + 1} positional arguments to be passed by the caller, "
                       f"but got only {len(args)} positional arguments.")
-    dbg = tracing_debug_info('value_and_grad', fun, args, kwargs)
+    dbg = debug_info('value_and_grad', fun, args, kwargs)
 
     f = lu.wrap_init(fun, params=kwargs, debug_info=dbg)
     f_partial, dyn_args = argnums_partial(f, argnums, args,
@@ -1021,7 +1021,7 @@ def _mapped_axis_spec(args_flat, in_axes_flat):
     try:
       # Duck type arrays like BCOO arrays can be passed to vmap.
       return shaped_abstractify(arg).sharding.spec[i]
-    except TypeError:
+    except (IndexError, TypeError):
       return None
 
   temp_spec = None
@@ -1426,11 +1426,12 @@ def _prepare_pmap(fun: Callable, in_axes, out_axes, static_broadcasted_tuple,
   if in_devices is not None and len(in_devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
-  dbg = tracing_debug_info(
+  dbg = debug_info(
       "pmap", fun, args, kwargs,
       static_argnums=static_broadcasted_tuple)
 
-  f = lu.wrap_init(fun)
+  f = lu.wrap_init(fun, debug_info=dbg)
+  del dbg
   if static_broadcasted_tuple:
     if max(static_broadcasted_tuple) >= len(args):
       raise ValueError(
@@ -1477,9 +1478,6 @@ def _prepare_pmap(fun: Callable, in_axes, out_axes, static_broadcasted_tuple,
     raise ValueError(msg) from None
   local_axis_size = _mapped_axis_size(fun, in_tree, args, in_axes_flat, "pmap")
 
-  f, res_paths = result_paths(f)
-  dbg = dbg.add_result_paths(res_paths)
-  f = lu.add_debug_info(f, dbg)
   f, out_axes_thunk = flat_out_axes(f, out_axes)
   flat_fun, out_tree = flatten_fun(f, in_tree)
 
@@ -2235,7 +2233,7 @@ def _check_sharding(aval, s):
         f" invalid value: {s}")
   if isinstance(s, Sharding):
     if isinstance(aval, core.AbstractToken):
-      aval = core.token_shaped_array
+      aval = core.get_token_aval()
     if not isinstance(s, PmapSharding):
       pjit.pjit_check_aval_sharding(
           (s,), (aval,), None, "device_put args", allow_uneven_sharding=False)

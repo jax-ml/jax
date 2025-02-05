@@ -54,10 +54,13 @@ from jax._src.sharding_impls import (AUTO, NamedSharding,
                                      SdyArraySharding, SdyArrayShardingList)
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects, ir, passmanager
 from jax._src.lib.mlir.dialects import func as func_dialect, hlo
 from jax._src.lib.mlir import register_jax_dialects
 from jax._src.state.types import AbstractRef
+
+# mypy: ignore-errors
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -469,11 +472,20 @@ def _traceback_to_location(ctx: ModuleContext, tb: xc.Traceback) -> ir.Location:
     loc = ctx.traceback_caches.location_cache.get(code_lasti, None)
     if loc is None:
       frame = source_info_util.raw_frame_to_frame(code, lasti)
-      file_loc = ir.Location.file(
-          get_canonical_source_file(frame.file_name, ctx.traceback_caches),
-          frame.start_line,
-          frame.start_column,
-      )
+      if xla_extension_version >= 309:
+        file_loc = ir.Location.file(
+            get_canonical_source_file(frame.file_name, ctx.traceback_caches),
+            frame.start_line,
+            frame.start_column,
+            frame.end_line,
+            frame.end_column,
+        )
+      else:
+        file_loc = ir.Location.file(
+            get_canonical_source_file(frame.file_name, ctx.traceback_caches),
+            frame.start_line,
+            frame.start_column,
+        )
       loc = ir.Location.name(frame.function_name, childLoc=file_loc)
       ctx.traceback_caches.location_cache[code_lasti] = loc
     frame_locs.append(loc)
@@ -1121,16 +1133,20 @@ def lower_jaxpr_to_module(
         "In multi-platform lowering either all or no lowering platforms "
         f"should support donation. Lowering for {platforms} of which "
         f"only {platforms_with_donation} support donation")
+    input_output_aliases, donated_args, xla_donated_args = _set_up_aliases(
+        input_output_aliases, in_avals, out_avals, donated_args,
+        arg_memory_kinds, result_memory_kinds, in_layouts, out_layouts,
+        result_shardings if num_partitions > 1 else None)
     if (num_partitions > 1 and
         (result_shardings is None or
-         all(s is None or isinstance(s, AUTO) or contains_unconstrained(s)
+         any(s is None or isinstance(s, AUTO) or contains_unconstrained(s)
              for s in result_shardings))):
-      xla_donated_args = donated_args
-      donated_args = [False] * len(donated_args)
-    if xla_donated_args is None:
-      input_output_aliases, donated_args, xla_donated_args = _set_up_aliases(
-          input_output_aliases, in_avals, out_avals, donated_args,
-          arg_memory_kinds, result_memory_kinds, in_layouts, out_layouts)
+      if xla_donated_args is None:
+        xla_donated_args = [False] * len(donated_args)
+      for input_id in range(len(donated_args)):
+        if donated_args[input_id]:
+          xla_donated_args[input_id] = True
+          donated_args[input_id] = False
   if any(donated_args):
     unused_donations = [str(a) for a, d in zip(in_avals, donated_args) if d]
     msg = "See an explanation at https://jax.readthedocs.io/en/latest/faq.html#buffer-donation."
@@ -1225,14 +1241,15 @@ def lower_jaxpr_to_module(
 
 def _set_up_aliases(input_output_aliases, avals_in, avals_out,
                     donated_args, arg_memory_kinds, result_memory_kinds,
-                    in_layouts, out_layouts):
+                    in_layouts, out_layouts, result_shardings):
   if input_output_aliases is None:
     input_output_aliases = [None] * len(avals_in)
   else:
     input_output_aliases = list(input_output_aliases)
   # To match-up in-avals to out-avals we only care about the number of
   # bytes, so we strip off unrelated aval metadata (eg. the named shape)
-  strip_metadata = lambda a: a.strip_weak_type()
+  strip_metadata = lambda a: (a if a is core.abstract_token else
+                              core.ShapedArray(a.shape, a.dtype))
   avals_in = map(strip_metadata, avals_in)
   avals_out = map(strip_metadata, avals_out)
 
@@ -1283,7 +1300,10 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
             " for the input and output layout to be chosen by XLA and not the"
             " layout of the input which might not be optimal.")
       if (in_layouts is None or out_layouts is None or
-          in_layouts[input_id] == out_layouts[i]):
+          in_layouts[input_id] == out_layouts[i]) and (
+              result_shardings is None or not (
+              (s := result_shardings[i]) is None or
+              isinstance(s, AUTO) or contains_unconstrained(s))):
         input_output_aliases[input_id] = i
       else:
         # Fallback to xla donation if layouts don't match.
@@ -1393,7 +1413,6 @@ def lower_jaxpr_to_fun(
     MLIR func op
   """
   util.test_event("lower_jaxpr_to_fun", name)
-
   # The first dimension variable may be the platform index
   num_dim_vars = len(ctx.shape_poly_state.dim_vars)
   dim_var_avals = [core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))] * num_dim_vars

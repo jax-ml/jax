@@ -537,7 +537,7 @@ def request_cpu_devices(nr_devices: int):
   invoked. Test cases that require a specific number of devices should skip
   themselves if that number is not met.
   """
-  if xla_bridge.NUM_CPU_DEVICES.value < nr_devices:
+  if config.num_cpu_devices.value < nr_devices:
     xla_bridge.get_backend.cache_clear()
     config.update("jax_num_cpu_devices", nr_devices)
 

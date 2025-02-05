@@ -24,7 +24,8 @@ LOC_REGEX = re.compile(r"loc\(#loc(?P<id>[0-9]+)\)")
 
 SRC_REGEX = re.compile(
     r"#loc(?P<id>[0-9]+) ="
-    r" loc\(\"(?P<file>.*)\":(?P<line>[0-9]+):(?P<col>[0-9]+)\)"
+    r" loc\(\"(?P<file>.*)\":(?P<line>[0-9]+):(?P<col>[0-9]+)"
+    r"( to (?P<endlineno>[0-9]+)?:(?P<endcolno>[0-9]+))?\)"
 )
 
 SCOPED_REGEX = re.compile(

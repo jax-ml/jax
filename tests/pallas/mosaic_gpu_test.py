@@ -900,6 +900,25 @@ class PallasCallTest(PallasTest):
     )
 
   @parameterized.parameters(False, True)
+  def test_fori_loop_accumulator(self, force_while):
+    self.skip_unless_sm90a()
+
+    transforms = (plgpu.TilingTransform((64, 64)), plgpu.SwizzleTransform(128))
+    @functools.partial(
+        pl.pallas_call,
+        in_specs=[plgpu.GPUBlockSpec((64, 64), lambda: (0, 0), transforms=transforms)],
+        out_shape=jax.ShapeDtypeStruct((64, 64), jnp.float16),
+        out_specs=plgpu.GPUBlockSpec((64, 64), lambda: (0, 0)),
+    )
+    def kernel(i_ref, o_ref):
+      def scope(acc_ref):
+        return _fori_loop(force_while, 0, 4, lambda _, v: v + acc_ref[...], acc_ref[...])
+      o_ref[...] = pl.run_state(scope)(plgpu.ACC.init(i_ref[...]))
+
+    acc_ini = jnp.ones((64, 64), dtype=jnp.float16)
+    np.testing.assert_array_equal(kernel(acc_ini), jnp.full((64, 64), 5, dtype=jnp.float16))
+
+  @parameterized.parameters(False, True)
   def test_fori_loop_indexed_store(self, force_while):
     @functools.partial(
         pl.pallas_call,
@@ -1565,6 +1584,77 @@ class PipelineTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
     )
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
+
+  def test_emit_pipeline_with_wgmma(self):
+    self.skip_unless_sm90a()
+
+    m, n, k = 256, 256, 1024
+    dtype = jnp.float16
+    key = jax.random.key(42)
+    x = jax.random.uniform(key, shape=(m, k), dtype=dtype)
+    y = jax.random.uniform(key, shape=(k, n), dtype=dtype)
+
+    swizzle = 128
+    swizzle_elems = swizzle // jnp.dtype(x.dtype).itemsize
+
+    tile_m = 64
+    tile_n = 64
+    tile_k = swizzle_elems
+
+    grid_m = m // tile_m
+    grid_n = n // tile_n
+    grid_k = k // tile_k
+
+    def kernel(a_gmem, b_gmem, c_smem, acc_reg):
+      pid_m = pl.program_id(0)
+      pid_n = pl.program_id(1)
+
+      def pipeline_body(a_smem, b_smem):
+        plgpu.wgmma(acc_reg, a_smem, b_smem)
+        plgpu.wgmma_wait(1)
+
+      plgpu.emit_pipeline(
+          pipeline_body,
+          in_specs=[
+              plgpu.GPUBlockSpec(
+                  (tile_m, tile_k),
+                  lambda k: (pid_m, k),
+                  transforms=(
+                      plgpu.TilingTransform((64, swizzle_elems)),
+                      plgpu.SwizzleTransform(swizzle),
+                  ),
+              ),
+              plgpu.GPUBlockSpec(
+                  (tile_k, tile_n),
+                  lambda k: (k, pid_n),
+                  transforms=(
+                      plgpu.TilingTransform((swizzle_elems, swizzle_elems)),
+                      plgpu.SwizzleTransform(swizzle),
+                  ),
+              ),
+          ],
+          grid=(grid_k,),
+          max_concurrent_steps=2,
+          delay_release=1,
+      )(a_gmem, b_gmem)
+      c_smem[...] = acc_reg[...].astype(dtype)
+
+    @jax.jit
+    def matmul(a: jax.Array, b: jax.Array) -> jax.Array:
+      return pl.pallas_call(
+          kernel,
+          in_specs=[
+              pl.BlockSpec(memory_space=plgpu.GMEM),
+              pl.BlockSpec(memory_space=plgpu.GMEM),
+          ],
+          out_specs=pl.BlockSpec((tile_m, tile_n), lambda m, n: (m, n)),
+          grid=(grid_m, grid_n),
+          out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
+          scratch_shapes=[plgpu.ACC((tile_m, tile_n), jnp.float32)],
+      )(a, b)
+
+    res = matmul(x, y)
+    np.testing.assert_array_equal(res, x @ y)
 
 
 class WarpSpecializedPipelineTest(PallasTest):

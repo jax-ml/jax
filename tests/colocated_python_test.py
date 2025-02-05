@@ -15,6 +15,7 @@
 import threading
 import time
 from typing import Sequence
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -30,6 +31,10 @@ import numpy as np
 config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
 
+try:
+  import cloudpickle  # noqa
+except (ModuleNotFoundError, ImportError):
+  raise unittest.SkipTest("tests depend on cloudpickle library")
 
 def _colocated_cpu_devices(
     devices: Sequence[jax.Device],

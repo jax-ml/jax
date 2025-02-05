@@ -456,6 +456,9 @@ MaybeTracer = Union[JaxType, Tracer]
 class ShardMapPrimitive(core.Primitive):
   multiple_results = True
 
+  def bind(self, *args, **params):
+    return self._true_bind(*args, **params)
+
   def bind_with_trace(self, trace, fun_and_args, params):
     fun, *args = fun_and_args
     return trace.process_shard_map(shard_map_p, fun, args, **params)
@@ -1160,7 +1163,8 @@ for o in it.chain(lax.__dict__.values(), slicing.__dict__.values(),
 
 for p in [control_flow.loops.cumsum_p, control_flow.loops.cumlogsumexp_p,
           control_flow.loops.cumprod_p, control_flow.loops.cummax_p,
-          control_flow.loops.cummin_p, pjit.sharding_constraint_p]:
+          control_flow.loops.cummin_p, pjit.sharding_constraint_p,
+          pjit.mesh_cast_p]:
   register_standard_check(p)
   register_standard_rewrite(p)
 
@@ -1715,7 +1719,9 @@ def _partial_eval_jaxpr_custom_rule(
   idx_map = {id(v): i for i, v in enumerate(out_vars)}
   out_fwd = [idx_map.get(id(v)) for v in res_vars]
   which = [f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd)]
-  with core.extend_axis_env_nd(eqn.params['mesh'].shape.items()):
+  mesh = eqn.params['mesh']
+  with (core.extend_axis_env_nd(mesh.shape.items()),
+        set_abstract_mesh(_as_manual_mesh(mesh))):
     jaxpr_known = pe.prune_jaxpr_outputs(jaxpr_known, [True] * num_out_primals + which)
     jaxpr_known, jaxpr_staged = _add_reshapes(which, jaxpr_known, jaxpr_staged)
   jaxpr_known = core.remove_named_axis_effects(jaxpr_known, mesh.axis_names)

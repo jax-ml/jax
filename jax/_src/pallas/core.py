@@ -222,10 +222,6 @@ class AbstractMemoryRef(state.AbstractRef):
   def __repr__(self) -> str:
     return f'MemRef<{self.memory_space}>{{{self.inner_aval.str_short()}}}'
 
-  @property
-  def sharding(self):
-    return self.inner_aval.sharding
-
   def update_weak_type(self, weak_type):
     return AbstractMemoryRef(
         self.inner_aval.update_weak_type(weak_type), self.memory_space)
@@ -413,9 +409,9 @@ class BlockSpec:
 
     fake_index_map_args, fake_index_map_kwargs = \
         index_map_tree.unflatten([False] * index_map_tree.num_leaves)
-    debug = api_util.tracing_debug_info("pallas_call index_map",
-                                        index_map_func, fake_index_map_args,
-                                        fake_index_map_kwargs)
+    debug = api_util.debug_info("pallas_call index_map",
+                                index_map_func, fake_index_map_args,
+                                fake_index_map_kwargs)
     flat_index_map_fun, index_map_out_tree_thunk = api_util.flatten_fun(
       lu.wrap_init(index_map_func, debug_info=debug), index_map_tree)
     index_map_src_info = NameAndSrcInfo.from_pallas_call(
@@ -423,7 +419,7 @@ class BlockSpec:
     )
     with tracing_grid_env(grid, mapped_dims):
       jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(
-          flat_index_map_fun, index_map_avals, debug_info=debug
+          flat_index_map_fun, index_map_avals
       )
     mapped_block_shape = tuple(mapped if s is None else s for s in block_shape)
     if len(out_avals) != len(block_shape):
@@ -890,7 +886,8 @@ def get_grid_mapping(
   )
   # The inputs for the index maps
   index_map_avals = (
-      (index_map_grid_aval.update(sharding=None),) * len(grid_spec.grid))
+      index_map_grid_aval.update(sharding=jax_core.get_cur_mesh_sharding()),
+  ) * len(grid_spec.grid)
   index_map_tree = tree_util.tree_structure((index_map_avals, {}))
 
   num_scalar_prefetch: int = getattr(grid_spec, "num_scalar_prefetch", 0)

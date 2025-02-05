@@ -147,13 +147,13 @@ class custom_vmap:
       raise AttributeError(
           f"No batching rule defined for custom_vmap function {fun_name} "
           "using def_vmap.")
-    debug = api_util.tracing_debug_info("custom_vmap", self.fun, args, {})
+    debug = api_util.debug_info("custom_vmap", self.fun, args, {})
     args_flat, in_tree = tree_flatten(args)
     flat_fun, out_tree = api_util.flatten_fun_nokwargs(
         lu.wrap_init(self.fun, debug_info=debug),
         in_tree)
     in_avals = [core.get_aval(x) for x in args_flat]
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
+    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
     in_tree = treedef_tuple((tree_structure(consts), in_tree))
     assert self.vmap_rule is not None

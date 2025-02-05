@@ -367,12 +367,46 @@ def nextafter(x1: ArrayLike, x2: ArrayLike) -> Array:
   """
   return nextafter_p.bind(x1, x2)
 
+@export
 def floor(x: ArrayLike) -> Array:
-  r"""Elementwise floor: :math:`\left\lfloor x \right\rfloor`."""
+  r"""Elementwise floor: :math:`\left\lfloor x \right\rfloor`.
+
+  This function lowers directly to the `stablehlo.floor`_ operation.
+
+  Args:
+    x: input array. Must have floating-point type.
+
+  Returns:
+    Array of same shape and dtype as ``x``, containing values rounded
+    to the next integer toward negative infinity.
+
+  See also:
+    - :func:`jax.lax.ceil`: round to the next integer toward positive infinity
+    - :func:`jax.lax.round`: round to the nearest integer
+
+  .. _stablehlo.floor: https://openxla.org/stablehlo/spec#floor
+  """
   return floor_p.bind(x)
 
+@export
 def ceil(x: ArrayLike) -> Array:
-  r"""Elementwise ceiling: :math:`\left\lceil x \right\rceil`."""
+  r"""Elementwise ceiling: :math:`\left\lceil x \right\rceil`.
+
+  This function lowers directly to the `stablehlo.ceil`_ operation.
+
+  Args:
+    x: input array. Must have floating-point type.
+
+  Returns:
+    Array of same shape and dtype as ``x``, containing values rounded
+    to the next integer toward positive infinity.
+
+  See also:
+    - :func:`jax.lax.floor`: round to the next integer toward negative infinity
+    - :func:`jax.lax.round`: round to the nearest integer
+
+  .. _stablehlo.ceil: https://openxla.org/stablehlo/spec#ceil
+  """
   return ceil_p.bind(x)
 
 class RoundingMethod(enum.IntEnum):
@@ -388,20 +422,38 @@ class RoundingMethod(enum.IntEnum):
   as “banker’s rounding” (e.g., 0.5 -> 0, 1.5 -> 2).
   """
 
+@export
 def round(x: ArrayLike,
           rounding_method: RoundingMethod = RoundingMethod.AWAY_FROM_ZERO
           ) -> Array:
   r"""Elementwise round.
 
-  Rounds values to the nearest integer.
+  Rounds values to the nearest integer. This function lowers directly to the
+  `stablehlo.round`_ operation.
 
   Args:
-    x: an array or scalar value to round.
+    x: an array or scalar value to round. Must have floating-point type.
     rounding_method: the method to use when rounding halfway values
-      (e.g., `0.5`). See :class:`jax.lax.RoundingMethod` for possible values.
+      (e.g., ``0.5``). See :class:`jax.lax.RoundingMethod` for possible values.
 
   Returns:
-    An array containing the elementwise rounding of x.
+    An array of the same shape and dtype as ``x``, containing the elementwise
+    rounding of ``x``.
+
+  See also:
+    - :func:`jax.lax.floor`: round to the next integer toward negative infinity
+    - :func:`jax.lax.ceil`: round to the next integer toward positive infinity
+
+  Examples:
+    >>> import jax.numpy as jnp
+    >>> from jax import lax
+    >>> x = jnp.array([-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5])
+    >>> jax.lax.round(x)  # defaults method is AWAY_FROM_ZERO
+    Array([-2., -1., -1.,  0.,  1.,  1.,  2.], dtype=float32)
+    >>> jax.lax.round(x, rounding_method=jax.lax.RoundingMethod.TO_NEAREST_EVEN)
+    Array([-2., -1., -0.,  0.,  0.,  1.,  2.], dtype=float32)
+
+  .. _stablehlo.round: https://openxla.org/stablehlo/spec#round
   """
   rounding_method = RoundingMethod(rounding_method)
   return round_p.bind(x, rounding_method=rounding_method)
@@ -409,29 +461,126 @@ def round(x: ArrayLike,
 def is_finite(x: ArrayLike) -> Array:
   r"""Elementwise :math:`\mathrm{isfinite}`.
 
-  For each element x returns `True` if and only if x is not :math:`\pm\infty` or
-  :math:`\mathit{NaN}`.
+  This function lowers directly to the  `stablehlo.is_finite`_ operation.
+
+  Args:
+    x: input array. Must have floating-point type.
+
+  Returns:
+    Array of boolean dtype with the same shape as ``x``, containing ``False`` where
+    ``x`` is :math:`\pm\infty` or :math:`\mathit{NaN}`, and ``True`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.isinf`: return True where array is infinite.
+    - :func:`jax.numpy.isnan`: return True where array is NaN.
+
+  .. _stablehlo.is_finite: https://openxla.org/stablehlo/spec#is_finite
   """
   return is_finite_p.bind(x)
 
 def exp(x: ArrayLike) -> Array:
-  r"""Elementwise exponential: :math:`e^x`."""
+  r"""Elementwise exponential: :math:`e^x`.
+
+  This function lowers directly to the  `stablehlo.exponential`_ operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+      exponential.
+
+  See also:
+    - :func:`jax.lax.exp2`: elementwise base-2 exponentional: :math:`2^x`.
+    - :func:`jax.lax.log`: elementwise natural logarithm: :math:`\mathrm{log}(x)`.
+
+  .. _stablehlo.exponential: https://openxla.org/stablehlo/spec#exponential
+  """
   return exp_p.bind(x)
 
 def exp2(x: ArrayLike) -> Array:
-  r"""Elementwise base-2 exponential: :math:`2^x`."""
+  r"""Elementwise base-2 exponential: :math:`2^x`.
+
+  This function is implemented in terms of the `stablehlo.exponential`_
+  and `stablehlo.multiply`_ operations.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+      base-2 exponential.
+
+  See also:
+    - :func:`jax.lax.exp`: elementwise exponentional: :math:`e^x`.
+    - :func:`jax.lax.log`: elementwise natural logarithm: :math:`\mathrm{log}(x)`.
+
+  .. _stablehlo.exponential: https://openxla.org/stablehlo/spec#exponential
+  .. _stablehlo.multiply: https://openxla.org/stablehlo/spec#multiply
+  """
   return exp2_p.bind(x)
 
 def expm1(x: ArrayLike) -> Array:
-  r"""Elementwise :math:`e^{x} - 1`."""
+  r"""Elementwise :math:`e^{x} - 1`.
+
+  This function lowers directly to the `stablehlo.exponential_minus_one`_
+  operation. Compared to the naive expression ``lax.exp(x) - 1``, it is
+  more accurate for ``x`` near zero.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+      exponential minus 1.
+
+  See also:
+    - :func:`jax.lax.exp`: elementwise exponentional: :math:`e^x`.
+    - :func:`jax.lax.log1p`: elementwise :math:`\mathrm{log}(1 + x)`.
+
+  .. _stablehlo.exponential_minus_one: https://openxla.org/stablehlo/spec#exponential_minus_one
+  """
   return expm1_p.bind(x)
 
 def log(x: ArrayLike) -> Array:
-  r"""Elementwise natural logarithm: :math:`\mathrm{log}(x)`."""
+  r"""Elementwise natural logarithm: :math:`\mathrm{log}(x)`.
+
+  This function lowers directly to the  `stablehlo.log`_ operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+      natural logarithm.
+
+  See also:
+    - :func:`jax.lax.exp`: elementwise exponentional: :math:`e^x`.
+
+  .. _stablehlo.log: https://openxla.org/stablehlo/spec#log
+  """
   return log_p.bind(x)
 
 def log1p(x: ArrayLike) -> Array:
-  r"""Elementwise :math:`\mathrm{log}(1 + x)`."""
+  r"""Elementwise :math:`\mathrm{log}(1 + x)`..
+
+  This function lowers directly to the  `stablehlo.log_plus_one`_ operation.
+  Compared to the naive expression ``lax.log(1 + x)``, it is more accurate
+  for ``x`` near zero.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+      natural logarithm of ``x + 1``.
+
+  See also:
+    - :func:`jax.lax.expm1`: elementwise :math:`e^x - 1`.
+    - :func:`jax.lax.log`: elementwise natural logarithm :math:`\mathrm{log}(x)`.
+
+  .. _stablehlo.log_plus_one: https://openxla.org/stablehlo/spec#log_plus_one
+  """
   return log1p_p.bind(x)
 
 def tanh(x: ArrayLike) -> Array:
@@ -745,9 +894,10 @@ def _trace_composite_to_jaxpr(fun: Callable,
                               in_tree: tree_util.PyTreeDef,
                               in_avals: Sequence[core.AbstractValue],
                               name: str,
-                              debug_info: api_util.TracingDebugInfo):
-  flat_fun, out_tree = api_util.flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug_info)
+                              debug_info: core.DebugInfo):
+  flat_fun, out_tree = api_util.flatten_fun_nokwargs(
+      lu.wrap_init(fun, debug_info=debug_info), in_tree)
+  jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
   if any(isinstance(c, core.Tracer) for c in consts):
     raise UnexpectedTracerError(
         "Found a JAX Tracer as a constant in the decomposition for the "
@@ -822,8 +972,8 @@ def composite(
   """
   @functools.wraps(decomposition)
   def _decorator(*args, **kwargs):
-    debug_info = api_util.tracing_debug_info("composite", decomposition,
-                                             args, kwargs)
+    debug_info = api_util.debug_info("composite", decomposition,
+                                     args, kwargs)
     flat_args, in_tree = tree_util.tree_flatten(args)
     in_avals = tuple(core.get_aval(x) for x in flat_args)
     closed_jaxpr, out_tree = _trace_composite_to_jaxpr(
@@ -3274,7 +3424,7 @@ def _convert_element_type_sharding_rule(operand, *, new_dtype, weak_type,
     if isinstance(sharding, NamedSharding):
       return NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
     else:
-      return None
+      return core.get_cur_mesh_sharding()
   return sharding
 
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type,
@@ -6540,6 +6690,8 @@ def _iota_abstract_eval(*dyn_shape, dtype, shape, dimension, sharding):
   if (not dyn_shape and
       not any(isinstance(d, core.DArray) and
               type(core.get_aval(d).dtype) is core.bint for d in shape)):
+    if sharding is None:
+      sharding = core.get_cur_mesh_sharding(spec=core.P(*[None] * len(shape)))
     return ShapedArray(shape, dtype, sharding=sharding)
   # TODO(mattjj): unify DShapedArray with ShapedArray, and remove this code
   return core.DShapedArray(_merge_dyn_shape(shape, dyn_shape), dtype, False)

@@ -104,30 +104,11 @@ _CPU_ENABLE_GLOO_COLLECTIVES = config.bool_flag(
     help="Deprecated, please use jax_cpu_collectives_implementation instead.",
 )
 
-CPU_COLLECTIVES_IMPLEMENTATIONS = ["none", "gloo", "mpi"]
-CPU_COLLECTIVES_IMPLEMENTATION = config.enum_flag(
-    name="jax_cpu_collectives_implementation",
-    default="none",
-    enum_values=CPU_COLLECTIVES_IMPLEMENTATIONS,
-    help=(
-        "Cross-process collective implementation used on CPU. Must be one of"
-        f" {CPU_COLLECTIVES_IMPLEMENTATIONS}"
-    ),
-)
-
 _CPU_ENABLE_ASYNC_DISPATCH = config.bool_flag(
     name="jax_cpu_enable_async_dispatch",
     default=True,
     help="Only applies to non-parallel computations. If False, run computations"
     "inline without async dispatch.",
-)
-
-NUM_CPU_DEVICES = config.int_flag(
-    name="jax_num_cpu_devices",
-    default=-1,
-    help="Number of CPU devices to use. If not provided, the value of "
-         "the XLA flag --xla_force_host_platform_device_count is used."
-         " Must be set before JAX is initialized.",
 )
 
 
@@ -255,7 +236,7 @@ def make_cpu_client(
     The created CPU client.
   """
   if collectives is None:
-    collectives_impl = CPU_COLLECTIVES_IMPLEMENTATION.value
+    collectives_impl = config.cpu_collectives_implementation.value
     if _CPU_ENABLE_GLOO_COLLECTIVES.value:
       collectives_impl = 'gloo'
       warnings.warn('Setting `jax_cpu_enable_gloo_collectives` is '
@@ -271,12 +252,13 @@ def make_cpu_client(
       collectives = xla_client._xla.make_mpi_collectives()
       collectives.Init()
       atexit.register(collectives.Finalize)
-    elif collectives_impl != 'none':
-      raise RuntimeError(f"Unknown collectives implementation "
-                        f"{collectives_impl}. Available implementations are "
-                        f"{CPU_COLLECTIVES_IMPLEMENTATIONS}.")
+    elif collectives_impl == 'megascale':
+      raise ValueError('JAX_CPU_COLLECTIVES_IMPLEMENTATION must "gloo" or "mpi"')
+    else:
+      # Already validated by config module
+      assert collectives_impl is None
 
-  num_devices = NUM_CPU_DEVICES.value if NUM_CPU_DEVICES.value >= 0 else None
+  num_devices = config.num_cpu_devices.value if config.num_cpu_devices.value >= 0 else None
   return xla_client.make_cpu_client(
     asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
     distributed_client=distributed.global_state.client,

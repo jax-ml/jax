@@ -195,7 +195,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   def _create_jaxpr(init):
     init_flat = tree_leaves(init)
     _, in_tree = tree_flatten((init, xs))
-    dbg = api_util.tracing_debug_info("scan", f, (init, xs), {})
+    dbg = api_util.debug_info("scan", f, (init, xs), {})
     carry_avals = tuple(map(core.get_aval, init_flat))
     jaxpr, _, out_tree = _initial_style_jaxpr(
         f, in_tree, carry_avals + x_avals, dbg)
@@ -585,7 +585,7 @@ def _for_partial_eval_custom(saveable, in_unknowns, in_inst, eqn):
   call_jaxpr = core.ClosedJaxpr(call_jaxpr_, call_jaxpr_consts)
   eqn_known = pe.new_jaxpr_eqn(known_invars, [*known_outvars, *resvars],
                                core.closed_call_p, dict(call_jaxpr=call_jaxpr),
-                               call_jaxpr.effects, eqn.source_info)
+                               call_jaxpr.effects, eqn.source_info, eqn.ctx)
 
   jaxpr_staged = _convert_inputs_to_reads(nsteps, len(res_avals),
                                           jaxpr_staged_resin_,
@@ -609,7 +609,7 @@ def _for_partial_eval_custom(saveable, in_unknowns, in_inst, eqn):
   _, outvars = partition_list(out_inst, eqn.outvars)
   eqn_staged = pe.new_jaxpr_eqn([*resvars, *eqn.invars], outvars,
                                core.closed_call_p, dict(call_jaxpr=call_jaxpr),
-                               call_jaxpr.effects, eqn.source_info)
+                               call_jaxpr.effects, eqn.source_info, eqn.ctx)
   new_vars = [*new_inst, *resvars]
   return eqn_known, eqn_staged, in_unknowns, out_inst, new_vars
 

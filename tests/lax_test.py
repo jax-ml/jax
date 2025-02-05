@@ -3894,7 +3894,8 @@ class CustomElementTypesTest(jtu.JaxTestCase):
 
   def setUp(self):
     core.pytype_aval_mappings[FooArray] = \
-        lambda x: core.ShapedArray(x.shape, FooTy())
+        lambda x: core.ShapedArray(x.shape, FooTy(),
+                                   sharding=core.get_cur_mesh_sharding())
     xla.canonicalize_dtype_handlers[FooArray] = lambda x: x
     pxla.shard_arg_handlers[FooArray] = shard_foo_array_handler
     mlir._constant_handlers[FooArray] = foo_array_constant_handler

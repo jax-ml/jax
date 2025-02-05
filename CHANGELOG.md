@@ -22,6 +22,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     JAX-level dead code elimination (DCE). See {jax-issue}`#25956` for more
     details.
 
+* Changes
+  * `JAX_CPU_COLLECTIVES_IMPLEMENTATION` and `JAX_NUM_CPU_DEVICES` now work as
+    env vars. Before they could only be specified via jax.config or flags.
+  * The `jax[tpu]` TPU extra no longer depends on the `libtpu-nightly` package.
+    This package may safely be removed if it is present on your machine; JAX now
+    uses `libtpu` instead.
+
 ## jax 0.5.0 (Jan 17, 2025)
 
 As of this release, JAX now uses

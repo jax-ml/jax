@@ -31,7 +31,6 @@ from jax._src.tree_util import (
     prefix_errors)
 from jax._src.tree_util import _replace_nones
 from jax._src import linear_util as lu
-from jax._src.linear_util import TracingDebugInfo
 from jax._src.util import (safe_map, WrapKwArgs, Hashable, HashableFunction,
                            Unhashable, safe_zip)
 from jax._src import traceback_util
@@ -582,7 +581,7 @@ def api_hook(fun, tag: str):
   return fun
 
 
-def tracing_debug_info(
+def debug_info(
     traced_for: str,
     fun: Callable,
     args: Sequence[Any],
@@ -591,17 +590,17 @@ def tracing_debug_info(
     static_argnums: tuple[int, ...] = (),
     static_argnames: tuple[str, ...] = (),
     result_paths_thunk: Callable[[], tuple[str, ...]] | None = None,
-    # TODO(necula): check if we really need this, e.g., to speed up tracing.
+    # TODO(necula): check if we really need this, e.g., to speed up tracing?
     sourceinfo: str | None = None,
     signature: inspect.Signature | None = None,
-) -> TracingDebugInfo:
+) -> core.DebugInfo:
   if sourceinfo is None:
     sourceinfo = fun_sourceinfo(fun)
   if signature is None:
     signature = fun_signature(fun)
   arg_names = _non_static_arg_names(signature, args, kwargs, static_argnums,
                                     static_argnames)
-  return TracingDebugInfo(traced_for, sourceinfo, arg_names, result_paths_thunk)
+  return core.DebugInfo(traced_for, sourceinfo, arg_names, result_paths_thunk)
 
 
 def fun_signature(fun: Callable) -> inspect.Signature | None:
@@ -619,7 +618,7 @@ _fun_name_re = re.compile(r"(?:<built-in function (\S+)>)")
 
 # TODO(mattjj): make this function internal to this module
 def fun_sourceinfo(fun: Callable) -> str:
-  # See TracingDebugInfo.fun_src_info
+  # See DebugInfo.fun_src_info
   res = getattr(fun, "__fun_sourceinfo__", None)
   if res is not None: return res
   while isinstance(fun, partial):
@@ -675,30 +674,6 @@ def _non_static_arg_names(fn_signature: inspect.Signature | None,
   arg_names = args_arg_names + kwargs_arg_names
   return arg_names
 
-@lu.transformation_with_aux2
-def result_paths(_fun, _store, *args, **kwargs):
-  "linear_util transform to get output pytree paths of pre-flattened function."
-  ans = _fun(*args, **kwargs)
-  _store.store([keystr(path) for path, _ in generate_key_paths(ans)])
-  return ans
-
-# TODO(necula): simplify this function, all it needs is to add the trace_debug to the Jaxpr
-def add_jaxpr_debug_info(jaxpr: core.Jaxpr,
-                         trace_debug: TracingDebugInfo | None,
-                         result_paths: tuple[str, ...] | None = None,
-                         ) -> core.Jaxpr:
-  """Add debug info to jaxpr, given trace-time debug info and result paths."""
-  if trace_debug is None:
-    return jaxpr
-  # TODO(necula): re-enable this safety check
-  # assert (result_paths is not None) ^ (trace_debug.result_paths_thunk is not None)
-  if result_paths is None:
-    result_paths = trace_debug.result_paths_thunk()  # type: ignore
-  debug_info = core.JaxprDebugInfo(
-      trace_debug.traced_for, trace_debug.func_src_info,
-      trace_debug.arg_names, tuple(result_paths))  # type: ignore
-  return jaxpr.replace(debug_info=debug_info)
-
 def hoist_obj_attrs(f, flat_args):
   idxs, objs, flat_args_ = [], [], []
   for i, x in enumerate(flat_args):
@@ -723,7 +698,7 @@ def register_class_with_attrs(t: type) -> None:
 _class_with_attrs: set[type] = set()
 
 # TODO(mattjj): make this function faster
-def _check_no_aliased_ref_args(dbg, avals, args):
+def _check_no_aliased_ref_args(dbg: core.DebugInfo | None, avals, args):
   assert config.mutable_array_checks.value
   refs: dict[int, int] = {}
   for i, (a, x) in enumerate(zip(avals, args)):
@@ -737,7 +712,7 @@ def _check_no_aliased_ref_args(dbg, avals, args):
         if dbg else
         f"at both flat index {dup_idx} and flat index {i}") from None
 
-def _check_no_aliased_closed_over_refs(dbg, consts, args) -> None:
+def _check_no_aliased_closed_over_refs(dbg: core.DebugInfo | None, consts, args) -> None:
   assert config.mutable_array_checks.value
   refs: set[int] = {id(core.get_referent(c)) for c in consts
                     if isinstance(core.get_aval(c), AbstractRef)}
@@ -748,4 +723,4 @@ def _check_no_aliased_closed_over_refs(dbg, consts, args) -> None:
           f"when tracing {dbg.func_src_info} for {dbg.traced_for}, a mutable "
           f"array reference of type {a.str_short()} was both closed over and "
           f"passed as the argument "
-          f"{dbg.arg_names[i]}" if dbg else "at flat index {i}")
+          f"{dbg.safe_arg_names(len(args))[i]}" if dbg else "at flat index {i}")
