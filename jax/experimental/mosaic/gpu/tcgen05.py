@@ -16,7 +16,6 @@
 import dataclasses
 import enum
 
-from jax._src import dtypes
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -28,20 +27,25 @@ from . import utils
 from . import fragmented_array as fa
 from . import _wgmma
 
+# MyPy does a terrible job with the MLIR API.
+# mypy: ignore-errors
+
+
+TCGEN05_SMEM_DESCRIPTOR_BIT = 1 << 46
+
 def create_smem_descriptor(
     memref_arg,
     leading_byte_offset: int,
     stride_byte_offset: int,
     swizzle: int | mgpu_dialect.SwizzlingMode | None,
 ):
-  blackwell_bit = 1 << 46
   return _wgmma.create_descriptor(
       memref_arg,
       leading_byte_offset,
       stride_byte_offset,
       swizzle,
       memory_space=3,
-      const_init=blackwell_bit,
+      const_init=TCGEN05_SMEM_DESCRIPTOR_BIT,
   )
 
 def create_instr_descriptor(
@@ -52,17 +56,20 @@ def create_instr_descriptor(
     transpose_a: bool = False,
     transpose_b: bool = False,
 ):
-  if input_dtype not in {np.float16, dtypes.bfloat16}:
+  f32 = ir.F32Type.get()
+  bf16 = ir.BF16Type.get()
+  f16 = ir.F16Type.get()
+  if input_dtype not in {f16, bf16}:
     raise NotImplementedError("Only float16 and bfloat16 inputs supported")
-  if acc_dtype not in {np.float32, np.float16}:
+  if acc_dtype not in {f32, f16}:
     raise NotImplementedError("Only float32 and float16 accumulators supported")
 
   desc = 0
   # We ignore sparsity in bits 0-3
-  desc |= (acc_dtype == np.float32) << 4  # D dtype, bits 4-5
+  desc |= (acc_dtype == f32) << 4  # D dtype, bits 4-5
   # Bit 6 is reserved
-  desc |= (input_dtype == dtypes.bfloat16) << 7  # A dtype, bits 7-9
-  desc |= (input_dtype == dtypes.bfloat16) << 10  # B dtype, bits 10-12
+  desc |= (input_dtype == bf16) << 7  # A dtype, bits 7-9
+  desc |= (input_dtype == bf16) << 10  # B dtype, bits 10-12
   # We ignore negate bits 13-14
   desc |= transpose_a << 15  # Transpose A
   desc |= transpose_b << 16  # Transpose B
@@ -75,19 +82,115 @@ def create_instr_descriptor(
   desc |= (m >> 4) << 24  # M >> 4, bits 24-28
   # Bit 29 is reserved
   # We ignore max shift under .ws, bits 30-31
-  return arith.constant(ir.IntegerType.get_signless(32), desc)  # type: ignore
+  return arith.constant(ir.IntegerType.get_signless(32), desc)
 
 
-def mma(dtype, num_cta, d_tmem, adesc, bdesc, idesc, enable_input_d):
-  if not (1 <= num_cta <= 2):
-    raise ValueError(f"num_cta must be 1 or 2, got: {num_cta}")
-  return llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [d_tmem, adesc, bdesc, idesc, enable_input_d],
-      f"tcgen05.mma.cta_group::1.kind::{dtype} [$0], $1, $2, $3, $4;",
-      "r,l,l,r,b",
-      has_side_effects=True,
+def mma(
+    d: ir.Value,
+    a: ir.Value,
+    b: ir.Value,
+    *,
+    a_swizzle: int = 128,
+    b_swizzle: int = 128,
+    num_cta: int = 1,
+    accumulate: ir.Value | bool = True,
+):
+  if not ir.MemRefType.isinstance(a.type):
+    raise ValueError(f"A must be a memref, got {a.type}")
+  if not ir.MemRefType.isinstance(b.type):
+    raise ValueError(f"B must be a memref, got: {b.type}")
+  if a_swizzle != 128 or b_swizzle != 128:
+    raise NotImplementedError("Only swizzle=128 has been tested")
+  if num_cta != 1:
+    raise NotImplementedError("Only num_cta=1 supported")
+  if isinstance(accumulate, bool):
+    accumulate = arith.constant(ir.IntegerType.get_signless(1), accumulate)
+
+  (
+      a_desc_base,
+      b_desc_base,
+      (m, k, n),
+      (m_tiling, kn_tiling),
+      element_type,
+      mma_params,
+      a_k_byte_stride,
+      b_k_byte_stride,
+  ) = _wgmma._validate_mma(
+      a,
+      b,
+      a_swizzle,
+      _wgmma.WGMMALayout.ROW_MAJOR,
+      _wgmma.WGMMALayout.COL_MAJOR,
+      descriptor_const_init=TCGEN05_SMEM_DESCRIPTOR_BIT,
   )
+
+  if m_tiling != 128:
+    raise ValueError(f"A must have rows tiled by 128, got: {m_tiling}")
+  a_strides, _ = ir.MemRefType(a.type).get_strides_and_offset()
+  a_m_byte_stride = a_strides[0] * utils.bytewidth(element_type)
+
+  groups_k = k // kn_tiling
+  groups_m = m // m_tiling
+
+  # TODO(apaszke): Verify ACC shape.
+
+  i64 = ir.IntegerType.get_signless(64)
+  for mi in range(groups_m):
+    for ki in range(groups_k):
+      a_mk = arith.addi(
+          a_desc_base,
+          utils.c(_wgmma.wgmma_encode(mi * a_m_byte_stride + ki * a_k_byte_stride), i64),
+      )
+      b_k = arith.addi(b_desc_base, utils.c(_wgmma.wgmma_encode(ki * b_k_byte_stride), i64))
+      accumulate = _do_mma(
+          d,
+          a_mk,
+          b_k,
+          d_type=ir.F32Type.get(),
+          m=m_tiling,
+          **mma_params,
+          accumulate=accumulate,
+      )
+
+
+def _do_mma(
+    d_addr: ir.Value,
+    a_desc: ir.Value,
+    b_desc: ir.Value,
+    a_transpose: bool,
+    b_transpose: bool,
+    a_k_stride: int,
+    b_k_stride: int,
+    m: int,
+    n: int,
+    swizzle: int,
+    element_type: ir.Type,
+    d_type: ir.Type,
+    accumulate: ir.Value,
+):
+  i1 = ir.IntegerType.get_signless(1)
+  i64 = ir.IntegerType.get_signless(64)
+  kn_tiling = swizzle // utils.bytewidth(element_type)
+  instr_k = 32 // utils.bytewidth(element_type)
+  if a_k_stride % 16 or b_k_stride % 16:
+    raise ValueError
+
+  i_desc = create_instr_descriptor(
+      m, n, d_type, element_type, a_transpose, b_transpose
+  )
+  for _ in range(kn_tiling // instr_k):
+    llvm.inline_asm(
+        ir.Type.parse("!llvm.void"),
+        [d_addr, a_desc, b_desc, i_desc, accumulate],
+        f"tcgen05.mma.cta_group::1.kind::{element_type} [$0], $1, $2, $3, $4;",
+        "r,l,l,r,b",
+        has_side_effects=True,
+    )
+    accumulate = arith.constant(i1, 1)
+    a_desc = arith.addi(a_desc, arith.constant(i64, a_k_stride >> 4))
+    b_desc = arith.addi(b_desc, arith.constant(i64, b_k_stride >> 4))
+  return accumulate
+
 
 def commit_arrive(barrier):
   return llvm.inline_asm(

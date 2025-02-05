@@ -53,6 +53,8 @@ def build_kernel(
   tile_k = 64  # TODO(apaszke): I think we need to tile TMA to change this.
   in_dtype = jnp.float16
   k_loop_iter = k // tile_k
+  tma_tile_m = 128
+  tma_tile_kn = 64
 
   if m % tile_m != 0:
     raise ValueError(f"{m=} must be divisible by {tile_m=}")
@@ -91,12 +93,17 @@ def build_kernel(
             src_ref=a,
             dst_ref=a_smem,
             gmem_slice=(ds(m_start, tile_m), ds(k_start, tile_k)),
+            gmem_transform=mgpu.TileTransform((tma_tile_m, tma_tile_kn)),
             **common_args,
         )
         ctx.async_copy(
             src_ref=b,
             dst_ref=b_smem,
             gmem_slice=(ds(n_start, tile_n), ds(k_start, tile_k)),
+            gmem_transform=(
+                mgpu.TileTransform((tma_tile_kn, tma_tile_kn)),
+                mgpu.TransposeTransform((1, 0, 2, 3)),
+            ),
             **common_args,
         )
 
@@ -106,32 +113,18 @@ def build_kernel(
       tcgen05.tmem_relinquish_alloc_permit()
       with mgpu.when(warp_leader):
         tmem_addr_value = llvm.load(ptr6, tmem_addr_addr)
-        idesc = tcgen05.create_instr_descriptor(
-            m=tile_n, n=tile_n, acc_dtype=jnp.float32, input_dtype=in_dtype
-        )
         @mgpu.fori(c(k_loop_iter, index), arith.constant(i1, 0))
         def _mma_body(ki, accumulate):
-          adesc = tcgen05.create_smem_descriptor(
-            a_smem, leading_byte_offset=16, stride_byte_offset=1024, swizzle=swizzle)
-          bdesc = tcgen05.create_smem_descriptor(
-            b_smem, leading_byte_offset=16, stride_byte_offset=1024, swizzle=swizzle)
           ab_full_barrier.wait()
-
-          # TODO(apaszke): Abstract this into a function.
-          assert tile_k % BLACKWELL_MMA_FP16_K == 0
-          def smem_descriptor_increment_address(desc, nbytes):
-            i64 = ir.IntegerType.get_signless(64)
-            return arith.addi(desc, arith.shrui(c(nbytes,i64), c(4,i64)))
-          for _ in range(tile_k // BLACKWELL_MMA_FP16_K):
-            tcgen05.mma("f16", 1, tmem_addr_value, adesc, bdesc, idesc, enable_input_d=accumulate)
-            accumulate = arith.constant(i1, 1)
-            adesc = smem_descriptor_increment_address(
-                adesc, BLACKWELL_MMA_FP16_K * 2
-            )
-            bdesc = smem_descriptor_increment_address(
-                bdesc, BLACKWELL_MMA_FP16_K * 2
-            )
-
+          tcgen05.mma(
+              tmem_addr_value,
+              a_smem,
+              mgpu.memref_transpose(b_smem, (0, 1, 3, 2)),
+              a_swizzle=swizzle,
+              b_swizzle=swizzle,
+              accumulate=accumulate,
+          )
+          accumulate = arith.constant(i1, 1)
           is_last_iter = arith.cmpi(
               arith.CmpIPredicate.eq, ki, c(k_loop_iter - 1, index)
           )
@@ -152,14 +145,14 @@ def build_kernel(
         dst_ref=d,
         gmem_slice=(ds(m_start, tile_m), ds(n_start, tile_n)),
         gmem_transform=mgpu.TileTransform((128, 64)),
-        swizzle=128,
+        swizzle=swizzle,
     )
     ctx.await_async_copy(0)
 
   smem = (
-      jax.ShapeDtypeStruct((tile_m, tile_k), jnp.float16),
-      jax.ShapeDtypeStruct((tile_n, tile_k), jnp.float16),
-      jax.ShapeDtypeStruct(mgpu.tile_shape((tile_m, tile_n), (128, 64)), jnp.float16),
+      jax.ShapeDtypeStruct(mgpu.tile_shape((tile_m, tile_k), (tma_tile_m, tma_tile_kn)), jnp.float16),
+      jax.ShapeDtypeStruct(mgpu.tile_shape((tile_k, tile_n), (tma_tile_kn, tma_tile_kn)), jnp.float16),
+      jax.ShapeDtypeStruct(mgpu.tile_shape((tile_m, tile_n), (tma_tile_m, tma_tile_kn)), jnp.float16),
       [mgpu.Barrier(arrival_count=1)] * 3,
       jax.ShapeDtypeStruct((1,), np.uint32),  # TMEM address
   )
