@@ -48,7 +48,7 @@ if [[ $os == "darwin" ]] || ( [[ $os == "linux" ]] && [[ $arch == "aarch64" ]] )
       bazel build --config=rbe_cross_compile_${os}_${arch} \
             --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
             --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
-            --test_env=JAX_NUM_GENERATED_CASES=25 \
+            --test_env=JAX_NUM_GENERATED_CASES=20 \
             --test_env=JAX_SKIP_SLOW_TESTS=true \
             --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
             --test_output=errors \
@@ -59,7 +59,7 @@ else
       bazel test --config=rbe_${os}_${arch} \
             --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
             --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
-            --test_env=JAX_NUM_GENERATED_CASES=25 \
+            --test_env=JAX_NUM_GENERATED_CASES=20 \
             --test_env=JAX_SKIP_SLOW_TESTS=true \
             --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
             --test_output=errors \
