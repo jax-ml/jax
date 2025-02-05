@@ -1133,16 +1133,20 @@ def lower_jaxpr_to_module(
         "In multi-platform lowering either all or no lowering platforms "
         f"should support donation. Lowering for {platforms} of which "
         f"only {platforms_with_donation} support donation")
+    input_output_aliases, donated_args, xla_donated_args = _set_up_aliases(
+        input_output_aliases, in_avals, out_avals, donated_args,
+        arg_memory_kinds, result_memory_kinds, in_layouts, out_layouts,
+        result_shardings if num_partitions > 1 else None)
     if (num_partitions > 1 and
         (result_shardings is None or
-         all(s is None or isinstance(s, AUTO) or contains_unconstrained(s)
+         any(s is None or isinstance(s, AUTO) or contains_unconstrained(s)
              for s in result_shardings))):
-      xla_donated_args = donated_args
-      donated_args = [False] * len(donated_args)
-    if xla_donated_args is None:
-      input_output_aliases, donated_args, xla_donated_args = _set_up_aliases(
-          input_output_aliases, in_avals, out_avals, donated_args,
-          arg_memory_kinds, result_memory_kinds, in_layouts, out_layouts)
+      if xla_donated_args is None:
+        xla_donated_args = [False] * len(donated_args)
+      for input_id in range(len(donated_args)):
+        if donated_args[input_id]:
+          xla_donated_args[input_id] = True
+          donated_args[input_id] = False
   if any(donated_args):
     unused_donations = [str(a) for a, d in zip(in_avals, donated_args) if d]
     msg = "See an explanation at https://jax.readthedocs.io/en/latest/faq.html#buffer-donation."
@@ -1237,7 +1241,7 @@ def lower_jaxpr_to_module(
 
 def _set_up_aliases(input_output_aliases, avals_in, avals_out,
                     donated_args, arg_memory_kinds, result_memory_kinds,
-                    in_layouts, out_layouts):
+                    in_layouts, out_layouts, result_shardings):
   if input_output_aliases is None:
     input_output_aliases = [None] * len(avals_in)
   else:
@@ -1296,7 +1300,10 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
             " for the input and output layout to be chosen by XLA and not the"
             " layout of the input which might not be optimal.")
       if (in_layouts is None or out_layouts is None or
-          in_layouts[input_id] == out_layouts[i]):
+          in_layouts[input_id] == out_layouts[i]) and (
+              result_shardings is None or not (
+              (s := result_shardings[i]) is None or
+              isinstance(s, AUTO) or contains_unconstrained(s))):
         input_output_aliases[input_id] = i
       else:
         # Fallback to xla donation if layouts don't match.
