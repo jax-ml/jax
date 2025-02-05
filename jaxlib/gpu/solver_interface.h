@@ -23,6 +23,10 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "jaxlib/gpu/vendor.h"
 
+#ifdef JAX_GPU_CUDA
+#include "third_party/gpus/cuda/include/cusolverSp.h"
+#endif
+
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 namespace solver {
@@ -205,6 +209,13 @@ JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::StatusOr<int>, GesvdjBatchedBufferSize);
       gpuGesvdjInfo_t params, int batch
 JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, GesvdjBatched);
 #undef JAX_GPU_SOLVER_GesvdjBatched_ARGS
+
+#define JAX_GPU_SOLVER_Csrlsvqr_ARGS(Type, ...)                          \
+  cusolverSpHandle_t handle, int n, int nnz, cusparseMatDescr_t matdesc, \
+      const Type *csrValA, const int *csrRowPtrA, const int *csrColIndA, \
+      const Type *b, double tol, int reorder, Type *x, int *singularity
+JAX_GPU_SOLVER_EXPAND_DEFINITION(absl::Status, Csrlsvqr);
+#undef JAX_GPU_SOLVER_Csrlsvqr_ARGS
 
 #endif  // JAX_GPU_CUDA
 
