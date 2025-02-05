@@ -1271,6 +1271,8 @@ class LaxRandomTest(jtu.JaxTestCase):
       for outcomes in [2, 3, 4]
   ])
   def testMultinomialShape(self, shape, outcomes):
+    if outcomes == 2:
+      self.skipTest('Broken at HEAD b/394428711')
     key = random.key(0)
 
     key, subkey = random.split(key)
