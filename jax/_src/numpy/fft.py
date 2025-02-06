@@ -18,8 +18,8 @@ from collections.abc import Sequence
 import operator
 import numpy as np
 
-from jax import dtypes
 from jax import lax
+from jax._src import dtypes
 from jax._src.lib import xla_client
 from jax._src.util import safe_zip
 from jax._src.numpy.util import ensure_arraylike, promote_dtypes_inexact
@@ -1175,7 +1175,7 @@ def fftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,
     - :func:`jax.numpy.fft.rfftfreq`: frequencies for use with
       :func:`~jax.numpy.fft.rfft` and :func:`~jax.numpy.fft.irfft`.
   """
-  dtype = dtype or dtypes.canonicalize_dtype(jnp.float_)
+  dtype = dtype or dtypes.canonicalize_dtype(dtypes.float_)
   if isinstance(n, (list, tuple)):
     raise ValueError(
           "The n argument of jax.numpy.fft.fftfreq only takes an int. "
@@ -1227,7 +1227,7 @@ def rfftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,
     - :func:`jax.numpy.fft.fftfreq`: frequencies for use with
       :func:`~jax.numpy.fft.fft` and :func:`~jax.numpy.fft.ifft`.
   """
-  dtype = dtype or dtypes.canonicalize_dtype(jnp.float_)
+  dtype = dtype or dtypes.canonicalize_dtype(dtypes.float_)
   if isinstance(n, (list, tuple)):
     raise ValueError(
           "The n argument of jax.numpy.fft.rfftfreq only takes an int. "

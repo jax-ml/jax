@@ -1579,7 +1579,7 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
   if n <= 1:
     return jnp.real(alpha)
 
-  if jnp.issubdtype(alpha.dtype, jnp.complexfloating):
+  if jnp.issubdtype(alpha.dtype, np.complexfloating):
     alpha = jnp.real(alpha)
     beta_sq = jnp.real(beta * jnp.conj(beta))
     beta_abs = jnp.sqrt(beta_sq)
