@@ -120,7 +120,7 @@ class SymbolicZero:
   def from_primal_value(val: Any) -> SymbolicZero:
     return SymbolicZero(get_aval(val).to_tangent_aval())
 
-def zero_from_primal(val, symbolic_zeros=False):
+def zero_from_primal(val: T, symbolic_zeros: bool = False) -> T:
   def f(x):
     tangent_aval = get_aval(x).to_tangent_aval()
     if symbolic_zeros:
