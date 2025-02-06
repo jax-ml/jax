@@ -38,6 +38,7 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
+from jax._src.lax import lax as lax_internal
 from jax._src.lax.lax import DotDimensionNumbers, _dot_general_batch_dim_nums
 from jax._src.lib import gpu_sparse
 from jax._src.lib.mlir.dialects import hlo
@@ -762,7 +763,7 @@ class BCSR(JAXSparse):
 
   def __init__(self, args: tuple[Array, Array, Array], *, shape: Sequence[int],
                indices_sorted: bool = False, unique_indices: bool = False):
-    self.data, self.indices, self.indptr = map(jnp.asarray, args)
+    self.data, self.indices, self.indptr = map(lax_internal.asarray, args)
     self.indices_sorted = indices_sorted
     self.unique_indices = unique_indices
     super().__init__(args, shape=shape)

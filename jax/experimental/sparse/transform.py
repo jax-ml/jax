@@ -64,6 +64,7 @@ from jax._src import sharding_impls
 from jax.experimental.sparse.bcoo import bcoo_multiply_dense, bcoo_multiply_sparse
 import jax.numpy as jnp
 from jax._src.api_util import flatten_fun_nokwargs
+from jax._src.lax import lax as lax_internal
 from jax._src.lib import pytree
 from jax._src.interpreters import partial_eval as pe
 from jax.tree_util import tree_flatten, tree_map, tree_unflatten
@@ -77,6 +78,7 @@ sparse_rules_bcoo : dict[core.Primitive, Callable] = {}
 sparse_rules_bcsr : dict[core.Primitive, Callable] = {}
 
 _zero_preserving_linear_unary_primitives = [
+  lax.asarray_p,
   lax.conj_p,
   lax.copy_p,
   lax.imag_p,
@@ -145,7 +147,7 @@ class SparsifyEnv:
     self._buffers = list(bufs)
 
   def _push(self, arr: Array) -> int:
-    self._buffers.append(jnp.asarray(arr))
+    self._buffers.append(lax_internal.asarray(arr))
     return len(self._buffers) - 1
 
   def data(self, spvalue: SparsifyValue) -> Array:

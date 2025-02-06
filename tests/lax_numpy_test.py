@@ -3665,6 +3665,30 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.assertArraysEqual(x_jax, func(x_np), check_dtypes=False)
       self.assertArraysEqual(x_jax, func(x_buf), check_dtypes=False)
 
+  def testAsarrayVmap(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/25745
+    x = np.arange(4)
+    func = jax.vmap(jnp.asarray)
+    self.assertIsInstance(func(x), jax.Array)
+
+  def testAsarrayPrimitive(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/18020
+
+    # JAX array input
+    jaxpr = jax.jit(jnp.asarray).trace(jnp.arange(4)).jaxpr
+    self.assertLen(jaxpr.eqns, 1)
+    self.assertEqual(jaxpr.eqns[0].primitive, jax.lax.asarray_p)
+
+    # NumPy array input
+    jaxpr = jax.jit(jnp.asarray).trace(np.arange(4)).jaxpr
+    self.assertLen(jaxpr.eqns, 1)
+    self.assertEqual(jaxpr.eqns[0].primitive, jax.lax.asarray_p)
+
+    # Scalar input
+    jaxpr = jax.jit(jnp.asarray).trace(1.0).jaxpr
+    self.assertLen(jaxpr.eqns, 1)
+    self.assertEqual(jaxpr.eqns[0].primitive, jax.lax.asarray_p)
+
   @jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*")
   def testArrayDtypeInference(self):
     def _check(obj, out_dtype, weak_type):
