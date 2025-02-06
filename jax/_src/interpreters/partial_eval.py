@@ -2022,8 +2022,11 @@ class DynamicJaxprTrace(core.Trace):
     self.frame.add_eqn(eqn)
     return out_tracers
 
-  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
-                              symbolic_zeros):
+  def process_custom_vjp_call(self, prim: core.Primitive,
+                              fun: lu.WrappedFun,
+                              fwd: lu.WrappedFun, bwd: lu.WrappedFun, tracers,
+                              out_trees: Callable[[], Sequence[PyTreeDef]],
+                              symbolic_zeros: bool):
     tracers = map(self.to_jaxpr_tracer, tracers)
     in_avals = [t.aval for t in tracers]
     fun_jaxpr, out_avals, consts, _ = trace_to_jaxpr_dynamic(fun, in_avals)
@@ -2041,7 +2044,8 @@ class DynamicJaxprTrace(core.Trace):
     invars = map(self.getvar, tracers)
     constvars = map(self.getvar, map(self.to_jaxpr_tracer, consts))
     outvars = map(self.makevar, out_tracers)
-    eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim.initial_style,
+    eqn = new_jaxpr_eqn([*constvars, *invars], outvars,
+                        prim.initial_style,  # type: ignore[attribute-error]
                         dict(fun_jaxpr=closed_fun_jaxpr,
                              fwd_jaxpr_thunk=fwd_jaxpr_from_zeros,
                              num_consts=len(consts),

@@ -1652,8 +1652,8 @@ def _promote_scalar_residuals(f: Callable, *args, **kwargs):
                 for x in out_consts]
   return jaxpr, (in_fwds, out_fwds, out_pvals, out_consts, env)
 
-def _promote_scalar_residuals_jaxpr(jaxpr, which):
-  @lu.wrap_init
+def _promote_scalar_residuals_jaxpr(jaxpr: core.Jaxpr,
+                                    which: Sequence[bool]):
   def fun(*res_and_args):
     res, args = split_list(res_and_args, [len(jaxpr.constvars)])
     res = [_rem_singleton(x) if w else x for x, w in zip(res, which)]
@@ -1661,7 +1661,8 @@ def _promote_scalar_residuals_jaxpr(jaxpr, which):
   res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for v, w in zip(jaxpr.constvars, which)]
   in_avals = [*res_avals, *[v.aval for v in jaxpr.invars]]
-  jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(fun, in_avals)
+  jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
+      lu.wrap_init(fun, debug_info=jaxpr.debug_info), in_avals)
   return jaxpr
 
 
@@ -1673,20 +1674,20 @@ def _unmentioned2(mesh: Mesh, names: AxisNames,
   return [n for n in _all_mesh_names_except_spmd(mesh) if n not in name_set]
 
 
-def _shard_map_transpose(out_cts, *args, jaxpr, mesh, in_names, out_names,
+def _shard_map_transpose(out_cts, *args,
+                         jaxpr: core.Jaxpr, mesh, in_names, out_names,
                          check_rep, rewrite, auto):
   mb_div = lambda x, y: x / y if y != 1 else x
   out_cts = [ad.Zero(_shard_aval(mesh, ns, x.aval)) if type(x) is ad.Zero
       else x if rewrite or dtypes.dtype(x) == dtypes.float0
       else mb_div(x, prod(map(mesh.shape.get, _unmentioned2(mesh, ns, auto))))
       for ns, x in zip(out_names, out_cts)]
-  args = [x if type(x) is not ad.UndefinedPrimal else
-          ad.UndefinedPrimal(_shard_aval(mesh, ns, x.aval))
-          for ns, x in zip(in_names, args)]
+  args = tuple(x if type(x) is not ad.UndefinedPrimal else
+               ad.UndefinedPrimal(_shard_aval(mesh, ns, x.aval))
+               for ns, x in zip(in_names, args))
   all_args, in_tree = tree_flatten((out_cts, args))
 
-  @lu.wrap_init
-  def fun_trans(out_cts, args):
+  def fun_trans_callable(out_cts, args):
     res, undefs = partition_list(map(ad.is_undefined_primal, args), args)
     jaxpr_known, jaxpr_unknown, _, _ = pe.partial_eval_jaxpr_nounits(
         pe.close_jaxpr(jaxpr), map(ad.is_undefined_primal, args), False)
@@ -1700,6 +1701,8 @@ def _shard_map_transpose(out_cts, *args, jaxpr, mesh, in_names, out_names,
         for ns, x in zip(in_names, out)]
     return out
 
+  fun_trans = lu.wrap_init(fun_trans_callable,
+                           debug_info=jaxpr.debug_info)
   fun_trans, nz_arg_cts = ad.nonzero_outputs(fun_trans)
   fun_trans_flat, out_tree = api_util.flatten_fun_nokwargs(fun_trans, in_tree)
 
@@ -2007,8 +2010,11 @@ class RewriteTrace(core.Trace):
       out_reps = out_reps[:len(out_reps) // 2]
     return map(partial(RewriteTracer, self), out_reps, out_vals)
 
-  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
-                              symbolic_zeros):
+  def process_custom_vjp_call(self, prim: core.Primitive, fun: lu.WrappedFun,
+                              fwd: lu.WrappedFun, bwd: lu.WrappedFun,
+                              tracers,
+                              out_trees: Callable[[], Sequence[PyTreeDef]],
+                              symbolic_zeros: bool):
     if symbolic_zeros:
       msg = ("Please open an issue at https://github.com/jax-ml/jax/issues and "
              "as a temporary workaround pass the check_rep=False argument to "
@@ -2076,13 +2082,15 @@ def _replication_rewrite_nomatch(
     jaxpr: core.ClosedJaxpr,
     in_rep: Sequence[set[AxisName]],
 ) -> tuple[core.ClosedJaxpr, list[set[AxisName]]]:
-  f = lu.wrap_init(partial(core.eval_jaxpr, jaxpr.jaxpr, jaxpr.consts))
+  f = lu.wrap_init(partial(core.eval_jaxpr, jaxpr.jaxpr, jaxpr.consts),
+                   debug_info=jaxpr.jaxpr.debug_info)
   f, out_rep = _efficient_transpose_rewrite_nomatch(f, mesh, in_rep)
   jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(f, jaxpr.in_avals)
   return core.ClosedJaxpr(jaxpr_, consts), out_rep()
 
 @lu.transformation_with_aux2
-def _rewrite_subtrace(f, store, tag, mesh, in_reps, *in_vals):
+def _rewrite_subtrace(f: Callable, store: lu.Store,
+                      tag: core.TraceTag, mesh: Mesh, in_reps, *in_vals):
   with core.take_current_trace() as parent_trace:
     assert len(in_reps) == len(in_vals), (len(in_reps), len(in_vals))
     t = RewriteTrace(parent_trace, tag, mesh)
@@ -2093,13 +2101,14 @@ def _rewrite_subtrace(f, store, tag, mesh, in_reps, *in_vals):
     store.store(out_reps)
     return out_vals
 
-def _rewrite_bwd(bwd, mesh, in_reps, reps_dst):
+def _rewrite_bwd(bwd: lu.WrappedFun,
+                 mesh: Mesh, in_reps, reps_dst) -> lu.WrappedFun:
   def new_bwd(*args):
     tag = core.TraceTag()
-    bwd_, reps_thunk = _rewrite_subtrace(lu.wrap_init(bwd), tag, mesh, in_reps())
+    bwd_, reps_thunk = _rewrite_subtrace(bwd, tag, mesh, in_reps())
     out = bwd_.call_wrapped(*args)
     return map(_match_replication, reps_thunk(), reps_dst, out)
-  return new_bwd
+  return lu.wrap_init(new_bwd, debug_info=bwd.debug_info)
 
 def _match_replication(src, dst, x):
   if dst - src:

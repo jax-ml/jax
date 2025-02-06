@@ -96,8 +96,12 @@ class TracerSpy:
   def __init__(self):
     self.tracers = []
 
-  def append(self, t: core.Tracer):
+  def append(self, t: Any):
     try:
+      # We plan to do boolean conversion and catch the exception, but this works
+      # only for scalars
+      if isinstance(t, core.Tracer) and t.shape:
+        t = jnp.sum(t)
       if t:
         pass
       assert False, t
@@ -862,6 +866,32 @@ class DebugInfoTest(jtu.JaxTestCase):
             re.compile(r".*func.func public @main\(.*jax.result_info = \"\[1\]\"}"),
         ])
 
+  def test_vjp_remat(self):
+    tracer_spy = TracerSpy()
+    def apply_fn(inp):
+      tracer_spy.append(inp)
+      def to_remat(x):
+        tracer_spy.append(x)
+        return jax.nn.relu(x * x)
+      fn = jax.checkpoint(to_remat)
+      return jax.vjp(fn, inp)
+
+    self._check_tracers_and_jaxprs(
+        jax.jit(apply_fn),
+        2.,
+        tracer_spy=tracer_spy,
+        expected_jaxpr_debug_infos=[
+            # TODO(necula): what are these flat_index components?
+            "traced_for=jit, fun=apply_fn, arg_names=inp, result_paths=[0],[1][<flat index 0>][0][<flat index 0>][0][0]",
+            re.compile(r"traced_for=custom_jvp fun, fun=relu at .*/nn/functions.py:.*, arg_names=x, result_paths="),
+            re.compile(r"traced_for=jit, fun=relu at .*/nn/functions.py:.*, arg_names=x, result_paths="),
+        ],
+        check_tracer_arg_name=True,
+        expected_tracer_debug_infos=[
+            "traced_for=checkpoint / remat, fun=to_remat, arg_names=x, from x",
+            "traced_for=jit, fun=apply_fn, arg_names=inp, from inp",
+        ])
+
   def test_custom_jvp(self):
     tracer_spy = TracerSpy()
     @jax.custom_jvp
@@ -959,7 +989,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         check_tracer_arg_name=True,
         expected_tracer_debug_infos=[
             "traced_for=custom_vjp fun, fun=my_f, arg_names=x['a'], from x['a']",
-            # TODO(necula): from None
+            # TODO(necula): from None?
             "traced_for=jit, fun=to_diff, arg_names=x['a'], from None",
             "traced_for=jit, fun=to_diff, arg_names=x['a'], from x['a']",
         ])
@@ -1435,6 +1465,33 @@ class DebugInfoTest(jtu.JaxTestCase):
         ],
     )
 
+  def test_hessian(self):
+    tracer_spy = TracerSpy()
+
+    def my_f(x):
+      tracer_spy.append(x)
+      return jnp.square(x).mean()
+
+    x = jax.random.uniform(jax.random.key(0), shape=(8, 4))
+
+    self._check_tracers_and_jaxprs(
+        jax.jit(jax.hessian(jax.jit(my_f))),
+        x,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=x, result_paths=",
+            # TODO(necula): arg_names and result_paths?
+            "traced_for=jit, fun=my_f, arg_names=None,x, result_paths=,",
+            "traced_for=jit, fun=my_f, arg_names=x, result_paths=,,,",
+        ],
+        tracer_spy=tracer_spy,
+        check_tracer_arg_name=True,
+        expected_tracer_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=x, from x",
+        ],
+    )
+
+    (x).block_until_ready()
+
   def test_remat(self):
     tracer_spy = TracerSpy()
     def my_f(x):
@@ -1506,7 +1563,6 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=checkpoint / remat, fun=my_f, arg_names=None,None, result_paths=",
             "traced_for=shard_map, fun=my_f, arg_names=x, result_paths=",
             "traced_for=shard_map, fun=my_f, arg_names=None,None, result_paths=",
-            "None",  # TODO(necula): missing
         ],
         check_tracer_arg_name=True,
         expected_tracer_debug_infos=[
@@ -1657,6 +1713,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         expected_tracer_debug_infos=[
             "traced_for=custom_linear_solve solve, fun=my_solve, arg_names=x",
             "traced_for=custom_linear_solve transpose_solve, fun=my_tr_solve, arg_names=x",
+            "traced_for=custom_linear_solve, fun=my_high_precision_dot, arg_names=b",
             "None",  # TODO(necula): there are missing debug info
         ])
 

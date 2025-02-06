@@ -374,15 +374,16 @@ class CustomJVPCallPrimitive(core.Primitive):
 
   def get_bind_params(self, params):
     new_params = dict(params)
-    call_jaxpr = new_params.pop('call_jaxpr')
-    num_consts = new_params.pop('num_consts')
+    call_jaxpr: core.ClosedJaxpr = new_params.pop('call_jaxpr')
+    num_consts: int = new_params.pop('num_consts')
     jvp_jaxpr_thunk = new_params.pop('jvp_jaxpr_thunk')
-    fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr))
-    jvp = lift_jvp(num_consts, jvp_jaxpr_thunk)
+    fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr),
+                       debug_info=call_jaxpr.jaxpr.debug_info)
+    jvp = lift_jvp(num_consts, jvp_jaxpr_thunk, call_jaxpr.jaxpr.debug_info)
     return [fun, jvp], new_params
 
-def lift_jvp(num_consts: int, jvp_jaxpr_thunk: Callable) -> lu.WrappedFun:
-  @lu.wrap_init
+def lift_jvp(num_consts: int, jvp_jaxpr_thunk: Callable,
+             debug_info: core.DebugInfo | None) -> lu.WrappedFun:
   def jvp(*xs):
     n, ragged = divmod(len(xs), 2)
     assert not ragged
@@ -398,7 +399,7 @@ def lift_jvp(num_consts: int, jvp_jaxpr_thunk: Callable) -> lu.WrappedFun:
                     for p, z in zip(out_primals, out_zeros)]
     assert next(nz_out_tangents_, None) is None
     return [*out_primals, *out_tangents]
-  return jvp
+  return lu.wrap_init(jvp, debug_info=debug_info)
 
 effects.custom_derivatives_allowed_effects.add_type(lax.InOutFeedEffect)
 
@@ -435,8 +436,9 @@ def _custom_jvp_call_transpose(params, jaxpr, args, ct, _):
 ad.primitive_transposes[custom_jvp_call_p] = _custom_jvp_call_transpose
 
 @weakref_lru_cache
-def _cached_closed_call_dce_instantiate(jaxpr_, used_outputs: tuple[bool, ...]
-                            ) -> tuple[core.ClosedJaxpr, list[bool]]:
+def _cached_closed_call_dce_instantiate(jaxpr_: core.ClosedJaxpr,
+                                        used_outputs: tuple[bool, ...]
+                                        ) -> tuple[core.ClosedJaxpr, list[bool]]:
   jaxpr, consts = jaxpr_.jaxpr, jaxpr_.consts
   new_jaxpr, used_inputs = pe.dce_jaxpr(jaxpr, used_outputs, True)
   return core.ClosedJaxpr(new_jaxpr, consts), used_inputs
@@ -673,7 +675,7 @@ class custom_vjp(Generic[ReturnValue]):
       flat_fwd, out_trees = _flatten_fwd(
           fwd_, self.nondiff_argnums, self.symbolic_zeros, debug_fun,
           debug_fwd, in_tree, out_type)
-      flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees).call_wrapped
+      flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees)
       out_flat = custom_vjp_call_p.bind(flat_fun, flat_fwd, flat_bwd,
                                         *args_flat, out_trees=out_trees,
                                         symbolic_zeros=self.symbolic_zeros)
@@ -940,7 +942,9 @@ mlir.register_lowering(custom_vjp_call_jaxpr_p, mlir.lower_fun(
 def _custom_vjp_call_jaxpr_jvp(
     primals, tangents, *, fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[..., tuple[core.Jaxpr, Sequence[Any]]],
-    num_consts: int, bwd: Callable, out_trees: Callable, symbolic_zeros: bool):
+    num_consts: int, bwd: lu.WrappedFun,
+    out_trees: Callable[[], Sequence[PyTreeDef]],
+    symbolic_zeros: bool):
   _, args = split_list(primals, [num_consts])
   consts_dot, args_dot = split_list(tangents, [num_consts])
   if any(type(t) is not Zero for t in consts_dot):
@@ -963,7 +967,8 @@ def _custom_vjp_call_jaxpr_vmap(
     axis_data, args, in_dims, *,
     fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[..., tuple[core.Jaxpr, Sequence[Any]]],
-    num_consts: int, bwd: Callable, out_trees: Callable, symbolic_zeros: bool):
+    num_consts: int, bwd: lu.WrappedFun,
+    out_trees: Callable, symbolic_zeros: bool):
   args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
   in_batched = [d is not not_mapped for d in in_dims]
@@ -1000,12 +1005,13 @@ def _custom_vjp_call_jaxpr_dce(
 ) -> tuple[list[bool], core.JaxprEqn | None]:
   if not any(used_outs) and not pe.has_effects(eqn):
     return [False] * len(eqn.invars), None
-
-  fun_jaxpr = eqn.params["fun_jaxpr"]
+  fun_jaxpr: core.ClosedJaxpr = eqn.params["fun_jaxpr"]
   fwd_jaxpr_thunk = eqn.params["fwd_jaxpr_thunk"]
-  bwd = eqn.params["bwd"]
-  out_trees = eqn.params["out_trees"]
-  symbolic_zeros = eqn.params["symbolic_zeros"]
+  bwd: lu.WrappedFun = eqn.params["bwd"]
+  out_trees: Callable[[], Sequence[PyTreeDef]] = eqn.params["out_trees"]
+  symbolic_zeros: bool = eqn.params["symbolic_zeros"]
+  dce_fun_jaxpr: core.ClosedJaxpr
+  used_ins: Sequence[bool]
   dce_fun_jaxpr, used_ins = _cached_closed_call_dce_instantiate(
       fun_jaxpr, tuple(used_outs))
   assert all(used_ins)
@@ -1019,7 +1025,6 @@ def _custom_vjp_call_jaxpr_dce(
         fwd_jaxpr, (True,) * num_res + tuple(used_outs))
     return dce_fwd_jaxpr.jaxpr, dce_fwd_jaxpr.consts
 
-  @lu.wrap_init
   def dce_bwd(*args):
     _, res_tree = out_trees()
     res, cts = split_list(args, [res_tree.num_leaves])
@@ -1035,19 +1040,21 @@ def _custom_vjp_call_jaxpr_dce(
         else:
           all_cts.append(zeros_like_aval(ct_aval))
     assert next(cts_, None) is None
-    return bwd(*res, *all_cts)
+    return bwd.call_wrapped(*res, *all_cts)
 
+  dce_bwd_wrapped = lu.wrap_init(dce_bwd,
+                                 debug_info=bwd.debug_info)
   outvars = [v for used, v in zip(used_outs, eqn.outvars) if used]
   new_params = dict(
       eqn.params,
       fun_jaxpr=dce_fun_jaxpr,
       fwd_jaxpr_thunk=dce_fwd_jaxpr_thunk,
-      bwd=dce_bwd.call_wrapped,
+      bwd=dce_bwd_wrapped,
   )
   new_eqn = pe.new_jaxpr_eqn(
       eqn.invars, outvars, eqn.primitive, new_params, dce_fun_jaxpr.effects,
       eqn.source_info, eqn.ctx)
-  return used_ins, new_eqn
+  return list(used_ins), new_eqn
 pe.dce_rules[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_dce
 
 xla.register_initial_style_primitive(custom_vjp_call_jaxpr_p)
@@ -1125,7 +1132,9 @@ def custom_gradient(fun):
   def fwd(*args, **kwargs):
     ans, rule = fun(*args, **kwargs)
     ans_flat, out_tree = tree_flatten((ans,))
-    rule, in_tree = flatten_fun_nokwargs(lu.wrap_init(rule), out_tree)
+    debug_fwd = debug_info("custom_gradient fwd", rule, (ans,), {})
+    rule, in_tree = flatten_fun_nokwargs(lu.wrap_init(rule,
+                                                      debug_info=debug_fwd), out_tree)
     ans_avals = [core.get_aval(x).to_tangent_aval() for x in ans_flat]
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(rule, ans_avals)
     return ans, Residuals(jaxpr, in_tree(), out_tree, consts)
@@ -1224,10 +1233,11 @@ def closure_convert(fun: Callable, *example_args) -> tuple[Callable, list[Any]]:
   """
   flat_args, in_tree = tree_flatten(example_args)
   in_avals = tuple(map(core.get_aval, flat_args))
+  debug = debug_info("closure_convert", fun, example_args, {})
   if config.check_tracer_leaks.value:
-    return _closure_convert_for_avals.__wrapped__(fun, in_tree, in_avals)
+    return _closure_convert_for_avals.__wrapped__(fun, in_tree, in_avals, debug)
   else:
-    return _closure_convert_for_avals(fun, in_tree, in_avals)
+    return _closure_convert_for_avals(fun, in_tree, in_avals, debug)
 
 def _maybe_perturbed(x: Any) -> bool:
   # False if x can't represent an AD-perturbed value (i.e. a value
@@ -1251,8 +1261,10 @@ def _maybe_perturbed(x: Any) -> bool:
     return True  # We can't be sure!
 
 @cache()
-def _closure_convert_for_avals(fun, in_tree, in_avals):
-  wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+def _closure_convert_for_avals(fun, in_tree, in_avals,
+                               debug_info: core.DebugInfo):
+  wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun, debug_info=debug_info),
+                                               in_tree)
   jaxpr, out_pvals, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
   out_tree = out_tree()
 

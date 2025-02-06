@@ -865,7 +865,7 @@ sparse_rules_bcoo[sparse.todense_p] = _todense_sparse_rule
 sparse_rules_bcsr[sparse.todense_p] = _todense_sparse_rule
 
 def _custom_jvp_sparse_rule(spenv, *spvalues, **params):
-  call_jaxpr = params.pop('call_jaxpr')
+  call_jaxpr: core.ClosedJaxpr = params.pop('call_jaxpr')
   jvp_jaxpr_thunk = params.pop('jvp_jaxpr_thunk')
   num_consts = params.pop('num_consts')
   sp_call_jaxpr, out_tree = _sparsify_jaxpr(spenv, call_jaxpr, *spvalues)
@@ -874,7 +874,7 @@ def _custom_jvp_sparse_rule(spenv, *spvalues, **params):
     sparrs = arrays_to_spvalues(spenv, arrs)
     out = eval_sparse(call_jaxpr.jaxpr, call_jaxpr.consts, sparrs, spenv)
     return spvalues_to_arrays(spenv, out)
-  jvp = lift_jvp(num_consts, jvp_jaxpr_thunk)
+  jvp = lift_jvp(num_consts, jvp_jaxpr_thunk, call_jaxpr.jaxpr.debug_info)
   invals = spvalues_to_arrays(spenv, spvalues)
   outvals = jax.custom_derivatives.custom_jvp_call_p.bind(fun, jvp, *invals, **params)
   return arrays_to_spvalues(spenv, outvals)
