@@ -214,6 +214,28 @@ _default_types: dict[str, type[Any]] = {
     'c': complex_,
 }
 
+
+def jax_dtype(obj: DTypeLike | None, *, align: bool = False,
+              copy: bool = False) -> DType:
+  """Cast an object to a dtype, respecting JAX dtype defaults.
+
+  Arguments mirror those of :func:`numpy.dtype`.
+  """
+  if obj is None:
+    obj = float_
+  elif issubdtype(obj, extended):
+    return obj  # type: ignore[return-value]
+  elif isinstance(obj, type):
+    obj = _DEFAULT_TYPEMAP.get(obj, obj)
+  return np.dtype(obj, align=align, copy=copy)
+
+_DEFAULT_TYPEMAP: dict[type, DTypeLike] = {
+  bool: bool,
+  int: int_,
+  float: float_,
+  complex: complex_,
+}
+
 def bit_width(dtype: DTypeLike) -> int:
   """Number of bits per element for the dtype."""
   # Note: we cannot use dtype.itemsize here because this is

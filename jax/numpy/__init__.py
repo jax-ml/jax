@@ -84,8 +84,6 @@ from jax._src.numpy.lax_numpy import (
     ediff1d as ediff1d,
     einsum as einsum,
     einsum_path as einsum_path,
-    empty as empty,
-    empty_like as empty_like,
     euler_gamma as euler_gamma,
     expand_dims as expand_dims,
     extract as extract,
@@ -105,8 +103,6 @@ from jax._src.numpy.lax_numpy import (
     fromiter as fromiter,
     fromstring as fromstring,
     from_dlpack as from_dlpack,
-    full as full,
-    full_like as full_like,
     gcd as gcd,
     geomspace as geomspace,
     get_printoptions as get_printoptions,
@@ -157,8 +153,6 @@ from jax._src.numpy.lax_numpy import (
     ndim as ndim,
     newaxis as newaxis,
     nonzero as nonzero,
-    ones as ones,
-    ones_like as ones_like,
     outer as outer,
     packbits as packbits,
     pad as pad,
@@ -221,6 +215,15 @@ from jax._src.numpy.lax_numpy import (
     vsplit as vsplit,
     vstack as vstack,
     where as where,
+)
+
+from jax._src.numpy.array_creation import (
+    empty as empty,
+    empty_like as empty_like,
+    full as full,
+    full_like as full_like,
+    ones as ones,
+    ones_like as ones_like,
     zeros as zeros,
     zeros_like as zeros_like,
 )
