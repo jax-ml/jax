@@ -1102,7 +1102,6 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
                       num_carry=len(carry_uk)-sum(carry_uk),
                       linear=tuple(linear_known))
 
-  @lu.wrap_init
   def known(*ins_known):
     consts_known_hoist, ins_known_lp = split_list(ins_known, [num_const_known])
     out_hoist = core.jaxpr_as_fun(jaxpr_known_hoist)(*consts_known_hoist)
@@ -1110,7 +1109,8 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
     out_loop = scan_p.bind(*consts_known_lp, *ins_known_lp, **params_known)
     return [*intensive_res, *out_loop]
   call_jaxpr_, _, call_jaxpr_consts, () = pe.trace_to_jaxpr_dynamic(
-      known, [v.aval for v in ins_known])
+      lu.wrap_init(known, debug_info=jaxpr_known_hoist.jaxpr.debug_info),
+      [v.aval for v in ins_known])
   call_jaxpr = core.ClosedJaxpr(call_jaxpr_, call_jaxpr_consts)
   eqn_known = pe.new_jaxpr_eqn(
       ins_known, [*intensive_res, *out_binders_known, *extensive_res],
@@ -1550,11 +1550,18 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
   newvar = core.gensym()
   invars_aug = (
       cond_jaxpr.jaxpr.invars + [newvar(core.get_aval(x)) for x in init_dot])
+  cond_debug = cond_jaxpr.jaxpr.debug_info
+  augmented_debug = cond_debug and (
+      cond_debug._replace(
+          arg_names=cond_debug.arg_names + (None,) * len(init_dot)
+      )
+  )
   cond_jaxpr_augmented = core.Jaxpr(cond_jaxpr.jaxpr.constvars,
                                     invars_aug,
                                     cond_jaxpr.jaxpr.outvars,
                                     cond_jaxpr.jaxpr.eqns,
-                                    cond_jaxpr.jaxpr.effects)
+                                    cond_jaxpr.jaxpr.effects,
+                                    augmented_debug)
   cond_jaxpr_augmented = core.ClosedJaxpr(cond_jaxpr_augmented, cond_jaxpr.consts)
 
   out = while_p.bind(
