@@ -272,10 +272,21 @@ nanobind_extension(
 )
 
 cc_library(
+    name = "ffi_wrapper",
+    hdrs = ["//jaxlib/gpu:ffi_wrapper.h"],
+    deps = [
+        ":hip_vendor",
+        "//jaxlib:ffi_helpers",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+cc_library(
     name = "hipsparse_kernels",
     srcs = ["//jaxlib/gpu:sparse_kernels.cc"],
     hdrs = ["//jaxlib/gpu:sparse_kernels.h"],
     deps = [
+        ":ffi_wrapper",
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
         "//jaxlib:handle_pool",
@@ -286,6 +297,7 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:hipsparse",
         "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
     ],
 )
