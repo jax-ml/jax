@@ -2169,7 +2169,7 @@ def _check_no_returned_refs(
         f"function returned a mutable array reference of type {a.str_short()}, "
         "but mutable array references cannot be returned.")
       result_paths = dbg.resolve_result_paths().safe_result_paths(len(out_tracers))
-      loc = f' at output tree path {result_paths[i]}'
+      loc = result_paths[i] and f' at output tree path {result_paths[i]}'
       frame = t._trace.frame
       v = frame.tracer_to_var.get(id(t))
       eqn = next((e for e in frame.eqns if v in e.outvars), None)
