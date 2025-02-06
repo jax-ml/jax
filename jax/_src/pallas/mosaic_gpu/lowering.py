@@ -1884,7 +1884,7 @@ def merge_indexers(
       i32 = ir.IntegerType.get_signless(32)
       if isinstance(x, ir.Value):
         return mgpu.FragmentedArray.splat(
-            x, (), is_signed=mgpu.utils.is_signed(x.type)
+            x, (), is_signed=ir.IntegerType.isinstance(x.type) or None
         ).astype(i32, is_signed=False)
       if isinstance(x, mgpu.FragmentedArray):
         return x.astype(i32, is_signed=False)
