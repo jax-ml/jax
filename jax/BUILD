@@ -61,6 +61,7 @@ config_setting(
 exports_files([
     "LICENSE",
     "version.py",
+    "py.typed",
 ])
 
 exports_files(
@@ -265,6 +266,15 @@ py_library_providing_imports_info(
         "experimental/checkify.py",
         "experimental/compilation_cache/compilation_cache.py",
     ],
+    data = glob(
+        [
+            "numpy/*.pyi",
+            "_src/**/*.pyi",
+        ],
+        exclude = [
+            "_src/basearray.pyi",
+        ],
+    ),
     lib_rule = pytype_library,
     pytype_srcs = glob(
         [
@@ -364,6 +374,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "basearray",
     srcs = ["_src/basearray.py"],
+    data = ["_src/basearray.pyi"],
     pytype_srcs = ["_src/basearray.pyi"],
     deps = [
         ":partition_spec",
@@ -676,6 +687,20 @@ pytype_strict_library(
         ":jax",
         ":pallas",
         ":pallas_gpu",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "pallas_experimental_mgpu_ops",
+    srcs = ["//jax/experimental/pallas/ops/gpu:mgpu_ops"],
+    visibility = [
+        ":mosaic_gpu_users",
+    ],
+    deps = [
+        ":jax",
+        ":mosaic_gpu",
+        ":pallas",
+        ":pallas_mosaic_gpu",
     ] + py_deps("numpy"),
 )
 
@@ -1182,6 +1207,7 @@ pytype_library(
 pytype_library(
     name = "compilation_cache",
     srcs = [
+        "experimental/compilation_cache/__init__.py",
         "experimental/compilation_cache/compilation_cache.py",
     ],
     visibility = ["//visibility:public"],
