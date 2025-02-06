@@ -34,6 +34,8 @@ from jax._src.cudnn.fused_attention_stablehlo import (
     MaskType,
     AttentionLayout,
 )
+from jax._src.ad_checkpoint import saved_residuals, checkpoint as new_checkpoint
+from jax._src import api
 
 config.parse_flags_with_absl()
 Array = jnp.ndarray
@@ -104,19 +106,27 @@ def sdpa_train(query: Array,
                mask_type: MaskType = MaskType.NO_MASK,
                is_bnth: bool = False,
                dropout_rate: float = 0.1,
-               sliding_window_length: int | None = None) -> Array:
+               sliding_window_length: int | None = None,
+               outputs_checkpoint_name: str = "",
+               policy = None) -> Array:
   if mask_type == MaskType.PADDING:
     if is_bnth:
       B, _, S, _ = query.shape
     else:
       B, S, _, _ = query.shape
     q_seqlen = kv_seqlen = jnp.full((B,), S // 2, jnp.int32)
-  out, sdpa_vjp = jax.vjp(
-      partial(dot_product_attention, scale=scale, mask_type=mask_type,
+
+  f = partial(dot_product_attention, scale=scale, mask_type=mask_type,
               dropout_rate=dropout_rate,
               qkv_layout="BNTH" if is_bnth else "BTNH",
-              sliding_window_length=sliding_window_length),
-      query, key, value, bias, mask, q_seqlen, kv_seqlen, q_offsets, kv_offsets)
+              sliding_window_length=sliding_window_length,
+              outputs_checkpoint_name=outputs_checkpoint_name)
+
+  if policy is not None:
+    f = new_checkpoint(f, policy=policy)
+
+  out, sdpa_vjp = jax.vjp(f, query, key, value, bias, mask, q_seqlen,
+    kv_seqlen, q_offsets, kv_offsets)
   query_grad, key_grad, value_grad, bias_grad = sdpa_vjp(grad)[:4]
   if bias is not None and len(bias.shape) == 3:
     # has dbias
@@ -743,6 +753,45 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-2, atol=1e-2)
       self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-2, atol=1e-2)
       self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-2, atol=1e-2)
+
+  @jtu.run_on_devices("cuda")
+  def test_sdpa_checkpoint(self):
+    try:
+      cudnn_version = check_cudnn_version()
+    except RuntimeError as e:
+      self.skipTest(str(e))
+      return
+    if cudnn_version < 90500:
+      self.skipTest("Requires >= cuDNN 9.5.0")
+
+    B, T, N, H = 2, 64, 2, 256
+    bf16 = jnp.bfloat16
+    keys = jax.random.split(jax.random.key(0), 4)
+    query = jax.random.normal(keys[0], (B, T, N, H), dtype=bf16)
+    key = jax.random.normal(keys[1], (B, T, N, H), dtype=bf16)
+    value = jax.random.normal(keys[2], (B, T, N, H), dtype=bf16)
+    grad = jax.random.normal(keys[3], (B, T, N, H), dtype=bf16)
+    f = jax.jit(partial(
+        sdpa_train, scale=1.0, mask_type=MaskType.CAUSAL, dropout_rate=0,
+        outputs_checkpoint_name="context",
+        policy=jax.checkpoint_policies.save_only_these_names("context")))
+    g = jax.jit(partial(
+        sdpa_train, scale=1.0, mask_type=MaskType.CAUSAL, dropout_rate=0,
+        policy=jax.checkpoint_policies.nothing_saveable))
+    out, (query_grad, key_grad, value_grad) = f(query, key, value, grad)
+    out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = g(query, key, value, grad)
+
+    f_jaxpr = api.make_jaxpr(f)(query, key, value, grad)
+    g_jaxpr = api.make_jaxpr(g)(query, key, value, grad)
+    f_jaxpr_text = str(f_jaxpr)
+    g_jaxpr_text = str(g_jaxpr)
+    self.assertEqual(f_jaxpr_text.count('dot_product_attention_fwd_wrapper'), 1)
+    self.assertEqual(g_jaxpr_text.count('dot_product_attention_fwd_wrapper'), 2)
+
+    self.assertArraysAllClose(out_ref, out, rtol=1e-5, atol=1e-5)
+    self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-5, atol=1e-5)
+    self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-5, atol=1e-5)
+    self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-5, atol=1e-5)
 
   @jtu.run_on_devices("cuda")
   def test_layouts(self):
