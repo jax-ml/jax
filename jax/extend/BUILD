@@ -23,6 +23,15 @@ package(
     default_visibility = ["//jax:jax_extend_users"],
 )
 
+filegroup(
+    name = "extend_sources",
+    srcs = glob(["**/*"]) + [
+        "//jax/extend/mlir:mlir_sources",
+        "//jax/extend/mlir/dialects:dialects_sources",
+    ],
+    visibility = ["//jax:jax_wheel_files"],
+)
+
 pytype_strict_library(
     name = "extend",
     srcs = ["__init__.py"],

@@ -1,4 +1,4 @@
-# Copyright 2024 The JAX Authors.
+# Copyright 2025 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,28 +14,13 @@
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//jax:__subpackages__"],
+    default_visibility = ["//visibility:private"],
 )
 
-exports_files(
-    srcs = glob(["*.py"]),
-)
+exports_files(["__init__.py"])
 
 filegroup(
-    name = "gpu_sources",
+    name = "dialects_sources",
     srcs = glob(["**/*"]),
     visibility = ["//jax:jax_wheel_files"],
-)
-
-filegroup(
-    name = "triton_ops",
-    srcs = glob(
-        ["*.py"],
-        exclude = ["*_mgpu.py"],
-    ),
-)
-
-filegroup(
-    name = "mgpu_ops",
-    srcs = glob(["*_mgpu.py"]),
 )

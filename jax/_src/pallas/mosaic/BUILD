@@ -24,6 +24,12 @@ package(
     ],
 )
 
+filegroup(
+    name = "mosaic_sources",
+    srcs = glob(["**/*"]),
+    visibility = ["//jax:jax_wheel_files"],
+)
+
 py_library(
     name = "core",
     srcs = ["core.py"],

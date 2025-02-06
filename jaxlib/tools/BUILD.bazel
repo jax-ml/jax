@@ -24,7 +24,10 @@ load(
 )
 load(
     "//jaxlib:jax.bzl",
+    "AARCH64_MANYLINUX_TAG",
     "PLATFORM_TAGS_DICT",
+    "PPC64LE_MANYLINUX_TAG",
+    "X86_64_MANYLINUX_TAG",
     "if_windows",
     "jax_py_test",
     "jax_wheel",
@@ -230,12 +233,6 @@ jax_wheel(
     wheel_binary = ":build_gpu_plugin_wheel",
     wheel_name = "jax_cuda12_pjrt",
 )
-
-AARCH64_MANYLINUX_TAG = "_".join(PLATFORM_TAGS_DICT[("Linux", "aarch64")])
-
-PPC64LE_MANYLINUX_TAG = "_".join(PLATFORM_TAGS_DICT[("Linux", "ppc64le")])
-
-X86_64_MANYLINUX_TAG = "_".join(PLATFORM_TAGS_DICT[("Linux", "x86_64")])
 
 verify_manylinux_compliance_test(
     name = "jaxlib_manylinux_compliance_test",

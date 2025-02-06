@@ -28,6 +28,12 @@ package(
     ],
 )
 
+filegroup(
+    name = "mosaic_gpu_sources",
+    srcs = glob(["**/*"]),
+    visibility = ["//jax:jax_wheel_files"],
+)
+
 py_library(
     name = "mosaic_gpu",
     srcs = ["__init__.py"],
