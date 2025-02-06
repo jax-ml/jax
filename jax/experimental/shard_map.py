@@ -874,6 +874,15 @@ def _match(mesh, check_rep, pspec, x):
 def _rem_singleton(x): return jnp.squeeze(x, axis=0)
 def _add_singleton(x): return jnp.expand_dims(x, axis=0)
 
+def _maybe_check_special(outs):
+  if not config.debug_nans.value and not config.debug_infs.value: return
+  bufs = [s.data for leaf in tree_leaves(outs)
+          for s in getattr(leaf, 'addressable_shards', [])]
+  try:
+    dispatch.check_special('shard_map', bufs)
+  except dispatch.InternalFloatingPointError as e:
+    raise FloatingPointError(f'Invalid value ({e.ty}) encountered in sharded computation.') from None
+
 class ShardMapTrace(core.Trace):
   __slots__ = ("mesh", "check", "context_mesh")
 
@@ -902,9 +911,10 @@ class ShardMapTrace(core.Trace):
       out_vals = eager_rule(self.mesh, *in_vals, **params)
     else:
       f = HashablePartial(_prim_applier, prim, tuple(params.items()), self.mesh)
-      with (core.eval_context(), jax.disable_jit(False),
-            set_abstract_mesh(self.context_mesh)):
+      with (core.eval_context(), jax.disable_jit(False), jax.debug_nans(False),
+            jax.debug_infs(False), set_abstract_mesh(self.context_mesh)):
         out_vals = jax.jit(f)(*in_vals)
+      _maybe_check_special(out_vals)
     rep_rule = _check_rules.get(prim, partial(_rule_missing, prim))
     out_rep = rep_rule(self.mesh, *in_rep, **params) if self.check else set()
     if prim.multiple_results:
@@ -1700,10 +1710,21 @@ def _shard_map_transpose(out_cts, *args, jaxpr, mesh, in_names, out_names,
   def new_out_names_thunk():
     return tuple(names for names, nz in zip(in_names, nz_arg_cts()) if nz)
 
-  out_flat = shard_map_p.bind(
-      fun_trans_flat, *all_args, mesh=mesh, in_names=tuple(new_in_names),
-      out_names_thunk=new_out_names_thunk, check_rep=check_rep, rewrite=rewrite,
-      auto=auto)
+  try:
+    out_flat = shard_map_p.bind(
+        fun_trans_flat, *all_args, mesh=mesh, in_names=tuple(new_in_names),
+        out_names_thunk=new_out_names_thunk, check_rep=check_rep, rewrite=rewrite,
+        auto=auto)
+  except (FloatingPointError, ZeroDivisionError) as e:
+    print("Invalid nan value encountered in the backward pass of a shard_map "
+          "function. Calling the de-optimized backward pass.")
+    try:
+      _ = fun_trans.call_wrapped(out_cts, args)
+    except (FloatingPointError, ZeroDivisionError) as e2:
+      raise e2 from None
+    else:
+      dispatch._raise_no_nan_in_deoptimized(e)
+
   return tree_unflatten(out_tree(), out_flat)
 ad.primitive_transposes[shard_map_p] = _shard_map_transpose
 

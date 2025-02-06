@@ -57,6 +57,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax.lax import (PrecisionLike,_array_copy,
                               _sort_le_comparator, _sort_lt_comparator)
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
@@ -5474,6 +5475,39 @@ def _supports_buffer_protocol(obj):
     return True
 
 
+def _make_string_array(
+    object: np.ndarray,
+    dtype: DTypeLike | None = None,
+    ndmin: int = 0,
+    device: xc.Device | Sharding | None = None,
+) -> Array:
+  if xla_extension_version < 311:
+    raise TypeError(
+        "String arrays are not supported in JAX before XLA extension version"
+        " 311."
+    )
+  if not isinstance(object, np.ndarray):
+    raise TypeError(
+        "Currently, string arrays can only be made from NumPy"
+        f" arrays. Got:  {type(object)}."
+    )
+  if dtype is not None and (
+      dtypes.is_string_dtype(object.dtype) != dtypes.is_string_dtype(dtype)
+  ):
+    raise TypeError(
+        f"Cannot make an array with dtype {dtype} from an object with dtype"
+        f" {object.dtype}."
+    )
+  if ndmin > object.ndim:
+    raise TypeError(
+        f"ndmin {ndmin} cannot be greater than object's ndims"
+        f" {object.ndim} for string arrays."
+    )
+
+  # Just do a device_put since XLA does not support string as a data type.
+  return jax.device_put(x=object, device=device)
+
+
 @export
 def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
           order: str | None = "K", ndmin: int = 0,
@@ -5566,6 +5600,15 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
       device is None):
     # Keep the output uncommitted.
     return jax.device_put(object)
+
+  # String arrays need separate handling because XLA does not support string
+  # as a data type.
+  if dtypes.is_string_dtype(dtype) or (
+      hasattr(object, "dtype") and dtypes.is_string_dtype(object.dtype)
+  ):
+    return _make_string_array(
+        object=object, dtype=dtype, ndmin=ndmin, device=device
+    )
 
   # For Python scalar literals, call coerce_to_array to catch any overflow
   # errors. We don't use dtypes.is_python_scalar because we don't want this

@@ -28,7 +28,6 @@ package(
 py_library(
     name = "flax_models",
     srcs = glob(["*.py"]),
-    srcs_version = "PY3",
     deps = [
         "//jax",
         "//third_party/py/flax:core",

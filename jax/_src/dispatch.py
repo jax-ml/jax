@@ -25,7 +25,7 @@ import itertools
 import logging
 import threading
 import time
-from typing import Any, NamedTuple
+from typing import Any, Callable, NamedTuple
 
 import jax
 from jax._src import api
@@ -100,6 +100,7 @@ def xla_primitive_callable(prim: core.Primitive, **params):
       return prim.bind(*args, **params)
   prim_fun.__name__ = prim.name
   prim_fun.__qualname__ = prim.name
+  prim_fun._apply_primitive = True
   return api.jit(prim_fun)
 
 
@@ -321,14 +322,51 @@ def check_special(name: str, bufs: Sequence[basearray.Array]) -> None:
 def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
   if dtypes.issubdtype(dtype, np.inexact):
     if config.debug_nans.value and np.any(np.isnan(np.asarray(buf))):
-      raise FloatingPointError(f"invalid value (nan) encountered in {name}")
+      raise InternalFloatingPointError(name, "nan")
     if config.debug_infs.value and np.any(np.isinf(np.asarray(buf))):
-      raise FloatingPointError(f"invalid value (inf) encountered in {name}")
+      raise InternalFloatingPointError(name, "inf")
 
 class CopySemantics(enum.Enum):
   ALIAS = enum.auto()
   COPY = enum.auto()
   DONATE = enum.auto()
+
+class InternalFloatingPointError(Exception):
+  name: str
+  ty: str
+
+  def __init__(self, name: str, ty: str):
+    self.name = name
+    self.ty = ty
+
+def maybe_recursive_nan_check(e: Exception, fun: Callable, args, kwargs,
+) -> None:  # always raises an exception
+  print("Invalid nan value encountered in the output of a jax.jit "
+        "function. Calling the de-optimized version.")
+  try:
+    _ = fun(*args, **kwargs)
+  except (FloatingPointError, ZeroDivisionError) as e2:
+    raise e2 from None
+  else:
+    _raise_no_nan_in_deoptimized(e)
+
+def _raise_no_nan_in_deoptimized(e) -> None:
+  msg = (f"{str(e)}. Because "
+        "jax_config.debug_nans.value and/or config.jax_debug_infs is set, the "
+        "de-optimized function (i.e., the function as if the `jit` "
+        "decorator were removed) was called in an attempt to get a more "
+        "precise error message. However, the de-optimized function did not "
+        "produce invalid values during its execution. This behavior can "
+        "result from `jit` optimizations causing the invalid value to be "
+        "produced. It may also arise from having nan/inf literals as "
+        "inputs or outputs, like `jax.jit(lambda ...: jax.numpy.nan)(...)`. "
+        "\n\n"
+        "It may be possible to avoid the invalid value by removing the "
+        "`jit` decorator, at the cost of losing optimizations. "
+        "\n\n"
+        "If you see this error, consider opening a bug report at "
+        "https://github.com/jax-ml/jax.")
+  raise FloatingPointError(msg) from None
 
 def _identity_fn(x):
   return x

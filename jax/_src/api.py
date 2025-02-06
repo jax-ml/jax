@@ -99,6 +99,7 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 
+@api_boundary
 def _nan_check_posthook(fun, args, kwargs, output):
   """Hook function called by the C++ jit/pmap to perform NaN checking."""
   buffers = []
@@ -108,12 +109,18 @@ def _nan_check_posthook(fun, args, kwargs, output):
 
   try:
     dispatch.check_special(pjit.pjit_p.name, buffers)
-  except FloatingPointError:
-    # compiled_fun can only raise in this case
+  except dispatch.InternalFloatingPointError as e:
     assert config.debug_nans.value or config.debug_infs.value
-    print("Invalid nan value encountered in the output of a C++-jit/pmap "
-          "function. Calling the de-optimized version.")
-    fun._cache_miss(*args, **kwargs)[0]  # probably won't return
+    if hasattr(fun, '_fun'):
+      f = fun._fun
+      if getattr(f, '_apply_primitive', False):
+        raise FloatingPointError(f"invalid value ({e.ty}) encountered in {f.__qualname__}") from None
+      # compiled_fun can only raise in this case
+      dispatch.maybe_recursive_nan_check(e, f, args, kwargs)
+      raise AssertionError("Unreachable") from e
+    else:
+      # TODO(emilyaf): Shouldn't need this fallback.
+      raise
 
 def _update_debug_special_global(_):
   if config._read("jax_debug_nans") or config._read("jax_debug_infs"):
@@ -1574,11 +1581,14 @@ def _cpp_pmap(
 
     execute: Callable | None = None
     with core.take_current_trace() as trace:
-      if isinstance(trace, core.EvalTrace):
-        execute = pxla.xla_pmap_impl_lazy(p.flat_fun, *p.flat_args, **params)
-        out = execute(*p.flat_args)
-      else:
-        out = pxla.xla_pmap_p.bind_with_trace(trace, (p.flat_fun, *p.flat_args), params)
+      try:
+        if isinstance(trace, core.EvalTrace):
+          execute = pxla.xla_pmap_impl_lazy(p.flat_fun, *p.flat_args, **params)
+          out = execute(*p.flat_args)
+        else:
+          out = pxla.xla_pmap_p.bind_with_trace(trace, (p.flat_fun, *p.flat_args), params)
+      except dispatch.InternalFloatingPointError as e:
+        raise FloatingPointError(f'Invalid value ({e.ty}) encountered in parallel computation.')
 
     out_tree, out_flat = p.out_tree, out
     out_pytree_def = out_tree()
@@ -1629,6 +1639,7 @@ def _cpp_pmap(
   _pmap_cache_clears.add(cpp_mapped_f)
 
   pmap_f = wraps(fun)(cpp_mapped_f)
+  pmap_f._fun = fun
 
   @api_boundary
   def lower(*args, **kwargs):
@@ -1674,6 +1685,7 @@ def _cpp_pmap(
 _pmap_cache_clears = weakref.WeakSet()  # type: ignore
 
 
+@api_boundary
 def jvp(
     fun: Callable, primals, tangents, has_aux: bool = False
   ) -> tuple[Any, ...]:
@@ -1878,6 +1890,7 @@ def _lift_linearized(jaxpr, primal_avals, io_tree, out_pvals, consts, *py_args):
 
   return apply_flat_fun_nokwargs(fun, io_tree, py_args)
 
+@api_boundary
 def _vjp_pullback_wrapper(name, out_primal_avals, io_tree, fun, *py_args_):
   if len(py_args_) != 1:
     msg = (f"The function returned by `jax.vjp` applied to {name} was called "
@@ -1937,6 +1950,7 @@ def vjp(fun: Callable[..., tuple[T, U]], *primals: Any,
         has_aux: Literal[True],
         reduce_axes: Sequence[AxisName] = ()) -> tuple[T, Callable, U]:
   ...
+@api_boundary
 def vjp(
     fun: Callable, *primals, has_aux: bool = False, reduce_axes=()
   ) -> tuple[Any, Callable] | tuple[Any, Callable, Any]:
@@ -2225,6 +2239,18 @@ def _infer_src_sharding(src, x) -> Sharding | None:
   return None
 
 
+@lru_cache(maxsize=2048)
+def _check_string_compatible_sharding(s):
+  """Checks if target devices are compatible with string arrays."""
+  if isinstance(s, xc.Device) and s.device_kind == "cpu":
+    return
+  if (isinstance(s, Sharding)
+      and s._internal_device_list[0].device_kind == "cpu"):
+    return
+  raise TypeError(
+      "String arrays can only be sharded to CPU devices. Received"
+      f" unsupported device or sharding: {s}")
+
 # TODO(yashkatariya): Generalize check_compatible_aval (maybe renamed) and use
 # that to check if shardings are compatible with the input.
 @lru_cache(maxsize=2048)
@@ -2235,6 +2261,10 @@ def _check_sharding(aval, s):
         "`jax.device_put` only accepts `None`, `jax.sharding.Sharding`,"
         " `jax.Device`, `Layout` or a pytree of these values. Received"
         f" invalid value: {s}")
+
+  if isinstance(aval, core.ShapedArray) and dtypes.is_string_dtype(aval.dtype):
+    _check_string_compatible_sharding(s)
+
   if isinstance(s, Sharding):
     if isinstance(aval, core.AbstractToken):
       aval = core.get_token_aval()

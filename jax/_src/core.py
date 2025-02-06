@@ -1472,11 +1472,14 @@ Value = Any
 
 def valid_jaxtype(x) -> bool:
   try:
-    abstractify(x)
+    aval = abstractify(x)
   except TypeError:
     return False
   else:
-    return True
+    if hasattr(aval, "dtype") and dtypes.is_string_dtype(aval.dtype):
+      return False
+    else:
+      return True
 
 def check_valid_jaxtype(x):
   if not valid_jaxtype(x):
