@@ -662,6 +662,8 @@ abs_dispatch_table = _make_dispatch_table(
         _Fallback([jnp.floating], math_dialect.absf),
     ],
     rocm=[
+        _Extern([jnp.float32], "__ocml_fabs_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_fabs_f64", jnp.float64),
         _Fallback([jnp.integer], math_dialect.absi),
         _Fallback([jnp.floating], math_dialect.absf),
     ],
@@ -703,8 +705,8 @@ exp_dispatch_table = _make_dispatch_table(
         _Fallback([jnp.floating], math_dialect.exp),
     ],
     rocm=[
-        _Fallback([jnp.float32], math_dialect.exp),
-        _Fallback([jnp.float64], math_dialect.exp),
+        _Extern([jnp.float32], "__ocml_exp_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_exp_f64", jnp.float64),
         _Fallback([jnp.floating], math_dialect.exp),
     ],
 )
@@ -1029,6 +1031,8 @@ population_count_dispatch_table = _make_dispatch_table(
         _Fallback([jnp.integer], math_dialect.ctpop),
     ],
     rocm=[
+        _Extern([jnp.int32], "__ockl_popcount_u32", jnp.int32),
+        _Extern([jnp.int64], "__ockl_popcount_u64", jnp.int64),
         _Fallback([jnp.integer], math_dialect.ctpop),
     ],
 )
@@ -1041,6 +1045,8 @@ clz_dispatch_table = _make_dispatch_table(
         _Fallback([jnp.integer], math_dialect.ctlz),
     ],
     rocm=[
+        _Extern([jnp.int32], "__ockl_clz_u32", jnp.int32),
+        _Extern([jnp.int64], "__ockl_clz_u64", jnp.int64),
         _Fallback([jnp.integer], math_dialect.ctlz),
     ],
 )
