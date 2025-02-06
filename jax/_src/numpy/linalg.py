@@ -450,7 +450,7 @@ def matrix_rank(
     )
   M, = promote_dtypes_inexact(M)
   if M.ndim < 2:
-    return (M != 0).any().astype(jnp.int32)
+    return (M != 0).any().astype(np.int32)
   S = svd(M, full_matrices=False, compute_uv=False)
   if rtol is None:
     rtol = S.max(-1) * np.max(M.shape[-2:]).astype(S.dtype) * jnp.finfo(S.dtype).eps
@@ -485,7 +485,7 @@ def _slogdet_qr(a: Array) -> tuple[Array, Array]:
   # Implementation of slogdet using QR decomposition. One reason we might prefer
   # QR decomposition is that it is more amenable to a fast batched
   # implementation on TPU because of the lack of row pivoting.
-  if jnp.issubdtype(lax.dtype(a), jnp.complexfloating):
+  if jnp.issubdtype(lax.dtype(a), np.complexfloating):
     raise NotImplementedError("slogdet method='qr' not implemented for complex "
                               "inputs")
   n = a.shape[-1]
@@ -553,7 +553,7 @@ def _slogdet_jvp(primals, tangents):
   g, = tangents
   sign, ans = slogdet(x)
   ans_dot = jnp.trace(solve(x, g), axis1=-1, axis2=-2)
-  if jnp.issubdtype(jnp._dtype(x), jnp.complexfloating):
+  if jnp.issubdtype(jnp._dtype(x), np.complexfloating):
     sign_dot = (ans_dot - ufuncs.real(ans_dot).astype(ans_dot.dtype)) * sign
     ans_dot = ufuncs.real(ans_dot)
   else:
@@ -637,7 +637,7 @@ def _cofactor_solve(a: ArrayLike, b: ArrayLike) -> tuple[Array, Array]:
   partial_det = reductions.cumprod(diag, axis=-1) * sign[..., None]
   lu = lu.at[..., -1, -1].set(1.0 / partial_det[..., -2])
   permutation = jnp.broadcast_to(permutation, (*batch_dims, a_shape[-1]))
-  iotas = jnp.ix_(*(lax.iota(jnp.int32, b) for b in (*batch_dims, 1)))
+  iotas = jnp.ix_(*(lax.iota(np.int32, b) for b in (*batch_dims, 1)))
   # filter out any matrices that are not full rank
   d = jnp.ones(x.shape[:-1], x.dtype)
   d = lax_linalg.triangular_solve(lu, d, left_side=True, lower=False)
