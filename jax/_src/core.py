@@ -2068,6 +2068,7 @@ class MutableArray:
   aval = property(lambda self: self._aval)
   shape = property(lambda self: self._aval.shape)
   dtype = property(lambda self: self._aval.dtype)
+  sharding = property(lambda self: self._buf.sharding)
   def __getitem__(self, idx): return self._aval._getitem(self, idx)
   def __setitem__(self, idx, x): return self._aval._setitem(self, idx, x)
   def __repr__(self) -> str: return 'Mutable' + repr(self[...])
@@ -2091,10 +2092,8 @@ def mutable_array_abstract_eval(init_aval):
 @mutable_array_p.def_impl
 def _mutable_array_impl(init_val):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
-  aval = get_aval(init_val)
-  # TODO(mattjj): improve spelling of 'defensive copy' here, avoid circular dep
-  init_val = init_val.copy() if hasattr(init_val, 'copy') else init_val
-  return MutableArray(AbstractRef(aval), init_val)
+  from jax._src.lax.lax import _array_copy  # pytype: disable=import-error
+  return MutableArray(AbstractRef(get_aval(init_val)), _array_copy(init_val))
 
 def freeze(ref):
   return freeze_p.bind(ref)

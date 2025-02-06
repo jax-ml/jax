@@ -65,9 +65,8 @@ from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding as JSharding
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.sharding_impls import (
-    ArrayMapping, ArrayMappingOrAutoOrUnspecified, AUTO, UNSPECIFIED,
-    UnspecifiedValue, get_array_mapping as _get_array_mapping,
-    array_mapping_to_axis_resources,
+    ArrayMapping, ArrayMappingOrAutoOrUnspecified, AUTO, UnspecifiedValue,
+    get_array_mapping as _get_array_mapping, array_mapping_to_axis_resources,
     SingleDeviceSharding, GSPMDSharding, NamedSharding, PositionalSharding)
 from jax._src.util import (safe_map, safe_zip, partition_list, wrap_name,
                            tuple_update, tuple_delete, distributed_debug_log,
@@ -2140,8 +2139,8 @@ def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
                           donated_invars, out_shardings, out_layouts):
   if any(isinstance(e, RefEffect) for e in closed_jaxpr.effects):
     closed_jaxpr, inout_aliases, mut = _discharge_refs(closed_jaxpr)
-    in_shardings = (*in_shardings,) + (UNSPECIFIED,) * len(mut.in_mut)
-    in_layouts = (*in_layouts,) + (None,) * len(mut.in_mut)
+    in_shardings = (*in_shardings, *(c.sharding for c in mut.in_mut))
+    in_layouts = (*in_layouts,) + (None,) * len(mut.in_mut)  # TODO(mattjj)
     donated_invars = (*donated_invars,) + (False,) * len(mut.in_mut)
     out_layouts_ = iter(zip(out_shardings, out_layouts))
     out_shardings, out_layouts = unzip2(
