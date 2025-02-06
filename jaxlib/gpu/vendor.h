@@ -402,6 +402,8 @@ constexpr uint32_t kNumThreadsPerWarp = 32;
 
 #elif defined(JAX_GPU_HIP)
 
+#define HIPBLAS_V2 1
+
 // IWYU pragma: begin_exports
 #include "rocm/include/hip/hip_cooperative_groups.h"
 #include "rocm/include/hip/hip_runtime_api.h"
@@ -421,11 +423,10 @@ constexpr uint32_t kNumThreadsPerWarp = 32;
 // MIOpen lib. Remove when MIOpen support is complete.
 #define MIOPEN_STATUS_SUCCESS 0
 
-typedef hipFloatComplex gpuComplex;
+typedef hipComplex gpuComplex;
 typedef hipDoubleComplex gpuDoubleComplex;
-
-typedef hipblasComplex gpublasComplex;
-typedef hipblasDoubleComplex gpublasDoubleComplex;
+typedef hipComplex gpublasComplex;
+typedef hipDoubleComplex gpublasDoubleComplex;
 typedef hipsolverHandle_t gpusolverDnHandle_t;
 typedef hipblasFillMode_t gpublasFillMode_t;
 typedef hipsolverFillMode_t gpusolverFillMode_t;

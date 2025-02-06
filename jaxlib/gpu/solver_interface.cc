@@ -58,8 +58,8 @@ JAX_GPU_DEFINE_GETRF(gpuDoubleComplex, gpusolverDnZgetrf);
 
 JAX_GPU_DEFINE_GETRF_BATCHED(float, gpublasSgetrfBatched);
 JAX_GPU_DEFINE_GETRF_BATCHED(double, gpublasDgetrfBatched);
-JAX_GPU_DEFINE_GETRF_BATCHED(gpublasComplex, gpublasCgetrfBatched);
-JAX_GPU_DEFINE_GETRF_BATCHED(gpublasDoubleComplex, gpublasZgetrfBatched);
+JAX_GPU_DEFINE_GETRF_BATCHED(gpuComplex, gpublasCgetrfBatched);
+JAX_GPU_DEFINE_GETRF_BATCHED(gpuDoubleComplex, gpublasZgetrfBatched);
 #undef JAX_GPU_DEFINE_GETRF_BATCHED
 
 // QR decomposition: geqrf
@@ -97,8 +97,8 @@ JAX_GPU_DEFINE_GEQRF(gpuDoubleComplex, gpusolverDnZgeqrf);
 
 JAX_GPU_DEFINE_GEQRF_BATCHED(float, gpublasSgeqrfBatched);
 JAX_GPU_DEFINE_GEQRF_BATCHED(double, gpublasDgeqrfBatched);
-JAX_GPU_DEFINE_GEQRF_BATCHED(gpublasComplex, gpublasCgeqrfBatched);
-JAX_GPU_DEFINE_GEQRF_BATCHED(gpublasDoubleComplex, gpublasZgeqrfBatched);
+JAX_GPU_DEFINE_GEQRF_BATCHED(gpuComplex, gpublasCgeqrfBatched);
+JAX_GPU_DEFINE_GEQRF_BATCHED(gpuDoubleComplex, gpublasZgeqrfBatched);
 #undef JAX_GPU_DEFINE_GEQRF_BATCHED
 
 // Householder transformations: orgqr
@@ -228,8 +228,8 @@ JAX_GPU_DEFINE_SYEVD(gpuDoubleComplex, gpusolverDnZheevd);
 
 JAX_GPU_DEFINE_SYRK(float, gpublasSsyrk);
 JAX_GPU_DEFINE_SYRK(double, gpublasDsyrk);
-JAX_GPU_DEFINE_SYRK(gpublasComplex, gpublasCsyrk);
-JAX_GPU_DEFINE_SYRK(gpublasDoubleComplex, gpublasZsyrk);
+JAX_GPU_DEFINE_SYRK(gpuComplex, gpublasCsyrk);
+JAX_GPU_DEFINE_SYRK(gpuDoubleComplex, gpublasZsyrk);
 #undef JAX_GPU_DEFINE_SYRK
 
 // Singular Value Decomposition: gesvd
