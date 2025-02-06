@@ -17,7 +17,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import dataclasses
+import enum
 from functools import partial, reduce
+import types
 from typing import Any, Literal
 
 import jax
@@ -82,19 +84,31 @@ pallas_call_p.def_impl(_pallas_call_impl)
 
 
 def _pallas_call_abstract_eval(
-    *avals, out_avals: tuple[jax_core.AbstractValue, ...], **_
+    *avals,
+    out_avals: tuple[jax_core.AbstractValue, ...],
+    interpret,
+    backend,
+    **params
 ):
   del avals
+
+  if isinstance(interpret, mosaic_tpu_interpret.TPUInterpretParams):
+    # Report effects that will be introduced when running/lowering
+    # mosaic_tpu_interpret.mosaic_tpu_interpret.interpret_pallas_call .
+    effs = mosaic_tpu_interpret.get_interpret_effects()
+  else:
+    effs = jax_core.no_effects
+
   # Make sure we don't return ShapedArrayWithMemorySpace to the outside world.
   return [
       jax_core.ShapedArray(a.shape, a.dtype, a.weak_type)
       if isinstance(a, pallas_core.ShapedArrayWithMemorySpace)
       else a
       for a in out_avals
-  ]
+  ], effs
 
 
-pallas_call_p.def_abstract_eval(_pallas_call_abstract_eval)
+pallas_call_p.def_effectful_abstract_eval(_pallas_call_abstract_eval)
 
 
 def _pallas_call_jvp_rule(
@@ -1230,9 +1244,12 @@ def _pallas_call_lowering(
   if params['jaxpr'].constvars:
     raise ValueError('Cannot lower a pallas_call with constants.')
   if interpret:
-    impl = partial(hlo_interpreter.pallas_call_hlo_interpret,
-                   backend=backend,
-                   **params)
+    if isinstance(interpret, mosaic_tpu_interpret.TPUInterpretParams):
+      impl = partial(mosaic_tpu_interpret.interpret_pallas_call, **params)
+    else:
+      impl = partial(hlo_interpreter.pallas_call_hlo_interpret,
+                     backend=backend,
+                     **params)
     return mlir.lower_fun(impl, multiple_results=True)(ctx, *in_nodes)
 
   def cpu_lowering(ctx: mlir.LoweringRuleContext,
@@ -1681,3 +1698,10 @@ try:
   from jax._src.pallas.mosaic import pallas_call_registration as mosaic_tpu_backend
 except ImportError:
   mosaic_tpu_backend = None  # type: ignore
+
+try:
+  from jax._src.pallas.mosaic import interpret as mosaic_tpu_interpret
+except ImportError:
+  mosaic_tpu_interpret = types.SimpleNamespace(  # type: ignore
+      TPUInterpretParams=types.new_class('_NoInstances', (enum.Enum,)),
+  )
