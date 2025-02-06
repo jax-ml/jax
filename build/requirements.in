@@ -20,3 +20,5 @@ zstandard
 etils[epath]
 # TODO(ybaturina): remove setuptools version
 setuptools<71.0.0
+# v0.1.71 has BUILD file in the sources that conflicts with @rules_python.
+tensorstore!=0.1.71
