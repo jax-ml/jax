@@ -54,7 +54,7 @@ jobs:
     name: "Pytest CPU (${{ inputs.runner }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
 
     env:
-      JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python.replace('-nogil', '-ft') }}"
+      JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
       JAXCI_PYTHON: "python${{ inputs.python }}"
       JAXCI_ENABLE_X64: "${{ inputs.enable-x64 }}"
 
@@ -73,8 +73,8 @@ jobs:
 
           # Get the major and minor version of Python.
           # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.10, then python_major_minor=310
-          # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13-ft, then python_major_minor=313t
-          python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-ft/t}" | tr -d '.')
+          # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13-nogil, then python_major_minor=313t
+          python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')
 
           echo "OS=${os}" >> $GITHUB_ENV
           echo "ARCH=${arch}" >> $GITHUB_ENV
