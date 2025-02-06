@@ -57,11 +57,13 @@ zip = safe_zip
 
 ### util
 
-def _initial_style_jaxpr(fun, in_avals):
+def _initial_style_jaxpr(fun: lu.WrappedFun,
+                         in_avals: Sequence[core.AbstractValue]
+                         ) -> tuple[core.Jaxpr, Sequence[Any]]:
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun, in_avals)
   return jaxpr, consts
 
-def _close_jaxpr(jaxpr):
+def _close_jaxpr(jaxpr: core.Jaxpr) -> core.ClosedJaxpr:
   return pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
 
 def _sum_tangents(_, x, *xs):
@@ -1298,7 +1300,8 @@ def partition_list(choice, lst):
 
 ### Custom transposition
 
-def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
+def linear_call(fun: Callable,
+                fun_transpose: Callable, residual_args,
                 linear_args):
   """Call a linear function, with a custom implementation for its transpose.
 
@@ -1388,19 +1391,30 @@ def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
   operands_lin, lin_tree = tree_flatten(linear_args)
 
   f_in_tree = treedef_tuple((res_tree, lin_tree))
-  f, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), f_in_tree)
+  f, out_tree = flatten_fun_nokwargs(
+      lu.wrap_init(
+          fun,
+          debug_info=debug_info("linear_call fun", fun,
+                                (residual_args, linear_args), {})),
+      f_in_tree)
 
   res_avals = map(core.get_aval, operands_res)
   lin_avals = map(core.get_aval, operands_lin)
   f_jaxpr, f_consts = _initial_style_jaxpr(f, (*res_avals, *lin_avals))
-  f_jaxpr = _close_jaxpr(f_jaxpr)
-  out_avals = f_jaxpr.out_avals
+  f_jaxpr_closed = _close_jaxpr(f_jaxpr)
+  out_avals = f_jaxpr_closed.out_avals
 
   t_in_tree = treedef_tuple((res_tree, out_tree()))
-  t, t_out_tree = flatten_fun_nokwargs(lu.wrap_init(fun_transpose), t_in_tree)
+  t, t_out_tree = flatten_fun_nokwargs(
+      lu.wrap_init(
+          fun_transpose,
+          # TODO(necula): the fun_transpose takes residual and output of fun!
+          debug_info=debug_info("linear_call fun_transpose", fun_transpose,
+                                (residual_args, linear_args), {})),
+      t_in_tree)
 
   t_jaxpr, t_consts = _initial_style_jaxpr(t, (*res_avals, *out_avals))
-  t_jaxpr = _close_jaxpr(t_jaxpr)
+  t_jaxpr_closed = _close_jaxpr(t_jaxpr)
 
   if t_out_tree() != lin_tree:
     raise TypeError(
@@ -1409,8 +1423,8 @@ def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
         f'and input structure {lin_tree}.')
 
   out = linear_call_p.bind(*f_consts, *t_consts, *operands_res, *operands_lin,
-                           callee=f_jaxpr,
-                           transpose=t_jaxpr,
+                           callee=f_jaxpr_closed,
+                           transpose=t_jaxpr_closed,
                            num_callee_consts=len(f_consts),
                            num_transpose_consts=len(t_consts),
                            num_res=len(operands_res))

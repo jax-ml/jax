@@ -318,7 +318,7 @@ def wrap_init(f: Callable, params=None, *,
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
   params_dict = {} if params is None else params
   params = () if params is None else tuple(sorted(params.items()))
-  fun = WrappedFun(f, partial(f, **params_dict), (), (), params, None, None)
+  fun = WrappedFun(f, partial(f, **params_dict), (), (), params, None, debug_info)
   if debug_info:
     if debug_info.result_paths is None:
       fun, result_paths_thunk = _get_result_paths_thunk(fun)

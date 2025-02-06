@@ -2060,10 +2060,9 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
     shape/dtypes/structure as ``primals``.
 
   >>> import jax
-  >>> import types
   >>>
   >>> f = lambda x, y: 0.5 * x - 0.5 * y
-  >>> scalar = types.SimpleNamespace(shape=(), dtype=np.dtype(np.float32))
+  >>> scalar = jax.ShapeDtypeStruct(shape=(), dtype=np.dtype(np.float32))
   >>> f_transpose = jax.linear_transpose(f, scalar, scalar)
   >>> f_transpose(1.0)
   (Array(0.5, dtype=float32), Array(-0.5, dtype=float32))

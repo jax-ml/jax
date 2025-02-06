@@ -640,7 +640,8 @@ class Trace(Generic[TracerType]):
            "to handle custom_jvp primitives")
     raise NotImplementedError(msg)
 
-  def process_custom_transpose(self, prim, call, tracers, **params):
+  def process_custom_transpose(self, prim: Primitive,
+                               call: lu.WrappedFun, tracers, **params):
     msg = (f"{type(self)} must override process_custom_transpose "
            "to handle custom_transpose_call primitives")
     raise NotImplementedError(msg)
