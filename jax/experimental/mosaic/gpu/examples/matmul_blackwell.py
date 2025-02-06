@@ -19,7 +19,6 @@ from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import gpu
-from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import nvvm
 from jax.experimental.mosaic import gpu as mgpu
 from jax.experimental.mosaic.gpu import c, ds, utils
@@ -47,7 +46,6 @@ def build_kernel(
   i32 = ir.IntegerType.get_signless(32)
   f32 = ir.F32Type.get()
   index = ir.IndexType.get()
-  ptr6 = ir.Type.parse("!llvm.ptr<6>")  # TMEM
 
   swizzle = 128
   tile_k = 64  # TODO(apaszke): I think we need to tile TMA to change this.
@@ -111,13 +109,13 @@ def build_kernel(
       tmem_addr_addr = utils.memref_ptr(tmem_addr, memory_space=3)
       tcgen05.tmem_alloc(tmem_addr_addr, tile_n)
       tcgen05.tmem_relinquish_alloc_permit()
+      tmem_ref = tcgen05.TMEMRef.from_alloc(tmem_addr, tcgen05.TMEMLayout.D, tile_n, f32)
       with mgpu.when(warp_leader):
-        tmem_addr_value = llvm.load(ptr6, tmem_addr_addr)
         @mgpu.fori(c(k_loop_iter, index), arith.constant(i1, 0))
         def _mma_body(ki, accumulate):
           ab_full_barrier.wait()
           tcgen05.mma(
-              tmem_addr_value,
+              tmem_ref,
               a_smem,
               mgpu.memref_transpose(b_smem, (0, 1, 3, 2)),
               a_swizzle=swizzle,

@@ -13,6 +13,8 @@
 # limitations under the License.
 # ==============================================================================
 
+from __future__ import annotations
+
 import dataclasses
 import enum
 
@@ -86,7 +88,7 @@ def create_instr_descriptor(
 
 
 def mma(
-    d: ir.Value,
+    d: TMEMRef,
     a: ir.Value,
     b: ir.Value,
     *,
@@ -124,15 +126,24 @@ def mma(
       descriptor_const_init=TCGEN05_SMEM_DESCRIPTOR_BIT,
   )
 
-  if m_tiling != 128:
-    raise ValueError(f"A must have rows tiled by 128, got: {m_tiling}")
+  # TODO(apaszke): It's enough to make this a multiple of d.num_rows, but it
+  # would need more code below.
+  if m_tiling != d.num_rows:
+    raise ValueError(
+        f"A's row tiling must be a multiple of {d.num_rows} (inferred from"
+        f" accumulator's TMEM layout), got: {m_tiling}"
+    )
+
   a_strides, _ = ir.MemRefType(a.type).get_strides_and_offset()
   a_m_byte_stride = a_strides[0] * utils.bytewidth(element_type)
 
   groups_k = k // kn_tiling
   groups_m = m // m_tiling
 
-  # TODO(apaszke): Verify ACC shape.
+  if d.shape != (m, n):
+    raise ValueError(
+        f"Accumulator shape mismatch: expected {(m, n)}, got {d.shape}"
+    )
 
   i64 = ir.IntegerType.get_signless(64)
   for mi in range(groups_m):
@@ -142,8 +153,10 @@ def mma(
           utils.c(_wgmma.wgmma_encode(mi * a_m_byte_stride + ki * a_k_byte_stride), i64),
       )
       b_k = arith.addi(b_desc_base, utils.c(_wgmma.wgmma_encode(ki * b_k_byte_stride), i64))
+      if groups_m != 1:
+        raise NotImplementedError("D needs to be sliced")
       accumulate = _do_mma(
-          d,
+          d.address,
           a_mk,
           b_k,
           d_type=ir.F32Type.get(),
