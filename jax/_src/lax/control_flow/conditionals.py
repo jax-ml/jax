@@ -796,6 +796,7 @@ def _cond_typecheck(bind_time, *in_atoms, branches):
 
 cond_p = core.Primitive('cond')
 cond_p.multiple_results = True
+cond_p.skip_canonicalization = True
 cond_p.def_impl(partial(dispatch.apply_primitive, cond_p))
 cond_p.def_effectful_abstract_eval(_cond_abstract_eval)
 ad.primitive_jvps[cond_p] = _cond_jvp

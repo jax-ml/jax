@@ -3214,7 +3214,10 @@ def check_arg_avals_for_call(ref_avals, arg_avals,
 
   errors = []
   for ref_aval, arg_aval, name in safe_zip(ref_avals, arg_avals, arg_names):
-    if not core.typematch(ref_aval, arg_aval):
+    # Don't compare shardings of avals because you can lower with
+    # numpy arrays + in_shardings and call compiled executable with
+    # sharded arrays. We also have sharding checks downstream.
+    if (ref_aval.shape, ref_aval.dtype) != (arg_aval.shape, arg_aval.dtype):
       errors.append(
           f"Argument {name} compiled with {ref_aval.str_short()} and called "
           f"with {arg_aval.str_short()}")

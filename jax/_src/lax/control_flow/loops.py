@@ -1277,6 +1277,7 @@ def _scan_state_partial_discharge_rule(should_discharge, in_avals, out_avals, *a
 
 scan_p = core.Primitive("scan")
 scan_p.multiple_results = True
+scan_p.skip_canonicalization = True
 scan_p.def_impl(partial(dispatch.apply_primitive, scan_p))
 scan_p.def_effectful_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp
@@ -1958,6 +1959,7 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args, 
 
 while_p = core.Primitive('while')
 while_p.multiple_results = True
+while_p.skip_canonicalization = True
 while_p.def_impl(partial(dispatch.apply_primitive, while_p))
 while_p.def_effectful_abstract_eval(_while_loop_abstract_eval)
 ad.primitive_jvps[while_p] = _while_loop_jvp
