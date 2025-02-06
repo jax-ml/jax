@@ -90,6 +90,7 @@ Operators
     erfc
     erf_inv
     exp
+    exp2
     expand_dims
     expm1
     fft
