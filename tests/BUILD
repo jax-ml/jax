@@ -161,6 +161,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "ffi_test",
     srcs = ["ffi_test.py"],
+    enable_configs = [
+        "gpu_p100x2",
+    ],
     # TODO(dfm): Remove after removal of jex.ffi imports.
     deps = ["//jax:extend"],
 )
