@@ -391,7 +391,7 @@ def _validate_mma(
       a_order = WGMMALayout.COL_MAJOR
     else:
       raise ValueError(a_byte_strides)
-    if a_order == WGMMALayout.COL_MAJOR and swizzle != 128:
+    if a_order != a_layout and m_tiling != kn_tiling:
       # Not sure what the layout is like, since the tiles aren't square.
       raise NotImplementedError
 

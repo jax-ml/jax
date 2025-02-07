@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import dataclasses
 import enum
+import math
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jaxlib.mlir import ir
@@ -101,8 +102,8 @@ def mma(
     raise ValueError(f"A must be a memref, got {a.type}")
   if not ir.MemRefType.isinstance(b.type):
     raise ValueError(f"B must be a memref, got: {b.type}")
-  if a_swizzle != 128 or b_swizzle != 128:
-    raise NotImplementedError("Only swizzle=128 has been tested")
+  if a_swizzle != b_swizzle:
+    raise NotImplementedError(f"{a_swizzle=} != {b_swizzle=}")
   if num_cta != 1:
     raise NotImplementedError("Only num_cta=1 supported")
   if isinstance(accumulate, bool):
@@ -188,6 +189,11 @@ def _do_mma(
   if a_k_stride % 16 or b_k_stride % 16:
     raise ValueError
 
+  if ir.F16Type.isinstance(element_type) or ir.BF16Type.isinstance(element_type):
+    kind = "f16"
+  else:
+    raise NotImplementedError(f"Unsupported input element type: {element_type}")
+
   i_desc = create_instr_descriptor(
       m, n, d_type, element_type, a_transpose, b_transpose
   )
@@ -195,7 +201,7 @@ def _do_mma(
     llvm.inline_asm(
         ir.Type.parse("!llvm.void"),
         [d_addr, a_desc, b_desc, i_desc, accumulate],
-        f"tcgen05.mma.cta_group::1.kind::{element_type} [$0], $1, $2, $3, $4;",
+        f"tcgen05.mma.cta_group::1.kind::{kind} [$0], $1, $2, $3, $4;",
         "r,l,l,r,b",
         has_side_effects=True,
     )
@@ -205,7 +211,14 @@ def _do_mma(
   return accumulate
 
 
-def commit_arrive(barrier):
+def commit_arrive(barrier: utils.BarrierRef | ir.Value):
+  if isinstance(barrier, utils.BarrierRef):
+    barrier = barrier.get_ptr()
+  elif barrier.type != ir.Type.parse("!llvm.ptr<3>"):
+    raise ValueError(
+        "barrier must be a Mosaic barrier or a SMEM pointer, got:"
+        f" {barrier.type}"
+    )
   return llvm.inline_asm(
       ir.Type.parse("!llvm.void"),
       [barrier],
@@ -214,9 +227,27 @@ def commit_arrive(barrier):
       has_side_effects=True
   )
 
-def tmem_alloc(tmem_addr, ncols: int):
-  if ncols.bit_count() != 1 or not 32 <= ncols <= 512:
-    raise ValueError(f"ncols must be a power of 2 and within [32, 512], got: {ncols}")
+def tmem_alloc(tmem_addr: ir.Value, ncols: int, exact: bool = True):
+  if ir.MemRefType.isinstance(tmem_addr.type):
+    ref_ty = ir.MemRefType(tmem_addr.type)
+    if ref_ty.element_type != ir.IntegerType.get_signless(32):
+      raise ValueError(f"tmem_addr must be an i32 memref, got: {ref_ty}")
+    if ref_ty.memory_space != ir.Attribute.parse("#gpu.address_space<workgroup>"):
+      raise ValueError(f"tmem_addr must be in shared memory, got: {ref_ty}")
+    if math.prod(ref_ty.shape) != 1:
+      raise ValueError(f"tmem_addr must contain a single element, got: {ref_ty}")
+    tmem_addr = utils.memref_ptr(tmem_addr, memory_space=3)
+  elif tmem_addr.type != ir.Type.parse("!llvm.ptr<3>"):
+    raise ValueError(f"tmem_addr must be an SMEM pointer or a memref, got: {tmem_addr.type}")
+  if exact:
+    if ncols.bit_count() != 1 or not 32 <= ncols <= 512:
+      raise ValueError(f"ncols must be a power of 2 and within [32, 512], got: {ncols}")
+  else:
+    ncols = max(32, 1 << (ncols - 1).bit_length())
+    if ncols > 512:
+      raise ValueError(
+          f"After rounding up, got {ncols} columns, exceeding the limit of 512"
+      )
   return llvm.inline_asm(
       ir.Type.parse("!llvm.void"),
       [tmem_addr],
@@ -285,7 +316,10 @@ class TMEMRef:
       raise ValueError(f"tmem_addr_ref must be in workgroup memory, got: {addr_ref_ty}")
     if addr_ref_ty.element_type != i32:
       raise ValueError(f"tmem_addr_ref must be an i32 memref, got: {addr_ref_ty}")
-    tmem_addr = memref.load(tmem_addr_ref, [arith.ConstantOp.create_index(0)])
+    if math.prod(addr_ref_ty.shape) != 1:
+      raise ValueError(f"tmem_addr_ref must contain a single element, got: {addr_ref_ty}")
+    i0 = arith.ConstantOp.create_index(0)
+    tmem_addr = memref.load(tmem_addr_ref, [i0] * addr_ref_ty.rank)
     # TODO: Do we have to do this??
     # warp_idx = utils.warp_idx(sync=False)
     # tmem_addr = arith.ori(tmem_addr, arith.shli(warp_idx, utils.c(21, i32)))
@@ -332,8 +366,8 @@ class TMEMRef:
         vreg = llvm.insertelement(high_undef, r_high, utils.c(1, i32))
         vector_regs.append(vreg)
       # Dimension 4 is the one where we split 32 rows into tiles of 8.
-      regs_slice = [slice(None)] * 4 + [slice(row_group * 2, (row_group + 1) * 2)]
-      registers[*regs_slice] = np.asarray(vector_regs, dtype=object).reshape(registers[*regs_slice].shape)
+      regs_slice = (slice(None),) * 4 + (slice(row_group * 2, (row_group + 1) * 2),)
+      registers[regs_slice] = np.asarray(vector_regs, dtype=object).reshape(registers[regs_slice].shape)
     return fa.FragmentedArray(_registers=registers, _layout=layout, _is_signed=None)
 
 
