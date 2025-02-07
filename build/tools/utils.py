@@ -179,7 +179,7 @@ def get_compiler_path_or_exit(compiler_path_flag, compiler_name):
   else:
     print(
         f"--{compiler_path_flag} is unset and {compiler_name} cannot be found"
-        " on the PATH. Please pass --{compiler_path_flag} directly."
+        f" on the PATH. Please pass --{compiler_path_flag} to the build script."
     )
     sys.exit(-1)
 
