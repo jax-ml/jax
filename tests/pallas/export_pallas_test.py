@@ -61,7 +61,8 @@ class ExportTest(jtu.JaxTestCase):
         platforms=platforms,
         # The Pallas GPU custom call is not enabled for export by default.
         disabled_checks=[
-            export.DisabledSafetyCheck.custom_call("triton_kernel_call")
+            export.DisabledSafetyCheck.custom_call("triton_kernel_call"),
+            export.DisabledSafetyCheck.custom_call("__gpu$xla.gpu.triton")
         ]
     )(a, a)
 

@@ -101,7 +101,7 @@ def pallas_call_lowering(
   module_op.write_bytecode(buf)
 
   # TODO(b/394629193): Remove True once the bug is fixed.
-  if True and jaxlib_version < (0, 5, 1):
+  if True or jaxlib_version < (0, 5, 1):
     # AOT Triton compilation is only available on jaxlib 0.5.1+.
     out_types = [
       ir.RankedTensorType.get(bm.array_shape_dtype.shape,
