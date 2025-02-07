@@ -11,7 +11,6 @@ jax.lib.xla_bridge
 .. autosummary::
   :toctree: _autosummary
 
-  default_backend
   get_backend
   get_compile_options
 

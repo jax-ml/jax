@@ -103,7 +103,8 @@ def _handle_array_process_allgather(inp, tiled):
   else:
     # All inputs here will be fully addressable.
     if jax.process_count() == 1:
-      return np.asarray(inp)
+      out = np.asarray(inp)
+      return np.expand_dims(out, axis=0) if not tiled else out
 
     devices = np.array(jax.devices()).reshape(jax.process_count(),
                                               jax.local_device_count())

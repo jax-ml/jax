@@ -38,7 +38,6 @@ from jax import tree_util
 from jax import sharding
 from jax import export
 from jax.experimental.jax2tf import impl_no_xla
-from jax.interpreters import xla
 
 from jax._src import ad_checkpoint
 from jax._src import ad_util
@@ -619,7 +618,7 @@ class GraphSerializationImpl(SerializationImpl):
     args_specs_flat, self.in_tree = tree_util.tree_flatten(
         (self.args_specs, self.kwargs_specs))
     self.args_avals_flat = tuple(
-        map(lambda a: core.raise_to_shaped(core.get_aval(a)), args_specs_flat))
+        map(core.get_aval, args_specs_flat))
     dim_vars = shape_poly.all_dim_vars(self.args_avals_flat)
     dim_values, _ = _interpret_fun_jax(
         partial(shape_poly.compute_dim_vars_from_arg_shapes,
@@ -1153,7 +1152,7 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
     else:
       return val, jax_dtype
   else:  # A constant
-    jax_dtype = jax_dtype or xla.abstractify(val).dtype
+    jax_dtype = jax_dtype or core.abstractify(val).dtype
     # TODO(document): We assume that the value of a constant does not
     # change through the scope of the function. But it may be an ndarray, ...
     # JAX has the same problem when generating HLO.
@@ -1294,11 +1293,11 @@ class TensorFlowTracer(core.Tracer):
 def _make_op_metadata(primitive: core.Primitive,
                       params: dict, *,
                       source_info: source_info_util.SourceInfo,
-                      ) -> xla_client.OpMetadata:
+                      ) -> xla_data_pb2.OpMetadata:
   eqn_str = (str(source_info.name_stack) + '/'
              + core.str_eqn_compact(primitive, params))
   frame = source_info_util.user_frame(source_info)
-  return xla_client.OpMetadata(
+  return xla_data_pb2.OpMetadata(
         op_type=primitive.name,
         op_name=eqn_str,
         source_file=mlir.get_canonical_source_file(
@@ -1326,6 +1325,9 @@ class TensorFlowTrace(core.Trace):
   those will introduce their own MainTrace, and any operations involving those
   will be done on those traces, i.e., not a concern for TFT.
   """
+
+  __slots__ = ()
+
   def to_tf_tracer(self, val: TfVal) -> TensorFlowTracer:
     """Lifts a non-Tracer into the TensorFlowTracer.
     """
@@ -1381,14 +1383,8 @@ class TensorFlowTrace(core.Trace):
 
     with tf.name_scope(_sanitize_scope_name(scope)):
       if _thread_local_state.include_xla_op_metadata:
-        op_metadata = _make_op_metadata(primitive, params,
-                                        source_info=source_info_util.current())
-        op_metadata_proto = xla_data_pb2.OpMetadata(
-            op_type=op_metadata.op_type,
-            op_name=op_metadata.op_name,
-            source_file=op_metadata.source_file,
-            source_line=op_metadata.source_line
-        )
+        op_metadata_proto = _make_op_metadata(
+            primitive, params, source_info=source_info_util.current())
         with tf_ops.get_default_graph()._attr_scope(
             {"_XlaOpMetadata": attr_value_pb2.AttrValue(
                 s=op_metadata_proto.SerializeToString())}):
@@ -1523,6 +1519,7 @@ tf_not_yet_impl = [
     "lu_pivots_to_permutation",
     "xla_pmap",
     "geqrf",
+    "geqp3",
     "householder_product",
     "hessenberg",
     "tridiagonal",
@@ -1666,39 +1663,6 @@ tf_impl[lax.sin_p] = tf.math.sin
 tf_impl[lax.sinh_p] = tf.math.sinh
 tf_impl[lax.cos_p] = tf.math.cos
 tf_impl[lax.cosh_p] = tf.math.cosh
-
-
-def _acos_impl(x):
-  if x.dtype.is_complex:
-    result = tf.multiply(tf.constant(1j, dtype=x.dtype), tf.math.acosh(x))
-    # By convention, numpy chooses the branch with positive real part.
-    rpart = tf.math.real(result)
-    return tf.where(
-        tf.math.greater(rpart, tf.constant(0, dtype=rpart.dtype)),
-        result,
-        tf.math.negative(result),
-    )
-  else:
-    return tf.where(
-        tf.math.not_equal(x, tf.constant(-1.0, dtype=x.dtype)),
-        tf.multiply(
-            tf.constant(2, dtype=x.dtype),
-            tf.math.atan2(
-                tf.math.sqrt(
-                    tf.math.subtract(
-                        tf.constant(1, dtype=x.dtype), tf.math.square(x)
-                    )
-                ),
-                tf.math.add(tf.constant(1, dtype=x.dtype), x),
-            ),
-        ),
-        tf.broadcast_to(tf.constant(np.pi, dtype=x.dtype), tf.shape(x)),
-    )
-
-
-tf_impl_with_avals[lax.acos_p] = _acos_impl
-tf_impl_with_avals[lax.asin_p] = _convert_jax_impl(
-    lax_internal.asin_impl, multiple_results=False)
 tf_impl_with_avals[lax.atan_p] = _convert_jax_impl(
     lax_internal.atan_impl, multiple_results=False)
 
@@ -1724,6 +1688,8 @@ tf_impl[lax.atan2_p] = _atan2
 tf_impl[lax.acosh_p] = tf.math.acosh
 tf_impl[lax.atanh_p] = tf.math.atanh
 tf_impl[lax.asinh_p] = tf.math.asinh
+tf_impl[lax.asin_p] = tf.math.asin
+tf_impl[lax.acos_p] = tf.math.acos
 
 tf_impl[lax.sqrt_p] = tf.math.sqrt
 tf_impl[lax.square_p] = tf.math.square
@@ -2087,6 +2053,12 @@ def _concatenate(*operands, dimension):
 tf_impl[lax.concatenate_p] = _concatenate
 
 
+def _split(operand, *, sizes, axis):
+  return tf.split(operand, _eval_shape(sizes), axis=axis)
+
+tf_impl[lax.split_p] = _split
+
+
 def _conv_general_dimension_numbers_proto(dimension_numbers):
   """Converts a ConvDimensionNumbers to an XLA ConvolutionDimensionNumbers."""
   assert isinstance(dimension_numbers, lax.ConvDimensionNumbers)
@@ -2193,7 +2165,7 @@ tf_impl_with_avals[lax.conv_general_dilated_p] = _conv_general_dilated
 def _dot_general(lhs, rhs, *, dimension_numbers,
                  precision: lax_internal.CanonicalPrecision,
                  preferred_element_type: DType | None,
-                 out_type=None,
+                 out_sharding=None,
                  _in_avals: Sequence[core.ShapedArray],
                  _out_aval: core.ShapedArray):
   """Implementation of lax.dot_general_p in terms of tf.linalg.einsum."""

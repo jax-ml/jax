@@ -46,8 +46,8 @@ from jax._src.scipy.special import (
   log_softmax as log_softmax,
   logit as logit,
   logsumexp as logsumexp,
-  lpmn as lpmn,
-  lpmn_values as lpmn_values,
+  lpmn as _deprecated_lpmn,
+  lpmn_values as _deprecated_lpmn_values,
   multigammaln as multigammaln,
   ndtr as ndtr,
   ndtri as ndtri,
@@ -57,6 +57,7 @@ from jax._src.scipy.special import (
   softmax as softmax,
   spence as spence,
   sph_harm as sph_harm,
+  sph_harm_y as sph_harm_y,
   xlog1py as xlog1py,
   xlogy as xlogy,
   zeta as zeta,
@@ -65,3 +66,25 @@ from jax._src.scipy.special import (
 from jax._src.third_party.scipy.special import (
   fresnel as fresnel,
 )
+
+_deprecations = {
+    # Added Jan 3 2024
+    "lpmn": (
+        "jax.scipy.special.lpmn is deprecated; no replacement is planned.",
+        _deprecated_lpmn,
+    ),
+    "lpmn_values": (
+        "jax.scipy.special.lpmn_values is deprecated; no replacement is planned.",
+        _deprecated_lpmn_values,
+    ),
+}
+
+import typing as _typing
+if _typing.TYPE_CHECKING:
+  lpmn = _deprecated_lpmn
+  lpmn_values = _deprecated_lpmn_values
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _typing

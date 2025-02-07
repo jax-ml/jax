@@ -21,7 +21,7 @@ import os
 import pathlib
 import subprocess
 
-_version = "0.4.38"
+_version = "0.5.1"
 # The following line is overwritten by build scripts in distributions &
 # releases. Do not modify this manually, or jax/jaxlib build will fail.
 _release_version: str | None = None
@@ -35,6 +35,8 @@ def _get_version_string() -> str:
   # In this case we return it directly.
   if _release_version is not None:
     return _release_version
+  if os.getenv("WHEEL_VERSION_SUFFIX"):
+    return _version + os.getenv("WHEEL_VERSION_SUFFIX", "")
   return _version_from_git_tree(_version) or _version_from_todays_date(_version)
 
 
@@ -71,16 +73,23 @@ def _get_version_for_build() -> str:
   """Determine the version at build time.
 
   The returned version string depends on which environment variables are set:
+  - if WHEEL_VERSION_SUFFIX is set: version looks like "0.5.1.dev20230906+ge58560fdc"
+    Here the WHEEL_VERSION_SUFFIX value is ".dev20230906+ge58560fdc".
+    Please note that the WHEEL_VERSION_SUFFIX value is not the same as the
+    JAX_CUSTOM_VERSION_SUFFIX value, and WHEEL_VERSION_SUFFIX is set by Bazel
+    wheel build rule.
   - if JAX_RELEASE or JAXLIB_RELEASE are set: version looks like "0.4.16"
   - if JAX_NIGHTLY or JAXLIB_NIGHTLY are set: version looks like "0.4.16.dev20230906"
   - if none are set: version looks like "0.4.16.dev20230906+ge58560fdc
   """
   if _release_version is not None:
     return _release_version
-  if os.environ.get('JAX_NIGHTLY') or os.environ.get('JAXLIB_NIGHTLY'):
-    return _version_from_todays_date(_version)
-  if os.environ.get('JAX_RELEASE') or os.environ.get('JAXLIB_RELEASE'):
+  if os.getenv("WHEEL_VERSION_SUFFIX"):
+    return _version + os.getenv("WHEEL_VERSION_SUFFIX", "")
+  if os.getenv("JAX_RELEASE") or os.getenv("JAXLIB_RELEASE"):
     return _version
+  if os.getenv("JAX_NIGHTLY") or os.getenv("JAXLIB_NIGHTLY"):
+    return _version_from_todays_date(_version)
   return _version_from_git_tree(_version) or _version_from_todays_date(_version)
 
 
@@ -137,7 +146,7 @@ def _get_cmdclass(pkg_source_path):
 
 
 __version__ = _get_version_string()
-_minimum_jaxlib_version = "0.4.36"
+_minimum_jaxlib_version = "0.5.0"
 
 def _version_as_tuple(version_str):
   return tuple(int(i) for i in version_str.split(".") if i.isdigit())

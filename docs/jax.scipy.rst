@@ -303,6 +303,11 @@ jax.scipy.stats.expon
 
    logpdf
    pdf
+   logcdf
+   cdf
+   logsf
+   sf
+   ppf
 
 jax.scipy.stats.gamma
 ~~~~~~~~~~~~~~~~~~~~~

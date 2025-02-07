@@ -11,6 +11,12 @@ For the overall JAX change log see [here](https://jax.readthedocs.io/en/latest/c
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
+## Released with jax 0.5.0
+
+* New functionality
+
+  * Added vector support for {func}`jax.experimental.pallas.debug_print` on TPU.
+
 ## Released with jax 0.4.37
 
 * New functionality

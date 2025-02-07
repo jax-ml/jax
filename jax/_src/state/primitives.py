@@ -217,7 +217,7 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
     # TODO(yashkatariya): Transform the sharding too instead of setting it to
     # None.
     out_aval = ref_aval.inner_aval.update(shape=out_shape, dtype=out_dtype,
-                                          sharding=None)
+                                          sharding=core.get_cur_mesh_sharding())
   else:
     if transforms:
       raise ValueError("Cannot index non-shaped array with nontrivial indices.")

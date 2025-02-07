@@ -29,15 +29,15 @@ import time
 from typing import Any
 
 import jax
-from jax import core
 from jax._src import config
+from jax._src import core
 from jax._src import sharding_impls
 from jax._src.interpreters import mlir
 from jax._src.lib import tpu
 from jax._src.lib import xla_client
 from jax.interpreters import xla
 from jaxlib.mlir import ir
-from jaxlib.mlir.dialects import mhlo
+from jaxlib.mlir.dialects import stablehlo
 from jaxlib.mlir.passmanager import PassManager
 
 try:
@@ -83,6 +83,7 @@ class MemorySpace(enum.Enum):
   HBM = enum.auto()
   VMEM = enum.auto()
   SEMAPHORE_MEM = enum.auto()
+  SMEM = enum.auto()
 
   @property
   def color(self) -> int:
@@ -92,6 +93,8 @@ class MemorySpace(enum.Enum):
       return 1
     elif self == MemorySpace.SEMAPHORE_MEM:
       return 2
+    elif self == MemorySpace.SMEM:
+      return 4
     else:
       raise ValueError("invalid memory space: " + str(self))
 
@@ -303,24 +306,30 @@ def _lower_tpu_kernel(
   except ir.MLIRError as e:
     raise ValueError("The compiled module fails MLIR verification") from e
 
+  timestamp = time.time_ns()
+  dump_cnt = [0]
+
+  def get_dump_file_prefix() -> str:
+    s = f"{timestamp}-{dump_cnt[0]:04}"
+    dump_cnt[0] += 1
+    return s
+
   with module.context as ctx, module.operation.location as _:
     ctx.append_dialect_registry(mlir.upstream_dialects)
     ctx.load_all_available_dialects()
     tpu.register_dialect(ctx)
-    mhlo.register_mhlo_dialect(ctx)
-    mhlo.register_mhlo_passes()
-    dump_mlir(module, "original", kernel_name)
+    stablehlo.register_dialect(ctx)
+    dump_mlir(module, "original", get_dump_file_prefix(), kernel_name)
 
     if _MOSAIC_ALLOW_HLO.value:
-      # Run hlo dialect conversion: hlo -> linalg -> vector.
+      # Run dialect conversion: StableHLO -> linalg -> vector.
       pipeline = [
-          "hlo-legalize-to-arithmetic",
-          "func.func(hlo-legalize-to-linalg)",
+          "func.func(stablehlo-legalize-to-linalg)",
           "func.func(linalg-vectorization)",
       ]
       pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
       pipeline.run(module.operation)
-      dump_mlir(module, "post-hlo-conversion")
+      dump_mlir(module, "post-hlo-conversion", get_dump_file_prefix(), kernel_name)
 
     sl_cnt, l_cnt = target_shape
     # Note: we don't pass the TpuTilingFlags here, since we don't know the
@@ -335,7 +344,7 @@ def _lower_tpu_kernel(
     ]
     pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
     pipeline.run(module.operation)
-    dump_mlir(module, "post-infer-memref-layout")
+    dump_mlir(module, "post-infer-memref-layout", get_dump_file_prefix(), kernel_name)
 
     pipeline = [
         "canonicalize",
@@ -343,7 +352,12 @@ def _lower_tpu_kernel(
     ]
     pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
     pipeline.run(module.operation)
-    dump_mlir(module, "post-infer-memref-layout-simplify")
+    dump_mlir(
+        module,
+        "post-infer-memref-layout-simplify",
+        get_dump_file_prefix(),
+        kernel_name,
+    )
 
     try:
       on_device_checks = FLAGS["xla_mosaic_on_device_checks"].value
@@ -357,30 +371,47 @@ def _lower_tpu_kernel(
             "builtin.module(func.func(debug-assert-insertion))"
         )
         pipeline.run(module.operation)
-        dump_mlir(module, "post-assert-insertion")
+        dump_mlir(module, "post-assert-insertion", get_dump_file_prefix(), kernel_name)
       elif checks:
         checks.discard("bounds")
         raise ValueError(
             f"Unrecognized on-device check categories: {', '.join(checks)}"
         )
 
+    # Legacy pipeline always runs in compatibility mode.
+    compatibility_mode = True
     pipeline = [
-        f"func.func(tpu-canonicalize-mosaic{{hardware-generation={hardware_generation}}})",
+        (
+            f"func.func(tpu-canonicalize-mosaic{{hardware-generation={hardware_generation} compatibility-mode={compatibility_mode}}})"
+        ),
     ]
     pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
     pipeline.run(module.operation)
-    dump_mlir(module, "post-canonicalize-mosaic")
+    dump_mlir(module, "post-canonicalize-mosaic", get_dump_file_prefix(), kernel_name)
 
     pipeline = [
         (
             "func.func(tpu-infer-vector-layout{"
+            f" hardware-generation={hardware_generation}"
             f" sublane-count={sl_cnt} lane-count={l_cnt}"
             "})"
         ),
     ]
     pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
     pipeline.run(module.operation)
-    dump_mlir(module, "post-infer-vector-layout")
+    dump_mlir(module, "post-infer-vector-layout", get_dump_file_prefix(), kernel_name)
+
+    pipeline = [
+        (
+            "func.func(tpu-relayout-insertion{"
+            f" sublane-count={sl_cnt} lane-count={l_cnt}"
+            f" hardware-generation={hardware_generation}"
+            "})"
+        ),
+    ]
+    pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
+    pipeline.run(module.operation)
+    dump_mlir(module, "post-relayout-insertion", get_dump_file_prefix(), kernel_name)
 
     mxu_size = 128 if hardware_generation < 6 else 256
     pipeline = [
@@ -393,7 +424,7 @@ def _lower_tpu_kernel(
     ]
     pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
     pipeline.run(module.operation)
-    dump_mlir(module, "post-apply-vector-layout")
+    dump_mlir(module, "post-apply-vector-layout", get_dump_file_prefix(), kernel_name)
 
     pipeline = [
         "canonicalize",
@@ -401,7 +432,12 @@ def _lower_tpu_kernel(
     ]
     pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
     pipeline.run(module.operation)
-    dump_mlir(module, "post-apply-vector-layout-simplify")
+    dump_mlir(
+        module,
+        "post-apply-vector-layout-simplify",
+        get_dump_file_prefix(),
+        kernel_name,
+    )
 
     return module
 
@@ -758,7 +794,9 @@ def _as_jax_callable(
   return jax.jit(apply_kernel)
 
 
-def dump_mlir(module: ir.Module, name: str, kernel_name: str | None = None):
+def dump_mlir(
+    module: ir.Module, name: str, prefix: str, kernel_name: str | None = None
+):
   """A helper function to dump mosaic mlir module"""
   try:
     should_dump = FLAGS["xla_mosaic_dump_to"].value
@@ -769,6 +807,6 @@ def dump_mlir(module: ir.Module, name: str, kernel_name: str | None = None):
     if outdir:
       if kernel_name:
         name = f"{kernel_name}-{name}"
-      path = os.path.join(outdir, f"{time.time_ns()}-mosaic-dump-{name}-py.txt")
+      path = os.path.join(outdir, f"{prefix}-mosaic-dump-{name}-py.txt")
       with open(path, "w") as f:
         f.write(str(module))

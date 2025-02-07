@@ -90,6 +90,7 @@ Operators
     erfc
     erf_inv
     exp
+    exp2
     expand_dims
     expm1
     fft
@@ -154,6 +155,7 @@ Operators
     slice_in_dim
     sort
     sort_key_val
+    split
     sqrt
     square
     squeeze

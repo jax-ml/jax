@@ -20,7 +20,6 @@ from jax._src.interpreters.partial_eval import (
   ConstFoldRule as ConstFoldRule,
   ConstVar as ConstVar,
   DCERule as DCERule,
-  DebugInfo as DebugInfo,
   DynamicJaxprTrace as DynamicJaxprTrace,
   DynamicJaxprTracer as DynamicJaxprTracer,
   ForwardingRule as ForwardingRule,
@@ -40,7 +39,6 @@ from jax._src.interpreters.partial_eval import (
   TracerId as TracerId,
   Val as Val,
   abstract_eval_fun as abstract_eval_fun,
-  arg_info_all as arg_info_all,
   call_padding_rule as call_padding_rule,
   call_param_updaters as call_param_updaters,
   call_partial_eval_custom_rule as call_partial_eval_custom_rule,
@@ -59,8 +57,6 @@ from jax._src.interpreters.partial_eval import (
   dce_jaxpr_closed_call_rule as dce_jaxpr_closed_call_rule,
   dce_jaxpr_consts as dce_jaxpr_consts,
   dce_rules as dce_rules,
-  debug_info as debug_info,
-  debug_info_final as debug_info_final,
   def_trivial_padding as def_trivial_padding,
   forwarding_rules as forwarding_rules,
   has_effects as has_effects,
@@ -79,8 +75,6 @@ from jax._src.interpreters.partial_eval import (
   partial_eval_wrapper_nounits as partial_eval_wrapper_nounits,
   partition_pvals as partition_pvals,
   recipe_to_eqn as recipe_to_eqn,
-  result_info as result_info,
-  sig_info as sig_info,
   trace_to_jaxpr_dynamic as _trace_to_jaxpr_dynamic,
   trace_to_jaxpr_dynamic2 as trace_to_jaxpr_dynamic2,
   trace_to_jaxpr_nounits as trace_to_jaxpr_nounits,
@@ -92,9 +86,9 @@ from jax._src.interpreters.partial_eval import (
 
 
 # TODO(mattjj): remove temporary shim when trace_to_jaxpr_dynamic sig stabilizes
-def trace_to_jaxpr_dynamic(fun, in_avals, debug_info=None, *, keep_inputs=None):  # noqa
+def trace_to_jaxpr_dynamic(fun, in_avals, *, keep_inputs=None):  # noqa
   jaxpr, out_avals, consts, () = _trace_to_jaxpr_dynamic(
-      fun, in_avals, debug_info, keep_inputs=keep_inputs)
+      fun, in_avals, keep_inputs=keep_inputs)
   return jaxpr, out_avals, consts
 
 

@@ -23,7 +23,7 @@ from typing import Any
 import warnings
 
 import jax
-from jax import core as jax_core
+from jax._src import core as jax_core
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import lowering
@@ -73,7 +73,7 @@ def pallas_call_lowering(
   outs = mosaic_core._mosaic_gpu_lowering_rule(
       ctx.replace(avals_out=new_avals_out),
       *args,
-      module=module.operation.get_asm(binary=True, enable_debug_info=True),
+      module=module,
       out_types=lowering_result.out_structs,
       input_output_aliases=input_output_aliases,
   )

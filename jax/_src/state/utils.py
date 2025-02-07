@@ -79,7 +79,7 @@ def hoist_consts_to_refs(
 
 
 def val_to_ref_aval(x) -> AbstractRef:
-  aval = core.raise_to_shaped(core.get_aval(x))
+  aval = core.get_aval(x)
   if type(aval) is not core.ShapedArray:
     raise TypeError(f"can't make ref from {x}")
   return AbstractRef(aval)

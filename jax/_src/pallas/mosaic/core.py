@@ -92,6 +92,8 @@ class TPUCompilerParams(pallas_core.CompilerParams):
   serialization_format: int = 1
   device_type: str | None = None
 
+  replace = dataclasses.replace
+
 class TPUMemorySpace(enum.Enum):
   ANY = "any"  # TODO(b/368401328): Remove this and just use pl.ANY.
   VMEM = "vmem"
@@ -160,8 +162,6 @@ class SemaphoreType(enum.Enum):
       dtype = BarrierSemaphoreTy()
     else:
       dtype = SemaphoreTy()
-    if pallas_core.is_interpret_mode():
-      dtype = pallas_core.SEMAPHORE_INTERPRET_DTYPE
     return pallas_core.MemoryRef(shape, dtype, TPUMemorySpace.SEMAPHORE)
 
   def get_array_aval(self) -> pallas_core.ShapedArrayWithMemorySpace:
@@ -240,19 +240,38 @@ def _tensorcore_mesh_discharge_rule(
     *args,
     mesh,
     jaxpr,
+    compiler_params: Any | None,
+    interpret: bool,
+    debug: bool,
+    cost_estimate: pallas_core.CostEstimate | None,
 ):
   assert isinstance(mesh, TensorCoreMesh)
+  if compiler_params and not isinstance(compiler_params, TPUCompilerParams):
+    raise ValueError(
+        "compiler_params must be a pltpu.TPUCompilerParams"
+    )
+  if not compiler_params:
+    compiler_params = TPUCompilerParams()
   if len(mesh.shape) > 1:
     raise NotImplementedError("Mesh must be 1D")
   core_axis_name, num_cores = list(mesh.shape.items())[0]
+  if compiler_params.dimension_semantics is not None:
+    raise ValueError(
+        "dimension_semantics must be None for TensorCoreMesh"
+    )
   return pallas_core.default_mesh_discharge_rule(
       in_avals,
       out_avals,
       *args,
       jaxpr=jaxpr,
       grid=((core_axis_name, num_cores),),
-      compiler_params=TPUCompilerParams(dimension_semantics=("parallel",)),
+      compiler_params=compiler_params.replace(
+          dimension_semantics=("parallel",)
+      ),
+      debug=debug,
+      interpret=interpret,
       backend="mosaic_tpu",
+      cost_estimate=cost_estimate,
   )
 
 pallas_core._core_map_mesh_rules[TensorCoreMesh] = (

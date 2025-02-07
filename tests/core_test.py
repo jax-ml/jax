@@ -293,7 +293,10 @@ class CoreTest(jtu.JaxTestCase):
     assert d2_sin(0.0) == 0.0
     assert d3_sin(0.0) == -1.0
 
+  @jtu.thread_unsafe_test()  # gc isn't predictable when threaded
   def test_reference_cycles(self):
+    if jtu.TEST_NUM_THREADS.value > 1:
+      self.skipTest("Test does not work with multiple threads")
     gc.collect()
 
     def f(x):
@@ -310,7 +313,10 @@ class CoreTest(jtu.JaxTestCase):
     finally:
       gc.set_debug(debug)
 
+  @jtu.thread_unsafe_test()  # gc isn't predictable when threaded
   def test_reference_cycles_jit(self):
+    if jtu.TEST_NUM_THREADS.value > 1:
+      self.skipTest("Test does not work with multiple threads")
     gc.collect()
 
     def f(x):

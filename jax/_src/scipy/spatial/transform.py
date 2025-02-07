@@ -130,7 +130,7 @@ class Rotation(typing.NamedTuple):
     else:
       return self.quat.shape[0]
 
-  def __mul__(self, other):
+  def __mul__(self, other) -> Rotation:
     """Compose this rotation with the other."""
     return Rotation.from_quat(_compose_quat(self.quat, other.quat))
 

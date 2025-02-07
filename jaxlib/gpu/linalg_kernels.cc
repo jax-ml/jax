@@ -15,46 +15,19 @@ limitations under the License.
 
 #include "jaxlib/gpu/linalg_kernels.h"
 
-#include <cstddef>
 #include <string>
 #include <string_view>
 
-#include "absl/status/status.h"
-#include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "jaxlib/ffi_helpers.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
-#include "jaxlib/kernel_helpers.h"
 #include "xla/ffi/api/ffi.h"
-#include "xla/service/custom_call_status.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 
 namespace ffi = xla::ffi;
-
-namespace {
-absl::Status CholeskyUpdateImpl(gpuStream_t stream, void** buffers,
-                                const char* opaque, std::size_t opaque_len) {
-  auto s = UnpackDescriptor<CholeskyUpdateDescriptor>(opaque, opaque_len);
-  JAX_RETURN_IF_ERROR(s.status());
-  const CholeskyUpdateDescriptor& d = **s;
-  JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(LaunchCholeskyUpdateKernel(stream, buffers, d)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuGetLastError()));
-  return absl::OkStatus();
-}
-}  // namespace
-
-void CholeskyUpdate(gpuStream_t stream, void** buffers, const char* opaque,
-                    size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = CholeskyUpdateImpl(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    std::string_view message = s.message();
-    XlaCustomCallStatusSetFailure(status, message.data(), message.length());
-  }
-}
 
 namespace {
 ffi::Error CholeskyUpdateFfiImpl(gpuStream_t stream, ffi::AnyBuffer matrix_in,

@@ -19,6 +19,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "if_building_jaxlib",
+    "jax_export_file_visibility",
     "jax_extend_internal_users",
     "jax_extra_deps",
     "jax_internal_export_back_compat_test_util_visibility",
@@ -61,6 +62,11 @@ exports_files([
     "LICENSE",
     "version.py",
 ])
+
+exports_files(
+    ["_src/export/serialization.fbs"],
+    visibility = jax_export_file_visibility,
+)
 
 # Packages that have access to JAX-internal implementation details.
 package_group(
@@ -114,6 +120,7 @@ py_library(
     testonly = 1,
     srcs = [
         "_src/test_util.py",
+        "_src/test_warning_util.py",
     ],
     visibility = [
         ":internal",
@@ -164,6 +171,7 @@ py_library(
     ] + jax_internal_export_back_compat_test_util_visibility,
     deps = [
         ":jax",
+        ":test_util",
     ] + py_deps("numpy"),
 )
 
@@ -191,6 +199,7 @@ py_library_providing_imports_info(
         "_src/callback.py",
         "_src/checkify.py",
         "_src/custom_batching.py",
+        "_src/custom_dce.py",
         "_src/custom_derivatives.py",
         "_src/custom_partitioning.py",
         "_src/custom_partitioning_sharding_rule.py",
@@ -199,6 +208,7 @@ py_library_providing_imports_info(
         "_src/dispatch.py",
         "_src/dlpack.py",
         "_src/earray.py",
+        "_src/ffi.py",
         "_src/flatten_util.py",
         "_src/interpreters/__init__.py",
         "_src/interpreters/ad.py",
@@ -341,6 +351,7 @@ pytype_strict_library(
         ":config",
         ":core",
         ":dtypes",
+        ":state_types",
         ":traceback_util",
         ":tree_util",
         ":util",
@@ -352,6 +363,7 @@ pytype_strict_library(
     srcs = ["_src/basearray.py"],
     pytype_srcs = ["_src/basearray.pyi"],
     deps = [
+        ":partition_spec",
         ":sharding",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
@@ -455,6 +467,7 @@ pytype_strict_library(
         ":dtypes",
         ":effects",
         ":mesh",
+        ":partition_spec",
         ":pretty_printer",
         ":source_info_util",
         ":traceback_util",
@@ -486,6 +499,7 @@ pytype_strict_library(
         ":traceback_util",
         ":typing",
         ":util",
+        "//jax/_src/lib",
     ] + py_deps("ml_dtypes") + py_deps("numpy"),
 )
 
@@ -551,6 +565,7 @@ pytype_strict_library(
     srcs = ["_src/interpreters/mlir.py"],
     deps = [
         ":ad_util",
+        ":api_util",
         ":config",
         ":core",
         ":dtypes",
@@ -558,6 +573,7 @@ pytype_strict_library(
         ":layout",
         ":op_shardings",
         ":partial_eval",
+        ":partition_spec",
         ":path",
         ":pickle_util",
         ":sharding",
@@ -582,6 +598,20 @@ pytype_strict_library(
     deps = [
         "//jax/_src/lib",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "source_mapper",
+    srcs = glob(include = ["experimental/source_mapper/**/*.py"]),
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        ":config",
+        ":core",
+        ":jax",
+        ":source_info_util",
+    ] + py_deps("absl/flags"),
 )
 
 pytype_strict_library(
@@ -621,6 +651,8 @@ pytype_strict_library(
         ":tpu_custom_call",
         "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:core",
+        "//jax/_src/pallas/mosaic:helpers",
+        "//jax/_src/pallas/mosaic:interpret",
         "//jax/_src/pallas/mosaic:lowering",
         "//jax/_src/pallas/mosaic:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/mosaic:pipeline",
@@ -727,7 +759,6 @@ py_library(
         ":jax",
         ":mlir",
         "//jax/_src/lib",
-        "//jax/extend:ffi",
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:builtin_dialect",
         "//jaxlib/mlir:func_dialect",
@@ -784,6 +815,15 @@ pytype_library(
     ],
 )
 
+pytype_library(
+    name = "experimental_transfer",
+    srcs = ["experimental/transfer.py"],
+    deps = [
+        ":jax",
+        "//jax/_src/lib",
+    ],
+)
+
 pytype_strict_library(
     name = "pickle_util",
     srcs = ["_src/pickle_util.py"],
@@ -823,7 +863,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "compute_on",
     srcs = ["_src/compute_on.py"],
-    deps = [":config"],
+    deps = [
+        ":config",
+        "//jax/_src/lib",
+    ],
 )
 
 pytype_strict_library(
@@ -831,6 +874,7 @@ pytype_strict_library(
     srcs = ["_src/xla_metadata.py"],
     deps = [
         ":config",
+        "//jax/_src/lib",
     ],
 )
 
@@ -857,6 +901,7 @@ pytype_strict_library(
         ":partition_spec",
         ":sharding",
         ":sharding_specs",
+        ":source_info_util",
         ":tree_util",
         ":util",
         ":xla_bridge",
@@ -1042,19 +1087,6 @@ pytype_library(
     ],
     visibility = ["//visibility:public"],
     deps = [":jax"],
-)
-
-pytype_library(
-    name = "experimental_array_api",
-    srcs = glob(
-        [
-            "experimental/array_api/*.py",
-        ],
-    ),
-    visibility = [":internal"],
-    deps = [
-        ":jax",
-    ],
 )
 
 pytype_library(

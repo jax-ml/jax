@@ -420,10 +420,9 @@ def run_deserialization(shardings: Sequence[sharding.Sharding | Layout],
   async def _run_deserializer():
     # Object should be created once per process.
     byte_limiter = _LimitInFlightBytes(concurrent_bytes)
-
     future_arrays = jax.tree_util.tree_map(
         partial(async_deserialize, byte_limiter=byte_limiter),
-        shardings, tensorstore_specs,
+        list(shardings), list(tensorstore_specs),
         [None] * len(tensorstore_specs) if global_shapes is None else global_shapes,
         [None] * len(tensorstore_specs) if dtypes is None else dtypes)
     return await asyncio.gather(*future_arrays)

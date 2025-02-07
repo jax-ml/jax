@@ -24,6 +24,7 @@ import enum
 import itertools as it
 from typing import Any, ClassVar, Literal
 
+import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
@@ -31,6 +32,7 @@ from jax._src import tree_util
 from jax._src.pallas import core as pallas_core
 from jax._src.state import indexing
 from jax._src.state import types as state_types
+from jax._src.state import discharge as state_discharge
 import jax.experimental.mosaic.gpu as mgpu
 import jax.numpy as jnp
 from jaxlib.mlir import ir
@@ -112,6 +114,24 @@ class GPUMemorySpace(enum.Enum):
   ) -> pallas_core.MemoryRef:
     # A convenience function for constructing MemoryRef types.
     return GPUMemoryRef(shape, dtype, memory_space=self, transforms=transforms)
+
+
+def kernel(body, out_shape, compiler_params=None, **mesh_kwargs):
+  if unwrap_out := not isinstance(out_shape, (tuple, list)):
+    out_shape = (out_shape,)
+  def wrapper(*operands):
+    def stateful(operand_and_out_refs):
+      operand_refs, out_refs = operand_and_out_refs
+      def cmap_body():
+        body(*operand_refs, *out_refs)
+      pallas_core.core_map(
+          GPUMesh(**mesh_kwargs), compiler_params=compiler_params
+      )(cmap_body)
+    _, outs = state_discharge.run_state(stateful)(
+        (operands, jax.tree.map(jnp.zeros_like, out_shape))
+    )
+    return outs[0] if unwrap_out else outs
+  return wrapper
 
 
 @dataclasses.dataclass(frozen=True)
@@ -483,12 +503,11 @@ class GPUMesh:
   # Those are NOT CUDA threads. On Hopper they correspond to warpgroups.
   num_threads: int | None = None
   axis_names: tuple[str, ...] = ()
-  approx_math: bool = False
 
   def __post_init__(self):
     if len(self.axis_names) != len(self.grid) + (self.num_threads is not None):
       raise ValueError("Need as many axis names as grid dimensions + warp groups")
-    if self.num_threads > 2048 // 128:
+    if self.num_threads is not None and self.num_threads > 2048 // 128:
       raise ValueError(
           "Requested too many CUDA threads per block. Each Mosaic thread"
           " corresponds to 128 CUDA threads."
@@ -521,12 +540,22 @@ def _gpu_mesh_discharge_rule(
     *args,
     mesh,
     jaxpr,
+    compiler_params,
+    interpret,
+    debug,
+    cost_estimate,
 ):
-  assert isinstance(mesh, GPUMesh)
+  if not isinstance(mesh, GPUMesh):
+    raise TypeError(f"Mesh must be a GPUMesh, got {type(mesh)}")
   if mesh.cluster:
     raise NotImplementedError
-  if mesh.num_threads is None:
-    raise NotImplementedError
+  if compiler_params and not isinstance(compiler_params, GPUCompilerParams):
+    raise TypeError(
+        "Compiler params must be a GPUCompilerParams, got"
+        f" {type(compiler_params)}"
+    )
+  if not compiler_params:
+    compiler_params = GPUCompilerParams()
   return pallas_core.default_mesh_discharge_rule(
       in_avals,
       out_avals,
@@ -534,8 +563,13 @@ def _gpu_mesh_discharge_rule(
       jaxpr=jaxpr,
       grid=tuple(mesh.shape.items()),
       backend="mosaic_gpu",
-      compiler_params=GPUCompilerParams(approx_math=mesh.approx_math),
+      compiler_params=compiler_params,
+      debug=debug,
+      interpret=interpret,
+      cost_estimate=cost_estimate,
   )
+
+
 pallas_core._core_map_mesh_rules[GPUMesh] = _gpu_mesh_discharge_rule
 
 

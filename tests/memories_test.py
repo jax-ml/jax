@@ -900,6 +900,9 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(out2.sharding.memory_kind, 'pinned_host')
 
   def test_compute_host_loop(self):
+    # TODO(apaszke): Remove after 12 weeks have passed.
+    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
+      self.skipTest("Requires libtpu built after 2024-12-19")
     @compute_on('device_host')
     @jax.jit
     def fn():
@@ -1308,7 +1311,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:
       out = f(inp)
       out2 = f(inp2)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
     self.assertArraysEqual(out, np_inp @ np_inp.T)
     self.assertArraysEqual(out2, np_inp @ np_inp.T)
@@ -1329,8 +1332,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
           jtu.count_jit_and_pmap_lowerings() as compile_count):
       f(inp)
       f(inp2)
-    self.assertEqual(cpp_count[0], 2)
-    self.assertEqual(compile_count[0], 1)
+    self.assertEqual(cpp_count(), 2)
+    self.assertEqual(compile_count(), 1)
 
   def test_jit_cpp_cache_output_hit(self):
     _, _, _, inp = _create_inputs((8, 2), P("x"), mem_kind="device")
@@ -1342,7 +1345,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:
       out = mul_two(inp)
       mul_two(out)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_jit_cache_hit_with_default_and_specified_mem_kind(self):
     _, s, np_inp, _ = _create_inputs((8, 2), P("x", "y"))
@@ -1357,7 +1360,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     with jtu.count_jit_and_pmap_lowerings() as count:
       out = f(np_inp)
       out2 = g(np_inp2)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
     self.assertArraysEqual(out, np_inp @ np_inp.T)
     self.assertArraysEqual(out2, np_inp2 @ np_inp2.T)
@@ -1541,6 +1544,9 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(y_out, y1 + y1)
 
   def test_compute_offload_with_linear_layout(self):
+    # TODO(apaszke): Remove after 12 weeks have passed.
+    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
+      self.skipTest("Requires libtpu built after 2024-12-19")
     sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     p_sharding = jax.sharding.SingleDeviceSharding(
         jax.devices()[0], memory_kind="pinned_host"
@@ -1633,9 +1639,12 @@ class ComputeOffload(jtu.BufferDonationTestCase):
         f(inp)
 
     # 2 for `f` and `2` for `mul` (compute type changes for `mul`)
-    self.assertEqual(count[0], 4)
+    self.assertEqual(count(), 4)
 
   def test_offload_take_host(self):
+    # TODO(apaszke): Remove after 12 weeks have passed.
+    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
+      self.skipTest("Requires libtpu built after 2024-12-19")
     @compute_on('device_host')
     @jax.jit
     def peer_forward(x, experts, indices, scores):
@@ -1832,6 +1841,27 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None:
       self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
+
+  def test_primitive_with_multiple_outputs(self):
+    # Test for https://github.com/jax-ml/jax/issues/25841
+    shape = (128,)
+    inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+
+    def policy(prim, *args, **kwargs):
+      del args, kwargs
+      if prim.multiple_results:
+        return Offloadable("device", "pinned_host")
+      return Recompute
+
+    @functools.partial(remat, policy=policy)
+    def test_fn(x):
+      # Need any primitive with multiple outputs and a non-trivial grad.
+      x1, _ = jax.lax.approx_max_k(x, k=2)
+      return jnp.sum(x1)
+
+    fn = jax.grad(test_fn)
+    jax.jit(fn)(inp)  # doesn't crash
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

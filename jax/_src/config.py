@@ -202,7 +202,6 @@ def trace_context():
   return (axis_env_state.value, mesh_context_manager.value,
           xla_metadata_context_manager.value,
           abstract_mesh_context_manager.value,
-          device_context.value,
           compute_on_context_manager.value, enable_x64.value,
           numpy_rank_promotion.value, default_matmul_precision.value,
           dynamic_shapes.value,
@@ -214,7 +213,6 @@ def trace_context():
           sharding_in_types.value,
           use_direct_linearize.value,
           softmax_custom_jvp.value,
-          enable_memories.value,
           disable_jit.value,
           debug_key_reuse.value,
           jax_xla_profile_version.value,
@@ -233,6 +231,8 @@ parse_flags_with_absl = config.parse_flags_with_absl
 
 class NoDefault: pass
 no_default = NoDefault()
+
+config_states = {}
 
 class State(config_ext.Config[_T]):
 
@@ -266,6 +266,7 @@ class State(config_ext.Config[_T]):
       self._validator(default)
     if self._update_global_hook:
       self._update_global_hook(default)
+    config_states[name] = self
 
   def __bool__(self) -> NoReturn:
     raise TypeError(
@@ -816,10 +817,10 @@ already_configured_with_absl = False
 trace_state = config_ext.Config(None, include_in_jit_key=True)
 axis_env_state = config_ext.Config((), include_in_jit_key=True)
 mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
-abstract_mesh_context_manager = config_ext.Config((), include_in_jit_key=True)
-device_context = config_ext.Config((), include_in_jit_key=True)
-compute_on_context_manager = config_ext.Config((), include_in_jit_key=True)
-xla_metadata_context_manager = config_ext.Config((), include_in_jit_key=True)
+abstract_mesh_context_manager = config_ext.Config(None, include_in_jit_key=True)
+device_context = config_ext.Config(None, include_in_jit_key=True)
+compute_on_context_manager = config_ext.Config(None, include_in_jit_key=True)
+xla_metadata_context_manager = config_ext.Config(None, include_in_jit_key=True)
 
 
 # TODO(b/214340779): remove flag when XLA:CPU is improved.
@@ -972,20 +973,6 @@ pmap_shmap_merge = bool_state(
     upgrade=True,
     help='If True, pmap and shard_map API will be merged.')
 
-def _update_jax_memories_global(val):
-  jax_jit.global_state().enable_memories = val
-
-def _update_jax_memories_thread_local(val):
-  jax_jit.thread_local_state().enable_memories = val
-
-enable_memories = bool_state(
-    'jax_enable_memories',
-    default=True,
-    upgrade=True,
-    update_global_hook=_update_jax_memories_global,
-    update_thread_local_hook=_update_jax_memories_thread_local,
-    help=("If True, will allow fetching memory kinds available on executable "
-          "and annotate Shardings with it."))
 
 spmd_mode = enum_state(
     name='jax_spmd_mode',
@@ -1038,7 +1025,7 @@ default_prng_impl = enum_state(
 
 threefry_partitionable = bool_state(
     name='jax_threefry_partitionable',
-    default=False,
+    default=True,
     upgrade=True,
     help=('Enables internal threefry PRNG implementation changes that '
           'render it automatically partitionable in some cases. Without this '
@@ -1166,20 +1153,6 @@ traceback_in_locations_limit = int_state(
         'Limit the number of frames at the Python traceback frames included in '
         'MLIR locations. If set to the negative value, traceback will not be '
         'limited.'
-    ),
-)
-
-share_autotune_config_between_hosts = bool_state(
-    name='jax_share_autotune_config_between_hosts',
-    default=False,
-    help=(
-        'If set to True, the coordinator process will share autotune configs '
-        'other participants. This will increase overall compilation time, but '
-        'will lead to equal compiled modules in each process. '
-        'If both jax_share_binary_between_hosts and '
-        'jax_share_autotune_config_between_hosts are set, compiled HLO will be '
-        "shared when it's possible and autotune config sharing will be used "
-        'as a fallback.'
     ),
 )
 
@@ -1491,6 +1464,12 @@ custom_vjp_disable_shape_check = bool_state(
     upgrade=True,
     help='Disable the check from #19009 to enable some custom_vjp hacks.')
 
+mutable_array_checks = bool_state(
+    name='jax_mutable_array_checks',
+    default=False,
+    upgrade=True,
+    help='Enable error checks for mutable arrays that rule out aliasing.')
+
 xla_runtime_errors = bool_state(
     name='jax_experimental_unsafe_xla_runtime_errors',
     default=False,
@@ -1665,7 +1644,7 @@ array_garbage_collection_guard = optional_enum_state(
         ' do not log garbage collection of "jax.Array" objects.\n * "log":'
         ' log an error when a "jax.Array" is garbage collected.\n * "fatal":'
         ' fatal error if a "jax.Array" is garbage collected.\nDefault is'
-        ' "allow".'
+        ' "allow". Note that not all cycles may be detected.'
     ),
     update_global_hook=lambda val: _update_garbage_collection_guard(
         guard_lib.global_state(), 'garbage_collect_array', val
@@ -1736,4 +1715,22 @@ memory_fitting_effort = float_state(
     name='jax_memory_fitting_effort',
     default=0.0,
     help='Effort for minimizing memory usage (higher means more effort), valid range [-1.0, 1.0].'
+)
+
+cpu_collectives_implementation = optional_enum_state(
+    name='jax_cpu_collectives_implementation',
+    enum_values=["gloo", "mpi", "megascale"],
+    default=None,
+    help=(
+        "Cross-process collective implementation used on CPU. Must be one of "
+        '("gloo", "mpi")'),
+)
+
+num_cpu_devices = int_state(
+    name="jax_num_cpu_devices",
+    default=-1,
+    help=(
+        "Number of CPU devices to use. If not provided, the value of "
+        "the XLA flag --xla_force_host_platform_device_count is used."
+        " Must be set before JAX is initialized."),
 )

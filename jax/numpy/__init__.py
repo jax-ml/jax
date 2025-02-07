@@ -34,7 +34,6 @@ from jax._src.numpy.lax_numpy import (
     arange as arange,
     argmax as argmax,
     argmin as argmin,
-    argsort as argsort,
     argwhere as argwhere,
     around as around,
     array as array,
@@ -49,25 +48,16 @@ from jax._src.numpy.lax_numpy import (
     atleast_2d as atleast_2d,
     atleast_3d as atleast_3d,
     bartlett as bartlett,
-    bfloat16 as bfloat16,
     bincount as bincount,
     blackman as blackman,
     block as block,
-    bool_ as bool,  # Array API alias for bool_  # noqa: F401
-    bool_ as bool_,
     broadcast_arrays as broadcast_arrays,
     broadcast_shapes as broadcast_shapes,
     broadcast_to as broadcast_to,
     can_cast as can_cast,
-    cdouble as cdouble,
-    character as character,
     choose as choose,
     clip as clip,
     column_stack as column_stack,
-    complex128 as complex128,
-    complex64 as complex64,
-    complex_ as complex_,
-    complexfloating as complexfloating,
     compress as compress,
     concat as concat,
     concatenate as concatenate,
@@ -77,7 +67,6 @@ from jax._src.numpy.lax_numpy import (
     correlate as correlate,
     cov as cov,
     cross as cross,
-    csingle as csingle,
     delete as delete,
     diag as diag,
     diagflat as diagflat,
@@ -87,7 +76,6 @@ from jax._src.numpy.lax_numpy import (
     diff as diff,
     digitize as digitize,
     dot as dot,
-    double as double,
     dsplit as dsplit,
     dstack as dstack,
     dtype as dtype,
@@ -105,20 +93,9 @@ from jax._src.numpy.lax_numpy import (
     finfo as finfo,
     fix as fix,
     flatnonzero as flatnonzero,
-    flexible as flexible,
     flip as flip,
     fliplr as fliplr,
     flipud as flipud,
-    float16 as float16,
-    float32 as float32,
-    float64 as float64,
-    float8_e4m3b11fnuz as float8_e4m3b11fnuz,
-    float8_e4m3fn as float8_e4m3fn,
-    float8_e4m3fnuz as float8_e4m3fnuz,
-    float8_e5m2 as float8_e5m2,
-    float8_e5m2fnuz as float8_e5m2fnuz,
-    float_ as float_,
-    floating as floating,
     fmax as fmax,
     fmin as fmin,
     frombuffer as frombuffer,
@@ -130,7 +107,6 @@ from jax._src.numpy.lax_numpy import (
     full as full,
     full_like as full_like,
     gcd as gcd,
-    generic as generic,
     geomspace as geomspace,
     get_printoptions as get_printoptions,
     gradient as gradient,
@@ -146,17 +122,9 @@ from jax._src.numpy.lax_numpy import (
     identity as identity,
     iinfo as iinfo,
     indices as indices,
-    inexact as inexact,
     inf as inf,
     inner as inner,
     insert as insert,
-    int4 as int4,
-    int8 as int8,
-    int16 as int16,
-    int32 as int32,
-    int64 as int64,
-    int_ as int_,
-    integer as integer,
     interp as interp,
     isclose as isclose,
     iscomplex as iscomplex,
@@ -170,12 +138,12 @@ from jax._src.numpy.lax_numpy import (
     kaiser as kaiser,
     kron as kron,
     lcm as lcm,
-    lexsort as lexsort,
     linspace as linspace,
     load as load,
     logspace as logspace,
     mask_indices as mask_indices,
     matmul as matmul,
+    matvec as matvec,
     matrix_transpose as matrix_transpose,
     meshgrid as meshgrid,
     moveaxis as moveaxis,
@@ -183,18 +151,14 @@ from jax._src.numpy.lax_numpy import (
     nan_to_num as nan_to_num,
     nanargmax as nanargmax,
     nanargmin as nanargmin,
-    argpartition as argpartition,
     ndim as ndim,
     newaxis as newaxis,
     nonzero as nonzero,
-    number as number,
-    object_ as object_,
     ones as ones,
     ones_like as ones_like,
     outer as outer,
     packbits as packbits,
     pad as pad,
-    partition as partition,
     permute_dims as permute_dims,
     pi as pi,
     piecewise as piecewise,
@@ -219,11 +183,7 @@ from jax._src.numpy.lax_numpy import (
     select as select,
     set_printoptions as set_printoptions,
     shape as shape,
-    signedinteger as signedinteger,
-    single as single,
     size as size,
-    sort as sort,
-    sort_complex as sort_complex,
     split as split,
     squeeze as squeeze,
     stack as stack,
@@ -244,20 +204,14 @@ from jax._src.numpy.lax_numpy import (
     triu_indices as triu_indices,
     triu_indices_from as triu_indices_from,
     trunc as trunc,
-    uint as uint,
-    uint4 as uint4,
-    uint8 as uint8,
-    uint16 as uint16,
-    uint32 as uint32,
-    uint64 as uint64,
     unpackbits as unpackbits,
     unravel_index as unravel_index,
-    unsignedinteger as unsignedinteger,
     unstack as unstack,
     unwrap as unwrap,
     vander as vander,
     vdot as vdot,
     vecdot as vecdot,
+    vecmat as vecmat,
     vsplit as vsplit,
     vstack as vstack,
     where as where,
@@ -265,9 +219,67 @@ from jax._src.numpy.lax_numpy import (
     zeros_like as zeros_like,
 )
 
+from jax._src.numpy.scalar_types import (
+    bfloat16 as bfloat16,
+    bool_ as bool,  # Array API alias for bool_  # noqa: F401
+    bool_ as bool_,
+    cdouble as cdouble,
+    csingle as csingle,
+    complex128 as complex128,
+    complex64 as complex64,
+    complex_ as complex_,
+    double as double,
+    float16 as float16,
+    float32 as float32,
+    float64 as float64,
+    float8_e4m3b11fnuz as float8_e4m3b11fnuz,
+    float8_e4m3fn as float8_e4m3fn,
+    float8_e4m3fnuz as float8_e4m3fnuz,
+    float8_e5m2 as float8_e5m2,
+    float8_e5m2fnuz as float8_e5m2fnuz,
+    float_ as float_,
+    int4 as int4,
+    int8 as int8,
+    int16 as int16,
+    int32 as int32,
+    int64 as int64,
+    int_ as int_,
+    single as single,
+    uint as uint,
+    uint4 as uint4,
+    uint8 as uint8,
+    uint16 as uint16,
+    uint32 as uint32,
+    uint64 as uint64,
+)
+
+from jax._src.numpy.sorting import (
+    argpartition as argpartition,
+    argsort as argsort,
+    lexsort as lexsort,
+    partition as partition,
+    sort as sort,
+    sort_complex as sort_complex,
+)
+
+# NumPy generic scalar types:
+from numpy import (
+    character as character,
+    complexfloating as complexfloating,
+    flexible as flexible,
+    floating as floating,
+    generic as generic,
+    inexact as inexact,
+    integer as integer,
+    number as number,
+    object_ as object_,
+    signedinteger as signedinteger,
+    unsignedinteger as unsignedinteger,
+)
+
 # TODO(slebedev): Remove the try-except once we upgrade to ml_dtypes 0.4.1.
 try:
-  from jax._src.numpy.lax_numpy import (
+  from jax._src.numpy.scalar_types import (
     int2 as int2,
     uint2 as uint2,
   )
@@ -276,9 +288,10 @@ except ImportError:
 
 # TODO: Remove the try-except once we upgrade to ml_dtypes 0.5.0
 try:
-  from jax._src.numpy.lax_numpy import (
+  from jax._src.numpy.scalar_types import (
     float8_e3m4 as float8_e3m4,
     float8_e4m3 as float8_e4m3,
+    float8_e8m0fnu as float8_e8m0fnu,
   )
 except ImportError:
   pass
@@ -477,17 +490,15 @@ del register_jax_array_methods
 
 
 _deprecations = {
-  # Deprecated 03 Sept 2024
+  # Finalized 2024-12-13; remove after 2024-3-13
   "round_": (
-    "jnp.round_ is deprecated; use jnp.round instead.",
-    round
+    "jnp.round_ was deprecated in JAX 0.4.38; use jnp.round instead.",
+    None
   ),
 }
 
 import typing
-if typing.TYPE_CHECKING:
-  round_ = round
-else:
+if not typing.TYPE_CHECKING:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr

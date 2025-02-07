@@ -19,6 +19,7 @@ limitations under the License.
 #ifndef JAXLIB_MOSAIC_DIALECT_TPU_INTEGRATIONS_C_TPU_DIALECT_H_
 #define JAXLIB_MOSAIC_DIALECT_TPU_INTEGRATIONS_C_TPU_DIALECT_H_
 
+#include "jaxlib/mosaic/dialect/tpu/integrations/c/tpu_dialect.h"
 #ifndef __cplusplus
 #include <stdbool.h>
 #endif
@@ -226,14 +227,17 @@ MLIR_CAPI_EXPORTED MlirTpuValueArray mlirTpuDisassemble(
     MlirValue val, MlirTpuI64TargetTuple target_shape);
 
 MLIR_CAPI_EXPORTED MlirLogicalResult
-mlirTpuApplyLayoutOp(int hardware_generation, MlirOperation op,
-                     MlirTpuI64TargetTuple target_shape);
+mlirTpuApplyLayoutOp(MlirTpuApplyVectorLayoutContext ctx, MlirOperation op);
 
 // Returns null on failure
 MLIR_CAPI_EXPORTED MlirValue
 mlirTpuRelayout(MlirTpuInsertionPoint insertion_point, MlirValue val,
                 MlirTpuVectorLayout src, MlirTpuVectorLayout dst,
                 MlirTpuApplyVectorLayoutContext ctx);
+
+
+MLIR_CAPI_EXPORTED void mlirTpuRegisterMosaicSerdePass();
+
 #ifdef __cplusplus
 }
 #endif

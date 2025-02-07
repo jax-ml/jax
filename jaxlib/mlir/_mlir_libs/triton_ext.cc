@@ -16,13 +16,13 @@ limitations under the License.
 #include <optional>
 
 #include "mlir-c/IR.h"
-#include "mlir/Bindings/Python/PybindAdaptors.h"
-#include "pybind11/detail/common.h"
+#include "mlir/Bindings/Python/NanobindAdaptors.h"
+#include "nanobind/nanobind.h"
 #include "jaxlib/triton/triton_dialect_capi.h"
 
-namespace py = pybind11;
+namespace nb = nanobind;
 
-PYBIND11_MODULE(_triton_ext, m, py::mod_gil_not_used()) {
+NB_MODULE(_triton_ext, m) {
   //
   // Dialects.
   //
@@ -36,20 +36,20 @@ PYBIND11_MODULE(_triton_ext, m, py::mod_gil_not_used()) {
           mlirDialectHandleLoadDialect(dialect, context);
         }
       },
-      py::arg("context"), py::arg("load") = true);
+      nb::arg("context"), nb::arg("load") = true);
 
   //
   // Types.
   //
 
-  mlir::python::adaptors::mlir_type_subclass(m, "PointerType",
+  mlir::python::nanobind_adaptors::mlir_type_subclass(m, "PointerType",
                                              mlirTritonIsAPointer)
       .def_classmethod(
           "get",
-          [](py::object cls, MlirType pointee_type, int64_t address_space) {
+          [](nb::object cls, MlirType pointee_type, int64_t address_space) {
             return cls(mlirTritonPointerTypeGet(pointee_type, address_space));
           },
-          py::arg("cls"), py::arg("pointee_type"), py::arg("address_space"),
+          nb::arg("cls"), nb::arg("pointee_type"), nb::arg("address_space"),
           "Creates a PointerType type.")
       .def_property_readonly("pointee_type", [](MlirType self) {
         return mlirTritonPointerTypeGetPointeeType(self);

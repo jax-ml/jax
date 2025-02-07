@@ -21,6 +21,7 @@ import logging
 from typing import Any
 
 import jax
+from jax._src import config
 from jax._src import core
 from jax._src import deprecations
 from jax._src import dispatch
@@ -158,8 +159,7 @@ def callback_batching_rule(
   new_args = [arg if dim is batching.not_mapped else
               batching.moveaxis(arg, dim, 0) for arg, dim in zip(args, dims)]
   batched_result_avals = tuple(
-      core.unmapped_aval(axis_size, core.no_axis_name, 0, aval)
-      for aval in result_avals)
+      core.unmapped_aval(axis_size, 0, aval) for aval in result_avals)
 
   # For FFI calls we must update the layouts. We handle the output layouts
   # here, but the input layout updates depend on the vmap_method parameter.
@@ -225,7 +225,9 @@ batching.primitive_batchers[pure_callback_p] = functools.partial(
 )
 
 
-def _callback_op_sharding(axis_context, sharding: SingleDeviceSharding | None):
+def _callback_op_sharding(
+    axis_context, sharding: SingleDeviceSharding | None, avals_out
+):
   if isinstance(axis_context, sharding_impls.SPMDAxisContext):
     # If we have fully manual sharding during lowering, that means the JAX
     # program has per-device semantics, so we run the callback on each device.
@@ -239,8 +241,18 @@ def _callback_op_sharding(axis_context, sharding: SingleDeviceSharding | None):
           "callbacks do not support specifying sharding inside spmd"
           " computations"
       )
-    op_sharding = xc.OpSharding()
-    op_sharding.type = xc.OpSharding.Type.MANUAL
+    if config.use_shardy_partitioner.value:
+      assert len(avals_out) == 1
+      op_sharding = sharding_impls.SdyArrayShardingList([
+          sharding_impls.SdyArraySharding(
+              mesh_shape=(),
+              dimension_shardings=[
+                  sharding_impls.SdyDimSharding(axes=[], is_closed=True)
+              ] * avals_out[0].ndim,
+              logical_device_ids=())])
+    else:
+      op_sharding = xc.OpSharding()  # type: ignore[assignment]
+      op_sharding.type = xc.OpSharding.Type.MANUAL
     return op_sharding
 
   if isinstance(axis_context, sharding_impls.ShardingContext):
@@ -268,10 +280,17 @@ def _callback_op_sharding(axis_context, sharding: SingleDeviceSharding | None):
     # If we have fully automatic sharding during lowering, that means the JAX
     # program has bulk array semantics, so we run the callback with a MAXIMAL
     # sharding and hence execute it only once on the full logical value).
-    op_sharding = xc.OpSharding()
-    op_sharding.type = xc.OpSharding.Type.MAXIMAL
-    op_sharding.tile_assignment_dimensions = [1]
-    op_sharding.tile_assignment_devices = [device_index]
+    if config.use_shardy_partitioner.value:
+      op_sharding = sharding_impls.SdyArrayShardingList([
+          sharding_impls.SdyArraySharding(
+              mesh_shape=(),
+              dimension_shardings=[],
+              logical_device_ids=(device_index,))])
+    else:
+      op_sharding = xc.OpSharding()  # type: ignore[assignment]
+      op_sharding.type = xc.OpSharding.Type.MAXIMAL
+      op_sharding.tile_assignment_dimensions = [1]
+      op_sharding.tile_assignment_devices = [device_index]
     return op_sharding
 
   # When there's no SPMD partitioning going on, don't annotate a sharding.
@@ -291,7 +310,8 @@ def pure_callback_lowering(
         )
     )
 
-  op_sharding = _callback_op_sharding(ctx.module_context.axis_context, sharding)
+  op_sharding = _callback_op_sharding(
+      ctx.module_context.axis_context, sharding, ctx.avals_out)
   result, _, _ = mlir.emit_python_callback(
       ctx,
       _callback,
@@ -337,6 +357,13 @@ def pure_callback(
   :func:`~pmap`), or not to be called at all when e.g. the output of a
   `jit`-decorated function has no data dependence on its value. Pure callbacks
   may also be reordered if data-dependence allows.
+
+  .. warning::
+
+     In the context of JAX transformations, Python exceptions should be
+     considered side-effects: this means that intentionally raising an error
+     within a `pure_callback` breaks the API contract, and the behavior of
+     the resulting program is undefined.
 
   When `vmap`-ed the behavior will depend on the value of the ``vmap_method``.
 
@@ -418,7 +445,7 @@ def pure_callback(
     (4,) (4,)
     Array([1., 2., 3., 4.], dtype=float32)
 
-  .. _External Callbacks: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
+  .. _External Callbacks: https://jax.readthedocs.io/en/latest/external-callbacks.html
   """
   if not isinstance(vectorized, DeprecatedArg) and not vectorized is None:
     deprecations.warn(
@@ -561,7 +588,8 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
         )
     )
 
-  op_sharding = _callback_op_sharding(ctx.module_context.axis_context, sharding)
+  op_sharding = _callback_op_sharding(
+      ctx.module_context.axis_context, sharding, ctx.avals_out)
   if ordered:
     token = ctx.tokens_in.get(_OrderedIOEffect)
     result, token, _ = mlir.emit_python_callback(
@@ -576,7 +604,7 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
     )
     ctx.set_tokens_out(mlir.TokenSet({_OrderedIOEffect: token}))
   else:
-    result, token, _ = mlir.emit_python_callback(
+    result, _, _ = mlir.emit_python_callback(
         ctx,
         _callback,
         None,

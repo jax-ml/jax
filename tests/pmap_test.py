@@ -47,22 +47,14 @@ from jax._src import sharding_impls
 from jax._src import sharding_specs
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import lax_test_util
-from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lax import parallel
 from jax._src.lib import xla_extension
 from jax._src.util import safe_map, safe_zip
 
 config.parse_flags_with_absl()
+jtu.request_cpu_devices(8)
 
-# Run all tests with 8 CPU devices.
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-
-def tearDownModule():
-  _exit_stack.close()
 
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
@@ -1287,7 +1279,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     x = jnp.arange(device_count)
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       ans = f(x)
-    # self.assertEqual(count[0], 0)  # TODO(mattjj): fix this
+    # self.assertEqual(count(), 0)  # TODO(mattjj): fix this
     expected = np.repeat(3, device_count)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -1308,7 +1300,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     x = jnp.arange(len(devices))
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       ans = f(x)
-    # self.assertEqual(count[0], 0)  # TODO(mattjj): don't compile for constants
+    # self.assertEqual(count(), 0)  # TODO(mattjj): don't compile for constants
     expected = np.repeat(3, len(devices))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -1344,7 +1336,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     x = jnp.arange(math.prod(shape)).reshape(shape)
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       ans = f(x)
-    # self.assertEqual(count[0], 0)  # TODO(mattjj): don't compile for constants
+    # self.assertEqual(count(), 0)  # TODO(mattjj): don't compile for constants
     expected = 3 * np.ones(shape[:2])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -1370,7 +1362,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     x = jnp.arange(math.prod(shape)).reshape(shape)
     with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       ans = f(x)
-    # self.assertEqual(count[0], 0)  # TODO(mattjj): don't compile for constants
+    # self.assertEqual(count(), 0)  # TODO(mattjj): don't compile for constants
     expected = 3 * np.ones(shape[:2])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
@@ -1677,6 +1669,23 @@ class PythonPmapTest(jtu.JaxTestCase):
       return time_evolution(state)
 
     multi_step_pmap(jnp.zeros((device_count,)), count=1)
+
+  def test_typed_prng_key_sharded(self):
+    devices = jax.local_devices()
+
+    @partial(jax.pmap, in_axes=0, out_axes=0, axis_size=len(devices),
+             axis_name='i', devices=devices)
+    def fn(key):
+      return jax.random.fold_in(key, 0)
+
+    sharded_key = jax.random.split(jax.random.key(0), len(devices))
+    replicated_key = jax.random.key(1)
+
+    sharded_key = jax.device_put_sharded(jnp.unstack(sharded_key), devices)
+    replicated_key = jax.device_put_replicated(replicated_key, devices)
+
+    fn(sharded_key)
+    fn(replicated_key)
 
   def testArrayGetItem(self):
     f = lambda x: 2 * x
@@ -2043,7 +2052,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       _, f_bwd2  = jax.vjp(f, x)
       _ = f_bwd(x)
       _ = f_bwd2(x)
-    self.assertEqual(count[0], 0)  # cache hits on fwd and bwd
+    self.assertEqual(count(), 0)  # cache hits on fwd and bwd
 
   def testSizeOverflow(self):
     if config.disable_jit.value:
@@ -2110,31 +2119,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' sin '), 1)
     self.assertEqual(jaxpr_text.count(' cos '), 2)
 
-  def test_pmap_lower_arg_info(self):
-    def f(x, y, *args, **kwargs):
-      return y['hi'] + args[1] + sum(kwargs.values())
-
-    lowered = jax.pmap(f).lower(
-      {'hi': jnp.array([1.])}, {'hi': jnp.array([2.])}, jnp.array([3.]),
-      jnp.array([4.]), z=jnp.array([5.]), w=jnp.array([6.]))
-    hlo_str = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
-    self.assertNotIn("\"x\"", hlo_str)
-    self.assertIn("y['hi']", hlo_str)
-    self.assertIn("args[0]", hlo_str)
-    self.assertIn("args[1]", hlo_str)
-    self.assertIn("kwargs['z']", hlo_str)
-    self.assertIn("kwargs['w']", hlo_str)
-
-  def test_pmap_lower_result_info(self):
-    def f(x, y, z):
-      return {'a': x, 'b': [y]}
-
-    lowered = jax.pmap(f).lower(jnp.array([1.]), (jnp.array([2]),),
-                                [jnp.array([3])])
-    hlo_str = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
-    self.assertIn("jax.result_info = \"['a']\"", hlo_str)
-    self.assertIn("jax.result_info = \"['b'][0][0]\"", hlo_str)
-
   def test_axis_name_shadowing_with_vmap(self):
     # vmap-of-pmap with mismatched axis sizes
     jax.vmap(jax.pmap(lambda x: 2 * x, axis_name='i'),
@@ -2193,20 +2177,21 @@ class CppPmapTest(PythonPmapTest):
     f = lambda x: x+1
     inputs = np.zeros([jax.device_count()], dtype=np.float32)
     pmaped_f = self.pmap(f)
-    pmaped_f(inputs)
-    self.assertEqual(pmaped_f._cache_size, 1)
+    self.assertEqual(pmaped_f._cache_size, 0)
 
-    # Note: We do not call jax.pmap in the other thread but we reuse the same
-    # object.
+    # We only call pmaped_f in the thread pool to make sure that any
+    # thread-local config settings are identical.
     futures = []
-    with ThreadPoolExecutor(max_workers=1) as executor:
-      futures.append(executor.submit(lambda: pmaped_f(inputs)))
+    with ThreadPoolExecutor(max_workers=2) as executor:
+      for _ in range(8):
+        futures.append(executor.submit(lambda: pmaped_f(inputs)))
       outputs = [f.result() for f in futures]
 
-    np.testing.assert_array_equal(pmaped_f(inputs), outputs[0])
     if pmaped_f._cache_size != 1:
       print(pmaped_f._debug_cache_keys())
     self.assertEqual(pmaped_f._cache_size, 1)
+
+    np.testing.assert_array_equal(pmaped_f(inputs), outputs[0])
 
   def test_cache_uses_jax_key(self):
     f = lambda x: x+1
@@ -3203,19 +3188,11 @@ class EagerPmapMixin:
 
   def setUp(self):
     super().setUp()
-    self.eager_pmap_enabled = config.eager_pmap.value
-    self.jit_disabled = config.disable_jit.value
-    config.update('jax_disable_jit', True)
-    config.update('jax_eager_pmap', True)
-    self.warning_ctx = jtu.ignore_warning(
-        message="Some donated buffers were not usable", category=UserWarning)
-    self.warning_ctx.__enter__()
-
-  def tearDown(self):
-    self.warning_ctx.__exit__(None, None, None)
-    config.update('jax_eager_pmap', self.eager_pmap_enabled)
-    config.update('jax_disable_jit', self.jit_disabled)
-    super().tearDown()
+    stack = contextlib.ExitStack()
+    stack.enter_context(jtu.thread_local_config_context(jax_disable_jit=True, jax_eager_pmap=True))
+    stack.enter_context(jtu.ignore_warning(
+        message="Some donated buffers were not usable", category=UserWarning))
+    self.addCleanup(stack.close)
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PythonPmapEagerTest(EagerPmapMixin, PythonPmapTest):

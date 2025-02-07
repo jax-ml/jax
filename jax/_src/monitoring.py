@@ -39,8 +39,17 @@ class EventDurationListenerWithMetadata(Protocol):
     ...
 
 
+class EventTimeSpanListenerWithMetadata(Protocol):
+
+  def __call__(
+      self, event: str, start_time: float, end_time: float, **kwargs: str | int
+  ) -> None:
+    ...
+
+
 _event_listeners: list[EventListenerWithMetadata] = []
 _event_duration_secs_listeners: list[EventDurationListenerWithMetadata] = []
+_event_time_span_listeners: list[EventTimeSpanListenerWithMetadata] = []
 
 
 def record_event(event: str, **kwargs: str | int) -> None:
@@ -64,11 +73,26 @@ def record_event_duration_secs(event: str, duration: float,
     callback(event, duration, **kwargs)
 
 
+def record_event_time_span(
+    event: str, start_time: float, end_time: float, **kwargs: str | int
+) -> None:
+  """Record an event start and end time in seconds (float)."""
+  for callback in _event_time_span_listeners:
+    callback(event, start_time, end_time, **kwargs)
+
+
 def register_event_listener(
     callback: EventListenerWithMetadata,
 ) -> None:
   """Register a callback to be invoked during record_event()."""
   _event_listeners.append(callback)
+
+
+def register_event_time_span_listener(
+    callback: EventTimeSpanListenerWithMetadata,
+) -> None:
+  """Register a callback to be invoked during record_event_time_span()."""
+  _event_time_span_listeners.append(callback)
 
 
 def register_event_duration_secs_listener(
@@ -80,15 +104,22 @@ def get_event_duration_listeners() -> list[EventDurationListenerWithMetadata]:
   """Get event duration listeners."""
   return list(_event_duration_secs_listeners)
 
+
+def get_event_time_span_listeners() -> list[EventTimeSpanListenerWithMetadata]:
+  """Get event time span listeners."""
+  return list(_event_time_span_listeners)
+
+
 def get_event_listeners() -> list[EventListenerWithMetadata]:
   """Get event listeners."""
   return list(_event_listeners)
 
 def clear_event_listeners():
   """Clear event listeners."""
-  global _event_listeners, _event_duration_secs_listeners
+  global _event_listeners, _event_duration_secs_listeners, _event_time_span_listeners
   _event_listeners = []
   _event_duration_secs_listeners = []
+  _event_time_span_listeners = []
 
 def _unregister_event_duration_listener_by_callback(
     callback: EventDurationListenerWithMetadata) -> None:
@@ -107,6 +138,18 @@ def _unregister_event_duration_listener_by_index(index: int) -> None:
   size = len(_event_duration_secs_listeners)
   assert -size <= index < size
   del _event_duration_secs_listeners[index]
+
+
+def _unregister_event_time_span_listener_by_callback(
+    callback: EventTimeSpanListenerWithMetadata,
+) -> None:
+  """Unregister an event time span listener by callback.
+
+  This function is supposed to be called for testing only.
+  """
+  assert callback in _event_time_span_listeners
+  _event_time_span_listeners.remove(callback)
+
 
 def _unregister_event_listener_by_callback(
     callback: EventListenerWithMetadata) -> None:

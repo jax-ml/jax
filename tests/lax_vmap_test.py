@@ -345,6 +345,24 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 5, bdims, (shape,), (dtype,), rng)
 
   @jtu.sample_product(
+    [dict(base_shape=base_shape, axis=axis, bdims=bdims)
+      for base_shape in [(4,), (3, 4), (2, 3, 4)]
+      for axis in range(len(base_shape))
+      for bdims in lax_test_util.all_bdims(base_shape)
+    ],
+    num_pieces=range(3),
+    dtype=lax_test_util.default_dtypes,
+  )
+  def testSplit(self, base_shape, dtype, num_pieces, axis, bdims):
+    sizes = jtu.rand_int(self.rng(), 5)((num_pieces + 1,), np.int64)
+    shape = list(base_shape)
+    shape[axis] = np.sum(sizes)
+    rng = jtu.rand_default(self.rng())
+    op = lambda x: lax.split(x, sizes, axis)
+    self._CheckBatching(op, 5, bdims, (shape,), (dtype,), rng,
+                        multiple_results=True)
+
+  @jtu.sample_product(
     [dict(shape=shape, perm=perm, bdims=bdims)
       for shape, perm in [
         [(3, 4), (1, 0)],

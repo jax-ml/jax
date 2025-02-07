@@ -20,6 +20,7 @@ from absl.testing import absltest
 import jax
 from jax import export
 from jax._src import test_util as jtu
+from jax._src.lib import triton
 from jax.experimental import pallas as pl
 import numpy as np
 
@@ -36,6 +37,9 @@ class ExportTest(jtu.JaxTestCase):
     super().setUp()
 
   def test_cross_platform(self):
+    # TODO(apaszke): Remove after 12 weeks have passed.
+    if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
+      self.skipTest("Requires libtpu built after 2024-12-19")
     def add_vectors_kernel(x_ref, y_ref, o_ref):
       x, y = x_ref[...], y_ref[...]
       o_ref[...] = x + y
@@ -46,12 +50,18 @@ class ExportTest(jtu.JaxTestCase):
                             out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype)
                             )(x, y)
 
+    platforms = ["tpu"]
+    if triton.has_compilation_handler("cuda"):
+      # Only include CUDA if GPU support is linked in.
+      platforms.append("cuda")
+
     a = np.arange(8 * 16, dtype=np.int32).reshape((8, 16))
     exp = export.export(
         add_vectors,
-        platforms=["tpu", "cuda"],
+        platforms=platforms,
         # The Pallas GPU custom call is not enabled for export by default.
         disabled_checks=[
+            export.DisabledSafetyCheck.custom_call("triton_kernel_call"),
             export.DisabledSafetyCheck.custom_call("__gpu$xla.gpu.triton")
         ]
     )(a, a)

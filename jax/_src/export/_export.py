@@ -518,7 +518,7 @@ def shape_and_dtype_jax_array(a) -> tuple[Sequence[int | None], DType]:
   """Returns the shape and dtype of a jax.Array or a j"""
   if isinstance(a, jax.ShapeDtypeStruct):
     return a.shape, a.dtype
-  aval = core.raise_to_shaped(core.get_aval(a))
+  aval = core.get_aval(a)
   return aval.shape, aval.dtype
 
 
@@ -633,7 +633,7 @@ def _export_lowered(
     jaxpr: core.ClosedJaxpr,
     fun_name: str,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
-    _device_assignment_for_internal_jax2tf_use_only = None,
+    _device_assignment_for_internal_jax2tf_use_only=None,
   ) -> Exported:
   version = config.jax_export_calling_convention_version.value
   if (version < minimum_supported_calling_convention_version or
@@ -698,7 +698,7 @@ def _export_lowered(
   ordered_effects = tuple(lowering.compile_args["ordered_effects"])
   unordered_effects = tuple(lowering.compile_args["unordered_effects"])
 
-  nr_devices = len(lowering.compile_args["device_assignment"])
+  nr_devices = lowering.compile_args["num_devices"]
   def export_sharding(s: LoweringSharding,
                       aval: core.ShapedArray) -> HloSharding | None:
     if isinstance(s, sharding_impls.UnspecifiedValue):
@@ -896,7 +896,7 @@ def _wrap_main_func(
     with ir.InsertionPoint(entry_block):
       # Make a context just for lowering the dimension value computations
       module_context = mlir.ModuleContext(
-          backend_or_name="cpu", platforms=["cpu"],
+          backend=None, platforms=["cpu"],
           axis_context=sharding_impls.ShardingContext(0),
           keepalives=[], channel_iterator=itertools.count(1),
           host_callbacks=[], module=wrapped_module, context=context,
@@ -971,7 +971,8 @@ def _check_lowering(lowering) -> None:
       "keepalive", "host_callbacks", "pmap_nreps", "committed",
       "device_assignment", "jaxpr_debug_info", "shape_poly_state",
       "all_default_mem_kind", "in_layouts", "out_layouts", "all_args_info",
-      "pgle_profiler", "intermediate_shardings", "context_mesh"}
+      "pgle_profiler", "intermediate_shardings", "context_mesh",
+      "num_devices"}
   for compile_arg in lowering.compile_args.keys():
     if compile_arg not in allowed_compile_args:
       raise NotImplementedError(f"Unrecognized lowered.compile_args[{compile_arg}]")
@@ -1017,13 +1018,31 @@ _CPU_FFI_KERNELS = [
     "lapack_ssytrd_ffi", "lapack_dsytrd_ffi", "lapack_chetrd_ffi", "lapack_zhetrd_ffi",
     "lapack_sgehrd_ffi", "lapack_dgehrd_ffi", "lapack_cgehrd_ffi", "lapack_zgehrd_ffi",
     "lapack_sgees_ffi", "lapack_dgees_ffi", "lapack_cgees_ffi", "lapack_zgees_ffi",
+    "lapack_strsm_ffi", "lapack_dtrsm_ffi", "lapack_ctrsm_ffi", "lapack_ztrsm_ffi",
+    "lapack_sgtsv_ffi", "lapack_dgtsv_ffi", "lapack_cgtsv_ffi", "lapack_zgtsv_ffi",
+]
+_GPU_FFI_KERNELS = [
+    # lu on GPU
+    "cu_lu_pivots_to_permutation", "cusolver_getrf_ffi",
+    "hip_lu_pivots_to_permutation", "hipsolver_getrf_ffi",
+    # qr on GPU
+    "cusolver_geqrf_ffi", "cusolver_orgqr_ffi",
+    "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi",
+    # eigh on GPU
+    "cusolver_syevd_ffi", "hipsolver_syevd_ffi",
+    # svd on GPU
+    "cusolver_gesvd_ffi", "cusolver_gesvdj_ffi",
+    "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
+    # tridiagonal on GPU
+    "cusolver_sytrd_ffi",
 ]
 # These are the JAX custom call target names that are guaranteed to be stable.
 # Their backwards compatibility is tested by back_compat_test.py.
 _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     *_CPU_FFI_KERNELS,
+    *_GPU_FFI_KERNELS,
     "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
-    "cu_threefry2x32", "cu_threefry2x32_ffi",
+    "cu_threefry2x32_ffi",
     # Triton IR does not guarantee stability.
     # "__gpu$xla.gpu.triton",
     # cholesky on CPU
@@ -1044,18 +1063,6 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "lapack_ssytrd", "lapack_dsytrd", "lapack_chetrd", "lapack_zhetrd",
     # hessenberg on CPU
     "lapack_sgehrd", "lapack_dgehrd", "lapack_cgehrd", "lapack_zgehrd",
-    # lu on GPU
-    "cu_lu_pivots_to_permutation", "cusolver_getrf_ffi",
-    "hip_lu_pivots_to_permutation", "hipsolver_getrf_ffi",
-    "cu_lu_pivots_to_permutation", "cusolver_getrf_ffi",
-    # qr on GPU
-    "cusolver_geqrf_ffi", "cusolver_orgqr_ffi",
-    "hipsolver_geqrf_ffi", "hipsolver_orgqr_ffi",
-    # eigh on GPU
-    "cusolver_syevd_ffi", "hipsolver_syevd_ffi",
-    # svd on GPU
-    "cusolver_gesvd_ffi", "cusolver_gesvdj_ffi",
-    "hipsolver_gesvd_ffi", "hipsolver_gesvdj_ffi",
     # lu on TPU
     "LuDecomposition",
     # ApproxTopK on TPU

@@ -12,26 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
+import tempfile
 import threading
 import time
 from typing import Sequence
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import xla_extension_version  # pylint: disable=g-importing-member
 from jax.experimental import colocated_python
-from jax.experimental.colocated_python import func as colocated_python_func
 from jax.experimental.colocated_python import serialization
 from jax.extend.ifrt_programs import ifrt_programs
 import jax.numpy as jnp
 import numpy as np
 
 config.parse_flags_with_absl()
+jtu.request_cpu_devices(8)
 
+try:
+  import cloudpickle  # noqa
+except (ModuleNotFoundError, ImportError):
+  raise unittest.SkipTest("tests depend on cloudpickle library")
 
 def _colocated_cpu_devices(
     devices: Sequence[jax.Device],
@@ -52,43 +56,12 @@ def _colocated_cpu_devices(
     ]
 
 
-@contextlib.contextmanager
-def _count_colocated_python_specialization_cache_miss() -> list[int]:
-  """Counts the number of cache misses for colocated_python specialization."""
-  original_get_specialized_func = colocated_python_func._get_specialized_func
-  count = [0]
-
-  @jax.util.cache(max_size=None)
-  def get_specialized_func(*args, **kwargs):
-    count[0] += 1
-    return original_get_specialized_func(*args, **kwargs)
-
-  colocated_python_func._get_specialized_func = get_specialized_func
-  try:
-    yield count
-  finally:
-    colocated_python_func._get_specialized_func = original_get_specialized_func
-
-
-_exit_stack = contextlib.ExitStack()
-
-
-def setUpModule():
-  # TODO(hyeontaek): Remove provisioning "cpu" backend devices once PjRt-IFRT
-  # prepares CPU devices by its own.
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-
-
-def tearDownModule():
-  _exit_stack.close()
+_count_colocated_python_specialization_cache_miss = jtu.count_events(
+    "colocated_python_func._get_specialized_func"
+)
 
 
 class ColocatedPythonTest(jtu.JaxTestCase):
-
-  def setUp(self):
-    super().setUp()
-    if xla_extension_version < 300:
-      self.skipTest("Requires xla_extension_version >= 300")
 
   def testMakeColocatedPythonProgram(self):
     def add_one(x):
@@ -117,12 +90,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
   def testSimpleFunctioWithTree(self):
     @colocated_python.colocated_python
@@ -137,12 +110,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
   def testEmptyInputFailsWithoutSpecialization(self):
     @colocated_python.colocated_python
@@ -168,12 +141,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = make_zero()
       out = jax.device_get(out)
       self.assertEqual(out, np.array(0))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       out = make_zero()
       out = jax.device_get(out)
       self.assertEqual(out, np.array(0))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
   def testInputPolymorphismWithoutOutSpecsFn(self):
     @colocated_python.colocated_python
@@ -188,12 +161,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       # Different input tree structure and dtype/shape.
       x = [np.array(1), (np.array(2), {"v": np.array(3)})]
@@ -202,12 +175,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 2)
+      self.assertEqual(count(), 2)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 2)
+      self.assertEqual(count(), 2)
 
   def testInputPolymorphismAllowedWithOutSpecsFn(self):
     @colocated_python.colocated_python
@@ -223,12 +196,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, np.array(2))
-      self.assertEqual(count[0], 1)
+      self.assertEqual(count(), 1)
 
       # Different input tree structure and dtype/shape.
       x = [np.array(1), (np.array(2), {"v": np.array(3)})]
@@ -237,12 +210,12 @@ class ColocatedPythonTest(jtu.JaxTestCase):
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 2)
+      self.assertEqual(count(), 2)
 
       out = add_one(x)
       out = jax.device_get(out)
       self.assertEqual(out, [np.array(2), (np.array(3), {"v": np.array(4)})])
-      self.assertEqual(count[0], 2)
+      self.assertEqual(count(), 2)
 
   @parameterized.named_parameters(
       ("on_main_thread", True),
@@ -321,6 +294,89 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     # If concurrent execution did not happen, elapsed time typically will be
     # around 15 seconds.
     self.assertLess(elapsed_time, 10)
+
+  def testInputsWithDifferentDeviceOrders(self):
+    cpu_devices = _colocated_cpu_devices(jax.local_devices())[:2]
+    if len(cpu_devices) < 2:
+      self.skipTest("Not enough CPU devices")
+
+    @colocated_python.colocated_python
+    def add(x: jax.Array, y: jax.Array) -> jax.Array:
+      arrays = [
+          x.addressable_shards[1].data + y.addressable_shards[0].data,
+          x.addressable_shards[0].data + y.addressable_shards[1].data,
+      ]
+      return jax.make_array_from_single_device_arrays(
+          y.shape, y.sharding, arrays
+      )
+
+    # The execution will use mixed device orders. We should specialize the
+    # function with devices to avoid the argument-dependent device selection.
+    add = add.specialize(devices=cpu_devices)
+
+    mesh1 = jax.sharding.Mesh([cpu_devices[0], cpu_devices[1]], "x")
+    sharding1 = jax.sharding.NamedSharding(
+        mesh1, jax.sharding.PartitionSpec("x")
+    )
+    mesh2 = jax.sharding.Mesh([cpu_devices[1], cpu_devices[0]], "x")
+    sharding2 = jax.sharding.NamedSharding(
+        mesh2, jax.sharding.PartitionSpec("x")
+    )
+
+    x = np.array([0, 2])
+    x = jax.device_put(x, sharding1)
+    y = np.array([4, 8])
+    y = jax.device_put(y, sharding2)
+
+    out = add(x, y)
+
+    self.assertEqual(out.sharding, sharding2)
+    out_device_list = [shard.device for shard in out.addressable_shards]
+    self.assertEqual(out_device_list, [cpu_devices[1], cpu_devices[0]])
+
+    out = jax.device_get(out)
+    np.testing.assert_equal(out, np.array([2 + 4, 0 + 8]))
+
+  def testModuleVariableAccess(self):
+    try:
+      # The following pattern of storing and accessing non-serialized state in
+      # the Python module is discouraged for storing user-defined state.
+      # However, it should still work because many caching mechanisms rely on
+      # this behavior.
+
+      # Poison the test's own `colocated_python` module with a non-serializable
+      # object (file) to detect any invalid attempt to serialize the module as
+      # part of a colocated Python function.
+      colocated_python._testing_non_serializable_object = (
+          tempfile.TemporaryFile()
+      )
+
+      @colocated_python.colocated_python
+      def set_global_state(x: jax.Array) -> jax.Array:
+        colocated_python._testing_global_state = x
+        return x + 1
+
+      @colocated_python.colocated_python
+      def get_global_state(x: jax.Array) -> jax.Array:
+        del x
+        return colocated_python._testing_global_state
+
+      cpu_devices = _colocated_cpu_devices(jax.local_devices())
+      x = np.array(1)
+      x = jax.device_put(x, cpu_devices[0])
+      y = np.array(2)
+      y = jax.device_put(y, cpu_devices[0])
+
+      jax.block_until_ready(set_global_state(x))
+      out = jax.device_get(get_global_state(y))
+
+      np.testing.assert_equal(out, np.array(1))
+    finally:
+      if "_testing_non_serializable_object" in colocated_python.__dict__:
+        colocated_python._testing_non_serializable_object.close()
+        del colocated_python._testing_non_serializable_object
+      if "_testing_global_state" in colocated_python.__dict__:
+        del colocated_python._testing_global_state
 
 
 if __name__ == "__main__":

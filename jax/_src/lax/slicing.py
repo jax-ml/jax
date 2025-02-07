@@ -32,6 +32,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import util
+from jax._src import mesh as mesh_lib
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -483,7 +484,7 @@ def scatter_add(
     An array containing the sum of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.add,
-                                       lax._abstractify(lax._const(operand, 0)))
+                                       core.get_aval(lax._const(operand, 0)))
   return scatter_add_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -536,7 +537,7 @@ def scatter_sub(
     An array containing the sum of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(
-      lax.sub, lax._abstractify(lax._const(operand, 0))
+      lax.sub, core.get_aval(lax._const(operand, 0))
   )
   return scatter_sub_p.bind(
       operand,
@@ -591,7 +592,7 @@ def scatter_mul(
     An array containing the sum of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.mul,
-                                       lax._abstractify(lax._const(operand, 1)))
+                                       core.get_aval(lax._const(operand, 1)))
   return scatter_mul_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -638,7 +639,7 @@ def scatter_min(
     An array containing the sum of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.min,
-                                       lax._abstractify(lax._const(operand, 0)))
+                                       core.get_aval(lax._const(operand, 0)))
   return scatter_min_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -685,7 +686,7 @@ def scatter_max(
     An array containing the sum of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.max,
-                                       lax._abstractify(lax._const(operand, 0)))
+                                       core.get_aval(lax._const(operand, 0)))
   return scatter_max_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -748,7 +749,7 @@ def scatter_apply(
     _apply = _scatter_apply_cache.setdefault(func, _apply)
   except TypeError:  # func is not weak referenceable
     pass
-  jaxpr, consts = lax._reduction_jaxpr(_apply, lax._abstractify(lax._zero(operand)))
+  jaxpr, consts = lax._reduction_jaxpr(_apply, core.get_aval(lax._zero(operand)))
   # TODO: implement this via its own primitive so we can define appropriate autodiff rules.
   return scatter_p.bind(
       operand, scatter_indices, unused, update_jaxpr=jaxpr,
@@ -1875,6 +1876,23 @@ def _gather_shape_computation(indices, dimension_numbers, slice_sizes):
               else next(indices_shape_gen) for i in range(output_shape_rank))
   return ans
 
+class GatherShardingError(Exception):
+  pass
+
+def _gather_sharding_rule(operand, indices, *, dimension_numbers,
+                          slice_sizes, unique_indices, indices_are_sorted,
+                          mode, fill_value):
+  # TODO(yashkatariya): Write a proper gather sharding rule.
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  if cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual:
+    return core.get_cur_mesh_sharding()
+  if (cur_mesh._are_all_axes_explicit and
+      all(s is None for s in operand.sharding.spec) and
+      all(s is None for s in indices.sharding.spec)):
+    return core.get_cur_mesh_sharding()
+  raise GatherShardingError(
+      "Use `.at[...].get(out_sharding=)` to provide output PartitionSpec for"
+      " the gather indexing.")
 
 def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
                  unique_indices, indices_are_sorted, fill_value,
@@ -2056,7 +2074,7 @@ def _gather_pad_rule(in_avals, out_avals, operand, indices, *,
 
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
-    weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0), sharding_rule=_gather_sharding_rule)
 ad.defjvp(gather_p, _gather_jvp_rule, None)
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule

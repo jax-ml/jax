@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+import functools
 from types import ModuleType
 import warnings
 
@@ -45,6 +46,7 @@ import warnings
 #   )
 # del typing
 def deprecation_getattr(module, deprecations):
+  @functools.cache
   def getattr(name):
     if name in deprecations:
       message, fn = deprecations[name]
@@ -123,6 +125,7 @@ def warn(deprecation_id: str, message: str, stacklevel: int) -> None:
 # always registered by the time `accelerate` and `is_acelerated` are called.
 register('jax-aval-named-shape')
 register('jax-dlpack-import-legacy')
+register('jax-nn-one-hot-float-input')
 register("jax-numpy-astype-complex-to-real")
 register("jax-numpy-array-none")
 register('jax-numpy-clip-args')
@@ -132,3 +135,4 @@ register('jax-numpy-quantile-interpolation')
 register('jax-numpy-reduction-non-boolean-where')
 register('jax-numpy-trimzeros-not-1d-array')
 register('pallas-gpu-triton')
+register('jax-scipy-special-sph-harm')

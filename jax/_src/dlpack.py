@@ -66,6 +66,14 @@ def _to_dlpack(x: Array, stream: int | Any | None,
     arr.addressable_data(0), stream=stream
   )
 
+
+_DL_DEVICE_TO_PLATFORM = {
+    DLDeviceType.kDLCPU: "cpu",
+    DLDeviceType.kDLCUDA: "cuda",
+    DLDeviceType.kDLROCM: "rocm",
+}
+
+
 def to_dlpack(x: Array, stream: int | Any | None = None,
               src_device: xla_client.Device | None = None,
               dl_device: tuple[DLDeviceType, int] | None = None,
@@ -110,19 +118,16 @@ def to_dlpack(x: Array, stream: int | Any | None = None,
   dl_device_type, local_hardware_id = dl_device if dl_device else (None, None)
   if dl_device_type:
     try:
-      dl_device_platform = {
-          DLDeviceType.kDLCPU: "cpu",
-          DLDeviceType.kDLCUDA: "cuda",
-          DLDeviceType.kDLROCM: "rocm",
-      }[dl_device_type]
+      dl_device_platform = _DL_DEVICE_TO_PLATFORM[dl_device_type]
       backend = xla_bridge.get_backend(dl_device_platform)
       device = backend.device_from_local_hardware_id(local_hardware_id)
-    except TypeError:
+    except KeyError:
       # https://data-apis.org/array-api/latest/API_specification/generated/array_api.array.__dlpack__.html
       # recommends using BufferError.
       raise BufferError(
-          "The device specification passed to to_dlpack contains an unsupported "
-          f"device type (DLDeviceType: {dl_device_type})")
+          "The device specification passed to to_dlpack contains an"
+          f" unsupported device type (DLDeviceType: {dl_device_type})"
+      ) from None
 
   # As new versions are adopted over time, we can maintain some legacy paths
   # for compatability mediated through the max_version parameter.
@@ -204,17 +209,12 @@ def _from_dlpack(external_array, device: xla_client.Device | None = None,
                  copy: bool | None = None):
   dl_device_type, device_id = external_array.__dlpack_device__()
   try:
-    dl_device_platform = {
-        DLDeviceType.kDLCPU: "cpu",
-        DLDeviceType.kDLCUDA: "cuda",
-        DLDeviceType.kDLROCM: "rocm",
-    }[dl_device_type]
-  except TypeError:
-    # https://dmlc.github.io/dlpack/latest/python_spec.html recommends using
-    # TypeError.
+    dl_device_platform = _DL_DEVICE_TO_PLATFORM[dl_device_type]
+  except KeyError:
     raise TypeError(
         "Array passed to from_dlpack is on unsupported device type "
-        f"(DLDeviceType: {dl_device_type}, array: {external_array}")
+        f"(DLDeviceType: {dl_device_type}, array: {external_array}"
+    ) from None
 
   backend = xla_bridge.get_backend(dl_device_platform)
   dlpack_device = backend.device_from_local_hardware_id(device_id)

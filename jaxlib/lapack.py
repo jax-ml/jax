@@ -118,50 +118,64 @@ def build_lapack_fn_target(fn_base: str, dtype) -> str:
 
 # ?trsm(left_side, lower, trans_a, diag, m, n, alpha, a, b):
 # triangular solve
-def trsm_hlo(dtype, alpha, a, b,
+def trsm_hlo(ctx, dtype, alpha, a, b,
              left_side=False, lower=False, trans_a=False,
              conj_a=False, diag=False, *,
              b_shape_vals: tuple[DimensionSize, ...]):
-  _lapack.initialize()
-  b_type = ir.RankedTensorType(b.type)
-
-  m, n = b_shape_vals[-2:]
-  batch_dims_vals = b_shape_vals[:-2]
-  num_bd = len(batch_dims_vals)
-  batch_size_val = hlo_s32(1)
-  for b_v in batch_dims_vals:
-    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
-
-  if dtype == np.float32:
-    fn = "blas_strsm"
-  elif dtype == np.float64:
-    fn = "blas_dtrsm"
-  elif dtype == np.complex64:
-    fn = "blas_ctrsm"
-  elif dtype == np.complex128:
-    fn = "blas_ztrsm"
-  else:
-    raise NotImplementedError(f"Unsupported dtype {dtype}")
-
   if conj_a and not trans_a:
     raise NotImplementedError("Conjugation without transposition not supported")
+  fn_base = prepare_lapack_call(fn_base="trsm", dtype=dtype)
+  b_type = ir.RankedTensorType(b.type)
+
+  batch_dims_vals = b_shape_vals[:-2]
+  num_bd = len(batch_dims_vals)
   scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   result_types, result_shapes = mk_result_types_and_shapes(
       [(b_shape_vals, b_type.element_type)])
+
+  if ctx.is_forward_compat():
+    # The old TRSM kernel name is prefixed with "blas"
+    fn = fn_base.replace("lapack", "blas", 1)
+    m, n = b_shape_vals[-2:]
+    batch_size_val = hlo_s32(1)
+    for b_v in batch_dims_vals:
+      batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
+    result_types, result_shapes = mk_result_types_and_shapes(
+        [(b_shape_vals, b_type.element_type)]
+    )
+    return custom_call(
+        fn,
+        result_types=result_types,
+        operands=[hlo_s32(int(left_side)), hlo_s32(int(lower)),
+                  hlo_s32((2 if conj_a else 1) if trans_a else 0), hlo_s32(int(diag)),
+                  ensure_hlo_s32(m), ensure_hlo_s32(n), batch_size_val,
+                  alpha, a, b],
+        operand_layouts=[scalar_layout] * 8 + [layout] * 2,
+        result_layouts=[layout],
+        operand_output_aliases={9: 0},
+        result_shapes=result_shapes,
+    ).results
+
+  fn = fn_base + "_ffi"
   return custom_call(
       fn,
       result_types=result_types,
-      operands=[hlo_s32(int(left_side)), hlo_s32(int(lower)),
-       hlo_s32((2 if conj_a else 1) if trans_a else 0), hlo_s32(int(diag)),
-       ensure_hlo_s32(m), ensure_hlo_s32(n), batch_size_val,
-       alpha, a, b],
-      operand_layouts=[scalar_layout] * 8 + [layout] * 2,
+      operands=[a, b, alpha],
+      operand_layouts=[layout] * 2 + [scalar_layout],
       result_layouts=[layout],
-      operand_output_aliases={9: 0},
+      operand_output_aliases={1: 0},
       result_shapes=result_shapes,
+      backend_config={
+          "side": _matrix_side_attr(left_side=left_side),
+          "uplo": _matrix_uplo_attr(lower=lower),
+          "trans_x": _matrix_transpose_attr(
+              transpose=trans_a, conjugate=conj_a
+          ),
+          "diag": _matrix_diagonal_attr(unit_diag=diag),
+      },
+      api_version=4,
   ).results
-
 
 
 # ?potrf: Cholesky decomposition

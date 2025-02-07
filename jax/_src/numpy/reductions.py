@@ -20,7 +20,6 @@ from functools import partial
 import math
 import operator
 from typing import overload, Any, Literal, Protocol, Union
-import warnings
 
 import numpy as np
 
@@ -37,7 +36,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike, DeprecatedArg
 from jax._src.util import (
     canonicalize_axis as _canonicalize_axis, maybe_named_axis,
-    set_module, NumpyComplexWarning)
+    set_module)
 
 
 export = set_module('jax.numpy')
@@ -100,7 +99,7 @@ ReductionOp = Callable[[Any, Any], Any]
 
 def _reduction(a: ArrayLike, name: str, op: ReductionOp, init_val: ArrayLike,
                *, has_identity: bool = True,
-               preproc: Callable[[ArrayLike], ArrayLike] | None = None,
+               preproc: Callable[[Array], Array] | None = None,
                bool_op: ReductionOp | None = None,
                upcast_f16_for_computation: bool = False,
                axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
@@ -201,16 +200,15 @@ def _reduction_init_val(a: ArrayLike, init_val: Any) -> np.ndarray:
     sign, info = np.sign(init_val), dtypes.iinfo(a_dtype)
     return np.array(info.min if sign < 0 else info.max, dtype=a_dtype)
 
-def _cast_to_bool(operand: ArrayLike) -> Array:
-  with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", category=NumpyComplexWarning)
-    return lax.convert_element_type(operand, np.bool_)
+def _cast_to_bool(operand: Array) -> Array:
+  if dtypes.issubdtype(operand.dtype, np.complexfloating):
+    operand = operand.real
+  return lax.convert_element_type(operand, np.bool_)
 
-def _cast_to_numeric(operand: ArrayLike) -> Array:
+def _cast_to_numeric(operand: Array) -> Array:
   return promote_dtypes_numeric(operand)[0]
 
-def _require_integer(operand: ArrayLike) -> Array:
-  arr = lax_internal.asarray(operand)
+def _require_integer(arr: Array) -> Array:
   if not dtypes.isdtype(arr, ("bool", "integral")):
     raise ValueError(f"integer argument required; got dtype={arr.dtype}")
   return arr
@@ -814,7 +812,9 @@ def mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
     a: input array.
     axis: optional, int or sequence of ints, default=None. Axis along which the
       mean to be computed. If None, mean is computed along all the axes.
-    dtype: The type of the output array. Default=None.
+    dtype: The type of the output array. If None (default) then the output dtype
+      will be match the input dtype for floating point inputs, or be set to float32
+      or float64 for non-floating-point inputs.
     keepdims: bool, default=False. If true, reduced axes are left in the result
       with size 1.
     where: optional, boolean array, default=None. The elements to be used in the
@@ -823,6 +823,10 @@ def mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
 
   Returns:
     An array of the mean along the given axis.
+
+  Notes:
+    For inputs of type `float16` or `bfloat16`, the reductions will be performed at
+    float32 precision.
 
   See also:
     - :func:`jax.numpy.average`: Compute the weighted average of array elements

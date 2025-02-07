@@ -21,15 +21,15 @@ import tempfile
 from typing import Any
 
 import jax
-from jax import core as jax_core
 from jax import dtypes
 from jax._src import config
-from jax._src import core as jax_src_core
+from jax._src import core as jax_core
 from jax._src import sharding_impls
 from jax._src import tpu_custom_call
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core
+from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import lowering
 from jax._src.pallas.mosaic import verification
@@ -85,6 +85,8 @@ def _get_memory_space_from_aval(
       return None
     case tpu_core.TPUMemorySpace.VMEM:
       return tpu_custom_call.MemorySpace.VMEM
+    case tpu_core.TPUMemorySpace.SMEM:
+      return tpu_custom_call.MemorySpace.SMEM
     case tpu_core.TPUMemorySpace.SEMAPHORE:
       return tpu_custom_call.MemorySpace.SEMAPHORE_MEM
   return None
@@ -134,16 +136,24 @@ def pallas_call_tpu_lowering_rule(
   mlir_ctx.append_dialect_registry(mlir.upstream_dialects)
   mlir_ctx.load_all_available_dialects()
   tpu.register_dialect(mlir_ctx)
+
   def lower_module(for_verification: bool):
     if for_verification or tpu_core.runtime_assert_enabled():
       mlir_ctx.allow_unregistered_dialects = True
     with mlir_ctx, ir.Location.unknown(mlir_ctx):
       dimension_semantics = mosaic_params.get("dimension_semantics", None)
       return lowering.lower_jaxpr_to_module(
-          ctx, mlir_ctx, grid_mapping, jaxpr,
-          dimension_semantics=dimension_semantics, mesh=mesh,
+          ctx,
+          mlir_ctx,
+          grid_mapping,
+          jaxpr,
+          dimension_semantics=dimension_semantics,
+          mesh=mesh,
           for_verification=for_verification,
-          name_and_src_info=name_and_src_info)
+          name_and_src_info=name_and_src_info,
+          dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
+      )
+
   mosaic_module, extra_args = lower_module(for_verification=False)
   if debug:
     print(f"\nThe Mosaic module for pallas_call {name_and_src_info}:")
@@ -189,7 +199,7 @@ def pallas_call_tpu_lowering_rule(
   # Replace in_avals to physical avals.
   # This step is required for mapping logical types to physical types.
   # (e.g. PRNG key -> uint32[2])
-  physical_avals = [jax_src_core.physical_aval(aval) for aval in ctx.avals_in]
+  physical_avals = [jax_core.physical_aval(aval) for aval in ctx.avals_in]
   ctx = ctx.replace(avals_in=physical_avals)
 
   # Booleans are loaded into the kernel as integers.

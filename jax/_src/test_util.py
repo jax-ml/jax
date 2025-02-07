@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import collections
 from collections.abc import Callable, Generator, Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
 import datetime
 import functools
@@ -30,9 +31,10 @@ import re
 import sys
 import tempfile
 import textwrap
+import threading
+import time
 from typing import Any, TextIO
 import unittest
-import warnings
 import zlib
 
 from absl.testing import absltest
@@ -40,22 +42,19 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import api
-from jax._src import array
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes as _dtypes
 from jax._src import lib as _jaxlib
-from jax._src import linear_util as lu
 from jax._src import monitoring
-from jax._src import pjit as pjit_lib
-from jax._src import stages
+from jax._src import test_warning_util
 from jax._src import xla_bridge
+from jax._src import util
 from jax._src import mesh as mesh_lib
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 from jax._src.interpreters import mlir
-from jax._src.interpreters import pxla
-from jax._src.lib import xla_client as xc
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
@@ -117,6 +116,12 @@ HYPOTHESIS_PROFILE = config.string_flag(
     os.getenv('JAX_HYPOTHESIS_PROFILE', 'deterministic'),
     help=('Select the hypothesis profile to use for testing. Available values: '
           'deterministic, interactive'),
+)
+
+TEST_NUM_THREADS = config.int_flag(
+    'jax_test_num_threads', int(os.getenv('JAX_TEST_NUM_THREADS', '0')),
+    help='Number of threads to use for running tests. 0 means run everything '
+    'in the main thread. Using > 1 thread is experimental.'
 )
 
 # We sanitize test names to ensure they work with "unitttest -k" and
@@ -235,32 +240,74 @@ capture_stdout = partial(_capture_output, sys.stdout)
 capture_stderr = partial(_capture_output, sys.stderr)
 
 
-@contextmanager
-def count_device_put():
-  batched_device_put = pxla.batched_device_put
-  count = [0]
+class EventThreadLocalState(threading.local):
+  def __init__(self):
+    self.counts = {}  # Mapping from string name to count.
+    self.nested_device_put_count = 0  # Number of recursive calls to device_put
 
-  def make_fn_and_count(fn):
-    def fn_and_count(*args, **kwargs):
-      count[0] += 1
-      # device_put handlers might call `dispatch.device_put` (e.g. on an
-      # underlying payload or several). We only want to count these
-      # recursive puts once, so we skip counting more than the outermost
-      # one in such a call stack.
-      pxla.batched_device_put = batched_device_put
-      try:
-        return fn(*args, **kwargs)
-      finally:
-        pxla.batched_device_put = batched_device_put_and_count
-    return fn_and_count
+    # Per-function counts
+    self.infer_params_fun_counts = None
+    self.lower_jaxpr_to_fun_counts = None
 
-  batched_device_put_and_count = make_fn_and_count(batched_device_put)
+    self.collect_lowered_jaxprs = None
 
-  pxla.batched_device_put = batched_device_put_and_count
-  try:
-    yield count
-  finally:
-    pxla.batched_device_put = batched_device_put
+thread_local_state = EventThreadLocalState()
+
+
+def event_listener(name, *args):
+  counts = thread_local_state.counts
+  counts[name] = counts.get(name, 0) + 1
+
+  # device_put handlers might call `dispatch.device_put` (e.g. on an
+  # underlying payload or several). We only want to count these
+  # recursive puts once, so we skip counting more than the outermost
+  # one in such a call stack.
+  if name == "batched_device_put_start":
+    if thread_local_state.nested_device_put_count == 0:
+      counts["batched_device_put"] = counts.get("batched_device_put", 0) + 1
+    thread_local_state.nested_device_put_count += 1
+  elif name == "batched_device_put_end":
+    thread_local_state.nested_device_put_count -= 1
+
+  elif name == "pjit._infer_params_impl":
+    # For infer_params, we collect per-function data, but only while a context
+    # manager is active.
+    infer_counts = thread_local_state.infer_params_fun_counts
+    if infer_counts is not None:
+      (fun,) = args
+      infer_counts[fun] += 1
+  elif name == "lower_jaxpr_to_fun":
+    # For infer_params, we collect per-function data, but only while a context
+    # manager is active.
+    lower_counts = thread_local_state.lower_jaxpr_to_fun_counts
+    if lower_counts is not None:
+      (fun,) = args
+      lower_counts[fun] += 1
+  elif name == "mlir.collect_lowered_jaxprs":
+    collection = thread_local_state.collect_lowered_jaxprs
+    if collection is not None:
+      collection.append(args)
+
+
+util.test_event_listener = event_listener
+
+
+def count_events(event):
+  "Returns a context-manager that yields a function that counts a test event."
+  @contextmanager
+  def count_event():
+    before = thread_local_state.counts.get(event, 0)
+    yield lambda: thread_local_state.counts.get(event, 0) - before
+  return count_event
+
+count_device_put = count_events("batched_device_put")
+count_device_put_fast_path_hit = count_events("batched_copy_array")
+count_pjit_cpp_cache_miss = count_events("pjit_lower")
+count_jit_tracing_cache_miss = count_events("create_pjit_jaxpr")
+count_aot_jit_cpp_cache_miss = count_events("stages_compiled_call")
+count_jit_and_pmap_lowerings = count_events("lower_jaxpr_to_module")
+count_jit_compilation_cache_miss = count_events("pxla_cached_compilation")
+count_jax_array_shard_arg_calls = count_events("_array_shard_arg")
 
 
 @contextmanager
@@ -269,189 +316,52 @@ def count_primitive_compiles():
 
   count = [-1]
   try:
-    yield count
+    yield lambda: count[0]
   finally:
     count[0] = dispatch.xla_primitive_callable.cache_info().misses
 
-
-@contextmanager
-def count_device_put_fast_path_hit():
-  original_fn = xc.batched_copy_array_to_devices_with_sharding
-  count = [0]
-
-  def batched_copy_array_to_devices_with_sharding_and_count(*args, **kwargs):
-    count[0] += 1
-    return original_fn(*args, **kwargs)
-
-  xc.batched_copy_array_to_devices_with_sharding = batched_copy_array_to_devices_with_sharding_and_count
-  try:
-    yield count
-  finally:
-    xc.batched_copy_array_to_devices_with_sharding = original_fn
-
-
-@contextmanager
-def count_pjit_cpp_cache_miss():
-  original_pjit_lower = pjit_lib._pjit_lower
-  count = [0]
-
-  def pjit_lower_and_count(*args, **kwargs):
-    count[0] += 1
-    return original_pjit_lower(*args, **kwargs)
-
-  pjit_lib._pjit_lower = pjit_lower_and_count
-  try:
-    yield count
-  finally:
-    pjit_lib._pjit_lower = original_pjit_lower
-
-@contextmanager
-def count_cached_compilation_cache_miss():
-  original_cached_compilation = pxla._cached_compilation
-  count = [0]
-
-  def cached_compilation_and_count(*args, **kwargs):
-    count[0] += 1
-    return original_cached_compilation(*args, **kwargs)
-
-  pxla._cached_compilation = cached_compilation_and_count
-  try:
-    yield count
-  finally:
-    pxla._cached_compilation = original_cached_compilation
-
-@contextmanager
-def count_jit_tracing_cache_miss():
-  original_create_pjit_jaxpr = pjit_lib._create_pjit_jaxpr
-  count = [0]
-
-  @lu.cache
-  def create_pjit_jaxpr_and_count(*args):
-    count[0] += 1
-    return original_create_pjit_jaxpr(*args)
-
-  pjit_lib._create_pjit_jaxpr = create_pjit_jaxpr_and_count
-  try:
-    yield count
-  finally:
-    pjit_lib._create_pjit_jaxpr = original_create_pjit_jaxpr
-
 @contextmanager
 def count_jit_infer_params_cache_miss():
-  original_infer_params_impl = pjit_lib._infer_params_impl
-  count = collections.defaultdict(int)
-
-  def infer_params_impl_and_count(fun, *args, **kw):
-    count[fun] += 1
-    return original_infer_params_impl(fun, *args, **kw)
-
-  pjit_lib._infer_params_impl = infer_params_impl_and_count
+  assert thread_local_state.infer_params_fun_counts is None
+  counts = collections.Counter()
+  thread_local_state.infer_params_fun_counts = counts
   try:
-    yield count
+    yield counts
   finally:
-    pjit_lib._infer_params_impl = original_infer_params_impl
+    thread_local_state.infer_params_fun_counts = None
+
+@contextmanager
+def count_subjaxpr_to_hlo_conversion(fun_name):
+  assert thread_local_state.lower_jaxpr_to_fun_counts is None
+  counts = collections.Counter()
+  thread_local_state.lower_jaxpr_to_fun_counts = counts
+  try:
+    yield lambda: counts[fun_name]
+  finally:
+    thread_local_state.lower_jaxpr_to_fun_counts = None
 
 
 @contextmanager
-def count_aot_jit_cpp_cache_miss():
-  original_call = stages.Compiled.call
-  count = [0]
-
-  def compiled_call_count(*args, **kwargs):
-    count[0] += 1
-    return original_call(*args, **kwargs)
-
-  stages.Compiled.call = compiled_call_count
+def collect_lowered_jaxprs() -> Generator[Sequence[tuple[core.ClosedJaxpr,
+                                                         mlir.ir.Module]]]:
+  """
+  Collects all the pairs of (jaxpr, mlir_module) that are lowered.
+  """
+  assert thread_local_state.collect_lowered_jaxprs is None
+  collection: list[tuple[core.ClosedJaxpr, mlir.ir.Module]] = []
+  thread_local_state.collect_lowered_jaxprs = collection
   try:
-    yield count
+    yield collection
   finally:
-    stages.Compiled.call = original_call
-
-
-@contextmanager
-def count_jit_and_pmap_lowerings():
-  # No need to clear any caches since we generally jit and pmap fresh callables
-  # in tests.
-
-  mlir_lower = mlir.lower_jaxpr_to_module
-  count = [0]
-
-  def mlir_lower_and_count(*args, **kwargs):
-    count[0] += 1
-    return mlir_lower(*args, **kwargs)
-
-  mlir.lower_jaxpr_to_module = mlir_lower_and_count
-  try:
-    yield count
-  finally:
-    mlir.lower_jaxpr_to_module = mlir_lower
-
-
-@contextmanager
-def count_jax_array_shard_arg_calls():
-  # No need to clear any caches since we generally jit and pmap fresh callables
-  # in tests.
-
-  array_shard_arg = array._array_shard_arg
-  count = [0]
-
-  def array_shard_arg_and_count(*args, **kwargs):
-    count[0] += 1
-    return array_shard_arg(*args, **kwargs)
-
-  pxla.shard_arg_handlers[array.ArrayImpl] = array_shard_arg_and_count
-  try:
-    yield count
-  finally:
-    pxla.shard_arg_handlers[array.ArrayImpl] = array_shard_arg
-
-
-@contextmanager
-def count_jit_compilation_cache_miss():
-  # No need to clear any caches since we generally jit and pmap fresh callables
-  # in tests.
-
-  jit_compilation = pxla._cached_compilation
-  count = [0]
-
-  def compile_and_count(*args, **kwargs):
-    count[0] += 1
-    return jit_compilation(*args, **kwargs)
-
-  pxla._cached_compilation = compile_and_count
-  try:
-    yield count
-  finally:
-    pxla._cached_compilation = jit_compilation
-
-
-@contextmanager
-def count_subjaxpr_to_hlo_conversion(fun_name: str):
-  # No need to clear any caches since we generally jit and pmap fresh callables
-  # in tests.
-
-  mlir_lower = mlir.lower_jaxpr_to_fun
-  count = [0]
-
-  def mlir_lower_and_count(ctx, name, *args, **kwargs):
-    if name == fun_name:
-      count[0] += 1
-    return mlir_lower(ctx, name, *args, **kwargs)
-
-  mlir.lower_jaxpr_to_fun = mlir_lower_and_count
-  try:
-    yield count
-  finally:
-    mlir.lower_jaxpr_to_fun = mlir_lower
-
+    thread_local_state.collect_lowered_jaxprs = None
 
 @contextmanager
 def assert_num_jit_and_pmap_compilations(times):
   with count_jit_and_pmap_lowerings() as count:
     yield
-  if count[0] != times:
+  if count() != times:
     raise AssertionError(f"Expected exactly {times} XLA compilations, "
-                         f"but executed {count[0]}")
+                         f"but executed {count()}")
 
 
 def jaxlib_version() -> tuple[int, ...]:
@@ -497,7 +407,8 @@ def is_cloud_tpu():
 # built at least `date``.
 # TODO(b/327203806): after libtpu adds a XLA version and the oldest support
 # libtpu contains the XLA version, remove using built time to skip tests.
-def if_cloud_tpu_at_least(date: datetime.date):
+def if_cloud_tpu_at_least(year: int, month: int, day: int):
+  date = datetime.date(year, month, day)
   if not is_cloud_tpu():
     return True
   # The format of Cloud TPU platform_version is like:
@@ -615,29 +526,20 @@ def device_supports_buffer_donation():
   )
 
 
-@contextmanager
-def set_host_platform_device_count(nr_devices: int):
-  """Context manager to set host platform device count if not specified by user.
+def request_cpu_devices(nr_devices: int):
+  """Requests at least `nr_devices` CPU devices.
 
-  This should only be used by tests at the top level in setUpModule(); it will
-  not work correctly if applied to individual test cases.
+  request_cpu_devices should be called at the top-level of a test module before
+  main() runs.
+
+  It is not guaranteed that the number of CPU devices will be exactly
+  `nr_devices`: it may be more or less, depending on how exactly the test is
+  invoked. Test cases that require a specific number of devices should skip
+  themselves if that number is not met.
   """
-  prev_xla_flags = os.getenv("XLA_FLAGS")
-  flags_str = prev_xla_flags or ""
-  # Don't override user-specified device count, or other XLA flags.
-  if "xla_force_host_platform_device_count" not in flags_str:
-    os.environ["XLA_FLAGS"] = (flags_str +
-                               f" --xla_force_host_platform_device_count={nr_devices}")
-  # Clear any cached backends so new CPU backend will pick up the env var.
-  xla_bridge.get_backend.cache_clear()
-  try:
-    yield
-  finally:
-    if prev_xla_flags is None:
-      del os.environ["XLA_FLAGS"]
-    else:
-      os.environ["XLA_FLAGS"] = prev_xla_flags
+  if config.num_cpu_devices.value < nr_devices:
     xla_bridge.get_backend.cache_clear()
+    config.update("jax_num_cpu_devices", nr_devices)
 
 
 def skip_on_flag(flag_name, skip_value):
@@ -1124,8 +1026,153 @@ def sample_product(*args, **kw):
   """
   return parameterized.parameters(*sample_product_testcases(*args, **kw))
 
+# We use a reader-writer lock to protect test execution. Tests that may run in
+# parallel acquire a read lock; tests that are not thread-safe acquire a write
+# lock.
+_test_rwlock = util.Mutex()
+
+def _run_one_test(test: unittest.TestCase, result: ThreadSafeTestResult):
+  if getattr(test.__class__, "thread_hostile", False):
+    _test_rwlock.writer_lock()
+    try:
+      test(result)  # type: ignore
+    finally:
+      _test_rwlock.writer_unlock()
+  else:
+    _test_rwlock.reader_lock()
+    try:
+      test(result)  # type: ignore
+    finally:
+      _test_rwlock.reader_unlock()
+
+
+@contextmanager
+def thread_unsafe_test():
+  """Decorator for tests that are not thread-safe.
+
+  Note: this decorator (naturally) only applies to what it wraps, not to, say,
+  code in separate setUp() or tearDown() methods.
+  """
+  if TEST_NUM_THREADS.value <= 0:
+    yield
+    return
+
+  _test_rwlock.assert_reader_held()
+  _test_rwlock.reader_unlock()
+  _test_rwlock.writer_lock()
+  try:
+    yield
+  finally:
+    _test_rwlock.writer_unlock()
+    _test_rwlock.reader_lock()
+
+
+def thread_unsafe_test_class():
+  "Decorator that marks a TestCase class as thread-hostile."
+  def f(klass):
+    assert issubclass(klass, unittest.TestCase), type(klass)
+    klass.thread_hostile = True
+    return klass
+  return f
+
+
+class ThreadSafeTestResult:
+  """
+  Wraps a TestResult to make it thread safe.
+
+  We do this by accumulating API calls and applying them in a batch under a
+  lock at the conclusion of each test case.
+
+  We duck type instead of inheriting from TestResult because we aren't actually
+  a perfect implementation of TestResult, and would rather get a loud error
+  for things we haven't implemented.
+  """
+  def __init__(self, lock: threading.Lock, result: unittest.TestResult):
+    self.lock = lock
+    self.test_result = result
+    self.actions: list[Callable] = []
+
+  def startTest(self, test: unittest.TestCase):
+    del test
+    self.start_time = time.time()
+
+  def stopTest(self, test: unittest.TestCase):
+    stop_time = time.time()
+    with self.lock:
+      # If test_result is an ABSL _TextAndXMLTestResult we override how it gets
+      # the time. This affects the timing that shows up in the XML output
+      # consumed by CI.
+      time_getter = getattr(self.test_result, "time_getter", None)
+      try:
+        self.test_result.time_getter = lambda: self.start_time
+        self.test_result.startTest(test)
+        for callback in self.actions:
+          callback()
+        self.test_result.time_getter = lambda: stop_time
+        self.test_result.stopTest(test)
+      finally:
+        if time_getter is not None:
+          self.test_result.time_getter = time_getter
+
+  def addSuccess(self, test: unittest.TestCase):
+    self.actions.append(lambda: self.test_result.addSuccess(test))
+
+  def addSkip(self, test: unittest.TestCase, reason: str):
+    self.actions.append(lambda: self.test_result.addSkip(test, reason))
+
+  def addError(self, test: unittest.TestCase, err):
+    self.actions.append(lambda: self.test_result.addError(test, err))
+
+  def addFailure(self, test: unittest.TestCase, err):
+    self.actions.append(lambda: self.test_result.addFailure(test, err))
+
+  def addExpectedFailure(self, test: unittest.TestCase, err):
+    self.actions.append(lambda: self.test_result.addExpectedFailure(test, err))
+
+  def addDuration(self, test: unittest.TestCase, elapsed):
+    self.actions.append(lambda: self.test_result.addDuration(test, elapsed))
+
+
+class JaxTestSuite(unittest.TestSuite):
+  """Runs tests in parallel using threads if TEST_NUM_THREADS is > 1.
+
+  Caution: this test suite does not run setUpClass or setUpModule methods if
+  thread parallelism is enabled.
+  """
+
+  def __init__(self, suite: unittest.TestSuite):
+    super().__init__(list(suite))
+
+  def run(self, result: unittest.TestResult, debug: bool = False) -> unittest.TestResult:
+    if TEST_NUM_THREADS.value <= 0:
+      return super().run(result)
+
+    test_warning_util.install_threadsafe_warning_handlers()
+
+    executor = ThreadPoolExecutor(TEST_NUM_THREADS.value)
+    lock = threading.Lock()
+    futures = []
+
+    def run_test(test):
+      "Recursively runs tests in a test suite or test case."
+      if isinstance(test, unittest.TestSuite):
+        for subtest in test:
+          run_test(subtest)
+      else:
+        test_result = ThreadSafeTestResult(lock, result)
+        futures.append(executor.submit(_run_one_test, test, test_result))
+
+    with executor:
+      run_test(self)
+      for future in futures:
+        future.result()
+
+    return result
+
 
 class JaxTestLoader(absltest.TestLoader):
+  suiteClass = JaxTestSuite
+
   def getTestCaseNames(self, testCaseClass):
     names = super().getTestCaseNames(testCaseClass)
     if _TEST_TARGETS.value:
@@ -1143,10 +1190,21 @@ def with_config(**kwds):
   """Test case decorator for subclasses of JaxTestCase"""
   def decorator(cls):
     assert inspect.isclass(cls) and issubclass(cls, JaxTestCase), "@with_config can only wrap JaxTestCase class definitions."
-    cls._default_config = {}
+    cls._default_thread_local_config = {}
     for b in cls.__bases__:
-      cls._default_config.update(b._default_config)
-    cls._default_config.update(kwds)
+      cls._default_thread_local_config.update(b._default_thread_local_config)
+    cls._default_thread_local_config.update(kwds)
+    return cls
+  return decorator
+
+def with_global_config(**kwds):
+  """Test case decorator for subclasses of JaxTestCase"""
+  def decorator(cls):
+    assert inspect.isclass(cls) and issubclass(cls, JaxTestCase), "@with_config can only wrap JaxTestCase class definitions."
+    cls._default_global_config = {}
+    for b in cls.__bases__:
+      cls._default_global_config.update(b._default_global_config)
+    cls._default_global_config.update(kwds)
     return cls
   return decorator
 
@@ -1177,6 +1235,15 @@ def global_config_context(**kwds):
     for key, value in original_config.items():
       config.update(key, value)
 
+@contextmanager
+def thread_local_config_context(**kwds):
+  stack = ExitStack()
+  for config_name, value in kwds.items():
+    stack.enter_context(config.config_states[config_name](value))
+  try:
+    yield
+  finally:
+    stack.close()
 
 class NotPresent:
   def __repr__(self):
@@ -1200,7 +1267,8 @@ def assert_global_configs_unchanged():
 
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
-  _default_config = {
+  _default_global_config: dict[str, Any] = {}
+  _default_thread_local_config = {
     'jax_enable_checks': True,
     'jax_numpy_dtype_promotion': 'strict',
     'jax_numpy_rank_promotion': 'raise',
@@ -1208,10 +1276,8 @@ class JaxTestCase(parameterized.TestCase):
     'jax_legacy_prng_key': 'error',
   }
 
-  _compilation_cache_exit_stack: ExitStack | None = None
+  _context_stack: ExitStack | None = None
 
-  def tearDown(self) -> None:
-    assert core.reset_trace_state()
 
   def setUp(self):
     super().setUp()
@@ -1222,28 +1288,41 @@ class JaxTestCase(parameterized.TestCase):
     # b) it returns values in int32 range, which RandomState requires.
     self._rng = npr.RandomState(zlib.adler32(self._testMethodName.encode()))
 
-  @classmethod
-  def setUpClass(cls):
-    cls._compilation_cache_exit_stack = ExitStack()
-    stack = cls._compilation_cache_exit_stack
-    stack.enter_context(global_config_context(**cls._default_config))
+    # TODO(phawkins): use TestCase.enterContext once Python 3.11 is the minimum
+    # version.
+    self._context_stack = ExitStack()
+    self.addCleanup(self._context_stack.close)
+    stack = self._context_stack
+    stack.enter_context(global_config_context(**self._default_global_config))
+    for config_name, value in self._default_thread_local_config.items():
+      stack.enter_context(jax._src.config.config_states[config_name](value))
 
     if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
+      assert TEST_NUM_THREADS.value <= 1, "Persistent compilation cache is not thread-safe."
       stack.enter_context(config.enable_compilation_cache(True))
       stack.enter_context(config.raise_persistent_cache_errors(True))
       stack.enter_context(config.persistent_cache_min_compile_time_secs(0))
       stack.enter_context(config.persistent_cache_min_entry_size_bytes(0))
-
       tmp_dir = stack.enter_context(tempfile.TemporaryDirectory())
-      compilation_cache.set_cache_dir(tmp_dir)
-      stack.callback(lambda: compilation_cache.reset_cache())
+      stack.enter_context(config.compilation_cache_dir(tmp_dir))
+      stack.callback(compilation_cache.reset_cache)
 
-  @classmethod
-  def tearDownClass(cls):
-    cls._compilation_cache_exit_stack.close()
+  def tearDown(self) -> None:
+    assert core.reset_trace_state()
+    super().tearDown()
 
   def rng(self):
     return self._rng
+
+  def assertDeprecationWarnsOrRaises(self, deprecation_id: str, message: str):
+    """Assert warning or error, depending on deprecation state.
+
+    For use with functions that call :func:`jax._src.deprecations.warn`.
+    """
+    if deprecations.is_accelerated(deprecation_id):
+      return self.assertRaisesRegex(ValueError, message)
+    else:
+      return self.assertWarnsRegex(DeprecationWarning, message)
 
   def assertArraysEqual(self, x, y, *, check_dtypes=True, err_msg='',
                         allow_object_dtype=False, verbose=True):
@@ -1328,11 +1407,44 @@ class JaxTestCase(parameterized.TestCase):
     self.assertMultiLineEqual(expected_clean, what_clean,
                               msg=f"Found\n{what}\nExpecting\n{expected}")
 
+
   @contextmanager
   def assertNoWarnings(self):
-    with warnings.catch_warnings():
-      warnings.simplefilter("error")
+    with test_warning_util.raise_on_warnings():
       yield
+
+  # We replace assertWarns and assertWarnsRegex with functions that use the
+  # thread-safe warning utilities. Unlike the unittest versions these only
+  # function as context managers.
+  @contextmanager
+  def assertWarns(self, warning, *, msg=None):
+    with test_warning_util.record_warnings() as ws:
+      yield
+    for w in ws:
+      if not isinstance(w.message, warning):
+        continue
+      if msg is not None and msg not in str(w.message):
+        continue
+      return
+    self.fail(f"Expected warning not found {warning}:'{msg}', got "
+              f"{ws}")
+
+  @contextmanager
+  def assertWarnsRegex(self, warning, regex):
+    if regex is not None:
+        regex = re.compile(regex)
+
+    with test_warning_util.record_warnings() as ws:
+      yield
+    for w in ws:
+      if not isinstance(w.message, warning):
+        continue
+      if regex is not None and not regex.search(str(w.message)):
+        continue
+      return
+    self.fail(f"Expected warning not found {warning}:'{regex}', got "
+              f"{ws}")
+
 
   def _CompileAndCheck(self, fun, args_maker, *, check_dtypes=True, tol=None,
                        rtol=None, atol=None, check_cache_misses=True):
@@ -1352,7 +1464,7 @@ class JaxTestCase(parameterized.TestCase):
 
     cache_misses = dispatch.xla_primitive_callable.cache_info().misses
     python_ans = fun(*args)
-    if check_cache_misses:
+    if check_cache_misses and TEST_NUM_THREADS.value <= 1:
       self.assertEqual(
           cache_misses, dispatch.xla_primitive_callable.cache_info().misses,
           "Compilation detected during second call of {} in op-by-op "
@@ -1409,11 +1521,7 @@ class BufferDonationTestCase(JaxTestCase):
     self.assertFalse(x.is_deleted())
 
 
-@contextmanager
-def ignore_warning(*, message='', category=Warning, **kw):
-  with warnings.catch_warnings():
-    warnings.filterwarnings("ignore", message=message, category=category, **kw)
-    yield
+ignore_warning = test_warning_util.ignore_warning
 
 # -------------------- Mesh parametrization helpers --------------------
 
@@ -1443,26 +1551,36 @@ def with_and_without_mesh(f):
       ('Mesh', (('x', 2),), (('i', 'x'),))
     ))(with_mesh_from_kwargs(f))
 
-def with_user_mesh(sizes, names):
+def with_user_mesh(sizes, names, axis_types=None):
+  axis_types = ({mesh_lib.AxisTypes.Explicit: names}
+                if axis_types is None else axis_types)
   def decorator(fn):
     def mesh_fn(*args, **kwargs):
-      mesh = create_mesh(sizes, names)
-      with mesh_lib.set_mesh(mesh):
+      mesh = create_mesh(sizes, names, axis_types=axis_types)
+      with mesh_lib.use_mesh(mesh):
         return fn(*args, **kwargs, mesh=mesh)
     return mesh_fn
   return decorator
 
 
-def create_mesh(mesh_shape, axis_names, iota_order=False):
+def create_mesh(mesh_shape, axis_names, iota_order=False, axis_types=None):
   size = math.prod(mesh_shape)
   if len(jax.devices()) < size:
     raise unittest.SkipTest(f"Test requires {size} global devices.")
   if iota_order:
     devices = sorted(jax.devices(), key=lambda d: d.id)
     mesh_devices = np.array(devices[:size]).reshape(mesh_shape)
-    return jax.sharding.Mesh(mesh_devices, axis_names)
+    return jax.sharding.Mesh(mesh_devices, axis_names, axis_types=axis_types)
   else:
-    return jax.make_mesh(mesh_shape, axis_names)
+    if axis_types is None:
+      explicit_axes = auto_axes = manual_axes = None
+    else:
+      explicit_axes = axis_types.get(mesh_lib.AxisTypes.Explicit, None)
+      auto_axes = axis_types.get(mesh_lib.AxisTypes.Auto, None)
+      manual_axes = axis_types.get(mesh_lib.AxisTypes.Manual, None)
+    return jax.make_mesh(mesh_shape, axis_names, explicit_axes=explicit_axes,
+                         auto_axes=auto_axes,
+                         manual_axes=manual_axes)
 
 class _cached_property:
   null = object()
@@ -1501,6 +1619,8 @@ class _LazyDtypes:
       float_dtypes += [_dtypes.float8_e3m4]
     if _dtypes.float8_e4m3 is not None:
       float_dtypes += [_dtypes.float8_e4m3]
+    if _dtypes.float8_e8m0fnu is not None:
+      float_dtypes += [_dtypes.float8_e8m0fnu]
     return self.supported(float_dtypes)
 
   @_cached_property
@@ -1648,6 +1768,10 @@ def register_event_duration_listener(callback):
 def set_env(**kwargs):
   """Context manager to temporarily set/unset one or more environment variables.
 
+  Caution: setting environment variables is not thread-safe. If you use this
+  utility, you must annotate your test using, e.g., @thread_unsafe_test() or
+  @thread_unsafe_test_class().
+
   Examples:
 
     >>> import os
@@ -1726,9 +1850,8 @@ def complex_plane_sample(dtype, size_re=10, size_im=None):
     logtiny = finfo.minexp / prec_dps_ratio
     axis_points = np.zeros(3 + 2 * size, dtype=finfo.dtype)
 
-    with warnings.catch_warnings():
+    with ignore_warning(category=RuntimeWarning):
       # Silence RuntimeWarning: overflow encountered in cast
-      warnings.simplefilter("ignore")
       half_neg_line = -np.logspace(logmin, logtiny, size, dtype=finfo.dtype)
       half_line = -half_neg_line[::-1]
       axis_points[-size - 1:-1] = half_line
@@ -2262,6 +2385,22 @@ def setup_hypothesis(max_examples=30) -> None:
   except (ModuleNotFoundError, ImportError):
     return
 
+  # In our tests we often use subclasses with slightly different class variables
+  # to generate whole suites of parameterized tests, but this approach does not
+  # work well with Hypothesis databases, which use some function of the method
+  # identity to generate keys. But, if the method is defined in a superclass,
+  # all subclasses share the same key. This key collision can lead to confusing
+  # false positives in other health checks.
+  #
+  # Still, as far as I understand, for as long as we don't use the example
+  # database, it should be perfectly safe to suppress this health check. This
+  # seems simpler than rewriting our tests that trigger this behavior. See
+  # the end of https://github.com/HypothesisWorks/hypothesis/issues/3446 for
+  # more context.
+  suppressed_checks = []
+  if hasattr(hp.HealthCheck, "differing_executors"):
+    suppressed_checks.append(hp.HealthCheck.differing_executors)
+
   hp.settings.register_profile(
       "deterministic",
       database=None,
@@ -2269,6 +2408,7 @@ def setup_hypothesis(max_examples=30) -> None:
       deadline=None,
       max_examples=max_examples,
       print_blob=True,
+      suppress_health_check=suppressed_checks,
   )
   hp.settings.register_profile(
       "interactive",

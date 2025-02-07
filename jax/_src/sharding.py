@@ -138,6 +138,10 @@ class Sharding:
   #############################################################################
   # Default implementations below that all subclasses will inherit.
 
+  @property
+  def _is_concrete(self) -> bool:
+    return True
+
   @functools.cached_property
   def addressable_devices(self) -> set[Device]:
     """The set of devices in the :class:`Sharding` that are addressable by the

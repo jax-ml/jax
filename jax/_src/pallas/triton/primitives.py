@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import jax
-from jax import core as jax_core
+from jax._src import core as jax_core
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.triton import dialect as tt_dialect
 from jax._src.pallas.triton import lowering

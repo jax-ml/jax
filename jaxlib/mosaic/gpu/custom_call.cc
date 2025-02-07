@@ -83,8 +83,10 @@ limitations under the License.
 #include "mlir/include/mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "mlir/include/mlir/Transforms/Passes.h"
 #include "jaxlib/gpu/vendor.h"
+#include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 #include "jaxlib/mosaic/gpu/launch_lowering.h"
 #include "jaxlib/mosaic/gpu/passes.h"
+#include "jaxlib/mosaic/gpu/serde.h"
 #include "jaxlib/mosaic/gpu/target.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
@@ -206,7 +208,8 @@ void InitContext(mlir::MLIRContext* context) {
                   mlir::math::MathDialect, mlir::memref::MemRefDialect,
                   mlir::scf::SCFDialect, mlir::vector::VectorDialect,
                   mlir::gpu::GPUDialect, mlir::nvgpu::NVGPUDialect,
-                  mlir::NVVM::NVVMDialect, mlir::LLVM::LLVMDialect>();
+                  mlir::NVVM::NVVMDialect, mlir::LLVM::LLVMDialect,
+                  mosaic_gpu::MosaicGPUDialect>();
   mlir::registerConvertNVVMToLLVMInterface(registry);
   mlir::registerConvertComplexToLLVMInterface(registry);
   mlir::registerConvertMemRefToLLVMInterface(registry);
@@ -453,12 +456,19 @@ absl::StatusOr<std::pair<std::string, std::string>> GetHostAndInitFuncNames(
 
 absl::StatusOr<CompiledKernel> CompileAndInit(const char* module) {
   mlir::MLIRContext context(mlir::MLIRContext::Threading::DISABLED);
+  context.allowUnregisteredDialects(true);
   InitContext(&context);
   mlir::ParserConfig parse_config(&context);
   auto module_op =
       mlir::parseSourceString<mlir::ModuleOp>(module, parse_config);
   if (!module_op) {
-    return absl::InternalError("Failed to parse module");
+    return absl::InternalError("Failed to parse Mosaic GPU module");
+  }
+  auto manager = mlir::PassManager::on<mlir::ModuleOp>(module_op->getContext());
+  manager.addPass(mosaic::gpu::createSerdePass(
+      mosaic::gpu::SerdePassOptions{.serialize = false}));
+  if (manager.run(module_op.get()).failed()) {
+    return absl::InternalError("Failed to deserialize Mosaic GPU module");
   }
   auto maybe_engine = Compile(*module_op);
   if (!maybe_engine.ok()) {

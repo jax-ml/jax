@@ -25,8 +25,6 @@ from jax._src import test_util as jtu
 
 import numpy as np
 
-numpy_version = jtu.numpy_version()
-
 config.parse_flags_with_absl()
 
 try:
@@ -47,10 +45,6 @@ dlpack_dtypes = sorted(jax.dlpack.SUPPORTED_DTYPES, key=lambda x: x.__name__)
 numpy_dtypes = sorted(
     [dt for dt in jax.dlpack.SUPPORTED_DTYPES if dt != jnp.bfloat16],
     key=lambda x: x.__name__)
-
-# NumPy didn't support bool as a dlpack type until 1.25.
-if jtu.numpy_version() < (1, 25, 0):
-  numpy_dtypes = [dt for dt in numpy_dtypes if dt != jnp.bool_]
 
 cuda_array_interface_dtypes = [dt for dt in dlpack_dtypes if dt != jnp.bfloat16]
 

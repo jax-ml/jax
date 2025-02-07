@@ -18,11 +18,11 @@ from collections.abc import Sequence
 import operator
 import numpy as np
 
-from jax import dtypes
 from jax import lax
+from jax._src import dtypes
 from jax._src.lib import xla_client
 from jax._src.util import safe_zip
-from jax._src.numpy.util import check_arraylike, promote_dtypes_inexact
+from jax._src.numpy.util import ensure_arraylike, promote_dtypes_inexact
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import ufuncs, reductions
 from jax._src.sharding import Sharding
@@ -49,8 +49,7 @@ def _fft_core(func_name: str, fft_type: lax.FftType, a: ArrayLike,
               s: Shape | None, axes: Sequence[int] | None,
               norm: str | None) -> Array:
   full_name = f"jax.numpy.fft.{func_name}"
-  check_arraylike(full_name, a)
-  arr = jnp.asarray(a)
+  arr = ensure_arraylike(full_name, a)
 
   if s is not None:
     s = tuple(map(operator.index, s))
@@ -71,12 +70,6 @@ def _fft_core(func_name: str, fft_type: lax.FftType, a: ArrayLike,
   if len(axes) != len(set(axes)):
     raise ValueError(
         f"{full_name} does not support repeated axes. Got axes {axes}.")
-
-  if len(axes) > 3:
-    # XLA does not support FFTs over more than 3 dimensions
-    raise ValueError(
-        "%s only supports 1D, 2D, and 3D FFTs. "
-        "Got axes %s with input rank %s." % (full_name, orig_axes, arr.ndim))
 
   # XLA only supports FFTs over the innermost axes, so rearrange if necessary.
   if orig_axes is not None:
@@ -100,7 +93,7 @@ def _fft_core(func_name: str, fft_type: lax.FftType, a: ArrayLike,
         s += [max(0, 2 * (arr.shape[axes[-1]] - 1))]
     else:
       s = [arr.shape[axis] for axis in axes]
-  transformed = lax.fft(arr, fft_type, tuple(s))
+  transformed = _fft_core_nd(arr, fft_type, s)
   if norm is not None:
     transformed *= _fft_norm(
         jnp.array(s, dtype=transformed.dtype), func_name, norm)
@@ -108,6 +101,31 @@ def _fft_core(func_name: str, fft_type: lax.FftType, a: ArrayLike,
   if orig_axes is not None:
     transformed = jnp.moveaxis(transformed, axes, orig_axes)
   return transformed
+
+
+def _fft_core_nd(arr: Array, fft_type: lax.FftType, s: Shape) -> Array:
+  # XLA supports N-D transforms up to N=3 so we use XLA's FFT N-D directly.
+  if len(s) <= 3:
+    return lax.fft(arr, fft_type, tuple(s))
+
+  # For larger N, we repeatedly apply N<=3 transforms until we reach the
+  # requested dimension. We special case N=4 to use two 2-D transforms instead
+  # of one 3-D and one 1-D, since we typically expect better accelerator
+  # performance when N>1.
+  n = 2 if len(s) == 4 else 3
+  src = tuple(range(arr.ndim - len(s), arr.ndim - n))
+  dst = tuple(range(arr.ndim - len(s) + n, arr.ndim))
+  if fft_type in {lax.FftType.RFFT, lax.FftType.FFT}:
+    arr = lax.fft(arr, fft_type, tuple(s)[-n:])
+    arr = jnp.moveaxis(arr, src, dst)
+    arr = _fft_core_nd(arr, lax.FftType.FFT, s[:-n])
+    arr = jnp.moveaxis(arr, dst, src)
+  else:
+    arr = jnp.moveaxis(arr, src, dst)
+    arr = _fft_core_nd(arr, lax.FftType.IFFT, s[:-n])
+    arr = jnp.moveaxis(arr, dst, src)
+    arr = lax.fft(arr, fft_type, tuple(s)[-n:])
+  return arr
 
 
 def fftn(a: ArrayLike, s: Shape | None = None,
@@ -1157,7 +1175,7 @@ def fftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,
     - :func:`jax.numpy.fft.rfftfreq`: frequencies for use with
       :func:`~jax.numpy.fft.rfft` and :func:`~jax.numpy.fft.irfft`.
   """
-  dtype = dtype or dtypes.canonicalize_dtype(jnp.float_)
+  dtype = dtype or dtypes.canonicalize_dtype(dtypes.float_)
   if isinstance(n, (list, tuple)):
     raise ValueError(
           "The n argument of jax.numpy.fft.fftfreq only takes an int. "
@@ -1209,7 +1227,7 @@ def rfftfreq(n: int, d: ArrayLike = 1.0, *, dtype: DTypeLike | None = None,
     - :func:`jax.numpy.fft.fftfreq`: frequencies for use with
       :func:`~jax.numpy.fft.fft` and :func:`~jax.numpy.fft.ifft`.
   """
-  dtype = dtype or dtypes.canonicalize_dtype(jnp.float_)
+  dtype = dtype or dtypes.canonicalize_dtype(dtypes.float_)
   if isinstance(n, (list, tuple)):
     raise ValueError(
           "The n argument of jax.numpy.fft.rfftfreq only takes an int. "
@@ -1268,8 +1286,7 @@ def fftshift(x: ArrayLike, axes: None | int | Sequence[int] = None) -> Array:
     >>> jnp.fft.ifftshift(shifted_freq)
     Array([ 0. ,  0.2,  0.4, -0.4, -0.2], dtype=float32)
   """
-  check_arraylike("fftshift", x)
-  x = jnp.asarray(x)
+  x = ensure_arraylike("fftshift", x)
   shift: int | Sequence[int]
   if axes is None:
     axes = tuple(range(x.ndim))
@@ -1318,8 +1335,7 @@ def ifftshift(x: ArrayLike, axes: None | int | Sequence[int] = None) -> Array:
     >>> jnp.fft.ifftshift(shifted_freq)
     Array([ 0. ,  0.2,  0.4, -0.4, -0.2], dtype=float32)
   """
-  check_arraylike("ifftshift", x)
-  x = jnp.asarray(x)
+  x = ensure_arraylike("ifftshift", x)
   shift: int | Sequence[int]
   if axes is None:
     axes = tuple(range(x.ndim))

@@ -41,7 +41,6 @@ from jax._src.state import types as state_types
 from jax._src.state.types import TransformedRef
 import jax.numpy as jnp
 
-
 class DynamicGridDim:
   def __repr__(self):
     return "DynamicGridDim"
@@ -76,6 +75,7 @@ class CompilerParams(Protocol):
   __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
 
 
+# TODO(necula): clean up the splitting of the fun_sourceinfo
 @dataclasses.dataclass(frozen=True)
 class NameAndSrcInfo:
   #: The name of the pallas_call or the name of the kernel function.
@@ -109,9 +109,12 @@ class NameAndSrcInfo:
     if pallas_call_name is not None:
       return NameAndSrcInfo(pallas_call_name,
                             f"for kernel function {src_info}")
-    src_info_parts = src_info.split(" ")
-    return NameAndSrcInfo(src_info_parts[0],
-                          " ".join(src_info_parts[1:]))
+    src_info_parts = src_info.split(" at ")
+    if len(src_info_parts) > 1:
+      return NameAndSrcInfo(src_info_parts[0],
+                            "at " + " ".join(src_info_parts[1:]))
+    else:
+      return NameAndSrcInfo(src_info_parts[0], "")
 
 
 split_list = util.split_list
@@ -219,10 +222,6 @@ class AbstractMemoryRef(state.AbstractRef):
   def __repr__(self) -> str:
     return f'MemRef<{self.memory_space}>{{{self.inner_aval.str_short()}}}'
 
-  @property
-  def sharding(self):
-    return self.inner_aval.sharding
-
   def update_weak_type(self, weak_type):
     return AbstractMemoryRef(
         self.inner_aval.update_weak_type(weak_type), self.memory_space)
@@ -283,6 +282,9 @@ class PallasTracingEnv(threading.local):
   grid_context: PallasGridContext | None = None
   grid_env_stack: list[GridEnv] = dataclasses.field(default_factory=list)
   is_interpret_mode: bool = False
+  dynamic_shapes: bool = False
+  module_export_fn: Callable[[mlir.ir.Module], None] | None = None
+
 _pallas_tracing_env = PallasTracingEnv()
 
 
@@ -316,22 +318,6 @@ def current_grid_env() -> GridEnv | None:
   if not _pallas_tracing_env.grid_env_stack:
     return None
   return _pallas_tracing_env.grid_env_stack[-1]
-
-
-@contextlib.contextmanager
-def interpret_mode_env(interpret_mode: bool) -> Iterator[None]:
-  prev_interpret = _pallas_tracing_env.is_interpret_mode
-  if interpret_mode:
-    _pallas_tracing_env.is_interpret_mode = True
-  try:
-    yield
-  finally:
-    if interpret_mode:
-      _pallas_tracing_env.is_interpret_mode = prev_interpret
-
-def is_interpret_mode() -> bool:
-  """Returns whether the kernel is executing in interpret mode."""
-  return _pallas_tracing_env.is_interpret_mode
 
 
 class Mapped:
@@ -411,29 +397,29 @@ class BlockSpec:
       )
     block_aval = AbstractMemoryRef(block_array_aval, self.memory_space)
 
-    if not jax_core.is_constant_shape(block_aval.shape):
+    if (
+        not jax_core.is_constant_shape(block_aval.shape)
+        and not dynamic_shapes_export_enabled()
+    ):
       raise ValueError(
           "shape polymorphism for Pallas does not support "
           "dynamically-shaped blocks. "
           f"Block spec for {origin} has block_shape: {block_aval.shape}"
       )
 
+    fake_index_map_args, fake_index_map_kwargs = \
+        index_map_tree.unflatten([False] * index_map_tree.num_leaves)
+    debug = api_util.debug_info("pallas_call index_map",
+                                index_map_func, fake_index_map_args,
+                                fake_index_map_kwargs)
     flat_index_map_fun, index_map_out_tree_thunk = api_util.flatten_fun(
-        lu.wrap_init(index_map_func), index_map_tree
-    )
-    debug = pe.debug_info(
-        index_map_func,
-        index_map_tree,
-        index_map_out_tree_thunk,
-        False,
-        "pallas_call index_map",
-    )
+      lu.wrap_init(index_map_func, debug_info=debug), index_map_tree)
     index_map_src_info = NameAndSrcInfo.from_pallas_call(
-        None, debug.func_src_info
+        None, debug and debug.func_src_info  # type: ignore
     )
     with tracing_grid_env(grid, mapped_dims):
       jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(
-          flat_index_map_fun, index_map_avals, debug_info=debug
+          flat_index_map_fun, index_map_avals
       )
     mapped_block_shape = tuple(mapped if s is None else s for s in block_shape)
     if len(out_avals) != len(block_shape):
@@ -472,6 +458,8 @@ class BlockSpec:
     )
     mapping.check_invariants()
     return mapping
+
+  replace = dataclasses.replace
 
 
 class NoBlockSpec:
@@ -582,13 +570,30 @@ class BlockMapping:
 
 @contextlib.contextmanager
 def tracing_grid_env(grid: GridMappingGrid, mapped_dims: tuple[int, ...]):
-  assert all(i is dynamic_grid_dim or isinstance(i, int) for i in grid)
+  if dynamic_shapes_export_enabled():
+    assert all(i is dynamic_grid_dim or jax_core.is_dim(i) for i in grid)
+  else:
+    assert all(i is dynamic_grid_dim or isinstance(i, int) for i in grid)
   old_grid_context = _pallas_tracing_env.grid_context
   try:
     _pallas_tracing_env.grid_context = PallasGridContext(grid, mapped_dims)
     yield
   finally:
     _pallas_tracing_env.grid_context = old_grid_context
+
+
+@contextlib.contextmanager
+def pallas_export_experimental(dynamic_shapes: bool):
+  old_dynamic_shapes = _pallas_tracing_env.dynamic_shapes
+  try:
+    _pallas_tracing_env.dynamic_shapes = dynamic_shapes
+    yield
+  finally:
+    _pallas_tracing_env.dynamic_shapes = old_dynamic_shapes
+
+
+def dynamic_shapes_export_enabled() -> bool:
+  return _pallas_tracing_env.dynamic_shapes
 
 
 @dataclasses.dataclass(frozen=True)
@@ -871,13 +876,18 @@ def get_grid_mapping(
     out_origins: Sequence[OriginStr],
 ) -> tuple[tuple[jax_core.AbstractValue, ...],
            GridMapping]:
-  assert all(i is None or isinstance(i, int) for i in grid_spec.grid)
+  if dynamic_shapes_export_enabled():
+    dim_check : Any = jax_core.is_dim  # type: ignore[no-redef]
+  else:
+    dim_check : Any = jax_core.is_constant_dim  # type: ignore[no-redef]
+  assert all(i is None or dim_check(i) for i in grid_spec.grid)
   grid_mapping_grid = tuple(
       dynamic_grid_dim if d is None else d for d in grid_spec.grid
   )
   # The inputs for the index maps
   index_map_avals = (
-      (index_map_grid_aval.update(sharding=None),) * len(grid_spec.grid))
+      index_map_grid_aval.update(sharding=jax_core.get_cur_mesh_sharding()),
+  ) * len(grid_spec.grid)
   index_map_tree = tree_util.tree_structure((index_map_avals, {}))
 
   num_scalar_prefetch: int = getattr(grid_spec, "num_scalar_prefetch", 0)
@@ -985,14 +995,15 @@ def get_grid_mapping(
 
 def unzip_dynamic_grid_bounds(
     grid_spec: GridSpec) -> tuple[GridSpec, tuple[Any, ...]]:
-  static_grid = tuple(
-      d if isinstance(d, int) else None for d in grid_spec.grid
-  )
+  if dynamic_shapes_export_enabled():
+    new_grid : Any = grid_spec.grid  # type: ignore[no-redef]
+  else:
+    new_grid : Any = tuple(d if isinstance(d, int) else None for d in grid_spec.grid)  # type: ignore[no-redef]
   dynamic_bounds = tuple(d for d in grid_spec.grid if not isinstance(d, int))
   # We can't use dataclasses.replace, because our fields are incompatible
   # with __init__'s signature.
   static_self = copy.copy(grid_spec)
-  static_self.grid = static_grid  # type: ignore
+  static_self.grid = new_grid  # type: ignore
   return static_self, dynamic_bounds
 
 
@@ -1028,18 +1039,37 @@ class CostEstimate:
 core_map_p = jax_core.Primitive("core_map")
 core_map_p.multiple_results = True
 
-def core_map(mesh):
+
+def core_map(
+    mesh,
+    *,
+    compiler_params: Any | None = None,
+    interpret: bool = False,
+    debug: bool = False,
+    cost_estimate: CostEstimate | None = None,
+):
   """Runs a function on a mesh, mapping it over the devices in the mesh.
 
   The function should be stateful in that it takes in no inputs and returns
   no outputs but can mutate closed-over Refs, for example.
+
+  Args:
+    mesh: The mesh to run the function on.
+    compiler_params: The compiler parameters to pass to the backend.
+    interpret: Whether to run the function in interpret mode.
+    debug: Whether or not to out helpful debugging information.
+    cost_estimate: The cost estimate of the function.
   """
   def wrapped(f):
     flat_args, in_tree = tree_util.tree_flatten(((), {}))
     flat_fun, out_tree_thunk = api_util.flatten_fun(lu.wrap_init(f), in_tree)
     with jax_core.extend_axis_env_nd(mesh.shape.items()):
       jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, flat_args)
-    out = core_map_p.bind(*consts, jaxpr=jaxpr, mesh=mesh)
+    out = core_map_p.bind(*consts, jaxpr=jaxpr, mesh=mesh,
+                          compiler_params=compiler_params,
+                          interpret=interpret,
+                          debug=debug,
+                          cost_estimate=cost_estimate)
     if out:
       raise ValueError("core_map-ped functions must not return any outputs.")
     return tree_util.tree_unflatten(out_tree_thunk(), out)
@@ -1047,7 +1077,7 @@ def core_map(mesh):
 
 
 @core_map_p.def_effectful_abstract_eval
-def _core_map_abstract_eval(*args, jaxpr, mesh):
+def _core_map_abstract_eval(*args, jaxpr, mesh, **_):
   del args
   if jaxpr.outvars:
     raise ValueError("core_map must not return any outputs.")
@@ -1074,6 +1104,9 @@ def default_mesh_discharge_rule(
     compiler_params,
     backend,
     jaxpr,
+    debug,
+    interpret,
+    cost_estimate,
 ):
   """Discharges a ``core_map`` over a mesh to a ``pallas_call``."""
   del out_avals  # Unused.
@@ -1103,6 +1136,9 @@ def default_mesh_discharge_rule(
       grid=grid,
       compiler_params=compiler_params,
       backend=backend,
+      interpret=interpret,
+      debug=debug,
+      cost_estimate=cost_estimate,
   )(*args)
   # ``outs`` lacks the unmodified inputs. Add them back in.
   all_outs = [None] * len(args)
@@ -1120,8 +1156,8 @@ def _core_map_discharge_rule(in_avals, out_avals, *args_flat, jaxpr, mesh, **kwa
   )
 
 
-def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh):
-  del in_atoms
+def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
+  del in_atoms, kwargs
   with jax_core.extend_axis_env_nd(tuple(mesh.shape.items())):
     jax_core.check_jaxpr(jaxpr)
   effs = set()
@@ -1135,3 +1171,11 @@ def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh):
       effs.add(eff)
   return [], effs
 jax_core.custom_typechecks[core_map_p] = _core_map_typecheck_rule
+
+
+def lower_as_mlir(f, *args, dynamic_shapes=False, **kwargs) -> mlir.ir.Module:
+  with pallas_export_experimental(dynamic_shapes):
+    lowered = jax.jit(f).lower(*args, **kwargs)
+    stablehlo = lowered.compiler_ir(dialect="stablehlo")  # type: ignore[return-value]
+
+  return stablehlo  # type: ignore[return-value]

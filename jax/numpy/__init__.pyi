@@ -17,6 +17,7 @@ from jax._src.typing import (
     Array, ArrayLike, DType, DTypeLike, DeprecatedArg,
     DimSize, DuckTypedArray, Shape, StaticScalar,
 )
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax.numpy import fft as fft, linalg as linalg
 from jax.sharding import Sharding as _Sharding
 import numpy as _np
@@ -371,6 +372,7 @@ def einsum(
     preferred_element_type: DTypeLike | None = ...,
     _use_xeinsum: builtins.bool = False,
     _dot_general: Callable[..., Array] = ...,
+    out_sharding: NamedSharding | P | None = ...,
 ) -> Array: ...
 
 @overload
@@ -384,6 +386,7 @@ def einsum(
     preferred_element_type: DTypeLike | None = ...,
     _use_xeinsum: builtins.bool = False,
     _dot_general: Callable[..., Array] = ...,
+    out_sharding: NamedSharding | P | None = ...,
 ) -> Array: ...
 @overload
 def einsum(
@@ -395,6 +398,7 @@ def einsum(
     preferred_element_type: DTypeLike | None = ...,
     _use_xeinsum: builtins.bool = ...,
     _dot_general: Callable[..., Array] = ...,
+    out_sharding: NamedSharding | P | None = ...,
 ) -> Array: ...
 
 @overload
@@ -645,6 +649,7 @@ def matmul(
     a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = ...,
     preferred_element_type: DTypeLike | None = ...) -> Array: ...
 def matrix_transpose(x: ArrayLike, /) -> Array: ...
+def matvec(x1: ArrayLike, x2: ArrayLike, /) -> Array: ...
 def max(a: ArrayLike, axis: _Axis = ..., out: None = ...,
         keepdims: builtins.bool = ..., initial: ArrayLike | None = ...,
         where: ArrayLike | None = ...) -> Array: ...
@@ -995,6 +1000,7 @@ def vdot(
 def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = ...,
            precision: PrecisionLike = ...,
            preferred_element_type: DTypeLike | None = ...) -> Array: ...
+def vecmat(x1: ArrayLike, x2: ArrayLike, /) -> Array: ...
 def vsplit(
     ary: ArrayLike, indices_or_sections: int | ArrayLike
 ) -> list[Array]: ...

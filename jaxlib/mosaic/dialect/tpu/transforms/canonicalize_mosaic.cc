@@ -13,6 +13,8 @@
 // NOLINTNEXTLINE(misc-include-cleaner)
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 // NOLINTNEXTLINE(misc-include-cleaner)
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -20,9 +22,8 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/log/check.h"
-#include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/SmallVector.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/include/mlir/Dialect/Math/IR/Math.h"
 #include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/include/mlir/Dialect/Vector/Transforms/VectorTransforms.h"
 #include "mlir/include/mlir/IR/AffineExpr.h"
@@ -33,10 +34,12 @@
 #include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/include/mlir/IR/OpDefinition.h"
 #include "mlir/include/mlir/IR/Operation.h"
+#include "mlir/include/mlir/IR/PatternMatch.h"
 #include "mlir/include/mlir/IR/Region.h"
 #include "mlir/include/mlir/IR/Value.h"
 #include "mlir/include/mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "jaxlib/mosaic/dialect/tpu/vreg_util.h"
 
 namespace mlir::tpu {
 
@@ -44,7 +47,17 @@ namespace mlir::tpu {
 #define GEN_PASS_DEF_CANONICALIZEMOSAICPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
 
-LogicalResult tpu_matmul_rule(tpu::MatmulOp op) {
+namespace {
+
+struct CanonicalizeContext {
+  // see Note: Compatibility mode
+  bool compatibility_mode;
+
+  int hardware_generation;
+};
+
+LogicalResult tpu_matmul_rule(const CanonicalizeContext &ctx,
+                              tpu::MatmulOp op) {
   ImplicitLocOpBuilder builder(op.getLoc(), op.getOperation());
 
   auto transpose_lhs = op.getTransposeLhs();
@@ -129,6 +142,11 @@ LogicalResult tpu_matmul_rule(tpu::MatmulOp op) {
   };
 
   if (lhs_element_type != rhs_element_type) {
+    if (!ctx.compatibility_mode) {
+      return op->emitOpError(
+          "Mosaic matmul invoked with mixed element types, but compatibility "
+          "mode is disabled.");
+    }
     if (lhs_element_type.isInteger() && rhs_element_type.isInteger()) {
       // TODO(mvoz): Add support for mixed int/int matmul.
       op->emitOpError("Mix int/int - NYI");
@@ -259,7 +277,7 @@ LogicalResult tpu_matmul_rule(tpu::MatmulOp op) {
   return success();
 };
 
-LogicalResult canonicalize_elementwise(int hardware_generation_,
+LogicalResult canonicalize_elementwise(const CanonicalizeContext &ctx,
                                        Operation &op) {
   OpBuilder builder(&op);
   auto operands = op.getOperands();
@@ -290,16 +308,28 @@ LogicalResult canonicalize_elementwise(int hardware_generation_,
         return failure();
       }
       auto element_type = ty.getElementType();
-      // PowFOp and DivFOp do not seem to be supported in bf16 on later
-      // hardware.
-      bool needs_cast = hardware_generation_ <= 5 || isa<math::PowFOp>(op) ||
-                        isa<arith::DivFOp>(op);
+      // There's an annoying hodgepodge of elementwise ops that need to be
+      // rewritten to f32 on later hardware.
+      // TODO(mvoz): Look into (1) what it would take to support these ops
+      // natively on later hardware, and (2) how to better organize this list.
+      bool needs_cast = ctx.hardware_generation <= 5 || isa<math::PowFOp>(op) ||
+                        isa<math::TanhOp>(op) || isa<math::ExpOp>(op) ||
+                        isa<math::LogOp>(op);
       if (needs_cast && element_type.isBF16()) {
-        auto target_f32 =
-            builder.create<arith::ExtFOp>(op.getLoc(), target_f32_ty, operand)
-                .getResult();
-        should_rewrite_op = true;
-        new_operands.push_back(target_f32);
+        if (ctx.compatibility_mode) {
+          auto target_f32 =
+              builder.create<arith::ExtFOp>(op.getLoc(), target_f32_ty, operand)
+                  .getResult();
+          should_rewrite_op = true;
+          new_operands.push_back(target_f32);
+        } else {
+          op.emitOpError(
+              "Compatibility mode disabled. Unsupported element type in "
+              "elementwise op on hardware generation: ")
+              << ctx.hardware_generation
+              << ". Use hardware generation after 5 or cast to f32.";
+          return failure();
+        }
       } else {
         new_operands.push_back(operand);
       }
@@ -331,7 +361,7 @@ LogicalResult canonicalize_elementwise(int hardware_generation_,
   return success();
 }
 
-LogicalResult canonicalize_multi_dim_reduction(int hardware_generation,
+LogicalResult canonicalize_multi_dim_reduction(const CanonicalizeContext &ctx,
                                                Operation &operation) {
   ImplicitLocOpBuilder builder(operation.getLoc(), &operation);
   auto op = cast<vector::MultiDimReductionOp>(operation);
@@ -351,7 +381,7 @@ LogicalResult canonicalize_multi_dim_reduction(int hardware_generation,
         reduces_sublanes = true;
       }
     }
-    if (hardware_generation <= 5 || reduces_sublanes) {
+    if (ctx.hardware_generation <= 5) {
       auto new_source = builder.create<arith::ExtFOp>(
           VectorType::get(source_ty.getShape(), builder.getF32Type()),
           op.getSource());
@@ -380,20 +410,29 @@ LogicalResult canonicalize_multi_dim_reduction(int hardware_generation,
       op.erase();
     }
     return success();
+  } else if (element_type.isSignlessInteger(32) &&
+             // TODO(b/384774084): Add support for u32 reductions.
+             (op.getKind() == vector::CombiningKind::ADD ||
+              op.getKind() == vector::CombiningKind::MAXSI ||
+              op.getKind() == vector::CombiningKind::MINSI)) {
+    return success();
   }
+  op.emitOpError("Unsupported element type for the selected reduction");
   return failure();
 }
 
-LogicalResult canonicalize_matmul(int hardware_generation, Operation &op) {
+LogicalResult canonicalize_matmul(const CanonicalizeContext &ctx,
+                                  Operation &op) {
   auto matmul_op = dyn_cast<tpu::MatmulOp>(op);
   if (!matmul_op) {
     op.emitOpError("Invariant violated: Not a matmul");
     return failure();
   }
-  return tpu_matmul_rule(matmul_op);
+  return tpu_matmul_rule(ctx, matmul_op);
 };
 
-LogicalResult canonicalize_contraction(int hardware_generation, Operation &op) {
+LogicalResult canonicalize_contraction(const CanonicalizeContext &ctx,
+                                       Operation &op) {
   auto contraction_op = dyn_cast<vector::ContractionOp>(op);
   if (!contraction_op) {
     op.emitOpError("Invariant violated: Not a contraction");
@@ -461,11 +500,12 @@ LogicalResult canonicalize_contraction(int hardware_generation, Operation &op) {
       /*transpose_rhs=*/false, precision_attr, dot_dimension_numbers_attr);
   contraction_op.replaceAllUsesWith(matmul_op.getResult());
   contraction_op.erase();
-  auto result = tpu_matmul_rule(matmul_op);
+  auto result = tpu_matmul_rule(ctx, matmul_op);
   return result;
 }
 
-LogicalResult canonicalize_extract(int hardware_generation, Operation &raw_op) {
+LogicalResult canonicalize_extract(const CanonicalizeContext &ctx,
+                                   Operation &raw_op) {
   auto op = dyn_cast<vector::ExtractOp>(raw_op);
   Type result_ty = op.getResult().getType();
   if (!isa<VectorType>(result_ty)) {
@@ -480,7 +520,8 @@ LogicalResult canonicalize_extract(int hardware_generation, Operation &raw_op) {
   return success();
 }
 
-LogicalResult canonicalize_select(int hardware_generation, Operation &raw_op) {
+LogicalResult canonicalize_select(const CanonicalizeContext &ctx,
+                                  Operation &raw_op) {
   auto op = dyn_cast<arith::SelectOp>(raw_op);
   if (!isa<VectorType>(op.getType()) ||
       isa<VectorType>(op.getCondition().getType())) {
@@ -498,7 +539,106 @@ LogicalResult canonicalize_select(int hardware_generation, Operation &raw_op) {
   return success();
 }
 
-LogicalResult canonicalize_repeat(int hardware_generation, Operation &raw_op) {
+// All conversions that change bitwidth must be canonicalized to tpu.fptosi.
+LogicalResult canonicalize_fptosi(const CanonicalizeContext &ctx,
+                                  Operation &raw_op) {
+  auto op = cast<arith::FPToSIOp>(raw_op);
+  ImplicitLocOpBuilder builder(op->getLoc(), op.getOperation());
+  auto src_vty = dyn_cast<VectorType>(op.getIn().getType());
+  auto dst_vty = dyn_cast<VectorType>(op.getType());
+  if (static_cast<bool>(src_vty) != static_cast<bool>(dst_vty)) {
+    return op.emitOpError("Vector/scalar mismatch between input and output");
+  }
+  bool is_vector = static_cast<bool>(src_vty);
+  unsigned src_bitwidth, dst_bitwidth;
+  if (is_vector) {
+    src_bitwidth = src_vty.getElementTypeBitWidth();
+    dst_bitwidth = dst_vty.getElementTypeBitWidth();
+  } else {
+    src_bitwidth = op.getIn().getType().getIntOrFloatBitWidth();
+    dst_bitwidth = op.getType().getIntOrFloatBitWidth();
+  }
+  if (dst_bitwidth > 32) {
+    return op.emitOpError("Target bitwidth too large");
+  }
+  // We have low-level optimized code for bf16->s8 and bf16->s4 casts on v6.
+  if (ctx.hardware_generation >= 6 && is_vector &&
+      src_vty.getElementType().isBF16() &&
+      (dst_vty.getElementType().isSignlessInteger(8) ||
+       dst_vty.getElementType().isSignlessInteger(4))) {
+    auto new_op = builder.create<tpu::FPToSIOp>(
+        op.getType(), op.getIn(), tpu::RoundingMode::kTowardsZero);
+    op.replaceAllUsesWith(new_op.getResult());
+    op.erase();
+    // We briefly trigger canonicalization here to potentially fuse the rounding
+    // ops into the newly created tpu.fptosi.
+    {
+      PatternRewriter rewriter(new_op.getContext());
+      rewriter.setInsertionPoint(new_op);
+      // We don't care if the canonicalization pattern matched or not.
+      (void)tpu::FPToSIOp::canonicalize(new_op, rewriter);
+      new_op = nullptr;  // Canonicalization may have erased the op!
+    }
+    return success();
+  }
+  Value x = op.getIn();
+  // Upcast the input to f32.
+  if (src_bitwidth < 32) {
+    if (is_vector) {
+      x = builder.create<arith::ExtFOp>(
+          VectorType::get(src_vty.getShape(), builder.getF32Type()), x);
+    } else {
+      x = builder.create<arith::ExtFOp>(builder.getF32Type(), x);
+    }
+  }
+  if (dst_bitwidth < 32) {
+    if (!ctx.compatibility_mode) {
+      return op.emitOpError(
+          "On this target only float-to-integer conversions can only happen on "
+          "32-bit values. Enable compatibility mode or upcast to float32.");
+    }
+    // Need to clip values to match XLA
+    auto clip = [&](Value x, Value low, Value high) {
+      x = builder.create<arith::MaximumFOp>(x, low);
+      x = builder.create<arith::MinimumFOp>(x, high);
+      return x;
+    };
+    auto minval = builder.getF32FloatAttr(
+        APInt::getSignedMinValue(dst_bitwidth).getSExtValue());
+    auto maxval = builder.getF32FloatAttr(
+        APInt::getSignedMaxValue(dst_bitwidth).getSExtValue());
+    if (is_vector) {
+      auto x_vty = cast<VectorType>(x.getType());
+      x = clip(x, getFullVector(builder, x_vty, minval),
+               getFullVector(builder, x_vty, maxval));
+    } else {
+      auto f32 = builder.getF32Type();
+      x = clip(x, builder.create<arith::ConstantOp>(f32, minval),
+               builder.create<arith::ConstantOp>(f32, maxval));
+    }
+  }
+  if (is_vector) {
+    x = builder.create<arith::FPToSIOp>(
+        VectorType::get(src_vty.getShape(), builder.getI32Type()), x);
+  } else {
+    x = builder.create<arith::FPToSIOp>(builder.getI32Type(), x);
+  }
+  if (dst_bitwidth < 32) {
+    if (!ctx.compatibility_mode) {
+      return op.emitOpError(
+          "On this target only float-to-integer conversions can only happen on "
+          "32-bit values. Enable compatibility mode or cast to int32 and "
+          "truncate later.");
+    }
+    x = builder.create<arith::TruncIOp>(op.getType(), x);
+  }
+  op.replaceAllUsesWith(x);
+  op.erase();
+  return success();
+}
+
+LogicalResult canonicalize_repeat(const CanonicalizeContext &ctx,
+                                  Operation &raw_op) {
   auto op = dyn_cast<tpu::RepeatOp>(raw_op);
   if (!isa<VectorType>(op.getType())) {
     return op.emitOpError("Only vector types supported");
@@ -522,7 +662,7 @@ LogicalResult canonicalize_repeat(int hardware_generation, Operation &raw_op) {
 }
 
 using canonicalize_rule_type =
-    std::function<LogicalResult(int hardware_generation, Operation &op)>;
+    std::function<LogicalResult(const CanonicalizeContext &ctx, Operation &op)>;
 
 const llvm::StringMap<canonicalize_rule_type> &rules() {
   static auto rules = new llvm::StringMap<canonicalize_rule_type>{
@@ -532,6 +672,7 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
       {vector::MultiDimReductionOp::getOperationName(),
        canonicalize_multi_dim_reduction},
       {arith::SelectOp::getOperationName(), canonicalize_select},
+      {arith::FPToSIOp::getOperationName(), canonicalize_fptosi},
       {tpu::RepeatOp::getOperationName(), canonicalize_repeat}};
   return *rules;
 }
@@ -543,16 +684,21 @@ const llvm::StringSet<> &elementwise_convertible_ops() {
                                           arith::SubFOp::getOperationName(),
                                           arith::MaximumFOp::getOperationName(),
                                           arith::MinimumFOp::getOperationName(),
-                                          math::PowFOp::getOperationName()};
+                                          math::PowFOp::getOperationName(),
+                                          math::TanhOp::getOperationName(),
+                                          math::ExpOp::getOperationName(),
+                                          math::LogOp::getOperationName()};
   return *ops;
 }
 
 class MosaicCanonicalizer {
  public:
-  MosaicCanonicalizer(int hardware_generation)
-      : hardware_generation_(hardware_generation) {}
+  MosaicCanonicalizer(int hardware_generation, bool compatibility_mode)
+      : hardware_generation_(hardware_generation),
+        compatibility_mode_(compatibility_mode) {}
 
   int hardware_generation_;
+  bool compatibility_mode_;
 
   LogicalResult canonicalize(func::FuncOp op) {
     if (!op.getBody().hasOneBlock()) {
@@ -573,6 +719,7 @@ class MosaicCanonicalizer {
   }
 
   LogicalResult canonicalizeOp(Operation &any_op) {
+    CanonicalizeContext ctx({compatibility_mode_, hardware_generation_});
     // We must iterate over the op first, because canonicalization can cause
     // us to .erase() an op, and accessing getRegions on it after is not sound.
     // Invariant - top level ops with regions may never be invalidated.
@@ -585,12 +732,12 @@ class MosaicCanonicalizer {
     }
     if (elementwise_convertible_ops().contains(
             any_op.getName().getStringRef())) {
-      return canonicalize_elementwise(hardware_generation_, any_op);
+      return canonicalize_elementwise(ctx, any_op);
     }
     if (auto rule_it = rules().find(any_op.getName().getStringRef());
         rule_it != rules().end()) {
       const canonicalize_rule_type &rule = rule_it->getValue();
-      return rule(hardware_generation_, any_op);
+      return rule(ctx, any_op);
     }
     return success();
   }
@@ -598,22 +745,28 @@ class MosaicCanonicalizer {
 
 struct CanonicalizeMosaicPass
     : public impl::CanonicalizeMosaicPassBase<CanonicalizeMosaicPass> {
-  CanonicalizeMosaicPass(int hardware_generation) {
-    this->hardware_generation = hardware_generation;
+  CanonicalizeMosaicPass(int hardware_generation_p, bool compatibility_mode_p)
+      : compatibility_mode_(compatibility_mode_p) {
+    this->hardware_generation = hardware_generation_p;
   }
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
-    MosaicCanonicalizer vlc(hardware_generation);
+    MosaicCanonicalizer vlc(hardware_generation, compatibility_mode_);
     if (vlc.canonicalize(func).failed()) {
       signalPassFailure();
     }
   };
+
+  bool compatibility_mode_;
 };
 
+}  // namespace
+
 std::unique_ptr<OperationPass<func::FuncOp>> createCanonicalizeMosaicPass(
-    int hardware_generation) {
-  return std::make_unique<CanonicalizeMosaicPass>(hardware_generation);
+    int hardware_generation, bool compatibility_mode) {
+  return std::make_unique<CanonicalizeMosaicPass>(hardware_generation,
+                                                  compatibility_mode);
 }
 
 }  // namespace mlir::tpu

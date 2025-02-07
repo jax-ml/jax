@@ -578,7 +578,7 @@ def _bcoo_transpose_transpose(ct, data, indices, *, permutation: Sequence[int], 
     raise ValueError("Cannot transpose with respect to sparse indices")
   assert data_ct.dtype == data.aval.dtype
   ct_spinfo = SparseInfo(tuple(spinfo.shape[p] for p in permutation))
-  rev_permutation = list(np.argsort(permutation))
+  rev_permutation = list(map(int, np.argsort(permutation)))
   # TODO(jakevdp) avoid dummy indices?
   dummy_indices = jnp.zeros([1 for i in range(indices.ndim - 2)] + list(indices.shape[-2:]), dtype=int)
   data_trans, _ = _bcoo_transpose(data_ct, dummy_indices, permutation=rev_permutation, spinfo=ct_spinfo)
@@ -610,7 +610,7 @@ def bcoo_dot_general(lhs: BCOO | Array, rhs: BCOO | Array, *,
                      dimension_numbers: DotDimensionNumbers,
                      precision: None = None,
                      preferred_element_type: None = None,
-                     out_type=None) -> BCOO | Array:
+                     out_sharding=None) -> BCOO | Array:
   """A general contraction operation.
 
   Args:
@@ -628,7 +628,7 @@ def bcoo_dot_general(lhs: BCOO | Array, rhs: BCOO | Array, *,
     the result will be dense, of type ndarray.
   """
   # TODO(jakevdp) make use of these?
-  del precision, out_type  # unused
+  del precision, out_sharding  # unused
   if isinstance(lhs, BCOO) and isinstance(rhs, BCOO):
     shape = _dot_general_validated_shape(lhs.shape, rhs.shape,
                                          dimension_numbers)
@@ -865,7 +865,7 @@ def _bcoo_dot_general_transpose(ct, lhs_data, lhs_indices, rhs, *, dimension_num
     dims: DotDimensionNumbers = ((ans_rhs, rhs_kept), (ans_batch, rhs_batch))
     lhs_contract_sorted_by_rhs = list(np.take(lhs_contract, np.argsort(rhs_contract)))
     permutation = list(lhs_batch) + lhs_kept + lhs_contract_sorted_by_rhs
-    out_axes = list(np.argsort(permutation))
+    out_axes = list(map(int, np.argsort(permutation)))
 
     # Determine whether efficient approach is possible:
     placeholder_data = jnp.empty((lhs_indices.ndim - 2) * (1,) + (lhs_indices.shape[-2],))
@@ -1055,7 +1055,7 @@ def _bcoo_dot_general_sampled_transpose(ct, A, B, indices, *, dimension_numbers)
   kwds = {'dimension_numbers': dimension_numbers,
           'precision': None,
           'preferred_element_type': None,
-          'out_type': None}
+          'out_sharding': None}
   A, B = ad.get_primitive_transpose(lax.dot_general_p)(ct, A, B, **kwds)
   return A, B, indices
 

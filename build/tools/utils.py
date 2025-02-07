@@ -170,18 +170,24 @@ def get_bazel_version(bazel_path):
     return None
   return tuple(int(x) for x in match.group(1).split("."))
 
-def get_clang_path_or_exit():
-  which_clang_output = shutil.which("clang")
-  if which_clang_output:
-    # If we've found a clang on the path, need to get the fully resolved path
+def get_compiler_path_or_exit(compiler_path_flag, compiler_name):
+  which_compiler_output = shutil.which(compiler_name)
+  if which_compiler_output:
+    # If we've found a compiler on the path, need to get the fully resolved path
     # to ensure that system headers are found.
-    return str(pathlib.Path(which_clang_output).resolve())
+    return str(pathlib.Path(which_compiler_output).resolve())
   else:
     print(
-        "--clang_path is unset and clang cannot be found"
-        " on the PATH. Please pass --clang_path directly."
+        f"--{compiler_path_flag} is unset and {compiler_name} cannot be found"
+        " on the PATH. Please pass --{compiler_path_flag} directly."
     )
     sys.exit(-1)
+
+def get_gcc_path_or_exit():
+  return get_compiler_path_or_exit("gcc_path", "gcc")
+
+def get_clang_path_or_exit():
+  return get_compiler_path_or_exit("clang_path", "clang")
 
 def get_clang_major_version(clang_path):
   clang_version_proc = subprocess.run(
@@ -194,6 +200,18 @@ def get_clang_major_version(clang_path):
   major_version = int(clang_version_proc.stdout)
 
   return major_version
+
+def get_gcc_major_version(gcc_path: str):
+  gcc_version_proc = subprocess.run(
+    [gcc_path, "-dumpversion"],
+    check=True,
+    capture_output=True,
+    text=True,
+  )
+  major_version = int(gcc_version_proc.stdout)
+
+  return major_version
+
 
 def get_jax_configure_bazel_options(bazel_command: list[str]):
   """Returns the bazel options to be written to .jax_configure.bazelrc."""
@@ -222,7 +240,7 @@ def get_githash():
         capture_output=True,
         check=True,
     ).stdout.strip()
-  except OSError:
+  except (subprocess.CalledProcessError, OSError):
     return ""
 
 def _parse_string_as_bool(s):

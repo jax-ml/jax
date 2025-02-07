@@ -137,3 +137,26 @@ py_library(
         "//jax:typing",
     ] + py_deps("numpy"),
 )
+
+py_library(
+    name = "helpers",
+    srcs = ["helpers.py"],
+    deps = [
+        ":core",
+        ":primitives",
+        "//jax",
+        "//jax/_src/pallas",
+    ],
+)
+
+py_library(
+    name = "interpret",
+    srcs = ["interpret.py"],
+    deps = [
+        ":core",
+        ":primitives",
+        "//jax",
+        "//jax/_src/lib",
+        "//jax/_src/pallas",
+    ] + py_deps("numpy"),
+)

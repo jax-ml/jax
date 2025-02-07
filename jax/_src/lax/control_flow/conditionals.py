@@ -25,6 +25,7 @@ from typing import Any, TypeVar
 
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -49,7 +50,6 @@ from jax._src.lib.mlir.dialects import hlo
 import numpy as np
 
 from jax._src.lax.control_flow.common import (
-    _abstractify,
     _avals_short,
     _check_tree_and_avals,
     _initial_style_jaxprs_with_common_consts,
@@ -134,14 +134,22 @@ def switch(index, branches: Sequence[Callable], *operands,
   if (config.disable_jit.value and core.is_concrete(index)):
     return branches[int(index)](*operands)
 
+  dbgs = [api_util.debug_info("switch", branch, operands, {})
+          for branch in branches]
   ops, ops_tree = tree_flatten(operands)
-  ops_avals = tuple(map(_abstractify, ops))
+  ops_avals = tuple(map(core.get_aval, ops))
+
+  if config.mutable_array_checks.value:
+    api_util._check_no_aliased_ref_args(dbgs[0], ops_avals, ops)
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
-      branches, ops_tree, ops_avals, primitive_name='switch')
+      branches, ops_tree, ops_avals, dbgs)
+  if config.mutable_array_checks.value:
+    api_util._check_no_aliased_closed_over_refs(dbgs[0], (*jaxprs[0].consts, *consts), ops)
   for i, (out_tree, jaxpr) in enumerate(zip(out_trees[1:], jaxprs[1:])):
-    _check_tree_and_avals(f"branch 0 and {i + 1} outputs",
+    _check_tree_and_avals("branch 0 output",
                           out_trees[0], jaxprs[0].out_avals,
+                          f"branch {i + 1} output",
                           out_tree, jaxpr.out_avals)
   joined_effects = core.join_effects(*(jaxpr.effects for jaxpr in jaxprs))
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
@@ -227,21 +235,27 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
       return false_fun(*operands)
 
   ops, ops_tree = tree_flatten(operands)
-  ops_avals = tuple(map(_abstractify, ops))
+  ops_avals = tuple(map(core.get_aval, ops))
 
+  dbg_true_fun = api_util.debug_info("cond", true_fun, operands, {})
+  if config.mutable_array_checks.value:
+    api_util._check_no_aliased_ref_args(dbg_true_fun, ops_avals, ops)
+  dbg_false_fun = api_util.debug_info("cond", false_fun, operands, {})
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
-      (true_fun, false_fun), ops_tree, ops_avals, 'cond')
-  if any(isinstance(op_aval, AbstractRef) for op_aval in ops_avals):
-    raise ValueError("Cannot pass `Ref`s into `cond`.")
+      (true_fun, false_fun), ops_tree, ops_avals,
+      [dbg_true_fun, dbg_false_fun])
   true_jaxpr, false_jaxpr = jaxprs
+  if config.mutable_array_checks.value:
+    api_util._check_no_aliased_closed_over_refs(dbg_true_fun, (*true_jaxpr.consts, *consts), ops)
 
   out_tree, false_out_tree = out_trees
   if any(isinstance(out_aval, AbstractRef) for out_aval in
          true_jaxpr.out_avals + false_jaxpr.out_avals):
     raise ValueError("Cannot return `Ref`s from `cond`.")
 
-  _check_tree_and_avals("true_fun and false_fun output",
+  _check_tree_and_avals("true_fun output",
                         out_tree, true_jaxpr.out_avals,
+                        "false_fun output",
                         false_out_tree, false_jaxpr.out_avals)
   # prune passhtrough outputs
   true_fwds = pe._jaxpr_forwarding(true_jaxpr.jaxpr)
@@ -313,7 +327,7 @@ def _cond_with_per_branch_args(pred,
                lambda op: false_fun(op[1]),
                (true_operand, false_operand))
 
-def _join_cond_effects(branches: Sequence[core.Jaxpr]) -> effects.Effects:
+def _join_cond_effects(branches: Sequence[core.ClosedJaxpr]) -> effects.Effects:
   joined_effects = set()
   for b in branches:
     for eff in b.effects:
@@ -323,7 +337,8 @@ def _join_cond_effects(branches: Sequence[core.Jaxpr]) -> effects.Effects:
       joined_effects.add(eff)
   return joined_effects
 
-def _cond_abstract_eval(*avals, branches, **_):
+def _cond_abstract_eval(*avals: core.AbstractValue,
+                        branches: Sequence[core.ClosedJaxpr], **_):
   joined_effects = _join_cond_effects(branches)
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
@@ -547,7 +562,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   effects_known = _join_cond_effects(branches_known)
   eqn_known = pe.new_jaxpr_eqn(
       ins_known, [*out_binders_known, *res_binders], cond_p, params_known,
-      effects_known, eqn.source_info)
+      effects_known, eqn.source_info, eqn.ctx)
 
   # Build the staged eqn.
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
@@ -555,7 +570,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   effects_staged = _join_cond_effects(branches_staged)
   eqn_staged = pe.new_jaxpr_eqn(
       [eqn.invars[0], *res_binders, *eqn.invars[1:]], out_binders_staged,
-      cond_p, params_staged, effects_staged, eqn.source_info)
+      cond_p, params_staged, effects_staged, eqn.source_info, eqn.ctx)
 
   new_vars = [*new_inst, *res_binders]
   return eqn_known, eqn_staged, unks_out, inst_out, new_vars
@@ -600,10 +615,11 @@ def _merge_branch_residuals(branch_res_avals):
 # This function augments branch outputs to agree with the merged residual
 # format: each branch is made to return zero-filled values in the places of
 # residual outputs that it does not populate.
-def _join_cond_outputs(jaxprs, all_res_avals, res_aval_indices_per_jaxpr,
+def _join_cond_outputs(jaxprs: Sequence[core.ClosedJaxpr],
+                       all_res_avals, res_aval_indices_per_jaxpr,
                        num_non_res_outputs):
-  def augment_jaxpr(jaxpr, res_indices):
-    @lu.wrap_init
+  def augment_jaxpr(jaxpr: core.ClosedJaxpr,
+                    res_indices):
     def f_aug(*args):
       outs_and_residuals = core.jaxpr_as_fun(jaxpr)(*args)
       outs, residuals = split_list(outs_and_residuals, [num_non_res_outputs])
@@ -611,19 +627,21 @@ def _join_cond_outputs(jaxprs, all_res_avals, res_aval_indices_per_jaxpr,
       aug_residuals = util.subvals(aug_residuals, zip(res_indices, residuals))
       return outs + list(aug_residuals)
 
-    return _make_closed_jaxpr(f_aug, jaxpr.in_avals)
+    wrapped_f_aug = lu.wrap_init(f_aug, debug_info=jaxpr.jaxpr.debug_info)
+    return _make_closed_jaxpr(wrapped_f_aug, jaxpr.in_avals)
 
   return tuple(map(augment_jaxpr, jaxprs, res_aval_indices_per_jaxpr))
 
 # This function augments branch inputs to agree with the merged residual format:
 # each branch is made to accept all residuals, even though it will ignore those
 # that it does not read.
-def _join_cond_pe_staged_jaxpr_inputs(jaxprs, all_res_avals,
+def _join_cond_pe_staged_jaxpr_inputs(jaxprs: Sequence[core.ClosedJaxpr],
+                                      all_res_avals,
                                       res_aval_indices_per_jaxpr):
   newvar = core.gensym(suffix='_')
   all_res_vars = map(newvar, all_res_avals)
 
-  def augment_jaxpr(jaxpr, res_indices):
+  def augment_jaxpr(jaxpr: core.ClosedJaxpr, res_indices) -> core.ClosedJaxpr:
     num_res = len(res_indices)
     res_vars = jaxpr.jaxpr.invars[:num_res]
     non_res_vars = jaxpr.jaxpr.invars[num_res:]
@@ -632,9 +650,9 @@ def _join_cond_pe_staged_jaxpr_inputs(jaxprs, all_res_avals,
     aug_invars = aug_res_vars + non_res_vars
     jaxpr_aug = core.Jaxpr(jaxpr.jaxpr.constvars, aug_invars,
                            jaxpr.jaxpr.outvars, jaxpr.jaxpr.eqns,
-                           jaxpr.jaxpr.effects)
-    jaxpr_aug = core.ClosedJaxpr(jaxpr_aug, jaxpr.consts)
-    return jaxpr_aug
+                           jaxpr.jaxpr.effects,
+                           jaxpr.jaxpr.debug_info)
+    return core.ClosedJaxpr(jaxpr_aug, jaxpr.consts)
 
   return tuple(map(augment_jaxpr, jaxprs, res_aval_indices_per_jaxpr))
 
@@ -665,12 +683,11 @@ def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
 
   # Finally, update parameters and form the new eqn.
   new_params = dict(eqn.params, branches=tuple(dce_branches))
-  new_effects = core.join_effects(*(b.effects for b in dce_branches))
-  new_effects = _join_cond_effects(dce_branches_)
+  new_effects = _join_cond_effects(dce_branches)
   new_eqn = pe.new_jaxpr_eqn(
       [v for v, used in zip(eqn.invars, [True, *used_inputs]) if used],
       [v for v, used in zip(eqn.outvars, used_outputs) if used],
-      eqn.primitive, new_params, new_effects, eqn.source_info)
+      eqn.primitive, new_params, new_effects, eqn.source_info, eqn.ctx)
 
   assert all(len(new_eqn.invars ) == 1 + len(jaxpr.in_avals )
              for jaxpr in new_params['branches'])
@@ -679,10 +696,10 @@ def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
   return [True, *used_inputs], new_eqn
 
 
-def _transpose_cond_jaxpr(jaxpr, num_res):
+def _transpose_cond_jaxpr(jaxpr: core.ClosedJaxpr,
+                          num_res: int):
   res_avals, primal_avals = split_list(jaxpr.in_avals, [num_res])
 
-  @lu.wrap_init
   def transposed(*args):
     res, cts_out = split_list(args, [num_res])
     primals = res + [ad.UndefinedPrimal(aval) for aval in primal_avals]
@@ -691,7 +708,9 @@ def _transpose_cond_jaxpr(jaxpr, num_res):
     _, cts_in = split_list(cts_in, [num_res])
     return map(ad.instantiate_zeros, cts_in)
 
-  return _make_closed_jaxpr(transposed, res_avals + jaxpr.out_avals)
+  return _make_closed_jaxpr(lu.wrap_init(transposed,
+                                         debug_info=jaxpr.jaxpr.debug_info),
+                            res_avals + jaxpr.out_avals)
 
 def _cond_transpose(cts, *args, branches):
   index, *ops = args
@@ -935,6 +954,7 @@ def platform_dependent(*args: Any,
   platform_index = platform_index_p.bind(
     platforms=tuple(tuple(ps) for ps in platforms_lists),
     has_default=(default is not None))
+
   if default is not None:
     branches = branches + (default,)
   # Use a switch, to get the proper transformation rules for free. Since
@@ -947,6 +967,8 @@ def platform_dependent(*args: Any,
   # recognized on the compilation platform. Detect eager mode and keep only the
   # needed branch.
   try:
+    # Note/TODO(mvoz): This actually rarely seems to concretize - we could look into
+    # core.ensure_compile_time_eval to get better single-branch selection.
     platform_index_concrete = core.concrete_or_error(operator.index, platform_index)
   except core.ConcretizationTypeError:
     return switch(platform_index, branches, *args)

@@ -274,6 +274,7 @@ namespace; they are listed below.
     mask_indices
     matmul
     matrix_transpose
+    matvec
     max
     maximum
     mean
@@ -358,7 +359,6 @@ namespace; they are listed below.
     roots
     rot90
     round
-    round_
     s_
     save
     savez
@@ -428,6 +428,7 @@ namespace; they are listed below.
     var
     vdot
     vecdot
+    vecmat
     vectorize
     vsplit
     vstack
@@ -541,7 +542,8 @@ Python Array API standard
 
   Prior to JAX v0.4.32, you must ``import jax.experimental.array_api`` in order
   to enable the array API for JAX arrays. After JAX v0.4.32, importing this
-  module is no longer required, and will raise a deprecation warning.
+  module is no longer required, and will raise a deprecation warning. After
+  JAX v0.5.0, this import will raise an error.
 
 Starting with JAX v0.4.32, :class:`jax.Array` and :mod:`jax.numpy` are compatible
 with the `Python Array API Standard`_. You can access the Array API namespace via

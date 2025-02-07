@@ -89,15 +89,16 @@ class PgleTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2,), ('x',))
     its = 500
 
+    compiler_options = {
+        'xla_gpu_enable_latency_hiding_scheduler': 'True',
+    }
+    # TODO(b/37664749): Remove this flag once the bug is fixed.
+    compiler_options['xla_gpu_enable_command_buffer'] = ''
     @partial(
         jax.jit,
         in_shardings=NamedSharding(mesh, PartitionSpec('x')),
         out_shardings=NamedSharding(mesh, PartitionSpec('x')),
-        compiler_options={
-            'xla_gpu_enable_latency_hiding_scheduler': 'True',
-            # TODO(patrios): Remove this flag once b/376647494 is fixed.
-            'xla_gpu_graph_min_graph_size': '100000',
-        },
+        compiler_options=compiler_options,
     )
     def f(x):
       agg = x
@@ -127,17 +128,17 @@ class PgleTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2,), ('x',))
 
     with tempfile.TemporaryDirectory() as dump_dir:
+      compile_options = {
+          'xla_gpu_enable_latency_hiding_scheduler': 'True',
+          'xla_dump_to': dump_dir,
+          'xla_gpu_experimental_dump_fdo_profiles': 'True',
+      }
+      # TODO(b/376647494): Remove this flag once the bug is fixed.
       @partial(
           jax.jit,
           in_shardings=NamedSharding(mesh, PartitionSpec('x')),
           out_shardings=NamedSharding(mesh, PartitionSpec('x')),
-          compiler_options={
-              'xla_gpu_enable_latency_hiding_scheduler': 'True',
-              # TODO(patrios): Remove this flag once b/376647494 is fixed.
-              'xla_gpu_graph_min_graph_size': '100000',
-              'xla_dump_to': dump_dir,
-              'xla_gpu_experimental_dump_fdo_profiles': 'True'
-          },
+          compiler_options=compile_options,
       )
       def f(x):
         return x * 2
@@ -149,14 +150,14 @@ class PgleTest(jtu.JaxTestCase):
       with config.pgle_profiling_runs(2), config.enable_pgle(True):
         # Run 1: Module should be compiled without FDO. Two modules are expected
         # One is the funtion f, the other one is multi slice module
-        with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
+        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
-        self.assertEqual(cache_miss_count[0], 2)
+        self.assertEqual(cache_miss_count(), 2)
 
         # Run 2: Second PGLE run. Profile should be empty.
-        with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
+        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
-        self.assertEqual(cache_miss_count[0], 2)
+        self.assertEqual(cache_miss_count(), 2)
         fdo_profiles_before_pgle = self.get_fdo_profiles(dump_dir)
         # One for before and one for after optimization.
         self.assertLen(fdo_profiles_before_pgle, 2)
@@ -165,9 +166,9 @@ class PgleTest(jtu.JaxTestCase):
             os.path.getsize(os.path.join(dump_dir, fdo_profiles_before_pgle[0])), 0)
 
         # Run 3: The module should be recompiled with FDO profiles
-        with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
+        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
-        self.assertEqual(cache_miss_count[0], 2)
+        self.assertEqual(cache_miss_count(), 2)
         fdo_profiles_after_pgle = self.get_fdo_profiles(dump_dir)
         # One for before and one for after optimization.
         self.assertLen(fdo_profiles_after_pgle, 4)
@@ -179,9 +180,9 @@ class PgleTest(jtu.JaxTestCase):
             )
 
         # Run 4: Fast-path should be used after PGLE is done
-        with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
+        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
           self.assertArraysEqual(f(x), expected)
-        self.assertLess(cache_miss_count[0], 2)
+        self.assertLess(cache_miss_count(), 2)
 
   def testAutoPgleWithAot(self):
     @jax.jit
@@ -197,31 +198,31 @@ class PgleTest(jtu.JaxTestCase):
 
     with config.pgle_profiling_runs(1), config.enable_pgle(True):
       # Run 1
-      with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
+      with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
         self.assertArraysEqual(compiled(x), expected)
-      self.assertEqual(cache_miss_count[0], 0)
+      self.assertEqual(cache_miss_count(), 0)
 
       # Run 2
-      with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
+      with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
         self.assertArraysEqual(compiled(x), expected)
-      self.assertEqual(cache_miss_count[0], 0)
+      self.assertEqual(cache_miss_count(), 0)
 
   def testAutoPgleWithPersistentCache(self):
     its = 50
     mesh = jtu.create_mesh((2,), ('x',))
 
     with tempfile.TemporaryDirectory() as dump_dir:
+      compiler_options = {
+          'xla_gpu_enable_latency_hiding_scheduler': 'True',
+          'xla_dump_to': dump_dir,
+          'xla_gpu_experimental_dump_fdo_profiles': 'True',
+      }
+      # TODO(b/376647494): Remove this flag once the bug is fixed.
       @partial(
           jax.jit,
           in_shardings=NamedSharding(mesh, PartitionSpec('x')),
           out_shardings=NamedSharding(mesh, PartitionSpec('x')),
-          compiler_options={
-              'xla_gpu_enable_latency_hiding_scheduler': 'True',
-              # TODO(patrios): Remove this flag once b/376647494 is fixed.
-              'xla_gpu_graph_min_graph_size': '100000',
-              'xla_dump_to': dump_dir,
-              'xla_gpu_experimental_dump_fdo_profiles': 'True'
-          },
+          compiler_options=compiler_options,
       )
       def f(x):
         agg = x
@@ -243,24 +244,24 @@ class PgleTest(jtu.JaxTestCase):
         cc.reset_cache()
         cc.set_cache_dir(cache_dir)
         # Run 1: Module should be compiled without FDO
-        with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
+        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
           f(x)
-        self.assertGreater(cache_miss_count[0], 0)
+        self.assertGreater(cache_miss_count(), 0)
 
         # Non-pgle profiled version of module should be saved
         non_pgle_profiled_files = os.listdir(cache_dir)
         self.assertNotEmpty(non_pgle_profiled_files)
 
         # Run 2: Compilation should not be called
-        with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
+        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
           f(x)
-        self.assertGreater(cache_miss_count[0], 0)
+        self.assertGreater(cache_miss_count(), 0)
 
         fdo_profiles_before_pgle = self.get_fdo_profiles(dump_dir)
         # Run 3: Module should be compiled with FDO and stored to persistent cache
-        with jtu.count_cached_compilation_cache_miss() as cache_miss_count:
+        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
           f(x)
-        self.assertGreater(cache_miss_count[0], 0)
+        self.assertGreater(cache_miss_count(), 0)
 
         # Check if FDO profile file of the biggest module is not empty
         fdo_profiles_after_pgle = [

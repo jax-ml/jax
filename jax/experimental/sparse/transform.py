@@ -297,6 +297,8 @@ class SparseTracer(core.Tracer):
 
 class SparseTrace(core.Trace):
 
+  __slots__ = ("parent_trace", "tag", "spenv")
+
   def __init__(self, parent_trace, tag, spenv):
     self.parent_trace = parent_trace
     self.tag = tag
@@ -737,7 +739,7 @@ def _sparsify_jaxpr(spenv, jaxpr, *spvalues):
 
   args = spvalues_to_arrays(spenv, spvalues)
   args_flat, in_tree = tree_flatten(args)
-  avals_flat = [core.raise_to_shaped(core.get_aval(arg)) for arg in args_flat]
+  avals_flat = [core.get_aval(arg) for arg in args_flat]
   sp_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped, avals_flat)
   sp_jaxpr = pe.ClosedJaxpr(sp_jaxpr, consts)
   assert out_tree is not None
@@ -843,8 +845,9 @@ sparse_rules_bcoo[lax.scan_p] = _scan_sparse
 def _cond_sparse(spenv, pred, *operands, branches, **params):
   sp_branches, treedefs = zip(*(_sparsify_jaxpr(spenv, jaxpr, *operands)
                                 for jaxpr in branches))
-  _check_tree_and_avals("sparsified true_fun and false_fun output",
+  _check_tree_and_avals("sparsified true_fun output",
                         treedefs[0], sp_branches[0].out_avals,
+                        "sparsified false_fun output",
                         treedefs[1], sp_branches[1].out_avals)
   args, _ = tree_flatten(spvalues_to_arrays(spenv, (pred, *operands)))
   out_flat = lax.cond_p.bind(*args, branches=sp_branches, **params)
@@ -862,7 +865,7 @@ sparse_rules_bcoo[sparse.todense_p] = _todense_sparse_rule
 sparse_rules_bcsr[sparse.todense_p] = _todense_sparse_rule
 
 def _custom_jvp_sparse_rule(spenv, *spvalues, **params):
-  call_jaxpr = params.pop('call_jaxpr')
+  call_jaxpr: core.ClosedJaxpr = params.pop('call_jaxpr')
   jvp_jaxpr_thunk = params.pop('jvp_jaxpr_thunk')
   num_consts = params.pop('num_consts')
   sp_call_jaxpr, out_tree = _sparsify_jaxpr(spenv, call_jaxpr, *spvalues)
@@ -871,7 +874,7 @@ def _custom_jvp_sparse_rule(spenv, *spvalues, **params):
     sparrs = arrays_to_spvalues(spenv, arrs)
     out = eval_sparse(call_jaxpr.jaxpr, call_jaxpr.consts, sparrs, spenv)
     return spvalues_to_arrays(spenv, out)
-  jvp = lift_jvp(num_consts, jvp_jaxpr_thunk)
+  jvp = lift_jvp(num_consts, jvp_jaxpr_thunk, call_jaxpr.jaxpr.debug_info)
   invals = spvalues_to_arrays(spenv, spvalues)
   outvals = jax.custom_derivatives.custom_jvp_call_p.bind(fun, jvp, *invals, **params)
   return arrays_to_spvalues(spenv, outvals)

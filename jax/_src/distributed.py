@@ -81,6 +81,15 @@ class State:
       raise ValueError('Number of processes must be defined.')
     if process_id is None:
       raise ValueError('The process id of the current process must be defined.')
+    if not isinstance(process_id, int):
+      raise TypeError("process_id must be a nonnegative int. "
+                      f"Got process_id={process_id} of type {type(process_id)}.")
+    if not isinstance(num_processes, int):
+      raise TypeError("num_processes must be a positive int. "
+                      f"Got num_processes={num_processes} of type {type(num_processes)}.")
+    if not (0 <= process_id < num_processes):
+      raise ValueError("process_id and num_processes must be nonnegative, with process_id < num_processes. "
+                       f"Got process_id={process_id}, num_processes={num_processes}.")
 
     self.coordinator_address = coordinator_address
 
@@ -249,7 +258,8 @@ def initialize(coordinator_address: str | None = None,
   """
   if xla_bridge.backends_are_initialized():
     raise RuntimeError("jax.distributed.initialize() must be called before "
-                        "any JAX computations are executed.")
+                        "any JAX calls that might initialise the XLA backend. "
+                        "This includes any computation, but also calls to jax.devices, jax.device_put, and others.")
   global_state.initialize(coordinator_address, num_processes, process_id,
                           local_device_ids, cluster_detection_method,
                           initialization_timeout, coordinator_bind_address)

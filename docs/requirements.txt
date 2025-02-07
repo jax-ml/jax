@@ -17,6 +17,7 @@ pytest-xdist
 # Packages used for notebook execution
 matplotlib
 scikit-learn
+pooch
 numpy
 rich[jupyter]
 cmake

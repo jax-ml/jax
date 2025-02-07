@@ -32,7 +32,6 @@ from jax import lax
 from jax import numpy as jnp
 from jax import scipy as jsp
 from jax._src import config
-from jax._src import deprecations
 from jax._src.lax import linalg as lax_linalg
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -269,8 +268,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   @jtu.run_on_devices("cpu", "gpu")
   def testEig(self, shape, dtype, compute_left_eigenvectors,
               compute_right_eigenvectors):
-    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     n = shape[-1]
     args_maker = lambda: [rng(shape, dtype)]
@@ -313,8 +310,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   def testEigHandlesNanInputs(self, shape, dtype, compute_left_eigenvectors,
                               compute_right_eigenvectors):
     """Verifies that `eig` fails gracefully if given non-finite inputs."""
-    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     a = jnp.full(shape, jnp.nan, dtype)
     results = lax.linalg.eig(
         a, compute_left_eigenvectors=compute_left_eigenvectors,
@@ -332,8 +327,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # haven't checked, that might be because of perturbations causing the
     # ordering of eigenvalues to change, which will trip up check_grads. So we
     # just test on small-ish matrices.
-    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     a, = args_maker()
@@ -347,8 +340,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("cpu", "gpu")
   def testEigvals(self, shape, dtype):
-    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     a, = args_maker()
@@ -359,8 +350,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   @jtu.run_on_devices("cpu", "gpu")
   def testEigvalsInf(self):
     # https://github.com/jax-ml/jax/issues/2661
-    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     x = jnp.array([[jnp.inf]])
     self.assertTrue(jnp.all(jnp.isnan(jnp.linalg.eigvals(x))))
 
@@ -370,8 +359,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("cpu", "gpu")
   def testEigBatching(self, shape, dtype):
-    if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     rng = jtu.rand_default(self.rng())
     shape = (10,) + shape
     args = rng(shape, dtype)
@@ -1107,7 +1094,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     ],
     dtype=float_types + complex_types,
   )
-  @jtu.ignore_warning(category=FutureWarning, message="jnp.linalg.solve: batched")
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testSolve(self, lhs_shape, rhs_shape, dtype):
     rng = jtu.rand_default(self.rng())
@@ -1121,22 +1107,14 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       lhs_shape=[(2, 2), (2, 2, 2), (2, 2, 2, 2), (2, 2, 2, 2, 2)],
       rhs_shape=[(2,), (2, 2), (2, 2, 2), (2, 2, 2, 2)]
   )
-  @jtu.ignore_warning(category=FutureWarning, message="jnp.linalg.solve: batched")
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testSolveBroadcasting(self, lhs_shape, rhs_shape):
     # Batched solve can involve some ambiguities; this test checks
     # that we match NumPy's convention in all cases.
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, 'float32'), rng(rhs_shape, 'float32')]
-
-    if jtu.numpy_version() >= (2, 0, 0):
-      # TODO(jakevdp) remove this condition after solve broadcast deprecation is finalized.
-      if len(rhs_shape) == 1 or (len(lhs_shape) != len(rhs_shape) + 1):
-        self._CheckAgainstNumpy(np.linalg.solve, jnp.linalg.solve, args_maker, tol=1E-3)
-    else:  # numpy 1.X
-      # As of numpy 1.26.3, np.linalg.solve fails when this condition is not met.
-      if len(lhs_shape) == 2 or len(rhs_shape) > 1:
-        self._CheckAgainstNumpy(np.linalg.solve, jnp.linalg.solve, args_maker, tol=1E-3)
+    if jtu.numpy_version() >= (2, 0, 0):  # NumPy 2.0 semantics
+      self._CheckAgainstNumpy(np.linalg.solve, jnp.linalg.solve, args_maker, tol=1E-3)
     self._CompileAndCheck(jnp.linalg.solve, args_maker)
 
   @jtu.sample_product(
@@ -1186,14 +1164,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     jtu.check_grads(jnp_fn, args_maker(), 1, rtol=6e-2, atol=1e-3)
 
   def testPinvDeprecatedArgs(self):
-    msg = "The rcond argument for linalg.pinv is deprecated."
-    def assert_warns_or_errors(msg=msg):
-      if deprecations.is_accelerated("jax-numpy-linalg-pinv-rcond"):
-        return self.assertRaisesRegex(ValueError, msg)
-      else:
-        return self.assertWarnsRegex(DeprecationWarning, msg)
     x = jnp.ones((3, 3))
-    with assert_warns_or_errors(msg):
+    with self.assertDeprecationWarnsOrRaises("jax-numpy-linalg-pinv-rcond",
+                                             "The rcond argument for linalg.pinv is deprecated."):
       jnp.linalg.pinv(x, rcond=1E-2)
 
   def testPinvGradIssue2792(self):
@@ -1239,14 +1212,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                           check_dtypes=False, rtol=1e-3)
 
   def testMatrixRankDeprecatedArgs(self):
-    msg = "The tol argument for linalg.matrix_rank is deprecated."
-    def assert_warns_or_errors(msg=msg):
-      if deprecations.is_accelerated("jax-numpy-linalg-matrix_rank-tol"):
-        return self.assertRaisesRegex(ValueError, msg)
-      else:
-        return self.assertWarnsRegex(DeprecationWarning, msg)
     x = jnp.ones((3, 3))
-    with assert_warns_or_errors(msg):
+    with self.assertDeprecationWarnsOrRaises("jax-numpy-linalg-matrix_rank-tol",
+                                             "The tol argument for linalg.matrix_rank is deprecated."):
       jnp.linalg.matrix_rank(x, tol=1E-2)
 
   @jtu.sample_product(
@@ -1312,11 +1280,10 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(xc, grad_test_jc(xc))
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
-  @jtu.ignore_warning(category=FutureWarning, message="jnp.linalg.solve: batched")
   def testIssue1151(self):
     rng = self.rng()
     A = jnp.array(rng.randn(100, 3, 3), dtype=jnp.float32)
-    b = jnp.array(rng.randn(100, 3), dtype=jnp.float32)
+    b = jnp.array(rng.randn(100, 3, 1), dtype=jnp.float32)
     x = jnp.linalg.solve(A, b)
     self.assertAllClose(vmap(jnp.dot)(A, x), b, atol=2e-3, rtol=1e-2)
 
@@ -1686,7 +1653,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     n=[1, 4, 5, 20, 50, 100],
-    batch_size=[(), (2,), (3, 4)] if scipy_version >= (1, 9, 0) else [()],
+    batch_size=[(), (2,), (3, 4)],
     dtype=int_types + float_types + complex_types
   )
   def testExpm(self, n, batch_size, dtype):
@@ -1712,16 +1679,34 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @jtu.sample_product(
     # Skip empty shapes because scipy fails: https://github.com/scipy/scipy/issues/1532
     shape=[(3, 4), (3, 3), (4, 3)],
-    dtype=[np.float32],
+    dtype=float_types + complex_types,
     mode=["full", "r", "economic"],
+    pivoting=[False, True]
   )
-  def testScipyQrModes(self, shape, dtype, mode):
+  def testScipyQrModes(self, shape, dtype, mode, pivoting):
+    is_not_cpu_test_device = not jtu.test_device_matches(["cpu"])
+    if pivoting and is_not_cpu_test_device:
+      self.skipTest("Pivoting is only supported on CPU with jaxlib > 0.4.38")
     rng = jtu.rand_default(self.rng())
-    jsp_func = partial(jax.scipy.linalg.qr, mode=mode)
-    sp_func = partial(scipy.linalg.qr, mode=mode)
+    jsp_func = partial(jax.scipy.linalg.qr, mode=mode, pivoting=pivoting)
+    sp_func = partial(scipy.linalg.qr, mode=mode, pivoting=pivoting)
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(sp_func, jsp_func, args_maker, rtol=1E-5, atol=1E-5)
     self._CompileAndCheck(jsp_func, args_maker)
+
+    # Pivoting is unsupported by the numpy api - repeat the jvp checks performed
+    # in NumpyLinalgTest::testQR for the `pivoting=True` modes here. Like in the
+    # numpy test, `qr_and_mul` expresses the identity function.
+    def qr_and_mul(a):
+      q, r, *p = jsp_func(a)
+      # To express the identity function we must "undo" the pivoting of `q @ r`.
+      inverted_pivots = p[0][p[0]]
+      return (q @ r)[:, inverted_pivots]
+
+    m, n = shape
+    if pivoting and mode != "r" and (m == n or (m > n and mode != "full")):
+      for a in args_maker():
+        jtu.check_jvp(qr_and_mul, partial(jvp, qr_and_mul), (a,), atol=3e-3)
 
   @jtu.sample_product(
       [dict(shape=shape, k=k)
@@ -2165,18 +2150,55 @@ class LaxLinalgTest(jtu.JaxTestCase):
         self.assertAllClose(
             eigvals_all[first:(last + 1)], eigvals_index, atol=atol)
 
-  @jtu.sample_product(dtype=[np.float32, np.float64])
-  def test_tridiagonal_solve(self, dtype):
-    dl = np.array([0.0, 2.0, 3.0], dtype=dtype)
-    d = np.ones(3, dtype=dtype)
-    du = np.array([1.0, 2.0, 0.0], dtype=dtype)
-    m = 3
-    B = np.ones([m, 1], dtype=dtype)
-    X = lax.linalg.tridiagonal_solve(dl, d, du, B)
-    A = np.eye(3, dtype=dtype)
-    A[[1, 2], [0, 1]] = dl[1:]
-    A[[0, 1], [1, 2]] = du[:-1]
-    np.testing.assert_allclose(A @ X, B, rtol=1e-6, atol=1e-6)
+  @jtu.sample_product(shape=[(3,), (3, 4), (3, 4, 5)],
+                      dtype=float_types + complex_types)
+  def test_tridiagonal_solve(self, shape, dtype):
+    if dtype not in float_types and jtu.test_device_matches(["gpu"]):
+      self.skipTest("Data type not supported on GPU")
+    rng = self.rng()
+    d = 1.0 + jtu.rand_positive(rng)(shape, dtype)
+    dl = jtu.rand_default(rng)(shape, dtype)
+    du = jtu.rand_default(rng)(shape, dtype)
+    b = jtu.rand_default(rng)(shape + (1,), dtype)
+    x = lax.linalg.tridiagonal_solve(dl, d, du, b)
+
+    def build_tri(dl, d, du):
+      return jnp.diag(d) + jnp.diag(dl[1:], -1) + jnp.diag(du[:-1], 1)
+    for _ in shape[:-1]:
+      build_tri = jax.vmap(build_tri)
+
+    a = build_tri(dl, d, du)
+    self.assertAllClose(a @ x, b, atol=5e-5, rtol=1e-4)
+
+  def test_tridiagonal_solve_endpoints(self):
+    # tridagonal_solve shouldn't depend on the endpoints being explicitly zero.
+    dtype = np.float32
+    size = 10
+    dl = np.linspace(-1.0, 1.0, size, dtype=dtype)
+    dlz = np.copy(dl)
+    dlz[0] = 0.0
+    d = np.linspace(1.0, 2.0, size, dtype=dtype)
+    du = np.linspace(1.0, -1.0, size, dtype=dtype)
+    duz = np.copy(du)
+    duz[-1] = 0.0
+    b = np.linspace(0.1, -0.1, size, dtype=dtype)[:, None]
+    self.assertAllClose(
+        lax.linalg.tridiagonal_solve(dl, d, du, b),
+        lax.linalg.tridiagonal_solve(dlz, d, duz, b),
+    )
+
+  @jtu.sample_product(shape=[(3,), (3, 4)], dtype=float_types + complex_types)
+  def test_tridiagonal_solve_grad(self, shape, dtype):
+    if dtype not in float_types and jtu.test_device_matches(["gpu"]):
+      self.skipTest("Data type not supported on GPU")
+    rng = self.rng()
+    d = 1.0 + jtu.rand_positive(rng)(shape, dtype)
+    dl = jtu.rand_default(rng)(shape, dtype)
+    du = jtu.rand_default(rng)(shape, dtype)
+    b = jtu.rand_default(rng)(shape + (1,), dtype)
+    args = (dl, d, du, b)
+    jtu.check_grads(lax.linalg.tridiagonal_solve, args, order=2, atol=1e-1,
+                    rtol=1e-1)
 
   @jtu.sample_product(
     shape=[(4, 4), (15, 15), (50, 50), (100, 100)],

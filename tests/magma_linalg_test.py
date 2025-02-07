@@ -42,8 +42,6 @@ class MagmaLinalgTest(jtu.JaxTestCase):
   @jtu.run_on_devices("gpu")
   def testEig(self, shape, dtype, compute_left_eigenvectors,
               compute_right_eigenvectors):
-    if jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     if not gpu_solver.has_magma():
       self.skipTest("MAGMA is not installed or can't be loaded.")
     # TODO(b/377907938), TODO(danfm): Debug issues MAGMA support for
@@ -93,8 +91,6 @@ class MagmaLinalgTest(jtu.JaxTestCase):
   def testEigHandlesNanInputs(self, shape, dtype, compute_left_eigenvectors,
                               compute_right_eigenvectors):
     """Verifies that `eig` fails gracefully if given non-finite inputs."""
-    if jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     if not gpu_solver.has_magma():
       self.skipTest("MAGMA is not installed or can't be loaded.")
     # TODO(b/377907938), TODO(danfm): Debug issues MAGMA support for
@@ -110,8 +106,6 @@ class MagmaLinalgTest(jtu.JaxTestCase):
       self.assertTrue(np.all(np.isnan(result)))
 
   def testEigMagmaConfig(self):
-    if jtu.jaxlib_version() <= (0, 4, 35):
-      self.skipTest("eig on GPU requires jaxlib version > 0.4.35")
     if not gpu_solver.has_magma():
       self.skipTest("MAGMA is not installed or can't be loaded.")
     rng = jtu.rand_default(self.rng())

@@ -22,39 +22,39 @@ import dataclasses
 import enum
 from functools import partial
 import itertools
-import time
-from typing import Any, NamedTuple
 import logging
 import threading
-
-import numpy as np
+import time
+from typing import Any, Callable, NamedTuple
 
 import jax
+from jax._src import api
+from jax._src import array
 from jax._src import basearray
 from jax._src import config
 from jax._src import core
-from jax._src import api
-from jax._src import array
 from jax._src import dtypes
+from jax._src import lib
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
+from jax._src.abstract_arrays import array_types
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
-from jax._src.abstract_arrays import array_types
 from jax._src.interpreters import mlir
-from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
-from jax._src import lib
-from jax._src.mesh import AbstractMesh, Mesh
+from jax._src.interpreters import xla
+from jax._src.layout import DeviceLocalLayout, Layout
 from jax._src.lib import xla_client as xc
-from jax._src.monitoring import record_event_duration_secs
+from jax._src.lib import xla_extension_version
+from jax._src.mesh import AbstractMesh, Mesh
+from jax._src.monitoring import record_event_duration_secs, record_event_time_span
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import (
-    SingleDeviceSharding, NamedSharding, TransferToMemoryKind,
+from jax._src.sharding_impls import ( NamedSharding,
+    SingleDeviceSharding, TransferToMemoryKind,
     is_single_device_sharding)
-from jax._src.layout import Layout, DeviceLocalLayout
+import numpy as np
 
 
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
@@ -94,11 +94,13 @@ def apply_primitive(prim, *args, **params):
 
 @util.cache()
 def xla_primitive_callable(prim: core.Primitive, **params):
+  util.test_event("xla_primitive_callable_cache_miss")
   def prim_fun(*args):
     with config.eager_constant_folding(False):
       return prim.bind(*args, **params)
   prim_fun.__name__ = prim.name
   prim_fun.__qualname__ = prim.name
+  prim_fun._apply_primitive = True
   return api.jit(prim_fun)
 
 
@@ -176,12 +178,14 @@ def log_elapsed_time(fmt: str, fun_name: str, event: str | None = None):
     log_priority = logging.WARNING if config.log_compiles.value else logging.DEBUG
     start_time = time.time()
     yield
-    elapsed_time = time.time() - start_time
+    end_time = time.time()
+    elapsed_time = end_time - start_time
     if logger.isEnabledFor(log_priority):
       logger.log(log_priority, fmt.format(
           fun_name=fun_name, elapsed_time=elapsed_time))
     if event is not None:
       record_event_duration_secs(event, elapsed_time)
+      record_event_time_span(event, start_time, end_time)
 
 
 def should_tuple_args(num_args: int, platform: str) -> bool:
@@ -318,14 +322,51 @@ def check_special(name: str, bufs: Sequence[basearray.Array]) -> None:
 def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
   if dtypes.issubdtype(dtype, np.inexact):
     if config.debug_nans.value and np.any(np.isnan(np.asarray(buf))):
-      raise FloatingPointError(f"invalid value (nan) encountered in {name}")
+      raise InternalFloatingPointError(name, "nan")
     if config.debug_infs.value and np.any(np.isinf(np.asarray(buf))):
-      raise FloatingPointError(f"invalid value (inf) encountered in {name}")
+      raise InternalFloatingPointError(name, "inf")
 
 class CopySemantics(enum.Enum):
   ALIAS = enum.auto()
   COPY = enum.auto()
   DONATE = enum.auto()
+
+class InternalFloatingPointError(Exception):
+  name: str
+  ty: str
+
+  def __init__(self, name: str, ty: str):
+    self.name = name
+    self.ty = ty
+
+def maybe_recursive_nan_check(e: Exception, fun: Callable, args, kwargs,
+) -> None:  # always raises an exception
+  print("Invalid nan value encountered in the output of a jax.jit "
+        "function. Calling the de-optimized version.")
+  try:
+    _ = fun(*args, **kwargs)
+  except (FloatingPointError, ZeroDivisionError) as e2:
+    raise e2 from None
+  else:
+    _raise_no_nan_in_deoptimized(e)
+
+def _raise_no_nan_in_deoptimized(e) -> None:
+  msg = (f"{str(e)}. Because "
+        "jax_config.debug_nans.value and/or config.jax_debug_infs is set, the "
+        "de-optimized function (i.e., the function as if the `jit` "
+        "decorator were removed) was called in an attempt to get a more "
+        "precise error message. However, the de-optimized function did not "
+        "produce invalid values during its execution. This behavior can "
+        "result from `jit` optimizations causing the invalid value to be "
+        "produced. It may also arise from having nan/inf literals as "
+        "inputs or outputs, like `jax.jit(lambda ...: jax.numpy.nan)(...)`. "
+        "\n\n"
+        "It may be possible to avoid the invalid value by removing the "
+        "`jit` decorator, at the cost of losing optimizations. "
+        "\n\n"
+        "If you see this error, consider opening a bug report at "
+        "https://github.com/jax-ml/jax.")
+  raise FloatingPointError(msg) from None
 
 def _identity_fn(x):
   return x
@@ -362,9 +403,19 @@ def _different_device_order_reshard(x, target_sharding, copy: CopySemantics):
       new_mesh, inp_sharding.spec, memory_kind=target_sharding.memory_kind,
       _logical_device_ids=(None if permute_order is None else
                             tuple(permute_order.tolist())))
-  new_x = array.make_array_from_single_device_arrays(x.shape, new_s, x._arrays)
+  new_x = _reorder_shards(x, new_s, CopySemantics.ALIAS)
   return api.jit(_identity_fn, out_shardings=target_sharding,
                 donate_argnums=donate_argnums)(new_x)
+
+
+def _reorder_shards(x, new_s, copy_semantics: CopySemantics):
+  """Reorders array shards to match the order indicated by the new sharding."""
+  if xla_extension_version >= 304:
+    xc_copy_semantics = pxla.to_xc_copy_semantics([copy_semantics])[0]
+    return xc.reorder_shards(x, new_s, xc_copy_semantics)  # type: ignore
+  else:
+    assert copy_semantics == CopySemantics.ALIAS
+    return array.make_array_from_single_device_arrays(x.shape, new_s, x._arrays)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -382,9 +433,9 @@ class _DeferredShardArg:
   committed: bool
   copy_semantics: CopySemantics
 
-  @property
-  def result_handler(self):
-    return pxla.global_aval_to_result_handler(self.aval, self.s, self.committed)
+  def result_handler(self, shard_arg_result):
+    return pxla.global_aval_to_result_handler(
+        self.aval, self.s, self.committed)(shard_arg_result)
 
 
 def _device_put_sharding_impl(x, aval, device, copy):
@@ -456,7 +507,7 @@ def _device_put_impl(
         " please provide a concrete Sharding with memory_kind.")
 
   try:
-    aval = xla.abstractify(x)
+    aval = core.abstractify(x)
   except TypeError as err:
     raise TypeError(
         f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
@@ -490,26 +541,24 @@ def _batched_device_put_impl(
     srcs: Sequence[Device | Sharding | Layout | None],
     copy_semantics: Sequence[CopySemantics]):
   ys = []
-  shard_arg_indices, shard_arg_xs, shard_arg_shardings = [], [], []
-  shard_arg_copy_semantics = []
+  dsa_indices, dsa_xs, dsa_shardings, dsa_copy_semantics = [], [], [], []
   for i, (x, device, src, cp) in enumerate(zip(xs, devices, srcs, copy_semantics)):
     y = _device_put_impl(x, device=device, src=src, copy=cp)
     if isinstance(y, _DeferredShardArg):
-      shard_arg_indices.append(i)
-      shard_arg_xs.append(y.x)
-      shard_arg_shardings.append(y.s)
-      shard_arg_copy_semantics.append(y.copy_semantics)
+      dsa_indices.append(i)
+      dsa_xs.append(y.x)
+      dsa_shardings.append(y.s)
+      dsa_copy_semantics.append(y.copy_semantics)
     ys.append(y)
 
-  if shard_arg_xs:
+  if dsa_xs:
     # Batch shard_arg calls. Helps improve efficiency for backends that support
     # efficient batch transfer.
     # device_put handles `Layout` via a different path, so just pass `None` as
     # the layout here.
-    shard_arg_results = pxla.shard_args(
-        shard_arg_shardings, [None] * len(shard_arg_xs),
-        shard_arg_copy_semantics, shard_arg_xs)
-    for i, shard_arg_result in zip(shard_arg_indices, shard_arg_results):
+    shard_arg_results = pxla.shard_args(dsa_shardings, [None] * len(dsa_xs),
+                                        dsa_copy_semantics, dsa_xs)
+    for i, shard_arg_result in zip(dsa_indices, shard_arg_results):
       assert isinstance(ys[i], _DeferredShardArg)
       ys[i] = ys[i].result_handler(shard_arg_result)
 
@@ -521,8 +570,6 @@ device_put_p.multiple_results = True
 device_put_p.def_impl(_batched_device_put_impl)
 
 def _device_put_abstract_eval(*xs, devices, srcs, copy_semantics):
-  if config.sharding_in_types.value:
-    return [x.update(sharding=s) for x, s in zip(xs, devices)]
   return xs
 device_put_p.def_abstract_eval(_device_put_abstract_eval)
 
@@ -565,12 +612,6 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
   # TODO(yashkatariya): Maybe we should add the custom calls anyways if it's
   # being used inside jit? Atleast for now, this preserves the old behavior.
   if ctx.module_context.all_default_mem_kind:
-    if config.sharding_in_types.value:
-      return [
-          mlir.wrap_with_sharding_op(
-              ctx, x, a, a.sharding._to_xla_hlo_sharding(a.ndim).to_proto())
-          for x, a in zip(xs, ctx.avals_out)
-      ]
     return xs
   def lower(x, device, aval, out_aval):
     if (isinstance(device, (Sharding, TransferToMemoryKind)) and
@@ -596,12 +637,6 @@ mlir.register_lowering(
 
 
 def _common_device_put_lowering(ctx, *xs, devices, srcs, copy_semantics):
-  if config.sharding_in_types.value:
-    return [
-        mlir.wrap_with_sharding_op(
-            ctx, x, a, a.sharding._to_xla_hlo_sharding(a.ndim).to_proto())
-        for x, a in zip(xs, ctx.avals_out)
-    ]
   return xs
 mlir.register_lowering(device_put_p, _common_device_put_lowering)
 

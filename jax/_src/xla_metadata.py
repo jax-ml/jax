@@ -13,41 +13,64 @@
 # limitations under the License.
 
 from typing import Any
-import threading
 from contextlib import contextmanager
 
 from jax._src import config
+from jax._src.lib import xla_client
+
+config_ext = xla_client._xla.config
 
 
-class _XlaMetadata(threading.local):
-  val: dict[Any, Any]
+class XlaMetadata:
+  __slots__ = ['val', 'hash']
 
-  def __init__(self):
-    self.val = {}
+  def __init__(self, val):
+    self.val = val
+    self.hash = hash(tuple(sorted(self.val.items())))
 
-thread_local_metadata = _XlaMetadata()
+  def __hash__(self):
+    return self.hash
+
+  def __eq__(self, other):
+    return other is not None and self.val == other.val
+
+
+def update_metadata(a, b: dict[str, Any]):
+  if not b:
+    return a
+  if a is None or a is config_ext.unset:
+    return XlaMetadata(b)
+  val = a.val.copy()
+  val.update(b)
+  return XlaMetadata(val)
+
 
 def current_xla_metadata():
-  return thread_local_metadata.val
+  metadata = config.xla_metadata_context_manager.value
+  return None if metadata is None else metadata.val
+
+
+class XlaMetadataContextManager:
+  __slots__ = ['prev', 'updates']
+
+  def __init__(self, updates):
+    self.updates = updates
+
+  def __enter__(self):
+    if not self.updates:
+      return
+
+    self.prev = config.xla_metadata_context_manager.get_local()
+    config.xla_metadata_context_manager.set_local(
+        update_metadata(self.prev, self.updates)
+    )
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    if not self.updates:
+      return
+    config.xla_metadata_context_manager.set_local(self.prev)
 
 @contextmanager
-def set_xla_metadata(*args, **kwargs):
-  new_metadata = thread_local_metadata.val.copy()
-  if args:
-    new_metadata.update(args[0] if args[0] else {})
-  else:
-    new_metadata.update(**kwargs)
-  prev_metadata, thread_local_metadata.val = (
-      thread_local_metadata.val,
-      new_metadata,
-  )
-  config.xla_metadata_context_manager.set_local(
-      tuple((v, k) for k, v in sorted(new_metadata.items()))
-  )
-  try:
+def set_xla_metadata(**kwargs):
+  with XlaMetadataContextManager(kwargs):
     yield
-  finally:
-    thread_local_metadata.val = prev_metadata
-    config.xla_metadata_context_manager.set_local(
-        tuple((v, k) for k, v in sorted(prev_metadata.items()))
-    )

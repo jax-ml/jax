@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from functools import partial
-from typing import Any
+from typing import Any, overload
 
 import warnings
 
@@ -82,12 +82,7 @@ def promote_dtypes(*args: ArrayLike) -> list[Array]:
   else:
     to_dtype, weak_type = dtypes._lattice_result_type(*args)
     to_dtype = dtypes.canonicalize_dtype(to_dtype, allow_extended_dtype=True)  # type: ignore[assignment]
-    if config.sharding_in_types.value:
-      return [lax._convert_element_type(x, to_dtype, weak_type,
-                                        getattr(x, "sharding", None))
-              for x in args]
-    else:
-      return [lax._convert_element_type(x, to_dtype, weak_type) for x in args]
+    return [lax._convert_element_type(x, to_dtype, weak_type) for x in args]
 
 
 def promote_dtypes_inexact(*args: ArrayLike) -> list[Array]:
@@ -131,6 +126,40 @@ def _complex_elem_type(dtype: DTypeLike) -> DType:
 def _arraylike(x: ArrayLike) -> bool:
   return (isinstance(x, np.ndarray) or isinstance(x, Array) or
           hasattr(x, '__jax_array__') or np.isscalar(x))
+
+
+def _arraylike_asarray(x: Any) -> Array:
+  """Convert an array-like object to an array."""
+  if hasattr(x, '__jax_array__'):
+    x = x.__jax_array__()
+  return lax.asarray(x)
+
+
+@overload
+def ensure_arraylike(fun_name: str, /) -> tuple[()]: ...
+@overload
+def ensure_arraylike(fun_name: str, a1: Any, /) -> Array: ...
+@overload
+def ensure_arraylike(fun_name: str, a1: Any, a2: Any, /) -> tuple[Array, Array]: ...
+@overload
+def ensure_arraylike(fun_name: str, a1: Any, a2: Any, a3: Any, /) -> tuple[Array, Array, Array]: ...
+@overload
+def ensure_arraylike(fun_name: str, a1: Any, a2: Any, a3: Any, a4: Any, /, *args: Any) -> tuple[Array, ...]: ...
+def ensure_arraylike(fun_name: str, /, *args: Any) -> Array | tuple[Array, ...]:
+  """Check that arguments are arraylike and convert them to arrays."""
+  check_arraylike(fun_name, *args)
+  if len(args) == 1:
+    return _arraylike_asarray(args[0])  # pytype: disable=bad-return-type
+  return tuple(_arraylike_asarray(arg) for arg in args)  # pytype: disable=bad-return-type
+
+
+def ensure_arraylike_tuple(fun_name: str, tup: tuple[Any, ...]) -> tuple[Array, ...]:
+  """Check that argument elements are arraylike and convert to a tuple of arrays.
+
+  This is useful because ensure_arraylike with a single argument returns a single array.
+  """
+  check_arraylike(fun_name, *tup)
+  return tuple(_arraylike_asarray(arg) for arg in tup)
 
 
 def check_arraylike(fun_name: str, *args: Any, emit_warning=False, stacklevel=3):
@@ -213,14 +242,18 @@ def promote_args_inexact(fun_name: str, *args: ArrayLike) -> list[Array]:
 @partial(api.jit, inline=True)
 def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
   """Like Numpy's broadcast_arrays but doesn't return views."""
-  shapes = [np.shape(arg) for arg in args]
+  avals = [core.shaped_abstractify(arg) for arg in args]
+  shapes = [a.shape for a in avals]
   if not shapes or all(core.definitely_equal_shape(shapes[0], s) for s in shapes):
     return [lax.asarray(arg) for arg in args]
   result_shape = lax.broadcast_shapes(*shapes)
-  return [_broadcast_to(arg, result_shape) for arg in args]
+  result_sharding = (lax.broadcast_shardings(*avals)  # type: ignore
+                     if config.sharding_in_types.value else None)
+  return [_broadcast_to(arg, result_shape, result_sharding) for arg in args]
 
 
-def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape) -> Array:
+def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape, sharding=None
+                  ) -> Array:
   check_arraylike("broadcast_to", arr)
   arr = arr if isinstance(arr, Array) else lax.asarray(arr)
   if not isinstance(shape, tuple) and np.ndim(shape) == 0:
@@ -240,7 +273,8 @@ def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape) -> Array:
     if nlead < 0 or not compatible:
       msg = "Incompatible shapes for broadcasting: {} and requested shape {}"
       raise ValueError(msg.format(arr_shape, shape))
-    return lax.broadcast_in_dim(arr, shape, tuple(range(nlead, len(shape))))
+    return lax.broadcast_in_dim(arr, shape, tuple(range(nlead, len(shape))),
+                                sharding=sharding)
 
 
 # The `jit` on `where` exists to avoid materializing constants in cases like

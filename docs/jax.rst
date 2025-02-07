@@ -18,12 +18,14 @@ Subpackages
    jax.dlpack
    jax.distributed
    jax.dtypes
+   jax.ffi
    jax.flatten_util
    jax.image
    jax.nn
    jax.ops
    jax.profiler
    jax.stages
+   jax.test_util
    jax.tree
    jax.tree_util
    jax.typing

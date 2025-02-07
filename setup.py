@@ -19,12 +19,11 @@ from setuptools import setup, find_packages
 
 project_name = 'jax'
 
-_current_jaxlib_version = '0.4.36'
+_current_jaxlib_version = '0.5.0'
 # The following should be updated after each new jaxlib release.
-_latest_jaxlib_version_on_pypi = '0.4.36'
+_latest_jaxlib_version_on_pypi = '0.5.0'
 
-_libtpu_version = '0.0.6'
-_libtpu_nightly_terminal_version = '0.1.dev20241010+nightly.cleanup'
+_libtpu_version = '0.0.8'
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
@@ -57,11 +56,10 @@ setup(
     install_requires=[
         f'jaxlib >={_minimum_jaxlib_version}, <={_jax_version}',
         'ml_dtypes>=0.4.0',
-        'numpy>=1.24',
+        'numpy>=1.25',
         "numpy>=1.26.0; python_version>='3.12'",
         'opt_einsum',
-        'scipy>=1.10',
-        "scipy>=1.11.1; python_version>='3.12'",
+        'scipy>=1.11.1',
     ],
     extras_require={
         # Minimum jaxlib version; used in testing.
@@ -75,11 +73,9 @@ setup(
         'ci': [f'jaxlib=={_latest_jaxlib_version_on_pypi}'],
 
         # Cloud TPU VM jaxlib can be installed via:
-        # $ pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+        # $ pip install "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
         'tpu': [
           f'jaxlib>={_current_jaxlib_version},<={_jax_version}',
-          # TODO(phawkins): remove the libtpu-nightly dependency in Q1 2025.
-          f'libtpu-nightly=={_libtpu_nightly_terminal_version}',
           f'libtpu=={_libtpu_version}',
           'requests',  # necessary for jax.distributed.initialize
         ],
@@ -106,6 +102,12 @@ setup(
         'cuda12_local': [
           f"jaxlib=={_current_jaxlib_version}",
           f"jax-cuda12-plugin=={_current_jaxlib_version}",
+        ],
+
+        # ROCm support for ROCm 6.0 and above.
+        'rocm': [
+          f"jaxlib=={_current_jaxlib_version}",
+          f"jax-rocm60-plugin>={_current_jaxlib_version},<={_jax_version}",
         ],
 
         # For automatic bootstrapping distributed jobs in Kubernetes

@@ -21,13 +21,14 @@ from __future__ import annotations
 
 from functools import partial
 import inspect
-from typing import Any
+from typing import Any, Callable
 import weakref
 
 import numpy as np
 import jax
 from jax import tree_util
 from jax._src import api_util
+from jax._src import config
 from jax._src import core
 from jax._src import custom_api_util
 from jax._src import dispatch
@@ -35,6 +36,7 @@ from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import sharding_impls
 from jax._src import xla_bridge as xb
+from jax._src.custom_partitioning_sharding_rule import sdy_sharding_rule_to_mlir, SdyShardingRule, str_to_sdy_sharding_rule
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client as xc
@@ -190,7 +192,7 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
         closed_jaxpr,
         name="tmp_xla_computation",
         platforms=module_context.platforms,
-        backend_or_name=module_context.backend_or_name,
+        backend=module_context.backend,
         axis_context=axis_context.extend_manual(frozenset(mesh.axis_names)),
     )
   result_sharding = _pack_result_sharding(result_shape, result_shardings)
@@ -225,18 +227,20 @@ def _custom_partitioning_abstract_eval(*avals, call, in_tree, out_tree,
                                        propagate_user_sharding, partition,
                                        infer_sharding_from_operands,
                                        decode_shardings,
+                                       sharding_rule,
                                        static_args):
   del in_tree, out_tree, propagate_user_sharding, partition
-  del infer_sharding_from_operands, decode_shardings, static_args
+  del infer_sharding_from_operands, decode_shardings, sharding_rule
+  del static_args
   return call.out_avals
 
 
 def _custom_partitioning_impl(*args, call, in_tree, out_tree,
                               propagate_user_sharding,
                               partition, infer_sharding_from_operands,
-                              decode_shardings, static_args):
+                              decode_shardings, sharding_rule, static_args):
   del in_tree, out_tree, propagate_user_sharding, partition
-  del infer_sharding_from_operands, decode_shardings, static_args
+  del infer_sharding_from_operands, decode_shardings, static_args, sharding_rule
   return core.jaxpr_as_fun(call)(*args)
 
 
@@ -281,13 +285,15 @@ class custom_partitioning:
       arg_shardings = jax.tree.map(lambda x: x.sharding, arg_shapes)
 
 
-    f.def_partition(partition, propagate_user_sharding, infer_sharding_from_operands)
+    f.def_partition(partition, propagate_user_sharding,
+                    infer_sharding_from_operands=infer_sharding_from_operands,
+                    sharding_rule='i j -> 'i j')
 
   The args to ``def_partition`` are as follows:
 
   * ``propagate_user_sharding``: Callable which takes the sharding of a user (in the dag)
-    and returns a suggestion for a new `NamedSharding`. The default
-    implementation is just to return the suggested sharding.
+    and returns a suggestion for a new `NamedSharding`. The default value is None.
+    A trivial implementation is just to return the input sharding.
   * ``partition``: Callable which takes the SPMD suggested partition shapes and
     partition specs and returns the mesh, a per-shard lowering function, and the final
     input and output sharding specs (the SPMD partitioner will repartition the
@@ -298,6 +304,16 @@ class custom_partitioning:
   * ``decode_shardings``: When set to True, convert input ``GSPMDSharding``s to
     ``NamedSharding`` if possible. This may not be possible if the user does not
     provide a contextual mesh.
+  * ``sharding_rule``: an SdyShardingRule object, an Einsum-like notation string
+    that describes the sharding rule, or a Callable that produces either of
+    these. We borrow the idea from the einops.rearrange string , to use a space
+    separator between factors and allow multiple letters factor names. See
+    `jax-shardy-guide <https://colab.sandbox.google.com/github/openxla/shardy/blob/main/docs/getting_started_jax.ipynb>`_
+    for more details and examples on how to use this.
+
+  When config.use_shardy_partitioner.value is True, `sharding_rule` is used;
+  otherwise, `propagate_user_sharding` and `infer_sharding_from_operands` are
+  used.
 
   Positional arguments can be specified as static using static_argnums. JAX uses
   :code:`inspect.signature(fun)` to resolve these positional arguments.
@@ -350,9 +366,16 @@ class custom_partitioning:
       def my_fft(x):
           return fft(x)
 
+      # Use Einsum-like notation to specify the sharding rule.
       my_fft.def_partition(
-          infer_sharding_from_operands=infer_sharding_from_operands,
-          partition=partition)
+        infer_sharding_from_operands=infer_sharding_from_operands,
+        partition=partition,
+        sharding_rule='...i -> ...i')
+      # Use SdyShardingRule object to specify the sharding rule.
+      my_fft.def_partition(
+        infer_sharding_from_operands=infer_sharding_from_operands,
+        partition=partition,
+        sharding_rule=SdyShardingRule(operand_mappings=((SDY_BATCHING, 'i'),), result_mappings=((SDY_BATCHING, 'i'),))))
 
     Now create a 2D array sharded along the first axis, pass it through ``my_fft``
     and notice how it is still sharded as expected, and identical to the output
@@ -425,19 +448,29 @@ class custom_partitioning:
     self.static_argnums = static_argnums
     self.propagate_user_sharding = None
     self.infer_sharding_from_operands = None
+    self.sharding_rule = None
 
   __getattr__: Any = custom_api_util.forward_attr
 
-  def def_partition(self, partition, infer_sharding_from_operands,
-                    propagate_user_sharding=None, decode_shardings=True):
+  def def_partition(self, partition, infer_sharding_from_operands=None,
+                    propagate_user_sharding=None, decode_shardings=True,
+                    sharding_rule=None):
     self.partition = partition
     self.propagate_user_sharding = propagate_user_sharding
     self.infer_sharding_from_operands = infer_sharding_from_operands
     self.decode_shardings = decode_shardings
+    if (sharding_rule is None or isinstance(sharding_rule, Callable) or
+        isinstance(sharding_rule, SdyShardingRule)):
+      self.sharding_rule = sharding_rule
+    else:
+      self.sharding_rule = str_to_sdy_sharding_rule(sharding_rule)
     return partition
 
   def __call__(self, *args, **kwargs):
     args = _resolve_kwargs(self.fun, args, kwargs)
+    debug = api_util.debug_info("custom_partitioning", self.fun,
+                                args, kwargs,
+                                static_argnums=self.static_argnums)
     if self.static_argnums:
       static_argnums = set(self.static_argnums)
       args = tuple(x if i in static_argnums else x for i, x in enumerate(args))
@@ -452,25 +485,34 @@ class custom_partitioning:
       _check_for_tracers(static_args)
     else:
       static_args = []
-      f_, dyn_args = lu.wrap_init(self.fun), args
+      f_, dyn_args = lu.wrap_init(self.fun, debug_info=debug), args
     args_flat, in_tree = tree_util.tree_flatten(dyn_args)
     flat_fun, out_tree = api_util.flatten_fun_nokwargs(f_, in_tree)
-    in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
-    debug = pe.debug_info(self.fun, in_tree, out_tree, False,
-                          "custom_partitioning")
+    in_avals = [core.get_aval(x) for x in args_flat]
     mesh = mesh_lib.thread_resources.env.physical_mesh
     with core.extend_axis_env_nd(mesh.shape.items()):
-      jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
+      jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
     assert not len(consts)
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+
+    propagate_user_sharding = None
+    infer_sharding_from_operands = None
+    sharding_rule = None
+    if config.use_shardy_partitioner.value:
+      sharding_rule = self.sharding_rule
+    else:
+      propagate_user_sharding = self.propagate_user_sharding
+      infer_sharding_from_operands = self.infer_sharding_from_operands
+
     out_flat = custom_partitioning_p.bind(
         *consts,
         *args_flat,
         call=closed_call,
         partition=self.partition,
-        propagate_user_sharding=self.propagate_user_sharding,
-        infer_sharding_from_operands=self.infer_sharding_from_operands,
+        propagate_user_sharding=propagate_user_sharding,
+        infer_sharding_from_operands=infer_sharding_from_operands,
         decode_shardings=self.decode_shardings,
+        sharding_rule=sharding_rule,
         in_tree=in_tree,
         out_tree=out_tree(),
         static_args=static_args
@@ -483,6 +525,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
                                        propagate_user_sharding, partition,
                                        infer_sharding_from_operands,
                                        decode_shardings,
+                                       sharding_rule,
                                        static_args):
   axis_context = ctx.module_context.axis_context
   if (isinstance(axis_context, sharding_impls.SPMDAxisContext) and
@@ -539,6 +582,18 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       backend_config=ir.StringAttr.get(key),
       operand_layouts=None,
       result_layouts=None)
+  if sharding_rule is not None:
+    value_types = [mlir.aval_to_ir_type(s) for s in call.in_avals]
+    if callable(sharding_rule):
+      sharding_rule = sharding_rule(mesh, value_types, result_types)
+      if isinstance(sharding_rule, str):
+        sharding_rule = str_to_sdy_sharding_rule(sharding_rule)
+      elif not isinstance(sharding_rule, SdyShardingRule):
+          raise ValueError("sharding_rule callable must produce either an "
+                           "SdyShardingRule object or an Einsum-like notation "
+                           "string.")
+    out.attributes['sdy.sharding_rule'] = sdy_sharding_rule_to_mlir(
+      sharding_rule, value_types, result_types)
   return out.results
 
 mlir.register_lowering(custom_partitioning_p,

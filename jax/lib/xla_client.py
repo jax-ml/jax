@@ -27,26 +27,26 @@ OpSharding = _xc.OpSharding
 Traceback = _xc.Traceback
 
 _deprecations = {
-    # Added Aug 5 2024
+    # Finalized 2024-12-11; remove after 2025-3-11
     "_xla": (
-        "jax.lib.xla_client._xla is deprecated; use jax.lib.xla_extension.",
-        _xc._xla,
+        "jax.lib.xla_client._xla was removed in JAX v0.4.38; use jax.lib.xla_extension.",
+        None,
     ),
     "bfloat16": (
-        "jax.lib.xla_client.bfloat16 is deprecated; use ml_dtypes.bfloat16.",
-        _xc.bfloat16,
+        "jax.lib.xla_client.bfloat16 was removed in JAX v0.4.38; use ml_dtypes.bfloat16.",
+        None,
     ),
-    # Added Sep 26 2024
+    # Finalized 2024-12-23; remove after 2024-03-23
     "Device": (
         "jax.lib.xla_client.Device is deprecated; use jax.Device instead.",
-        _xc.Device,
+        None,
     ),
     "XlaRuntimeError": (
         (
             "jax.lib.xla_client.XlaRuntimeError is deprecated; use"
             " jax.errors.JaxRuntimeError."
         ),
-        _xc.XlaRuntimeError,
+        None,
     ),
     # Added Oct 10 2024
     "FftType": (
@@ -104,8 +104,6 @@ _deprecations = {
 import typing as _typing
 
 if _typing.TYPE_CHECKING:
-  _xla = _xc._xla
-  bfloat16 = _xc.bfloat16
   dtype_to_etype = _xc.dtype_to_etype
   ops = _xc.ops
   register_custom_call_target = _xc.register_custom_call_target

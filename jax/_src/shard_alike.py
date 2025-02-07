@@ -24,7 +24,6 @@ from jax._src.tree_util import tree_flatten, tree_unflatten
 from jax._src.interpreters import batching
 from jax._src.util import safe_zip
 from jax._src.lib import xla_client as xc
-from jax._src.api_util import shaped_abstractify
 from jax._src.lib.mlir import dialects, ir
 
 _next_shard_group_id = itertools.count()
@@ -39,8 +38,8 @@ def shard_alike(x, y):
                      f'Got x_tree: {x_tree}, y_tree: {y_tree}')
 
   for x_, y_ in safe_zip(x_flat, y_flat):
-    x_aval = shaped_abstractify(x_)
-    y_aval = shaped_abstractify(y_)
+    x_aval = core.shaped_abstractify(x_)
+    y_aval = core.shaped_abstractify(y_)
     if x_aval.shape != y_aval.shape:
       raise ValueError(
           'The leaves shapes of `x` and `y` should match. Got `x` leaf shape:'

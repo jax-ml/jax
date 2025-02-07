@@ -68,6 +68,8 @@ if dtypes.float8_e3m4 is not None:
   fp8_dtypes += [np.dtype(dtypes.float8_e3m4)]
 if dtypes.float8_e4m3 is not None:
   fp8_dtypes += [np.dtype(dtypes.float8_e4m3)]
+if dtypes.float8_e8m0fnu is not None:
+  fp8_dtypes += [np.dtype(dtypes.float8_e8m0fnu)]
 float_dtypes += fp8_dtypes
 custom_float_dtypes += fp8_dtypes
 
@@ -947,6 +949,8 @@ class TestPromotionTables(jtu.JaxTestCase):
     # Regression test for https://github.com/jax-ml/jax/issues/6051
     if dtype in intn_dtypes:
       self.skipTest("XLA support for int2 and int4 is incomplete.")
+    if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
+      self.skipTest("TPU does not support float8_e8m0fnu.")
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     if weak_type:
       expected = dtypes.canonicalize_dtype(
@@ -958,6 +962,9 @@ class TestPromotionTables(jtu.JaxTestCase):
   @jax.numpy_dtype_promotion('standard')
   def testFloat8PromotionError(self):
     for dtype in fp8_dtypes:
+      if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
+        # TPU does not support float8_e8m0fnu.
+        continue
       x = jnp.array(1, dtype=dtype)
       y = jnp.array(1, dtype='float32')
       with self.assertRaisesRegex(dtypes.TypePromotionError,
@@ -1018,6 +1025,8 @@ class TestPromotionTables(jtu.JaxTestCase):
         self.skipTest('XLA support for int4 is incomplete.')
       if dtypes.iinfo(dtype).bits == 2:
         self.skipTest('XLA support for int2 is incomplete.')
+    if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
+      self.skipTest('TPU does not support float8_e8m0fnu.')
     val = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     rep = repr(val)
     self.assertStartsWith(rep, 'Array(')

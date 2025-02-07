@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
 import math
 from functools import partial
 from absl.testing import absltest
@@ -24,24 +23,19 @@ from jax.sharding import NamedSharding, PartitionSpec as P, SingleDeviceSharding
 from jax._src import config
 from jax._src.layout import Layout, DeviceLocalLayout as DLL
 from jax._src import test_util as jtu
+from jax._src.lib import xla_extension_version
 from jax._src.util import safe_zip
 from jax.experimental.compute_on import compute_on
 
 config.parse_flags_with_absl()
-
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-
-def tearDownModule():
-  _exit_stack.close()
+jtu.request_cpu_devices(8)
 
 
 class LayoutTest(jtu.JaxTestCase):
 
+  # Remove this setUp once the released xla_extension_version is >= 308.
   def setUp(self):
-    if not jtu.test_device_matches(['tpu', 'gpu']):
+    if xla_extension_version < 308 and not jtu.test_device_matches(['tpu', 'gpu']):
       self.skipTest("Layouts do not work on CPU backend yet.")
     super().setUp()
 
@@ -87,7 +81,7 @@ class LayoutTest(jtu.JaxTestCase):
     with jtu.count_aot_jit_cpp_cache_miss() as init_count:
       init_out = init_compiled(arr1, arr2)
       init_compiled(arr1, arr2)
-    self.assertEqual(init_count[0], 1)
+    self.assertEqual(init_count(), 1)
 
     self.assertEqual(init_out[0].layout, init_compiled.output_layouts[0])
     self.assertEqual(init_out[1].layout, init_compiled.output_layouts[1])
@@ -95,7 +89,7 @@ class LayoutTest(jtu.JaxTestCase):
     with jtu.count_aot_jit_cpp_cache_miss() as apply_count:
       apply_out = compiled_apply(*init_out)
       compiled_apply(*init_out)
-    self.assertEqual(apply_count[0], 1)
+    self.assertEqual(apply_count(), 1)
 
     self.assertEqual(apply_out[0].layout, compiled_apply.output_layouts[0])
     self.assertEqual(apply_out[1].layout, compiled_apply.output_layouts[1])
@@ -184,9 +178,10 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertTupleEqual(
         compiled.input_layouts[0][0].device_local_layout.major_to_minor[::-1],
         (1, 0))
-    self.assertTupleEqual(
-        compiled.output_layouts.device_local_layout.major_to_minor[::-1],
-        (0, 1))
+    if not jtu.test_device_matches(['cpu']):
+      self.assertTupleEqual(
+          compiled.output_layouts.device_local_layout.major_to_minor[::-1],
+          (0, 1))
     self.assertArraysEqual(out, np_inp.T)
     self.assertEqual(out.sharding, s)
 
@@ -235,12 +230,12 @@ class LayoutTest(jtu.JaxTestCase):
     compiled(*arrs)
 
   def test_aot_layout_mismatch(self):
-    if jtu.test_device_matches(["gpu"]):
+    if jtu.test_device_matches(['cpu', 'gpu']):
       # The test fails on GPU because the compilation with both input and
       # output set to auto layout is underspecified. The GPU compiler chooses
       # the default layout as the input layout and that choice does not
       # raise an exception.
-      self.skipTest("This test does not work on GPU backend.")
+      self.skipTest('This test does not work on CPU or GPU backends.')
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     shape = (256, 4, 2)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -692,6 +687,29 @@ class LayoutTest(jtu.JaxTestCase):
       return sparsecore_compute(x), host_compute(y)
 
     f(sparecore_arr, host_arr)
+
+  def test_cpp_layout_cache_miss(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    shape = (16, 16)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+
+    arr_m2m = arr.layout.device_local_layout.major_to_minor
+    custom_layout = Layout(DLL(major_to_minor=arr_m2m[::-1]), s)
+    arr2 = jax.device_put(np_inp, custom_layout)
+
+    @jax.jit
+    def f(x):
+      return x @ x.T
+
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      out = f(arr)
+      out2 = f(arr2)
+    self.assertEqual(count(), 2)
+
+    self.assertArraysEqual(out, np_inp @ np_inp.T)
+    self.assertArraysEqual(out2, np_inp @ np_inp.T)
 
 
 if __name__ == '__main__':

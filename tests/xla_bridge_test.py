@@ -14,8 +14,6 @@
 
 import os
 import platform
-import time
-import warnings
 
 from absl import logging
 from absl.testing import absltest
@@ -126,31 +124,6 @@ class XlaBridgeTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(RuntimeError, "Unknown backend foo"):
       xb.local_devices(backend="foo")
 
-  def test_timer_tpu_warning(self):
-    with warnings.catch_warnings(record=True) as w:
-      warnings.simplefilter("always")
-
-      def _mock_tpu_client_with_options(library_path=None, options=None):
-        time_to_wait = 5
-        start = time.time()
-        while not w:
-          if time.time() - start > time_to_wait:
-            raise ValueError(
-                "This test should not hang for more than "
-                f"{time_to_wait} seconds.")
-          time.sleep(0.1)
-
-        self.assertLen(w, 1)
-        msg = str(w[-1].message)
-        self.assertIn("Did you run your code on all TPU hosts?", msg)
-
-      def _mock_tpu_client(library_path=None):
-        _mock_tpu_client_with_options(library_path=library_path, options=None)
-
-      with mock.patch.object(xc, "make_tpu_client",
-                            side_effect=_mock_tpu_client_with_options):
-        xb.tpu_client_timer_callback(0.01)
-
   def test_register_plugin(self):
     with self.assertLogs(level="WARNING") as log_output:
       with mock.patch.object(xc, "load_pjrt_plugin_dynamically", autospec=True):
@@ -244,8 +217,14 @@ class GetBackendTest(jtu.JaxTestCase):
     def process_index(self):
       return 0
 
+    def devices(self):
+      return []
+
     def local_devices(self):
       return []
+
+    def _get_all_devices(self):
+      return self.devices()
 
   def _register_factory(self, platform: str, priority, device_count=1,
                         assert_used_at_most_once=False, experimental=False):
@@ -332,7 +311,6 @@ class GetBackendTest(jtu.JaxTestCase):
       "Unable to initialize backend 'error': I'm not a real backend"
     ):
       xb.get_backend("error")
-
 
   def test_no_devices(self):
     self._register_factory("no_devices", -10, device_count=0)

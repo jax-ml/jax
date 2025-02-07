@@ -200,16 +200,11 @@ class DimExprTest(jtu.JaxTestCase):
                "3*a*mod(a + 2, b + 2)"),
               ("3 * floordiv(a + 2, b + 2) * 2", 3 * ((a + 2) // (b + 2)) * 2,
                "6*floordiv(a + 2, b + 2)"),
-              # Keep for backwards compatibility. We ought to be able to parse
-              # non_negative
-              ("non_negative(a - 2)", "build_inside", "max(a - 2, 0)"),
               ("max(a, b)", "build_inside", "max(a, b)"),
               ("min(a, b)", "build_inside", "min(a, b)"),
   ]])
   def test_parse_dim(self, dim_spec, dim_poly, expected_str):
-    if dim_spec == "non_negative(a - 2)":
-      dim_poly = core.non_negative_dim(DimExprTest.a - 2)
-    elif dim_spec == "max(a, b)":
+    if dim_spec == "max(a, b)":
       dim_poly = core.max_dim(DimExprTest.a, DimExprTest.b)
     elif dim_spec == "min(a, b)":
       dim_poly = core.min_dim(DimExprTest.a, DimExprTest.b)
@@ -382,13 +377,6 @@ class DimExprTest(jtu.JaxTestCase):
                              [b * (a % 4), b * (a // 4), a * (a // 4), a // 4,
                               a * a, b, 15])
 
-    # This failed with a previous implementation of factor equality
-    self.assertNotEqual(shape_poly._DimTerm.from_operation(shape_poly._DimFactor.NON_NEGATIVE,
-                                                           a - b - 1,
-                                                           scope=a.scope),
-                        shape_poly._DimTerm.from_operation(shape_poly._DimFactor.NON_NEGATIVE,
-                                                           a - 2 * b - 1,
-                                                           scope=a.scope))
   def test_bounds_arithmetic(self):
     a, b, c = shape_poly.symbolic_shape("a, b, c")
     bounded_le4 = 5 - a
@@ -471,6 +459,10 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(_bounds(-b // (a + 1)), (-np.inf, -1))
 
     self.assertEqual(_bounds(a - a // 2), (1, np.inf))
+    self.assertEqual(_bounds((a + 3) - (a + 3) // 2), (2, np.inf))
+    self.assertEqual(_bounds((a + 6) - 1 * (a + 6) // 4), (6, np.inf))
+    self.assertEqual(_bounds((a + 6) - 2 * ((a + 6) // 4)), (4, np.inf))
+    self.assertEqual(_bounds((a + 6) - 3 * ((a + 6) // 4)), (2, np.inf))
     self.assertEqual(_bounds(a - 2 * (a // 2)), (0, 1))
     with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
                                 "Possible division by 0"):
@@ -494,15 +486,6 @@ class DimExprTest(jtu.JaxTestCase):
         fact_val = fact._evaluate(dict(a=a_val))
         self.assertGreaterEqual(fact_val, lb)
         self.assertLessEqual(fact_val, ub)
-
-  def test_bounds_non_negative(self):
-    a, b = shape_poly.symbolic_shape("a, b")
-
-    self.assertEqual(_bounds(core.non_negative_dim(a)), (1, np.inf))
-    self.assertEqual(_bounds(core.non_negative_dim(a - 5)), (0, np.inf))
-    self.assertEqual(_bounds(core.non_negative_dim(15 - a)), (0, 14))
-    self.assertEqual(_bounds(core.non_negative_dim(15 - a) // 3), (0, 4))
-    self.assertEqual(_bounds(a - core.non_negative_dim(a - 3)), (1, 3))
 
   def test_max_dim(self):
     a, b, c, d = shape_poly.symbolic_shape("a, b, c, d")
@@ -599,7 +582,7 @@ class DimExprTest(jtu.JaxTestCase):
 
   def test_bounds_complex(self):
     a, b = shape_poly.symbolic_shape("a, b")
-    min_a_b = b - core.non_negative_dim(b - a)
+    min_a_b = b - core.max_dim(0, b - a)
     # This comes up in slicing with stride
     self.assertGreaterEqual(min_a_b // 2, 0)
 
@@ -805,16 +788,6 @@ class DimExprTest(jtu.JaxTestCase):
         set(decision.combine_term_with_existing(_m(d), 2, scope=scope,
                                                 only_smaller_than_t=True)))
 
-  def test_non_negative_dim(self):
-    a, = shape_poly.symbolic_shape("a,")
-
-    self.sampled_assertion(2, core.non_negative_dim, 2)
-    self.sampled_assertion(0, core.non_negative_dim, 0)
-    self.sampled_assertion(0, core.non_negative_dim, -1)
-    self.sampled_assertion(a, core.non_negative_dim, a)
-    self.sampled_assertion(2 * a - 1, core.non_negative_dim, 2 * a - 1)
-    self.sampled_assertion(core.non_negative_dim(a - 2),
-                           core.non_negative_dim, a - 2)
 
   def test_dilate_dim(self):
     """0 if d == 0 else 1 + dilation * (d - 1))"""
@@ -1099,25 +1072,42 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(exp.in_avals[0], exp.in_avals[1])
 
   def test_constraints_eq_threefry(self):
-    # Test equalities that arise out of the threefree lowering
+    # Test equalities that arise out of the threefry lowering
     # x : i32[a]  # a may be even or odd
     # x_padded: i32[a + a % 2] = jnp.concat([x, jnp.zeros((a % 2,))])
-    # x_reshaped: i32[2, (a + a % 2) // 2] = x_padded.reshape((-1, 2))
-    # x_1 = x_reshaped.reshape((-1,))
+    # x_reshaped: i32[(a + a % 2) // 2, 2] = x_padded.reshape((-1, 2))
+    # x_1: i32[a + a % 2] = x_reshaped.reshape((-1,))
     a, = shape_poly.symbolic_shape(
         "a",
-        constraints=("mod(a + mod(a, 2), -2) == 0",
-                     "2*floordiv(mod(a, 2) + a, -2) == a"))
+        constraints=("mod(a + mod(a, 2), -2) == 0",))
 
     x_reshaped, r = divmod(a + a % 2, -2)
     self.assertEqual(r, 0)
-    self.assertEqual(x_reshaped, (a + a % 2) // -2)
-    self.assertEqual(2 * x_reshaped, a)
+    self.assertEqual(- x_reshaped, -1 * ((a + a % 2) // -2))
+    self.assertEqual(-2 * x_reshaped, a + a % 2)
 
-  def test_constraints_a_minus_4d_eq(self):
+  def test_constraints_eq_mod_0(self):
+    # mod(b, N) == 0 is a common constraint, we need to ensure we can use it
+    # to infer things like: N * floordiv(b, N) == b, b >= N.
+    b, c, d = shape_poly.symbolic_shape(
+        "b, c, d",
+        constraints=("mod(b, 4) == 0",))
+
+    # Inequalities work, because we use more expensive reasoning
+    self.assertGreaterEqual(b, 4 * (b // 4))
+    self.assertGreaterEqual(4 * (b // 4), b)
+    # Equalities used to fail
+    self.assertEqual(b, 4 * (b // 4))
+    # And an equality that may come up in a reshape
+    self.assertEqual(math.prod([b, c, d]), math.prod([b // 4, c, d, 2, 2]))
+
+    self.assertGreaterEqual(b, b // 4)
+    self.assertGreaterEqual(b, 3 * (b // 4))
+
+  def test_constraints_eq_a_minus_4d(self):
     # simulates d = div(a, 4) and m = mod(a, 4)
-    assumptions = ["4*d == a - m", "m >= 0", "m <= 3"]
-    scope = shape_poly.SymbolicScope(assumptions)
+    constraints = ["4*d == a - m", "m >= 0", "m <= 3"]
+    scope = shape_poly.SymbolicScope(constraints)
     a, d = shape_poly.symbolic_shape("a, d", scope=scope)
     self.assertEqual(_bounds(a - 4*d), (1, 3))  # a - 4d = m >= 1
     # TODO: The incompleteness is due to the way we combine external constraints
@@ -1125,15 +1115,26 @@ class DimExprTest(jtu.JaxTestCase):
                      _expect(best=(3, np.inf), current=(-np.inf, np.inf)))  # a - 2d = m + 2d >= 3
     # TODO: The incompleteness is due to the way we combine external constraints
     self.assertEqual(_bounds(a),
-                     _expect(best=(5, np.inf), current=(1, np.inf)))  # a >= 4d + m >= 5
+                     _expect(best=(5, np.inf), current=(4, np.inf)))  # a >= 4d + m >= 5
 
     # Now with a different order of constraints
-    assumptions1 = ["m1 >= 0", "m1 <= 3", "a1 == 4*d1 + m1"]
-    scope1 = shape_poly.SymbolicScope(assumptions1)
+    constraints1 = ["m1 >= 0", "m1 <= 3", "a1 == 4*d1 + m1"]
+    scope1 = shape_poly.SymbolicScope(constraints1)
     a1, d1, m1 = shape_poly.symbolic_shape("a1, d1, m1", scope=scope1)
     self.assertEqual(_bounds(a1 - 4*d1), (1, 3))  # a - 4d = m >= 1
     self.assertEqual(_bounds(a1 - 2*d1), (3, np.inf))  # a - 2d = m + 2d >= 3
     self.assertEqual(_bounds(a1), (5, np.inf))  # a >= 4d + m >= 5
+
+  def test_constraints_eq_geq(self):
+    # We ensure that an equality constraint it is usable not just for
+    # normalization but also for inequality reasoning.
+    a, b = export.symbolic_shape(
+        "a, b", constraints=["4 * a == b"])
+    self.assertGreaterEqual(b, a)
+    self.assertGreaterEqual(b, 3*a)
+    self.assertGreaterEqual(b, 4 * a)
+    self.assertGreaterEqual(5 * a, b)
+    self.assertGreaterEqual(9 * a, 2*b)
 
   def test_constraints_error_msg(self):
     a, b = shape_poly.symbolic_shape("a, b",
@@ -1671,6 +1672,28 @@ class ShapePolyTest(jtu.JaxTestCase):
                          "mod(a + mod(a, 2), -2) == 0",
                          "-2*floordiv(a + mod(a, 2), -2) == a + mod(a, 2)"])
 
+  def test_constraints_eq_mod_0(self):
+    # mod(b, N) == 0 is a common constraint, we need to ensure we can use it
+    # to infer things like: N * floordiv(b, N) == b, b >= N.
+    def f(x):  # x: f32[b] and b % 4 == 0
+      b = x.shape[0]
+      y1 = jnp.ones((1, 3, 4,  b // 4), dtype=x.dtype)
+      y2 = y1.reshape((1, 3, -1))  # : f32[1, 3, b]
+      y3 = x.reshape((1, 1, b)) + y2  # : f32[1, 3, b]
+
+      slice0 = lax.slice(x, (0,), (b // 4,))  # Requires b >= b // 4
+      slice1 = lax.slice(x, (0,), (2 * (b // 4),))  # Requires b >= 2 * (b // 4)
+      slice2 = lax.slice(x, (0,), (3 * (b // 4),))  # Requires b >= 2 * (b // 4)
+      slice3 = lax.slice(x, (0,), (4 * (b // 4),))  # Requires b >= 2 * (b // 4)
+      return (jnp.sum(y3) +
+              jnp.sum(slice0) + jnp.sum(slice1) +
+              jnp.sum(slice2) + jnp.sum(slice3))
+
+    check_shape_poly(self, f,
+                     arg_descriptors=[RandArg((16,), _i32)],
+                     polymorphic_shapes=["b"],
+                     symbolic_constraints=["mod(b, 4) == 0"])
+
   def test_constraints_for_profile(self):
     # A somewhat more involved tests to stress test the correctness and
     # performance
@@ -1713,7 +1736,7 @@ class ShapePolyTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        re.escape("Expected '4 - a' to be greater or equal to 0, but found -1")):
+        re.escape("Expected '- a + 4' to be greater or equal to 0, but found -1")):
       exp.call(np.arange(5, dtype=np.int32))
 
   def test_constraints_eq_0_compile_time_check(self):
@@ -2710,11 +2733,11 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 expect_error=expect_error_associative_scan),
     PolyHarness("one_hot", "poly_num_classes",
                 lambda x, y: jax.nn.one_hot(x, y.shape[0]),
-                arg_descriptors=[np.arange(16, dtype=_f32), RandArg((16,), _f32)],
+                arg_descriptors=[np.arange(16, dtype=_i32), RandArg((16,), _f32)],
                 polymorphic_shapes=[None, "b0, ..."]),
     PolyHarness("one_hot", "all_poly",
                 lambda x, y: jax.nn.one_hot(x, y.shape[0]),
-                arg_descriptors=[np.arange(16, dtype=_f32), RandArg((16,), _f32)],
+                arg_descriptors=[np.arange(16, dtype=_i32), RandArg((16,), _f32)],
                 polymorphic_shapes=["b, ...", "b, ..."]),
     PolyHarness("ones", "",
                 lambda x: jnp.ones(x.shape, dtype=_f32) + x,
@@ -2963,31 +2986,30 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                      RandArg((3, 4, 5), _f32)],
                     polymorphic_shapes=["b, ...", "b, w, ..."], tol=1E-5,
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
-        # TODO(necula): The known dimensions product must be even.
         PolyHarness("random_categorical", f"axis=0_{flags_name}",
                     lambda key, a: jax.random.categorical(
                       jax.random.wrap_key_data(key), a, axis=0),
                     arg_descriptors=[RandArg((key_size,), np.uint32),
                                      RandArg((3, 8), _f32)],
-                    polymorphic_shapes=[None, "b0, ..."],
+                    polymorphic_shapes=[None, "b0, b1"],
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
         PolyHarness("random_categorical", f"axis=1_{flags_name}",
                     lambda key, a: jax.random.categorical(
-                      jax.random.wrap_key_data(key), a, axis=1),
+                        jax.random.wrap_key_data(key), a, axis=1),
                     arg_descriptors=[RandArg((key_size,), np.uint32),
                                      RandArg((3, 5, 8), _f32)],
-                    polymorphic_shapes=[None, "b0, b1, ..."],
+                    polymorphic_shapes=[None, "b0, b1, b2"],
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
         PolyHarness("random_categorical", f"axis=1_then_reshape_{flags_name}",
                     lambda key, a: jax.random.categorical(
-                      jax.random.wrap_key_data(key), a, axis=1).reshape(-1),
+                        jax.random.wrap_key_data(key), a, axis=1).reshape(-1),
                     arg_descriptors=[RandArg((key_size,), np.uint32),
                                      RandArg((3, 5, 8), _f32)],
-                    polymorphic_shapes=[None, "b0, b1, ..."],
+                    polymorphic_shapes=[None, "b0, b1, b2"],
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
         PolyHarness("random_categorical", f"0_dim_{flags_name}",  # One axis has 0 size
                     lambda key, a: jax.random.categorical(
-                      jax.random.wrap_key_data(key), a, axis=1),
+                        jax.random.wrap_key_data(key), a, axis=1),
                     arg_descriptors=[RandArg((key_size,), np.uint32),
                                      RandArg((3, 5, 0), _f32)],
                     polymorphic_shapes=[None, "b0, b1, ..."],
@@ -3005,14 +3027,13 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                      RandArg((64, 12, 4), _f32),  # sample on axis=1
                                      RandArg((3, 4), _f32),
                                      StaticArg(use_p)],
-                    # TODO(necula): threefry requires even-sized samples.
                     polymorphic_shapes=[None,
-                                        "_, 2*b1, _" if arr_poly else None,
+                                        "b0, b1, b2" if arr_poly else None,
                                         "b3, b4" if shape_poly else None],
                     # The array sampled dimension must be larger than res_shape.size
                     symbolic_constraints=[
-                        "2*b1 >= 12" if arr_poly else "1 >= 0",
-                        "2*b1 >= b3*b4" if arr_poly and shape_poly else "1 >= 0",
+                        "b1 >= 12" if arr_poly else "1 >= 0",
+                        "b1 >= b3*b4" if arr_poly and shape_poly else "1 >= 0",
                         "12 >= b3*b4" if shape_poly else "1 >= 0"
                     ],
                     override_jax_config_flags=override_jax_config_flags,
@@ -3039,24 +3060,20 @@ _POLY_SHAPE_TEST_HARNESSES = [
                     lambda key, a: jax.random.uniform(jax.random.wrap_key_data(key),
                                                       a.shape, dtype=_f32),
                     arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 4, 5), _f32)],
-                    polymorphic_shapes=[None, "b0, ..."],
+                    polymorphic_shapes=[None, "b0, 4, 5"],
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
         PolyHarness("random_uniform", f"even_2_{flags_name}",
                     lambda key, a: jax.random.uniform(jax.random.wrap_key_data(key),
-                                                      (2 * a.shape[0], a.shape[1]),
-                                                      dtype=_f32),
+                                                      a.shape, dtype=_f32),
                     arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 4), _f32)],
-                    polymorphic_shapes=[None, "b0, b1, ..."],
+                    polymorphic_shapes=[None, "b0, 2*b1"],
                     override_jax_config_flags=override_jax_config_flags),  # type: ignore
-        PolyHarness("random_uniform", f"error_not_even_{flags_name}",
+        PolyHarness("random_uniform", f"error_unknown_evenness_{flags_name}",
                     lambda key, a: jax.random.uniform(jax.random.wrap_key_data(key),
                                                       a.shape, dtype=_f32),
                     arg_descriptors=[RandArg((key_size,), np.uint32),
                                      RandArg((3, 5), _f32)],
-                    polymorphic_shapes=[None, "b0, ..."],
-                    expect_error=(
-                        (core.InconclusiveDimensionOperation,
-                         "array size .* must be even") if flags_name == "threefry_non_partitionable" else None),
+                    polymorphic_shapes=[None, "b0, b1"],
                     override_jax_config_flags=override_jax_config_flags)  # type: ignore
       ]
         for key_size, flags_name, override_jax_config_flags in [
@@ -3666,7 +3683,7 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
     if "cholesky" in harness.group_name and jtu.test_device_matches(["tpu"]):
       harness.tol = 5e-5
 
-    with jtu.global_config_context(**config_flags):
+    with jtu.thread_local_config_context(**config_flags):
       harness.run_test(self)
 
 

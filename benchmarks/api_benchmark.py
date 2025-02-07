@@ -21,10 +21,9 @@ import operator
 import google_benchmark
 import jax
 from jax import lax
-from jax._src.api_util import shaped_abstractify  # technically not an api fn
 from jax._src.ad_checkpoint import checkpoint  # new jax.remat implementation
+from jax._src import core
 from jax._src.lib import xla_client as xc
-from jax.interpreters import xla
 from jax._src import array
 from jax._src import op_shardings
 from jax._src.pjit import pjit_check_aval_sharding
@@ -422,12 +421,12 @@ def bench_shaped_abstractify(state):
   device, *_ = jax.devices()
   args = [jax.device_put_replicated(1, [device])] * 1000
   while state:
-    _ = [shaped_abstractify(x) for x in args]
+    _ = [core.shaped_abstractify(x) for x in args]
 
 
 def _run_benchmark_for_xla_abstractify(arg, state):
   while state:
-    xla.abstractify(arg)
+    core.abstractify(arg)
 
 def bench_xla_abstractify():
   _abstractify_args = [

@@ -215,3 +215,26 @@ cc_library(
         "@llvm-project//mlir:CAPIIR",
     ],
 )
+
+# Header-only target, used when using the C API from a separate shared library.
+cc_library(
+    name = "gpu_dialect_capi_headers",
+    hdrs = DIALECT_CAPI_HEADERS,
+    deps = [
+        ":mosaic_gpu_inc_gen",
+        "@llvm-project//mlir:CAPIIRHeaders",
+    ],
+)
+
+# Alwayslink target, used when exporting the C API from a shared library.
+cc_library(
+    name = "gpu_dialect_capi_objects",
+    srcs = DIALECT_CAPI_SOURCES,
+    hdrs = DIALECT_CAPI_HEADERS,
+    deps = [
+        ":mosaic_gpu",
+        ":mosaic_gpu_inc_gen",
+        "@llvm-project//mlir:CAPIIRObjects",
+    ],
+    alwayslink = True,
+)

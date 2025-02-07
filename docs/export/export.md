@@ -240,7 +240,7 @@ present on the exporting machine:
 
 ```
 
-There is a safety check that will be raise an error when trying to compile
+There is a safety check that will raise an error when trying to compile
 an `Exported` object on a machine that does not have the accelerator
 for which the code was exported.
 
@@ -326,7 +326,7 @@ combinations of input shapes.
 
 See the {ref}`shape_poly` documentation.
 
-## Device polymorphic export
+## Device-polymorphic export
 
 An exported artifact may contain sharding annotations for inputs,
 outputs and for some intermediates, but these annotations do not refer
@@ -335,20 +335,28 @@ Instead, the sharding annotations refer to logical devices. This
 means that you can compile and run the exported artifacts on different
 physical devices that were used for exporting.
 
+The cleanest way to achieve a device-polymorphic export is to
+use shardings constructed with a `jax.sharding.AbstractMesh`,
+which contains only the mesh shape and axis names. But,
+you can achieve the same results if you use shardings
+constructed for a mesh with concrete devices, since the actual
+devices in the mesh are ignored for tracing and lowering:
+
 ```python
 >>> import jax
 >>> from jax import export
->>> from jax.sharding import Mesh, NamedSharding
+>>> from jax.sharding import AbstractMesh, Mesh, NamedSharding
 >>> from jax.sharding import PartitionSpec as P
+>>>
+>>> # Use an AbstractMesh for exporting
+>>> export_mesh = AbstractMesh((("a", 4),))
 
->>> # Use the first 4 devices for exporting.
->>> export_devices = jax.local_devices()[:4]
->>> export_mesh = Mesh(export_devices, ("a",))
 >>> def f(x):
 ...   return x.T
 
->>> arg = jnp.arange(8 * len(export_devices))
->>> exp = export.export(jax.jit(f, in_shardings=(NamedSharding(export_mesh, P("a")),)))(arg)
+>>> exp = export.export(jax.jit(f))(
+...    jax.ShapeDtypeStruct((32,), dtype=np.int32,
+...                         sharding=NamedSharding(export_mesh, P("a"))))
 
 >>> # `exp` knows for how many devices it was exported.
 >>> exp.nr_devices
@@ -359,8 +367,20 @@ physical devices that were used for exporting.
 >>> exp.in_shardings_hlo
 ({devices=[4]<=[4]},)
 
+>>> # You can also use a concrete set of devices for exporting
+>>> concrete_devices = jax.local_devices()[:4]
+>>> concrete_mesh = Mesh(concrete_devices, ("a",))
+>>> exp2 = export.export(jax.jit(f))(
+...    jax.ShapeDtypeStruct((32,), dtype=np.int32,
+...                         sharding=NamedSharding(concrete_mesh, P("a"))))
+
+>>> # You can expect the same results
+>>> assert exp.in_shardings_hlo == exp2.in_shardings_hlo
+
+>>> # When you call an Exported, you must use a concrete set of devices
+>>> arg = jnp.arange(8 * 4)
 >>> res1 = exp.call(jax.device_put(arg,
-...                                NamedSharding(export_mesh, P("a"))))
+...                                NamedSharding(concrete_mesh, P("a"))))
 
 >>> # Check out the first 2 shards of the result
 >>> [f"device={s.device} index={s.index}" for s in res1.addressable_shards[:2]]
@@ -397,9 +417,11 @@ of devices than it was exported for:
 >>> def f(x):
 ...   return x.T
 
->>> arg = jnp.arange(4 * len(export_devices))
->>> exp = export.export(jax.jit(f, in_shardings=(NamedSharding(export_mesh, P("a")),)))(arg)
+>>> exp = export.export(jax.jit(f))(
+...    jax.ShapeDtypeStruct((4 * len(export_devices),), dtype=np.int32,
+...                         sharding=NamedSharding(export_mesh, P("a"))))
 
+>>> arg = jnp.arange(4 * len(export_devices))
 >>> exp.call(arg)  # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):
 ValueError: Exported module f was lowered for 8 devices and is called in a context with 1 devices. This is disallowed because: the module was lowered for more than 1 device.
@@ -420,13 +442,16 @@ artifacts using a new mesh constructed at the call site:
 >>> def f(x):
 ...   return x.T
 
->>> arg = jnp.arange(4 * len(export_devices))
->>> exp = export.export(jax.jit(f, in_shardings=(NamedSharding(export_mesh, P("a")),)))(arg)
+
+>>> exp = export.export(jax.jit(f))(
+...    jax.ShapeDtypeStruct((4 * len(export_devices),), dtype=np.int32,
+...                         sharding=NamedSharding(export_mesh, P("a"))))
 
 >>> # Prepare the mesh for calling `exp`.
 >>> calling_mesh = Mesh(np.array(export_devices[::-1]), ("b",))
 
 >>> # Shard the arg according to what `exp` expects.
+>>> arg = jnp.arange(4 * len(export_devices))
 >>> sharded_arg = jax.device_put(arg, exp.in_shardings_jax(calling_mesh)[0])
 >>> res = exp.call(sharded_arg)
 

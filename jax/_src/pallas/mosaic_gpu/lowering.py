@@ -161,6 +161,12 @@ def _scan_resource_estimator(*args, jaxpr: jax_core.ClosedJaxpr, **params) -> in
   return _estimate_resources(jaxpr)
 
 
+@_register_resource_estimator(lax.while_p)
+def _while_resource_estimator(*args, cond_jaxpr: jax_core.ClosedJaxpr, body_jaxpr: jax_core.ClosedJaxpr, **params) -> int:
+  del args, params  # Unused.
+  return _estimate_resources(cond_jaxpr) | _estimate_resources(body_jaxpr)
+
+
 @_register_resource_estimator(primitives.run_scoped_p)
 def _run_scoped_resource_estimator(*consts, jaxpr: jax_core.Jaxpr) -> int:
   del consts  # Unused.
@@ -791,25 +797,30 @@ def lower_jaxpr_to_module(
     # Each range is 2 events, each event is 4 bytes.
     prof_spec = mgpu_profiler.ProfilerSpec(prof_space * 2 * 4)
     prof_ctx = ProfilerContext(params["profile_dir"], prof_spec)
-  module, out_structs_gmem, _ = mgpu_core._lower_as_gpu_kernel(
-      body,
-      grid=parallel_grid,
-      cluster=(),
-      block=block,
-      in_shapes=in_structs_gmem,
-      out_shape=out_structs_gmem,
-      smem_scratch_shape=(
-          (*in_structs_smem, *out_structs_smem),
-          *extra_smem_scratch,
-          (
-              mgpu.Barrier(arrival_count=1, num_barriers=max_concurrent_steps),
-              rs.barriers,
-              extra_barriers,
+  module, out_structs_gmem, _, launch_ctx, scratch_arr = (
+      mgpu_core._lower_as_gpu_kernel(
+          body,
+          grid=parallel_grid,
+          cluster=(),
+          block=block,
+          in_shapes=in_structs_gmem,
+          out_shape=out_structs_gmem,
+          smem_scratch_shape=(
+              (*in_structs_smem, *out_structs_smem),
+              *extra_smem_scratch,
+              (
+                  mgpu.Barrier(
+                      arrival_count=1, num_barriers=max_concurrent_steps
+                  ),
+                  rs.barriers,
+                  extra_barriers,
+              ),
           ),
-      ),
-      module_name=name_and_src_info.name,
-      prof_spec=prof_spec,
+          module_name=name_and_src_info.name,
+          prof_spec=prof_spec,
+      )
   )
+  mgpu_core._initialize_scratch(launch_ctx, scratch_arr)
 
   return LoweringResult(
       module, parallel_grid, block, out_structs_gmem, prof_ctx
@@ -1001,19 +1012,23 @@ def _handle_indexing(
   ]
   if not indexer_idxs:
     return ref, transforms
-  if len(indexer_idxs) > 1:
-    raise NotImplementedError("Only one level of indexing supported.")
-  [indexer_idx] = indexer_idxs
-  indexer = cast(indexing.NDIndexer, transforms[indexer_idx])
-  if indexer.int_indexer_shape:
-    raise NotImplementedError("int_indexer_shape non-empty")
-  indices = _ndindexer_indices(indexer)
-  new_transforms_rev = []
-  for t in reversed(transforms[:indexer_idx]):
-    indices, new_t = t.untransform_index(indices)
-    new_transforms_rev.append(new_t)
-  new_transforms = [*reversed(new_transforms_rev), *transforms[indexer_idx + 1:]]
-  return mgpu.memref_slice(ref, indices), new_transforms
+  sliced_ref = ref
+  new_transforms = []
+  for t in transforms:
+    if not isinstance(t, indexing.NDIndexer):
+      new_transforms.append(t)
+      continue
+    indexer = cast(indexing.NDIndexer, t)
+    if indexer.int_indexer_shape:
+      raise NotImplementedError("int_indexer_shape non-empty")
+    indices = _ndindexer_indices(indexer)
+    new_transforms_rev = []
+    for t in reversed(new_transforms):
+      indices, new_t = t.untransform_index(indices)
+      new_transforms_rev.append(new_t)
+    sliced_ref = mgpu.memref_slice(sliced_ref, indices)
+    new_transforms = list(reversed(new_transforms_rev))
+  return sliced_ref, new_transforms
 
 
 def _ndindexer_indices(indexer: indexing.NDIndexer) -> tuple[gpu_core.Index, ...]:
@@ -1106,6 +1121,9 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
       ctx.module_ctx, ctx.launch_ctx, jaxpr.jaxpr, args
   )
 
+@register_lowering_rule(pjit.mesh_cast_p)
+def _mesh_cast_lowering_rule(ctx, x, dst_sharding):
+  return x
 
 @register_lowering_rule(lax.slice_p)
 def _slice_lowering_rule(
@@ -1415,15 +1433,6 @@ def _run_scoped_lowering_rule(
         ctx.module_ctx, ctx.launch_ctx, jaxpr, input_refs, consts
     )
 
-  for o in outs:
-    # This is definitely one of the accumulators we produced. Each
-    # run_scoped call is responsible for dereferencing its own
-    # accumulators.
-    if isinstance(o, mgpu.WGMMAAccumulator) or (
-        isinstance(o, ir.Value) and ir.MemRefType.isinstance(o.type)
-    ):
-      raise ValueError(f"No references are allowed to escape a scope. (got {o})")
-
   assert len(outs) == len(jaxpr.outvars), (jaxpr, outs)
   return outs
 
@@ -1493,7 +1502,14 @@ def _lower_jaxpr_to_for_loop(
   if arg_avals:
     out_avals = ctx.avals_out[-len(arg_avals):]
 
-  @mgpu.fori(length, [*map(_ensure_fa, args, arg_avals)])
+  is_acc = [isinstance(v, mgpu.WGMMAAccumulator) for v in args]
+  def as_fas(vals, avals):
+    if is_acc != [isinstance(v, mgpu.WGMMAAccumulator) for v in vals]:
+      raise ValueError("Unexpected loop carry w.r.t. accumulators.")
+
+    return [v if a else _ensure_fa(v, av) for a, v, av in zip(is_acc, vals, avals)]
+
+  @mgpu.fori(length, as_fas(args, arg_avals))
   def loop(loop_index, body_args):
     if has_loop_index:
       loop_index = arith_dialect.addi(loop_index, start)
@@ -1503,7 +1519,7 @@ def _lower_jaxpr_to_for_loop(
     outs = lower_jaxpr_to_mosaic_gpu(
         ctx.module_ctx, ctx.launch_ctx, jaxpr, jaxpr_args
     )
-    return map(_ensure_fa, outs, out_avals)
+    return as_fas(outs, out_avals)
 
   return loop.results
 
@@ -1558,6 +1574,44 @@ def _scan_lowering_rule(
   return for_out
 
 
+def _lower_while_via_fori(
+    ctx: LoweringRuleContext,
+    *args,
+    fori_jaxpr,
+    cond_nconsts,
+    body_nconsts,
+):
+  assert not fori_jaxpr.constvars
+  # The pattern matcher looks for conditions with no constants.
+  assert cond_nconsts == 0
+
+  # Reflect the changes of the pattern matcher to the context.
+  lb_aval, ub_aval, *_ = ctx.avals_in[cond_nconsts + body_nconsts:]
+  ctx = ctx.replace(
+      avals_in=(
+          *ctx.avals_in[cond_nconsts:body_nconsts],
+          ctx.avals_in[body_nconsts],  # the index
+          *ctx.avals_in[body_nconsts + 2 :],
+      ),
+      avals_out=tuple(ctx.avals_out[2:]),
+  )
+  _, consts, (lb, ub, *args) = util.split_list(
+      args, [cond_nconsts, body_nconsts]
+  )
+  lb = _ensure_ir_value(lb, lb_aval.dtype)
+  ub = _ensure_ir_value(ub, ub_aval.dtype)
+  for_out = _lower_jaxpr_to_for_loop(
+      ctx,
+      fori_jaxpr,
+      lb,
+      arith_dialect.subi(ub, lb),
+      consts,
+      *args,
+      has_loop_index=True,
+  )
+  return ub, ub, *for_out
+
+
 @register_lowering_rule(lax.while_p)
 def _while_lowering_rule(
     ctx: LoweringRuleContext,
@@ -1568,33 +1622,73 @@ def _while_lowering_rule(
     body_nconsts,
 ):
   # First try to lower via a simpler fori loop, which may optimize better.
-  fori_jaxpr, err = pallas_utils.pattern_match_while_to_fori_loop(
+  fori_jaxpr, _ = pallas_utils.pattern_match_while_to_fori_loop(
       cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts
   )
-  del cond_jaxpr, body_jaxpr
-  if fori_jaxpr is None:
-    raise NotImplementedError(err)
+  if fori_jaxpr is not None:
+    return _lower_while_via_fori(
+        ctx,
+        *args,
+        fori_jaxpr=fori_jaxpr,
+        cond_nconsts=cond_nconsts,
+        body_nconsts=body_nconsts,
+    )
 
-  if fori_jaxpr.constvars:
-    raise NotImplementedError
-
-  lb_aval, ub_aval, *_ = ctx.avals_in[body_nconsts:]
-  # Reflect the changes of the pattern matcher to the context.
-  avals_in = (
-      *ctx.avals_in[cond_nconsts:body_nconsts],
-      ctx.avals_in[body_nconsts],  # the index
-      *ctx.avals_in[body_nconsts + 2:],
+  # If we fail conversion to fori, fallback to an ordinary while loop.
+  cond_consts, body_consts, carry = util.split_list(
+      args, [cond_nconsts, body_nconsts]
   )
+  _cond_avals, body_avals, carry_avals = util.split_list(
+      ctx.avals_in, [cond_nconsts, body_nconsts]
+  )
+  carry = [
+      v if isinstance(v, mgpu.WGMMAAccumulator) else _ensure_fa(v, av)
+      for v, av in zip(carry, carry_avals)
+  ]
+  # Flatten the carry to get a concatenated list of registers from each FA.
+  # Note that the treedef is also used below to unflatten the body results.
+  flat_carry, carry_treedef = jax.tree.flatten(carry)
+  flat_carry_types = [a.type for a in flat_carry]
+  while_op = scf_dialect.WhileOp(flat_carry_types, flat_carry)
 
-  avals_out = tuple(ctx.avals_out[2:])
-  ctx = ctx.replace(avals_in=avals_in, avals_out=avals_out)
-  _, consts, (lb, ub, *args) = util.split_list(args, [cond_nconsts, body_nconsts])
+  before_block = while_op.before.blocks.append(*flat_carry_types)
+  with ir.InsertionPoint.at_block_begin(before_block):
+    cond_args = [*cond_consts, *carry_treedef.unflatten(before_block.arguments)]
+    [cond] = lower_jaxpr_to_mosaic_gpu(
+        ctx.module_ctx, ctx.launch_ctx, cond_jaxpr.jaxpr, cond_args
+    )
+    scf_dialect.condition(
+        _ensure_ir_value(cond, *cond_jaxpr.out_avals), before_block.arguments
+    )
 
-  lb, ub = _ensure_ir_value(lb, lb_aval.dtype), _ensure_ir_value(ub, ub_aval.dtype)
-  length = arith_dialect.subi(ub, lb)
+  after_block = while_op.after.blocks.append(*flat_carry_types)
+  with ir.InsertionPoint.at_block_begin(after_block):
+    body_args = [*body_consts, *carry_treedef.unflatten(after_block.arguments)]
+    loop_out = lower_jaxpr_to_mosaic_gpu(
+        ctx.module_ctx, ctx.launch_ctx, body_jaxpr.jaxpr, body_args
+    )
+    loop_out = [
+        v if isinstance(v, mgpu.WGMMAAccumulator) else _ensure_fa(v, av)
+        for v, av in zip(loop_out, carry_avals)
+    ]
+    for idx, (carry_fa, out_fa) in enumerate(zip(carry, loop_out)):
+      _is_acc = lambda x: isinstance(x, mgpu.WGMMAAccumulator)
+      if _is_acc(carry_fa) != _is_acc(out_fa):
+        raise ValueError(
+            f"The loop body output has unexpected accumulator type: output[{idx}]"
+            f" is {out_fa}, when it should be {carry_fa}."
+        )
 
-  for_out = _lower_jaxpr_to_for_loop(ctx, fori_jaxpr, lb, length, consts, *args, has_loop_index=True)
-  return (ub, ub, *for_out)
+      if not _is_acc(out_fa) and carry_fa.layout != out_fa.layout:
+        raise ValueError(
+            f"The loop body output has unexpected layout: output[{idx}] has"
+            f" layout {out_fa.layout}, when it should be {carry_fa.layout}."
+        )
+    scf_dialect.yield_(
+        carry_treedef.flatten_up_to(loop_out) if loop_out else []
+    )
+  return carry_treedef.unflatten(list(while_op.results))
+
 
 @register_lowering_rule(lax.cond_p)
 def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
@@ -1619,6 +1713,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
         ctx.module_ctx, ctx.launch_ctx, branches[0].jaxpr, args
     )
     yielded_types = [v.type for v in jax.tree.leaves(_yielded_values(outs, ctx.avals_out))]
+    del outs
 
   switch_op = scf_dialect.IndexSwitchOp(
       yielded_types,
@@ -1711,29 +1806,21 @@ def _ensure_fa(x: object, dtype: jnp.dtype) -> mgpu.FragmentedArray:
   if isinstance(x, mgpu.FragmentedArray):
     assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
     return x
-  elif isinstance(x, (np.number, np.ndarray, int, float)):
-    return mgpu.FragmentedArray.splat(
-        _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype)),
-        (),
-        is_signed=mgpu_utils.is_signed(dtype),
-    )
-  elif isinstance(x, ir.Value):
-    if isinstance(x.type, (ir.IntegerType, ir.FloatType, ir.IndexType)):
-      assert x.type == mgpu_utils.dtype_to_ir_type(dtype)
-      return mgpu.FragmentedArray.splat(x, (), is_signed=mgpu_utils.is_signed(dtype))
-  raise NotImplementedError(f"Unsupported type: {type(x)}")
+  return mgpu.FragmentedArray.splat(
+      _ensure_ir_value(x, dtype), (), is_signed=mgpu_utils.is_signed(dtype)
+  )
 
 
 def _ensure_ir_value(x: object, dtype: jnp.dtype) -> ir.Value:
   if isinstance(x, ir.Value):
     assert x.type == mgpu_utils.dtype_to_ir_type(dtype)
     return x
-  elif isinstance(x, (np.number, np.ndarray, int, float)):
-    return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
   elif isinstance(x, mgpu.FragmentedArray):
+    assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
     if isinstance(x.layout, mgpu.WGSplatFragLayout):
       return x.registers.item()
-  raise NotImplementedError(f"Unsupported type: {type(x)}")
+    raise NotImplementedError(f"Unsupported layout: {x.layout}")
+  return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
 
 
 def _ir_constant(v: object, t: ir.Type) -> ir.Value:
@@ -1771,3 +1858,65 @@ def _as_index(v: object) -> ir.Value:
       return _as_index(v.registers.item())
     case _:
       raise ValueError(f"Unsupported index: {v} of type {type(v)}")
+
+
+def merge_indexers(
+    indexers: Sequence[indexing.NDIndexer]) -> indexing.NDIndexer:
+  """Merges multiple indexers into a single indexer.
+
+  This function computes a new indexer such that applying the
+  new indexer produces the same result as applying the sequence
+  of input indexers in order from first-to-last.
+  """
+  if len(indexers) == 0:
+    raise ValueError("Cannot merge empty list of indexers")
+  if len(indexers) == 1:
+    return indexers[0]
+  root_shape = indexers[0].shape
+  current_indices = [indexing.Slice(0, size, 1) for size in root_shape]
+  removed_dimensions = set()
+  for indexer in indexers:
+    if indexer.int_indexer_shape:
+      raise NotImplementedError()
+
+    def _ensure_idx_fa(x):
+      index = ir.IndexType.get()
+      i32 = ir.IntegerType.get_signless(32)
+      if isinstance(x, ir.Value):
+        return mgpu.FragmentedArray.splat(
+            x, (), is_signed=mgpu.utils.is_signed(x.type)
+        ).astype(i32, is_signed=False)
+      if isinstance(x, mgpu.FragmentedArray):
+        return x.astype(i32, is_signed=False)
+      if isinstance(x, int):
+        return mgpu.FragmentedArray.splat(mgpu.c(x, i32), (), is_signed=False)
+      raise NotImplementedError(x)
+
+    num_skipped = 0
+    for i in range(len(current_indices)):
+      # Integer indexers remove dimensions which should be
+      # skipped by following indexers.
+      if i in removed_dimensions:
+        num_skipped += 1
+        continue
+      dim_indexer = indexer.indices[i - num_skipped]
+      current_index = current_indices[i]
+      assert isinstance(current_index, indexing.Slice)
+
+      current_start_index = _ensure_idx_fa(current_index.start)
+      if isinstance(dim_indexer, indexing.Slice):
+        if dim_indexer.stride != 1:
+          raise NotImplementedError("Non-unit strides not implemented.")
+        current_indices[i] = indexing.Slice(
+            current_start_index + _ensure_idx_fa(dim_indexer.start),
+            dim_indexer.size,
+            1,
+        )
+      else:
+        current_indices[i] = current_start_index + _ensure_idx_fa(dim_indexer)
+        removed_dimensions.add(i)
+  return indexing.NDIndexer(
+      indices=tuple(current_indices),
+      shape=root_shape,
+      int_indexer_shape=(),
+  )

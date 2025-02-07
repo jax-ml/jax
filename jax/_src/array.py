@@ -22,9 +22,7 @@ import math
 import operator as op
 from typing import Any, TYPE_CHECKING, cast
 
-from jax._src import abstract_arrays
 from jax._src import api
-from jax._src import api_util
 from jax._src import basearray
 from jax._src import config
 from jax._src import core
@@ -33,6 +31,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
 from jax._src import profiler
+from jax._src import util
 from jax._src import xla_bridge
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
@@ -40,9 +39,10 @@ from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout, Layout
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension as xe
+from jax._src.lib import xla_extension_version
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    PmapSharding, SingleDeviceSharding, NamedSharding,
+    PmapSharding, SingleDeviceSharding,
     device_replica_id_map, hashed_index, num_addressable_indices, local_to_global_shape)  # pyformat: disable
 from jax._src.typing import ArrayLike, DLDeviceType
 from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method, cache
@@ -56,7 +56,10 @@ PRNGKeyArray = Any  # TODO(jakevdp): fix cycles and import this.
 
 def _get_device(a: ArrayImpl) -> Device:
   devices = a.sharding._internal_device_list  # pytype: disable=attribute-error
-  assert len(devices) == 1
+  if len(devices) != 1:
+    raise ValueError(
+        "When making an array from single-device arrays the input arrays must "
+        f"have one shard each. An argument array had {len(devices)} shard(s).")
   return devices[0]
 
 
@@ -196,54 +199,102 @@ class ArrayImpl(basearray.Array):
 
     self.aval = aval
     self._sharding = sharding
-    self._arrays = [a._arrays[0] for a in arrays]
     self._committed = committed
     self._npy_value = None
+    arrays = [a._arrays[0] for a in arrays]
 
     # Don't rearrange if skip_checks is enabled because this assumes that the
     # input buffers are already arranged properly. This usually happens when
     # Array's are created as output of a JAX transformation
     # (like pjit, etc).
     if not _skip_checks or config.enable_checks.value:
-      self._check_and_rearrange()
+      arrays = self._check_and_rearrange(arrays, self._sharding, self.aval)
+    self._arrays = arrays  # type: ignore
 
-  def _check_and_rearrange(self):
-    device_id_to_buffer = {_get_device(db).id: db for db in self._arrays}
+  if xla_extension_version >= 310:
+    def _check_and_rearrange(self, arrays, sharding, aval):
+      device_id_to_buffer = {_get_device(db).id: db for db in arrays}
 
-    addressable_dev = self.sharding.addressable_devices
-    if len(self._arrays) != len(addressable_dev):
-      raise ValueError(
-          f"Expected {len(addressable_dev)} per-device arrays "
-          "(this is how many devices are addressable by the sharding), but "
-          f"got {len(self._arrays)}")
+      addressable_dev = sharding.addressable_devices
+      if len(arrays) != len(addressable_dev):
+        raise ValueError(
+            f"Expected {len(addressable_dev)} per-device arrays "
+            "(this is how many devices are addressable by the sharding), but "
+            f"got {len(arrays)}")
 
-    array_device_ids = set(device_id_to_buffer.keys())
-    addressable_device_ids = {d.id for d in addressable_dev}
-    # Calculate a symmetric difference because the device ids between sharding
-    # and _arrays should match.
-    diff = array_device_ids ^ addressable_device_ids
-    if diff:
-      dev_in_sharding_not_in_arrays = addressable_device_ids - array_device_ids
-      dev_in_arrays_not_in_sharding = array_device_ids - addressable_device_ids
-      err_msg = (
-          "Addressable devices and per-device arrays devices do not match.")
-      if dev_in_sharding_not_in_arrays:
-        err_msg += (f" Sharding contains devices {dev_in_sharding_not_in_arrays} "
-                    "that are not present in per-device arrays.")
-      if dev_in_arrays_not_in_sharding:
-        err_msg += (f" Per-device arrays contain devices {dev_in_arrays_not_in_sharding} "
-                    "that are not present in the sharding.")
-      raise ValueError(err_msg)
+      array_device_ids = set(device_id_to_buffer.keys())
+      addressable_device_ids = {d.id for d in addressable_dev}
+      if len(array_device_ids) != len(arrays):
+        buffer_device_ids = [_get_device(db).id for db in arrays]
+        raise ValueError(
+            "When making an array from single-device arrays, the input arrays"
+            " must be from distinct devices, but got device IDs"
+            f" {buffer_device_ids}")
 
-    _validate_shape_and_dtype_for_per_device_arrays(
-        self._arrays,
-        sharding=self.sharding,
-        aval=self.aval,
-        expected_shape=self.sharding.shard_shape(self.shape),
-    )
-    # Rearrange arrays based on the device assignment.
-    addressable_da = self.sharding._addressable_device_assignment
-    self._arrays = [device_id_to_buffer[device.id] for device in addressable_da]
+      # Calculate a symmetric difference because the device ids between sharding
+      # and _arrays should match.
+      diff = array_device_ids ^ addressable_device_ids
+      if diff:
+        dev_in_sharding_not_in_arrays = addressable_device_ids - array_device_ids
+        dev_in_arrays_not_in_sharding = array_device_ids - addressable_device_ids
+        err_msg = (
+            "Addressable devices and per-device arrays devices do not match.")
+        if dev_in_sharding_not_in_arrays:
+          err_msg += (f" Sharding contains devices {dev_in_sharding_not_in_arrays} "
+                      "that are not present in per-device arrays.")
+        if dev_in_arrays_not_in_sharding:
+          err_msg += (f" Per-device arrays contain devices {dev_in_arrays_not_in_sharding} "
+                      "that are not present in the sharding.")
+        raise ValueError(err_msg)
+
+      _validate_shape_and_dtype_for_per_device_arrays(
+          arrays,
+          sharding=sharding,
+          aval=aval,
+          expected_shape=sharding.shard_shape(aval.shape),
+      )
+
+      # Rearrange arrays based on the device assignment.
+      addressable_da = sharding._addressable_device_assignment
+      return [device_id_to_buffer[device.id] for device in addressable_da]
+  else:
+    def _check_and_rearrange(self):  # type: ignore
+      device_id_to_buffer = {_get_device(db).id: db for db in self._arrays}
+
+      addressable_dev = self.sharding.addressable_devices
+      if len(self._arrays) != len(addressable_dev):
+        raise ValueError(
+            f"Expected {len(addressable_dev)} per-device arrays "
+            "(this is how many devices are addressable by the sharding), but "
+            f"got {len(self._arrays)}")
+
+      array_device_ids = set(device_id_to_buffer.keys())
+      addressable_device_ids = {d.id for d in addressable_dev}
+      # Calculate a symmetric difference because the device ids between sharding
+      # and _arrays should match.
+      diff = array_device_ids ^ addressable_device_ids
+      if diff:
+        dev_in_sharding_not_in_arrays = addressable_device_ids - array_device_ids
+        dev_in_arrays_not_in_sharding = array_device_ids - addressable_device_ids
+        err_msg = (
+            "Addressable devices and per-device arrays devices do not match.")
+        if dev_in_sharding_not_in_arrays:
+          err_msg += (f" Sharding contains devices {dev_in_sharding_not_in_arrays} "
+                      "that are not present in per-device arrays.")
+        if dev_in_arrays_not_in_sharding:
+          err_msg += (f" Per-device arrays contain devices {dev_in_arrays_not_in_sharding} "
+                      "that are not present in the sharding.")
+        raise ValueError(err_msg)
+
+      _validate_shape_and_dtype_for_per_device_arrays(
+          self._arrays,
+          sharding=self.sharding,
+          aval=self.aval,
+          expected_shape=self.sharding.shard_shape(self.shape),
+      )
+      # Rearrange arrays based on the device assignment.
+      addressable_da = self.sharding._addressable_device_assignment
+      self._arrays = [device_id_to_buffer[device.id] for device in addressable_da]
 
   @property
   def shape(self) -> Shape:
@@ -754,7 +805,8 @@ def make_array_from_callback(
   first_value = per_device_values[0]
   expected_dtype = first_value.dtype
   expected_shape = sharding.shard_shape(shape)
-  aval = core.ShapedArray(shape, expected_dtype)
+  aval = core.update_aval_with_sharding(
+      core.ShapedArray(shape, expected_dtype), sharding)
   _validate_shape_and_dtype_for_per_device_arrays(
       per_device_values,
       expected_shape=expected_shape,
@@ -1014,30 +1066,32 @@ def make_array_from_single_device_arrays(
   """
   # All input arrays should be committed. Checking it is expensive on
   # single-controller systems.
-  if any(isinstance(arr, core.Tracer) for arr in arrays):
-    raise ValueError(
-        "jax.make_array_from_single_device_arrays requires a list of concrete"
-        f" arrays as input. got types {set(map(type, arrays))}")
-  aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
+  aval = core.update_aval_with_sharding(
+      core.ShapedArray(shape, arrays[0].dtype, weak_type=False), sharding)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     return aval.dtype._rules.make_sharded_array(aval, sharding, arrays,
                                                 committed=True)
   # TODO(phawkins): ideally the cast() could be checked.
-  return ArrayImpl(aval, sharding, cast(Sequence[ArrayImpl], arrays),
-                   committed=True)
+  try:
+    return ArrayImpl(aval, sharding, cast(Sequence[ArrayImpl], arrays),
+                    committed=True)
+  except TypeError:
+    if not isinstance(arrays, Sequence):
+      raise TypeError("jax.make_array_from_single_device_arrays `arrays` "
+                      "argument must be a Sequence (list or tuple), but got "
+                      f"{type(arrays)}.")
+    if any(isinstance(arr, core.Tracer) for arr in arrays):
+      raise ValueError(
+          "jax.make_array_from_single_device_arrays requires a list of concrete"
+          f" arrays as input, but got types {set(map(type, arrays))}")
+    raise
 
-
-core.pytype_aval_mappings[ArrayImpl] = abstract_arrays.canonical_concrete_aval
-xla.pytype_aval_mappings[ArrayImpl] = op.attrgetter('aval')
 xla.canonicalize_dtype_handlers[ArrayImpl] = pxla.identity
+
 def _get_aval_array(self):
-  if config.sharding_in_types.value and isinstance(self.sharding, NamedSharding):
-    return self.aval.update(sharding=NamedSharding(
-        self.sharding.mesh.abstract_mesh,
-        self.sharding.spec._normalized_spec(self.ndim)))
-  else:
-    return self.aval
-api_util._shaped_abstractify_handlers[ArrayImpl] = _get_aval_array
+  return core.update_aval_with_sharding(self.aval, self.sharding)
+core.pytype_aval_mappings[ArrayImpl] = _get_aval_array
+
 # TODO(jakevdp) replace this with true inheritance at the C++ level.
 basearray.Array.register(ArrayImpl)
 
@@ -1094,7 +1148,7 @@ def shard_device_array(x, devices, indices, sharding):
     shards = [x] * len(devices)
   else:
     shards = x._multi_slice(start_indices, limit_indices, removed_dims)
-  aval = api_util.shaped_abstractify(x)
+  aval = core.shaped_abstractify(x)
   return pxla.batched_device_put(aval, sharding, shards, devices)
 
 
@@ -1131,6 +1185,7 @@ def _sharding_indices_and_eq(src_sharding, shape, dst_sharding):
 
 
 def _array_shard_arg(xs, shardings, layouts, copy_semantics):
+  util.test_event("_array_shard_arg")
   results = []
   batch_xs, batch_devs, batch_shardings, batch_indices = [], [], [], []
   batch_cs = []
@@ -1168,6 +1223,7 @@ def _array_shard_arg(xs, shardings, layouts, copy_semantics):
         results.append(
             shard_sharded_device_array_slow_path(x, devices, indices, sharding))
 
+  util.test_event("batched_copy_array")
   copy_outs = xc.batched_copy_array_to_devices_with_sharding(
       batch_xs, batch_devs, batch_shardings, batch_cs)
   for i, copy_out in safe_zip(batch_indices, copy_outs):
@@ -1178,6 +1234,7 @@ pxla.shard_arg_handlers[ArrayImpl] = _array_shard_arg
 
 
 def _array_global_result_handler(global_aval, out_sharding, committed):
+  global_aval = core.update_aval_with_sharding(global_aval, out_sharding)
   if global_aval.dtype == dtypes.float0:
     return lambda _: np.zeros(global_aval.shape, dtypes.float0)
   if dtypes.issubdtype(global_aval.dtype, dtypes.extended):
@@ -1204,14 +1261,18 @@ pxla.local_result_handlers[core.ShapedArray] = _array_local_result_handler
 # Token handlers
 
 def _token_shard_arg(xs, shardings, layouts, copy_semantics):
-  return _array_shard_arg([x._buf for x in xs], shardings, layouts,
-                          copy_semantics)
+  results = []
+  for x, sharding, layout in safe_zip(xs, shardings, layouts):
+    x.block_until_ready()
+    x = np.array([], dtype=bool)
+    results.append(api.device_put(x, Layout(layout, sharding)))
+  return results
 pxla.shard_arg_handlers[core.Token] = _token_shard_arg
 
 
 def _token_global_result_handler(global_aval, out_sharding, committed):
   array_handler = _array_global_result_handler(
-      core.token_shaped_array, out_sharding, committed)
+      core.get_token_aval(), out_sharding, committed)
 
   def wrapper(*args, **kwargs):
     out_buf = array_handler(*args, **kwargs)

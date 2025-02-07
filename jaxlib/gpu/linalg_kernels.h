@@ -16,31 +16,13 @@ limitations under the License.
 #ifndef JAXLIB_GPU_LINALG_KERNELS_H_
 #define JAXLIB_GPU_LINALG_KERNELS_H_
 
-#include <cstddef>
 #include <cstdint>
 
 #include "jaxlib/gpu/vendor.h"
 #include "xla/ffi/api/ffi.h"
-#include "xla/service/custom_call_status.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
-
-enum LinalgType {
-  F32 = 0,
-  F64 = 1,
-};
-
-struct CholeskyUpdateDescriptor {
-  LinalgType linalg_type;
-  std::int64_t matrix_size;  // leading dim (N) for a square (NxN)matrix
-};
-
-gpuError_t LaunchCholeskyUpdateKernel(gpuStream_t stream, void** buffers,
-                                      CholeskyUpdateDescriptor descriptor);
-
-void CholeskyUpdate(gpuStream_t stream, void** buffers, const char* opaque,
-                    size_t opaque_len, XlaCustomCallStatus* status);
 
 gpuError_t LaunchCholeskyUpdateFfiKernel(gpuStream_t stream, void* matrix,
                                          void* vector, int size,

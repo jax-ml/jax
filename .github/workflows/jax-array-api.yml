@@ -28,17 +28,18 @@ jobs:
       with:
         repository: data-apis/array-api-tests
         # TODO(jakevdp) update this to a stable release/tag when available.
-        ref: '1572b129c6682211abfe139e112592226c361a6c'  # Latest commit as of 2024-12-04
+        ref: 'd982a6245400295477f5da5afa1c4a2a5e641ea4'  # Latest commit as of 2025-01-30
         submodules: 'true'
         path: 'array-api-tests'
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+      uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38  # v5.4.0
       with:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        python -m pip install .[ci]
-        python -m pip install pytest-xdist -r array-api-tests/requirements.txt
+        pip install uv
+        uv pip install --system .[ci]
+        uv pip install --system pytest-xdist -r array-api-tests/requirements.txt
     - name: Run the test suite
       env:
         ARRAY_API_TESTS_MODULE: jax.numpy
