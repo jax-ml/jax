@@ -89,7 +89,6 @@ for pkg_name in ['jax_cuda12_plugin', 'jax.jaxlib']:
   else:
     break
 
-newaxis = None
 T = TypeVar('T')
 
 
@@ -102,20 +101,6 @@ def canonicalize_shape(shape: Any, context: str="") -> core.Shape:
   else:
     return core.canonicalize_shape(shape, context)
 
-
-# NumPy constants
-
-pi = np.pi
-e = np.e
-euler_gamma = np.euler_gamma
-inf = np.inf
-nan = np.nan
-
-# NumPy utility functions
-
-get_printoptions = np.get_printoptions
-printoptions = np.printoptions
-set_printoptions = np.set_printoptions
 
 @export
 def iscomplexobj(x: Any) -> bool:
@@ -167,19 +152,10 @@ def _dtype(x: Any) -> DType:
 # Dtype-related functions
 iinfo = dtypes.iinfo
 finfo = dtypes.finfo
-
-dtype = np.dtype
 can_cast = dtypes.can_cast
 promote_types = dtypes.promote_types
 
 ComplexWarning = NumpyComplexWarning
-
-# Numpy functions
-array_str = np.array_str
-array_repr = np.array_repr
-
-save = np.save
-savez = np.savez
 
 
 def _jnp_dtype(obj: DTypeLike | None, *, align: bool = False,
@@ -542,8 +518,6 @@ def isscalar(element: Any) -> bool:
   elif hasattr(element, '__jax_array__'):
     return asarray(element).ndim == 0
   return False
-
-iterable = np.iterable
 
 
 @export
@@ -3870,7 +3844,7 @@ def flatnonzero(a: ArrayLike, *, size: int | None = None,
 @export
 @partial(jit, static_argnames=('axis',))
 def unwrap(p: ArrayLike, discont: ArrayLike | None = None,
-           axis: int = -1, period: ArrayLike = 2 * pi) -> Array:
+           axis: int = -1, period: ArrayLike = 2 * np.pi) -> Array:
   """Unwrap a periodic signal.
 
   JAX implementation of :func:`numpy.unwrap`.
@@ -6911,12 +6885,12 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
                             _canonicalize_axis(axis, out.ndim))
 
   elif num == 1:
-    delta = asarray(nan if endpoint else stop - start, dtype=computation_dtype)
+    delta = asarray(np.nan if endpoint else stop - start, dtype=computation_dtype)
     out = reshape(broadcast_start, bounds_shape)
   else:  # num == 0 degenerate case, match numpy behavior
     empty_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))
     empty_shape.insert(axis, 0)
-    delta = asarray(nan, dtype=computation_dtype)
+    delta = asarray(np.nan, dtype=computation_dtype)
     out = reshape(array([], dtype=dtype), empty_shape)
 
   if issubdtype(dtype, np.integer) and not issubdtype(out.dtype, np.integer):
@@ -10510,7 +10484,7 @@ def _nanargmax(a, axis: int | None = None, keepdims: bool = False):
   if not issubdtype(_dtype(a), np.inexact):
     return argmax(a, axis=axis, keepdims=keepdims)
   nan_mask = ufuncs.isnan(a)
-  a = where(nan_mask, -inf, a)
+  a = where(nan_mask, -np.inf, a)
   res = argmax(a, axis=axis, keepdims=keepdims)
   return where(reductions.all(nan_mask, axis=axis, keepdims=keepdims), -1, res)
 
@@ -10571,7 +10545,7 @@ def _nanargmin(a, axis: int | None = None, keepdims : bool = False):
   if not issubdtype(_dtype(a), np.inexact):
     return argmin(a, axis=axis, keepdims=keepdims)
   nan_mask = ufuncs.isnan(a)
-  a = where(nan_mask, inf, a)
+  a = where(nan_mask, np.inf, a)
   res = argmin(a, axis=axis, keepdims=keepdims)
   return where(reductions.all(nan_mask, axis=axis, keepdims=keepdims), -1, res)
 
@@ -11560,7 +11534,7 @@ def take_along_axis(
     return tuple(lst)
 
   use_64bit_index = any(not core.is_constant_dim(d) or d >= (1 << 31) for d in a.shape)
-  index_dtype = dtype('int64' if use_64bit_index else 'int32')
+  index_dtype = np.dtype('int64' if use_64bit_index else 'int32')
   indices = lax.convert_element_type(indices, index_dtype)
 
   axis_size = a.shape[axis_int]
@@ -12365,7 +12339,7 @@ def blackman(M: int) -> Array:
   if M <= 1:
     return ones(M, dtype)
   n = lax.iota(dtype, M)
-  return 0.42 - 0.5 * ufuncs.cos(2 * pi * n / (M - 1)) + 0.08 * ufuncs.cos(4 * pi * n / (M - 1))
+  return 0.42 - 0.5 * ufuncs.cos(2 * np.pi * n / (M - 1)) + 0.08 * ufuncs.cos(4 * np.pi * n / (M - 1))
 
 
 @export
@@ -12427,7 +12401,7 @@ def hamming(M: int) -> Array:
   if M <= 1:
     return ones(M, dtype)
   n = lax.iota(dtype, M)
-  return 0.54 - 0.46 * ufuncs.cos(2 * pi * n / (M - 1))
+  return 0.54 - 0.46 * ufuncs.cos(2 * np.pi * n / (M - 1))
 
 
 @export
@@ -12458,7 +12432,7 @@ def hanning(M: int) -> Array:
   if M <= 1:
     return ones(M, dtype)
   n = lax.iota(dtype, M)
-  return 0.5 * (1 - ufuncs.cos(2 * pi * n / (M - 1)))
+  return 0.5 * (1 - ufuncs.cos(2 * np.pi * n / (M - 1)))
 
 
 @export
