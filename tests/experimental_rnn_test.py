@@ -213,9 +213,7 @@ class RnnTest(jtu.JaxTestCase):
 
     k = jax.random.split(jax.random.PRNGKey(1), 4)
     stablehlo = jax.jit(f).lower(*k).as_text("stablehlo")
-    self.assertIn('stablehlo.custom_call @cudnn_rnn(%0, %1, %2, %6, %5) '
-                  '{api_version = 2 : i32, backend_config = '
-                  '"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\00@\\03\\80\\00@\\01\\00\\00"}',
+    self.assertIn('"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\00@\\03\\80\\00@\\01\\00\\00"',
                   stablehlo)
 
 if __name__ == '__main__':

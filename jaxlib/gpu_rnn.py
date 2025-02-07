@@ -33,7 +33,9 @@ for cuda_module_name in [".cuda", "jax_cuda12_plugin"]:
 
 if _cuda_rnn:
   for _name, _value in _cuda_rnn.registrations().items():
-    xla_client.register_custom_call_target(_name, _value, platform='CUDA')
+    api_version = 1 if _name.endswith("_ffi") else 0
+    xla_client.register_custom_call_target(_name, _value, platform='CUDA',
+                                           api_version=api_version)
   compute_rnn_workspace_reserve_space_sizes = _cuda_rnn.compute_rnn_workspace_reserve_space_sizes
 
 
@@ -47,7 +49,9 @@ for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
 
 if _hip_rnn:
   for _name, _value in _hip_rnn.registrations().items():
-    xla_client.register_custom_call_target(_name, _value, platform='ROCM')
+    api_version = 1 if _name.endswith("_ffi") else 0
+    xla_client.register_custom_call_target(_name, _value, platform='ROCM',
+                                           api_version=api_version)
   compute_rnn_workspace_reserve_space_sizes = _hip_rnn.compute_rnn_workspace_reserve_space_sizes
 
 
@@ -93,10 +97,10 @@ def _rnn_fwd_lowering(_rnn, platform, ctx, input, h_0, c_0, weights, seq_lengths
   out = hlo.CustomCallOp(
       [output_type, h_0.type, c_0.type, workspace_type, reserve_space_type],
       [input, h_0, c_0, weights, seq_lengths],
-      call_target_name=ir.StringAttr.get(f"{platform}dnn_rnn"),
+      call_target_name=ir.StringAttr.get(f"{platform}dnn_rnn_ffi"),
       has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
+      backend_config=ir.DictAttr.get({"opaque": ir.StringAttr.get(opaque)}),
+      api_version=ir.IntegerAttr.get(i32_type, 4),
       called_computations=ir.ArrayAttr.get([]),
   )
   return out.results[:-2] + out.results[-1:]  # drop workspace output
@@ -140,10 +144,10 @@ def _rnn_bwd_lowering(_rnn, platform, ctx, dy, dhn, dcn, x, h0, c0, w, y,
           dy, dhn, dcn, x, h0, c0, w, y, reserve_space, zeroed_dw,
           seq_lengths
       ],
-      call_target_name=ir.StringAttr.get(f"{platform}dnn_rnn_bwd"),
+      call_target_name=ir.StringAttr.get(f"{platform}dnn_rnn_bwd_ffi"),
       has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(opaque),
-      api_version=ir.IntegerAttr.get(i32_type, 2),
+      backend_config=ir.DictAttr.get({"opaque": ir.StringAttr.get(opaque)}),
+      api_version=ir.IntegerAttr.get(i32_type, 4),
       called_computations=ir.ArrayAttr.get([]),
       output_operand_aliases=ir.ArrayAttr.get([
           hlo.OutputOperandAlias.get(

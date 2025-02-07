@@ -140,6 +140,7 @@ cc_library(
     srcs = ["//jaxlib/gpu:rnn_kernels.cc"],
     hdrs = ["//jaxlib/gpu:rnn_kernels.h"],
     deps = [
+        ":ffi_wrapper",
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
         "//jaxlib:handle_pool",
@@ -149,6 +150,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@local_config_rocm//rocm:miopen",
         "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
     ],
 )
