@@ -352,9 +352,9 @@ def check_is_flash_attention(
                 f"Unsupported sequence length Q {T}, KV {S} and head dim {H} for FP8."
             )
     else:
-        # Regular attention conditions
+        # bf16/fp16 attention conditions
         # Check the head dim.
-        is_on_hopper = check_compute_capability("9.0")
+        is_on_hopper = is_cuda_compute_capability_equal("9.0")
         H_max = 256 if cudnn_version >= 90500 and is_on_hopper else 128
         if not (H <= H_max and H % 8 == 0):
           raise NotImplementedError(
@@ -384,6 +384,14 @@ def check_compute_capability(capability):
   target = tuple(int(x) for x in capability.split("."))
   current = tuple(int(x) for x in d.compute_capability.split("."))
   return current >= target
+
+def is_cuda_compute_capability_equal(capability):
+  if not 'cuda' in xla_bridge.get_backend().platform_version:
+    return False
+  d, *_ = jax.local_devices(backend="gpu")
+  target = tuple(int(x) for x in capability.split("."))
+  current = tuple(int(x) for x in d.compute_capability.split("."))
+  return current == target
 
 def _dot_product_attention_fwd(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
