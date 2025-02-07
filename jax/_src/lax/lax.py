@@ -1041,6 +1041,15 @@ def composite(
                                      args, kwargs)
     flat_args, in_tree = tree_util.tree_flatten(args)
     in_avals = tuple(core.get_aval(x) for x in flat_args)
+    if any(isinstance(v, core.Tracer) for v in kwargs.values()):
+      raise UnexpectedTracerError(
+          "Found a JAX Tracer as an attribute in the decomposition for the "
+          f"composite op '{name}'. This means that the decomposition function "
+          "closes over a value that is involved in a JAX transformation. "
+          "Any values that aren't explicitly known at compile time must be "
+          "explicitly passed as arguments to the composite."
+          "\n\nNote: If you are passing jax arrays as attributes, use numpy "
+          "arrays instead.")
     closed_jaxpr, out_tree = _trace_composite_to_jaxpr(
         partial(decomposition, **kwargs), in_tree, in_avals, name, debug_info
     )

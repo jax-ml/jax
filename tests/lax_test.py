@@ -4610,6 +4610,25 @@ class CompositeTest(jtu.JaxTestCase):
         mlir_module)
     self.assertIn("func.func private @my.tangent", mlir_module)
 
+  def test_composite_unsupported_attribute_dtypes(self):
+
+    def my_tangent_composite_with_attributes(x):
+      def decomposition(x, **_):
+        return lax.sin(x) / lax.cos(x)
+      return lax.composite(decomposition, "my.tangent")(
+          x, tensor=jnp.zeros((1, 2), dtype=jnp.float32)
+      )
+
+    pi = jnp.pi
+    x = jnp.array([0.0, pi / 4, 3 * pi / 4, pi], dtype=jnp.float32)
+
+    with self.assertRaisesRegex(
+        UnexpectedTracerError,
+        "Note: If you are passing jax arrays as attributes, use numpy arrays "
+        "instead."
+    ):
+      jax.jit(my_tangent_composite_with_attributes).lower(x).as_text()
+
   def test_composite_with_non_default_version(self):
     @partial(lax.composite, name="my.square", version=1)
     def my_square_with_version(x):
