@@ -303,14 +303,6 @@ def attn_logits_soft_cap_strategy() -> hps.SearchStrategy[float | None]:
   return hps.one_of(hps.just(None), hps.floats(min_value=1.0, max_value=50.0))
 
 
-def to_dynamic_mask(mask: mask_lib.MultiHeadMask) -> jax.Array:
-  q_seq_len, kv_seq_len = mask.masks[0].shape
-  full_mask_slice = (slice(0, q_seq_len), slice(0, kv_seq_len))
-  dynamic_mask = jnp.stack([m[full_mask_slice] for m in mask.masks], axis=0)
-
-  return dynamic_mask
-
-
 @jtu.with_config(jax_traceback_filtering="off")
 class PallasBaseTest(jtu.JaxTestCase):
   INTERPRET = False
@@ -384,7 +376,7 @@ class SplashAttentionTest(PallasBaseTest):
     masks = data.draw(mha_mask_strategy(q_seq_len, kv_seq_len, num_q_heads))
     mask = mask_lib.MultiHeadMask(tuple(m.get_mask() for m in masks))
     if is_dynamic_mask:
-      mask = to_dynamic_mask(mask)
+      mask = jnp.array(mask[:, :, :])
     block_sizes = data.draw(block_sizes_strategy(q_seq_len, kv_seq_len))
 
     if is_mqa:
@@ -460,7 +452,7 @@ class SplashAttentionTest(PallasBaseTest):
     masks = data.draw(mha_mask_strategy(q_seq_len, kv_seq_len, num_q_heads))
     mask = mask_lib.MultiHeadMask(tuple(m.get_mask() for m in masks))
     if is_dynamic_mask:
-      mask = to_dynamic_mask(mask)
+      mask = jnp.array(mask[:, :, :])
     block_sizes = data.draw(block_sizes_strategy(q_seq_len, kv_seq_len))
     if is_mqa:
       attn_ref = splash.make_masked_mqa_reference(mask)
@@ -628,7 +620,7 @@ class SplashAttentionTest(PallasBaseTest):
     masks = data.draw(mha_mask_strategy(q_seq_len, kv_seq_len, num_q_heads))
     mask = mask_lib.MultiHeadMask(tuple(m.get_mask() for m in masks))
     if use_dynamic_mask:
-      mask = to_dynamic_mask(mask)
+      mask = jnp.array(mask[:, :, :])
     block_sizes = data.draw(
         block_sizes_strategy(q_seq_len, kv_seq_len, include_bwd_blocks=True,
                              use_fused_bwd_kernel=use_fused_bwd_kernel)

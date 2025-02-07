@@ -2293,6 +2293,26 @@ def _splash_attention(
     mask_function: MaskFunctionType | None,
     interpret: bool,
 ) -> SplashCustomReturnType:
+  """
+  For dynamic masks, `partial_mask_blocks` has shape (head_count, q_blocks, kv_blocks, block_q, block_kv).
+  This shape allows sharding across both head count and query sequence dimensions.
+
+  Note: The leading dimensions (head_count, q_blocks, kv_blocks) must be
+  collapsed into a single dimension before being passed to the kernel.
+  """
+  def _collapse_partial_mask_blocks(mask_info: mask_info_lib.MaskInfo | None):
+    if mask_info is None or mask_info.partial_mask_blocks is None:
+        return mask_info
+
+    return mask_info._replace(
+        partial_mask_blocks=mask_info.partial_mask_blocks.reshape(
+            -1, *mask_info.partial_mask_blocks.shape[-2:]
+        )
+    )
+
+  fwd_mask_info = _collapse_partial_mask_blocks(fwd_mask_info)
+  dq_mask_info = _collapse_partial_mask_blocks(dq_mask_info)
+  dkv_mask_info = _collapse_partial_mask_blocks(dkv_mask_info)
   return _splash_attention_custom(
       fwd_mask_info,
       dq_mask_info,
@@ -2352,13 +2372,16 @@ class SplashAttentionKernel:
     spec = sharding.spec
     assert len(spec) == 2
     replicated = jax.sharding.PartitionSpec()
+    partial_mask_blocks_spec = (
+        spec if self.fwd_mask_info.is_dynamic_mask else replicated
+    )
     # Shard q_sequence over the sequence dimension only.
     q_sequence_spec = jax.sharding.PartitionSpec(spec[1])
     mask_info_specs = mask_info_lib.MaskInfo(  # pytype: disable=wrong-arg-types
         data_next=spec if self.fwd_mask_info.data_next is not None else None,
         mask_next=spec if self.fwd_mask_info.mask_next is not None else None,
         block_mask=spec if self.fwd_mask_info.block_mask is not None else None,
-        partial_mask_blocks=replicated
+        partial_mask_blocks=partial_mask_blocks_spec
         if self.fwd_mask_info.partial_mask_blocks is not None
         else None,
         q_sequence=q_sequence_spec
