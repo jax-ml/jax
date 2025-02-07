@@ -34,7 +34,6 @@ from jax._src.numpy.lax_numpy import (
     arange as arange,
     argmax as argmax,
     argmin as argmin,
-    argsort as argsort,
     argwhere as argwhere,
     around as around,
     array as array,
@@ -139,7 +138,6 @@ from jax._src.numpy.lax_numpy import (
     kaiser as kaiser,
     kron as kron,
     lcm as lcm,
-    lexsort as lexsort,
     linspace as linspace,
     load as load,
     logspace as logspace,
@@ -153,7 +151,6 @@ from jax._src.numpy.lax_numpy import (
     nan_to_num as nan_to_num,
     nanargmax as nanargmax,
     nanargmin as nanargmin,
-    argpartition as argpartition,
     ndim as ndim,
     newaxis as newaxis,
     nonzero as nonzero,
@@ -162,7 +159,6 @@ from jax._src.numpy.lax_numpy import (
     outer as outer,
     packbits as packbits,
     pad as pad,
-    partition as partition,
     permute_dims as permute_dims,
     pi as pi,
     piecewise as piecewise,
@@ -188,8 +184,6 @@ from jax._src.numpy.lax_numpy import (
     set_printoptions as set_printoptions,
     shape as shape,
     size as size,
-    sort as sort,
-    sort_complex as sort_complex,
     split as split,
     squeeze as squeeze,
     stack as stack,
@@ -257,6 +251,15 @@ from jax._src.numpy.scalar_types import (
     uint16 as uint16,
     uint32 as uint32,
     uint64 as uint64,
+)
+
+from jax._src.numpy.sorting import (
+    argpartition as argpartition,
+    argsort as argsort,
+    lexsort as lexsort,
+    partition as partition,
+    sort as sort,
+    sort_complex as sort_complex,
 )
 
 # NumPy generic scalar types:
