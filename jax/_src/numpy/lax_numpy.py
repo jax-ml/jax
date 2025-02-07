@@ -102,11 +102,40 @@ euler_gamma = np.euler_gamma
 inf = np.inf
 nan = np.nan
 
-# NumPy utility functions
+# Wrappers for NumPy printoptions
 
-get_printoptions = np.get_printoptions
-printoptions = np.printoptions
-set_printoptions = np.set_printoptions
+def get_printoptions():
+  """Alias of :func:`numpy.get_printoptions`.
+
+  JAX arrays are printed via NumPy, so NumPy's `printoptions`
+  configurations will apply to printed JAX arrays.
+
+  See the :func:`numpy.set_printoptions` documentation for details
+  on the available options and their meanings.
+  """
+  return np.get_printoptions()
+
+def printoptions(*args, **kwargs):
+  """Alias of :func:`numpy.printoptions`.
+
+  JAX arrays are printed via NumPy, so NumPy's `printoptions`
+  configurations will apply to printed JAX arrays.
+
+  See the :func:`numpy.set_printoptions` documentation for details
+  on the available options and their meanings.
+  """
+  return np.printoptions(*args, **kwargs)
+
+def set_printoptions(*args, **kwargs):
+  """Alias of :func:`numpy.set_printoptions`.
+
+  JAX arrays are printed via NumPy, so NumPy's `printoptions`
+  configurations will apply to printed JAX arrays.
+
+  See the :func:`numpy.set_printoptions` documentation for details
+  on the available options and their meanings.
+  """
+  return np.set_printoptions(*args, **kwargs)
 
 @export
 def iscomplexobj(x: Any) -> bool:
