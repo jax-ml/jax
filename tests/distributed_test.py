@@ -67,20 +67,18 @@ class DistributedTest(jtu.JaxTestCase):
     for thread in threads:
       thread.join()
 
-  @jtu.sample_product(run_initialize=[True, False])
-  def test_is_distributed_initialized(self, run_initialize):
+  def test_is_distributed_initialized(self):
     # Run in subprocess to isolate side effects from jax.distributed.initialize which conflict with other
     # tests. Unfortunately this can't be avoided by calling jax.distributed.shutdown, as the XLA backend
     # will be warmed up, which yields a RuntimeError on subsequent calls to initialize.
-    assert portpicker is not None
-    port = portpicker.pick_unused_port()
-    pycmd = "import jax; "
-    if run_initialize:
-      pycmd += f"jax.distributed.initialize('localhost:{port}', 1, 0); print(jax.distributed.is_initialized()); assert jax.distributed.is_initialized()"
-    else:
-      pycmd += "assert not jax.distributed.is_initialized()"
+    port = portpicker.pick_unused_port() # type: ignore
+    cmd = f"""import jax;
+    assert not jax.distributed.is_initialized();
+    jax.distributed.initialize('localhost:{port}', 1, 0);
+    assert jax.distributed.is_initialized();
+    """.replace("\n", ' ')
 
-    result = subprocess.run([sys.executable, "-c", pycmd], capture_output=True)
+    result = subprocess.run([sys.executable, "-c", cmd], capture_output=True)
     self.assertEqual(
       result.returncode, 0, msg=f"Test failed with:\n{result.stdout}\n{result.stderr}"
     )
