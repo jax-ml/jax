@@ -45,8 +45,9 @@ array_types: set[type] = {np.ndarray} | numpy_scalar_types  # pylint: disable=g-
 
 
 def masked_array_error(*args, **kwargs):
-  raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
-                   "Use arr.filled() to convert the value to a standard numpy array.")
+  raise ValueError(
+      "numpy masked arrays are not supported as direct inputs to JAX functions."
+      " Use arr.filled() to convert the value to a standard numpy array.")
 
 core.pytype_aval_mappings[np.ma.MaskedArray] = masked_array_error
 
@@ -54,7 +55,8 @@ core.pytype_aval_mappings[np.ma.MaskedArray] = masked_array_error
 def _make_shaped_array_for_numpy_array(x: np.ndarray) -> ShapedArray:
   dtype = x.dtype
   dtypes.check_valid_dtype(dtype)
-  return ShapedArray(x.shape, dtypes.canonicalize_dtype(dtype))
+  return ShapedArray(x.shape, dtypes.canonicalize_dtype(dtype),
+                     sharding=core.get_cur_mesh_sharding(core.P(*[None] * x.ndim)))
 
 core.pytype_aval_mappings[np.ndarray] = _make_shaped_array_for_numpy_array
 
@@ -62,7 +64,9 @@ core.pytype_aval_mappings[np.ndarray] = _make_shaped_array_for_numpy_array
 def _make_shaped_array_for_numpy_scalar(x: np.generic) -> ShapedArray:
   dtype = np.dtype(x)
   dtypes.check_valid_dtype(dtype)
-  return ShapedArray(np.shape(x), dtypes.canonicalize_dtype(dtype))
+  shape = np.shape(x)
+  return ShapedArray(shape, dtypes.canonicalize_dtype(dtype),
+                     sharding=core.get_cur_mesh_sharding(core.P(*[None] * len(shape))))
 
 for t in numpy_scalar_types:
   core.pytype_aval_mappings[t] = _make_shaped_array_for_numpy_scalar
@@ -74,7 +78,8 @@ def _make_abstract_python_scalar(typ, val):
   # Note: all python scalar types are weak except bool, because bool only
   # comes in a single width.
   return ShapedArray((), dtypes._scalar_type_to_dtype(typ, val),
-                     weak_type=typ is not bool)
+                     weak_type=typ is not bool,
+                     sharding=core.get_cur_mesh_sharding())
 
 for t in dtypes.python_scalar_dtypes:
   core.pytype_aval_mappings[t] = partial(_make_abstract_python_scalar, t)

@@ -143,11 +143,12 @@ def linearize_jaxpr(
   return _linearize_jaxpr(jaxpr, tuple(nonzeros))
 
 @weakref_lru_cache
+@source_info_util.reset_name_stack()
 def _linearize_jaxpr(
     jaxpr: core.ClosedJaxpr,
     nonzeros: tuple[bool, ...]
   ) -> tuple[core.ClosedJaxpr, int, Sequence[bool], core.ClosedJaxpr]:
-  dbg = lu.TracingDebugInfo.from_jaxpr(jaxpr)
+  dbg = jaxpr.jaxpr.debug_info
   primal_trace = pe.DynamicJaxprTrace(dbg)
   tangent_trace = pe.DynamicJaxprTrace(dbg)
   lin_trace = LinearizeTrace(primal_trace, tangent_trace)
@@ -192,7 +193,8 @@ def direct_linearize(traceable: lu.WrappedFun,
     linearize_trace = LinearizeTrace(parent_trace, tangent_trace, tag=tag)
     tracers = [LinearizeTracer(linearize_trace, p, t) for p, t in zip(primals, tangents)]
     tracers = [t.full_lower() for t in tracers]
-    with core.set_current_trace(linearize_trace, check_leaks=True):
+    with (core.set_current_trace(linearize_trace, check_leaks=True),
+          source_info_util.transform_name_stack('jvp')):
       if has_aux:
         ans, aux = traceable.call_wrapped(*tracers)
         aux_primals = [x.primal
@@ -587,6 +589,10 @@ class LinearizeTrace(Trace):
     self.tag = core.TraceTag() if tag is None else tag
     self.parent_trace = parent_trace
     self.tangent_trace = tangent_trace
+    self._name_stack_prefix_len = len(source_info_util.current_name_stack())
+
+  def _name_stack_suffix(self):
+    return source_info_util.current_name_stack()[self._name_stack_prefix_len:]
 
   def to_primal_tangent_pair(self, val):
     if isinstance(val, LinearizeTracer) and val._trace.tag is self.tag:
@@ -605,7 +611,8 @@ class LinearizeTrace(Trace):
     with core.set_current_trace(self.parent_trace):
       primal_out, tangent_nzs_out, residuals, linearized = lin(
           tangent_nzs, *primals_in, **params)
-    with core.set_current_trace(self.tangent_trace):
+    with (core.set_current_trace(self.tangent_trace),
+          source_info_util.set_name_stack(self._name_stack_suffix())):
       tangent_out = linearized(residuals, *tangents_in)
     if primitive.multiple_results:
       return [maybe_linearize_tracer(self, x, nz, t)

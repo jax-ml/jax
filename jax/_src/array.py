@@ -1220,7 +1220,7 @@ pxla.shard_arg_handlers[core.Token] = _token_shard_arg
 
 def _token_global_result_handler(global_aval, out_sharding, committed):
   array_handler = _array_global_result_handler(
-      core.token_shaped_array, out_sharding, committed)
+      core.get_token_aval(), out_sharding, committed)
 
   def wrapper(*args, **kwargs):
     out_buf = array_handler(*args, **kwargs)

@@ -323,7 +323,7 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
   @wraps(fun)
   @api_boundary
   def fun_remat(*args, **kwargs):
-    debug = api_util.tracing_debug_info(
+    debug = api_util.debug_info(
         "checkpoint / remat", fun,
         args, kwargs, static_argnums=static_argnums)
     fun_, args = _remat_static_argnums(fun, static_argnums, args)
@@ -418,7 +418,7 @@ _dyn_args_fun_cached = weakref_lru_cache(_dyn_args_fun_uncached)
 def _trace_to_jaxpr(fun: Callable,
                     in_tree: PyTreeDef,
                     in_avals: Sequence[core.AbstractValue],
-                    debug: lu.TracingDebugInfo
+                    debug: core.DebugInfo
                     ) -> tuple[core.Jaxpr, Sequence[Any], PyTreeDef]:
   flat_fun, out_tree = api_util.flatten_fun(lu.wrap_init(fun), in_tree)
   try:
@@ -447,7 +447,7 @@ def saved_residuals(f: Callable,
     args, kwargs = tree_unflatten(in_tree, args)
     return f(*args, **kwargs)
 
-  debug_info = api_util.tracing_debug_info("saved_residuals", f, args, kwargs)
+  debug_info = api_util.debug_info("saved_residuals", f, args, kwargs)
   out = api.make_jaxpr(lambda *args: api.linearize(f_, *args)[1],
                        return_shape=True)(*in_leaves)
   assert isinstance(out, tuple)

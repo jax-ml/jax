@@ -136,7 +136,7 @@ class CompatTest(bctu.CompatTestBase):
         cpu_eig_lapack_geev.data_2023_06_19,
         cpu_eigh_lapack_syev.data_2023_03_17,
         cpu_qr_lapack_geqrf.data_2023_03_17,
-        cuda_threefry2x32.data_2023_03_15, cuda_threefry2x32.data_2024_07_30,
+        cuda_threefry2x32.data_2024_07_30,
         cpu_lu_lapack_getrf.data_2023_06_14,
         cuda_lu_pivots_to_permutation.data_2024_08_08,
         cuda_lu_cusolver_getrf.data_2024_08_19,
@@ -855,11 +855,6 @@ class CompatTest(bctu.CompatTestBase):
     with config.threefry_partitionable(False):
       def func(x):
         return jax.random.uniform(x, (2, 4), dtype=np.float32)
-
-      # TODO(b/338022728): remove after 6 months
-      data = self.load_testdata(cuda_threefry2x32.data_2023_03_15)
-      self.run_one_test(func, data,
-                        expect_current_custom_calls=["cu_threefry2x32_ffi"])
 
       data = self.load_testdata(cuda_threefry2x32.data_2024_07_30)
       self.run_one_test(func, data)

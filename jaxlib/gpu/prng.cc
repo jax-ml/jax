@@ -23,15 +23,10 @@ namespace {
 
 namespace nb = nanobind;
 
-std::string BuildThreeFry2x32Descriptor(std::int64_t n) {
-  return PackDescriptorAsString(ThreeFry2x32Descriptor{n});
-}
 nb::dict Registrations() {
   nb::dict dict;
   dict[JAX_GPU_PREFIX "_threefry2x32_ffi"] =
       EncapsulateFfiHandler(ThreeFry2x32Ffi);
-  // TODO(b/338022728): remove after 6 months
-  dict[JAX_GPU_PREFIX "_threefry2x32"] = EncapsulateFunction(ThreeFry2x32);
   return dict;
 }
 

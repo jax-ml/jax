@@ -348,6 +348,9 @@ def _flatten_jvp(f, store, primal_name, jvp_name, in_tree, maybe_out_type, *args
 class CustomJVPCallPrimitive(core.Primitive):
   multiple_results = True
 
+  def bind(self, *args, **params):
+    return self._true_bind(*args, **params)
+
   def bind_with_trace(self, trace, args, params):
     fun, jvp, tracers = args[0], args[1], args[2:]
     return trace.process_custom_jvp_call(self, fun, jvp, tracers, **params)
@@ -865,6 +868,9 @@ def _temporary_shape_exception(a, a_) -> bool:
 
 class CustomVJPCallPrimitive(core.CallPrimitive):
   initial_style: core.Primitive
+
+  def bind(self, *args, **params):
+    return self._true_bind(*args, **params)
 
   def bind_with_trace(self, trace, args, params):
     fun, fwd, bwd, tracers = args[0], args[1], args[2], args[3:]

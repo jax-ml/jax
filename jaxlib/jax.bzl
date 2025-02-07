@@ -106,6 +106,7 @@ def jax_visibility(_target):
     return []
 
 jax_extra_deps = []
+jax_gpu_support_deps = []
 jax2tf_deps = []
 
 def pytype_library(name, pytype_srcs = None, **kwargs):
@@ -208,7 +209,7 @@ def if_building_jaxlib(
             "@pypi_jax_cuda12_pjrt//:pkg",
         ],
         if_not_building_for_cpu = ["@pypi_jaxlib//:pkg"]):
-    """Adds jaxlib and jaxlib cuda plugin wheels as dependencies instead of depending on sources. 
+    """Adds jaxlib and jaxlib cuda plugin wheels as dependencies instead of depending on sources.
 
     This allows us to test prebuilt versions of jaxlib wheels against the rest of the JAX codebase.
 

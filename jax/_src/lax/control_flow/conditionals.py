@@ -134,7 +134,7 @@ def switch(index, branches: Sequence[Callable], *operands,
   if (config.disable_jit.value and core.is_concrete(index)):
     return branches[int(index)](*operands)
 
-  dbgs = [api_util.tracing_debug_info("switch", branch, operands, {})
+  dbgs = [api_util.debug_info("switch", branch, operands, {})
           for branch in branches]
   ops, ops_tree = tree_flatten(operands)
   ops_avals = tuple(map(core.get_aval, ops))
@@ -237,10 +237,10 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   ops, ops_tree = tree_flatten(operands)
   ops_avals = tuple(map(core.get_aval, ops))
 
-  dbg_true_fun = api_util.tracing_debug_info("cond", true_fun, operands, {})
+  dbg_true_fun = api_util.debug_info("cond", true_fun, operands, {})
   if config.mutable_array_checks.value:
     api_util._check_no_aliased_ref_args(dbg_true_fun, ops_avals, ops)
-  dbg_false_fun = api_util.tracing_debug_info("cond", false_fun, operands, {})
+  dbg_false_fun = api_util.debug_info("cond", false_fun, operands, {})
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
       (true_fun, false_fun), ops_tree, ops_avals,
       [dbg_true_fun, dbg_false_fun])
@@ -561,7 +561,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   effects_known = _join_cond_effects(branches_known)
   eqn_known = pe.new_jaxpr_eqn(
       ins_known, [*out_binders_known, *res_binders], cond_p, params_known,
-      effects_known, eqn.source_info)
+      effects_known, eqn.source_info, eqn.ctx)
 
   # Build the staged eqn.
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
@@ -569,7 +569,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   effects_staged = _join_cond_effects(branches_staged)
   eqn_staged = pe.new_jaxpr_eqn(
       [eqn.invars[0], *res_binders, *eqn.invars[1:]], out_binders_staged,
-      cond_p, params_staged, effects_staged, eqn.source_info)
+      cond_p, params_staged, effects_staged, eqn.source_info, eqn.ctx)
 
   new_vars = [*new_inst, *res_binders]
   return eqn_known, eqn_staged, unks_out, inst_out, new_vars
@@ -684,7 +684,7 @@ def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
   new_eqn = pe.new_jaxpr_eqn(
       [v for v, used in zip(eqn.invars, [True, *used_inputs]) if used],
       [v for v, used in zip(eqn.outvars, used_outputs) if used],
-      eqn.primitive, new_params, new_effects, eqn.source_info)
+      eqn.primitive, new_params, new_effects, eqn.source_info, eqn.ctx)
 
   assert all(len(new_eqn.invars ) == 1 + len(jaxpr.in_avals )
              for jaxpr in new_params['branches'])

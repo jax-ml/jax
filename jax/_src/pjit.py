@@ -49,7 +49,7 @@ from jax._src import xla_bridge as xb
 from jax._src.api_util import (
   argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
   donation_vector, check_callable, resolve_argnums,
-  argnames_partial_except, tracing_debug_info, result_paths, add_jaxpr_debug_info,
+  argnames_partial_except, debug_info, result_paths, add_jaxpr_debug_info,
   hoist_obj_attrs, _check_no_aliased_ref_args,
   _check_no_aliased_closed_over_refs)
 from jax._src.interpreters import partial_eval as pe
@@ -548,7 +548,7 @@ def _infer_params_impl(
     ji: PjitInfo,
     pjit_mesh: mesh_lib.Mesh | None,
     resource_env: mesh_lib.ResourceEnv | None,
-    dbg: lu.TracingDebugInfo,
+    dbg: core.DebugInfo,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
     in_avals: tuple[core.AbstractValue, ...] | None,
@@ -733,7 +733,7 @@ def _infer_params(
         'Using `with mesh:` context manager and `jax.sharding.use_mesh`'
         ' together is not allowed.')
 
-  dbg = tracing_debug_info(
+  dbg = debug_info(
       'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
       static_argnames=ji.static_argnames, sourceinfo=ji.fun_sourceinfo,
       signature=ji.fun_signature)
@@ -756,7 +756,7 @@ def _infer_params(
     entry.pjit_params = p
   return entry.pjit_params, entry.pjit_params.consts + dynargs
 
-def _infer_input_type(fun: Callable, dbg: lu.TracingDebugInfo | None,
+def _infer_input_type(fun: Callable, dbg: core.DebugInfo | None,
                       explicit_args) -> tuple[core.AbstractValue, ...]:
   avals = []
   try:
@@ -1302,7 +1302,7 @@ def _create_pjit_jaxpr(
     fun: lu.WrappedFun,
     in_type: core.InputType | Sequence[core.AbstractValue],
     attr_data: int,
-    debug_info: lu.TracingDebugInfo,
+    debug_info: core.DebugInfo,
     result_paths: Callable,
     ignored_inline: IgnoreKey
 ) -> tuple[core.ClosedJaxpr, list[Any], list[core.AbstractValue],
@@ -1346,7 +1346,7 @@ def _create_pjit_jaxpr(
 def _check_and_canonicalize_out_shardings(
     out_shardings_treedef, out_shardings_leaves, out_layouts_treedef,
     out_layouts_leaves, out_tree, out_avals,
-    debug_info: core.JaxprDebugInfo | None,
+    debug_info: core.DebugInfo | None,
     device_or_backend_set):
   orig_out_shardings = tree_unflatten(out_shardings_treedef, out_shardings_leaves)
   if isinstance(orig_out_shardings, (UnspecifiedValue, Sharding)):
@@ -1478,7 +1478,6 @@ def check_aval_layout_compatibility(
 
 pjit_p = core.Primitive("pjit")
 pjit_p.multiple_results = True
-
 
 def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
   # If device or backend is set, return the default layout. This is because you
@@ -2707,14 +2706,20 @@ def mesh_cast(xs, out_shardings):
   return tree_unflatten(treedef, out_flat)
 
 mesh_cast_p = core.Primitive('mesh_cast')
+mesh_cast_p.skip_canonicalization = True
 def _mesh_cast_abstract_eval(aval, dst_sharding):
   src_sharding = aval.sharding
+  if src_sharding == dst_sharding:
+    return aval
+  if src_sharding.mesh.empty or dst_sharding.mesh.empty:
+    return aval.update(sharding=dst_sharding)
   if src_sharding.mesh.shape_tuple != dst_sharding.mesh.shape_tuple:
     raise ValueError(
         f'Mesh shape of the input {src_sharding.mesh.shape_tuple} does not'
         ' match the mesh shape of the target sharding'
         f' {dst_sharding.mesh.shape_tuple} for shape {aval.str_short()}')
-  if src_sharding.mesh.axis_types == dst_sharding.mesh.axis_types:
+  if (src_sharding.mesh.axis_types == dst_sharding.mesh.axis_types and
+      src_sharding.spec != dst_sharding.spec):
     raise ValueError(
         'mesh_cast should only be used when AxisTypes changes between the'
         ' input mesh and the target mesh. Got src'
@@ -2746,7 +2751,9 @@ def _mesh_cast_abstract_eval(aval, dst_sharding):
 mesh_cast_p.def_abstract_eval(_mesh_cast_abstract_eval)
 
 def _mesh_cast_impl(x, dst_sharding):
-  return dispatch.apply_primitive(mesh_cast_p, x, dst_sharding=dst_sharding)
+  x_aval = core.shaped_abstractify(x)
+  with mesh_lib.set_abstract_mesh(x_aval.sharding.mesh):
+    return dispatch.apply_primitive(mesh_cast_p, x, dst_sharding=dst_sharding)
 mesh_cast_p.def_impl(_mesh_cast_impl)
 
 def _mesh_cast_transpose_rule(ct, x, dst_sharding):
@@ -2763,7 +2770,6 @@ def _mesh_cast_hlo_lowering(ctx, x_node, *, dst_sharding):
 mlir.register_lowering(mesh_cast_p, _mesh_cast_hlo_lowering)
 
 def _mesh_cast_batcher(axis_data, vals_in, dims_in, dst_sharding):
-  assert axis_data.spmd_name is None
   x, = vals_in
   d, = dims_in
   vmapped_dst_sharding = batching.get_sharding_for_vmap(

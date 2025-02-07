@@ -468,9 +468,9 @@ class custom_partitioning:
 
   def __call__(self, *args, **kwargs):
     args = _resolve_kwargs(self.fun, args, kwargs)
-    debug = api_util.tracing_debug_info("custom_partitioning", self.fun,
-                                        args, kwargs,
-                                        static_argnums=self.static_argnums)
+    debug = api_util.debug_info("custom_partitioning", self.fun,
+                                args, kwargs,
+                                static_argnums=self.static_argnums)
     if self.static_argnums:
       static_argnums = set(self.static_argnums)
       args = tuple(x if i in static_argnums else x for i, x in enumerate(args))

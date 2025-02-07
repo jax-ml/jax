@@ -82,31 +82,7 @@ EffectTypeSet = effects.EffectTypeSet
 no_effects: Effects = effects.no_effects
 
 
-# TODO(necula): make this an extension of TracingDebugInfo
-class JaxprDebugInfo(NamedTuple):
-  # An extension of lu.TracingDebugInfo; see comments there
-  traced_for: str
-  func_src_info: str
-  arg_names: tuple[str | None, ...]
-  # This is formed after tracing, when we have concrete `result_paths`
-  result_paths: tuple[str, ...]  # e.g. ('[0]', '[1]', ...)
-
-  def safe_arg_names(self, expected: int) -> tuple[str | None, ...]:
-    """Get the arg_names with a safety check."""
-    if len(self.arg_names) == expected:
-      return self.arg_names
-    else:
-      # TODO(necula): this should not happen
-      return (None,) * expected
-
-  def safe_result_paths(self, expected: int) -> tuple[str | None, ...]:
-    """Get the result_paths with a safety check."""
-    if len(self.result_paths) == expected:
-      return self.result_paths
-    else:
-      # TODO(necula): this should not happen
-      return ("",) * expected
-
+DebugInfo = lu.DebugInfo
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
@@ -117,7 +93,7 @@ class Jaxpr:
   _outvars: list[Atom]
   _eqns: list[JaxprEqn]
   _effects: Effects
-  _debug_info: JaxprDebugInfo | None
+  _debug_info: DebugInfo | None
 
   @property
   def constvars(self) -> list[Var]:
@@ -140,13 +116,13 @@ class Jaxpr:
     return self._effects
 
   @property
-  def debug_info(self) -> JaxprDebugInfo | None:
+  def debug_info(self) -> DebugInfo | None:
     return self._debug_info
 
   def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
                outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
                effects: Effects = no_effects,
-               debug_info: JaxprDebugInfo | None = None):
+               debug_info: DebugInfo | None = None):
     """
     Args:
       constvars: list of variables introduced for constants. Array constants are
@@ -157,14 +133,14 @@ class Jaxpr:
       eqns: list of equations.
       effects: set of effects. The effects on a jaxpr are a superset of the
         union of the effects for each equation.
-      debug_info: optional JaxprDebugInfo.
+      debug_info: optional DebugInfo.
     """
     self._constvars = list(constvars)
     self._invars = list(invars)
     self._outvars = list(outvars)
     self._eqns = list(eqns)
     self._effects = effects
-    self._debug_info = debug_info
+    self._debug_info = debug_info and debug_info.resolve_result_paths()
     # TODO(necula): re-enable these safety checks
     # assert (not debug_info or len(debug_info.arg_names) == len(invars)), (debug_info, invars)
     # assert (not debug_info or len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
@@ -505,6 +481,8 @@ class Primitive:
   map_primitive: bool = False
   # set for ref primitives
   ref_primitive: bool = False
+  # set for primitives that can skip canonicalization of values
+  skip_canonicalization: bool = False
 
   def __init__(self, name: str):
     self.name = name
@@ -513,6 +491,12 @@ class Primitive:
     return f'{self.name}'
 
   def bind(self, *args, **params):
+    if not config.sharding_in_types.value:
+      return self._true_bind(*args, **params)
+    args = args if self.skip_canonicalization else map(canonicalize_value, args)
+    return self._true_bind(*args, **params)
+
+  def _true_bind(self, *args, **params):
     for arg in args:
       if (isinstance(arg, Tracer)
           and not arg._trace.is_valid()
@@ -610,8 +594,8 @@ def check_avals_context_mesh(avals, prim_name):
   if config.sharding_in_types.value:
     cur_mesh = mesh_lib.get_abstract_mesh()
     for a in avals:
-      if a.sharding.mesh.empty or cur_mesh.empty:
-        continue
+      # avals can have meshes with different axis_names so allow that in
+      # full auto mode.
       if a.sharding.mesh._are_all_axes_auto and cur_mesh._are_all_axes_auto:
         continue
       if a.sharding.mesh != cur_mesh:
@@ -620,21 +604,6 @@ def check_avals_context_mesh(avals, prim_name):
             f" the aval mesh {a.sharding.mesh} for shape {a.str_short()}. This"
             " error occurs at source: "
             f" {source_info_util.summarize(source_info_util.current())}")
-
-# TODO(yashkatariya, dougalm): Remove this and replace with canonicalize_value
-# function which casts scalar, numpy arrays, etc to jax arrays so that values
-# passed to primitives are always have avals, etc i.e. they are canonical and
-# also does mesh casting, etc
-def cast_from_auto_to_manual(avals):
-  if not config.sharding_in_types.value:
-    return avals
-
-  from jax._src.sharding_impls import NamedSharding  # type: ignore
-  cur_mesh = mesh_lib.get_abstract_mesh()
-  return [a.update(sharding=NamedSharding(cur_mesh, P(*[None] * a.ndim)))
-          if (not a.sharding.mesh.empty and cur_mesh._are_all_axes_manual and
-              a.sharding.mesh._are_all_axes_auto)
-          else a for a in avals]
 
 # -------------------- tracing --------------------
 
@@ -1775,6 +1744,38 @@ def _make_lengths_same(sharding, ndim):
   assert False, "unreachable"
 
 
+# TODO(dougalm): Cast scalar, numpy arrays, etc to jax arrays so that values
+# passed to primitives are always have avals, etc i.e. they are canonical.
+def canonicalize_value(val):
+  if not config.sharding_in_types.value:
+    return val
+
+  from jax._src.pjit import NamedSharding, mesh_cast  # type: ignore
+
+  try:
+    aval = get_aval(val)
+  except TypeError:
+    return val
+  if not isinstance(aval, ShapedArray):
+    return val
+
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  if cur_mesh == aval.sharding.mesh:  # type: ignore
+    return val
+  if cur_mesh._are_all_axes_manual and aval.sharding.mesh._are_all_axes_auto:  # type: ignore
+    return mesh_cast(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))  # type: ignore
+  if aval.sharding.mesh.empty and not cur_mesh.empty:  # type: ignore
+    return mesh_cast(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))  # type: ignore
+  return val
+
+
+def get_cur_mesh_sharding(spec=None):
+  from jax._src.sharding_impls import NamedSharding  # type: ignore
+
+  spec = P() if spec is None else spec
+  return NamedSharding(mesh_lib.get_abstract_mesh(), spec)
+
+
 # TODO(yashkatariya): Only works with User/Auto. Generalize it to work with
 # Collective too.
 def modify_spec_for_auto_manual(spec, mesh) -> P:
@@ -1791,13 +1792,16 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
   return P(*new_spec)
 
 def _maybe_modify_sharding(sharding, ndim):
+  if len(sharding.spec) == 0 or all(s is None for s in sharding.spec):
+    if len(sharding.spec) != ndim:
+      return _make_lengths_same(sharding, ndim)
+    return sharding
+
   if sharding.mesh._are_all_axes_explicit:
-    out = sharding
-  elif all(s is None for s in sharding.spec):
-    out = sharding
-  else:
-    out = sharding.with_spec(modify_spec_for_auto_manual(
-        sharding.spec, sharding.mesh))
+    return sharding
+
+  out = sharding.with_spec(modify_spec_for_auto_manual(
+      sharding.spec, sharding.mesh))
   if (len(out.spec) != ndim and
       (out.mesh._are_all_axes_auto or out.mesh._are_all_axes_manual)):
     out = _make_lengths_same(out, ndim)
@@ -1807,18 +1811,14 @@ def _maybe_modify_sharding(sharding, ndim):
 def get_sharding(sharding, ndim):
   from jax._src.sharding_impls import NamedSharding  # type: ignore
 
-  if sharding is not None:
-    out_s = _maybe_modify_sharding(sharding, ndim)
-    if len(out_s.spec) != ndim:
-      raise ValueError(
-          "Length of sharding.spec must be equal to aval's ndim. Got"
-          f" sharding.spec {out_s.spec} and aval.ndim {ndim}")
-  else:
-    cur_mesh = mesh_lib.get_abstract_mesh()
-    if cur_mesh.empty:
-      raise RuntimeError("Please set the mesh via `jax.set_mesh` API.")
-    assert sharding is None
-    out_s = NamedSharding(cur_mesh, P(*[None] * ndim))
+  if sharding is None:
+    return NamedSharding(mesh_lib.empty_abstract_mesh, P(*[None] * ndim))
+
+  out_s = _maybe_modify_sharding(sharding, ndim)
+  if len(out_s.spec) != ndim:
+    raise ValueError(
+        "Length of sharding.spec must be equal to aval's ndim. Got"
+        f" sharding.spec {out_s.spec}, aval.ndim {ndim} and sharding {out_s}")
   if not isinstance(out_s.mesh, mesh_lib.AbstractMesh):
     raise ValueError("Mesh of an aval must be an AbstractMesh. "
                      f"Got {out_s.mesh} of type {type(out_s.mesh)}")
@@ -2112,7 +2112,8 @@ class AbstractToken(AbstractValue):
 abstract_token: AbstractToken = AbstractToken()
 
 # Singleton shaped array used by all abstract tokens when shape/dtype is needed.
-token_shaped_array: ShapedArray = ShapedArray((0,), np.dtype(np.bool_))
+def get_token_aval():
+  return ShapedArray((0,), np.dtype(np.bool_), sharding=get_cur_mesh_sharding())
 
 # Concrete token object
 class Token:
@@ -2377,13 +2378,17 @@ def dim_constant(ct: int):
     return np.int64(ct)
 
 def dim_value_aval() -> AbstractValue:
-  return ShapedArray((), dim_value_dtype(), weak_type=True)
+  return ShapedArray((), dim_value_dtype(), weak_type=True,
+                     sharding=get_cur_mesh_sharding())
 
 # ------------------- Call -------------------
 
 class CallPrimitive(Primitive):
   multiple_results = True
   call_primitive = True
+
+  def bind(self, *args, **params):
+    return self._true_bind(*args, **params)
 
   def bind_with_trace(self, trace, fun_and_args, params):
     fun = fun_and_args[0]
@@ -2424,6 +2429,9 @@ closed_call_p.def_effectful_abstract_eval(
 class MapPrimitive(Primitive):
   multiple_results = True
   map_primitive = True
+
+  def bind(self, *args, **params):
+    return self._true_bind(*args, **params)
 
   def bind_with_trace(self, trace, fun_and_args, params):
     fun = fun_and_args[0]

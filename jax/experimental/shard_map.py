@@ -456,6 +456,9 @@ MaybeTracer = Union[JaxType, Tracer]
 class ShardMapPrimitive(core.Primitive):
   multiple_results = True
 
+  def bind(self, *args, **params):
+    return self._true_bind(*args, **params)
+
   def bind_with_trace(self, trace, fun_and_args, params):
     fun, *args = fun_and_args
     return trace.process_shard_map(shard_map_p, fun, args, **params)
@@ -1160,7 +1163,8 @@ for o in it.chain(lax.__dict__.values(), slicing.__dict__.values(),
 
 for p in [control_flow.loops.cumsum_p, control_flow.loops.cumlogsumexp_p,
           control_flow.loops.cumprod_p, control_flow.loops.cummax_p,
-          control_flow.loops.cummin_p, pjit.sharding_constraint_p]:
+          control_flow.loops.cummin_p, pjit.sharding_constraint_p,
+          pjit.mesh_cast_p]:
   register_standard_check(p)
   register_standard_rewrite(p)
 

@@ -96,7 +96,7 @@ jobs:
         echo "JAX_THREEFRY_PARTITIONABLE=$JAX_THREEFRY_PARTITIONABLE"
         echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
         echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
-        pytest -n auto --tb=short --maxfail=20 tests examples
+        pytest -n 4 --tb=short --maxfail=20 tests examples
 
 
   documentation:

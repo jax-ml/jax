@@ -1042,7 +1042,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     *_CPU_FFI_KERNELS,
     *_GPU_FFI_KERNELS,
     "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
-    "cu_threefry2x32", "cu_threefry2x32_ffi",
+    "cu_threefry2x32_ffi",
     # Triton IR does not guarantee stability.
     # "__gpu$xla.gpu.triton",
     # cholesky on CPU
