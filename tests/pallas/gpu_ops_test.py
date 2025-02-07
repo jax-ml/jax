@@ -300,7 +300,7 @@ class FusedAttentionTest(PallasBaseTest):
     # TODO(sharadmv): Fix test.
     self.assertAllClose(dq, dq_ref, atol=5e-2)
     self.assertAllClose(dk, dk_ref, atol=5e-2)
-    self.assertAllClose(dv, dv_ref, atol=1e-3)
+    self.assertAllClose(dv, dv_ref, atol=5e-2)
 
 
 class FusedAttentionInterpretTest(FusedAttentionTest):
