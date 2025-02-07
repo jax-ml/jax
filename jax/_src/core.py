@@ -1773,8 +1773,10 @@ def canonicalize_value(val):
 
 
 def get_cur_mesh_sharding(spec=None):
-  from jax._src.sharding_impls import NamedSharding  # type: ignore
+  if not config.sharding_in_types.value:
+    return None
 
+  from jax._src.sharding_impls import NamedSharding  # type: ignore
   spec = P() if spec is None else spec
   return NamedSharding(mesh_lib.get_abstract_mesh(), spec)
 
