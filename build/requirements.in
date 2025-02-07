@@ -16,7 +16,10 @@ scipy>=1.13.1
 
 ml_dtypes>=0.4.0
 opt_einsum
-zstandard
+# python 3.13t cannot compile zstandard 0.23.0 due to
+# https://github.com/indygreg/python-zstandard/issues/231.
+# pip cannot differentiate between python 3.13 and 3.13t.
+zstandard; python_version<="3.12"
 etils[epath]
 # TODO(ybaturina): remove setuptools version
 setuptools<71.0.0
