@@ -41,10 +41,6 @@ limitations under the License.
 #include "jaxlib/gpu/vendor.h"
 #include "xla/ffi/api/ffi.h"
 
-#ifdef JAX_GPU_CUDA
-#include "third_party/gpus/cuda/include/cusolverSp.h"
-#endif
-
 #define JAX_FFI_RETURN_IF_GPU_ERROR(...) \
   FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(__VA_ARGS__))
 
