@@ -6567,7 +6567,8 @@ class NumpyDocTests(jtu.JaxTestCase):
     aliases = ['abs', 'acos', 'acosh', 'asin', 'asinh', 'atan', 'atanh', 'atan2',
                'amax', 'amin', 'around', 'bitwise_invert', 'bitwise_left_shift',
                'bitwise_not','bitwise_right_shift', 'conj', 'degrees', 'divide',
-               'mod', 'pow', 'radians', 'round_']
+               'get_printoptions', 'mod', 'pow', 'printoptions', 'radians', 'round_',
+               'set_printoptions']
     skip_args_check = ['vsplit', 'hsplit', 'dsplit', 'array_split']
 
     for name in dir(jnp):
