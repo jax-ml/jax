@@ -1600,7 +1600,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         expected_jaxpr_debug_infos=[
             # TODO(necula): this should not be pointing into the JAX internals
             re.compile(r"traced_for=jit, fun=checked_fun at .*jax._src.checkify.py:.*, arg_names=args\[0\]"),
-            re.compile(r"traced_for=jit, fun=argsort at .*numpy.lax_numpy.py:.*, arg_names=a, result_paths="),
+            re.compile(r"traced_for=jit, fun=argsort at .*numpy.sorting.py:.*, arg_names=a, result_paths="),
             "traced_for=pmap, fun=my_f, arg_names=my_x, result_paths=[0]",
         ],
         expected_tracer_debug_infos=[
