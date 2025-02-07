@@ -883,8 +883,8 @@ class DebugInfoTest(jtu.JaxTestCase):
         expected_jaxpr_debug_infos=[
             # TODO(necula): what are these flat_index components?
             "traced_for=jit, fun=apply_fn, arg_names=inp, result_paths=[0],[1][<flat index 0>][0][<flat index 0>][0][0]",
-            re.compile(r"traced_for=custom_jvp fun, fun=relu at .*/nn/functions.py:.*, arg_names=x, result_paths="),
-            re.compile(r"traced_for=jit, fun=relu at .*/nn/functions.py:.*, arg_names=x, result_paths="),
+            re.compile(r"traced_for=custom_jvp fun, fun=relu at .*nn.functions.py:.*, arg_names=x, result_paths="),
+            re.compile(r"traced_for=jit, fun=relu at .*nn.functions.py:.*, arg_names=x, result_paths="),
         ],
         check_tracer_arg_name=True,
         expected_tracer_debug_infos=[
@@ -1296,7 +1296,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         tracer_spy=tracer_spy,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=<lambda>, arg_names=ub,x, result_paths=",
-            re.compile(r'traced_for=while_cond, fun=_fori_cond_fun at .*/loops.py:.*, arg_names=loop_carry\[0\],loop_carry\[1\],loop_carry\[2\], result_paths='),
+            re.compile(r'traced_for=while_cond, fun=_fori_cond_fun at .*loops.py:.*, arg_names=loop_carry\[0\],loop_carry\[1\],loop_carry\[2\], result_paths='),
             # TODO(necula): arg_names and result_paths are not right
             "traced_for=while_body, fun=my_body, arg_names=loop_carry[0],loop_carry[1],loop_carry[2], result_paths=[0],[1],[2]",
         ],
@@ -1430,7 +1430,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         x, x_tan,
         expected_jaxpr_debug_infos=[
             # TODO(necula): why this?
-            re.compile(r'traced_for=jit, fun=_multi_slice at .*/array_methods.py:.*, arg_names=self, result_paths=.*'),
+            re.compile(r'traced_for=jit, fun=_multi_slice at .*array_methods.py:.*, arg_names=self, result_paths=.*'),
             "traced_for=pmap, fun=my_f, arg_names=x,y,args[0],args[1], result_paths=['u'],['v']",
         ],
         tracer_spy=tracer_spy,
@@ -1599,8 +1599,8 @@ class DebugInfoTest(jtu.JaxTestCase):
         tracer_spy=tracer_spy,
         expected_jaxpr_debug_infos=[
             # TODO(necula): this should not be pointing into the JAX internals
-            re.compile(r"traced_for=jit, fun=checked_fun at .*jax/_src/checkify.py:.*, arg_names=args\[0\]"),
-            re.compile(r"traced_for=jit, fun=argsort at .*numpy/lax_numpy.py:.*, arg_names=a, result_paths="),
+            re.compile(r"traced_for=jit, fun=checked_fun at .*jax._src.checkify.py:.*, arg_names=args\[0\]"),
+            re.compile(r"traced_for=jit, fun=argsort at .*numpy.lax_numpy.py:.*, arg_names=a, result_paths="),
             "traced_for=pmap, fun=my_f, arg_names=my_x, result_paths=[0]",
         ],
         expected_tracer_debug_infos=[
@@ -1698,14 +1698,14 @@ class DebugInfoTest(jtu.JaxTestCase):
         tracer_spy=tracer_spy,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=<lambda>, arg_names=a,b, result_paths=[0],[1]",
-            re.compile(r"traced_for=jit, fun=_solve at .*scipy/linalg.py:.*, arg_names=a,b, result_paths="),
-            re.compile(r"traced_for=jit, fun=solve at .*/linalg.py:.*, arg_names=a,b, result_paths="),
-            re.compile(r"traced_for=jit, fun=_lu_solve at .*/linalg.py:.*, arg_names=lu,permutation,b, result_paths="),
+            re.compile(r"traced_for=jit, fun=_solve at .*scipy.linalg.py:.*, arg_names=a,b, result_paths="),
+            re.compile(r"traced_for=jit, fun=solve at .*linalg.py:.*, arg_names=a,b, result_paths="),
+            re.compile(r"traced_for=jit, fun=_lu_solve at .*linalg.py:.*, arg_names=lu,permutation,b, result_paths="),
             # TODO(necula): why pointers to internal functions, arg_names, result_paths?
             re.compile(r'traced_for=custom_linear_solve solve, fun=<lambda> at .*linalg.py:.*, arg_names=None,None,x, result_paths='),
-            re.compile(r'traced_for=custom_linear_solve transpose_solve, fun=<lambda> at .*/linalg.py:.*, arg_names=None,None,x, result_paths='),
-            re.compile(r'traced_for=custom_linear_solve, fun=<lambda> at .*/linalg.py:.*, arg_names=None,x, result_paths='),
-            re.compile(r'traced_for=custom_linear_solve transpose_solve, fun=<lambda> at .*/linalg.py:.*, arg_names=None,x, result_paths='),
+            re.compile(r'traced_for=custom_linear_solve transpose_solve, fun=<lambda> at .*linalg.py:.*, arg_names=None,None,x, result_paths='),
+            re.compile(r'traced_for=custom_linear_solve, fun=<lambda> at .*linalg.py:.*, arg_names=None,x, result_paths='),
+            re.compile(r'traced_for=custom_linear_solve transpose_solve, fun=<lambda> at .*linalg.py:.*, arg_names=None,x, result_paths='),
             'traced_for=custom_linear_solve, fun=my_high_precision_dot, arg_names=None,b, result_paths=',
             'traced_for=custom_linear_solve solve, fun=my_solve, arg_names=None,x, result_paths=',
             'traced_for=custom_linear_solve transpose_solve, fun=my_tr_solve, arg_names=None,x, result_paths=',
@@ -1739,7 +1739,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=<lambda>, arg_names=x, result_paths=[0],[1]",
             # TODO(necula): internal function?
-            re.compile(r"traced_for=custom_jvp fun, fun=_custom_root at .*/control_flow/solves.py:.*, arg_names=args\[0\], result_paths=\[0\]"),
+            re.compile(r"traced_for=custom_jvp fun, fun=_custom_root at .*control_flow.solves.py:.*, arg_names=args\[0\], result_paths=\[0\]"),
         ],
         expected_tracer_debug_infos=[
             "traced_for=custom_root, fun=my_f, arg_names=x",
@@ -1805,8 +1805,8 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=jit, fun=my_f, arg_names=input, result_paths=",
             # TODO(necula): function source location points in JAX internals
             # TODO(necula): arg_names and result_paths are wrong
-            re.compile(r"traced_for=checkify_pallas, fun=checked_kernel_fn at .*/pallas_call.py:.*, arg_names=args\[0\],.*, result_paths="),
-            re.compile(r"traced_for=pallas_call index_map, fun=<lambda> at .*/pallas/core.py:.*, arg_names=, result_paths="),
+            re.compile(r"traced_for=checkify_pallas, fun=checked_kernel_fn at .*pallas_call.py:.*, arg_names=args\[0\],.*, result_paths="),
+            re.compile(r"traced_for=pallas_call index_map, fun=<lambda> at .*pallas.core.py:.*, arg_names=, result_paths="),
         ],
         expected_tracer_debug_infos=[
             "traced_for=pallas_call, fun=kernel, arg_names=x_ref,y_ref",
