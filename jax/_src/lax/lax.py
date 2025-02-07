@@ -589,7 +589,24 @@ def log1p(x: ArrayLike) -> Array:
   return log1p_p.bind(x)
 
 def tanh(x: ArrayLike) -> Array:
-  r"""Elementwise hyperbolic tangent: :math:`\mathrm{tanh}(x)`."""
+  r"""Elementwise hyperbolic tangent: :math:`\mathrm{tanh}(x)`.
+
+  This function lowers directly to the `stablehlo.tanh`_ operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    hyperbolic tangent.
+
+  See also:
+    - :func:`jax.lax.atanh`: elementwise inverse hyperbolic tangent.
+    - :func:`jax.lax.cosh`: elementwise hyperbolic cosine.
+    - :func:`jax.lax.sinh`: elementwise hyperbolic sine.
+
+  .. _stablehlo.tanh: https://openxla.org/stablehlo/spec#tanh
+  """
   return tanh_p.bind(x)
 
 def logistic(x: ArrayLike) -> Array:
@@ -2631,23 +2648,98 @@ def atan(x: ArrayLike) -> Array:
   return atan_p.bind(x)
 
 def sinh(x: ArrayLike) -> Array:
-  r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`."""
+  r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`.
+
+  This function lowers directly to the ``chlo.sinh`` operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    hyperbolic sine.
+
+  See also:
+    - :func:`jax.lax.asinh`: elementwise inverse hyperbolic sine.
+    - :func:`jax.lax.cosh`: elementwise hyperbolic cosine.
+    - :func:`jax.lax.tanh`: elementwise hyperbolic tangent.
+  """
   return sinh_p.bind(x)
 
 def cosh(x: ArrayLike) -> Array:
-  r"""Elementwise hyperbolic cosine: :math:`\mathrm{cosh}(x)`."""
+  r"""Elementwise hyperbolic cosine: :math:`\mathrm{cosh}(x)`.
+
+  This function lowers directly to the ``chlo.cosh`` operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    hyperbolic cosine.
+
+  See also:
+    - :func:`jax.lax.acosh`: elementwise inverse hyperbolic cosine.
+    - :func:`jax.lax.sinh`: elementwise hyperbolic sine.
+    - :func:`jax.lax.tanh`: elementwise hyperbolic tangent.
+  """
   return cosh_p.bind(x)
 
 def asinh(x: ArrayLike) -> Array:
-  r"""Elementwise inverse hyperbolic sine: :math:`\mathrm{asinh}(x)`."""
+  r"""Elementwise inverse hyperbolic sine: :math:`\mathrm{asinh}(x)`.
+
+  This function lowers directly to the ``chlo.asinh`` operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    inverse hyperbolic sine.
+
+  See also:
+    - :func:`jax.lax.acosh`: elementwise inverse hyperbolic cosine.
+    - :func:`jax.lax.atanh`: elementwise inverse hyperbolic tangent.
+    - :func:`jax.lax.sinh`: elementwise hyperbolic sine.
+  """
   return asinh_p.bind(x)
 
 def acosh(x: ArrayLike) -> Array:
-  r"""Elementwise inverse hyperbolic cosine: :math:`\mathrm{acosh}(x)`."""
+  r"""Elementwise inverse hyperbolic cosine: :math:`\mathrm{acosh}(x)`.
+
+  This function lowers directly to the ``chlo.acosh`` operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    inverse hyperbolic cosine.
+
+  See also:
+    - :func:`jax.lax.asinh`: elementwise inverse hyperbolic sine.
+    - :func:`jax.lax.atanh`: elementwise inverse hyperbolic tangent.
+    - :func:`jax.lax.cosh`: elementwise hyperbolic cosine.
+  """
   return acosh_p.bind(x)
 
 def atanh(x: ArrayLike) -> Array:
-  r"""Elementwise inverse hyperbolic tangent: :math:`\mathrm{atanh}(x)`."""
+  r"""Elementwise inverse hyperbolic tangent: :math:`\mathrm{atanh}(x)`.
+
+  This function lowers directly to the ``chlo.atanh`` operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    inverse hyperbolic tangent.
+
+  See also:
+    - :func:`jax.lax.acosh`: elementwise inverse hyperbolic cosine.
+    - :func:`jax.lax.asinh`: elementwise inverse hyperbolic sine.
+    - :func:`jax.lax.tanh`: elementwise hyperbolic tangent.
+  """
   return atanh_p.bind(x)
 
 
