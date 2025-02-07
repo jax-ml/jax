@@ -74,7 +74,7 @@ class BufferedRef:
     gmem_slices = self.compute_gmem_slice(grid_indices)
     gpu_primitives.copy_gmem_to_smem(
         self.gmem_ref.at[gmem_slices],  # pytype: disable=unsupported-operands
-        self.smem_ref.at[slot],
+        self.smem_ref.at[slot],  # pytype: disable=unsupported-operands
         barrier_ref.at[slot],
     )
 
@@ -234,7 +234,7 @@ def emit_pipeline(
       map(lambda bref: bref.copy_in(step, indices, barrier_ref), in_brefs)
 
     def loop_body(step, carry):
-      slot = step % max_concurrent_steps
+      slot = lax.rem(step, max_concurrent_steps)
       indices, fetch_indices, last_store_slices = carry
 
       if in_specs:
@@ -281,14 +281,16 @@ def emit_pipeline(
         )
 
       fetch_step = step + (max_concurrent_steps - delay_release)
-      fetch_slot = slot  # (x + y) % y == x % y
+      fetch_slot = lax.rem(fetch_step, max_concurrent_steps)
+
+      def do_fetch():
+        for bref in in_brefs:
+          bref.copy_in(fetch_slot, fetch_indices, barrier_ref)
+
       jax.lax.cond(
-          lax.bitwise_and(fetch_step >= delay_release, fetch_step < num_steps),
-          lambda: map(
-              lambda bref: bref.copy_in(fetch_slot, fetch_indices, barrier_ref),
-              in_brefs,
-          ),
-          lambda: [None] * len(in_brefs),
+          lax.bitwise_and(step >= delay_release, fetch_step < num_steps),
+          do_fetch,
+          lambda: None,
       )
 
       return (
@@ -297,9 +299,11 @@ def emit_pipeline(
           new_store_slices,
       )
 
+    # Invariant: ``indices`` and ``fetch_indices`` are always
+    # ``max_concurrent_steps-delay_release`` apart.
     indices = (jnp.asarray(0, dtype=lax.dtype(0)),) * len(grid)
     fetch_indices = indices
-    for _ in range(max_concurrent_steps):
+    for _ in range(max_concurrent_steps-delay_release):
       fetch_indices = _inc_grid_by_1(fetch_indices, grid)
     # TODO(justinfu): Only store base pointer instead of all indices.
     last_store_slices = [
@@ -316,7 +320,7 @@ def emit_pipeline(
     # loop. This is the only place where we store them.
     if all(bref.is_index_invariant for bref in out_brefs):
       gpu_primitives.commit_smem()
-    last_slot = (num_steps - 1) % max_concurrent_steps
+    last_slot = lax.rem(num_steps - 1, max_concurrent_steps)
     for bref in out_brefs:
       if bref.is_index_invariant:
         bref.copy_out(last_slot, last_indices, predicate=None)
