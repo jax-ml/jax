@@ -901,7 +901,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         tracer_spy=tracer_spy,
         expected_jaxpr_debug_infos=[
             # TODO(necula): what are these flat_index components?
-            "traced_for=jit, fun=apply_fn, arg_names=inp, result_paths=[0],[1][<flat index 0>][0][<flat index 0>][0][0]",
+            "traced_for=jit, fun=apply_fn, arg_names=inp, result_paths=[0],[1][0][0][0][0][0]",
             re.compile(r"traced_for=custom_jvp fun, fun=relu at .*nn.functions.py:.*, arg_names=x, result_paths="),
             re.compile(r"traced_for=jit, fun=relu at .*nn.functions.py:.*, arg_names=x, result_paths="),
         ],
@@ -1091,8 +1091,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         expected_jaxpr_debug_infos=[
             "traced_for=cond, fun=my_f, arg_names=x['c'], result_paths=",
             "traced_for=cond, fun=<lambda>, arg_names=x['c'], result_paths=",
-            # TODO(necula): flat_index?
-            "traced_for=jit, fun=<lambda>, arg_names=x, result_paths=[<flat index 0>][0][0],[<flat index 0>][0][1]",
+            "traced_for=jit, fun=<lambda>, arg_names=x, result_paths=[0][0][0],[0][0][1]",
         ],
         check_tracer_arg_name=True,
         expected_tracer_debug_infos=[

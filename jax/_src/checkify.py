@@ -833,7 +833,7 @@ def checkify_while_body_jaxpr(
     # This checks if the next cond application will error
     _ = cond_f(*c_consts, *out)
     return out
-  new_body_f_ = lu.wrap_init(new_body_f)
+  new_body_f_ = lu.wrap_init(new_body_f, debug_info=body_jaxpr.jaxpr.debug_info)
   c_consts_avals = cond_jaxpr.in_avals[:c_consts_num]
   jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(new_body_f_, [*c_consts_avals,
                                                              *body_jaxpr.in_avals])
@@ -952,7 +952,8 @@ error_checks[ad_checkpoint.remat_p] = remat_error_check
 
 
 def shard_map_error_check(
-    error, enabled_errors, *vals_in, jaxpr, in_names, out_names, **kwargs
+    error: Error, enabled_errors, *vals_in,
+    jaxpr: core.Jaxpr, in_names, out_names, **kwargs
 ):
   if (mesh := kwargs.get('mesh')) is None:
     raise ValueError('Mesh must be provided for shard_map with checkify.')
@@ -976,7 +977,6 @@ def shard_map_error_check(
     )
   num_out_error_vals = out_tree.num_leaves - len(out_names)
 
-  @lu.wrap_init
   def expand_errors_leading_dim(*xs):
     outs = core.eval_jaxpr(checked_jaxpr.jaxpr, checked_jaxpr.consts, *xs)
     errs, outs = split_list(outs, [num_out_error_vals])
@@ -985,7 +985,9 @@ def shard_map_error_check(
 
   with core.extend_axis_env_nd(mesh.shape.items()):
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
-        expand_errors_leading_dim, checked_jaxpr.in_avals
+        lu.wrap_init(expand_errors_leading_dim,
+                     debug_info=checked_jaxpr.jaxpr.debug_info),
+        checked_jaxpr.in_avals
     )
   checked_jaxpr = core.ClosedJaxpr(jaxpr, consts)
 
@@ -993,7 +995,8 @@ def shard_map_error_check(
   # Use fully sharded partitioning for out errors.
   new_out_names = (*([{0: mesh.axis_names}] * num_out_error_vals), *out_names)
   subfun = lu.hashable_partial(
-      lu.wrap_init(core.eval_jaxpr), checked_jaxpr.jaxpr, checked_jaxpr.consts
+      lu.wrap_init(core.eval_jaxpr, debug_info=checked_jaxpr.jaxpr.debug_info),
+      checked_jaxpr.jaxpr, checked_jaxpr.consts
   )
   new_params = dict(
       jaxpr=checked_jaxpr.jaxpr,
@@ -1007,8 +1010,10 @@ def shard_map_error_check(
   return tree_unflatten(out_tree, err_and_out)
 error_checks[shard_map.shard_map_p] = shard_map_error_check
 
-def custom_jvp_call_rule(in_err, enabled_errors, *in_vals, num_consts,
-                         jvp_jaxpr_thunk, call_jaxpr, **params):
+def custom_jvp_call_rule(in_err: Error,
+                         enabled_errors: set, *in_vals, num_consts,
+                         jvp_jaxpr_fun: lu.WrappedFun,
+                         call_jaxpr: core.ClosedJaxpr, **params):
   # The types to have in mind are:
   #   jvp : (a -> b) -> (a, T a) -> (b, T b)
   #   checkify : (a -> b) -> a -> Err b
@@ -1021,10 +1026,11 @@ def custom_jvp_call_rule(in_err, enabled_errors, *in_vals, num_consts,
   err_vals, err_tree = jtu.tree_flatten(in_err)
   partial_checkify = lu.wrap_init(
       functools.partial(checkify_jaxpr_flat, call_jaxpr.jaxpr,
-                        call_jaxpr.consts, enabled_errors, err_tree))
+                        call_jaxpr.consts, enabled_errors, err_tree),
+      debug_info=call_jaxpr.jaxpr.debug_info)
   partial_checkify, f_metadata = _flatten_and_get_error_metadata_thunk(
       partial_checkify)
-  jvp = lift_jvp(err_tree.num_leaves, num_consts, jvp_jaxpr_thunk)
+  jvp = lift_jvp(err_tree.num_leaves, num_consts, jvp_jaxpr_fun)
   jvp, jvp_out_tree = flatten_fun_output(jvp)
   all_outs = custom_derivatives.custom_jvp_call_p.bind(
       partial_checkify, jvp, *err_vals, *in_vals, **params)
@@ -1041,17 +1047,17 @@ error_checks[custom_derivatives.custom_jvp_call_p] = custom_jvp_call_rule
 
 # Compared to custom_derivatives.lift_jvp, we're handling the extra inputs and
 # outputs that checkify adds (just forwarding the error data's primal and
-# tangent components). The jaxpr in jvp_jaxpr_thunk doesn't expect those.
+# tangent components). The jaxpr in jvp_jaxpr_fun doesn't expect those.
 # TODO(mattjj): can we simplify this, or dedup with custom_derivatives.lift_jvp?
 # Adding another layer of lu.transformation was tricky, though maybe doable.
-def lift_jvp(num_errs, num_consts, jvp_jaxpr_thunk):
-  @lu.wrap_init
+def lift_jvp(num_errs: int, num_consts: int,
+             jvp_jaxpr_fun: lu.WrappedFun) -> lu.WrappedFun:
   def jvp(*xs):
     n, ragged = divmod(len(xs), 2)
     assert not ragged
     primals, tangents = xs[num_consts+num_errs:n], xs[n+num_consts+num_errs:]
     zeros = [type(t) is SymbolicZero for t in tangents]
-    jvp_jaxpr, jvp_consts, out_zeros = jvp_jaxpr_thunk(*zeros)
+    jvp_jaxpr, jvp_consts, out_zeros = jvp_jaxpr_fun.call_wrapped(*zeros)
     nonzero_tangents = [t for t in tangents if type(t) is not SymbolicZero]
     out = core.eval_jaxpr(jvp_jaxpr, jvp_consts, *primals, *nonzero_tangents)
     out_primals, nz_out_tangents = split_list(out, [len(out_zeros)])
@@ -1063,7 +1069,7 @@ def lift_jvp(num_errs, num_consts, jvp_jaxpr_thunk):
     primal_errs = xs[num_consts:num_consts+num_errs]
     tangent_errs = xs[n+num_consts:n+num_consts+num_errs]
     return [*primal_errs, *out_primals, *tangent_errs, *out_tangents]
-  return jvp
+  return lu.wrap_init(jvp, debug_info=jvp_jaxpr_fun.debug_info)
 
 def custom_vjp_call_jaxpr_rule(in_err, enabled_errors, *in_vals,
                                fun_jaxpr: core.ClosedJaxpr,

@@ -27,7 +27,7 @@ from jax._src import dtypes
 from jax._src.state.types import AbstractRef
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_map,
-    treedef_children, generate_key_paths, keystr, broadcast_prefix,
+    treedef_children, generate_key_paths, broadcast_prefix,
     prefix_errors)
 from jax._src.tree_util import _replace_nones
 from jax._src import linear_util as lu
@@ -595,6 +595,15 @@ def debug_info(
     sourceinfo: str | None = None,
     signature: inspect.Signature | None = None,
 ) -> core.DebugInfo:
+  """Constructd core.DebugInfo for a function given example args and kwargs.
+
+  `args` and `kwargs` are example positional and keyword arguments, users with
+  `inspect.Signature` to get the names of argments. The arguments that are
+  considered static for tracing purposes should be included, and designated
+  using `static_argnums` and `static_argnames`.
+
+  See docstring for linear_util.DebugInfo.
+  """
   if sourceinfo is None:
     sourceinfo = fun_sourceinfo(fun)
   if signature is None:
@@ -671,12 +680,13 @@ def _non_static_arg_names(fn_signature: inspect.Signature | None,
     except (ValueError, TypeError):
       pass
     else:
-      return tuple(f'{name}{keystr(path)}' for name, x in ba.arguments.items()
+      return tuple(f'{name}{lu._clean_keystr_arg_names(path)}'
+                   for name, x in ba.arguments.items()
                    for path, l in generate_key_paths(x) if l is not static)
-  args_arg_names = tuple(f'args{keystr(path)}'
+  args_arg_names = tuple(f'args{lu._clean_keystr_arg_names(path)}'
                          for path, l in generate_key_paths(args_)
                          if l is not static)
-  kwargs_arg_names = tuple(f'kwargs{keystr(path)}'
+  kwargs_arg_names = tuple(f'kwargs{lu._clean_keystr_arg_names(path)}'
                            for path, l in generate_key_paths(kwargs_)
                            if l is not static)
   arg_names = args_arg_names + kwargs_arg_names

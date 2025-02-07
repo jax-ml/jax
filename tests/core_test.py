@@ -26,9 +26,8 @@ import jax
 from jax import lax
 from jax import numpy as jnp
 from jax import jvp, linearize, vjp, jit, make_jaxpr
-from jax.api_util import flatten_fun_nokwargs
+from jax.api_util import flatten_fun_nokwargs, debug_info
 from jax._src import config
-
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import util
@@ -48,14 +47,16 @@ def call(f, *args):
 @util.curry
 def core_call(f, *args):
   args, in_tree = jax.tree.flatten(args)
-  f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f), in_tree)
+  dbg = debug_info("core_call_test", f, args, {})
+  f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f, debug_info=dbg), in_tree)
   out = core.call_p.bind(f, *args)
   return jax.tree.unflatten(out_tree(), out)
 
 @util.curry
 def core_closed_call(f, *args):
   args, in_tree = jax.tree.flatten(args)
-  f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f), in_tree)
+  dbg = debug_info("core_closed_call_test", f, args, {})
+  f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f, debug_info=dbg), in_tree)
   out = core.closed_call_p.bind(f, *args)
   return jax.tree.unflatten(out_tree(), out)
 
@@ -362,7 +363,10 @@ class CoreTest(jtu.JaxTestCase):
 
     aval = core.ShapedArray((), jnp.dtype('int32'))
     pval = pe.PartialVal.unknown(aval)
-    jaxpr, _, _ = pe.trace_to_jaxpr_nounits(lu.wrap_init(f), [pval], False)
+    jaxpr, _, _ = pe.trace_to_jaxpr_nounits(
+        lu.wrap_init(f,
+                     debug_info=debug_info("test", f, (0,), {})),
+        [pval], False)
     dropvar, b = jaxpr.eqns[0].outvars
     self.assertEqual(dropvar.aval, aval)
 
@@ -548,12 +552,13 @@ class DynamicShapesTest(jtu.JaxTestCase):
     a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
     b = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
 
-    @lu.wrap_init
     def f(x, y):
       return x, y
 
     jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-      f, [n, a, b], keep_inputs=[False, True, True])
+      lu.wrap_init(f,
+                   debug_info=debug_info("test", f, (1, 2), {})),
+      [n, a, b], keep_inputs=[False, True, True])
 
     self.assertLen(jaxpr.invars, 3)
     self.assertEqual((jaxpr.invars[0],), jaxpr.invars[1].aval.shape)
@@ -569,7 +574,6 @@ class DynamicShapesTest(jtu.JaxTestCase):
     a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
     b = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
 
-    @lu.wrap_init
     def f(x, y):
       @jax.jit
       def g(x, y, z, w):
@@ -577,7 +581,9 @@ class DynamicShapesTest(jtu.JaxTestCase):
       return g(x, y, x, y)
 
     jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-      f, [n, a, b], keep_inputs=[False, True, True])
+      lu.wrap_init(f,
+                   debug_info=debug_info("test", f, (0, 1), {})),
+        [n, a, b], keep_inputs=[False, True, True])
 
     self.assertLen(jaxpr.invars, 1 + 2)  # one axis size var, two other inputs
     self.assertEqual((jaxpr.invars[0],), jaxpr.invars[1].aval.shape)
@@ -605,7 +611,6 @@ class DynamicShapesTest(jtu.JaxTestCase):
     a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
     b = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
 
-    @lu.wrap_init
     def f(x, y):
       @jax.jit
       def g(_, x, y, z, w):
@@ -613,7 +618,9 @@ class DynamicShapesTest(jtu.JaxTestCase):
       return g(x.shape[0], x, y, x, y)
 
     jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-      f, [n, a, b], keep_inputs=[False, True, True])
+        lu.wrap_init(f,
+                     debug_info=debug_info("test", f, (1, 2), {})),
+        [n, a, b], keep_inputs=[False, True, True])
 
     # { lambda ; a:i32[] b:f32[a] c:f32[a]. let
     #     d:f32[a] e:f32[a] = xla_call[
@@ -641,7 +648,6 @@ class DynamicShapesTest(jtu.JaxTestCase):
     a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
     b = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
 
-    @lu.wrap_init
     def f(x, y):
       z = lax.mul(x, y)
       w = lax.sin(z)
@@ -649,7 +655,9 @@ class DynamicShapesTest(jtu.JaxTestCase):
       return (u,)
 
     jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-      f, [n, a, b], keep_inputs=[False, True, True])
+        lu.wrap_init(f,
+                     debug_info=debug_info("test", f, (1, 2), {})),
+        [n, a, b], keep_inputs=[False, True, True])
 
     self.assertLen(jaxpr.invars, 1 + 2)  # one axis size var, two other inputs
     self.assertLen(jaxpr.eqns, 3)
@@ -667,14 +675,15 @@ class DynamicShapesTest(jtu.JaxTestCase):
     a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
     b = core.DShapedArray((DBIdx(1),), jnp.dtype('float32'), weak_type=False)
 
-    @lu.wrap_init
     def f(a, b):
       @jax.jit
       def g(x): return x
       return g(a),
 
     jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-      f, [n, m, a, b], keep_inputs=[False, False, True, True])
+        lu.wrap_init(f,
+                     debug_info=debug_info("test", f, (1, 2), {})),
+        [n, m, a, b], keep_inputs=[False, False, True, True])
     # { lambda ; a:i32[] b:i32[] c:f32[a] d:f32[b]. let
     #     e:f32[a] = xla_call[
     #       call_jaxpr={ lambda ; f:i32[] g:f32[f]. let  in (g,) }

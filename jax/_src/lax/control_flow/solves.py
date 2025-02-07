@@ -159,7 +159,8 @@ def _root_jvp(const_lengths, jaxprs, primals, tangents):
   linearize_and_solve = partial(
       core.jaxpr_as_fun(jaxprs.l_and_s), *params.l_and_s)
   f_at_solution = lambda *params: f(*params, *solution)
-  _, rhs = ad.jvp(lu.wrap_init(f_at_solution)).call_wrapped(
+  _, rhs = ad.jvp(lu.wrap_init(f_at_solution,
+                               debug_info=jaxprs.f.jaxpr.debug_info)).call_wrapped(
       params.f, params_dot.f)
   solution_dot = _map(
       operator.neg, linearize_and_solve(*solution, *rhs))
