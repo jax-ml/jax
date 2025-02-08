@@ -415,7 +415,10 @@ def lower_fun(
   fn = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
 
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
-    wrapped_fun = lu.wrap_init(fn, params)
+    wrapped_fun = lu.wrap_init(
+        fn, params,
+        debug_info=api_util.debug_info("pallas triton lower_fun", fun,
+                                       args, params))
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
     jaxpr = jax_core.ClosedJaxpr(jaxpr, consts)
     out = _closed_call_lowering_rule(ctx, *args, call_jaxpr=jaxpr)
@@ -539,7 +542,11 @@ def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
   ]
   in_tree = tree_util.tree_structure((args, args))
   flat_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(body), in_tree
+      lu.wrap_init(
+          body,
+          debug_info=api_util.debug_info("pallas triton associative_scan",
+                                         body, (args, args), {})),
+      in_tree
   )
   combine_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       flat_fun, in_avals
@@ -2185,7 +2192,11 @@ def _reduction_lowering(body, ctx: LoweringRuleContext, a, axes):
   mapped_avals = [jax_core.ShapedArray((), aval.dtype) for aval in ctx.avals_in]
   in_tree = tree_util.tree_structure((a, a))
   flat_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(body), in_tree
+      lu.wrap_init(
+          body,
+          debug_info=api_util.debug_info("pallas triton reduction",
+                                         body, (a, a), {})),
+      in_tree
   )
   combine_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       flat_fun, [*mapped_avals, *mapped_avals]

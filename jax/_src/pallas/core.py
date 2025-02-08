@@ -1062,7 +1062,11 @@ def core_map(
   """
   def wrapped(f):
     flat_args, in_tree = tree_util.tree_flatten(((), {}))
-    flat_fun, out_tree_thunk = api_util.flatten_fun(lu.wrap_init(f), in_tree)
+    flat_fun, out_tree_thunk = api_util.flatten_fun(
+        lu.wrap_init(f,
+                     debug_info=api_util.debug_info("pallas_core_map", f,
+                                                    (), {})),
+        in_tree)
     with jax_core.extend_axis_env_nd(mesh.shape.items()):
       jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, flat_args)
     out = core_map_p.bind(*consts, jaxpr=jaxpr, mesh=mesh,

@@ -24,6 +24,7 @@ import math
 from typing import Any
 
 import jax
+from jax import api_util
 from jax import lax
 from jax._src import core
 from jax._src import linear_util as lu
@@ -94,7 +95,12 @@ def _uses_arguments(
     index_map: Callable[..., Any], num_args: int
 ) -> Sequence[bool]:
   jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(index_map), (core.ShapedArray((), jnp.int32),) * num_args
+      lu.wrap_init(
+          index_map,
+          debug_info=api_util.debug_info("pallas index_map",
+                                         index_map,
+                                         (0,) * num_args, {})),
+      (core.ShapedArray((), jnp.int32),) * num_args
   )
   _, used_inputs = pe.dce_jaxpr(jaxpr, used_outputs=[True] * len(jaxpr.outvars))
   return used_inputs

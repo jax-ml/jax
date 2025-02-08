@@ -19,6 +19,7 @@ from jax._src.core import (
 
 from jax._src.api_util import (
   argnums_partial as argnums_partial,
+  debug_info as debug_info,
   donation_vector as donation_vector,
   flatten_axes as flatten_axes,
   flatten_fun as flatten_fun,
