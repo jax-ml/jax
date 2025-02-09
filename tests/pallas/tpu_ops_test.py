@@ -417,6 +417,25 @@ class OpsTest(PallasBaseTest):
     expected = np.take_along_axis(x, idx, axis=axis)
     np.testing.assert_array_equal(actual, expected)
 
+  @parameterized.product(dtype=[jnp.float32, jnp.bfloat16])
+  def test_float_div(self, dtype):
+    if not jtu.is_device_tpu_at_least(version=4):
+      self.skipTest("Requires TPUv4+")
+    if jtu.get_tpu_version() == 6:
+      # TODO(b/395036323): tpu v6 has precision issue with XLA.
+      self.skipTest("b/395036323")
+    def kernel(x, y, out):
+      out[:] = jax.lax.div(x[:], y[:])
+
+    run = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), dtype),
+    )
+    k1, k2 = jax.random.split(jax.random.key(1234), 2)
+    x = jax.random.normal(k1, (8, 128), dtype=dtype)
+    y = jax.random.normal(k2, (8, 128), dtype=dtype)
+    np.testing.assert_allclose(run(x, y), jax.lax.div(x, y))
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True
