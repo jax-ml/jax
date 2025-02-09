@@ -108,6 +108,11 @@ table DisabledSafetyCheck {
   custom_call_target: string;
 }
 
+table Axis {
+  name: string;
+  size: uint16;
+}
+
 table Exported {
   /// We increment the serialization version every time we change the
   /// schema, even if the change is backwards compatible.
@@ -137,6 +142,8 @@ table Exported {
   uses_global_constants: bool;
 
   vjp: Exported;
+
+  mesh: [Axis];
 }
 
 root_type Exported;
