@@ -2025,7 +2025,8 @@ def _pjit_batcher_for_sharding(
     if sharding_impls.is_op_sharding_replicated(hlo_s):
       return s
     if isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
-      parsed_pspec = s._parsed_pspec.insert_axis_partitions(dim, None)
+      parsed_pspec = s._parsed_pspec.insert_axis_partitions(
+          dim, PartitionSpec.UNCONSTRAINED)
       return NamedSharding._from_parsed_pspec(s.mesh, parsed_pspec)
     new_op = hlo_s.to_proto().clone()
     tad = list(new_op.tile_assignment_dimensions)
@@ -2659,7 +2660,6 @@ def _sharding_constraint_batcher(
                        f"{sharding.spec}")
   x, = vals_in
   d, = dims_in
-  # None means unconstrained in ParsedPartitionSpec
   unconstrained_dims = {ud + (d <= ud) for ud in unconstrained_dims}
   if axis_data.spmd_name is None:
     unconstrained_dims.add(d)
@@ -2887,7 +2887,7 @@ def use_explicit_axes(*axes):
 def get_unconstrained_dims(sharding: NamedSharding):
   assert sharding._parsed_pspec is not None
   return {i for i, axes in enumerate(sharding._parsed_pspec)
-          if axes is None}
+          if axes is PartitionSpec.UNCONSTRAINED}
 
 
 def _get_partition_spec(

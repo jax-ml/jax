@@ -56,7 +56,7 @@ class TransferToMemoryKind:
 @util.cache(max_size=128, trace_context_in_key=False)
 def _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes):
   for p in parsed_pspec:
-    if p is not None:
+    if p is not PartitionSpec.UNCONSTRAINED:
       for r in p:
         if r not in mesh.shape:
           raise ValueError(
@@ -71,7 +71,7 @@ def _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes):
 @util.cache(max_size=128, trace_context_in_key=False)
 def _check_axis_type_consistency(mesh, parsed_pspec):
   for p in parsed_pspec:
-    if p is not None:
+    if p is not PartitionSpec.UNCONSTRAINED:
       if not all(mesh._name_to_type[p[0]] == mesh._name_to_type[r] for r in p):
         raise ValueError(
             'AxisTypes should be the same in a tuple subset of PartitionSpec:'
@@ -431,7 +431,7 @@ class NamedSharding(jsharding.Sharding):
     dim_shardings = [SdyDimSharding(axes=[], is_closed=True)
                      for _ in range(num_dimensions)]
     for i, dim_spec in enumerate(self._parsed_pspec):
-      if dim_spec is None:
+      if dim_spec is PartitionSpec.UNCONSTRAINED:
         dim_shardings[i].is_closed = False
       elif not dim_spec:
         # Already empty and closed sharding.
@@ -1079,7 +1079,7 @@ def get_array_mapping(
     return axis_resources
   return OrderedDict((axis, i)
                      for i, axes in enumerate(axis_resources)
-                     if axes is not None for axis in axes)
+                     if axes is not PartitionSpec.UNCONSTRAINED for axis in axes)
 
 
 get_single_pspec = lambda p: array_mapping_to_axis_resources(
@@ -1090,12 +1090,11 @@ class ParsedPartitionSpec:
   __slots__ = ('_user_spec', 'partitions')
 
   _user_spec: PartitionSpec | None
-  partitions: tuple[tuple[MeshAxisName, ...] | None, ...]
+  partitions: tuple[tuple[MeshAxisName, ...] | UnconstrainedSingleton, ...]
 
   def __init__(self, user_spec, partitions):
     self._user_spec = user_spec
-    # None in partitions represents unconstrained dim.
-    # TODO(yashkatariya): May use a sentinel value.
+    assert None not in partitions, partitions
     self.partitions = tuple(partitions)
 
   def get_partition_spec(self) -> PartitionSpec:
@@ -1130,10 +1129,10 @@ class ParsedPartitionSpec:
         axis_spec = ()
       elif isinstance(axis_spec, (list, tuple)):
         axis_spec = tuple(axis_spec)
-      elif isinstance(axis_spec, UnconstrainedSingleton):
+      elif axis_spec is PartitionSpec.UNCONSTRAINED:
         if not allow_unconstrained_dims:
           raise ValueError(f"Unconstrained dims are not allowed: {entry}")
-        axis_spec = None
+        axis_spec = PartitionSpec.UNCONSTRAINED
       else:
         axis_spec = (axis_spec,)
       axis_specs.append(axis_spec)
@@ -1204,7 +1203,7 @@ def _check_unique_resources(
   resource_counts: dict[MeshAxisName, int] = {}
   duplicate = False
   for d in arg_axis_resources:
-    if d is not None:
+    if d is not PartitionSpec.UNCONSTRAINED:
       for resource in d:
         count = resource_counts.get(resource, 0)
         if count > 0:

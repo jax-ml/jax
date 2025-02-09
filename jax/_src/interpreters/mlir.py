@@ -49,6 +49,7 @@ from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
+from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding as JSharding
 from jax._src.sharding_impls import (AUTO, NamedSharding,
                                      modify_sdy_sharding_wrt_axis_types,
@@ -1062,20 +1063,27 @@ def _get_mem_kind(s: JSharding | AUTO | None) -> str | None:
   assert isinstance(s, JSharding)
   return s.memory_kind
 
+
 def contains_unconstrained(s):
-  return isinstance(s, NamedSharding) and None in s._parsed_pspec
+  return (
+      isinstance(s, NamedSharding)
+      and PartitionSpec.UNCONSTRAINED in s._parsed_pspec
+  )
+
 
 def all_unconstrained(s, aval):
   if isinstance(s, NamedSharding):
     if aval.ndim != len(s._parsed_pspec):
       return False
-    return all(p is None for p in s._parsed_pspec)
+    return all(p is PartitionSpec.UNCONSTRAINED for p in s._parsed_pspec)
   return False
 
 def _get_unconstrained_dimensions(s, aval):
   us = contains_unconstrained(s)
-  return (us, all_unconstrained(s, aval),
-          ({i for i, p in enumerate(s._parsed_pspec) if p is None} if us else None))
+  return (
+    us, all_unconstrained(s, aval),
+    ({i for i, p in enumerate(s._parsed_pspec)
+      if p is PartitionSpec.UNCONSTRAINED} if us else None))
 
 def lower_jaxpr_to_module(
     module_name: str,
