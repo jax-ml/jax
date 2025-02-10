@@ -1484,5 +1484,15 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
       jax.random.normal(jax.random.key(0), 1000)
     f()  # don't crash
 
+
+class JaxWithKeyArrayTest(jtu.JaxTestCase):
+  def test_key_device_put(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/26101
+    cpu = jax.devices("cpu")[0]
+    key = jax.random.key(123)
+    key_on_cpu = jax.device_put(key, cpu)
+    repr(key_on_cpu)  # doesn't crash
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
