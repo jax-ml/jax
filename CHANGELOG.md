@@ -22,6 +22,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     JAX-level dead code elimination (DCE). See {jax-issue}`#25956` for more
     details.
 
+* Breaking changes
+  * Fixed a numerical issue in the gradients produced by `jax.remat`. This may
+    cause ``f(x) != jax.value_and_grad(f)(x)[0]`` (due to numerical differences)
+    for more functions f than previously. See
+    https://github.com/google/jax/pull/22244 for more information.
+
 * Changes
   * `JAX_CPU_COLLECTIVES_IMPLEMENTATION` and `JAX_NUM_CPU_DEVICES` now work as
     env vars. Before they could only be specified via jax.config or flags.
