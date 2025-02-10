@@ -1114,7 +1114,7 @@ class ParsedPartitionSpec:
   @classmethod
   def from_user_input(
       cls,
-      entry: PartitionSpec | None,
+      entry: PartitionSpec,
       arg_name: str,
       allow_unconstrained_dims: bool = False,
   ) -> ParsedPartitionSpec:
@@ -1122,7 +1122,7 @@ class ParsedPartitionSpec:
       return cls(entry, ())
     if not isinstance(entry, PartitionSpec):
       raise TypeError(f"{arg_name} are expected to be "
-                      f"PartitionSpec instances or None, but got {entry}")
+                      f"PartitionSpec instances, but got {entry}")
     axis_specs = []
     for axis_spec in entry:
       if axis_spec is None:
