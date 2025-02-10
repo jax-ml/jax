@@ -307,6 +307,7 @@ def parse_args():
         "--test-cmd",
         default="./build/rocm/build_rocm.sh && ./build/rocm/run_single_gpu.py -c && ./build/rocm/run_multi_gpu.sh",
     )
+    testp.add_argument("--test-cmd", default="./build/rocm/build_rocm.sh && ./build/rocm/run_single_gpu.py -c && ./build/rocm/run_multi_gpu.sh")
 
     ddp = subp.add_parser("dist_docker")
     ddp.add_argument("--dockerfile", default="build/rocm/Dockerfile.ms")
