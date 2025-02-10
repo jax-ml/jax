@@ -1179,9 +1179,11 @@ def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
 jax_core.custom_typechecks[core_map_p] = _core_map_typecheck_rule
 
 
-def lower_as_mlir(f, *args, dynamic_shapes=False, **kwargs) -> mlir.ir.Module:
+def lower_as_mlir(
+    f, *args, dynamic_shapes=False, device=None, **kwargs
+) -> mlir.ir.Module:
   with pallas_export_experimental(dynamic_shapes):
-    lowered = jax.jit(f).lower(*args, **kwargs)
+    lowered = jax.jit(f, device=device).lower(*args, **kwargs)
     stablehlo = lowered.compiler_ir(dialect="stablehlo")  # type: ignore[return-value]
 
   return stablehlo  # type: ignore[return-value]
