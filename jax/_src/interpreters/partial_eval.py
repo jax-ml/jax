@@ -2056,9 +2056,12 @@ class DynamicJaxprTrace(core.Trace):
     self.frame.add_eqn(eqn)
     return out_tracers
 
-  def process_custom_transpose(self, prim, call, tracers, *,
-                               transpose, out_types,
-                               lin_tree, res_tree, out_tree):
+  def process_custom_transpose(self, prim: core.Primitive,  # type: ignore[override]
+                               call: lu.WrappedFun, tracers, *,
+                               transpose: lu.WrappedFun,
+                               out_types,
+                               lin_tree: PyTreeDef,
+                               res_tree: PyTreeDef, out_tree: PyTreeDef):
     tracers = map(self.to_jaxpr_tracer, tracers)
     tracers_res, tracers_lin = split_list(tracers, [res_tree.num_leaves])
 
@@ -2070,7 +2073,7 @@ class DynamicJaxprTrace(core.Trace):
         convert_constvars_jaxpr(call_jaxpr), ())
 
     transpose_flat, in_tree2 = api_util.flatten_fun_nokwargs(
-        lu.wrap_init(transpose), treedef_tuple((res_tree, out_tree)))
+        transpose, treedef_tuple((res_tree, out_tree)))
 
     # the following thunk evaluates to a pair: transpose_jaxpr, transpose_consts
     @_memoize
