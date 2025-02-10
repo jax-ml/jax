@@ -5174,7 +5174,9 @@ class RematTest(jtu.JaxTestCase):
     # NOTE(mattjj): after #3370, this test doesn't actually call remat...
     def named_call(f):
       def named_f(*args):
-        f_ = lu.wrap_init(lambda: (f(*args),))
+        my_f = lambda: (f(*args),)
+        f_ = lu.wrap_init(
+            my_f, debug_info=api_util.debug_info("test_remat", my_f, args, {}))
         out, = core.call_p.bind(f_)
         return out
       return named_f
@@ -5234,8 +5236,11 @@ class RematTest(jtu.JaxTestCase):
 
     @jax_util.curry
     def call(f, *args):
+      my_f = lambda *args: [f(*args)]
       return core.call(
-          lu.wrap_init(lambda *args: [f(*args)]),
+          lu.wrap_init(my_f,
+                       debug_info=api_util.debug_info("test_remat", my_f,
+                                                      args, {})),
           *args, name='foo')[0]
 
     f = call(add_one)

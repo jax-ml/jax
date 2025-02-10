@@ -75,9 +75,9 @@ def _debug_info_to_string(dbg: core.DebugInfo | None) -> list[str]:
   if dbg is None: return "None"
   # Strip the absolute path and the line number but check that it references
   # this file (to catch errors when the source info points in JAX internals)
-  fun_src_info = re.sub(r"^(\S+)( at .*/debug_info_test.py:.*)?", "\\1", dbg.func_src_info)
+  func_src_info = re.sub(r"^(\S+)( at .*/debug_info_test.py:.*)?", "\\1", dbg.func_src_info)
   arg_names_str = ",".join([str(a) for a in dbg.arg_names])
-  res = f"traced_for={dbg.traced_for}, fun={fun_src_info}, arg_names={arg_names_str}"
+  res = f"traced_for={dbg.traced_for}, fun={func_src_info}, arg_names={arg_names_str}"
   if isinstance(dbg.result_paths, tuple):
     res += f", result_paths={','.join(dbg.result_paths)}"
   elif dbg.result_paths is None:
@@ -289,6 +289,26 @@ class DebugInfoTest(jtu.JaxTestCase):
     dbg = api_util.debug_info("jit", lambda my_arg: False, (1,), {})
     self.assertRegex(dbg.func_src_info, r"^<lambda> at .*debug_info_test.py:\d+")
     self.assertEqual(dbg.arg_names, ("my_arg",))
+
+  def test_debug_info_save_wrapped_fun_source_info(self):
+    def wrapper(x, y):
+      return x
+
+    api_util.save_wrapped_fun_sourceinfo(wrapper, None)  # No effect
+    dbg = api_util.debug_info("test", wrapper, (1, 2), {})
+    self.assertEqual("wrapper", dbg.func_name)
+
+    api_util.save_wrapped_fun_sourceinfo(wrapper, lambda x, y: x)
+    dbg = api_util.debug_info("test", wrapper, (1, 2), {})
+    self.assertEqual("<lambda>", dbg.func_name)
+
+    def other_f():
+      pass
+    dbg_other = api_util.debug_info("test other", other_f, (), {})
+    api_util.save_wrapped_fun_sourceinfo(wrapper, dbg_other)
+    dbg = api_util.debug_info("test", wrapper, (1, 2), {})
+    self.assertEqual("other_f", dbg.func_name)
+    self.assertEqual("test", dbg.traced_for)
 
   def test_debug_info_no_source_info_not_callable(self):
     # built-in function "int" does not have an inspect.Signature
@@ -1143,7 +1163,7 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=jit, fun=my_f, arg_names=xdict['x'],xdict['y'], result_paths=['a']",
         ],
         expected_tracer_debug_infos=[
-            "traced_for=custom_vmap, fun=my_f, arg_names=xdict['x'],xdict['y']",
+            "traced_for=custom_vmap fun, fun=my_f, arg_names=xdict['x'],xdict['y']",
             "traced_for=jit, fun=my_f, arg_names=xdict['x'],xdict['y']"
         ])
 

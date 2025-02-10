@@ -610,10 +610,17 @@ def fun_signature(fun: Callable) -> inspect.Signature | None:
   except (ValueError, TypeError):
     return None
 
-def save_wrapped_fun_sourceinfo(wrapper: Callable, wrapped: Callable):
+def save_wrapped_fun_sourceinfo(wrapper: Callable,
+                                wrapped: Callable | core.DebugInfo | None) -> None:
   # Prefer this to functools.wraps because it does not create a reference to
   # the wrapped function.
-  setattr(wrapper, "__fun_sourceinfo__", fun_sourceinfo(wrapped))
+  if isinstance(wrapped, core.DebugInfo):
+    func_src_info = wrapped.func_src_info
+  elif callable(wrapped):
+    func_src_info = fun_sourceinfo(wrapped)
+  else:
+    return
+  setattr(wrapper, "__fun_sourceinfo__", func_src_info)
 
 _fun_name_re = re.compile(r"(?:<built-in function (\S+)>)")
 
