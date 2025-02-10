@@ -45,17 +45,17 @@ from jax._src.lax import svd as lax_svd
 from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
     _input_dtype)
-from jax._src.lib import gpu_solver
-from jax._src.lib import gpu_sparse
-from jax._src.lib import lapack
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.typing import Array, ArrayLike
 
-# The following import is unused but needed to register the custom_call targets
-# in the gpu_linalg module.
-from jax._src.lib import gpu_linalg  # noqa: F401
+# The following imports may be unused but they are needed to register the
+# custom call targets defined in each module.
+from jax._src.lib import gpu_linalg  # pylint:disable=unused-import  # noqa: F401
+from jax._src.lib import gpu_solver  # pylint:disable=unused-import  # noqa: F401
+from jax._src.lib import gpu_sparse  # pylint:disable=unused-import  # noqa: F401
+from jax._src.lib import lapack  # pylint:disable=unused-import  # noqa: F401
 
 TFun = TypeVar('TFun', bound=Callable[..., Any])
 
@@ -582,22 +582,14 @@ def _cholesky_cpu_lowering(ctx, operand):
   operand_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
-  op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-  ctx_arg = (ctx,)
-  result, info = lapack.potrf_hlo(*ctx_arg, operand_aval.dtype, operand,
-                                  lower=True, a_shape_vals=op_shape_vals)
-
-  ok = mlir.compare_hlo(
-      info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
-      "EQ", "SIGNED")
-  select_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-  return [_broadcasting_select_hlo(
-      ctx,
-      mlir.broadcast_in_dim(ctx, ok,
-                            select_aval,
-                            broadcast_dimensions=range(len(batch_dims))),
-      select_aval,
-      result, out_aval, _nan_like_hlo(ctx, out_aval), out_aval)]
+  target_name = lapack.prepare_lapack_call("potrf_ffi", operand_aval.dtype)
+  info_aval = ShapedArray(batch_dims, np.int32)
+  rule = _linalg_ffi_lowering(target_name, avals_out=[operand_aval, info_aval],
+                              operand_output_aliases={0: 0})
+  result, info = rule(ctx, operand, uplo=_matrix_uplo_attr(True))
+  ok = mlir.compare_hlo(info, mlir.full_like_aval(ctx, 0, info_aval), "EQ",
+                        "SIGNED")
+  return [_replace_not_ok_with_nan(ctx, batch_dims, ok, result, out_aval)]
 
 mlir.register_lowering(
     cholesky_p, _cholesky_cpu_lowering, platform='cpu')
@@ -772,59 +764,59 @@ def eig_abstract_eval(operand, *, compute_left_eigenvectors,
 
   return tuple(output)
 
+def _eig_compute_attr(compute):
+  return _enum_attr(
+      lapack.eig.ComputationMode.kComputeEigenvectors if compute
+      else lapack.eig.ComputationMode.kNoEigenvectors
+  )
+
 def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
                       compute_right_eigenvectors, use_magma):
   del use_magma  # unused
   operand_aval, = ctx.avals_in
   out_aval = ctx.avals_out[0]
   batch_dims = operand_aval.shape[:-2]
-  op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-  w, vl, vr, info = lapack.geev_hlo(ctx, operand_aval.dtype, operand,
-                                    input_shape_vals=op_shape_vals,
-                                    jobvl=compute_left_eigenvectors,
-                                    jobvr=compute_right_eigenvectors)
+  real = operand_aval.dtype == np.float32 or operand_aval.dtype == np.float64
+  eigvals_aval = ShapedArray(operand_aval.shape[:-1], operand_aval.dtype)
+  eigvecs_aval = ShapedArray(operand_aval.shape,
+                              dtypes.to_complex_dtype(operand_aval.dtype))
+  info_aval = ShapedArray(batch_dims, np.int32)
+  avals_out = [eigvals_aval, eigvecs_aval, eigvecs_aval, info_aval]
+  if real:
+    avals_out = [eigvals_aval, *avals_out]
+  target_name = lapack.prepare_lapack_call("geev_ffi", operand_aval.dtype)
+  rule = _linalg_ffi_lowering(target_name, avals_out=avals_out)
+  *w, vl, vr, info = rule(ctx, operand,
+                          compute_left=_eig_compute_attr(compute_left_eigenvectors),
+                          compute_right=_eig_compute_attr(compute_right_eigenvectors))
+  w = hlo.complex(w[0], w[1]) if real else w[0]
 
   ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "EQ", "SIGNED")
-  select_w_aval = ShapedArray(batch_dims + (1,), np.dtype(np.bool_))
-  w = _broadcasting_select_hlo(
-      ctx,
-      mlir.broadcast_in_dim(ctx, ok, select_w_aval,
-                            broadcast_dimensions=range(len(batch_dims))),
-      select_w_aval,
-      w, out_aval, _nan_like_hlo(ctx, out_aval), out_aval)
+  w = _replace_not_ok_with_nan(ctx, batch_dims, ok, w, out_aval)
   output = [w]
-
   if compute_left_eigenvectors:
     aval = ctx.avals_out[len(output)]
-    select_vl_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-    vl = _broadcasting_select_hlo(
-        ctx,
-        mlir.broadcast_in_dim(ctx, ok, select_vl_aval,
-                              broadcast_dimensions=range(len(batch_dims))),
-        select_vl_aval,
-        vl, aval, _nan_like_hlo(ctx, aval), aval)
+    vl = _replace_not_ok_with_nan(ctx, batch_dims, ok, vl, aval)
     output.append(vl)
-
   if compute_right_eigenvectors:
     aval = ctx.avals_out[len(output)]
-    select_vr_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-    vr = _broadcasting_select_hlo(
-        ctx,
-        mlir.broadcast_in_dim(ctx, ok, select_vr_aval,
-                              broadcast_dimensions=range(len(batch_dims))),
-        select_vr_aval,
-        vr, aval, _nan_like_hlo(ctx, aval), aval)
+    vr = _replace_not_ok_with_nan(ctx, batch_dims, ok, vr, aval)
     output.append(vr)
-
   return output
 
 
-def _eig_gpu_impl(target_name_prefix, x, *, compute_left_eigenvectors,
-                  compute_right_eigenvectors, use_magma):
+def _eig_gpu_lowering(target_name_prefix, ctx, operand, *,
+                      compute_left_eigenvectors, compute_right_eigenvectors,
+                      use_magma):
+  operand_aval, = ctx.avals_in
+  batch_dims = operand_aval.shape[:-2]
+  n, m = operand_aval.shape[-2:]
+  assert n == m
+
   gpu_solver.initialize_hybrid_kernels()
-  dtype = x.dtype
+  dtype = operand_aval.dtype
   is_real = dtype == np.float32 or dtype == np.float64
   if is_real:
     target_name = f"{target_name_prefix}hybrid_eig_real"
@@ -834,65 +826,43 @@ def _eig_gpu_impl(target_name_prefix, x, *, compute_left_eigenvectors,
     assert dtype == np.complex64 or dtype == np.complex128
     complex_dtype = dtype
 
-  batch_dims = x.shape[:-2]
-  n, m = x.shape[-2:]
-  assert n == m
-  num_batch_dims = len(batch_dims)
-
-  layout = tuple(range(num_batch_dims)) + (num_batch_dims + 1, num_batch_dims)
-  out_types = [
-      api.ShapeDtypeStruct(batch_dims + (n,), dtype),
-      api.ShapeDtypeStruct(batch_dims + (n, n), complex_dtype),
-      api.ShapeDtypeStruct(batch_dims + (n, n), complex_dtype),
-      api.ShapeDtypeStruct(batch_dims, np.int32),
+  avals_out = [
+      ShapedArray(batch_dims + (n,), dtype),
+      ShapedArray(batch_dims + (n, n), complex_dtype),
+      ShapedArray(batch_dims + (n, n), complex_dtype),
+      ShapedArray(batch_dims, np.int32),
   ]
-  out_layouts = [None, layout, layout, None]
   if is_real:
-    out_types = [api.ShapeDtypeStruct(batch_dims + (n,), dtype)] + out_types
-    out_layouts = [None] + out_layouts
+    avals_out = [ShapedArray(batch_dims + (n,), dtype)] + avals_out
 
   magma = config.gpu_use_magma.value
   if use_magma is not None:
     magma = "on" if use_magma else "off"
-  fun = ffi.ffi_call(target_name, out_types, input_layouts=[layout],
-                     output_layouts=out_layouts)
-  *w, vl, vr, info = fun(x, magma=magma, left=compute_left_eigenvectors,
-                         right=compute_right_eigenvectors)
+
+  rule = _linalg_ffi_lowering(target_name, avals_out=avals_out)
+  *w, vl, vr, info = rule(ctx, operand, magma=magma,
+                          left=compute_left_eigenvectors,
+                          right=compute_right_eigenvectors)
   if is_real:
     assert len(w) == 2
-    w = lax.complex(*w)
+    w = hlo.complex(*w)
   else:
     assert len(w) == 1
     w = w[0]
-  ok = lax.eq(info, lax.zeros_like_array(info))
-  ok = _broadcast_to(ok[..., None], w.shape)
-  w = lax.select(ok, w, lax.full_like(w, np.nan + np.nan * 1j))
-  ok = _broadcast_to(ok[..., None], x.shape)
+  zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.int32))
+  ok = mlir.compare_hlo(info, zeros, "EQ", "SIGNED")
+  w_aval = ShapedArray(batch_dims + (n,), complex_dtype)
+  w = _replace_not_ok_with_nan(ctx, batch_dims, ok, w, w_aval)
   output = [w]
   if compute_left_eigenvectors:
-    vl = lax.select(ok, vl, lax.full_like(vl, np.nan + np.nan * 1j))
+    vl_aval = ShapedArray(batch_dims + (n, n), complex_dtype)
+    vl = _replace_not_ok_with_nan(ctx, batch_dims, ok, vl, vl_aval)
     output.append(vl)
   if compute_right_eigenvectors:
-    vr = lax.select(ok, vr, lax.full_like(vr, np.nan + np.nan * 1j))
+    vr_aval = ShapedArray(batch_dims + (n, n), complex_dtype)
+    vr = _replace_not_ok_with_nan(ctx, batch_dims, ok, vr, vr_aval)
     output.append(vr)
   return output
-
-
-def _eig_gpu_lowering(target_name_prefix, ctx, operand, *,
-                      compute_left_eigenvectors, compute_right_eigenvectors,
-                      use_magma):
-  if ctx.is_forward_compat():
-    raise NotImplementedError(
-        "Export of nonsymmetric eigendecomposition on GPU is not supported "
-        "because of forward compatibility. The "
-        "'jax_export_ignore_forward_compatibility' configuration option can be "
-        "used to disable this check.")
-  rule = mlir.lower_fun(partial(
-      _eig_gpu_impl, target_name_prefix,
-      compute_left_eigenvectors=compute_left_eigenvectors,
-      compute_right_eigenvectors=compute_right_eigenvectors,
-      use_magma=use_magma), multiple_results=True)
-  return rule(ctx, operand)
 
 
 def eig_batching_rule(batched_args, batch_dims, *, compute_left_eigenvectors,
@@ -1073,10 +1043,6 @@ def _eigh_cpu_gpu_lowering(
   if not (subset_by_index is None or subset_by_index == (0, n)):
     raise NotImplementedError("subset_by_index not supported on CPU and GPU")
   batch_dims = operand_aval.shape[:-2]
-  nb = len(batch_dims)
-  layout = (nb, nb + 1) + tuple(range(nb - 1, -1, -1))
-  result_layouts = [layout, tuple(range(nb, -1, -1)),
-                    tuple(range(nb - 1, -1, -1))]
   if target_name_prefix == "cpu":
     dtype = operand_aval.dtype
     prefix = "he" if dtypes.issubdtype(dtype, np.complexfloating) else "sy"
@@ -1090,29 +1056,16 @@ def _eigh_cpu_gpu_lowering(
     target_name = f"{target_name_prefix}solver_syevd_ffi"
     kwargs = {"lower": lower, "algorithm": np.uint8(0)}
 
-  rule = ffi.ffi_lowering(target_name, operand_layouts=[layout],
-                          result_layouts=result_layouts,
-                          operand_output_aliases={0: 0})
-  info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
-  sub_ctx = ctx.replace(avals_out=[v_aval, w_aval, info_aval])
-  v, w, info = rule(sub_ctx, operand, **kwargs)
+  info_aval = ShapedArray(batch_dims, np.int32)
+  avals_out = [v_aval, w_aval, info_aval]
+  rule = _linalg_ffi_lowering(target_name, avals_out=avals_out,
+                              operand_output_aliases={0: 0})
+  v, w, info = rule(ctx, operand, **kwargs)
 
-  zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
+  zeros = mlir.full_like_aval(ctx, 0, info_aval)
   ok = mlir.compare_hlo(info, zeros, "EQ", "SIGNED")
-  select_v_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-  v = _broadcasting_select_hlo(
-      ctx,
-      mlir.broadcast_in_dim(ctx, ok, select_v_aval,
-                            broadcast_dimensions=range(len(batch_dims))),
-      select_v_aval,
-      v, v_aval, _nan_like_hlo(ctx, v_aval), v_aval)
-  select_w_aval = ShapedArray(batch_dims + (1,), np.dtype(np.bool_))
-  w = _broadcasting_select_hlo(
-      ctx,
-      mlir.broadcast_in_dim(ctx, ok, select_w_aval,
-                            broadcast_dimensions=range(len(batch_dims))),
-      select_w_aval,
-      w, w_aval, _nan_like_hlo(ctx, w_aval), w_aval)
+  v = _replace_not_ok_with_nan(ctx, batch_dims, ok, v, v_aval)
+  w = _replace_not_ok_with_nan(ctx, batch_dims, ok, w, w_aval)
   return [v, w]
 
 
@@ -1400,12 +1353,17 @@ def _triangular_solve_cpu_lower(
     a = chlo.conj(a)
     conjugate_a = False
   if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
+    target_name = lapack.prepare_lapack_call("trsm_ffi", a_aval.dtype)
     alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype))
-    b_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, b_aval.shape)
-    return lapack.trsm_hlo(
-        ctx, a_aval.dtype, alpha,
-        a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal,
-        b_shape_vals=b_shape_vals)
+    alpha_aval = ShapedArray((), a_aval.dtype)
+    rule = _linalg_ffi_lowering(target_name,
+                                [a_aval, b_aval, alpha_aval],
+                                operand_output_aliases={1: 0})
+    return rule(ctx, a, b, alpha,
+                side=_matrix_side_attr(left_side),
+                uplo=_matrix_uplo_attr(lower),
+                trans_x=_matrix_transpose_attr(transpose_a, conjugate_a),
+                diag=_matrix_diagonal_attr(unit_diagonal))
   else:
     # Fall back to the HLO implementation for unsupported types or batching.
     # TODO: Consider swapping XLA for LAPACK in batched case
@@ -1679,31 +1637,18 @@ def _lu_cpu_gpu_lowering(ctx, operand, *, target_name_prefix: str):
     target_name = lapack.prepare_lapack_call("getrf_ffi", operand_aval.dtype)
   else:
     target_name = f"{target_name_prefix}solver_getrf_ffi"
-
-  # We manually construct the layouts because the input and output are
-  # expected to be in Fortran order.
-  nb = len(batch_dims)
-  layout = (nb, nb + 1) + tuple(range(nb - 1, -1, -1))
-  result_layouts = [layout, tuple(range(nb, -1, -1)),
-                    tuple(range(nb - 1, -1, -1))]
-  rule = ffi.ffi_lowering(target_name, operand_layouts=[layout],
-                          result_layouts=result_layouts,
-                          operand_output_aliases={0: 0})
-  sub_ctx = ctx.replace(avals_out=[out_aval, pivot_aval, info_aval])
-  lu, pivot, info = rule(sub_ctx, operand)
+  rule = _linalg_ffi_lowering(target_name,
+                              avals_out=[out_aval, pivot_aval, info_aval],
+                              operand_output_aliases={0: 0})
+  lu, pivot, info = rule(ctx, operand)
 
   # Subtract 1 from the pivot to get 0-based indices.
   pivot = hlo.subtract(pivot, mlir.full_like_aval(ctx, 1, pivot_aval))
   ok = mlir.compare_hlo(info, mlir.full_like_aval(ctx, 0, info_aval),
       "GE", "SIGNED")
-  select_lu_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-  lu = _broadcasting_select_hlo(
-      ctx,
-      mlir.broadcast_in_dim(ctx, ok, select_lu_aval,
-                            broadcast_dimensions=range(len(batch_dims))),
-      select_lu_aval,
-      lu, out_aval, _nan_like_hlo(ctx, out_aval), out_aval)
-  sub_ctx = ctx.replace(primitive=None, avals_in=[pivot_aval], avals_out=[perm_aval])
+  lu = _replace_not_ok_with_nan(ctx, batch_dims, ok, lu, out_aval)
+  sub_ctx = ctx.replace(primitive=None, avals_in=[pivot_aval],
+                        avals_out=[perm_aval])
   perm_fn = mlir.lower_fun(lambda x: lu_pivots_to_permutation(x, m),
                            multiple_results=False)
   perm, = perm_fn(sub_ctx, pivot)
@@ -1882,17 +1827,11 @@ def _geqrf_lowering_rule(ctx, operand):
 
 def _geqrf_cpu_gpu_lowering(ctx, a, *, target_name_prefix: str):
   operand_aval, = ctx.avals_in
-  batch_dims = operand_aval.shape[:-2]
-  nb = len(batch_dims)
-  layout = (nb, nb + 1) + tuple(range(nb - 1, -1, -1))
-  result_layouts = [layout, tuple(range(nb, -1, -1))]
   if target_name_prefix == "cpu":
     target_name = lapack.prepare_lapack_call("geqrf_ffi", operand_aval.dtype)
   else:
     target_name = f"{target_name_prefix}solver_geqrf_ffi"
-  rule = ffi.ffi_lowering(target_name, operand_layouts=[layout],
-                          result_layouts=result_layouts,
-                          operand_output_aliases={0: 0})
+  rule = _linalg_ffi_lowering(target_name, operand_output_aliases={0: 0})
   return rule(ctx, a)
 
 geqrf_p = Primitive('geqrf')
@@ -1951,17 +1890,10 @@ def _geqp3_batching_rule(batched_args, batch_dims):
   return geqp3(a, jpvt), (0, 0, 0)
 
 def _geqp3_cpu_lowering(ctx, a, jpvt):
-  a_aval, jpvt_aval = ctx.avals_in
-  batch_dims = a_aval.shape[:-2]
-  nb = len(batch_dims)
-  layout = [(nb, nb + 1) + tuple(range(nb - 1, -1, -1)), tuple(range(nb, -1, -1))]
-  result_layouts = layout + [tuple(range(nb, -1, -1))]
+  a_aval, _ = ctx.avals_in
   target_name = lapack.prepare_lapack_call("geqp3_ffi", a_aval.dtype)
-  rule = ffi.ffi_lowering(target_name, operand_layouts=layout,
-                          result_layouts=result_layouts,
-                          operand_output_aliases={0: 0, 1: 1})
+  rule = _linalg_ffi_lowering(target_name, operand_output_aliases={0: 0, 1: 1})
   return rule(ctx, a, jpvt)
-
 
 geqp3_p = Primitive('geqp3')
 geqp3_p.multiple_results = True
@@ -2027,19 +1959,13 @@ def _householder_product_lowering_rule(ctx, a, taus):
 def _householder_product_cpu_gpu_lowering(ctx, a, taus, *,
                                           target_name_prefix: str):
   a_aval, _ = ctx.avals_in
-  batch_dims = a_aval.shape[:-2]
-  nb = len(batch_dims)
-  layout = (nb, nb + 1) + tuple(range(nb - 1, -1, -1))
-  tau_layout = tuple(range(nb, -1, -1))
   if target_name_prefix == "cpu":
     dtype = a_aval.dtype
     prefix = "un" if dtypes.issubdtype(dtype, np.complexfloating) else "or"
     target_name = lapack.prepare_lapack_call(f"{prefix}gqr_ffi", dtype)
   else:
     target_name = f"{target_name_prefix}solver_orgqr_ffi"
-  rule = ffi.ffi_lowering(target_name, operand_layouts=[layout, tau_layout],
-                          result_layouts=[layout],
-                          operand_output_aliases={0: 0})
+  rule = _linalg_ffi_lowering(target_name, operand_output_aliases={0: 0})
   return rule(ctx, a, taus)
 
 householder_product_p = Primitive('householder_product')
@@ -2297,6 +2223,16 @@ def _empty_svd(a, *, full_matrices, compute_uv):
   return s, u, v
 
 
+def _svd_computation_attr(compute_uv, full_matrices):
+  mode = "A"
+  if full_matrices is None:
+    full_matrices = True
+  if not compute_uv:
+    mode = "N"
+  elif not full_matrices:
+    mode = "S"
+  return _char_attr(mode)
+
 def _svd_cpu_gpu_lowering(
     ctx,
     operand,
@@ -2327,15 +2263,7 @@ def _svd_cpu_gpu_lowering(
       raise NotImplementedError(
           "The SVD algorithm parameter is not implemented on CPU.")
     target_name = lapack.prepare_lapack_call("gesdd_ffi", operand_aval.dtype)
-    nb = len(batch_dims)
-    layout = (nb, nb + 1) + tuple(range(nb - 1, -1, -1))
-    result_layouts = [layout, tuple(range(nb, -1, -1)), layout, layout,
-                      tuple(range(nb - 1, -1, -1))]
-    mode = lapack._svd_computation_attr(compute_uv=compute_uv,
-                                        full_matrices=full_matrices)
-    rule = ffi.ffi_lowering(target_name, operand_layouts=[layout],
-                            result_layouts=result_layouts,
-                            operand_output_aliases={0: 0})
+    mode = _svd_computation_attr(compute_uv, full_matrices)
     info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
     if compute_uv:
       s_aval, u_aval, vt_aval = ctx.avals_out
@@ -2349,9 +2277,10 @@ def _svd_cpu_gpu_lowering(
       vt_aval = ShapedArray((*batch_dims,
                              n if full_matrices else core.min_dim(m, n), n),
                             operand_aval.dtype)
-    sub_ctx = ctx.replace(avals_out=[operand_aval, s_aval, u_aval, vt_aval,
-                                     info_aval])
-    _, s, u, vt, info = rule(sub_ctx, operand, mode=mode)
+    avals_out = [operand_aval, s_aval, u_aval, vt_aval, info_aval]
+    rule = _linalg_ffi_lowering(target_name, avals_out=avals_out,
+                                operand_output_aliases={0: 0})
+    _, s, u, vt, info = rule(ctx, operand, mode=mode)
   else:
     s, u, vt, info = _svd_gpu_sub_lowering(ctx, operand,
                                            full_matrices=full_matrices,
@@ -2361,31 +2290,12 @@ def _svd_cpu_gpu_lowering(
 
   zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
   ok = mlir.compare_hlo(info, zeros, "EQ", "SIGNED")
-  select_s_aval = ShapedArray(batch_dims + (1,), np.dtype(np.bool_))
-  s = _broadcasting_select_hlo(
-      ctx,
-      mlir.broadcast_in_dim(ctx, ok, select_s_aval,
-                            broadcast_dimensions=range(len(batch_dims))),
-      select_s_aval,
-      s, s_aval, _nan_like_hlo(ctx, s_aval), s_aval)
+  s = _replace_not_ok_with_nan(ctx, batch_dims, ok, s, s_aval)
   result = [s]
-
   if compute_uv:
     u_aval, vt_aval = ctx.avals_out[1:]
-    select_u_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-    u = _broadcasting_select_hlo(
-        ctx,
-        mlir.broadcast_in_dim(ctx, ok, select_u_aval,
-                              broadcast_dimensions=range(len(batch_dims))),
-        select_u_aval,
-        u, u_aval, _nan_like_hlo(ctx, u_aval), u_aval)
-    select_v_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-    vt = _broadcasting_select_hlo(
-        ctx,
-        mlir.broadcast_in_dim(ctx, ok, select_v_aval,
-                              broadcast_dimensions=range(len(batch_dims))),
-        select_v_aval,
-        vt, vt_aval, _nan_like_hlo(ctx, vt_aval), vt_aval)
+    u = _replace_not_ok_with_nan(ctx, batch_dims, ok, u, u_aval)
+    vt = _replace_not_ok_with_nan(ctx, batch_dims, ok, vt, vt_aval)
     result += [u, vt]
 
   return result
@@ -2429,6 +2339,7 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
       use_jacobi = False
   else:
     use_jacobi = algorithm == SvdAlgorithm.JACOBI
+  column_major = True
   if use_jacobi:
     target_name = f"{target_name_prefix}solver_gesvdj_ffi"
     # The gesvdjbatched kernel doesn't support "econ" mode, but it also only
@@ -2438,7 +2349,6 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
       econ = not full_matrices and m > 32 and n > 32
     except core.InconclusiveDimensionOperation:
       econ = False
-    layout = (nb, nb + 1) + tuple(range(nb - 1, -1, -1))
   else:
     target_name = f"{target_name_prefix}solver_gesvd_ffi"
     econ = not full_matrices
@@ -2446,31 +2356,22 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
     transposed = m < n
     kwargs = {"transposed": transposed}
     if transposed:
-      layout = tuple(range(nb + 1, -1, -1))
-    else:
-      layout = (nb, nb + 1) + tuple(range(nb - 1, -1, -1))
+      column_major = False
 
-  result_layouts = [layout, tuple(range(nb, -1, -1)),
-                    layout if use_jacobi or compute_uv else (),
-                    layout if use_jacobi or compute_uv else (),
-                    tuple(range(nb - 1, -1, -1))]
-  rule = ffi.ffi_lowering(target_name, operand_layouts=[layout],
-                          result_layouts=result_layouts,
-                          operand_output_aliases={0: 0})
   if use_jacobi:
     # When using the Jacobi algorithm, the U and V matrices must always be
     # allocated even if compute_uv is False.
     u_aval = ShapedArray((*batch_dims, m, k if econ else m), u_aval.dtype)
     v_aval = ShapedArray((*batch_dims, n, k if econ else n), vt_aval.dtype)
-    sub_ctx = ctx.replace(avals_out=[operand_aval, s_aval, u_aval, v_aval,
-                                     info_aval])
+    avals_out = [operand_aval, s_aval, u_aval, v_aval, info_aval]
   elif transposed:
-    sub_ctx = ctx.replace(avals_out=[operand_aval, s_aval, vt_aval, u_aval,
-                                     info_aval])
+    avals_out = [operand_aval, s_aval, vt_aval, u_aval, info_aval]
   else:
-    sub_ctx = ctx.replace(avals_out=[operand_aval, s_aval, u_aval, vt_aval,
-                                     info_aval])
-  _, s, u, vt, info = rule(sub_ctx, operand, full_matrices=not econ,
+    avals_out = [operand_aval, s_aval, u_aval, vt_aval, info_aval]
+  rule = _linalg_ffi_lowering(target_name, avals_out=avals_out,
+                              operand_output_aliases={0: 0},
+                              column_major=column_major)
+  _, s, u, vt, info = rule(ctx, operand, full_matrices=not econ,
                            compute_uv=compute_uv, **kwargs)
   if use_jacobi and compute_uv:
     vt = hlo.transpose(
@@ -2615,29 +2516,18 @@ def _tridiagonal_solve_gpu_lowering(lowering, ctx, dl, d, du, b):
 
 
 def _tridiagonal_solve_cpu_lowering(ctx, dl, d, du, b, **kwargs):
+  del kwargs  # unused
   b_aval = ctx.avals_in[-1]
   batch_dims = b_aval.shape[:-2]
   target_name = lapack.prepare_lapack_call("gtsv_ffi", b_aval.dtype)
-  nb = len(batch_dims)
-  b_layout = (nb, nb + 1) + tuple(range(nb - 1, -1, -1))
-  d_layout = tuple(range(nb, -1, -1))
-  layouts = [d_layout, d_layout, d_layout, b_layout]
-  info_layout = tuple(range(nb - 1, -1, -1))
-  rule = ffi.ffi_lowering(target_name, operand_layouts=layouts,
-                          result_layouts=layouts + [info_layout],
-                          operand_output_aliases={0: 0, 1: 1, 2: 2, 3: 3})
-  info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
-  sub_ctx = ctx.replace(avals_out=list(ctx.avals_in) + [info_aval])
-  *_, b_out, info = rule(sub_ctx, dl, d, du, b)
+  info_aval = ShapedArray(batch_dims, np.int32)
+  rule = _linalg_ffi_lowering(target_name,
+                              avals_out=[*ctx.avals_in, info_aval],
+                              operand_output_aliases={0: 0, 1: 1, 2: 2, 3: 3})
+  *_, b_out, info = rule(ctx, dl, d, du, b)
   zeros = mlir.full_like_aval(ctx, 0, info_aval)
   ok = mlir.compare_hlo(info, zeros, "EQ", "SIGNED")
-  select_b_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-  return [_broadcasting_select_hlo(
-      ctx,
-      mlir.broadcast_in_dim(ctx, ok, select_b_aval,
-                            broadcast_dimensions=range(len(batch_dims))),
-      select_b_aval,
-      b_out, b_aval, _nan_like_hlo(ctx, b_aval), b_aval)]
+  return [_replace_not_ok_with_nan(ctx, batch_dims, ok, b_out, b_aval)]
 
 
 def _tridiagonal_product(dl, d, du, b):
@@ -2822,56 +2712,45 @@ def _schur_abstract_eval(operand, *, compute_schur_vectors, sort_eig_vals,
 
 def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
                         select_callable):
+  del select_callable  # unused
+  if sort_eig_vals:
+    raise NotImplementedError(
+        "The sort feature of LAPACK's gees routine is not implemented.")
+
   operand_aval, = ctx.avals_in
   batch_dims = operand_aval.shape[:-2]
+  real = operand_aval.dtype == np.float32 or operand_aval.dtype == np.float64
+  target_name = lapack.prepare_lapack_call("gees_ffi", operand_aval.dtype)
 
-  a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-  # TODO(b/344892332): Remove the conditional after the compatibility period.
-  gees_result = lapack.gees_hlo(ctx, operand_aval.dtype, operand,
-                                jobvs=compute_schur_vectors,
-                                sort=sort_eig_vals,
-                                select=select_callable,
-                                a_shape_vals=a_shape_vals)
-  if not ctx.is_forward_compat():
-    schur_form, schur_vectors, _eig_vals, _selected_eig_vals, info = gees_result
+  info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
+  eigvals_aval = ShapedArray(operand_aval.shape[:-1], operand_aval.dtype)
+  if real:
+    avals_out = [operand_aval, operand_aval, eigvals_aval, eigvals_aval,
+                 info_aval, info_aval]
   else:
-    # Number of return values depends on value of sort_eig_vals.
-    schur_form, schur_vectors, *_, info = gees_result
+    avals_out = [operand_aval, operand_aval, eigvals_aval, info_aval, info_aval]
+
+  mode = (
+      lapack.schur.ComputationMode.kComputeSchurVectors
+      if compute_schur_vectors
+      else lapack.schur.ComputationMode.kNoComputeSchurVectors
+  )
+  rule = _linalg_ffi_lowering(target_name, avals_out=avals_out,
+                              operand_output_aliases={0: 0})
+  schur_form, schur_vectors, *_, info = rule(
+      ctx, operand, mode=_enum_attr(mode),
+      sort=_enum_attr(lapack.schur.Sort.kNoSortEigenvalues))
 
   ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "EQ", "SIGNED")
 
-  select_schur_form_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-  schur_form = _broadcasting_select_hlo(
-      ctx,
-      mlir.broadcast_in_dim(
-          ctx,
-          ok,
-          select_schur_form_aval,
-          broadcast_dimensions=range(len(batch_dims)),
-      ),
-      select_schur_form_aval,
-      schur_form,
-      ctx.avals_out[0],
-      _nan_like_hlo(ctx, ctx.avals_out[0]),
-      ctx.avals_out[0],
-  )
+  schur_form = _replace_not_ok_with_nan(ctx, batch_dims, ok, schur_form,
+                                        ctx.avals_out[0])
   output = [schur_form]
   if compute_schur_vectors:
-    select_vs_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-    schur_vectors = _broadcasting_select_hlo(
-        ctx,
-        mlir.broadcast_in_dim(
-            ctx, ok, select_vs_aval, broadcast_dimensions=range(len(batch_dims))
-        ),
-        select_vs_aval,
-        schur_vectors,
-        ctx.avals_out[1],
-        _nan_like_hlo(ctx, ctx.avals_out[1]),
-        ctx.avals_out[1],
-    )
-
+    schur_vectors = _replace_not_ok_with_nan(ctx, batch_dims, ok, schur_vectors,
+                                             ctx.avals_out[1])
     output.append(schur_vectors)
 
   return output
@@ -2953,26 +2832,23 @@ batching.primitive_batchers[hessenberg_p] = _hessenberg_batching_rule
 def _hessenberg_cpu_hlo(ctx, a):
   a_aval, = ctx.avals_in
   batch_dims = a_aval.shape[:-2]
-  a, taus, info = lapack.gehrd_hlo(ctx, a_aval.dtype, a)
+  n = a_aval.shape[-1]
+  if not core.is_constant_dim(n):
+    raise ValueError("hessenberg requires the last dimension of a to be "
+                     f"constant, got a.shape of {a.shape}.")
+  target_name = lapack.prepare_lapack_call("gehrd_ffi", a_aval.dtype)
+  avals_out = [*ctx.avals_out, ShapedArray(batch_dims, np.int32)]
+  rule = _linalg_ffi_lowering(target_name, avals_out=avals_out,
+                              operand_output_aliases={0: 0})
+  a, taus, info = rule(ctx, a, low=np.int32(1), high=np.int32(n))
   ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "EQ", "SIGNED")
-  select_a_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-  select_taus_aval = ShapedArray(batch_dims + (1,), np.dtype(np.bool_))
   return [
-    _broadcasting_select_hlo(
-      ctx,
-      mlir.broadcast_in_dim(ctx, ok, select_a_aval,
-                            broadcast_dimensions=range(len(batch_dims))),
-      select_a_aval,
-      a, ctx.avals_out[0], _nan_like_hlo(ctx, ctx.avals_out[0]), ctx.avals_out[0]),
-    _broadcasting_select_hlo(
-      ctx,
-      mlir.broadcast_in_dim(ctx, ok, select_taus_aval,
-                            broadcast_dimensions=range(len(batch_dims))),
-      select_taus_aval,
-      taus, ctx.avals_out[1], _nan_like_hlo(ctx, ctx.avals_out[1]), ctx.avals_out[1]),
-    ]
+      _replace_not_ok_with_nan(ctx, batch_dims, ok, a, ctx.avals_out[0]),
+      _replace_not_ok_with_nan(ctx, batch_dims, ok, taus, ctx.avals_out[1]),
+  ]
+
 
 mlir.register_lowering(hessenberg_p, _hessenberg_cpu_hlo, platform='cpu')
 
@@ -3051,20 +2927,15 @@ batching.primitive_batchers[tridiagonal_p] = _tridiagonal_batching_rule
 
 def _tridiagonal_cpu_hlo(ctx, a, *, lower):
   a_aval, = ctx.avals_in
-  return lapack.sytrd_hlo(ctx, a_aval.dtype, a, lower=lower)
+  real = a_aval.dtype == np.float32 or a_aval.dtype == np.float64
+  prefix = "sy" if real else "he"
+  target_name = lapack.prepare_lapack_call(f"{prefix}trd_ffi", a_aval.dtype)
+  rule = _linalg_ffi_lowering(target_name, operand_output_aliases={0: 0})
+  return rule(ctx, a, uplo=_matrix_uplo_attr(lower))
 
 def _tridiagonal_gpu_hlo(ctx, a, *, lower, target_name_prefix):
-  operand_aval, = ctx.avals_in
-  dims = operand_aval.shape
-  batch_dims = dims[:-2]
-  nb = len(batch_dims)
-  layout = (nb, nb + 1) + tuple(range(nb - 1, -1, -1))
-  result_layouts = [layout, tuple(range(nb, -1, -1)), tuple(range(nb, -1, -1)),
-                    tuple(range(nb, -1, -1)), tuple(range(nb - 1, -1, -1))]
-  rule = ffi.ffi_lowering(f"{target_name_prefix}solver_sytrd_ffi",
-                          operand_layouts=[layout],
-                          result_layouts=result_layouts,
-                          operand_output_aliases={0: 0})
+  rule = _linalg_ffi_lowering(f"{target_name_prefix}solver_sytrd_ffi",
+                              operand_output_aliases={0: 0})
   return rule(ctx, a, lower=lower)
 
 
@@ -3097,3 +2968,59 @@ def _broadcasting_select_hlo(ctx, which, which_aval, x, x_aval, y, y_aval) -> ir
                                             (which_aval, x_aval, y_aval),
                                             out_shapes)
   return hlo.select(which, x, y)
+
+def _replace_not_ok_with_nan(ctx, batch_dims, ok, x, x_aval):
+  num_bcast_dims = len(x_aval.shape) - len(batch_dims)
+  select_aval = ShapedArray(batch_dims + (1,) * num_bcast_dims, np.bool_)
+  return _broadcasting_select_hlo(
+      ctx,
+      mlir.broadcast_in_dim(ctx, ok, select_aval,
+                            broadcast_dimensions=range(len(batch_dims))),
+      select_aval,
+      x, x_aval, _nan_like_hlo(ctx, x_aval), x_aval)
+
+def _enum_attr(e):
+  return ir.IntegerAttr.get(ir.IntegerType.get_unsigned(8), e.value)
+
+def _char_attr(c):
+  return ir.IntegerAttr.get(ir.IntegerType.get_unsigned(8), ord(c))
+
+def _matrix_side_attr(left_side):
+  return _char_attr("L" if left_side else "R")
+
+def _matrix_uplo_attr(lower):
+  return _char_attr("L" if lower else "U")
+
+def _matrix_transpose_attr(transpose: bool, conjugate: bool):
+  return _char_attr(("C" if conjugate else "T") if transpose else "N")
+
+def _matrix_diagonal_attr(unit_diag: bool):
+  return _char_attr("U" if unit_diag else "N")
+
+def _column_major_matrix_layout(dim: int) -> tuple[int, ...]:
+  # The layout for a batch of matrices with Fortran order.
+  return (dim - 2, dim - 1) + tuple(range(dim - 3, -1, -1))
+
+def _linalg_ffi_lowering(target_name, avals_in=None, avals_out=None,
+                         operand_output_aliases=None, column_major=True):
+  # A lightweight wrapper around ffi.ffi_lowering that can automatically set
+  # the layouts appropriately for column-major matrices, which most handlers
+  # used here will expect.
+  def rule(ctx, *args, **kwargs):
+    avals_in_ = ctx.avals_in if avals_in is None else avals_in
+    avals_out_ = ctx.avals_out if avals_out is None else avals_out
+    max_num_dims = max(len(v.shape) for v in avals_in_)
+    ctx = ctx.replace(avals_in=avals_in_, avals_out=avals_out_)
+    operand_layouts = [
+        _column_major_matrix_layout(len(aval.shape))
+        if column_major and len(aval.shape) == max_num_dims else None
+        for aval in avals_in_]
+    result_layouts = [
+        _column_major_matrix_layout(len(aval.shape))
+        if column_major and len(aval.shape) == max_num_dims else None
+        for aval in avals_out_]
+    rule = ffi.ffi_lowering(target_name, operand_layouts=operand_layouts,
+                            result_layouts=result_layouts,
+                            operand_output_aliases=operand_output_aliases)
+    return rule(ctx, *args, **kwargs)
+  return rule
