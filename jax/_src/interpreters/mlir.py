@@ -398,6 +398,12 @@ for _scalar_type in [np.int8, np.int16, np.int32, np.int64,
                      np.bool_, np.longlong, dtypes.bfloat16]:
   register_attribute_handler(_scalar_type, _numpy_array_attribute_handler)  # type: ignore
 
+def _dtype_attribute_handler(dtype: np.dtype | np.generic) -> ir.Attribute:
+  return ir.TypeAttr.get(dtype_to_ir_type(dtype))
+
+register_attribute_handler(np.dtype, _dtype_attribute_handler)
+register_attribute_handler(np.generic, _dtype_attribute_handler)
+
 def _python_scalar_attribute_handler(dtype, val):
   return _numpy_scalar_attribute(np.array(val, dtype))
 

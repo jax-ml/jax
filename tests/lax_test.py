@@ -4589,9 +4589,14 @@ class CompositeTest(jtu.JaxTestCase):
     def my_tangent_composite_with_attributes(x):
       def decomposition(x, **_):
         return lax.sin(x) / lax.cos(x)
-      return lax.composite(decomposition, "my.tangent")(x, foo="bar", baz=1,
-                           tensor=np.zeros((1, 2), dtype=np.float32),
-                           tensor_r1=np.zeros((2,), dtype=np.float32))
+      return lax.composite(decomposition, "my.tangent")(
+          x,
+          dtype=np.dtype(np.float32),
+          int=1,
+          str="bar",
+          tensor=np.zeros((1, 2), dtype=np.float32),
+          tensor_r1=np.zeros((2,), dtype=np.float32),
+      )
 
     pi = jnp.pi
     x = jnp.array([0.0, pi / 4, 3 * pi / 4, pi], dtype=jnp.float32)
@@ -4603,7 +4608,7 @@ class CompositeTest(jtu.JaxTestCase):
     mlir_module = my_tangent_composite_with_attributes.lower(x).as_text()
     self.assertIn(
         'stablehlo.composite "my.tangent" %arg0 {composite_attributes = {'
-        'baz = 1 : i64, foo = "bar", '
+        'dtype = f32, int = 1 : i64, str = "bar", '
         'tensor = dense<0.000000e+00> : tensor<1x2xf32>, '
         'tensor_r1 = dense<0.000000e+00> : tensor<2xf32>}, '
         'decomposition = @my.tangent} : (tensor<4xf32>) -> tensor<4xf32>',
