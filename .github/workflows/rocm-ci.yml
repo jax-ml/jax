@@ -6,16 +6,18 @@ on:
   push:
     branches:
       - rocm-main
+      - 'rocm-jaxlib-v*'
   pull_request:
     branches:
       - rocm-main
+      - 'rocm-jaxlib-v*'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-jax-in-docker: # strategy and matrix come here 
+  build-jax-in-docker: # strategy and matrix come here
     runs-on:  mi-250
     env:
       BASE_IMAGE: "ubuntu:22.04"
