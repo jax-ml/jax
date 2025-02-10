@@ -88,7 +88,7 @@ If the block shape does not divide evenly the overall shape then the
 last iteration on each axis will still receive references to blocks
 of `block_shape` but the elements that are out-of-bounds are padded
 on input and discarded on output. The values of the padding are unspecified, and
-you should assume they is garbage. In the `interpret=True` mode, we
+you should assume they are garbage. In the `interpret=True` mode, we
 pad with NaN for floating-point values, to give users a chance to
 spot accessing out-of-bounds elements, but this behavior should not
 be depended upon. Note that at least one of the
