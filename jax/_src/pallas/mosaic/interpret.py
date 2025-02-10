@@ -476,7 +476,9 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params):
         return _interpret_jaxpr(pjit_jaxpr.jaxpr, *pjit_jaxpr.consts, *args,
                                 compiler_params=compiler_params)
       in_avals = tuple(jax_core.shaped_abstractify(i) for i in invals)
-      new_jaxpr = _to_jaxpr(lu.wrap_init(f), in_avals)
+      new_jaxpr = _to_jaxpr(lu.wrap_init(f,
+                                         debug_info=pjit_jaxpr.jaxpr.debug_info),
+                            in_avals)
       out = pjit.pjit_p.bind(*invals, **(eqn.params | {'jaxpr': new_jaxpr}))
 
     elif prim is primitives.run_scoped_p:

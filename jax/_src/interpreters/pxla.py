@@ -1823,7 +1823,7 @@ def _move_mutable_consts(
   invars = (*jaxpr.invars, *mutvars)
   effects = pe.make_jaxpr_effects(constvars, invars, jaxpr.outvars, jaxpr.eqns)
   jaxpr = core.Jaxpr(constvars, invars, jaxpr.outvars, jaxpr.eqns,
-                     effects, None)
+                     effects, closed_jaxpr.jaxpr.debug_info)
   return core.ClosedJaxpr(jaxpr, consts), in_mut
 
 @weakref_lru_cache

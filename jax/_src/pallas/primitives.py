@@ -848,7 +848,11 @@ def run_scoped(f: Callable[..., Any], *types: Any, **kw_types: Any) -> Any:
   types in addition to :class:`jax.experimental.pallas.MemoryRef`.
   """
   flat_types, in_tree = tree_util.tree_flatten((types, kw_types))
-  flat_fun, out_tree_thunk = api_util.flatten_fun(lu.wrap_init(f), in_tree)
+  flat_fun, out_tree_thunk = api_util.flatten_fun(
+      lu.wrap_init(f,
+                   debug_info=api_util.debug_info("pallas run_scoped",
+                                                  f, types, kw_types)),
+      in_tree)
   # We allow ref avals to be transformed references.
   ref_avals = [t.get_ref_aval() for t in flat_types]
   avals = [

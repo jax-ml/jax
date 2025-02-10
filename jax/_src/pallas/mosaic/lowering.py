@@ -23,6 +23,7 @@ import string
 from typing import Any, Hashable
 
 import jax
+from jax import api_util
 from jax import lax
 from jax import tree_util
 from jax._src import ad_util
@@ -860,7 +861,10 @@ def lower_jaxpr_to_func(
 def lower_fun(fun: Callable, *, multiple_results: bool) -> Callable:
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
     f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
-    wrapped_fun = lu.wrap_init(f, params)
+    wrapped_fun = lu.wrap_init(
+        f, params,
+        debug_info=api_util.debug_info("mosaic lower_fun", f,
+                                       args, params))
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
     if consts:
       raise NotImplementedError

@@ -1001,7 +1001,10 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
     )
   flat_args, jaxpr_in_tree = jax.tree_util.tree_flatten((jnp.int32(0),))
   wrapped_loop, _ = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(f), jaxpr_in_tree)
+      lu.wrap_init(f,
+                   debug_info=api_util.debug_info("checkify oob_grid_access",
+                                                  f, (0,), {})),
+      jaxpr_in_tree)
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
     avals_in = map(jax_core.get_aval, flat_args)
     traced_loop, _, consts, () = pe.trace_to_jaxpr_dynamic(
@@ -1426,7 +1429,7 @@ def _pallas_call_state_discharge_rule(
       )
   )
   new_jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(_rewritten_body),
+      lu.wrap_init(_rewritten_body, debug_info=jaxpr.debug_info),
       [
           *index_map_avals,
           *ref_avals,

@@ -17,6 +17,7 @@ import unittest
 
 from absl.testing import absltest
 import jax
+from jax import api_util
 import jax.numpy as jnp
 from jax import lax
 from jax.experimental import pjit
@@ -178,12 +179,13 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
   def test_core_call_primitive_inherits_effects(self):
 
     def f(x):
-      @lu.wrap_init
       def f_(x):
         effect_p.bind(effect=foo_effect)
         effect_p.bind(effect=bar_effect)
         return [x]
-      return core.call(f_, x)[0]
+      dbg = api_util.debug_info("test", f_, (2.,), {})
+      return core.call(
+          lu.wrap_init(f_, debug_info=dbg), x)[0]
     jaxpr = jax.make_jaxpr(f)(2.)
     self.assertIn(foo_effect, jaxpr.jaxpr.effects)
     self.assertIn(bar_effect, jaxpr.jaxpr.effects)
