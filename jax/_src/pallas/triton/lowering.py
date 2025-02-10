@@ -127,6 +127,10 @@ def _eval_index_map(
       raise NotImplementedError(
           "Unblocked indexing with padding is not supported in Triton lowering."
       )
+    if block_mapping.pipeline_mode is not None:
+      raise NotImplementedError(
+          "Pipeline mode is not supported in Triton lowering."
+      )
     return tuple(block_indices)
   return tuple(
       i if b is pallas_core.mapped else _mul(i, _ir_constant(b, i.type))

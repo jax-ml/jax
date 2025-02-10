@@ -689,6 +689,21 @@ def lower_jaxpr_to_module(
         block_params["window_kind"] = ir.Attribute.parse(
             f"#tpu.element_window<{pad_low},{pad_high}>"
         )
+      if bm.pipeline_mode is not None:
+        if not isinstance(bm.pipeline_mode, pallas_core.Buffered):
+          raise LoweringException(
+              f"Unsupported pipeline mode: {bm.pipeline_mode}."
+          )
+        buffer_count = bm.pipeline_mode.buffer_count
+        if buffer_count < 1 or buffer_count > 2:
+          raise LoweringException(
+              "Only single (1) and double (2) buffering are supported. Got"
+              f" {buffer_count}."
+          )
+        pipeline_mode = "synchronous" if buffer_count == 1 else "double_buffered"
+        block_params["pipeline_mode"] = ir.Attribute.parse(
+            f"#tpu.pipeline_mode<{pipeline_mode}>"
+        )
       window_params.append(ir.DictAttr.get(block_params))
       m.body.append(mlir_func)
       sym_tab.insert(mlir_func)

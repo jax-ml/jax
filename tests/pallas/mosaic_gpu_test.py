@@ -1361,6 +1361,36 @@ class PallasCallTest(PallasTest):
 
 class PipelineTest(PallasTest):
 
+  def test_pipeline_mode(self):
+    def body(x_ref, y_ref, o_ref):
+      x = x_ref[:]
+      y = y_ref[:]
+      o_ref[:] = x + y
+
+    data_size =  64 * 256
+    block_size = 256
+
+    x = jnp.arange(data_size, dtype=jnp.float32)
+    y = jnp.arange(data_size, dtype=jnp.float32)
+    in_specs = [
+        pl.BlockSpec((block_size,), lambda *i: i, pipeline_mode=pl.Buffered(2)),
+        pl.BlockSpec((block_size,), lambda *i: i, pipeline_mode=pl.Buffered(1))
+    ]
+    out_specs = pl.BlockSpec((block_size,), lambda *i: i)
+
+    @jax.jit
+    def vadd(x, y):
+      return pl.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
+        in_specs=in_specs,
+        out_specs=out_specs,
+        grid=data_size // block_size,
+    )(x, y)
+
+    with self.assertRaisesRegex(Exception, "Pipeline mode is not supported"):
+      vadd(x, y)
+
   def test_manual(self):
     max_concurrent_steps = 2
     num_steps = 4

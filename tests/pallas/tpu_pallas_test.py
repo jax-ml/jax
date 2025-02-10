@@ -73,6 +73,56 @@ class PallasBaseTest(jtu.JaxTestCase):
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
 
+class TPUPipelineModeTest(PallasBaseTest):
+
+  @parameterized.parameters(
+      (pl.Buffered(2), pl.Buffered(2)),
+      (pl.Buffered(2), pl.Buffered(1)),
+      (pl.Buffered(1), pl.Buffered(1)))
+  def test_two_input_vadd(self, x_pmode : pl.Buffered, y_pmode : pl.Buffered):
+    def body(x_ref, y_ref, o_ref):
+      x = x_ref[:]
+      y = y_ref[:]
+      o_ref[:] = x + y
+
+    size_in_vregs = 128
+    data_size = size_in_vregs * 1024
+    block_size = 1024
+
+    x = jnp.arange(data_size, dtype=jnp.float32)
+    y = jnp.arange(data_size, dtype=jnp.float32)
+    in_specs = [
+        pl.BlockSpec((block_size,), lambda i: i, pipeline_mode=pmode)
+        for pmode in [x_pmode, y_pmode]
+    ]
+    out_specs = pl.BlockSpec((block_size,), lambda i: i)
+
+    @jax.jit
+    def vadd(x, y):
+      return self.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
+        in_specs=in_specs,
+        out_specs=out_specs,
+        grid=data_size // block_size,
+    )(x, y)
+
+    compiled = (
+        vadd.lower(
+            jax.ShapeDtypeStruct(x.shape, x.dtype),
+            jax.ShapeDtypeStruct(y.shape, y.dtype),
+        )
+        .compile()
+        .as_text()
+    )
+    pattern = (
+        r'"used_scoped_memory_configs":\[\{"memory_space":"1",.*?"size":"(\d+)"'
+    )
+    expected_vmem_usage = block_size * 4 * (2 + x_pmode.buffer_count + y_pmode.buffer_count)
+    vmem_usage = int(re.search(pattern, compiled).group(1))
+    self.assertEqual(vmem_usage, expected_vmem_usage)
+    z = vadd(x, y)
+    np.testing.assert_allclose(z, x + y)
 
 class PallasCallScalarPrefetchTest(PallasBaseTest):
   def test_trivial_scalar_prefetch(self):
