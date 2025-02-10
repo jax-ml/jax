@@ -57,7 +57,7 @@ PLATFORM_TAGS_DICT = {
     ("Linux", "x86_64"): ("manylinux2014", "x86_64"),
     ("Linux", "aarch64"): ("manylinux2014", "aarch64"),
     ("Linux", "ppc64le"): ("manylinux2014", "ppc64le"),
-    ("Darwin", "x86_64"): ("macosx_10_14", "x86_64"),
+    ("Darwin", "x86_64"): ("macosx_11_0", "x86_64"),
     ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
     ("Windows", "AMD64"): ("win", "amd64"),
 }
