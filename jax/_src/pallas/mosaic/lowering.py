@@ -152,7 +152,6 @@ class LoweringRuleContext:
   avals_in: Sequence[jax_core.AbstractValue]
   avals_out: Sequence[jax_core.AbstractValue]
   block_shapes: Sequence[tuple[int | pallas_core.Mapped, ...] | None]
-
   replace = dataclasses.replace
 
   @property
@@ -3381,6 +3380,7 @@ def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
     device_id = _device_id_to_logical(ctx, device_id, device_id_type)
   tpu.enqueue_dma(src_ref, dst_ref, sem, source_semaphore=src_sem,
                   device_id=device_id)
+
   return []
 lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
 
@@ -3388,16 +3388,31 @@ lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
 def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                             device_id_type: tpu_primitives.DeviceIdType):
   del device_id_type
-  (_, _, ref, transforms, sem, sem_transforms, _, _, _) = tree_util.tree_unflatten(
-      tree, args)
-  (_, _, ref_aval, _, sem_aval, _, _, _, _) = tree_util.tree_unflatten(
-      tree, ctx.avals_in)
+  (src, src_transforms, dst, transforms, sem, sem_transforms, _, _, _) = (
+      tree_util.tree_unflatten(tree, args)
+  )
+  (src_aval, _, dst_aval, _, sem_aval, _, _, _, _) = tree_util.tree_unflatten(
+      tree, ctx.avals_in
+  )
   block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
   ref_block_shape = block_shapes[2]
-  ref, _ = _transform_ref(ref, ref_aval.dtype, ref_block_shape, transforms)
+  src, _ = _transform_ref(src, src_aval.dtype, src_aval.shape, src_transforms)
+  dst, _ = _transform_ref(dst, dst_aval.dtype, ref_block_shape, transforms)
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
-  tpu.wait_dma(sem, ref)
+  if ctx.forward_compatible:
+    # TODO(mvoz): Remove once a month has passed. b/395630795
+    src_memory_space = _memory_space_to_mosaic_attribute(src_aval.memory_space)
+    smem_space = ir.Attribute.parse("#tpu.memory_space<smem>")
+    src_is_smem = src_memory_space == smem_space
+    wait_ref = src if src_is_smem else dst
+    # Legacy instruction emits only an sfence if the target/dst ref is in smem.
+    # So, we pass the src ref to the wait instruction if it is in smem to
+    # ensure legacy cases are correct, while technically keeping API compat.
+    tpu.wait_dma(sem, wait_ref)
+  else:
+    tpu.wait_dma2(sem, src, dst)
   return []
+
 lowering_rules[tpu_primitives.dma_wait_p] = _dma_wait_lowering_rule
 
 def _device_id_lowering_rule(ctx: LoweringRuleContext):

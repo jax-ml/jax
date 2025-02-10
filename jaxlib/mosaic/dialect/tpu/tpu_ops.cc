@@ -959,7 +959,17 @@ LogicalResult EnqueueDMAOp::verify() {
   return success();
 }
 
+// TODO(mvoz): Remove once a month has passed. b/395630795
 LogicalResult WaitDMAOp::verify() {
+  auto sem_type = getMemRefType(getSemaphore());
+  if (sem_type.getRank() != 0) {
+    emitOpError("DMA wait semaphore must be rank 0");
+    return failure();
+  }
+  return success();
+}
+
+LogicalResult WaitDMA2Op::verify() {
   auto sem_type = getMemRefType(getSemaphore());
   if (sem_type.getRank() != 0) {
     emitOpError("DMA wait semaphore must be rank 0");

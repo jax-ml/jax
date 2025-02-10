@@ -746,6 +746,16 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
   let hasVerifier = 1;
 }
 
+def TPU_WaitDMA2Op : TPU_Op<"wait_dma2"> {
+  let arguments = (ins
+    MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
+    AnyMemRef:$src,
+    AnyMemRef:$dst
+  );
+  let hasVerifier = 1;
+}
+
+// TODO(mvoz): Remove once a month has passed. b/395630795
 def TPU_WaitDMAOp : TPU_Op<"wait_dma"> {
   let arguments = (ins
     MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
