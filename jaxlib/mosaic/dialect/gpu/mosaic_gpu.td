@@ -194,7 +194,7 @@ def MosaicGPU_SwizzlingMode : I32EnumAttr<"SwizzlingMode",
 }
 
 def TileTransformAttr : MosaicGPU_Attr<"TileTransform", "tile"> {
-  let parameters = (ins Variadic<I64>:$tiling);
+  let parameters = (ins ArrayRefParameter<"int32_t", "tiling">:$tiling);
   let summary = "Specifies a transform that tiles suffix dimensions of a memref in SMEM.";
   let description = [{
     For example, given a memref of shape (5, 128, 128) and a tiling of (64, 32),
@@ -210,7 +210,7 @@ def TileTransformAttr : MosaicGPU_Attr<"TileTransform", "tile"> {
 }
 
 def TransposeTransformAttr : MosaicGPU_Attr<"TransposeTransform", "transpose"> {
-  let parameters = (ins Variadic<I64>:$permutation);
+  let parameters = (ins ArrayRefParameter<"int32_t", "permutation">:$permutation);
   let summary = "Specifies a transpose transform of a memref in SMEM.";
   let assemblyFormat = "`<` $permutation `>`";
 }
@@ -385,26 +385,21 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
     This operation supports larger inputs than the PTX-level WGMMA operation
     and will schedule as many PTX-level WGMMA operations as needed to
     accomplish the calculation. The `b` matrix, and optionally `a`, needs to be
-    provided in a 4-dimensional form, where the two minor-most dimensions
-    express the tile (group) size and the two major-most dimensions represent
-    the total number of tiles in each direction.
+    provided as a 2-dimensional memref. All memrefs may have transforms that
+    define swizzling, tiling, and transposition.
 
     The inputs should have the following shapes:
-      - If `a` is in shared memory:
-        - a: [groups_m, groups_k, 64,     k]
-      - If `a` is in registers:
-        - a: [groups_m * 64, groups_k * k]
-      - b: [groups_k, groups_n,  k, k]
-      - accumulator: [groups_m * 64, groups_n * k]
+      - a: [groups_m * 64, groups_k * s]
+      - b: [groups_k * s, groups_n * s]
+      - accumulator: [groups_m * 64, groups_n * s]
     Where:
-      - `k == swizzle/element_bytediwth` (for `kNoSwizzle`, `swizzle` is 16.)
+      - `s == swizzle/element_bytediwth` (for `kNoSwizzle`, `swizzle` is 16.)
+        and the tilings are [64, s] for `a` and [s, s] for `b`.
 
     The output has an identical shape and type as the input accumulator.
 
     The `accumulator` is always in registers and `b` is always in shared memory.
-    The last two dimensions of any input in shared memory may be physically
-    transposed in memory. This is inferred from the strides of the provided
-    memrefs. `a` and `b` must have the same element type and when `a` is in
+    `a` and `b` must have the same element type and when `a` is in
     registers only F16 or BF16 are supported.
 
     The `accumulator` must be a vector with a FragmentedLayout. The WGMMA
@@ -422,10 +417,7 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
     AnyTypeOf<[
       MemRefOf<[MosaicGPU_WGMMASupportedType]>,
       VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>]>:$a,
-    MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b,
-
-    // Attributes
-    DefaultValuedAttr<MosaicGPU_SwizzlingMode, "SwizzlingMode::k128ByteSwizzle">:$swizzle
+    MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b
   );
   let results = (outs VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>);
 
