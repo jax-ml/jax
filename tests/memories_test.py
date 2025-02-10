@@ -1470,9 +1470,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysAllClose(out, expected_out, rtol=1e-3)
 
   def test_mem_kind_donation_pinned_host(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest("XLA failure due to b/370786664 and b/366411266. "
-                    "Enable when fixed.")
     mesh = jtu.create_mesh((2,), "x")
     s = NamedSharding(mesh, P(), memory_kind='pinned_host')
     s_dev = s.with_memory_kind('device')
