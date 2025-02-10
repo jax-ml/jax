@@ -332,15 +332,17 @@ def ffi_call_geqrf(x, _use_extend=False, **kwargs):
 class BatchPartitioningTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
-    if xla_extension_version < 312:
-      self.skipTest("Requires XLA extension version >= 312")
+    if xla_extension_version < 313:
+      self.skipTest("Requires XLA extension version >= 313")
+    # Register callbacks before checking the number of devices to make sure
+    # that we're testing the registration path, even if we can't run the tests.
+    for target_name in ["lapack_sgeqrf_ffi", "cusolver_geqrf_ffi",
+                        "hipsolver_geqrf_ffi"]:
+      jax.ffi.register_ffi_target_as_batch_partitionable(target_name)
     if jax.device_count() < 2:
       self.skipTest("Requires multiple devices")
     if jtu.test_device_matches(["cpu"]):
       lapack._lapack.initialize()
-    for target_name in ["lapack_sgeqrf_ffi", "cusolver_geqrf_ffi",
-                        "hipsolver_geqrf_ffi"]:
-      jax.ffi.register_ffi_target_as_batch_partitionable(target_name)
 
   @jtu.run_on_devices("gpu", "cpu")
   def test_shard_map(self):
