@@ -87,6 +87,7 @@ class TPUCompilerParams(pallas_core.CompilerParams):
   allow_input_fusion: Sequence[bool] | None = None
   vmem_limit_bytes: int | None = None
   collective_id: int | None = None
+  has_side_effects: bool = False
   flags: dict[str, Any] | None = None
   internal_scratch_in_bytes: int | None = None
   serialization_format: int = 1
