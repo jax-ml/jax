@@ -136,7 +136,7 @@ def build_kernel(
           return accumulate
 
     gpu.barrier()
-    mma_done_barrier.wait()
+    mma_done_barrier.wait(for_tensor_core=True)
 
     acc[:].astype(ir.F16Type.get()).store_tiled(d_smem, swizzle=128)
     mgpu.commit_shared()

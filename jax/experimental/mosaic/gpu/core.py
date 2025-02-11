@@ -171,6 +171,7 @@ class TMEM:
   shape: tuple[int, int]
   dtype: Any
   layout: tcgen05.TMEMLayout
+  collective: bool = False
 
   def __post_init__(self):
     if self.shape[0] != self.layout.num_rows:
@@ -251,13 +252,13 @@ def _construct_smem_reftree(
             collective_dims,
             cluster_shape,
         )
-      case TMEM(shape, dtype, layout):
+      case TMEM(shape, dtype, layout, collective):
         addr_ref = memref.view(
             ir.MemRefType.get([], i32, memory_space=smem),
             dynamic_smem, c(dynamic_smem_offset, index), [],
         )
         delayed_warp_init.append(
-            functools.partial(tcgen05.tmem_alloc, addr_ref, shape[1], exact=False)
+            functools.partial(tcgen05.tmem_alloc, addr_ref, shape[1], collective=collective, exact=False)
         )
         def ref(addr_ref=addr_ref, shape=shape, dtype=dtype, layout=layout):
           addr = memref.load(addr_ref, [])
