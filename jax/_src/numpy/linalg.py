@@ -32,7 +32,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax.lax import PrecisionLike
 from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy import lax_numpy as jnp
-from jax._src.numpy import reductions, ufuncs
+from jax._src.numpy import reductions, tensor_contractions, ufuncs
 from jax._src.numpy.util import promote_dtypes_inexact, ensure_arraylike
 from jax._src.util import canonicalize_axis, set_module
 from jax._src.typing import ArrayLike, Array, DTypeLike, DeprecatedArg
@@ -977,8 +977,8 @@ def _pinv(a: ArrayLike, rtol: ArrayLike | None = None, hermitian: bool = False) 
   rtol = lax.expand_dims(rtol[..., jnp.newaxis], range(s.ndim - rtol.ndim - 1))
   cutoff = rtol * s[..., 0:1]
   s = jnp.where(s > cutoff, s, jnp.inf).astype(u.dtype)
-  res = jnp.matmul(vh.mT, ufuncs.divide(u.mT, s[..., jnp.newaxis]),
-                   precision=lax.Precision.HIGHEST)
+  res = tensor_contractions.matmul(vh.mT, ufuncs.divide(u.mT, s[..., jnp.newaxis]),
+                                   precision=lax.Precision.HIGHEST)
   return lax.convert_element_type(res, arr.dtype)
 
 
@@ -1391,14 +1391,14 @@ def _lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None, *,
     rank = mask.sum()
     safe_s = jnp.where(mask, s, 1).astype(a.dtype)
     s_inv = jnp.where(mask, 1 / safe_s, 0)[:, jnp.newaxis]
-    uTb = jnp.matmul(u.conj().T, b, precision=lax.Precision.HIGHEST)
-    x = jnp.matmul(vt.conj().T, s_inv * uTb, precision=lax.Precision.HIGHEST)
+    uTb = tensor_contractions.matmul(u.conj().T, b, precision=lax.Precision.HIGHEST)
+    x = tensor_contractions.matmul(vt.conj().T, s_inv * uTb, precision=lax.Precision.HIGHEST)
   # Numpy returns empty residuals in some cases. To allow compilation, we
   # default to returning full residuals in all cases.
   if numpy_resid and (rank < n or m <= n):
     resid = jnp.asarray([])
   else:
-    b_estimate = jnp.matmul(a, x, precision=lax.Precision.HIGHEST)
+    b_estimate = tensor_contractions.matmul(a, x, precision=lax.Precision.HIGHEST)
     resid = norm(b - b_estimate, axis=0) ** 2
   if b_orig_ndim == 1:
     x = x.ravel()
@@ -1723,8 +1723,8 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
     Array([20, 47], dtype=int32)
   """
   x1, x2 = ensure_arraylike('jnp.linalg.vecdot', x1, x2)
-  return jnp.vecdot(x1, x2, axis=axis, precision=precision,
-                    preferred_element_type=preferred_element_type)
+  return tensor_contractions.vecdot(x1, x2, axis=axis, precision=precision,
+                                    preferred_element_type=preferred_element_type)
 
 
 @export
@@ -1784,8 +1784,8 @@ def matmul(x1: ArrayLike, x2: ArrayLike, /, *,
            [49, 64]], dtype=int32)
   """
   x1, x2 = ensure_arraylike('jnp.linalg.matmul', x1, x2)
-  return jnp.matmul(x1, x2, precision=precision,
-                    preferred_element_type=preferred_element_type)
+  return tensor_contractions.matmul(x1, x2, precision=precision,
+                                    preferred_element_type=preferred_element_type)
 
 
 @export
@@ -1866,8 +1866,8 @@ def tensordot(x1: ArrayLike, x2: ArrayLike, /, *,
            [2, 4, 6]], dtype=int32)
   """
   x1, x2 = ensure_arraylike('jnp.linalg.tensordot', x1, x2)
-  return jnp.tensordot(x1, x2, axes=axes, precision=precision,
-                       preferred_element_type=preferred_element_type)
+  return tensor_contractions.tensordot(x1, x2, axes=axes, precision=precision,
+                                       preferred_element_type=preferred_element_type)
 
 
 @export

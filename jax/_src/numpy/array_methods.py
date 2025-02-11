@@ -41,6 +41,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_client as xc
 from jax._src.numpy import array_api_metadata
 from jax._src.numpy import lax_numpy
+from jax._src.numpy import tensor_contractions
 from jax._src import mesh as mesh_lib
 from jax._src.pjit import auto_axes, PartitionSpec
 from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
@@ -194,7 +195,7 @@ def _dot(self: Array, b: ArrayLike, *, precision: lax_internal.PrecisionLike = N
 
   Refer to :func:`jax.numpy.dot` for the full documentation.
   """
-  return lax_numpy.dot(self, b, precision=precision, preferred_element_type=preferred_element_type)
+  return tensor_contractions.dot(self, b, precision=precision, preferred_element_type=preferred_element_type)
 
 def _flatten(self: Array, order: str = "C") -> Array:
   """Flatten array into a 1-dimensional shape.
@@ -961,8 +962,8 @@ _array_operators = {
   "rmod": _defer_to_unrecognized_arg("%", ufuncs.mod, swap=True),
   "pow": _defer_to_unrecognized_arg("**", ufuncs.power),
   "rpow": _defer_to_unrecognized_arg("**", ufuncs.power, swap=True),
-  "matmul": _defer_to_unrecognized_arg("@", lax_numpy.matmul),
-  "rmatmul": _defer_to_unrecognized_arg("@", lax_numpy.matmul, swap=True),
+  "matmul": _defer_to_unrecognized_arg("@", tensor_contractions.matmul),
+  "rmatmul": _defer_to_unrecognized_arg("@", tensor_contractions.matmul, swap=True),
   "and": _defer_to_unrecognized_arg("&", ufuncs.bitwise_and),
   "rand": _defer_to_unrecognized_arg("&", ufuncs.bitwise_and, swap=True),
   "or": _defer_to_unrecognized_arg("|", ufuncs.bitwise_or),
