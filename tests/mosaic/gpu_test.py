@@ -2254,6 +2254,35 @@ class LayoutTest(TestCase):
     np.testing.assert_array_equal(f(x), x)
 
 
+def with_swizzle(
+    mem_ref: ir.Value, swizzle: mgpu_dialect.SwizzlingMode
+) -> ir.Value:
+  """Appends a swizzle transform to the layout of the given memref.
+
+  If the memref's layout is not a LayoutAttr, it is replaced with a LayoutAttr
+  with a single swizzle transform.
+  """
+  mem_ref_type = ir.MemRefType(mem_ref.type)
+  old_layout = (
+      mgpu_dialect.LayoutAttr(mem_ref_type.layout)
+      if mgpu_dialect.LayoutAttr.isinstance(mem_ref_type.layout)
+      else mgpu_dialect.LayoutAttr.get(mem_ref_type.rank, [])
+  )
+
+  swizzle_transform = mgpu_dialect.SwizzleTransformAttr.get(swizzle)
+  new_layout = mgpu_dialect.LayoutAttr.get(
+      mem_ref_type.rank, old_layout.transforms + [swizzle_transform]
+  )
+
+  memref_swizzle_type = ir.MemRefType.get(
+      mem_ref_type.shape,
+      mem_ref_type.element_type,
+      new_layout,
+      mem_ref_type.memory_space,
+  )
+  return memref.cast(memref_swizzle_type, mem_ref)
+
+
 class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
   """Device tests with lowering from the MLIR dialect and layout inference."""
 
@@ -2328,23 +2357,19 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       # GMEM -> SMEM
       mgpu_dialect.async_load(
           source=a_gmem_ref,
-          destination=a_smem_ref,
+          destination=with_swizzle(a_smem_ref, swizzle),
           barrier=dialect_barrier,
           indices=[zero_i32, zero_i32],
           slice_lengths=shape,
-          transforms=ir.ArrayAttr.get([]),
           collective=ir.ArrayAttr.get([]),
-          swizzle=swizzle,
       )
       mgpu_dialect.async_load(
           source=b_gmem_ref,
-          destination=b_smem_ref,
+          destination=with_swizzle(b_smem_ref, swizzle),
           barrier=dialect_barrier,
           indices=[zero_i32, zero_i32],
           slice_lengths=shape,
-          transforms=ir.ArrayAttr.get([]),
           collective=ir.ArrayAttr.get([]),
-          swizzle=swizzle,
       )
 
       parities = memref.load(tma_barrier.phases, [])
@@ -2366,12 +2391,10 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
       # SMEM -> GMEM
       mgpu_dialect.async_store(
-          source=result_smem_ref,
+          source=with_swizzle(result_smem_ref, swizzle),
           destination=result_gmem_ref,
           indices=[zero_i32, zero_i32],
           slice_lengths=shape,
-          transforms=ir.ArrayAttr.get([]),
-          swizzle=swizzle,
       )
       nvvm.cp_async_bulk_wait_group(0)
       utils.warpgroup_barrier()
@@ -2437,23 +2460,19 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       # GMEM -> SMEM
       mgpu_dialect.async_load(
           source=a_gmem_ref,
-          destination=a_smem_ref,
+          destination=with_swizzle(a_smem_ref, swizzle),
           barrier=dialect_barrier,
           indices=[zero_i32, zero_i32, zero_i32, zero_i32],
           slice_lengths=shape_a,
-          transforms=ir.ArrayAttr.get([]),
           collective=ir.ArrayAttr.get([]),
-          swizzle=swizzle,
       )
       mgpu_dialect.async_load(
           source=b_gmem_ref,
-          destination=b_smem_ref,
+          destination=with_swizzle(b_smem_ref, swizzle),
           barrier=dialect_barrier,
           indices=[zero_i32, zero_i32, zero_i32, zero_i32],
           slice_lengths=shape_b,
-          transforms=ir.ArrayAttr.get([]),
           collective=ir.ArrayAttr.get([]),
-          swizzle=swizzle,
       )
 
       parities = memref.load(tma_barrier.phases, [])
@@ -2486,8 +2505,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           destination=result_gmem_ref,
           indices=[zero_i32, zero_i32],
           slice_lengths=shape_result,
-          transforms=ir.ArrayAttr.get([]),
-          swizzle=mgpu_dialect.SwizzlingMode.kNoSwizzle,
       )
       nvvm.cp_async_bulk_wait_group(0)
 

@@ -20,6 +20,7 @@ include "mlir/Dialect/LLVMIR/LLVMOpBase.td"
 include "mlir/Dialect/LLVMIR/BasicPtxBuilderInterface.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/IR/AttrTypeBase.td"
+include "mlir/IR/BuiltinAttributeInterfaces.td"
 include "mlir/IR/BuiltinTypeInterfaces.td"
 include "mlir/IR/CommonAttrConstraints.td"
 include "mlir/IR/CommonTypeConstraints.td"
@@ -39,8 +40,8 @@ class MosaicGPU_Type<string name, string mnemonic_, list<Trait> traits = []>
   let mnemonic = mnemonic_;
 }
 
-class MosaicGPU_Attr<string name, string mnemonic_>
-    : AttrDef<MosaicGPU_Dialect, name> {
+class MosaicGPU_Attr<string name, string mnemonic_, list<Trait> traits = []>
+    : AttrDef<MosaicGPU_Dialect, name, traits> {
   let mnemonic = mnemonic_;
 }
 
@@ -194,7 +195,7 @@ def MosaicGPU_SwizzlingMode : I32EnumAttr<"SwizzlingMode",
 
 def TileTransformAttr : MosaicGPU_Attr<"TileTransform", "tile"> {
   let parameters = (ins Variadic<I64>:$tiling);
-  let summary = "Tiles a suffix of memref dimensions.";
+  let summary = "Specifies a transform that tiles suffix dimensions of a memref in SMEM.";
   let description = [{
     For example, given a memref of shape (5, 128, 128) and a tiling of (64, 32),
     the shape of the result will be (5, 2, 4, 64, 32). The shape always ends
@@ -210,8 +211,36 @@ def TileTransformAttr : MosaicGPU_Attr<"TileTransform", "tile"> {
 
 def TransposeTransformAttr : MosaicGPU_Attr<"TransposeTransform", "transpose"> {
   let parameters = (ins Variadic<I64>:$permutation);
-  let summary = "Specifies how to transpose a memref.";
+  let summary = "Specifies a transpose transform of a memref in SMEM.";
   let assemblyFormat = "`<` $permutation `>`";
+}
+
+def SwizzleTransformAttr : MosaicGPU_Attr<"SwizzleTransform", "swizzle"> {
+  let parameters = (ins "SwizzlingModeAttr":$swizzle);
+
+  let summary = "Specifies a swizzle transform of a memref in SMEM.";
+  let assemblyFormat = "`<` $swizzle `>`";
+}
+
+def LayoutAttr : MosaicGPU_Attr<"Layout", "layout",
+    [DeclareAttrInterfaceMethods<MemRefLayoutAttrInterface>]> {
+  let parameters = (ins
+    TypeParameter<"int32_t", "number of dimensions">:$num_dimensions,
+    ArrayRefParameter<"mlir::Attribute", "transforms">:$transforms
+  );
+
+  let summary = "Specifies a layout of a memref in SMEM.";
+  let description = [{
+    This layout attribute is used to specify the layout of a memref in SMEM.
+    It is composed of a number of transforms, which are applied in the order
+    they are provided. The transforms can be any combination of:
+      - TileTransformAttr
+      - TransposeTransformAttr
+      - SwizzleTransformAttr
+
+    The num_dimensions parameter must match the rank of the memref shape.
+  }];
+  let assemblyFormat = "`<` $num_dimensions `,` $transforms `>`";
 }
 
 def GlobalMemory : Resource<"::mosaic_gpu::GlobalMemory">;
@@ -235,14 +264,16 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     indicates that the slice length is 1 and that the corresponding dimension
     should be collapsed and does not appear in the `destination` MemRef.
 
-    Additional `transforms` may be provided to control how the `source` data is
-    mapped to the `destination`. The transformations will be composed in the
-    order they are provided. The `swizzle` attribute controls what swizzling
-    is applied to the data after it is transformed, before it is finally written
-    to SMEM. The transformed data is written in row-major order to the
-    contiguous SMEM `destination`. The untransformed `source` data does not need
-    to be contiguous, except for the last dimension, which needs to be
-    contiguous and the minor-most dimension.
+    Setting the `layout` attribute of the `destination` MemRef to an instance of
+    `LayoutAttr` enables additional `transforms` that control how the `source`
+    data is mapped to the `destination`. The transformations will be composed in
+    the order they are provided. The transforms may contain up to a single
+    swizzle transform that controls what swizzling is applied to the data after
+    it is transformed, before it is finally written to SMEM. The transformed
+    data is written in row-major order to the contiguous SMEM `destination`.
+    The untransformed `source` data does not need to be contiguous, except for
+    the last dimension, which needs to be contiguous and the minor-most
+    dimension.
 
     The `collective` attribute can be provided to use TMA multicast to more
     efficiently load the GMEM data in cases where multiple thread blocks are
@@ -266,8 +297,6 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
 
     // Attributes
     DenseI64ArrayAttr:$slice_lengths,
-    TypedArrayAttrBase<AnyAttrOf<[TileTransformAttr, TransposeTransformAttr]>, "transforms">:$transforms,
-    DefaultValuedAttr<MosaicGPU_SwizzlingMode, "SwizzlingMode::kNoSwizzle">:$swizzle,
     TypedArrayAttrBase<MosaicGPU_Dimension, "dimensions">:$collective
   );
 
@@ -299,11 +328,13 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     indicates that this dimension is collapsed in the `source` and needs to be
     expanded to a slice of size 1 in the `destination`.
 
-    Additional `transforms` may be provided to control how the `destination`
-    data in GMEM is mapped to the `source` data in SMEM. The transformations
-    will be composed in the order they are provided. The `swizzle` attribute
-    is the swizzling mode of the `source` data in SMEM. The `source` SMEM data
-    is contiguous and the transformed data is written to the `destination` GMEM
+    Setting the `layout` attribute of the `source` MemRef to an instance of
+    `LayoutAttr` enables additional `transforms` that control how the
+    `destination` data in GMEM is mapped to the `source` data in SMEM. The
+    transformations will be composed in the order they are provided. The
+    transforms may contain up to a single swizzle transform that is the
+    swizzling mode of the `source` data in SMEM. The `source` SMEM data is
+    contiguous and the transformed data is written to the `destination` GMEM
     which does not need to be contiguous.
 
     The `predicate` input should be set to `true` by a single thread in the
@@ -318,9 +349,7 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     PtxPredicate:$predicate,
 
     // Attributes
-    DenseI64ArrayAttr:$slice_lengths,
-    TypedArrayAttrBase<AnyAttrOf<[TileTransformAttr, TransposeTransformAttr]>, "transforms">:$transforms,
-    DefaultValuedAttr<MosaicGPU_SwizzlingMode, "SwizzlingMode::kNoSwizzle">:$swizzle
+    DenseI64ArrayAttr:$slice_lengths
   );
 
   let assemblyFormat = [{

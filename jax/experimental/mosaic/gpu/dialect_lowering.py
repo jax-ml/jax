@@ -240,12 +240,33 @@ def _vector_splat_op_lowering_rule(
   return [_fragmented_array_to_ir(fragmented_array, out_vec_ty)]
 
 
+def layout_to_swizzle(layout: ir.Attribute) -> mgpu.SwizzlingMode:
+  """Returns the swizzle mode for the given layout.
+
+    If the layout is not a LayoutAttr, the swizzle is kNoSwizzle. Otherwise,
+    the layout must consist of exactly one swizzle transform.
+  """
+  if mgpu.LayoutAttr.isinstance(layout):
+    transforms = mgpu.LayoutAttr(layout).transforms
+    if len(transforms) != 1:
+      raise ValueError(f"{layout} has multiple transforms")
+    if not mgpu.SwizzleTransformAttr.isinstance(transforms[0]):
+      raise NotImplementedError("Only siwzzle transforms are supported.")
+    # TODO(dasenov): Swizzling can change if the ref is sliced in certain
+    # ways. We might want to enforce some restrictions here.
+    return mgpu.SwizzleTransformAttr(transforms[0]).swizzle
+
+  return mgpu.SwizzlingMode.kNoSwizzle
+
+
 @_register_lowering(mgpu.AsyncLoadOp)
 def _mgpu_async_load_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncLoadOp
 ) -> Sequence[ir.Value]:
   assert ctx.launch_context is not None
   barrier = utils.BarrierRef.from_dialect_barrier_memref(load_op.barrier)
+
+  dst_layout = ir.MemRefType(load_op.destination.type).layout
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=load_op.source,
@@ -253,7 +274,7 @@ def _mgpu_async_load_op_lowering_rule(
       barrier=barrier,
       arrive=False,
       uniform=True,
-      swizzle=load_op.swizzle.value,
+      swizzle=layout_to_swizzle(dst_layout),
       predicate=ctx.single_thread_per_warpgroup_predicate,
   )
   return []
@@ -264,11 +285,13 @@ def _mgpu_async_store_op_lowering_rule(
     ctx: LoweringContext, store_op: mgpu.AsyncStoreOp
 ) -> Sequence[ir.Value]:
   assert ctx.launch_context is not None
+
+  src_layout = ir.MemRefType(store_op.source.type).layout
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=store_op.source,
       dst_ref=store_op.destination,
-      swizzle=store_op.swizzle.value,
+      swizzle=layout_to_swizzle(src_layout),
       uniform=True,
       predicate=ctx.single_thread_per_warpgroup_predicate,
   )
