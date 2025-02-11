@@ -231,7 +231,9 @@ FailureOr<MemRefType> inferMemref(MemRefType memref,
     return emitError(UnknownLoc::get(memref.getContext()), "Invalid tiling");
   }
   SmallVector<int64_t> new_shape(memref.getShape());
-  for (int i = 0; i < first_tile.dimensions().size(); ++i) {
+  // TODO(jevinjiang): support unaligned slice shape on second minor and remove
+  // the padding logic below.
+  for (int i = 0; i < first_tile.dimensions().size() - 1; ++i) {
     new_shape[untiled_dims + i] =
         llvm::alignTo(new_shape[untiled_dims + i], first_tile.dimension(i));
   }
