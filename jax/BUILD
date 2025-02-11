@@ -395,6 +395,16 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "cost_analysis",
+    srcs = ["_src/cost_analysis.py"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":jax",
+        "//jax/extend:core",
+    ],
+)
+
+pytype_strict_library(
     name = "cache_key",
     srcs = ["_src/cache_key.py"],
     visibility = [":internal"] + jax_visibility("compilation_cache"),

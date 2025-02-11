@@ -121,6 +121,18 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "cost_analysis_test",
+    srcs = ["cost_analysis_test.py"],
+    enable_backends = [
+        "cpu",
+        "cpu_x32",
+    ],
+    deps = [
+        "//jax:cost_analysis",
+    ],
+)
+
+jax_multiplatform_test(
     name = "debug_nans_test",
     srcs = ["debug_nans_test.py"],
 )
