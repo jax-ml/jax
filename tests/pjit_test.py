@@ -6549,6 +6549,32 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     shmap_f()  # doesn't crash
     jax.jit(shmap_f)()  # doesn't crash
 
+  @jtu.with_user_mesh((2, 1), ('x', 'y'))
+  def test_wsc_error(self, mesh):
+    s = NamedSharding(mesh, P('x'))
+    with self.assertRaisesRegex(
+        ValueError,
+        "The spec of NamedSharding passed to with_sharding_constraint"):
+      jax.lax.with_sharding_constraint(np.arange(8), s)
+
+    s = NamedSharding(mesh, P(('x', 'y'), None))
+    with self.assertRaisesRegex(
+        ValueError,
+        "The spec of NamedSharding passed to with_sharding_constraint"):
+      jax.lax.with_sharding_constraint(np.arange(8).reshape(4, 2), s)
+
+    s = NamedSharding(mesh, P())
+    jax.lax.with_sharding_constraint(np.arange(8), s)
+
+    s = NamedSharding(mesh, P(P.UNCONSTRAINED, 'x'))
+    with self.assertRaisesRegex(
+        ValueError,
+        "The spec of NamedSharding passed to with_sharding_constraint"):
+      jax.lax.with_sharding_constraint(np.arange(8).reshape(4, 2), s)
+
+    s = NamedSharding(mesh, P(P.UNCONSTRAINED))
+    jax.lax.with_sharding_constraint(np.arange(8), s)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

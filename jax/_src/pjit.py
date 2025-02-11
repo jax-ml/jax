@@ -2521,6 +2521,23 @@ state_discharge.register_discharge_rule(pjit_p)(_pjit_state_discharge_rule)
 
 # -------------------- with_sharding_constraint --------------------
 
+def check_shardings_are_auto(shardings_flat):
+  if not config.sharding_in_types.value:
+    return
+
+  for s in shardings_flat:
+    if not isinstance(s, NamedSharding):
+      continue
+    mesh = s.mesh.abstract_mesh
+    if not all(mesh._name_to_type[i] == mesh_lib.AxisTypes.Auto
+               for axes in s._parsed_pspec
+               if axes is not PartitionSpec.UNCONSTRAINED for i in axes):
+      raise ValueError(
+          'The spec of NamedSharding passed to with_sharding_constraint can'
+          f' only refer to Auto axes of the mesh. Got spec={s.spec} and'
+          f' mesh={mesh}')
+
+
 def with_sharding_constraint(x, shardings):
   """Mechanism to constrain the sharding of an Array inside a jitted computation
 
@@ -2574,6 +2591,8 @@ def with_sharding_constraint(x, shardings):
   pjit_check_aval_sharding(
       shardings_flat, x_flat, None, "with_sharding_constraint arguments",
       allow_uneven_sharding=True)
+
+  check_shardings_are_auto(shardings_flat)
 
   check_aval_layout_compatibility(user_layouts_flat, x_flat, None,
                                   "with_sharding_constraint arguments")
