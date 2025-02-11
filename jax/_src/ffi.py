@@ -27,6 +27,7 @@ from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import effects
 from jax._src import util
+from jax._src import xla_bridge
 from jax._src.callback import callback_batching_rule
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -85,6 +86,18 @@ def register_ffi_type_id(
     platform: the target platform.
   """
   return xla_client.register_custom_type_id(name, obj, platform=platform)
+
+
+def register_ffi_target_as_batch_partitionable(name: str) -> None:
+  """Registers an FFI target as batch partitionable.
+
+  Args:
+    name: the name of the target.
+  """
+  xla_client.register_custom_call_as_batch_partitionable(name)
+  xla_bridge.register_plugin_callbacks(
+      functools.partial(xla_client.register_custom_call_as_batch_partitionable,
+                        name))
 
 
 def pycapsule(funcptr):

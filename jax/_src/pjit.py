@@ -49,7 +49,7 @@ from jax._src import xla_bridge as xb
 from jax._src.api_util import (
   argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
   donation_vector, check_callable, resolve_argnums,
-  argnames_partial_except, debug_info, result_paths, add_jaxpr_debug_info,
+  argnames_partial_except, debug_info,
   hoist_obj_attrs, _check_no_aliased_ref_args,
   _check_no_aliased_closed_over_refs)
 from jax._src.interpreters import partial_eval as pe
@@ -222,6 +222,10 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
               f"Argument '{name}' of shape {aval.str_short()} of type"
               f' {type(arg)} is not a valid JAX type.') from e
       raise AssertionError("Unreachable") from e
+  except dispatch.InternalFloatingPointError as e:
+    if getattr(fun, '_apply_primitive', False):
+      raise FloatingPointError(f"invalid value ({e.ty}) encountered in {fun.__qualname__}") from None
+    dispatch.maybe_recursive_nan_check(e, fun, args, kwargs)
 
   if p.attrs_tracked:
     num_states_out = sum(end_tree.num_leaves for _, end_tree, _ in p.attrs_tracked)
@@ -567,9 +571,7 @@ def _infer_params_impl(
 
   axes_specs = _flat_axes_specs(ji.abstracted_axes, *args, **kwargs)
 
-  f = lu.wrap_init(fun)
-  f, res_paths = result_paths(f)
-  dbg = dbg and dbg.add_result_paths(result_paths_thunk=res_paths)
+  f = lu.wrap_init(fun, debug_info=dbg)
   f, dyn_args = argnums_partial_except(f, ji.static_argnums, args, allow_invalid=True)
   del args
 
@@ -618,7 +620,7 @@ def _infer_params_impl(
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
       in_shardings_treedef, in_shardings_leaves,
       ji.in_layouts_treedef, ji.in_layouts_leaves,
-      in_avals, in_tree, dbg, device_or_backend_set, have_kwargs)
+      in_avals, in_tree, flat_fun.debug_info, device_or_backend_set, have_kwargs)
 
   attr_token = _attr_token(flat_fun, in_type)
 
@@ -627,8 +629,7 @@ def _infer_params_impl(
       if mesh_lib.get_abstract_mesh().empty else mesh_lib.get_abstract_mesh())
   with mesh_lib.set_abstract_mesh(abstract_mesh):
     jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
-        flat_fun, in_type, attr_token, dbg,
-        HashableFunction(res_paths, closure=()),
+        flat_fun, in_type, attr_token,
         IgnoreKey(ji.inline))
     if config.mutable_array_checks.value:
       _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), explicit_args)
@@ -1171,17 +1172,18 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
 callsites: set[str] = set()
 
 def explain_tracing_cache_miss(
-    f: Callable, unseen_f: bool, cache: dict, key: tuple):
+    fun: lu.WrappedFun, unseen_f: bool, cache: dict, key: tuple):
   if config.check_tracer_leaks.value: return
 
   def unpack(key):
-    transforms, (), _, (in_type, _, debug_info, _, inline), *_, ctx = key
+    transforms, (), _, (in_type, _, inline), *_, ctx = key
     # TODO(dougalm,mattjj): enable cache miss explanation with attrs
     _, (_, (in_tree,)), *_ = transforms
-    return in_tree, in_type, debug_info, inline.val, ctx
-  in_tree, in_type, debug_info, inline, ctx = unpack(key)
+    return in_tree, in_type, inline.val, ctx
+  in_tree, in_type, inline, ctx = unpack(key)
   if inline: return
 
+  debug_info = fun.debug_info
   msg: list[str] = []
   p = msg.append
   done = lambda: logger.log(logging.WARNING, '\n'.join(msg))
@@ -1190,7 +1192,7 @@ def explain_tracing_cache_miss(
   p(f"TRACING CACHE MISS at {callsite} because:")
 
   # have we seen this function before at all?
-  fun_name = getattr(f, '__qualname__', f)
+  fun_name = getattr(fun.f, '__qualname__', fun.f)
   if debug_info is not None and debug_info.func_src_info:
     # TODO(necula): clean up the extraction of the source info
     _, *rest = debug_info.func_src_info.split(' at ')
@@ -1198,7 +1200,7 @@ def explain_tracing_cache_miss(
   else:
     src_info = ''
   if unseen_f:
-    p(f"  never seen function:\n    {fun_name} id={id(f)}{src_info}")
+    p(f"  never seen function:\n    {fun_name} id={id(fun.f)}{src_info}")
     if callsite in callsites:
       p("  but seen another function defined on the same line; maybe the function is\n"
         "  being re-defined repeatedly, preventing caching?")
@@ -1263,7 +1265,7 @@ def explain_tracing_cache_miss(
   # have we never seen these input types (eg shapes, dtypes) before?
   types_match = [k for k in trees_match if k[1] == in_type]
   if not types_match:
-    if len(in_type) < 5:
+    if len(in_type) < 5 and debug_info is not None:
       in_type_str = ':\n    {}'.format(',  '.join(
           f'{n}: {ty.str_short(short_dtypes=True)}'
           for n, ty in zip(debug_info.arg_names, in_type)))
@@ -1275,7 +1277,12 @@ def explain_tracing_cache_miss(
     num_mismatch = sum(map(op.ne, closest_ty, in_type))
     p(f"  closest seen input type signature has {num_mismatch} mismatches, including:")
     add_weak_type_hint = False
-    for name, ty1, ty2 in zip(debug_info.arg_names, closest_ty, in_type):
+    if debug_info:
+      arg_names = debug_info.safe_arg_names(len(in_type))
+    else:
+      arg_names = (None,) * len(in_type)
+
+    for name, ty1, ty2 in zip(arg_names, closest_ty, in_type):
       if ty1 != ty2:
         if type(ty1) == type(ty2) == core.ShapedArray:
           s1, s2 = ty1.str_short(True), ty2.str_short(True)
@@ -1302,8 +1309,6 @@ def _create_pjit_jaxpr(
     fun: lu.WrappedFun,
     in_type: core.InputType | Sequence[core.AbstractValue],
     attr_data: int,
-    debug_info: core.DebugInfo,
-    result_paths: Callable,
     ignored_inline: IgnoreKey
 ) -> tuple[core.ClosedJaxpr, list[Any], list[core.AbstractValue],
            list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
@@ -1317,16 +1322,12 @@ def _create_pjit_jaxpr(
       fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
     if config.dynamic_shapes.value:
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic2(
-          lu.annotate(fun, cast(core.InputType, in_type)), debug_info=debug_info)
+          lu.annotate(fun, cast(core.InputType, in_type)))
       attrs_tracked = []
     else:
       jaxpr, global_out_avals, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
-          fun, in_type, debug_info=debug_info)
+          fun, in_type)
       # assert attr_data is sentinel or attr_data matches attrs_tracked
-
-  # TODO(dougalm,mattjj): enable debug info with attrs_tracked
-  if not config.dynamic_shapes.value and not attrs_tracked:
-    jaxpr = add_jaxpr_debug_info(jaxpr, debug_info, result_paths())
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports
@@ -1703,33 +1704,7 @@ def _pjit_call_impl_python(
                           ("out_layouts", out_layouts),
                           ("abstract args", map(core.abstractify, args)),
                           ("fingerprint", fingerprint))
-  try:
-    return compiled.unsafe_call(*args), compiled, pgle_profiler
-  except FloatingPointError as e:
-    assert config.debug_nans.value or config.debug_infs.value  # compiled_fun can only raise in this case
-
-    if len(jaxpr.eqns) > 1:
-      _ = core.jaxpr_as_fun(jaxpr)(*args)  # may raise, not return
-
-    # If control reaches this line, we got a NaN on the output of `compiled`
-    # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
-    msg = (f"{str(e)}. Because "
-           "jax_config.debug_nans.value and/or config.jax_debug_infs is set, the "
-           "de-optimized function (i.e., the function as if the `jit` "
-           "decorator were removed) was called in an attempt to get a more "
-           "precise error message. However, the de-optimized function did not "
-           "produce invalid values during its execution. This behavior can "
-           "result from `jit` optimizations causing the invalid value to be "
-           "produced. It may also arise from having nan/inf constants as "
-           "outputs, like `jax.jit(lambda ...: jax.numpy.nan)(...)`. "
-           "\n\n"
-           "It may be possible to avoid the invalid value by removing the "
-           "`jit` decorator, at the cost of losing optimizations. "
-           "\n\n"
-           "If you see this error, consider opening a bug report at "
-           "https://github.com/jax-ml/jax.")
-    raise FloatingPointError(msg)
-
+  return compiled.unsafe_call(*args), compiled, pgle_profiler
 
 @weakref_lru_cache
 def _get_jaxpr_as_fun(jaxpr, in_shardings, out_shardings, in_layouts,
@@ -1927,7 +1902,9 @@ def _pjit_abstract_eval(*args, jaxpr, out_shardings, **_):
 pjit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 
-def _pjit_cached_lower_jaxpr_to_fun(ctx, name, jaxpr, effects, in_shardings,
+def _pjit_cached_lower_jaxpr_to_fun(ctx: mlir.LoweringRuleContext,
+                                    name: str, jaxpr: core.ClosedJaxpr,
+                                    effects, in_shardings,
                                     out_shardings, in_layouts, out_layouts,
                                     api_name):
   mod_ctx = ctx.module_context
@@ -1958,7 +1935,8 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx, name, jaxpr, effects, in_shardings,
   return func
 
 
-def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
+def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
+                   jaxpr: core.ClosedJaxpr, in_shardings,
                    out_shardings, in_layouts, out_layouts, resource_env,
                    donated_invars, keep_unused, inline, compiler_options_kvs):
   effects = list(ctx.tokens_in.effects())
@@ -1986,8 +1964,10 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
 mlir.register_lowering(pjit_p, _pjit_lowering)
 
 
-def _pjit_batcher(axis_data, vals_in, dims_in,
-                  jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
+def _pjit_batcher(axis_data, vals_in,
+                  dims_in: tuple[int, ...],
+                  jaxpr: core.ClosedJaxpr,
+                  in_shardings, out_shardings, in_layouts, out_layouts,
                   resource_env, donated_invars, name, keep_unused, inline,
                   compiler_options_kvs):
   segment_lens, dims_in = batching.indirectify_ragged_axes(dims_in)
@@ -2036,7 +2016,8 @@ batching.ragged_prop_rules[pjit_p] = batching.ragged_mask_no_op_rule
 
 def _pjit_batcher_for_sharding(
     s: Sharding | UnspecifiedValue,
-    dim: int, spmd_axis_name: tuple[str, ...] | None, mesh, ndim: int):
+    dim: int | batching.RaggedAxis, spmd_axis_name: tuple[str, ...] | None, mesh,
+    ndim: int):
   if isinstance(s, UnspecifiedValue):
     return s
   hlo_s = s._to_xla_hlo_sharding(ndim)
@@ -2044,11 +2025,12 @@ def _pjit_batcher_for_sharding(
     if sharding_impls.is_op_sharding_replicated(hlo_s):
       return s
     if isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
-      parsed_pspec = s._parsed_pspec.insert_axis_partitions(dim, None)
+      parsed_pspec = s._parsed_pspec.insert_axis_partitions(
+          dim, PartitionSpec.UNCONSTRAINED)
       return NamedSharding._from_parsed_pspec(s.mesh, parsed_pspec)
     new_op = hlo_s.to_proto().clone()
     tad = list(new_op.tile_assignment_dimensions)
-    tad.insert(dim, 1)
+    tad.insert(dim, 1)  # type: ignore
     new_op.tile_assignment_dimensions = tad
     new_gs = GSPMDSharding(
         s._device_assignment, new_op,
@@ -2170,8 +2152,9 @@ def _pjit_linearization(nzs, *primals_in, jaxpr,
 ad.primitive_linearizations[pjit_p] = _pjit_linearization
 
 
-def _pjit_partial_eval(trace, *in_tracers,
-                       jaxpr, in_shardings, out_shardings,
+def _pjit_partial_eval(trace: pe.JaxprTrace,
+                       *in_tracers,
+                       jaxpr: core.ClosedJaxpr, in_shardings, out_shardings,
                        in_layouts, out_layouts, resource_env, donated_invars,
                        name, keep_unused, inline, compiler_options_kvs):
   in_pvals = [t.pval for t in in_tracers]
@@ -2190,7 +2173,7 @@ def _pjit_partial_eval(trace, *in_tracers,
   else:
     known_jaxpr, unknown_jaxpr, unknown_outs, res_avals = \
         pe.partial_eval_jaxpr_nounits(jaxpr, unknown_ins, instantiate=False)
-  unknown_outs = tuple(unknown_outs)
+  unknown_outs = tuple(unknown_outs)  # type: ignore[assignment]
   known_outs = tuple(not uk for uk in unknown_outs)
   num_residuals = len(res_avals)
   res_shardings = (UNSPECIFIED,) * num_residuals
@@ -2281,7 +2264,7 @@ def _pjit_partial_eval(trace, *in_tracers,
   unknown_tracers_in = [t for t in in_tracers if not t.pval.is_known()]
   unknown_out_avals = unknown_jaxpr.out_avals
   unknown_tracers_out = [
-      pe.JaxprTracer(trace, pe.PartialVal.unknown(aval), None)
+      pe.JaxprTracer(trace, pe.PartialVal.unknown(aval), None)  # type: ignore
       for aval in unknown_out_avals
   ]
   eqn = pe.new_eqn_recipe((*unknown_tracers_in, *residual_tracers),
@@ -2348,7 +2331,8 @@ pe.partial_eval_jaxpr_custom_rules[pjit_p] = \
 
 
 @lu.cache
-def _pjit_transpose_trace(fun, in_avals):
+def _pjit_transpose_trace(fun: lu.WrappedFun,
+                          in_avals: Sequence[core.AbstractValue]):
   transpose_jaxpr, _, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
       fun, in_avals)
   transpose_jaxpr = core.ClosedJaxpr(transpose_jaxpr, consts)
@@ -2356,13 +2340,15 @@ def _pjit_transpose_trace(fun, in_avals):
 
 
 def _pjit_transpose(cts_in, *primals_in,
-                    jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
+                    jaxpr: core.ClosedJaxpr,
+                    in_shardings, out_shardings, in_layouts, out_layouts,
                     resource_env, donated_invars, name, keep_unused, inline,
                     compiler_options_kvs):
   def prune_type(ty, xs, maybe_zeros):
     return tuple(x for x, mz in zip(xs, maybe_zeros) if type(mz) is not ty)
 
-  body = lu.wrap_init(ad.closed_backward_pass)
+  body = lu.wrap_init(ad.closed_backward_pass,
+                      debug_info=jaxpr.jaxpr._debug_info)
   body = lu.hashable_partial(body, jaxpr, False)
   primals_and_nz_cts_in, in_treedef = tree_flatten((primals_in, cts_in))
   body, cts_out_treedef_thunk = flatten_fun_nokwargs(body, in_treedef)
@@ -2397,19 +2383,31 @@ def _pjit_transpose(cts_in, *primals_in,
     transpose_in_layouts = (None,) * len(attrs_tracked) + transpose_in_layouts
     transpose_out_layouts = (None,) * len(attrs_tracked) + transpose_out_layouts
 
-  nz_cts_out = pjit_p.bind(
-      *primals_and_nz_cts_in,
-      jaxpr=transpose_jaxpr,
-      in_shardings=transpose_in_shardings,
-      out_shardings=transpose_out_shardings,
-      in_layouts=transpose_in_layouts,
-      out_layouts=transpose_out_layouts,
-      resource_env=resource_env,
-      donated_invars=(False,) * len(primals_and_nz_cts_in),
-      name=name,
-      keep_unused=keep_unused,
-      inline=inline,
-      compiler_options_kvs=compiler_options_kvs)
+  try:
+    nz_cts_out = pjit_p.bind(
+        *primals_and_nz_cts_in,
+        jaxpr=transpose_jaxpr,
+        in_shardings=transpose_in_shardings,
+        out_shardings=transpose_out_shardings,
+        in_layouts=transpose_in_layouts,
+        out_layouts=transpose_out_layouts,
+        resource_env=resource_env,
+        donated_invars=(False,) * len(primals_and_nz_cts_in),
+        name=name,
+        keep_unused=keep_unused,
+        inline=inline,
+        compiler_options_kvs=compiler_options_kvs)
+  except dispatch.InternalFloatingPointError as e:
+    print("Invalid nan value encountered in the backward pass of a jax.jit "
+          "function. Calling the de-optimized backward pass.")
+    try:
+      _ = ad.closed_backward_pass(jaxpr, None, primals_in, cts_in)
+    except (FloatingPointError, ZeroDivisionError) as e2:
+      raise e2 from None  # great
+    else:
+      # If control reaches this line, we got a NaN on the output of `compiled`
+      # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
+      dispatch._raise_no_nan_in_deoptimized(e)
 
   if attrs_tracked:
     final_states, nz_cts_out = split_list(nz_cts_out, [len(init_states)])
@@ -2662,7 +2660,6 @@ def _sharding_constraint_batcher(
                        f"{sharding.spec}")
   x, = vals_in
   d, = dims_in
-  # None means unconstrained in ParsedPartitionSpec
   unconstrained_dims = {ud + (d <= ud) for ud in unconstrained_dims}
   if axis_data.spmd_name is None:
     unconstrained_dims.add(d)
@@ -2890,7 +2887,7 @@ def use_explicit_axes(*axes):
 def get_unconstrained_dims(sharding: NamedSharding):
   assert sharding._parsed_pspec is not None
   return {i for i, axes in enumerate(sharding._parsed_pspec)
-          if axes is None}
+          if axes is PartitionSpec.UNCONSTRAINED}
 
 
 def _get_partition_spec(

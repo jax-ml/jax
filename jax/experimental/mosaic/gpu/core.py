@@ -165,7 +165,7 @@ class ClusterBarrier:
 
 
 def _count_buffer_bytes(shape_dtype: jax.ShapeDtypeStruct) -> int:
-  return np.prod(shape_dtype.shape) * np.dtype(shape_dtype.dtype).itemsize
+  return math.prod(shape_dtype.shape) * np.dtype(shape_dtype.dtype).itemsize
 
 
 class ThreadSemantics(enum.Enum):

@@ -367,4 +367,5 @@ rediraffe_redirects = {
     'notebooks/external_callbacks.md': 'external-callbacks.md',
     'notebooks/How_JAX_primitives_work.md': 'jax-primitives.md',
     'jax.extend.ffi.rst': 'jax.ffi.rst',
+    'Custom_Operation_for_GPUs.md': 'ffi.md',
 }

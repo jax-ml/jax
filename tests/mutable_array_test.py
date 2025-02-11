@@ -21,6 +21,7 @@ import jax
 from jax._src import core
 from jax._src import config
 from jax._src import test_util as jtu
+from jax.sharding import NamedSharding, PartitionSpec as P
 import jax.numpy as jnp
 
 from jax._src.state.types import (RefEffect)
@@ -240,6 +241,18 @@ class MutableArrayTest(jtu.JaxTestCase):
     x = jnp.arange(3.)
     _ = jax.jit(lambda x_ref: x_ref[...])(core.mutable_array(x))
     x + 1  # don't crash
+
+  def test_sharding_persists(self):
+    mesh = jax.make_mesh((1,), ('i',))
+    x = jax.device_put(jnp.arange(2), NamedSharding(mesh, P('i')))
+    s = x.sharding
+    a = core.mutable_array(x)
+    self.assertEqual(s, a.sharding)
+    self.assertEqual(s, a[...].sharding)
+    f = jax.jit(lambda: a[...])
+    y = f()
+    self.assertEqual(s, a.sharding)
+    self.assertEqual(s, y.sharding)
 
 
 @jtu.with_config(jax_mutable_array_checks=True)

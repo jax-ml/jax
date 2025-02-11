@@ -85,8 +85,9 @@ from .utils import (
     warpgroup_idx as warpgroup_idx,
     when as when,
 )
+# The import below shadows the module, so we need to rename it.
+from . import wgmma as _wgmma  # noqa: F401
 from .wgmma import (
     WGMMAAccumulator as WGMMAAccumulator,
-    WGMMALayout as WGMMALayout,
     wgmma as wgmma,
 )

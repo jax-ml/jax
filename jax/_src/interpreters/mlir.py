@@ -34,6 +34,7 @@ import warnings
 import numpy as np
 
 from jax._src import ad_util
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
@@ -48,6 +49,7 @@ from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
+from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding as JSharding
 from jax._src.sharding_impls import (AUTO, NamedSharding,
                                      modify_sdy_sharding_wrt_axis_types,
@@ -1061,20 +1063,27 @@ def _get_mem_kind(s: JSharding | AUTO | None) -> str | None:
   assert isinstance(s, JSharding)
   return s.memory_kind
 
+
 def contains_unconstrained(s):
-  return isinstance(s, NamedSharding) and None in s._parsed_pspec
+  return (
+      isinstance(s, NamedSharding)
+      and PartitionSpec.UNCONSTRAINED in s._parsed_pspec
+  )
+
 
 def all_unconstrained(s, aval):
   if isinstance(s, NamedSharding):
     if aval.ndim != len(s._parsed_pspec):
       return False
-    return all(p is None for p in s._parsed_pspec)
+    return all(p is PartitionSpec.UNCONSTRAINED for p in s._parsed_pspec)
   return False
 
 def _get_unconstrained_dimensions(s, aval):
   us = contains_unconstrained(s)
-  return (us, all_unconstrained(s, aval),
-          ({i for i, p in enumerate(s._parsed_pspec) if p is None} if us else None))
+  return (
+    us, all_unconstrained(s, aval),
+    ({i for i, p in enumerate(s._parsed_pspec)
+      if p is PartitionSpec.UNCONSTRAINED} if us else None))
 
 def lower_jaxpr_to_module(
     module_name: str,
@@ -1133,16 +1142,20 @@ def lower_jaxpr_to_module(
         "In multi-platform lowering either all or no lowering platforms "
         f"should support donation. Lowering for {platforms} of which "
         f"only {platforms_with_donation} support donation")
+    input_output_aliases, donated_args, xla_donated_args = _set_up_aliases(
+        input_output_aliases, in_avals, out_avals, donated_args,
+        arg_memory_kinds, result_memory_kinds, in_layouts, out_layouts,
+        result_shardings if num_partitions > 1 else None)
     if (num_partitions > 1 and
         (result_shardings is None or
-         all(s is None or isinstance(s, AUTO) or contains_unconstrained(s)
+         any(s is None or isinstance(s, AUTO) or contains_unconstrained(s)
              for s in result_shardings))):
-      xla_donated_args = donated_args
-      donated_args = [False] * len(donated_args)
-    if xla_donated_args is None:
-      input_output_aliases, donated_args, xla_donated_args = _set_up_aliases(
-          input_output_aliases, in_avals, out_avals, donated_args,
-          arg_memory_kinds, result_memory_kinds, in_layouts, out_layouts)
+      if xla_donated_args is None:
+        xla_donated_args = [False] * len(donated_args)
+      for input_id in range(len(donated_args)):
+        if donated_args[input_id]:
+          xla_donated_args[input_id] = True
+          donated_args[input_id] = False
   if any(donated_args):
     unused_donations = [str(a) for a, d in zip(in_avals, donated_args) if d]
     msg = "See an explanation at https://jax.readthedocs.io/en/latest/faq.html#buffer-donation."
@@ -1237,7 +1250,7 @@ def lower_jaxpr_to_module(
 
 def _set_up_aliases(input_output_aliases, avals_in, avals_out,
                     donated_args, arg_memory_kinds, result_memory_kinds,
-                    in_layouts, out_layouts):
+                    in_layouts, out_layouts, result_shardings):
   if input_output_aliases is None:
     input_output_aliases = [None] * len(avals_in)
   else:
@@ -1296,7 +1309,10 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
             " for the input and output layout to be chosen by XLA and not the"
             " layout of the input which might not be optimal.")
       if (in_layouts is None or out_layouts is None or
-          in_layouts[input_id] == out_layouts[i]):
+          in_layouts[input_id] == out_layouts[i]) and (
+              result_shardings is None or not (
+              (s := result_shardings[i]) is None or
+              isinstance(s, AUTO) or contains_unconstrained(s))):
         input_output_aliases[input_id] = i
       else:
         # Fallback to xla donation if layouts don't match.
@@ -1406,7 +1422,6 @@ def lower_jaxpr_to_fun(
     MLIR func op
   """
   util.test_event("lower_jaxpr_to_fun", name)
-
   # The first dimension variable may be the platform index
   num_dim_vars = len(ctx.shape_poly_state.dim_vars)
   dim_var_avals = [core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))] * num_dim_vars
@@ -2157,7 +2172,8 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   as `avals_out`."""
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
     f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
-    wrapped_fun = lu.wrap_init(f, params)
+    wrapped_fun = lu.wrap_init(f, params,
+        debug_info=api_util.debug_info("lower_fun", fun, args, params))
     manager = (contextlib.nullcontext() if ctx.jaxpr_eqn_ctx is None else
                ctx.jaxpr_eqn_ctx.manager)
 

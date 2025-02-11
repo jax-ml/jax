@@ -90,7 +90,30 @@ print(arr_sharded)
 jax.debug.visualize_array_sharding(arr_sharded)
 ```
 
++++ {"id": "UEObolTqw4pp"}
+
 The device numbers here are not in numerical order, because the mesh reflects the underlying toroidal topology of the device.
+
+The {class}`~jax.sharding.NamedSharding` includes a parameter called `memory_kind`. This parameter determines the type of memory to be used and defaults to `device`. You can set this parameter to `pinned_host` if you prefer to place it on the host.
+
+To create a new sharding that only differs from an existing sharding in terms of its memory kind, you can use the `with_memory_kind` method on the existing sharding.
+
+```{code-cell}
+---
+colab:
+  base_uri: https://localhost:8080/
+id: aKNeOHTJnqmS
+outputId: 847c53ec-8b2e-4be0-f993-7fde7d77c0f2
+---
+s_host = jax.NamedSharding(mesh, P('x', 'y'), memory_kind='pinned_host')
+s_dev = s_host.with_memory_kind('device')
+arr_host = jax.device_put(arr, s_host)
+arr_dev = jax.device_put(arr, s_dev)
+print(arr_host.sharding.memory_kind)
+print(arr_dev.sharding.memory_kind)
+```
+
++++ {"id": "jDHYnVqHwaST"}
 
 ## 1. Automatic parallelism via `jit`
 
@@ -129,7 +152,51 @@ jax.debug.visualize_array_sharding(result)
 print(result)
 ```
 
++++ {"id": "Q4N5mrr9i_ki"}
+
 The result is partially replicated: that is, the first two elements of the array are replicated on devices `0` and `6`, the second on `1` and `7`, and so on.
+
+### 1.1 Sharding transformation between memory types
+
+The output sharding of a {func}`jax.jit` function can differ from the input sharding if you specify the output sharding using the `out_shardings` parameter. Specifically, the `memory_kind` of the output can be different from that of the input array.
+
+#### Example 1: Pinned host to device memory
+
+In the example below, the {func}`jax.jit` function `f` takes an array sharded in `pinned_host` memory and generates an array in `device` memory.
+
+```{code-cell}
+---
+colab:
+  base_uri: https://localhost:8080/
+id: PXu3MhafyRHo
+outputId: 7bc6821f-a4a9-4cf8-8b21-e279d516d27b
+---
+f = jax.jit(lambda x: x, out_shardings=s_dev)
+out_dev = f(arr_host)
+print(out_dev)
+print(out_dev.sharding.memory_kind)
+```
+
++++ {"id": "LuYFqpcBySiX"}
+
+#### Example 2: Device to pinned_host memory
+
+In the example below, the {func}`jax.jit` function `g` takes an array sharded in `device` memory and generates an array in `pinned_host` memory.
+
+```{code-cell}
+---
+colab:
+  base_uri: https://localhost:8080/
+id: qLsgNlKfybRw
+outputId: a16448b9-7e39-408f-b200-505f65ad4464
+---
+g = jax.jit(lambda x: x, out_shardings=s_host)
+out_host = g(arr_dev)
+print(out_host)
+print(out_host.sharding.memory_kind)
+```
+
++++ {"id": "7BGD31-owaSU"}
 
 ## 2. Semi-automated sharding with constraints
 

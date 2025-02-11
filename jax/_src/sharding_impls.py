@@ -19,7 +19,6 @@ from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 import dataclasses
 import functools
-import itertools
 import math
 from typing import Any, NamedTuple, Union, cast
 
@@ -57,7 +56,7 @@ class TransferToMemoryKind:
 @util.cache(max_size=128, trace_context_in_key=False)
 def _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes):
   for p in parsed_pspec:
-    if p is not None:
+    if p is not PartitionSpec.UNCONSTRAINED:
       for r in p:
         if r not in mesh.shape:
           raise ValueError(
@@ -72,7 +71,7 @@ def _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes):
 @util.cache(max_size=128, trace_context_in_key=False)
 def _check_axis_type_consistency(mesh, parsed_pspec):
   for p in parsed_pspec:
-    if p is not None:
+    if p is not PartitionSpec.UNCONSTRAINED:
       if not all(mesh._name_to_type[p[0]] == mesh._name_to_type[r] for r in p):
         raise ValueError(
             'AxisTypes should be the same in a tuple subset of PartitionSpec:'
@@ -432,7 +431,7 @@ class NamedSharding(jsharding.Sharding):
     dim_shardings = [SdyDimSharding(axes=[], is_closed=True)
                      for _ in range(num_dimensions)]
     for i, dim_spec in enumerate(self._parsed_pspec):
-      if dim_spec is None:
+      if dim_spec is PartitionSpec.UNCONSTRAINED:
         dim_shardings[i].is_closed = False
       elif not dim_spec:
         # Already empty and closed sharding.
@@ -1080,7 +1079,7 @@ def get_array_mapping(
     return axis_resources
   return OrderedDict((axis, i)
                      for i, axes in enumerate(axis_resources)
-                     if axes is not None for axis in axes)
+                     if axes is not PartitionSpec.UNCONSTRAINED for axis in axes)
 
 
 get_single_pspec = lambda p: array_mapping_to_axis_resources(
@@ -1090,10 +1089,12 @@ get_single_pspec = lambda p: array_mapping_to_axis_resources(
 class ParsedPartitionSpec:
   __slots__ = ('_user_spec', 'partitions')
 
+  _user_spec: PartitionSpec | None
+  partitions: tuple[tuple[MeshAxisName, ...] | UnconstrainedSingleton, ...]
+
   def __init__(self, user_spec, partitions):
     self._user_spec = user_spec
-    # None in partitions represents unconstrained dim.
-    # TODO(yashkatariya): May use a sentinel value.
+    assert None not in partitions, partitions
     self.partitions = tuple(partitions)
 
   def get_partition_spec(self) -> PartitionSpec:
@@ -1111,7 +1112,12 @@ class ParsedPartitionSpec:
     return ParsedPartitionSpec(None, new_partitions)
 
   @classmethod
-  def from_user_input(cls, entry, arg_name, allow_unconstrained_dims=False):
+  def from_user_input(
+      cls,
+      entry: PartitionSpec | None,
+      arg_name: str,
+      allow_unconstrained_dims: bool = False,
+  ) -> ParsedPartitionSpec:
     if entry is None:
       return cls(entry, ())
     if not isinstance(entry, PartitionSpec):
@@ -1123,10 +1129,10 @@ class ParsedPartitionSpec:
         axis_spec = ()
       elif isinstance(axis_spec, (list, tuple)):
         axis_spec = tuple(axis_spec)
-      elif isinstance(axis_spec, UnconstrainedSingleton):
+      elif axis_spec is PartitionSpec.UNCONSTRAINED:
         if not allow_unconstrained_dims:
           raise ValueError(f"Unconstrained dims are not allowed: {entry}")
-        axis_spec = None
+        axis_spec = PartitionSpec.UNCONSTRAINED
       else:
         axis_spec = (axis_spec,)
       axis_specs.append(axis_spec)
@@ -1157,9 +1163,10 @@ class ParsedPartitionSpec:
 
 def preprocess(mesh, spec, parsed_pspec, _manual_axes=frozenset()):
   if parsed_pspec is None:
-    parsed_pspec = prepare_axis_resources(
-        PartitionSpec() if spec is None else spec,
-        "NamedSharding spec", allow_unconstrained_dims=True)
+    spec = PartitionSpec() if spec is None else spec
+    parsed_pspec = ParsedPartitionSpec.from_user_input(
+        spec, "NamedSharding spec", allow_unconstrained_dims=True)
+    _check_unique_resources(parsed_pspec, "NamedSharding spec")
   _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes)
   _check_axis_type_consistency(mesh, parsed_pspec)
   return parsed_pspec
@@ -1182,30 +1189,34 @@ def prepare_axis_resources(axis_resources, arg_name,
                          'allowed.')
       new_entries.append(entry)
     else:
-      new_entries.append(ParsedPartitionSpec.from_user_input(
-          entry, what, allow_unconstrained_dims=allow_unconstrained_dims))
+      parsed_pspec = ParsedPartitionSpec.from_user_input(
+          entry, what, allow_unconstrained_dims=allow_unconstrained_dims)
+      _check_unique_resources(parsed_pspec, arg_name)
+      new_entries.append(parsed_pspec)
 
-  _check_unique_resources(new_entries, arg_name)
   return tree_util.tree_unflatten(treedef, new_entries)
 
 
-def _check_unique_resources(axis_resources, arg_name):
-  for arg_axis_resources in axis_resources:
-    if not arg_axis_resources: continue
-    if isinstance(arg_axis_resources, (UnspecifiedValue, AUTO, jsharding.Sharding)):
-      continue
-    constrained_dims = [d for d in arg_axis_resources if d is not None]
-    resource_counts = collections.Counter(
-        itertools.chain.from_iterable(constrained_dims))
-    if not resource_counts: continue
-    if resource_counts.most_common(1)[0][1] > 1:
-      multiple_uses = [r for r, c in resource_counts.items() if c > 1]
-      if multiple_uses:
-        raise ValueError(
-            f'A single {arg_name} specification can map every mesh axis to at'
-            ' most one positional dimension, but'
-            f' {arg_axis_resources.get_partition_spec()} has duplicate entries'
-            f' for {mesh_lib.show_axes(multiple_uses)}')
+def _check_unique_resources(
+    arg_axis_resources: ParsedPartitionSpec, arg_name: str
+) -> None:
+  resource_counts: dict[MeshAxisName, int] = {}
+  duplicate = False
+  for d in arg_axis_resources:
+    if d is not PartitionSpec.UNCONSTRAINED:
+      for resource in d:
+        count = resource_counts.get(resource, 0)
+        if count > 0:
+          duplicate = True
+        resource_counts[resource] = count + 1
+  if duplicate:
+    multiple_uses = [r for r, c in resource_counts.items() if c > 1]
+    raise ValueError(
+        f'A single {arg_name} specification can map every mesh axis to at'
+        ' most one positional dimension, but'
+        f' {arg_axis_resources.get_partition_spec()} has duplicate entries'
+        f' for {mesh_lib.show_axes(multiple_uses)}')
+
 
 # Axis environments
 

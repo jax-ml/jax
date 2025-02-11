@@ -67,7 +67,8 @@ def _ensure_str_tuple(x: str | Iterable[str]) -> tuple[str, ...]:
     return tuple(map(_ensure_str, x))
 
 @lu.transformation_with_aux2
-def flatten_fun(f, store, in_tree, *args_flat):
+def flatten_fun(f: Callable, store: lu.Store,
+                in_tree: PyTreeDef, *args_flat):
   py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
   ans = f(*py_args, **py_kwargs)
   ans, out_tree = tree_flatten(ans)
@@ -587,10 +588,10 @@ def debug_info(
     args: Sequence[Any],
     kwargs: dict[str, Any],
     *,
-    static_argnums: tuple[int, ...] = (),
-    static_argnames: tuple[str, ...] = (),
+    static_argnums: Sequence[int] = (),
+    static_argnames: Sequence[str] = (),
     result_paths_thunk: Callable[[], tuple[str, ...]] | None = None,
-    # TODO(necula): check if we really need this, e.g., to speed up tracing.
+    # TODO(necula): check if we really need this, e.g., to speed up tracing?
     sourceinfo: str | None = None,
     signature: inspect.Signature | None = None,
 ) -> core.DebugInfo:
@@ -674,29 +675,6 @@ def _non_static_arg_names(fn_signature: inspect.Signature | None,
   arg_names = args_arg_names + kwargs_arg_names
   return arg_names
 
-@lu.transformation_with_aux2
-def result_paths(_fun, _store, *args, **kwargs):
-  "linear_util transform to get output pytree paths of pre-flattened function."
-  ans = _fun(*args, **kwargs)
-  _store.store([keystr(path) for path, _ in generate_key_paths(ans)])
-  return ans
-
-# TODO(necula): simplify this function, all it needs is to add the trace_debug to the Jaxpr
-def add_jaxpr_debug_info(jaxpr: core.Jaxpr,
-                         debug: core.DebugInfo | None,
-                         result_paths: tuple[str, ...] | None = None,
-                         ) -> core.Jaxpr:
-  """Add debug info to jaxpr, given trace-time debug info and result paths."""
-  if debug is None:
-    return jaxpr
-  # TODO(necula): re-enable this safety check
-  # assert (result_paths is not None) ^ (trace_debug.result_paths_thunk is not None)
-  if result_paths is not None:
-    debug = debug._replace(result_paths=tuple(result_paths))
-  else:
-    debug = debug.resolve_result_paths()
-  return jaxpr.replace(debug_info=debug)
-
 def hoist_obj_attrs(f, flat_args):
   idxs, objs, flat_args_ = [], [], []
   for i, x in enumerate(flat_args):
@@ -721,7 +699,7 @@ def register_class_with_attrs(t: type) -> None:
 _class_with_attrs: set[type] = set()
 
 # TODO(mattjj): make this function faster
-def _check_no_aliased_ref_args(dbg, avals, args):
+def _check_no_aliased_ref_args(dbg: core.DebugInfo | None, avals, args):
   assert config.mutable_array_checks.value
   refs: dict[int, int] = {}
   for i, (a, x) in enumerate(zip(avals, args)):
@@ -735,7 +713,7 @@ def _check_no_aliased_ref_args(dbg, avals, args):
         if dbg else
         f"at both flat index {dup_idx} and flat index {i}") from None
 
-def _check_no_aliased_closed_over_refs(dbg, consts, args) -> None:
+def _check_no_aliased_closed_over_refs(dbg: core.DebugInfo | None, consts, args) -> None:
   assert config.mutable_array_checks.value
   refs: set[int] = {id(core.get_referent(c)) for c in consts
                     if isinstance(core.get_aval(c), AbstractRef)}
@@ -746,4 +724,4 @@ def _check_no_aliased_closed_over_refs(dbg, consts, args) -> None:
           f"when tracing {dbg.func_src_info} for {dbg.traced_for}, a mutable "
           f"array reference of type {a.str_short()} was both closed over and "
           f"passed as the argument "
-          f"{dbg.arg_names[i]}" if dbg else "at flat index {i}")
+          f"{dbg.safe_arg_names(len(args))[i]}" if dbg else "at flat index {i}")

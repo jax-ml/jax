@@ -590,8 +590,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       return
     if cudnn_version < 90500:
       self.skipTest("Requires >= cuDNN 9.5.0")
-    if not jtu.is_cuda_compute_capability_at_least("9.0"):
-      self.skipTest("Requires at least Hopper arch")
+    if not jtu.is_cuda_compute_capability_equal("9.0"):
+      self.skipTest("Requires Hopper arch")
 
     B, T, N, H = 2, 64, 2, 256
     bf16 = jnp.bfloat16

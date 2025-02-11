@@ -374,7 +374,7 @@ def floor(x: ArrayLike) -> Array:
   This function lowers directly to the `stablehlo.floor`_ operation.
 
   Args:
-    x: input array. Must be have floating-point type.
+    x: input array. Must have floating-point type.
 
   Returns:
     Array of same shape and dtype as ``x``, containing values rounded
@@ -395,7 +395,7 @@ def ceil(x: ArrayLike) -> Array:
   This function lowers directly to the `stablehlo.ceil`_ operation.
 
   Args:
-    x: input array. Must be have floating-point type.
+    x: input array. Must have floating-point type.
 
   Returns:
     Array of same shape and dtype as ``x``, containing values rounded
@@ -458,53 +458,231 @@ def round(x: ArrayLike,
   rounding_method = RoundingMethod(rounding_method)
   return round_p.bind(x, rounding_method=rounding_method)
 
+@export
 def is_finite(x: ArrayLike) -> Array:
   r"""Elementwise :math:`\mathrm{isfinite}`.
 
-  For each element x returns `True` if and only if x is not :math:`\pm\infty` or
-  :math:`\mathit{NaN}`.
+  This function lowers directly to the  `stablehlo.is_finite`_ operation.
+
+  Args:
+    x: input array. Must have floating-point type.
+
+  Returns:
+    Array of boolean dtype with the same shape as ``x``, containing ``False`` where
+    ``x`` is :math:`\pm\infty` or :math:`\mathit{NaN}`, and ``True`` otherwise.
+
+  See also:
+    - :func:`jax.numpy.isinf`: return True where array is infinite.
+    - :func:`jax.numpy.isnan`: return True where array is NaN.
+
+  .. _stablehlo.is_finite: https://openxla.org/stablehlo/spec#is_finite
   """
   return is_finite_p.bind(x)
 
+@export
 def exp(x: ArrayLike) -> Array:
-  r"""Elementwise exponential: :math:`e^x`."""
+  r"""Elementwise exponential: :math:`e^x`.
+
+  This function lowers directly to the  `stablehlo.exponential`_ operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    exponential.
+
+  See also:
+    - :func:`jax.lax.exp2`: elementwise base-2 exponentional: :math:`2^x`.
+    - :func:`jax.lax.log`: elementwise natural logarithm: :math:`\mathrm{log}(x)`.
+
+  .. _stablehlo.exponential: https://openxla.org/stablehlo/spec#exponential
+  """
   return exp_p.bind(x)
 
 def exp2(x: ArrayLike) -> Array:
-  r"""Elementwise base-2 exponential: :math:`2^x`."""
+  r"""Elementwise base-2 exponential: :math:`2^x`.
+
+  This function is implemented in terms of the `stablehlo.exponential`_
+  and `stablehlo.multiply`_ operations.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    base-2 exponential.
+
+  See also:
+    - :func:`jax.lax.exp`: elementwise exponentional: :math:`e^x`.
+    - :func:`jax.lax.log`: elementwise natural logarithm: :math:`\mathrm{log}(x)`.
+
+  .. _stablehlo.exponential: https://openxla.org/stablehlo/spec#exponential
+  .. _stablehlo.multiply: https://openxla.org/stablehlo/spec#multiply
+  """
   return exp2_p.bind(x)
 
+@export
 def expm1(x: ArrayLike) -> Array:
-  r"""Elementwise :math:`e^{x} - 1`."""
+  r"""Elementwise :math:`e^{x} - 1`.
+
+  This function lowers directly to the `stablehlo.exponential_minus_one`_
+  operation. Compared to the naive expression ``lax.exp(x) - 1``, it is
+  more accurate for ``x`` near zero.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    exponential minus 1.
+
+  See also:
+    - :func:`jax.lax.exp`: elementwise exponentional: :math:`e^x`.
+    - :func:`jax.lax.log1p`: elementwise :math:`\mathrm{log}(1 + x)`.
+
+  .. _stablehlo.exponential_minus_one: https://openxla.org/stablehlo/spec#exponential_minus_one
+  """
   return expm1_p.bind(x)
 
+@export
 def log(x: ArrayLike) -> Array:
-  r"""Elementwise natural logarithm: :math:`\mathrm{log}(x)`."""
+  r"""Elementwise natural logarithm: :math:`\mathrm{log}(x)`.
+
+  This function lowers directly to the  `stablehlo.log`_ operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    natural logarithm.
+
+  See also:
+    - :func:`jax.lax.exp`: elementwise exponentional: :math:`e^x`.
+
+  .. _stablehlo.log: https://openxla.org/stablehlo/spec#log
+  """
   return log_p.bind(x)
 
+@export
 def log1p(x: ArrayLike) -> Array:
-  r"""Elementwise :math:`\mathrm{log}(1 + x)`."""
+  r"""Elementwise :math:`\mathrm{log}(1 + x)`.
+
+  This function lowers directly to the  `stablehlo.log_plus_one`_ operation.
+  Compared to the naive expression ``lax.log(1 + x)``, it is more accurate
+  for ``x`` near zero.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    natural logarithm of ``x + 1``.
+
+  See also:
+    - :func:`jax.lax.expm1`: elementwise :math:`e^x - 1`.
+    - :func:`jax.lax.log`: elementwise natural logarithm :math:`\mathrm{log}(x)`.
+
+  .. _stablehlo.log_plus_one: https://openxla.org/stablehlo/spec#log_plus_one
+  """
   return log1p_p.bind(x)
 
 def tanh(x: ArrayLike) -> Array:
-  r"""Elementwise hyperbolic tangent: :math:`\mathrm{tanh}(x)`."""
+  r"""Elementwise hyperbolic tangent: :math:`\mathrm{tanh}(x)`.
+
+  This function lowers directly to the `stablehlo.tanh`_ operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    hyperbolic tangent.
+
+  See also:
+    - :func:`jax.lax.atanh`: elementwise inverse hyperbolic tangent.
+    - :func:`jax.lax.cosh`: elementwise hyperbolic cosine.
+    - :func:`jax.lax.sinh`: elementwise hyperbolic sine.
+
+  .. _stablehlo.tanh: https://openxla.org/stablehlo/spec#tanh
+  """
   return tanh_p.bind(x)
 
 def logistic(x: ArrayLike) -> Array:
   r"""Elementwise logistic (sigmoid) function: :math:`\frac{1}{1 + e^{-x}}`."""
   return logistic_p.bind(x)
 
+@export
 def sin(x: ArrayLike) -> Array:
-  r"""Elementwise sine: :math:`\mathrm{sin}(x)`."""
+  r"""Elementwise sine: :math:`\mathrm{sin}(x)`.
+
+  For floating-point inputs, this function lowers directly to the
+  `stablehlo.sine`_ operation. For complex inputs, it lowers to a
+  sequence of HLO operations implementing the complex sine.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    sine.
+
+  See also:
+    - :func:`jax.lax.cos`: elementwise cosine.
+    - :func:`jax.lax.tan`: elementwise tangent.
+    - :func:`jax.lax.asin`: elementwise arc sine.
+
+  .. _stablehlo.sine: https://openxla.org/stablehlo/spec#sine
+  """
   return sin_p.bind(x)
 
+@export
 def cos(x: ArrayLike) -> Array:
-  r"""Elementwise cosine: :math:`\mathrm{cos}(x)`."""
+  r"""Elementwise cosine: :math:`\mathrm{cos}(x)`.
+
+  For floating-point inputs, this function lowers directly to the
+  `stablehlo.cosine`_ operation. For complex inputs, it lowers to a
+  sequence of HLO operations implementing the complex cosine.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    cosine.
+
+  See also:
+    - :func:`jax.lax.sin`: elementwise sine.
+    - :func:`jax.lax.tan`: elementwise tangent.
+    - :func:`jax.lax.acos`: elementwise arc cosine.
+
+  .. _stablehlo.cosine: https://openxla.org/stablehlo/spec#cosine
+  """
   return cos_p.bind(x)
 
+@export
 def atan2(x: ArrayLike, y: ArrayLike) -> Array:
-  r"""Elementwise arc tangent of two variables:
-    :math:`\mathrm{atan}({x \over y})`."""
+  r"""Elementwise two-term arc tangent: :math:`\mathrm{atan}({x \over y})`.
+
+  This function lowers directly to the `stablehlo.atan2`_ operation.
+
+  Args:
+    x, y: input arrays. Must have a matching floating-point or complex dtypes. If
+      neither is a scalar, the two arrays must have the same number of dimensions
+      and be broadcast-compatible.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` and ``y`` containing the element-wise
+    arc tangent of :math:`x \over y`, respecting the quadrant indicated by the sign
+    of each input.
+
+  See also:
+    - :func:`jax.lax.tan`: elementwise tangent.
+    - :func:`jax.lax.atan`: elementwise one-term arc tangent.
+
+  .. _stablehlo.atan2: https://openxla.org/stablehlo/spec#atan2
+  """
   return atan2_p.bind(x, y)
 
 def real(x: ArrayLike) -> Array:
@@ -744,7 +922,8 @@ def _convert_element_type(
   if ((old_dtype, old_weak_type) == (new_dtype, weak_type) and
       isinstance(operand, Array) and
       not (isinstance(operand, core.Tracer) and core.is_concrete(operand)) and
-      (sharding is None or getattr(operand, 'sharding', None) == sharding)):
+      (sharding is None or
+       (sharding._is_concrete and getattr(operand, 'sharding', None) == sharding))):
     return operand
   else:
     return convert_element_type_p.bind(
@@ -798,8 +977,9 @@ def _trace_composite_to_jaxpr(fun: Callable,
                               in_avals: Sequence[core.AbstractValue],
                               name: str,
                               debug_info: core.DebugInfo):
-  flat_fun, out_tree = api_util.flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug_info)
+  flat_fun, out_tree = api_util.flatten_fun_nokwargs(
+      lu.wrap_init(fun, debug_info=debug_info), in_tree)
+  jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
   if any(isinstance(c, core.Tracer) for c in consts):
     raise UnexpectedTracerError(
         "Found a JAX Tracer as a constant in the decomposition for the "
@@ -878,6 +1058,15 @@ def composite(
                                      args, kwargs)
     flat_args, in_tree = tree_util.tree_flatten(args)
     in_avals = tuple(core.get_aval(x) for x in flat_args)
+    if any(isinstance(v, core.Tracer) for v in kwargs.values()):
+      raise UnexpectedTracerError(
+          "Found a JAX Tracer as an attribute in the decomposition for the "
+          f"composite op '{name}'. This means that the decomposition function "
+          "closes over a value that is involved in a JAX transformation. "
+          "Any values that aren't explicitly known at compile time must be "
+          "explicitly passed as arguments to the composite."
+          "\n\nNote: If you are passing jax arrays as attributes, use numpy "
+          "arrays instead.")
     closed_jaxpr, out_tree = _trace_composite_to_jaxpr(
         partial(decomposition, **kwargs), in_tree, in_avals, name, debug_info
     )
@@ -1824,6 +2013,8 @@ def reduce(operands: Any,
   is undefined.
   """
   flat_operands, operand_tree = tree_util.tree_flatten(operands)
+  comp_debug = api_util.debug_info("reduce comp", computation,
+                                   (init_values, init_values), {})
   flat_init_values, init_value_tree = tree_util.tree_flatten(init_values)
   if operand_tree != init_value_tree:
     raise ValueError('Operands must have the same tree structure as init_values:'
@@ -1840,14 +2031,14 @@ def reduce(operands: Any,
   else:
     flat_init_avals = safe_map(core.get_aval, flat_init_values)
     closed_jaxpr, out_tree = _variadic_reduction_jaxpr(
-        computation, tuple(flat_init_avals), init_value_tree)
+        computation, comp_debug, tuple(flat_init_avals), init_value_tree)
     out = reduce_p.bind(*flat_operands, *flat_init_values, computation=computation,
                         jaxpr=closed_jaxpr, dimensions=tuple(dimensions))
     return tree_util.tree_unflatten(out_tree, out)
 
 @cache()
-def _reduction_jaxpr(computation, aval):
-  @lu.wrap_init
+def _reduction_jaxpr(computation: Callable,
+                     aval: core.AbstractValue):
   def comp(x, y):
     result = computation(x, y)
     if not (isinstance(result, core.Tracer) or core.valid_jaxtype(result)):
@@ -1856,7 +2047,11 @@ def _reduction_jaxpr(computation, aval):
           f"Reduction functions should only return an array.\n"
           f"Full return value: {result}")
     return (result,)
-  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(comp, (aval, aval))
+  comp_wrapped = lu.wrap_init(
+      comp,
+      debug_info=api_util.debug_info("reduction_jaxpr", computation,
+                                     (aval, aval), {}))
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(comp_wrapped, (aval, aval))
   if any(isinstance(c, core.Tracer) for c in consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
@@ -1864,10 +2059,13 @@ def _reduction_jaxpr(computation, aval):
   return jaxpr, tuple(consts)
 
 @cache()
-def _variadic_reduction_jaxpr(computation, flat_avals, aval_tree):
+def _variadic_reduction_jaxpr(computation: Callable[[Any, Any], Any],
+                              debug_info: core.DebugInfo,
+                              flat_avals,
+                              aval_tree: tree_util.PyTreeDef):
   avals = tree_util.tree_unflatten(aval_tree, flat_avals)
   flat_in_avals, in_tree = tree_util.tree_flatten((avals, avals))
-  comp = lu.wrap_init(computation)
+  comp = lu.wrap_init(computation, debug_info=debug_info)
   flat_comp, out_tree = api_util.flatten_fun_nokwargs(comp, in_tree)
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_comp, tuple(flat_in_avals))
   if any(isinstance(c, core.Tracer) for c in consts):
@@ -2365,40 +2563,183 @@ def reciprocal(x: ArrayLike) -> Array:
   r"""Elementwise reciprocal: :math:`1 \over x`."""
   return integer_pow(x, -1)
 
+@export
 def tan(x: ArrayLike) -> Array:
-  r"""Elementwise tangent: :math:`\mathrm{tan}(x)`."""
+  r"""Elementwise tangent: :math:`\mathrm{tan}(x)`.
+
+  This function lowers directly to the `stablehlo.tangent`_ operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    tangent.
+
+  See also:
+    - :func:`jax.lax.cos`: elementwise cosine.
+    - :func:`jax.lax.sin`: elementwise sine.
+    - :func:`jax.lax.atan`: elementwise arc tangent.
+    - :func:`jax.lax.atan2`: elementwise 2-term arc tangent.
+
+  .. _stablehlo.tangent: https://openxla.org/stablehlo/spec#tangent
+  """
   return tan_p.bind(x)
 
+@export
 def asin(x: ArrayLike) -> Array:
-  r"""Elementwise arc sine: :math:`\mathrm{asin}(x)`."""
+  r"""Elementwise arc sine: :math:`\mathrm{asin}(x)`.
+
+  This function lowers directly to the ``chlo.asin`` operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the
+    element-wise arc sine.
+
+  See also:
+    - :func:`jax.lax.sin`: elementwise sine.
+    - :func:`jax.lax.acos`: elementwise arc cosine.
+    - :func:`jax.lax.atan`: elementwise arc tangent.
+  """
   return asin_p.bind(x)
 
+@export
 def acos(x: ArrayLike) -> Array:
-  r"""Elementwise arc cosine: :math:`\mathrm{acos}(x)`."""
+  r"""Elementwise arc cosine: :math:`\mathrm{acos}(x)`.
+
+  This function lowers directly to the ``chlo.acos`` operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the
+    element-wise arc cosine.
+
+  See also:
+    - :func:`jax.lax.cos`: elementwise cosine.
+    - :func:`jax.lax.asin`: elementwise arc sine.
+    - :func:`jax.lax.atan`: elementwise arc tangent.
+  """
   return acos_p.bind(x)
 
+@export
 def atan(x: ArrayLike) -> Array:
-  r"""Elementwise arc tangent: :math:`\mathrm{atan}(x)`."""
+  r"""Elementwise arc tangent: :math:`\mathrm{atan}(x)`.
+
+  This function lowers directly to the ``chlo.atan`` operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the
+    element-wise arc tangent.
+
+  See also:
+    - :func:`jax.lax.tan`: elementwise tangent.
+    - :func:`jax.lax.acos`: elementwise arc cosine.
+    - :func:`jax.lax.asin`: elementwise arc sine.
+    - :func:`jax.lax.atan2`: elementwise 2-term arc tangent.
+  """
   return atan_p.bind(x)
 
 def sinh(x: ArrayLike) -> Array:
-  r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`."""
+  r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`.
+
+  This function lowers directly to the ``chlo.sinh`` operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    hyperbolic sine.
+
+  See also:
+    - :func:`jax.lax.asinh`: elementwise inverse hyperbolic sine.
+    - :func:`jax.lax.cosh`: elementwise hyperbolic cosine.
+    - :func:`jax.lax.tanh`: elementwise hyperbolic tangent.
+  """
   return sinh_p.bind(x)
 
 def cosh(x: ArrayLike) -> Array:
-  r"""Elementwise hyperbolic cosine: :math:`\mathrm{cosh}(x)`."""
+  r"""Elementwise hyperbolic cosine: :math:`\mathrm{cosh}(x)`.
+
+  This function lowers directly to the ``chlo.cosh`` operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    hyperbolic cosine.
+
+  See also:
+    - :func:`jax.lax.acosh`: elementwise inverse hyperbolic cosine.
+    - :func:`jax.lax.sinh`: elementwise hyperbolic sine.
+    - :func:`jax.lax.tanh`: elementwise hyperbolic tangent.
+  """
   return cosh_p.bind(x)
 
 def asinh(x: ArrayLike) -> Array:
-  r"""Elementwise inverse hyperbolic sine: :math:`\mathrm{asinh}(x)`."""
+  r"""Elementwise inverse hyperbolic sine: :math:`\mathrm{asinh}(x)`.
+
+  This function lowers directly to the ``chlo.asinh`` operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    inverse hyperbolic sine.
+
+  See also:
+    - :func:`jax.lax.acosh`: elementwise inverse hyperbolic cosine.
+    - :func:`jax.lax.atanh`: elementwise inverse hyperbolic tangent.
+    - :func:`jax.lax.sinh`: elementwise hyperbolic sine.
+  """
   return asinh_p.bind(x)
 
 def acosh(x: ArrayLike) -> Array:
-  r"""Elementwise inverse hyperbolic cosine: :math:`\mathrm{acosh}(x)`."""
+  r"""Elementwise inverse hyperbolic cosine: :math:`\mathrm{acosh}(x)`.
+
+  This function lowers directly to the ``chlo.acosh`` operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    inverse hyperbolic cosine.
+
+  See also:
+    - :func:`jax.lax.asinh`: elementwise inverse hyperbolic sine.
+    - :func:`jax.lax.atanh`: elementwise inverse hyperbolic tangent.
+    - :func:`jax.lax.cosh`: elementwise hyperbolic cosine.
+  """
   return acosh_p.bind(x)
 
 def atanh(x: ArrayLike) -> Array:
-  r"""Elementwise inverse hyperbolic tangent: :math:`\mathrm{atanh}(x)`."""
+  r"""Elementwise inverse hyperbolic tangent: :math:`\mathrm{atanh}(x)`.
+
+  This function lowers directly to the ``chlo.atanh`` operation.
+
+  Args:
+    x: input array. Must have floating-point or complex type.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing the element-wise
+    inverse hyperbolic tangent.
+
+  See also:
+    - :func:`jax.lax.acosh`: elementwise inverse hyperbolic cosine.
+    - :func:`jax.lax.asinh`: elementwise inverse hyperbolic sine.
+    - :func:`jax.lax.tanh`: elementwise hyperbolic tangent.
+  """
   return atanh_p.bind(x)
 
 
@@ -5818,7 +6159,7 @@ def _argminmax_dtype_rule(operand, *, axes, index_dtype):
 
 class _ArgMinMaxReducer:
 
-  def __init__(self, value_comparator):
+  def __init__(self, value_comparator: Callable[[Any, Any], Any]):
     self._value_comparator = value_comparator
 
   def __repr__(self):

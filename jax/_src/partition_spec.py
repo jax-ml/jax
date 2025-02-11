@@ -56,7 +56,7 @@ class PartitionSpec(tuple):
     for p in self:
       if p is None:
         out.append(None)
-      elif isinstance(p, UnconstrainedSingleton):
+      elif p is _UNCONSTRAINED_PARTITION:
         out.append(None)
       elif isinstance(p, (list, tuple)):
         if len(p) == 1:

@@ -24,8 +24,11 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src.lax import lax
+from jax._src.lib import xla_client as xc
+from jax._src.sharding_impls import SingleDeviceSharding
 from jax._src.util import safe_zip, safe_map
 from jax._src.typing import Array, ArrayLike, DimSize, DType, DTypeLike, Shape
+from jax.sharding import Sharding
 
 import numpy as np
 
@@ -299,3 +302,10 @@ def _where(condition: ArrayLike, x: ArrayLike, y: ArrayLike) -> Array:
   except:
     is_always_empty = False  # can fail with dynamic shapes
   return lax.select(condition, x_arr, y_arr) if not is_always_empty else x_arr
+
+
+def normalize_device_to_sharding(device: xc.Device | Sharding | None) -> Sharding | None:
+  if isinstance(device, xc.Device):
+    return SingleDeviceSharding(device)
+  else:
+    return device

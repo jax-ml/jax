@@ -61,7 +61,7 @@ from jax._src.api_util import (
   flatten_axes, donation_vector,
   rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
   apply_flat_fun_nokwargs, check_callable, debug_info,
-  result_paths, flat_out_axes)
+  flat_out_axes)
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
@@ -99,6 +99,7 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 
+@api_boundary
 def _nan_check_posthook(fun, args, kwargs, output):
   """Hook function called by the C++ jit/pmap to perform NaN checking."""
   buffers = []
@@ -108,12 +109,18 @@ def _nan_check_posthook(fun, args, kwargs, output):
 
   try:
     dispatch.check_special(pjit.pjit_p.name, buffers)
-  except FloatingPointError:
-    # compiled_fun can only raise in this case
+  except dispatch.InternalFloatingPointError as e:
     assert config.debug_nans.value or config.debug_infs.value
-    print("Invalid nan value encountered in the output of a C++-jit/pmap "
-          "function. Calling the de-optimized version.")
-    fun._cache_miss(*args, **kwargs)[0]  # probably won't return
+    if hasattr(fun, '_fun'):
+      f = fun._fun
+      if getattr(f, '_apply_primitive', False):
+        raise FloatingPointError(f"invalid value ({e.ty}) encountered in {f.__qualname__}") from None
+      # compiled_fun can only raise in this case
+      dispatch.maybe_recursive_nan_check(e, f, args, kwargs)
+      raise AssertionError("Unreachable") from e
+    else:
+      # TODO(emilyaf): Shouldn't need this fallback.
+      raise
 
 def _update_debug_special_global(_):
   if config._read("jax_debug_nans") or config._read("jax_debug_infs"):
@@ -573,7 +580,11 @@ def jacfwd(fun: Callable, argnums: int | Sequence[int] = 0,
 
   @wraps(fun, docstr=docstr, argnums=argnums)
   def jacfun(*args, **kwargs):
-    f = lu.wrap_init(fun, kwargs)
+    f = lu.wrap_init(
+        fun, kwargs,
+        debug_info=debug_info(
+            "jacfwd", fun, args, kwargs,
+            static_argnums=(argnums,) if isinstance(argnums, int) else argnums))
     f_partial, dyn_args = argnums_partial(f, argnums, args,
                                           require_static_args_hashable=False)
     tree_map(partial(_check_input_dtype_jacfwd, holomorphic), dyn_args)
@@ -661,7 +672,11 @@ def jacrev(fun: Callable, argnums: int | Sequence[int] = 0,
 
   @wraps(fun, docstr=docstr, argnums=argnums)
   def jacfun(*args, **kwargs):
-    f = lu.wrap_init(fun, kwargs)
+    f = lu.wrap_init(
+        fun, kwargs,
+        debug_info=debug_info(
+            "jacrev", fun, args, kwargs,
+            static_argnums=(argnums,) if isinstance(argnums, int) else argnums))
     f_partial, dyn_args = argnums_partial(f, argnums, args,
                                           require_static_args_hashable=False)
     tree_map(partial(_check_input_dtype_jacrev, holomorphic, allow_int), dyn_args)
@@ -983,7 +998,7 @@ def vmap(fun: F,
                        "to the positional arguments passed to the function, "
                        f"but got {len(in_axes)=}, {len(args)=}")
     args_flat, in_tree  = tree_flatten((args, kwargs), is_leaf=batching.is_vmappable)
-    f = lu.wrap_init(fun)
+    f = lu.wrap_init(fun, debug_info=debug_info("vmap", fun, args, kwargs))
     flat_fun, out_tree = batching.flatten_fun_for_vmap(f, in_tree)
     in_axes_flat = flatten_axes("vmap in_axes", in_tree, (in_axes, 0), kws=True)
     axis_size_ = (axis_size if axis_size is not None else
@@ -1430,7 +1445,8 @@ def _prepare_pmap(fun: Callable, in_axes, out_axes, static_broadcasted_tuple,
       "pmap", fun, args, kwargs,
       static_argnums=static_broadcasted_tuple)
 
-  f = lu.wrap_init(fun)
+  f = lu.wrap_init(fun, debug_info=dbg)
+  del dbg
   if static_broadcasted_tuple:
     if max(static_broadcasted_tuple) >= len(args):
       raise ValueError(
@@ -1477,9 +1493,6 @@ def _prepare_pmap(fun: Callable, in_axes, out_axes, static_broadcasted_tuple,
     raise ValueError(msg) from None
   local_axis_size = _mapped_axis_size(fun, in_tree, args, in_axes_flat, "pmap")
 
-  f, res_paths = result_paths(f)
-  dbg = dbg.add_result_paths(res_paths)
-  f = lu.add_debug_info(f, dbg)
   f, out_axes_thunk = flat_out_axes(f, out_axes)
   flat_fun, out_tree = flatten_fun(f, in_tree)
 
@@ -1576,11 +1589,14 @@ def _cpp_pmap(
 
     execute: Callable | None = None
     with core.take_current_trace() as trace:
-      if isinstance(trace, core.EvalTrace):
-        execute = pxla.xla_pmap_impl_lazy(p.flat_fun, *p.flat_args, **params)
-        out = execute(*p.flat_args)
-      else:
-        out = pxla.xla_pmap_p.bind_with_trace(trace, (p.flat_fun, *p.flat_args), params)
+      try:
+        if isinstance(trace, core.EvalTrace):
+          execute = pxla.xla_pmap_impl_lazy(p.flat_fun, *p.flat_args, **params)
+          out = execute(*p.flat_args)
+        else:
+          out = pxla.xla_pmap_p.bind_with_trace(trace, (p.flat_fun, *p.flat_args), params)
+      except dispatch.InternalFloatingPointError as e:
+        raise FloatingPointError(f'Invalid value ({e.ty}) encountered in parallel computation.')
 
     out_tree, out_flat = p.out_tree, out
     out_pytree_def = out_tree()
@@ -1631,6 +1647,7 @@ def _cpp_pmap(
   _pmap_cache_clears.add(cpp_mapped_f)
 
   pmap_f = wraps(fun)(cpp_mapped_f)
+  pmap_f._fun = fun
 
   @api_boundary
   def lower(*args, **kwargs):
@@ -1676,6 +1693,7 @@ def _cpp_pmap(
 _pmap_cache_clears = weakref.WeakSet()  # type: ignore
 
 
+@api_boundary
 def jvp(
     fun: Callable, primals, tangents, has_aux: bool = False
   ) -> tuple[Any, ...]:
@@ -1717,15 +1735,15 @@ def jvp(
   0.19900084
   """
   check_callable(fun)
-  return _jvp(lu.wrap_init(fun), primals, tangents, has_aux=has_aux)
-
-def _jvp(fun: lu.WrappedFun, primals, tangents, has_aux=False):
-  """Variant of jvp() that takes an lu.WrappedFun."""
   if (not isinstance(primals, (tuple, list)) or
       not isinstance(tangents, (tuple, list))):
     raise TypeError("primal and tangent arguments to jax.jvp must be tuples or lists; "
                     f"found {type(primals).__name__} and {type(tangents).__name__}.")
+  return _jvp(lu.wrap_init(fun, debug_info=debug_info("jvp", fun, primals, {})),
+              primals, tangents, has_aux=has_aux)
 
+def _jvp(fun: lu.WrappedFun, primals, tangents, has_aux=False):
+  """Variant of jvp() that takes an lu.WrappedFun."""
   ps_flat, tree_def = tree_flatten(primals)
   ts_flat, tree_def_2 = tree_flatten(tangents)
   if tree_def != tree_def_2:
@@ -1837,7 +1855,7 @@ def linearize(fun: Callable, *primals, has_aux: bool = False
   -6.676704
   """
   check_callable(fun)
-  f = lu.wrap_init(fun)
+  f = lu.wrap_init(fun, debug_info=debug_info("linearize", fun, primals, {}))
   primals_flat, in_tree = tree_flatten(primals)
   if has_aux:
     jaxtree_fun, out_tree = flatten_fun_nokwargs2(f, in_tree)
@@ -1880,6 +1898,7 @@ def _lift_linearized(jaxpr, primal_avals, io_tree, out_pvals, consts, *py_args):
 
   return apply_flat_fun_nokwargs(fun, io_tree, py_args)
 
+@api_boundary
 def _vjp_pullback_wrapper(name, out_primal_avals, io_tree, fun, *py_args_):
   if len(py_args_) != 1:
     msg = (f"The function returned by `jax.vjp` applied to {name} was called "
@@ -1939,6 +1958,7 @@ def vjp(fun: Callable[..., tuple[T, U]], *primals: Any,
         has_aux: Literal[True],
         reduce_axes: Sequence[AxisName] = ()) -> tuple[T, Callable, U]:
   ...
+@api_boundary
 def vjp(
     fun: Callable, *primals, has_aux: bool = False, reduce_axes=()
   ) -> tuple[Any, Callable] | tuple[Any, Callable, Any]:
@@ -1985,8 +2005,9 @@ def vjp(
     raise NotImplementedError("reduce_axes argument to vjp is deprecated")
   del reduce_axes
   check_callable(fun)
-  return _vjp(
-      lu.wrap_init(fun), *primals, has_aux=has_aux)
+  wrapped_fun = lu.wrap_init(fun,
+                             debug_info=debug_info("vjp", fun, primals, {}))
+  return _vjp(wrapped_fun, *primals, has_aux=has_aux)
 
 def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
   """Variant of vjp() that takes an lu.WrappedFun."""
@@ -2051,7 +2072,10 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
     raise NotImplementedError("reduce_axes argument to transpose is deprecated")
   del reduce_axes
   primals_flat, in_tree = tree_flatten(primals)
-  flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+  flat_fun, out_tree = flatten_fun_nokwargs(
+      lu.wrap_init(fun,
+                   debug_info=debug_info("linear_transpose", fun, primals, {})),
+      in_tree)
   in_avals = map(shaped_abstractify, primals_flat)
   in_dtypes = map(dtypes.dtype, in_avals)
 
@@ -2223,6 +2247,18 @@ def _infer_src_sharding(src, x) -> Sharding | None:
   return None
 
 
+@lru_cache(maxsize=2048)
+def _check_string_compatible_sharding(s):
+  """Checks if target devices are compatible with string arrays."""
+  if isinstance(s, xc.Device) and s.device_kind == "cpu":
+    return
+  if (isinstance(s, Sharding)
+      and s._internal_device_list[0].device_kind == "cpu"):
+    return
+  raise TypeError(
+      "String arrays can only be sharded to CPU devices. Received"
+      f" unsupported device or sharding: {s}")
+
 # TODO(yashkatariya): Generalize check_compatible_aval (maybe renamed) and use
 # that to check if shardings are compatible with the input.
 @lru_cache(maxsize=2048)
@@ -2233,6 +2269,10 @@ def _check_sharding(aval, s):
         "`jax.device_put` only accepts `None`, `jax.sharding.Sharding`,"
         " `jax.Device`, `Layout` or a pytree of these values. Received"
         f" invalid value: {s}")
+
+  if isinstance(aval, core.ShapedArray) and dtypes.is_string_dtype(aval.dtype):
+    _check_string_compatible_sharding(s)
+
   if isinstance(s, Sharding):
     if isinstance(aval, core.AbstractToken):
       aval = core.get_token_aval()

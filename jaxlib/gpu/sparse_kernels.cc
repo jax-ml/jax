@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
+#include "jaxlib/gpu/ffi_wrapper.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/handle_pool.h"
@@ -179,6 +180,8 @@ static absl::Status CsrToDense_(gpuStream_t stream, void** buffers,
   return absl::OkStatus();
 }
 
+JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CsrToDenseFfi, CsrToDense_);
+
 void CsrToDense(gpuStream_t stream, void** buffers, const char* opaque,
                 size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CsrToDense_(stream, buffers, opaque, opaque_len);
@@ -220,6 +223,8 @@ static absl::Status CsrFromDense_(gpuStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_b)));
   return absl::OkStatus();
 }
+
+JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CsrFromDenseFfi, CsrFromDense_);
 
 void CsrFromDense(gpuStream_t stream, void** buffers, const char* opaque,
                   size_t opaque_len, XlaCustomCallStatus* status) {
@@ -277,6 +282,8 @@ static absl::Status CsrMatvec_(gpuStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnVec(vec_y)));
   return absl::OkStatus();
 }
+
+JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CsrMatvecFfi, CsrMatvec_);
 
 void CsrMatvec(gpuStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status) {
@@ -336,6 +343,8 @@ static absl::Status CsrMatmat_(gpuStream_t stream, void** buffers,
   return absl::OkStatus();
 }
 
+JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CsrMatmatFfi, CsrMatmat_);
+
 void CsrMatmat(gpuStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CsrMatmat_(stream, buffers, opaque, opaque_len);
@@ -376,6 +385,8 @@ static absl::Status CooToDense_(gpuStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_b)));
   return absl::OkStatus();
 }
+
+JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CooToDenseFfi, CooToDense_);
 
 void CooToDense(gpuStream_t stream, void** buffers, const char* opaque,
                 size_t opaque_len, XlaCustomCallStatus* status) {
@@ -418,6 +429,8 @@ static absl::Status CooFromDense_(gpuStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_b)));
   return absl::OkStatus();
 }
+
+JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CooFromDenseFfi, CooFromDense_);
 
 void CooFromDense(gpuStream_t stream, void** buffers, const char* opaque,
                   size_t opaque_len, XlaCustomCallStatus* status) {
@@ -474,6 +487,8 @@ static absl::Status CooMatvec_(gpuStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnVec(vec_y)));
   return absl::OkStatus();
 }
+
+JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CooMatvecFfi, CooMatvec_);
 
 void CooMatvec(gpuStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status) {
@@ -541,6 +556,8 @@ static absl::Status CooMatmat_(gpuStream_t stream, void** buffers,
   return absl::OkStatus();
 }
 
+JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(CooMatmatFfi, CooMatmat_);
+
 void CooMatmat(gpuStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CooMatmat_(stream, buffers, opaque, opaque_len);
@@ -594,6 +611,19 @@ static absl::Status gtsv2(F computeGtsv2, gpuStream_t stream, void** buffers,
   }
   return absl::OkStatus();
 }
+
+JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(
+    gtsv2_f32_ffi, [](gpuStream_t stream, void** buffers, const char* opaque,
+                      std::size_t opaque_len) {
+      return gtsv2<float>(gpusparseSgtsv2, stream, buffers, opaque, opaque_len);
+    });
+
+JAX_GPU_REGISTER_WRAPPED_LEGACY_KERNEL(
+    gtsv2_f64_ffi, [](gpuStream_t stream, void** buffers, const char* opaque,
+                      std::size_t opaque_len) {
+      return gtsv2<double>(gpusparseDgtsv2, stream, buffers, opaque,
+                           opaque_len);
+    });
 
 void gtsv2_f32(gpuStream_t stream, void** buffers, const char* opaque,
                std::size_t opaque_len, XlaCustomCallStatus* status) {

@@ -431,6 +431,23 @@ class PJitTest(jtu.BufferDonationTestCase):
     f(x)
     self.assertNotDeleted(x)
 
+  @jtu.run_on_devices('tpu', 'cpu', 'gpu')
+  def testBufferDonationMixedConstrainedness(self):
+    mesh = jtu.create_mesh((2,), 'x')
+    s = NamedSharding(mesh, P())
+    s2 = NamedSharding(mesh, P(P.UNCONSTRAINED, P.UNCONSTRAINED))
+
+    @partial(pjit, donate_argnames=('x', 'y'), out_shardings=(s2, s))
+    def f(x, y):
+      return x * 2, y * 2
+
+    x1 = jax.device_put(np.arange(16).reshape(8, 2), s)
+    x2 = jax.device_put(np.arange(16).reshape(8, 2), s)
+    txt = f.lower(x1, x2).as_text()
+    self.assertIn("jax.buffer_donor = true", txt)
+    self.assertIn("tf.aliasing_output = 1 : i32", txt)
+    f(x1, x2)
+
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testShardingConstraintStablehlo(self):
     @partial(pjit, in_shardings=None, out_shardings=None)

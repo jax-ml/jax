@@ -511,7 +511,7 @@ def _empty_array(prefix, length_spec, aval):
 
 eval_jaxpr_p = core.Primitive('eval_jaxpr')
 eval_jaxpr_p.multiple_results = True
-def _stage_jaxpr(trace, *tracers, jaxpr):
+def _stage_jaxpr(trace: pe.JaxprTrace, *tracers, jaxpr: core.ClosedJaxpr):
   params = dict(call_jaxpr=jaxpr)
   return trace.default_process_primitive(core.closed_call_p, tracers, params)
 pe.custom_staging_rules[eval_jaxpr_p] = _stage_jaxpr
@@ -586,8 +586,10 @@ def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
                   for p, nz in zip(primals_out, nonzeros_out)]
   return primals_out, tangents_out
 
-def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
-                       jaxpr, linear, unroll, _split_transpose):
+def _scan_partial_eval(trace, *tracers, reverse: bool,
+                       length: int, num_consts: int, num_carry: int,
+                       jaxpr: core.ClosedJaxpr, linear: Sequence[bool],
+                       unroll: int, _split_transpose: bool):
   num_ys = len(jaxpr.out_avals) - num_carry
   unknowns = [not t.pval.is_known() for t in tracers]
   const_uk, init_uk, xs_uk = split_list(unknowns, [num_consts, num_carry])
@@ -612,8 +614,8 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   del res_avals, carry_uk_out
 
   # Instantiate those inputs which must be treated as unknown from the fixpoint.
-  tracers = [trace.instantiate_const(t) if uk else t
-             for t, uk in zip(tracers, unknowns)]
+  tracers = tuple(trace.instantiate_const(t) if uk else t
+                  for t, uk in zip(tracers, unknowns))
 
   # The residual inputs and outputs of the jaxprs produced haven't yet been
   # adapted to the scan calling convention; in particular, jaxpr_known has its
@@ -638,7 +640,9 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
                  for aval in jaxpr_known.in_avals[len(const_pvals):]]
   with source_info_util.reset_name_stack():
     jaxpr_known_, invar_pvals_out, jaxpr_known_consts = pe.trace_to_jaxpr_nounits(
-        lu.wrap_init(core.jaxpr_as_fun(jaxpr_known)), const_pvals + other_pvals,
+        lu.wrap_init(core.jaxpr_as_fun(jaxpr_known),
+                     debug_info=jaxpr_known.jaxpr.debug_info),
+        const_pvals + other_pvals,
         instantiate=[True] * (len(out_uk) - sum(out_uk)) + [False] * num_res)
   jaxpr_known = pe.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr_known_), ())
   # The above trace_to_jaxpr_nounits call computed loop-invariant residuals
@@ -880,8 +884,9 @@ def _scan_transpose(cts, *args, reverse, length, num_consts,
 # transpose_scan_jaxpr :: ([res1, c, a, res2] -> b)
 #                         -> ([res1, CT c, CT b, res2] -> [CT c, CT a])
 @weakref_lru_cache
-def _transpose_scan_jaxpr(jaxpr, num_res1, num_c, num_res2,
-                          ct_ys_is_zeros):
+def _transpose_scan_jaxpr(jaxpr: core.ClosedJaxpr,
+                          num_res1: int, num_c: int, num_res2: int,
+                          ct_ys_is_zeros: Sequence[bool]):
   num_a = len(jaxpr.in_avals) - num_res1 - num_c - num_res2
   # TODO: allow input cotangent avals to be batched relative to jaxpr.in_avals
   # if an axis isn't reduced
@@ -896,7 +901,6 @@ def _transpose_scan_jaxpr(jaxpr, num_res1, num_c, num_res2,
       aval for aval, is_zero in zip(b_ys_avals, ct_ys_is_zeros) if not is_zero
   ]
 
-  @lu.wrap_init
   def transposed(*res1_cbar_bbar_res2):
     res1, c_bar, b_bar, ys_bar_stripped, res2 = split_list(
         res1_cbar_bbar_res2,
@@ -915,9 +919,14 @@ def _transpose_scan_jaxpr(jaxpr, num_res1, num_c, num_res2,
     a_bar = _map(ad.instantiate_zeros, a_bar)
     c_bar = _map(ad.instantiate_zeros, _map(ad.add_tangents, c_bar, new_c_bar))
     return c_bar + a_bar
+
+  # TODO(necula): fix arg names and results for transposed
+  transposed_wrapped = lu.wrap_init(transposed,
+                                    debug_info=jaxpr.jaxpr.debug_info)
   return _make_closed_jaxpr_attrs(
-      transposed, tuple(res1_avals + c_avals + b_carry_avals +
-                        b_ys_avals_stripped + res2_avals))
+      transposed_wrapped,
+      tuple(res1_avals + c_avals + b_carry_avals +
+            b_ys_avals_stripped + res2_avals))
 
 
 def _scan_batching_rule(axis_data, args,

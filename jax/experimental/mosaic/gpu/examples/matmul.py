@@ -68,7 +68,7 @@ class WGMMADefaultImpl:
       block_tiling: Tiling,
       tma_tiling: Tiling,
       lhs_dtype: jnp.dtype, rhs_dtype: jnp.dtype,
-      rhs_transpose: WGMMALayout,
+      rhs_transpose: bool,
   ) -> dict[str, jax.ShapeDtypeStruct]:
     del block_tiling, tma_tiling, lhs_dtype, rhs_dtype, rhs_transpose  # Unused.
     return ()
@@ -81,7 +81,6 @@ class WGMMADefaultImpl:
   def wgmma(
       smem_scratch: Any,  # pylint: disable=unused-argument
       acc: WGMMAAccumulator,
-      b_order: WGMMALayout,
       a_slice: SmemRef,
       b_slice: SmemRef,
       swizzle: int,
@@ -91,7 +90,7 @@ class WGMMADefaultImpl:
     This function must guarantee that all WGMMA operations queued before it was
     called have completed before returning.
     """
-    acc = wgmma(acc, a_slice, b_slice, b_order=b_order, swizzle=swizzle)
+    acc = wgmma(acc, a_slice, b_slice, swizzle=swizzle)
     nvvm.wgmma_commit_group_sync_aligned()
     nvvm.wgmma_wait_group_sync_aligned(1)
     return acc
@@ -250,11 +249,10 @@ def build_kernel(
       with ctx.named_region("WGMMA"):
         a_slice = memref_slice(lhs_smem, si)
         b_slice = memref_slice(rhs_smem, si)
-        rhs_smem_order = (
-            WGMMALayout.COL_MAJOR if rhs_transpose else WGMMALayout.ROW_MAJOR
-        )
+        if rhs_transpose:
+          b_slice = memref_transpose(b_slice, (0, 1, 3, 2))
         accs = wgmma_impl.wgmma(
-            impl_smem, accs, rhs_smem_order, a_slice, b_slice, swizzle=swizzle
+            impl_smem, accs, a_slice, b_slice, swizzle=swizzle
         )
 
       with ctx.named_region("TMA start"):

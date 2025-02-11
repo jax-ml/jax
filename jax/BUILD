@@ -499,6 +499,7 @@ pytype_strict_library(
         ":traceback_util",
         ":typing",
         ":util",
+        "//jax/_src/lib",
     ] + py_deps("ml_dtypes") + py_deps("numpy"),
 )
 
@@ -564,6 +565,7 @@ pytype_strict_library(
     srcs = ["_src/interpreters/mlir.py"],
     deps = [
         ":ad_util",
+        ":api_util",
         ":config",
         ":core",
         ":dtypes",
@@ -650,6 +652,7 @@ pytype_strict_library(
         "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:core",
         "//jax/_src/pallas/mosaic:helpers",
+        "//jax/_src/pallas/mosaic:interpret",
         "//jax/_src/pallas/mosaic:lowering",
         "//jax/_src/pallas/mosaic:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/mosaic:pipeline",

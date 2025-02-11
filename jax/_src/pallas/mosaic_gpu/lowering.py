@@ -1879,6 +1879,19 @@ def merge_indexers(
     if indexer.int_indexer_shape:
       raise NotImplementedError()
 
+    def _ensure_idx_fa(x):
+      index = ir.IndexType.get()
+      i32 = ir.IntegerType.get_signless(32)
+      if isinstance(x, ir.Value):
+        return mgpu.FragmentedArray.splat(
+            x, (), is_signed=mgpu.utils.is_signed(x.type)
+        ).astype(i32, is_signed=False)
+      if isinstance(x, mgpu.FragmentedArray):
+        return x.astype(i32, is_signed=False)
+      if isinstance(x, int):
+        return mgpu.FragmentedArray.splat(mgpu.c(x, i32), (), is_signed=False)
+      raise NotImplementedError(x)
+
     num_skipped = 0
     for i in range(len(current_indices)):
       # Integer indexers remove dimensions which should be
@@ -1890,18 +1903,17 @@ def merge_indexers(
       current_index = current_indices[i]
       assert isinstance(current_index, indexing.Slice)
 
-      current_start_index = _ensure_fa(current_index.start, jnp.int32)
+      current_start_index = _ensure_idx_fa(current_index.start)
       if isinstance(dim_indexer, indexing.Slice):
         if dim_indexer.stride != 1:
           raise NotImplementedError("Non-unit strides not implemented.")
         current_indices[i] = indexing.Slice(
-            current_start_index + _ensure_fa(dim_indexer.start, jnp.int32),
+            current_start_index + _ensure_idx_fa(dim_indexer.start),
             dim_indexer.size,
             1,
         )
       else:
-        current_indices[i] = current_start_index + _ensure_fa(
-              dim_indexer, dtype=jnp.int32)
+        current_indices[i] = current_start_index + _ensure_idx_fa(dim_indexer)
         removed_dimensions.add(i)
   return indexing.NDIndexer(
       indices=tuple(current_indices),

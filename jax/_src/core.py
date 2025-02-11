@@ -392,7 +392,7 @@ class JaxprEqn:
 
 # TODO(mattjj): call typecheck rules here, so we don't form bad eqns
 def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
-                  ctx=None):
+                  ctx=None) -> JaxprEqn:
   source_info = source_info or source_info_util.new_source_info()
   ctx = ctx or JaxprEqnContext(
       compute_on.current_compute_type(),
@@ -1472,11 +1472,14 @@ Value = Any
 
 def valid_jaxtype(x) -> bool:
   try:
-    abstractify(x)
+    aval = abstractify(x)
   except TypeError:
     return False
   else:
-    return True
+    if hasattr(aval, "dtype") and dtypes.is_string_dtype(aval.dtype):
+      return False
+    else:
+      return True
 
 def check_valid_jaxtype(x):
   if not valid_jaxtype(x):
@@ -1770,8 +1773,10 @@ def canonicalize_value(val):
 
 
 def get_cur_mesh_sharding(spec=None):
-  from jax._src.sharding_impls import NamedSharding  # type: ignore
+  if not config.sharding_in_types.value:
+    return None
 
+  from jax._src.sharding_impls import NamedSharding  # type: ignore
   spec = P() if spec is None else spec
   return NamedSharding(mesh_lib.get_abstract_mesh(), spec)
 
@@ -2065,6 +2070,7 @@ class MutableArray:
   aval = property(lambda self: self._aval)
   shape = property(lambda self: self._aval.shape)
   dtype = property(lambda self: self._aval.dtype)
+  sharding = property(lambda self: self._buf.sharding)
   def __getitem__(self, idx): return self._aval._getitem(self, idx)
   def __setitem__(self, idx, x): return self._aval._setitem(self, idx, x)
   def __repr__(self) -> str: return 'Mutable' + repr(self[...])
@@ -2088,10 +2094,8 @@ def mutable_array_abstract_eval(init_aval):
 @mutable_array_p.def_impl
 def _mutable_array_impl(init_val):
   from jax._src.state.types import AbstractRef  # pytype: disable=import-error
-  aval = get_aval(init_val)
-  # TODO(mattjj): improve spelling of 'defensive copy' here, avoid circular dep
-  init_val = init_val.copy() if hasattr(init_val, 'copy') else init_val
-  return MutableArray(AbstractRef(aval), init_val)
+  from jax._src.lax.lax import _array_copy  # pytype: disable=import-error
+  return MutableArray(AbstractRef(get_aval(init_val)), _array_copy(init_val))
 
 def freeze(ref):
   return freeze_p.bind(ref)
@@ -2398,7 +2402,8 @@ class CallPrimitive(Primitive):
   def get_bind_params(self, params):
     new_params = dict(params)
     jaxpr = new_params.pop('call_jaxpr')
-    subfun = lu.hashable_partial(lu.wrap_init(eval_jaxpr), jaxpr, ())
+    subfun = lu.hashable_partial(lu.wrap_init(eval_jaxpr, debug_info=jaxpr.debug_info),
+                                 jaxpr, ())
     if config.dynamic_shapes.value:
       subfun = lu.annotate(subfun, _jaxpr_type_to_callable_annotation(jaxpr))
     return [subfun], new_params
@@ -2415,8 +2420,9 @@ call_p.def_impl(call_impl)
 class ClosedCallPrimitive(CallPrimitive):
   def get_bind_params(self, params):
     new_params = dict(params)
-    jaxpr = new_params.pop('call_jaxpr')
-    subfun = lu.wrap_init(partial(eval_jaxpr, jaxpr.jaxpr, jaxpr.consts))
+    jaxpr: ClosedJaxpr = new_params.pop('call_jaxpr')
+    subfun = lu.wrap_init(partial(eval_jaxpr, jaxpr.jaxpr, jaxpr.consts),
+                          debug_info=jaxpr.jaxpr.debug_info)
     return [subfun], new_params
 
 closed_call_p: ClosedCallPrimitive = ClosedCallPrimitive('closed_call')
@@ -2434,7 +2440,7 @@ class MapPrimitive(Primitive):
     return self._true_bind(*args, **params)
 
   def bind_with_trace(self, trace, fun_and_args, params):
-    fun = fun_and_args[0]
+    fun: lu.WrappedFun = fun_and_args[0]
     args = fun_and_args[1:]
     assert len(params['in_axes']) == len(args)
     return trace.process_map(self, fun, args, params)
@@ -2444,8 +2450,9 @@ class MapPrimitive(Primitive):
 
   def get_bind_params(self, params):
     new_params = dict(params)
-    jaxpr = new_params.pop('call_jaxpr')
-    subfun = lu.hashable_partial(lu.wrap_init(eval_jaxpr), jaxpr, ())
+    jaxpr: Jaxpr = new_params.pop('call_jaxpr')
+    subfun = lu.hashable_partial(lu.wrap_init(eval_jaxpr,
+                                              debug_info=jaxpr.debug_info), jaxpr, ())
     axes = new_params.pop('out_axes')
     new_params['out_axes_thunk'] = HashableFunction(lambda: axes, closure=axes)
     return [subfun], new_params

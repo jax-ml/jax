@@ -228,6 +228,7 @@ class Mesh(contextlib.ContextDecorator):
     self.axis_names = axis_names
     self.axis_types = axis_types
     self._axis_types_tuple = axis_types_tuple
+    self._size = math.prod(self.shape.values()) if self.devices.ndim else 0
     _mesh_object_dict[key] = self
     return self
 
@@ -236,12 +237,12 @@ class Mesh(contextlib.ContextDecorator):
             {'axis_types': self.axis_types})
 
   def __eq__(self, other):
-    if not isinstance(other, Mesh):
-      return False
     # This is a performance optimization. Comparing thousands of devices
     # can be expensive.
     if id(self) == id(other):
       return True
+    if not isinstance(other, Mesh):
+      return False
     return (self.axis_names == other.axis_names and
             self.devices.shape == other.devices.shape and
             self._axis_types_tuple == other._axis_types_tuple and
@@ -306,7 +307,7 @@ class Mesh(contextlib.ContextDecorator):
 
   @property
   def size(self):
-    return math.prod(self.shape.values()) if self.devices.ndim else 0
+    return self._size
 
   @property
   def empty(self):
@@ -413,6 +414,7 @@ class AbstractMesh:
       self._axis_names, self._axis_sizes = list(zip(*self.shape_tuple))
     else:
       self._axis_names, self._axis_sizes = (), ()
+    self._size = math.prod(self._axis_sizes) if self._axis_sizes else 0
     self.axis_types = ({AxisTypes.Auto: self._axis_names}
                        if axis_types is None else axis_types)
     self._axis_types_tuple = to_axis_types_tuple(self.axis_types)
@@ -426,10 +428,10 @@ class AbstractMesh:
     return hash((self.shape_tuple, self._axis_types_tuple))
 
   def __eq__(self, other):
-    if not isinstance(other, AbstractMesh):
-      return False
     if id(self) == id(other):
       return True
+    if not isinstance(other, AbstractMesh):
+      return False
     return (self.shape_tuple == other.shape_tuple and
             self._axis_types_tuple == other._axis_types_tuple)
 
@@ -451,9 +453,9 @@ class AbstractMesh:
   def _name_to_type(self):
     return axis_names_to_types(self.axis_types)
 
-  @functools.cached_property
+  @property
   def size(self):
-    return math.prod(self._axis_sizes) if self._axis_sizes else 0
+    return self._size
 
   @functools.cached_property
   def shape(self):
@@ -530,8 +532,8 @@ class AbstractMesh:
 
   @staticmethod
   def _extremely_unsafe_enter_tracing_context(mesh: AbstractMesh):
-    jax_config.abstract_mesh_context_manager.set_local(mesh)
-    return
+    prev = jax_config.abstract_mesh_context_manager.swap_local(mesh)
+    return prev
 
 
 # Create this indirection because pytype fails to recognize a property if a

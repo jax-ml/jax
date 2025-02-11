@@ -38,7 +38,9 @@ def image_by_name(name):
 
 
 def create_manylinux_build_image(rocm_version, rocm_build_job, rocm_build_num):
-    image_name = "jax-build-manylinux_2_28_x86_64_rocm%s" % rocm_version.replace(".", "")
+    image_name = "jax-build-manylinux_2_28_x86_64_rocm%s" % rocm_version.replace(
+        ".", ""
+    )
     cmd = [
         "docker",
         "build",
@@ -66,7 +68,9 @@ def dist_wheels(
 ):
     # We want to make sure the wheels we build are manylinux compliant. We'll
     # do the build in a container. Build the image for this.
-    image_name = create_manylinux_build_image(rocm_version, rocm_build_job, rocm_build_num)
+    image_name = create_manylinux_build_image(
+        rocm_version, rocm_build_job, rocm_build_num
+    )
 
     if xla_path:
         xla_path = os.path.abspath(xla_path)
@@ -236,7 +240,7 @@ def test(image_name, test_cmd):
     cmd.extend(mounts)
     cmd.extend(gpu_args)
 
-    container_cmd = "cd /jax && " + test_cmd 
+    container_cmd = "cd /jax && " + test_cmd
     cmd.append(image_name)
     cmd.extend(
         [
@@ -253,7 +257,7 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument(
         "--base-docker",
-         default="",
+        default="",
         help="Argument to override base docker in dockerfile",
     )
 
@@ -299,7 +303,10 @@ def parse_args():
 
     testp = subp.add_parser("test")
     testp.add_argument("image_name")
-    testp.add_argument("--test-cmd", default="./build/rocm/build_rocm.sh && ./build/rocm/run_single_gpu.py -c && ./build/rocm/run_multi_gpu.sh")
+    testp.add_argument(
+        "--test-cmd",
+        default="./build/rocm/build_rocm.sh && ./build/rocm/run_single_gpu.py -c && ./build/rocm/run_multi_gpu.sh",
+    )
 
     ddp = subp.add_parser("dist_docker")
     ddp.add_argument("--dockerfile", default="build/rocm/Dockerfile.ms")
@@ -349,3 +356,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

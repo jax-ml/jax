@@ -14,10 +14,15 @@ on:
   pull_request:
     branches:
       - main
+  push:
+    branches:
+      - main
+      - 'release/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  # Don't cancel in-progress jobs for main/release branches.
+  cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
 
 jobs:
   run_tests:
@@ -26,14 +31,22 @@ jobs:
     container: ${{ (contains(matrix.runner, 'linux-x86') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest') ||
                    (contains(matrix.runner, 'linux-arm64') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-arm64:latest') }}
     env:
-      JAXCI_HERMETIC_PYTHON_VERSION: "3.12"
+      JAXCI_HERMETIC_PYTHON_VERSION: ${{ matrix.python }}
       JAXCI_ENABLE_X64: ${{ matrix.enable-x_64 }}
 # Begin Presubmit Naming Check - name modification requires internal check to be updated
     strategy:
       matrix:
+        python: ["3.10", "3.13"]
         runner: ["linux-x86-n2-16", "linux-arm64-c4a-16"]
         enable-x_64: [1, 0]
-    name: "Bazel CPU tests (${{ matrix.runner }}, Python 3.12, x64=${{ matrix.enable-x_64 }})"
+        exclude:
+            # Exclude x64=1 on the oldest Python and x64=0 on the newest Python. As long as we have
+            # coverage for one of each, we don't need to run both.
+            - python: "3.10"
+              enable-x_64: 1
+            - python: "3.13"
+              enable-x_64: 0
+    name: "Bazel CPU tests (${{ matrix.runner }}, Python ${{ matrix.python }}, x64=${{ matrix.enable-x_64 }})"
 # End Presubmit Naming Check github-cpu-presubmits
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2

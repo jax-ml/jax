@@ -308,7 +308,7 @@ class custom_partitioning:
     that describes the sharding rule, or a Callable that produces either of
     these. We borrow the idea from the einops.rearrange string , to use a space
     separator between factors and allow multiple letters factor names. See
-    [jax-shardy-guide](https://colab.sandbox.google.com/github/openxla/shardy/blob/main/docs/getting_started_jax.ipynb)
+    `jax-shardy-guide <https://colab.sandbox.google.com/github/openxla/shardy/blob/main/docs/getting_started_jax.ipynb>`_
     for more details and examples on how to use this.
 
   When config.use_shardy_partitioner.value is True, `sharding_rule` is used;
@@ -485,13 +485,13 @@ class custom_partitioning:
       _check_for_tracers(static_args)
     else:
       static_args = []
-      f_, dyn_args = lu.wrap_init(self.fun), args
+      f_, dyn_args = lu.wrap_init(self.fun, debug_info=debug), args
     args_flat, in_tree = tree_util.tree_flatten(dyn_args)
     flat_fun, out_tree = api_util.flatten_fun_nokwargs(f_, in_tree)
     in_avals = [core.get_aval(x) for x in args_flat]
     mesh = mesh_lib.thread_resources.env.physical_mesh
     with core.extend_axis_env_nd(mesh.shape.items()):
-      jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
+      jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
     assert not len(consts)
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
 

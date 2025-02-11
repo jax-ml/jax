@@ -1250,51 +1250,6 @@ class LaxRandomTest(jtu.JaxTestCase):
     p = jax.numpy.float16(0.5)
     jax.random.binomial(key, n, p)  # doesn't error
 
-  def testMultinomialExample(self):
-    key = random.key(0)
-    probs = jnp.array([
-      [0.5, 0.2, 0.3],
-      [0.1, 0.2, 0.7],
-      [1.0, 0.0, 0.0],
-      [0.0, 1.0, 0.0],
-      [0.0, 0.0, 1.0],
-      [0.5, 0.0, 0.5],
-    ])
-    trials = 1e8
-    counts = random.multinomial(key, trials, probs)
-    freqs = counts / trials
-    self.assertAllClose(freqs, probs, atol=1e-3)
-
-  @jtu.sample_product([
-      dict(shape=shape, outcomes=outcomes)
-      for shape in [(5,), (2, 3), (2, 3, 5)]
-      for outcomes in [2, 3, 4]
-  ])
-  def testMultinomialShape(self, shape, outcomes):
-    key = random.key(0)
-
-    key, subkey = random.split(key)
-    probs = random.dirichlet(subkey, jnp.ones(outcomes))
-
-    trials = 1e8
-    counts = random.multinomial(key, trials, probs, shape=shape)
-    freqs = counts / trials
-
-    self.assertAllClose(freqs, jnp.broadcast_to(probs, freqs.shape), atol=1e-3)
-
-  @jtu.sample_product([
-      dict(n_dtype=n_dtype, p_dtype=p_dtype, dtype=dtype)
-      for n_dtype in jtu.dtypes.all_floating
-      for p_dtype in jtu.dtypes.all_floating
-      for dtype in jtu.dtypes.all_floating
-  ])
-  @jax.numpy_dtype_promotion('standard')
-  def testMultinomialDtype(self, n_dtype, p_dtype, dtype):
-    key = random.key(0)
-    n = jnp.astype(10, n_dtype)
-    p = jnp.astype(jnp.ones(3) / 3, p_dtype)
-    random.multinomial(key, n, p)
-
   def test_batched_key_errors(self):
     keys = lambda: jax.random.split(self.make_key(0))
     msg = "{} accepts a single key, but was given a key array of shape.*"

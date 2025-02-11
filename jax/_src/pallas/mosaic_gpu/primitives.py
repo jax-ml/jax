@@ -558,15 +558,9 @@ def _wgmma_lowering(
     if rhs_tiling != (swizzle_elems, swizzle_elems):
       raise NotImplementedError("WGMMA rhs tiling does not fit swizzle")
 
-  new_acc = mgpu.wgmma(
-      acc,
-      a,
-      b,
-      swizzle=rhs_swizzle,
-      b_order=mgpu.WGMMALayout.COL_MAJOR
-      if rhs_transpose
-      else mgpu.WGMMALayout.ROW_MAJOR,
-  )
+  if rhs_transpose:
+    b = mgpu.memref_transpose(b, (0, 1, 3, 2))
+  new_acc = mgpu.wgmma(acc, a, b, swizzle=rhs_swizzle)
   nvvm_dialect.wgmma_commit_group_sync_aligned()
   return new_acc
 
