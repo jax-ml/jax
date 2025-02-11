@@ -297,6 +297,12 @@ class TMEMLayout(enum.Enum):
   """
   D = "D"
 
+  @property
+  def num_rows(self) -> int:
+    match self:
+      case TMEMLayout.D:
+        return 128
+
 
 @dataclasses.dataclass(frozen=True)
 class TMEMRef:
@@ -327,11 +333,7 @@ class TMEMRef:
 
   @property
   def num_rows(self):
-    match self.layout:
-      case TMEMLayout.D:
-        return 128
-      case _:
-        raise NotImplementedError(self.layout)
+    return self.layout.num_rows
 
   @property
   def shape(self):

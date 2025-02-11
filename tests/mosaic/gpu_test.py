@@ -968,19 +968,17 @@ class TCGen05Test(TestCase):
       in_jax_dtype,
       out_jax_dtype,
   ):
-    i32 = ir.IntegerType.get_signless(32)
     if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
       raise self.skipTest("Only f16 input is supported for f16 output.")
 
     in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
-    out_mlir_dtype = utils.dtype_to_ir_type(out_jax_dtype)
     m_tile = 128
     nk_tile = swizzle // bytewidth(in_mlir_dtype)
     k = nk_tile * k_steps
     assert m % m_tile == 0 and n % nk_tile == 0
 
     def kernel(ctx, lhs, rhs, out, scratch):
-      lhs_smem, rhs_smem, barriers, tmem_addr_ref = scratch
+      lhs_smem, rhs_smem, barriers, acc = scratch
       lhs_transform = (mgpu.TileTransform((m_tile, nk_tile)),)
       if lhs_transpose:
         assert nk_tile == m_tile  # Make sure we didn't have to transpose tiling
@@ -1004,21 +1002,16 @@ class TCGen05Test(TestCase):
       )
       barriers[0].wait()
       barriers[1].wait()
-      with mgpu.when(arith.cmpi(arith.CmpIPredicate.eq, mgpu.warp_idx(), c(0, i32))):
-        tcgen05.tmem_alloc(tmem_addr_ref, n)
-        tcgen05.tmem_relinquish_alloc_permit()
-        acc = tcgen05.TMEMRef.from_alloc(tmem_addr_ref, tcgen05.TMEMLayout.D, n, out_mlir_dtype)
-        with mgpu.single_thread():
-          if lhs_transpose:
-            lhs_smem = memref_transpose(lhs_smem, (0, 1, 3, 2))
-          if rhs_transpose:
-            rhs_smem = memref_transpose(rhs_smem, (0, 1, 3, 2))
-          tcgen05.mma(
-              acc, lhs_smem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False,
-          )
-          tcgen05.commit_arrive(barriers[2])
+      with mgpu.single_thread():
+        if lhs_transpose:
+          lhs_smem = memref_transpose(lhs_smem, (0, 1, 3, 2))
+        if rhs_transpose:
+          rhs_smem = memref_transpose(rhs_smem, (0, 1, 3, 2))
+        tcgen05.mma(
+            acc, lhs_smem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False,
+        )
+        tcgen05.commit_arrive(barriers[2])
       barriers[2].wait()
-      acc = tcgen05.TMEMRef.from_alloc(tmem_addr_ref, tcgen05.TMEMLayout.D, n, out_mlir_dtype)
       acc[:].store_untiled(out)
 
     in_finfo = jnp.finfo(in_jax_dtype)
@@ -1036,7 +1029,7 @@ class TCGen05Test(TestCase):
         jax.ShapeDtypeStruct(tile_shape((m, k), (m_tile, nk_tile)), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape((k, n), (nk_tile, nk_tile)), in_jax_dtype),
         mgpu.TMABarrier(3),
-        jax.ShapeDtypeStruct((), jnp.int32),
+        mgpu.TMEM((128, n), out_jax_dtype, tcgen05.TMEMLayout.D),
     ]
     z = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape

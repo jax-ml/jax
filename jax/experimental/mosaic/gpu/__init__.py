@@ -16,11 +16,15 @@
 from jax import ShapeDtypeStruct as ShapeDtypeStruct
 from jax._src.lib import mosaic_gpu_dialect as dialect  # noqa: F401
 
+# The imports below shadow the module, so we need to rename it.
+from . import wgmma as _wgmma  # noqa: F401
+
 from .core import (
     Barrier as Barrier,
     ClusterBarrier as ClusterBarrier,
     TMABarrier as TMABarrier,
     ThreadSemantics as ThreadSemantics,
+    TMEM as TMEM,
     Union as Union,
     as_gpu_kernel as as_gpu_kernel,
 )
@@ -85,8 +89,6 @@ from .utils import (
     warpgroup_idx as warpgroup_idx,
     when as when,
 )
-# The import below shadows the module, so we need to rename it.
-from . import wgmma as _wgmma  # noqa: F401
 from .wgmma import (
     WGMMAAccumulator as WGMMAAccumulator,
     wgmma as wgmma,

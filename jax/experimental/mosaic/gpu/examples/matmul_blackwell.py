@@ -21,7 +21,7 @@ from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import nvvm
 from jax.experimental.mosaic import gpu as mgpu
-from jax.experimental.mosaic.gpu import c, ds, utils
+from jax.experimental.mosaic.gpu import c, ds
 from jax.experimental.mosaic.gpu import tcgen05
 import jax.numpy as jnp
 import jax.random as jr
@@ -65,7 +65,7 @@ def build_kernel(
   tma_tile_kn = 64
 
   def kernel(ctx, a, b, d, smem):
-    a_smem, b_smem, d_smem, barriers, mma_done_barrier, tmem_addr = smem
+    a_smem, b_smem, d_smem, barriers, mma_done_barrier, acc = smem
     (ab_full_barriers, ab_empty_barriers) = barriers
 
     warp_idx = mgpu.warp_idx(sync=True)
@@ -109,18 +109,14 @@ def build_kernel(
             **common_args,
         )
 
-    with mgpu.when(is_warp(MMA_WARP)):
-      tmem_addr_addr = utils.memref_ptr(tmem_addr, memory_space=3)
-      tcgen05.tmem_alloc(tmem_addr_addr, tile_n)
-      tcgen05.tmem_relinquish_alloc_permit()
-      tmem_ref = tcgen05.TMEMRef.from_alloc(tmem_addr, tcgen05.TMEMLayout.D, tile_n, f32)
+    with mgpu.when(arith.andi(is_warp(MMA_WARP), warp_leader)):
       with mgpu.when(warp_leader):
         @mgpu.fori(c(k_loop_iter, index), arith.constant(i1, 0))
         def _mma_body(ki, accumulate):
           slot = arith.remui(ki, c(max_concurrent_steps, index))
           ab_full_barriers[slot].wait()
           tcgen05.mma(
-              tmem_ref,
+              acc,
               mgpu.memref_slice(a_smem, slot),
               mgpu.memref_transpose(mgpu.memref_slice(b_smem, slot), (0, 1, 3, 2)),
               a_swizzle=swizzle,
@@ -142,9 +138,9 @@ def build_kernel(
     gpu.barrier()
     mma_done_barrier.wait()
 
-    tmem_ref = tcgen05.TMEMRef.from_alloc(tmem_addr, tcgen05.TMEMLayout.D, tile_n, f32)
-    tmem_ref[:].astype(ir.F16Type.get()).store_tiled(d_smem, swizzle=128)
+    acc[:].astype(ir.F16Type.get()).store_tiled(d_smem, swizzle=128)
     mgpu.commit_shared()
+    # TODO(apaszke): Free up TMEM?
     ctx.async_copy(
         src_ref=d_smem,
         dst_ref=d,
@@ -161,7 +157,7 @@ def build_kernel(
       jax.ShapeDtypeStruct(mgpu.tile_shape((tile_m, tile_n), (tma_tile_m, tma_tile_kn)), jnp.float16),
       [mgpu.Barrier(arrival_count=1, num_barriers=max_concurrent_steps)] * 2,
       mgpu.Barrier(arrival_count=1),
-      jax.ShapeDtypeStruct((1,), np.uint32),  # TMEM address
+      mgpu.TMEM((128, tile_n), jnp.float32, tcgen05.TMEMLayout.D),
   )
   return mgpu.as_gpu_kernel(
       kernel,
