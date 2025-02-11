@@ -75,7 +75,7 @@ def _debug_info_to_string(dbg: core.DebugInfo | None) -> list[str]:
   if dbg is None: return "None"
   # Strip the absolute path and the line number but check that it references
   # this file (to catch errors when the source info points in JAX internals)
-  func_src_info = re.sub(r"^(\S+)( at .*/debug_info_test.py:.*)?", "\\1", dbg.func_src_info)
+  func_src_info = re.sub(r"^(\S+)( at .*.debug_info_test.py:\d+)?", "\\1", dbg.func_src_info)
   arg_names_str = ",".join([str(a) for a in dbg.arg_names])
   res = f"traced_for={dbg.traced_for}, fun={func_src_info}, arg_names={arg_names_str}"
   if isinstance(dbg.result_paths, tuple):
