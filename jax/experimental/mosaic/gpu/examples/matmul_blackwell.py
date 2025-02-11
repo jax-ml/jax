@@ -42,10 +42,10 @@ def build_kernel(
     tile_m: int = 128,
     tile_n: int = 128,
     max_concurrent_steps: int = 2,
+    collective: bool = False,
 ):
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
-  f32 = ir.F32Type.get()
   index = ir.IndexType.get()
 
   swizzle = 128
@@ -64,19 +64,27 @@ def build_kernel(
   tma_tile_m = 128
   tma_tile_kn = 64
 
+  block_tile_m = tile_m
+  block_tile_n = tile_n
+  if collective:
+    tile_m *= 2
+    tile_n *= 2
+
   def kernel(ctx, a, b, d, smem):
     a_smem, b_smem, d_smem, barriers, mma_done_barrier, acc = smem
     (ab_full_barriers, ab_empty_barriers) = barriers
 
     warp_idx = mgpu.warp_idx(sync=True)
-    warp_leader = nvvm.elect_sync(i1)
+    is_warp_leader = nvvm.elect_sync(i1)
 
-    is_warp = lambda i: arith.cmpi(arith.CmpIPredicate.eq, warp_idx, c(i, i32))
+    is_leader_of = lambda i: arith.andi(arith.cmpi(arith.CmpIPredicate.eq, warp_idx, c(i, i32)), is_warp_leader)
 
-    m_start = arith.muli(gpu.block_id(gpu.Dimension.y), c(tile_m,index))
-    n_start = arith.muli(gpu.block_id(gpu.Dimension.x), c(tile_n,index))
+    m_start = arith.muli(gpu.cluster_id(gpu.Dimension.x), c(tile_m,index))
+    block_m_start = arith.muli(gpu.block_id(gpu.Dimension.x), c(block_tile_m,index))
+    n_start = arith.muli(gpu.block_id(gpu.Dimension.y), c(tile_n,index))
+    is_leader_block = arith.cmpi(arith.CmpIPredicate.eq, ctx.cluster_idx(gpu.Dimension.x), c(0, index))
 
-    with mgpu.when(arith.andi(is_warp(TMA_WARP), warp_leader)):
+    with mgpu.when(is_leader_of(TMA_WARP)):
       @mgpu.fori(c(k_loop_iter, index), None)
       def _tma_body(ki, _):
         slot = arith.remui(ki, c(max_concurrent_steps, index))
@@ -84,12 +92,18 @@ def build_kernel(
         with mgpu.when(arith.cmpi(arith.CmpIPredicate.uge, ki, c(max_concurrent_steps, index))):
           ab_empty_barriers[slot].wait()
         full_barrier = ab_full_barriers[slot]
-        full_barrier.arrive_expect_tx(
-            bytecount((tile_m, tile_k), in_dtype) + bytecount((tile_n, tile_k), in_dtype)
-        )
+        with mgpu.when(is_leader_block):
+          full_barrier.arrive_expect_tx(
+              bytecount((tile_m, tile_k), in_dtype) + bytecount((tile_n, tile_k), in_dtype)
+          )
         k_start = arith.muli(ki, c(tile_k, index))
         common_args = dict(
-            swizzle=swizzle, barrier=full_barrier, arrive=False, uniform=False,
+            swizzle=swizzle,
+            barrier=full_barrier,
+            arrive=False,
+            uniform=False,
+            collective=gpu.Dimension.x,
+            partitioned=0,  # Non-contracting dim is always 0.
         )
         ctx.async_copy(
             src_ref=a,
@@ -109,59 +123,59 @@ def build_kernel(
             **common_args,
         )
 
-    with mgpu.when(arith.andi(is_warp(MMA_WARP), warp_leader)):
-      with mgpu.when(warp_leader):
-        @mgpu.fori(c(k_loop_iter, index), arith.constant(i1, 0))
-        def _mma_body(ki, accumulate):
-          slot = arith.remui(ki, c(max_concurrent_steps, index))
-          ab_full_barriers[slot].wait()
-          tcgen05.mma(
-              acc,
-              mgpu.memref_slice(a_smem, slot),
-              mgpu.memref_transpose(mgpu.memref_slice(b_smem, slot), (0, 1, 3, 2)),
-              a_swizzle=swizzle,
-              b_swizzle=swizzle,
-              accumulate=accumulate,
-          )
-          accumulate = arith.constant(i1, 1)
-          is_last_iter = arith.cmpi(
-              arith.CmpIPredicate.eq, ki, c(k_loop_iter - 1, index)
-          )
-          barrier_ptr = arith.select(
-              is_last_iter,
-              mma_done_barrier.get_ptr(),
-              ab_empty_barriers[slot].get_ptr(),
-          )
-          tcgen05.commit_arrive(barrier_ptr)
-          return accumulate
+    with mgpu.when(arith.andi(is_leader_of(MMA_WARP), is_leader_block)):
+      @mgpu.fori(c(k_loop_iter, index), arith.constant(i1, 0))
+      def _mma_body(ki, accumulate):
+        slot = arith.remui(ki, c(max_concurrent_steps, index))
+        ab_full_barriers[slot].wait()
+        tcgen05.mma(
+            acc,
+            mgpu.memref_slice(a_smem, slot),
+            mgpu.memref_transpose(mgpu.memref_slice(b_smem, slot), (0, 1, 3, 2)),
+            a_swizzle=swizzle,
+            b_swizzle=swizzle,
+            accumulate=accumulate,
+            collective=collective,
+        )
+        accumulate = arith.constant(i1, 1)
+        is_last_iter = arith.cmpi(
+            arith.CmpIPredicate.eq, ki, c(k_loop_iter - 1, index)
+        )
+        barrier_ptr = arith.select(
+            is_last_iter,
+            mma_done_barrier.get_ptr(),
+            ab_empty_barriers[slot].get_ptr(),
+        )
+        tcgen05.commit_arrive(barrier_ptr, collective=collective, ctx=ctx)
+        return accumulate
 
     gpu.barrier()
     mma_done_barrier.wait(for_tensor_core=True)
 
     acc[:].astype(ir.F16Type.get()).store_tiled(d_smem, swizzle=128)
     mgpu.commit_shared()
-    # TODO(apaszke): Free up TMEM?
     ctx.async_copy(
         src_ref=d_smem,
         dst_ref=d,
-        gmem_slice=(ds(m_start, tile_m), ds(n_start, tile_n)),
+        gmem_slice=(ds(block_m_start, block_tile_m), ds(n_start, tile_n)),
         gmem_transform=mgpu.TileTransform((128, 64)),
         swizzle=swizzle,
     )
+    # TODO(apaszke): Free up TMEM?
     ctx.await_async_copy(0)
 
   # TODO(apaszke): Use a union for output SMEM.
   smem = (
-      jax.ShapeDtypeStruct((max_concurrent_steps, *mgpu.tile_shape((tile_m, tile_k), (tma_tile_m, tma_tile_kn))), jnp.float16),
-      jax.ShapeDtypeStruct((max_concurrent_steps, *mgpu.tile_shape((tile_k, tile_n), (tma_tile_kn, tma_tile_kn))), jnp.float16),
-      jax.ShapeDtypeStruct(mgpu.tile_shape((tile_m, tile_n), (tma_tile_m, tma_tile_kn)), jnp.float16),
+      jax.ShapeDtypeStruct((max_concurrent_steps, *mgpu.tile_shape((block_tile_m, tile_k), (tma_tile_m, tma_tile_kn))), jnp.float16),
+      jax.ShapeDtypeStruct((max_concurrent_steps, *mgpu.tile_shape((tile_k, block_tile_n), (tma_tile_kn, tma_tile_kn))), jnp.float16),
+      jax.ShapeDtypeStruct(mgpu.tile_shape((block_tile_m, tile_n), (tma_tile_m, tma_tile_kn)), jnp.float16),
       [mgpu.Barrier(arrival_count=1, num_barriers=max_concurrent_steps)] * 2,
       mgpu.Barrier(arrival_count=1),
-      mgpu.TMEM((128, tile_n), jnp.float32, tcgen05.TMEMLayout.D),
+      mgpu.TMEM((128, tile_n), jnp.float32, tcgen05.TMEMLayout.D, collective=collective),
   )
   return mgpu.as_gpu_kernel(
       kernel,
-      (n // tile_n, m // tile_m, 1),
+      (m // block_tile_m, n // tile_n, 1),
       (128, 1, 1),
       (
           jax.ShapeDtypeStruct((m, k), jnp.float16),
@@ -169,6 +183,7 @@ def build_kernel(
       ),
       jax.ShapeDtypeStruct((m, n), jnp.float16),
       smem,
+      cluster=(2 if collective else 1, 1, 1),
   )
 
 
@@ -188,8 +203,8 @@ def main(unused_argv):
     f = build_kernel(m, n, k, tile_m=m_tile, tile_n=n_tile)
   y = f(a, b).block_until_ready()
 
-  ref = np.asarray(a) @ np.asarray(b).T
-  np.testing.assert_allclose(y, ref, atol=1e-3, rtol=1e-3)
+  y_ref = jax.jit(lambda a, b: a @ b.T)(a, b)
+  np.testing.assert_allclose(y, y_ref, atol=1e-3, rtol=1e-3)
   print("OK!")
 
 
