@@ -1,23 +1,27 @@
-name: ROCm GPU Post-Merge Check
+name: ROCm GPU CI
 
 on:
-  # Trigger the workflow after a push into the main branch
+  # Trigger the workflow on push or pull request,
+  # but only for the rocm-main branch
   push:
     branches:
-      - main
-
-permissions:
-  contents: read
+      - rocm-main
+      - 'rocm-jaxlib-v*'
+  pull_request:
+    branches:
+      - rocm-main
+      - 'rocm-jaxlib-v*'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-jax-in-docker:
-    runs-on: linux-x86_64-cirrascale-64-8gpu-amd-mi250
+  build-jax-in-docker: # strategy and matrix come here
+    runs-on:  mi-250
     env:
       BASE_IMAGE: "ubuntu:22.04"
-      TEST_IMAGE: ubuntu-jax-upstream-${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}
+      TEST_IMAGE: ubuntu-jax-${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}
       PYTHON_VERSION: "3.10"
       ROCM_VERSION: "6.2.4"
       WORKSPACE_DIR: workdir_${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}
@@ -32,6 +36,9 @@ jobs:
           ls
       - name: Print system info
         run: |
+          whoami
+          printenv
+          df -h
           rocm-smi
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
@@ -50,10 +57,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rocm_jax_r${{ env.ROCM_VERSION }}_py${{ env.PYTHON_VERSION  }}_id${{ github.run_id }}
-          path: ${{ env.WORKSPACE_DIR }}/dist/*.whl
-          retention-days: 2
+          path: ./dist/*.whl
       - name: Run tests
         run: |
           cd $WORKSPACE_DIR
-          python3 build/rocm/ci_build test $TEST_IMAGE
+          python3 build/rocm/ci_build test $TEST_IMAGE --test-cmd "pytest tests/core_test.py"
 
