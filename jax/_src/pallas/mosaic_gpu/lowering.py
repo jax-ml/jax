@@ -356,6 +356,12 @@ def _check_block_mappings(
           + err_details(bm)
       )
 
+    if bm.pipeline_mode is not None:
+      raise NotImplementedError(
+          "Pipeline mode is not supported in Mosaic GPU lowering.\n\n"
+          + err_details(bm)
+      )
+
 
 def lower_jaxpr_to_module(
     grid_mapping: pallas_core.GridMapping,

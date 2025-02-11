@@ -28,8 +28,10 @@ Adjoint algorithm based on Appendix C of https://arxiv.org/pdf/1806.07366.pdf
 
 from functools import partial
 import operator as op
+from typing import Callable
 
 import jax
+from jax import api_util
 import jax.numpy as jnp
 from jax._src import core
 from jax import custom_derivatives
@@ -44,8 +46,9 @@ map = safe_map
 zip = safe_zip
 
 
-def ravel_first_arg(f, unravel):
-  return ravel_first_arg_(lu.wrap_init(f), unravel).call_wrapped
+def ravel_first_arg(f: Callable, unravel, debug_info: core.DebugInfo):
+  return ravel_first_arg_(lu.wrap_init(f, debug_info=debug_info),
+                          unravel).call_wrapped
 
 @lu.transformation2
 def ravel_first_arg_(f, unravel, y_flat, *args):
@@ -179,9 +182,10 @@ def odeint(func, y0, t, *args, rtol=1.4e-8, atol=1.4e-8, mxstep=jnp.inf, hmax=jn
   return _odeint_wrapper(converted, rtol, atol, mxstep, hmax, y0, t, *args, *consts)
 
 @partial(jax.jit, static_argnums=(0, 1, 2, 3, 4))
-def _odeint_wrapper(func, rtol, atol, mxstep, hmax, y0, ts, *args):
+def _odeint_wrapper(func: Callable, rtol, atol, mxstep, hmax, y0, ts, *args):
   y0, unravel = ravel_pytree(y0)
-  func = ravel_first_arg(func, unravel)
+  debug = api_util.debug_info("odeint", func, args, {})
+  func = ravel_first_arg(func, unravel, debug)
   out = _odeint(func, rtol, atol, mxstep, hmax, y0, ts, *args)
   return jax.vmap(unravel)(out)
 

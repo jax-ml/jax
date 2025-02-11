@@ -4721,6 +4721,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     q1 = np.take_along_axis( h, g, axis=-1)
     np.testing.assert_equal(q0, q1)
 
+  def testTakeAlongAxisInputTensorHasSingletonDimension(self):
+    h = jtu.rand_default(self.rng())((2, 1, 5, 7, 13), np.float32)
+    g = jtu.rand_int(self.rng(), 0, 7)((2, 3, 5, 11, 1), np.uint8)
+    q0 = jnp.take_along_axis(h, g, axis=-2)
+    q1 = np.take_along_axis( h, g, axis=-2)
+    np.testing.assert_equal(q0, q1)
+
   def testTakeAlongAxisOutOfBounds(self):
     x = jnp.arange(10, dtype=jnp.float32)
     idx = jnp.array([-11, -10, -9, -5, -1, 0, 1, 5, 9, 10, 11])

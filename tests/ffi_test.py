@@ -181,7 +181,8 @@ class FfiTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
       shape=[(6, 5), (4, 5, 6)],
-      vmap_method=["expand_dims", "broadcast_all", "sequential"],
+      vmap_method=["expand_dims", "broadcast_all", "sequential",
+                   "sequential_unrolled"],
   )
   @jtu.run_on_devices("gpu", "cpu")
   def test_ffi_call_batching(self, shape, vmap_method):
@@ -190,7 +191,7 @@ class FfiTest(jtu.JaxTestCase):
     expected = lax_linalg_internal.geqrf(x)
     actual = jax.vmap(partial(ffi_call_geqrf, vmap_method=vmap_method))(x)
     for a, b in zip(actual, expected):
-      if vmap_method == "sequential" and len(shape) == 3:
+      if vmap_method.startswith("sequential") and len(shape) == 3:
         # On GPU, the batched FFI call to geqrf uses an algorithm with
         # different numerics than the unbatched version (which is used when
         # vmap_method="sequential"). Therefore, we need to include floating
@@ -332,15 +333,17 @@ def ffi_call_geqrf(x, _use_extend=False, **kwargs):
 class BatchPartitioningTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
-    if xla_extension_version < 312:
-      self.skipTest("Requires XLA extension version >= 312")
+    if xla_extension_version < 313:
+      self.skipTest("Requires XLA extension version >= 313")
+    # Register callbacks before checking the number of devices to make sure
+    # that we're testing the registration path, even if we can't run the tests.
+    for target_name in ["lapack_sgeqrf_ffi", "cusolver_geqrf_ffi",
+                        "hipsolver_geqrf_ffi"]:
+      jax.ffi.register_ffi_target_as_batch_partitionable(target_name)
     if jax.device_count() < 2:
       self.skipTest("Requires multiple devices")
     if jtu.test_device_matches(["cpu"]):
       lapack._lapack.initialize()
-    for target_name in ["lapack_sgeqrf_ffi", "cusolver_geqrf_ffi",
-                        "hipsolver_geqrf_ffi"]:
-      jax.ffi.register_ffi_target_as_batch_partitionable(target_name)
 
   @jtu.run_on_devices("gpu", "cpu")
   def test_shard_map(self):

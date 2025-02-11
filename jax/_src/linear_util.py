@@ -65,13 +65,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from functools import partial
+import re
 from typing import Any, NamedTuple
 import weakref
 
 from jax._src import config
 from jax._src import core
 from jax._src import traceback_util
-from jax._src.tree_util import keystr, generate_key_paths
+from jax._src.tree_util import keystr, KeyPath, generate_key_paths
 from jax._src.util import curry, cache_clearing_funs, HashableFunction
 
 
@@ -266,13 +267,17 @@ class DebugInfo(NamedTuple):
   # The paths of the flattened non-static argnames,
   # e.g. ('x', 'dict_arg["a"]', ... ).
   # Uses `None` for the args that do not correspond to user-named arguments,
-  # e.g., tangent args in jax.jvp.
+  # e.g., tangent args in jax.jvp. At the moment, `arg_names` accuracy is
+  # best-effort. Use `safe_arg_names` to detect and handle an unexpected
+  # number of elements in `arg_names`.
   arg_names: tuple[str | None, ...]
 
   # The result paths are not available while we are tracing the function,
   # instead we keep a thunk. Once we are done tracing, we use
   # `self.resolve_result_paths()` to execute the thunk and replace the
-  # actual result paths.
+  # actual result paths. At the moment, `result_paths` accuracy is
+  # best-effort. Use `safe_result_paths` to detect and handle an unexpected
+  # number of elements in `result_paths`.
   # e.g. ('[0]', '[1]', ...)
   result_paths: tuple[str, ...] | Callable[[], tuple[str, ...]] | None
 
@@ -318,7 +323,7 @@ def wrap_init(f: Callable, params=None, *,
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
   params_dict = {} if params is None else params
   params = () if params is None else tuple(sorted(params.items()))
-  fun = WrappedFun(f, partial(f, **params_dict), (), (), params, None, None)
+  fun = WrappedFun(f, partial(f, **params_dict), (), (), params, None, debug_info)
   if debug_info:
     if debug_info.result_paths is None:
       fun, result_paths_thunk = _get_result_paths_thunk(fun)
@@ -329,10 +334,16 @@ def wrap_init(f: Callable, params=None, *,
   return fun
 
 
+# We replace <flat index 0> with 0
+_re_clean_keystr_arg_names = re.compile(r"<flat index ([^>]+)>")
+def _clean_keystr_arg_names(k: KeyPath) -> str:
+  res = keystr(k)
+  return _re_clean_keystr_arg_names.sub(r"\1", res)
+
 @transformation_with_aux2
 def _get_result_paths_thunk(_fun: Callable, _store: Store, *args, **kwargs):
   ans = _fun(*args, **kwargs)
-  result_paths = [keystr(path) for path, _ in generate_key_paths(ans)]
+  result_paths = [_clean_keystr_arg_names(path) for path, _ in generate_key_paths(ans)]
   if _store:
     # In some instances a lu.WrappedFun is called multiple times, e.g.,
     # the bwd function in a custom_vjp

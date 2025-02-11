@@ -47,9 +47,7 @@ from jax._src.numpy.lax_numpy import (
     atleast_1d as atleast_1d,
     atleast_2d as atleast_2d,
     atleast_3d as atleast_3d,
-    bartlett as bartlett,
     bincount as bincount,
-    blackman as blackman,
     block as block,
     broadcast_arrays as broadcast_arrays,
     broadcast_shapes as broadcast_shapes,
@@ -106,8 +104,6 @@ from jax._src.numpy.lax_numpy import (
     geomspace as geomspace,
     get_printoptions as get_printoptions,
     gradient as gradient,
-    hamming as hamming,
-    hanning as hanning,
     histogram as histogram,
     histogram_bin_edges as histogram_bin_edges,
     histogram2d as histogram2d,
@@ -131,7 +127,6 @@ from jax._src.numpy.lax_numpy import (
     issubdtype as issubdtype,
     iterable as iterable,
     ix_ as ix_,
-    kaiser as kaiser,
     kron as kron,
     lcm as lcm,
     linspace as linspace,
@@ -263,6 +258,14 @@ from jax._src.numpy.sorting import (
     partition as partition,
     sort as sort,
     sort_complex as sort_complex,
+)
+
+from jax._src.numpy.window_functions import (
+    bartlett as bartlett,
+    blackman as blackman,
+    hamming as hamming,
+    hanning as hanning,
+    kaiser as kaiser,
 )
 
 # NumPy generic scalar types:

@@ -735,17 +735,23 @@ class BarrierRef:
         1,
     )
 
-  def wait_parity(self, parity):
+  def wait_parity(self, parity, for_tensor_core=False):
     i32 = ir.IntegerType.get_signless(32)
     ticks = arith.constant(i32, 10000000)
     parity = arith.extui(i32, parity)
     nvvm.mbarrier_try_wait_parity_shared(self.get_ptr(), parity, ticks)
+    if for_tensor_core:
+      llvm.inline_asm(
+          ir.Type.parse("!llvm.void"),
+          [], "tcgen05.fence::after_thread_sync;", "",
+          has_side_effects=True,
+      )
 
-  def wait(self):
+  def wait(self, for_tensor_core: bool = False):
     parities = memref.load(self.phases, [])
     parity, new_parities = self.update_parities(parities)
     memref.store(new_parities, self.phases, [])
-    self.wait_parity(parity)
+    self.wait_parity(parity, for_tensor_core)
 
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     i32 = ir.IntegerType.get_signless(32)

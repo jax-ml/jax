@@ -33,7 +33,7 @@ jobs:
         python-version: ["3.10"]
     name: "TPU test (jaxlib=${{ matrix.jaxlib-version }}, ${{ matrix.tpu.type }})"
     env:
-      LIBTPU_OLDEST_VERSION_DATE: 20240922
+      LIBTPU_OLDEST_VERSION_DATE: 20241118
       PYTHON: python${{ matrix.python-version }}
     runs-on: ${{ matrix.tpu.runner }}
     container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest"

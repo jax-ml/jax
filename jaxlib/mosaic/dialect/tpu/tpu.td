@@ -64,6 +64,18 @@ def TPU_CoreTypeEnum : EnumAttr<TPU_Dialect, TPU_CoreType, "core_type"> {
     let assemblyFormat = "`<` $value `>`";
 }
 
+def TPU_PipelineMode : I32EnumAttr<"PipelineMode", "Pipeline mode", [
+  I32EnumAttrCase<"kSynchronous", 1, "synchronous">,
+  I32EnumAttrCase<"kDoubleBuffered", 2, "double_buffered">
+  ]> {
+    let genSpecializedAttr = 0;
+    let cppNamespace = "::mlir::tpu";
+}
+
+def TPU_PipelineModeEnum : EnumAttr<TPU_Dialect, TPU_PipelineMode, "pipeline_mode"> {
+    let assemblyFormat = "`<` $value `>`";
+}
+
 def TPU_SemaphoreType : TPU_Type<"Semaphore", "semaphore", [MemRefElementTypeInterface]>;
 def TPU_DMASemaphoreType : TPU_Type<"DMASemaphore", "dma_semaphore", [MemRefElementTypeInterface]>;
 def TPU_SomeSemaphoreType : AnyTypeOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>;
@@ -734,6 +746,16 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
   let hasVerifier = 1;
 }
 
+def TPU_WaitDMA2Op : TPU_Op<"wait_dma2"> {
+  let arguments = (ins
+    MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,
+    AnyMemRef:$src,
+    AnyMemRef:$dst
+  );
+  let hasVerifier = 1;
+}
+
+// TODO(mvoz): Remove once a month has passed. b/395630795
 def TPU_WaitDMAOp : TPU_Op<"wait_dma"> {
   let arguments = (ins
     MemRefOf<[TPU_DMASemaphoreType]>:$semaphore,

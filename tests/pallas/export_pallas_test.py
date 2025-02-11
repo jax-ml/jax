@@ -51,7 +51,8 @@ class ExportTest(jtu.JaxTestCase):
                             )(x, y)
 
     platforms = ["tpu"]
-    if triton.has_compilation_handler("cuda"):
+    # TODO(b/394629193): Remove True once the bug is fixed.
+    if True or triton.has_compilation_handler("cuda"):
       # Only include CUDA if GPU support is linked in.
       platforms.append("cuda")
 

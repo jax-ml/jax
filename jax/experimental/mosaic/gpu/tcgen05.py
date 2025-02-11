@@ -29,6 +29,7 @@ import numpy as np
 from . import utils
 from . import fragmented_array as fa
 from . import _wgmma
+from .launch_context import LaunchContext
 
 # MyPy does a terrible job with the MLIR API.
 # mypy: ignore-errors
@@ -97,6 +98,7 @@ def mma(
     b_swizzle: int = 128,
     num_cta: int = 1,
     accumulate: ir.Value | bool = True,
+    collective: bool = False,
 ):
   if not ir.MemRefType.isinstance(a.type):
     raise ValueError(f"A must be a memref, got {a.type}")
@@ -141,9 +143,12 @@ def mma(
   groups_k = k // kn_tiling
   groups_m = m // m_tiling
 
-  if d.shape != (m, n):
+  # TODO(apaszke): Verify that the cluster shape matches the expectation of
+  # collective MMA.
+  expected_acc_shape = (m, n * (2 if collective else 1))
+  if d.shape != expected_acc_shape:
     raise ValueError(
-        f"Accumulator shape mismatch: expected {(m, n)}, got {d.shape}"
+        f"Accumulator shape mismatch: expected {expected_acc_shape}, got {d.shape}"
     )
 
   i64 = ir.IntegerType.get_signless(64)
@@ -162,6 +167,7 @@ def mma(
           b_k,
           d_type=ir.F32Type.get(),
           m=m_tiling,
+          collective=collective,
           **mma_params,
           accumulate=accumulate,
       )
@@ -181,6 +187,7 @@ def _do_mma(
     element_type: ir.Type,
     d_type: ir.Type,
     accumulate: ir.Value,
+    collective: bool,
 ):
   i1 = ir.IntegerType.get_signless(1)
   i64 = ir.IntegerType.get_signless(64)
@@ -194,14 +201,15 @@ def _do_mma(
   else:
     raise NotImplementedError(f"Unsupported input element type: {element_type}")
 
+  num_cta = 2 if collective else 1
   i_desc = create_instr_descriptor(
-      m, n, d_type, element_type, a_transpose, b_transpose
+      m * num_cta, n * num_cta, d_type, element_type, a_transpose, b_transpose
   )
   for _ in range(kn_tiling // instr_k):
     llvm.inline_asm(
         ir.Type.parse("!llvm.void"),
         [d_addr, a_desc, b_desc, i_desc, accumulate],
-        f"tcgen05.mma.cta_group::1.kind::{kind} [$0], $1, $2, $3, $4;",
+        f"tcgen05.mma.cta_group::{num_cta}.kind::{kind} [$0], $1, $2, $3, $4;",
         "r,l,l,r,b",
         has_side_effects=True,
     )
@@ -211,7 +219,11 @@ def _do_mma(
   return accumulate
 
 
-def commit_arrive(barrier: utils.BarrierRef | ir.Value):
+def commit_arrive(
+    barrier: utils.BarrierRef | ir.Value,
+    collective: bool = False,
+    ctx: LaunchContext | None = None,
+):
   if isinstance(barrier, utils.BarrierRef):
     barrier = barrier.get_ptr()
   elif barrier.type != ir.Type.parse("!llvm.ptr<3>"):
@@ -219,15 +231,27 @@ def commit_arrive(barrier: utils.BarrierRef | ir.Value):
         "barrier must be a Mosaic barrier or a SMEM pointer, got:"
         f" {barrier.type}"
     )
+  if collective:
+    if ctx is None:
+      raise ValueError("ctx must be provided for collective barriers")
+    # TODO(apaszke): This is just 0b11 shifted by the even CTA index.
+    if ctx.cluster_size != (2, 1, 1):
+      raise NotImplementedError("Collective arrivals only support (2, 1, 1)-shaped clusters")
+    ptx = """
+    {
+        .reg .b16 msk;
+        mov.b16 msk, 3;
+        tcgen05.commit.cta_group::2.mbarrier::arrive::one.multicast::cluster.b64 [$0], msk;
+    }
+    """
+  else:
+    ptx = "tcgen05.commit.cta_group::1.mbarrier::arrive::one.b64 [$0];"
   return llvm.inline_asm(
-      ir.Type.parse("!llvm.void"),
-      [barrier],
-      "tcgen05.commit.cta_group::1.mbarrier::arrive::one.b64 [$0];",
-      "l",
-      has_side_effects=True
+      ir.Type.parse("!llvm.void"), [barrier], ptx, "l", has_side_effects=True
   )
 
-def tmem_alloc(tmem_addr: ir.Value, ncols: int, exact: bool = True):
+
+def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact: bool = True):
   if ir.MemRefType.isinstance(tmem_addr.type):
     ref_ty = ir.MemRefType(tmem_addr.type)
     if ref_ty.element_type != ir.IntegerType.get_signless(32):
@@ -248,10 +272,11 @@ def tmem_alloc(tmem_addr: ir.Value, ncols: int, exact: bool = True):
       raise ValueError(
           f"After rounding up, got {ncols} columns, exceeding the limit of 512"
       )
+  num_cta = 2 if collective else 1
   return llvm.inline_asm(
       ir.Type.parse("!llvm.void"),
       [tmem_addr],
-      f"tcgen05.alloc.cta_group::1.sync.aligned.shared::cta.b32  [$0], {ncols};",
+      f"tcgen05.alloc.cta_group::{num_cta}.sync.aligned.shared::cta.b32  [$0], {ncols};",
       "r",
       has_side_effects=True,
   )
@@ -297,6 +322,12 @@ class TMEMLayout(enum.Enum):
   """
   D = "D"
 
+  @property
+  def num_rows(self) -> int:
+    match self:
+      case TMEMLayout.D:
+        return 128
+
 
 @dataclasses.dataclass(frozen=True)
 class TMEMRef:
@@ -327,11 +358,7 @@ class TMEMRef:
 
   @property
   def num_rows(self):
-    match self.layout:
-      case TMEMLayout.D:
-        return 128
-      case _:
-        raise NotImplementedError(self.layout)
+    return self.layout.num_rows
 
   @property
   def shape(self):
@@ -372,7 +399,6 @@ class TMEMRef:
 
 
 def _m128_256bit_32bit_layout(shape: tuple[int, ...]):
-  """Returns a tiled layout that is easy to relayout to WGMMA layout after doubling the bitwidth."""
   if len(shape) != 2:
     raise ValueError(f"Shape {shape} is not 2D")
   if shape[0] % 128 != 0 or shape[1] % 8 != 0:

@@ -37,6 +37,7 @@ jax_multiplatform_test(
         "gpu_h100",
         "gpu_h100x2",
     ],
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     shard_count = 8,
     tags = ["multiaccelerator"],
     deps = [

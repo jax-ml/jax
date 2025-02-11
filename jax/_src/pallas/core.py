@@ -74,6 +74,9 @@ class CompilerParams(Protocol):
   # Subclasses must be dataclasses.
   __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
 
+@dataclasses.dataclass(frozen=True)
+class Buffered:
+  buffer_count: int
 
 # TODO(necula): clean up the splitting of the fun_sourceinfo
 @dataclasses.dataclass(frozen=True)
@@ -359,6 +362,7 @@ class BlockSpec:
   index_map: Callable[..., Any] | None = None
   memory_space: Any | None = dataclasses.field(kw_only=True, default=None)
   indexing_mode: IndexingMode = dataclasses.field(kw_only=True, default=blocked)
+  pipeline_mode: Buffered | None = None
 
   def to_block_mapping(
       self,
@@ -455,6 +459,7 @@ class BlockSpec:
             array_aval_shape, array_aval.dtype
         ),
         origin=origin,
+        pipeline_mode=self.pipeline_mode,
     )
     mapping.check_invariants()
     return mapping
@@ -496,6 +501,7 @@ class BlockMapping:
   array_shape_dtype: jax.ShapeDtypeStruct  # The whole array
   origin: OriginStr
   transforms: Sequence[MemoryRefTransform] = ()
+  pipeline_mode: Buffered | None = None
 
   def check_invariants(self) -> None:
     if not config.enable_checks.value: return
@@ -1062,7 +1068,11 @@ def core_map(
   """
   def wrapped(f):
     flat_args, in_tree = tree_util.tree_flatten(((), {}))
-    flat_fun, out_tree_thunk = api_util.flatten_fun(lu.wrap_init(f), in_tree)
+    flat_fun, out_tree_thunk = api_util.flatten_fun(
+        lu.wrap_init(f,
+                     debug_info=api_util.debug_info("pallas_core_map", f,
+                                                    (), {})),
+        in_tree)
     with jax_core.extend_axis_env_nd(mesh.shape.items()):
       jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, flat_args)
     out = core_map_p.bind(*consts, jaxpr=jaxpr, mesh=mesh,
@@ -1173,9 +1183,11 @@ def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
 jax_core.custom_typechecks[core_map_p] = _core_map_typecheck_rule
 
 
-def lower_as_mlir(f, *args, dynamic_shapes=False, **kwargs) -> mlir.ir.Module:
+def lower_as_mlir(
+    f, *args, dynamic_shapes=False, device=None, **kwargs
+) -> mlir.ir.Module:
   with pallas_export_experimental(dynamic_shapes):
-    lowered = jax.jit(f).lower(*args, **kwargs)
+    lowered = jax.jit(f, device=device).lower(*args, **kwargs)
     stablehlo = lowered.compiler_ir(dialect="stablehlo")  # type: ignore[return-value]
 
   return stablehlo  # type: ignore[return-value]

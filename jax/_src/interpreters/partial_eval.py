@@ -502,7 +502,7 @@ def _closed_call_param_updater(params, _, __):
   return dict(params, call_jaxpr=core.ClosedJaxpr(jaxpr, ()))
 call_param_updaters[core.closed_call_p] = _closed_call_param_updater
 
-def abstract_eval_fun(fun, *avals, debug_info=None, **params):
+def abstract_eval_fun(fun: Callable, *avals, debug_info=None, **params):
   _, avals_out, _, () = trace_to_jaxpr_dynamic(
       lu.wrap_init(fun, params, debug_info=debug_info), avals)
   assert all(isinstance(aval, AbstractValue) for aval in avals_out)
@@ -1992,7 +1992,9 @@ class DynamicJaxprTrace(core.Trace):
       self.frame.add_eqn(eqn)
     return out_tracers
 
-  def process_custom_jvp_call(self, prim, fun, jvp, tracers, symbolic_zeros):
+  def process_custom_jvp_call(self, prim, fun: lu.WrappedFun,
+                              jvp: lu.WrappedFun, tracers,
+                              symbolic_zeros: bool):
     tracers = map(self.to_jaxpr_tracer, tracers)
     in_avals = [t.aval for t in tracers]
     in_tangent_avals = [t.to_tangent_aval() for t in in_avals]
@@ -2014,7 +2016,8 @@ class DynamicJaxprTrace(core.Trace):
     outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
                         dict(call_jaxpr=closed_fun_jaxpr,
-                             jvp_jaxpr_thunk=jvp_jaxpr_thunk,
+                             jvp_jaxpr_fun=lu.wrap_init(jvp_jaxpr_thunk,
+                                                        debug_info=jvp.debug_info),
                              num_consts=len(consts),
                              symbolic_zeros=symbolic_zeros),
                         fun_jaxpr.effects,
@@ -2056,9 +2059,12 @@ class DynamicJaxprTrace(core.Trace):
     self.frame.add_eqn(eqn)
     return out_tracers
 
-  def process_custom_transpose(self, prim, call, tracers, *,
-                               transpose, out_types,
-                               lin_tree, res_tree, out_tree):
+  def process_custom_transpose(self, prim: core.Primitive,  # type: ignore[override]
+                               call: lu.WrappedFun, tracers, *,
+                               transpose: lu.WrappedFun,
+                               out_types,
+                               lin_tree: PyTreeDef,
+                               res_tree: PyTreeDef, out_tree: PyTreeDef):
     tracers = map(self.to_jaxpr_tracer, tracers)
     tracers_res, tracers_lin = split_list(tracers, [res_tree.num_leaves])
 
@@ -2070,7 +2076,7 @@ class DynamicJaxprTrace(core.Trace):
         convert_constvars_jaxpr(call_jaxpr), ())
 
     transpose_flat, in_tree2 = api_util.flatten_fun_nokwargs(
-        lu.wrap_init(transpose), treedef_tuple((res_tree, out_tree)))
+        transpose, treedef_tuple((res_tree, out_tree)))
 
     # the following thunk evaluates to a pair: transpose_jaxpr, transpose_consts
     @_memoize

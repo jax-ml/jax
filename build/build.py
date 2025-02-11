@@ -588,6 +588,8 @@ async def main():
     )
     for option in args.bazel_options:
       wheel_build_command_base.append(option)
+    if "cuda" in args.wheels:
+      wheel_build_command_base.append("--config=cuda_libraries_from_stubs")
 
   with open(".jax_configure.bazelrc", "w") as f:
     jax_configure_options = utils.get_jax_configure_bazel_options(wheel_build_command_base.get_command_as_list())

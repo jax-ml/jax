@@ -10835,6 +10835,12 @@ def take_along_axis(
   collapsed_slice_dims = []
   operand_batching_dims = []
   start_indices_batching_dims = []
+
+  # We will squeeze the array. i is the index of the unsqueezed shape, while
+  # new_i is the index of the squeezed shape. j is the index of the gather
+  # indices.
+  dims_to_squeeze = []
+  new_i = 0
   j = 0
   for i in range(rank):
     if i == axis_int:
@@ -10842,22 +10848,20 @@ def take_along_axis(
         indices = _normalize_index(indices, axis_size)
       gather_indices.append(lax.reshape(indices, gather_index_shape))
       slice_sizes.append(1)
-      start_index_map.append(i)
-      collapsed_slice_dims.append(i)
+      start_index_map.append(new_i)
+      collapsed_slice_dims.append(new_i)
+      new_i += 1
       j += 1
     elif core.definitely_equal(idx_shape[i], 1):
       # If idx_shape[i] == 1, we can just take the entirety of the arr's axis
       # and avoid forming an iota index.
       offset_dims.append(i)
       slice_sizes.append(arr_shape[i])
+      new_i += 1
     elif core.definitely_equal(arr_shape[i], 1):
-      # If the array dimension is 1 but the index dimension is not, we
-      # broadcast the array dimension to the index dimension by repeatedly
-      # gathering the first element.
-      gather_indices.append(zeros(gather_index_shape, dtype=index_dtype))
-      slice_sizes.append(1)
-      start_index_map.append(i)
-      collapsed_slice_dims.append(i)
+      # If the array dimension is 1 but the index dimension is not, we will
+      # squeeze this dimension.
+      dims_to_squeeze.append(i)
       j += 1
     else:
       # Otherwise, idx_shape[i] == arr_shape[i]. Mark the dimensions in both
@@ -10866,10 +10870,13 @@ def take_along_axis(
         slice_sizes.append(0)
       else:
         slice_sizes.append(1)
-      operand_batching_dims.append(i)
+      operand_batching_dims.append(new_i)
       start_indices_batching_dims.append(j)
+      new_i += 1
       j += 1
 
+  # Squeeze a to remove singleton dimensions.
+  a = lax.squeeze(a, dims_to_squeeze)
   gather_indices_arr = lax.concatenate(gather_indices, dimension=j)
   dnums = lax.GatherDimensionNumbers(
     offset_dims=tuple(offset_dims),
@@ -11572,164 +11579,6 @@ def _canonicalize_tuple_index(arr_ndim, idx):
     colons = (slice(None),) * (arr_ndim - num_dimensions_consumed)
     idx = tuple(idx) + colons
   return idx
-
-
-@export
-def blackman(M: int) -> Array:
-  """Return a Blackman window of size M.
-
-  JAX implementation of :func:`numpy.blackman`.
-
-  Args:
-    M: The window size.
-
-  Returns:
-    An array of size M containing the Blackman window.
-
-  Examples:
-    >>> with jnp.printoptions(precision=2, suppress=True):
-    ...   print(jnp.blackman(4))
-    [-0.    0.63  0.63 -0.  ]
-
-  See also:
-    - :func:`jax.numpy.bartlett`: return a Bartlett window of size M.
-    - :func:`jax.numpy.hamming`: return a Hamming window of size M.
-    - :func:`jax.numpy.hanning`: return a Hanning window of size M.
-    - :func:`jax.numpy.kaiser`: return a Kaiser window of size M.
-  """
-  M = core.concrete_or_error(int, M, "M argument of jnp.blackman")
-  dtype = dtypes.canonicalize_dtype(dtypes.float_)
-  if M <= 1:
-    return ones(M, dtype)
-  n = lax.iota(dtype, M)
-  return 0.42 - 0.5 * ufuncs.cos(2 * pi * n / (M - 1)) + 0.08 * ufuncs.cos(4 * pi * n / (M - 1))
-
-
-@export
-def bartlett(M: int) -> Array:
-  """Return a Bartlett window of size M.
-
-  JAX implementation of :func:`numpy.bartlett`.
-
-  Args:
-    M: The window size.
-
-  Returns:
-    An array of size M containing the Bartlett window.
-
-  Examples:
-    >>> with jnp.printoptions(precision=2, suppress=True):
-    ...   print(jnp.bartlett(4))
-    [0.   0.67 0.67 0.  ]
-
-  See also:
-    - :func:`jax.numpy.blackman`: return a Blackman window of size M.
-    - :func:`jax.numpy.hamming`: return a Hamming window of size M.
-    - :func:`jax.numpy.hanning`: return a Hanning window of size M.
-    - :func:`jax.numpy.kaiser`: return a Kaiser window of size M.
-  """
-  M = core.concrete_or_error(int, M, "M argument of jnp.bartlett")
-  dtype = dtypes.canonicalize_dtype(dtypes.float_)
-  if M <= 1:
-    return ones(M, dtype)
-  n = lax.iota(dtype, M)
-  return 1 - ufuncs.abs(2 * n + 1 - M) / (M - 1)
-
-
-@export
-def hamming(M: int) -> Array:
-  """Return a Hamming window of size M.
-
-  JAX implementation of :func:`numpy.hamming`.
-
-  Args:
-    M: The window size.
-
-  Returns:
-    An array of size M containing the Hamming window.
-
-  Examples:
-    >>> with jnp.printoptions(precision=2, suppress=True):
-    ...   print(jnp.hamming(4))
-    [0.08 0.77 0.77 0.08]
-
-  See also:
-    - :func:`jax.numpy.bartlett`: return a Bartlett window of size M.
-    - :func:`jax.numpy.blackman`: return a Blackman window of size M.
-    - :func:`jax.numpy.hanning`: return a Hanning window of size M.
-    - :func:`jax.numpy.kaiser`: return a Kaiser window of size M.
-  """
-  M = core.concrete_or_error(int, M, "M argument of jnp.hamming")
-  dtype = dtypes.canonicalize_dtype(dtypes.float_)
-  if M <= 1:
-    return ones(M, dtype)
-  n = lax.iota(dtype, M)
-  return 0.54 - 0.46 * ufuncs.cos(2 * pi * n / (M - 1))
-
-
-@export
-def hanning(M: int) -> Array:
-  """Return a Hanning window of size M.
-
-  JAX implementation of :func:`numpy.hanning`.
-
-  Args:
-    M: The window size.
-
-  Returns:
-    An array of size M containing the Hanning window.
-
-  Examples:
-    >>> with jnp.printoptions(precision=2, suppress=True):
-    ...   print(jnp.hanning(4))
-    [0.   0.75 0.75 0.  ]
-
-  See also:
-    - :func:`jax.numpy.bartlett`: return a Bartlett window of size M.
-    - :func:`jax.numpy.blackman`: return a Blackman window of size M.
-    - :func:`jax.numpy.hamming`: return a Hamming window of size M.
-    - :func:`jax.numpy.kaiser`: return a Kaiser window of size M.
-  """
-  M = core.concrete_or_error(int, M, "M argument of jnp.hanning")
-  dtype = dtypes.canonicalize_dtype(dtypes.float_)
-  if M <= 1:
-    return ones(M, dtype)
-  n = lax.iota(dtype, M)
-  return 0.5 * (1 - ufuncs.cos(2 * pi * n / (M - 1)))
-
-
-@export
-def kaiser(M: int, beta: ArrayLike) -> Array:
-  """Return a Kaiser window of size M.
-
-  JAX implementation of :func:`numpy.kaiser`.
-
-  Args:
-    M: The window size.
-    beta: The Kaiser window parameter.
-
-  Returns:
-    An array of size M containing the Kaiser window.
-
-  Examples:
-    >>> with jnp.printoptions(precision=2, suppress=True):
-    ...   print(jnp.kaiser(4, 1.5))
-    [0.61 0.95 0.95 0.61]
-
-  See also:
-    - :func:`jax.numpy.bartlett`: return a Bartlett window of size M.
-    - :func:`jax.numpy.blackman`: return a Blackman window of size M.
-    - :func:`jax.numpy.hamming`: return a Hamming window of size M.
-    - :func:`jax.numpy.hanning`: return a Hanning window of size M.
-  """
-  M = core.concrete_or_error(int, M, "M argument of jnp.kaiser")
-  dtype = dtypes.canonicalize_dtype(dtypes.float_)
-  if M <= 1:
-    return ones(M, dtype)
-  n = lax.iota(dtype, M)
-  alpha = 0.5 * (M - 1)
-  return i0(beta * ufuncs.sqrt(1 - ((n - alpha) / alpha) ** 2)) / i0(beta)
-
 
 def _gcd_cond_fn(xs: tuple[Array, Array]) -> Array:
   x1, x2 = xs

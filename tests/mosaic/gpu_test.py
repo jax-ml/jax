@@ -968,19 +968,17 @@ class TCGen05Test(TestCase):
       in_jax_dtype,
       out_jax_dtype,
   ):
-    i32 = ir.IntegerType.get_signless(32)
     if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
       raise self.skipTest("Only f16 input is supported for f16 output.")
 
     in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
-    out_mlir_dtype = utils.dtype_to_ir_type(out_jax_dtype)
     m_tile = 128
     nk_tile = swizzle // bytewidth(in_mlir_dtype)
     k = nk_tile * k_steps
     assert m % m_tile == 0 and n % nk_tile == 0
 
     def kernel(ctx, lhs, rhs, out, scratch):
-      lhs_smem, rhs_smem, barriers, tmem_addr_ref = scratch
+      lhs_smem, rhs_smem, barriers, acc = scratch
       lhs_transform = (mgpu.TileTransform((m_tile, nk_tile)),)
       if lhs_transpose:
         assert nk_tile == m_tile  # Make sure we didn't have to transpose tiling
@@ -1004,27 +1002,22 @@ class TCGen05Test(TestCase):
       )
       barriers[0].wait()
       barriers[1].wait()
-      with mgpu.when(arith.cmpi(arith.CmpIPredicate.eq, mgpu.warp_idx(), c(0, i32))):
-        tcgen05.tmem_alloc(tmem_addr_ref, n)
-        tcgen05.tmem_relinquish_alloc_permit()
-        acc = tcgen05.TMEMRef.from_alloc(tmem_addr_ref, tcgen05.TMEMLayout.D, n, out_mlir_dtype)
-        with mgpu.single_thread():
-          if lhs_transpose:
-            lhs_smem = memref_transpose(lhs_smem, (0, 1, 3, 2))
-          if rhs_transpose:
-            rhs_smem = memref_transpose(rhs_smem, (0, 1, 3, 2))
-          tcgen05.mma(
-              acc, lhs_smem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False,
-          )
-          tcgen05.commit_arrive(barriers[2])
-      barriers[2].wait()
-      acc = tcgen05.TMEMRef.from_alloc(tmem_addr_ref, tcgen05.TMEMLayout.D, n, out_mlir_dtype)
+      with mgpu.single_thread():
+        if lhs_transpose:
+          lhs_smem = memref_transpose(lhs_smem, (0, 1, 3, 2))
+        if rhs_transpose:
+          rhs_smem = memref_transpose(rhs_smem, (0, 1, 3, 2))
+        tcgen05.mma(
+            acc, lhs_smem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False,
+        )
+        tcgen05.commit_arrive(barriers[2])
+      barriers[2].wait(for_tensor_core=True)
       acc[:].store_untiled(out)
 
     in_finfo = jnp.finfo(in_jax_dtype)
     exponent_bits, mantissa_bits = in_finfo.nexp, in_finfo.nmant
     def quantize(x):
-      # Quantize the input to avoid rounding when feeding the WGMMA
+      # Quantize the input to avoid rounding when feeding the TensorCore
       return jax.lax.reduce_precision(x, exponent_bits, mantissa_bits)
 
     x_shape = (k, m) if lhs_transpose else (m, k)
@@ -1036,10 +1029,113 @@ class TCGen05Test(TestCase):
         jax.ShapeDtypeStruct(tile_shape((m, k), (m_tile, nk_tile)), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape((k, n), (nk_tile, nk_tile)), in_jax_dtype),
         mgpu.TMABarrier(3),
-        jax.ShapeDtypeStruct((), jnp.int32),
+        mgpu.TMEM((128, n), out_jax_dtype, tcgen05.TMEMLayout.D),
     ]
     z = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape
+    )(x, y)
+    x32, y32 = x.astype(np.float32), y.astype(np.float32)
+    ref = (x32.T if lhs_transpose else x32) @ (y32.T if rhs_transpose else y32)
+    atol = 2e-2 if out_jax_dtype == jnp.float16 else 5e-6
+    np.testing.assert_allclose(z, ref, atol=atol)
+
+  @parameterized.product(
+      lhs_transpose=(False,),  # TODO(apaszke): True
+      rhs_transpose=(True,),
+      in_jax_dtype=(jnp.float16,),  # TODO(apaszke): f32
+      out_jax_dtype=(jnp.float32,),  # TODO(apaszke): f16 accumulation
+      m=(256,),  # TODO(apaszke): 64, 192, 256
+      n=(128, 256),  # TODO(apaszke): 192, other non-power-of-2
+      k_steps=(1, 2),
+      swizzle=(32, 64, 128,),
+  )
+  def test_mma_collective(
+      self,
+      m,
+      n,
+      k_steps,
+      swizzle,
+      lhs_transpose,
+      rhs_transpose,
+      in_jax_dtype,
+      out_jax_dtype,
+  ):
+    if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
+      raise self.skipTest("Only f16 input is supported for f16 output.")
+
+    in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
+    m_block_tile = m // 2
+    m_tma_tile = 128
+    n_block_tile = n // 2
+    nk_tma_tile = swizzle // bytewidth(in_mlir_dtype)
+    k = nk_tma_tile * k_steps
+    assert m % m_tma_tile == 0 and n % nk_tma_tile == 0
+    index = ir.IndexType.get()
+
+    def kernel(ctx, lhs, rhs, out, scratch):
+      lhs_smem, rhs_smem, barriers, acc = scratch
+      lhs_transform = (mgpu.TileTransform((m_tma_tile, nk_tma_tile)),)
+      if lhs_transpose:
+        assert nk_tma_tile == m_tma_tile  # Make sure we didn't have to transpose tiling
+        lhs_transform += (mgpu.TransposeTransform((1, 0, 2, 3)),)
+      rhs_transform = (mgpu.TileTransform((nk_tma_tile, nk_tma_tile)),)
+      if rhs_transpose:
+        rhs_transform += (mgpu.TransposeTransform((1, 0, 2, 3)),)
+      block_id = gpu.cluster_block_id(gpu.Dimension.x)
+      ctx.async_copy(
+          src_ref=lhs,
+          dst_ref=lhs_smem,
+          swizzle=swizzle,
+          gmem_transform=lhs_transform,
+          barrier=barriers[0],
+          collective=gpu.Dimension.x,
+          partitioned=1 if lhs_transpose else 0,  # Split non-contracting dim.
+      )
+      ctx.async_copy(
+          src_ref=rhs,
+          dst_ref=rhs_smem,
+          swizzle=swizzle,
+          gmem_transform=rhs_transform,
+          barrier=barriers[1],
+          collective=gpu.Dimension.x,
+          partitioned=0 if rhs_transpose else 1,  # Split non-contracting dim.
+      )
+      is_leader_thread = single_thread_predicate()
+      is_first_block = arith.cmpi(arith.CmpIPredicate.eq, block_id, c(0, index))
+      with when(arith.andi(is_first_block, is_leader_thread)):
+        barriers[0].wait()
+        barriers[1].wait()
+        if lhs_transpose:
+          lhs_smem = memref_transpose(lhs_smem, (0, 1, 3, 2))
+        if rhs_transpose:
+          rhs_smem = memref_transpose(rhs_smem, (0, 1, 3, 2))
+        tcgen05.mma(
+            acc, lhs_smem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False, collective=True
+        )
+        tcgen05.commit_arrive(barriers[2], collective=True, ctx=ctx)
+      barriers[2].wait(for_tensor_core=True)
+      m_slice = ds(arith.muli(block_id, c(m_block_tile, index)), m_block_tile)
+      acc[:].store_untiled(memref_slice(out, m_slice))
+
+    in_finfo = jnp.finfo(in_jax_dtype)
+    exponent_bits, mantissa_bits = in_finfo.nexp, in_finfo.nmant
+    def quantize(x):
+      # Quantize the input to avoid rounding when feeding the TensorCore
+      return jax.lax.reduce_precision(x, exponent_bits, mantissa_bits)
+
+    x_shape = (k, m) if lhs_transpose else (m, k)
+    x = quantize(self.prng.uniform(-1, 1, x_shape)).astype(in_jax_dtype)
+    y_shape = (n, k) if rhs_transpose else (k, n)
+    y = quantize(self.prng.uniform(-1, 1, y_shape)).astype(in_jax_dtype)
+    out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
+    scratch_shape = [
+        jax.ShapeDtypeStruct(tile_shape((m_block_tile, k), (m_tma_tile, nk_tma_tile)), in_jax_dtype),
+        jax.ShapeDtypeStruct(tile_shape((k, n_block_tile), (nk_tma_tile, nk_tma_tile)), in_jax_dtype),
+        mgpu.TMABarrier(3),
+        mgpu.TMEM((128, n), out_jax_dtype, tcgen05.TMEMLayout.D, collective=True),
+    ]
+    z = mgpu.as_gpu_kernel(
+        kernel, (2, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape, cluster=(2, 1, 1)
     )(x, y)
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
     ref = (x32.T if lhs_transpose else x32) @ (y32.T if rhs_transpose else y32)

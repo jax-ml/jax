@@ -60,6 +60,7 @@ from functools import partial
 import numpy as np
 
 from jax import lax
+from jax import api_util
 import jax.numpy as jnp
 from jax.experimental import pjit
 from jax.tree_util import (register_pytree_node, tree_structure,
@@ -147,7 +148,9 @@ def jet(fun, primals, series):
     store.store(tree)
     return ans
 
-  f, out_tree = flatten_fun_output(lu.wrap_init(fun))
+  f, out_tree = flatten_fun_output(
+      lu.wrap_init(fun,
+                   debug_info=api_util.debug_info("jet", fun, primals, {})))
   out_primals, out_terms = jet_fun(jet_subtrace(f), order).call_wrapped(primals, series)
   return tree_unflatten(out_tree(), out_primals), tree_unflatten(out_tree(), out_terms)
 
@@ -723,7 +726,7 @@ jet_rules[lax.scatter_add_p] = _scatter_add_rule
 def _jet_jaxpr(
     jaxpr: core.ClosedJaxpr, order: int, primals_and_series_avals, in_tree_def
 ) -> tuple[core.ClosedJaxpr, Any]:
-  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
+  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr), debug_info=jaxpr.jaxpr.debug_info)
   f_jet, out_tree_def = traceable(jet_fun(jet_subtrace(f), order), in_tree_def)
   jaxpr_jet, _, consts, () = pe.trace_to_jaxpr_dynamic(
       f_jet, primals_and_series_avals)

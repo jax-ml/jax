@@ -17,6 +17,7 @@ import operator
 from absl.testing import absltest
 
 import jax
+from jax import api_util
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import util
@@ -62,7 +63,10 @@ class UtilTest(jtu.JaxTestCase):
       store.store(aux_output)
       return (results[0:len(args)], dict(zip(kwargs_keys, results[len(args):])))
 
-    wf = lu.wrap_init(f)  # Wraps `f` as a `WrappedFun`.
+    # Wraps `f` as a `WrappedFun`.
+    wf = lu.wrap_init(
+        f,
+        debug_info=api_util.debug_info("test", f, (1, 2), dict(three=3, four=4)))
     wf, out_thunk = kw_to_positional(wf, 2)
     # Call the transformed function.
     scaled_positional, scaled_kwargs = wf.call_wrapped(1, 2, three=3, four=4)

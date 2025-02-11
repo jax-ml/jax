@@ -19,12 +19,13 @@ import functools
 import itertools
 import math
 import sys
-from typing import Any
+from typing import Any, Callable
 import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax import api_util
 from jax import lax
 from jax import random
 from jax._src import dtypes
@@ -61,6 +62,11 @@ jtu.setup_hypothesis(max_examples=50)
 intx = dtypes.canonicalize_dtype(jnp.int64)
 floatx = dtypes.canonicalize_dtype(jnp.float64)
 
+def wrap_init(f: Callable, nr_args: int):
+  # wrapper for lu.wrap_init with debugging info
+  return lu.wrap_init(
+      f,
+      debug_info=api_util.debug_info("state_test", f, (0,) * nr_args, {}))
 
 def is_power_of_two(n: int) -> bool:
   return (n > 0) and (n & (n - 1) == 0)
@@ -2284,7 +2290,7 @@ class PallasPrimitivesTest(PallasBaseTest):
       x = pl.load(x_ref, expr())
       return [x]
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(body), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
+        wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
   @parameterized.parameters(*[
@@ -2299,7 +2305,7 @@ class PallasPrimitivesTest(PallasBaseTest):
       pl.store(x_ref, expr(), pl.load(x_ref, expr()))
       return []
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(body), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
+        wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
   @parameterized.parameters(*[
@@ -2319,7 +2325,7 @@ class PallasPrimitivesTest(PallasBaseTest):
       x = pl.swap(x_ref, expr(), pl.load(x_ref, expr()))
       return [x]
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(body), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
+        wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
 

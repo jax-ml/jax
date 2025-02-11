@@ -57,11 +57,13 @@ zip = safe_zip
 
 ### util
 
-def _initial_style_jaxpr(fun, in_avals):
+def _initial_style_jaxpr(fun: lu.WrappedFun,
+                         in_avals: Sequence[core.AbstractValue]
+                         ) -> tuple[core.Jaxpr, Sequence[Any]]:
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun, in_avals)
   return jaxpr, consts
 
-def _close_jaxpr(jaxpr):
+def _close_jaxpr(jaxpr: core.Jaxpr) -> core.ClosedJaxpr:
   return pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
 
 def _sum_tangents(_, x, *xs):
@@ -376,20 +378,19 @@ class CustomJVPCallPrimitive(core.Primitive):
     new_params = dict(params)
     call_jaxpr: core.ClosedJaxpr = new_params.pop('call_jaxpr')
     num_consts: int = new_params.pop('num_consts')
-    jvp_jaxpr_thunk = new_params.pop('jvp_jaxpr_thunk')
+    jvp_jaxpr_fun = new_params.pop('jvp_jaxpr_fun')
     fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr),
                        debug_info=call_jaxpr.jaxpr.debug_info)
-    jvp = lift_jvp(num_consts, jvp_jaxpr_thunk, call_jaxpr.jaxpr.debug_info)
+    jvp = lift_jvp(num_consts, jvp_jaxpr_fun)
     return [fun, jvp], new_params
 
-def lift_jvp(num_consts: int, jvp_jaxpr_thunk: Callable,
-             debug_info: core.DebugInfo | None) -> lu.WrappedFun:
+def lift_jvp(num_consts: int, jvp_jaxpr_fun: lu.WrappedFun) -> lu.WrappedFun:
   def jvp(*xs):
     n, ragged = divmod(len(xs), 2)
     assert not ragged
     primals, tangents = xs[num_consts:n], xs[n+num_consts:]
     zeros = [type(t) is SymbolicZero for t in tangents]
-    jvp_jaxpr, jvp_consts, out_zeros = jvp_jaxpr_thunk(*zeros)
+    jvp_jaxpr, jvp_consts, out_zeros = jvp_jaxpr_fun.call_wrapped(*zeros)
     nonzero_tangents = [t for t in tangents if type(t) is not SymbolicZero]
     out = core.eval_jaxpr(jvp_jaxpr, jvp_consts, *primals, *nonzero_tangents)
     out_primals, nz_out_tangents = split_list(out, [len(out_zeros)])
@@ -399,16 +400,16 @@ def lift_jvp(num_consts: int, jvp_jaxpr_thunk: Callable,
                     for p, z in zip(out_primals, out_zeros)]
     assert next(nz_out_tangents_, None) is None
     return [*out_primals, *out_tangents]
-  return lu.wrap_init(jvp, debug_info=debug_info)
+  return lu.wrap_init(jvp, debug_info=jvp_jaxpr_fun.debug_info)
 
 effects.custom_derivatives_allowed_effects.add_type(lax.InOutFeedEffect)
 
 custom_jvp_call_p = CustomJVPCallPrimitive('custom_jvp_call')
 
-def _custom_jvp_call_typecheck(_, *in_avals, call_jaxpr, jvp_jaxpr_thunk,
+def _custom_jvp_call_typecheck(_, *in_avals, call_jaxpr, jvp_jaxpr_fun,
                                num_consts, symbolic_zeros):
   # TODO(mattjj): could do more checking here...
-  del in_avals, jvp_jaxpr_thunk, num_consts
+  del in_avals, jvp_jaxpr_fun, num_consts
   disallowed_effects = effects.custom_derivatives_allowed_effects.filter_not_in(call_jaxpr.effects)
   if disallowed_effects:
     raise NotImplementedError(
@@ -416,9 +417,9 @@ def _custom_jvp_call_typecheck(_, *in_avals, call_jaxpr, jvp_jaxpr_thunk,
   return call_jaxpr.out_avals, call_jaxpr.effects
 core.custom_typechecks[custom_jvp_call_p] = _custom_jvp_call_typecheck
 
-def _custom_jvp_call_mlir_translation(ctx, *args, call_jaxpr, jvp_jaxpr_thunk,
+def _custom_jvp_call_mlir_translation(ctx, *args, call_jaxpr, jvp_jaxpr_fun,
                                       num_consts, symbolic_zeros):
-  del jvp_jaxpr_thunk, num_consts, symbolic_zeros
+  del jvp_jaxpr_fun, num_consts, symbolic_zeros
   consts = mlir._ir_consts(call_jaxpr.consts)
   out, tokens = mlir.jaxpr_subcomp(ctx.module_context, call_jaxpr.jaxpr,
                                    ctx.name_stack, ctx.tokens_in, consts,
@@ -450,7 +451,7 @@ def _custom_jvp_call_dce(
     return [False] * len(eqn.invars), None
 
   call_jaxpr = eqn.params["call_jaxpr"]
-  jvp_jaxpr_thunk = eqn.params["jvp_jaxpr_thunk"]
+  jvp_jaxpr_fun = eqn.params["jvp_jaxpr_fun"]
   # We must set instantiate=True because some inputs that are unused by the
   # DCE'ed primal might be used in the JVP rule.
   dce_call_jaxpr, used_ins = _cached_closed_call_dce_instantiate(
@@ -459,7 +460,7 @@ def _custom_jvp_call_dce(
 
   @pe._memoize
   def dce_jvp_jaxpr_thunk(*in_zeros):
-    jvp_jaxpr, consts, out_zeros = jvp_jaxpr_thunk(*in_zeros)
+    jvp_jaxpr, consts, out_zeros = jvp_jaxpr_fun.call_wrapped(*in_zeros)
     dce_jvp_jaxpr, _ = pe.dce_jaxpr(jvp_jaxpr, [*used_outs, *used_outs], True)
     dce_out_zeros = [v for used, v in zip(used_outs, out_zeros) if used]
     return dce_jvp_jaxpr, consts, dce_out_zeros
@@ -468,7 +469,8 @@ def _custom_jvp_call_dce(
   new_params = dict(
       eqn.params,
       call_jaxpr=dce_call_jaxpr,
-      jvp_jaxpr_thunk=dce_jvp_jaxpr_thunk,
+      jvp_jaxpr_fun=lu.wrap_init(dce_jvp_jaxpr_thunk,
+                                 debug_info=jvp_jaxpr_fun.debug_info)
   )
   new_eqn = pe.new_jaxpr_eqn(
       eqn.invars, outvars, eqn.primitive, new_params, dce_call_jaxpr.effects,
@@ -1298,7 +1300,8 @@ def partition_list(choice, lst):
 
 ### Custom transposition
 
-def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
+def linear_call(fun: Callable,
+                fun_transpose: Callable, residual_args,
                 linear_args):
   """Call a linear function, with a custom implementation for its transpose.
 
@@ -1388,19 +1391,30 @@ def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
   operands_lin, lin_tree = tree_flatten(linear_args)
 
   f_in_tree = treedef_tuple((res_tree, lin_tree))
-  f, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), f_in_tree)
+  f, out_tree = flatten_fun_nokwargs(
+      lu.wrap_init(
+          fun,
+          debug_info=debug_info("linear_call fun", fun,
+                                (residual_args, linear_args), {})),
+      f_in_tree)
 
   res_avals = map(core.get_aval, operands_res)
   lin_avals = map(core.get_aval, operands_lin)
   f_jaxpr, f_consts = _initial_style_jaxpr(f, (*res_avals, *lin_avals))
-  f_jaxpr = _close_jaxpr(f_jaxpr)
-  out_avals = f_jaxpr.out_avals
+  f_jaxpr_closed = _close_jaxpr(f_jaxpr)
+  out_avals = f_jaxpr_closed.out_avals
 
   t_in_tree = treedef_tuple((res_tree, out_tree()))
-  t, t_out_tree = flatten_fun_nokwargs(lu.wrap_init(fun_transpose), t_in_tree)
+  t, t_out_tree = flatten_fun_nokwargs(
+      lu.wrap_init(
+          fun_transpose,
+          # TODO(necula): the fun_transpose takes residual and output of fun!
+          debug_info=debug_info("linear_call fun_transpose", fun_transpose,
+                                (residual_args, linear_args), {})),
+      t_in_tree)
 
   t_jaxpr, t_consts = _initial_style_jaxpr(t, (*res_avals, *out_avals))
-  t_jaxpr = _close_jaxpr(t_jaxpr)
+  t_jaxpr_closed = _close_jaxpr(t_jaxpr)
 
   if t_out_tree() != lin_tree:
     raise TypeError(
@@ -1409,8 +1423,8 @@ def linear_call(fun: Callable, fun_transpose: Callable, residual_args,
         f'and input structure {lin_tree}.')
 
   out = linear_call_p.bind(*f_consts, *t_consts, *operands_res, *operands_lin,
-                           callee=f_jaxpr,
-                           transpose=t_jaxpr,
+                           callee=f_jaxpr_closed,
+                           transpose=t_jaxpr_closed,
                            num_callee_consts=len(f_consts),
                            num_transpose_consts=len(t_consts),
                            num_res=len(operands_res))

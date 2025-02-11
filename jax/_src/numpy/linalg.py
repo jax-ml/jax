@@ -1300,12 +1300,14 @@ def qr(a: ArrayLike, mode: str = "reduced") -> Array | QRResult:
 @export
 @jit
 def solve(a: ArrayLike, b: ArrayLike) -> Array:
-  """Solve a linear system of equations
+  """Solve a linear system of equations.
 
   JAX implementation of :func:`numpy.linalg.solve`.
 
   This solves a (batched) linear system of equations ``a @ x = b``
   for ``x`` given ``a`` and ``b``.
+
+  If ``a`` is singular, this will return ``nan`` or ``inf`` values.
 
   Args:
     a: array of shape ``(..., N, N)``.
@@ -1313,8 +1315,10 @@ def solve(a: ArrayLike, b: ArrayLike) -> Array:
       ``(..., N, M)`` (for batched 2-dimensional right-hand-side).
 
   Returns:
-    An array containing the result of the linear solve. The result has shape ``(..., N)``
-    if ``b`` is of shape ``(N,)``, and has shape ``(..., N, M)`` otherwise.
+    An array containing the result of the linear solve if ``a`` is non-singular.
+    The result has shape ``(..., N)`` if ``b`` is of shape ``(N,)``, and has
+    shape ``(..., N, M)`` otherwise.
+    If ``a`` is singular, the result contains ``nan`` or ``inf`` values.
 
   See also:
     - :func:`jax.scipy.linalg.solve`: SciPy-style API for solving linear systems.

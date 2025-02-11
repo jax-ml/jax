@@ -27,7 +27,6 @@ from jax import lax
 
 import jax.custom_batching
 import jax.custom_derivatives
-import jax.custom_transpose
 from jax.experimental import checkify
 import jax.experimental.custom_dce
 from jax.experimental import pallas as pl
@@ -42,6 +41,7 @@ from jax._src import api_util
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src import config
 from jax._src import core
+from jax._src import custom_transpose
 from jax._src import test_util as jtu
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.lax.control_flow import for_loop
@@ -75,9 +75,9 @@ def _debug_info_to_string(dbg: core.DebugInfo | None) -> list[str]:
   if dbg is None: return "None"
   # Strip the absolute path and the line number but check that it references
   # this file (to catch errors when the source info points in JAX internals)
-  fun_src_info = re.sub(r"^(\S+)( at .*/debug_info_test.py:.*)?", "\\1", dbg.func_src_info)
+  func_src_info = re.sub(r"^(\S+)( at .*.debug_info_test.py:\d+)?", "\\1", dbg.func_src_info)
   arg_names_str = ",".join([str(a) for a in dbg.arg_names])
-  res = f"traced_for={dbg.traced_for}, fun={fun_src_info}, arg_names={arg_names_str}"
+  res = f"traced_for={dbg.traced_for}, fun={func_src_info}, arg_names={arg_names_str}"
   if isinstance(dbg.result_paths, tuple):
     res += f", result_paths={','.join(dbg.result_paths)}"
   elif dbg.result_paths is None:
@@ -96,17 +96,18 @@ class TracerSpy:
   def __init__(self):
     self.tracers = []
 
-  def append(self, t: Any):
-    try:
-      # We plan to do boolean conversion and catch the exception, but this works
-      # only for scalars
-      if isinstance(t, core.Tracer) and t.shape:
-        t = jnp.sum(t)
-      if t:
-        pass
-      assert False, t
-    except Exception as e:
-      self.tracers.append((t, e))
+  def append(self, t: Any) -> None:
+    if isinstance(t, core.Tracer):
+      try:
+        # We plan to do boolean conversion and catch the exception, but this works
+        # only for scalars
+        if t.shape:
+          t = jnp.sum(t)
+        if t:
+          pass
+        assert False, t
+      except Exception as e:
+        self.tracers.append((t, e))
 
 
 @jtu.with_config(jax_mutable_array_checks=True)
@@ -120,7 +121,7 @@ class DebugInfoTest(jtu.JaxTestCase):
                                 check_lowering: bool = True,
                                 check_tracer_arg_name: bool = False,
                                 expected_lowering_lines: list[str | re.Pattern] = [],
-                                **kwargs):
+                                **kwargs) -> None:
     """Checks for expected debug info in all jaxprs, and in inspected tracers.
 
     `traceable` will be traced as `traceable.trace(*args, **kwargs)` if it has
@@ -204,7 +205,7 @@ class DebugInfoTest(jtu.JaxTestCase):
                      expected: list[str | re.Pattern],
                      found: list[str],
                      what: str,
-                     report_found_unexpected: bool = True):
+                     report_found_unexpected: bool = True) -> None:
     expected_and_found: set[str | re.Pattern] = set()
     found_and_expected: set[str] = set()
     for exp_re in expected:
@@ -288,6 +289,26 @@ class DebugInfoTest(jtu.JaxTestCase):
     dbg = api_util.debug_info("jit", lambda my_arg: False, (1,), {})
     self.assertRegex(dbg.func_src_info, r"^<lambda> at .*debug_info_test.py:\d+")
     self.assertEqual(dbg.arg_names, ("my_arg",))
+
+  def test_debug_info_save_wrapped_fun_source_info(self):
+    def wrapper(x, y):
+      return x
+
+    api_util.save_wrapped_fun_sourceinfo(wrapper, None)  # No effect
+    dbg = api_util.debug_info("test", wrapper, (1, 2), {})
+    self.assertEqual("wrapper", dbg.func_name)
+
+    api_util.save_wrapped_fun_sourceinfo(wrapper, lambda x, y: x)
+    dbg = api_util.debug_info("test", wrapper, (1, 2), {})
+    self.assertEqual("<lambda>", dbg.func_name)
+
+    def other_f():
+      pass
+    dbg_other = api_util.debug_info("test other", other_f, (), {})
+    api_util.save_wrapped_fun_sourceinfo(wrapper, dbg_other)
+    dbg = api_util.debug_info("test", wrapper, (1, 2), {})
+    self.assertEqual("other_f", dbg.func_name)
+    self.assertEqual("test", dbg.traced_for)
 
   def test_debug_info_no_source_info_not_callable(self):
     # built-in function "int" does not have an inspect.Signature
@@ -695,14 +716,12 @@ class DebugInfoTest(jtu.JaxTestCase):
         (1.,), {"hi": 2.}, 3., 4., 5., 6.,  # x, y, z, args[0], args[1], args[2]
         t=11., w=12.,  # kwargs
         expected_jaxpr_debug_infos=[
-            # TODO(necula): the arg_names include the dead ones
             "traced_for=jit, fun=my_f, arg_names=y['hi'],z,args[0],args[1],kwargs['t'],kwargs['w'], result_paths=",
         ],
         tracer_spy=tracer_spy,
         check_tracer_arg_name=True,
         expected_tracer_debug_infos=[
             "traced_for=jit, fun=my_f, arg_names=y['hi'],z,args[0],args[1],kwargs['t'],kwargs['w'], from kwargs['w']",
-            "None",  # TODO(necula) missing debug info
         ],
         expected_lowering_lines=[
             re.compile(r".*func.func public @main\(%arg0: tensor<f..> loc\(\"y\['hi'\]\"\)"),
@@ -882,7 +901,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         tracer_spy=tracer_spy,
         expected_jaxpr_debug_infos=[
             # TODO(necula): what are these flat_index components?
-            "traced_for=jit, fun=apply_fn, arg_names=inp, result_paths=[0],[1][<flat index 0>][0][<flat index 0>][0][0]",
+            "traced_for=jit, fun=apply_fn, arg_names=inp, result_paths=[0],[1][0][0][0][0][0]",
             re.compile(r"traced_for=custom_jvp fun, fun=relu at .*nn.functions.py:.*, arg_names=x, result_paths="),
             re.compile(r"traced_for=jit, fun=relu at .*nn.functions.py:.*, arg_names=x, result_paths="),
         ],
@@ -1025,30 +1044,97 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=jit, fun=<lambda>, arg_names=xy[0],xy[1], from None",
         ])
 
-  def test_vmap_of_nested_jit(self):
+  def test_custom_transpose(self):
+    # Helpers from api_test.py
+    class _custom_transpose:
+      def __init__(self, out_types, fun):
+        self.out_types = out_types
+        self.fun = custom_transpose.custom_transpose(fun)
+
+      def __getattr__(self, name):
+        return getattr(self.fun, name)
+
+      def __call__(self, *args):
+        return self.fun(self.out_types, *args)
+
+    def custom_transpose_with_example_out(example_out):
+      return functools.partial(
+          _custom_transpose,
+          jax.tree.map(
+              lambda x: core.get_aval(x).to_tangent_aval(), example_out))
+
     tracer_spy = TracerSpy()
-    def my_f(x, y):
-      tracer_spy.append(x)
+    def my_f_with_cond(i, x):
+      def my_f(x):
+        tracer_spy.append(x)
+        @custom_transpose_with_example_out(jnp.ones(2))
+        def fn(r, x):
+          tracer_spy.append(r)
+          tracer_spy.append(x["c"])
+          return dict(b=x["c"] / r)
 
-      def my_g(u, v):
-        tracer_spy.append(u)
-        return dict(c=u * v, d=v)
+        @fn.def_transpose
+        def fn_tp(r, t):
+          tracer_spy.append(r)
+          return dict(c=2 * t / r)
 
-      return jax.jit(my_g)(y, x)["c"]
+        return x["c"] + fn(jnp.ones(2) * 3., x)
 
+      return lax.cond(i > 0, my_f, lambda x: x["c"], dict(c=x))
+
+    x = jnp.ones(2) * 6.
     self._check_tracers_and_jaxprs(
-        jax.jit(jax.vmap(my_f)),
-        np.ones((8,), dtype=np.float32), np.zeros((8,), dtype=np.float32),
+        jax.jit(lambda x: jax.linear_transpose(functools.partial(my_f_with_cond, 7.),
+                                               x)),
+        x,
         tracer_spy=tracer_spy,
         expected_jaxpr_debug_infos=[
-            "traced_for=jit, fun=my_f, arg_names=x,y, result_paths=",
-            "traced_for=jit, fun=my_g, arg_names=u,v, result_paths=['c']",
+            "traced_for=cond, fun=my_f, arg_names=x['c'], result_paths=",
+            "traced_for=cond, fun=<lambda>, arg_names=x['c'], result_paths=",
+            "traced_for=jit, fun=<lambda>, arg_names=x, result_paths=[0][0][0],[0][0][1]",
         ],
+        check_tracer_arg_name=True,
         expected_tracer_debug_infos=[
-            # TODO(necula): missing debug info
-            "None",
-            "traced_for=jit, fun=my_g, arg_names=u,v"
+            "traced_for=custom_transpose fun, fun=fn, arg_names=r,x['c'], from r",
+            "traced_for=custom_transpose fun, fun=fn, arg_names=r,x['c'], from x['c']",
+            "traced_for=custom_transpose transpose_fun, fun=fn_tp, arg_names=r,t, from r",
         ])
+
+  def test_linear_call(self):
+    tracer_spy = TracerSpy()
+    def my_f(x, y):
+      tracer_spy.append(y)
+      def fn(r, x):
+        tracer_spy.append(r)
+        tracer_spy.append(x["c"])
+        return dict(b=x["c"] * r)
+      def fn_tp(r, t):
+        tracer_spy.append(t["b"])
+        return dict(c=t["b"] * r)
+      return dict(a=x["c"] + jax.custom_derivatives.linear_call(fn, fn_tp, y, x)["b"])
+
+    f1 = lambda x: my_f(x, jnp.ones(2) * 3.)
+    x = jnp.ones(2) * 6.
+
+    self._check_tracers_and_jaxprs(
+        jax.jit(lambda x: jax.linear_transpose(f1, dict(c=x))(dict(a=x))),
+        x,
+        tracer_spy=tracer_spy,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=<lambda>, arg_names=x, result_paths=[0]['c']",
+            "traced_for=linear_call fun, fun=fn, arg_names=r,x['c'], result_paths=['b']",
+            "traced_for=linear_call fun_transpose, fun=fn_tp, arg_names=r,t['c'], result_paths=['c']",
+        ],
+        check_tracer_arg_name=True,
+        expected_tracer_debug_infos=[
+            # TODO(necula): from None?
+            "traced_for=jit, fun=<lambda>, arg_names=x, from None",
+            "traced_for=linear_call fun, fun=fn, arg_names=r,x['c'], from r",
+            "traced_for=linear_call fun, fun=fn, arg_names=r,x['c'], from x['c']",
+            "traced_for=linear_call fun_transpose, fun=fn_tp, arg_names=r,t['c'], from t['c']",
+        ]),
+
+
 
   def test_custom_vmap(self):
     tracer_spy = TracerSpy()
@@ -1076,7 +1162,7 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=jit, fun=my_f, arg_names=xdict['x'],xdict['y'], result_paths=['a']",
         ],
         expected_tracer_debug_infos=[
-            "traced_for=custom_vmap, fun=my_f, arg_names=xdict['x'],xdict['y']",
+            "traced_for=custom_vmap fun, fun=my_f, arg_names=xdict['x'],xdict['y']",
             "traced_for=jit, fun=my_f, arg_names=xdict['x'],xdict['y']"
         ])
 
@@ -1341,6 +1427,31 @@ class DebugInfoTest(jtu.JaxTestCase):
         expected_tracer_debug_infos=[
             "traced_for=jit, fun=my_f, arg_names=x"],
     )
+
+  def test_vmap_of_nested_jit(self):
+    tracer_spy = TracerSpy()
+    def my_f(x, y):
+      tracer_spy.append(x)
+
+      def my_g(u, v):
+        tracer_spy.append(u)
+        return dict(c=u * v, d=v)
+
+      return jax.jit(my_g)(y, x)["c"]
+
+    self._check_tracers_and_jaxprs(
+        jax.jit(jax.vmap(my_f)),
+        np.ones((8,), dtype=np.float32), np.zeros((8,), dtype=np.float32),
+        tracer_spy=tracer_spy,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=x,y, result_paths=",
+            "traced_for=jit, fun=my_g, arg_names=u,v, result_paths=['c']",
+        ],
+        expected_tracer_debug_infos=[
+            # TODO(necula): missing debug info
+            "None",
+            "traced_for=jit, fun=my_g, arg_names=u,v"
+        ])
 
   def test_pmap(self):
     tracer_spy = TracerSpy()

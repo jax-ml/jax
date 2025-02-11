@@ -393,8 +393,8 @@ def ffi_call(
           "the vectorized and vmap_method arguments of ffi_call cannot "
           "be used together. Please use the vmap_method argument.")
     vmap_method = "legacy_vectorized" if vectorized else "sequential"
-  allowed_vmap_methods = ["sequential", "expand_dims", "broadcast_all",
-                          "legacy_vectorized", None]
+  allowed_vmap_methods = ["sequential", "sequential_unrolled", "expand_dims",
+                          "broadcast_all", "legacy_vectorized", None]
   if vmap_method not in allowed_vmap_methods:
     raise ValueError(
         f"vmap_method must be on of the allowed methods {allowed_vmap_methods}, "

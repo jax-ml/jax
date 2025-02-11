@@ -1387,7 +1387,7 @@ def _closed_call_check(mesh, *in_rep, call_jaxpr, **kwargs):
 
 
 @register_check(custom_derivatives.custom_jvp_call_p)
-def _custom_jvp_call_check(mesh, *in_rep, call_jaxpr, jvp_jaxpr_thunk,
+def _custom_jvp_call_check(mesh, *in_rep, call_jaxpr, jvp_jaxpr_fun,
                            num_consts, symbolic_zeros):
   return _check_rep(mesh, call_jaxpr.jaxpr, in_rep)
 
@@ -1578,11 +1578,13 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
   return pe.merge_lists(out_knowns, out_tracers, out_consts)
 pe.JaxprTrace.process_shard_map = _shard_map_partial_eval
 
-def _shard_map_linearize(trace, shard_map_p, f, tracers, mesh, in_names,
+def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
+                         tracers, mesh, in_names,
                          out_names_thunk, check_rep, rewrite, auto):
   primals, tangents = unzip2(map(trace.to_primal_tangent_pair, tracers))
   nzs_in = tuple(type(t) is not ad.Zero for t in tangents)
-  f_primal, linearize_outs_thunk = ad.linearize_subtrace(f, trace.tag, nzs_in)
+  f_primal, linearize_outs_thunk = ad.linearize_subtrace(f, trace.tag, nzs_in,
+                                                         f.debug_info)
   f_primal = _promote_scalar_residuals_lin(f_primal, linearize_outs_thunk)
   tangent_in_names = [ax for ax, nz in zip(in_names, nzs_in) if nz]
   all_names = _all_mesh_names_except_spmd(mesh, trace)
@@ -1780,23 +1782,24 @@ def _partial_eval_jaxpr_custom_rule(
 pe.partial_eval_jaxpr_custom_rules[shard_map_p] = \
     _partial_eval_jaxpr_custom_rule
 
-def _add_reshapes(which, jaxpr_known, jaxpr_staged):
+def _add_reshapes(which: Sequence[bool],
+                  jaxpr_known: core.Jaxpr,
+                  jaxpr_staged: core.Jaxpr) -> tuple[core.Jaxpr, core.Jaxpr]:
   # add singleton axes to residuals which are from jaxpr_known and are scalars
   which_ = [w and not v.aval.shape  # pytype: disable=attribute-error
             for w, v in zip(which, jaxpr_staged.invars[:len(which)])]
   if not any(which_): return jaxpr_known, jaxpr_staged
   assert not jaxpr_known.constvars and not jaxpr_staged.constvars
 
-  @lu.wrap_init
   def known(*args):
     out = core.eval_jaxpr(jaxpr_known, (), *args)
     out_known, res = split_list(out, [len(out) - sum(which)])
     res = [_add_singleton(x) if not x.shape else x for x in res]
     return [*out_known, *res]
   avals_in = [v.aval for v in jaxpr_known.invars]
-  jaxpr_known, _, (), () = pe.trace_to_jaxpr_dynamic(known, avals_in)
+  jaxpr_known, _, (), () = pe.trace_to_jaxpr_dynamic(
+      lu.wrap_init(known, debug_info=jaxpr_known.debug_info), avals_in)
 
-  @lu.wrap_init
   def staged(*args):
     res_, ins = split_list(args, [len(which)])
     res = [_rem_singleton(x) if w else x for x, w in zip(res_, which_)]
@@ -1804,7 +1807,8 @@ def _add_reshapes(which, jaxpr_known, jaxpr_staged):
   res_avals = [core.unmapped_aval(1, 0, v.aval) if w else v.aval
                for w, v in zip(which_, jaxpr_staged.invars[:len(which)])]
   avals_in = [*res_avals, *[v.aval for v in jaxpr_staged.invars[len(which):]]]
-  jaxpr_staged, _, (), () = pe.trace_to_jaxpr_dynamic(staged, avals_in)
+  jaxpr_staged, _, (), () = pe.trace_to_jaxpr_dynamic(
+      lu.wrap_init(staged, debug_info=jaxpr_staged.debug_info), avals_in)
 
   return jaxpr_known, jaxpr_staged
 
@@ -2070,7 +2074,8 @@ def _replication_rewrite_match(
     in_rep: Sequence[set[AxisName]],
     out_rep_dst: Sequence[set[AxisName]],
 ) -> core.ClosedJaxpr:
-  f = lu.wrap_init(partial(core.eval_jaxpr, jaxpr.jaxpr, jaxpr.consts))
+  f = lu.wrap_init(partial(core.eval_jaxpr, jaxpr.jaxpr, jaxpr.consts),
+                   debug_info=jaxpr.jaxpr.debug_info)
   f, out_rep = _efficient_transpose_rewrite_nomatch(f, mesh, in_rep)
   f = _match_rep(f, mesh, out_rep, out_rep_dst)
   jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(f, jaxpr.in_avals)
