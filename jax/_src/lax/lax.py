@@ -1028,7 +1028,9 @@ def composite(
   Returns:
     out: callable composite function. Note that positional arguments to this
       function should be interpreted as inputs and keyword arguments should be
-      interpreted as attributes of the op.
+      interpreted as attributes of the op. Any keyword arguments that are passed
+      with ``None`` as a value will be omitted from the
+      ``composite_attributes``.
 
   Examples:
     Tangent kernel:
@@ -1113,7 +1115,11 @@ def _composite_lowering(
       ctx.avals_out,
       ctx.tokens_in,
   )
-  composite_attrs = {k : mlir.ir_attribute(v) for k, v in attributes}
+  composite_attrs = {
+      k : mlir.ir_attribute(v)
+      for k, v in attributes
+      if v is not None
+  }
   symbol_name = func_op.name.value
   composite = hlo.CompositeOp(
       func_op.type.results,

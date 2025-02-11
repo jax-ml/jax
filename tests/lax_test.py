@@ -4593,6 +4593,7 @@ class CompositeTest(jtu.JaxTestCase):
           x,
           dtype=np.dtype(np.float32),
           int=1,
+          omit=None,
           str="bar",
           tensor=np.zeros((1, 2), dtype=np.float32),
           tensor_r1=np.zeros((2,), dtype=np.float32),
