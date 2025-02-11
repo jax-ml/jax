@@ -240,12 +240,52 @@ def _vector_splat_op_lowering_rule(
   return [_fragmented_array_to_ir(fragmented_array, out_vec_ty)]
 
 
+def memref_layout_to_transforms(
+    layout: ir.Attribute,
+) -> tuple[mgpu.SwizzlingMode, tuple[launch_context.MemRefTransform, ...]]:
+  """Returns the swizzle and transforms that are encoded in the given layout.
+
+    If the layout is not a LayoutAttr, the swizzle is kNoSwizzle and the
+    transforms are empty. Otherwise, the layout may have at most one swizzle
+    transform and any combination of tiling and transpose transforms.
+  """
+  swizzle = None
+  gmem_transforms: tuple[launch_context.MemRefTransform, ...] = ()
+
+  if mgpu.LayoutAttr.isinstance(layout):
+    transforms_attr = mgpu.LayoutAttr(layout).transforms
+    for transform in transforms_attr:
+      if mgpu.SwizzleTransformAttr.isinstance(transform):
+        # TODO(dasenov): Swizzling can change if the ref is sliced in certain
+        # ways. We might want to enforce some restrictions here.
+        if swizzle is not None:
+          raise ValueError(f"{layout} has multiple swizzle transforms")
+        swizzle = mgpu.SwizzleTransformAttr(transform).swizzle
+      elif mgpu.TileTransformAttr.isinstance(transform):
+        tiling = mgpu.TileTransformAttr(transform).tiling
+        tiling_transform = launch_context.TileTransform(tuple(tiling))
+        gmem_transforms = gmem_transforms + (tiling_transform,)
+      elif mgpu.TransposeTransformAttr.isinstance(transform):
+        permutation = mgpu.TransposeTransformAttr(transform).permutation
+        transpose_transform = launch_context.TransposeTransform(
+            tuple(permutation)
+        )
+        gmem_transforms = gmem_transforms + (transpose_transform,)
+      else:
+        raise ValueError(f"{layout} has an unsupported transform: {transform}")
+
+  return swizzle or mgpu.SwizzlingMode.kNoSwizzle, gmem_transforms
+
+
 @_register_lowering(mgpu.AsyncLoadOp)
 def _mgpu_async_load_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncLoadOp
 ) -> Sequence[ir.Value]:
   assert ctx.launch_context is not None
   barrier = utils.BarrierRef.from_dialect_barrier_memref(load_op.barrier)
+
+  dst_layout = ir.MemRefType(load_op.destination.type).layout
+  swizzle, transforms = memref_layout_to_transforms(dst_layout)
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=load_op.source,
@@ -253,7 +293,8 @@ def _mgpu_async_load_op_lowering_rule(
       barrier=barrier,
       arrive=False,
       uniform=True,
-      swizzle=load_op.swizzle.value,
+      swizzle=swizzle,
+      gmem_transform=transforms,
       predicate=ctx.single_thread_per_warpgroup_predicate,
   )
   return []
@@ -264,11 +305,15 @@ def _mgpu_async_store_op_lowering_rule(
     ctx: LoweringContext, store_op: mgpu.AsyncStoreOp
 ) -> Sequence[ir.Value]:
   assert ctx.launch_context is not None
+
+  src_layout = ir.MemRefType(store_op.source.type).layout
+  swizzle, transforms = memref_layout_to_transforms(src_layout)
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=store_op.source,
       dst_ref=store_op.destination,
-      swizzle=store_op.swizzle.value,
+      swizzle=swizzle,
+      gmem_transform=transforms,
       uniform=True,
       predicate=ctx.single_thread_per_warpgroup_predicate,
   )

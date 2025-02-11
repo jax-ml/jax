@@ -163,7 +163,6 @@ class DialectTest(MosaicGpuTest):
               barrier,
               indices,
               slice_lengths=[4, 8],
-              transforms=ir.ArrayAttr.get([]),
               collective=ir.ArrayAttr.get([]),
           )
       )
@@ -190,7 +189,6 @@ class DialectTest(MosaicGpuTest):
               barrier,
               indices,
               slice_lengths=[4, 8],
-              transforms=ir.ArrayAttr.get([]),
               collective=ir.ArrayAttr.get([]),
           )
       )
@@ -217,7 +215,6 @@ class DialectTest(MosaicGpuTest):
               barrier,
               indices,
               slice_lengths=[-2, 8],
-              transforms=ir.ArrayAttr.get([]),
               collective=ir.ArrayAttr.get([]),
           )
       )
@@ -245,7 +242,6 @@ class DialectTest(MosaicGpuTest):
               barrier,
               indices,
               slice_lengths=[-1, 4, 8],
-              transforms=ir.ArrayAttr.get([]),
               collective=ir.ArrayAttr.get([]),
           )
       )
@@ -271,7 +267,6 @@ class DialectTest(MosaicGpuTest):
               barrier,
               indices,
               slice_lengths=[4, 8],
-              transforms=ir.ArrayAttr.get([]),
               collective=ir.ArrayAttr.get([]),
           )
       )
@@ -297,7 +292,6 @@ class DialectTest(MosaicGpuTest):
               barrier,
               indices,
               slice_lengths=[4, 8],
-              transforms=ir.ArrayAttr.get([]),
               collective=ir.ArrayAttr.get([]),
           )
       )
@@ -324,7 +318,6 @@ class DialectTest(MosaicGpuTest):
               barrier,
               indices,
               slice_lengths=[4],
-              transforms=ir.ArrayAttr.get([]),
               collective=ir.ArrayAttr.get([
                   ir.IntegerAttr.get(i32, mgpu.dialect.Dimension.x),
                   ir.IntegerAttr.get(i32, mgpu.dialect.Dimension.x),
@@ -356,7 +349,6 @@ class DialectTest(MosaicGpuTest):
               destination,
               indices,
               slice_lengths=[4, 8],
-              transforms=ir.ArrayAttr.get([]),
           )
       )
 
@@ -380,7 +372,6 @@ class DialectTest(MosaicGpuTest):
               destination,
               indices,
               slice_lengths=[4, 8],
-              transforms=ir.ArrayAttr.get([]),
           )
       )
 
@@ -404,7 +395,6 @@ class DialectTest(MosaicGpuTest):
               destination,
               indices,
               slice_lengths=[-2, 8],
-              transforms=ir.ArrayAttr.get([]),
           )
       )
 
@@ -429,7 +419,6 @@ class DialectTest(MosaicGpuTest):
               destination,
               indices,
               slice_lengths=[-1, 4, 8],
-              transforms=ir.ArrayAttr.get([]),
           )
       )
 
@@ -452,7 +441,6 @@ class DialectTest(MosaicGpuTest):
               destination,
               indices,
               slice_lengths=[4, 8],
-              transforms=ir.ArrayAttr.get([]),
           )
       )
 
@@ -475,7 +463,6 @@ class DialectTest(MosaicGpuTest):
               destination,
               indices,
               slice_lengths=[4, 8],
-              transforms=ir.ArrayAttr.get([]),
           )
       )
 

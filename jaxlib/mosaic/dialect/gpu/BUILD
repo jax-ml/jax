@@ -198,10 +198,12 @@ genrule(
 )
 
 DIALECT_CAPI_SOURCES = [
+    ":integrations/c/attributes.cc",
     ":integrations/c/gpu_dialect.cc",
 ]
 
 DIALECT_CAPI_HEADERS = [
+    ":integrations/c/attributes.h",
     ":integrations/c/gpu_dialect.h",
 ]
 
@@ -212,7 +214,10 @@ cc_library(
     deps = [
         ":mosaic_gpu",
         ":mosaic_gpu_inc_gen",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:CAPIIR",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
     ],
 )
 
@@ -234,7 +239,10 @@ cc_library(
     deps = [
         ":mosaic_gpu",
         ":mosaic_gpu_inc_gen",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:CAPIIRObjects",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
     ],
     alwayslink = True,
 )

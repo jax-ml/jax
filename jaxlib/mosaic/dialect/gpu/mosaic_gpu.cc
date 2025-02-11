@@ -260,14 +260,25 @@ llvm::LogicalResult VerifyCommonLoadStoreOp(
     return error(
         "The `slice_lengths` attribute must not contain values less than -1.");
   }
-  if (gmem_type.getRank() !=
+
+  int dim_expansion = 0;
+  if (auto layout = mlir::dyn_cast<LayoutAttr>(smem_type.getLayout())) {
+    for (auto transform : layout.getTransforms()) {
+      if (auto tile = mlir::dyn_cast<TileTransformAttr>(transform)) {
+        dim_expansion += tile.getTiling().size();
+      }
+    }
+  }
+  if (gmem_type.getRank() + dim_expansion !=
       smem_type.getRank() + absl::c_count(slice_lengths, -1)) {
     return error(
-        "The rank of the `{0}` must be equal to the rank of the "
+        "The rank of the `{0}` plus any dimension expansion due to tiling "
+        " transforms must be equal to the rank of the "
         "`{1}` plus the number of collapsed dimensions as indicated "
         "by -1 values in `slice_lengths`.",
         gmem_name, smem_name);
   }
+
   if (num_indices != gmem_type.getRank()) {
     return error("The size of `indices` must be equal to the rank of `{0}`.",
                  gmem_name);
@@ -483,6 +494,14 @@ llvm::LogicalResult WGMMAOp::verify() {
   }
 
   return llvm::success();
+}
+
+mlir::AffineMap LayoutAttr::getAffineMap() const {
+  // This always returns an identity map. It's technically not correct, but we
+  // don't actually use it anywhere. It's only called during verification of the
+  // layout attribute and needs to be semi-valid.
+  return mlir::AffineMap::getMultiDimIdentityMap(getNumDimensions(),
+                                                 getContext());
 }
 
 void MosaicGPUDialect::initialize() {
