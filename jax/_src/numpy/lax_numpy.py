@@ -10835,6 +10835,12 @@ def take_along_axis(
   collapsed_slice_dims = []
   operand_batching_dims = []
   start_indices_batching_dims = []
+
+  # We will squeeze the array. i is the index of the unsqueezed shape, while
+  # new_i is the index of the squeezed shape. j is the index of the gather
+  # indices.
+  dims_to_squeeze = []
+  new_i = 0
   j = 0
   for i in range(rank):
     if i == axis_int:
@@ -10842,22 +10848,20 @@ def take_along_axis(
         indices = _normalize_index(indices, axis_size)
       gather_indices.append(lax.reshape(indices, gather_index_shape))
       slice_sizes.append(1)
-      start_index_map.append(i)
-      collapsed_slice_dims.append(i)
+      start_index_map.append(new_i)
+      collapsed_slice_dims.append(new_i)
+      new_i += 1
       j += 1
     elif core.definitely_equal(idx_shape[i], 1):
       # If idx_shape[i] == 1, we can just take the entirety of the arr's axis
       # and avoid forming an iota index.
       offset_dims.append(i)
       slice_sizes.append(arr_shape[i])
+      new_i += 1
     elif core.definitely_equal(arr_shape[i], 1):
-      # If the array dimension is 1 but the index dimension is not, we
-      # broadcast the array dimension to the index dimension by repeatedly
-      # gathering the first element.
-      gather_indices.append(zeros(gather_index_shape, dtype=index_dtype))
-      slice_sizes.append(1)
-      start_index_map.append(i)
-      collapsed_slice_dims.append(i)
+      # If the array dimension is 1 but the index dimension is not, we will
+      # squeeze this dimension.
+      dims_to_squeeze.append(i)
       j += 1
     else:
       # Otherwise, idx_shape[i] == arr_shape[i]. Mark the dimensions in both
@@ -10866,10 +10870,13 @@ def take_along_axis(
         slice_sizes.append(0)
       else:
         slice_sizes.append(1)
-      operand_batching_dims.append(i)
+      operand_batching_dims.append(new_i)
       start_indices_batching_dims.append(j)
+      new_i += 1
       j += 1
 
+  # Squeeze a to remove singleton dimensions.
+  a = lax.squeeze(a, dims_to_squeeze)
   gather_indices_arr = lax.concatenate(gather_indices, dimension=j)
   dnums = lax.GatherDimensionNumbers(
     offset_dims=tuple(offset_dims),
