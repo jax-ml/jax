@@ -476,7 +476,7 @@ class custom_partitioning:
       args = tuple(x if i in static_argnums else x for i, x in enumerate(args))
       dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
       f_, dyn_args = api_util.argnums_partial(
-          lu.wrap_init(self.fun),
+          lu.wrap_init(self.fun, debug_info=debug),
           dyn_argnums,
           args,
           require_static_args_hashable=False,
