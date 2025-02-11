@@ -336,7 +336,7 @@ def _custom_linear_solve_impl(*args, const_lengths, jaxprs):
 
 
 def _tangent_linear_map(func: Callable, params, params_dot,
-                        debug_info: core.DebugInfo | None,
+                        debug_info: core.DebugInfo,
                         *x):
   """Compute the tangent of a linear map.
 
