@@ -14,6 +14,8 @@
 # ==============================================================================
 """Matmul kernel for Blackwell."""
 
+import itertools
+
 import jax
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
@@ -23,6 +25,7 @@ from jax._src.lib.mlir.dialects import nvvm
 from jax.experimental.mosaic import gpu as mgpu
 from jax.experimental.mosaic.gpu import c, ds
 from jax.experimental.mosaic.gpu import tcgen05
+from jax.experimental.mosaic.gpu import profiler
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -209,24 +212,55 @@ def build_kernel(
 
 
 def main(unused_argv):
-  m_tile = 128
-  n_tile = 128
-  k_tile = 64
-  m = 16*m_tile
-  n = 16*n_tile
-  k = 16*k_tile
+  m, k, n = 8192, 4096, 2048
 
   ka, kb = jr.split(jr.key(0), 2)
   a = jr.normal(key=ka, shape=(m, k), dtype=jnp.float16)
   b = jr.normal(key=kb, shape=(n, k), dtype=jnp.float16)
 
-  with mlir.make_ir_context(), ir.Location.unknown():
-    f = build_kernel(m, n, k, tile_m=m_tile, tile_n=n_tile)
-  y = f(a, b).block_until_ready()
+  tile_m = tile_n = (128,)
+  max_concurrent_steps = (2, 4, 5, 6)
+  grid_tile_m = (1, 2, 4, 8, 16)
+  collective = (False, True)
+  configs = itertools.product(tile_m, tile_n, max_concurrent_steps, grid_tile_m, collective)
+  names = ("tile_m", "tile_n", "max_concurrent_steps", "grid_tile_m", "collective")
+  best_runtime = float("inf")
+  best_kwargs = {}
+  for config in configs:
+    kwargs = dict(zip(names, config))
+    tile_m = kwargs["tile_m"]
+    if kwargs["collective"]:
+      tile_m *= 2
+    if m < tile_m or n < kwargs["tile_n"]:
+      continue
+    if (m // tile_m) % kwargs["grid_tile_m"]:
+      continue
+    try:
+      with mlir.make_ir_context(), ir.Location.unknown():
+        f = build_kernel(m, n, k, **kwargs)
+        _, runtime = profiler.measure(f)(a, b)
+    except ValueError as e:
+      if "Mosaic GPU kernel exceeds available shared memory" not in str(e):
+        raise
+      runtime = float("inf")
+    else:
+      print(" ".join(f"{k}={v}" for k, v in kwargs.items()), int(runtime * 1000))
+    if runtime < best_runtime:
+      best_runtime = runtime
+      best_kwargs = kwargs
+  if not best_kwargs:
+    raise ValueError("No valid configuration found")
 
-  y_ref = jax.jit(lambda a, b: a @ b.T)(a, b)
-  np.testing.assert_allclose(y, y_ref, atol=1e-3, rtol=1e-3)
-  print("OK!")
+  with mlir.make_ir_context(), ir.Location.unknown():
+    d, runtime = profiler.measure(build_kernel(m, n, k, **best_kwargs))(a, b)
+  d_ref, ref_runtime = profiler.measure(jax.jit(lambda a, b: a @ b.T))(a, b)
+
+  tflops = float(2 * k * m * n) / (runtime / 1e3) / 1e12
+  ref_tflops = float(2 * k * m * n) / (ref_runtime / 1e3) / 1e12
+  print("Best parameters: ", " ".join(f"{k}={v}" for k, v in best_kwargs.items()))
+  print(f"Kernel:    {runtime * 1000:.1f} us = {tflops:.1f} TFLOPS")
+  print(f"Reference: {ref_runtime * 1000:.1f} us = {ref_tflops:.1f} TFLOPS")
+  np.testing.assert_allclose(d, d_ref, atol=1e-3, rtol=1e-3)
 
 
 if __name__ == "__main__":
