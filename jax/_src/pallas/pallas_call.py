@@ -242,7 +242,9 @@ def _batch_block_mapping(
 
   with grid_mapping.trace_env():
     block_mapping_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(_block_map_function), idx_avals)
+        lu.wrap_init(_block_map_function,
+                     debug_info=block_mapping.index_map_jaxpr.jaxpr.debug_info),
+        idx_avals)
   shape = block_mapping.block_shape
   if dim is batching.not_mapped:
     new_block_shape = shape

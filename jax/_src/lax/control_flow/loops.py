@@ -1255,7 +1255,9 @@ def _scan_state_partial_discharge_rule(should_discharge, in_avals, out_avals, *a
   )
   # TODO(cperivol): avoid tracing the jaxpr twice. When doing so don't
   # forget to manage the effects.
-  new_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(wrapped), avals_for_wrapped_no_refs)
+  new_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(
+      lu.wrap_init(wrapped, debug_info=discharged_jaxpr.debug_info),
+      avals_for_wrapped_no_refs)
   all_out = scan_p.bind(*args_for_wrapped,
                         jaxpr=core.ClosedJaxpr(new_jaxpr, ()),
                         length=length,
@@ -1922,9 +1924,9 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args, 
     carry, refs_out = split_list(carry_refs, [num_carry])
     return [*refs_out, *carry]
   new_body_jaxpr, _, new_body_consts, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(new_body), [*remaining_body_const_avals, *[a.inner_aval for a
-                                                              in ref_avals],
-                               *carry_avals])
+      lu.wrap_init(new_body, debug_info=discharged_body_jaxpr.debug_info),
+      [*remaining_body_const_avals, *[a.inner_aval for a in ref_avals],
+      *carry_avals])
   if new_body_consts: raise NotImplementedError
 
   # Since some `Ref`s that were previously consts are now carries, we need to
@@ -1936,9 +1938,8 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args, 
     del refs  # We don't use them here!
     return core.eval_jaxpr(cond_jaxpr, cond_jaxpr_consts, *consts, *carry)
   new_cond_jaxpr, _, new_cond_consts, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(new_cond), [*cond_consts_avals,
-                               *[a.inner_aval for a in ref_avals],
-                               *carry_avals])
+      lu.wrap_init(new_cond, debug_info=cond_jaxpr.debug_info),
+      [*cond_consts_avals, *[a.inner_aval for a in ref_avals], *carry_avals])
   if new_cond_consts: raise NotImplementedError
 
   out = while_p.bind(*cond_consts, *remaining_body_consts, *refs, *carry,

@@ -3044,11 +3044,11 @@ def _custom_jvp_call_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
     call_jaxpr: jax_core.Jaxpr,
-    jvp_jaxpr_thunk: Callable,
+    jvp_jaxpr_fun: lu.WrappedFun,
     num_consts: int,
     symbolic_zeros: bool,
 ):
-  del jvp_jaxpr_thunk
+  del jvp_jaxpr_fun
   if symbolic_zeros: raise NotImplementedError
   if num_consts: raise NotImplementedError
   if call_jaxpr.consts: raise NotImplementedError
