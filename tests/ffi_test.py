@@ -181,7 +181,8 @@ class FfiTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
       shape=[(6, 5), (4, 5, 6)],
-      vmap_method=["expand_dims", "broadcast_all", "sequential"],
+      vmap_method=["expand_dims", "broadcast_all", "sequential",
+                   "sequential_unrolled"],
   )
   @jtu.run_on_devices("gpu", "cpu")
   def test_ffi_call_batching(self, shape, vmap_method):
@@ -190,7 +191,7 @@ class FfiTest(jtu.JaxTestCase):
     expected = lax_linalg_internal.geqrf(x)
     actual = jax.vmap(partial(ffi_call_geqrf, vmap_method=vmap_method))(x)
     for a, b in zip(actual, expected):
-      if vmap_method == "sequential" and len(shape) == 3:
+      if vmap_method.startswith("sequential") and len(shape) == 3:
         # On GPU, the batched FFI call to geqrf uses an algorithm with
         # different numerics than the unbatched version (which is used when
         # vmap_method="sequential"). Therefore, we need to include floating
