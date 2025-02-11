@@ -41,6 +41,7 @@ def build_kernel(
     m, n, k,
     tile_m: int = 128,
     tile_n: int = 128,
+    grid_tile_m: int = 1,
     max_concurrent_steps: int = 2,
     collective: bool = False,
 ):
@@ -50,13 +51,6 @@ def build_kernel(
 
   swizzle = 128
   tile_k = swizzle // 2
-
-  if m % tile_m != 0:
-    raise ValueError(f"{m=} must be divisible by {tile_m=}")
-  if n % tile_n != 0:
-    raise ValueError(f"{n=} must be divisible by {tile_n=}")
-  if k % tile_k != 0:
-    raise ValueError(f"{k=} must be divisible by {tile_k=}")
 
   in_dtype = jnp.float16
   k_loop_iter = k // tile_k
@@ -69,6 +63,17 @@ def build_kernel(
   if collective:
     tile_m *= 2
     tile_n *= 2
+    if grid_tile_m == 1:
+      grid_tile_m = 2
+
+  if m % tile_m != 0:
+    raise ValueError(f"{m=} must be divisible by {tile_m=}")
+  if n % tile_n != 0:
+    raise ValueError(f"{n=} must be divisible by {tile_n=}")
+  if k % tile_k != 0:
+    raise ValueError(f"{k=} must be divisible by {tile_k=}")
+  if (m // tile_m) % grid_tile_m:
+    raise ValueError(f"{m=} // {tile_m=} must be divisible by {grid_tile_m=}")
 
   def kernel(ctx, a, b, d, smem):
     ((a_smem, b_smem), d_smem), barriers, mma_done_barrier, acc = smem
@@ -76,13 +81,19 @@ def build_kernel(
 
     warp_idx = mgpu.warp_idx(sync=True)
     is_warp_leader = nvvm.elect_sync(i1)
-
     is_leader_of = lambda i: arith.andi(arith.cmpi(arith.CmpIPredicate.eq, warp_idx, c(i, i32)), is_warp_leader)
-
-    m_start = arith.muli(gpu.cluster_id(gpu.Dimension.x), c(tile_m,index))
-    block_m_start = arith.muli(gpu.block_id(gpu.Dimension.x), c(block_tile_m,index))
-    n_start = arith.muli(gpu.block_id(gpu.Dimension.y), c(tile_n,index))
     is_leader_block = arith.cmpi(arith.CmpIPredicate.eq, ctx.cluster_idx(gpu.Dimension.x), c(0, index))
+
+    m_idx = arith.addi(
+        gpu.block_id(gpu.Dimension.x),
+        arith.muli(gpu.block_id(gpu.Dimension.z), c(grid_tile_m, index)),
+    )
+    n_idx = gpu.block_id(gpu.Dimension.y)
+    block_m_start = arith.muli(m_idx, c(block_tile_m, index))
+    # All blocks in the cluster share the same m_start -- align it!
+    m_start = arith.muli(arith.divui(block_m_start, c(tile_m, index)), c(tile_m, index))
+    n_start = arith.muli(n_idx, c(tile_n,index))
+
 
     with mgpu.when(is_leader_of(TMA_WARP)):
       @mgpu.fori(c(k_loop_iter, index), None)
@@ -185,7 +196,7 @@ def build_kernel(
   )
   return mgpu.as_gpu_kernel(
       kernel,
-      (m // block_tile_m, n // tile_n, 1),
+      (grid_tile_m, n // tile_n, m // (block_tile_m * grid_tile_m)),
       (128, 1, 1),
       (
           jax.ShapeDtypeStruct((m, k), jnp.float16),
