@@ -47,6 +47,10 @@ on:
 
 jobs:
   run-tests:
+    defaults:
+      run:
+        # Explicitly set the shell to bash
+        shell: bash
     runs-on: ${{ inputs.runner }}
     # TODO: Update to the generic ML ecosystem test containers when they are ready.
     container:  ${{ (contains(inputs.cuda, '12.3') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/nosla-cuda12.3-cudnn9.1-ubuntu20.04-manylinux2014-multipython:latest') ||
@@ -73,11 +77,23 @@ jobs:
           echo "ARCH=${arch}" >> $GITHUB_ENV
           echo "PYTHON_MAJOR_MINOR=${python_major_minor}" >> $GITHUB_ENV
       - name: Download the wheel artifacts from GCS
+        id: download-wheel-artifacts
+        # Set continue-on-error to true to prevent actions from failing the workflow if this step
+        # fails. Instead, we verify the outcome in the next step so that we can print a more
+        # informative error message.
+        continue-on-error: true
         run: >-
           mkdir -p $(pwd)/dist &&
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
+      - name: Skip the test run if the wheel artifacts were not downloaded successfully
+        if: steps.download-wheel-artifacts.outcome == 'failure'
+        run: |
+          echo "Failed to download wheel artifacts from GCS. Please check if the wheels were"
+          echo "built successfully by the artifact build jobs and are available in the GCS bucket."
+          echo "Skipping the test run."
+          exit 1
       - name: Install Python dependencies
         run: $JAXCI_PYTHON -m pip install -r build/requirements.in
       # Halt for testing
