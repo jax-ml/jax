@@ -1082,33 +1082,29 @@ class TCGen05Test(TestCase):
       if rhs_transpose:
         rhs_transform += (mgpu.TransposeTransform((1, 0, 2, 3)),)
       block_id = gpu.cluster_block_id(gpu.Dimension.x)
-      m_slice = ds(arith.muli(block_id, c(m_block_tile, index)), m_block_tile)
-      n_slice = ds(arith.muli(block_id, c(n_block_tile, index)), n_block_tile)
-      # TODO(apaszke): Add support for collective partitioned loads.
       ctx.async_copy(
           src_ref=lhs,
           dst_ref=lhs_smem,
           swizzle=swizzle,
-          gmem_slice=m_slice,
           gmem_transform=lhs_transform,
           barrier=barriers[0],
+          collective=gpu.Dimension.x,
+          partitioned=1 if lhs_transpose else 0,  # Split non-contracting dim.
       )
       ctx.async_copy(
           src_ref=rhs,
           dst_ref=rhs_smem,
           swizzle=swizzle,
-          gmem_slice=n_slice,
           gmem_transform=rhs_transform,
           barrier=barriers[1],
+          collective=gpu.Dimension.x,
+          partitioned=0 if rhs_transpose else 1,  # Split non-contracting dim.
       )
-      barriers[0].wait()
-      barriers[1].wait()
-      # Make sure both blocks have loaded their data.
-      nvvm.cluster_arrive_relaxed(aligned=ir.UnitAttr.get())
-      nvvm.cluster_wait(aligned=ir.UnitAttr.get())
       is_leader_thread = single_thread_predicate()
       is_first_block = arith.cmpi(arith.CmpIPredicate.eq, block_id, c(0, index))
       with when(arith.andi(is_first_block, is_leader_thread)):
+        barriers[0].wait()
+        barriers[1].wait()
         if lhs_transpose:
           lhs_smem = memref_transpose(lhs_smem, (0, 1, 3, 2))
         if rhs_transpose:
@@ -1118,6 +1114,7 @@ class TCGen05Test(TestCase):
         )
         tcgen05.commit_arrive(barriers[2], collective=True, ctx=ctx)
       barriers[2].wait(for_tensor_core=True)
+      m_slice = ds(arith.muli(block_id, c(m_block_tile, index)), m_block_tile)
       acc[:].store_untiled(memref_slice(out, m_slice))
 
     in_finfo = jnp.finfo(in_jax_dtype)
