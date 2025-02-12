@@ -2495,6 +2495,9 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           swizzle=swizzle,
       )
 
+      nvvm.wgmma_commit_group_sync_aligned()
+      nvvm.wgmma_wait_group_sync_aligned(0)
+
       # Registers -> SMEM
       zero_index = arith.constant(ir.IndexType.get(), 0)
       vector.store(result, result_smem_ref, [zero_index, zero_index])
