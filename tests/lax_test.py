@@ -1942,6 +1942,42 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr.eqns[0].primitive, primitive)
 
   @jtu.sample_product(
+      [
+          dict(
+              op=rec.op,
+              reference_op=rec.reference_op,
+              dtype=dtype,
+          )
+          for rec in lax_test_util.lax_named_reduce_ops()
+          for dtype in rec.dtypes
+      ],
+      [
+          dict(shape=shape, dims=dims)
+          for shape, dims in [
+              [(3, 4, 5), (0,)],
+              [(3, 4, 5), (1, 2)],
+              [(3, 4, 5), (0, 2)],
+              [(3, 4, 5), (0, 1, 2)],
+          ]
+      ],
+  )
+  def testNamedReduceOperators(self, op, reference_op, dtype, shape, dims):
+    rng_factory = (jtu.rand_default if dtypes.issubdtype(dtype, np.integer)
+                   else jtu.rand_small)
+    rng = rng_factory(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+
+    def lax_fun(operand):
+      return op(operand, dims)
+
+    def reference_fun(operand):
+      return reference_op(operand, dims).astype(dtype)
+
+    self._CompileAndCheck(lax_fun, args_maker)
+    self._CheckAgainstNumpy(reference_fun, lax_fun, args_maker)
+
+
+  @jtu.sample_product(
     op=["add", "mul"],
     op_namespace=[lax, operator],
     arr_weak_type=[False, True],

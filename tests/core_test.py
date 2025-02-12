@@ -34,7 +34,6 @@ from jax._src import util
 from jax._src import test_util as jtu
 from jax._src.core import ShapedArray, DBIdx
 from jax._src.interpreters import partial_eval as pe
-from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
 
 config.parse_flags_with_absl()
@@ -651,7 +650,7 @@ class DynamicShapesTest(jtu.JaxTestCase):
     def f(x, y):
       z = lax.mul(x, y)
       w = lax.sin(z)
-      u = lax_internal._reduce_sum(w, [0])
+      u = lax.reduce_sum(w, [0])
       return (u,)
 
     jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
