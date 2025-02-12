@@ -240,6 +240,7 @@ def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
 
 for op in (
     arith.AddFOp,
+    arith.AddIOp,
     arith.MulFOp,
     vector.LoadOp,
     vector.StoreOp,

@@ -1317,9 +1317,11 @@ def _add_lowering_rule_wg(ctx: LoweringRuleContext, x, y):
 
   if np.issubdtype(ctx.avals_in[0].dtype, np.floating):
     add_op = arith_dialect.addf
+  elif np.issubdtype(ctx.avals_in[0].dtype, np.integer):
+    add_op = arith_dialect.addi
   else:
     raise NotImplementedError(
-        "Lowering of non-float addition is not implemented"
+        f"Unsupported dtype {ctx.avals_in[0].dtype} in lowering of add_p"
     )
 
   x = _ensure_vector(x, x_aval.dtype)

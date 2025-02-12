@@ -2085,6 +2085,7 @@ class PallasCallWarpgroupSemanticsTest(PallasTest):
 
   @parameterized.named_parameters(
       ("add_float", lambda x, y: x + y, np.float32),
+      ("add_int", lambda x, y: x + y, np.int32),
   )
   def test_binary_op_wg_semantics(self, bop, dtype):
     @functools.partial(
