@@ -482,6 +482,8 @@ def ffi_call(
         attributes=_wrap_kwargs_hashable(kwargs),
     )
     if multiple_results:
+      if isinstance(result_shape_dtypes, tuple):
+        return tuple(results)
       return results
     else:
       return results[0]
