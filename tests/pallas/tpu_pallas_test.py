@@ -21,9 +21,11 @@ import io
 import math
 import re
 import sys
+from typing import Callable
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax import api_util
 from jax import lax
 from jax._src import checkify
 from jax._src import state
@@ -59,6 +61,13 @@ def string_stdout():
   sys.stdout = stringio
   yield stringio
   sys.stdout = initial_stdout
+
+
+def wrap_init(f: Callable, nr_args: int):
+  # wrapper for lu.wrap_init with debugging info
+  return lu.wrap_init(
+      f,
+      debug_info=api_util.debug_info("state_test", f, (0,) * nr_args, {}))
 
 
 class PallasBaseTest(jtu.JaxTestCase):
@@ -793,7 +802,7 @@ class PallasCallDMATest(PallasBaseTest):
       return []
 
     jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(kernel),
+        wrap_init(kernel, 2),
         [
             state.shaped_array_ref((8,), jnp.float32),
             state.shaped_array_ref((8,), jnp.float32),
@@ -923,7 +932,7 @@ class PallasCallDMATest(PallasBaseTest):
     aref1 = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
     aref2 = state.AbstractRef(jax.core.ShapedArray((4,), jnp.dtype('float32')))
     in_avals = [aref1, aref2]
-    stateful_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
+    stateful_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(wrap_init(f, 2),
                                                           in_avals)
     discharged_jaxpr, _ = state_discharge.discharge_state(
         stateful_jaxpr, consts=(), should_discharge=[False, True])
@@ -2509,7 +2518,7 @@ class PrettyPrintingTest(PallasBaseTest):
       return []
 
     jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(body), [state.shaped_array_ref((2, 8, 128), jnp.int32),
+        wrap_init(body, 2), [state.shaped_array_ref((2, 8, 128), jnp.int32),
                              jax.core.ShapedArray((), jnp.int32)]
     )
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))

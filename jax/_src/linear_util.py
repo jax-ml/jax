@@ -19,7 +19,8 @@ For example,
 
    from jax._src import linear_util as lu
 
-   wf = lu.wrap_init(f)  # Produce a WrappedFun for applying transformations on `f`
+   # Produce a WrappedFun for applying transformations on `f`
+   wf = lu.wrap_init(f, debug_info=api_util.debug_info("test", f, (), {}))
 
 A `WrappedFun` object represents a function `f`, together with a sequence of
 nested transformations that are to be applied to the positional and keyword
@@ -67,6 +68,7 @@ from collections.abc import Callable, Sequence
 from functools import partial
 import re
 from typing import Any, NamedTuple
+import warnings
 import weakref
 
 from jax._src import config
@@ -151,6 +153,7 @@ class WrappedFun:
     stores: a list of out_store for the auxiliary output of the `transforms`.
     params: extra parameters to pass as keyword arguments to `f`, along with the
       transformed keyword arguments.
+    debug_info: debugging info about the function being wrapped.
   """
   __slots__ = ("f", "f_transformed", "transforms", "stores", "params", "in_type", "debug_info")
 
@@ -317,6 +320,15 @@ class DebugInfo(NamedTuple):
     assert not callable(self.result_paths), self
     return tuple(v for v, b in zip(self.safe_result_paths(len(keep)), keep) if b)
 
+
+def _missing_debug_info_msg(for_what: str) -> DebugInfo:
+  warnings.warn(
+      f"{for_what} is missing a DebugInfo object. "
+      "This behavior is deprecated, use api_util.debug_info() to "
+      "construct a proper DebugInfo object and propagate it to this function. "
+      "See https://github.com/jax-ml/jax/issues/26480 for more details.",
+      DeprecationWarning, stacklevel=2)
+  return DebugInfo("missing_debug_info", "<missing_debug_info>", (), ())
 
 def wrap_init(f: Callable, params=None, *,
               debug_info: DebugInfo | None = None) -> WrappedFun:

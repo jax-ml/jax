@@ -3127,7 +3127,12 @@ class MeshExecutable(stages.XlaExecutable):
     if self._all_args_info is None:
       kept_args = args_after_dce
       ref_avals = self.in_avals
-      debug_info = None
+      # TODO(necula): ensure we have actual debug info; need debug info
+      # before DCE.
+      # See https://github.com/jax-ml/jax/issues/26480.
+      debug_info = core.DebugInfo(
+          "MeshExecutable", "<unknown>",
+          tuple(f"args[{i}]" for i in range(len(args))), ())
     else:
       kept_args = args
       ref_avals = self._all_args_info.in_avals
