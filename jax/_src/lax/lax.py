@@ -2177,19 +2177,19 @@ def _get_monoid_reducer(monoid_op: Callable,
     # allow bitwise reductions for boolean and integer types
     _is_intlike = dtype == np.bool_ or dtypes.issubdtype(dtype, np.integer)
     if monoid_op is add:
-      return _reduce_sum if np.equal(val, 0) else None
+      return reduce_sum if np.equal(val, 0) else None
     elif monoid_op is mul:
-      return _reduce_prod if np.equal(val, 1) else None
+      return reduce_prod if np.equal(val, 1) else None
     elif monoid_op is bitwise_or and _is_intlike:
-      return _reduce_or if np.equal(val, _get_bitwise_or_identity(dtype)) else None
+      return reduce_or if np.equal(val, _get_bitwise_or_identity(dtype)) else None
     elif monoid_op is bitwise_and and _is_intlike:
-      return _reduce_and if np.equal(val, _get_bitwise_and_identity(dtype)) else None
+      return reduce_and if np.equal(val, _get_bitwise_and_identity(dtype)) else None
     elif monoid_op is bitwise_xor and _is_intlike:
-      return _reduce_xor if np.equal(val, _get_bitwise_or_identity(dtype)) else None
+      return reduce_xor if np.equal(val, _get_bitwise_or_identity(dtype)) else None
     elif monoid_op is max:
-      return _reduce_max if np.equal(val, _get_max_identity(dtype)) else None
+      return reduce_max if np.equal(val, _get_max_identity(dtype)) else None
     elif monoid_op is min:
-      return _reduce_min if np.equal(val, _get_min_identity(dtype)) else None
+      return reduce_min if np.equal(val, _get_min_identity(dtype)) else None
   return None
 
 def _get_bitwise_and_identity(dtype: DTypeLike) -> np.ndarray:
@@ -2226,25 +2226,164 @@ def _get_min_identity(dtype: DTypeLike) -> np.ndarray:
   else:
     raise ValueError(f"Unsupported dtype for min: {dtype}")
 
-def _reduce_sum(operand: ArrayLike, axes: Sequence[int]) -> Array:
+def reduce_sum(operand: ArrayLike, axes: Sequence[int]) -> Array:
+  """Compute the sum of elements over one or more array axes.
+
+  Args:
+    operand: array over which to sum. Must have numerical dtype.
+    axes: sequence of zero or more unique integers specifying the axes over
+      which to sum. Each entry must satisfy ``0 <= axis < operand.ndim``.
+
+  Returns:
+    An array of the same dtype as ``operand``, with shape corresponding
+    to the dimensions of ``operand.shape`` with ``axes`` removed.
+
+  Notes:
+    Unlike :func:`jax.numpy.sum`, :func:`jax.lax.reduce_sum` does not upcast
+    narrow-width types for accumulation, so sums of 8-bit or 16-bit types
+    may be subject to rounding errors.
+
+  See also:
+    - :func:`jax.numpy.sum`: more flexible NumPy-style summation API, built
+      around :func:`jax.lax.reduce_sum`.
+    - Other low-level :mod:`jax.lax` reduction operators:
+      :func:`jax.lax.reduce_prod`, :func:`jax.lax.reduce_max`, :func:`jax.lax.reduce_min`,
+      :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_or`, :func:`jax.lax.reduce_xor`.
+  """
   return reduce_sum_p.bind(operand, axes=tuple(axes))
 
-def _reduce_prod(operand: ArrayLike, axes: Sequence[int]) -> Array:
+def reduce_prod(operand: ArrayLike, axes: Sequence[int]) -> Array:
+  """Compute the product of elements over one or more array axes.
+
+  Args:
+    operand: array over which to sum. Must have numerical dtype.
+    axes: sequence of zero or more unique integers specifying the axes over
+      which to sum. Each entry must satisfy ``0 <= axis < operand.ndim``.
+
+  Returns:
+    An array of the same dtype as ``operand``, with shape corresponding
+    to the dimensions of ``operand.shape`` with ``axes`` removed.
+
+  Notes:
+    Unlike :func:`jax.numpy.prod`, :func:`jax.lax.reduce_prod` does not upcast
+    narrow-width types for accumulation, so products of 8-bit or 16-bit types
+    may be subject to rounding errors.
+
+  See also:
+    - :func:`jax.numpy.prod`: more flexible NumPy-style product API, built
+      around :func:`jax.lax.reduce_prod`.
+    - Other low-level :mod:`jax.lax` reduction operators:
+      :func:`jax.lax.reduce_sum`, :func:`jax.lax.reduce_max`, :func:`jax.lax.reduce_min`,
+      :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_or`, :func:`jax.lax.reduce_xor`.
+  """
   return reduce_prod_p.bind(operand, axes=tuple(axes))
 
-def _reduce_max(operand: ArrayLike, axes: Sequence[int]) -> Array:
+def reduce_max(operand: ArrayLike, axes: Sequence[int]) -> Array:
+  """Compute the maximum of elements over one or more array axes.
+
+  Args:
+    operand: array over which to compute maximum.
+    axes: sequence of zero or more unique integers specifying the axes over
+      which to reduce. Each entry must satisfy ``0 <= axis < operand.ndim``.
+
+  Returns:
+    An array of the same dtype as ``operand``, with shape corresponding
+    to the dimensions of ``operand.shape`` with ``axes`` removed.
+
+  See also:
+    - :func:`jax.numpy.max`: more flexible NumPy-style max-reduction API, built
+      around :func:`jax.lax.reduce_max`.
+    - Other low-level :mod:`jax.lax` reduction operators:
+      :func:`jax.lax.reduce_sum`, :func:`jax.lax.reduce_prod`, :func:`jax.lax.reduce_min`,
+      :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_or`, :func:`jax.lax.reduce_xor`.
+  """
   return reduce_max_p.bind(operand, axes=tuple(axes))
 
-def _reduce_min(operand: ArrayLike, axes: Sequence[int]) -> Array:
+def reduce_min(operand: ArrayLike, axes: Sequence[int]) -> Array:
+  """Compute the minimum of elements over one or more array axes.
+
+  Args:
+    operand: array over which to compute minimum.
+    axes: sequence of zero or more unique integers specifying the axes over
+      which to reduce. Each entry must satisfy ``0 <= axis < operand.ndim``.
+
+  Returns:
+    An array of the same dtype as ``operand``, with shape corresponding
+    to the dimensions of ``operand.shape`` with ``axes`` removed.
+
+  See also:
+    - :func:`jax.numpy.min`: more flexible NumPy-style min-reduction API, built
+      around :func:`jax.lax.reduce_min`.
+    - Other low-level :mod:`jax.lax` reduction operators:
+      :func:`jax.lax.reduce_sum`, :func:`jax.lax.reduce_prod`, :func:`jax.lax.reduce_max`,
+      :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_or`, :func:`jax.lax.reduce_xor`.
+  """
   return reduce_min_p.bind(operand, axes=tuple(axes))
 
-def _reduce_or(operand: ArrayLike, axes: Sequence[int]) -> Array:
+def reduce_or(operand: ArrayLike, axes: Sequence[int]) -> Array:
+  """Compute the bitwise OR of elements over one or more array axes.
+
+  Args:
+    operand: array over which to compute the reduction. Must have boolean
+      or integer dtype.
+    axes: sequence of zero or more unique integers specifying the axes over
+      which to reduce. Each entry must satisfy ``0 <= axis < operand.ndim``.
+
+  Returns:
+    An array of the same dtype as ``operand``, with shape corresponding
+    to the dimensions of ``operand.shape`` with ``axes`` removed.
+
+  See also:
+    - :func:`jax.numpy.bitwise_or.reduce`: more flexible NumPy-style logical
+      reduction API, built around :func:`jax.lax.reduce_or`.
+    - Other low-level :mod:`jax.lax` reduction operators:
+      :func:`jax.lax.reduce_sum`, :func:`jax.lax.reduce_prod`, :func:`jax.lax.reduce_max`,
+      :func:`jax.lax.reduce_min`, :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_xor`.
+  """
   return reduce_or_p.bind(operand, axes=tuple(axes))
 
-def _reduce_and(operand: ArrayLike, axes: Sequence[int]) -> Array:
+def reduce_and(operand: ArrayLike, axes: Sequence[int]) -> Array:
+  """Compute the bitwise AND of elements over one or more array axes.
+
+  Args:
+    operand: array over which to compute the reduction. Must have boolean
+      or integer dtype.
+    axes: sequence of zero or more unique integers specifying the axes over
+      which to reduce. Each entry must satisfy ``0 <= axis < operand.ndim``.
+
+  Returns:
+    An array of the same dtype as ``operand``, with shape corresponding
+    to the dimensions of ``operand.shape`` with ``axes`` removed.
+
+  See also:
+    - :func:`jax.numpy.bitwise_and.reduce`: more flexible NumPy-style logical
+      reduction API, built around :func:`jax.lax.reduce_and`.
+    - Other low-level :mod:`jax.lax` reduction operators:
+      :func:`jax.lax.reduce_sum`, :func:`jax.lax.reduce_prod`, :func:`jax.lax.reduce_max`,
+      :func:`jax.lax.reduce_min`, :func:`jax.lax.reduce_or`, :func:`jax.lax.reduce_xor`.
+  """
   return reduce_and_p.bind(operand, axes=tuple(axes))
 
-def _reduce_xor(operand: ArrayLike, axes: Sequence[int]) -> Array:
+def reduce_xor(operand: ArrayLike, axes: Sequence[int]) -> Array:
+  """Compute the bitwise XOR of elements over one or more array axes.
+
+  Args:
+    operand: array over which to compute the reduction. Must have boolean
+      or integer dtype.
+    axes: sequence of zero or more unique integers specifying the axes over
+      which to reduce. Each entry must satisfy ``0 <= axis < operand.ndim``.
+
+  Returns:
+    An array of the same dtype as ``operand``, with shape corresponding
+    to the dimensions of ``operand.shape`` with ``axes`` removed.
+
+  See also:
+    - :func:`jax.numpy.bitwise_xor.reduce`: more flexible NumPy-style logical
+      reduction API, built around :func:`jax.lax.reduce_xor`.
+    - Other low-level :mod:`jax.lax` reduction operators:
+      :func:`jax.lax.reduce_sum`, :func:`jax.lax.reduce_prod`, :func:`jax.lax.reduce_max`,
+      :func:`jax.lax.reduce_min`, :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_or`.
+  """
   return reduce_xor_p.bind(operand, axes=tuple(axes))
 
 @overload
@@ -3014,11 +3153,11 @@ def _unbroadcast(aval, x):
     return x
   assert not aval.shape or len(x_shape) == len(aval.shape)
   if not aval.shape:
-    return _reduce_sum(x, list(range(len(x_shape))))
+    return reduce_sum(x, list(range(len(x_shape))))
   else:
     dims = [i for i, (a, b) in enumerate(zip(x_shape, aval.shape)) if not core.definitely_equal(a, b)]
     if config.enable_checks.value: assert all(aval.shape[i] == 1 for i in dims)
-    return reshape(_reduce_sum(x, dims), aval.shape)
+    return reshape(reduce_sum(x, dims), aval.shape)
 
 def _maybe_broadcast(target_shape, x):
   x_shape = np.shape(x)
@@ -4959,7 +5098,7 @@ def _broadcast_in_dim_transpose_rule(ct, operand, *dyn_shape,
                if core.definitely_equal(s, 1)]
   bdims = tuple(np.delete(broadcast_dimensions, unit_dims))
   axes = tuple(np.delete(range(len(shape)), bdims))
-  return ([expand_dims(_reduce_sum(ct, axes), unit_dims)] +
+  return ([expand_dims(reduce_sum(ct, axes), unit_dims)] +
           [None] * len(dyn_shape))
 
 def _broadcast_in_dim_batch_rule(axis_data, batched_args, batch_dims, shape,
@@ -5405,7 +5544,7 @@ def _pad_transpose(t, operand, padding_value, *, padding_config):
     t_padv = ad_util.Zero(padding_value.aval) if ad.is_undefined_primal(padding_value) else None
   else:
     lo, hi, interior = util.unzip3(padding_config)
-    total = lambda x: _reduce_sum(x, list(range(t.ndim)))
+    total = lambda x: reduce_sum(x, list(range(t.ndim)))
 
     def t_op():
       unpad_config = safe_zip(np.negative(lo), np.negative(hi),
@@ -6177,7 +6316,7 @@ reduce_sum_p = standard_primitive(
   'reduce_sum', sharding_rule=_reduce_op_sharding_rule)
 ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p, _get_sum_identity)
-pe.padding_rules[reduce_sum_p] = partial(_reducer_padding, _reduce_sum,
+pe.padding_rules[reduce_sum_p] = partial(_reducer_padding, reduce_sum,
                                          _get_sum_identity)
 batching.ragged_prop_rules[reduce_sum_p] = batching.ragged_mask_elementwise_rule
 
@@ -6192,7 +6331,7 @@ reduce_prod_p = standard_primitive(
   'reduce_prod', sharding_rule=_reduce_op_sharding_rule)
 ad.primitive_jvps[reduce_prod_p] = _reduce_prod_jvp_rule
 batching.defreducer(reduce_prod_p, _get_prod_identity)
-pe.padding_rules[reduce_prod_p] = partial(_reducer_padding, _reduce_prod,
+pe.padding_rules[reduce_prod_p] = partial(_reducer_padding, reduce_prod,
                                           _get_prod_identity)
 
 
@@ -6203,8 +6342,8 @@ def _reduce_chooser_jvp_rule(g, ans, operand, *, axes):
   shape = [1 if i in axes else d for i, d in enumerate(operand.shape)]
   location_indicators = convert_element_type(
       _eq_meet(operand, reshape(ans, shape)), g.dtype)
-  counts = _reduce_sum(location_indicators, axes)
-  return div(_reduce_sum(mul(g, location_indicators), axes), counts)
+  counts = reduce_sum(location_indicators, axes)
+  return div(reduce_sum(mul(g, location_indicators), axes), counts)
 
 
 reduce_max_p = standard_primitive(
@@ -6212,7 +6351,7 @@ reduce_max_p = standard_primitive(
     sharding_rule=_reduce_op_sharding_rule)
 ad.defjvp2(reduce_max_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_max_p, _get_max_identity)
-pe.padding_rules[reduce_max_p] = partial(_reducer_padding, _reduce_max,
+pe.padding_rules[reduce_max_p] = partial(_reducer_padding, reduce_max,
                                          _get_max_identity)
 batching.ragged_prop_rules[reduce_max_p] = batching.ragged_mask_elementwise_rule
 
@@ -6222,7 +6361,7 @@ reduce_min_p = standard_primitive(
     sharding_rule=_reduce_op_sharding_rule)
 ad.defjvp2(reduce_min_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_min_p, _get_min_identity)
-pe.padding_rules[reduce_min_p] = partial(_reducer_padding, _reduce_min,
+pe.padding_rules[reduce_min_p] = partial(_reducer_padding, reduce_min,
                                          _get_min_identity)
 
 

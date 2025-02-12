@@ -130,8 +130,15 @@ Operators
     real
     reciprocal
     reduce
+    reduce_and
+    reduce_max
+    reduce_min
+    reduce_or
     reduce_precision
+    reduce_prod
+    reduce_sum
     reduce_window
+    reduce_xor
     rem
     reshape
     rev

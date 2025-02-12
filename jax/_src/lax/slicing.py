@@ -1910,7 +1910,7 @@ def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
   mask = lax.bitwise_and(
       lax.ge(indices, np.int64(0)),
       lax.le(indices, lax.expand_dims(upper_bound, tuple(range(num_batch_dims)))))
-  mask = lax._reduce_and(mask, [num_batch_dims])
+  mask = lax.reduce_and(mask, [num_batch_dims])
 
   # Computes the output shape and the positions of the batch dimensions in the
   # output
