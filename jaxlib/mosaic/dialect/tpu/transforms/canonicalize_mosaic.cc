@@ -677,18 +677,18 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
   return *rules;
 }
 
-const llvm::StringSet<> &elementwise_convertible_ops() {
-  static auto ops = new llvm::StringSet<>{arith::MulFOp::getOperationName(),
-                                          arith::DivFOp::getOperationName(),
-                                          arith::AddFOp::getOperationName(),
-                                          arith::SubFOp::getOperationName(),
-                                          arith::MaximumFOp::getOperationName(),
-                                          arith::MinimumFOp::getOperationName(),
-                                          math::PowFOp::getOperationName(),
-                                          math::TanhOp::getOperationName(),
-                                          math::ExpOp::getOperationName(),
-                                          math::LogOp::getOperationName()};
-  return *ops;
+bool need_elementwise_canonicalization(CanonicalizeContext ctx, Operation &op) {
+  if (isa<arith::DivFOp>(op)) {
+    auto vec_ty = dyn_cast<VectorType>(op.getOperand(0).getType());
+    if (vec_ty && vec_ty.getElementType().isBF16() &&
+        ctx.hardware_generation >= 4) {
+      return false;
+    }
+    return true;
+  }
+  return isa<arith::MulFOp, arith::AddFOp, arith::SubFOp, arith::MaximumFOp,
+             arith::MinimumFOp, math::PowFOp, math::TanhOp, math::ExpOp,
+             math::LogOp>(op);
 }
 
 class MosaicCanonicalizer {
@@ -730,8 +730,7 @@ class MosaicCanonicalizer {
         }
       }
     }
-    if (elementwise_convertible_ops().contains(
-            any_op.getName().getStringRef())) {
+    if (need_elementwise_canonicalization(ctx, any_op)) {
       return canonicalize_elementwise(ctx, any_op);
     }
     if (auto rule_it = rules().find(any_op.getName().getStringRef());
