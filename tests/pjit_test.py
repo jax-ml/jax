@@ -5256,7 +5256,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     @jax.jit
     def g(x):
       x = x * 2
-      y = jax.lax.broadcasted_iota(x.dtype, (8, 2), 0, sharding=P('x', 'y'))
+      y = jax.lax.broadcasted_iota(x.dtype, (8, 2), 0, out_sharding=P('x', 'y'))
       self.assertEqual(y.aval.sharding.spec, P('x', 'y'))
       return x, y
 
@@ -5359,7 +5359,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     @partial(jax.jit, static_argnums=1)
     def f(x, new_sharding):
-      y = lax.reshape(x, dst_shape, sharding=new_sharding)
+      y = lax.reshape(x, dst_shape, out_sharding=new_sharding)
       y = y * 2
       self.assertEqual(y.aval.sharding.spec, dst_spec)
       return y
@@ -6533,7 +6533,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     arr = jax.device_put(np_inp, NamedSharding(mesh, P(None, 'x')))
 
     def f(x):
-      y = lax.reshape(x, (1, 2), sharding=P(None, 'y'))
+      y = lax.reshape(x, (1, 2), out_sharding=P(None, 'y'))
       y = y * 2
       self.assertEqual(y.aval.sharding.spec, P(None, 'y'))
       return y

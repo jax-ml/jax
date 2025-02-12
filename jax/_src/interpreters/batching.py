@@ -1097,7 +1097,7 @@ def broadcast(x, sz, axis, mesh_axis=None):
     sharding = x_aval.sharding.with_spec(new_spec)
   else:
     sharding = None
-  return jax.lax.broadcast_in_dim(x, shape, broadcast_dims, sharding=sharding)
+  return jax.lax.broadcast_in_dim(x, shape, broadcast_dims, out_sharding=sharding)
 
 def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
   if dst == jumble_axis:

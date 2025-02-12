@@ -507,7 +507,7 @@ def _empty_array(prefix, length_spec, aval):
   sharding = (aval.sharding.with_spec((length_spec, *aval.sharding.spec))
               if config.sharding_in_types.value else None)
   return lax.broadcast(lax.empty(aval.dtype), (*prefix, *aval.shape),
-                       sharding=sharding)
+                       out_sharding=sharding)
 
 eval_jaxpr_p = core.Primitive('eval_jaxpr')
 eval_jaxpr_p.multiple_results = True

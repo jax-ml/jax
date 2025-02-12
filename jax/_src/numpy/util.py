@@ -277,7 +277,7 @@ def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape, sharding=None
       msg = "Incompatible shapes for broadcasting: {} and requested shape {}"
       raise ValueError(msg.format(arr_shape, shape))
     return lax.broadcast_in_dim(arr, shape, tuple(range(nlead, len(shape))),
-                                sharding=sharding)
+                                out_sharding=sharding)
 
 
 # The `jit` on `where` exists to avoid materializing constants in cases like
