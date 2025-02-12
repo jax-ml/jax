@@ -84,8 +84,6 @@ def workgroup_ptr_ty() -> ir.Type:
 class MosaicGpuTest(parameterized.TestCase):
 
   def setUp(self):
-    if mgpu.dialect is None:
-      raise self.skipTest("Test requires Mosaic GPU dialect")
     if jax.version._version != jax.lib.__version__:
       raise self.skipTest("Test requires matching jax and jaxlib versions")
     super().setUp()
