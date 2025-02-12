@@ -24,6 +24,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added low-level reduction APIs in {mod}`jax.lax`: {func}`jax.lax.reduce_sum`,
     {func}`jax.lax.reduce_prod`, {func}`jax.lax.reduce_max`, {func}`jax.lax.reduce_min`, 
     {func}`jax.lax.reduce_and`, {func}`jax.lax.reduce_or`, and {func}`jax.lax.reduce_xor`.
+  * {func}`jax.lax.linalg.qr`, and {func}`jax.scipy.linalg.qr`, now support
+    column-pivoting on CPU and GPU. See {jax-issue}`#20282` and
+    {jax-issue}`#25955` for more details.
 
 * Changes
   * `JAX_CPU_COLLECTIVES_IMPLEMENTATION` and `JAX_NUM_CPU_DEVICES` now work as
