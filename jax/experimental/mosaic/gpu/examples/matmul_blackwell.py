@@ -191,11 +191,12 @@ def build_kernel(
       mgpu.tile_shape((block_tile_m, tile_n), (tma_tile_m, tma_tile_kn)),
       jnp.float16)
   smem_buffers = mgpu.Union([compute_buffers, epilogue_buffer])
+  assert block_tile_m == 128
   smem = (
       smem_buffers,
       [mgpu.Barrier(arrival_count=1, num_barriers=max_concurrent_steps)] * 2,
       mgpu.Barrier(arrival_count=1),
-      mgpu.TMEM((128, tile_n), jnp.float32, tcgen05.TMEMLayout.D, collective=collective),
+      mgpu.TMEM((128, tile_n), jnp.float32, collective=collective),
   )
   return mgpu.as_gpu_kernel(
       kernel,
