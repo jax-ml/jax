@@ -79,6 +79,7 @@ jobs:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
+      install-jax-current-commit: 1
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
   run-pytest-cuda:
@@ -109,6 +110,7 @@ jobs:
       python: ${{ matrix.python }}
       cuda:  ${{ matrix.cuda }}
       enable-x64:  ${{ matrix.enable-x64 }}
+      install-jax-current-commit: 1
       # GCS upload URI is the same for both artifact build jobs
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
