@@ -1218,6 +1218,16 @@ compilation_cache_dir = optional_string_state(
           '2. The value of this flag set in the command line or by default.'),
 )
 
+compilation_cache_expect_pgle = bool_state(
+    name='jax_compilation_cache_expect_pgle',
+    default=False,
+    help=('If set to True, compilation cache entries that were compiled with '
+          'profile data (i.e. PGLE was enabled and the requisite number of '
+          'executions were profiled) will be preferentially loaded, even if '
+          'PGLE is not currently enabled. A warning will be printed when no '
+          'preferred cache entry is found.')
+)
+
 compilation_cache_max_size = int_state(
     name='jax_compilation_cache_max_size',
     default=-1,
