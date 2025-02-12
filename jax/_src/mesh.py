@@ -208,8 +208,11 @@ class Mesh(contextlib.ContextDecorator):
           f"devices.ndim == {devices.ndim} and "
           f"len(axis_names) == {len(axis_names)}.")
 
-    axis_types = ({AxisTypes.Auto: axis_names} if axis_types is None else
-                  axis_types)
+    axis_types: MeshAxisType = (
+        {AxisTypes.Auto: axis_names}
+        if axis_types is None else
+        axis_types
+    )
     axis_types_tuple = to_axis_types_tuple(axis_types)
     if len(axis_names_to_types(axis_types).keys()) != len(axis_names):
       raise ValueError(
