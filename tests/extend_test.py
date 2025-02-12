@@ -53,7 +53,8 @@ class ExtendTest(jtu.JaxTestCase):
     self.assertIs(jex.linear_util.merge_linear_aux, linear_util.merge_linear_aux)
     self.assertIs(jex.linear_util.transformation, linear_util.transformation)
     self.assertIs(jex.linear_util.transformation_with_aux, linear_util.transformation_with_aux)
-    self.assertIs(jex.linear_util.wrap_init, linear_util.wrap_init)
+    # TODO(necula): revert this change once we deprecate the old wrap_init
+    # self.assertIs(jex.linear_util.wrap_init, linear_util.wrap_init)
 
 
 class RandomTest(jtu.JaxTestCase):

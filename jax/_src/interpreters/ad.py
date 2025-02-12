@@ -86,7 +86,7 @@ def jvpfun(f: Callable, instantiate, transform_stack, primals, tangents):
 @lu.transformation_with_aux2
 def linearize_subtrace(_f: Callable, _store: lu.Store, _tag: core.TraceTag,
                        nzs_in: Sequence[bool],
-                       debug_info: core.DebugInfo | None,
+                       debug_info: core.DebugInfo,
                        *primals, **params):
   with core.take_current_trace() as parent_trace:
     tangent_trace = pe.DynamicJaxprTrace(debug_info)
@@ -133,7 +133,7 @@ def jvp_subtrace_aux(f, store, tag, primals, tangents):
   return out_primals, out_tangents
 
 def convert_constvars_jaxpr_constvars_at_end(jaxpr: core.Jaxpr) -> core.Jaxpr:
-  dbg = jaxpr.debug_info and jaxpr.debug_info._replace(
+  dbg = jaxpr.debug_info._replace(
       arg_names=jaxpr.debug_info.arg_names + (None,) * len(jaxpr.constvars))
   return core.Jaxpr(constvars=(),
                     invars=jaxpr.invars + jaxpr.constvars,
@@ -768,7 +768,7 @@ def linearize_from_jvp(jvp: Callable,
                        multiple_results: bool,
                        nonzeros: Sequence[bool],
                        user_facing_symbolic_zeros: bool, instantiate_input_zeros: bool,
-                       debug_info: core.DebugInfo | None,
+                       debug_info: core.DebugInfo,
                        primals, params):
   current_name_stack = source_info_util.current_name_stack()
   with core.take_current_trace() as parent_trace:
@@ -1100,15 +1100,14 @@ def rearrange_binders(jaxpr: core.ClosedJaxpr, primals_in, tangents_in, primals_
   new_invars = _perm(primals_in, tangents_in, jaxpr.jaxpr.invars)
   new_outvars = _perm(primals_out, tangents_out, jaxpr.jaxpr.outvars)
   new_debug_info = jaxpr.jaxpr.debug_info
-  if new_debug_info is not None:
-    new_arg_names = tuple(_perm(primals_in, tangents_in,
-                                jaxpr.jaxpr.debug_info.safe_arg_names(len(jaxpr.jaxpr.invars))))
-    new_result_paths = tuple(_perm(primals_out, tangents_out,
-                                   jaxpr.jaxpr.debug_info.safe_result_paths(len(jaxpr.jaxpr.outvars))))
-    new_debug_info = new_debug_info._replace(
-        arg_names=new_arg_names,
-        result_paths=new_result_paths,
-    )
+  new_arg_names = tuple(_perm(primals_in, tangents_in,
+                              jaxpr.jaxpr.debug_info.safe_arg_names(len(jaxpr.jaxpr.invars))))
+  new_result_paths = tuple(_perm(primals_out, tangents_out,
+                                  jaxpr.jaxpr.debug_info.safe_result_paths(len(jaxpr.jaxpr.outvars))))
+  new_debug_info = new_debug_info._replace(
+      arg_names=new_arg_names,
+      result_paths=new_result_paths,
+  )
   new_jaxpr = core.Jaxpr(jaxpr.jaxpr.constvars,
                          new_invars, new_outvars, jaxpr.jaxpr.eqns,
                          jaxpr.jaxpr.effects,
