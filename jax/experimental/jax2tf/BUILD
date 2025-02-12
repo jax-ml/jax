@@ -27,6 +27,15 @@ package(
     default_visibility = ["//visibility:private"],
 )
 
+filegroup(
+    name = "jax2tf_sources",
+    srcs = glob(
+        ["**/*"],
+        exclude = ["examples/tf_js/**"],
+    ),
+    visibility = ["//jax:jax_wheel_files"],
+)
+
 py_library(
     name = "jax2tf",
     srcs = ["__init__.py"],

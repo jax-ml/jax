@@ -23,6 +23,12 @@ package(
     default_visibility = ["//jax:jax_extend_users"],
 )
 
+filegroup(
+    name = "mlir_sources",
+    srcs = glob(["**/*"]),
+    visibility = ["//jax:jax_wheel_files"],
+)
+
 pytype_strict_library(
     name = "ir",
     srcs = ["ir.py"],

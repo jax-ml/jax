@@ -25,6 +25,12 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
+filegroup(
+    name = "tools_sources",
+    srcs = glob(["**/*"]),
+    visibility = ["//jax:jax_wheel_files"],
+)
+
 py_library(
     name = "jax_to_ir",
     srcs = ["jax_to_ir.py"],

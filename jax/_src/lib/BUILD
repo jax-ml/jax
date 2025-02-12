@@ -25,14 +25,23 @@ package(
     default_visibility = ["//jax:internal"],
 )
 
+filegroup(
+    name = "lib_sources",
+    srcs = glob(["**/*"]) + [
+        "//jax/_src/lib/mlir:mlir_sources",
+        "//jax/_src/lib/mlir/dialects:dialects_sources",
+    ],
+    visibility = ["//jax:jax_wheel_files"],
+)
+
 py_library_providing_imports_info(
     name = "lib",
     srcs = [
         "__init__.py",
-        "mlir/__init__.py",
-        "mlir/dialects/__init__.py",
         "mosaic_gpu.py",
         "triton.py",
+        "//jax/_src/lib/mlir:__init__.py",
+        "//jax/_src/lib/mlir/dialects:__init__.py",
     ],
     lib_rule = pytype_strict_library,
     visibility = ["//jax:internal"] + jax_visibility("lib"),

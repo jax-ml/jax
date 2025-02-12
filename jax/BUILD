@@ -110,6 +110,30 @@ package_group(
     packages = mosaic_gpu_internal_users,
 )
 
+package_group(
+    name = "jax_wheel_files",
+    packages = ["//..."],
+)
+
+filegroup(
+    name = "jax_sources",
+    srcs = glob(
+        ["**/*"],
+        exclude = [
+            "experimental/slab/**",
+            "experimental/pallas/ops/tpu/random/**",
+            "_src/internal_test_util/export_back_compat_test_data/**",
+        ],
+    ) + [
+        "//jax/_src/lib:lib_sources",
+        "//jax/_src/pallas:pallas_sources",
+        "//jax/experimental/jax2tf:jax2tf_sources",
+        "//jax/experimental/pallas/ops/gpu:gpu_sources",
+        "//jax/extend:extend_sources",
+        "//jax/tools:tools_sources",
+    ],
+)
+
 # JAX-private test utilities.
 py_library(
     # This build target is required in order to use private test utilities in jax._src.test_util,

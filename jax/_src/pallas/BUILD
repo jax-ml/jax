@@ -25,6 +25,16 @@ package(
     ],
 )
 
+filegroup(
+    name = "pallas_sources",
+    srcs = glob(["**/*"]) + [
+        "//jax/_src/pallas/mosaic:mosaic_sources",
+        "//jax/_src/pallas/mosaic_gpu:mosaic_gpu_sources",
+        "//jax/_src/pallas/triton:triton_sources",
+    ],
+    visibility = ["//jax:jax_wheel_files"],
+)
+
 py_library(
     name = "pallas",
     srcs = [

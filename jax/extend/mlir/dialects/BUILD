@@ -23,6 +23,12 @@ package(
     default_visibility = ["//jax:jax_extend_users"],
 )
 
+filegroup(
+    name = "dialects_sources",
+    srcs = glob(["**/*"]),
+    visibility = ["//jax:jax_wheel_files"],
+)
+
 pytype_strict_library(
     name = "arithmetic_dialect",
     srcs = ["arith.py"],
