@@ -594,6 +594,9 @@ def check_avals_context_mesh(avals, prim_name):
   if config.sharding_in_types.value:
     cur_mesh = mesh_lib.get_abstract_mesh()
     for a in avals:
+      # TODO(yashkatariya): Should be cur_mesh.unset
+      if cur_mesh.empty or a.sharding.mesh.empty:
+        continue
       # avals can have meshes with different axis_names so allow that in
       # full auto mode.
       if a.sharding.mesh._are_all_axes_auto and cur_mesh._are_all_axes_auto:
@@ -1762,13 +1765,13 @@ def canonicalize_value(val):
     return val
   if not isinstance(aval, ShapedArray):
     return val
+  if aval.sharding.mesh.empty:
+    return val
 
   cur_mesh = mesh_lib.get_abstract_mesh()
   if cur_mesh == aval.sharding.mesh:  # type: ignore
     return val
   if cur_mesh._are_all_axes_manual and aval.sharding.mesh._are_all_axes_auto:  # type: ignore
-    return mesh_cast(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))  # type: ignore
-  if aval.sharding.mesh.empty and not cur_mesh.empty:  # type: ignore
     return mesh_cast(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))  # type: ignore
   return val
 
@@ -2118,7 +2121,7 @@ abstract_token: AbstractToken = AbstractToken()
 
 # Singleton shaped array used by all abstract tokens when shape/dtype is needed.
 def get_token_aval():
-  return ShapedArray((0,), np.dtype(np.bool_), sharding=get_cur_mesh_sharding())
+  return ShapedArray((0,), np.dtype(np.bool_), sharding=None)
 
 # Concrete token object
 class Token:
@@ -2383,8 +2386,7 @@ def dim_constant(ct: int):
     return np.int64(ct)
 
 def dim_value_aval() -> AbstractValue:
-  return ShapedArray((), dim_value_dtype(), weak_type=True,
-                     sharding=get_cur_mesh_sharding())
+  return ShapedArray((), dim_value_dtype(), weak_type=True, sharding=None)
 
 # ------------------- Call -------------------
 
@@ -2604,6 +2606,8 @@ def typematch(t1: AbstractValue, t2: AbstractValue) -> bool:
         isinstance(t2, (ShapedArray, DShapedArray))):
     # This case handles DShapedArray and shape polynomials. Alternatively we
     # could try normalizing first and then doing simple equality.
+    # TODO(yashkatariya): Also check `sharding` here.
+    # See https://github.com/jax-ml/jax/issues/26474
     return t1.dtype == t2.dtype and definitely_equal_shape(t1.shape, t2.shape)
   else:
     return False

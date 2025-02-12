@@ -52,9 +52,10 @@ def call_sharding_rule(prim, rule, num_out, *avals, **kwargs):
   if config.sharding_in_types.value:
     from jax._src.pjit import _get_abstract_mesh_from_avals, NamedSharding
     cur_mesh = mesh_lib.get_abstract_mesh()
-    if cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual:
-      aval_mesh = _get_abstract_mesh_from_avals(avals)
-      # TODO(yashkatariya): `aval_mesh.empty` should be `aval_mesh.unset`
+    aval_mesh = _get_abstract_mesh_from_avals(avals)
+    # TODO(yashkatariya): cur_mesh should also look at cur_mesh.unset
+    if ((cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual) and
+        (aval_mesh._are_all_axes_auto or aval_mesh._are_all_axes_manual)):
       aval_mesh = cur_mesh if aval_mesh.empty else aval_mesh
       s = NamedSharding(aval_mesh, P())
       return s if num_out is None else [s] * num_out
