@@ -461,7 +461,7 @@ class ufunc:
       idx = tuple(ind if isinstance(ind, slice) else ind[i] for ind in indices)
       a = a.at[idx].set(self(a.at[idx].get(), *(arg[i] for arg in args)))
       return (i + 1, a), x
-    carry, _ = jax.lax.scan(scan_fun, (0, a), None, len(indices[0]))
+    carry, _ = jax.lax.scan(scan_fun, (0, a), None, len(indices[0]))  # type: ignore[arg-type]
     return carry[1]
 
   @partial(jax.jit, static_argnames=['self', 'axis', 'dtype'])

@@ -729,7 +729,7 @@ def _pallas_call_batching_rule(
     for pos, invar in enumerate(jaxpr.invars):
       ragged_axis_values[pos] = var_to_raggedness[invar]
 
-    per_input_ragged_axis_dim = []
+    per_input_ragged_axis_dim: list[int | None] = []
     for rav in ragged_axis_values:
       if rav is not None:
         per_input_ragged_axis_dim.append(rav[1])
