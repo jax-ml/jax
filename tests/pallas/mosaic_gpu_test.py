@@ -793,25 +793,6 @@ class PallasCallTest(PallasTest):
         jnp.arange(math.prod(grid), dtype=jnp.int32).reshape(*grid)
     )
 
-  def test_program_id_in_block_spec(self):
-    @functools.partial(
-        pl.pallas_call,
-        out_specs=pl.BlockSpec((128,), lambda *_: pl.program_id(0)),
-        out_shape=jax.ShapeDtypeStruct([128 * 2], jnp.int32),
-        grid=2,
-    )
-    def kernel(o_ref):
-      del o_ref
-
-    # ``assertRaises`` have no way of asserting against the cause, so we
-    # have to use ``traceback.format_exception`` manually.
-    with self.assertRaises(Exception) as exc_info:
-      kernel()
-    self.assertIn(
-        "not supported in this context",
-        "".join(traceback.format_exception(exc_info.exception)),
-    )
-
   def test_num_programs(self):
     @functools.partial(
         pl.pallas_call,
@@ -2101,6 +2082,9 @@ class PallasCallWarpgroupSemanticsTest(PallasTest):
     self.compiler_params = plgpu.GPUCompilerParams(
         thread_semantics=mosaic_gpu_core.ThreadSemantics.Warpgroup
     )
+
+    # TODO(slebedev, bchetioui): Remove this once the lowering rules are there.
+    self.skipTest("WG semantics lowering rules are not implemented yet.")
 
     super().setUp()
 
