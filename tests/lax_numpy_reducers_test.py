@@ -930,5 +930,50 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @jtu.sample_product(
+    op=['sum', 'prod'],
+    dtype=['float16', 'bfloat16'],
+  )
+  def testReducerF16Casts(self, op, dtype):
+    rng = jtu.rand_default(self.rng())
+    x = jnp.asarray(rng((10,), dtype))
+
+    func = getattr(jnp, op)
+    reduce_p = getattr(jax.lax, f"reduce_{op}_p")
+    conv_elem_p = jax.lax.convert_element_type_p
+
+    # Without dtype specified, the reduction is sandwiched between two casts.
+    jaxpr1 = jax.make_jaxpr(func)(x)
+    self.assertEqual(
+      [eqn.primitive for eqn in jaxpr1.eqns],
+      [conv_elem_p, reduce_p, conv_elem_p])
+
+    # With dtype specified, the reduction happens without a cast.
+    jaxpr2 = jax.make_jaxpr(partial(func, dtype=dtype))(x)
+    self.assertEqual([eqn.primitive for eqn in jaxpr2.eqns], [reduce_p])
+
+  @jtu.sample_product(
+    dtype=['float16', 'bfloat16'],
+  )
+  def testMeanF16Casts(self, dtype):
+    rng = jtu.rand_default(self.rng())
+    x = jnp.asarray(rng((10,), dtype))
+
+    reduce_sum_p = jax.lax.reduce_sum_p
+    div_p = jax.lax.div_p
+    conv_elem_p = jax.lax.convert_element_type_p
+
+    # Without dtype specified, the reduction is sandwiched between two casts.
+    jaxpr1 = jax.make_jaxpr(jnp.mean)(x)
+    self.assertEqual(
+      [eqn.primitive for eqn in jaxpr1.eqns],
+      [conv_elem_p, reduce_sum_p, div_p, conv_elem_p])
+
+    # With dtype specified, the reduction happens without a cast.
+    jaxpr2 = jax.make_jaxpr(partial(jnp.mean, dtype=dtype))(x)
+    self.assertEqual(
+      [eqn.primitive for eqn in jaxpr2.eqns],
+      [reduce_sum_p, div_p])
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
