@@ -970,13 +970,30 @@ def _partial_eval_jaxpr_nounits(jaxpr: ClosedJaxpr,
   if config.enable_checks.value:
     core.check_jaxpr(jaxpr_known)
     core.check_jaxpr(jaxpr_unknown)
+
+  def check(first, second):
+    if not config.sharding_in_types.value:
+      assert first == second
+      return
+
+    for f, s in zip(first, second):
+      if (not isinstance(f, core.ShapedArray) and
+          not isinstance(s, core.ShapedArray)):
+        assert f == s
+      elif f.sharding.mesh.empty or s.sharding.mesh.empty:
+        assert (f.shape, f.dtype) == (s.shape, s.dtype)
+      else:
+        assert f == s, (f, s)
+
   # check jaxpr_known has input type corresponding to known inputs of jaxpr
   assert ([v.aval for v in jaxpr_known.invars] ==
           [a for a, uk in zip(jaxpr.in_avals, in_unknowns) if not uk])
   # check jaxpr_known has out type corresponding to known outs of jaxpr plus res
-  assert ([v.aval.strip_weak_type() for v in jaxpr_known.outvars] ==
-          [a.strip_weak_type() for a, uk in zip(jaxpr.out_avals, out_unknowns)
-           if not uk] + [a.strip_weak_type() for a in res_avals])
+  # Change this to `assert ... == ...` and remove the check function.
+  # See https://github.com/jax-ml/jax/issues/26474
+  check([v.aval.strip_weak_type() for v in jaxpr_known.outvars],
+        [a.strip_weak_type() for a, uk in zip(jaxpr.out_avals, out_unknowns)
+         if not uk] + [a.strip_weak_type() for a in res_avals])
   # check jaxpr_unknown has input type corresponding to res plus unknown inputs
   assert ([v.aval.strip_weak_type() for v in jaxpr_unknown.invars] ==
           [a.strip_weak_type() for a in res_avals] +

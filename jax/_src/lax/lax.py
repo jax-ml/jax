@@ -58,6 +58,7 @@ from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
 from jax._src.interpreters.batching import RaggedAxis
 from jax._src.lax import slicing
+from jax._src import mesh as mesh_lib
 from jax._src.lax.utils import (
   _input_dtype, dtype_to_string, standard_abstract_eval,
   standard_multi_result_abstract_eval, standard_primitive)
@@ -3086,13 +3087,13 @@ def broadcasting_shape_rule(name, *avals):
 def broadcasting_sharding_rule(name, *avals):
   mesh = None
   for a in avals:
-    if a.sharding is not None:
+    if a.sharding is not None and not a.sharding.mesh.empty:
       if mesh is not None and mesh != a.sharding.mesh:
         raise ValueError(
             f'Mesh for all inputs should be equal. Got one mesh: {mesh} and'
             f' another mesh: {a.sharding.mesh}')
       mesh = a.sharding.mesh
-  assert mesh is not None
+  mesh = mesh_lib.get_abstract_mesh() if mesh is None else mesh
 
   shapes = [aval.shape for aval in avals if aval.shape]
   if not shapes:
@@ -5380,11 +5381,14 @@ def _concatenate_shape_rule(*operands, **kwargs):
   return ex_shape[:dimension] + (concat_size,) + ex_shape[dimension+1:]
 
 def _concatenate_sharding_rule(*operands, **kwargs):
-  if not all(o.sharding == operands[0].sharding for o in operands):
+  non_empty_s = [o.sharding for o in operands if not o.sharding.mesh.empty]
+  if not non_empty_s:
+    return core.get_cur_mesh_sharding()
+  if not all(s == non_empty_s[0] for s in non_empty_s):
     ss = ", ".join(str(o.sharding) for o in operands)
     raise TypeError(
         f"All operands should have the same sharding. Got shardings {ss}")
-  return operands[0].sharding
+  return non_empty_s[0]
 
 def _concatenate_dtype_rule(*operands, **kwargs):
   check_same_dtypes('concatenate', *operands)
@@ -5974,15 +5978,19 @@ def _select_shape_rule(which, *cases):
   return cases[0].shape
 
 def _select_sharding_rule(which, *cases):
-  if any(case.sharding != cases[0].sharding for case in cases[1:]):
+  non_empty_s = [c.sharding for c in cases if not c.sharding.mesh.empty]
+  if not non_empty_s:
+    return core.get_cur_mesh_sharding()
+  if any(s != non_empty_s[0] for s in non_empty_s[1:]):
     msg = "select cases must have the same shardings, got [{}]."
     raise TypeError(msg.format(", ".join([str(c.sharding) for c in cases])))
-  if which.shape and which.sharding != cases[0].sharding:
+  if (which.shape and not which.sharding.mesh.empty and
+      which.sharding != non_empty_s[0]):
     raise TypeError(
         'select `which` must be scalar or have the same sharding as cases, got'
         f' `which` sharding {which.sharding} but case sharding'
         f' {cases[0].sharding}.')
-  return cases[0].sharding
+  return non_empty_s[0]
 
 
 def _select_dtype_rule(which, *cases):

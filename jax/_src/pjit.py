@@ -187,19 +187,16 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
     args_flat = [*init_states, *args_flat]
 
   try:
-    # TODO(yashkatariya): Maybe thread this into pjit params like resource_env
-    # and set the context manager down the stack?
-    with mesh_lib.set_abstract_mesh(p.abstract_mesh):
-      if (core.trace_state_clean() and
-          not config.debug_key_reuse.value and
-          not config.data_dependent_tracing_fallback.value):
-        args_flat = map(core.full_lower, args_flat)
-        core.check_eval_args(args_flat)
-        out_flat, compiled, profiler = _pjit_call_impl_python(*args_flat, **p.params)
-      else:
-        out_flat = pjit_p.bind(*args_flat, **p.params)
-        compiled = None
-        profiler = None
+    if (core.trace_state_clean() and
+        not config.debug_key_reuse.value and
+        not config.data_dependent_tracing_fallback.value):
+      args_flat = map(core.full_lower, args_flat)
+      core.check_eval_args(args_flat)
+      out_flat, compiled, profiler = _pjit_call_impl_python(*args_flat, **p.params)
+    else:
+      out_flat = pjit_p.bind(*args_flat, **p.params)
+      compiled = None
+      profiler = None
   except pxla.DeviceAssignmentMismatchError as e:
     fails, = e.args
     api_name = 'jit' if p.params['resource_env'] is None else 'pjit'
@@ -508,7 +505,7 @@ def _make_jit_wrapper(fun: Callable, jit_info: PjitInfo):
                              pgle_profiler=None)
     return stages.Traced(
         p.params['jaxpr'], args_info, p.params["name"], p.out_tree,
-        lower_callable, p.abstract_mesh, args_flat, p.arg_names, p.num_consts)
+        lower_callable, args_flat, p.arg_names, p.num_consts)
 
   wrapped = _cpp_pjit(fun, jit_info)
   wrapped.lower = lower
@@ -544,7 +541,6 @@ class PjitParams(NamedTuple):
   arg_names: tuple[str | None, ...]
   num_consts: int
   attrs_tracked: list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]
-  abstract_mesh: AbstractMesh
 
 
 def _infer_params_impl(
@@ -624,15 +620,11 @@ def _infer_params_impl(
 
   attr_token = _attr_token(flat_fun, in_type)
 
-  abstract_mesh = (
-      _get_abstract_mesh_from_avals(in_avals)
-      if mesh_lib.get_abstract_mesh().empty else mesh_lib.get_abstract_mesh())
-  with mesh_lib.set_abstract_mesh(abstract_mesh):
-    jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
-        flat_fun, in_type, attr_token,
-        IgnoreKey(ji.inline))
-    if config.mutable_array_checks.value:
-      _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), explicit_args)
+  jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
+      flat_fun, in_type, attr_token, IgnoreKey(ji.inline))
+
+  if config.mutable_array_checks.value:
+    _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), explicit_args)
   _attr_update(flat_fun, in_type, attr_token, attrs_tracked)
 
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
@@ -672,7 +664,7 @@ def _infer_params_impl(
   )
   return PjitParams(consts, params, in_avals, in_tree, out_tree(),
                     donated_invars, dbg.arg_names if dbg else None, len(consts),
-                    attrs_tracked, abstract_mesh), args_flat
+                    attrs_tracked), args_flat
 
 def _get_abstract_mesh_from_avals(in_avals):
   if not config.sharding_in_types.value:
@@ -1286,8 +1278,7 @@ def explain_tracing_cache_miss(
       if ty1 != ty2:
         if type(ty1) == type(ty2) == core.ShapedArray:
           s1, s2 = ty1.str_short(True), ty2.str_short(True)
-          if s1 == s2:  # weak types don't show up in str_short()
-            assert ty1.weak_type ^ ty2.weak_type
+          if ty1.weak_type != ty2.weak_type:
             s1 += f'{{weak_type={ty1.weak_type}}}'
             s2 += f'{{weak_type={ty2.weak_type}}}'
             add_weak_type_hint = True
@@ -1479,6 +1470,7 @@ def check_aval_layout_compatibility(
 
 pjit_p = core.Primitive("pjit")
 pjit_p.multiple_results = True
+pjit_p.skip_canonicalization = True
 
 def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
   # If device or backend is set, return the default layout. This is because you

@@ -5476,6 +5476,52 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         TypeError, "select cases must have the same shardings"):
       f(arr1 == arr2, arr1, arr3)
 
+  @config.sharding_in_types(True)
+  def test_explicit_mode_no_context_mesh(self):
+    mesh = jtu.create_mesh((4, 2), ('x', 'y'),
+                           axis_types={AxisTypes.Explicit: ('x', 'y')})
+    abstract_mesh = mesh.abstract_mesh
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', None)))
+    arr2 = jax.device_put(np_inp.T, NamedSharding(mesh, P(None, 'y')))
+
+    @jax.jit
+    def f(x, y):
+      self.assertEqual(x.aval.sharding.spec, P('x', None))
+      self.assertEqual(x.aval.sharding.mesh, abstract_mesh)
+      self.assertEqual(y.aval.sharding.spec, P(None, 'y'))
+      self.assertEqual(y.aval.sharding.mesh, abstract_mesh)
+      z = x @ y
+      self.assertEqual(z.aval.sharding.spec, P('x', 'y'))
+      self.assertEqual(z.aval.sharding.mesh, abstract_mesh)
+      a = z * 2
+      self.assertEqual(a.aval.sharding.spec, P('x', 'y'))
+      self.assertEqual(a.aval.sharding.mesh, abstract_mesh)
+      return a
+
+    out = f(arr, arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
+  @config.sharding_in_types(True)
+  def test_auto_mode_no_context_mesh(self):
+    mesh = jtu.create_mesh((4, 2), ('x', 'y'),
+                           axis_types={AxisTypes.Auto: ('x', 'y')})
+    abstract_mesh = mesh.abstract_mesh
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', None)))
+
+    @jax.jit
+    def f(x):
+      self.assertEqual(x.aval.sharding.spec, P(None, None))
+      self.assertEqual(x.aval.sharding.mesh, abstract_mesh)
+      a = x * 2
+      self.assertEqual(a.aval.sharding.spec, P(None, None))
+      self.assertEqual(a.aval.sharding.mesh, abstract_mesh)
+      return a
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
   @jtu.with_user_mesh((2, 2), ('x', 'y'))
   def test_mesh_cast_reshard_error(self, mesh):
     np_inp = np.arange(16).reshape(8, 2)
@@ -6533,7 +6579,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     @partial(jax.vmap, out_axes=-1)
     def f(x):
-      return np.zeros((4,))
+      return jnp.zeros((4,))
 
     out = f(arr)
     self.assertEqual(out.shape, (4, 8))

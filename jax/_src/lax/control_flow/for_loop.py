@@ -67,6 +67,7 @@ discharge_state = state_discharge.discharge_state
 
 for_p = core.Primitive('for')
 for_p.multiple_results = True
+for_p.skip_canonicalization = True
 
 ### Tracing utilities
 

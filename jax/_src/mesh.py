@@ -446,6 +446,10 @@ class AbstractMesh:
     d = collections.defaultdict(list)
     for n, t in safe_zip(self.axis_names, self._axis_types_tuple):
       d[t].append(n)
+    # TODO(yashkatariya): Remove this and properties like `_are_all_axes_manual`
+    # should return False when axis_types is empty.
+    if not d:
+      return {AxisTypes.Auto: ()}
     return {t: n[0] if len(n) == 1 else tuple(n) for t, n in d.items()}
 
   @functools.cached_property
