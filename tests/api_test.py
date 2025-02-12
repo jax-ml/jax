@@ -1366,6 +1366,32 @@ class JitTest(jtu.BufferDonationTestCase):
               "exec_time_compilation_effort": 0.0,
           })(1.0)
 
+  def test_optimization_level_compiler_option(self):
+    def f(x):
+      return jnp.sqrt(x**2) + 1.0
+
+    f_jit = jit(
+        f,
+        compiler_options={
+            "optimization_level": config.EffortLevel.O1.value,
+        },
+    )(
+        1.0
+    )  # doesn't crash.
+
+  def test_memory_fitting_level_compiler_option(self):
+    def f(x):
+      return jnp.sqrt(x**2) + 1.0
+
+    f_jit = jit(
+        f,
+        compiler_options={
+            "memory_fitting_level": config.EffortLevel.O0.value,
+        },
+    )(
+        1.0
+    )  # doesn't crash.
+
   def test_jit_lower_compile_with_compiler_options_invalid(self):
     def f(x):
       return jnp.sqrt(x ** 2) + 1.
