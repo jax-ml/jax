@@ -2621,6 +2621,8 @@ wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
 
 
 def lower_sharding_under_shit(ctx, op, aval, sharding_proto=None):
+  if aval.sharding.mesh.empty:
+    return op
   # Don't emit a wsc under full manual mode to avoid increasing HLO size.
   if aval.sharding.mesh._are_all_axes_manual:
     return op

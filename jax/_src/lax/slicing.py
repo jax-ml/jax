@@ -1884,7 +1884,7 @@ def _gather_sharding_rule(operand, indices, *, dimension_numbers,
                           mode, fill_value):
   # TODO(yashkatariya): Write a proper gather sharding rule.
   cur_mesh = mesh_lib.get_abstract_mesh()
-  if cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual:
+  if cur_mesh.empty or cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual:
     return core.get_cur_mesh_sharding()
   if (cur_mesh._are_all_axes_explicit and
       all(s is None for s in operand.sharding.spec) and

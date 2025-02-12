@@ -131,6 +131,15 @@ def to_axis_types_tuple(axis_types, axis_names) -> tuple[AxisTypes, ...]:
         f" axis_types={name_to_type}")
   return tuple(name_to_type[i] for i in axis_names)
 
+def all_axis_types_match(axis_types, ty: AxisTypes) -> bool:
+  if not axis_types:
+    return False
+  return all(t == ty for t in axis_types.keys())
+
+def any_axis_types_match(axis_types, ty: AxisTypes) -> bool:
+  if not axis_types:
+    return False
+  return any(t == ty for t in axis_types.keys())
 
 _mesh_object_dict = {}  # type: ignore
 
@@ -369,19 +378,27 @@ class Mesh(contextlib.ContextDecorator):
 
   @functools.cached_property
   def _are_all_axes_manual(self) -> bool:
-    return all(t == AxisTypes.Manual for t in self.axis_types.keys())
+    return all_axis_types_match(self.axis_types, AxisTypes.Manual)
 
   @functools.cached_property
   def _are_all_axes_auto(self) -> bool:
-    return all(t == AxisTypes.Auto for t in self.axis_types.keys())
+    return all_axis_types_match(self.axis_types, AxisTypes.Auto)
+
+  @functools.cached_property
+  def _are_all_axes_explicit(self) -> bool:
+    return all_axis_types_match(self.axis_types, AxisTypes.Explicit)
 
   @functools.cached_property
   def _any_axis_manual(self) -> bool:
-    return any(t == AxisTypes.Manual for t in self.axis_types.keys())
+    return any_axis_types_match(self.axis_types, AxisTypes.Manual)
 
   @functools.cached_property
   def _any_axis_auto(self) -> bool:
-    return any(t == AxisTypes.Auto for t in self.axis_types.keys())
+    return any_axis_types_match(self.axis_types, AxisTypes.Auto)
+
+  @functools.cached_property
+  def _any_axis_explicit(self) -> bool:
+    return any_axis_types_match(self.axis_types, AxisTypes.Explicit)
 
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
@@ -446,11 +463,7 @@ class AbstractMesh:
     d = collections.defaultdict(list)
     for n, t in safe_zip(self.axis_names, self._axis_types_tuple):
       d[t].append(n)
-    # TODO(yashkatariya): Remove this and properties like `_are_all_axes_manual`
-    # should return False when axis_types is empty.
-    if not d:
-      return {AxisTypes.Auto: ()}
-    return {t: n[0] if len(n) == 1 else tuple(n) for t, n in d.items()}
+    return {t: tuple(n) for t, n in d.items()}
 
   @functools.cached_property
   def _name_to_type(self):
@@ -485,27 +498,27 @@ class AbstractMesh:
 
   @functools.cached_property
   def _are_all_axes_manual(self) -> bool:
-    return all(t == AxisTypes.Manual for t in self.axis_types.keys())
+    return all_axis_types_match(self.axis_types, AxisTypes.Manual)
 
   @functools.cached_property
   def _are_all_axes_auto(self) -> bool:
-    return all(t == AxisTypes.Auto for t in self.axis_types.keys())
+    return all_axis_types_match(self.axis_types, AxisTypes.Auto)
 
   @functools.cached_property
   def _are_all_axes_explicit(self) -> bool:
-    return all(t == AxisTypes.Explicit for t in self.axis_types.keys())
+    return all_axis_types_match(self.axis_types, AxisTypes.Explicit)
 
   @functools.cached_property
   def _any_axis_manual(self) -> bool:
-    return any(t == AxisTypes.Manual for t in self.axis_types.keys())
+    return any_axis_types_match(self.axis_types, AxisTypes.Manual)
 
   @functools.cached_property
   def _any_axis_auto(self) -> bool:
-    return any(t == AxisTypes.Auto for t in self.axis_types.keys())
+    return any_axis_types_match(self.axis_types, AxisTypes.Auto)
 
   @functools.cached_property
   def _any_axis_explicit(self) -> bool:
-    return any(t == AxisTypes.Explicit for t in self.axis_types.keys())
+    return any_axis_types_match(self.axis_types, AxisTypes.Explicit)
 
   @property
   def devices(self):

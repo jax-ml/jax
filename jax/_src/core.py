@@ -1812,7 +1812,8 @@ def _maybe_modify_sharding(sharding, ndim):
   out = sharding.with_spec(modify_spec_for_auto_manual(
       sharding.spec, sharding.mesh))
   if (len(out.spec) != ndim and
-      (out.mesh._are_all_axes_auto or out.mesh._are_all_axes_manual)):
+      (out.mesh.empty or out.mesh._are_all_axes_auto or
+       out.mesh._are_all_axes_manual)):
     out = _make_lengths_same(out, ndim)
   return out
 
