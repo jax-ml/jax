@@ -27,6 +27,7 @@ from jax import lax
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax.experimental import pallas as pl
+from jax.experimental.mosaic.gpu import core as mosaic_gpu_core
 from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
@@ -2071,6 +2072,32 @@ class ExamplesTest(PallasTest):
     np.testing.assert_allclose(out, x @ x)
 
   # TODO(apaszke): Clusters and multicast
+
+
+class PallasCallWarpgroupSemanticsTest(PallasTest):
+
+  def setUp(self):
+    self.compiler_params = plgpu.GPUCompilerParams(
+        thread_semantics=mosaic_gpu_core.ThreadSemantics.Warpgroup
+    )
+
+    super().setUp()
+
+  @parameterized.named_parameters(
+      ("add_float", lambda x, y: x + y, np.float32),
+  )
+  def test_binary_op_wg_semantics(self, bop, dtype):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], dtype=dtype),
+        compiler_params=self.compiler_params
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = bop(x_ref[...], y_ref[...])
+
+    x = jnp.arange(256).astype(dtype)
+    y = x + 1
+    np.testing.assert_array_equal(kernel(x, y), bop(x, y))
 
 
 if __name__ == "__main__":

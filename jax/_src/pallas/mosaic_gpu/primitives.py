@@ -73,7 +73,7 @@ def _copy_smem_to_gmem_abstract_eval(src, dst, *args, **params):
   return (), {state.ReadEffect(0), state.WriteEffect(1)}
 
 
-@lowering.register_lowering_rule(copy_smem_to_gmem_p)
+@lowering.register_lowering_rule(copy_smem_to_gmem_p, mgpu.ThreadSemantics.Lane)
 def _copy_smem_to_gmem_lowering(
     ctx: lowering.LoweringRuleContext,
     src,
@@ -187,7 +187,7 @@ def _copy_gmem_to_smem_abstract_eval(src, dst, barrier, *args, **params):
   return (), {state.ReadEffect(0), state.WriteEffect(1)}
 
 
-@lowering.register_lowering_rule(copy_gmem_to_smem_p)
+@lowering.register_lowering_rule(copy_gmem_to_smem_p, mgpu.ThreadSemantics.Lane)
 def _copy_gmem_to_smem_lowering(
     ctx: lowering.LoweringRuleContext,
     src,
@@ -307,7 +307,7 @@ def _barrier_arrive_abstract_eval(barrier, *args, **params):
   return (), {gpu_core._memory_effect}
 
 
-@lowering.register_lowering_rule(barrier_arrive_p)
+@lowering.register_lowering_rule(barrier_arrive_p, mgpu.ThreadSemantics.Lane)
 def _barrier_arrive_lowering(
     ctx: lowering.LoweringRuleContext,
     barrier,
@@ -345,7 +345,7 @@ def _barrier_wait_abstract_eval(barrier, *args, **params):
   return (), {gpu_core._memory_effect}
 
 
-@lowering.register_lowering_rule(barrier_wait_p)
+@lowering.register_lowering_rule(barrier_wait_p, mgpu.ThreadSemantics.Lane)
 def _barrier_wait_lowering(
     ctx: lowering.LoweringRuleContext,
     barrier,
@@ -382,7 +382,7 @@ def _wait_smem_to_gmem_abstract_eval(n, *, wait_read_only):
   return (), {gpu_core._memory_effect}
 
 
-@lowering.register_lowering_rule(wait_smem_to_gmem_p)
+@lowering.register_lowering_rule(wait_smem_to_gmem_p, mgpu.ThreadSemantics.Lane)
 def _wait_smem_to_gmem_lowering(
     ctx: lowering.LoweringRuleContext, n, *, wait_read_only
 ):
@@ -483,7 +483,7 @@ def _wgmma_ref_discharge(in_avals, out_avals, *args, **kwargs):
 wgmma_p = jax_core.Primitive("wgmma")
 
 
-@lowering.register_lowering_rule(wgmma_p)
+@lowering.register_lowering_rule(wgmma_p, mgpu.ThreadSemantics.Lane)
 def _wgmma_lowering(
     ctx: lowering.LoweringRuleContext,
     acc,
@@ -588,7 +588,7 @@ def wgmma_wait_effectful_abstract_eval(_):
   return [], {gpu_core._wgmma_pipeline_effect}
 
 
-@lowering.register_lowering_rule(wgmma_wait_p)
+@lowering.register_lowering_rule(wgmma_wait_p, mgpu.ThreadSemantics.Lane)
 def _wgmma_wait_lowering(ctx: lowering.LoweringRuleContext, allow_groups):
   del ctx
   nvvm_dialect.wgmma_wait_group_sync_aligned(allow_groups)
@@ -619,7 +619,7 @@ def _wgmma_accumulator_deref_discharge(in_avals, out_avals, acc):
   return (None,), wgmma_accumulator_deref_p.bind(acc)
 
 
-@lowering.register_lowering_rule(wgmma_accumulator_deref_p)
+@lowering.register_lowering_rule(wgmma_accumulator_deref_p, mgpu.ThreadSemantics.Lane)
 def _wgmma_accumulator_deref_lowering(ctx: lowering.LoweringRuleContext, acc):
   del ctx
   nvvm_dialect.wgmma_wait_group_sync_aligned(0)
@@ -665,7 +665,7 @@ def _layout_cast_abstract_eval(x, new_layout):
   return x
 
 
-@lowering.register_lowering_rule(layout_cast_p)
+@lowering.register_lowering_rule(layout_cast_p, mgpu.ThreadSemantics.Lane)
 def _layout_cast_lowering(ctx: lowering.LoweringRuleContext, x, *, new_layout):
   del ctx  # Unused.
   return x.to_layout(_get_mgpu_layout(new_layout))
@@ -686,7 +686,7 @@ def _set_max_registers_abstract_eval(n, *, action):
   return (), {gpu_core._memory_effect}
 
 
-@lowering.register_lowering_rule(set_max_registers_p)
+@lowering.register_lowering_rule(set_max_registers_p, mgpu.ThreadSemantics.Lane)
 def _set_max_registers_lowering(
     ctx: lowering.LoweringRuleContext, n, *, action
 ):
@@ -714,7 +714,7 @@ def _commit_smem_abstract_eval():
   return (), {gpu_core._memory_effect}
 
 
-@lowering.register_lowering_rule(commit_smem_p)
+@lowering.register_lowering_rule(commit_smem_p, mgpu.ThreadSemantics.Lane)
 def _commit_smem_lowering(ctx: lowering.LoweringRuleContext):
   mgpu.commit_shared()
   return ()
@@ -733,7 +733,7 @@ def _broadcasted_iota_abstract_eval(dtype, shape, dimension, layout):
   return jax_core.ShapedArray(shape, dtype)
 
 
-@lowering.register_lowering_rule(broadcasted_iota_p)
+@lowering.register_lowering_rule(broadcasted_iota_p, mgpu.ThreadSemantics.Lane)
 def _broadcasted_iota_lowering(
     ctx: lowering.LoweringRuleContext, dtype, shape, dimension, layout
 ):

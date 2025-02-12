@@ -1212,9 +1212,11 @@ _PALLAS_USE_MOSAIC_GPU = config.bool_flag(
     default=config.bool_env("JAX_PALLAS_USE_MOSAIC_GPU", False),
     help=(
         "If True, lower Pallas kernels to the experimental Mosaic GPU"
-        " dialect, instead of Trition IR."
+        " dialect, instead of Triton IR."
     ),
 )
+
+
 _PALLAS_VERBOSE_ERRORS = config.bool_flag(
     "jax_pallas_verbose_errors",
     default=config.bool_env("JAX_PALLAS_VERBOSE_ERRORS", True),
