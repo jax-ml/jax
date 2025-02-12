@@ -383,7 +383,7 @@ class ArrayImpl(basearray.Array):
 
   def __getitem__(self, idx):
     from jax._src.lax import lax
-    from jax._src.numpy import lax_numpy
+    from jax._src.numpy import indexing
     self._check_if_deleted()
 
     if isinstance(self.sharding, PmapSharding):
@@ -418,7 +418,7 @@ class ArrayImpl(basearray.Array):
         return ArrayImpl(
             out.aval, sharding, [out], committed=False, _skip_checks=True)
 
-    return lax_numpy._rewriting_take(self, idx)
+    return indexing.rewriting_take(self, idx)
 
   def __iter__(self):
     if self.ndim == 0:
