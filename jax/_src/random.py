@@ -2042,18 +2042,27 @@ def orthogonal(
   key: ArrayLike,
   n: int,
   shape: Shape = (),
-  dtype: DTypeLikeFloat = float
+  dtype: DTypeLikeFloat = float,
+  m: int | None = None,
 ) -> Array:
-  """Sample uniformly from the orthogonal group O(n).
+  r"""Sample uniformly from the orthogonal group O(n).
 
   If the dtype is complex, sample uniformly from the unitary group U(n).
 
+  For unequal rows and columns, this samples a semi-orthogonal matrix instead.
+  That is, if :math:`A` is the resulting matrix and :math:`A^*` is its conjugate
+  transpose, then:
+
+  - If :math:`n \leq m`, the rows are mutually orthonormal: :math:`A A^* = I_n`.
+  - If :math:`m \leq n`, the columns are mutually orthonormal: :math:`A^* A = I_m`.
+
   Args:
     key: a PRNG key used as the random key.
-    n: an integer indicating the resulting dimension.
+    n: an integer indicating the number of rows.
     shape: optional, the batch dimensions of the result. Default ().
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    m: an integer indicating the number of columns. Defaults to `n`.
 
   Returns:
     A random array of shape `(*shape, n, n)` and specified dtype.
@@ -2063,15 +2072,26 @@ def orthogonal(
            the classical compact groups". Notices of the American Mathematical
            Society, 54(5), 592-604. https://arxiv.org/abs/math-ph/0609050.
   """
+  if m is None:
+    _m = n
+  else:
+    _m = m
   shape = core.canonicalize_shape(shape)
   key, _ = _check_prng_key("orthogonal", key)
   dtypes.check_user_dtype_supported(dtype)
   _check_shape("orthogonal", shape)
   n = core.concrete_or_error(index, n, "The error occurred in jax.random.orthogonal()")
-  z = normal(key, (*shape, n, n), dtype)
+  _m = core.concrete_or_error(index, _m, "The error occurred in jax.random.orthogonal()")
+
+  z = normal(key, (*shape, max(n, _m), min(n, _m)), dtype)
   q, r = jnp.linalg.qr(z)
   d = jnp.linalg.diagonal(r)
-  return q * jnp.expand_dims(jnp.sign(d), -2)
+  x = q * jnp.expand_dims(jnp.sign(d), -2)
+
+  if n < _m:
+    return x.mT
+  else:
+    return x
 
 def generalized_normal(
   key: ArrayLike,
