@@ -138,6 +138,7 @@ exclude_patterns = [
     'pallas/tpu/matmul.md',
     'jep/9407-type-promotion.md',
     'autodidax.md',
+    'autodidax2_part1.md',
     'sharded-computation.md',
     'ffi.ipynb',
 ]
