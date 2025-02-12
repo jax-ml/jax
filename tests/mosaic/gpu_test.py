@@ -953,7 +953,7 @@ class TCGen05Test(TestCase):
       in_jax_dtype=(jnp.float16, jnp.bfloat16),  # TODO(apaszke): f32
       out_jax_dtype=(jnp.float32,),  # TODO(apaszke): f16 accumulation
       m=(128,),  # TODO(apaszke): 64, 192, 256
-      n=(64, 128, 256),  # TODO(apaszke): 192, other non-power-of-2
+      n=(64, 128, 256, 512),  # TODO(apaszke): 192, other non-power-of-2
       k_steps=(1, 2),
       swizzle=(32, 64, 128,),
   )
@@ -1029,7 +1029,7 @@ class TCGen05Test(TestCase):
         jax.ShapeDtypeStruct(tile_shape((m, k), (m_tile, nk_tile)), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape((k, n), (nk_tile, nk_tile)), in_jax_dtype),
         mgpu.TMABarrier(3),
-        mgpu.TMEM((128, n), out_jax_dtype, tcgen05.TMEMLayout.D),
+        mgpu.TMEM((128, n), out_jax_dtype),
     ]
     z = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape
@@ -1045,7 +1045,7 @@ class TCGen05Test(TestCase):
       in_jax_dtype=(jnp.float16,),  # TODO(apaszke): f32
       out_jax_dtype=(jnp.float32,),  # TODO(apaszke): f16 accumulation
       m=(256,),  # TODO(apaszke): 64, 192, 256
-      n=(128, 256),  # TODO(apaszke): 192, other non-power-of-2
+      n=(128, 256),  # TODO(apaszke): 512, 192, other non-power-of-2
       k_steps=(1, 2),
       swizzle=(32, 64, 128,),
   )
@@ -1132,7 +1132,7 @@ class TCGen05Test(TestCase):
         jax.ShapeDtypeStruct(tile_shape((m_block_tile, k), (m_tma_tile, nk_tma_tile)), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape((k, n_block_tile), (nk_tma_tile, nk_tma_tile)), in_jax_dtype),
         mgpu.TMABarrier(3),
-        mgpu.TMEM((128, n), out_jax_dtype, tcgen05.TMEMLayout.D, collective=True),
+        mgpu.TMEM((128, n), out_jax_dtype, collective=True),
     ]
     z = mgpu.as_gpu_kernel(
         kernel, (2, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape, cluster=(2, 1, 1)

@@ -170,15 +170,12 @@ class ClusterBarrier:
 class TMEM:
   shape: tuple[int, int]
   dtype: Any
-  layout: tcgen05.TMEMLayout
+  layout: tcgen05.TMEMLayout | None = None
   collective: bool = False
 
   def __post_init__(self):
-    if self.shape[0] != self.layout.num_rows:
-      raise ValueError(
-          f"Row must match layout={self.layout} ({self.layout.num_rows}), but"
-          f" got {self.shape[0]}"
-      )
+    if self.layout is not None:
+      self.layout.check_shape(self.shape)
 
 
 def _count_buffer_bytes(shape_dtype: jax.ShapeDtypeStruct) -> int:
@@ -226,15 +223,20 @@ def _construct_smem_reftree(
       case Union(members):
         member_thunks = [
             _construct_smem_reftree(
-                cluster_shape, dynamic_smem, m,
-                delayed_warp_init, dynamic_smem_offset,
+                cluster_shape,
+                dynamic_smem,
+                m,
+                delayed_warp_init,
+                dynamic_smem_offset,
             )
             for m in members
         ]
         # TODO(apaszke): This is quadratic, but it shouldn't matter for now...
         dynamic_smem_offset += _smem_tree_size(ref_ty)
+
         def ref(member_thunks=member_thunks):
           return Union([t() for t in member_thunks])
+
       case TMABarrier(num_barriers):
         ref = utils.BarrierRef.initialize(
             get_barrier_ptr(num_barriers), num_barriers, arrival_count=1
@@ -257,13 +259,19 @@ def _construct_smem_reftree(
             ir.MemRefType.get([], i32, memory_space=smem),
             dynamic_smem, c(dynamic_smem_offset, index), [],
         )
+        if layout is None:
+          layout = tcgen05._infer_tmem_layout(shape)
+        num_cols = layout.cols_in_shape(shape)
         delayed_warp_init.append(
-            functools.partial(tcgen05.tmem_alloc, addr_ref, shape[1], collective=collective, exact=False)
+            functools.partial(
+                tcgen05.tmem_alloc,
+                addr_ref, num_cols, collective=collective, exact=False,
+            )
         )
         def ref(addr_ref=addr_ref, shape=shape, dtype=dtype, layout=layout):
           addr = memref.load(addr_ref, [])
           return tcgen05.TMEMRef(
-              addr, layout, shape[1], utils.dtype_to_ir_type(dtype)
+              addr, shape, utils.dtype_to_ir_type(dtype), layout
           )
         dynamic_smem_offset += 4  # i32 takes up 4 bytes
       case _:
