@@ -610,7 +610,7 @@ class PmapSharding(jsharding.Sharding):
       shape: The shape of the input array.
       sharded_dim: Dimension the input array is sharded on. Defaults to 0.
       devices: Optional sequence of devices to use. If omitted, the implicit
-      device order used by pmap is used, which is the order of
+        device order used by pmap is used, which is the order of
         :func:`jax.local_devices`.
     """
     if sharded_dim is None:
