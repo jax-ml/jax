@@ -1118,6 +1118,16 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "error_check_test",
+    srcs = ["error_check_test.py"],
+    enable_configs = ["tpu_v3_2x2"],
+    shard_count = {
+        "gpu": 2,
+        "tpu": 4,
+    },
+)
+
+jax_multiplatform_test(
     name = "stax_test",
     srcs = ["stax_test.py"],
     shard_count = {
