@@ -26,8 +26,9 @@ from jax._src import core
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy.lax_numpy import (
     arange, argmin, array, atleast_1d, concatenate, convolve,
-    diag, dot, finfo, full, ones, outer, roll, trim_zeros,
+    diag, finfo, full, ones, roll, trim_zeros,
     trim_zeros_tol, vander, zeros)
+from jax._src.numpy.tensor_contractions import dot, outer
 from jax._src.numpy.ufuncs import maximum, true_divide, sqrt
 from jax._src.numpy.reductions import all
 from jax._src.numpy import linalg
