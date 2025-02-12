@@ -99,7 +99,7 @@ class StringArrayTest(jtu.JaxTestCase):
     numpy_string_array = np.array(
         [["abcd", "efgh"], ["ijkl", "mnop"]], dtype=np.dtypes.StringDType()  # type: ignore
     )
-    mesh = jax.sharding.Mesh(np.array(cpu_devices).reshape((2, 1)), ("x", "y"))
+    mesh = jax.sharding.Mesh(np.array(cpu_devices)[:2].reshape((2, 1)), ("x", "y"))
     sharding = jax.sharding.NamedSharding(
         mesh, jax.sharding.PartitionSpec("x", "y")
     )
