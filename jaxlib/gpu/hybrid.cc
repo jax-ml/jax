@@ -47,6 +47,10 @@ void GetLapackKernelsFromScipy() {
         lapack_ptr("cgeev"));
     AssignKernelFn<EigenvalueDecompositionComplex<ffi::C128>>(
         lapack_ptr("zgeev"));
+    AssignKernelFn<PivotingQrFactorization<ffi::F32>>(lapack_ptr("sgeqp3"));
+    AssignKernelFn<PivotingQrFactorization<ffi::F64>>(lapack_ptr("dgeqp3"));
+    AssignKernelFn<PivotingQrFactorization<ffi::C64>>(lapack_ptr("cgeqp3"));
+    AssignKernelFn<PivotingQrFactorization<ffi::C128>>(lapack_ptr("zgeqp3"));
   });
 }
 
@@ -57,6 +61,7 @@ NB_MODULE(_hybrid, m) {
     nb::dict dict;
     dict[JAX_GPU_PREFIX "hybrid_eig_real"] = EncapsulateFfiHandler(kEigReal);
     dict[JAX_GPU_PREFIX "hybrid_eig_comp"] = EncapsulateFfiHandler(kEigComp);
+    dict[JAX_GPU_PREFIX "hybrid_geqp3"] = EncapsulateFfiHandler(kGeqp3);
     return dict;
   });
 }

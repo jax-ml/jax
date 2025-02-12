@@ -953,7 +953,9 @@ def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: str = "
     with ``K = min(M, N)``.
 
   Notes:
-    - At present, pivoting is only implemented on CPU backends.
+    - At present, pivoting is only implemented on the CPU and GPU backends. For further
+      details about the GPU implementation, see the documentation for
+      :func:`jax.lax.linalg.qr`.
 
   See also:
     - :func:`jax.numpy.linalg.qr`: NumPy-style QR decomposition API
