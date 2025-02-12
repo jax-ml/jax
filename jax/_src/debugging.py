@@ -597,8 +597,12 @@ def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
       else:
         color = None
         text_color = None
-      padding = (top_padding, right_padding, bottom_padding, left_padding)
-      padding = tuple(max(x, 0) for x in padding)  # type: ignore
+      padding = (
+          max(top_padding, 0),
+          max(right_padding, 0),
+          max(bottom_padding, 0),
+          max(left_padding, 0),
+      )
       col.append(
           rich.padding.Padding(
             rich.align.Align(entry, "center", vertical="middle"), padding,

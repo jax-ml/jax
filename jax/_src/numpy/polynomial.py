@@ -437,7 +437,7 @@ def polyval(p: ArrayLike, x: ArrayLike, *, unroll: int = 16) -> Array:
   del p, x
   shape = lax.broadcast_shapes(p_arr.shape[1:], x_arr.shape)
   y = lax.full_like(x_arr, 0, shape=shape, dtype=x_arr.dtype)
-  y, _ = lax.scan(lambda y, p: (y * x_arr + p, None), y, p_arr, unroll=unroll)
+  y, _ = lax.scan(lambda y, p: (y * x_arr + p, None), y, p_arr, unroll=unroll)  # type: ignore[misc]
   return y
 
 
