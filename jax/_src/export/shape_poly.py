@@ -42,7 +42,7 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src.lax import lax
 from jax._src.interpreters import mlir
-from jax._src.numpy import lax_numpy
+from jax._src.numpy import einsum as jnp_einsum
 from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src import util
@@ -1267,7 +1267,7 @@ def _einsum_contract_path(*operands, **kwargs):
     contract_operands.append(operands[idx[0]])
   return contract_operands, contractions
 
-lax_numpy._poly_einsum_handlers[_DimExpr] = _einsum_contract_path
+jnp_einsum._poly_einsum_handlers[_DimExpr] = _einsum_contract_path
 
 # To implement shape-constraint checking we use a shape assertion primitive.
 #    shape_assertion_p.bind(assert_what: bool, *error_message_inputs,
