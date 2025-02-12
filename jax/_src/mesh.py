@@ -141,11 +141,60 @@ def any_axis_types_match(axis_types, ty: AxisTypes) -> bool:
     return False
   return any(t == ty for t in axis_types.keys())
 
+
+class _BaseMesh:
+  axis_names: tuple[MeshAxisName, ...]
+  shape_tuple: tuple[tuple[str, int], ...]
+  _axis_types_tuple: tuple[AxisTypes, ...]
+
+  @functools.cached_property
+  def _are_all_axes_manual(self) -> bool:
+    return all_axis_types_match(self.axis_types, AxisTypes.Manual)
+
+  @functools.cached_property
+  def _are_all_axes_auto(self) -> bool:
+    return all_axis_types_match(self.axis_types, AxisTypes.Auto)
+
+  @functools.cached_property
+  def _are_all_axes_explicit(self) -> bool:
+    return all_axis_types_match(self.axis_types, AxisTypes.Explicit)
+
+  @functools.cached_property
+  def _any_axis_manual(self) -> bool:
+    return any_axis_types_match(self.axis_types, AxisTypes.Manual)
+
+  @functools.cached_property
+  def _any_axis_auto(self) -> bool:
+    return any_axis_types_match(self.axis_types, AxisTypes.Auto)
+
+  @functools.cached_property
+  def _any_axis_explicit(self) -> bool:
+    return any_axis_types_match(self.axis_types, AxisTypes.Explicit)
+
+  @functools.cached_property
+  def axis_types(self):
+    d = collections.defaultdict(list)
+    for n, t in safe_zip(self.axis_names, self._axis_types_tuple):
+      d[t].append(n)
+    return {t: tuple(n) for t, n in d.items()}
+
+  @functools.cached_property
+  def _name_to_type(self):
+    return dict(safe_zip(self.axis_names, self._axis_types_tuple))
+
+  def update_axis_types(self, new_axis_types) -> AbstractMesh:
+    # dict(self._name_to_type) will copy it.
+    updated_name_to_type = dict(self._name_to_type)
+    updated_name_to_type.update(axis_names_to_types(new_axis_types))
+    new_axis_types = axis_types_to_names(updated_name_to_type)
+    return AbstractMesh(self.shape_tuple, axis_types=new_axis_types)
+
+
 _mesh_object_dict = {}  # type: ignore
 
 MeshAxisType = dict[AxisTypes, str | tuple[str, ...]]
 
-class Mesh(contextlib.ContextDecorator):
+class Mesh(_BaseMesh, contextlib.ContextDecorator):
   """Declare the hardware resources available in the scope of this manager.
 
   In particular, all ``axis_names`` become valid resource names inside the
@@ -298,13 +347,6 @@ class Mesh(contextlib.ContextDecorator):
         (name, size)
         for name, size in safe_zip(self.axis_names, self.devices.shape))
 
-  @functools.cached_property
-  def axis_types(self):
-    d = collections.defaultdict(list)
-    for n, t in safe_zip(self.axis_names, self._axis_types_tuple):
-      d[t].append(n)
-    return {t: tuple(n) for t, n in d.items()}
-
   @property
   def axis_sizes(self) -> tuple[int, ...]:
     return self.devices.shape
@@ -376,30 +418,6 @@ class Mesh(contextlib.ContextDecorator):
   def abstract_mesh(self):
     return AbstractMesh(self.shape_tuple, axis_types=self.axis_types)
 
-  @functools.cached_property
-  def _are_all_axes_manual(self) -> bool:
-    return all_axis_types_match(self.axis_types, AxisTypes.Manual)
-
-  @functools.cached_property
-  def _are_all_axes_auto(self) -> bool:
-    return all_axis_types_match(self.axis_types, AxisTypes.Auto)
-
-  @functools.cached_property
-  def _are_all_axes_explicit(self) -> bool:
-    return all_axis_types_match(self.axis_types, AxisTypes.Explicit)
-
-  @functools.cached_property
-  def _any_axis_manual(self) -> bool:
-    return any_axis_types_match(self.axis_types, AxisTypes.Manual)
-
-  @functools.cached_property
-  def _any_axis_auto(self) -> bool:
-    return any_axis_types_match(self.axis_types, AxisTypes.Auto)
-
-  @functools.cached_property
-  def _any_axis_explicit(self) -> bool:
-    return any_axis_types_match(self.axis_types, AxisTypes.Explicit)
-
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
 
@@ -412,7 +430,7 @@ class _ThreadResourcesLocalState(threading.local):
 thread_resources = _ThreadResourcesLocalState()
 
 
-class AbstractMesh:
+class AbstractMesh(_BaseMesh):
   """AbstractMesh contains only axis names and axis sizes.
 
   It does not contain concrete devices compared to `jax.sharding.Mesh`. You
@@ -458,17 +476,6 @@ class AbstractMesh:
   def axis_sizes(self) -> tuple[int, ...]:
     return self._axis_sizes
 
-  @functools.cached_property
-  def axis_types(self):
-    d = collections.defaultdict(list)
-    for n, t in safe_zip(self.axis_names, self._axis_types_tuple):
-      d[t].append(n)
-    return {t: tuple(n) for t, n in d.items()}
-
-  @functools.cached_property
-  def _name_to_type(self):
-    return dict(safe_zip(self.axis_names, self._axis_types_tuple))
-
   @property
   def size(self):
     return self._size
@@ -485,40 +492,9 @@ class AbstractMesh:
   def empty(self):
     return self.size == 0
 
-  def update_axis_types(self, new_axis_types) -> AbstractMesh:
-    # dict(self._name_to_type) will copy it.
-    updated_name_to_type = dict(self._name_to_type)
-    updated_name_to_type.update(axis_names_to_types(new_axis_types))
-    new_axis_types = axis_types_to_names(updated_name_to_type)
-    return AbstractMesh(self.shape_tuple, axis_types=new_axis_types)
-
   @property
   def abstract_mesh(self):
     return self
-
-  @functools.cached_property
-  def _are_all_axes_manual(self) -> bool:
-    return all_axis_types_match(self.axis_types, AxisTypes.Manual)
-
-  @functools.cached_property
-  def _are_all_axes_auto(self) -> bool:
-    return all_axis_types_match(self.axis_types, AxisTypes.Auto)
-
-  @functools.cached_property
-  def _are_all_axes_explicit(self) -> bool:
-    return all_axis_types_match(self.axis_types, AxisTypes.Explicit)
-
-  @functools.cached_property
-  def _any_axis_manual(self) -> bool:
-    return any_axis_types_match(self.axis_types, AxisTypes.Manual)
-
-  @functools.cached_property
-  def _any_axis_auto(self) -> bool:
-    return any_axis_types_match(self.axis_types, AxisTypes.Auto)
-
-  @functools.cached_property
-  def _any_axis_explicit(self) -> bool:
-    return any_axis_types_match(self.axis_types, AxisTypes.Explicit)
 
   @property
   def devices(self):
