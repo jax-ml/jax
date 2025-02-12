@@ -22,9 +22,11 @@ aggregation/exporting.
 """
 
 from jax._src.monitoring import (
+    clear_event_listeners as clear_event_listeners,
     record_event_duration_secs as record_event_duration_secs,
+    record_event_time_span as record_event_time_span,
     record_event as record_event,
     register_event_duration_secs_listener as register_event_duration_secs_listener,
     register_event_listener as register_event_listener,
-    clear_event_listeners as clear_event_listeners,
+    register_event_time_span_listener as register_event_time_span_listener,
 )

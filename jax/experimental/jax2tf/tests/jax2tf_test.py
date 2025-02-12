@@ -44,40 +44,23 @@ from jax.sharding import PartitionSpec as P
 
 import numpy as np
 import tensorflow as tf
-# pylint: disable=g-direct-tensorflow-import
-from tensorflow.compiler.tf2xla.python import xla as tfxla
-# pylint: enable=g-direct-tensorflow-import
 
 config.parse_flags_with_absl()
-_exit_stack = contextlib.ExitStack()
-
-# TODO(necula): Remove once tensorflow is 2.10.0 everywhere.
-def setUpModule():
-  if not hasattr(tfxla, "optimization_barrier"):
-    _exit_stack.enter_context(jtu.global_config_context(jax_remat_opt_barrier=False))
-
-def tearDownModule():
-  _exit_stack.close()
 
 
 class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
-  @classmethod
-  def setUpClass(cls):
+  def setUp(self):
+    super().setUp()
     # One TF device of each device_type
-    cls.tf_devices = []
+    self.tf_devices = []
     for tf_device in (tf.config.list_logical_devices("TPU") +
                       tf.config.list_logical_devices("GPU") +
                       tf.config.list_logical_devices()):
       if tf_device.device_type == "TPU_SYSTEM":
         continue  # A virtual device
-      if all(tf_device.device_type != d.device_type for d in cls.tf_devices):
-        cls.tf_devices.append(tf_device)
-
-    super().setUpClass()
-
-  def setUp(self):
-    super().setUp()
+      if all(tf_device.device_type != d.device_type for d in self.tf_devices):
+        self.tf_devices.append(tf_device)
     self.warning_ctx = jtu.ignore_warning(
         message="jax2tf.convert with native_serialization=False has been deprecated"
     )
@@ -1678,7 +1661,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       f_jax,
       native_serialization=True,
       native_serialization_platforms=("cpu", "cuda", "tpu"))
-    for tf_device in self.__class__.tf_devices:
+    for tf_device in self.tf_devices:
       logging.info(
         f"Running on tf_device = {tf_device} of device_type = {tf_device.device_type}")
       with tf.device(tf_device):

@@ -44,6 +44,7 @@ pytype_strict_library(
     deps = [
         ":lowering",
         "//jax",
+        "//jax:core",
         "//jax:mlir",
         "//jax:mosaic_gpu",
         "//jax/_src/pallas",
@@ -77,6 +78,7 @@ pytype_strict_library(
         "//jax:dtypes",
         "//jax:effects",
         "//jax:mosaic_gpu",
+        "//jax:state_types",
         "//jax:tree_util",
         "//jax/_src/pallas",
         "//jaxlib/mlir:ir",

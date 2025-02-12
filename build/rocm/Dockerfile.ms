@@ -1,5 +1,6 @@
 ################################################################################
-FROM ubuntu:20.04 AS rocm_base
+ARG BASE_DOCKER=ubuntu:22.04
+FROM $BASE_DOCKER AS rocm_base
 ################################################################################
 
 RUN --mount=type=cache,target=/var/cache/apt \
@@ -12,7 +13,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Add target file to help determine which device(s) to build for
-ARG GPU_DEVICE_TARGETS="gfx900 gfx906 gfx908 gfx90a gfx940 gfx941 gfx942 gfx1030 gfx1100"
+ARG GPU_DEVICE_TARGETS="gfx900 gfx906 gfx908 gfx90a gfx940 gfx941 gfx942 gfx1030 gfx1100 gfx1200 gfx1201"
 ENV GPU_DEVICE_TARGETS=${GPU_DEVICE_TARGETS}
 
 # Install ROCm

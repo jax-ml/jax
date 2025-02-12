@@ -356,13 +356,13 @@ def floor(x: ArrayLike, /) -> Array:
     >>> x = jax.random.uniform(key, (3, 3), minval=-5, maxval=5)
     >>> with jnp.printoptions(precision=2, suppress=True):
     ...     print(x)
-    [[ 1.44 -1.77 -3.07]
-     [ 3.86  2.25 -3.08]
-     [-1.55 -2.48  1.32]]
+    [[-0.11  1.8   1.16]
+     [ 0.61 -0.49  0.86]
+     [-4.25  2.75  1.99]]
     >>> jnp.floor(x)
-    Array([[ 1., -2., -4.],
-           [ 3.,  2., -4.],
-           [-2., -3.,  1.]], dtype=float32)
+    Array([[-1.,  1.,  1.],
+           [ 0., -1.,  0.],
+           [-5.,  2.,  1.]], dtype=float32)
   """
   check_arraylike('floor', x)
   if dtypes.isdtype(dtypes.dtype(x), ('integral', 'bool')):
@@ -395,13 +395,13 @@ def ceil(x: ArrayLike, /) -> Array:
     >>> x = jax.random.uniform(key, (3, 3), minval=-5, maxval=5)
     >>> with jnp.printoptions(precision=2, suppress=True):
     ...     print(x)
-    [[ 2.55 -1.87 -3.76]
-     [ 0.48  3.85 -1.94]
-     [ 3.2   4.56 -1.43]]
+    [[-0.61  0.34 -0.54]
+     [-0.62  3.97  0.59]
+     [ 4.84  3.42 -1.14]]
     >>> jnp.ceil(x)
-    Array([[ 3., -1., -3.],
-           [ 1.,  4., -1.],
-           [ 4.,  5., -1.]], dtype=float32)
+    Array([[-0.,  1., -0.],
+           [-0.,  4.,  1.],
+           [ 5.,  4., -1.]], dtype=float32)
   """
   check_arraylike('ceil', x)
   if dtypes.isdtype(dtypes.dtype(x), ('integral', 'bool')):
@@ -2765,6 +2765,12 @@ def log2(x: ArrayLike, /) -> Array:
     Array([-2., -1.,  0.,  1.,  2.,  3.], dtype=float32)
   """
   x, = promote_args_inexact("log2", x)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    r = lax.log(x)
+    re = lax.real(r)
+    im = lax.imag(r)
+    ln2 = lax.log(_constant_like(re, 2))
+    return lax.complex(lax.div(re, ln2), lax.div(im, ln2))
   return lax.div(lax.log(x), lax.log(_constant_like(x, 2)))
 
 
@@ -2789,6 +2795,12 @@ def log10(x: ArrayLike, /) -> Array:
     [-2. -1.  0.  1.  2.  3.]
   """
   x, = promote_args_inexact("log10", x)
+  if dtypes.issubdtype(x.dtype, np.complexfloating):
+    r = lax.log(x)
+    re = lax.real(r)
+    im = lax.imag(r)
+    ln10 = lax.log(_constant_like(re, 10))
+    return lax.complex(lax.div(re, ln10), lax.div(im, ln10))
   return lax.div(lax.log(x), lax.log(_constant_like(x, 10)))
 
 

@@ -220,7 +220,7 @@ def build_kernel(
           # TODO(apaszke): Support WGMMA without an initial accumulator.
           qk_acc = WGMMAAccumulator.zero(blocks.q, blocks.kv)
           q, k = qo_smem, memref_slice(k_smem, slot)
-          qk_acc = wgmma(qk_acc, q, k, b_order=WGMMALayout.COL_MAJOR)
+          qk_acc = wgmma(qk_acc, q, memref_transpose(k, (0, 1, 3, 2)))
           nvvm.wgmma_commit_group_sync_aligned()
 
         perform_schedule_barrier()
@@ -441,7 +441,7 @@ def build_kernel(
         # TODO(apaszke): Support WGMMA without an initial accumulator.
         qk_acc = WGMMAAccumulator.zero(blocks.q, blocks.kv)
         q, k = qo_smem, memref_slice(k_smem, slot)
-        qk_acc = wgmma(qk_acc, q, k, b_order=WGMMALayout.COL_MAJOR)
+        qk_acc = wgmma(qk_acc, q, memref_transpose(k, (0, 1, 3, 2)))
         nvvm.wgmma_commit_group_sync_aligned()
 
       # We hide the TMA overhead by overlapping it with the QK matmul.
@@ -576,7 +576,7 @@ def benchmark_and_verify(
         head_dim=head_dim,
         **kwargs,
     )
-    out, runtime = profiler.measure(f, q[0], k[0], v[0])
+    out, runtime = profiler.measure(f)(q[0], k[0], v[0])
     out = out[None]
 
     @jax.jit
@@ -607,7 +607,7 @@ if __name__ == "__main__":
     exit(0)
 
   batch_size = 1
-  num_q_heads = 4
+  num_q_heads = 2
   num_kv_heads = 1
   prof_spec = None
   seq_lens = (4096, 32768)

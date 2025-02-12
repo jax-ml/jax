@@ -38,6 +38,7 @@ from jax import lax
 import jax.numpy as jnp
 from jax import random
 from jax import tree_util
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
@@ -442,7 +443,10 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
             partial(shape_poly.compute_dim_vars_from_arg_shapes,
                     avals,
                     args_kwargs_tree=tree_util.tree_flatten((avals, {}))[1]),
-            args_tf, avals, "")
+            args_tf, avals, "",
+        debug_info=api_util.debug_info("jax2tf dim_vars",
+                                       shape_poly.compute_dim_vars_from_arg_shapes,
+                                       avals, {}))
         if expected_shapes is not None:
           expected_avals = tree_util.tree_map(
               lambda shape_str: core.ShapedArray(
@@ -1959,11 +1963,11 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 expect_error=expect_error_associative_scan),
     PolyHarness("one_hot", "poly_num_classes",
                 lambda x, y: jax.nn.one_hot(x, y.shape[0]),
-                arg_descriptors=[np.arange(16, dtype=_f32), RandArg((16,), _f32)],
+                arg_descriptors=[np.arange(16, dtype=_i32), RandArg((16,), _f32)],
                 polymorphic_shapes=[None, "b0, ..."]),
     PolyHarness("one_hot", "all_poly",
                 lambda x, y: jax.nn.one_hot(x, y.shape[0]),
-                arg_descriptors=[np.arange(16, dtype=_f32), RandArg((16,), _f32)],
+                arg_descriptors=[np.arange(16, dtype=_i32), RandArg((16,), _f32)],
                 polymorphic_shapes=["b, ...", "b, ..."]),
     PolyHarness("ones", "",
                 lambda x: jnp.ones(x.shape, dtype=_f32) + x,
@@ -2086,10 +2090,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
         PolyHarness("random_uniform", f"error_not_even_{flags_name}",
                     lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
                     arg_descriptors=[RandArg((key_size,), np.uint32), RandArg((3, 5), _f32)],
-                    polymorphic_shapes=[None, "b0, ..."],
-                    expect_error=(
-                        (core.InconclusiveDimensionOperation,
-                         "array size .* must be even") if flags_name == "threefry_non_partitionable" else (None, None)),
+                    polymorphic_shapes=[None, "b0, b1"],
                     override_jax_config_flags=override_jax_config_flags)  # type: ignore
       ]
         for key_size, flags_name, override_jax_config_flags in [
@@ -2673,7 +2674,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
     if harness.group_name == "eig" and not jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("JAX implements eig only on CPU.")
 
-    with jtu.global_config_context(**harness.override_jax_config_flags):
+    with jtu.thread_local_config_context(**harness.override_jax_config_flags):
       harness.run_test(self)
 
 

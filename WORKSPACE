@@ -13,6 +13,7 @@ python_init_repositories(
         "3.11": "//build:requirements_lock_3_11.txt",
         "3.12": "//build:requirements_lock_3_12.txt",
         "3.13": "//build:requirements_lock_3_13.txt",
+        "3.13-ft": "//build:requirements_lock_3_13_ft.txt",
     },
     local_wheel_inclusion_list = [
         "jaxlib*",
@@ -60,6 +61,21 @@ xla_workspace0()
 
 load("//third_party/flatbuffers:workspace.bzl", flatbuffers = "repo")
 flatbuffers()
+
+load("//jaxlib:jax_python_wheel.bzl", "jax_python_wheel_repository")
+jax_python_wheel_repository(
+    name = "jax_wheel",
+    version_key = "_version",
+    version_source = "//jax:version.py",
+)
+
+load(
+    "@tsl//third_party/py:python_wheel.bzl",
+    "python_wheel_version_suffix_repository",
+)
+python_wheel_version_suffix_repository(
+    name = "jax_wheel_version_suffix",
+)
 
 load(
     "@tsl//third_party/gpus/cuda/hermetic:cuda_json_init_repository.bzl",

@@ -19,6 +19,7 @@ from absl.testing import absltest
 import jax
 from jax._src import core
 from jax._src import test_util as jtu
+import jax._src.lib
 from jax._src.lib import xla_client as xc
 from jax.experimental import topologies
 from jax.experimental.pjit import pjit
@@ -110,6 +111,21 @@ class JaxAotTest(jtu.JaxTestCase):
     self.assertEqual(
         topo.platform_version, aot_topo.devices[0].client.platform_version
     )
+
+  def test_lower_as_text_with_and_without_debug_info(self):
+    def my_function(x):
+      return jnp.sin(x)
+
+    lowered = jax.jit(my_function).lower(42.)
+    stablehlo = lowered.as_text("stablehlo", debug_info=True)
+    self.assertRegex(stablehlo, r"sine.* loc")
+    stablehlo = lowered.as_text("stablehlo")
+    self.assertNotRegex(stablehlo, r"sine.* loc")
+
+    hlo = lowered.as_text("hlo", debug_info=True)
+    self.assertRegex(hlo, r"sine.*metadata=.*source_file=.*")
+    hlo = lowered.as_text("hlo")
+    self.assertNotRegex(hlo, r"sine.*metadata=.*source_file=.*")
 
 
 if __name__ == '__main__':

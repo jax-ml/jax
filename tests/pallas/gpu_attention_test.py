@@ -21,6 +21,7 @@ import jax
 from jax import random
 from jax._src import config
 from jax._src import test_util as jtu
+
 if sys.platform != "win32":
   from jax.experimental.pallas.ops.gpu import decode_attention
 else:
@@ -48,8 +49,9 @@ class PallasBaseTest(jtu.JaxTestCase):
       self.skipTest("On CPU, the test works only in interpret mode")
     if jax.config.x64_enabled:
       self.skipTest("The test works only in 32-bit")
-    if (jtu.test_device_matches(["cuda"]) and
-        not jtu.is_cuda_compute_capability_at_least("8.0")):
+    if jtu.test_device_matches(
+        ["cuda"]
+    ) and not jtu.is_cuda_compute_capability_at_least("8.0"):
       self.skipTest("Only works on GPU with capability >= sm80")
     if sys.platform == "win32":
       self.skipTest("Only works on non-Windows platforms")
@@ -62,8 +64,10 @@ class DecodeAttentionTest(PallasBaseTest):
 
   @parameterized.named_parameters(*[
       (
-          (f"{batch_size=}_{seq_len=}_{num_heads=}_{head_dim=}_{kwargs=}_"
-           f"{start_idx=}_{kv_seq_len=}"),
+          (
+              f"{batch_size=}_{seq_len=}_{num_heads=}_{head_dim=}_{kwargs=}_"
+              f"{start_idx=}_{kv_seq_len=}_{return_residuals=}"
+          ),
           batch_size,
           seq_len,
           num_heads,
@@ -71,6 +75,7 @@ class DecodeAttentionTest(PallasBaseTest):
           kwargs,
           start_idx,
           kv_seq_len,
+          return_residuals,
       )
       for (
           batch_size,
@@ -85,6 +90,7 @@ class DecodeAttentionTest(PallasBaseTest):
       ]
       for start_idx in [None, 123]
       for kv_seq_len in [None, 250]
+      for return_residuals in [False, True]
   ])
   @jax.numpy_dtype_promotion("standard")
   def test_mqa(
@@ -96,6 +102,7 @@ class DecodeAttentionTest(PallasBaseTest):
       kwargs,
       start_idx,
       kv_seq_len,
+      return_residuals,
   ):
     del kwargs
 
@@ -104,16 +111,36 @@ class DecodeAttentionTest(PallasBaseTest):
     k = random.normal(k2, (batch_size, seq_len, head_dim), dtype=jnp.float16)
     v = random.normal(k3, (batch_size, seq_len, head_dim), dtype=jnp.float16)
 
-    o = decode_attention.mqa(q, k, v, start_idx=start_idx,
-                             kv_seq_len=kv_seq_len, interpret=self.INTERPRET)
-    o_ref = decode_attention.mqa_reference(q, k, v, start_idx=start_idx,
-                                           kv_seq_len=kv_seq_len)
+    o, *res = decode_attention.mqa(
+        q,
+        k,
+        v,
+        start_idx=start_idx,
+        kv_seq_len=kv_seq_len,
+        return_residuals=return_residuals,
+        interpret=self.INTERPRET,
+    )
+    o_ref, *res_ref = decode_attention.mqa_reference(
+        q,
+        k,
+        v,
+        start_idx=start_idx,
+        kv_seq_len=kv_seq_len,
+        return_residuals=return_residuals,
+    )
     np.testing.assert_allclose(o, o_ref, atol=0.05)
+    if return_residuals:
+      l, m = res[0]
+      l_ref, m_ref = res_ref[0]
+      np.testing.assert_allclose(l, l_ref, atol=0.05)
+      np.testing.assert_allclose(m, m_ref, atol=0.05)
 
   @parameterized.named_parameters(*[
       (
-          (f"{batch_size=}_{seq_len=}_{num_q_heads=}_{num_kv_heads=}_{head_dim=}"
-           f"_{kwargs=}_{start_idx=}_{kv_seq_len=}"),
+          (
+              f"{batch_size=}_{seq_len=}_{num_q_heads=}_{num_kv_heads=}_{head_dim=}"
+              f"_{kwargs=}_{start_idx=}_{kv_seq_len=}_{return_residuals=}"
+          ),
           batch_size,
           seq_len,
           num_q_heads,
@@ -122,6 +149,7 @@ class DecodeAttentionTest(PallasBaseTest):
           kwargs,
           start_idx,
           kv_seq_len,
+          return_residuals,
       )
       for (
           batch_size,
@@ -137,6 +165,7 @@ class DecodeAttentionTest(PallasBaseTest):
       ]
       for start_idx in [None, 123]
       for kv_seq_len in [None, 250]
+      for return_residuals in [False, True]
   ])
   @jax.numpy_dtype_promotion("standard")
   def test_gqa(
@@ -149,6 +178,7 @@ class DecodeAttentionTest(PallasBaseTest):
       kwargs,
       start_idx,
       kv_seq_len,
+      return_residuals,
   ):
     del kwargs
 
@@ -162,11 +192,30 @@ class DecodeAttentionTest(PallasBaseTest):
     v = random.normal(
         k3, (batch_size, seq_len, num_kv_heads, head_dim), dtype=jnp.float16
     )
-    o = decode_attention.gqa(q, k, v, start_idx=start_idx,
-                             kv_seq_len=kv_seq_len, interpret=self.INTERPRET)
-    o_ref = decode_attention.gqa_reference(q, k, v, start_idx=start_idx,
-                                           kv_seq_len=kv_seq_len)
+    o, *res = decode_attention.gqa(
+        q,
+        k,
+        v,
+        start_idx=start_idx,
+        kv_seq_len=kv_seq_len,
+        return_residuals=return_residuals,
+        interpret=self.INTERPRET,
+    )
+    o_ref, *res_ref = decode_attention.gqa_reference(
+        q,
+        k,
+        v,
+        start_idx=start_idx,
+        kv_seq_len=kv_seq_len,
+        return_residuals=return_residuals,
+    )
     np.testing.assert_allclose(o, o_ref, atol=0.05)
+    if return_residuals:
+      l, m = res[0]
+      l_ref, m_ref = res_ref[0]
+      np.testing.assert_allclose(l, l_ref, atol=0.05)
+      np.testing.assert_allclose(m, m_ref, atol=0.05)
+
 
 class DecodeAttentionInterpretTest(DecodeAttentionTest):
   INTERPRET = True

@@ -104,6 +104,7 @@ class JaxVersionTest(unittest.TestCase):
     self.assertEqual(version, "1.2.3.dev4567")
     self.assertValidVersion(version)
 
+  @jtu.thread_unsafe_test()  # Setting environment variables is not thread-safe.
   @patch_jax_version("1.2.3", None)
   def testBuildVersionFromEnvironment(self):
     # This test covers build-time construction of version strings in the
@@ -155,6 +156,18 @@ class JaxVersionTest(unittest.TestCase):
         version = jax.version._get_version_for_build()
       self.assertTrue(version.startswith(f"{base_version}.dev"))
       self.assertTrue(version.endswith("test"))
+      self.assertValidVersion(version)
+
+    with jtu.set_env(
+        JAX_RELEASE=None,
+        JAXLIB_RELEASE=None,
+        JAX_NIGHTLY=None,
+        JAXLIB_NIGHTLY="1",
+        WHEEL_VERSION_SUFFIX=".dev20250101+1c0f1076erc1",
+    ):
+      with assert_no_subprocess_call():
+        version = jax.version._get_version_for_build()
+      self.assertEqual(version, f"{base_version}.dev20250101+1c0f1076erc1")
       self.assertValidVersion(version)
 
   def testVersions(self):

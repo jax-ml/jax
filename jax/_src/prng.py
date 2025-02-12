@@ -26,7 +26,6 @@ from jax import lax
 from jax import numpy as jnp
 from jax import tree_util
 
-from jax._src import api_util
 from jax._src import api
 from jax._src import config as config
 from jax._src import core
@@ -303,7 +302,6 @@ _set_array_base_attributes(PRNGKeyArray, include=[
     'at', 'flatten', 'ravel', 'reshape',
     'squeeze', 'swapaxes', 'take', 'transpose', 'T'])
 
-api_util._shaped_abstractify_handlers[PRNGKeyArray] = op.attrgetter('aval')
 
 def prngkeyarray_flatten(x):
   return (x._base_array,), x._impl
@@ -407,11 +405,8 @@ class KeyTyRules:
 
   @staticmethod
   def device_put_sharded(vals, aval, sharding, devices):
-    physical_aval = core.physical_aval(aval)
     physical_buffers = tree_util.tree_map(random_unwrap, vals)
-    phys_sharding = physical_sharding(aval, sharding)
-    physical_result = pxla.batched_device_put(physical_aval, phys_sharding,
-                                              physical_buffers, list(devices))
+    physical_result = api.device_put_sharded(physical_buffers, list(devices))
     return random_wrap(physical_result, impl=aval.dtype._impl)
 
   @staticmethod
@@ -463,8 +458,6 @@ class KeyTy(dtypes.ExtendedDType):
 
 
 core.pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
-xla.pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
-
 xla.canonicalize_dtype_handlers[PRNGKeyArray] = lambda x: x
 
 
@@ -1072,22 +1065,35 @@ def threefry_2x32(keypair, count):
     msg = "threefry_2x32 requires uint32 arguments, got {}"
     raise TypeError(msg.format([lax.dtype(x) for x in [key1, key2, count]]))
 
-  odd_size = count.size % 2
-  if not isinstance(odd_size, int):
-    msg = ("jax.random functions have limited support for shape polymorphism "
-           "when using threefry. "
-           f"In particular, the array size ({count.size}) must be even.")
-    raise core.InconclusiveDimensionOperation(msg)
-
-  if odd_size:
-    x = list(jnp.split(jnp.concatenate([count.ravel(), np.uint32([0])]), 2))
+  flat_count = count.ravel()
+  odd_size = flat_count.shape[0] % 2
+  if core.is_constant_dim(odd_size):
+    if odd_size:
+      x = list(jnp.split(jnp.concatenate([flat_count, np.uint32([0])]), 2))
+    else:
+      x = list(jnp.split(flat_count, 2))
   else:
-    x = list(jnp.split(count.ravel(), 2))
+    # With symbolic shapes we cannot always tell statically if odd_size is true
+    # or false, so we rewrite this without a conditional.
+    flat_count_padded = jnp.concatenate([flat_count, np.uint32([0])])
+    flat_count_padded_half_size = flat_count_padded.shape[0] // 2
+    x = [
+      lax.dynamic_slice(flat_count_padded, (0,),
+                        (flat_count_padded_half_size,)),
+      lax.dynamic_slice(flat_count_padded,
+                        (flat_count_padded_half_size,),
+                        (flat_count_padded_half_size,))
+    ]
+  assert x[0].shape == x[1].shape, (x[0].shape, x[1].shape)
 
   x = threefry2x32_p.bind(key1, key2, x[0], x[1])
   out = jnp.concatenate(x)
   assert out.dtype == np.uint32
-  return lax.reshape(out[:-1] if odd_size else out, count.shape)
+  if core.is_constant_dim(odd_size):
+    return lax.reshape(out[:-1] if odd_size else out, count.shape)
+  else:
+    out_no_padding = lax.dynamic_slice(out, (0,), (flat_count.shape[0],))
+  return lax.reshape(out_no_padding, count.shape)
 
 
 def threefry_split(key: typing.Array, shape: Shape) -> typing.Array:

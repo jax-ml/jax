@@ -26,7 +26,6 @@ from jax._src import traceback_util
 from jax._src import util
 from jax._src.api import make_jaxpr
 from jax._src.interpreters.partial_eval import dce_jaxpr
-from jax._src.interpreters.xla import abstractify
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.tree_util import broadcast_prefix, tree_flatten, tree_unflatten, tree_map
 from jax.experimental import shard_map
@@ -142,14 +141,14 @@ def _roofline_interpreter(
 
   def read(v: core.Atom) -> RooflineShape:
     if type(v) is core.Literal:
-      return RooflineShape.from_aval(abstractify(v.val))
+      return RooflineShape.from_aval(core.abstractify(v.val))
     else:
       assert isinstance(v, core.Var)
       return env[v]
 
   def aval(v: core.Atom) -> core.AbstractValue:
     if type(v) is core.Literal:
-      return abstractify(v.val)
+      return core.abstractify(v.val)
     else:
       return v.aval
 

@@ -38,7 +38,11 @@ import numpy as np
 
 +++ {"id": "TWKESTKAlyjT"}
 
+(tpu_and_its_memory_spaces)=
+
 ## TPU and its memory spaces
+
++++
 
 A TPU and its TensorCore consist of memory spaces (where arrays can reside),
 registers (which temporarily store scalar and array values) and compute units

@@ -197,6 +197,7 @@ def _callable_generators(dtype):
     jax_debug_nans=True,
     jax_numpy_rank_promotion='raise',
     jax_traceback_filtering='off')
+@jtu.thread_unsafe_test_class()  # matplotlib isn't thread-safe
 class LobpcgTest(jtu.JaxTestCase):
 
   def checkLobpcgConsistency(self, matrix_name, n, k, m, tol, dtype):

@@ -591,9 +591,30 @@ nb::dict Registrations() {
       EncapsulateFunction(CooFromDense);
   dict[JAX_GPU_PREFIX "sparse_coo_matvec"] = EncapsulateFunction(CooMatvec);
   dict[JAX_GPU_PREFIX "sparse_coo_matmat"] = EncapsulateFunction(CooMatmat);
+
+  dict[JAX_GPU_PREFIX "sparse_csr_todense_ffi"] =
+      EncapsulateFfiHandler(CsrToDenseFfi);
+  dict[JAX_GPU_PREFIX "sparse_csr_fromdense_ffi"] =
+      EncapsulateFfiHandler(CsrFromDenseFfi);
+  dict[JAX_GPU_PREFIX "sparse_csr_matvec_ffi"] =
+      EncapsulateFfiHandler(CsrMatvecFfi);
+  dict[JAX_GPU_PREFIX "sparse_csr_matmat_ffi"] =
+      EncapsulateFfiHandler(CsrMatmatFfi);
+  dict[JAX_GPU_PREFIX "sparse_coo_todense_ffi"] =
+      EncapsulateFfiHandler(CooToDenseFfi);
+  dict[JAX_GPU_PREFIX "sparse_coo_fromdense_ffi"] =
+      EncapsulateFfiHandler(CooFromDenseFfi);
+  dict[JAX_GPU_PREFIX "sparse_coo_matvec_ffi"] =
+      EncapsulateFfiHandler(CooMatvecFfi);
+  dict[JAX_GPU_PREFIX "sparse_coo_matmat_ffi"] =
+      EncapsulateFfiHandler(CooMatmatFfi);
 #endif
   dict[JAX_GPU_PREFIX "sparse_gtsv2_f32"] = EncapsulateFunction(gtsv2_f32);
   dict[JAX_GPU_PREFIX "sparse_gtsv2_f64"] = EncapsulateFunction(gtsv2_f64);
+  dict[JAX_GPU_PREFIX "sparse_gtsv2_f32_ffi"] =
+      EncapsulateFfiHandler(gtsv2_f32_ffi);
+  dict[JAX_GPU_PREFIX "sparse_gtsv2_f64_ffi"] =
+      EncapsulateFfiHandler(gtsv2_f64_ffi);
   // TODO(tomhennigan): Add support for gtsv2 complex 32/64.
   return dict;
 }

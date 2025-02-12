@@ -52,8 +52,6 @@ struct GlobalMemory : public mlir::SideEffects::Resource::Base<GlobalMemory> {
 
 constexpr absl::string_view kRuntimeTmaDescriptorInitializerName =
     "mosaic_gpu_init_tma_desc";
-constexpr absl::string_view kRuntimeMemcpyAsyncH2DName =
-    "mosaic_gpu_memcpy_async_h2d";
 
 template <typename T>
 std::string MlirToString(T&& value) {

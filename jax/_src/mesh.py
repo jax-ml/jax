@@ -76,7 +76,7 @@ class ResourceEnv(NamedTuple):
 @util.cache(max_size=128, trace_context_in_key=False)
 def _get_local_mesh(global_mesh: Mesh, process_index: int) -> Mesh:
   if global_mesh.empty:
-      return global_mesh
+    return global_mesh
   is_local_device = np.vectorize(
       lambda d: d.process_index == process_index, otypes=[bool])(global_mesh.devices)
   subcube_indices = []
@@ -96,34 +96,44 @@ def _get_local_mesh(global_mesh: Mesh, process_index: int) -> Mesh:
   # subcube that hull will contain non-local devices.
   if not is_local_device[subcube_indices_tuple].all():
     raise ValueError(
-        "When passing host local inputs to pjit or xmap, devices "
-        "connected to a single host must form a contiguous subcube of the "
-        "global device mesh")
+        "When passing host local inputs to pjit, devices connected to a single"
+        " host must form a contiguous subcube of the global device mesh"
+    )
   return Mesh(global_mesh.devices[subcube_indices_tuple], global_mesh.axis_names)
 
 
 class AxisTypes(enum.Enum):
   Auto = enum.auto()
-  User = enum.auto()
-  Collective = enum.auto()
+  Explicit = enum.auto()
+  Manual = enum.auto()
 
   def __repr__(self):
     return self.name
 
 def axis_names_to_types(axis_types) -> dict[str, AxisTypes]:
-  if axis_types is None:
-    return {}
-  d = {}
+  return {n: t for t, names in axis_types.items()
+          for n in ((names,) if not isinstance(names, tuple) else names)}
+
+def axis_types_to_names(name_to_type: dict[str, AxisTypes]):
+  d = collections.defaultdict(list)
+  for n, t in name_to_type.items():
+    d[t].append(n)
+  return {t: ns[0] if len(ns) == 1 else tuple(ns) for t, ns in d.items()}
+
+def to_axis_types_tuple(axis_types):
+  out = []
   for t, names in axis_types.items():
     if isinstance(names, tuple):
-      for n in names:
-        d[n] = t
+      new_names = names[0] if len(names) == 1 else names
     else:
-      d[names] = t
-  return d
+      new_names = names
+    out.append((t, new_names))
+  return tuple(out)
+
 
 _mesh_object_dict = {}  # type: ignore
 
+MeshAxisType = dict[AxisTypes, str | tuple[str, ...]]
 
 class Mesh(contextlib.ContextDecorator):
   """Declare the hardware resources available in the scope of this manager.
@@ -178,11 +188,11 @@ class Mesh(contextlib.ContextDecorator):
 
   devices: np.ndarray
   axis_names: tuple[MeshAxisName, ...]
-  axis_types: dict[AxisTypes, str | tuple[str, ...]] | None
+  axis_types: MeshAxisType
 
   def __new__(cls, devices: np.ndarray | Sequence[xc.Device],
-              axis_names: str | Sequence[MeshAxisName],
-              axis_types: dict[AxisTypes, str | tuple[str, ...]] | None = None):
+              axis_names: str | Sequence[MeshAxisName], *,
+              axis_types: MeshAxisType | None = None):
     if not isinstance(devices, np.ndarray):
       devices = np.array(devices)
     if isinstance(axis_names, str):
@@ -198,9 +208,15 @@ class Mesh(contextlib.ContextDecorator):
           f"devices.ndim == {devices.ndim} and "
           f"len(axis_names) == {len(axis_names)}.")
 
-    # TODO(yashkatariya): If axis_types is None, set all axes to AUTO.
-    axis_types_tuple = (None if axis_types is None else
-                        tuple(axis_types.items()))
+    axis_types = ({AxisTypes.Auto: axis_names} if axis_types is None else
+                  axis_types)
+    axis_types_tuple = to_axis_types_tuple(axis_types)
+    if len(axis_names_to_types(axis_types).keys()) != len(axis_names):
+      raise ValueError(
+          "Number of axis names in axis_types should match the number of"
+          f" axis_names. Got axis_names={axis_names} and"
+          f" axis_types={axis_types}")
+
     key = (axis_names, devices.shape, tuple(devices.flat), axis_types_tuple)
     val = _mesh_object_dict.get(key, None)
     if val is not None:
@@ -212,19 +228,21 @@ class Mesh(contextlib.ContextDecorator):
     self.axis_names = axis_names
     self.axis_types = axis_types
     self._axis_types_tuple = axis_types_tuple
+    self._size = math.prod(self.shape.values()) if self.devices.ndim else 0
     _mesh_object_dict[key] = self
     return self
 
   def __reduce__(self):
-    return (type(self), (self.devices, self.axis_names, self.axis_types))
+    return (type(self), (self.devices, self.axis_names),
+            {'axis_types': self.axis_types})
 
   def __eq__(self, other):
-    if not isinstance(other, Mesh):
-      return False
     # This is a performance optimization. Comparing thousands of devices
     # can be expensive.
     if id(self) == id(other):
       return True
+    if not isinstance(other, Mesh):
+      return False
     return (self.axis_names == other.axis_names and
             self.devices.shape == other.devices.shape and
             self._axis_types_tuple == other._axis_types_tuple and
@@ -289,7 +307,7 @@ class Mesh(contextlib.ContextDecorator):
 
   @property
   def size(self):
-    return math.prod(self.shape.values()) if self.devices.ndim else 0
+    return self._size
 
   @property
   def empty(self):
@@ -335,7 +353,7 @@ class Mesh(contextlib.ContextDecorator):
   def _repr(self):
     if self.empty:
       return "Mesh(device_ids=[], axis_names=())"
-    atr = '' if self.axis_types is None else f", axis_types={self.axis_types}"
+    atr = f", axis_types={self.axis_types}"
     return f"Mesh(device_ids={self.device_ids!r}, axis_names={self.axis_names!r}{atr})"
 
   def __repr__(self):
@@ -348,7 +366,23 @@ class Mesh(contextlib.ContextDecorator):
 
   @functools.cached_property
   def abstract_mesh(self):
-    return AbstractMesh(self.shape_tuple, self.axis_types)
+    return AbstractMesh(self.shape_tuple, axis_types=self.axis_types)
+
+  @functools.cached_property
+  def _are_all_axes_manual(self) -> bool:
+    return all(t == AxisTypes.Manual for t in self.axis_types.keys())
+
+  @functools.cached_property
+  def _are_all_axes_auto(self) -> bool:
+    return all(t == AxisTypes.Auto for t in self.axis_types.keys())
+
+  @functools.cached_property
+  def _any_axis_manual(self) -> bool:
+    return any(t == AxisTypes.Manual for t in self.axis_types.keys())
+
+  @functools.cached_property
+  def _any_axis_auto(self) -> bool:
+    return any(t == AxisTypes.Auto for t in self.axis_types.keys())
 
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
@@ -368,37 +402,44 @@ class AbstractMesh:
   It does not contain concrete devices compared to `jax.sharding.Mesh`. You
   should use this as an input to the sharding passed to with_sharding_constraint
   and mesh passed to shard_map to avoid tracing and lowering cache misses when
-  your mesh shape and names stay the same but the devices change.
+  your mesh shape and axis names stay the same but the devices change.
   See the description of https://github.com/jax-ml/jax/pull/23022 for more
   details.
   """
 
-  def __init__(self, shape_tuple: tuple[tuple[str, int], ...],
-               axis_types: dict[AxisTypes, str | tuple[str, ...]] | None = None):
+  def __init__(self, shape_tuple: tuple[tuple[str, int], ...], *,
+               axis_types: MeshAxisType | None = None):
     self.shape_tuple = shape_tuple
-    self.axis_types = axis_types
     if self.shape_tuple:
       self._axis_names, self._axis_sizes = list(zip(*self.shape_tuple))
     else:
       self._axis_names, self._axis_sizes = (), ()
-    # TODO(yashkatariya): If axis_types is None, set all axes to AUTO.
-    self._axis_types_tuple = (None if axis_types is None else
-                              tuple(axis_types.items()))
+    self._size = math.prod(self._axis_sizes) if self._axis_sizes else 0
+    self.axis_types = ({AxisTypes.Auto: self._axis_names}
+                       if axis_types is None else axis_types)
+    self._axis_types_tuple = to_axis_types_tuple(self.axis_types)
+    if len(self._name_to_type.keys()) != len(self._axis_names):
+      raise ValueError(
+          "Number of axis names in axis_types should match the number of"
+          f" axis_names in shape_tuple. Got axis_names={self._axis_names} and"
+          f" axis_types={self.axis_types}")
 
   def __hash__(self):
     return hash((self.shape_tuple, self._axis_types_tuple))
 
   def __eq__(self, other):
-    if not isinstance(other, AbstractMesh):
-      return False
     if id(self) == id(other):
       return True
+    if not isinstance(other, AbstractMesh):
+      return False
     return (self.shape_tuple == other.shape_tuple and
             self._axis_types_tuple == other._axis_types_tuple)
 
   def __repr__(self):
-    atr = '' if self.axis_types is None else f", axis_types={self.axis_types}"
-    return f"AbstractMesh({self.shape_tuple}{atr})"
+    mesh_repr = (", ".join(f"'{n}': {v}" for n, v in self.shape_tuple)
+                 if self.shape_tuple else "()")
+    atr = f", axis_types={self.axis_types}"
+    return f"AbstractMesh({mesh_repr}{atr})"
 
   @property
   def axis_names(self):
@@ -412,9 +453,9 @@ class AbstractMesh:
   def _name_to_type(self):
     return axis_names_to_types(self.axis_types)
 
-  @functools.cached_property
+  @property
   def size(self):
-    return math.prod(self._axis_sizes) if self._axis_sizes else 0
+    return self._size
 
   @functools.cached_property
   def shape(self):
@@ -428,11 +469,40 @@ class AbstractMesh:
   def empty(self):
     return self.size == 0
 
+  def update_axis_types(self, new_axis_types) -> AbstractMesh:
+    # dict(self._name_to_type) will copy it.
+    updated_name_to_type = dict(self._name_to_type)
+    updated_name_to_type.update(axis_names_to_types(new_axis_types))
+    new_axis_types = axis_types_to_names(updated_name_to_type)
+    return AbstractMesh(self.shape_tuple, axis_types=new_axis_types)
+
+  @property
+  def abstract_mesh(self):
+    return self
+
   @functools.cached_property
-  def _are_all_axes_collective(self) -> bool:
-    if self.axis_types is None:
-      return False
-    return all(t == AxisTypes.Collective for t in self.axis_types.keys())
+  def _are_all_axes_manual(self) -> bool:
+    return all(t == AxisTypes.Manual for t in self.axis_types.keys())
+
+  @functools.cached_property
+  def _are_all_axes_auto(self) -> bool:
+    return all(t == AxisTypes.Auto for t in self.axis_types.keys())
+
+  @functools.cached_property
+  def _are_all_axes_explicit(self) -> bool:
+    return all(t == AxisTypes.Explicit for t in self.axis_types.keys())
+
+  @functools.cached_property
+  def _any_axis_manual(self) -> bool:
+    return any(t == AxisTypes.Manual for t in self.axis_types.keys())
+
+  @functools.cached_property
+  def _any_axis_auto(self) -> bool:
+    return any(t == AxisTypes.Auto for t in self.axis_types.keys())
+
+  @functools.cached_property
+  def _any_axis_explicit(self) -> bool:
+    return any(t == AxisTypes.Explicit for t in self.axis_types.keys())
 
   @property
   def devices(self):
@@ -455,16 +525,15 @@ class AbstractMesh:
     _raise_value_error("local_mesh")
 
   def __enter__(self):
-    return push_abstract_mesh_context(self)
+    _raise_value_error("__enter__")
 
   def __exit__(self, exc_type, exc_value, traceback):
-    pop_abstract_mesh_context()
-    return False
+    _raise_value_error("__exit__")
 
   @staticmethod
   def _extremely_unsafe_enter_tracing_context(mesh: AbstractMesh):
-    jax_config.abstract_mesh_context_manager.set_local(mesh)
-    return
+    prev = jax_config.abstract_mesh_context_manager.swap_local(mesh)
+    return prev
 
 
 # Create this indirection because pytype fails to recognize a property if a
@@ -473,70 +542,35 @@ def _raise_value_error(name):
   raise ValueError(f"AbstractMesh does not implement {name}")
 
 
-class AbstractMeshContext(threading.local):
-  def __init__(self):
-    self.stack = [None]
-    self.mesh = self.stack[-1]
-
-abstract_mesh_context = AbstractMeshContext()
-
-def push_abstract_mesh_context(val):
-  abstract_mesh_context.stack.append(val)
-  abstract_mesh_context.mesh = val
-  # TODO(yashkatariya): Allow setting empty tuples and tuples with None in them.
-  # Right now that leads to weird numerical issues.
-  non_none_meshes = tuple(m for m in abstract_mesh_context.stack
-                          if m is not None)
-  if non_none_meshes:
-    jax_config.abstract_mesh_context_manager.set_local(non_none_meshes)
-  return val
-
-def pop_abstract_mesh_context():
-  abstract_mesh_context.stack.pop()
-  abstract_mesh_context.mesh = abstract_mesh_context.stack[-1]
-  non_none_meshes = tuple(m for m in abstract_mesh_context.stack
-                          if m is not None)
-  if non_none_meshes:
-    jax_config.abstract_mesh_context_manager.set_local(non_none_meshes)
-
-
-class null_mesh_context:
-
-  def __enter__(self):
-    return push_abstract_mesh_context(None)
-
-  def __exit__(self, *excinfo):
-    pop_abstract_mesh_context()
-    return False
-
-
 @contextlib.contextmanager
-def set_mesh(mesh: Mesh):
-  with (mesh.abstract_mesh, jax_config.sharding_in_types(True),
-        enter_device_context(mesh)):
-    yield
-
-
-class DeviceContext(threading.local):
-  def __init__(self):
-    self.stack = [None]
-    self.concrete_mesh = self.stack[-1]
-
-device_context = DeviceContext()
-
-
-@contextlib.contextmanager
-def enter_device_context(mesh: Mesh):
-  device_context.stack.append(mesh)
-  device_context.concrete_mesh = mesh
-  non_none_meshes = tuple(m for m in device_context.stack if m is not None)
-  if non_none_meshes:
-    jax_config.device_context.set_local(non_none_meshes)
+def set_abstract_mesh(mesh: AbstractMesh):
+  prev_val = jax_config.abstract_mesh_context_manager.swap_local(mesh)
   try:
     yield
   finally:
-    device_context.stack.pop()
-    device_context.concrete_mesh = device_context.stack[-1]
-    non_none_meshes = tuple(m for m in device_context.stack if m is not None)
-    if non_none_meshes:
-      jax_config.device_context.set_local(non_none_meshes)
+    jax_config.abstract_mesh_context_manager.set_local(prev_val)
+
+empty_abstract_mesh = AbstractMesh(())
+
+def get_abstract_mesh():
+  val = jax_config.abstract_mesh_context_manager.value
+  return empty_abstract_mesh if val is None else val
+
+
+@contextlib.contextmanager
+def set_concrete_mesh(mesh: Mesh):
+  prev_val = jax_config.device_context.swap_local(mesh)
+  try:
+    yield
+  finally:
+    jax_config.device_context.set_local(prev_val)
+
+def get_concrete_mesh():
+  return jax_config.device_context.value
+
+
+@contextlib.contextmanager
+def use_mesh(mesh: Mesh):
+  with (set_abstract_mesh(mesh.abstract_mesh),
+        jax_config.sharding_in_types(True), set_concrete_mesh(mesh)):
+    yield

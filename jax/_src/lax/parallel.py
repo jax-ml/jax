@@ -130,8 +130,8 @@ def psum(x, axis_name, *, axis_index_groups=None):
     def pos_reduce(x):
       if not pos_axes:
         return x
-      return lax._reduce_sum(x, [canonicalize_axis(axis, getattr(x, 'ndim', 0))
-                                 for axis in pos_axes])
+      return lax.reduce_sum(x, [canonicalize_axis(axis, getattr(x, 'ndim', 0))
+                                for axis in pos_axes])
     if axis_index_groups is not None:
       assert not pos_axes
       size = len(axis_index_groups[0])
@@ -457,6 +457,101 @@ def all_to_all(x, axis_name, split_axis, concat_axis, *, axis_index_groups=None,
 
   return tree_util.tree_map(bind, x)
 
+def ragged_all_to_all(
+    operand, output, input_offsets, send_sizes, output_offsets, recv_sizes, *,
+    axis_name, axis_index_groups = None):
+  """Ragged version of :func:`all_to_all`.
+
+  For now, ``split_axis`` and ``concat_axis`` from `all_to_all` are equivalent
+  and the outermost (ragged) dimension. ``axis_index_groups`` is default to all
+  replicas (e.g. there is only one group and covers all axis indices).
+
+  Ragged arrays are defined by a set of three arrays:
+  * ``data``: the ``data`` array is "ragged" along its outermost dimension,
+    along which each indexed element has variable size.
+  * ``offsets``: the ``offsets`` array indexes the outermost dimension of the
+    ``data`` array, and represents the starting offset of each ragged element of
+    the ``data`` array.
+  * ``sizes``: the ``sizes`` array represents the size of each ragged element of
+    the ``data`` array, where the size is specified in units of sub-elements. A
+    sub-element is defined as the suffix of the ``data`` array shape obtained by
+    removing the outermost "ragged" dimension.
+  The ``offsets`` and ``sizes`` arrays must have the same size.
+
+  # Example ragged tensor
+  data: [8,3] = {{a,b,c},{d,e,f},{g,h,i},{j,k,l},{m,n,o},{p,q,r},{s,t,u},{v,w,x}}
+  offsets: [3] = {0, 1, 4}
+  sizes: [3] = {1, 3, 4}
+
+  # Index 'data' at 'offsets'[0], 'sizes'[0]'
+  {a,b,c}
+
+  # Index 'data' at 'offsets'[1], 'sizes'[1]'
+  {d,e,f},{g,h,i},{j,k,l}
+
+  # Index 'data' at 'offsets'[2], 'sizes'[2]'
+  {m,n,o},{p,q,r},{s,t,u},{v,w,x}
+
+
+  ``output_offsets`` must be sharded in a way that each replica has offsets in
+  the target replica output perspective.
+
+  For i-th output offset, the current replica will send
+  `operand[input_offsets[i]:input_offsets[i]+input_sizes[i]]` update to `i`-th
+  replica that will be written to
+  `output_i[output_offsets[i]:output_offsets[i]+send_sizes[i]]` in `i`-th
+  replica ``output``.
+
+  For example, if we have 2 replicas:
+
+  replica 0:
+    operand: [1, 2, 2]
+    output: [0, 0, 0, 0]
+    input_offsets: [0, 1]
+    send_sizes: [1, 2]
+    output_offsets: [0, 0]
+    recv_sizes: [1, 1]
+
+  replica 1:
+    operand: [3, 4, 0]
+    output: [0, 0, 0, 0]
+    input_offsets: [0, 1]
+    send_sizes: [1, 1]
+    output_offsets: [1, 2]
+    recv_sizes: [2, 1]
+
+  replica 0's result will be: [1, 3, 0, 0]
+  replica 1's result will be: [2, 2, 4, 0]
+
+  Args:
+    operand: array with ragged dimension along its outermost dimension.
+    output: array of ragged input offsets.
+    input_offsets: array of ragged input send sizes.
+    send_sizes: array of ragged output data.
+    output_offsets: array of ragged offsets in the target replica output.
+    recv_sizes: array of ragged output receive sizes.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      :func:`jax.pmap` documentation for more details).
+    axis_index_groups: optional list of lists containing axis indices (e.g. for
+      an axis of size 4, [[0, 1], [2, 3]] would run ragged all to all over the
+      first two and last two replicas). Groups must cover all axis indices
+      exactly once, and all groups must be the same size. Otherwise, the
+      behavior is undefined.
+
+  Returns:
+    array with shape equal to ``output``.
+  """
+
+  if not isinstance(axis_name, (tuple, list)):
+    axis_name = (axis_name,)
+
+  axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
+  return ragged_all_to_all_p.bind(operand, output, input_offsets, send_sizes,
+                                  output_offsets, recv_sizes,
+                                  axis_name=axis_name,
+                                  axis_index_groups=axis_index_groups)
+
+
 def axis_index(axis_name):
   """Return the index along the mapped axis ``axis_name``.
 
@@ -638,6 +733,7 @@ def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
       raise ValueError(f"axis_index_groups can only be used with reductions over "
                        f"named axes, but got: {axes}")
   if config.sharding_in_types.value:
+    core.check_avals_context_mesh(args, 'all_reduce')
     out_avals = [
         ShapedArray(lax._reduce_op_shape_rule(arg, axes=pos_axes), arg.dtype,
                     sharding=lax._reduce_op_sharding_rule(arg, axes=pos_axes))
@@ -738,10 +834,10 @@ def _psum_transpose_rule(cts, *args, axes, axis_index_groups):
 
 psum_p = core.Primitive('psum')
 psum_p.multiple_results = True
-psum_p.def_impl(partial(_allreduce_impl, psum_p, lax._reduce_sum))
+psum_p.def_impl(partial(_allreduce_impl, psum_p, lax.reduce_sum))
 psum_p.def_effectful_abstract_eval(_allreduce_effectful_abstract_eval)
 mlir.register_lowering(
-    psum_p, partial(_allreduce_lowering, lax.add_p, lax._reduce_sum))
+    psum_p, partial(_allreduce_lowering, lax.add_p, lax.reduce_sum))
 ad.deflinear2(psum_p, _psum_transpose_rule)
 batching.fancy_primitive_batchers[psum_p] = \
   partial(_batched_reduction_collective, psum_p, lambda v, axis_size: axis_size * v)
@@ -749,10 +845,10 @@ batching.skippable_batchers[psum_p] = partial(_names_in_param, 'axes')
 
 pmax_p = core.Primitive('pmax')
 pmax_p.multiple_results = True
-pmax_p.def_impl(partial(_allreduce_impl, pmax_p, lax._reduce_max))
+pmax_p.def_impl(partial(_allreduce_impl, pmax_p, lax.reduce_max))
 pmax_p.def_effectful_abstract_eval(_allreduce_effectful_abstract_eval)
 mlir.register_lowering(
-    pmax_p, partial(_allreduce_lowering, lax.max_p, lax._reduce_max))
+    pmax_p, partial(_allreduce_lowering, lax.max_p, lax.reduce_max))
 batching.fancy_primitive_batchers[pmax_p] = \
   partial(_batched_reduction_collective, pmax_p, lambda v, axis_size: v)
 batching.skippable_batchers[pmax_p] = partial(_names_in_param, 'axes')
@@ -760,10 +856,10 @@ batching.skippable_batchers[pmax_p] = partial(_names_in_param, 'axes')
 
 pmin_p = core.Primitive('pmin')
 pmin_p.multiple_results = True
-pmin_p.def_impl(partial(_allreduce_impl, pmin_p, lax._reduce_min))
+pmin_p.def_impl(partial(_allreduce_impl, pmin_p, lax.reduce_min))
 pmin_p.def_effectful_abstract_eval(_allreduce_effectful_abstract_eval)
 mlir.register_lowering(
-    pmin_p, partial(_allreduce_lowering, lax.min_p, lax._reduce_min))
+    pmin_p, partial(_allreduce_lowering, lax.min_p, lax.reduce_min))
 batching.fancy_primitive_batchers[pmin_p] = \
   partial(_batched_reduction_collective, pmin_p, lambda v, axis_size: v)
 batching.skippable_batchers[pmin_p] = partial(_names_in_param, 'axes')
@@ -1051,6 +1147,81 @@ ad.deflinear2(all_to_all_p, _all_to_all_transpose_rule)
 batching.fancy_primitive_batchers[all_to_all_p] = _all_to_all_batched_collective
 batching.skippable_batchers[all_to_all_p] = partial(_names_in_param, 'axis_name')
 
+
+def _ragged_all_to_all_lowering(
+    ctx, operand, output, input_offsets, send_sizes, output_offsets, recv_sizes,
+    *, axis_name, axis_index_groups
+):
+  replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
+                                   axis_index_groups)
+
+  # Assumes all groups are the same size
+  split_count = len(replica_groups[0])
+  if not all(split_count == len(g) for g in replica_groups):
+    raise ValueError('Replica groups must be equally sized')
+
+  ragged_all_to_all_attrs = {
+      "replica_groups": _replica_groups_hlo(replica_groups)
+  }
+  is_spmd = isinstance(
+      ctx.module_context.axis_context, (SPMDAxisContext, ShardingContext))
+  if is_spmd:
+    ragged_all_to_all_attrs['channel_id'] = ir.IntegerAttr.get(
+        ir.IntegerType.get_signless(64), ctx.module_context.new_channel()
+    )
+
+  return hlo.CustomCallOp(
+      result=[output.type],
+      inputs=[operand, output, input_offsets, send_sizes, output_offsets,
+              recv_sizes],
+      call_target_name=ir.StringAttr.get('ragged_all_to_all'),
+      backend_config=ir.DictAttr.get(ragged_all_to_all_attrs),
+      api_version=ir.IntegerAttr.get(ir.IntegerType.get_signless(32), 4),
+  ).results
+
+def _ragged_all_to_all_effectful_abstract_eval(
+    operand, output, input_offsets, send_sizes, output_offsets, recv_sizes,
+    axis_name, axis_index_groups
+):
+  del operand, axis_index_groups
+  if not dtypes.issubdtype(input_offsets.dtype, np.integer):
+    raise ValueError("ragged_all_to_all input_offsets must be integer type.")
+  if not dtypes.issubdtype(send_sizes.dtype, np.integer):
+    raise ValueError("ragged_all_to_all send_sizes must be integer type.")
+  if not dtypes.issubdtype(output_offsets.dtype, np.integer):
+    raise ValueError("ragged_all_to_all output_offsets must be integer type.")
+  if not dtypes.issubdtype(recv_sizes.dtype, np.integer):
+    raise ValueError("ragged_all_to_all recv_sizes must be integer type.")
+  if len(input_offsets.shape) != 1 or input_offsets.shape[0] < 1:
+    raise ValueError(
+        "ragged_all_to_all input_offsets must be rank 1 with positive dimension"
+        " size, but got shape {}".format(input_offsets.shape)
+    )
+  if len(send_sizes.shape) != 1 or send_sizes.shape[0] < 1:
+    raise ValueError(
+        "ragged_all_to_all send_sizes must be rank 1 with positive dimension"
+        " size, but got shape {}".format(send_sizes.shape)
+    )
+  if len(output_offsets.shape) != 1 or output_offsets.shape[0] < 1:
+    raise ValueError(
+        "ragged_all_to_all output_offsets must be rank 1 with positive"
+        " dimension size, but got shape {}".format(output_offsets.shape)
+    )
+  if len(recv_sizes.shape) != 1 or recv_sizes.shape[0] < 1:
+    raise ValueError(
+        "ragged_all_to_all recv_sizes must be rank 1 with positive dimension"
+        " size, but got shape {}".format(recv_sizes.shape)
+    )
+
+  _check_axis_names(axis_name)
+  out_aval = output.update(shape=output.shape, weak_type=False)
+  effects = {*map(core.NamedAxisEffect, axis_name)}
+  return out_aval, effects
+
+ragged_all_to_all_p = core.Primitive('ragged_all_to_all')
+ragged_all_to_all_p.def_effectful_abstract_eval(_ragged_all_to_all_effectful_abstract_eval)
+mlir.register_lowering(ragged_all_to_all_p, _ragged_all_to_all_lowering)
+batching.skippable_batchers[ragged_all_to_all_p] = partial(_names_in_param, 'axis_name')
 
 def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
   """Gather values of x across all replicas.
@@ -1484,7 +1655,22 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
     axis_name, = axis_name
   if axis_name not in axis_env.names:
     raise NameError(f"unbound axis name: {axis_name}")
+  axis_context = ctx.module_context.axis_context
   axis_pos = list(axis_env.names).index(axis_name)
+
+  # For partial auto, enter into a fully manual shard_map.
+  if (isinstance(axis_context, SPMDAxisContext) and
+      axis_context.manual_axes and
+      axis_context.manual_axes != frozenset(axis_context.mesh.axis_names)):
+    if axis_env.sizes[axis_pos] == 1:
+      return hlo.constant(ir.DenseElementsAttr.get(np.asarray(0, dtype=np.int32)))
+    from jax.experimental.shard_map import shard_map
+    def f():
+      return axis_index_p.bind(axis_name=axis_name)
+    return mlir.lower_fun(
+        lambda: [shard_map(f, axis_context.mesh, check_rep=False,
+                           in_specs=(), out_specs=P())()])(ctx)[0]
+
   nreplicas = axis_env.nreps // math.prod(axis_env.sizes)
   div = mlir.ir_constant(
       np.array(
@@ -1492,12 +1678,7 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
       )
   )
   mod = mlir.ir_constant(np.array(axis_env.sizes[axis_pos], dtype=np.uint32))
-  axis_context = ctx.module_context.axis_context
-  is_spmd = isinstance(
-      axis_context,
-      (SPMDAxisContext, ShardingContext),
-  )
-  if is_spmd:
+  if isinstance(axis_context, (ShardingContext, SPMDAxisContext)):
     device_id = hlo.partition_id()
   else:
     device_id = hlo.replica_id()

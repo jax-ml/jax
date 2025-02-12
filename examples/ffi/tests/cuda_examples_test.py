@@ -13,36 +13,37 @@
 # limitations under the License.
 
 from absl.testing import absltest
-
 import jax
-import jax.numpy as jnp
 from jax._src import test_util as jtu
+import jax.numpy as jnp
 
 jax.config.parse_flags_with_absl()
 
 
 class CudaE2eTests(jtu.JaxTestCase):
+
   def setUp(self):
     super().setUp()
     if not jtu.test_device_matches(["cuda"]):
       self.skipTest("Unsupported platform")
 
     # Import here to avoid trying to load the library when it's not built.
-    from jax_ffi_example import cuda_examples
+    from jax_ffi_example import cuda_examples  # pylint: disable=g-import-not-at-top
+
     self.foo = cuda_examples.foo
 
   def test_fwd_interpretable(self):
     shape = (2, 3)
-    a = 2. * jnp.ones(shape)
-    b = 3. * jnp.ones(shape)
+    a = 2.0 * jnp.ones(shape, dtype=jnp.float32)
+    b = 3.0 * jnp.ones(shape, dtype=jnp.float32)
     observed = jax.jit(self.foo)(a, b)
-    expected = (2. * (3. + 1.))
-    self.assertArraysEqual(observed, expected)
+    expected = 2.0 * (3.0 + 1.0)
+    self.assertArraysEqual(observed, jnp.float32(expected))
 
   def test_bwd_interpretable(self):
     shape = (2, 3)
-    a = 2. * jnp.ones(shape)
-    b = 3. * jnp.ones(shape)
+    a = 2.0 * jnp.ones(shape, dtype=jnp.float32)
+    b = 3.0 * jnp.ones(shape, dtype=jnp.float32)
 
     def loss(a, b):
       return jnp.sum(self.foo(a, b))
@@ -56,8 +57,8 @@ class CudaE2eTests(jtu.JaxTestCase):
   def test_fwd_random(self):
     shape = (2, 3)
     akey, bkey = jax.random.split(jax.random.key(0))
-    a = jax.random.normal(key=akey, shape=shape)
-    b = jax.random.normal(key=bkey, shape=shape)
+    a = jax.random.normal(key=akey, shape=shape, dtype=jnp.float32)
+    b = jax.random.normal(key=bkey, shape=shape, dtype=jnp.float32)
     observed = jax.jit(self.foo)(a, b)
     expected = a * (b + 1)
     self.assertAllClose(observed, expected)
@@ -65,10 +66,9 @@ class CudaE2eTests(jtu.JaxTestCase):
   def test_bwd_random(self):
     shape = (2, 3)
     akey, bkey = jax.random.split(jax.random.key(0))
-    a = jax.random.normal(key=akey, shape=shape)
-    b = jax.random.normal(key=bkey, shape=shape)
-    jtu.check_grads(f=jax.jit(self.foo), args=(a, b), order=1,
-                    modes=("rev",))
+    a = jax.random.normal(key=akey, shape=shape, dtype=jnp.float32)
+    b = jax.random.normal(key=bkey, shape=shape, dtype=jnp.float32)
+    jtu.check_grads(f=jax.jit(self.foo), args=(a, b), order=1, modes=("rev",))
 
 
 if __name__ == "__main__":

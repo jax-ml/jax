@@ -11,7 +11,6 @@ that use or interface with JAX.
    :maxdepth: 1
 
    notebooks/Writing_custom_interpreters_in_Jax
-   Custom_Operation_for_GPUs
    jax.extend
 
 .. toctree::

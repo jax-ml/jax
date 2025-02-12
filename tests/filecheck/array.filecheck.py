@@ -23,8 +23,6 @@ import jax
 from jax import lax
 import numpy as np
 
-from jax._src.lax import lax as lax_internal
-
 from jax.tests.filecheck.jax_filecheck_helpers import print_ir
 
 jax.config.update("jax_enable_x64", True)
@@ -56,12 +54,12 @@ def main(_):
       partial(lax.pad, padding_value=np.int32(7),
               padding_config=((2, 3, 4), (4, 5, 6))))
 
-  # CHECK-LABEL: TEST: _reduce_sum int32[2,3,7]
+  # CHECK-LABEL: TEST: reduce_sum int32[2,3,7]
   # CHECK: hlo.reduce
   # CHECK: hlo.add
   # CHECK: tensor<3xi32>
   print_ir(np.empty([2, 3, 7], np.int32))(
-      partial(lax_internal._reduce_sum, axes=(0, 2)))
+      partial(lax.reduce_sum, axes=(0, 2)))
 
   # CHECK-LABEL: TEST: reshape int32[2,3,7]
   # CHECK: hlo.reshape

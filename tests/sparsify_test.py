@@ -560,7 +560,9 @@ class SparsifyTest(jtu.JaxTestCase):
     func(x, y)  # No error
     func(x_bcoo, y_bcoo)  # No error
 
-    with self.assertRaisesRegex(TypeError, "sparsified true_fun and false_fun output.*"):
+    with self.assertRaisesRegex(
+        TypeError,
+        "sparsified true_fun output must have same type structure as sparsified false_fun output.*"):
       func(x_bcoo, y)
 
   @parameterized.named_parameters(

@@ -35,4 +35,4 @@ class TritonCompilerParams(pallas_core.CompilerParams):
   PLATFORM: ClassVar[str] = "triton"
   num_warps: int | None = None
   num_stages: int | None = None
-  serialized_metadata: str | None = None
+  serialized_metadata: bytes | None = None

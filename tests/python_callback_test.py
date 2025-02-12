@@ -36,14 +36,7 @@ from jax.sharding import Mesh
 import numpy as np
 
 config.parse_flags_with_absl()
-
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(2))
-
-def tearDownModule():
-  _exit_stack.close()
+jtu.request_cpu_devices(2)
 
 map, unsafe_map = util.safe_map, map
 
@@ -555,6 +548,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
         np.arange(2 * jax.local_device_count()).reshape([-1, 2]) + 1.)
 
   @with_pure_and_io_callbacks
+  @jtu.thread_unsafe_test()  # logging isn't thread-safe
   def test_exception_in_callback(self, *, callback):
     def fail(x):
       raise RuntimeError("Ooops")
@@ -577,6 +571,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
       self.assertIn("Traceback (most recent call last)", output)
 
   @with_pure_and_io_callbacks
+  @jtu.thread_unsafe_test()  # count_primitive_compiles isn't thread-safe
   def test_compilation_caching(self, *, callback):
     def f_outside(x):
       return 2 * x
@@ -588,7 +583,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
     with jtu.count_primitive_compiles() as count:
       for _ in range(3):
         self.assertAllClose(2 * x, fun(x))
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
 
 class PureCallbackTest(jtu.JaxTestCase):
@@ -944,11 +939,19 @@ class PureCallbackTest(jtu.JaxTestCase):
     np.testing.assert_allclose(
         out, np.arange(jax.local_device_count()) * 2
     )
-
-    self.assertIn(
-        f'{{maximal device={callback_device_index}}}',
-        str(f_jit.lower(inp).compiler_ir(dialect='stablehlo')),
-    )
+    stablehlo_ir = f_jit.lower(inp).as_text()
+    if config.use_shardy_partitioner.value:
+      self.assertIn(
+          "sdy.sharding ="
+          f" #sdy.sharding_per_value<[<@maximal_mesh_{callback_device_index},"
+          " []>]>",
+          stablehlo_ir)
+      self.assertIn(
+          f"sdy.mesh @maximal_mesh_{callback_device_index} = <[],"
+          f" device_ids=[{callback_device_index}]>",
+          stablehlo_ir)
+    else:
+      self.assertIn(f"{{maximal device={callback_device_index}}}", stablehlo_ir)
 
   def test_can_shard_pure_callback_manually(self):
 
@@ -1029,6 +1032,30 @@ class PureCallbackTest(jtu.JaxTestCase):
                                vmap_method="broadcast_all")
 
     jax.vmap(f, in_axes=(0, None))(jnp.arange(4.0), 1.0)  # doesn't error
+
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
+  @jtu.run_on_devices("cpu")
+  def test_async_deadlock(self):
+    self.skipTest("Too slow and memory intensive.")
+
+    # See https://github.com/jax-ml/jax/issues/24255
+    eig = jax.jit(jnp.linalg.eig)
+
+    def callback(x):
+      return jax.block_until_ready(eig(x))
+
+    def fun(x):
+      self.assertEqual(x.dtype, jnp.complex64)
+      out_type = (
+          jax.ShapeDtypeStruct(x.shape[:-1], x.dtype),
+          jax.ShapeDtypeStruct(x.shape, x.dtype),
+      )
+      return jax.pure_callback(callback, out_type, x)
+
+    result = 0.0
+    for _ in range(10):
+      result += fun(jnp.ones((500, 500), jnp.complex64))[1]
+    jax.block_until_ready(result)  # doesn't deadlock
 
 
 class IOCallbackTest(jtu.JaxTestCase):
@@ -1206,10 +1233,19 @@ class IOCallbackTest(jtu.JaxTestCase):
         self.assertIn(v, _collected)
 
     callback_device_index = in_spec._device_assignment.index(callback_device)
-    self.assertIn(
-        f'{{maximal device={callback_device_index}}}',
-        str(f.lower(x).compiler_ir(dialect='stablehlo')),
-    )
+    stablehlo_ir = f.lower(x).as_text()
+    if config.use_shardy_partitioner.value:
+      self.assertIn(
+          "sdy.sharding ="
+          f" #sdy.sharding_per_value<[<@maximal_mesh_{callback_device_index},"
+          " []>]>",
+          stablehlo_ir)
+      self.assertIn(
+          f"sdy.mesh @maximal_mesh_{callback_device_index} = <[],"
+          f" device_ids=[{callback_device_index}]>",
+          stablehlo_ir)
+    else:
+      self.assertIn(f"{{maximal device={callback_device_index}}}", stablehlo_ir)
 
   def test_sequence_pjit_io_callback_ordered(self):
     # A sequence of pairs of calls to pjit(io_callback(ordered=True)) with each
@@ -1245,7 +1281,7 @@ class IOCallbackTest(jtu.JaxTestCase):
       )
       mesh = jax.sharding.Mesh(np.array(devices_for_iteration), ['dev'])
       in_spec = (
-          jax.sharding.NamedSharding(mesh, None),
+          jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec()),
           jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev')),
       )
       out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
@@ -1264,6 +1300,8 @@ class IOCallbackTest(jtu.JaxTestCase):
     self.assertEqual(_collected, expected)
 
   def test_can_shard_io_callback_manually(self):
+    if config.use_shardy_partitioner.value:
+      self.skipTest("TODO(b/384938613): Failing under shardy.")
 
     mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
 

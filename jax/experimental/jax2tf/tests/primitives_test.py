@@ -170,7 +170,13 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     for p in all_primitives:
       if p.name == "axis_index":
         continue
+      if p.name == "composite":
+        continue
       if p.name == "sharding_constraint":
+        continue
+      if p.name == "mesh_cast":
+        continue
+      if p.name == "reshard":
         continue
       # TODO: Remove once tensorflow is 2.10.0 everywhere.
       if p.name == "optimization_barrier":
@@ -183,6 +189,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         continue
       if p.name == "pallas_call":
         continue
+      if p.name == "ragged_all_to_all":
+        continue
       if p.name == "ffi_call":
         continue
       if p.name == "tpu_custom_call":
@@ -194,6 +202,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
           "dot_product_attention_bwd",
           "dot_product_attention_fwd_wrapper",
           "dot_product_attention_bwd_wrapper",
+          "dot_product_attention_fp8_fwd_wrapper",
+          "dot_product_attention_fp8_bwd_wrapper",
       ):
         continue
       if p.name in tf_not_yet_impl:

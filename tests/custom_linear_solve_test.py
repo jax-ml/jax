@@ -482,6 +482,26 @@ class CustomLinearSolveTest(jtu.JaxTestCase):
     # doesn't crash
     jax.vmap(solve_aux)(b)
 
+  def test_custom_linear_solve_ordered_effects(self):
+    # See https://github.com/jax-ml/jax/issues/26087
+    def mat_vec(v):
+      jax.debug.callback(lambda: print("mat_vec"), ordered=True)
+      return v
+
+    def solve(b):
+      return lax.custom_linear_solve(mat_vec, b, lambda matvec, x: matvec(x))
+
+    b = self.rng().randn(24)
+    with jtu.capture_stdout() as output:
+      expected = solve(b)
+      jax.effects_barrier()
+    self.assertEqual(output(), "mat_vec\n")
+    with jtu.capture_stdout() as output:
+      computed = jax.jit(solve)(b)
+      jax.effects_barrier()
+    self.assertEqual(output(), "mat_vec\n")
+    self.assertAllClose(computed, expected)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

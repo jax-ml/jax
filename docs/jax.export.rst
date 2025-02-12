@@ -14,8 +14,11 @@ Classes
 .. autosummary::
   :toctree: _autosummary
 
-  Exported
-  DisabledSafetyCheck
+.. autoclass:: Exported
+  :members:
+
+.. autoclass:: DisabledSafetyCheck
+  :members:
 
 Functions
 ---------

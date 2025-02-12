@@ -46,7 +46,7 @@ NT_DIM_NUMBERS = (((1,), (1,)), ((), ()))  # RHS transposed
 class SegmentIds(NamedTuple):
   """SegmentIds for Q and KV sequences.
 
-  SegmentIds are a mechanims to ensure that there is no cross-attention between
+  SegmentIds are a mechanism to ensure that there is no cross-attention between
   segments (fraction of a sequence) that have been concatenated together into a
   sequence. Each array is a list of ids (integers). Only tokens with the same
   id are allowed to attend to each other.
@@ -603,9 +603,9 @@ def _apply_mask_and_soft_cap(
     else:
       mask = pl.load(mask_ref, (k_slice, slice(None)))
 
-    snm = jnp.where(should_not_mask, 1, 0)
-    masks.append(jnp.bitwise_or(mask, jnp.broadcast_to(snm, mask.shape)) != 0)
-
+    masks.append(
+        jnp.bitwise_or(mask, jnp.broadcast_to(should_not_mask, mask.shape))
+    )
   if mask_function is not None:
     # Compute the mask using the given q_sequence indices.
     # KV indices are computed on the fly. This works because we only support Q
@@ -899,6 +899,16 @@ def _splash_attention_forward(
     kv_head_dimension = 2
     kv_seq_len_dimension = 1
     num_kv_heads = k.shape[0]
+
+  partial_mask_blocks = fwd_mask_info.partial_mask_blocks
+  if (
+      partial_mask_blocks is not None
+      and jnp.dtype(partial_mask_blocks.dtype) != np.bool_
+  ):
+    raise ValueError(
+        "partial_mask_blocks must be of type np.bool_ but got"
+        f" {partial_mask_blocks.dtype}"
+    )
 
   if len(k.shape) != expected_kv_rank:
     raise ValueError(
@@ -2382,7 +2392,7 @@ class SplashAttentionKernel:
 
 
 def _make_splash_attention(
-    mask: np.ndarray | mask_lib.MultiHeadMask,
+    mask: np.ndarray | jax.Array | mask_lib.MultiHeadMask,
     *,
     block_sizes: BlockSizes | None = None,
     is_mqa: bool,
@@ -2405,14 +2415,26 @@ def _make_splash_attention(
 
   if block_sizes is None:
     block_sizes = BlockSizes.get_default()
-  fwd_mask_info, mask_function_fwd = mask_info_lib.process_mask(
+
+  process_mask_fn = (
+      mask_info_lib.process_dynamic_mask
+      if isinstance(mask, jax.Array)
+      else mask_info_lib.process_mask
+  )
+
+  process_mask_dvk_fn = (
+      mask_info_lib.process_dynamic_mask_dkv
+      if isinstance(mask, jax.Array)
+      else mask_info_lib.process_mask_dkv
+  )
+
+  fwd_mask_info, mask_function_fwd = process_mask_fn(
       mask,
       (block_sizes.block_q, block_sizes.block_kv),
       downcast_smem_data=downcast_smem_data,
       head_shards=head_shards,
       q_seq_shards=q_seq_shards,
   )
-
   fwd_mask_info = tree_util.tree_map(jnp.array, fwd_mask_info)
 
   dq_mask_info = None
@@ -2422,7 +2444,7 @@ def _make_splash_attention(
       dq_mask_info = None
     else:
       bq_dq, bkv_dq = block_sizes.block_q_dq, block_sizes.block_kv_dq
-      dq_mask_info, mask_function_dq = mask_info_lib.process_mask(
+      dq_mask_info, mask_function_dq = process_mask_fn(
           mask,
           (bq_dq, bkv_dq),
           downcast_smem_data=downcast_smem_data,
@@ -2432,7 +2454,7 @@ def _make_splash_attention(
       assert (mask_function_fwd is None) == (mask_function_dq is None)
       dq_mask_info = tree_util.tree_map(jnp.array, dq_mask_info)
     bq_dkv, bkv_dkv = block_sizes.block_q_dkv, block_sizes.block_kv_dkv
-    dkv_mask_info, mask_function_dkv = mask_info_lib.process_mask_dkv(
+    dkv_mask_info, mask_function_dkv = process_mask_dvk_fn(
         mask,
         (bq_dkv, bkv_dkv),
         downcast_smem_data=downcast_smem_data,

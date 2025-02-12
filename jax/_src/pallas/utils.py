@@ -25,15 +25,6 @@ import jax.numpy as jnp
 import numpy as np
 
 
-def when(condition):
-  def _wrapped(f):
-    if isinstance(condition, bool):
-      if condition:
-        f()
-    else:
-      lax.cond(condition, f, lambda: None)
-  return _wrapped
-
 @overload
 def cdiv(a: int, b: int) -> int:
   ...

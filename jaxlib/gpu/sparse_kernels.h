@@ -25,6 +25,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/handle_pool.h"
+#include "xla/ffi/api/ffi.h"
 #include "xla/service/custom_call_status.h"
 
 namespace jax {
@@ -148,6 +149,17 @@ void gtsv2_f32(gpuStream_t stream, void** buffers, const char* opaque,
 
 void gtsv2_f64(gpuStream_t stream, void** buffers, const char* opaque,
                std::size_t opaque_len, XlaCustomCallStatus* status);
+
+XLA_FFI_DECLARE_HANDLER_SYMBOL(CsrToDenseFfi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(CsrFromDenseFfi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(CsrMatvecFfi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(CsrMatmatFfi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(CooToDenseFfi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(CooFromDenseFfi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(CooMatvecFfi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(CooMatmatFfi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(gtsv2_f32_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(gtsv2_f64_ffi);
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

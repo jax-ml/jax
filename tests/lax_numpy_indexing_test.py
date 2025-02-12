@@ -399,6 +399,14 @@ MIXED_ADVANCED_INDEXING_TESTS_NO_REPEATS = [
     IndexSpec(shape=(3, 4), indexer=(Ellipsis, np.array(1, dtype=np.int32)),
               out_shape=(3,)),
   ]),
+  ("EllipsisWithArrayIndices", [
+    IndexSpec(shape=(3, 4, 5), indexer=(np.array([0, 1]), ..., np.array([0, 1])),
+              out_shape=(2, 4)),
+    IndexSpec(shape=(3, 4, 5), indexer=(slice(None), np.array([0, 1]), ..., np.array([0, 1])),
+              out_shape=(2, 3)),
+    IndexSpec(shape=(3, 4, 5), indexer=(slice(None), ..., np.array([0, 1]), np.array([0, 1])),
+              out_shape=(3, 2)),
+  ]),
 ]
 
 
@@ -1666,6 +1674,18 @@ class IndexedUpdateTest(jtu.JaxTestCase):
 
     c = a.at[0].set(val)
     self.assertEqual(int(c[0]), val)
+
+  def testGradOfVmapOfScatter(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/25878
+    def f(x, i):
+      return x.at[i].get(mode='clip')
+
+    x = jnp.array([1.0])
+    i = jnp.array([1])  # out-of-bound index
+    expected = jnp.array([[1.0]])
+
+    self.assertArraysEqual(jax.jacrev(f)(x, i), expected)
+    self.assertArraysEqual(jax.jacrev(jax.vmap(f, (None, 0)))(x, i), expected)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

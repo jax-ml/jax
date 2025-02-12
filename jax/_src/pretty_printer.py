@@ -42,9 +42,9 @@ except ImportError:
   colorama = None
 
 
-_PPRINT_USE_COLOR = config.bool_flag(
+_PPRINT_USE_COLOR = config.bool_state(
     'jax_pprint_use_color',
-    config.bool_env('JAX_PPRINT_USE_COLOR', True),
+    True,
     help='Enable jaxpr pretty-printing with colorful syntax highlighting.'
 )
 

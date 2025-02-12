@@ -69,18 +69,6 @@ _call_tf_dynamic_shape_error = "call_tf cannot call functions whose output has d
 
 class CallTfTest(tf_test_util.JaxToTfTestCase):
 
-  @classmethod
-  def setUpClass(cls):
-    # One TF device of each device_type
-    cls.tf_devices = []
-    for tf_device in tf.config.list_logical_devices():
-      if tf_device.device_type == "TPU_SYSTEM":
-        continue  # A virtual device
-      if all(tf_device.device_type != d.device_type for d in cls.tf_devices):
-        cls.tf_devices.append(tf_device)
-
-    super().setUpClass()
-
   def setUp(self):
     if tf is None:
       raise unittest.SkipTest("Test requires tensorflow")
@@ -88,6 +76,13 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     # bug in TensorFlow.
     _ = tf.add(1, 1)
     super().setUp()
+    # One TF device of each device_type
+    self.tf_devices = []
+    for tf_device in tf.config.list_logical_devices():
+      if tf_device.device_type == "TPU_SYSTEM":
+        continue  # A virtual device
+      if all(tf_device.device_type != d.device_type for d in self.tf_devices):
+        self.tf_devices.append(tf_device)
     self.warning_ctx = jtu.ignore_warning(
         message=(
             "(jax2tf.convert with native_serialization=False has been deprecated"
@@ -798,7 +793,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
 
     jax_and_tf_platforms = (
       set(jax_platforms) & {d.device_type.lower()
-                            for d in self.__class__.tf_devices})
+                            for d in self.tf_devices})
 
     lowering_platforms = ("tpu", "cpu", "cuda")
 
@@ -833,7 +828,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
       f_jax,
       native_serialization=True,
       native_serialization_platforms=lowering_platforms))
-    for tf_device in self.__class__.tf_devices:
+    for tf_device in self.tf_devices:
       with self.subTest(tf_device.device_type):
         logging.info(
           f"Running on tf_device = {tf_device} of device_type = {tf_device.device_type}")

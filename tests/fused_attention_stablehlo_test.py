@@ -38,12 +38,68 @@ from jax._src.cudnn.fused_attention_stablehlo import (
 config.parse_flags_with_absl()
 Array = jnp.ndarray
 
+fp8_meta_names = [
+    "amax_dQ",
+    "amax_dK",
+    "amax_dV",
+    "amax_dP",
+    "descale_q",
+    "descale_k",
+    "descale_v",
+    "descale_s",
+    "scale_s",
+    "scale_o",
+    "descale_o",
+    "descale_dO",
+    "descale_dP",
+    "scale_dQ",
+    "scale_dK",
+    "scale_dV",
+    "scale_dP",
+]
+
+
+def quantize_to_fp8(x, q_dtype, compute_dtype, scale):
+  # Explicitly cast the max values to the compute dtype to avoid unnecessary
+  # casting to FP32 during the subsequent math operations."
+  assert q_dtype in (
+      jnp.float8_e4m3fn,
+      jnp.float8_e5m2,
+      jnp.float8_e4m3fnuz,
+      jnp.float8_e5m2fnuz,
+  )
+  dtype_max = jnp.finfo(q_dtype).max.astype(compute_dtype)
+  scaled_x = x / jnp.broadcast_to(
+      jnp.asarray(scale, dtype=compute_dtype), x.shape
+  )
+  clipped_x = jnp.clip(scaled_x, -dtype_max, dtype_max)
+  return clipped_x.astype(q_dtype)
+
+
+def quantize_dequantize_fp8(x, q_dtype, scale, compute_dtype):
+  qx = quantize_to_fp8(x, q_dtype, compute_dtype, scale)
+  out = qx.astype(x.dtype) * jnp.broadcast_to(
+      jnp.asarray(scale, dtype=x.dtype), qx.shape
+  )
+  return out
+
+
+cast_to_representable = partial(
+    quantize_dequantize_fp8, scale=1, compute_dtype=jnp.bfloat16
+)
+
+quantize = partial(quantize_to_fp8, scale=1)
+
 def sdpa_train(query: Array,
                key: Array,
                value: Array,
                grad: Array,
                bias: Array | None = None,
                mask: Array | None = None,
+               q_seqlen: Array | None = None,
+               kv_seqlen: Array | None = None,
+               q_offsets: Array | None = None,
+               kv_offsets: Array | None = None,
                scale: float = 0.5,
                mask_type: MaskType = MaskType.NO_MASK,
                is_bnth: bool = False,
@@ -55,15 +111,13 @@ def sdpa_train(query: Array,
     else:
       B, S, _, _ = query.shape
     q_seqlen = kv_seqlen = jnp.full((B,), S // 2, jnp.int32)
-  else:
-    q_seqlen = kv_seqlen = None
   out, sdpa_vjp = jax.vjp(
       partial(dot_product_attention, scale=scale, mask_type=mask_type,
               dropout_rate=dropout_rate,
               qkv_layout="BNTH" if is_bnth else "BTNH",
               sliding_window_length=sliding_window_length),
-      query, key, value, bias, mask, q_seqlen, kv_seqlen)
-  query_grad, key_grad, value_grad, bias_grad, _, _, _ = sdpa_vjp(grad)
+      query, key, value, bias, mask, q_seqlen, kv_seqlen, q_offsets, kv_offsets)
+  query_grad, key_grad, value_grad, bias_grad = sdpa_vjp(grad)[:4]
   if bias is not None and len(bias.shape) == 3:
     # has dbias
     return out, (query_grad, key_grad, value_grad, bias_grad)
@@ -171,11 +225,37 @@ def sdpa_train_ref(query: Array,
     return out_ref, (query_grad_ref, key_grad_ref, value_grad_ref, bias_grad_ref)
   return out_ref, (query_grad_ref, key_grad_ref, value_grad_ref)
 
+
+def sdpa_train_fp8(
+    query: Array,
+    key: Array,
+    value: Array,
+    grad: Array,
+    fp8_metas: dict[Array],
+    scale: float = 0.5,
+    mask_type: MaskType = MaskType.NO_MASK,
+):
+  def dot_product_attention_fp8(query, key, value, fp8_metas):
+    f_p = partial(
+        dot_product_attention, scale=scale, mask_type=mask_type, use_fp8=True
+    )
+    return f_p(query, key, value, None, None, None, None, fp8_metas)
+
+  out, sdpa_vjp = jax.vjp(
+      dot_product_attention_fp8, query, key, value, fp8_metas
+  )
+
+  grad_amax_s = jnp.ones((1, 1, 1, 1), dtype=jnp.float32)
+  grad_amax_o = jnp.ones((1, 1, 1, 1), dtype=jnp.float32)
+  query_grad, key_grad, value_grad, *_ = sdpa_vjp(
+      (grad, grad_amax_s, grad_amax_o)
+  )
+  return out[0], (query_grad, key_grad, value_grad)
+
+
 class DotProductAttentionTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
-    if jax.device_count() < 4:
-      self.skipTest("Requires more than 4 devices.")
     try:
       cudnn_version = check_cudnn_version()
     except RuntimeError as e:
@@ -202,7 +282,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
   def test_sdpa(self, batch_size: int, seq_len: int, num_heads: int,
                 head_dim: int, use_mask: bool, use_bias: bool, mask_type: MaskType,
                 dropout_rate: float, scale: float, dtype: jnp.dtype):
-    if len(jax.local_devices()) <= 4:
+    if len(jax.local_devices()) < 4:
       self.skipTest("Require at least 4 devices to run sharding tests.")
     if use_mask and mask_type != MaskType.NO_MASK:
       self.skipTest("Either pass in mask or generate mask directly in cuDNN.")
@@ -286,6 +366,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_inference(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
     k1, k2, k3 = jax.random.split(jax.random.key(0), 3)
     query = jax.random.normal(
         k1, (4, 1024, 4, 64), dtype=jnp.bfloat16)
@@ -327,6 +409,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_var_seq(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
     self.skipTest("Skip before fixed.")
     k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
     query = jax.random.normal(
@@ -358,6 +442,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_broadcast_bias_and_dbias(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
     try:
       cudnn_version = check_cudnn_version()
     except RuntimeError as e:
@@ -424,6 +510,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("cuda")
   def test_sdpa_dbias(self, batch_size: int):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
     # cuDNN only supports dbias when batch size is 1. If the batch size is
     # greater, dbias is silently set to all zeros. This test verifies this
     # behavior for both vmap and regular use cases.
@@ -460,6 +548,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_sliding_window_length(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
     k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
     query = jax.random.normal(
         k1, (4, 1024, 4, 64), dtype=jnp.bfloat16)
@@ -492,7 +582,172 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-5, atol=1e-5)
 
   @jtu.run_on_devices("cuda")
+  def test_sdpa_large_head_size(self):
+    try:
+      cudnn_version = check_cudnn_version()
+    except RuntimeError as e:
+      self.skipTest(str(e))
+      return
+    if cudnn_version < 90500:
+      self.skipTest("Requires >= cuDNN 9.5.0")
+    if not jtu.is_cuda_compute_capability_equal("9.0"):
+      self.skipTest("Requires Hopper arch")
+
+    B, T, N, H = 2, 64, 2, 256
+    bf16 = jnp.bfloat16
+    keys = jax.random.split(jax.random.key(0), 4)
+    query = jax.random.normal(keys[0], (B, T, N, H), dtype=bf16)
+    key = jax.random.normal(keys[1], (B, T, N, H), dtype=bf16)
+    value = jax.random.normal(keys[2], (B, T, N, H), dtype=bf16)
+    grad = jax.random.normal(keys[3], (B, T, N, H), dtype=bf16)
+    sdpa_train_ans = jax.jit(partial(
+        sdpa_train, scale=1.0, mask_type=MaskType.CAUSAL, dropout_rate=0)
+    )
+    sdpa_train_rfc = jax.jit(partial(
+        sdpa_train_ref, scale=1.0, mask_type=MaskType.CAUSAL, dropout_rate=0)
+    )
+
+    out_ans, grads_ans = sdpa_train_ans(query, key, value, grad, None, None)
+    out_ref, grads_ref = sdpa_train_rfc(query, key, value, grad, None, None)
+    self.assertArraysAllClose(out_ref, out_ans)
+    self.assertArraysAllClose(grads_ref[0], grads_ans[0])
+    self.assertArraysAllClose(grads_ref[1], grads_ans[1])
+    self.assertArraysAllClose(grads_ref[2], grads_ans[2])
+
+  @jtu.run_on_devices("cuda")
+  def test_sdpa_packed_layout(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
+    try:
+      cudnn_version = check_cudnn_version()
+    except RuntimeError as e:
+      self.skipTest(str(e))
+      return
+    if cudnn_version < 90600:
+      self.skipTest("Requires >= cuDNN 9.6.0")
+    k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
+    query = jax.random.normal(
+        k1, (4, 512, 4, 64), dtype=jnp.bfloat16)
+    key = jax.random.normal(
+        k2, (4, 512, 4, 64), dtype=jnp.bfloat16)
+    value = jax.random.normal(
+        k3, (4, 512, 4, 64), dtype=jnp.bfloat16)
+    grad = jax.random.normal(
+        k4, (4, 512, 4, 64), dtype=jnp.bfloat16)
+
+    def generate_padding_mask(segment_ids, padding_id, shape, dtype):
+      # segment_ids [B, T]
+      encoded_padding = jnp.where(segment_ids >= padding_id, 0, 1).astype(dtype)
+      return jax.lax.broadcast_in_dim(
+        encoded_padding, shape, broadcast_dimensions=[0, 1])
+
+    def generate_segment_mask(segment_ids, dtype):
+      segment_ids_1 = jnp.expand_dims(segment_ids, axis=-1)
+      # segment_ids_1 = jnp.where(segment_ids_1 == 3, 4, segment_ids_1)
+      segment_ids_2 = jnp.expand_dims(segment_ids, axis=1)
+      mask = jnp.not_equal(segment_ids_1, segment_ids_2).astype(dtype)
+      # broadcast to [B, N, T, T]
+      mask = jnp.expand_dims(mask, 1)
+      mask *= get_large_negative_number(dtype)
+      return mask
+
+    # starting pos of each segment
+    q_offsets = jnp.asarray([
+      [0, 170, 340, -1], # 3 segments
+      [0, 150, 340, -1], # 3 segments
+      [0, 190, -1, -1],  # 2 segments
+      [0, -1, -1, -1]    # 1 segment
+    ], dtype=np.int32)
+
+    # actual seqlen of each segment without padding
+    q_seqlen = jnp.asarray([
+      [170, 170, 172], # No padding inside each segment
+      [150, 187, 172], # 3 padding tokens inside second segment
+      [190, 190, -1],  # 132 padding tokens inside last segment
+      [400, -1, -1],   # 112 padding tokens inside last segment
+    ], dtype=np.int32)
+
+    # maximum number of segments is id for padding token
+    segment_ids = jnp.asarray([
+      [0]*170 + [1]*170 + [2]*172,
+      [0]*150 + [1]*187 + [3]*3 + [2]*172,
+      [0]*190 + [1]*190 + [3]*132,
+      [0]*400 + [3]*112,
+    ], dtype=np.int32)
+
+    kv_offsets = q_offsets.copy()
+    kv_seqlen = q_seqlen.copy()
+
+    mask = generate_padding_mask(segment_ids, q_seqlen.shape[1], query.shape, query.dtype)
+    bias = generate_segment_mask(segment_ids, query.dtype)
+
+    devices = np.array(jax.local_devices()[:4])
+    devices = devices.reshape((2, 2))
+    with Mesh(devices, ("dp", "tp")) as mesh:
+      qkv_spec = PartitionSpec("dp", None, "tp", None)
+      qkv_sharding = NamedSharding(mesh, qkv_spec)
+      bias_spec = PartitionSpec("dp", None, None, None)
+      bias_sharding = NamedSharding(mesh, bias_spec)
+      offsets_specs = PartitionSpec("dp", None)
+      offsets_sharding = NamedSharding(mesh, offsets_specs)
+
+      query = jax.device_put(query, qkv_sharding)
+      key = jax.device_put(key, qkv_sharding)
+      value = jax.device_put(value, qkv_sharding)
+      grad = jax.device_put(grad, qkv_sharding)
+      bias = jax.device_put(bias, bias_sharding)
+      q_offsets = jax.device_put(q_offsets, offsets_sharding)
+      kv_offsets = jax.device_put(kv_offsets, offsets_sharding)
+      q_seqlen = jax.device_put(q_seqlen, offsets_sharding)
+      kv_seqlen = jax.device_put(kv_seqlen, offsets_sharding)
+
+      jitted_sdpa_train = jax.jit(
+        partial(
+          sdpa_train, scale=0.1, mask_type=MaskType.NO_MASK, dropout_rate=0),
+        in_shardings=(qkv_sharding, qkv_sharding, qkv_sharding, qkv_sharding,
+                      None, None, offsets_sharding, offsets_sharding, offsets_sharding, offsets_sharding),
+        out_shardings=(qkv_sharding, (qkv_sharding, qkv_sharding, qkv_sharding))
+      )
+
+      jitted_sdpa_train_ref = jax.jit(
+        partial(
+          sdpa_train_ref, scale=0.1, mask_type=MaskType.NO_MASK, dropout_rate=0),
+        in_shardings=(qkv_sharding, qkv_sharding, qkv_sharding, qkv_sharding,
+                      bias_sharding),
+        out_shardings=(qkv_sharding, (qkv_sharding, qkv_sharding, qkv_sharding))
+      )
+
+      query = query * mask
+      key = key * mask
+      value = value * mask
+      grad = grad * mask
+
+      out, (query_grad, key_grad, value_grad) = \
+        jitted_sdpa_train(query, key, value, grad, None, None, q_seqlen, kv_seqlen, q_offsets, kv_offsets)
+      out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = \
+        jitted_sdpa_train_ref(query, key, value, grad, bias)
+
+      out = out * mask
+      out_ref = out_ref * mask
+
+      query_grad = query_grad * mask
+      query_grad_ref = query_grad_ref * mask
+
+      key_grad = key_grad * mask
+      key_grad_ref = key_grad_ref * mask
+
+      value_grad = value_grad * mask
+      value_grad_ref = value_grad_ref * mask
+
+      self.assertArraysAllClose(out_ref, out, rtol=1e-2, atol=1e-2)
+      self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-2, atol=1e-2)
+      self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-2, atol=1e-2)
+      self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-2, atol=1e-2)
+
+  @jtu.run_on_devices("cuda")
   def test_layouts(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
     dtype = "bfloat16"
     B, T, N, H = 4, 1024, 8, 128
     S = T
@@ -520,6 +775,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     self.assertArraysAllClose(dv_ref, _cvt_back(dv))
 
   def test_sdpa_utils(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
     test_cases = [
       (1, 257, 64, 8905, False, True, True),
       (1, 1024, 64, 8905, False, False, True),
@@ -542,6 +799,169 @@ class DotProductAttentionTest(jtu.JaxTestCase):
           check_is_flash_attention(
             query, key, AttentionLayout.BNTH.value, cudnn_version, has_bias,
             is_training)
+
+
+@jtu.with_config(jax_numpy_dtype_promotion="standard")
+class DotProductAttentionF8Test(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    try:
+      cudnn_version = check_cudnn_version()
+    except RuntimeError as e:
+      self.skipTest(str(e))
+      return
+    if cudnn_version < 91000:
+      self.skipTest("Requires >= cuDNN 9.1.0")
+    if not jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest("Requires at least Hopper arch")
+
+  @jtu.sample_product(
+      batch_size=[2, 4],
+      seq_len=[128, 256],
+      num_heads=[4, 8],
+      head_dim=[128],
+      mask_type=[MaskType.NO_MASK],
+      scale=[1.0, 0.75],
+      dtype=[jnp.bfloat16, jnp.float16],
+  )
+  @jtu.run_on_devices("cuda")
+  def test_sdpa_fp8(
+      self,
+      batch_size: int,
+      seq_len: int,
+      num_heads: int,
+      head_dim: int,
+      mask_type: MaskType,
+      scale: float,
+      dtype: jnp.dtype,
+  ):
+    k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
+    input_shape = (
+        batch_size,
+        seq_len,
+        num_heads,
+        head_dim,
+    )  # only test the default BTNH
+    query_h = jax.random.normal(k1, input_shape, dtype=dtype)
+    key_h = jax.random.normal(k2, input_shape, dtype=dtype)
+    value_h = jax.random.normal(k3, input_shape, dtype=dtype)
+    grad_h = jax.random.normal(k4, input_shape, dtype=dtype)
+    query = cast_to_representable(query_h, jnp.float8_e4m3fn)
+    key = cast_to_representable(key_h, jnp.float8_e4m3fn)
+    value = cast_to_representable(value_h, jnp.float8_e4m3fn)
+    grad = cast_to_representable(grad_h, jnp.float8_e4m3fn)
+
+    query_quantized = quantize(query, jnp.float8_e4m3fn, jnp.float32)
+    key_quantized = quantize(key, jnp.float8_e4m3fn, jnp.float32)
+    value_quantized = quantize(value, jnp.float8_e4m3fn, jnp.float32)
+    grad_quantized = quantize(grad, jnp.float8_e4m3fn, jnp.float32)
+
+    sdpa_train_fp8_p = partial(sdpa_train_fp8, scale=scale, mask_type=mask_type)
+    jitted_sdpa_train_fp8 = jax.jit(sdpa_train_fp8_p)
+    jitted_sdpa_train_ref = jax.jit(
+        partial(
+            sdpa_train_ref, scale=scale, mask_type=mask_type, dropout_rate=0.0
+        ),
+    )
+
+    fp8_metas = {
+        name: jnp.ones((1, 1, 1, 1), dtype=jnp.float32)
+        for name in fp8_meta_names
+    }
+    out, (query_grad, key_grad, value_grad) = jitted_sdpa_train_fp8(
+        query_quantized,
+        key_quantized,
+        value_quantized,
+        grad_quantized,
+        fp8_metas,
+    )
+    out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = (
+        jitted_sdpa_train_ref(query, key, value, grad, None, None)
+    )
+
+    self.assertArraysAllClose(out_ref, out.astype(dtype), rtol=5e-1, atol=5e-1)
+    self.assertArraysAllClose(
+        query_grad_ref, query_grad.astype(dtype), rtol=5e-1, atol=3e0
+    )
+    self.assertArraysAllClose(
+        key_grad_ref, key_grad.astype(dtype), rtol=5e-1, atol=3e0
+    )
+    self.assertArraysAllClose(
+        value_grad_ref, value_grad.astype(dtype), rtol=5e-1, atol=5e-1
+    )
+
+  @jtu.sample_product(
+      batch_size=[4, 2],
+      seq_len=[4, 16],
+      num_heads=[4, 16],
+      head_dim=[16, 32],
+      mask_type=[MaskType.NO_MASK],
+      qkv_layout=["BNTH", "BTNH"],
+      scale=[1.0, 0.75],
+      dtype=[jnp.bfloat16, jnp.float16],
+  )
+  @jtu.run_on_devices("cuda")
+  def test_sdpa_fp8_inference(
+      self,
+      batch_size: int,
+      seq_len: int,
+      num_heads: int,
+      head_dim: int,
+      mask_type: MaskType,
+      qkv_layout: str,
+      scale: float,
+      dtype: jnp.dtype,
+  ):
+    k1, k2, k3 = jax.random.split(jax.random.key(0), 3)
+    if qkv_layout == "BNTH":
+      input_shape = (batch_size, num_heads, seq_len, head_dim)
+    else:
+      input_shape = (batch_size, seq_len, num_heads, head_dim)
+    query_h = jax.random.normal(k1, input_shape, dtype=dtype)
+    key_h = jax.random.normal(k2, input_shape, dtype=dtype)
+    value_h = jax.random.normal(k3, input_shape, dtype=dtype)
+
+    query = cast_to_representable(query_h, jnp.float8_e4m3fn)
+    key = cast_to_representable(key_h, jnp.float8_e4m3fn)
+    value = cast_to_representable(value_h, jnp.float8_e4m3fn)
+
+    query_quantized = quantize(query, jnp.float8_e4m3fn, jnp.float32)
+    key_quantized = quantize(key, jnp.float8_e4m3fn, jnp.float32)
+    value_quantized = quantize(value, jnp.float8_e4m3fn, jnp.float32)
+
+    def dot_product_attention_fp8(query, key, value, fp8_metas):
+      f_p = partial(
+          dot_product_attention,
+          scale=scale,
+          mask_type=mask_type,
+          qkv_layout=qkv_layout,
+          use_fp8=True,
+      )
+      return f_p(query, key, value, None, None, None, None, fp8_metas)
+
+    jitted_sdpa_inference = jax.jit(
+        dot_product_attention_fp8,
+    )
+
+    jitted_sdpa_inference_ref = jax.jit(
+        partial(
+            dot_product_attention,
+            scale=scale,
+            mask_type=mask_type,
+            qkv_layout=qkv_layout,
+        ),
+    )
+    fp8_metas = {
+        name: jnp.ones((1, 1, 1, 1), dtype=jnp.float32)
+        for name in fp8_meta_names
+    }
+    out, _, _ = jitted_sdpa_inference(
+        query_quantized, key_quantized, value_quantized, fp8_metas
+    )
+    out_ref = jitted_sdpa_inference_ref(query, key, value)
+    self.assertArraysAllClose(out_ref, out.astype(dtype), rtol=5e-2, atol=5e-2)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

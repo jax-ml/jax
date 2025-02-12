@@ -14,7 +14,6 @@
 """Tests for serialization and deserialization of GDA."""
 
 import asyncio
-import contextlib
 import math
 from functools import partial
 import os
@@ -36,19 +35,47 @@ import numpy as np
 import tensorstore as ts
 
 jax.config.parse_flags_with_absl()
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-
-def tearDownModule():
-  _exit_stack.close()
+jtu.request_cpu_devices(8)
 
 
 class CheckpointTest(jtu.JaxTestCase):
 
   def _on_commit_callback(self, temp_ckpt_dir, final_ckpt_dir):
     os.rename(temp_ckpt_dir, final_ckpt_dir)
+
+  def test_deserialize_on_array_list(self):
+    global_mesh = jtu.create_mesh((2, 4), ('x', 'y'))
+    inp_shape = (16, 64)
+    pspec = P('x', 'y')
+    sharding = NamedSharding(global_mesh, pspec)
+    inputs = []
+    lambda_fn = lambda idx: src[idx]
+    num_arrays = 5
+    for _ in range(num_arrays):
+      src = jax.random.normal(jax.random.key(0), inp_shape)
+      inp = array.make_array_from_callback(inp_shape, sharding, lambda_fn)
+      inputs.append(inp)
+    ckpt_dir = pathlib.Path(self.create_tempdir().full_path)
+    tspecs = [
+        serialization.get_tensorstore_spec(f'{ckpt_dir}/array_{i}')
+        for i in range(num_arrays)
+    ]
+    inputs = tuple(inputs)
+    tspecs = tuple(tspecs)
+    manager = serialization.GlobalAsyncCheckpointManager()
+    manager.serialize(
+        inputs,
+        tspecs,
+        on_commit_callback=partial(
+            self._on_commit_callback, ckpt_dir, ckpt_dir
+        ),
+    )
+    manager.wait_until_finished()
+    shardings = tuple([sharding] * num_arrays)
+    restored_arrays = manager.deserialize(shardings, tspecs)
+    self.assertLen(restored_arrays, num_arrays)
+    for inp, deserialized_array in zip(inputs, restored_arrays):
+      self.assertArraysEqual(deserialized_array, inp)
 
   @jtu.skip_on_devices('cpu')
   def test_memory_consumption(self):

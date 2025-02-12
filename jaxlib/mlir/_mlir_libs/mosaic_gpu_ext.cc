@@ -13,17 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// clang-format: off
-// pybind11 must be included before mlir/Bindings/Python/PybindAdaptors.h,
-// otherwise this code will not build on Windows.
-#include "pybind11/pybind11.h"
-// clang-format: on
+#include <cstdint>
+#include <vector>
 
 #include "mlir-c/IR.h"
-#include "mlir/Bindings/Python/PybindAdaptors.h"  // IWYU pragma: keep
+#include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
+#include "nanobind/nanobind.h"
+#include "jaxlib/mosaic/dialect/gpu/integrations/c/attributes.h"
 #include "jaxlib/mosaic/dialect/gpu/integrations/c/gpu_dialect.h"
 
-PYBIND11_MODULE(_mosaic_gpu_ext, m, py::mod_gil_not_used()) {
+namespace nb = nanobind;
+
+NB_MODULE(_mosaic_gpu_ext, m) {
   m.def(
       "register_dialect",
       [](MlirContext context, bool load) {
@@ -33,5 +34,40 @@ PYBIND11_MODULE(_mosaic_gpu_ext, m, py::mod_gil_not_used()) {
           mlirDialectHandleLoadDialect(dialect, context);
         }
       },
-      py::arg("context"), py::arg("load") = true);
+      nb::arg("context"), nb::arg("load") = true);
+
+  mlir::python::nanobind_adaptors::mlir_attribute_subclass(
+      m, "SwizzleTransformAttr", MosaicGpuIsASwizzleTransformAttr)
+      .def_classmethod(
+          "get",
+          [](nb::object cls, int32_t swizzle, MlirContext ctx) {
+            return cls(MosaicGpuSwizzleTransformAttrGet(
+                ctx, static_cast<int32_t>(swizzle)));
+          },
+          nb::arg("cls"), nb::arg("swizzle"),
+          nb::arg("context").none() = nb::none(),
+          "Creates a SwizzleTransformAttr with the given swizzle.")
+      .def_property_readonly("swizzle", [](MlirAttribute self) {
+        return MosaicGpuSwizzleTransformAttrGetSwizzle(self);
+      });
+
+  mlir::python::nanobind_adaptors::mlir_attribute_subclass(
+      m, "LayoutAttr", MosaicGpuIsALayoutAttr)
+      .def_classmethod(
+          "get",
+          [](nb::object cls, int32_t num_dimensions,
+             std::vector<MlirAttribute>& transforms, MlirContext ctx) {
+            return cls(MosaicGpuLayoutAttrGet(
+                ctx, num_dimensions, transforms.data(), transforms.size()));
+          },
+          nb::arg("cls"), nb::arg("num_dimensions"), nb::arg("transforms"),
+          nb::arg("context").none() = nb::none(),
+          "Creates a LayoutAttr with the given transforms.")
+      .def_property_readonly("transforms", [](MlirAttribute self) {
+        std::vector<MlirAttribute> result;
+        for (int i = 0; i < MosaicGpuLayoutAttrGetTransformsSize(self); ++i) {
+          result.push_back(MosaicGpuLayoutAttrGetTransform(self, i));
+        }
+        return result;
+      });
 }

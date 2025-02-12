@@ -27,7 +27,7 @@ import subprocess
 import tempfile
 
 from bazel_tools.tools.python.runfiles import runfiles
-from jax.tools import build_utils
+from jaxlib.tools import build_utils
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -55,13 +55,6 @@ parser.add_argument(
     "--editable",
     action="store_true",
     help="Create an 'editable' jaxlib build instead of a wheel.",
-)
-parser.add_argument(
-    "--skip_gpu_kernels",
-    # args.skip_gpu_kernels is True when
-    # --skip_gpu_kernels is in the command
-    action="store_true",
-    help="Whether to skip gpu kernels in jaxlib.",
 )
 args = parser.parse_args()
 
@@ -169,7 +162,7 @@ plat_name={tag}
     )
 
 
-def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
+def prepare_wheel(sources_path: pathlib.Path, *, cpu):
   """Assembles a source tree for the wheel in `sources_path`."""
   copy_runfiles = functools.partial(build_utils.copy_file, runfiles=r)
 
@@ -220,46 +213,28 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
       ],
   )
 
-  if exists(f"__main__/jaxlib/cuda/_solver.{pyext}") and not skip_gpu_kernels:
-    copy_runfiles(
-        dst_dir=jaxlib_dir / "cuda",
-        src_files=[
-            f"__main__/jaxlib/cuda/_solver.{pyext}",
-            f"__main__/jaxlib/cuda/_blas.{pyext}",
-            f"__main__/jaxlib/cuda/_linalg.{pyext}",
-            f"__main__/jaxlib/cuda/_prng.{pyext}",
-            f"__main__/jaxlib/cuda/_rnn.{pyext}",
-            f"__main__/jaxlib/cuda/_sparse.{pyext}",
-            f"__main__/jaxlib/cuda/_triton.{pyext}",
-            f"__main__/jaxlib/cuda/_hybrid.{pyext}",
-            f"__main__/jaxlib/cuda/_versions.{pyext}",
-        ],
-    )
-  if exists(f"__main__/jaxlib/rocm/_solver.{pyext}") and not skip_gpu_kernels:
-    copy_runfiles(
-        dst_dir=jaxlib_dir / "rocm",
-        src_files=[
-            f"__main__/jaxlib/rocm/_solver.{pyext}",
-            f"__main__/jaxlib/rocm/_blas.{pyext}",
-            f"__main__/jaxlib/rocm/_linalg.{pyext}",
-            f"__main__/jaxlib/rocm/_prng.{pyext}",
-            f"__main__/jaxlib/rocm/_sparse.{pyext}",
-            f"__main__/jaxlib/rocm/_triton.{pyext}",
-            f"__main__/jaxlib/rocm/_hybrid.{pyext}",
-        ],
-    )
-
   mosaic_python_dir = jaxlib_dir / "mosaic" / "python"
   copy_runfiles(
       dst_dir=mosaic_python_dir,
       src_files=[
           "__main__/jaxlib/mosaic/python/layout_defs.py",
+          "__main__/jaxlib/mosaic/python/mosaic_gpu.py",
           "__main__/jaxlib/mosaic/python/tpu.py",
       ],
   )
   # TODO (sharadmv,skyewm): can we avoid patching this file?
   patch_copy_mlir_import(
       "__main__/jaxlib/mosaic/python/_tpu_gen.py", dst_dir=mosaic_python_dir
+  )
+  mosaic_gpu_dir = jaxlib_dir / "mosaic" / "dialect" / "gpu"
+  os.makedirs(mosaic_gpu_dir)
+  patch_copy_mlir_import(
+      "__main__/jaxlib/mosaic/dialect/gpu/_mosaic_gpu_gen_ops.py",
+      dst_dir=mosaic_gpu_dir,
+  )
+  patch_copy_mlir_import(
+      "__main__/jaxlib/mosaic/dialect/gpu/_mosaic_gpu_gen_enums.py",
+      dst_dir=mosaic_gpu_dir,
   )
 
   copy_runfiles(
@@ -352,6 +327,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirHlo.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsSparseTensor.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirSparseTensorPasses.{pyext}",
+          f"__main__/jaxlib/mlir/_mlir_libs/_mosaic_gpu_ext.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_tpu_ext.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_sdy.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_stablehlo.{pyext}",
@@ -406,14 +382,17 @@ try:
   prepare_wheel(
       pathlib.Path(sources_path),
       cpu=args.cpu,
-      skip_gpu_kernels=args.skip_gpu_kernels,
   )
   package_name = "jaxlib"
   if args.editable:
     build_utils.build_editable(sources_path, args.output_path, package_name)
   else:
-    git_hash = build_utils.get_githash(args.jaxlib_git_hash)
-    build_utils.build_wheel(sources_path, args.output_path, package_name, git_hash=git_hash)
+    build_utils.build_wheel(
+        sources_path,
+        args.output_path,
+        package_name,
+        git_hash=args.jaxlib_git_hash,
+    )
 finally:
   if tmpdir:
     tmpdir.cleanup()

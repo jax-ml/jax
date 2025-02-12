@@ -4,9 +4,9 @@ import jax.numpy as jnp
 from jax import jit
 
 from jax._src import custom_derivatives, dtypes
-from jax._src.numpy.lax_numpy import complexfloating
 from jax._src.numpy.util import promote_args_inexact
 from jax._src.typing import Array, ArrayLike
+from numpy import complexfloating
 
 
 @jit

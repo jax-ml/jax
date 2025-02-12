@@ -30,8 +30,9 @@ LOCATION_PATTERN = re.compile(
     r'(?P<location>loc\((?P<eqn_str>\".*?\")(?P<frames>.*)\))'
 )
 FRAME_PATTERN = re.compile(
-    r'(?P<fun_name>\".*?\")\((?P<filename>\".*?\"):'
-    r'(?P<lineno>[0-9]+):(?P<colno>[0-9]+)\)'
+    r'(?P<fun_name>\".*?\")\((?P<filename>\"[^"]*?\"):'
+    r'(?P<lineno>[0-9]+)?:(?P<colno>[0-9]+)'
+    r'( to (?P<endlineno>[0-9]+)?:(?P<endcolno>[0-9]+))?\)'
 )
 MLIR_ERR_PREFIX = (
     'Pallas encountered an internal verification error.'

@@ -11,12 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import contextlib
+
 import threading
 import unittest
 
 from absl.testing import absltest
 import jax
+from jax import api_util
 import jax.numpy as jnp
 from jax import lax
 from jax.experimental import pjit
@@ -34,6 +35,7 @@ from jax._src.interpreters import partial_eval as pe
 import numpy as np
 
 config.parse_flags_with_absl()
+jtu.request_cpu_devices(2)
 
 effect_p = core.Primitive('effect')
 effect_p.multiple_results = True
@@ -132,15 +134,6 @@ def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out
 mlir.register_lowering(callback_p, callback_effect_lowering)
 
 
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(2))
-
-def tearDownModule():
-  _exit_stack.close()
-
-
 class JaxprEffectsTest(jtu.JaxTestCase):
 
   def test_trivial_jaxpr_has_no_effects(self):
@@ -186,12 +179,13 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
   def test_core_call_primitive_inherits_effects(self):
 
     def f(x):
-      @lu.wrap_init
       def f_(x):
         effect_p.bind(effect=foo_effect)
         effect_p.bind(effect=bar_effect)
         return [x]
-      return core.call(f_, x)[0]
+      dbg = api_util.debug_info("test", f_, (2.,), {})
+      return core.call(
+          lu.wrap_init(f_, debug_info=dbg), x)[0]
     jaxpr = jax.make_jaxpr(f)(2.)
     self.assertIn(foo_effect, jaxpr.jaxpr.effects)
     self.assertIn(bar_effect, jaxpr.jaxpr.effects)
@@ -277,6 +271,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
     self.assertSetEqual(jaxpr.effects, {foo_effect, bar_effect})
 
 
+@jtu.thread_unsafe_test_class()  # because of mlir.register_lowering calls
 class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
   def setUp(self):

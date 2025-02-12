@@ -858,7 +858,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     _ = f(3.)
     with jtu.count_jit_and_pmap_lowerings() as count:
       _ = f(3.)
-    self.assertEqual(count[0], 0)
+    self.assertEqual(count(), 0)
 
   def test_goodfellow_custom_jvp(self):
     def h(fext):

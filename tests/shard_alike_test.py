@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -24,15 +22,7 @@ from jax.experimental.shard_alike import shard_alike
 from jax.experimental.shard_map import shard_map
 
 jax.config.parse_flags_with_absl()
-
-# Run all tests with 8 CPU devices.
-_exit_stack = contextlib.ExitStack()
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-
-def tearDownModule():
-  _exit_stack.close()
+jtu.request_cpu_devices(8)
 
 
 class ShardAlikeDownstreamTest(jtu.JaxTestCase):
@@ -68,7 +58,7 @@ class ShardAlikeTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp * np_inp * 4)
 
   def test_output_sharded_alike_input(self):
-    mesh = jtu.create_mesh((2, 1), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     np_inp = np.arange(16).reshape(8, 2)
     s = NamedSharding(mesh, P('x', 'y'))
     inp = jax.device_put(np_inp, s)
@@ -83,7 +73,7 @@ class ShardAlikeTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp * 2)
 
   def test_arange_shard_alike_jit(self):
-    mesh = jtu.create_mesh((2, 1), ('x', 'y'))
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     np_inp = np.arange(16).reshape(8, 2)
     s = NamedSharding(mesh, P('x', 'y'))
     inp = jax.device_put(np_inp, s)
@@ -201,7 +191,7 @@ class ShardAlikeTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:
       f(np_inp)
       out1, out2 = f(np_inp)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
     self.assertTrue(s.is_equivalent_to(out1.sharding, np_inp.ndim))
     self.assertTrue(s.is_equivalent_to(out2.sharding, np_inp.ndim))
 
@@ -213,7 +203,7 @@ class ShardAlikeTest(jtu.JaxTestCase):
     with jtu.count_pjit_cpp_cache_miss() as count:
       g(arr)
       out3, out4 = g(arr)
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
     self.assertEqual(out3.sharding, s)
     self.assertEqual(out4.sharding, s)
 

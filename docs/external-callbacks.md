@@ -24,7 +24,7 @@ kernelspec:
 
 <!--* freshness: { reviewed: '2024-05-16' } *-->
 
-This tutorial outlines how you can use various callback functions, which allow JAX runtimes to execute Python code on the host. Examples of JAX callbacks are {func}`jax.pure_callback`, {func}`jax.experimental.io_callback` and {func}`jax.debug.callback`. You can use them even while running under JAX transformations, including {func}`~jax.jit`, {func}`~jax.vmap`, {func}`~jax.grad`.
+This tutorial outlines how you can use various callback functions, which allow JAX runtimes to execute Python code on the host. Examples of JAX callbacks are `jax.pure_callback`, `jax.experimental.io_callback` and `jax.debug.callback`. You can use them even while running under JAX transformations, including {func}`~jax.jit`, {func}`~jax.vmap`, {func}`~jax.grad`.
 
 ## Why callbacks?
 
@@ -66,8 +66,11 @@ This works by passing the runtime value of `y` as a CPU {class}`jax.Array` back 
 In earlier versions of JAX, there was only one kind of callback available, implemented in {func}`jax.experimental.host_callback`. The `host_callback` routines had some deficiencies, and are now deprecated in favor of several callbacks designed for different situations:
 
 - {func}`jax.pure_callback`: appropriate for pure functions: i.e. functions with no side effects.
+  See {ref}`external-callbacks-exploring-pure-callback`.
 - {func}`jax.experimental.io_callback`: appropriate for impure functions: e.g. functions which read or write data to disk.
+  See {ref}`external-callbacks-exploring-io-callback`.
 - {func}`jax.debug.callback`: appropriate for functions that should reflect the execution behavior of the compiler.
+  See {ref}`external-callbacks-exploring-debug-callback`.
 
 (The {func}`jax.debug.print` function you used previously is a wrapper around {func}`jax.debug.callback`).
 
@@ -85,6 +88,7 @@ From the user perspective, these three flavors of callback are mainly distinguis
 
 ³ Note that `vmap` of `scan`/`while_loop` of `io_callback` has complicated semantics, and its behavior may change in future releases.
 
+(external-callbacks-exploring-pure-callback)=
 ### Exploring `pure_callback`
 
 {func}`jax.pure_callback` is generally the callback function you should reach for when you want host-side execution of a pure function: i.e. a function that has no side-effects (such as printing values, reading data from disk, updating a global state, etc.).
@@ -102,26 +106,29 @@ def f_host(x):
 
 def f(x):
   result_shape = jax.ShapeDtypeStruct(x.shape, x.dtype)
-  return jax.pure_callback(f_host, result_shape, x)
+  return jax.pure_callback(f_host, result_shape, x, vmap_method='sequential')
 
 x = jnp.arange(5.0)
 f(x)
 ```
 
-Because `pure_callback` can be elided or duplicated, it is compatible out-of-the-box with transformations like `jit` and `vmap`, as well as higher-order primitives like `scan` and `while_loop`:"
+Because `pure_callback` can be elided or duplicated, it is compatible out-of-the-box with transformations like `jit` as well as higher-order primitives like `scan` and `while_loop`:"
 
 ```{code-cell}
 jax.jit(f)(x)
 ```
 
 ```{code-cell}
-jax.vmap(f)(x)
-```
-
-```{code-cell}
 def body_fun(_, x):
   return _, f(x)
 jax.lax.scan(body_fun, None, jnp.arange(5.0))[1]
+```
+
+Because we specified a `vmap_method` in the `pure_callback` function call, it will also
+be compatible with `vmap`:
+
+```{code-cell}
+jax.vmap(f)(x)
 ```
 
 However, because there is no way for JAX to introspect the content of the callback, `pure_callback` has undefined autodiff semantics:
@@ -160,6 +167,41 @@ f2();
 In `f1`, the output of the callback is used in the return value of the function, so the callback is executed and we see the printed output.
 In `f2` on the other hand, the output of the callback is unused, and so the compiler notices this and eliminates the function call. These are the correct semantics for a callback to a function with no side-effects.
 
+#### `pure_callback` and exceptions
+
+In the context of JAX transformations, Python runtime exceptions should be considered side-effects:
+this means that intentionally raising an error within a `pure_callback` breaks the API contract,
+and the behavior of the resulting program is undefined. In particular, the manner in which
+such a program halts will generally depend on the backend, and the details of that behavior may
+change in future releases.
+
+Additionally, passing impure functions to `pure_callback` may result in unexpected behavior during
+transformations like {func}`jax.jit` or {func}`jax.vmap`, because the transformation rules for
+`pure_callback` are defined under the assumption that the callback function is pure. Here's one
+simple example of an impure callback behaving unexpectedly under `vmap`:
+```python
+import jax
+import jax.numpy as jnp
+
+def raise_via_callback(x):
+  def _raise(x):
+    raise ValueError(f"value of x is {x}")
+  return jax.pure_callback(_raise, x, x)
+
+def raise_if_negative(x):
+  return jax.lax.cond(x < 0, raise_via_callback, lambda x: x, x)
+
+x_batch = jnp.arange(4)
+
+[raise_if_negative(x) for x in x_batch]  # does not raise
+
+jax.vmap(raise_if_negative)(x_batch)  # ValueError: value of x is 0
+```
+To avoid this and similar unexpected behavior, we recommend not attempting to use
+`pure_callback` to raise runtime errors.
+
+
+(external-callbacks-exploring-io-callback)=
 ### Exploring `io_callback`
 
 In contrast to {func}`jax.pure_callback`, {func}`jax.experimental.io_callback` is explicitly meant to be used with impure functions, i.e. functions that do have side-effects.
@@ -307,8 +349,8 @@ def jv(v, z):
       shape=jnp.broadcast_shapes(v.shape, z.shape),
       dtype=z.dtype)
 
-  # You use vectorize=True because scipy.special.jv handles broadcasted inputs.
-  return jax.pure_callback(_scipy_jv, result_shape_dtype, v, z, vectorized=True)
+  # Use vmap_method="broadcast_all" because scipy.special.jv handles broadcasted inputs.
+  return jax.pure_callback(_scipy_jv, result_shape_dtype, v, z, vmap_method="broadcast_all")
 ```
 
 This lets us call into {func}`scipy.special.jv` from transformed JAX code, including when transformed by {func}`~jax.jit` and {func}`~jax.vmap`:

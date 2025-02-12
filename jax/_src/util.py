@@ -328,8 +328,7 @@ def weakref_lru_cache(call: Callable, maxsize=2048,
   """
   global _weakref_lru_caches
   cached_call = xc.weakref_lru_cache(
-      config.trace_context if trace_context_in_key else _ignore,
-      call, maxsize)
+      config.trace_context if trace_context_in_key else _ignore, call, maxsize)
   _weakref_lru_caches.add(cached_call)
   return cached_call
 
@@ -376,11 +375,21 @@ def wrap_name(name, transform_name):
   return transform_name + '(' + name + ')'
 
 def fun_name(fun: Callable):
-  return getattr(fun, "__name__", "<unnamed function>")
+  name = getattr(fun, "__name__", None)
+  if name is not None:
+    return name
+  if isinstance(fun, partial):
+    return fun_name(fun.func)
+  else:
+    return "<unnamed function>"
 
 def fun_qual_name(fun: Callable):
-  return getattr(fun, "__qualname__",
-                 getattr(fun, "__name__", "<unnamed function>"))
+  qual_name = getattr(fun, "__qualname__", None)
+  if qual_name is not None:
+    return qual_name
+  if isinstance(fun, partial):
+    return fun_qual_name(fun.func)
+  return fun_name(fun)
 
 def canonicalize_axis(axis, num_dims) -> int:
   """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
@@ -676,3 +685,14 @@ class StrictABCMeta(abc.ABCMeta):
 
 class StrictABC(metaclass=StrictABCMeta):
   __slots__ = ()
+
+
+test_event_listener: Callable | None = None
+
+def test_event(name: str, *args) -> None:
+  if not test_event_listener:
+    return
+  test_event_listener(name, *args)
+
+if hasattr(jaxlib_utils, "Mutex"):
+  Mutex = jaxlib_utils.Mutex

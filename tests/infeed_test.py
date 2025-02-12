@@ -28,6 +28,7 @@ import numpy as np
 jax.config.parse_flags_with_absl()
 
 
+@jtu.thread_unsafe_test_class()  # infeed isn't thread-safe
 class InfeedTest(jtu.JaxTestCase):
 
   def setUp(self):

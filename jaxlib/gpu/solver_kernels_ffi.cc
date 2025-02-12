@@ -915,7 +915,8 @@ ffi::Error GesvdjImpl(int64_t batch, int64_t rows, int64_t cols,
 
   auto a_data = static_cast<T*>(a.untyped_data());
   auto out_data = static_cast<T*>(out->untyped_data());
-  auto s_data = static_cast<typename solver::RealType<T>::value*>(s->untyped_data());
+  auto s_data =
+      static_cast<typename solver::RealType<T>::value*>(s->untyped_data());
   auto u_data = static_cast<T*>(u->untyped_data());
   auto v_data = static_cast<T*>(v->untyped_data());
   auto info_data = info->typed_data();
@@ -1012,7 +1013,178 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdjFfi, GesvdjDispatch,
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
 );
 
+// csrlsvqr: Linear system solve via Sparse QR
+
+template <typename T>
+ffi::Error CsrlsvqrImpl(int64_t n, int64_t nnz, double tol, int reorder,
+                        gpuStream_t stream, ffi::AnyBuffer csrValA,
+                        ffi::Buffer<ffi::S32> csrColIndA,
+                        ffi::Buffer<ffi::S32> csrRowPtrA, ffi::AnyBuffer b,
+                        ffi::Result<ffi::AnyBuffer> x) {
+  FFI_ASSIGN_OR_RETURN(auto handle, SpSolverHandlePool::Borrow(stream));
+
+  FFI_ASSIGN_OR_RETURN(auto int_n, MaybeCastNoOverflow<int>(n));
+  FFI_ASSIGN_OR_RETURN(auto int_nnz, MaybeCastNoOverflow<int>(nnz));
+
+  cusparseMatDescr_t matdesc = nullptr;
+  JAX_FFI_RETURN_IF_GPU_ERROR(cusparseCreateMatDescr(&matdesc));
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      cusparseSetMatType(matdesc, CUSPARSE_MATRIX_TYPE_GENERAL));
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      cusparseSetMatIndexBase(matdesc, CUSPARSE_INDEX_BASE_ZERO));
+
+  auto* csrValA_data = static_cast<T*>(csrValA.untyped_data());
+  auto* csrColIndA_data = csrColIndA.typed_data();
+  auto* csrRowPtrA_data = csrRowPtrA.typed_data();
+  auto* b_data = static_cast<T*>(b.untyped_data());
+  auto* x_data = static_cast<T*>(x->untyped_data());
+
+  int singularity = -1;
+  auto result = solver::Csrlsvqr<T>(
+      handle.get(), int_n, int_nnz, matdesc, csrValA_data, csrRowPtrA_data,
+      csrColIndA_data, b_data, tol, reorder, x_data, &singularity);
+  cusparseDestroyMatDescr(matdesc);
+  FFI_RETURN_IF_ERROR_STATUS(result);
+
+  if (singularity >= 0) {
+    return ffi::Error(ffi::ErrorCode::kInternal,
+                      "Singular matrix in linear solve.");
+  }
+
+  return ffi::Error::Success();
+}
+
+ffi::Error CsrlsvqrDispatch(gpuStream_t stream, int reorder, double tol,
+                            ffi::AnyBuffer csrValA,
+                            ffi::Buffer<ffi::S32> csrColIndA,
+                            ffi::Buffer<ffi::S32> csrRowPtrA, ffi::AnyBuffer b,
+                            ffi::Result<ffi::AnyBuffer> x) {
+  auto dataType = csrValA.element_type();
+  if (dataType != b.element_type() || dataType != x->element_type()) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to csrlsvqr must have the same element type");
+  }
+  int64_t n = b.element_count();
+  int64_t nnz = csrValA.element_count();
+  FFI_RETURN_IF_ERROR(
+      CheckShape(csrColIndA.dimensions(), nnz, "csrColIndA", "csrlsvqr"));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(csrRowPtrA.dimensions(), n + 1, "csrColPtrA", "csrlsvqr"));
+  FFI_RETURN_IF_ERROR(CheckShape(x->dimensions(), n, "x", "csrlsvqr"));
+  SOLVER_DISPATCH_IMPL(CsrlsvqrImpl, n, nnz, tol, reorder, stream, csrValA,
+                       csrColIndA, csrRowPtrA, b, x);
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in csrlsvqr", absl::FormatStreamed(dataType)));
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(CsrlsvqrFfi, CsrlsvqrDispatch,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Attr<int>("reorder")          // reorder
+                                  .Attr<double>("tol")           // tol
+                                  .Arg<ffi::AnyBuffer>()         // csrValA
+                                  .Arg<ffi::Buffer<ffi::S32>>()  // csrColIndA
+                                  .Arg<ffi::Buffer<ffi::S32>>()  // csrRowPtrA
+                                  .Arg<ffi::AnyBuffer>()         // b
+                                  .Ret<ffi::AnyBuffer>()         // x
+);
+
 #endif  // JAX_GPU_CUDA
+
+// Symmetric tridiagonal reduction: sytrd
+
+template <typename T>
+ffi::Error SytrdImpl(int64_t batch, int64_t size, gpuStream_t stream,
+                     ffi::ScratchAllocator& scratch, bool lower,
+                     ffi::AnyBuffer a, ffi::Result<ffi::AnyBuffer> out,
+                     ffi::Result<ffi::AnyBuffer> d,
+                     ffi::Result<ffi::AnyBuffer> e,
+                     ffi::Result<ffi::AnyBuffer> tau,
+                     ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(size));
+  FFI_ASSIGN_OR_RETURN(auto handle, SolverHandlePool::Borrow(stream));
+
+  gpusolverFillMode_t uplo =
+      lower ? GPUSOLVER_FILL_MODE_LOWER : GPUSOLVER_FILL_MODE_UPPER;
+  FFI_ASSIGN_OR_RETURN(int lwork,
+                       solver::SytrdBufferSize<T>(handle.get(), uplo, n));
+  FFI_ASSIGN_OR_RETURN(auto workspace,
+                       AllocateWorkspace<T>(scratch, lwork, "sytrd"));
+
+  auto* a_data = static_cast<T*>(a.untyped_data());
+  auto* out_data = static_cast<T*>(out->untyped_data());
+  auto* d_data =
+      static_cast<typename solver::RealType<T>::value*>(d->untyped_data());
+  auto* e_data =
+      static_cast<typename solver::RealType<T>::value*>(e->untyped_data());
+  auto* tau_data = static_cast<T*>(tau->untyped_data());
+  auto* info_data = info->typed_data();
+  if (a_data != out_data) {
+    JAX_FFI_RETURN_IF_GPU_ERROR(gpuMemcpyAsync(
+        out_data, a_data, a.size_bytes(), gpuMemcpyDeviceToDevice, stream));
+  }
+
+  int out_step = n * n;
+  for (int64_t i = 0; i < batch; ++i) {
+    FFI_RETURN_IF_ERROR_STATUS(solver::Sytrd<T>(handle.get(), uplo, n, out_data,
+                                                d_data, e_data, tau_data,
+                                                workspace, lwork, info_data));
+    out_data += out_step;
+    d_data += n;
+    e_data += n - 1;
+    tau_data += n - 1;
+    ++info_data;
+  }
+  return ffi::Error::Success();
+}
+
+ffi::Error SytrdDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
+                         bool lower, ffi::AnyBuffer a,
+                         ffi::Result<ffi::AnyBuffer> out,
+                         ffi::Result<ffi::AnyBuffer> d,
+                         ffi::Result<ffi::AnyBuffer> e,
+                         ffi::Result<ffi::AnyBuffer> tau,
+                         ffi::Result<ffi::Buffer<ffi::S32>> info) {
+  auto dataType = a.element_type();
+  if (out->element_type() != dataType ||
+      d->element_type() != ffi::ToReal(dataType) ||
+      e->element_type() != ffi::ToReal(dataType) ||
+      tau->element_type() != dataType) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to sytrd must have the same element type");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(a.dimensions()));
+  if (rows != cols) {
+    return ffi::Error::InvalidArgument(
+        "The input matrix to sytrd must be square");
+  }
+  FFI_RETURN_IF_ERROR(
+      CheckShape(out->dimensions(), {batch, rows, cols}, "out", "sytrd"));
+  FFI_RETURN_IF_ERROR(CheckShape(d->dimensions(), {batch, cols}, "d", "sytrd"));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(e->dimensions(), {batch, cols - 1}, "e", "sytrd"));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(tau->dimensions(), {batch, cols - 1}, "tau", "sytrd"));
+  FFI_RETURN_IF_ERROR(CheckShape(info->dimensions(), batch, "info", "sytrd"));
+  SOLVER_DISPATCH_IMPL(SytrdImpl, batch, rows, stream, scratch, lower, a, out,
+                       d, e, tau, info);
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in sytrd", absl::FormatStreamed(dataType)));
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(SytrdFfi, SytrdDispatch,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Ctx<ffi::ScratchAllocator>()
+                                  .Attr<bool>("lower")
+                                  .Arg<ffi::AnyBuffer>()         // a
+                                  .Ret<ffi::AnyBuffer>()         // out
+                                  .Ret<ffi::AnyBuffer>()         // d
+                                  .Ret<ffi::AnyBuffer>()         // e
+                                  .Ret<ffi::AnyBuffer>()         // tau
+                                  .Ret<ffi::Buffer<ffi::S32>>()  // info
+);
 
 #undef SOLVER_DISPATCH_IMPL
 #undef SOLVER_BLAS_DISPATCH_IMPL

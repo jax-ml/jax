@@ -16,6 +16,7 @@ from absl.testing import absltest
 
 import jax
 import jax.numpy as jnp
+
 from jax._src import test_util as jtu
 
 from jax_ffi_example import rms_norm
@@ -29,21 +30,24 @@ def rms_norm_ref(x, eps=1e-5):
 
 
 class RmsNormTests(jtu.JaxTestCase):
+
   def setUp(self):
     super().setUp()
     if not jtu.test_device_matches(["cpu"]):
       self.skipTest("Unsupported platform")
 
   def test_basic(self):
-    x = jnp.linspace(-0.5, 0.5, 15)
+    x = jnp.linspace(-0.5, 0.5, 15, dtype=jnp.float32)
     self.assertAllClose(rms_norm.rms_norm(x), rms_norm_ref(x))
 
   def test_batching(self):
-    x = jnp.linspace(-0.5, 0.5, 15).reshape((3, 5))
-    self.assertAllClose(jax.vmap(rms_norm.rms_norm)(x), jax.vmap(rms_norm_ref)(x))
+    x = jnp.linspace(-0.5, 0.5, 15, dtype=jnp.float32).reshape((3, 5))
+    self.assertAllClose(
+        jax.vmap(rms_norm.rms_norm)(x), jax.vmap(rms_norm_ref)(x)
+    )
 
   def test_grads(self):
-    x = jnp.linspace(-0.5, 0.5, 15).reshape((3, 5))
+    x = jnp.linspace(-0.5, 0.5, 15, dtype=jnp.float32).reshape((3, 5))
     jtu.check_grads(rms_norm.rms_norm, (x,), order=1, modes=("rev",))
 
 

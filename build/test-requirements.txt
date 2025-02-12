@@ -7,7 +7,8 @@ flatbuffers
 hypothesis
 mpmath>=1.3
 pillow>=10.4.0
-portpicker
+# TODO(kanglan): Remove once psutil from portpicker supports python 3.13t 
+portpicker; python_version<"3.13"
 pytest-xdist
 wheel
 rich

@@ -44,6 +44,7 @@ limitations under the License.
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/transforms/apply_vector_layout.h"
+#include "jaxlib/mosaic/dialect/tpu/transforms/serde.h"
 #include "xla/array.h"
 
 // TODO(tlongeri): null pointer checks?
@@ -382,13 +383,10 @@ MlirTpuValueArray mlirTpuDisassemble(MlirTpuInsertionPoint insertion_point,
   return MlirTpuValueArrayFromXlaArray(std::move(failure_or_vals).value());
 }
 
-MlirLogicalResult mlirTpuApplyLayoutOp(int hardware_generation,
-                                       MlirOperation op,
-                                       MlirTpuI64TargetTuple target_shape) {
-  mlir::tpu::ApplyVectorLayoutContext ctx{
-      .hardware_generation = hardware_generation,
-      .target_shape = unwrap(target_shape)};
-  return wrap(mlir::tpu::applyLayoutOp(ctx, *unwrap(op)));
+MlirLogicalResult mlirTpuApplyLayoutOp(MlirTpuApplyVectorLayoutContext ctx,
+                                       MlirOperation op) {
+  mlir::tpu::ApplyVectorLayoutContext unwrapped_ctx = unwrap(ctx);
+  return wrap(mlir::tpu::applyLayoutOp(unwrapped_ctx, *unwrap(op)));
 }
 
 MlirValue mlirTpuRelayout(MlirTpuInsertionPoint insertion_point, MlirValue val,
@@ -406,6 +404,10 @@ MlirValue mlirTpuRelayout(MlirTpuInsertionPoint insertion_point, MlirValue val,
   }
   return wrap(std::move(failure_or_new_val).value());
 }
+}
+
+MLIR_CAPI_EXPORTED void mlirTpuRegisterMosaicSerdePass() {
+  mlir::tpu::registerMosaicSerdePass();
 }
 
 #include "mlir/CAPI/Pass.h"     // IWYU pragma: keep

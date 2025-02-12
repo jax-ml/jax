@@ -18,6 +18,7 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/synchronization/mutex.h"
 
 namespace nb = nanobind;
 
@@ -225,4 +226,19 @@ NB_MODULE(utils, m) {
       PyCFunction_NewEx(&safe_map_def, /*self=*/nullptr, module_name.ptr()));
   m.attr("safe_zip") = nb::steal<nb::object>(
       PyCFunction_NewEx(&safe_zip_def, /*self=*/nullptr, module_name.ptr()));
+
+  // Python has no reader-writer lock in its standard library, so we expose
+  // bindings around absl::Mutex.
+  nb::class_<absl::Mutex>(m, "Mutex")
+      .def(nb::init<>())
+      .def("lock", &absl::Mutex::Lock, nb::call_guard<nb::gil_scoped_release>())
+      .def("unlock", &absl::Mutex::Unlock)
+      .def("assert_held", &absl::Mutex::AssertHeld)
+      .def("reader_lock", &absl::Mutex::ReaderLock,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("reader_unlock", &absl::Mutex::ReaderUnlock)
+      .def("assert_reader_held", &absl::Mutex::AssertReaderHeld)
+      .def("writer_lock", &absl::Mutex::WriterLock,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("writer_unlock", &absl::Mutex::WriterUnlock);
 }

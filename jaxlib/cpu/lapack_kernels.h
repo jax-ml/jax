@@ -27,7 +27,7 @@ limitations under the License.
 #include "xla/service/custom_call_status.h"
 
 // Underlying function pointers (i.e., KERNEL_CLASS::Fn) are initialized either
-// by the pybind wrapper that links them to an existing SciPy lapack instance,
+// by the nanobind wrapper that links them to an existing SciPy lapack instance,
 // or using the lapack_kernels_strong.cc static initialization to link them
 // directly to lapack for use in a pure C++ context.
 
@@ -212,6 +212,34 @@ struct QrFactorization {
 
   static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols);
 };
+
+//== Column Pivoting QR Factorization ==//
+
+// lapack geqp3
+template <::xla::ffi::DataType dtype>
+struct PivotingQrFactorization {
+  using RealType = ::xla::ffi::NativeType<::xla::ffi::ToReal(dtype)>;
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using FnType = std::conditional_t<
+      ::xla::ffi::IsComplexType<dtype>(),
+      void(lapack_int* m, lapack_int* n, ValueType* a, lapack_int* lda,
+           lapack_int* jpvt, ValueType* tau, ValueType* work, lapack_int* lwork,
+           RealType* rwork, lapack_int* info),
+      void(lapack_int* m, lapack_int* n, ValueType* a, lapack_int* lda,
+           lapack_int* jpvt, ValueType* tau, ValueType* work, lapack_int* lwork,
+           lapack_int* info)>;
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(
+      ::xla::ffi::Buffer<dtype> x, ::xla::ffi::Buffer<LapackIntDtype> jpvt,
+      ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ResultBuffer<LapackIntDtype> jpvt_out,
+      ::xla::ffi::ResultBuffer<dtype> tau);
+
+  static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols);
+};
+
 
 //== Orthogonal QR ==//
 
@@ -466,9 +494,9 @@ struct EigenvalueDecompositionHermitian {
 // LAPACK uses a packed representation to represent a mixture of real
 // eigenvectors and complex conjugate pairs. This helper unpacks the
 // representation into regular complex matrices.
-template <typename T, typename Int=lapack_int>
-static void UnpackEigenvectors(Int n, const T* eigenvals_imag,
-                               const T* packed, std::complex<T>* unpacked) {
+template <typename T, typename Int = lapack_int>
+static void UnpackEigenvectors(Int n, const T* eigenvals_imag, const T* packed,
+                               std::complex<T>* unpacked) {
   for (int j = 0; j < n;) {
     if (eigenvals_imag[j] == 0. || std::isnan(eigenvals_imag[j])) {
       // Real values in each row without imaginary part
@@ -740,11 +768,31 @@ struct TridiagonalReduction {
   static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols);
 };
 
+//== General Tridiagonal System Solver ==//
+
+template <::xla::ffi::DataType dtype>
+struct TridiagonalSolver {
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using FnType = void(lapack_int* n, lapack_int* nrhs, ValueType* dl,
+                      ValueType* d, ValueType* du, ValueType* b,
+                      lapack_int* ldb, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+  static ::xla::ffi::Error Kernel(
+      ::xla::ffi::Buffer<dtype> dl, ::xla::ffi::Buffer<dtype> d,
+      ::xla::ffi::Buffer<dtype> du, ::xla::ffi::Buffer<dtype> b,
+      ::xla::ffi::ResultBuffer<dtype> dl_out,
+      ::xla::ffi::ResultBuffer<dtype> d_out,
+      ::xla::ffi::ResultBuffer<dtype> du_out,
+      ::xla::ffi::ResultBuffer<dtype> b_out,
+      ::xla::ffi::ResultBuffer<LapackIntDtype> info);
+};
+
 // Declare all the handler symbols
-XLA_FFI_DECLARE_HANDLER_SYMBOL(blas_strsm_ffi);
-XLA_FFI_DECLARE_HANDLER_SYMBOL(blas_dtrsm_ffi);
-XLA_FFI_DECLARE_HANDLER_SYMBOL(blas_ctrsm_ffi);
-XLA_FFI_DECLARE_HANDLER_SYMBOL(blas_ztrsm_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_strsm_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dtrsm_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_ctrsm_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_ztrsm_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgetrf_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgetrf_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgetrf_ffi);
@@ -753,6 +801,10 @@ XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgeqrf_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgeqrf_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgeqrf_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_zgeqrf_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgeqp3_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgeqp3_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgeqp3_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_zgeqp3_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sorgqr_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dorgqr_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cungqr_ffi);
@@ -785,6 +837,10 @@ XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgehrd_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgehrd_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgehrd_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_zgehrd_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgtsv_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgtsv_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgtsv_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_zgtsv_ffi);
 
 }  // namespace jax
 

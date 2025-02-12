@@ -27,7 +27,11 @@ from jax._src.partition_spec import (
     PartitionSpec as PartitionSpec,
 )
 from jax._src.interpreters.pxla import Mesh as Mesh
-from jax._src.mesh import AbstractMesh as AbstractMesh
+from jax._src.mesh import (
+    AbstractMesh as AbstractMesh,
+    AxisTypes as AxisTypes,
+    use_mesh as use_mesh
+)
 
 _deprecations = {
     # Finalized 2024-10-01; remove after 2025-01-01.

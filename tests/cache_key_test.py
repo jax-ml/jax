@@ -31,7 +31,6 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.mesh import Mesh
 from jax._src.partition_spec import PartitionSpec as P
@@ -69,8 +68,7 @@ class CacheKeyTest(jtu.JaxTestCase):
     debug_options.xla_dump_hlo_as_long_text = True
     debug_options.xla_dump_disable_metadata = True
     debug_options.xla_dump_hlo_pipeline_re = "xyzzy"
-    if jaxlib_version > (0, 4, 35):
-      debug_options.xla_gpu_experimental_autotune_cache_mode = 2
+    debug_options.xla_gpu_experimental_autotune_cache_mode = 2
     hash2 = self.get_hashed_value(
         cache_key._hash_serialized_compile_options, compile_options
     )
@@ -271,6 +269,7 @@ class CacheKeyTest(jtu.JaxTestCase):
       self.assertNotEqual(hash_1, hash_2)
 
   @parameterized.parameters([False, True])
+  @jtu.thread_unsafe_test()  # env vars are not thread-safe
   def test_identical_computations_different_metadata(self, include_metadata):
     f = lambda x, y: lax.mul(lax.add(x, y), 2)
     g = lambda x, y: lax.mul(lax.add(x, y), 2)
@@ -287,6 +286,7 @@ class CacheKeyTest(jtu.JaxTestCase):
       key2 = cache_key.get(computation2, devices, compile_options, backend)
     self.assertEqual(include_metadata, key1 != key2)
 
+  @jtu.thread_unsafe_test()  # env vars are not thread-safe
   def test_xla_flags(self):
     if jtu.is_device_tpu(version=4):
       raise unittest.SkipTest("TODO(b/240151176)")
@@ -333,6 +333,7 @@ class CacheKeyTest(jtu.JaxTestCase):
         del os.environ["XLA_FLAGS"]
       sys.argv = orig_argv
 
+  @jtu.thread_unsafe_test()  # env vars are not thread-safe
   def test_libtpu_init_args(self):
     if jtu.is_device_tpu(version=4):
       raise unittest.SkipTest("TODO(b/240151176)")

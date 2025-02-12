@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 from functools import partial
-import contextlib
 
 from absl.testing import absltest
 from jax.sharding import PartitionSpec as P
@@ -28,6 +27,7 @@ from jax.experimental import roofline
 
 
 jax.config.parse_flags_with_absl()
+jtu.request_cpu_devices(8)
 
 
 def create_inputs(
@@ -43,18 +43,6 @@ def create_inputs(
     )
     arrays.append(array)
   return mesh, tuple(arrays)
-
-
-# Run all tests with 8 CPU devices.
-_exit_stack = contextlib.ExitStack()
-
-
-def setUpModule():
-  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-
-
-def tearDownModule():
-  _exit_stack.close()
 
 
 class RooflineTest(jtu.JaxTestCase):

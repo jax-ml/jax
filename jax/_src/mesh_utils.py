@@ -386,7 +386,7 @@ def _create_device_mesh_for_nd_torus_splitting_axes(
           )
       ):
         best_logical_axis_assignment = logical_axis_assignment
-    assignment[:, logical_axis] = best_logical_axis_assignment
+    assignment[:, logical_axis] = best_logical_axis_assignment  # type: ignore  # numpy 2.2
 
   # Read out the assignment.
   logical_mesh = _generate_logical_mesh(
@@ -597,10 +597,10 @@ def _generate_logical_mesh(
           zip(logical_indices, physical_indices, range(len(logical_indices)))
       )
   )
-  logical_mesh = np.transpose(logical_mesh, transpose_axes)
+  logical_mesh = np.transpose(logical_mesh, transpose_axes)  # type: ignore  # numpy 2.2
 
   # Reshape to add the trivial dimensions back.
-  logical_mesh = np.reshape(logical_mesh, logical_mesh_shape)
+  logical_mesh = np.reshape(logical_mesh, logical_mesh_shape)  # type: ignore  # numpy 2.2
 
   return logical_mesh
 

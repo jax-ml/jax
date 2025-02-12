@@ -75,7 +75,7 @@ def broadcast_one_to_all(in_tree: Any, is_source: bool | None = None) -> Any:
     return host_local_array_to_global_array(inp, global_mesh, pspec)
 
   def post_jit(x):
-    return np.asarray(x.addressable_data(0))
+    return jax.device_get(x.addressable_data(0))
 
   in_tree = jax.tree.map(pre_jit, in_tree)
   out_tree = jax.jit(_psum, out_shardings=jax.sharding.NamedSharding(
@@ -103,7 +103,8 @@ def _handle_array_process_allgather(inp, tiled):
   else:
     # All inputs here will be fully addressable.
     if jax.process_count() == 1:
-      return np.asarray(inp)
+      out = np.asarray(inp)
+      return np.expand_dims(out, axis=0) if not tiled else out
 
     devices = np.array(jax.devices()).reshape(jax.process_count(),
                                               jax.local_device_count())

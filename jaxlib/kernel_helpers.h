@@ -25,9 +25,9 @@ limitations under the License.
 
 namespace jax {
 
-// See kernel_pybind11_helpers.h for info on descriptor objects. We separate out
-// the functionality that doesn't require pybind11 for building CUDA libraries,
-// since older versions nvcc don't seem to be able to compile pybind11.
+// See kernel_nanobind_helpers.h for info on descriptor objects. We separate out
+// the functionality that doesn't require nanobind for building CUDA libraries,
+// since older versions nvcc don't seem to be able to compile nanobind.
 
 // Packs a descriptor object into a byte string.
 template <typename T>

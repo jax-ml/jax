@@ -23,7 +23,7 @@ from typing import Any
 import warnings
 
 import jax
-from jax import core as jax_core
+from jax._src import core as jax_core
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import lowering
@@ -55,6 +55,12 @@ def pallas_call_lowering(
     print(f"The grid mapping for pallas_call {name_and_src_info}:")
     print(grid_mapping)
 
+  thread_semantics = compiler_params.get("mosaic_gpu", {}).get(
+      "thread_semantics", mosaic_core.ThreadSemantics.Lane
+  )
+  if thread_semantics == mosaic_core.ThreadSemantics.Warpgroup:
+    mosaic_core.dialect.register_dialect(ctx.module_context.context)  # pytype: disable=attribute-error
+
   lowering_result = lowering.lower_jaxpr_to_module(
       grid_mapping,
       jaxpr,
@@ -73,7 +79,7 @@ def pallas_call_lowering(
   outs = mosaic_core._mosaic_gpu_lowering_rule(
       ctx.replace(avals_out=new_avals_out),
       *args,
-      module=module.operation.get_asm(binary=True, enable_debug_info=True),
+      module=module,
       out_types=lowering_result.out_structs,
       input_output_aliases=input_output_aliases,
   )

@@ -35,7 +35,7 @@ import sys
 LOG = logging.getLogger(__name__)
 
 
-GPU_DEVICE_TARGETS = "gfx900 gfx906 gfx908 gfx90a gfx940 gfx941 gfx942 gfx1030 gfx1100"
+GPU_DEVICE_TARGETS = "gfx900 gfx906 gfx908 gfx90a gfx940 gfx941 gfx942 gfx1030 gfx1100 gfx1200 gfx1201"
 
 
 def build_rocm_path(rocm_version_str):
@@ -90,21 +90,33 @@ def build_jaxlib_wheel(
     jax_path, rocm_path, python_version, xla_path=None, compiler="gcc"
 ):
     use_clang = "true" if compiler == "clang" else "false"
+
+    # Avoid git warning by setting safe.directory.
+    try:
+        subprocess.run(
+            ["git", "config", "--global", "--add", "safe.directory", "*"],
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to configure Git safe directory: {e}")
+        raise
+
     cmd = [
         "python",
         "build/build.py",
-        "build"
-        "--wheels=jaxlib,jax-rocm-plugin,jax-rocm-pjrt"
+        "build",
+        "--wheels=jaxlib,jax-rocm-plugin,jax-rocm-pjrt",
         "--rocm_path=%s" % rocm_path,
         "--rocm_version=60",
         "--use_clang=%s" % use_clang,
-        "--verbose"
+        "--verbose",
     ]
 
     # Add clang path if clang is used.
     if compiler == "clang":
         clang_path = find_clang_path()
         if clang_path:
+            LOG.info("Found clang at path: %s", clang_path)
             cmd.append("--clang_path=%s" % clang_path)
         else:
             raise RuntimeError("Clang binary not found in /usr/lib/llvm-*")
@@ -303,6 +315,21 @@ def main():
         if os.path.basename(whl).startswith("jax-"):
             LOG.info("Copying %s into %s" % (whl, wheelhouse_dir))
             shutil.copy(whl, wheelhouse_dir)
+
+    # Delete the 'dist' directory since it causes permissions issues
+    logging.info("Deleting dist, egg-info and cache directory")
+    shutil.rmtree(os.path.join(args.jax_path, "dist"))
+    shutil.rmtree(os.path.join(args.jax_path, "jax.egg-info"))
+    shutil.rmtree(os.path.join(args.jax_path, "jax", "__pycache__"))
+
+    # Make the wheels deleteable by the runner
+    whl_house = os.path.join(args.jax_path, "wheelhouse")
+    logging.info("Changing permissions for %s" % whl_house)
+    mode = 0o664
+    for item in os.listdir(whl_house):
+        whl_path = os.path.join(whl_house, item)
+        if os.path.isfile(whl_path):
+            os.chmod(whl_path, mode)
 
 
 if __name__ == "__main__":

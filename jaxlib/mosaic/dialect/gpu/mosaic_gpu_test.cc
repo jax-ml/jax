@@ -19,8 +19,8 @@ limitations under the License.
 #include <optional>
 #include <string>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -181,16 +181,16 @@ TEST_F(MosaicGpuTest, RuntimeFunctionsAreRegistered) {
 
   llvm::SmallVector<mlir::func::FuncOp> func_ops =
       llvm::to_vector(module_op->getBody()->getOps<mlir::func::FuncOp>());
-  EXPECT_EQ(func_ops.size(), 2);
+  EXPECT_EQ(func_ops.size(), 1);
 
   absl::flat_hash_set<std::string> func_names;
   for (mlir::func::FuncOp& func_op : func_ops) {
     func_names.insert(func_op.getSymName().str());
   }
 
-  EXPECT_THAT(func_names, UnorderedElementsAre(
-                              mosaic_gpu::kRuntimeTmaDescriptorInitializerName,
-                              mosaic_gpu::kRuntimeMemcpyAsyncH2DName));
+  EXPECT_THAT(
+      func_names,
+      UnorderedElementsAre(mosaic_gpu::kRuntimeTmaDescriptorInitializerName));
 }
 
 

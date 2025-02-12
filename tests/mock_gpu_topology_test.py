@@ -25,15 +25,16 @@ NUM_SLICES = 2
 NUM_HOSTS_PER_SLICE = 4
 
 
-@jtu.with_config(
+@jtu.with_global_config(
   jax_mock_gpu_topology=f"{NUM_SLICES}x{NUM_HOSTS_PER_SLICE}x1",
   jax_cuda_visible_devices="0")
+@jtu.thread_unsafe_test_class()
 class MockGPUTopologyTest(jtu.JaxTestCase):
 
   def setUp(self):
+    super().setUp()
     if not jtu.test_device_matches(["gpu"]):
       self.skipTest("Mocking devices only works on the GPU backend.")
-    super().setUp()
 
   @jtu.skip_under_pytest("Test must run in an isolated process")
   def testMockDeviceCount(self):

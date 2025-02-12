@@ -4,13 +4,149 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 For the changes specific to the experimental Pallas APIs,
 see {ref}`pallas-changelog`.
 
+JAX follows Effort-based versioning; for a discussion of this and JAX's API
+compatibility policy, refer to {ref}`api-compatibility`. For the Python and
+NumPy version support policy, refer to {ref}`version-support-policy`.
+
 <!--
 Remember to align the itemized text with the first line of an item within a list.
 
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## jax 0.4.36
+## Unreleased
+
+* New Features
+  * Added an experimental {func}`jax.experimental.custom_dce.custom_dce`
+    decorator to support customizing the behavior of opaque functions under
+    JAX-level dead code elimination (DCE). See {jax-issue}`#25956` for more
+    details.
+  * Added low-level reduction APIs in {mod}`jax.lax`: {func}`jax.lax.reduce_sum`,
+    {func}`jax.lax.reduce_prod`, {func}`jax.lax.reduce_max`, {func}`jax.lax.reduce_min`, 
+    {func}`jax.lax.reduce_and`, {func}`jax.lax.reduce_or`, and {func}`jax.lax.reduce_xor`.
+
+* Changes
+  * `JAX_CPU_COLLECTIVES_IMPLEMENTATION` and `JAX_NUM_CPU_DEVICES` now work as
+    env vars. Before they could only be specified via jax.config or flags.
+  * `JAX_CPU_COLLECTIVES_IMPLEMENTATION` now defaults to `'gloo'`, meaning
+    multi-process CPU communication works out-of-the-box.
+  * The `jax[tpu]` TPU extra no longer depends on the `libtpu-nightly` package.
+    This package may safely be removed if it is present on your machine; JAX now
+    uses `libtpu` instead.
+
+## jax 0.5.0 (Jan 17, 2025)
+
+As of this release, JAX now uses
+[effort-based versioning](https://jax.readthedocs.io/en/latest/jep/25516-effver.html).
+Since this release makes a breaking change to PRNG key semantics that
+may require users to update their code, we are bumping the "meso" version of JAX
+to signify this.
+
+* Breaking changes
+  * Enable `jax_threefry_partitionable` by default (see
+    [the update note](https://github.com/jax-ml/jax/discussions/18480)).
+
+  * This release drops support for Mac x86 wheels. Mac ARM of course remains
+    supported. For a recent discussion, see
+    https://github.com/jax-ml/jax/discussions/22936.
+
+    Two key factors motivated this decision:
+    * The Mac x86 build (only) has a number of test failures and crashes. We
+      would prefer to ship no release than a broken release.
+    * Mac x86 hardware is end-of-life and cannot be easily obtained for
+      developers at this point. So it is difficult for us to fix this kind of
+      problem even if we wanted to.
+
+    We are open to readding support for Mac x86 if the community is willing
+    to help support that platform: in particular, we would need the JAX test
+    suite to pass cleanly on Mac x86 before we could ship releases again.
+
+* Changes:
+  * The minimum NumPy version is now 1.25. NumPy 1.25 will remain the minimum
+    supported version until June 2025.
+  * The minimum SciPy version is now 1.11. SciPy 1.11 will remain the minimum
+    supported version until June 2025.
+  * {func}`jax.numpy.einsum` now defaults to `optimize='auto'` rather than
+    `optimize='optimal'`. This avoids exponentially-scaling trace-time in
+    the case of many arguments ({jax-issue}`#25214`).
+  * {func}`jax.numpy.linalg.solve` no longer supports batched 1D arguments
+    on the right hand side. To recover the previous behavior in these cases,
+    use `solve(a, b[..., None]).squeeze(-1)`.
+
+* New Features
+  * {func}`jax.numpy.fft.fftn`, {func}`jax.numpy.fft.rfftn`,
+    {func}`jax.numpy.fft.ifftn`, and {func}`jax.numpy.fft.irfftn` now support
+    transforms in more than 3 dimensions, which was previously the limit. See
+    {jax-issue}`#25606` for more details.
+  * Support added for user defined state in the FFI via the new
+    {func}`jax.ffi.register_ffi_type_id` function.
+  * The AOT lowering `.as_text()` method now supports the `debug_info` option
+    to include debugging information, e.g., source location, in the output.
+
+* Deprecations
+  * From {mod}`jax.interpreters.xla`, `abstractify` and `pytype_aval_mappings`
+    are now deprecated, having been replaced by symbols of the same name
+    in {mod}`jax.core`.
+  * {func}`jax.scipy.special.lpmn` and {func}`jax.scipy.special.lpmn_values`
+    are deprecated, following their deprecation in SciPy v1.15.0. There are
+    no plans to replace these deprecated functions with new APIs.
+  * The {mod}`jax.extend.ffi` submodule was moved to {mod}`jax.ffi`, and the
+    previous import path is deprecated.
+
+* Deletions
+  * `jax_enable_memories` flag has been deleted and the behavior of that flag
+    is on by default.
+  * From `jax.lib.xla_client`, the previously-deprecated `Device` and
+    `XlaRuntimeError` symbols have been removed; instead use `jax.Device`
+    and `jax.errors.JaxRuntimeError` respectively.
+  * The `jax.experimental.array_api` module has been removed after being
+    deprecated in JAX v0.4.32. Since that release, {mod}`jax.numpy` supports
+    the array API directly.
+
+## jax 0.4.38 (Dec 17, 2024)
+
+* Breaking Changes
+  * `XlaExecutable.cost_analysis` now returns a `dict[str, float]` (instead of a
+    single-element `list[dict[str, float]]`).
+
+* Changes:
+  * `jax.tree.flatten_with_path` and `jax.tree.map_with_path` are added
+    as shortcuts of the corresponding `tree_util` functions.
+
+* Deprecations
+  * a number of APIs in the internal `jax.core` namespace have been deprecated.
+    Most were no-ops, were little-used, or can be replaced by APIs of the same
+    name in {mod}`jax.extend.core`; see the documentation for {mod}`jax.extend`
+    for information on the compatibility guarantees of these semi-public extensions.
+  * Several previously-deprecated APIs have been removed, including:
+    * from {mod}`jax.core`: `check_eqn`, `check_type`,  `check_valid_jaxtype`, and
+      `non_negative_dim`.
+    * from {mod}`jax.lib.xla_bridge`: `xla_client` and `default_backend`.
+    * from {mod}`jax.lib.xla_client`: `_xla` and `bfloat16`.
+    * from {mod}`jax.numpy`: `round_`.
+
+* New Features
+  * {func}`jax.export.export` can be used for device-polymorphic export with
+    shardings constructed with {func}`jax.sharding.AbstractMesh`.
+    See the [jax.export documentation](https://jax.readthedocs.io/en/latest/export/export.html#device-polymorphic-export).
+  * Added {func}`jax.lax.split`. This is a primitive version of
+    {func}`jax.numpy.split`, added because it yields a more compact
+    transpose during automatic differentiation.
+
+## jax 0.4.37 (Dec 9, 2024)
+
+This is a patch release of jax 0.4.36. Only "jax" was released at this version.
+
+## jax 0.4.37
+
+* Bug fixes
+  * Fixed a bug where `jit` would error if an argument was named `f` (#25329).
+  * Fix a bug that will throw `index out of range` error in
+    {func}`jax.lax.while_loop` if the user register pytree node class with
+    different aux data for the flatten and flatten_with_path.
+  * Pinned a new libtpu release (0.0.6) that fixes a compiler bug on TPU v6e.
+
+## jax 0.4.36 (Dec 5, 2024)
 
 * Breaking Changes
   * This release lands "stackless", an internal change to JAX's tracing
@@ -53,6 +189,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
          use `uses_global_constants`.
       * the `lowering_platforms` kwarg for {func}`jax.export.export`: use
         `platforms` instead.
+  * The kwargs `symbolic_scope` and `symbolic_constraints` from
+    {func}`jax.export.symbolic_args_specs` have been removed. They were
+    deprecated in June 2024. Use `scope` and `constraints` instead.
   * Hashing of tracers, which has been deprecated since version 0.4.30, now
     results in a `TypeError`.
   * Refactor: JAX build CLI (build/build.py) now uses a subcommand structure and
@@ -67,6 +206,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     return NaN for negative integer inputs, to match the behavior of SciPy from
     https://github.com/scipy/scipy/pull/21827.
   * `jax.clear_backends` was removed after being deprecated in v0.4.26.
+  * We removed the custom call "__gpu$xla.gpu.triton" from the list of custom
+    call that we guarantee export stability. This is because this custom call
+    relies on Triton IR, which is not guaranteed to be stable. If you need
+    to export code that uses this custom call, you can use the `disabled_checks`
+    parameter. See more details in the [documentation](https://jax.readthedocs.io/en/latest/export/export.html#compatibility-guarantees-for-custom-calls).
 
 * New Features
   * {func}`jax.jit` got a new `compiler_options: dict[str, Any]` argument, for
@@ -79,6 +223,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.lax.linalg.eig` and the related `jax.numpy` functions
     ({func}`jax.numpy.linalg.eig` and {func}`jax.numpy.linalg.eigvals`) are now
     supported on GPU. See {jax-issue}`#24663` for more details.
+  * Added two new configuration flags, `jax_exec_time_optimization_effort` and `jax_memory_fitting_effort`, to control the amount of effort the compiler spends minimizing execution time and memory usage, respectively.  Valid values are between -1.0 and 1.0, default is 0.0.
 
 * Bug fixes
   * Fixed a bug where the GPU implementations of LU and QR decomposition would

@@ -79,7 +79,8 @@ def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any], * ,
               if isinstance(v.aval, AbstractRef) and d
               else v.aval for v, d in zip(jaxpr.invars, should_discharge)]
   eval_jaxpr = lu.wrap_init(partial(_eval_jaxpr_discharge_state, jaxpr,
-                                    should_discharge, consts))
+                                    should_discharge, consts),
+                            debug_info=jaxpr.debug_info)
   new_jaxpr, _ , new_consts, () = pe.trace_to_jaxpr_dynamic(eval_jaxpr, in_avals)
   return new_jaxpr, new_consts
 
@@ -148,41 +149,51 @@ def _eval_jaxpr_discharge_state(
                        if d and isinstance(v.aval, AbstractRef)}
 
   for eqn in jaxpr.eqns:
-    should_discharge = [id(v.aval) in refs_to_discharge for v in eqn.invars]
-    if eqn.primitive is core.mutable_array_p:
-      [invar], [outvar] = eqn.invars, eqn.outvars
-      ans = env.read(invar)
-      refs_to_discharge.add(id(outvar.aval))
-    elif (any(should_discharge)
-          or core.internal_mutable_array_effect in eqn.effects
-      ):
-      if eqn.primitive in _partial_discharge_rules:
-        rule: DischargeRule = partial(_partial_discharge_rules[eqn.primitive], should_discharge)
-      elif eqn.primitive in _discharge_rules:
-        rule = _discharge_rules[eqn.primitive]
+    name_stack = (
+        source_info_util.current_name_stack() + eqn.source_info.name_stack
+    )
+    traceback = eqn.source_info.traceback
+    with source_info_util.user_context(
+        traceback, name_stack=name_stack), eqn.ctx.manager:
+      should_discharge = [id(v.aval) in refs_to_discharge for v in eqn.invars]
+      if eqn.primitive is core.mutable_array_p:
+        [invar], [outvar] = eqn.invars, eqn.outvars
+        ans = env.read(invar)
+        refs_to_discharge.add(id(outvar.aval))
+      elif eqn.primitive is core.freeze_p:
+        [invar], [outvar] = eqn.invars, eqn.outvars
+        ans = env.read(invar)
+        refs_to_discharge.remove(id(invar.aval))
+      elif (any(should_discharge)
+            or core.internal_mutable_array_effect in eqn.effects
+        ):
+        if eqn.primitive in _partial_discharge_rules:
+          rule: DischargeRule = partial(_partial_discharge_rules[eqn.primitive], should_discharge)
+        elif eqn.primitive in _discharge_rules:
+          rule = _discharge_rules[eqn.primitive]
+        else:
+          raise NotImplementedError("No state discharge rule implemented for "
+              f"primitive: {eqn.primitive}")
+        invals = map(env.read, eqn.invars)
+        in_avals = [v.aval for v in eqn.invars]
+        out_avals = [v.aval for v in eqn.outvars]
+        new_invals, ans = rule(
+            in_avals, out_avals, *invals, **eqn.params)
+        for invar, should, new_inval in zip(eqn.invars, should_discharge, new_invals):
+          if new_inval is not None:
+            if not should:
+              raise ValueError(
+                  f"Did not ask for inval to be discharged but it was. ({invar=},"
+                  f" {new_inval=})"
+              )
+            env.write(invar, new_inval)  # type: ignore[arg-type]
       else:
-        raise NotImplementedError("No state discharge rule implemented for "
-            f"primitive: {eqn.primitive}")
-      invals = map(env.read, eqn.invars)
-      in_avals = [v.aval for v in eqn.invars]
-      out_avals = [v.aval for v in eqn.outvars]
-      new_invals, ans = rule(
-          in_avals, out_avals, *invals, **eqn.params)
-      for invar, should, new_inval in zip(eqn.invars, should_discharge, new_invals):
-        if new_inval is not None:
-          if not should:
-            raise ValueError(
-                f"Did not ask for inval to be discharged but it was. ({invar=},"
-                f" {new_inval=})"
-            )
-          env.write(invar, new_inval)  # type: ignore[arg-type]
-    else:
-      # Default primitive rule, similar to `core.eval_jaxpr`. Note that here
-      # we assume any higher-order primitives inside of the jaxpr are *not*
-      # stateful.
-      subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
-      ans = eqn.primitive.bind(*subfuns, *map(env.read, eqn.invars),
-                               **bind_params)
+        # Default primitive rule, similar to `core.eval_jaxpr`. Note that here
+        # we assume any higher-order primitives inside of the jaxpr are *not*
+        # stateful.
+        subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
+        ans = eqn.primitive.bind(*subfuns, *map(env.read, eqn.invars),
+                                **bind_params)
     if eqn.primitive.multiple_results:
       map(env.write, eqn.outvars, ans)
     else:
@@ -364,7 +375,7 @@ def transform_swap_array(x, transforms, val):
       case indexing.NDIndexer():
         indexer = transform
         if _is_trivial_indexer(indexer):
-          _results.append(None)
+          _results.append(_results[-1])
           continue
         # If everything in the indexer is a slice or ()-shaped, we can also
         # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
@@ -449,12 +460,13 @@ def _addupdate_discharge(x, val, idx, tree):
   return _prepend_scatter(x, indexer, val, add=True)
 
 @weakref_lru_cache
-def _cached_closed_jaxpr_discharge(closed_jaxpr):
+def _cached_closed_jaxpr_discharge(closed_jaxpr: core.ClosedJaxpr):
   jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
   num_outs = len(jaxpr.outvars)
   discharged_jaxpr, discharged_consts = discharge_state(jaxpr, consts)
   discharged_closed_jaxpr = core.ClosedJaxpr(discharged_jaxpr, discharged_consts)
-  fun = lu.wrap_init(core.jaxpr_as_fun(discharged_closed_jaxpr))
+  fun = lu.wrap_init(core.jaxpr_as_fun(discharged_closed_jaxpr),
+                     debug_info=discharged_jaxpr.debug_info)
   return discharged_closed_jaxpr, num_outs, fun
 
 @register_discharge_rule(core.closed_call_p)
@@ -536,6 +548,9 @@ def _run_state_abstract_eval(*avals: core.AbstractValue, jaxpr: core.Jaxpr,
       nonlocal_effects.add(
           eff.replace(input_index=inner_to_outer_aval_mapping[eff.input_index])
       )
+  assert len(jaxpr.invars) == len(is_initialized)
+  if not all(is_initialized):
+    raise NotImplementedError  # Uninitialized refs are not in avals.
   return avals, nonlocal_effects
 run_state_p.def_effectful_abstract_eval(_run_state_abstract_eval)
 
@@ -584,7 +599,6 @@ def _convert_outputs_to_writes(
   assert not jaxpr.constvars, "Jaxpr shouldn't have constvars."
 
   in_avals = [v.aval for v in jaxpr.invars]
-  @lu.wrap_init
   def eval_jaxpr(*refs):
     # We split the refs into the original input refs and the dummy residual
     # refs.
@@ -596,14 +610,15 @@ def _convert_outputs_to_writes(
   res_ref_avals = [AbstractRef(v.aval) if not isinstance(v.aval, AbstractRef)
                    else v.aval for v in jaxpr.outvars]
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
-      eval_jaxpr, [*in_avals, *res_ref_avals])
+      lu.wrap_init(eval_jaxpr,
+                   debug_info=jaxpr.debug_info),
+      [*in_avals, *res_ref_avals])
   assert not consts
   return jaxpr, [core.ShapedArray(a.shape, a.dtype) for a in res_ref_avals]
 
 def _convert_inputs_to_reads(num_res: int, jaxpr: core.Jaxpr) -> core.Jaxpr:
   assert not jaxpr.constvars, "Jaxpr should not have constvars"
 
-  @lu.wrap_init
   def eval_jaxpr(*refs):
     residual_refs, orig_refs = split_list(refs, [num_res])
     residual_vals = [r[...] for r in residual_refs]
@@ -615,7 +630,9 @@ def _convert_inputs_to_reads(num_res: int, jaxpr: core.Jaxpr) -> core.Jaxpr:
   res_ref_avals = [AbstractRef(aval) if not isinstance(aval, AbstractRef) else
                    aval for aval in res_val_avals]
   jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(
-      eval_jaxpr, [*res_ref_avals, *orig_ref_avals])
+      lu.wrap_init(eval_jaxpr,
+                   debug_info=jaxpr.debug_info),
+      [*res_ref_avals, *orig_ref_avals])
   return jaxpr
 
 def _run_state_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
@@ -831,11 +848,12 @@ def _run_state_partial_eval_custom(
       *[v.aval for v in res_staged_invars], **staged_params)
   _, staged_outvars = partition_list(in_unknowns, eqn.outvars)
   if num_res:
-    @lu.wrap_init
+
     def staged(*args):
       out = run_state_p.bind(*args, **staged_params)
       return out[num_res:]
-    staged_call_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(staged,
+    staged_call_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(
+        lu.wrap_init(staged, debug_info=jaxpr_staged.debug_info),
         [v.aval for v in res_staged_invars])
     eqn_staged = pe.new_jaxpr_eqn(res_staged_invars,
                                   staged_outvars,
@@ -904,7 +922,9 @@ def _transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: Sequence[bool],
     ad.backward_pass(tangent_jaxpr, False, (), (*primals_args, *ct_args), ())
     return []
   jaxpr_trans, _, consts, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(trans), [v.aval for v in jaxpr.invars])
+      lu.wrap_init(trans,
+                   debug_info=jaxpr.debug_info),
+      [v.aval for v in jaxpr.invars])
   return jaxpr_trans, consts
 
 def _run_state_transpose(in_cts, *args, jaxpr: core.Jaxpr,
@@ -975,26 +995,31 @@ def _run_state_discharge_rule(in_avals: Sequence[core.AbstractValue],
   return new_invals, out_vals
 
 def initial_style_jaxpr(
-    fun: Callable, in_tree: PyTreeDef, in_avals: Sequence[core.AbstractValue]
+    fun: Callable, in_tree: PyTreeDef, in_avals: Sequence[core.AbstractValue],
+    dbg: core.DebugInfo,
   ) -> tuple[core.Jaxpr, list[Any], PyTreeDef]:
-  return _initial_style_jaxpr(fun, in_tree, tuple(in_avals))
+  return _initial_style_jaxpr(fun, in_tree, tuple(in_avals), dbg)
 
 @weakref_lru_cache
-def _initial_style_jaxpr(fun, in_tree, in_avals):
-  fun_, out_tree_thunk = api_util.flatten_fun_nokwargs(lu.wrap_init(fun),
+def _initial_style_jaxpr(fun: Callable,
+                         in_tree: api_util.PyTreeDef,
+                         in_avals: Sequence[core.AbstractValue],
+                         debug: core.DebugInfo):
+  fun_, out_tree_thunk = api_util.flatten_fun_nokwargs(
+      lu.wrap_init(fun, debug_info=debug),
       tree_util.treedef_tuple((in_tree,)))
-  debug = pe.debug_info(fun_, in_tree, out_tree_thunk, False, 'run_state')
-  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun_, in_avals, debug)
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun_, in_avals)
   return jaxpr, consts, out_tree_thunk()
 
 
 T = TypeVar('T')
 def run_state(f: Callable[..., None]) -> Callable[[T], T]:
   def wrapped(args):
+    dbg = api_util.debug_info("run_state", f, (args,), {})
     flat_args, in_tree = tree_util.tree_flatten(args)
     ref_avals, ref_args = unzip2(map(get_ref_aval_from_value, flat_args))
     # There may be some uninitialized values here in ref_args.
-    jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals)
+    jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals, dbg)
     jaxpr = hoist_consts_to_refs(jaxpr_)
     which_linear = (False,) * (len(consts) + len(ref_args))
     refs_is_initialized = tuple(r is not uninitialized for r in ref_args)
@@ -1010,9 +1035,10 @@ def run_state(f: Callable[..., None]) -> Callable[[T], T]:
 
 def run_state_reference(f: Callable[..., None]):
   def wrapped(args):
+    dbg = api_util.debug_info("run_state", f, (args,), {})
     flat_args, in_tree = tree_util.tree_flatten(args)
     ref_avals, ref_args = unzip2(map(get_ref_aval_from_value, flat_args))
-    jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals)
+    jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals, dbg)
     jaxpr = hoist_consts_to_refs(jaxpr_)
     discharged_jaxpr, discharged_consts = discharge_state(jaxpr, ())
 

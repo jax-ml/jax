@@ -97,7 +97,7 @@ def _sharding_spec_indices(self, shape: tuple[int, ...]) -> np.ndarray:
   # is used to extract the corresponding shard of the logical array.
   shard_indices = np.empty([math.prod(shard_indices_shape)], dtype=np.object_)
   for i, idxs in enumerate(itertools.product(*axis_indices)):
-    shard_indices[i] = idxs
+    shard_indices[i] = idxs  # type: ignore  # numpy 2.2
   shard_indices = shard_indices.reshape(shard_indices_shape)
 
   # Ensure that each sharded axis is used exactly once in the mesh mapping

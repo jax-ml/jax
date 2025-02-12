@@ -90,6 +90,7 @@ Operators
     erfc
     erf_inv
     exp
+    exp2
     expand_dims
     expm1
     fft
@@ -129,8 +130,15 @@ Operators
     real
     reciprocal
     reduce
+    reduce_and
+    reduce_max
+    reduce_min
+    reduce_or
     reduce_precision
+    reduce_prod
+    reduce_sum
     reduce_window
+    reduce_xor
     rem
     reshape
     rev
@@ -154,6 +162,7 @@ Operators
     slice_in_dim
     sort
     sort_key_val
+    split
     sqrt
     square
     squeeze

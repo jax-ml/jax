@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from mlir import ir  # type: ignore
+from mlir import ir
 
 def register_dialect(context: ir.Context, load: bool = ...) -> None: ...
 

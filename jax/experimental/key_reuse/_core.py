@@ -292,7 +292,6 @@ key_reuse_signatures[random.random_gamma_p] = KeyReuseSignature(Sink(0))
 key_reuse_signatures[lax.broadcast_in_dim_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[lax.copy_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[lax.convert_element_type_p] = KeyReuseSignature(Forward(0, 0))
-key_reuse_signatures[lax.device_put_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[lax.reshape_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[lax.squeeze_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[prng.random_wrap_p] = KeyReuseSignature(Source(0))
@@ -398,7 +397,10 @@ def jaxpr_type_signature(jaxpr: core.Jaxpr) -> KeyReuseSignature:
 def function_type_signature(fun: Callable[..., Any], *args: Any) -> KeyReuseSignature:
   args_flat, in_tree = tree_util.tree_flatten(args)
   in_avals_flat = [core.get_aval(arg) for arg in args_flat]
-  wrapped_fun, _ = api_util.flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
+  wrapped_fun, _ = api_util.flatten_fun_nokwargs(
+      lu.wrap_init(fun,
+                   debug_info=api_util.debug_info("key_reuse", fun, args, {})),
+      in_tree)
   jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
   return jaxpr_type_signature(jaxpr)
 
@@ -559,6 +561,14 @@ def _remat_key_type_signature(eqn):
   return jaxpr_type_signature(eqn.params['jaxpr'])
 
 key_reuse_signatures[remat_p] = _remat_key_type_signature
+
+
+@dynamic_key_reuse_signature
+def _device_put_signature(eqn):
+  num_vals = len(eqn.invars)
+  return KeyReuseSignature(*(Forward(i, i) for i in range(num_vals)))
+
+key_reuse_signatures[lax.device_put_p] = _device_put_signature
 
 
 def call_impl_with_key_reuse_checks(prim: core.Primitive, raw_impl: Callable[..., Any], *args, **kwargs) -> Any:

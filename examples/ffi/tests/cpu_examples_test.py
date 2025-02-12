@@ -16,6 +16,7 @@ from absl.testing import absltest
 
 import jax
 import jax.numpy as jnp
+
 from jax._src import test_util as jtu
 
 from jax_ffi_example import cpu_examples
@@ -24,23 +25,24 @@ jax.config.parse_flags_with_absl()
 
 
 class AttrsTests(jtu.JaxTestCase):
+
   def setUp(self):
     super().setUp()
     if not jtu.test_device_matches(["cpu"]):
       self.skipTest("Unsupported platform")
 
   def test_array_attr(self):
-    self.assertEqual(cpu_examples.array_attr(5), jnp.arange(5).sum())
-    self.assertEqual(cpu_examples.array_attr(3), jnp.arange(3).sum())
+    self.assertEqual(cpu_examples.array_attr(5), jnp.arange(5).sum().astype(jnp.int32))
+    self.assertEqual(cpu_examples.array_attr(3), jnp.arange(3).sum().astype(jnp.int32))
 
   def test_array_attr_jit_cache(self):
     jit_array_attr = jax.jit(cpu_examples.array_attr, static_argnums=(0,))
     with jtu.count_jit_and_pmap_lowerings() as count:
       jit_array_attr(5)
-    self.assertEqual(count[0], 1)  # compiles once the first time
+    self.assertEqual(count(), 1)  # compiles once the first time
     with jtu.count_jit_and_pmap_lowerings() as count:
       jit_array_attr(5)
-    self.assertEqual(count[0], 0)  # cache hit
+    self.assertEqual(count(), 0)  # cache hit
 
   def test_array_attr_no_jit(self):
     with jax.disable_jit():
@@ -63,6 +65,7 @@ class AttrsTests(jtu.JaxTestCase):
 
 
 class CounterTests(jtu.JaxTestCase):
+
   def setUp(self):
     super().setUp()
     if not jtu.test_device_matches(["cpu"]):
@@ -89,6 +92,21 @@ class CounterTests(jtu.JaxTestCase):
     # Persists after the cache is cleared
     counter_fun.clear_cache()
     self.assertEqual(counter_fun(0)[1], 3)
+
+
+class AliasingTests(jtu.JaxTestCase):
+  def setUp(self):
+    super().setUp()
+    if not jtu.test_device_matches(["cpu"]):
+      self.skipTest("Unsupported platform")
+
+  def test_basic_array(self):
+    x = jnp.linspace(0, 0.5, 10)
+    self.assertAllClose(cpu_examples.aliasing(x), x)
+
+  def test_basic_scalar(self):
+    x = jnp.int32(6)
+    self.assertAllClose(cpu_examples.aliasing(x), x)
 
 
 if __name__ == "__main__":

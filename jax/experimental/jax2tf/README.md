@@ -1864,12 +1864,12 @@ purposes of `call_tf`.)
 
 Inside Google, you can turn on logging by using the `--vmodule` argument to
 specify the logging levels for different modules,
-e.g., `--vmodule=jax_export=3`. You can set `TF_DUMP_GRAPH_PREFIX` to
+e.g., `--vmodule=_export=3`. You can set `TF_DUMP_GRAPH_PREFIX` to
 a directory where modules should be dumped, or to `"-"` to dump the
 modules to the log.
 The following modules are useful for debugging JAX native serialization:
 
-  * `jax_export=3` - will log the StableHLO module on serialization.
+  * `_export=3` - will log the StableHLO module on serialization.
   * `jax2tf=3` - will log the parameters to `XlaCallModule` op on serialization.
   * `xla_call_module_loader=3` - will log the StableHLO module upon loading,
     after shape refinements, and on verification error. You can use level `4` to

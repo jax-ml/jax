@@ -246,12 +246,6 @@ class ArrayAPISmokeTest(absltest.TestCase):
     self.assertIsInstance(x, jax.Array)
     self.assertIs(x.__array_namespace__(), ARRAY_API_NAMESPACE)
 
-  def test_deprecated_import(self):
-    msg = "jax.experimental.array_api import is no longer required"
-    with self.assertWarnsRegex(DeprecationWarning, msg):
-      import jax.experimental.array_api as nx
-    self.assertIs(nx, ARRAY_API_NAMESPACE)
-
 
 class ArrayAPIInspectionUtilsTest(jtu.JaxTestCase):
 

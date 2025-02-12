@@ -14,8 +14,7 @@
 """Tests for garbage allocation guard."""
 
 import gc
-import io
-from unittest import mock
+import weakref
 
 from absl.testing import absltest
 import jax
@@ -26,56 +25,43 @@ import jax.numpy as jnp
 jax.config.parse_flags_with_absl()
 
 
-# Helper class used to create a reference cycle.
-class GarbageCollectionGuardTestNodeHelper:
-
-  def __init__(self, data):
-    self.data = data
-    self.next = None
-
-
 def _create_array_cycle():
   """Creates a reference cycle of two jax.Arrays."""
-  n1 = GarbageCollectionGuardTestNodeHelper(jax.jit(lambda: jnp.ones( (2, 2)))())
-  n2 = GarbageCollectionGuardTestNodeHelper(jax.jit(lambda: jnp.zeros((2, 2)))())
+  n1 = jnp.ones((2, 2))
+  n2 = jnp.zeros((2, 2))
   n1.next = n2
   n2.next = n1
+  return weakref.ref(n1)
 
 
+@jtu.thread_unsafe_test_class()  # GC isn't predictable when threaded.
 class GarbageCollectionGuardTest(jtu.JaxTestCase):
 
   def test_gced_array_is_not_logged_by_default(self):
     # Create a reference cycle of two jax.Arrays.
-    _create_array_cycle()
-
-    # Use mock_stderr to be able to inspect stderr.
-    mock_stderr = io.StringIO()
-    with mock.patch("sys.stderr", mock_stderr):
-      # Trigger a garbage collection, which will garbage collect the arrays
-      # in the cycle.
+    ref = _create_array_cycle()
+    with jtu.capture_stderr() as stderr:
+      self.assertIsNotNone(ref())  # Cycle still alive.
       gc.collect()
+      self.assertIsNone(ref())  # Cycle collected.
     # Check that no error message is logged because
     # `array_garbage_collection_guard` defaults to `allow`.
     self.assertNotIn(
-        "`jax.Array` was deleted by the Python garbage collector",
-        mock_stderr.getvalue(),
+        "`jax.Array` was deleted by the Python garbage collector", stderr(),
     )
 
   def test_gced_array_is_logged(self):
-    # Use mock_stderr to be able to inspect stderr.
-    mock_stderr = io.StringIO()
-
     with config.array_garbage_collection_guard("log"):
-      # Create a reference cycle of two jax.Arrays.
-      _create_array_cycle()
-      with mock.patch("sys.stderr", mock_stderr):
+      with jtu.capture_stderr() as stderr:
+        # Create a reference cycle of two jax.Arrays.
+        ref = _create_array_cycle()
+        self.assertIsNotNone(ref())  # Cycle still alive.
         gc.collect()
-
+        self.assertIsNone(ref())  # Cycle collected.
     # Verify that an error message is logged because two jax.Arrays were garbage
     # collected.
     self.assertIn(
-        "`jax.Array` was deleted by the Python garbage collector",
-        mock_stderr.getvalue(),
+        "`jax.Array` was deleted by the Python garbage collector", stderr()
     )
 
 

@@ -48,7 +48,7 @@ class gaussian_kde:
   def __init__(self, dataset, bw_method=None, weights=None):
     check_arraylike("gaussian_kde", dataset)
     dataset = jnp.atleast_2d(dataset)
-    if jnp.issubdtype(lax.dtype(dataset), jnp.complexfloating):
+    if jnp.issubdtype(lax.dtype(dataset), np.complexfloating):
       raise NotImplementedError("gaussian_kde does not support complex data")
     if not dataset.size > 1:
       raise ValueError("`dataset` input should have multiple elements.")
@@ -222,7 +222,7 @@ class gaussian_kde:
         "dynamically changing the bandwidth method is not supported")
 
   def _reshape_points(self, points):
-    if jnp.issubdtype(lax.dtype(points), jnp.complexfloating):
+    if jnp.issubdtype(lax.dtype(points), np.complexfloating):
       raise NotImplementedError(
           "gaussian_kde does not support complex coordinates")
     points = jnp.atleast_2d(points)

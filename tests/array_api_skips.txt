@@ -13,3 +13,9 @@ array_api_tests/test_special_cases.py::test_unary[sign((x_i is -0 or x_i == +0))
 
 # Returns int32 when int64 is expected
 array_api_tests/test_searching_functions.py::test_searchsorted
+
+# clip out dtype has ambiguous semantics (https://github.com/numpy/numpy/issues/24976)
+array_api_tests/test_operators_and_elementwise_functions.py::test_clip
+
+# JAX raises a ValueError rather than the expected IndexError for out-of-bound axis
+array_api_tests/test_manipulation_functions.py::test_expand_dims

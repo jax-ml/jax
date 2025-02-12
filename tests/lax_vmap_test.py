@@ -345,6 +345,24 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op, 5, bdims, (shape,), (dtype,), rng)
 
   @jtu.sample_product(
+    [dict(base_shape=base_shape, axis=axis, bdims=bdims)
+      for base_shape in [(4,), (3, 4), (2, 3, 4)]
+      for axis in range(len(base_shape))
+      for bdims in lax_test_util.all_bdims(base_shape)
+    ],
+    num_pieces=range(3),
+    dtype=lax_test_util.default_dtypes,
+  )
+  def testSplit(self, base_shape, dtype, num_pieces, axis, bdims):
+    sizes = jtu.rand_int(self.rng(), 5)((num_pieces + 1,), np.int64)
+    shape = list(base_shape)
+    shape[axis] = np.sum(sizes)
+    rng = jtu.rand_default(self.rng())
+    op = lambda x: lax.split(x, sizes, axis)
+    self._CheckBatching(op, 5, bdims, (shape,), (dtype,), rng,
+                        multiple_results=True)
+
+  @jtu.sample_product(
     [dict(shape=shape, perm=perm, bdims=bdims)
       for shape, perm in [
         [(3, 4), (1, 0)],
@@ -690,6 +708,25 @@ class LaxVmapTest(jtu.JaxTestCase):
     self._CheckBatching(op1, 5, bdims, (shape,), (dtype,), rng)
     op2 = lambda x: lax.top_k(x, k=k)[1]
     self._CheckBatching(op2, 5, bdims, (shape,), (dtype,), rng)
+
+  @jtu.sample_product(
+    [dict(shape=shape, bdims=bdims)
+      for shape in [(8,), (3, 4, 5)]
+      for bdims in lax_test_util.all_bdims(shape)],
+    dtype=lax_test_util.default_dtypes,
+  )
+  def test_optimization_barrier_vmap(self, shape, dtype, bdims):
+    rng = jtu.rand_small(self.rng())
+    self._CheckBatching(lax.optimization_barrier, 5, bdims, (shape,), (dtype,),
+                        rng)
+
+  def test_optimization_barrier_vmap_out_axes(self):
+    x = jnp.arange(8)
+    y = x.reshape(1, 8)
+    out = jax.vmap(lax.optimization_barrier, in_axes=((0, 1),),
+                   out_axes=(0, 1))((x, y))
+    self.assertArraysEqual(out[0], x)
+    self.assertArraysEqual(out[1], y)
 
   @jtu.sample_product(
     [dict(shape=shape, bdims=bdims, dimension=dimension, arity=arity)

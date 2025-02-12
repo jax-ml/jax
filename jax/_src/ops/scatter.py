@@ -145,14 +145,14 @@ def _get_identity(op, dtype):
   elif op is lax.scatter_min:
     if dtype == dtypes.bool_:
       return True
-    elif jnp.issubdtype(dtype, jnp.integer):
-      return jnp.iinfo(dtype).max
+    elif dtypes.issubdtype(dtype, np.integer):
+      return dtypes.iinfo(dtype).max
     return float('inf')
   elif op is lax.scatter_max:
     if dtype == dtypes.bool_:
       return False
-    elif jnp.issubdtype(dtype, jnp.integer):
-      return jnp.iinfo(dtype).min
+    elif dtypes.issubdtype(dtype, np.integer):
+      return dtypes.iinfo(dtype).min
     return -float('inf')
   else:
     raise ValueError(f"Unrecognized op: {op}")

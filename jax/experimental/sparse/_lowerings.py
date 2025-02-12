@@ -19,7 +19,7 @@ are used internally in GPU translation rules of higher-level primitives.
 
 from functools import partial
 
-from jax import core
+from jax._src import core
 from jax._src import dispatch
 from jax._src.interpreters import mlir
 from jax._src.lib import gpu_sparse

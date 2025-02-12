@@ -69,6 +69,8 @@ def logsumexp(a: ArrayLike, axis: Axis = None, b: ArrayLike | None = None,
     Either an array ``result`` or a pair of arrays ``(result, sign)``, depending
     on the value of the ``return_sign`` argument.
   """
+  if where is not None:
+    a = jnp.where(where, a, 0)
   if b is not None:
     a_arr, b_arr = promote_args_inexact("logsumexp", a, b)
     a_arr = jnp.where(b_arr != 0, a_arr, -jnp.inf)

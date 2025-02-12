@@ -709,7 +709,7 @@ class KeyArrayTest(jtu.JaxTestCase):
       f(key).block_until_ready()
       f(key).block_until_ready()
 
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   # TODO(jakevdp) remove this decorator when reuse checks move to C++
   @jax.debug_key_reuse(False)
@@ -726,7 +726,7 @@ class KeyArrayTest(jtu.JaxTestCase):
       f(key).block_until_ready()
       f(key).block_until_ready()
 
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_cpp_dispatch_aot_normal(self):
     # Ensure we stay on the C++ dispatch path when calling an
@@ -739,7 +739,7 @@ class KeyArrayTest(jtu.JaxTestCase):
       f(key).block_until_ready()
       f(key).block_until_ready()
 
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   def test_cpp_dispatch_aot_split(self):
     # Ensure we stay on the C++ dispatch path when calling an
@@ -753,7 +753,7 @@ class KeyArrayTest(jtu.JaxTestCase):
       f(key).block_until_ready()
       f(key).block_until_ready()
 
-    self.assertEqual(count[0], 1)
+    self.assertEqual(count(), 1)
 
   # -- prng primitives
 

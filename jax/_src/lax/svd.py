@@ -197,7 +197,7 @@ def svd(
 
   reduce_to_square = False
   if full_matrices:
-    q_full, a_full = lax.linalg.qr(a, full_matrices=True)
+    q_full, a_full = lax.linalg.qr(a, pivoting=False, full_matrices=True)
     q = q_full[:, :n]
     u_out_null = q_full[:, n:]
     a = a_full[:n, :]
@@ -206,7 +206,7 @@ def svd(
     # The constant `1.15` comes from Yuji Nakatsukasa's implementation
     # https://www.mathworks.com/matlabcentral/fileexchange/36830-symmetric-eigenvalue-decomposition-and-the-svd?s_tid=FX_rc3_behav
     if m > 1.15 * n:
-      q, a = lax.linalg.qr(a, full_matrices=False)
+      q, a = lax.linalg.qr(a, pivoting=False, full_matrices=False)
       reduce_to_square = True
 
   if not compute_uv:

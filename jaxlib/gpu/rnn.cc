@@ -29,17 +29,19 @@ namespace nb = nanobind;
 nb::bytes BuildRnnDescriptor(int input_size, int hidden_size, int num_layers,
                              int batch_size, int max_seq_length, float dropout,
                              bool bidirectional, bool cudnn_allow_tf32,
-			     int workspace_size, int reserve_space_size) {
+                             int workspace_size, int reserve_space_size) {
   return PackDescriptor(RnnDescriptor{
       input_size, hidden_size, num_layers, batch_size, max_seq_length, dropout,
-      bidirectional, cudnn_allow_tf32, workspace_size, reserve_space_size
-  });
+      bidirectional, cudnn_allow_tf32, workspace_size, reserve_space_size});
 }
 
 nb::dict Registrations() {
   nb::dict dict;
   dict[JAX_GPU_PREFIX "dnn_rnn"] = EncapsulateFunction(RNNForward);
   dict[JAX_GPU_PREFIX "dnn_rnn_bwd"] = EncapsulateFunction(RNNBackward);
+  dict[JAX_GPU_PREFIX "dnn_rnn_ffi"] = EncapsulateFfiHandler(RNNForwardFfi);
+  dict[JAX_GPU_PREFIX "dnn_rnn_bwd_ffi"] =
+      EncapsulateFfiHandler(RNNBackwardFfi);
   return dict;
 }
 

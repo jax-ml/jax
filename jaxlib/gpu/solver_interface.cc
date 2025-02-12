@@ -20,6 +20,10 @@ limitations under the License.
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 
+#ifdef JAX_GPU_CUDA
+#include "third_party/gpus/cuda/include/cusolverSp.h"
+#endif
+
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 namespace solver {
@@ -315,7 +319,52 @@ JAX_GPU_DEFINE_GESVDJ_BATCHED(gpuComplex, gpusolverDnCgesvdjBatched);
 JAX_GPU_DEFINE_GESVDJ_BATCHED(gpuDoubleComplex, gpusolverDnZgesvdjBatched);
 #undef JAX_GPU_DEFINE_GESVDJ_BATCHED
 
+#define JAX_GPU_DEFINE_CSRLSVQR(Type, Scalar, Name)                          \
+  template <>                                                                \
+  absl::Status Csrlsvqr<Type>(                                               \
+      cusolverSpHandle_t handle, int n, int nnz, cusparseMatDescr_t matdesc, \
+      const Type *csrValA, const int *csrRowPtrA, const int *csrColIndA,     \
+      const Type *b, double tol, int reorder, Type *x, int *singularity) {   \
+    return JAX_AS_STATUS(Name(handle, n, nnz, matdesc, csrValA, csrRowPtrA,  \
+                              csrColIndA, b, static_cast<Scalar>(tol),       \
+                              reorder, x, singularity));                     \
+  }
+
+JAX_GPU_DEFINE_CSRLSVQR(float, float, cusolverSpScsrlsvqr);
+JAX_GPU_DEFINE_CSRLSVQR(double, double, cusolverSpDcsrlsvqr);
+JAX_GPU_DEFINE_CSRLSVQR(gpuComplex, float, cusolverSpCcsrlsvqr);
+JAX_GPU_DEFINE_CSRLSVQR(gpuDoubleComplex, double, cusolverSpZcsrlsvqr);
+#undef JAX_GPU_DEFINE_CSRLSVQR
+
 #endif  // JAX_GPU_CUDA
+
+// Symmetric tridiagonal reduction: sytrd
+
+#define JAX_GPU_DEFINE_SYTRD(Type, Name)                                       \
+  template <>                                                                  \
+  absl::StatusOr<int> SytrdBufferSize<Type>(gpusolverDnHandle_t handle,        \
+                                            gpusolverFillMode_t uplo, int n) { \
+    int lwork;                                                                 \
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(Name##_bufferSize(                       \
+        handle, uplo, n, /*A=*/nullptr, /*lda=*/n, /*D=*/nullptr,              \
+        /*E=*/nullptr, /*tau=*/nullptr, &lwork)));                             \
+    return lwork;                                                              \
+  }                                                                            \
+                                                                               \
+  template <>                                                                  \
+  absl::Status Sytrd<Type>(gpusolverDnHandle_t handle,                         \
+                           gpusolverFillMode_t uplo, int n, Type *a,           \
+                           RealType<Type>::value *d, RealType<Type>::value *e, \
+                           Type *tau, Type *workspace, int lwork, int *info) { \
+    return JAX_AS_STATUS(                                                      \
+        Name(handle, uplo, n, a, n, d, e, tau, workspace, lwork, info));       \
+  }
+
+JAX_GPU_DEFINE_SYTRD(float, gpusolverDnSsytrd);
+JAX_GPU_DEFINE_SYTRD(double, gpusolverDnDsytrd);
+JAX_GPU_DEFINE_SYTRD(gpuComplex, gpusolverDnChetrd);
+JAX_GPU_DEFINE_SYTRD(gpuDoubleComplex, gpusolverDnZhetrd);
+#undef JAX_GPU_DEFINE_SYTRD
 
 }  // namespace solver
 }  // namespace JAX_GPU_NAMESPACE

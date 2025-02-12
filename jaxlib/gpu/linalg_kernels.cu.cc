@@ -67,48 +67,6 @@ __global__ void CholeskyUpdateKernel(T* rMatrix, T* uVector, int nSize) {
 }  // namespace
 
 template <typename T>
-gpuError_t LaunchCholeskyUpdateKernelBody(gpuStream_t stream, void** buffers,
-                                          int grid_dim, int block_dim,
-                                          int nSize) {
-  T* rMatrix = reinterpret_cast<T*>(buffers[2]);
-  T* uVector = reinterpret_cast<T*>(buffers[3]);
-
-  void* arg_ptrs[3] = {
-      reinterpret_cast<void*>(&rMatrix),
-      reinterpret_cast<void*>(&uVector),
-      reinterpret_cast<void*>(&nSize),
-  };
-  return gpuLaunchCooperativeKernel((void*)CholeskyUpdateKernel<T>, grid_dim,
-                                    block_dim, arg_ptrs,
-                                    /*dynamic_shared_mem_bytes=*/0, stream);
-}
-
-gpuError_t LaunchCholeskyUpdateKernel(gpuStream_t stream, void** buffers,
-                                      CholeskyUpdateDescriptor descriptor) {
-  int nSize = descriptor.matrix_size;
-  LinalgType type = descriptor.linalg_type;
-
-  int dev = 0;
-  gpuDeviceProp deviceProp;
-  gpuError_t err = gpuGetDeviceProperties(&deviceProp, dev);
-  if (err != gpuSuccess) {
-    return err;
-  }
-
-  int block_dim = deviceProp.maxThreadsPerBlock;
-  int grid_dim = deviceProp.multiProcessorCount;
-
-  switch (type) {
-    case LinalgType::F64:
-      return LaunchCholeskyUpdateKernelBody<double>(stream, buffers, grid_dim,
-                                                    block_dim, nSize);
-    case LinalgType::F32:
-      return LaunchCholeskyUpdateKernelBody<float>(stream, buffers, grid_dim,
-                                                   block_dim, nSize);
-  }
-}
-
-template <typename T>
 gpuError_t LaunchCholeskyUpdateFfiKernelBody(gpuStream_t stream, void* matrix,
                                              void* vector, int grid_dim,
                                              int block_dim, int nSize) {

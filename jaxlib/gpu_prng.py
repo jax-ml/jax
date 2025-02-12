@@ -36,10 +36,8 @@ for cuda_module_name in [".cuda", "jax_cuda12_plugin"]:
 
 if _cuda_prng:
   for _name, _value in _cuda_prng.registrations().items():
-    # TODO(b/338022728): remove after 6 months, always api_version=1
-    api_version = 1 if "_ffi" in _name else 0
     xla_client.register_custom_call_target(_name, _value, platform="CUDA",
-                                           api_version=api_version)
+                                           api_version=1)
 
 for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
   try:

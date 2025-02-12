@@ -35,7 +35,7 @@ float ComputeRmsNorm(float eps, int64_t size, const float *x, float *y) {
   for (int64_t n = 0; n < size; ++n) {
     sm += x[n] * x[n];
   }
-  float scale = 1.0f / std::sqrt(sm / float(size) + eps);
+  float scale = 1.0f / std::sqrt(sm / static_cast<float>(size) + eps);
   for (int64_t n = 0; n < size; ++n) {
     y[n] = x[n] * scale;
   }
@@ -108,7 +108,7 @@ void ComputeRmsNormBwd(int64_t size, float res, const float *x,
   for (int64_t n = 0; n < size; ++n) {
     ct_res += x[n] * ct_y[n];
   }
-  float factor = ct_res * res * res * res / float(size);
+  float factor = ct_res * res * res * res / static_cast<float>(size);
   for (int64_t n = 0; n < size; ++n) {
     ct_x[n] = res * ct_y[n] - factor * x[n];
   }

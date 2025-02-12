@@ -22,6 +22,7 @@ from jax._src.pallas.mosaic import random as plrandom
 from jax.experimental import pallas as pl
 from jax.experimental import shard_map
 from jax.experimental.pallas import tpu as pltpu
+from jax.experimental.pallas.ops.tpu.random import philox  # pylint: disable=unused-import  # noqa: F401
 from jax.experimental.pallas.ops.tpu.random import threefry  # pylint: disable=unused-import  # noqa: F401
 import jax.numpy as jnp
 import numpy as np
@@ -304,6 +305,57 @@ class ThreefryTest(parameterized.TestCase):
 
     np.testing.assert_array_equal(jax_gen, pl_gen)
 
+
+class PhiloxTest(parameterized.TestCase):
+
+  def setUp(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Need TPU devices")
+    super().setUp()
+
+  @parameterized.parameters(
+      ((512, 512),),
+      ((137, 275),),  # Non block-aligned shape
+      ((4, 512, 512),),  # Greater than 2D shape
+      ((34,),),  # 1D
+      (tuple(),),  # 0D
+  )
+  def test_generate_uniform(self, shape):
+    key = jax_random.key(0, impl="pallas_philox4x32")
+    values = jax_random.uniform(key, shape=shape)
+    minval = jnp.min(values)
+    maxval = jnp.max(values)
+    self.assertGreaterEqual(minval, 0.0)
+    self.assertLessEqual(maxval, 1.0)
+
+  def test_split(self):
+    key = jax_random.key(0, impl="pallas_philox4x32")
+    key1, key2 = jax_random.split(key)
+    key_data = jax.random.key_data(key)
+    key1_data = jax.random.key_data(key1)
+    key2_data = jax.random.key_data(key2)
+    # Assert all keys are different.
+    with self.assertRaises(AssertionError):
+      np.testing.assert_array_equal(key_data, key1_data)
+    with self.assertRaises(AssertionError):
+      np.testing.assert_array_equal(key_data, key2_data)
+    with self.assertRaises(AssertionError):
+      np.testing.assert_array_equal(key1_data, key2_data)
+
+  def test_foldin(self):
+    key = jax_random.key(0, impl="pallas_philox4x32")
+    new_key_1 = jax_random.fold_in(key, 1)
+    new_key_2 = jax_random.fold_in(key, 2)
+    key_data = jax.random.key_data(key)
+    key1_data = jax.random.key_data(new_key_1)
+    key2_data = jax.random.key_data(new_key_2)
+    # Assert all keys are different.
+    with self.assertRaises(AssertionError):
+      np.testing.assert_array_equal(key_data, key1_data)
+    with self.assertRaises(AssertionError):
+      np.testing.assert_array_equal(key_data, key2_data)
+    with self.assertRaises(AssertionError):
+      np.testing.assert_array_equal(key1_data, key2_data)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

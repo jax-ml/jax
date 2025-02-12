@@ -41,6 +41,11 @@ jax::QrFactorization<ffi::DataType::F64>::FnType dgeqrf_;
 jax::QrFactorization<ffi::DataType::C64>::FnType cgeqrf_;
 jax::QrFactorization<ffi::DataType::C128>::FnType zgeqrf_;
 
+jax::PivotingQrFactorization<ffi::DataType::F32>::FnType sgeqp3_;
+jax::PivotingQrFactorization<ffi::DataType::F64>::FnType dgeqp3_;
+jax::PivotingQrFactorization<ffi::DataType::C64>::FnType cgeqp3_;
+jax::PivotingQrFactorization<ffi::DataType::C128>::FnType zgeqp3_;
+
 jax::OrthogonalQr<ffi::DataType::F32>::FnType sorgqr_;
 jax::OrthogonalQr<ffi::DataType::F64>::FnType dorgqr_;
 jax::OrthogonalQr<ffi::DataType::C64>::FnType cungqr_;
@@ -80,6 +85,11 @@ jax::TridiagonalReduction<ffi::DataType::F32>::FnType ssytrd_;
 jax::TridiagonalReduction<ffi::DataType::F64>::FnType dsytrd_;
 jax::TridiagonalReduction<ffi::DataType::C64>::FnType chetrd_;
 jax::TridiagonalReduction<ffi::DataType::C128>::FnType zhetrd_;
+
+jax::TridiagonalSolver<ffi::DataType::F32>::FnType sgtsv_;
+jax::TridiagonalSolver<ffi::DataType::F64>::FnType dgtsv_;
+jax::TridiagonalSolver<ffi::DataType::C64>::FnType cgtsv_;
+jax::TridiagonalSolver<ffi::DataType::C128>::FnType zgtsv_;
 
 }  // extern "C"
 
@@ -335,6 +345,11 @@ static auto init = []() -> int {
   AssignKernelFn<QrFactorization<ffi::DataType::C64>>(cgeqrf_);
   AssignKernelFn<QrFactorization<ffi::DataType::C128>>(zgeqrf_);
 
+  AssignKernelFn<PivotingQrFactorization<ffi::DataType::F32>>(sgeqp3_);
+  AssignKernelFn<PivotingQrFactorization<ffi::DataType::F64>>(dgeqp3_);
+  AssignKernelFn<PivotingQrFactorization<ffi::DataType::C64>>(cgeqp3_);
+  AssignKernelFn<PivotingQrFactorization<ffi::DataType::C128>>(zgeqp3_);
+
   AssignKernelFn<OrthogonalQr<ffi::DataType::F32>>(sorgqr_);
   AssignKernelFn<OrthogonalQr<ffi::DataType::F64>>(dorgqr_);
   AssignKernelFn<OrthogonalQr<ffi::DataType::C64>>(cungqr_);
@@ -377,6 +392,11 @@ static auto init = []() -> int {
   AssignKernelFn<HessenbergDecomposition<ffi::DataType::F64>>(dgehrd_);
   AssignKernelFn<HessenbergDecomposition<ffi::DataType::C64>>(cgehrd_);
   AssignKernelFn<HessenbergDecomposition<ffi::DataType::C128>>(zgehrd_);
+
+  AssignKernelFn<TridiagonalSolver<ffi::DataType::F32>>(sgtsv_);
+  AssignKernelFn<TridiagonalSolver<ffi::DataType::F64>>(dgtsv_);
+  AssignKernelFn<TridiagonalSolver<ffi::DataType::C64>>(cgtsv_);
+  AssignKernelFn<TridiagonalSolver<ffi::DataType::C128>>(zgtsv_);
 
   return 0;
 }();

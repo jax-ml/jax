@@ -18,12 +18,14 @@ Subpackages
    jax.dlpack
    jax.distributed
    jax.dtypes
+   jax.ffi
    jax.flatten_util
    jax.image
    jax.nn
    jax.ops
    jax.profiler
    jax.stages
+   jax.test_util
    jax.tree
    jax.tree_util
    jax.typing
@@ -102,6 +104,9 @@ Automatic differentiation
     closure_convert
     checkpoint
 
+Customization
+-------------
+
 ``custom_jvp``
 ~~~~~~~~~~~~~~
 
@@ -120,6 +125,16 @@ Automatic differentiation
 
   custom_vjp
   custom_vjp.defvjp
+
+``custom_batching``
+~~~~~~~~~~~~~~~~~~~
+
+.. autosummary::
+  :toctree: _autosummary
+
+  custom_batching.custom_vmap
+  custom_batching.custom_vmap.def_vmap
+  custom_batching.sequential_vmap
 
 jax.Array (:code:`jax.Array`)
 -----------------------------

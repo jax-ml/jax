@@ -13,7 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
 
 namespace ffi = xla::ffi;
@@ -59,8 +58,7 @@ ffi::Error FooFwdHost(cudaStream_t stream, ffi::Buffer<ffi::F32> a,
   // by a different kernel previously launched by XLA.
   cudaError_t last_error = cudaGetLastError();
   if (last_error != cudaSuccess) {
-    return ffi::Error(
-        XLA_FFI_Error_Code_INTERNAL,
+    return ffi::Error::Internal(
         std::string("CUDA error: ") + cudaGetErrorString(last_error));
   }
   return ffi::Error::Success();
@@ -117,8 +115,7 @@ ffi::Error FooBwdHost(cudaStream_t stream,
       a_grad->typed_data(), b_grad->typed_data(), n);
   cudaError_t last_error = cudaGetLastError();
   if (last_error != cudaSuccess) {
-    return ffi::Error(
-        XLA_FFI_Error_Code_INTERNAL,
+    return ffi::Error::Internal(
         std::string("CUDA error: ") + cudaGetErrorString(last_error));
   }
   return ffi::Error::Success();

@@ -217,7 +217,7 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
     # TODO(yashkatariya): Transform the sharding too instead of setting it to
     # None.
     out_aval = ref_aval.inner_aval.update(shape=out_shape, dtype=out_dtype,
-                                          sharding=None)
+                                          sharding=core.get_cur_mesh_sharding())
   else:
     if transforms:
       raise ValueError("Cannot index non-shaped array with nontrivial indices.")
@@ -654,3 +654,8 @@ def _broadcast_to_abstract_eval(aval, *, shape):
 mlir.register_lowering(
     broadcast_to_p, mlir.lower_fun(_broadcast_to_impl, False)
 )
+
+# === AD rules for mutable arrays ===
+
+ad.defjvp(core.mutable_array_p, lambda g, _: core.mutable_array(g))
+ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))

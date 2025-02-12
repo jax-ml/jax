@@ -13,7 +13,7 @@
 # limitations under the License.
 
 load("@rules_python//python:defs.bzl", "py_library")
-load("//jaxlib:jax.bzl", "pybind_extension")
+load("//jaxlib:jax.bzl", "nanobind_extension")
 
 package(
     default_applicable_licenses = [],
@@ -44,13 +44,16 @@ cc_library(
     srcs = [
         "launch_lowering.cc",
         "passes.cc",
+        "serde.cc",
     ],
     hdrs = [
         "launch_lowering.h",
-        "pass_boilerplate.h",
         "passes.h",
+        "serde.h",
     ],
     deps = [
+        "//jaxlib:pass_boilerplate",
+        "//jaxlib/mosaic:serde",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:DataLayoutInterfaces",
         "@llvm-project//mlir:FuncDialect",
@@ -119,6 +122,7 @@ cc_library(
         ":passes",
         ":target",
         "//jaxlib/cuda:cuda_vendor",
+        "//jaxlib/mosaic/dialect/gpu:mosaic_gpu",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -126,6 +130,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
@@ -169,19 +174,13 @@ cc_library(
     alwayslink = True,
 )
 
-pybind_extension(
+nanobind_extension(
     name = "_mosaic_gpu_ext",
     srcs = ["mosaic_gpu_ext.cc"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
-    linkopts = select({
-        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
-            "-Wl,-rpath,$$ORIGIN/../../../nvidia/cuda_runtime/lib",
-        ],
-        "//conditions:default": [],
-    }),
     deps = [
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/cuda:cuda_vendor",
@@ -198,12 +197,6 @@ cc_binary(
     name = "libmosaic_gpu_runtime.so",
     srcs = ["runtime.cc"],
     copts = ["-fvisibility=default"],
-    linkopts = select({
-        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
-            "-Wl,-rpath,$$ORIGIN/../../../nvidia/cuda_runtime/lib",
-        ],
-        "//conditions:default": [],
-    }),
     linkshared = 1,
     tags = [
         "manual",

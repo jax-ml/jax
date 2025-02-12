@@ -49,8 +49,11 @@ uint_dtypes = test_util.dtypes.all_unsigned
 bool_dtypes = test_util.dtypes.boolean
 
 default_dtypes = float_dtypes + int_dtypes
+number_dtypes = (
+    float_dtypes + complex_dtypes + int_dtypes + uint_dtypes
+)
 all_dtypes = (
-    float_dtypes + complex_dtypes + int_dtypes + uint_dtypes + bool_dtypes
+    number_dtypes + bool_dtypes
 )
 python_scalar_types = [bool, int, float, complex]
 
@@ -148,6 +151,25 @@ def lax_reduce_ops():
           int_dtypes + uint_dtypes + bool_dtypes,
           lax.reduce_xor_p,
       ),
+  ]
+
+
+NamedReducerOpRecord = collections.namedtuple(
+    "NamedReducerOpRecord", ["op", "reference_op", "dtypes"]
+)
+
+def lax_named_reduce_ops():
+  return [
+      NamedReducerOpRecord(lax.reduce_sum, np.sum, number_dtypes),
+      NamedReducerOpRecord(lax.reduce_prod, np.prod, number_dtypes),
+      NamedReducerOpRecord(lax.reduce_max, np.max, all_dtypes),
+      NamedReducerOpRecord(lax.reduce_min, np.min, all_dtypes),
+      NamedReducerOpRecord(lax.reduce_and, np.bitwise_and.reduce,
+                           bool_dtypes + int_dtypes + uint_dtypes),
+      NamedReducerOpRecord(lax.reduce_or, np.bitwise_or.reduce,
+                           bool_dtypes + int_dtypes + uint_dtypes),
+      NamedReducerOpRecord(lax.reduce_xor, np.bitwise_xor.reduce,
+                           bool_dtypes + int_dtypes + uint_dtypes),
   ]
 
 

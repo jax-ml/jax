@@ -490,7 +490,7 @@ This section covers some of the most common patterns with JAX pytrees.
 
 ### Transposing pytrees with `jax.tree.map` and `jax.tree.transpose`
 
-To transpose a pytree (turn a list of trees into a tree of lists), JAX has two functions: {func} `jax.tree.map` (more basic) and {func}`jax.tree.transpose` (more flexible, complex and verbose).
+To transpose a pytree (turn a list of trees into a tree of lists), JAX has two functions: {func}`jax.tree.map` (more basic) and {func}`jax.tree.transpose` (more flexible, complex and verbose).
 
 **Option 1:** Use {func}`jax.tree.map`. Here's an example:
 

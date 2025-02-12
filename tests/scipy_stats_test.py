@@ -523,6 +523,86 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @genNamedParametersNArgs(3)
+  def testExponLogCdf(self, shapes, dtypes):
+    rng = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.expon.logcdf
+    lax_fun = lsp_stats.expon.logcdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=5e-4
+      )
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testExponCdf(self, shapes, dtypes):
+    rng = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.expon.cdf
+    lax_fun = lsp_stats.expon.cdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=5e-4
+      )
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testExponSf(self, shapes, dtypes):
+    rng = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.expon.sf
+    lax_fun = lsp_stats.expon.sf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=5e-4
+      )
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testExponLogSf(self, shapes, dtypes):
+    rng = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.expon.logsf
+    lax_fun = lsp_stats.expon.logsf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      return [x, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=5e-4
+      )
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testExponPpf(self, shapes, dtypes):
+    rng = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.expon.ppf
+    lax_fun = lsp_stats.expon.ppf
+
+    def args_maker():
+      q, loc, scale = map(rng, shapes, dtypes)
+      return [q, loc, scale]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, check_dtypes=False, tol=5e-4
+      )
+      self._CompileAndCheck(lax_fun, args_maker)
+
   @genNamedParametersNArgs(4)
   def testGammaLogPdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())

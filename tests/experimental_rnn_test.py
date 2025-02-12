@@ -34,14 +34,13 @@ class RnnTest(jtu.JaxTestCase):
       num_layers=[1, 4],
       bidirectional=[True, False],
   )
-  @jtu.run_on_devices("cuda")
+  @jtu.run_on_devices("cuda", "rocm")
   @jax.default_matmul_precision("float32")
   def test_lstm(self, batch_size: int, seq_len: int, input_size: int,
                 hidden_size: int, num_layers: int, bidirectional: bool):
-    # TODO(phawkins): Partially disable this on cudnn version per b/281071013
-    if (batch_size == 1 and seq_len == 4 and input_size == 1 and
-        hidden_size == 6 and num_layers == 4 and bidirectional == False):
-      self.skipTest("Test requires cudnn >= 8.8")
+    # TODO(ruturaj4): Bidirectional doesn't quite work well with rocm.
+    if bidirectional and jtu.is_device_rocm():
+      self.skipTest("Bidirectional mode is not available for ROCm.")
 
     num_directions = 2 if bidirectional else 1
     seq_length_key, root_key = jax.random.split(jax.random.PRNGKey(0))
@@ -61,6 +60,8 @@ class RnnTest(jtu.JaxTestCase):
     weights = rnn.init_lstm_weight(k4, input_size, hidden_size, num_layers,
                                    bidirectional)
     def f(weights, x, h_0, c_0):
+      if jtu.is_device_rocm():
+        weights = rnn.swap_lstm_gates(weights, input_size, hidden_size, num_layers, bidirectional)
       y, h, c = rnn.lstm(
         x,
         h_0,
@@ -177,6 +178,43 @@ class RnnTest(jtu.JaxTestCase):
     for i in range(batch_size):
       y_padded = y_ref[i, seq_lengths[i]:]
       np.testing.assert_allclose(y_padded, jnp.zeros_like(y_padded))
+
+  @jtu.run_on_devices("cuda")
+  def test_struct_encoding_determinism(self):
+    def f(k1, k2, k3, k4):
+        batch_size = 1
+        seq_len = 1
+        input_size = 1
+        hidden_size = 1
+        bidirectional = False
+        num_directions = 2 if bidirectional else 1
+        num_layers = 1
+        x = jax.random.normal(k1, (batch_size, seq_len, input_size), dtype=jnp.float32)
+        h_0 = jax.random.normal(
+            k2, (num_directions * num_layers, batch_size, hidden_size),
+            dtype=jnp.float32)
+        c_0 = jax.random.normal(
+            k3, (num_directions * num_layers, batch_size, hidden_size),
+            dtype=jnp.float32)
+        seq_lengths = jnp.ones((batch_size,), dtype=jnp.int32) * seq_len
+        weights = rnn.init_lstm_weight(k4, input_size, hidden_size, num_layers,
+                                      bidirectional)
+        return rnn.lstm(
+            x,
+            h_0,
+            c_0,
+            weights,
+            seq_lengths=seq_lengths,
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=False,
+            bidirectional=bidirectional)
+
+    k = jax.random.split(jax.random.PRNGKey(1), 4)
+    stablehlo = jax.jit(f).lower(*k).as_text("stablehlo")
+    self.assertIn('"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\00@\\03\\80\\00@\\01\\00\\00"',
+                  stablehlo)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
