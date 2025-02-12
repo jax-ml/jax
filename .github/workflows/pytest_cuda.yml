@@ -34,6 +34,11 @@ on:
         type: string
         required: true
         default: "0"
+      install-jax-current-commit:
+        description: "Should the 'jax' package be installed from the current commit?"
+        type: string
+        required: true
+        default: "1"
       gcs_download_uri:
         description: "GCS location prefix from where the artifacts should be downloaded"
         required: true
@@ -61,6 +66,7 @@ jobs:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
       JAXCI_PYTHON: "python${{ inputs.python }}"
       JAXCI_ENABLE_X64: "${{ inputs.enable-x64 }}"
+      JAXCI_INSTALL_JAX_CURRENT_COMMIT: "${{ inputs.install-jax-current-commit }}"
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -82,11 +88,16 @@ jobs:
         # fails. Instead, we verify the outcome in the next step so that we can print a more
         # informative error message.
         continue-on-error: true
-        run: >-
+        run: |
           mkdir -p $(pwd)/dist &&
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
+
+          # Download the "jax" wheel from GCS if inputs.install-jax-current-commit is not set to 1
+          if [[ "${{ inputs.install-jax-current-commit }}" != 1 ]]; then
+            gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*.whl $(pwd)/dist/
+          fi
       - name: Skip the test run if the wheel artifacts were not downloaded successfully
         if: steps.download-wheel-artifacts.outcome == 'failure'
         run: |
