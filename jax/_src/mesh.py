@@ -28,7 +28,7 @@ import numpy as np
 
 from jax._src import config as jax_config
 from jax._src import xla_bridge as xb
-from jax._src import util
+from jax._src.util import safe_zip, cache, tuple_delete
 from jax._src.lib import xla_client as xc
 
 
@@ -73,7 +73,7 @@ class ResourceEnv(NamedTuple):
     return f"ResourceEnv(mesh=Mesh({mesh_repr}))"
 
 
-@util.cache(max_size=128, trace_context_in_key=False)
+@cache(max_size=128, trace_context_in_key=False)
 def _get_local_mesh(global_mesh: Mesh, process_index: int) -> Mesh:
   if global_mesh.empty:
     return global_mesh
@@ -82,7 +82,7 @@ def _get_local_mesh(global_mesh: Mesh, process_index: int) -> Mesh:
   subcube_indices = []
   # We take the smallest slice of each dimension that doesn't skip any local device.
   for axis in range(global_mesh.devices.ndim):
-    other_axes = util.tuple_delete(tuple(range(global_mesh.devices.ndim)), axis)
+    other_axes = tuple_delete(tuple(range(global_mesh.devices.ndim)), axis)
     # NOTE: This re-reduces over many axes multiple times, so we could definitely
     #       optimize it, but I hope it won't be a bottleneck anytime soon.
     local_slices = is_local_device.any(other_axes, keepdims=False)
@@ -120,15 +120,16 @@ def axis_types_to_names(name_to_type: dict[str, AxisTypes]):
     d[t].append(n)
   return {t: ns[0] if len(ns) == 1 else tuple(ns) for t, ns in d.items()}
 
-def to_axis_types_tuple(axis_types):
-  out = []
-  for t, names in axis_types.items():
-    if isinstance(names, tuple):
-      new_names = names[0] if len(names) == 1 else names
-    else:
-      new_names = names
-    out.append((t, new_names))
-  return tuple(out)
+def to_axis_types_tuple(axis_types, axis_names) -> tuple[AxisTypes, ...]:
+  if axis_types is None:
+    return (AxisTypes.Auto,) * len(axis_names)
+  name_to_type = axis_names_to_types(axis_types)
+  if len(name_to_type.keys()) != len(axis_names):
+    raise ValueError(
+        "Number of axis names in axis_types should match the number of"
+        f" axis_names in shape_tuple. Got axis_names={axis_names} and"
+        f" axis_types={name_to_type}")
+  return tuple(name_to_type[i] for i in axis_names)
 
 
 _mesh_object_dict = {}  # type: ignore
@@ -188,7 +189,6 @@ class Mesh(contextlib.ContextDecorator):
 
   devices: np.ndarray
   axis_names: tuple[MeshAxisName, ...]
-  axis_types: MeshAxisType
 
   def __new__(cls, devices: np.ndarray | Sequence[xc.Device],
               axis_names: str | Sequence[MeshAxisName], *,
@@ -208,14 +208,7 @@ class Mesh(contextlib.ContextDecorator):
           f"devices.ndim == {devices.ndim} and "
           f"len(axis_names) == {len(axis_names)}.")
 
-    axis_types = ({AxisTypes.Auto: axis_names} if axis_types is None else
-                  axis_types)
-    axis_types_tuple = to_axis_types_tuple(axis_types)
-    if len(axis_names_to_types(axis_types).keys()) != len(axis_names):
-      raise ValueError(
-          "Number of axis names in axis_types should match the number of"
-          f" axis_names. Got axis_names={axis_names} and"
-          f" axis_types={axis_types}")
+    axis_types_tuple = to_axis_types_tuple(axis_types, axis_names)
 
     key = (axis_names, devices.shape, tuple(devices.flat), axis_types_tuple)
     val = _mesh_object_dict.get(key, None)
@@ -226,7 +219,6 @@ class Mesh(contextlib.ContextDecorator):
     self.devices = devices.copy()
     self.devices.flags.writeable = False
     self.axis_names = axis_names
-    self.axis_types = axis_types
     self._axis_types_tuple = axis_types_tuple
     self._size = math.prod(self.shape.values()) if self.devices.ndim else 0
     _mesh_object_dict[key] = self
@@ -289,13 +281,20 @@ class Mesh(contextlib.ContextDecorator):
   def shape(self):
     return collections.OrderedDict(
         (name, size)
-        for name, size in util.safe_zip(self.axis_names, self.devices.shape))
+        for name, size in safe_zip(self.axis_names, self.devices.shape))
 
   @functools.cached_property
   def shape_tuple(self):
     return tuple(
         (name, size)
-        for name, size in util.safe_zip(self.axis_names, self.devices.shape))
+        for name, size in safe_zip(self.axis_names, self.devices.shape))
+
+  @functools.cached_property
+  def axis_types(self):
+    d = collections.defaultdict(list)
+    for n, t in safe_zip(self.axis_names, self._axis_types_tuple):
+      d[t].append(n)
+    return {t: tuple(n) for t, n in d.items()}
 
   @property
   def axis_sizes(self) -> tuple[int, ...]:
@@ -415,14 +414,7 @@ class AbstractMesh:
     else:
       self._axis_names, self._axis_sizes = (), ()
     self._size = math.prod(self._axis_sizes) if self._axis_sizes else 0
-    self.axis_types = ({AxisTypes.Auto: self._axis_names}
-                       if axis_types is None else axis_types)
-    self._axis_types_tuple = to_axis_types_tuple(self.axis_types)
-    if len(self._name_to_type.keys()) != len(self._axis_names):
-      raise ValueError(
-          "Number of axis names in axis_types should match the number of"
-          f" axis_names in shape_tuple. Got axis_names={self._axis_names} and"
-          f" axis_types={self.axis_types}")
+    self._axis_types_tuple = to_axis_types_tuple(axis_types, self._axis_names)
 
   def __hash__(self):
     return hash((self.shape_tuple, self._axis_types_tuple))
@@ -450,8 +442,15 @@ class AbstractMesh:
     return self._axis_sizes
 
   @functools.cached_property
+  def axis_types(self):
+    d = collections.defaultdict(list)
+    for n, t in safe_zip(self.axis_names, self._axis_types_tuple):
+      d[t].append(n)
+    return {t: n[0] if len(n) == 1 else tuple(n) for t, n in d.items()}
+
+  @functools.cached_property
   def _name_to_type(self):
-    return axis_names_to_types(self.axis_types)
+    return dict(safe_zip(self.axis_names, self._axis_types_tuple))
 
   @property
   def size(self):

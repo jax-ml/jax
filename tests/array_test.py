@@ -1372,6 +1372,13 @@ class ShardingTest(jtu.JaxTestCase):
         ' axis_names'):
       jax.make_mesh((1, 1), ('data', 'model'), explicit_axes='data')
 
+    mesh1 = jax.make_mesh((1, 1, 1, 1, 1), ('a', 'b', 'c', 'd', 'e'),
+                          auto_axes=('c', 'b'), explicit_axes=('e', 'a', 'd'))
+    mesh2 = jax.make_mesh((1, 1, 1, 1, 1), ('a', 'b', 'c', 'd', 'e'),
+                          auto_axes=('b', 'c'), explicit_axes=('d', 'a', 'e'))
+    self.assertEqual(mesh1, mesh2)
+    self.assertEqual(hash(mesh1), hash(mesh2))
+
 
 @jtu.with_config(jax_use_shardy_partitioner=True)
 class ShardyShardingTest(jtu.JaxTestCase):
