@@ -1171,19 +1171,13 @@ class BarrierTest(TestCase):
       self.skipTest("Cluster too big")
     is_trivial = math.prod(cluster[d] for d in collective_dims) == 1
     def kernel(ctx, dst, mask, collective_barrier):
-      memref.store(arith.constant(i32, 1 << 17), mask, [c(0, index)])
-      gpu.barrier()
-      collective_barrier.arrive()
-      collective_barrier.wait()
+      cluster_idx = ctx.cluster_idx()
       if not is_trivial:
-        llvm.atomicrmw(
-            llvm.AtomicBinOp.min,
-            utils.memref_ptr(mask),
-            collective_barrier.cluster_mask,
-            llvm.AtomicOrdering.monotonic,
-        )
+        memref.store(collective_barrier.cluster_mask, mask, [cluster_idx])
       else:
         assert collective_barrier.cluster_mask is None
+      collective_barrier.arrive()
+      collective_barrier.wait()
       tid = thread_idx()
       linear_idx = arith.index_cast(index, tid)
       stride = c(128, index)
@@ -1192,7 +1186,7 @@ class BarrierTest(TestCase):
         stride = arith.muli(stride, gpu.grid_dim(d))
       memref.store(arith.index_cast(i32, linear_idx), dst, [linear_idx])
     out_shape = jax.ShapeDtypeStruct((math.prod(cluster) * 128,), jnp.int32)
-    mask_shape = jax.ShapeDtypeStruct((1,), jnp.int32)
+    mask_shape = jax.ShapeDtypeStruct((math.prod(cluster),), jnp.int32)
     barrier_dims = collective_dims
     if group_dims:
       barrier_dims = (collective_dims[:2], *collective_dims[2:])
@@ -1215,7 +1209,7 @@ class BarrierTest(TestCase):
         )
         mask_bits = block_bits[least_significant_slice]
         expected_mask |= np.bitwise_or.reduce(mask_bits, axis=None)
-      self.assertEqual(mask, expected_mask)
+      self.assertEqual(min(mask), expected_mask)
 
 
 class TMATest(TestCase):
