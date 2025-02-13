@@ -651,9 +651,18 @@ class ArrayImpl(basearray.Array):
       db.block_until_ready()
     return self
 
-  @use_cpp_method()
-  def _single_device_array_to_np_array(self):
-    return np.asarray(self._arrays[0])
+  if xla_extension_version >= 314:
+    @use_cpp_method()
+    def _single_device_array_to_np_array_did_copy(self) -> tuple[np.ndarray, bool]:  # type: ignore
+      ...  # type: ignore
+
+  else:
+    @use_cpp_method()
+    def _single_device_array_to_np_array(self):
+      return np.asarray(self._arrays[0])
+
+    def _single_device_array_to_np_array_did_copy(self) -> tuple[np.ndarray, bool]:
+      return cast(np.ndarray, self._single_device_array_to_np_array()), True
 
   @use_cpp_method()
   def _copy_single_device_array_to_host_async(self):
@@ -676,9 +685,11 @@ class ArrayImpl(basearray.Array):
 
     if self._npy_value is None:
       if self.is_fully_replicated:
-        self._npy_value = self._single_device_array_to_np_array()
-        self._npy_value.flags.writeable = False
-        return cast(np.ndarray, self._npy_value)
+        npy_value, did_copy = self._single_device_array_to_np_array_did_copy()
+        npy_value.flags.writeable = False
+        if did_copy:
+          self._npy_value = npy_value
+        return npy_value
 
       # TODO(yashkatariya): Merge `_process_has_full_value_in_mcjax` with
       # is_fully_addressable.
@@ -697,7 +708,7 @@ class ArrayImpl(basearray.Array):
 
       npy_value = np.empty(self.shape, self.dtype)
       for i, ind in _cached_index_calc(self.sharding, self.shape):
-        npy_value[ind] = self._arrays[i]._single_device_array_to_np_array()
+        npy_value[ind], _ = self._arrays[i]._single_device_array_to_np_array_did_copy()
       self._npy_value = npy_value
       self._npy_value.flags.writeable = False
     return self._npy_value
