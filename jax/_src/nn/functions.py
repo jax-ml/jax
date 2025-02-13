@@ -1176,7 +1176,7 @@ def scaled_matmul(
     factors applied to the matrices.
 
     .. math::
-      \mathrm{ScaledMatmul}(lhs, rhs, lhs_scales, rhs_scales)=lhs_scales*rhs_scales*\mathrm{dot}(lhs, rhs)
+      \mathrm{ScaledMatmul}(lhs, rhs, lhs_scales, rhs_scales)=lhs_scales \cdot rhs_scales \cdot \mathrm{dot}(lhs, rhs)
 
     Args:
         lhs (Array): A 3D array of shape (B, M, K).
@@ -1229,9 +1229,9 @@ def scaled_dot_general(
   Computes the scaled dot general on lhs, rhs with quanitzation specified by configs:
 
   .. math::
-    \widehat{lhs}, s_a=\mathrm{quantize}(lhs)
-    \widehat{rhs}, s_b=\mathrm{quantize}(rhs)
-    \mathrm{ScaledDot}(lhs, rhs)=s_a s_b \mathrm{dot}(\widehat{lhs}, \widehat{rhs})
+    \widehat{lhs}, s_a=\mathrm{quantize}(lhs) \\
+    \widehat{rhs}, s_b=\mathrm{quantize}(rhs) \\
+    \mathrm{ScaledDot}(lhs, rhs)=s_a \cdot s_b \cdot \mathrm{dot}(\widehat{lhs}, \widehat{rhs})
 
   Args:
       lhs: Left-hand side input tensor.
