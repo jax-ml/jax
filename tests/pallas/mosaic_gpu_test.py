@@ -72,9 +72,12 @@ class PallasTest(jtu.JaxTestCase):
       # We need to cudaDeviceSynchronize to make sure printfs are flushed.
       mosaic_gpu_lib._mosaic_gpu_ext._sync_all_devices()
 
-  def skip_unless_sm90a(self):
-    if not jtu.is_cuda_compute_capability_equal("9.0"):
-      self.skipTest("Only works on GPU with capability sm90a")
+
+class PallasSm90ATest(PallasTest, jtu.CudaArchSpecificTest):
+
+  def setUp(self):
+    self.skip_unless_sm90a()
+    super().setUp()
 
 
 class PallasCallTest(PallasTest):
@@ -901,25 +904,6 @@ class PallasCallTest(PallasTest):
     )
 
   @parameterized.parameters(False, True)
-  def test_fori_loop_accumulator(self, force_while):
-    self.skip_unless_sm90a()
-
-    transforms = (plgpu.TilingTransform((64, 64)), plgpu.SwizzleTransform(128))
-    @functools.partial(
-        pl.pallas_call,
-        in_specs=[plgpu.GPUBlockSpec((64, 64), lambda: (0, 0), transforms=transforms)],
-        out_shape=jax.ShapeDtypeStruct((64, 64), jnp.float16),
-        out_specs=plgpu.GPUBlockSpec((64, 64), lambda: (0, 0)),
-    )
-    def kernel(i_ref, o_ref):
-      def scope(acc_ref):
-        return _fori_loop(force_while, 0, 4, lambda _, v: v + acc_ref[...], acc_ref[...])
-      o_ref[...] = pl.run_state(scope)(plgpu.ACC.init(i_ref[...]))
-
-    acc_ini = jnp.ones((64, 64), dtype=jnp.float16)
-    np.testing.assert_array_equal(kernel(acc_ini), jnp.full((64, 64), 5, dtype=jnp.float16))
-
-  @parameterized.parameters(False, True)
   def test_fori_loop_indexed_store(self, force_while):
     @functools.partial(
         pl.pallas_call,
@@ -1016,183 +1000,6 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256, dtype=jnp.int32)
     np.testing.assert_array_equal(kernel(x), jnp.broadcast_to(jnp.sum(x) * 3, [256]))
 
-  @parameterized.parameters(jnp.float16, jnp.float32)
-  def test_wgmma(self, dtype):
-    self.skip_unless_sm90a()
-    # TensorCores can only fuse transposes of 16-bit values, and RHS
-    # is expected to be column major by default.
-    rhs_transpose = jnp.dtype(dtype).itemsize != 2
-    swizzle = 128
-    elems_128b = swizzle // jnp.dtype(dtype).itemsize
-    def kernel(a_ref, b_ref, o_ref):
-      if rhs_transpose:
-        b_ref = plgpu.transpose_ref(b_ref, (1, 0))
-      def scope(acc_ref):
-        plgpu.wgmma(acc_ref, a_ref, b_ref)
-        return acc_ref[...]
-
-      o_ref[...] = pl.run_scoped(scope, plgpu.ACC((64, 192), jnp.float32))
-
-    key1, key2 = jax.random.split(jax.random.key(42), 2)
-    a = jax.random.uniform(key1, shape=(64, 128), dtype=dtype)
-    b_shape = (128, 192)
-    if rhs_transpose:
-      b_shape = b_shape[::-1]
-    b = jax.random.uniform(key2, shape=b_shape, dtype=dtype)
-
-    rhs_transforms = (plgpu.TilingTransform((elems_128b, elems_128b)),)
-    if rhs_transpose:
-      rhs_transforms += (plgpu.TransposeTransform((1, 0, 2, 3)),)
-    res = pl.pallas_call(
-        kernel,
-        in_specs=[
-            plgpu.GPUBlockSpec(
-                (64, 128),
-                lambda i, j: (i, j),
-                transforms=(
-                    plgpu.TilingTransform((64, elems_128b)),
-                    plgpu.SwizzleTransform(128),
-                ),
-            ),
-            plgpu.GPUBlockSpec(
-                b_shape,
-                lambda *i: i,
-                transforms=(*rhs_transforms, plgpu.SwizzleTransform(128)),
-            ),
-        ],
-        out_specs=plgpu.GPUBlockSpec((64, 192), lambda *i: i),
-        out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float32),
-        grid=(1, 1),
-    )(a, b)
-    np.testing.assert_allclose(
-        res, a @ (b.T if rhs_transpose else b), rtol=1e-3
-    )
-
-  def test_wgmma_registers(self):
-    self.skip_unless_sm90a()
-    def kernel(a_ref, b_ref, o_ref):
-      def scope(acc_ref):
-        plgpu.wgmma(acc_ref, a_ref[...], b_ref)
-        return acc_ref[...]
-      o_ref[...] = pl.run_scoped(scope, plgpu.ACC((64, 192), jnp.float32))
-
-    key1, key2 = jax.random.split(jax.random.key(42), 2)
-    a = jax.random.uniform(key1, shape=(64, 128), dtype=jnp.float16)
-    b = jax.random.uniform(key2, shape=(128, 192), dtype=jnp.float16)
-
-    transforms = (plgpu.TilingTransform((64, 64)), plgpu.SwizzleTransform(128))
-    res = pl.pallas_call(
-        kernel,
-        in_specs=[
-            plgpu.GPUBlockSpec((64, 128), lambda: (0, 0), transforms=transforms),
-            plgpu.GPUBlockSpec((128, 192), lambda: (0, 0), transforms=transforms),
-        ],
-        out_specs=plgpu.GPUBlockSpec((64, 192), lambda: (0, 0)),
-        out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float32),
-    )(a, b)
-    np.testing.assert_allclose(res, a @ b, rtol=1e-3)
-
-  def test_wgmma_registers_init(self):
-    self.skip_unless_sm90a()
-    def kernel(a_ref, b_ref, i_ref, o_ref):
-      def scope(acc_ref):
-        plgpu.wgmma(acc_ref, a_ref[...], b_ref)
-      o_ref[...] = pl.run_state(scope)(plgpu.ACC.init(i_ref[...]))
-
-    key1, key2, key3 = jax.random.split(jax.random.key(42), 3)
-    a = jax.random.uniform(key1, shape=(64, 128), dtype=jnp.float16)
-    b = jax.random.uniform(key2, shape=(128, 192), dtype=jnp.float16)
-    i = jax.random.uniform(key3, shape=(64, 192), dtype=jnp.float16) * 10
-
-    transforms = (plgpu.TilingTransform((64, 64)), plgpu.SwizzleTransform(128))
-    res = pl.pallas_call(
-        kernel,
-        in_specs=[
-            plgpu.GPUBlockSpec((64, 128), lambda: (0, 0), transforms=transforms),
-            plgpu.GPUBlockSpec((128, 192), lambda: (0, 0), transforms=transforms),
-            plgpu.GPUBlockSpec((64, 192), lambda: (0, 0), transforms=transforms),
-        ],
-        out_specs=plgpu.GPUBlockSpec((64, 192), lambda: (0, 0)),
-        out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float16),
-    )(a, b, i)
-    np.testing.assert_allclose(res, i + a @ b, rtol=2e-3)
-
-  def test_wgmma_sliced_ref(self):
-    self.skip_unless_sm90a()
-    def kernel(a_ref, b_ref, o_ref):
-      def scope(acc_ref):
-        plgpu.wgmma(acc_ref, a_ref.at[0], b_ref.at[0])
-        return acc_ref[...]
-
-      o_ref[...] = pl.run_scoped(scope, plgpu.ACC((64, 192), jnp.float32))
-
-    key1, key2 = jax.random.split(jax.random.key(42), 2)
-    a = jax.random.uniform(key1, shape=(2, 64, 128), dtype=jnp.float16)
-    b = jax.random.uniform(key2, shape=(2, 128, 192), dtype=jnp.float16)
-
-    res = pl.pallas_call(
-        kernel,
-        in_specs=[
-            plgpu.GPUBlockSpec(
-                (2, 64, 128), lambda: (0, 0, 0),
-                transforms=(
-                    plgpu.TilingTransform((64, 64)),
-                    plgpu.SwizzleTransform(128),
-                ),
-            ),
-            plgpu.GPUBlockSpec(
-                (2, 128, 192), lambda: (0, 0, 0),
-                transforms=(
-                    plgpu.TilingTransform((64, 64)),
-                    plgpu.SwizzleTransform(128),
-                ),
-            ),
-        ],
-        out_specs=plgpu.GPUBlockSpec((64, 192), lambda: (0, 0)),
-        out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float32),
-    )(a, b)
-    np.testing.assert_allclose(res, a[0] @ b[0], rtol=1e-3)
-
-  def test_wgmma_sliced_acc(self):
-    self.skip_unless_sm90a()
-    swizzle = 128
-    elems_128b = swizzle // jnp.dtype(jnp.float16).itemsize
-    def kernel(a_ref, b_ref, o_ref):
-      def scope(acc_ref):
-        plgpu.wgmma(acc_ref, a_ref, b_ref)
-        return acc_ref[:, :64], acc_ref[:, 64:]
-
-      o_ref[:, :64], o_ref[:, 64:] = pl.run_scoped(scope, plgpu.ACC((64, 128), jnp.float32))
-
-    key1, key2 = jax.random.split(jax.random.key(42), 2)
-    a = jax.random.uniform(key1, shape=(64, 128), dtype=jnp.float16)
-    b = jax.random.uniform(key2, shape=(128, 128), dtype=jnp.float16)
-    res = pl.pallas_call(
-        kernel,
-        in_specs=[
-            plgpu.GPUBlockSpec(
-                (64, 128),
-                lambda i, j: (i, j),
-                transforms=(
-                    plgpu.TilingTransform((64, elems_128b)),
-                    plgpu.SwizzleTransform(128),
-                ),
-            ),
-            plgpu.GPUBlockSpec(
-                (128, 128),
-                lambda *i: i,
-                transforms=(
-                    plgpu.TilingTransform((elems_128b, elems_128b)),
-                    plgpu.SwizzleTransform(128),
-                ),
-            ),
-        ],
-        out_specs=plgpu.GPUBlockSpec((64, 128), lambda *i: i),
-        out_shape=jax.ShapeDtypeStruct((64, 128), jnp.float32),
-        grid=(1, 1),
-    )(a, b)
-    np.testing.assert_allclose(res, a @ b, rtol=1e-3)
-
   def test_input_output_aliases(self):
     # Note that we're writing to the input pointer, which should alias b_ptr.
     def kernel(a_ref, b_ref):
@@ -1208,70 +1015,6 @@ class PallasCallTest(PallasTest):
         out_shape=a,
     )(a)
     np.testing.assert_array_equal(b, np.ones_like(a))
-
-  def test_realistic_matmul(self):
-    self.skip_unless_sm90a()
-    dtype = jnp.float16
-    swizzle = 128
-    elems_128b = swizzle // jnp.dtype(dtype).itemsize
-    grid_m, grid_k, grid_n = 132, 10, 4
-    tile_m = tile_n = 128
-    tile_k = elems_128b
-    m, k, n = grid_m * tile_m, grid_k * tile_k, grid_n * tile_n
-    def kernel(a_ref, b_ref, o_ref, acc_ref):
-      # Make sure tiling does not alter the shape of references
-      assert a_ref.shape == (tile_m, tile_k)
-      assert b_ref.shape == (tile_k, tile_n)
-      assert o_ref.shape == acc_ref.shape == (tile_m, tile_n)
-      plgpu.wgmma(acc_ref, a_ref, b_ref)
-      is_last_step = pl.program_id(2) == grid_k - 1
-      @pl.when(is_last_step)
-      def _epilogue():
-        o_ref[...] = acc_ref[...].astype(dtype)
-      plgpu.wgmma_wait(1)  # We don't await the last WGMMA, hence delay_release=1
-
-    key1, key2 = jax.random.split(jax.random.key(42), 2)
-    a = jax.random.uniform(key1, shape=(m, k), dtype=dtype)
-    b = jax.random.uniform(key2, shape=(k, n), dtype=dtype)
-
-    res = pl.pallas_call(
-        kernel,
-        in_specs=[
-            plgpu.GPUBlockSpec(
-                (tile_m, tile_k),
-                lambda m, n, k: (m, k),
-                transforms=(
-                    plgpu.TilingTransform((64, elems_128b)),
-                    plgpu.SwizzleTransform(128),
-                ),
-            ),
-            plgpu.GPUBlockSpec(
-                (tile_k, tile_n),
-                lambda m, n, k: (k, n),
-                transforms=(
-                    plgpu.TilingTransform((elems_128b, elems_128b)),
-                    plgpu.SwizzleTransform(128),
-                ),
-            ),
-        ],
-        out_specs=plgpu.GPUBlockSpec(
-            (tile_m, tile_n),
-            lambda m, n, k: (m, n),
-            transforms=(
-                plgpu.TilingTransform((64, elems_128b)),
-                plgpu.SwizzleTransform(128),
-            ),
-        ),
-        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float16),
-        scratch_shapes=[plgpu.ACC((tile_m, tile_n), jnp.float32)],
-        grid=(grid_m, grid_n, grid_k),
-        compiler_params=plgpu.GPUCompilerParams(
-            dimension_semantics=["parallel", "parallel", "sequential"],
-            max_concurrent_steps=2,
-            delay_release=1,
-        ),
-    )(a, b)
-    np.testing.assert_allclose(res, a @ b, rtol=1e-3)
 
   def test_slicing(self):
     left = upper = slice(None, 64)
@@ -1358,6 +1101,261 @@ class PallasCallTest(PallasTest):
     y = convert(x)
     y_ref = jax.lax.bitcast_convert_type(x, out_dtype)
     np.testing.assert_array_equal(y, y_ref)
+
+
+class PallasCallSm90ATest(PallasSm90ATest):
+
+  @parameterized.parameters(False, True)
+  def test_fori_loop_accumulator(self, force_while):
+    transforms = (plgpu.TilingTransform((64, 64)), plgpu.SwizzleTransform(128))
+    @functools.partial(
+        pl.pallas_call,
+        in_specs=[plgpu.GPUBlockSpec((64, 64), lambda: (0, 0), transforms=transforms)],
+        out_shape=jax.ShapeDtypeStruct((64, 64), jnp.float16),
+        out_specs=plgpu.GPUBlockSpec((64, 64), lambda: (0, 0)),
+    )
+    def kernel(i_ref, o_ref):
+      def scope(acc_ref):
+        return _fori_loop(force_while, 0, 4, lambda _, v: v + acc_ref[...], acc_ref[...])
+      o_ref[...] = pl.run_state(scope)(plgpu.ACC.init(i_ref[...]))
+
+    acc_ini = jnp.ones((64, 64), dtype=jnp.float16)
+    np.testing.assert_array_equal(kernel(acc_ini), jnp.full((64, 64), 5, dtype=jnp.float16))
+
+  def test_realistic_matmul(self):
+    dtype = jnp.float16
+    swizzle = 128
+    elems_128b = swizzle // jnp.dtype(dtype).itemsize
+    grid_m, grid_k, grid_n = 132, 10, 4
+    tile_m = tile_n = 128
+    tile_k = elems_128b
+    m, k, n = grid_m * tile_m, grid_k * tile_k, grid_n * tile_n
+    def kernel(a_ref, b_ref, o_ref, acc_ref):
+      # Make sure tiling does not alter the shape of references
+      assert a_ref.shape == (tile_m, tile_k)
+      assert b_ref.shape == (tile_k, tile_n)
+      assert o_ref.shape == acc_ref.shape == (tile_m, tile_n)
+      plgpu.wgmma(acc_ref, a_ref, b_ref)
+      is_last_step = pl.program_id(2) == grid_k - 1
+      @pl.when(is_last_step)
+      def _epilogue():
+        o_ref[...] = acc_ref[...].astype(dtype)
+      plgpu.wgmma_wait(1)  # We don't await the last WGMMA, hence delay_release=1
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.uniform(key1, shape=(m, k), dtype=dtype)
+    b = jax.random.uniform(key2, shape=(k, n), dtype=dtype)
+
+    res = pl.pallas_call(
+        kernel,
+        in_specs=[
+            plgpu.GPUBlockSpec(
+                (tile_m, tile_k),
+                lambda m, n, k: (m, k),
+                transforms=(
+                    plgpu.TilingTransform((64, elems_128b)),
+                    plgpu.SwizzleTransform(128),
+                ),
+            ),
+            plgpu.GPUBlockSpec(
+                (tile_k, tile_n),
+                lambda m, n, k: (k, n),
+                transforms=(
+                    plgpu.TilingTransform((elems_128b, elems_128b)),
+                    plgpu.SwizzleTransform(128),
+                ),
+            ),
+        ],
+        out_specs=plgpu.GPUBlockSpec(
+            (tile_m, tile_n),
+            lambda m, n, k: (m, n),
+            transforms=(
+                plgpu.TilingTransform((64, elems_128b)),
+                plgpu.SwizzleTransform(128),
+            ),
+        ),
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float16),
+        scratch_shapes=[plgpu.ACC((tile_m, tile_n), jnp.float32)],
+        grid=(grid_m, grid_n, grid_k),
+        compiler_params=plgpu.GPUCompilerParams(
+            dimension_semantics=["parallel", "parallel", "sequential"],
+            max_concurrent_steps=2,
+            delay_release=1,
+        ),
+    )(a, b)
+    np.testing.assert_allclose(res, a @ b, rtol=1e-3)
+
+  @parameterized.parameters(jnp.float16, jnp.float32)
+  def test_wgmma(self, dtype):
+    # TensorCores can only fuse transposes of 16-bit values, and RHS
+    # is expected to be column major by default.
+    rhs_transpose = jnp.dtype(dtype).itemsize != 2
+    swizzle = 128
+    elems_128b = swizzle // jnp.dtype(dtype).itemsize
+    def kernel(a_ref, b_ref, o_ref):
+      if rhs_transpose:
+        b_ref = plgpu.transpose_ref(b_ref, (1, 0))
+      def scope(acc_ref):
+        plgpu.wgmma(acc_ref, a_ref, b_ref)
+        return acc_ref[...]
+
+      o_ref[...] = pl.run_scoped(scope, plgpu.ACC((64, 192), jnp.float32))
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.uniform(key1, shape=(64, 128), dtype=dtype)
+    b_shape = (128, 192)
+    if rhs_transpose:
+      b_shape = b_shape[::-1]
+    b = jax.random.uniform(key2, shape=b_shape, dtype=dtype)
+
+    rhs_transforms = (plgpu.TilingTransform((elems_128b, elems_128b)),)
+    if rhs_transpose:
+      rhs_transforms += (plgpu.TransposeTransform((1, 0, 2, 3)),)
+    res = pl.pallas_call(
+        kernel,
+        in_specs=[
+            plgpu.GPUBlockSpec(
+                (64, 128),
+                lambda i, j: (i, j),
+                transforms=(
+                    plgpu.TilingTransform((64, elems_128b)),
+                    plgpu.SwizzleTransform(128),
+                ),
+            ),
+            plgpu.GPUBlockSpec(
+                b_shape,
+                lambda *i: i,
+                transforms=(*rhs_transforms, plgpu.SwizzleTransform(128)),
+            ),
+        ],
+        out_specs=plgpu.GPUBlockSpec((64, 192), lambda *i: i),
+        out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float32),
+        grid=(1, 1),
+    )(a, b)
+    np.testing.assert_allclose(
+        res, a @ (b.T if rhs_transpose else b), rtol=1e-3
+    )
+
+  def test_wgmma_registers(self):
+    def kernel(a_ref, b_ref, o_ref):
+      def scope(acc_ref):
+        plgpu.wgmma(acc_ref, a_ref[...], b_ref)
+        return acc_ref[...]
+      o_ref[...] = pl.run_scoped(scope, plgpu.ACC((64, 192), jnp.float32))
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.uniform(key1, shape=(64, 128), dtype=jnp.float16)
+    b = jax.random.uniform(key2, shape=(128, 192), dtype=jnp.float16)
+
+    transforms = (plgpu.TilingTransform((64, 64)), plgpu.SwizzleTransform(128))
+    res = pl.pallas_call(
+        kernel,
+        in_specs=[
+            plgpu.GPUBlockSpec((64, 128), lambda: (0, 0), transforms=transforms),
+            plgpu.GPUBlockSpec((128, 192), lambda: (0, 0), transforms=transforms),
+        ],
+        out_specs=plgpu.GPUBlockSpec((64, 192), lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float32),
+    )(a, b)
+    np.testing.assert_allclose(res, a @ b, rtol=1e-3)
+
+  def test_wgmma_registers_init(self):
+    def kernel(a_ref, b_ref, i_ref, o_ref):
+      def scope(acc_ref):
+        plgpu.wgmma(acc_ref, a_ref[...], b_ref)
+      o_ref[...] = pl.run_state(scope)(plgpu.ACC.init(i_ref[...]))
+
+    key1, key2, key3 = jax.random.split(jax.random.key(42), 3)
+    a = jax.random.uniform(key1, shape=(64, 128), dtype=jnp.float16)
+    b = jax.random.uniform(key2, shape=(128, 192), dtype=jnp.float16)
+    i = jax.random.uniform(key3, shape=(64, 192), dtype=jnp.float16) * 10
+
+    transforms = (plgpu.TilingTransform((64, 64)), plgpu.SwizzleTransform(128))
+    res = pl.pallas_call(
+        kernel,
+        in_specs=[
+            plgpu.GPUBlockSpec((64, 128), lambda: (0, 0), transforms=transforms),
+            plgpu.GPUBlockSpec((128, 192), lambda: (0, 0), transforms=transforms),
+            plgpu.GPUBlockSpec((64, 192), lambda: (0, 0), transforms=transforms),
+        ],
+        out_specs=plgpu.GPUBlockSpec((64, 192), lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float16),
+    )(a, b, i)
+    np.testing.assert_allclose(res, i + a @ b, rtol=2e-3)
+
+  def test_wgmma_sliced_ref(self):
+    def kernel(a_ref, b_ref, o_ref):
+      def scope(acc_ref):
+        plgpu.wgmma(acc_ref, a_ref.at[0], b_ref.at[0])
+        return acc_ref[...]
+
+      o_ref[...] = pl.run_scoped(scope, plgpu.ACC((64, 192), jnp.float32))
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.uniform(key1, shape=(2, 64, 128), dtype=jnp.float16)
+    b = jax.random.uniform(key2, shape=(2, 128, 192), dtype=jnp.float16)
+
+    res = pl.pallas_call(
+        kernel,
+        in_specs=[
+            plgpu.GPUBlockSpec(
+                (2, 64, 128), lambda: (0, 0, 0),
+                transforms=(
+                    plgpu.TilingTransform((64, 64)),
+                    plgpu.SwizzleTransform(128),
+                ),
+            ),
+            plgpu.GPUBlockSpec(
+                (2, 128, 192), lambda: (0, 0, 0),
+                transforms=(
+                    plgpu.TilingTransform((64, 64)),
+                    plgpu.SwizzleTransform(128),
+                ),
+            ),
+        ],
+        out_specs=plgpu.GPUBlockSpec((64, 192), lambda: (0, 0)),
+        out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float32),
+    )(a, b)
+    np.testing.assert_allclose(res, a[0] @ b[0], rtol=1e-3)
+
+  def test_wgmma_sliced_acc(self):
+    swizzle = 128
+    elems_128b = swizzle // jnp.dtype(jnp.float16).itemsize
+    def kernel(a_ref, b_ref, o_ref):
+      def scope(acc_ref):
+        plgpu.wgmma(acc_ref, a_ref, b_ref)
+        return acc_ref[:, :64], acc_ref[:, 64:]
+
+      o_ref[:, :64], o_ref[:, 64:] = pl.run_scoped(scope, plgpu.ACC((64, 128), jnp.float32))
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.uniform(key1, shape=(64, 128), dtype=jnp.float16)
+    b = jax.random.uniform(key2, shape=(128, 128), dtype=jnp.float16)
+    res = pl.pallas_call(
+        kernel,
+        in_specs=[
+            plgpu.GPUBlockSpec(
+                (64, 128),
+                lambda i, j: (i, j),
+                transforms=(
+                    plgpu.TilingTransform((64, elems_128b)),
+                    plgpu.SwizzleTransform(128),
+                ),
+            ),
+            plgpu.GPUBlockSpec(
+                (128, 128),
+                lambda *i: i,
+                transforms=(
+                    plgpu.TilingTransform((elems_128b, elems_128b)),
+                    plgpu.SwizzleTransform(128),
+                ),
+            ),
+        ],
+        out_specs=plgpu.GPUBlockSpec((64, 128), lambda *i: i),
+        out_shape=jax.ShapeDtypeStruct((64, 128), jnp.float32),
+        grid=(1, 1),
+    )(a, b)
+    np.testing.assert_allclose(res, a @ b, rtol=1e-3)
 
 
 class PipelineTest(PallasTest):
@@ -1616,8 +1614,10 @@ class PipelineTest(PallasTest):
     )
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
 
+
+class PipelineSm90ATest(PallasSm90ATest):
+
   def test_realistic_matmul(self):
-    self.skip_unless_sm90a()
     dtype = jnp.float16
     swizzle = 128
     elems_128b = swizzle // jnp.dtype(dtype).itemsize
@@ -2045,6 +2045,9 @@ class ExamplesTest(PallasTest):
     x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
     out = plgpu.kernel(body, out_shape=x, grid=(2,), axis_names=("rows",))(x, x)
     np.testing.assert_allclose(out, x + x)
+
+
+class ExamplesSm90ATest(PallasSm90ATest):
 
   # WGMMA
   def test_stage6(self):
