@@ -78,8 +78,6 @@ from jax._src.numpy.lax_numpy import (
     dtype as dtype,
     e as e,
     ediff1d as ediff1d,
-    einsum as einsum,
-    einsum_path as einsum_path,
     euler_gamma as euler_gamma,
     expand_dims as expand_dims,
     extract as extract,
@@ -206,6 +204,11 @@ from jax._src.numpy.array_creation import (
     ones_like as ones_like,
     zeros as zeros,
     zeros_like as zeros_like,
+)
+
+from jax._src.numpy.einsum import (
+    einsum as einsum,
+    einsum_path as einsum_path,
 )
 
 from jax._src.numpy.scalar_types import (
