@@ -33,6 +33,7 @@ from jax._src import source_info_util
 from jax._src import xla_bridge
 from jax._src import mesh_utils
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.op_shardings import (
     are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated)
@@ -1385,8 +1386,11 @@ def explode_superdims(sizes, dims):
     final_dims += reversed(new_dims)
   return final_dims
 
-def parse_flatten_op_sharding(hlo_sharding: xc.OpSharding | xc.HloSharding,
-                              mesh: mesh_lib.Mesh) -> Sequence[ParsedPartitionSpec]:
+
+def parse_flatten_op_sharding(
+    hlo_sharding: xc.OpSharding | xc.HloSharding,
+    mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh,
+) -> Sequence[ParsedPartitionSpec]:
   if isinstance(hlo_sharding, xc.OpSharding):
     hlo_sharding = xc.HloSharding.from_proto(hlo_sharding)
   if hlo_sharding.tuple_elements():
@@ -1395,6 +1399,9 @@ def parse_flatten_op_sharding(hlo_sharding: xc.OpSharding | xc.HloSharding,
       out.extend(parse_flatten_op_sharding(s, mesh))
     return out
   elif hlo_sharding.is_replicated():
+    return [ParsedPartitionSpec(PartitionSpec(), ())]
+  elif (xla_extension_version >= 314 and hlo_sharding.is_maximal()
+        and mesh.size == 1):
     return [ParsedPartitionSpec(PartitionSpec(), ())]
   elif hlo_sharding.is_tiled():
     mesh_shape = mesh.shape
