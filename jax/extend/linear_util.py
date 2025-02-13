@@ -25,4 +25,6 @@ from jax._src.linear_util import (
   transformation2 as transformation2,
   transformation_with_aux2 as transformation_with_aux2,
   wrap_init as wrap_init,
+  # TODO(b/396086979): remove this once we pass debug_info everywhere.
+  _missing_debug_info as _missing_debug_info,
 )

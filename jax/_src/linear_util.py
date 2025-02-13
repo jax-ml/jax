@@ -321,7 +321,7 @@ class DebugInfo(NamedTuple):
     return tuple(v for v, b in zip(self.safe_result_paths(len(keep)), keep) if b)
 
 
-def _missing_debug_info_msg(for_what: str) -> DebugInfo:
+def _missing_debug_info(for_what: str) -> DebugInfo:
   warnings.warn(
       f"{for_what} is missing a DebugInfo object. "
       "This behavior is deprecated, use api_util.debug_info() to "
