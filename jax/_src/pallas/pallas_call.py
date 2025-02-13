@@ -566,7 +566,7 @@ def _pallas_call_batching_rule(
       ragged_axis_values.append(None)  # type: ignore[arg-type]
 
   all_dims = list(dims) + [0] * grid_mapping.num_outputs
-  ragged_axis_values = ragged_axis_values + [None] * grid_mapping.num_outputs  # type: ignore[list-item]
+  ragged_axis_values = ragged_axis_values + [None] * grid_mapping.num_outputs
 
   num_index_operands = grid_mapping.num_index_operands
   num_scratch_operands = grid_mapping.num_scratch_operands
@@ -895,7 +895,7 @@ def _pallas_call_batching_rule(
                 if config.sharding_in_types.value else None)
     shape = tuple_insert(aval.shape, 0, axis_size)
     batched_out_avals.append(aval.update(shape=shape, sharding=sharding))
-  batched_out_avals = tuple(batched_out_avals)  # type: ignore
+  batched_out_avals = tuple(batched_out_avals)
 
   out = pallas_call_p.bind(
       *dynamic_grid_args,
@@ -1037,7 +1037,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
   #   returning them, since pallas kernels do not return outputs.
   # 4) Create block specs for the error state and call pallas_call with
   #   the new kernel.
-  dynamic_grid_bounds, scalars, args = split_list(  # type: ignore
+  dynamic_grid_bounds, scalars, args = split_list(
       args, [grid_mapping.num_dynamic_grid_bounds,
              grid_mapping.num_index_operands]
   )

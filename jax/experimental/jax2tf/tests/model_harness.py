@@ -293,7 +293,7 @@ for poly_shapes, tensor_specs in [
       tensor_specs=tensor_specs)
 
 # bilstm input specs: [((2, 3), np.int32), ((2,), np.int32)] = [inputs, lengths]
-for poly_shapes, tensor_specs in [  # type: ignore
+for poly_shapes, tensor_specs in [
     (None, None),
     # batch polymorphism
     (["(b, _)", "(_,)"], [((None, 3), tf.int32), ((2,), tf.int32)]),
@@ -347,7 +347,7 @@ for poly_shapes, tensor_specs in [
 #   ((1, 2, 4), np.float32),  # encoder inp: [batch, max_input_len, vocab_size]
 #   ((1, 3, 4), np.float32),  # decoder_inp: [batch, max_output_len, vocab_size]
 # ]
-for poly_shapes, tensor_specs in [  # type: ignore
+for poly_shapes, tensor_specs in [
     (None, None),
     # batch polymorphism
     (
@@ -372,7 +372,7 @@ for poly_shapes, tensor_specs in [  # type: ignore
       tensor_specs=tensor_specs)
 
 # lm1b/nlp_seq input spec: [((2, 1), np.float32)]  [batch, seq_len]
-for poly_shapes, tensor_specs in [  # type: ignore
+for poly_shapes, tensor_specs in [
     (None, None),
     # batch polymorphism.
     (["(b, _)"], [((None, 1), tf.float32)]),
@@ -392,7 +392,7 @@ for poly_shapes, tensor_specs in [  # type: ignore
 #   ((1, 2), np.float32),  # inputs:  [batch, max_target_len]
 #   ((1, 2), np.float32),  # targets: [batch, max_target_len]
 # ]
-for poly_shapes, tensor_specs in [  # type: ignore
+for poly_shapes, tensor_specs in [
     (None, None),
     # batch polymorphism.
     (["(b, _)"] * 2, [((None, 1), tf.float32)] * 2),

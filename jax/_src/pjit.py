@@ -738,18 +738,18 @@ def _infer_input_type(fun: Callable, dbg: core.DebugInfo | None,
     for i, x in enumerate(explicit_args):
       avals.append(core.shaped_abstractify(x))
   except OverflowError:
-    arg_path = (f"argument path is {dbg.arg_names[i]}" if dbg  # type: ignore
-                else f"flattened argument number is {i}")  # type: ignore
+    arg_path = (f"argument path is {dbg.arg_names[i]}" if dbg
+                else f"flattened argument number is {i}")
     raise OverflowError(
       "An overflow was encountered while parsing an argument to a jitted "
       f"computation, whose {arg_path}."
     ) from None
   except TypeError:
-    arg_description = (f"path {dbg.arg_names[i]}" if dbg  # type: ignore
-                       else f"flattened argument number {i}")  # type: ignore
+    arg_description = (f"path {dbg.arg_names[i]}" if dbg
+                       else f"flattened argument number {i}")
     raise TypeError(
       f"Error interpreting argument to {fun} as an abstract array."
-      f" The problematic value is of type {type(x)} and was passed to"  # type: ignore
+      f" The problematic value is of type {type(x)} and was passed to"
       f" the function at {arg_description}.\n"
       "This typically means that a jit-wrapped function was called with a non-array"
       " argument, and this argument was not marked as static using the"
@@ -1340,11 +1340,11 @@ def _check_and_canonicalize_out_shardings(
   if not config.dynamic_shapes.value:
     pjit_check_aval_sharding(
         out_shardings_flat, out_avals,
-        None if debug_info is None else debug_info.safe_result_paths(len(out_avals)),  # type: ignore[arg-type]
+        None if debug_info is None else debug_info.safe_result_paths(len(out_avals)),
         "pjit outputs", allow_uneven_sharding=False)
     check_aval_layout_compatibility(
         out_layouts_flat, out_avals,
-        None if debug_info is None else debug_info.safe_result_paths(len(out_avals)),  # type: ignore[arg-type]
+        None if debug_info is None else debug_info.safe_result_paths(len(out_avals)),
         "jit outputs")
   return out_shardings_flat, out_layouts_flat
 
@@ -2238,7 +2238,7 @@ def _pjit_partial_eval(trace: pe.JaxprTrace,
   unknown_tracers_in = [t for t in in_tracers if not t.pval.is_known()]
   unknown_out_avals = unknown_jaxpr.out_avals
   unknown_tracers_out = [
-      pe.JaxprTracer(trace, pe.PartialVal.unknown(aval), None)  # type: ignore
+      pe.JaxprTracer(trace, pe.PartialVal.unknown(aval), None)
       for aval in unknown_out_avals
   ]
   eqn = pe.new_eqn_recipe((*unknown_tracers_in, *residual_tracers),
@@ -2778,7 +2778,7 @@ def reshard(xs, out_shardings):
   out_flat = []
   for x, x_aval, s in safe_zip(x_flat, x_avals_flat, shardings_flat):
     ds = canonicalize_sharding(s)
-    ds = ds.with_spec(ds.spec._normalized_spec_for_aval(x_aval.ndim))  # type: ignore
+    ds = ds.with_spec(ds.spec._normalized_spec_for_aval(x_aval.ndim))
     out_flat.append(reshard_p.bind(x, dst_sharding=ds))
   return tree_unflatten(treedef, out_flat)
 
@@ -2828,14 +2828,14 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
                   axis_type: mesh_lib.AxisTypes):
   cur_mesh = mesh_lib.get_abstract_mesh()
   if axes is None:
-    axes = cur_mesh.axis_names  # type: ignore
+    axes = cur_mesh.axis_names
   if not isinstance(axes, tuple):
     axes = (axes,)
   for a in axes:
-    if cur_mesh._name_to_type[a] == axis_type:  # type: ignore
+    if cur_mesh._name_to_type[a] == axis_type:
       raise ValueError(f'Axes {a} cannot be casted to type {axis_type} since '
                        f'it already is of type {axis_type}.')
-  new_mesh = cur_mesh.update_axis_types({axis_type: axes})  # type: ignore
+  new_mesh = cur_mesh.update_axis_types({axis_type: axes})
   return new_mesh
 
 def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,

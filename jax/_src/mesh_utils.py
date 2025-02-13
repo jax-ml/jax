@@ -597,10 +597,10 @@ def _generate_logical_mesh(
           zip(logical_indices, physical_indices, range(len(logical_indices)))
       )
   )
-  logical_mesh = np.transpose(logical_mesh, transpose_axes)  # type: ignore  # numpy 2.2
+  logical_mesh = np.transpose(logical_mesh, transpose_axes)  # numpy 2.2
 
   # Reshape to add the trivial dimensions back.
-  logical_mesh = np.reshape(logical_mesh, logical_mesh_shape)  # type: ignore  # numpy 2.2
+  logical_mesh = np.reshape(logical_mesh, logical_mesh_shape)  # numpy 2.2
 
   return logical_mesh
 

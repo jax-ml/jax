@@ -209,7 +209,7 @@ class ArrayImpl(basearray.Array):
     # (like pjit, etc).
     if not _skip_checks or config.enable_checks.value:
       arrays = self._check_and_rearrange(arrays, self._sharding, self.aval)
-    self._arrays = arrays  # type: ignore
+    self._arrays = arrays
 
   if xla_extension_version >= 310:
     def _check_and_rearrange(self, arrays, sharding, aval):
@@ -654,7 +654,7 @@ class ArrayImpl(basearray.Array):
   if xla_extension_version >= 314:
     @use_cpp_method()
     def _single_device_array_to_np_array_did_copy(self) -> tuple[np.ndarray, bool]:  # type: ignore
-      ...  # type: ignore
+      ...
 
   else:
     @use_cpp_method()
@@ -782,7 +782,7 @@ def make_array_from_callback(
     raise TypeError(
         "`DeviceLocalLayout.AUTO` cannot be used in place of a device-local"
         f" layout when calling `jax.make_array_from_callback`. Got {sharding}")
-  sharding = sharding.sharding if isinstance(sharding, Layout) else sharding  # type: ignore
+  sharding = sharding.sharding if isinstance(sharding, Layout) else sharding
   if not isinstance(sharding, Sharding):
     raise TypeError(
         f"sharding should be an instance of `jax.sharding`. Got {sharding} of"

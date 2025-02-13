@@ -809,7 +809,7 @@ def _run_state_partial_eval_custom(
   jaxpr_known, res_avals = _convert_outputs_to_writes(jaxpr_known_resout)
 
   # In a stateful partial_eval, the residuals should be `Ref`s.
-  res_avals = map(AbstractRef, res_avals)  # type: ignore
+  res_avals = map(AbstractRef, res_avals)
 
   known_invars, staged_invars = partition_list(in_unknowns, eqn.invars)
   known_outvars, staged_outvars = partition_list(in_unknowns, eqn.outvars)

@@ -419,7 +419,7 @@ class BlockSpec:
     flat_index_map_fun, index_map_out_tree_thunk = api_util.flatten_fun(
       lu.wrap_init(index_map_func, debug_info=debug), index_map_tree)
     index_map_src_info = NameAndSrcInfo.from_pallas_call(
-        None, debug and debug.func_src_info  # type: ignore
+        None, debug and debug.func_src_info
     )
     with tracing_grid_env(grid, mapped_dims):
       jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(
@@ -883,7 +883,7 @@ def get_grid_mapping(
 ) -> tuple[tuple[jax_core.AbstractValue, ...],
            GridMapping]:
   if dynamic_shapes_export_enabled():
-    dim_check : Any = jax_core.is_dim  # type: ignore[no-redef]
+    dim_check : Any = jax_core.is_dim
   else:
     dim_check : Any = jax_core.is_constant_dim  # type: ignore[no-redef]
   assert all(i is None or dim_check(i) for i in grid_spec.grid)
@@ -978,7 +978,7 @@ def get_grid_mapping(
       grid=grid_mapping_grid,  # type: ignore[arg-type]
       grid_names=grid_spec.grid_names,
       block_mappings=(*in_block_mappings, *out_block_mappings),
-      index_map_avals=index_map_avals,  # type: ignore[arg-type]
+      index_map_avals=index_map_avals,
       index_map_tree=index_map_tree,
       vmapped_dims=(),
       num_index_operands=num_flat_scalar_prefetch,
@@ -1002,14 +1002,14 @@ def get_grid_mapping(
 def unzip_dynamic_grid_bounds(
     grid_spec: GridSpec) -> tuple[GridSpec, tuple[Any, ...]]:
   if dynamic_shapes_export_enabled():
-    new_grid : Any = grid_spec.grid  # type: ignore[no-redef]
+    new_grid : Any = grid_spec.grid
   else:
     new_grid : Any = tuple(d if isinstance(d, int) else None for d in grid_spec.grid)  # type: ignore[no-redef]
   dynamic_bounds = tuple(d for d in grid_spec.grid if not isinstance(d, int))
   # We can't use dataclasses.replace, because our fields are incompatible
   # with __init__'s signature.
   static_self = copy.copy(grid_spec)
-  static_self.grid = new_grid  # type: ignore
+  static_self.grid = new_grid
   return static_self, dynamic_bounds
 
 
@@ -1188,6 +1188,6 @@ def lower_as_mlir(
 ) -> mlir.ir.Module:
   with pallas_export_experimental(dynamic_shapes):
     lowered = jax.jit(f, device=device).lower(*args, **kwargs)
-    stablehlo = lowered.compiler_ir(dialect="stablehlo")  # type: ignore[return-value]
+    stablehlo = lowered.compiler_ir(dialect="stablehlo")
 
   return stablehlo  # type: ignore[return-value]

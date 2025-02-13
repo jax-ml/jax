@@ -481,7 +481,7 @@ def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
   # Since not all inputs are used in jaxpr_unknown, we filter the input tracers
   # down using the output of `dce_jaxpr`.
   used_and_known = map(operator.and_, used_refs, map(operator.not_, in_unknowns))
-  tracers = [trace.instantiate_const(t) if u_and_k else t for t, u_and_k  # type: ignore
+  tracers = [trace.instantiate_const(t) if u_and_k else t for t, u_and_k
              in zip(tracers, used_and_known)]
   _, known_used = partition_list(used_refs, used_and_known)
   _, used_tracers = partition_list(used_refs, tracers)

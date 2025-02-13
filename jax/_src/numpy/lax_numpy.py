@@ -3195,7 +3195,7 @@ def _split(op: str, ary: ArrayLike,
       sizes = [(part_size + 1)] * r + [part_size] * (num_sections - r)
     else:
       raise ValueError(f"array split does not result in an equal division: rest is {r}")
-  sizes = [i if core.is_symbolic_dim(i) else np.int64(i)  # type: ignore[misc]
+  sizes = [i if core.is_symbolic_dim(i) else np.int64(i)
            for i in sizes]
   return list(lax.split(ary, sizes, axis=axis))
 
@@ -5498,7 +5498,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     sharding = object.aval.sharding
     sharding = None if sharding.mesh.empty else sharding
   else:
-    sharding = canonicalize_device_to_sharding(device)  # type: ignore
+    sharding = canonicalize_device_to_sharding(device)
 
   # Use device_put to avoid a copy for ndarray inputs.
   if (not copy and isinstance(object, np.ndarray) and
@@ -6388,7 +6388,7 @@ def _arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
     return lax.iota(dtype, start)  # type: ignore[arg-type]
   else:
     if step is None and start == 0 and stop is not None:
-      return lax.iota(dtype, np.ceil(stop).astype(int))  # type: ignore[arg-type]
+      return lax.iota(dtype, np.ceil(stop).astype(int))
     return array(np.arange(start, stop=stop, step=step, dtype=dtype))
 
 

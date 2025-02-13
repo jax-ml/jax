@@ -347,7 +347,7 @@ def pallas_call_hlo_interpret(
   del compiler_params, cost_estimate, out_avals
   # If we're in interpret mode, we *scan* over the grid and eval the
   # discharged jaxpr.
-  dynamic_grid_args, args = split_list(  # type: ignore
+  dynamic_grid_args, args = split_list(
       args, [grid_mapping.num_dynamic_grid_bounds]
   )
   dynamic_grid_args_iter = iter(dynamic_grid_args)
