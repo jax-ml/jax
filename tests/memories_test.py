@@ -26,6 +26,7 @@ from jax import lax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.layout import DeviceLocalLayout as DLL, Layout
+from jax._src.lib import xla_extension_version
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.numpy as jnp
@@ -1657,6 +1658,40 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     indices = jnp.ones((16, 4, 4, 2), dtype=jnp.int32)
     scores = jnp.ones((16, 4, 4, 2))
     jax.jit(peer_forward)(x, experts, indices, scores)  # doesn't crash
+
+
+class StreamAnnotationTest(jtu.JaxTestCase):
+
+  def test_stream_annotation_inside_shmap(self):
+    if xla_extension_version < 313 :
+      self.skipTest("Requires xla_extension_version >= 313")
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest("Stream annotation is only supported on GPU.")
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    np_inp = np.ones((8, 8))
+    arr1 = jax.device_put(np_inp, s)
+    arr2 = jax.device_put(np_inp, s)
+
+    @compute_on('gpu_stream:1')
+    @jax.jit
+    def g(x, y):
+      return x @ y
+
+    @compute_on('gpu_stream:2')
+    @jax.jit
+    def h(x, y):
+      return x @ y
+
+    def f(x, y):
+      z = g(x, y)
+      w = h(3 * x, 2 * y)
+      return z + w
+
+    out = jax.jit(shard_map(f, mesh=mesh,
+                            in_specs=(P('x', 'y'), P('x', 'y')),
+                            out_specs=P('x', 'y')))(arr1, arr2)
+    self.assertArraysEqual(out, arr1 * 28)
 
 
 class ActivationOffloadingTest(jtu.JaxTestCase):
