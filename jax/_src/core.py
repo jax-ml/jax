@@ -1767,11 +1767,11 @@ def canonicalize_value(val):
     return val
 
   cur_mesh = mesh_lib.get_abstract_mesh()
-  if cur_mesh == aval.sharding.mesh:  # type: ignore
+  if cur_mesh == aval.sharding.mesh:
     return val
-  if cur_mesh._are_all_axes_manual and aval.sharding.mesh._are_all_axes_auto:  # type: ignore
-    from jax._src.pjit import mesh_cast  # type: ignore
-    return mesh_cast(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))  # type: ignore
+  if cur_mesh._are_all_axes_manual and aval.sharding.mesh._are_all_axes_auto:
+    from jax._src.pjit import mesh_cast  # pytype: disable=import-error
+    return mesh_cast(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))
   return val
 
 
@@ -1785,7 +1785,7 @@ def get_cur_mesh_sharding(spec=None):
 # TODO(yashkatariya): Only works with User/Auto. Generalize it to work with
 # Collective too.
 def modify_spec_for_auto_manual(spec, mesh) -> P:
-  new_spec = []  # type: ignore
+  new_spec = []
   for s in spec:
     if not s:
       new_spec.append(s)
@@ -1888,7 +1888,7 @@ class ShapedArray(UnshapedArray):
               self.dtype.name)
     dt_str = dt_str.replace('void', 'float0')
     if hasattr(self, 'sharding') and self.sharding is not None:
-      shapestr = _get_shape_sharding_str(self.shape, self.sharding.spec)  # type: ignore
+      shapestr = _get_shape_sharding_str(self.shape, self.sharding.spec)
       return f'{dt_str}[{shapestr}]'
     else:
       shapestr = ','.join(map(str, self.shape))

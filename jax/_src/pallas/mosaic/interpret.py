@@ -685,7 +685,7 @@ def interpret_pallas_call(
   del debug, cost_estimate, out_avals
 
   # args contains: *dynamic_grid_sizes, *index, *inputs.  (No consts?)
-  dynamic_grid_args, scalars, input_args = split_list(  # type: ignore
+  dynamic_grid_args, scalars, input_args = split_list(
       args,
       [grid_mapping.num_dynamic_grid_bounds, grid_mapping.num_index_operands],
   )

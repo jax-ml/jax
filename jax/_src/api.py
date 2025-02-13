@@ -2357,7 +2357,7 @@ def device_put(
         assert not m and not d
         copy_semantics.append(dispatch.CopySemantics.COPY)
 
-    for xf, d in zip(x_flat, device_flat):  # type: ignore
+    for xf, d in zip(x_flat, device_flat):
       _check_sharding(shaped_abstractify(xf), d)
     out_flat = dispatch.device_put_p.bind(
         *x_flat, devices=device_flat, srcs=src_flat,

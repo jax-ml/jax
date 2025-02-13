@@ -180,7 +180,7 @@ def _linearize_jaxpr(
   if attrs_tracked:
     raise NotImplementedError("TODO: attrs")
   residuals_and_primals = (*tangent_consts, *out_primals)
-  residuals_and_primals = map(primal_trace.to_jaxpr_tracer, residuals_and_primals)  # type: ignore[assignment]
+  residuals_and_primals = map(primal_trace.to_jaxpr_tracer, residuals_and_primals)
   primal_jaxpr, primal_consts, attrs_tracked = primal_trace.to_jaxpr(residuals_and_primals, debug_info)
   primal_trace.invalidate()
   num_residuals = len(tangent_consts)
@@ -213,7 +213,7 @@ def direct_linearize(traceable: lu.WrappedFun,
       del linearize_trace, ans, tracers
   out_nzs = [type(t) is not Zero for t in out_tangents]
   out_nz_tangents = [t for t, nz in zip(out_tangents, out_nzs) if nz]
-  out_nz_tangents = map(tangent_trace.to_jaxpr_tracer, out_nz_tangents)  # type: ignore
+  out_nz_tangents = map(tangent_trace.to_jaxpr_tracer, out_nz_tangents)
   jaxpr, consts, attrs_tracked = tangent_trace.to_jaxpr(out_nz_tangents, traceable.debug_info)
   tangent_trace.invalidate()
   out_tangents_pvals = [pe.PartialVal.unknown(core.get_aval(t)) if nz else
@@ -343,7 +343,7 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
           ct_out = core.freeze(ref)
           write_cotangent(eqn.primitive, val_var, ct_out)
         elif eqn.primitive is core.freeze_p:
-          val_var, = eqn.outvars  # type: ignore
+          val_var, = eqn.outvars
           ref_var, = eqn.invars   # type: ignore
           ct_in = instantiate_zeros(read_cotangent(val_var))
           write_primal(ref_var, core.mutable_array(ct_in))

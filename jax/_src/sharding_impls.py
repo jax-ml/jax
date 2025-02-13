@@ -451,7 +451,7 @@ class PositionalSharding(jsharding.Sharding):
     ids = self._ids.copy()
     platform_name = self._devices[0].platform.upper()
     for idx, x in np.ndenumerate(ids):
-      ids[idx] = DeviceIdSet(platform_name, *(self._devices[i].id for i in x))  # type: ignore  # numpy 2.2
+      ids[idx] = DeviceIdSet(platform_name, *(self._devices[i].id for i in x))
     body = np.array2string(ids, prefix=cls_name + '(', suffix=')',
                            max_line_width=100)
     mem = '' if self._memory_kind is None else f', memory_kind={self._memory_kind}'
@@ -1269,7 +1269,7 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
           ' `jax.sharding.use_mesh` is not allowed. Please pass a'
           ' NamedSharding instance or enter into a mesh context via'
           f' `jax.sharding.use_mesh`. Got {sharding}')
-    sharding = NamedSharding(cur_mesh, sharding)  # type: ignore
+    sharding = NamedSharding(cur_mesh, sharding)
   else:
     if (check_mesh_consistency and not cur_mesh.empty and
         sharding.mesh.abstract_mesh != cur_mesh):

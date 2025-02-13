@@ -105,7 +105,7 @@ def cloud_tpu_init() -> None:
 def is_cloud_tpu_older_than(year: int, month: int, day: int):
   # We import locally because the functions above must run before the runtime
   # modules are imported.
-  from jax._src import xla_bridge  # type: ignore
+  from jax._src import xla_bridge  # pytype: disable=import-error
   date = datetime.date(year, month, day)
   if not running_in_cloud_tpu_vm:
     return False

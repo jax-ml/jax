@@ -260,7 +260,7 @@ class Error:
       cur_effect = None
       for error_effect, code in self._code.items():
         if self._pred[error_effect][idx]:   # type: ignore
-          if min_code is None or code[idx] < min_code:  # type: ignore
+          if min_code is None or code[idx] < min_code:
             min_code = code[idx]   # type: ignore
             cur_effect = error_effect
 

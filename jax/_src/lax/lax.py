@@ -138,9 +138,9 @@ def asarray(x: ArrayLike) -> Array:
   if isinstance(x, Array):
     return x
   elif isinstance(x, (bool, np.ndarray, np.generic)):
-    return _convert_element_type(x, weak_type=False)  # type: ignore[bad-return-type]
+    return _convert_element_type(x, weak_type=False)  # pytype: disable=bad-return-type
   elif isinstance(x, (int, float, builtins.complex)):
-    return _convert_element_type(dtypes.coerce_to_array(x), weak_type=True)  # type: ignore[bad-return-type]
+    return _convert_element_type(dtypes.coerce_to_array(x), weak_type=True)
   else:
     raise TypeError(f"asarray: expected ArrayLike, got {x} of type {type(x)}.")
 
@@ -3212,7 +3212,7 @@ def _nary_lower_hlo(op: Callable, ctx,
   """
   del params
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
-  args = mlir.multi_broadcast_in_dim(ctx, args, avals_in, aval_out.shape)  # type: ignore
+  args = mlir.multi_broadcast_in_dim(ctx, args, avals_in, aval_out.shape)
   if config.sharding_in_types.value:
     args = multi_sharding_in_dim(ctx, args, avals_in, aval_out)
 
@@ -7423,7 +7423,7 @@ def _zero(x):
   if config.sharding_in_types.value:
     x_aval = core.get_aval(x)
     return full_like(x, shape=(), fill_value=0,
-                     sharding=x_aval.sharding.with_spec(P()))  # type: ignore
+                     sharding=x_aval.sharding.with_spec(P()))
   return full_like(x, shape=(), fill_value=0)
 
 _ones: Callable = partial(full_like, fill_value=1)

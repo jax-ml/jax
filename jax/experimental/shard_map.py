@@ -977,7 +977,7 @@ class ShardMapTracer(core.Tracer):
     out = core.mapped_aval(self._trace.mesh.size, 0, aval)
     if config.sharding_in_types.value:
       new_sharding = NamedSharding(_as_manual_mesh(self._trace.mesh),
-                                   out.sharding.spec)  # type: ignore
+                                   out.sharding.spec)  # pytype: disable=attribute-error
     else:
       new_sharding = None
     return out.update(sharding=new_sharding)

@@ -2275,7 +2275,7 @@ def lower_sharding_computation(
   # I refactor, this will also work well with mesh being provided at
   # compile time.
   # Sets device_assignment to None if only abstractMesh and unspecified exists.
-  num_devices, device_assignment = _get_num_devices(  # type: ignore
+  num_devices, device_assignment = _get_num_devices(
       it.chain(unique_in_shardings, unique_out_shardings,
                unique_intermediate_shardings),
       device_assignment)
@@ -2330,12 +2330,12 @@ def lower_sharding_computation(
               "mesh should be the same across the entire program. Got mesh"
               f" shape for one sharding {abstract_mesh} and"
               f" {sharding.mesh.abstract_mesh} for another")
-        abstract_mesh = sharding.mesh.abstract_mesh  # type: ignore
+        abstract_mesh = sharding.mesh.abstract_mesh
 
   semantic_in_shardings = SemanticallyEqualShardings(
-      in_shardings, global_in_avals)  # type: ignore
+      in_shardings, global_in_avals)
   semantic_out_shardings = SemanticallyEqualShardings(
-      out_shardings, global_out_avals)  # type: ignore
+      out_shardings, global_out_avals)
 
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
@@ -2540,7 +2540,7 @@ def _gspmd_to_named_sharding(
   assert isinstance(orig_in_s, NamedSharding)
   assert isinstance(orig_in_s.mesh, Mesh)
   return sharding_impls._gspmd_to_named_sharding_via_mesh(out_s, orig_in_s.mesh)
-_orig_out_sharding_handlers[NamedSharding] = _gspmd_to_named_sharding  # type: ignore
+_orig_out_sharding_handlers[NamedSharding] = _gspmd_to_named_sharding
 
 def _gspmd_to_positional_sharding(
     out_s: GSPMDSharding, orig_in_s: PositionalSharding) -> PositionalSharding:
@@ -2832,7 +2832,7 @@ def _maybe_get_and_check_out_shardings(
           dtypes.issubdtype(aval.dtype, dtypes.extended)):
         xla_s = sharding_impls.logical_sharding(aval, xla_s)
       try:
-        new_out_shardings.append(_gspmd_to_named_sharding(xla_s, orig))  # type: ignore
+        new_out_shardings.append(_gspmd_to_named_sharding(xla_s, orig))  # pytype: disable=wrong-arg-types
       except:
         new_out_shardings.append(xla_s)
     else:
@@ -3015,9 +3015,9 @@ class UnloadedMeshExecutable:
         device_assignment=da,
         backend=backend,
         input_avals=global_in_avals,
-        input_shardings=in_shardings,  # type: ignore
+        input_shardings=in_shardings,
         output_avals=global_out_avals,
-        output_shardings=out_shardings,  # type: ignore # arg-type
+        output_shardings=out_shardings,
         committed=committed,
         name=name,
         unordered_effects=unordered_effects,
