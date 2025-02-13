@@ -89,6 +89,8 @@ class TPUPipelineModeTest(PallasBaseTest):
       (pl.Buffered(2), pl.Buffered(1)),
       (pl.Buffered(1), pl.Buffered(1)))
   def test_two_input_vadd(self, x_pmode : pl.Buffered, y_pmode : pl.Buffered):
+    if not jtu.if_cloud_tpu_at_least(2025, 2, 11):
+      self.skipTest("Needs a newer libTPU")
     def body(x_ref, y_ref, o_ref):
       x = x_ref[:]
       y = y_ref[:]
