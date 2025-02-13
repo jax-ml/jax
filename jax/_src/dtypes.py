@@ -109,6 +109,12 @@ _float8_e4m3fnuz_dtype: np.dtype = np.dtype(float8_e4m3fnuz)
 _float8_e5m2_dtype: np.dtype = np.dtype(float8_e5m2)
 _float8_e5m2fnuz_dtype: np.dtype = np.dtype(float8_e5m2fnuz)
 
+# fp4 support
+# TODO: remove Optional when minimum ml_dtypes version >= 0.5.0
+float4_e2m1fn: type[np.generic] | None = None
+
+_float4_e2m1fn_dtype: np.dtype | None = None
+
 def supports_inf(dtype: DTypeLike) -> bool:
   """Return true if the dtype supports infinity, else return False."""
   typ = np.dtype(dtype).type
@@ -144,6 +150,8 @@ _float8_dtypes = [
     _float8_e5m2fnuz_dtype,
 ]
 
+_float4_dtypes: list[np.dtype] = []
+
 # TODO: remove the if statements below when minimum ml_dtypes version >= 0.5.0
 if hasattr(ml_dtypes, "float8_e4m3"):
   float8_e4m3 = ml_dtypes.float8_e4m3
@@ -163,6 +171,12 @@ if hasattr(ml_dtypes, "float8_e8m0fnu"):
   _custom_float_scalar_types.insert(0, float8_e8m0fnu)  # type: ignore[arg-type]
   _custom_float_dtypes.insert(0, _float8_e8m0fnu_dtype)
   _float8_dtypes.insert(0, _float8_e8m0fnu_dtype)
+if hasattr(ml_dtypes, "float4_e2m1fn"):
+  float4_e2m1fn = ml_dtypes.float4_e2m1fn
+  _float4_e2m1fn_dtype = np.dtype(float4_e2m1fn)
+  _custom_float_scalar_types.insert(0, float4_e2m1fn)  # type: ignore[arg-type]
+  _custom_float_dtypes.insert(0, _float4_e2m1fn_dtype)
+  _float4_dtypes.insert(0, _float4_e2m1fn_dtype)
 
 # 2-bit integer support
 int2: type[np.generic] | None = None
