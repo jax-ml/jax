@@ -1783,6 +1783,12 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
 
   cur_mesh = mesh_lib.get_abstract_mesh()
   if isinstance(sharding, PartitionSpec):
+    if cur_mesh.empty:
+      raise ValueError(
+          'Using PartitionSpec when you are not under a mesh context via'
+          ' `jax.sharding.use_mesh` is not allowed. Please pass a'
+          ' NamedSharding instance or enter into a mesh context via'
+          f' `jax.sharding.use_mesh`. Got {sharding}')
     sharding = NamedSharding(cur_mesh, sharding)  # type: ignore
   else:
     if (check_mesh_consistency and not cur_mesh.empty and

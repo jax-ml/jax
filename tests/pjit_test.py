@@ -6621,6 +6621,23 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P(P.UNCONSTRAINED))
     jax.lax.with_sharding_constraint(np.arange(8), s)
 
+  @config.sharding_in_types(True)
+  def test_pspec_einsum_no_context_mesh(self):
+    mesh = jtu.create_mesh((1, 1), ('x', 'y'),
+                           axis_types={AxisTypes.Explicit: ('x', 'y')})
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+    arr2 = jax.device_put(np_inp.T, NamedSharding(mesh, P('y', None)))
+
+    @jax.jit
+    def f(x, y):
+      return jnp.einsum('xy,yz->xz', x, y, out_sharding=P('x', 'y'))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Using PartitionSpec when.*not under a mesh context.*is not allowed"):
+      f(arr, arr2)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
