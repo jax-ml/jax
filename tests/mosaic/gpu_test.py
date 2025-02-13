@@ -475,7 +475,7 @@ def get_packed_shape(strides, shape):
   return [packed_shape[i] for i in inv_perm]
 
 
-class WGMMATest(TestCase):
+class WGMMALayoutTest(TestCase):
 
   @parameterized.named_parameters(("f32", jnp.float32), ("f16", jnp.float16))
   def test_store_untiled(self, dtype):
@@ -487,25 +487,6 @@ class WGMMATest(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), (), expected, ()
     )()
     np.testing.assert_array_equal(iota, expected)
-
-  @parameterized.named_parameters(
-      ("f32", jnp.float32, 256),
-      ("f16", jnp.float16, 256),
-      ("f16_small", jnp.float16, 128),
-  )
-  def test_store_untiled_splat(self, jax_dtype, size):
-    mlir_dtype = utils.dtype_to_ir_type(jax_dtype)
-    def kernel(ctx, out, _):
-      del ctx
-      arr = mgpu.FragmentedArray.splat(
-          c(1.0, mlir_dtype), (size,), is_signed=utils.is_signed(jax_dtype)
-      )
-      arr.store_untiled(out)
-    expected = np.ones((size,), jax_dtype)
-    mosaic_ones = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), (), expected, ()
-    )()
-    np.testing.assert_array_equal(mosaic_ones, expected)
 
   @parameterized.product(
       dtype=[jnp.float32, jnp.float16, jnp.int8],
@@ -561,47 +542,6 @@ class WGMMATest(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), (), expected, smem_shape
     )()
     np.testing.assert_array_equal(iota, expected)
-
-  def test_convert_bool_to_u8(self):
-    m, n = 128, 128
-    def kernel(ctx, dst, _):
-      i8 = ir.IntegerType.get_signless(8)
-      iota = iota_tensor(m, n, jnp.uint8)
-      (iota > 10).astype(i8, is_signed=False).store_untiled(dst)
-
-    out_shape = jax.ShapeDtypeStruct((m, n), jnp.int8)
-    result = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
-    )()
-    iota = np.arange(m * n, dtype=jnp.uint8).reshape(m, n)
-    np.testing.assert_array_equal(result, (iota > 10).astype(jnp.uint8))
-
-  @parameterized.parameters(
-      (jnp.uint8, jnp.uint16, 255),
-      (jnp.uint8, jnp.int16, 255),
-      (jnp.int8, jnp.uint16, -127),
-      (jnp.int8, jnp.int16, -127),
-  )
-  def test_convert_int_uint(self, from_dtype, to_dtype, value):
-    m, n = 1, 128
-    def kernel(ctx, dst, _):
-      i8 = ir.IntegerType.get_signless(8)
-      from_mlir_dtype = utils.dtype_to_ir_type(from_dtype)
-      to_mlir_dtype = utils.dtype_to_ir_type(to_dtype)
-      from_arr = mgpu.FragmentedArray.splat(
-          c(value, from_mlir_dtype),
-          (m, n),
-          is_signed=utils.is_signed(from_dtype),
-      )
-      to_arr = from_arr.astype(to_mlir_dtype, is_signed=utils.is_signed(to_dtype))
-      to_arr.store_untiled(dst)
-
-    out_shape = jax.ShapeDtypeStruct((m, n), to_dtype)
-    result = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
-    )()
-    expected = jnp.full((m, n), value, dtype=from_dtype).astype(to_dtype)
-    np.testing.assert_array_equal(result, expected)
 
   @parameterized.named_parameters(
       ("bf16_i8", jnp.bfloat16, jnp.int8),
@@ -686,6 +626,14 @@ class WGMMATest(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), expected, expected, (expected,) * 2
     )(expected)
     np.testing.assert_array_equal(iota, expected)
+
+
+class WGMMATest(TestCase):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.is_cuda_compute_capability_equal("9.0"):
+      self.skipTest("Only works on GPU with capability sm90a")
 
   @parameterized.product(
       lhs_transpose=(False, True),
@@ -2077,6 +2025,47 @@ class FragmentedArrayTest(TestCase):
     f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, None)
     np.testing.assert_array_equal(f(x), x * 3)
 
+  def test_convert_bool_to_u8(self):
+    m, n = 128, 128
+    def kernel(ctx, dst, _):
+      i8 = ir.IntegerType.get_signless(8)
+      iota = iota_tensor(m, n, jnp.uint8)
+      (iota > 10).astype(i8, is_signed=False).store_untiled(dst)
+
+    out_shape = jax.ShapeDtypeStruct((m, n), jnp.int8)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    iota = np.arange(m * n, dtype=jnp.uint8).reshape(m, n)
+    np.testing.assert_array_equal(result, (iota > 10).astype(jnp.uint8))
+
+  @parameterized.parameters(
+      (jnp.uint8, jnp.uint16, 255),
+      (jnp.uint8, jnp.int16, 255),
+      (jnp.int8, jnp.uint16, -127),
+      (jnp.int8, jnp.int16, -127),
+  )
+  def test_convert_int_uint(self, from_dtype, to_dtype, value):
+    m, n = 1, 128
+    def kernel(ctx, dst, _):
+      i8 = ir.IntegerType.get_signless(8)
+      from_mlir_dtype = utils.dtype_to_ir_type(from_dtype)
+      to_mlir_dtype = utils.dtype_to_ir_type(to_dtype)
+      from_arr = mgpu.FragmentedArray.splat(
+          c(value, from_mlir_dtype),
+          (m, n),
+          is_signed=utils.is_signed(from_dtype),
+      )
+      to_arr = from_arr.astype(to_mlir_dtype, is_signed=utils.is_signed(to_dtype))
+      to_arr.store_untiled(dst)
+
+    out_shape = jax.ShapeDtypeStruct((m, n), to_dtype)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    expected = jnp.full((m, n), value, dtype=from_dtype).astype(to_dtype)
+    np.testing.assert_array_equal(result, expected)
+
 
 class ProfilerTest(TestCase):
 
@@ -2134,6 +2123,25 @@ class TorchTest(TestCase):
 
 
 class LayoutTest(TestCase):
+
+  @parameterized.named_parameters(
+      ("f32", jnp.float32, 256),
+      ("f16", jnp.float16, 256),
+      ("f16_small", jnp.float16, 128),
+  )
+  def test_store_untiled_splat(self, jax_dtype, size):
+    mlir_dtype = utils.dtype_to_ir_type(jax_dtype)
+    def kernel(ctx, out, _):
+      del ctx
+      arr = mgpu.FragmentedArray.splat(
+          c(1.0, mlir_dtype), (size,), is_signed=utils.is_signed(jax_dtype)
+      )
+      arr.store_untiled(out)
+    expected = np.ones((size,), jax_dtype)
+    mosaic_ones = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), expected, ()
+    )()
+    np.testing.assert_array_equal(mosaic_ones, expected)
 
   @parameterized.product(
       shape=((128, 128), (64, 8), (64, 256)),
