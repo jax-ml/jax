@@ -29,29 +29,30 @@ extern "C" {
 // SwizzleTransformAttr
 //===----------------------------------------------------------------------===//
 
-MLIR_CAPI_EXPORTED bool MosaicGpuIsASwizzleTransformAttr(MlirAttribute attr);
+MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsASwizzleTransformAttr(
+    MlirAttribute attr);
 
 MLIR_CAPI_EXPORTED MlirAttribute
-MosaicGpuSwizzleTransformAttrGet(MlirContext ctx, int32_t swizzle);
+mlirMosaicGpuSwizzleTransformAttrGet(MlirContext ctx, int32_t swizzle);
 
 MLIR_CAPI_EXPORTED int32_t
-MosaicGpuSwizzleTransformAttrGetSwizzle(MlirAttribute attr);
+mlirMosaicGpuSwizzleTransformAttrGetSwizzle(MlirAttribute attr);
 
 //===----------------------------------------------------------------------===//
 // LayoutAttr
 //===----------------------------------------------------------------------===//
 
-MLIR_CAPI_EXPORTED bool MosaicGpuIsALayoutAttr(MlirAttribute attr);
+MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsALayoutAttr(MlirAttribute attr);
 
 MLIR_CAPI_EXPORTED MlirAttribute
-MosaicGpuLayoutAttrGet(MlirContext ctx, int32_t num_dimensions,
-                       MlirAttribute* transforms, int32_t transforms_size);
+mlirMosaicGpuLayoutAttrGet(MlirContext ctx, int32_t num_dimensions,
+                           MlirAttribute* transforms, int32_t transforms_size);
 
 MLIR_CAPI_EXPORTED int32_t
-MosaicGpuLayoutAttrGetTransformsSize(MlirAttribute attr);
+mlirMosaicGpuLayoutAttrGetTransformsSize(MlirAttribute attr);
 
 MLIR_CAPI_EXPORTED MlirAttribute
-MosaicGpuLayoutAttrGetTransform(MlirAttribute attr, int32_t index);
+mlirMosaicGpuLayoutAttrGetTransform(MlirAttribute attr, int32_t index);
 
 #ifdef __cplusplus
 }

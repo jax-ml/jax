@@ -37,27 +37,27 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       nb::arg("context"), nb::arg("load") = true);
 
   mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-      m, "SwizzleTransformAttr", MosaicGpuIsASwizzleTransformAttr)
+      m, "SwizzleTransformAttr", mlirMosaicGpuIsASwizzleTransformAttr)
       .def_classmethod(
           "get",
           [](nb::object cls, int32_t swizzle, MlirContext ctx) {
-            return cls(MosaicGpuSwizzleTransformAttrGet(
+            return cls(mlirMosaicGpuSwizzleTransformAttrGet(
                 ctx, static_cast<int32_t>(swizzle)));
           },
           nb::arg("cls"), nb::arg("swizzle"),
           nb::arg("context").none() = nb::none(),
           "Creates a SwizzleTransformAttr with the given swizzle.")
       .def_property_readonly("swizzle", [](MlirAttribute self) {
-        return MosaicGpuSwizzleTransformAttrGetSwizzle(self);
+        return mlirMosaicGpuSwizzleTransformAttrGetSwizzle(self);
       });
 
   mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-      m, "LayoutAttr", MosaicGpuIsALayoutAttr)
+      m, "LayoutAttr", mlirMosaicGpuIsALayoutAttr)
       .def_classmethod(
           "get",
           [](nb::object cls, int32_t num_dimensions,
              std::vector<MlirAttribute>& transforms, MlirContext ctx) {
-            return cls(MosaicGpuLayoutAttrGet(
+            return cls(mlirMosaicGpuLayoutAttrGet(
                 ctx, num_dimensions, transforms.data(), transforms.size()));
           },
           nb::arg("cls"), nb::arg("num_dimensions"), nb::arg("transforms"),
@@ -65,8 +65,9 @@ NB_MODULE(_mosaic_gpu_ext, m) {
           "Creates a LayoutAttr with the given transforms.")
       .def_property_readonly("transforms", [](MlirAttribute self) {
         std::vector<MlirAttribute> result;
-        for (int i = 0; i < MosaicGpuLayoutAttrGetTransformsSize(self); ++i) {
-          result.push_back(MosaicGpuLayoutAttrGetTransform(self, i));
+        for (int i = 0; i < mlirMosaicGpuLayoutAttrGetTransformsSize(self);
+             ++i) {
+          result.push_back(mlirMosaicGpuLayoutAttrGetTransform(self, i));
         }
         return result;
       });

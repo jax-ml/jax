@@ -12,17 +12,17 @@
 //===----------------------------------------------------------------------===//
 // SwizzleTransformAttr
 //===----------------------------------------------------------------------===//
-bool MosaicGpuIsASwizzleTransformAttr(MlirAttribute attr) {
+bool mlirMosaicGpuIsASwizzleTransformAttr(MlirAttribute attr) {
   return mlir::isa<mosaic_gpu::SwizzleTransformAttr>(unwrap(attr));
 }
-MlirAttribute MosaicGpuSwizzleTransformAttrGet(MlirContext ctx,
-                                               int32_t swizzle) {
+MlirAttribute mlirMosaicGpuSwizzleTransformAttrGet(MlirContext ctx,
+                                                   int32_t swizzle) {
   return wrap(mosaic_gpu::SwizzleTransformAttr::get(
       unwrap(ctx),
       mosaic_gpu::SwizzlingModeAttr::get(
           unwrap(ctx), static_cast<mosaic_gpu::SwizzlingMode>(swizzle))));
 }
-int32_t MosaicGpuSwizzleTransformAttrGetSwizzle(MlirAttribute attr) {
+int32_t mlirMosaicGpuSwizzleTransformAttrGetSwizzle(MlirAttribute attr) {
   return static_cast<int32_t>(
       mlir::cast<mosaic_gpu::SwizzleTransformAttr>(unwrap(attr))
           .getSwizzle()
@@ -33,13 +33,14 @@ int32_t MosaicGpuSwizzleTransformAttrGetSwizzle(MlirAttribute attr) {
 // LayoutAttr
 //===----------------------------------------------------------------------===//
 
-bool MosaicGpuIsALayoutAttr(MlirAttribute attr) {
+bool mlirMosaicGpuIsALayoutAttr(MlirAttribute attr) {
   return mlir::isa<mosaic_gpu::LayoutAttr>(unwrap(attr));
 }
 
-MlirAttribute MosaicGpuLayoutAttrGet(MlirContext ctx, int32_t num_dimensions,
-                                     MlirAttribute* transforms,
-                                     int32_t transforms_size) {
+MlirAttribute mlirMosaicGpuLayoutAttrGet(MlirContext ctx,
+                                         int32_t num_dimensions,
+                                         MlirAttribute* transforms,
+                                         int32_t transforms_size) {
   std::vector<mlir::Attribute> unwrapped_transforms;
   unwrapped_transforms.reserve(transforms_size);
   for (int i = 0; i < transforms_size; ++i) {
@@ -49,14 +50,14 @@ MlirAttribute MosaicGpuLayoutAttrGet(MlirContext ctx, int32_t num_dimensions,
                                           unwrapped_transforms));
 }
 
-int32_t MosaicGpuLayoutAttrGetTransformsSize(MlirAttribute attr) {
+int32_t mlirMosaicGpuLayoutAttrGetTransformsSize(MlirAttribute attr) {
   return mlir::cast<mosaic_gpu::LayoutAttr>(unwrap(attr))
       .getTransforms()
       .size();
 }
 
-MlirAttribute MosaicGpuLayoutAttrGetTransform(MlirAttribute attr,
-                                              int32_t index) {
+MlirAttribute mlirMosaicGpuLayoutAttrGetTransform(MlirAttribute attr,
+                                                  int32_t index) {
   return wrap(
       mlir::cast<mosaic_gpu::LayoutAttr>(unwrap(attr)).getTransforms()[index]);
 }
