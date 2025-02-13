@@ -487,7 +487,7 @@ def quantize(x, config):
     scaled_x = x / e8m0_to_dtype(scales_q, scales.dtype)
   elif config.mode == "nvfp4":
     assert config.scale_type == jnp.float8_e4m3fn
-    # shuw(TODO): placeholder
+    # shuw(TODO): Add when XLA is ready and e2m1fn is available.
     scales_q = scales
     scales_x = x
 
