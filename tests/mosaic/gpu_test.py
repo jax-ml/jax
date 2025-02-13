@@ -901,7 +901,7 @@ class TCGen05Test(TestCase):
       in_jax_dtype=(jnp.float16, jnp.bfloat16),  # TODO(apaszke): f32
       out_jax_dtype=(jnp.float32,),  # TODO(apaszke): f16 accumulation
       m=(128,),  # TODO(apaszke): 64, 192, 256
-      n=(64, 128, 256),  # TODO(apaszke): 192, other non-power-of-2
+      n=(64, 128, 256, 512),  # TODO(apaszke): 192, other non-power-of-2
       k_steps=(1, 2),
       swizzle=(32, 64, 128,),
   )
@@ -993,7 +993,7 @@ class TCGen05Test(TestCase):
       in_jax_dtype=(jnp.float16,),  # TODO(apaszke): f32
       out_jax_dtype=(jnp.float32,),  # TODO(apaszke): f16 accumulation
       m=(256,),  # TODO(apaszke): 64, 192, 256
-      n=(128, 256),  # TODO(apaszke): 192, other non-power-of-2
+      n=(128, 256),  # TODO(apaszke): 512, 192, other non-power-of-2
       k_steps=(1, 2),
       swizzle=(32, 64, 128,),
   )

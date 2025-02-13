@@ -87,7 +87,7 @@ class WGMMAAccumulator:
 def wgmma_encode(x: int):
   result = (x & 0x3FFFF) >> 4
   if result << 4 != x:
-    raise ValueError("Cannot encode value in a WGMMA descriptor")
+    raise ValueError(f"Cannot encode value in a WGMMA descriptor: {x}")
   return result
 
 
@@ -414,7 +414,6 @@ def _validate_mma(
       b_transpose=b_order != b_layout,
       a_k_stride=(2 if a_order == a_layout else swizzle) << 4,
       b_k_stride=(2 if b_order == b_layout else swizzle) << 4,
-      n=n,
       swizzle=swizzle,
       element_type=ir.FloatTF32Type.get()
       if ir.F32Type.isinstance(element_type)
@@ -481,6 +480,9 @@ def wgmma(
       b_k_byte_stride,
   ) = _validate_mma(a, b, swizzle, WGMMALayout.ROW_MAJOR, WGMMALayout.COL_MAJOR)
 
+  if n > 256:
+    raise ValueError(f"N must be smaller than 256, got {n}")
+
   if a_in_regs:
     if a.mlir_dtype != ir.F16Type.get() and a.mlir_dtype != ir.BF16Type.get():
       raise ValueError(
@@ -521,7 +523,7 @@ def wgmma(
         )
       b_k = llvm_add(b_desc_base, c(wgmma_encode(ki * b_k_byte_stride), i64))
       new_acc_regs[mi : mi + 1] = wgmma_m64(
-          new_acc_regs[mi : mi + 1], a_mk, b_k, **wgmma_params
+          new_acc_regs[mi : mi + 1], a_mk, b_k, n=n, **wgmma_params
       )
   return WGMMAAccumulator(
       _value=fa.FragmentedArray(

@@ -96,26 +96,25 @@ def mma(
     *,
     a_swizzle: int = 128,
     b_swizzle: int = 128,
-    num_cta: int = 1,
     accumulate: ir.Value | bool = True,
     collective: bool = False,
 ):
+  i64 = ir.IntegerType.get_signless(64)
   if not ir.MemRefType.isinstance(a.type):
     raise ValueError(f"A must be a memref, got {a.type}")
   if not ir.MemRefType.isinstance(b.type):
     raise ValueError(f"B must be a memref, got: {b.type}")
   if a_swizzle != b_swizzle:
     raise NotImplementedError(f"{a_swizzle=} != {b_swizzle=}")
-  if num_cta != 1:
-    raise NotImplementedError("Only num_cta=1 supported")
   if isinstance(accumulate, bool):
     accumulate = arith.constant(ir.IntegerType.get_signless(1), accumulate)
+  num_cta = 2 if collective else 1
 
   (
       a_desc_base,
       b_desc_base,
       (m, k, n),
-      (m_tiling, kn_tiling),
+      (m_mem_tiling, kn_mem_tiling),
       element_type,
       mma_params,
       a_k_byte_stride,
@@ -129,19 +128,35 @@ def mma(
       descriptor_const_init=TCGEN05_SMEM_DESCRIPTOR_BIT,
   )
 
+  # The sizes of instruction we'll be using
+  m_instr_tiling = m_mem_tiling
+  k_instr_tiling = kn_mem_tiling
+  if n * num_cta <= 256:
+    n_instr_tiling = n
+  elif n * num_cta == 512:
+    if collective:
+      raise NotImplementedError("Collective MMA with effective N=512 is unsupported")
+    n_instr_tiling = 256
+  else:
+    raise NotImplementedError("The only supported N larger than 256 is 512")
+
   # TODO(apaszke): It's enough to make this a multiple of d.num_rows, but it
   # would need more code below.
-  if m_tiling != d.num_rows:
+  if m_instr_tiling != d.num_rows:
     raise ValueError(
         f"A's row tiling must be a multiple of {d.num_rows} (inferred from"
-        f" accumulator's TMEM layout), got: {m_tiling}"
+        f" accumulator's TMEM layout), got: {m_instr_tiling}"
     )
 
   a_strides, _ = ir.MemRefType(a.type).get_strides_and_offset()
   a_m_byte_stride = a_strides[0] * utils.bytewidth(element_type)
+  b_strides, _ = ir.MemRefType(b.type).get_strides_and_offset()
+  b_n_byte_stride = b_strides[1] * utils.bytewidth(element_type)
 
-  groups_k = k // kn_tiling
-  groups_m = m // m_tiling
+  groups_k = k // k_instr_tiling
+  groups_m = m // m_instr_tiling
+  groups_n = n // n_instr_tiling
+  n_mem_tiles_per_instr = n_instr_tiling // kn_mem_tiling
 
   # TODO(apaszke): Verify that the cluster shape matches the expectation of
   # collective MMA.
@@ -151,26 +166,28 @@ def mma(
         f"Accumulator shape mismatch: expected {expected_acc_shape}, got {d.shape}"
     )
 
-  i64 = ir.IntegerType.get_signless(64)
-  for mi in range(groups_m):
-    for ki in range(groups_k):
-      a_mk = arith.addi(
-          a_desc_base,
-          utils.c(_wgmma.wgmma_encode(mi * a_m_byte_stride + ki * a_k_byte_stride), i64),
-      )
-      b_k = arith.addi(b_desc_base, utils.c(_wgmma.wgmma_encode(ki * b_k_byte_stride), i64))
-      if groups_m != 1:
-        raise NotImplementedError("D needs to be sliced")
-      accumulate = _do_mma(
-          d.address,
-          a_mk,
-          b_k,
-          d_type=ir.F32Type.get(),
-          m=m_tiling,
-          collective=collective,
-          **mma_params,
-          accumulate=accumulate,
-      )
+  true = arith.constant(ir.IntegerType.get_signless(1), 1)
+  for mi, ni, ki in np.ndindex(groups_m, groups_n, groups_k):
+    a_offset = mi * a_m_byte_stride + ki * a_k_byte_stride
+    a_mk = arith.addi(a_desc_base, utils.c(_wgmma.wgmma_encode(a_offset), i64))
+    b_offset = ni * n_mem_tiles_per_instr * b_n_byte_stride + ki * b_k_byte_stride
+    b_nk = arith.addi(b_desc_base, utils.c(_wgmma.wgmma_encode(b_offset), i64))
+    if groups_m != 1:
+      raise NotImplementedError("D needs to be sliced")
+    acc = accumulate if ki == 0 else true
+    _do_mma(
+        d.slice(
+            slice(None), utils.ds(ni * n_instr_tiling, n_instr_tiling)
+        ).address,
+        a_mk,
+        b_nk,
+        d_type=ir.F32Type.get(),
+        m=m_instr_tiling,
+        n=n_instr_tiling,
+        collective=collective,
+        **mma_params,
+        accumulate=acc,
+    )
 
 
 def _do_mma(
@@ -216,7 +233,6 @@ def _do_mma(
     accumulate = arith.constant(i1, 1)
     a_desc = arith.addi(a_desc, arith.constant(i64, a_k_stride >> 4))
     b_desc = arith.addi(b_desc, arith.constant(i64, b_k_stride >> 4))
-  return accumulate
 
 
 def commit_arrive(
@@ -300,6 +316,11 @@ def tmem_load(tmem_addr, shape, num):
       num_out_regs = 4
     case _:
       raise NotImplementedError(f"{shape=} is unsupported")
+  if num * num_out_regs >= 256:
+    raise ValueError(
+        f"Loading too much TMEM at once: {num=} and each load requires"
+        f" {num_out_regs} registers, which exceeds the limit of 256"
+    )
   num_out_regs *= num
   i32 = ir.IntegerType.get_signless(32)
   out_regs = ",".join("$" + str(i) for i in range(num_out_regs))
@@ -364,6 +385,24 @@ class TMEMRef:
   def shape(self):
     return (self.num_rows, self.num_cols)
 
+  def slice(self, *idxs):
+    base_idx, slice_shape, is_squeezed = utils.parse_indices(idxs, self.shape)
+    if self.layout != TMEMLayout.D:
+      raise NotImplementedError(self.layout)
+    if any(is_squeezed):
+      raise ValueError("TMEM can only be sliced, not indexed")
+    if base_idx[0] != 0 or slice_shape[0] != self.num_rows:
+      raise NotImplementedError("TMEM cannot be sliced along rows")
+    col_idx = base_idx[1]
+    if not isinstance(col_idx, ir.Value):
+      col_idx = arith.constant(ir.IntegerType.get_signless(32), col_idx)
+    return TMEMRef(
+        address=arith.addi(self.address, col_idx),
+        layout=self.layout,
+        num_cols=slice_shape[1],
+        dtype=self.dtype,
+    )
+
   def __getitem__(self, *idxs):
     i32 = ir.IntegerType.get_signless(32)
     base_idxs, slice_shape, is_squeezed = utils.parse_indices(idxs, self.shape)
@@ -380,11 +419,25 @@ class TMEMRef:
     layout = _m128_256bit_32bit_layout(self.shape)
     regs_shape = layout.registers_shape(self.shape)
     num = self.num_cols // 8
+    # TODO(apaszke): Make the tiling configurable through the args too.
+    if num <= 32:
+      num_tiling = num
+    elif num == 64:
+      num_tiling = 32
+    else:
+      raise NotImplementedError(f"num_cols={self.num_cols} is unsupported")
     registers = np.empty(regs_shape, dtype=object)
     # We load 16 lanes at a time, but need 32 in total.
     for row_group in range(2):
-      addr = arith.addi(self.address, arith.constant(i32, (row_group * 16) << 16))
-      regs = tmem_load(addr, "16x256b", num)
+      addr_row = arith.addi(self.address, arith.constant(i32, (row_group * 16) << 16))
+      regs = []
+      cols_per_num_tile = 8  # This depends on the 16x256b below.
+      for num_group in range(num // num_tiling):
+        addr_row_col = arith.addi(
+            addr_row,
+            arith.constant(i32, num_tiling * num_group * cols_per_num_tile),
+        )
+        regs += tmem_load(addr_row_col, "16x256b", num_tiling)
       regs = [llvm.bitcast(self.dtype, r) for r in regs]
       vector_regs = []
       undef = llvm.mlir_undef(ir.VectorType.get((2,), self.dtype))
