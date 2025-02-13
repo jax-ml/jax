@@ -15,6 +15,8 @@
 from jax._src.lax.linalg import (
   cholesky as cholesky,
   cholesky_p as cholesky_p,
+  cholesky_update as cholesky_update,
+  cholesky_update_p as cholesky_update_p,
   eig as eig,
   eig_p as eig_p,
   eigh as eigh,
@@ -24,6 +26,7 @@ from jax._src.lax.linalg import (
   lu as lu,
   lu_p as lu_p,
   lu_pivots_to_permutation as lu_pivots_to_permutation,
+  lu_pivots_to_permutation_p as lu_pivots_to_permutation_p,
   householder_product as householder_product,
   householder_product_p as householder_product_p,
   qr as qr,
@@ -39,8 +42,9 @@ from jax._src.lax.linalg import (
   tridiagonal_solve_p as tridiagonal_solve_p,
   schur as schur,
   schur_p as schur_p,
+  symmetric_product as symmetric_product,
+  symmetric_product_p as symmetric_product_p,
 )
-
 
 from jax._src.lax.qdwh import (
   qdwh as qdwh

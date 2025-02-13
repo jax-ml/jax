@@ -238,18 +238,23 @@ Linear algebra operators (jax.lax.linalg)
   :toctree: _autosummary
 
     cholesky
+    cholesky_update
     eig
     eigh
     hessenberg
-    lu
     householder_product
+    lu
+    lu_pivots_to_permutation
     qdwh
     qr
     schur
     svd
+    SvdAlgorithm
+    symmetric_product
     triangular_solve
     tridiagonal
     tridiagonal_solve
+
 
 Argument classes
 ----------------
