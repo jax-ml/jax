@@ -5753,7 +5753,7 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
       'This reshape is not supported. Only 4 out of the box reshapes are'
       ' supported.Adding/removing singleton dims and splitting/merging without'
       ' sharded split/merged axes are supported. Please specify the sharding of'
-      ' the output via the `sharding` argument of jax.lax.reshape.')
+      ' the output via the `out_sharding` argument of jax.lax.reshape.')
 
 def _split_merge_singleton_dim_sharding_rule(operand, new_sizes):
   filtered_spec = [sp for sh, sp in zip(operand.shape, operand.sharding.spec)
