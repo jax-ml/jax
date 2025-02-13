@@ -1401,16 +1401,20 @@ mlir.register_lowering(triangular_solve_p, _triangular_solve_cpu_lower,
 # by LU decomposition into permutations.
 
 # Define this outside lu_pivots_to_permutation to ensure fori_loop cache hits
+def _lu_pivots_body_fn_inner(i, permutation, swaps):
+  j = swaps[i]
+  x = permutation[i]
+  y = permutation[j]
+  permutation = permutation.at[i].set(y)
+  return permutation.at[j].set(x)
+
 def _lu_pivots_body_fn(i, permutation_and_swaps):
   permutation, swaps = permutation_and_swaps
   batch_dims = swaps.shape[:-1]
-  j = swaps[..., i]
-  iotas = _broadcasted_iotas(*batch_dims)
-  x = permutation[..., i]
-  y = permutation[(*iotas, j)]
-  permutation = permutation.at[..., i].set(y)
-  return permutation.at[(*iotas, j)].set(x), swaps
-
+  fn = _lu_pivots_body_fn_inner
+  for _ in range(len(batch_dims)):
+    fn = api.vmap(fn, in_axes=(None, 0, 0), out_axes=0)
+  return fn(i, permutation, swaps), swaps
 
 def _generic_lu_pivots_to_permutation(swaps, permutation_size):
   """Converts the pivots (row swaps) returned by LU to a permutation.
