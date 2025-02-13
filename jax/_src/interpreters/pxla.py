@@ -2003,7 +2003,9 @@ def jaxpr_transfer_mem_kinds(
   return out
 
 
-def are_all_shardings_default_mem_kind(da_object: xc.DeviceList, shardings):
+def are_all_shardings_default_mem_kind(
+    da_object: xc.DeviceList | None, shardings
+):
   if da_object is None:
     return True
   try:
@@ -2339,8 +2341,8 @@ def lower_sharding_computation(
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
        closed_jaxpr, api_name, fun_name, backend, semantic_in_shardings,
        semantic_out_shardings, in_layouts, out_layouts, num_devices,
-       tuple(da_object) if prim_requires_devices else None, donated_invars,
-       name_stack, all_default_mem_kind, inout_aliases,
+       tuple(da_object) if prim_requires_devices else None,  # type: ignore[arg-type]
+       donated_invars, name_stack, all_default_mem_kind, inout_aliases,
        propagated_out_mem_kinds, platforms,
        lowering_parameters=lowering_parameters,
        abstract_mesh=abstract_mesh)

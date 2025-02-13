@@ -494,7 +494,7 @@ def _wgmma_lowering(
     b_transforms_tree,
 ):
   _, a_aval, *_ = ctx.avals_in
-  lhs_swizzle = None
+  lhs_swizzle: int | None = None
   if a_transforms_tree is not None:
     a_transforms_leaves, b_transforms_leaves = util.split_list(
         transforms_leaves, [a_transforms_tree.num_leaves]

@@ -13,14 +13,13 @@
 # limitations under the License.
 
 import enum
-from typing import ClassVar
 
 
 class ComputationMode(enum.Enum):
-  kComputeSchurVectors: ClassVar[ComputationMode]
-  kNoComputeSchurVectors: ClassVar[ComputationMode]
+  kComputeSchurVectors = ...
+  kNoComputeSchurVectors = ...
 
 
 class Sort(enum.Enum):
-  kNoSortEigenvalues: ClassVar[Sort]
-  kSortEigenvalues: ClassVar[Sort]
+  kNoSortEigenvalues = ...
+  kSortEigenvalues = ...
