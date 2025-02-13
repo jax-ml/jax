@@ -2011,11 +2011,14 @@ def merge_indexers(
       raise NotImplementedError()
 
     def _ensure_idx_fa(x):
-      index = ir.IndexType.get()
       i32 = ir.IntegerType.get_signless(32)
       if isinstance(x, ir.Value):
+        # TODO(cperivol): We assume all indices are signed. We should
+        # look at the JAX avals to see if the integers are signed or
+        # not to figure out is_signed.
+        is_signed = False if ir.IntegerType.isinstance(x.type) else None
         return mgpu.FragmentedArray.splat(
-            x, (), is_signed=mgpu.utils.is_signed(x.type)
+            x, (), is_signed=is_signed
         ).astype(i32, is_signed=False)
       if isinstance(x, mgpu.FragmentedArray):
         return x.astype(i32, is_signed=False)

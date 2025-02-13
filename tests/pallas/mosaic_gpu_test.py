@@ -339,13 +339,30 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
 
   @parameterized.named_parameters(
-      {"testcase_name": "1d_none",
-       "shape": (256,), "indexers": (slice(0, 128), slice(None, 32))},
-      {"testcase_name": "1d_offset",
-       "shape": (256,), "indexers": (slice(32, 96), slice(0, 32))},
-      {"testcase_name": "2d_extract",
-       "shape": (64, 64), "indexers": (4, slice(0, 64))},
-      )
+      {
+          "testcase_name": "1d_none",
+          "shape": (256,),
+          "indexers": (slice(0, 128), slice(None, 32)),
+      },
+      {
+          "testcase_name": "1d_offset",
+          "shape": (256,),
+          "indexers": (slice(32, 96), slice(0, 32)),
+      },
+      {
+          "testcase_name": "2d_extract_static",
+          "shape": (64, 64),
+          "indexers": (4, slice(0, 64)),
+      },
+      {
+          "testcase_name": "2d_extract_dyn",
+          "shape": (64, 64),
+          "indexers": lambda in_dev: (
+              pl.program_id(0) + 4 if in_dev else jnp.array(4),
+              slice(0, 64),
+          ),
+      },
+  )
   def test_copy_gmem_to_smem_with_multiple_gmem_indexers(self, shape, indexers):
     @functools.partial(
         pl.pallas_call,
@@ -354,10 +371,11 @@ class PallasCallTest(PallasTest):
         scratch_shapes=[plgpu.SMEM(shape, jnp.float32),
                         plgpu.Barrier(num_arrivals=1),
                         ],
+        grid=(1,),
     )
     def kernel(x_ref_gmem, o_ref, scratch_ref, barrier_ref):
       scratch_ref_sliced = scratch_ref
-      for indexer in indexers:
+      for indexer in indexers(True) if callable(indexers) else indexers:
         scratch_ref_sliced = scratch_ref_sliced.at[indexer]
         x_ref_gmem = x_ref_gmem.at[indexer]
       plgpu.copy_gmem_to_smem(
@@ -369,7 +387,7 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(np.prod(shape)).astype(jnp.float32).reshape(*shape)
     result = kernel(x)
     ref = x + 1.0
-    for indexer in indexers:
+    for indexer in indexers(False) if callable(indexers) else indexers:
       result = result[indexer]
       ref = ref[indexer]
     np.testing.assert_array_equal(result, ref)
