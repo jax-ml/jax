@@ -192,7 +192,7 @@ class _BaseMesh:
 
 _mesh_object_dict = {}  # type: ignore
 
-MeshAxisType = dict[AxisTypes, str | tuple[str, ...]]
+MeshAxisType = dict[AxisTypes, core.AxisName | tuple[core.AxisName, ...]]
 
 class Mesh(_BaseMesh, contextlib.ContextDecorator):
   """Declare the hardware resources available in the scope of this manager.

@@ -2623,7 +2623,7 @@ def sample(num: int, make_gen: Callable[[], Chooser]) -> Iterator[CaseSpec]:
     name, *case = sample_one(rng, make_gen())
     if name not in seen:
       seen.add(name)
-      yield name, *case
+      yield case
 
 # To sample one test spec, we run the generator, getting back sequences of
 # options from it and sending in our choices from those options until finally a
@@ -2738,7 +2738,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
   def make_mesh(mesh_shape):
     return jtu.create_mesh(tuple(mesh_shape.values()), tuple(mesh_shape))
 
-  @parameterized.named_parameters(
+  @parameterized.parameters(
       sample(jtu.NUM_GENERATED_CASES.value, sample_shmap))
   def test_eager_against_ref(self, fun, mesh, _, in_specs, out_specs, args, ref):
     mesh = self.make_mesh(mesh)
@@ -2747,7 +2747,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     expected = ref(fun, mesh, in_specs, out_specs)(*args)
     self.assertAllClose(expected, out, check_dtypes=False)
 
-  @parameterized.named_parameters(
+  @parameterized.parameters(
       sample(jtu.NUM_GENERATED_CASES.value, sample_shmap))
   def test_jit_against_ref(self, fun, mesh, _, in_specs, out_specs, args, ref):
     mesh = self.make_mesh(mesh)
@@ -2756,9 +2756,9 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     expected = ref(fun, mesh, in_specs, out_specs)(*args)
     self.assertAllClose(expected, out, check_dtypes=False)
 
-  @parameterized.named_parameters(
-      (name + f'_check_rep={check_rep}', *params, check_rep)
-      for (name, *params) in sample(jtu.NUM_GENERATED_CASES.value, sample_shmap)
+  @parameterized.parameters(
+      (*params, check_rep)
+      for params in sample(jtu.NUM_GENERATED_CASES.value, sample_shmap)
       for check_rep in [True, False]
   )
   @jax.default_matmul_precision("float32")
@@ -2770,7 +2770,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
       f = jax.jit(f)
     jtu.check_grads(f, args, order=2, atol=1e-2, rtol=1e-2)
 
-  @parameterized.named_parameters(
+  @parameterized.parameters(
       sample(jtu.NUM_GENERATED_CASES.value, sample_shmap))
   @jax.default_matmul_precision("float32")
   def test_grads_closure(self, fun, mesh, jit, in_specs, out_specs, args, _):
@@ -2789,7 +2789,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
       return g(*args)
     jtu.check_grads(f, (0.2, *closed_over_args), order=2, atol=1e-2, rtol=1e-2)
 
-  @parameterized.named_parameters(
+  @parameterized.parameters(
       sample(jtu.NUM_GENERATED_CASES.value,
              partial(sample_shmap_batched, 5)))
   def test_vmap(self, bdims, fun, mesh, jit, in_specs, out_specs, args, ref):
@@ -2812,7 +2812,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
     tol = 1e-2 if jtu.test_device_matches(['tpu']) else None
     self.assertAllClose(ans, expected, check_dtypes=False, atol=tol, rtol=tol)
 
-  @parameterized.named_parameters(
+  @parameterized.parameters(
       sample(jtu.NUM_GENERATED_CASES.value,
              partial(sample_shmap_batched, 5)))
   def test_vmap_closure(self, bdims, fun, mesh, jit, in_specs, out_specs, args, _):
