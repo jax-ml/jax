@@ -36,10 +36,14 @@ from jax._src.core import AxisName
 from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 from jax._src.cudnn.fused_attention_stablehlo import (
     dot_product_attention as cudnn_dot_product_attention, MaskType)
+from jax._src.cudnn.scaled_matmul_stablehlo import (
+    scaled_matmul_wrapper as cudnn_scaled_matmul,
+    scaled_dot_general_wrapper as cudnn_scaled_dot_general,
+    BlockScaleConfigs, mxfp8_configs)
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.numpy import util as numpy_util
-from jax._src.typing import Array, ArrayLike, DType
+from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.ops.special import logsumexp as _logsumexp
 
 
@@ -1159,3 +1163,92 @@ def dot_product_attention(
       raise ValueError(f"Unsupported implementation option: {implementation}")
 
   return jnp.reshape(out, output_shape)
+
+def scaled_matmul(
+    lhs: Array,
+    rhs: Array,
+    lhs_scales: Array,
+    rhs_scales: Array,
+    preferred_element_type: DTypeLike = jnp.float32,
+) -> Array:
+    r"""
+    Performs scaled matrix multiplication between two 3D arrays, with scaling
+    factors applied to the matrices.
+
+    .. math::
+      \mathrm{ScaledMatmul}(lhs, rhs, lhs_scales, rhs_scales)=lhs_scales*rhs_scales*\mathrm{dot}(lhs, rhs)
+
+    Args:
+        lhs (Array): A 3D array of shape (B, M, K).
+        rhs (Array): A 3D array of shape (B, N, K).
+        lhs_scales (Array): A 3D array of shape (B, M, K_block).
+        rhs_scales (Array): A 3D array of shape (B, N, K_block).
+        preferred_element_type (DTypeLike, optional): The preferred data type
+          for the computation. Defaults to `jnp.float32`.
+
+    Returns:
+        Array: A 3D array of shape (B, M, N) representing the scaled matrix
+          multiplication result.
+
+    Raises:
+        AssertionError: If the number of columns in `lhs` (`lhs_K`) does not
+          match the number of columns in `rhs` (`rhs_K`).
+
+    Notes:
+        - The function ensures that the `preferred_element_type` is
+          danonicalized before passing it to the underlying computation.
+        - Scaling is applied to the matrices based on the `lhs_scales` and
+          `rhs_scales` arrays, enabling efficient computations in blocks.
+
+    """
+    B, M, lhs_K = lhs.shape
+    _, N, rhs_K = rhs.shape
+    assert lhs_K == rhs_K
+    _, _, K_block = lhs_scales.shape
+
+    preferred_element_type = dtypes.canonicalize_dtype(
+        np.dtype(preferred_element_type)
+    )
+    out = cudnn_scaled_matmul(
+        lhs,
+        rhs,
+        lhs_scales,
+        rhs_scales,
+        preferred_element_type=preferred_element_type,
+    )
+    return out
+
+def scaled_dot_general(
+    lhs, rhs,
+    dimension_numbers,
+    preferred_element_type=jnp.float32,
+    configs: BlockScaleConfigs=mxfp8_configs,
+  ):
+  r"""Scaled dot general operation.
+
+  Computes the scaled dot general on lhs, rhs with quanitzation specified by configs:
+
+  .. math::
+    \widehat{lhs}, s_a=\mathrm{quantize}(lhs)
+    \widehat{rhs}, s_b=\mathrm{quantize}(rhs)
+    \mathrm{ScaledDot}(lhs, rhs)=s_a s_b \mathrm{dot}(\widehat{lhs}, \widehat{rhs})
+
+  Args:
+      lhs: Left-hand side input tensor.
+      rhs: Right-hand side input tensor.
+      dimension_numbers: A tuple specifying the contraction and batch dimensions
+          for the dot general operation. Must follow the format:
+          `((lhs_contracting_dims, rhs_contracting_dims), (lhs_batch_dims, rhs_batch_dims))`.
+      preferred_element_type: The preferred output data type. Supported types are
+          `jnp.float32`, `jnp.bfloat16`, and `jnp.float16`. Defaults to `jnp.float32`.
+      configs: A `BlockScaleConfigs` objects specifying the scaling
+          configurations for the operation. Defaults to `mxfp8_configs`.
+
+  Returns:
+      The result of the scaled dot general operation.
+  """
+  return cudnn_scaled_dot_general(
+        lhs, rhs, dimension_numbers,
+        preferred_element_type=preferred_element_type,
+        configs=configs
+  )

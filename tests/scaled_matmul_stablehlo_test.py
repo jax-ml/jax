@@ -11,10 +11,11 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.cudnn.fused_attention_stablehlo import check_cudnn_version
 from jax._src.cudnn.scaled_matmul_stablehlo import (
-    scaled_matmul,
-    mxfp8_dot_general,
-    quantize,
-    shape_normalization,
+    scaled_matmul_wrapper,
+    scaled_dot_general_wrapper,
+    mxfp8_configs,
+    generate_quantized_tensors,
+    quantize_dequantize,
 )
 
 
@@ -42,57 +43,6 @@ expected_hlos = [
 ]
 sharding_configs = [[i, j] for i, j in zip(input_sharding_configs, expected_hlos)]
 
-def quantize_to_fp8(x, q_dtype, compute_dtype, scale):
-  # Explicitly cast the max values to the compute dtype to avoid unnecessary
-  # casting to FP32 during the subsequent math operations."
-  assert q_dtype in (jnp.float8_e4m3fn, )
-  dtype_max = jnp.finfo(q_dtype).max.astype(compute_dtype)
-  scaled_x = x / jnp.broadcast_to(
-      jnp.asarray(scale, dtype=compute_dtype), x.shape
-  )
-  clipped_x = jnp.clip(scaled_x, -dtype_max, dtype_max)
-  return clipped_x.astype(q_dtype)
-
-def quantize_dequantize_fp8(x, q_dtype, scale, compute_dtype):
-  qx = quantize_to_fp8(x, q_dtype, compute_dtype, scale)
-  out = qx.astype(x.dtype) * jnp.broadcast_to(
-      jnp.asarray(scale, dtype=x.dtype), qx.shape
-  )
-  return out
-
-def generate_quantized_tensors(
-    batch, lhs_non_contract, contract, rhs_non_contract, dtype=jnp.float32
-  ):
-  cast_to_representable = partial(
-      quantize_dequantize_fp8,
-      scale=jnp.ones((1,)),
-      compute_dtype=dtype,
-  )
-
-  k1, k2 = jax.random.split(jax.random.key(123), 2)
-
-  f8_dtype = jnp.float8_e4m3fn
-
-  a = cast_to_representable(
-      jax.random.uniform(
-          k1, (batch, lhs_non_contract, contract), minval=-1.0, dtype=dtype
-      ),
-      f8_dtype,
-  )
-  b = cast_to_representable(
-      jax.random.uniform(
-          k2, (batch, rhs_non_contract, contract), minval=-1.0, dtype=dtype
-      ),
-      f8_dtype,
-  )
-
-  dn = ((2,), (0,))
-  a_3d = shape_normalization(a, dn)
-  b_3d = shape_normalization(b, dn)
-  a_q, a_scales = quantize(a, f8_dtype)
-  b_q, b_scales = quantize(b, f8_dtype)
-
-  return a, b, a_q, b_q, a_scales, b_scales
 
 def shard_and_device_put(
     mesh, a_sharding, b_sharding, a, b, a_scales=None, b_scales=None
@@ -126,19 +76,19 @@ def shard_and_device_put(
   return a, b, in_shardings
 
 
-def get_hlo_text(in_shardings):
+def get_hlo_text(in_shardings, block_scale_configs=mxfp8_configs):
   mesh_names = ("dp", "tp")
   devices = np.array(jax.local_devices()[:4]).reshape((2, 2))
   mesh = Mesh(devices, mesh_names)
   _, _, a_q, b_q, a_scales, b_scales = generate_quantized_tensors(
-      2, 512, 1024, 512
+      2, 512, 1024, 512, block_scale_configs,
   )
 
   with mesh:
     a_q, b_q, a_scales, b_scales, in_shardings = shard_and_device_put(
         mesh, in_shardings[0], in_shardings[1], a_q, b_q, a_scales, b_scales
     )
-    pjit_fn = jax.jit(scaled_matmul, in_shardings=in_shardings)
+    pjit_fn = jax.jit(scaled_matmul_wrapper, in_shardings=in_shardings)
     hlo = pjit_fn.lower(a_q, b_q, a_scales, b_scales).compile()
   return hlo.as_text()
 
@@ -180,16 +130,20 @@ class ScaledMatmulTest(jtu.JaxTestCase):
       contract=[160, 96],
       lhs_non_contract=[240, 100],
       dtype=[jnp.float16, jnp.bfloat16, jnp.float32],
+      block_scale_configs=[mxfp8_configs,],
   )
   @jtu.run_on_devices("cuda")
-  def test_scaled_matmul(self, contract, lhs_non_contract, dtype):
+  def test_scaled_matmul(
+      self, contract, lhs_non_contract, dtype, block_scale_configs,
+  ):
     batch, rhs_non_contract = 2, 128
     a, b, a_q, b_q, a_scales, b_scales = generate_quantized_tensors(
-        batch, lhs_non_contract, contract, rhs_non_contract, dtype=dtype
+        batch, lhs_non_contract, contract, rhs_non_contract,
+        block_scale_configs, dtype=dtype,
     )
 
     def wrapper(lhs, rhs, lhs_scales, rhs_scales, out_type):
-      return scaled_matmul(
+      return scaled_matmul_wrapper(
           lhs,
           rhs,
           lhs_scales,
@@ -216,15 +170,18 @@ class ScaledMatmulTest(jtu.JaxTestCase):
         out, out_ref.astype(dtype), rtol=1e-3, atol=1e-3
     )
 
-  @jtu.sample_product(sharding_config=sharding_configs)
+  @jtu.sample_product(
+        sharding_config=sharding_configs,
+        block_scale_configs=[mxfp8_configs,],
+  )
   @jtu.run_on_devices("cuda")
-  def test_scaled_matmul_sharded(self, sharding_config):
+  def test_scaled_matmul_sharded(self, sharding_config, block_scale_configs):
     if len(jax.local_devices()) < 4:
       self.skipTest("Require at least 4 devices to run sharding tests.")
     batch, contract, non_contract = 2, 1024, 256
 
     a, b, a_q, b_q, a_scales, b_scales = generate_quantized_tensors(
-        batch, non_contract, contract, non_contract
+        batch, non_contract, contract, non_contract, block_scale_configs,
     )
 
     devices = np.array(jax.local_devices()[:4])
@@ -246,7 +203,7 @@ class ScaledMatmulTest(jtu.JaxTestCase):
 
       args = [a_q, b_q, a_scales, b_scales]
       j_scaled_matmul = jax.jit(
-          scaled_matmul, in_shardings=input_shardings
+          scaled_matmul_wrapper, in_shardings=input_shardings
       )
       hlo_text = j_scaled_matmul.lower(*args).compile().as_text()
       hlo_pattern = re.compile(
@@ -268,7 +225,9 @@ class ScaledMatmulTest(jtu.JaxTestCase):
 
 
 @jtu.with_config(jax_numpy_dtype_promotion="standard")
-class Mxfp8DotGeneralTest(jtu.JaxTestCase):
+class MxFp8ScaledDotGeneralTest(jtu.JaxTestCase):
+
+  block_scale_configs = mxfp8_configs
 
   def setUp(self):
     super().setUp()
@@ -302,7 +261,7 @@ class Mxfp8DotGeneralTest(jtu.JaxTestCase):
   @jtu.run_on_devices("cuda")
   def test_dot_general(self, configs, output_type):
     cast_to_representable = partial(
-        quantize_dequantize_fp8,
+        quantize_dequantize,
         scale=jnp.ones((1,)),
         compute_dtype=jnp.float32,
     )
@@ -311,16 +270,21 @@ class Mxfp8DotGeneralTest(jtu.JaxTestCase):
     a_shape, b_shape, dimension_numbers, is_training = configs
     a = cast_to_representable(
         jax.random.uniform(k1, a_shape, minval=-1.0, dtype=output_type),
-        jnp.float8_e4m3fn,
+        self.block_scale_configs[0].data_type,
     )
     b = cast_to_representable(
         jax.random.uniform(k2, b_shape, minval=-1.0, dtype=output_type),
-        jnp.float8_e4m3fn,
+        self.block_scale_configs[1].data_type,
     )
 
+    scaled_dot_general = partial(
+        scaled_dot_general_wrapper,
+        configs=self.block_scale_configs
+    )
     def fwd(a, b, is_ref=False):
-      fn = jax.lax.dot_general if is_ref else mxfp8_dot_general
-      y = fn(a, b, dimension_numbers, preferred_element_type=output_type)
+      fn = jax.lax.dot_general if is_ref else scaled_dot_general
+      y = fn(a, b, dimension_numbers,
+             preferred_element_type=output_type)
       return jnp.sum(y)
 
     if is_training:
@@ -349,7 +313,7 @@ class Mxfp8DotGeneralTest(jtu.JaxTestCase):
       self.skipTest("Require at least 4 devices to run sharding tests.")
 
     cast_to_representable = partial(
-        quantize_dequantize_fp8,
+        quantize_dequantize,
         scale=jnp.ones((1,)),
         compute_dtype=jnp.float32,
     )
@@ -360,14 +324,20 @@ class Mxfp8DotGeneralTest(jtu.JaxTestCase):
 
     k1, k2 = jax.random.split(jax.random.key(0), 2)
     a = cast_to_representable(
-        jax.random.uniform(k1, a_shape, minval=-1.0), jnp.float8_e4m3fn
+        jax.random.uniform(k1, a_shape, minval=-1.0),
+        self.block_scale_configs[0].data_type,
     )
     b = cast_to_representable(
-        jax.random.uniform(k2, b_shape, minval=-1.0), jnp.float8_e4m3fn
+        jax.random.uniform(k2, b_shape, minval=-1.0),
+        self.block_scale_configs[1].data_type,
     )
 
+    scaled_dot_general = partial(
+        scaled_dot_general_wrapper,
+        configs=self.block_scale_configs
+    )
     def fwd(a, b, is_ref=False):
-      fn = jax.lax.dot_general if is_ref else mxfp8_dot_general
+      fn = jax.lax.dot_general if is_ref else scaled_dot_general
       y = fn(a, b, dimension_numbers)
       # Use a little complex loss function to avoid constant grads, whose
       # sharding info might be optimized off and then cause issue with the
@@ -415,7 +385,7 @@ class Mxfp8DotGeneralTest(jtu.JaxTestCase):
   @jtu.run_on_devices("cuda")
   def test_dot_general_vmap(self, configs):
     cast_to_representable = partial(
-        quantize_dequantize_fp8,
+        quantize_dequantize,
         scale=jnp.ones((1,)),
         compute_dtype=jnp.float32,
     )
@@ -426,15 +396,21 @@ class Mxfp8DotGeneralTest(jtu.JaxTestCase):
     dimension_numbers = (([1], [1]), ([], []))
 
     a = cast_to_representable(
-        jax.random.uniform(k1, a_shape, minval=-1.0), jnp.float8_e4m3fn
+        jax.random.uniform(k1, a_shape, minval=-1.0),
+        self.block_scale_configs[0].data_type,
     )
     b = cast_to_representable(
-        jax.random.uniform(k2, b_shape, minval=-1.0), jnp.float8_e4m3fn
+        jax.random.uniform(k2, b_shape, minval=-1.0),
+        self.block_scale_configs[1].data_type,
     )
 
+    scaled_dot_general = partial(
+        scaled_dot_general_wrapper,
+        configs=self.block_scale_configs
+    )
     def fwd(a, b, is_ref=False):
       fn = jax.vmap(
-          jax.lax.dot_general if is_ref else mxfp8_dot_general,
+          jax.lax.dot_general if is_ref else scaled_dot_general,
           in_axes=(a_axis, b_axis, None),
           out_axes=o_axis,
       )
@@ -455,5 +431,3 @@ class Mxfp8DotGeneralTest(jtu.JaxTestCase):
 
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())
-
-

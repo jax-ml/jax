@@ -1,6 +1,8 @@
+from dataclasses import dataclass
 import json
 import operator
 from functools import partial, reduce
+from typing import List
 
 # Third-party imports
 import jax
@@ -21,6 +23,26 @@ from jax.sharding import PartitionSpec as P
 Array = jnp.ndarray
 nv_scaled_dot_name = "__nv$scaled_dot"
 
+@dataclass
+class BlockScaleConfig:
+  mode: str
+  block_size: int
+  data_type: DTypeLike
+  scale_type: DTypeLike
+  global_scale: Array | None
+  infer_only: bool
+
+mxfp8_config = BlockScaleConfig(
+    mode='mxfp8',
+    block_size=32,
+    data_type=jnp.float8_e4m3fn,
+    scale_type=jnp.float8_e8m0fnu,
+    global_scale=None,
+    infer_only=False
+)
+
+BlockScaleConfigs = List[BlockScaleConfig]
+mxfp8_configs: BlockScaleConfigs = [mxfp8_config, mxfp8_config, mxfp8_config]
 
 def default_layouts(*shapes):
   return [range(len(shape) - 1, -1, -1) for shape in shapes]
@@ -301,7 +323,7 @@ def _scaled_matmul(
   )
   return output[0]
 
-def scaled_matmul(
+def scaled_matmul_wrapper(
     lhs: Array,
     rhs: Array,
     lhs_scales: Array,
@@ -447,39 +469,92 @@ def e8m0_to_dtype(x, dtype):
   )
   return new_x.astype(dtype)
 
-
-def quantize_core(x, q_dtype, scale):
-  scaled_x = x / scale
-  MAX = jnp.finfo(q_dtype).max.astype(x.dtype)
-  clipped_x = jnp.clip(scaled_x, -MAX, MAX)
-  return clipped_x.astype(q_dtype)
-
-
-def quantize(x, quantize_type, block_size=32):
+def quantize(x, config):
   x_shape = x.shape
   contract_dim = x_shape[-1]
+  block_size = config.block_size
   assert contract_dim >= block_size and contract_dim % block_size == 0
   x_new_shape = x_shape[:-1] + (x_shape[-1] // block_size, block_size)
   x = x.reshape(x_new_shape)  # shape = (B, M, K / block_size, block_size)
 
   amax = jnp.max(jnp.abs(x), axis=-1, keepdims=True)
-  MAX = jnp.finfo(quantize_type).max.astype(x.dtype)
+  MAX = jnp.finfo(config.data_type).max.astype(x.dtype)
   scales = amax / MAX  # shape = (B, M, K / block_size, 1)
 
-  scales_q = cast_to_e8m0_with_rounding_up(scales)
-  scaled_x = x / e8m0_to_dtype(scales_q, scales.dtype)
+  if config.mode == "mxfp8":
+    assert config.scale_type == jnp.float8_e8m0fnu
+    scales_q = cast_to_e8m0_with_rounding_up(scales)
+    scaled_x = x / e8m0_to_dtype(scales_q, scales.dtype)
+  elif config.mode == "nvfp4":
+    assert config.scale_type == jnp.float8_e4m3fn
+    # shuw(TODO): placeholder
+    scales_q = scales
+    scales_x = x
 
   clipped_x = jnp.clip(scaled_x, -MAX, MAX)
-  x_q = clipped_x.astype(quantize_type)
+  x_q = clipped_x.astype(config.data_type)
 
   x_q = x_q.reshape(x_shape)  # shape = (B, M, K)
   scales_q = jnp.reshape(scales_q, scales_q.shape[:-1]).view(
-      jnp.float8_e8m0fnu
+      config.scale_type
   )
   return x_q, scales_q
 
 
-def mxfp8_dot_impl(lhs, rhs, dimension_numbers, preferred_element_type):
+def quantize_to_qtype(x, q_dtype, compute_dtype, scale):
+  # Explicitly cast the max values to the compute dtype to avoid unnecessary
+  # casting to FP32 during the subsequent math operations."
+  assert q_dtype in (jnp.float8_e4m3fn, )
+  dtype_max = jnp.finfo(q_dtype).max.astype(compute_dtype)
+  scaled_x = x / jnp.broadcast_to(
+      jnp.asarray(scale, dtype=compute_dtype), x.shape
+  )
+  clipped_x = jnp.clip(scaled_x, -dtype_max, dtype_max)
+  return clipped_x.astype(q_dtype)
+
+def quantize_dequantize(x, q_dtype, scale, compute_dtype):
+  qx = quantize_to_qtype(x, q_dtype, compute_dtype, scale)
+  out = qx.astype(x.dtype) * jnp.broadcast_to(
+      jnp.asarray(scale, dtype=x.dtype), qx.shape
+  )
+  return out
+
+def generate_quantized_tensors(
+    batch, lhs_non_contract, contract, rhs_non_contract,
+    configs, dtype=jnp.float32,
+  ):
+  cast_to_representable = partial(
+      quantize_dequantize,
+      scale=jnp.ones((1,)),
+      compute_dtype=dtype,
+  )
+
+  k1, k2 = jax.random.split(jax.random.key(123), 2)
+
+  a = cast_to_representable(
+      jax.random.uniform(
+          k1, (batch, lhs_non_contract, contract), minval=-1.0, dtype=dtype
+      ),
+      configs[0].data_type,
+  )
+  b = cast_to_representable(
+      jax.random.uniform(
+          k2, (batch, rhs_non_contract, contract), minval=-1.0, dtype=dtype
+      ),
+      configs[1].data_type,
+  )
+
+  dn = ((2,), (0,))
+  a_3d = shape_normalization(a, dn)
+  b_3d = shape_normalization(b, dn)
+  a_q, a_scales = quantize(a, configs[0])
+  b_q, b_scales = quantize(b, configs[1])
+
+  return a, b, a_q, b_q, a_scales, b_scales
+
+
+def scaled_dot_impl(lhs, rhs, dimension_numbers, preferred_element_type,
+                    configs):
   if preferred_element_type is None:
     preferred_element_type = dtypes.result_type(
         lhs, rhs, return_weak_type_flag=False
@@ -495,10 +570,11 @@ def mxfp8_dot_impl(lhs, rhs, dimension_numbers, preferred_element_type):
 
   lhs_3d = shape_normalization(lhs, lhs_dn)
   rhs_3d = shape_normalization(rhs, rhs_dn)
-  lhs_q, lhs_scales = quantize(lhs_3d, jnp.float8_e4m3fn)
-  rhs_q, rhs_scales = quantize(rhs_3d, jnp.float8_e4m3fn)
+  lhs_config, rhs_config = configs[0], configs[1]
+  lhs_q, lhs_scales = quantize(lhs_3d, lhs_config)
+  rhs_q, rhs_scales = quantize(rhs_3d, rhs_config)
 
-  out = scaled_matmul(
+  out = scaled_matmul_wrapper(
       lhs_q, rhs_q, lhs_scales, rhs_scales, preferred_element_type
   )
 
@@ -509,8 +585,9 @@ def mxfp8_dot_impl(lhs, rhs, dimension_numbers, preferred_element_type):
   return expanded_out
 
 
-def mxfp8_dot_general_transpose_lhs(
-    g, x, y, *, dimension_numbers, preferred_element_type, swap_ans=False
+def scaled_dot_general_transpose_lhs(
+    g, x, y, *, dimension_numbers, preferred_element_type, configs,
+    swap_ans=False
   ):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   x_ndim = x.aval.ndim
@@ -530,10 +607,15 @@ def mxfp8_dot_general_transpose_lhs(
 
   y_3d = shape_normalization(y, y_dn)
   g_3d = shape_normalization(g, g_dn)
-  g_q, g_scales = quantize(g_3d, jnp.float8_e4m3fn)
-  y_q, y_scales = quantize(y_3d, jnp.float8_e4m3fn)
 
-  out = scaled_matmul(g_q, y_q, g_scales, y_scales, preferred_element_type)
+  g_config, y_config = configs[0], configs[1]
+
+  g_q, g_scales = quantize(g_3d, g_config)
+  y_q, y_scales = quantize(y_3d, y_config)
+
+  out = scaled_matmul_wrapper(
+      g_q, y_q, g_scales, y_scales, preferred_element_type
+  )
 
   expanded_out_shape = compute_dot_output_shape(g.shape, y.shape, g_dn, y_dn)
   expanded_out = jnp.reshape(out, expanded_out_shape)
@@ -541,34 +623,40 @@ def mxfp8_dot_general_transpose_lhs(
   return x_bar
 
 
-def mxfp8_dot_general_transpose_rhs(
-    g, x, y, *, dimension_numbers, preferred_element_type: DTypeLike | None
+def scaled_dot_general_transpose_rhs(
+    g, x, y, *, dimension_numbers, preferred_element_type: DTypeLike,
+    configs: BlockScaleConfigs
   ):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   swapped_dimension_numbers = ((y_contract, x_contract), (y_batch, x_batch))
-  y_bar = mxfp8_dot_general_transpose_lhs(
+  y_bar = scaled_dot_general_transpose_lhs(
       g,
       y,
       x,
       dimension_numbers=swapped_dimension_numbers,
       preferred_element_type=preferred_element_type,
+      configs=configs,
       swap_ans=True,
   )
   return y_bar
 
 
-@partial(custom_vjp, nondiff_argnums=(2, 3))
-def mxfp8_dot_general_fn(lhs, rhs, dimension_numbers, preferred_element_type):
-  return mxfp8_dot_impl(lhs, rhs, dimension_numbers, preferred_element_type)
+@partial(custom_vjp, nondiff_argnums=(2, 3, 4))
+def scaled_dot_general_fn(lhs, rhs, dimension_numbers, preferred_element_type,
+                          configs):
+  return scaled_dot_impl(lhs, rhs, dimension_numbers, preferred_element_type,
+                         configs)
 
 
-def mxfp8_dot_fwd(lhs, rhs, dimension_numbers, preferred_element_type):
-  out = mxfp8_dot_impl(lhs, rhs, dimension_numbers, preferred_element_type)
+def scaled_dot_fwd(lhs, rhs, dimension_numbers, preferred_element_type,
+                   configs):
+  out = scaled_dot_impl(lhs, rhs, dimension_numbers, preferred_element_type,
+                        configs)
   res = (lhs, rhs)
   return out, res
 
 
-def mxfp8_dot_bwd(dimension_numbers, preferred_element_type, res, g):
+def scaled_dot_bwd(dimension_numbers, preferred_element_type, configs, res, g):
   (lhs, rhs) = res
 
   args = [g, lhs, rhs]
@@ -576,12 +664,20 @@ def mxfp8_dot_bwd(dimension_numbers, preferred_element_type, res, g):
       "dimension_numbers": dimension_numbers,
       "preferred_element_type": preferred_element_type,
   }
-  grad_lhs = mxfp8_dot_general_transpose_lhs(*args, **kw_args)
-  grad_rhs = mxfp8_dot_general_transpose_rhs(*args, **kw_args)
+  lhs_kw_args = {
+      **kw_args,
+      "configs": [configs[2], configs[1]]
+  }
+  rhs_kw_args = {
+      **kw_args,
+      "configs": [configs[2], configs[0]]
+  }
+  grad_lhs = scaled_dot_general_transpose_lhs(*args, **lhs_kw_args)
+  grad_rhs = scaled_dot_general_transpose_rhs(*args, **rhs_kw_args)
   return (grad_lhs, grad_rhs)
 
 
-mxfp8_dot_general_fn.defvjp(mxfp8_dot_fwd, mxfp8_dot_bwd)
+scaled_dot_general_fn.defvjp(scaled_dot_fwd, scaled_dot_bwd)
 
 
 def ensure_tuple(dimension_numbers):
@@ -610,9 +706,10 @@ def _ensure_batch_dim(lhs, rhs, dimension_numbers):
   return lhs_batched, rhs_batched, dn_batched
 
 
-# TODO(shuw): mxfp8_dot_general should be in nn.function when upstreaming.
-def mxfp8_dot_general(
-    lhs, rhs, dimension_numbers, preferred_element_type=jnp.float32
+def scaled_dot_general_wrapper(
+    lhs, rhs, dimension_numbers,
+    preferred_element_type=jnp.float32,
+    configs: BlockScaleConfigs=mxfp8_configs,
   ):
   if preferred_element_type not in (jnp.float32, jnp.bfloat16, jnp.float16):
     msg = ('Only support preferred_element_type in (f32, bf16, f16), but got '
@@ -622,8 +719,8 @@ def mxfp8_dot_general(
   lhs_batched, rhs_batched, dn_batched = _ensure_batch_dim(
       lhs, rhs, dimension_numbers
   )
-  out = mxfp8_dot_general_fn(
-      lhs_batched, rhs_batched, dn_batched, preferred_element_type
+  out = scaled_dot_general_fn(
+      lhs_batched, rhs_batched, dn_batched, preferred_element_type, configs,
   )
 
   # Expanding batch dims for operands adds a singleton batch dim at axis 0 in
@@ -631,4 +728,3 @@ def mxfp8_dot_general(
   if dn_batched != dimension_numbers:
     return jnp.squeeze(out, axis=0)
   return out
-

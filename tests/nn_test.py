@@ -29,6 +29,11 @@ from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src.lib import cuda_versions
+from jax._src.cudnn.scaled_matmul_stablehlo import (
+    generate_quantized_tensors,
+    mxfp8_configs,
+    quantize_dequantize,
+)
 from jax.test_util import check_grads
 from jax import nn
 from jax import random
@@ -54,6 +59,80 @@ _cudnn_dbias_error = 'cuDNN only supports bias gradient'
 @jtu.with_config(jax_legacy_prng_key="allow",
                  jax_numpy_dtype_promotion="standard")
 class NNFunctionsTest(jtu.JaxTestCase):
+  @parameterized.product(
+      contract=[160, 96],
+      lhs_non_contract=[240, 100],
+      dtype=[jnp.float16, jnp.bfloat16, jnp.float32],
+      configs=[mxfp8_configs,],
+  )
+  def testScaledMatmul(self, contract, lhs_non_contract, dtype, configs):
+    batch, rhs_non_contract = 4, 256
+    a, b, a_q, b_q, a_scales, b_scales = generate_quantized_tensors(
+        batch, lhs_non_contract, contract, rhs_non_contract,
+        configs, dtype=dtype,
+    )
+    out = nn.scaled_matmul(a_q, b_q, a_scales, b_scales,
+                           preferred_element_type=dtype)
+    out_ref = jnp.matmul(a.astype(jnp.float32),
+                         jnp.transpose(b, (0, 2, 1)).astype(jnp.float32))
+    self.assertArraysAllClose(
+        out, out_ref.astype(dtype), rtol=1e-3, atol=1e-3
+    )
+
+  @parameterized.product(
+      is_training=[True, False],
+      output_type=[jnp.float16, jnp.bfloat16, jnp.float32],
+      configs=[mxfp8_configs,],
+  )
+  def testScaledDotGeneral(
+      self, is_training, output_type, configs,
+  ):
+    cast_to_representable = partial(
+        quantize_dequantize,
+        scale=jnp.ones((1,)),
+        compute_dtype=jnp.float32,
+    )
+    k1, k2 = jax.random.split(jax.random.key(0), 2)
+    a_shape = [2, 256, 96]
+    b_shape = [2, 96, 160]
+    dimension_numbers = (([2], [1]), ([0], [0]))
+    a = cast_to_representable(
+        jax.random.uniform(k1, a_shape, minval=-1.0, dtype=output_type),
+        configs[0].data_type,
+    )
+    b = cast_to_representable(
+        jax.random.uniform(k2, b_shape, minval=-1.0, dtype=output_type),
+        configs[1].data_type,
+    )
+
+    scaled_dot_general_fn = partial(
+        nn.scaled_dot_general, configs=configs
+    )
+    def fwd(a, b, is_ref=False):
+      fn = jax.lax.dot_general if is_ref else scaled_dot_general_fn
+      y = fn(a, b, dimension_numbers,
+             preferred_element_type=output_type)
+      return jnp.sum(y)
+
+    if is_training:
+      j_train = jax.jit(jax.value_and_grad(fwd, argnums=[0, 1]))
+
+      j_train_ref = jax.jit(
+          jax.value_and_grad(partial(fwd, is_ref=True), argnums=[0, 1])
+      )
+      out, (x_grad, w_grad) = j_train(a, b)
+      out_ref, (x_grad_ref, w_grad_ref) = j_train_ref(a, b)
+
+      self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e-2)
+      self.assertArraysAllClose(x_grad, x_grad_ref, rtol=1e-2, atol=1e1)
+      self.assertArraysAllClose(w_grad, w_grad_ref, rtol=1e-2, atol=1e1)
+    else:
+      j_inference = jax.jit(fwd)
+      j_inference_ref = jax.jit(partial(fwd, is_ref=True))
+      out = j_inference(a, b)
+      out_ref = j_inference_ref(a, b)
+      self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e-2)
+
   @parameterized.product(
       dtype=[jnp.bfloat16, jnp.float16],
       group_num=[1, 2, 4],
