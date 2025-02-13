@@ -1766,6 +1766,10 @@ class ScipyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=not calc_q)
     self._CompileAndCheck(jsp_func, args_maker)
 
+    if len(shape) == 3:
+      args = args_maker()
+      self.assertAllClose(jax.vmap(jsp_func)(*args), jsp_func(*args))
+
   @jtu.sample_product(
       shape=[(1, 1), (2, 2, 2), (4, 4), (10, 10), (2, 5, 5)],
       dtype=float_types + complex_types,
@@ -1797,6 +1801,10 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(sp_func, jax_func, args_maker, rtol=1e-4, atol=1e-4,
                             check_dtypes=False)
+
+    if len(shape) == 3:
+      args = args_maker()
+      self.assertAllClose(jax.vmap(jax_func)(*args), jax_func(*args))
 
   @jtu.sample_product(
     n=[1, 4, 5, 20, 50, 100],

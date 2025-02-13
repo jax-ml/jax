@@ -1976,7 +1976,7 @@ def _householder_product_batching_rule(batched_args, batch_dims):
   a, taus = batched_args
   b_a, b_taus, = batch_dims
   return householder_product(batching.moveaxis(a, b_a, 0),
-               batching.moveaxis(taus, b_taus, 0)), (0,)
+               batching.moveaxis(taus, b_taus, 0)), 0
 
 def _householder_product_lowering_rule(ctx, a, taus):
   aval_out, = ctx.avals_out
@@ -2865,7 +2865,7 @@ def _hessenberg_batching_rule(batched_args, batch_dims):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
-  return hessenberg(x), 0
+  return hessenberg(x), (0, 0)
 
 batching.primitive_batchers[hessenberg_p] = _hessenberg_batching_rule
 
@@ -2961,7 +2961,7 @@ def _tridiagonal_batching_rule(batched_args, batch_dims, *, lower):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
-  return tridiagonal(x, lower=lower), 0
+  return tridiagonal_p.bind(x, lower=lower), (0, 0, 0, 0, 0)
 
 batching.primitive_batchers[tridiagonal_p] = _tridiagonal_batching_rule
 
