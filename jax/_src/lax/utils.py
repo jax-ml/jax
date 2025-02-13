@@ -25,6 +25,7 @@ from jax._src import dtypes
 from jax._src import mesh as mesh_lib
 from jax._src.util import safe_zip
 from jax._src.partition_spec import PartitionSpec as P
+from jax._src.named_sharding import NamedSharding
 
 zip, unsafe_zip = safe_zip, zip
 
@@ -48,9 +49,27 @@ def standard_primitive(shape_rule, dtype_rule, name,
 
 def _get_array_abstraction_level(a): return a.array_abstraction_level
 
+def _get_abstract_mesh_from_avals(in_avals) -> mesh_lib.AbstractMesh:
+  if not config.sharding_in_types.value:
+    return None  # type: ignore
+  m = None
+  for a in in_avals:
+    if a is core.abstract_token:
+      continue
+    if a.sharding.mesh.empty:  # type: ignore
+      continue
+    if m is not None and m != a.sharding.mesh:
+      if m._are_all_axes_auto and a.sharding.mesh._are_all_axes_auto:
+        return mesh_lib.empty_abstract_mesh
+      raise ValueError(
+          f'Mesh for all inputs should be equal. Got one mesh: {m} and'
+          f' another mesh: {a.sharding.mesh}')
+    m = a.sharding.mesh  # type: ignore
+  return mesh_lib.empty_abstract_mesh if m is None else m
+
+
 def call_sharding_rule(prim, rule, num_out, *avals, **kwargs):
   if config.sharding_in_types.value:
-    from jax._src.pjit import _get_abstract_mesh_from_avals, NamedSharding
     cur_mesh = mesh_lib.get_abstract_mesh()
     aval_mesh = _get_abstract_mesh_from_avals(avals)
     if ((cur_mesh.empty or cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual) and

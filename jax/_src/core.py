@@ -52,6 +52,7 @@ from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            HashableFunction, HashableWrapper, weakref_lru_cache,
                            partition_list, StrictABCMeta)
 import jax._src.pretty_printer as pp
+from jax._src.named_sharding import NamedSharding
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client
 from jax._src import traceback_util
@@ -1491,7 +1492,6 @@ def check_valid_jaxtype(x):
       f"Value {x!r} of type {type(x)} is not a valid JAX type")
 
 def update_aval_with_sharding(aval, sharding):
-  from jax._src.sharding_impls import NamedSharding  # type: ignore
   if config.sharding_in_types.value and isinstance(sharding, NamedSharding):
     aval = aval.update(sharding=NamedSharding(
         sharding.mesh.abstract_mesh,
@@ -1757,8 +1757,6 @@ def canonicalize_value(val):
   if not config.sharding_in_types.value:
     return val
 
-  from jax._src.pjit import NamedSharding, mesh_cast  # type: ignore
-
   try:
     aval = get_aval(val)
   except TypeError:
@@ -1772,6 +1770,7 @@ def canonicalize_value(val):
   if cur_mesh == aval.sharding.mesh:  # type: ignore
     return val
   if cur_mesh._are_all_axes_manual and aval.sharding.mesh._are_all_axes_auto:  # type: ignore
+    from jax._src.pjit import mesh_cast  # type: ignore
     return mesh_cast(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))  # type: ignore
   return val
 
@@ -1779,8 +1778,6 @@ def canonicalize_value(val):
 def get_cur_mesh_sharding(spec=None):
   if not config.sharding_in_types.value:
     return None
-
-  from jax._src.sharding_impls import NamedSharding  # type: ignore
   spec = P() if spec is None else spec
   return NamedSharding(mesh_lib.get_abstract_mesh(), spec)
 
@@ -1819,8 +1816,6 @@ def _maybe_modify_sharding(sharding, ndim):
 
 
 def get_sharding(sharding, ndim):
-  from jax._src.sharding_impls import NamedSharding  # type: ignore
-
   if sharding is None:
     return NamedSharding(mesh_lib.empty_abstract_mesh, P(*[None] * ndim))
 
@@ -1972,7 +1967,6 @@ class DShapedArray(UnshapedArray):
 
   @property
   def sharding(self):
-    from jax._src.sharding_impls import NamedSharding  # type: ignore
     return NamedSharding(mesh_lib.empty_abstract_mesh, P())
 
   def _len(self, tracer):

@@ -297,6 +297,7 @@ py_library_providing_imports_info(
         ":mesh",
         ":mlir",
         ":monitoring",
+        ":named_sharding",
         ":op_shardings",
         ":partial_eval",
         ":partition_spec",
@@ -467,6 +468,7 @@ pytype_strict_library(
         ":dtypes",
         ":effects",
         ":mesh",
+        ":named_sharding",
         ":partition_spec",
         ":pretty_printer",
         ":source_info_util",
@@ -897,6 +899,7 @@ pytype_strict_library(
         ":core",
         ":internal_mesh_utils",
         ":mesh",
+        ":named_sharding",
         ":op_shardings",
         ":partition_spec",
         ":sharding",
@@ -905,6 +908,18 @@ pytype_strict_library(
         ":tree_util",
         ":util",
         ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "named_sharding",
+    srcs = ["_src/named_sharding.py"],
+    deps = [
+        ":mesh",
+        ":partition_spec",
+        ":sharding",
+        ":util",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )

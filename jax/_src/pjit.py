@@ -666,24 +666,6 @@ def _infer_params_impl(
                     donated_invars, dbg.arg_names if dbg else None, len(consts),
                     attrs_tracked), args_flat
 
-def _get_abstract_mesh_from_avals(in_avals):
-  if not config.sharding_in_types.value:
-    return None
-  m = None
-  for a in in_avals:
-    if a is core.abstract_token:
-      continue
-    if a.sharding.mesh.empty:  # type: ignore
-      continue
-    if m is not None and m != a.sharding.mesh:
-      if m._are_all_axes_auto and a.sharding.mesh._are_all_axes_auto:
-        return mesh_lib.empty_abstract_mesh
-      raise ValueError(
-          f'Mesh for all inputs should be equal. Got one mesh: {m} and'
-          f' another mesh: {a.sharding.mesh}')
-    m = a.sharding.mesh  # type: ignore
-  return mesh_lib.empty_abstract_mesh if m is None else m
-
 
 class InferParamsCacheEntry:
   """Mutable value object for _infer_params_cached."""
