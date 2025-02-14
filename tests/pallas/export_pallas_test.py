@@ -20,9 +20,12 @@ from absl.testing import absltest
 import jax
 from jax import export
 from jax._src import test_util as jtu
-from jax._src.lib import triton
 from jax.experimental import pallas as pl
 import numpy as np
+try:
+  from jax._src.lib import triton
+except ImportError:
+  triton = None  # Windows builds don't have Triton.
 
 
 jax.config.parse_flags_with_absl()
