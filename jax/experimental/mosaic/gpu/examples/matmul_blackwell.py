@@ -191,11 +191,12 @@ def build_kernel(
       mgpu.tile_shape((block_tile_m, tile_n), (tma_tile_m, tma_tile_kn)),
       jnp.float16)
   smem_buffers = mgpu.Union([compute_buffers, epilogue_buffer])
+  assert block_tile_m == 128
   smem = (
       smem_buffers,
       [mgpu.Barrier(arrival_count=1, num_barriers=max_concurrent_steps)] * 2,
       mgpu.Barrier(arrival_count=1),
-      mgpu.TMEM((128, tile_n), jnp.float32, tcgen05.TMEMLayout.D, collective=collective),
+      mgpu.TMEM((128, tile_n), jnp.float32, collective=collective),
   )
   return mgpu.as_gpu_kernel(
       kernel,
@@ -212,27 +213,32 @@ def build_kernel(
 
 
 def main(unused_argv):
-  m, k, n = 8192, 4096, 2048
+  m, k, n = 8192, 4096, 8192
 
   ka, kb = jr.split(jr.key(0), 2)
   a = jr.normal(key=ka, shape=(m, k), dtype=jnp.float16)
   b = jr.normal(key=kb, shape=(n, k), dtype=jnp.float16)
 
-  tile_m = tile_n = (128,)
+  tile_m = (128,)
+  tile_n = (128, 256, 512)
   max_concurrent_steps = (2, 4, 5, 6)
   grid_tile_m = (1, 2, 4, 8, 16)
   collective = (False, True)
-  configs = itertools.product(tile_m, tile_n, max_concurrent_steps, grid_tile_m, collective)
-  names = ("tile_m", "tile_n", "max_concurrent_steps", "grid_tile_m", "collective")
+  configs = itertools.product(collective, tile_m, tile_n, grid_tile_m, max_concurrent_steps)
+  names = ("collective", "tile_m", "tile_n", "grid_tile_m", "max_concurrent_steps")
   best_runtime = float("inf")
   best_kwargs = {}
   for config in configs:
     kwargs = dict(zip(names, config))
     tile_m = kwargs["tile_m"]
+    tile_n = kwargs["tile_n"]
     if kwargs["collective"]:
       tile_m *= 2
-    if m < tile_m or n < kwargs["tile_n"]:
+      tile_n *= 2
+    if m < tile_m or n < tile_n:
       continue
+    if kwargs["collective"] and tile_n >= 512:
+      continue  # TODO(apaszke): Support 512
     if (m // tile_m) % kwargs["grid_tile_m"]:
       continue
     try:
