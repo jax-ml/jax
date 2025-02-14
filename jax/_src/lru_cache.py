@@ -94,7 +94,6 @@ class LRUCache(CacheInterface):
       raise ValueError("key cannot be empty")
 
     cache_path = self.path / f"{key}{_CACHE_SUFFIX}"
-    atime_path = self.path / f"{key}{_ATIME_SUFFIX}"
 
     if self.eviction_enabled:
       self.lock.acquire(timeout=self.lock_timeout_secs)
@@ -108,8 +107,10 @@ class LRUCache(CacheInterface):
 
       val = cache_path.read_bytes()
 
-      timestamp = time.time_ns().to_bytes(8, "little")
-      atime_path.write_bytes(timestamp)
+      if self.eviction_enabled:
+        timestamp = time.time_ns().to_bytes(8, "little")
+        atime_path = self.path / f"{key}{_ATIME_SUFFIX}"
+        atime_path.write_bytes(timestamp)
 
       return val
 
@@ -138,7 +139,6 @@ class LRUCache(CacheInterface):
       return
 
     cache_path = self.path / f"{key}{_CACHE_SUFFIX}"
-    atime_path = self.path / f"{key}{_ATIME_SUFFIX}"
 
     if self.eviction_enabled:
       self.lock.acquire(timeout=self.lock_timeout_secs)
@@ -151,8 +151,10 @@ class LRUCache(CacheInterface):
 
       cache_path.write_bytes(val)
 
-      timestamp = time.time_ns().to_bytes(8, "little")
-      atime_path.write_bytes(timestamp)
+      if self.eviction_enabled:
+        timestamp = time.time_ns().to_bytes(8, "little")
+        atime_path = self.path / f"{key}{_ATIME_SUFFIX}"
+        atime_path.write_bytes(timestamp)
 
     finally:
       if self.eviction_enabled:
