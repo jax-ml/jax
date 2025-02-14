@@ -20,7 +20,6 @@ import functools
 import operator
 from typing import Sequence, Type, cast
 
-import jax
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
