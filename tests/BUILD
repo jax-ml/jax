@@ -1118,6 +1118,11 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "error_check_test",
+    srcs = ["error_check_test.py"],
+)
+
+jax_multiplatform_test(
     name = "stax_test",
     srcs = ["stax_test.py"],
     shard_count = {
