@@ -126,6 +126,7 @@ py_library(
         ":internal",
     ] + jax_test_util_visibility,
     deps = [
+        ":compilation_cache_internal",
         ":jax",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )

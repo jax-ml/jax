@@ -350,8 +350,8 @@ class PgleTest(jtu.JaxTestCase):
     # Test pass fdo_profile as compiler_options API works.
     f_lowered.compile(compiler_options={'fdo_profile': fdo_profile})
 
-
   def testPersistentCachePopulatedWithAutoPgle(self):
+    self.skipTest('Test does not cleanly reset the compilation cache')
     its = 50
     mesh = jtu.create_mesh((2,), ('x',))
 
