@@ -478,7 +478,7 @@ def _slogdet_lu(a: Array) -> tuple[Array, Array]:
                   jnp.array(0, dtype=dtype),
                   sign * jnp.array(-2 * (parity % 2) + 1, dtype=dtype))
   logdet = jnp.where(
-      is_zero, jnp.array(-jnp.inf, dtype=dtype),
+      is_zero, jnp.array(-np.inf, dtype=dtype),
       reductions.sum(ufuncs.log(ufuncs.abs(diag)).astype(dtype), axis=-1))
   return sign, ufuncs.real(logdet)
 
@@ -539,7 +539,7 @@ def slogdet(a: ArrayLike, *, method: str | None = None) -> SlogdetResult:
   """
   a = ensure_arraylike("jnp.linalg.slogdet", a)
   a, = promote_dtypes_inexact(a)
-  a_shape = jnp.shape(a)
+  a_shape = np.shape(a)
   if len(a_shape) < 2 or a_shape[-1] != a_shape[-2]:
     raise ValueError(f"Argument to slogdet() must have shape [..., n, n], got {a_shape}")
   if method is None or method == "lu":
@@ -610,8 +610,8 @@ def _cofactor_solve(a: ArrayLike, b: ArrayLike) -> tuple[Array, Array]:
   a, b = ensure_arraylike("jnp.linalg._cofactor_solve", a, b)
   a, = promote_dtypes_inexact(a)
   b, = promote_dtypes_inexact(b)
-  a_shape = jnp.shape(a)
-  b_shape = jnp.shape(b)
+  a_shape = np.shape(a)
+  b_shape = np.shape(b)
   a_ndims = len(a_shape)
   if not (a_ndims >= 2 and a_shape[-1] == a_shape[-2]
     and b_shape[-2:] == a_shape[-2:]):
@@ -710,7 +710,7 @@ def det(a: ArrayLike) -> Array:
   """
   a = ensure_arraylike("jnp.linalg.det", a)
   a, = promote_dtypes_inexact(a)
-  a_shape = jnp.shape(a)
+  a_shape = np.shape(a)
   if len(a_shape) >= 2 and a_shape[-1] == 2 and a_shape[-2] == 2:
     return _det_2x2(a)
   elif len(a_shape) >= 2 and a_shape[-1] == 3 and a_shape[-2] == 3:
@@ -976,10 +976,10 @@ def _pinv(a: ArrayLike, rtol: ArrayLike | None = None, hermitian: bool = False) 
   u, s, vh = svd(arr, full_matrices=False, hermitian=hermitian)
   # Singular values less than or equal to ``rtol * largest_singular_value``
   # are set to zero.
-  rtol = lax.expand_dims(rtol[..., jnp.newaxis], range(s.ndim - rtol.ndim - 1))
+  rtol = lax.expand_dims(rtol[..., np.newaxis], range(s.ndim - rtol.ndim - 1))
   cutoff = rtol * s[..., 0:1]
-  s = jnp.where(s > cutoff, s, jnp.inf).astype(u.dtype)
-  res = tensor_contractions.matmul(vh.mT, ufuncs.divide(u.mT, s[..., jnp.newaxis]),
+  s = jnp.where(s > cutoff, s, np.inf).astype(u.dtype)
+  res = tensor_contractions.matmul(vh.mT, ufuncs.divide(u.mT, s[..., np.newaxis]),
                                    precision=lax.Precision.HIGHEST)
   return lax.convert_element_type(res, arr.dtype)
 
@@ -1148,7 +1148,7 @@ def norm(x: ArrayLike, ord: int | str | None = None,
   """
   x = ensure_arraylike("jnp.linalg.norm", x)
   x, = promote_dtypes_inexact(x)
-  x_shape = jnp.shape(x)
+  x_shape = np.shape(x)
   ndim = len(x_shape)
 
   if axis is None:
@@ -1181,12 +1181,12 @@ def norm(x: ArrayLike, ord: int | str | None = None,
         col_axis -= 1
       return reductions.amin(reductions.sum(ufuncs.abs(x), axis=row_axis, keepdims=keepdims),
                              axis=col_axis, keepdims=keepdims)
-    elif ord == jnp.inf:
+    elif ord == np.inf:
       if not keepdims and row_axis > col_axis:
         row_axis -= 1
       return reductions.amax(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
                      axis=row_axis, keepdims=keepdims)
-    elif ord == -jnp.inf:
+    elif ord == -np.inf:
       if not keepdims and row_axis > col_axis:
         row_axis -= 1
       return reductions.amin(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
@@ -1392,7 +1392,7 @@ def _lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None, *,
     mask = s >= jnp.array(rcond, dtype=s.dtype) * s[0]
     rank = mask.sum()
     safe_s = jnp.where(mask, s, 1).astype(a.dtype)
-    s_inv = jnp.where(mask, 1 / safe_s, 0)[:, jnp.newaxis]
+    s_inv = jnp.where(mask, 1 / safe_s, 0)[:, np.newaxis]
     uTb = tensor_contractions.matmul(u.conj().T, b, precision=lax.Precision.HIGHEST)
     x = tensor_contractions.matmul(vt.conj().T, s_inv * uTb, precision=lax.Precision.HIGHEST)
   # Numpy returns empty residuals in some cases. To allow compilation, we
@@ -1651,9 +1651,9 @@ def vector_norm(x: ArrayLike, /, *, axis: int | tuple[int, ...] | None = None, k
   if ord is None or ord == 2:
     return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
                                       keepdims=keepdims))
-  elif ord == jnp.inf:
+  elif ord == np.inf:
     return reductions.amax(ufuncs.abs(x), axis=axis, keepdims=keepdims)
-  elif ord == -jnp.inf:
+  elif ord == -np.inf:
     return reductions.amin(ufuncs.abs(x), axis=axis, keepdims=keepdims)
   elif ord == 0:
     return reductions.sum(x != 0, dtype=jnp.finfo(lax.dtype(x)).dtype,
@@ -2177,7 +2177,7 @@ def cond(x: ArrayLike, p=None):
       raise ValueError(f"jnp.linalg.cond: for {p=}, array must be square; got {arr.shape=}")
     r = norm(x, ord=p, axis=(-2, -1)) * norm(inv(x), ord=p, axis=(-2, -1))
   # Convert NaNs to infs where original array has no NaNs.
-  return jnp.where(ufuncs.isnan(r) & ~ufuncs.isnan(x).any(axis=(-2, -1)), jnp.inf, r)
+  return jnp.where(ufuncs.isnan(r) & ~ufuncs.isnan(x).any(axis=(-2, -1)), np.inf, r)
 
 
 @export
