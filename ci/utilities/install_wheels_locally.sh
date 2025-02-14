@@ -27,15 +27,23 @@ fi
 echo "Installing the following wheels:"
 echo "${WHEELS[@]}"
 
+# Use `uv` if it's available. `uv` is much faster than pip for installing
+# Python packages.
+if command -v uv >/dev/null 2>&1; then
+  USE_UV="uv"
+else
+  USE_UV=""
+fi
+
 # On Windows, convert MSYS Linux-like paths to Windows paths.
 if [[ $(uname -s) =~ "MSYS_NT" ]]; then
-  "$JAXCI_PYTHON" -m pip install $(cygpath -w "${WHEELS[@]}")
+  "$JAXCI_PYTHON" -m $USE_UV pip install $(cygpath -w "${WHEELS[@]}")
 else
-  "$JAXCI_PYTHON" -m pip install "${WHEELS[@]}"
+  "$JAXCI_PYTHON" -m $USE_UV pip install "${WHEELS[@]}"
 fi
 
 if [[ "$JAXCI_INSTALL_JAX_CURRENT_COMMIT" == "1" ]]; then
   echo "Installing the JAX package in editable mode at the current commit..."
   # Install JAX package at the current commit.
-  "$JAXCI_PYTHON" -m pip install -U -e .
+  "$JAXCI_PYTHON" -m $USE_UV pip install -U -e .
 fi
