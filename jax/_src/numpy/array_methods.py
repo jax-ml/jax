@@ -40,6 +40,7 @@ from jax._src.array import ArrayImpl
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_client as xc
 from jax._src.numpy import array_api_metadata
+from jax._src.numpy import indexing
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import tensor_contractions
 from jax._src import mesh as mesh_lib
@@ -382,8 +383,8 @@ def _take(self: Array, indices: ArrayLike, axis: int | None = None, out: None = 
 
   Refer to :func:`jax.numpy.take` for full documentation.
   """
-  return lax_numpy.take(self, indices, axis=axis, out=out, mode=mode, unique_indices=unique_indices,
-                        indices_are_sorted=indices_are_sorted, fill_value=fill_value)
+  return indexing.take(self, indices, axis=axis, out=out, mode=mode, unique_indices=unique_indices,
+                       indices_are_sorted=indices_are_sorted, fill_value=fill_value)
 
 def _to_device(self: Array, device: xc.Device | Sharding, *,
                stream: int | Any | None = None):
@@ -649,7 +650,7 @@ def _chunk_iter(x, size):
       yield lax.dynamic_slice_in_dim(x, num_chunks * size, tail)
 
 def _getitem(self, item):
-  return lax_numpy._rewriting_take(self, item)
+  return indexing.rewriting_take(self, item)
 
 # Syntactic sugar for scatter operations.
 class _IndexUpdateHelper:
@@ -777,7 +778,7 @@ class _IndexUpdateRef:
 
     See :mod:`jax.ops` for details.
     """
-    take = partial(lax_numpy._rewriting_take,
+    take = partial(indexing.rewriting_take,
                    indices_are_sorted=indices_are_sorted,
                    unique_indices=unique_indices, mode=mode,
                    fill_value=fill_value)

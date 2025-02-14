@@ -70,7 +70,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax.tree_util import tree_flatten, tree_map, tree_unflatten
 from jax.util import safe_map, safe_zip, split_list
 from jax._src.lax.control_flow import _check_tree_and_avals
-from jax._src.numpy import lax_numpy
+from jax._src.numpy import indexing as jnp_indexing
 from jax.experimental import sparse
 from jax.experimental.sparse import BCOO, BCSR
 
@@ -914,7 +914,7 @@ def _bcoo_rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=Fals
                            mode=None, fill_value=None):
   # Only sparsify the array argument; sparse indices not yet supported
   result = sparsify(functools.partial(
-    lax_numpy._rewriting_take, idx=idx, indices_are_sorted=indices_are_sorted,
+    jnp_indexing.rewriting_take, idx=idx, indices_are_sorted=indices_are_sorted,
     mode=mode, unique_indices=unique_indices, fill_value=fill_value))(arr)
   # Account for a corner case in the rewriting_take implementation.
   if not isinstance(result, BCOO) and np.size(result) == 0:
@@ -966,7 +966,7 @@ def _bcsr_rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=Fals
                            mode=None, fill_value=None):
   # Only sparsify the array argument; sparse indices not yet supported
   result = sparsify(functools.partial(
-    lax_numpy._rewriting_take, idx=idx, indices_are_sorted=indices_are_sorted,
+    jnp_indexing.rewriting_take, idx=idx, indices_are_sorted=indices_are_sorted,
     mode=mode, unique_indices=unique_indices, fill_value=fill_value))(arr)
   return result
 

@@ -31,6 +31,8 @@ from jax._src import deprecations
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.lax import PrecisionLike
 from jax._src.lax import linalg as lax_linalg
+from jax._src.numpy import einsum
+from jax._src.numpy import indexing
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import reductions, tensor_contractions, ufuncs
 from jax._src.numpy.util import promote_dtypes_inexact, ensure_arraylike
@@ -292,7 +294,7 @@ def svd(
       s = lax.rev(s, dimensions=[s.ndim - 1])
       idxs = lax.rev(idxs, dimensions=[s.ndim - 1])
       sign = lax.rev(sign, dimensions=[s.ndim - 1])
-      u = jnp.take_along_axis(w, idxs[..., None, :], axis=-1)
+      u = indexing.take_along_axis(w, idxs[..., None, :], axis=-1)
       vh = _H(u * sign[..., None, :].astype(u.dtype))
       return SVDResult(u, s, vh)
     else:
@@ -2115,8 +2117,8 @@ def multi_dot(arrays: Sequence[ArrayLike], *, precision: PrecisionLike = None) -
     einsum_axes[0] = einsum_axes[0][1:]
   if arrs[-1].ndim == 1:
     einsum_axes[-1] = einsum_axes[-1][:1]
-  return jnp.einsum(*itertools.chain(*zip(arrs, einsum_axes)),  # type: ignore[call-overload]
-                    optimize='auto', precision=precision)
+  return einsum.einsum(*itertools.chain(*zip(arrs, einsum_axes)),  # type: ignore[call-overload]
+                       optimize='auto', precision=precision)
 
 
 @export

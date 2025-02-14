@@ -144,11 +144,8 @@ from jax._src.numpy.lax_numpy import (
     permute_dims as permute_dims,
     pi as pi,
     piecewise as piecewise,
-    place as place,
     printoptions as printoptions,
     promote_types as promote_types,
-    put as put,
-    put_along_axis as put_along_axis,
     ravel as ravel,
     ravel_multi_index as ravel_multi_index,
     repeat as repeat,
@@ -170,8 +167,6 @@ from jax._src.numpy.lax_numpy import (
     squeeze as squeeze,
     stack as stack,
     swapaxes as swapaxes,
-    take as take,
-    take_along_axis as take_along_axis,
     tile as tile,
     trace as trace,
     trapezoid as trapezoid,
@@ -209,6 +204,14 @@ from jax._src.numpy.array_creation import (
 from jax._src.numpy.einsum import (
     einsum as einsum,
     einsum_path as einsum_path,
+)
+
+from jax._src.numpy.indexing import (
+    place as place,
+    put as put,
+    put_along_axis as put_along_axis,
+    take as take,
+    take_along_axis as take_along_axis,
 )
 
 from jax._src.numpy.scalar_types import (
