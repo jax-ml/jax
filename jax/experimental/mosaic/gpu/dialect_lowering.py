@@ -119,8 +119,8 @@ def _fragmented_array_from_ir(
 
 # TODO(dasenov): Remove this when minimum jaxlib version >= 0.5.1.
 # Jaxlib doesn't contain the latest Mosaic GPU dialect bindings.
-WaitOp = mgpu.WaitOp if jax.version._version == jax.lib.__version__ else None
-ArriveExpectTxOp = mgpu.ArriveExpectTxOp if jax.version._version == jax.lib.__version__ else None
+WaitOp = getattr(mgpu, "WaitOp", None)
+ArriveExpectTxOp = getattr(mgpu, "ArriveExpectTxOp", None)
 
 def _register_lowering(
     op: str | Type[ir.OpView] | None
