@@ -650,8 +650,8 @@ _abs_dispatch_table = _make_dispatch_table(
     rocm=[
         _Fallback([jnp.int32], lambda ctx, x: math_dialect.absi(x)),
         _Fallback([jnp.int64], lambda ctx, x: math_dialect.absi(x)),
-        _Fallback([jnp.float32], lambda ctx, x: math_dialect.absf(x)),
-        _Fallback([jnp.float64], lambda ctx, x: math_dialect.absf(x)),
+        _Extern([jnp.float32], "__ocml_fabs_f32", jnp.float32),
+        _Extern([jnp.float64], "__ocml_fabs_f64", jnp.float64),
     ],
 )
 
@@ -707,9 +707,9 @@ triton_lowering_rules.update({
             _Fallback([jnp.bfloat16], lambda ctx, x: math_dialect.exp(x)),
         ],
         rocm=[
-            _Fallback([jnp.float32], lambda ctx, x: math_dialect.exp(x)),
-            _Fallback([jnp.float64], lambda ctx, x: math_dialect.exp(x)),
-            _Fallback([jnp.float16], lambda ctx, x: math_dialect.exp(x)),
+            _Extern([jnp.float32], "__ocml_exp_f32", jnp.float32),
+            _Extern([jnp.float64], "__ocml_exp_f64", jnp.float64),
+            _Extern([jnp.float16], "__ocml_exp_f16", jnp.float16),
             _Fallback([jnp.bfloat16], lambda ctx, x: math_dialect.exp(x)),
         ],
     ),
@@ -980,8 +980,8 @@ triton_lowering_rules.update({
             _Extern([jnp.int64], "__nv_popcll", jnp.int32),
         ],
         rocm=[
-            _Fallback([jnp.int32], lambda ctx, x: math_dialect.ctpop(x)),
-            _Fallback([jnp.int64], lambda ctx, x: math_dialect.ctpop(x)),
+            _Extern([jnp.int32], "__ockl_popcount_u32", jnp.int32),
+            _Extern([jnp.int64], "__ockl_popcount_u64", jnp.int64),
         ],
     ),
     lax.clz_p: _make_dispatch_table(
@@ -991,8 +991,8 @@ triton_lowering_rules.update({
             _Extern([jnp.int64], "__nv_clzll", jnp.int32),
         ],
         rocm=[
-            _Fallback([jnp.int32], lambda ctx, x: math_dialect.ctlz(x)),
-            _Fallback([jnp.int64], lambda ctx, x: math_dialect.ctlz(x)),
+            _Extern([jnp.int32], "__ockl_clz_u32", jnp.int32),
+            _Extern([jnp.int64], "__ockl_clz_u64", jnp.int64),
         ],
     ),
     lax.nextafter_p: _make_dispatch_table(
