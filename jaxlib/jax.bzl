@@ -52,7 +52,7 @@ loops_visibility = []
 
 # TODO(vam): remove this once zstandard builds against Python 3.13
 def get_zstandard():
-    if HERMETIC_PYTHON_VERSION == "3.13":
+    if HERMETIC_PYTHON_VERSION == "3.13" or HERMETIC_PYTHON_VERSION == "3.13-ft":
         return []
     return ["@pypi_zstandard//:pkg"]
 
