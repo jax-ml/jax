@@ -37,6 +37,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     This package may safely be removed if it is present on your machine; JAX now
     uses `libtpu` instead.
 
+* Deprecations
+  * Several previously-deprecated APIs have been removed, including:
+    * From `jax.lib.xla_client`: `FftType`, `PaddingType`, `dtype_to_etype`,
+      and `shape_from_pyval`.
+
 ## jax 0.5.0 (Jan 17, 2025)
 
 As of this release, JAX now uses
