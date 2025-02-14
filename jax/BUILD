@@ -61,6 +61,9 @@ config_setting(
 exports_files([
     "LICENSE",
     "version.py",
+    "py.typed",
+    "numpy/__init__.pyi",
+    "_src/basearray.pyi",
 ])
 
 exports_files(
@@ -1180,6 +1183,7 @@ pytype_library(
 pytype_library(
     name = "compilation_cache",
     srcs = [
+        "experimental/compilation_cache/__init__.py",
         "experimental/compilation_cache/compilation_cache.py",
     ],
     visibility = ["//visibility:public"],
