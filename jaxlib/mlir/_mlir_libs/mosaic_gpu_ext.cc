@@ -37,6 +37,92 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       nb::arg("context"), nb::arg("load") = true);
 
   mlir::python::nanobind_adaptors::mlir_attribute_subclass(
+      m, "TileTransformAttr", mlirMosaicGpuIsATileTransformAttr)
+      .def_classmethod(
+          "get",
+          [](nb::object cls, std::vector<int32_t>& tiling, MlirContext ctx) {
+            return cls(mlirMosaicGpuTileTransformAttrGet(ctx, tiling.data(),
+                                                         tiling.size()));
+          },
+          nb::arg("cls"), nb::arg("tiling"),
+          nb::arg("context").none() = nb::none(),
+          "Creates a TileTransformAttr with the given tiling.")
+      .def_property_readonly("tiling", [](MlirAttribute self) {
+        std::vector<int32_t> result;
+        for (int i = 0; i < mlirMosaicGpuTileTransformAttrGetTilingSize(self);
+             ++i) {
+          result.push_back(mlirMosaicGpuTileTransformAttrGetTiling(self, i));
+        }
+        return result;
+      });
+
+  mlir::python::nanobind_adaptors::mlir_attribute_subclass(
+      m, "TransposeTransformAttr", mlirMosaicGpuIsATransposeTransformAttr)
+      .def_classmethod(
+          "get",
+          [](nb::object cls, std::vector<int32_t>& permutation,
+             MlirContext ctx) {
+            return cls(mlirMosaicGpuTransposeTransformAttrGet(
+                ctx, permutation.data(), permutation.size()));
+          },
+          nb::arg("cls"), nb::arg("permutation"),
+          nb::arg("context").none() = nb::none(),
+          "Creates a TransposeTransformAttr with the given permutation.")
+      .def_property_readonly("permutation", [](MlirAttribute self) {
+        std::vector<int32_t> result;
+        for (int i = 0;
+             i < mlirMosaicGpuTransposeTransformAttrGetPermutationSize(self);
+             ++i) {
+          result.push_back(
+              mlirMosaicGpuTransposeTransformAttrGetPermutation(self, i));
+        }
+        return result;
+      });
+
+  mlir::python::nanobind_adaptors::mlir_attribute_subclass(
+      m, "TileTransformAttr", mlirMosaicGpuIsATileTransformAttr)
+      .def_classmethod(
+          "get",
+          [](nb::object cls, std::vector<int32_t>& tiling, MlirContext ctx) {
+            return cls(mlirMosaicGpuTileTransformAttrGet(ctx, tiling.data(),
+                                                         tiling.size()));
+          },
+          nb::arg("cls"), nb::arg("tiling"),
+          nb::arg("context").none() = nb::none(),
+          "Creates a TileTransformAttr with the given tiling.")
+      .def_property_readonly("tiling", [](MlirAttribute self) {
+        std::vector<int32_t> result;
+        for (int i = 0; i < mlirMosaicGpuTileTransformAttrGetTilingSize(self);
+             ++i) {
+          result.push_back(mlirMosaicGpuTileTransformAttrGetTiling(self, i));
+        }
+        return result;
+      });
+
+  mlir::python::nanobind_adaptors::mlir_attribute_subclass(
+      m, "TransposeTransformAttr", mlirMosaicGpuIsATransposeTransformAttr)
+      .def_classmethod(
+          "get",
+          [](nb::object cls, std::vector<int32_t>& permutation,
+             MlirContext ctx) {
+            return cls(mlirMosaicGpuTransposeTransformAttrGet(
+                ctx, permutation.data(), permutation.size()));
+          },
+          nb::arg("cls"), nb::arg("permutation"),
+          nb::arg("context").none() = nb::none(),
+          "Creates a TransposeTransformAttr with the given permutation.")
+      .def_property_readonly("permutation", [](MlirAttribute self) {
+        std::vector<int32_t> result;
+        for (int i = 0;
+             i < mlirMosaicGpuTransposeTransformAttrGetPermutationSize(self);
+             ++i) {
+          result.push_back(
+              mlirMosaicGpuTransposeTransformAttrGetPermutation(self, i));
+        }
+        return result;
+      });
+
+  mlir::python::nanobind_adaptors::mlir_attribute_subclass(
       m, "SwizzleTransformAttr", mlirMosaicGpuIsASwizzleTransformAttr)
       .def_classmethod(
           "get",

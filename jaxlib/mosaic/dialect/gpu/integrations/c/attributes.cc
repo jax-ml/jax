@@ -10,6 +10,60 @@
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu.h"
 
 //===----------------------------------------------------------------------===//
+// TileTransformAttr
+//===----------------------------------------------------------------------===//
+
+bool mlirMosaicGpuIsATileTransformAttr(MlirAttribute attr) {
+  return mlir::isa<mosaic_gpu::TileTransformAttr>(unwrap(attr));
+}
+
+MlirAttribute mlirMosaicGpuTileTransformAttrGet(MlirContext ctx,
+                                                int32_t* tiling,
+                                                int32_t tiling_size) {
+  return wrap(mosaic_gpu::TileTransformAttr::get(
+      unwrap(ctx), llvm::ArrayRef<int32_t>(tiling, tiling_size)));
+}
+
+int32_t mlirMosaicGpuTileTransformAttrGetTilingSize(MlirAttribute attr) {
+  return mlir::cast<mosaic_gpu::TileTransformAttr>(unwrap(attr))
+      .getTiling()
+      .size();
+}
+
+int32_t mlirMosaicGpuTileTransformAttrGetTiling(MlirAttribute attr,
+                                                int32_t index) {
+  return mlir::cast<mosaic_gpu::TileTransformAttr>(unwrap(attr))
+      .getTiling()[index];
+}
+//===----------------------------------------------------------------------===//
+// TransposeTransformAttr
+//===----------------------------------------------------------------------===//
+
+bool mlirMosaicGpuIsATransposeTransformAttr(MlirAttribute attr) {
+  return mlir::isa<mosaic_gpu::TransposeTransformAttr>(unwrap(attr));
+}
+
+MlirAttribute mlirMosaicGpuTransposeTransformAttrGet(MlirContext ctx,
+                                                     int32_t* permutation,
+                                                     int32_t permutation_size) {
+  return wrap(mosaic_gpu::TransposeTransformAttr::get(
+      unwrap(ctx), llvm::ArrayRef<int32_t>(permutation, permutation_size)));
+}
+
+int32_t mlirMosaicGpuTransposeTransformAttrGetPermutationSize(
+    MlirAttribute attr) {
+  return mlir::cast<mosaic_gpu::TransposeTransformAttr>(unwrap(attr))
+      .getPermutation()
+      .size();
+}
+
+int32_t mlirMosaicGpuTransposeTransformAttrGetPermutation(MlirAttribute attr,
+                                                          int32_t index) {
+  return mlir::cast<mosaic_gpu::TransposeTransformAttr>(unwrap(attr))
+      .getPermutation()[index];
+}
+
+//===----------------------------------------------------------------------===//
 // SwizzleTransformAttr
 //===----------------------------------------------------------------------===//
 bool mlirMosaicGpuIsASwizzleTransformAttr(MlirAttribute attr) {
