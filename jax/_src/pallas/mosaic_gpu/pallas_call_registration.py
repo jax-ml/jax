@@ -76,12 +76,15 @@ def pallas_call_lowering(
   new_avals_out = [
       jax_core.ShapedArray(t.shape, t.dtype) for t in lowering_result.out_structs
   ]
+  params = compiler_params.get("mosaic_gpu", {})
+  use_custom_barrier = params.get("use_custom_barrier", False)
   outs = mosaic_core._mosaic_gpu_lowering_rule(
       ctx.replace(avals_out=new_avals_out),
       *args,
       module=module,
       out_types=lowering_result.out_structs,
       input_output_aliases=input_output_aliases,
+      use_custom_barrier=use_custom_barrier,
   )
   if (prof_ctx := lowering_result.profiler_context) is not None:
     *outs, prof_buffer = outs
