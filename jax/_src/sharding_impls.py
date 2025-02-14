@@ -1271,6 +1271,12 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
           f' `jax.sharding.use_mesh`. Got {sharding}')
     sharding = NamedSharding(cur_mesh, sharding)
   else:
+    # There are cases when you have multiple meshes set. Allow that for full
+    # auto mode because of existing use cases.
+    # TODO(yashkatariya): Remove this once we disallow different meshes.
+    if (sharding.mesh.abstract_mesh._are_all_axes_auto and
+        cur_mesh._are_all_axes_auto):
+      return sharding
     if (check_mesh_consistency and not cur_mesh.empty and
         sharding.mesh.abstract_mesh != cur_mesh):
       raise ValueError(

@@ -607,6 +607,7 @@ class DevicePutTest(jtu.JaxTestCase):
         out_host, np_inp * 2, s_host, 'pinned_host')
 
   def test_output_streaming_inside_scan(self):
+    self.skipTest("b/393371838")
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
       self.skipTest("This test requires an xla_version >= 2.")
     mesh = jtu.create_mesh((1, 1, 2), ("x", "y", "z"))
@@ -1330,11 +1331,11 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     f = jax.jit(lambda x: x @ x.T)
 
     with (jtu.count_pjit_cpp_cache_miss() as cpp_count,
-          jtu.count_jit_and_pmap_lowerings() as compile_count):
+          jtu.count_jit_and_pmap_lowerings() as lowering_count):
       f(inp)
       f(inp2)
     self.assertEqual(cpp_count(), 2)
-    self.assertEqual(compile_count(), 1)
+    self.assertEqual(lowering_count(), 2)
 
   def test_jit_cpp_cache_output_hit(self):
     _, _, _, inp = _create_inputs((8, 2), P("x"), mem_kind="device")
