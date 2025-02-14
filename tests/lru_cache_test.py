@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import glob
 import importlib.util
 import tempfile
 import time
@@ -152,6 +153,18 @@ class LRUCacheTest(LRUCacheTestCase):
       cache.put("a", b"aaaa")
     self.assertIsNone(cache.get("a"))
     self.assertEqual(set(self.path.glob(f"*{_CACHE_SUFFIX}")), set())
+
+  # Check that we don't write access time file when the eviction policy is
+  # disabled. Writing this file can be extremely unperformant and cause
+  # problems on large-scale network storage.
+  def test_no_atime_file(self):
+    cache = LRUCache(self.name, max_size=-1)
+
+    cache.put("a", b"a")
+    self.assertEmpty(glob.glob(self.name + "/*atime*"))
+
+    cache.get("a")
+    self.assertEmpty(glob.glob(self.name + "/*atime*"))
 
 
 if __name__ == "__main__":

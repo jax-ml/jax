@@ -22,7 +22,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     JAX-level dead code elimination (DCE). See {jax-issue}`#25956` for more
     details.
   * Added low-level reduction APIs in {mod}`jax.lax`: {func}`jax.lax.reduce_sum`,
-    {func}`jax.lax.reduce_prod`, {func}`jax.lax.reduce_max`, {func}`jax.lax.reduce_min`, 
+    {func}`jax.lax.reduce_prod`, {func}`jax.lax.reduce_max`, {func}`jax.lax.reduce_min`,
     {func}`jax.lax.reduce_and`, {func}`jax.lax.reduce_or`, and {func}`jax.lax.reduce_xor`.
   * {func}`jax.lax.linalg.qr`, and {func}`jax.scipy.linalg.qr`, now support
     column-pivoting on CPU and GPU. See {jax-issue}`#20282` and
@@ -36,6 +36,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The `jax[tpu]` TPU extra no longer depends on the `libtpu-nightly` package.
     This package may safely be removed if it is present on your machine; JAX now
     uses `libtpu` instead.
+
+* Bug fixes
+  * Persistent compilation cache no longer writes access time file if
+    JAX_COMPILATION_CACHE_MAX_SIZE is unset or set to -1, i.e. if the LRU
+    eviction policy isn't enabled. This should improve performance when using
+    the cache with large-scale network storage.
 
 ## jax 0.5.0 (Jan 17, 2025)
 
