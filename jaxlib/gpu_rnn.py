@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from functools import partial
-import importlib
 
 import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.stablehlo as hlo
@@ -22,14 +21,10 @@ import numpy as np
 
 from jaxlib import xla_client
 from .gpu_common_utils import GpuLibNotLinkedError
+from .plugin_support import import_from_plugin
 
-for cuda_module_name in [".cuda", "jax_cuda12_plugin"]:
-  try:
-    _cuda_rnn = importlib.import_module(f"{cuda_module_name}._rnn", package="jaxlib")
-  except ImportError:
-    _cuda_rnn = None
-  else:
-    break
+_cuda_rnn = import_from_plugin("cuda", "_rnn")
+_hip_rnn = import_from_plugin("rocm", "_rnn")
 
 if _cuda_rnn:
   for _name, _value in _cuda_rnn.registrations().items():
@@ -37,15 +32,6 @@ if _cuda_rnn:
     xla_client.register_custom_call_target(_name, _value, platform='CUDA',
                                            api_version=api_version)
   compute_rnn_workspace_reserve_space_sizes = _cuda_rnn.compute_rnn_workspace_reserve_space_sizes
-
-
-for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
-  try:
-    _hip_rnn = importlib.import_module(f"{rocm_module_name}._rnn", package="jaxlib")
-  except ImportError:
-    _hip_rnn = None
-  else:
-    break
 
 if _hip_rnn:
   for _name, _value in _hip_rnn.registrations().items():

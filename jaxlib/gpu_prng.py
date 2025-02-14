@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 from functools import partial
-import importlib
 import itertools
 
 import jaxlib.mlir.ir as ir
@@ -22,17 +21,10 @@ import jaxlib.mlir.ir as ir
 from jaxlib import xla_client
 
 from .hlo_helpers import custom_call
+from .plugin_support import import_from_plugin
 
-
-for cuda_module_name in [".cuda", "jax_cuda12_plugin"]:
-  try:
-    _cuda_prng = importlib.import_module(
-        f"{cuda_module_name}._prng", package="jaxlib"
-    )
-  except ImportError:
-    _cuda_prng = None
-  else:
-    break
+_cuda_prng = import_from_plugin("cuda", "_prng")
+_hip_prng = import_from_plugin("rocm", "_prng")
 
 if _cuda_prng:
   for _name, _value in _cuda_prng.registrations().items():
@@ -40,16 +32,6 @@ if _cuda_prng:
     api_version = 1 if "_ffi" in _name else 0
     xla_client.register_custom_call_target(_name, _value, platform="CUDA",
                                            api_version=api_version)
-
-for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
-  try:
-    _hip_prng = importlib.import_module(
-        f"{rocm_module_name}._prng", package="jaxlib"
-    )
-  except ImportError:
-    _hip_prng = None
-  else:
-    break
 
 if _hip_prng:
   for _name, _value in _hip_prng.registrations().items():
