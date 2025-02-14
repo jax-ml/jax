@@ -1733,21 +1733,43 @@ def _reshape_lowering_rule(
     return ValueError("`dimensions` is not supported.")
 
   a = _ensure_ir_value(a, *ctx.avals_in)
+  [a_aval] = ctx.avals_in
   [out_aval] = ctx.avals_out
+  # Triton Reshape doesn't support scalar result types (only 0d tensors).
+  if out_aval.ndim == 0:
+    return _reduce_lowering(jnp.add, ctx, a, axes=tuple(range(a_aval.ndim)))
+  return _reshape(a, out_aval.shape)
+
+
+def _reshape(a: ir.Value, shape: Sequence[int]) -> ir.Value:
   if not ir.RankedTensorType.isinstance(a.type):
-    assert all(dim_size == 1 for dim_size in out_aval.shape)
-    return _splat(a, out_aval.shape)
+    assert all(dim_size == 1 for dim_size in shape)
+    return _splat(a, shape)
 
   ty = ir.RankedTensorType(a.type)
-
-  # Triton Reshape doesn't support scalar result types (only 0d tensors).
-  if not out_aval.shape:
-    return _reduce_lowering(jnp.add, ctx, a, axes=tuple(range(ty.rank)))
-
   return tt_dialect.reshape(
-      ir.RankedTensorType.get([*out_aval.shape], ty.element_type, ty.encoding),
+      ir.RankedTensorType.get(shape, ty.element_type, ty.encoding),
       a,
       allow_reorder=False,
+  )
+
+
+@register_lowering(lax.concatenate_p)
+def _concatenate_lowering_rule(ctx: LoweringRuleContext, *args, dimension):
+  if len(args) != 2:
+    raise NotImplementedError("Only 2-argument concatenate is supported.")
+  x_aval, y_aval = ctx.avals_in
+  x, y = args
+  if dimension != x_aval.ndim-1:
+    raise NotImplementedError(
+        "Only concatenate along the last dimension is supported."
+    )
+  if x_aval.shape[-1] != 1 or y_aval.shape[-1] != 1:
+    raise NotImplementedError(
+        "Only arguments with shape [..., 1] are supported."
+    )
+  return tt_dialect.join(
+      _reshape(x, x_aval.shape[:-1]), _reshape(y, y_aval.shape[:-1])
   )
 
 

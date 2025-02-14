@@ -753,20 +753,25 @@ class OpsTest(PallasBaseTest):
     x = np.arange(1024, dtype=jnp.float32).reshape(8, 128) + 10
     self.assertAllClose(f(x).item(), 10.0)
 
-  @jtu.skip_on_devices("gpu")  # TODO: not implemented
   def test_concat_constant(self):
-    if pltpu is None:
+    if pltpu is None and jtu.test_device_matches(["tpu"]):
       self.skipTest("No TPU module available.")
+    axis = 0
+    num_arrays = 16
+    if jtu.test_device_matches(["gpu"]) and not self.INTERPRET:
+      # Triton only supports concatenation along the last dimension.
+      num_arrays = 2
+      axis = -1
     def kernel(out):
       result = []
-      for i in range(16):
+      for i in range(num_arrays):
         result.append(jnp.full((1, 128), i, jnp.float32))
-      out[:] = jnp.stack(result).reshape(16, 128)
+      out[:] = jnp.stack(result, axis=axis).reshape(num_arrays, 128)
 
     def run(interpret=False):
       return pl.pallas_call(
           kernel,
-          out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
+          out_shape=jax.ShapeDtypeStruct((num_arrays, 128), jnp.float32),
           out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
           interpret=interpret,
       )()
