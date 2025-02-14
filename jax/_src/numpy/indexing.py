@@ -1003,7 +1003,7 @@ def _expand_bool_indices(idx, shape):
       abstract_i = None
     if _is_boolean_index(i):
       if isinstance(i, list):
-        i = array(i)
+        i = lax_numpy.array(i)
         abstract_i = core.get_aval(i)
 
       if not core.is_concrete(i):
