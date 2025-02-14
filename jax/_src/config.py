@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 import contextlib
+import enum
 import functools
 import itertools
 import logging
@@ -33,6 +34,29 @@ config_ext = xla_client._xla.config
 logger = logging.getLogger(__name__)
 
 _T = TypeVar('_T')
+
+
+class EffortLevel(enum.Enum):
+  """Effort level enum, mirroring the XLA effort options."""
+
+  UNKNOWN = 0
+  O0 = 9
+  O1 = 19
+  O2 = 29
+  O3 = 39
+
+  @classmethod
+  def _missing_(cls, value: object) -> EffortLevel | None:
+    return _effort_from_string.get(value)
+
+
+_effort_from_string: dict[Any, EffortLevel] = {
+    'UNKNOWN': EffortLevel.UNKNOWN,
+    'O0': EffortLevel.O0,
+    'O1': EffortLevel.O1,
+    'O2': EffortLevel.O2,
+    'O3': EffortLevel.O3,
+}
 
 
 def bool_env(varname: str, default: bool) -> bool:
@@ -1725,6 +1749,37 @@ memory_fitting_effort = float_state(
     name='jax_memory_fitting_effort',
     default=0.0,
     help='Effort for minimizing memory usage (higher means more effort), valid range [-1.0, 1.0].'
+)
+
+optimization_level = enum_state(
+    name='jax_optimization_level',
+    enum_values=[
+        'UNKNOWN',
+        'O0',
+        'O1',
+        'O2',
+        'O3',
+    ],
+    default='UNKNOWN',
+    help='The degree to which the compiler should optimize for execution time',
+    include_in_jit_key=True
+)
+
+memory_fitting_level = enum_state(
+    name='jax_memory_fitting_level',
+    enum_values=[
+        'UNKNOWN',
+        'O0',
+        'O1',
+        'O2',
+        'O3',
+    ],
+    default='UNKNOWN',
+    help=(
+        'The degree to which the compiler should attempt to make the program'
+        ' fit in memory'
+    ),
+    include_in_jit_key=True
 )
 
 cpu_collectives_implementation = optional_enum_state(
