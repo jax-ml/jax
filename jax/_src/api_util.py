@@ -620,7 +620,7 @@ def fun_signature(fun: Callable) -> inspect.Signature | None:
     return None
 
 def save_wrapped_fun_sourceinfo(wrapper: Callable,
-                                wrapped: Callable | core.DebugInfo | None) -> None:
+                                wrapped: Callable | core.DebugInfo) -> None:
   # Prefer this to functools.wraps because it does not create a reference to
   # the wrapped function.
   if isinstance(wrapped, core.DebugInfo):
@@ -628,7 +628,7 @@ def save_wrapped_fun_sourceinfo(wrapper: Callable,
   elif callable(wrapped):
     func_src_info = fun_sourceinfo(wrapped)
   else:
-    return
+    assert False, wrapped  # Unreachable
   setattr(wrapper, "__fun_sourceinfo__", func_src_info)
 
 _fun_name_re = re.compile(r"(?:<built-in function (\S+)>)")
@@ -716,7 +716,7 @@ def register_class_with_attrs(t: type) -> None:
 _class_with_attrs: set[type] = set()
 
 # TODO(mattjj): make this function faster
-def _check_no_aliased_ref_args(dbg: core.DebugInfo | None, avals, args):
+def _check_no_aliased_ref_args(dbg: core.DebugInfo, avals, args):
   assert config.mutable_array_checks.value
   refs: dict[int, int] = {}
   for i, (a, x) in enumerate(zip(avals, args)):
@@ -730,7 +730,7 @@ def _check_no_aliased_ref_args(dbg: core.DebugInfo | None, avals, args):
         if dbg else
         f"at both flat index {dup_idx} and flat index {i}") from None
 
-def _check_no_aliased_closed_over_refs(dbg: core.DebugInfo | None, consts, args) -> None:
+def _check_no_aliased_closed_over_refs(dbg: core.DebugInfo, consts, args) -> None:
   assert config.mutable_array_checks.value
   refs: set[int] = {id(core.get_referent(c)) for c in consts
                     if isinstance(core.get_aval(c), AbstractRef)}

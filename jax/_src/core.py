@@ -94,7 +94,7 @@ class Jaxpr:
   _outvars: list[Atom]
   _eqns: list[JaxprEqn]
   _effects: Effects
-  _debug_info: DebugInfo | None
+  _debug_info: DebugInfo
 
   @property
   def constvars(self) -> list[Var]:
@@ -117,13 +117,17 @@ class Jaxpr:
     return self._effects
 
   @property
-  def debug_info(self) -> DebugInfo | None:
+  def debug_info(self) -> DebugInfo:
     return self._debug_info
 
   def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
                outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
                effects: Effects = no_effects,
-               debug_info: DebugInfo | None = None):
+               # We want all calls to pass a DebugInfo object, but for backwards
+               # compatibility we have to allow calls when the debug_info
+               # is missing.
+               debug_info: DebugInfo = None,  # type: ignore[annotation-type-mismatch,assignment]
+               ):
     """
     Args:
       constvars: list of variables introduced for constants. Array constants are
@@ -134,14 +138,16 @@ class Jaxpr:
       eqns: list of equations.
       effects: set of effects. The effects on a jaxpr are a superset of the
         union of the effects for each equation.
-      debug_info: optional DebugInfo.
+      debug_info: debugging information.
     """
     self._constvars = list(constvars)
     self._invars = list(invars)
     self._outvars = list(outvars)
     self._eqns = list(eqns)
     self._effects = effects
-    self._debug_info = debug_info and debug_info.resolve_result_paths()
+    # TODO(https://github.com/jax-ml/jax/issues/26480)
+    debug_info = debug_info or lu._missing_debug_info("core.Jaxpr")
+    self._debug_info = debug_info.resolve_result_paths()
     # TODO(necula): re-enable these safety checks
     # assert (not debug_info or len(debug_info.arg_names) == len(invars)), (debug_info, invars)
     # assert (not debug_info or len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)

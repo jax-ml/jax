@@ -731,22 +731,20 @@ def _infer_params(
     entry.pjit_params = p
   return entry.pjit_params, entry.pjit_params.consts + dynargs
 
-def _infer_input_type(fun: Callable, dbg: core.DebugInfo | None,
+def _infer_input_type(fun: Callable, dbg: core.DebugInfo,
                       explicit_args) -> tuple[core.AbstractValue, ...]:
   avals = []
   try:
     for i, x in enumerate(explicit_args):
       avals.append(core.shaped_abstractify(x))
   except OverflowError:
-    arg_path = (f"argument path is {dbg.arg_names[i]}" if dbg
-                else f"flattened argument number is {i}")
+    arg_path = f"argument path is {dbg.arg_names[i]}"  # type: ignore
     raise OverflowError(
       "An overflow was encountered while parsing an argument to a jitted "
       f"computation, whose {arg_path}."
     ) from None
   except TypeError:
-    arg_description = (f"path {dbg.arg_names[i]}" if dbg
-                       else f"flattened argument number {i}")
+    arg_description = f"path {dbg.arg_names[i]}"  # type: ignore
     raise TypeError(
       f"Error interpreting argument to {fun} as an abstract array."
       f" The problematic value is of type {type(x)} and was passed to"
@@ -1111,7 +1109,7 @@ class PytreeLeaf:
 @util.cache(max_size=4096, trace_context_in_key=False)
 def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
                                in_layouts_treedef, in_layouts_leaves,
-                               in_avals, in_tree, debug_info,
+                               in_avals, in_tree, debug_info: core.DebugInfo,
                                device_or_backend_set, kws):
   if not kws:
     in_tree, _ = treedef_children(in_tree)
@@ -1136,11 +1134,11 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
   attrs_tracked = debug_info and len(debug_info.arg_names) != len(in_avals)
   if not config.dynamic_shapes.value and not attrs_tracked:
     pjit_check_aval_sharding(in_shardings_flat, in_avals,
-                             None if debug_info is None else debug_info.safe_arg_names(len(in_avals)),
+                             debug_info.safe_arg_names(len(in_avals)),
                              "pjit arguments", allow_uneven_sharding=False)
     check_aval_layout_compatibility(
         in_layouts_flat, in_avals,
-        None if debug_info is None else debug_info.arg_names, "jit arguments")
+        debug_info.safe_arg_names(len(in_avals)), "jit arguments")  # type: ignore[arg-type]
   return in_shardings_flat, in_layouts_flat
 
 callsites: set[str] = set()
@@ -1167,7 +1165,7 @@ def explain_tracing_cache_miss(
 
   # have we seen this function before at all?
   fun_name = getattr(fun.f, '__qualname__', fun.f)
-  if debug_info is not None and debug_info.func_src_info:
+  if debug_info.func_src_info:
     # TODO(necula): clean up the extraction of the source info
     _, *rest = debug_info.func_src_info.split(' at ')
     src_info = " defined at "  + ' '.join(rest)
@@ -1239,7 +1237,7 @@ def explain_tracing_cache_miss(
   # have we never seen these input types (eg shapes, dtypes) before?
   types_match = [k for k in trees_match if k[1] == in_type]
   if not types_match:
-    if len(in_type) < 5 and debug_info is not None:
+    if len(in_type) < 5:
       in_type_str = ':\n    {}'.format(',  '.join(
           f'{n}: {ty.str_short(short_dtypes=True)}'
           for n, ty in zip(debug_info.arg_names, in_type)))
@@ -1251,10 +1249,7 @@ def explain_tracing_cache_miss(
     num_mismatch = sum(map(op.ne, closest_ty, in_type))
     p(f"  closest seen input type signature has {num_mismatch} mismatches, including:")
     add_weak_type_hint = False
-    if debug_info:
-      arg_names = debug_info.safe_arg_names(len(in_type))
-    else:
-      arg_names = (None,) * len(in_type)
+    arg_names = debug_info.safe_arg_names(len(in_type))
 
     for name, ty1, ty2 in zip(arg_names, closest_ty, in_type):
       if ty1 != ty2:
@@ -1320,7 +1315,7 @@ def _create_pjit_jaxpr(
 def _check_and_canonicalize_out_shardings(
     out_shardings_treedef, out_shardings_leaves, out_layouts_treedef,
     out_layouts_leaves, out_tree, out_avals,
-    debug_info: core.DebugInfo | None,
+    debug_info: core.DebugInfo,
     device_or_backend_set):
   orig_out_shardings = tree_unflatten(out_shardings_treedef, out_shardings_leaves)
   if isinstance(orig_out_shardings, (UnspecifiedValue, Sharding)):
@@ -1340,11 +1335,11 @@ def _check_and_canonicalize_out_shardings(
   if not config.dynamic_shapes.value:
     pjit_check_aval_sharding(
         out_shardings_flat, out_avals,
-        None if debug_info is None else debug_info.safe_result_paths(len(out_avals)),
+        debug_info.safe_result_paths(len(out_avals)),  # type: ignore[arg-type]
         "pjit outputs", allow_uneven_sharding=False)
     check_aval_layout_compatibility(
         out_layouts_flat, out_avals,
-        None if debug_info is None else debug_info.safe_result_paths(len(out_avals)),
+        debug_info.safe_result_paths(len(out_avals)),  # type: ignore[arg-type]
         "jit outputs")
   return out_shardings_flat, out_layouts_flat
 

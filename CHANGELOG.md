@@ -37,6 +37,15 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     This package may safely be removed if it is present on your machine; JAX now
     uses `libtpu` instead.
 
+* Deprecations
+  * The internal function `linear_util.wrap_init` and the constructor
+    `core.Jaxpr` now must take a non-empty `core.DebugInfo` kwarg. For
+    a limited time, a `DeprecationWarning` is printed if
+    `jax.extend.linear_util.wrap_init` is used without debugging info.
+    A downstream effect of this several other internal functions need debug
+    info. This change does not affect public APIs.
+    See https://github.com/jax-ml/jax/issues/26480 for more detail.
+
 ## jax 0.5.0 (Jan 17, 2025)
 
 As of this release, JAX now uses

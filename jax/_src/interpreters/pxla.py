@@ -877,8 +877,8 @@ def lower_parallel_callable(
           replicated_args=replicated_args,
           arg_shardings=None,
           result_shardings=None,
-          arg_names=jaxpr._debug_info and jaxpr._debug_info.safe_arg_names(len(jaxpr.invars)),
-          result_names=jaxpr._debug_info and jaxpr._debug_info.safe_result_paths(len(jaxpr.outvars)),
+          arg_names=jaxpr._debug_info.safe_arg_names(len(jaxpr.invars)),
+          result_names=jaxpr._debug_info.safe_result_paths(len(jaxpr.outvars)),
           num_replicas=replicas.num_global_replicas,
           lowering_parameters=lowering_parameters)
   return PmapComputation(lowering_result.module,
@@ -1968,8 +1968,8 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         result_shardings=out_mlir_shardings,
         in_layouts=in_layouts,
         out_layouts=out_layouts,
-        arg_names=jaxpr._debug_info and jaxpr._debug_info.safe_arg_names(len(jaxpr.invars)),
-        result_names=jaxpr._debug_info and jaxpr._debug_info.safe_result_paths(len(jaxpr.outvars)),
+        arg_names=jaxpr._debug_info.safe_arg_names(len(jaxpr.invars)),
+        result_names=jaxpr._debug_info.safe_result_paths(len(jaxpr.outvars)),
         num_replicas=nreps,
         num_partitions=num_partitions,
         all_default_mem_kind=all_default_mem_kind,
@@ -2125,7 +2125,7 @@ MaybeLayout = Sequence[Union[DeviceLocalLayout, AutoLayout, None]]
 class AllArgsInfo(NamedTuple):
   """Avals and debug_info for all arguments prior to DCE."""
   in_avals: Sequence[core.ShapedArray]
-  debug_info: core.DebugInfo | None
+  debug_info: core.DebugInfo
 
 
 @lru_cache(maxsize=2048)
@@ -3202,17 +3202,13 @@ def cc_shard_arg(x, sharding, layout):
 
 
 def check_arg_avals_for_call(ref_avals, arg_avals,
-                             jaxpr_debug_info: core.DebugInfo | None = None):
+                             jaxpr_debug_info: core.DebugInfo):
   if len(ref_avals) != len(arg_avals):
     raise TypeError(
         f"Computation compiled for {len(ref_avals)} inputs "
         f"but called with {len(arg_avals)}")
 
-  if jaxpr_debug_info is not None:
-    arg_names = [f"'{name}'" for name in jaxpr_debug_info.safe_arg_names(len(ref_avals))]
-  else:
-    num_args = len(ref_avals)
-    arg_names = [f"{i + 1}/{num_args}" for i in range(num_args)]
+  arg_names = [f"'{name}'" for name in jaxpr_debug_info.safe_arg_names(len(ref_avals))]
 
   errors = []
   for ref_aval, arg_aval, name in safe_zip(ref_avals, arg_avals, arg_names):
@@ -3264,14 +3260,13 @@ def check_array_xla_sharding_layout_match(
     args_after_dce,
     in_xla_shardings: Sequence[JSharding],
     in_xla_layouts: Sequence[DeviceLocalLayout],
-    jaxpr_debug_info: core.DebugInfo | None,
+    jaxpr_debug_info: core.DebugInfo,
     kept_var_idx: set[int]) -> None:
   from jax._src.array import ArrayImpl
   # jaxpr_debug_info.arg_names are before DCE, so need to DCE them.
   arg_names = (
-      [""] * len(args_after_dce) if jaxpr_debug_info is None
-      else [a for i, a in enumerate(jaxpr_debug_info.arg_names)  # type: ignore
-            if i in kept_var_idx]
+      [a for i, a in enumerate(jaxpr_debug_info.arg_names)  # type: ignore
+       if i in kept_var_idx]
   )
   errors = []
   num_errors = 5

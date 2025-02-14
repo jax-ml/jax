@@ -30,8 +30,8 @@ from jax._src import traceback_util
 from jax._src.ad_util import (
     stop_gradient_p, SymbolicZero, Zero, zeros_like_aval)
 from jax._src.api_util import (
-  argnums_partial, flatten_fun_nokwargs, resolve_kwargs, fun_signature,
-  _non_static_arg_names, prepend_static_args, debug_info)
+  argnums_partial, flatten_fun_nokwargs, resolve_kwargs,
+  prepend_static_args, debug_info)
 from jax._src.errors import UnexpectedTracerError
 from jax._src.state.types import AbstractRef
 from jax._src.interpreters import ad
@@ -686,7 +686,7 @@ class custom_vjp(Generic[ReturnValue]):
 
 @lu.transformation2
 def _check_primal_refs(f: Callable, nondiff_argnums: Sequence[int],
-                       debug_info: core.DebugInfo | None, *args):
+                       debug_info: core.DebugInfo, *args):
   _check_for_aliased_refs(f, nondiff_argnums, debug_info, args)
   out = f(*args)
   _check_for_returned_refs(f, out, 'primal')
@@ -694,20 +694,14 @@ def _check_primal_refs(f: Callable, nondiff_argnums: Sequence[int],
 
 def _check_for_aliased_refs(f: Callable,
                             nondiff_argnums: Sequence[int],
-                            debug: core.DebugInfo | None,
+                            debug: core.DebugInfo,
                             args):
   leaves = tree_leaves(args)
   refs: dict[int, int] = {}
   for i, x in enumerate(leaves):
     if (isinstance((a := core.get_aval(x)), AbstractRef) and
         (dup_idx := refs.setdefault(id(core.get_referent(x)), i)) != i):
-      if debug is not None:
-        arg_names = debug.safe_arg_names(len(leaves))
-      else:
-        # TODO(necula): drop this branch
-        arg_names = _non_static_arg_names(fun_signature(f), args, {}, nondiff_argnums, ())
-      if arg_names is None:
-        arg_names = [f'flat index {j}' for j in range(len(leaves))]
+      arg_names = debug.safe_arg_names(len(leaves))
       raise ValueError(
           "only one reference to a mutable array may be passed as an argument "
           f"to a function, but custom_vjp function {f} got the same mutable "
@@ -763,8 +757,8 @@ def _check_for_tracers(x):
 def _flatten_fwd(f: Callable, store: lu.EqualStore,
                  nondiff_argnums: Sequence[int],
                  symbolic_zeros: bool,
-                 debug_primal: core.DebugInfo | None,
-                 debug_fwd: core.DebugInfo | None,
+                 debug_primal: core.DebugInfo,
+                 debug_fwd: core.DebugInfo,
                  in_tree: PyTreeDef, maybe_out_type, *args):
   primal_name = debug_primal.func_name if debug_primal else str(f)
   fwd_name = debug_fwd.func_name if debug_fwd else "<unknown>"
@@ -1560,9 +1554,9 @@ custom_jvp_call_jaxpr_p = core.Primitive("custom_jvp_call_jaxpr")
 # simpler, but it would be worth revisiting this.
 def optimize_remat_of_custom_vjp_fwd(
     fun: Callable[..., ReturnValue],
-    debug_fun: core.DebugInfo | None,
+    debug_fun: core.DebugInfo,
     fwd: Callable[..., tuple[ReturnValue, Any]],
-    debug_fwd: core.DebugInfo | None,
+    debug_fwd: core.DebugInfo,
     nondiff_argnums: Sequence[int] = (),
     symbolic_zeros: bool = False,
 ) -> Callable[..., tuple[ReturnValue, Any]]:

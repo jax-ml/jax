@@ -71,8 +71,7 @@ def _collect_jaxprs(jaxpr: core.Jaxpr,
   return acc
 
 
-def _debug_info_to_string(dbg: core.DebugInfo | None) -> list[str]:
-  if dbg is None: return "None"
+def _debug_info_to_string(dbg: core.DebugInfo) -> list[str]:
   # Strip the absolute path and the line number but check that it references
   # this file (to catch errors when the source info points in JAX internals)
   func_src_info = re.sub(r"^(\S+)( at .*.debug_info_test.py:\d+)?", "\\1", dbg.func_src_info)
@@ -294,7 +293,6 @@ class DebugInfoTest(jtu.JaxTestCase):
     def wrapper(x, y):
       return x
 
-    api_util.save_wrapped_fun_sourceinfo(wrapper, None)  # No effect
     dbg = api_util.debug_info("test", wrapper, (1, 2), {})
     self.assertEqual("wrapper", dbg.func_name)
 

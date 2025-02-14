@@ -73,7 +73,7 @@ for_p.skip_canonicalization = True
 
 def _trace_to_jaxpr_with_refs(f: Callable, state_tree: PyTreeDef,
                               state_avals: Sequence[core.AbstractValue],
-                              debug_info: core.DebugInfo | None,
+                              debug_info: core.DebugInfo,
                               ) -> tuple[core.Jaxpr, list[Any], PyTreeDef]:
   f, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(f, debug_info=debug_info),

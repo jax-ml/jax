@@ -161,7 +161,7 @@ class WrappedFun:
                f_transformed: Callable,
                transforms,
                stores: tuple[Store | EqualStore | None, ...], params, in_type,
-               debug_info: DebugInfo | None):
+               debug_info: DebugInfo):
     self.f = f
     self.f_transformed = f_transformed
     self.transforms = transforms
@@ -258,6 +258,7 @@ def fun_name(f):
   except:
     return str(f)
 
+
 class DebugInfo(NamedTuple):
   """Debugging info about a func, its arguments, and results."""
   traced_for: str             # e.g. 'jit', 'scan', etc
@@ -331,18 +332,17 @@ def _missing_debug_info(for_what: str) -> DebugInfo:
   return DebugInfo("missing_debug_info", "<missing_debug_info>", (), ())
 
 def wrap_init(f: Callable, params=None, *,
-              debug_info: DebugInfo | None = None) -> WrappedFun:
+              debug_info: DebugInfo) -> WrappedFun:
   """Wraps function `f` as a `WrappedFun`, suitable for transformation."""
   params_dict = {} if params is None else params
   params = () if params is None else tuple(sorted(params.items()))
   fun = WrappedFun(f, partial(f, **params_dict), (), (), params, None, debug_info)
-  if debug_info:
-    if debug_info.result_paths is None:
-      fun, result_paths_thunk = _get_result_paths_thunk(fun)
-      debug_info = debug_info._replace(
-          result_paths=HashableFunction(result_paths_thunk, closure=()))
-    fun = WrappedFun(fun.f, fun.f_transformed, fun.transforms, fun.stores,
-                     fun.params, fun.in_type, debug_info)
+  if debug_info.result_paths is None:
+    fun, result_paths_thunk = _get_result_paths_thunk(fun)
+    debug_info = debug_info._replace(
+        result_paths=HashableFunction(result_paths_thunk, closure=()))
+  fun = WrappedFun(fun.f, fun.f_transformed, fun.transforms, fun.stores,
+                    fun.params, fun.in_type, debug_info)
   return fun
 
 
