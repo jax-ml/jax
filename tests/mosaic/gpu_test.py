@@ -234,6 +234,13 @@ class TestCase(parameterized.TestCase):
     self.enter_context(ir.Location.unknown())
 
 
+class Sm90ATestCase(TestCase, jtu.CudaArchSpecificTest):
+
+  def setUp(self):
+      self.skip_unless_sm90a()
+      super().setUp()
+
+
 class TestUtilTest(TestCase):
 
   def test_copy_basic(self):
@@ -2424,6 +2431,9 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     y = self.prng.uniform(-1, 1, shape).astype(dtype)
 
     self.assertArraysEqual(jax.jit(kernel)(x, y), x + y + y)
+
+
+class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
 
   # TODO(dasenov): Add a test for kNoSwizzle, i.e. all swizzling modes.
   @parameterized.parameters(mgpu_dialect.SwizzlingMode.k32ByteSwizzle,
