@@ -37,6 +37,8 @@ from jax._src.nn.functions import (
   relu as relu,
   relu6 as relu6,
   dot_product_attention as dot_product_attention,
+  scaled_dot_general as scaled_dot_general,
+  scaled_matmul as scaled_matmul,
   selu as selu,
   sigmoid as sigmoid,
   soft_sign as soft_sign,
