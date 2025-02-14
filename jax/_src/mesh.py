@@ -335,7 +335,7 @@ class Mesh(_BaseMesh, contextlib.ContextDecorator):
               if not t.physical_mesh.empty))
     return False
 
-  @property
+  @functools.cached_property
   def shape(self):
     return collections.OrderedDict(
         (name, size)
