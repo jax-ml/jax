@@ -2204,6 +2204,24 @@ class ShardMapTest(jtu.JaxTestCase):
   #
   #   f(x)  # don't crash
 
+  def test_partial_auto_debug_print(self):
+    if config.use_shardy_partitioner.value:
+      raise unittest.SkipTest("shardy error")
+
+    mesh = jtu.create_mesh((4, 2), ('i', 'j'))
+    x = jnp.arange(8.)
+
+    def g(x):
+      jax.debug.print('{}', x)
+
+    @jax.jit
+    def f(x):
+      return shard_map(g,
+                       mesh, in_specs=P('i'), out_specs=None,
+                       check_rep=False, auto=frozenset({'j'}))(x)
+
+    y = f(x)  # don't crash
+
   def test_partial_auto_of_random_keys(self):
     mesh = jtu.create_mesh((4, 2), ('i', 'j'))
     keys = jax.random.split(jax.random.key(0), 8)
