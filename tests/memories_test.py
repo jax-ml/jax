@@ -1663,7 +1663,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 class StreamAnnotationTest(jtu.JaxTestCase):
 
   def test_stream_annotation_inside_shmap(self):
-    if xla_extension_version < 313 :
+    if xla_extension_version < 313:
       self.skipTest("Requires xla_extension_version >= 313")
     if not jtu.test_device_matches(["gpu"]):
       self.skipTest("Stream annotation is only supported on GPU.")

@@ -44,7 +44,7 @@ def _check_valid(c_type: str):
       and not c_type.startswith("gpu_stream:")):
     raise ValueError(
         f'Invalid compute type {c_type}. Current supported values '
-        'are `device_host`, `device`, `tpu_sparsecore`, and `gpu_stream:#`. ')
+        'are `device_host`, `device`, `tpu_sparsecore`, and `gpu_stream:#`.')
 
 @contextmanager
 def compute_on(compute_type: str):
