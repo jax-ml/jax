@@ -1191,3 +1191,7 @@ def lower_as_mlir(
     stablehlo = lowered.compiler_ir(dialect="stablehlo")
 
   return stablehlo  # type: ignore[return-value]
+
+_out_shape_to_aval_mapping: dict[
+    type[Any], Callable[[Any], jax_core.AbstractValue]
+] = {}

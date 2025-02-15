@@ -1188,6 +1188,55 @@ class PallasCallDMATest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(y, x)
 
+  def test_output_dma_semaphore_ref(self):
+    if self.INTERPRET:
+      self.skipTest('TODO(sharadmv, justinfu): Add interpret support for DMA.')
+
+    def kernel(x_hbm_ref, y_hbm_ref, sem_out):
+      pltpu.make_async_copy(
+          x_hbm_ref.at[pl.ds(8), :], y_hbm_ref.at[:, pl.ds(128)], sem_out
+      ).start()
+
+    def kernel2(x_hbm_ref, y_hbm_ref, sem_in, y_hbm_out):
+      del y_hbm_out
+      pltpu.make_async_copy(
+          x_hbm_ref.at[pl.ds(8), :], y_hbm_ref.at[:, pl.ds(128)], sem_in
+      ).wait()
+
+    x = jnp.arange(8 * 128.0).reshape((8, 128))
+
+    @jax.jit
+    def body(x):
+      y, sem_out = self.pallas_call(
+          kernel,
+          in_specs=[
+              pl.BlockSpec(memory_space=pl.ANY),
+          ],
+          out_specs=[
+              pl.BlockSpec(memory_space=pl.ANY),
+              pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
+          ],
+          out_shape=[
+              jax.ShapeDtypeStruct((8, 128), jnp.float32),
+              pltpu.SemaphoreType.DMA,
+          ],
+      )(x)
+
+      y = self.pallas_call(
+          kernel2,
+          in_specs=[
+              pl.BlockSpec(memory_space=pl.ANY),
+              pl.BlockSpec(memory_space=pl.ANY),
+              pl.BlockSpec(memory_space=pltpu.SEMAPHORE),
+          ],
+          out_specs=pl.BlockSpec(memory_space=pl.ANY),
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+          input_output_aliases={1: 0},
+      )(x, y, sem_out)
+      return y
+
+    np.testing.assert_array_equal(body(x), x)
+
   def test_hbm_hbm_grid_dma(self):
     # When using the grid, we have to emit Mosaic window_params. Test that they
     # work correctly with ANY memory space operands.

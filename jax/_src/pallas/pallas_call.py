@@ -38,9 +38,9 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import primitives
 from jax._src.pallas import helpers as pallas_helpers
 from jax._src.pallas import hlo_interpreter
+from jax._src.pallas import primitives
 from jax._src.state import discharge as state_discharge
 from jax._src.state import types as state_types
 from jax._src.util import (
@@ -1337,6 +1337,10 @@ def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
     case pallas_core.MemoryRef():
       return out_shape.get_array_aval()
     case _:
+      if type(out_shape) in pallas_core._out_shape_to_aval_mapping:
+        return pallas_core._out_shape_to_aval_mapping[type(out_shape)](
+            out_shape
+        )
       if not (hasattr(out_shape, "shape") and hasattr(out_shape, "dtype")):
         raise ValueError(f"Invalid out_shape type: {type(out_shape)}")
       return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype)
