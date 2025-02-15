@@ -94,6 +94,7 @@ cc_library(
         "@xla//xla:array",
         "@xla//xla:shape_util",
         "@xla//xla:util",
+        "@xla//xla/tsl/platform:errors",
     ] + pallas_extension_deps,
 )
 

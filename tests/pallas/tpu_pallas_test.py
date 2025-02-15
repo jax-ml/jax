@@ -16,6 +16,7 @@
 
 import contextlib
 import functools
+import itertools
 import gc
 import io
 import math
@@ -1707,6 +1708,98 @@ class PallasCallDMAInterpretTest(PallasCallDMATest):
 
 
 class PallasCallTest(PallasBaseTest):
+
+  @parameterized.parameters([
+      dict(shape=shape, dty=dty)
+      for shape, dty in itertools.product(
+          [(4, 2, 9), (1, 1025), (1024, 1024)], [jnp.float32, jnp.int32]
+      )
+  ])
+  def test_double_replicated_reduction(self, shape, dty):
+    if not jtu.if_cloud_tpu_at_least(2025, 2, 19):
+      self.skipTest("Needs a newer libTPU")
+    def body(o_ref):
+      x = jnp.full(shape, 2.0, dtype=dty)
+      reduction = jnp.sum(x, axis=None)
+      bcast = jnp.full((vregs_in_block * 1024,), reduction)
+      o_ref[:] = bcast
+
+    vregs_in_block = 2
+    total_vregs = 4
+
+    data_size = total_vregs * 1024
+    block_size = vregs_in_block * 1024
+
+    @jax.jit
+    def reduce():
+      return self.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct((data_size,), dty),
+        in_specs=[],
+        out_specs=pl.BlockSpec((block_size,), lambda i: i),
+        grid= data_size // block_size,
+    )()
+
+    x = jnp.full(shape, 2.0, dtype=dty)
+    z = jax.block_until_ready(reduce())
+    reduce_value = jnp.sum(jnp.full(shape, x), dtype=dty)
+    np.testing.assert_allclose(z, reduce_value)
+
+  @parameterized.parameters([
+      dict(
+          m=m,
+          replicated=replicated,
+          reduced_dims=reduced_dims,
+          dty=dty,
+          reduce_func=reduce_func,
+      )
+      for m, replicated, reduced_dims, dty, reduce_func in itertools.product(
+          [128, 256],
+          [(True, True), (False, True), (True, False)],
+          [(0, 1), (0,), (1,)],
+          [jnp.float32, jnp.int32],
+          [jnp.sum, jnp.max, jnp.min],
+      )
+  ])
+  def test_replicated_broadcast_reduction(
+      self, m, replicated, reduced_dims, dty, reduce_func
+  ):
+    if not jtu.if_cloud_tpu_at_least(2025, 2, 19):
+      self.skipTest("Needs a newer libTPU")
+    if dty == jnp.int32 and 1 in reduced_dims:
+      # TODO(b/395579834): Remove this skip once we implement this.
+      self.skipTest('int32 reduction on last dimension not supported')
+    if not jtu.is_device_tpu_at_least(4) and len(replicated) == 2:
+      self.skipTest(
+          'Brodcast in both sublanes and lanes not supported on this hardware'
+      )
+
+    in_shape = (1 if replicated[0] else m, 1 if replicated[1] else m)
+    red_shape = [m, m]
+    for d in reduced_dims:
+      red_shape[d] = 1
+
+    def body(x_ref, o_ref):
+      x = x_ref[:]
+      dilated_x = jnp.broadcast_to(x, (m, m))
+      reduced = reduce_func(dilated_x, axis=reduced_dims).reshape(red_shape)
+      o_ref[:] = reduced
+
+    @jax.jit
+    def reduce(x):
+      return self.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct(red_shape, dty),
+        in_specs=[pl.BlockSpec(in_shape)],
+        out_specs=pl.BlockSpec(red_shape),
+        grid=1,
+    )(x)
+
+    x = jnp.full(in_shape, 2.0, dtype=dty)
+    y = jax.block_until_ready(reduce(x))
+    dilated_x = jnp.broadcast_to(x, (m, m))
+    expected = reduce_func(dilated_x, axis=reduced_dims).reshape(red_shape)
+    np.testing.assert_allclose(y, expected)
 
   def test_cost_analysis(self):
     def kernel(x, y):
