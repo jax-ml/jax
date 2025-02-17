@@ -1225,6 +1225,27 @@ LogicalResult DynamicGatherOp::verify() {
   return success();
 }
 
+LogicalResult AssumeMultipleOp::verify() {
+  auto operand_value = getValue();
+  auto divisor = getMultiple();
+  if (auto cst_op = operand_value.getDefiningOp<arith::ConstantOp>()) {
+    auto int_attr = dyn_cast<IntegerAttr>(cst_op.getValue());
+    // Illegal usage of AssumeMultipleOp.
+    if (!int_attr) {
+      return emitOpError(
+                 "Illegal user annotation, expected an integer, but got ")
+             << cst_op.getValue();
+    }
+    if (int_attr.getInt() % divisor != 0) {
+      return emitOpError(
+                 "Illegal user annotation, expected an integer that is "
+                 "divisible by the multiple, but got ")
+             << int_attr.getInt() << " % " << divisor;
+    }
+  }
+  return success();
+}
+
 }  // namespace tpu
 }  // namespace mlir
 

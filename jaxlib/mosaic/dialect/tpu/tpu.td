@@ -608,6 +608,7 @@ def TPU_AssumeMultipleOp : TPU_Op<"assume_multiple", [Pure, SameOperandsAndResul
     I32Attr:$multiple
   );
   let results = (outs AnyTypeOf<[Index, AnyInteger]>:$result);
+  let hasVerifier = 1;
 }
 
 def TPU_MemRefSliceOp : TPU_Op<"memref_slice", [Pure, AttrSizedOperandSegments]> {
