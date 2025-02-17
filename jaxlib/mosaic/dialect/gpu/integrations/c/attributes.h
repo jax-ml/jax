@@ -26,6 +26,37 @@ extern "C" {
 #endif
 
 //===----------------------------------------------------------------------===//
+// TileTransformAttr
+//===----------------------------------------------------------------------===//
+
+MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsATileTransformAttr(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED MlirAttribute mlirMosaicGpuTileTransformAttrGet(
+    MlirContext ctx, int32_t* tiling, int32_t tiling_size);
+
+MLIR_CAPI_EXPORTED int32_t
+mlirMosaicGpuTileTransformAttrGetTilingSize(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED int32_t
+mlirMosaicGpuTileTransformAttrGetTiling(MlirAttribute attr, int32_t index);
+
+//===----------------------------------------------------------------------===//
+// TransposeTransformAttr
+//===----------------------------------------------------------------------===//
+
+MLIR_CAPI_EXPORTED bool mlirMosaicGpuIsATransposeTransformAttr(
+    MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED MlirAttribute mlirMosaicGpuTransposeTransformAttrGet(
+    MlirContext ctx, int32_t* permutation, int32_t permutation_size);
+
+MLIR_CAPI_EXPORTED int32_t
+mlirMosaicGpuTransposeTransformAttrGetPermutationSize(MlirAttribute attr);
+
+MLIR_CAPI_EXPORTED int32_t mlirMosaicGpuTransposeTransformAttrGetPermutation(
+    MlirAttribute attr, int32_t index);
+
+//===----------------------------------------------------------------------===//
 // SwizzleTransformAttr
 //===----------------------------------------------------------------------===//
 
