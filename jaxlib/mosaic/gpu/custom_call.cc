@@ -53,6 +53,7 @@ limitations under the License.
 #include "mlir/include/mlir/Conversion/NVVMToLLVM/NVVMToLLVM.h"
 #include "mlir/include/mlir/Conversion/Passes.h"
 #include "mlir/include/mlir/Conversion/UBToLLVM/UBToLLVM.h"
+#include "mlir/include/mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/Arith/Transforms/Passes.h"
 #include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
@@ -215,6 +216,7 @@ void InitContext(mlir::MLIRContext* context) {
   mlir::registerConvertMemRefToLLVMInterface(registry);
   mlir::registerConvertMathToLLVMInterface(registry);
   mlir::registerConvertFuncToLLVMInterface(registry);
+  mlir::vector::registerConvertVectorToLLVMInterface(registry);
   mlir::index::registerConvertIndexToLLVMInterface(registry);
   mlir::cf::registerConvertControlFlowToLLVMInterface(registry);
   mlir::ub::registerConvertUBToLLVMInterface(registry);
