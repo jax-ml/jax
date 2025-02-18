@@ -40,14 +40,15 @@ from jax._src.interpreters import mlir
 from jax._src.lax import control_flow
 from jax._src.lax import eigh as lax_eigh
 from jax._src.lax import lax as lax_internal
-from jax._src.partition_spec import PartitionSpec as P
 from jax._src.lax import svd as lax_svd
+from jax._src.lax import utils as lax_utils
 from jax._src.lax.lax import (
-    standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
+    standard_primitive, naryop_dtype_rule, _float, _complex,
     _input_dtype)
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.partition_spec import PartitionSpec as P
 from jax._src.typing import Array, ArrayLike
 
 # The following imports may be unused but they are needed to register the
@@ -648,12 +649,124 @@ def tridiagonal_solve(dl: Array, d: Array, du: Array, b: Array) -> Array:
   return tridiagonal_solve_p.bind(dl, d, du, b)
 
 
-# primitives
+# Primitive registration helper functions
 
-_cpu_lapack_types = {np.dtype(np.float32), np.dtype(np.float64),
-                     np.dtype(np.complex64), np.dtype(np.complex128)}
+_platform_prefix_map = {"cpu": "cpu", "cuda": "cu", "rocm": "hip"}
+
+def register_cpu_gpu_lowering(
+    prim, lowering_rule, supported_platforms=("cpu", "cuda", "rocm")
+):
+  for platform in supported_platforms:
+    prefix = _platform_prefix_map[platform]
+    mlir.register_lowering(
+        prim,
+        partial(lowering_rule, target_name_prefix=prefix),
+        platform=platform)
+
+def linalg_shape_rule(multiple_results, supports_batching, ranks, result_shape,
+                      name, *avals, **kwargs):
+  batch_dims, dims = [], []
+  for i, (rank, aval) in enumerate(zip(ranks, avals)):
+    shape = aval.shape
+    if len(shape) < rank:
+      raise TypeError(
+          f"Input {i} to {name} must have rank at least {rank}, but got "
+          f"shape={shape}"
+      )
+    if not supports_batching and len(shape) != rank:
+      raise TypeError(
+          f"Input {i} to {name} must have a rank of exactly {rank}, but got "
+          f"shape={shape}"
+      )
+    batch_dims.append(shape[:len(shape) - rank])
+    dims.append(shape[len(shape) - rank:])
+  if not all(len(batch_dims[0]) == len(b) for b in batch_dims):
+    raise TypeError(
+        f"All inputs to {name} must have the same number of batch dimensions, "
+        f"but got {[len(b) for b in batch_dims]} batch dimensions for the "
+        "inputs."
+    )
+  batch_dims = tuple(batch_dims[0])
+  out = result_shape(*dims, **kwargs)
+  if multiple_results:
+    return tuple(batch_dims + tuple(d) for d in out)
+  else:
+    return batch_dims + tuple(out)
+
+def linalg_sharding_rule(
+    multiple_results, shape_rule, ranks, name, *avals, **kwargs
+):
+  output_shapes = shape_rule(*avals, **kwargs)
+  batch_specs = []
+  for i, (rank, aval) in enumerate(zip(ranks, avals)):
+    spec = aval.sharding.spec
+    batch_spec, rest_spec = spec[:len(spec) - rank], spec[len(spec) - rank:]
+    if not all(s is None for s in rest_spec):
+      raise ValueError(
+          f"Input {i} to {name} must be unsharded on non-batch dimensions, "
+          f"but got {spec}."
+      )
+    batch_specs.append(batch_spec)
+  batch_spec = batch_specs[0]
+  if any(b != batch_spec for b in batch_specs[1:]):
+    raise ValueError(
+        f"All inputs to {name} must have the same batch sharding, but got "
+        f"{batch_specs}."
+    )
+  sharding = avals[0].sharding
+  if multiple_results:
+    return [
+        sharding.with_spec(
+            P(*(tuple(batch_spec) + (None,) * (len(s) - len(batch_spec))))
+        )
+        for s in output_shapes
+    ]
+  else:
+    ndim = len(output_shapes) - len(batch_spec)
+    return sharding.with_spec(P(*(tuple(batch_spec) + (None,) * ndim)))
+
+def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
+                     multiple_results=False, supports_batching=True):
+  dtype_rule = partial(
+      lax_internal.naryop_dtype_rule, result_dtype, accepted_dtypes, name)
+  shape_rule = partial(
+      linalg_shape_rule, multiple_results, supports_batching, ranks,
+      result_shape, name)
+  if supports_batching:
+    sharding_rule = partial(
+        linalg_sharding_rule, multiple_results, shape_rule, ranks, name)
+  else:
+    sharding_rule = None
+  prim = core.Primitive(name)
+  prim.multiple_results = multiple_results
+  prim.def_impl(partial(dispatch.apply_primitive, prim))
+  if multiple_results:
+    prim.def_abstract_eval(
+        partial(lax_utils.standard_multi_result_abstract_eval, prim,
+                shape_rule, dtype_rule, lax_utils._standard_weak_type_rule,
+                sharding_rule))
+  else:
+    prim.def_abstract_eval(
+      partial(lax_utils.standard_abstract_eval, prim, shape_rule, dtype_rule,
+              lax_utils._standard_weak_type_rule, sharding_rule))
+  if supports_batching:
+    batching.primitive_batchers[prim] = partial(
+        batching.expand_dims_batcher, prim)
+  return prim
+
+standard_linalg_primitive = partial(linalg_primitive, lax_internal._input_dtype)
+
+
+# Primitive implementations
 
 # Cholesky decomposition
+
+def _cholesky_shape_rule(shape):
+  if shape[0] != shape[1]:
+    raise ValueError(
+        f"The input to cholesky must be a square matrix. Got shape {shape}.")
+  return shape
+
 
 def _cholesky_jvp_rule(primals, tangents):
   x, = primals
@@ -674,20 +787,11 @@ def _cholesky_jvp_rule(primals, tangents):
       precision=lax.Precision.HIGHEST)
   return L, L_dot
 
-def _cholesky_batching_rule(batched_args, batch_dims):
-  x, = batched_args
-  bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
-  return cholesky(x), 0
-
-cholesky_p = standard_unop(_float | _complex, 'cholesky')
-ad.primitive_jvps[cholesky_p] = _cholesky_jvp_rule
-batching.primitive_batchers[cholesky_p] = _cholesky_batching_rule
 
 def _cholesky_lowering(ctx, x):
+  del ctx  # unused
   return [hlo.cholesky(x, lower=ir.BoolAttr.get(True))]
 
-mlir.register_lowering(cholesky_p, _cholesky_lowering)
 
 def _cholesky_cpu_lowering(ctx, operand):
   operand_aval, = ctx.avals_in
@@ -702,31 +806,23 @@ def _cholesky_cpu_lowering(ctx, operand):
                         "SIGNED")
   return [_replace_not_ok_with_nan(ctx, batch_dims, ok, result, out_aval)]
 
-mlir.register_lowering(
-    cholesky_p, _cholesky_cpu_lowering, platform='cpu')
+
+cholesky_p = standard_linalg_primitive(
+    (_float | _complex,), (2,), _cholesky_shape_rule, "cholesky")
+ad.primitive_jvps[cholesky_p] = _cholesky_jvp_rule
+mlir.register_lowering(cholesky_p, _cholesky_lowering)
+mlir.register_lowering(cholesky_p, _cholesky_cpu_lowering, platform="cpu")
+
 
 # Cholesky update
 
-def _cholesky_update_abstract_eval(r_matrix, w_vector):
-  r_dtype = dtypes.canonicalize_dtype(r_matrix.dtype)
-  w_dtype = dtypes.canonicalize_dtype(w_vector.dtype)
-  if not (r_dtype == w_dtype and r_dtype in (np.float32, np.float64)):
-    raise NotImplementedError(
-        "Rank-1 Cholesky update is only implemented for float32 and float64.")
-  if not (r_matrix.ndim == 2 and w_vector.ndim == 1
-          and r_matrix.shape[-2] == r_matrix.shape[-1]
-          and r_matrix.shape[-2] == w_vector.shape[-1]):
+def _cholesky_update_shape_rule(r_shape, w_shape):
+  if r_shape[0] != r_shape[1] or w_shape[0] != r_shape[1]:
     raise ValueError(
         "Rank-1 update to Cholesky decomposition takes a square matrix "
-        "and a vector as inputs. Got shapes {}, {} instead".format(
-            r_matrix.shape, w_vector.shape))
-  return ShapedArray(r_matrix.shape, r_matrix.dtype)
-
-def _cholesky_update_gpu_lowering_rule(target_name_prefix, ctx, r_matrix, w_vector):
-  rule = ffi.ffi_lowering(f"{target_name_prefix}_cholesky_update_ffi",
-                          operand_output_aliases={0: 0, 1: 1})
-  sub_ctx = ctx.replace(avals_out=ctx.avals_in)
-  return rule(sub_ctx, r_matrix, w_vector)[:1]
+        f"and a vector of the same size as input. Got shapes {r_shape} and "
+        f"{w_shape} instead")
+  return r_shape
 
 
 def _cholesky_update_jax_fn(R, z):
@@ -760,120 +856,40 @@ def _cholesky_update_jax_fn(R, z):
   return R
 
 
-cholesky_update_p = Primitive('cholesky_update')
-cholesky_update_p.multiple_results = False
-cholesky_update_p.def_abstract_eval(_cholesky_update_abstract_eval)
-cholesky_update_p.def_impl(partial(dispatch.apply_primitive, cholesky_update_p))
+def _cholesky_update_gpu_lowering_rule(target_name_prefix, ctx, r_matrix,
+                                       w_vector):
+  rule = ffi.ffi_lowering(f"{target_name_prefix}_cholesky_update_ffi",
+                          operand_output_aliases={0: 0, 1: 1})
+  sub_ctx = ctx.replace(avals_out=ctx.avals_in)
+  return rule(sub_ctx, r_matrix, w_vector)[:1]
 
+
+cholesky_update_p = standard_linalg_primitive(
+    (_float, _float), (2, 1), _cholesky_update_shape_rule, "cholesky_update",
+    supports_batching=False)
 mlir.register_lowering(
     cholesky_update_p, partial(_cholesky_update_gpu_lowering_rule, "cu"),
-    platform='cuda')
+    platform="cuda")
 mlir.register_lowering(
     cholesky_update_p,
     mlir.lower_fun(_cholesky_update_jax_fn, multiple_results=False))
 
-# symmetric_update
+# General eigendecomposition
 
-def _symmetric_product_abstract_eval(a, c, *, alpha, beta):
-  a_dtype = dtypes.canonicalize_dtype(a.dtype)
-  c_dtype = dtypes.canonicalize_dtype(c.dtype)
-  if not (a_dtype == c_dtype and a_dtype in (np.float32, np.float64)):
-    raise NotImplementedError(
-        "Symmetric update is only implemented for float32 and float64.")
-  if not (a.ndim >= 2 and c.ndim >= 2
-          and a.shape[-2] == c.shape[-1]
-          and c.shape[-1] == c.shape[-2]):
+def _eig_dtype_rule(
+    a_dtype, *, compute_left_eigenvectors, compute_right_eigenvectors, **_
+):
+  dtype = dtypes.to_complex_dtype(dtypes.canonicalize_dtype(a_dtype))
+  return (dtype,) * (1 + compute_left_eigenvectors + compute_right_eigenvectors)
+
+def _eig_shape_rule(
+    shape, *, compute_left_eigenvectors, compute_right_eigenvectors, **_
+):
+  if shape[0] != shape[1]:
     raise ValueError(
-        "Symmetric update takes (maybe batched) matrices of matching shapes. "
-        "Got shapes {}, {} instead".format(a.shape, c.shape))
-  return ShapedArray(c.shape, c.dtype)
-
-
-def _symmetric_product_batching_rule(batched_args, batch_dims, *, alpha, beta):
-  a_tensor, c_tensor = batched_args
-  a_bd, c_bd = batch_dims
-  a_tensor = batching.moveaxis(a_tensor, a_bd, 0)
-  c_tensor = batching.moveaxis(c_tensor, c_bd, 0)
-  return (
-      symmetric_product_p.bind(a_tensor, c_tensor, alpha=alpha, beta=beta), 0)
-
-symmetric_product_p = Primitive('symmetric_update')
-symmetric_product_p.multiple_results = False
-symmetric_product_p.def_abstract_eval(_symmetric_product_abstract_eval)
-symmetric_product_p.def_impl(
-    partial(dispatch.apply_primitive, symmetric_product_p))
-batching.primitive_batchers[
-    symmetric_product_p] = _symmetric_product_batching_rule
-
-
-def _symmetric_product_gpu_lowering(
-    platform, ctx, a_tensor, c_tensor, alpha, beta):
-  a_aval, c_aval = ctx.avals_in[:2]
-  dtype = a_aval.dtype
-  alpha_aval = beta_aval = ShapedArray((), dtype)
-
-  alpha_array = mlir.full_like_aval(ctx, alpha, alpha_aval)
-  beta_array = mlir.full_like_aval(ctx, beta, beta_aval)
-
-  rule = ffi.ffi_lowering(f"{platform}solver_syrk_ffi",
-                          operand_output_aliases={1: 0})
-  ctx = ctx.replace(avals_in=[a_aval, c_aval, alpha_aval, beta_aval])
-  return rule(ctx, a_tensor, c_tensor, alpha_array, beta_array, transpose=False)
-
-
-def _symmetric_product_jax_fn(a, c, *, alpha, beta):
-  a_T = lax.transpose(a, (*range(a.ndim - 2), a.ndim - 1, a.ndim - 2))
-  return alpha * lax.batch_matmul(
-      a, a_T, precision=lax.Precision.HIGHEST) + beta * c
-
-
-mlir.register_lowering(
-    symmetric_product_p,
-    partial(_symmetric_product_gpu_lowering, 'cu'), platform='cuda')
-mlir.register_lowering(
-    symmetric_product_p,
-    mlir.lower_fun(_symmetric_product_jax_fn, multiple_results=False))
-
-# Asymmetric eigendecomposition
-
-def eig_impl(operand, *, compute_left_eigenvectors, compute_right_eigenvectors,
-             use_magma):
-  return dispatch.apply_primitive(
-      eig_p,
-      operand,
-      compute_left_eigenvectors=compute_left_eigenvectors,
-      compute_right_eigenvectors=compute_right_eigenvectors,
-      use_magma=use_magma,
-  )
-
-def eig_lower(*args, **kw):
-  raise NotImplementedError(
-    "Nonsymmetric eigendecomposition is only implemented on the CPU backend. "
-    "If your matrix is symmetric or Hermitian, you should use eigh instead.")
-
-def eig_abstract_eval(operand, *, compute_left_eigenvectors,
-                      compute_right_eigenvectors, use_magma):
-  del use_magma  # unused
-  if isinstance(operand, ShapedArray):
-    if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
-      raise ValueError("Argument to nonsymmetric eigendecomposition must have "
-                       "shape [..., n, n], got shape {}".format(operand.shape))
-
-    batch_dims = operand.shape[:-2]
-    n = operand.shape[-1]
-    dtype = dtypes.canonicalize_dtype(dtypes.to_complex_dtype(operand.dtype))
-    vl = vr = operand.update(shape=batch_dims + (n, n), dtype=dtype)
-    w = operand.update(shape=batch_dims + (n,), dtype=dtype)
-  else:
-    raise NotImplementedError
-
-  output = [w]
-  if compute_left_eigenvectors:
-    output.append(vl)
-  if compute_right_eigenvectors:
-    output.append(vr)
-
-  return tuple(output)
+        f"The input to eig must be a square matrix. Got shape {shape}.")
+  count = compute_left_eigenvectors + compute_right_eigenvectors
+  return (shape[:-1],) + (shape,) * count
 
 def _eig_compute_attr(compute):
   return _enum_attr(
@@ -917,10 +933,9 @@ def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
     output.append(vr)
   return output
 
-
-def _eig_gpu_lowering(target_name_prefix, ctx, operand, *,
+def _eig_gpu_lowering(ctx, operand, *,
                       compute_left_eigenvectors, compute_right_eigenvectors,
-                      use_magma):
+                      use_magma, target_name_prefix):
   operand_aval, = ctx.avals_in
   batch_dims = operand_aval.shape[:-2]
   n, m = operand_aval.shape[-2:]
@@ -975,18 +990,6 @@ def _eig_gpu_lowering(target_name_prefix, ctx, operand, *,
     output.append(vr)
   return output
 
-
-def eig_batching_rule(batched_args, batch_dims, *, compute_left_eigenvectors,
-                      compute_right_eigenvectors, use_magma):
-  x, = batched_args
-  bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
-
-  return (eig_p.bind(x, compute_left_eigenvectors=compute_left_eigenvectors,
-                     compute_right_eigenvectors=compute_right_eigenvectors,
-                     use_magma=use_magma),
-          (0,) * (1 + compute_left_eigenvectors + compute_right_eigenvectors))
-
 def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
                  compute_right_eigenvectors, use_magma):
   del use_magma  # unused
@@ -1002,60 +1005,36 @@ def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
   l, v = eig(a, compute_left_eigenvectors=False)
   return [l], [(_solve(v, da.astype(v.dtype)) * _T(v)).sum(-1)]
 
-eig_p = Primitive('eig')
-eig_p.multiple_results = True
-eig_p.def_impl(eig_impl)
-eig_p.def_abstract_eval(eig_abstract_eval)
-mlir.register_lowering(eig_p, eig_lower)
-mlir.register_lowering(eig_p, _eig_cpu_lowering, platform='cpu')
-mlir.register_lowering(eig_p, partial(_eig_gpu_lowering, 'cu'),
-                       platform='cuda')
-mlir.register_lowering(eig_p, partial(_eig_gpu_lowering, 'hip'),
-                       platform='rocm')
-batching.primitive_batchers[eig_p] = eig_batching_rule
+eig_p = linalg_primitive(
+    _eig_dtype_rule, (_float | _complex,), (2,), _eig_shape_rule, "eig",
+    multiple_results=True)
 ad.primitive_jvps[eig_p] = eig_jvp_rule
+mlir.register_lowering(eig_p, _eig_cpu_lowering, platform="cpu")
+register_cpu_gpu_lowering(eig_p, _eig_gpu_lowering, ("cuda", "rocm"))
 
 
 # Symmetric/Hermitian eigendecomposition
-
 
 def eigh_jacobi(x: ArrayLike, *, lower: bool = True,
                 sort_eigenvalues: bool = True) -> tuple[Array, Array]:
   """Helper Jacobi eigendecomposition implemented by XLA.
 
-  Used as a subroutine of QDWH-eig on TPU."""
-  w, v = eigh_jacobi_p.bind(x, lower=lower, sort_eigenvalues=sort_eigenvalues)
-  return w, v
+  Used as a subroutine of QDWH-eig on TPU.
+  """
+  return eigh_jacobi_p.bind(x, lower=lower, sort_eigenvalues=sort_eigenvalues)
 
-def _eigh_jacobi_impl(operand, *, lower, sort_eigenvalues):
-  w, v = dispatch.apply_primitive(eigh_jacobi_p, operand, lower=lower,
-                                  sort_eigenvalues=sort_eigenvalues)
-  return w, v
+def _eigh_jacobi_shape_rule(shape, **_):
+  if shape[0] != shape[-1]:
+    raise ValueError(
+        "Argument to symmetric eigendecomposition must have shape [..., n, n], "
+        f"got shape {shape}"
+    )
+  n = shape[0]
+  return (n,), (n, n)
 
-def _eigh_jacobi_abstract_eval(operand, *, lower, sort_eigenvalues):
-  if isinstance(operand, ShapedArray):
-    if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
-      raise ValueError(
-        "Argument to symmetric eigendecomposition must have shape [..., n, n],"
-        "got shape {}".format(operand.shape))
-
-    batch_dims = operand.shape[:-2]
-    n = operand.shape[-1]
-    batch_s = operand.sharding.spec[:-2]
-    ns = operand.sharding.spec[-1]
-    if ns is not None:
-      raise ValueError(f'n should be unsharded. Got n: {ns}'
-                        ' specs. Try marking their specs as None.')
-    w_s = operand.sharding.with_spec(P(*batch_s + (ns,)))
-    v_s = operand.sharding.with_spec(P(*batch_s + (ns, ns)))
-    w = operand.update(shape=batch_dims + (n,),
-                       dtype=lax_internal._complex_basetype(operand.dtype),
-                       sharding=w_s)
-    v = operand.update(shape=batch_dims + (n, n), sharding=v_s)
-  else:
-    w, v = operand, operand
-  return w, v
-
+def _eigh_jacobi_dtype_rule(dtype, **_):
+  dtype = dtypes.canonicalize_dtype(dtype)
+  return lax_internal._complex_basetype(dtype), dtype
 
 def _eigh_jacobi_lowering_rule(ctx, operand, lower, sort_eigenvalues):
   operand_aval, = ctx.avals_in
@@ -1091,51 +1070,26 @@ def _eigh_jacobi_lowering_rule(ctx, operand, lower, sort_eigenvalues):
   )
   return op.results[1], op.results[0]
 
-eigh_jacobi_p = Primitive('eigh_jacobi')
-eigh_jacobi_p.multiple_results = True
-eigh_jacobi_p.def_impl(_eigh_jacobi_impl)
-eigh_jacobi_p.def_abstract_eval(_eigh_jacobi_abstract_eval)
+eigh_jacobi_p = linalg_primitive(
+    _eigh_jacobi_dtype_rule, (_float | _complex,), (2,),
+    _eigh_jacobi_shape_rule, "eigh_jacobi", multiple_results=True)
 mlir.register_lowering(eigh_jacobi_p, _eigh_jacobi_lowering_rule)
 
 
-def _eigh_impl(operand, *, lower, sort_eigenvalues, subset_by_index):
-  v, w = dispatch.apply_primitive(
-      eigh_p,
-      operand,
-      lower=lower,
-      sort_eigenvalues=sort_eigenvalues,
-      subset_by_index=subset_by_index,
-  )
-  return v, w
-
-
-def _eigh_abstract_eval(operand, *, lower, sort_eigenvalues, subset_by_index):
-  if isinstance(operand, ShapedArray):
-    if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
-      raise ValueError(
+def _eigh_shape_rule(shape, *, subset_by_index, **_):
+  if shape[0] != shape[-1]:
+    raise ValueError(
         "Argument to symmetric eigendecomposition must have shape [..., n, n], "
-        "got shape {}".format(operand.shape))
+        f"got shape {shape}"
+    )
+  n = shape[0]
+  d = (n if subset_by_index is None else
+       subset_by_index[1] - subset_by_index[0])
+  return (n, d), (d,)
 
-    batch_dims = operand.shape[:-2]
-    n = operand.shape[-1]
-    d = (n if subset_by_index is None else
-         subset_by_index[1] - subset_by_index[0])
-    batch_s = operand.sharding.spec[:-2]
-    ns, ds = operand.sharding.spec[-1], None
-    if ns is not None:
-      raise ValueError(f'n should be unsharded. Got n: {ns} specs. Try '
-                        'marking their specs as None.')
-    v_s = operand.sharding.with_spec(P(*batch_s + (ns, ds)))
-    w_s = operand.sharding.with_spec(P(*batch_s + (ds,)))
-    v = operand.update(shape=batch_dims + (n, d), sharding=v_s)
-    w = operand.update(
-        shape=batch_dims + (d,),
-        dtype=lax_internal._complex_basetype(operand.dtype),
-        sharding=w_s)
-  else:
-    v, w = operand, operand
-  return v, w
-
+def _eigh_dtype_rule(dtype, **_):
+  dtype = dtypes.canonicalize_dtype(dtype)
+  return dtype, lax_internal._complex_basetype(dtype)
 
 def _eigh_cpu_gpu_lowering(
     ctx, operand, *, lower, sort_eigenvalues, subset_by_index,
@@ -1265,40 +1219,151 @@ def _eigh_jvp_rule(
   return (v, w_real), (dv, dw)
 
 
-def _eigh_batching_rule(
-    batched_args, batch_dims, *, lower, sort_eigenvalues, subset_by_index
-):
-  x, = batched_args
-  bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
-  return eigh_p.bind(
-      x,
-      lower=lower,
-      sort_eigenvalues=sort_eigenvalues,
-      subset_by_index=subset_by_index,
-  ), (0, 0)
-
-
-eigh_p = Primitive('eigh')
-eigh_p.multiple_results = True
-eigh_p.def_impl(_eigh_impl)
-eigh_p.def_abstract_eval(_eigh_abstract_eval)
+eigh_p = linalg_primitive(
+    _eigh_dtype_rule, (_float | _complex,), (2,), _eigh_shape_rule, "eigh",
+    multiple_results=True)
 ad.primitive_jvps[eigh_p] = _eigh_jvp_rule
-batching.primitive_batchers[eigh_p] = _eigh_batching_rule
-
-mlir.register_lowering(
-    eigh_p, partial(_eigh_cpu_gpu_lowering, target_name_prefix='cpu'),
-    platform='cpu')
-mlir.register_lowering(
-  eigh_p, partial(_eigh_cpu_gpu_lowering, target_name_prefix='cu'),
-  platform='cuda')
-mlir.register_lowering(
-  eigh_p, partial(_eigh_cpu_gpu_lowering, target_name_prefix='hip'),
-  platform='rocm')
 mlir.register_lowering(
     eigh_p, mlir.lower_fun(_eigh_tpu_impl, multiple_results=True),
     platform='tpu')
+register_cpu_gpu_lowering(eigh_p, _eigh_cpu_gpu_lowering)
 
+
+# Hessenberg reduction
+
+def _hessenberg_shape_rule(shape, **_):
+  if shape[0] != shape[-1]:
+    raise ValueError(
+        "Argument to Hessenberg reduction must have shape [..., n, n], "
+        f"got shape {shape}"
+    )
+  return shape, shape[:-2] + (shape[-1] - 1,)
+
+
+def _hessenberg_dtype_rule(dtype, **_):
+  dtype = dtypes.canonicalize_dtype(dtype)
+  return dtype, dtype
+
+
+def _hessenberg_cpu_lowering(ctx, a):
+  a_aval, = ctx.avals_in
+  batch_dims = a_aval.shape[:-2]
+  n = a_aval.shape[-1]
+  if not core.is_constant_dim(n):
+    raise ValueError("hessenberg requires the last dimension of a to be "
+                     f"constant, got a.shape of {a.shape}.")
+  target_name = lapack.prepare_lapack_call("gehrd_ffi", a_aval.dtype)
+  avals_out = [*ctx.avals_out, ShapedArray(batch_dims, np.int32)]
+  rule = _linalg_ffi_lowering(target_name, avals_out=avals_out,
+                              operand_output_aliases={0: 0})
+  a, taus, info = rule(ctx, a, low=np.int32(1), high=np.int32(n))
+  ok = mlir.compare_hlo(
+      info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      "EQ", "SIGNED")
+  return [
+      _replace_not_ok_with_nan(ctx, batch_dims, ok, a, ctx.avals_out[0]),
+      _replace_not_ok_with_nan(ctx, batch_dims, ok, taus, ctx.avals_out[1]),
+  ]
+
+
+hessenberg_p = linalg_primitive(
+    _hessenberg_dtype_rule, (_float | _complex,), (2,), _hessenberg_shape_rule,
+    "hessenberg", multiple_results=True)
+mlir.register_lowering(hessenberg_p, _hessenberg_cpu_lowering, platform="cpu")
+
+
+# Householder product
+
+def _householder_product_shape_rule(a_shape, taus_shape, **_):
+  m, n = a_shape
+  if m < n:
+    raise ValueError(
+        "The first argument to householder_product must have at least as many "
+        f"rows as columns, got shape {a_shape}")
+  k = taus_shape[0]
+  if k > core.min_dim(m, n):
+    raise ValueError(
+        "The second argument to householder_product must not have more rows "
+        "than the minimum of the first argument's rows and columns.")
+  return a_shape
+
+
+def _householder_product_lowering(ctx, a, taus):
+  aval_out, = ctx.avals_out
+  if not is_constant_shape(aval_out.shape):
+    result_shapes = [
+        mlir.eval_dynamic_shape_as_tensor(ctx, aval_out.shape)]
+  else:
+    result_shapes = None
+  op = mlir.custom_call(
+      "ProductOfElementaryHouseholderReflectors",
+      result_types=[mlir.aval_to_ir_type(aval_out)],
+      operands=[a, taus],
+      api_version=1,
+      result_shapes=result_shapes)
+  return [op.result]
+
+
+def _householder_product_cpu_gpu_lowering(ctx, a, taus, *,
+                                          target_name_prefix: str):
+  a_aval, _ = ctx.avals_in
+  if target_name_prefix == "cpu":
+    dtype = a_aval.dtype
+    prefix = "un" if dtypes.issubdtype(dtype, np.complexfloating) else "or"
+    target_name = lapack.prepare_lapack_call(f"{prefix}gqr_ffi", dtype)
+  else:
+    target_name = f"{target_name_prefix}solver_orgqr_ffi"
+  rule = _linalg_ffi_lowering(target_name, operand_output_aliases={0: 0})
+  return rule(ctx, a, taus)
+
+householder_product_p = standard_linalg_primitive(
+    (_float | _complex, _float | _complex), (2, 1),
+    _householder_product_shape_rule, "householder_product")
+mlir.register_lowering(householder_product_p, _householder_product_lowering)
+register_cpu_gpu_lowering(
+    householder_product_p, _householder_product_cpu_gpu_lowering)
+
+
+# Symmetric product
+
+def _symmetric_product_shape_rule(a_shape, c_shape, **_):
+  if a_shape[0] != c_shape[1] or c_shape[0] != c_shape[1]:
+    raise ValueError(
+        "symmetric_update expects a rectangular matrix of shape (m, n) and a "
+        f"square matrix of shape (n, n). Got shapes {a_shape} and {c_shape}.")
+  return c_shape
+
+def _symmetric_product_jax_fn(a, c, *, alpha, beta):
+  a_T = lax.transpose(a, (*range(a.ndim - 2), a.ndim - 1, a.ndim - 2))
+  return alpha * lax.batch_matmul(
+      a, a_T, precision=lax.Precision.HIGHEST) + beta * c
+
+def _symmetric_product_gpu_lowering(
+    platform, ctx, a_tensor, c_tensor, alpha, beta):
+  a_aval, c_aval = ctx.avals_in[:2]
+  dtype = a_aval.dtype
+  alpha_aval = beta_aval = ShapedArray((), dtype)
+
+  alpha_array = mlir.full_like_aval(ctx, alpha, alpha_aval)
+  beta_array = mlir.full_like_aval(ctx, beta, beta_aval)
+
+  rule = ffi.ffi_lowering(f"{platform}solver_syrk_ffi",
+                          operand_output_aliases={1: 0})
+  ctx = ctx.replace(avals_in=[a_aval, c_aval, alpha_aval, beta_aval])
+  return rule(ctx, a_tensor, c_tensor, alpha_array, beta_array, transpose=False)
+
+symmetric_product_p = standard_linalg_primitive(
+    (_float, _float), (2, 2), _symmetric_product_shape_rule,
+    "symmetric_product")
+mlir.register_lowering(
+    symmetric_product_p,
+    partial(_symmetric_product_gpu_lowering, "cu"), platform="cuda")
+mlir.register_lowering(
+    symmetric_product_p,
+    mlir.lower_fun(_symmetric_product_jax_fn, multiple_results=False))
+
+
+# Triangular solve
 
 _triangular_solve_dtype_rule = partial(
     naryop_dtype_rule, _input_dtype, (_float | _complex, _float | _complex),
@@ -1446,6 +1511,11 @@ def _triangular_solve_lowering(
                              hlo.TransposeAttr.get(transpose))
   return [mlir.lower_sharding_under_shit(ctx, out, out_aval)]
 
+_cpu_lapack_types = {np.dtype(np.float32), np.dtype(np.float64),
+                     np.dtype(np.complex64), np.dtype(np.complex128)}
+
+_cpu_lapack_types = {np.dtype(np.float32), np.dtype(np.float64),
+                     np.dtype(np.complex64), np.dtype(np.complex128)}
 
 def _triangular_solve_cpu_lower(
     ctx, a, b, *, left_side, lower, transpose_a,
@@ -2023,75 +2093,6 @@ batching.primitive_batchers[geqp3_p] = _geqp3_batching_rule
 mlir.register_lowering(geqp3_p, _geqp3_cpu_lowering, platform="cpu")
 mlir.register_lowering(geqp3_p, partial(_geqp3_gpu_lowering, 'cu'), platform="cuda")
 mlir.register_lowering(geqp3_p, partial(_geqp3_gpu_lowering, 'hip'), platform="rocm")
-
-# householder_product: product of elementary Householder reflectors
-
-def _householder_product_abstract_eval(a, taus):
-  if not isinstance(a, ShapedArray) or not isinstance(taus, ShapedArray):
-    raise NotImplementedError("Unsupported aval in householder_product_abstract_eval: "
-                              f"{a.aval} {taus.aval}")
-  if a.ndim < 2:
-    raise ValueError("Argument to Householder product must have ndims >= 2")
-  *batch_dims, m, n = a.shape
-  *taus_batch_dims, k = taus.shape
-  if a.dtype != taus.dtype or batch_dims != taus_batch_dims or k > core.min_dim(m, n):
-    raise ValueError(f"Type mismatch for Householder product: {a=} {taus=}")
-  if m < n:
-    raise ValueError("Householder product inputs must have at least as many "
-                     f"rows as columns, got shape {a.shape}")
-  return a
-
-def _householder_product_batching_rule(batched_args, batch_dims):
-  a, taus = batched_args
-  b_a, b_taus, = batch_dims
-  return householder_product(batching.moveaxis(a, b_a, 0),
-               batching.moveaxis(taus, b_taus, 0)), 0
-
-def _householder_product_lowering_rule(ctx, a, taus):
-  aval_out, = ctx.avals_out
-  if not is_constant_shape(aval_out.shape):
-    result_shapes = [
-        mlir.eval_dynamic_shape_as_tensor(ctx, aval_out.shape)]
-  else:
-    result_shapes = None
-  op = mlir.custom_call(
-      "ProductOfElementaryHouseholderReflectors",
-      result_types=[mlir.aval_to_ir_type(aval_out)],
-      operands=[a, taus],
-      api_version=1,
-      result_shapes=result_shapes)
-  return [op.result]
-
-def _householder_product_cpu_gpu_lowering(ctx, a, taus, *,
-                                          target_name_prefix: str):
-  a_aval, _ = ctx.avals_in
-  if target_name_prefix == "cpu":
-    dtype = a_aval.dtype
-    prefix = "un" if dtypes.issubdtype(dtype, np.complexfloating) else "or"
-    target_name = lapack.prepare_lapack_call(f"{prefix}gqr_ffi", dtype)
-  else:
-    target_name = f"{target_name_prefix}solver_orgqr_ffi"
-  rule = _linalg_ffi_lowering(target_name, operand_output_aliases={0: 0})
-  return rule(ctx, a, taus)
-
-householder_product_p = Primitive('householder_product')
-householder_product_p.def_impl(partial(dispatch.apply_primitive, householder_product_p))
-householder_product_p.def_abstract_eval(_householder_product_abstract_eval)
-batching.primitive_batchers[householder_product_p] = _householder_product_batching_rule
-mlir.register_lowering(householder_product_p, _householder_product_lowering_rule)
-
-mlir.register_lowering(
-    householder_product_p,
-    partial(_householder_product_cpu_gpu_lowering, target_name_prefix='cpu'),
-    platform='cpu')
-mlir.register_lowering(
-    householder_product_p,
-    partial(_householder_product_cpu_gpu_lowering, target_name_prefix='cu'),
-    platform='cuda')
-mlir.register_lowering(
-    householder_product_p,
-    partial(_householder_product_cpu_gpu_lowering, target_name_prefix='hip'),
-    platform='rocm')
 
 
 def _qr_impl(operand, *, pivoting, full_matrices, use_magma):
@@ -2850,57 +2851,6 @@ mlir.register_lowering(schur_p, _schur_lowering)
 mlir.register_lowering(schur_p, _schur_cpu_lowering, platform='cpu')
 batching.primitive_batchers[schur_p] = _schur_batching_rule
 ad.primitive_jvps[schur_p] = _schur_jvp_rule
-
-
-# hessenberg: Upper Hessenberg reduction
-
-def _hessenberg_abstract_eval(a):
-  if a.dtype not in (np.float32, np.float64, np.complex64, np.complex128):
-    raise TypeError("hessenberg requires a.dtype to be float32, float64, "
-                    f"complex64, or complex128, got {a.dtype}.")
-  if a.ndim < 2:
-    raise TypeError("hessenberg requires a.ndim to be at least 2, got "
-                    f"{a.ndim}.")
-  if a.shape[-1] != a.shape[-2]:
-    raise TypeError("hessenberg requires the last two dimensions of a to be "
-                    f"equal in size, got a.shape of {a.shape}.")
-  return [a, ShapedArray(a.shape[:-2] + (a.shape[-1] - 1,), a.dtype)]
-
-hessenberg_p = Primitive("hessenberg")
-hessenberg_p.def_impl(partial(dispatch.apply_primitive, hessenberg_p))
-hessenberg_p.def_abstract_eval(_hessenberg_abstract_eval)
-hessenberg_p.multiple_results = True
-
-def _hessenberg_batching_rule(batched_args, batch_dims):
-  x, = batched_args
-  bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
-  return hessenberg(x), (0, 0)
-
-batching.primitive_batchers[hessenberg_p] = _hessenberg_batching_rule
-
-def _hessenberg_cpu_hlo(ctx, a):
-  a_aval, = ctx.avals_in
-  batch_dims = a_aval.shape[:-2]
-  n = a_aval.shape[-1]
-  if not core.is_constant_dim(n):
-    raise ValueError("hessenberg requires the last dimension of a to be "
-                     f"constant, got a.shape of {a.shape}.")
-  target_name = lapack.prepare_lapack_call("gehrd_ffi", a_aval.dtype)
-  avals_out = [*ctx.avals_out, ShapedArray(batch_dims, np.int32)]
-  rule = _linalg_ffi_lowering(target_name, avals_out=avals_out,
-                              operand_output_aliases={0: 0})
-  a, taus, info = rule(ctx, a, low=np.int32(1), high=np.int32(n))
-  ok = mlir.compare_hlo(
-      info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
-      "EQ", "SIGNED")
-  return [
-      _replace_not_ok_with_nan(ctx, batch_dims, ok, a, ctx.avals_out[0]),
-      _replace_not_ok_with_nan(ctx, batch_dims, ok, taus, ctx.avals_out[1]),
-  ]
-
-
-mlir.register_lowering(hessenberg_p, _hessenberg_cpu_hlo, platform='cpu')
 
 
 # tridiagonal: Upper Hessenberg reduction
