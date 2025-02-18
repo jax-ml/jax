@@ -55,6 +55,7 @@ class PgleTest(jtu.JaxTestCase):
 
   def tearDown(self):
     cc.set_cache_dir(None)
+    cc.reset_cache()
     super().tearDown()
 
   def testPGLEProfilerGetFDOProfile(self):
