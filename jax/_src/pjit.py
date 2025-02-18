@@ -695,6 +695,12 @@ def _infer_params_cached(
 def _infer_params(
     fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> tuple[PjitParams, list[Any]]:
+  if (not mesh_lib.thread_resources.env.physical_mesh.empty and
+      mesh_lib.get_concrete_mesh() is not None):
+    raise ValueError(
+        'Using `with mesh:` context manager and `jax.sharding.use_mesh`'
+        ' together is not allowed.')
+
   if ji.use_resource_env:
     # We need to fetch the mesh from inside the wrapped function, because
     # meshes are dynamically scoped (i.e., with a context manager).
@@ -703,10 +709,6 @@ def _infer_params(
   else:
     resource_env = None
     pjit_mesh = None
-  if resource_env is not None and mesh_lib.get_concrete_mesh() is not None:
-    raise ValueError(
-        'Using `with mesh:` context manager and `jax.sharding.use_mesh`'
-        ' together is not allowed.')
 
   dbg = debug_info(
       'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
@@ -2538,8 +2540,13 @@ def with_sharding_constraint(x, shardings):
       flatten_axes("with_sharding_constraint layouts", tree, layouts))
   del layouts
 
-  resource_env = mesh_lib.thread_resources.env
-  mesh = resource_env.physical_mesh
+  # TODO(yashkatariya): with_sharding_constraint should read the value of
+  # get_abstract_mesh
+  mesh = mesh_lib.thread_resources.env.physical_mesh
+  if not mesh.empty and mesh_lib.get_concrete_mesh() is not None:
+    raise ValueError(
+        'Using `with mesh:` context manager and `jax.sharding.use_mesh`'
+        ' together is not allowed.')
 
   shardings_flat = [_create_sharding_for_array(mesh, a, 'shardings',
                                                'with_sharding_constraint')
@@ -2567,15 +2574,14 @@ def with_sharding_constraint(x, shardings):
                                   "with_sharding_constraint arguments")
 
   outs = [sharding_constraint_p.bind(xf, sharding=s, layout=l,
-                                     resource_env=resource_env,
-                                     unconstrained_dims=ud)
+                                     context_mesh=mesh, unconstrained_dims=ud)
           for xf, s, l, ud in zip(x_flat, shardings_flat, user_layouts_flat,
                                   unconstrained_dims)]
   return tree_unflatten(tree, outs)
 
 def _identity_fn(x): return x
 
-def _sharding_constraint_impl(x, sharding, layout, resource_env,
+def _sharding_constraint_impl(x, sharding, layout, context_mesh,
                               unconstrained_dims):
   if (isinstance(sharding, NamedSharding) and
       isinstance(sharding.mesh, AbstractMesh)):
@@ -2617,7 +2623,7 @@ ad.deflinear2(sharding_constraint_p,
               lambda ct, _, **params: (sharding_constraint_p.bind(ct, **params),))
 
 def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding, layout,
-                                      resource_env, unconstrained_dims):
+                                      context_mesh, unconstrained_dims):
   aval, = ctx.avals_in
   out_aval, = ctx.avals_out
   axis_ctx = ctx.module_context.axis_context
@@ -2638,7 +2644,8 @@ mlir.register_lowering(sharding_constraint_p,
 
 
 def _sharding_constraint_batcher(
-    axis_data, vals_in, dims_in, sharding, layout, resource_env, unconstrained_dims):
+    axis_data, vals_in, dims_in, sharding, layout, context_mesh,
+    unconstrained_dims):
   if axis_data.spmd_name is not None and isinstance(sharding, NamedSharding):
     used = {n for ns in sharding.spec
             for n in (ns if isinstance(ns, tuple) else (ns,))}
@@ -2653,7 +2660,7 @@ def _sharding_constraint_batcher(
     unconstrained_dims.add(d)
 
   vmapped_sharding = _pjit_batcher_for_sharding(
-      sharding, d, axis_data.spmd_name, resource_env.physical_mesh, x.ndim)
+      sharding, d, axis_data.spmd_name, context_mesh, x.ndim)
   if unconstrained_dims and isinstance(vmapped_sharding, NamedSharding):
     new_spec = list(vmapped_sharding.spec) + [None] * (x.ndim - len(vmapped_sharding.spec))
     for u in unconstrained_dims:
@@ -2671,7 +2678,7 @@ def _sharding_constraint_batcher(
       x,
       sharding=vmapped_sharding,
       layout=layout,
-      resource_env=resource_env,
+      context_mesh=context_mesh,
       unconstrained_dims=unconstrained_dims)
   return y, d
 batching.fancy_primitive_batchers[sharding_constraint_p] = _sharding_constraint_batcher

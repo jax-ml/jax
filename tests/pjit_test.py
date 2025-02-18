@@ -6621,6 +6621,31 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P(P.UNCONSTRAINED))
     jax.lax.with_sharding_constraint(np.arange(8), s)
 
+  def test_use_mesh_legacy_mesh_ctx_mgr_mix_error(self):
+    mesh = jtu.create_mesh((1, 1), ('x', 'y'))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'Using `with mesh:` context manager and `jax.sharding.use_mesh`'
+        ' together is not allowed'):
+      with jax.sharding.use_mesh(mesh), mesh:
+        jax.jit(lambda x: x)(jnp.arange(8))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'Using `with mesh:` context manager and `jax.sharding.use_mesh`'
+        ' together is not allowed'):
+      with jax.sharding.use_mesh(mesh), mesh:
+        jnp.zeros((8, 2), dtype=jnp.int32)
+
+    x = jnp.arange(8)
+    with self.assertRaisesRegex(
+        ValueError,
+        'Using `with mesh:` context manager and `jax.sharding.use_mesh`'
+        ' together is not allowed'):
+      with jax.sharding.use_mesh(mesh), mesh:
+        jax.lax.with_sharding_constraint(x, NamedSharding(mesh, P()))
+
   @config.sharding_in_types(True)
   def test_pspec_einsum_no_context_mesh(self):
     mesh = jtu.create_mesh((1, 1), ('x', 'y'),

@@ -3604,7 +3604,7 @@ tf_impl_with_avals[pjit.pjit_p] = _pjit
 
 def _pjit_sharding_constraint(arg: TfVal, *,
                               sharding: sharding.Sharding,
-                              resource_env: mesh.ResourceEnv,
+                              context_mesh: mesh.Mesh,
                               _in_avals: Sequence[core.ShapedArray],
                               _out_aval: core.ShapedArray,
                               **kwargs) -> TfVal:
