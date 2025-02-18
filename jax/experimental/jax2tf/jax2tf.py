@@ -1542,7 +1542,7 @@ tf_not_yet_impl = [
     "consume",
     "ragged_dot",
     "cholesky_update",
-    "symmetric_update",
+    "symmetric_product",
     "from_edtype",
     "to_edtype",
     # Pallas TPU primitives

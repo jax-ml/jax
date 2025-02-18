@@ -1052,6 +1052,15 @@ def reducer_batcher(prim, ident, batched_args, batch_dims, axes, **params):
   else:
     assert False
 
+def expand_dims_batcher(prim, args, dims, **params):
+  """A batching rule for primitives that support matching leading batch
+  dimensions in all arguments.
+  """
+  size, = {x.shape[bd] for x, bd in zip(args, dims) if bd is not not_mapped}
+  args = [bdim_at_front(x, bd, size) for x, bd in zip(args, dims)]
+  out = prim.bind(*args, **params)
+  return (out, (0,) * len(out)) if prim.multiple_results else (out, 0)
+
 def mask_ragged_axes(operand: Array, ident, axis_spec: RaggedAxis) -> Array:
   # TODO(mattjj, axch) Can we mask multiple axes more efficiently at
   # once, rather than one at a time?
