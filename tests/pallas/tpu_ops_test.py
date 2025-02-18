@@ -438,6 +438,38 @@ class OpsTest(PallasBaseTest):
     y = jax.random.normal(k2, (8, 128), dtype=dtype)
     np.testing.assert_allclose(run(x, y), jax.lax.div(x, y), **kwargs)
 
+  @parameterized.product(
+      dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
+  )
+  def test_concat_mask(self, dtype):
+    if not jtu.if_cloud_tpu_at_least(2025, 2, 19):
+      self.skipTest("Requires libtpu built after 2025-02-19")
+    bitwidth = pallas_utils.dtype_bitwidth(dtype)
+    if jtu.get_tpu_version() < 5 and bitwidth < 32:
+      self.skipTest(
+          f"Not implemented: cast vector to mask with bitwidth == {bitwidth}"
+      )
+    shape = (128, 128)
+
+    def kernel(x, out):
+      mask = x[...] != 0
+      concated_mask = jnp.concatenate([mask, mask], axis=0)
+      concated_x = jnp.concatenate([x[:], x[:]], axis=0)
+      out[:] = lax.select(concated_mask, concated_x, jnp.zeros_like(concated_x))
+
+    x = jax.random.normal(jax.random.key(1234), shape, dtype=jnp.float32)
+    if dtype == jnp.int8:
+      x = (x * 100).astype(jnp.int8)
+    else:
+      x = x.astype(dtype)
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((shape[0] * 2, shape[1]), dtype)
+    )(x)
+    concated_mask = jnp.concatenate([x != 0, x != 0], axis=0)
+    concated_x = jnp.concatenate([x, x], axis=0)
+    expected = lax.select(concated_mask, concated_x, jnp.zeros_like(concated_x))
+    np.testing.assert_array_equal(out, expected)
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True

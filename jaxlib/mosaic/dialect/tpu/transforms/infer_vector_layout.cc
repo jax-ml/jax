@@ -777,7 +777,6 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(0 <= dimension && dimension < res_rank,
                  "Expect a valid concatenate dimension");
     VectorType res_ty = op.getResult().getType();
-    int8_t bitwidth = res_ty.getElementTypeBitWidth();
 
     std::optional<int64_t> tiling_dim;
     if (dimension == res_ty.getRank() - 1) {
@@ -793,6 +792,7 @@ class VectorLayoutInferer {
       SmallVector<Layout, 4> op_layouts = getLayoutFromOperands(op);
       SmallVector<Layout> in_layouts;
       in_layouts.reserve(op.getSources().size());
+      int8_t bitwidth = first_layout->bitwidth();
 
       // Set implicit dim to treat 1D as (1, N) and tile it as (1, 128)
       std::array<int64_t, 2> tiling =
