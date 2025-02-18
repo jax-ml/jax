@@ -61,7 +61,7 @@ def _mask(x, dims, alternative=0):
   Replaces values outside those dimensions with `alternative`. `alternative` is
   broadcast with `x`.
   """
-  assert jnp.ndim(x) == len(dims)
+  assert np.ndim(x) == len(dims)
   mask = None
   for i, d in enumerate(dims):
     if d is not None:
@@ -145,7 +145,7 @@ def _projector_subspace(P, H, n, rank, maxiter=2, swap=False):
   N, _ = P.shape
   negative_column_norms = -jnp_linalg.norm(P, axis=1)
   # `jnp.argsort` ensures NaNs sort last, so set masked-out column norms to NaN.
-  negative_column_norms = _mask(negative_column_norms, (n,), jnp.nan)
+  negative_column_norms = _mask(negative_column_norms, (n,), np.nan)
   sort_idxs = jnp.argsort(negative_column_norms)
   X = P[:, sort_idxs]
   # X = X[:, :rank]
@@ -397,7 +397,7 @@ def _eigh_work(H, n, termination_size, subset_by_index):
     def default_case(agenda, blocks, eigenvectors):
       V = _slice(eigenvectors, (0, offset), (n, b), (N, B))
       # TODO: Improve this?
-      split_point = reductions.nanmedian(_mask(jnp.diag(ufuncs.real(H)), (b,), jnp.nan))
+      split_point = reductions.nanmedian(_mask(jnp.diag(ufuncs.real(H)), (b,), np.nan))
       H_minus, V_minus, H_plus, V_plus, rank = split_spectrum(
           H, b, split_point, V0=V)
 
@@ -564,7 +564,7 @@ def eigh(
     eig_vals, eig_vecs = _eigh_work(
         H, n, termination_size=termination_size, subset_by_index=subset_by_index
     )
-  eig_vals = _mask(ufuncs.real(eig_vals), (n,), jnp.nan)
+  eig_vals = _mask(ufuncs.real(eig_vals), (n,), np.nan)
   if sort_eigenvalues or compute_slice:
     sort_idxs = jnp.argsort(eig_vals)
     if compute_slice:

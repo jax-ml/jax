@@ -98,7 +98,7 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
       FutureWarning)
 
   idx = indexing.merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
-  indexer = indexing.index_to_gather(jnp.shape(x), idx,
+  indexer = indexing.index_to_gather(np.shape(x), idx,
                                      normalize_indices=normalize_indices)
 
   # Avoid calling scatter if the slice shape is empty, both as a fast path and
@@ -110,7 +110,7 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
 
   # Broadcast `y` to the slice output shape.
   y = jnp.broadcast_to(y, tuple(indexer.slice_shape))
-  # Collapse any `None`/`jnp.newaxis` dimensions.
+  # Collapse any `None`/`np.newaxis` dimensions.
   y = jnp.squeeze(y, axis=indexer.newaxis_dims)
   if indexer.reversed_y_dims:
     y = lax.rev(y, indexer.reversed_y_dims)
