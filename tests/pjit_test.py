@@ -1727,7 +1727,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
     mesh2 = jax.sharding.Mesh([dev[0], dev[3], dev[2], dev[1]], 'x')
     f = jax.jit(lambda x, y: (x, y),
                 in_shardings=(NamedSharding(mesh2, P('x')), AUTO(mesh1)))
-    inp = core.ShapedArray((8, 2), np.float32)
+    inp = jax.ShapeDtypeStruct((8, 2), np.float32)
     with self.assertRaisesRegex(
         ValueError,
         "Received incompatible devices for jitted computation"):
@@ -3518,16 +3518,13 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)
 
-    out3 = jnp.squeeze(arr, axis=-1)
-    cache_info3 = pxla._cached_compilation.cache_info()
-    self.assertIsInstance(out3.sharding, NamedSharding)
+    with jtu.count_jit_tracing_cache_miss() as tracing_count:
+      out3 = jnp.squeeze(arr, axis=-1)
+      self.assertIsInstance(out3.sharding, NamedSharding)
 
-    out4 = jnp.squeeze(arr2, axis=-1)
-    cache_info4 = pxla._cached_compilation.cache_info()
-    self.assertIsInstance(out4.sharding, PositionalSharding)
-
-    self.assertEqual(cache_info4.hits, cache_info3.hits + 1)
-    self.assertEqual(cache_info4.misses, cache_info3.misses)
+      out4 = jnp.squeeze(arr2, axis=-1)
+      self.assertIsInstance(out4.sharding, PositionalSharding)
+    self.assertEqual(tracing_count(), 2)
 
   @jtu.thread_unsafe_test()  # cache_info isn't thread-safe
   def test_cache_hit_pjit_lower_with_cpp_cache_miss(self):
@@ -3551,7 +3548,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     # Drops out of C++ cache i.e. cache miss
     self.assertEqual(count(), 2)
-    self.assertEqual(lowering_count(), 1)
+    self.assertEqual(lowering_count(), 2)
 
   def test_list_in_pspec(self):
     mesh = jtu.create_mesh((2,), ('x',))
@@ -3632,22 +3629,21 @@ class ArrayPjitTest(jtu.JaxTestCase):
     arr2 = jax.device_put(np.arange(8).reshape(8, 1), ps)
 
     f = jax.jit(lambda x: x * 2)
-    out = f(arr)
-    cache_info1 = pxla._cached_compilation.cache_info()
-    self.assertIsInstance(out.sharding, NamedSharding)
 
-    with jtu.count_pjit_cpp_cache_miss() as count:
-      out2 = f(arr2)
-      cache_info2 = pxla._cached_compilation.cache_info()
-      self.assertIsInstance(out2.sharding, PositionalSharding)
+    with jtu.count_jit_compilation_cache_miss() as compilation_count:
+      out = f(arr)
+      self.assertIsInstance(out.sharding, NamedSharding)
 
-      # This will hit the cpp cache.
-      out3 = f(out2)
-      self.assertIsInstance(out3.sharding, PositionalSharding)
-    self.assertEqual(count(), 1)
+      with jtu.count_pjit_cpp_cache_miss() as cpp_count:
+        out2 = f(arr2)
+        self.assertIsInstance(out2.sharding, PositionalSharding)
 
-    self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
-    self.assertEqual(cache_info2.misses, cache_info1.misses)
+        # This will hit the cpp cache.
+        out3 = f(out2)
+        self.assertIsInstance(out3.sharding, PositionalSharding)
+
+    self.assertEqual(compilation_count(), 2)
+    self.assertEqual(cpp_count(), 1)
 
     out4 = jnp.sum(arr)
     self.assertIsInstance(out4.sharding, NamedSharding)
@@ -3966,14 +3962,11 @@ class ArrayPjitTest(jtu.JaxTestCase):
       f()  # doesn't crash
 
   def test_lowering_cache_hit_different_devices(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest('b/358322664: different axis names results in '
-                    'a cache miss with Shardy.')
     if jax.device_count() < 4:
       self.skipTest('Requires >=4 devices')
 
     mesh1 = jax.sharding.Mesh(jax.devices()[:2], 'x')
-    mesh2 = jax.sharding.Mesh(jax.devices()[2:4], 'y')
+    mesh2 = jax.sharding.Mesh(jax.devices()[2:4], 'x')
 
     @jax.jit
     def f(x):
@@ -3984,7 +3977,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       out_a = f(a)  # lowering cached
 
       # same num_devices but different devices.
-      b = jax.device_put(out_a, NamedSharding(mesh2, P('y')))
+      b = jax.device_put(out_a, NamedSharding(mesh2, P('x')))
       f(b)  # lowering cache *hit*
 
     with jtu.count_jit_and_pmap_lowerings() as count:
@@ -5476,7 +5469,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         TypeError, "select cases must have the same shardings"):
       f(arr1 == arr2, arr1, arr3)
 
-  @config.sharding_in_types(True)
   def test_explicit_mode_no_context_mesh(self):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'),
                            axis_types={AxisTypes.Explicit: ('x', 'y')})
@@ -5502,7 +5494,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = f(arr, arr2)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 
-  @config.sharding_in_types(True)
   def test_auto_mode_no_context_mesh(self):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'),
                            axis_types={AxisTypes.Auto: ('x', 'y')})
@@ -6646,7 +6637,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       with jax.sharding.use_mesh(mesh), mesh:
         jax.lax.with_sharding_constraint(x, NamedSharding(mesh, P()))
 
-  @config.sharding_in_types(True)
   def test_pspec_einsum_no_context_mesh(self):
     mesh = jtu.create_mesh((1, 1), ('x', 'y'),
                            axis_types={AxisTypes.Explicit: ('x', 'y')})
@@ -6661,6 +6651,23 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         "Using PartitionSpec when.*not under a mesh context.*is not allowed"):
+      f(arr, arr2)
+
+  @jtu.with_user_mesh((2, 1), ('x', 'y'),
+                      axis_types={AxisTypes.Auto: ('x', 'y')})
+  def test_error_on_canonicalize_under_auto_mode(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+    arr2 = jax.device_put(np_inp.T, NamedSharding(mesh, P('y', None)))
+
+    @jax.jit
+    def f(x, y):
+      return jnp.einsum('xy,yz->xz', x, y,
+                        out_sharding=NamedSharding(mesh, P('x', 'y')))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "PartitionSpec cannot contain axis names that are.*Auto.*Manual"):
       f(arr, arr2)
 
 

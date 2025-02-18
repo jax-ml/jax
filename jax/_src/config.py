@@ -1069,7 +1069,7 @@ threefry_gpu_kernel_lowering = bool_state(
 
 sharding_in_types = bool_state(
     name='jax_sharding_in_types',
-    default=False,
+    default=True,
     help=('When True, enables forward only sharding propagation in JAX and '
           'avals have sharding on them.'),
     include_in_jit_key=True)
