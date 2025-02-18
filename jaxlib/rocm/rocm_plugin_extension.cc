@@ -74,6 +74,8 @@ nb::dict FfiRegistrations() {
   gpu_callback_dict["execute"] =
       jax::EncapsulateFfiHandler(jax::hip::kXlaFfiPythonGpuCallback);
   dict["xla_ffi_python_gpu_callback"] = gpu_callback_dict;
+  dict["xla_buffer_python_gpu_callback"] =
+      jax::EncapsulateFfiHandler(jax::hip::kXlaBufferPythonGpuCallback);
   return dict;
 }
 
