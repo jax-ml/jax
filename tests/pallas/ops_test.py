@@ -754,7 +754,7 @@ class OpsTest(PallasBaseTest):
     self.assertAllClose(f(x).item(), 10.0)
 
   def test_concat_constant(self):
-    if pltpu is None and jtu.test_device_matches(["tpu"]):
+    if pltpu is None:
       self.skipTest("No TPU module available.")
     axis = 0
     num_arrays = 16
