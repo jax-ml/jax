@@ -130,15 +130,15 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::registerStripDebugInfo();
     mlir::registerConvertNVGPUToNVVMPass();
     mlir::registerConvertVectorToSCF();
-    mlir::registerSCFToControlFlow();
+    mlir::registerSCFToControlFlowPass();
     mlir::registerConvertNVVMToLLVMPass();
     mlir::registerArithToLLVMConversionPass();
     mlir::registerConvertIndexToLLVMPass();
     mlir::registerConvertGpuOpsToNVVMOps();
     mlir::registerConvertMathToLLVMPass();
     mlir::registerConvertFuncToLLVMPass();
-    mlir::registerConvertAffineToStandard();
-    mlir::registerReconcileUnrealizedCasts();
+    mlir::registerLowerAffinePass();
+    mlir::registerReconcileUnrealizedCastsPass();
     // TODO(apaszke): Only register the passes we actually use.
     mlir::memref::registerMemRefPasses();
     mlir::registerConvertToLLVMPass();
