@@ -2067,7 +2067,7 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2, 2), ('i', 'j'))
 
     def g(x):
-      return x * x
+      return jax.nn.softmax(x * x)
 
     def h(x):
       return shard_map(g, mesh,
