@@ -6689,6 +6689,34 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertArraysEqual(z, x)
       self.assertEqual(z.sharding, s2)
 
+  @parameterized.parameters(True, False)
+  def test_wsc_pspec_use_mesh(self, sharded_inp):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    np_inp = np.zeros((4, 4), dtype=np.int32)
+    if sharded_inp:
+      arr = jax.device_put(np_inp, NamedSharding(mesh, P()))
+    else:
+      arr = np_inp
+
+    with jax.sharding.use_mesh(mesh):
+      out = with_sharding_constraint(arr, P('x', 'y'))
+      self.assertArraysEqual(out, np_inp)
+      self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
+    with jax.sharding.use_mesh(mesh):
+      f = jax.jit(lambda x: with_sharding_constraint(x, P('x', 'y')))
+      jaxpr = f.trace(arr).jaxpr
+      self.assertIsInstance(jaxpr.eqns[0].params['sharding'].mesh,
+                            mesh_lib.AbstractMesh)
+      out = f(arr)
+      self.assertArraysEqual(out, np_inp)
+      self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
+      arr2 = jax.device_put(np_inp, NamedSharding(mesh, P('x')))
+      out2 = f(arr2)
+      self.assertArraysEqual(out2, np_inp)
+      self.assertEqual(out2.sharding, NamedSharding(mesh, P('x', 'y')))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

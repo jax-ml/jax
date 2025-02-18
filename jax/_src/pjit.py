@@ -691,16 +691,17 @@ def _infer_params_cached(
 ) -> InferParamsCacheEntry:
   return InferParamsCacheEntry()
 
-
-def _infer_params(
-    fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
-) -> tuple[PjitParams, list[Any]]:
+def disallow_use_mesh_and_legacy_mesh_ctx_mgr_together():
   if (not mesh_lib.thread_resources.env.physical_mesh.empty and
       mesh_lib.get_concrete_mesh() is not None):
     raise ValueError(
         'Using `with mesh:` context manager and `jax.sharding.use_mesh`'
         ' together is not allowed.')
 
+def _infer_params(
+    fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[PjitParams, list[Any]]:
+  disallow_use_mesh_and_legacy_mesh_ctx_mgr_together()
   if ji.use_resource_env:
     # We need to fetch the mesh from inside the wrapped function, because
     # meshes are dynamically scoped (i.e., with a context manager).
@@ -2540,15 +2541,13 @@ def with_sharding_constraint(x, shardings):
       flatten_axes("with_sharding_constraint layouts", tree, layouts))
   del layouts
 
-  # TODO(yashkatariya): with_sharding_constraint should read the value of
-  # get_abstract_mesh
-  mesh = mesh_lib.thread_resources.env.physical_mesh
-  if not mesh.empty and mesh_lib.get_concrete_mesh() is not None:
-    raise ValueError(
-        'Using `with mesh:` context manager and `jax.sharding.use_mesh`'
-        ' together is not allowed.')
+  disallow_use_mesh_and_legacy_mesh_ctx_mgr_together()
 
-  shardings_flat = [_create_sharding_for_array(mesh, a, 'shardings',
+  context_mesh = (
+      mesh_lib.get_abstract_mesh() if mesh_lib.get_concrete_mesh() is not None
+      else mesh_lib.thread_resources.env.physical_mesh)
+
+  shardings_flat = [_create_sharding_for_array(context_mesh, a, 'shardings',
                                                'with_sharding_constraint')
                     for a in user_shardings_flat]
   for s, u in zip(shardings_flat, user_shardings_flat):
@@ -2574,7 +2573,8 @@ def with_sharding_constraint(x, shardings):
                                   "with_sharding_constraint arguments")
 
   outs = [sharding_constraint_p.bind(xf, sharding=s, layout=l,
-                                     context_mesh=mesh, unconstrained_dims=ud)
+                                     context_mesh=context_mesh,
+                                     unconstrained_dims=ud)
           for xf, s, l, ud in zip(x_flat, shardings_flat, user_layouts_flat,
                                   unconstrained_dims)]
   return tree_unflatten(tree, outs)
@@ -2585,24 +2585,29 @@ def _sharding_constraint_impl(x, sharding, layout, context_mesh,
                               unconstrained_dims):
   if (isinstance(sharding, NamedSharding) and
       isinstance(sharding.mesh, AbstractMesh)):
-    aval = core.shaped_abstractify(x)
-    if not hasattr(x, 'sharding'):
-      raise ValueError(
-          'Target sharding contains a `jax.sharding.AbstractMesh` which'
-          ' requires the input passed should be a `jax.Array`. Got'
-          f' {type(x)} with shape {aval.str_short()}')
-    if not isinstance(x.sharding, NamedSharding):
-      raise TypeError(
-          'The sharding on the input must be a `NamedSharding` since the target'
-          ' sharding has an `AbstractMesh` in it. Got sharding type'
-          f' {type(x.sharding)} for shape {aval.str_short()}')
-    if x.sharding.mesh.shape_tuple != sharding.mesh.shape_tuple:
-      raise ValueError(
-          f'Mesh shape of the input {x.sharding.mesh.shape_tuple} does not'
-          ' match the mesh shape of the target sharding'
-          f' {sharding.mesh.shape_tuple} for shape {aval.str_short()}')
-    sharding = NamedSharding._from_parsed_pspec(
-        x.sharding.mesh, sharding._parsed_pspec)
+    if (not context_mesh.empty and isinstance(context_mesh, AbstractMesh) and
+        not hasattr(x, 'sharding')):
+      sharding = NamedSharding._from_parsed_pspec(
+          mesh_lib.get_concrete_mesh(), sharding._parsed_pspec)
+    else:
+      aval = core.shaped_abstractify(x)
+      if not hasattr(x, 'sharding'):
+        raise ValueError(
+            'Target sharding contains a `jax.sharding.AbstractMesh` which'
+            ' requires the input passed should be a `jax.Array`. Got'
+            f' {type(x)} with shape {aval.str_short()}')
+      if not isinstance(x.sharding, NamedSharding):
+        raise TypeError(
+            'The sharding on the input must be a `NamedSharding` since the'
+            ' target sharding has an `AbstractMesh` in it. Got sharding type'
+            f' {type(x.sharding)} for shape {aval.str_short()}')
+      if x.sharding.mesh.shape_tuple != sharding.mesh.shape_tuple:
+        raise ValueError(
+            f'Mesh shape of the input {x.sharding.mesh.shape_tuple} does not'
+            ' match the mesh shape of the target sharding'
+            f' {sharding.mesh.shape_tuple} for shape {aval.str_short()}')
+      sharding = NamedSharding._from_parsed_pspec(
+          x.sharding.mesh, sharding._parsed_pspec)
 
   if layout is None:
     if hasattr(x, 'sharding') and x.sharding.is_equivalent_to(sharding, x.ndim):
