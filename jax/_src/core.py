@@ -228,6 +228,18 @@ class ClosedJaxpr:
     return [v.aval for v in self.jaxpr.outvars]
 
   @property
+  def invars(self):
+    return self._jaxpr.invars
+
+  @property
+  def outvars(self):
+    return self._jaxpr.outvars
+
+  @property
+  def constvars(self):
+    return self._jaxpr.constvars
+
+  @property
   def literals(self):
     return self.consts  # backwards compatible alias
 
@@ -3167,7 +3179,6 @@ def pp_jaxpr(
 
 
 def pp_jaxprs(jaxprs, context: JaxprPpContext, settings: JaxprPpSettings) -> pp.Doc:
-  jaxprs = [j.jaxpr if isinstance(j, ClosedJaxpr) else j for j in jaxprs]
   return pp.group(pp.nest(2, pp.concat([
       pp.text('('), pp.brk(""),
       pp.join(pp.brk(), map(lambda x: pp_jaxpr(x, context, settings), jaxprs))]
