@@ -93,6 +93,12 @@ from jaxlib.xla_extension import pytree as pytree  # noqa: F401
 
 from jaxlib.xla_extension import Device as Device  # noqa: F401
 
+# TODO(danfm): Remove the try/except once JAX 0.6.1 is released.
+try:
+  from jaxlib.xla_extension import ffi as ffi  # noqa: F401
+except ImportError:
+  ffi = None
+
 import jaxlib.xla_client as xla_client  # noqa: F401
 
 # Jaxlib code is split between the Jax and the XLA repositories.
