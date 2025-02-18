@@ -43,7 +43,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import svd as lax_svd
 from jax._src.lax import utils as lax_utils
 from jax._src.lax.lax import (
-    standard_primitive, naryop_dtype_rule, _float, _complex,
+    standard_primitive, naryop_dtype_rule, _float, _complex, _int,
     _input_dtype)
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
@@ -726,9 +726,11 @@ def linalg_sharding_rule(
     return sharding.with_spec(P(*(tuple(batch_spec) + (None,) * ndim)))
 
 def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
-                     multiple_results=False, supports_batching=True):
+                     multiple_results=False, supports_batching=True,
+                     require_same=True):
   dtype_rule = partial(
-      lax_internal.naryop_dtype_rule, result_dtype, accepted_dtypes, name)
+      lax_internal.naryop_dtype_rule, result_dtype, accepted_dtypes, name,
+      require_same=require_same)
   shape_rule = partial(
       linalg_shape_rule, multiple_results, supports_batching, ranks,
       result_shape, name)
@@ -1656,6 +1658,195 @@ register_cpu_gpu_lowering(
     ("cuda", "rocm"))
 
 
+# QR decomposition
+
+# QR decomposition is implemented as a composition of two lower-level primitives
+# geqrf and orgqr. The names, while cryptic Fortran alphabet soup, are LAPACK's
+# names for the primitives, and we stick with them for consistency.
+
+def geqrf(a: ArrayLike) -> tuple[Array, Array]:
+  """Computes the QR decomposition of a matrix.
+
+  Args:
+    a: an ``[..., m, n]`` batch of matrices, with floating-point or complex type.
+  Returns:
+    An ``(a, taus)`` pair where ``r`` is in the upper triangle of ``a``,
+    ``q`` is represented in the lower triangle of ``a`` and in ``taus`` as
+    elementary Householder reflectors.
+  """
+  a_out, taus = geqrf_p.bind(a)
+  return a_out, taus
+
+def _geqrf_shape_rule(shape):
+  m, n = shape
+  return shape, (core.min_dim(m, n),)
+
+def _geqrf_dtype_rule(dtype):
+  dtype = dtypes.canonicalize_dtype(dtype)
+  return dtype, dtype
+
+def _geqrf_lowering_rule(ctx, operand):
+  ts_type = mlir.aval_to_ir_type(ctx.avals_out[0])
+  r_type = mlir.aval_to_ir_type(ctx.avals_out[1])
+  result_types = [ts_type, r_type]
+  if any(not is_constant_shape(aval_out.shape)
+         for aval_out in ctx.avals_out):
+    result_shapes = [
+        mlir.eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
+        for aval_out in ctx.avals_out
+    ]
+  else:
+    result_shapes = None
+  op = mlir.custom_call(
+      "Qr",
+      result_types=result_types,
+      operands=[operand],
+      api_version=1,
+      result_shapes=result_shapes
+  )
+  return op.results
+
+def _geqrf_cpu_gpu_lowering(ctx, a, *, target_name_prefix: str):
+  operand_aval, = ctx.avals_in
+  if target_name_prefix == "cpu":
+    target_name = lapack.prepare_lapack_call("geqrf_ffi", operand_aval.dtype)
+  else:
+    target_name = f"{target_name_prefix}solver_geqrf_ffi"
+  rule = _linalg_ffi_lowering(target_name, operand_output_aliases={0: 0})
+  return rule(ctx, a)
+
+geqrf_p = linalg_primitive(
+    _geqrf_dtype_rule, (_float | _complex,), (2,), _geqrf_shape_rule, "geqrf",
+    multiple_results=True)
+mlir.register_lowering(geqrf_p, _geqrf_lowering_rule)
+register_cpu_gpu_lowering(geqrf_p, _geqrf_cpu_gpu_lowering)
+
+
+def geqp3(a: ArrayLike, jpvt: ArrayLike, *,
+          use_magma: bool | None = None) -> tuple[Array, Array, Array]:
+  """Computes the column-pivoted QR decomposition of a matrix.
+
+  Args:
+    a: a ``[..., m, n]`` batch of matrices, with floating-point or complex type.
+    jpvt: a ``[..., n]`` batch of column-pivot index vectors with integer type,
+    use_magma: Locally override the ``jax_use_magma`` flag. If ``True``, the
+      `geqp3` is computed using MAGMA. If ``False``, the computation is done using
+      LAPACK on to the host CPU. If ``None`` (default), the behavior is controlled
+      by the ``jax_use_magma`` flag. This argument is only used on GPU.
+  Returns:
+    A ``(a, jpvt, taus)`` triple, where ``r`` is in the upper triangle of ``a``,
+    ``q`` is represented in the lower triangle of ``a`` and in ``taus`` as
+    elementary Householder reflectors, and ``jpvt`` is the column-pivot indices
+    such that ``a[:, jpvt] = q @ r``.
+  """
+  a_out, jpvt_out, taus = geqp3_p.bind(a, jpvt, use_magma=use_magma)
+  return a_out, jpvt_out, taus
+
+def _geqp3_shape_rule(a_shape, jpvt_shape, **_):
+  m, n = a_shape
+  return a_shape, jpvt_shape, (core.min_dim(m, n),)
+
+def _geqp3_dtype_rule(dtype, jpvt_dtype, *_, **__):
+  dtype = dtypes.canonicalize_dtype(dtype)
+  jpvt_dtype = dtypes.canonicalize_dtype(jpvt_dtype)
+  return dtype, jpvt_dtype, dtype
+
+def _geqp3_cpu_gpu_lowering(ctx, a, jpvt, *, use_magma, target_name_prefix):
+  a_aval, _ = ctx.avals_in
+  if target_name_prefix == "cpu":
+    target_name = lapack.prepare_lapack_call("geqp3_ffi", a_aval.dtype)
+    params = {}
+  else:
+    gpu_solver.initialize_hybrid_kernels()
+    magma = config.gpu_use_magma.value
+    target_name = f"{target_name_prefix}hybrid_geqp3"
+    if use_magma is not None:
+      magma = "on" if use_magma else "off"
+    params = {"magma": magma}
+  rule = _linalg_ffi_lowering(target_name, operand_output_aliases={0: 0, 1: 1})
+  return rule(ctx, a, jpvt, **params)
+
+geqp3_p = linalg_primitive(
+    _geqp3_dtype_rule, (_float | _complex, _int), (2, 1),
+    _geqp3_shape_rule, "geqp3", multiple_results=True, require_same=False)
+register_cpu_gpu_lowering(geqp3_p, _geqp3_cpu_gpu_lowering)
+
+
+def _qr_shape_rule(shape, *, pivoting, full_matrices, **_):
+  m, n = shape
+  k = m if full_matrices else core.min_dim(m, n)
+  return ((m, k), (k, n), (n,)) if pivoting else ((m, k), (k, n))
+
+def _qr_dtype_rule(dtype, *, pivoting, **_):
+  dtype = dtypes.canonicalize_dtype(dtype)
+  return (dtype, dtype, dtypes.dtype(np.int32)) if pivoting else (dtype, dtype)
+
+def qr_jvp_rule(primals, tangents, *, pivoting, full_matrices, use_magma):
+  # See j-towns.github.io/papers/qr-derivative.pdf for a terse derivation.
+  x, = primals
+  dx, = tangents
+  q, r, *p = qr_p.bind(x, pivoting=pivoting, full_matrices=False, use_magma=use_magma)
+  *_, m, n = x.shape
+  if m < n or (full_matrices and m != n):
+    raise NotImplementedError(
+      "Unimplemented case of QR decomposition derivative")
+  if pivoting:
+    dx = dx[..., p[0]]
+  dx_rinv = triangular_solve(r, dx)  # Right side solve by default
+  qt_dx_rinv = _H(q) @ dx_rinv
+  qt_dx_rinv_lower = _tril(qt_dx_rinv, -1)
+  do = qt_dx_rinv_lower - _H(qt_dx_rinv_lower)  # This is skew-symmetric
+  # The following correction is necessary for complex inputs
+  I = lax.expand_dims(lax_internal._eye(do.dtype, (n, n)), range(qt_dx_rinv.ndim - 2))
+  do = do + I * (qt_dx_rinv - qt_dx_rinv.real.astype(qt_dx_rinv.dtype))
+  dq = q @ (do - qt_dx_rinv) + dx_rinv
+  dr = (qt_dx_rinv - do) @ r
+  if pivoting:
+    dp = ad_util.Zero.from_primal_value(p[0])
+    return (q, r, p[0]), (dq, dr, dp)
+  return (q, r), (dq, dr)
+
+def _qr_lowering(a, *, pivoting, full_matrices, use_magma):
+  *batch_dims, m, n = a.shape
+  if m == 0 or n == 0:
+    k = m if full_matrices else core.min_dim(m, n)
+    q = lax.broadcast_in_dim(lax_internal._eye(a.dtype, (m, k)),
+                             (*batch_dims, m, k),
+                             (len(batch_dims), len(batch_dims) + 1))
+    r = lax.full((*batch_dims, k, n), 0, dtype=a.dtype)
+    if pivoting:
+      p = lax.full((*batch_dims, n), 0, dtype=np.dtype(np.int32))
+      return q, r, p
+    return q, r
+
+  if pivoting:
+    jpvt = lax.full((*batch_dims, n), 0, dtype=np.dtype(np.int32))
+    r, p, taus = geqp3(a, jpvt, use_magma=use_magma)
+    p -= 1  # Convert geqp3's 1-based indices to 0-based indices by subtracting 1.
+  else:
+    r, taus = geqrf(a)
+
+  if m < n:
+    q = householder_product(r[..., :m, :m], taus)
+  elif full_matrices:
+    pads = [(0, 0, 0)] * (len(batch_dims) + 1) + [(0, m - n, 0)]
+    q = lax.pad(r, lax_internal._zero(r), pads)
+    q = householder_product(q, taus)
+  else:
+    q = householder_product(r, taus)
+    r = r[..., :n, :n]
+  r = _triu(r)
+  if pivoting:
+    return q, r, p
+  return q, r
+
+qr_p = linalg_primitive(
+    _qr_dtype_rule, (_float | _complex,), (2,), _qr_shape_rule, "qr",
+    multiple_results=True)
+ad.primitive_jvps[qr_p] = qr_jvp_rule
+mlir.register_lowering(qr_p, mlir.lower_fun(_qr_lowering))
+
+
 # Symmetric product
 
 def _symmetric_product_shape_rule(a_shape, c_shape, **_):
@@ -1886,273 +2077,6 @@ mlir.register_lowering(triangular_solve_p, _triangular_solve_lowering)
 mlir.register_lowering(triangular_solve_p, _triangular_solve_cpu_lower,
                        platform='cpu')
 
-
-# QR decomposition
-
-# QR decomposition is implemented as a composition of two lower-level primitives
-# geqrf and orgqr. The names, while cryptic Fortran alphabet soup, are LAPACK's
-# names for the primitives, and we stick with them for consistency.
-
-def geqrf(a: ArrayLike) -> tuple[Array, Array]:
-  """Computes the QR decomposition of a matrix.
-
-  Args:
-    a: an ``[..., m, n]`` batch of matrices, with floating-point or complex type.
-  Returns:
-    An ``(a, taus)`` pair where ``r`` is in the upper triangle of ``a``,
-    ``q`` is represented in the lower triangle of ``a`` and in ``taus`` as
-    elementary Householder reflectors.
-  """
-  a_out, taus = geqrf_p.bind(a)
-  return a_out, taus
-
-def _geqrf_abstract_eval(operand):
-  if not isinstance(operand, ShapedArray):
-    raise NotImplementedError("Unsupported aval in geqrf_abstract_eval: "
-                              f"{operand.aval}")
-  if operand.ndim < 2:
-    raise ValueError("Argument to QR decomposition must have ndims >= 2")
-  *batch_dims, m, n = operand.shape
-  spec = operand.sharding.spec
-  batch_s, ms, ns = spec[:-2], spec[-2], spec[-1]
-  if ms is not None or ns is not None:
-    raise ValueError(f'm and n should be unsharded. Got m: {ms} and n: {ns}'
-                      ' specs. Try marking their specs as None.')
-  taus_s = operand.sharding.with_spec(P(*(*batch_s, None)))
-  taus = operand.update(shape=(*batch_dims, core.min_dim(m, n)),
-                        sharding=taus_s)
-  return operand, taus
-
-def _geqrf_batching_rule(batched_args, batch_dims):
-  x, = batched_args
-  bd, = batch_dims
-  return geqrf(batching.moveaxis(x, bd, 0)), (0, 0)
-
-def _geqrf_lowering_rule(ctx, operand):
-  ts_type = mlir.aval_to_ir_type(ctx.avals_out[0])
-  r_type = mlir.aval_to_ir_type(ctx.avals_out[1])
-  result_types = [ts_type, r_type]
-  if any(not is_constant_shape(aval_out.shape)
-         for aval_out in ctx.avals_out):
-    result_shapes = [
-        mlir.eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
-        for aval_out in ctx.avals_out
-    ]
-  else:
-    result_shapes = None
-  op = mlir.custom_call(
-      "Qr",
-      result_types=result_types,
-      operands=[operand],
-      api_version=1,
-      result_shapes=result_shapes
-  )
-  return op.results
-
-def _geqrf_cpu_gpu_lowering(ctx, a, *, target_name_prefix: str):
-  operand_aval, = ctx.avals_in
-  if target_name_prefix == "cpu":
-    target_name = lapack.prepare_lapack_call("geqrf_ffi", operand_aval.dtype)
-  else:
-    target_name = f"{target_name_prefix}solver_geqrf_ffi"
-  rule = _linalg_ffi_lowering(target_name, operand_output_aliases={0: 0})
-  return rule(ctx, a)
-
-geqrf_p = Primitive('geqrf')
-geqrf_p.multiple_results = True
-geqrf_p.def_impl(partial(dispatch.apply_primitive, geqrf_p))
-geqrf_p.def_abstract_eval(_geqrf_abstract_eval)
-batching.primitive_batchers[geqrf_p] = _geqrf_batching_rule
-mlir.register_lowering(geqrf_p, _geqrf_lowering_rule)
-
-mlir.register_lowering(
-    geqrf_p, partial(_geqrf_cpu_gpu_lowering, target_name_prefix='cpu'),
-    platform='cpu')
-mlir.register_lowering(
-    geqrf_p,
-    partial(_geqrf_cpu_gpu_lowering, target_name_prefix='cu'),
-    platform='cuda')
-mlir.register_lowering(
-    geqrf_p,
-    partial(_geqrf_cpu_gpu_lowering, target_name_prefix='hip'),
-    platform='rocm')
-
-
-def geqp3(a: ArrayLike, jpvt: ArrayLike, *,
-          use_magma: bool | None = None) -> tuple[Array, Array, Array]:
-  """Computes the column-pivoted QR decomposition of a matrix.
-
-  Args:
-    a: a ``[..., m, n]`` batch of matrices, with floating-point or complex type.
-    jpvt: a ``[..., n]`` batch of column-pivot index vectors with integer type,
-    use_magma: Locally override the ``jax_use_magma`` flag. If ``True``, the
-      `geqp3` is computed using MAGMA. If ``False``, the computation is done using
-      LAPACK on to the host CPU. If ``None`` (default), the behavior is controlled
-      by the ``jax_use_magma`` flag. This argument is only used on GPU.
-  Returns:
-    A ``(a, jpvt, taus)`` triple, where ``r`` is in the upper triangle of ``a``,
-    ``q`` is represented in the lower triangle of ``a`` and in ``taus`` as
-    elementary Householder reflectors, and ``jpvt`` is the column-pivot indices
-    such that ``a[:, jpvt] = q @ r``.
-  """
-  a_out, jpvt_out, taus = geqp3_p.bind(a, jpvt, use_magma=use_magma)
-  return a_out, jpvt_out, taus
-
-def _geqp3_abstract_eval(a, jpvt, *, use_magma):
-  del use_magma
-  if not isinstance(a, ShapedArray) or not isinstance(jpvt, ShapedArray):
-    raise NotImplementedError("Unsupported aval in geqp3_abstract_eval: "
-                              f"{a.aval}, {jpvt.aval}")
-  if a.ndim < 2:
-    raise ValueError("Argument to column-pivoted QR decomposition must have ndims >= 2")
-  *batch_dims, m, n = a.shape
-  *jpvt_batch_dims, jpvt_n = jpvt.shape
-  if batch_dims != jpvt_batch_dims or jpvt_n != n:
-    raise ValueError(f"Type mismatch for pivoted QR decomposition: {a=} {jpvt=}")
-  taus = a.update(shape=(*batch_dims, core.min_dim(m, n)))
-  return a, jpvt, taus
-
-def _geqp3_batching_rule(batched_args, batch_dims, *, use_magma):
-  a, jpvt = batched_args
-  b_a, b_jpvt = batch_dims
-  a = batching.moveaxis(a, b_a, 0)
-  jpvt = batching.moveaxis(jpvt, b_jpvt, 0)
-  return geqp3(a, jpvt, use_magma=use_magma), (0, 0, 0)
-
-def _geqp3_cpu_lowering(ctx, a, jpvt, *, use_magma):
-  del use_magma
-  a_aval, _ = ctx.avals_in
-  target_name = lapack.prepare_lapack_call("geqp3_ffi", a_aval.dtype)
-  rule = _linalg_ffi_lowering(target_name, operand_output_aliases={0: 0, 1: 1})
-  return rule(ctx, a, jpvt)
-
-def _geqp3_gpu_lowering(target_name_prefix, ctx, a, jpvt, *, use_magma):
-  gpu_solver.initialize_hybrid_kernels()
-  magma = config.gpu_use_magma.value
-  target_name = f"{target_name_prefix}hybrid_geqp3"
-  if use_magma is not None:
-    magma = "on" if use_magma else "off"
-  rule = _linalg_ffi_lowering(target_name, operand_output_aliases={0: 0, 1: 1})
-  return rule(ctx, a, jpvt, magma=magma)
-
-geqp3_p = Primitive('geqp3')
-geqp3_p.multiple_results = True
-geqp3_p.def_impl(partial(dispatch.apply_primitive, geqp3_p))
-geqp3_p.def_abstract_eval(_geqp3_abstract_eval)
-batching.primitive_batchers[geqp3_p] = _geqp3_batching_rule
-mlir.register_lowering(geqp3_p, _geqp3_cpu_lowering, platform="cpu")
-mlir.register_lowering(geqp3_p, partial(_geqp3_gpu_lowering, 'cu'), platform="cuda")
-mlir.register_lowering(geqp3_p, partial(_geqp3_gpu_lowering, 'hip'), platform="rocm")
-
-
-def _qr_impl(operand, *, pivoting, full_matrices, use_magma):
-  q, r, *p = dispatch.apply_primitive(qr_p, operand, pivoting=pivoting,
-                                      full_matrices=full_matrices, use_magma=use_magma)
-  return (q, r, p[0]) if pivoting else (q, r)
-
-def _qr_abstract_eval(operand, *, pivoting, full_matrices, use_magma):
-  del use_magma
-  if isinstance(operand, ShapedArray):
-    if operand.ndim < 2:
-      raise ValueError("Argument to QR decomposition must have ndims >= 2")
-    *batch_dims, m, n = operand.shape
-    k = m if full_matrices else core.min_dim(m, n)
-
-    *batch_s, ms, ns = operand.sharding.spec
-    ks = None
-    if ms is not None or ns is not None:
-      raise ValueError(f'm and n should be unsharded. Got m: {ms} and n: {ns}'
-                        ' specs. Try marking their specs as None.')
-    q_s = operand.sharding.with_spec(P(*(*batch_s, ms, ks)))
-    r_s = operand.sharding.with_spec(P(*(*batch_s, ks, ns)))
-    p_s = operand.sharding.with_spec(P(*(*batch_s, ns)))
-
-    q = operand.update(shape=(*batch_dims, m, k), sharding=q_s)
-    r = operand.update(shape=(*batch_dims, k, n), sharding=r_s)
-    p = operand.update(shape=(*batch_dims, n), dtype=np.dtype(np.int32),
-                       sharding=p_s)
-  else:
-    q, r, p = operand, operand, operand
-  return (q, r, p) if pivoting else (q, r)
-
-def qr_jvp_rule(primals, tangents, *, pivoting, full_matrices, use_magma):
-  # See j-towns.github.io/papers/qr-derivative.pdf for a terse derivation.
-  x, = primals
-  dx, = tangents
-  q, r, *p = qr_p.bind(x, pivoting=pivoting, full_matrices=False, use_magma=use_magma)
-  *_, m, n = x.shape
-  if m < n or (full_matrices and m != n):
-    raise NotImplementedError(
-      "Unimplemented case of QR decomposition derivative")
-  if pivoting:
-    dx = dx[..., p[0]]
-  dx_rinv = triangular_solve(r, dx)  # Right side solve by default
-  qt_dx_rinv = _H(q) @ dx_rinv
-  qt_dx_rinv_lower = _tril(qt_dx_rinv, -1)
-  do = qt_dx_rinv_lower - _H(qt_dx_rinv_lower)  # This is skew-symmetric
-  # The following correction is necessary for complex inputs
-  I = lax.expand_dims(lax_internal._eye(do.dtype, (n, n)), range(qt_dx_rinv.ndim - 2))
-  do = do + I * (qt_dx_rinv - qt_dx_rinv.real.astype(qt_dx_rinv.dtype))
-  dq = q @ (do - qt_dx_rinv) + dx_rinv
-  dr = (qt_dx_rinv - do) @ r
-  if pivoting:
-    dp = ad_util.Zero.from_primal_value(p[0])
-    return (q, r, p[0]), (dq, dr, dp)
-  return (q, r), (dq, dr)
-
-def _qr_batching_rule(batched_args, batch_dims, *, pivoting, full_matrices,
-                      use_magma):
-  x, = batched_args
-  bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
-  out_axes = (0, 0, 0) if pivoting else (0, 0)
-  return qr_p.bind(x, pivoting=pivoting, full_matrices=full_matrices,
-                   use_magma=use_magma), out_axes
-
-def _qr_lowering(a, *, pivoting, full_matrices, use_magma):
-  *batch_dims, m, n = a.shape
-  if m == 0 or n == 0:
-    k = m if full_matrices else core.min_dim(m, n)
-    q = lax.broadcast_in_dim(lax_internal._eye(a.dtype, (m, k)),
-                             (*batch_dims, m, k),
-                             (len(batch_dims), len(batch_dims) + 1))
-    r = lax.full((*batch_dims, k, n), 0, dtype=a.dtype)
-    if pivoting:
-      p = lax.full((*batch_dims, n), 0, dtype=np.dtype(np.int32))
-      return q, r, p
-    return q, r
-
-  if pivoting:
-    jpvt = lax.full((*batch_dims, n), 0, dtype=np.dtype(np.int32))
-    r, p, taus = geqp3(a, jpvt, use_magma=use_magma)
-    p -= 1  # Convert geqp3's 1-based indices to 0-based indices by subtracting 1.
-  else:
-    r, taus = geqrf(a)
-
-  if m < n:
-    q = householder_product(r[..., :m, :m], taus)
-  elif full_matrices:
-    pads = [(0, 0, 0)] * (len(batch_dims) + 1) + [(0, m - n, 0)]
-    q = lax.pad(r, lax_internal._zero(r), pads)
-    q = householder_product(q, taus)
-  else:
-    q = householder_product(r, taus)
-    r = r[..., :n, :n]
-  r = _triu(r)
-  if pivoting:
-    return q, r, p
-  return q, r
-
-
-qr_p = Primitive('qr')
-qr_p.multiple_results = True
-qr_p.def_impl(_qr_impl)
-qr_p.def_abstract_eval(_qr_abstract_eval)
-
-ad.primitive_jvps[qr_p] = qr_jvp_rule
-batching.primitive_batchers[qr_p] = _qr_batching_rule
-
-mlir.register_lowering(qr_p, mlir.lower_fun(_qr_lowering))
 
 # Singular value decomposition
 def _svd_impl(operand, *, full_matrices, compute_uv, subset_by_index=None,
