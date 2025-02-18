@@ -6670,6 +6670,25 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "PartitionSpec cannot contain axis names that are.*Auto.*Manual"):
       f(arr, arr2)
 
+  def test_device_put_under_use_mesh(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    x = jnp.zeros((4, 4), dtype=jnp.int32)
+    x_np = np.zeros((4, 4), dtype=np.int32)
+    s = NamedSharding(mesh, P('x', 'y'))
+    with jax.sharding.use_mesh(mesh):
+      y = jax.device_put(x, s)
+      self.assertArraysEqual(y, x)
+      self.assertEqual(y.sharding, s)
+
+      y2 = jax.device_put(x_np, s)
+      self.assertArraysEqual(y2, x_np)
+      self.assertEqual(y2.sharding, s)
+
+      s2 = NamedSharding(mesh, P('x'))
+      z = jax.device_put(y, s2)
+      self.assertArraysEqual(z, x)
+      self.assertEqual(z.sharding, s2)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

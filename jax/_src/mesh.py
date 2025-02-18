@@ -550,7 +550,7 @@ def get_abstract_mesh():
 
 
 @contextlib.contextmanager
-def set_concrete_mesh(mesh: Mesh):
+def set_concrete_mesh(mesh: Mesh | None):
   prev_val = jax_config.device_context.swap_local(mesh)
   try:
     yield
