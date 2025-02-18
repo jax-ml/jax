@@ -1113,7 +1113,7 @@ def lower_jaxpr_to_module(
     result_shardings: Sequence[JSharding | AUTO | None] | None = None,
     in_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
     out_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
-    arg_names: Sequence[str | None] | None = None,
+    arg_names: Sequence[str] | None = None,
     result_names: Sequence[str] | None = None,
     num_replicas: int = 1,
     num_partitions: int = 1,

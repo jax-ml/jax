@@ -274,13 +274,13 @@ class MutableArrayErrorsTest(jtu.JaxTestCase):
   def test_return_from_jit_pytree(self):
     with self.assertRaisesRegex(
         ValueError,
-        r"tree path \['hi'\]"):
+        r"tree path result\['hi'\]"):
       jax.jit(lambda x_ref: {'hi': x_ref})(core.mutable_array(jnp.arange(3)))
 
   def test_return_from_jit_closure(self):
     with self.assertRaisesRegex(
         ValueError,
-        r"tree path \['hi'\]"):
+        r"tree path result\['hi'\]"):
       x_ref = core.mutable_array(jnp.arange(3))
       jax.jit(lambda: {'hi': x_ref})()
 

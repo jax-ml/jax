@@ -1554,7 +1554,7 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
   cond_debug = cond_jaxpr.jaxpr.debug_info
   augmented_debug = cond_debug and (
       cond_debug._replace(
-          arg_names=cond_debug.arg_names + (None,) * len(init_dot)
+          arg_names=cond_debug.arg_names + ("",) * len(init_dot)
       )
   )
   cond_jaxpr_augmented = core.Jaxpr(cond_jaxpr.jaxpr.constvars,

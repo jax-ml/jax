@@ -149,8 +149,8 @@ class Jaxpr:
     debug_info = debug_info or lu._missing_debug_info("core.Jaxpr")
     self._debug_info = debug_info.resolve_result_paths()
     # TODO(necula): re-enable these safety checks
-    # assert (not debug_info or len(debug_info.arg_names) == len(invars)), (debug_info, invars)
-    # assert (not debug_info or len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
+    # assert (len(debug_info.arg_names) == len(invars)), (debug_info, invars)
+    # assert (len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
 
   def __str__(self):
     return str(self.pretty_print())
