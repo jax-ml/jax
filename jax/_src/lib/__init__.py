@@ -171,3 +171,4 @@ cuda_path = _cuda_path()
 
 guard_lib = xla_client._xla.guard_lib
 Device = xla_client._xla.Device
+ffi = xla_client._xla.ffi
