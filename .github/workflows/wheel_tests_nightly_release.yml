@@ -55,7 +55,7 @@ jobs:
           # Runner OS and Python values need to match the matrix stategy of our internal CI jobs
           # that build the wheels.
           runner: ["linux-x86-g2-48-l4-4gpu"]
-          python: ["3.10","3.11", "3.12", "3.13"]
+          python: ["3.10","3.11", "3.12", "3.13", "3.13-nogil"]
           cuda: ["12.3", "12.1"]
           enable-x64: [0]
     with:
