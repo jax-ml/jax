@@ -67,11 +67,15 @@ jobs:
 
           # Get the major and minor version of Python.
           # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.10, then python_major_minor=310
-          python_major_minor=$(echo "$JAXCI_HERMETIC_PYTHON_VERSION" | tr -d '.')
+          # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13-nogil, then python_major_minor=313t
+          python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')
 
           echo "OS=${os}" >> $GITHUB_ENV
           echo "ARCH=${arch}" >> $GITHUB_ENV
-          echo "PYTHON_MAJOR_MINOR=${python_major_minor}" >> $GITHUB_ENV
+          # Python wheels follow a naming convention: standard wheels use the pattern
+          # `*-cp<py_version>-cp<py_version>-*`, while free-threaded wheels use
+          # `*-cp<py_version>-cp<py_version>t-*`.
+          echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
       - name: Download the wheel artifacts from GCS
         run: >-
           mkdir -p $(pwd)/dist &&
