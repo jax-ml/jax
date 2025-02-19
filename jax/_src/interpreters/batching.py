@@ -1091,12 +1091,9 @@ def broadcast(x, sz, axis, mesh_axis=None):
   shape = list(np.shape(x))
   shape.insert(axis, sz)
   broadcast_dims = tuple(np.delete(np.arange(len(shape)), axis))
-  if config.sharding_in_types.value:
-    x_aval = core.get_aval(x)
-    new_spec = P(*tuple_insert(x_aval.sharding.spec, axis, mesh_axis))
-    sharding = x_aval.sharding.with_spec(new_spec)
-  else:
-    sharding = None
+  x_aval = core.get_aval(x)
+  new_spec = P(*tuple_insert(x_aval.sharding.spec, axis, mesh_axis))
+  sharding = x_aval.sharding.with_spec(new_spec)
   return jax.lax.broadcast_in_dim(x, shape, broadcast_dims, out_sharding=sharding)
 
 def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):

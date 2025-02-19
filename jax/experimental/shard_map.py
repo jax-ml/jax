@@ -480,10 +480,8 @@ shard_map_p = ShardMapPrimitive('shard_map')
 # Staging
 
 def _as_manual_mesh(mesh):
-  if config.sharding_in_types.value:
-    return AbstractMesh(
-        mesh.shape_tuple, axis_types={AxisTypes.Manual: mesh.axis_names})
-  return None
+  return AbstractMesh(
+      mesh.shape_tuple, axis_types={AxisTypes.Manual: mesh.axis_names})
 
 def _extend_axis_env(mesh, auto):
   return core.extend_axis_env_nd([(k, v) for k, v in mesh.shape.items()
@@ -554,12 +552,9 @@ def _shard_shaped_array(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
   assert isinstance(aval, core.ShapedArray)
   new_shape = tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
                     for i, sz in enumerate(aval.shape))
-  if config.sharding_in_types.value:
-    new_mesh = AbstractMesh(
-        mesh.shape_tuple, axis_types={AxisTypes.Manual: mesh.axis_names})
-    new_sharding = NamedSharding(new_mesh, P(*[None] * aval.ndim))
-  else:
-    new_sharding = None
+  new_mesh = AbstractMesh(
+      mesh.shape_tuple, axis_types={AxisTypes.Manual: mesh.axis_names})
+  new_sharding = NamedSharding(new_mesh, P(*[None] * aval.ndim))
   return aval.update(shape=new_shape, sharding=new_sharding)
 core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
 
@@ -568,13 +563,10 @@ def _unshard_shaped_array(mesh: Mesh, names: AxisNames,
   assert isinstance(aval, core.ShapedArray)
   new_shape = tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
                     for i, sz in enumerate(aval.shape))
-  if config.sharding_in_types.value:
-    spec = _names_to_pspec(names)._normalized_spec_for_aval(aval.ndim)
-    new_mesh = (mesh.abstract_mesh if get_abstract_mesh().empty else
-                get_abstract_mesh())
-    new_sharding = NamedSharding(new_mesh, spec)
-  else:
-    new_sharding = None
+  spec = _names_to_pspec(names)._normalized_spec_for_aval(aval.ndim)
+  new_mesh = (mesh.abstract_mesh if get_abstract_mesh().empty else
+              get_abstract_mesh())
+  new_sharding = NamedSharding(new_mesh, spec)
   return aval.update(shape=new_shape, sharding=new_sharding)
 core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
 
@@ -979,11 +971,8 @@ class ShardMapTracer(core.Tracer):
   def aval(self):
     aval = core.get_aval(self.val)
     out = core.mapped_aval(self._trace.mesh.size, 0, aval)
-    if config.sharding_in_types.value:
-      new_sharding = NamedSharding(_as_manual_mesh(self._trace.mesh),
-                                   out.sharding.spec)  # pytype: disable=attribute-error
-    else:
-      new_sharding = None
+    new_sharding = NamedSharding(_as_manual_mesh(self._trace.mesh),
+                                 out.sharding.spec)  # pytype: disable=attribute-error
     return out.update(sharding=new_sharding)
 
   def to_concrete_value(self):

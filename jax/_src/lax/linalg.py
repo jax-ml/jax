@@ -1041,16 +1041,13 @@ def _eigh_jacobi_abstract_eval(operand, *, lower, sort_eigenvalues):
 
     batch_dims = operand.shape[:-2]
     n = operand.shape[-1]
-    if config.sharding_in_types.value:
-      batch_s = operand.sharding.spec[:-2]
-      ns = operand.sharding.spec[-1]
-      if ns is not None:
-        raise ValueError(f'n should be unsharded. Got n: {ns}'
-                         ' specs. Try marking their specs as None.')
-      w_s = operand.sharding.with_spec(P(*batch_s + (ns,)))
-      v_s = operand.sharding.with_spec(P(*batch_s + (ns, ns)))
-    else:
-      w_s, v_s = None, None
+    batch_s = operand.sharding.spec[:-2]
+    ns = operand.sharding.spec[-1]
+    if ns is not None:
+      raise ValueError(f'n should be unsharded. Got n: {ns}'
+                        ' specs. Try marking their specs as None.')
+    w_s = operand.sharding.with_spec(P(*batch_s + (ns,)))
+    v_s = operand.sharding.with_spec(P(*batch_s + (ns, ns)))
     w = operand.update(shape=batch_dims + (n,),
                        dtype=lax_internal._complex_basetype(operand.dtype),
                        sharding=w_s)
@@ -1123,16 +1120,13 @@ def _eigh_abstract_eval(operand, *, lower, sort_eigenvalues, subset_by_index):
     n = operand.shape[-1]
     d = (n if subset_by_index is None else
          subset_by_index[1] - subset_by_index[0])
-    if config.sharding_in_types.value:
-      batch_s = operand.sharding.spec[:-2]
-      ns, ds = operand.sharding.spec[-1], None
-      if ns is not None:
-        raise ValueError(f'n should be unsharded. Got n: {ns} specs. Try '
-                         'marking their specs as None.')
-      v_s = operand.sharding.with_spec(P(*batch_s + (ns, ds)))
-      w_s = operand.sharding.with_spec(P(*batch_s + (ds,)))
-    else:
-      v_s, w_s = None, None
+    batch_s = operand.sharding.spec[:-2]
+    ns, ds = operand.sharding.spec[-1], None
+    if ns is not None:
+      raise ValueError(f'n should be unsharded. Got n: {ns} specs. Try '
+                        'marking their specs as None.')
+    v_s = operand.sharding.with_spec(P(*batch_s + (ns, ds)))
+    w_s = operand.sharding.with_spec(P(*batch_s + (ds,)))
     v = operand.update(shape=batch_dims + (n, d), sharding=v_s)
     w = operand.update(
         shape=batch_dims + (d,),
@@ -1450,9 +1444,7 @@ def _triangular_solve_lowering(
                              ir.BoolAttr.get(lower),
                              ir.BoolAttr.get(unit_diagonal),
                              hlo.TransposeAttr.get(transpose))
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, out_aval)]
-  return [out]
+  return [mlir.lower_sharding_under_shit(ctx, out, out_aval)]
 
 
 def _triangular_solve_cpu_lower(
@@ -1901,15 +1893,12 @@ def _geqrf_abstract_eval(operand):
   if operand.ndim < 2:
     raise ValueError("Argument to QR decomposition must have ndims >= 2")
   *batch_dims, m, n = operand.shape
-  if config.sharding_in_types.value:
-    spec = operand.sharding.spec
-    batch_s, ms, ns = spec[:-2], spec[-2], spec[-1]
-    if ms is not None or ns is not None:
-      raise ValueError(f'm and n should be unsharded. Got m: {ms} and n: {ns}'
-                       ' specs. Try marking their specs as None.')
-    taus_s = operand.sharding.with_spec(P(*(*batch_s, None)))
-  else:
-    taus_s = None
+  spec = operand.sharding.spec
+  batch_s, ms, ns = spec[:-2], spec[-2], spec[-1]
+  if ms is not None or ns is not None:
+    raise ValueError(f'm and n should be unsharded. Got m: {ms} and n: {ns}'
+                      ' specs. Try marking their specs as None.')
+  taus_s = operand.sharding.with_spec(P(*(*batch_s, None)))
   taus = operand.update(shape=(*batch_dims, core.min_dim(m, n)),
                         sharding=taus_s)
   return operand, taus
@@ -2117,17 +2106,16 @@ def _qr_abstract_eval(operand, *, pivoting, full_matrices, use_magma):
       raise ValueError("Argument to QR decomposition must have ndims >= 2")
     *batch_dims, m, n = operand.shape
     k = m if full_matrices else core.min_dim(m, n)
-    if config.sharding_in_types.value:
-      *batch_s, ms, ns = operand.sharding.spec
-      ks = None
-      if ms is not None or ns is not None:
-        raise ValueError(f'm and n should be unsharded. Got m: {ms} and n: {ns}'
-                         ' specs. Try marking their specs as None.')
-      q_s = operand.sharding.with_spec(P(*(*batch_s, ms, ks)))
-      r_s = operand.sharding.with_spec(P(*(*batch_s, ks, ns)))
-      p_s = operand.sharding.with_spec(P(*(*batch_s, ns)))
-    else:
-      q_s, r_s, p_s = None, None, None
+
+    *batch_s, ms, ns = operand.sharding.spec
+    ks = None
+    if ms is not None or ns is not None:
+      raise ValueError(f'm and n should be unsharded. Got m: {ms} and n: {ns}'
+                        ' specs. Try marking their specs as None.')
+    q_s = operand.sharding.with_spec(P(*(*batch_s, ms, ks)))
+    r_s = operand.sharding.with_spec(P(*(*batch_s, ks, ns)))
+    p_s = operand.sharding.with_spec(P(*(*batch_s, ns)))
+
     q = operand.update(shape=(*batch_dims, m, k), sharding=q_s)
     r = operand.update(shape=(*batch_dims, k, n), sharding=r_s)
     p = operand.update(shape=(*batch_dims, n), dtype=np.dtype(np.int32),
@@ -2241,21 +2229,18 @@ def _svd_abstract_eval(operand, *, full_matrices, compute_uv, subset_by_index,
         raise ValueError("full_matrices and subset_by_index cannot both be set")
       rank = min(rank, subset_by_index[1] - subset_by_index[0])
 
-    if config.sharding_in_types.value:
-      batch_s = operand.sharding.spec[:-2]
-      ms = operand.sharding.spec[-2]
-      ns = operand.sharding.spec[-1]
-      if ms is not None or ns is not None:
-        raise ValueError(f'm and n should be unsharded. Got m: {ms} and n: {ns}'
-                         ' specs. Try marking their specs as None.')
-      rank_s = None
-      s_sharding = operand.sharding.with_spec(P(*batch_s + (rank_s,)))
-      u_sharding = operand.sharding.with_spec(
-          P(*batch_s + (ms, ms if full_matrices else rank_s)))
-      vt_sharding = operand.sharding.with_spec(
-          P(*batch_s + (ns if full_matrices else rank_s, ns)))
-    else:
-      s_sharding, u_sharding, vt_sharding = None, None, None
+    batch_s = operand.sharding.spec[:-2]
+    ms = operand.sharding.spec[-2]
+    ns = operand.sharding.spec[-1]
+    if ms is not None or ns is not None:
+      raise ValueError(f'm and n should be unsharded. Got m: {ms} and n: {ns}'
+                        ' specs. Try marking their specs as None.')
+    rank_s = None
+    s_sharding = operand.sharding.with_spec(P(*batch_s + (rank_s,)))
+    u_sharding = operand.sharding.with_spec(
+        P(*batch_s + (ms, ms if full_matrices else rank_s)))
+    vt_sharding = operand.sharding.with_spec(
+        P(*batch_s + (ns if full_matrices else rank_s, ns)))
 
     s = operand.update(
         shape=batch_dims + (rank,),

@@ -563,6 +563,5 @@ def get_concrete_mesh():
 
 @contextlib.contextmanager
 def use_mesh(mesh: Mesh):
-  with (set_abstract_mesh(mesh.abstract_mesh),
-        jax_config.sharding_in_types(True), set_concrete_mesh(mesh)):
+  with set_abstract_mesh(mesh.abstract_mesh), set_concrete_mesh(mesh):
     yield

@@ -20,7 +20,6 @@ from functools import partial
 
 from jax._src import core
 from jax._src import dispatch
-from jax._src import config
 from jax._src import dtypes
 from jax._src import mesh as mesh_lib
 from jax._src.util import safe_zip
@@ -50,8 +49,6 @@ def standard_primitive(shape_rule, dtype_rule, name,
 def _get_array_abstraction_level(a): return a.array_abstraction_level
 
 def _get_abstract_mesh_from_avals(in_avals) -> mesh_lib.AbstractMesh:
-  if not config.sharding_in_types.value:
-    return None  # type: ignore
   m = None
   for a in in_avals:
     if a is core.abstract_token:
@@ -69,22 +66,20 @@ def _get_abstract_mesh_from_avals(in_avals) -> mesh_lib.AbstractMesh:
 
 
 def call_sharding_rule(prim, rule, num_out, *avals, **kwargs):
-  if config.sharding_in_types.value:
-    cur_mesh = mesh_lib.get_abstract_mesh()
-    aval_mesh = _get_abstract_mesh_from_avals(avals)
-    if ((cur_mesh.empty or cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual) and
-        (aval_mesh.empty or aval_mesh._are_all_axes_auto or aval_mesh._are_all_axes_manual)):
-      aval_mesh = cur_mesh if aval_mesh.empty else aval_mesh
-      s = NamedSharding(aval_mesh, P())
-      return s if num_out is None else [s] * num_out
-    if rule is None:
-      raise ValueError(
-          f'sharding rule for {prim.name} is not implemented. Please file a'
-          ' bug at https://github.com/jax-ml/jax/issues. You can work around'
-          ' this error by dropping that operation into full auto sharding'
-          ' mode via: `jax.experimental.shard.auto_axes(fun, out_shardings=...)`')
-    return rule(*avals, **kwargs)
-  return None if num_out is None else [None] * num_out
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  aval_mesh = _get_abstract_mesh_from_avals(avals)
+  if ((cur_mesh.empty or cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual) and
+      (aval_mesh.empty or aval_mesh._are_all_axes_auto or aval_mesh._are_all_axes_manual)):
+    aval_mesh = cur_mesh if aval_mesh.empty else aval_mesh
+    s = NamedSharding(aval_mesh, P())
+    return s if num_out is None else [s] * num_out
+  if rule is None:
+    raise ValueError(
+        f'sharding rule for {prim.name} is not implemented. Please file a'
+        ' bug at https://github.com/jax-ml/jax/issues. You can work around'
+        ' this error by dropping that operation into full auto sharding'
+        ' mode via: `jax.experimental.shard.auto_axes(fun, out_shardings=...)`')
+  return rule(*avals, **kwargs)
 
 def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
                            sharding_rule, *avals, **kwargs):

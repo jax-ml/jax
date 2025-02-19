@@ -234,7 +234,6 @@ def trace_context():
           default_device.value, random_seed_offset.value,
           threefry_partitionable.value,
           threefry_gpu_kernel_lowering.value,
-          sharding_in_types.value,
           use_direct_linearize.value,
           softmax_custom_jvp.value,
           disable_jit.value,
@@ -1065,13 +1064,6 @@ threefry_gpu_kernel_lowering = bool_state(
     help=('On GPU, lower threefry PRNG operations to a kernel implementation. '
           'This makes compile times faster at a potential runtime memory '
           'cost.'),
-    include_in_jit_key=True)
-
-sharding_in_types = bool_state(
-    name='jax_sharding_in_types',
-    default=True,
-    help=('When True, enables forward only sharding propagation in JAX and '
-          'avals have sharding on them.'),
     include_in_jit_key=True)
 
 use_direct_linearize = bool_state(

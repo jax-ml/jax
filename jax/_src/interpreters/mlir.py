@@ -1719,7 +1719,7 @@ def lower_jaxpr_to_fun(
       for o, s, o_aval, us in zip(flat_outputs, ir_result_shardings,
                                   output_avals, unconstrained_shardings):  # type: ignore
         if us[0] and not us[1]:
-          if config.use_shardy_partitioner.value and config.sharding_in_types.value:
+          if config.use_shardy_partitioner.value:
             s = modify_sdy_sharding_wrt_axis_types(s, o_aval.sharding.mesh)
           temp_flat_outputs.append(wrap_with_sharding_op(
               entry_lowering_ctx, o, o_aval, s, unspecified_dims=us[2]))

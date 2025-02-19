@@ -250,8 +250,7 @@ def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
   if not shapes or all(core.definitely_equal_shape(shapes[0], s) for s in shapes):
     return [lax.asarray(arg) for arg in args]
   result_shape = lax.broadcast_shapes(*shapes)
-  result_sharding = (lax.broadcast_shardings(*avals)
-                     if config.sharding_in_types.value else None)
+  result_sharding = lax.broadcast_shardings(*avals)
   return [_broadcast_to(arg, result_shape, result_sharding) for arg in args]
 
 

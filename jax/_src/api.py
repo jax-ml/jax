@@ -1029,9 +1029,6 @@ def vmap(fun: F,
   return cast(F, vmap_f)
 
 def _mapped_axis_spec(args_flat, in_axes_flat):
-  if not config.sharding_in_types.value:
-    return None
-
   def _get_spec(arg, i):
     try:
       # Duck type arrays like BCOO arrays can be passed to vmap.

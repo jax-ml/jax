@@ -2311,10 +2311,9 @@ def lower_sharding_computation(
     propagated_out_mem_kinds = get_out_memory_kinds_via_propagation(
         closed_jaxpr, in_shardings)
 
-  if config.sharding_in_types.value:
-    out_shardings = _concretize_abstract_out_shardings(
-        out_shardings, global_out_avals, device_assignment,
-        propagated_out_mem_kinds)
+  out_shardings = _concretize_abstract_out_shardings(
+      out_shardings, global_out_avals, device_assignment,
+      propagated_out_mem_kinds)
 
   # 2. Build up the HLO
 

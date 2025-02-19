@@ -24,7 +24,6 @@ import math
 
 from jax import tree_util
 from jax._src import core
-from jax._src import config
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.sharding_impls import (SPMDAxisContext, ShardingContext,
@@ -732,16 +731,12 @@ def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
     if len(pos_axes) != 0:
       raise ValueError(f"axis_index_groups can only be used with reductions over "
                        f"named axes, but got: {axes}")
-  if config.sharding_in_types.value:
-    core.check_avals_context_mesh(args, 'all_reduce')
-    out_avals = [
-        ShapedArray(lax._reduce_op_shape_rule(arg, axes=pos_axes), arg.dtype,
-                    sharding=lax._reduce_op_sharding_rule(arg, axes=pos_axes))
-        for arg in args
-    ]
-  else:
-    out_avals = [ShapedArray(lax._reduce_op_shape_rule(arg, axes=pos_axes), arg.dtype)
-                 for arg in args]
+  core.check_avals_context_mesh(args, 'all_reduce')
+  out_avals = [
+      ShapedArray(lax._reduce_op_shape_rule(arg, axes=pos_axes), arg.dtype,
+                  sharding=lax._reduce_op_sharding_rule(arg, axes=pos_axes))
+      for arg in args
+  ]
   return out_avals, {core.NamedAxisEffect(axis) for axis in named_axes}
 
 def _check_axis_names(axes):
@@ -795,11 +790,8 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
     else:
       op = hlo.AllReduceOp(
           [x.type], [x], replica_groups=replica_groups, **other_args)
-    if config.sharding_in_types.value:
-      scalar_aval = core.ShapedArray(
-          (), aval.dtype, sharding=NamedSharding(aval.sharding.mesh, P()))
-    else:
-      scalar_aval = core.ShapedArray((), aval.dtype)
+    scalar_aval = core.ShapedArray(
+        (), aval.dtype, sharding=NamedSharding(aval.sharding.mesh, P()))
     scalar_type = mlir.aval_to_ir_type(scalar_aval)
     reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
     with ir.InsertionPoint(reducer_block):

@@ -2025,9 +2025,6 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
     by the ``lhs`` non-contracting/non-batch dimensions, and finally the ``rhs``
     non-contracting/non-batch dimensions.
   """
-  if out_sharding is not None and not config.sharding_in_types.value:
-    raise NotImplementedError("out_sharding only works when sharding_in_types "
-                              "config is True.")
   if out_sharding is not None and not isinstance(out_sharding, NamedSharding):
     raise NotImplementedError(
         '`out_sharding` argument of `dot_general` only supports NamedSharding '
@@ -2116,9 +2113,6 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
   See Also:
     jax.lax.broadcast : simpler interface to add new leading dimensions.
   """
-  if not config.sharding_in_types.value and out_sharding is not None:
-    raise NotImplementedError("out_sharding argument to broadcast_in_dim is only "
-                              "allowed when sharding_in_types config is on.")
   out_sharding = canonicalize_sharding(out_sharding)
   if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions) and
       isinstance(operand, Array) and out_sharding is None):
@@ -2748,8 +2742,7 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
     shard = broadcast(fill_value, broadcast_shape)
     return array.make_array_from_callback(shape, sharding, lambda _: shard)
 
-  if (config.sharding_in_types.value and sharding is not None and
-      not sharding._is_concrete):
+  if sharding is not None and not sharding._is_concrete:
     return broadcast(fill_value, shape, out_sharding=sharding)
   else:
     return broadcast(fill_value, shape)
@@ -2762,9 +2755,7 @@ def zeros_like_shaped_array(aval: ShapedArray) -> Array:
     scalar_zero = np.zeros((), dtype=aval.dtype)
   else:
     scalar_zero = _convert_element_type(0, aval.dtype, aval.weak_type)
-  if config.sharding_in_types.value:
-    return broadcast(scalar_zero, aval.shape, out_sharding=aval.sharding)
-  return broadcast(scalar_zero, aval.shape)
+  return broadcast(scalar_zero, aval.shape, out_sharding=aval.sharding)
 
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
@@ -2793,9 +2784,6 @@ def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int,
   static_shape = [None if isinstance(d, core.Tracer) else d for d in shape]
   dimension = core.concrete_or_error(
       int, dimension, "dimension argument of lax.broadcasted_iota")
-  if not config.sharding_in_types.value and out_sharding is not None:
-    raise NotImplementedError('sharding support for broadcasted_iota is not '
-                              'implemented outside of sharding_in_types mode.')
   out_sharding = canonicalize_sharding(out_sharding)
   return iota_p.bind(*dynamic_shape, dtype=dtype, shape=tuple(static_shape),
                      dimension=dimension, sharding=out_sharding)
@@ -2959,8 +2947,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
   if dtypes.issubdtype(dtype, dtypes.extended):
     return dtype._rules.full(fill_shape, fill_value, dtype)  # type: ignore[union-attr]
 
-  if (config.sharding_in_types.value and sharding is None and shape is None and
-      isinstance(x, core.Tracer)):
+  if sharding is None and shape is None and isinstance(x, core.Tracer):
     sharding = x.aval.sharding
   else:
     # If `x` has a sharding but no `_committed` attribute
@@ -3461,14 +3448,10 @@ def _nary_lower_hlo(op: Callable, ctx,
   del params
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
   args = mlir.multi_broadcast_in_dim(ctx, args, avals_in, aval_out.shape)
-  if config.sharding_in_types.value:
-    args = multi_sharding_in_dim(ctx, args, avals_in, aval_out)
+  args = multi_sharding_in_dim(ctx, args, avals_in, aval_out)
 
   out = op(*args)
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  else:
-    return [out]
+  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
 
 
 _float = {np.floating}
@@ -3876,10 +3859,8 @@ def _integer_pow_lowering(ctx, x, *, y):
     if builtins.abs(y) >= 3:
       lowering = mlir.cache_lowering(lowering)
     out, = lowering(ctx, x, y=y)
-  if config.sharding_in_types.value:
-    aval_out, = ctx.avals_out
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  aval_out, = ctx.avals_out
+  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
 
 mlir.register_lowering(integer_pow_p, _integer_pow_lowering)
 
@@ -4267,9 +4248,7 @@ def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type,
     operand = hlo.real(operand)
     aval_in = aval_in.update(dtype=_real_dtype(aval_in.dtype))
   out = mlir.convert_hlo(ctx, operand, aval_in, aval_out)
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
 
 mlir.register_lowering(convert_element_type_p, _convert_element_type_lower)
 
@@ -4630,12 +4609,9 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   x_contract_sorted_by_y = list(np.take(x_contract, np.argsort(y_contract)))
   unsorted_axes = list(x_batch) + x_kept + x_contract_sorted_by_y
   out_axes = np.argsort(unsorted_axes)
-  if config.sharding_in_types.value:
-    xs = x.aval.sharding
-    inverse_spec = tuple(xs.spec[o] for o in unsorted_axes)
-    ds = xs.with_spec(inverse_spec)
-  else:
-    ds = None
+  xs = x.aval.sharding
+  inverse_spec = tuple(xs.spec[o] for o in unsorted_axes)
+  ds = xs.with_spec(inverse_spec)
   dot_general_out = dot_general(g, y, dims, precision=precision,
                                 preferred_element_type=preferred_element_type,
                                 out_sharding=ds)
@@ -5020,8 +4996,8 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       precision_config=precision_attr(precision),
       **algorithm_kwarg,
   )
-  if config.sharding_in_types.value:
-    result = mlir.lower_sharding_under_shit(ctx, result, aval_out)
+
+  result = mlir.lower_sharding_under_shit(ctx, result, aval_out)
   if accumulation_aval.dtype != aval_out.dtype:
     result = mlir.convert_hlo(ctx, result, accumulation_aval, aval_out)
   return [result]
@@ -5487,9 +5463,7 @@ def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions,
     aval_out = aval_out.update(shape=_merge_dyn_shape(shape, dyn_shape))
   out = mlir.broadcast_in_dim(ctx, x, aval_out,
                               broadcast_dimensions=broadcast_dimensions)
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
 
 def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions,
                                     sharding):
@@ -5498,12 +5472,9 @@ def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions,
               type(core.get_aval(d).dtype) is core.bint for d in shape)):
     shape = _broadcast_in_dim_shape_rule(  # error checking
         x, shape=shape, broadcast_dimensions=broadcast_dimensions, sharding=None)
-    if config.sharding_in_types.value:
-      new_sharding = _broadcast_in_dim_sharding_rule(
-          x, shape=shape, broadcast_dimensions=broadcast_dimensions,
-          sharding=sharding)
-    else:
-      new_sharding = None
+    new_sharding = _broadcast_in_dim_sharding_rule(
+        x, shape=shape, broadcast_dimensions=broadcast_dimensions,
+        sharding=sharding)
     return core.ShapedArray(shape, x.dtype, x.weak_type, sharding=new_sharding)
   # If any BInts in shape, or Tracers in dyn_shape, produce a DShapedArray
   # (even if x is a ShapedArray)
@@ -5680,9 +5651,7 @@ pe.padding_rules[concatenate_p] = _concatenate_pad_rule
 def _concatenate_lower(ctx, *xs, dimension):
   aval_out, = ctx.avals_out
   out = hlo.concatenate(xs, mlir.i64_attr(dimension))
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
 mlir.register_lowering(concatenate_p, _concatenate_lower)
 
 
@@ -5734,8 +5703,7 @@ def _split_lower(ctx, x, *, sizes, axis):
     limit_indices[axis] = start_indices[axis] + aval_out.shape[axis]
     out = mlir.slice_op(ctx, x, aval_out, start_indices=start_indices,
                         limit_indices=limit_indices, strides=strides)
-    outs.append(mlir.lower_sharding_under_shit(ctx, out, aval_out)
-                if config.sharding_in_types.value else out)
+    outs.append(mlir.lower_sharding_under_shit(ctx, out, aval_out))
     start_indices[axis] = limit_indices[axis]
   return outs
 
@@ -5840,9 +5808,7 @@ def _pad_lower(ctx, x, padding_value, *, padding_config):
   aval_out, = ctx.avals_out
   low, high, interior = util.unzip3(padding_config)
   out = mlir.pad(ctx, aval_out, x, padding_value, low, high, interior)
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
 
 mlir.register_lowering(pad_p, _pad_lower)
 
@@ -5908,9 +5874,7 @@ def _squeeze_lower(ctx, operand, *, dimensions):
   del dimensions  # Implied by the output aval.
   aval_out, = ctx.avals_out
   out = mlir.reshape(ctx, operand, aval_out)
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
 
 mlir.register_lowering(squeeze_p, _squeeze_lower)
 
@@ -6073,16 +6037,11 @@ def _reshape_dtype_rule(operand, *, new_sizes, dimensions, sharding):
 def _reshape_transpose_rule(t, operand, *, new_sizes, dimensions, sharding):
   assert ad.is_undefined_primal(operand)
   if dimensions is None:
-    if config.sharding_in_types.value:
-      return [reshape(t, operand.aval.shape, out_sharding=operand.aval.sharding)]
-    return [reshape(t, operand.aval.shape)]
+    return [reshape(t, operand.aval.shape, out_sharding=operand.aval.sharding)]
   else:
-    if config.sharding_in_types.value:
-      t_s = operand.aval.sharding.with_spec(
-          tuple(map(lambda s: s if s is None else str(s),
-                    np.take(operand.aval.sharding.spec, dimensions))))
-    else:
-      t_s = None
+    t_s = operand.aval.sharding.with_spec(
+        tuple(map(lambda s: s if s is None else str(s),
+                  np.take(operand.aval.sharding.spec, dimensions))))
     return [transpose(reshape(t, np.take(operand.aval.shape, dimensions),
                               out_sharding=t_s),
                       np.argsort(dimensions))]
@@ -6110,9 +6069,7 @@ def _reshape_lower(ctx, x, *dyn_shape, new_sizes, dimensions, sharding):
   if dyn_shape:
     aval_out = aval_out.update(shape=_merge_dyn_shape(new_sizes, dyn_shape))
   out = mlir.reshape(ctx, x, aval_out)
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
 
 def _reshape_staging_rule(
     trace, x, *dyn, new_sizes, dimensions, sharding):
@@ -6162,9 +6119,7 @@ batching.primitive_batchers[rev_p] = _rev_batch_rule
 def _rev_lower(ctx, x, *, dimensions):
   aval_out, = ctx.avals_out
   out = hlo.reverse(x, mlir.dense_int_array(dimensions))
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
 mlir.register_lowering(rev_p, _rev_lower)
 
 
@@ -6201,9 +6156,7 @@ def _transpose_lower(ctx, x, *, permutation):
     trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
     permutation = [*permutation, *trailing_dims]
   out = hlo.transpose(x, mlir.dense_int_array(permutation))
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
 
 transpose_p = standard_primitive(
     _transpose_shape_rule, _input_dtype, 'transpose',
@@ -6345,10 +6298,6 @@ def _select_hlo_lowering_opaque(ctx, which, *cases):
       avals_in=[aval_which_bcast, *physical_avals_cases],
       avals_out=[physical_aval_out])[0]
 
-def _add_shit_to_select(ctx, op, aval_out):
-  if config.sharding_in_types.value:
-    return mlir.lower_sharding_under_shit(ctx, op, aval_out)
-  return op
 
 def _select_hlo_lowering(ctx, which, *cases):
   which_aval = ctx.avals_in[0]
@@ -6356,13 +6305,13 @@ def _select_hlo_lowering(ctx, which, *cases):
 
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     op = _select_hlo_lowering_opaque(ctx, which, *cases)
-    return [_add_shit_to_select(ctx, op, aval_out)]
+    return [mlir.lower_sharding_under_shit(ctx, op, aval_out)]
 
   if which_aval.dtype == np.dtype(np.bool_):
     assert len(cases) <= 2
     if len(cases) == 1: return cases
     op = hlo.select(which, cases[1], cases[0])
-    return [_add_shit_to_select(ctx, op, aval_out)]
+    return [mlir.lower_sharding_under_shit(ctx, op, aval_out)]
 
   if dtypes.issubdtype(which_aval.dtype, np.signedinteger):
     compare_type = 'SIGNED'
@@ -6382,7 +6331,7 @@ def _select_hlo_lowering(ctx, which, *cases):
                       _select(offset + mid, cases[mid:]))
 
   op = _select(0, cases)
-  return [_add_shit_to_select(ctx, op, aval_out)]
+  return [mlir.lower_sharding_under_shit(ctx, op, aval_out)]
 
 select_n_p = standard_primitive(
     _select_shape_rule, _select_dtype_rule, 'select_n',
@@ -6514,10 +6463,8 @@ def _reduce_lower(ctx, *values, computation, jaxpr, dimensions):
                                       *reducer.arguments,
                                       dim_var_values=ctx.dim_var_values)
     hlo.return_(mlir.flatten_ir_values(out_nodes))
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, r, aval)
-            for r, aval in safe_zip(op.results, ctx.avals_out)]
-  return op.results
+  return [mlir.lower_sharding_under_shit(ctx, r, aval)
+          for r, aval in safe_zip(op.results, ctx.avals_out)]
 
 mlir.register_lowering(reduce_p, _reduce_lower)
 
@@ -6532,11 +6479,8 @@ def _reduce_sum_transpose_rule(cotangent, operand, *, axes):
   assert ad.is_undefined_primal(operand)
   input_shape = operand.aval.shape
   broadcast_dimensions = tuple(np.delete(np.arange(len(input_shape)), axes))
-  if config.sharding_in_types.value:
-    result = broadcast_in_dim(cotangent, input_shape, broadcast_dimensions,
-                              out_sharding=operand.aval.sharding)
-  else:
-    result = broadcast_in_dim(cotangent, input_shape, broadcast_dimensions)
+  result = broadcast_in_dim(cotangent, input_shape, broadcast_dimensions,
+                            out_sharding=operand.aval.sharding)
   assert result.shape == input_shape
   return [result]
 
@@ -6674,7 +6618,7 @@ def _compute_argminmax(value_comparator, get_identity,
   axis, = axes
   indices = broadcasted_iota(
       index_dtype, np.shape(operand), axis,
-      out_sharding=operand.aval.sharding if config.sharding_in_types.value else None)
+      out_sharding=operand.aval.sharding)
   res = reduce([operand, indices],
                [get_identity(operand.dtype), np.array(0, index_dtype)],
                _ArgMinMaxReducer(value_comparator),
@@ -6739,9 +6683,7 @@ def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes):
   reducer_region = op.regions[0].blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(reducer_region):
     hlo.return_([reducer(*reducer_region.arguments)])
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, op.result, aval_out)]
-  return op.results
+  return [mlir.lower_sharding_under_shit(ctx, op.result, aval_out)]
 
 mlir.register_lowering(reduce_sum_p, partial(_unary_reduce_lower, hlo.AddOp,
                                              _get_sum_identity))
@@ -6782,9 +6724,7 @@ def _reduce_precision_lower(ctx, operand, *, exponent_bits, mantissa_bits):
   aval_out, = ctx.avals_out
   out = hlo.reduce_precision(operand, mlir.i32_attr(exponent_bits),
                              mlir.i32_attr(mantissa_bits))
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
 
 mlir.register_lowering(reduce_precision_p, _reduce_precision_lower)
 
@@ -6924,8 +6864,7 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
                     mlir.flatten_ir_values(operands),
                     dimension=mlir.i64_attr(dimension),
                     is_stable=ir.BoolAttr.get(is_stable))
-  scalar_s = (lambda a: a.sharding.with_spec(P())
-              if config.sharding_in_types.value else lambda _: None)
+  scalar_s = lambda a: a.sharding.with_spec(P())
   scalar_avals = [aval.update(shape=(), sharding=scalar_s(aval))
                   for aval in ctx.avals_in]
   scalar_types = safe_map(mlir.aval_to_ir_type, scalar_avals)
@@ -7458,9 +7397,7 @@ def _iota_lower(ctx, *dyn_shape, dtype, shape, dimension, sharding):
   if dyn_shape:
     aval_out = aval_out.update(shape=_merge_dyn_shape(shape, dyn_shape))
   out = mlir.iota(ctx, aval_out, dimension=dimension)
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
 mlir.register_lowering(iota_p, _iota_lower)
 
 def _iota_batching_rule(in_vals, in_dims, *, dtype, shape, dimension,
@@ -7668,20 +7605,16 @@ def _const(example, val):
 _zeros: Callable = partial(full_like, fill_value=0)
 
 def _zero(x):
-  if config.sharding_in_types.value:
-    x_aval = core.get_aval(x)
-    return full_like(x, shape=(), fill_value=0,
-                     sharding=x_aval.sharding.with_spec(P()))
-  return full_like(x, shape=(), fill_value=0)
+  x_aval = core.get_aval(x)
+  return full_like(x, shape=(), fill_value=0,
+                    sharding=x_aval.sharding.with_spec(P()))
 
 _ones: Callable = partial(full_like, fill_value=1)
 
 def _one(x):
-  if config.sharding_in_types.value:
-    x_aval = core.get_aval(x)
-    return full_like(x, shape=(), fill_value=1,
-                     sharding=x_aval.sharding.with_spec(P()))
-  return full_like(x, shape=(), fill_value=1)
+  x_aval = core.get_aval(x)
+  return full_like(x, shape=(), fill_value=1,
+                    sharding=x_aval.sharding.with_spec(P()))
 
 _twos: Callable = partial(full_like, fill_value=2)
 _two: Callable = partial(full_like, shape=(), fill_value=2)

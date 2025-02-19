@@ -411,9 +411,6 @@ def _einsum(
     _dot_general=lax.dot_general,
     out_sharding=None,
 ):
-  if out_sharding is not None and not config.sharding_in_types.value:
-    raise NotImplementedError("out_sharding only works when sharding_in_types "
-                              "config is True.")
   out_sharding = canonicalize_sharding(out_sharding)
   if out_sharding is not None and not isinstance(out_sharding, NamedSharding):
     raise NotImplementedError(
@@ -546,8 +543,7 @@ def _einsum(
                                **k_out_sharding)
       else:
         names = batch_names_str + remaining_lhs_names + remaining_rhs_names
-        if (config.sharding_in_types.value and out_sharding is not None and
-            names != result_names):
+        if out_sharding is not None and names != result_names:
           spec = out_sharding.spec
           inverse_spec = tuple(spec[result_names.index(name)] for name in names)
           dot_general_out_sharding = NamedSharding(out_sharding.mesh,

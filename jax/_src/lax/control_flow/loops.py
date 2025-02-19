@@ -231,8 +231,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   xs_avals = [core.get_aval(x) for x in xs_flat]
 
-  if (config.sharding_in_types.value and
-      not all(a.sharding.spec[0] is None for a in xs_avals)):
+  if not all(a.sharding.spec[0] is None for a in xs_avals):
     raise ValueError('0th dimension of all xs should be replicated. Got '
                      f'{", ".join(str(a.sharding.spec) for a in xs_avals)}')
 
@@ -504,8 +503,7 @@ def _split_leading(sz, x):
 def _concat(a, b): return lax.concatenate([a, b], 0)
 
 def _empty_array(prefix, length_spec, aval):
-  sharding = (aval.sharding.with_spec((length_spec, *aval.sharding.spec))
-              if config.sharding_in_types.value else None)
+  sharding = aval.sharding.with_spec((length_spec, *aval.sharding.spec))
   return lax.broadcast(lax.empty(aval.dtype), (*prefix, *aval.shape),
                        out_sharding=sharding)
 

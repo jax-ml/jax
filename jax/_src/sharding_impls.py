@@ -22,7 +22,6 @@ import math
 from typing import Any, NamedTuple, cast
 
 from jax._src import core
-from jax._src import config
 from jax._src import mesh as mesh_lib
 from jax._src import sharding as jsharding
 from jax._src import sharding_specs
@@ -1254,8 +1253,6 @@ def flatten_spec(spec):
 def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
                           check_mesh_consistency: bool = True
                           ) -> NamedSharding | None:
-  if not config.sharding_in_types.value:
-    return sharding  # type: ignore
   if sharding is None:
     return sharding
   if isinstance(sharding, NamedSharding) and sharding.mesh.empty:

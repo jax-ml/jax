@@ -1746,14 +1746,10 @@ def _pjit_lower(
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None):
   util.test_event("pjit_lower")
-  if config.sharding_in_types.value:
-    if resource_env is not None:
-      mesh, api_name = resource_env.physical_mesh, 'pjit'
-    else:
-      mesh, api_name = mesh_lib.get_concrete_mesh(), 'jit'
+  if resource_env is not None:
+    mesh, api_name = resource_env.physical_mesh, 'pjit'
   else:
-    mesh, api_name = ((resource_env.physical_mesh, 'pjit')
-                      if resource_env is not None else (None, 'jit'))
+    mesh, api_name = mesh_lib.get_concrete_mesh(), 'jit'
   return pxla.lower_sharding_computation(
       jaxpr, api_name, name, in_shardings, out_shardings,
       in_layouts, out_layouts, tuple(donated_invars),
@@ -2494,9 +2490,6 @@ state_discharge.register_discharge_rule(pjit_p)(_pjit_state_discharge_rule)
 # -------------------- with_sharding_constraint --------------------
 
 def check_shardings_are_auto(shardings_flat):
-  if not config.sharding_in_types.value:
-    return
-
   for s in shardings_flat:
     if not isinstance(s, NamedSharding):
       continue

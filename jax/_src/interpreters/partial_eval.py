@@ -974,10 +974,6 @@ def _partial_eval_jaxpr_nounits(jaxpr: ClosedJaxpr,
     core.check_jaxpr(jaxpr_unknown)
 
   def check(first, second):
-    if not config.sharding_in_types.value:
-      assert first == second
-      return
-
     for f, s in zip(first, second):
       if (not isinstance(f, core.ShapedArray) and
           not isinstance(s, core.ShapedArray)):
