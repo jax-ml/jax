@@ -729,6 +729,13 @@ class DynamicShapesTest(jtu.JaxTestCase):
         with self.assertRaises(jax.errors.KeyReuseError):
           jax.jit(f)(0)
 
+  def test_check_closed_jaxpr(self):
+    jaxpr = make_jaxpr(lambda x, y: (x*x, y*y, x*y))(2., 3.)
+    assert isinstance(jaxpr, core.ClosedJaxpr)
+    self.assertEqual(len(jaxpr.invars), 2)
+    self.assertEqual(len(jaxpr.outvars), 3)
+    self.assertEqual(len(jaxpr.constvars), 0)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
