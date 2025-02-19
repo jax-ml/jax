@@ -146,8 +146,8 @@ float0 = dtypes.float0
 
 def jit(
   fun: Callable,
-  in_shardings=sharding_impls.UNSPECIFIED,
-  out_shardings=sharding_impls.UNSPECIFIED,
+  in_shardings: Any = sharding_impls.UNSPECIFIED,
+  out_shardings: Any = sharding_impls.UNSPECIFIED,
   static_argnums: int | Sequence[int] | None = None,
   static_argnames: str | Iterable[str] | None = None,
   donate_argnums: int | Sequence[int] | None = None,

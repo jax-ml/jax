@@ -814,8 +814,8 @@ class JitWrapped(stages.Wrapped):
 # because `None` means that the input is fully replicated.
 def pjit(
     fun: Callable,
-    in_shardings=UNSPECIFIED,
-    out_shardings=UNSPECIFIED,
+    in_shardings: Any = UNSPECIFIED,
+    out_shardings: Any = UNSPECIFIED,
     static_argnums: int | Sequence[int] | None = None,
     static_argnames: str | Iterable[str] | None = None,
     donate_argnums: int | Sequence[int] | None = None,
