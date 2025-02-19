@@ -61,6 +61,11 @@ jax::SingularValueDecomposition<ffi::DataType::F64>::FnType dgesdd_;
 jax::SingularValueDecompositionComplex<ffi::DataType::C64>::FnType cgesdd_;
 jax::SingularValueDecompositionComplex<ffi::DataType::C128>::FnType zgesdd_;
 
+jax::SingularValueDecompositionQR<ffi::DataType::F32>::FnType sgesvd_;
+jax::SingularValueDecompositionQR<ffi::DataType::F64>::FnType dgesvd_;
+jax::SingularValueDecompositionQRComplex<ffi::DataType::C64>::FnType cgesvd_;
+jax::SingularValueDecompositionQRComplex<ffi::DataType::C128>::FnType zgesvd_;
+
 jax::EigenvalueDecompositionSymmetric<ffi::DataType::F32>::FnType ssyevd_;
 jax::EigenvalueDecompositionSymmetric<ffi::DataType::F64>::FnType dsyevd_;
 jax::EigenvalueDecompositionHermitian<ffi::DataType::C64>::FnType cheevd_;
@@ -366,6 +371,13 @@ static auto init = []() -> int {
       cgesdd_);
   AssignKernelFn<SingularValueDecompositionComplex<ffi::DataType::C128>>(
       zgesdd_);
+
+  AssignKernelFn<SingularValueDecompositionQR<ffi::DataType::F32>>(sgesvd_);
+  AssignKernelFn<SingularValueDecompositionQR<ffi::DataType::F64>>(dgesvd_);
+  AssignKernelFn<SingularValueDecompositionQRComplex<ffi::DataType::C64>>(
+      cgesvd_);
+  AssignKernelFn<SingularValueDecompositionQRComplex<ffi::DataType::C128>>(
+      zgesvd_);
 
   AssignKernelFn<EigenvalueDecompositionSymmetric<ffi::DataType::F32>>(ssyevd_);
   AssignKernelFn<EigenvalueDecompositionSymmetric<ffi::DataType::F64>>(dsyevd_);
