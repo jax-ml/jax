@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import atexit
 import collections
-from collections.abc import Callable, Generator, Hashable, Iterable, Sequence
+from collections.abc import Callable, Hashable, Iterable, Sequence
 from functools import partial, lru_cache
 import inspect
 import math
@@ -2736,10 +2736,9 @@ def named_call(
   return source_info_util.extend_name_stack(name)(fun)
 
 
-@contextmanager
 def named_scope(
     name: str,
-  ) -> Generator[None, None, None]:
+  ) -> source_info_util.ExtendNameStackContextManager:
   """A context manager that adds a user specified name to the JAX name stack.
 
   When staging out computations for just-in-time compilation to XLA (or other
@@ -2786,8 +2785,7 @@ def named_scope(
   """
   if not isinstance(name, str):
     raise TypeError("named_scope name argument must be a string.")
-  with source_info_util.extend_name_stack(name):
-    yield
+  return source_info_util.extend_name_stack(name)
 
 def effects_barrier():
   """Waits until existing functions have completed any side-effects."""

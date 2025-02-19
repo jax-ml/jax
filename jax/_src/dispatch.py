@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import atexit
 from collections.abc import Sequence
-import contextlib
 import dataclasses
 import enum
 from functools import partial
@@ -170,22 +169,32 @@ def wait_for_tokens():
   runtime_tokens.block_until_ready()
 
 
-@contextlib.contextmanager
-def log_elapsed_time(fmt: str, fun_name: str, event: str | None = None):
-  if _on_exit:
-    yield
-  else:
-    log_priority = logging.WARNING if config.log_compiles.value else logging.DEBUG
-    start_time = time.time()
-    yield
+class LogElapsedTimeContextManager:
+  __slots__ = ['fmt', 'fun_name', 'event', 'start_time']
+
+  def __init__(self, fmt: str, fun_name: str, event: str | None = None):
+    self.fmt = fmt
+    self.fun_name = fun_name
+    self.event = event
+
+  def __enter__(self):
+    self.start_time = time.time()
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    if _on_exit:
+      return
+
     end_time = time.time()
-    elapsed_time = end_time - start_time
+    elapsed_time = end_time - self.start_time
+    log_priority = logging.WARNING if config.log_compiles.value else logging.DEBUG
     if logger.isEnabledFor(log_priority):
-      logger.log(log_priority, fmt.format(
-          fun_name=fun_name, elapsed_time=elapsed_time))
-    if event is not None:
-      record_event_duration_secs(event, elapsed_time)
-      record_event_time_span(event, start_time, end_time)
+      logger.log(log_priority, self.fmt.format(
+          fun_name=self.fun_name, elapsed_time=elapsed_time))
+    if self.event is not None:
+      record_event_duration_secs(self.event, elapsed_time)
+      record_event_time_span(self.event, self.start_time, end_time)
+
+log_elapsed_time = LogElapsedTimeContextManager
 
 
 def should_tuple_args(num_args: int, platform: str) -> bool:
