@@ -79,6 +79,7 @@ from jax._src.lib import xla_client as _xc
 Device = _xc.Device
 del _xc
 
+from jax._src.core import get_ty as get_ty
 from jax._src.api import effects_barrier as effects_barrier
 from jax._src.api import block_until_ready as block_until_ready
 from jax._src.ad_checkpoint import checkpoint_wrapper as checkpoint  # noqa: F401
