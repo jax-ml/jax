@@ -411,7 +411,7 @@ def _einsum(
     _dot_general=lax.dot_general,
     out_sharding=None,
 ):
-  out_sharding = canonicalize_sharding(out_sharding)
+  out_sharding = canonicalize_sharding(out_sharding, 'einsum')
   if out_sharding is not None and not isinstance(out_sharding, NamedSharding):
     raise NotImplementedError(
         "`out_sharding` argument of `einsum` only supports NamedSharding"

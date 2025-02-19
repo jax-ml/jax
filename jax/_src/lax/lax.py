@@ -2029,7 +2029,7 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
     raise NotImplementedError(
         '`out_sharding` argument of `dot_general` only supports NamedSharding '
         'instances. Please file a bug if this is not enough for your use case.')
-  out_sharding = canonicalize_sharding(out_sharding)
+  out_sharding = canonicalize_sharding(out_sharding, 'dot_general')
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   cdims = (api_util._ensure_index_tuple(lhs_contract),
            api_util._ensure_index_tuple(rhs_contract))
@@ -2113,7 +2113,7 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
   See Also:
     jax.lax.broadcast : simpler interface to add new leading dimensions.
   """
-  out_sharding = canonicalize_sharding(out_sharding)
+  out_sharding = canonicalize_sharding(out_sharding, 'broadcast_in_dim')
   if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions) and
       isinstance(operand, Array) and out_sharding is None):
     return operand
@@ -2188,7 +2188,7 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
     return operand
   else:
     dyn_shape, static_new_sizes = _extract_tracers_dyn_shape(new_sizes)
-    out_sharding = canonicalize_sharding(out_sharding)
+    out_sharding = canonicalize_sharding(out_sharding, 'reshape')
     return reshape_p.bind(
       operand, *dyn_shape, new_sizes=tuple(static_new_sizes),
       dimensions=None if dims is None or same_dims else dims,
@@ -2784,7 +2784,7 @@ def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int,
   static_shape = [None if isinstance(d, core.Tracer) else d for d in shape]
   dimension = core.concrete_or_error(
       int, dimension, "dimension argument of lax.broadcasted_iota")
-  out_sharding = canonicalize_sharding(out_sharding)
+  out_sharding = canonicalize_sharding(out_sharding, 'broadcasted_iota')
   return iota_p.bind(*dynamic_shape, dtype=dtype, shape=tuple(static_shape),
                      dimension=dimension, sharding=out_sharding)
 

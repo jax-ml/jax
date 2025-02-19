@@ -1251,7 +1251,7 @@ def flatten_spec(spec):
   return out
 
 def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
-                          check_mesh_consistency: bool = True
+                          api_name: str, check_mesh_consistency: bool = True
                           ) -> NamedSharding | None:
   if sharding is None:
     return sharding
@@ -1262,10 +1262,9 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
   if isinstance(sharding, PartitionSpec):
     if cur_mesh.empty:
       raise ValueError(
-          'Using PartitionSpec when you are not under a mesh context via'
-          ' `jax.sharding.use_mesh` is not allowed. Please pass a'
-          ' NamedSharding instance or enter into a mesh context via'
-          f' `jax.sharding.use_mesh`. Got {sharding}')
+          'Using PartitionSpec when you are not under a mesh context is not'
+          ' allowed. Please pass a NamedSharding instance or enter into a mesh'
+          f' context via `jax.sharding.use_mesh`. Got {sharding}')
     sharding = NamedSharding(cur_mesh, sharding)
   else:
     # There are cases when you have multiple meshes set. Allow that for full
@@ -1278,9 +1277,10 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
     if (check_mesh_consistency and not cur_mesh.empty and
         sharding.mesh.abstract_mesh != cur_mesh):
       raise ValueError(
-          f'Context mesh {cur_mesh} should match the mesh'
-          f' of sharding {sharding.mesh.abstract_mesh}. This error occurs at'
-          f' source:  {source_info_util.summarize(source_info_util.current())}')
+          f'Context mesh {cur_mesh} should match the mesh of sharding'
+          f' {sharding.mesh.abstract_mesh} passed to {api_name}.'
+          ' This error occurs at source: '
+          f' {source_info_util.summarize(source_info_util.current())}')
     if isinstance(sharding.mesh, mesh_lib.Mesh):
       sharding = NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
 
@@ -1288,9 +1288,11 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
     if sharding.mesh._name_to_type[s] in {
         mesh_lib.AxisTypes.Auto, mesh_lib.AxisTypes.Manual}:
       raise ValueError(
-          'PartitionSpec cannot contain axis names that are of type Auto or'
-          f' Manual. Got PartitionSpec: {sharding.spec} with axis name:'
-          f' {s} of type: {sharding.mesh._name_to_type[s]}')
+          f'PartitionSpec passed to {api_name} cannot contain axis'
+          ' names that are of type Auto or Manual. Got PartitionSpec:'
+          f' {sharding.spec} with axis name: {s} of type:'
+          f' {sharding.mesh._name_to_type[s]}, This error occurs at source: '
+          f' {source_info_util.summarize(source_info_util.current())}')
   return sharding
 
 TypeOfAxis = str | tuple[str, ...] | None

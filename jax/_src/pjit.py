@@ -2690,7 +2690,8 @@ def mesh_cast(xs, out_shardings):
   shardings_flat = flatten_axes("mesh_cast shardings", treedef, out_shardings)
   out_flat = [
       mesh_cast_p.bind(
-          x, dst_sharding=canonicalize_sharding(s, check_mesh_consistency=False))
+          x, dst_sharding=canonicalize_sharding(
+              s, 'mesh_cast', check_mesh_consistency=False))
       for x, s in safe_zip(x_flat, shardings_flat)
   ]
   return tree_unflatten(treedef, out_flat)
@@ -2777,7 +2778,7 @@ def reshard(xs, out_shardings):
   x_avals_flat = [core.shaped_abstractify(x) for x in x_flat]
   out_flat = []
   for x, x_aval, s in safe_zip(x_flat, x_avals_flat, shardings_flat):
-    ds = canonicalize_sharding(s)
+    ds = canonicalize_sharding(s, 'reshard')
     ds = ds.with_spec(ds.spec._normalized_spec_for_aval(x_aval.ndim))  # pytype: disable=attribute-error
     out_flat.append(reshard_p.bind(x, dst_sharding=ds))
   return tree_unflatten(treedef, out_flat)
@@ -2825,7 +2826,8 @@ batching.skippable_batchers[reshard_p] = lambda _: ()
 # -------------------- auto and user mode -------------------------
 
 def _get_new_mesh(axes: str | tuple[str, ...] | None,
-                  axis_type: mesh_lib.AxisTypes):
+                  axis_type: mesh_lib.AxisTypes,
+                  error_on_manual_to_auto_explict=False):
   cur_mesh = mesh_lib.get_abstract_mesh()
   if axes is None:
     axes = cur_mesh.axis_names
@@ -2835,13 +2837,21 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
     if cur_mesh._name_to_type[a] == axis_type:
       raise ValueError(f'Axes {a} cannot be casted to type {axis_type} since '
                        f'it already is of type {axis_type}.')
+    if (error_on_manual_to_auto_explict and
+        cur_mesh._name_to_type[a] == mesh_lib.AxisTypes.Manual and
+        axis_type in {mesh_lib.AxisTypes.Auto, mesh_lib.AxisTypes.Explicit}):
+      raise NotImplementedError(
+          'Going from `Manual` AxisType to `Auto` or `Explicit` AxisType is not'
+          ' allowed. Please file a bug at https://github.com/jax-ml/jax/issues'
+          ' with your use case')
   new_mesh = cur_mesh.update_axis_types({axis_type: axes})
   return new_mesh
 
 def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,
               out_shardings):
   def decorator(*args, **kwargs):
-    new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Auto)
+    new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Auto,
+                             error_on_manual_to_auto_explict=True)
     with mesh_lib.set_abstract_mesh(new_mesh):
       in_specs = tree_map(lambda a: core.modify_spec_for_auto_manual(
           a.aval.sharding.spec, new_mesh), args)
@@ -2860,7 +2870,8 @@ def use_auto_axes(*axes):
 def explicit_axes(fun, *, axes: str | tuple[str, ...] | None = None,
                   in_shardings):
   def decorator(*args, **kwargs):
-    new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Explicit)
+    new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Explicit,
+                             error_on_manual_to_auto_explict=True)
     with mesh_lib.set_abstract_mesh(new_mesh):
       args = mesh_cast(args, in_shardings)
       out = fun(*args, **kwargs)

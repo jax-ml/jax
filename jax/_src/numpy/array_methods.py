@@ -784,7 +784,7 @@ class _IndexUpdateRef:
                    fill_value=fill_value)
     if out_sharding is not None:
       assert isinstance(out_sharding, (NamedSharding, PartitionSpec))
-      out_sharding = canonicalize_sharding(out_sharding)
+      out_sharding = canonicalize_sharding(out_sharding, '.get')
       take = auto_axes(take, axes=mesh_lib.get_abstract_mesh().axis_names,
                        out_shardings=out_sharding.spec)
     return take(self.array, self.index)

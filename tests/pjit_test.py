@@ -4942,8 +4942,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        'PartitionSpec cannot contain axis names that are of type Auto or'
-        ' Manual'):
+        'PartitionSpec passed to einsum cannot contain axis names that are of'
+        ' type Auto or Manual'):
       auto_axes(f, out_shardings=P())(arr1, arr2)
 
     out = jax.grad(f, argnums=(0, 1))(arr1, arr2)
@@ -6082,7 +6082,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return out
 
     with self.assertRaisesRegex(
-        ValueError, "PartitionSpec cannot contain axis names.*Auto"):
+        ValueError, "PartitionSpec.*cannot contain axis names.*Auto"):
       g(arr1, arr2)
 
   @jtu.with_user_mesh((2, 2, 2), ('x', 'y', 'z'),
@@ -6667,7 +6667,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        "PartitionSpec cannot contain axis names that are.*Auto.*Manual"):
+        "PartitionSpec passed to einsum cannot contain axis names.*Auto.*Manual"):
       f(arr, arr2)
 
   def test_device_put_under_use_mesh(self):
@@ -6716,6 +6716,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out2 = f(arr2)
       self.assertArraysEqual(out2, np_inp)
       self.assertEqual(out2.sharding, NamedSharding(mesh, P('x', 'y')))
+
+  @jtu.with_user_mesh((2, 1), ('x', 'y'),
+                      axis_types={AxisTypes.Auto: ('x', 'y')})
+  def test_axes_api_error_manual_to_auto_explicit(self, mesh):
+    def g(x):
+      return auto_axes(lambda a: a * 2, axes=('x', 'y'),
+                       out_shardings=P('x', 'y'))(x)
+
+    with self.assertRaisesRegex(
+        NotImplementedError, "Going from `Manual`.*to.*`Auto`.*`Explicit`"):
+      jax.jit(shard_map(g, mesh=mesh, in_specs=P('x', 'y'), out_specs=P('x', 'y'))
+              )(np.arange(16).reshape(8, 2))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
