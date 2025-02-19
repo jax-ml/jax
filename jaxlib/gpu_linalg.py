@@ -45,6 +45,9 @@ if _cuda_linalg:
     xla_client.register_custom_call_target(
         _name, _value, platform="CUDA", api_version=api_version
     )
+  if hasattr(xla_client, "register_custom_call_as_batch_partitionable"):
+    xla_client.register_custom_call_as_batch_partitionable(
+        "cu_lu_pivots_to_permutation")
 
 if _hip_linalg:
   for _name, _value in _hip_linalg.registrations().items():
@@ -55,3 +58,6 @@ if _hip_linalg:
     xla_client.register_custom_call_target(
         _name, _value, platform="ROCM", api_version=api_version
     )
+  if hasattr(xla_client, "register_custom_call_as_batch_partitionable"):
+    xla_client.register_custom_call_as_batch_partitionable(
+        "hip_lu_pivots_to_permutation")
