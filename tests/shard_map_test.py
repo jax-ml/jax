@@ -2063,6 +2063,24 @@ class ShardMapTest(jtu.JaxTestCase):
     v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
     self.assertAllClose(v*v, f(v), check_dtypes=False)
 
+  def test_grad_partial_auto(self):
+    mesh = jtu.create_mesh((2, 2), ('i', 'j'))
+
+    def h(x):
+      return x ** 2
+
+    @jax.jit
+    def f(x):
+      return shard_map(h, mesh,
+                    in_specs=P('i', None),
+                    out_specs=P('i', None),
+                    check_rep=False,
+                    auto=frozenset({'j'}))(x).sum()
+
+    v = jnp.arange(32.).reshape(4, 8)
+    v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+    self.assertAllClose(2*v, jax.grad(f)(v), check_dtypes=False)
+
   def test_grad_nested_partial_auto(self):
     mesh = jtu.create_mesh((2, 2), ('i', 'j'))
 
