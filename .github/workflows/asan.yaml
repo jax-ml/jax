@@ -62,7 +62,8 @@ jobs:
         run: |
           source ${GITHUB_WORKSPACE}/venv/bin/activate
           cd jax
-          pip install -r build/test-requirements.txt
+          pip install uv~=0.5.30
+          uv pip install -r build/test-requirements.txt
       - name: Build and install JAX
         env:
           ASAN_OPTIONS: detect_leaks=0
@@ -73,8 +74,8 @@ jobs:
             --bazel_options=--color=yes \
             --bazel_options=--copt=-fsanitize=address \
             --clang_path=/usr/bin/clang-18
-          pip install dist/jaxlib-*.whl
-          pip install -e .
+          uv pip install dist/jaxlib-*.whl \
+            -e .
       - name: Run tests
         env:
           ASAN_OPTIONS: detect_leaks=0
