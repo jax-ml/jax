@@ -614,6 +614,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     jtu.assert_dot_precision(
         lax.Precision.HIGHEST, partial(jvp, jnp.linalg.eigh), (a,), (a,))
 
+  def testEighGradRankPromotion(self):
+    rng = jtu.rand_default(self.rng())
+    a = rng((10, 3, 3), np.float32)
+    jvp(jnp.linalg.eigh, (a,), (a,))  # doesn't crash
+
   @jtu.sample_product(
     shape=[(1, 1), (4, 4), (5, 5), (300, 300)],
     dtype=float_types + complex_types,
