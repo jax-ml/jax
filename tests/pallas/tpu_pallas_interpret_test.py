@@ -19,12 +19,15 @@ contains only tests that do not use shard_map.
 """
 
 from absl.testing import absltest
-import numpy as np
 
 import jax
 from jax._src import test_util as jtu
 import jax._src.pallas.mosaic.interpret as mosaic_interpret
 from jax.experimental import pallas as pl
+import jax.numpy as jnp
+
+import numpy as np
+
 
 jax.config.parse_flags_with_absl()
 
@@ -62,6 +65,25 @@ class InterpretTest(jtu.JaxTestCase):
     z = matmul(x, y)
     np.testing.assert_allclose(z, x @ y, atol=1e-4)
 
+  def test_dynamic_grid(self):
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    iters = jax.random.randint(jax.random.key(0), (), 10, 20, dtype=jnp.int32)
+    @jax.jit
+    def f(x):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          grid=(iters,),
+          in_specs=(pl.BlockSpec(x.shape, lambda i: (0, 0)),),
+          out_specs=pl.BlockSpec(x.shape, lambda i: (0, 0)),
+          interpret=mosaic_interpret.TPUInterpretParams()
+      )(x)
+
+    x = jnp.arange(32 * 128.).reshape((32, 128))
+    y = f(x)
+    np.testing.assert_allclose(y, x)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

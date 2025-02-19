@@ -811,8 +811,13 @@ def interpret_pallas_call(
       args,
       [grid_mapping.num_dynamic_grid_bounds, grid_mapping.num_index_operands],
   )
-  # TODO(jburnim): Support dynamic grid sizes?
-  grid = grid_mapping.static_grid
+  dynamic_grid_args_iter = iter(dynamic_grid_args)
+  grid = tuple(
+      a if a is not pallas_core.dynamic_grid_dim
+      else next(dynamic_grid_args_iter)
+      for a in grid_mapping.grid
+  )
+  assert next(dynamic_grid_args_iter, None) is None
 
   axis_sizes = jax_core.get_axis_env().axis_sizes
   device_id = _device_coords_to_logical_id(
