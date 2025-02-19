@@ -14,5 +14,6 @@
 
 from jax._src.distributed import (
    initialize as initialize,
+   is_initialized as is_initialized,
    shutdown as shutdown,
 )
