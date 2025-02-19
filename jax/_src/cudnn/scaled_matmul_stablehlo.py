@@ -21,7 +21,7 @@ from jax.sharding import PartitionSpec as P
 
 
 Array = jnp.ndarray
-nv_scaled_dot_name = "__nv$scaled_dot"
+block_scaled_dot_name = "__op$block_scaled_dot"
 
 @dataclass
 class BlockScaleConfig:
@@ -88,7 +88,7 @@ def _scaled_matmul_cuda_lowering(
 
   backend_config = json.dumps(backend_config)
   out = mlir.custom_call(
-      nv_scaled_dot_name,
+      block_scaled_dot_name,
       result_types=result_types,
       operands=operands,
       backend_config=backend_config,
