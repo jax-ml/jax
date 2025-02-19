@@ -125,6 +125,11 @@ jax_multiplatform_test(
     srcs = ["debug_nans_test.py"],
 )
 
+jax_multiplatform_test(
+    name = "distributed_test",
+    srcs = ["distributed_test.py"],
+)
+
 jax_py_test(
     name = "multiprocess_gpu_test",
     srcs = ["multiprocess_gpu_test.py"],

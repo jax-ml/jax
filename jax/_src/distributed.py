@@ -169,7 +169,6 @@ class State:
 
 global_state = State()
 
-
 def initialize(coordinator_address: str | None = None,
                num_processes: int | None = None,
                process_id: int | None = None,
@@ -264,6 +263,10 @@ def initialize(coordinator_address: str | None = None,
                           local_device_ids, cluster_detection_method,
                           initialization_timeout, coordinator_bind_address)
 
+
+def is_initialized() -> bool:
+  """Check if the JAX distributed system is initialized."""
+  return global_state.client is not None
 
 def shutdown():
   """Shuts down the distributed system.
