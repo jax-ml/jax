@@ -1851,6 +1851,7 @@ def _dot_general_lowering_rule(
           ir.F32Type,
           ir.Float8E5M2Type,
           ir.Float8E4M3FNType,
+          ir.Float8E4M3B11FNUZType,
       ]
   ):
     val = ir.FloatAttr.get(val_type, 0.0)
