@@ -23,9 +23,9 @@ import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
-from jax.experimental import _mini_mpmd as mini_mpmd
-from jax.experimental._mini_mpmd import profile_utils
-from jax.experimental._mini_mpmd.examples import launch_utils
+from jax.experimental import _private_mm as mm
+from jax.experimental._private_mm import profile_utils
+from jax.experimental._private_mm.examples import launch_utils
 
 
 LR = 0.01
@@ -44,7 +44,7 @@ class Stage:
         raw_fwd = self.raw_fwd
 
         @partial(
-            mini_mpmd.jit,
+            mm.jit,
             in_shardings=self.sharding(P()),
             out_shardings=self.sharding(P()),
         )
@@ -56,7 +56,7 @@ class Stage:
     @cached_property
     def grad_init(self):
         @partial(
-            mini_mpmd.jit,
+            mm.jit,
             in_shardings=self.sharding(P()),
             out_shardings=self.sharding(P()),
         )
@@ -70,7 +70,7 @@ class Stage:
         raw_fwd = self.raw_fwd
 
         @partial(
-            mini_mpmd.jit,
+            mm.jit,
             in_shardings=self.sharding(P()),
             out_shardings=self.sharding(P()),
         )
@@ -88,7 +88,7 @@ class Stage:
     @cached_property
     def update(self):
         @partial(
-            mini_mpmd.jit,
+            mm.jit,
             in_shardings=self.sharding(P()),
             out_shardings=self.sharding(P()),
         )
@@ -96,9 +96,6 @@ class Stage:
             return jax.tree.map(lambda v, dv: v - dv * LR, params, grads)
 
         return _update
-
-
-Stages = list[Stage]
 
 
 def print_sharding(prefix, arr):
@@ -111,11 +108,11 @@ def print_sharding(prefix, arr):
 
 def transfer(arr, stage):
     sharding = stage.sharding(P())  # just replicate
-    return mini_mpmd.device_put(arr, device=sharding)
+    return mm.device_put(arr, device=sharding)
 
 
 def _mpmd_constant(stage, shape, value, dtype=jnp.float32):
-    # TODO: Better support for constants in mini_mpmd (bake into jit executable?)
+    # TODO: Better support for constants in mm (bake into jit executable?)
     return transfer(jnp.full(shape, value, dtype=dtype), stage)
 
 

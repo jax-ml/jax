@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax.experimental._mini_mpmd.mini_mpmd import (
+from jax.experimental._private_mm.mm import (
     device_put,
     jit,
     MpmdArray
 )
-from jax.experimental._mini_mpmd import profile_utils as profile_utils
+from jax.experimental._private_mm import profile_utils as profile_utils

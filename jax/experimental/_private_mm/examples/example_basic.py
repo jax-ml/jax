@@ -19,8 +19,8 @@ import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
-from jax.experimental import _mini_mpmd as mini_mpmd
-from jax.experimental._mini_mpmd.examples import launch_utils
+from jax.experimental import _private_mm as mm
+from jax.experimental._private_mm.examples import launch_utils
 
 
 def step():
@@ -33,25 +33,25 @@ def step():
 
     shape = (512, 2**20)
 
-    @partial(mini_mpmd.jit, in_shardings=sharding1, out_shardings=sharding1)
+    @partial(mm.jit, in_shardings=sharding1, out_shardings=sharding1)
     def stage1(x):
         return x + 1
 
-    @partial(mini_mpmd.jit, in_shardings=sharding2, out_shardings=sharding2)
+    @partial(mm.jit, in_shardings=sharding2, out_shardings=sharding2)
     def stage2(x):
         return x * 2
 
-    a0: mini_mpmd.MpmdArray = mini_mpmd.device_put(jnp.zeros(shape), sharding1)
-    b0: mini_mpmd.MpmdArray = mini_mpmd.device_put(jnp.ones(shape), sharding1)
+    a0: mm.MpmdArray = mm.device_put(jnp.zeros(shape), sharding1)
+    b0: mm.MpmdArray = mm.device_put(jnp.ones(shape), sharding1)
 
     # Enqueue all work on [a]
     a1 = stage1(a0)
-    a1 = mini_mpmd.device_put(a1, sharding2)
+    a1 = mm.device_put(a1, sharding2)
     a2 = stage2(a1)
 
     # Enqueue all work on [b]
     b1 = stage1(b0)
-    b1 = mini_mpmd.device_put(b1, sharding2)
+    b1 = mm.device_put(b1, sharding2)
     b2 = stage2(b1)
 
     # Only print if a2/b2 resident (i.e., we belong to the last stage):
@@ -61,7 +61,7 @@ def step():
         print(b2.jax_array)
 
 
-def example_mini_mpmd(num_processes, process_id):
+def example_basic(num_processes, process_id):
     assert jax.device_count() == 8
     # FIXME: Support stages spread across multiple processes.
     assert 2 % num_processes == 0
@@ -75,5 +75,5 @@ if __name__ == '__main__':
     num_processes = 2
     if len(sys.argv) >= 2:
         num_processes = int(sys.argv[1])
-    success = launch_utils.launch_example(num_processes, example_mini_mpmd)
+    success = launch_utils.launch_example(num_processes, example_basic)
     sys.exit(0 if success else 1)

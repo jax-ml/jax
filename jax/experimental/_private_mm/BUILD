@@ -26,22 +26,22 @@ package(
 )
 
 py_library(
-    name = "mini_mpmd",
+    name = "private_mm",
     srcs = ["__init__.py"],
     visibility = ["//visibility:public"],
     deps = [":mini_mpmd_internal"],
 )
 
 py_library(
-    name = "mini_mpmd_internal",
+    name = "private_mm_internal",
     srcs = [
         "example_utils.py",
-        "mini_mpmd.py",
+        "mm.py",
         "mini_dime.py",
         "profile_utils.py",
     ],
     tags = ["pytype_unchecked_annotations"],
-    visibility = jax_visibility("mini_mpmd_internal"),
+    visibility = jax_visibility("private_mm_internal"),
     deps = [
         "//jax",
     ],

@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Runs some simple mini_mpmd operations on varying numbers of processes."""
+"""Runs some simple mm operations on varying numbers of processes."""
 
 from functools import partial
 
@@ -21,8 +21,8 @@ import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
-from jax.experimental import _mini_mpmd as mini_mpmd
-from jax.experimental._mini_mpmd.examples import launch_utils
+from jax.experimental import _private_mm as mm
+from jax.experimental._private_mm.examples import launch_utils
 
 
 def make_two_meshes():
@@ -38,14 +38,14 @@ def make_two_meshes():
 
 def test_device_put_uncommitted(_num_processes, process_id):
     _, _, sharding1, sharding2 = make_two_meshes()
-    x = mini_mpmd.device_put(jnp.ones((16,16)), sharding1)
+    x = mm.device_put(jnp.ones((16,16)), sharding1)
     x.block_until_ready()
 
 
 def test_device_put_across_meshes(_num_processes, process_id):
     _, _, sharding1, sharding2 = make_two_meshes()
-    x = mini_mpmd.device_put(jnp.ones((16,16)), sharding1)
-    y = mini_mpmd.device_put(x, sharding2)
+    x = mm.device_put(jnp.ones((16,16)), sharding1)
+    y = mm.device_put(x, sharding2)
     if y.is_fully_remote:
         y.block_until_ready()
     else:
@@ -54,10 +54,10 @@ def test_device_put_across_meshes(_num_processes, process_id):
 
 def test_jit_and_transfer(_num_processes, process_id):
     _, _, sharding1, sharding2 = make_two_meshes()
-    x1 = mini_mpmd.device_put(jnp.ones((16,16)), sharding1)
-    x2 = mini_mpmd.jit(lambda x: x + 1, out_shardings=sharding1)(x1)
-    y1 = mini_mpmd.device_put(x2, sharding2)
-    y2 = mini_mpmd.jit(lambda x: x * 2, out_shardings=sharding2)(y1)
+    x1 = mm.device_put(jnp.ones((16,16)), sharding1)
+    x2 = mm.jit(lambda x: x + 1, out_shardings=sharding1)(x1)
+    y1 = mm.device_put(x2, sharding2)
+    y2 = mm.jit(lambda x: x * 2, out_shardings=sharding2)(y1)
     if y2.is_fully_remote:
         y2.block_until_ready()
     else:
@@ -75,7 +75,7 @@ def run_test(num_processes, test_fun, name):
 
 
 def run_tests():
-    # For 1 process mini_mpmd device_puts simply reduce to jax.device_puts.
+    # For 1 process mm.device_puts simply reduce to jax.device_puts.
     # For 2 processes and tests involving two meshes we require NCCL comms,
     # but all devices of a mesh are managed by the same process.
     # For 4 processes and tests involving two meshes we additionally have to

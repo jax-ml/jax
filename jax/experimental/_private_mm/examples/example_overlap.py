@@ -23,9 +23,9 @@ import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
-from jax.experimental import _mini_mpmd as mini_mpmd
-from jax.experimental._mini_mpmd import profile_utils
-from jax.experimental._mini_mpmd.examples import launch_utils
+from jax.experimental import _private_mm as mm
+from jax.experimental._private_mm import profile_utils
+from jax.experimental._private_mm.examples import launch_utils
 
 
 @dataclass(frozen=True)
@@ -33,12 +33,10 @@ class Stage:
     fwd: Callable[[Any, Any], Any]  # (params, acts) -> acts
     mesh: Mesh
 
-Stages = list[Stage]
-
 
 def transfer(arr, stage):
     sharding = NamedSharding(stage.mesh, P())  # just replicate
-    return mini_mpmd.device_put(arr, device=sharding)
+    return mm.device_put(arr, device=sharding)
 
 
 def stages_step_fn(stages, num_mubatches, params_by_stage, xs):
@@ -134,7 +132,7 @@ def example_overlap(num_processes, process_id):
         ]
         assert all(d.process_index == devices[0].process_index for d in devices)
         mesh = Mesh(np.asarray(devices), ('repl',))
-        jitted_fun = mini_mpmd.jit(
+        jitted_fun = mm.jit(
             mlp,
             in_shardings=(NamedSharding(mesh, P()), NamedSharding(mesh, P())),
             out_shardings=NamedSharding(mesh, P()),

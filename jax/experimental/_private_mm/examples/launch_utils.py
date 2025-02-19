@@ -41,7 +41,7 @@ def init_multi_process_local(num_processes, process_id, num_devices):
 def _entrypoint(num_processes, process_id, user_main, num_devices):
     # Only import these in the subprocess, not the launcher process.
     import jax.experimental.multihost_utils
-    from jax.experimental._mini_mpmd import profile_utils
+    from jax.experimental._private_mm import profile_utils
 
     init_multi_process_local(num_processes, process_id, num_devices)
     jax.experimental.multihost_utils.sync_global_devices("start_user_main")

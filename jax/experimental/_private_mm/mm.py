@@ -27,7 +27,7 @@ from jax._src.op_shardings import are_op_shardings_equal
 
 from jax._src.tree_util import broadcast_prefix, prefix_errors, tree_leaves_with_path
 
-from jax.experimental._mini_mpmd import mini_dime
+from jax.experimental._private_mm import mini_dime
 
 
 @dataclass
@@ -137,7 +137,7 @@ def recv_buf_factory(shape, dtype, tgt_sharding):
     return recv_buf_init
 
 
-# TODO: Generalize mini_mpmd.device_put to mix jax.device_put, send and recv as
+# TODO: Generalize mm.device_put to mix jax.device_put, send and recv as
 # needed. For the moment, we only allow cases that neatly fall into one of the
 # above three cases, i.e. the present process either issue a jax.device_put,
 # a NCCL send or a NCCL recv. This means that every submesh (e.g. a stage) needs
@@ -265,7 +265,7 @@ def jit(*args, **kwargs):
                 )
             except ValueError:
                 e, *_ = prefix_errors(out_shardings, out_shape_dtypes)
-                raise e('mini_mpmd.jit out_shardings') from None
+                raise e('mm.jit out_shardings') from None
             out_shardings_full = jax.tree.unflatten(
                 jax.tree.structure(out_shape_dtypes),
                 out_shardings_flat,
@@ -275,7 +275,7 @@ def jit(*args, **kwargs):
                 if not is_fully_remote_sharding(sharding):
                     path, in_val = first_fully_remote_input
                     raise ValueError(
-                        'mini_mpmd.jit produces a non-fully-remote output, but '
+                        'mm.jit produces a non-fully-remote output, but '
                         f'was invoked on fully-remote input: {in_val} @ {path}')
                 return MpmdArray(
                     aval=jax.core.ShapedArray(
