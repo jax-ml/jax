@@ -998,9 +998,9 @@ def _partial_eval_jaxpr_nounits(jaxpr: ClosedJaxpr,
           [a.strip_weak_type() for a, uk in zip(jaxpr.in_avals, in_unknowns)
            if uk])
   # check jaxpr_unknown has output type corresponding to unknown outputs
-  assert ([v.aval.strip_weak_type() for v in jaxpr_unknown.outvars] ==
-          [a.strip_weak_type() for a, uk in zip(jaxpr.out_avals, out_unknowns)
-           if uk])
+  check([v.aval.strip_weak_type() for v in jaxpr_unknown.outvars],
+        [a.strip_weak_type() for a, uk in zip(jaxpr.out_avals, out_unknowns)
+         if uk])
 
   closed_jaxpr_known = ClosedJaxpr(jaxpr_known, consts_known)
   closed_jaxpr_unknown = ClosedJaxpr(jaxpr_unknown, ())
