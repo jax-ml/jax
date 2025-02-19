@@ -2085,7 +2085,7 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2, 2), ('i', 'j'))
 
     def g(x):
-      return jax.nn.softmax(x * x)
+      return jnp.sin(x)
 
     def h(x):
       return shard_map(g, mesh,
@@ -2102,7 +2102,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     v = jnp.arange(32.).reshape(4, 8)
     v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
-    self.assertAllClose(v*2, jax.grad(f)(v), check_dtypes=False)
+    self.assertAllClose(jnp.cos(x), jax.grad(f)(v), check_dtypes=False)
 
   def test_axis_size_1_partial_auto(self):
     mesh = jtu.create_mesh((1, 2, 2), ('i', 'j', 'k'))
