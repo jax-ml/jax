@@ -19,7 +19,6 @@ from collections.abc import Callable, Sequence, Iterable
 import contextlib
 import dataclasses
 from functools import partial
-import inspect
 import logging
 import operator as op
 import weakref
@@ -143,8 +142,6 @@ class PjitInfo(NamedTuple):
   In other words, this structure contains arguments to jit()/pjit(),
   preprocessed and validated.
   """
-  fun_sourceinfo: str
-  fun_signature: inspect.Signature | None
   # Shardings, as specified by the user. These can either be UNSPECIFIED or they
   # can be a tree (prefix) of shardings or None.
   user_specified_in_shardings: bool
@@ -334,7 +331,7 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
   @api_boundary
   def cache_miss(*args, **kwargs):
     if config.no_tracing.value:
-      raise RuntimeError(f"re-tracing function {jit_info.fun_sourceinfo} for "
+      raise RuntimeError(f"re-tracing function {api_util.fun_sourceinfo(fun)} for "
                          "`jit`, but 'no_tracing' is set")
 
     (outs, out_flat, out_tree, args_flat, jaxpr, attrs_tracked, executable,
@@ -450,7 +447,6 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
   in_layouts_leaves, in_layouts_treedef = none_lr.flatten(in_layouts)
   out_layouts_leaves, out_layouts_treedef = none_lr.flatten(out_layouts)
 
-  fun_sourceinfo = api_util.fun_sourceinfo(fun)
   fun_signature = api_util.fun_signature(fun)
 
   donate_argnums, donate_argnames, static_argnums, static_argnames = resolve_argnums(
@@ -460,8 +456,6 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
   compiler_options_kvs = (() if compiler_options is None else
                           tuple(compiler_options.items()))
   return PjitInfo(
-        fun_sourceinfo=fun_sourceinfo,
-        fun_signature=fun_signature,
         user_specified_in_shardings=user_specified_in_shardings,
         in_shardings_treedef=in_shardings_treedef,
         in_shardings_leaves=tuple(in_shardings_leaves),
@@ -713,8 +707,7 @@ def _infer_params(
 
   dbg = debug_info(
       'jit', fun, args, kwargs, static_argnums=ji.static_argnums,
-      static_argnames=ji.static_argnames, sourceinfo=ji.fun_sourceinfo,
-      signature=ji.fun_signature)
+      static_argnames=ji.static_argnames)
 
   if config.dynamic_shapes.value:  # if dynamic shapes, don't use the cache
     p, args_flat = _infer_params_impl(fun, ji, pjit_mesh, resource_env, dbg,
@@ -1167,22 +1160,15 @@ def explain_tracing_cache_miss(
   p(f"TRACING CACHE MISS at {callsite} because:")
 
   # have we seen this function before at all?
-  fun_name = getattr(fun.f, '__qualname__', fun.f)
-  if debug_info.func_src_info:
-    # TODO(necula): clean up the extraction of the source info
-    _, *rest = debug_info.func_src_info.split(' at ')
-    src_info = " defined at "  + ' '.join(rest)
-  else:
-    src_info = ''
   if unseen_f:
-    p(f"  never seen function:\n    {fun_name} id={id(fun.f)}{src_info}")
+    p(f"  never seen function:\n    id={id(fun.f)} {debug_info.func_src_info}")
     if callsite in callsites:
       p("  but seen another function defined on the same line; maybe the function is\n"
         "  being re-defined repeatedly, preventing caching?")
     callsites.add(callsite)
     return done()
   else:
-    p(f"  for {fun_name}{src_info}")
+    p(f"  for {debug_info.func_src_info}")
 
   seen_keys = map(unpack, cache.keys())
 
