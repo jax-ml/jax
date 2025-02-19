@@ -26,7 +26,6 @@ from functools import partial
 import numpy as np
 
 import jax
-import jax.numpy as jnp
 
 from jax_ffi_example import _rms_norm
 
@@ -36,14 +35,6 @@ for name, target in _rms_norm.registrations().items():
 
 @partial(jax.custom_vjp, nondiff_argnums=(1,))
 def rms_norm(x, eps=1e-5):
-  # We only implemented the `float32` version of this function, so we start by
-  # checking the dtype. This check isn't strictly necessary because type
-  # checking is also performed by the FFI when decoding input and output
-  # buffers, but it can be useful to check types in Python to raise more
-  # informative errors.
-  if x.dtype != jnp.float32:
-    raise ValueError("Only the float32 dtype is implemented by rms_norm")
-
   # In this case, the output of our FFI function is just a single array with the
   # same shape and dtype as the input.
   out_type = jax.ShapeDtypeStruct(x.shape, x.dtype)
