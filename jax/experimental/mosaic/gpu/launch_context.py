@@ -252,6 +252,24 @@ class LaunchContext:
     else:
       yield
 
+  def cluster_idx(
+      self, dim: gpu.Dimension | Sequence[gpu.Dimension] | None = None
+  ) -> ir.Value:
+    """Returns the index of a block within a subset of the cluster spanned by the given dimensions."""
+    if dim is None:
+      dim = gpu.Dimension
+    elif isinstance(dim, gpu.Dimension):
+      dim = (dim,)
+    index = ir.IndexType.get()
+    stride = 1
+    idx = c(0, index)
+    for d in sorted(dim):
+      if self.cluster_size[d] == 1:  # Optimize a multiply by 0.
+        continue
+      idx = arith.addi(idx, arith.muli(gpu.cluster_block_id(d), c(stride, index)))
+      stride *= self.cluster_size[d]
+    return idx
+
   def _alloc_scratch(
       self,
       size: int,
@@ -317,6 +335,8 @@ class LaunchContext:
             if swizzle is None
             else swizzle
         )
+        # TODO(apaszke): Better verification (e.g. slice is non-zero)
+        # TODO(apaszke): We always know strides statically.
         args = [
             host_ptr,
             base_ptr,
@@ -353,8 +373,35 @@ class LaunchContext:
       arrive: bool | None = None,
       uniform: bool = True,
       collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
+      partitioned: int | None = None,
       predicate: ir.Value | None = None,  # Should select 0 or 1 threads from the WG.
   ):
+    """Initiates an async copy between GMEM and SMEM.
+
+    Exactly one of `src_ref` and `dst_ref` must be in GMEM and in SMEM, and the
+    SMEM reference must be contiguous. The GMEM window that is read or written
+    to is specified by the `gmem_slice`. The copy can change the order in which
+    the data appears in the window by applying a sequence of transforms to the
+    GMEM reference (as specified by `gmem_transform`).
+
+    When `collective` is specified (only allowed for GMEM -> SMEM copies), the
+    identical async_copy must be scheduled by all blocks that share the same
+    coordinates along collective dimensions within a cluster. The behavior is
+    undefined otherwise. The semantics of collective loads depend further on the
+    `partitioned` argument:
+
+    - If `partitioned` is not specified, all blocks load the same data into
+      their shared memory and all receive the update in their barriers, unless
+      `arrive` is False. If `arrive` is False, you should expect the barrier to
+      have expect_tx incremented by the same amount of bytes as if `collective`
+      was not specified.
+    - If `partitioned` is specified, each block only loads a separate slice of
+      the data into SMEM, partitioned into equal tiles along the `partitioned`
+      dimension. In this case only the barrier of the first block in the
+      collective will have its expect_tx incremented by the total size of the
+      transfer across all blocks involved in the collective. Barriers supplied
+      by other blocks will be ignored (even if `arrive` is True).
+    """
     index = ir.IndexType.get()
     i16 = ir.IntegerType.get_signless(16)
     i32 = ir.IntegerType.get_signless(32)
@@ -406,13 +453,46 @@ class LaunchContext:
           " multiple of 16 bytes"
       )
 
-    # TMA supports OOB indices, so we skip the check.
+    # NOTE: TMA supports OOB indices, so we skip the check.
     base_indices, slice_shape, is_squeezed = utils.parse_indices(
         gmem_slice, ir.MemRefType(gmem_ref.type).shape, check_oob=False
     )
     dyn_base_indices = tuple(
         c(i, index) if not isinstance(i, ir.Value) else i for i in base_indices
     )
+    del base_indices  # Use the dynamic indices from now on!
+
+    collective_size = 1
+    if collective is not None:
+      if isinstance(collective, gpu.Dimension):
+        collective = (collective,)
+      collective_size = math.prod(self.cluster_size[d] for d in collective)
+      if gmem_ref is dst_ref:
+        raise ValueError("Only GMEM -> SMEM copies can be collective")
+    if partitioned is not None:
+      if collective is None:
+        raise ValueError("Only collective loads can be partitioned")
+      if collective_size > 1 and partitioned is not None:
+        if math.prod(self.cluster_size) != 2:
+          raise NotImplementedError(
+              "Partitioned loads only supported for clusters of size 2"
+          )
+        if slice_shape[partitioned] % collective_size != 0:
+          raise ValueError(
+              f"The collective size ({collective_size}) must divide the slice"
+              " shape along the partitioned dimension, but it has size"
+              f" {slice_shape[partitioned]}"
+          )
+        slice_shape[partitioned] //= collective_size
+        dyn_base_indices = list(dyn_base_indices)
+        dyn_base_indices[partitioned] = arith.addi(
+            dyn_base_indices[partitioned],
+            arith.muli(
+                self.cluster_idx(collective), c(slice_shape[partitioned], index)
+            ),
+        )
+        dyn_base_indices = tuple(dyn_base_indices)
+
     squeezed_dims = [i for i, squeezed in enumerate(is_squeezed) if squeezed]
     sliced_dims = [i for i, squeezed in enumerate(is_squeezed) if not squeezed]
     # Indexing is really slicing + squeezing, and user transforms are meant to
@@ -454,7 +534,14 @@ class LaunchContext:
           f" transformed slice: {tuple(smem_ref_ty.shape)} != {slice_shape}"
       )
     smem_strides, _ = smem_ref_ty.get_strides_and_offset()
-    if smem_strides != utils.get_contiguous_strides(smem_ref_ty.shape):
+    if any(
+        s != cs and d != 1  # Strides don't matter for dims of size 1.
+        for s, cs, d in zip(
+            smem_strides,
+            utils.get_contiguous_strides(smem_ref_ty.shape),
+            smem_ref_ty.shape,
+        )
+    ):
       raise ValueError(
           "async_copy needs the SMEM reference to be contiguous, but got"
           f" strides {smem_strides} for shape {smem_ref_ty.shape}"
@@ -463,12 +550,9 @@ class LaunchContext:
     dyn_base_indices = list(dyn_base_indices)
     slice_shape = list(slice_shape)
     assert all(d == 1 for d in slice_shape[:num_squeezed_dims])
-    collective_size = 1
-    if collective is not None:
-      if isinstance(collective, gpu.Dimension):
-        collective = (collective,)
-      collective_size = math.prod(self.cluster_size[d] for d in collective)
-    if collective_size > 1:
+
+    # Partitioned loads have already been processed (before transforms).
+    if collective_size > 1 and partitioned is None:
       def partition_dim(dim: int, idx: ir.Value, num_chunks: int):
         # No need to partition squeezed dims. They don't even exist in smem_ref.
         assert dim >= num_squeezed_dims
@@ -481,13 +565,7 @@ class LaunchContext:
             (slice(None),) * (dim - num_squeezed_dims)
             + (utils.ds(block_offset, slice_shape[dim]),),
         )
-      stride = 1
-      idx = c(0, index)
-      for d in sorted(collective):
-        if self.cluster_size[d] == 1:  # Optimize a multiply by 0.
-          continue
-        idx = arith.addi(idx, arith.muli(gpu.cluster_block_id(d), c(stride, index)))
-        stride *= self.cluster_size[d]
+      idx = self.cluster_idx(collective)
       rem_collective_size = collective_size
       for dim, slice_size in enumerate(slice_shape[:-1]):
         if slice_size % rem_collective_size == 0:
@@ -563,15 +641,44 @@ class LaunchContext:
       )
       barrier_ptr = barrier.get_ptr()
       with uniform_ctx():
-        if arrive:
-          nvvm.mbarrier_arrive_expect_tx_shared(
-              barrier_ptr, transfer_bytes, predicate=predicate
+        if collective_size > 1 and partitioned is not None:
+          if predicate is None:
+            predicate = c(1, ir.IntegerType.get_signless(1))
+          if arrive:
+            first_block = arith.cmpi(
+                arith.CmpIPredicate.eq, self.cluster_idx(collective), c(0, index),
+            )
+            arrive_predicate = arith.andi(predicate, first_block)
+            nvvm.mbarrier_arrive_expect_tx_shared(
+                barrier_ptr, transfer_bytes, predicate=arrive_predicate
+            )
+          rank = len(slice_shape)
+          idx_operands = ",".join(f"${i}" for i in range(4, 4 + rank))
+          llvm.inline_asm(
+              ir.Type.parse("!llvm.void"),
+              [predicate, smem_ptr, tma_desc, barrier_ptr, *rev_dyn_base_indices],
+              f"""
+              {{
+              .reg .b32 mapped_addr;
+              @$0 mapa.shared::cluster.u32 mapped_addr, $3, 0;
+              @$0 cp.async.bulk.tensor.{rank}d.shared::cta.global.tile.mbarrier::complete_tx::bytes.cta_group::2
+                                   [$1], [$2, {{{idx_operands}}}], [mapped_addr];
+              }}
+              """,
+              "b,r,l,r" + ",r" * rank,
+              has_side_effects=True,
           )
-        nvvm.cp_async_bulk_tensor_shared_cluster_global(
-            smem_ptr, tma_desc, rev_dyn_base_indices, barrier_ptr, [],
-            multicast_mask=multicast_mask, predicate=predicate
-        )
+        else:
+          if arrive:
+            nvvm.mbarrier_arrive_expect_tx_shared(
+                barrier_ptr, transfer_bytes, predicate=predicate
+            )
+          nvvm.cp_async_bulk_tensor_shared_cluster_global(
+              smem_ptr, tma_desc, rev_dyn_base_indices, barrier_ptr, [],
+              multicast_mask=multicast_mask, predicate=predicate
+          )
     else:
+      assert multicast_mask is None
       with uniform_ctx():
         nvvm.cp_async_bulk_tensor_global_shared_cta(
             tma_desc, smem_ptr, rev_dyn_base_indices, predicate=predicate

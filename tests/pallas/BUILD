@@ -15,6 +15,7 @@
 load(
     "//jaxlib:jax.bzl",
     "jax_generate_backend_suites",
+    "jax_gpu_support_deps",
     "jax_multiplatform_test",
     "jax_py_test",
     "py_deps",
@@ -205,10 +206,28 @@ jax_multiplatform_test(
     ],
 )
 
+jax_py_test(
+    name = "export_pallas_test_cpu_only",
+    srcs = ["export_pallas_test.py"],
+    args = ["--jax_test_dut=cpu"],
+    main = "export_pallas_test.py",
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_gpu",  # build_cleaner: keep
+        "//jax:pallas_tpu",  # build_cleaner: keep
+        "//jax:test_util",
+    ] + jax_gpu_support_deps,
+)
+
 jax_multiplatform_test(
     name = "export_pallas_test",
     srcs = ["export_pallas_test.py"],
-    enable_backends = ["cpu"],
+    # Cross-compilation on CPU is tested separately.
+    disable_configs = [
+        "cpu",
+        "cpu_shardy",
+        "cpu_x32",
+    ],
     enable_configs = [
         "gpu_a100_x32",
     ],
@@ -408,6 +427,32 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "tpu_pallas_interpret_test",
+    srcs = [
+        "tpu_pallas_interpret_test.py",
+    ],
+    disable_configs = ["cpu_shardy"],
+    enable_backends = ["cpu"],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_tpu",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
+    name = "tpu_pallas_interpret_distributed_test",
+    srcs = [
+        "tpu_pallas_interpret_distributed_test.py",
+    ],
+    disable_configs = ["cpu_shardy"],
+    enable_backends = ["cpu"],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_tpu",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
     name = "tpu_paged_attention_kernel_test",
     srcs = ["tpu_paged_attention_kernel_test.py"],
     disable_configs = [
@@ -418,7 +463,6 @@ jax_multiplatform_test(
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
-        "notap",  # this code has data race issues that XLA improvements unhide. b/392946030
         "notsan",  # Times out.
     ],
     deps = [
@@ -535,7 +579,10 @@ jax_multiplatform_test(
     name = "mgpu_attention_test",
     srcs = ["mgpu_attention_test.py"],
     enable_backends = [],
-    enable_configs = ["gpu_h100_x32"],
+    enable_configs = [
+        "gpu_h100_x32",
+        "gpu_h100",
+    ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     deps = [
         "//jax:pallas",

@@ -42,6 +42,7 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import api
+from jax._src import compilation_cache
 from jax._src import config
 from jax._src import core
 from jax._src import deprecations
@@ -60,7 +61,6 @@ from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
     check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, rand_like, tolerance)
 from jax._src.util import unzip2
-from jax.experimental.compilation_cache import compilation_cache
 from jax.tree_util import tree_all, tree_flatten, tree_map, tree_unflatten
 import numpy as np
 import numpy.random as npr
@@ -472,6 +472,19 @@ def is_cuda_compute_capability_equal(capability: str) -> bool:
   current = tuple(int(x) for x in d.compute_capability.split("."))
   return current == target
 
+
+class CudaArchSpecificTest:
+  """A mixin with methods allowing to skip arch specific tests."""
+
+  def skip_unless_sm90a(self):
+    if not is_cuda_compute_capability_equal("9.0"):
+      self.skipTest("Only works on GPU with capability sm90a")
+
+  def skip_unless_sm100a(self):
+    if not is_cuda_compute_capability_equal("10.0"):
+      self.skipTest("Only works on GPU with capability sm100a")
+
+
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""
   if is_device_rocm():
@@ -537,7 +550,7 @@ def request_cpu_devices(nr_devices: int):
   invoked. Test cases that require a specific number of devices should skip
   themselves if that number is not met.
   """
-  if xla_bridge.NUM_CPU_DEVICES.value < nr_devices:
+  if config.num_cpu_devices.value < nr_devices:
     xla_bridge.get_backend.cache_clear()
     config.update("jax_num_cpu_devices", nr_devices)
 
@@ -1029,58 +1042,42 @@ def sample_product(*args, **kw):
 # We use a reader-writer lock to protect test execution. Tests that may run in
 # parallel acquire a read lock; tests that are not thread-safe acquire a write
 # lock.
-if hasattr(util, 'Mutex'):
-  _test_rwlock = util.Mutex()
+_test_rwlock = util.Mutex()
 
-  def _run_one_test(test: unittest.TestCase, result: ThreadSafeTestResult):
-    if getattr(test.__class__, "thread_hostile", False):
-      _test_rwlock.writer_lock()
-      try:
-        test(result)  # type: ignore
-      finally:
-        _test_rwlock.writer_unlock()
-    else:
-      _test_rwlock.reader_lock()
-      try:
-        test(result)  # type: ignore
-      finally:
-        _test_rwlock.reader_unlock()
-
-
-  @contextmanager
-  def thread_unsafe_test():
-    """Decorator for tests that are not thread-safe.
-
-    Note: this decorator (naturally) only applies to what it wraps, not to, say,
-    code in separate setUp() or tearDown() methods.
-    """
-    if TEST_NUM_THREADS.value <= 0:
-      yield
-      return
-
-    _test_rwlock.assert_reader_held()
-    _test_rwlock.reader_unlock()
+def _run_one_test(test: unittest.TestCase, result: ThreadSafeTestResult):
+  if getattr(test.__class__, "thread_hostile", False):
     _test_rwlock.writer_lock()
-    try:
-      yield
-    finally:
-      _test_rwlock.writer_unlock()
-      _test_rwlock.reader_lock()
-else:
-  # TODO(phawkins): remove this branch when jaxlib 0.5.0 is the minimum.
-  _test_rwlock = threading.Lock()
-
-  def _run_one_test(test: unittest.TestCase, result: ThreadSafeTestResult):
-    _test_rwlock.acquire()
     try:
       test(result)  # type: ignore
     finally:
-      _test_rwlock.release()
+      _test_rwlock.writer_unlock()
+  else:
+    _test_rwlock.reader_lock()
+    try:
+      test(result)  # type: ignore
+    finally:
+      _test_rwlock.reader_unlock()
 
 
-  @contextmanager
-  def thread_unsafe_test():
-    yield  # No reader-writer lock, so we get no parallelism.
+@contextmanager
+def thread_unsafe_test():
+  """Decorator for tests that are not thread-safe.
+
+  Note: this decorator (naturally) only applies to what it wraps, not to, say,
+  code in separate setUp() or tearDown() methods.
+  """
+  if TEST_NUM_THREADS.value <= 0:
+    yield
+    return
+
+  _test_rwlock.assert_reader_held()
+  _test_rwlock.reader_unlock()
+  _test_rwlock.writer_lock()
+  try:
+    yield
+  finally:
+    _test_rwlock.writer_unlock()
+    _test_rwlock.reader_lock()
 
 
 def thread_unsafe_test_class():
@@ -1268,17 +1265,23 @@ class NotPresent:
 
 @contextmanager
 def assert_global_configs_unchanged():
+  starting_cache = compilation_cache._cache
   starting_config = jax.config.values.copy()
   yield
   ending_config = jax.config.values
+  ending_cache = compilation_cache._cache
 
-  if starting_config == ending_config:
-    return
-  differing = {k: (starting_config.get(k, NotPresent()), ending_config.get(k, NotPresent()))
-                for k in (starting_config.keys() | ending_config.keys())
-                if (k not in starting_config or k not in ending_config
-                    or starting_config[k] != ending_config[k])}
-  raise AssertionError(f"Test changed global config values. Differing values are: {differing}")
+  if starting_config != ending_config:
+    differing = {k: (starting_config.get(k, NotPresent()), ending_config.get(k, NotPresent()))
+                  for k in (starting_config.keys() | ending_config.keys())
+                  if (k not in starting_config or k not in ending_config
+                      or starting_config[k] != ending_config[k])}
+    raise AssertionError(f"Test changed global config values. Differing values are: {differing}")
+  if starting_cache is not ending_cache:
+    raise AssertionError(
+        f"Test changed the compilation cache object: before test it was "
+        f"{starting_cache}, now it is {ending_cache}"
+    )
 
 
 class JaxTestCase(parameterized.TestCase):

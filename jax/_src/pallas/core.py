@@ -74,6 +74,9 @@ class CompilerParams(Protocol):
   # Subclasses must be dataclasses.
   __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
 
+@dataclasses.dataclass(frozen=True)
+class Buffered:
+  buffer_count: int
 
 # TODO(necula): clean up the splitting of the fun_sourceinfo
 @dataclasses.dataclass(frozen=True)
@@ -222,10 +225,6 @@ class AbstractMemoryRef(state.AbstractRef):
   def __repr__(self) -> str:
     return f'MemRef<{self.memory_space}>{{{self.inner_aval.str_short()}}}'
 
-  @property
-  def sharding(self):
-    return self.inner_aval.sharding
-
   def update_weak_type(self, weak_type):
     return AbstractMemoryRef(
         self.inner_aval.update_weak_type(weak_type), self.memory_space)
@@ -363,6 +362,7 @@ class BlockSpec:
   index_map: Callable[..., Any] | None = None
   memory_space: Any | None = dataclasses.field(kw_only=True, default=None)
   indexing_mode: IndexingMode = dataclasses.field(kw_only=True, default=blocked)
+  pipeline_mode: Buffered | None = None
 
   def to_block_mapping(
       self,
@@ -413,17 +413,17 @@ class BlockSpec:
 
     fake_index_map_args, fake_index_map_kwargs = \
         index_map_tree.unflatten([False] * index_map_tree.num_leaves)
-    debug = api_util.tracing_debug_info("pallas_call index_map",
-                                        index_map_func, fake_index_map_args,
-                                        fake_index_map_kwargs)
+    debug = api_util.debug_info("pallas_call index_map",
+                                index_map_func, fake_index_map_args,
+                                fake_index_map_kwargs)
     flat_index_map_fun, index_map_out_tree_thunk = api_util.flatten_fun(
       lu.wrap_init(index_map_func, debug_info=debug), index_map_tree)
     index_map_src_info = NameAndSrcInfo.from_pallas_call(
-        None, debug and debug.func_src_info  # type: ignore
+        None, debug and debug.func_src_info
     )
     with tracing_grid_env(grid, mapped_dims):
       jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(
-          flat_index_map_fun, index_map_avals, debug_info=debug
+          flat_index_map_fun, index_map_avals
       )
     mapped_block_shape = tuple(mapped if s is None else s for s in block_shape)
     if len(out_avals) != len(block_shape):
@@ -459,6 +459,7 @@ class BlockSpec:
             array_aval_shape, array_aval.dtype
         ),
         origin=origin,
+        pipeline_mode=self.pipeline_mode,
     )
     mapping.check_invariants()
     return mapping
@@ -500,6 +501,7 @@ class BlockMapping:
   array_shape_dtype: jax.ShapeDtypeStruct  # The whole array
   origin: OriginStr
   transforms: Sequence[MemoryRefTransform] = ()
+  pipeline_mode: Buffered | None = None
 
   def check_invariants(self) -> None:
     if not config.enable_checks.value: return
@@ -881,7 +883,7 @@ def get_grid_mapping(
 ) -> tuple[tuple[jax_core.AbstractValue, ...],
            GridMapping]:
   if dynamic_shapes_export_enabled():
-    dim_check : Any = jax_core.is_dim  # type: ignore[no-redef]
+    dim_check : Any = jax_core.is_dim
   else:
     dim_check : Any = jax_core.is_constant_dim  # type: ignore[no-redef]
   assert all(i is None or dim_check(i) for i in grid_spec.grid)
@@ -890,7 +892,8 @@ def get_grid_mapping(
   )
   # The inputs for the index maps
   index_map_avals = (
-      (index_map_grid_aval.update(sharding=None),) * len(grid_spec.grid))
+      index_map_grid_aval.update(sharding=jax_core.get_cur_mesh_sharding()),
+  ) * len(grid_spec.grid)
   index_map_tree = tree_util.tree_structure((index_map_avals, {}))
 
   num_scalar_prefetch: int = getattr(grid_spec, "num_scalar_prefetch", 0)
@@ -975,7 +978,7 @@ def get_grid_mapping(
       grid=grid_mapping_grid,  # type: ignore[arg-type]
       grid_names=grid_spec.grid_names,
       block_mappings=(*in_block_mappings, *out_block_mappings),
-      index_map_avals=index_map_avals,  # type: ignore[arg-type]
+      index_map_avals=index_map_avals,
       index_map_tree=index_map_tree,
       vmapped_dims=(),
       num_index_operands=num_flat_scalar_prefetch,
@@ -999,14 +1002,14 @@ def get_grid_mapping(
 def unzip_dynamic_grid_bounds(
     grid_spec: GridSpec) -> tuple[GridSpec, tuple[Any, ...]]:
   if dynamic_shapes_export_enabled():
-    new_grid : Any = grid_spec.grid  # type: ignore[no-redef]
+    new_grid : Any = grid_spec.grid
   else:
     new_grid : Any = tuple(d if isinstance(d, int) else None for d in grid_spec.grid)  # type: ignore[no-redef]
   dynamic_bounds = tuple(d for d in grid_spec.grid if not isinstance(d, int))
   # We can't use dataclasses.replace, because our fields are incompatible
   # with __init__'s signature.
   static_self = copy.copy(grid_spec)
-  static_self.grid = new_grid  # type: ignore
+  static_self.grid = new_grid
   return static_self, dynamic_bounds
 
 
@@ -1065,7 +1068,11 @@ def core_map(
   """
   def wrapped(f):
     flat_args, in_tree = tree_util.tree_flatten(((), {}))
-    flat_fun, out_tree_thunk = api_util.flatten_fun(lu.wrap_init(f), in_tree)
+    flat_fun, out_tree_thunk = api_util.flatten_fun(
+        lu.wrap_init(f,
+                     debug_info=api_util.debug_info("pallas_core_map", f,
+                                                    (), {})),
+        in_tree)
     with jax_core.extend_axis_env_nd(mesh.shape.items()):
       jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, flat_args)
     out = core_map_p.bind(*consts, jaxpr=jaxpr, mesh=mesh,
@@ -1176,9 +1183,15 @@ def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
 jax_core.custom_typechecks[core_map_p] = _core_map_typecheck_rule
 
 
-def lower_as_mlir(f, *args, dynamic_shapes=False, **kwargs) -> mlir.ir.Module:
+def lower_as_mlir(
+    f, *args, dynamic_shapes=False, device=None, **kwargs
+) -> mlir.ir.Module:
   with pallas_export_experimental(dynamic_shapes):
-    lowered = jax.jit(f).lower(*args, **kwargs)
-    stablehlo = lowered.compiler_ir(dialect="stablehlo")  # type: ignore[return-value]
+    lowered = jax.jit(f, device=device).lower(*args, **kwargs)
+    stablehlo = lowered.compiler_ir(dialect="stablehlo")
 
   return stablehlo  # type: ignore[return-value]
+
+_out_shape_to_aval_mapping: dict[
+    type[Any], Callable[[Any], jax_core.AbstractValue]
+] = {}

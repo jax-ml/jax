@@ -21,6 +21,36 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     decorator to support customizing the behavior of opaque functions under
     JAX-level dead code elimination (DCE). See {jax-issue}`#25956` for more
     details.
+  * Added low-level reduction APIs in {mod}`jax.lax`: {func}`jax.lax.reduce_sum`,
+    {func}`jax.lax.reduce_prod`, {func}`jax.lax.reduce_max`, {func}`jax.lax.reduce_min`,
+    {func}`jax.lax.reduce_and`, {func}`jax.lax.reduce_or`, and {func}`jax.lax.reduce_xor`.
+  * {func}`jax.lax.linalg.qr`, and {func}`jax.scipy.linalg.qr`, now support
+    column-pivoting on CPU and GPU. See {jax-issue}`#20282` and
+    {jax-issue}`#25955` for more details.
+
+* Changes
+  * `JAX_CPU_COLLECTIVES_IMPLEMENTATION` and `JAX_NUM_CPU_DEVICES` now work as
+    env vars. Before they could only be specified via jax.config or flags.
+  * `JAX_CPU_COLLECTIVES_IMPLEMENTATION` now defaults to `'gloo'`, meaning
+    multi-process CPU communication works out-of-the-box.
+  * The `jax[tpu]` TPU extra no longer depends on the `libtpu-nightly` package.
+    This package may safely be removed if it is present on your machine; JAX now
+    uses `libtpu` instead.
+
+* Deprecations
+  * The internal function `linear_util.wrap_init` and the constructor
+    `core.Jaxpr` now must take a non-empty `core.DebugInfo` kwarg. For
+    a limited time, a `DeprecationWarning` is printed if
+    `jax.extend.linear_util.wrap_init` is used without debugging info.
+    A downstream effect of this several other internal functions need debug
+    info. This change does not affect public APIs.
+    See https://github.com/jax-ml/jax/issues/26480 for more detail.
+
+* Bug fixes
+  * Persistent compilation cache no longer writes access time file if
+    JAX_COMPILATION_CACHE_MAX_SIZE is unset or set to -1, i.e. if the LRU
+    eviction policy isn't enabled. This should improve performance when using
+    the cache with large-scale network storage.
 
 ## jax 0.5.0 (Jan 17, 2025)
 

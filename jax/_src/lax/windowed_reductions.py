@@ -19,6 +19,7 @@ from functools import partial
 import warnings
 
 from jax import tree_util
+from jax._src import api_util
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
@@ -55,6 +56,8 @@ def _reduce_window(
     window_dilation: Sequence[int] | None = None,
 ):
   flat_operands, operand_tree = tree_util.tree_flatten(operand)
+  comp_debug = api_util.debug_info("reduce_window comp", computation,
+                                   (init_value, init_value), {})
   flat_init_values, init_value_tree = tree_util.tree_flatten(init_value)
   if operand_tree != init_value_tree:
     raise ValueError(
@@ -88,7 +91,7 @@ def _reduce_window(
   else:
     flat_init_avals = map(core.get_aval, flat_init_values)
     jaxpr, out_tree = lax._variadic_reduction_jaxpr(
-        computation, tuple(flat_init_avals), init_value_tree
+        computation, comp_debug, tuple(flat_init_avals), init_value_tree
     )
     if operand_tree != out_tree:
       raise ValueError(

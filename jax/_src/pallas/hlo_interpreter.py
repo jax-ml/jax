@@ -326,7 +326,7 @@ def resolve_physical_types(jaxpr: jax_core.Jaxpr, consts: Sequence[Any]):
   interp_fun = partial(
       eval_jaxpr_recursive, jaxpr, consts,
       recurse_hop_rule=resolve_physical_types)
-  wrapped = lu.wrap_init(interp_fun)
+  wrapped = lu.wrap_init(interp_fun, debug_info=jaxpr.debug_info)
   new_jaxpr, _, new_consts, () = pe.trace_to_jaxpr_dynamic(
       wrapped, kernel_avals)
   return new_jaxpr, new_consts
@@ -347,7 +347,7 @@ def pallas_call_hlo_interpret(
   del compiler_params, cost_estimate, out_avals
   # If we're in interpret mode, we *scan* over the grid and eval the
   # discharged jaxpr.
-  dynamic_grid_args, args = split_list(  # type: ignore
+  dynamic_grid_args, args = split_list(
       args, [grid_mapping.num_dynamic_grid_bounds]
   )
   dynamic_grid_args_iter = iter(dynamic_grid_args)

@@ -599,6 +599,8 @@ class GraphSerializationImpl(SerializationImpl):
     name_stack = util.wrap_name(fun_name, "jax2tf")
     self.name_stack = name_stack
     self.args_flat_tf = args_flat_tf
+    self.debug = api_util.debug_info("jax2tf", fun_jax,
+                                      args_specs, kwargs_specs)
 
   def before_conversion(self):
     prev_enable_xla = _thread_local_state.enable_xla
@@ -623,7 +625,10 @@ class GraphSerializationImpl(SerializationImpl):
     dim_values, _ = _interpret_fun_jax(
         partial(shape_poly.compute_dim_vars_from_arg_shapes,
                 self.args_avals_flat, args_kwargs_tree=self.in_tree),
-        self.args_flat_tf, self.args_avals_flat, self.name_stack)
+        self.args_flat_tf, self.args_avals_flat, self.name_stack,
+        debug_info=api_util.debug_info("jax2tf dim_vars",
+                                       shape_poly.compute_dim_vars_from_arg_shapes,
+                                       self.args_specs, self.kwargs_specs))
 
     _thread_local_state.shape_env = zip(dim_vars, dim_values)
 
@@ -639,7 +644,8 @@ class GraphSerializationImpl(SerializationImpl):
         fun_flat_jax,
         args_flat_tf, self.args_avals_flat,
         self.name_stack,
-        fresh_constant_cache=True)
+        fresh_constant_cache=True,
+        debug_info=self.debug)
     return outs_tf, self.outs_avals, out_tree_thunk()
 
   def get_vjp_fun(self) -> tuple[Callable,
@@ -849,10 +855,12 @@ def _interpret_fun_jax(
     fun_jax: Callable,
     args_tf: Sequence[TfVal],
     args_avals: Sequence[core.ShapedArray],
-    extra_name_stack: str | None,
+    extra_name_stack: str | None, *,
     fresh_constant_cache: bool = False,
+    debug_info: core.DebugInfo,
 ) -> tuple[tuple[TfVal, ...], tuple[core.ShapedArray, ...]]:
-  subtrace_fun = _interpret_subtrace(lu.wrap_init(fun_jax), args_avals)
+  subtrace_fun = _interpret_subtrace(
+      lu.wrap_init(fun_jax, debug_info=debug_info), args_avals)
   with _extended_name_stack(extra_name_stack):
     out_vals: Sequence[tuple[TfVal, core.ShapedArray]] = \
         _call_wrapped_with_new_constant_cache(subtrace_fun, args_tf,
@@ -1033,7 +1041,9 @@ def _convert_jax_impl(impl_jax: Callable, *,
 
     results_tf, _ = _interpret_fun_jax(
         impl_multiple_results_jax, args_tf, _in_avals,
-        extra_name_stack)
+        extra_name_stack,
+        debug_info=api_util.debug_info("jax2tf", impl_jax,
+                                       args_tf, kwargs))
     return results_tf if multiple_results else results_tf[0]
 
   return wrapped_tf
@@ -1066,7 +1076,8 @@ def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args_tf: TfVal,
   """
   outs_tf, _ = _interpret_fun_jax(core.jaxpr_as_fun(jaxpr),
                                   args_tf, jaxpr.in_avals, extra_name_stack,
-                                  fresh_constant_cache=fresh_constant_cache)
+                                  fresh_constant_cache=fresh_constant_cache,
+                                  debug_info=jaxpr.jaxpr.debug_info)
   return outs_tf
 
 
@@ -1197,7 +1208,9 @@ def _eval_shape(shape: Sequence[shape_poly.DimSize], dtype=None) -> Sequence[TfV
   dim_vars, dim_values = util.unzip2(_thread_local_state.shape_env)
   shape_values_tf, _ = _interpret_fun_jax(
       partial(core.evaluate_shape, shape, dim_vars),
-      dim_values, [core.dim_value_aval()] * len(dim_values), "")  # type: ignore
+      dim_values, [core.dim_value_aval()] * len(dim_values), "",  # type: ignore
+      debug_info=api_util.debug_info("jax2tf evaluate_shape", core.evaluate_shape,
+                                     (0, 0, *dim_values), {}))
   # Keep only the non-constant dimensions
   return tuple(operator.index(d) if core.is_constant_dim(d) else d_tf  # type: ignore
                for d, d_tf in zip(shape, shape_values_tf))
@@ -3431,10 +3444,10 @@ def _tridiagonal_solve(*args: TfVal, _in_avals, _out_aval, **params):
 tf_impl_with_avals[lax.linalg.tridiagonal_solve_p] = _tridiagonal_solve
 
 def _custom_jvp_call(*args: TfVal, call_jaxpr: core.ClosedJaxpr,
-                           jvp_jaxpr_thunk: Callable,
+                           jvp_jaxpr_fun: Callable,
                            num_consts: int) -> Sequence[TfVal]:
   # TODO(necula): ensure that there is no AD transformation in scope
-  del jvp_jaxpr_thunk, num_consts
+  del jvp_jaxpr_fun, num_consts
   return _interpret_jaxpr(call_jaxpr, *args, extra_name_stack="custom_jvp",
                           fresh_constant_cache=False)
 
@@ -3591,7 +3604,7 @@ tf_impl_with_avals[pjit.pjit_p] = _pjit
 
 def _pjit_sharding_constraint(arg: TfVal, *,
                               sharding: sharding.Sharding,
-                              resource_env: mesh.ResourceEnv,
+                              context_mesh: mesh.Mesh,
                               _in_avals: Sequence[core.ShapedArray],
                               _out_aval: core.ShapedArray,
                               **kwargs) -> TfVal:

@@ -31,8 +31,10 @@ from jax._src import deprecations
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.lax import PrecisionLike
 from jax._src.lax import linalg as lax_linalg
+from jax._src.numpy import einsum
+from jax._src.numpy import indexing
 from jax._src.numpy import lax_numpy as jnp
-from jax._src.numpy import reductions, ufuncs
+from jax._src.numpy import reductions, tensor_contractions, ufuncs
 from jax._src.numpy.util import promote_dtypes_inexact, ensure_arraylike
 from jax._src.util import canonicalize_axis, set_module
 from jax._src.typing import ArrayLike, Array, DTypeLike, DeprecatedArg
@@ -292,7 +294,7 @@ def svd(
       s = lax.rev(s, dimensions=[s.ndim - 1])
       idxs = lax.rev(idxs, dimensions=[s.ndim - 1])
       sign = lax.rev(sign, dimensions=[s.ndim - 1])
-      u = jnp.take_along_axis(w, idxs[..., None, :], axis=-1)
+      u = indexing.take_along_axis(w, idxs[..., None, :], axis=-1)
       vh = _H(u * sign[..., None, :].astype(u.dtype))
       return SVDResult(u, s, vh)
     else:
@@ -450,7 +452,7 @@ def matrix_rank(
     )
   M, = promote_dtypes_inexact(M)
   if M.ndim < 2:
-    return (M != 0).any().astype(jnp.int32)
+    return (M != 0).any().astype(np.int32)
   S = svd(M, full_matrices=False, compute_uv=False)
   if rtol is None:
     rtol = S.max(-1) * np.max(M.shape[-2:]).astype(S.dtype) * jnp.finfo(S.dtype).eps
@@ -476,7 +478,7 @@ def _slogdet_lu(a: Array) -> tuple[Array, Array]:
                   jnp.array(0, dtype=dtype),
                   sign * jnp.array(-2 * (parity % 2) + 1, dtype=dtype))
   logdet = jnp.where(
-      is_zero, jnp.array(-jnp.inf, dtype=dtype),
+      is_zero, jnp.array(-np.inf, dtype=dtype),
       reductions.sum(ufuncs.log(ufuncs.abs(diag)).astype(dtype), axis=-1))
   return sign, ufuncs.real(logdet)
 
@@ -485,7 +487,7 @@ def _slogdet_qr(a: Array) -> tuple[Array, Array]:
   # Implementation of slogdet using QR decomposition. One reason we might prefer
   # QR decomposition is that it is more amenable to a fast batched
   # implementation on TPU because of the lack of row pivoting.
-  if jnp.issubdtype(lax.dtype(a), jnp.complexfloating):
+  if jnp.issubdtype(lax.dtype(a), np.complexfloating):
     raise NotImplementedError("slogdet method='qr' not implemented for complex "
                               "inputs")
   n = a.shape[-1]
@@ -537,7 +539,7 @@ def slogdet(a: ArrayLike, *, method: str | None = None) -> SlogdetResult:
   """
   a = ensure_arraylike("jnp.linalg.slogdet", a)
   a, = promote_dtypes_inexact(a)
-  a_shape = jnp.shape(a)
+  a_shape = np.shape(a)
   if len(a_shape) < 2 or a_shape[-1] != a_shape[-2]:
     raise ValueError(f"Argument to slogdet() must have shape [..., n, n], got {a_shape}")
   if method is None or method == "lu":
@@ -553,7 +555,7 @@ def _slogdet_jvp(primals, tangents):
   g, = tangents
   sign, ans = slogdet(x)
   ans_dot = jnp.trace(solve(x, g), axis1=-1, axis2=-2)
-  if jnp.issubdtype(jnp._dtype(x), jnp.complexfloating):
+  if jnp.issubdtype(jnp._dtype(x), np.complexfloating):
     sign_dot = (ans_dot - ufuncs.real(ans_dot).astype(ans_dot.dtype)) * sign
     ans_dot = ufuncs.real(ans_dot)
   else:
@@ -608,8 +610,8 @@ def _cofactor_solve(a: ArrayLike, b: ArrayLike) -> tuple[Array, Array]:
   a, b = ensure_arraylike("jnp.linalg._cofactor_solve", a, b)
   a, = promote_dtypes_inexact(a)
   b, = promote_dtypes_inexact(b)
-  a_shape = jnp.shape(a)
-  b_shape = jnp.shape(b)
+  a_shape = np.shape(a)
+  b_shape = np.shape(b)
   a_ndims = len(a_shape)
   if not (a_ndims >= 2 and a_shape[-1] == a_shape[-2]
     and b_shape[-2:] == a_shape[-2:]):
@@ -637,7 +639,7 @@ def _cofactor_solve(a: ArrayLike, b: ArrayLike) -> tuple[Array, Array]:
   partial_det = reductions.cumprod(diag, axis=-1) * sign[..., None]
   lu = lu.at[..., -1, -1].set(1.0 / partial_det[..., -2])
   permutation = jnp.broadcast_to(permutation, (*batch_dims, a_shape[-1]))
-  iotas = jnp.ix_(*(lax.iota(jnp.int32, b) for b in (*batch_dims, 1)))
+  iotas = jnp.ix_(*(lax.iota(np.int32, b) for b in (*batch_dims, 1)))
   # filter out any matrices that are not full rank
   d = jnp.ones(x.shape[:-1], x.dtype)
   d = lax_linalg.triangular_solve(lu, d, left_side=True, lower=False)
@@ -708,7 +710,7 @@ def det(a: ArrayLike) -> Array:
   """
   a = ensure_arraylike("jnp.linalg.det", a)
   a, = promote_dtypes_inexact(a)
-  a_shape = jnp.shape(a)
+  a_shape = np.shape(a)
   if len(a_shape) >= 2 and a_shape[-1] == 2 and a_shape[-2] == 2:
     return _det_2x2(a)
   elif len(a_shape) >= 2 and a_shape[-1] == 3 and a_shape[-2] == 3:
@@ -974,11 +976,11 @@ def _pinv(a: ArrayLike, rtol: ArrayLike | None = None, hermitian: bool = False) 
   u, s, vh = svd(arr, full_matrices=False, hermitian=hermitian)
   # Singular values less than or equal to ``rtol * largest_singular_value``
   # are set to zero.
-  rtol = lax.expand_dims(rtol[..., jnp.newaxis], range(s.ndim - rtol.ndim - 1))
+  rtol = lax.expand_dims(rtol[..., np.newaxis], range(s.ndim - rtol.ndim - 1))
   cutoff = rtol * s[..., 0:1]
-  s = jnp.where(s > cutoff, s, jnp.inf).astype(u.dtype)
-  res = jnp.matmul(vh.mT, ufuncs.divide(u.mT, s[..., jnp.newaxis]),
-                   precision=lax.Precision.HIGHEST)
+  s = jnp.where(s > cutoff, s, np.inf).astype(u.dtype)
+  res = tensor_contractions.matmul(vh.mT, ufuncs.divide(u.mT, s[..., np.newaxis]),
+                                   precision=lax.Precision.HIGHEST)
   return lax.convert_element_type(res, arr.dtype)
 
 
@@ -1146,7 +1148,7 @@ def norm(x: ArrayLike, ord: int | str | None = None,
   """
   x = ensure_arraylike("jnp.linalg.norm", x)
   x, = promote_dtypes_inexact(x)
-  x_shape = jnp.shape(x)
+  x_shape = np.shape(x)
   ndim = len(x_shape)
 
   if axis is None:
@@ -1179,12 +1181,12 @@ def norm(x: ArrayLike, ord: int | str | None = None,
         col_axis -= 1
       return reductions.amin(reductions.sum(ufuncs.abs(x), axis=row_axis, keepdims=keepdims),
                              axis=col_axis, keepdims=keepdims)
-    elif ord == jnp.inf:
+    elif ord == np.inf:
       if not keepdims and row_axis > col_axis:
         row_axis -= 1
       return reductions.amax(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
                      axis=row_axis, keepdims=keepdims)
-    elif ord == -jnp.inf:
+    elif ord == -np.inf:
       if not keepdims and row_axis > col_axis:
         row_axis -= 1
       return reductions.amin(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
@@ -1300,12 +1302,14 @@ def qr(a: ArrayLike, mode: str = "reduced") -> Array | QRResult:
 @export
 @jit
 def solve(a: ArrayLike, b: ArrayLike) -> Array:
-  """Solve a linear system of equations
+  """Solve a linear system of equations.
 
   JAX implementation of :func:`numpy.linalg.solve`.
 
   This solves a (batched) linear system of equations ``a @ x = b``
   for ``x`` given ``a`` and ``b``.
+
+  If ``a`` is singular, this will return ``nan`` or ``inf`` values.
 
   Args:
     a: array of shape ``(..., N, N)``.
@@ -1313,8 +1317,10 @@ def solve(a: ArrayLike, b: ArrayLike) -> Array:
       ``(..., N, M)`` (for batched 2-dimensional right-hand-side).
 
   Returns:
-    An array containing the result of the linear solve. The result has shape ``(..., N)``
-    if ``b`` is of shape ``(N,)``, and has shape ``(..., N, M)`` otherwise.
+    An array containing the result of the linear solve if ``a`` is non-singular.
+    The result has shape ``(..., N)`` if ``b`` is of shape ``(N,)``, and has
+    shape ``(..., N, M)`` otherwise.
+    If ``a`` is singular, the result contains ``nan`` or ``inf`` values.
 
   See also:
     - :func:`jax.scipy.linalg.solve`: SciPy-style API for solving linear systems.
@@ -1386,15 +1392,15 @@ def _lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None, *,
     mask = s >= jnp.array(rcond, dtype=s.dtype) * s[0]
     rank = mask.sum()
     safe_s = jnp.where(mask, s, 1).astype(a.dtype)
-    s_inv = jnp.where(mask, 1 / safe_s, 0)[:, jnp.newaxis]
-    uTb = jnp.matmul(u.conj().T, b, precision=lax.Precision.HIGHEST)
-    x = jnp.matmul(vt.conj().T, s_inv * uTb, precision=lax.Precision.HIGHEST)
+    s_inv = jnp.where(mask, 1 / safe_s, 0)[:, np.newaxis]
+    uTb = tensor_contractions.matmul(u.conj().T, b, precision=lax.Precision.HIGHEST)
+    x = tensor_contractions.matmul(vt.conj().T, s_inv * uTb, precision=lax.Precision.HIGHEST)
   # Numpy returns empty residuals in some cases. To allow compilation, we
   # default to returning full residuals in all cases.
   if numpy_resid and (rank < n or m <= n):
     resid = jnp.asarray([])
   else:
-    b_estimate = jnp.matmul(a, x, precision=lax.Precision.HIGHEST)
+    b_estimate = tensor_contractions.matmul(a, x, precision=lax.Precision.HIGHEST)
     resid = norm(b - b_estimate, axis=0) ** 2
   if b_orig_ndim == 1:
     x = x.ravel()
@@ -1645,9 +1651,9 @@ def vector_norm(x: ArrayLike, /, *, axis: int | tuple[int, ...] | None = None, k
   if ord is None or ord == 2:
     return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
                                       keepdims=keepdims))
-  elif ord == jnp.inf:
+  elif ord == np.inf:
     return reductions.amax(ufuncs.abs(x), axis=axis, keepdims=keepdims)
-  elif ord == -jnp.inf:
+  elif ord == -np.inf:
     return reductions.amin(ufuncs.abs(x), axis=axis, keepdims=keepdims)
   elif ord == 0:
     return reductions.sum(x != 0, dtype=jnp.finfo(lax.dtype(x)).dtype,
@@ -1719,8 +1725,8 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
     Array([20, 47], dtype=int32)
   """
   x1, x2 = ensure_arraylike('jnp.linalg.vecdot', x1, x2)
-  return jnp.vecdot(x1, x2, axis=axis, precision=precision,
-                    preferred_element_type=preferred_element_type)
+  return tensor_contractions.vecdot(x1, x2, axis=axis, precision=precision,
+                                    preferred_element_type=preferred_element_type)
 
 
 @export
@@ -1780,8 +1786,8 @@ def matmul(x1: ArrayLike, x2: ArrayLike, /, *,
            [49, 64]], dtype=int32)
   """
   x1, x2 = ensure_arraylike('jnp.linalg.matmul', x1, x2)
-  return jnp.matmul(x1, x2, precision=precision,
-                    preferred_element_type=preferred_element_type)
+  return tensor_contractions.matmul(x1, x2, precision=precision,
+                                    preferred_element_type=preferred_element_type)
 
 
 @export
@@ -1862,8 +1868,8 @@ def tensordot(x1: ArrayLike, x2: ArrayLike, /, *,
            [2, 4, 6]], dtype=int32)
   """
   x1, x2 = ensure_arraylike('jnp.linalg.tensordot', x1, x2)
-  return jnp.tensordot(x1, x2, axes=axes, precision=precision,
-                       preferred_element_type=preferred_element_type)
+  return tensor_contractions.tensordot(x1, x2, axes=axes, precision=precision,
+                                       preferred_element_type=preferred_element_type)
 
 
 @export
@@ -2111,8 +2117,8 @@ def multi_dot(arrays: Sequence[ArrayLike], *, precision: PrecisionLike = None) -
     einsum_axes[0] = einsum_axes[0][1:]
   if arrs[-1].ndim == 1:
     einsum_axes[-1] = einsum_axes[-1][:1]
-  return jnp.einsum(*itertools.chain(*zip(arrs, einsum_axes)),  # type: ignore[call-overload]
-                    optimize='auto', precision=precision)
+  return einsum.einsum(*itertools.chain(*zip(arrs, einsum_axes)),  # type: ignore[call-overload]
+                       optimize='auto', precision=precision)
 
 
 @export
@@ -2171,7 +2177,7 @@ def cond(x: ArrayLike, p=None):
       raise ValueError(f"jnp.linalg.cond: for {p=}, array must be square; got {arr.shape=}")
     r = norm(x, ord=p, axis=(-2, -1)) * norm(inv(x), ord=p, axis=(-2, -1))
   # Convert NaNs to infs where original array has no NaNs.
-  return jnp.where(ufuncs.isnan(r) & ~ufuncs.isnan(x).any(axis=(-2, -1)), jnp.inf, r)
+  return jnp.where(ufuncs.isnan(r) & ~ufuncs.isnan(x).any(axis=(-2, -1)), np.inf, r)
 
 
 @export

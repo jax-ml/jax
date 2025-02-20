@@ -141,25 +141,28 @@ class custom_vmap:
 
   @traceback_util.api_boundary
   def __call__(self, *args, **kwargs):
+    debug_fun = api_util.debug_info("custom_vmap fun", self.fun,
+                                    args, kwargs)
     args = api_util.resolve_kwargs(self.fun, args, kwargs)
-    fun_name = getattr(self.fun, "__name__", str(self.fun))
     if not self.vmap_rule:
       raise AttributeError(
-          f"No batching rule defined for custom_vmap function {fun_name} "
+          f"No batching rule defined for custom_vmap function {debug_fun.func_name} "
           "using def_vmap.")
-    debug = api_util.tracing_debug_info("custom_vmap", self.fun, args, {})
     args_flat, in_tree = tree_flatten(args)
     flat_fun, out_tree = api_util.flatten_fun_nokwargs(
-        lu.wrap_init(self.fun, debug_info=debug),
+        lu.wrap_init(self.fun, debug_info=debug_fun),
         in_tree)
     in_avals = [core.get_aval(x) for x in args_flat]
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
+    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
     in_tree = treedef_tuple((tree_structure(consts), in_tree))
     assert self.vmap_rule is not None
+    debug_rule = api_util.debug_info("custom_vmap rule", self.vmap_rule,
+                                     (0, args, args), {})
     out_flat = custom_vmap_p.bind(*consts, *args_flat,
                                   call=closed_call,
-                                  rule=ClosedRule(self.vmap_rule),
+                                  rule=ClosedRule(self.vmap_rule,
+                                                  debug_rule),
                                   in_tree=in_tree,
                                   out_tree=out_tree())
     return tree_unflatten(out_tree(), out_flat)
@@ -170,9 +173,10 @@ class custom_vmap:
 # Define a class, instead of making a function closing over `rule`, so
 # that we can override __str__
 class ClosedRule:
-  def __init__(self, rule):
+  def __init__(self, rule: Callable, debug: core.DebugInfo):
     functools.update_wrapper(self, rule)
     self.rule = rule
+    self.debug = debug
 
   def __call__(self, axis_size, all_in_batched, *all_args):
     _, args = all_args
@@ -252,8 +256,11 @@ def custom_vmap_abstract_eval(*in_avals, call, **_):
   return call.out_avals
 
 
-def custom_vmap_jvp(primals, tangents, *, call, rule, in_tree, out_tree):
-  def jvp_of_rule_rule(axis_size, in_batched, primals, tangents):
+def custom_vmap_jvp(primals, tangents, *,
+                    call: core.ClosedJaxpr,
+                    rule: ClosedRule,
+                    in_tree: tree_util.PyTreeDef, out_tree: tree_util.PyTreeDef):
+  def jvp_of_rule_rule(axis_size: int, in_batched, primals, tangents):
     in_batched_ps, in_batched_ts = in_batched
 
     mutually_batched = tree_map(operator.and_, in_batched_ps, in_batched_ts)
@@ -281,11 +288,14 @@ def custom_vmap_jvp(primals, tangents, *, call, rule, in_tree, out_tree):
       out_mutually_batched.store(out_batched)
       return out
 
+    api_util.save_wrapped_fun_sourceinfo(to_jvp, call.jaxpr.debug_info)
     def to_vmap_over_extra_batched_dims(primals, tangents):
       return api.jvp(to_jvp, primals, tangents)
 
     to_vmap_over_extra_batched_dims_flat, out_tree2 = api_util.flatten_fun_nokwargs(
-        lu.wrap_init(to_vmap_over_extra_batched_dims),
+        lu.wrap_init(to_vmap_over_extra_batched_dims,
+                     # TODO(necula): fix the debug_info calling convention
+                     debug_info=call.jaxpr.debug_info),
         tree_ps_ts)
 
     flat_out_ps_ts, flat_out_axes = vmap_unrestricted(

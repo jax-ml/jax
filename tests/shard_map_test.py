@@ -29,6 +29,7 @@ import numpy as np
 
 import jax
 import jax.ad_checkpoint
+from jax import api_util
 from jax import lax
 from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
@@ -1329,7 +1330,11 @@ class ShardMapTest(jtu.JaxTestCase):
 
   def test_rewrite_process_call(self):
     def f(x):
-      return core.call_p.bind(lu.wrap_init(lambda x: [2. * x]), x)[0] * x
+      return core.call_p.bind(
+          lu.wrap_init(lambda x: [2. * x],
+                       debug_info=api_util.debug_info("test", lambda x: [2. * x],
+                                                      (x,), {})),
+          x)[0] * x
 
     mesh = jtu.create_mesh((4,), ('x',))
     g = shard_map(f, mesh, in_specs=(P('x'),), out_specs=P('x'))
@@ -1345,7 +1350,10 @@ class ShardMapTest(jtu.JaxTestCase):
     @jax.jit
     @partial(shard_map, mesh=mesh, in_specs=(P('x'),), out_specs=P('x'))
     def f(x):
-      return core.call_p.bind(lu.wrap_init(lambda: [2. * x]))[0] * x
+      return core.call_p.bind(
+          lu.wrap_init(lambda: [2. * x],
+                       debug_info=api_util.debug_info("test", lambda: [2. * x],
+                                                      (), {})))[0] * x
 
     x = jnp.arange(4.)
     y = f(x)
@@ -2078,6 +2086,29 @@ class ShardMapTest(jtu.JaxTestCase):
     v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
     self.assertAllClose(v*2, jax.grad(f)(v), check_dtypes=False)
 
+  def test_grad_nested_partial_auto_with_residuals(self):
+    mesh = jtu.create_mesh((2, 2), ('i', 'j'))
+
+    def g(x):
+      return x * x * x
+
+    def h(x):
+      return shard_map(g, mesh,
+                    in_specs=P(None, 'j'),
+                    out_specs=P(None, 'j'))(x)
+
+    @jax.jit
+    def f(x):
+      return shard_map(h, mesh,
+                    in_specs=P('i', None),
+                    out_specs=P('i', None),
+                    check_rep=False,
+                    auto=frozenset({'j'}))(x).sum()
+
+    v = jnp.arange(32.).reshape(4, 8)
+    v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+    self.assertAllClose(v*v*3, jax.grad(f)(v), check_dtypes=False)
+
   def test_axis_size_1_partial_auto(self):
     mesh = jtu.create_mesh((1, 2, 2), ('i', 'j', 'k'))
 
@@ -2195,6 +2226,24 @@ class ShardMapTest(jtu.JaxTestCase):
   #                      check_rep=False, auto=frozenset({'j'}))(x)
   #
   #   f(x)  # don't crash
+
+  def test_partial_auto_debug_print(self):
+    if config.use_shardy_partitioner.value:
+      raise unittest.SkipTest("shardy error")
+
+    mesh = jtu.create_mesh((4, 2), ('i', 'j'))
+    x = jnp.arange(8.)
+
+    def g(x):
+      jax.debug.print('{}', x)
+
+    @jax.jit
+    def f(x):
+      return shard_map(g,
+                       mesh, in_specs=P('i'), out_specs=None,
+                       check_rep=False, auto=frozenset({'j'}))(x)
+
+    y = f(x)  # don't crash
 
   def test_partial_auto_of_random_keys(self):
     mesh = jtu.create_mesh((4, 2), ('i', 'j'))

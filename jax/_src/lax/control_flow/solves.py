@@ -93,16 +93,16 @@ def custom_root(f: Callable,
   """
   guess_flat, in_args_tree = tree_flatten((initial_guess,))
   guess_avals = tuple(_map(core.get_aval, guess_flat))
-  f_debug = api_util.tracing_debug_info("custom_root", f, (initial_guess,), {})
+  f_debug = api_util.debug_info("custom_root", f, (initial_guess,), {})
   f_jaxpr, f_consts, out_tree = _initial_style_jaxpr(
       f, in_args_tree, guess_avals, f_debug)
 
   in_tree, = treedef_children(in_args_tree)
   _check_tree("f", "initial_guess", out_tree, in_tree, False)
 
-  solve_debug = api_util.tracing_debug_info("custom_root solve", solve,
-                                            (f, initial_guess), {},
-                                            static_argnums=(0,))
+  solve_debug = api_util.debug_info("custom_root solve", solve,
+                                    (f, initial_guess), {},
+                                    static_argnums=(0,))
   solve_jaxpr, solve_consts, solution_tree = _initial_style_jaxpr(
       partial(solve, f), in_args_tree, guess_avals, solve_debug)
   _check_tree("solve", "initial_guess", solution_tree, in_tree, has_aux)
@@ -111,10 +111,10 @@ def custom_root(f: Callable,
     unchecked_zeros, f_jvp = api.linearize(f, x)
     return tangent_solve(f_jvp, b)
 
-  tangent_solve_debug = api_util.tracing_debug_info("custom_root tangent_solve",
-                                                    tangent_solve,
-                                                    (f, initial_guess), {},
-                                                    static_argnums=(0,))
+  tangent_solve_debug = api_util.debug_info("custom_root tangent_solve",
+                                            tangent_solve,
+                                            (f, initial_guess), {},
+                                            static_argnums=(0,))
   l_and_s_jaxpr, l_and_s_consts, out_tree = _initial_style_jaxpr(
       linearize_and_solve, treedef_tuple((in_tree,) * 2), guess_avals * 2,
       tangent_solve_debug)
@@ -159,7 +159,8 @@ def _root_jvp(const_lengths, jaxprs, primals, tangents):
   linearize_and_solve = partial(
       core.jaxpr_as_fun(jaxprs.l_and_s), *params.l_and_s)
   f_at_solution = lambda *params: f(*params, *solution)
-  _, rhs = ad.jvp(lu.wrap_init(f_at_solution)).call_wrapped(
+  _, rhs = ad.jvp(lu.wrap_init(f_at_solution,
+                               debug_info=jaxprs.f.jaxpr.debug_info)).call_wrapped(
       params.f, params_dot.f)
   solution_dot = _map(
       operator.neg, linearize_and_solve(*solution, *rhs))
@@ -265,17 +266,17 @@ def custom_linear_solve(
 
     return f_aux if has_aux else f
 
-  matvec_debug = api_util.tracing_debug_info("custom_linear_solve",
-                                             matvec, (b,), {})
+  matvec_debug = api_util.debug_info("custom_linear_solve",
+                                     matvec, (b,), {})
   # no auxiliary data assumed for matvec
   matvec_jaxpr, matvec_consts, out_tree = _initial_style_jaxpr(
       _shape_checked(matvec, "matvec", False), in_args_tree, b_avals,
       matvec_debug)
   _check_tree("matvec", "b", out_tree, tree, False)
 
-  solve_debug = api_util.tracing_debug_info("custom_linear_solve solve",
-                                            solve, (matvec, b), {},
-                                            static_argnums=(0,))
+  solve_debug = api_util.debug_info("custom_linear_solve solve",
+                                    solve, (matvec, b), {},
+                                    static_argnums=(0,))
   solve_jaxpr, solve_consts, out_tree = _initial_style_jaxpr(
       _shape_checked(partial(solve, matvec), "solve", has_aux), in_args_tree, b_avals,
       solve_debug)
@@ -285,7 +286,7 @@ def custom_linear_solve(
     vecmat_jaxpr = tr_solve_jaxpr = None
     vecmat_consts = tr_solve_consts = []
   else:
-    transpose_solve_debug = api_util.tracing_debug_info(
+    transpose_solve_debug = api_util.debug_info(
         "custom_linear_solve transpose_solve", transpose_solve,
         (matvec, b), {}, static_argnums=(0,))
     if symmetric:
@@ -325,7 +326,7 @@ def _linear_solve_abstract_eval(*args, const_lengths, jaxprs):
   num_aux = len(jaxprs.solve.out_avals) - len(jaxprs.matvec.out_avals)
   if num_aux > 0:
     args_to_raise += tuple(jaxprs.solve.out_avals[-num_aux:])
-  return args_to_raise
+  return args_to_raise, jaxprs.solve.effects
 
 
 def _custom_linear_solve_impl(*args, const_lengths, jaxprs):
@@ -334,7 +335,9 @@ def _custom_linear_solve_impl(*args, const_lengths, jaxprs):
   return x
 
 
-def _tangent_linear_map(func, params, params_dot, *x):
+def _tangent_linear_map(func: Callable, params, params_dot,
+                        debug_info: core.DebugInfo,
+                        *x):
   """Compute the tangent of a linear map.
 
   Assuming ``func(*params, *x)`` is linear in ``x`` and computes ``A @ x``,
@@ -342,7 +345,7 @@ def _tangent_linear_map(func, params, params_dot, *x):
   """
   assert any(type(p) is not ad_util.Zero for p in params_dot)
   zeros = _map(ad_util.Zero.from_primal_value, x)
-  _, out_tangent = ad.jvp(lu.wrap_init(func)).call_wrapped(
+  _, out_tangent = ad.jvp(lu.wrap_init(func, debug_info=debug_info)).call_wrapped(
       params + list(x), params_dot + zeros)
   return out_tangent
 
@@ -369,7 +372,8 @@ def _custom_linear_solve_jvp(primals, tangents, const_lengths, jaxprs):
     rhs = b_dot
   else:
     matvec_tangents = _tangent_linear_map(
-        core.jaxpr_as_fun(jaxprs.matvec), params.matvec, params_dot.matvec, *x_leaves)
+        core.jaxpr_as_fun(jaxprs.matvec), params.matvec, params_dot.matvec,
+        jaxprs.matvec.jaxpr.debug_info, *x_leaves)
     rhs = _map(ad.add_tangents, b_dot, _map(operator.neg, matvec_tangents))
 
   x_dot = linear_solve_p.bind(*(_flatten(params) + rhs), **kwargs)
@@ -482,7 +486,7 @@ def _linear_solve_batching_rule(axis_data, args, dims, const_lengths, jaxprs):
 linear_solve_p = core.Primitive('custom_linear_solve')
 linear_solve_p.multiple_results = True
 linear_solve_p.def_impl(_custom_linear_solve_impl)
-linear_solve_p.def_abstract_eval(_linear_solve_abstract_eval)
+linear_solve_p.def_effectful_abstract_eval(_linear_solve_abstract_eval)
 ad.primitive_jvps[linear_solve_p] = _custom_linear_solve_jvp
 xla.register_initial_style_primitive(linear_solve_p)
 mlir.register_lowering(

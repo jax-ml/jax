@@ -24,19 +24,21 @@ import jax
 from jax import lax
 import jax.extend as jex
 import jax.numpy as jnp
-import jax.sharding as shd
+from jax.sharding import PartitionSpec as P
 
 from jax._src import config
 from jax._src import core
+from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
 from jax._src.layout import DeviceLocalLayout
-from jax._src.lib import lapack
+from jax._src.lib import lapack, xla_extension_version
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lax import linalg as lax_linalg_internal
 from jax.experimental.shard_map import shard_map
 
 jax.config.parse_flags_with_absl()
+jtu.request_cpu_devices(8)
 
 
 class FfiTest(jtu.JaxTestCase):
@@ -163,7 +165,7 @@ class FfiTest(jtu.JaxTestCase):
       return jax.ffi.ffi_call("test_ffi", x)(x, non_hashable_arg=np.arange(3))
     self.assertIn("HashableArray", str(jax.make_jaxpr(fun)(jnp.ones(5))))
     hlo = jax.jit(fun).lower(jnp.ones(5)).as_text()
-    self.assertIn("non_hashable_arg = array<i64: 0, 1, 2>", hlo)
+    self.assertIn("non_hashable_arg = dense<[0, 1, 2]> : tensor<3xi64>", hlo)
     with self.assertRaises(Exception) as manager:
       fun(jnp.ones(5))
     self.assertNotIsInstance(manager.exception, TypeError)
@@ -179,7 +181,8 @@ class FfiTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
       shape=[(6, 5), (4, 5, 6)],
-      vmap_method=["expand_dims", "broadcast_all", "sequential"],
+      vmap_method=["expand_dims", "broadcast_all", "sequential",
+                   "sequential_unrolled"],
   )
   @jtu.run_on_devices("gpu", "cpu")
   def test_ffi_call_batching(self, shape, vmap_method):
@@ -188,7 +191,7 @@ class FfiTest(jtu.JaxTestCase):
     expected = lax_linalg_internal.geqrf(x)
     actual = jax.vmap(partial(ffi_call_geqrf, vmap_method=vmap_method))(x)
     for a, b in zip(actual, expected):
-      if vmap_method == "sequential" and len(shape) == 3:
+      if vmap_method.startswith("sequential") and len(shape) == 3:
         # On GPU, the batched FFI call to geqrf uses an algorithm with
         # different numerics than the unbatched version (which is used when
         # vmap_method="sequential"). Therefore, we need to include floating
@@ -282,11 +285,10 @@ class FfiTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("gpu", "cpu")
   def test_shard_map(self):
-    mesh = jtu.create_mesh((1,), ("i",))
+    mesh = jtu.create_mesh((len(jax.devices()),), ("i",))
     x = self.rng().randn(8, 4, 5).astype(np.float32)
 
-    @partial(shard_map, mesh=mesh, in_specs=shd.PartitionSpec('i'),
-             out_specs=shd.PartitionSpec('i'))
+    @partial(shard_map, mesh=mesh, in_specs=P("i"), out_specs=P("i"))
     def f(x):
       return ffi_call_geqrf(x)
 
@@ -326,6 +328,92 @@ def ffi_call_geqrf(x, _use_extend=False, **kwargs):
   return lax.platform_dependent(
       x, cpu=partial(call, "cpu"), rocm=partial(call, "rocm"),
       cuda=partial(call, "cuda"))
+
+
+class BatchPartitioningTest(jtu.JaxTestCase):
+  def setUp(self):
+    super().setUp()
+    if xla_extension_version < 313:
+      self.skipTest("Requires XLA extension version >= 313")
+    # Register callbacks before checking the number of devices to make sure
+    # that we're testing the registration path, even if we can't run the tests.
+    for target_name in ["lapack_sgeqrf_ffi", "cusolver_geqrf_ffi",
+                        "hipsolver_geqrf_ffi"]:
+      jax.ffi.register_ffi_target_as_batch_partitionable(target_name)
+    if jax.device_count() < 2:
+      self.skipTest("Requires multiple devices")
+    if jtu.test_device_matches(["cpu"]):
+      lapack._lapack.initialize()
+
+  @jtu.run_on_devices("gpu", "cpu")
+  def test_shard_map(self):
+    mesh = jtu.create_mesh((len(jax.devices()),), ("i",))
+    x = self.rng().randn(8, 4, 5).astype(np.float32)
+
+    @partial(shard_map, mesh=mesh, in_specs=P("i"), out_specs=P("i"),
+             check_rep=False)
+    def f(x):
+      return batch_partitionable_ffi_call(x)
+
+    f(x)  # eager mode doesn't crash
+    jax.jit(f)(x)  # neither does JIT
+    self.assertNotIn("all-gather", jax.jit(f).lower(x).compile().as_text())
+
+  @jtu.run_on_devices("gpu", "cpu")
+  def test_batch_partitioning(self):
+    def f(x):
+      return batch_partitionable_ffi_call(x)
+
+    mesh = jtu.create_mesh((len(jax.devices()),), ("i",))
+    x = self.rng().randn(8, 4, 5).astype(np.float32)
+    x_sharding = jax.NamedSharding(mesh, P("i"))
+    x = jax.device_put(x, x_sharding)
+    f_jit = jax.jit(f, out_shardings=x_sharding)
+
+    f(x)  # eager mode doesn't crash
+    f_jit(x)  # neither does JIT
+    self.assertNotIn("all-gather", f_jit.lower(x).compile().as_text())
+
+
+def batch_partitionable_ffi_call(x):
+  return batch_partitionable_p.bind(x)
+
+
+batch_partitionable_p = core.Primitive("batch_partitionable")
+batch_partitionable_p.multiple_results = True
+dispatch.simple_impl(batch_partitionable_p)
+
+
+@batch_partitionable_p.def_abstract_eval
+def _batch_partitionable_abstract_eval(x):
+  return x, core.ShapedArray(x.shape[:-1], x.dtype)
+
+
+def _batch_partitionable_lowering(target_name, ctx, x):
+  x_aval, = ctx.avals_in
+  num_batch_dims = len(x_aval.shape) - 2
+  frontend_attrs = mlir.ir_attribute({"num_batch_dims": str(num_batch_dims)})
+  return jax.ffi.ffi_lowering(
+      target_name,
+      extra_attributes={"mhlo.frontend_attributes": frontend_attrs}
+  )(ctx, x)
+
+
+mlir.register_lowering(
+    batch_partitionable_p,
+    partial(_batch_partitionable_lowering, "lapack_sgeqrf_ffi"),
+    platform="cpu",
+)
+mlir.register_lowering(
+    batch_partitionable_p,
+    partial(_batch_partitionable_lowering, "cusolver_geqrf_ffi"),
+    platform="cuda",
+)
+mlir.register_lowering(
+    batch_partitionable_p,
+    partial(_batch_partitionable_lowering, "hipsolver_geqrf_ffi"),
+    platform="rocm",
+)
 
 
 if __name__ == "__main__":

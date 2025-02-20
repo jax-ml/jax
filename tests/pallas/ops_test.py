@@ -19,12 +19,13 @@ import functools
 import itertools
 import math
 import sys
-from typing import Any
+from typing import Any, Callable
 import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax import api_util
 from jax import lax
 from jax import random
 from jax._src import dtypes
@@ -61,6 +62,11 @@ jtu.setup_hypothesis(max_examples=50)
 intx = dtypes.canonicalize_dtype(jnp.int64)
 floatx = dtypes.canonicalize_dtype(jnp.float64)
 
+def wrap_init(f: Callable, nr_args: int):
+  # wrapper for lu.wrap_init with debugging info
+  return lu.wrap_init(
+      f,
+      debug_info=api_util.debug_info("state_test", f, (0,) * nr_args, {}))
 
 def is_power_of_two(n: int) -> bool:
   return (n > 0) and (n & (n - 1) == 0)
@@ -747,20 +753,25 @@ class OpsTest(PallasBaseTest):
     x = np.arange(1024, dtype=jnp.float32).reshape(8, 128) + 10
     self.assertAllClose(f(x).item(), 10.0)
 
-  @jtu.skip_on_devices("gpu")  # TODO: not implemented
   def test_concat_constant(self):
     if pltpu is None:
       self.skipTest("No TPU module available.")
+    axis = 0
+    num_arrays = 16
+    if jtu.test_device_matches(["gpu"]) and not self.INTERPRET:
+      # Triton only supports concatenation along the last dimension.
+      num_arrays = 2
+      axis = -1
     def kernel(out):
       result = []
-      for i in range(16):
+      for i in range(num_arrays):
         result.append(jnp.full((1, 128), i, jnp.float32))
-      out[:] = jnp.stack(result).reshape(16, 128)
+      out[:] = jnp.stack(result, axis=axis).reshape(num_arrays, 128)
 
     def run(interpret=False):
       return pl.pallas_call(
           kernel,
-          out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
+          out_shape=jax.ShapeDtypeStruct((num_arrays, 128), jnp.float32),
           out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
           interpret=interpret,
       )()
@@ -951,8 +962,8 @@ class OpsTest(PallasBaseTest):
       # TODO(apaszke): Remove after 12 weeks have passed.
       if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
         self.skipTest("Requires libtpu built at least on 2024-12-19")
-      if fn == jnp.exp2 and dtype == "bfloat16":
-        self.skipTest("TODO(b/392601160): test fails in CI")
+      if fn == jnp.exp2 and dtype == "bfloat16" and not jtu.if_cloud_tpu_at_least(2025, 1, 31):
+        self.skipTest("Test requires newer libtpu")
 
     if (
         jtu.test_device_matches(["gpu"])
@@ -2284,7 +2295,7 @@ class PallasPrimitivesTest(PallasBaseTest):
       x = pl.load(x_ref, expr())
       return [x]
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(body), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
+        wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
   @parameterized.parameters(*[
@@ -2299,7 +2310,7 @@ class PallasPrimitivesTest(PallasBaseTest):
       pl.store(x_ref, expr(), pl.load(x_ref, expr()))
       return []
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(body), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
+        wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
   @parameterized.parameters(*[
@@ -2319,7 +2330,7 @@ class PallasPrimitivesTest(PallasBaseTest):
       x = pl.swap(x_ref, expr(), pl.load(x_ref, expr()))
       return [x]
     jaxpr, _ , _ = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(body), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
+        wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
 

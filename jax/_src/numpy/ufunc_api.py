@@ -25,6 +25,7 @@ from typing import Any
 import jax
 from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.lax import lax as lax_internal
+from jax._src.numpy import indexing
 import jax._src.numpy.lax_numpy as jnp
 from jax._src.numpy.reductions import _moveaxis
 from jax._src.numpy.util import check_arraylike, _broadcast_to, _where
@@ -442,7 +443,7 @@ class ufunc:
     dtype = jax.eval_shape(self._func, lax_internal._one(a), *(lax_internal._one(arg) for arg in args)).dtype
     a = lax_internal.asarray(a).astype(dtype)
     args = tuple(lax_internal.asarray(arg).astype(dtype) for arg in args)
-    indices = jnp._eliminate_deprecated_list_indexing(indices)
+    indices = indexing.eliminate_deprecated_list_indexing(indices)
     if not indices:
       return a
 
@@ -461,7 +462,7 @@ class ufunc:
       idx = tuple(ind if isinstance(ind, slice) else ind[i] for ind in indices)
       a = a.at[idx].set(self(a.at[idx].get(), *(arg[i] for arg in args)))
       return (i + 1, a), x
-    carry, _ = jax.lax.scan(scan_fun, (0, a), None, len(indices[0]))
+    carry, _ = jax.lax.scan(scan_fun, (0, a), None, len(indices[0]))  # type: ignore[arg-type]
     return carry[1]
 
   @partial(jax.jit, static_argnames=['self', 'axis', 'dtype'])
@@ -517,7 +518,7 @@ class ufunc:
                          dtype: DTypeLike | None = None) -> Array:
     check_arraylike(f"{self.__name__}.reduceat", a, indices)
     a = lax_internal.asarray(a)
-    idx_tuple = jnp._eliminate_deprecated_list_indexing(indices)
+    idx_tuple = indexing.eliminate_deprecated_list_indexing(indices)
     assert len(idx_tuple) == 1
     indices = idx_tuple[0]
     if a.ndim == 0:
@@ -529,14 +530,14 @@ class ufunc:
     if axis is None or isinstance(axis, (tuple, list)):
       raise ValueError("reduceat requires a single integer axis.")
     axis = canonicalize_axis(axis, a.ndim)
-    out = jnp.take(a, indices, axis=axis)
+    out = indexing.take(a, indices, axis=axis)
     ind = jax.lax.expand_dims(jnp.append(indices, a.shape[axis]),
                               list(np.delete(np.arange(out.ndim), axis)))
     ind_start = jax.lax.slice_in_dim(ind, 0, ind.shape[axis] - 1, axis=axis)
     ind_end = jax.lax.slice_in_dim(ind, 1, ind.shape[axis], axis=axis)
     def loop_body(i, out):
       return _where((i > ind_start) & (i < ind_end),
-                    self(out, jnp.take(a, jax.lax.expand_dims(i, (0,)), axis=axis)),
+                    self(out, indexing.take(a, jax.lax.expand_dims(i, (0,)), axis=axis)),
                     out)
     return jax.lax.fori_loop(0, a.shape[axis], loop_body, out)
 

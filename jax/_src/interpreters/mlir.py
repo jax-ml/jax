@@ -34,6 +34,7 @@ import warnings
 import numpy as np
 
 from jax._src import ad_util
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
@@ -48,16 +49,20 @@ from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
+from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding as JSharding
 from jax._src.sharding_impls import (AUTO, NamedSharding,
                                      modify_sdy_sharding_wrt_axis_types,
                                      SdyArraySharding, SdyArrayShardingList)
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects, ir, passmanager
 from jax._src.lib.mlir.dialects import func as func_dialect, hlo
 from jax._src.lib.mlir import register_jax_dialects
 from jax._src.state.types import AbstractRef
+
+# mypy: ignore-errors
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -365,28 +370,13 @@ def _numpy_scalar_attribute(val: Any) -> ir.Attribute:
   else:
     raise TypeError(f"Unsupported scalar attribute type: {type(val)}")
 
-_dtype_to_array_attr: dict[Any, AttributeHandler] = {
-  np.dtype(np.bool_): ir.DenseBoolArrayAttr.get,
-  np.dtype(np.float32): ir.DenseF32ArrayAttr.get,
-  np.dtype(np.float64): ir.DenseF64ArrayAttr.get,
-  np.dtype(np.int32): ir.DenseI32ArrayAttr.get,
-  np.dtype(np.int64): ir.DenseI64ArrayAttr.get,
-  np.dtype(np.int8): ir.DenseI8ArrayAttr.get,
-}
-
 def _numpy_array_attribute(x: np.ndarray | np.generic) -> ir.Attribute:
   shape = x.shape
   if x.dtype == np.bool_:
     x = np.packbits(x, bitorder='little')  # type: ignore
   x = np.ascontiguousarray(x)
-  builder = _dtype_to_array_attr.get(x.dtype, None)
-  # Array attributes only support 1D arrays. Fall back to creating dense
-  # elements attribute for higher dimensions.
-  if builder and len(shape) == 1:
-    return builder(x)
-  else:
-    element_type = dtype_to_ir_type(x.dtype)
-    return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
+  element_type = dtype_to_ir_type(x.dtype)
+  return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
 
 def _numpy_array_attribute_handler(val: np.ndarray | np.generic) -> ir.Attribute:
   if 0 in val.strides and val.size > 0:
@@ -407,6 +397,12 @@ for _scalar_type in [np.int8, np.int16, np.int32, np.int64,
                      np.complex64, np.complex128,
                      np.bool_, np.longlong, dtypes.bfloat16]:
   register_attribute_handler(_scalar_type, _numpy_array_attribute_handler)  # type: ignore
+
+def _dtype_attribute_handler(dtype: np.dtype | np.generic) -> ir.Attribute:
+  return ir.TypeAttr.get(dtype_to_ir_type(dtype))
+
+register_attribute_handler(np.dtype, _dtype_attribute_handler)
+register_attribute_handler(np.generic, _dtype_attribute_handler)
 
 def _python_scalar_attribute_handler(dtype, val):
   return _numpy_scalar_attribute(np.array(val, dtype))
@@ -484,11 +480,20 @@ def _traceback_to_location(ctx: ModuleContext, tb: xc.Traceback) -> ir.Location:
     loc = ctx.traceback_caches.location_cache.get(code_lasti, None)
     if loc is None:
       frame = source_info_util.raw_frame_to_frame(code, lasti)
-      file_loc = ir.Location.file(
-          get_canonical_source_file(frame.file_name, ctx.traceback_caches),
-          frame.start_line,
-          frame.start_column,
-      )
+      if xla_extension_version >= 309:
+        file_loc = ir.Location.file(
+            get_canonical_source_file(frame.file_name, ctx.traceback_caches),
+            frame.start_line,
+            frame.start_column,
+            frame.end_line,
+            frame.end_column,
+        )
+      else:
+        file_loc = ir.Location.file(
+            get_canonical_source_file(frame.file_name, ctx.traceback_caches),
+            frame.start_line,
+            frame.start_column,
+        )
       loc = ir.Location.name(frame.function_name, childLoc=file_loc)
       ctx.traceback_caches.location_cache[code_lasti] = loc
     frame_locs.append(loc)
@@ -1064,20 +1069,27 @@ def _get_mem_kind(s: JSharding | AUTO | None) -> str | None:
   assert isinstance(s, JSharding)
   return s.memory_kind
 
+
 def contains_unconstrained(s):
-  return isinstance(s, NamedSharding) and None in s._parsed_pspec
+  return (
+      isinstance(s, NamedSharding)
+      and PartitionSpec.UNCONSTRAINED in s._parsed_pspec
+  )
+
 
 def all_unconstrained(s, aval):
   if isinstance(s, NamedSharding):
     if aval.ndim != len(s._parsed_pspec):
       return False
-    return all(p is None for p in s._parsed_pspec)
+    return all(p is PartitionSpec.UNCONSTRAINED for p in s._parsed_pspec)
   return False
 
 def _get_unconstrained_dimensions(s, aval):
   us = contains_unconstrained(s)
-  return (us, all_unconstrained(s, aval),
-          ({i for i, p in enumerate(s._parsed_pspec) if p is None} if us else None))
+  return (
+    us, all_unconstrained(s, aval),
+    ({i for i, p in enumerate(s._parsed_pspec)
+      if p is PartitionSpec.UNCONSTRAINED} if us else None))
 
 def lower_jaxpr_to_module(
     module_name: str,
@@ -1136,16 +1148,20 @@ def lower_jaxpr_to_module(
         "In multi-platform lowering either all or no lowering platforms "
         f"should support donation. Lowering for {platforms} of which "
         f"only {platforms_with_donation} support donation")
+    input_output_aliases, donated_args, xla_donated_args = _set_up_aliases(
+        input_output_aliases, in_avals, out_avals, donated_args,
+        arg_memory_kinds, result_memory_kinds, in_layouts, out_layouts,
+        result_shardings if num_partitions > 1 else None)
     if (num_partitions > 1 and
         (result_shardings is None or
-         all(s is None or isinstance(s, AUTO) or contains_unconstrained(s)
+         any(s is None or isinstance(s, AUTO) or contains_unconstrained(s)
              for s in result_shardings))):
-      xla_donated_args = donated_args
-      donated_args = [False] * len(donated_args)
-    if xla_donated_args is None:
-      input_output_aliases, donated_args, xla_donated_args = _set_up_aliases(
-          input_output_aliases, in_avals, out_avals, donated_args,
-          arg_memory_kinds, result_memory_kinds, in_layouts, out_layouts)
+      if xla_donated_args is None:
+        xla_donated_args = [False] * len(donated_args)
+      for input_id in range(len(donated_args)):
+        if donated_args[input_id]:
+          xla_donated_args[input_id] = True
+          donated_args[input_id] = False
   if any(donated_args):
     unused_donations = [str(a) for a, d in zip(in_avals, donated_args) if d]
     msg = "See an explanation at https://jax.readthedocs.io/en/latest/faq.html#buffer-donation."
@@ -1240,14 +1256,15 @@ def lower_jaxpr_to_module(
 
 def _set_up_aliases(input_output_aliases, avals_in, avals_out,
                     donated_args, arg_memory_kinds, result_memory_kinds,
-                    in_layouts, out_layouts):
+                    in_layouts, out_layouts, result_shardings):
   if input_output_aliases is None:
     input_output_aliases = [None] * len(avals_in)
   else:
     input_output_aliases = list(input_output_aliases)
   # To match-up in-avals to out-avals we only care about the number of
   # bytes, so we strip off unrelated aval metadata (eg. the named shape)
-  strip_metadata = lambda a: a.strip_weak_type()
+  strip_metadata = lambda a: (a if a is core.abstract_token else
+                              core.ShapedArray(a.shape, a.dtype))
   avals_in = map(strip_metadata, avals_in)
   avals_out = map(strip_metadata, avals_out)
 
@@ -1298,7 +1315,10 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out,
             " for the input and output layout to be chosen by XLA and not the"
             " layout of the input which might not be optimal.")
       if (in_layouts is None or out_layouts is None or
-          in_layouts[input_id] == out_layouts[i]):
+          in_layouts[input_id] == out_layouts[i]) and (
+              result_shardings is None or not (
+              (s := result_shardings[i]) is None or
+              isinstance(s, AUTO) or contains_unconstrained(s))):
         input_output_aliases[input_id] = i
       else:
         # Fallback to xla donation if layouts don't match.
@@ -1408,7 +1428,6 @@ def lower_jaxpr_to_fun(
     MLIR func op
   """
   util.test_event("lower_jaxpr_to_fun", name)
-
   # The first dimension variable may be the platform index
   num_dim_vars = len(ctx.shape_poly_state.dim_vars)
   dim_var_avals = [core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))] * num_dim_vars
@@ -1700,7 +1719,7 @@ def lower_jaxpr_to_fun(
       for o, s, o_aval, us in zip(flat_outputs, ir_result_shardings,
                                   output_avals, unconstrained_shardings):  # type: ignore
         if us[0] and not us[1]:
-          if config.use_shardy_partitioner.value and config.sharding_in_types.value:
+          if config.use_shardy_partitioner.value:
             s = modify_sdy_sharding_wrt_axis_types(s, o_aval.sharding.mesh)
           temp_flat_outputs.append(wrap_with_sharding_op(
               entry_lowering_ctx, o, o_aval, s, unspecified_dims=us[2]))
@@ -2159,7 +2178,8 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   as `avals_out`."""
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
     f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
-    wrapped_fun = lu.wrap_init(f, params)
+    wrapped_fun = lu.wrap_init(f, params,
+        debug_info=api_util.debug_info("lower_fun", fun, args, params))
     manager = (contextlib.nullcontext() if ctx.jaxpr_eqn_ctx is None else
                ctx.jaxpr_eqn_ctx.manager)
 
@@ -2309,9 +2329,14 @@ def map_compute_type(c_type):
 
 def wrap_compute_type_in_place(ctx, op):
   if ctx.jaxpr_eqn_ctx is not None and ctx.jaxpr_eqn_ctx.compute_type is not None:
-    dict_attr = {"_xla_compute_type": ir.StringAttr.get(
-        map_compute_type(ctx.jaxpr_eqn_ctx.compute_type))}
-    op.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
+    if ctx.jaxpr_eqn_ctx.compute_type.startswith("gpu_stream:"):
+      stream = ctx.jaxpr_eqn_ctx.compute_type.split(":")[1]
+      dict_attr = {"_xla_stream_annotation": ir.StringAttr.get(stream)}
+      op.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
+    else:
+      dict_attr = {"_xla_compute_type": ir.StringAttr.get(
+          map_compute_type(ctx.jaxpr_eqn_ctx.compute_type))}
+      op.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
 
 
 def wrap_xla_metadata_in_place(ctx, op):
@@ -2601,6 +2626,8 @@ wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
 
 
 def lower_sharding_under_shit(ctx, op, aval, sharding_proto=None):
+  if aval.sharding.mesh.empty:
+    return op
   # Don't emit a wsc under full manual mode to avoid increasing HLO size.
   if aval.sharding.mesh._are_all_axes_manual:
     return op

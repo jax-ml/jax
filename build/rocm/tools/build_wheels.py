@@ -109,13 +109,14 @@ def build_jaxlib_wheel(
         "--rocm_path=%s" % rocm_path,
         "--rocm_version=60",
         "--use_clang=%s" % use_clang,
-        "--verbose"
+        "--verbose",
     ]
 
     # Add clang path if clang is used.
     if compiler == "clang":
         clang_path = find_clang_path()
         if clang_path:
+            LOG.info("Found clang at path: %s", clang_path)
             cmd.append("--clang_path=%s" % clang_path)
         else:
             raise RuntimeError("Clang binary not found in /usr/lib/llvm-*")
@@ -314,6 +315,21 @@ def main():
         if os.path.basename(whl).startswith("jax-"):
             LOG.info("Copying %s into %s" % (whl, wheelhouse_dir))
             shutil.copy(whl, wheelhouse_dir)
+
+    # Delete the 'dist' directory since it causes permissions issues
+    logging.info("Deleting dist, egg-info and cache directory")
+    shutil.rmtree(os.path.join(args.jax_path, "dist"))
+    shutil.rmtree(os.path.join(args.jax_path, "jax.egg-info"))
+    shutil.rmtree(os.path.join(args.jax_path, "jax", "__pycache__"))
+
+    # Make the wheels deleteable by the runner
+    whl_house = os.path.join(args.jax_path, "wheelhouse")
+    logging.info("Changing permissions for %s" % whl_house)
+    mode = 0o664
+    for item in os.listdir(whl_house):
+        whl_path = os.path.join(whl_house, item)
+        if os.path.isfile(whl_path):
+            os.chmod(whl_path, mode)
 
 
 if __name__ == "__main__":

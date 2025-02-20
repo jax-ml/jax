@@ -1370,9 +1370,7 @@ def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
   aval_out, = ctx.avals_out
   out = mlir.slice_op(ctx, x, aval_out, start_indices=start_indices,
                       limit_indices=limit_indices, strides=strides)
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
 
 mlir.register_lowering(slice_p, _slice_lower)
 
@@ -1525,9 +1523,7 @@ def _dynamic_slice_lower(ctx, x, *starts_and_dyn_sizes, slice_sizes):
   if dyn:
     aval_out = aval_out.update(shape=lax._merge_dyn_shape(slice_sizes, dyn))
   out = mlir.dynamic_slice(ctx, aval_out, x, start_indices=start_indices)
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
 
 mlir.register_lowering(dynamic_slice_p, _dynamic_slice_lower)
 
@@ -1642,9 +1638,7 @@ def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
   aval_out, = ctx.avals_out
   out = mlir.dynamic_update_slice(ctx, aval_out, x, update,
                                   start_indices=start_indices)
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
 
 mlir.register_lowering(dynamic_update_slice_p, _dynamic_update_slice_lower)
 
@@ -1884,12 +1878,12 @@ def _gather_sharding_rule(operand, indices, *, dimension_numbers,
                           mode, fill_value):
   # TODO(yashkatariya): Write a proper gather sharding rule.
   cur_mesh = mesh_lib.get_abstract_mesh()
-  if cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual:  # type: ignore
-    return None
-  if (cur_mesh._are_all_axes_explicit and  # type: ignore
+  if cur_mesh.empty or cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual:
+    return core.get_cur_mesh_sharding()
+  if (cur_mesh._are_all_axes_explicit and
       all(s is None for s in operand.sharding.spec) and
       all(s is None for s in indices.sharding.spec)):
-    return None
+    return core.get_cur_mesh_sharding()
   raise GatherShardingError(
       "Use `.at[...].get(out_sharding=)` to provide output PartitionSpec for"
       " the gather indexing.")
@@ -1910,7 +1904,7 @@ def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
   mask = lax.bitwise_and(
       lax.ge(indices, np.int64(0)),
       lax.le(indices, lax.expand_dims(upper_bound, tuple(range(num_batch_dims)))))
-  mask = lax._reduce_and(mask, [num_batch_dims])
+  mask = lax.reduce_and(mask, [num_batch_dims])
 
   # Computes the output shape and the positions of the batch dimensions in the
   # output

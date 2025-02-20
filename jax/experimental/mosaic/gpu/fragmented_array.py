@@ -1178,7 +1178,7 @@ class FragmentedArray:
       if ir.IntegerType(cur_dtype).width > ir.IntegerType(new_dtype).width:
         convert = arith.trunci
       else:
-        convert = arith.extsi
+        convert = arith.extsi if self.is_signed else arith.extui
     elif from_integer and to_float:
       convert = arith.sitofp
     elif from_float and to_integer:
@@ -2004,15 +2004,12 @@ def optimization_barrier(*arrays: mgpu.FragmentedArray):
   regs = []
   reg_dtypes = []
   reg_constraints = []
-  ptx_lines = ["// Optimization barrier"]
   repack_fns = []
   # We unpack each array into a flat list of registers, and prepare the
   # functions that invert the transform in repack_fns.
   for array in arrays:
-    ptx_lines.append("// Next array")
     reg_ty = array.registers.flat[0].type
     dtype = array.mlir_dtype
-    num_prev_cstr = len(reg_constraints)
     if ir.F32Type.isinstance(dtype):
       if ir.VectorType.isinstance(reg_ty):
         [vec_len] = ir.VectorType(reg_ty).shape
@@ -2055,19 +2052,20 @@ def optimization_barrier(*arrays: mgpu.FragmentedArray):
       raise NotImplementedError(array.mlir_dtype)
     regs += array_regs
     reg_dtypes += [array_regs[0].type] * len(array_regs)
-    reg_constraints += [f"={reg_constraint}"] * len(array_regs)
     reg_constraints += [reg_constraint] * len(array_regs)
-    ptx_lines += [
-        f"mov.b32 ${i}, ${len(array_regs)+i}"
-        for i in range(num_prev_cstr, num_prev_cstr + len(array_regs))
-    ]
-  reg_constraints = ",".join(reg_constraints)
+  ptx_lines = [
+      f"mov.b32 ${i}, ${len(reg_constraints)+i}"
+      for i in range(len(reg_constraints))
+  ]
   ptx = ";\n\t".join(ptx_lines) + ";"
+  all_reg_constraints = ",".join(
+      [*("=" + c for c in reg_constraints), *reg_constraints]
+  )
   struct_ty = ir.Type.parse(
       f"!llvm.struct<({','.join(map(str, reg_dtypes))})>"
   )
   result_struct = llvm.inline_asm(
-      struct_ty, regs, ptx, reg_constraints,
+      struct_ty, regs, ptx, all_reg_constraints,
       asm_dialect=0, has_side_effects=True,
   )
   regs = [

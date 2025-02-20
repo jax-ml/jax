@@ -26,8 +26,9 @@ from jax._src import core
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy.lax_numpy import (
     arange, argmin, array, atleast_1d, concatenate, convolve,
-    diag, dot, finfo, full, ones, outer, roll, trim_zeros,
+    diag, finfo, full, ones, roll, trim_zeros,
     trim_zeros_tol, vander, zeros)
+from jax._src.numpy.tensor_contractions import dot, outer
 from jax._src.numpy.ufuncs import maximum, true_divide, sqrt
 from jax._src.numpy.reductions import all
 from jax._src.numpy import linalg
@@ -436,7 +437,7 @@ def polyval(p: ArrayLike, x: ArrayLike, *, unroll: int = 16) -> Array:
   del p, x
   shape = lax.broadcast_shapes(p_arr.shape[1:], x_arr.shape)
   y = lax.full_like(x_arr, 0, shape=shape, dtype=x_arr.dtype)
-  y, _ = lax.scan(lambda y, p: (y * x_arr + p, None), y, p_arr, unroll=unroll)
+  y, _ = lax.scan(lambda y, p: (y * x_arr + p, None), y, p_arr, unroll=unroll)  # type: ignore[misc]
   return y
 
 

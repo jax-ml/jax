@@ -308,53 +308,6 @@ llvm::LogicalResult AsyncStoreOp::verify() {
 }
 
 namespace {
-llvm::FailureOr<WGMMALayout> GetWgmmaLayout(mlir::Location loc,
-                                            mlir::MemRefType type,
-                                            absl::string_view name,
-                                            SwizzlingMode swizzling_mode) {
-  auto error = [loc](auto... params) {
-    return emitError(loc, llvm::formatv(params...));
-  };
-
-  auto [strides, offset] = type.getStridesAndOffset();
-
-  WGMMALayout layout = WGMMALayout::RowMajor;
-  if (strides[3] == 1) {
-    layout = WGMMALayout::RowMajor;
-  } else if (strides[2] == 1) {
-    layout = WGMMALayout::ColumnMajor;
-  } else {
-    return error(
-        "At least one of the last two dimensions of `{0}` must have a "
-        "stride of 1, but they do not: stride(dim 2)={1}, stride(dim 3)={2}",
-        name, strides[2], strides[3]);
-  }
-
-  auto shape = type.getShape();
-  if (layout == WGMMALayout::RowMajor && strides[2] != shape[3]) {
-    return error(
-        "When `{0}` has row-major layout, the stride of dimension 2 (={1}) "
-        "must be equal to size of dimension 3 (={2})",
-        shape[3], strides[2], shape[3]);
-  }
-
-  if (layout == WGMMALayout::ColumnMajor && strides[3] != shape[2]) {
-    return error(
-        "When `{0}` has column-major layout, the stride of dimension 3 (={1}) "
-        "must be equal to size of dimension 2 (={2})",
-        shape[2], strides[3], shape[2]);
-  }
-
-  if (strides[1] != shape[2] * shape[3]) {
-    return error(
-        "Dimension 1 ` of `{0}` must have a stride equal to size of dimension "
-        "2 times size of dimension 3 (={1}), but has {2}.",
-        name, shape[2] * shape[3], strides[1]);
-  }
-
-  return layout;
-}
-
 // This is the size of the M dimension in all wgmma instructions. It is fixed,
 // unlike the K and N dimensions.
 constexpr int kWgmmaSizeM = 64;
@@ -371,118 +324,59 @@ llvm::LogicalResult WGMMAOp::verify() {
     return error("The `a` and `b` inputs must have the same element type.");
   }
 
-  auto b_shape = getB().getType().getShape();
-  if (b_shape.size() != 4) {
-    return error("The `b` input must have rank 4.");
-  }
-
-  int element_bytewidth = element_type.getIntOrFloatBitWidth() / 8;
-  int kn_tile = static_cast<int>(getSwizzle()) / element_bytewidth;
-
-  int64_t groups_k = b_shape[0];
-  int64_t groups_n = b_shape[1];
-  int64_t k_group_size = b_shape[2];
-  int64_t n_group_size = b_shape[3];
-
-  // It might be possible to relax that requirement, in particular to allow
-  // n_group_size to be smaller than kn_tile and use padding.
-  if (n_group_size != kn_tile) {
-    return error(
-        "The n group size ({0}) must be equal to swizzle/element_bytewidth "
-        "({1}).",
-        n_group_size, kn_tile);
-  }
-  if (k_group_size != kn_tile) {
-    return error(
-        "The k group size ({0}) must be equal to swizzle/element_bytewidth "
-        "({1}).",
-        k_group_size, kn_tile);
-  }
-
-  auto b_layout = GetWgmmaLayout(getLoc(), getB().getType(), "b", getSwizzle());
-  if (failed(b_layout)) {
-    return b_layout;
-  }
-
-  int groups_m = 0;
   auto a_shape = a_shaped_type.getShape();
-  if (auto a_memref = dyn_cast<mlir::MemRefType>(getA().getType())) {
-    if (a_shape.size() != 4) {
-      return error("When `a` is a memref, it must have rank 4.");
-    }
+  if (a_shape.size() != 2) {
+    return error("The `a` input must have rank 2.");
+  }
 
-    groups_m = a_shape[0];
-
-    if (a_shape[1] != groups_k) {
-      return error(
-          "When `a` is a memref, dimension 1 ({0}) must be equal to groups_k "
-          "which is `b`'s dimension 0 ({1}).",
-          a_shape[1], groups_k);
-    }
-
-    if (a_shape[2] != kWgmmaSizeM) {
-      return error(
-          "When `a` is a memref, dimension 2 ({0}) must be equal to {1}.",
-          a_shape[2], kWgmmaSizeM);
-    }
-
-    if (a_shape[3] != kn_tile) {
-      return error(
-          "When `a` is a memref, dimension 3 ({0}) must be equal to kn_tile.",
-          a_shape[3]);
-    }
-
-    auto a_layout = GetWgmmaLayout(getLoc(), a_memref, "a", getSwizzle());
-    if (failed(a_layout)) {
-      return a_layout;
-    }
-    if (*a_layout == WGMMALayout::ColumnMajor &&
-        getSwizzle() != SwizzlingMode::k128ByteSwizzle) {
-      // Not sure what the layout is like, since the tiles aren't square.
-      return error(
-          "When `a` is a memref and has a column-major layout, only a swizzle "
-          "of 128 bytes is currently supported, but got {0}.");
-    }
-  } else {
-    // a is a tensor in registers.
-    if (!element_type.isBF16() && !element_type.isF16()) {
-      return error(
-          "When `a` is a tensor in registers, it must have element type bf16 "
-          "or f16.");
-    }
-    if (a_shape.size() != 2) {
-      return error("When `a` is a tensor in registers, it must have rank 2.");
-    }
-    if (a_shape[0] % kWgmmaSizeM) {
-      return error(
-          "When `a` is a tensor in registers, dimension 0 must be a multiple "
-          "of {0}, but got {1}.",
-          kWgmmaSizeM, a_shape[0]);
-    }
-
-    groups_m = a_shape[0] / kWgmmaSizeM;
-
-    if (a_shape[1] != kn_tile * groups_k) {
-      return error(
-          "When `a` is a tensor in registers, dimension 1 must be equal to "
-          "kn_tile * groups_k ({0}*{1}), but got {2}.",
-          kn_tile, groups_k, a_shape[1]);
-    }
+  auto b_shape = getB().getType().getShape();
+  if (b_shape.size() != 2) {
+    return error("The `b` input must have rank 2.");
   }
 
   auto accShape = getAccumulator().getType().getShape();
   if (accShape.size() != 2) {
     return error("The accumulator must have rank 2.");
   }
-  int expected_acc_0 = groups_m * kWgmmaSizeM;
-  int expected_acc_1 = groups_n * n_group_size;
-  if (accShape[0] != expected_acc_0 || accShape[1] != expected_acc_1) {
+
+  if (accShape[0] % kWgmmaSizeM) {
     return error(
-        "Incorrect accumulator shape. Expected: [{0},{1}], but got [{2},{3}].",
-        expected_acc_0, expected_acc_1, accShape[0], accShape[1]);
+        "The accumulator's first dimension must be a multiple of {0}, but got "
+        "{1}.",
+        kWgmmaSizeM, accShape[0]);
+  }
+
+  int M = accShape[0];  // groups_m * 64
+  if (M != a_shape[0] && M != a_shape[1]) {
+    return error(
+        "The accumulator's first dimension {0} must be equal to one "
+        "of the dimensions of `a` - ({1}, {2}).",
+        M, a_shape[0], a_shape[1]);
+  }
+  int K = (a_shape[0] == M ? a_shape[1] : a_shape[0]);  // groups_k * k
+  if (K != b_shape[0] && K != b_shape[1]) {
+    return error(
+        "`a`'s contracting dimension {0} must be equal to one "
+        "of the dimensions of `b` - ({1}, {2}).",
+        K, b_shape[0], b_shape[1]);
+  }
+  int N = (b_shape[0] == K ? b_shape[1] : b_shape[0]);  // groups_n * k
+  if (N != accShape[1]) {
+    return error(
+        "`b`'s non-contracting dimension {0} must be equal to the "
+        "accumulator's second dimension {1}.",
+        N, accShape[1]);
   }
 
   return llvm::success();
+}
+
+mlir::AffineMap LayoutAttr::getAffineMap() const {
+  // This always returns an identity map. It's technically not correct, but we
+  // don't actually use it anywhere. It's only called during verification of the
+  // layout attribute and needs to be semi-valid.
+  return mlir::AffineMap::getMultiDimIdentityMap(getNumDimensions(),
+                                                 getContext());
 }
 
 void MosaicGPUDialect::initialize() {

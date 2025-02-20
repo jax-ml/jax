@@ -29,6 +29,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import util
 from jax._src.lax import lax as lax_internal
+from jax._src.numpy import indexing
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import reductions
 from jax._src.numpy.util import check_arraylike, promote_dtypes
@@ -72,7 +73,7 @@ def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
 
   # XLA gathers and scatters are very similar in structure; the scatter logic
   # is more or less a transpose of the gather equivalent.
-  treedef, static_idx, dynamic_idx = jnp._split_index_for_jit(idx, x.shape)
+  treedef, static_idx, dynamic_idx = indexing.split_index_for_jit(idx, x.shape)
   return _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
                        indices_are_sorted, unique_indices, mode,
                        normalize_indices)
@@ -96,9 +97,9 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
       "In future JAX releases this will result in an error.",
       FutureWarning)
 
-  idx = jnp._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
-  indexer = jnp._index_to_gather(jnp.shape(x), idx,
-                                 normalize_indices=normalize_indices)
+  idx = indexing.merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
+  indexer = indexing.index_to_gather(np.shape(x), idx,
+                                     normalize_indices=normalize_indices)
 
   # Avoid calling scatter if the slice shape is empty, both as a fast path and
   # to handle cases like zeros(0)[array([], int32)].
@@ -109,7 +110,7 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
 
   # Broadcast `y` to the slice output shape.
   y = jnp.broadcast_to(y, tuple(indexer.slice_shape))
-  # Collapse any `None`/`jnp.newaxis` dimensions.
+  # Collapse any `None`/`np.newaxis` dimensions.
   y = jnp.squeeze(y, axis=indexer.newaxis_dims)
   if indexer.reversed_y_dims:
     y = lax.rev(y, indexer.reversed_y_dims)
@@ -145,14 +146,14 @@ def _get_identity(op, dtype):
   elif op is lax.scatter_min:
     if dtype == dtypes.bool_:
       return True
-    elif jnp.issubdtype(dtype, jnp.integer):
-      return jnp.iinfo(dtype).max
+    elif dtypes.issubdtype(dtype, np.integer):
+      return dtypes.iinfo(dtype).max
     return float('inf')
   elif op is lax.scatter_max:
     if dtype == dtypes.bool_:
       return False
-    elif jnp.issubdtype(dtype, jnp.integer):
-      return jnp.iinfo(dtype).min
+    elif dtypes.issubdtype(dtype, np.integer):
+      return dtypes.iinfo(dtype).min
     return -float('inf')
   else:
     raise ValueError(f"Unrecognized op: {op}")

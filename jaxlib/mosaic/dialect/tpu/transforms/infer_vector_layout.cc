@@ -276,6 +276,10 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<tpu::DynamicGatherOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<tpu::BitcastOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
@@ -341,8 +345,8 @@ class VectorLayoutInferer {
           return failure();
         }
       } else {
-        any_op.emitOpError("unsupported in vector layout inference");
-        return failure();
+        return any_op.emitError("Not implemented: Unsupported operation: ")
+               << any_op.getName() << " in infer-vector-layout pass";
       }
       CHECK(any_op.getNumResults() == 0 || any_op.hasAttr("out_layout"));
       CHECK(any_op.getNumOperands() == 0 || any_op.hasAttr("in_layout"));
@@ -773,7 +777,6 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(0 <= dimension && dimension < res_rank,
                  "Expect a valid concatenate dimension");
     VectorType res_ty = op.getResult().getType();
-    int8_t bitwidth = res_ty.getElementTypeBitWidth();
 
     std::optional<int64_t> tiling_dim;
     if (dimension == res_ty.getRank() - 1) {
@@ -789,6 +792,7 @@ class VectorLayoutInferer {
       SmallVector<Layout, 4> op_layouts = getLayoutFromOperands(op);
       SmallVector<Layout> in_layouts;
       in_layouts.reserve(op.getSources().size());
+      int8_t bitwidth = first_layout->bitwidth();
 
       // Set implicit dim to treat 1D as (1, N) and tile it as (1, 128)
       std::array<int64_t, 2> tiling =
@@ -939,6 +943,26 @@ class VectorLayoutInferer {
   LogicalResult infer(tpu::GatherOp op) {
     auto src_layout = getLayout(op.getSource());
     setLayout(op, src_layout, src_layout);
+    return success();
+  }
+
+  LogicalResult infer(tpu::DynamicGatherOp op) {
+    if (op.getType().getShape() != ArrayRef<int64_t>(target_shape_) &&
+        op.getType().getElementTypeBitWidth() != 32) {
+      return op.emitOpError(
+          "Not implemented: DynamicGatherOp only supports 32-bit VREG shape");
+    }
+    if (op.getDimension() != 0 && op.getDimension() != 1) {
+      return op.emitOpError(
+          "Not implemented: Only dimension 0 and 1 are supported");
+    }
+    // TODO(jevinjiang): we could preserve some offsets such as replicated
+    // offset but since we are forcing all operands and result to be the same
+    // layout, we can set all offsets to zero for now. Also maybe we should
+    // consider adding this to elementwise rule.
+    auto layout = VectorLayout(kNativeBitwidth, {0, 0}, default_tiling_,
+                               ImplicitDim::kNone);
+    setLayout(op, {layout, layout}, layout);
     return success();
   }
 

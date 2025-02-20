@@ -229,6 +229,7 @@ def _tpu_custom_call_lowering(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,  # pylint: disable=missing-function-docstring
     config: CustomCallBackendConfig,
+    has_side_effects: bool,
     kernel_name: str | None,
     out_avals: Any,
     input_output_aliases: tuple[tuple[int, int], ...],
@@ -263,17 +264,20 @@ def _tpu_custom_call_lowering(
   # information.
   if kernel_name is not None:
     extra_attributes = dict(kernel_name=ir.StringAttr.get(kernel_name))
+  has_side_effects = has_side_effects if has_side_effects is not None else False
   call = mlir.custom_call(
       "tpu_custom_call",
       result_types=result_types,
       operands=in_nodes,
       backend_config=config.to_json(),
       api_version=1,
+      has_side_effect=has_side_effects,
       operand_output_aliases=dict(input_output_aliases),
       operand_layouts=_avals_to_layouts(ctx.avals_in),
       result_layouts=_avals_to_layouts(ctx.avals_out),
       result_shapes=result_shapes,
-      extra_attributes=extra_attributes)
+      extra_attributes=extra_attributes,
+  )
 
   return call.results
 
@@ -653,6 +657,7 @@ def lower_module_to_custom_call(
     input_output_aliases: tuple[tuple[int, int], ...],
     internal_scratch_in_bytes: int | None,
     collective_id: int | None,
+    has_side_effects: bool,
     serialization_format: int | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None,
     device_type: str | None,
@@ -676,6 +681,7 @@ def lower_module_to_custom_call(
       ctx,
       *in_nodes,
       config=config,
+      has_side_effects=has_side_effects,
       kernel_name=kernel_name,
       out_avals=out_type,
       input_output_aliases=input_output_aliases,
@@ -695,6 +701,7 @@ def as_tpu_kernel(
     input_output_aliases: tuple[tuple[int, int], ...] = (),
     internal_scratch_in_bytes: int | None = None,
     collective_id: int | None = None,
+    has_side_effects: bool = False,
     serialization_format: int | None = 1,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
 ) -> Callable[..., Any]:
@@ -716,6 +723,7 @@ def as_tpu_kernel(
   )
   return _as_jax_callable(
       config,
+      has_side_effects,
       out_type,
       kernel_name=kernel_name,
       input_output_aliases=input_output_aliases,
@@ -732,6 +740,7 @@ def lowered_as_tpu_kernel(
     needs_layout_passes: bool = False,
     device_type: str | None = None,
     has_communication: bool = False,
+    has_side_effects: bool = False,
     has_custom_barrier: bool = False,
     kernel_name: str | None = None,
     vmem_limit_bytes: int | None = None,
@@ -761,6 +770,7 @@ def lowered_as_tpu_kernel(
   )
   return _as_jax_callable(
       config,
+      has_side_effects,
       out_type,
       kernel_name=kernel_name,
       input_output_aliases=input_output_aliases,
@@ -769,6 +779,7 @@ def lowered_as_tpu_kernel(
 
 def _as_jax_callable(
     config: CustomCallBackendConfig,
+    has_side_effects: bool,
     out_type: Any,
     *,
     kernel_name: str | None,
@@ -785,6 +796,7 @@ def _as_jax_callable(
     result = tpu_custom_call_p.bind(
         *args,
         config=config,
+        has_side_effects=has_side_effects,
         kernel_name=kernel_name,
         out_avals=out_avals,
         input_output_aliases=input_output_aliases,

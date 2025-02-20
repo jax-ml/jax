@@ -292,6 +292,7 @@ class JaxExportTest(jtu.JaxTestCase):
                         exp_f.call((a, b), a=a, b=b))
 
   def test_pytree_namedtuple(self):
+    if not CAN_SERIALIZE: raise unittest.SkipTest("test requires flatbuffers")
     T = collections.namedtuple("SomeType", ("a", "b", "c"))
     export.register_namedtuple_serialization(
         T,
@@ -317,6 +318,7 @@ class JaxExportTest(jtu.JaxTestCase):
                      tree_util.tree_structure(res))
 
   def test_pytree_namedtuple_error(self):
+    if not CAN_SERIALIZE: raise unittest.SkipTest("test requires flatbuffers")
     T = collections.namedtuple("SomeType", ("a", "b"))
     x = T(a=1, b=2)
     with self.assertRaisesRegex(
@@ -363,6 +365,7 @@ class JaxExportTest(jtu.JaxTestCase):
       )
 
   def test_pytree_custom_types(self):
+    if not CAN_SERIALIZE: raise unittest.SkipTest("test requires flatbuffers")
     x1 = collections.OrderedDict([("foo", 34), ("baz", 101), ("something", -42)])
 
     @tree_util.register_pytree_node_class

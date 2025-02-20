@@ -61,6 +61,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
@@ -1365,6 +1366,36 @@ class JitTest(jtu.BufferDonationTestCase):
           compiler_options={
               "exec_time_compilation_effort": 0.0,
           })(1.0)
+
+  def test_optimization_level_compiler_option(self):
+    def f(x):
+      return jnp.sqrt(x**2) + 1.0
+
+    if xla_extension_version < 316:
+      self.skipTest("Requires XLA extension version >= 316")
+    f_jit = jit(
+        f,
+        compiler_options={
+            "optimization_level": config.EffortLevel.O1.value,
+        },
+    )(
+        1.0
+    )  # doesn't crash.
+
+  def test_memory_fitting_level_compiler_option(self):
+    def f(x):
+      return jnp.sqrt(x**2) + 1.0
+
+    if xla_extension_version < 316:
+      self.skipTest("Requires XLA extension version >= 316")
+    f_jit = jit(
+        f,
+        compiler_options={
+            "memory_fitting_level": config.EffortLevel.O0.value,
+        },
+    )(
+        1.0
+    )  # doesn't crash.
 
   def test_jit_lower_compile_with_compiler_options_invalid(self):
     def f(x):
@@ -5174,7 +5205,9 @@ class RematTest(jtu.JaxTestCase):
     # NOTE(mattjj): after #3370, this test doesn't actually call remat...
     def named_call(f):
       def named_f(*args):
-        f_ = lu.wrap_init(lambda: (f(*args),))
+        my_f = lambda: (f(*args),)
+        f_ = lu.wrap_init(
+            my_f, debug_info=api_util.debug_info("test_remat", my_f, args, {}))
         out, = core.call_p.bind(f_)
         return out
       return named_f
@@ -5234,8 +5267,11 @@ class RematTest(jtu.JaxTestCase):
 
     @jax_util.curry
     def call(f, *args):
+      my_f = lambda *args: [f(*args)]
       return core.call(
-          lu.wrap_init(lambda *args: [f(*args)]),
+          lu.wrap_init(my_f,
+                       debug_info=api_util.debug_info("test_remat", my_f,
+                                                      args, {})),
           *args, name='foo')[0]
 
     f = call(add_one)
@@ -9520,8 +9556,11 @@ class CustomVJPTest(jtu.JaxTestCase):
     def fwd(x):
       return np.array([2.0])*x*x/np.array([1.0]), (x,)
 
-    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
     x = jnp.linspace(0, 5.0, 10)
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
+        fun, api_util.debug_info("custom_vjp fun", fun, (x,), {}),
+        fwd, api_util.debug_info("custom_vjp fwd", fwd, (x,), {}))
+
     self.assertAllClose(jax.jit(fwd)(x)[0], 2*x*x)  # Shouldn't hit custom DCE
     self.assertAllClose(jax.jit(lambda x: fwd(x)[0])(x), x)  # Should be DCEed
 
@@ -9530,8 +9569,10 @@ class CustomVJPTest(jtu.JaxTestCase):
       return (np.array([1.0])*x)[0]
     def fwd(x):
       return (np.array([2.0])*x*x/np.array([1.0]))[0], (x,)
-    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
     x = jnp.linspace(0, 5.0, 10)
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
+        fun, api_util.debug_info("custom_vjp fun", fun, (x,), {}),
+        fwd, api_util.debug_info("custom_vjp fwd", fwd, (x,), {}))
     self.assertAllClose(jax.jit(jax.vmap(fwd))(x)[0], 2*x*x)
     self.assertAllClose(jax.jit(lambda x: jax.vmap(fwd)(x)[0])(x), x)
 
@@ -9540,11 +9581,15 @@ class CustomVJPTest(jtu.JaxTestCase):
       return x
     def fwd(x):
       return x*x, (x,)
-    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
+
+    x = jnp.linspace(0, 5.0, 10)
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
+        fun, api_util.debug_info("custom_vjp fun", fun, (x,), {}),
+        fwd, api_util.debug_info("custom_vjp fwd", fwd, (x,), {}))
 
     def g(x):
       return jax.lax.cond(True, fwd, lambda x: (2.0 * x, (x,)), x)
-    x = jnp.linspace(0, 5.0, 10)
+
     self.assertAllClose(jax.jit(g)(x)[0], x*x)
     self.assertAllClose(jax.jit(lambda x: g(x)[0])(x), x)
 
@@ -9553,7 +9598,10 @@ class CustomVJPTest(jtu.JaxTestCase):
       return x**2
     def fwd_(x):
       return x*x, (x,)
-    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd_)
+
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
+        fun, api_util.debug_info("custom_vjp fun", fun, (3.2,), {}),
+        fwd_, api_util.debug_info("custom_vjp fwd", fwd_, (3.2,), {}))
     calc = jax.jvp(fwd, (3.2,), (1.0,))
     expected = jax.jvp(fwd_, (3.2,), (1.0,))
     self.assertAllClose(calc, expected)

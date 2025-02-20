@@ -96,6 +96,10 @@ def sdpa_train(query: Array,
                grad: Array,
                bias: Array | None = None,
                mask: Array | None = None,
+               q_seqlen: Array | None = None,
+               kv_seqlen: Array | None = None,
+               q_offsets: Array | None = None,
+               kv_offsets: Array | None = None,
                scale: float = 0.5,
                mask_type: MaskType = MaskType.NO_MASK,
                is_bnth: bool = False,
@@ -107,15 +111,13 @@ def sdpa_train(query: Array,
     else:
       B, S, _, _ = query.shape
     q_seqlen = kv_seqlen = jnp.full((B,), S // 2, jnp.int32)
-  else:
-    q_seqlen = kv_seqlen = None
   out, sdpa_vjp = jax.vjp(
       partial(dot_product_attention, scale=scale, mask_type=mask_type,
               dropout_rate=dropout_rate,
               qkv_layout="BNTH" if is_bnth else "BTNH",
               sliding_window_length=sliding_window_length),
-      query, key, value, bias, mask, q_seqlen, kv_seqlen)
-  query_grad, key_grad, value_grad, bias_grad, _, _, _ = sdpa_vjp(grad)
+      query, key, value, bias, mask, q_seqlen, kv_seqlen, q_offsets, kv_offsets)
+  query_grad, key_grad, value_grad, bias_grad = sdpa_vjp(grad)[:4]
   if bias is not None and len(bias.shape) == 3:
     # has dbias
     return out, (query_grad, key_grad, value_grad, bias_grad)
@@ -588,8 +590,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       return
     if cudnn_version < 90500:
       self.skipTest("Requires >= cuDNN 9.5.0")
-    if not jtu.is_cuda_compute_capability_at_least("9.0"):
-      self.skipTest("Requires at least Hopper arch")
+    if not jtu.is_cuda_compute_capability_equal("9.0"):
+      self.skipTest("Requires Hopper arch")
 
     B, T, N, H = 2, 64, 2, 256
     bf16 = jnp.bfloat16
@@ -611,6 +613,136 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     self.assertArraysAllClose(grads_ref[0], grads_ans[0])
     self.assertArraysAllClose(grads_ref[1], grads_ans[1])
     self.assertArraysAllClose(grads_ref[2], grads_ans[2])
+
+  @jtu.run_on_devices("cuda")
+  def test_sdpa_packed_layout(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
+    try:
+      cudnn_version = check_cudnn_version()
+    except RuntimeError as e:
+      self.skipTest(str(e))
+      return
+    if cudnn_version < 90600:
+      self.skipTest("Requires >= cuDNN 9.6.0")
+    k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
+    query = jax.random.normal(
+        k1, (4, 512, 4, 64), dtype=jnp.bfloat16)
+    key = jax.random.normal(
+        k2, (4, 512, 4, 64), dtype=jnp.bfloat16)
+    value = jax.random.normal(
+        k3, (4, 512, 4, 64), dtype=jnp.bfloat16)
+    grad = jax.random.normal(
+        k4, (4, 512, 4, 64), dtype=jnp.bfloat16)
+
+    def generate_padding_mask(segment_ids, padding_id, shape, dtype):
+      # segment_ids [B, T]
+      encoded_padding = jnp.where(segment_ids >= padding_id, 0, 1).astype(dtype)
+      return jax.lax.broadcast_in_dim(
+        encoded_padding, shape, broadcast_dimensions=[0, 1])
+
+    def generate_segment_mask(segment_ids, dtype):
+      segment_ids_1 = jnp.expand_dims(segment_ids, axis=-1)
+      # segment_ids_1 = jnp.where(segment_ids_1 == 3, 4, segment_ids_1)
+      segment_ids_2 = jnp.expand_dims(segment_ids, axis=1)
+      mask = jnp.not_equal(segment_ids_1, segment_ids_2).astype(dtype)
+      # broadcast to [B, N, T, T]
+      mask = jnp.expand_dims(mask, 1)
+      mask *= get_large_negative_number(dtype)
+      return mask
+
+    # starting pos of each segment
+    q_offsets = jnp.asarray([
+      [0, 170, 340, -1], # 3 segments
+      [0, 150, 340, -1], # 3 segments
+      [0, 190, -1, -1],  # 2 segments
+      [0, -1, -1, -1]    # 1 segment
+    ], dtype=np.int32)
+
+    # actual seqlen of each segment without padding
+    q_seqlen = jnp.asarray([
+      [170, 170, 172], # No padding inside each segment
+      [150, 187, 172], # 3 padding tokens inside second segment
+      [190, 190, -1],  # 132 padding tokens inside last segment
+      [400, -1, -1],   # 112 padding tokens inside last segment
+    ], dtype=np.int32)
+
+    # maximum number of segments is id for padding token
+    segment_ids = jnp.asarray([
+      [0]*170 + [1]*170 + [2]*172,
+      [0]*150 + [1]*187 + [3]*3 + [2]*172,
+      [0]*190 + [1]*190 + [3]*132,
+      [0]*400 + [3]*112,
+    ], dtype=np.int32)
+
+    kv_offsets = q_offsets.copy()
+    kv_seqlen = q_seqlen.copy()
+
+    mask = generate_padding_mask(segment_ids, q_seqlen.shape[1], query.shape, query.dtype)
+    bias = generate_segment_mask(segment_ids, query.dtype)
+
+    devices = np.array(jax.local_devices()[:4])
+    devices = devices.reshape((2, 2))
+    with Mesh(devices, ("dp", "tp")) as mesh:
+      qkv_spec = PartitionSpec("dp", None, "tp", None)
+      qkv_sharding = NamedSharding(mesh, qkv_spec)
+      bias_spec = PartitionSpec("dp", None, None, None)
+      bias_sharding = NamedSharding(mesh, bias_spec)
+      offsets_specs = PartitionSpec("dp", None)
+      offsets_sharding = NamedSharding(mesh, offsets_specs)
+
+      query = jax.device_put(query, qkv_sharding)
+      key = jax.device_put(key, qkv_sharding)
+      value = jax.device_put(value, qkv_sharding)
+      grad = jax.device_put(grad, qkv_sharding)
+      bias = jax.device_put(bias, bias_sharding)
+      q_offsets = jax.device_put(q_offsets, offsets_sharding)
+      kv_offsets = jax.device_put(kv_offsets, offsets_sharding)
+      q_seqlen = jax.device_put(q_seqlen, offsets_sharding)
+      kv_seqlen = jax.device_put(kv_seqlen, offsets_sharding)
+
+      jitted_sdpa_train = jax.jit(
+        partial(
+          sdpa_train, scale=0.1, mask_type=MaskType.NO_MASK, dropout_rate=0),
+        in_shardings=(qkv_sharding, qkv_sharding, qkv_sharding, qkv_sharding,
+                      None, None, offsets_sharding, offsets_sharding, offsets_sharding, offsets_sharding),
+        out_shardings=(qkv_sharding, (qkv_sharding, qkv_sharding, qkv_sharding))
+      )
+
+      jitted_sdpa_train_ref = jax.jit(
+        partial(
+          sdpa_train_ref, scale=0.1, mask_type=MaskType.NO_MASK, dropout_rate=0),
+        in_shardings=(qkv_sharding, qkv_sharding, qkv_sharding, qkv_sharding,
+                      bias_sharding),
+        out_shardings=(qkv_sharding, (qkv_sharding, qkv_sharding, qkv_sharding))
+      )
+
+      query = query * mask
+      key = key * mask
+      value = value * mask
+      grad = grad * mask
+
+      out, (query_grad, key_grad, value_grad) = \
+        jitted_sdpa_train(query, key, value, grad, None, None, q_seqlen, kv_seqlen, q_offsets, kv_offsets)
+      out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = \
+        jitted_sdpa_train_ref(query, key, value, grad, bias)
+
+      out = out * mask
+      out_ref = out_ref * mask
+
+      query_grad = query_grad * mask
+      query_grad_ref = query_grad_ref * mask
+
+      key_grad = key_grad * mask
+      key_grad_ref = key_grad_ref * mask
+
+      value_grad = value_grad * mask
+      value_grad_ref = value_grad_ref * mask
+
+      self.assertArraysAllClose(out_ref, out, rtol=1e-2, atol=1e-2)
+      self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-2, atol=1e-2)
+      self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-2, atol=1e-2)
+      self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-2, atol=1e-2)
 
   @jtu.run_on_devices("cuda")
   def test_layouts(self):

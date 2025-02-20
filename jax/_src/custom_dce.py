@@ -127,12 +127,12 @@ class custom_dce:
           "def_dce."
       )
     rule_name = util.fun_name(self.dce_rule)
-    debug = api_util.tracing_debug_info("custom_dce", self.fun,
-                                        args, {},
-                                        static_argnums=self.static_argnums)
-    debug_rule = api_util.tracing_debug_info("custom_dce_rule", self.dce_rule,
-                                             args, {},
-                                             static_argnums=self.static_argnums)
+    debug = api_util.debug_info("custom_dce", self.fun,
+                                args, {},
+                                static_argnums=self.static_argnums)
+    debug_rule = api_util.debug_info("custom_dce_rule", self.dce_rule,
+                                     args, {},
+                                     static_argnums=self.static_argnums)
     args = api_util.resolve_kwargs(self.fun, args, kwargs)
     if self.static_argnums:
       static_argnums = set(self.static_argnums)
@@ -147,11 +147,11 @@ class custom_dce:
       )
       static_args = [args[i] for i in self.static_argnums]
       dce_rule = api_util.prepend_static_args(
-          lu.wrap_init(self.dce_rule), static_args
+          lu.wrap_init(self.dce_rule, debug_info=debug_rule), static_args
       )
     else:
       fun = lu.wrap_init(self.fun, debug_info=debug)
-      dce_rule = lu.wrap_init(self.dce_rule)
+      dce_rule = lu.wrap_init(self.dce_rule, debug_info=debug_rule)
       dyn_args = args
 
     args_flat, in_tree = tree_util.tree_flatten(dyn_args)
@@ -176,7 +176,7 @@ class custom_dce:
       )
       assert self.dce_rule is not None
       dce_jaxpr, _, dce_consts, () = pe.trace_to_jaxpr_dynamic(
-          flat_rule, in_avals, debug_rule
+          flat_rule, in_avals
       )
 
       # This second round of DCE is used to work out which inputs are actually
@@ -191,7 +191,7 @@ class custom_dce:
 
       return core.ClosedJaxpr(dce_jaxpr, dce_consts), used_ins
 
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
+    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
     closed_call = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
     out_avals = closed_call.out_avals
     out_flat = custom_dce_p.bind(
@@ -366,7 +366,8 @@ def custom_dce_jvp(primals, tangents, *, fun_jaxpr: core.ClosedJaxpr, **_):
   # that most users of this API would compose this with a custom_jvp or
   # custom_vjp, which makes this less urgent.
   out = core.call_p.bind(
-      lu.wrap_init(core.jaxpr_as_fun(jvp_jaxpr)), *primals, *tangents
+      lu.wrap_init(core.jaxpr_as_fun(jvp_jaxpr),
+                   debug_info=jvp_jaxpr.jaxpr.debug_info), *primals, *tangents
   )
 
   out_primals, out_tangents = util.split_list(out, [len(out_nz)])

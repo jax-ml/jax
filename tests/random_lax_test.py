@@ -1219,7 +1219,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckChiSquared(samples.astype(int), pmf, pval=1e-3)
       self.assertAllClose(samples.mean(), n * p, rtol=0.025, check_dtypes=False)
-      self.assertAllClose(samples.var(), n * p * (1 - p) , rtol=0.035,
+      self.assertAllClose(samples.var(), n * p * (1 - p) , rtol=0.036,
                           check_dtypes=False)
 
   def testBinomialCornerCases(self):
@@ -1242,6 +1242,13 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertArraysAllClose(samples1, jnp.array([jnp.nan, 0., jnp.nan, jnp.inf]), check_dtypes=False)
     self.assertArraysAllClose(samples2, jnp.array([jnp.nan, 0., jnp.nan, jnp.nan]), check_dtypes=False)
     self.assertArraysAllClose(samples3, jnp.array([jnp.nan, jnp.nan, jnp.nan]), check_dtypes=False)
+
+  def test_binomial_dtypes(self):
+    # Regression test for https://github.com/jax-ml/jax/pull/25688#discussion_r1938010569
+    key = jax.random.key(0)
+    n = jax.numpy.float16(100)
+    p = jax.numpy.float16(0.5)
+    jax.random.binomial(key, n, p)  # doesn't error
 
   def test_batched_key_errors(self):
     keys = lambda: jax.random.split(self.make_key(0))

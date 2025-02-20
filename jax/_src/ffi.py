@@ -27,6 +27,7 @@ from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import effects
 from jax._src import util
+from jax._src import xla_bridge
 from jax._src.callback import callback_batching_rule
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -85,6 +86,18 @@ def register_ffi_type_id(
     platform: the target platform.
   """
   return xla_client.register_custom_type_id(name, obj, platform=platform)
+
+
+def register_ffi_target_as_batch_partitionable(name: str) -> None:
+  """Registers an FFI target as batch partitionable.
+
+  Args:
+    name: the name of the target.
+  """
+  xla_client.register_custom_call_as_batch_partitionable(name)
+  xla_bridge.register_plugin_callbacks(
+      functools.partial(xla_client.register_custom_call_as_batch_partitionable,
+                        name))
 
 
 def pycapsule(funcptr):
@@ -380,8 +393,8 @@ def ffi_call(
           "the vectorized and vmap_method arguments of ffi_call cannot "
           "be used together. Please use the vmap_method argument.")
     vmap_method = "legacy_vectorized" if vectorized else "sequential"
-  allowed_vmap_methods = ["sequential", "expand_dims", "broadcast_all",
-                          "legacy_vectorized", None]
+  allowed_vmap_methods = ["sequential", "sequential_unrolled", "expand_dims",
+                          "broadcast_all", "legacy_vectorized", None]
   if vmap_method not in allowed_vmap_methods:
     raise ValueError(
         f"vmap_method must be on of the allowed methods {allowed_vmap_methods}, "
@@ -469,6 +482,8 @@ def ffi_call(
         attributes=_wrap_kwargs_hashable(kwargs),
     )
     if multiple_results:
+      if isinstance(result_shape_dtypes, tuple):
+        return tuple(results)
       return results
     else:
       return results[0]

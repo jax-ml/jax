@@ -29,6 +29,7 @@ from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects, ir
 from jax._src.util import safe_zip
 from jax._src.mesh import AxisTypes
@@ -81,7 +82,8 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertTrue(dispatch.is_single_device_sharding(s.data.sharding))
       self.assertArraysEqual(s.data, global_data[s.index])
     self.assertArraysEqual(arr._value, global_data)
-    self.assertArraysEqual(arr._npy_value, global_data)
+    if arr._npy_value is not None:
+      self.assertArraysEqual(arr._npy_value, global_data)
 
   @parameterized.named_parameters(
       ("mesh_x_y", P("x", "y"),
@@ -820,6 +822,20 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertArraysEqual(result, data)
     self.assertEqual(result.sharding, s)
 
+  @parameterized.product(dtype=jtu.dtypes.all + jtu.dtypes.custom_floats)
+  @jtu.run_on_devices("gpu")
+  def test_pinned_host_npy_value_doesnt_cache(self, dtype):
+    if xla_extension_version < 314:
+      self.skipTest("Requires XLA extension version >= 314")
+    # see https://github.com/jax-ml/jax/issues/26216
+    d_tensor = jnp.array(0, dtype=dtype)
+    d_sharding = d_tensor.sharding
+    h_sharding = d_sharding.with_memory_kind("pinned_host")
+    h_tensor = jax.device_put(d_tensor, h_sharding)
+    np.array(h_tensor)
+    self.assertIsNone(h_tensor._npy_value)
+
+
 class ShardingTest(jtu.JaxTestCase):
 
   def test_mesh_pspec_sharding_interface(self):
@@ -1044,7 +1060,6 @@ class ShardingTest(jtu.JaxTestCase):
       ("2d_mesh_tuple_empty",      (2, 1), P((),)),
       ("2d_mesh_x_none",           (2, 1), P(('x',), None)),
       ("2d_mesh_xy_none",          (2, 1), P(('x', 'y'), None)),
-      ("2d_mesh_none",             (2, 1), None),
       ("2d_mesh_x_tuple_empty",    (2, 1), P('x', (), (), ())),
       ("2d_mesh_3_tuple_empty",    (2, 1), P((), (), ())),
       ("3d_mesh2_x_none_none",     (1, 2, 4), P('x', None, None)),
@@ -1372,6 +1387,13 @@ class ShardingTest(jtu.JaxTestCase):
         'Number of axis names in axis_types should match the number of'
         ' axis_names'):
       jax.make_mesh((1, 1), ('data', 'model'), explicit_axes='data')
+
+    mesh1 = jax.make_mesh((1, 1, 1, 1, 1), ('a', 'b', 'c', 'd', 'e'),
+                          auto_axes=('c', 'b'), explicit_axes=('e', 'a', 'd'))
+    mesh2 = jax.make_mesh((1, 1, 1, 1, 1), ('a', 'b', 'c', 'd', 'e'),
+                          auto_axes=('b', 'c'), explicit_axes=('d', 'a', 'e'))
+    self.assertEqual(mesh1, mesh2)
+    self.assertEqual(hash(mesh1), hash(mesh2))
 
 
 @jtu.with_config(jax_use_shardy_partitioner=True)

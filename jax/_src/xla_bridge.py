@@ -62,6 +62,8 @@ XlaBackend = xla_client.Client
 
 MIN_COMPUTE_CAPABILITY = 52
 
+_DEFAULT_CPU_COLLECTIVES_IMPL = 'gloo'
+
 # TODO(phawkins): Remove jax_xla_backend.
 _XLA_BACKEND = config.string_flag(
     'jax_xla_backend', '',
@@ -104,30 +106,11 @@ _CPU_ENABLE_GLOO_COLLECTIVES = config.bool_flag(
     help="Deprecated, please use jax_cpu_collectives_implementation instead.",
 )
 
-CPU_COLLECTIVES_IMPLEMENTATIONS = ["none", "gloo", "mpi"]
-CPU_COLLECTIVES_IMPLEMENTATION = config.enum_flag(
-    name="jax_cpu_collectives_implementation",
-    default="none",
-    enum_values=CPU_COLLECTIVES_IMPLEMENTATIONS,
-    help=(
-        "Cross-process collective implementation used on CPU. Must be one of"
-        f" {CPU_COLLECTIVES_IMPLEMENTATIONS}"
-    ),
-)
-
 _CPU_ENABLE_ASYNC_DISPATCH = config.bool_flag(
     name="jax_cpu_enable_async_dispatch",
     default=True,
     help="Only applies to non-parallel computations. If False, run computations"
     "inline without async dispatch.",
-)
-
-NUM_CPU_DEVICES = config.int_flag(
-    name="jax_num_cpu_devices",
-    default=-1,
-    help="Number of CPU devices to use. If not provided, the value of "
-         "the XLA flag --xla_force_host_platform_device_count is used."
-         " Must be set before JAX is initialized.",
 )
 
 
@@ -254,8 +237,10 @@ def make_cpu_client(
   Returns:
     The created CPU client.
   """
-  if collectives is None:
-    collectives_impl = CPU_COLLECTIVES_IMPLEMENTATION.value
+  # TODO(skyewm): use distributed.is_initialized() after
+  # https://github.com/jax-ml/jax/pull/26172 goes in.
+  if collectives is None and distributed.global_state.client is not None:
+    collectives_impl = config.cpu_collectives_implementation.value
     if _CPU_ENABLE_GLOO_COLLECTIVES.value:
       collectives_impl = 'gloo'
       warnings.warn('Setting `jax_cpu_enable_gloo_collectives` is '
@@ -263,6 +248,9 @@ def make_cpu_client(
                       '"jax_cpu_collectives_implementation", "gloo")` instead.',
                       DeprecationWarning,
                       )
+    if collectives_impl is None:
+      collectives_impl = _DEFAULT_CPU_COLLECTIVES_IMPL
+
     if collectives_impl == 'gloo':
       collectives = xla_client._xla.make_gloo_tcp_collectives(
         distributed_client=distributed.global_state.client,
@@ -271,12 +259,11 @@ def make_cpu_client(
       collectives = xla_client._xla.make_mpi_collectives()
       collectives.Init()
       atexit.register(collectives.Finalize)
-    elif collectives_impl != 'none':
-      raise RuntimeError(f"Unknown collectives implementation "
-                        f"{collectives_impl}. Available implementations are "
-                        f"{CPU_COLLECTIVES_IMPLEMENTATIONS}.")
+    else:
+      # Already validated by config module
+      assert collectives_impl is None
 
-  num_devices = NUM_CPU_DEVICES.value if NUM_CPU_DEVICES.value >= 0 else None
+  num_devices = config.num_cpu_devices.value if config.num_cpu_devices.value >= 0 else None
   return xla_client.make_cpu_client(
     asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
     distributed_client=distributed.global_state.client,

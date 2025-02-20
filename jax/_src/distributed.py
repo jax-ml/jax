@@ -169,7 +169,6 @@ class State:
 
 global_state = State()
 
-
 def initialize(coordinator_address: str | None = None,
                num_processes: int | None = None,
                process_id: int | None = None,
@@ -258,11 +257,16 @@ def initialize(coordinator_address: str | None = None,
   """
   if xla_bridge.backends_are_initialized():
     raise RuntimeError("jax.distributed.initialize() must be called before "
-                        "any JAX computations are executed.")
+                        "any JAX calls that might initialise the XLA backend. "
+                        "This includes any computation, but also calls to jax.devices, jax.device_put, and others.")
   global_state.initialize(coordinator_address, num_processes, process_id,
                           local_device_ids, cluster_detection_method,
                           initialization_timeout, coordinator_bind_address)
 
+
+def is_initialized() -> bool:
+  """Check if the JAX distributed system is initialized."""
+  return global_state.client is not None
 
 def shutdown():
   """Shuts down the distributed system.

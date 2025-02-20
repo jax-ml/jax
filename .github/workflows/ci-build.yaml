@@ -31,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       - name: Set up Python 3.11
-        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38  # v5.4.0
         with:
           python-version: 3.11
       - run: python -m pip install pre-commit
@@ -70,22 +70,13 @@ jobs:
         apt update
         apt install -y libssl-dev
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+      uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38  # v5.4.0
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Get pip cache dir
-      id: pip-cache
-      run: |
-        python -m pip install --upgrade pip wheel
-        echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
-    - name: pip cache
-      uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
-      with:
-        path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-py${{ matrix.python-version }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
     - name: Install dependencies
       run: |
-        pip install .[minimum-jaxlib] -r build/test-requirements.txt
+        pip install uv
+        uv pip install --system .[minimum-jaxlib] -r build/test-requirements.txt
 
     - name: Run tests
       env:
@@ -117,22 +108,13 @@ jobs:
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+      uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38  # v5.4.0
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Get pip cache dir
-      id: pip-cache
-      run: |
-        python -m pip install --upgrade pip wheel
-        echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
-    - name: pip cache
-      uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57  # v4.2.0
-      with:
-        path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-pip-docs-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
     - name: Install dependencies
       run: |
-        pip install -r docs/requirements.txt
+        pip install uv
+        uv pip install --system -r docs/requirements.txt
     - name: Test documentation
       env:
         XLA_FLAGS: "--xla_force_host_platform_device_count=8"
@@ -140,7 +122,7 @@ jobs:
         JAX_ARRAY: 1
         PY_COLORS: 1
       run: |
-        pytest -n auto --tb=short --doctest-glob='*.md' --doctest-glob='*.rst' docs --doctest-continue-on-failure --ignore=docs/multi_process.md 
+        pytest -n auto --tb=short --doctest-glob='*.md' --doctest-glob='*.rst' docs --doctest-continue-on-failure --ignore=docs/multi_process.md
         pytest -n auto --tb=short --doctest-modules jax --ignore=jax/config.py --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/_src/lib/triton.py --ignore=jax/_src/lib/mosaic_gpu.py --ignore=jax/interpreters/mlir.py --ignore=jax/experimental/array_serialization --ignore=jax/collect_profile.py --ignore=jax/_src/tpu_custom_call.py --ignore=jax/experimental/mosaic --ignore=jax/experimental/pallas --ignore=jax/_src/pallas --ignore=jax/lib/xla_extension.py
 
 
@@ -160,22 +142,13 @@ jobs:
         apt update
         apt install -y libssl-dev libsqlite3-dev
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+      uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38  # v5.4.0
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Get pip cache dir
-      id: pip-cache
-      run: |
-        python -m pip install --upgrade pip wheel
-        echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
-    - name: pip cache
-      uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57  # v4.2.0
-      with:
-        path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-pip-docs-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
     - name: Install dependencies
       run: |
-        pip install -r docs/requirements.txt
+        pip install uv
+        uv pip install --system -r docs/requirements.txt
     - name: Render documentation
       run: |
         sphinx-build -j auto --color -W --keep-going -b html -D nb_execution_mode=off docs docs/build/html
@@ -195,22 +168,13 @@ jobs:
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+      uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38  # v5.4.0
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Get pip cache dir
-      id: pip-cache
-      run: |
-        python -m pip install --upgrade pip wheel
-        echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
-    - name: pip cache
-      uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57  # v4.2.0
-      with:
-        path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-py${{ matrix.python-version }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
     - name: Install dependencies
       run: |
-        pip install .[minimum-jaxlib] tensorflow -r build/test-requirements.txt
+        pip install uv
+        uv pip install --system .[minimum-jaxlib] tensorflow -r build/test-requirements.txt
 
     - name: Run tests
       env:
@@ -236,23 +200,15 @@ jobs:
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
     - name: Set up Python
-      uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+      uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38  # v5.4.0
       with:
         python-version: 3.12
-    - name: Get pip cache dir
-      id: pip-cache
-      run: |
-        python -m pip install --upgrade pip wheel
-        echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
-    - name: pip cache
-      uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57  # v4.2.0
-      with:
-        path: ${{ steps.pip-cache.outputs.dir }}
-        key: ${{ runner.os }}-pip-ffi-examples-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt', 'examples/**/pyproject.toml') }}
     - name: Install JAX
-      run: pip install .[cuda12]
+      run: |
+        pip install uv
+        uv pip install --system .[cuda12]
     - name: Build and install example project
-      run: python -m pip install -v ./examples/ffi[test]
+      run: uv pip install --system ./examples/ffi[test]
       env:
         # We test building using GCC instead of clang. All other JAX builds use
         # clang, but it is useful to make sure that FFI users can compile using

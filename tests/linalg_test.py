@@ -1683,10 +1683,13 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     mode=["full", "r", "economic"],
     pivoting=[False, True]
   )
+  @jax.default_matmul_precision("float32")
   def testScipyQrModes(self, shape, dtype, mode, pivoting):
-    is_not_cpu_test_device = not jtu.test_device_matches(["cpu"])
-    if pivoting and is_not_cpu_test_device:
-      self.skipTest("Pivoting is only supported on CPU with jaxlib > 0.4.38")
+    if pivoting:
+      if not jtu.test_device_matches(["cpu", "gpu"]):
+        self.skipTest("Pivoting is only supported on CPU and GPU.")
+      if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 5, 0):
+        self.skipTest("Pivoting is only supported on GPU for jaxlib > 0.5.0")
     rng = jtu.rand_default(self.rng())
     jsp_func = partial(jax.scipy.linalg.qr, mode=mode, pivoting=pivoting)
     sp_func = partial(scipy.linalg.qr, mode=mode, pivoting=pivoting)
@@ -1700,7 +1703,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     def qr_and_mul(a):
       q, r, *p = jsp_func(a)
       # To express the identity function we must "undo" the pivoting of `q @ r`.
-      inverted_pivots = p[0][p[0]]
+      inverted_pivots = jnp.argsort(p[0])
       return (q @ r)[:, inverted_pivots]
 
     m, n = shape
@@ -1763,6 +1766,10 @@ class ScipyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=not calc_q)
     self._CompileAndCheck(jsp_func, args_maker)
 
+    if len(shape) == 3:
+      args = args_maker()
+      self.assertAllClose(jax.vmap(jsp_func)(*args), jsp_func(*args))
+
   @jtu.sample_product(
       shape=[(1, 1), (2, 2, 2), (4, 4), (10, 10), (2, 5, 5)],
       dtype=float_types + complex_types,
@@ -1794,6 +1801,10 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(sp_func, jax_func, args_maker, rtol=1e-4, atol=1e-4,
                             check_dtypes=False)
+
+    if len(shape) == 3:
+      args = args_maker()
+      self.assertAllClose(jax.vmap(jax_func)(*args), jax_func(*args))
 
   @jtu.sample_product(
     n=[1, 4, 5, 20, 50, 100],

@@ -561,9 +561,11 @@ LogicalResult canonicalize_fptosi(const CanonicalizeContext &ctx,
   if (dst_bitwidth > 32) {
     return op.emitOpError("Target bitwidth too large");
   }
+  // We have low-level optimized code for bf16->s8 and bf16->s4 casts on v6.
   if (ctx.hardware_generation >= 6 && is_vector &&
       src_vty.getElementType().isBF16() &&
-      dst_vty.getElementType().isSignlessInteger(8)) {
+      (dst_vty.getElementType().isSignlessInteger(8) ||
+       dst_vty.getElementType().isSignlessInteger(4))) {
     auto new_op = builder.create<tpu::FPToSIOp>(
         op.getType(), op.getIn(), tpu::RoundingMode::kTowardsZero);
     op.replaceAllUsesWith(new_op.getResult());
@@ -675,18 +677,18 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
   return *rules;
 }
 
-const llvm::StringSet<> &elementwise_convertible_ops() {
-  static auto ops = new llvm::StringSet<>{arith::MulFOp::getOperationName(),
-                                          arith::DivFOp::getOperationName(),
-                                          arith::AddFOp::getOperationName(),
-                                          arith::SubFOp::getOperationName(),
-                                          arith::MaximumFOp::getOperationName(),
-                                          arith::MinimumFOp::getOperationName(),
-                                          math::PowFOp::getOperationName(),
-                                          math::TanhOp::getOperationName(),
-                                          math::ExpOp::getOperationName(),
-                                          math::LogOp::getOperationName()};
-  return *ops;
+bool need_elementwise_canonicalization(CanonicalizeContext ctx, Operation &op) {
+  if (isa<arith::DivFOp>(op)) {
+    auto vec_ty = dyn_cast<VectorType>(op.getOperand(0).getType());
+    if (vec_ty && vec_ty.getElementType().isBF16() &&
+        ctx.hardware_generation >= 4) {
+      return false;
+    }
+    return true;
+  }
+  return isa<arith::MulFOp, arith::AddFOp, arith::SubFOp, arith::MaximumFOp,
+             arith::MinimumFOp, math::PowFOp, math::TanhOp, math::ExpOp,
+             math::LogOp>(op);
 }
 
 class MosaicCanonicalizer {
@@ -728,8 +730,7 @@ class MosaicCanonicalizer {
         }
       }
     }
-    if (elementwise_convertible_ops().contains(
-            any_op.getName().getStringRef())) {
+    if (need_elementwise_canonicalization(ctx, any_op)) {
       return canonicalize_elementwise(ctx, any_op);
     }
     if (auto rule_it = rules().find(any_op.getName().getStringRef());

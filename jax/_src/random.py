@@ -2070,8 +2070,8 @@ def orthogonal(
   n = core.concrete_or_error(index, n, "The error occurred in jax.random.orthogonal()")
   z = normal(key, (*shape, n, n), dtype)
   q, r = jnp.linalg.qr(z)
-  d = jnp.diagonal(r, 0, -2, -1)
-  return lax.mul(q, lax.expand_dims(lax.div(d, abs(d).astype(d.dtype)), [-2]))
+  d = jnp.linalg.diagonal(r)
+  return q * jnp.expand_dims(jnp.sign(d), -2)
 
 def generalized_normal(
   key: ArrayLike,
@@ -2432,7 +2432,7 @@ def _stirling_approx_tail(k):
       dtype=k.dtype,
   )
   use_tail_values = k <= 9
-  k = lax.clamp(0.0, k, 9.0)
+  k = lax.clamp(_lax_const(k, 0.0), k, _lax_const(k, 9.0))
   kp1sq = (k + 1) * (k + 1)
   approx = (1.0 / 12 - (1.0 / 360 - 1.0 / 1260 / kp1sq) / kp1sq) / (k + 1)
   k = jnp.floor(k)

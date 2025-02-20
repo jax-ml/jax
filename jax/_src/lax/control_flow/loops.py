@@ -202,7 +202,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
       a single iteration of a loop. If an integer is provided, it determines how
       many unrolled loop iterations to run within a single rolled iteration of
       the loop. If a boolean is provided, it will determine if the loop is
-      competely unrolled (i.e. `unroll=True`) or left completely unrolled (i.e.
+      competely unrolled (i.e. `unroll=True`) or left completely rolled (i.e.
       `unroll=False`).
     _split_transpose: experimental optional bool specifying whether to further
       split the transpose into a scan (computing activation gradients), and a
@@ -231,8 +231,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   xs_avals = [core.get_aval(x) for x in xs_flat]
 
-  if (config.sharding_in_types.value and
-      not all(a.sharding.spec[0] is None for a in xs_avals)):
+  if not all(a.sharding.spec[0] is None for a in xs_avals):
     raise ValueError('0th dimension of all xs should be replicated. Got '
                      f'{", ".join(str(a.sharding.spec) for a in xs_avals)}')
 
@@ -273,7 +272,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     return carry, stacked_y
 
   x_avals = [core.mapped_aval(length, 0, aval) for aval in xs_avals]
-  dbg_body = api_util.tracing_debug_info("scan", f, (init, xs), {})
+  dbg_body = api_util.debug_info("scan", f, (init, xs), {})
 
   if config.mutable_array_checks.value:
     in_flat, in_tree = tree_flatten((init, xs))
@@ -504,14 +503,13 @@ def _split_leading(sz, x):
 def _concat(a, b): return lax.concatenate([a, b], 0)
 
 def _empty_array(prefix, length_spec, aval):
-  sharding = (aval.sharding.with_spec((length_spec, *aval.sharding.spec))
-              if config.sharding_in_types.value else None)
+  sharding = aval.sharding.with_spec((length_spec, *aval.sharding.spec))
   return lax.broadcast(lax.empty(aval.dtype), (*prefix, *aval.shape),
-                       sharding=sharding)
+                       out_sharding=sharding)
 
 eval_jaxpr_p = core.Primitive('eval_jaxpr')
 eval_jaxpr_p.multiple_results = True
-def _stage_jaxpr(trace, *tracers, jaxpr):
+def _stage_jaxpr(trace: pe.JaxprTrace, *tracers, jaxpr: core.ClosedJaxpr):
   params = dict(call_jaxpr=jaxpr)
   return trace.default_process_primitive(core.closed_call_p, tracers, params)
 pe.custom_staging_rules[eval_jaxpr_p] = _stage_jaxpr
@@ -586,8 +584,10 @@ def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
                   for p, nz in zip(primals_out, nonzeros_out)]
   return primals_out, tangents_out
 
-def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
-                       jaxpr, linear, unroll, _split_transpose):
+def _scan_partial_eval(trace, *tracers, reverse: bool,
+                       length: int, num_consts: int, num_carry: int,
+                       jaxpr: core.ClosedJaxpr, linear: Sequence[bool],
+                       unroll: int, _split_transpose: bool):
   num_ys = len(jaxpr.out_avals) - num_carry
   unknowns = [not t.pval.is_known() for t in tracers]
   const_uk, init_uk, xs_uk = split_list(unknowns, [num_consts, num_carry])
@@ -612,8 +612,8 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   del res_avals, carry_uk_out
 
   # Instantiate those inputs which must be treated as unknown from the fixpoint.
-  tracers = [trace.instantiate_const(t) if uk else t
-             for t, uk in zip(tracers, unknowns)]
+  tracers = tuple(trace.instantiate_const(t) if uk else t
+                  for t, uk in zip(tracers, unknowns))
 
   # The residual inputs and outputs of the jaxprs produced haven't yet been
   # adapted to the scan calling convention; in particular, jaxpr_known has its
@@ -638,7 +638,9 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
                  for aval in jaxpr_known.in_avals[len(const_pvals):]]
   with source_info_util.reset_name_stack():
     jaxpr_known_, invar_pvals_out, jaxpr_known_consts = pe.trace_to_jaxpr_nounits(
-        lu.wrap_init(core.jaxpr_as_fun(jaxpr_known)), const_pvals + other_pvals,
+        lu.wrap_init(core.jaxpr_as_fun(jaxpr_known),
+                     debug_info=jaxpr_known.jaxpr.debug_info),
+        const_pvals + other_pvals,
         instantiate=[True] * (len(out_uk) - sum(out_uk)) + [False] * num_res)
   jaxpr_known = pe.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr_known_), ())
   # The above trace_to_jaxpr_nounits call computed loop-invariant residuals
@@ -880,8 +882,9 @@ def _scan_transpose(cts, *args, reverse, length, num_consts,
 # transpose_scan_jaxpr :: ([res1, c, a, res2] -> b)
 #                         -> ([res1, CT c, CT b, res2] -> [CT c, CT a])
 @weakref_lru_cache
-def _transpose_scan_jaxpr(jaxpr, num_res1, num_c, num_res2,
-                          ct_ys_is_zeros):
+def _transpose_scan_jaxpr(jaxpr: core.ClosedJaxpr,
+                          num_res1: int, num_c: int, num_res2: int,
+                          ct_ys_is_zeros: Sequence[bool]):
   num_a = len(jaxpr.in_avals) - num_res1 - num_c - num_res2
   # TODO: allow input cotangent avals to be batched relative to jaxpr.in_avals
   # if an axis isn't reduced
@@ -896,7 +899,6 @@ def _transpose_scan_jaxpr(jaxpr, num_res1, num_c, num_res2,
       aval for aval, is_zero in zip(b_ys_avals, ct_ys_is_zeros) if not is_zero
   ]
 
-  @lu.wrap_init
   def transposed(*res1_cbar_bbar_res2):
     res1, c_bar, b_bar, ys_bar_stripped, res2 = split_list(
         res1_cbar_bbar_res2,
@@ -915,9 +917,14 @@ def _transpose_scan_jaxpr(jaxpr, num_res1, num_c, num_res2,
     a_bar = _map(ad.instantiate_zeros, a_bar)
     c_bar = _map(ad.instantiate_zeros, _map(ad.add_tangents, c_bar, new_c_bar))
     return c_bar + a_bar
+
+  # TODO(necula): fix arg names and results for transposed
+  transposed_wrapped = lu.wrap_init(transposed,
+                                    debug_info=jaxpr.jaxpr.debug_info)
   return _make_closed_jaxpr_attrs(
-      transposed, tuple(res1_avals + c_avals + b_carry_avals +
-                        b_ys_avals_stripped + res2_avals))
+      transposed_wrapped,
+      tuple(res1_avals + c_avals + b_carry_avals +
+            b_ys_avals_stripped + res2_avals))
 
 
 def _scan_batching_rule(axis_data, args,
@@ -1093,7 +1100,6 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
                       num_carry=len(carry_uk)-sum(carry_uk),
                       linear=tuple(linear_known))
 
-  @lu.wrap_init
   def known(*ins_known):
     consts_known_hoist, ins_known_lp = split_list(ins_known, [num_const_known])
     out_hoist = core.jaxpr_as_fun(jaxpr_known_hoist)(*consts_known_hoist)
@@ -1101,7 +1107,8 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
     out_loop = scan_p.bind(*consts_known_lp, *ins_known_lp, **params_known)
     return [*intensive_res, *out_loop]
   call_jaxpr_, _, call_jaxpr_consts, () = pe.trace_to_jaxpr_dynamic(
-      known, [v.aval for v in ins_known])
+      lu.wrap_init(known, debug_info=jaxpr_known_hoist.jaxpr.debug_info),
+      [v.aval for v in ins_known])
   call_jaxpr = core.ClosedJaxpr(call_jaxpr_, call_jaxpr_consts)
   eqn_known = pe.new_jaxpr_eqn(
       ins_known, [*intensive_res, *out_binders_known, *extensive_res],
@@ -1246,7 +1253,9 @@ def _scan_state_partial_discharge_rule(should_discharge, in_avals, out_avals, *a
   )
   # TODO(cperivol): avoid tracing the jaxpr twice. When doing so don't
   # forget to manage the effects.
-  new_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(wrapped), avals_for_wrapped_no_refs)
+  new_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(
+      lu.wrap_init(wrapped, debug_info=discharged_jaxpr.debug_info),
+      avals_for_wrapped_no_refs)
   all_out = scan_p.bind(*args_for_wrapped,
                         jaxpr=core.ClosedJaxpr(new_jaxpr, ()),
                         length=length,
@@ -1266,6 +1275,7 @@ def _scan_state_partial_discharge_rule(should_discharge, in_avals, out_avals, *a
 
 scan_p = core.Primitive("scan")
 scan_p.multiple_results = True
+scan_p.skip_canonicalization = True
 scan_p.def_impl(partial(dispatch.apply_primitive, scan_p))
 scan_p.def_effectful_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp
@@ -1357,10 +1367,10 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   def _create_jaxpr(init_val):
     init_vals, in_tree = tree_flatten((init_val,))
     init_avals = tuple(_map(core.get_aval, init_vals))
-    cond_dbg = api_util.tracing_debug_info("while_cond", cond_fun, (init_val,), {})
+    cond_dbg = api_util.debug_info("while_cond", cond_fun, (init_val,), {})
     cond_jaxpr, cond_consts, cond_tree = _initial_style_jaxpr(
         cond_fun, in_tree, init_avals, cond_dbg)
-    body_dbg = api_util.tracing_debug_info("while_body", body_fun, (init_val,), {})
+    body_dbg = api_util.debug_info("while_body", body_fun, (init_val,), {})
     body_jaxpr, body_consts, body_tree = _initial_style_jaxpr(
         body_fun, in_tree, init_avals, body_dbg)
     if not treedef_is_leaf(cond_tree) or len(cond_jaxpr.out_avals) != 1:
@@ -1368,7 +1378,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
       raise TypeError(msg.format(cond_tree))
     pred_aval = cond_jaxpr.out_avals[0]
     if (not isinstance(pred_aval, ShapedArray)
-        or pred_aval.strip_weak_type() != ShapedArray((), np.bool_)):
+        or ShapedArray(pred_aval.shape, pred_aval.dtype) != ShapedArray((), np.bool_)):
       msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
       raise TypeError(msg.format(cond_jaxpr.out_avals))
     return init_vals, init_avals, body_jaxpr, in_tree, cond_jaxpr, cond_consts, body_consts, body_tree
@@ -1541,11 +1551,18 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
   newvar = core.gensym()
   invars_aug = (
       cond_jaxpr.jaxpr.invars + [newvar(core.get_aval(x)) for x in init_dot])
+  cond_debug = cond_jaxpr.jaxpr.debug_info
+  augmented_debug = cond_debug and (
+      cond_debug._replace(
+          arg_names=cond_debug.arg_names + (None,) * len(init_dot)
+      )
+  )
   cond_jaxpr_augmented = core.Jaxpr(cond_jaxpr.jaxpr.constvars,
                                     invars_aug,
                                     cond_jaxpr.jaxpr.outvars,
                                     cond_jaxpr.jaxpr.eqns,
-                                    cond_jaxpr.jaxpr.effects)
+                                    cond_jaxpr.jaxpr.effects,
+                                    augmented_debug)
   cond_jaxpr_augmented = core.ClosedJaxpr(cond_jaxpr_augmented, cond_jaxpr.consts)
 
   out = while_p.bind(
@@ -1734,7 +1751,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
       # Pred can be batched
       pred = core.eval_jaxpr(cond_jaxpr.jaxpr, cond_jaxpr.consts, *args)[0]
       if batched:
-        pred = lax._reduce_or(pred, tuple(range(len(pred_aval.shape))))
+        pred = lax.reduce_or(pred, tuple(range(len(pred_aval.shape))))
       return pred
     def body(args):
       return tuple(core.eval_jaxpr(body_jaxpr.jaxpr, body_jaxpr.consts, *args))
@@ -1855,10 +1872,15 @@ def _while_typecheck(_, *in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,
         f'Effects not supported in `while`: {disallowed_effects}')
   return body_jaxpr.out_avals, joined_effects
 
-def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
+def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
                           cond_nconsts, body_nconsts):
   # TODO(sharadmv): enable supporting state effects in the cond
   if any(isinstance(eff, state.RefEffect) for eff in cond_jaxpr.effects):
+    raise NotImplementedError
+  cond_consts_discharge, body_consts_discharge, carry_discharge = split_list(
+      should_discharge, [cond_nconsts, body_nconsts])
+
+  if any(cond_consts_discharge):
     raise NotImplementedError
   cond_consts, body_consts, carry = split_list(args, [cond_nconsts, body_nconsts])
   cond_consts_avals, body_consts_avals, carry_avals = split_list(in_avals,
@@ -1866,7 +1888,10 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
                                                                   body_nconsts])
   # There shouldn't be any `Ref`s in the `cond` (because of our check above).
   assert not any(isinstance(aval, state.AbstractRef) for aval in cond_consts_avals)
-  is_ref = [isinstance(aval, state.AbstractRef) for aval in body_consts_avals]
+  is_ref = [
+      isinstance(aval, state.AbstractRef) and should
+      for aval, should in zip(body_consts_avals, body_consts_discharge)
+  ]
   remaining_body_consts, refs = partition_list(is_ref, body_consts)
   remaining_body_const_avals, ref_avals = partition_list(is_ref,
                                                          body_consts_avals)
@@ -1886,7 +1911,7 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
   # Therefore we need to rewrite the jaxpr to shuffle around the `Ref`s so that
   # they are part of the carry.
   discharged_body_jaxpr, discharged_consts = state_discharge.discharge_state(
-      body_jaxpr, ())
+      body_jaxpr, (), should_discharge=[*body_consts_discharge, *carry_discharge])
   if discharged_consts: raise NotImplementedError
 
   def new_body(*consts_refs_carry):
@@ -1898,9 +1923,9 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
     carry, refs_out = split_list(carry_refs, [num_carry])
     return [*refs_out, *carry]
   new_body_jaxpr, _, new_body_consts, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(new_body), [*remaining_body_const_avals, *[a.inner_aval for a
-                                                              in ref_avals],
-                               *carry_avals])
+      lu.wrap_init(new_body, debug_info=discharged_body_jaxpr.debug_info),
+      [*remaining_body_const_avals, *[a.inner_aval for a in ref_avals],
+      *carry_avals])
   if new_body_consts: raise NotImplementedError
 
   # Since some `Ref`s that were previously consts are now carries, we need to
@@ -1912,9 +1937,8 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
     del refs  # We don't use them here!
     return core.eval_jaxpr(cond_jaxpr, cond_jaxpr_consts, *consts, *carry)
   new_cond_jaxpr, _, new_cond_consts, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(new_cond), [*cond_consts_avals,
-                               *[a.inner_aval for a in ref_avals],
-                               *carry_avals])
+      lu.wrap_init(new_cond, debug_info=cond_jaxpr.debug_info),
+      [*cond_consts_avals, *[a.inner_aval for a in ref_avals], *carry_avals])
   if new_cond_consts: raise NotImplementedError
 
   out = while_p.bind(*cond_consts, *remaining_body_consts, *refs, *carry,
@@ -1933,6 +1957,7 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
 
 while_p = core.Primitive('while')
 while_p.multiple_results = True
+while_p.skip_canonicalization = True
 while_p.def_impl(partial(dispatch.apply_primitive, while_p))
 while_p.def_effectful_abstract_eval(_while_loop_abstract_eval)
 ad.primitive_jvps[while_p] = _while_loop_jvp
@@ -1943,7 +1968,7 @@ batching.fancy_primitive_batchers[while_p] = _while_loop_batching_rule
 pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
 mlir.register_lowering(while_p, _while_lowering)
 core.custom_typechecks[while_p] = _while_typecheck
-state_discharge.register_discharge_rule(while_p)(_while_discharge_rule)
+state_discharge.register_partial_discharge_rule(while_p)(_while_partial_discharge_rule)
 
 
 def _pred_bcast_select_hlo(ctx,

@@ -91,8 +91,11 @@ def estimate_cost(fun, *args, **kwargs) -> pallas_core.CostEstimate:
   """
   flattened_args, treedef = jax.tree.flatten(args)
   partial_fun = functools.partial(fun, **kwargs)
-  wrapped_fun, _ = api_util.flatten_fun_nokwargs(lu.wrap_init(partial_fun),
-                                                 treedef)
+  wrapped_fun, _ = api_util.flatten_fun_nokwargs(
+      lu.wrap_init(partial_fun,
+                   debug_info=api_util.debug_info("cost_estimate", fun,
+                                                  args, kwargs)),
+      treedef)
   avals = [jax_core.ShapedArray(a.shape, a.dtype) for a in flattened_args]
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, avals)
   estimate = cost_estimate_jaxpr(jax_core.ClosedJaxpr(jaxpr, consts))

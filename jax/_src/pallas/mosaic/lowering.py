@@ -23,6 +23,7 @@ import string
 from typing import Any, Hashable
 
 import jax
+from jax import api_util
 from jax import lax
 from jax import tree_util
 from jax._src import ad_util
@@ -38,6 +39,7 @@ from jax._src import prng
 from jax._src import source_info_util
 from jax._src import state
 from jax._src import traceback_util
+from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
@@ -151,7 +153,6 @@ class LoweringRuleContext:
   avals_in: Sequence[jax_core.AbstractValue]
   avals_out: Sequence[jax_core.AbstractValue]
   block_shapes: Sequence[tuple[int | pallas_core.Mapped, ...] | None]
-
   replace = dataclasses.replace
 
   @property
@@ -597,6 +598,11 @@ def lower_jaxpr_to_module(
     for_verification: bool = False,
     dynamic_shape_replacement_enabled: bool = False,
 ) -> tuple[Module, tuple[Any, ...]]:
+  # NOTE: We should bump this periodically
+  if is_cloud_tpu_older_than(2025, 1, 10):
+    raise RuntimeError(
+        "Pallas TPU requires a libTPU version that's at most a month old"
+    )
   if dynamic_shape_replacement_enabled:
     _mosaic_lowering_dynamic_shape_env = LoweringDynamicShapeEnv()
 
@@ -688,6 +694,21 @@ def lower_jaxpr_to_module(
           pad_low, pad_high = map(list, zip(*bm.indexing_mode.padding))
         block_params["window_kind"] = ir.Attribute.parse(
             f"#tpu.element_window<{pad_low},{pad_high}>"
+        )
+      if bm.pipeline_mode is not None:
+        if not isinstance(bm.pipeline_mode, pallas_core.Buffered):
+          raise LoweringException(
+              f"Unsupported pipeline mode: {bm.pipeline_mode}."
+          )
+        buffer_count = bm.pipeline_mode.buffer_count
+        if buffer_count < 1 or buffer_count > 2:
+          raise LoweringException(
+              "Only single (1) and double (2) buffering are supported. Got"
+              f" {buffer_count}."
+          )
+        pipeline_mode = "synchronous" if buffer_count == 1 else "double_buffered"
+        block_params["pipeline_mode"] = ir.Attribute.parse(
+            f"#tpu.pipeline_mode<{pipeline_mode}>"
         )
       window_params.append(ir.DictAttr.get(block_params))
       m.body.append(mlir_func)
@@ -845,7 +866,10 @@ def lower_jaxpr_to_func(
 def lower_fun(fun: Callable, *, multiple_results: bool) -> Callable:
   def f_lowered(ctx: LoweringRuleContext, *args, **params):
     f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
-    wrapped_fun = lu.wrap_init(f, params)
+    wrapped_fun = lu.wrap_init(
+        f, params,
+        debug_info=api_util.debug_info("mosaic lower_fun", f,
+                                       args, params))
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
     if consts:
       raise NotImplementedError
@@ -1524,7 +1548,9 @@ def _masked_swap_lowering_rule(
       1 if b is pallas_core.mapped else next(mem_slice_shape_iter)
       for b in ref_block_shape
   ]
-  mem_aval = aval_out.update(shape=tuple(mem_slice_shape), sharding=None)
+  mem_aval = aval_out.update(
+      shape=tuple(mem_slice_shape), sharding=jax_core.get_cur_mesh_sharding()
+  )
   mem_aval_shape = ctx.lowering_context.dynamic_shape_replacement_fn(
       mem_aval.shape
   )
@@ -2085,6 +2111,74 @@ def _iota_lowering_rule(ctx: LoweringRuleContext, dtype, shape, dimension,
 
 
 lowering_rules[lax.iota_p] = _iota_lowering_rule
+
+
+def _gather_lowering_rule(
+    ctx: LoweringRuleContext,
+    x,
+    indices,
+    *,
+    dimension_numbers,
+    slice_sizes,
+    unique_indices,
+    indices_are_sorted,
+    mode,
+    fill_value,
+):
+  in_aval = ctx.avals_in[0]
+  indices_aval = ctx.avals_in[1]
+  out_aval = ctx.avals_out[0]
+
+  if len(in_aval.shape) != 2:
+    raise NotImplementedError("Only 2D gather is supported")
+  if pallas_utils.dtype_bitwidth(in_aval.dtype) != 32:
+    raise NotImplementedError("Only 32-bit gather is supported")
+  if in_aval.shape != indices_aval.shape[:-1] != out_aval.shape:
+    raise ValueError("Shape mismatch in input, indices and output")
+
+  out_type = aval_to_ir_type(
+      ctx.lowering_context.dynamic_shape_replacement_fn, out_aval
+  )
+  # During lowering jnp.take_along_axis to lax.gather, we append extra dimension
+  # to the end of the indices array. We should reshape it back to the original
+  # shape before lowering to Mosaic and rely on MLIR CSE to remove the reshapes.
+  assert indices_aval.shape == in_aval.shape + (1,)
+  recovered_indices = vector.shape_cast(
+      ir.VectorType.get(in_aval.shape, ir.IntegerType.get_signless(32)),
+      indices,
+  )
+  # Note: current support for lax.gather is still very limited.
+  del fill_value
+  if (
+      slice_sizes == (1, 1)
+      and not unique_indices
+      and not indices_are_sorted
+      and mode
+      in (
+          lax.GatherScatterMode.FILL_OR_DROP,
+          lax.GatherScatterMode.PROMISE_IN_BOUNDS,
+      )
+  ):
+    if dimension_numbers == lax.GatherDimensionNumbers(
+        offset_dims=(),
+        collapsed_slice_dims=(0,),
+        start_index_map=(0,),
+        operand_batching_dims=(1,),
+        start_indices_batching_dims=(1,),
+    ):
+      return tpu.dynamic_gather(out_type, x, recovered_indices, 0)
+    if dimension_numbers == lax.GatherDimensionNumbers(
+        offset_dims=(),
+        collapsed_slice_dims=(1,),
+        start_index_map=(1,),
+        operand_batching_dims=(0,),
+        start_indices_batching_dims=(0,),
+    ):
+      return tpu.dynamic_gather(out_type, x, recovered_indices, 1)
+  raise NotImplementedError("Unsupported gather")
+
+
+lowering_rules[lax.gather_p] = _gather_lowering_rule
 
 
 def _transpose_lowering_rule(ctx: LoweringRuleContext, x, *, permutation):
@@ -2947,15 +3041,20 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
 lowering_rules[pjit.pjit_p] = _pjit_lowering_rule
 
 
+def _mesh_cast_lowering_rule(ctx, x, dst_sharding):
+  return x
+lowering_rules[pjit.mesh_cast_p] = _mesh_cast_lowering_rule
+
+
 def _custom_jvp_call_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
     call_jaxpr: jax_core.Jaxpr,
-    jvp_jaxpr_thunk: Callable,
+    jvp_jaxpr_fun: lu.WrappedFun,
     num_consts: int,
     symbolic_zeros: bool,
 ):
-  del jvp_jaxpr_thunk
+  del jvp_jaxpr_fun
   if symbolic_zeros: raise NotImplementedError
   if num_consts: raise NotImplementedError
   if call_jaxpr.consts: raise NotImplementedError
@@ -3287,6 +3386,7 @@ def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
     device_id = _device_id_to_logical(ctx, device_id, device_id_type)
   tpu.enqueue_dma(src_ref, dst_ref, sem, source_semaphore=src_sem,
                   device_id=device_id)
+
   return []
 lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
 
@@ -3294,16 +3394,34 @@ lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
 def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                             device_id_type: tpu_primitives.DeviceIdType):
   del device_id_type
-  (_, _, ref, transforms, sem, sem_transforms, _, _, _) = tree_util.tree_unflatten(
-      tree, args)
-  (_, _, ref_aval, _, sem_aval, _, _, _, _) = tree_util.tree_unflatten(
-      tree, ctx.avals_in)
+  (src, src_transforms, dst, transforms, sem, sem_transforms, _, _, _) = (
+      tree_util.tree_unflatten(tree, args)
+  )
+  (src_aval, _, dst_aval, _, sem_aval, _, _, _, _) = tree_util.tree_unflatten(
+      tree, ctx.avals_in
+  )
   block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
   ref_block_shape = block_shapes[2]
-  ref, _ = _transform_ref(ref, ref_aval.dtype, ref_block_shape, transforms)
+  src, _ = _transform_ref(src, src_aval.dtype, src_aval.shape, src_transforms)
+  dst, _ = _transform_ref(dst, dst_aval.dtype, ref_block_shape, transforms)
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
-  tpu.wait_dma(sem, ref)
+  if ctx.forward_compatible or is_cloud_tpu_older_than(2025, 2, 12):
+    # TODO(mvoz): Remove once six months have passed. b/395630795
+    if hasattr(src_aval, "memory_space"):
+      src_memory_space = _memory_space_to_mosaic_attribute(src_aval.memory_space)
+      smem_space = ir.Attribute.parse("#tpu.memory_space<smem>")
+      src_is_smem = src_memory_space == smem_space
+      wait_ref = src if src_is_smem else dst
+    else:
+      wait_ref = dst
+    # Legacy instruction emits only an sfence if the target/dst ref is in smem.
+    # So, we pass the src ref to the wait instruction if it is in smem to
+    # ensure legacy cases are correct, while technically keeping API compat.
+    tpu.wait_dma(sem, wait_ref)
+  else:
+    tpu.wait_dma2(sem, src, dst)
   return []
+
 lowering_rules[tpu_primitives.dma_wait_p] = _dma_wait_lowering_rule
 
 def _device_id_lowering_rule(ctx: LoweringRuleContext):

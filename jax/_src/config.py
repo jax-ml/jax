@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 import contextlib
+import enum
 import functools
 import itertools
 import logging
@@ -33,6 +34,29 @@ config_ext = xla_client._xla.config
 logger = logging.getLogger(__name__)
 
 _T = TypeVar('_T')
+
+
+class EffortLevel(enum.Enum):
+  """Effort level enum, mirroring the XLA effort options."""
+
+  UNKNOWN = 0
+  O0 = 9
+  O1 = 19
+  O2 = 29
+  O3 = 39
+
+  @classmethod
+  def _missing_(cls, value: object) -> EffortLevel | None:
+    return _effort_from_string.get(value)
+
+
+_effort_from_string: dict[Any, EffortLevel] = {
+    'UNKNOWN': EffortLevel.UNKNOWN,
+    'O0': EffortLevel.O0,
+    'O1': EffortLevel.O1,
+    'O2': EffortLevel.O2,
+    'O3': EffortLevel.O3,
+}
 
 
 def bool_env(varname: str, default: bool) -> bool:
@@ -210,7 +234,6 @@ def trace_context():
           default_device.value, random_seed_offset.value,
           threefry_partitionable.value,
           threefry_gpu_kernel_lowering.value,
-          sharding_in_types.value,
           use_direct_linearize.value,
           softmax_custom_jvp.value,
           disable_jit.value,
@@ -1043,13 +1066,6 @@ threefry_gpu_kernel_lowering = bool_state(
           'cost.'),
     include_in_jit_key=True)
 
-sharding_in_types = bool_state(
-    name='jax_sharding_in_types',
-    default=False,
-    help=('When True, enables forward only sharding propagation in JAX and '
-          'avals have sharding on them.'),
-    include_in_jit_key=True)
-
 use_direct_linearize = bool_state(
     name='jax_use_direct_linearize',
     default=False,
@@ -1216,6 +1232,16 @@ compilation_cache_dir = optional_string_state(
           'Precedence: '
           '1. A call to compilation_cache.set_cache_dir(). '
           '2. The value of this flag set in the command line or by default.'),
+)
+
+compilation_cache_expect_pgle = bool_state(
+    name='jax_compilation_cache_expect_pgle',
+    default=False,
+    help=('If set to True, compilation cache entries that were compiled with '
+          'profile data (i.e. PGLE was enabled and the requisite number of '
+          'executions were profiled) will be preferentially loaded, even if '
+          'PGLE is not currently enabled. A warning will be printed when no '
+          'preferred cache entry is found.')
 )
 
 compilation_cache_max_size = int_state(
@@ -1715,4 +1741,53 @@ memory_fitting_effort = float_state(
     name='jax_memory_fitting_effort',
     default=0.0,
     help='Effort for minimizing memory usage (higher means more effort), valid range [-1.0, 1.0].'
+)
+
+optimization_level = enum_state(
+    name='jax_optimization_level',
+    enum_values=[
+        'UNKNOWN',
+        'O0',
+        'O1',
+        'O2',
+        'O3',
+    ],
+    default='UNKNOWN',
+    help='The degree to which the compiler should optimize for execution time',
+    include_in_jit_key=True
+)
+
+memory_fitting_level = enum_state(
+    name='jax_memory_fitting_level',
+    enum_values=[
+        'UNKNOWN',
+        'O0',
+        'O1',
+        'O2',
+        'O3',
+    ],
+    default='UNKNOWN',
+    help=(
+        'The degree to which the compiler should attempt to make the program'
+        ' fit in memory'
+    ),
+    include_in_jit_key=True
+)
+
+cpu_collectives_implementation = optional_enum_state(
+    name='jax_cpu_collectives_implementation',
+    enum_values=["gloo", "mpi", "megascale"],
+    default=None,
+    help=(
+        "Cross-process collective implementation used on CPU. Must be one of "
+        '("gloo", "mpi")'),
+)
+
+num_cpu_devices = int_state(
+    name="jax_num_cpu_devices",
+    default=-1,
+    help=(
+        "Number of CPU devices to use. If not provided, the value of "
+        "the XLA flag --xla_force_host_platform_device_count is used."
+        " Must be set before JAX is initialized."),
 )

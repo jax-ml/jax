@@ -28,10 +28,12 @@ from jax import lax
 from jax._src import core
 from jax._src import dtypes
 from jax._src.lax import lax as lax_internal
+from jax._src.numpy.array_creation import empty, full, full_like, ones, zeros
 from jax._src.numpy.lax_numpy import (
-    append, arange, concatenate, diff, empty, full, full_like, lexsort,
-    moveaxis, nonzero, ones, ravel, sort, where, zeros)
+    append, arange, concatenate, diff,
+    moveaxis, nonzero, ravel, sort, where)
 from jax._src.numpy.reductions import any, cumsum
+from jax._src.numpy.sorting import lexsort
 from jax._src.numpy.ufuncs import isnan
 from jax._src.numpy.util import ensure_arraylike, promote_dtypes
 from jax._src.util import canonicalize_axis, set_module

@@ -16,14 +16,13 @@ from __future__ import annotations
 from functools import partial
 
 from absl.testing import absltest
-from jax.sharding import PartitionSpec as P
 import jax
+from jax._src import mesh
+from jax._src import test_util as jtu
+from jax.experimental import roofline
 import jax.lax as lax
 import jax.numpy as jnp
-
-from jax._src import test_util as jtu
-
-from jax.experimental import roofline
+from jax.sharding import PartitionSpec as P
 
 
 jax.config.parse_flags_with_absl()
@@ -128,12 +127,13 @@ class RooflineTest(jtu.JaxTestCase):
     ici_bytes = 2 * int(itemsize * sharded_mk * axis_size_m1)
     ici_latency = 2 * 2
     expected = roofline.RooflineResult(
-      flops=2 * 2 * m * k * n,
-      ici_bytes={"x": ici_bytes},
-      ici_latency={"x": ici_latency},
-      hbm_bytes=2 * itemsize * (mk + kn + mn),
-      # Right after all_gather.
-      peak_hbm_bytes=itemsize * (mk * axis_size + mk + kn),
+        flops=2 * 2 * m * k * n,
+        unfused_flops=2 * 2 * m * k * n,
+        ici_bytes={"x": ici_bytes},
+        ici_latency={"x": ici_latency},
+        hbm_bytes=2 * itemsize * (mk + kn + mn),
+        # Right after all_gather.
+        peak_hbm_bytes=itemsize * (mk * axis_size + mk + kn),
     )
     self.assertDataclassEqual(results, expected)
 
@@ -177,11 +177,12 @@ class RooflineTest(jtu.JaxTestCase):
     )
     ici_latency = 2 * 2 * 2
     expected = roofline.RooflineResult(
-      flops=2 * m * k * n,
-      ici_bytes={axis: ici_bytes for axis in ("x", "y")},
-      ici_latency={axis: ici_latency for axis in ("x", "y")},
-      hbm_bytes=itemsize * (mk + kn + mn),
-      peak_hbm_bytes=itemsize * (mn),
+        flops=2 * m * k * n,
+        unfused_flops=2 * m * k * n,
+        ici_bytes={axis: ici_bytes for axis in ("x", "y")},
+        ici_latency={axis: ici_latency for axis in ("x", "y")},
+        hbm_bytes=itemsize * (mk + kn + mn),
+        peak_hbm_bytes=itemsize * (mn),
     )
     self.assertDataclassEqual(results, expected)
 
@@ -291,11 +292,12 @@ class RooflineTest(jtu.JaxTestCase):
     ici_bytes = int(itemsize * sharded_mk * axis_size_m1)
     ici_latency = 2
     expected = roofline.RooflineResult(
-      flops=2 * m * k * n,
-      ici_bytes={"x": ici_bytes},
-      ici_latency={"x": ici_latency},
-      hbm_bytes=itemsize * (mk + kn + mn),
-      peak_hbm_bytes=itemsize * (mk + kn),
+        flops=2 * m * k * n,
+        unfused_flops=2 * m * k * n,
+        ici_bytes={"x": ici_bytes},
+        ici_latency={"x": ici_latency},
+        hbm_bytes=itemsize * (mk + kn + mn),
+        peak_hbm_bytes=itemsize * (mk + kn),
     )
     self.assertDataclassEqual(fwd_results, expected)
 
@@ -303,12 +305,13 @@ class RooflineTest(jtu.JaxTestCase):
     # 2 for psum + 1 for rs.
     bwd_ici_bytes = 3 * int(bwd_itemsize * sharded_mk * axis_size_m1)
     expected = roofline.RooflineResult(
-      flops=2 * 2 * m * k * n,
-      ici_bytes={"x": bwd_ici_bytes},
-      ici_latency={"x": 3 * ici_latency},
-      hbm_bytes=2 * bwd_itemsize * (mk + kn + mn),
-      # Residuals + cotangents.
-      peak_hbm_bytes=bwd_itemsize * (mk + kn + mn),
+        flops=2 * 2 * m * k * n,
+        unfused_flops=2 * 2 * m * k * n,
+        ici_bytes={"x": bwd_ici_bytes},
+        ici_latency={"x": 3 * ici_latency},
+        hbm_bytes=2 * bwd_itemsize * (mk + kn + mn),
+        # Residuals + cotangents.
+        peak_hbm_bytes=bwd_itemsize * (mk + kn + mn),
     )
     self.assertDataclassEqual(bwd_results, expected)
 
@@ -387,11 +390,12 @@ class RooflineTest(jtu.JaxTestCase):
     ici_bytes = int(itemsize * sharded_kn * axis_size_m1)
     ici_latency = 2
     expected = roofline.RooflineResult(
-      flops=2 * m * k * n,
-      ici_bytes={"x": ici_bytes},
-      ici_latency={"x": ici_latency},
-      hbm_bytes=itemsize * (mk + kn + mn),
-      peak_hbm_bytes=itemsize * (mk + kn),
+        flops=2 * m * k * n,
+        unfused_flops=2 * m * k * n,
+        ici_bytes={"x": ici_bytes},
+        ici_latency={"x": ici_latency},
+        hbm_bytes=itemsize * (mk + kn + mn),
+        peak_hbm_bytes=itemsize * (mk + kn),
     )
     self.assertDataclassEqual(fwd_results, expected)
 
@@ -399,15 +403,39 @@ class RooflineTest(jtu.JaxTestCase):
     # Remat ag + rs.
     bwd_ici_bytes = 2 * int(bwd_itemsize * sharded_kn * axis_size_m1)
     expected = roofline.RooflineResult(
-      flops=2 * 2 * m * k * n,
-      ici_bytes={"x": bwd_ici_bytes},
-      ici_latency={"x": 2 * ici_latency},
-      hbm_bytes=2 * bwd_itemsize * (mk + kn + mn),
-      # Residuals + cotangents.
-      # We gather kn while computing the kn cotangents.
-      peak_hbm_bytes=bwd_itemsize * (kn + kn + mn),
+        flops=2 * 2 * m * k * n,
+        unfused_flops=2 * 2 * m * k * n,
+        ici_bytes={"x": bwd_ici_bytes},
+        ici_latency={"x": 2 * ici_latency},
+        hbm_bytes=2 * bwd_itemsize * (mk + kn + mn),
+        # Residuals + cotangents.
+        # We gather kn while computing the kn cotangents.
+        peak_hbm_bytes=bwd_itemsize * (kn + kn + mn),
     )
     self.assertDataclassEqual(bwd_results, expected)
+
+  def test_binary_ops(self):
+    for f in [
+        lambda a, b: a ^ b,
+        lambda a, b: a | b,
+        lambda a, b: a & b,
+        lambda a, b: a + b,
+        lambda a, b: a - b,
+        lambda a, b: a * b,
+        lambda a, b: a / b,
+        lambda a, b: a < b,
+        lambda a, b: a <= b,
+        lambda a, b: a > b,
+        lambda a, b: a >= b,
+        lambda a, b: a == b,
+    ]:
+      _, result = roofline.roofline(
+          f,
+          mesh=mesh.AbstractMesh(()),
+          in_specs=(P(), P()),
+          out_specs=P(),
+      )(jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int))
+      self.assertEqual(result.unfused_flops, 3 * 3 * 8)
 
 
 if __name__ == "__main__":

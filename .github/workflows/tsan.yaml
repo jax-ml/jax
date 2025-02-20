@@ -6,7 +6,7 @@ concurrency:
 
 on:
   schedule:
-    - cron: "0 12 * * *" # Daily at 12:00 UTC
+    - cron: "0 5 * * *" # Daily at 05:00 UTC == 00:00 EST == 21:00 PST
   workflow_dispatch: # allows triggering the workflow run manually
   pull_request: # Automatically trigger on pull requests affecting this file
     branches:
@@ -50,7 +50,7 @@ jobs:
           path: numpy
           submodules: true
 
-      - name: Restore cached CPython with TSAN
+      - name: Restore cached TSAN CPython
         id: cache-cpython-tsan-restore
         uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
         with:
@@ -58,7 +58,7 @@ jobs:
             ./python-tsan.tgz
           key: ${{ runner.os }}-cpython-tsan-${{ hashFiles('cpython/configure.ac') }}
 
-      - name: Build CPython with TSAN enabled
+      - name: Build CPython with enabled TSAN
         if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
         run: |
           cd cpython
@@ -173,6 +173,10 @@ jobs:
             --bazel_options=--copt=-g \
             --clang_path=/usr/bin/clang-18
 
+          # Update the patch to use TSAN instrumented numpy
+          sed -i "s|+--extra-index-url.*|+--extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/|" .github/workflows/requirements_lock_3_13_ft.patch
+          cat .github/workflows/requirements_lock_3_13_ft.patch
+
           # Apply a patch to numpy in requirements lock 3.13 ft to use the nightly version
           git apply .github/workflows/requirements_lock_3_13_ft.patch
 
@@ -194,4 +198,8 @@ jobs:
               --test_output=errors \
               --local_test_jobs=32 \
               --test_timeout=600 \
+              --config=resultstore \
+              --spawn_strategy=local \
+              --remote_cache=remotebuildexecution.googleapis.com \
+              --remote_instance_name=projects/tensorflow-testing/instances/default_instance \
               //tests:cpu_tests

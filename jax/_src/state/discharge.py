@@ -79,7 +79,8 @@ def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any], * ,
               if isinstance(v.aval, AbstractRef) and d
               else v.aval for v, d in zip(jaxpr.invars, should_discharge)]
   eval_jaxpr = lu.wrap_init(partial(_eval_jaxpr_discharge_state, jaxpr,
-                                    should_discharge, consts))
+                                    should_discharge, consts),
+                            debug_info=jaxpr.debug_info)
   new_jaxpr, _ , new_consts, () = pe.trace_to_jaxpr_dynamic(eval_jaxpr, in_avals)
   return new_jaxpr, new_consts
 
@@ -459,12 +460,13 @@ def _addupdate_discharge(x, val, idx, tree):
   return _prepend_scatter(x, indexer, val, add=True)
 
 @weakref_lru_cache
-def _cached_closed_jaxpr_discharge(closed_jaxpr):
+def _cached_closed_jaxpr_discharge(closed_jaxpr: core.ClosedJaxpr):
   jaxpr, consts = closed_jaxpr.jaxpr, closed_jaxpr.consts
   num_outs = len(jaxpr.outvars)
   discharged_jaxpr, discharged_consts = discharge_state(jaxpr, consts)
   discharged_closed_jaxpr = core.ClosedJaxpr(discharged_jaxpr, discharged_consts)
-  fun = lu.wrap_init(core.jaxpr_as_fun(discharged_closed_jaxpr))
+  fun = lu.wrap_init(core.jaxpr_as_fun(discharged_closed_jaxpr),
+                     debug_info=discharged_jaxpr.debug_info)
   return discharged_closed_jaxpr, num_outs, fun
 
 @register_discharge_rule(core.closed_call_p)
@@ -597,7 +599,6 @@ def _convert_outputs_to_writes(
   assert not jaxpr.constvars, "Jaxpr shouldn't have constvars."
 
   in_avals = [v.aval for v in jaxpr.invars]
-  @lu.wrap_init
   def eval_jaxpr(*refs):
     # We split the refs into the original input refs and the dummy residual
     # refs.
@@ -609,14 +610,15 @@ def _convert_outputs_to_writes(
   res_ref_avals = [AbstractRef(v.aval) if not isinstance(v.aval, AbstractRef)
                    else v.aval for v in jaxpr.outvars]
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
-      eval_jaxpr, [*in_avals, *res_ref_avals])
+      lu.wrap_init(eval_jaxpr,
+                   debug_info=jaxpr.debug_info),
+      [*in_avals, *res_ref_avals])
   assert not consts
   return jaxpr, [core.ShapedArray(a.shape, a.dtype) for a in res_ref_avals]
 
 def _convert_inputs_to_reads(num_res: int, jaxpr: core.Jaxpr) -> core.Jaxpr:
   assert not jaxpr.constvars, "Jaxpr should not have constvars"
 
-  @lu.wrap_init
   def eval_jaxpr(*refs):
     residual_refs, orig_refs = split_list(refs, [num_res])
     residual_vals = [r[...] for r in residual_refs]
@@ -628,7 +630,9 @@ def _convert_inputs_to_reads(num_res: int, jaxpr: core.Jaxpr) -> core.Jaxpr:
   res_ref_avals = [AbstractRef(aval) if not isinstance(aval, AbstractRef) else
                    aval for aval in res_val_avals]
   jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(
-      eval_jaxpr, [*res_ref_avals, *orig_ref_avals])
+      lu.wrap_init(eval_jaxpr,
+                   debug_info=jaxpr.debug_info),
+      [*res_ref_avals, *orig_ref_avals])
   return jaxpr
 
 def _run_state_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
@@ -805,7 +809,7 @@ def _run_state_partial_eval_custom(
   jaxpr_known, res_avals = _convert_outputs_to_writes(jaxpr_known_resout)
 
   # In a stateful partial_eval, the residuals should be `Ref`s.
-  res_avals = map(AbstractRef, res_avals)  # type: ignore
+  res_avals = map(AbstractRef, res_avals)
 
   known_invars, staged_invars = partition_list(in_unknowns, eqn.invars)
   known_outvars, staged_outvars = partition_list(in_unknowns, eqn.outvars)
@@ -828,7 +832,7 @@ def _run_state_partial_eval_custom(
   eqn_known = pe.new_jaxpr_eqn(known_and_res_invars,
                                [*known_outvars, *known_out_resvars],
                                run_state_p, known_params,
-                               known_effects, eqn.source_info)
+                               known_effects, eqn.source_info, eqn.ctx)
 
   jaxpr_staged = _convert_inputs_to_reads(len(res_avals), jaxpr_staged_resin_)
 
@@ -844,17 +848,18 @@ def _run_state_partial_eval_custom(
       *[v.aval for v in res_staged_invars], **staged_params)
   _, staged_outvars = partition_list(in_unknowns, eqn.outvars)
   if num_res:
-    @lu.wrap_init
+
     def staged(*args):
       out = run_state_p.bind(*args, **staged_params)
       return out[num_res:]
-    staged_call_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(staged,
-                                                             [v.aval for v in res_staged_invars])
+    staged_call_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(
+        lu.wrap_init(staged, debug_info=jaxpr_staged.debug_info),
+        [v.aval for v in res_staged_invars])
     eqn_staged = pe.new_jaxpr_eqn(res_staged_invars,
                                   staged_outvars,
                                   core.closed_call_p,
                                   dict(call_jaxpr=pe.close_jaxpr(staged_call_jaxpr)),
-                                  staged_effects, eqn.source_info)
+                                  staged_effects, eqn.source_info, eqn.ctx)
     assert len(res_staged_invars) == len(staged_call_jaxpr.invars)
     assert len(staged_outvars) == len(staged_call_jaxpr.outvars)
   else:
@@ -862,7 +867,7 @@ def _run_state_partial_eval_custom(
                                   staged_outvars,
                                   run_state_p,
                                   staged_params,
-                                  staged_effects, eqn.source_info)
+                                  staged_effects, eqn.source_info, eqn.ctx)
   new_vars = [*new_inst, *nonref_resvars, *ref_resvars]
   return eqn_known, eqn_staged, in_unknowns, in_unknowns, new_vars
 pe.partial_eval_jaxpr_custom_rules[run_state_p] = _run_state_partial_eval_custom
@@ -917,7 +922,9 @@ def _transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: Sequence[bool],
     ad.backward_pass(tangent_jaxpr, False, (), (*primals_args, *ct_args), ())
     return []
   jaxpr_trans, _, consts, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(trans), [v.aval for v in jaxpr.invars])
+      lu.wrap_init(trans,
+                   debug_info=jaxpr.debug_info),
+      [v.aval for v in jaxpr.invars])
   return jaxpr_trans, consts
 
 def _run_state_transpose(in_cts, *args, jaxpr: core.Jaxpr,
@@ -989,7 +996,7 @@ def _run_state_discharge_rule(in_avals: Sequence[core.AbstractValue],
 
 def initial_style_jaxpr(
     fun: Callable, in_tree: PyTreeDef, in_avals: Sequence[core.AbstractValue],
-    dbg: api_util.TracingDebugInfo,
+    dbg: core.DebugInfo,
   ) -> tuple[core.Jaxpr, list[Any], PyTreeDef]:
   return _initial_style_jaxpr(fun, in_tree, tuple(in_avals), dbg)
 
@@ -997,17 +1004,18 @@ def initial_style_jaxpr(
 def _initial_style_jaxpr(fun: Callable,
                          in_tree: api_util.PyTreeDef,
                          in_avals: Sequence[core.AbstractValue],
-                         debug: api_util.TracingDebugInfo):
-  fun_, out_tree_thunk = api_util.flatten_fun_nokwargs(lu.wrap_init(fun),
+                         debug: core.DebugInfo):
+  fun_, out_tree_thunk = api_util.flatten_fun_nokwargs(
+      lu.wrap_init(fun, debug_info=debug),
       tree_util.treedef_tuple((in_tree,)))
-  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun_, in_avals, debug)
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun_, in_avals)
   return jaxpr, consts, out_tree_thunk()
 
 
 T = TypeVar('T')
 def run_state(f: Callable[..., None]) -> Callable[[T], T]:
   def wrapped(args):
-    dbg = api_util.tracing_debug_info("run_state", f, (args,), {})
+    dbg = api_util.debug_info("run_state", f, (args,), {})
     flat_args, in_tree = tree_util.tree_flatten(args)
     ref_avals, ref_args = unzip2(map(get_ref_aval_from_value, flat_args))
     # There may be some uninitialized values here in ref_args.
@@ -1027,7 +1035,7 @@ def run_state(f: Callable[..., None]) -> Callable[[T], T]:
 
 def run_state_reference(f: Callable[..., None]):
   def wrapped(args):
-    dbg = api_util.tracing_debug_info("run_state", f, (args,), {})
+    dbg = api_util.debug_info("run_state", f, (args,), {})
     flat_args, in_tree = tree_util.tree_flatten(args)
     ref_avals, ref_args = unzip2(map(get_ref_aval_from_value, flat_args))
     jaxpr_, consts, _ = initial_style_jaxpr(f, in_tree, ref_avals, dbg)

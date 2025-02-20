@@ -71,8 +71,8 @@ ffi::Error RmsNormImpl(float eps, ffi::Buffer<ffi::F32> x,
 }
 
 // Wrap `RmsNormImpl` and specify the interface to XLA. If you need to declare
-// this handler in a header, you can use the `XLA_FFI_DECLASE_HANDLER_SYMBOL`
-// macro: `XLA_FFI_DECLASE_HANDLER_SYMBOL(RmsNorm)`.
+// this handler in a header, you can use the `XLA_FFI_DECLARE_HANDLER_SYMBOL`
+// macro: `XLA_FFI_DECLARE_HANDLER_SYMBOL(RmsNorm)`.
 XLA_FFI_DEFINE_HANDLER_SYMBOL(RmsNorm, RmsNormImpl,
                               ffi::Ffi::Bind()
                                   .Attr<float>("eps")

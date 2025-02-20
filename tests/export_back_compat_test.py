@@ -136,7 +136,7 @@ class CompatTest(bctu.CompatTestBase):
         cpu_eig_lapack_geev.data_2023_06_19,
         cpu_eigh_lapack_syev.data_2023_03_17,
         cpu_qr_lapack_geqrf.data_2023_03_17,
-        cuda_threefry2x32.data_2023_03_15, cuda_threefry2x32.data_2024_07_30,
+        cuda_threefry2x32.data_2024_07_30,
         cpu_lu_lapack_getrf.data_2023_06_14,
         cuda_lu_pivots_to_permutation.data_2024_08_08,
         cuda_lu_cusolver_getrf.data_2024_08_19,
@@ -206,12 +206,13 @@ class CompatTest(bctu.CompatTestBase):
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
 
-    data = self.load_testdata(cpu_cholesky_lapack_potrf.data_2023_06_19[dtype_name])
+    info = cpu_cholesky_lapack_potrf.data_2024_05_31[dtype_name]
+    data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol)
-    with config.export_ignore_forward_compatibility(True):
-      # FFI Kernel test
-      data = self.load_testdata(cpu_cholesky_lapack_potrf.data_2024_05_31[dtype_name])
-      self.run_one_test(func, data, rtol=rtol, atol=atol)
+
+    data = self.load_testdata(cpu_cholesky_lapack_potrf.data_2023_06_19[dtype_name])
+    self.run_one_test(func, data, rtol=rtol, atol=atol,
+                      expect_current_custom_calls=info["custom_call_targets"])
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -230,7 +231,6 @@ class CompatTest(bctu.CompatTestBase):
                             compute_left_eigenvectors=True,
                             compute_right_eigenvectors=True)
 
-    data = self.load_testdata(cpu_eig_lapack_geev.data_2023_06_19[dtype_name])
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
 
@@ -270,13 +270,14 @@ class CompatTest(bctu.CompatTestBase):
       check_left_eigenvectors(operand, all_w_run, res_run[1])
       check_right_eigenvectors(operand, all_w_run, res_run[2])
 
+    info = cpu_eig_lapack_geev.data_2024_08_19[dtype_name]
+    data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_eig_results)
-    with config.export_ignore_forward_compatibility(True):
-      # FFI Kernel test
-      data = self.load_testdata(cpu_eig_lapack_geev.data_2024_08_19[dtype_name])
-      self.run_one_test(func, data, rtol=rtol, atol=atol,
-                        check_results=check_eig_results)
+    data = self.load_testdata(cpu_eig_lapack_geev.data_2023_06_19[dtype_name])
+    self.run_one_test(func, data, rtol=rtol, atol=atol,
+                      check_results=check_eig_results,
+                      expect_current_custom_calls=info["custom_call_targets"])
 
   @staticmethod
   def eigh_input(shape, dtype):
@@ -640,20 +641,19 @@ class CompatTest(bctu.CompatTestBase):
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
 
-    data = self.load_testdata(cpu_schur_lapack_gees.data_2023_07_16[dtype_name])
-
     def check_schur_results(res_run, res_expected, *, rtol, atol):
       t_run, s_run = res_run
       self.assertAllClose(input, s_run @ t_run @ np.conj(s_run.T),
                           rtol=rtol, atol=atol)
 
+    info = cpu_schur_lapack_gees.data_2024_11_29[dtype_name]
+    data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_schur_results)
-    with config.export_ignore_forward_compatibility(True):
-      # FFI Kernel test
-      data = self.load_testdata(cpu_schur_lapack_gees.data_2024_11_29[dtype_name])
-      self.run_one_test(func, data, rtol=rtol, atol=atol,
-                        check_results=check_schur_results)
+    data = self.load_testdata(cpu_schur_lapack_gees.data_2023_07_16[dtype_name])
+    self.run_one_test(func, data, rtol=rtol, atol=atol,
+                      check_results=check_schur_results,
+                      expect_current_custom_calls=info["custom_call_targets"])
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -732,21 +732,21 @@ class CompatTest(bctu.CompatTestBase):
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
 
-    data = self.load_testdata(cpu_triangular_solve_blas_trsm.data_2023_07_16[dtype_name])
-
     def check_triangular_solve_results(res_run, res_expected, *, rtol, atol):
       x, = res_run
       matmul = partial(jnp.matmul, precision=lax.Precision.HIGHEST)
       y = matmul(a, x) if left_side else matmul(x, a)
       self.assertArraysAllClose(y, jnp.broadcast_to(b, y.shape), rtol=rtol, atol=atol)
 
+    info = cpu_triangular_solve_blas_trsm.data_2024_12_02[dtype_name]
+    data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_triangular_solve_results)
-    with config.export_ignore_forward_compatibility(True):
-      # FFI Kernel test
-      data = self.load_testdata(cpu_triangular_solve_blas_trsm.data_2024_12_02[dtype_name])
-      self.run_one_test(func, data, rtol=rtol, atol=atol,
-                        check_results=check_triangular_solve_results)
+
+    data = self.load_testdata(cpu_triangular_solve_blas_trsm.data_2023_07_16[dtype_name])
+    self.run_one_test(func, data, rtol=rtol, atol=atol,
+                      check_results=check_triangular_solve_results,
+                      expect_current_custom_calls=info["custom_call_targets"])
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -767,16 +767,15 @@ class CompatTest(bctu.CompatTestBase):
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
 
+    info = cpu_hessenberg_lapack_gehrd.data_2024_08_31[dtype_name]
+    data = self.load_testdata(info)
+    self.run_one_test(func, data, rtol=rtol, atol=atol)
+
     data = self.load_testdata(
         cpu_hessenberg_lapack_gehrd.data_2024_08_30[dtype_name]
     )
-    self.run_one_test(func, data, rtol=rtol, atol=atol)
-    with config.export_ignore_forward_compatibility(True):
-      # FFI Kernel test
-      data = self.load_testdata(
-          cpu_hessenberg_lapack_gehrd.data_2024_08_31[dtype_name]
-      )
-      self.run_one_test(func, data, rtol=rtol, atol=atol)
+    self.run_one_test(func, data, rtol=rtol, atol=atol,
+                      expect_current_custom_calls=info["custom_call_targets"])
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -797,16 +796,15 @@ class CompatTest(bctu.CompatTestBase):
     rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
 
+    info = cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_12_01[dtype_name]
+    data = self.load_testdata(info)
+    self.run_one_test(func, data, rtol=rtol, atol=atol)
+
     data = self.load_testdata(
         cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_09_03[dtype_name]
     )
-    self.run_one_test(func, data, rtol=rtol, atol=atol)
-    with config.export_ignore_forward_compatibility(True):
-      # FFI Kernel test
-      data = self.load_testdata(
-          cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_12_01[dtype_name]
-      )
-      self.run_one_test(func, data, rtol=rtol, atol=atol)
+    self.run_one_test(func, data, rtol=rtol, atol=atol,
+                      expect_current_custom_calls=info["custom_call_targets"])
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -855,11 +853,6 @@ class CompatTest(bctu.CompatTestBase):
     with config.threefry_partitionable(False):
       def func(x):
         return jax.random.uniform(x, (2, 4), dtype=np.float32)
-
-      # TODO(b/338022728): remove after 6 months
-      data = self.load_testdata(cuda_threefry2x32.data_2023_03_15)
-      self.run_one_test(func, data,
-                        expect_current_custom_calls=["cu_threefry2x32_ffi"])
 
       data = self.load_testdata(cuda_threefry2x32.data_2024_07_30)
       self.run_one_test(func, data)

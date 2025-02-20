@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Union
+from typing import Any, Sequence, Union
 
 from jax._src import core
 from jax._src import tree_util
@@ -198,20 +198,20 @@ class NDIndexer:
       # TODO(slebedev): Consider requiring `indices` to be a Sequence.
       indices = (indices,)
 
-    indices = list(indices)
     if num_ellipsis := sum(idx is ... for idx in indices):
       if num_ellipsis > 1:
         raise ValueError("Only one ellipsis is supported.")
       # Expand ... so that `indices` has the same length as `shape`.
       ip = indices.index(...)
+      indices = list(indices)
       indices[ip:ip+1] = [slice(None)] * (len(shape) - len(indices) + 1)
-    if len(indices) > len(shape):
       indices = tuple(indices)
+    if len(indices) > len(shape):
       raise ValueError("`indices` must not be longer than `shape`: "
                        f"{indices=}, {shape=}")
     elif len(indices) < len(shape):
       # Pad `indices` to have the same length as `shape`.
-      indices.extend([slice(None)] * (len(shape) - len(indices)))
+      indices = (*indices, *[slice(None)] * (len(shape) - len(indices)))
 
     # Promote all builtin `slice`s to `Slice`.
     indices = tuple(
@@ -220,6 +220,7 @@ class NDIndexer:
 
     is_int_indexing = [not isinstance(i, Slice) for i in indices]
     if any(is_int_indexing):
+      int_indexers: Sequence[Any]
       other_indexers, int_indexers = partition_list(is_int_indexing, indices)
       indexer_shapes = tuple(core.get_aval(i).shape for i in int_indexers)
       try:

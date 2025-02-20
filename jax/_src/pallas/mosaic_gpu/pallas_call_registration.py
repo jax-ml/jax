@@ -55,6 +55,12 @@ def pallas_call_lowering(
     print(f"The grid mapping for pallas_call {name_and_src_info}:")
     print(grid_mapping)
 
+  thread_semantics = compiler_params.get("mosaic_gpu", {}).get(
+      "thread_semantics", mosaic_core.ThreadSemantics.Lane
+  )
+  if thread_semantics == mosaic_core.ThreadSemantics.Warpgroup:
+    mosaic_core.dialect.register_dialect(ctx.module_context.context)  # pytype: disable=attribute-error
+
   lowering_result = lowering.lower_jaxpr_to_module(
       grid_mapping,
       jaxpr,

@@ -51,19 +51,6 @@ namespace JAX_GPU_NAMESPACE {
 
 namespace ffi = ::xla::ffi;
 
-template <typename T>
-inline absl::StatusOr<T*> AllocateWorkspace(ffi::ScratchAllocator& scratch,
-                                            int64_t size,
-                                            std::string_view name) {
-  auto maybe_workspace = scratch.Allocate(sizeof(T) * size);
-  if (!maybe_workspace.has_value()) {
-    return absl::Status(
-        absl::StatusCode::kResourceExhausted,
-        absl::StrFormat("Unable to allocate workspace for %s", name));
-  }
-  return static_cast<T*>(maybe_workspace.value());
-}
-
 #if JAX_GPU_HAVE_64_BIT
 
 // Map an FFI buffer element type to the appropriate GPU solver type.
@@ -1011,6 +998,82 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(GesvdjFfi, GesvdjDispatch,
                                   .Ret<ffi::AnyBuffer>()         // u
                                   .Ret<ffi::AnyBuffer>()         // v
                                   .Ret<ffi::Buffer<ffi::S32>>()  // info
+);
+
+// csrlsvqr: Linear system solve via Sparse QR
+
+template <typename T>
+ffi::Error CsrlsvqrImpl(int64_t n, int64_t nnz, double tol, int reorder,
+                        gpuStream_t stream, ffi::AnyBuffer csrValA,
+                        ffi::Buffer<ffi::S32> csrColIndA,
+                        ffi::Buffer<ffi::S32> csrRowPtrA, ffi::AnyBuffer b,
+                        ffi::Result<ffi::AnyBuffer> x) {
+  FFI_ASSIGN_OR_RETURN(auto handle, SpSolverHandlePool::Borrow(stream));
+
+  FFI_ASSIGN_OR_RETURN(auto int_n, MaybeCastNoOverflow<int>(n));
+  FFI_ASSIGN_OR_RETURN(auto int_nnz, MaybeCastNoOverflow<int>(nnz));
+
+  cusparseMatDescr_t matdesc = nullptr;
+  JAX_FFI_RETURN_IF_GPU_ERROR(cusparseCreateMatDescr(&matdesc));
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      cusparseSetMatType(matdesc, CUSPARSE_MATRIX_TYPE_GENERAL));
+  JAX_FFI_RETURN_IF_GPU_ERROR(
+      cusparseSetMatIndexBase(matdesc, CUSPARSE_INDEX_BASE_ZERO));
+
+  auto* csrValA_data = static_cast<T*>(csrValA.untyped_data());
+  auto* csrColIndA_data = csrColIndA.typed_data();
+  auto* csrRowPtrA_data = csrRowPtrA.typed_data();
+  auto* b_data = static_cast<T*>(b.untyped_data());
+  auto* x_data = static_cast<T*>(x->untyped_data());
+
+  int singularity = -1;
+  auto result = solver::Csrlsvqr<T>(
+      handle.get(), int_n, int_nnz, matdesc, csrValA_data, csrRowPtrA_data,
+      csrColIndA_data, b_data, tol, reorder, x_data, &singularity);
+  cusparseDestroyMatDescr(matdesc);
+  FFI_RETURN_IF_ERROR_STATUS(result);
+
+  if (singularity >= 0) {
+    return ffi::Error(ffi::ErrorCode::kInternal,
+                      "Singular matrix in linear solve.");
+  }
+
+  return ffi::Error::Success();
+}
+
+ffi::Error CsrlsvqrDispatch(gpuStream_t stream, int reorder, double tol,
+                            ffi::AnyBuffer csrValA,
+                            ffi::Buffer<ffi::S32> csrColIndA,
+                            ffi::Buffer<ffi::S32> csrRowPtrA, ffi::AnyBuffer b,
+                            ffi::Result<ffi::AnyBuffer> x) {
+  auto dataType = csrValA.element_type();
+  if (dataType != b.element_type() || dataType != x->element_type()) {
+    return ffi::Error::InvalidArgument(
+        "The inputs and outputs to csrlsvqr must have the same element type");
+  }
+  int64_t n = b.element_count();
+  int64_t nnz = csrValA.element_count();
+  FFI_RETURN_IF_ERROR(
+      CheckShape(csrColIndA.dimensions(), nnz, "csrColIndA", "csrlsvqr"));
+  FFI_RETURN_IF_ERROR(
+      CheckShape(csrRowPtrA.dimensions(), n + 1, "csrColPtrA", "csrlsvqr"));
+  FFI_RETURN_IF_ERROR(CheckShape(x->dimensions(), n, "x", "csrlsvqr"));
+  SOLVER_DISPATCH_IMPL(CsrlsvqrImpl, n, nnz, tol, reorder, stream, csrValA,
+                       csrColIndA, csrRowPtrA, b, x);
+  return ffi::Error::InvalidArgument(absl::StrFormat(
+      "Unsupported dtype %s in csrlsvqr", absl::FormatStreamed(dataType)));
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(CsrlsvqrFfi, CsrlsvqrDispatch,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Attr<int>("reorder")          // reorder
+                                  .Attr<double>("tol")           // tol
+                                  .Arg<ffi::AnyBuffer>()         // csrValA
+                                  .Arg<ffi::Buffer<ffi::S32>>()  // csrColIndA
+                                  .Arg<ffi::Buffer<ffi::S32>>()  // csrRowPtrA
+                                  .Arg<ffi::AnyBuffer>()         // b
+                                  .Ret<ffi::AnyBuffer>()         // x
 );
 
 #endif  // JAX_GPU_CUDA

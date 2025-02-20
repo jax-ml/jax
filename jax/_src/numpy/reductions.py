@@ -231,7 +231,7 @@ def _reduce_sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                 initial: ArrayLike | None = None, where: ArrayLike | None = None,
                 promote_integers: bool = True) -> Array:
   return _reduction(a, "sum", lax.add, 0, preproc=_cast_to_numeric,
-                    bool_op=lax.bitwise_or, upcast_f16_for_computation=True,
+                    bool_op=lax.bitwise_or, upcast_f16_for_computation=(dtype is None),
                     axis=axis, dtype=dtype, out=out, keepdims=keepdims,
                     initial=initial, where_=where, parallel_reduce=lax.psum,
                     promote_integers=promote_integers)
@@ -319,7 +319,7 @@ def _reduce_prod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None
                  initial: ArrayLike | None = None, where: ArrayLike | None = None,
                  promote_integers: bool = True) -> Array:
   return _reduction(a, "prod", lax.mul, 1, preproc=_cast_to_numeric,
-                    bool_op=lax.bitwise_and, upcast_f16_for_computation=True,
+                    bool_op=lax.bitwise_and, upcast_f16_for_computation=(dtype is None),
                     axis=axis, dtype=dtype, out=out, keepdims=keepdims,
                     initial=initial, where_=where, promote_integers=promote_integers)
 
@@ -812,7 +812,9 @@ def mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
     a: input array.
     axis: optional, int or sequence of ints, default=None. Axis along which the
       mean to be computed. If None, mean is computed along all the axes.
-    dtype: The type of the output array. Default=None.
+    dtype: The type of the output array. If None (default) then the output dtype
+      will be match the input dtype for floating point inputs, or be set to float32
+      or float64 for non-floating-point inputs.
     keepdims: bool, default=False. If true, reduced axes are left in the result
       with size 1.
     where: optional, boolean array, default=None. The elements to be used in the
@@ -821,6 +823,10 @@ def mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
 
   Returns:
     An array of the mean along the given axis.
+
+  Notes:
+    For inputs of type `float16` or `bfloat16`, the reductions will be performed at
+    float32 precision.
 
   See also:
     - :func:`jax.numpy.average`: Compute the weighted average of array elements
@@ -859,9 +865,10 @@ def mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
            [6. ]], dtype=float32)
   """
   return _mean(a, _ensure_optional_axes(axis), dtype, out, keepdims,
-               where=where)
+               where=where, upcast_f16_for_computation=(dtype is None))
 
-@partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'), inline=True)
+@partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims', 'upcast_f16_for_computation'),
+         inline=True)
 def _mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
           out: None = None, keepdims: bool = False, *,
           upcast_f16_for_computation: bool = True,

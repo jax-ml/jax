@@ -38,6 +38,7 @@ from jax import lax
 import jax.numpy as jnp
 from jax import random
 from jax import tree_util
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
@@ -442,7 +443,10 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
             partial(shape_poly.compute_dim_vars_from_arg_shapes,
                     avals,
                     args_kwargs_tree=tree_util.tree_flatten((avals, {}))[1]),
-            args_tf, avals, "")
+            args_tf, avals, "",
+        debug_info=api_util.debug_info("jax2tf dim_vars",
+                                       shape_poly.compute_dim_vars_from_arg_shapes,
+                                       avals, {}))
         if expected_shapes is not None:
           expected_avals = tree_util.tree_map(
               lambda shape_str: core.ShapedArray(

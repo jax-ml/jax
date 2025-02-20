@@ -60,6 +60,7 @@ from functools import partial
 import numpy as np
 
 from jax import lax
+from jax import api_util
 import jax.numpy as jnp
 from jax.experimental import pjit
 from jax.tree_util import (register_pytree_node, tree_structure,
@@ -147,7 +148,9 @@ def jet(fun, primals, series):
     store.store(tree)
     return ans
 
-  f, out_tree = flatten_fun_output(lu.wrap_init(fun))
+  f, out_tree = flatten_fun_output(
+      lu.wrap_init(fun,
+                   debug_info=api_util.debug_info("jet", fun, primals, {})))
   out_primals, out_terms = jet_fun(jet_subtrace(f), order).call_wrapped(primals, series)
   return tree_unflatten(out_tree(), out_primals), tree_unflatten(out_tree(), out_terms)
 
@@ -641,18 +644,18 @@ def _gen_reduce_choose_taylor_rule(chooser_fun):
     location_indicators = lax.convert_element_type(
         lax_internal._eq_meet(operand, lax.reshape(primal_out, shape)),
         primal_dtype)
-    counts = lax_internal._reduce_sum(location_indicators, axes)
+    counts = lax.reduce_sum(location_indicators, axes)
     def _reduce_chooser_taylor_rule(g):
       return lax.div(
-          lax_internal._reduce_sum(lax.mul(g, location_indicators), axes),
+          lax.reduce_sum(lax.mul(g, location_indicators), axes),
           counts)
     series_out = [_reduce_chooser_taylor_rule(g) for g in gs]
     return primal_out, series_out
   return chooser_taylor_rule
 jet_rules[lax.reduce_max_p] = _gen_reduce_choose_taylor_rule(
-    lax_internal._reduce_max)
+    lax.reduce_max)
 jet_rules[lax.reduce_min_p] = _gen_reduce_choose_taylor_rule(
-    lax_internal._reduce_min)
+    lax.reduce_min)
 
 def _abs_taylor_rule(x, series_in, **params):
   x, = x
@@ -723,7 +726,7 @@ jet_rules[lax.scatter_add_p] = _scatter_add_rule
 def _jet_jaxpr(
     jaxpr: core.ClosedJaxpr, order: int, primals_and_series_avals, in_tree_def
 ) -> tuple[core.ClosedJaxpr, Any]:
-  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
+  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr), debug_info=jaxpr.jaxpr.debug_info)
   f_jet, out_tree_def = traceable(jet_fun(jet_subtrace(f), order), in_tree_def)
   jaxpr_jet, _, consts, () = pe.trace_to_jaxpr_dynamic(
       f_jet, primals_and_series_avals)

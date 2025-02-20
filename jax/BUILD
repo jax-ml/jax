@@ -126,6 +126,7 @@ py_library(
         ":internal",
     ] + jax_test_util_visibility,
     deps = [
+        ":compilation_cache_internal",
         ":jax",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
@@ -208,6 +209,7 @@ py_library_providing_imports_info(
         "_src/dispatch.py",
         "_src/dlpack.py",
         "_src/earray.py",
+        "_src/error_check.py",
         "_src/ffi.py",
         "_src/flatten_util.py",
         "_src/interpreters/__init__.py",
@@ -297,6 +299,7 @@ py_library_providing_imports_info(
         ":mesh",
         ":mlir",
         ":monitoring",
+        ":named_sharding",
         ":op_shardings",
         ":partial_eval",
         ":partition_spec",
@@ -467,6 +470,7 @@ pytype_strict_library(
         ":dtypes",
         ":effects",
         ":mesh",
+        ":named_sharding",
         ":partition_spec",
         ":pretty_printer",
         ":source_info_util",
@@ -499,6 +503,7 @@ pytype_strict_library(
         ":traceback_util",
         ":typing",
         ":util",
+        "//jax/_src/lib",
     ] + py_deps("ml_dtypes") + py_deps("numpy"),
 )
 
@@ -564,6 +569,7 @@ pytype_strict_library(
     srcs = ["_src/interpreters/mlir.py"],
     deps = [
         ":ad_util",
+        ":api_util",
         ":config",
         ":core",
         ":dtypes",
@@ -650,6 +656,7 @@ pytype_strict_library(
         "//jax/_src/pallas",
         "//jax/_src/pallas/mosaic:core",
         "//jax/_src/pallas/mosaic:helpers",
+        "//jax/_src/pallas/mosaic:interpret",
         "//jax/_src/pallas/mosaic:lowering",
         "//jax/_src/pallas/mosaic:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/mosaic:pipeline",
@@ -894,6 +901,7 @@ pytype_strict_library(
         ":core",
         ":internal_mesh_utils",
         ":mesh",
+        ":named_sharding",
         ":op_shardings",
         ":partition_spec",
         ":sharding",
@@ -902,6 +910,18 @@ pytype_strict_library(
         ":tree_util",
         ":util",
         ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "named_sharding",
+    srcs = ["_src/named_sharding.py"],
+    deps = [
+        ":mesh",
+        ":partition_spec",
+        ":sharding",
+        ":util",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )

@@ -61,6 +61,10 @@ jobs:
       gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax-fork/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
   run-pytest-cpu:
+    # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
+    # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
+    # still want to run the tests for other platforms.
+    if: ${{ always() }}
     needs: build-jaxlib-artifact
     uses: ./.github/workflows/pytest_cpu.yml
     strategy:
@@ -75,9 +79,14 @@ jobs:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
+      install-jax-current-commit: 1
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
   run-pytest-cuda:
+    # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
+    # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
+    # still want to run the tests for other platforms.
+    if: ${{ always() }}
     needs: [build-jaxlib-artifact, build-cuda-artifacts]
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
@@ -101,10 +110,15 @@ jobs:
       python: ${{ matrix.python }}
       cuda:  ${{ matrix.cuda }}
       enable-x64:  ${{ matrix.enable-x64 }}
+      install-jax-current-commit: 1
       # GCS upload URI is the same for both artifact build jobs
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
   run-bazel-test-cuda:
+    # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
+    # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
+    # still want to run the tests for other platforms.
+    if: ${{ always() }}
     needs: [build-jaxlib-artifact, build-cuda-artifacts]
     uses: ./.github/workflows/bazel_cuda_non_rbe.yml
     strategy:

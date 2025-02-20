@@ -125,6 +125,11 @@ jax_multiplatform_test(
     srcs = ["debug_nans_test.py"],
 )
 
+jax_multiplatform_test(
+    name = "distributed_test",
+    srcs = ["distributed_test.py"],
+)
+
 jax_py_test(
     name = "multiprocess_gpu_test",
     srcs = ["multiprocess_gpu_test.py"],
@@ -161,6 +166,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "ffi_test",
     srcs = ["ffi_test.py"],
+    enable_configs = [
+        "gpu_p100x2",
+    ],
     # TODO(dfm): Remove after removal of jex.ffi imports.
     deps = ["//jax:extend"],
 )
@@ -562,6 +570,7 @@ jax_multiplatform_test(
     srcs = ["lax_scipy_special_functions_test.py"],
     backend_tags = {
         "gpu": ["noasan"],  # Times out.
+        "cpu": ["noasan"],  # Times out.
     },
     shard_count = {
         "cpu": 20,
@@ -1114,6 +1123,11 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "error_check_test",
+    srcs = ["error_check_test.py"],
+)
+
+jax_multiplatform_test(
     name = "stax_test",
     srcs = ["stax_test.py"],
     shard_count = {
@@ -1518,7 +1532,7 @@ jax_multiplatform_test(
     ],
     shard_count = {
         "cpu": 4,
-        "gpu": 4,
+        "gpu": 6,
         "tpu": 4,
     },
     tags = [
@@ -1608,6 +1622,11 @@ jax_py_test(
 )
 
 jax_multiplatform_test(
+    name = "string_array_test",
+    srcs = ["string_array_test.py"],
+)
+
+jax_multiplatform_test(
     name = "cudnn_fusion_test",
     srcs = ["cudnn_fusion_test.py"],
     enable_backends = [],
@@ -1642,6 +1661,7 @@ exports_files(
         "shard_map_test.py",
         "transfer_guard_test.py",
         "layout_test.py",
+        "string_array_test.py",
     ],
     visibility = jax_test_file_visibility,
 )

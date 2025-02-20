@@ -22,6 +22,10 @@ from jax import export
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
 import numpy as np
+try:
+  from jax._src.lib import triton
+except ImportError:
+  triton = None  # Windows builds don't have Triton.
 
 
 jax.config.parse_flags_with_absl()
@@ -49,12 +53,19 @@ class ExportTest(jtu.JaxTestCase):
                             out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype)
                             )(x, y)
 
+    platforms = ["tpu"]
+    # TODO(b/394629193): Remove True once the bug is fixed.
+    if True or triton.has_compilation_handler("cuda"):
+      # Only include CUDA if GPU support is linked in.
+      platforms.append("cuda")
+
     a = np.arange(8 * 16, dtype=np.int32).reshape((8, 16))
     exp = export.export(
         add_vectors,
-        platforms=["tpu", "cuda"],
+        platforms=platforms,
         # The Pallas GPU custom call is not enabled for export by default.
         disabled_checks=[
+            export.DisabledSafetyCheck.custom_call("triton_kernel_call"),
             export.DisabledSafetyCheck.custom_call("__gpu$xla.gpu.triton")
         ]
     )(a, a)

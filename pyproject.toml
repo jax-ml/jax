@@ -7,6 +7,7 @@ show_error_codes = true
 disable_error_code = "attr-defined, name-defined, annotation-unchecked"
 no_implicit_optional = true
 warn_redundant_casts = true
+allow_redefinition = true
 
 [[tool.mypy.overrides]]
 module = [
@@ -58,6 +59,12 @@ filterwarnings = [
     # TODO(jakevdp): remove when array_api_tests stabilize
     "default:.*not machine-readable.*:UserWarning",
     "default:Special cases found for .* but none were parsed.*:UserWarning",
+
+    # jax.profiler imports tensorflow.python.profiler.trace internally, which
+    # will fail with python 3.12 and some versions of protobuf because the
+    # "error" entry above promotes DeprecationWarnings into errors. See also:
+    # https://github.com/protocolbuffers/protobuf/issues/12186#issuecomment-1745679358
+    "ignore:Type google\\._upb\\._message\\.(Scalar|Message)MapContainer uses PyType_Spec with a metaclass that has custom tp_new\\. This is deprecated and will no longer be allowed in Python 3\\.14\\.:DeprecationWarning",
 
     # NOTE: this is probably not where you want to add code to suppress a
     # warning. Only pytest tests look at this list, whereas Bazel tests also

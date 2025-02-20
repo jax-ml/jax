@@ -17,7 +17,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import dataclasses
+import enum
 from functools import partial, reduce
+import types
 from typing import Any, Literal
 
 import jax
@@ -36,9 +38,9 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas import primitives
+from jax._src.pallas import helpers as pallas_helpers
 from jax._src.pallas import hlo_interpreter
-from jax._src.pallas import utils as pallas_utils
+from jax._src.pallas import primitives
 from jax._src.state import discharge as state_discharge
 from jax._src.state import types as state_types
 from jax._src.util import (
@@ -82,31 +84,43 @@ pallas_call_p.def_impl(_pallas_call_impl)
 
 
 def _pallas_call_abstract_eval(
-    *avals, out_avals: tuple[jax_core.AbstractValue, ...], **_
+    *avals,
+    out_avals: tuple[jax_core.AbstractValue, ...],
+    interpret,
+    backend,
+    **params
 ):
   del avals
+
+  if isinstance(interpret, mosaic_tpu_interpret.TPUInterpretParams):
+    # Report effects that will be introduced when running/lowering
+    # mosaic_tpu_interpret.mosaic_tpu_interpret.interpret_pallas_call .
+    effs = mosaic_tpu_interpret.get_interpret_effects()
+  else:
+    effs = jax_core.no_effects
+
   # Make sure we don't return ShapedArrayWithMemorySpace to the outside world.
   return [
       jax_core.ShapedArray(a.shape, a.dtype, a.weak_type)
       if isinstance(a, pallas_core.ShapedArrayWithMemorySpace)
       else a
       for a in out_avals
-  ]
+  ], effs
 
 
-pallas_call_p.def_abstract_eval(_pallas_call_abstract_eval)
+pallas_call_p.def_effectful_abstract_eval(_pallas_call_abstract_eval)
 
 
 def _pallas_call_jvp_rule(
     primals,
     tangents,
     *,
-    jaxpr,
+    jaxpr: jax_core.Jaxpr,
     name_and_src_info,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping,
-    debug,
-    interpret,
+    debug: bool,
+    interpret: bool,
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
@@ -228,7 +242,9 @@ def _batch_block_mapping(
 
   with grid_mapping.trace_env():
     block_mapping_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(_block_map_function), idx_avals)
+        lu.wrap_init(_block_map_function,
+                     debug_info=block_mapping.index_map_jaxpr.jaxpr.debug_info),
+        idx_avals)
   shape = block_mapping.block_shape
   if dim is batching.not_mapped:
     new_block_shape = shape
@@ -550,7 +566,7 @@ def _pallas_call_batching_rule(
       ragged_axis_values.append(None)  # type: ignore[arg-type]
 
   all_dims = list(dims) + [0] * grid_mapping.num_outputs
-  ragged_axis_values = ragged_axis_values + [None] * grid_mapping.num_outputs  # type: ignore[list-item]
+  ragged_axis_values = ragged_axis_values + [None] * grid_mapping.num_outputs
 
   num_index_operands = grid_mapping.num_index_operands
   num_scratch_operands = grid_mapping.num_scratch_operands
@@ -713,7 +729,7 @@ def _pallas_call_batching_rule(
     for pos, invar in enumerate(jaxpr.invars):
       ragged_axis_values[pos] = var_to_raggedness[invar]
 
-    per_input_ragged_axis_dim = []
+    per_input_ragged_axis_dim: list[int | None] = []
     for rav in ragged_axis_values:
       if rav is not None:
         per_input_ragged_axis_dim.append(rav[1])
@@ -739,7 +755,7 @@ def _pallas_call_batching_rule(
       # b_len_mod = jnp.equal(jnp.mod(b_len, val_at_ragged_dim), 0)
       # checkify.check(b_len_mod, "b_len % val_at_ragged_dim != 0")
 
-      @pallas_utils.when(run_kernel)
+      @pallas_helpers.when(run_kernel)
       def f():
         # Important! This allows us to trace the inner kernel with the correct
         # grid to preserve user program_id semantics. Ex: program_id(0) will
@@ -875,11 +891,10 @@ def _pallas_call_batching_rule(
 
   batched_out_avals = []
   for aval in out_avals:
-    sharding = (aval.sharding.with_spec(tuple_insert(aval.sharding.spec, 0, None))
-                if config.sharding_in_types.value else None)
+    sharding = aval.sharding.with_spec(tuple_insert(aval.sharding.spec, 0, None))
     shape = tuple_insert(aval.shape, 0, axis_size)
     batched_out_avals.append(aval.update(shape=shape, sharding=sharding))
-  batched_out_avals = tuple(batched_out_avals)  # type: ignore
+  batched_out_avals = tuple(batched_out_avals)
 
   out = pallas_call_p.bind(
       *dynamic_grid_args,
@@ -987,7 +1002,10 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
     )
   flat_args, jaxpr_in_tree = jax.tree_util.tree_flatten((jnp.int32(0),))
   wrapped_loop, _ = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(f), jaxpr_in_tree)
+      lu.wrap_init(f,
+                   debug_info=api_util.debug_info("checkify oob_grid_access",
+                                                  f, (0,), {})),
+      jaxpr_in_tree)
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
     avals_in = map(jax_core.get_aval, flat_args)
     traced_loop, _, consts, () = pe.trace_to_jaxpr_dynamic(
@@ -1018,7 +1036,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
   #   returning them, since pallas kernels do not return outputs.
   # 4) Create block specs for the error state and call pallas_call with
   #   the new kernel.
-  dynamic_grid_bounds, scalars, args = split_list(  # type: ignore
+  dynamic_grid_bounds, scalars, args = split_list(
       args, [grid_mapping.num_dynamic_grid_bounds,
              grid_mapping.num_index_operands]
   )
@@ -1098,13 +1116,14 @@ def pallas_call_checkify_rule(error: checkify.Error,
   retrace_in_avals = [*shaped_scalar_avals, *error_memref_aval, *input_aval,
                       *error_memref_aval, *output_aval, *scratch_aval]
   jaxpr_flat_avals, jaxpr_in_tree = tree_util.tree_flatten(retrace_in_avals)
+  debug = api_util.debug_info("checkify_pallas", checked_kernel_fn,
+                              retrace_in_avals, {})
   wrapped_kernel_with_err, out_tree_thunk = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(checked_kernel_fn), jaxpr_in_tree)
-  debug = api_util.tracing_debug_info("checkify_pallas", checked_kernel_fn,
-                                      retrace_in_avals, {})
+      lu.wrap_init(checked_kernel_fn, debug_info=debug), jaxpr_in_tree)
+
   with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
     final_jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
-        wrapped_kernel_with_err, jaxpr_flat_avals, debug)
+        wrapped_kernel_with_err, jaxpr_flat_avals)
 
   # Prepare pallas_call inputs. We need to create new block specs
   # for the new error inputs and outputs.
@@ -1161,16 +1180,16 @@ def _trace_kernel_to_jaxpr(
     kernel_in_transforms: tuple[tuple[pallas_core.Transform, ...], ...],
     indexer: bool = False,
 ) -> tuple[jax_core.ClosedJaxpr, tuple[jax.Array, ...]]:
+  fake_kernel_args = kernel_in_tree.unflatten(kernel_avals)
+  debug = api_util.debug_info("pallas_call", fun, fake_kernel_args, {})
   wrapped_kernel_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(fun), kernel_in_tree)
+      lu.wrap_init(fun, debug_info=debug), kernel_in_tree)
   wrapped_kernel_fun = primitives.wrap_with_transforms(
       wrapped_kernel_fun, kernel_in_transforms
   )
-  fake_kernel_args = kernel_in_tree.unflatten(kernel_avals)
-  debug = api_util.tracing_debug_info("pallas_call", fun, fake_kernel_args, {})
   with grid_mapping.trace_env():
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_kernel_fun,
-                                                     kernel_avals, debug)
+                                                     kernel_avals)
     if consts:
       consts_avals = [jax_core.get_aval(c) for c in consts]
       if any(not isinstance(aval, state.AbstractRef) for aval in consts_avals):
@@ -1192,9 +1211,11 @@ _PALLAS_USE_MOSAIC_GPU = config.bool_flag(
     default=config.bool_env("JAX_PALLAS_USE_MOSAIC_GPU", False),
     help=(
         "If True, lower Pallas kernels to the experimental Mosaic GPU"
-        " dialect, instead of Trition IR."
+        " dialect, instead of Triton IR."
     ),
 )
+
+
 _PALLAS_VERBOSE_ERRORS = config.bool_flag(
     "jax_pallas_verbose_errors",
     default=config.bool_env("JAX_PALLAS_VERBOSE_ERRORS", True),
@@ -1229,9 +1250,12 @@ def _pallas_call_lowering(
   if params['jaxpr'].constvars:
     raise ValueError('Cannot lower a pallas_call with constants.')
   if interpret:
-    impl = partial(hlo_interpreter.pallas_call_hlo_interpret,
-                   backend=backend,
-                   **params)
+    if isinstance(interpret, mosaic_tpu_interpret.TPUInterpretParams):
+      impl = partial(mosaic_tpu_interpret.interpret_pallas_call, **params)
+    else:
+      impl = partial(hlo_interpreter.pallas_call_hlo_interpret,
+                     backend=backend,
+                     **params)
     return mlir.lower_fun(impl, multiple_results=True)(ctx, *in_nodes)
 
   def cpu_lowering(ctx: mlir.LoweringRuleContext,
@@ -1312,6 +1336,10 @@ def _convert_out_shape_to_aval(out_shape: Any) -> jax_core.AbstractValue:
     case pallas_core.MemoryRef():
       return out_shape.get_array_aval()
     case _:
+      if type(out_shape) in pallas_core._out_shape_to_aval_mapping:
+        return pallas_core._out_shape_to_aval_mapping[type(out_shape)](
+            out_shape
+        )
       if not (hasattr(out_shape, "shape") and hasattr(out_shape, "dtype")):
         raise ValueError(f"Invalid out_shape type: {type(out_shape)}")
       return jax_core.ShapedArray(shape=out_shape.shape, dtype=out_shape.dtype)
@@ -1408,7 +1436,7 @@ def _pallas_call_state_discharge_rule(
       )
   )
   new_jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(_rewritten_body),
+      lu.wrap_init(_rewritten_body, debug_info=jaxpr.debug_info),
       [
           *index_map_avals,
           *ref_avals,
@@ -1568,7 +1596,7 @@ def pallas_call(
     kernel_fun_sig = api_util.fun_signature(kernel)
     arg_names = None
     if kernel_fun_sig:
-      kernel_debug_info = api_util.tracing_debug_info(
+      kernel_debug_info = api_util.debug_info(
           "pallas_call kernel",
            kernel,
            [1] * len(kernel_fun_sig.parameters), {})
@@ -1680,3 +1708,10 @@ try:
   from jax._src.pallas.mosaic import pallas_call_registration as mosaic_tpu_backend
 except ImportError:
   mosaic_tpu_backend = None  # type: ignore
+
+try:
+  from jax._src.pallas.mosaic import interpret as mosaic_tpu_interpret
+except ImportError:
+  mosaic_tpu_interpret = types.SimpleNamespace(  # type: ignore
+      TPUInterpretParams=types.new_class('_NoInstances', (enum.Enum,)),
+  )

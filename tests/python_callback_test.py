@@ -1057,6 +1057,20 @@ class PureCallbackTest(jtu.JaxTestCase):
       result += fun(jnp.ones((500, 500), jnp.complex64))[1]
     jax.block_until_ready(result)  # doesn't deadlock
 
+  def test_non_default_stride(self):
+    x = jnp.arange(24, dtype=jnp.float32).reshape(2, 3, 4)
+    def callback(x):
+      return np.asfortranarray(x)
+
+    @jax.jit
+    def f(x):
+      return jax.pure_callback(
+          callback, jax.ShapeDtypeStruct(x.shape, x.dtype), x
+      )
+
+    result = f(x)
+    np.testing.assert_array_equal(x, result)
+
 
 class IOCallbackTest(jtu.JaxTestCase):
 
@@ -1281,7 +1295,7 @@ class IOCallbackTest(jtu.JaxTestCase):
       )
       mesh = jax.sharding.Mesh(np.array(devices_for_iteration), ['dev'])
       in_spec = (
-          jax.sharding.NamedSharding(mesh, None),
+          jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec()),
           jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev')),
       )
       out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())

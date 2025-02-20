@@ -389,6 +389,87 @@ class OpsTest(PallasBaseTest):
     ref = jax.jit(lambda x: round_fn(x).astype(target))(x)
     np.testing.assert_array_equal(out, ref)
 
+  @parameterized.product(axis=[0, 1], mode=["promise_in_bounds", None])
+  def test_dynamic_gather_along_axis(self, axis, mode):
+    if not jtu.if_cloud_tpu_at_least(2025, 2, 5):
+      self.skipTest("Requires libtpu built after 2025-02-05")
+    if (axis == 0 and not jtu.is_device_tpu_at_least(version=5)) or (
+        axis == 1 and not jtu.is_device_tpu_at_least(version=4)
+    ):
+      self.skipTest("Requires TPUv5+ for axis=0 and TPUv4+ for axis=1")
+    dtype = jnp.int32
+    shape = (8, 128)
+
+    def kernel(x, indices, out):
+      out[...] = jnp.take_along_axis(x[...], indices[...], axis, mode=mode)
+
+    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    idx = jax.random.randint(
+        key=jax.random.key(1234),
+        shape=shape,
+        minval=0,
+        maxval=shape[axis],
+        dtype=jnp.int32,
+    )
+    actual = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(shape, dtype)
+    )(x, idx)
+    expected = np.take_along_axis(x, idx, axis=axis)
+    np.testing.assert_array_equal(actual, expected)
+
+  @parameterized.product(dtype=[jnp.float32, jnp.bfloat16])
+  def test_float_div(self, dtype):
+    if not jtu.if_cloud_tpu_at_least(2025, 2, 13):
+      self.skipTest("Requires libtpu built after 2025-02-13")
+    if not jtu.is_device_tpu_at_least(version=4):
+      self.skipTest("Requires TPUv4+")
+    kwargs = {}
+    if jtu.get_tpu_version() == 6:
+      kwargs.update(dict(rtol=1e-2))
+    def kernel(x, y, out):
+      out[:] = jax.lax.div(x[:], y[:])
+
+    run = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), dtype),
+    )
+    k1, k2 = jax.random.split(jax.random.key(1234), 2)
+    x = jax.random.normal(k1, (8, 128), dtype=dtype)
+    y = jax.random.normal(k2, (8, 128), dtype=dtype)
+    np.testing.assert_allclose(run(x, y), jax.lax.div(x, y), **kwargs)
+
+  @parameterized.product(
+      dtype=[jnp.float32, jnp.bfloat16, jnp.int8],
+  )
+  def test_concat_mask(self, dtype):
+    if not jtu.if_cloud_tpu_at_least(2025, 2, 19):
+      self.skipTest("Requires libtpu built after 2025-02-19")
+    bitwidth = pallas_utils.dtype_bitwidth(dtype)
+    if jtu.get_tpu_version() < 5 and bitwidth < 32:
+      self.skipTest(
+          f"Not implemented: cast vector to mask with bitwidth == {bitwidth}"
+      )
+    shape = (128, 128)
+
+    def kernel(x, out):
+      mask = x[...] != 0
+      concated_mask = jnp.concatenate([mask, mask], axis=0)
+      concated_x = jnp.concatenate([x[:], x[:]], axis=0)
+      out[:] = lax.select(concated_mask, concated_x, jnp.zeros_like(concated_x))
+
+    x = jax.random.normal(jax.random.key(1234), shape, dtype=jnp.float32)
+    if dtype == jnp.int8:
+      x = (x * 100).astype(jnp.int8)
+    else:
+      x = x.astype(dtype)
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((shape[0] * 2, shape[1]), dtype)
+    )(x)
+    concated_mask = jnp.concatenate([x != 0, x != 0], axis=0)
+    concated_x = jnp.concatenate([x, x], axis=0)
+    expected = lax.select(concated_mask, concated_x, jnp.zeros_like(concated_x))
+    np.testing.assert_array_equal(out, expected)
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True

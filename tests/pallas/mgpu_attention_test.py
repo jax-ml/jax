@@ -52,21 +52,38 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
       batch_size=(1, 4),
       q_seq_len=(4096,),
       kv_seq_len=(4096,),
-      num_q_and_kv_heads=((4, 1),    # MQA
-                          (6, 3),    # GQA
-                          (4, 4),),  # MHA
+      num_q_and_kv_heads=(
+          (4, 1),  # MQA
+          (6, 3),  # GQA
+          (4, 4),
+      ),  # MHA
       head_dim=(64, 128, 256),
+      attention_impl=(
+          attention_mgpu.attention,
+          attention_mgpu.attention_with_pipeline_emitter,
+      ),
   )
   def test_flash_attention(
-      self, batch_size, q_seq_len, kv_seq_len, num_q_and_kv_heads, head_dim
+      self,
+      batch_size,
+      q_seq_len,
+      kv_seq_len,
+      num_q_and_kv_heads,
+      head_dim,
+      attention_impl,
   ):
     num_q_heads, num_kv_heads = num_q_and_kv_heads
     k1, k2, k3 = jax.random.split(jax.random.key(42), 3)
     q = jax.random.normal(k1, (batch_size, q_seq_len, num_q_heads, head_dim), jnp.float16)
     k = jax.random.normal(k2, (batch_size, kv_seq_len, num_kv_heads, head_dim), jnp.float16)
     v = jax.random.normal(k3, (batch_size, kv_seq_len, num_kv_heads, head_dim), jnp.float16)
-    out = attention_mgpu.attention(
-        q, k, v, attention_mgpu.TuningConfig(block_q=64, block_kv=64, max_concurrent_steps=2)
+    out = attention_impl(
+        q,
+        k,
+        v,
+        attention_mgpu.TuningConfig(
+            block_q=64, block_kv=64, max_concurrent_steps=2
+        ),
     )
     out_ref = attention_mgpu.attention_reference(q, k, v)
     np.testing.assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)

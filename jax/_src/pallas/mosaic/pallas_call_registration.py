@@ -103,7 +103,6 @@ def _get_memory_spaces_from_avals(
     output_memory_spaces = tuple(map(_get_memory_space_from_aval, out_avals))
   return output_memory_spaces
 
-
 def pallas_call_tpu_lowering_rule(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
@@ -241,6 +240,7 @@ def pallas_call_tpu_lowering_rule(
       device_type=mosaic_params.get("device_type"),
       internal_scratch_in_bytes=mosaic_params.get("internal_scratch_in_bytes"),
       collective_id=mosaic_params.get("collective_id", None),
+      has_side_effects=mosaic_params.get("has_side_effects", False),
       output_memory_spaces=output_memory_spaces,
   )
   _maybe_cast_to_bool = lambda x, aval: x.astype(

@@ -26,15 +26,6 @@ for cuda_module_name in [".cuda", "jax_cuda12_plugin"]:
   else:
     break
 
-if _cuda_linalg:
-  for _name, _value in _cuda_linalg.registrations().items():
-    api_version = (1
-                   if _name.endswith("lu_pivots_to_permutation")
-                   or _name.endswith("_ffi") else 0)
-    xla_client.register_custom_call_target(
-        _name, _value, platform="CUDA", api_version=api_version
-    )
-
 for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
   try:
     _hip_linalg = importlib.import_module(
@@ -45,8 +36,19 @@ for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
   else:
     break
 
+if _cuda_linalg:
+  for _name, _value in _cuda_linalg.registrations().items():
+    # TODO(danfm): remove after JAX 0.5.1 release
+    api_version = (1
+                   if _name.endswith("lu_pivots_to_permutation")
+                   or _name.endswith("_ffi") else 0)
+    xla_client.register_custom_call_target(
+        _name, _value, platform="CUDA", api_version=api_version
+    )
+
 if _hip_linalg:
   for _name, _value in _hip_linalg.registrations().items():
+    # TODO(danfm): remove after JAX 0.5.1 release
     api_version = (1
                    if _name.endswith("lu_pivots_to_permutation")
                    or _name.endswith("_ffi") else 0)

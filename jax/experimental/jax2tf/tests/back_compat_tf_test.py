@@ -58,7 +58,7 @@ def deserialize_directory(serialized_string, output_directory):
 
   # Extract the tar archive to the output directory
   with tarfile.open(fileobj=io.BytesIO(tar_data), mode="r") as tar:
-    if sys.version_info[:1] < (3, 12):
+    if sys.version_info[:2] < (3, 12):
       tar.extractall(output_directory)
     else:
       tar.extractall(output_directory, filter='data')

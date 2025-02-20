@@ -18,12 +18,13 @@ import contextlib
 import ctypes
 import dataclasses
 import enum
+import functools
 import hashlib
 import math
 import os
 import pathlib
 import time
-from typing import Any, Generic, TypeVar
+from typing import Any, Callable, Generic, TypeVar
 import weakref
 
 import jax
@@ -31,6 +32,7 @@ from jax._src.interpreters import mlir
 from jax._src.lib import mosaic_gpu_dialect as dialect
 from jaxlib.mlir import ir
 from jaxlib.mlir import passmanager
+from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import builtin
 from jaxlib.mlir.dialects import func
 from jaxlib.mlir.dialects import gpu
@@ -49,6 +51,7 @@ else:
 from . import profiler
 from . import utils
 from . import launch_context
+from . import tcgen05
 
 # mypy: ignore-errors
 
@@ -163,9 +166,20 @@ class ClusterBarrier:
   collective_dims: Sequence[gpu.Dimension]
   num_barriers: int = 1
 
+@dataclasses.dataclass(frozen=True)
+class TMEM:
+  shape: tuple[int, int]
+  dtype: Any
+  layout: tcgen05.TMEMLayout | None = None
+  collective: bool = False
+
+  def __post_init__(self):
+    if self.layout is not None:
+      self.layout.check_shape(self.shape)
+
 
 def _count_buffer_bytes(shape_dtype: jax.ShapeDtypeStruct) -> int:
-  return np.prod(shape_dtype.shape) * np.dtype(shape_dtype.dtype).itemsize
+  return math.prod(shape_dtype.shape) * np.dtype(shape_dtype.dtype).itemsize
 
 
 class ThreadSemantics(enum.Enum):
@@ -179,10 +193,12 @@ def _construct_smem_reftree(
     cluster_shape: tuple[int, int, int],
     dynamic_smem: ir.Value,
     smem_buffers: ShapeTree,
+    delayed_warp_init: list[Callable[[], None]],  # Mutated by this function!
     dynamic_smem_offset: int = 0,
-) -> RefTree:
+) -> Callable[[], RefTree]:
   index = ir.IndexType.get()
   i8 = ir.IntegerType.get_signless(8)
+  i32 = ir.IntegerType.get_signless(32)
   smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
   flat_ref_tys, smem_buffer_tree = jax.tree.flatten(
       smem_buffers, is_leaf=lambda x: isinstance(x, Union)
@@ -205,13 +221,22 @@ def _construct_smem_reftree(
       return barrier_base_ptr
     match ref_ty:
       case Union(members):
-        member_trees = [
-            _construct_smem_reftree(cluster_shape, dynamic_smem, m, dynamic_smem_offset)
+        member_thunks = [
+            _construct_smem_reftree(
+                cluster_shape,
+                dynamic_smem,
+                m,
+                delayed_warp_init,
+                dynamic_smem_offset,
+            )
             for m in members
         ]
         # TODO(apaszke): This is quadratic, but it shouldn't matter for now...
         dynamic_smem_offset += _smem_tree_size(ref_ty)
-        ref = Union(member_trees)
+
+        def ref(member_thunks=member_thunks):
+          return Union([t() for t in member_thunks])
+
       case TMABarrier(num_barriers):
         ref = utils.BarrierRef.initialize(
             get_barrier_ptr(num_barriers), num_barriers, arrival_count=1
@@ -229,6 +254,26 @@ def _construct_smem_reftree(
             collective_dims,
             cluster_shape,
         )
+      case TMEM(shape, dtype, layout, collective):
+        addr_ref = memref.view(
+            ir.MemRefType.get([], i32, memory_space=smem),
+            dynamic_smem, c(dynamic_smem_offset, index), [],
+        )
+        if layout is None:
+          layout = tcgen05._infer_tmem_layout(shape)
+        num_cols = layout.cols_in_shape(shape)
+        delayed_warp_init.append(
+            functools.partial(
+                tcgen05.tmem_alloc,
+                addr_ref, num_cols, collective=collective, exact=False,
+            )
+        )
+        def ref(addr_ref=addr_ref, shape=shape, dtype=dtype, layout=layout):
+          addr = memref.load(addr_ref, [])
+          return tcgen05.TMEMRef(
+              addr, shape, utils.dtype_to_ir_type(dtype), layout
+          )
+        dynamic_smem_offset += 4  # i32 takes up 4 bytes
       case _:
         mlir_dtype = utils.dtype_to_ir_type(ref_ty.dtype)
         tile_smem = memref.view(
@@ -238,7 +283,14 @@ def _construct_smem_reftree(
         dynamic_smem_offset += _count_buffer_bytes(ref_ty)
         ref = tile_smem
     smem_refs.append(ref)
-  return jax.tree.unflatten(smem_buffer_tree, smem_refs)
+  def ref_tree_thunk():
+    refs = []
+    for ref in smem_refs:
+      if callable(ref):
+        ref = ref()
+      refs.append(ref)
+    return jax.tree.unflatten(smem_buffer_tree, refs)
+  return ref_tree_thunk
 
 
 def _smem_tree_size(smem_buffers: ShapeTree) -> int:
@@ -258,6 +310,8 @@ def _smem_tree_size(smem_buffers: ShapeTree) -> int:
         if size % utils.MBARRIER_BYTES:
           raise NotImplementedError("Misaligned barrier allocation")
         size += num_barriers * utils.MBARRIER_BYTES
+      case TMEM(_):
+        size += 4  # i32 takes up 4 bytes
       case _:
         size += _count_buffer_bytes(l)
   return size
@@ -336,15 +390,25 @@ def _launch(
     scratch_ptr = builtin.unrealized_conversion_cast([ptr_ty], [scratch_arr])
     ctx = launch_context.LaunchContext(launch_op, scratch_ptr, cluster, prof)
     with ctx.named_region("Init"):
-      smem_ref_tree = _construct_smem_reftree(
-          cluster, dynamic_smem, smem_buffers
+      delayed_warp_init = []
+      smem_ref_tree_thunk = _construct_smem_reftree(
+          cluster, dynamic_smem, smem_buffers, delayed_warp_init
       )
-      # TODO(apaszke): Skip the following if no barriers were initialized.
+      # TODO(apaszke): Skip fences if no barriers or TMEM is initialized.
+      # TODO(apaszke): Only initialize cluster barriers before the cluster wait.
       nvvm.fence_mbarrier_init()
       if math.prod(cluster) != 1:
         nvvm.cluster_arrive_relaxed(aligned=ir.UnitAttr.get())
         nvvm.cluster_wait(aligned=ir.UnitAttr.get())
-      gpu.barrier()
+      if delayed_warp_init:
+        eq = arith.CmpIPredicate.eq
+        is_init_warp = arith.cmpi(eq, utils.warp_idx(sync=False), c(0, i32))
+        with utils.when(is_init_warp):
+          for init in delayed_warp_init:
+            init()
+          tcgen05.tmem_relinquish_alloc_permit()
+      gpu.barrier()  # Make sure the init is visible to all threads.
+      smem_ref_tree = smem_ref_tree_thunk()
 
     yield ctx, smem_ref_tree
     if prof is not None:

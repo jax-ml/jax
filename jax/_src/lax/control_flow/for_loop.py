@@ -67,14 +67,17 @@ discharge_state = state_discharge.discharge_state
 
 for_p = core.Primitive('for')
 for_p.multiple_results = True
+for_p.skip_canonicalization = True
 
 ### Tracing utilities
 
-def _trace_to_jaxpr_with_refs(f, state_tree: PyTreeDef,
-                              state_avals: Sequence[core.AbstractValue]
+def _trace_to_jaxpr_with_refs(f: Callable, state_tree: PyTreeDef,
+                              state_avals: Sequence[core.AbstractValue],
+                              debug_info: core.DebugInfo,
                               ) -> tuple[core.Jaxpr, list[Any], PyTreeDef]:
   f, out_tree_thunk = api_util.flatten_fun_nokwargs(
-      lu.wrap_init(f), treedef_tuple((tree_structure(0), state_tree)))
+      lu.wrap_init(f, debug_info=debug_info),
+      treedef_tuple((tree_structure(0), state_tree)))
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       f, state_avals)
   return jaxpr, consts, out_tree_thunk()
@@ -129,12 +132,13 @@ def for_loop(nsteps: int | Sequence[int],
           rest_steps, functools.partial(body, i), vals, unroll=unroll)
       tree_map(lambda ref, val: ref_set(ref, (), val), refs, vals)
     return for_loop(outer_step, wrapped_body, init_state, unroll=unroll)
+  dbg = api_util.debug_info("for_loop", body, (0, init_state), {})
   nsteps, = nsteps
   flat_state, state_tree = tree_flatten(init_state)
   state_avals = map(state_utils.val_to_ref_aval, flat_state)
   idx_aval = core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))
   jaxpr, consts, out_tree = _trace_to_jaxpr_with_refs(
-      body, state_tree, [idx_aval, *state_avals])
+      body, state_tree, [idx_aval, *state_avals], dbg)
   if out_tree != tree_structure(None):
     raise Exception("`body` should not return anything.")
   jaxpr = state_utils.hoist_consts_to_refs(jaxpr, index=1)
@@ -195,7 +199,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   def _create_jaxpr(init):
     init_flat = tree_leaves(init)
     _, in_tree = tree_flatten((init, xs))
-    dbg = api_util.tracing_debug_info("scan", f, (init, xs), {})
+    dbg = api_util.debug_info("scan", f, (init, xs), {})
     carry_avals = tuple(map(core.get_aval, init_flat))
     jaxpr, _, out_tree = _initial_style_jaxpr(
         f, in_tree, carry_avals + x_avals, dbg)
@@ -212,6 +216,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     tree_map(lambda c_ref, c: ref_set(c_ref, (), c), carry_refs, carry)
     tree_map(lambda y_ref, y: ref_set(y_ref, (i,), y), ys_refs, y)
   assert isinstance(length, int)
+  api_util.save_wrapped_fun_sourceinfo(for_body, f)
   init, _, ys = for_loop(length, for_body, (init, xs, ys), reverse=reverse,
                          unroll=unroll)
   return init, ys
@@ -476,7 +481,7 @@ def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
   # Since not all inputs are used in jaxpr_unknown, we filter the input tracers
   # down using the output of `dce_jaxpr`.
   used_and_known = map(operator.and_, used_refs, map(operator.not_, in_unknowns))
-  tracers = [trace.instantiate_const(t) if u_and_k else t for t, u_and_k  # type: ignore
+  tracers = [trace.instantiate_const(t) if u_and_k else t for t, u_and_k
              in zip(tracers, used_and_known)]
   _, known_used = partition_list(used_refs, used_and_known)
   _, used_tracers = partition_list(used_refs, tracers)
@@ -572,7 +577,6 @@ def _for_partial_eval_custom(saveable, in_unknowns, in_inst, eqn):
   newvar = core.gensym()
   resvars = map(newvar, res_avals)
 
-  @lu.wrap_init
   def known(*known_vals):
     empty_res = map(ad_util.zeros_like_aval, res_avals)
     jaxpr_known_args = [*known_vals, *empty_res]
@@ -581,11 +585,12 @@ def _for_partial_eval_custom(saveable, in_unknowns, in_inst, eqn):
                       reverse=reverse, which_linear=jaxpr_known_which_linear,
                       unroll=unroll)
   call_jaxpr_, _, call_jaxpr_consts, () = pe.trace_to_jaxpr_dynamic(
-      known, [v.aval for v in known_invars])
+      lu.wrap_init(known, debug_info=jaxpr.debug_info),
+      [v.aval for v in known_invars])
   call_jaxpr = core.ClosedJaxpr(call_jaxpr_, call_jaxpr_consts)
   eqn_known = pe.new_jaxpr_eqn(known_invars, [*known_outvars, *resvars],
                                core.closed_call_p, dict(call_jaxpr=call_jaxpr),
-                               call_jaxpr.effects, eqn.source_info)
+                               call_jaxpr.effects, eqn.source_info, eqn.ctx)
 
   jaxpr_staged = _convert_inputs_to_reads(nsteps, len(res_avals),
                                           jaxpr_staged_resin_,
@@ -596,20 +601,20 @@ def _for_partial_eval_custom(saveable, in_unknowns, in_inst, eqn):
                                    which_linear=which_linear_unknown,
                                    unroll=unroll)
 
-  @lu.wrap_init
   def staged(*res_and_refs):
     out_flat = for_p.bind(*res_and_refs, **params_staged)
     _, ans = split_list(out_flat, [num_res])
     _, ans = partition_list(out_inst, ans)
     return ans
   call_jaxpr_, _, call_jaxpr_consts, () = pe.trace_to_jaxpr_dynamic(
-      staged, [v.aval for v in [*resvars, *eqn.invars]])
+      lu.wrap_init(staged, debug_info=jaxpr_staged.debug_info),
+      [v.aval for v in [*resvars, *eqn.invars]])
   assert len(jaxpr_staged.invars) - 1 == len(call_jaxpr_.invars)
   call_jaxpr = core.ClosedJaxpr(call_jaxpr_, call_jaxpr_consts)
   _, outvars = partition_list(out_inst, eqn.outvars)
   eqn_staged = pe.new_jaxpr_eqn([*resvars, *eqn.invars], outvars,
                                core.closed_call_p, dict(call_jaxpr=call_jaxpr),
-                               call_jaxpr.effects, eqn.source_info)
+                               call_jaxpr.effects, eqn.source_info, eqn.ctx)
   new_vars = [*new_inst, *resvars]
   return eqn_known, eqn_staged, in_unknowns, out_inst, new_vars
 
@@ -621,7 +626,7 @@ def _convert_outputs_to_writes(
   assert not jaxpr.constvars, "Jaxpr shouldn't have constvars."
 
   in_avals = [v.aval for v in jaxpr.invars]  # [i, *orig_ref_avals]
-  @lu.wrap_init
+
   def eval_jaxpr(i, *refs):
     # We split the refs into the original input refs and the dummy residual
     # refs.
@@ -641,7 +646,8 @@ def _convert_outputs_to_writes(
                   v.aval.dtype))  # pytype: disable=attribute-error
       for v, loop_invar in zip(jaxpr.outvars, loop_invar_res)]
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
-      eval_jaxpr, [*in_avals, *res_ref_avals])
+      lu.wrap_init(eval_jaxpr, debug_info=jaxpr.debug_info),
+      [*in_avals, *res_ref_avals])
   assert not consts
   return jaxpr, [core.ShapedArray(a.shape, a.dtype) for a in res_ref_avals]  # pytype: disable=attribute-error
 
@@ -650,7 +656,6 @@ def _convert_inputs_to_reads(
     loop_invar_res: Sequence[bool]) -> core.Jaxpr:
   assert not jaxpr.constvars, "Jaxpr should not have constvars"
 
-  @lu.wrap_init
   def eval_jaxpr(i, *refs):
     residual_refs, orig_refs = split_list(refs, [num_res])
     residual_vals = [r[()] if loop_invar else r[i] for r, loop_invar
@@ -667,7 +672,8 @@ def _convert_inputs_to_reads(
       for aval, loop_invar in zip(res_val_avals, loop_invar_res)]
 
   jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(
-      eval_jaxpr, [i_aval, *res_ref_avals, *orig_ref_avals])
+      lu.wrap_init(eval_jaxpr, debug_info=jaxpr.debug_info),
+      [i_aval, *res_ref_avals, *orig_ref_avals])
   return jaxpr
 
 def transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: list[bool]) -> core.Jaxpr:
@@ -693,7 +699,8 @@ def transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: list[bool]) -> core.Jaxpr:
     ad.backward_pass(tangent_jaxpr, False, (), (*primals_args, *ct_args), ())
     return []
   jaxpr_trans, _, _, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(trans), [v.aval for v in jaxpr.invars])
+      lu.wrap_init(trans, debug_info=jaxpr.debug_info),
+      [v.aval for v in jaxpr.invars])
   return jaxpr_trans
 
 def _for_transpose(in_cts, *args, jaxpr, nsteps, reverse, which_linear, unroll):
@@ -746,8 +753,9 @@ def discharged_for_loop(nsteps, body, init_state, *, reverse: bool = False):
   flat_state, state_tree = tree_flatten(init_state)
   state_avals = map(state_utils.val_to_ref_aval, flat_state)
   idx_aval = core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))
+  debug = api_util.debug_info("discharged_for_loop", body, (0, init_state), {})
   jaxpr, consts, out_tree = _trace_to_jaxpr_with_refs(
-      body, state_tree, [idx_aval, *state_avals])
+      body, state_tree, [idx_aval, *state_avals], debug)
   if out_tree != tree_structure(None):
     raise Exception("`body` should not return anything.")
   discharged_jaxpr, discharged_consts = discharge_state(jaxpr, consts)

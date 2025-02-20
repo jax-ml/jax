@@ -88,12 +88,12 @@ int main(int argc, char** argv) {
       xla::LiteralUtil::CreateR2<float>({{1.0f, 2.0f}, {3.0f, 4.0f}});
   xla::Literal literal_y =
       xla::LiteralUtil::CreateR2<float>({{1.0f, 1.0f}, {1.0f, 1.0f}});
+  xla::PjRtDevice* device = client->addressable_devices()[0];
+  xla::PjRtMemorySpace* memory_space = *device->default_memory_space();
   std::unique_ptr<xla::PjRtBuffer> param_x =
-      client->BufferFromHostLiteral(literal_x, client->addressable_devices()[0])
-          .value();
+      client->BufferFromHostLiteral(literal_x, memory_space).value();
   std::unique_ptr<xla::PjRtBuffer> param_y =
-      client->BufferFromHostLiteral(literal_y, client->addressable_devices()[0])
-          .value();
+      client->BufferFromHostLiteral(literal_y, memory_space).value();
 
   // Execute on CPU.
   xla::ExecuteOptions execute_options;

@@ -55,6 +55,32 @@ for prim in it.chain(
     roofline.register_standard_roofline(prim)
 
 
+def _binary_p_roofline(
+    ctx: roofline.RooflineRuleContext,
+    *args,
+    **kw,
+) -> roofline.RooflineResult:
+  lhs, rhs = (roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in)
+  out = roofline.RooflineShape.from_aval(ctx.avals_out[0])
+  return roofline.RooflineResult(unfused_flops=lhs.size + rhs.size + out.size)
+
+
+roofline.register_roofline(lax.add_p)(_binary_p_roofline)
+roofline.register_roofline(lax.sub_p)(_binary_p_roofline)
+roofline.register_roofline(lax.mul_p)(_binary_p_roofline)
+roofline.register_roofline(lax.div_p)(_binary_p_roofline)
+roofline.register_roofline(lax.rem_p)(_binary_p_roofline)
+roofline.register_roofline(lax.and_p)(_binary_p_roofline)
+roofline.register_roofline(lax.or_p)(_binary_p_roofline)
+roofline.register_roofline(lax.xor_p)(_binary_p_roofline)
+roofline.register_roofline(lax.gt_p)(_binary_p_roofline)
+roofline.register_roofline(lax.lt_p)(_binary_p_roofline)
+roofline.register_roofline(lax.ge_p)(_binary_p_roofline)
+roofline.register_roofline(lax.le_p)(_binary_p_roofline)
+roofline.register_roofline(lax.eq_p)(_binary_p_roofline)
+roofline.register_roofline(lax.ne_p)(_binary_p_roofline)
+
+
 @roofline.register_roofline(lax.dot_general_p)
 def _dot_general_roofline(
   ctx: roofline.RooflineRuleContext,
@@ -81,7 +107,9 @@ def _dot_general_roofline(
   if not ctx.pin_rhs_in_vmem:
     hbm_bytes += rhs.bytes
 
-  return roofline.RooflineResult(flops=int(flops), hbm_bytes=hbm_bytes)
+  return roofline.RooflineResult(
+      flops=int(flops), unfused_flops=int(flops), hbm_bytes=hbm_bytes
+  )
 
 
 def _return_zeros_if_one_sized_axis(

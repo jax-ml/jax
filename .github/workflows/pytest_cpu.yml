@@ -29,6 +29,11 @@ on:
         type: string
         required: true
         default: "0"
+      install-jax-current-commit:
+        description: "Should the 'jax' package be installed from the current commit?"
+        type: string
+        required: true
+        default: "1"
       gcs_download_uri:
         description: "GCS location prefix from where the artifacts should be downloaded"
         required: true
@@ -57,6 +62,7 @@ jobs:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
       JAXCI_PYTHON: "python${{ inputs.python }}"
       JAXCI_ENABLE_X64: "${{ inputs.enable-x64 }}"
+      JAXCI_INSTALL_JAX_CURRENT_COMMIT: "${{ inputs.install-jax-current-commit }}"
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -83,16 +89,43 @@ jobs:
           # `*-cp<py_version>-cp<py_version>t-*`.
           echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
       - name: Download jaxlib wheel from GCS (non-Windows runs)
+        id: download-wheel-artifacts-nw
+        # Set continue-on-error to true to prevent actions from failing the workflow if this step
+        # fails. Instead, we verify the outcome in the step below so that we can print a more
+        # informative error message.
+        continue-on-error: true
         if: ${{ !contains(inputs.runner, 'windows-x86') }}
-        run: >-
+        run: |
           mkdir -p $(pwd)/dist &&
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+
+          # Download the "jax" wheel from GCS if inputs.install-jax-current-commit is not set to 1
+          if [[ "${{ inputs.install-jax-current-commit }}" != 1 ]]; then
+            gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*.whl $(pwd)/dist/
+          fi
       - name: Download jaxlib wheel from GCS (Windows runs)
+        id: download-wheel-artifacts-w
+        # Set continue-on-error to true to prevent actions from failing the workflow if this step
+        # fails. Instead, we verify the outcome in step below so that we can print a more
+        # informative error message.
+        continue-on-error: true
         if: ${{ contains(inputs.runner, 'windows-x86') }}
         shell: cmd
-        run: >-
+        run: |
           mkdir dist &&
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
+
+          # Download the "jax" wheel from GCS if inputs.install-jax-current-commit is not set to 1
+          if not "${{ inputs.install-jax-current-commit }}"=="1" (
+            gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*.whl dist/
+          )
+      - name: Skip the test run if the wheel artifacts were not downloaded successfully
+        if: steps.download-wheel-artifacts-nw.outcome == 'failure' || steps.download-wheel-artifacts-w.outcome == 'failure'
+        run: |
+          echo "Failed to download wheel artifacts from GCS. Please check if the wheels were"
+          echo "built successfully by the artifact build jobs and are available in the GCS bucket."
+          echo "Skipping the test run."
+          exit 1
       - name: Install Python dependencies
         run: $JAXCI_PYTHON -m pip install -r build/requirements.in
       # Halt for testing

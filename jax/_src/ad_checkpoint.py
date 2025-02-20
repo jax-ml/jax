@@ -323,7 +323,7 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
   @wraps(fun)
   @api_boundary
   def fun_remat(*args, **kwargs):
-    debug = api_util.tracing_debug_info(
+    debug = api_util.debug_info(
         "checkpoint / remat", fun,
         args, kwargs, static_argnums=static_argnums)
     fun_, args = _remat_static_argnums(fun, static_argnums, args)
@@ -418,11 +418,11 @@ _dyn_args_fun_cached = weakref_lru_cache(_dyn_args_fun_uncached)
 def _trace_to_jaxpr(fun: Callable,
                     in_tree: PyTreeDef,
                     in_avals: Sequence[core.AbstractValue],
-                    debug: lu.TracingDebugInfo
+                    debug: core.DebugInfo
                     ) -> tuple[core.Jaxpr, Sequence[Any], PyTreeDef]:
-  flat_fun, out_tree = api_util.flatten_fun(lu.wrap_init(fun), in_tree)
+  flat_fun, out_tree = api_util.flatten_fun(lu.wrap_init(fun, debug_info=debug), in_tree)
   try:
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
+    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
   except core.ConcretizationTypeError as e:
     msg, = e.args
     if 'for checkpoint' in msg:
@@ -447,7 +447,7 @@ def saved_residuals(f: Callable,
     args, kwargs = tree_unflatten(in_tree, args)
     return f(*args, **kwargs)
 
-  debug_info = api_util.tracing_debug_info("saved_residuals", f, args, kwargs)
+  debug_info = api_util.debug_info("saved_residuals", f, args, kwargs)
   out = api.make_jaxpr(lambda *args: api.linearize(f_, *args)[1],
                        return_shape=True)(*in_leaves)
   assert isinstance(out, tuple)
@@ -682,12 +682,13 @@ def transpose_jaxpr(jaxpr: core.ClosedJaxpr, in_linear: bool | Sequence[bool],
   return _transpose_jaxpr(jaxpr, tuple(in_linear), tuple(out_zeros))
 
 @weakref_lru_cache
-def _transpose_jaxpr(jaxpr, in_lin, out_zeros):
+def _transpose_jaxpr(jaxpr: core.ClosedJaxpr,
+                     in_lin: Sequence[bool],
+                     out_zeros: Sequence[bool]):
   in_avals = ([a for a,  lin in zip(jaxpr.in_avals,  in_lin   ) if not lin] +
               [a for a, zero in zip(jaxpr.out_avals, out_zeros) if not zero])
   cell = lambda: None
 
-  @lu.wrap_init
   def transposed(*args_flat):
     ins_flat, out_cts_flat = split_list(args_flat, [len(in_lin) - sum(in_lin)])
 
@@ -699,7 +700,8 @@ def _transpose_jaxpr(jaxpr, in_lin, out_zeros):
     assert next(ins_iter, None) is None
     with source_info_util.extend_name_stack('rematted_computation'):
       lin_jaxpr, _, consts = pe.trace_to_jaxpr_nounits(
-          lu.wrap_init(core.jaxpr_as_fun(jaxpr)), in_pvals, False)
+          lu.wrap_init(core.jaxpr_as_fun(jaxpr), debug_info=jaxpr.jaxpr.debug_info),
+          in_pvals, False)
 
     # Transpose the linear jaxpr (which only has linear inputs).
     out_cts_iter = iter(out_cts_flat)
@@ -714,7 +716,10 @@ def _transpose_jaxpr(jaxpr, in_lin, out_zeros):
     in_cts_nz, _ = partition_list(in_zeros, in_cts)
     return in_cts_nz
 
-  transposed_jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(transposed, in_avals)
+  transposed_wrapped = lu.wrap_init(transposed,
+                                    debug_info=jaxpr.jaxpr.debug_info)
+  transposed_jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(
+      transposed_wrapped, in_avals)
   transposed_jaxpr = core.ClosedJaxpr(transposed_jaxpr_, consts)
   return transposed_jaxpr, cell.in_cts_zero  # pytype: disable=attribute-error
 

@@ -451,8 +451,6 @@ class AxisData:
 
 
 def get_sharding_for_vmap(axis_data, orig_sharding, axis):
-  if orig_sharding.mesh.empty:
-    return None
   val = axis_data.explicit_mesh_axis
   new_spec = P(*tuple_insert(orig_sharding.spec, axis, val))
   return NamedSharding(orig_sharding.mesh, new_spec)
@@ -760,7 +758,8 @@ def _batch_jaxpr2(
     axis_data,
     in_axes: tuple[int | NotMapped | RaggedAxis, ...],
   ) -> tuple[core.ClosedJaxpr, tuple[int | NotMapped, ...]]:
-  f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
+  f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr),
+                   debug_info=closed_jaxpr.jaxpr.debug_info)
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
   f = _batch_jaxpr_outer(f, axis_data, in_axes)
   in_axes2, avals_in = unzip2([
@@ -800,8 +799,11 @@ def batch_jaxpr_axes(closed_jaxpr, axis_data, in_axes, out_axes_dest):
   return _batch_jaxpr_axes(closed_jaxpr, axis_data, tuple(in_axes), tuple(out_axes_dest))
 
 @weakref_lru_cache
-def _batch_jaxpr_axes(closed_jaxpr, axis_data, in_axes, out_axes_dest):
-  f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
+def _batch_jaxpr_axes(closed_jaxpr: core.ClosedJaxpr,
+                      axis_data: AxisData,
+                      in_axes: Sequence[int], out_axes_dest: Sequence[int]):
+  f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr),
+                   debug_info=closed_jaxpr.jaxpr.debug_info)
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
   f, out_batched = _match_axes_jaxpr(f, axis_data, out_axes_dest, out_axes)
   f = _batch_jaxpr_outer(f, axis_data, in_axes)
@@ -897,7 +899,10 @@ def batch_custom_jvp_subtrace(f, store, tag, axis_data, in_dims, *in_vals):
   store.store(out_dims * 2)
   return out_primals + out_tangents
 
-def batch_custom_vjp_bwd(bwd, tag, axis_data, in_dims, out_dim_dests):
+def batch_custom_vjp_bwd(bwd: lu.WrappedFun, tag: core.TraceTag,
+                         axis_data: AxisData,
+                         in_dims: Callable[[], Sequence[int | None]],
+                         out_dim_dests: Sequence[int | None]) -> lu.WrappedFun:
   axis_size = axis_data.size
   axis_name = axis_data.name
   mesh_axis = axis_data.explicit_mesh_axis
@@ -908,11 +913,11 @@ def batch_custom_vjp_bwd(bwd, tag, axis_data, in_dims, out_dim_dests):
             for x, dim in zip(args, in_dims_)]
     in_dims_ = [None if type(x) is SymbolicZero else d
                 for x, d in zip(args, in_dims_)]
-    bwd_, out_dims_thunk = batch_subtrace(lu.wrap_init(bwd), tag, axis_data, in_dims_)
+    bwd_, out_dims_thunk = batch_subtrace(bwd, tag, axis_data, in_dims_)
     bwd_ = _match_axes_and_sum(bwd_, axis_size, axis_name, mesh_axis,
                                out_dims_thunk, out_dim_dests)
     return bwd_.call_wrapped(*args)
-  return new_bwd
+  return lu.wrap_init(new_bwd, debug_info=bwd.debug_info)
 
 @lu.transformation2
 def _match_axes_and_sum(f, axis_size, axis_name, mesh_axis, out_dims_thunk,
@@ -1086,13 +1091,10 @@ def broadcast(x, sz, axis, mesh_axis=None):
   shape = list(np.shape(x))
   shape.insert(axis, sz)
   broadcast_dims = tuple(np.delete(np.arange(len(shape)), axis))
-  if config.sharding_in_types.value:
-    x_aval = core.get_aval(x)
-    new_spec = P(*tuple_insert(x_aval.sharding.spec, axis, mesh_axis))
-    sharding = x_aval.sharding.with_spec(new_spec)
-  else:
-    sharding = None
-  return jax.lax.broadcast_in_dim(x, shape, broadcast_dims, sharding=sharding)
+  x_aval = core.get_aval(x)
+  new_spec = P(*tuple_insert(x_aval.sharding.spec, axis, mesh_axis))
+  sharding = x_aval.sharding.with_spec(new_spec)
+  return jax.lax.broadcast_in_dim(x, shape, broadcast_dims, out_sharding=sharding)
 
 def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
   if dst == jumble_axis:

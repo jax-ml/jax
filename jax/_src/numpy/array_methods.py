@@ -40,7 +40,9 @@ from jax._src.array import ArrayImpl
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_client as xc
 from jax._src.numpy import array_api_metadata
+from jax._src.numpy import indexing
 from jax._src.numpy import lax_numpy
+from jax._src.numpy import tensor_contractions
 from jax._src import mesh as mesh_lib
 from jax._src.pjit import auto_axes, PartitionSpec
 from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
@@ -194,7 +196,7 @@ def _dot(self: Array, b: ArrayLike, *, precision: lax_internal.PrecisionLike = N
 
   Refer to :func:`jax.numpy.dot` for the full documentation.
   """
-  return lax_numpy.dot(self, b, precision=precision, preferred_element_type=preferred_element_type)
+  return tensor_contractions.dot(self, b, precision=precision, preferred_element_type=preferred_element_type)
 
 def _flatten(self: Array, order: str = "C") -> Array:
   """Flatten array into a 1-dimensional shape.
@@ -381,8 +383,8 @@ def _take(self: Array, indices: ArrayLike, axis: int | None = None, out: None = 
 
   Refer to :func:`jax.numpy.take` for full documentation.
   """
-  return lax_numpy.take(self, indices, axis=axis, out=out, mode=mode, unique_indices=unique_indices,
-                        indices_are_sorted=indices_are_sorted, fill_value=fill_value)
+  return indexing.take(self, indices, axis=axis, out=out, mode=mode, unique_indices=unique_indices,
+                       indices_are_sorted=indices_are_sorted, fill_value=fill_value)
 
 def _to_device(self: Array, device: xc.Device | Sharding, *,
                stream: int | Any | None = None):
@@ -648,7 +650,7 @@ def _chunk_iter(x, size):
       yield lax.dynamic_slice_in_dim(x, num_chunks * size, tail)
 
 def _getitem(self, item):
-  return lax_numpy._rewriting_take(self, item)
+  return indexing.rewriting_take(self, item)
 
 # Syntactic sugar for scatter operations.
 class _IndexUpdateHelper:
@@ -776,14 +778,14 @@ class _IndexUpdateRef:
 
     See :mod:`jax.ops` for details.
     """
-    take = partial(lax_numpy._rewriting_take,
+    take = partial(indexing.rewriting_take,
                    indices_are_sorted=indices_are_sorted,
                    unique_indices=unique_indices, mode=mode,
                    fill_value=fill_value)
     if out_sharding is not None:
       assert isinstance(out_sharding, (NamedSharding, PartitionSpec))
-      out_sharding = canonicalize_sharding(out_sharding)
-      take = auto_axes(take, axes=mesh_lib.get_abstract_mesh().axis_names,  # type: ignore
+      out_sharding = canonicalize_sharding(out_sharding, '.get')
+      take = auto_axes(take, axes=mesh_lib.get_abstract_mesh().axis_names,
                        out_shardings=out_sharding.spec)
     return take(self.array, self.index)
 
@@ -961,8 +963,8 @@ _array_operators = {
   "rmod": _defer_to_unrecognized_arg("%", ufuncs.mod, swap=True),
   "pow": _defer_to_unrecognized_arg("**", ufuncs.power),
   "rpow": _defer_to_unrecognized_arg("**", ufuncs.power, swap=True),
-  "matmul": _defer_to_unrecognized_arg("@", lax_numpy.matmul),
-  "rmatmul": _defer_to_unrecognized_arg("@", lax_numpy.matmul, swap=True),
+  "matmul": _defer_to_unrecognized_arg("@", tensor_contractions.matmul),
+  "rmatmul": _defer_to_unrecognized_arg("@", tensor_contractions.matmul, swap=True),
   "and": _defer_to_unrecognized_arg("&", ufuncs.bitwise_and),
   "rand": _defer_to_unrecognized_arg("&", ufuncs.bitwise_and, swap=True),
   "or": _defer_to_unrecognized_arg("|", ufuncs.bitwise_or),

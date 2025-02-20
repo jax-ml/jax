@@ -959,7 +959,17 @@ LogicalResult EnqueueDMAOp::verify() {
   return success();
 }
 
+// TODO(mvoz): Remove once a month has passed. b/395630795
 LogicalResult WaitDMAOp::verify() {
+  auto sem_type = getMemRefType(getSemaphore());
+  if (sem_type.getRank() != 0) {
+    emitOpError("DMA wait semaphore must be rank 0");
+    return failure();
+  }
+  return success();
+}
+
+LogicalResult WaitDMA2Op::verify() {
   auto sem_type = getMemRefType(getSemaphore());
   if (sem_type.getRank() != 0) {
     emitOpError("DMA wait semaphore must be rank 0");
@@ -1198,6 +1208,40 @@ LogicalResult PackSubelementsOp::verify() {
       return emitOpError("Positions must be unique");
     }
     seen_positions[position] = true;
+  }
+  return success();
+}
+
+LogicalResult DynamicGatherOp::verify() {
+  if (getSource().getType() != getType()) {
+    return emitOpError("Expected source and result types must match");
+  }
+  if (getIndices().getType().getShape() != getIndices().getType().getShape()) {
+    return emitOpError("Expected indices and result shapes must match");
+  }
+  if (!getIndices().getType().getElementType().isInteger(32)) {
+    return emitOpError("Not implemented: Only i32 indices supported");
+  }
+  return success();
+}
+
+LogicalResult AssumeMultipleOp::verify() {
+  auto operand_value = getValue();
+  auto divisor = getMultiple();
+  if (auto cst_op = operand_value.getDefiningOp<arith::ConstantOp>()) {
+    auto int_attr = dyn_cast<IntegerAttr>(cst_op.getValue());
+    // Illegal usage of AssumeMultipleOp.
+    if (!int_attr) {
+      return emitOpError(
+                 "Illegal user annotation, expected an integer, but got ")
+             << cst_op.getValue();
+    }
+    if (int_attr.getInt() % divisor != 0) {
+      return emitOpError(
+                 "Illegal user annotation, expected an integer that is "
+                 "divisible by the multiple, but got ")
+             << int_attr.getInt() << " % " << divisor;
+    }
   }
   return success();
 }

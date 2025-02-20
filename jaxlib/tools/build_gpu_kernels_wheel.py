@@ -24,7 +24,7 @@ import pathlib
 import tempfile
 
 from bazel_tools.tools.python.runfiles import runfiles
-from jax.tools import build_utils
+from jaxlib.tools import build_utils
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -174,12 +174,11 @@ try:
   if args.editable:
     build_utils.build_editable(sources_path, args.output_path, package_name)
   else:
-    git_hash = build_utils.get_githash(args.jaxlib_git_hash)
     build_utils.build_wheel(
         sources_path,
         args.output_path,
         package_name,
-        git_hash=git_hash,
+        git_hash=args.jaxlib_git_hash,
     )
 finally:
   tmpdir.cleanup()

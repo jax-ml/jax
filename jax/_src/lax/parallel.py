@@ -24,7 +24,6 @@ import math
 
 from jax import tree_util
 from jax._src import core
-from jax._src import config
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.sharding_impls import (SPMDAxisContext, ShardingContext,
@@ -130,8 +129,8 @@ def psum(x, axis_name, *, axis_index_groups=None):
     def pos_reduce(x):
       if not pos_axes:
         return x
-      return lax._reduce_sum(x, [canonicalize_axis(axis, getattr(x, 'ndim', 0))
-                                 for axis in pos_axes])
+      return lax.reduce_sum(x, [canonicalize_axis(axis, getattr(x, 'ndim', 0))
+                                for axis in pos_axes])
     if axis_index_groups is not None:
       assert not pos_axes
       size = len(axis_index_groups[0])
@@ -732,17 +731,12 @@ def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
     if len(pos_axes) != 0:
       raise ValueError(f"axis_index_groups can only be used with reductions over "
                        f"named axes, but got: {axes}")
-  if config.sharding_in_types.value:
-    args = core.cast_from_auto_to_manual(args)
-    core.check_avals_context_mesh(args, 'all_reduce')
-    out_avals = [
-        ShapedArray(lax._reduce_op_shape_rule(arg, axes=pos_axes), arg.dtype,
-                    sharding=lax._reduce_op_sharding_rule(arg, axes=pos_axes))
-        for arg in args
-    ]
-  else:
-    out_avals = [ShapedArray(lax._reduce_op_shape_rule(arg, axes=pos_axes), arg.dtype)
-                 for arg in args]
+  core.check_avals_context_mesh(args, 'all_reduce')
+  out_avals = [
+      ShapedArray(lax._reduce_op_shape_rule(arg, axes=pos_axes), arg.dtype,
+                  sharding=lax._reduce_op_sharding_rule(arg, axes=pos_axes))
+      for arg in args
+  ]
   return out_avals, {core.NamedAxisEffect(axis) for axis in named_axes}
 
 def _check_axis_names(axes):
@@ -796,11 +790,8 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
     else:
       op = hlo.AllReduceOp(
           [x.type], [x], replica_groups=replica_groups, **other_args)
-    if config.sharding_in_types.value:
-      scalar_aval = core.ShapedArray(
-          (), aval.dtype, sharding=NamedSharding(aval.sharding.mesh, P()))
-    else:
-      scalar_aval = core.ShapedArray((), aval.dtype)
+    scalar_aval = core.ShapedArray(
+        (), aval.dtype, sharding=NamedSharding(aval.sharding.mesh, P()))
     scalar_type = mlir.aval_to_ir_type(scalar_aval)
     reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
     with ir.InsertionPoint(reducer_block):
@@ -835,10 +826,10 @@ def _psum_transpose_rule(cts, *args, axes, axis_index_groups):
 
 psum_p = core.Primitive('psum')
 psum_p.multiple_results = True
-psum_p.def_impl(partial(_allreduce_impl, psum_p, lax._reduce_sum))
+psum_p.def_impl(partial(_allreduce_impl, psum_p, lax.reduce_sum))
 psum_p.def_effectful_abstract_eval(_allreduce_effectful_abstract_eval)
 mlir.register_lowering(
-    psum_p, partial(_allreduce_lowering, lax.add_p, lax._reduce_sum))
+    psum_p, partial(_allreduce_lowering, lax.add_p, lax.reduce_sum))
 ad.deflinear2(psum_p, _psum_transpose_rule)
 batching.fancy_primitive_batchers[psum_p] = \
   partial(_batched_reduction_collective, psum_p, lambda v, axis_size: axis_size * v)
@@ -846,10 +837,10 @@ batching.skippable_batchers[psum_p] = partial(_names_in_param, 'axes')
 
 pmax_p = core.Primitive('pmax')
 pmax_p.multiple_results = True
-pmax_p.def_impl(partial(_allreduce_impl, pmax_p, lax._reduce_max))
+pmax_p.def_impl(partial(_allreduce_impl, pmax_p, lax.reduce_max))
 pmax_p.def_effectful_abstract_eval(_allreduce_effectful_abstract_eval)
 mlir.register_lowering(
-    pmax_p, partial(_allreduce_lowering, lax.max_p, lax._reduce_max))
+    pmax_p, partial(_allreduce_lowering, lax.max_p, lax.reduce_max))
 batching.fancy_primitive_batchers[pmax_p] = \
   partial(_batched_reduction_collective, pmax_p, lambda v, axis_size: v)
 batching.skippable_batchers[pmax_p] = partial(_names_in_param, 'axes')
@@ -857,10 +848,10 @@ batching.skippable_batchers[pmax_p] = partial(_names_in_param, 'axes')
 
 pmin_p = core.Primitive('pmin')
 pmin_p.multiple_results = True
-pmin_p.def_impl(partial(_allreduce_impl, pmin_p, lax._reduce_min))
+pmin_p.def_impl(partial(_allreduce_impl, pmin_p, lax.reduce_min))
 pmin_p.def_effectful_abstract_eval(_allreduce_effectful_abstract_eval)
 mlir.register_lowering(
-    pmin_p, partial(_allreduce_lowering, lax.min_p, lax._reduce_min))
+    pmin_p, partial(_allreduce_lowering, lax.min_p, lax.reduce_min))
 batching.fancy_primitive_batchers[pmin_p] = \
   partial(_batched_reduction_collective, pmin_p, lambda v, axis_size: v)
 batching.skippable_batchers[pmin_p] = partial(_names_in_param, 'axes')

@@ -3758,8 +3758,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertIsNot(x, y)
 
   def testArrayUnsupportedDtypeError(self):
-    with self.assertRaisesRegex(TypeError,
-                                "JAX only supports number and bool dtypes.*"):
+    with self.assertRaisesRegex(
+        TypeError, 'JAX only supports number, bool, and string dtypes.*'
+    ):
       jnp.array(3, [('a','<i4'),('b','<i4')])
 
   def testArrayFromInteger(self):
@@ -4718,6 +4719,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     g = jtu.rand_int(self.rng(), 0, 100)((256, 256, 1), np.uint8)
     q0 = jnp.take_along_axis(h, g, axis=-1)
     q1 = np.take_along_axis( h, g, axis=-1)
+    np.testing.assert_equal(q0, q1)
+
+  def testTakeAlongAxisInputTensorHasSingletonDimension(self):
+    h = jtu.rand_default(self.rng())((2, 1, 5, 7, 13), np.float32)
+    g = jtu.rand_int(self.rng(), 0, 7)((2, 3, 5, 11, 1), np.uint8)
+    q0 = jnp.take_along_axis(h, g, axis=-2)
+    q1 = np.take_along_axis( h, g, axis=-2)
     np.testing.assert_equal(q0, q1)
 
   def testTakeAlongAxisOutOfBounds(self):
@@ -6566,7 +6574,8 @@ class NumpyDocTests(jtu.JaxTestCase):
     aliases = ['abs', 'acos', 'acosh', 'asin', 'asinh', 'atan', 'atanh', 'atan2',
                'amax', 'amin', 'around', 'bitwise_invert', 'bitwise_left_shift',
                'bitwise_not','bitwise_right_shift', 'conj', 'degrees', 'divide',
-               'mod', 'pow', 'radians', 'round_']
+               'get_printoptions', 'mod', 'pow', 'printoptions', 'radians', 'round_',
+               'set_printoptions']
     skip_args_check = ['vsplit', 'hsplit', 'dsplit', 'array_split']
 
     for name in dir(jnp):

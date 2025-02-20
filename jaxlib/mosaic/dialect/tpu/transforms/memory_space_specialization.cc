@@ -100,6 +100,9 @@ LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,
     if (auto op = dyn_cast<tpu::WaitDMAOp>(some_op)) {
       continue;  // Nothing to do.
     }
+    if (auto op = dyn_cast<tpu::WaitDMA2Op>(some_op)) {
+      continue;  // Nothing to do.
+    }
     some_op->emitOpError(
         "Failed to propagate memory space update through this operation");
     return failure();

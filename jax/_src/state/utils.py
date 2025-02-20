@@ -73,7 +73,7 @@ def hoist_consts_to_refs(
     return core.eval_jaxpr(jaxpr, all_consts, *args0, *args1)
 
   hoisted_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(_hoist), in_avals)
+      lu.wrap_init(_hoist, debug_info=jaxpr.debug_info), in_avals)
   assert not consts, "All consts should have been converted to refs"
   return hoisted_jaxpr
 

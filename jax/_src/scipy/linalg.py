@@ -953,7 +953,9 @@ def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: str = "
     with ``K = min(M, N)``.
 
   Notes:
-    - At present, pivoting is only implemented on CPU backends.
+    - At present, pivoting is only implemented on the CPU and GPU backends. For further
+      details about the GPU implementation, see the documentation for
+      :func:`jax.lax.linalg.qr`.
 
   See also:
     - :func:`jax.numpy.linalg.qr`: NumPy-style QR decomposition API
@@ -1016,12 +1018,14 @@ def _solve(a: ArrayLike, b: ArrayLike, assume_a: str, lower: bool) -> Array:
 def solve(a: ArrayLike, b: ArrayLike, lower: bool = False,
           overwrite_a: bool = False, overwrite_b: bool = False, debug: bool = False,
           check_finite: bool = True, assume_a: str = 'gen') -> Array:
-  """Solve a linear system of equations
+  """Solve a linear system of equations.
 
   JAX implementation of :func:`scipy.linalg.solve`.
 
   This solves a (batched) linear system of equations ``a @ x = b`` for ``x``
   given ``a`` and ``b``.
+
+  If ``a`` is singular, this will return ``nan`` or ``inf`` values.
 
   Args:
     a: array of shape ``(..., N, N)``.
@@ -1041,7 +1045,9 @@ def solve(a: ArrayLike, b: ArrayLike, lower: bool = False,
     check_finite: unused by JAX
 
   Returns:
-    An array of the same shape as ``b`` containing the solution to the linear system.
+    An array of the same shape as ``b`` containing the solution to the linear
+    system if ``a`` is non-singular.
+    If ``a`` is singular, the result contains ``nan`` or ``inf`` values.
 
   See also:
     - :func:`jax.scipy.linalg.lu_solve`: Solve via LU factorization.
@@ -1579,7 +1585,7 @@ def eigh_tridiagonal(d: ArrayLike, e: ArrayLike, *, eigvals_only: bool = False,
   if n <= 1:
     return jnp.real(alpha)
 
-  if jnp.issubdtype(alpha.dtype, jnp.complexfloating):
+  if jnp.issubdtype(alpha.dtype, np.complexfloating):
     alpha = jnp.real(alpha)
     beta_sq = jnp.real(beta * jnp.conj(beta))
     beta_abs = jnp.sqrt(beta_sq)

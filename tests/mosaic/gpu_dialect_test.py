@@ -84,8 +84,6 @@ def workgroup_ptr_ty() -> ir.Type:
 class MosaicGpuTest(parameterized.TestCase):
 
   def setUp(self):
-    if mgpu.dialect is None:
-      raise self.skipTest("Test requires Mosaic GPU dialect")
     if jax.version._version != jax.lib.__version__:
       raise self.skipTest("Test requires matching jax and jaxlib versions")
     super().setUp()
@@ -163,7 +161,6 @@ class DialectTest(MosaicGpuTest):
               barrier,
               indices,
               slice_lengths=[4, 8],
-              transforms=ir.ArrayAttr.get([]),
               collective=ir.ArrayAttr.get([]),
           )
       )
@@ -190,7 +187,6 @@ class DialectTest(MosaicGpuTest):
               barrier,
               indices,
               slice_lengths=[4, 8],
-              transforms=ir.ArrayAttr.get([]),
               collective=ir.ArrayAttr.get([]),
           )
       )
@@ -217,7 +213,6 @@ class DialectTest(MosaicGpuTest):
               barrier,
               indices,
               slice_lengths=[-2, 8],
-              transforms=ir.ArrayAttr.get([]),
               collective=ir.ArrayAttr.get([]),
           )
       )
@@ -245,7 +240,6 @@ class DialectTest(MosaicGpuTest):
               barrier,
               indices,
               slice_lengths=[-1, 4, 8],
-              transforms=ir.ArrayAttr.get([]),
               collective=ir.ArrayAttr.get([]),
           )
       )
@@ -271,7 +265,6 @@ class DialectTest(MosaicGpuTest):
               barrier,
               indices,
               slice_lengths=[4, 8],
-              transforms=ir.ArrayAttr.get([]),
               collective=ir.ArrayAttr.get([]),
           )
       )
@@ -297,7 +290,6 @@ class DialectTest(MosaicGpuTest):
               barrier,
               indices,
               slice_lengths=[4, 8],
-              transforms=ir.ArrayAttr.get([]),
               collective=ir.ArrayAttr.get([]),
           )
       )
@@ -324,7 +316,6 @@ class DialectTest(MosaicGpuTest):
               barrier,
               indices,
               slice_lengths=[4],
-              transforms=ir.ArrayAttr.get([]),
               collective=ir.ArrayAttr.get([
                   ir.IntegerAttr.get(i32, mgpu.dialect.Dimension.x),
                   ir.IntegerAttr.get(i32, mgpu.dialect.Dimension.x),
@@ -356,7 +347,6 @@ class DialectTest(MosaicGpuTest):
               destination,
               indices,
               slice_lengths=[4, 8],
-              transforms=ir.ArrayAttr.get([]),
           )
       )
 
@@ -380,7 +370,6 @@ class DialectTest(MosaicGpuTest):
               destination,
               indices,
               slice_lengths=[4, 8],
-              transforms=ir.ArrayAttr.get([]),
           )
       )
 
@@ -404,7 +393,6 @@ class DialectTest(MosaicGpuTest):
               destination,
               indices,
               slice_lengths=[-2, 8],
-              transforms=ir.ArrayAttr.get([]),
           )
       )
 
@@ -429,7 +417,6 @@ class DialectTest(MosaicGpuTest):
               destination,
               indices,
               slice_lengths=[-1, 4, 8],
-              transforms=ir.ArrayAttr.get([]),
           )
       )
 
@@ -452,7 +439,6 @@ class DialectTest(MosaicGpuTest):
               destination,
               indices,
               slice_lengths=[4, 8],
-              transforms=ir.ArrayAttr.get([]),
           )
       )
 
@@ -475,7 +461,6 @@ class DialectTest(MosaicGpuTest):
               destination,
               indices,
               slice_lengths=[4, 8],
-              transforms=ir.ArrayAttr.get([]),
           )
       )
 
@@ -490,17 +475,10 @@ class DialectTest(MosaicGpuTest):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
           ir.VectorType.get([128, 160], ir.BF16Type.get()),
-          ir.MemRefType.get([2, 4, 64, 32], ir.F16Type.get()),
-          ir.MemRefType.get([4, 5, 32, 32], ir.BF16Type.get()),
+          ir.MemRefType.get([128, 128], ir.F16Type.get()),
+          ir.MemRefType.get([128, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(
-          lambda accumulator, a, b: mgpu.dialect.wgmma(
-              accumulator,
-              a,
-              b,
-              swizzle=mgpu.dialect.SwizzlingMode.k64ByteSwizzle,
-          )
-      )
+      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -508,75 +486,110 @@ class DialectTest(MosaicGpuTest):
     ):
       self.module.operation.verify()
 
-  def test_wgmma_b_rank_is_4(self):
+  def test_wgmma_a_rank_is_2(self):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
           ir.VectorType.get([128, 160], ir.BF16Type.get()),
-          ir.MemRefType.get([2, 4, 64, 32], ir.BF16Type.get()),
-          ir.MemRefType.get([5, 32, 32], ir.BF16Type.get()),
+          ir.MemRefType.get([3, 128, 128], ir.BF16Type.get()),
+          ir.MemRefType.get([128, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(
-          lambda accumulator, a, b: mgpu.dialect.wgmma(
-              accumulator,
-              a,
-              b,
-              swizzle=mgpu.dialect.SwizzlingMode.k64ByteSwizzle,
-          )
-      )
+      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
 
     with self.assertRaisesRegex(
         ir.MLIRError,
-        "The `b` input must have rank 4.",
+        "The `a` input must have rank 2.",
     ):
       self.module.operation.verify()
 
-  def test_wgmma_b_shape_dim_3(self):
+  def test_wgmma_b_rank_is_2(self):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
           ir.VectorType.get([128, 160], ir.BF16Type.get()),
-          ir.MemRefType.get([2, 4, 64, 32], ir.BF16Type.get()),
-          ir.MemRefType.get([4, 5, 32, 16], ir.BF16Type.get()),
+          ir.MemRefType.get([128, 128], ir.BF16Type.get()),
+          ir.MemRefType.get([2, 128, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(
-          lambda accumulator, a, b: mgpu.dialect.wgmma(
-              accumulator,
-              a,
-              b,
-              swizzle=mgpu.dialect.SwizzlingMode.k64ByteSwizzle,
-          )
-      )
+      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
 
     with self.assertRaisesRegex(
         ir.MLIRError,
-        r"The n group size \(16\) must be equal to swizzle/element_bytewidth "
-        r"\(32\)",
+        "The `b` input must have rank 2.",
     ):
       self.module.operation.verify()
 
-  def test_wgmma_b_shape_dim_2(self):
+  def test_wgmma_acc_rank_is_2(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.VectorType.get([2, 128, 160], ir.BF16Type.get()),
+          ir.MemRefType.get([128, 128], ir.BF16Type.get()),
+          ir.MemRefType.get([128, 160], ir.BF16Type.get()),
+          name="wgmma",
+      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        "The accumulator must have rank 2.",
+    ):
+      self.module.operation.verify()
+
+  def test_wgmma_acc_m_dim_not_multiple_of_64(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.VectorType.get([127, 160], ir.BF16Type.get()),
+          ir.MemRefType.get([128, 128], ir.BF16Type.get()),
+          ir.MemRefType.get([128, 160], ir.BF16Type.get()),
+          name="wgmma",
+      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"accumulator.*must be a multiple of 64",
+    ):
+      self.module.operation.verify()
+
+  def test_wgmma_acc_m_not_equal_to_a_m_dim(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.VectorType.get([256, 160], ir.BF16Type.get()),
+          ir.MemRefType.get([512, 128], ir.BF16Type.get()),
+          ir.MemRefType.get([128, 160], ir.BF16Type.get()),
+          name="wgmma",
+      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"accumulator's first dimension 256 must be equal to.*`a`",
+    ):
+      self.module.operation.verify()
+
+  def test_wgmma_a_k_dim_not_equal_to_b_k_dim(self):
     with ir.InsertionPoint(self.module.body):
       func.FuncOp.from_py_func(
           ir.VectorType.get([128, 160], ir.BF16Type.get()),
-          ir.MemRefType.get([2, 4, 64, 32], ir.BF16Type.get()),
-          ir.MemRefType.get([4, 5, 64, 32], ir.BF16Type.get()),
+          ir.MemRefType.get([128, 128], ir.BF16Type.get()),
+          ir.MemRefType.get([160, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(
-          lambda accumulator, a, b: mgpu.dialect.wgmma(
-              accumulator,
-              a,
-              b,
-              swizzle=mgpu.dialect.SwizzlingMode.k64ByteSwizzle,
-          )
-      )
+      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
 
     with self.assertRaisesRegex(
         ir.MLIRError,
-        r"The k group size \(64\) must be equal to swizzle/element_bytewidth "
-        r"\(32\)",
+        r"`a`'s contracting dimension 128 must be equal to one of.*`b`",
     ):
       self.module.operation.verify()
 
-  # TODO(b/381371456): Add tests for the other WGMMA inputs.
+  def test_wgmma_b_n_dim_not_equal_to_acc_n_dim(self):
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(
+          ir.VectorType.get([128, 160], ir.BF16Type.get()),
+          ir.MemRefType.get([128, 128], ir.BF16Type.get()),
+          ir.MemRefType.get([128, 192], ir.BF16Type.get()),
+          name="wgmma",
+      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+
+    with self.assertRaisesRegex(
+        ir.MLIRError,
+        r"`b`'s non-contracting dimension 192 must be equal to the",
+    ):
+      self.module.operation.verify()
 
 
 class DialectLoweringTest(MosaicGpuTest):

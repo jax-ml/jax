@@ -78,6 +78,7 @@ class RooflineShape:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RooflineResult:
   flops: int = 0
+  unfused_flops: int = 0
   ici_bytes: dict[str, int] = field(default_factory=dict)
   ici_latency: dict[str, int] = field(default_factory=dict)
   hbm_bytes: int = 0
@@ -92,20 +93,22 @@ class RooflineResult:
       return {k: d1.get(k, 0) + d2.get(k, 0) for k in set(d1) | set(d2)}
 
     return RooflineResult(
-      flops=self.flops + other.flops,
-      ici_bytes=merge_ici_dicts(self.ici_bytes, other.ici_bytes),
-      ici_latency=merge_ici_dicts(self.ici_latency, other.ici_latency),
-      hbm_bytes=self.hbm_bytes + other.hbm_bytes,
-      peak_hbm_bytes=max(self.peak_hbm_bytes, other.peak_hbm_bytes),
+        flops=self.flops + other.flops,
+        unfused_flops=self.unfused_flops + other.unfused_flops,
+        ici_bytes=merge_ici_dicts(self.ici_bytes, other.ici_bytes),
+        ici_latency=merge_ici_dicts(self.ici_latency, other.ici_latency),
+        hbm_bytes=self.hbm_bytes + other.hbm_bytes,
+        peak_hbm_bytes=max(self.peak_hbm_bytes, other.peak_hbm_bytes),
     )
 
   def __mul__(self, constant: int | float) -> "RooflineResult":
     return RooflineResult(
-      flops=int(self.flops * constant),
-      ici_bytes={k: int(v * constant) for k, v in self.ici_bytes.items()},
-      ici_latency={k: int(v * constant) for k, v in self.ici_latency.items()},
-      hbm_bytes=int(self.hbm_bytes * constant),
-      peak_hbm_bytes=int(self.peak_hbm_bytes * constant),
+        flops=int(self.flops * constant),
+        unfused_flops=int(self.unfused_flops * constant),
+        ici_bytes={k: int(v * constant) for k, v in self.ici_bytes.items()},
+        ici_latency={k: int(v * constant) for k, v in self.ici_latency.items()},
+        hbm_bytes=int(self.hbm_bytes * constant),
+        peak_hbm_bytes=int(self.peak_hbm_bytes * constant),
     )
 
   def __rmul__(self, constant: int | float) -> "RooflineResult":

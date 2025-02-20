@@ -16,11 +16,15 @@
 from jax import ShapeDtypeStruct as ShapeDtypeStruct
 from jax._src.lib import mosaic_gpu_dialect as dialect  # noqa: F401
 
+# The imports below shadow the module, so we need to rename it.
+from . import wgmma as _wgmma  # noqa: F401
+
 from .core import (
     Barrier as Barrier,
     ClusterBarrier as ClusterBarrier,
     TMABarrier as TMABarrier,
     ThreadSemantics as ThreadSemantics,
+    TMEM as TMEM,
     Union as Union,
     as_gpu_kernel as as_gpu_kernel,
 )
@@ -33,17 +37,13 @@ from .launch_context import (
     TransposeTransform as TransposeTransform,
 )
 
-if dialect is not None:
-  from .dialect_lowering import (
-      lower_mgpu_dialect as lower_mgpu_dialect,
-  )
-  from .layout_inference import (
-      infer_layout as infer_layout,
-  )
-else:
-  lower_mgpu_dialect = None
-  infer_layout = None
+from .dialect_lowering import (
+    lower_mgpu_dialect as lower_mgpu_dialect,
+)
 
+from .layout_inference import (
+    infer_layout as infer_layout,
+)
 
 from .fragmented_array import (
     FragmentedArray as FragmentedArray,
@@ -87,6 +87,5 @@ from .utils import (
 )
 from .wgmma import (
     WGMMAAccumulator as WGMMAAccumulator,
-    WGMMALayout as WGMMALayout,
     wgmma as wgmma,
 )

@@ -15,6 +15,7 @@ import functools
 
 from absl.testing import absltest
 import jax
+from jax import api_util
 import jax.numpy as jnp
 from jax._src import core
 from jax import lax
@@ -85,11 +86,12 @@ class NameStackTest(jtu.JaxTestCase):
   def test_call_primitive_jaxpr_should_not_store_outer_name_stack(self):
     @jax.named_scope('foo')
     def f(x):
-      @lu.wrap_init
       @jax.named_scope('bar')
       def _f(x):
         return [x + 1]
-      return core.call(_f, x)[0]
+      return core.call(lu.wrap_init(
+          _f,
+          debug_info=api_util.debug_info("test", _f, (0,), {})), x)[0]
 
     jaxpr = jax.make_jaxpr(f)(2).jaxpr
     self.assertEqual(str(jaxpr.eqns[0].params['call_jaxpr'].eqns[0].source_info.name_stack), 'bar')
@@ -217,7 +219,8 @@ class NameStackTransformationTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       with jax.named_scope('bar'):
-        return jnp.sin(x)
+        # return jnp.sin(x)
+        return jax.lax.sin(x)
     jaxpr = jax.make_jaxpr(f)(1.).jaxpr
     jaxpr_param = 'jaxpr'
 
