@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import collections
+import functools
 import io
 from typing import Any, Callable, Sequence
 
@@ -77,6 +78,19 @@ def _get_cpu_device_map() -> dict[int, jax.Device]:
   return cpu_device_map
 
 
+def _lookup_cpu_device(
+    cpu_device_map: dict[int, jax.Device], device_id: int
+) -> jax.Device:
+  """Returns a CPU device with the given device ID."""
+  d = cpu_device_map.get(device_id)
+  if d is None:
+    raise ValueError(
+        f"Invalid device ID {device_id}. Device list must contain only CPU"
+        " devices."
+    )
+  return d
+
+
 def _reduce_mesh(
     mesh: jax.sharding.Mesh,
 ) -> tuple[Callable[..., jax.sharding.Mesh], Any]:
@@ -84,9 +98,9 @@ def _reduce_mesh(
       mesh_device_ids: np.ndarray, axis_names: Any
   ) -> jax.sharding.Mesh:
     cpu_device_map = _get_cpu_device_map()
-    mesh_devices = np.vectorize(lambda device_id: cpu_device_map[device_id])(
-        mesh_device_ids
-    )
+    mesh_devices = np.vectorize(
+        functools.partial(_lookup_cpu_device, cpu_device_map)
+    )(mesh_device_ids)
     return jax.sharding.Mesh(mesh_devices, axis_names)
 
   mesh_device_ids = np.vectorize(lambda d: d.id, otypes=[int])(mesh.devices)
@@ -98,9 +112,9 @@ def _reduce_device_list(
 ) -> tuple[Callable[..., DeviceList], Any]:
   def make_device_list(device_ids: Sequence[int]) -> DeviceList:
     cpu_device_map = _get_cpu_device_map()
-    devices = np.vectorize(lambda device_id: cpu_device_map[device_id])(
-        device_ids
-    )
+    devices = np.vectorize(
+        functools.partial(_lookup_cpu_device, cpu_device_map)
+    )(device_ids)
     return DeviceList(tuple(devices))
 
   device_ids = [d.id for d in device_list]
@@ -113,7 +127,8 @@ def _reduce_single_device_sharding(
 
   def make_single_device_sharding(device_id: int):
     cpu_device_map = _get_cpu_device_map()
-    return jax.sharding.SingleDeviceSharding(cpu_device_map[device_id])
+    device = _lookup_cpu_device(cpu_device_map, device_id)
+    return jax.sharding.SingleDeviceSharding(device)
 
   return make_single_device_sharding, (sharding.device_set.pop().id,)
 
