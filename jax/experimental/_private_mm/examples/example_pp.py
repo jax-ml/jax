@@ -35,9 +35,13 @@ LR = 0.01
 class Stage:
     raw_fwd: Callable[[Any, Any, Any], Any]  # (params, acts, ys) -> acts
     mesh: Mesh
+    params_specs: Any  # pytree of PartitionSpecs
 
     def sharding(self, spec):
         return NamedSharding(self.mesh, spec)
+
+    def params_shardings(self):
+        return jax.tree.map(self.sharding, self.params_specs)
 
     @cached_property
     def fwd(self):
@@ -45,7 +49,11 @@ class Stage:
 
         @partial(
             mm.jit,
-            in_shardings=self.sharding(P()),
+            in_shardings=(
+                self.params_shardings(),
+                self.sharding(P()),
+                self.sharding(P()),
+            ),
             out_shardings=self.sharding(P()),
         )
         def _fwd(params, acts, ys):
@@ -57,8 +65,8 @@ class Stage:
     def grad_init(self):
         @partial(
             mm.jit,
-            in_shardings=self.sharding(P()),
-            out_shardings=self.sharding(P()),
+            in_shardings=(self.params_shardings(),),
+            out_shardings=self.params_shardings(),
         )
         def _grad_init(params):
             return jax.tree.map(jnp.zeros_like, params)
@@ -71,8 +79,17 @@ class Stage:
 
         @partial(
             mm.jit,
-            in_shardings=self.sharding(P()),
-            out_shardings=self.sharding(P()),
+            in_shardings=(
+                self.params_shardings(),
+                self.sharding(P()),
+                self.sharding(P()),
+                self.params_shardings(),
+                self.sharding(P()),
+            ),
+            out_shardings=(
+                self.params_shardings(),
+                self.sharding(P()),
+            ),
         )
         def _bwd_and_grad_acc(params, fwd_activation, ys, grads_acc, activation):
             with jax.named_scope('bwd'):
@@ -89,8 +106,11 @@ class Stage:
     def update(self):
         @partial(
             mm.jit,
-            in_shardings=self.sharding(P()),
-            out_shardings=self.sharding(P()),
+            in_shardings=(
+                self.params_shardings(),
+                self.params_shardings(),
+            ),
+            out_shardings=self.params_shardings(),
         )
         def _update(params, grads):
             return jax.tree.map(lambda v, dv: v - dv * LR, params, grads)
@@ -106,14 +126,14 @@ def print_sharding(prefix, arr):
     print(f'{prefix} {sharding_str}')
 
 
-def transfer(arr, stage):
-    sharding = stage.sharding(P())  # just replicate
+def transfer(arr, stage, spec):
+    sharding = stage.sharding(spec)
     return mm.device_put(arr, device=sharding)
 
 
-def _mpmd_constant(stage, shape, value, dtype=jnp.float32):
+def _mpmd_constant(stage, spec, shape, value, dtype=jnp.float32):
     # TODO: Better support for constants in mm (bake into jit executable?)
-    return transfer(jnp.full(shape, value, dtype=dtype), stage)
+    return transfer(jnp.full(shape, value, dtype=dtype), stage, spec)
 
 
 def stages_step_fn(stages, num_mubatches, params_by_stage, xs, ys):
@@ -150,7 +170,8 @@ def stages_step_fn(stages, num_mubatches, params_by_stage, xs, ys):
     }
     # bwd_input : (mubatch_idx, stage_idx) -> activation
     bwd_input = {
-        (mubatch_idx, num_stages-1): _mpmd_constant(stages[-1], shape=(), value=1.0)
+        (mubatch_idx, num_stages-1): _mpmd_constant(
+            stages[-1], P(), shape=(), value=1.0)
         for mubatch_idx in range(num_mubatches)
     }
     # grads_by_stage : stage_idx -> grads
@@ -166,7 +187,7 @@ def stages_step_fn(stages, num_mubatches, params_by_stage, xs, ys):
         if stage_idx == num_stages-1:
             return ys
         else:
-            return _mpmd_constant(stages[stage_idx], shape=(), value=jnp.nan)
+            return _mpmd_constant(stages[stage_idx], P(), shape=(), value=jnp.nan)
 
     ### Microbatched forward+backward
     for mubatch_idx, stage_idx, is_bwd in tasks:
@@ -191,6 +212,7 @@ def stages_step_fn(stages, num_mubatches, params_by_stage, xs, ys):
                         fwd_input[succ_id] = transfer(
                             activation,
                             stages[stage_idx+1],
+                            P(),
                         )
                 else:
                     loss[mubatch_idx] = activation
@@ -211,6 +233,7 @@ def stages_step_fn(stages, num_mubatches, params_by_stage, xs, ys):
                         bwd_input[succ_id] = transfer(
                             activation,
                             stages[stage_idx-1],
+                            P(),
                         )
 
     ### Update params
@@ -246,8 +269,8 @@ def example_pp(num_processes, process_id):
 
     @jax.jit
     def mlp(params, xs):
-        for W in params:
-            xs = xs @ W
+        for WA, WB in params:
+            xs = xs @ WA @ WB
         return xs
 
     @jax.jit
@@ -257,45 +280,49 @@ def example_pp(num_processes, process_id):
     def init_params(key):
         params = []
         for _ in range(NUM_LAYERS):
-            key, key_W = jax.random.split(key)
-            params.append(jax.random.normal(key_W, (LAYER_SIZE, LAYER_SIZE)))
+            key, key_WA, key_WB = jax.random.split(key, 3)
+            WA = jax.random.normal(key_WA, (LAYER_SIZE, LAYER_SIZE))
+            WB = jax.random.normal(key_WB, (LAYER_SIZE, LAYER_SIZE))
+            params.append((WA, WB))
         return params, key
 
+    def shard_params_by_stage(params, stages):
+        num_per_stage, rem = divmod(len(params), len(stages))
+        assert num_per_stage > 0
+        assert rem == 0
+        params_by_stage = [
+            jax.tree.map(
+                lambda arr, spec: transfer(arr, stage, spec),
+                params[num_per_stage*stage_idx:num_per_stage*(stage_idx+1)],
+                stage.params_specs,
+            )
+            for stage_idx, stage in enumerate(stages)
+        ]
+        return params_by_stage
 
-    # Defined stages -- two devices per stage (running fully-replicated).
+
+    # Define stages -- two devices per stage (running fully-replicated).
     num_devices_per_stage = jax.device_count() // NUM_STAGES
     stages = []
     for i in range(NUM_STAGES):
         devices = jax.devices()[num_devices_per_stage*i : num_devices_per_stage*(i+1)]
         assert all(d.process_index == devices[0].process_index for d in devices)
-        mesh = Mesh(np.asarray(devices), ('repl',))
+        mesh = Mesh(np.asarray(devices), ('model',))
         if i == NUM_STAGES - 1:
             fwd = lambda params, xs, ys: mse(mlp(params, xs), ys)
         else:
             fwd = lambda params, xs, _ys: mlp(params, xs)
-        stages.append(Stage(fwd, mesh))
+        num_layers_per_stage = NUM_LAYERS // NUM_STAGES
+        params_specs = [(P(None, 'model'), P('model', None))] * num_layers_per_stage
+        stages.append(Stage(fwd, mesh, params_specs))
 
     def step_fn(params_by_stage, xs, ys):
         return stages_step_fn(stages, NUM_MUBATCHES, params_by_stage, xs, ys)
 
 
-    def shard_params_by_stage(params):
-        num_per_stage, rem = divmod(len(params), NUM_STAGES)
-        assert num_per_stage > 0
-        assert rem == 0
-        params_by_stage = [
-            jax.tree.map(
-                lambda arr: transfer(arr, stages[stage_idx]),
-                params[num_per_stage*stage_idx:num_per_stage*(stage_idx+1)],
-            )
-            for stage_idx in range(NUM_STAGES)
-        ]
-        return params_by_stage
-
-
     key = jax.random.PRNGKey(0)
     params, key = init_params(key)
-    params_by_stage = shard_params_by_stage(params)
+    params_by_stage = shard_params_by_stage(params, stages)
 
     # Just keep reusing one batch, so we don't have to worry about infeed.
     key, key_xs = jax.random.split(key)
@@ -305,8 +332,8 @@ def example_pp(num_processes, process_id):
     )
     ys_batch = 7 * xs_batch
 
-    xs_batch = transfer(xs_batch, stages[0])
-    ys_batch = transfer(ys_batch, stages[-1])
+    xs_batch = transfer(xs_batch, stages[0], P())
+    ys_batch = transfer(ys_batch, stages[-1], P())
 
     NUM_STEPS = 50
     NUM_STEPS_PROFILED = 3
