@@ -162,13 +162,11 @@ FailureOr<int8_t> getTypeBitwidth(Type ty) {
   if (auto bf16_ty = dyn_cast<BFloat16Type>(ty)) {
     return 16;
   }
-  if (auto f8e5m2_ty = dyn_cast<Float8E5M2Type>(ty)) {
+  if (isa<Float8E5M2Type, Float8E4M3FNType, Float8E4M3B11FNUZType>(ty)) {
     return 8;
   }
-  if (auto f8e4m3fn_ty = dyn_cast<Float8E4M3FNType>(ty)) {
-    return 8;
-  }
-  return emitError(UnknownLoc::get(ty.getContext()), "Unsupported type: ")
+  return emitError(UnknownLoc::get(ty.getContext()),
+                   "Unsupported type in mosaic dialect: ")
          << ty;
 }
 
