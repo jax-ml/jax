@@ -32,18 +32,6 @@ class BlockScaleConfig:
   global_scale: Array | None
   infer_only: bool
 
-mxfp8_config = BlockScaleConfig(
-    mode='mxfp8',
-    block_size=32,
-    data_type=jnp.float8_e4m3fn,
-    scale_type=jnp.float8_e8m0fnu,
-    global_scale=None,
-    infer_only=False
-)
-
-BlockScaleConfigs = List[BlockScaleConfig]
-mxfp8_configs: BlockScaleConfigs = [mxfp8_config, mxfp8_config, mxfp8_config]
-
 def default_layouts(*shapes):
   return [range(len(shape) - 1, -1, -1) for shape in shapes]
 
@@ -490,6 +478,8 @@ def quantize(x, config):
     # shuw(TODO): Add when XLA is ready and e2m1fn is available.
     scales_q = scales
     scales_x = x
+  else:
+    raise ValueError(f"Unrecognized mode: {config.mode}.")
 
   clipped_x = jnp.clip(scaled_x, -MAX, MAX)
   x_q = clipped_x.astype(config.data_type)
@@ -519,38 +509,6 @@ def quantize_dequantize(x, q_dtype, scale, compute_dtype):
   )
   return out
 
-def generate_quantized_tensors(
-    batch, lhs_non_contract, contract, rhs_non_contract,
-    configs, dtype=jnp.float32,
-  ):
-  cast_to_representable = partial(
-      quantize_dequantize,
-      scale=jnp.ones((1,)),
-      compute_dtype=dtype,
-  )
-
-  k1, k2 = jax.random.split(jax.random.key(123), 2)
-
-  a = cast_to_representable(
-      jax.random.uniform(
-          k1, (batch, lhs_non_contract, contract), minval=-1.0, dtype=dtype
-      ),
-      configs[0].data_type,
-  )
-  b = cast_to_representable(
-      jax.random.uniform(
-          k2, (batch, rhs_non_contract, contract), minval=-1.0, dtype=dtype
-      ),
-      configs[1].data_type,
-  )
-
-  dn = ((2,), (0,))
-  a_3d = shape_normalization(a, dn)
-  b_3d = shape_normalization(b, dn)
-  a_q, a_scales = quantize(a, configs[0])
-  b_q, b_scales = quantize(b, configs[1])
-
-  return a, b, a_q, b_q, a_scales, b_scales
 
 
 def scaled_dot_impl(lhs, rhs, dimension_numbers, preferred_element_type,
@@ -625,7 +583,7 @@ def scaled_dot_general_transpose_lhs(
 
 def scaled_dot_general_transpose_rhs(
     g, x, y, *, dimension_numbers, preferred_element_type: DTypeLike,
-    configs: BlockScaleConfigs
+    configs: List[BlockScaleConfig]
   ):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   swapped_dimension_numbers = ((y_contract, x_contract), (y_batch, x_batch))
@@ -709,12 +667,23 @@ def _ensure_batch_dim(lhs, rhs, dimension_numbers):
 def scaled_dot_general_wrapper(
     lhs, rhs, dimension_numbers,
     preferred_element_type=jnp.float32,
-    configs: BlockScaleConfigs=mxfp8_configs,
+    configs: List[BlockScaleConfig] | None=None,
   ):
   if preferred_element_type not in (jnp.float32, jnp.bfloat16, jnp.float16):
     msg = ('Only support preferred_element_type in (f32, bf16, f16), but got '
             '{preferred_element_type}')
     raise TypeError(msg)
+  if configs is None:
+    mxfp8_config = BlockScaleConfig(
+        mode='mxfp8',
+        block_size=32,
+        data_type=jnp.float8_e4m3fn,
+        scale_type=jnp.float8_e8m0fnu,
+        global_scale=None,
+        infer_only=False
+    )
+    configs = [mxfp8_config, mxfp8_config, mxfp8_config]
+
   dimension_numbers = ensure_tuple(dimension_numbers)
   lhs_batched, rhs_batched, dn_batched = _ensure_batch_dim(
       lhs, rhs, dimension_numbers

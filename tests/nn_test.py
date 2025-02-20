@@ -30,9 +30,10 @@ from jax._src import core
 from jax._src import test_util as jtu
 from jax._src.lib import cuda_versions
 from jax._src.cudnn.scaled_matmul_stablehlo import (
-    generate_quantized_tensors,
-    mxfp8_configs,
+    quantize,
     quantize_dequantize,
+    shape_normalization,
+    BlockScaleConfig,
 )
 from jax.test_util import check_grads
 from jax import nn
@@ -42,9 +43,9 @@ import jax.numpy as jnp
 
 config.parse_flags_with_absl()
 
-def _is_required_cudnn_version_satisfied(min_cudnn_version):
+def _is_required_cudnn_version_satisfied(min_cc, min_cudnn_version):
   return (
-      jtu.is_cuda_compute_capability_at_least("8.0") and
+      jtu.is_cuda_compute_capability_at_least(min_cc) and
       cuda_versions is not None and
       cuda_versions.cudnn_get_version() >= min_cudnn_version
   )
@@ -56,6 +57,50 @@ def _check_cudnn_backend(fn, *args, **kwargs):
 
 _cudnn_dbias_error = 'cuDNN only supports bias gradient'
 
+def _generate_quantized_tensors(
+    batch, lhs_non_contract, contract, rhs_non_contract,
+    configs, dtype=jnp.float32,
+  ):
+  cast_to_representable = partial(
+      quantize_dequantize,
+      scale=jnp.ones((1,)),
+      compute_dtype=dtype,
+  )
+
+  k1, k2 = jax.random.split(jax.random.key(123), 2)
+
+  a = cast_to_representable(
+      jax.random.uniform(
+          k1, (batch, lhs_non_contract, contract), minval=-1.0, dtype=dtype
+      ),
+      configs[0].data_type,
+  )
+  b = cast_to_representable(
+      jax.random.uniform(
+          k2, (batch, rhs_non_contract, contract), minval=-1.0, dtype=dtype
+      ),
+      configs[1].data_type,
+  )
+
+  dn = ((2,), (0,))
+  a_3d = shape_normalization(a, dn)
+  b_3d = shape_normalization(b, dn)
+  a_q, a_scales = quantize(a, configs[0])
+  b_q, b_scales = quantize(b, configs[1])
+
+  return a, b, a_q, b_q, a_scales, b_scales
+
+_create_mxfp8_config = lambda: BlockScaleConfig(
+    mode='mxfp8',
+    block_size=32,
+    data_type=jnp.float8_e4m3fn,
+    scale_type=jnp.float8_e8m0fnu,
+    global_scale=None,
+    infer_only=False
+)
+
+mxfp8_configs = [_create_mxfp8_config() for _ in range(3)]
+
 @jtu.with_config(jax_legacy_prng_key="allow",
                  jax_numpy_dtype_promotion="standard")
 class NNFunctionsTest(jtu.JaxTestCase):
@@ -64,10 +109,13 @@ class NNFunctionsTest(jtu.JaxTestCase):
       lhs_non_contract=[240, 100],
       dtype=[jnp.float16, jnp.bfloat16, jnp.float32],
       configs=[mxfp8_configs,],
+      impl=['cudnn',],
   )
-  def testScaledMatmul(self, contract, lhs_non_contract, dtype, configs):
+  def testScaledMatmul(self, contract, lhs_non_contract, dtype, configs, impl):
+    if impl == 'cudnn' and not _is_required_cudnn_version_satisfied("10.0", 90700):
+      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible")
     batch, rhs_non_contract = 4, 256
-    a, b, a_q, b_q, a_scales, b_scales = generate_quantized_tensors(
+    a, b, a_q, b_q, a_scales, b_scales = _generate_quantized_tensors(
         batch, lhs_non_contract, contract, rhs_non_contract,
         configs, dtype=dtype,
     )
@@ -83,10 +131,12 @@ class NNFunctionsTest(jtu.JaxTestCase):
       is_training=[True, False],
       output_type=[jnp.float16, jnp.bfloat16, jnp.float32],
       configs=[mxfp8_configs,],
+      impl=['cudnn',],
   )
   def testScaledDotGeneral(
-      self, is_training, output_type, configs,
-  ):
+      self, is_training, output_type, configs, impl):
+    if impl == 'cudnn' and not _is_required_cudnn_version_satisfied("10.0", 90700):
+      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible")
     cast_to_representable = partial(
         quantize_dequantize,
         scale=jnp.ones((1,)),
@@ -132,7 +182,6 @@ class NNFunctionsTest(jtu.JaxTestCase):
       out = j_inference(a, b)
       out_ref = j_inference_ref(a, b)
       self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e-2)
-
   @parameterized.product(
       dtype=[jnp.bfloat16, jnp.float16],
       group_num=[1, 2, 4],
@@ -140,7 +189,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
       impl=['cudnn', 'xla'],
   )
   def testDotProductAttention(self, dtype, group_num, use_vmap, impl):
-    if impl == 'cudnn' and not _is_required_cudnn_version_satisfied(8904):
+    if impl == 'cudnn' and not _is_required_cudnn_version_satisfied("8.0", 8904):
       raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
     if impl == 'cudnn' and dtype == jnp.float32:
       raise unittest.SkipTest("cuDNN only supports fp16 or bf16.")
@@ -189,7 +238,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     if isinstance(mask_mode, str):
       mask_mode = (mask_mode,)
     min_cudnn_version = 90200 if 'sliding_window' in mask_mode else 8904
-    if not _is_required_cudnn_version_satisfied(min_cudnn_version):
+    if not _is_required_cudnn_version_satisfied("8.0", min_cudnn_version):
       raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
 
     dtype = jnp.bfloat16
@@ -252,7 +301,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
       use_vmap=[False, True],
   )
   def testDotProductAttentionBiasGradient(self, batch_size, use_vmap):
-    if not _is_required_cudnn_version_satisfied(8904):
+    if not _is_required_cudnn_version_satisfied("8.0", 8904):
       raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
 
     dtype = jnp.bfloat16

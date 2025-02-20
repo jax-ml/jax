@@ -13,14 +13,15 @@ from jax._src.cudnn.fused_attention_stablehlo import check_cudnn_version
 from jax._src.cudnn.scaled_matmul_stablehlo import (
     scaled_matmul_wrapper,
     scaled_dot_general_wrapper,
-    mxfp8_configs,
-    generate_quantized_tensors,
+    shape_normalization,
+    quantize,
     quantize_dequantize,
+    BlockScaleConfig,
 )
 
 
 config.parse_flags_with_absl()
-input_sharding_configs = [
+input_shardings = [
     (("dp", None, "tp"), ("dp", None, "tp")),
     (("dp", None, "tp"), ("dp", None, None)),
     (("dp", None, "tp"), ("dp", "tp", None)),
@@ -41,7 +42,63 @@ expected_hlos = [
     ("all-gather", "f8e4m3fn[2,512,1024]", "replica_groups=[2,2]<=[4]", c_name),
     ("all-gather", "f8e4m3fn[2,512,512]", "replica_groups=[2,2]<=[4]", c_name),
 ]
-sharding_configs = [[i, j] for i, j in zip(input_sharding_configs, expected_hlos)]
+expected_output_spec = [
+    PartitionSpec('dp',),
+    PartitionSpec('dp',),
+    PartitionSpec('dp', None, 'tp'),
+    PartitionSpec('dp', None, 'tp'),
+    PartitionSpec('dp', 'tp', None),
+    PartitionSpec(None, 'dp', 'tp'),
+    PartitionSpec(None, 'tp', None),
+    PartitionSpec(None, None, 'tp'),
+]
+sharding_configs = {
+    input_sharding: (hlo, output_spec)
+    for input_sharding, hlo, output_spec in zip(input_shardings, expected_hlos, expected_output_spec)
+}
+
+mxfp8_config = BlockScaleConfig(
+    mode='mxfp8',
+    block_size=32,
+    data_type=jnp.float8_e4m3fn,
+    scale_type=jnp.float8_e8m0fnu,
+    global_scale=None,
+    infer_only=False
+)
+mxfp8_configs = [mxfp8_config for _ in range(3)]
+
+def generate_quantized_tensors(
+    batch, lhs_non_contract, contract, rhs_non_contract,
+    configs, dtype=jnp.float32,
+  ):
+  cast_to_representable = partial(
+      quantize_dequantize,
+      scale=jnp.ones((1,)),
+      compute_dtype=dtype,
+  )
+
+  k1, k2 = jax.random.split(jax.random.key(123), 2)
+
+  a = cast_to_representable(
+      jax.random.uniform(
+          k1, (batch, lhs_non_contract, contract), minval=-1.0, dtype=dtype
+      ),
+      configs[0].data_type,
+  )
+  b = cast_to_representable(
+      jax.random.uniform(
+          k2, (batch, rhs_non_contract, contract), minval=-1.0, dtype=dtype
+      ),
+      configs[1].data_type,
+  )
+
+  dn = ((2,), (0,))
+  a_3d = shape_normalization(a, dn)
+  b_3d = shape_normalization(b, dn)
+  a_q, a_scales = quantize(a, configs[0])
+  b_q, b_scales = quantize(b, configs[1])
+
+  return a, b, a_q, b_q, a_scales, b_scales
 
 
 def shard_and_device_put(
@@ -76,7 +133,10 @@ def shard_and_device_put(
   return a, b, in_shardings
 
 
-def get_hlo_text(in_shardings, block_scale_configs=mxfp8_configs):
+def get_hlo_text(in_shardings, block_scale_configs=None):
+  if block_scale_configs is None:
+    block_scale_configs = mxfp8_configs
+
   mesh_names = ("dp", "tp")
   devices = np.array(jax.local_devices()[:4]).reshape((2, 2))
   mesh = Mesh(devices, mesh_names)
@@ -109,15 +169,15 @@ class ScaledMatmulTest(jtu.JaxTestCase):
       self.skipTest("Requires at least Blackwell arch")
 
   @jtu.sample_product(
-      sharding_config=sharding_configs,
+      in_shardings=sharding_configs,
   )
   @jtu.run_on_devices("cuda")
-  def test_collectives(self, sharding_config):
+  def test_collectives(self, in_shardings):
     if jtu.device_under_test() != "gpu" or len(jax.local_devices()) < 4:
       self.skipTest("Partition Test enabled for at least 4 GPUs")
 
-    input_sharding, expected_hlo = sharding_config[0], sharding_config[1]
-    hlo_text = get_hlo_text(input_sharding)
+    expected_hlo = sharding_configs[in_shardings][0]
+    hlo_text = get_hlo_text(in_shardings)
 
     hlo_pattern = re.compile(
         r".*".join([re.escape(x) for x in expected_hlo]), flags=re.DOTALL
@@ -171,22 +231,21 @@ class ScaledMatmulTest(jtu.JaxTestCase):
     )
 
   @jtu.sample_product(
-        sharding_config=sharding_configs,
+        in_shardings=sharding_configs,
         block_scale_configs=[mxfp8_configs,],
   )
   @jtu.run_on_devices("cuda")
-  def test_scaled_matmul_sharded(self, sharding_config, block_scale_configs):
+  def test_scaled_matmul_sharded(self, in_shardings, block_scale_configs):
     if len(jax.local_devices()) < 4:
       self.skipTest("Require at least 4 devices to run sharding tests.")
     batch, contract, non_contract = 2, 1024, 256
-
     a, b, a_q, b_q, a_scales, b_scales = generate_quantized_tensors(
         batch, non_contract, contract, non_contract, block_scale_configs,
     )
 
     devices = np.array(jax.local_devices()[:4])
     devices = devices.reshape((2, 2))
-    in_shardings = sharding_config[0]
+    expected_output_spec = sharding_configs[in_shardings][1]
 
     with Mesh(devices, ("dp", "tp")) as mesh:
       a_q, b_q, a_scales, b_scales, input_shardings = (
@@ -205,11 +264,11 @@ class ScaledMatmulTest(jtu.JaxTestCase):
       j_scaled_matmul = jax.jit(
           scaled_matmul_wrapper, in_shardings=input_shardings
       )
-      hlo_text = j_scaled_matmul.lower(*args).compile().as_text()
+      hlo_compiled = j_scaled_matmul.lower(*args).compile()
       hlo_pattern = re.compile(
           r".*".join([re.escape(x) for x in ("custom-call", c_name)])
       )
-      self.assertRegex(hlo_text, hlo_pattern)
+      self.assertRegex(hlo_compiled.as_text(), hlo_pattern)
 
       j_ref = jax.jit(
           partial(
@@ -221,8 +280,13 @@ class ScaledMatmulTest(jtu.JaxTestCase):
 
       out = j_scaled_matmul(*args)
       out_ref = j_ref(a, b)
+      expected_output_sharding = NamedSharding(
+          mesh=mesh, spec=expected_output_spec
+      )
       self.assertArraysAllClose(out, out_ref, rtol=1e-3, atol=1e-3)
-
+      self.assertTrue(
+          out.sharding.is_equivalent_to(expected_output_sharding, out.ndim)
+      )
 
 @jtu.with_config(jax_numpy_dtype_promotion="standard")
 class MxFp8ScaledDotGeneralTest(jtu.JaxTestCase):
@@ -306,9 +370,9 @@ class MxFp8ScaledDotGeneralTest(jtu.JaxTestCase):
       out_ref = j_inference_ref(a, b)
       self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e-2)
 
-  @jtu.sample_product(sharding_config=input_sharding_configs)
+  @jtu.sample_product(in_shardings=sharding_configs)
   @jtu.run_on_devices("cuda")
-  def test_dot_general_sharded(self, sharding_config):
+  def test_dot_general_sharded(self, in_shardings):
     if len(jax.local_devices()) < 4:
       self.skipTest("Require at least 4 devices to run sharding tests.")
 
@@ -344,7 +408,6 @@ class MxFp8ScaledDotGeneralTest(jtu.JaxTestCase):
       # custom scaled_matmul op.
       return jnp.sum(jnp.tanh(y))
 
-    in_shardings = sharding_config
     devices = np.array(jax.local_devices()[:4])
     devices = devices.reshape((2, 2))
     with Mesh(devices, ("dp", "tp")) as mesh:
@@ -374,6 +437,7 @@ class MxFp8ScaledDotGeneralTest(jtu.JaxTestCase):
       self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e-2)
       self.assertArraysAllClose(x_grad, x_grad_ref, rtol=1e-2, atol=1e1)
       self.assertArraysAllClose(w_grad, w_grad_ref, rtol=1e-2, atol=1e1)
+
 
   @jtu.sample_product(
       configs=[
