@@ -475,6 +475,27 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     self.assertEqual(out_ints[0], 1002)
     self.assertEqual(out_ints[1], 1003)
 
+  def testDetectInvalidMeshDevice(self):
+    cpu_devices = _colocated_cpu_devices(jax.local_devices())
+    if jax.local_devices()[0].id == cpu_devices[0].id:
+      self.skipTest(
+          "This test only works in a setup where accelerator and CPU devices"
+          " use different device IDs."
+      )
+
+    # mesh contains non-CPU devices. To be used in colocated Python, it should
+    # have contained CPU devices only.
+    mesh = jax.sharding.Mesh(jax.local_devices(), "x")
+    sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+
+    @colocated_python.colocated_python
+    def make_zero() -> jax.Array:
+      return jax.make_array_from_callback((), sharding, lambda _: np.array(0))
+
+    with self.assertRaisesRegex(ValueError, "Invalid device ID"):
+      make_zero = make_zero.specialize(devices=cpu_devices)
+      jax.block_until_ready(make_zero())
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
