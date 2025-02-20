@@ -38,6 +38,8 @@ from jax._src.pallas.helpers import empty_like as empty_like
 from jax._src.pallas.helpers import when as when
 from jax._src.pallas.pallas_call import pallas_call as pallas_call
 from jax._src.pallas.pallas_call import pallas_call_p as pallas_call_p
+from jax._src.pallas.primitives import async_copy as async_copy
+from jax._src.pallas.primitives import async_remote_copy as async_remote_copy
 from jax._src.pallas.primitives import atomic_add as atomic_add
 from jax._src.pallas.primitives import atomic_and as atomic_and
 from jax._src.pallas.primitives import atomic_cas as atomic_cas
@@ -47,15 +49,22 @@ from jax._src.pallas.primitives import atomic_or as atomic_or
 from jax._src.pallas.primitives import atomic_xchg as atomic_xchg
 from jax._src.pallas.primitives import atomic_xor as atomic_xor
 from jax._src.pallas.primitives import debug_print as debug_print
+from jax._src.pallas.primitives import device_id
 from jax._src.pallas.primitives import dot as dot
 from jax._src.pallas.primitives import load as load
+from jax._src.pallas.primitives import make_async_copy as make_async_copy
+from jax._src.pallas.primitives import make_async_remote_copy as make_async_remote_copy
 from jax._src.pallas.primitives import max_contiguous as max_contiguous
 from jax._src.pallas.primitives import multiple_of as multiple_of
 from jax._src.pallas.primitives import num_programs as num_programs
 from jax._src.pallas.primitives import program_id as program_id
 from jax._src.pallas.primitives import run_scoped as run_scoped
+from jax._src.pallas.primitives import semaphore_read as semaphore_read
+from jax._src.pallas.primitives import semaphore_signal as semaphore_signal
+from jax._src.pallas.primitives import semaphore_wait as semaphore_wait
 from jax._src.pallas.primitives import store as store
 from jax._src.pallas.primitives import swap as swap
+from jax._src.pallas.primitives import DeviceIdType
 from jax._src.pallas.utils import cdiv as cdiv
 from jax._src.pallas.utils import next_power_of_2 as next_power_of_2
 from jax._src.pallas.utils import strides_from_shape as strides_from_shape
