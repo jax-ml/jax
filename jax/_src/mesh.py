@@ -160,6 +160,13 @@ class _BaseMesh:
     return all_axis_types_match(self.axis_types, AxisTypes.Explicit)
 
   @functools.cached_property
+  def _are_all_axes_auto_or_manual(self) -> bool:
+    if not self.axis_types:
+      return False
+    return all(t == AxisTypes.Auto or t == AxisTypes.Manual
+               for t in self.axis_types.keys())
+
+  @functools.cached_property
   def _any_axis_manual(self) -> bool:
     return any_axis_types_match(self.axis_types, AxisTypes.Manual)
 
@@ -173,6 +180,8 @@ class _BaseMesh:
 
   @functools.cached_property
   def axis_types(self):
+    if not self.axis_names:
+      return {}
     d = collections.defaultdict(list)
     for n, t in safe_zip(self.axis_names, self._axis_types_tuple):
       d[t].append(n)

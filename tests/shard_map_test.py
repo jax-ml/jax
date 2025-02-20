@@ -40,7 +40,7 @@ from jax._src import test_util as jtu
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
-from jax._src.mesh import AbstractMesh
+from jax._src.mesh import AbstractMesh, AxisTypes
 from jax._src.interpreters import partial_eval as pe
 from jax._src import linear_util as lu
 from jax._src import tree_util
@@ -1890,6 +1890,8 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2, 2), ('i', 'j'))
 
     def g(x):
+      self.assertDictEqual(x.aval.sharding.mesh.axis_types,
+                           {AxisTypes.Manual: ('i',), AxisTypes.Auto: ('j',)})
       x = jax.lax.with_sharding_constraint(
           x, jax.sharding.NamedSharding(mesh, P(None, 'j')))
       return x * x
@@ -1917,7 +1919,78 @@ class ShardMapTest(jtu.JaxTestCase):
           ' replicated}}',
           f.lower(v).as_text('hlo'),
       )
-    self.assertAllClose(v*v, f(v), check_dtypes=False)
+    self.assertAllClose(v * v, f(v), check_dtypes=False)
+
+  @jtu.with_user_mesh((2, 2), ('i', 'j'))
+  def test_partial_auto_explicit(self, mesh):
+    def g(x):
+      self.assertDictEqual(x.aval.sharding.mesh.axis_types,
+                           {AxisTypes.Manual: ('i',), AxisTypes.Explicit: ('j',)})
+      self.assertEqual(x.aval.sharding.spec, P(None, 'j'))
+      out = x * x
+      self.assertEqual(out.aval.sharding.spec, P(None, 'j'))
+      return out
+
+    @jax.jit
+    def f(x):
+      x = shard_map(g, mesh,
+                    in_specs=P('i', None),
+                    out_specs=P('i', None),
+                    auto=frozenset({'j'}))(x)
+      self.assertEqual(x.aval.sharding.spec, P('i', 'j'))
+      return x
+
+    v = jnp.arange(32.).reshape(4, 8)
+    v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+
+    out = f(v)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('i', 'j')))
+    self.assertAllClose(v * v, out, check_dtypes=False)
+
+    if config.use_shardy_partitioner.value:
+      self.assertIn(
+          'sdy.sharding_constraint %1 <@mesh, [{}, {"j"}]>',
+          f.lower(v).as_text(),
+      )
+    else:
+      self.assertIn(
+          'mhlo.sharding = "{devices=[1,2,2]<=[2,2]T(1,0) last_tile_dims={manual}}"}',
+          f.lower(v).as_text(),
+      )
+
+    @jax.jit
+    def h(x):
+      return jnp.sum(f(x))
+
+    jax.grad(h)(v)  # doesn't crash
+    jax.jit(jax.grad(h))(v)  # doesn't crash
+
+  @jtu.with_user_mesh((2, 1, 2, 2), ('i', 'j', 'k', 'l'))
+  def test_partial_auto_explicit_multi_explicit(self, mesh):
+    def g(x):
+      self.assertDictEqual(x.aval.sharding.mesh.axis_types,
+                           {AxisTypes.Manual: ('i', 'j'),
+                            AxisTypes.Explicit: ('k', 'l')})
+      self.assertEqual(x.aval.sharding.spec, P(None, None, 'k', 'l'))
+      out = x.T
+      self.assertEqual(out.aval.sharding.spec, P('l', 'k', None, None))
+      return out
+
+    @jax.jit
+    def f(x):
+      x = shard_map(g, mesh,
+                    in_specs=P('i', 'j', None, None),
+                    out_specs=P('i', 'j', None, None),
+                    auto=frozenset({'k', 'l'}))(x)
+      self.assertEqual(x.aval.sharding.spec, P(('i', 'l'), ('j', 'k'), None, None))
+      return x
+
+    v = jnp.arange(64.).reshape(4, 2, 2, 4)
+    v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j', 'k', 'l')))
+
+    out = f(v)
+    self.assertEqual(
+        out.sharding, NamedSharding(mesh,  P(('i', 'l'), ('j', 'k'), None, None)))
 
   def test_partial_auto_propagate_through(self):
     mesh = jtu.create_mesh((2, 2, 2), ('i', 'j', 'k'))

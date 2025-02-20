@@ -68,8 +68,8 @@ def _get_abstract_mesh_from_avals(in_avals) -> mesh_lib.AbstractMesh:
 def call_sharding_rule(prim, rule, num_out, *avals, **kwargs):
   cur_mesh = mesh_lib.get_abstract_mesh()
   aval_mesh = _get_abstract_mesh_from_avals(avals)
-  if ((cur_mesh.empty or cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual) and
-      (aval_mesh.empty or aval_mesh._are_all_axes_auto or aval_mesh._are_all_axes_manual)):
+  if ((cur_mesh.empty or cur_mesh._are_all_axes_auto_or_manual) and
+      (aval_mesh.empty or aval_mesh._are_all_axes_auto_or_manual)):
     aval_mesh = cur_mesh if aval_mesh.empty else aval_mesh
     s = NamedSharding(aval_mesh, P())
     return s if num_out is None else [s] * num_out
