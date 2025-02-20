@@ -19,7 +19,6 @@ contains only tests that use shard_map.
 """
 
 from absl.testing import absltest
-import numpy as np
 
 import jax
 from jax import lax
@@ -29,6 +28,8 @@ from jax.experimental import pallas as pl
 from jax.experimental import shard_map
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
+
+import numpy as np
 
 jax.config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -130,7 +131,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
 
     np.testing.assert_allclose(xla_result, pallas_result)
 
-
   def test_all_gather_example(self):
     num_devices = jax.device_count()
     if num_devices < 4:
@@ -141,7 +141,8 @@ class InterpretDistributedTest(jtu.JaxTestCase):
 
     # Create an input array that shards the first dimension across
     # all devices.
-    input_arr = jax.random.uniform(jax.random.key(0), (8 * num_devices, 128))
+    input_arr = jax.random.uniform(
+        jax.random.key(0), (8 * num_devices, 128), dtype=jnp.float32)
     input_arr = jax.device_put(input_arr, sharding)
 
     def all_gather_kernel(input_ref,
@@ -224,7 +225,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       all_gather_kernel,
       out_shape=out_shape,
       grid_spec=grid_spec,
-      interpret=mosaic_interpret.TPUInterpretParams(),
+      interpret=mosaic_interpret.TPUInterpretParams(dma_execution_mode='eager'),
       compiler_params=pltpu.TPUCompilerParams(collective_id=0),
     )
 
@@ -258,7 +259,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     sharding = jax.sharding.NamedSharding(mesh, partition)
 
     input_arr = jax.random.uniform(
-      jax.random.key(0), shape=(8, 128 * num_devices))
+        jax.random.key(0), shape=(8, 128 * num_devices))
     input_arr = jax.device_put(input_arr, sharding)
 
     def all_reduce_kernel(
@@ -350,10 +351,10 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       remote_copy.wait()
 
     out_shape = (
-      jax.ShapeDtypeStruct((8, 128), jnp.float32),
+      jax.ShapeDtypeStruct((8, 128), input_arr.dtype),
       # We allocate the double-buffer as a Pallas output so that it is
       # resident in HBM.
-      jax.ShapeDtypeStruct((2, 8, 128), jnp.float32),  # hbm_scratch
+      jax.ShapeDtypeStruct((2, 8, 128), input_arr.dtype),  # hbm_scratch
     )
 
     grid_spec = pltpu.PrefetchScalarGridSpec(
@@ -372,7 +373,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       scratch_shapes=(
         [pltpu.SemaphoreType.DMA] * 3
         + [pltpu.SemaphoreType.REGULAR]  # capacity_sem
-        + [pltpu.VMEM((8, 128), jnp.float32)]  # receive_scratch
+        + [pltpu.VMEM((8, 128), input_arr.dtype)]  # receive_scratch
       ),
     )
 
@@ -380,7 +381,8 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       all_reduce_kernel,
       out_shape=out_shape,
       grid_spec=grid_spec,
-      interpret=mosaic_interpret.TPUInterpretParams(),
+      interpret=mosaic_interpret.TPUInterpretParams(
+          dma_execution_mode='on_wait'),
       compiler_params=pltpu.TPUCompilerParams(collective_id=0),
     )
 
@@ -405,7 +407,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     )(input_arr)
 
     np.testing.assert_allclose(xla_result, pallas_result, atol=1e-5)
-
 
   def test_reduce_scatter_sum_example(self):
     num_devices = jax.device_count()
@@ -716,6 +717,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         outer_block_size[0] * num_devices,
         outer_block_size[1] * num_devices,
       ),
+      dtype=jnp.float32,
     )
     input_arr = jax.device_put(input_arr, sharding)
 
@@ -924,7 +926,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         @pl.when(phase == RIGHT)
         def _():
           pltpu.semaphore_wait(left_capacity_sem, 1)
-
 
     out_shape = (
       jax.ShapeDtypeStruct(
