@@ -238,13 +238,30 @@ def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
   return (num_vector_operands * [layout], num_vector_results * [layout])
 
 
-for op in (
+for op in [
     arith.AddFOp,
     arith.AddIOp,
+    arith.AndIOp,
+    arith.CmpFOp,
+    arith.CmpIOp,
+    arith.MaxNumFOp,
+    arith.MaxSIOp,
+    arith.MaxUIOp,
+    arith.MinNumFOp,
+    arith.MinSIOp,
+    arith.MinUIOp,
     arith.MulFOp,
+    arith.MulIOp,
+    arith.OrIOp,
+    arith.RemFOp,
+    arith.RemSIOp,
+    arith.RemUIOp,
+    arith.SubFOp,
+    arith.SubIOp,
+    arith.XOrIOp,
     vector.LoadOp,
     vector.StoreOp,
-):
+]:
   _add_layout_inference_rule(op, _infer_pointwise_op_layouts)
 
 

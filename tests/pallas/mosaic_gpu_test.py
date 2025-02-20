@@ -90,7 +90,7 @@ class PallasCallTest(PallasTest):
       ("rsqrt", jax.lax.rsqrt),
       ("tanh", jax.lax.tanh, 1e-6),
   )
-  def test_unary_ops(self, unary, rtol=1e-7):
+  def test_unary_op(self, unary, rtol=1e-7):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
@@ -112,6 +112,24 @@ class PallasCallTest(PallasTest):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = bop(x_ref[...], y_ref[...])
+
+    x = jnp.arange(256).astype(jnp.float32)
+    y = x + 1
+    np.testing.assert_array_equal(kernel(x, y), bop(x, y))
+
+  @parameterized.named_parameters(
+      ("eq", lambda x, y: x == y),
+      ("ne", lambda x, y: x != y),
+  )
+  def test_comparison_op(self, bop):
+    self.skipTest("Mosaic GPU does not support i1 yet")
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.bool),
     )
     def kernel(x_ref, y_ref, o_ref):
       o_ref[...] = bop(x_ref[...], y_ref[...])
@@ -2095,24 +2113,32 @@ class ExamplesSm90ATest(PallasSm90ATest):
   # TODO(apaszke): Clusters and multicast
 
 
+# TODO(slebedev): Remove in favor of PallasCallTest.
 class PallasCallWarpgroupSemanticsTest(PallasTest):
 
   def setUp(self):
-    self.compiler_params = plgpu.GPUCompilerParams(
-        thread_semantics=mosaic_gpu_core.ThreadSemantics.Warpgroup
+    self.pallas_call = functools.partial(
+        pl.pallas_call,
+        compiler_params=plgpu.GPUCompilerParams(
+            thread_semantics=mosaic_gpu_core.ThreadSemantics.Warpgroup
+        ),
     )
 
     super().setUp()
 
   @parameterized.named_parameters(
-      ("add_float", lambda x, y: x + y, np.float32),
-      ("add_int", lambda x, y: x + y, np.int32),
+      ("add_float", lambda x, y: x + y, jnp.float32, jnp.float32),
+      ("add_int", lambda x, y: x + y, jnp.int32, jnp.int32),
+      ("eq_int", lambda x, y: x == y, jnp.int32, jnp.bool),
+      ("eq_float", lambda x, y: x == y, jnp.float32, jnp.bool),
   )
-  def test_binary_op_wg_semantics(self, bop, dtype):
+  def test_op(self, bop, dtype, out_dtype):
+    if dtype == jnp.bool:
+      self.skipTest("Mosaic GPU does not support i1 yet")
+
     @functools.partial(
-        pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct([256], dtype=dtype),
-        compiler_params=self.compiler_params
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], dtype=out_dtype),
     )
     def kernel(x_ref, y_ref, o_ref):
       o_ref[...] = bop(x_ref[...], y_ref[...])
