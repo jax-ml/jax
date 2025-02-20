@@ -485,12 +485,20 @@ def get_packed_shape(strides, shape):
 
 class WGMMALayoutTest(TestCase):
 
-  @parameterized.named_parameters(("f32", jnp.float32), ("f16", jnp.float16))
-  def test_store_untiled(self, dtype):
+  @parameterized.product(dtype=[jnp.float16, jnp.float32],
+                         tiled_layout=[False, True],
+                         transposed_smem=[False, True])
+  def test_store_untiled(self, dtype, tiled_layout, transposed_smem):
     def kernel(ctx, out, _):
       del ctx
-      iota_tensor(64, 64, dtype).store_untiled(out)
+      if transposed_smem:
+        out = memref_transpose(out, (1, 0))
+      iota_tensor(64, 64, dtype, tiled_layout=tiled_layout).store_untiled(
+          out, vector_store=not transposed_smem
+      )
     expected = np.arange(64 * 64, dtype=dtype).reshape(64, 64)
+    if transposed_smem:
+      expected = expected.T
     iota = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (), expected, ()
     )()
