@@ -97,7 +97,7 @@ jobs:
 
           # Download the "jax" wheel from GCS if inputs.install-jax-current-commit is not set to 1
           if [[ "${{ inputs.install-jax-current-commit }}" != 1 ]]; then
-            gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*.whl $(pwd)/dist/
+            gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
           fi
       - name: Download jaxlib wheel from GCS (Windows runs)
         id: download-wheel-artifacts-w
@@ -108,12 +108,14 @@ jobs:
         if: ${{ contains(inputs.runner, 'windows-x86') }}
         shell: cmd
         run: |
-          mkdir dist &&
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
+          mkdir dist
+          @REM Use `call` so that we can run sequential gsutil commands on Windows
+          @REM See https://github.com/GoogleCloudPlatform/gsutil/issues/233#issuecomment-196150652
+          call gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
 
-          # Download the "jax" wheel from GCS if inputs.install-jax-current-commit is not set to 1
+          @REM Download the "jax" wheel from GCS if inputs.install-jax-current-commit is not set to 1
           if not "${{ inputs.install-jax-current-commit }}"=="1" (
-            gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*.whl dist/
+            call gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl dist/
           )
       - name: Skip the test run if the wheel artifacts were not downloaded successfully
         if: steps.download-wheel-artifacts-nw.outcome == 'failure' || steps.download-wheel-artifacts-w.outcome == 'failure'
