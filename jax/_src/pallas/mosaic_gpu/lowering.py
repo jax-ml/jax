@@ -275,6 +275,7 @@ class LoweringRuleContext:
   launch_ctx: mgpu.LaunchContext
   thread_semantics: mgpu_core.ThreadSemantics
   predicate: ir.Value
+  prim: jax_core.Primitive
   avals_in: Sequence[jax_core.ShapedArray]
   avals_out: Sequence[jax_core.ShapedArray]
 
@@ -928,6 +929,7 @@ def lower_jaxpr_to_mosaic_gpu(
           predicate=mgpu.single_thread_predicate(per_block=False),
           avals_in=[cast(jax_core.ShapedArray, v.aval) for v in eqn.invars],
           avals_out=[cast(jax_core.ShapedArray, v.aval) for v in eqn.outvars],
+          prim=eqn.primitive,
       )
       try:
         outvals = rule(rule_ctx, *invals, **eqn.params)
@@ -1306,34 +1308,92 @@ mosaic_lowering_rules[mgpu.ThreadSemantics.Lane].update({
 })
 
 
-# TODO(bchetioui): explore how this can be generalized for more binary ops.
-def _add_lowering_rule_wg(ctx: LoweringRuleContext, x, y):
+def _binary_op_lowering_rule_wg(
+    ctx: LoweringRuleContext, x, y, *, ui_impl, si_impl, f_impl=None
+):
   x_aval, y_aval = ctx.avals_in
   [out_aval] = ctx.avals_out
-  # TODO(bchetioui): support implicit broadcast.
-  if x_aval.shape != out_aval.shape or y_aval.shape != out_aval.shape:
-    raise NotImplementedError(
-        "Implicit broadcast not implemented with warpgroup semantics")
-
-  if np.issubdtype(ctx.avals_in[0].dtype, np.floating):
-    add_op = arith_dialect.addf
-  elif np.issubdtype(ctx.avals_in[0].dtype, np.integer):
-    add_op = arith_dialect.addi
+  x, y = _bcast_vectors(x, y, *ctx.avals_in, *ctx.avals_out)
+  if jnp.issubdtype(out_aval, jnp.signedinteger):
+    return si_impl(x, y)
+  elif jnp.issubdtype(out_aval, jnp.integer):
+    return ui_impl(x, y)
+  elif f_impl is not None and jnp.issubdtype(out_aval, jnp.floating):
+    return f_impl(x, y)
   else:
     raise NotImplementedError(
-        f"Unsupported dtype {ctx.avals_in[0].dtype} in lowering of add_p"
+        f"{ctx.prim} does not support {x_aval.dtype} and {y_aval.dtype}"
     )
 
-  x = _ensure_vector(x, x_aval.dtype)
-  y = _ensure_vector(y, y_aval.dtype)
 
-  return add_op(x, y)
+for op, si_impl, ui_impl, f_impl in [
+    (lax.add_p, arith_dialect.addi, arith_dialect.addi, arith_dialect.addf),
+    (lax.sub_p, arith_dialect.subi, arith_dialect.subi, arith_dialect.subf),
+    (lax.mul_p, arith_dialect.muli, arith_dialect.muli, arith_dialect.mulf),
+    (
+        lax.div_p,
+        arith_dialect.floordivsi,
+        arith_dialect.divui,
+        arith_dialect.divf,
+    ),
+    (lax.rem_p, arith_dialect.remsi, arith_dialect.remui, arith_dialect.remf),
+    (lax.and_p, arith_dialect.andi, arith_dialect.andi, None),
+    (lax.or_p, arith_dialect.ori, arith_dialect.ori, None),
+    (lax.xor_p, arith_dialect.xori, arith_dialect.xori, None),
+    (
+        lax.max_p,
+        arith_dialect.maxsi,
+        arith_dialect.maxui,
+        arith_dialect.maxnumf,
+    ),
+    (
+        lax.min_p,
+        arith_dialect.minsi,
+        arith_dialect.minui,
+        arith_dialect.minnumf,
+    ),
+]:
+  mosaic_lowering_rules[mgpu.ThreadSemantics.Warpgroup][op] = partial(
+      _binary_op_lowering_rule_wg,
+      si_impl=si_impl,
+      ui_impl=ui_impl,
+      f_impl=f_impl,
+  )
+
+CmpIPred = arith_dialect.CmpIPredicate
+CmpFPred = arith_dialect.CmpFPredicate
+
+def _comparison_lowering_rule_wg(
+    ctx: LoweringRuleContext, x, y, *, si_pred, ui_pred, f_pred
+):
+  x_aval, y_aval = ctx.avals_in
+  x, y = _bcast_vectors(x, y, *ctx.avals_in, *ctx.avals_out)
+  if jnp.issubdtype(x_aval, jnp.signedinteger):
+    return arith_dialect.cmpi(si_pred, x, y)
+  elif jnp.issubdtype(x_aval, jnp.integer):
+    return arith_dialect.cmpi(ui_pred, x, y)
+  elif jnp.issubdtype(x_aval, jnp.floating):
+    return arith_dialect.cmpf(f_pred, x, y)
+  else:
+    raise NotImplementedError(
+        f"{ctx.prim} does not support {x_aval.dtype} and {y_aval.dtype}"
+    )
 
 
-mosaic_lowering_rules[mgpu.ThreadSemantics.Warpgroup].update({
-    lax.add_p: _add_lowering_rule_wg,
-    # TODO(bchetioui): add support for the remaining binary ops.
-})
+for op, si_pred, ui_pred, f_pred in [
+    (lax.eq_p, CmpIPred.eq, CmpIPred.eq, CmpFPred.OEQ),
+    (lax.ne_p, CmpIPred.ne, CmpIPred.ne, CmpFPred.UNE),
+    (lax.lt_p, CmpIPred.slt, CmpIPred.ult, CmpFPred.OLT),
+    (lax.le_p, CmpIPred.sle, CmpIPred.ule, CmpFPred.OLE),
+    (lax.gt_p, CmpIPred.sgt, CmpIPred.ugt, CmpFPred.OGT),
+    (lax.ge_p, CmpIPred.sge, CmpIPred.uge, CmpFPred.OGE),
+]:
+  mosaic_lowering_rules[mgpu.ThreadSemantics.Warpgroup][op] = partial(
+      _comparison_lowering_rule_wg,
+      si_pred=si_pred,
+      ui_pred=ui_pred,
+      f_pred=f_pred,
+  )
 
 
 @register_lowering_rule(lax.div_p, mgpu.ThreadSemantics.Lane)
@@ -1929,6 +1989,44 @@ def _ensure_fa(x: object, dtype: jnp.dtype) -> mgpu.FragmentedArray:
   return mgpu.FragmentedArray.splat(
       _ensure_ir_value(x, dtype), (), is_signed=mgpu_utils.is_signed(dtype)
   )
+
+
+def _bcast_vectors(
+    x: object,
+    y: object,
+    x_aval: jax_core.ShapedArray,
+    y_aval: jax_core.ShapedArray,
+    out_aval: jax_core.ShapedArray,
+) -> tuple[ir.Value, ir.Value]:
+  """Ensures that ``x`` and ``y`` have the expected shapes and dtypes.
+
+  More specifically, the inputs are converted to vectors of the same dtype
+  as ``x_aval`` and ``y_aval``, and broadcasted to the output shape
+  if necessary.
+  """
+  x_dtype = x_aval.dtype
+  if not isinstance(x, ir.Value) or not ir.VectorType.isinstance(x.type):
+    if x_aval.weak_type:
+      x_dtype = y_aval.dtype
+    x = _ensure_vector(x, x_dtype)
+  y_dtype = y_aval.dtype
+  if not isinstance(y, ir.Value) or not ir.VectorType.isinstance(y.type):
+    if y_aval.weak_type:
+      y_dtype = x_aval.dtype
+    y = _ensure_vector(y, y_dtype)
+  if x_aval.shape != out_aval.shape:
+    assert not x_aval.shape  # TODO(slebedev): Support non-scalar inputs.
+    x = vector_dialect.splat(
+        ir.VectorType.get(out_aval.shape, mgpu_utils.dtype_to_ir_type(x_dtype)),
+        x,
+    )
+  if y_aval.shape != out_aval.shape:
+    assert not y_aval.shape  # TODO(slebedev): Support non-scalar inputs.
+    y = vector_dialect.splat(
+        ir.VectorType.get(out_aval.shape, mgpu_utils.dtype_to_ir_type(y_dtype)),
+        y,
+    )
+  return x, y
 
 
 def _ensure_vector(x: object, dtype: jnp.dtype) -> ir.Value:

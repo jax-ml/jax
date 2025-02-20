@@ -15,6 +15,7 @@
 import contextlib
 import functools
 import math
+import operator
 import os
 import re
 import tempfile
@@ -27,7 +28,6 @@ from jax import lax
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax.experimental import pallas as pl
-from jax.experimental.mosaic.gpu import core as mosaic_gpu_core
 from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
@@ -90,7 +90,7 @@ class PallasCallTest(PallasTest):
       ("rsqrt", jax.lax.rsqrt),
       ("tanh", jax.lax.tanh, 1e-6),
   )
-  def test_unary_ops(self, unary, rtol=1e-7):
+  def test_unary_op(self, unary, rtol=1e-7):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
@@ -101,24 +101,65 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_allclose(kernel(x), unary(x), rtol=rtol)
 
-  @parameterized.named_parameters(
-      ("add", lambda x, y: x + y),
-      ("mul", lambda x, y: x * y),
-      ("div", lambda x, y: x / y),
-      ("min", lambda x, y: jnp.minimum(x, y)),
-      ("max", lambda x, y: jnp.maximum(x, y)),
+  @parameterized.product(
+      op=[
+          operator.add,
+          lambda x, _: x + 1,  # for int->vector conversion
+          operator.sub,
+          operator.mul,
+          lax.div,
+          jnp.minimum,
+          jnp.maximum,
+      ],
+      dtype=[jnp.float32, jnp.int32, jnp.uint32],
+      thread_semantics=[*plgpu.ThreadSemantics],
   )
-  def test_binary_op(self, bop):
+  def test_binary_op(self, op, dtype, thread_semantics):
     @functools.partial(
         pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+        out_shape=jax.ShapeDtypeStruct([256], dtype),
+        compiler_params=plgpu.GPUCompilerParams(
+            thread_semantics=thread_semantics
+        ),
     )
     def kernel(x_ref, y_ref, o_ref):
-      o_ref[...] = bop(x_ref[...], y_ref[...])
+      o_ref[...] = op(x_ref[...], y_ref[...])
 
-    x = jnp.arange(256).astype(jnp.float32)
-    y = x + 1
-    np.testing.assert_array_equal(kernel(x, y), bop(x, y))
+    key0, key1 = jax.random.split(jax.random.key(0), 2)
+    x = (jax.random.uniform(key0, [256]) * 42).astype(dtype)
+    y = (jax.random.uniform(key1, [256]) * 42).astype(dtype)
+    np.testing.assert_array_equal(kernel(x, y), op(x, y))
+
+  @parameterized.product(
+      op=[
+          lax.eq,
+          operator.ne,
+          operator.lt,
+          operator.le,
+          operator.gt,
+          operator.ge,
+      ],
+      # TODO(slebedev): Support integral types.
+      dtype=[jnp.float32, jnp.int32, jnp.uint32],
+      thread_semantics=[*plgpu.ThreadSemantics],
+  )
+  def test_comparison_op(self, op, dtype, thread_semantics):
+    if thread_semantics == plgpu.ThreadSemantics.Warpgroup:
+      self.skipTest("Lowering with WG semantics does not yet support .astype()")
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], dtype),
+        compiler_params=plgpu.GPUCompilerParams(
+            thread_semantics=thread_semantics
+        ),
+    )
+    def kernel(o_ref):
+      o_ref[...] = jnp.broadcast_to(
+          op(dtype(42), dtype(24)).astype(dtype), o_ref.shape
+      )
+
+    np.testing.assert_array_equal(kernel(), jnp.full([256], op(42, 24), dtype))
 
   def test_add_first(self):
     @functools.partial(
@@ -2093,33 +2134,6 @@ class ExamplesSm90ATest(PallasSm90ATest):
     np.testing.assert_allclose(out, x @ x)
 
   # TODO(apaszke): Clusters and multicast
-
-
-class PallasCallWarpgroupSemanticsTest(PallasTest):
-
-  def setUp(self):
-    self.compiler_params = plgpu.GPUCompilerParams(
-        thread_semantics=mosaic_gpu_core.ThreadSemantics.Warpgroup
-    )
-
-    super().setUp()
-
-  @parameterized.named_parameters(
-      ("add_float", lambda x, y: x + y, np.float32),
-      ("add_int", lambda x, y: x + y, np.int32),
-  )
-  def test_binary_op_wg_semantics(self, bop, dtype):
-    @functools.partial(
-        pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct([256], dtype=dtype),
-        compiler_params=self.compiler_params
-    )
-    def kernel(x_ref, y_ref, o_ref):
-      o_ref[...] = bop(x_ref[...], y_ref[...])
-
-    x = jnp.arange(256).astype(dtype)
-    y = x + 1
-    np.testing.assert_array_equal(kernel(x, y), bop(x, y))
 
 
 if __name__ == "__main__":
