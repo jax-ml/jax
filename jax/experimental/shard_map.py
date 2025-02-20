@@ -484,17 +484,15 @@ def _as_manual_mesh(mesh, auto: frozenset):
   manual_axes = tuple(set(mesh.axis_names) - auto)
   cur_mesh = get_abstract_mesh()
   if cur_mesh.empty:
-    auto_axes = tuple(auto)
-    explicit_axes = ()
-  else:
-    explicit_axes, auto_axes = [], []  # type: ignore
-    for a in auto:
-      if cur_mesh._name_to_type[a] == AxisTypes.Auto:
-        auto_axes.append(a)
-      else:
-        assert cur_mesh._name_to_type[a] == AxisTypes.Explicit
-        explicit_axes.append(a)
-    explicit_axes, auto_axes = tuple(explicit_axes), tuple(auto_axes)  # type: ignore
+    cur_mesh = mesh
+  explicit_axes, auto_axes = [], []  # type: ignore
+  for a in auto:
+    if cur_mesh._name_to_type[a] == AxisTypes.Auto:
+      auto_axes.append(a)
+    else:
+      assert cur_mesh._name_to_type[a] == AxisTypes.Explicit
+      explicit_axes.append(a)
+  explicit_axes, auto_axes = tuple(explicit_axes), tuple(auto_axes)  # type: ignore
   return AbstractMesh(
       mesh.shape_tuple,
       axis_types={

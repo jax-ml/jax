@@ -1921,6 +1921,34 @@ class ShardMapTest(jtu.JaxTestCase):
       )
     self.assertAllClose(v * v, f(v), check_dtypes=False)
 
+  def test_partial_auto_explicit_no_use_mesh(self):
+    mesh = jtu.create_mesh((2, 2), ('i', 'j'),
+                           axis_types={AxisTypes.Explicit: ('i', 'j')})
+
+    def g(x):
+      self.assertDictEqual(x.aval.sharding.mesh.axis_types,
+                           {AxisTypes.Manual: ('i',), AxisTypes.Explicit: ('j',)})
+      self.assertEqual(x.aval.sharding.spec, P(None, 'j'))
+      out = x * x
+      self.assertEqual(out.aval.sharding.spec, P(None, 'j'))
+      return out
+
+    @jax.jit
+    def f(x):
+      x = shard_map(g, mesh,
+                    in_specs=P('i', None),
+                    out_specs=P('i', None),
+                    auto=frozenset({'j'}))(x)
+      self.assertEqual(x.aval.sharding.spec, P('i', 'j'))
+      return x
+
+    v = jnp.arange(32.).reshape(4, 8)
+    v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+
+    out = f(v)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('i', 'j')))
+    self.assertAllClose(v * v, out, check_dtypes=False)
+
   @jtu.with_user_mesh((2, 2), ('i', 'j'))
   def test_partial_auto_explicit(self, mesh):
     def g(x):
