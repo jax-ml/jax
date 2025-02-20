@@ -538,7 +538,7 @@ class PjitParams(NamedTuple):
   in_tree: PyTreeDef
   out_tree: PyTreeDef
   donated_invars: tuple[bool, ...]
-  arg_names: tuple[str | None, ...]
+  arg_names: tuple[str, ...]
   num_consts: int
   attrs_tracked: list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]
 
@@ -663,7 +663,7 @@ def _infer_params_impl(
       compiler_options_kvs=ji.compiler_options_kvs,
   )
   return PjitParams(consts, params, in_avals, in_tree, out_tree(),
-                    donated_invars, dbg.arg_names if dbg else None, len(consts),
+                    donated_invars, dbg.arg_names, len(consts),
                     attrs_tracked), args_flat
 
 
@@ -741,13 +741,13 @@ def _infer_input_type(fun: Callable, dbg: core.DebugInfo,
     for i, x in enumerate(explicit_args):
       avals.append(core.shaped_abstractify(x))
   except OverflowError:
-    arg_path = f"argument path is {dbg.arg_names[i]}"  # type: ignore
+    arg_path = f"argument path is {dbg.arg_names[i]}"
     raise OverflowError(
       "An overflow was encountered while parsing an argument to a jitted "
       f"computation, whose {arg_path}."
     ) from None
   except TypeError:
-    arg_description = f"path {dbg.arg_names[i]}"  # type: ignore
+    arg_description = f"path {dbg.arg_names[i]}"
     raise TypeError(
       f"Error interpreting argument to {fun} as an abstract array."
       f" The problematic value is of type {type(x)} and was passed to"
@@ -1134,7 +1134,7 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
         "pjit in_layouts", in_tree, in_layouts, tupled_args=True)
 
   # TODO(dougalm,mattjj): enable debug info with attrs_tracked
-  attrs_tracked = debug_info and len(debug_info.arg_names) != len(in_avals)
+  attrs_tracked = len(debug_info.arg_names) != len(in_avals)
   if not config.dynamic_shapes.value and not attrs_tracked:
     pjit_check_aval_sharding(in_shardings_flat, in_avals,
                              debug_info.safe_arg_names(len(in_avals)),
@@ -1338,11 +1338,11 @@ def _check_and_canonicalize_out_shardings(
   if not config.dynamic_shapes.value:
     pjit_check_aval_sharding(
         out_shardings_flat, out_avals,
-        debug_info.safe_result_paths(len(out_avals)),  # type: ignore[arg-type]
+        debug_info.safe_result_paths(len(out_avals)),
         "pjit outputs", allow_uneven_sharding=False)
     check_aval_layout_compatibility(
         out_layouts_flat, out_avals,
-        debug_info.safe_result_paths(len(out_avals)),  # type: ignore[arg-type]
+        debug_info.safe_result_paths(len(out_avals)),
         "jit outputs")
   return out_shardings_flat, out_layouts_flat
 
@@ -1396,10 +1396,9 @@ class IgnoreKey:
 
 
 def pjit_check_aval_sharding(
-    shardings, flat_avals, names: tuple[str | None, ...] | None,
+    shardings, flat_avals, names: Sequence[str],
     what_aval: str, allow_uneven_sharding: bool):
-  new_names = [None] * len(shardings) if names is None else names
-  for aval, s, name in zip(flat_avals, shardings, new_names):
+  for aval, s, name in zip(flat_avals, shardings, names):
     if isinstance(s, (UnspecifiedValue, AUTO)):
       continue
     name_str = f' with pytree key path {name}' if name else ''
@@ -1431,9 +1430,8 @@ def pjit_check_aval_sharding(
 
 
 def check_aval_layout_compatibility(
-    layouts, flat_avals, names: tuple[str, ...] | None, what_aval: str):
-  new_names = [''] * len(layouts) if names is None else names
-  for aval, l, name in zip(flat_avals, layouts, new_names):
+    layouts, flat_avals, names: Sequence[str], what_aval: str):
+  for aval, l, name in zip(flat_avals, layouts, names):
     if l is None or isinstance(l, AutoLayout):
       continue
     name_str = f' with pytree key path {name}' if name else ''
@@ -2557,12 +2555,14 @@ def with_sharding_constraint(x, shardings):
                         for s in shardings_flat]
 
   pjit_check_aval_sharding(
-      shardings_flat, x_flat, None, "with_sharding_constraint arguments",
+      shardings_flat, x_flat, ("",) * len(shardings_flat),
+      "with_sharding_constraint arguments",
       allow_uneven_sharding=True)
 
   check_shardings_are_auto(shardings_flat)
 
-  check_aval_layout_compatibility(user_layouts_flat, x_flat, None,
+  check_aval_layout_compatibility(user_layouts_flat, x_flat,
+                                  ("",) * len(user_layouts_flat),
                                   "with_sharding_constraint arguments")
 
   outs = [sharding_constraint_p.bind(xf, sharding=s, layout=l,

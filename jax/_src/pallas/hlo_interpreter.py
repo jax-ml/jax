@@ -336,7 +336,6 @@ def pallas_call_hlo_interpret(
     *args,
     backend: str | None,
     jaxpr: jax_core.Jaxpr,
-    name_and_src_info: pallas_core.NameAndStrInfo,
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: GridMapping,
@@ -345,6 +344,7 @@ def pallas_call_hlo_interpret(
     out_avals: tuple[jax_core.AbstractValue, ...],
 ):
   del compiler_params, cost_estimate, out_avals
+  debug_info = jaxpr.debug_info
   # If we're in interpret mode, we *scan* over the grid and eval the
   # discharged jaxpr.
   dynamic_grid_args, args = split_list(
@@ -360,7 +360,7 @@ def pallas_call_hlo_interpret(
   discharged_jaxpr, discharged_consts, scratch_avals = kernel_to_hlo_jaxpr(
       jaxpr, (), grid_mapping, backend=backend)
   if debug:
-    print(f"\nJaxpr of the the kernel in pallas_call {name_and_src_info}:")
+    print(f"\nJaxpr of the the kernel in pallas_call {debug_info.func_src_info}:")
     print(discharged_jaxpr)
   out = _initialize_output_vals(grid_mapping.block_mappings_output,
                                 args, input_output_aliases)

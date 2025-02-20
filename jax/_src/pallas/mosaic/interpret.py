@@ -796,7 +796,6 @@ def get_interpret_effects():
 def interpret_pallas_call(
     *args,
     jaxpr: jax_core.Jaxpr,
-    name_and_src_info: pallas_core.NameAndSrcInfo,
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: GridMapping,
