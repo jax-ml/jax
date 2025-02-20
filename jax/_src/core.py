@@ -1770,7 +1770,12 @@ def canonicalize_value(val):
   cur_mesh = mesh_lib.get_abstract_mesh()
   if cur_mesh == aval.sharding.mesh:
     return val
-  if cur_mesh._are_all_axes_manual and aval.sharding.mesh._are_all_axes_auto:
+  # Atleast 1 mesh axis should be Manual and all other axes should be
+  # Manual or Auto to allow casting.
+  # TODO(yashkatariy): Casting to Explicit is not yet allowed. Maybe we need
+  # cast_and_slice_p for it since shape might change?
+  if (cur_mesh._any_axis_manual and cur_mesh._are_all_axes_auto_or_manual and
+      aval.sharding.mesh._are_all_axes_auto):
     from jax._src.pjit import mesh_cast  # pytype: disable=import-error
     return mesh_cast(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))
   return val

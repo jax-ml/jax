@@ -6586,6 +6586,22 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     shmap_f()  # doesn't crash
     jax.jit(shmap_f)()  # doesn't crash
 
+  @jtu.with_user_mesh((2, 2), ('x', 'y'),
+                      axis_types={AxisTypes.Auto: ('x', 'y')})
+  def test_shmap_close_over_partial_auto(self, mesh):
+    const = jnp.arange(8)
+    def f():
+      return const * 2
+
+    shmap_f = shard_map(f, mesh=mesh, in_specs=(), out_specs=P('x'),
+                        auto=frozenset({'y'}))
+    f = jax.jit(shmap_f)
+    out = f()
+    self.assertArraysEqual(out, jnp.concatenate([const * 2, const * 2]))
+
+    jaxpr = f.trace().jaxpr
+    self.assertIn('mesh_cast', str(jaxpr))
+
   @jtu.with_user_mesh((2, 1), ('x', 'y'))
   def test_wsc_error(self, mesh):
     s = NamedSharding(mesh, P('x'))
