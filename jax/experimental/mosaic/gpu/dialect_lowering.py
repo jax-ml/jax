@@ -18,7 +18,7 @@ from collections.abc import Callable
 import dataclasses
 import functools
 import operator
-from typing import Sequence, Type, cast
+from typing import Any, Sequence, Type, cast
 
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
@@ -350,20 +350,77 @@ def _mgpu_async_store_op_lowering_rule(
   return []
 
 
-@_register_lowering(arith.AddFOp)
-@_register_lowering(arith.AddIOp)
-def _arith_add_op_lowering_rule(
-    _: LoweringContext, add: arith.AddFOp | arith.AddIOp
+def _binary_op_lowering_rule(
+    _: LoweringContext,
+    op: Any,
+    impl: Callable[
+        [fa.FragmentedArray, fa.FragmentedArray], fa.FragmentedArray
+    ],
 ) -> Sequence[ir.Value]:
+  lhs = _fragmented_array_from_ir(op.lhs)
+  rhs = _fragmented_array_from_ir(op.rhs)
+  return [_fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
 
-  fragmented_array_lhs = _fragmented_array_from_ir(add.lhs)
-  fragmented_array_rhs = _fragmented_array_from_ir(add.rhs)
 
-  return [
-      _fragmented_array_to_ir(
-          fragmented_array_lhs + fragmented_array_rhs, add.result.type
-      )
-  ]
+for ops, impl in [
+    ([arith.AddIOp, arith.AddFOp], operator.add),
+    ([arith.SubIOp, arith.SubFOp], operator.sub),
+    ([arith.MulIOp, arith.MulFOp], operator.mul),
+    ([arith.RemSIOp, arith.RemUIOp, arith.RemFOp], operator.mod),
+    ([arith.AndIOp], operator.and_),
+    ([arith.OrIOp], operator.or_),
+    ([arith.XOrIOp], operator.xor),
+    ([arith.MaxSIOp, arith.MaxUIOp, arith.MaxNumFOp], fa.FragmentedArray.max),
+    ([arith.MinSIOp, arith.MinUIOp, arith.MinNumFOp], fa.FragmentedArray.min),
+]:
+  for op in ops:
+    _lowerings[op.OPERATION_NAME] = functools.partial(
+        _binary_op_lowering_rule, impl=impl
+    )
+
+
+CMPI_IMPLS = {
+    arith.CmpIPredicate.eq: operator.eq,
+    arith.CmpIPredicate.ne: operator.ne,
+    arith.CmpIPredicate.slt: operator.lt,
+    arith.CmpIPredicate.sle: operator.le,
+    arith.CmpIPredicate.sgt: operator.gt,
+    arith.CmpIPredicate.sge: operator.ge,
+    arith.CmpIPredicate.ult: operator.lt,
+    arith.CmpIPredicate.ule: operator.le,
+    arith.CmpIPredicate.ugt: operator.gt,
+    arith.CmpIPredicate.uge: operator.ge,
+}
+
+
+@_register_lowering(arith.CmpIOp)
+def _cmpi_op_lowering_rule(
+    _: LoweringContext, op: arith.CmpIOp
+) -> Sequence[ir.Value]:
+  impl = CMPI_IMPLS[op.predicate.value]
+  lhs = _fragmented_array_from_ir(op.lhs)
+  rhs = _fragmented_array_from_ir(op.rhs)
+  return [_fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
+
+
+CMPF_IMPLS = {
+    arith.CmpFPredicate.OEQ: operator.eq,
+    arith.CmpFPredicate.UNE: operator.ne,
+    arith.CmpFPredicate.OLT: operator.lt,
+    arith.CmpFPredicate.OLE: operator.le,
+    arith.CmpFPredicate.OGT: operator.gt,
+    arith.CmpFPredicate.OGE: operator.ge,
+}
+
+
+@_register_lowering(arith.CmpFOp)
+def _cmpf_op_lowering_rule(
+    _: LoweringContext, op: arith.CmpFOp
+) -> Sequence[ir.Value]:
+  impl = CMPF_IMPLS[op.predicate.value]
+  lhs = _fragmented_array_from_ir(op.lhs)
+  rhs = _fragmented_array_from_ir(op.rhs)
+  return [_fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
 
 
 @_register_lowering(mgpu.WGMMAOp)
