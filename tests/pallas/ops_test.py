@@ -1863,12 +1863,14 @@ class OpsTest(PallasBaseTest):
 
   @parameterized.named_parameters(
       ("add_i32", pl.atomic_add, np.array([1, 2, 3, 4], np.int32), np.sum),
-      ("max_i", pl.atomic_max, np.array([1, 2, 3, 4], np.int32), np.max),
+      ("max_i32", pl.atomic_max, np.array([1, 2, 3, 4], np.int32), np.max),
       ("min_i32", pl.atomic_min, np.array([1, 2, 3, 4], np.int32), np.min),
+      ("max_u32", pl.atomic_max, np.array([1, 2, 3, 4], np.uint32), np.max),
+      ("min_u32", pl.atomic_min, np.array([1, 2, 3, 4], np.uint32), np.min),
       ("add_f16", pl.atomic_add, np.array([1, 2, 3, 4], np.float16), np.sum),
       ("add_f32", pl.atomic_add, np.array([1, 2, 3, 4], np.float32), np.sum),
-      ("max_f32", pl.atomic_max, np.array([1, 2, 3, 4], np.float32), np.max),
-      ("min_f32", pl.atomic_min, np.array([1, 2, 3, 4], np.float32), np.min),
+      ("max_f32", pl.atomic_max, np.array([-2, -1, 0, 1], np.float32), np.max),
+      ("min_f32", pl.atomic_min, np.array([-2, -1, 0, 1], np.float32), np.min),
   )
   def test_scalar_atomic(self, op, value, numpy_op):
     # The Pallas TPU lowering currently supports only blocks of rank >= 1
