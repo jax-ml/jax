@@ -160,6 +160,7 @@ def _roofline_interpreter(
       sum(np.prod(shape.shape) * shape.dtype.itemsize for shape in env.values())
     )
 
+  jaxpr = jaxpr.jaxpr if isinstance(jaxpr, core.ClosedJaxpr) else jaxpr
   make_roofline_shape = lambda x: RooflineShape.from_aval(aval(x))
   map(
     write,
