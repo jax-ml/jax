@@ -13,9 +13,10 @@ from jax._src.cudnn.fused_attention_stablehlo import check_cudnn_version
 from jax._src.cudnn.scaled_matmul_stablehlo import (
     scaled_matmul_wrapper,
     scaled_dot_general_wrapper,
-    mxfp8_configs,
-    generate_quantized_tensors,
+    shape_normalization,
+    quantize,
     quantize_dequantize,
+    BlockScaleConfig,
 )
 
 
@@ -42,6 +43,49 @@ expected_hlos = [
     ("all-gather", "f8e4m3fn[2,512,512]", "replica_groups=[2,2]<=[4]", c_name),
 ]
 sharding_configs = [[i, j] for i, j in zip(input_sharding_configs, expected_hlos)]
+
+mxfp8_config = BlockScaleConfig(
+    mode='mxfp8',
+    block_size=32,
+    data_type=jnp.float8_e4m3fn,
+    scale_type=jnp.float8_e8m0fnu,
+    global_scale=None,
+    infer_only=False
+)
+mxfp8_configs = [mxfp8_config for _ in range(3)]
+
+def generate_quantized_tensors(
+    batch, lhs_non_contract, contract, rhs_non_contract,
+    configs, dtype=jnp.float32,
+  ):
+  cast_to_representable = partial(
+      quantize_dequantize,
+      scale=jnp.ones((1,)),
+      compute_dtype=dtype,
+  )
+
+  k1, k2 = jax.random.split(jax.random.key(123), 2)
+
+  a = cast_to_representable(
+      jax.random.uniform(
+          k1, (batch, lhs_non_contract, contract), minval=-1.0, dtype=dtype
+      ),
+      configs[0].data_type,
+  )
+  b = cast_to_representable(
+      jax.random.uniform(
+          k2, (batch, rhs_non_contract, contract), minval=-1.0, dtype=dtype
+      ),
+      configs[1].data_type,
+  )
+
+  dn = ((2,), (0,))
+  a_3d = shape_normalization(a, dn)
+  b_3d = shape_normalization(b, dn)
+  a_q, a_scales = quantize(a, configs[0])
+  b_q, b_scales = quantize(b, configs[1])
+
+  return a, b, a_q, b_q, a_scales, b_scales
 
 
 def shard_and_device_put(
@@ -76,7 +120,10 @@ def shard_and_device_put(
   return a, b, in_shardings
 
 
-def get_hlo_text(in_shardings, block_scale_configs=mxfp8_configs):
+def get_hlo_text(in_shardings, block_scale_configs=None):
+  if block_scale_configs is None:
+    block_scale_configs = mxfp8_configs
+
   mesh_names = ("dp", "tp")
   devices = np.array(jax.local_devices()[:4]).reshape((2, 2))
   mesh = Mesh(devices, mesh_names)
@@ -205,11 +252,11 @@ class ScaledMatmulTest(jtu.JaxTestCase):
       j_scaled_matmul = jax.jit(
           scaled_matmul_wrapper, in_shardings=input_shardings
       )
-      hlo_text = j_scaled_matmul.lower(*args).compile().as_text()
+      hlo_compiled = j_scaled_matmul.lower(*args).compile()
       hlo_pattern = re.compile(
           r".*".join([re.escape(x) for x in ("custom-call", c_name)])
       )
-      self.assertRegex(hlo_text, hlo_pattern)
+      self.assertRegex(hlo_compiled.as_text(), hlo_pattern)
 
       j_ref = jax.jit(
           partial(
@@ -222,7 +269,7 @@ class ScaledMatmulTest(jtu.JaxTestCase):
       out = j_scaled_matmul(*args)
       out_ref = j_ref(a, b)
       self.assertArraysAllClose(out, out_ref, rtol=1e-3, atol=1e-3)
-
+      self.assertTrue(out.sharding.is_equivalent_to(out_ref.sharding, out_ref.ndim))
 
 @jtu.with_config(jax_numpy_dtype_promotion="standard")
 class MxFp8ScaledDotGeneralTest(jtu.JaxTestCase):
