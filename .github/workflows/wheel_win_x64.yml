@@ -37,8 +37,9 @@ jobs:
           BAZEL_VC: "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Enterprise\\VC"
           JAXLIB_RELEASE: true
         run: |
-          python -m pip install -r build/test-requirements.txt
-          python -m pip install --upgrade numpy==2.0.0 scipy==1.13.1
+          python -m pip install uv~=0.5.30
+          python -m uv pip install -r build/test-requirements.txt \
+            --upgrade numpy==2.0.0 scipy==1.13.1
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
           python.exe build\build.py build --wheels=jaxlib `
             --bazel_options=--color=yes `
@@ -57,7 +58,7 @@ jobs:
           JAX_SKIP_SLOW_TESTS: true
           PY_COLORS: 1
         run: |
-          python -m pip install --find-links ${{ github.workspace }}\dist jaxlib
-          python -m pip install -e ${{ github.workspace }}
+          python -m uv pip install --find-links ${{ github.workspace }}\dist jaxlib \
+            -e ${{ github.workspace }}
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
           pytest -n auto --tb=short tests examples
