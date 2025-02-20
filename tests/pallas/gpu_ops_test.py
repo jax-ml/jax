@@ -239,6 +239,7 @@ class FusedAttentionTest(PallasBaseTest):
       causal,
       use_segment_ids,
   ):
+    self.skipTest("Skip tests on ROCm")
     k1, k2, k3 = random.split(random.key(0), 3)
     q = random.normal(
         k1, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16

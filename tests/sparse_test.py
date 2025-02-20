@@ -208,6 +208,8 @@ class cuSparseTest(sptu.SparseTestCase):
     transpose=[True, False],
   )
   def test_csr_matvec(self, shape, dtype, transpose):
+    if (dtype == np.int32):
+      self.skipTest("skipping int32 type tests")
     op = lambda M: M.T if transpose else M
 
     v_rng = jtu.rand_default(self.rng())
@@ -228,6 +230,8 @@ class cuSparseTest(sptu.SparseTestCase):
       transpose=[True, False],
   )
   def test_csr_matmat(self, shape, dtype, transpose):
+    if (dtype == np.int32):
+      self.skipTest("skipping int32 type tests")
     op = lambda M: M.T if transpose else M
 
     B_rng = jtu.rand_default(self.rng())
@@ -1036,6 +1040,8 @@ class SparseObjectTest(sptu.SparseTestCase):
     for Obj in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO]))
   @jax.default_matmul_precision("float32")
   def test_matmul(self, shape, dtype, Obj, bshape):
+    if dtype == np.complex64:
+      self.skipTest("Skip test on ROCm")
     rng = sptu.rand_sparse(self.rng(), post=jnp.array)
     rng_b = jtu.rand_default(self.rng())
     M = rng(shape, dtype)

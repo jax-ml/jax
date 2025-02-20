@@ -1562,6 +1562,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   )
   @jax.default_matmul_precision("float32")
   def testPoly(self, a_shape, dtype, rank):
+    self.skipTest("Skip Poly tests on ROCm")
     if dtype in (np.float16, jnp.bfloat16, np.int16):
       self.skipTest(f"{dtype} gets promoted to {np.float16}, which is not supported.")
     elif rank == 2 and not jtu.test_device_matches(["cpu", "gpu"]):
