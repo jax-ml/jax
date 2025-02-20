@@ -45,6 +45,7 @@ from jax._src.lax import svd as lax_svd
 from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
     _input_dtype)
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -1455,14 +1456,19 @@ def _triangular_solve_cpu_lower(
   if conjugate_a and not transpose_a:
     a = chlo.conj(a)
     conjugate_a = False
-  if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
+  if np.dtype(a_aval.dtype) in _cpu_lapack_types:
     target_name = lapack.prepare_lapack_call("trsm_ffi", a_aval.dtype)
-    alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype))
-    alpha_aval = ShapedArray((), a_aval.dtype)
+    # TODO(b/397715595): Remove forward_compat check no earlier than 2025-03-14.
+    if ctx.is_forward_compat() or jaxlib_version <= (0, 5, 1):
+      alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype)),
+      alpha_aval = ShapedArray((), a_aval.dtype),
+    else:
+      alpha = ()
+      alpha_aval = ()
     rule = _linalg_ffi_lowering(target_name,
-                                [a_aval, b_aval, alpha_aval],
+                                [a_aval, b_aval, *alpha_aval],
                                 operand_output_aliases={1: 0})
-    return rule(ctx, a, b, alpha,
+    return rule(ctx, a, b, *alpha,
                 side=_matrix_side_attr(left_side),
                 uplo=_matrix_uplo_attr(lower),
                 trans_x=_matrix_transpose_attr(transpose_a, conjugate_a),
