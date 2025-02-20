@@ -333,7 +333,7 @@ def check_layout(query, key, value, bias, q_seqlen, kv_seqlen,
 
 
 def check_is_flash_attention(
-    query, key, layout: int, cudnn_version, has_bias, is_training, is_packed,
+    query, key, layout: int, cudnn_version, has_bias, is_training, is_packed=False,
     is_fp8=False):
     # Extract sequence length (T) and head dim (H) based on layout
     if layout == AttentionLayout.BNTH.value:
