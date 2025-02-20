@@ -939,7 +939,7 @@ def index_in_dim(operand: Array | np.ndarray, index: int, axis: int = 0,
                  keepdims: bool = True) -> Array:
   """Convenience wrapper around :func:`lax.slice` to perform int indexing.
 
-  This is effectively equivalent to ``operand[..., start_index:limit_index:stride]``
+  This is effectively equivalent to ``operand[..., index]``
   with the indexing applied on the specified axis.
 
   Args:
