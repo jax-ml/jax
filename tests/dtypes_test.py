@@ -73,6 +73,12 @@ if dtypes.float8_e8m0fnu is not None:
 float_dtypes += fp8_dtypes
 custom_float_dtypes += fp8_dtypes
 
+fp4_dtypes = []
+if dtypes.float4_e2m1fn is not None:
+  fp4_dtypes += [np.dtype(dtypes.float4_e2m1fn)]
+float_dtypes += fp4_dtypes
+custom_float_dtypes += fp4_dtypes
+
 complex_dtypes = [np.dtype('complex64'), np.dtype('complex128')]
 
 
