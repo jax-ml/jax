@@ -296,3 +296,48 @@ def _ppermute_roofline(
     ici_bytes={axis: int(ici_bytes) for axis in axis_name},
     ici_latency={axis: int(ici_latency) for axis in axis_name},
   )
+
+
+def _minmax_p_roofline(
+    ctx: roofline.RooflineRuleContext,
+    *args,
+    **kw,
+) -> roofline.RooflineResult:
+  lhs, rhs = (roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in)
+  out = roofline.RooflineShape.from_aval(ctx.avals_out[0])
+  return roofline.RooflineResult(
+      # Cost of matmul + cost of max (which is the size of the output matrix)
+      unfused_flops=int(
+          2 * lhs.size * np.prod(rhs.shape[1:])
+          + np.prod(lhs.shape[:-1] + rhs.shape[1:])
+      ),
+      hbm_bytes=int(
+          lhs.dtype.itemsize
+          * (
+              # Access all inputs and a scalar, plus 5 * output size:
+              # 1 write and read the output of matmul
+              # 2 write and read a matrix of zeros
+              # 3 write a matrix of results
+              1
+              + lhs.size
+              + rhs.size
+              + 5 * np.prod(lhs.shape[:-1] + rhs.shape[1:])
+          )
+      ),
+  )
+
+
+roofline.register_roofline(lax.min_p)(_minmax_p_roofline)
+roofline.register_roofline(lax.max_p)(_minmax_p_roofline)
+
+
+@roofline.register_roofline(lax.reduce_sum_p)
+def _reduce_sum_p_roofline(
+    ctx: roofline.RooflineRuleContext,
+    *args,
+    **kw,
+) -> roofline.RooflineResult:
+  (x,) = (roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in)
+  return roofline.RooflineResult(
+      unfused_flops=x.size - 1, hbm_bytes=x.dtype.itemsize * (x.size + 2)
+  )
