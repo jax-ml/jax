@@ -20,3 +20,5 @@ from jax._src.public_test_util import (
   check_jvp as check_jvp,
   check_vjp as check_vjp,
 )
+
+from jax._src.test_util import XlaGpuFeatureTestCase as XlaGpuFeatureTestCase
