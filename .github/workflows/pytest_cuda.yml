@@ -100,7 +100,7 @@ jobs:
 
           # Download the "jax" wheel from GCS if inputs.install-jax-current-commit is not set to 1
           if [[ "${{ inputs.install-jax-current-commit }}" != 1 ]]; then
-            gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*.whl $(pwd)/dist/
+            gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax-*py3*none*.whl $(pwd)/dist/
           fi
       - name: Skip the test run if the wheel artifacts were not downloaded successfully
         if: steps.download-wheel-artifacts.outcome == 'failure'
