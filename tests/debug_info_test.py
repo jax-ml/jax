@@ -121,24 +121,31 @@ class DebugInfoTest(jtu.JaxTestCase):
                                 check_tracer_arg_name: bool = False,
                                 expected_lowering_lines: list[str | re.Pattern] = [],
                                 **kwargs) -> None:
-    """Checks for expected debug info in all jaxprs, and in inspected tracers.
+    """Checks the expected debug info in all jaxprs, in spied tracers, and StableHLO.
 
     `traceable` will be traced as `traceable.trace(*args, **kwargs)` if it has
-    a `trace` attribute, or will be called as `traceable(*args, **kwargs)`
-    otherwise. The debug infos in the nested Jaxprs are first converted to
+    a `trace` method (for jit), or will be called as `traceable(*args, **kwargs)`
+    otherwise (for eager). We collect all the nested Jaxprs, either from
+    the result of `trace`, or by capturing all the lowered jaxprs in eager
+    mode. The debug infos in the nested Jaxprs are first converted to
     strings using `_debug_info_to_string` and then
-    compared against `expected_jaxpr_debug_infos`.
+    compared against `expected_jaxpr_debug_infos`. During this conversion,
+    we strip occurences of this test file name and a line number
+    (e.g., .*/debug_info_test.py:56)
     An element of `expected_jaxpr_debug_infos` can be a string, in which case
-    it is looked up by equality, or a `re.Pattern` (the result of `re.compile`)
-    in which case it is looked up by `.match()`. All elements of
+    it is compared by equality, or a `re.Pattern` (the result of `re.compile`)
+    in which case it is compared by `.match()`. All elements of
     `expected_jaxpr_debug_infos` must appear, and all Jaxprs must be matched.
 
     Optionally, we can pass a TracerSpy object into which we have
-    appended tracers from the execution of `traceable`. Those
-    tracers must have debugging info matching `expected_tracer_debug_infos`.
-    If the `check_tracer_arg_name` is True, then we append
-    ", from <arg_name>" to the inspected tracer's debug info (to test
-    provenance information).
+    `append`ed tracers from the execution of `traceable`. E.g., if we
+    do `tracer_spy.append(a)`, where `a` is an argument of a `jit` function,
+    we expect to see debugging info
+    "traced_for=jit, fun=my_f, arg_names=a,b, from a". These debugging infos
+    are compared with `expected_tracer_debug_infos`.
+
+    Finally, if we pass `expected_lowering_lines` then we are looking for those
+    matches in the StableHLO MLIR modules that are lowered.
     """
     if hasattr(traceable, "trace"):
       traced = traceable.trace(*args, **kwargs)
@@ -823,7 +830,6 @@ class DebugInfoTest(jtu.JaxTestCase):
         ])
 
   def test_vjp_of_jit(self):
-    self.skipTest("Enable this after figuring out why it's failing")
     tracer_spy = TracerSpy()
     def my_f(x, y, z):
       tracer_spy.append(y[0])
@@ -833,6 +839,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         jnp.float32(1.), (jnp.float32(2.),), [jnp.float32(3.)],
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=my_f, arg_names=x,y[0], result_paths=",
+            re.compile(r"traced_for=jit, fun=convert_element_type at .*dispatch.py:.*, arg_names=args\[0\], result_paths="),
             # TODO(necula): arg_names?
             "traced_for=jit, fun=my_f, arg_names=None,None,None,None, result_paths=['a'],['b'][0][0]",
         ],
