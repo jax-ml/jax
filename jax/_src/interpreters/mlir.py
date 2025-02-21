@@ -2784,7 +2784,7 @@ def merge_mlir_modules(dst_module: ir.Module,
   # are the "main" symbol.
   renamings = {}
   for op in src_module.body.operations:
-    name = op.name.value
+    name = op.sym_name.value
     should_rename = name in dst_symtab or name == "main"
     if should_rename:
       base_name = sym_name if name == "main" else name
@@ -2804,8 +2804,9 @@ def merge_mlir_modules(dst_module: ir.Module,
   # Apply the symbol renamings to symbol definitions.
   private = ir.StringAttr.get("private")
   for op in src_module.body.operations:
-    if op.name.value in renamings:
-      src_symtab.set_symbol_name(op, renamings[op.name.value])
+    name = op.sym_name.value
+    if name in renamings:
+      src_symtab.set_symbol_name(op, renamings[name])
     op.attributes["sym_visibility"] = private
 
   # Apply the symbol renamings to symbol uses.
@@ -3302,8 +3303,10 @@ def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
   """
   try:
     refined_module_str = xla_extension.mlir.refine_polymorphic_shapes(
-      module_to_bytecode(module), enable_shape_assertions=True,
-      validate_static_shapes=True)
+        module_to_bytecode(module),
+        enable_shape_assertions=True,
+        validate_static_shapes=True,
+        enable_shardy=config.use_shardy_partitioner.value)
   except Exception as e:
     raise ValueError(
         "Error refining shapes. " +
