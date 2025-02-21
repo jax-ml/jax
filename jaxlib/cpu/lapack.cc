@@ -111,6 +111,10 @@ void GetLapackKernelsFromScipy() {
     AssignKernelFn<svd::SVDType<DataType::F64>>(lapack_ptr("dgesdd"));
     AssignKernelFn<svd::SVDType<DataType::C64>>(lapack_ptr("cgesdd"));
     AssignKernelFn<svd::SVDType<DataType::C128>>(lapack_ptr("zgesdd"));
+    AssignKernelFn<svd::SVDQRType<DataType::F32>>(lapack_ptr("sgesvd"));
+    AssignKernelFn<svd::SVDQRType<DataType::F64>>(lapack_ptr("dgesvd"));
+    AssignKernelFn<svd::SVDQRType<DataType::C64>>(lapack_ptr("cgesvd"));
+    AssignKernelFn<svd::SVDQRType<DataType::C128>>(lapack_ptr("zgesvd"));
 
     AssignKernelFn<RealSyevd<float>>(lapack_ptr("ssyevd"));
     AssignKernelFn<RealSyevd<double>>(lapack_ptr("dsyevd"));
@@ -274,6 +278,10 @@ nb::dict Registrations() {
   dict["lapack_dgesdd_ffi"] = EncapsulateFunction(lapack_dgesdd_ffi);
   dict["lapack_cgesdd_ffi"] = EncapsulateFunction(lapack_cgesdd_ffi);
   dict["lapack_zgesdd_ffi"] = EncapsulateFunction(lapack_zgesdd_ffi);
+  dict["lapack_sgesvd_ffi"] = EncapsulateFunction(lapack_sgesvd_ffi);
+  dict["lapack_dgesvd_ffi"] = EncapsulateFunction(lapack_dgesvd_ffi);
+  dict["lapack_cgesvd_ffi"] = EncapsulateFunction(lapack_cgesvd_ffi);
+  dict["lapack_zgesvd_ffi"] = EncapsulateFunction(lapack_zgesvd_ffi);
   dict["lapack_ssyevd_ffi"] = EncapsulateFunction(lapack_ssyevd_ffi);
   dict["lapack_dsyevd_ffi"] = EncapsulateFunction(lapack_dsyevd_ffi);
   dict["lapack_cheevd_ffi"] = EncapsulateFunction(lapack_cheevd_ffi);
