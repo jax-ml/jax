@@ -67,7 +67,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from functools import partial
 import re
-from typing import Any, NamedTuple
+from typing import Any, Hashable, NamedTuple
 import warnings
 import weakref
 
@@ -145,22 +145,35 @@ class WrappedFun:
 
   Args:
     f: the function to be transformed.
-    transforms: a list of `(gen, gen_static_args)` tuples representing
+    f_transformed: transformed function.
+    transforms: a tuple of `(gen, gen_static_args)` tuples representing
       transformations to apply to `f.` Here `gen` is a generator function and
       `gen_static_args` is a tuple of static arguments for the generator. See
       description at the start of this module for the expected behavior of the
       generator.
     stores: a list of out_store for the auxiliary output of the `transforms`.
-    params: extra parameters to pass as keyword arguments to `f`, along with the
-      transformed keyword arguments.
+    params: a tuple of `(name, param)` tuples representing extra parameters to
+      pass as keyword arguments to `f`, along with the transformed keyword
+      arguments.
+    in_type: optional input type
     debug_info: debugging info about the function being wrapped.
   """
   __slots__ = ("f", "f_transformed", "transforms", "stores", "params", "in_type", "debug_info")
 
+  f: Callable
+  f_transformed: Callable
+  transforms: tuple[tuple[Callable, tuple[Hashable, ...]], ...]
+  stores: tuple[Store | EqualStore | None, ...]
+  params: tuple[tuple[str, Any], ...]
+  in_type: core.InputType | None
+  debug_info: DebugInfo
+
   def __init__(self, f: Callable,
                f_transformed: Callable,
-               transforms,
-               stores: tuple[Store | EqualStore | None, ...], params, in_type,
+               transforms: tuple[tuple[Callable, tuple[Hashable, ...]], ...],
+               stores: tuple[Store | EqualStore | None, ...],
+               params: tuple[tuple[str, Hashable], ...],
+               in_type: core.InputType | None,
                debug_info: DebugInfo):
     self.f = f
     self.f_transformed = f_transformed
@@ -342,7 +355,7 @@ def wrap_init(f: Callable, params=None, *,
     debug_info = debug_info._replace(
         result_paths=HashableFunction(result_paths_thunk, closure=()))
   fun = WrappedFun(fun.f, fun.f_transformed, fun.transforms, fun.stores,
-                    fun.params, fun.in_type, debug_info)
+                   fun.params, fun.in_type, debug_info)
   return fun
 
 
