@@ -17,48 +17,41 @@ communication library used in JaxPP (https://arxiv.org/abs/2412.14374).
 Requires `pip install cupy-cuda12x`.
 """
 
-import os
-import sysconfig
-
 import enum
-import multiprocessing as mp
 import pickle
 from collections import OrderedDict
 from functools import cached_property
 
-import cupy
+try:
+    import cupy  # type: ignore[import-not-found]
+    from cupy.cuda import nccl  # type: ignore[import-not-found]
+
+    # CuPy NCCL utils from https://github.com/cupy/cupy/blob/118ade4a146d1cc68519f7f661f2c145f0b942c9/cupyx/distributed/_nccl_comm.py#L46-L55
+    _nccl_dtypes = {
+        "b": nccl.NCCL_INT8,
+        "B": nccl.NCCL_UINT8,
+        "i": nccl.NCCL_INT32,
+        "I": nccl.NCCL_UINT32,
+        "l": nccl.NCCL_INT64,
+        "L": nccl.NCCL_UINT64,
+        "q": nccl.NCCL_INT64,
+        "Q": nccl.NCCL_UINT64,
+        "e": nccl.NCCL_FLOAT16,
+        "f": nccl.NCCL_FLOAT32,
+        "d": nccl.NCCL_FLOAT64,
+        # Size of array will be doubled
+        "F": nccl.NCCL_FLOAT32,
+        "D": nccl.NCCL_FLOAT64,
+    }
+except ImportError:
+    cupy = None
+    nccl = None
+
 import jax
 import jax.numpy as jnp
 import jaxlib.xla_extension as xe
-import numpy as np
-from cupy.cuda import nccl
-from cupy.cuda.nccl import NcclCommunicator
-from cupy.cuda.nccl import get_unique_id as nccl_get_unique_id
-from cupy.cuda.nccl import groupEnd as nccl_group_end
-from cupy.cuda.nccl import groupStart as nccl_group_start
 from jax._src import array
 from jax._src.op_shardings import are_op_shardings_equal
-from jax.sharding import Mesh, NamedSharding
-from jax.sharding import PartitionSpec as P
-
-
-# CuPy NCCL utils from https://github.com/cupy/cupy/blob/118ade4a146d1cc68519f7f661f2c145f0b942c9/cupyx/distributed/_nccl_comm.py#L46-L55
-_nccl_dtypes = {
-    "b": nccl.NCCL_INT8,
-    "B": nccl.NCCL_UINT8,
-    "i": nccl.NCCL_INT32,
-    "I": nccl.NCCL_UINT32,
-    "l": nccl.NCCL_INT64,
-    "L": nccl.NCCL_UINT64,
-    "q": nccl.NCCL_INT64,
-    "Q": nccl.NCCL_UINT64,
-    "e": nccl.NCCL_FLOAT16,
-    "f": nccl.NCCL_FLOAT32,
-    "d": nccl.NCCL_FLOAT64,
-    # Size of array will be doubled
-    "F": nccl.NCCL_FLOAT32,
-    "D": nccl.NCCL_FLOAT64,
-}
 
 
 def _get_nccl_dtype_and_count(arr, count=None):
@@ -97,7 +90,7 @@ class UniqueDevices(tuple[jax.Device, ...]):
         return ",".join(str(d.id) for d in self)
 
 
-local_comms = {}
+local_comms: dict[UniqueDevices, nccl.NcclCommunicator] = {}
 
 
 def get_or_create_comm(devs: UniqueDevices):
@@ -107,7 +100,7 @@ def get_or_create_comm(devs: UniqueDevices):
     my_process_index = jax.process_index()
     if comm is None:
         if devs.leader.process_index == my_process_index:
-            nccl_id = nccl_get_unique_id()
+            nccl_id = nccl.get_unique_id()
             get_distributed_client().key_value_set_bytes(
                 devs.key, pickle.dumps(nccl_id)
             )
@@ -117,18 +110,18 @@ def get_or_create_comm(devs: UniqueDevices):
             )
             nccl_id = pickle.loads(nccl_id)
 
-        nccl_group_start()
+        nccl.groupStart()
         for d in devs:
             if d.process_index == my_process_index:
                 with cupy.cuda.Device(d.local_hardware_id):
-                    comm = NcclCommunicator(len(devs), nccl_id, devs.ranks[d])
-        nccl_group_end()
+                    comm = nccl.NcclCommunicator(len(devs), nccl_id, devs.ranks[d])
+        nccl.groupEnd()
 
         local_comms[devs] = comm
     return comm
 
 
-local_streams = {}
+local_streams: dict = {}
 
 
 class OpT(enum.Enum):
@@ -178,8 +171,12 @@ def send_or_recv(
     In that case, this process will send/receive only its corresponding addressable_shards
     """
 
-    is_send = src_sharding is None
-    other_sharding = tgt_sharding if is_send else src_sharding
+    if src_sharding is None:
+        is_send = True
+        other_sharding = tgt_sharding
+    else:
+        is_send = False
+        other_sharding = src_sharding
 
     if not is_send:
         # XXX: x.sharding and tgt_sharding must be equal since this is a recv.
@@ -205,7 +202,7 @@ def send_or_recv(
     cpy_arrays_and_streams = []
     # FIXME: maybe narrow `nccl_group_{start,end}` scope by first accumulating
     # arguments in a list and then performing the operation
-    nccl_group_start()
+    nccl.groupStart()
     for x_device, other_device in zip(
         x.sharding._device_assignment,
         other_sharding._device_assignment,
@@ -235,7 +232,7 @@ def send_or_recv(
                     stream.ptr,
                 )
 
-    nccl_group_end()
+    nccl.groupEnd()
     # NOTE: since communicators are blocking, after the group_end operation
     #  above, all the send/recvs have been enqueued into the stream. Therefore,
     #  we can record events on the stream

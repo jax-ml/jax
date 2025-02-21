@@ -13,8 +13,8 @@
 # limitations under the License.
 
 from jax.experimental._private_mm.mm import (
-    device_put,
-    jit,
-    MpmdArray
+    device_put as device_put,
+    jit as jit,
+    MpmdArray as MpmdArray
 )
 from jax.experimental._private_mm import profile_utils as profile_utils

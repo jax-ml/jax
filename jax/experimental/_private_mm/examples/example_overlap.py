@@ -20,7 +20,6 @@ import time
 import numpy as np
 
 import jax
-import jax.numpy as jnp
 from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
 from jax.experimental import _private_mm as mm

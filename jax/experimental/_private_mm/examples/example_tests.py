@@ -13,8 +13,6 @@
 # limitations under the License.
 """Runs some simple mm operations on varying numbers of processes."""
 
-from functools import partial
-
 import numpy as np
 
 import jax

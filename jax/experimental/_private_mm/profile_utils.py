@@ -31,7 +31,7 @@ def get_profiling_mode() -> str | None:
 if get_profiling_mode() == 'nsys':
     from ctypes import cdll
     libcudart = cdll.LoadLibrary('libcudart.so')
-    import nvtx
+    import nvtx  # type: ignore[import-not-found]
 
 
 def maybe_start_profile(path):

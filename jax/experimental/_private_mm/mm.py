@@ -15,15 +15,12 @@
 
 from dataclasses import dataclass
 from functools import cached_property, lru_cache, partial, wraps
-import multiprocessing as mp
 
 from typing import Callable
 
 import jax
 import jax.numpy as jnp
-import numpy as np
-from jax.sharding import Mesh, NamedSharding, PartitionSpec as P, Sharding, SingleDeviceSharding
-from jax._src.op_shardings import are_op_shardings_equal
+from jax.sharding import NamedSharding, Sharding, SingleDeviceSharding
 
 from jax._src.tree_util import broadcast_prefix, prefix_errors, tree_leaves_with_path
 
@@ -69,9 +66,7 @@ class MpmdArray:
     @property
     def jax_array(self):
         if self.is_fully_remote:
-            raise ValueError(
-                f'cannot convert fully-remote MpmdArray to jax.Array'
-            )
+            raise ValueError('cannot convert fully-remote MpmdArray to jax.Array')
         self.block_until_ready()
         assert isinstance(self._result, jax.Array), (
             'expected non-fully-remote MpmdArray to hold some local data, but got: '

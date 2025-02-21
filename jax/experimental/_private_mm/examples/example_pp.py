@@ -14,7 +14,7 @@
 """A toy model with MPMD pipeline parallelism."""
 
 from dataclasses import dataclass
-from functools import cached_property, cmp_to_key, partial
+from functools import cached_property, partial
 from typing import Any, Callable
 
 import numpy as np
@@ -266,6 +266,8 @@ def example_pp(num_processes, process_id):
     NUM_LAYERS = NUM_STAGES
     BATCH_SIZE = 1024 * 16
 
+    ENABLE_TP = True
+
 
     @jax.jit
     def mlp(params, xs):
@@ -313,7 +315,10 @@ def example_pp(num_processes, process_id):
         else:
             fwd = lambda params, xs, _ys: mlp(params, xs)
         num_layers_per_stage = NUM_LAYERS // NUM_STAGES
-        params_specs = [(P(None, 'model'), P('model', None))] * num_layers_per_stage
+        if ENABLE_TP:
+            params_specs = [(P(None, 'model'), P('model', None))] * num_layers_per_stage
+        else:
+            params_specs = [(P(), P())] * num_layers_per_stage
         stages.append(Stage(fwd, mesh, params_specs))
 
     def step_fn(params_by_stage, xs, ys):
