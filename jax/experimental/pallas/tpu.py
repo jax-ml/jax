@@ -16,9 +16,9 @@
 
 from jax._src.pallas.mosaic import core as core
 from jax._src.pallas.mosaic.core import create_tensorcore_mesh as create_tensorcore_mesh
-from jax._src.pallas.mosaic.core import dma_semaphore as dma_semaphore
+from jax._src.pallas.core import dma_semaphore as dma_semaphore
 from jax._src.pallas.mosaic.core import PrefetchScalarGridSpec as PrefetchScalarGridSpec
-from jax._src.pallas.mosaic.core import semaphore as semaphore
+from jax._src.pallas.core import semaphore as semaphore
 from jax._src.pallas.mosaic.core import SemaphoreType as SemaphoreType
 from jax._src.pallas.mosaic.core import TPUMemorySpace as TPUMemorySpace
 from jax._src.pallas.mosaic.core import TPUCompilerParams as TPUCompilerParams
@@ -35,22 +35,22 @@ from jax._src.pallas.mosaic.pipeline import emit_pipeline_with_allocations as em
 from jax._src.pallas.mosaic.pipeline import get_pipeline_schedule as get_pipeline_schedule
 from jax._src.pallas.mosaic.pipeline import make_pipeline_allocations as make_pipeline_allocations
 from jax._src.pallas.mosaic.pipeline import PARALLEL as PARALLEL
-from jax._src.pallas.mosaic.primitives import async_copy as async_copy
-from jax._src.pallas.mosaic.primitives import async_remote_copy as async_remote_copy
+from jax._src.pallas.primitives import async_copy as async_copy
+from jax._src.pallas.primitives import async_remote_copy as async_remote_copy
 from jax._src.pallas.mosaic.primitives import bitcast as bitcast
 from jax._src.pallas.mosaic.primitives import delay as delay
-from jax._src.pallas.mosaic.primitives import device_id as device_id
-from jax._src.pallas.mosaic.primitives import DeviceIdType as DeviceIdType
+from jax._src.pallas.primitives import device_id as device_id
+from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
 from jax._src.pallas.mosaic.primitives import get_barrier_semaphore as get_barrier_semaphore
-from jax._src.pallas.mosaic.primitives import make_async_copy as make_async_copy
-from jax._src.pallas.mosaic.primitives import make_async_remote_copy as make_async_remote_copy
+from jax._src.pallas.primitives import make_async_copy as make_async_copy
+from jax._src.pallas.primitives import make_async_remote_copy as make_async_remote_copy
 from jax._src.pallas.mosaic.primitives import prng_random_bits as prng_random_bits
 from jax._src.pallas.mosaic.primitives import prng_seed as prng_seed
 from jax._src.pallas.mosaic.primitives import repeat as repeat
 from jax._src.pallas.mosaic.primitives import roll as roll
-from jax._src.pallas.mosaic.primitives import semaphore_read as semaphore_read
-from jax._src.pallas.mosaic.primitives import semaphore_signal as semaphore_signal
-from jax._src.pallas.mosaic.primitives import semaphore_wait as semaphore_wait
+from jax._src.pallas.primitives import semaphore_read as semaphore_read
+from jax._src.pallas.primitives import semaphore_signal as semaphore_signal
+from jax._src.pallas.primitives import semaphore_wait as semaphore_wait
 from jax._src.pallas.mosaic.random import to_pallas_key as to_pallas_key
 
 import types
