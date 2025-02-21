@@ -78,7 +78,7 @@ jobs:
         pip install uv
         uv pip install --system .[minimum-jaxlib] -r build/test-requirements.txt
 
-    - name: Run tests
+    - name: Prep tests
       env:
         JAX_NUM_GENERATED_CASES: ${{ matrix.num_generated_cases }}
         JAX_ENABLE_X64: ${{ matrix.enable-x64 }}
@@ -89,6 +89,22 @@ jobs:
         PY_COLORS: 1
       run: |
         pip install -e .
+        alias python3=python
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+    - name: Wait For Connection
+      uses: google-ml-infra/actions/ci_connection@main
+      with:
+        halt-dispatch-input: true
+    - name: Run tests
+      env:
+        JAX_NUM_GENERATED_CASES: ${{ matrix.num_generated_cases }}
+        JAX_ENABLE_X64: ${{ matrix.enable-x64 }}
+        JAX_ENABLE_CUSTOM_PRNG: ${{ matrix.prng-upgrade }}
+        JAX_THREEFRY_PARTITIONABLE: ${{ matrix.prng-upgrade }}
+        JAX_ENABLE_CHECKS: true
+        JAX_SKIP_SLOW_TESTS: true
+        PY_COLORS: 1
+      run: |
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
         echo "JAX_ENABLE_CUSTOM_PRNG=$JAX_ENABLE_CUSTOM_PRNG"

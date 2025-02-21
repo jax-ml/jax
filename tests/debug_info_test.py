@@ -830,8 +830,6 @@ class DebugInfoTest(jtu.JaxTestCase):
         ])
 
   def test_vjp_of_jit(self):
-    # TODO(b/398208230): Re-enable this test after fixing.
-    self.skipTest("Enable this after figuring out why it's failing")
     tracer_spy = TracerSpy()
     def my_f(x, y, z):
       tracer_spy.append(y[0])
