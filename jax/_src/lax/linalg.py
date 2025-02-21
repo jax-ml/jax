@@ -1324,6 +1324,338 @@ register_cpu_gpu_lowering(
     householder_product_p, _householder_product_cpu_gpu_lowering)
 
 
+# LU decomposition
+
+# Computes a pivoted LU decomposition such that
+# PA = LU
+# In the style of LAPACK, LU are stored in the same matrix.
+
+def _lu_unblocked(a):
+  """Unblocked LU decomposition, as a rolled loop."""
+  m, n = a.shape
+  def body(k, state):
+    pivot, perm, a = state
+    m_idx = lax.iota('int32', m)
+    n_idx = lax.iota('int32', n)
+
+    if dtypes.issubdtype(a.dtype, np.complexfloating):
+      t = a[:, k]
+      magnitude = abs(t.real) + abs(t.imag)
+    else:
+      magnitude = abs(a[:, k])
+    i = lax.argmax(lax.select(m_idx >= k, magnitude, lax.full_like(magnitude, -np.inf)),
+                   axis=0, index_dtype=pivot.dtype)
+    pivot = pivot.at[k].set(i)
+    a = a.at[[k, i],].set(a[[i, k],])
+    perm = perm.at[[i, k],].set(perm[[k, i],])
+
+    # a[k+1:, k] /= a[k, k], adapted for loop-invariant shapes
+    x = a[k, k]
+    a = a.at[:, k].set(lax.select((m_idx > k) & (x != 0), a[:, k] / x, a[:, k]))
+
+    # a[k+1:, k+1:] -= jnp.outer(a[k+1:, k], a[k, k+1:])
+    a_outer = a[:, k, None] * a[k, None]
+    a = a - lax.select((m_idx[:, None] > k) & (n_idx[None, :] > k),
+                       a_outer, lax_internal._zeros(a_outer))
+    return pivot, perm, a
+
+  pivot = lax.full((min(m, n),), 0, dtype=np.int32)
+  perm = lax.iota('int32', m)
+  if m == 0 and n == 0:
+    # If the array is empty, the loop body never executes but tracing it to a
+    # jaxpr fails because the indexing cannot succeed.
+    return (pivot, perm, a)
+  return lax.fori_loop(0, min(m, n), body, (pivot, perm, a))
+
+
+def _lu_blocked(a, block_size=128):
+  """Blocked LU decomposition, as an unrolled loop."""
+  m, n = a.shape
+  r = min(m, n)
+  pivot = lax.full((r,), 0, dtype=np.int32)
+  perm = lax.iota('int32', m)
+  for k in range(0, r, block_size):
+    b = min(r - k, block_size)
+    block_pivot, block_perm, lu_block = _lu_unblocked(a[k:, k:k+b])
+
+    pivot = pivot.at[k:k+b].set(block_pivot + k)
+    perm = perm.at[k:].set(perm[block_perm + k])
+    a = a.at[k:, :].set(a[block_perm + k, :])
+    a = a.at[k:, k:k+b].set(lu_block)
+
+    if k + b < n:
+      a = a.at[k:k+b, k+b:].set(
+        triangular_solve(a[k:k+b, k:k+b], a[k:k+b, k+b:], left_side=True,
+                         lower=True, unit_diagonal=True))
+      a = a.at[k+b:, k+b:].add(-lax.dot(a[k+b:, k:k+b], a[k:k+b, k+b:],
+                                        precision=lax.Precision.HIGHEST))
+  return a, pivot, perm
+
+def _lu_python(x):
+  """Default LU decomposition in Python, where no better version exists."""
+  batch_dims = x.shape[:-2]
+  fn = _lu_blocked
+  for _ in range(len(batch_dims)):
+    fn = api.vmap(fn)
+
+  return fn(x)
+
+
+def _lu_shape_rule(shape):
+  m, n = shape
+  return shape, (core.min_dim(m, n),), (m,)
+
+
+def _lu_dtype_rule(dtype, **_):
+  dtype = dtypes.canonicalize_dtype(dtype)
+  return dtype, dtypes.dtype(np.int32), dtypes.dtype(np.int32)
+
+
+def _lu_jvp_rule(primals, tangents):
+  a, = primals
+  a_dot, = tangents
+  lu, pivots, permutation = lu_p.bind(a)
+
+  a_shape = np.shape(a)
+  m, n = a_shape[-2:]
+  dtype = lax.dtype(a)
+  k = min(m, n)
+
+  batch_dims = a_shape[:-2]
+  iotas = _broadcasted_iotas(*batch_dims, 1)
+  x = a_dot[(*iotas[:-1], permutation, slice(None))]
+
+  # Differentiation of Matrix Functionals Using Triangular Factorization
+  # F. R. De Hoog, R. S. Anderssen, and M. A. Lukas
+  #
+  #     LU = A
+  # ==> L'U + LU' = A'
+  # ==> inv(L) . L' + U' . inv(U) = inv(L) A' inv(U)
+  # ==> L' = L . tril(inv(L) . A' . inv(U), -1)
+  #     U' = triu(inv(L) . A' . inv(U)) . U
+
+  ndims = len(a_shape)
+  l_padding = [(0, 0, 0)] * ndims
+  l_padding[-1] = (0, m - k, 0)
+  zero = lax_internal._const(lu, 0)
+  l = lax.pad(_tril(lu[..., :, :k], -1), zero, l_padding)
+  l = l + lax.expand_dims(lax_internal._eye(dtype, (m, m)), range(l.ndim - 2))
+  u_eye = lax.pad(lax_internal._eye(dtype, (n - k, n - k)), zero,
+                  ((k, 0, 0), (k, 0, 0)))
+  u_padding = [(0, 0, 0)] * ndims
+  u_padding[-2] = (0, n - k, 0)
+  u = (lax.pad(_triu(lu[..., :k, :]), zero, u_padding) +
+       lax.expand_dims(u_eye, range(lu.ndim - 2)))
+
+  la = triangular_solve(l, x, left_side=True, transpose_a=False, lower=True,
+                        unit_diagonal=True)
+  lau = triangular_solve(u, la, left_side=False, transpose_a=False,
+                         lower=False)
+
+  with config.default_matmul_precision("highest"):
+    l_dot = l @ _tril(lau, -1)
+    u_dot = _triu(lau) @ u
+  lu_dot = l_dot + u_dot
+  return (lu, pivots, permutation), (lu_dot, ad_util.Zero.from_primal_value(pivots),
+                                     ad_util.Zero.from_primal_value(permutation))
+
+
+def _lu_cpu_gpu_lowering(ctx, operand, *, target_name_prefix: str):
+  operand_aval, = ctx.avals_in
+  out_aval, pivot_aval, perm_aval = ctx.avals_out
+  batch_dims = operand_aval.shape[:-2]
+  info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
+  m = operand_aval.shape[-2]
+
+  if target_name_prefix == "cpu":
+    target_name = lapack.prepare_lapack_call("getrf_ffi", operand_aval.dtype)
+  else:
+    target_name = f"{target_name_prefix}solver_getrf_ffi"
+  rule = _linalg_ffi_lowering(target_name,
+                              avals_out=[out_aval, pivot_aval, info_aval],
+                              operand_output_aliases={0: 0})
+  lu, pivot, info = rule(ctx, operand)
+
+  # Subtract 1 from the pivot to get 0-based indices.
+  pivot = hlo.subtract(pivot, mlir.full_like_aval(ctx, 1, pivot_aval))
+  ok = mlir.compare_hlo(info, mlir.full_like_aval(ctx, 0, info_aval),
+      "GE", "SIGNED")
+  lu = _replace_not_ok_with_nan(ctx, batch_dims, ok, lu, out_aval)
+  sub_ctx = ctx.replace(primitive=None, avals_in=[pivot_aval],
+                        avals_out=[perm_aval])
+  perm_fn = mlir.lower_fun(lambda x: lu_pivots_to_permutation(x, m),
+                           multiple_results=False)
+  perm, = perm_fn(sub_ctx, pivot)
+  return [lu, pivot, perm]
+
+
+def _lu_tpu_lowering_rule(ctx, operand):
+  result_types = [
+    mlir.aval_to_ir_type(ctx.avals_out[0]),
+    mlir.aval_to_ir_type(ctx.avals_out[1]),
+    mlir.aval_to_ir_type(ctx.avals_out[2])]
+  if any(not is_constant_shape(a.shape) for a in ctx.avals_out):
+    result_shapes = [
+      mlir.eval_dynamic_shape_as_tensor(ctx, a.shape)
+      for a in ctx.avals_out]
+  else:
+    result_shapes = None
+  op = mlir.custom_call(
+    "LuDecomposition",
+    result_types=result_types,
+    operands=[operand],
+    result_shapes=result_shapes)
+  return op.results
+
+
+lu_p = linalg_primitive(
+    _lu_dtype_rule, (_float | _complex,), (2,), _lu_shape_rule, "lu",
+    multiple_results=True)
+ad.primitive_jvps[lu_p] = _lu_jvp_rule
+mlir.register_lowering(lu_p, mlir.lower_fun(_lu_python, multiple_results=True))
+mlir.register_lowering(lu_p, _lu_tpu_lowering_rule, platform='tpu')
+register_cpu_gpu_lowering(lu_p, _lu_cpu_gpu_lowering)
+
+
+def lu_solve(lu: ArrayLike, permutation: ArrayLike, b: ArrayLike,
+             trans: int = 0) -> Array:
+  """LU solve with broadcasting."""
+  return _lu_solve(lu, permutation, b, trans)
+
+
+def _lu_solve_core(lu: Array, permutation: Array, b: Array, trans: int) -> Array:
+  m = lu.shape[0]
+  x = lax.reshape(b, (m, math.prod(b.shape[1:])))
+  if trans == 0:
+    x = x[permutation, :]
+    x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True)
+    x = triangular_solve(lu, x, left_side=True, lower=False)
+  elif trans == 1 or trans == 2:
+    conj = trans == 2
+    x = triangular_solve(lu, x, left_side=True, lower=False, transpose_a=True,
+                         conjugate_a=conj)
+    x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True,
+                         transpose_a=True, conjugate_a=conj)
+    _, ind = lax.sort_key_val(permutation, lax.iota('int32', permutation.shape[0]))
+    x = x[ind, :]
+  else:
+    raise ValueError(f"'trans' value must be 0, 1, or 2, got {trans}")
+  return lax.reshape(x, b.shape)
+
+
+@partial(api.jit, static_argnums=(3,))
+def _lu_solve(lu: Array, permutation: Array, b: Array, trans: int) -> Array:
+  if len(lu.shape) < 2 or lu.shape[-1] != lu.shape[-2]:
+    raise ValueError("last two dimensions of LU decomposition must be equal, "
+                     "got shape {}".format(lu.shape))
+  if len(b.shape) < 1:
+    raise ValueError("b matrix must have rank >= 1, got shape {}"
+                     .format(b.shape))
+  # Broadcasting follows NumPy's convention for linalg.solve: the RHS is
+  # treated as a (batched) vector if the number of dimensions differ by 1.
+  # Otherwise, broadcasting rules apply.
+  rhs_vector = lu.ndim == b.ndim + 1
+  if rhs_vector:
+    if b.shape[-1] != lu.shape[-1]:
+      raise ValueError("When LU decomposition matrix and b have the same "
+                       "number of dimensions, last axis of LU decomposition "
+                       "matrix (shape {}) and b array (shape {}) must match"
+                       .format(lu.shape, b.shape))
+    b = b[..., np.newaxis]
+  else:
+    if b.shape[-2] != lu.shape[-1]:
+      raise ValueError("When LU decomposition matrix and b different "
+                       "numbers of dimensions, last axis of LU decomposition "
+                       "matrix (shape {}) and second to last axis of b array "
+                       "(shape {}) must match"
+                       .format(lu.shape, b.shape))
+
+  batch_shape = lax.broadcast_shapes(lu.shape[:-2], permutation.shape[:-1], b.shape[:-2])
+  lu = _broadcast_to(lu, (*batch_shape, *lu.shape[-2:]))
+  permutation = _broadcast_to(permutation, (*batch_shape, permutation.shape[-1]))
+  b = _broadcast_to(b, (*batch_shape, *b.shape[-2:]))
+  fn = _lu_solve_core
+  for _ in batch_shape:
+    fn = api.vmap(fn, in_axes=(0, 0, 0, None))
+  x = fn(lu, permutation, b, trans)
+  return x[..., 0] if rhs_vector else x
+
+# Support operation for LU decomposition: Transformation of the pivots returned
+# by LU decomposition into permutations.
+
+# Define this outside lu_pivots_to_permutation to ensure fori_loop cache hits
+def _lu_pivots_body_fn_inner(i, permutation, swaps):
+  j = swaps[i]
+  x = permutation[i]
+  y = permutation[j]
+  permutation = permutation.at[i].set(y)
+  return permutation.at[j].set(x)
+
+
+def _lu_pivots_body_fn(i, permutation_and_swaps):
+  permutation, swaps = permutation_and_swaps
+  batch_dims = swaps.shape[:-1]
+  fn = _lu_pivots_body_fn_inner
+  for _ in range(len(batch_dims)):
+    fn = api.vmap(fn, in_axes=(None, 0, 0), out_axes=0)
+  return fn(i, permutation, swaps), swaps
+
+
+def _generic_lu_pivots_to_permutation(swaps, permutation_size):
+  """Converts the pivots (row swaps) returned by LU to a permutation.
+
+  We build a permutation rather than applying `swaps` directly to the rows
+  of a matrix because lax loops aren't differentiable.
+
+  Args:
+    swaps: an array of shape (..., k) of row swaps to perform
+    permutation_size: the size of the output permutation. Should be >= k.
+  Returns:
+    An int32 array of shape (..., m).
+  """
+  assert len(swaps.shape) >= 1
+  batch_dims = swaps.shape[:-1]
+  k = swaps.shape[-1]
+  m = permutation_size
+
+  permutation = lax.broadcasted_iota(np.int32, batch_dims + (m,),
+                                     len(batch_dims))
+  if m == 0 or k == 0:
+    return permutation
+  upper = np.array(k, np.int32) if is_constant_dim(k) else k
+  result, _ = lax.fori_loop(np.array(0, np.int32), upper, _lu_pivots_body_fn,
+                            (permutation, swaps))
+  return result
+
+
+def _lu_pivots_to_permutation_shape_rule(shape, *, permutation_size):
+  pivots_size, = shape
+  if not permutation_size >= pivots_size:
+    raise ValueError(
+        f"Output permutation size {permutation_size} has to exceed the "
+        f"trailing dimension of the pivots. Got pivots size {pivots_size}")
+  return (permutation_size,)
+
+
+def _lu_pivots_to_permutation_gpu_lowering(ctx, pivots, *,
+                                           permutation_size,
+                                           target_name_prefix):
+  del permutation_size  # unused
+  rule = ffi.ffi_lowering(f"{target_name_prefix}_lu_pivots_to_permutation")
+  return rule(ctx, pivots)
+
+
+lu_pivots_to_permutation_p = standard_linalg_primitive(
+    ({np.int32},), (1,), _lu_pivots_to_permutation_shape_rule,
+    "lu_pivots_to_permutation")
+mlir.register_lowering(
+    lu_pivots_to_permutation_p,
+    mlir.lower_fun(_generic_lu_pivots_to_permutation, multiple_results=False))
+register_cpu_gpu_lowering(
+    lu_pivots_to_permutation_p, _lu_pivots_to_permutation_gpu_lowering,
+    ("cuda", "rocm"))
+
+
 # Symmetric product
 
 def _symmetric_product_shape_rule(a_shape, c_shape, **_):
@@ -1553,388 +1885,6 @@ def _triangular_solve_cpu_lower(
 mlir.register_lowering(triangular_solve_p, _triangular_solve_lowering)
 mlir.register_lowering(triangular_solve_p, _triangular_solve_cpu_lower,
                        platform='cpu')
-
-
-# Support operation for LU decomposition: Transformation of the pivots returned
-# by LU decomposition into permutations.
-
-# Define this outside lu_pivots_to_permutation to ensure fori_loop cache hits
-def _lu_pivots_body_fn_inner(i, permutation, swaps):
-  j = swaps[i]
-  x = permutation[i]
-  y = permutation[j]
-  permutation = permutation.at[i].set(y)
-  return permutation.at[j].set(x)
-
-def _lu_pivots_body_fn(i, permutation_and_swaps):
-  permutation, swaps = permutation_and_swaps
-  batch_dims = swaps.shape[:-1]
-  fn = _lu_pivots_body_fn_inner
-  for _ in range(len(batch_dims)):
-    fn = api.vmap(fn, in_axes=(None, 0, 0), out_axes=0)
-  return fn(i, permutation, swaps), swaps
-
-def _generic_lu_pivots_to_permutation(swaps, permutation_size):
-  """Converts the pivots (row swaps) returned by LU to a permutation.
-
-  We build a permutation rather than applying `swaps` directly to the rows
-  of a matrix because lax loops aren't differentiable.
-
-  Args:
-    swaps: an array of shape (..., k) of row swaps to perform
-    permutation_size: the size of the output permutation. Should be >= k.
-  Returns:
-    An int32 array of shape (..., m).
-  """
-  assert len(swaps.shape) >= 1
-  batch_dims = swaps.shape[:-1]
-  k = swaps.shape[-1]
-  m = permutation_size
-
-  permutation = lax.broadcasted_iota(np.int32, batch_dims + (m,),
-                                     len(batch_dims))
-  if m == 0 or k == 0:
-    return permutation
-  upper = np.array(k, np.int32) if is_constant_dim(k) else k
-  result, _ = lax.fori_loop(np.array(0, np.int32), upper, _lu_pivots_body_fn,
-                            (permutation, swaps))
-  return result
-
-
-def _lu_pivots_to_permutation_abstract_eval(pivots, *, permutation_size):
-  if isinstance(pivots, ShapedArray):
-    if pivots.ndim < 1 or pivots.dtype != np.dtype(np.int32):
-      raise ValueError(
-          'Argument to lu_pivots_to_permutation must have rank >= 1 and dtype '
-          'int32. Got shape={} and dtype={}'.format(pivots.shape, pivots.dtype))
-    pivots_size = pivots.shape[-1]
-    if not permutation_size >= pivots_size:
-      raise ValueError(
-          'Output permutation size {} has to exceed the trailing dimension of '
-          'the pivots. Got pivots size {}'.format(permutation_size, pivots_size))
-    return pivots.update(shape=(*pivots.shape[:-1], permutation_size))
-  else:
-    return pivots
-
-
-def _lu_pivots_to_permutation_batching_rule(batched_args, batch_dims, *,
-                                            permutation_size):
-  x, = batched_args
-  bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
-  return lu_pivots_to_permutation_p.bind(
-      x, permutation_size=permutation_size), 0
-
-def _lu_pivots_to_permutation_gpu_lowering(platform, ctx, pivots, *,
-                                           permutation_size):
-  del permutation_size  # unused
-  rule = ffi.ffi_lowering(f"{platform}_lu_pivots_to_permutation")
-  return rule(ctx, pivots)
-
-
-lu_pivots_to_permutation_p = Primitive('lu_pivots_to_permutation')
-lu_pivots_to_permutation_p.multiple_results = False
-lu_pivots_to_permutation_p.def_impl(
-    partial(dispatch.apply_primitive, lu_pivots_to_permutation_p))
-lu_pivots_to_permutation_p.def_abstract_eval(
-    _lu_pivots_to_permutation_abstract_eval)
-batching.primitive_batchers[lu_pivots_to_permutation_p] = (
-    _lu_pivots_to_permutation_batching_rule)
-mlir.register_lowering(
-    lu_pivots_to_permutation_p,
-    mlir.lower_fun(_generic_lu_pivots_to_permutation, multiple_results=False))
-mlir.register_lowering(
-    lu_pivots_to_permutation_p,
-    partial(_lu_pivots_to_permutation_gpu_lowering, "cu"),
-    platform='cuda')
-mlir.register_lowering(
-    lu_pivots_to_permutation_p,
-    partial(_lu_pivots_to_permutation_gpu_lowering, "hip"),
-    platform='rocm')
-
-# LU decomposition
-
-# Computes a pivoted LU decomposition such that
-# PA = LU
-# In the style of LAPACK, LU are stored in the same matrix.
-
-def _lu_unblocked(a):
-  """Unblocked LU decomposition, as a rolled loop."""
-  m, n = a.shape
-  def body(k, state):
-    pivot, perm, a = state
-    m_idx = lax.iota('int32', m)
-    n_idx = lax.iota('int32', n)
-
-    if dtypes.issubdtype(a.dtype, np.complexfloating):
-      t = a[:, k]
-      magnitude = abs(t.real) + abs(t.imag)
-    else:
-      magnitude = abs(a[:, k])
-    i = lax.argmax(lax.select(m_idx >= k, magnitude, lax.full_like(magnitude, -np.inf)),
-                   axis=0, index_dtype=pivot.dtype)
-    pivot = pivot.at[k].set(i)
-    a = a.at[[k, i],].set(a[[i, k],])
-    perm = perm.at[[i, k],].set(perm[[k, i],])
-
-    # a[k+1:, k] /= a[k, k], adapted for loop-invariant shapes
-    x = a[k, k]
-    a = a.at[:, k].set(lax.select((m_idx > k) & (x != 0), a[:, k] / x, a[:, k]))
-
-    # a[k+1:, k+1:] -= jnp.outer(a[k+1:, k], a[k, k+1:])
-    a_outer = a[:, k, None] * a[k, None]
-    a = a - lax.select((m_idx[:, None] > k) & (n_idx[None, :] > k),
-                       a_outer, lax_internal._zeros(a_outer))
-    return pivot, perm, a
-
-  pivot = lax.full((min(m, n),), 0, dtype=np.int32)
-  perm = lax.iota('int32', m)
-  if m == 0 and n == 0:
-    # If the array is empty, the loop body never executes but tracing it to a
-    # jaxpr fails because the indexing cannot succeed.
-    return (pivot, perm, a)
-  return lax.fori_loop(0, min(m, n), body, (pivot, perm, a))
-
-
-def _lu_blocked(a, block_size=128):
-  """Blocked LU decomposition, as an unrolled loop."""
-  m, n = a.shape
-  r = min(m, n)
-  pivot = lax.full((r,), 0, dtype=np.int32)
-  perm = lax.iota('int32', m)
-  for k in range(0, r, block_size):
-    b = min(r - k, block_size)
-    block_pivot, block_perm, lu_block = _lu_unblocked(a[k:, k:k+b])
-
-    pivot = pivot.at[k:k+b].set(block_pivot + k)
-    perm = perm.at[k:].set(perm[block_perm + k])
-    a = a.at[k:, :].set(a[block_perm + k, :])
-    a = a.at[k:, k:k+b].set(lu_block)
-
-    if k + b < n:
-      a = a.at[k:k+b, k+b:].set(
-        triangular_solve(a[k:k+b, k:k+b], a[k:k+b, k+b:], left_side=True,
-                         lower=True, unit_diagonal=True))
-      a = a.at[k+b:, k+b:].add(-lax.dot(a[k+b:, k:k+b], a[k:k+b, k+b:],
-                                        precision=lax.Precision.HIGHEST))
-  return a, pivot, perm
-
-def _lu_python(x):
-  """Default LU decomposition in Python, where no better version exists."""
-  batch_dims = x.shape[:-2]
-  fn = _lu_blocked
-  for _ in range(len(batch_dims)):
-    fn = api.vmap(fn)
-
-  return fn(x)
-
-def _lu_impl(operand):
-  lu, pivot, perm = dispatch.apply_primitive(lu_p, operand)
-  return lu, pivot, perm
-
-def _lu_abstract_eval(operand):
-  if isinstance(operand, ShapedArray):
-    if operand.ndim < 2:
-      raise ValueError("Argument to LU decomposition must have ndims >= 2")
-
-    batch_dims = operand.shape[:-2]
-    m = operand.shape[-2]
-    n = operand.shape[-1]
-    pivot = operand.update(shape=batch_dims + (core.min_dim(m, n),),
-                           dtype=np.int32)
-    perm = operand.update(shape=batch_dims + (m,), dtype=np.int32)
-  else:
-    pivot = operand
-    perm = operand
-  return operand, pivot, perm
-
-def _lu_jvp_rule(primals, tangents):
-  a, = primals
-  a_dot, = tangents
-  lu, pivots, permutation = lu_p.bind(a)
-
-  a_shape = np.shape(a)
-  m, n = a_shape[-2:]
-  dtype = lax.dtype(a)
-  k = min(m, n)
-
-  batch_dims = a_shape[:-2]
-  iotas = _broadcasted_iotas(*batch_dims, 1)
-  x = a_dot[(*iotas[:-1], permutation, slice(None))]
-
-  # Differentiation of Matrix Functionals Using Triangular Factorization
-  # F. R. De Hoog, R. S. Anderssen, and M. A. Lukas
-  #
-  #     LU = A
-  # ==> L'U + LU' = A'
-  # ==> inv(L) . L' + U' . inv(U) = inv(L) A' inv(U)
-  # ==> L' = L . tril(inv(L) . A' . inv(U), -1)
-  #     U' = triu(inv(L) . A' . inv(U)) . U
-
-  ndims = len(a_shape)
-  l_padding = [(0, 0, 0)] * ndims
-  l_padding[-1] = (0, m - k, 0)
-  zero = lax_internal._const(lu, 0)
-  l = lax.pad(_tril(lu[..., :, :k], -1), zero, l_padding)
-  l = l + lax.expand_dims(lax_internal._eye(dtype, (m, m)), range(l.ndim - 2))
-  u_eye = lax.pad(lax_internal._eye(dtype, (n - k, n - k)), zero,
-                  ((k, 0, 0), (k, 0, 0)))
-  u_padding = [(0, 0, 0)] * ndims
-  u_padding[-2] = (0, n - k, 0)
-  u = (lax.pad(_triu(lu[..., :k, :]), zero, u_padding) +
-       lax.expand_dims(u_eye, range(lu.ndim - 2)))
-
-  la = triangular_solve(l, x, left_side=True, transpose_a=False, lower=True,
-                        unit_diagonal=True)
-  lau = triangular_solve(u, la, left_side=False, transpose_a=False,
-                         lower=False)
-
-  with config.default_matmul_precision("highest"):
-    l_dot = l @ _tril(lau, -1)
-    u_dot = _triu(lau) @ u
-  lu_dot = l_dot + u_dot
-  return (lu, pivots, permutation), (lu_dot, ad_util.Zero.from_primal_value(pivots),
-                                     ad_util.Zero.from_primal_value(permutation))
-
-
-def _lu_batching_rule(batched_args, batch_dims):
-  x, = batched_args
-  bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
-  return lu_p.bind(x), (0, 0, 0)
-
-def _lu_cpu_gpu_lowering(ctx, operand, *, target_name_prefix: str):
-  operand_aval, = ctx.avals_in
-  out_aval, pivot_aval, perm_aval = ctx.avals_out
-  batch_dims = operand_aval.shape[:-2]
-  info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
-  m = operand_aval.shape[-2]
-
-  if target_name_prefix == "cpu":
-    target_name = lapack.prepare_lapack_call("getrf_ffi", operand_aval.dtype)
-  else:
-    target_name = f"{target_name_prefix}solver_getrf_ffi"
-  rule = _linalg_ffi_lowering(target_name,
-                              avals_out=[out_aval, pivot_aval, info_aval],
-                              operand_output_aliases={0: 0})
-  lu, pivot, info = rule(ctx, operand)
-
-  # Subtract 1 from the pivot to get 0-based indices.
-  pivot = hlo.subtract(pivot, mlir.full_like_aval(ctx, 1, pivot_aval))
-  ok = mlir.compare_hlo(info, mlir.full_like_aval(ctx, 0, info_aval),
-      "GE", "SIGNED")
-  lu = _replace_not_ok_with_nan(ctx, batch_dims, ok, lu, out_aval)
-  sub_ctx = ctx.replace(primitive=None, avals_in=[pivot_aval],
-                        avals_out=[perm_aval])
-  perm_fn = mlir.lower_fun(lambda x: lu_pivots_to_permutation(x, m),
-                           multiple_results=False)
-  perm, = perm_fn(sub_ctx, pivot)
-  return [lu, pivot, perm]
-
-
-def _lu_tpu_lowering_rule(ctx, operand):
-  result_types = [
-    mlir.aval_to_ir_type(ctx.avals_out[0]),
-    mlir.aval_to_ir_type(ctx.avals_out[1]),
-    mlir.aval_to_ir_type(ctx.avals_out[2])]
-  if any(not is_constant_shape(a.shape) for a in ctx.avals_out):
-    result_shapes = [
-      mlir.eval_dynamic_shape_as_tensor(ctx, a.shape)
-      for a in ctx.avals_out]
-  else:
-    result_shapes = None
-  op = mlir.custom_call(
-    "LuDecomposition",
-    result_types=result_types,
-    operands=[operand],
-    result_shapes=result_shapes)
-  return op.results
-
-
-lu_p = Primitive('lu')
-lu_p.multiple_results = True
-lu_p.def_impl(_lu_impl)
-lu_p.def_abstract_eval(_lu_abstract_eval)
-mlir.register_lowering(lu_p, mlir.lower_fun(_lu_python, multiple_results=True))
-ad.primitive_jvps[lu_p] = _lu_jvp_rule
-batching.primitive_batchers[lu_p] = _lu_batching_rule
-
-mlir.register_lowering(
-    lu_p, partial(_lu_cpu_gpu_lowering, target_name_prefix="cpu"),
-    platform="cpu")
-
-mlir.register_lowering(
-    lu_p, partial(_lu_cpu_gpu_lowering, target_name_prefix="cu"),
-    platform="cuda")
-mlir.register_lowering(
-    lu_p, partial(_lu_cpu_gpu_lowering, target_name_prefix="hip"),
-    platform="rocm")
-
-mlir.register_lowering(lu_p, _lu_tpu_lowering_rule, platform='tpu')
-
-
-def _lu_solve_core(lu: Array, permutation: Array, b: Array, trans: int) -> Array:
-  m = lu.shape[0]
-  x = lax.reshape(b, (m, math.prod(b.shape[1:])))
-  if trans == 0:
-    x = x[permutation, :]
-    x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True)
-    x = triangular_solve(lu, x, left_side=True, lower=False)
-  elif trans == 1 or trans == 2:
-    conj = trans == 2
-    x = triangular_solve(lu, x, left_side=True, lower=False, transpose_a=True,
-                         conjugate_a=conj)
-    x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True,
-                         transpose_a=True, conjugate_a=conj)
-    _, ind = lax.sort_key_val(permutation, lax.iota('int32', permutation.shape[0]))
-    x = x[ind, :]
-  else:
-    raise ValueError(f"'trans' value must be 0, 1, or 2, got {trans}")
-  return lax.reshape(x, b.shape)
-
-
-@partial(api.jit, static_argnums=(3,))
-def _lu_solve(lu: Array, permutation: Array, b: Array, trans: int) -> Array:
-  if len(lu.shape) < 2 or lu.shape[-1] != lu.shape[-2]:
-    raise ValueError("last two dimensions of LU decomposition must be equal, "
-                     "got shape {}".format(lu.shape))
-  if len(b.shape) < 1:
-    raise ValueError("b matrix must have rank >= 1, got shape {}"
-                     .format(b.shape))
-  # Broadcasting follows NumPy's convention for linalg.solve: the RHS is
-  # treated as a (batched) vector if the number of dimensions differ by 1.
-  # Otherwise, broadcasting rules apply.
-  rhs_vector = lu.ndim == b.ndim + 1
-  if rhs_vector:
-    if b.shape[-1] != lu.shape[-1]:
-      raise ValueError("When LU decomposition matrix and b have the same "
-                       "number of dimensions, last axis of LU decomposition "
-                       "matrix (shape {}) and b array (shape {}) must match"
-                       .format(lu.shape, b.shape))
-    b = b[..., np.newaxis]
-  else:
-    if b.shape[-2] != lu.shape[-1]:
-      raise ValueError("When LU decomposition matrix and b different "
-                       "numbers of dimensions, last axis of LU decomposition "
-                       "matrix (shape {}) and second to last axis of b array "
-                       "(shape {}) must match"
-                       .format(lu.shape, b.shape))
-
-  batch_shape = lax.broadcast_shapes(lu.shape[:-2], permutation.shape[:-1], b.shape[:-2])
-  lu = _broadcast_to(lu, (*batch_shape, *lu.shape[-2:]))
-  permutation = _broadcast_to(permutation, (*batch_shape, permutation.shape[-1]))
-  b = _broadcast_to(b, (*batch_shape, *b.shape[-2:]))
-  fn = _lu_solve_core
-  for _ in batch_shape:
-    fn = api.vmap(fn, in_axes=(0, 0, 0, None))
-  x = fn(lu, permutation, b, trans)
-  return x[..., 0] if rhs_vector else x
-
-
-def lu_solve(lu: ArrayLike, permutation: ArrayLike, b: ArrayLike,
-             trans: int = 0) -> Array:
-  """LU solve with broadcasting."""
-  return _lu_solve(lu, permutation, b, trans)
 
 
 # QR decomposition
