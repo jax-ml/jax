@@ -2834,9 +2834,6 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
   if not isinstance(axes, tuple):
     axes = (axes,)
   for a in axes:
-    if cur_mesh._name_to_type[a] == axis_type:
-      raise ValueError(f'Axes {a} cannot be casted to type {axis_type} since '
-                       f'it already is of type {axis_type}.')
     if (error_on_manual_to_auto_explict and
         cur_mesh._name_to_type[a] == mesh_lib.AxisTypes.Manual and
         axis_type in {mesh_lib.AxisTypes.Auto, mesh_lib.AxisTypes.Explicit}):
