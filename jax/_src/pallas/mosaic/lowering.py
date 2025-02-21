@@ -192,12 +192,12 @@ def _memory_space_to_mosaic_attribute(memory_space: MemorySpace | None
 
 def _dtype_to_ir_type(dtype: jnp.dtype,
                       is_kernel_boundary: bool = False) -> ir.Type:
-  if jnp.issubdtype(dtype, tpu_core.semaphore_dtype):
-    if jnp.issubdtype(dtype, tpu_core.dma_semaphore):
+  if jnp.issubdtype(dtype, pallas_core.semaphore_dtype):
+    if jnp.issubdtype(dtype, pallas_core.dma_semaphore):
       return ir.Type.parse("!tpu.dma_semaphore")
-    elif jnp.issubdtype(dtype, tpu_core.semaphore):
+    elif jnp.issubdtype(dtype, pallas_core.semaphore):
       return ir.Type.parse("!tpu.semaphore")
-    elif jnp.issubdtype(dtype, tpu_core.barrier_semaphore):
+    elif jnp.issubdtype(dtype, pallas_core.barrier_semaphore):
       return ir.Type.parse("!tpu.semaphore")
     else:
       raise NotImplementedError
@@ -3291,7 +3291,7 @@ def _alloc_value(
 ) -> ir.Value:
   if isinstance(aval, pallas_core.AbstractMemoryRef):
     memspace = _memory_space_to_mosaic_attribute(aval.memory_space)
-    if jnp.issubdtype(aval.dtype, tpu_core.semaphore_dtype):
+    if jnp.issubdtype(aval.dtype, pallas_core.semaphore_dtype):
       assert aval.memory_space == TPUMemorySpace.SEMAPHORE
       memref_type = aval_to_ir_type(
           ctx.lowering_context.dynamic_shape_replacement_fn,
@@ -3341,8 +3341,8 @@ lowering_rules[primitives.run_scoped_p] = _run_scoped_lowering_rule
 
 def _device_id_to_logical(
     ctx: LoweringRuleContext, device_id,
-    device_id_type: tpu_primitives.DeviceIdType):
-  if device_id_type is tpu_primitives.DeviceIdType.MESH:
+    device_id_type: primitives.DeviceIdType):
+  if device_id_type is primitives.DeviceIdType.MESH:
     # Mesh means we are passed the mesh coordinates for the device
     device_ids = tree_util.tree_leaves(device_id)
     mesh_strides = ctx.lowering_context.mesh_context.mesh_strides
@@ -3357,7 +3357,7 @@ def _device_id_to_logical(
             for a, b in zip(device_ids, mesh_strides)
         ),
     )
-  elif device_id_type is tpu_primitives.DeviceIdType.LOGICAL:
+  elif device_id_type is primitives.DeviceIdType.LOGICAL:
     return device_id
   raise NotImplementedError(f"Unsupported device id type: {device_id_type}")
 
@@ -3373,13 +3373,13 @@ def _semaphore_read_lowering_rule(
   return tpu.sem_read(sem)
 
 
-lowering_rules[tpu_primitives.semaphore_read_p] = _semaphore_read_lowering_rule
+lowering_rules[primitives.semaphore_read_p] = _semaphore_read_lowering_rule
 
 def _semaphore_signal_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
     args_tree,
-    device_id_type: tpu_primitives.DeviceIdType,
+    device_id_type: primitives.DeviceIdType,
 ):
   sem_aval, _, _, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
   sem, transforms, value, device_id, core_index = tree_util.tree_unflatten(
@@ -3392,7 +3392,7 @@ def _semaphore_signal_lowering_rule(
   return []
 
 
-lowering_rules[tpu_primitives.semaphore_signal_p] = (
+lowering_rules[primitives.semaphore_signal_p] = (
     _semaphore_signal_lowering_rule)
 
 
@@ -3402,10 +3402,10 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, transforms)
   tpu.sem_wait(sem, value)
   return []
-lowering_rules[tpu_primitives.semaphore_wait_p] = _semaphore_wait_lowering_rule
+lowering_rules[primitives.semaphore_wait_p] = _semaphore_wait_lowering_rule
 
 def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
-                             device_id_type: tpu_primitives.DeviceIdType):
+                             device_id_type: primitives.DeviceIdType):
   (
       src_ref,
       src_transforms,
@@ -3445,7 +3445,7 @@ lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
 
 
 def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
-                            device_id_type: tpu_primitives.DeviceIdType):
+                            device_id_type: primitives.DeviceIdType):
   del device_id_type
   (src, src_transforms, dst, transforms, sem, sem_transforms, _, _, _) = (
       tree_util.tree_unflatten(tree, args)
@@ -3477,7 +3477,7 @@ lowering_rules[tpu_primitives.dma_wait_p] = _dma_wait_lowering_rule
 
 def _device_id_lowering_rule(ctx: LoweringRuleContext):
   return tpu.device_id()
-lowering_rules[tpu_primitives.device_id_p] = _device_id_lowering_rule
+lowering_rules[primitives.device_id_p] = _device_id_lowering_rule
 
 def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
   grid_names = ctx.lowering_context.grid_names
