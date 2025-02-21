@@ -62,7 +62,7 @@ def _binary_p_roofline(
 ) -> roofline.RooflineResult:
   lhs, rhs = (roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in)
   out = roofline.RooflineShape.from_aval(ctx.avals_out[0])
-  return roofline.RooflineResult(unfused_flops=lhs.size + rhs.size + out.size)
+  return roofline.RooflineResult(unfused_flops=lhs.size)
 
 
 roofline.register_roofline(lax.add_p)(_binary_p_roofline)
