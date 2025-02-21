@@ -327,11 +327,11 @@ def _uses_arguments(cjaxpr: jax_core.ClosedJaxpr) -> list[bool]:
 
 def _check_block_mappings(
     block_mappings: Sequence[pallas_core.BlockMapping],
-    name_and_src_info: pallas_core.NameAndSrcInfo,
+    debug_info: jax_core.DebugInfo,
 ) -> None:
   def err_details(bm: pallas_core.BlockMapping) -> str:
     return (
-        f"Block spec for {bm.origin} in pallas_call {name_and_src_info}"
+        f"Block spec for {bm.origin} in pallas_call {debug_info.func_src_info}"
         f" has block shape {bm.block_shape}, array shape"
         f" {bm.array_shape_dtype.shape},"
         # TODO(necula): add index_map source location info
@@ -369,7 +369,6 @@ def _check_block_mappings(
 def lower_jaxpr_to_module(
     grid_mapping: pallas_core.GridMapping,
     jaxpr: jax_core.Jaxpr,
-    name_and_src_info: pallas_core.NameAndSrcInfo,
     compiler_params: dict[str, Any],
     cost_estimate: pallas_core.CostEstimate | None
 ) -> LoweringResult:
@@ -387,7 +386,8 @@ def lower_jaxpr_to_module(
     )
 
   block_mappings = grid_mapping.block_mappings
-  _check_block_mappings(block_mappings, name_and_src_info)
+  debug_info = jaxpr.debug_info
+  _check_block_mappings(block_mappings, debug_info)
 
   params = compiler_params.get("mosaic_gpu", {})
   approx_math = params.get("approx_math", False)
@@ -534,7 +534,7 @@ def lower_jaxpr_to_module(
     for barrier, barrier_ref in zip(rs.barriers, runtime_barriers):
       grouped_barriers[barrier].append(barrier_ref)
     module_ctx = ModuleContext(
-        name_and_src_info.name,
+        mlir.sanitize_name(debug_info.func_name),
         grid_mapping.grid_names,
         None,
         approx_math,
@@ -829,7 +829,7 @@ def lower_jaxpr_to_module(
                   extra_barriers,
               ),
           ),
-          module_name=name_and_src_info.name,
+          module_name=mlir.sanitize_name(debug_info.func_name),
           prof_spec=prof_spec,
       )
   )

@@ -232,6 +232,7 @@ class DebugInfoTest(jtu.JaxTestCase):
 
     dbg = api_util.debug_info("jit", my_f, (1, 2), dict(z=3, w=4))
     self.assertRegex(dbg.func_src_info, r"^my_f at .*debug_info_test.py:\d+")
+    self.assertEqual(dbg.func_name, "my_f")
     self.assertEqual(dbg.arg_names, ("x", "y", "z", "w"))
     self.assertIsNone(dbg.result_paths)
 
@@ -847,6 +848,27 @@ class DebugInfoTest(jtu.JaxTestCase):
             re.compile(r".*func.func public @main\(.*%arg1: tensor<f..> loc\(unknown\)"),
             re.compile(r".*func.func public @main\(.*-> \(tensor<f..> {jax.result_info = \"\"}"),
         ])
+
+  def test_nested_jit_with_const_and_unused_args(self):
+    def my_f(x, y):  # y is unused
+      def my_g(u, v):  # v is unused
+        return v + np.ones(v.shape, v.dtype)
+
+      return x + jax.jit(my_g)(y, x)
+
+    x = y = np.ones((8,), dtype=np.float32)
+    self._check_tracers_and_jaxprs(
+        jax.jit(my_f),
+        x, y,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=x,y, result_paths=",
+            "traced_for=jit, fun=my_g, arg_names=u,v, result_paths="
+        ],
+        expected_lowering_lines=[
+            re.compile(r".*func.func public @main\(%arg0: tensor<8xf..> loc\(\"x\"\)\)"),
+            re.compile(r".*call @my_g\(%arg.\) : \(tensor<8xf..>\)"),
+        ]
+    )
 
   def test_vjp_of_nested_jit(self):
     tracer_spy = TracerSpy()
@@ -1913,10 +1935,9 @@ class DebugInfoTest(jtu.JaxTestCase):
         tracer_spy=tracer_spy,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=my_f, arg_names=input, result_paths=",
-            # TODO(necula): function source location points in JAX internals
             # TODO(necula): arg_names and result_paths are wrong
-            re.compile(r"traced_for=checkify_pallas, fun=checked_kernel_fn at .*pallas_call.py:.*, arg_names=args\[0\],.*, result_paths="),
-            re.compile(r"traced_for=pallas_call index_map, fun=<lambda> at .*pallas.core.py:.*, arg_names=, result_paths="),
+            re.compile(r"traced_for=checkify_pallas, fun=checked_kernel_fn at .*.pallas_call.py:.*, arg_names=args\[0\],.*, result_paths="),
+            re.compile(r"traced_for=pallas_call index_map, fun=default_index_map at .*.pallas.core.py:.*, arg_names=, result_paths=\[0\].*"),
         ],
         expected_tracer_debug_infos=[
             "traced_for=pallas_call, fun=kernel, arg_names=x_ref,y_ref",
