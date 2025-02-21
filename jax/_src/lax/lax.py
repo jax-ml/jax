@@ -3444,7 +3444,6 @@ _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
 
 def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals,
                       require_same=True, allow_extended_dtype=False, **kwargs):
-  del kwargs
   assert len(avals) == len(accepted_dtypes), (avals, accepted_dtypes)
   for i, aval in enumerate(avals):
     if allow_extended_dtype and isinstance(aval.dtype, dtypes.ExtendedDType):
@@ -3467,7 +3466,7 @@ def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals,
         typenames = ', '.join(t.__name__ for t in types)
         raise TypeError(msg.format(name, typename, i, i, typenames))
   if require_same: check_same_dtypes(name, *avals)
-  return result_dtype(*avals)
+  return result_dtype(*avals, **kwargs)
 
 
 def broadcasting_shape_rule(name, *avals):
