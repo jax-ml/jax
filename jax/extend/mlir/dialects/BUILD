@@ -24,6 +24,24 @@ package(
 )
 
 pytype_strict_library(
+    name = "dialects",
+    srcs = ["__init__.py"],
+    deps = [
+        ":arithmetic_dialect",
+        ":builtin_dialect",
+        ":chlo_dialect",
+        ":func_dialect",
+        ":math_dialect",
+        ":memref_dialect",
+        ":scf_dialect",
+        ":sdy_dialect",
+        ":sparse_tensor_dialect",
+        ":stablehlo_dialect",
+        ":vector_dialect",
+    ],
+)
+
+pytype_strict_library(
     name = "arithmetic_dialect",
     srcs = ["arith.py"],
     deps = if_building_jaxlib(["//jaxlib/mlir:arithmetic_dialect"]),
