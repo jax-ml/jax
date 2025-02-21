@@ -20,6 +20,7 @@ limitations under the License.
 #include <complex>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <optional>
@@ -222,33 +223,63 @@ template struct Getrf<std::complex<double>>;
 
 // FFI Kernel
 
+template <typename F>
+ffi::Future EnqueueBatchedWork(ffi::ThreadPool thread_pool, int64_t size,
+                               int64_t step, F fn) {
+  if (size <= step || thread_pool.num_threads() <= 1) {
+    ffi::Promise promise;
+    ffi::Future future(promise);
+    promise.SetAvailable();
+    fn(0, size);
+    return future;
+  }
+  int64_t count = (size + step - 1) / step;
+  ffi::CountDownPromise counter(count);
+  ffi::Future future(counter);
+  for (int64_t i = 0; i < size; i += step) {
+    thread_pool.Schedule([i, size, step, fn, counter]() mutable {
+      fn(i, std::min(size, i + step));
+      counter.CountDown();
+    });
+  }
+  return future;
+}
+
 template <ffi::DataType dtype>
-ffi::Error LuDecomposition<dtype>::Kernel(
-    ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
-    ffi::ResultBuffer<LapackIntDtype> ipiv,
+ffi::Future LuDecomposition<dtype>::Kernel(
+    ffi::ThreadPool thread_pool, ffi::Buffer<dtype> x,
+    ffi::ResultBuffer<dtype> x_out, ffi::ResultBuffer<LapackIntDtype> ipiv,
     ffi::ResultBuffer<LapackIntDtype> info) {
-  FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
-                       SplitBatch2D(x.dimensions()));
+  FFI_ASSIGN_OR_RETURN_FUTURE((auto [batch_count, x_rows, x_cols]),
+                              SplitBatch2D(x.dimensions()));
+  FFI_ASSIGN_OR_RETURN_FUTURE(auto x_rows_v,
+                              MaybeCastNoOverflow<lapack_int>(x_rows));
+  FFI_ASSIGN_OR_RETURN_FUTURE(auto x_cols_v,
+                              MaybeCastNoOverflow<lapack_int>(x_cols));
+  auto x_leading_dim_v = x_rows_v;
+  const int64_t x_out_step{x_rows * x_cols};
+  const int64_t ipiv_step{std::min(x_rows, x_cols)};
+
   auto* x_out_data = x_out->typed_data();
   auto* ipiv_data = ipiv->typed_data();
   auto* info_data = info->typed_data();
-
   CopyIfDiffBuffer(x, x_out);
 
-  FFI_ASSIGN_OR_RETURN(auto x_rows_v, MaybeCastNoOverflow<lapack_int>(x_rows));
-  FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<lapack_int>(x_cols));
-  auto x_leading_dim_v = x_rows_v;
+  // This is the heuristic used by torch, and I did some experiments and it
+  // seems like a reasonable starting point.
+  float matrix_rank = static_cast<float>(std::min(x_rows, x_cols));
+  int64_t chunk_size_per_thread = std::max(
+      int64_t{1},
+      static_cast<int64_t>(3200.0 / (matrix_rank * matrix_rank * matrix_rank)));
 
-  const int64_t x_out_step{x_rows * x_cols};
-  const int64_t ipiv_step{std::min(x_rows, x_cols)};
-  for (int64_t i = 0; i < batch_count; ++i) {
-    fn(&x_rows_v, &x_cols_v, x_out_data, &x_leading_dim_v, ipiv_data,
-       info_data);
-    x_out_data += x_out_step;
-    ipiv_data += ipiv_step;
-    ++info_data;
-  }
-  return ffi::Error::Success();
+  return EnqueueBatchedWork(
+      thread_pool, batch_count, chunk_size_per_thread,
+      [=](int64_t start, int64_t end) mutable {
+        for (int64_t i = start; i < end; ++i) {
+          fn(&x_rows_v, &x_cols_v, x_out_data + i * x_out_step,
+             &x_leading_dim_v, ipiv_data + i * ipiv_step, info_data + i);
+        }
+      });
 }
 
 template struct LuDecomposition<ffi::DataType::F32>;
@@ -2115,6 +2146,7 @@ template struct TridiagonalSolver<ffi::DataType::C128>;
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                             \
       name, LuDecomposition<data_type>::Kernel,              \
       ::xla::ffi::Ffi::Bind()                                \
+          .Ctx<::xla::ffi::ThreadPool>()                     \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)         \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)     \
           .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*ipiv*/) \
