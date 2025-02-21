@@ -270,6 +270,7 @@ filegroup(
         "dialect/tpu/transforms/extensions/apply_vector_layout_extensions.cc",
         "dialect/tpu/transforms/extensions/infer_vector_layout_extensions.cc",
     ],
+    # compatible with libtpu
 )
 
 cc_library(
