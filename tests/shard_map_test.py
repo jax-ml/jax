@@ -2056,6 +2056,24 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(v * v, actual, check_dtypes=False)
     self.assertEqual(actual.sharding, sharding)
 
+  def test_shmap_close_over_unused_params(self):
+    mesh = jtu.create_mesh((2,), ("data",))
+
+    def loss_fn(_, batch):
+      return jnp.sum(batch)
+
+    @jax.jit
+    def update_fn(params, batch):
+      def grad_fn(batch):
+        return jax.value_and_grad(loss_fn)(params, batch)
+      return shard_map(grad_fn, mesh=mesh, in_specs=P("data"), out_specs=P(),
+                       check_rep=False)(batch)
+
+    arr_sharded = jax.device_put(jnp.arange(32.0).reshape(4, 8),
+                                 NamedSharding(mesh, P()))
+    params = jnp.copy(arr_sharded)
+    update_fn(params, arr_sharded)  # doesn't crash
+
   def test_sharded_prng_with_abstract_mesh(self):
     shape = (8, 2, 2)
     mesh = jtu.create_mesh((2, 2, 2), ('x', 'y', 'z'))
