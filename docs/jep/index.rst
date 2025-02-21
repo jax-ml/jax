@@ -52,6 +52,7 @@ Then create a pull request that adds a file named
   17111: Efficient transposition of `shard_map` (and other maps) <17111-shmap-transpose>
   18137: Scope of JAX NumPy & SciPy Wrappers <18137-numpy-scipy-scope>
   25516: Effort-based versioning <25516-effver>
+  26069: PyTree dict key order <26069-pytree-dict-key-order>
 
 
 Several early JEPs were converted in hindsight from other documentation,
