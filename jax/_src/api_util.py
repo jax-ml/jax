@@ -662,7 +662,7 @@ def _non_static_arg_names(fn_signature: inspect.Signature | None,
                           args: Sequence[Any], kwargs: dict[str, Any],
                           static_argnums: Sequence[int],
                           static_argnames: Sequence[str],
-                          ) -> tuple[str | None, ...]:
+                          ) -> tuple[str, ...]:
   """Returns the names of the non-static arguments.
 
   If the `fn_signature` is given then we get from it the names of the

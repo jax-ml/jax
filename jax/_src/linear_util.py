@@ -270,11 +270,12 @@ class DebugInfo(NamedTuple):
 
   # The paths of the flattened non-static argnames,
   # e.g. ('x', 'dict_arg["a"]', ... ).
-  # Uses `None` for the args that do not correspond to user-named arguments,
-  # e.g., tangent args in jax.jvp. At the moment, `arg_names` accuracy is
+  # Uses the empty string for the args that do not correspond to
+  # user-named arguments, e.g., tangent args in jax.jvp.
+  # At the moment, `arg_names` accuracy is
   # best-effort. Use `safe_arg_names` to detect and handle an unexpected
   # number of elements in `arg_names`.
-  arg_names: tuple[str | None, ...]
+  arg_names: tuple[str, ...]
 
   # The result paths are not available while we are tracing the function,
   # instead we keep a thunk. Once we are done tracing, we use
@@ -295,15 +296,20 @@ class DebugInfo(NamedTuple):
   def func_name(self) -> str:
     return self.func_src_info.split(" ")[0]
 
-  def safe_arg_names(self, expected: int) -> tuple[str | None, ...]:
+  def replace_func_name(self, name: str) -> DebugInfo:
+    func_src_comps = self.func_src_info.split(" ")
+    func_src_comps[0] = name
+    return self._replace(func_src_info=" ".join(func_src_comps))
+
+  def safe_arg_names(self, expected: int) -> tuple[str, ...]:
     """Get the arg_names with a safety check."""
     if len(self.arg_names) == expected:
       return self.arg_names
     else:
       # TODO(necula): this should not happen
-      return (None,) * expected
+      return ("",) * expected
 
-  def filter_arg_names(self, keep: Sequence[bool]) -> tuple[str | None, ...]:
+  def filter_arg_names(self, keep: Sequence[bool]) -> tuple[str, ...]:
     """Keep only the arg_names for which `keep` is True."""
     return tuple(v for v, b in zip(self.safe_arg_names(len(keep)), keep) if b)
 

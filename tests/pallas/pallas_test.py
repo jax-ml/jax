@@ -28,14 +28,12 @@ import jax
 import jax.export
 from jax import lax
 from jax import random
-from jax._src import api_util
 from jax._src import checkify
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax.control_flow.for_loop import for_loop
-from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax.experimental import pallas as pl
@@ -159,6 +157,7 @@ class PallasBaseTest(jtu.JaxTestCase):
 
 
 class PallasCallTest(PallasBaseTest):
+
   def test_add_one(self):
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("On TPU the test works only in interpret mode")
@@ -971,9 +970,25 @@ class ApiErrorTest(PallasBaseTest):
     with self.assertRaisesRegex(
         ValueError,
         "Index map function my_index_map at .*pallas_test.py.* "
-        "for x_ref must return 1 values to match .*"
+        "for args\\[0\\] must return 1 values to match .*"
         "Currently returning 2 values."):
       f(a)
+
+  def test_pallas_call_index_map_pytree_input_wrong_number_of_results(self):
+    a = np.arange(256, dtype=np.int32)
+    def my_index_map():
+      return 0, 0
+    f = self.pallas_call(lambda x_ref, o_ref: None,
+                         out_shape=a,
+                         in_specs=[dict(one=pl.BlockSpec((4,), my_index_map),
+                                        two=pl.BlockSpec((8,), my_index_map))])
+    with self.assertRaisesRegex(
+        ValueError,
+        "Index map function my_index_map at .*pallas_test.py.* "
+        "for args\\[0\\]\\['one'\\] must return 1 values to match .*"
+        "Currently returning 2 values."):
+      f(dict(one=a, two=a))
+
 
   def test_pallas_call_index_map_wrong_return_type(self):
     a = np.arange(256, dtype=np.int32)
@@ -986,7 +1001,7 @@ class ApiErrorTest(PallasBaseTest):
     with self.assertRaisesRegex(
         ValueError,
         "Index map function my_index_map at .*pallas_test.py.* "
-        "for x_ref must return integer scalars. Output\\[0\\] has "
+        "for args\\[0\\] must return integer scalars. Output\\[0\\] has "
         "type .*float"):
       f(a)
 
@@ -1001,7 +1016,7 @@ class ApiErrorTest(PallasBaseTest):
     with self.assertRaisesRegex(
         ValueError,
         "Index map function my_index_map at .*pallas_test.py.* "
-        "for x_ref must return integer scalars. Output\\[0\\] has "
+        "for args\\[0\\] must return integer scalars. Output\\[0\\] has "
         "type .*int32\\[4\\]"):
       f(a)
 
@@ -1015,7 +1030,7 @@ class ApiErrorTest(PallasBaseTest):
                                                 lambda i: jnp.array(index_map_result)[i])])
     with self.assertRaisesRegex(
         ValueError,
-        "Index map function .* for x_ref must not capture constants:"):
+        "Index map function .* for args\\[0\\] must not capture constants:"):
       f(a)
 
   def test_pallas_call_out_specs_mismatch_shape(self):
@@ -1036,7 +1051,7 @@ class ApiErrorTest(PallasBaseTest):
                          in_specs=[pl.BlockSpec((1, 1), lambda: (0, 0))])
     with self.assertRaisesRegex(
         ValueError,
-        "Block shape for x_ref .* must have the same number of dimensions as the "
+        "Block shape for args\\[0\\] .* must have the same number of dimensions as the "
         "array shape"):
 
       f(a)
@@ -1087,40 +1102,6 @@ class ApiErrorTest(PallasBaseTest):
       self.pallas_call(lambda x_ref, y_ref, o1_ref: None,
                        out_shape=[jax.ShapeDtypeStruct(x.shape, jnp.float32)],
                        input_output_aliases={1: 0})(x, x)
-
-  def test_name_and_src_info(self):
-    def the_kernel(): return None
-    ns1 = pallas_core.NameAndSrcInfo.from_pallas_call(
-        "my_name", api_util.fun_sourceinfo(the_kernel))
-    self.assertEqual("my_name", ns1.name)
-    self.assertIn("the_kernel", ns1.src_info)
-    self.assertIn("pallas_test.py:", ns1.src_info)
-    self.assertRegex(
-        str(ns1),
-        "my_name for kernel function the_kernel at .*pallas_test.py:.*")
-
-    ns2 = pallas_core.NameAndSrcInfo.from_pallas_call(
-        None,
-        api_util.fun_sourceinfo(the_kernel))
-    self.assertEqual("the_kernel", ns2.name)
-    self.assertIn("pallas_test.py:", ns2.src_info)
-    self.assertRegex(
-        str(ns2),
-        "the_kernel at .*pallas_test.py:.*")
-
-    ns3 = pallas_core.NameAndSrcInfo.from_pallas_call("my_name", None)
-    self.assertEqual("my_name", ns3.name)
-    self.assertEqual("", ns3.src_info)
-    self.assertEqual(str(ns3), "my_name")
-
-    ns4 = pallas_core.NameAndSrcInfo.from_pallas_call("my name with spaces",
-                                                      None)
-    self.assertEqual("my_name_with_spaces", ns4.name)
-    self.assertEqual("", ns4.src_info)
-
-    ns5 = pallas_core.NameAndSrcInfo.from_pallas_call(None, None)
-    self.assertEqual("unknown", ns5.name)
-    self.assertEqual("", ns5.src_info)
 
 
 class ApiErrorInterpretTest(ApiErrorTest):
