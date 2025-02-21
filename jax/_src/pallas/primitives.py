@@ -993,3 +993,267 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr):
     return out[:num_return_values]
 
   return mlir.lower_fun(_lower_fun, multiple_results=True)(ctx, *args)
+
+
+def _get_ref_and_transforms(ref):
+  if isinstance(ref, state.TransformedRef):
+    return ref.ref, ref.transforms
+  return ref, ()
+
+
+class DeviceIdType(enum.Enum):
+  MESH = "mesh"
+  LOGICAL = "logical"
+
+
+def check_sem_avals(
+    sem_aval, sem_transforms_avals, name, allowed_semaphore_types=None
+):
+  if allowed_semaphore_types is None:
+    allowed_semaphore_types = {
+        pallas_core.semaphore,
+        pallas_core.barrier_semaphore,
+        # For interpret mode.
+        pallas_core.SEMAPHORE_INTERPRET_DTYPE,
+    }
+  if not isinstance(sem_aval, state.AbstractRef):
+    raise ValueError(f"Cannot {name} on a non-semaphore Ref: {sem_aval}")
+  sem_shape = sem_aval.shape
+  if sem_transforms_avals:
+    sem_shape = sem_transforms_avals[-1].get_indexer_shape()
+  if sem_shape:
+    raise ValueError(f"Cannot {name} on a non-()-shaped semaphore: {sem_shape}")
+  # Uncomment when semaphore type works for Mosaic-GPU lowering
+  # sem_dtype = sem_aval.dtype
+  # if not any(
+  #     jnp.issubdtype(sem_dtype, sem_type)
+  #     for sem_type in allowed_semaphore_types
+  # ):
+  #   raise ValueError(
+  #       f"Must {name} semaphores of the following types:"
+  #       f" {allowed_semaphore_types}."
+  #   )
+
+
+def _transform_semaphore(ref_value, transforms, ref_aval):
+  """Helper function for indexing into a semaphore during state_discharge."""
+  if ref_value.shape == ref_aval.shape:
+    return state_discharge.transform_array(ref_value, transforms)
+  elif len(ref_value.shape) == 0:
+    return ref_value
+  else:
+    raise ValueError(
+        f"Semaphore value shape {ref_value.shape} does not match aval shape"
+        f" {ref_aval.shape}"
+    )
+
+
+semaphore_read_p = jax_core.Primitive("semaphore_read")
+semaphore_read_p.multiple_results = False
+
+
+def semaphore_read(sem_or_view):
+  ref, transforms = _get_ref_and_transforms(sem_or_view)
+  args = [ref, transforms]
+  flat_args, args_tree = tree_util.tree_flatten(args)
+  return semaphore_read_p.bind(*flat_args, args_tree=args_tree)
+
+@semaphore_read_p.def_abstract_eval
+def _semaphore_read_abstract_eval(
+    *avals,
+    args_tree,
+):
+  sem_aval, sem_transforms_avals = tree_util.tree_unflatten(args_tree, avals)
+  check_sem_avals(
+      sem_aval,
+      sem_transforms_avals,
+      "read",
+      allowed_semaphore_types={
+          pallas_core.dma_semaphore,
+          pallas_core.semaphore,
+          pallas_core.barrier_semaphore,
+          pallas_core.SEMAPHORE_INTERPRET_DTYPE,
+      },
+  )
+  return jax_core.ShapedArray((), jnp.dtype("int32"))
+
+def _semaphore_read_discharge_rule(in_avals,
+                                   out_avals,
+                                   *flat_args,
+                                   args_tree):
+  del out_avals
+  [ref, transforms] = args_tree.unflatten(flat_args)
+  sem_value = _transform_semaphore(ref, transforms, in_avals[0])
+  sem_value = sem_value.astype(jnp.int32)
+  return (None,) * len(in_avals), sem_value
+state_discharge.register_discharge_rule(semaphore_read_p)(
+    _semaphore_read_discharge_rule
+)
+
+
+semaphore_signal_p = jax_core.Primitive('semaphore_signal')
+semaphore_signal_p.multiple_results = True
+
+
+def semaphore_signal(
+    sem_or_view,
+    inc: int | jax.Array = 1,
+    *,
+    device_id: int | jax.Array | None | tuple[int | jax.Array, ...] = None,
+    device_id_type: DeviceIdType = DeviceIdType.MESH,
+    core_index: int | jax.Array | None = None,
+):
+  ref, transforms = _get_ref_and_transforms(sem_or_view)
+  inc = jnp.asarray(inc, dtype=jnp.int32)
+  args = [ref, transforms, inc, device_id, core_index]
+  flat_args, args_tree = tree_util.tree_flatten(args)
+  semaphore_signal_p.bind(
+      *flat_args,
+      args_tree=args_tree,
+      device_id_type=device_id_type,
+  )
+
+
+@semaphore_signal_p.def_abstract_eval
+def _semaphore_signal_abstract_eval(
+    *avals,
+    args_tree,
+    device_id_type: DeviceIdType,
+):
+  del device_id_type
+  (
+      sem_aval,
+      sem_transforms_avals,
+      value_aval,
+      device_id_avals,
+      core_index_aval,
+  ) = tree_util.tree_unflatten(args_tree, avals)
+  check_sem_avals(sem_aval, sem_transforms_avals, "signal")
+  if value_aval.dtype != jnp.dtype("int32"):
+    raise ValueError("Must signal an int32 value.")
+  if device_id_avals is not None:
+    device_id_flat_avals = tree_util.tree_leaves(device_id_avals)
+    for aval in device_id_flat_avals:
+      if aval.dtype != jnp.dtype("int32"):
+        raise ValueError("`device_id`s must be an int32 value.")
+  return []
+
+
+def _semaphore_signal_pp_eqn(eqn: jax_core.JaxprEqn,
+                             context: jax_core.JaxprPpContext,
+                             settings: jax_core.JaxprPpSettings):
+  del settings
+  invars = eqn.invars
+  tree = eqn.params["args_tree"]
+  (
+      sem,
+      sem_transforms,
+      value,
+      device_ids,
+      _,
+  ) = tree_util.tree_unflatten(tree, invars)
+  out = pp.concat([
+      pp.text("semaphore_signal"),
+      pp.text(" "),
+      sp.pp_ref_transforms(context, sem, sem_transforms),
+      pp.text(" "),
+      pp.text(jax_core.pp_var(value, context)),
+  ])
+  if device_ids is not None:
+    flat_device_ids = tree_util.tree_leaves(device_ids)
+    if not flat_device_ids:
+      return out
+    device_ids_pp = [pp.text(jax_core.pp_var(flat_device_ids[0], context))]
+    for device_id in flat_device_ids[1:]:
+      device_ids_pp.append(pp.text(" "))
+      device_ids_pp.append(pp.text(jax_core.pp_var(device_id, context)))
+    out = pp.concat([out, pp.concat(device_ids_pp)])
+  return out
+jax_core.pp_eqn_rules[semaphore_signal_p] = _semaphore_signal_pp_eqn
+
+
+def _semaphore_signal_discharge_rule(in_avals,
+                                     out_avals,
+                                     *flat_args,
+                                     args_tree,
+                                     device_id_type):
+  del out_avals, device_id_type
+  [ref, transforms, inc, device_id, core_index] = args_tree.unflatten(flat_args)
+  if device_id is not None:
+    raise NotImplementedError("Remote signal not implemented.")
+  if core_index is not None:
+    raise NotImplementedError("Multiple core support not implemented.")
+  sem_value = _transform_semaphore(ref, transforms, in_avals[0])
+  inc = inc.astype(pallas_core.SEMAPHORE_INTERPRET_DTYPE)
+  _, new_sem_value = state_discharge.transform_swap_array(
+      ref, transforms, sem_value + inc
+  )
+  return (new_sem_value,) + (None,) * (len(in_avals) - 1), ()
+state_discharge.register_discharge_rule(semaphore_signal_p)(
+    _semaphore_signal_discharge_rule
+)
+
+
+semaphore_wait_p = jax_core.Primitive('semaphore_wait')
+semaphore_wait_p.multiple_results = True
+
+def semaphore_wait(sem_or_view, dec: int | jax.Array = 1):
+  ref, transforms = _get_ref_and_transforms(sem_or_view)
+  dec = jnp.asarray(dec, dtype=jnp.int32)
+  args = [ref, transforms, dec]
+  flat_args, args_tree = tree_util.tree_flatten(args)
+  semaphore_wait_p.bind(*flat_args, args_tree=args_tree)
+
+@semaphore_wait_p.def_abstract_eval
+def _semaphore_wait_abstract_eval(*avals, args_tree):
+  sem_aval, sem_transforms_avals, value_aval = tree_util.tree_unflatten(
+      args_tree, avals
+  )
+  check_sem_avals(sem_aval, sem_transforms_avals, "wait")
+  if value_aval.dtype != jnp.dtype("int32"):
+    raise ValueError("Must wait an int32 value.")
+  return []
+
+def _semaphore_wait_pp_eqn(eqn: jax_core.JaxprEqn,
+                             context: jax_core.JaxprPpContext,
+                             settings: jax_core.JaxprPpSettings):
+  del settings
+  invars = eqn.invars
+  tree = eqn.params["args_tree"]
+  (
+      sem,
+      sem_transforms,
+      value,
+  ) = tree_util.tree_unflatten(tree, invars)
+  return pp.concat([
+      pp.text("semaphore_wait"),
+      pp.text(" "),
+      sp.pp_ref_transforms(context, sem, sem_transforms),
+      pp.text(" "),
+      pp.text(jax_core.pp_var(value, context)),
+  ])
+jax_core.pp_eqn_rules[semaphore_wait_p] = _semaphore_wait_pp_eqn
+
+def _semaphore_wait_discharge_rule(in_avals,
+                                     out_avals,
+                                     *flat_args,
+                                     args_tree):
+  del out_avals
+  [ref, transforms, dec] = args_tree.unflatten(flat_args)
+  sem_value = _transform_semaphore(ref, transforms, in_avals[0])
+  dec = dec.astype(pallas_core.SEMAPHORE_INTERPRET_DTYPE)
+  _, new_sem_value = state_discharge.transform_swap_array(
+      ref, transforms, sem_value - dec
+  )
+  return (new_sem_value,) + (None,) * (len(in_avals) - 1), ()
+state_discharge.register_discharge_rule(semaphore_wait_p)(
+    _semaphore_wait_discharge_rule
+)
+
+device_id_p = jax_core.Primitive('device_id')
+
+@device_id_p.def_abstract_eval
+def _device_id_abstract_eval():
+  return jax_core.ShapedArray((), jnp.dtype("int32"))
+
+device_id = device_id_p.bind
