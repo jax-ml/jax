@@ -1030,6 +1030,8 @@ def _to_physical_op_sharding(
 ) -> xc.OpSharding | SdyArraySharding | None:
   if sharding is None:
     return None
+  if all_unconstrained(sharding, aval):
+    return None
   if isinstance(sharding, AUTO):
     if config.use_shardy_partitioner.value:
       return sharding._to_sdy_sharding(aval.ndim)  # type: ignore
@@ -1071,10 +1073,8 @@ def _get_mem_kind(s: JSharding | AUTO | None) -> str | None:
 
 
 def contains_unconstrained(s):
-  return (
-      isinstance(s, NamedSharding)
-      and PartitionSpec.UNCONSTRAINED in s._parsed_pspec
-  )
+  return (isinstance(s, NamedSharding)
+          and PartitionSpec.UNCONSTRAINED in s._parsed_pspec)
 
 
 def all_unconstrained(s, aval):
@@ -1084,12 +1084,19 @@ def all_unconstrained(s, aval):
     return all(p is PartitionSpec.UNCONSTRAINED for p in s._parsed_pspec)
   return False
 
-def _get_unconstrained_dimensions(s, aval):
+class UnconstrainedVariants(NamedTuple):
+  contains_unconstrained: bool
+  all_unconstrained: bool
+  unconstrained_dims: set[int] | None
+
+def _get_unconstrained_variants(s, aval) -> UnconstrainedVariants:
   us = contains_unconstrained(s)
-  return (
-    us, all_unconstrained(s, aval),
-    ({i for i, p in enumerate(s._parsed_pspec)
-      if p is PartitionSpec.UNCONSTRAINED} if us else None))
+  unconstrained_dims = ({i for i, p in enumerate(s._parsed_pspec)
+                         if p is PartitionSpec.UNCONSTRAINED} if us else None)
+  return UnconstrainedVariants(
+      contains_unconstrained=us, all_unconstrained=all_unconstrained(s, aval),
+      unconstrained_dims=unconstrained_dims)
+
 
 def lower_jaxpr_to_module(
     module_name: str,
@@ -1511,13 +1518,13 @@ def lower_jaxpr_to_fun(
          for is_donated, types in zip(xla_donated_args, input_types)])
 
   ir_result_shardings = None
-  unconstrained_shardings = None
+  unconstrained_variants = None
   if result_shardings is not None:
     ir_result_shardings = util.flatten(
         [[_to_physical_op_sharding(ctx, a, s)] * len_ir_types(types)
          for a, s, types in zip(output_avals, result_shardings, output_types)])
-    unconstrained_shardings = util.flatten(
-        [[_get_unconstrained_dimensions(s, a)] * len_ir_types(types)
+    unconstrained_variants = util.flatten(
+        [[_get_unconstrained_variants(s, a)] * len_ir_types(types)
          for a, s, types in zip(output_avals, result_shardings, output_types)])
 
   ir_result_memory_kinds = None
@@ -1633,9 +1640,9 @@ def lower_jaxpr_to_fun(
         attrs['jax.result_info'] = ir.StringAttr.get(name_)
 
   if use_sharding_annotations and ir_result_shardings is not None:
-    for attrs, sharding, us in zip(result_attrs, ir_result_shardings,
-                                   unconstrained_shardings):  # type: ignore
-      if sharding is not None and not us[0]:
+    for attrs, sharding, uv in zip(result_attrs, ir_result_shardings,
+                                   unconstrained_variants):  # type: ignore
+      if sharding is not None and not uv.contains_unconstrained:
         if config.use_shardy_partitioner.value:
           attrs["sdy.sharding"] = get_sharding_attr(sharding)
         else:
@@ -1716,13 +1723,15 @@ def lower_jaxpr_to_fun(
 
     if ir_result_shardings is not None:
       temp_flat_outputs = []
-      for o, s, o_aval, us in zip(flat_outputs, ir_result_shardings,
-                                  output_avals, unconstrained_shardings):  # type: ignore
-        if us[0] and not us[1]:
+      for o, s, o_aval, uv in zip(flat_outputs, ir_result_shardings,
+                                  output_avals, unconstrained_variants):  # type: ignore
+        if (s is not None and uv.contains_unconstrained and
+            not uv.all_unconstrained):
           if config.use_shardy_partitioner.value:
             s = modify_sdy_sharding_wrt_axis_types(s, o_aval.sharding.mesh)
           temp_flat_outputs.append(wrap_with_sharding_op(
-              entry_lowering_ctx, o, o_aval, s, unspecified_dims=us[2]))
+              entry_lowering_ctx, o, o_aval, s,
+              unspecified_dims=uv.unconstrained_dims))
         else:
           temp_flat_outputs.append(o)
       flat_outputs = temp_flat_outputs
