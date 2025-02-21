@@ -26,6 +26,7 @@ from jax._src.lib.mlir.dialects import sdy
 from jax._src import mesh as mesh_lib
 from jax._src.partition_spec import PartitionSpec, UnconstrainedSingleton
 from jax._src import sharding as JSharding
+from jax._src import xla_bridge as xb
 import numpy as np
 
 Shape = tuple[int, ...]
@@ -211,7 +212,9 @@ class NamedSharding(JSharding.Sharding):
                        '`jax.sharding.AbstractMesh`.')
     # Speed up `is_fully_addressable` since there is a high chance that the
     # mesh across multiple NamedSharding objects will be the same.
-    return not self.mesh.is_multi_process
+    client = self._internal_device_list[0].client
+    return (len(self.mesh._process_indices) == 1 and
+            next(iter(self.mesh._process_indices)) == xb.process_index(client))
 
   @property
   def _is_concrete(self) -> bool:

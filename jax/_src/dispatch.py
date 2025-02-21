@@ -491,9 +491,10 @@ def _device_put_sharding_impl(x, aval, device, copy):
       return pxla.batched_device_put(aval, SingleDeviceSharding(device), [x],
                                      [device])
 
-  sh = SingleDeviceSharding(pxla.get_default_device()
-                            if device is None else device)
-  return _DeferredShardArg(x, sh, aval, device is not None, copy)
+  dev = pxla.get_default_device() if device is None else device
+  # TODO(emilyaf): Maybe we need to bring back _DeferredShardArg here once we
+  # allow creating of empty arrays in case of `device_put(0, nonlocal_device)`.
+  return pxla.batched_device_put(aval, SingleDeviceSharding(dev), [x], [dev])
 
 
 def _device_put_impl(
