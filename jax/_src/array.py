@@ -45,7 +45,7 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding,
     device_replica_id_map, hashed_index, num_addressable_indices, local_to_global_shape)  # pyformat: disable
-from jax._src.typing import ArrayLike, DLDeviceType
+from jax._src.typing import ArrayLike, DLDeviceType, DTypeLike
 from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method, cache
 import numpy as np
 
@@ -1033,7 +1033,8 @@ def make_array_from_process_local_data(
 
 
 def make_array_from_single_device_arrays(
-    shape: Shape, sharding: Sharding, arrays: Sequence[basearray.Array]
+    shape: Shape, sharding: Sharding, arrays: Sequence[basearray.Array], *,
+    dtype: DTypeLike | None = None,
 ) -> ArrayImpl:
   r"""Returns a ``jax.Array`` from a sequence of ``jax.Array``\s each on a single device.
       Every device in input ``sharding``\'s mesh must have an array in ``arrays``\s.
@@ -1046,6 +1047,8 @@ def make_array_from_single_device_arrays(
       must equal ``len(sharding.addressable_devices)`` and the shape of each array must be the same. For multiprocess code,
       each process will call with a different ``arrays`` argument that corresponds to that processes' data.
       These arrays are commonly created via ``jax.device_put``.
+    dtype: The dtype of the output ``jax.Array``. If not provided, the dtype of the first array in
+      ``arrays`` is used. If ``arrays`` is empty, the ``dtype`` argument must be provided
 
   Returns:
     A global ``jax.Array``, sharded as ``sharding``, with shape equal to ``shape``, and with per-device
@@ -1076,10 +1079,35 @@ def make_array_from_single_device_arrays(
   For cases where you have a local array and want to convert it to a global
   jax.Array, use ``jax.make_array_from_process_local_data``.
   """
+  if not isinstance(arrays, Sequence):
+    raise TypeError("jax.make_array_from_single_device_arrays `arrays` "
+                    "argument must be a Sequence (list or tuple), but got "
+                    f"{type(arrays)}.")
+  if arrays:
+    array_dtype = arrays[0].dtype
+    for arr in arrays:
+      if arr.dtype != array_dtype:
+        raise ValueError(
+            "Each array in `arrays` must have the same dtype. Got "
+            f"{array_dtype} and {arr.dtype}.")
+    if dtype is None:
+      dtype = array_dtype
+    else:
+      if array_dtype != dtype:
+        raise ValueError(
+            "If `dtype` is provided to "
+            "`jax.make_array_from_single_device_arrays`, it must match the "
+            "dtype of each array in `arrays`.")
+  else:
+    if dtype is None:
+      raise ValueError(
+          "If `arrays` is empty, `dtype` must be provided via the `dtype` "
+          "argument to `jax.make_array_from_single_device_arrays`.")
+
   # All input arrays should be committed. Checking it is expensive on
   # single-controller systems.
   aval = core.update_aval_with_sharding(
-      core.ShapedArray(shape, arrays[0].dtype, weak_type=False), sharding)
+      core.ShapedArray(shape, dtype, weak_type=False), sharding)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     return aval.dtype._rules.make_sharded_array(aval, sharding, arrays,
                                                 committed=True)
@@ -1088,10 +1116,6 @@ def make_array_from_single_device_arrays(
     return ArrayImpl(aval, sharding, cast(Sequence[ArrayImpl], arrays),
                     committed=True)
   except TypeError:
-    if not isinstance(arrays, Sequence):
-      raise TypeError("jax.make_array_from_single_device_arrays `arrays` "
-                      "argument must be a Sequence (list or tuple), but got "
-                      f"{type(arrays)}.")
     if any(isinstance(arr, core.Tracer) for arr in arrays):
       raise ValueError(
           "jax.make_array_from_single_device_arrays requires a list of concrete"
