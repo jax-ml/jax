@@ -151,8 +151,8 @@ class DialectTest(MosaicGpuTest):
               layout=ir.Attribute.parse("strided<[16, 1]>"),
           ),
           ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
-          ir.IntegerType.get_signless(32),
-          ir.IntegerType.get_signless(32),
+          ir.IndexType.get(),
+          ir.IndexType.get(),
           name="async_load",
       )(
           lambda source, destination, barrier, *indices: mgpu.dialect.async_load(
@@ -177,8 +177,8 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F64Type.get()),
           ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
-          ir.IntegerType.get_signless(32),
-          ir.IntegerType.get_signless(32),
+          ir.IndexType.get(),
+          ir.IndexType.get(),
           name="async_load",
       )(
           lambda source, destination, barrier, *indices: mgpu.dialect.async_load(
@@ -203,8 +203,8 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
-          ir.IntegerType.get_signless(32),
-          ir.IntegerType.get_signless(32),
+          ir.IndexType.get(),
+          ir.IndexType.get(),
           name="async_load",
       )(
           lambda source, destination, barrier, *indices: mgpu.dialect.async_load(
@@ -229,9 +229,9 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([1, 4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
-          ir.IntegerType.get_signless(32),
-          ir.IntegerType.get_signless(32),
-          ir.IntegerType.get_signless(32),
+          ir.IndexType.get(),
+          ir.IndexType.get(),
+          ir.IndexType.get(),
           name="async_load",
       )(
           lambda source, destination, barrier, *indices: mgpu.dialect.async_load(
@@ -256,7 +256,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
-          ir.IntegerType.get_signless(32),
+          ir.IndexType.get(),
           name="async_load",
       )(
           lambda source, destination, barrier, *indices: mgpu.dialect.async_load(
@@ -281,7 +281,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
-          ir.IntegerType.get_signless(32),
+          ir.IndexType.get(),
           name="async_load",
       )(
           lambda source, destination, barrier, *indices: mgpu.dialect.async_load(
@@ -307,7 +307,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([], ir.Type.parse("!mosaic_gpu.barrier")),
-          i32,
+          ir.IndexType.get(),
           name="async_load",
       )(
           lambda source, destination, barrier, *indices: mgpu.dialect.async_load(
@@ -338,8 +338,8 @@ class DialectTest(MosaicGpuTest):
               layout=ir.Attribute.parse("strided<[16, 1]>"),
           ),
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
-          ir.IntegerType.get_signless(32),
-          ir.IntegerType.get_signless(32),
+          ir.IndexType.get(),
+          ir.IndexType.get(),
           name="async_store",
       )(
           lambda source, destination, *indices: mgpu.dialect.async_store(
@@ -361,8 +361,8 @@ class DialectTest(MosaicGpuTest):
       func.FuncOp.from_py_func(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F64Type.get()),
-          ir.IntegerType.get_signless(32),
-          ir.IntegerType.get_signless(32),
+          ir.IndexType.get(),
+          ir.IndexType.get(),
           name="async_store",
       )(
           lambda source, destination, *indices: mgpu.dialect.async_store(
@@ -384,8 +384,8 @@ class DialectTest(MosaicGpuTest):
       func.FuncOp.from_py_func(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
-          ir.IntegerType.get_signless(32),
-          ir.IntegerType.get_signless(32),
+          ir.IndexType.get(),
+          ir.IndexType.get(),
           name="async_store",
       )(
           lambda source, destination, *indices: mgpu.dialect.async_store(
@@ -407,9 +407,9 @@ class DialectTest(MosaicGpuTest):
       func.FuncOp.from_py_func(
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([1, 4, 8], ir.F32Type.get()),
-          ir.IntegerType.get_signless(32),
-          ir.IntegerType.get_signless(32),
-          ir.IntegerType.get_signless(32),
+          ir.IndexType.get(),
+          ir.IndexType.get(),
+          ir.IndexType.get(),
           name="async_store",
       )(
           lambda source, destination, *indices: mgpu.dialect.async_store(
@@ -431,7 +431,7 @@ class DialectTest(MosaicGpuTest):
       func.FuncOp.from_py_func(
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
           ir.MemRefType.get([4, 8], ir.F32Type.get()),
-          ir.IntegerType.get_signless(32),
+          ir.IndexType.get(),
           name="async_store",
       )(
           lambda source, destination, *indices: mgpu.dialect.async_store(
@@ -453,7 +453,7 @@ class DialectTest(MosaicGpuTest):
       func.FuncOp.from_py_func(
           ir.MemRefType.get([4], ir.F32Type.get()),
           ir.MemRefType.get([4], ir.F32Type.get()),
-          ir.IntegerType.get_signless(32),
+          ir.IndexType.get(),
           name="async_store",
       )(
           lambda source, destination, *indices: mgpu.dialect.async_store(

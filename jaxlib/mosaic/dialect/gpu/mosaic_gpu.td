@@ -292,7 +292,7 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     MemRefOf<[AnyType]>:$source,
     MemRefOf<[AnyType]>:$destination,
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
-    Variadic<I32>:$indices,
+    Variadic<Index>:$indices,
     PtxPredicate:$predicate,
 
     // Attributes
@@ -345,7 +345,7 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
   let arguments = (ins
     MemRefOf<[AnyType]>:$source,
     MemRefOf<[AnyType]>:$destination,
-    Variadic<I32>:$indices,
+    Variadic<Index>:$indices,
     PtxPredicate:$predicate,
 
     // Attributes

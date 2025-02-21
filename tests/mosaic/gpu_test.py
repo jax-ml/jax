@@ -2448,8 +2448,8 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           barrier=dialect_barrier, expect_tx=2 * memref_bytes
       )
 
-      zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
-      zero_slice_indices = [zero_i32] * memref_type.rank
+      zero_index = arith.constant(ir.IndexType.get(), 0)
+      zero_slice_indices = [zero_index] * memref_type.rank
 
       # GMEM -> SMEM
       mgpu_dialect.async_load(
@@ -2477,7 +2477,6 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       parity, _ = tma_barrier.update_parities(parities)
       mgpu_dialect.wait(dialect_barrier, parity)
 
-      zero_index = arith.constant(ir.IndexType.get(), 0)
       zero_vector_indices = [zero_index] * memref_type.rank
 
       # SMEM -> registers
@@ -2586,13 +2585,13 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
           expect_tx=bytes_a + bytes_b,
       )
 
-      zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
+      zero_index = arith.constant(ir.IndexType.get(), 0)
       # GMEM -> SMEM
       mgpu_dialect.async_load(
           source=a_gmem_ref,
           destination=a_smem_ref,
           barrier=dialect_barrier,
-          indices=[zero_i32] * len(test_case.shape_a),
+          indices=[zero_index] * len(test_case.shape_a),
           slice_lengths=test_case.shape_a,
           collective=ir.ArrayAttr.get([]),
       )
@@ -2600,7 +2599,7 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
           source=b_gmem_ref,
           destination=b_smem_ref,
           barrier=dialect_barrier,
-          indices=[zero_i32] * len(test_case.shape_b),
+          indices=[zero_index] * len(test_case.shape_b),
           slice_lengths=test_case.shape_b,
           collective=ir.ArrayAttr.get([]),
       )
@@ -2624,14 +2623,13 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
       nvvm.wgmma_wait_group_sync_aligned(0)
 
       # Registers -> SMEM
-      zero_index = arith.constant(ir.IndexType.get(), 0)
       vector.store(result, result_smem_ref, [zero_index, zero_index])
 
       # SMEM -> GMEM
       mgpu_dialect.async_store(
           source=result_smem_ref,
           destination=result_gmem_ref,
-          indices=[zero_i32, zero_i32],
+          indices=[zero_index, zero_index],
           slice_lengths=shape_result,
       )
       nvvm.cp_async_bulk_wait_group(0)
