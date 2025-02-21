@@ -1922,10 +1922,11 @@ class JaxExportTest(jtu.JaxTestCase):
     res_exported = exp_f.call(lhs, rhs, group_sizes)
     self.assertAllClose(res_native, res_exported)
 
-  def test_different_meshes(self):
+  def test_different_mesh_shapes_everywhere(self):
     if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/394265659) can't create NameShardings for Shardy "
-                    "since there are multiple different meshes")
+      self.skipTest("We are intiially restricting the use of Shardy in JAX "
+                    "export to not allow different mesh shapes during lowering "
+                    "time and loading time.")
     # Make sure we can save with various meshes, and load with various meshes,
     # all different from one another.
     if jax.local_device_count() < 8:
@@ -1958,6 +1959,73 @@ class JaxExportTest(jtu.JaxTestCase):
 
     r = jax.jit(exp.call, out_shardings=NamedSharding(old_mesh_0, P("old_b")))(a, b)
     self.assertAllClose(a + b, r)
+
+  def test_different_axis_names_different_axis_sizes_on_load(self):
+    # Make sure we can save with various meshes and load with various meshes.
+    # However, The meshes during saving and loading must all match in shape, but
+    # can have different axis names.
+    if jax.local_device_count() < 8:
+      self.skipTest("Need at least 8 devices")
+
+    old_mesh = jtu.create_mesh((4, 2), ("old_a", "old_b"))
+    @jax.jit
+    def f(x, y):
+      z = x + y
+      return jax.lax.with_sharding_constraint(
+          z, NamedSharding(old_mesh, P("old_b")))
+
+    exp = get_exported(f)(
+        jax.ShapeDtypeStruct(
+            (32, 32), dtype=np.float32,
+            sharding=NamedSharding(old_mesh, P(None, "old_a"))),
+        jax.ShapeDtypeStruct(
+            (32, 32), dtype=np.float32,
+            sharding=NamedSharding(old_mesh, P("old_b"))))
+
+    # Call the Exported with a concrete Mesh
+    new_mesh = jtu.create_mesh((2, 4), ("new_a", "new_b"))
+
+    a = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+    a = jax.device_put(a, NamedSharding(new_mesh, P("new_b", "new_a")))
+    b = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+    b = jax.device_put(b, NamedSharding(new_mesh, P("new_b")))
+
+    r = jax.jit(exp.call, out_shardings=NamedSharding(new_mesh, P("new_a")))(a, b)
+    self.assertAllClose(a + b, r)
+
+  def test_different_axis_names_same_axis_sizes(self):
+    # Make sure we can save with various meshes and load with various meshes.
+    # However, The meshes during saving and loading must all match in shape, but
+    # can have different axis names.
+    if jax.local_device_count() < 8:
+      self.skipTest("Need at least 8 devices")
+
+    old_mesh = jtu.create_mesh((4, 2), ("old_a", "old_b"))
+    @jax.jit
+    def f(x, y):
+      z = x + y
+      return jax.lax.with_sharding_constraint(
+          z, NamedSharding(old_mesh, P("old_b")))
+
+    exp = get_exported(f)(
+        jax.ShapeDtypeStruct(
+            (32, 32), dtype=np.float32,
+            sharding=NamedSharding(old_mesh, P(None, "old_a"))),
+        jax.ShapeDtypeStruct(
+            (32, 32), dtype=np.float32,
+            sharding=NamedSharding(old_mesh, P("old_b"))))
+
+    # Call the Exported with a concrete Mesh
+    new_mesh = jtu.create_mesh((4, 2), ("new_a", "new_b"))
+
+    a = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+    a = jax.device_put(a, NamedSharding(new_mesh, P("new_b", "new_a")))
+    b = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+    b = jax.device_put(b, NamedSharding(new_mesh, P("new_b")))
+
+    r = jax.jit(exp.call, out_shardings=NamedSharding(new_mesh, P("new_a")))(a, b)
+    self.assertAllClose(a + b, r)
+
 
 
 if __name__ == "__main__":
