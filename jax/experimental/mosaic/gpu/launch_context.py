@@ -226,6 +226,21 @@ class CollapseLeadingIndicesTransform(MemRefTransform):
     raise NotImplementedError  # Unused
 
 
+@dataclasses.dataclass(frozen=True)
+class PeerMemTransform(MemRefTransform):
+  """Translate memref to a peer memref."""
+  dev_id: Any
+
+  def apply(self, ref: ir.Value) -> ir.Value:
+    return utils.to_remote_memref(ref, self.dev_id)
+
+  def transform_index(self, idx: Sequence[ir.Value]) -> tuple[ir.Value, ...]:
+    return tuple(idx)
+
+  def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    return tuple(shape)
+
+
 OnDeviceProfiler = profiler.OnDeviceProfiler
 
 

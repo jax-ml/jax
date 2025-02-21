@@ -27,7 +27,7 @@ from typing import Any, Protocol, cast
 import jax
 from jax import api_util
 from jax import lax
-from jax._src import core as jax_core
+from jax._src import core as jax_core, tree_util
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import source_info_util
@@ -42,10 +42,12 @@ from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.lib.mlir.dialects import vector as vector_dialect
+from jax._src.lib.mlir.dialects import llvm
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
+from jax._src.pallas.common_lowering import _device_id_to_logical
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.state import discharge
 from jax._src.state import indexing
@@ -872,6 +874,12 @@ def _num_programs_lowering_rule(ctx: LoweringRuleContext, axis):
       gpu_dialect.block_dim(gpu_dialect.Dimension(axis)),
   )
 
+@register_lowering_rule(primitives.device_id_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(primitives.device_id_p, mgpu.ThreadSemantics.Warpgroup)
+def device_id_lowering_rule(ctx: LoweringRuleContext):
+  return llvm.CallOp(ir.IntegerType.get_signless(32), [],
+                     op_bundle_operands=[], op_bundle_sizes=[], op_bundle_tags=[],
+                     callee="nvshmem_my_pe").result
 
 def _handle_reshaping(
     ref: ir.Value, transforms: Sequence[gpu_core.Transform]
@@ -948,6 +956,16 @@ def _ndindexer_indices(indexer: indexing.NDIndexer) -> tuple[gpu_core.Index, ...
   return tuple(indices)
 
 
+def _handle_peer_transform(
+    ref: ir.Value, transforms: Sequence[gpu_core.Transform]
+) -> tuple[ir.Value, Sequence[gpu_core.Transform]]:
+  if len(transforms) != 0 and isinstance(transforms[0], gpu_core.PeerMemRef):
+    transforms[0].dev_id = gpu_core._ensure_ir_value(transforms[0].dev_id, jnp.int32)
+    mgpu_transform = transforms[0].to_gpu_transform()
+    return mgpu_transform.apply(ref), transforms[1:]
+  return ref, transforms
+
+
 @register_lowering_rule(sp.get_p, mgpu.ThreadSemantics.Lane)
 def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *leaves, tree):
   if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
@@ -956,6 +974,7 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *leaves, tree):
   x_aval = ctx.avals_in[0]
 
   transforms = jax.tree.unflatten(tree, leaves)
+  x_smem, transforms = _handle_peer_transform(x_smem, transforms)
   x_smem, transforms = _handle_reshaping(x_smem, transforms)
   x_smem, transforms = _handle_indexing(x_smem, transforms)
 
@@ -988,6 +1007,7 @@ def _get_lowering_rule_wg(ctx: LoweringRuleContext, x_smem, *leaves, tree):
   x_aval = ctx.avals_in[0]
 
   transforms = jax.tree.unflatten(tree, leaves)
+  x_smem, transforms = _handle_peer_transform(x_smem, transforms)
   x_smem, transforms = _handle_reshaping(x_smem, transforms)
   x_smem, transforms = _handle_indexing(x_smem, transforms)
 
@@ -1016,6 +1036,7 @@ def _swap_lowering_rule(
     raise TypeError(f"Can only store to references (got {x_smem}).")
   x_aval = ctx.avals_in[0]
   transforms = jax.tree.unflatten(tree, leaves)
+  x_smem, transforms = _handle_peer_transform(x_smem, transforms)
   x_smem, transforms = _handle_reshaping(x_smem, transforms)
   x_smem, transforms = _handle_indexing(x_smem, transforms)
   match transforms:
@@ -1049,6 +1070,7 @@ def _swap_lowering_rule_wg(
   x_aval = ctx.avals_in[0]
 
   transforms = jax.tree.unflatten(tree, leaves)
+  x_smem, transforms = _handle_peer_transform(x_smem, transforms)
   x_smem, transforms = _handle_reshaping(x_smem, transforms)
   x_smem, transforms = _handle_indexing(x_smem, transforms)
 
@@ -1110,8 +1132,8 @@ def _select_n_lowering_rule(ctx: LoweringRuleContext, pred, *cases):
     # orders the cases in reverse.
     return pred.select(*reversed(cases))
   else:
-    pred = _ensure_ir_value(pred, pred_aval.dtype)
-    cases = [_ensure_ir_value(c, c_aval.dtype) for c, c_aval in zip(cases, cases_avals)]
+    pred = gpu_core._ensure_ir_value(pred, pred_aval.dtype)
+    cases = [gpu_core._ensure_ir_value(c, c_aval.dtype) for c, c_aval in zip(cases, cases_avals)]
     # TODO(bchetioui): support implicit broadcast.
     if any(a.shape != out_aval.shape for a in ctx.avals_in):
       raise NotImplementedError(
@@ -1158,7 +1180,7 @@ def _broadcast_in_dim_lowering_rule_wg(
   if broadcast_dimensions:
     raise NotImplementedError
   [x_aval] = ctx.avals_in
-  x = _ensure_ir_value(x, x_aval.dtype)
+  x = gpu_core._ensure_ir_value(x, x_aval.dtype)
   return vector_dialect.splat(
       ir.VectorType.get(shape, mgpu_utils.dtype_to_ir_type(x_aval.dtype)),
       x,
@@ -1183,7 +1205,7 @@ def _convert_element_type_lowering_rule_wg(
   del weak_type, sharding
   [x_aval] = ctx.avals_in
   [y_aval] = ctx.avals_out
-  x = _ensure_ir_value(x, x_aval.dtype)
+  x = gpu_core._ensure_ir_value(x, x_aval.dtype)
 
   cur_dtype = mgpu_utils.dtype_to_ir_type(x_aval.dtype)
   new_dtype = mgpu_utils.dtype_to_ir_type(new_dtype)
@@ -1254,8 +1276,8 @@ def _convert_element_type_lowering_rule_wg(
       minint = 0
       convert = arith_dialect.fptoui
 
-    maxint = _ir_constant(maxint, cur_dtype)
-    minint = _ir_constant(minint, cur_dtype)
+    maxint = gpu_core._ir_constant(maxint, cur_dtype)
+    minint = gpu_core._ir_constant(minint, cur_dtype)
     if x_aval.shape:
       maxint = vector_dialect.splat(x.type, maxint)
       minint = vector_dialect.splat(x.type, minint)
@@ -1447,7 +1469,7 @@ def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
       arith_dialect.FastMathFlags.afn if ctx.module_ctx.approx_math else None
   )
   return math_dialect.rsqrt(
-      _ensure_ir_value(x, x_aval.dtype), fastmath=fastmath
+      gpu_core._ensure_ir_value(x, x_aval.dtype), fastmath=fastmath
   )
 
 
@@ -1460,7 +1482,7 @@ def _tanh_lowering_rule(ctx: LoweringRuleContext, x):
   fastmath = (
       arith_dialect.FastMathFlags.afn if ctx.module_ctx.approx_math else None
   )
-  return math_dialect.tanh(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
+  return math_dialect.tanh(gpu_core._ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
 
 
 def _logistic(x):
@@ -1484,7 +1506,7 @@ def _exp_lowering_rule(ctx: LoweringRuleContext, x):
   fastmath = (
       arith_dialect.FastMathFlags.afn if ctx.module_ctx.approx_math else None
   )
-  return math_dialect.exp(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
+  return math_dialect.exp(gpu_core._ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
 
 
 @register_lowering_rule(lax.exp2_p, mgpu.ThreadSemantics.Lane)
@@ -1495,7 +1517,7 @@ def _exp2_lowering_rule(ctx: LoweringRuleContext, x):
   fastmath = (
       arith_dialect.FastMathFlags.afn if ctx.module_ctx.approx_math else None
   )
-  return math_dialect.exp2(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
+  return math_dialect.exp2(gpu_core._ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
 
 
 @register_lowering_rule(lax.log_p, mgpu.ThreadSemantics.Lane)
@@ -1507,7 +1529,7 @@ def _log_lowering_rule(ctx: LoweringRuleContext, x):
   fastmath = (
       arith_dialect.FastMathFlags.afn if ctx.module_ctx.approx_math else None
   )
-  return math_dialect.log(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
+  return math_dialect.log(gpu_core._ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
 
 
 @register_lowering_rule(lax.reduce_sum_p, mgpu.ThreadSemantics.Lane)
@@ -1554,7 +1576,7 @@ def _reduce_lowering_rule_wg(
 ) -> ir.OpView:
   [x_aval] = ctx.avals_in
   [out_aval] = ctx.avals_out
-  x = _ensure_ir_value(x, x_aval.dtype)
+  x = gpu_core._ensure_ir_value(x, x_aval.dtype)
   out_type = mgpu_utils.dtype_to_ir_type(out_aval.dtype)
   if not out_aval.shape:
     # Special-case: reducing to a scalar.
@@ -1565,7 +1587,7 @@ def _reduce_lowering_rule_wg(
     return vector_dialect.ReductionOp(out_type, kind, x)
   acc = vector_dialect.splat(
       ir.VectorType.get(out_aval.shape, out_type),
-      _ensure_ir_value(acc, out_aval.dtype),
+      gpu_core._ensure_ir_value(acc, out_aval.dtype),
   )
   return vector_dialect.MultiDimReductionOp(kind, x, acc, axes)
 
@@ -1656,7 +1678,7 @@ def _debug_print_lowering_rule(
     mgpu.debug_print(
         fmt,
         *(
-            _ensure_ir_value(arg, aval.dtype)
+            gpu_core._ensure_ir_value(arg, aval.dtype)
             for arg, aval in zip(args, ctx.avals_in)
         ),
     )
@@ -1830,7 +1852,7 @@ def _lower_jaxpr_to_for_loop(
     _ensure = (
         _ensure_fa
         if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane
-        else _ensure_ir_value
+        else gpu_core._ensure_ir_value
     )
     return [v if a else _ensure(v, av) for a, v, av in zip(is_acc, vals, avals)]
 
@@ -1885,8 +1907,8 @@ def _scan_lowering_rule(
   if has_loop_index:
     start, *args = args
     index_aval, *_ = arg_avals
-    start: ir.Value = _ensure_ir_value(start, index_aval.dtype)
-    length = _ir_constant(length, start.type)
+    start: ir.Value = gpu_core._ensure_ir_value(start, index_aval.dtype)
+    length = gpu_core._ir_constant(length, start.type)
   else:
     start = _i32_constant(0)
     length = _i32_constant(length)
@@ -1924,8 +1946,8 @@ def _lower_while_via_fori(
   _, consts, (lb, ub, *args) = util.split_list(
       args, [cond_nconsts, body_nconsts]
   )
-  lb = _ensure_ir_value(lb, lb_aval.dtype)
-  ub = _ensure_ir_value(ub, ub_aval.dtype)
+  lb = gpu_core._ensure_ir_value(lb, lb_aval.dtype)
+  ub = gpu_core._ensure_ir_value(ub, ub_aval.dtype)
   for_out = _lower_jaxpr_to_for_loop(
       ctx,
       fori_jaxpr,
@@ -1984,7 +2006,7 @@ def _while_lowering_rule(
         ctx.module_ctx, ctx.launch_ctx, cond_jaxpr.jaxpr, cond_args
     )
     scf_dialect.condition(
-        _ensure_ir_value(cond, *cond_jaxpr.out_avals), before_block.arguments
+        gpu_core._ensure_ir_value(cond, *cond_jaxpr.out_avals), before_block.arguments
     )
 
   after_block = while_op.after.blocks.append(*flat_carry_types)
@@ -2027,7 +2049,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
       if isinstance(out, mgpu.FragmentedArray):
         ret.append(out)
       else:
-        ret.append(_ensure_ir_value(out, aval.dtype))
+        ret.append(gpu_core._ensure_ir_value(out, aval.dtype))
     return ret
 
   # We need the branch return mlir types in order to construct the
@@ -2044,7 +2066,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
 
   switch_op = scf_dialect.IndexSwitchOp(
       yielded_types,
-      _as_index(_ensure_ir_value(index, index_aval.dtype)),
+      _as_index(gpu_core._ensure_ir_value(index, index_aval.dtype)),
       ir.DenseI64ArrayAttr.get(range(len(branches) - 1)),
       num_caseRegions=len(branches) - 1,
   )
@@ -2093,7 +2115,7 @@ def _bitcast_convert_type_lowering_rule(
     )
 
   if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Warpgroup:
-    x = _ensure_ir_value(x, x_aval.dtype)
+    x = gpu_core._ensure_ir_value(x, x_aval.dtype)
     return arith_dialect.bitcast(
         ir.VectorType.get(x_aval.shape, dst_elem_type), x
     )
@@ -2143,7 +2165,7 @@ def _ensure_fa(x: object, dtype: jnp.dtype) -> mgpu.FragmentedArray:
     assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
     return x
   return mgpu.FragmentedArray.splat(
-      _ensure_ir_value(x, dtype), (), is_signed=mgpu_utils.is_signed(dtype)
+      gpu_core._ensure_ir_value(x, dtype), (), is_signed=mgpu_utils.is_signed(dtype)
   )
 
 
@@ -2161,17 +2183,17 @@ def _bcast_wg(
   if necessary.
   """
   if not out_aval.shape:
-    return _ensure_ir_value(x, x_aval.dtype), _ensure_ir_value(y, y_aval.dtype)
+    return gpu_core._ensure_ir_value(x, x_aval.dtype), gpu_core._ensure_ir_value(y, y_aval.dtype)
   x_dtype = x_aval.dtype
   if not isinstance(x, ir.Value):
     if x_aval.weak_type:
       x_dtype = y_aval.dtype
-    x = _ensure_ir_value(x, x_dtype)
+    x = gpu_core._ensure_ir_value(x, x_dtype)
   y_dtype = y_aval.dtype
   if not isinstance(y, ir.Value):
     if y_aval.weak_type:
       y_dtype = x_aval.dtype
-    y = _ensure_ir_value(y, y_dtype)
+    y = gpu_core._ensure_ir_value(y, y_dtype)
   if not ir.VectorType.isinstance(x.type):
     assert not x_aval.shape
     x = vector_dialect.splat(
@@ -2189,33 +2211,6 @@ def _bcast_wg(
   elif y_aval.shape != out_aval.shape:
     raise NotImplementedError("Unsupported broadcast")
   return x, y
-
-
-def _ensure_ir_value(x: object, dtype: jnp.dtype) -> ir.Value:
-  if isinstance(x, ir.Value):
-    mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
-    if ir.VectorType.isinstance(x.type):
-      assert ir.VectorType(x.type).element_type == mlir_dtype
-    else:
-      assert x.type == mlir_dtype, (x.type, mlir_dtype)
-    return x
-  elif isinstance(x, mgpu.FragmentedArray):
-    assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
-    if isinstance(x.layout, mgpu.WGSplatFragLayout):
-      return x.registers.item()
-    raise NotImplementedError(f"Unsupported layout: {x.layout}")
-  return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
-
-
-def _ir_constant(v: object, t: ir.Type) -> ir.Value:
-  if isinstance(v, (np.number, np.ndarray, int, float)):
-    if isinstance(t, (ir.IntegerType, ir.IndexType)):
-      v = int(v)
-    else:
-      assert isinstance(t, ir.FloatType)
-      v = float(v)
-    return arith_dialect.constant(t, v)
-  raise NotImplementedError(f"Unsupported constant: {v!r}")
 
 
 def _i32_constant(v: int) -> ir.Value:
@@ -2307,3 +2302,101 @@ def merge_indexers(
       shape=root_shape,
       int_indexer_shape=(),
   )
+
+
+@register_lowering_rule(primitives.semaphore_read_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(primitives.semaphore_read_p, mgpu.ThreadSemantics.Warpgroup)
+def _semaphore_read_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    args_tree,
+):
+  sem_aval, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem, transforms = tree_util.tree_unflatten(args_tree, args)
+  sem, _ = _handle_indexing(sem, transforms)
+  sem_ptr = mgpu.utils.memref_ptr(sem)
+  i32_ty = ir.IntegerType.get_signless(32)
+  return llvm.inline_asm(
+    i32_ty,
+    [sem_ptr],
+    """
+    ld.acquire.sys.u32 $0,[$1];
+    """,
+    "=r,l",
+    has_side_effects=True,
+  )
+
+
+@register_lowering_rule(primitives.semaphore_signal_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(primitives.semaphore_signal_p, mgpu.ThreadSemantics.Warpgroup)
+def _semaphore_signal_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    args_tree,
+    device_id_type: primitives.DeviceIdType,
+):
+  sem_aval, _, _, device_id_aval, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem, transforms, value, device_id, core_index = tree_util.tree_unflatten(
+      args_tree, args
+  )
+  sem, _ = _handle_indexing(sem, transforms)
+  if device_id is None:
+    raise NotImplementedError(
+      "'semaphore_signal' requires 'device_id' argument to be set on GPUs."
+    )
+  device_id = _device_id_to_logical(ctx, device_id, device_id_type)
+  device_id = gpu_core._ensure_ir_value(device_id, device_id_aval.dtype)
+  i64_ty = ir.IntegerType.get_signless(64)
+  i32_ty = ir.IntegerType.get_signless(32)
+  peer_ptr = mgpu.utils.to_remote_ptr(sem, device_id)
+  val = gpu_core._ir_constant(value, i32_ty)
+  mgpu_utils.warpgroup_barrier()
+  with mgpu.single_thread(per_block=False):
+    old_val = llvm.inline_asm(
+      i32_ty,
+      [peer_ptr, val],
+      """
+      atom.add.release.sys.global.u32 $0,[$1],$2;
+      """,
+      "=r,l,r",
+      has_side_effects=True,
+    )
+  return ()
+
+
+@register_lowering_rule(primitives.semaphore_wait_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(primitives.semaphore_wait_p, mgpu.ThreadSemantics.Warpgroup)
+def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
+  sem_aval, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem, transforms, value = tree_util.tree_unflatten(args_tree, args)
+  sem, _ = _handle_indexing(sem, transforms)
+
+  sem_ptr = mgpu.utils.memref_ptr(sem)
+  i64_ty = ir.IntegerType.get_signless(64)
+  i32_ty = ir.IntegerType.get_signless(32)
+  ne_pred = arith_dialect.CmpIPredicate.ne
+  zero_const = mgpu.utils.c(0, i32_ty)
+  val = gpu_core._ir_constant(value, i32_ty)
+
+  with mgpu.single_thread(per_block=False):
+    # Create the while loop for busy waiting
+    while_op = scf_dialect.WhileOp([i32_ty], [zero_const])
+    before_block = while_op.before.blocks.append(i32_ty)
+    with ir.InsertionPoint.at_block_begin(before_block):
+      old_val = llvm.inline_asm(
+        i32_ty,
+        [sem_ptr, val, zero_const],
+        """
+        atom.acquire.sys.global.cas.b32 $0, [$1], $2, $3;
+        """,
+        "=r,l,r,r",
+        has_side_effects=True,
+      )
+      comparison = arith_dialect.cmpi(ne_pred, old_val, val)
+      scf_dialect.condition(comparison, before_block.arguments)
+    after_block = while_op.after.blocks.append(i32_ty)
+    with ir.InsertionPoint.at_block_begin(after_block):
+      scf_dialect.yield_(after_block.arguments)
+
+  mgpu_utils.warpgroup_barrier()
+  return ()

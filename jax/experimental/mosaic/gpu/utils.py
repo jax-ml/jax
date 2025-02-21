@@ -1205,3 +1205,16 @@ def bitcast(x: ir.Value, new_type: ir.Type):
 
 def ceil_div(x: int, y: int):
   return (x + y - 1) // y
+
+
+def to_remote_ptr(mem, peer):
+  mem_ptr = memref_ptr(mem)
+  peer_ptr = llvm.CallOp(ir.Type.parse("!llvm.ptr"), [mem_ptr, peer],
+                         op_bundle_operands=[], op_bundle_sizes=[], op_bundle_tags=[],
+                         callee="nvshmem_ptr").result
+  return peer_ptr
+
+
+def to_remote_memref(mem, peer):
+  peer_ptr = to_remote_ptr(mem, peer)
+  return ptr_as_memref(peer_ptr, mem.type)

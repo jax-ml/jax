@@ -23,8 +23,10 @@ from jax._src.pallas.mosaic_gpu.core import GPUCompilerParams as GPUCompilerPara
 from jax._src.pallas.mosaic_gpu.core import GPUMemorySpace as GPUMemorySpace
 from jax._src.pallas.mosaic_gpu.core import GPUMesh as GPUMesh
 from jax._src.pallas.mosaic_gpu.core import kernel as kernel
+from jax._src.pallas.mosaic_gpu.core import PeerMemRef as PeerMemRef
 from jax._src.pallas.mosaic_gpu.core import SwizzleTransform as SwizzleTransform
 from jax._src.pallas.mosaic_gpu.core import TilingTransform as TilingTransform
+from jax._src.pallas.mosaic_gpu.core import remote_ref as remote_ref
 from jax._src.pallas.mosaic_gpu.core import transpose_ref as transpose_ref
 from jax._src.pallas.mosaic_gpu.core import TransposeTransform as TransposeTransform
 from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as ACC  # noqa: F401

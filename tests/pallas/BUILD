@@ -225,6 +225,26 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "gpu_pallas_distributed_test",
+    srcs = [
+        "gpu_pallas_distributed_test.py",
+    ],
+    enable_backends = [],
+    enable_configs = [
+        "gpu_h100_x32",
+    ],
+    env = {
+        "JAX_PALLAS_USE_MOSAIC_GPU": "1",
+        "JAX_PALLAS_VERBOSE_ERRORS": "0",
+    },
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_mosaic_gpu",  # build_cleaner: keep
+        "//jax/_src/pallas/mosaic_gpu",
+    ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("portpicker"),
+)
+
+jax_multiplatform_test(
     name = "export_back_compat_pallas_test",
     srcs = ["export_back_compat_pallas_test.py"],
     enable_backends = ["cpu"],

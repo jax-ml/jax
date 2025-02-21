@@ -14,6 +14,7 @@
 
 """Contains GPU-specific Pallas abstractions."""
 
+# mypy: ignore-errors
 from __future__ import annotations
 
 import abc
@@ -22,6 +23,7 @@ from collections.abc import Sequence
 import dataclasses
 import enum
 import itertools as it
+import numpy as np
 from typing import Any, ClassVar, Literal
 
 import jax
@@ -33,9 +35,13 @@ from jax._src.pallas import core as pallas_core
 from jax._src.state import indexing
 from jax._src.state import types as state_types
 from jax._src.state import discharge as state_discharge
+from jax.experimental.mosaic.gpu import fragmented_array as fa
 import jax.experimental.mosaic.gpu as mgpu
+import jax.experimental.mosaic.gpu.utils as mgpu_utils
 import jax.numpy as jnp
 from jaxlib.mlir import ir
+from jaxlib.mlir.dialects import arith
+
 
 
 AbstractMemoryRef = pallas_core.AbstractMemoryRef
@@ -373,6 +379,48 @@ class UnswizzleRef(state_types.Transform):
     return idxs, self
 
 
+@tree_util.register_pytree_node_class
+@dataclasses.dataclass
+class PeerMemRef(state_types.Transform):
+  dev_id: Any
+
+  def transform_shape(self, shape):
+    return shape
+
+  def transform_dtype(self, dtype):
+    return dtype
+
+  def untransform_index(
+      self, idxs: tuple[Index, ...]
+  ) -> tuple[tuple[Index, ...], state_types.Transform]:
+    return idxs, self
+
+  def tree_flatten(self):
+    return (self.dev_id,), ()
+
+  def to_gpu_transform(self) -> mgpu.MemRefTransform:
+    return mgpu.PeerMemTransform(self.dev_id)
+
+  @classmethod
+  def tree_unflatten(cls, metadata, arrays):
+    del metadata
+    return cls(arrays[0])
+
+
+def remote_ref(
+    ref: pallas_core.TransformedRef | Any,
+    device_id: Any,
+) -> pallas_core.TransformedRef:
+  """Translate memref to a symmetric memref on a peer device."""
+  if not isinstance(ref, pallas_core.TransformedRef):
+    if not isinstance(jax_core.get_aval(ref), pallas_core.AbstractMemoryRef):
+      raise TypeError("ref must be a reference")
+    ref = pallas_core.TransformedRef(ref, transforms=())
+  return pallas_core.TransformedRef(
+      ref.ref, (*ref.transforms, PeerMemRef(device_id)),
+  )
+
+
 @dataclasses.dataclass
 class GPUBlockSpec(pallas_core.BlockSpec):
   transforms: Sequence[MemoryRefTransform] = ()
@@ -590,3 +638,30 @@ class _WGMMAPipelineEffect(effects.Effect):
 
 effects.control_flow_allowed_effects.add_type(_WGMMAPipelineEffect)
 _wgmma_pipeline_effect = _WGMMAPipelineEffect()
+
+
+def _ir_constant(v: object, t: ir.Type) -> ir.Value:
+  if isinstance(v, (np.number, np.ndarray, int, float)):
+    if isinstance(t, (ir.IntegerType, ir.IndexType)):
+      v = int(v)
+    else:
+      assert isinstance(t, ir.FloatType)
+      v = float(v)
+    return arith.constant(t, v)
+  raise NotImplementedError(f"Unsupported constant: {v!r}")
+
+
+def _ensure_ir_value(x: object, dtype: jnp.dtype) -> ir.Value:
+  if isinstance(x, ir.Value):
+    mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
+    if ir.VectorType.isinstance(x.type):
+      assert ir.VectorType(x.type).element_type == mlir_dtype
+    else:
+      assert x.type == mlir_dtype, (x.type, mlir_dtype)
+    return x
+  elif isinstance(x, fa.FragmentedArray):
+    assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
+    if isinstance(x.layout, fa.WGSplatFragLayout):
+      return x.registers.item()
+    raise NotImplementedError(f"Unsupported layout: {x.layout}")
+  return _ir_constant(x, mgpu_utils.dtype_to_ir_type(dtype))
