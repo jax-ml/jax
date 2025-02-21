@@ -22,13 +22,13 @@ from typing import Any, overload
 
 import numpy as np
 
+import jax
 from jax._src import core
 from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import effects
 from jax._src import util
 from jax._src import xla_bridge
-from jax._src.callback import callback_batching_rule
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -157,6 +157,81 @@ def _convert_layout_for_lowering(
     return tuple(layout)
 
 
+def build_ffi_lowering_function(
+    call_target_name: str,
+    *,
+    operand_layouts: Sequence[FfiLayoutOptions] | None = None,
+    result_layouts: Sequence[FfiLayoutOptions] | None = None,
+    backend_config: Mapping[str, ir.Attribute] | str | None = None,
+    **lowering_args: Any,
+) -> Callable[..., ir.Operation]:
+  """Build a lowering op for an foreign function interface (FFI) target.
+
+  By default, this lowering rule can use the input and output abstract values to
+  compute the input and output types and shapes for the custom call, assuming
+  row-major layouts.
+
+  Note that layouts passed to this function as tuples should be in
+  minor-to-major order (as expected by XLA) rather than major-to-minor as used
+  by :func:`~jax.ffi.ffi_call` and ``DeviceLocalLayout``.
+
+  If keyword arguments are passed to the lowering rule, these are treated as
+  attributes, and added to `backend_config`.
+
+  Args:
+    call_target_name: The name of the custom call target.
+    operand_layouts: A sequence of layouts (dimension orders) for each operand.
+      By default, the operands are assumed to be row-major.
+    result_layouts: A sequence of layouts (dimension orders) for each result.
+      By default, the results are assumed to be row-major.
+    backend_config: Configuration data for the custom call. Any keyword
+      arguments passed to the lowering rule will added to this dictionary.
+    lowering_args: Any other arguments to :func:`mlir.custom_call` will also be
+      passed through if provided as extra arguments to this function.
+  """
+
+  def _lowering_op(
+    ctx: mlir.LoweringRuleContext, *operands: ir.Value, **params: Any
+  ) -> ir.Operation:
+    kwargs = dict(lowering_args)
+    kwargs.setdefault("api_version", 4)
+    if kwargs["api_version"] >= 4:
+      if backend_config is not None and not isinstance(backend_config, dict):
+        raise ValueError(
+            "When api_version > 4, backend_config must be a dictionary.")
+      kwargs["backend_config"] = dict(
+        backend_config or {}, **{k: mlir.ir_attribute(v) for k, v in params.items()})
+    else:
+      if params:
+        raise ValueError(
+            "The use of ffi_call attributes requires a custom call API version "
+            f"of at least 4; got api_version={kwargs['api_version']}.")
+      kwargs["backend_config"] = backend_config
+    if "result_types" not in kwargs:
+      kwargs["result_types"] = [mlir.aval_to_ir_type(aval) for aval in ctx.avals_out]
+    if operand_layouts is None:
+      kwargs["operand_layouts"] = map(_convert_layout_for_lowering, ctx.avals_in)
+    else:
+      kwargs["operand_layouts"] = [
+          _convert_layout_for_lowering(*args)
+          for args in zip(ctx.avals_in, operand_layouts)]
+    if result_layouts is None:
+      kwargs["result_layouts"] = map(_convert_layout_for_lowering, ctx.avals_out)
+    else:
+      kwargs["result_layouts"] = [
+          _convert_layout_for_lowering(*args)
+          for args in zip(ctx.avals_out, result_layouts)]
+    if "result_shapes" not in kwargs and not all(
+        core.is_constant_shape(_aval_shape(aval)) for aval in ctx.avals_out):
+      kwargs["result_shapes"] = [
+          mlir.shape_tensor(mlir.eval_dynamic_shape_as_ivals(ctx, _aval_shape(aval)))
+          for aval in ctx.avals_out]
+
+    return mlir.custom_call(call_target_name, operands=operands, **kwargs)
+
+  return _lowering_op
+
+
 def ffi_lowering(
     call_target_name: str,
     *,
@@ -193,41 +268,15 @@ def ffi_lowering(
   def _lowering(
     ctx: mlir.LoweringRuleContext, *operands: ir.Value, **params: Any
   ) -> Sequence[ir.Value | Sequence[ir.Value]]:
-    kwargs = dict(lowering_args)
-    kwargs.setdefault("api_version", 4)
-    if kwargs["api_version"] >= 4:
-      if backend_config is not None and not isinstance(backend_config, dict):
-        raise ValueError(
-            "When api_version > 4, backend_config must be a dictionary.")
-      kwargs["backend_config"] = dict(
-        backend_config or {}, **{k: mlir.ir_attribute(v) for k, v in params.items()})
-    else:
-      if params:
-        raise ValueError(
-            "The use of ffi_call attributes requires a custom call API version "
-            f"of at least 4; got api_version={kwargs['api_version']}.")
-      kwargs["backend_config"] = backend_config
-    if "result_types" not in kwargs:
-      kwargs["result_types"] = [mlir.aval_to_ir_type(aval) for aval in ctx.avals_out]
-    if operand_layouts is None:
-      kwargs["operand_layouts"] = map(_convert_layout_for_lowering, ctx.avals_in)
-    else:
-      kwargs["operand_layouts"] = [
-          _convert_layout_for_lowering(*args)
-          for args in zip(ctx.avals_in, operand_layouts)]
-    if result_layouts is None:
-      kwargs["result_layouts"] = map(_convert_layout_for_lowering, ctx.avals_out)
-    else:
-      kwargs["result_layouts"] = [
-          _convert_layout_for_lowering(*args)
-          for args in zip(ctx.avals_out, result_layouts)]
-    if "result_shapes" not in kwargs and not all(
-        core.is_constant_shape(_aval_shape(aval)) for aval in ctx.avals_out):
-      kwargs["result_shapes"] = [
-          mlir.shape_tensor(mlir.eval_dynamic_shape_as_ivals(ctx, _aval_shape(aval)))
-          for aval in ctx.avals_out]
+    result = build_ffi_lowering_function(
+        call_target_name,
+        operand_layouts=operand_layouts,
+        result_layouts=result_layouts,
+        backend_config=backend_config,
+        **lowering_args,
+    )(ctx, *operands, **params)
 
-    return mlir.custom_call(call_target_name, operands=operands, **kwargs).results  # type: ignore
+    return result.results  # type: ignore
 
   return _lowering
 
@@ -630,6 +679,97 @@ def ffi_call_lowering(
   return rule(ctx, *operands, **_unwrap_kwargs_hashable(attributes))
 
 
+def ffi_batching_rule(
+    prim,
+    args,
+    dims,
+    *,
+    vectorized: bool | None | DeprecatedArg,
+    vmap_method: str | None,
+    result_avals: Sequence[core.ShapedArray],
+    **kwargs: Any,
+):
+  if isinstance(vectorized, DeprecatedArg) and vmap_method is None:
+    deprecations.warn(
+        "jax-callback-vectorized",
+        f"The default behavior of {prim.name} under vmap will soon "
+        "change. Currently, the default behavior is to generate a sequential "
+        "vmap (i.e. a loop), but in the future the default will be to raise "
+        "an error. To keep the current default, set vmap_method='sequential'.",
+        stacklevel=6)
+    vmap_method = "sequential"
+
+  axis_size, = {a.shape[d] for a, d in zip(args, dims)
+                if d is not batching.not_mapped}
+  new_args = [arg if dim is batching.not_mapped else
+              batching.moveaxis(arg, dim, 0) for arg, dim in zip(args, dims)]
+  batched_result_avals = tuple(
+      core.unmapped_aval(axis_size, 0, aval) for aval in result_avals)
+
+  # For FFI calls we must update the layouts. We handle the output layouts
+  # here, but the input layout updates depend on the vmap_method parameter.
+  if (
+      vmap_method not in ("sequential", "sequential_unrolled") and
+      kwargs.get("output_layouts") is not None
+  ):
+    kwargs["output_layouts"] = tuple(
+        None if layout is None else tuple(n + 1 for n in layout) + (0,)
+        for layout in kwargs["output_layouts"])
+
+  if vmap_method == "legacy_vectorized":
+    # This method is kept to support the behavior that was previously exposed
+    # when using `vectorized=True`.
+    if kwargs.get("input_layouts") is not None:
+      kwargs["input_layouts"] = tuple(
+          layout if d is batching.not_mapped else
+          (None if layout is None else tuple(n + 1 for n in layout) + (0,))
+          for layout, d in zip(kwargs["input_layouts"], dims))
+    outvals = prim.bind(
+        *new_args,
+        vectorized=vectorized,
+        vmap_method=vmap_method,
+        result_avals=batched_result_avals,
+        **kwargs,
+    )
+  elif vmap_method == "expand_dims" or vmap_method == "broadcast_all":
+    size = axis_size if vmap_method == "broadcast_all" else 1
+    bcast_args = [
+        jax.lax.broadcast(x, (size,)) if d is batching.not_mapped else x
+        for x, d in zip(new_args, dims)]
+    if kwargs.get("input_layouts") is not None:
+      kwargs["input_layouts"] = tuple(
+          None if layout is None else tuple(n + 1 for n in layout) + (0,)
+          for layout in kwargs["input_layouts"])
+    outvals = prim.bind(
+      *bcast_args,
+      vectorized=vectorized,
+      vmap_method=vmap_method,
+      result_avals=batched_result_avals,
+      **kwargs,
+    )
+  elif vmap_method == "sequential" or vmap_method == "sequential_unrolled":
+    is_batched = [d is not batching.not_mapped for d in dims]
+    unbatched_args, batched_args = util.partition_list(is_batched, new_args)
+    def _batch_fun(batched_args):
+      merged_args = util.merge_lists(is_batched, unbatched_args, batched_args)
+      return prim.bind(
+          *merged_args,
+          result_avals=result_avals,
+          vectorized=vectorized,
+          vmap_method=vmap_method,
+          **kwargs,
+      )
+    unroll = vmap_method == "sequential_unrolled"
+    g = lambda _, x: ((), _batch_fun(x))
+    _, outvals = jax.lax.scan(g, (), batched_args, unroll=unroll)
+  else:
+    raise NotImplementedError(
+        f"vmap is only supported for the {prim.name} primitive when vmap_method "
+        "is one of 'sequential', 'sequential_unrolled', 'expand_dims', "
+        f"'broadcast_all', or 'legacy_vectorized'. Got {vmap_method=}.")
+  return tuple(outvals), (0,) * len(outvals)
+
+
 ffi_call_p = core.Primitive("ffi_call")
 ffi_call_p.multiple_results = True
 dispatch.simple_impl(ffi_call_p)
@@ -637,5 +777,5 @@ ffi_call_p.def_effectful_abstract_eval(ffi_call_abstract_eval)
 ad.primitive_jvps[ffi_call_p] = ffi_call_jvp
 ad.primitive_transposes[ffi_call_p] = ffi_call_transpose
 batching.primitive_batchers[ffi_call_p] = functools.partial(
-    callback_batching_rule, ffi_call_p)
+    ffi_batching_rule, ffi_call_p)
 mlir.register_lowering(ffi_call_p, ffi_call_lowering)
