@@ -238,7 +238,7 @@ def broadcast_shardings(*avals):
                               sharding=a.sharding.with_spec(new_spec)))
   return broadcasting_sharding_rule('broadcast_shardings', *aval_list)
 
-def _identity(x): return x
+def _identity(x, **_): return x
 
 def _extract_tracers_dyn_shape(
     shape: Sequence[int | core.Tracer]
@@ -3406,7 +3406,7 @@ for t in itertools.chain(
 
 _fixed_dtype = \
     lambda dtype: lambda *args, **kwargs: dtypes.canonicalize_dtype(dtype)
-_complex_basetype = lambda dtype: np.abs(np.zeros((), dtype)).dtype
+_complex_basetype = lambda dtype, **kwargs: np.abs(np.zeros((), dtype)).dtype
 
 _strip_weak_type = lambda *args, **_: False
 
@@ -3426,7 +3426,7 @@ def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval, **kwargs):
     typename = dtype_to_string(aval.dtype)
     accepted_typenames = (t.__name__ for t in accepted_dtypes)
     raise TypeError(msg.format(name, typename, ', '.join(accepted_typenames)))
-  return result_dtype(aval.dtype)
+  return result_dtype(aval.dtype, **kwargs)
 
 
 def unop(result_dtype, accepted_dtypes, name):
@@ -3837,7 +3837,7 @@ def _complex_transpose_rule(t, x, y):
     else:
       return [None, _unbroadcast(y.aval, imag(neg(t)))]
 
-_complex_dtype = lambda dtype, *args: (np.zeros((), dtype) + np.zeros((), np.complex64)).dtype
+_complex_dtype = lambda dtype, *args, **kwargs: (np.zeros((), dtype) + np.zeros((), np.complex64)).dtype
 complex_p = naryop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
                   'complex')
 ad.deflinear2(complex_p, _complex_transpose_rule)
