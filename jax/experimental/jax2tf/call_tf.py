@@ -591,8 +591,7 @@ def _call_tf_lowering(
   call = func_dialect.CallOp(callee_result_types,
                              ir.FlatSymbolRefAttr.get(fn),
                              tuple(args_op) + captured_ops)
-  if result_shape.is_tuple() and xla_client.mlir_api_version < 58:
-    # In API version 58, the results are always flattened.
+  if result_shape.is_tuple():
     flat_results = [hlo.get_tuple_element(call, mlir.i32_attr(i))
                     for i in range(len(result_shapes))]
   else:
