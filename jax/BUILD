@@ -1239,6 +1239,8 @@ pytype_library(
         "experimental/colocated_python/api.py",
         "experimental/colocated_python/func.py",
         "experimental/colocated_python/func_backend.py",
+        "experimental/colocated_python/obj.py",
+        "experimental/colocated_python/obj_backend.py",
         "experimental/colocated_python/serialization.py",
     ],
     visibility = ["//visibility:public"],
