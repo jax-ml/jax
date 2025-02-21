@@ -1,0 +1,3 @@
+# Require approvals for changes to ROCm build and CI scripts
+/build/rocm/ @charleshofer
+
