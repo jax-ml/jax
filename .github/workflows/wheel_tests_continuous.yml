@@ -20,6 +20,7 @@ name: CI - Wheel Tests (Continuous)
 on:
   schedule:
     - cron: "0 */2 * * *" # Run once every 2 hours
+  workflow_dispatch: # allows triggering the workflow run manually
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
