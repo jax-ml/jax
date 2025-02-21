@@ -42,9 +42,7 @@ from jax._src.lax import eigh as lax_eigh
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import svd as lax_svd
 from jax._src.lax import utils as lax_utils
-from jax._src.lax.lax import (
-    standard_primitive, naryop_dtype_rule, _float, _complex, _int,
-    _input_dtype)
+from jax._src.lax.lax import _float, _complex, _int
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -1847,235 +1845,67 @@ ad.primitive_jvps[qr_p] = qr_jvp_rule
 mlir.register_lowering(qr_p, mlir.lower_fun(_qr_lowering))
 
 
-# Symmetric product
+# Schur Decomposition
 
-def _symmetric_product_shape_rule(a_shape, c_shape, **_):
-  if a_shape[0] != c_shape[1] or c_shape[0] != c_shape[1]:
+def _schur_shape_rule(shape, *, compute_schur_vectors, **_):
+  if shape[0] != shape[1]:
     raise ValueError(
-        "symmetric_update expects a rectangular matrix of shape (m, n) and a "
-        f"square matrix of shape (n, n). Got shapes {a_shape} and {c_shape}.")
-  return c_shape
+        f"The input to schur must be a square matrix. Got shape {shape}.")
+  return (shape, shape) if compute_schur_vectors else (shape,)
 
-def _symmetric_product_jax_fn(a, c, *, alpha, beta):
-  a_T = lax.transpose(a, (*range(a.ndim - 2), a.ndim - 1, a.ndim - 2))
-  return alpha * lax.batch_matmul(
-      a, a_T, precision=lax.Precision.HIGHEST) + beta * c
+def _schur_dtype_rule(dtype, *, compute_schur_vectors, **_):
+  dtype = dtypes.canonicalize_dtype(dtype)
+  return (dtype, dtype) if compute_schur_vectors else (dtype,)
 
-def _symmetric_product_gpu_lowering(
-    platform, ctx, a_tensor, c_tensor, alpha, beta):
-  a_aval, c_aval = ctx.avals_in[:2]
-  dtype = a_aval.dtype
-  alpha_aval = beta_aval = ShapedArray((), dtype)
+def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
+                        select_callable):
+  del select_callable  # unused
+  if sort_eig_vals:
+    raise NotImplementedError(
+        "The sort feature of LAPACK's gees routine is not implemented.")
 
-  alpha_array = mlir.full_like_aval(ctx, alpha, alpha_aval)
-  beta_array = mlir.full_like_aval(ctx, beta, beta_aval)
+  operand_aval, = ctx.avals_in
+  batch_dims = operand_aval.shape[:-2]
+  real = operand_aval.dtype == np.float32 or operand_aval.dtype == np.float64
+  target_name = lapack.prepare_lapack_call("gees_ffi", operand_aval.dtype)
 
-  rule = ffi.ffi_lowering(f"{platform}solver_syrk_ffi",
-                          operand_output_aliases={1: 0})
-  ctx = ctx.replace(avals_in=[a_aval, c_aval, alpha_aval, beta_aval])
-  return rule(ctx, a_tensor, c_tensor, alpha_array, beta_array, transpose=False)
-
-symmetric_product_p = standard_linalg_primitive(
-    (_float, _float), (2, 2), _symmetric_product_shape_rule,
-    "symmetric_product")
-mlir.register_lowering(
-    symmetric_product_p,
-    partial(_symmetric_product_gpu_lowering, "cu"), platform="cuda")
-mlir.register_lowering(
-    symmetric_product_p,
-    mlir.lower_fun(_symmetric_product_jax_fn, multiple_results=False))
-
-
-# Triangular solve
-
-_triangular_solve_dtype_rule = partial(
-    naryop_dtype_rule, _input_dtype, (_float | _complex, _float | _complex),
-    'triangular_solve')
-
-def _triangular_solve_shape_rule(a, b, *, left_side=False, **unused_kwargs):
-  if a.ndim < 2:
-    msg = "triangular_solve requires a.ndim to be at least 2, got {}."
-    raise TypeError(msg.format(a.ndim))
-  if b.ndim < 2:
-    msg = "triangular_solve requires b.ndim to be at least 2, got {}."
-    raise TypeError(msg.format(b.ndim))
-  if a.shape[-1] != a.shape[-2]:
-    msg = ("triangular_solve requires the last two dimensions of a to be equal "
-           "in size, got a.shape of {}.")
-    raise TypeError(msg.format(a.shape))
-  if a.shape[:-2] != b.shape[:-2]:
-    msg = ("triangular_solve requires both arguments to have the same number "
-           "of dimensions and equal batch dimensions, got {} and {}.")
-    raise TypeError(msg.format(a.shape, b.shape))
-  common_dim = -2 if left_side else -1
-  if a.shape[-1] != b.shape[common_dim]:
-    msg = "Incompatible shapes for arguments to triangular_solve: {} and {}."
-    raise TypeError(msg.format(a.shape, b.shape))
-  return b.shape
-
-def _triangular_solve_sharding_rule(a, b, *, left_side=False, **unused_kwargs):
-  a_spec, b_spec = a.sharding.spec, b.sharding.spec
-  if a_spec[-1] != a_spec[-2]:
-    raise TypeError(
-        "triangular_solve requires the last two dimensions of a to be equal "
-        f"in sharding, got a_spec of {a_spec}.")
-  if a_spec[:-2] != b_spec[:-2]:
-    raise TypeError(
-        "triangular_solve requires both arguments to have the same number "
-        f"of dimensions and equal batch shardings, got {a_spec} and {b_spec}.")
-  common_dim = -2 if left_side else -1
-  if a_spec[-1] != b_spec[common_dim]:
-    raise TypeError(
-        "Incompatible shardings for arguments to triangular_solve:"
-        f" {a_spec} and {b_spec}.")
-  return b.sharding
-
-
-def _triangular_solve_jvp_rule_a(
-    g_a, ans, a, b, *, left_side, lower, transpose_a, conjugate_a,
-    unit_diagonal):
-  m, n = b.shape[-2:]
-  k = 1 if unit_diagonal else 0
-  g_a = _tril(g_a, k=-k) if lower else _triu(g_a, k=k)
-  g_a = lax.neg(g_a)
-  g_a = _T(g_a) if transpose_a else g_a
-  g_a = g_a.conj() if conjugate_a else g_a
-  dot = partial(lax.dot if g_a.ndim == 2 else lax.batch_matmul,
-                precision=lax.Precision.HIGHEST)
-
-  def a_inverse(rhs):
-    return triangular_solve(a, rhs, left_side=left_side, lower=lower,
-                            transpose_a=transpose_a, conjugate_a=conjugate_a,
-                            unit_diagonal=unit_diagonal)
-
-  # triangular_solve is about the same cost as matrix multplication (~n^2 FLOPs
-  # for matrix/vector inputs). Order these operations in whichever order is
-  # cheaper.
-  if left_side:
-    assert g_a.shape[-2:] == a.shape[-2:] == (m, m) and ans.shape[-2:] == (m, n)
-    if m > n:
-      return a_inverse(dot(g_a, ans))  # A^{-1} (∂A X)
-    else:
-      return dot(a_inverse(g_a), ans)  # (A^{-1} ∂A) X
+  info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
+  eigvals_aval = ShapedArray(operand_aval.shape[:-1], operand_aval.dtype)
+  if real:
+    avals_out = [operand_aval, operand_aval, eigvals_aval, eigvals_aval,
+                 info_aval, info_aval]
   else:
-    assert g_a.shape[-2:] == a.shape[-2:] == (n, n) and ans.shape[-2:] == (m, n)
-    if m < n:
-      return a_inverse(dot(ans, g_a))  # (X ∂A) A^{-1}
-    else:
-      return dot(ans, a_inverse(g_a))  # X (∂A A^{-1})
+    avals_out = [operand_aval, operand_aval, eigvals_aval, info_aval, info_aval]
 
-def _triangular_solve_transpose_rule(
-    cotangent, a, b, *, left_side, lower, transpose_a, conjugate_a,
-    unit_diagonal):
-  # Triangular solve is nonlinear in its first argument and linear in its second
-  # argument, analogous to `div` but swapped.
-  assert not ad.is_undefined_primal(a) and ad.is_undefined_primal(b)
-  if type(cotangent) is ad_util.Zero:
-    cotangent_b = ad_util.Zero(b.aval)
-  else:
-    cotangent_b = triangular_solve(a, cotangent, left_side=left_side,
-                                   lower=lower, transpose_a=not transpose_a,
-                                   conjugate_a=conjugate_a,
-                                   unit_diagonal=unit_diagonal)
-  return [None, cotangent_b]
+  mode = (
+      lapack.schur.ComputationMode.kComputeSchurVectors
+      if compute_schur_vectors
+      else lapack.schur.ComputationMode.kNoComputeSchurVectors
+  )
+  rule = _linalg_ffi_lowering(target_name, avals_out=avals_out,
+                              operand_output_aliases={0: 0})
+  schur_form, schur_vectors, *_, info = rule(
+      ctx, operand, mode=_enum_attr(mode),
+      sort=_enum_attr(lapack.schur.Sort.kNoSortEigenvalues))
 
+  ok = mlir.compare_hlo(
+      info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      "EQ", "SIGNED")
 
-def _triangular_solve_batching_rule(batched_args, batch_dims, *, left_side,
-                                   lower, transpose_a, conjugate_a,
-                                   unit_diagonal):
-  x, y = batched_args
-  bx, by = batch_dims
-  if bx is batching.not_mapped:
-    if left_side:
-      y = batching.moveaxis(y, by, -1)
-      y_flat = y.reshape(y.shape[:-2] + (y.shape[-2] * y.shape[-1],))
-      bdim_out = y.ndim - 1
-    else:
-      y = batching.moveaxis(y, by, -2)
-      y_flat = y.reshape(y.shape[:-3]  + (y.shape[-3] * y.shape[-2], y.shape[-1]))
-      bdim_out = y.ndim - 2
-    out_flat = triangular_solve(
-        x, y_flat, left_side=left_side, lower=lower,
-        transpose_a=transpose_a, conjugate_a=conjugate_a,
-        unit_diagonal=unit_diagonal)
-    return out_flat.reshape(y.shape), bdim_out
-  else:
-    size = next(t.shape[i] for t, i in zip(batched_args, batch_dims)
-                if i is not None)
-    x = batching.bdim_at_front(x, bx, size)
-    y = batching.bdim_at_front(y, by, size)
-    return triangular_solve(x, y, left_side=left_side, lower=lower,
-                            transpose_a=transpose_a, conjugate_a=conjugate_a,
-                            unit_diagonal=unit_diagonal), 0
+  schur_form = _replace_not_ok_with_nan(ctx, batch_dims, ok, schur_form,
+                                        ctx.avals_out[0])
+  output = [schur_form]
+  if compute_schur_vectors:
+    schur_vectors = _replace_not_ok_with_nan(ctx, batch_dims, ok, schur_vectors,
+                                             ctx.avals_out[1])
+    output.append(schur_vectors)
 
-triangular_solve_p = standard_primitive(
-    _triangular_solve_shape_rule, _triangular_solve_dtype_rule,
-    'triangular_solve', sharding_rule=_triangular_solve_sharding_rule)
-ad.defjvp2(triangular_solve_p,
-           _triangular_solve_jvp_rule_a,
-           lambda g_b, _, a, b, **kws: triangular_solve(a, g_b, **kws))
-ad.primitive_transposes[triangular_solve_p] = _triangular_solve_transpose_rule
-batching.primitive_batchers[triangular_solve_p] = _triangular_solve_batching_rule
+  return output
 
-
-def _triangular_solve_lowering(
-    ctx, a, b, *, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
-  out_aval, = ctx.avals_out
-  if conjugate_a and not transpose_a:
-    a = chlo.ConjOp(a)
-    conjugate_a = False
-  if not transpose_a:
-    transpose = "NO_TRANSPOSE"
-  else:
-    transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
-  out = hlo.triangular_solve(a, b, ir.BoolAttr.get(left_side),
-                             ir.BoolAttr.get(lower),
-                             ir.BoolAttr.get(unit_diagonal),
-                             hlo.TransposeAttr.get(transpose))
-  return [mlir.lower_sharding_under_shit(ctx, out, out_aval)]
-
-_cpu_lapack_types = {np.dtype(np.float32), np.dtype(np.float64),
-                     np.dtype(np.complex64), np.dtype(np.complex128)}
-
-_cpu_lapack_types = {np.dtype(np.float32), np.dtype(np.float64),
-                     np.dtype(np.complex64), np.dtype(np.complex128)}
-
-def _triangular_solve_cpu_lower(
-    ctx, a, b, *, left_side, lower, transpose_a,
-    conjugate_a, unit_diagonal):
-  a_aval, b_aval = ctx.avals_in
-
-  if conjugate_a and not transpose_a:
-    a = chlo.conj(a)
-    conjugate_a = False
-  if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
-    target_name = lapack.prepare_lapack_call("trsm_ffi", a_aval.dtype)
-    alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype))
-    alpha_aval = ShapedArray((), a_aval.dtype)
-    rule = _linalg_ffi_lowering(target_name,
-                                [a_aval, b_aval, alpha_aval],
-                                operand_output_aliases={1: 0})
-    return rule(ctx, a, b, alpha,
-                side=_matrix_side_attr(left_side),
-                uplo=_matrix_uplo_attr(lower),
-                trans_x=_matrix_transpose_attr(transpose_a, conjugate_a),
-                diag=_matrix_diagonal_attr(unit_diagonal))
-  else:
-    # Fall back to the HLO implementation for unsupported types or batching.
-    # TODO: Consider swapping XLA for LAPACK in batched case
-    if transpose_a:
-      transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
-    else:
-      transpose = "NO_TRANSPOSE"
-    return [hlo.triangular_solve(a, b, ir.BoolAttr.get(left_side),
-                                 ir.BoolAttr.get(lower),
-                                 ir.BoolAttr.get(unit_diagonal),
-                                 hlo.TransposeAttr.get(transpose))]
-
-
-mlir.register_lowering(triangular_solve_p, _triangular_solve_lowering)
-mlir.register_lowering(triangular_solve_p, _triangular_solve_cpu_lower,
-                       platform='cpu')
+schur_p = linalg_primitive(
+    _schur_dtype_rule, (_float | _complex,), (2,), _schur_shape_rule, "schur",
+    multiple_results=True)
+mlir.register_lowering(schur_p, _schur_cpu_lowering, platform="cpu")
 
 
 # Singular value decomposition
@@ -2462,306 +2292,216 @@ mlir.register_lowering(
 mlir.register_lowering(svd_p, _svd_tpu_lowering_rule)
 
 
-_tridiagonal_solve_dtype_rule = partial(
-    naryop_dtype_rule, _input_dtype, (_float | _complex, _float | _complex,
-                                      _float | _complex, _float | _complex),
-    'tridiagonal_solve')
+# Symmetric product
+
+def _symmetric_product_shape_rule(a_shape, c_shape, **_):
+  if a_shape[0] != c_shape[1] or c_shape[0] != c_shape[1]:
+    raise ValueError(
+        "symmetric_update expects a rectangular matrix of shape (m, n) and a "
+        f"square matrix of shape (n, n). Got shapes {a_shape} and {c_shape}.")
+  return c_shape
+
+def _symmetric_product_jax_fn(a, c, *, alpha, beta):
+  a_T = lax.transpose(a, (*range(a.ndim - 2), a.ndim - 1, a.ndim - 2))
+  return alpha * lax.batch_matmul(
+      a, a_T, precision=lax.Precision.HIGHEST) + beta * c
+
+def _symmetric_product_gpu_lowering(
+    platform, ctx, a_tensor, c_tensor, alpha, beta):
+  a_aval, c_aval = ctx.avals_in[:2]
+  dtype = a_aval.dtype
+  alpha_aval = beta_aval = ShapedArray((), dtype)
+
+  alpha_array = mlir.full_like_aval(ctx, alpha, alpha_aval)
+  beta_array = mlir.full_like_aval(ctx, beta, beta_aval)
+
+  rule = ffi.ffi_lowering(f"{platform}solver_syrk_ffi",
+                          operand_output_aliases={1: 0})
+  ctx = ctx.replace(avals_in=[a_aval, c_aval, alpha_aval, beta_aval])
+  return rule(ctx, a_tensor, c_tensor, alpha_array, beta_array, transpose=False)
+
+symmetric_product_p = standard_linalg_primitive(
+    (_float, _float), (2, 2), _symmetric_product_shape_rule,
+    "symmetric_product")
+mlir.register_lowering(
+    symmetric_product_p,
+    partial(_symmetric_product_gpu_lowering, "cu"), platform="cuda")
+mlir.register_lowering(
+    symmetric_product_p,
+    mlir.lower_fun(_symmetric_product_jax_fn, multiple_results=False))
 
 
-def _tridiagonal_solve_shape_rule(dl, d, du, b):
-  if b.ndim < 2:
-    raise TypeError(
-        f"tridiagonal_solve requires b.ndim to be at least 2, got {b.ndim}.")
-  if dl.shape != d.shape or dl.shape != du.shape:
-    raise TypeError(
-        "tridiagonal_solve requires that all diagonal arguments have the same "
-        "shape.")
-  if dl.shape != b.shape[:-1]:
-    raise TypeError(
-        "tridiagonal_solve requires that the leading ndim-1 dimensions of b "
-        "equal the dimensions of the diagonal arguments.")
-  return b.shape
+# Triangular solve
 
+def _triangular_solve_shape_rule(a_shape, b_shape, *, left_side=False, **_):
+  if a_shape[0] != a_shape[1]:
+    raise ValueError(
+        "The first input to triangular_solve must be a square matrix. Got "
+        f"shape {a_shape}.")
+  common_dim = -2 if left_side else -1
+  if a_shape[-1] != b_shape[common_dim]:
+    raise ValueError(
+        f"Incompatible shapes for arguments to triangular_solve: {a_shape} and "
+        f"{b_shape}.")
+  return b_shape
 
-def _tridiagonal_solve_gpu_lowering(lowering, ctx, dl, d, du, b):
-  _, _, _, b_aval = ctx.avals_in
-  if b_aval.dtype != np.float32 and b_aval.dtype != np.float64:
-    raise NotImplementedError(
-        "tridiagonal_solve is only implemented for float32 and float64 on GPU.")
-  m, n = b_aval.shape[-2:]
-  b_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, b_aval.shape)
-  return [lowering(
-      dl, d, du, b, m=m, n=n, ldb=m, t=b_aval.dtype,
-      b_shape_vals=b_shape_vals)]
+def _triangular_solve_dtype_rule(dtype, *_, **__):
+  return dtypes.canonicalize_dtype(dtype)
 
+def _triangular_solve_jvp_rule_a(
+    g_a, ans, a, b, *, left_side, lower, transpose_a, conjugate_a,
+    unit_diagonal):
+  m, n = b.shape[-2:]
+  k = 1 if unit_diagonal else 0
+  g_a = _tril(g_a, k=-k) if lower else _triu(g_a, k=k)
+  g_a = lax.neg(g_a)
+  g_a = _T(g_a) if transpose_a else g_a
+  g_a = g_a.conj() if conjugate_a else g_a
+  dot = partial(lax.dot if g_a.ndim == 2 else lax.batch_matmul,
+                precision=lax.Precision.HIGHEST)
 
-def _tridiagonal_solve_cpu_lowering(ctx, dl, d, du, b, **kwargs):
-  del kwargs  # unused
-  b_aval = ctx.avals_in[-1]
-  batch_dims = b_aval.shape[:-2]
-  target_name = lapack.prepare_lapack_call("gtsv_ffi", b_aval.dtype)
-  info_aval = ShapedArray(batch_dims, np.int32)
-  rule = _linalg_ffi_lowering(target_name,
-                              avals_out=[*ctx.avals_in, info_aval],
-                              operand_output_aliases={0: 0, 1: 1, 2: 2, 3: 3})
-  *_, b_out, info = rule(ctx, dl, d, du, b)
-  zeros = mlir.full_like_aval(ctx, 0, info_aval)
-  ok = mlir.compare_hlo(info, zeros, "EQ", "SIGNED")
-  return [_replace_not_ok_with_nan(ctx, batch_dims, ok, b_out, b_aval)]
+  def a_inverse(rhs):
+    return triangular_solve(a, rhs, left_side=left_side, lower=lower,
+                            transpose_a=transpose_a, conjugate_a=conjugate_a,
+                            unit_diagonal=unit_diagonal)
 
-
-def _tridiagonal_product(dl, d, du, b):
-  y = lax.reshape(d, d.shape + (1,)) * b
-  y = y.at[..., 1:, :].add(dl[..., 1:, None] * b[..., :-1, :])
-  y = y.at[..., :-1, :].add(du[..., :-1, None] * b[..., 1:, :])
-  return y
-
-
-def _tridiagonal_solve_jvp_rule(primals, tangents):
-  *diags, _ = primals
-  *diags_dot, b_dot = tangents
-  ans = tridiagonal_solve_p.bind(*primals)
-  if all(type(p) is ad_util.Zero for p in diags_dot):
-    rhs = b_dot
+  # triangular_solve is about the same cost as matrix multplication (~n^2 FLOPs
+  # for matrix/vector inputs). Order these operations in whichever order is
+  # cheaper.
+  if left_side:
+    assert g_a.shape[-2:] == a.shape[-2:] == (m, m) and ans.shape[-2:] == (m, n)
+    if m > n:
+      return a_inverse(dot(g_a, ans))  # A^{-1} (∂A X)
+    else:
+      return dot(a_inverse(g_a), ans)  # (A^{-1} ∂A) X
   else:
-    matvec_dot = _tridiagonal_product(*map(ad.instantiate_zeros, diags_dot), ans)
-    rhs = ad.add_tangents(b_dot, -matvec_dot)
-  ans_dot = tridiagonal_solve_p.bind(*diags, rhs)
-  return ans, ans_dot
+    assert g_a.shape[-2:] == a.shape[-2:] == (n, n) and ans.shape[-2:] == (m, n)
+    if m < n:
+      return a_inverse(dot(ans, g_a))  # (X ∂A) A^{-1}
+    else:
+      return dot(ans, a_inverse(g_a))  # X (∂A A^{-1})
 
-
-def _tridiagonal_solve_transpose_rule(cotangent, dl, d, du, b):
-  # Tridiagonal solve is nonlinear in the tridiagonal arguments and linear
-  # otherwise.
-  assert not (ad.is_undefined_primal(dl) or ad.is_undefined_primal(d) or
-              ad.is_undefined_primal(du)) and ad.is_undefined_primal(b)
+def _triangular_solve_transpose_rule(
+    cotangent, a, b, *, left_side, lower, transpose_a, conjugate_a,
+    unit_diagonal):
+  # Triangular solve is nonlinear in its first argument and linear in its second
+  # argument, analogous to `div` but swapped.
+  assert not ad.is_undefined_primal(a) and ad.is_undefined_primal(b)
   if type(cotangent) is ad_util.Zero:
     cotangent_b = ad_util.Zero(b.aval)
   else:
-    dl_trans = lax.concatenate((lax.zeros_like_array(du[..., -1:]), du[..., :-1]),
-                               du.ndim-1)
-    du_trans = lax.concatenate((dl[..., 1:], lax.zeros_like_array(dl[..., :1])),
-                               dl.ndim-1)
-    cotangent_b = tridiagonal_solve(dl_trans, d, du_trans, cotangent)
-  return [None, None, None, cotangent_b]
+    cotangent_b = triangular_solve(a, cotangent, left_side=left_side,
+                                   lower=lower, transpose_a=not transpose_a,
+                                   conjugate_a=conjugate_a,
+                                   unit_diagonal=unit_diagonal)
+  return [None, cotangent_b]
 
-
-def _tridiagonal_solve_batching_rule(batched_args, batch_dims):
-  dl, d, du, b = batched_args
-  bdl, bd, bdu, bb = batch_dims
-  if (bdl is batching.not_mapped and
-      bd is batching.not_mapped and
-      bdu is batching.not_mapped):
-
-    b = batching.moveaxis(b, bb, -2)
-    b_flat = b.reshape(b.shape[:-3]  + (b.shape[-3], b.shape[-2] * b.shape[-1]))
-    bdim_out = b.ndim - 2
-    out_flat = tridiagonal_solve(dl, d, du, b_flat)
-    return out_flat.reshape(b.shape), bdim_out
+def _triangular_solve_batching_rule(batched_args, batch_dims, *, left_side,
+                                   lower, transpose_a, conjugate_a,
+                                   unit_diagonal):
+  x, y = batched_args
+  bx, by = batch_dims
+  if bx is batching.not_mapped:
+    if left_side:
+      y = batching.moveaxis(y, by, -1)
+      y_flat = y.reshape(y.shape[:-2] + (y.shape[-2] * y.shape[-1],))
+      bdim_out = y.ndim - 1
+    else:
+      y = batching.moveaxis(y, by, -2)
+      y_flat = y.reshape(y.shape[:-3]  + (y.shape[-3] * y.shape[-2], y.shape[-1]))
+      bdim_out = y.ndim - 2
+    out_flat = triangular_solve(
+        x, y_flat, left_side=left_side, lower=lower,
+        transpose_a=transpose_a, conjugate_a=conjugate_a,
+        unit_diagonal=unit_diagonal)
+    return out_flat.reshape(y.shape), bdim_out
   else:
     size = next(t.shape[i] for t, i in zip(batched_args, batch_dims)
                 if i is not None)
-    dl = batching.bdim_at_front(dl, bdl, size)
-    d = batching.bdim_at_front(d, bd, size)
-    du = batching.bdim_at_front(du, bdu, size)
-    b = batching.bdim_at_front(b, bb, size)
-    return tridiagonal_solve(dl, d, du, b), 0
+    x = batching.bdim_at_front(x, bx, size)
+    y = batching.bdim_at_front(y, by, size)
+    return triangular_solve(x, y, left_side=left_side, lower=lower,
+                            transpose_a=transpose_a, conjugate_a=conjugate_a,
+                            unit_diagonal=unit_diagonal), 0
 
-
-tridiagonal_solve_p = standard_primitive(
-    _tridiagonal_solve_shape_rule, _tridiagonal_solve_dtype_rule,
-    'tridiagonal_solve')
-ad.primitive_jvps[tridiagonal_solve_p] = _tridiagonal_solve_jvp_rule
-ad.primitive_transposes[tridiagonal_solve_p] = _tridiagonal_solve_transpose_rule
-batching.primitive_batchers[tridiagonal_solve_p] = _tridiagonal_solve_batching_rule
-
-mlir.register_lowering(
-    tridiagonal_solve_p,
-    _tridiagonal_solve_cpu_lowering,
-    platform='cpu')
-mlir.register_lowering(
-    tridiagonal_solve_p,
-    partial(_tridiagonal_solve_gpu_lowering, gpu_sparse.cuda_gtsv2),
-    platform='cuda')
-mlir.register_lowering(
-    tridiagonal_solve_p,
-    partial(_tridiagonal_solve_gpu_lowering, gpu_sparse.rocm_gtsv2),
-    platform='rocm')
-
-
-def _tridiagonal_solve_jax_impl(dl, d, du, b):
-  def fwd(carry, args):
-    cp, dp = carry
-    a, b, c, d = args
-    cp_next = c / (b - a * cp)
-    dp_next = (d - a * dp) / (b - a * cp)
-    return (cp_next, dp_next), (cp, dp)
-
-  (_, final), (cp, dp) = lax.scan(
-      fwd, (du[0] / d[0], b[0] / d[0]), (dl[1:], d[1:], du[1:], b[1:, :]),
-      unroll=32)
-
-  def bwd(xn, args):
-    cp, dp = args
-    x = dp - cp * xn
-    return x, xn
-
-  end, ans = lax.scan(bwd, final, (cp, dp), unroll=32, reverse=True)
-  return lax.concatenate((end[None], ans), 0)
-
-
-def _tridiagonal_solve_jax(dl, d, du, b, **_):
-  impl = _tridiagonal_solve_jax_impl
-  for _ in range(dl.ndim - 1):
-    impl = api.vmap(impl)
-  return impl(dl, d, du, b)
-
-
-mlir.register_lowering(tridiagonal_solve_p, mlir.lower_fun(
-    _tridiagonal_solve_jax, multiple_results=False))
-
-
-# Schur Decomposition
-
-def _schur_impl(operand, *, compute_schur_vectors, sort_eig_vals,
-                select_callable):
-  return dispatch.apply_primitive(
-      schur_p,
-      operand,
-      compute_schur_vectors=compute_schur_vectors,
-      sort_eig_vals=sort_eig_vals,
-      select_callable=select_callable)
-
-def _schur_lowering(ctx, *args, **kwargs):
-  raise NotImplementedError(
-      "Schur decomposition is only implemented on the CPU backend.")
-
-def _schur_abstract_eval(operand, *, compute_schur_vectors, sort_eig_vals,
-                         select_callable):
-
-  if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
-    raise ValueError("Argument to Schur decomposition must have "
-                     "shape [..., n, n], got shape {}".format(operand.shape))
-
-  batch_dims = operand.shape[:-2]
-  n = operand.shape[-1]
-  dtype = operand.dtype
-  dtype = dtypes.canonicalize_dtype(dtype)
-  T = operand.update(shape=batch_dims + (n, n), dtype=dtype)
-  vs = operand.update(shape=batch_dims + (n, n), dtype=dtype)
-
-  return (T, vs) if compute_schur_vectors else (T,)
-
-def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
-                        select_callable):
-  del select_callable  # unused
-  if sort_eig_vals:
-    raise NotImplementedError(
-        "The sort feature of LAPACK's gees routine is not implemented.")
-
-  operand_aval, = ctx.avals_in
-  batch_dims = operand_aval.shape[:-2]
-  real = operand_aval.dtype == np.float32 or operand_aval.dtype == np.float64
-  target_name = lapack.prepare_lapack_call("gees_ffi", operand_aval.dtype)
-
-  info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
-  eigvals_aval = ShapedArray(operand_aval.shape[:-1], operand_aval.dtype)
-  if real:
-    avals_out = [operand_aval, operand_aval, eigvals_aval, eigvals_aval,
-                 info_aval, info_aval]
+def _triangular_solve_lowering(
+    ctx, a, b, *, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
+  out_aval, = ctx.avals_out
+  if conjugate_a and not transpose_a:
+    a = chlo.ConjOp(a)
+    conjugate_a = False
+  if not transpose_a:
+    transpose = "NO_TRANSPOSE"
   else:
-    avals_out = [operand_aval, operand_aval, eigvals_aval, info_aval, info_aval]
-
-  mode = (
-      lapack.schur.ComputationMode.kComputeSchurVectors
-      if compute_schur_vectors
-      else lapack.schur.ComputationMode.kNoComputeSchurVectors
-  )
-  rule = _linalg_ffi_lowering(target_name, avals_out=avals_out,
-                              operand_output_aliases={0: 0})
-  schur_form, schur_vectors, *_, info = rule(
-      ctx, operand, mode=_enum_attr(mode),
-      sort=_enum_attr(lapack.schur.Sort.kNoSortEigenvalues))
-
-  ok = mlir.compare_hlo(
-      info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
-      "EQ", "SIGNED")
-
-  schur_form = _replace_not_ok_with_nan(ctx, batch_dims, ok, schur_form,
-                                        ctx.avals_out[0])
-  output = [schur_form]
-  if compute_schur_vectors:
-    schur_vectors = _replace_not_ok_with_nan(ctx, batch_dims, ok, schur_vectors,
-                                             ctx.avals_out[1])
-    output.append(schur_vectors)
-
-  return output
+    transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
+  out = hlo.triangular_solve(a, b, ir.BoolAttr.get(left_side),
+                             ir.BoolAttr.get(lower),
+                             ir.BoolAttr.get(unit_diagonal),
+                             hlo.TransposeAttr.get(transpose))
+  return [mlir.lower_sharding_under_shit(ctx, out, out_aval)]
 
 
-def _schur_batching_rule(batched_args, batch_dims, *, compute_schur_vectors,
-                         sort_eig_vals, select_callable):
-  x, = batched_args
-  bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
+_cpu_lapack_types = {np.dtype(np.float32), np.dtype(np.float64),
+                     np.dtype(np.complex64), np.dtype(np.complex128)}
 
-  return schur_p.bind(
-      x,
-      compute_schur_vectors=compute_schur_vectors,
-      sort_eig_vals=sort_eig_vals,
-      select_callable=select_callable), (0,) * (1 + compute_schur_vectors)
+def _triangular_solve_cpu_lower(
+    ctx, a, b, *, left_side, lower, transpose_a,
+    conjugate_a, unit_diagonal):
+  a_aval, b_aval = ctx.avals_in
 
+  if conjugate_a and not transpose_a:
+    a = chlo.conj(a)
+    conjugate_a = False
+  if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
+    target_name = lapack.prepare_lapack_call("trsm_ffi", a_aval.dtype)
+    alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype))
+    alpha_aval = ShapedArray((), a_aval.dtype)
+    rule = _linalg_ffi_lowering(target_name,
+                                [a_aval, b_aval, alpha_aval],
+                                operand_output_aliases={1: 0})
+    return rule(ctx, a, b, alpha,
+                side=_matrix_side_attr(left_side),
+                uplo=_matrix_uplo_attr(lower),
+                trans_x=_matrix_transpose_attr(transpose_a, conjugate_a),
+                diag=_matrix_diagonal_attr(unit_diagonal))
+  else:
+    # Fall back to the HLO implementation for unsupported types or batching.
+    # TODO: Consider swapping XLA for LAPACK in batched case
+    if transpose_a:
+      transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
+    else:
+      transpose = "NO_TRANSPOSE"
+    return [hlo.triangular_solve(a, b, ir.BoolAttr.get(left_side),
+                                 ir.BoolAttr.get(lower),
+                                 ir.BoolAttr.get(unit_diagonal),
+                                 hlo.TransposeAttr.get(transpose))]
 
-def _schur_jvp_rule(primals, tangents, **kwds):
-  raise NotImplementedError(
-      'The differentiation rules for the Schur factorization have not been implemented.'
-  )
-
-
-schur_p = Primitive('schur')
-schur_p.multiple_results = True
-schur_p.def_impl(_schur_impl)
-schur_p.def_abstract_eval(_schur_abstract_eval)
-mlir.register_lowering(schur_p, _schur_lowering)
-mlir.register_lowering(schur_p, _schur_cpu_lowering, platform='cpu')
-batching.primitive_batchers[schur_p] = _schur_batching_rule
-ad.primitive_jvps[schur_p] = _schur_jvp_rule
+triangular_solve_p = linalg_primitive(
+    _triangular_solve_dtype_rule, (_float | _complex, _float | _complex),
+    (2, 2), _triangular_solve_shape_rule, "triangular_solve")
+ad.defjvp2(triangular_solve_p,
+           _triangular_solve_jvp_rule_a,
+           lambda g_b, _, a, b, **kws: triangular_solve(a, g_b, **kws))
+ad.primitive_transposes[triangular_solve_p] = _triangular_solve_transpose_rule
+batching.primitive_batchers[triangular_solve_p] = _triangular_solve_batching_rule
+mlir.register_lowering(triangular_solve_p, _triangular_solve_lowering)
+mlir.register_lowering(triangular_solve_p, _triangular_solve_cpu_lower,
+                       platform="cpu")
 
 
 # tridiagonal: Upper Hessenberg reduction
 
-def _tridiagonal_abstract_eval(a, *, lower):
-  if a.dtype not in (np.float32, np.float64, np.complex64, np.complex128):
-    raise TypeError("tridiagonal requires a.dtype to be float32, float64, "
-                    f"complex64, or complex128, got {a.dtype}.")
-  if a.ndim < 2:
-    raise TypeError("tridiagonal requires a.ndim to be at least 2, got "
-                    f"{a.ndim}.")
-  if a.shape[-1] != a.shape[-2]:
-    raise TypeError("tridiagonal requires the last two dimensions of a to be "
-                    f"equal in size, got a.shape of {a.shape}.")
-  if a.shape[-1] == 0:
-    raise TypeError("tridiagonal requires the last two dimensions of a to be "
-                    f"non-zero, got a.shape of {a.shape}.")
-  real_dtype = dtypes.finfo(a.dtype).dtype
-  return [
-      a,
-      ShapedArray(a.shape[:-2] + (a.shape[-1],), real_dtype),
-      ShapedArray(a.shape[:-2] + (a.shape[-1] - 1,), real_dtype),
-      ShapedArray(a.shape[:-2] + (a.shape[-1] - 1,), a.dtype),
-  ]
+def _tridiagonal_shape_rule(shape, **_):
+  if shape[0] != shape[1] or shape[1] == 0:
+    raise ValueError(
+        f"The input to tridiagonal must be a square matrix. Got shape {shape}.")
+  n, _ = shape
+  return shape, (n,), (n - 1,), (n - 1,)
 
-tridiagonal_p = Primitive("tridiagonal")
-tridiagonal_p.def_impl(partial(dispatch.apply_primitive, tridiagonal_p))
-tridiagonal_p.def_abstract_eval(_tridiagonal_abstract_eval)
-tridiagonal_p.multiple_results = True
-
-def _tridiagonal_batching_rule(batched_args, batch_dims, *, lower):
-  x, = batched_args
-  bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
-  return tridiagonal_p.bind(x, lower=lower), (0, 0, 0, 0)
-
-batching.primitive_batchers[tridiagonal_p] = _tridiagonal_batching_rule
+def _tridiagonal_dtype_rule(dtype, **_):
+  dtype = dtypes.canonicalize_dtype(dtype)
+  real_dtype = lax_internal._complex_basetype(dtype)
+  return dtype, real_dtype, real_dtype, dtype
 
 def _tridiagonal_cpu_gpu_lowering(ctx, a, *, lower, target_name_prefix):
   a_aval, = ctx.avals_in
@@ -2788,21 +2528,151 @@ def _tridiagonal_cpu_gpu_lowering(ctx, a, *, lower, target_name_prefix):
   taus = _replace_not_ok_with_nan(ctx, batch_dims, ok, taus, taus_aval)
   return arr, d, e, taus
 
+tridiagonal_p = linalg_primitive(
+    _tridiagonal_dtype_rule, (_float | _complex,), (2,),
+    _tridiagonal_shape_rule, "tridiagonal", multiple_results=True)
+register_cpu_gpu_lowering(tridiagonal_p, _tridiagonal_cpu_gpu_lowering)
+
+
+# Tridiagonal solve
+
+def _tridiagonal_solve_shape_rule(dl_shape, d_shape, du_shape, b_shape, **_):
+  if dl_shape != d_shape or dl_shape != du_shape:
+    raise TypeError(
+        "tridiagonal_solve requires that all diagonal arguments have the same "
+        "shape.")
+  if dl_shape != b_shape[:-1]:
+    raise TypeError(
+        "tridiagonal_solve requires that the leading ndim-1 dimensions of b "
+        "equal the dimensions of the diagonal arguments.")
+  return b_shape
+
+def _tridiagonal_solve_gpu_lowering(lowering, ctx, dl, d, du, b):
+  _, _, _, b_aval = ctx.avals_in
+  if b_aval.dtype != np.float32 and b_aval.dtype != np.float64:
+    raise NotImplementedError(
+        "tridiagonal_solve is only implemented for float32 and float64 on GPU.")
+  m, n = b_aval.shape[-2:]
+  b_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, b_aval.shape)
+  return [lowering(
+      dl, d, du, b, m=m, n=n, ldb=m, t=b_aval.dtype,
+      b_shape_vals=b_shape_vals)]
+
+def _tridiagonal_solve_cpu_lowering(ctx, dl, d, du, b, **kwargs):
+  del kwargs  # unused
+  b_aval = ctx.avals_in[-1]
+  batch_dims = b_aval.shape[:-2]
+  target_name = lapack.prepare_lapack_call("gtsv_ffi", b_aval.dtype)
+  info_aval = ShapedArray(batch_dims, np.int32)
+  rule = _linalg_ffi_lowering(target_name,
+                              avals_out=[*ctx.avals_in, info_aval],
+                              operand_output_aliases={0: 0, 1: 1, 2: 2, 3: 3})
+  *_, b_out, info = rule(ctx, dl, d, du, b)
+  zeros = mlir.full_like_aval(ctx, 0, info_aval)
+  ok = mlir.compare_hlo(info, zeros, "EQ", "SIGNED")
+  return [_replace_not_ok_with_nan(ctx, batch_dims, ok, b_out, b_aval)]
+
+def _tridiagonal_product(dl, d, du, b):
+  y = lax.reshape(d, d.shape + (1,)) * b
+  y = y.at[..., 1:, :].add(dl[..., 1:, None] * b[..., :-1, :])
+  y = y.at[..., :-1, :].add(du[..., :-1, None] * b[..., 1:, :])
+  return y
+
+def _tridiagonal_solve_jvp_rule(primals, tangents):
+  *diags, _ = primals
+  *diags_dot, b_dot = tangents
+  ans = tridiagonal_solve_p.bind(*primals)
+  if all(type(p) is ad_util.Zero for p in diags_dot):
+    rhs = b_dot
+  else:
+    matvec_dot = _tridiagonal_product(*map(ad.instantiate_zeros, diags_dot), ans)
+    rhs = ad.add_tangents(b_dot, -matvec_dot)
+  ans_dot = tridiagonal_solve_p.bind(*diags, rhs)
+  return ans, ans_dot
+
+def _tridiagonal_solve_transpose_rule(cotangent, dl, d, du, b):
+  # Tridiagonal solve is nonlinear in the tridiagonal arguments and linear
+  # otherwise.
+  assert not (ad.is_undefined_primal(dl) or ad.is_undefined_primal(d) or
+              ad.is_undefined_primal(du)) and ad.is_undefined_primal(b)
+  if type(cotangent) is ad_util.Zero:
+    cotangent_b = ad_util.Zero(b.aval)
+  else:
+    dl_trans = lax.concatenate((lax.zeros_like_array(du[..., -1:]), du[..., :-1]),
+                               du.ndim-1)
+    du_trans = lax.concatenate((dl[..., 1:], lax.zeros_like_array(dl[..., :1])),
+                               dl.ndim-1)
+    cotangent_b = tridiagonal_solve(dl_trans, d, du_trans, cotangent)
+  return [None, None, None, cotangent_b]
+
+def _tridiagonal_solve_batching_rule(batched_args, batch_dims):
+  dl, d, du, b = batched_args
+  bdl, bd, bdu, bb = batch_dims
+  if (bdl is batching.not_mapped and
+      bd is batching.not_mapped and
+      bdu is batching.not_mapped):
+
+    b = batching.moveaxis(b, bb, -2)
+    b_flat = b.reshape(b.shape[:-3]  + (b.shape[-3], b.shape[-2] * b.shape[-1]))
+    bdim_out = b.ndim - 2
+    out_flat = tridiagonal_solve(dl, d, du, b_flat)
+    return out_flat.reshape(b.shape), bdim_out
+  else:
+    size = next(t.shape[i] for t, i in zip(batched_args, batch_dims)
+                if i is not None)
+    dl = batching.bdim_at_front(dl, bdl, size)
+    d = batching.bdim_at_front(d, bd, size)
+    du = batching.bdim_at_front(du, bdu, size)
+    b = batching.bdim_at_front(b, bb, size)
+    return tridiagonal_solve(dl, d, du, b), 0
+
+def _tridiagonal_solve_jax_impl(dl, d, du, b):
+  def fwd(carry, args):
+    cp, dp = carry
+    a, b, c, d = args
+    cp_next = c / (b - a * cp)
+    dp_next = (d - a * dp) / (b - a * cp)
+    return (cp_next, dp_next), (cp, dp)
+
+  (_, final), (cp, dp) = lax.scan(
+      fwd, (du[0] / d[0], b[0] / d[0]), (dl[1:], d[1:], du[1:], b[1:, :]),
+      unroll=32)
+
+  def bwd(xn, args):
+    cp, dp = args
+    x = dp - cp * xn
+    return x, xn
+
+  end, ans = lax.scan(bwd, final, (cp, dp), unroll=32, reverse=True)
+  return lax.concatenate((end[None], ans), 0)
+
+def _tridiagonal_solve_jax(dl, d, du, b, **_):
+  impl = _tridiagonal_solve_jax_impl
+  for _ in range(dl.ndim - 1):
+    impl = api.vmap(impl)
+  return impl(dl, d, du, b)
+
+tridiagonal_solve_p = standard_linalg_primitive(
+    (_float | _complex, _float | _complex, _float | _complex, _float | _complex),
+    (1, 1, 1, 2), _tridiagonal_solve_shape_rule, "tridiagonal_solve")
+ad.primitive_jvps[tridiagonal_solve_p] = _tridiagonal_solve_jvp_rule
+ad.primitive_transposes[tridiagonal_solve_p] = _tridiagonal_solve_transpose_rule
+batching.primitive_batchers[tridiagonal_solve_p] = _tridiagonal_solve_batching_rule
 mlir.register_lowering(
-    tridiagonal_p,
-    partial(_tridiagonal_cpu_gpu_lowering, target_name_prefix="cpu"),
-    platform="cpu",
-)
+    tridiagonal_solve_p,
+    _tridiagonal_solve_cpu_lowering,
+    platform='cpu')
 mlir.register_lowering(
-    tridiagonal_p,
-    partial(_tridiagonal_cpu_gpu_lowering, target_name_prefix="cu"),
-    platform="cuda",
-)
+    tridiagonal_solve_p,
+    partial(_tridiagonal_solve_gpu_lowering, gpu_sparse.cuda_gtsv2),
+    platform='cuda')
 mlir.register_lowering(
-    tridiagonal_p,
-    partial(_tridiagonal_cpu_gpu_lowering, target_name_prefix="hip"),
-    platform="rocm",
-)
+    tridiagonal_solve_p,
+    partial(_tridiagonal_solve_gpu_lowering, gpu_sparse.rocm_gtsv2),
+    platform='rocm')
+mlir.register_lowering(tridiagonal_solve_p, mlir.lower_fun(
+    _tridiagonal_solve_jax, multiple_results=False))
+
 
 # Utilities
 
