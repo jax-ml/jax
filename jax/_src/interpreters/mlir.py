@@ -2633,7 +2633,7 @@ wrap_with_full_to_shard_op = partial(_wrap_with_spmd_op, "SPMDFullToShardShape")
 wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
 
 
-def lower_sharding_under_shit(ctx, op, aval, sharding_proto=None):
+def lower_with_sharding_in_types(ctx, op, aval, sharding_proto=None):
   if aval.sharding.mesh.empty:
     return op
   # Don't emit a wsc under full manual mode to avoid increasing HLO size.
@@ -3011,7 +3011,8 @@ def reduce_window(
     reducer = rw.regions[0].blocks.append(*(scalar_types + scalar_types))
     with ir.InsertionPoint(reducer):
       hlo.return_(reducer_body(reducer))
-  return rw.results
+  return [lower_with_sharding_in_types(ctx, r, aval)
+          for r, aval in zip(rw.results, ctx.avals_out)]
 
 
 def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:

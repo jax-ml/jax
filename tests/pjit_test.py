@@ -34,7 +34,7 @@ from jax._src import core
 from jax._src import config
 from jax._src import dispatch
 from jax._src import test_util as jtu
-from jax import dtypes
+from jax._src import dtypes
 from jax import stages
 from jax import lax
 from jax._src.lax import lax as lax_internal
@@ -6694,6 +6694,19 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "PartitionSpec passed to einsum cannot contain axis names.*Auto.*Manual"):
       f(arr, arr2)
 
+  @jtu.with_user_mesh((2,), ('x',))
+  def test_cumsum(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P()))
+
+    @jax.jit
+    def f(x):
+      return jnp.cumsum(x)
+
+    out = f(arr)
+    self.assertArraysEqual(out, np.cumsum(np_inp))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None)))
+
   def test_device_put_under_use_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     x = jnp.zeros((4, 4), dtype=jnp.int32)
@@ -6763,6 +6776,52 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = auto_axes(f, out_shardings=P('x'))(np.arange(8))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
     self.assertArraysEqual(out, np.arange(8) * 2)
+
+  @jtu.sample_product(
+    from_dtype=(['int4', 'uint4'] + jtu.dtypes.all_floating +
+                jtu.dtypes.all_integer + jtu.dtypes.all_unsigned),
+    to_dtype=(['int4', 'uint4'] + jtu.dtypes.all_floating +
+              jtu.dtypes.all_integer + jtu.dtypes.all_unsigned),
+    shape_and_spec=[((), P()), ((2,), P('x')), ((2, 4), P('x', 'y'))],
+  )
+  @jtu.with_user_mesh((2, 2), ('x', 'y'))
+  def test_bitcast_convert_type(self, from_dtype, to_dtype, shape_and_spec,
+                                mesh):
+    shape, spec = shape_and_spec
+    rng = jtu.rand_default(self.rng())
+    nbits_in = dtypes.bit_width(from_dtype)
+    nbits_out = dtypes.bit_width(to_dtype)
+    if nbits_in < nbits_out:
+      shape = (*shape, nbits_out // nbits_in)
+      spec = P(*(*spec, None))
+    args_maker = lambda: [jax.device_put(rng(shape, from_dtype),
+                                         NamedSharding(mesh, spec))]
+
+    if nbits_in == nbits_out:
+      expected_shape = shape
+      expected_spec = spec
+    elif nbits_in < nbits_out:
+      expected_shape = shape[:-1]
+      expected_spec = P(*spec[:-1])
+    else:
+      expected_shape = (*shape, nbits_in // nbits_out)
+      expected_spec = P(*spec, None)
+
+    @jax.jit
+    def f(x):
+      out = lax.bitcast_convert_type(x, to_dtype)
+      self.assertEqual(out.aval.shape, expected_shape)
+      self.assertEqual(out.aval.sharding.spec, expected_spec)
+      return out
+
+    self._CompileAndCheck(f, args_maker)
+
+    # Test the shape and dtype of the output. We avoid testing the values here
+    # because the bitwise representation may vary from platform to platform.
+    out = f(*args_maker())
+    self.assertEqual(out.dtype, to_dtype)
+    self.assertEqual(out.shape, expected_shape)
+    self.assertEqual(out.sharding, NamedSharding(mesh, expected_spec))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

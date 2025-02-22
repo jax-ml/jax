@@ -2755,7 +2755,7 @@ def _mesh_cast_hlo_lowering(ctx, x_node, *, dst_sharding):
   proto = (dst_sharding._to_sdy_sharding(aval.ndim)
            if config.use_shardy_partitioner.value else
            dst_sharding._to_xla_hlo_sharding(aval.ndim).to_proto())
-  return [mlir.lower_sharding_under_shit(ctx, x_node, aval_out, proto)]
+  return [mlir.lower_with_sharding_in_types(ctx, x_node, aval_out, proto)]
 mlir.register_lowering(mesh_cast_p, _mesh_cast_hlo_lowering)
 
 def _mesh_cast_batcher(axis_data, vals_in, dims_in, dst_sharding):
@@ -2807,7 +2807,7 @@ def _reshard_hlo_lowering(ctx, x_node, *, dst_sharding):
   proto = (dst_sharding._to_sdy_sharding(aval.ndim)
            if config.use_shardy_partitioner.value else
            dst_sharding._to_xla_hlo_sharding(aval.ndim).to_proto())
-  return [mlir.lower_sharding_under_shit(ctx, x_node, aval_out, proto)]
+  return [mlir.lower_with_sharding_in_types(ctx, x_node, aval_out, proto)]
 mlir.register_lowering(reshard_p, _reshard_hlo_lowering)
 
 def _reshard_batcher(axis_data, vals_in, dims_in, dst_sharding):

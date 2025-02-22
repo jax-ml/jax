@@ -2438,7 +2438,7 @@ def _triangular_solve_lowering(
                              ir.BoolAttr.get(lower),
                              ir.BoolAttr.get(unit_diagonal),
                              hlo.TransposeAttr.get(transpose))
-  return [mlir.lower_sharding_under_shit(ctx, out, out_aval)]
+  return [mlir.lower_with_sharding_in_types(ctx, out, out_aval)]
 
 
 _cpu_lapack_types = {np.dtype(np.float32), np.dtype(np.float64),

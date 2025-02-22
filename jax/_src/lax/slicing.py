@@ -1370,7 +1370,7 @@ def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
   aval_out, = ctx.avals_out
   out = mlir.slice_op(ctx, x, aval_out, start_indices=start_indices,
                       limit_indices=limit_indices, strides=strides)
-  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
+  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 mlir.register_lowering(slice_p, _slice_lower)
 
@@ -1523,7 +1523,7 @@ def _dynamic_slice_lower(ctx, x, *starts_and_dyn_sizes, slice_sizes):
   if dyn:
     aval_out = aval_out.update(shape=lax._merge_dyn_shape(slice_sizes, dyn))
   out = mlir.dynamic_slice(ctx, aval_out, x, start_indices=start_indices)
-  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
+  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 mlir.register_lowering(dynamic_slice_p, _dynamic_slice_lower)
 
@@ -1638,7 +1638,7 @@ def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
   aval_out, = ctx.avals_out
   out = mlir.dynamic_update_slice(ctx, aval_out, x, update,
                                   start_indices=start_indices)
-  return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
+  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 mlir.register_lowering(dynamic_update_slice_p, _dynamic_update_slice_lower)
 
