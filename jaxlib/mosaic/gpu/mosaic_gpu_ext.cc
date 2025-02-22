@@ -182,8 +182,9 @@ void callback_complete(CUcontext context, uint32_t streamId,
         // Convert integer nanoseconds to floating point milliseconds to match
         // the interface of the events-based profiler.
         double duration_ms = (kernel->end - kernel->start) / 1e6;
+        const char* kernel_name = kernel->name;
         profiler_state.timings.push_back(
-            std::make_tuple(kernel->name, duration_ms));
+            std::make_tuple(kernel_name, duration_ms));
       }
     } else if (status == CUPTI_ERROR_MAX_LIMIT_REACHED) {
       // no more records available
