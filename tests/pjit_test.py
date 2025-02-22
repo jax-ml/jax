@@ -6234,6 +6234,14 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out = embed_vd.at[token_bt].get(out_sharding=P('x', None, None))
       self.assertEqual(out.shape, (8, 4, 16))
       self.assertEqual(out.aval.sharding.spec, P('x', None, None))
+
+      out2 = embed_vd.at[token_bt, :].get(out_sharding=P('x', None, None))
+      self.assertEqual(out2.shape, (8, 4, 16))
+      self.assertEqual(out2.aval.sharding.spec, P('x', None, None))
+
+      out3 = embed_vd.at[token_bt, ...].get(out_sharding=P('x', None, None))
+      self.assertEqual(out3.shape, (8, 4, 16))
+      self.assertEqual(out3.aval.sharding.spec, P('x', None, None))
       return out
 
     out = f(embed, tok)

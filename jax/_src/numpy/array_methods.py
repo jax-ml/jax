@@ -43,8 +43,7 @@ from jax._src.numpy import array_api_metadata
 from jax._src.numpy import indexing
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import tensor_contractions
-from jax._src import mesh as mesh_lib
-from jax._src.pjit import auto_axes, PartitionSpec
+from jax._src.pjit import PartitionSpec
 from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
 from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
@@ -778,16 +777,14 @@ class _IndexUpdateRef:
 
     See :mod:`jax.ops` for details.
     """
-    take = partial(indexing.rewriting_take,
-                   indices_are_sorted=indices_are_sorted,
-                   unique_indices=unique_indices, mode=mode,
-                   fill_value=fill_value)
     if out_sharding is not None:
       assert isinstance(out_sharding, (NamedSharding, PartitionSpec))
       out_sharding = canonicalize_sharding(out_sharding, '.get')
-      take = auto_axes(take, axes=mesh_lib.get_abstract_mesh().axis_names,
-                       out_shardings=out_sharding.spec)
-    return take(self.array, self.index)
+    return indexing.rewriting_take(self.array, self.index,
+                                   indices_are_sorted=indices_are_sorted,
+                                   unique_indices=unique_indices, mode=mode,
+                                   fill_value=fill_value,
+                                   out_sharding=out_sharding)
 
   def set(self, values, *, indices_are_sorted=False, unique_indices=False,
           mode=None):

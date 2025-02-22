@@ -33,6 +33,8 @@ from jax._src import errors
 from jax._src.api import jit
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy import einsum
+from jax._src import mesh as mesh_lib
+from jax._src.pjit import auto_axes
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
@@ -600,7 +602,7 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
 
 
 def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
-                   mode=None, fill_value=None):
+                   mode=None, fill_value=None, out_sharding=None):
   # Computes arr[idx].
   # All supported cases of indexing can be implemented as an XLA gather,
   # followed by an optional reverse and broadcast_in_dim.
@@ -624,13 +626,13 @@ def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
 
   treedef, static_idx, dynamic_idx = split_index_for_jit(idx, arr.shape)
   return _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
-                 unique_indices, mode, fill_value)
+                 unique_indices, mode, fill_value, out_sharding)
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
 # @partial(jit, static_argnums=(1, 2))
 def _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
-            unique_indices, mode, fill_value):
+            unique_indices, mode, fill_value, out_sharding):
   idx = merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = index_to_gather(np.shape(arr), idx)  # shared with _scatter_update
   y = arr
@@ -653,11 +655,18 @@ def _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
 
   # We avoid generating a gather when indexer.gather_indices.size is empty.
   if not core.is_empty_shape(indexer.gather_indices.shape):
-    y = lax.gather(
-      y, indexer.gather_indices, indexer.dnums, indexer.gather_slice_shape,
-      unique_indices=unique_indices or indexer.unique_indices,
-      indices_are_sorted=indices_are_sorted or indexer.indices_are_sorted,
-      mode=mode, fill_value=fill_value)
+    internal_gather = partial(
+        lax.gather,
+        dimension_numbers=indexer.dnums,
+        slice_sizes=indexer.gather_slice_shape,
+        unique_indices=unique_indices or indexer.unique_indices,
+        indices_are_sorted=indices_are_sorted or indexer.indices_are_sorted,
+        mode=mode, fill_value=fill_value)
+    if out_sharding is not None:
+      internal_gather = auto_axes(
+          internal_gather, axes=mesh_lib.get_abstract_mesh().axis_names,
+          out_shardings=out_sharding)
+    y = internal_gather(y, indexer.gather_indices)
 
   # Reverses axes with negative strides.
   if indexer.reversed_y_dims:
