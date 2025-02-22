@@ -57,15 +57,21 @@ sharding_configs = {
     for input_sharding, hlo, output_spec in zip(input_shardings, expected_hlos, expected_output_spec)
 }
 
-mxfp8_config = BlockScaleConfig(
-    mode='mxfp8',
-    block_size=32,
-    data_type=jnp.float8_e4m3fn,
-    scale_type=jnp.float8_e8m0fnu,
-    global_scale=None,
-    infer_only=False
-)
-mxfp8_configs = [mxfp8_config for _ in range(3)]
+def create_mxfp8_configs_if_available():
+  if _dtypes.float8_e8m0fnu is None:
+    raise unittest.SkipTest("float8_e8m0fnu is not available.")
+
+  def _create_mxfp8_config():
+    return BlockScaleConfig(
+        mode='mxfp8',
+        block_size=32,
+        data_type=jnp.float8_e4m3fn,
+        scale_type=jnp.float8_e8m0fnu,
+        global_scale=None,
+        infer_only=False
+    )
+  
+  return [_create_mxfp8_config() for _ in range(3)]
 
 def generate_quantized_tensors(
     batch, lhs_non_contract, contract, rhs_non_contract,
@@ -135,7 +141,7 @@ def shard_and_device_put(
 
 def get_hlo_text(in_shardings, block_scale_configs=None):
   if block_scale_configs is None:
-    block_scale_configs = mxfp8_configs
+    block_scale_configs = create_mxfp8_configs_if_available()
 
   mesh_names = ("dp", "tp")
   devices = np.array(jax.local_devices()[:4]).reshape((2, 2))
@@ -190,7 +196,7 @@ class ScaledMatmulTest(jtu.JaxTestCase):
       contract=[160, 96],
       lhs_non_contract=[240, 100],
       dtype=[jnp.float16, jnp.bfloat16, jnp.float32],
-      block_scale_configs=[mxfp8_configs,],
+      block_scale_configs=[create_mxfp8_configs_if_available(),],
   )
   @jtu.run_on_devices("cuda")
   def test_scaled_matmul(
@@ -232,7 +238,7 @@ class ScaledMatmulTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
         in_shardings=sharding_configs,
-        block_scale_configs=[mxfp8_configs,],
+        block_scale_configs=[create_mxfp8_configs_if_available(),],
   )
   @jtu.run_on_devices("cuda")
   def test_scaled_matmul_sharded(self, in_shardings, block_scale_configs):
@@ -291,7 +297,7 @@ class ScaledMatmulTest(jtu.JaxTestCase):
 @jtu.with_config(jax_numpy_dtype_promotion="standard")
 class MxFp8ScaledDotGeneralTest(jtu.JaxTestCase):
 
-  block_scale_configs = mxfp8_configs
+  block_scale_configs = create_mxfp8_configs_if_available()
 
   def setUp(self):
     super().setUp()
