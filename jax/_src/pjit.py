@@ -2742,9 +2742,7 @@ def _mesh_cast_abstract_eval(aval, dst_sharding):
 mesh_cast_p.def_abstract_eval(_mesh_cast_abstract_eval)
 
 def _mesh_cast_impl(x, dst_sharding):
-  x_aval = core.shaped_abstractify(x)
-  with mesh_lib.set_abstract_mesh(x_aval.sharding.mesh):
-    return dispatch.apply_primitive(mesh_cast_p, x, dst_sharding=dst_sharding)
+  return dispatch.apply_primitive(mesh_cast_p, x, dst_sharding=dst_sharding)
 mesh_cast_p.def_impl(_mesh_cast_impl)
 
 def _mesh_cast_transpose_rule(ct, x, dst_sharding):
@@ -2851,7 +2849,7 @@ def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,
                              error_on_manual_to_auto_explict=True)
     with mesh_lib.set_abstract_mesh(new_mesh):
       in_specs = tree_map(lambda a: core.modify_spec_for_auto_manual(
-          a.aval.sharding.spec, new_mesh), args)
+          core.get_aval(a).sharding.spec, new_mesh), args)
       args = mesh_cast(args, in_specs)
       out = fun(*args, **kwargs)
     return mesh_cast(out, out_shardings)
@@ -2873,7 +2871,7 @@ def explicit_axes(fun, *, axes: str | tuple[str, ...] | None = None,
       args = mesh_cast(args, in_shardings)
       out = fun(*args, **kwargs)
     out_specs = tree_map(lambda o: core.modify_spec_for_auto_manual(
-        o.aval.sharding.spec, mesh_lib.get_abstract_mesh()), out)
+        core.get_aval(o).sharding.spec, mesh_lib.get_abstract_mesh()), out)
     return mesh_cast(out, out_specs)
   return decorator
 

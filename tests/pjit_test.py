@@ -6753,6 +6753,17 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       jax.jit(shard_map(g, mesh=mesh, in_specs=P('x', 'y'), out_specs=P('x', 'y'))
               )(np.arange(16).reshape(8, 2))
 
+  @jtu.with_user_mesh((2,), ('x',))
+  def test_auto_axes_numpy_array(self, mesh):
+    @jax.jit
+    def f(x):
+      self.assertTrue(x.aval.sharding.mesh._are_all_axes_auto)
+      return x * 2
+
+    out = auto_axes(f, out_shardings=P('x'))(np.arange(8))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+    self.assertArraysEqual(out, np.arange(8) * 2)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

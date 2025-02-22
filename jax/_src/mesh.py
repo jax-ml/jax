@@ -191,12 +191,11 @@ class _BaseMesh:
   def _name_to_type(self):
     return dict(safe_zip(self.axis_names, self._axis_types_tuple))
 
-  def update_axis_types(self, new_axis_types) -> AbstractMesh:
+  def _get_new_axis_types(self, new_axis_types):
     # dict(self._name_to_type) will copy it.
     updated_name_to_type = dict(self._name_to_type)
     updated_name_to_type.update(axis_names_to_types(new_axis_types))
-    new_axis_types = axis_types_to_names(updated_name_to_type)
-    return AbstractMesh(self.shape_tuple, axis_types=new_axis_types)
+    return axis_types_to_names(updated_name_to_type)
 
 
 _mesh_object_dict = {}  # type: ignore
@@ -427,6 +426,10 @@ class Mesh(_BaseMesh, contextlib.ContextDecorator):
   def abstract_mesh(self):
     return AbstractMesh(self.shape_tuple, axis_types=self.axis_types)
 
+  def update_axis_types(self, new_axis_types) -> Mesh:
+    new_axis_types = self._get_new_axis_types(new_axis_types)
+    return Mesh(self.devices, self.axis_names, axis_types=new_axis_types)
+
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
 
@@ -504,6 +507,10 @@ class AbstractMesh(_BaseMesh):
   @property
   def abstract_mesh(self):
     return self
+
+  def update_axis_types(self, new_axis_types) -> AbstractMesh:
+    new_axis_types = self._get_new_axis_types(new_axis_types)
+    return AbstractMesh(self.shape_tuple, axis_types=new_axis_types)
 
   @property
   def devices(self):

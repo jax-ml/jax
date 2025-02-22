@@ -63,7 +63,8 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding as JSharding
-from jax._src.mesh import AbstractMesh, Mesh
+from jax._src.mesh import (AbstractMesh, Mesh, get_abstract_mesh,
+                           get_concrete_mesh)
 from jax._src.sharding_impls import (
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, AUTO, UnspecifiedValue,
     get_array_mapping as _get_array_mapping, array_mapping_to_axis_resources,
@@ -2190,6 +2191,20 @@ def _concretize_abstract_out_shardings(shardings, avals, device_assignment,
   return tuple(out)
 
 
+def _get_context_mesh(context_mesh: Mesh | None) -> Mesh | None:
+  if context_mesh is None:
+    return context_mesh
+  # Don't update the mesh because the old `with mesh` ctx mgr is set.
+  if get_concrete_mesh() is None:
+    return context_mesh
+  cur_mesh = get_abstract_mesh()
+  if cur_mesh.empty or context_mesh.empty:
+    return context_mesh
+  if cur_mesh == context_mesh.abstract_mesh:
+    return context_mesh
+  return context_mesh.update_axis_types(cur_mesh.axis_types)
+
+
 @profiler.annotate_function
 def lower_sharding_computation(
     closed_jaxpr: core.ClosedJaxpr,
@@ -2244,6 +2259,8 @@ def lower_sharding_computation(
 
   assert len(out_shardings) == len(out_layouts) == len(global_out_avals), (
       len(out_shardings), len(out_layouts), len(global_out_avals))
+
+  context_mesh = _get_context_mesh(context_mesh)
 
   devices_from_context = (None if context_mesh is None or context_mesh.empty
                           else context_mesh._flat_devices_tuple)
@@ -2609,10 +2626,10 @@ def maybe_recover_user_shardings(
             new_shardings, [None] * len(new_shardings), i, None)
 
   # For nullary cases like: `jit(lambda: ..., out_shardings=(None, sharding))`
-  for oi in new_shardings:
-    if oi is not None and type(oi) in _orig_out_sharding_handlers:
+  for ns in new_shardings:
+    if ns is not None and type(ns) in _orig_out_sharding_handlers:
       return _get_out_sharding_from_orig_sharding(
-          new_shardings, [None] * len(new_shardings), oi, None)
+          new_shardings, new_avals, ns, None)
 
   if context_mesh is not None and not context_mesh.empty:
     return [sharding_impls._gspmd_to_named_sharding_via_mesh(n, context_mesh)
