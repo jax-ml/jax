@@ -15,9 +15,12 @@
 """Grouped matrix multiplication kernels for TPU written in Pallas."""
 
 from collections.abc import Callable
+import dataclasses
 import functools
 from typing import Any, Optional
 
+from aqt.jax.v2 import aqt_tensor
+from aqt.jax.v2 import pallas as aqt_pl
 import jax
 from jax import lax
 from jax.experimental import pallas as pl
@@ -25,7 +28,7 @@ from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas.ops.tpu.megablox import common
 import jax.numpy as jnp
 
-
+QTensor = aqt_tensor.QTensor
 partial = functools.partial
 
 
@@ -309,11 +312,12 @@ LutFn = Callable[[int, int, int], Optional[tuple[int, int, int]]]
         "tiling",
         "transpose_rhs",
         "interpret",
+        "quant",
     ],
 )
 def gmm(
     lhs: jnp.ndarray,
-    rhs: jnp.ndarray,
+    rhs: jnp.ndarray | QTensor,
     group_sizes: jnp.ndarray,
     preferred_element_type: jnp.dtype = jnp.float32,
     tiling: tuple[int, int, int] | LutFn | None = (128, 128, 128),
@@ -321,6 +325,7 @@ def gmm(
     existing_out: jnp.ndarray | None = None,
     transpose_rhs: bool = False,
     interpret: bool = False,
+    quant: bool = False,
 ) -> jnp.ndarray:
   """Compute lhs[sizes[i-1]:sizes[i], :] @ rhs for each group 'i'.
 
@@ -336,6 +341,7 @@ def gmm(
     transpose_rhs: True if the rhs needs to be transposed.
     interpret: Whether or not to run the kernel in interpret mode, helpful for
       testing and debugging.
+    quant: Whether to quantize lhs and rhs.
 
   Returns:
     A 2d, jnp.ndarray with shape [m, n].
@@ -390,11 +396,17 @@ def gmm(
       visit_empty_groups=False,
   )
 
+  # We need to know contracting axis when we quantized lhs and rhs
+  if transpose_rhs:
+    dot_general_dims = (((1,), (1,)), ((), ()))
+  else:
+    dot_general_dims = (((1,), (0,)), ((), ()))
+
   def kernel(
       group_metadata,
       group_offset,
-      lhs,
-      rhs,
+      lhs: jax.Array | QTensor,
+      rhs: jax.Array | QTensor,
       existing_out,
       out,
       acc_scratch,
@@ -427,7 +439,10 @@ def gmm(
 
       orig_dtype = x.dtype
       iota = lax.broadcasted_iota(jnp.int32, x.shape, dim)
-      x = x.astype(jnp.float32)
+      if not quant:
+        x = x.astype(jnp.float32)
+      else:
+        x = x.astype(jnp.int32)
       return jnp.where(iota < k_rem, x, 0).astype(orig_dtype)
 
     def _store_accum():
@@ -450,16 +465,30 @@ def gmm(
         mask_k_rem_lhs = lambda x: x
         mask_k_rem_rhs = lambda x: x
 
-      if transpose_rhs:
-        dot_general_dims = (((1,), (1,)), ((), ()))
+      if isinstance(lhs, QTensor):
+        # loaded_lhs = aqt_pl.load_qtensor(lhs)
+        # Let qx: QTensor, qx = quant(x, 8 , ...)
+        # qx.dequant() == qx.qvalue * qx.scale ~= x
+        # Thus, setting qvalue to zero is equivalent to setting original tensor
+        # to zero.
+        qvalue = mask_k_rem_lhs(lhs.qvalue[...])
+        loaded_lhs = dataclasses.replace(lhs, qvalue=qvalue)
+        loaded_lhs = aqt_pl.load_qtensor(loaded_lhs)
       else:
-        dot_general_dims = (((1,), (0,)), ((), ()))
+        loaded_lhs = mask_k_rem_lhs(lhs[...]).astype(input_dtype)
 
-      loaded_lhs = lhs[...]
-      loaded_rhs = rhs[...]
-      acc_scratch[...] += lax.dot_general(
-          mask_k_rem_lhs(loaded_lhs).astype(input_dtype),
-          mask_k_rem_rhs(loaded_rhs).astype(input_dtype),
+      if isinstance(rhs, QTensor):
+        qvalue = mask_k_rem_rhs(rhs.qvalue[...])
+        loaded_rhs = dataclasses.replace(rhs, qvalue=qvalue)
+        loaded_rhs = aqt_pl.load_qtensor(loaded_rhs)
+      else:
+        loaded_rhs = mask_k_rem_rhs(rhs[...]).astype(input_dtype)
+
+      # aqt's dot_general supports QTensor as lhs and rhs.
+      dot_general = aqt_pl.dot_general if quant else lax.dot_general
+      acc_scratch[...] += dot_general(
+          loaded_lhs,
+          loaded_rhs,
           preferred_element_type=jnp.float32,
           dimension_numbers=dot_general_dims,
       )
@@ -505,6 +534,8 @@ def gmm(
   else:
     in_out_block_spec = out_block_spec
     input_output_aliases = {6: 0}
+    if quant:
+      input_output_aliases = {8: 0}
 
   lhs_block_spec = pl.BlockSpec((tm, tk), lhs_transform_indices)
   if transpose_rhs:
@@ -513,7 +544,13 @@ def gmm(
     rhs_block_spec = pl.BlockSpec((None, tk, tn), rhs_transform_indices)
 
   lhs_bytes = lhs.size * lhs.itemsize
-  rhs_bytes = (k * n) * rhs.itemsize  # We don't read all of rhs
+  if isinstance(rhs, QTensor):
+    rhs_bytes = (
+        k * n
+    ) * rhs.qvalue.itemsize  # ignore scale factor as its size marginal.
+  else:
+    rhs_bytes = (k * n) * rhs.itemsize  # We don't read all of rhs
+
   out_bytes = (m * n) * jnp.dtype(preferred_element_type).itemsize
   max_active_tiles = group_metadata[1].size
   bytes_accessed = (
@@ -523,7 +560,8 @@ def gmm(
   cost_estimate = pl.CostEstimate(
       flops=flops, bytes_accessed=bytes_accessed, transcendentals=0
   )
-  call_gmm = pl.pallas_call(
+  pallas_call_fn = aqt_pl.pallas_call if quant else pl.pallas_call
+  call_gmm = pallas_call_fn(
       kernel,
       out_shape=jax.ShapeDtypeStruct((m, n), preferred_element_type),
       grid_spec=pltpu.PrefetchScalarGridSpec(
@@ -539,10 +577,22 @@ def gmm(
       ),
       input_output_aliases=input_output_aliases,
       compiler_params=pltpu.TPUCompilerParams(
-              dimension_semantics=("parallel", "arbitrary", "arbitrary")),
+          dimension_semantics=("parallel", "arbitrary", "arbitrary")
+      ),
       interpret=interpret,
       cost_estimate=cost_estimate,
   )
+
+  if quant:
+    lhs_contracting_axis, rhs_contracting_axis = dot_general_dims[0]
+    # Since block_spec.block_shape of rhs is None, the first axis is reduced
+    # inside kernel, e.g., if block_shape is (None, tn, tk) then a tensor of
+    # shape (tn, tk) will be feteched inside kernel instead of (1, tn, tk).
+    # Therefore, we need to add one to rhs_contracting_axis.
+    rhs_contracting_axis = map(lambda x: x + 1, rhs_contracting_axis)
+    lhs = aqt_pl.quant(lhs, 8, lhs_contracting_axis)
+    if not isinstance(rhs, QTensor):
+      rhs = aqt_pl.quant(rhs, 8, list(rhs_contracting_axis))
 
   out = call_gmm(
       group_metadata,
