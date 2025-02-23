@@ -1344,13 +1344,13 @@ for op, si_impl, ui_impl, f_impl in [
         lax.max_p,
         arith_dialect.maxsi,
         arith_dialect.maxui,
-        arith_dialect.maxnumf,
+        arith_dialect.maximumf,
     ),
     (
         lax.min_p,
         arith_dialect.minsi,
         arith_dialect.minui,
-        arith_dialect.minnumf,
+        arith_dialect.minimumf,
     ),
 ]:
   mosaic_lowering_rules[mgpu.ThreadSemantics.Warpgroup][op] = partial(

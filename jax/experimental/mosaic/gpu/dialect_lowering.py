@@ -385,10 +385,10 @@ for op, impl, is_signed in [
     (arith.XOrIOp, operator.xor, False),
     (arith.MaxSIOp, fa.FragmentedArray.max, True),
     (arith.MaxUIOp, fa.FragmentedArray.max, False),
-    (arith.MaxNumFOp, fa.FragmentedArray.max, None),
+    (arith.MaximumFOp, fa.FragmentedArray.max, None),
     (arith.MinSIOp, fa.FragmentedArray.min, True),
     (arith.MinUIOp, fa.FragmentedArray.min, False),
-    (arith.MinNumFOp, fa.FragmentedArray.min, None),
+    (arith.MinimumFOp, fa.FragmentedArray.min, None),
 ]:
   _lowerings[op.OPERATION_NAME] = functools.partial(
       _binary_op_lowering_rule, impl=impl, is_signed=is_signed
