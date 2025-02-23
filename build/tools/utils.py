@@ -208,7 +208,7 @@ def get_gcc_major_version(gcc_path: str):
     capture_output=True,
     text=True,
   )
-  major_version = int(gcc_version_proc.stdout)
+  major_version = int(gcc_version_proc.stdout.split(".")[0])
 
   return major_version
 
