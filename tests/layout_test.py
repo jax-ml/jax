@@ -23,7 +23,6 @@ from jax.sharding import NamedSharding, PartitionSpec as P, SingleDeviceSharding
 from jax._src import config
 from jax._src.layout import Layout, DeviceLocalLayout as DLL
 from jax._src import test_util as jtu
-from jax._src.lib import xla_extension_version
 from jax._src.util import safe_zip
 from jax.experimental.compute_on import compute_on
 
@@ -32,12 +31,6 @@ jtu.request_cpu_devices(8)
 
 
 class LayoutTest(jtu.JaxTestCase):
-
-  # Remove this setUp once the released xla_extension_version is >= 308.
-  def setUp(self):
-    if xla_extension_version < 308 and not jtu.test_device_matches(['tpu', 'gpu']):
-      self.skipTest("Layouts do not work on CPU backend yet.")
-    super().setUp()
 
   def test_auto_layout(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))

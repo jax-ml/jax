@@ -25,7 +25,6 @@ from jax._src import ad_checkpoint
 from jax._src import debugging
 from jax._src import dispatch
 from jax._src import test_util as jtu
-from jax._src.lib import xla_extension_version
 import jax.numpy as jnp
 import numpy as np
 
@@ -62,9 +61,6 @@ class DebugCallbackTest(jtu.JaxTestCase):
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   @jtu.run_on_devices("cpu")
   def test_async_deadlock(self):
-    if xla_extension_version < 306:
-      self.skipTest("deadlock expected")
-
     # See https://github.com/jax-ml/jax/issues/25861
     def print_it(i, maxiter):
       self.assertIsInstance(i, jax.Array)
