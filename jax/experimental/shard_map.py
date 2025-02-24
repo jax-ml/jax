@@ -1707,10 +1707,12 @@ def _shard_map_transpose(out_cts, *args,
                          jaxpr: core.Jaxpr, mesh, in_names, out_names,
                          check_rep, rewrite, auto):
   mb_div = lambda x, y: x / y if y != 1 else x
-  out_cts = [ad.Zero(_shard_aval(mesh, auto, ns, x.aval)) if type(x) is ad.Zero
+  out_cts = [
+      ad.Zero(_shard_aval(mesh, auto, ns, x.aval)) if type(x) is ad.Zero
       else x if rewrite or dtypes.dtype(x) == dtypes.float0
       else mb_div(x, prod(map(mesh.shape.get, _unmentioned2(mesh, ns, auto))))
-      for ns, x in zip(out_names, out_cts)]
+      for ns, x in zip(out_names, out_cts)
+  ]
   args = tuple(x if type(x) is not ad.UndefinedPrimal else
                ad.UndefinedPrimal(_shard_aval(mesh, auto, ns, x.aval))
                for ns, x in zip(in_names, args))
@@ -1751,12 +1753,17 @@ def _shard_map_transpose(out_cts, *args,
     print("Invalid nan value encountered in the backward pass of a shard_map "
           "function. Calling the de-optimized backward pass.")
     try:
-      _ = fun_trans.call_wrapped(out_cts, args)
+      # TODO(mattjj): Remove this and do `fun_trans.call_wrapped(out_cts, args)`
+      # in eager mode so that output of shmap are not manual.
+      with jax.disable_jit(True):
+        _ = shard_map_p.bind(
+            fun_trans_flat, *all_args, mesh=mesh, in_names=tuple(new_in_names),
+            out_names_thunk=new_out_names_thunk, check_rep=check_rep,
+            rewrite=rewrite, auto=auto)
     except (FloatingPointError, ZeroDivisionError) as e2:
       raise e2 from None
     else:
       dispatch._raise_no_nan_in_deoptimized(e)
-
   return tree_unflatten(out_tree(), out_flat)
 ad.primitive_transposes[shard_map_p] = _shard_map_transpose
 

@@ -2555,8 +2555,7 @@ def _gspmd_to_named_sharding(
   assert isinstance(out_s, GSPMDSharding)
   assert isinstance(orig_in_s, NamedSharding)
   assert isinstance(orig_in_s.mesh, Mesh)
-  if (out_aval is not None and not out_aval.sharding.mesh.empty and
-      out_aval.sharding.mesh._are_all_axes_auto):
+  if out_aval is not None and not out_aval.sharding.mesh.empty:
     mesh = _abstract_to_concrete_mesh(
         out_aval.sharding.mesh, out_s._device_assignment)
   else:
