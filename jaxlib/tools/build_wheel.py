@@ -195,6 +195,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu):
           "__main__/jaxlib/gpu_common_utils.py",
           "__main__/jaxlib/gpu_solver.py",
           "__main__/jaxlib/gpu_sparse.py",
+          "__main__/jaxlib/plugin_support.py",
           "__main__/jaxlib/version.py",
           "__main__/jaxlib/xla_client.py",
           f"xla/xla/python/xla_extension.{pyext}",
