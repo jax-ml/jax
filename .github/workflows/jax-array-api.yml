@@ -38,7 +38,7 @@ jobs:
     - name: Install dependencies
       run: |
         pip install uv~=0.5.30
-        uv pip install --system .[ci] --system pytest-xdist -r array-api-tests/requirements.txt
+        uv pip install --system .[ci] pytest-xdist -r array-api-tests/requirements.txt
     - name: Run the test suite
       env:
         ARRAY_API_TESTS_MODULE: jax.numpy
