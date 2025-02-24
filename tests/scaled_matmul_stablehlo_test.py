@@ -73,6 +73,7 @@ def create_mxfp8_configs_if_available():
   
   return [_create_mxfp8_config() for _ in range(3)]
 
+
 def generate_quantized_tensors(
     batch, lhs_non_contract, contract, rhs_non_contract,
     configs, dtype=jnp.float32,
