@@ -6126,17 +6126,19 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
 
   is_split, out_split = _split_on_one_axis(operand.shape, new_sizes, 'Splitting')
   if is_split:
-    return _split_an_axis_sharding_rule(operand, out_split, new_sizes)
+    return _split_an_axis_sharding_rule(operand, out_split, new_sizes,
+                                        dimensions)
 
   is_merge, operand_merge = _merge_on_one_axis(operand, new_sizes)
   if is_merge:
-    return _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes)
+    return _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes,
+                                        dimensions)
 
   raise ValueError(
-      'This reshape is not supported. Only 4 out of the box reshapes are'
-      ' supported.Adding/removing singleton dims and splitting/merging without'
-      ' sharded split/merged axes are supported. Please specify the sharding of'
-      ' the output via the `out_sharding` argument of jax.lax.reshape.')
+      'This reshape is not supported. Please specify the sharding of'
+      ' the output via the `out_sharding` argument of jax.lax.reshape. Got'
+      f' operand shape: {operand.shape}, new sizes: {new_sizes} and'
+      f' operand spec: {operand.sharding.spec}')
 
 def _split_merge_singleton_dim_sharding_rule(operand, new_sizes):
   filtered_spec = [sp for sh, sp in zip(operand.shape, operand.sharding.spec)
@@ -6151,38 +6153,54 @@ def _split_merge_singleton_dim_sharding_rule(operand, new_sizes):
       new_spec.append(sp)
   return operand.sharding.with_spec(new_spec)
 
-def _split_an_axis_sharding_rule(operand, out_split, new_sizes):
+def _get_spec_size(sp, mesh):
+  tup_sp = sp if isinstance(sp, tuple) else (sp,)
+  return math.prod(mesh.shape[t] for t in tup_sp)
+
+def _split_an_axis_sharding_rule(operand, out_split, new_sizes, dimensions):
   new_spec = []
-  for sh, out, sp in safe_zip(operand.shape, out_split, operand.sharding.spec):
+  mesh = operand.sharding.mesh
+  for out, sp in safe_zip(out_split, operand.sharding.spec):
     if isinstance(out, list):
-      if sp is not None:
+      if sp is None:
+        new_spec.extend([None] * len(out))
+      elif dimensions is None and out[0] % _get_spec_size(sp, mesh) == 0:
+        new_spec.extend([sp] + [None] * (len(out) - 1))
+      else:
         raise ValueError(
-            f'Split axis cannot be sharded. Got operand dim {sh} with spec'
-            f' {sp}. Please specify the sharding of the output via the'
-            ' `sharding` argument of jax.lax.reshape.')
-      new_spec.extend([None] * len(out))
+            'This reshape is not supported. Please specify the sharding of the'
+            ' output via the `sharding` argument of jax.lax.reshape. Got'
+            f' operand shape: {operand.shape}, new sizes: {new_sizes} and'
+            f' operand spec: {operand.sharding.spec}')
     else:
       new_spec.append(sp)
-  assert len(new_spec) == len(new_sizes)
+  assert len(new_spec) == len(new_sizes), (new_spec, new_sizes)
   return operand.sharding.with_spec(new_spec)
 
 
-def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes):
+def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes, dimensions):
   new_spec = []
+  mesh = operand.sharding.mesh
   op_spec = iter(operand.sharding.spec)
-  for op_merge in operand_merge:
+  for new_size, op_merge in zip(new_sizes, operand_merge):
     if isinstance(op_merge, list):
       sp = [next(op_spec) for _ in op_merge]
-      if not all(s is None for s in sp):
+      if all(s is None for s in sp):
+        new_spec.append(None)
+      elif (sp[0] is not None and all(s is None for s in sp[1:]) and
+            dimensions is None):
+        assert new_size % _get_spec_size(sp[0], mesh) == 0
+        new_spec.append(sp[0])
+      else:
         raise ValueError(
-            f'Merged axis cannot be sharded. Got {sp}. Please specify the'
-            ' sharding of the output via the `sharding` argument of'
-            ' jax.lax.reshape.')
-      new_spec.append(None)
+            'This reshape is not supported. Please specify the sharding of the'
+            ' output via the `sharding` argument of jax.lax.reshape. Got'
+            f' operand shape: {operand.shape}, new sizes: {new_sizes} and'
+            f' operand spec: {operand.sharding.spec}')
     else:
       new_spec.append(next(op_spec))
   assert next(op_spec, None) is None
-  assert len(new_spec) == len(new_sizes)
+  assert len(new_spec) == len(new_sizes), (new_spec, new_sizes)
   return operand.sharding.with_spec(new_spec)
 
 

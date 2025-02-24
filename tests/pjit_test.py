@@ -5383,8 +5383,14 @@ class ShardingInTypesTest(jtu.JaxTestCase):
        P('x', None, None), P('x', None, None, None, None),
        'Splitting on more than 1 axis is not supported'
       ),
-      ('split_4_error', (4, 6, 8), (4, 2, 3, 8),
-       P('x', 'y', None), None, 'Split axis cannot be sharded'
+      ('split_4', (4, 6, 8), (4, 2, 3, 8),
+       P('x', 'y', None), P('x', 'y', None, None), ''
+      ),
+      ('split_4_xy', (4, 12, 8), (4, 4, 3, 8),
+       P(None, ('x', 'y'), None), P(None, ('x', 'y'), None, None), ''
+      ),
+      ('split_4_error', (4, 6, 8), (4, 3, 2, 8),
+       P('x', 'y', None), None, 'This reshape is not supported'
       ),
       ('split_5_error', (4, 6, 8), (4, 4, 2, 6),
        P('x', None, None), None, 'This reshape is not supported'
@@ -5401,12 +5407,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       ('merge_3', (4, 6, 2, 2, 2), (4, 6, 8),
        P('x', None, None, None, None), P('x', None, None), ''
       ),
+      ('merge_4', (4, 2, 3, 8), (4, 6, 8),
+       P(None, 'y', None, 'x'), P(None, 'y', 'x'), ''
+      ),
+      ('merge_4_xy', (4, 4, 3, 8), (4, 12, 8),
+       P(None, ('x', 'y'), None, None), P(None, ('x', 'y'), None), ''
+      ),
       ('merge_4_error', (4, 2, 3, 2, 4), (4, 6, 8),
        P('x', None, None, None, None), P('x', None, None),
        'Merging on more than 1 axis is not supported'
       ),
-      ('merge_5_error', (4, 2, 3, 8), (4, 6, 8),
-       P(None, 'y', None, 'x'), None, 'Merged axis cannot be sharded'
+      ('merge_5_error', (4, 2, 6, 8), (4, 12, 8),
+       P(None, None, 'y', 'x'), None, 'This reshape is not supported'
       ),
       ('merge_6_error', (4, 2, 3, 8), (4, 8, 6),
        P(None, 'y', None, 'x'), None, 'This reshape is not supported'
