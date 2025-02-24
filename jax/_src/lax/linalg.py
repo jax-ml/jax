@@ -31,8 +31,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import util
-from jax._src.core import (
-    Primitive, ShapedArray, is_constant_dim, is_constant_shape)
+from jax._src.core import ShapedArray, is_constant_dim, is_constant_shape
 from jax._src import ffi
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -1909,60 +1908,30 @@ mlir.register_lowering(schur_p, _schur_cpu_lowering, platform="cpu")
 
 
 # Singular value decomposition
-def _svd_impl(operand, *, full_matrices, compute_uv, subset_by_index=None,
-              algorithm=None):
-  return dispatch.apply_primitive(
-      svd_p,
-      operand,
-      full_matrices=full_matrices,
-      compute_uv=compute_uv,
-      subset_by_index=subset_by_index,
-      algorithm=algorithm,
-  )
 
-
-def _svd_abstract_eval(operand, *, full_matrices, compute_uv, subset_by_index,
-                       algorithm=None):
-  del algorithm  # unused
-  if isinstance(operand, ShapedArray):
-    batch_dims = operand.shape[:-2]
-    m = operand.shape[-2]
-    n = operand.shape[-1]
-    rank = core.min_dim(m, n)
-    if subset_by_index is not None:
-      if full_matrices and subset_by_index != (0, rank):
-        raise ValueError("full_matrices and subset_by_index cannot both be set")
-      rank = min(rank, subset_by_index[1] - subset_by_index[0])
-
-    batch_s = operand.sharding.spec[:-2]
-    ms = operand.sharding.spec[-2]
-    ns = operand.sharding.spec[-1]
-    if ms is not None or ns is not None:
-      raise ValueError(f'm and n should be unsharded. Got m: {ms} and n: {ns}'
-                        ' specs. Try marking their specs as None.')
-    rank_s = None
-    s_sharding = operand.sharding.with_spec(P(*batch_s + (rank_s,)))
-    u_sharding = operand.sharding.with_spec(
-        P(*batch_s + (ms, ms if full_matrices else rank_s)))
-    vt_sharding = operand.sharding.with_spec(
-        P(*batch_s + (ns if full_matrices else rank_s, ns)))
-
-    s = operand.update(
-        shape=batch_dims + (rank,),
-        dtype=lax_internal._complex_basetype(operand.dtype),
-        sharding=s_sharding
+def _svd_shape_rule(shape, *, full_matrices, compute_uv, subset_by_index, **_):
+  m, n = shape
+  rank = core.min_dim(m, n)
+  if subset_by_index is not None:
+    if full_matrices and subset_by_index != (0, rank):
+      raise ValueError("full_matrices and subset_by_index cannot both be set")
+    rank = core.min_dim(rank, subset_by_index[1] - subset_by_index[0])
+  if compute_uv:
+    return (
+        (rank,),
+        (m, m if full_matrices else rank),
+        (n if full_matrices else rank, n),
     )
-    if compute_uv:
-      u = operand.update(shape=batch_dims + (m, m if full_matrices else rank),
-                         sharding=u_sharding)
-      vt = operand.update(shape=batch_dims + (n if full_matrices else rank, n),
-                          sharding=vt_sharding)
-      return s, u, vt
-    else:
-      return s,
   else:
-    raise NotImplementedError
+    return (rank,),
 
+def _svd_dtype_rule(dtype, *, compute_uv, **_):
+  dtype = dtypes.canonicalize_dtype(dtype)
+  real_dtype = lax_internal._complex_basetype(dtype)
+  if compute_uv:
+    return real_dtype, dtype, dtype
+  else:
+    return real_dtype,
 
 @config.default_matmul_precision("float32")
 def _svd_jvp_rule(
@@ -2013,7 +1982,6 @@ def _svd_jvp_rule(
 
   return (s, U, Vt), (ds, dU, _H(dV))
 
-
 def _empty_svd(a, *, full_matrices, compute_uv):
   batch_shape = a.shape[:-2]
   m, n = a.shape[-2:]
@@ -2031,7 +1999,6 @@ def _empty_svd(a, *, full_matrices, compute_uv):
   if m < n:
     u, v = v, u
   return s, u, v
-
 
 def _svd_computation_attr(compute_uv, full_matrices):
   mode = "A"
@@ -2112,7 +2079,6 @@ def _svd_cpu_gpu_lowering(
     result += [u, vt]
 
   return result
-
 
 def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
                           target_name_prefix, algorithm):
@@ -2207,7 +2173,6 @@ def _svd_gpu_sub_lowering(ctx, operand, *, full_matrices, compute_uv,
   else:
     return s, u, vt, info
 
-
 def _svd_tpu(a, *, full_matrices, compute_uv, subset_by_index, algorithm=None):
   if algorithm is not None and algorithm != SvdAlgorithm.DEFAULT:
     raise NotImplementedError(
@@ -2229,7 +2194,6 @@ def _svd_tpu(a, *, full_matrices, compute_uv, subset_by_index, algorithm=None):
   else:
     s = fn(a)
     return [s]
-
 
 def _svd_tpu_lowering_rule(
     ctx, operand, *, full_matrices, compute_uv, subset_by_index, algorithm=None
@@ -2254,44 +2218,11 @@ def _svd_tpu_lowering_rule(
       subset_by_index=subset_by_index,
   )
 
-
-def _svd_batching_rule(
-    batched_args, batch_dims, *, full_matrices, compute_uv, subset_by_index,
-    algorithm=None,
-):
-  x, = batched_args
-  bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
-  outs = svd_p.bind(
-      x,
-      full_matrices=full_matrices,
-      compute_uv=compute_uv,
-      subset_by_index=subset_by_index,
-      algorithm=algorithm,
-  )
-
-  if compute_uv:
-    return outs, (0, 0, 0)
-  else:
-    return outs, (0,)
-
-
-svd_p = Primitive('svd')
-svd_p.multiple_results = True
-svd_p.def_impl(_svd_impl)
-svd_p.def_abstract_eval(_svd_abstract_eval)
+svd_p = linalg_primitive(
+    _svd_dtype_rule, (_float | _complex,), (2,), _svd_shape_rule, "svd",
+    multiple_results=True)
 ad.primitive_jvps[svd_p] = _svd_jvp_rule
-batching.primitive_batchers[svd_p] = _svd_batching_rule
-
-mlir.register_lowering(
-    svd_p, partial(_svd_cpu_gpu_lowering, target_name_prefix='cpu'),
-    platform='cpu')
-mlir.register_lowering(
-    svd_p, partial(_svd_cpu_gpu_lowering, target_name_prefix='cu'),
-    platform='cuda')
-mlir.register_lowering(
-    svd_p, partial(_svd_cpu_gpu_lowering, target_name_prefix='hip'),
-    platform='rocm')
+register_cpu_gpu_lowering(svd_p, _svd_cpu_gpu_lowering)
 mlir.register_lowering(svd_p, _svd_tpu_lowering_rule)
 
 
