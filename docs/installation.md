@@ -20,7 +20,7 @@ different builds for different operating systems and accelerators.
 
 * **TPU (Google Cloud TPU VM)**
   ```
-  pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+  pip install -U "jax[tpu]"
   ```
 
 (install-supported-platforms)=
@@ -199,7 +199,7 @@ To install JAX along with appropriate versions of `jaxlib` and `libtpu`, you can
 the following in your cloud TPU VM:
 
 ```bash
-pip install "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+pip install "jax[tpu]"
 ```
 
 For users of Colab (https://colab.research.google.com/), be sure you are
