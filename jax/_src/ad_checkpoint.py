@@ -458,7 +458,7 @@ def saved_residuals(f: Callable,
   return _saved_residuals(jaxpr, debug_info.arg_names)
 
 def _saved_residuals(jaxpr: core.Jaxpr,
-                     arg_names: tuple[str | None, ...]) -> list[tuple[core.AbstractValue, str]]:
+                     arg_names: Sequence[str]) -> list[tuple[core.AbstractValue, str]]:
   res_lits = [x for x in jaxpr.outvars if     isinstance(x, core.Literal)]
   res_vars = {x for x in jaxpr.outvars if not isinstance(x, core.Literal)}
 
@@ -473,7 +473,7 @@ def _saved_residuals(jaxpr: core.Jaxpr,
 
   for i, v in enumerate(jaxpr.invars):
     if v in res_vars:
-      if arg_names[i] is not None:
+      if arg_names[i]:
         src = f'from the argument {arg_names[i]}'
       else:
         src = 'from the argument at flattened index {i}'

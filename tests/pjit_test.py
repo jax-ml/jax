@@ -6858,7 +6858,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     spec = P(resources, None)
     mesh_size = str(math.prod([dim[1] for dim in mesh]))
     error = re.compile(
-        r"One of pjit outputs with pytree key path \['rrr'\].*" + spec_regex(spec) + r".*"
+        r"One of pjit outputs with pytree key path result\['rrr'\].*" + spec_regex(spec) + r".*"
         r"implies that the global size of its dimension 0 should be "
         r"divisible by " + mesh_size + r", but it is equal to 3", re.M | re.S)
     with self.assertRaisesRegex(ValueError, error):

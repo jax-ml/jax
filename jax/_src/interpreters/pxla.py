@@ -3260,7 +3260,7 @@ def check_array_xla_sharding_layout_match(
   from jax._src.array import ArrayImpl
   # jaxpr_debug_info.arg_names are before DCE, so need to DCE them.
   arg_names = (
-      [a for i, a in enumerate(jaxpr_debug_info.arg_names)  # type: ignore
+      [a for i, a in enumerate(jaxpr_debug_info.arg_names)
        if i in kept_var_idx]
   )
   errors = []

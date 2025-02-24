@@ -842,7 +842,7 @@ def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
   """Moves the constvars to the start of invars."""
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   dbg = jaxpr.debug_info._replace(
-      arg_names=(None,) * len(jaxpr.constvars) + jaxpr.debug_info.arg_names)
+      arg_names=("",) * len(jaxpr.constvars) + jaxpr.debug_info.arg_names)
   lifted_jaxpr = Jaxpr(constvars=(),
                        invars=jaxpr.constvars + jaxpr.invars,
                        outvars=jaxpr.outvars, eqns=jaxpr.eqns,
@@ -1574,7 +1574,7 @@ class DynamicJaxprTracer(core.Tracer):
 
     origin = ("The error occurred while tracing the function "
               f"{dbg.func_src_info} for {dbg.traced_for}. ")
-    if invar_pos and dbg.arg_names:
+    if invar_pos:
       try:
         arg_names = [dbg.arg_names[i] for i in invar_pos]
       except IndexError:

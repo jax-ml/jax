@@ -2274,7 +2274,7 @@ def _check_sharding(aval, s):
       aval = core.get_token_aval()
     if not isinstance(s, PmapSharding):
       pjit.pjit_check_aval_sharding(
-          (s,), (aval,), None, "device_put args", allow_uneven_sharding=False)
+          (s,), (aval,), ("",), "device_put args", allow_uneven_sharding=False)
     s.shard_shape(aval.shape)  # should raise an Error if incompatible
 
 

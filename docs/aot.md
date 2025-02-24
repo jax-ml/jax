@@ -56,7 +56,7 @@ some other features along the way. An example:
 >>> # Print lowered HLO
 >>> print(lowered.as_text())
 module @jit_f attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 : i32} {
-  func.func public @main(%arg0: tensor<i32>, %arg1: tensor<i32>) -> (tensor<i32> {jax.result_info = ""}) {
+  func.func public @main(%arg0: tensor<i32>, %arg1: tensor<i32>) -> (tensor<i32> {jax.result_info = "result"}) {
     %c = stablehlo.constant dense<2> : tensor<i32>
     %0 = stablehlo.multiply %c, %arg0 : tensor<i32>
     %1 = stablehlo.add %0, %arg1 : tensor<i32>
@@ -140,7 +140,7 @@ to invoke the resulting compiled function. Continuing with our example above:
 >>> # Lowered HLO, specialized to the *value* of the first argument (7)
 >>> print(lowered_with_x.as_text())
 module @jit_f attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 : i32} {
-  func.func public @main(%arg0: tensor<i32>) -> (tensor<i32> {jax.result_info = ""}) {
+  func.func public @main(%arg0: tensor<i32>) -> (tensor<i32> {jax.result_info = "result"}) {
     %c = stablehlo.constant dense<14> : tensor<i32>
     %0 = stablehlo.add %c, %arg0 : tensor<i32>
     return %0 : tensor<i32>
