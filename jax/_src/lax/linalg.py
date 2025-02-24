@@ -1208,7 +1208,8 @@ def _eigh_jvp_rule(
   w = w_real.astype(a.dtype)
   eye_n = lax_internal._eye(a.dtype, (n, n))
   # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
-  Fmat = lax.integer_pow(eye_n + w[..., np.newaxis, :] - w[..., np.newaxis], -1) - eye_n
+  with config.numpy_rank_promotion("allow"):
+    Fmat = lax.integer_pow(eye_n + w[..., np.newaxis, :] - w[..., np.newaxis], -1) - eye_n
   # eigh impl doesn't support batch dims, but future-proof the grad.
   dot = partial(lax.dot if a.ndim == 2 else lax.batch_matmul,
                 precision=lax.Precision.HIGHEST)
