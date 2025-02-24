@@ -28,6 +28,7 @@ from typing import Any, Callable, Generic, TypeVar
 import weakref
 
 import jax
+from jax.experimental.mosaic.gpu import fragmented_array as fa
 from jax._src.interpreters import mlir
 from jax._src.lib import mosaic_gpu_dialect as dialect
 from jaxlib.mlir import ir
@@ -546,13 +547,26 @@ def _initialize_scratch(
 def _declare_runtime_functions():
   """Declares the runtime functions that can be used by the generated code."""
   ptr_ty = ir.Type.parse("!llvm.ptr")
+  i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
   arg_tys = [ptr_ty, ptr_ty, i64, i64, ptr_ty, ptr_ty, i64, ptr_ty]
   init_tma_desc_type = ir.FunctionType.get(arg_tys, [])
   func.FuncOp(
       "mosaic_gpu_init_tma_desc", init_tma_desc_type, visibility="private"
   )
-
+  rtype = ir.IntegerType.get_signless(32)
+  ftype = ir.Type.parse(f'!llvm.func<{rtype} ()>')
+  ftype_attr = ir.TypeAttr.get(ftype)
+  llvm.LLVMFuncOp("nvshmem_my_pe", ftype_attr)
+  ftype = ir.Type.parse(f'!llvm.func<void ({ptr_ty},{ptr_ty},{i64},{i32})>')
+  ftype_attr = ir.TypeAttr.get(ftype)
+  llvm.LLVMFuncOp("nvshmem_putmem", ftype_attr)
+  ftype = ir.Type.parse(f'!llvm.func<void ({ptr_ty},{i32},{i32})>')
+  ftype_attr = ir.TypeAttr.get(ftype)
+  llvm.LLVMFuncOp("nvshmem_int32_atomic_add", ftype_attr)
+  ftype = ir.Type.parse(f'!llvm.func<void ({ptr_ty},{i32},{i32})>')
+  ftype_attr = ir.TypeAttr.get(ftype)
+  llvm.LLVMFuncOp("nvshmem_int32_wait_until", ftype_attr)
 
 def as_gpu_kernel(
     body,
@@ -733,3 +747,15 @@ def as_torch_gpu_kernel(
   apply.destructor = weakref.ref(apply, unload)
 
   return apply
+
+
+def device_id_to_llvm(device_id):
+  i32_ty = ir.IntegerType.get_signless(32)
+  if isinstance(device_id, (int, np.integer)):
+    return c(device_id, i32_ty)
+  elif (isinstance(device_id, fa.FragmentedArray) and
+        isinstance(device_id.layout, fa.WGSplatFragLayout) and
+        device_id.shape == ()):
+    return device_id.registers.item()
+  else:
+    raise NotImplementedError(type(device_id))
