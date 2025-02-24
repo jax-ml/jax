@@ -591,23 +591,18 @@ def debug_info(
     static_argnums: Sequence[int] = (),
     static_argnames: Sequence[str] = (),
     result_paths_thunk: Callable[[], tuple[str, ...]] | None = None,
-    # TODO(necula): check if we really need this, e.g., to speed up tracing?
-    sourceinfo: str | None = None,
-    signature: inspect.Signature | None = None,
 ) -> core.DebugInfo:
   """Constructd core.DebugInfo for a function given example args and kwargs.
 
-  `args` and `kwargs` are example positional and keyword arguments, users with
-  `inspect.Signature` to get the names of argments. The arguments that are
-  considered static for tracing purposes should be included, and designated
-  using `static_argnums` and `static_argnames`.
+  `args` and `kwargs` are example positional and keyword arguments, used with
+  `inspect.Signature` to get the names of arguments. The arguments that are
+  considered static for tracing purposes should be included, and should be
+  designated using `static_argnums` and `static_argnames`.
 
   See docstring for linear_util.DebugInfo.
   """
-  if sourceinfo is None:
-    sourceinfo = fun_sourceinfo(fun)
-  if signature is None:
-    signature = fun_signature(fun)
+  sourceinfo = fun_sourceinfo(fun)
+  signature = fun_signature(fun)
   arg_names = _non_static_arg_names(signature, args, kwargs, static_argnums,
                                     static_argnames)
   return core.DebugInfo(traced_for, sourceinfo, arg_names, result_paths_thunk)
