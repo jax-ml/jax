@@ -83,6 +83,7 @@ class RooflineResult:
   ici_latency: dict[str, int] = field(default_factory=dict)
   hbm_bytes: int = 0
   peak_hbm_bytes: int = 0
+  unfused_hbm_bytes: int = 0
 
   @classmethod
   def zeros(cls) -> "RooflineResult":
@@ -99,6 +100,7 @@ class RooflineResult:
         ici_latency=merge_ici_dicts(self.ici_latency, other.ici_latency),
         hbm_bytes=self.hbm_bytes + other.hbm_bytes,
         peak_hbm_bytes=max(self.peak_hbm_bytes, other.peak_hbm_bytes),
+        unfused_hbm_bytes=self.unfused_hbm_bytes + other.unfused_hbm_bytes,
     )
 
   def __mul__(self, constant: int | float) -> "RooflineResult":
@@ -109,6 +111,7 @@ class RooflineResult:
         ici_latency={k: int(v * constant) for k, v in self.ici_latency.items()},
         hbm_bytes=int(self.hbm_bytes * constant),
         peak_hbm_bytes=int(self.peak_hbm_bytes * constant),
+        unfused_hbm_bytes=int(self.unfused_hbm_bytes * constant),
     )
 
   def __rmul__(self, constant: int | float) -> "RooflineResult":
