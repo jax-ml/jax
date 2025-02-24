@@ -80,6 +80,7 @@ import numpy as np
 NDIndexer = indexing.NDIndexer
 TPUMemorySpace = tpu_core.TPUMemorySpace
 MemorySpace = pallas_core.MemorySpace | TPUMemorySpace
+HBM = tpu_core.TPUMemorySpace.HBM
 VMEM = tpu_core.TPUMemorySpace.VMEM
 SMEM = tpu_core.TPUMemorySpace.SMEM
 # Booleans are stored as the following type in memrefs.
@@ -653,11 +654,13 @@ def lower_jaxpr_to_module(
   if grid:
     for i, bm in enumerate(grid_mapping.block_mappings):
       func_name = f"transform_{i}"
-      # ANY and SEMAPHORE operands don't support windowing and require empty window_params.
+      # ANY, HBM and SEMAPHORE operands don't support windowing and require empty window_params.
       tpu_memory_space = _memory_space_to_tpu_memory_space(
           bm.block_aval.memory_space)
+      print("index_map_jaxpr: ", bm.index_map_jaxpr)
       if (
           tpu_memory_space == tpu_core.TPUMemorySpace.ANY
+          or tpu_memory_space == tpu_core.TPUMemorySpace.HBM
           or tpu_memory_space == tpu_core.TPUMemorySpace.SEMAPHORE
       ):
         # We checked above that the block does not require windowing.

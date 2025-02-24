@@ -98,6 +98,7 @@ class TPUCompilerParams(pallas_core.CompilerParams):
 
 class TPUMemorySpace(enum.Enum):
   ANY = "any"  # TODO(b/368401328): Remove this and just use pl.ANY.
+  HBM = "hbm"
   VMEM = "vmem"
   SMEM = "smem"
   CMEM = "cmem"
