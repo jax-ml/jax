@@ -4360,8 +4360,6 @@ def _convert_elt_type_fwd_rule(eqn):
     return [None], eqn
 
 def _convert_elt_type_pp_rule(eqn, context, settings):
-  # don't print new_dtype because the output binder shows it, don't print
-  # weak_type when false
   params = dict(eqn.params)
   if params['sharding'] is None:
     del params['sharding']  # don't show trivial case
