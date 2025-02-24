@@ -115,6 +115,7 @@ def _dot_general_roofline(
 def _return_zeros_if_one_sized_axis(
   ctx: roofline.RooflineRuleContext, axes: tuple[str, ...]
 ) -> roofline.RooflineResult | None:
+  assert ctx.mesh
   axes_size = np.prod([ctx.mesh.shape[axis] for axis in axes])
   if axes_size > 1:
     return None
@@ -134,6 +135,7 @@ def _ring_collective_roofline(
   if zeros_result := _return_zeros_if_one_sized_axis(ctx, axes):
     return zeros_result
 
+  assert ctx.mesh
   mesh = ctx.mesh.shape
   current_shard_size = roofline.RooflineShape.total_bytes(ctx.avals_in)
   if is_reduce:
@@ -215,6 +217,7 @@ def _all_to_all_roofline(
   if zeros_result := _return_zeros_if_one_sized_axis(ctx, axis_name):
     return zeros_result
 
+  assert ctx.mesh
   mesh = ctx.mesh.shape
   size = roofline.RooflineShape.total_bytes(ctx.avals_in) * np.prod([
     mesh[axis] for axis in axis_name
@@ -250,6 +253,7 @@ def _ppermute_roofline(
   if zeros_result := _return_zeros_if_one_sized_axis(ctx, axis_name):
     return zeros_result
 
+  assert ctx.mesh
   mesh = ctx.mesh.shape
   mesh_dims: list[int] = [mesh.get(axis, 1) for axis in axis_name]
   shard_size = roofline.RooflineShape.total_bytes(ctx.avals_in)
