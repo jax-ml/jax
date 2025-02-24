@@ -35,15 +35,14 @@ jobs:
           rm -rf ${GITHUB_WORKSPACE}/jax-metal-venv
           python3 -m venv ${GITHUB_WORKSPACE}/jax-metal-venv
           source  ${GITHUB_WORKSPACE}/jax-metal-venv/bin/activate
-          pip install -U pip numpy wheel
-          pip install absl-py pytest
+          pip install uv~=0.5.30
+          uv pip install -U pip numpy wheel absl-py pytest
           if [[ "${{ matrix.jaxlib-version }}" == "nightly" ]]; then
-            pip install --pre jaxlib \
+            uv pip install --pre jaxlib \
               -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
           fi;
           cd jax
-          pip install .
-          pip install jax-metal
+          uv pip install . jax-metal
       - name: Run test
         run: |
           source  ${GITHUB_WORKSPACE}/jax-metal-venv/bin/activate

@@ -111,9 +111,9 @@ jobs:
 
           export PATH=${GITHUB_WORKSPACE}/cpython-tsan/bin/:$PATH
 
-          python3 -m pip install -r requirements/build_requirements.txt
+          python3 -m pip install uv~=0.5.30
           # Make sure to install a compatible Cython version (master branch is best for now)
-          python3 -m pip install -U git+https://github.com/cython/cython
+          python3 -m uv pip install -r requirements/build_requirements.txt -U git+https://github.com/cython/cython
 
           CC=clang-18 CXX=clang++-18 python3 -m pip wheel --wheel-dir dist -v . --no-build-isolation -Csetup-args=-Db_sanitize=thread -Csetup-args=-Dbuildtype=debugoptimized
 

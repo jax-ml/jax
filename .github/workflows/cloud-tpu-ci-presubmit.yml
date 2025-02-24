@@ -74,8 +74,7 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install JAX test requirements
         run: |
-          $JAXCI_PYTHON -m pip install -U -r build/test-requirements.txt
-          $JAXCI_PYTHON -m pip install -U -r build/collect-profile-requirements.txt
+          $JAXCI_PYTHON -m uv pip install -U -r build/test-requirements.txt -r build/collect-profile-requirements.txt
       - name: Build jaxlib at head with latest XLA
         run: |
           # Build and install jaxlib at head
@@ -86,7 +85,7 @@ jobs:
                   --verbose
 
           # Install libtpu
-          $JAXCI_PYTHON -m pip install --pre libtpu \
+          $JAXCI_PYTHON -m uv pip install --pre libtpu \
             -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
       # Halt for testing
       - name: Wait For Connection

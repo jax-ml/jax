@@ -38,10 +38,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install JAX test requirements
         run: |
-          pip install .[ci] -r build/test-requirements.txt
+          pip install uv~=0.5.30
+          uv pip install .[ci] -r build/test-requirements.txt
       - name: Install numpy & scipy development versions
         run: |
-          pip install \
+          uv pip install \
             -i https://pypi.anaconda.org/scientific-python-nightly-wheels/simple \
             --no-deps \
             --pre \

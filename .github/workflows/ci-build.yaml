@@ -75,7 +75,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        pip install uv
+        pip install uv~=0.5.30
         uv pip install --system .[minimum-jaxlib] -r build/test-requirements.txt
 
     - name: Run tests
@@ -113,7 +113,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        pip install uv
+        pip install uv~=0.5.30
         uv pip install --system -r docs/requirements.txt
     - name: Test documentation
       env:
@@ -147,7 +147,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        pip install uv
+        pip install uv~=0.5.30
         uv pip install --system -r docs/requirements.txt
     - name: Render documentation
       run: |
@@ -173,7 +173,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        pip install uv
+        pip install uv~=0.5.30
         uv pip install --system .[minimum-jaxlib] tensorflow -r build/test-requirements.txt
 
     - name: Run tests
@@ -205,7 +205,7 @@ jobs:
         python-version: 3.12
     - name: Install JAX
       run: |
-        pip install uv
+        pip install uv~=0.5.30
         uv pip install --system .[cuda12]
     - name: Build and install example project
       run: uv pip install --system ./examples/ffi[test]
