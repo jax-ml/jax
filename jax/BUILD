@@ -923,6 +923,7 @@ pytype_strict_library(
         ":partition_spec",
         ":sharding",
         ":util",
+        ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
