@@ -59,6 +59,9 @@ jobs:
           name: rocm_jax_r${{ env.ROCM_VERSION }}_py${{ env.PYTHON_VERSION  }}_id${{ github.run_id }}
           path: ./dist/*.whl
       - name: Run tests
+        env:
+          GPU_COUNT: "8"
+          GFX: "gfx90a"
         run: |
           cd $WORKSPACE_DIR
           python3 build/rocm/ci_build test $TEST_IMAGE --test-cmd "pytest tests/core_test.py"
