@@ -28,6 +28,7 @@ JaxValueError = error_check.JaxValueError
 config.parse_flags_with_absl()
 
 
+@jtu.thread_unsafe_test_class()  # TODO(b/398772684): fix thread safety
 @jtu.with_config(jax_check_tracer_leaks=True)
 class ErrorCheckTests(jtu.JaxTestCase):
 
