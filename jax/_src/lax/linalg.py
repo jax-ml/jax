@@ -30,7 +30,6 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
-from jax._src import util
 from jax._src.core import ShapedArray, is_constant_dim, is_constant_shape
 from jax._src import ffi
 from jax._src.interpreters import ad
@@ -1411,20 +1410,7 @@ def _lu_dtype_rule(dtype, **_):
   return dtype, dtypes.dtype(np.int32), dtypes.dtype(np.int32)
 
 
-def _lu_jvp_rule(primals, tangents):
-  a, = primals
-  a_dot, = tangents
-  lu, pivots, permutation = lu_p.bind(a)
-
-  a_shape = np.shape(a)
-  m, n = a_shape[-2:]
-  dtype = lax.dtype(a)
-  k = min(m, n)
-
-  batch_dims = a_shape[:-2]
-  iotas = _broadcasted_iotas(*batch_dims, 1)
-  x = a_dot[(*iotas[:-1], permutation, slice(None))]
-
+def _lu_jvp_inner(lu, a_dot, permutation):
   # Differentiation of Matrix Functionals Using Triangular Factorization
   # F. R. De Hoog, R. S. Anderssen, and M. A. Lukas
   #
@@ -1434,28 +1420,43 @@ def _lu_jvp_rule(primals, tangents):
   # ==> L' = L . tril(inv(L) . A' . inv(U), -1)
   #     U' = triu(inv(L) . A' . inv(U)) . U
 
-  ndims = len(a_shape)
-  l_padding = [(0, 0, 0)] * ndims
+  a_shape = np.shape(a_dot)
+  assert len(a_shape) == 2
+  m, n = a_shape
+  dtype = lax.dtype(a_dot)
+  k = min(m, n)
+
+  l_padding = [(0, 0, 0)] * 2
   l_padding[-1] = (0, m - k, 0)
   zero = lax_internal._const(lu, 0)
-  l = lax.pad(_tril(lu[..., :, :k], -1), zero, l_padding)
-  l = l + lax.expand_dims(lax_internal._eye(dtype, (m, m)), range(l.ndim - 2))
+  l = lax.pad(_tril(lu[:, :k], -1), zero, l_padding)
+  l = l + lax_internal._eye(dtype, (m, m))
   u_eye = lax.pad(lax_internal._eye(dtype, (n - k, n - k)), zero,
                   ((k, 0, 0), (k, 0, 0)))
-  u_padding = [(0, 0, 0)] * ndims
+  u_padding = [(0, 0, 0)] * 2
   u_padding[-2] = (0, n - k, 0)
-  u = (lax.pad(_triu(lu[..., :k, :]), zero, u_padding) +
-       lax.expand_dims(u_eye, range(lu.ndim - 2)))
+  u = lax.pad(_triu(lu[:k, :]), zero, u_padding) + u_eye
 
-  la = triangular_solve(l, x, left_side=True, transpose_a=False, lower=True,
-                        unit_diagonal=True)
+  la = triangular_solve(l, a_dot[permutation], left_side=True,
+                        transpose_a=False, lower=True, unit_diagonal=True)
   lau = triangular_solve(u, la, left_side=False, transpose_a=False,
                          lower=False)
-
   with config.default_matmul_precision("highest"):
     l_dot = l @ _tril(lau, -1)
     u_dot = _triu(lau) @ u
-  lu_dot = l_dot + u_dot
+  return l_dot + u_dot
+
+
+def _lu_jvp_rule(primals, tangents):
+  a, = primals
+  a_dot, = tangents
+  lu, pivots, permutation = lu_p.bind(a)
+
+  lu_dot_fun = _lu_jvp_inner
+  for _ in np.shape(a)[:-2]:
+    lu_dot_fun = api.vmap(lu_dot_fun)
+  lu_dot = lu_dot_fun(lu, a_dot, permutation)
+
   return (lu, pivots, permutation), (lu_dot, ad_util.Zero.from_primal_value(pivots),
                                      ad_util.Zero.from_primal_value(permutation))
 
@@ -2661,11 +2662,6 @@ def _H(x: Array) -> Array:
   return _T(x).conj()
 
 def symmetrize(x: Array) -> Array: return (x + _H(x)) / 2
-
-def _broadcasted_iotas(*sizes):
-  ones = (1,) * (len(sizes) - 1)
-  shapes = (util.tuple_insert(ones, i, s) for i, s in enumerate(sizes))
-  return [lax.broadcasted_iota('int32', shape, i) for i, shape in enumerate(shapes)]
 
 def _tril(m: Array, k:int = 0) -> Array:
   *_, N, M = m.shape
