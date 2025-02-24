@@ -174,7 +174,8 @@ struct LuDecomposition {
                       lapack_int* lda, lapack_int* ipiv, lapack_int* info);
 
   inline static FnType* fn = nullptr;
-  static ::xla::ffi::Error Kernel(
+  static ::xla::ffi::Future Kernel(
+      ::xla::ffi::ThreadPool thread_pool, ::xla::ffi::Dictionary attrs,
       ::xla::ffi::Buffer<dtype> x, ::xla::ffi::ResultBuffer<dtype> x_out,
       ::xla::ffi::ResultBuffer<LapackIntDtype> ipiv,
       ::xla::ffi::ResultBuffer<LapackIntDtype> info);
@@ -239,7 +240,6 @@ struct PivotingQrFactorization {
 
   static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols);
 };
-
 
 //== Orthogonal QR ==//
 
