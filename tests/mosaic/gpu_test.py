@@ -2378,10 +2378,15 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
   @staticmethod
   def pointwise_kernel_with_tma_cases(dtype: jnp.dtype):
-    @dataclasses.dataclass(frozen=True)
+    @dataclasses.dataclass()
     class TestCaseInput:
       shape: tuple[int, ...]
+      shape_sliced: tuple[int, ...] = ()
       transforms: tuple[Tile | Transpose | Swizzle, ...] = ()
+
+      def __post_init__(self):
+        if not self.shape_sliced:
+          self.shape_sliced = self.shape
 
     result = []
     for swizzle in mgpu_dialect.SwizzlingMode:
@@ -2391,6 +2396,11 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         #  differently.
         result.append(TestCaseInput(shape=[128, n]))
       result.extend([
+          TestCaseInput(
+              shape=[256, n],
+              shape_sliced=[128, n],
+              transforms=[Swizzle(swizzle)],
+          ),
           TestCaseInput(
               shape=[128, n],
               transforms=[Swizzle(swizzle)],
@@ -2412,7 +2422,8 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
               transforms=[Transpose([1, 0, 2, 3]), Swizzle(swizzle)],
           ),
           TestCaseInput(
-              shape=[128, n],
+              shape=[256, n],
+              shape_sliced=[128, n],
               transforms=[Tile([64, n]), Swizzle(swizzle)],
           ),
           TestCaseInput(
@@ -2439,37 +2450,32 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       a_smem_ref, b_smem_ref, result_smem_ref, tma_barrier = smem
       dialect_barrier = tma_barrier.as_dialect_barrier_memref()
 
-      memref_type = ir.MemRefType(a_gmem_ref.type)
-      shape = memref_type.shape
-      elt_type = memref_type.element_type
-
-      memref_bytes = utils.bytewidth(elt_type) * math.prod(shape)
+      elt_type = ir.MemRefType(a_gmem_ref.type).element_type
+      memref_bytes = utils.bytewidth(elt_type) * math.prod(
+          test_case.shape_sliced
+      )
       mgpu_dialect.arrive_expect_tx(
           barrier=dialect_barrier, expect_tx=2 * memref_bytes
       )
 
       zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
-      zero_slice_indices = [zero_i32] * memref_type.rank
+      zero_slice_indices = [zero_i32] * len(test_case.shape)
 
       # GMEM -> SMEM
       mgpu_dialect.async_load(
           source=a_gmem_ref,
-          destination=memref_with_transforms(
-              a_smem_ref, test_case.transforms
-          ),
+          destination=memref_with_transforms(a_smem_ref, test_case.transforms),
           barrier=dialect_barrier,
           indices=zero_slice_indices,
-          slice_lengths=shape,
+          slice_lengths=test_case.shape_sliced,
           collective=ir.ArrayAttr.get([]),
       )
       mgpu_dialect.async_load(
           source=b_gmem_ref,
-          destination=memref_with_transforms(
-              b_smem_ref, test_case.transforms
-          ),
+          destination=memref_with_transforms(b_smem_ref, test_case.transforms),
           barrier=dialect_barrier,
           indices=zero_slice_indices,
-          slice_lengths=shape,
+          slice_lengths=test_case.shape_sliced,
           collective=ir.ArrayAttr.get([]),
       )
 
@@ -2478,10 +2484,10 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       mgpu_dialect.wait(dialect_barrier, parity)
 
       zero_index = arith.constant(ir.IndexType.get(), 0)
-      zero_vector_indices = [zero_index] * memref_type.rank
+      zero_vector_indices = [zero_index] * len(test_case.shape_sliced)
 
       # SMEM -> registers
-      ab_type = ir.VectorType.get(shape, elt_type)
+      ab_type = ir.VectorType.get(test_case.shape_sliced, elt_type)
       a = vector.load(ab_type, a_smem_ref, zero_vector_indices)
       b = vector.load(ab_type, b_smem_ref, zero_vector_indices)
 
@@ -2493,12 +2499,10 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
       # SMEM -> GMEM
       mgpu_dialect.async_store(
-          source=memref_with_transforms(
-              result_smem_ref, test_case.transforms
-          ),
+          source=memref_with_transforms(result_smem_ref, test_case.transforms),
           destination=result_gmem_ref,
           indices=zero_slice_indices,
-          slice_lengths=shape,
+          slice_lengths=test_case.shape_sliced,
       )
       nvvm.cp_async_bulk_wait_group(0)
       utils.warpgroup_barrier()
@@ -2506,16 +2510,17 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     dtype = jnp.bfloat16
 
     jax_shape = jax.ShapeDtypeStruct(test_case.shape, dtype)
+    jax_shape_sliced = jax.ShapeDtypeStruct(test_case.shape_sliced, dtype)
     kernel = mgpu.as_gpu_kernel(
         add,
         grid=(1, 1, 1),
         block=(128, 1, 1),
         in_shape=(jax_shape, jax_shape),
-        out_shape=jax_shape,
+        out_shape=jax_shape_sliced,
         smem_scratch_shape=[
-            jax_shape,
-            jax_shape,
-            jax_shape,
+            jax_shape_sliced,
+            jax_shape_sliced,
+            jax_shape_sliced,
             core.TMABarrier(1),
         ],
         thread_semantics=mgpu.ThreadSemantics.Warpgroup,
@@ -2524,20 +2529,33 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     x = self.prng.uniform(-1, 1, test_case.shape).astype(dtype)
     y = self.prng.uniform(-1, 1, test_case.shape).astype(dtype)
 
-    self.assertArraysEqual(jax.jit(kernel)(x, y), x + y + y)
+    self.assertArraysEqual(
+        jax.jit(kernel)(x, y),
+        x[: test_case.shape_sliced[0], : test_case.shape_sliced[1]]
+        + y[: test_case.shape_sliced[0], : test_case.shape_sliced[1]]
+        + y[: test_case.shape_sliced[0], : test_case.shape_sliced[1]],
+    )
 
 
 class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
 
   @staticmethod
   def wgmma_kernel_with_tma_cases(abtype: jnp.dtype):
-    @dataclasses.dataclass(frozen=True)
+    @dataclasses.dataclass()
     class TestCaseInput:
       shape_a: tuple[int, ...] = ()
+      shape_a_sliced: tuple[int, ...] = ()
       shape_b: tuple[int, ...] = ()
+      shape_b_sliced: tuple[int, ...] = ()
       shape_res: tuple[int, ...] = ()
       transforms_a: tuple[Tile | Transpose | Swizzle, ...] = ()
       transforms_b: tuple[Tile | Transpose | Swizzle, ...] = ()
+
+      def __post_init__(self):
+        if not self.shape_a_sliced:
+          self.shape_a_sliced = self.shape_a
+        if not self.shape_b_sliced:
+          self.shape_b_sliced = self.shape_b
 
     result = []
     for swizzle in [
@@ -2550,9 +2568,18 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
       groups_m = 4
       groups_n = 1
       groups_k = 1
+      num_slices = 10
       result.extend([
           TestCaseInput(
               shape_a=[groups_m * 64, groups_k * k],
+              shape_b=[groups_k * k, groups_n * k],
+              shape_res=[groups_m * 64, groups_n * k],
+              transforms_a=[Tile([64, k]), Swizzle(swizzle)],
+              transforms_b=[Tile([k, k]), Swizzle(swizzle)],
+          ),
+          TestCaseInput(
+              shape_a=[num_slices * groups_m * 64, num_slices * groups_k * k],
+              shape_a_sliced=[groups_m * 64, groups_k * k],
               shape_b=[groups_k * k, groups_n * k],
               shape_res=[groups_m * 64, groups_n * k],
               transforms_a=[Tile([64, k]), Swizzle(swizzle)],
@@ -2563,7 +2590,6 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
 
   @parameterized.parameters(wgmma_kernel_with_tma_cases(jnp.bfloat16))
   def test_wgmma_kernel_with_tma(self, test_case):
-
     def matmul(
         ctx: launch_context.LaunchContext,
         a_gmem_ref: ir.Value,
@@ -2578,8 +2604,12 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
       dialect_barrier = tma_barrier.as_dialect_barrier_memref()
 
       ab_elt_type = ir.MemRefType(a_gmem_ref.type).element_type
-      bytes_a = utils.bytewidth(ab_elt_type) * math.prod(test_case.shape_a)
-      bytes_b = utils.bytewidth(ab_elt_type) * math.prod(test_case.shape_b)
+      bytes_a = utils.bytewidth(ab_elt_type) * math.prod(
+          test_case.shape_a_sliced
+      )
+      bytes_b = utils.bytewidth(ab_elt_type) * math.prod(
+          test_case.shape_b_sliced
+      )
 
       mgpu_dialect.arrive_expect_tx(
           barrier=dialect_barrier,
@@ -2593,7 +2623,7 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
           destination=a_smem_ref,
           barrier=dialect_barrier,
           indices=[zero_i32] * len(test_case.shape_a),
-          slice_lengths=test_case.shape_a,
+          slice_lengths=test_case.shape_a_sliced,
           collective=ir.ArrayAttr.get([]),
       )
       mgpu_dialect.async_load(
@@ -2601,7 +2631,7 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
           destination=b_smem_ref,
           barrier=dialect_barrier,
           indices=[zero_i32] * len(test_case.shape_b),
-          slice_lengths=test_case.shape_b,
+          slice_lengths=test_case.shape_b_sliced,
           collective=ir.ArrayAttr.get([]),
       )
 
@@ -2639,7 +2669,9 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
     abtype = jnp.bfloat16
     acctype = jnp.float32
     a_jax_shape = jax.ShapeDtypeStruct(test_case.shape_a, abtype)
+    a_sliced_jax_shape = jax.ShapeDtypeStruct(test_case.shape_a_sliced, abtype)
     b_jax_shape = jax.ShapeDtypeStruct(test_case.shape_b, abtype)
+    b_sliced_jax_shape = jax.ShapeDtypeStruct(test_case.shape_b_sliced, abtype)
     result_jax_shape = jax.ShapeDtypeStruct(test_case.shape_res, acctype)
     kernel = mgpu.as_gpu_kernel(
         matmul,
@@ -2648,8 +2680,8 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
         in_shape=(a_jax_shape, b_jax_shape),
         out_shape=result_jax_shape,
         smem_scratch_shape=[
-            a_jax_shape,
-            b_jax_shape,
+            a_sliced_jax_shape,
+            b_sliced_jax_shape,
             result_jax_shape,
             core.TMABarrier(1),
         ],
@@ -2662,8 +2694,12 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
     self.assertArraysAllClose(
         jax.jit(kernel)(x, y),
         np.matmul(
-            x.reshape(test_case.shape_a),
-            y.reshape(test_case.shape_b),
+            x.reshape(test_case.shape_a)[
+                : test_case.shape_a_sliced[0], : test_case.shape_a_sliced[1]
+            ],
+            y.reshape(test_case.shape_b)[
+                : test_case.shape_b_sliced[0], : test_case.shape_b_sliced[1]
+            ],
         ),
         atol=1e-5,
         rtol=1e-5,
