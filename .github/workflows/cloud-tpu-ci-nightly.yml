@@ -15,6 +15,10 @@ on:
   schedule:
     - cron: "0 2,14 * * *" # Run at 7am and 7pm PST
   workflow_dispatch: # allows triggering the workflow run manually
+  # For testing, DO NOT SUBMIT without removing this.
+  pull_request:
+    branches:
+      - main
 # This should also be set to read-only in the project settings, but it's nice to
 # document and enforce the permissions here.
 permissions:
@@ -62,7 +66,7 @@ jobs:
           $PYTHON -m uv pip install -U -r build/test-requirements.txt -r build/collect-profile-requirements.txt
       - name: Install JAX
         run: |
-          $PYTHON -m uv pip uninstall -y jax jaxlib libtpu
+          $PYTHON -m uv pip uninstall jax jaxlib libtpu
           if [ "${{ matrix.jaxlib-version }}" == "head" ]; then
             # Build and install jaxlib at head
             $PYTHON build/build.py build --wheels=jaxlib \
@@ -72,8 +76,7 @@ jobs:
 
             # Install jaxlib, "jax" at head, and libtpu
             $PYTHON -m uv pip install dist/*.whl \
-               -U -e . \
-               --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+               -U -e .[tpu]
           elif [ "${{ matrix.jaxlib-version }}" == "pypi_latest" ]; then
             $PYTHON -m uv pip install .[tpu] \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
