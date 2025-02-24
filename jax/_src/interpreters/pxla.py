@@ -2851,6 +2851,16 @@ def finalize_shardings(shardings, device_assignment):
   return shardings
 
 
+def get_prop_to_input_output(in_shardings, out_shardings,
+                             num_ordered_effects):
+  allow_prop_to_inputs = (False,) * num_ordered_effects + tuple(
+      isinstance(i, (UnspecifiedValue, AUTO)) for i in in_shardings)
+  allow_prop_to_outputs = (False,) * num_ordered_effects + tuple(
+      isinstance(o, (UnspecifiedValue, AUTO)) or mlir.contains_unconstrained(o)
+      for o in out_shardings)
+  return allow_prop_to_inputs, allow_prop_to_outputs
+
+
 @dataclasses.dataclass
 class UnloadedMeshExecutable:
   xla_executable: Any
@@ -2941,11 +2951,8 @@ class UnloadedMeshExecutable:
       da = _create_da_object(tuple(device_assignment))
     del device_assignment
 
-    allow_prop_to_inputs = (False,) * len(ordered_effects) + tuple(
-        isinstance(i, (UnspecifiedValue, AUTO)) for i in in_shardings)
-    allow_prop_to_outputs = (False,) * len(ordered_effects) + tuple(
-        isinstance(o, (UnspecifiedValue, AUTO)) or mlir.contains_unconstrained(o)
-        for o in out_shardings)
+    allow_prop_to_inputs, allow_prop_to_outputs = get_prop_to_input_output(
+        in_shardings, out_shardings, len(ordered_effects))
 
     mesh = None
     if auto_spmd_lowering:
