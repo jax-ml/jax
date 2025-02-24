@@ -3321,13 +3321,13 @@ def _semaphore_read_lowering_rule(
   return tpu.sem_read(sem)
 
 
-lowering_rules[tpu_primitives.semaphore_read_p] = _semaphore_read_lowering_rule
+lowering_rules[primitives.semaphore_read_p] = _semaphore_read_lowering_rule
 
 def _semaphore_signal_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
     args_tree,
-    device_id_type: tpu_primitives.DeviceIdType,
+    device_id_type: primitives.DeviceIdType,
 ):
   sem_aval, _, _, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
   sem, transforms, value, device_id, core_index = tree_util.tree_unflatten(
@@ -3340,7 +3340,7 @@ def _semaphore_signal_lowering_rule(
   return []
 
 
-lowering_rules[tpu_primitives.semaphore_signal_p] = (
+lowering_rules[primitives.semaphore_signal_p] = (
     _semaphore_signal_lowering_rule)
 
 
@@ -3350,10 +3350,10 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, transforms)
   tpu.sem_wait(sem, value)
   return []
-lowering_rules[tpu_primitives.semaphore_wait_p] = _semaphore_wait_lowering_rule
+lowering_rules[primitives.semaphore_wait_p] = _semaphore_wait_lowering_rule
 
 def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
-                             device_id_type: tpu_primitives.DeviceIdType):
+                             device_id_type: primitives.DeviceIdType):
   (
       src_ref,
       src_transforms,
@@ -3368,6 +3368,9 @@ def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   (src_ref_aval, _, dst_ref_aval, _, sem_aval, _, src_sem_aval, _, _) = (
       tree_util.tree_unflatten(tree, ctx.avals_in)
   )
+  if (src_sem is None) ^ (device_id is None):
+    raise ValueError("Either both or neither `src_sem` and `device_id` "
+                     "can be set.")
   if src_ref_aval.dtype == jnp.bool_:
     raise NotImplementedError("DMAs with bool dtypes are not supported.")
   block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
@@ -3389,11 +3392,11 @@ def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                   device_id=device_id)
 
   return []
-lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
+lowering_rules[primitives.dma_start_p] = _dma_start_lowering_rule
 
 
 def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
-                            device_id_type: tpu_primitives.DeviceIdType):
+                            device_id_type: primitives.DeviceIdType):
   del device_id_type
   (src, src_transforms, dst, transforms, sem, sem_transforms, _, _, _) = (
       tree_util.tree_unflatten(tree, args)
@@ -3422,12 +3425,11 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   else:
     tpu.wait_dma2(sem, src, dst)
   return []
-
-lowering_rules[tpu_primitives.dma_wait_p] = _dma_wait_lowering_rule
+lowering_rules[primitives.dma_wait_p] = _dma_wait_lowering_rule
 
 def _device_id_lowering_rule(ctx: LoweringRuleContext):
   return tpu.device_id()
-lowering_rules[tpu_primitives.device_id_p] = _device_id_lowering_rule
+lowering_rules[primitives.device_id_p] = _device_id_lowering_rule
 
 def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
   grid_names = ctx.lowering_context.grid_names
