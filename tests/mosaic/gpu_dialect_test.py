@@ -693,6 +693,35 @@ class DialectLoweringTest(MosaicGpuTest):
     )
     self.assertEmpty(all_ops_with_layouts)
 
+  def test_lowering_splat_constant(self):
+    cst = None
+    elt_ty = ir.BF16Type.get()
+
+    def body():
+      vec_ty = ir.VectorType.get((16, 8), elt_ty)
+      zero = ir.FloatAttr.get(elt_ty, 0)
+      nonlocal cst
+      cst = arith.ConstantOp(
+          vec_ty, ir.DenseElementsAttr.get_splat(vec_ty, zero)
+      )
+      cst.attributes["out_layouts"] = ir.ArrayAttr.get([
+          layouts.to_layout_attr(
+              mgpu.WGStridedFragLayout.from_shaped_type(vec_ty)
+          )
+      ])
+
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func()(body)
+
+    mgpu.lower_mgpu_dialect(self.module, None)
+
+    cst_ops = find_if(
+        self.module,
+        lambda op: isinstance(op, arith.ConstantOp),
+    )
+    self.assertLen(cst_ops, 1)
+    self.assertEqual(cst_ops[0].result.type, elt_ty)
+
   def test_lowering_vector_load_and_store_ops(self):
     shape = (8, 128)
     elt_ty = ir.BF16Type.get()

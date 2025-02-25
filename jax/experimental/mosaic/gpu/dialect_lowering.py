@@ -171,6 +171,33 @@ def _initialize_barrier_op_lowering_rule(
       barrier_base_ptr, initialize_barrier_op.barriers_ref.type),
 
 
+@_register_lowering(arith.ConstantOp)
+def _arith_constant_op_lowering_rule(
+    _: LoweringContext, op: arith.ConstantOp
+) -> Sequence[ir.Value]:
+  if not ir.DenseElementsAttr.isinstance(op.value):
+    raise NotImplementedError(f"Unsupported constant op: {op}")
+
+  value = ir.DenseElementsAttr(op.value)
+  if not value.is_splat:
+    raise NotImplementedError(f"Unsupported constant op: {op}")
+
+  ty = ir.VectorType(op.result.type)
+  is_signed = False if ir.IntegerType.isinstance(ty.element_type) else None
+
+  return [
+      _fragmented_array_to_ir(
+          fa.FragmentedArray.splat(
+              arith.constant(ty.element_type, value.get_splat_value()),
+              tuple(ty.shape),
+              layouts.from_layout_attr(op.attributes["out_layouts"][0]),
+              is_signed=is_signed,
+          ),
+          op.result.type,
+      )
+  ]
+
+
 @_register_lowering(vector.LoadOp)
 def _vector_load_op_lowering_rule(
     _: LoweringContext, vector_load_op: vector.LoadOp
