@@ -1626,7 +1626,9 @@ def physical_aval(aval):
       isinstance(aval.dtype, dtypes.ExtendedDType)):
     elt_aval = physical_element_aval(aval.dtype)
     if isinstance(aval, ShapedArray):
-      return ShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype)
+      from jax._src.sharding_impls import physical_sharding  # type: ignore
+      return ShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype,
+                         sharding=physical_sharding(aval, aval.sharding))
     return DShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype)
   return aval
 

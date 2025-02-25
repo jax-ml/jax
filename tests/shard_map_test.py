@@ -2392,9 +2392,21 @@ class ShardMapTest(jtu.JaxTestCase):
                        mesh, in_specs=P('i'), out_specs=P('i'),
                        check_rep=False, auto=frozenset({'j'}))(keys)
 
-    y = f(keys) # don't crash
+    y = f(keys)  # doesn't crash
     self.assertAllClose(jax.random.key_data(y), jax.random.key_data(keys),
                         check_dtypes=False)
+
+  def test_partial_auto_of_random_keys_slice(self):
+    mesh = jtu.create_mesh((4, 2), ('i', 'j'))
+    keys = jax.random.split(jax.random.key(0), 8).reshape(4, 2)
+
+    @jax.jit
+    def f(x):
+      return shard_map(lambda k: k[0],
+                       mesh, in_specs=P('i'), out_specs=P('i'),
+                       check_rep=False, auto=frozenset({'j'}))(x)
+
+    f(keys)  # doesn't crash
 
   def test_vmap_grad_shmap_spmd_axis_name_residuals(self):
     # https://github.com/jax-ml/jax/pull/21032

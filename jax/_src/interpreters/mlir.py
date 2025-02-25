@@ -2648,6 +2648,8 @@ def lower_with_sharding_in_types(ctx, op, aval, sharding_proto=None):
     return op
   # TODO(yashkatariya): If all the axes in pspec are AUTO or collective,
   # `return op` early and avoid bloating HLO size.
+  if dtypes.issubdtype(aval.dtype, dtypes.extended):
+    aval = core.physical_aval(aval)
   if config.use_shardy_partitioner.value:
     proto = (aval.sharding._to_sdy_sharding(aval.ndim)
              if sharding_proto is None else sharding_proto)
