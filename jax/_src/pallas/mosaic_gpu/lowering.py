@@ -79,6 +79,11 @@ def _align_to(x: int, alignment: int):
   return x
 
 
+@dataclasses.dataclass(frozen=True)
+class ResourceEstimatorContext:
+  arrival_multiplier: int
+
+
 @dataclasses.dataclass(kw_only=True, frozen=True)
 class Resources:
   smem_scratch_bytes: int = 0
@@ -118,7 +123,9 @@ class Resources:
 
 class ResourceEstimator(Protocol):
 
-  def __call__(self, *args: Any, **params: Any) -> Resources:
+  def __call__(
+      self, ctx: ResourceEstimatorContext, *args: Any, **params: Any
+  ) -> Resources:
     ...
 
 
@@ -133,7 +140,9 @@ def _register_resource_estimator(primitive: jax_core.Primitive):
   return deco
 
 
-def _estimate_resources(jaxpr: jax_core.Jaxpr) -> Resources:
+def _estimate_resources(
+    ctx: ResourceEstimatorContext, jaxpr: jax_core.Jaxpr
+) -> Resources:
   """Estimates the resources required by the kernel."""
   rs = Resources(smem_scratch_bytes=0)
   for eqn in jaxpr.eqns:
@@ -142,34 +151,48 @@ def _estimate_resources(jaxpr: jax_core.Jaxpr) -> Resources:
     if rule is None:
       # Assume that unsupported primitives are neutral wrt resource usage.
       continue
-    rs |= rule(*(invar.aval for invar in eqn.invars), **eqn.params)
+    rs |= rule(ctx, *(invar.aval for invar in eqn.invars), **eqn.params)
 
   return rs
 
 
 @_register_resource_estimator(lax.cond_p)
-def _cond_resource_estimator(*args, branches) -> int:
+def _cond_resource_estimator(
+    ctx: ResourceEstimatorContext, *args, branches
+) -> int:
   del args  # Unused.
   return functools.reduce(
       lambda a, b: a | b,
-      (_estimate_resources(branch.jaxpr) for branch in branches),
+      (_estimate_resources(ctx, branch.jaxpr) for branch in branches),
   )
 
 
 @_register_resource_estimator(lax.scan_p)
-def _scan_resource_estimator(*args, jaxpr: jax_core.ClosedJaxpr, **params) -> int:
+def _scan_resource_estimator(
+    ctx: ResourceEstimatorContext, *args, jaxpr: jax_core.ClosedJaxpr, **params
+) -> int:
   del args, params  # Unused.
-  return _estimate_resources(jaxpr)
+  return _estimate_resources(ctx, jaxpr)
 
 
 @_register_resource_estimator(lax.while_p)
-def _while_resource_estimator(*args, cond_jaxpr: jax_core.ClosedJaxpr, body_jaxpr: jax_core.ClosedJaxpr, **params) -> int:
+def _while_resource_estimator(
+    ctx: ResourceEstimatorContext,
+    *args,
+    cond_jaxpr: jax_core.ClosedJaxpr,
+    body_jaxpr: jax_core.ClosedJaxpr,
+    **params,
+) -> int:
   del args, params  # Unused.
-  return _estimate_resources(cond_jaxpr) | _estimate_resources(body_jaxpr)
+  return _estimate_resources(ctx, cond_jaxpr) | _estimate_resources(
+      ctx, body_jaxpr
+  )
 
 
 @_register_resource_estimator(primitives.run_scoped_p)
-def _run_scoped_resource_estimator(*consts, jaxpr: jax_core.Jaxpr) -> int:
+def _run_scoped_resource_estimator(
+    ctx: ResourceEstimatorContext, *consts, jaxpr: jax_core.Jaxpr
+) -> int:
   del consts  # Unused.
   rs = Resources()
   for v in jaxpr.invars:
@@ -178,7 +201,7 @@ def _run_scoped_resource_estimator(*consts, jaxpr: jax_core.Jaxpr) -> int:
       rs += Resources(
           barrier_counts=collections.Counter([
               mgpu.Barrier(
-                  aval.dtype.num_arrivals * WARPGROUP_SIZE, *aval.shape
+                  aval.dtype.num_arrivals * ctx.arrival_multiplier, *aval.shape
               )
           ])
       )
@@ -186,11 +209,14 @@ def _run_scoped_resource_estimator(*consts, jaxpr: jax_core.Jaxpr) -> int:
       rs += Resources(
           smem_scratch_bytes=math.prod(aval.shape) * aval.dtype.itemsize
       )
-  return rs + _estimate_resources(jaxpr)
+  return rs + _estimate_resources(ctx, jaxpr)
 
 
 @_register_resource_estimator(lax.reduce_sum_p)
-def _reduce_sum_resource_estimator(x_aval: jax_core.ShapedArray, *, axes) -> int:
+def _reduce_sum_resource_estimator(
+    ctx: ResourceEstimatorContext, x_aval: jax_core.ShapedArray, *, axes
+) -> int:
+  del ctx, axes  # Unused.
   # We don't need shmem for some reductons, but it depends on the layout, so we
   # conservatively request some scratch space.
   return Resources(smem_scratch_bytes=4 * x_aval.dtype.itemsize)
@@ -786,9 +812,12 @@ def lower_jaxpr_to_module(
         "All scratch operands must be SMEM references or accumulators (ACC),"
         f" but got: {scratch_avals}"
     )
-  rs = _estimate_resources(jaxpr)
+  arrival_multiplier = (
+      WARPGROUP_SIZE if thread_semantics == mgpu.ThreadSemantics.Lane else 1
+  )
+  rs = _estimate_resources(ResourceEstimatorContext(arrival_multiplier), jaxpr)
   extra_barriers = [
-      mgpu.Barrier(aval.dtype.num_arrivals * WARPGROUP_SIZE, *aval.shape)
+      mgpu.Barrier(aval.dtype.num_arrivals * arrival_multiplier, *aval.shape)
       for aval in scratch_avals
       if isinstance(aval.dtype, gpu_core.BarrierType)
   ]
@@ -1562,15 +1591,24 @@ def _debug_print_lowering_rule(
 
 
 @register_lowering_rule(primitives.run_scoped_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(primitives.run_scoped_p, mgpu.ThreadSemantics.Warpgroup)
 def _run_scoped_lowering_rule(
     ctx: LoweringRuleContext, *consts, jaxpr: jax_core.Jaxpr
 ):
   input_refs = []
   should_discharge = []
   alloc_stack = contextlib.ExitStack()
+  arrival_multiplier = (
+      WARPGROUP_SIZE if ctx.thread_semantics == mgpu.ThreadSemantics.Lane else 1
+  )
   for v in jaxpr.invars:
     aval = v.aval
     if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
+      if ctx.thread_semantics == mgpu.ThreadSemantics.Warpgroup:
+        # TODO(bchetioui): Fix this and remove the NotImplementedError.
+        raise NotImplementedError(
+            "WGMMA accumulators are not supported with Warpgroup semantics."
+        )
       mlir_dtype = mlir.dtype_to_ir_type(aval.dtype)
       input_refs.append(mgpu.WGMMAAccumulator.zero(*aval.shape, mlir_dtype))
       should_discharge.append(True)
@@ -1578,7 +1616,7 @@ def _run_scoped_lowering_rule(
       input_refs.append(
           ctx.module_ctx.reserve_barrier(
               mgpu.Barrier(
-                  aval.dtype.num_arrivals * WARPGROUP_SIZE, *aval.shape
+                  aval.dtype.num_arrivals * arrival_multiplier, *aval.shape
               )
           )
       )
@@ -1604,13 +1642,23 @@ def _run_scoped_lowering_rule(
     discharged_jaxpr, _ = discharge.discharge_state(no_const_jaxpr, (), should_discharge=should_discharge)
     new_input_vals = consts + tuple(input_refs)
     outs = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, discharged_jaxpr, new_input_vals, ()
+        ctx.module_ctx,
+        ctx.launch_ctx,
+        discharged_jaxpr,
+        new_input_vals,
+        (),
+        thread_semantics=ctx.thread_semantics,
     )
     # Discharge appends to the output the refs that got discharged.
     outs = outs[:-sum(should_discharge)]
   else:
     outs = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, jaxpr, input_refs, consts
+        ctx.module_ctx,
+        ctx.launch_ctx,
+        jaxpr,
+        input_refs,
+        consts,
+        thread_semantics=ctx.thread_semantics,
     )
 
   assert len(outs) == len(jaxpr.outvars), (jaxpr, outs)

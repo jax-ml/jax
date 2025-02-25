@@ -312,13 +312,19 @@ class PallasCallTest(PallasTest):
 
     np.testing.assert_array_equal(kernel(), jax.lax.broadcasted_iota(dtype, (128, 128), dimension))
 
-  @parameterized.product(indexer=[..., slice(128), slice(None, 128)])
-  def test_copy_smem_to_gmem(self, indexer):
+  @parameterized.product(
+      indexer=[..., slice(128), slice(None, 128)],
+      thread_semantics=[*plgpu.ThreadSemantics],
+  )
+  def test_copy_smem_to_gmem(self, indexer, thread_semantics):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         scratch_shapes=[plgpu.SMEM((256,), jnp.float32)],
+        compiler_params=plgpu.GPUCompilerParams(
+            thread_semantics=thread_semantics
+        ),
     )
     def kernel(x_ref, o_ref_gmem, scratch_ref):
       scratch_ref[...] = x_ref[...] + 1
@@ -775,7 +781,8 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(jnp.arange(11, dtype=jnp.int32)),
                                   jnp.full((128,), 10, dtype=jnp.int32))
 
-  def test_run_scoped(self):
+  @parameterized.product(thread_semantics=[*plgpu.ThreadSemantics])
+  def test_run_scoped(self, thread_semantics):
     def kernel(x_ref, o_ref):
       def body(tmp_ref):
         self.assertEqual(tmp_ref.shape, (8, 128))
@@ -790,6 +797,9 @@ class PallasCallTest(PallasTest):
     f = pl.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        compiler_params=plgpu.GPUCompilerParams(
+            thread_semantics=thread_semantics
+        ),
     )
     o = f(inp)
     np.testing.assert_array_equal(o, inp + 1.0)

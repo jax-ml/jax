@@ -74,6 +74,9 @@ def _copy_smem_to_gmem_abstract_eval(src, dst, *args, **params):
 
 
 @lowering.register_lowering_rule(copy_smem_to_gmem_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(
+    copy_smem_to_gmem_p, mgpu.ThreadSemantics.Warpgroup
+)
 def _copy_smem_to_gmem_lowering(
     ctx: lowering.LoweringRuleContext,
     src,
@@ -97,13 +100,47 @@ def _copy_smem_to_gmem_lowering(
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
   src, src_transforms = lowering._handle_indexing(src, src_transforms)
   copy_params = _extract_gmem_copy_params(dst_transforms) | _extract_smem_copy_params(src_transforms)
-  ctx.launch_ctx.async_copy(
-      src_ref=src,
-      dst_ref=dst,
-      predicate=predicate,
-      **copy_params,
+  if ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    ctx.launch_ctx.async_copy(
+        src_ref=src,
+        dst_ref=dst,
+        predicate=predicate,
+        **copy_params,
+    )
+    return ()
+
+  if "gmem_slice" not in copy_params:
+    i32 = ir.IntegerType.get_signless(32)
+    slice_lengths = ir.MemRefType(src.type).shape
+    indices = [mgpu.utils.c(0, i32)] * len(slice_lengths)
+  else:
+    indices, slice_lengths = _split_gmem_slice(copy_params["gmem_slice"])
+  assert copy_params.get("swizzle") is None
+  assert not copy_params.get("gmem_transform")
+  mgpu.dialect.async_store(
+      src, dst, indices, slice_lengths, predicate=predicate
   )
   return ()
+
+
+def _split_gmem_slice(gmem_slice):
+  i32 = ir.IntegerType.get_signless(32)
+  indices = []
+  slice_lengths = []
+  for idx in gmem_slice:
+    match idx:
+      case slice():
+        indices.append(mgpu_utils.c(idx.start, i32))
+        slice_lengths.append(idx.stop - idx.start)
+      case mgpu.DynamicSlice():
+        indices.append(arith_dialect.index_cast(i32, idx.base))
+        slice_lengths.append(idx.length)
+      case ir.Value():
+        indices.append(arith_dialect.index_cast(i32, idx))
+        slice_lengths.append(-1)
+      case _:
+        raise NotImplementedError(f"Unsupported GMEM slice: {idx}")
+  return indices, slice_lengths
 
 
 def _extract_gmem_copy_params(transforms):
@@ -117,6 +154,7 @@ def _extract_gmem_copy_params(transforms):
   return dict(
       gmem_slice=lowering._ndindexer_indices(indexer),
   )
+
 
 def _extract_smem_copy_params(transforms):
   if not transforms:
@@ -188,6 +226,9 @@ def _copy_gmem_to_smem_abstract_eval(src, dst, barrier, *args, **params):
 
 
 @lowering.register_lowering_rule(copy_gmem_to_smem_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(
+    copy_gmem_to_smem_p, mgpu.ThreadSemantics.Warpgroup
+)
 def _copy_gmem_to_smem_lowering(
     ctx: lowering.LoweringRuleContext,
     src,
@@ -220,17 +261,38 @@ def _copy_gmem_to_smem_lowering(
     )
   dst_ty = ir.MemRefType(dst.type)
   bytes = math.prod(dst_ty.shape) * mgpu.bytewidth(dst_ty.element_type)
-  if bytes % WARPGROUP_SIZE:
-    raise NotImplementedError("Only aligned copies are supported")
-  # We arrive uniformly from each thread in the WG, so we need to divide the
-  # number of bytes by the number of threads in the WG.
-  # TODO: apaszke - Relax this. We can just select the WG leader and have it
-  # arrive with the whole transfer size, while everyone else arrives with 0.
-  # But we should continue using this scheme as it's likely to be faster.
-  bytes //= WARPGROUP_SIZE
-  barrier.arrive_expect_tx(bytes)
-  ctx.launch_ctx.async_copy(
-      src_ref=src, dst_ref=dst, barrier=barrier, arrive=False, **copy_params
+  if ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    if bytes % WARPGROUP_SIZE:
+      raise NotImplementedError("Only aligned copies are supported")
+    # We arrive uniformly from each thread in the WG, so we need to divide the
+    # number of bytes by the number of threads in the WG.
+    # TODO: apaszke - Relax this. We can just select the WG leader and have it
+    # arrive with the whole transfer size, while everyone else arrives with 0.
+    # But we should continue using this scheme as it's likely to be faster.
+    bytes //= WARPGROUP_SIZE
+    barrier.arrive_expect_tx(bytes)
+    ctx.launch_ctx.async_copy(
+        src_ref=src, dst_ref=dst, barrier=barrier, arrive=False, **copy_params
+    )
+    return ()
+
+  if "gmem_slice" not in copy_params:
+    i32 = ir.IntegerType.get_signless(32)
+    slice_lengths = ir.MemRefType(src.type).shape
+    indices = [mgpu.utils.c(0, i32)] * len(slice_lengths)
+  else:
+    indices, slice_lengths = _split_gmem_slice(copy_params["gmem_slice"])
+  assert copy_params.get("swizzle") is None
+  assert not copy_params.get("gmem_transform")
+  barrier_ref = barrier.as_dialect_barrier_memref()
+  mgpu.dialect.arrive_expect_tx(barrier_ref, bytes)
+  mgpu.dialect.async_load(
+      src,
+      dst,
+      barrier_ref,
+      indices,
+      slice_lengths,
+      collective=ir.ArrayAttr.get([]),
   )
   return ()
 
@@ -346,6 +408,7 @@ def _barrier_wait_abstract_eval(barrier, *args, **params):
 
 
 @lowering.register_lowering_rule(barrier_wait_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(barrier_wait_p, mgpu.ThreadSemantics.Warpgroup)
 def _barrier_wait_lowering(
     ctx: lowering.LoweringRuleContext,
     barrier,
@@ -383,6 +446,9 @@ def _wait_smem_to_gmem_abstract_eval(n, *, wait_read_only):
 
 
 @lowering.register_lowering_rule(wait_smem_to_gmem_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(
+    wait_smem_to_gmem_p, mgpu.ThreadSemantics.Warpgroup
+)
 def _wait_smem_to_gmem_lowering(
     ctx: lowering.LoweringRuleContext, n, *, wait_read_only
 ):
@@ -715,6 +781,7 @@ def _commit_smem_abstract_eval():
 
 
 @lowering.register_lowering_rule(commit_smem_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(commit_smem_p, mgpu.ThreadSemantics.Warpgroup)
 def _commit_smem_lowering(ctx: lowering.LoweringRuleContext):
   mgpu.commit_shared()
   return ()

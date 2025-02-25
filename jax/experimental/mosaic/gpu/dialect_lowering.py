@@ -320,10 +320,18 @@ def _mgpu_async_load_op_lowering_rule(
 
   dst_layout = ir.MemRefType(load_op.destination.type).layout
   swizzle, transforms = memref_layout_to_swizzle_and_transforms(dst_layout)
+
+  gmem_slice = []
+  for idx, size in zip(load_op.indices, load_op.slice_lengths):
+    idx = arith.index_cast(ir.IndexType.get(), idx)
+    v = idx if size < 0 else utils.DynamicSlice(idx, size)
+    gmem_slice.append(v)
+
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=load_op.source,
       dst_ref=transform_memref(load_op.destination, transforms),
+      gmem_slice=tuple(gmem_slice),
       barrier=barrier,
       arrive=False,
       uniform=True,
@@ -342,10 +350,18 @@ def _mgpu_async_store_op_lowering_rule(
 
   src_layout = ir.MemRefType(store_op.source.type).layout
   swizzle, transforms = memref_layout_to_swizzle_and_transforms(src_layout)
+
+  gmem_slice = []
+  for idx, size in zip(store_op.indices, store_op.slice_lengths):
+    idx = arith.index_cast(ir.IndexType.get(), idx)
+    v = idx if size < 0 else utils.DynamicSlice(idx, size)
+    gmem_slice.append(v)
+
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=transform_memref(store_op.source, transforms),
       dst_ref=store_op.destination,
+      gmem_slice=tuple(gmem_slice),
       swizzle=swizzle,
       gmem_transform=transforms,
       uniform=True,
