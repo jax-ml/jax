@@ -1,4 +1,4 @@
-# Copyright 2023 The JAX Authors.
+# Copyright 2025 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,32 +14,28 @@
 
 load(
     "//jaxlib:jax.bzl",
-    "if_building_jaxlib",
-    "pytype_strict_library",
+    "py_deps",
+    "pytype_library",
 )
+
+licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//jax:jax_extend_users"],
 )
 
-pytype_strict_library(
-    name = "mlir",
-    srcs = ["__init__.py"],
-    deps = [
-        ":ir",
-        ":pass_manager",
+pytype_library(
+    name = "serialization",
+    srcs = [
+        "__init__.py",
+        "serialization.py",
     ],
-)
-
-pytype_strict_library(
-    name = "ir",
-    srcs = ["ir.py"],
-    deps = if_building_jaxlib(["//jaxlib/mlir:ir"]),
-)
-
-pytype_strict_library(
-    name = "pass_manager",
-    srcs = ["passmanager.py"],
-    deps = if_building_jaxlib(["//jaxlib/mlir:pass_manager"]),
+    visibility = ["//visibility:public"],
+    deps = [
+        "//jax",
+    ] + py_deps([
+        "numpy",
+        "tensorstore",
+        "absl/logging",
+    ]),
 )

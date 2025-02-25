@@ -1650,6 +1650,18 @@ jax_py_test(
     ],
 )
 
+jax_multiplatform_test(
+    name = "serialization_test",
+    srcs = ["serialization_test.py"],
+    enable_configs = [
+        "tpu_v3_2x2",
+    ],
+    deps = [
+        "//jax:experimental",
+        "//jax/experimental/array_serialization:serialization",
+    ],
+)
+
 exports_files(
     [
         "api_test.py",

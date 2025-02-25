@@ -61,6 +61,7 @@ config_setting(
 exports_files([
     "LICENSE",
     "version.py",
+    "py.typed",
 ])
 
 exports_files(
@@ -117,7 +118,6 @@ py_library(
     # JAX does provide some public test utilities (see jax/test_util.py);
     # these are available in jax.test_util via the standard :jax target.
     name = "test_util",
-    testonly = 1,
     srcs = [
         "_src/test_util.py",
         "_src/test_warning_util.py",
@@ -134,8 +134,8 @@ py_library(
 # TODO(necula): break the internal_test_util into smaller build targets.
 py_library(
     name = "internal_test_util",
-    testonly = 1,
     srcs = [
+        "_src/internal_test_util/__init__.py",
         "_src/internal_test_util/deprecation_module.py",
         "_src/internal_test_util/lax_test_util.py",
     ] + glob(
@@ -151,7 +151,6 @@ py_library(
 
 py_library(
     name = "internal_test_harnesses",
-    testonly = 1,
     srcs = ["_src/internal_test_util/test_harnesses.py"],
     visibility = [":internal"] + jax_internal_test_harnesses_visibility,
     deps = [
@@ -165,7 +164,6 @@ py_library(
 
 py_library(
     name = "internal_export_back_compat_test_util",
-    testonly = 1,
     srcs = ["_src/internal_test_util/export_back_compat_test_util.py"],
     visibility = [
         ":internal",
@@ -681,7 +679,6 @@ pytype_strict_library(
 
 pytype_strict_library(
     name = "pallas_experimental_gpu_ops",
-    testonly = True,
     srcs = ["//jax/experimental/pallas/ops/gpu:mgpu_ops"],
     visibility = [
         ":mosaic_gpu_users",
@@ -1121,7 +1118,6 @@ pytype_library(
 
 pytype_library(
     name = "sparse_test_util",
-    testonly = 1,
     srcs = [
         "experimental/sparse/test_util.py",
     ],
@@ -1183,6 +1179,7 @@ pytype_library(
 pytype_library(
     name = "compilation_cache",
     srcs = [
+        "experimental/compilation_cache/__init__.py",
         "experimental/compilation_cache/compilation_cache.py",
     ],
     visibility = ["//visibility:public"],
