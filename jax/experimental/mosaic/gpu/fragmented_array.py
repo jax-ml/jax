@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import functools
 import math
@@ -1402,6 +1403,25 @@ class FragmentedArray:
 
     if create_array:
       return FragmentedArray(_registers=new_regs, _layout=self.layout, _is_signed=is_signed)
+
+  def debug_print(self, array_name: str, *, print_slice=None):
+    idx_fmt = " ".join(["{}"] * len(self.shape))
+    c = arith.ConstantOp.create_index
+    @self.foreach
+    def _(val, idx):
+      ctx = contextlib.nullcontext
+      if print_slice is not None:
+        base_idx, slice_shape, _ = utils.parse_indices(print_slice, self.shape)
+        preds = [arith.andi(
+            arith.cmpi(arith.CmpIPredicate.ule, c(base), i),
+            arith.cmpi(arith.CmpIPredicate.ult, i, c(base + l))
+        ) for base, l, i in  zip(base_idx, slice_shape, idx)]
+        pred = functools.reduce(arith.andi, preds)
+        ctx = utils.when(pred)
+
+      with ctx:
+        utils.debug_print(f"{array_name}[{idx_fmt}] = {{}}", *idx, val, uniform=False)
+
 
   def store_untiled(self, ref: ir.Value):
     if not ir.MemRefType.isinstance(ref.type):
