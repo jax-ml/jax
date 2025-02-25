@@ -17,7 +17,6 @@
 #include "shardy/integrations/c/passes.h"
 #include "jaxlib/mosaic/gpu/integrations/c/passes.h"
 
-
 namespace nb = nanobind;
 
 #define REGISTER_DIALECT(name) \
