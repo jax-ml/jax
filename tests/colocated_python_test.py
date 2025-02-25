@@ -388,6 +388,8 @@ class ColocatedPythonTest(jtu.JaxTestCase):
           "String support for colocated Python requires xla_extension_version"
           " >= 315"
       )
+    if np.lib.NumpyVersion(np.__version__) < "2.0.0":
+      self.skipTest("StringDType requires NumPy 2.0.0 or later")
     cpu_devices = _colocated_cpu_devices(jax.local_devices())
     if len(cpu_devices) < 2:
       self.skipTest(f"Need at least two CPU devices, got: {len(cpu_devices)}")
@@ -434,6 +436,8 @@ class ColocatedPythonTest(jtu.JaxTestCase):
           "String support for colocated Python requires xla_extension_version"
           " >= 315"
       )
+    if np.lib.NumpyVersion(np.__version__) < "2.0.0":
+      self.skipTest("StringDType requires NumPy 2.0.0 or later")
     cpu_devices = _colocated_cpu_devices(jax.local_devices())
     if len(cpu_devices) < 1:
       self.skipTest("Need at least one CPU devices")
