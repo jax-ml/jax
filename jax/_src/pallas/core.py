@@ -992,6 +992,12 @@ class CostEstimate:
   transcendentals: int
   bytes_accessed: int
 
+  def __post_init__(self):
+    for k, v in dataclasses.asdict(self).items():
+      if not isinstance(v, int):
+        raise ValueError("All fields in CostEstimate must be ints. "
+                         f"{k} is not an int: {type(v)}({v})")
+
   def to_json(self) -> bytes:
     return (
         f'{{"flops": {self.flops}, "transcendentals": {self.transcendentals},'
