@@ -45,6 +45,10 @@ def create_inputs(
 
 
 class RooflineTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    self._bytes_per_word = 8 if jax.config.read("jax_enable_x64") else 4
+
   def test_scalar_collectives(self):
     a_spec = P("z", ("x", "y"))
     b_spec = P(("x", "y"), "z")
@@ -428,6 +432,8 @@ class RooflineTest(jtu.JaxTestCase):
         lambda a, b: a > b,
         lambda a, b: a >= b,
         lambda a, b: a == b,
+        lambda a, b: jnp.minimum(a, b),
+        lambda a, b: jnp.maximum(a, b),
     ]:
       _, result = roofline.roofline(
           f,
@@ -489,6 +495,36 @@ class RooflineTest(jtu.JaxTestCase):
         lambda a, b: a + b,
     )(jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int))
     self.assertEqual(result.unfused_flops, 3 * 8)
+
+  def test_reduce_sum_no_axis(self):
+    _, result = roofline.roofline(
+        lambda x: jnp.sum(x),
+        mesh=mesh.AbstractMesh(()),
+        in_specs=(P()),
+        out_specs=P(),
+    )(jnp.zeros((11, 4)))
+    self.assertEqual(result.unfused_flops, 11 * 4 - 1)
+    self.assertEqual(
+        result.unfused_hbm_bytes, self._bytes_per_word * (11 * 4 + 1)
+    )
+
+  def test_reduce_sum_with_axis(self):
+    for axis, expected_flops, expected_memory in [
+        (0, (11 - 1) * 4, 11 * 4 + 4),
+        (1, (4 - 1) * 11, 11 * 4 + 11),
+        ([0, 1], 11 * 4 - 1, 11 * 4 + 1),
+        ([], 0, 11 * 4 + 11 * 4),
+    ]:
+      _, result = roofline.roofline(
+          lambda x: jnp.sum(x, axis=axis),
+          mesh=mesh.AbstractMesh(()),
+          in_specs=(P()),
+          out_specs=P(),
+      )(jnp.zeros((11, 4)))
+      self.assertEqual(result.unfused_flops, expected_flops)
+      self.assertEqual(
+          result.unfused_hbm_bytes, self._bytes_per_word * expected_memory
+      )
 
 
 if __name__ == "__main__":
