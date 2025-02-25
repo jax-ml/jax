@@ -360,11 +360,11 @@ def _eval_index_map(
 
 def _check_block_mappings(
     block_mappings: Sequence[pallas_core.BlockMapping],
-    name_and_src_info: pallas_core.NameAndSrcInfo,
+    debug_info: jax_core.DebugInfo,
 ) -> None:
   def err_details(bm: pallas_core.BlockMapping) -> str:
     return (
-        f"Block spec for {bm.origin} in pallas_call {name_and_src_info}"
+        f"Block spec for {bm.origin} in pallas_call {debug_info.func_src_info}"
         f" has block shape {bm.block_shape}, array shape"
         f" {bm.array_shape_dtype.shape},"
         # TODO(necula): add index_map source location info
@@ -435,7 +435,6 @@ def _block_spec_from_block_mapping(
 def lower_pipelined_jaxpr_to_module(
     grid_mapping: pallas_core.GridMapping,
     jaxpr: jax_core.Jaxpr,
-    name_and_src_info: pallas_core.NameAndSrcInfo,
     compiler_params: dict[str, Any],
     cost_estimate: pallas_core.CostEstimate | None,
 ) -> LoweringResult:
@@ -453,7 +452,7 @@ def lower_pipelined_jaxpr_to_module(
     )
 
   block_mappings = grid_mapping.block_mappings
-  _check_block_mappings(block_mappings, name_and_src_info)
+  _check_block_mappings(block_mappings, jaxpr.debug_info)
   in_block_mappings, out_block_mappings = util.split_list(
       block_mappings, [grid_mapping.num_inputs]
   )
@@ -554,7 +553,6 @@ def lower_pipelined_jaxpr_to_module(
         [bm.array_shape_dtype for bm in in_block_mappings],
         [bm.array_shape_dtype for bm in out_block_mappings],
         new_jaxpr,
-        name_and_src_info,
         compiler_params,
         new_consts,
     )
@@ -567,10 +565,10 @@ def lower_jaxpr_to_module(
     in_shapes: Sequence[jax.ShapeDtypeStruct],
     out_shapes: Sequence[jax.ShapeDtypeStruct],
     jaxpr: jax_core.Jaxpr,
-    name_and_src_info: pallas_core.NameAndSrcInfo,
     compiler_params: dict[str, Any],
     consts=(),
 ) -> LoweringResult:
+  debug_info = jaxpr.debug_info
   params = compiler_params.get("mosaic_gpu", {})
   approx_math = params.get("approx_math", False)
   thread_semantics = params.get(
@@ -593,7 +591,7 @@ def lower_jaxpr_to_module(
     for barrier, barrier_ref in zip(rs.barriers, runtime_barriers):
       grouped_barriers[barrier].append(barrier_ref)
     module_ctx = ModuleContext(
-        name_and_src_info.name,
+        mlir.sanitize_name(debug_info.func_name),
         grid_names,
         [_program_id(axis, squashed_dims) for axis in range(len(grid))],
         approx_math,
@@ -632,7 +630,7 @@ def lower_jaxpr_to_module(
               jax.ShapeDtypeStruct(shape=[smem_scratch_bytes], dtype=np.int8),
               rs.barriers,
           ),
-          module_name=name_and_src_info.name,
+          module_name=mlir.sanitize_name(debug_info.func_name),
           prof_spec=prof_spec,
       )
   )

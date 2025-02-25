@@ -240,6 +240,7 @@ class DebugInfoTest(jtu.JaxTestCase):
 
     dbg = api_util.debug_info("jit", my_f, (1, 2), dict(z=3, w=4))
     self.assertRegex(dbg.func_src_info, r"^my_f at .*debug_info_test.py:\d+")
+    self.assertEqual(dbg.func_name, "my_f")
     self.assertEqual(dbg.arg_names, ("x", "y", "z", "w"))
     self.assertIsNone(dbg.result_paths)
 
@@ -813,7 +814,7 @@ class DebugInfoTest(jtu.JaxTestCase):
         x, y,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=my_f, arg_names=x,y, result_paths=result",
-            "traced_for=jit, fun=my_g, arg_names=u,v, result_paths=result"
+            "traced_for=jit, fun=my_g, arg_names=u,v, result_paths=result",
         ],
         expected_lowering_lines=[
             re.compile(r".*func.func public @main\(%arg0: tensor<8xf..> loc\(\"x\"\)\)"),
@@ -1889,7 +1890,8 @@ class DebugInfoTest(jtu.JaxTestCase):
                             in_specs=(pl.BlockSpec((128, 8), my_index_map),
                                       pl.BlockSpec((128, 8), my_index_map)),
                             out_specs=pl.BlockSpec((128, 8), my_index_map),
-                            grid=(pl.cdiv(x.shape[0], 128), pl.cdiv(x.shape[1], 8)))(x, x)
+                            grid=(pl.cdiv(x.shape[0], 128), pl.cdiv(x.shape[1], 8)),
+                            name="my_custom_kernel_name")(x, x)
 
     self._check_tracers_and_jaxprs(
         jax.jit(my_f), x,
@@ -1897,11 +1899,12 @@ class DebugInfoTest(jtu.JaxTestCase):
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=my_f, arg_names=x, result_paths=result",
             "traced_for=pallas_call index_map, fun=my_index_map, arg_names=i,j, result_paths=result[0],result[1]",
-            "traced_for=pallas_call, fun=my_kernel, arg_names=x_ref,y_ref,o_ref, result_paths=",
+            # TODO(necula): result_paths?
+            "traced_for=pallas_call kernel, fun=my_custom_kernel_name, arg_names=x_ref,y_ref,o_ref, result_paths=",
         ],
         expected_tracer_debug_infos=[
             "traced_for=pallas_call index_map, fun=my_index_map, arg_names=i,j, from i",
-            "traced_for=pallas_call, fun=my_kernel, arg_names=x_ref,y_ref,o_ref, from x_ref",
+            "traced_for=pallas_call kernel, fun=my_custom_kernel_name, arg_names=x_ref,y_ref,o_ref, from x_ref",
         ],
         check_lowering=False,  # We need interpret mode on CPU. TODO(necula)
     )
@@ -1915,7 +1918,8 @@ class DebugInfoTest(jtu.JaxTestCase):
     def my_f(input):
       out_shape = jax.ShapeDtypeStruct(input.shape, input.dtype)
       pallas_call = pl.pallas_call(kernel,
-                                   out_shape=out_shape)
+                                   out_shape=out_shape,
+                                   name="my_custom_kernel_name")
       checked_call = checkify.checkify(pallas_call,
                                        errors=checkify.nan_checks)
       return checked_call(input)[1]
@@ -1928,11 +1932,11 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=jit, fun=my_f, arg_names=input, result_paths=result",
             # TODO(necula): function source location points in JAX internals
             # TODO(necula): arg_names and result_paths are wrong
-            re.compile(r"traced_for=checkify_pallas, fun=checked_kernel_fn at .*pallas_call.py:.*, arg_names=args\[0\],.*, result_paths="),
-            re.compile(r"traced_for=pallas_call index_map, fun=<lambda> at .*pallas.core.py:.*, arg_names=, result_paths="),
+            re.compile(r"traced_for=checkify_pallas, fun=checked_kernel_fn at .*.pallas_call.py:.*, arg_names=args\[0\],.*, result_paths="),
+            re.compile(r"traced_for=pallas_call index_map, fun=default_index_map at .*.pallas.core.py:.*, arg_names=, result_paths=result\[0\].*"),
         ],
         expected_tracer_debug_infos=[
-            "traced_for=pallas_call, fun=kernel, arg_names=x_ref,y_ref, from x_ref",
+            "traced_for=pallas_call kernel, fun=my_custom_kernel_name, arg_names=x_ref,y_ref, from x_ref",
         ],
         check_lowering=False,  # We need interpret mode on CPU. TODO(necula)
     )

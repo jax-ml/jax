@@ -107,7 +107,6 @@ def pallas_call_tpu_lowering_rule(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
     jaxpr: jax_core.Jaxpr,
-    name_and_src_info: core.NameAndSrcInfo,
     grid_mapping: core.GridMapping,
     input_output_aliases: tuple[tuple[int, int], ...],
     debug: bool,
@@ -118,8 +117,9 @@ def pallas_call_tpu_lowering_rule(
 ):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
   del interpret
+  debug_info = jaxpr._debug_info
   if debug:
-    print(f"\nThe kernel jaxpr for pallas_call {name_and_src_info}:")
+    print(f"\nThe kernel jaxpr for pallas_call {debug_info.func_src_info}:")
     print(jaxpr)
   if "mosaic" in compiler_params:
     mosaic_params = compiler_params["mosaic"]
@@ -149,13 +149,12 @@ def pallas_call_tpu_lowering_rule(
           dimension_semantics=dimension_semantics,
           mesh=mesh,
           for_verification=for_verification,
-          name_and_src_info=name_and_src_info,
           dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
       )
 
   mosaic_module, extra_args = lower_module(for_verification=False)
   if debug:
-    print(f"\nThe Mosaic module for pallas_call {name_and_src_info}:")
+    print(f"\nThe Mosaic module for pallas_call {debug_info.func_src_info}:")
     print(mosaic_module)
   num_extra_args = len(extra_args)
   num_dyn_bounds = grid_mapping.num_dynamic_grid_bounds
@@ -176,7 +175,7 @@ def pallas_call_tpu_lowering_rule(
         verification_module, num_devices, num_cores
     )
     if promela_dump_path == "stdout":
-      print(f"The Promela model for pallas_call {name_and_src_info}:")
+      print(f"The Promela model for pallas_call {debug_info.func_src_info}:")
       print(model)
     else:
       if promela_dump_path == "sponge":
@@ -188,7 +187,7 @@ def pallas_call_tpu_lowering_rule(
           )
       dump_ctx = tempfile.NamedTemporaryFile(
           mode="w",
-          prefix=name_and_src_info.name + "-",
+          prefix=mlir.sanitize_name(debug_info.func_name) + "-",
           suffix=".pml",
           dir=promela_dump_path, delete=False,
       )
@@ -230,7 +229,7 @@ def pallas_call_tpu_lowering_rule(
       module=mosaic_module,
       out_type=kernel_out_avals,
       backend="tpu",
-      kernel_name=name_and_src_info.name,
+      kernel_name=mlir.sanitize_name(debug_info.func_name),
       cost_estimate=mosaic_cost_estimate,
       vmem_limit_bytes=mosaic_params.get("vmem_limit_bytes"),
       flags=mosaic_params.get("flags"),
