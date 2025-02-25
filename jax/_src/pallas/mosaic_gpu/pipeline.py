@@ -97,6 +97,9 @@ class BufferedRef:
 def _uses_arguments(
     index_map: Callable[..., Any], num_args: int
 ) -> Sequence[bool]:
+  if not num_args:
+    return ()
+
   jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(
           index_map,
