@@ -35,6 +35,8 @@ NB_MODULE(_mosaic_gpu_ext, m) {
         }
       },
       nb::arg("context"), nb::arg("load") = true);
+  m.def("private_operation_remove_from_parent", mlirOperationRemoveFromParent);
+  m.def("private_block_append_owned_operation", mlirBlockAppendOwnedOperation);
 
   mlir::python::nanobind_adaptors::mlir_attribute_subclass(
       m, "TileTransformAttr", mlirMosaicGpuIsATileTransformAttr)
