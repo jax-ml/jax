@@ -25,9 +25,11 @@ from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import builtin
+from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import nvvm
+from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import numpy as np
 
@@ -45,10 +47,37 @@ class LoweringContext:
   launch_context: launch_context.LaunchContext | None
   single_thread_per_block_predicate: ir.Value | None
   single_thread_per_warpgroup_predicate: ir.Value | None
+  lowered_operations: set[ir.Operation | ir.OpView] = dataclasses.field(
+      default_factory=set
+  )
+
+  def lower_op(self, op: ir.OpView):
+    if not _should_lower(op):
+      return
+
+    if (name := op.OPERATION_NAME) not in _lowerings:
+      raise NotImplementedError(f"Missing lowering rule for {op}")
+
+    lowering_rule = _lowerings[name]
+
+    # TODO(bchetioui): make sure all layouts are set here.
+    if layouts.should_have_layout(op) and not layouts.has_any_layout_set(op):
+      raise ValueError(f"{op} is missing a layout and can not be lowered.")
+
+    new_results = lowering_rule(self, op)
+    if new_results is not RECURSED:
+      for old, new in zip(op.results, new_results):
+        old.replace_all_uses_with(new)
+      self.lowered_operations.add(op)
 
 
+class Recursed:
+  pass
+RECURSED = Recursed()
+
+MlirLoweringRuleResult = Sequence[ir.Value] | Recursed
 MlirLoweringRule = Callable[
-    [LoweringContext, ir.Operation | ir.OpView], Sequence[ir.Value]
+    [LoweringContext, ir.Operation | ir.OpView], MlirLoweringRuleResult
 ]
 
 
@@ -544,6 +573,37 @@ def _mgpu_wait_op_lowering_rule(
   return []
 
 
+@_register_lowering(WaitOp)
+def _for_op_lowering_rule(
+    _: LoweringContext, wait_op: scf.ForOp
+) -> Sequence[ir.Value]:
+
+  barrier = utils.BarrierRef.from_dialect_barrier_memref(wait_op.barrier)
+  barrier.wait_parity(wait_op.parity)
+
+  return []
+
+
+@_register_lowering(func.FuncOp)
+@_register_lowering(gpu.LaunchOp)
+@_register_lowering(scf.IfOp)  # TODO(apaszke,bchetioui): Add a proper rule.
+@_register_lowering(scf.ForOp)  # TODO(apaszke,bchetioui): Add a proper rule.
+@_register_lowering(scf.IndexSwitchOp)  # TODO(apaszke,bchetioui): Add a proper rule.
+def _traverse_op_lowering_rule(
+    ctx: LoweringContext, op: ir.OpView
+) -> MlirLoweringRuleResult:
+  if layouts.should_have_layout(op):
+    raise ValueError(
+        f"Rule cannot handle an op with vector operands or results: {op}"
+    )
+  for region in op.operation.regions:
+    for block in region:
+      for block_op in list(block):
+        with ir.InsertionPoint(block_op):
+          ctx.lower_op(block_op)
+  return RECURSED
+
+
 def single_thread_predicates(module: ir.Module) -> tuple[ir.Value, ir.Value]:
   """Returns a single thread predicate per block and one per warpgroup."""
   block_predicate = warpgroup_predicate = None
@@ -572,11 +632,11 @@ def single_thread_predicates(module: ir.Module) -> tuple[ir.Value, ir.Value]:
 
 def _should_lower(op: ir.OpView) -> bool:
   """Returns 'true' if the operation should be lowered."""
-  if isinstance(op.name, ir.StringAttr):
-    name = op.name.value
-  else:
-    name = op.name
-  return name.startswith("mosaic_gpu.") or layouts.should_have_layout(op)
+  return (
+      op.OPERATION_NAME.startswith("mosaic_gpu.")
+      or layouts.should_have_layout(op)
+      or any(bool(b) for r in op.regions for b in r)  # Does it have subblocks?
+  )
 
 
 def lower_mgpu_dialect(
@@ -591,8 +651,6 @@ def lower_mgpu_dialect(
   module.context.append_dialect_registry(mlir_interpreter.upstream_dialects)
   module.context.load_all_available_dialects()
 
-  lowered_operations: set[ir.Operation | ir.OpView] = set()
-
   # TODO(bchetioui): fix tests to not have a test-only path polluting the API.
   if launch_context is None:  # this case is used in some tests
     block_predicate = warpgroup_predicate = None
@@ -600,37 +658,9 @@ def lower_mgpu_dialect(
     block_predicate, warpgroup_predicate = single_thread_predicates(module)
 
   ctx = LoweringContext(launch_context, block_predicate, warpgroup_predicate)
-
-  def _lower_op(op: ir.OpView):
-    if not _should_lower(op):
-      return
-
-    if op.name not in _lowerings:
-      raise NotImplementedError(f"Missing lowering rule for {op.name}")
-
-    lowering_rule = _lowerings[op.name]
-
-    # TODO(bchetioui): make sure all layouts are set here.
-    if layouts.should_have_layout(op) and not layouts.has_any_layout_set(op):
-      raise ValueError(f"{op} is missing a layout and can not be lowered.")
-
-    new_results = lowering_rule(ctx, op)
-
-    for old, new in zip(op.results, new_results):
-      old.replace_all_uses_with(new)
-    lowered_operations.add(op)
-
-  def _traverse_and_lower_op(op: ir.OpView):
-    for region in op.operation.regions:
-      for block in region:
-        for block_op in list(block):
-          with ir.InsertionPoint(block_op):
-            _traverse_and_lower_op(block_op)
-    _lower_op(op)
-
   with ir.InsertionPoint(module.body):
     for op in list(module.body):
-      _traverse_and_lower_op(op)
+      ctx.lower_op(op)
 
-  for lowered_op in lowered_operations:
+  for lowered_op in ctx.lowered_operations:
     lowered_op.erase()
