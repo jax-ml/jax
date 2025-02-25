@@ -49,7 +49,6 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax.lax import (PrecisionLike,_array_copy,
                               _sort_le_comparator, _sort_lt_comparator)
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.numpy.array_creation import (empty, empty_like, full,
                                            ones, ones_like, zeros, zeros_like)
 from jax._src.numpy import indexing
@@ -5357,11 +5356,6 @@ def _make_string_array(
     ndmin: int = 0,
     device: xc.Device | Sharding | None = None,
 ) -> Array:
-  if xla_extension_version < 311:
-    raise TypeError(
-        "String arrays are not supported in JAX before XLA extension version"
-        " 311."
-    )
   if not isinstance(object, np.ndarray):
     raise TypeError(
         "Currently, string arrays can only be made from NumPy"

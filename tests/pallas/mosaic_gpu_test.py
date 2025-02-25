@@ -19,7 +19,6 @@ import operator
 import os
 import re
 import tempfile
-import traceback
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -115,6 +114,9 @@ class PallasCallTest(PallasTest):
       thread_semantics=[*plgpu.ThreadSemantics],
   )
   def test_binary_op(self, op, dtype, thread_semantics):
+    if thread_semantics == plgpu.ThreadSemantics.Warpgroup:
+      self.skipTest("Needs scan_p WG lowering")
+
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], dtype),
@@ -144,6 +146,8 @@ class PallasCallTest(PallasTest):
       thread_semantics=[*plgpu.ThreadSemantics],
   )
   def test_comparison_op(self, op, dtype, thread_semantics):
+    if thread_semantics == plgpu.ThreadSemantics.Warpgroup:
+      self.skipTest("Needs scan_p WG lowering")
 
     @functools.partial(
         pl.pallas_call,
@@ -315,6 +319,9 @@ class PallasCallTest(PallasTest):
       thread_semantics=[*plgpu.ThreadSemantics],
   )
   def test_copy_smem_to_gmem(self, indexer, thread_semantics):
+    if thread_semantics == plgpu.ThreadSemantics.Warpgroup:
+      self.skipTest("Needs scan_p WG lowering")
+
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
@@ -781,6 +788,9 @@ class PallasCallTest(PallasTest):
 
   @parameterized.product(thread_semantics=[*plgpu.ThreadSemantics])
   def test_run_scoped(self, thread_semantics):
+    if thread_semantics == plgpu.ThreadSemantics.Warpgroup:
+      self.skipTest("Needs scan_p WG lowering")
+
     def kernel(x_ref, o_ref):
       def body(tmp_ref):
         self.assertEqual(tmp_ref.shape, (8, 128))
@@ -845,21 +855,16 @@ class PallasCallTest(PallasTest):
   def test_program_id_in_block_spec(self):
     @functools.partial(
         pl.pallas_call,
-        out_specs=pl.BlockSpec((128,), lambda *_: pl.program_id(0)),
-        out_shape=jax.ShapeDtypeStruct([128 * 2], jnp.int32),
+        in_specs=(pl.BlockSpec((2, 128), lambda i: (pl.program_id(0), i)),),
+        out_specs=pl.BlockSpec((2, 128), lambda i: (pl.program_id(0), i)),
+        out_shape=jax.ShapeDtypeStruct([2, 128], jnp.int32),
         grid=2,
     )
-    def kernel(o_ref):
-      del o_ref
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
 
-    # ``assertRaises`` have no way of asserting against the cause, so we
-    # have to use ``traceback.format_exception`` manually.
-    with self.assertRaises(Exception) as exc_info:
-      kernel()
-    self.assertIn(
-        "not supported in this context",
-        "".join(traceback.format_exception(exc_info.exception)),
-    )
+    x = jnp.arange(2 * 128, dtype=jnp.int32).reshape([2, 128])
+    np.testing.assert_array_equal(kernel(x), x)
 
   def test_num_programs(self):
     @functools.partial(

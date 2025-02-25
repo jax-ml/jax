@@ -18,7 +18,6 @@ import jax
 from jax import numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import xla_extension_version
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -29,12 +28,6 @@ class StringArrayTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if xla_extension_version < 311:
-      self.skipTest(
-          "Skipping this test because the current XLA extension version:"
-          f" {xla_extension_version} is older than 309, the oldest version with"
-          " string array support."
-      )
     if not hasattr(np.dtypes, "StringDType"):
       self.skipTest(
           "Skipping this test because the numpy.dtype.StringDType is not"

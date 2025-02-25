@@ -21,16 +21,16 @@ from collections.abc import Hashable, MutableMapping, MutableSequence, Sequence
 import contextlib
 import dataclasses
 import functools
-import itertools as it
 import math
 from typing import Any, Protocol, cast
 
 import jax
 from jax import lax
 from jax._src import core as jax_core
+from jax._src import linear_util as lu
 from jax._src import pjit
-from jax._src import util
 from jax._src import source_info_util
+from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
@@ -47,13 +47,13 @@ from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.state import discharge
 from jax._src.state import indexing
-from jax._src.state import types as state_types
 from jax._src.state import primitives as sp
+from jax._src.state import types as state_types
 from jax._src.state.types import RefReshaper
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core as mgpu_core
-from jax.experimental.mosaic.gpu import utils as mgpu_utils
 from jax.experimental.mosaic.gpu import profiler as mgpu_profiler
+from jax.experimental.mosaic.gpu import utils as mgpu_utils
 import jax.numpy as jnp
 import numpy as np
 
@@ -81,7 +81,15 @@ def _align_to(x: int, alignment: int):
 
 @dataclasses.dataclass(frozen=True)
 class ResourceEstimatorContext:
-  arrival_multiplier: int
+  thread_semantics: mgpu.ThreadSemantics
+
+  @property
+  def arrival_multiplier(self) -> int:
+    return (
+        WARPGROUP_SIZE
+        if self.thread_semantics == mgpu.ThreadSemantics.Lane
+        else 1
+    )
 
 
 @dataclasses.dataclass(kw_only=True, frozen=True)
@@ -307,6 +315,10 @@ class LoweringRuleContext:
 
   replace = dataclasses.replace
 
+  @property
+  def estimator_ctx(self) -> ResourceEstimatorContext:
+    return ResourceEstimatorContext(thread_semantics=self.thread_semantics)
+
 
 @dataclasses.dataclass(frozen=True)
 class LoweringResult:
@@ -344,11 +356,6 @@ def _eval_index_map(
       # TODO(slebedev): Use a type-agnostic multiplication wrapper.
       result.append(arith_dialect.muli(_as_index(i), _as_index(b)))
   return tuple(result)
-
-
-def _uses_arguments(cjaxpr: jax_core.ClosedJaxpr) -> list[bool]:
-  jaxpr = cjaxpr.jaxpr
-  return pe.dce_jaxpr(jaxpr, used_outputs=[True] * len(jaxpr.outvars))[1]
 
 
 def _check_block_mappings(
@@ -392,12 +399,45 @@ def _check_block_mappings(
       )
 
 
-def lower_jaxpr_to_module(
+def _block_spec_from_block_mapping(
+    bm: pallas_core.BlockMapping,
+    which_parallel: Sequence[bool],
+) -> pallas_core.BlockSpec:
+  eval_index_map = functools.partial(
+      jax.core.eval_jaxpr,
+      bm.index_map_jaxpr.jaxpr,
+      bm.index_map_jaxpr.consts,
+  )
+
+  def index_map(*indices):
+    # Inject the parallel indices into the sequential ones coming from
+    # `emit_pipeline`.
+    new_indices = util.merge_lists(
+        which_parallel,
+        indices,
+        [
+            primitives.program_id(axis)
+            for axis, is_parallel in enumerate(which_parallel)
+            if is_parallel
+        ],
+    )
+    return eval_index_map(*new_indices)
+
+  return gpu_core.GPUBlockSpec(
+      bm.block_shape,
+      index_map,
+      memory_space=bm.transformed_block_aval.memory_space,
+      indexing_mode=bm.indexing_mode,
+      transforms=bm.transforms,
+  )
+
+
+def lower_pipelined_jaxpr_to_module(
     grid_mapping: pallas_core.GridMapping,
     jaxpr: jax_core.Jaxpr,
     name_and_src_info: pallas_core.NameAndSrcInfo,
     compiler_params: dict[str, Any],
-    cost_estimate: pallas_core.CostEstimate | None
+    cost_estimate: pallas_core.CostEstimate | None,
 ) -> LoweringResult:
   del cost_estimate  # Unused.
 
@@ -414,155 +454,148 @@ def lower_jaxpr_to_module(
 
   block_mappings = grid_mapping.block_mappings
   _check_block_mappings(block_mappings, name_and_src_info)
-
-  params = compiler_params.get("mosaic_gpu", {})
-  approx_math = params.get("approx_math", False)
-  max_concurrent_steps = params.get("max_concurrent_steps", 1)
-  delay_release = params.get("delay_release", 0)
-  thread_semantics = params.get(
-      "thread_semantics", mgpu_core.ThreadSemantics.Lane
-  )
-  dimension_semantics = params.get("dimension_semantics")
-  if dimension_semantics is None:
-    dimension_semantics = ["parallel"] * len(grid_mapping.grid)
-  elif len(dimension_semantics) != len(grid_mapping.grid):
-    raise ValueError(
-        "dimension_semantics must have an entry for each grid dimension:"
-        f" {len(dimension_semantics)=}, but len(grid) is {grid_mapping.grid})."
-    )
-  sequential_axes = tuple(
-      i for i, s in enumerate(dimension_semantics) if s == "sequential"
-  )
-  if max_concurrent_steps <= delay_release:
-    raise ValueError(
-        "max_concurrent_steps must be greater than delay_release, but"
-        f" {max_concurrent_steps=}, {delay_release=}"
-    )
-
-  if grid_mapping.grid_names:  # Last dim corresponds to the warpgroup count
-    block = (128 * grid_mapping.grid[-1], 1, 1)
-    logical_grid = grid_mapping.grid[:-1]
-  else:
-    block = (128, 1, 1)
-    logical_grid = grid_mapping.grid
-
-  parallel_grid = [
-      d for i, d in enumerate(logical_grid) if i not in sequential_axes
-  ]
-  if len(parallel_grid) <= 3:
-    squashed_dims = ()
-    parallel_grid += (1,) * (3 - len(parallel_grid))
-  else:
-    # If we have >3 parallel dimensions, we merge all leading dimensions
-    # into the first (Dimension.x) CUDA grid dimension.
-    squashed_dims = parallel_grid[:-2]
-    parallel_grid = [math.prod(parallel_grid[:-2]), *parallel_grid[-2:]]
-
-  if sequential_axes:
-    # TODO(slebedev): Support multiple sequential axes.
-    if len(sequential_axes) > 1:
-      raise NotImplementedError(
-          "Multiple sequential axes are not supported in Mosaic GPU lowering."
-      )
-    [sequential_axis] = sequential_axes
-    num_steps = grid_mapping.grid[sequential_axis]
-    out_sequential_invariant = [
-        not _uses_arguments(bm.index_map_jaxpr)[sequential_axis]
-        for bm in grid_mapping.block_mappings_output
-    ]
-  else:
-    num_steps = 1
-    out_sequential_invariant = [True] * len(grid_mapping.out_shapes)
-
-  # Shrink ``max_concurrent_steps`` if the total number of steps is lower to
-  # reduce the size of the allocated buffers below.
-  if max_concurrent_steps > num_steps:
-    max_concurrent_steps = num_steps
-    delay_release = 0  # No need to delay anything
-
-  in_in_smem, out_in_smem = util.split_list(
-      [
-          bm.transformed_block_aval.memory_space in (None, gpu_core.SMEM)
-          for bm in block_mappings
-      ],
-      [grid_mapping.num_inputs],
-  )
-
   in_block_mappings, out_block_mappings = util.split_list(
       block_mappings, [grid_mapping.num_inputs]
   )
-  in_structs_gmem = [*grid_mapping.in_shapes]
-  # We allocate the fully transformed shapes here. All primitives have seen the
-  # inverse transformation stack and will understand how to handle it.
-  in_structs_smem = [
-      jax.ShapeDtypeStruct(
-          [max_concurrent_steps, *bm.transformed_block_aval.shape],
-          bm.transformed_block_aval.dtype,
+
+  if grid_mapping.grid_names:  # Last dim corresponds to the warpgroup count
+    block = (128 * grid_mapping.grid[-1], 1, 1)
+    grid = grid_mapping.grid[:-1]
+  else:
+    block = (128, 1, 1)
+    grid = grid_mapping.grid
+
+  params = compiler_params.get("mosaic_gpu", {})
+  dimension_semantics = params.get("dimension_semantics", None)
+  if dimension_semantics is None:
+    which_parallel = [True] * len(grid)
+  else:
+    assert len(dimension_semantics) == len(grid)
+    which_parallel = [ds == "parallel" for ds in dimension_semantics]
+  del dimension_semantics
+
+  sequential_grid = tuple(
+      d for axis, d in enumerate(grid) if not which_parallel[axis]
+  )
+  parallel_grid = tuple(
+      d for axis, d in enumerate(grid) if which_parallel[axis]
+  )
+
+  from jax._src.pallas.mosaic_gpu import pipeline
+  from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
+
+  def ref_for_aval(aval: jax_core.AbstractValue):
+    if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
+      return gpu_core.WGMMAAccumulatorRef(aval.shape, aval.dtype)
+    elif isinstance(aval, pallas_core.AbstractMemoryRef):
+      return pallas_core.MemoryRef(aval.shape, aval.dtype, aval.memory_space)
+    else:
+      return gpu_core.SMEM(aval.shape, aval.dtype)
+
+  def pipeline_fn(*refs):
+    return primitives.run_scoped(
+        functools.partial(scoped_pipeline_fn, *refs),
+        scratch_refs=[
+            ref_for_aval(v.aval)
+            for v in jaxpr.invars[grid_mapping.slice_scratch_ops]
+        ],
+    )
+
+  def scoped_pipeline_fn(*refs, scratch_refs):
+    def body_fn(*refs):
+      grid_env = pallas_core.current_grid_env()
+      assert grid_env is not None  # Set by ``emit_pipeline``.
+      program_ids_template = util.merge_lists(
+          which_parallel,
+          [grid_axis.index for grid_axis in grid_env],
+          [None] * sum(which_parallel),
       )
-      if in_smem
-      else None
-      for bm, in_smem in zip(
-          block_mappings[: grid_mapping.num_inputs], in_in_smem
+      assert len(refs) + len(scratch_refs) == len(jaxpr.invars)
+      return gpu_primitives.jaxpr_call(
+          jaxpr, *refs, *scratch_refs, program_ids=program_ids_template
       )
-  ]
-  in_gmem_transforms = [
-      cast(gpu_core.MemoryRefTransform, bm.transforms)
-      for bm in in_block_mappings
-  ]
-  out_structs_gmem = [*grid_mapping.out_shapes]
-  out_structs_smem = [
-      jax.ShapeDtypeStruct(
-          [max_concurrent_steps, *bm.transformed_block_aval.shape], s.dtype
-      )
-      if in_smem
-      else None
-      for bm, in_smem, s in zip(
-          block_mappings[grid_mapping.num_inputs :],
-          out_in_smem,
-          grid_mapping.out_shapes,
-      )
-  ]
-  out_gmem_transforms = [
-      cast(gpu_core.MemoryRefTransform, bm.transforms)
-      for bm in out_block_mappings
-  ]
+
+    return pipeline.emit_pipeline(
+        body_fn,
+        grid=sequential_grid,
+        in_specs=[
+            _block_spec_from_block_mapping(bm, which_parallel)
+            for bm in in_block_mappings
+        ],
+        out_specs=[
+            _block_spec_from_block_mapping(bm, which_parallel)
+            for bm in out_block_mappings
+        ],
+        max_concurrent_steps=params.pop("max_concurrent_steps", 1),
+        delay_release=params.pop("delay_release", 0),
+    )(*refs)
+
+  with grid_mapping.trace_env():
+    new_jaxpr, _, new_consts, () = pe.trace_to_jaxpr_dynamic(
+        lu.wrap_init(
+            # ``wrap_init`` does not support functions returning None.
+            lambda *args: pipeline_fn(*args) or (),
+            debug_info=jaxpr.debug_info,
+        ),
+        [
+            gpu_core.GMEM(
+                bm.array_shape_dtype.shape, bm.array_shape_dtype.dtype
+            ).get_ref_aval()
+            for bm in block_mappings
+        ],
+    )
+    assert not new_consts
+
+  with grid_mapping.trace_env():
+    return lower_jaxpr_to_module(
+        parallel_grid,
+        grid_mapping.grid_names,
+        block,
+        [bm.array_shape_dtype for bm in in_block_mappings],
+        [bm.array_shape_dtype for bm in out_block_mappings],
+        new_jaxpr,
+        name_and_src_info,
+        compiler_params,
+        new_consts,
+    )
+
+
+def lower_jaxpr_to_module(
+    grid: Sequence[int],
+    grid_names: Sequence[str],
+    block: Sequence[int],
+    in_shapes: Sequence[jax.ShapeDtypeStruct],
+    out_shapes: Sequence[jax.ShapeDtypeStruct],
+    jaxpr: jax_core.Jaxpr,
+    name_and_src_info: pallas_core.NameAndSrcInfo,
+    compiler_params: dict[str, Any],
+    consts=(),
+) -> LoweringResult:
+  params = compiler_params.get("mosaic_gpu", {})
+  approx_math = params.get("approx_math", False)
+  thread_semantics = params.get(
+      "thread_semantics", mgpu_core.ThreadSemantics.Lane
+  )
+
+  if len(grid) <= 3:
+    squashed_dims = ()
+    parallel_grid = grid + (1,) * (3 - len(grid))
+  else:
+    # If we have >3 parallel dimensions, we merge all leading dimensions
+    # into the first (Dimension.x) CUDA grid dimension.
+    squashed_dims = grid[:-2]
+    parallel_grid = (math.prod(grid[:-2]), *grid[-2:])
 
   def body(launch_ctx: mgpu.LaunchContext, *buffers: ir.Value):
-    *buffers_gmem, (
-        buffers_smem,
-        *scratch_buffers_smem,
-        runtime_smem,
-        barriers,
-    ) = buffers
-    assert len(buffers_gmem) == len(buffers_smem)
-    in_buffers_gmem, out_buffers_gmem = util.split_list(
-        buffers_gmem, [grid_mapping.num_inputs]
-    )
-    in_buffers_smem, out_buffers_smem = util.split_list(
-        buffers_smem, [grid_mapping.num_inputs]
-    )
-    barriers, runtime_barriers, extra_barriers = barriers
-
-    parallel_count = it.count()
-    program_ids_template = [
-        _program_id(next(parallel_count), squashed_dims=squashed_dims)
-        if axis not in sequential_axes
-        else None
-        for axis in range(len(logical_grid))
-    ]
-
-    def make_program_ids(step: ir.Value):
-      assert ir.IndexType.isinstance(step.type)
-      step = arith_dialect.index_cast(ir.IntegerType.get_signless(32), step)
-      return [step if pid is None else pid for pid in program_ids_template]
+    *buffers_gmem, (runtime_smem, runtime_barriers) = buffers
 
     grouped_barriers = collections.defaultdict(list)
     for barrier, barrier_ref in zip(rs.barriers, runtime_barriers):
       grouped_barriers[barrier].append(barrier_ref)
     module_ctx = ModuleContext(
         name_and_src_info.name,
-        grid_mapping.grid_names,
-        None,
+        grid_names,
+        [_program_id(axis, squashed_dims) for axis in range(len(grid))],
         approx_math,
         runtime_smem,
         smem_used_bytes=0,
@@ -573,266 +606,14 @@ def lower_jaxpr_to_module(
     )
     del runtime_smem, grouped_barriers, runtime_barriers
 
-    smem_scratch_it = iter(scratch_buffers_smem)
-    scratch_buffers_template = []
-    should_discharge = []
-    accs = []
-    for aval in scratch_avals:
-      match aval:
-        case gpu_core.WGMMAAbstractAccumulatorRef():
-          scratch_buffers_template.append(None)
-          should_discharge.append(True)
-          accs.append(
-              mgpu.WGMMAAccumulator.zero(
-                  *aval.shape, dtype=mgpu_utils.dtype_to_ir_type(aval.dtype)
-              )
-          )
-        case gpu_core.AbstractMemoryRef() if isinstance(
-            aval.dtype, gpu_core.BarrierType
-        ):
-          pass
-        case gpu_core.AbstractMemoryRef() if aval.memory_space == SMEM:
-          scratch_buffers_template.append(next(smem_scratch_it))
-          should_discharge.append(False)
-        case _:
-          raise NotImplementedError(
-              f"Unsupported scratch operand type: {aval}"
-          )
-    assert not jaxpr.outvars
-    if any(should_discharge):
-      # User-visible WGMMA APIs use the effectful accumulator references, but we
-      # can't lower that directly to Mosaic GPU that uses pure dataflow for
-      # accumulators. So we have to discharge the effects first.
-      assert not jaxpr.constvars
-      should_discharge = (
-          [False] * len(grid_mapping.block_mappings)
-          + should_discharge
-          + [False] * len(extra_barriers)
-      )
-      with grid_mapping.trace_env():
-        lowered_jaxpr, _ = discharge.discharge_state(
-            jaxpr, (), should_discharge=should_discharge
-        )
-    else:
-      lowered_jaxpr = jaxpr
-
-    # Precompute the total number of bytes transferred from GMEM to SMEM,
-    # so that we can do a single arrive instruction for all of the inputs.
-    in_transfer_bytes = 0
-    for in_smem, b_smem in zip(in_in_smem, in_buffers_smem):
-      if not in_smem:
-        continue
-      b_smem_type = ir.MemRefType(b_smem.type)
-      in_transfer_bytes += math.prod(b_smem_type.shape[1:]) * mgpu.bytewidth(
-          b_smem_type.element_type
-      )
-
-    def gmem_slice(
-        step: ir.Value,
-        block_mapping: pallas_core.BlockMapping,
-    ) -> Sequence[mgpu.DynamicSlice]:
-      assert len(sequential_axes) <= 1
-      program_ids = make_program_ids(step)
-      idxs = _eval_index_map(module_ctx, launch_ctx, program_ids, block_mapping)
-      return tuple(
-          mgpu.ds(idx, dim) for idx, dim in zip(idxs, block_mapping.block_shape)
-      )
-
-    is_memory_thread = mgpu.single_thread_predicate(per_block=True)
-
-    def fetch(idx: int, step: ir.Value, slot: ir.Value) -> None:
-      if not in_in_smem[idx]:
-        return
-
-      swizzle = None
-      pl_transforms = in_gmem_transforms[idx]
-      if pl_transforms and isinstance(
-          pl_transforms[-1], gpu_core.SwizzleTransform
-      ):
-        swizzle = pl_transforms[-1].swizzle
-        pl_transforms = pl_transforms[:-1]
-      gmem_transforms = tuple(x.to_gpu_transform() for x in pl_transforms)
-      launch_ctx.async_copy(
-          src_ref=in_buffers_gmem[idx],
-          dst_ref=mgpu.memref_slice(in_buffers_smem[idx], slot),
-          gmem_slice=gmem_slice(step, in_block_mappings[idx]),
-          barrier=barriers[slot],
-          gmem_transform=gmem_transforms,
-          swizzle=swizzle,
-          arrive=False,  # The caller must do ``arrive_expect_tx`` manually!
-          predicate=is_memory_thread,
-      )
-
-    def store(
-        idx: int, step: ir.Value, slot: ir.Value, prev_base_offset: ir.Value | None
-    ) -> ir.Value | None:
-      if not out_in_smem[idx]:
-        return _as_index(-1)
-
-      store_slice = gmem_slice(step, out_block_mappings[idx])
-      if out_sequential_invariant[idx]:
-        assert prev_base_offset is None
-        do_store = None  # Lack of predicate defaults to True.
-        base_offset = None
-      else:
-        assert prev_base_offset is not None
-        # We have to do some work to make sure that consecutive stores are not
-        # going to be writing to the same location, or else we'll end up with
-        # multiple concurrent writes and a racy program.
-        # TODO(apaszke,slebedev): This still diverges significantly from the TPU
-        # semantics in that it will move on to the next SMEM output slice even if
-        # it's not storing the previous one.
-        strides, _ = ir.MemRefType(out_buffers_gmem[idx].type).get_strides_and_offset()
-        base_offset = _as_index(0)
-        for stride, slc in zip(strides, store_slice):
-          base_offset = arith_dialect.addi(
-              base_offset, arith_dialect.muli(slc.base, _as_index(stride))
-          )
-        base_offset_changed = arith_dialect.cmpi(
-            arith_dialect.CmpIPredicate.ne, base_offset, prev_base_offset
-        )
-        is_last_step = arith_dialect.cmpi(
-            arith_dialect.CmpIPredicate.eq, step, _as_index(num_steps - 1)
-        )
-        do_store = arith_dialect.andi(
-            is_memory_thread, arith_dialect.ori(base_offset_changed, is_last_step)
-        )
-
-      swizzle = None
-      pl_transforms = out_gmem_transforms[idx]
-      if pl_transforms and isinstance(
-          pl_transforms[-1], gpu_core.SwizzleTransform
-      ):
-        swizzle = pl_transforms[-1].swizzle
-        pl_transforms = pl_transforms[:-1]
-      gmem_transforms = tuple(x.to_gpu_transform() for x in pl_transforms)
-      launch_ctx.async_copy(
-          src_ref=mgpu.memref_slice(out_buffers_smem[idx], slot),
-          dst_ref=out_buffers_gmem[idx],
-          gmem_slice=store_slice,
-          gmem_transform=gmem_transforms,
-          swizzle=swizzle,
-          predicate=do_store,
-      )
-      return base_offset
-
-    for slot in range(min(max_concurrent_steps, num_steps)):
-      barriers[slot].arrive_expect_tx(in_transfer_bytes, predicate=is_memory_thread)
-      for idx in range(grid_mapping.num_inputs):
-        fetch(idx, _as_index(slot), _as_index(slot))
-
-    last_store_offsets = [None if inv else _as_index(-1) for inv in out_sequential_invariant]
-
-    @mgpu.fori(_as_index(num_steps), (accs, last_store_offsets))
-    def _(step, carry):
-      accs, last_store_offsets = carry
-      slot = arith_dialect.remui(step, _as_index(max_concurrent_steps))
-      if grid_mapping.num_inputs:
-        # Only wait if async copies were issued.
-        barriers[slot].wait()
-      # We need to make sure the output copy is complete before the kernel starts
-      # writing to the output window.
-      launch_ctx.await_async_copy(
-          max_concurrent_steps - (1 + delay_release), await_read_only=True
-      )
-
-      args = [
-          mgpu.memref_slice(buffers_smem[idx], slot)
-          if in_smem
-          else buffers_gmem[idx]
-          for idx, in_smem in enumerate(it.chain(in_in_smem, out_in_smem))
-      ]
-      accs_it = iter(accs)
-      scratch_buffers = [
-          b if b is not None else next(accs_it)
-          for b in scratch_buffers_template
-      ]
-      args.extend(scratch_buffers)
-      # TODO(apaszke): This assumes barriers come after buffers in scratch args,
-      # but that's not necessarily true.
-      args.extend(extra_barriers)
-      new_accs = lower_jaxpr_to_mosaic_gpu(
-          dataclasses.replace(module_ctx, program_ids=make_program_ids(step)),
-          launch_ctx,
-          lowered_jaxpr,
-          args,
-          thread_semantics=thread_semantics
-      )
-
-      if not all(out_sequential_invariant):
-        mgpu.commit_shared()
-      new_store_offsets = []
-      for idx in range(grid_mapping.num_outputs):
-        last_offset = last_store_offsets[idx]
-        new_store_offsets.append(
-            store(idx, step, slot, last_offset)
-            if not out_sequential_invariant[idx]
-            else last_offset  # Only store if the output can depend on the step.
-        )
-
-      del slot  # Just to make sure we don't accidentally use it.
-      fetch_step = arith_dialect.addi(
-          step, _as_index(max_concurrent_steps - delay_release)
-      )
-      fetch_step_in_bounds = arith_dialect.cmpi(
-          arith_dialect.CmpIPredicate.ult, fetch_step, _as_index(num_steps)
-      )
-      not_initial_step = arith_dialect.cmpi(
-          arith_dialect.CmpIPredicate.uge, step, _as_index(delay_release)
-      )
-      fetch_slot = arith_dialect.remui(fetch_step, _as_index(max_concurrent_steps))
-      with mgpu.when(arith_dialect.andi(fetch_step_in_bounds, not_initial_step)):
-        barriers[fetch_slot].arrive_expect_tx(in_transfer_bytes, predicate=is_memory_thread)
-        for idx in range(grid_mapping.num_inputs):
-          fetch(idx, fetch_step, fetch_slot)
-
-      return list(new_accs), new_store_offsets
-
-    # Outputs invariant to the sequential axis are never written from inside the
-    # loop. This is the only place where we store them.
-    if all(out_sequential_invariant):
-      mgpu.commit_shared()
-    last_slot = _as_index((num_steps - 1) % max_concurrent_steps)
-    for idx in range(grid_mapping.num_outputs):
-      if out_sequential_invariant[idx]:
-        store(idx, _as_index(0), last_slot, None)
-
-    launch_ctx.await_async_copy(0)
-
-  scratch_avals = [
-      var.aval for var in jaxpr.invars[grid_mapping.slice_scratch_ops]
-  ]
-  local_spaces = (gpu_core.SMEM, gpu_core.REGS)
-  if not all(
-      isinstance(aval, pallas_core.AbstractMemoryRef)
-      and aval.memory_space in local_spaces
-      for aval in scratch_avals
-  ):
-    raise TypeError(
-        "All scratch operands must be SMEM references or accumulators (ACC),"
-        f" but got: {scratch_avals}"
+    _ = lower_jaxpr_to_mosaic_gpu(
+        module_ctx, launch_ctx, jaxpr, buffers_gmem, consts, thread_semantics
     )
-  arrival_multiplier = (
-      WARPGROUP_SIZE if thread_semantics == mgpu.ThreadSemantics.Lane else 1
-  )
-  rs = _estimate_resources(ResourceEstimatorContext(arrival_multiplier), jaxpr)
-  extra_barriers = [
-      mgpu.Barrier(aval.dtype.num_arrivals * arrival_multiplier, *aval.shape)
-      for aval in scratch_avals
-      if isinstance(aval.dtype, gpu_core.BarrierType)
-  ]
-  extra_smem_scratch = [
-      jax.ShapeDtypeStruct(aval.shape, aval.dtype)
-      for aval in scratch_avals
-      if not isinstance(aval.dtype, gpu_core.BarrierType)
-      and aval.memory_space == gpu_core.SMEM
-  ]
+
+  rs = _estimate_resources(ResourceEstimatorContext(thread_semantics), jaxpr)
   smem_scratch_bytes = params.get("smem_scratch_bytes")
   if smem_scratch_bytes is None:
     smem_scratch_bytes = rs.smem_scratch_bytes
-  extra_smem_scratch.append(
-      jax.ShapeDtypeStruct(shape=[smem_scratch_bytes], dtype=np.int8)
-  )
 
   prof_ctx = prof_spec = None
   if prof_space := params.get("profile_space", 0):
@@ -845,18 +626,11 @@ def lower_jaxpr_to_module(
           grid=parallel_grid,
           cluster=(),
           block=block,
-          in_shapes=in_structs_gmem,
-          out_shape=out_structs_gmem,
+          in_shapes=in_shapes,
+          out_shape=out_shapes,
           smem_scratch_shape=(
-              (*in_structs_smem, *out_structs_smem),
-              *extra_smem_scratch,
-              (
-                  mgpu.Barrier(
-                      arrival_count=1, num_barriers=max_concurrent_steps
-                  ),
-                  rs.barriers,
-                  extra_barriers,
-              ),
+              jax.ShapeDtypeStruct(shape=[smem_scratch_bytes], dtype=np.int8),
+              rs.barriers,
           ),
           module_name=name_and_src_info.name,
           prof_spec=prof_spec,
@@ -1464,13 +1238,13 @@ for op, si_impl, ui_impl, f_impl in [
         lax.max_p,
         arith_dialect.maxsi,
         arith_dialect.maxui,
-        arith_dialect.maximumf,
+        arith_dialect.maxnumf,
     ),
     (
         lax.min_p,
         arith_dialect.minsi,
         arith_dialect.minui,
-        arith_dialect.minimumf,
+        arith_dialect.minnumf,
     ),
 ]:
   mosaic_lowering_rules[mgpu.ThreadSemantics.Warpgroup][op] = partial(
@@ -1689,9 +1463,6 @@ def _run_scoped_lowering_rule(
   input_refs = []
   should_discharge = []
   alloc_stack = contextlib.ExitStack()
-  arrival_multiplier = (
-      WARPGROUP_SIZE if ctx.thread_semantics == mgpu.ThreadSemantics.Lane else 1
-  )
   for v in jaxpr.invars:
     aval = v.aval
     if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
@@ -1707,7 +1478,9 @@ def _run_scoped_lowering_rule(
       input_refs.append(
           ctx.module_ctx.reserve_barrier(
               mgpu.Barrier(
-                  aval.dtype.num_arrivals * arrival_multiplier, *aval.shape
+                  aval.dtype.num_arrivals
+                  * ctx.estimator_ctx.arrival_multiplier,
+                  *aval.shape,
               )
           )
       )

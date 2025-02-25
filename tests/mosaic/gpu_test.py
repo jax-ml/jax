@@ -29,7 +29,6 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir import passmanager
 from jax._src.lib.mlir.dialects import arith
@@ -2701,9 +2700,6 @@ class UtilsTest(TestCase):
 class SerializationTest(absltest.TestCase):
 
   def test_pass_is_registered(self):
-    if jaxlib_version < (0, 5, 1):
-      self.skipTest("Test requires jaxlib 0.5.1 or later")
-
     ctx = mlir.make_ir_context()
     ctx.allow_unregistered_dialects = True
     with ir.Location.unknown(ctx):

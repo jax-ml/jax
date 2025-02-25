@@ -61,7 +61,7 @@ def pallas_call_lowering(
   if thread_semantics == mosaic_core.ThreadSemantics.Warpgroup:
     mosaic_core.dialect.register_dialect(ctx.module_context.context)  # pytype: disable=attribute-error
 
-  lowering_result = lowering.lower_jaxpr_to_module(
+  lowering_result = lowering.lower_pipelined_jaxpr_to_module(
       grid_mapping,
       jaxpr,
       name_and_src_info,
