@@ -1136,51 +1136,77 @@ class TracingContext(threading.local):
 trace_ctx = TracingContext()
 
 
-@contextmanager
-def take_current_trace():
-  prev = trace_ctx.trace
-  try:
-    trace_ctx.set_trace(eval_trace)
-    yield prev
-  finally:
-    trace_ctx.set_trace(prev)
+class TakeCurrentTraceContextManager:
+  __slots__ = ['prev']
 
-@contextmanager
-def set_current_trace(trace, check_leaks=False):
-  prev = trace_ctx.trace
-  try:
-    trace_ctx.set_trace(trace)
-    yield
-  finally:
-    trace_ctx.set_trace(prev)
-    if check_leaks and config.check_tracer_leaks.value:
-      trace.invalidate()
-      trace_ref = ref(trace)
-      del trace
+  def __enter__(self):
+    self.prev = trace_ctx.trace
+    trace_ctx.set_trace(eval_trace)
+    return self.prev
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    trace_ctx.set_trace(self.prev)
+
+take_current_trace = TakeCurrentTraceContextManager
+
+
+class SetCurrentTraceContextManager:
+  __slots__ = ['trace', 'check_leaks', 'prev']
+
+  def __init__(self, trace, check_leaks=False):
+    self.trace = trace
+    self.check_leaks = check_leaks
+
+  def __enter__(self):
+    self.prev = trace_ctx.trace
+    trace_ctx.set_trace(self.trace)
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    trace_ctx.set_trace(self.prev)
+    if self.check_leaks and config.check_tracer_leaks.value:
+      self.trace.invalidate()
+      trace_ref = ref(self.trace)
+      del self.trace
       live_trace = trace_ref()
       if live_trace is not None:
         leaked_tracers = maybe_find_leaked_tracers(live_trace)
         if leaked_tracers:
           raise leaked_tracer_error("trace", live_trace, leaked_tracers)
 
-@contextmanager
-def extend_axis_env_nd(name_size_pairs : Iterable[tuple[AxisName, int]]):
-  prev = trace_ctx.axis_env
-  try:
-    trace_ctx.set_axis_env(prev.extend_pure(name_size_pairs))
-    yield
-  finally:
-    trace_ctx.set_axis_env(prev)
+set_current_trace = SetCurrentTraceContextManager
 
-@contextmanager
-def add_spmd_axis_names(axis_names: AxisName | None):
-  prev = trace_ctx.axis_env
-  try:
-    if axis_names is not None:
-      trace_ctx.set_axis_env(prev.add_spmd_axis_names(axis_names))
-    yield
-  finally:
-    trace_ctx.set_axis_env(prev)
+class ExtendAxisEnvNdContextManager:
+  __slots__ = ['prev', 'name_size_pairs']
+
+  def __init__(self, name_size_pairs: Iterable[tuple[AxisName, int]]):
+    self.name_size_pairs = name_size_pairs
+
+  def __enter__(self):
+    self.prev = trace_ctx.axis_env
+    trace_ctx.set_axis_env(self.prev.extend_pure(self.name_size_pairs))
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    trace_ctx.set_axis_env(self.prev)
+
+extend_axis_env_nd = ExtendAxisEnvNdContextManager
+
+
+class AddSpmdAxisNamesContextManager:
+  __slots__ = ['prev', 'axis_names']
+
+  def __init__(self, axis_names: AxisName | None):
+    self.axis_names = axis_names
+
+  def __enter__(self):
+    self.prev = trace_ctx.axis_env
+    if self.axis_names is not None:
+      trace_ctx.set_axis_env(self.prev.add_spmd_axis_names(self.axis_names))
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    trace_ctx.set_axis_env(self.prev)
+
+add_spmd_axis_names = AddSpmdAxisNamesContextManager
+
 
 def get_axis_env():
   return trace_ctx.axis_env
@@ -1232,6 +1258,7 @@ def ensure_no_leaks(trace:Trace):
       leaked_tracers = maybe_find_leaked_tracers(live_trace)
       if leaked_tracers:
         raise leaked_tracer_error("trace", live_trace, leaked_tracers)
+
 
 def maybe_find_leaked_tracers(trace: Trace) -> list[Tracer]:
   """Find the leaked tracers holding a reference to the Trace
