@@ -114,8 +114,6 @@ class PallasCallTest(PallasTest):
       thread_semantics=[*plgpu.ThreadSemantics],
   )
   def test_binary_op(self, op, dtype, thread_semantics):
-    if thread_semantics == plgpu.ThreadSemantics.Warpgroup:
-      self.skipTest("Needs scan_p WG lowering")
 
     @functools.partial(
         pl.pallas_call,
@@ -146,8 +144,6 @@ class PallasCallTest(PallasTest):
       thread_semantics=[*plgpu.ThreadSemantics],
   )
   def test_comparison_op(self, op, dtype, thread_semantics):
-    if thread_semantics == plgpu.ThreadSemantics.Warpgroup:
-      self.skipTest("Needs scan_p WG lowering")
 
     @functools.partial(
         pl.pallas_call,
@@ -319,8 +315,6 @@ class PallasCallTest(PallasTest):
       thread_semantics=[*plgpu.ThreadSemantics],
   )
   def test_copy_smem_to_gmem(self, indexer, thread_semantics):
-    if thread_semantics == plgpu.ThreadSemantics.Warpgroup:
-      self.skipTest("Needs scan_p WG lowering")
 
     @functools.partial(
         pl.pallas_call,
@@ -788,8 +782,6 @@ class PallasCallTest(PallasTest):
 
   @parameterized.product(thread_semantics=[*plgpu.ThreadSemantics])
   def test_run_scoped(self, thread_semantics):
-    if thread_semantics == plgpu.ThreadSemantics.Warpgroup:
-      self.skipTest("Needs scan_p WG lowering")
 
     def kernel(x_ref, o_ref):
       def body(tmp_ref):
@@ -906,12 +898,18 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 128).astype(jnp.float16).reshape(128, 128)
     np.testing.assert_array_equal(kernel(x), x)
 
-  @parameterized.parameters(False, True)
-  def test_fori_loop_array(self, force_while):
+  @parameterized.product(
+      force_while=[False, True], thread_semantics=[*plgpu.ThreadSemantics]
+  )
+  def test_fori_loop_array(self, force_while, thread_semantics):
+    if thread_semantics == plgpu.ThreadSemantics.Warpgroup:
+      # TODO(apaszke,bchetioui,slebedev): Support while + array carries.
+      self.skipTest("WG semantics unsupported")
 
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
+        compiler_params=plgpu.GPUCompilerParams(thread_semantics=thread_semantics),
     )
     def kernel(x_ref, o_ref):
       # Equivalent to x_ref[...] + 2 + 3.
@@ -920,12 +918,17 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256, dtype=jnp.int32)
     np.testing.assert_array_equal(kernel(x), x + 2 + 3)
 
-  @parameterized.parameters(False, True)
-  def test_fori_loop_scalar(self, force_while):
+  @parameterized.product(
+      force_while=[False, True], thread_semantics=[*plgpu.ThreadSemantics]
+  )
+  def test_fori_loop_scalar(self, force_while, thread_semantics):
+    if force_while and thread_semantics == plgpu.ThreadSemantics.Warpgroup:
+      self.skipTest("WG semantics does not support force_while.")
 
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
+        compiler_params=plgpu.GPUCompilerParams(thread_semantics=thread_semantics),
     )
     def kernel(o_ref):
       # Equivalent to 2 + 3.
@@ -1035,25 +1038,26 @@ class PallasCallTest(PallasTest):
     with self.assertRaisesRegex(ValueError, "has layout .*, when it should be"):
       kernel()
 
-  def test_cond(self):
+  @parameterized.parameters([*plgpu.ThreadSemantics])
+  def test_cond(self, thread_semantics):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
+        compiler_params=plgpu.GPUCompilerParams(thread_semantics=thread_semantics),
     )
     def kernel(x_ref, o_ref):
-      acc = _sum_same_dtype(x_ref[...])
       jax.lax.cond(
-          acc % 2 == 0,
-          lambda: pl.debug_print("acc * 2: {}", acc * 2),
-          lambda: pl.debug_print("acc: {}", acc),
+          x_ref[0] % 2 == 0,
+          lambda: pl.debug_print("acc % 2"),
+          lambda: pl.debug_print("acc"),
       )
-      o_ref[...] = jnp.broadcast_to(acc, o_ref.shape)
+      o_ref[...] = jnp.broadcast_to(jnp.asarray(0, dtype=o_ref.dtype), o_ref.shape)
 
-    x = jnp.arange(256, dtype=jnp.int32)
+    x = jnp.full((256,), 1234, dtype=jnp.int32)
     with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
-    self.assertIn("acc * 2:", output())
+    self.assertIn("acc % 2", output())
 
   def test_cond_returning_array(self):
     @functools.partial(

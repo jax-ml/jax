@@ -880,7 +880,7 @@ def _jaxpr_call_lowering_rule(
     program_ids[axis] = lowering._program_id(axis, ctx.module_ctx.squashed_dims)
   new_module_ctx = dataclasses.replace(ctx.module_ctx, program_ids=program_ids)
   return lowering.lower_jaxpr_to_mosaic_gpu(
-      new_module_ctx, ctx.launch_ctx, jaxpr, args
+      new_module_ctx, ctx.launch_ctx, jaxpr, args, thread_semantics=ctx.thread_semantics,
   )
 
 
