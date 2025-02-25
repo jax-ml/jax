@@ -51,6 +51,7 @@ from jax._src.pallas.mosaic.primitives import roll as roll
 from jax._src.pallas.mosaic.primitives import semaphore_read as semaphore_read
 from jax._src.pallas.mosaic.primitives import semaphore_signal as semaphore_signal
 from jax._src.pallas.mosaic.primitives import semaphore_wait as semaphore_wait
+from jax._src.pallas.mosaic.random import sample_block as sample_block
 from jax._src.pallas.mosaic.random import to_pallas_key as to_pallas_key
 
 import types
