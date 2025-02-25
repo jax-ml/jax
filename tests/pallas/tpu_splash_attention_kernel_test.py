@@ -211,7 +211,9 @@ def sequence_length_strategy(draw: Draw) -> tuple[int, int]:
 @hps.composite
 def attention_strategy(draw: Draw) -> tuple[int, int, int, np.dtype]:
   q_seq_len, kv_seq_len = draw(sequence_length_strategy())
-  head_dim = draw(hps.sampled_from([128, 256]))
+  head_dim_qk, head_dim_v = draw(
+      hps.sampled_from([(128, 128), (256, 256), (192, 128)])
+  )
   if q_seq_len >= 4096 and kv_seq_len >= 4096:
     # Do not draw bfloat16 on longer sequence lengths, as this increases
     # the risk of numerical precision errors causing false positives in
@@ -219,16 +221,26 @@ def attention_strategy(draw: Draw) -> tuple[int, int, int, np.dtype]:
     dtype = np.dtype("float32")
   else:
     dtype = draw(hps.sampled_from([np.dtype("float32"), np.dtype(jnp.bfloat16)]))
-  return q_seq_len, kv_seq_len, head_dim, dtype
+  return q_seq_len, kv_seq_len, head_dim_qk, head_dim_v, dtype
 
 
 @hps.composite
 def mha_strategy(draw: Draw) -> tuple[int, int, int, int, int, np.dtype]:
-  q_seq_len, kv_seq_len, head_dim, dtype = draw(attention_strategy())
+  q_seq_len, kv_seq_len, head_dim_qk, head_dim_v, dtype = draw(
+      attention_strategy()
+  )
   num_q_heads, num_kv_heads = draw(
       hps.sampled_from([(1, 1), (2, 2), (4, 1), (8, 4), (6, 2)])
   )
-  return q_seq_len, kv_seq_len, num_q_heads, num_kv_heads, head_dim, dtype
+  return (
+      q_seq_len,
+      kv_seq_len,
+      num_q_heads,
+      num_kv_heads,
+      head_dim_qk,
+      head_dim_v,
+      dtype,
+  )
 
 
 @hps.composite
@@ -338,21 +350,31 @@ class SplashAttentionTest(PallasBaseTest):
     key = random.key(seed)
     k1, k2, k3 = random.split(key, 3)
 
-    q_seq_len, kv_seq_len, num_q_heads, num_kv_heads, head_dim, dtype = (
-        data.draw(mha_strategy())
-    )
+    (
+        q_seq_len,
+        kv_seq_len,
+        num_q_heads,
+        num_kv_heads,
+        head_dim_qk,
+        head_dim_v,
+        dtype,
+    ) = data.draw(mha_strategy())
 
     # Avoid segment ids for rectangular matrices, as its hard to enforce
     # valid masks (non-0 rows).
     hp.assume(q_seq_len == kv_seq_len or not is_segmented)
 
-    q = random.uniform(k1, (num_q_heads, q_seq_len, head_dim), dtype=dtype)
+    q = random.uniform(k1, (num_q_heads, q_seq_len, head_dim_qk), dtype=dtype)
     if is_mqa:
-      k = random.uniform(k2, (kv_seq_len, head_dim), dtype=dtype)
-      v = random.uniform(k3, (kv_seq_len, head_dim), dtype=dtype)
+      k = random.uniform(k2, (kv_seq_len, head_dim_qk), dtype=dtype)
+      v = random.uniform(k3, (kv_seq_len, head_dim_v), dtype=dtype)
     else:
-      k = random.uniform(k2, (num_kv_heads, kv_seq_len, head_dim), dtype=dtype)
-      v = random.uniform(k3, (num_kv_heads, kv_seq_len, head_dim), dtype=dtype)
+      k = random.uniform(
+          k2, (num_kv_heads, kv_seq_len, head_dim_qk), dtype=dtype
+      )
+      v = random.uniform(
+          k3, (num_kv_heads, kv_seq_len, head_dim_v), dtype=dtype
+      )
 
     segment_ids = None
     if is_segmented:
@@ -405,21 +427,31 @@ class SplashAttentionTest(PallasBaseTest):
     key = random.key(seed)
     k1, k2, k3 = random.split(key, 3)
 
-    q_seq_len, kv_seq_len, num_q_heads, num_kv_heads, head_dim, dtype = (
-        data.draw(mha_strategy())
-    )
+    (
+        q_seq_len,
+        kv_seq_len,
+        num_q_heads,
+        num_kv_heads,
+        head_dim_qk,
+        head_dim_v,
+        dtype,
+    ) = data.draw(mha_strategy())
 
     # Avoid segment ids for rectangular matrices, as its hard to enforce
     # valid masks (non-0 rows).
     hp.assume(q_seq_len == kv_seq_len or not is_segmented)
 
-    q = random.uniform(k1, (num_q_heads, q_seq_len, head_dim), dtype=dtype)
+    q = random.uniform(k1, (num_q_heads, q_seq_len, head_dim_qk), dtype=dtype)
     if is_mqa:
-      k = random.uniform(k2, (kv_seq_len, head_dim), dtype=dtype)
-      v = random.uniform(k3, (kv_seq_len, head_dim), dtype=dtype)
+      k = random.uniform(k2, (kv_seq_len, head_dim_qk), dtype=dtype)
+      v = random.uniform(k3, (kv_seq_len, head_dim_v), dtype=dtype)
     else:
-      k = random.uniform(k2, (num_kv_heads, kv_seq_len, head_dim), dtype=dtype)
-      v = random.uniform(k3, (num_kv_heads, kv_seq_len, head_dim), dtype=dtype)
+      k = random.uniform(
+          k2, (num_kv_heads, kv_seq_len, head_dim_qk), dtype=dtype
+      )
+      v = random.uniform(
+          k3, (num_kv_heads, kv_seq_len, head_dim_v), dtype=dtype
+      )
 
     segment_ids = None
     if is_segmented:
@@ -473,15 +505,17 @@ class SplashAttentionTest(PallasBaseTest):
     key = random.key(1 + seed)
     k1, k2, k3, k4 = random.split(key, 4)
 
-    q_seq_len, kv_seq_len, head_dim, dtype = data.draw(attention_strategy())
+    q_seq_len, kv_seq_len, head_dim_qk, head_dim_v, dtype = data.draw(
+        attention_strategy()
+    )
 
     # Avoid segment ids for rectangular matrices, as it's hard to enforce
     # valid masks (non-0 rows).
     hp.assume(q_seq_len == kv_seq_len or not is_segmented)
 
-    q = random.uniform(k1, (q_seq_len, head_dim), dtype=dtype)
-    k = random.uniform(k2, (kv_seq_len, head_dim), dtype=dtype)
-    v = random.uniform(k3, (kv_seq_len, head_dim), dtype=dtype)
+    q = random.uniform(k1, (q_seq_len, head_dim_qk), dtype=dtype)
+    k = random.uniform(k2, (kv_seq_len, head_dim_qk), dtype=dtype)
+    v = random.uniform(k3, (kv_seq_len, head_dim_v), dtype=dtype)
     segment_ids = None
     if is_segmented:
       assert q_seq_len == kv_seq_len
@@ -561,21 +595,31 @@ class SplashAttentionTest(PallasBaseTest):
     key = random.key(seed)
     k1, k2, k3, k4 = random.split(key, 4)
 
-    q_seq_len, kv_seq_len, num_q_heads, num_kv_heads, head_dim, dtype = (
-        data.draw(mha_strategy())
-    )
+    (
+        q_seq_len,
+        kv_seq_len,
+        num_q_heads,
+        num_kv_heads,
+        head_dim_qk,
+        head_dim_v,
+        dtype,
+    ) = data.draw(mha_strategy())
 
     # Avoid segment ids for rectangular matrices, as it's hard to enforce
     # valid masks (non-0 rows).
     hp.assume(q_seq_len == kv_seq_len or not is_segmented)
 
-    q = random.uniform(k1, (num_q_heads, q_seq_len, head_dim), dtype=dtype)
+    q = random.uniform(k1, (num_q_heads, q_seq_len, head_dim_qk), dtype=dtype)
     if is_mqa:
-      k = random.uniform(k2, (kv_seq_len, head_dim), dtype=dtype)
-      v = random.uniform(k3, (kv_seq_len, head_dim), dtype=dtype)
+      k = random.uniform(k2, (kv_seq_len, head_dim_qk), dtype=dtype)
+      v = random.uniform(k3, (kv_seq_len, head_dim_v), dtype=dtype)
     else:
-      k = random.uniform(k2, (num_kv_heads, kv_seq_len, head_dim), dtype=dtype)
-      v = random.uniform(k3, (num_kv_heads, kv_seq_len, head_dim), dtype=dtype)
+      k = random.uniform(
+          k2, (num_kv_heads, kv_seq_len, head_dim_qk), dtype=dtype
+      )
+      v = random.uniform(
+          k3, (num_kv_heads, kv_seq_len, head_dim_v), dtype=dtype
+      )
 
     segment_ids = None
     if is_segmented:
