@@ -46,10 +46,6 @@ namespace mosaic_gpu {
 using Memref = ::mlir::TypedValue<::mlir::MemRefType>;
 using Pointer = ::mlir::TypedValue<::mlir::LLVM::LLVMPointerType>;
 
-struct GlobalMemory : public mlir::SideEffects::Resource::Base<GlobalMemory> {
-  llvm::StringRef getName() final { return "<GlobalMemory>"; }
-};
-
 constexpr absl::string_view kRuntimeTmaDescriptorInitializerName =
     "mosaic_gpu_init_tma_desc";
 

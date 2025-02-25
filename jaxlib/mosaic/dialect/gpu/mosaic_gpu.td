@@ -243,10 +243,8 @@ def LayoutAttr : MosaicGPU_Attr<"Layout", "layout",
   let assemblyFormat = "`<` $num_dimensions `,` $transforms `>`";
 }
 
-def GlobalMemory : Resource<"::mosaic_gpu::GlobalMemory">;
-
 def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
-      [AttrSizedOperandSegments, MemoryEffects<[MemRead<GlobalMemory>]>]> {
+      [AttrSizedOperandSegments]> {
   let summary = "Schedules an async load of a MemRef from GMEM to SMEM";
   let description = [{
     Schedules an async copy of the contents of the `source` MemRef in GMEM to
@@ -313,7 +311,7 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
 }
 
 def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
-      [AttrSizedOperandSegments, MemoryEffects<[MemWrite<GlobalMemory>]>]> {
+      [AttrSizedOperandSegments]> {
   let summary = "Schedules an async store of a MemRef from SMEM to GMEM";
   let description = [{
     Schedules an async store of the contents of the `source` MemRef in SMEM to
