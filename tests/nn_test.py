@@ -104,7 +104,7 @@ def create_mxfp8_configs_if_available():
         global_scale=None,
         infer_only=False
     )
-  
+
   return [_create_mxfp8_config() for _ in range(3)]
 
 
