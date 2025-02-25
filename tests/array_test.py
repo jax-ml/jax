@@ -29,7 +29,6 @@ from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects, ir
 from jax._src.util import safe_zip
 from jax._src.mesh import AxisTypes
@@ -825,8 +824,6 @@ class JaxArrayTest(jtu.JaxTestCase):
   @parameterized.product(dtype=jtu.dtypes.all + jtu.dtypes.custom_floats)
   @jtu.run_on_devices("gpu")
   def test_pinned_host_npy_value_doesnt_cache(self, dtype):
-    if xla_extension_version < 314:
-      self.skipTest("Requires XLA extension version >= 314")
     # see https://github.com/jax-ml/jax/issues/26216
     d_tensor = jnp.array(0, dtype=dtype)
     d_sharding = d_tensor.sharding

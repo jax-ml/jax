@@ -25,7 +25,6 @@ from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import xla_extension_version
 from jax.experimental import colocated_python
 from jax.experimental.colocated_python import serialization
 from jax.extend.ifrt_programs import ifrt_programs
@@ -383,11 +382,6 @@ class ColocatedPythonTest(jtu.JaxTestCase):
         del colocated_python._testing_global_state
 
   def testStringProcessing(self):
-    if xla_extension_version < 315:
-      self.skipTest(
-          "String support for colocated Python requires xla_extension_version"
-          " >= 315"
-      )
     if np.lib.NumpyVersion(np.__version__) < "2.0.0":
       self.skipTest("StringDType requires NumPy 2.0.0 or later")
     cpu_devices = _colocated_cpu_devices(jax.local_devices())
@@ -431,11 +425,6 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     )
 
   def testBinaryDataProcessing(self):
-    if xla_extension_version < 315:
-      self.skipTest(
-          "String support for colocated Python requires xla_extension_version"
-          " >= 315"
-      )
     if np.lib.NumpyVersion(np.__version__) < "2.0.0":
       self.skipTest("StringDType requires NumPy 2.0.0 or later")
     cpu_devices = _colocated_cpu_devices(jax.local_devices())
