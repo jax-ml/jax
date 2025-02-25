@@ -6863,6 +6863,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.shape, expected_shape)
     self.assertEqual(out.sharding, NamedSharding(mesh, expected_spec))
 
+  def test_auto_axes_computation_follows_data_error(self):
+    mesh = jtu.create_mesh((2,), ('x',), axis_types={AxisTypes.Explicit: 'x'})
+    s = NamedSharding(mesh, P('x'))
+    arr = jax.device_put(np.arange(8), s)
+
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    with self.assertRaisesRegex(ValueError, "Context mesh.*cannot be empty"):
+      auto_axes(f, out_shardings=s)(arr)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

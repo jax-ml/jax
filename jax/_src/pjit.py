@@ -2827,9 +2827,16 @@ batching.skippable_batchers[reshard_p] = lambda _: ()
 # -------------------- auto and user mode -------------------------
 
 def _get_new_mesh(axes: str | tuple[str, ...] | None,
-                  axis_type: mesh_lib.AxisTypes,
+                  axis_type: mesh_lib.AxisTypes, name: str,
                   error_on_manual_to_auto_explict=False):
   cur_mesh = mesh_lib.get_abstract_mesh()
+  # TODO(yashkatariya): Maybe allow fetching mesh from the args to enable
+  # computation follows data?
+  if cur_mesh.empty:
+    raise ValueError(
+        f'Context mesh {cur_mesh} cannot be empty. Please use'
+        ' `jax.sharding.use_mesh` API to enter into a mesh context when using'
+        f' `{name}` API.')
   if axes is None:
     axes = cur_mesh.axis_names
   if not isinstance(axes, tuple):
@@ -2848,7 +2855,7 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
 def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,
               out_shardings):
   def decorator(*args, **kwargs):
-    new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Auto,
+    new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Auto, 'auto_axes',
                              error_on_manual_to_auto_explict=True)
     with mesh_lib.set_abstract_mesh(new_mesh):
       in_specs = tree_map(lambda a: core.modify_spec_for_auto_manual(
@@ -2860,7 +2867,7 @@ def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,
 
 @contextlib.contextmanager
 def use_auto_axes(*axes):
-  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Auto)
+  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Auto, 'use_auto_axes')
   with mesh_lib.set_abstract_mesh(new_mesh):
     yield
 
@@ -2868,7 +2875,7 @@ def use_auto_axes(*axes):
 def explicit_axes(fun, *, axes: str | tuple[str, ...] | None = None,
                   in_shardings):
   def decorator(*args, **kwargs):
-    new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Explicit,
+    new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Explicit, 'explicit_axes',
                              error_on_manual_to_auto_explict=True)
     with mesh_lib.set_abstract_mesh(new_mesh):
       args = mesh_cast(args, in_shardings)
@@ -2880,7 +2887,8 @@ def explicit_axes(fun, *, axes: str | tuple[str, ...] | None = None,
 
 @contextlib.contextmanager
 def use_explicit_axes(*axes):
-  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Explicit)
+  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Explicit,
+                           'use_explicit_axes')
   with mesh_lib.set_abstract_mesh(new_mesh):
     yield
 
