@@ -1318,6 +1318,26 @@ def _broadcast_in_dim_lowering_rule(
   return x.broadcast(shape)
 
 
+@register_lowering_rule(lax.broadcast_in_dim_p, mgpu.ThreadSemantics.Warpgroup)
+def _broadcast_in_dim_lowering_rule_wg(
+    ctx: LoweringRuleContext,
+    x: ir.Value,
+    *,
+    broadcast_dimensions,
+    shape,
+    sharding,
+):
+  del sharding
+  if broadcast_dimensions:
+    raise NotImplementedError
+  [x_aval] = ctx.avals_in
+  x = _ensure_ir_value(x, x_aval.dtype)
+  return vector_dialect.splat(
+      ir.VectorType.get(shape, mgpu_utils.dtype_to_ir_type(x_aval.dtype)),
+      x,
+  )
+
+
 @register_lowering_rule(lax.convert_element_type_p, mgpu.ThreadSemantics.Lane)
 def _convert_element_type_lowering_rule(
     ctx: LoweringRuleContext, x, *, new_dtype, weak_type, sharding
@@ -1327,6 +1347,55 @@ def _convert_element_type_lowering_rule(
   return _ensure_fa(x, x_aval.dtype).astype(
       mgpu_utils.dtype_to_ir_type(new_dtype), is_signed=mgpu_utils.is_signed(new_dtype)
   )
+
+
+@register_lowering_rule(lax.convert_element_type_p, mgpu.ThreadSemantics.Warpgroup)
+def _convert_element_type_lowering_rule_wg(
+    ctx: LoweringRuleContext, x, *, new_dtype, weak_type, sharding
+):
+  del weak_type, sharding
+  [x_aval] = ctx.avals_in
+  [y_aval] = ctx.avals_out
+  x = _ensure_ir_value(x, x_aval.dtype)
+
+  cur_dtype = mgpu_utils.dtype_to_ir_type(x_aval.dtype)
+  new_dtype = mgpu_utils.dtype_to_ir_type(new_dtype)
+
+  if 1 < mgpu_utils.bitwidth(cur_dtype) < 8 or 1 < mgpu_utils.bitwidth(new_dtype) < 8:
+    raise NotImplementedError("Conversion involving sub-byte types unsupported")
+
+  from_float = ir.FloatType.isinstance(cur_dtype)
+  to_float = ir.FloatType.isinstance(new_dtype)
+  from_integer = ir.IntegerType.isinstance(cur_dtype)
+  to_integer = ir.IntegerType.isinstance(new_dtype)
+  if from_float and to_float:
+    if ir.FloatType(cur_dtype).width > ir.FloatType(new_dtype).width:
+      convert = arith_dialect.truncf
+    else:
+      convert = arith_dialect.extf
+  elif from_integer and to_integer:
+    if ir.IntegerType(cur_dtype).width > ir.IntegerType(new_dtype).width:
+      convert = arith_dialect.trunci
+    else:
+      if mgpu_utils.is_signed(x_aval.dtype):
+        convert = arith_dialect.extsi
+      else:
+        convert = arith_dialect.extui
+  elif from_integer and to_float:
+    if mgpu_utils.is_signed(x_aval.dtype):
+      convert = arith_dialect.sitofp
+    else:
+      convert = arith_dialect.uitofp
+  elif from_float and to_integer:
+    if mgpu_utils.is_signed(y_aval.dtype):
+      convert = arith_dialect.fptosi
+    else:
+      convert = arith_dialect.fptoui
+  else:
+    raise NotImplementedError(f"Unsupported conversion {cur_dtype} -> {new_dtype}")
+
+  ty = ir.VectorType.get(x_aval.shape, new_dtype) if x_aval.shape else new_dtype
+  return convert(ty, x)
 
 
 mosaic_lowering_rules[mgpu.ThreadSemantics.Lane].update({

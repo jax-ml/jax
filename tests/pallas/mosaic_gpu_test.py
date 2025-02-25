@@ -144,8 +144,6 @@ class PallasCallTest(PallasTest):
       thread_semantics=[*plgpu.ThreadSemantics],
   )
   def test_comparison_op(self, op, dtype, thread_semantics):
-    if thread_semantics == plgpu.ThreadSemantics.Warpgroup:
-      self.skipTest("Lowering with WG semantics does not yet support .astype()")
 
     @functools.partial(
         pl.pallas_call,
