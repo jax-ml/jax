@@ -37,13 +37,20 @@ nvidia-smi
 echo "Running single accelerator tests (without RBE)..."
 
 # Set up test environment variables.
+# Set the number of test jobs to min(num_cpu_cores, gpu_count * $JAXCI_MAX_TESTS_PER_GPU, total_ram_gb / 6)
+# We calculate JAXCI_MAX_TESTS_PER_GPU as memory_per_gpu_gb / 2gb
 export gpu_count=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
 export num_test_jobs=$((gpu_count * JAXCI_MAX_TESTS_PER_GPU))
 export num_cpu_cores=$(nproc)
+export total_ram_gb=$(awk '/MemTotal/ {printf "%.0f", $2/1048576}' /proc/meminfo)
+export host_memory_limit=$((total_ram_gb / 6))
 
-# tests_jobs = max(gpu_count * max_tests_per_gpu, num_cpu_cores)
-if [[ $num_test_jobs -gt $num_cpu_cores ]]; then
+if [[ $num_cpu_cores -lt $num_test_jobs ]]; then
   num_test_jobs=$num_cpu_cores
+fi
+
+if [[ $host_memory_limit -lt $num_test_jobs ]]; then
+  num_test_jobs=$host_memory_limit
 fi
 
 # Use the Bazel remote cache to speed up builds. Pushes to the cache bucket is

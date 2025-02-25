@@ -29,6 +29,12 @@ on:
         type: string
         required: true
         default: "0"
+      # Set this to be GPU memory / 2GB
+      max-tests-per-gpu:
+        description: "Maximum number of tests to run per GPU."
+        type: string
+        required: true
+        default: "12"
       gcs_download_uri:
         description: "GCS location URI from where the artifacts should be downloaded"
         required: true
@@ -52,6 +58,7 @@ jobs:
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
       JAXCI_ENABLE_X64: ${{ inputs.enable-x64 }}
+      JAXCI_MAX_TESTS_PER_GPU: "${{ inputs.max-tests-per-gpu }}"
       # Enable writing to the Bazel remote cache bucket.
       JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE: "1"
 
