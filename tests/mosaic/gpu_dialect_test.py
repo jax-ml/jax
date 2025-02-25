@@ -478,7 +478,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([128, 128], ir.F16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+      )(mgpu.dialect.wgmma)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -493,7 +493,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([3, 128, 128], ir.BF16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+      )(mgpu.dialect.wgmma)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -508,7 +508,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([128, 128], ir.BF16Type.get()),
           ir.MemRefType.get([2, 128, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+      )(mgpu.dialect.wgmma)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -523,7 +523,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([128, 128], ir.BF16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+      )(mgpu.dialect.wgmma)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -538,7 +538,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([128, 128], ir.BF16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+      )(mgpu.dialect.wgmma)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -553,7 +553,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([512, 128], ir.BF16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+      )(mgpu.dialect.wgmma)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -568,7 +568,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([128, 128], ir.BF16Type.get()),
           ir.MemRefType.get([160, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+      )(mgpu.dialect.wgmma)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -583,7 +583,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([128, 128], ir.BF16Type.get()),
           ir.MemRefType.get([128, 192], ir.BF16Type.get()),
           name="wgmma",
-      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+      )(mgpu.dialect.wgmma)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
