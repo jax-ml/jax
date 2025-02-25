@@ -35,7 +35,7 @@ set_seed = prng_seed
 FOLD_IN_ROUNDS = 128
 
 
-def to_pallas_key(key: jax_prng.PRNGKeyArray) -> jax_prng.PRNGKeyArray:
+def to_pallas_key(key: jax.Array) -> jax.Array:
   """Helper function for converting non-Pallas PRNG keys into Pallas keys."""
   generate_key = functools.partial(
       jax.random.bits, shape=tpu_key_impl.key_shape, dtype=jnp.uint32
@@ -165,7 +165,7 @@ bernoulli = _make_stateful_sampler(jax_api_random.bernoulli)  # type: ignore
 
 
 def sample_block(sampler_fn: SampleFnType,
-                 global_key: jax_prng.PRNGKeyArray,
+                 global_key: jax.Array,
                  block_size: Shape,
                  tile_size: Shape,
                  total_size: Shape,
