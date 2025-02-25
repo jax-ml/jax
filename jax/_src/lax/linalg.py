@@ -2389,7 +2389,7 @@ def _triangular_solve_cpu_lower(
   if conjugate_a and not transpose_a:
     a = chlo.conj(a)
     conjugate_a = False
-  if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
+  if np.dtype(a_aval.dtype) in _cpu_lapack_types:
     target_name = lapack.prepare_lapack_call("trsm_ffi", a_aval.dtype)
     # TODO(b/397715595): Remove forward_compat check no earlier than 2025-03-18.
     if ctx.is_forward_compat() or jaxlib_version <= (0, 5, 1):
