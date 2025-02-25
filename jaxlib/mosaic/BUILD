@@ -233,8 +233,14 @@ cc_library(
     deps = [
         ":tpu_dialect",
         ":tpu_inc_gen",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@llvm-project//llvm:Support",
         "@llvm-project//mlir:CAPIIRObjects",
+        "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Support",
+        "@xla//xla:array",
     ],
     alwayslink = True,
 )
