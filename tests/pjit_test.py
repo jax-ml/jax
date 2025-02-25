@@ -7691,11 +7691,13 @@ class ShardyTest(jtu.JaxTestCase):
     if jtu.is_cloud_tpu():
       raise unittest.SkipTest("Custom partitioning is not supported on libtpu.")
 
-    def partition(mesh, arg_shapes, result_shape):
+    def partition(static_arg0, static_arg1, mesh, arg_shapes, result_shape):
       arg_shardings = jax.tree.map(lambda s: s.sharding, arg_shapes)
       result_sharding = result_shape.sharding
       rank = len(arg_shapes[0].shape)
 
+      self.assertEqual(static_arg0, 1)
+      self.assertEqual(static_arg1, 2)
       def lower_fn(x, y):
         axis_name = arg_shardings[1].spec[rank-2][0]
         i = jax.lax.axis_index(axis_name)
@@ -7706,15 +7708,17 @@ class ShardyTest(jtu.JaxTestCase):
 
       return mesh, lower_fn, (result_sharding), arg_shardings
 
-    def produce_sharding_rule(mesh, arg_shapes, result_shape):
+    def produce_sharding_rule(static_arg0, static_arg1, mesh, arg_shapes, result_shape):
+      self.assertEqual(static_arg0, 1)
+      self.assertEqual(static_arg1, 2)
       rank = len(arg_shapes[0].shape)
       leading_axes = ""
       for i in range(rank - 2):
         leading_axes += f" b{i}"
       return f"{leading_axes} i j, {leading_axes} j k -> {leading_axes} i k"
 
-    @partial(custom_partitioning)
-    def f(x, y):
+    @partial(custom_partitioning, static_argnums=(2,3))
+    def f(x, y, static_arg0=1, static_arg1=2):
       return jnp.matmul(x, y)
 
     f.def_partition(
