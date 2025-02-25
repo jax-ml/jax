@@ -2390,7 +2390,7 @@ class ShardMapTest(jtu.JaxTestCase):
     def f(x):
       return shard_map(lambda k: k,
                        mesh, in_specs=P('i'), out_specs=P('i'),
-                       check_rep=False, auto=frozenset({'j'}))(keys)
+                       check_rep=False, auto=frozenset({'j'}))(x)
 
     y = f(keys) # don't crash
     self.assertAllClose(jax.random.key_data(y), jax.random.key_data(keys),
