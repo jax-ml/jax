@@ -921,6 +921,28 @@ def lower_jaxpr_to_mosaic_gpu(
     return atom.val if isinstance(atom, jax_core.Literal) else env[atom]
 
   def write_env(var: jax_core.Var, val):
+    # TODO(apaszke): Handle other avals (refs, etc.).
+    if isinstance(aval := var.aval, jax_core.ShapedArray):
+      # TODO(apaszke): Clarify the type invariants for lane semantics?
+      if thread_semantics == mgpu.ThreadSemantics.Warpgroup:
+        # Shaped arrays must be vectors if and only if their shape is non-empty.
+        # Those with empty shapes should be represented by their scalar type.
+        mlir_dtype = mgpu_utils.dtype_to_ir_type(aval.dtype)
+        if not isinstance(val, ir.Value):
+          raise AssertionError(f"Shaped arrays must be represented by ir.Values, got: {val}")
+        if aval.shape:
+          if not ir.VectorType.isinstance(val.type):
+            raise AssertionError(f"Non-scalar arrays must be represented by vectors, got: {val.type}")
+          vty = ir.VectorType(val.type)
+          if vty.element_type != mlir_dtype:
+            raise AssertionError(f"Vector element type must match ShapedArray dtype, got: {val.type} != {mlir_dtype}")
+          if tuple(vty.shape) != aval.shape:
+            raise AssertionError(f"Vector shape must match ShapedArray shape, got: {vty.shape} != {aval.shape}")
+        else:
+          if ir.VectorType.isinstance(val.type):
+            raise AssertionError(f"Scalars must be represented by non-vector types, got: {val.type}")
+          if val.type != mlir_dtype:
+            raise AssertionError(f"Scalar type must match ShapedArray dtype, got: {val.type} != {mlir_dtype}")
     env[var] = val
 
   map(write_env, jaxpr.constvars, consts)
@@ -1342,7 +1364,7 @@ def _binary_op_lowering_rule_wg(
 ):
   x_aval, y_aval = ctx.avals_in
   [out_aval] = ctx.avals_out
-  x, y = _bcast_vectors(x, y, *ctx.avals_in, *ctx.avals_out)
+  x, y = _bcast_wg(x, y, *ctx.avals_in, *ctx.avals_out)
   if jnp.issubdtype(out_aval, jnp.signedinteger):
     return si_impl(x, y)
   elif jnp.issubdtype(out_aval, jnp.integer):
@@ -1396,7 +1418,7 @@ def _comparison_lowering_rule_wg(
     ctx: LoweringRuleContext, x, y, *, si_pred, ui_pred, f_pred
 ):
   x_aval, y_aval = ctx.avals_in
-  x, y = _bcast_vectors(x, y, *ctx.avals_in, *ctx.avals_out)
+  x, y = _bcast_wg(x, y, *ctx.avals_in, *ctx.avals_out)
   if jnp.issubdtype(x_aval, jnp.signedinteger):
     return arith_dialect.cmpi(si_pred, x, y)
   elif jnp.issubdtype(x_aval, jnp.integer):
@@ -2039,7 +2061,7 @@ def _ensure_fa(x: object, dtype: jnp.dtype) -> mgpu.FragmentedArray:
   )
 
 
-def _bcast_vectors(
+def _bcast_wg(
     x: object,
     y: object,
     x_aval: jax_core.ShapedArray,
@@ -2052,6 +2074,8 @@ def _bcast_vectors(
   as ``x_aval`` and ``y_aval``, and broadcasted to the output shape
   if necessary.
   """
+  if not out_aval.shape:
+    return _ensure_ir_value(x, x_aval.dtype), _ensure_ir_value(y, y_aval.dtype)
   x_dtype = x_aval.dtype
   if not isinstance(x, ir.Value) or not ir.VectorType.isinstance(x.type):
     if x_aval.weak_type:
@@ -2090,7 +2114,11 @@ def _ensure_vector(x: object, dtype: jnp.dtype) -> ir.Value:
 
 def _ensure_ir_value(x: object, dtype: jnp.dtype) -> ir.Value:
   if isinstance(x, ir.Value):
-    assert x.type == mgpu_utils.dtype_to_ir_type(dtype)
+    mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
+    if ir.VectorType.isinstance(x.type):
+      assert ir.VectorType(x.type).element_type == mlir_dtype
+    else:
+      assert x.type == mlir_dtype
     return x
   elif isinstance(x, mgpu.FragmentedArray):
     assert x.mlir_dtype == mgpu_utils.dtype_to_ir_type(dtype)
