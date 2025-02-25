@@ -39,10 +39,11 @@ jobs:
       - name: Install JAX test requirements
         run: |
           pip install uv~=0.5.30
-          uv pip install .[ci] -r build/test-requirements.txt
+          uv pip install --system .[ci] -r build/test-requirements.txt
       - name: Install numpy & scipy development versions
         run: |
           uv pip install \
+            --system \
             -i https://pypi.anaconda.org/scientific-python-nightly-wheels/simple \
             --no-deps \
             --pre \
