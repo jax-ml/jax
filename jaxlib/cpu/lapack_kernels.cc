@@ -146,7 +146,10 @@ template struct Trsm<std::complex<double>>;
 
 template <ffi::DataType dtype>
 ffi::Error TriMatrixEquationSolver<dtype>::Kernel(
-    ffi::Buffer<dtype> x, ffi::Buffer<dtype> y, ffi::BufferR0<dtype> alpha,
+    ffi::Buffer<dtype> x, ffi::Buffer<dtype> y,
+    // TODO(b/397715595): Remove RemainingArgs no earlier than 180 days after
+    // the release of JAX 0.5.2.
+    ffi::RemainingArgs,
     ffi::ResultBuffer<dtype> y_out, MatrixParams::Side side,
     MatrixParams::UpLo uplo, MatrixParams::Transpose trans_x,
     MatrixParams::Diag diag) {
@@ -168,10 +171,10 @@ ffi::Error TriMatrixEquationSolver<dtype>::Kernel(
   auto* x_data = x.typed_data();
   const int64_t y_out_step{y_rows * y_cols};
   const int64_t x_step{x_leading_dim_v * x_leading_dim_v};
+  ffi::NativeType<dtype> alpha = static_cast<ffi::NativeType<dtype>>(1);
   for (int64_t i = 0; i < batch_count; ++i) {
-    fn(&side_v, &uplo_v, &trans_x_v, &diag_v, &y_rows_v, &y_cols_v,
-       alpha.typed_data(), x_data, &x_leading_dim_v, y_out_data,
-       &y_leading_dim_v);
+    fn(&side_v, &uplo_v, &trans_x_v, &diag_v, &y_rows_v, &y_cols_v, &alpha,
+       x_data, &x_leading_dim_v, y_out_data, &y_leading_dim_v);
 
     y_out_data += y_out_step;
     x_data += x_step;
@@ -2241,17 +2244,17 @@ template struct TridiagonalSolver<ffi::DataType::C128>;
 
 // FFI Definition Macros (by DataType)
 
-#define JAX_CPU_DEFINE_TRSM(name, data_type)               \
-  XLA_FFI_DEFINE_HANDLER_SYMBOL(                           \
-      name, TriMatrixEquationSolver<data_type>::Kernel,    \
-      ::xla::ffi::Ffi::Bind()                              \
-          .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)       \
-          .Arg<::xla::ffi::Buffer<data_type>>(/*y*/)       \
-          .Arg<::xla::ffi::BufferR0<data_type>>(/*alpha*/) \
-          .Ret<::xla::ffi::Buffer<data_type>>(/*y_out*/)   \
-          .Attr<MatrixParams::Side>("side")                \
-          .Attr<MatrixParams::UpLo>("uplo")                \
-          .Attr<MatrixParams::Transpose>("trans_x")        \
+#define JAX_CPU_DEFINE_TRSM(name, data_type)             \
+  XLA_FFI_DEFINE_HANDLER_SYMBOL(                         \
+      name, TriMatrixEquationSolver<data_type>::Kernel,  \
+      ::xla::ffi::Ffi::Bind()                            \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)     \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*y*/)     \
+          .RemainingArgs()                               \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*y_out*/) \
+          .Attr<MatrixParams::Side>("side")              \
+          .Attr<MatrixParams::UpLo>("uplo")              \
+          .Attr<MatrixParams::Transpose>("trans_x")      \
           .Attr<MatrixParams::Diag>("diag"))
 
 #define JAX_CPU_DEFINE_GETRF(name, data_type)                \
