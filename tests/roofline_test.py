@@ -437,6 +437,22 @@ class RooflineTest(jtu.JaxTestCase):
       )(jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int))
       self.assertEqual(result.unfused_flops, 3 * 8)
 
+  def test_broadcast(self):
+    for left, right in [
+        (jnp.zeros((3, 8)), jnp.ones((1, 1))),
+        (jnp.zeros((1, 1)), jnp.ones((3, 8))),
+        (jnp.zeros((3, 8)), jnp.ones((3, 8))),
+        (2.0, jnp.ones((3, 8))),
+        (jnp.zeros((3, 8)), 2.0),
+    ]:
+      _, result = roofline.roofline(
+          lambda a, b: a + b,
+          mesh=mesh.AbstractMesh(()),
+          in_specs=(P(), P()),
+          out_specs=P(),
+      )(left, right)
+      self.assertEqual(result.unfused_flops, 3 * 8)
+
   def test_nested(self):
     def f(x, y):
       @jax.jit
