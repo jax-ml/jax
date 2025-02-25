@@ -1880,13 +1880,15 @@ class ShapedArray(UnshapedArray):
     return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
                        self.weak_type, sharding=self.sharding)
 
-  def str_short(self, short_dtypes=False):
+  def str_short(self, short_dtypes=False, mesh_axis_types=False):
     dt_str = (dtypes.short_dtype_name(self.dtype) if short_dtypes else
               self.dtype.name)
     dt_str = dt_str.replace('void', 'float0')
     if self.sharding is not None:
       shapestr = _get_shape_sharding_str(self.shape, self.sharding.spec)
-      return f'{dt_str}[{shapestr}]'
+      mesh_axes = (f'({self.sharding.mesh.axis_types})'
+                   if mesh_axis_types else '')
+      return f'{dt_str}[{shapestr}]{mesh_axes}'
     else:
       shapestr = ','.join(map(str, self.shape))
       return f'{dt_str}[{shapestr}]'

@@ -43,6 +43,7 @@ from jax._src import prng
 from jax.sharding import PartitionSpec as P, Mesh
 from jax.experimental import multihost_utils
 from jax.experimental.shard_map import shard_map
+from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax.experimental.custom_partitioning import (
     custom_partitioning, SdyShardingRule, BATCHING)
 from jax._src import array
@@ -3296,6 +3297,33 @@ class ArrayPjitTest(jtu.JaxTestCase):
         message=".*Using jit-of-pmap can lead to inefficient data movement"):
       pjit(_pmapped_fun)(inputs)  # doesn't crash
       jax.jit(_pmapped_fun)(inputs)  # doesn't crash
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_sharding_mismatch(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+    s = NamedSharding(mesh, P('x'))
+
+    @jax.jit
+    def f(x, y):
+      return x * y
+
+    np_inp = np.arange(8, dtype=np.float32)
+    x = np_inp
+    y = jax.device_put(np_inp, s)
+    f(x, y)
+
+    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
+
+    # sharding change
+    with config.explain_cache_misses(True):
+      x_ = jax.device_put(np_inp, s)
+      with self.assertLogs(level='WARNING') as cm:
+        f(x_, y)
+    self.assertLen(cm.output, expected_log_len)
+    msg = cm.output[0]
+    self.assertIn('never seen input type signature', msg)
+    self.assertIn('closest seen input type signature has 1 mismatches', msg)
+    self.assertIn("seen f32[8]({}), but now given f32[8]({Auto: ('x',)})", msg)
 
   def test_pjit_function_cache_cpp(self):
     def f(x):

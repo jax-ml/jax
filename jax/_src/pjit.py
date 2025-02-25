@@ -1262,6 +1262,9 @@ def explain_tracing_cache_miss(
             s1 += f'{{weak_type={ty1.weak_type}}}'
             s2 += f'{{weak_type={ty2.weak_type}}}'
             add_weak_type_hint = True
+          elif ty1.sharding != ty2.sharding:
+            s1 = ty1.str_short(short_dtypes=True, mesh_axis_types=True)
+            s2 = ty2.str_short(short_dtypes=True, mesh_axis_types=True)
         else:
           s1, s2 = str(ty1), str(ty2)
         p(f"    * at {name}, seen {s1}, but now given {s2}")
