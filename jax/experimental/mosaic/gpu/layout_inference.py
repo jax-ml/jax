@@ -22,7 +22,7 @@ from typing import cast
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
-from jax._src.lib.mlir.dialects import func
+from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 
 from . import fragmented_array as fa
@@ -161,17 +161,17 @@ def _value_layout(value: ir.Value) -> ir.Attribute | None:
     ].index(value)
     return layouts_lib.out_layouts(owner)[value_result_number]
 
-  # Function block case, useful when attempting to derive layouts for ops
-  # depending on function parameters.
-  if isinstance(owner, ir.Block) and isinstance(owner.owner, func.FuncOp):
-    func_op = owner.owner
+  # Block case, useful when attempting to derive layouts for ops
+  # depending on function parameters, or loop block arguments.
+  if isinstance(owner, ir.Block):
+    owner_op = owner.owner
     block = cast(ir.Block, owner)
-    if not layouts_lib.has_in_layouts_set(func_op):
+    if not layouts_lib.has_in_layouts_set(owner_op):
       return None
     value_arg_number = [
         r for r in block.arguments if ir.VectorType.isinstance(r.type)
     ].index(value)
-    return layouts_lib.in_layouts(func_op)[value_arg_number]
+    return layouts_lib.in_layouts(owner_op)[value_arg_number]
 
   raise NotImplementedError(
       f"{owner} is not a function block nor an operation.")
@@ -301,6 +301,41 @@ def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
     )
 
   return [], [layout]
+
+
+@partial(_add_layout_inference_rule, scf.YieldOp)
+def _infer_yield_op_layout(op: scf.YieldOp) -> OptionalLayouts:
+  layouts = []
+  for result in op.results_:
+    if not ir.VectorType.isinstance(result.type):
+      continue
+    if (layout := _value_layout(result)) is not None:
+      layouts.append(layout)
+    else:
+      # Not all layouts could be inferred for vector ops. Return for now.
+      return None
+
+  return (layouts, [])
+
+
+@partial(_add_layout_inference_rule, scf.ForOp)
+def _infer_for_op_layout(op: scf.ForOp) -> OptionalLayouts:
+  yield_op = op.body.operations[len(op.body.operations) - 1]
+  assert isinstance(yield_op, scf.YieldOp)
+
+  if layouts_lib.has_in_layouts_set(yield_op):
+    yield_layouts = list(layouts_lib.in_layouts(yield_op))
+    if any(
+        layouts_lib.is_splat_fragmented_layout(layout)
+        for layout in yield_layouts
+    ):
+      return None
+    return (yield_layouts, yield_layouts)
+
+  # TODO(bchetioui): we don't attempt to propagate from outside for the moment.
+  # For the existing kernels, propagating from the YieldOp should be enough.
+
+  return None
 
 
 @partial(_add_layout_inference_rule, vector.SplatOp)
