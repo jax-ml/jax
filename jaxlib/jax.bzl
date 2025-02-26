@@ -87,7 +87,6 @@ _py_deps = {
     "ml_dtypes": ["@pypi_ml_dtypes//:pkg"],
     "numpy": ["@pypi_numpy//:pkg"],
     "scipy": ["@pypi_scipy//:pkg"],
-    "tensorstore": ["@pypi_tensorstore//:pkg"],
     "tensorflow_core": [],
     "torch": [],
     "zstandard": get_zstandard(),
