@@ -20,4 +20,6 @@ matplotlib~=3.8.4; python_version=="3.10"
 matplotlib; python_version>="3.11"
 opt-einsum
 auditwheel
-tensorstore==0.1.72
+# TODO(kanglan): Remove once tensorstore supports python 3.13t or an environment
+# marker for free threading is available.
+tensorstore==0.1.72; python_version<"3.13"
