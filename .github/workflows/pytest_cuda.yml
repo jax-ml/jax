@@ -39,6 +39,12 @@ on:
         type: string
         required: true
         default: "1"
+      # Set this to be GPU memory / 2GB
+      max-tests-per-gpu:
+        description: "Maximum number of tests to run per GPU."
+        type: string
+        required: true
+        default: "12"
       gcs_download_uri:
         description: "GCS location prefix from where the artifacts should be downloaded"
         required: true
@@ -67,6 +73,7 @@ jobs:
       JAXCI_PYTHON: "python${{ inputs.python }}"
       JAXCI_ENABLE_X64: "${{ inputs.enable-x64 }}"
       JAXCI_INSTALL_JAX_CURRENT_COMMIT: "${{ inputs.install-jax-current-commit }}"
+      JAXCI_MAX_TESTS_PER_GPU: "${{ inputs.max-tests-per-gpu }}"
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2

@@ -45,16 +45,28 @@ export NCCL_DEBUG=WARN
 export TF_CPP_MIN_LOG_LEVEL=0
 export JAX_ENABLE_64="$JAXCI_ENABLE_X64"
 
-# Set the number of processes to run to be 4x the number of GPUs.
+# Set the number of processes to min(num_cpu_cores, gpu_count * $JAXCI_MAX_TESTS_PER_GPU, total_ram_gb / 6)
+# We calculate JAXCI_MAX_TESTS_PER_GPU as memory_per_gpu_gb / 2gb
 export gpu_count=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
-export num_processes=`expr 4 \* $gpu_count`
+export num_processes=$((gpu_count * JAXCI_MAX_TESTS_PER_GPU))
+export num_cpu_cores=$(nproc)
+export total_ram_gb=$(awk '/MemTotal/ {printf "%.0f", $2/1048576}' /proc/meminfo)
+export host_memory_limit=$((total_ram_gb / 6))
+
+if [[ $num_cpu_cores -lt $num_processes ]]; then
+  num_processes=$num_cpu_cores
+fi
+
+if [[ $host_memory_limit -lt $num_processes ]]; then
+  num_processes=$host_memory_limit
+fi
 
 export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 export XLA_FLAGS=--xla_gpu_force_compilation_parallelism=1
 # End of test environment variable setup
 
 echo "Running CUDA tests..."
-"$JAXCI_PYTHON" -m pytest -n $num_processes --tb=short --maxfail=20 \
+"$JAXCI_PYTHON" -m pytest -n "$num_processes" --tb=short --maxfail=20 \
 tests examples \
 --deselect=tests/multi_device_test.py::MultiDeviceTest::test_computation_follows_data \
 --deselect=tests/multiprocess_gpu_test.py::MultiProcessGpuTest::test_distributed_jax_visible_devices \

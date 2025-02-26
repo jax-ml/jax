@@ -21,6 +21,10 @@ on:
   schedule:
     - cron: "0 */2 * * *" # Run once every 2 hours
   workflow_dispatch: # allows triggering the workflow run manually
+  # DO NOT SUBMIT without removing this
+  pull_request:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -94,24 +98,29 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           # Python values need to match the matrix stategy in the artifact build jobs above
-          runner: ["linux-x86-g2-48-l4-4gpu", "linux-x86-a3-8g-h100-8gpu"]
+          specs: [
+          # max-tests-per-gpu is to be set as (GPU memory / 2GB)
+          {runner: "linux-x86-g2-48-l4-4gpu", max-tests-per-gpu: "12"},
+          {runner: "linux-x86-a3-8g-h100-8gpu", max-tests-per-gpu: "40"}
+          ]
           python: ["3.10",]
           cuda: ["12.3", "12.1"]
           enable-x64: [1, 0]
           exclude:
             # Run only a single configuration on H100 to save resources
-            - runner: "linux-x86-a3-8g-h100-8gpu"
+            - specs: {runner: "linux-x86-a3-8g-h100-8gpu"}
               python: "3.10"
               cuda: "12.1"
-            - runner: "linux-x86-a3-8g-h100-8gpu"
+            - specs: {runner: "linux-x86-a3-8g-h100-8gpu"}
               python: "3.10"
               enable-x64: 0
     with:
-      runner: ${{ matrix.runner }}
+      runner: ${{ matrix.specs.runner }}
       python: ${{ matrix.python }}
       cuda:  ${{ matrix.cuda }}
       enable-x64:  ${{ matrix.enable-x64 }}
       install-jax-current-commit: 1
+      max-tests-per-gpu: ${{ matrix.specs.max-tests-per-gpu }}
       # GCS upload URI is the same for both artifact build jobs
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
@@ -126,12 +135,16 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           # Python values need to match the matrix stategy in the build artifacts job above
-          runner: ["linux-x86-g2-48-l4-4gpu",]
+          specs: [
+          # max-tests-per-gpu is to be set as (GPU memory / 2GB)
+          {runner: "linux-x86-g2-48-l4-4gpu", max-tests-per-gpu: "12"},
+          ]
           python: ["3.10",]
           enable-x64: [1, 0]
     with:
-      runner: ${{ matrix.runner }}
+      runner: ${{ matrix.specs.runner }}
       python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
+      max-tests-per-gpu: ${{ matrix.specs.max-tests-per-gpu }}
       # GCS upload URI is the same for both artifact build jobs
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
