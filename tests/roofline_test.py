@@ -45,6 +45,10 @@ def create_inputs(
 
 
 class RooflineTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    self._bytes_per_word = 8 if jax.config.read("jax_enable_x64") else 4
+
   def test_scalar_collectives(self):
     a_spec = P("z", ("x", "y"))
     b_spec = P(("x", "y"), "z")
@@ -132,6 +136,7 @@ class RooflineTest(jtu.JaxTestCase):
         ici_bytes={"x": ici_bytes},
         ici_latency={"x": ici_latency},
         hbm_bytes=2 * itemsize * (mk + kn + mn),
+        unfused_hbm_bytes=2 * itemsize * (mk + kn + mn),
         # Right after all_gather.
         peak_hbm_bytes=itemsize * (mk * axis_size + mk + kn),
     )
@@ -182,6 +187,7 @@ class RooflineTest(jtu.JaxTestCase):
         ici_bytes={axis: ici_bytes for axis in ("x", "y")},
         ici_latency={axis: ici_latency for axis in ("x", "y")},
         hbm_bytes=itemsize * (mk + kn + mn),
+        unfused_hbm_bytes=itemsize * (mk + kn + mn),
         peak_hbm_bytes=itemsize * (mn),
     )
     self.assertDataclassEqual(results, expected)
@@ -297,6 +303,7 @@ class RooflineTest(jtu.JaxTestCase):
         ici_bytes={"x": ici_bytes},
         ici_latency={"x": ici_latency},
         hbm_bytes=itemsize * (mk + kn + mn),
+        unfused_hbm_bytes=itemsize * (mk + kn + mn),
         peak_hbm_bytes=itemsize * (mk + kn),
     )
     self.assertDataclassEqual(fwd_results, expected)
@@ -310,6 +317,7 @@ class RooflineTest(jtu.JaxTestCase):
         ici_bytes={"x": bwd_ici_bytes},
         ici_latency={"x": 3 * ici_latency},
         hbm_bytes=2 * bwd_itemsize * (mk + kn + mn),
+        unfused_hbm_bytes=2 * bwd_itemsize * (mk + kn + mn),
         # Residuals + cotangents.
         peak_hbm_bytes=bwd_itemsize * (mk + kn + mn),
     )
@@ -395,6 +403,7 @@ class RooflineTest(jtu.JaxTestCase):
         ici_bytes={"x": ici_bytes},
         ici_latency={"x": ici_latency},
         hbm_bytes=itemsize * (mk + kn + mn),
+        unfused_hbm_bytes=itemsize * (mk + kn + mn),
         peak_hbm_bytes=itemsize * (mk + kn),
     )
     self.assertDataclassEqual(fwd_results, expected)
@@ -408,6 +417,7 @@ class RooflineTest(jtu.JaxTestCase):
         ici_bytes={"x": bwd_ici_bytes},
         ici_latency={"x": 2 * ici_latency},
         hbm_bytes=2 * bwd_itemsize * (mk + kn + mn),
+        unfused_hbm_bytes=2 * bwd_itemsize * (mk + kn + mn),
         # Residuals + cotangents.
         # We gather kn while computing the kn cotangents.
         peak_hbm_bytes=bwd_itemsize * (kn + kn + mn),
@@ -428,14 +438,115 @@ class RooflineTest(jtu.JaxTestCase):
         lambda a, b: a > b,
         lambda a, b: a >= b,
         lambda a, b: a == b,
+        lambda a, b: jnp.minimum(a, b),
+        lambda a, b: jnp.maximum(a, b),
     ]:
-      _, result = roofline.roofline(
+      out, result = roofline.roofline(
           f,
           mesh=mesh.AbstractMesh(()),
           in_specs=(P(), P()),
           out_specs=P(),
       )(jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int))
-      self.assertEqual(result.unfused_flops, 3 * 3 * 8)
+      self.assertEqual(result.unfused_flops, 3 * 8)
+      self.assertEqual(
+          result.unfused_hbm_bytes,
+          2 * self._bytes_per_word * 3 * 8 + out.dtype.itemsize * 3 * 8,
+      )
+
+  def test_broadcast(self):
+    for left, right in [
+        (jnp.zeros((3, 8)), jnp.ones((1, 1))),
+        (jnp.zeros((1, 1)), jnp.ones((3, 8))),
+        (jnp.zeros((3, 8)), jnp.ones((3, 8))),
+        (2.0, jnp.ones((3, 8))),
+        (jnp.zeros((3, 8)), 2.0),
+    ]:
+      _, result = roofline.roofline(
+          lambda a, b: a + b,
+          mesh=mesh.AbstractMesh(()),
+          in_specs=(P(), P()),
+          out_specs=P(),
+      )(left, right)
+      self.assertEqual(result.unfused_flops, 3 * 8)
+
+  def test_nested(self):
+    def f(x, y):
+      @jax.jit
+      def g(x):
+        return x * y
+
+      return g(x) + g(y)
+
+    _, result = roofline.roofline(
+        f,
+        mesh=mesh.AbstractMesh(()),
+        in_specs=(P(), P()),
+        out_specs=P(),
+    )(jnp.zeros((11, 4), dtype=int), jnp.ones((11, 4), dtype=int))
+    self.assertEqual(result.unfused_flops, 3 * (11 * 4))
+
+  def test_no_mesh(self):
+    _, result = roofline.roofline(
+        lambda a, b: a + b,
+        in_specs=(P(), P()),
+        out_specs=P(),
+    )(jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int))
+    self.assertEqual(result.unfused_flops, 3 * 8)
+
+  def test_no_specs(self):
+    _, result = roofline.roofline(
+        lambda a, b: a + b,
+        mesh=mesh.AbstractMesh(()),
+    )(jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int))
+    self.assertEqual(result.unfused_flops, 3 * 8)
+
+  def test_no_mesh_and_no_specs(self):
+    _, result = roofline.roofline(
+        lambda a, b: a + b,
+    )(jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int))
+    self.assertEqual(result.unfused_flops, 3 * 8)
+
+  def test_dot_general(self):
+    _, result = roofline.roofline(
+        lambda a, b: a @ b,
+        mesh=mesh.AbstractMesh(()),
+        in_specs=(P(), P()),
+        out_specs=P(),
+    )(jnp.zeros((3, 7), dtype=int), jnp.ones((7, 5), dtype=int))
+    self.assertEqual(result.unfused_flops, 2 * 3 * 7 * 5)
+    self.assertEqual(
+        result.unfused_hbm_bytes, self._bytes_per_word * (3 * 7 + 7 * 5 + 3 * 5)
+    )
+
+  def test_reduce_sum_no_axis(self):
+    _, result = roofline.roofline(
+        lambda x: jnp.sum(x),
+        mesh=mesh.AbstractMesh(()),
+        in_specs=(P()),
+        out_specs=P(),
+    )(jnp.zeros((11, 4)))
+    self.assertEqual(result.unfused_flops, 11 * 4 - 1)
+    self.assertEqual(
+        result.unfused_hbm_bytes, self._bytes_per_word * (11 * 4 + 1)
+    )
+
+  def test_reduce_sum_with_axis(self):
+    for axis, expected_flops, expected_memory in [
+        (0, (11 - 1) * 4, 11 * 4 + 4),
+        (1, (4 - 1) * 11, 11 * 4 + 11),
+        ([0, 1], 11 * 4 - 1, 11 * 4 + 1),
+        ([], 0, 11 * 4 + 11 * 4),
+    ]:
+      _, result = roofline.roofline(
+          lambda x: jnp.sum(x, axis=axis),
+          mesh=mesh.AbstractMesh(()),
+          in_specs=(P()),
+          out_specs=P(),
+      )(jnp.zeros((11, 4)))
+      self.assertEqual(result.unfused_flops, expected_flops)
+      self.assertEqual(
+          result.unfused_hbm_bytes, self._bytes_per_word * expected_memory
+      )
 
 
 if __name__ == "__main__":

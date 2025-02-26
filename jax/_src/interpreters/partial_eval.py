@@ -270,6 +270,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     # Form the complete list of residuals by forwarding some inputs.
     if config.dynamic_shapes.value:
       # With dynamic shapes, we may need to forward implicit arguments.
+      assert f.in_type is not None, "f must be annotated with lu.annotate()"
       in_consts_, in_knowns_ = iter(in_consts), iter(in_knowns)
       in_consts_full = [None] * len(f.in_type)
       for idx, (aval, explicit) in enumerate(f.in_type):
@@ -841,7 +842,7 @@ def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
   """Moves the constvars to the start of invars."""
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   dbg = jaxpr.debug_info._replace(
-      arg_names=(None,) * len(jaxpr.constvars) + jaxpr.debug_info.arg_names)
+      arg_names=("",) * len(jaxpr.constvars) + jaxpr.debug_info.arg_names)
   lifted_jaxpr = Jaxpr(constvars=(),
                        invars=jaxpr.constvars + jaxpr.invars,
                        outvars=jaxpr.outvars, eqns=jaxpr.eqns,
@@ -1573,7 +1574,7 @@ class DynamicJaxprTracer(core.Tracer):
 
     origin = ("The error occurred while tracing the function "
               f"{dbg.func_src_info} for {dbg.traced_for}. ")
-    if invar_pos and dbg.arg_names:
+    if invar_pos:
       try:
         arg_names = [dbg.arg_names[i] for i in invar_pos]
       except IndexError:
@@ -1941,6 +1942,7 @@ class DynamicJaxprTrace(core.Trace):
                    explicit_tracers, params):
     if f.in_type is None:
       f = lu.annotate(f, tuple((get_aval(t), True) for t in explicit_tracers))
+    assert f.in_type is not None
     implicit_tracers = _extract_implicit_args(self, f.in_type, explicit_tracers)
     in_tracers = map(self.to_jaxpr_tracer, [*implicit_tracers, *explicit_tracers])
     # TODO(mattjj): check in_tracers are consistent with f.in_type annotation
@@ -2209,6 +2211,7 @@ def _check_no_returned_refs(
 def trace_to_jaxpr_dynamic2(
     fun: lu.WrappedFun,
   ) -> tuple[Jaxpr, OutputType, list[Any]]:
+  assert fun.in_type is not None, "fun must be annotated with lu.annotate()"
 
   trace = DynamicJaxprTrace(fun.debug_info)
   with core.ensure_no_leaks(trace), source_info_util.reset_name_stack():

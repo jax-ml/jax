@@ -478,7 +478,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([128, 128], ir.F16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+      )(mgpu.dialect.wgmma)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -493,7 +493,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([3, 128, 128], ir.BF16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+      )(mgpu.dialect.wgmma)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -508,7 +508,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([128, 128], ir.BF16Type.get()),
           ir.MemRefType.get([2, 128, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+      )(mgpu.dialect.wgmma)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -523,7 +523,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([128, 128], ir.BF16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+      )(mgpu.dialect.wgmma)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -538,7 +538,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([128, 128], ir.BF16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+      )(mgpu.dialect.wgmma)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -553,7 +553,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([512, 128], ir.BF16Type.get()),
           ir.MemRefType.get([128, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+      )(mgpu.dialect.wgmma)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -568,7 +568,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([128, 128], ir.BF16Type.get()),
           ir.MemRefType.get([160, 160], ir.BF16Type.get()),
           name="wgmma",
-      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+      )(mgpu.dialect.wgmma)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -583,7 +583,7 @@ class DialectTest(MosaicGpuTest):
           ir.MemRefType.get([128, 128], ir.BF16Type.get()),
           ir.MemRefType.get([128, 192], ir.BF16Type.get()),
           name="wgmma",
-      )(lambda accumulator, a, b: mgpu.dialect.wgmma(accumulator, a, b))
+      )(mgpu.dialect.wgmma)
 
     with self.assertRaisesRegex(
         ir.MLIRError,
@@ -693,6 +693,35 @@ class DialectLoweringTest(MosaicGpuTest):
     )
     self.assertEmpty(all_ops_with_layouts)
 
+  def test_lowering_splat_constant(self):
+    cst = None
+    elt_ty = ir.BF16Type.get()
+
+    def body():
+      vec_ty = ir.VectorType.get((16, 8), elt_ty)
+      zero = ir.FloatAttr.get(elt_ty, 0)
+      nonlocal cst
+      cst = arith.ConstantOp(
+          vec_ty, ir.DenseElementsAttr.get_splat(vec_ty, zero)
+      )
+      cst.attributes["out_layouts"] = ir.ArrayAttr.get([
+          layouts.to_layout_attr(
+              mgpu.WGStridedFragLayout.from_shaped_type(vec_ty)
+          )
+      ])
+
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func()(body)
+
+    mgpu.lower_mgpu_dialect(self.module, None)
+
+    cst_ops = find_if(
+        self.module,
+        lambda op: isinstance(op, arith.ConstantOp),
+    )
+    self.assertLen(cst_ops, 1)
+    self.assertEqual(cst_ops[0].result.type, elt_ty)
+
   def test_lowering_vector_load_and_store_ops(self):
     shape = (8, 128)
     elt_ty = ir.BF16Type.get()
@@ -731,6 +760,47 @@ class DialectLoweringTest(MosaicGpuTest):
     store1, store2, *_ = all_stores  # Variadic unpacking to silence linter.
     check_type(store1.valueToStore.type)
     check_type(store2.valueToStore.type)
+
+  def test_lowering_for(self):
+    shape = (4, 128)
+    i32 = ir.IntegerType.get_signless(32)
+    vec_ty = ir.VectorType.get(shape, i32)
+    splat_layout_attr = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
+    strided_layout_attr = layouts.to_layout_attr(
+        mgpu.WGStridedFragLayout.from_shaped_type(vec_ty)
+    )
+    with ir.InsertionPoint(self.module.body):
+      i1 = arith.constant(ir.IndexType.get(), 1)
+      c1 = arith.constant(i32, 1)
+      splat = vector.SplatOp(
+          ir.VectorType.get(shape, i32), arith.constant(i32, 1234),
+      )
+      splat.attributes["out_layouts"] = ir.ArrayAttr.get([
+          splat_layout_attr
+      ])
+      ptr = llvm.mlir_undef(ir.Type.parse("!llvm.ptr"))
+      ref = mgpu_utils.ptr_as_memref(ptr, ir.MemRefType.get(shape, i32))
+      i0 = arith.constant(ir.IndexType.get(), 0)
+      other_vec = vector.LoadOp(vec_ty, ref, [i0, i0])
+      other_vec.attributes["out_layouts"] = ir.ArrayAttr.get([strided_layout_attr])
+      for_op = scf.ForOp(i1, i1, i1, [c1, splat.result])
+      for_op.attributes["in_layouts"] = ir.ArrayAttr.get([strided_layout_attr])
+      for_op.attributes["out_layouts"] = ir.ArrayAttr.get([strided_layout_attr])
+      with ir.InsertionPoint(for_op.body):
+        i, int_carry, vec_carry = for_op.body.arguments
+        new_int_carry = arith.addi(int_carry, arith.index_castui(i32, i))
+        new_vec_carry = arith.AddIOp(vec_carry, other_vec)
+        new_vec_carry.attributes["in_layouts"] = ir.ArrayAttr.get([strided_layout_attr] * 2)
+        new_vec_carry.attributes["out_layouts"] = ir.ArrayAttr.get([strided_layout_attr])
+        yield_op = scf.YieldOp([new_int_carry, new_vec_carry])
+        yield_op.attributes["in_layouts"] = ir.ArrayAttr.get([strided_layout_attr])
+
+    mgpu.lower_mgpu_dialect(self.module, None)
+    self.module.operation.verify()
+    [for_op] = find_if(self.module, lambda op: isinstance(op, scf.ForOp))
+    result_types = [r.type for r in for_op.results]
+    reg_vec_ty = ir.VectorType.get((2,), i32)
+    self.assertSequenceEqual(result_types, [i32, reg_vec_ty, reg_vec_ty])
 
 
 if __name__ == "__main__":

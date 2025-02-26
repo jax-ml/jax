@@ -75,7 +75,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        pip install uv
+        pip install uv~=0.5.30
         uv pip install --system .[minimum-jaxlib] -r build/test-requirements.txt
 
     - name: Run tests
@@ -88,7 +88,7 @@ jobs:
         JAX_SKIP_SLOW_TESTS: true
         PY_COLORS: 1
       run: |
-        pip install -e .
+        uv pip install --system -e .
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
         echo "JAX_ENABLE_CUSTOM_PRNG=$JAX_ENABLE_CUSTOM_PRNG"
@@ -113,7 +113,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        pip install uv
+        pip install uv~=0.5.30
         uv pip install --system -r docs/requirements.txt
     - name: Test documentation
       env:
@@ -147,7 +147,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        pip install uv
+        pip install uv~=0.5.30
         uv pip install --system -r docs/requirements.txt
     - name: Render documentation
       run: |
@@ -173,8 +173,9 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        pip install uv
-        uv pip install --system .[minimum-jaxlib] tensorflow -r build/test-requirements.txt
+        pip install uv~=0.5.30
+        uv pip install --system .[minimum-jaxlib] -r build/test-requirements.txt
+        uv pip install --system --pre tensorflow==2.19.0rc0
 
     - name: Run tests
       env:
@@ -184,7 +185,7 @@ jobs:
         JAX_SKIP_SLOW_TESTS: true
         PY_COLORS: 1
       run: |
-        pip install -e .
+        uv pip install --system -e .
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
         echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
@@ -205,7 +206,7 @@ jobs:
         python-version: 3.12
     - name: Install JAX
       run: |
-        pip install uv
+        pip install uv~=0.5.30
         uv pip install --system .[cuda12]
     - name: Build and install example project
       run: uv pip install --system ./examples/ffi[test]

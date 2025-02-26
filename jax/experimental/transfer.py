@@ -16,7 +16,6 @@
 import jax
 from typing import Any, TYPE_CHECKING
 from jax._src.lib import xla_client as _xc
-from jax._src.lib import xla_extension_version
 from jax._src.util import use_cpp_class, use_cpp_method
 
 class TransferConnection:
@@ -42,7 +41,7 @@ class TransferConnection:
     return tree.unflatten(self._pull_flat(uuid, backend, xs_flat))
 
 
-if not TYPE_CHECKING and xla_extension_version >= 305:
+if not TYPE_CHECKING:
   TransferConnection = use_cpp_class(_xc._xla.TransferConnection)(TransferConnection)
 
 
@@ -67,8 +66,7 @@ class TransferServer:
     self._await_pull_flat(uuid, jax.tree.flatten(arrays)[0])
 
 
-if not TYPE_CHECKING and xla_extension_version >= 305:
+if not TYPE_CHECKING:
   TransferServer = use_cpp_class(_xc._xla.TransferServer)(TransferServer)
 
-if xla_extension_version >= 305:
-  start_transfer_server = _xc._xla.start_transfer_server
+start_transfer_server = _xc._xla.start_transfer_server

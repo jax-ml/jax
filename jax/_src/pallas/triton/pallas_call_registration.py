@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import io
-import re
 from typing import Any
 import zlib
 
@@ -26,7 +25,6 @@ import jax._src.core as jax_core
 from jax._src.interpreters import mlir
 from jax._src.lib import triton
 from jax._src.lib import gpu_triton as triton_kernel_call_lib
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.triton import lowering
@@ -48,7 +46,6 @@ def pallas_call_lowering(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
     jaxpr: jax_core.Jaxpr,
-    name_and_src_info: pallas_core.NameAndSrcInfo,
     interpret: bool,
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
@@ -57,7 +54,8 @@ def pallas_call_lowering(
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
 ):
-  del interpret, cost_estimate, out_avals
+  del interpret, out_avals, cost_estimate
+  debug_info = jaxpr.debug_info
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(
         "dynamic grid bounds not supported in the Triton backend"
@@ -78,22 +76,20 @@ def pallas_call_lowering(
     num_stages = 3 if num_stages is None else num_stages
 
   if debug:
-    print(f"\nThe kernel jaxpr for pallas_call {name_and_src_info}:")
+    print(f"\nThe kernel jaxpr for pallas_call {debug_info.func_src_info}:")
     print(jaxpr)
-    print("The grid mapping for pallas_call {name_and_src_info}:")
+    print(f"The grid mapping for pallas_call {debug_info.func_src_info}:")
     print(grid_mapping)
 
   # Sanitize the name to conform to NVPTX requirements. We do this here
   # to avoid the need to fetch the new name from PTX post compilation.
-  name_and_src_info = name_and_src_info.replace(
-      name=re.sub(r"[^a-zA-Z0-9_$]", "_", name_and_src_info.name)
-  )
+  name = mlir.sanitize_name(debug_info.func_name)
   lowering_result = lowering.lower_jaxpr_to_triton_module(
-      jaxpr, grid_mapping, name_and_src_info, lowering_platform
+      jaxpr, grid_mapping, lowering_platform
   )
   module_op = lowering_result.module.operation
   if debug:
-    print(f"\nThe Triton module for pallas_call {name_and_src_info}:")
+    print(f"\nThe Triton module for pallas_call {debug_info.func_src_info}:")
     print(module_op.get_asm(enable_debug_info=True, pretty_debug_info=True))
 
   grid_x, grid_y, grid_z = normalize_grid(lowering_result.grid)
@@ -101,7 +97,7 @@ def pallas_call_lowering(
   module_op.write_bytecode(buf)
 
   # TODO(b/394629193): Remove True once the bug is fixed.
-  if True or jaxlib_version < (0, 5, 1):
+  if True:
     # AOT Triton compilation is only available on jaxlib 0.5.1+.
     out_types = [
       ir.RankedTensorType.get(bm.array_shape_dtype.shape,
@@ -109,7 +105,7 @@ def pallas_call_lowering(
       for bm in grid_mapping.block_mappings_output
     ]
     backend_config = dict(
-        name=ir.StringAttr.get(name_and_src_info.name),
+        name=ir.StringAttr.get(name),
         ir=ir.StringAttr.get(buf.getvalue()),
         num_stages=mlir.i32_attr(num_stages),
         num_warps=mlir.i32_attr(num_warps),
@@ -156,7 +152,7 @@ def pallas_call_lowering(
       num_stages=num_stages,
   )
   kernel = triton_kernel_call_lib.TritonKernel(
-      name_and_src_info.name,
+      debug_info.func_name,
       num_warps,
       compilation_result.smem_bytes,
       compilation_result.asm,
@@ -181,7 +177,7 @@ def pallas_call_lowering(
       operands=in_nodes,
        backend_config=zlib.compress(
           kernel_call.to_proto(
-              name_and_src_info.name,
+              debug_info.func_name,
               triton_params.get("serialized_metadata") or b"",
           )
       ),

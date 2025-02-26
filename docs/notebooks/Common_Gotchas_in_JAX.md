@@ -677,6 +677,20 @@ Many such cases are discussed in detail in the sections above; here we list seve
 
   ```
   This sort of mismatch would typically arise when casting extreme values from floating to integer types or vice versa.
+- When operating on [subnormal](https://en.wikipedia.org/wiki/Subnormal_number)
+  floating point numbers, JAX operations use flush-to-zero semantics on some
+  backends. For example:
+  ```python
+  >>> import jax.numpy as jnp
+  >>> subnormal = jnp.float32(1E-45)
+  >>> subnormal  # subnormals are representable
+  Array(1.e-45, dtype=float32)
+  >>> subnormal + 0  # but are flushed to zero within operations
+  Array(0., dtype=float32)
+
+  ```
+  The detailed operation semantics for subnormal values will generally
+  vary depending on the backend.
 
 ## 🔪 Sharp bits covered in tutorials
 - {ref}`control-flow` discusses how to work with the constraints that `jit` imposes on the use of Python control flow and logical operators.

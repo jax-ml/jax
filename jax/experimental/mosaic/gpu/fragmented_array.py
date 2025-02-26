@@ -1180,9 +1180,9 @@ class FragmentedArray:
       else:
         convert = arith.extsi if self.is_signed else arith.extui
     elif from_integer and to_float:
-      convert = arith.sitofp
+      convert = arith.sitofp if self.is_signed else arith.uitofp
     elif from_float and to_integer:
-      convert = arith.fptosi
+      convert = arith.fptosi if is_signed else arith.fptoui
     else:
       raise NotImplementedError(f"Unsupported conversion {cur_dtype} -> {new_dtype}")
     new_registers = np.empty_like(self.registers)

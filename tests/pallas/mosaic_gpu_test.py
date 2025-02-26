@@ -15,10 +15,10 @@
 import contextlib
 import functools
 import math
+import operator
 import os
 import re
 import tempfile
-import traceback
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -27,7 +27,6 @@ from jax import lax
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax.experimental import pallas as pl
-from jax.experimental.mosaic.gpu import core as mosaic_gpu_core
 from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
@@ -90,7 +89,7 @@ class PallasCallTest(PallasTest):
       ("rsqrt", jax.lax.rsqrt),
       ("tanh", jax.lax.tanh, 1e-6),
   )
-  def test_unary_ops(self, unary, rtol=1e-7):
+  def test_unary_op(self, unary, rtol=1e-7):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
@@ -101,24 +100,64 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_allclose(kernel(x), unary(x), rtol=rtol)
 
-  @parameterized.named_parameters(
-      ("add", lambda x, y: x + y),
-      ("mul", lambda x, y: x * y),
-      ("div", lambda x, y: x / y),
-      ("min", lambda x, y: jnp.minimum(x, y)),
-      ("max", lambda x, y: jnp.maximum(x, y)),
+  @parameterized.product(
+      op=[
+          operator.add,
+          lambda x, _: x + 1,  # for int->vector conversion
+          operator.sub,
+          operator.mul,
+          lax.div,
+          jnp.minimum,
+          jnp.maximum,
+      ],
+      dtype=[jnp.float32, jnp.int32, jnp.uint32],
+      thread_semantics=[*plgpu.ThreadSemantics],
   )
-  def test_binary_op(self, bop):
+  def test_binary_op(self, op, dtype, thread_semantics):
+
     @functools.partial(
         pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+        out_shape=jax.ShapeDtypeStruct([256], dtype),
+        compiler_params=plgpu.GPUCompilerParams(
+            thread_semantics=thread_semantics
+        ),
     )
     def kernel(x_ref, y_ref, o_ref):
-      o_ref[...] = bop(x_ref[...], y_ref[...])
+      o_ref[...] = op(x_ref[...], y_ref[...])
 
-    x = jnp.arange(256).astype(jnp.float32)
-    y = x + 1
-    np.testing.assert_array_equal(kernel(x, y), bop(x, y))
+    key0, key1 = jax.random.split(jax.random.key(0), 2)
+    x = (jax.random.uniform(key0, [256]) * 42).astype(dtype)
+    y = (jax.random.uniform(key1, [256]) * 42).astype(dtype)
+    np.testing.assert_array_equal(kernel(x, y), op(x, y))
+
+  @parameterized.product(
+      op=[
+          lax.eq,
+          operator.ne,
+          operator.lt,
+          operator.le,
+          operator.gt,
+          operator.ge,
+      ],
+      # TODO(slebedev): Support integral types.
+      dtype=[jnp.float32, jnp.int32, jnp.uint32],
+      thread_semantics=[*plgpu.ThreadSemantics],
+  )
+  def test_comparison_op(self, op, dtype, thread_semantics):
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], dtype),
+        compiler_params=plgpu.GPUCompilerParams(
+            thread_semantics=thread_semantics
+        ),
+    )
+    def kernel(o_ref):
+      o_ref[...] = jnp.broadcast_to(
+          op(dtype(42), dtype(24)).astype(dtype), o_ref.shape
+      )
+
+    np.testing.assert_array_equal(kernel(), jnp.full([256], op(42, 24), dtype))
 
   def test_add_first(self):
     @functools.partial(
@@ -271,13 +310,20 @@ class PallasCallTest(PallasTest):
 
     np.testing.assert_array_equal(kernel(), jax.lax.broadcasted_iota(dtype, (128, 128), dimension))
 
-  @parameterized.product(indexer=[..., slice(128), slice(None, 128)])
-  def test_copy_smem_to_gmem(self, indexer):
+  @parameterized.product(
+      indexer=[..., slice(128), slice(None, 128)],
+      thread_semantics=[*plgpu.ThreadSemantics],
+  )
+  def test_copy_smem_to_gmem(self, indexer, thread_semantics):
+
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
         scratch_shapes=[plgpu.SMEM((256,), jnp.float32)],
+        compiler_params=plgpu.GPUCompilerParams(
+            thread_semantics=thread_semantics
+        ),
     )
     def kernel(x_ref, o_ref_gmem, scratch_ref):
       scratch_ref[...] = x_ref[...] + 1
@@ -734,7 +780,9 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(jnp.arange(11, dtype=jnp.int32)),
                                   jnp.full((128,), 10, dtype=jnp.int32))
 
-  def test_run_scoped(self):
+  @parameterized.product(thread_semantics=[*plgpu.ThreadSemantics])
+  def test_run_scoped(self, thread_semantics):
+
     def kernel(x_ref, o_ref):
       def body(tmp_ref):
         self.assertEqual(tmp_ref.shape, (8, 128))
@@ -749,6 +797,9 @@ class PallasCallTest(PallasTest):
     f = pl.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        compiler_params=plgpu.GPUCompilerParams(
+            thread_semantics=thread_semantics
+        ),
     )
     o = f(inp)
     np.testing.assert_array_equal(o, inp + 1.0)
@@ -796,21 +847,16 @@ class PallasCallTest(PallasTest):
   def test_program_id_in_block_spec(self):
     @functools.partial(
         pl.pallas_call,
-        out_specs=pl.BlockSpec((128,), lambda *_: pl.program_id(0)),
-        out_shape=jax.ShapeDtypeStruct([128 * 2], jnp.int32),
+        in_specs=(pl.BlockSpec((2, 128), lambda i: (pl.program_id(0), i)),),
+        out_specs=pl.BlockSpec((2, 128), lambda i: (pl.program_id(0), i)),
+        out_shape=jax.ShapeDtypeStruct([2, 128], jnp.int32),
         grid=2,
     )
-    def kernel(o_ref):
-      del o_ref
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
 
-    # ``assertRaises`` have no way of asserting against the cause, so we
-    # have to use ``traceback.format_exception`` manually.
-    with self.assertRaises(Exception) as exc_info:
-      kernel()
-    self.assertIn(
-        "not supported in this context",
-        "".join(traceback.format_exception(exc_info.exception)),
-    )
+    x = jnp.arange(2 * 128, dtype=jnp.int32).reshape([2, 128])
+    np.testing.assert_array_equal(kernel(x), x)
 
   def test_num_programs(self):
     @functools.partial(
@@ -852,12 +898,17 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 128).astype(jnp.float16).reshape(128, 128)
     np.testing.assert_array_equal(kernel(x), x)
 
-  @parameterized.parameters(False, True)
-  def test_fori_loop_array(self, force_while):
+  @parameterized.product(
+      force_while=[False, True], thread_semantics=[*plgpu.ThreadSemantics]
+  )
+  def test_fori_loop_array(self, force_while, thread_semantics):
+    if force_while and thread_semantics == plgpu.ThreadSemantics.Warpgroup:
+      self.skipTest("WG semantics does not support force_while.")
 
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
+        compiler_params=plgpu.GPUCompilerParams(thread_semantics=thread_semantics),
     )
     def kernel(x_ref, o_ref):
       # Equivalent to x_ref[...] + 2 + 3.
@@ -866,12 +917,17 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256, dtype=jnp.int32)
     np.testing.assert_array_equal(kernel(x), x + 2 + 3)
 
-  @parameterized.parameters(False, True)
-  def test_fori_loop_scalar(self, force_while):
+  @parameterized.product(
+      force_while=[False, True], thread_semantics=[*plgpu.ThreadSemantics]
+  )
+  def test_fori_loop_scalar(self, force_while, thread_semantics):
+    if force_while and thread_semantics == plgpu.ThreadSemantics.Warpgroup:
+      self.skipTest("WG semantics does not support force_while.")
 
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
+        compiler_params=plgpu.GPUCompilerParams(thread_semantics=thread_semantics),
     )
     def kernel(o_ref):
       # Equivalent to 2 + 3.
@@ -981,25 +1037,26 @@ class PallasCallTest(PallasTest):
     with self.assertRaisesRegex(ValueError, "has layout .*, when it should be"):
       kernel()
 
-  def test_cond(self):
+  @parameterized.parameters([*plgpu.ThreadSemantics])
+  def test_cond(self, thread_semantics):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
+        compiler_params=plgpu.GPUCompilerParams(thread_semantics=thread_semantics),
     )
     def kernel(x_ref, o_ref):
-      acc = _sum_same_dtype(x_ref[...])
       jax.lax.cond(
-          acc % 2 == 0,
-          lambda: pl.debug_print("acc * 2: {}", acc * 2),
-          lambda: pl.debug_print("acc: {}", acc),
+          x_ref[0] % 2 == 0,
+          lambda: pl.debug_print("acc % 2"),
+          lambda: pl.debug_print("acc"),
       )
-      o_ref[...] = jnp.broadcast_to(acc, o_ref.shape)
+      o_ref[...] = jnp.broadcast_to(jnp.asarray(0, dtype=o_ref.dtype), o_ref.shape)
 
-    x = jnp.arange(256, dtype=jnp.int32)
+    x = jnp.full((256,), 1234, dtype=jnp.int32)
     with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
-    self.assertIn("acc * 2:", output())
+    self.assertIn("acc % 2", output())
 
   def test_cond_returning_array(self):
     @functools.partial(
@@ -2093,33 +2150,6 @@ class ExamplesSm90ATest(PallasSm90ATest):
     np.testing.assert_allclose(out, x @ x)
 
   # TODO(apaszke): Clusters and multicast
-
-
-class PallasCallWarpgroupSemanticsTest(PallasTest):
-
-  def setUp(self):
-    self.compiler_params = plgpu.GPUCompilerParams(
-        thread_semantics=mosaic_gpu_core.ThreadSemantics.Warpgroup
-    )
-
-    super().setUp()
-
-  @parameterized.named_parameters(
-      ("add_float", lambda x, y: x + y, np.float32),
-      ("add_int", lambda x, y: x + y, np.int32),
-  )
-  def test_binary_op_wg_semantics(self, bop, dtype):
-    @functools.partial(
-        pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct([256], dtype=dtype),
-        compiler_params=self.compiler_params
-    )
-    def kernel(x_ref, y_ref, o_ref):
-      o_ref[...] = bop(x_ref[...], y_ref[...])
-
-    x = jnp.arange(256).astype(dtype)
-    y = x + 1
-    np.testing.assert_array_equal(kernel(x, y), bop(x, y))
 
 
 if __name__ == "__main__":

@@ -34,7 +34,6 @@ def pallas_call_lowering(
     ctx: mlir.LoweringRuleContext,
     *args,
     jaxpr: jax_core.Jaxpr,
-    name_and_src_info: pallas_core.NameAndSrcInfo,
     interpret: bool,
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
@@ -43,6 +42,7 @@ def pallas_call_lowering(
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
 ):
+  debug_info = jaxpr.debug_info
   del interpret, out_avals
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(
@@ -50,9 +50,9 @@ def pallas_call_lowering(
     )
 
   if debug:
-    print(f"\nThe kernel jaxpr for pallas_call {name_and_src_info}:")
+    print(f"\nThe kernel jaxpr for pallas_call {debug_info.func_src_info}:")
     print(jaxpr)
-    print(f"The grid mapping for pallas_call {name_and_src_info}:")
+    print(f"The grid mapping for pallas_call {debug_info.func_src_info}:")
     print(grid_mapping)
 
   thread_semantics = compiler_params.get("mosaic_gpu", {}).get(
@@ -61,15 +61,14 @@ def pallas_call_lowering(
   if thread_semantics == mosaic_core.ThreadSemantics.Warpgroup:
     mosaic_core.dialect.register_dialect(ctx.module_context.context)  # pytype: disable=attribute-error
 
-  lowering_result = lowering.lower_jaxpr_to_module(
+  lowering_result = lowering.lower_pipelined_jaxpr_to_module(
       grid_mapping,
       jaxpr,
-      name_and_src_info,
       compiler_params,
       cost_estimate,
   )
   if debug:
-    print(f"\nThe Mosaic GPU module for pallas_call {name_and_src_info}:")
+    print(f"\nThe Mosaic GPU module for pallas_call {debug_info.func_src_info}:")
     print(lowering_result.module.operation)
 
   module = lowering_result.module
@@ -88,7 +87,7 @@ def pallas_call_lowering(
     if (dump_path := prof_ctx.dump_path) == "sponge":
       dump_path = os.getenv("TEST_UNDECLARED_OUTPUTS_DIR")  # type: ignore
     out_file = os.path.join(
-        dump_path, f"{name_and_src_info.name}-{time.time_ns()}-trace.json"
+        dump_path, f"{mlir.sanitize_name(debug_info.func_name)}-{time.time_ns()}-trace.json"
     )
     def dump_profile(prof_buffer):
       try:
@@ -101,7 +100,7 @@ def pallas_call_lowering(
           )
       except FileExistsError:
         warnings.warn(
-            f"Failed to dump profile for pallas_call {name_and_src_info}, "
+            f"Failed to dump profile for pallas_call {debug_info.func_src_info}, "
             f"profile already exists at {out_file}"
         )
     def do_callback(prof_buffer):

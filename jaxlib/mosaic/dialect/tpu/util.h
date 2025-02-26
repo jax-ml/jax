@@ -20,6 +20,7 @@
 #include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "mlir/include/mlir/IR/Attributes.h"
+#include "mlir/include/mlir/IR/BuiltinTypes.h"
 #include "mlir/include/mlir/IR/Diagnostics.h"
 #include "mlir/include/mlir/IR/Value.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
@@ -156,19 +157,12 @@ FailureOr<int8_t> getTypeBitwidth(Type ty) {
       return width;
     }
   }
-  if (auto f32_ty = dyn_cast<Float32Type>(ty)) {
-    return 32;
+  if (isa<IntegerType, Float32Type, BFloat16Type, Float8E5M2Type,
+          Float8E4M3FNType, Float8E4M3B11FNUZType>(ty)) {
+    return ty.getIntOrFloatBitWidth();
   }
-  if (auto bf16_ty = dyn_cast<BFloat16Type>(ty)) {
-    return 16;
-  }
-  if (auto f8e5m2_ty = dyn_cast<Float8E5M2Type>(ty)) {
-    return 8;
-  }
-  if (auto f8e4m3fn_ty = dyn_cast<Float8E4M3FNType>(ty)) {
-    return 8;
-  }
-  return emitError(UnknownLoc::get(ty.getContext()), "Unsupported type: ")
+  return emitError(UnknownLoc::get(ty.getContext()),
+                   "Unsupported type in mosaic dialect: ")
          << ty;
 }
 

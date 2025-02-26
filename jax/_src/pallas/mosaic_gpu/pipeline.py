@@ -61,6 +61,9 @@ class BufferedRef:
   def compute_gmem_slice(self, grid_indices) -> tuple[pl.Slice, ...]:
     index_map = self.spec.index_map
     assert index_map is not None
+    # We don't allow Python scalars here, because they are interpreted
+    # differently depending on the x32/x64 mode.
+    assert all(i.dtype == jnp.dtype(jnp.int32) for i in grid_indices)
     return tuple(
         pl.Slice(idx * size, size)  # type: ignore[arg-type]
         for idx, size in zip(
@@ -94,6 +97,9 @@ class BufferedRef:
 def _uses_arguments(
     index_map: Callable[..., Any], num_args: int
 ) -> Sequence[bool]:
+  if not num_args:
+    return ()
+
   jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(
           index_map,
@@ -122,7 +128,9 @@ def _inc_grid_by_1(
   for idx, size in reversed(list(zip(indices, grid))):
     next_idx = lax.select(carry, idx + 1, idx)
     carry = next_idx == size
-    next_indices.append(lax.select(carry, 0, next_idx).astype(idx.dtype))
+    next_indices.append(
+        lax.select(carry, jnp.asarray(0, dtype=idx.dtype), next_idx)
+    )
   return tuple(reversed(next_indices))
 
 
@@ -237,7 +245,11 @@ def emit_pipeline(
     for step, indices in enumerate(
         it.islice(it.product(*map(range, grid)), max_concurrent_steps)
     ):
+      indices = tuple(map(lambda i: jnp.asarray(i, dtype=jnp.int32), indices))
       map(lambda bref: bref.copy_in(step, indices, barrier_ref), in_brefs)
+
+    # This is true if any of the outputs need to be transferred inside the loop.
+    copies_out_in_loop = not all(bref.is_index_invariant for bref in out_brefs)
 
     def loop_body(step, carry):
       slot = lax.rem(step, max_concurrent_steps)
@@ -247,9 +259,10 @@ def emit_pipeline(
         # Wait for the current GMEM->SMEM copy to complete.
         gpu_primitives.barrier_wait(barrier_ref.at[slot])
       # Wait for the previous output SMEM->GMEM copy to complete.
-      gpu_primitives.wait_smem_to_gmem(
-          max_concurrent_steps - (1 + delay_release), wait_read_only=True
-      )
+      if copies_out_in_loop:
+        gpu_primitives.wait_smem_to_gmem(
+            max_concurrent_steps - (1 + delay_release), wait_read_only=True
+        )
 
       with pallas_core.grid_env(map(pallas_core.GridAxis, indices, grid)):
         body(*(
@@ -257,7 +270,7 @@ def emit_pipeline(
             for bref in it.chain(in_brefs, out_brefs)
         ))
 
-      if not all(bref.is_index_invariant for bref in out_brefs):
+      if copies_out_in_loop:
         gpu_primitives.commit_smem()
 
       # Copy the output from SMEM to GMEM.
@@ -307,7 +320,7 @@ def emit_pipeline(
 
     # Invariant: ``indices`` and ``fetch_indices`` are always
     # ``max_concurrent_steps-delay_release`` apart.
-    indices = (jnp.asarray(0, dtype=lax.dtype(0)),) * len(grid)
+    indices = (jnp.asarray(0, dtype=jnp.int32),) * len(grid)
     fetch_indices = indices
     for _ in range(max_concurrent_steps-delay_release):
       fetch_indices = _inc_grid_by_1(fetch_indices, grid)
@@ -324,7 +337,7 @@ def emit_pipeline(
 
     # Outputs invariant to the sequential axis are never written from inside the
     # loop. This is the only place where we store them.
-    if all(bref.is_index_invariant for bref in out_brefs):
+    if not copies_out_in_loop:
       gpu_primitives.commit_smem()
     last_slot = lax.rem(num_steps - 1, max_concurrent_steps)
     for bref in out_brefs:
@@ -508,6 +521,9 @@ def emit_pipeline_warp_specialized(
           _compute_registers(memory_registers, num_compute_wgs),
           action="increase")
 
+      # This is true if any of the outputs need to be transferred inside the loop.
+      copies_out_in_loop = not all(bref.is_index_invariant for bref in out_brefs)
+
       def compute_loop_body(step, carry):
         indices, last_store_slices, prev_body_carry = carry
         slot = lax.rem(step, max_concurrent_steps)
@@ -520,7 +536,8 @@ def emit_pipeline_warp_specialized(
               in_barrier.at[_get_slot(slot, has_seq_dim)])
 
         # Wait for the previous output SMEM->GMEM copy to complete.
-        gpu_primitives.wait_smem_to_gmem(max_concurrent_steps - 1)
+        if copies_out_in_loop:
+          gpu_primitives.wait_smem_to_gmem(max_concurrent_steps - 1)
 
         with pallas_core.grid_env(map(pallas_core.GridAxis, indices, grid)):
           body_refs = []
@@ -538,8 +555,9 @@ def emit_pipeline_warp_specialized(
         if not manual_consumed_barriers:
           [consumed_barrier_ref] = consumed_barrier_refs
           gpu_primitives.barrier_arrive(consumed_barrier_ref.at[slot])
+        # TODO(justinfu,apaszke): This should probably be done by the memory WG.
         # Copy the output from SMEM to GMEM.
-        if not all(bref.is_index_invariant for bref in out_brefs):
+        if copies_out_in_loop:
           gpu_primitives.commit_smem()
 
         new_store_slices = last_store_slices[:]
@@ -562,7 +580,7 @@ def emit_pipeline_warp_specialized(
                         predicate=slices_changed)
         next_indices = _inc_grid_by_1(indices, grid)
         return (next_indices, new_store_slices, next_body_carry)
-      init_indices = (jnp.asarray(0, dtype=lax.dtype(0)),) * len(grid)
+      init_indices = (jnp.asarray(0, dtype=jnp.int32),) * len(grid)
       # TODO(justinfu): Only store base pointer instead of all indices.
       last_store_slices = [
           None
@@ -594,7 +612,7 @@ def emit_pipeline_warp_specialized(
 
       # Handle index_invariant outputs after the loop. They are not
       # written in the main pipeline loop.
-      if all(bref.is_index_invariant for bref in out_brefs):
+      if not copies_out_in_loop:
         gpu_primitives.commit_smem()
       last_slot = lax.rem(num_pipeline_steps - 1, max_concurrent_steps)
       for bref in out_brefs:
@@ -607,7 +625,7 @@ def emit_pipeline_warp_specialized(
     # The memory thread executes this block which issues all pipelined DMAs.
     def memory_block():
       gpu_primitives.set_max_registers(memory_registers, action="decrease")
-      indices = (jnp.asarray(0, dtype=lax.dtype(0)),) * len(grid)
+      indices = (jnp.asarray(0, dtype=jnp.int32),) * len(grid)
 
       # Begin initial copies.
       for step in range(max_concurrent_steps):

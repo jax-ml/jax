@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import dataclasses
 import enum
+import itertools
 import math
 from typing import Any, Literal
 
@@ -74,6 +75,9 @@ def _copy_smem_to_gmem_abstract_eval(src, dst, *args, **params):
 
 
 @lowering.register_lowering_rule(copy_smem_to_gmem_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(
+    copy_smem_to_gmem_p, mgpu.ThreadSemantics.Warpgroup
+)
 def _copy_smem_to_gmem_lowering(
     ctx: lowering.LoweringRuleContext,
     src,
@@ -83,7 +87,7 @@ def _copy_smem_to_gmem_lowering(
     dst_transforms_treedef,
     has_user_predicate,
 ):
-  predicate = ctx.predicate
+  predicate = ctx.module_ctx.single_wg_lane_predicate
   if has_user_predicate:
     flat_args, user_predicate = flat_args[:-1], flat_args[-1]
     predicate = arith_dialect.andi(
@@ -97,13 +101,47 @@ def _copy_smem_to_gmem_lowering(
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
   src, src_transforms = lowering._handle_indexing(src, src_transforms)
   copy_params = _extract_gmem_copy_params(dst_transforms) | _extract_smem_copy_params(src_transforms)
-  ctx.launch_ctx.async_copy(
-      src_ref=src,
-      dst_ref=dst,
-      predicate=predicate,
-      **copy_params,
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    ctx.launch_ctx.async_copy(
+        src_ref=src,
+        dst_ref=dst,
+        predicate=predicate,
+        **copy_params,
+    )
+    return ()
+
+  if "gmem_slice" not in copy_params:
+    i32 = ir.IntegerType.get_signless(32)
+    slice_lengths = ir.MemRefType(src.type).shape
+    indices = [mgpu.utils.c(0, i32)] * len(slice_lengths)
+  else:
+    indices, slice_lengths = _split_gmem_slice(copy_params["gmem_slice"])
+  assert copy_params.get("swizzle") is None
+  assert not copy_params.get("gmem_transform")
+  mgpu.dialect.async_store(
+      src, dst, indices, slice_lengths, predicate=predicate
   )
   return ()
+
+
+def _split_gmem_slice(gmem_slice):
+  i32 = ir.IntegerType.get_signless(32)
+  indices = []
+  slice_lengths = []
+  for idx in gmem_slice:
+    match idx:
+      case slice():
+        indices.append(mgpu_utils.c(idx.start, i32))
+        slice_lengths.append(idx.stop - idx.start)
+      case mgpu.DynamicSlice():
+        indices.append(arith_dialect.index_cast(i32, idx.base))
+        slice_lengths.append(idx.length)
+      case ir.Value():
+        indices.append(arith_dialect.index_cast(i32, idx))
+        slice_lengths.append(-1)
+      case _:
+        raise NotImplementedError(f"Unsupported GMEM slice: {idx}")
+  return indices, slice_lengths
 
 
 def _extract_gmem_copy_params(transforms):
@@ -117,6 +155,7 @@ def _extract_gmem_copy_params(transforms):
   return dict(
       gmem_slice=lowering._ndindexer_indices(indexer),
   )
+
 
 def _extract_smem_copy_params(transforms):
   if not transforms:
@@ -188,6 +227,9 @@ def _copy_gmem_to_smem_abstract_eval(src, dst, barrier, *args, **params):
 
 
 @lowering.register_lowering_rule(copy_gmem_to_smem_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(
+    copy_gmem_to_smem_p, mgpu.ThreadSemantics.Warpgroup
+)
 def _copy_gmem_to_smem_lowering(
     ctx: lowering.LoweringRuleContext,
     src,
@@ -220,17 +262,43 @@ def _copy_gmem_to_smem_lowering(
     )
   dst_ty = ir.MemRefType(dst.type)
   bytes = math.prod(dst_ty.shape) * mgpu.bytewidth(dst_ty.element_type)
-  if bytes % WARPGROUP_SIZE:
-    raise NotImplementedError("Only aligned copies are supported")
-  # We arrive uniformly from each thread in the WG, so we need to divide the
-  # number of bytes by the number of threads in the WG.
-  # TODO: apaszke - Relax this. We can just select the WG leader and have it
-  # arrive with the whole transfer size, while everyone else arrives with 0.
-  # But we should continue using this scheme as it's likely to be faster.
-  bytes //= WARPGROUP_SIZE
-  barrier.arrive_expect_tx(bytes)
-  ctx.launch_ctx.async_copy(
-      src_ref=src, dst_ref=dst, barrier=barrier, arrive=False, **copy_params
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    if bytes % WARPGROUP_SIZE:
+      raise NotImplementedError("Only aligned copies are supported")
+    # We arrive uniformly from each thread in the WG, so we need to divide the
+    # number of bytes by the number of threads in the WG.
+    # TODO: apaszke - Relax this. We can just select the WG leader and have it
+    # arrive with the whole transfer size, while everyone else arrives with 0.
+    # But we should continue using this scheme as it's likely to be faster.
+    bytes //= WARPGROUP_SIZE
+    barrier.arrive_expect_tx(bytes)
+    ctx.launch_ctx.async_copy(
+        src_ref=src,
+        dst_ref=dst,
+        barrier=barrier,
+        arrive=False,
+        predicate=ctx.module_ctx.single_wg_lane_predicate,
+        **copy_params,
+    )
+    return ()
+
+  if "gmem_slice" not in copy_params:
+    i32 = ir.IntegerType.get_signless(32)
+    slice_lengths = ir.MemRefType(src.type).shape
+    indices = [mgpu.utils.c(0, i32)] * len(slice_lengths)
+  else:
+    indices, slice_lengths = _split_gmem_slice(copy_params["gmem_slice"])
+  assert copy_params.get("swizzle") is None
+  assert not copy_params.get("gmem_transform")
+  barrier_ref = barrier.as_dialect_barrier_memref()
+  mgpu.dialect.arrive_expect_tx(barrier_ref, bytes)
+  mgpu.dialect.async_load(
+      src,
+      dst,
+      barrier_ref,
+      indices,
+      slice_lengths,
+      collective=ir.ArrayAttr.get([]),
   )
   return ()
 
@@ -346,6 +414,7 @@ def _barrier_wait_abstract_eval(barrier, *args, **params):
 
 
 @lowering.register_lowering_rule(barrier_wait_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(barrier_wait_p, mgpu.ThreadSemantics.Warpgroup)
 def _barrier_wait_lowering(
     ctx: lowering.LoweringRuleContext,
     barrier,
@@ -383,6 +452,9 @@ def _wait_smem_to_gmem_abstract_eval(n, *, wait_read_only):
 
 
 @lowering.register_lowering_rule(wait_smem_to_gmem_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(
+    wait_smem_to_gmem_p, mgpu.ThreadSemantics.Warpgroup
+)
 def _wait_smem_to_gmem_lowering(
     ctx: lowering.LoweringRuleContext, n, *, wait_read_only
 ):
@@ -715,6 +787,7 @@ def _commit_smem_abstract_eval():
 
 
 @lowering.register_lowering_rule(commit_smem_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(commit_smem_p, mgpu.ThreadSemantics.Warpgroup)
 def _commit_smem_lowering(ctx: lowering.LoweringRuleContext):
   mgpu.commit_shared()
   return ()
@@ -768,4 +841,141 @@ def broadcasted_iota(
 ) -> jax.Array:
   return broadcasted_iota_p.bind(
       dtype=jnp.dtype(dtype), shape=shape, dimension=dimension, layout=layout
+  )
+
+
+jaxpr_call_p = jax_core.Primitive("jaxpr_call")
+jaxpr_call_p.multiple_results = True
+
+
+@jaxpr_call_p.def_abstract_eval
+def _jaxpr_call_abstract_eval(*args, jaxpr: jax_core.Jaxpr, **params):
+  del args, params  # Unused.
+  return [v.aval for v in jaxpr.outvars]
+
+
+@lowering.register_lowering_rule(jaxpr_call_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(jaxpr_call_p, mgpu.ThreadSemantics.Warpgroup)
+def _jaxpr_call_lowering_rule(
+    ctx: lowering.LoweringRuleContext,
+    *flat_args,
+    jaxpr: jax_core.Jaxpr,
+    ref_treedefs,
+    program_ids_treedef,
+):
+  args = []
+  flat_refs, flat_program_ids = util.split_list(
+      flat_args, [sum(treedef.num_leaves for treedef in ref_treedefs)]
+  )
+  flat_refs = util.split_list(
+      flat_refs,
+      [treedef.num_leaves for treedef in ref_treedefs[: len(ref_treedefs) - 1]],
+  )
+  for treedef, flat_ref in zip(ref_treedefs, flat_refs):
+    ref = treedef.unflatten(flat_ref)
+    if isinstance(ref, tuple):
+      # We ignore other transforms here, because they are already embedded
+      # in the jaxpr.
+      ref, _ = lowering._handle_indexing(*ref)
+    args.append(ref)
+  program_ids = program_ids_treedef.unflatten(flat_program_ids)
+  for axis, pid in enumerate(program_ids):
+    if pid is not None:
+      continue
+    program_ids[axis] = lowering._program_id(axis, ctx.module_ctx.squashed_dims)
+  new_module_ctx = dataclasses.replace(ctx.module_ctx, program_ids=program_ids)
+  return lowering.lower_jaxpr_to_mosaic_gpu(
+      new_module_ctx, ctx.launch_ctx, jaxpr, args
+  )
+
+
+@lowering._register_resource_estimator(jaxpr_call_p)
+def _jaxpr_call_resource_estimator(
+    ctx: lowering.ResourceEstimatorContext,
+    *args,
+    jaxpr: jax_core.Jaxpr,
+    **params,
+):
+  del args, params  # Unused.
+  return lowering._estimate_resources(ctx, jaxpr)
+
+
+@discharge.register_partial_discharge_rule(jaxpr_call_p)
+def _jaxpr_call_discharge(
+    flat_should_discharge,
+    in_avals,
+    out_avals,
+    *flat_args,
+    jaxpr,
+    ref_treedefs,
+    program_ids_treedef,
+):
+  del in_avals, out_avals  # Unused.
+  flat_should_discharge = util.split_list(
+      flat_should_discharge,
+      [treedef.num_leaves for treedef in ref_treedefs[: len(ref_treedefs) - 1]],
+  )
+  should_discharge = [*map(any, flat_should_discharge)]
+  discharged_jaxpr, discharged_consts = discharge.discharge_state(
+      jaxpr, (), should_discharge=should_discharge
+  )
+  assert not discharged_consts
+  outs = jaxpr_call_p.bind(
+      *flat_args,
+      jaxpr=discharged_jaxpr,
+      ref_treedefs=ref_treedefs,
+      program_ids_treedef=program_ids_treedef,
+  )
+  discharged_outs_it = iter(outs[len(jaxpr.outvars) :])
+  new_in_vals = tuple(
+      itertools.chain.from_iterable(
+          [next(discharged_outs_it) if discharged else None]
+          * ref_treedefs[idx].num_leaves
+          for idx, discharged in enumerate(should_discharge)
+      )
+  ) + (None,) * program_ids_treedef.num_leaves
+  return new_in_vals, outs[: len(jaxpr.outvars)]
+
+
+def jaxpr_call(
+    jaxpr: jax_core.Jaxpr,
+    *refs: pallas_core.AbstractMemoryRef | state_types.TransformedRef,
+    program_ids: Sequence[jax.Array | None],
+) -> Sequence[jax.Array]:
+  """Internal primitive for calling a kernel jaxpr inside ``emit_pipeline``.
+
+  This is *not* a general purpose primitive. In particular, it assumes that
+  the transformed references have been indexed.
+
+  Args:
+    jaxpr: The jaxpr to call.
+    *refs: The references to pass into the jaxpr.
+    program_ids: The loop-bound program IDs to pass into the jaxpr, or None
+      if the program ID corresponds to a parallel dimension.
+
+  Returns:
+    The outputs of the jaxpr.
+  """
+  assert not jaxpr.outvars
+  flat_refs = []
+  ref_treedefs = []
+  ref: Any
+  for ref in refs:
+    if isinstance(ref, state_types.TransformedRef):
+      if not isinstance(ref.transforms[-1], indexing.NDIndexer):
+        raise ValueError(
+            "TransformedRef must have been indexed before passing into"
+            f" jaxpr_call. Got {ref}."
+        )
+      ref = (ref.ref, ref.transforms)
+    flat_ref, treedef = jax.tree.flatten(ref)
+    flat_refs.extend(flat_ref)
+    ref_treedefs.append(treedef)
+  flat_program_ids, program_ids_treedef = jax.tree.flatten(program_ids)
+  return jaxpr_call_p.bind(
+      *flat_refs,
+      *flat_program_ids,
+      jaxpr=jaxpr,
+      ref_treedefs=ref_treedefs,
+      program_ids_treedef=program_ids_treedef,
   )

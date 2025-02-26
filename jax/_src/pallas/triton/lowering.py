@@ -277,9 +277,9 @@ def _check_tensor_size(shape: tuple[int | pallas_core.Mapped, ...]):
 def lower_jaxpr_to_triton_module(
     jaxpr: jax_core.Jaxpr,
     grid_mapping: GridMapping,
-    name_and_src_info: pallas_core.NameAndSrcInfo,
     platform: str
 ) -> LoweringResult:
+  debug_info = jaxpr.debug_info
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(
         "dynamic grid bounds not supported in the Triton backend"
@@ -295,7 +295,7 @@ def lower_jaxpr_to_triton_module(
   with _new_ir_context(), ir.Location.unknown():
     module = ir.Module.create()
     attrs = module.operation.attributes
-    module_name = name_and_src_info.name
+    module_name = mlir.sanitize_name(debug_info.func_name)
     attrs["sym_name"] = ir.StringAttr.get(module_name)
     param_types = [
         tt_dialect.PointerType.get(_dtype_to_ir_type(var.aval.dtype), 1)
@@ -304,7 +304,7 @@ def lower_jaxpr_to_triton_module(
     assert len(jaxpr.outvars) == 0
     fn_type = ir.FunctionType.get(param_types, [])
     fn = tt_dialect.FuncOp(
-        name_and_src_info.name,
+        module_name,
         ir.TypeAttr.get(fn_type),
         sym_visibility="public",
         res_attrs=ir.DictAttr.get(dict(noinline=ir.BoolAttr.get(False))),
@@ -324,7 +324,7 @@ def lower_jaxpr_to_triton_module(
           if i not in grid_mapping.vmapped_dims
       ]
       ctx = ModuleContext(
-          name_and_src_info.name,
+          mlir.sanitize_name(debug_info.func_name),
           grid_mapping, local_program_ids, mlir.TracebackCaches(), platform
       )
       if grid_mapping.num_index_operands:

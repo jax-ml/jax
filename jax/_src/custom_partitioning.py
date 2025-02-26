@@ -585,7 +585,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
   if sharding_rule is not None:
     value_types = [mlir.aval_to_ir_type(s) for s in call.in_avals]
     if callable(sharding_rule):
-      sharding_rule = sharding_rule(mesh, value_types, result_types)
+      sharding_rule = sharding_rule(*static_args, mesh, value_types, result_types)
       if isinstance(sharding_rule, str):
         sharding_rule = str_to_sdy_sharding_rule(sharding_rule)
       elif not isinstance(sharding_rule, SdyShardingRule):

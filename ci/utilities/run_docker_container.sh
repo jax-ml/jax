@@ -52,10 +52,10 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
     JAXCI_DOCKER_ARGS="$JAXCI_DOCKER_ARGS -e GCE_METADATA_HOST=$IP_ADDR"
   fi
 
-  # Create a temporary file to pass any user defined JAXCI_ variables to the
-  # container.
+  # Create a temporary file to pass any user defined JAXCI_ / JAX_ / JAXLIB_
+  # variables to the container.
   JAXCI_TEMP_ENVFILE_DIR=$(mktemp)
-  env | grep "JAXCI_" > "$JAXCI_TEMP_ENVFILE_DIR"
+  env | grep -e "JAXCI_" -e "JAX_" -e "JAXLIB_" > "$JAXCI_TEMP_ENVFILE_DIR"
 
   # On Windows, convert MSYS Linux-like paths to Windows paths.
   if [[ "$(uname -s)" =~ "MSYS_NT" ]]; then

@@ -27,6 +27,7 @@ from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
 from jax.tree_util import (tree_flatten, tree_unflatten,
                            register_pytree_node, Partial, PyTreeDef)
+from jax._src import mesh as mesh_lib
 from jax._src import core
 from jax._src import source_info_util
 from jax._src.ad_util import (
@@ -134,7 +135,7 @@ def jvp_subtrace_aux(f, store, tag, primals, tangents):
 
 def convert_constvars_jaxpr_constvars_at_end(jaxpr: core.Jaxpr) -> core.Jaxpr:
   dbg = jaxpr.debug_info._replace(
-      arg_names=jaxpr.debug_info.arg_names + (None,) * len(jaxpr.constvars))
+      arg_names=jaxpr.debug_info.arg_names + ("",) * len(jaxpr.constvars))
   return core.Jaxpr(constvars=(),
                     invars=jaxpr.invars + jaxpr.constvars,
                     outvars=jaxpr.outvars, eqns=jaxpr.eqns,
@@ -945,7 +946,14 @@ deflinear2(add_jaxvals_p, lambda t, *args: (t, t))
 
 
 def instantiate_zeros(tangent):
-  return zeros_like_aval(tangent.aval) if type(tangent) is Zero else tangent
+  if type(tangent) is Zero:
+    if hasattr(tangent.aval, 'sharding'):
+      # TODO(dougalm, yashkatariya): Delete this context manager once we figure
+      # out how to ensure jaxpr arguments always have the context mesh.
+      with mesh_lib.set_abstract_mesh(tangent.aval.sharding.mesh):  # type: ignore
+        return zeros_like_aval(tangent.aval)
+    return zeros_like_aval(tangent.aval)
+  return tangent
 
 @lu.transformation_with_aux2
 def traceable(f, store, in_tree, *primals_and_tangents):

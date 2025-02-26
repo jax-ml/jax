@@ -87,6 +87,7 @@ _py_deps = {
     "ml_dtypes": ["@pypi_ml_dtypes//:pkg"],
     "numpy": ["@pypi_numpy//:pkg"],
     "scipy": ["@pypi_scipy//:pkg"],
+    "tensorstore": ["@pypi_tensorstore//:pkg"],
     "tensorflow_core": [],
     "torch": [],
     "zstandard": get_zstandard(),
@@ -125,12 +126,15 @@ def pytype_library(name, pytype_srcs = None, **kwargs):
     _ = pytype_srcs  # @unused
     native.py_library(name = name, **kwargs)
 
-def pytype_strict_library(name, pytype_srcs = None, **kwargs):
-    _ = pytype_srcs  # @unused
-    native.py_library(name = name, **kwargs)
+def pytype_strict_library(name, pytype_srcs = [], **kwargs):
+    data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
+    new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
+    native.py_library(name = name, data = data, **new_kwargs)
 
 def py_library_providing_imports_info(*, name, lib_rule = native.py_library, pytype_srcs = [], **kwargs):
-    lib_rule(name = name, **kwargs)
+    data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
+    new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
+    lib_rule(name = name, data = data, **new_kwargs)
 
 def py_extension(name, srcs, copts, deps, linkopts = []):
     nanobind_extension(name, srcs = srcs, copts = copts, linkopts = linkopts, deps = deps, module_name = name)
@@ -321,8 +325,8 @@ def jax_generate_backend_suites(backends = []):
         tags = ["-jax_test_%s" % backend for backend in backends] + ["-manual"],
     )
 
-def _get_full_wheel_name(package_name, no_abi, platform_name, cpu_name, wheel_version):
-    if no_abi:
+def _get_full_wheel_name(package_name, no_abi, platform_independent, platform_name, cpu_name, wheel_version):
+    if no_abi or platform_independent:
         wheel_name_template = "{package_name}-{wheel_version}-py{major_python_version}-none-{wheel_platform_tag}.whl"
     else:
         wheel_name_template = "{package_name}-{wheel_version}-cp{python_version}-cp{python_version}-{wheel_platform_tag}.whl"
@@ -332,7 +336,9 @@ def _get_full_wheel_name(package_name, no_abi, platform_name, cpu_name, wheel_ve
         python_version = python_version,
         major_python_version = python_version[0],
         wheel_version = wheel_version,
-        wheel_platform_tag = "_".join(PLATFORM_TAGS_DICT[platform_name, cpu_name]),
+        wheel_platform_tag = "any" if platform_independent else "_".join(
+            PLATFORM_TAGS_DICT[platform_name, cpu_name],
+        ),
     )
 
 def _jax_wheel_impl(ctx):
@@ -360,10 +366,13 @@ def _jax_wheel_impl(ctx):
         env["JAX_RELEASE"] = "1"
 
     cpu = ctx.attr.cpu
+    no_abi = ctx.attr.no_abi
+    platform_independent = ctx.attr.platform_independent
     platform_name = ctx.attr.platform_name
     wheel_name = _get_full_wheel_name(
         package_name = ctx.attr.wheel_name,
-        no_abi = ctx.attr.no_abi,
+        no_abi = no_abi,
+        platform_independent = platform_independent,
         platform_name = platform_name,
         cpu_name = cpu,
         wheel_version = full_wheel_version,
@@ -373,7 +382,8 @@ def _jax_wheel_impl(ctx):
     wheel_dir = output_file.path[:output_file.path.rfind("/")]
 
     args.add("--output_path", wheel_dir)  # required argument
-    args.add("--cpu", cpu)  # required argument
+    if not platform_independent:
+        args.add("--cpu", cpu)
     args.add("--jaxlib_git_hash", git_hash)  # required argument
 
     if ctx.attr.enable_cuda:
@@ -389,14 +399,21 @@ def _jax_wheel_impl(ctx):
     if ctx.attr.skip_gpu_kernels:
         args.add("--skip_gpu_kernels")
 
+    srcs = []
+    for src in ctx.attr.source_files:
+        for f in src.files.to_list():
+            srcs.append(f)
+            args.add("--srcs=%s" % (f.path))
+
     args.set_param_file_format("flag_per_line")
     args.use_param_file("@%s", use_always = False)
     ctx.actions.run(
         arguments = [args],
-        inputs = [],
+        inputs = srcs,
         outputs = [output_file],
         executable = executable,
         env = env,
+        mnemonic = "BuildJaxWheel",
     )
 
     return [DefaultInfo(files = depset(direct = [output_file]))]
@@ -411,9 +428,11 @@ _jax_wheel = rule(
         ),
         "wheel_name": attr.string(mandatory = True),
         "no_abi": attr.bool(default = False),
+        "platform_independent": attr.bool(default = False),
         "cpu": attr.string(mandatory = True),
         "platform_name": attr.string(mandatory = True),
         "git_hash": attr.label(default = Label("//jaxlib/tools:jaxlib_git_hash")),
+        "source_files": attr.label_list(allow_files = True),
         "output_path": attr.label(default = Label("//jaxlib/tools:output_path")),
         "enable_cuda": attr.bool(default = False),
         # A cuda/rocm version is required for gpu wheels; for cpu wheels, it can be an empty string.
@@ -427,7 +446,15 @@ _jax_wheel = rule(
     executable = False,
 )
 
-def jax_wheel(name, wheel_binary, wheel_name, no_abi = False, enable_cuda = False, platform_version = ""):
+def jax_wheel(
+        name,
+        wheel_binary,
+        wheel_name,
+        no_abi = False,
+        platform_independent = False,
+        enable_cuda = False,
+        platform_version = "",
+        source_files = []):
     """Create jax artifact wheels.
 
     Common artifact attributes are grouped within a single macro.
@@ -437,8 +464,10 @@ def jax_wheel(name, wheel_binary, wheel_name, no_abi = False, enable_cuda = Fals
       wheel_binary: the binary to use to build the wheel
       wheel_name: the name of the wheel
       no_abi: whether to build a wheel without ABI
+      platform_independent: whether to build a wheel without platform tag
       enable_cuda: whether to build a cuda wheel
       platform_version: the cuda version to use for the wheel
+      source_files: the source files to include in the wheel
 
     Returns:
       A directory containing the wheel
@@ -448,6 +477,7 @@ def jax_wheel(name, wheel_binary, wheel_name, no_abi = False, enable_cuda = Fals
         wheel_binary = wheel_binary,
         wheel_name = wheel_name,
         no_abi = no_abi,
+        platform_independent = platform_independent,
         enable_cuda = enable_cuda,
         platform_version = platform_version,
         # git_hash is empty by default. Use `--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)`
@@ -465,6 +495,7 @@ def jax_wheel(name, wheel_binary, wheel_name, no_abi = False, enable_cuda = Fals
             "//jaxlib/tools:arm64": "aarch64",
             "@platforms//cpu:x86_64": "x86_64",
         }),
+        source_files = source_files,
     )
 
 jax_test_file_visibility = []

@@ -68,8 +68,8 @@ def _get_abstract_mesh_from_avals(in_avals) -> mesh_lib.AbstractMesh:
 def call_sharding_rule(prim, rule, num_out, *avals, **kwargs):
   cur_mesh = mesh_lib.get_abstract_mesh()
   aval_mesh = _get_abstract_mesh_from_avals(avals)
-  if ((cur_mesh.empty or cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual) and
-      (aval_mesh.empty or aval_mesh._are_all_axes_auto or aval_mesh._are_all_axes_manual)):
+  if ((cur_mesh.empty or cur_mesh._are_all_axes_auto_or_manual) and
+      (aval_mesh.empty or aval_mesh._are_all_axes_auto_or_manual)):
     aval_mesh = cur_mesh if aval_mesh.empty else aval_mesh
     s = NamedSharding(aval_mesh, P())
     return s if num_out is None else [s] * num_out
@@ -118,6 +118,8 @@ def standard_multi_result_abstract_eval(
     core.check_avals_context_mesh(avals, prim.name)
     out_shardings = call_sharding_rule(
         prim, sharding_rule, len(out_shapes), *avals, **kwargs)
+    if isinstance(weak_types, bool):
+      weak_types = (weak_types,) * len(out_shapes)
     out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh)
                  for s, d, weak_type, sh in zip(out_shapes, out_dtypes,
                                                 weak_types, out_shardings)]
@@ -125,6 +127,8 @@ def standard_multi_result_abstract_eval(
     return out_avals
   elif least_specialized is core.UnshapedArray:
     out_dtypes = dtype_rule(*avals, **kwargs)
+    if isinstance(weak_types, bool):
+      weak_types = (weak_types,) * len(out_dtypes)
     return [core.UnshapedArray(dtype, weak_type=weak_type)
             for dtype, weak_type in zip(out_dtypes, weak_types)]
   else:

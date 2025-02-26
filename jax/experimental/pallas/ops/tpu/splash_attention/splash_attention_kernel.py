@@ -701,7 +701,7 @@ def flash_attention_kernel(
     bq: int,
     bkv: int,
     bkv_compute: int,
-    head_dim: int,
+    head_dim_v: int,
     q_layout: QKVLayout,
     k_layout: QKVLayout,
     v_layout: QKVLayout,
@@ -711,10 +711,10 @@ def flash_attention_kernel(
   float32 = jnp.float32
   HEAD_DIM_MINOR = QKVLayout.HEAD_DIM_MINOR
 
-  head_dim_repeats, rem = divmod(head_dim, NUM_LANES)
+  head_dim_v_repeats, rem = divmod(head_dim_v, NUM_LANES)
   if rem != 0:
     raise NotImplementedError(
-        f"{head_dim=} should be a multiple of {NUM_LANES}"
+        f"{head_dim_v=} should be a multiple of {NUM_LANES}"
     )
 
   h, i, j = pl.program_id(0), pl.program_id(1), pl.program_id(2)
@@ -800,7 +800,7 @@ def flash_attention_kernel(
     v = v.astype(float32)
     o_curr = lax.dot_general(s_curr, v, sv_dims)
 
-    alpha_o = pltpu.repeat(alpha, head_dim_repeats, axis=1)
+    alpha_o = pltpu.repeat(alpha, head_dim_v_repeats, axis=1)
     o_scratch_ref[:] = alpha_o * o_scratch_ref[:] + o_curr
 
   @pl.when(should_run)
@@ -814,7 +814,7 @@ def flash_attention_kernel(
   @pl.when(j == grid_width - 1)
   def end():
     l = l_scratch_ref[...]
-    l_inv = pltpu.repeat(1.0 / l, head_dim_repeats, axis=1)
+    l_inv = pltpu.repeat(1.0 / l, head_dim_v_repeats, axis=1)
     o_ref[...] = (o_scratch_ref[...] * l_inv).astype(o_ref.dtype)
     if logsumexp_ref is not None:
       assert logsumexp_ref.shape == (bq, NUM_LANES)
@@ -885,7 +885,8 @@ def _splash_attention_forward(
     attn_logits_soft_cap: float | None = None,
     interpret: bool = False
 ) -> SplashCustomReturnType:
-  num_q_heads, q_seq_len, head_dim = q.shape
+  num_q_heads, q_seq_len, head_dim_qk = q.shape
+  head_dim_v = v.shape[-1]
   bq, bkv = block_sizes.block_q, block_sizes.block_kv
   bkv_compute = block_sizes.block_kv_compute
 
@@ -916,9 +917,9 @@ def _splash_attention_forward(
         f" {len(k.shape)}-dim one."
     )
 
-  if k.shape[kv_head_dimension] != head_dim:
+  if k.shape[kv_head_dimension] != head_dim_qk:
     raise ValueError(
-        f"Expected 'key' head dimension to be: {head_dim}. Instead got:"
+        f"Expected 'key' head dimension to be: {head_dim_qk}. Instead got:"
         f" {k.shape[kv_head_dimension]}."
     )
 
@@ -928,10 +929,10 @@ def _splash_attention_forward(
         f" multiple of the number of 'query' heads ({num_q_heads})"
     )
 
-  if k.shape != v.shape:
+  if k.shape[:-1] != v.shape[:-1]:
     raise ValueError(
-        f"Expected 'key' {k.shape} and 'value' {v.shape} to have the same"
-        " shape."
+        f"Expected 'key' {k.shape} and 'value' {v.shape} to have the same "
+        "leading dimensions."
     )
 
   if bkv % bkv_compute:
@@ -1000,17 +1001,17 @@ def _splash_attention_forward(
   # Convert the logical shape from head-minor to sequence-minor.
   in_specs = [
       pl.BlockSpec(
-          from_head_minor((None, bq, head_dim), q_layout), q_index_map
+          from_head_minor((None, bq, head_dim_qk), q_layout), q_index_map
       ),
       pl.BlockSpec(
           from_head_minor(
-              (bkv, head_dim) if is_mqa else (None, bkv, head_dim), k_layout
+              (bkv, head_dim_qk) if is_mqa else (None, bkv, head_dim_qk), k_layout
           ),
           k_index_map,
       ),
       pl.BlockSpec(
           from_head_minor(
-              (bkv, head_dim) if is_mqa else (None, bkv, head_dim), v_layout
+              (bkv, head_dim_v) if is_mqa else (None, bkv, head_dim_v), v_layout
           ),
           v_index_map,
       ),
@@ -1054,15 +1055,15 @@ def _splash_attention_forward(
   out_shapes = [
       jax.ShapeDtypeStruct((bq, NUM_LANES), jnp.float32),  # m_scratch
       jax.ShapeDtypeStruct((bq, NUM_LANES), jnp.float32),  # l_scratch
-      jax.ShapeDtypeStruct((bq, head_dim), jnp.float32),  # o_scratch
-      jax.ShapeDtypeStruct((num_q_heads, q_seq_len, head_dim), q.dtype),
+      jax.ShapeDtypeStruct((bq, head_dim_v), jnp.float32),  # o_scratch
+      jax.ShapeDtypeStruct((num_q_heads, q_seq_len, head_dim_v), q.dtype),
   ]
   out_specs = [
       # TODO(sharadmv): convert m/l to be scratch
       pl.BlockSpec((bq, NUM_LANES), lambda h, i, j, *_: (0, 0)),
       pl.BlockSpec((bq, NUM_LANES), lambda h, i, j, *_: (0, 0)),
-      pl.BlockSpec((bq, head_dim), lambda h, i, j, *_: (0, 0)),
-      pl.BlockSpec((None, bq, head_dim), out_index_map),
+      pl.BlockSpec((bq, head_dim_v), lambda h, i, j, *_: (0, 0)),
+      pl.BlockSpec((None, bq, head_dim_v), out_index_map),
   ]
   if save_residuals:
     out_shapes += [
@@ -1104,7 +1105,7 @@ def _splash_attention_forward(
             bq=bq,
             bkv=bkv,
             bkv_compute=bkv_compute,
-            head_dim=head_dim,
+            head_dim_v=head_dim_v,
             q_layout=q_layout,
             k_layout=k_layout,
             v_layout=v_layout,
@@ -1372,7 +1373,8 @@ def _splash_attention_bwd_dq(
     mask_function: MaskFunctionType | None,
     interpret: bool,
 ):
-  num_q_heads, q_seq_len, head_dim = q.shape
+  num_q_heads, q_seq_len, head_dim_qk = q.shape
+  head_dim_v = v.shape[-1]
   if is_mqa:
     kv_seq_len = k.shape[0]
     num_kv_heads = 1
@@ -1393,10 +1395,10 @@ def _splash_attention_bwd_dq(
         f" multiple of the number of 'query' heads ({num_q_heads})"
     )
 
-  if k.shape != v.shape:
+  if k.shape[:-1] != v.shape[:-1]:
     raise ValueError(
-        f"Expected 'key' {k.shape} and 'value' {v.shape} to have the same"
-        " shape."
+        f"Expected 'key' {k.shape} and 'value' {v.shape} to have the same "
+        "leading dimensions."
     )
 
   if bkv % NUM_LANES:
@@ -1417,13 +1419,13 @@ def _splash_attention_bwd_dq(
   def o_index_map(h, i, *_):
     return h, i, 0
 
-  o_spec = pl.BlockSpec((None, bq, head_dim), o_index_map)
+  o_spec = pl.BlockSpec((None, bq, head_dim_v), o_index_map)
 
   def q_index_map(h, i, *_):
     return from_head_minor((h, i, 0), q_layout)
 
   q_spec = pl.BlockSpec(
-      from_head_minor((None, bq, head_dim), q_layout), q_index_map
+      from_head_minor((None, bq, head_dim_qk), q_layout), q_index_map
   )
 
   def k_index_map(h, i, j, data_next_ref, block_mask_ref, mask_next_ref, *_):
@@ -1435,7 +1437,7 @@ def _splash_attention_bwd_dq(
 
   k_spec = pl.BlockSpec(
       from_head_minor(
-          (bkv, head_dim) if is_mqa else (None, bkv, head_dim), k_layout
+          (bkv, head_dim_qk) if is_mqa else (None, bkv, head_dim_qk), k_layout
       ),
       k_index_map,
   )
@@ -1449,7 +1451,7 @@ def _splash_attention_bwd_dq(
 
   v_spec = pl.BlockSpec(
       from_head_minor(
-          (bkv, head_dim) if is_mqa else (None, bkv, head_dim), v_layout
+          (bkv, head_dim_v) if is_mqa else (None, bkv, head_dim_v), v_layout
       ),
       v_index_map,
   )
@@ -1490,7 +1492,7 @@ def _splash_attention_bwd_dq(
     q_segment_spec = kv_segment_spec = None
     q_segment_ids = kv_segment_ids = None
 
-  do_spec = dq_spec = o_spec
+  do_spec = o_spec
 
   def logsumexp_index_map(h, i, *_):
     return h, 0, i
@@ -1530,12 +1532,12 @@ def _splash_attention_bwd_dq(
     in_specs.append(None)
 
   out_shapes = [
-      jax.ShapeDtypeStruct((bq, head_dim), jnp.float32),
+      jax.ShapeDtypeStruct((bq, head_dim_qk), jnp.float32),
       jax.ShapeDtypeStruct(q.shape, q.dtype),
   ]
   out_specs = [
-      pl.BlockSpec((bq, head_dim), lambda *_: (0, 0)),
-      dq_spec,
+      pl.BlockSpec((bq, head_dim_qk), lambda *_: (0, 0)),
+      pl.BlockSpec((None, bq, head_dim_qk), lambda h, i, *_: (h, i, 0)),
   ]
 
   kernel = functools.partial(
@@ -1811,7 +1813,8 @@ def _splash_attention_bwd_dkv(
     mask_function: MaskFunctionType | None,
     interpret: bool,
 ):
-  num_q_heads, q_seq_len, head_dim = q.shape
+  num_q_heads, q_seq_len, head_dim_qk = q.shape
+  head_dim_v = v.shape[-1]
   if is_mqa:
     num_kv_heads, kv_seq_len = 1, k.shape[0]
   else:
@@ -1836,10 +1839,10 @@ def _splash_attention_bwd_dkv(
         f" multiple of the number of 'query' heads ({num_q_heads})"
     )
 
-  if k.shape != v.shape:
+  if k.shape[:-1] != v.shape[:-1]:
     raise ValueError(
-        f"Expected 'key' {k.shape} and 'value' {v.shape} to have the same"
-        " shape."
+        f"Expected 'key' {k.shape} and 'value' {v.shape} to have the same "
+        "leading dimensions."
     )
 
   q_heads_per_kv_head = num_q_heads // num_kv_heads
@@ -1874,7 +1877,7 @@ def _splash_attention_bwd_dkv(
     )
     return head_index, next_i, 0
 
-  o_spec = pl.BlockSpec((None, bq, head_dim), o_index_map)
+  o_spec = pl.BlockSpec((None, bq, head_dim_v), o_index_map)
 
   def q_index_map(
       kv_index,
@@ -1896,7 +1899,8 @@ def _splash_attention_bwd_dkv(
     return from_head_minor((head_index, next_i, 0), q_layout)
 
   q_spec = pl.BlockSpec(
-      from_head_minor((None, bq, head_dim), q_layout), q_index_map)
+      from_head_minor((None, bq, head_dim_qk), q_layout), q_index_map
+  )
 
   def k_index_map(kv_index, head_index, *_):
     prefix = () if is_mqa else (_div(head_index, q_heads_per_kv_head),)
@@ -1904,7 +1908,7 @@ def _splash_attention_bwd_dkv(
 
   k_spec = pl.BlockSpec(
       from_head_minor(
-          (bkv, head_dim) if is_mqa else (None, bkv, head_dim),
+          (bkv, head_dim_qk) if is_mqa else (None, bkv, head_dim_qk),
           k_layout,
       ),
       k_index_map,
@@ -1916,7 +1920,7 @@ def _splash_attention_bwd_dkv(
 
   v_spec = pl.BlockSpec(
       from_head_minor(
-          (bkv, head_dim) if is_mqa else (None, bkv, head_dim),
+          (bkv, head_dim_v) if is_mqa else (None, bkv, head_dim_v),
           v_layout,
       ),
       v_index_map,
@@ -1925,13 +1929,13 @@ def _splash_attention_bwd_dkv(
   if use_fused_bwd_kernel:
     def dq_index_map(kv_index, head_index, q_index, *_):
       return (kv_index, head_index, q_index, 0)
-    dq_spec = pl.BlockSpec((None, None, bq, head_dim), dq_index_map)
+    dq_spec = pl.BlockSpec((None, None, bq, head_dim_qk), dq_index_map)
     dq_shape = jax.ShapeDtypeStruct((kv_seq_len // bkv, *q.shape), q.dtype)
     if bkv == bkv_compute:
       dq_scratch_spec = dq_scratch_shape = None
     else:
-      dq_scratch_spec = pl.BlockSpec((bq, head_dim), lambda *_: (0, 0))
-      dq_scratch_shape = jax.ShapeDtypeStruct((bq, head_dim), jnp.float32)
+      dq_scratch_spec = pl.BlockSpec((bq, head_dim_qk), lambda *_: (0, 0))
+      dq_scratch_shape = jax.ShapeDtypeStruct((bq, head_dim_qk), jnp.float32)
   else:
     dq_spec = dq_shape = dq_scratch_spec = dq_scratch_shape = None
 
@@ -1939,8 +1943,13 @@ def _splash_attention_bwd_dkv(
     prefix = () if is_mqa else (_div(head_index, q_heads_per_kv_head),)
     return (*prefix, kv_index, 0)
 
-  dk_spec = dv_spec = pl.BlockSpec(
-      (bkv, head_dim) if is_mqa else (None, bkv, head_dim),
+  dk_spec = pl.BlockSpec(
+      (bkv, head_dim_qk) if is_mqa else (None, bkv, head_dim_qk),
+      dkv_index_map,
+  )
+
+  dv_spec = pl.BlockSpec(
+      (bkv, head_dim_v) if is_mqa else (None, bkv, head_dim_v),
       dkv_index_map,
   )
 
@@ -2059,16 +2068,16 @@ def _splash_attention_bwd_dkv(
 
   out_shapes = [
       dq_scratch_shape,
-      jax.ShapeDtypeStruct((bkv, head_dim), jnp.float32),
-      jax.ShapeDtypeStruct((bkv, head_dim), jnp.float32),
+      jax.ShapeDtypeStruct((bkv, head_dim_qk), jnp.float32),
+      jax.ShapeDtypeStruct((bkv, head_dim_v), jnp.float32),
       dq_shape,
       jax.ShapeDtypeStruct(k.shape, k.dtype),
       jax.ShapeDtypeStruct(v.shape, v.dtype),
   ]
   out_specs = [
       dq_scratch_spec,
-      pl.BlockSpec((bkv, head_dim), lambda *_: (0, 0)),
-      pl.BlockSpec((bkv, head_dim), lambda *_: (0, 0)),
+      pl.BlockSpec((bkv, head_dim_qk), lambda *_: (0, 0)),
+      pl.BlockSpec((bkv, head_dim_v), lambda *_: (0, 0)),
       dq_spec,
       dk_spec,
       dv_spec,

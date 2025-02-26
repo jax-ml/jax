@@ -160,6 +160,13 @@ class _BaseMesh:
     return all_axis_types_match(self.axis_types, AxisTypes.Explicit)
 
   @functools.cached_property
+  def _are_all_axes_auto_or_manual(self) -> bool:
+    if not self.axis_types:
+      return False
+    return all(t == AxisTypes.Auto or t == AxisTypes.Manual
+               for t in self.axis_types.keys())
+
+  @functools.cached_property
   def _any_axis_manual(self) -> bool:
     return any_axis_types_match(self.axis_types, AxisTypes.Manual)
 
@@ -173,6 +180,8 @@ class _BaseMesh:
 
   @functools.cached_property
   def axis_types(self):
+    if not self.axis_names:
+      return {}
     d = collections.defaultdict(list)
     for n, t in safe_zip(self.axis_names, self._axis_types_tuple):
       d[t].append(n)
@@ -182,12 +191,11 @@ class _BaseMesh:
   def _name_to_type(self):
     return dict(safe_zip(self.axis_names, self._axis_types_tuple))
 
-  def update_axis_types(self, new_axis_types) -> AbstractMesh:
+  def _get_new_axis_types(self, new_axis_types):
     # dict(self._name_to_type) will copy it.
     updated_name_to_type = dict(self._name_to_type)
     updated_name_to_type.update(axis_names_to_types(new_axis_types))
-    new_axis_types = axis_types_to_names(updated_name_to_type)
-    return AbstractMesh(self.shape_tuple, axis_types=new_axis_types)
+    return axis_types_to_names(updated_name_to_type)
 
 
 _mesh_object_dict = {}  # type: ignore
@@ -418,6 +426,10 @@ class Mesh(_BaseMesh, contextlib.ContextDecorator):
   def abstract_mesh(self):
     return AbstractMesh(self.shape_tuple, axis_types=self.axis_types)
 
+  def update_axis_types(self, new_axis_types) -> Mesh:
+    new_axis_types = self._get_new_axis_types(new_axis_types)
+    return Mesh(self.devices, self.axis_names, axis_types=new_axis_types)
+
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
 
@@ -496,6 +508,10 @@ class AbstractMesh(_BaseMesh):
   def abstract_mesh(self):
     return self
 
+  def update_axis_types(self, new_axis_types) -> AbstractMesh:
+    new_axis_types = self._get_new_axis_types(new_axis_types)
+    return AbstractMesh(self.shape_tuple, axis_types=new_axis_types)
+
   @property
   def devices(self):
     _raise_value_error("devices")
@@ -533,14 +549,20 @@ class AbstractMesh(_BaseMesh):
 def _raise_value_error(name):
   raise ValueError(f"AbstractMesh does not implement {name}")
 
+class SetAbstractMeshContextManager:
+  __slots__ = ['mesh', 'prev']
 
-@contextlib.contextmanager
-def set_abstract_mesh(mesh: AbstractMesh):
-  prev_val = jax_config.abstract_mesh_context_manager.swap_local(mesh)
-  try:
-    yield
-  finally:
-    jax_config.abstract_mesh_context_manager.set_local(prev_val)
+  def __init__(self, mesh: AbstractMesh):
+    self.mesh = mesh
+
+  def __enter__(self):
+    self.prev = jax_config.abstract_mesh_context_manager.swap_local(self.mesh)
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    jax_config.abstract_mesh_context_manager.set_local(self.prev)
+
+set_abstract_mesh = SetAbstractMeshContextManager
+
 
 empty_abstract_mesh = AbstractMesh(())
 

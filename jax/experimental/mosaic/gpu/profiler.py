@@ -98,12 +98,17 @@ def _measure_events(
 
 
 def _measure_cupti(f, aggregate):
-  def wrapper(*args, **kwargs):
+  def run(*args, **kwargs):
     mosaic_gpu_lib._mosaic_gpu_ext._cupti_init()
     try:
       results = jax.block_until_ready(jax.jit(f)(*args, **kwargs))
     finally:
       timings = mosaic_gpu_lib._mosaic_gpu_ext._cupti_get_timings()
+    return results, timings
+
+  def wrapper(*args, **kwargs):
+    run(*args, **kwargs)  # Warmup.
+    results, timings = run(*args, **kwargs)
     if not timings:
       return results, None
     elif aggregate:

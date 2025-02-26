@@ -33,7 +33,6 @@ from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 import numpy as np
 
@@ -191,13 +190,12 @@ def get_compile_options(
 
   build_options.exec_time_optimization_effort = config.exec_time_optimization_effort.value
   build_options.memory_fitting_effort = config.memory_fitting_effort.value
-  if xla_extension_version >= 316:
-    build_options.optimization_level = config.EffortLevel(
-        config.optimization_level.value
-    ).value
-    build_options.memory_fitting_level = config.EffortLevel(
-        config.memory_fitting_level.value
-    ).value
+  build_options.optimization_level = config.EffortLevel(
+      config.optimization_level.value
+  ).value
+  build_options.memory_fitting_level = config.EffortLevel(
+      config.memory_fitting_level.value
+  ).value
 
   # This is a temporary workaround to simplify the AutoPGLE usage.
   # TODO(b/376647494): Remove once the bug is fixed.
@@ -212,10 +210,9 @@ def get_compile_options(
     # Some overrides are passed directly on build_options.
     overrides_on_build_options = [
         "exec_time_optimization_effort", "memory_fitting_effort"]
-    if xla_extension_version >= 316:
-      overrides_on_build_options.extend(
-          ["optimization_level", "memory_fitting_level"]
-      )
+    overrides_on_build_options.extend(
+        ["optimization_level", "memory_fitting_level"]
+    )
 
     env_options_overrides = dict(env_options_overrides)
     for name in overrides_on_build_options:

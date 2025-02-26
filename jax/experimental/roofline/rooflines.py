@@ -61,8 +61,18 @@ def _binary_p_roofline(
     **kw,
 ) -> roofline.RooflineResult:
   lhs, rhs = (roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in)
+  broadcasted_shape = [
+      max(l, r) for l, r in it.zip_longest(lhs.shape, rhs.shape, fillvalue=1)
+  ]
   out = roofline.RooflineShape.from_aval(ctx.avals_out[0])
-  return roofline.RooflineResult(unfused_flops=lhs.size + rhs.size + out.size)
+  return roofline.RooflineResult(
+      unfused_flops=int(np.prod(broadcasted_shape)),
+      unfused_hbm_bytes=(
+          lhs.dtype.itemsize * lhs.size
+          + rhs.dtype.itemsize * rhs.size
+          + out.dtype.itemsize * out.size
+      ),
+  )
 
 
 roofline.register_roofline(lax.add_p)(_binary_p_roofline)
@@ -79,6 +89,8 @@ roofline.register_roofline(lax.ge_p)(_binary_p_roofline)
 roofline.register_roofline(lax.le_p)(_binary_p_roofline)
 roofline.register_roofline(lax.eq_p)(_binary_p_roofline)
 roofline.register_roofline(lax.ne_p)(_binary_p_roofline)
+roofline.register_roofline(lax.min_p)(_binary_p_roofline)
+roofline.register_roofline(lax.max_p)(_binary_p_roofline)
 
 
 @roofline.register_roofline(lax.dot_general_p)
@@ -108,13 +120,17 @@ def _dot_general_roofline(
     hbm_bytes += rhs.bytes
 
   return roofline.RooflineResult(
-      flops=int(flops), unfused_flops=int(flops), hbm_bytes=hbm_bytes
+      flops=int(flops),
+      unfused_flops=int(flops),
+      hbm_bytes=hbm_bytes,
+      unfused_hbm_bytes=hbm_bytes,
   )
 
 
 def _return_zeros_if_one_sized_axis(
   ctx: roofline.RooflineRuleContext, axes: tuple[str, ...]
 ) -> roofline.RooflineResult | None:
+  assert ctx.mesh
   axes_size = np.prod([ctx.mesh.shape[axis] for axis in axes])
   if axes_size > 1:
     return None
@@ -134,6 +150,7 @@ def _ring_collective_roofline(
   if zeros_result := _return_zeros_if_one_sized_axis(ctx, axes):
     return zeros_result
 
+  assert ctx.mesh
   mesh = ctx.mesh.shape
   current_shard_size = roofline.RooflineShape.total_bytes(ctx.avals_in)
   if is_reduce:
@@ -215,6 +232,7 @@ def _all_to_all_roofline(
   if zeros_result := _return_zeros_if_one_sized_axis(ctx, axis_name):
     return zeros_result
 
+  assert ctx.mesh
   mesh = ctx.mesh.shape
   size = roofline.RooflineShape.total_bytes(ctx.avals_in) * np.prod([
     mesh[axis] for axis in axis_name
@@ -250,6 +268,7 @@ def _ppermute_roofline(
   if zeros_result := _return_zeros_if_one_sized_axis(ctx, axis_name):
     return zeros_result
 
+  assert ctx.mesh
   mesh = ctx.mesh.shape
   mesh_dims: list[int] = [mesh.get(axis, 1) for axis in axis_name]
   shard_size = roofline.RooflineShape.total_bytes(ctx.avals_in)
@@ -295,4 +314,26 @@ def _ppermute_roofline(
   return roofline.RooflineResult(
     ici_bytes={axis: int(ici_bytes) for axis in axis_name},
     ici_latency={axis: int(ici_latency) for axis in axis_name},
+  )
+
+
+@roofline.register_roofline(lax.reduce_sum_p)
+def _reduce_sum_p_roofline(
+    ctx: roofline.RooflineRuleContext,
+    *args,
+    axes: tuple[int, ...],
+    **kw,
+) -> roofline.RooflineResult:
+  (x,) = (roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in)
+  domain_size = np.prod([x.shape[i] for i in axes])
+  other_axes = set(range(len(x.shape))) - set(axes)
+  result_size = np.prod([x.shape[i] for i in other_axes])
+
+  return roofline.RooflineResult(
+      # To add n values, we do n - 1 add operations, and we have to do that
+      # for every element in the result.
+      unfused_flops=int((domain_size - 1) * result_size),
+      # Size of input, plus output. (We assume that the output is also used
+      # as accumulator.)
+      unfused_hbm_bytes=int(x.dtype.itemsize * (x.size + result_size)),
   )

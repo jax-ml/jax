@@ -33,7 +33,6 @@ import ml_dtypes
 import numpy as np
 
 from jax._src import config
-from jax._src.lib import xla_extension_version
 from jax._src.typing import Array, DType, DTypeLike
 from jax._src.util import set_module, StrictABC
 
@@ -518,7 +517,7 @@ _complex_types: list[JAXType] = [
 # only meant for the `jnp.isdtype` and we want to be conservative and not allow
 # StringDType to be used in there.
 _string_types: list[JAXType] = []
-if hasattr(np.dtypes, 'StringDType') and xla_extension_version >= 311:
+if hasattr(np.dtypes, 'StringDType'):
   _string_types: list[JAXType] = [np.dtypes.StringDType()]  # type: ignore
 
 _jax_dtype_set = {

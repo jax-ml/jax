@@ -90,6 +90,9 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_p100x2",
     ],
+    env = {
+        "PYTHONWARNINGS": "default",  # TODO(b/394123878): protobuf, via TensorFlow, issues a Python warning under Python 3.12+ sometimes.
+    },
     tags = ["multiaccelerator"],
     deps = py_deps("tensorflow_core"),
 )
@@ -1644,6 +1647,18 @@ jax_py_test(
         "//jax",
         "//jax:experimental",
         "//jax:test_util",
+    ],
+)
+
+jax_multiplatform_test(
+    name = "serialization_test",
+    srcs = ["serialization_test.py"],
+    enable_configs = [
+        "tpu_v3_2x2",
+    ],
+    deps = [
+        "//jax:experimental",
+        "//jax/experimental/array_serialization:serialization",
     ],
 )
 

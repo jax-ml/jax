@@ -146,7 +146,10 @@ template struct Trsm<std::complex<double>>;
 
 template <ffi::DataType dtype>
 ffi::Error TriMatrixEquationSolver<dtype>::Kernel(
-    ffi::Buffer<dtype> x, ffi::Buffer<dtype> y, ffi::BufferR0<dtype> alpha,
+    ffi::Buffer<dtype> x, ffi::Buffer<dtype> y,
+    // TODO(b/397715595): Remove RemainingArgs no earlier than 180 days after
+    // the release of JAX 0.5.2.
+    ffi::RemainingArgs,
     ffi::ResultBuffer<dtype> y_out, MatrixParams::Side side,
     MatrixParams::UpLo uplo, MatrixParams::Transpose trans_x,
     MatrixParams::Diag diag) {
@@ -168,10 +171,10 @@ ffi::Error TriMatrixEquationSolver<dtype>::Kernel(
   auto* x_data = x.typed_data();
   const int64_t y_out_step{y_rows * y_cols};
   const int64_t x_step{x_leading_dim_v * x_leading_dim_v};
+  ffi::NativeType<dtype> alpha = static_cast<ffi::NativeType<dtype>>(1);
   for (int64_t i = 0; i < batch_count; ++i) {
-    fn(&side_v, &uplo_v, &trans_x_v, &diag_v, &y_rows_v, &y_cols_v,
-       alpha.typed_data(), x_data, &x_leading_dim_v, y_out_data,
-       &y_leading_dim_v);
+    fn(&side_v, &uplo_v, &trans_x_v, &diag_v, &y_rows_v, &y_cols_v, &alpha,
+       x_data, &x_leading_dim_v, y_out_data, &y_leading_dim_v);
 
     y_out_data += y_out_step;
     x_data += x_step;
@@ -893,6 +896,107 @@ static int64_t SvdGetWorkspaceSize(lapack_int x_rows, lapack_int x_cols,
   return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
 }
 
+template <ffi::DataType dtype>
+static ffi::Error SvdQRKernel(
+    ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
+    ffi::ResultBuffer<ffi::ToReal(dtype)> singular_values,
+    ffi::ResultBuffer<dtype> u, ffi::ResultBuffer<dtype> vt,
+    ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode) {
+  if (mode == svd::ComputationMode::kComputeVtOverwriteXPartialU) [[unlikely]] {
+    return ffi::Error(
+        XLA_FFI_Error_Code_UNIMPLEMENTED,
+        "SVD: Current implementation does not support this computation mode");
+  }
+  FFI_ASSIGN_OR_RETURN((auto [batch_count, x_rows, x_cols]),
+                       SplitBatch2D(x.dimensions()));
+  auto* x_out_data = x_out->typed_data();
+  auto* singular_values_data = singular_values->typed_data();
+  auto* u_data = u->typed_data();
+  auto* vt_data = vt->typed_data();
+  auto* info_data = info->typed_data();
+
+  // Prepare LAPACK workspaces.
+  FFI_ASSIGN_OR_RETURN(
+      const auto work_size,
+      svd::SVDQRType<dtype>::GetWorkspaceSize(x_rows, x_cols, mode));
+  auto work_data = AllocateScratchMemory<dtype>(work_size);
+  using RealType = typename svd::SVDType<dtype>::RealType;
+  std::unique_ptr<RealType[]> rwork;
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    FFI_ASSIGN_OR_RETURN(const auto rwork_size,
+                         svd::GetRealWorkspaceSizeQR(x_rows, x_cols));
+    rwork = AllocateScratchMemory<ffi::ToReal(dtype)>(rwork_size);
+  }
+
+  CopyIfDiffBuffer(x, x_out);
+
+  FFI_ASSIGN_OR_RETURN(auto x_rows_v, MaybeCastNoOverflow<lapack_int>(x_rows));
+  FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<lapack_int>(x_cols));
+  auto mode_v = static_cast<char>(mode);
+  auto workspace_dim_v = work_size;
+  auto x_leading_dim_v = x_rows_v;
+  auto u_leading_dim_v = x_rows_v;
+
+  auto u_dims = u->dimensions().last(2);
+  auto vt_dims = vt->dimensions().last(2);
+  FFI_ASSIGN_OR_RETURN(auto vt_leading_dim_v,
+                       MaybeCastNoOverflow<lapack_int>(vt_dims.front()));
+
+  const int64_t x_out_step{x_rows * x_cols};
+  const int64_t singular_values_step{singular_values->dimensions().back()};
+  const int64_t u_step{u_dims.front() * u_dims.back()};
+  const int64_t vt_step{vt_leading_dim_v * vt_dims.back()};
+
+  for (int64_t i = 0; i < batch_count; ++i) {
+    if constexpr (ffi::IsComplexType<dtype>()) {
+      svd::SVDQRType<dtype>::fn(&mode_v, &mode_v, &x_rows_v, &x_cols_v, x_out_data,
+                                &x_leading_dim_v, singular_values_data, u_data,
+                                &u_leading_dim_v, vt_data, &vt_leading_dim_v,
+                                work_data.get(), &workspace_dim_v, rwork.get(),
+                                info_data);
+    } else {
+      svd::SVDQRType<dtype>::fn(&mode_v, &mode_v, &x_rows_v, &x_cols_v, x_out_data,
+                                &x_leading_dim_v, singular_values_data, u_data,
+                                &u_leading_dim_v, vt_data, &vt_leading_dim_v,
+                                work_data.get(), &workspace_dim_v, info_data);
+    }
+    x_out_data += x_out_step;
+    singular_values_data += singular_values_step;
+    u_data += u_step;
+    vt_data += vt_step;
+    ++info_data;
+  }
+  return ffi::Error::Success();
+}
+
+template <ffi::DataType dtype>
+static absl::StatusOr<lapack_int> SvdQRGetWorkspaceSize(lapack_int x_rows,
+                                                        lapack_int x_cols,
+                                                        svd::ComputationMode mode) {
+  ffi::NativeType<dtype> optimal_size = {};
+  lapack_int info = 0;
+  lapack_int workspace_query = -1;
+
+  auto mode_v = static_cast<char>(mode);
+  auto x_leading_dim_v = x_rows;
+  auto u_leading_dim_v = x_rows;
+  auto vt_leading_dim_v = mode == svd::ComputationMode::kComputeFullUVt
+                              ? x_cols
+                              : std::min(x_rows, x_cols);
+  if constexpr (ffi::IsComplexType<dtype>()) {
+    svd::SVDQRType<dtype>::fn(&mode_v, &mode_v, &x_rows, &x_cols, nullptr,
+                              &x_leading_dim_v, nullptr, nullptr,
+                              &u_leading_dim_v, nullptr, &vt_leading_dim_v,
+                              &optimal_size, &workspace_query, nullptr, &info);
+  } else {
+    svd::SVDQRType<dtype>::fn(&mode_v, &mode_v, &x_rows, &x_cols, nullptr,
+                              &x_leading_dim_v, nullptr, nullptr,
+                              &u_leading_dim_v, nullptr, &vt_leading_dim_v,
+                              &optimal_size, &workspace_query, &info);
+  }
+  return info == 0 ? MaybeCastNoOverflow<lapack_int>(std::real(optimal_size)) : -1;
+}
+
 }  // namespace internal
 
 template <ffi::DataType dtype>
@@ -928,6 +1032,39 @@ SingularValueDecompositionComplex<dtype>::GetWorkspaceSize(
   return internal::SvdGetWorkspaceSize<dtype>(x_rows, x_cols, mode);
 }
 
+template <ffi::DataType dtype>
+ffi::Error SingularValueDecompositionQR<dtype>::Kernel(
+    ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
+    ffi::ResultBuffer<dtype> singular_values, ffi::ResultBuffer<dtype> u,
+    ffi::ResultBuffer<dtype> vt, ffi::ResultBuffer<LapackIntDtype> info,
+    svd::ComputationMode mode) {
+  return internal::SvdQRKernel<dtype>(x, x_out, singular_values, u, vt, info,
+                                      mode);
+}
+
+template <ffi::DataType dtype>
+ffi::Error SingularValueDecompositionQRComplex<dtype>::Kernel(
+    ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
+    ffi::ResultBuffer<ffi::ToReal(dtype)> singular_values,
+    ffi::ResultBuffer<dtype> u, ffi::ResultBuffer<dtype> vt,
+    ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode) {
+  return internal::SvdQRKernel<dtype>(x, x_out, singular_values, u, vt, info,
+                                      mode);
+}
+
+template <ffi::DataType dtype>
+absl::StatusOr<lapack_int> SingularValueDecompositionQR<dtype>::GetWorkspaceSize(
+    lapack_int x_rows, lapack_int x_cols, svd::ComputationMode mode) {
+  return internal::SvdQRGetWorkspaceSize<dtype>(x_rows, x_cols, mode);
+}
+
+template <ffi::DataType dtype>
+absl::StatusOr<lapack_int>
+SingularValueDecompositionQRComplex<dtype>::GetWorkspaceSize(
+    lapack_int x_rows, lapack_int x_cols, svd::ComputationMode mode) {
+  return internal::SvdQRGetWorkspaceSize<dtype>(x_rows, x_cols, mode);
+}
+
 absl::StatusOr<lapack_int> svd::GetRealWorkspaceSize(
     int64_t x_rows, int64_t x_cols, svd::ComputationMode mode) {
   const auto min_dim = std::min(x_rows, x_cols);
@@ -940,6 +1077,10 @@ absl::StatusOr<lapack_int> svd::GetRealWorkspaceSize(
                2 * max_dim * min_dim + 2 * min_dim * min_dim + min_dim));
 }
 
+absl::StatusOr<lapack_int> svd::GetRealWorkspaceSizeQR(int64_t x_rows, int64_t x_cols) {
+  return CastNoOverflow<lapack_int>(5 * std::min(x_rows, x_cols));
+}
+
 absl::StatusOr<lapack_int> svd::GetIntWorkspaceSize(int64_t x_rows,
                                                     int64_t x_cols) {
   return CastNoOverflow<lapack_int>(8 * std::min(x_rows, x_cols));
@@ -949,6 +1090,11 @@ template struct SingularValueDecomposition<ffi::DataType::F32>;
 template struct SingularValueDecomposition<ffi::DataType::F64>;
 template struct SingularValueDecompositionComplex<ffi::DataType::C64>;
 template struct SingularValueDecompositionComplex<ffi::DataType::C128>;
+
+template struct SingularValueDecompositionQR<ffi::DataType::F32>;
+template struct SingularValueDecompositionQR<ffi::DataType::F64>;
+template struct SingularValueDecompositionQRComplex<ffi::DataType::C64>;
+template struct SingularValueDecompositionQRComplex<ffi::DataType::C128>;
 
 //== Eigenvalues and eigenvectors ==//
 
@@ -2098,17 +2244,17 @@ template struct TridiagonalSolver<ffi::DataType::C128>;
 
 // FFI Definition Macros (by DataType)
 
-#define JAX_CPU_DEFINE_TRSM(name, data_type)               \
-  XLA_FFI_DEFINE_HANDLER_SYMBOL(                           \
-      name, TriMatrixEquationSolver<data_type>::Kernel,    \
-      ::xla::ffi::Ffi::Bind()                              \
-          .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)       \
-          .Arg<::xla::ffi::Buffer<data_type>>(/*y*/)       \
-          .Arg<::xla::ffi::BufferR0<data_type>>(/*alpha*/) \
-          .Ret<::xla::ffi::Buffer<data_type>>(/*y_out*/)   \
-          .Attr<MatrixParams::Side>("side")                \
-          .Attr<MatrixParams::UpLo>("uplo")                \
-          .Attr<MatrixParams::Transpose>("trans_x")        \
+#define JAX_CPU_DEFINE_TRSM(name, data_type)             \
+  XLA_FFI_DEFINE_HANDLER_SYMBOL(                         \
+      name, TriMatrixEquationSolver<data_type>::Kernel,  \
+      ::xla::ffi::Ffi::Bind()                            \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)     \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*y*/)     \
+          .RemainingArgs()                               \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*y_out*/) \
+          .Attr<MatrixParams::Side>("side")              \
+          .Attr<MatrixParams::UpLo>("uplo")              \
+          .Attr<MatrixParams::Transpose>("trans_x")      \
           .Attr<MatrixParams::Diag>("diag"))
 
 #define JAX_CPU_DEFINE_GETRF(name, data_type)                \
@@ -2170,6 +2316,30 @@ template struct TridiagonalSolver<ffi::DataType::C128>;
 #define JAX_CPU_DEFINE_GESDD_COMPLEX(name, data_type)                    \
   XLA_FFI_DEFINE_HANDLER_SYMBOL(                                         \
       name, SingularValueDecompositionComplex<data_type>::Kernel,        \
+      ::xla::ffi::Ffi::Bind()                                            \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)                     \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)                 \
+          .Ret<::xla::ffi::Buffer<::xla::ffi::ToReal(data_type)>>(/*s*/) \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*u*/)                     \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*vt*/)                    \
+          .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*info*/)             \
+          .Attr<svd::ComputationMode>("mode"))
+
+#define JAX_CPU_DEFINE_GESVD(name, data_type)                \
+  XLA_FFI_DEFINE_HANDLER_SYMBOL(                             \
+      name, SingularValueDecompositionQR<data_type>::Kernel, \
+      ::xla::ffi::Ffi::Bind()                                \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)         \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)     \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*s*/)         \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*u*/)         \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*vt*/)        \
+          .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*info*/) \
+          .Attr<svd::ComputationMode>("mode"))
+
+#define JAX_CPU_DEFINE_GESVD_COMPLEX(name, data_type)                    \
+  XLA_FFI_DEFINE_HANDLER_SYMBOL(                                         \
+      name, SingularValueDecompositionQRComplex<data_type>::Kernel,      \
       ::xla::ffi::Ffi::Bind()                                            \
           .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)                     \
           .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)                 \
@@ -2332,6 +2502,11 @@ JAX_CPU_DEFINE_GESDD(lapack_dgesdd_ffi, ::xla::ffi::DataType::F64);
 JAX_CPU_DEFINE_GESDD_COMPLEX(lapack_cgesdd_ffi, ::xla::ffi::DataType::C64);
 JAX_CPU_DEFINE_GESDD_COMPLEX(lapack_zgesdd_ffi, ::xla::ffi::DataType::C128);
 
+JAX_CPU_DEFINE_GESVD(lapack_sgesvd_ffi, ::xla::ffi::DataType::F32);
+JAX_CPU_DEFINE_GESVD(lapack_dgesvd_ffi, ::xla::ffi::DataType::F64);
+JAX_CPU_DEFINE_GESVD_COMPLEX(lapack_cgesvd_ffi, ::xla::ffi::DataType::C64);
+JAX_CPU_DEFINE_GESVD_COMPLEX(lapack_zgesvd_ffi, ::xla::ffi::DataType::C128);
+
 JAX_CPU_DEFINE_SYEVD(lapack_ssyevd_ffi, ::xla::ffi::DataType::F32);
 JAX_CPU_DEFINE_SYEVD(lapack_dsyevd_ffi, ::xla::ffi::DataType::F64);
 JAX_CPU_DEFINE_HEEVD(lapack_cheevd_ffi, ::xla::ffi::DataType::C64);
@@ -2370,6 +2545,8 @@ JAX_CPU_DEFINE_GTSV(lapack_zgtsv_ffi, ::xla::ffi::DataType::C128);
 #undef JAX_CPU_DEFINE_POTRF
 #undef JAX_CPU_DEFINE_GESDD
 #undef JAX_CPU_DEFINE_GESDD_COMPLEX
+#undef JAX_CPU_DEFINE_GESVD
+#undef JAX_CPU_DEFINE_GESVD_COMPLEX
 #undef JAX_CPU_DEFINE_SYEVD
 #undef JAX_CPU_DEFINE_HEEVD
 #undef JAX_CPU_DEFINE_GEEV

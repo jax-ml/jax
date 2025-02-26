@@ -16,6 +16,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## jax 0.5.1 (Feb 24, 2025)
+
 * New Features
   * Added an experimental {func}`jax.experimental.custom_dce.custom_dce`
     decorator to support customizing the behavior of opaque functions under
@@ -47,6 +49,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     See https://github.com/jax-ml/jax/issues/26480 for more detail.
 
 * Bug fixes
+  * TPU runtime startup and shutdown time should be significantly improved on
+    TPU v5e and newer (from around 17s to around 8s). If not already set, you may
+    need to enable transparent hugepages in your VM image
+    (`sudo sh -c 'echo always > /sys/kernel/mm/transparent_hugepage/enabled'`).
+    We hope to improve this further in future releases.
   * Persistent compilation cache no longer writes access time file if
     JAX_COMPILATION_CACHE_MAX_SIZE is unset or set to -1, i.e. if the LRU
     eviction policy isn't enabled. This should improve performance when using

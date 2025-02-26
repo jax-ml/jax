@@ -111,7 +111,6 @@ def _reduce_window(
     return tree_util.tree_unflatten(out_tree, out_flat)
 
 
-
 def reduce_window(
     operand,
     init_value,
@@ -328,14 +327,13 @@ def _reduce_window_abstract_eval_rule(
            "have shapes {}.")
     raise TypeError(msg.format([v.shape for v in init_val_avals]))
   out_shape = _common_reduce_window_shape_rule(
-      operand_avals[0],
-      window_dimensions,
-      window_strides,
-      padding,
-      base_dilation,
-      window_dilation,
-  )
-  return tuple(ShapedArray(out_shape, op.dtype) for op in operand_avals)
+      operand_avals[0], window_dimensions, window_strides, padding,
+      base_dilation, window_dilation)
+  out_sharding = reduce_window_sharding_rule(
+      operand_avals[0], window_dimensions, window_strides, padding,
+      base_dilation, window_dilation)
+  return tuple(ShapedArray(out_shape, op.dtype, sharding=out_sharding)
+               for op in operand_avals)
 
 
 def _generic_reduce_window_batch_rule(
@@ -514,8 +512,27 @@ def _reduce_window_batch_rule(reduce_window, batched_args, bdims, *,
                           base_dilation, window_dilation)
   return operand, bdim
 
+def reduce_window_sharding_rule(operand, window_dimensions, window_strides,
+                                padding, base_dilation, window_dilation):
+  if base_dilation is None:
+    base_dilation = [1] * operand.ndim
+  if window_dilation is None:
+    window_dilation = [1] * operand.ndim
+
+  for spec, wdim, ws, pd, bd, wdil in zip(
+      operand.sharding.spec, window_dimensions, window_strides, padding,
+      base_dilation, window_dilation):
+    if spec is None:
+      continue
+    if not (wdim == 1 and ws == 1 and pd == 1 and bd == 1 and wdil == 1):
+      raise NotImplementedError(
+          "Only trivial windowing is supported along non-replicated"
+          f" dimensions. Got {operand.sharding.spec=}")
+  return operand.sharding
+
 reduce_window_sum_p = lax.standard_primitive(
-    _reduce_window_sum_shape_rule, lax._input_dtype, 'reduce_window_sum')
+    _reduce_window_sum_shape_rule, lax._input_dtype, 'reduce_window_sum',
+    sharding_rule=reduce_window_sharding_rule)
 ad.deflinear2(reduce_window_sum_p, _reduce_window_sum_transpose_rule)
 batching.primitive_batchers[reduce_window_sum_p] = partial(
   _reduce_window_batch_rule, _reduce_window_sum)
@@ -580,14 +597,16 @@ def reduce_window_shape_tuple(operand_shape, window_dimensions, window_strides,
 
 
 reduce_window_max_p = lax.standard_primitive(
-    _common_reduce_window_shape_rule, lax._input_dtype, 'reduce_window_max')
+    _common_reduce_window_shape_rule, lax._input_dtype, 'reduce_window_max',
+    sharding_rule=reduce_window_sharding_rule)
 ad.defjvp(reduce_window_max_p, partial(_reduce_window_chooser_jvp_rule,
                                        lax.max_p))
 batching.primitive_batchers[reduce_window_max_p] = partial(
   _reduce_window_batch_rule, _reduce_window_max)
 
 reduce_window_min_p = lax.standard_primitive(
-    _common_reduce_window_shape_rule, lax._input_dtype, 'reduce_window_min')
+    _common_reduce_window_shape_rule, lax._input_dtype, 'reduce_window_min',
+    sharding_rule=reduce_window_sharding_rule)
 ad.defjvp(reduce_window_min_p, partial(_reduce_window_chooser_jvp_rule,
                                        lax.min_p))
 
@@ -637,7 +656,6 @@ mlir.register_lowering(reduce_window_min_p, partial(
     _reduce_window_lower, mlir.min_hlo, lax._get_min_identity))
 mlir.register_lowering(reduce_window_max_p, partial(
     _reduce_window_lower, mlir.max_hlo, lax._get_max_identity))
-
 
 
 def _select_and_scatter_shape_rule(
@@ -801,8 +819,19 @@ def _select_and_gather_add_shape_rule(
            "got {} and {}.")
     raise TypeError(msg.format(tangents.shape, operand.shape))
   return _common_reduce_window_shape_rule(
-    operand, window_dimensions, window_strides, padding, base_dilation,
-    window_dilation)
+      operand, window_dimensions, window_strides, padding, base_dilation,
+      window_dilation)
+
+def _select_and_gather_add_sharding_rule(
+    tangents, operand, *, select_prim, window_dimensions, window_strides,
+    padding, base_dilation, window_dilation):
+  if tangents.sharding != operand.sharding:
+    raise TypeError(
+        "select_and_gather_add tangents and operand shardings must match, "
+        f"got {tangents.sharding} and {operand.sharding}.")
+  return reduce_window_sharding_rule(
+      operand, window_dimensions, window_strides, padding, base_dilation,
+      window_dilation)
 
 def _select_and_gather_add_lowering(
     ctx: mlir.LoweringRuleContext,
@@ -1010,7 +1039,7 @@ def _select_and_gather_add_batching_rule(
 
 select_and_gather_add_p = lax.standard_primitive(
     _select_and_gather_add_shape_rule, lax._input_dtype,
-    'select_and_gather_add')
+    'select_and_gather_add', sharding_rule=_select_and_gather_add_sharding_rule)
 ad.primitive_jvps[select_and_gather_add_p] = _select_and_gather_add_jvp
 ad.primitive_transposes[select_and_gather_add_p] = \
   _select_and_gather_add_transpose

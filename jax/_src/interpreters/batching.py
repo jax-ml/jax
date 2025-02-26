@@ -28,6 +28,7 @@ from jax._src import source_info_util
 from jax._src import linear_util as lu
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.sharding_impls import NamedSharding
+from jax._src import mesh as mesh_lib
 from jax._src.ad_util import (Zero, instantiate, SymbolicZero,
                               replace_rule_output_symbolic_zeros,
                               add_jaxvals, add_jaxvals_p)
@@ -1052,6 +1053,15 @@ def reducer_batcher(prim, ident, batched_args, batch_dims, axes, **params):
   else:
     assert False
 
+def expand_dims_batcher(prim, args, dims, **params):
+  """A batching rule for primitives that support matching leading batch
+  dimensions in all arguments.
+  """
+  size, = {x.shape[bd] for x, bd in zip(args, dims) if bd is not not_mapped}
+  args = [bdim_at_front(x, bd, size) for x, bd in zip(args, dims)]
+  out = prim.bind(*args, **params)
+  return (out, (0,) * len(out)) if prim.multiple_results else (out, 0)
+
 def mask_ragged_axes(operand: Array, ident, axis_spec: RaggedAxis) -> Array:
   # TODO(mattjj, axch) Can we mask multiple axes more efficiently at
   # once, rather than one at a time?
@@ -1094,7 +1104,11 @@ def broadcast(x, sz, axis, mesh_axis=None):
   x_aval = core.get_aval(x)
   new_spec = P(*tuple_insert(x_aval.sharding.spec, axis, mesh_axis))
   sharding = x_aval.sharding.with_spec(new_spec)
-  return jax.lax.broadcast_in_dim(x, shape, broadcast_dims, out_sharding=sharding)
+  # TODO(dougalm, yashkatariya): Delete this context manager once we figure
+  # out how to ensure jaxpr arguments always have the context mesh.
+  with mesh_lib.set_abstract_mesh(sharding.mesh):
+    return jax.lax.broadcast_in_dim(x, shape, broadcast_dims,
+                                    out_sharding=sharding)
 
 def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
   if dst == jumble_axis:

@@ -1554,7 +1554,7 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
   cond_debug = cond_jaxpr.jaxpr.debug_info
   augmented_debug = cond_debug and (
       cond_debug._replace(
-          arg_names=cond_debug.arg_names + (None,) * len(init_dot)
+          arg_names=cond_debug.arg_names + ("",) * len(init_dot)
       )
   )
   cond_jaxpr_augmented = core.Jaxpr(cond_jaxpr.jaxpr.constvars,
@@ -2426,6 +2426,9 @@ def _cumred_shape_rule(x, *, axis: int, reverse: bool):
         f"axis {axis} is out of bounds for array of shape {x.shape}")
   return x.shape
 
+def _cumred_sharding_rule(x, *, axis: int, reverse: bool):
+  return x.sharding
+
 def _cumsum_transpose_rule(t, operand, *, axis: int, reverse: bool):
   return [cumsum(t, axis=axis, reverse=not reverse)]
 
@@ -2476,7 +2479,7 @@ def _cumred_dtype_rule(name, operand, *args, **kw):
 def _cumulative_reduction_primitive(name, reduce_fn, reduce_window_fn):
   reducer_p = lax.standard_primitive(
     _cumred_shape_rule, partial(_cumred_dtype_rule, name),
-    name)
+    name, sharding_rule=_cumred_sharding_rule)
   batching.primitive_batchers[reducer_p] = partial(_cumred_batch_rule,
                                                    reducer_p)
 
@@ -2495,14 +2498,18 @@ def _cumulative_reduction_primitive(name, reduce_fn, reduce_window_fn):
 
   return reducer_p
 
-cumsum_p = _cumulative_reduction_primitive("cumsum", lax.add, windowed_reductions._reduce_window_sum)
+cumsum_p = _cumulative_reduction_primitive(
+    "cumsum", lax.add, windowed_reductions._reduce_window_sum)
 ad.deflinear2(cumsum_p, _cumsum_transpose_rule)
 
 cumlogsumexp_p = _cumulative_reduction_primitive(
     "cumlogsumexp", logaddexp, windowed_reductions._reduce_window_logaddexp)
-cumprod_p = _cumulative_reduction_primitive("cumprod", lax.mul, windowed_reductions._reduce_window_prod)
-cummax_p = _cumulative_reduction_primitive("cummax", lax.max, windowed_reductions._reduce_window_max)
-cummin_p = _cumulative_reduction_primitive("cummin", lax.min, windowed_reductions._reduce_window_min)
+cumprod_p = _cumulative_reduction_primitive(
+    "cumprod", lax.mul, windowed_reductions._reduce_window_prod)
+cummax_p = _cumulative_reduction_primitive(
+    "cummax", lax.max, windowed_reductions._reduce_window_max)
+cummin_p = _cumulative_reduction_primitive(
+    "cummin", lax.min, windowed_reductions._reduce_window_min)
 
 
 def _cumulative_jvp_rule(primals, tangents, *, axis: int, reverse: bool,

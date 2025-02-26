@@ -30,6 +30,7 @@ from jax._src import api
 from jax._src import api_util
 from jax._src import ad_checkpoint
 from jax._src import linear_util as lu
+from jax._src import callback
 from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
@@ -518,7 +519,7 @@ def check_lowering_rule(ctx, *args, err_tree, debug):
   if not config.xla_runtime_errors.value:
     raise functionalization_error
 
-  out_op, _, _ = mlir.emit_python_callback(
+  out_op, _, _ = callback.emit_python_callback(
       ctx, callback=functools.partial(python_err, err_tree),
       token=None,
       operands=args,
@@ -964,13 +965,14 @@ def shard_map_error_check(
   new_in_names = (*([{}] * num_error_vals), *in_names)
   new_vals_in = [*err_vals, *vals_in]
   in_avals = list(map(core.get_aval, new_vals_in))
+  auto = kwargs.get('auto')
   for i, v in enumerate(in_avals):
     if not (sharder := core.shard_aval_handlers.get(type(v))):
       raise ValueError(f'Unsupported aval type: {type(v)}')
-    in_avals[i] = sharder(mesh, new_in_names[i], v)
+    in_avals[i] = sharder(mesh, auto, new_in_names[i], v)
 
-  with (core.extend_axis_env_nd(mesh.shape.items()),
-        mesh_lib.set_abstract_mesh(shard_map._as_manual_mesh(mesh))):
+  with (shard_map._extend_axis_env(mesh, auto),
+        mesh_lib.set_abstract_mesh(shard_map._as_manual_mesh(mesh, auto))):
     # jaxpr to checked_jaxpr
     checked_jaxpr, out_tree, _ = jaxpr_to_checkify_jaxpr(
         pe.close_jaxpr(jaxpr), enabled_errors, err_tree, *in_avals

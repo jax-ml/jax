@@ -111,9 +111,9 @@ jobs:
 
           export PATH=${GITHUB_WORKSPACE}/cpython-tsan/bin/:$PATH
 
-          python3 -m pip install -r requirements/build_requirements.txt
+          python3 -m pip install uv~=0.5.30
           # Make sure to install a compatible Cython version (master branch is best for now)
-          python3 -m pip install -U git+https://github.com/cython/cython
+          python3 -m uv pip install -r requirements/build_requirements.txt -U git+https://github.com/cython/cython
 
           CC=clang-18 CXX=clang++-18 python3 -m pip wheel --wheel-dir dist -v . --no-build-isolation -Csetup-args=-Db_sanitize=thread -Csetup-args=-Dbuildtype=debugoptimized
 
@@ -180,6 +180,9 @@ jobs:
           # Apply a patch to numpy in requirements lock 3.13 ft to use the nightly version
           git apply .github/workflows/requirements_lock_3_13_ft.patch
 
+          # Remove tensorstore dependency from jax/experimental/array_serialization/BUILD
+          sed -i -E '/"tensorstore"/d' $PWD/jax/experimental/array_serialization/BUILD
+
           echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
           echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
           echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
@@ -202,4 +205,4 @@ jobs:
               --spawn_strategy=local \
               --remote_cache=remotebuildexecution.googleapis.com \
               --remote_instance_name=projects/tensorflow-testing/instances/default_instance \
-              //tests:cpu_tests
+              //tests:cpu_tests -- -//tests:serialization_test_cpu

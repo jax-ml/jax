@@ -233,68 +233,94 @@ def has_user_context(e):
     e = e.__cause__
   return False
 
-@contextlib.contextmanager
-def user_context(c: Traceback | None, *, name_stack: NameStack | None = None):
-  prev = _source_info_context.context
-  _source_info_context.context = _source_info_context.context.replace(
-      traceback=c, name_stack=name_stack)
-  filtered_tb = None
-  try:
-    yield
-  except Exception as e:
-    if c is None or has_user_context(e):
-      raise
-    filtered_tb = traceback_util.filter_traceback(c.as_python_traceback())
+class UserContextManager:
+  __slots__ = ['traceback', 'name_stack', 'prev']
+
+  def __init__(self, traceback: Traceback | None, *,
+               name_stack: NameStack | None = None):
+    self.traceback = traceback
+    self.name_stack = name_stack
+
+  def __enter__(self):
+    self.prev = _source_info_context.context
+    _source_info_context.context = _source_info_context.context.replace(
+        traceback=self.traceback, name_stack=self.name_stack)
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    _source_info_context.context = self.prev
+    if exc_type is None or exc_value is None:
+      return
+
+    if self.traceback is None or has_user_context(exc_value):
+      return
+
+    filtered_tb = traceback_util.filter_traceback(self.traceback.as_python_traceback())
     if filtered_tb:
-      msg = traceback_util.format_exception_only(e)
+      msg = traceback_util.format_exception_only(exc_value)
       msg = f'{msg}\n\n{_message}'
       exp = JaxStackTraceBeforeTransformation(msg).with_traceback(filtered_tb)
-      exp.__context__ = e.__context__
-      exp.__cause__ = e.__cause__
-      exp.__suppress_context__ = e.__suppress_context__
-      e.__context__ = None
-      e.__cause__ = exp
-    raise
-  finally:
-    _source_info_context.context = prev
-    del filtered_tb
+      exp.__context__ = exc_value.__context__
+      exp.__cause__ = exc_value.__cause__
+      exp.__suppress_context__ = exc_value.__suppress_context__
+      exc_value.__context__ = None
+      exc_value.__cause__ = exp
+
+user_context = UserContextManager
+
 
 def current_name_stack() -> NameStack:
   return _source_info_context.context.name_stack
 
-@contextlib.contextmanager
-def extend_name_stack(name: str) -> Iterator[NameStack]:
-  prev_context = _source_info_context.context
-  curr_name_stack = prev_context.name_stack
-  new_context = prev_context.replace(name_stack=curr_name_stack.extend(name))
-  _source_info_context.context = new_context
-  try:
-    yield _source_info_context.context.name_stack
-  finally:
-    _source_info_context.context = prev_context
 
-@contextlib.contextmanager
-def set_name_stack(name_stack: NameStack) -> Iterator[None]:
-  prev_context = _source_info_context.context
-  new_context = prev_context.replace(name_stack=name_stack)
-  _source_info_context.context = new_context
-  try:
-    yield
-  finally:
-    _source_info_context.context = prev_context
+class ExtendNameStackContextManager(contextlib.ContextDecorator):
+  __slots__ = ['name', 'prev']
 
-@contextlib.contextmanager
-def reset_name_stack() -> Iterator[None]:
-  with set_name_stack(NameStack()):
-    yield
+  def __init__(self, name: str):
+    self.name = name
 
-@contextlib.contextmanager
-def transform_name_stack(name: str) -> Iterator[NameStack]:
-  prev_context = _source_info_context.context
-  curr_name_stack = prev_context.name_stack
-  new_context = prev_context.replace(name_stack=curr_name_stack.transform(name))
-  _source_info_context.context = new_context
-  try:
-    yield _source_info_context.context.name_stack
-  finally:
-    _source_info_context.context = prev_context
+  def __enter__(self):
+    self.prev = prev = _source_info_context.context
+    name_stack = prev.name_stack.extend(self.name)
+    _source_info_context.context = prev.replace(name_stack=name_stack)
+    return name_stack
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    _source_info_context.context = self.prev
+
+extend_name_stack = ExtendNameStackContextManager
+
+
+class SetNameStackContextManager(contextlib.ContextDecorator):
+  __slots__ = ['name_stack', 'prev']
+
+  def __init__(self, name_stack: NameStack):
+    self.name_stack = name_stack
+
+  def __enter__(self):
+    self.prev = prev = _source_info_context.context
+    _source_info_context.context = prev.replace(name_stack=self.name_stack)
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    _source_info_context.context = self.prev
+
+
+set_name_stack = SetNameStackContextManager
+reset_name_stack = lambda: SetNameStackContextManager(NameStack())
+
+
+class TransformNameStackContextManager(contextlib.ContextDecorator):
+  __slots__ = ['name', 'prev']
+
+  def __init__(self, name: str):
+    self.name = name
+
+  def __enter__(self):
+    self.prev = prev = _source_info_context.context
+    name_stack = prev.name_stack.transform(self.name)
+    _source_info_context.context = prev.replace(name_stack=name_stack)
+    return name_stack
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    _source_info_context.context = self.prev
+
+transform_name_stack = TransformNameStackContextManager

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import atexit
 from collections.abc import Sequence
-import contextlib
 import dataclasses
 import enum
 from functools import partial
@@ -46,7 +45,6 @@ from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
 from jax._src.layout import DeviceLocalLayout, Layout
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.monitoring import record_event_duration_secs, record_event_time_span
 from jax._src.partition_spec import PartitionSpec
@@ -170,22 +168,32 @@ def wait_for_tokens():
   runtime_tokens.block_until_ready()
 
 
-@contextlib.contextmanager
-def log_elapsed_time(fmt: str, fun_name: str, event: str | None = None):
-  if _on_exit:
-    yield
-  else:
-    log_priority = logging.WARNING if config.log_compiles.value else logging.DEBUG
-    start_time = time.time()
-    yield
+class LogElapsedTimeContextManager:
+  __slots__ = ['fmt', 'fun_name', 'event', 'start_time']
+
+  def __init__(self, fmt: str, fun_name: str, event: str | None = None):
+    self.fmt = fmt
+    self.fun_name = fun_name
+    self.event = event
+
+  def __enter__(self):
+    self.start_time = time.time()
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    if _on_exit:
+      return
+
     end_time = time.time()
-    elapsed_time = end_time - start_time
+    elapsed_time = end_time - self.start_time
+    log_priority = logging.WARNING if config.log_compiles.value else logging.DEBUG
     if logger.isEnabledFor(log_priority):
-      logger.log(log_priority, fmt.format(
-          fun_name=fun_name, elapsed_time=elapsed_time))
-    if event is not None:
-      record_event_duration_secs(event, elapsed_time)
-      record_event_time_span(event, start_time, end_time)
+      logger.log(log_priority, self.fmt.format(
+          fun_name=self.fun_name, elapsed_time=elapsed_time))
+    if self.event is not None:
+      record_event_duration_secs(self.event, elapsed_time)
+      record_event_time_span(self.event, self.start_time, end_time)
+
+log_elapsed_time = LogElapsedTimeContextManager
 
 
 def should_tuple_args(num_args: int, platform: str) -> bool:
@@ -410,12 +418,8 @@ def _different_device_order_reshard(x, target_sharding, copy: CopySemantics):
 
 def _reorder_shards(x, new_s, copy_semantics: CopySemantics):
   """Reorders array shards to match the order indicated by the new sharding."""
-  if xla_extension_version >= 304:
-    xc_copy_semantics = pxla.to_xc_copy_semantics([copy_semantics])[0]
-    return xc.reorder_shards(x, new_s, xc_copy_semantics)  # type: ignore
-  else:
-    assert copy_semantics == CopySemantics.ALIAS
-    return array.make_array_from_single_device_arrays(x.shape, new_s, x._arrays)
+  xc_copy_semantics = pxla.to_xc_copy_semantics([copy_semantics])[0]
+  return xc.reorder_shards(x, new_s, xc_copy_semantics)  # type: ignore
 
 
 @dataclasses.dataclass(frozen=True)

@@ -38,10 +38,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install JAX test requirements
         run: |
-          pip install .[ci] -r build/test-requirements.txt
+          pip install uv~=0.5.30
+          uv pip install --system .[ci] -r build/test-requirements.txt
       - name: Install numpy & scipy development versions
         run: |
-          pip install \
+          uv pip install \
+            --system \
             -i https://pypi.anaconda.org/scientific-python-nightly-wheels/simple \
             --no-deps \
             --pre \
@@ -64,7 +66,7 @@ jobs:
           echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
           echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
-          pytest -n auto --tb=short --maxfail=20 tests examples
+          pytest -n 2 --tb=short --maxfail=20 tests examples
       - name: Notify failed build
         uses: jayqi/failed-build-issue-action@1a893bbf43ef1c2a8705e2b115cd4f0fe3c5649b  # v1.2.0
         if: failure() && github.event.pull_request == null
