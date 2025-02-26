@@ -46,8 +46,8 @@ RealNumeric = Any  # Scalar jnp array or float
 @export
 @typing.runtime_checkable
 class Initializer(Protocol):
-  @staticmethod
-  def __call__(key: Array,
+  def __call__(self,
+               key: Array,
                shape: core.Shape,
                dtype: DTypeLikeInexact = jnp.float_) -> Array:
     raise NotImplementedError
