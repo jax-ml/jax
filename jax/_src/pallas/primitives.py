@@ -36,13 +36,13 @@ from jax._src import state
 from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
-from jax._src.state import types as state_types
 from jax._src.state import primitives as sp
-from jax.interpreters import mlir
+from jax._src.state import types as state_types
 import jax.numpy as jnp
 
 partial = functools.partial
@@ -54,6 +54,7 @@ zip, unsafe_zip = util.safe_zip, zip
 
 program_id_p = jax_core.Primitive("program_id")
 batching.ragged_prop_rules[program_id_p] = batching.ragged_mask_no_op_rule
+
 
 def program_id(axis: int) -> jax.Array:
   """Returns the kernel execution position along the given axis of the grid.
@@ -69,6 +70,7 @@ def program_id(axis: int) -> jax.Array:
   """
   return program_id_p.bind(axis=axis)
 
+
 def program_id_bind_with_trace(trace, _, params):
   axis = params.pop("axis")
   grid_env = pallas_core.current_grid_env()
@@ -78,19 +80,27 @@ def program_id_bind_with_trace(trace, _, params):
   # Query the size of the axis to make sure it's a valid axis (and error
   # otherwise).
   _ = frame.size(axis)
-  return jax_core.Primitive.bind_with_trace(program_id_p, trace, (), dict(axis=axis))
+  return jax_core.Primitive.bind_with_trace(
+      program_id_p, trace, (), dict(axis=axis)
+  )
+
+
 # TODO(dougalm): figure out how put the grid_env contest on the relevant trace
 program_id_p.def_bind_with_trace(program_id_bind_with_trace)
+
 
 @program_id_p.def_abstract_eval
 def _program_id_abstract_eval(**_):
   return jax_core.ShapedArray((), jnp.int32)
 
+
 num_programs_p = jax_core.Primitive("num_programs")
+
 
 def num_programs(axis: int) -> int | jax.Array:
   """Returns the size of the grid along the given axis."""
   return num_programs_p.bind(axis=axis)
+
 
 def _num_programs_bind_with_trace(trace, _, params):
   axis = params.pop("axis")
@@ -102,13 +112,19 @@ def _num_programs_bind_with_trace(trace, _, params):
   frame = pallas_core.axis_frame()
   size = frame.size(axis)
   if size is pallas_core.dynamic_grid_dim:
-    return jax_core.Primitive.bind_with_trace(num_programs_p, trace, (), dict(axis=axis))
+    return jax_core.Primitive.bind_with_trace(
+        num_programs_p, trace, (), dict(axis=axis)
+    )
   return size
+
+
 num_programs_p.def_bind_with_trace(_num_programs_bind_with_trace)
+
 
 @num_programs_p.def_abstract_eval
 def _num_programs_abstract_eval(**_):
   return jax_core.ShapedArray((), jnp.int32)
+
 
 class AtomicOpType(enum.Enum):
   XCHG = "xchg"
@@ -118,6 +134,7 @@ class AtomicOpType(enum.Enum):
   AND = "and"
   OR = "or"
   XOR = "xor"
+
 
 atomic_rmw_p = jax_core.Primitive("atomic_rmw")
 
@@ -149,7 +166,9 @@ def _atomic_rmw_discharge_rule(
     slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
     slice_sizes = tuple(s.size if isinstance(s, Slice) else 1 for s in indices)
     out_ones = lax.dynamic_slice(ref, slice_starts, slice_sizes=slice_sizes)
-    val_indexer = tuple(None if scalar else slice(None) for scalar in scalar_dims)
+    val_indexer = tuple(
+        None if scalar else slice(None) for scalar in scalar_dims
+    )
     val = val[val_indexer]
     val = monoid(val, out_ones)
     x_new = lax.dynamic_update_slice(ref, val, start_indices=slice_starts)
@@ -163,7 +182,9 @@ def _atomic_rmw_discharge_rule(
   return (x_new,) + (None,) * (len(in_avals) - 1), out
 
 
-state_discharge.register_discharge_rule(atomic_rmw_p)(_atomic_rmw_discharge_rule)
+state_discharge.register_discharge_rule(atomic_rmw_p)(
+    _atomic_rmw_discharge_rule
+)
 
 
 @atomic_rmw_p.def_effectful_abstract_eval
@@ -183,8 +204,14 @@ def _atomic_abstract_eval(*avals_flat, args_tree, atomic_type: AtomicOpType):
   return _swap_abstract_eval(*avals_flat, args_tree=args_tree)
 
 
-def _atomic_rmw(x_ref_or_view, idx, val, *, mask: Any | None = None,
-                atomic_type: AtomicOpType):
+def _atomic_rmw(
+    x_ref_or_view,
+    idx,
+    val,
+    *,
+    mask: Any | None = None,
+    atomic_type: AtomicOpType,
+):
   x_ref, transforms = sp.get_ref_and_transforms(
       x_ref_or_view, idx, "atomic_rmw"
   )
@@ -192,6 +219,7 @@ def _atomic_rmw(x_ref_or_view, idx, val, *, mask: Any | None = None,
   return atomic_rmw_p.bind(
       *args_flat, args_tree=args_tree, atomic_type=atomic_type
   )
+
 
 def atomic_xchg(x_ref_or_view, idx, val, *, mask: Any | None = None):
   """Atomically exchanges the given value with the value at the given index.
@@ -304,7 +332,9 @@ def atomic_xor(x_ref_or_view, idx, val, *, mask: Any | None = None):
       x_ref_or_view, idx, val, mask=mask, atomic_type=AtomicOpType.XOR
   )
 
+
 atomic_cas_p = jax_core.Primitive("atomic_cas")
+
 
 @atomic_cas_p.def_effectful_abstract_eval
 def _atomic_cas_abstract_eval(ref_aval, cmp_aval, val_aval):
@@ -316,11 +346,14 @@ def _atomic_cas_abstract_eval(ref_aval, cmp_aval, val_aval):
     raise ValueError("cmp must be scalar.")
   if val_aval.shape:
     raise ValueError("val must be scalar.")
-  return jax_core.ShapedArray(val_aval.shape, val_aval.dtype), {state.WriteEffect(0)}
+  return jax_core.ShapedArray(val_aval.shape, val_aval.dtype), {
+      state.WriteEffect(0)
+  }
 
 
 def atomic_cas(ref, cmp, val):
   """Performs an atomic compare-and-swap of the value in the ref with the
+
   given value.
 
   Args:
@@ -333,41 +366,49 @@ def atomic_cas(ref, cmp, val):
   """
   return atomic_cas_p.bind(ref, cmp, val)
 
+
 @state_discharge.register_discharge_rule(atomic_cas_p)
 def _atomic_cas_discharge_rule(in_avals, out_avals, ref, cmp, val):
   del in_avals, out_avals
   new_val = jnp.where(ref == cmp, val, ref)
   return (new_val, None, None), ref
 
+
 max_contiguous_p = jax_core.Primitive("max_contiguous")
 
 max_contiguous_p.def_impl(lambda x, **_: x)
 mlir.register_lowering(max_contiguous_p, lambda _, x, **__: [x])
+
 
 def max_contiguous(x, values):
   if not isinstance(values, list):
     values = [values]
   return max_contiguous_p.bind(x, values=values)
 
+
 @max_contiguous_p.def_abstract_eval
 def _max_contiguous_abstract_eval(aval, **_):
   return aval
+
 
 multiple_of_p = jax_core.Primitive("multiple_of")
 
 multiple_of_p.def_impl(lambda x, **_: x)
 mlir.register_lowering(multiple_of_p, lambda _, x, **__: [x])
 
+
 def multiple_of(x: jax.Array, values: list[int] | int) -> jax.Array:
   if not isinstance(values, list):
     values = [values]
   return multiple_of_p.bind(x, values=values)
 
+
 @multiple_of_p.def_abstract_eval
 def _multiple_of_abstract_eval(aval, **_):
   return aval
 
-load_p = jax_core.Primitive('masked_load')
+
+load_p = jax_core.Primitive("masked_load")
 
 
 @load_p.def_effectful_abstract_eval
@@ -381,16 +422,13 @@ def _load_abstract_eval(*avals_flat, args_tree, **_):
 
 def _load_pp_rule(eqn, context, settings):
   # Pretty prints `a = load x i` as `x[i] <- a`
-  y, = eqn.outvars
-  x, indexers, mask, other  = tree_util.tree_unflatten(eqn.params["args_tree"],
-                                                       eqn.invars)
+  (y,) = eqn.outvars
+  x, indexers, mask, other = tree_util.tree_unflatten(
+      eqn.params["args_tree"], eqn.invars
+  )
   # TODO(sharadmv): pretty print mask and other
   lhs = jax_core.pp_vars([y], context, print_shapes=settings.print_shapes)
-  result = [
-      lhs,
-      pp.text(' <- '),
-      sp.pp_ref_transforms(context, x, indexers)
-  ]
+  result = [lhs, pp.text(" <- "), sp.pp_ref_transforms(context, x, indexers)]
   if mask is not None:
     result += [
         pp.text(" "),
@@ -404,6 +442,8 @@ def _load_pp_rule(eqn, context, settings):
         pp.text(jax_core.pp_var(other, context)),
     ]
   return pp.concat(result)
+
+
 jax_core.pp_eqn_rules[load_p] = _load_pp_rule
 
 
@@ -428,6 +468,7 @@ def _load_jvp(primals, tangents, args_tree, **params):
 
 ad.primitive_jvps[load_p] = _load_jvp
 
+
 def uninitialized_value(shape, dtype):
   if jnp.issubdtype(dtype, jnp.floating):
     return jnp.full(shape, jnp.nan, dtype)
@@ -444,10 +485,12 @@ def uninitialized_value(shape, dtype):
     return jnp.full(shape, 0, dtype)
   raise NotImplementedError(dtype)
 
-def _pad_values_to_avoid_dynamic_slice_oob_shift(value,
-                                   slice_sizes, unpad=False):
-  """
-  DynamicSlice and DynamicUpdateSlice adjust the start index in cases where the
+
+def _pad_values_to_avoid_dynamic_slice_oob_shift(
+    value, slice_sizes, unpad=False
+):
+  """DynamicSlice and DynamicUpdateSlice adjust the start index in cases where the
+
   requested slice overruns the bounds of the array. This pads the array with
   uninitialised values such that the requested slice will never overrun.
 
@@ -460,16 +503,19 @@ def _pad_values_to_avoid_dynamic_slice_oob_shift(value,
 
   padding_config = tuple((0, slice_size, 0) for slice_size in slice_sizes)
   if unpad:
-    padding_config = tuple((-low, -high, -interior)
-                           for (low, high, interior) in padding_config)
+    padding_config = tuple(
+        (-low, -high, -interior) for (low, high, interior) in padding_config
+    )
   padding_value = uninitialized_value(shape=(), dtype=value.dtype)
-  value = lax.pad(value,
-                  padding_config=padding_config,
-                  padding_value=padding_value)
+  value = lax.pad(
+      value, padding_config=padding_config, padding_value=padding_value
+  )
   return value
 
+
 _unpad_values_to_avoid_dynamic_slice_oob_shift = partial(
-  _pad_values_to_avoid_dynamic_slice_oob_shift, unpad=True)
+    _pad_values_to_avoid_dynamic_slice_oob_shift, unpad=True
+)
 
 
 @state_discharge.register_discharge_rule(load_p)
@@ -495,9 +541,9 @@ def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     ref = _pad_values_to_avoid_dynamic_slice_oob_shift(ref, slice_sizes)
     idx_dtype = dtypes.canonicalize_dtype(jnp.int64)
     out_ones = lax.dynamic_slice(
-      ref,
-      [jnp.astype(s, idx_dtype) for s in slice_starts],
-      slice_sizes=slice_sizes,
+        ref,
+        [jnp.astype(s, idx_dtype) for s in slice_starts],
+        slice_sizes=slice_sizes,
     )
     out_indexer = tuple(0 if scalar else slice(None) for scalar in scalar_dims)
     out = out_ones[out_indexer]
@@ -510,7 +556,7 @@ def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
   return (None,) * len(in_avals), out
 
 
-swap_p = jax_core.Primitive('masked_swap')
+swap_p = jax_core.Primitive("masked_swap")
 
 
 @swap_p.def_effectful_abstract_eval
@@ -537,13 +583,13 @@ def _swap_pp_rule(eqn, context, settings):
   # Pretty prints `a = swap x v i` as `a, x[i] <- x[i], v`
   # or:
   # Pretty prints `_ = swap x v i` as `x[i] <- v`
-  y, = eqn.outvars
+  (y,) = eqn.outvars
   x, indexers, val, mask = eqn.params["args_tree"].unflatten(eqn.invars)
   x_i = sp.pp_ref_transforms(context, x, indexers)
   if isinstance(y, jax_core.DropVar):
-    return pp.concat([
-        x_i,
-        pp.text(" <- "), pp.text(jax_core.pp_var(val, context))])
+    return pp.concat(
+        [x_i, pp.text(" <- "), pp.text(jax_core.pp_var(val, context))]
+    )
   y = jax_core.pp_vars([y], context, print_shapes=settings.print_shapes)
   result = [
       y,
@@ -561,6 +607,8 @@ def _swap_pp_rule(eqn, context, settings):
         pp.text(jax_core.pp_var(mask, context)),
     ]
   return pp.concat(result)
+
+
 jax_core.pp_eqn_rules[swap_p] = _swap_pp_rule
 
 
@@ -630,8 +678,16 @@ def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
   return (x_new,) + (None,) * (len(in_avals) - 1), out
 
 
-def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier=None,
-         eviction_policy=None, volatile=False) -> jax.Array:
+def load(
+    x_ref_or_view,
+    idx,
+    *,
+    mask=None,
+    other=None,
+    cache_modifier=None,
+    eviction_policy=None,
+    volatile=False,
+) -> jax.Array:
   """Returns an array loaded from the given index.
 
   If neither ``mask`` nor ``other`` is specified, this function has the same
@@ -640,9 +696,9 @@ def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier=None,
   Args:
     x_ref_or_view: The ref to load from.
     idx: The indexer to use.
-    mask: An optional boolean mask specifying which indices to load.
-      If mask is ``False`` and ``other`` is not given, no assumptions can
-      be made about the value in the resulting array.
+    mask: An optional boolean mask specifying which indices to load. If mask is
+      ``False`` and ``other`` is not given, no assumptions can be made about the
+      value in the resulting array.
     other: An optional value to use for indices where mask is ``False``.
     cache_modifier: TO BE DOCUMENTED.
     eviction_policy: TO BE DOCUMENTED.
@@ -660,8 +716,16 @@ def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier=None,
       is_volatile=volatile,
   )
 
-def swap(x_ref_or_view, idx, val, *, mask=None, eviction_policy=None,
-         _function_name="swap") -> jax.Array:
+
+def swap(
+    x_ref_or_view,
+    idx,
+    val,
+    *,
+    mask=None,
+    eviction_policy=None,
+    _function_name="swap",
+) -> jax.Array:
   """Swaps the value at the given index and returns the old value.
 
   See :func:`~jax.experimental.pallas.load` for the meaning of the arguments.
@@ -677,16 +741,30 @@ def swap(x_ref_or_view, idx, val, *, mask=None, eviction_policy=None,
       *args_flat, args_tree=args_tree, eviction_policy=eviction_policy
   )
 
+
 def store(x_ref_or_view, idx, val, *, mask=None, eviction_policy=None) -> None:
   """Stores a value at the given index.
 
   See :func:`~jax.experimental.pallas.load` for the meaning of the arguments.
   """
-  _ = swap(x_ref_or_view, idx, val, mask=mask, eviction_policy=eviction_policy,
-           _function_name="store")
+  _ = swap(
+      x_ref_or_view,
+      idx,
+      val,
+      mask=mask,
+      eviction_policy=eviction_policy,
+      _function_name="store",
+  )
 
-def dot(a, b, trans_a: bool = False, trans_b: bool = False,
-        allow_tf32: bool | None = None, precision=None):
+
+def dot(
+    a,
+    b,
+    trans_a: bool = False,
+    trans_b: bool = False,
+    allow_tf32: bool | None = None,
+    precision=None,
+):
   if (a.ndim != 2) or (b.ndim != 2):
     raise ValueError("`a` and `b` must be 2D arrays.")
   lhs_contract_dim = 0 if trans_a else 1
@@ -711,6 +789,7 @@ def dot(a, b, trans_a: bool = False, trans_b: bool = False,
       precision=precision,
       preferred_element_type=out_dtype,
   )
+
 
 reciprocal_p = jax_core.Primitive("reciprocal")
 
@@ -785,9 +864,7 @@ def debug_print(fmt: str, *args: jax.typing.ArrayLike):
   return debug_print_p.bind(*args, fmt=fmt, has_placeholders=has_placeholders)
 
 
-def check_debug_print_format(
-    fmt: str, *args: jax.typing.ArrayLike
-):
+def check_debug_print_format(fmt: str, *args: jax.typing.ArrayLike):
   n_placeholders = 0
   for _, field, spec, conversion in string.Formatter().parse(fmt):
     if field is not None:
@@ -887,10 +964,14 @@ def run_scoped(f: Callable[..., Any], *types: Any, **kw_types: Any) -> Any:
   """
   flat_types, in_tree = tree_util.tree_flatten((types, kw_types))
   flat_fun, out_tree_thunk = api_util.flatten_fun(
-      lu.wrap_init(f,
-                   debug_info=api_util.debug_info("pallas run_scoped",
-                                                  f, types, kw_types)),
-      in_tree)
+      lu.wrap_init(
+          f,
+          debug_info=api_util.debug_info(
+              "pallas run_scoped", f, types, kw_types
+          ),
+      ),
+      in_tree,
+  )
   # We allow ref avals to be transformed references.
   ref_avals = [t.get_ref_aval() for t in flat_types]
   avals = [
@@ -930,12 +1011,8 @@ def _run_scoped_abstract_eval(*args, jaxpr):
 
 
 def _run_scoped_discharge_rule(
-    should_discharge,
-    in_avals,
-    out_avals,
-    *args_flat,
-    jaxpr,
-    **_):
+    should_discharge, in_avals, out_avals, *args_flat, jaxpr, **_
+):
   del out_avals
   num_consts = len(args_flat)
   # discharge_state only discharges invars, not consts, so in order to
@@ -949,7 +1026,8 @@ def _run_scoped_discharge_rule(
   )
   if new_consts:
     raise NotImplementedError(
-        "Cannot handle new consts created by state discharge.")
+        "Cannot handle new consts created by state discharge."
+    )
 
   # Lowering expects that the jaxpr.consts to be the eqn.invals.
   discharged_body = pe.convert_invars_to_constvars(discharged_body, num_consts)
@@ -964,14 +1042,18 @@ def _run_scoped_discharge_rule(
   # We update all ref values with their updated values from the discharged
   # body. For other values we leave them in place.
   updates = [
-      ref_outputs.pop(0) if should and isinstance(aval, pallas_core.AbstractMemoryRef)
-      else None for should, aval in zip(should_discharge, in_avals)]
-  assert len(updates) == len(in_avals), f'{len(updates)} != {len(in_avals)}'
+      ref_outputs.pop(0)
+      if should and isinstance(aval, pallas_core.AbstractMemoryRef)
+      else None
+      for should, aval in zip(should_discharge, in_avals)
+  ]
+  assert len(updates) == len(in_avals), f"{len(updates)} != {len(in_avals)}"
   return updates, return_values
 
 
 state_discharge.register_partial_discharge_rule(run_scoped_p)(
-    _run_scoped_discharge_rule)
+    _run_scoped_discharge_rule
+)
 
 
 @functools.partial(mlir.register_lowering, run_scoped_p)
@@ -979,17 +1061,72 @@ def _run_scoped_lowering_rule(ctx, *args, jaxpr):
   jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
   num_return_values = len(jaxpr_noconst.outvars)
   discharged_body, new_consts = state_discharge.discharge_state(
-      jaxpr_noconst, [], should_discharge=True)
-  if new_consts:    raise NotImplementedError(
-        "Cannot handle new consts created by state discharge.")
+      jaxpr_noconst, [], should_discharge=True
+  )
+  if new_consts:
+    raise NotImplementedError(
+        "Cannot handle new consts created by state discharge."
+    )
 
   def _lower_fun(*lower_fun_args):
     # Create inputs filled with uninitialized values to the body.
     num_consts = len(lower_fun_args)
     body_avals = [v.aval for v in discharged_body.invars[num_consts:]]
-    init_vals = [uninitialized_value(
-        aval.shape, aval.dtype) for aval in body_avals]
+    init_vals = [
+        uninitialized_value(aval.shape, aval.dtype) for aval in body_avals
+    ]
     out = jax_core.eval_jaxpr(discharged_body, [], *lower_fun_args, *init_vals)
     return out[:num_return_values]
 
   return mlir.lower_fun(_lower_fun, multiple_results=True)(ctx, *args)
+
+
+def with_memory_constraint(x: jax.Array, memory_space: Any) -> jax.Array:
+  """Returns a copy of x constrained to be in the specified memory space.
+
+  This API is considered **highly experimental** and may not interact with the
+  other JAX APIs and the XLA compiler correctly.
+  """
+
+  return jax.tree.map(
+      lambda x: with_memory_constraint_p.bind(x, memory_space=memory_space), x
+  )
+
+
+with_memory_constraint_p = jax_core.Primitive("with_memory_constraint")
+
+
+@with_memory_constraint_p.def_impl
+def _with_memory_constraint_impl(
+    x: jax.Array, *, memory_space: Any
+) -> jax.Array:
+  del x, memory_space
+  raise NotImplementedError(
+      "with_memory_constraint is not implemented in eager mode."
+  )
+
+
+@with_memory_constraint_p.def_abstract_eval
+def _with_memory_constraint_abstract_eval(
+    x: jax_core.ShapedArray, *, memory_space: Any
+):
+  return x.update(_private_memory_kind=memory_space)
+
+@functools.partial(mlir.register_lowering, with_memory_constraint_p)
+def _with_memory_constraint_lowering(
+    ctx: mlir.LoweringRuleContext, x, *, memory_space: Any
+):
+
+  memory_kind = pallas_core._memory_space_to_memory_kind(memory_space)
+  if memory_kind is None:
+    # Don't constrain if the handler returns None.
+    return [x]
+  return [mlir.wrap_with_memory_kind(x, memory_kind, ctx.avals_out[0])]
+
+
+
+def get_memory_space(
+    x: jax.Array,
+) -> Any:
+  """Queries the memory space of an array."""
+  return pallas_core._get_memory_space_from_aval(jax_core.get_aval(x))

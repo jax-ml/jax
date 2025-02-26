@@ -48,8 +48,9 @@ LogicalResult specializeMemorySpace(TypedValue<MemRefType> value,
   MemorySpace current_memory_space = attr.getValue();
   if (current_memory_space == memory_space) {
     return success();  // Nothing to do here.
-  } else if (current_memory_space != MemorySpace::kAny) {
-    return failure();  // Memory space mismatch!
+  } else if (!(current_memory_space == MemorySpace::kAny ||
+             current_memory_space == MemorySpace::kHbm)) {
+    return failure();
   }
   value.setType(updateMemorySpace(value.getType(), memory_space));
   std::vector<Operation*> to_update(value.getUsers().begin(),

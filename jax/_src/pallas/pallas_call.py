@@ -100,13 +100,7 @@ def _pallas_call_abstract_eval(
   else:
     effs = jax_core.no_effects
 
-  # Make sure we don't return ShapedArrayWithMemorySpace to the outside world.
-  return [
-      jax_core.ShapedArray(a.shape, a.dtype, a.weak_type)
-      if isinstance(a, pallas_core.ShapedArrayWithMemorySpace)
-      else a
-      for a in out_avals
-  ], effs
+  return out_avals, effs
 
 
 pallas_call_p.def_effectful_abstract_eval(_pallas_call_abstract_eval)

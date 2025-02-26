@@ -103,6 +103,7 @@ class TPUMemorySpace(enum.Enum):
   VMEM = "vmem"
   SMEM = "smem"
   CMEM = "cmem"
+  HBM = "hbm"
   SEMAPHORE = "semaphore_mem"
 
   def __str__(self) -> str:
@@ -111,6 +112,18 @@ class TPUMemorySpace(enum.Enum):
   def __call__(self, shape: tuple[int, ...], dtype: jnp.dtype):
     # A convenience function for constructing MemoryRef types.
     return pallas_core.MemoryRef(shape, dtype, self)
+
+
+def _tpu_memory_space_to_memory_kind(memory_space: TPUMemorySpace) -> str:
+  if memory_space == TPUMemorySpace.VMEM:
+    return "vmem"
+  elif memory_space == TPUMemorySpace.HBM:
+    return "pinned_device"
+  raise NotImplementedError(f"Unsupported memory space: {memory_space}")
+pallas_core._memory_space_to_memory_kind_mapping[TPUMemorySpace] = (
+    _tpu_memory_space_to_memory_kind
+)
+
 
 class semaphore_dtype(dtypes.extended): pass
 class semaphore(semaphore_dtype): pass
@@ -168,7 +181,7 @@ class SemaphoreType(enum.Enum):
       dtype = SemaphoreTy()
     return pallas_core.MemoryRef(shape, dtype, TPUMemorySpace.SEMAPHORE)
 
-  def get_array_aval(self) -> pallas_core.ShapedArrayWithMemorySpace:
+  def get_array_aval(self) -> jax_core.ShapedArray:
     return self(()).get_array_aval()
 
   def get_ref_aval(self) -> AbstractMemoryRef:
@@ -246,7 +259,7 @@ def _tensorcore_mesh_discharge_rule(
     in_avals,
     out_avals,
     *args,
-    mesh,
+    mesh: TensorCoreMesh,
     jaxpr,
     compiler_params: Any | None,
     interpret: bool,
@@ -255,6 +268,18 @@ def _tensorcore_mesh_discharge_rule(
     name: str,
 ):
   assert isinstance(mesh, TensorCoreMesh)
+  num_cores = len(mesh.devices)
+  if num_cores > 1:
+    # Since each core will have its own VMEM, we currently disallow VMEM inputs
+    # and outputs since we do not know how they are sharded across cores.
+    in_memory_spaces = [
+        pallas_core._get_memory_space_from_aval(aval) for aval in in_avals
+    ]
+    if TPUMemorySpace.VMEM in in_memory_spaces:
+      raise NotImplementedError(
+          "TensorCoreMesh does not support VMEM inputs/outputs when there are"
+          " >1 cores. Use HBM or ANY instead."
+      )
   if compiler_params and not isinstance(compiler_params, TPUCompilerParams):
     raise ValueError(
         "compiler_params must be a pltpu.TPUCompilerParams"

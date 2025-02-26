@@ -69,4 +69,5 @@ ANY = TPUMemorySpace.ANY
 CMEM = TPUMemorySpace.CMEM
 SMEM = TPUMemorySpace.SMEM
 VMEM = TPUMemorySpace.VMEM
+HBM = TPUMemorySpace.HBM
 SEMAPHORE = TPUMemorySpace.SEMAPHORE

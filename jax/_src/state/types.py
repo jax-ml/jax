@@ -454,10 +454,16 @@ _ref_type_aval_mappings: dict[
     type[Any], Callable[[Any], tuple[AbstractRef, Array | Uninitialized]],
 ] = {}
 
+# Used to create specialized Refs from a given aval.
+_ref_aval_mappings: dict[
+    type[core.AbstractValue], Callable[[Any], AbstractRef]
+] = {}
 
-def _default_value_to_ref_aval(x: Any) -> tuple[AbstractRef, Array]:
+def _default_value_to_ref_aval(x: Any) -> tuple[AbstractRef, Any]:
   # Default type mapping just creates an AbstractRef from the array's aval.
   aval = core.get_aval(x)
+  if type(aval) in _ref_aval_mappings:
+    return _ref_aval_mappings[type(aval)](x), x
   return AbstractRef(aval), x
 
 
