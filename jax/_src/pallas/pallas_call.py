@@ -1234,7 +1234,9 @@ def _pallas_call_lowering(
     raise ValueError('Cannot lower a pallas_call with constants.')
   if interpret:
     if isinstance(interpret, mosaic_tpu_interpret.TPUInterpretParams):
-      impl = partial(mosaic_tpu_interpret.interpret_pallas_call, **params)
+      impl = partial(mosaic_tpu_interpret.interpret_pallas_call,
+                     interpret_params=interpret,
+                     **params)
     else:
       impl = partial(hlo_interpreter.pallas_call_hlo_interpret,
                      backend=backend,

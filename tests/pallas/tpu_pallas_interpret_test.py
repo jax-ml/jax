@@ -66,6 +66,11 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_allclose(z, x @ y, atol=1e-4)
 
   def test_dynamic_grid(self):
+    num_devices = jax.device_count()
+    if num_devices > 1:
+      # Workaround for https://github.com/jax-ml/jax/issues/25671
+      self.skipTest(f'requires 1 device, found {num_devices}')
+
     def kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...]
 
