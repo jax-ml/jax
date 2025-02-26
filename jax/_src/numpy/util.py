@@ -84,7 +84,7 @@ def promote_dtypes(*args: ArrayLike) -> list[Array]:
     return [lax.asarray(arg) for arg in args]
   else:
     to_dtype, weak_type = dtypes._lattice_result_type(*args)
-    to_dtype = dtypes.canonicalize_dtype(to_dtype, allow_extended_dtype=True)  # type: ignore[assignment]
+    to_dtype = dtypes.canonicalize_dtype(to_dtype, allow_extended_dtype=True)
     return [lax._convert_element_type(x, to_dtype, weak_type) for x in args]
 
 
@@ -93,8 +93,8 @@ def promote_dtypes_inexact(*args: ArrayLike) -> list[Array]:
 
   Promotes arguments to an inexact type."""
   to_dtype, weak_type = dtypes._lattice_result_type(*args)
-  to_dtype = dtypes.canonicalize_dtype(to_dtype, allow_extended_dtype=True)  # type: ignore[assignment]
-  to_dtype_inexact = dtypes.to_inexact_dtype(to_dtype)
+  to_dtype = dtypes.canonicalize_dtype(to_dtype, allow_extended_dtype=True)
+  to_dtype_inexact = dtypes.to_inexact_dtype(to_dtype)  # type: ignore[arg-type]
   return [lax._convert_element_type(x, to_dtype_inexact, weak_type)
           for x in args]
 
@@ -250,8 +250,7 @@ def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
   if not shapes or all(core.definitely_equal_shape(shapes[0], s) for s in shapes):
     return [lax.asarray(arg) for arg in args]
   result_shape = lax.broadcast_shapes(*shapes)
-  result_sharding = (lax.broadcast_shardings(*avals)  # type: ignore
-                     if config.sharding_in_types.value else None)
+  result_sharding = lax.broadcast_shardings(*avals)
   return [_broadcast_to(arg, result_shape, result_sharding) for arg in args]
 
 
@@ -277,7 +276,7 @@ def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape, sharding=None
       msg = "Incompatible shapes for broadcasting: {} and requested shape {}"
       raise ValueError(msg.format(arr_shape, shape))
     return lax.broadcast_in_dim(arr, shape, tuple(range(nlead, len(shape))),
-                                sharding=sharding)
+                                out_sharding=sharding)
 
 
 # The `jit` on `where` exists to avoid materializing constants in cases like

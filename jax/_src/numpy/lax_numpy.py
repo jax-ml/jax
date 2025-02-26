@@ -26,57 +26,49 @@ rules for the underlying :code:`lax` primitives.
 from __future__ import annotations
 
 import builtins
-import collections
 from collections.abc import Callable, Sequence
 from functools import partial
 import importlib
 import math
 import operator
 import os
-import string
-from typing import (Any, IO, Literal, NamedTuple,
-                    Protocol, TypeVar, Union, overload)
+from typing import (Any, IO, Literal, Protocol, TypeVar, Union, overload)
 import warnings
 
 import jax
-from jax import errors
 from jax import jit
 from jax import lax
 from jax._src import config
 from jax._src import core
 from jax._src import deprecations
-from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import xla_bridge
 from jax._src.api_util import _ensure_index_tuple
-from jax._src.array import ArrayImpl
-from jax._src.core import ShapedArray
 from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.lax import (PrecisionLike,_array_copy,
                               _sort_le_comparator, _sort_lt_comparator)
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
-from jax._src.numpy.array_creation import (empty, empty_like, full, full_like,
+from jax._src.numpy.array_creation import (empty, empty_like, full,
                                            ones, ones_like, zeros, zeros_like)
+from jax._src.numpy import indexing
 from jax._src.numpy import reductions
+from jax._src.numpy import tensor_contractions
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.numpy.sorting import argsort, sort
 from jax._src.numpy.vectorize import vectorize
 from jax._src.typing import (
-  Array, ArrayLike, DType, DTypeLike, DeprecatedArg, DimSize, Shape, StaticScalar,
+  Array, ArrayLike, DType, DTypeLike, DeprecatedArg, DimSize, Shape
 )
 from jax._src.util import (
     NumpyComplexWarning, canonicalize_axis as _canonicalize_axis,
-    ceil_of_ratio, partition_list, safe_zip, set_module, unzip2,
-    tuple_replace)
+    ceil_of_ratio, safe_zip, set_module, unzip2)
 from jax.sharding import Sharding
-from jax._src.sharding_impls import (SingleDeviceSharding, NamedSharding,
-                                     PartitionSpec as P, canonicalize_sharding)
-from jax.tree_util import tree_flatten, tree_leaves, tree_map
+from jax._src.sharding_impls import SingleDeviceSharding
+from jax.tree_util import tree_leaves, tree_map
 import numpy as np
-import opt_einsum
 
 export = set_module('jax.numpy')
 
@@ -90,17 +82,7 @@ for pkg_name in ['jax_cuda12_plugin', 'jax.jaxlib']:
   else:
     break
 
-newaxis = None
 T = TypeVar('T')
-
-
-# NumPy constants
-
-pi = np.pi
-e = np.e
-euler_gamma = np.euler_gamma
-inf = np.inf
-nan = np.nan
 
 # Wrappers for NumPy printoptions
 
@@ -177,9 +159,6 @@ def iscomplexobj(x: Any) -> bool:
     typ = asarray(x).dtype.type
   return issubdtype(typ, np.complexfloating)
 
-shape = _shape = np.shape
-ndim = _ndim = np.ndim
-size = np.size
 
 def _dtype(x: Any) -> DType:
   return dtypes.dtype(x, canonicalize=True)
@@ -188,18 +167,10 @@ def _dtype(x: Any) -> DType:
 iinfo = dtypes.iinfo
 finfo = dtypes.finfo
 
-dtype = np.dtype
 can_cast = dtypes.can_cast
 promote_types = dtypes.promote_types
 
 ComplexWarning = NumpyComplexWarning
-
-# Numpy functions
-array_str = np.array_str
-array_repr = np.array_repr
-
-save = np.save
-savez = np.savez
 
 _lax_const = lax_internal._const
 
@@ -542,8 +513,6 @@ def isscalar(element: Any) -> bool:
     return asarray(element).ndim == 0
   return False
 
-iterable = np.iterable
-
 
 @export
 def result_type(*args: Any) -> DType:
@@ -629,7 +598,7 @@ def trunc(x: ArrayLike) -> Array:
 @partial(jit, static_argnames=['mode', 'op', 'precision', 'preferred_element_type'])
 def _conv(x: Array, y: Array, mode: str, op: str, precision: PrecisionLike,
           preferred_element_type: DTypeLike | None = None) -> Array:
-  if ndim(x) != 1 or ndim(y) != 1:
+  if np.ndim(x) != 1 or np.ndim(y) != 1:
     raise ValueError(f"{op}() only support 1-dimensional inputs.")
   if preferred_element_type is None:
     # if unspecified, promote to inexact following NumPy's default for convolutions.
@@ -864,7 +833,7 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
   util.check_arraylike("histogram_bin_edges", a, bins)
   arr = asarray(a)
   dtype = dtypes.to_inexact_dtype(arr.dtype)
-  if _ndim(bins) == 1:
+  if np.ndim(bins) == 1:
     return asarray(bins, dtype=dtype)
 
   bins_int = core.concrete_or_error(operator.index, bins,
@@ -872,7 +841,7 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
   if range is None:
     range = [arr.min(), arr.max()]
   range = asarray(range, dtype=dtype)
-  if shape(range) != (2,):
+  if np.shape(range) != (2,):
     raise ValueError(f"`range` must be either None or a sequence of scalars, got {range}")
   range = (where(reductions.ptp(range) == 0, range[0] - 0.5, range[0]),
            where(reductions.ptp(range) == 0, range[1] + 0.5, range[1]))
@@ -948,7 +917,7 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
     weights = ones_like(a)
   else:
     util.check_arraylike("histogram", a, bins, weights)
-    if shape(a) != shape(weights):
+    if np.shape(a) != np.shape(weights):
       raise ValueError("weights should have the same shape as a.")
     a, weights = util.promote_dtypes_inexact(a, weights)
 
@@ -1113,13 +1082,13 @@ def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
     sample, = util.promote_dtypes_inexact(sample)
   else:
     util.check_arraylike("histogramdd", sample, weights)
-    if shape(weights) != shape(sample)[:1]:
+    if np.shape(weights) != np.shape(sample)[:1]:
       raise ValueError("should have one weight for each sample.")
     sample, weights = util.promote_dtypes_inexact(sample, weights)
-  N, D = shape(sample)
+  N, D = np.shape(sample)
 
   if range is not None and (
-      len(range) != D or any(r is not None and shape(r)[0] != 2 for r in range)):  # type: ignore[arg-type]
+      len(range) != D or any(r is not None and np.shape(r)[0] != 2 for r in range)):  # type: ignore[arg-type]
     raise ValueError(f"For sample.shape={(N, D)}, range must be a sequence "
                      f"of {D} pairs or Nones; got {range=}")
 
@@ -1236,8 +1205,8 @@ def transpose(a: ArrayLike, axes: Sequence[int] | None = None) -> Array:
            [2, 4]], dtype=int32)
   """
   util.check_arraylike("transpose", a)
-  axes_ = list(range(ndim(a))[::-1]) if axes is None else axes
-  axes_ = [_canonicalize_axis(i, ndim(a)) for i in axes_]
+  axes_ = list(range(np.ndim(a))[::-1]) if axes is None else axes
+  axes_ = [_canonicalize_axis(i, np.ndim(a)) for i in axes_]
   return lax.transpose(a, axes_)
 
 
@@ -1391,8 +1360,8 @@ def rot90(m: ArrayLike, k: int = 1, axes: tuple[int, int] = (0, 1)) -> Array:
                      f"two, but got first argument of shape {np.shape(m)}, "
                      f"which has ndim {np.ndim(m)}")
   ax1, ax2 = axes
-  ax1 = _canonicalize_axis(ax1, ndim(m))
-  ax2 = _canonicalize_axis(ax2, ndim(m))
+  ax1 = _canonicalize_axis(ax1, np.ndim(m))
+  ax2 = _canonicalize_axis(ax2, np.ndim(m))
   if ax1 == ax2:
     raise ValueError("Axes must be different")  # same as numpy error
   k = k % 4
@@ -1401,7 +1370,7 @@ def rot90(m: ArrayLike, k: int = 1, axes: tuple[int, int] = (0, 1)) -> Array:
   elif k == 2:
     return flip(flip(m, ax1), ax2)
   else:
-    perm = list(range(ndim(m)))
+    perm = list(range(np.ndim(m)))
     perm[ax1], perm[ax2] = perm[ax2], perm[ax1]
     if k == 1:
       return transpose(flip(m, ax2), perm)
@@ -1472,9 +1441,9 @@ def flip(m: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
 @partial(jit, static_argnames=('axis',))
 def _flip(m: Array, axis: int | tuple[int, ...] | None = None) -> Array:
   if axis is None:
-    return lax.rev(m, list(range(len(shape(m)))))
+    return lax.rev(m, list(range(len(np.shape(m)))))
   axis = _ensure_index_tuple(axis)
-  return lax.rev(m, [_canonicalize_axis(ax, ndim(m)) for ax in axis])
+  return lax.rev(m, [_canonicalize_axis(ax, np.ndim(m)) for ax in axis])
 
 
 @export
@@ -1625,7 +1594,7 @@ def angle(z: ArrayLike, deg: bool = False) -> Array:
   im = ufuncs.imag(z)
   dtype = _dtype(re)
   if not issubdtype(dtype, np.inexact) or (
-      issubdtype(_dtype(z), np.floating) and ndim(z) == 0):
+      issubdtype(_dtype(z), np.floating) and np.ndim(z) == 0):
     dtype = dtypes.canonicalize_dtype(dtypes.float_)
     re = lax.convert_element_type(re, dtype)
     im = lax.convert_element_type(im, dtype)
@@ -1712,7 +1681,7 @@ def diff(a: ArrayLike, n: int = 1, axis: int = -1,
   combined: list[Array] = []
   if prepend is not None:
     prepend = util.ensure_arraylike("diff", prepend)
-    if not ndim(prepend):
+    if not np.ndim(prepend):
       shape = list(arr.shape)
       shape[axis] = 1
       prepend = broadcast_to(prepend, tuple(shape))
@@ -1722,7 +1691,7 @@ def diff(a: ArrayLike, n: int = 1, axis: int = -1,
 
   if append is not None:
     append = util.ensure_arraylike("diff", append)
-    if not ndim(append):
+    if not np.ndim(append):
       shape = list(arr.shape)
       shape[axis] = 1
       append = broadcast_to(append, tuple(shape))
@@ -1886,12 +1855,12 @@ def gradient(
     upper_edge = sliced(1, 2) - sliced(0, 1)
     lower_edge = sliced(-1, None) - sliced(-2, -1)
 
-    if ndim(h) == 0:
+    if np.ndim(h) == 0:
       inner = (sliced(2, None) - sliced(None, -2)) * 0.5 / h
       lower_edge /= h
       upper_edge /= h
 
-    elif ndim(h) == 1:
+    elif np.ndim(h) == 1:
       if len(h) != a.shape[axis]:
         raise ValueError(
             "Spacing arrays must have the same length as the "
@@ -2120,7 +2089,7 @@ def ravel(a: ArrayLike, order: str = "C") -> Array:
   util.check_arraylike("ravel", a)
   if order == "K":
     raise NotImplementedError("Ravel not implemented for order='K'.")
-  return reshape(a, (size(a),), order)
+  return reshape(a, (np.size(a),), order)
 
 
 @export
@@ -2267,7 +2236,7 @@ def unravel_index(indices: ArrayLike, shape: Shape) -> tuple[Array, ...]:
     # TODO: Consider warning here since shape is supposed to be a sequence, so
     # this should not happen.
     shape = [shape]
-  if any(ndim(s) != 0 for s in shape):
+  if any(np.ndim(s) != 0 for s in shape):
     raise ValueError("unravel_index: shape should be a scalar or 1D sequence.")
   out_indices: list[ArrayLike] = [0] * len(shape)
   for i, s in reversed(list(enumerate(shape))):
@@ -2393,7 +2362,7 @@ def squeeze(a: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
 @partial(jit, static_argnames=('axis',), inline=True)
 def _squeeze(a: Array, axis: tuple[int, ...]) -> Array:
   if axis is None:
-    a_shape = shape(a)
+    a_shape = np.shape(a)
     if not core.is_constant_shape(a_shape):
       # We do not even know the rank of the output if the input shape is not known
       raise ValueError("jnp.squeeze with axis=None is not supported with shape polymorphism")
@@ -2515,7 +2484,7 @@ def swapaxes(a: ArrayLike, axis1: int, axis2: int) -> Array:
     (2, 5, 4, 3)
   """
   util.check_arraylike("swapaxes", a)
-  perm = np.arange(ndim(a))
+  perm = np.arange(np.ndim(a))
   perm[axis1], perm[axis2] = perm[axis2], perm[axis1]
   return lax.transpose(a, list(perm))
 
@@ -2575,12 +2544,12 @@ def moveaxis(a: ArrayLike, source: int | Sequence[int],
 
 @partial(jit, static_argnames=('source', 'destination'), inline=True)
 def _moveaxis(a: Array, source: tuple[int, ...], destination: tuple[int, ...]) -> Array:
-  source = tuple(_canonicalize_axis(i, ndim(a)) for i in source)
-  destination = tuple(_canonicalize_axis(i, ndim(a)) for i in destination)
+  source = tuple(_canonicalize_axis(i, np.ndim(a)) for i in source)
+  destination = tuple(_canonicalize_axis(i, np.ndim(a)) for i in destination)
   if len(source) != len(destination):
     raise ValueError("Inconsistent number of elements: {} vs {}"
                      .format(len(source), len(destination)))
-  perm = [i for i in range(ndim(a)) if i not in source]
+  perm = [i for i in range(np.ndim(a)) if i not in source]
   for dest, src in sorted(zip(destination, source)):
     perm.insert(dest, src)
   return lax.transpose(a, perm)
@@ -2674,7 +2643,7 @@ def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
            right: ArrayLike | str | None = None,
            period: ArrayLike | None = None) -> Array:
   util.check_arraylike("interp", x, xp, fp)
-  if shape(xp) != shape(fp) or ndim(xp) != 1:
+  if np.shape(xp) != np.shape(fp) or np.ndim(xp) != 1:
     raise ValueError("xp and fp must be one-dimensional arrays of equal size")
   x_arr, xp_arr = util.promote_dtypes_inexact(x, xp)
   fp_arr, = util.promote_dtypes_inexact(fp)
@@ -2699,7 +2668,7 @@ def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
     raise ValueError("jnp.interp: complex x values not supported.")
 
   if period is not None:
-    if ndim(period) != 0:
+    if np.ndim(period) != 0:
       raise ValueError(f"period must be a scalar; got {period}")
     period = ufuncs.abs(period)
     x_arr = x_arr % period
@@ -3026,7 +2995,7 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
     x = lax.convert_element_type(x, 'int32')
   if not issubdtype(_dtype(x), np.integer):
     raise TypeError(f"x argument to bincount must have an integer type; got {_dtype(x)}")
-  if ndim(x) != 1:
+  if np.ndim(x) != 1:
     raise ValueError("only 1-dimensional input supported.")
   minlength = core.concrete_or_error(operator.index, minlength,
       "The error occurred because of argument 'minlength' of jnp.bincount.")
@@ -3040,7 +3009,7 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
         "The error occurred because of argument 'length' of jnp.bincount.")
   if weights is None:
     weights = np.array(1, dtype=dtypes.int_)
-  elif shape(x) != shape(weights):
+  elif np.shape(x) != np.shape(weights):
     raise ValueError("shape of weights must match shape of x.")
   return zeros(length, _dtype(weights)).at[clip(x, 0)].add(weights, mode='drop')
 
@@ -3196,7 +3165,7 @@ def _split(op: str, ary: ArrayLike,
       sizes = [(part_size + 1)] * r + [part_size] * (num_sections - r)
     else:
       raise ValueError(f"array split does not result in an equal division: rest is {r}")
-  sizes = [i if core.is_symbolic_dim(i) else np.int64(i)  # type: ignore[misc]
+  sizes = [i if core.is_symbolic_dim(i) else np.int64(i)
            for i in sizes]
   return list(lax.split(ary, sizes, axis=axis))
 
@@ -3797,7 +3766,7 @@ def nonzero(a: ArrayLike, *, size: int | None = None,
   """
   arr = util.ensure_arraylike("nonzero", a)
   del a
-  if ndim(arr) == 0:
+  if np.ndim(arr) == 0:
     raise ValueError("Calling nonzero on 0d arrays is not allowed. "
                      "Use jnp.atleast_1d(scalar).nonzero() instead.")
   mask = arr if arr.dtype == bool else (arr != 0)
@@ -3813,7 +3782,7 @@ def nonzero(a: ArrayLike, *, size: int | None = None,
   out = tuple((flat_indices // stride) % size for stride, size in zip(strides, arr.shape))
   if fill_value is not None:
     fill_value_tup = fill_value if isinstance(fill_value, tuple) else arr.ndim * (fill_value,)
-    if any(_shape(val) != () for val in fill_value_tup):
+    if any(np.shape(val) != () for val in fill_value_tup):
       raise ValueError(f"fill_value must be a scalar or a tuple of length {arr.ndim}; got {fill_value}")
     fill_mask = arange(calculated_size) >= mask.sum()
     out = tuple(where(fill_mask, fval, entry) for fval, entry in safe_zip(fill_value_tup, out))
@@ -3869,7 +3838,7 @@ def flatnonzero(a: ArrayLike, *, size: int | None = None,
 @export
 @partial(jit, static_argnames=('axis',))
 def unwrap(p: ArrayLike, discont: ArrayLike | None = None,
-           axis: int = -1, period: ArrayLike = 2 * pi) -> Array:
+           axis: int = -1, period: ArrayLike = 2 * np.pi) -> Array:
   """Unwrap a periodic signal.
 
   JAX implementation of :func:`numpy.unwrap`.
@@ -4005,10 +3974,10 @@ def _check_no_padding(axis_padding: tuple[Any, Any], mode: str):
 
 
 def _pad_constant(array: Array, pad_width: PadValue[int], constant_values: Array) -> Array:
-  nd = ndim(array)
+  nd = np.ndim(array)
   constant_values = lax_internal._convert_element_type(
       constant_values, array.dtype, dtypes.is_weakly_typed(array))
-  constant_values_nd = ndim(constant_values)
+  constant_values_nd = np.ndim(constant_values)
 
   if constant_values_nd == 0:
     widths = [(low, high, 0) for (low, high) in pad_width]
@@ -4041,7 +4010,7 @@ def _pad_constant(array: Array, pad_width: PadValue[int], constant_values: Array
 
 
 def _pad_wrap(array: Array, pad_width: PadValue[int]) -> Array:
-  for i in range(ndim(array)):
+  for i in range(np.ndim(array)):
     if array.shape[i] == 0:
       _check_no_padding(pad_width[i], "wrap")
       continue
@@ -4064,7 +4033,7 @@ def _pad_symmetric_or_reflect(array: Array, pad_width: PadValue[int],
   assert mode in ("symmetric", "reflect")
   assert reflect_type in ("even", "odd")
 
-  for i in range(ndim(array)):
+  for i in range(np.ndim(array)):
     if array.shape[i] == 0:
       _check_no_padding(pad_width[i], mode)
       continue
@@ -4129,7 +4098,7 @@ def _pad_symmetric_or_reflect(array: Array, pad_width: PadValue[int],
 
 
 def _pad_edge(array: Array, pad_width: PadValue[int]) -> Array:
-  nd = ndim(array)
+  nd = np.ndim(array)
   for i in range(nd):
     if array.shape[i] == 0:
       _check_no_padding(pad_width[i], "edge")
@@ -4150,7 +4119,7 @@ def _pad_edge(array: Array, pad_width: PadValue[int]) -> Array:
 
 def _pad_linear_ramp(array: Array, pad_width: PadValue[int],
                      end_values: PadValue[ArrayLike]) -> Array:
-  for axis in range(ndim(array)):
+  for axis in range(np.ndim(array)):
     edge_before = lax.slice_in_dim(array, 0, 1, axis=axis)
     edge_after = lax.slice_in_dim(array, -1, None, axis=axis)
     ramp_before = linspace(
@@ -4184,7 +4153,7 @@ def _pad_linear_ramp(array: Array, pad_width: PadValue[int],
 def _pad_stats(array: Array, pad_width: PadValue[int],
                stat_length: PadValue[int] | None,
                stat_func: PadStatFunc) -> Array:
-  nd = ndim(array)
+  nd = np.ndim(array)
   for i in range(nd):
     if stat_length is None:
       stat_before = stat_func(array, axis=i, keepdims=True)
@@ -4223,7 +4192,7 @@ def _pad_stats(array: Array, pad_width: PadValue[int],
 
 def _pad_empty(array: Array, pad_width: PadValue[int]) -> Array:
   # Note: jax.numpy.empty = jax.numpy.zeros
-  for i in range(ndim(array)):
+  for i in range(np.ndim(array)):
     shape_before = array.shape[:i] + (pad_width[i][0],) + array.shape[i + 1:]
     pad_before = empty_like(array, shape=shape_before)
 
@@ -4234,9 +4203,9 @@ def _pad_empty(array: Array, pad_width: PadValue[int]) -> Array:
 
 
 def _pad_func(array: Array, pad_width: PadValue[int], func: Callable[..., Any], **kwargs) -> Array:
-  pad_width = _broadcast_to_pairs(pad_width, ndim(array), "pad_width")
+  pad_width = _broadcast_to_pairs(pad_width, np.ndim(array), "pad_width")
   padded = _pad_constant(array, pad_width, asarray(0))
-  for axis in range(ndim(padded)):
+  for axis in range(np.ndim(padded)):
     padded = apply_along_axis(func, axis, padded, pad_width[axis], axis, kwargs)
   return padded
 
@@ -4246,7 +4215,7 @@ def _pad(array: ArrayLike, pad_width: PadValueLike[int], mode: str,
          constant_values: ArrayLike, stat_length: PadValueLike[int],
          end_values: PadValueLike[ArrayLike], reflect_type: str):
   array = asarray(array)
-  nd = ndim(array)
+  nd = np.ndim(array)
 
   if nd == 0:
     return array
@@ -4414,7 +4383,7 @@ def pad(array: ArrayLike, pad_width: PadValueLike[int | Array | np.ndarray],
   """
 
   util.check_arraylike("pad", array)
-  pad_width = _broadcast_to_pairs(pad_width, ndim(array), "pad_width")
+  pad_width = _broadcast_to_pairs(pad_width, np.ndim(array), "pad_width")
   if pad_width and not all(core.is_dim(p[0]) and core.is_dim(p[1])
                            for p in pad_width):
     raise TypeError('`pad_width` must be of integral type.')
@@ -4509,11 +4478,11 @@ def stack(arrays: np.ndarray | Array | Sequence[ArrayLike],
     return concatenate(expand_dims(arrays, axis + 1), axis=axis, dtype=dtype)
   else:
     util.check_arraylike("stack", *arrays)
-    shape0 = shape(arrays[0])
+    shape0 = np.shape(arrays[0])
     axis = _canonicalize_axis(axis, len(shape0) + 1)
     new_arrays = []
     for a in arrays:
-      if shape(a) != shape0:
+      if np.shape(a) != shape0:
         raise ValueError("All input arrays must have the same shape.")
       new_arrays.append(expand_dims(a, axis))
     return concatenate(new_arrays, axis=axis, dtype=dtype)
@@ -4606,7 +4575,7 @@ def tile(A: ArrayLike, reps: DimSize | Sequence[DimSize]) -> Array:
     reps_tup = tuple(reps)  # type: ignore[arg-type]
   reps_tup = tuple(operator.index(rep) if core.is_constant_dim(rep) else rep
                    for rep in reps_tup)
-  A_shape = (1,) * (len(reps_tup) - ndim(A)) + shape(A)
+  A_shape = (1,) * (len(reps_tup) - np.ndim(A)) + np.shape(A)
   reps_tup = (1,) * (len(A_shape) - len(reps_tup)) + reps_tup
   result = broadcast_to(reshape(A, [j for i in A_shape for j in [1, i]]),
                         [k for pair in zip(reps_tup, A_shape) for k in pair])
@@ -4675,9 +4644,9 @@ def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
     raise ValueError("Need at least one array to concatenate.")
   if axis is None:
     return concatenate([ravel(a) for a in arrays], axis=0, dtype=dtype)
-  if ndim(arrays[0]) == 0:
+  if np.ndim(arrays[0]) == 0:
     raise ValueError("Zero-dimensional arrays cannot be concatenated.")
-  axis = _canonicalize_axis(axis, ndim(arrays[0]))
+  axis = _canonicalize_axis(axis, np.ndim(arrays[0]))
   if dtype is None:
     arrays_out = util.promote_dtypes(*arrays)
   else:
@@ -5082,7 +5051,7 @@ def choose(a: ArrayLike, choices: Array | np.ndarray | Sequence[ArrayLike],
 
 
 def _atleast_nd(x: ArrayLike, n: int) -> Array:
-  m = ndim(x)
+  m = np.ndim(x)
   return lax.broadcast(x, (1,) * (n - m)) if m < n else asarray(x)
 
 def _block(xs: ArrayLike | list[ArrayLike]) -> tuple[Array, int]:
@@ -5095,7 +5064,7 @@ def _block(xs: ArrayLike | list[ArrayLike]) -> tuple[Array, int]:
     xs_tup, depths = unzip2([_block(x) for x in xs])
     if any(d != depths[0] for d in depths[1:]):
       raise ValueError("Mismatched list depths in jax.numpy.block")
-    rank = max(depths[0], max(ndim(x) for x in xs_tup))
+    rank = max(depths[0], max(np.ndim(x) for x in xs_tup))
     xs_tup = tuple(_atleast_nd(x, rank) for x in xs_tup)
     return concatenate(xs_tup, axis=-depths[0]), depths[0] + 1
   else:
@@ -5494,12 +5463,11 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   # whenever x is weak, but avoids introducing weak types with something like
   # array([1, 2, 3])
   weak_type = dtype is None and dtypes.is_weakly_typed(object)
-  if (config.sharding_in_types.value and device is None and
-      isinstance(object, core.Tracer)):
+  if device is None and isinstance(object, core.Tracer):
     sharding = object.aval.sharding
     sharding = None if sharding.mesh.empty else sharding
   else:
-    sharding = canonicalize_device_to_sharding(device)  # type: ignore
+    sharding = canonicalize_device_to_sharding(device)
 
   # Use device_put to avoid a copy for ndarray inputs.
   if (not copy and isinstance(object, np.ndarray) and
@@ -5597,8 +5565,8 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     raise TypeError(f"Unexpected input type for array: {type(object)}")
   out_array: Array = lax_internal._convert_element_type(
       out, dtype, weak_type=weak_type, sharding=sharding)
-  if ndmin > ndim(out_array):
-    out_array = lax.expand_dims(out_array, range(ndmin - ndim(out_array)))
+  if ndmin > np.ndim(out_array):
+    out_array = lax.expand_dims(out_array, range(ndmin - np.ndim(out_array)))
   return out_array
 
 
@@ -5847,7 +5815,7 @@ def array_equal(a1: ArrayLike, a2: ArrayLike, equal_nan: bool = False) -> Array:
     Array(True, dtype=bool)
   """
   a1, a2 = asarray(a1), asarray(a2)
-  if shape(a1) != shape(a2):
+  if np.shape(a1) != np.shape(a2):
     return array(False, dtype=bool)
   eq = asarray(a1 == a2)
   if equal_nan:
@@ -6389,7 +6357,7 @@ def _arange(start: ArrayLike | DimSize, stop: ArrayLike | DimSize | None = None,
     return lax.iota(dtype, start)  # type: ignore[arg-type]
   else:
     if step is None and start == 0 and stop is not None:
-      return lax.iota(dtype, np.ceil(stop).astype(int))  # type: ignore[arg-type]
+      return lax.iota(dtype, np.ceil(stop).astype(int))
     return array(np.arange(start, stop=stop, step=step, dtype=dtype))
 
 
@@ -6527,7 +6495,7 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   start = start.astype(computation_dtype)
   stop = stop.astype(computation_dtype)
 
-  bounds_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))
+  bounds_shape = list(lax.broadcast_shapes(np.shape(start), np.shape(stop)))
   broadcast_start = broadcast_to(start, bounds_shape)
   broadcast_stop = broadcast_to(stop, bounds_shape)
   axis = len(bounds_shape) + axis + 1 if axis < 0 else axis
@@ -6550,12 +6518,12 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
                             _canonicalize_axis(axis, out.ndim))
 
   elif num == 1:
-    delta = asarray(nan if endpoint else stop - start, dtype=computation_dtype)
+    delta = asarray(np.nan if endpoint else stop - start, dtype=computation_dtype)
     out = reshape(broadcast_start, bounds_shape)
   else:  # num == 0 degenerate case, match numpy behavior
-    empty_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))
+    empty_shape = list(lax.broadcast_shapes(np.shape(start), np.shape(stop)))
     empty_shape.insert(axis, 0)
-    delta = asarray(nan, dtype=computation_dtype)
+    delta = asarray(np.nan, dtype=computation_dtype)
     out = reshape(array([], dtype=dtype), empty_shape)
 
   if issubdtype(dtype, np.integer) and not issubdtype(out.dtype, np.integer):
@@ -7061,7 +7029,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
       "value to `total_repeat_length`.")
 
     # Fast path for when repeats is a scalar.
-    if np.ndim(repeats) == 0 and ndim(arr) != 0:
+    if np.ndim(repeats) == 0 and np.ndim(arr) != 0:
       input_shape = arr.shape
       axis = _canonicalize_axis(axis, len(input_shape))
       aux_axis = axis + 1
@@ -7084,7 +7052,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
 
   # Special case when a is a scalar.
   if arr.ndim == 0:
-    if shape(repeats) == (1,):
+    if np.shape(repeats) == (1,):
       return full([total_repeat_length], arr)
     else:
       raise ValueError('`repeat` with a scalar parameter `a` is only '
@@ -7112,7 +7080,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
   block_split_indicators = block_split_indicators.at[scatter_indices].add(1)
   # Cumsum again to get scatter indices for repeat, e.g. [0,1,1,3,3,3,3,3]
   gather_indices = reductions.cumsum(block_split_indicators) - 1
-  return take(arr, gather_indices, axis=axis)
+  return indexing.take(arr, gather_indices, axis=axis)
 
 
 @export
@@ -7287,7 +7255,7 @@ def tril(m: ArrayLike, k: int = 0) -> Array:
             [7, 8]]], dtype=int32)
   """
   util.check_arraylike("tril", m)
-  m_shape = shape(m)
+  m_shape = np.shape(m)
   if len(m_shape) < 2:
     raise ValueError("Argument to jax.numpy.tril must be at least 2D")
   N, M = m_shape[-2:]
@@ -7354,7 +7322,7 @@ def triu(m: ArrayLike, k: int = 0) -> Array:
             [0, 8]]], dtype=int32)
   """
   util.check_arraylike("triu", m)
-  m_shape = shape(m)
+  m_shape = np.shape(m)
   if len(m_shape) < 2:
     raise ValueError("Argument to jax.numpy.triu must be at least 2D")
   N, M = m_shape[-2:]
@@ -7414,12 +7382,12 @@ def trace(a: ArrayLike, offset: int | ArrayLike = 0, axis1: int = 0, axis2: int 
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.trace is not supported.")
 
-  if _canonicalize_axis(axis1, ndim(a)) == _canonicalize_axis(axis2, ndim(a)):
+  if _canonicalize_axis(axis1, np.ndim(a)) == _canonicalize_axis(axis2, np.ndim(a)):
     raise ValueError(f"axis1 and axis2 can not be same. axis1={axis1} and axis2={axis2}")
 
   dtypes.check_user_dtype_supported(dtype, "trace")
 
-  a_shape = shape(a)
+  a_shape = np.shape(a)
   a = moveaxis(a, (axis1, axis2), (-2, -1))
 
   # Mask out the diagonal and reduce.
@@ -7658,7 +7626,7 @@ def triu_indices_from(arr: ArrayLike, k: int = 0) -> tuple[Array, Array]:
     >>> jnp.triu_indices_from(arr, k=-1)
     (Array([0, 0, 0, 1, 1, 1, 2, 2], dtype=int32), Array([0, 1, 2, 0, 1, 2, 1, 2], dtype=int32))
   """
-  arr_shape = shape(arr)
+  arr_shape = np.shape(arr)
   if len(arr_shape) != 2:
     raise ValueError("Only 2-D inputs are accepted")
   return triu_indices(arr_shape[0], k=k, m=arr_shape[1])
@@ -7716,7 +7684,7 @@ def tril_indices_from(arr: ArrayLike, k: int = 0) -> tuple[Array, Array]:
     >>> jnp.tril_indices_from(arr, k=-1)
     (Array([1, 2, 2], dtype=int32), Array([0, 0, 1], dtype=int32))
   """
-  arr_shape = shape(arr)
+  arr_shape = np.shape(arr)
   if len(arr_shape) != 2:
     raise ValueError("Only 2-D inputs are accepted")
   return tril_indices(arr_shape[0], k=k, m=arr_shape[1])
@@ -7871,12 +7839,12 @@ def diag_indices_from(arr: ArrayLike) -> tuple[Array, ...]:
     Array([0, 1], dtype=int32))
   """
   util.check_arraylike("diag_indices_from", arr)
-  nd = ndim(arr)
-  if not ndim(arr) >= 2:
+  nd = np.ndim(arr)
+  if not np.ndim(arr) >= 2:
     raise ValueError("input array must be at least 2-d")
 
-  s = shape(arr)
-  if len(set(shape(arr))) != 1:
+  s = np.shape(arr)
+  if len(set(np.shape(arr))) != 1:
     raise ValueError("All dimensions of input must be of equal length")
 
   return diag_indices(s[0], ndim=nd)
@@ -7921,12 +7889,12 @@ def diagonal(a: ArrayLike, offset: int = 0, axis1: int = 0,
   """
   util.check_arraylike("diagonal", a)
 
-  if ndim(a) < 2:
+  if np.ndim(a) < 2:
     raise ValueError("diagonal requires an array of at least two dimensions.")
   offset = core.concrete_or_error(operator.index, offset, "'offset' argument of jnp.diagonal()")
 
   def _default_diag(a):
-    a_shape = shape(a)
+    a_shape = np.shape(a)
 
     a = moveaxis(a, (axis1, axis2), (-2, -1))
 
@@ -7940,10 +7908,10 @@ def diagonal(a: ArrayLike, offset: int = 0, axis1: int = 0,
 
   # The mosaic lowering rule for diag is only defined for square arrays.
   # TODO(mvoz): Add support for offsets.
-  if shape(a)[0] != shape(a)[1] or ndim(a) != 2 or offset != 0 or _dtype(a) == bool:
+  if np.shape(a)[0] != np.shape(a)[1] or np.ndim(a) != 2 or offset != 0 or _dtype(a) == bool:
     return _default_diag(a)
   else:
-    a_shape_eye = eye(shape(a)[0], dtype=_dtype(a))
+    a_shape_eye = eye(np.shape(a)[0], dtype=_dtype(a))
 
     def _mosaic_diag(a):
       def _sum(x, axis):
@@ -8010,7 +7978,7 @@ def diag(v: ArrayLike, k: int = 0) -> Array:
 @partial(jit, static_argnames=('k',))
 def _diag(v, k):
   util.check_arraylike("diag", v)
-  v_shape = shape(v)
+  v_shape = np.shape(v)
   if len(v_shape) == 1:
     zero = lambda x: lax.full_like(x, shape=(), fill_value=0)
     n = v_shape[0] + abs(k)
@@ -8480,7 +8448,7 @@ def apply_along_axis(
     Array([ 65, 133, 243], dtype=int32)
   """
   util.check_arraylike("apply_along_axis", arr)
-  num_dims = ndim(arr)
+  num_dims = np.ndim(arr)
   axis = _canonicalize_axis(axis, num_dims)
   func = lambda arr: func1d(arr, *args, **kwargs)
   for i in range(1, num_dims - axis):
@@ -8544,1158 +8512,6 @@ def apply_over_axes(func: Callable[[ArrayLike, int], Array], a: ArrayLike,
     else:
       raise ValueError("function is not returning an array of the correct shape")
   return a_arr
-
-
-### Tensor contraction operations
-
-@export
-@partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
-def dot(a: ArrayLike, b: ArrayLike, *,
-        precision: PrecisionLike = None,
-        preferred_element_type: DTypeLike | None = None) -> Array:
-  """Compute the dot product of two arrays.
-
-  JAX implementation of :func:`numpy.dot`.
-
-  This differs from :func:`jax.numpy.matmul` in two respects:
-
-  - if either ``a`` or ``b`` is a scalar, the result of ``dot`` is equivalent to
-    :func:`jax.numpy.multiply`, while the result of ``matmul`` is an error.
-  - if ``a`` and ``b`` have more than 2 dimensions, the batch indices are
-    stacked rather than broadcast.
-
-  Args:
-    a: first input array, of shape ``(..., N)``.
-    b: second input array. Must have shape ``(N,)`` or ``(..., N, M)``.
-      In the multi-dimensional case, leading dimensions must be broadcast-compatible
-      with the leading dimensions of ``a``.
-    precision: either ``None`` (default), which means the default precision for
-      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
-      such values indicating precision of ``a`` and ``b``.
-    preferred_element_type: either ``None`` (default), which means the default
-      accumulation type for the input types, or a datatype, indicating to
-      accumulate results to and return a result with that datatype.
-
-  Returns:
-    array containing the dot product of the inputs, with batch dimensions of
-    ``a`` and ``b`` stacked rather than broadcast.
-
-  See also:
-    - :func:`jax.numpy.matmul`: broadcasted batched matmul.
-    - :func:`jax.lax.dot_general`: general batched matrix multiplication.
-
-  Examples:
-    For scalar inputs, ``dot`` computes the element-wise product:
-
-    >>> x = jnp.array([1, 2, 3])
-    >>> jnp.dot(x, 2)
-    Array([2, 4, 6], dtype=int32)
-
-    For vector or matrix inputs, ``dot`` computes the vector or matrix product:
-
-    >>> M = jnp.array([[2, 3, 4],
-    ...                [5, 6, 7],
-    ...                [8, 9, 0]])
-    >>> jnp.dot(M, x)
-    Array([20, 38, 26], dtype=int32)
-    >>> jnp.dot(M, M)
-    Array([[ 51,  60,  29],
-           [ 96, 114,  62],
-           [ 61,  78,  95]], dtype=int32)
-
-    For higher-dimensional matrix products, batch dimensions are stacked, whereas
-    in :func:`~jax.numpy.matmul` they are broadcast. For example:
-
-    >>> a = jnp.zeros((3, 2, 4))
-    >>> b = jnp.zeros((3, 4, 1))
-    >>> jnp.dot(a, b).shape
-    (3, 2, 3, 1)
-    >>> jnp.matmul(a, b).shape
-    (3, 2, 1)
-  """
-  a, b = util.ensure_arraylike("dot", a, b)
-  dtypes.check_user_dtype_supported(preferred_element_type, "dot")
-  if preferred_element_type is None:
-    preferred_element_type, output_weak_type = dtypes.result_type(a, b, return_weak_type_flag=True)
-  else:
-    output_weak_type = False
-
-  batch_dims = ((), ())
-  a_ndim, b_ndim = ndim(a), ndim(b)
-  if a_ndim == 0 or b_ndim == 0:
-    contract_dims: tuple[tuple[int, ...], tuple[int, ...]] = ((), ())
-  else:
-    if b_ndim == 1:
-      contract_dims = ((a_ndim - 1,), (0,))
-    else:
-      contract_dims = ((a_ndim - 1,), (b_ndim - 2,))
-  result = lax.dot_general(a, b, dimension_numbers=(contract_dims, batch_dims),
-                           precision=precision,
-                           preferred_element_type=preferred_element_type)
-  return lax_internal._convert_element_type(result, preferred_element_type,
-                                            output_weak_type)
-
-
-@export
-@partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
-def matmul(a: ArrayLike, b: ArrayLike, *,
-           precision: PrecisionLike = None,
-           preferred_element_type: DTypeLike | None = None,
-           ) -> Array:
-  """Perform a matrix multiplication.
-
-  JAX implementation of :func:`numpy.matmul`.
-
-  Args:
-    a: first input array, of shape ``(N,)`` or ``(..., K, N)``.
-    b: second input array. Must have shape ``(N,)`` or ``(..., N, M)``.
-      In the multi-dimensional case, leading dimensions must be broadcast-compatible
-      with the leading dimensions of ``a``.
-    precision: either ``None`` (default), which means the default precision for
-      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
-      such values indicating precision of ``a`` and ``b``.
-    preferred_element_type: either ``None`` (default), which means the default
-      accumulation type for the input types, or a datatype, indicating to
-      accumulate results to and return a result with that datatype.
-
-  Returns:
-    array containing the matrix product of the inputs. Shape is ``a.shape[:-1]``
-    if ``b.ndim == 1``, otherwise the shape is ``(..., K, M)``, where leading
-    dimensions of ``a`` and ``b`` are broadcast together.
-
-  See Also:
-    - :func:`jax.numpy.linalg.vecdot`: batched vector product.
-    - :func:`jax.numpy.linalg.tensordot`: batched tensor product.
-    - :func:`jax.lax.dot_general`: general N-dimensional batched dot product.
-
-  Examples:
-    Vector dot products:
-
-    >>> a = jnp.array([1, 2, 3])
-    >>> b = jnp.array([4, 5, 6])
-    >>> jnp.matmul(a, b)
-    Array(32, dtype=int32)
-
-    Matrix dot product:
-
-    >>> a = jnp.array([[1, 2, 3],
-    ...                [4, 5, 6]])
-    >>> b = jnp.array([[1, 2],
-    ...                [3, 4],
-    ...                [5, 6]])
-    >>> jnp.matmul(a, b)
-    Array([[22, 28],
-           [49, 64]], dtype=int32)
-
-    For convenience, in all cases you can do the same computation using
-    the ``@`` operator:
-
-    >>> a @ b
-    Array([[22, 28],
-           [49, 64]], dtype=int32)
-  """
-  a, b = util.ensure_arraylike("matmul", a, b)
-  dtypes.check_user_dtype_supported(preferred_element_type, "matmul")
-  for i, x in enumerate((a, b)):
-    if ndim(x) < 1:
-      msg = (f"matmul input operand {i} must have ndim at least 1, "
-             f"but it has ndim {ndim(x)}")
-      raise ValueError(msg)
-  if preferred_element_type is None:
-    preferred_element_type, output_weak_type = dtypes.result_type(a, b, return_weak_type_flag=True)
-  else:
-    output_weak_type = False
-
-  a_is_mat, b_is_mat = (ndim(a) > 1), (ndim(b) > 1)
-  a_batch_dims: tuple[int | None, ...] = shape(a)[:-2] if a_is_mat else ()
-  b_batch_dims: tuple[int | None, ...] = shape(b)[:-2] if b_is_mat else ()
-  num_batch_dims = max(len(a_batch_dims), len(b_batch_dims))
-  a_batch_dims = (None,) * (num_batch_dims - len(a_batch_dims)) + a_batch_dims
-  b_batch_dims = (None,) * (num_batch_dims - len(b_batch_dims)) + b_batch_dims
-
-  # Dimensions to squeeze from the inputs.
-  a_squeeze: list[int] = []
-  b_squeeze: list[int] = []
-
-  # Positions of batch dimensions in squeezed inputs.
-  a_batch = []
-  b_batch = []
-
-  # Desired index in final output of each kind of dimension, in the order that
-  # lax.dot_general will emit them.
-  idx_batch: list[int] = []
-  idx_a_other: list[int] = []  # other = non-batch, non-contracting.
-  idx_b_other: list[int] = []
-  for i, (ba, bb) in enumerate(zip(a_batch_dims, b_batch_dims)):
-    if ba is None:
-      idx_b_other.append(i)
-    elif bb is None:
-      idx_a_other.append(i)
-    elif core.definitely_equal(ba, 1):
-      idx_b_other.append(i)
-      a_squeeze.append(len(idx_batch) + len(idx_a_other) + len(a_squeeze))
-    elif core.definitely_equal(bb, 1):
-      idx_a_other.append(i)
-      b_squeeze.append(len(idx_batch) + len(idx_b_other) + len(b_squeeze))
-    elif core.definitely_equal(ba, bb):
-      a_batch.append(len(idx_batch) + len(idx_a_other))
-      b_batch.append(len(idx_batch) + len(idx_b_other))
-      idx_batch.append(i)
-    else:
-      raise ValueError("Incompatible shapes for matmul arguments: {} and {}"
-                       .format(shape(a), shape(b)))
-
-  if a_is_mat: idx_a_other.append(num_batch_dims)
-  if b_is_mat: idx_b_other.append(num_batch_dims + a_is_mat)
-  perm = np.argsort(np.concatenate([idx_batch, idx_a_other, idx_b_other]))
-
-  a = lax.squeeze(a, tuple(a_squeeze))
-  b = lax.squeeze(b, tuple(b_squeeze))
-  out = lax.dot_general(
-    a, b, (((ndim(a) - 1,), (ndim(b) - 1 - b_is_mat,)), (a_batch, b_batch)),
-    precision=precision, preferred_element_type=preferred_element_type)
-  result = lax.transpose(out, perm)
-  return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
-
-
-@export
-@jit
-def matvec(x1: ArrayLike, x2: ArrayLike, /) -> Array:
-  """Batched matrix-vector product.
-
-  JAX implementation of :func:`numpy.matvec`.
-
-  Args:
-    x1: array of shape ``(..., M, N)``
-    x2: array of shape ``(..., N)``. Leading dimensions must be broadcast-compatible
-      with leading dimensions of ``x1``.
-
-  Returns:
-    An array of shape ``(..., M)`` containing the batched matrix-vector product.
-
-  See also:
-    - :func:`jax.numpy.linalg.vecdot`: batched vector product.
-    - :func:`jax.numpy.vecmat`: vector-matrix product.
-    - :func:`jax.numpy.matmul`: general matrix multiplication.
-
-  Examples:
-    Simple matrix-vector product:
-
-    >>> x1 = jnp.array([[1, 2, 3],
-    ...                 [4, 5, 6]])
-    >>> x2 = jnp.array([7, 8, 9])
-    >>> jnp.matvec(x1, x2)
-    Array([ 50, 122], dtype=int32)
-
-    Batched matrix-vector product:
-
-    >>> x2 = jnp.array([[7, 8, 9],
-    ...                 [5, 6, 7]])
-    >>> jnp.matvec(x1, x2)
-    Array([[ 50, 122],
-           [ 38,  92]], dtype=int32)
-  """
-  util.check_arraylike("matvec", x1, x2)
-  return vectorize(matmul, signature="(n,m),(m)->(n)")(x1, x2)
-
-
-@export
-@jit
-def vecmat(x1: ArrayLike, x2: ArrayLike, /) -> Array:
-  """Batched conjugate vector-matrix product.
-
-  JAX implementation of :func:`numpy.vecmat`.
-
-  Args:
-    x1: array of shape ``(..., M)``.
-    x2: array of shape ``(..., M, N)``. Leading dimensions must be broadcast-compatible
-      with leading dimensions of ``x1``.
-
-  Returns:
-    An array of shape ``(..., N)`` containing the batched conjugate vector-matrix product.
-
-  See also:
-    - :func:`jax.numpy.linalg.vecdot`: batched vector product.
-    - :func:`jax.numpy.matvec`: matrix-vector product.
-    - :func:`jax.numpy.matmul`: general matrix multiplication.
-
-  Examples:
-    Simple vector-matrix product:
-
-    >>> x1 = jnp.array([[1, 2, 3]])
-    >>> x2 = jnp.array([[4, 5],
-    ...                 [6, 7],
-    ...                 [8, 9]])
-    >>> jnp.vecmat(x1, x2)
-    Array([[40, 46]], dtype=int32)
-
-    Batched vector-matrix product:
-
-    >>> x1 = jnp.array([[1, 2, 3],
-    ...                 [4, 5, 6]])
-    >>> jnp.vecmat(x1, x2)
-    Array([[ 40,  46],
-           [ 94, 109]], dtype=int32)
-  """
-  util.check_arraylike("matvec", x1, x2)
-  return vectorize(matmul, signature="(n),(n,m)->(m)")(ufuncs.conj(x1), x2)
-
-
-@export
-@partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
-def vdot(
-    a: ArrayLike, b: ArrayLike, *,
-    precision: PrecisionLike = None,
-    preferred_element_type: DTypeLike | None = None,
-) -> Array:
-  """Perform a conjugate multiplication of two 1D vectors.
-
-  JAX implementation of :func:`numpy.vdot`.
-
-  Args:
-    a: first input array, if not 1D it will be flattened.
-    b: second input array, if not 1D it will be flattened. Must have ``a.size == b.size``.
-    precision: either ``None`` (default), which means the default precision for
-      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
-      such values indicating precision of ``a`` and ``b``.
-    preferred_element_type: either ``None`` (default), which means the default
-      accumulation type for the input types, or a datatype, indicating to
-      accumulate results to and return a result with that datatype.
-
-  Returns:
-    Scalar array (shape ``()``) containing the conjugate vector product of the inputs.
-
-  See Also:
-    - :func:`jax.numpy.vecdot`: batched vector product.
-    - :func:`jax.numpy.matmul`: general matrix multiplication.
-    - :func:`jax.lax.dot_general`: general N-dimensional batched dot product.
-
-  Examples:
-    >>> x = jnp.array([1j, 2j, 3j])
-    >>> y = jnp.array([1., 2., 3.])
-    >>> jnp.vdot(x, y)
-    Array(0.-14.j, dtype=complex64)
-
-    Note the difference between this and :func:`~jax.numpy.dot`, which does not
-    conjugate the first input when complex:
-
-    >>> jnp.dot(x, y)
-    Array(0.+14.j, dtype=complex64)
-  """
-  util.check_arraylike("vdot", a, b)
-  if issubdtype(_dtype(a), np.complexfloating):
-    a = ufuncs.conj(a)
-  return dot(ravel(a), ravel(b), precision=precision,
-             preferred_element_type=preferred_element_type)
-
-
-@export
-def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
-           precision: PrecisionLike = None,
-           preferred_element_type: DTypeLike | None = None) -> Array:
-  """Perform a conjugate multiplication of two batched vectors.
-
-  JAX implementation of :func:`numpy.vecdot`.
-
-  Args:
-    a: left-hand side array.
-    b: right-hand side array. Size of ``b[axis]`` must match size of ``a[axis]``,
-      and remaining dimensions must be broadcast-compatible.
-    axis: axis along which to compute the dot product (default: -1)
-    precision: either ``None`` (default), which means the default precision for
-      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
-      such values indicating precision of ``a`` and ``b``.
-    preferred_element_type: either ``None`` (default), which means the default
-      accumulation type for the input types, or a datatype, indicating to
-      accumulate results to and return a result with that datatype.
-
-  Returns:
-    array containing the conjugate dot product of ``a`` and ``b`` along ``axis``.
-    The non-contracted dimensions are broadcast together.
-
-  See Also:
-    - :func:`jax.numpy.vdot`: flattened vector product.
-    - :func:`jax.numpy.vecmat`: vector-matrix product.
-    - :func:`jax.numpy.matmul`: general matrix multiplication.
-    - :func:`jax.lax.dot_general`: general N-dimensional batched dot product.
-
-  Examples:
-    Vector conjugate-dot product of two 1D arrays:
-
-    >>> a = jnp.array([1j, 2j, 3j])
-    >>> b = jnp.array([4., 5., 6.])
-    >>> jnp.linalg.vecdot(a, b)
-    Array(0.-32.j, dtype=complex64)
-
-    Batched vector dot product of two 2D arrays:
-
-    >>> a = jnp.array([[1, 2, 3],
-    ...                [4, 5, 6]])
-    >>> b = jnp.array([[2, 3, 4]])
-    >>> jnp.linalg.vecdot(a, b, axis=-1)
-    Array([20, 47], dtype=int32)
-  """
-  x1_arr, x2_arr = util.ensure_arraylike("jnp.vecdot", x1, x2)
-  if x1_arr.shape[axis] != x2_arr.shape[axis]:
-    raise ValueError(f"axes must match; got shapes {x1_arr.shape} and {x2_arr.shape} with {axis=}")
-  x1_arr = jax.numpy.moveaxis(x1_arr, axis, -1)
-  x2_arr = jax.numpy.moveaxis(x2_arr, axis, -1)
-  return vectorize(partial(vdot, precision=precision, preferred_element_type=preferred_element_type),
-                   signature="(n),(n)->()")(x1_arr, x2_arr)
-
-
-@export
-def tensordot(a: ArrayLike, b: ArrayLike,
-              axes: int | Sequence[int] | Sequence[Sequence[int]] = 2,
-              *, precision: PrecisionLike = None,
-              preferred_element_type: DTypeLike | None = None) -> Array:
-  """Compute the tensor dot product of two N-dimensional arrays.
-
-  JAX implementation of :func:`numpy.linalg.tensordot`.
-
-  Args:
-    a: N-dimensional array
-    b: M-dimensional array
-    axes: integer or tuple of sequences of integers. If an integer `k`, then
-      sum over the last `k` axes of ``a`` and the first `k` axes of ``b``,
-      in order. If a tuple, then ``axes[0]`` specifies the axes of ``a`` and
-      ``axes[1]`` specifies the axes of ``b``.
-    precision: either ``None`` (default), which means the default precision for
-      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
-      such values indicating precision of ``a`` and ``b``.
-    preferred_element_type: either ``None`` (default), which means the default
-      accumulation type for the input types, or a datatype, indicating to
-      accumulate results to and return a result with that datatype.
-
-  Returns:
-    array containing the tensor dot product of the inputs
-
-  See also:
-    - :func:`jax.numpy.einsum`: NumPy API for more general tensor contractions.
-    - :func:`jax.lax.dot_general`: XLA API for more general tensor contractions.
-
-  Examples:
-    >>> x1 = jnp.arange(24.).reshape(2, 3, 4)
-    >>> x2 = jnp.ones((3, 4, 5))
-    >>> jnp.tensordot(x1, x2)
-    Array([[ 66.,  66.,  66.,  66.,  66.],
-           [210., 210., 210., 210., 210.]], dtype=float32)
-
-    Equivalent result when specifying the axes as explicit sequences:
-
-    >>> jnp.tensordot(x1, x2, axes=([1, 2], [0, 1]))
-    Array([[ 66.,  66.,  66.,  66.,  66.],
-           [210., 210., 210., 210., 210.]], dtype=float32)
-
-    Equivalent result via :func:`~jax.numpy.einsum`:
-
-    >>> jnp.einsum('ijk,jkm->im', x1, x2)
-    Array([[ 66.,  66.,  66.,  66.,  66.],
-           [210., 210., 210., 210., 210.]], dtype=float32)
-
-    Setting ``axes=1`` for two-dimensional inputs is equivalent to a matrix
-    multiplication:
-
-    >>> x1 = jnp.array([[1, 2],
-    ...                 [3, 4]])
-    >>> x2 = jnp.array([[1, 2, 3],
-    ...                 [4, 5, 6]])
-    >>> jnp.linalg.tensordot(x1, x2, axes=1)
-    Array([[ 9, 12, 15],
-           [19, 26, 33]], dtype=int32)
-    >>> x1 @ x2
-    Array([[ 9, 12, 15],
-           [19, 26, 33]], dtype=int32)
-
-    Setting ``axes=0`` for one-dimensional inputs is equivalent to
-    :func:`~jax.numpy.outer`:
-
-    >>> x1 = jnp.array([1, 2])
-    >>> x2 = jnp.array([1, 2, 3])
-    >>> jnp.linalg.tensordot(x1, x2, axes=0)
-    Array([[1, 2, 3],
-           [2, 4, 6]], dtype=int32)
-    >>> jnp.outer(x1, x2)
-    Array([[1, 2, 3],
-           [2, 4, 6]], dtype=int32)
-  """
-  a, b = util.ensure_arraylike("tensordot", a, b)
-  dtypes.check_user_dtype_supported(preferred_element_type, "tensordot")
-  a_ndim = ndim(a)
-  b_ndim = ndim(b)
-
-  if preferred_element_type is None:
-    preferred_element_type, output_weak_type = dtypes.result_type(a, b, return_weak_type_flag=True)
-  else:
-    output_weak_type = False
-
-  if type(axes) is int:
-    if axes > min(a_ndim, b_ndim):
-      msg = "Number of tensordot axes (axes {}) exceeds input ranks ({} and {})"
-      raise TypeError(msg.format(axes, a.shape, b.shape))
-    contracting_dims = tuple(range(a_ndim - axes, a_ndim)), tuple(range(axes))
-  elif isinstance(axes, (tuple, list)) and len(axes) == 2:
-    ax1, ax2 = axes
-    if type(ax1) == type(ax2) == int:
-      contracting_dims = ((_canonicalize_axis(ax1, a_ndim),),
-                          (_canonicalize_axis(ax2, b_ndim),))
-    elif isinstance(ax1, (tuple, list)) and isinstance(ax2, (tuple, list)):
-      if len(ax1) != len(ax2):
-        msg = "tensordot requires axes lists to have equal length, got {} and {}."
-        raise TypeError(msg.format(ax1, ax2))
-      contracting_dims = (tuple(_canonicalize_axis(i, a_ndim) for i in ax1),
-                          tuple(_canonicalize_axis(i, b_ndim) for i in ax2))
-    else:
-      msg = ("tensordot requires both axes lists to be either ints, tuples or "
-             "lists, got {} and {}")
-      raise TypeError(msg.format(ax1, ax2))
-  else:
-    msg = ("tensordot axes argument must be an int, a pair of ints, or a pair "
-           "of lists/tuples of ints.")
-    raise TypeError(msg)
-  result = lax.dot_general(a, b, (contracting_dims, ((), ())),
-                           precision=precision, preferred_element_type=preferred_element_type)
-  return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
-
-
-class Unoptimized(opt_einsum.paths.PathOptimizer):
-  """Unoptimized path for einsum."""
-  def __call__(self, inputs, *args, **kwargs):
-    return [(0, 1)] * (len(inputs) - 1)
-
-@overload
-def einsum(
-    subscript: str, /,
-    *operands: ArrayLike,
-    out: None = None,
-    optimize: str | bool | list[tuple[int, ...]] = "auto",
-    precision: PrecisionLike = None,
-    preferred_element_type: DTypeLike | None = None,
-    _dot_general: Callable[..., Array] = lax.dot_general,
-    out_sharding=None,
-) -> Array: ...
-
-@overload
-def einsum(
-    arr: ArrayLike,
-    axes: Sequence[Any], /,
-    *operands: ArrayLike | Sequence[Any],
-    out: None = None,
-    optimize: str | bool | list[tuple[int, ...]] = "auto",
-    precision: PrecisionLike = None,
-    preferred_element_type: DTypeLike | None = None,
-    _dot_general: Callable[..., Array] = lax.dot_general,
-    out_sharding=None,
-) -> Array: ...
-
-@export
-def einsum(
-    subscripts, /,
-    *operands,
-    out: None = None,
-    optimize: str | bool | list[tuple[int, ...]] = "auto",
-    precision: PrecisionLike = None,
-    preferred_element_type: DTypeLike | None = None,
-    _dot_general: Callable[..., Array] = lax.dot_general,
-    out_sharding=None,
-) -> Array:
-  """Einstein summation
-
-  JAX implementation of :func:`numpy.einsum`.
-
-  ``einsum`` is a powerful and generic API for computing various reductions,
-  inner products, outer products, axis reorderings, and combinations thereof
-  across one or more input arrays. It has a somewhat complicated overloaded API;
-  the arguments below reflect the most common calling convention. The Examples
-  section below demonstrates some of the alternative calling conventions.
-
-  Args:
-    subscripts: string containing axes names separated by commas.
-    *operands: sequence of one or more arrays corresponding to the subscripts.
-    optimize: specify how to optimize the order of computation. In JAX this defaults
-      to ``"auto"`` which produces optimized expressions via the opt_einsum_
-      package. Other options are ``True`` (same as ``"optimal"``), ``False``
-      (unoptimized), or any string supported by ``opt_einsum``, which
-      includes ``"optimal"``, ``"greedy"``, ``"eager"``, and others. It may also
-      be a pre-computed path (see :func:`~jax.numpy.einsum_path`).
-    precision: either ``None`` (default), which means the default precision for
-      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``).
-    preferred_element_type: either ``None`` (default), which means the default
-      accumulation type for the input types, or a datatype, indicating to
-      accumulate results to and return a result with that datatype.
-    out: unsupported by JAX
-    _dot_general: optionally override the ``dot_general`` callable used by ``einsum``.
-      This parameter is experimental, and may be removed without warning at any time.
-
-  Returns:
-    array containing the result of the einstein summation.
-
-  See also:
-    :func:`jax.numpy.einsum_path`
-
-  Examples:
-    The mechanics of ``einsum`` are perhaps best demonstrated by example. Here we
-    show how to use ``einsum`` to compute a number of quantities from one or more
-    arrays. For more discussion and examples of ``einsum``, see the documentation
-    of :func:`numpy.einsum`.
-
-    >>> M = jnp.arange(16).reshape(4, 4)
-    >>> x = jnp.arange(4)
-    >>> y = jnp.array([5, 4, 3, 2])
-
-    **Vector product**
-
-    >>> jnp.einsum('i,i', x, y)
-    Array(16, dtype=int32)
-    >>> jnp.vecdot(x, y)
-    Array(16, dtype=int32)
-
-    Here are some alternative ``einsum`` calling conventions to compute the same
-    result:
-
-    >>> jnp.einsum('i,i->', x, y)  # explicit form
-    Array(16, dtype=int32)
-    >>> jnp.einsum(x, (0,), y, (0,))  # implicit form via indices
-    Array(16, dtype=int32)
-    >>> jnp.einsum(x, (0,), y, (0,), ())  # explicit form via indices
-    Array(16, dtype=int32)
-
-    **Matrix product**
-
-    >>> jnp.einsum('ij,j->i', M, x)  # explicit form
-    Array([14, 38, 62, 86], dtype=int32)
-    >>> jnp.matmul(M, x)
-    Array([14, 38, 62, 86], dtype=int32)
-
-    Here are some alternative ``einsum`` calling conventions to compute the same
-    result:
-
-    >>> jnp.einsum('ij,j', M, x) # implicit form
-    Array([14, 38, 62, 86], dtype=int32)
-    >>> jnp.einsum(M, (0, 1), x, (1,), (0,)) # explicit form via indices
-    Array([14, 38, 62, 86], dtype=int32)
-    >>> jnp.einsum(M, (0, 1), x, (1,))  # implicit form via indices
-    Array([14, 38, 62, 86], dtype=int32)
-
-    **Outer product**
-
-    >>> jnp.einsum("i,j->ij", x, y)
-    Array([[ 0,  0,  0,  0],
-           [ 5,  4,  3,  2],
-           [10,  8,  6,  4],
-           [15, 12,  9,  6]], dtype=int32)
-    >>> jnp.outer(x, y)
-    Array([[ 0,  0,  0,  0],
-           [ 5,  4,  3,  2],
-           [10,  8,  6,  4],
-           [15, 12,  9,  6]], dtype=int32)
-
-    Some other ways of computing outer products:
-
-    >>> jnp.einsum("i,j", x, y)  # implicit form
-    Array([[ 0,  0,  0,  0],
-           [ 5,  4,  3,  2],
-           [10,  8,  6,  4],
-           [15, 12,  9,  6]], dtype=int32)
-    >>> jnp.einsum(x, (0,), y, (1,), (0, 1))  # explicit form via indices
-    Array([[ 0,  0,  0,  0],
-           [ 5,  4,  3,  2],
-           [10,  8,  6,  4],
-           [15, 12,  9,  6]], dtype=int32)
-    >>> jnp.einsum(x, (0,), y, (1,))  # implicit form via indices
-    Array([[ 0,  0,  0,  0],
-           [ 5,  4,  3,  2],
-           [10,  8,  6,  4],
-           [15, 12,  9,  6]], dtype=int32)
-
-    **1D array sum**
-
-    >>> jnp.einsum("i->", x)  # requires explicit form
-    Array(6, dtype=int32)
-    >>> jnp.einsum(x, (0,), ())  # explicit form via indices
-    Array(6, dtype=int32)
-    >>> jnp.sum(x)
-    Array(6, dtype=int32)
-
-    **Sum along an axis**
-
-    >>> jnp.einsum("...j->...", M)  # requires explicit form
-    Array([ 6, 22, 38, 54], dtype=int32)
-    >>> jnp.einsum(M, (..., 0), (...,))  # explicit form via indices
-    Array([ 6, 22, 38, 54], dtype=int32)
-    >>> M.sum(-1)
-    Array([ 6, 22, 38, 54], dtype=int32)
-
-    **Matrix transpose**
-
-    >>> y = jnp.array([[1, 2, 3],
-    ...                [4, 5, 6]])
-    >>> jnp.einsum("ij->ji", y)  # explicit form
-    Array([[1, 4],
-           [2, 5],
-           [3, 6]], dtype=int32)
-    >>> jnp.einsum("ji", y)  # implicit form
-    Array([[1, 4],
-           [2, 5],
-           [3, 6]], dtype=int32)
-    >>> jnp.einsum(y, (1, 0))  # implicit form via indices
-    Array([[1, 4],
-           [2, 5],
-           [3, 6]], dtype=int32)
-    >>> jnp.einsum(y, (0, 1), (1, 0))  # explicit form via indices
-    Array([[1, 4],
-           [2, 5],
-           [3, 6]], dtype=int32)
-    >>> jnp.transpose(y)
-    Array([[1, 4],
-           [2, 5],
-           [3, 6]], dtype=int32)
-
-    **Matrix diagonal**
-
-    >>> jnp.einsum("ii->i", M)
-    Array([ 0,  5, 10, 15], dtype=int32)
-    >>> jnp.diagonal(M)
-    Array([ 0,  5, 10, 15], dtype=int32)
-
-    **Matrix trace**
-
-    >>> jnp.einsum("ii", M)
-    Array(30, dtype=int32)
-    >>> jnp.trace(M)
-    Array(30, dtype=int32)
-
-    **Tensor products**
-
-    >>> x = jnp.arange(30).reshape(2, 3, 5)
-    >>> y = jnp.arange(60).reshape(3, 4, 5)
-    >>> jnp.einsum('ijk,jlk->il', x, y)  # explicit form
-    Array([[ 3340,  3865,  4390,  4915],
-           [ 8290,  9940, 11590, 13240]], dtype=int32)
-    >>> jnp.tensordot(x, y, axes=[(1, 2), (0, 2)])
-    Array([[ 3340,  3865,  4390,  4915],
-           [ 8290,  9940, 11590, 13240]], dtype=int32)
-    >>> jnp.einsum('ijk,jlk', x, y)  # implicit form
-    Array([[ 3340,  3865,  4390,  4915],
-           [ 8290,  9940, 11590, 13240]], dtype=int32)
-    >>> jnp.einsum(x, (0, 1, 2), y, (1, 3, 2), (0, 3))  # explicit form via indices
-    Array([[ 3340,  3865,  4390,  4915],
-           [ 8290,  9940, 11590, 13240]], dtype=int32)
-    >>> jnp.einsum(x, (0, 1, 2), y, (1, 3, 2))  # implicit form via indices
-    Array([[ 3340,  3865,  4390,  4915],
-           [ 8290,  9940, 11590, 13240]], dtype=int32)
-
-    **Chained dot products**
-
-    >>> w = jnp.arange(5, 9).reshape(2, 2)
-    >>> x = jnp.arange(6).reshape(2, 3)
-    >>> y = jnp.arange(-2, 4).reshape(3, 2)
-    >>> z = jnp.array([[2, 4, 6], [3, 5, 7]])
-    >>> jnp.einsum('ij,jk,kl,lm->im', w, x, y, z)
-    Array([[ 481,  831, 1181],
-           [ 651, 1125, 1599]], dtype=int32)
-    >>> jnp.einsum(w, (0, 1), x, (1, 2), y, (2, 3), z, (3, 4))  # implicit, via indices
-    Array([[ 481,  831, 1181],
-           [ 651, 1125, 1599]], dtype=int32)
-    >>> w @ x @ y @ z  # direct chain of matmuls
-    Array([[ 481,  831, 1181],
-           [ 651, 1125, 1599]], dtype=int32)
-    >>> jnp.linalg.multi_dot([w, x, y, z])
-    Array([[ 481,  831, 1181],
-           [ 651, 1125, 1599]], dtype=int32)
-
-  .. _opt_einsum: https://github.com/dgasmith/opt_einsum
-  """
-  operands = (subscripts, *operands)
-  if out is not None:
-    raise NotImplementedError("The 'out' argument to jnp.einsum is not supported.")
-  spec = operands[0] if isinstance(operands[0], str) else None
-  path_type = 'optimal' if optimize is True else Unoptimized() if optimize is False else optimize
-
-  # Allow handling of shape polymorphism
-  non_constant_dim_types = {
-      type(d) for op in operands if not isinstance(op, str)
-      for d in np.shape(op) if not core.is_constant_dim(d)
-  }
-  if not non_constant_dim_types:
-    contract_path = opt_einsum.contract_path
-  else:
-    ty = next(iter(non_constant_dim_types))
-    contract_path = _poly_einsum_handlers.get(ty, _default_poly_einsum_handler)
-  # using einsum_call=True here is an internal api for opt_einsum... sorry
-  operands, contractions = contract_path(
-        *operands, einsum_call=True, use_blas=True, optimize=path_type)
-
-  contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)
-
-  jit_einsum = jit(_einsum, static_argnums=(1, 2, 3, 4, 5), inline=True)
-  if spec is not None:
-    jit_einsum = jax.named_call(jit_einsum, name=spec)
-  operand_arrays = list(util.ensure_arraylike_tuple("einsum", operands))
-  return jit_einsum(operand_arrays, contractions, precision,
-                    preferred_element_type, _dot_general, out_sharding)
-
-
-# Enable other modules to override einsum_contact_path.
-# Indexed by the type of the non constant dimension
-_poly_einsum_handlers = {}  # type: ignore
-
-def _default_poly_einsum_handler(*operands, **kwargs):
-  dummy = collections.namedtuple('dummy', ['shape', 'dtype'])
-  dummies = [dummy(tuple(d if type(d) is int else 8 for d in x.shape), x.dtype)
-             if hasattr(x, 'dtype') else x for x in operands]
-  mapping = {id(d): i for i, d in enumerate(dummies)}
-  out_dummies, contractions = opt_einsum.contract_path(*dummies, **kwargs)
-  contract_operands = [operands[mapping[id(d)]] for d in out_dummies]
-  return contract_operands, contractions
-
-@overload
-def einsum_path(
-    subscripts: str, /,
-    *operands: ArrayLike,
-    optimize: bool | str | list[tuple[int, ...]] =  ...,
-) -> tuple[list[tuple[int, ...]], Any]: ...
-
-@overload
-def einsum_path(
-    arr: ArrayLike,
-    axes: Sequence[Any], /,
-    *operands: ArrayLike | Sequence[Any],
-    optimize: bool | str | list[tuple[int, ...]] =  ...,
-) -> tuple[list[tuple[int, ...]], Any]: ...
-
-@export
-def einsum_path(
-    subscripts, /,
-    *operands,
-    optimize: bool | str | list[tuple[int, ...]] = 'auto'
-  ) -> tuple[list[tuple[int, ...]], Any]:
-  """Evaluates the optimal contraction path without evaluating the einsum.
-
-  JAX implementation of :func:`numpy.einsum_path`. This function calls into
-  the opt_einsum_ package, and makes use of its optimization routines.
-
-  Args:
-    subscripts: string containing axes names separated by commas.
-    *operands: sequence of one or more arrays corresponding to the subscripts.
-    optimize: specify how to optimize the order of computation. In JAX this defaults
-      to ``"auto"``. Other options are ``True`` (same as ``"optimize"``), ``False``
-      (unoptimized), or any string supported by ``opt_einsum``, which
-      includes ``"optimize"``,, ``"greedy"``, ``"eager"``, and others.
-
-  Returns:
-    A tuple containing the path that may be passed to :func:`~jax.numpy.einsum`, and a
-    printable object representing this optimal path.
-
-  Examples:
-    >>> key1, key2, key3 = jax.random.split(jax.random.key(0), 3)
-    >>> x = jax.random.randint(key1, minval=-5, maxval=5, shape=(2, 3))
-    >>> y = jax.random.randint(key2, minval=-5, maxval=5, shape=(3, 100))
-    >>> z = jax.random.randint(key3, minval=-5, maxval=5, shape=(100, 5))
-    >>> path, path_info = jnp.einsum_path("ij,jk,kl", x, y, z, optimize="optimal")
-    >>> print(path)
-    [(1, 2), (0, 1)]
-    >>> print(path_info)
-          Complete contraction:  ij,jk,kl->il
-                Naive scaling:  4
-            Optimized scaling:  3
-              Naive FLOP count:  9.000e+3
-          Optimized FLOP count:  3.060e+3
-          Theoretical speedup:  2.941e+0
-          Largest intermediate:  1.500e+1 elements
-        --------------------------------------------------------------------------------
-        scaling        BLAS                current                             remaining
-        --------------------------------------------------------------------------------
-          3           GEMM              kl,jk->lj                             ij,lj->il
-          3           GEMM              lj,ij->il                                il->il
-
-    Use the computed path in :func:`~jax.numpy.einsum`:
-
-    >>> jnp.einsum("ij,jk,kl", x, y, z, optimize=path)
-    Array([[-754,  324, -142,   82,   50],
-           [ 408,  -50,   87,  -29,    7]], dtype=int32)
-
-  .. _opt_einsum: https://github.com/dgasmith/opt_einsum
-  """
-  if optimize is True:
-    optimize = 'optimal'
-  elif optimize is False:
-    optimize = Unoptimized()
-  return opt_einsum.contract_path(subscripts, *operands, optimize=optimize)
-
-def _removechars(s, chars):
-  return s.translate(str.maketrans(dict.fromkeys(chars)))
-
-
-def _einsum(
-    operands: list[jax.Array],
-    contractions: Sequence[tuple[tuple[int, ...], frozenset[str], str]],
-    precision,
-    preferred_element_type,
-    _dot_general=lax.dot_general,
-    out_sharding=None,
-):
-  if out_sharding is not None and not config.sharding_in_types.value:
-    raise NotImplementedError("out_sharding only works when sharding_in_types "
-                              "config is True.")
-  out_sharding = canonicalize_sharding(out_sharding)
-  if out_sharding is not None and not isinstance(out_sharding, NamedSharding):
-    raise NotImplementedError(
-        "`out_sharding` argument of `einsum` only supports NamedSharding"
-        " instances. Please file a bug if this is not enough for your use case.")
-  dtypes.check_user_dtype_supported(preferred_element_type, "einsum")
-  if preferred_element_type is None:
-    preferred_element_type, output_weak_type = dtypes.result_type(*operands, return_weak_type_flag=True)
-  else:
-    output_weak_type = False
-
-  def sum(x, axes):
-    if dtypes.result_type(x, preferred_element_type) != x.dtype:
-      x = x.astype(preferred_element_type)
-    return lax.reduce(x, np.array(0, x.dtype),
-                      lax.add if x.dtype != bool else lax.bitwise_or, axes)
-
-  def sum_uniques(operand, names, uniques):
-    if uniques:
-      axes = [names.index(name) for name in uniques]
-      operand = sum(operand, axes)
-      names = _removechars(names, uniques)
-    return operand, names
-
-  def sum_repeats(operand, names, counts, keep_names):
-    for name, count in counts.items():
-      if count > 1:
-        axes = [i for i, n in enumerate(names) if n == name]
-        eye = lax_internal._delta(np.dtype('bool'), operand.shape, axes)
-        operand = lax.select(eye, operand, zeros_like(operand))
-        if name not in keep_names:
-          operand = sum(operand, axes)
-          names = names.replace(name, '')
-        else:
-          operand = sum(operand, axes[:-1])
-          names = names.replace(name, '', count - 1)
-    return operand, names
-
-  def filter_singleton_dims(operand, names, other_shape, other_names):
-    eq = core.definitely_equal
-    keep = [not eq(operand.shape[i], 1) or j == -1 or eq(other_shape[j], 1)
-            for i, j in enumerate(map(other_names.find, names))]
-    sqez_axes, keep_axes = partition_list(keep, list(range(operand.ndim)))
-    return lax.squeeze(operand, sqez_axes), "".join(names[i] for i in keep_axes)
-
-  for operand_indices, contracted_names_set, einstr in contractions:
-    contracted_names = sorted(contracted_names_set)
-    input_str, result_names = einstr.split('->')
-    input_names = input_str.split(',')
-
-    # switch on the number of operands to be processed in this loop iteration.
-    # every case here sets 'operand' and 'names'.
-    if len(operand_indices) == 1:
-      operand = operands.pop(operand_indices[0])
-      names, = input_names
-      counts = collections.Counter(names)
-
-      # sum out unique contracted indices with a single reduce-sum
-      uniques = [name for name in contracted_names if counts[name] == 1]
-      operand, names = sum_uniques(operand, names, uniques)
-
-      # for every repeated index, do a contraction against an identity matrix
-      operand, names = sum_repeats(operand, names, counts, result_names)
-
-    elif len(operand_indices) == 2:
-      lhs, rhs = map(operands.pop, operand_indices)
-      lhs_names, rhs_names = input_names
-
-      # handle cases where one side of a contracting or batch dimension is 1
-      # but its counterpart is not.
-      lhs, lhs_names = filter_singleton_dims(lhs, lhs_names, shape(rhs),
-                                             rhs_names)
-      rhs, rhs_names = filter_singleton_dims(rhs, rhs_names, shape(lhs),
-                                             lhs_names)
-
-      lhs_counts = collections.Counter(lhs_names)
-      rhs_counts = collections.Counter(rhs_names)
-
-      # sum out unique contracted indices in lhs and rhs
-      lhs_uniques = [name for name in contracted_names
-                     if lhs_counts[name] == 1 and rhs_counts[name] == 0]
-      lhs, lhs_names = sum_uniques(lhs, lhs_names, lhs_uniques)
-
-      rhs_uniques = [name for name in contracted_names
-                     if rhs_counts[name] == 1 and lhs_counts[name] == 0]
-      rhs, rhs_names = sum_uniques(rhs, rhs_names, rhs_uniques)
-
-      # for every repeated index, contract against an identity matrix
-      lhs, lhs_names = sum_repeats(lhs, lhs_names, lhs_counts,
-                                   result_names + rhs_names)
-      rhs, rhs_names = sum_repeats(rhs, rhs_names, rhs_counts,
-                                   result_names + lhs_names)
-
-      lhs_or_rhs_names = set(lhs_names) | set(rhs_names)
-      contracted_names = [x for x in contracted_names if x in lhs_or_rhs_names]
-      lhs_and_rhs_names = set(lhs_names) & set(rhs_names)
-      batch_names = [x for x in result_names if x in lhs_and_rhs_names]
-
-      lhs_batch, rhs_batch = unzip2((lhs_names.find(n), rhs_names.find(n))
-                                    for n in batch_names)
-
-      # NOTE(mattjj): this can fail non-deterministically in python3, maybe
-      # due to opt_einsum
-      assert config.dynamic_shapes.value or all(
-        name in lhs_names and name in rhs_names and
-        lhs.shape[lhs_names.index(name)] == rhs.shape[rhs_names.index(name)]
-        for name in contracted_names), (
-          "Incompatible reduction dimensions: "
-          f"lhs.shape={lhs.shape} lhs_names={lhs_names} "
-          f"rhs.shape={rhs.shape} rhs_names={rhs_names}")
-
-      # contract using dot_general
-      batch_names_str = ''.join(batch_names)
-      lhs_cont, rhs_cont = unzip2((lhs_names.index(n), rhs_names.index(n))
-                                  for n in contracted_names)
-      deleted_names = batch_names_str + ''.join(contracted_names)
-      remaining_lhs_names = _removechars(lhs_names, deleted_names)
-      remaining_rhs_names = _removechars(rhs_names, deleted_names)
-      # Try both orders of lhs and rhs, in the hope that one of them means we
-      # don't need an explicit transpose. opt_einsum likes to contract from
-      # right to left, so we expect (rhs,lhs) to have the best chance of not
-      # needing a transpose.
-      names = batch_names_str + remaining_rhs_names + remaining_lhs_names
-      if names == result_names:
-        dimension_numbers = ((rhs_cont, lhs_cont), (rhs_batch, lhs_batch))
-        k_out_sharding = ({} if out_sharding is None else
-                          {'out_sharding': out_sharding})
-        operand = _dot_general(rhs, lhs, dimension_numbers, precision,
-                               preferred_element_type=preferred_element_type,
-                               **k_out_sharding)
-      else:
-        names = batch_names_str + remaining_lhs_names + remaining_rhs_names
-        if (config.sharding_in_types.value and out_sharding is not None and
-            names != result_names):
-          spec = out_sharding.spec
-          inverse_spec = tuple(spec[result_names.index(name)] for name in names)
-          dot_general_out_sharding = NamedSharding(out_sharding.mesh,
-                                                   P(*inverse_spec))
-        else:
-          dot_general_out_sharding = out_sharding  # type: ignore
-        dimension_numbers = ((lhs_cont, rhs_cont), (lhs_batch, rhs_batch))
-        dot_general_out_sharding = ({} if dot_general_out_sharding is None else  # type: ignore
-                                    {'out_sharding': dot_general_out_sharding})
-        operand = _dot_general(lhs, rhs, dimension_numbers, precision,
-                               preferred_element_type=preferred_element_type,
-                               **dot_general_out_sharding)
-    else:
-      raise NotImplementedError  # if this is actually reachable, open an issue!
-
-    # the resulting 'operand' with axis labels 'names' should be a permutation
-    # of the desired result
-    assert len(names) == len(result_names) == len(set(names))
-    assert set(names) == set(result_names)
-    if names != result_names:
-      perm = tuple(names.index(name) for name in result_names)
-      operand = lax.transpose(operand, perm)
-    operands.append(operand)  # used in next iteration
-
-  return lax_internal._convert_element_type(operands[0], preferred_element_type,
-                                            output_weak_type)
-
-
-@export
-@partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
-def inner(
-    a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = None,
-    preferred_element_type: DType | None = None,
-) -> Array:
-  """Compute the inner product of two arrays.
-
-  JAX implementation of :func:`numpy.inner`.
-
-  Unlike :func:`jax.numpy.matmul` or :func:`jax.numpy.dot`, this always performs
-  a contraction along the last dimension of each input.
-
-  Args:
-    a: array of shape ``(..., N)``
-    b: array of shape ``(..., N)``
-    precision: either ``None`` (default), which means the default precision for
-      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
-      such values indicating precision of ``a`` and ``b``.
-    preferred_element_type: either ``None`` (default), which means the default
-      accumulation type for the input types, or a datatype, indicating to
-      accumulate results to and return a result with that datatype.
-
-  Returns:
-    array of shape ``(*a.shape[:-1], *b.shape[:-1])`` containing the batched vector
-    product of the inputs.
-
-  See also:
-    - :func:`jax.numpy.vecdot`: conjugate multiplication along a specified axis.
-    - :func:`jax.numpy.tensordot`: general tensor multiplication.
-    - :func:`jax.numpy.matmul`: general batched matrix & vector multiplication.
-
-  Examples:
-    For 1D inputs, this implements standard (non-conjugate) vector multiplication:
-
-    >>> a = jnp.array([1j, 3j, 4j])
-    >>> b = jnp.array([4., 2., 5.])
-    >>> jnp.inner(a, b)
-    Array(0.+30.j, dtype=complex64)
-
-    For multi-dimensional inputs, batch dimensions are stacked rather than broadcast:
-
-    >>> a = jnp.ones((2, 3))
-    >>> b = jnp.ones((5, 3))
-    >>> jnp.inner(a, b).shape
-    (2, 5)
-  """
-  a, b = util.ensure_arraylike("inner", a, b)
-  if ndim(a) == 0 or ndim(b) == 0:
-    a = asarray(a, dtype=preferred_element_type)
-    b = asarray(b, dtype=preferred_element_type)
-    return a * b
-  return tensordot(a, b, (-1, -1), precision=precision,
-                   preferred_element_type=preferred_element_type)
-
-
-@export
-@partial(jit, inline=True)
-def outer(a: ArrayLike, b: ArrayLike, out: None = None) -> Array:
-  """Compute the outer product of two arrays.
-
-  JAX implementation of :func:`numpy.outer`.
-
-  Args:
-    a: first input array, if not 1D it will be flattened.
-    b: second input array, if not 1D it will be flattened.
-    out: unsupported by JAX.
-
-  Returns:
-    The outer product of the inputs ``a`` and ``b``. Returned array
-    will be of shape ``(a.size, b.size)``.
-
-  See also:
-    - :func:`jax.numpy.inner`: compute the inner product of two arrays.
-    - :func:`jax.numpy.einsum`: Einstein summation.
-
-  Examples:
-    >>> a = jnp.array([1, 2, 3])
-    >>> b = jnp.array([4, 5, 6])
-    >>> jnp.outer(a, b)
-    Array([[ 4,  5,  6],
-           [ 8, 10, 12],
-           [12, 15, 18]], dtype=int32)
-  """
-  if out is not None:
-    raise NotImplementedError("The 'out' argument to jnp.outer is not supported.")
-  util.check_arraylike("outer", a, b)
-  a, b = util.promote_dtypes(a, b)
-  return ravel(a)[:, None] * ravel(b)[None, :]
 
 
 @export
@@ -9835,13 +8651,13 @@ def kron(a: ArrayLike, b: ArrayLike) -> Array:
   """
   util.check_arraylike("kron", a, b)
   a, b = util.promote_dtypes(a, b)
-  if ndim(a) < ndim(b):
-    a = expand_dims(a, range(ndim(b) - ndim(a)))
-  elif ndim(b) < ndim(a):
-    b = expand_dims(b, range(ndim(a) - ndim(b)))
-  a_reshaped = expand_dims(a, range(1, 2 * ndim(a), 2))
-  b_reshaped = expand_dims(b, range(0, 2 * ndim(b), 2))
-  out_shape = tuple(np.multiply(shape(a), shape(b)))
+  if np.ndim(a) < np.ndim(b):
+    a = expand_dims(a, range(np.ndim(b) - np.ndim(a)))
+  elif np.ndim(b) < np.ndim(a):
+    b = expand_dims(b, range(np.ndim(a) - np.ndim(b)))
+  a_reshaped = expand_dims(a, range(1, 2 * np.ndim(a), 2))
+  b_reshaped = expand_dims(b, range(0, 2 * np.ndim(b), 2))
+  out_shape = tuple(np.multiply(np.shape(a), np.shape(b)))
   return reshape(lax.mul(a_reshaped, b_reshaped), out_shape)
 
 
@@ -9969,9 +8785,9 @@ def argwhere(
     Array([], shape=(0, 0), dtype=int32)
   """
   result = transpose(vstack(nonzero(atleast_1d(a), size=size, fill_value=fill_value)))
-  if ndim(a) == 0:
+  if np.ndim(a) == 0:
     return result[:0].reshape(result.shape[0], 0)
-  return result.reshape(result.shape[0], ndim(a))
+  return result.reshape(result.shape[0], np.ndim(a))
 
 
 @export
@@ -10019,7 +8835,7 @@ def argmax(a: ArrayLike, axis: int | None = None, out: None = None,
 @partial(jit, static_argnames=('axis', 'keepdims'), inline=True)
 def _argmax(a: Array, axis: int | None = None, keepdims: bool = False) -> Array:
   if axis is None:
-    dims = list(range(ndim(a)))
+    dims = list(range(np.ndim(a)))
     a = ravel(a)
     axis = 0
   else:
@@ -10075,7 +8891,7 @@ def argmin(a: ArrayLike, axis: int | None = None, out: None = None,
 @partial(jit, static_argnames=('axis', 'keepdims'), inline=True)
 def _argmin(a: Array, axis: int | None = None, keepdims: bool = False) -> Array:
   if axis is None:
-    dims = list(range(ndim(a)))
+    dims = list(range(np.ndim(a)))
     a = ravel(a)
     axis = 0
   else:
@@ -10149,7 +8965,7 @@ def _nanargmax(a, axis: int | None = None, keepdims: bool = False):
   if not issubdtype(_dtype(a), np.inexact):
     return argmax(a, axis=axis, keepdims=keepdims)
   nan_mask = ufuncs.isnan(a)
-  a = where(nan_mask, -inf, a)
+  a = where(nan_mask, -np.inf, a)
   res = argmax(a, axis=axis, keepdims=keepdims)
   return where(reductions.all(nan_mask, axis=axis, keepdims=keepdims), -1, res)
 
@@ -10210,7 +9026,7 @@ def _nanargmin(a, axis: int | None = None, keepdims : bool = False):
   if not issubdtype(_dtype(a), np.inexact):
     return argmin(a, axis=axis, keepdims=keepdims)
   nan_mask = ufuncs.isnan(a)
-  a = where(nan_mask, inf, a)
+  a = where(nan_mask, np.inf, a)
   res = argmin(a, axis=axis, keepdims=keepdims)
   return where(reductions.all(nan_mask, axis=axis, keepdims=keepdims), -1, res)
 
@@ -10351,7 +9167,7 @@ def rollaxis(a: ArrayLike, axis: int, start: int = 0) -> Array:
   """
   util.check_arraylike("rollaxis", a)
   start = core.concrete_or_error(operator.index, start, "'start' argument of jnp.rollaxis()")
-  a_ndim = ndim(a)
+  a_ndim = np.ndim(a)
   axis = _canonicalize_axis(axis, a_ndim)
   if not (-a_ndim <= start <= a_ndim):
     raise ValueError(f"{start=} must satisfy {-a_ndim}<=start<={a_ndim}")
@@ -10536,1049 +9352,6 @@ def unpackbits(
       unpacked = unpacked[..., :count]
   return swapaxes(unpacked, axis, -1)
 
-
-@export
-def take(
-    a: ArrayLike,
-    indices: ArrayLike,
-    axis: int | None = None,
-    out: None = None,
-    mode: str | None = None,
-    unique_indices: bool = False,
-    indices_are_sorted: bool = False,
-    fill_value: StaticScalar | None = None,
-) -> Array:
-  """Take elements from an array.
-
-  JAX implementation of :func:`numpy.take`, implemented in terms of
-  :func:`jax.lax.gather`. JAX's behavior differs from NumPy in the case
-  of out-of-bound indices; see the ``mode`` parameter below.
-
-  Args:
-    a: array from which to take values.
-    indices: N-dimensional array of integer indices of values to take from the array.
-    axis: the axis along which to take values. If not specified, the array will
-      be flattened before indexing is applied.
-    mode: Out-of-bounds indexing mode, either ``"fill"`` or ``"clip"``. The default
-      ``mode="fill"`` returns invalid values (e.g. NaN) for out-of bounds indices;
-      the ``fill_value`` argument gives control over this value. For more discussion
-      of ``mode`` options, see :attr:`jax.numpy.ndarray.at`.
-    fill_value: The fill value to return for out-of-bounds slices when mode is 'fill'.
-      Ignored otherwise. Defaults to NaN for inexact types, the largest negative value for
-      signed types, the largest positive value for unsigned types, and True for booleans.
-    unique_indices: If True, the implementation will assume that the indices are unique,
-      which can result in more efficient execution on some backends. If set to True and
-      indices are not unique, the output is undefined.
-    indices_are_sorted : If True, the implementation will assume that the indices are
-      sorted in ascending order, which can lead to more efficient execution on some
-      backends. If set to True and indices are not sorted, the output is undefined.
-
-  Returns:
-    Array of values extracted from ``a``.
-
-  See also:
-    - :attr:`jax.numpy.ndarray.at`: take values via indexing syntax.
-    - :func:`jax.numpy.take_along_axis`: take values along an axis
-
-  Examples:
-    >>> x = jnp.array([[1., 2., 3.],
-    ...                [4., 5., 6.]])
-    >>> indices = jnp.array([2, 0])
-
-    Passing no axis results in indexing into the flattened array:
-
-    >>> jnp.take(x, indices)
-    Array([3., 1.], dtype=float32)
-    >>> x.ravel()[indices]  # equivalent indexing syntax
-    Array([3., 1.], dtype=float32)
-
-    Passing an axis results ind applying the index to every subarray along the axis:
-
-    >>> jnp.take(x, indices, axis=1)
-    Array([[3., 1.],
-           [6., 4.]], dtype=float32)
-    >>> x[:, indices]  # equivalent indexing syntax
-    Array([[3., 1.],
-           [6., 4.]], dtype=float32)
-
-    Out-of-bound indices fill with invalid values. For float inputs, this is `NaN`:
-
-    >>> jnp.take(x, indices, axis=0)
-    Array([[nan, nan, nan],
-           [ 1.,  2.,  3.]], dtype=float32)
-    >>> x.at[indices].get(mode='fill', fill_value=jnp.nan)  # equivalent indexing syntax
-    Array([[nan, nan, nan],
-           [ 1.,  2.,  3.]], dtype=float32)
-
-    This default out-of-bound behavior can be adjusted using the ``mode`` parameter, for
-    example, we can instead clip to the last valid value:
-
-    >>> jnp.take(x, indices, axis=0, mode='clip')
-    Array([[4., 5., 6.],
-           [1., 2., 3.]], dtype=float32)
-    >>> x.at[indices].get(mode='clip')  # equivalent indexing syntax
-    Array([[4., 5., 6.],
-           [1., 2., 3.]], dtype=float32)
-  """
-  return _take(a, indices, None if axis is None else operator.index(axis), out,
-               mode, unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,
-               fill_value=fill_value)
-
-
-@partial(jit, static_argnames=('axis', 'mode', 'unique_indices', 'indices_are_sorted', 'fill_value'))
-def _take(a, indices, axis: int | None = None, out=None, mode=None,
-          unique_indices=False, indices_are_sorted=False, fill_value=None):
-  if out is not None:
-    raise NotImplementedError("The 'out' argument to jnp.take is not supported.")
-  a, indices = util.ensure_arraylike("take", a, indices)
-
-  if axis is None:
-    a = ravel(a)
-    axis_idx = 0
-  else:
-    axis_idx = _canonicalize_axis(axis, ndim(a))
-
-  if mode is None or mode == "fill":
-    gather_mode = lax.GatherScatterMode.FILL_OR_DROP
-    # lax.gather() does not support negative indices, so we wrap them here
-    indices = where(indices < 0, indices + a.shape[axis_idx], indices)
-  elif mode == "raise":
-    # TODO(phawkins): we have no way to report out of bounds errors yet.
-    raise NotImplementedError("The 'raise' mode to jnp.take is not supported.")
-  elif mode == "wrap":
-    indices = ufuncs.mod(indices, _lax_const(indices, a.shape[axis_idx]))
-    gather_mode = lax.GatherScatterMode.PROMISE_IN_BOUNDS
-  elif mode == "clip":
-    gather_mode = lax.GatherScatterMode.CLIP
-  else:
-    raise ValueError(f"Invalid mode '{mode}' for np.take")
-
-  index_dims = len(shape(indices))
-  slice_sizes = list(shape(a))
-  if slice_sizes[axis_idx] == 0:
-    if indices.size != 0:
-      raise IndexError("Cannot do a non-empty jnp.take() from an empty axis.")
-    return a
-
-  if indices.size == 0:
-    out_shape = (slice_sizes[:axis_idx] + list(indices.shape) +
-                 slice_sizes[axis_idx + 1:])
-    return full_like(a, 0, shape=out_shape)
-
-  slice_sizes[axis_idx] = 1
-  dnums = lax.GatherDimensionNumbers(
-    offset_dims=tuple(
-      list(range(axis_idx)) +
-      list(range(axis_idx + index_dims, len(a.shape) + index_dims - 1))),
-    collapsed_slice_dims=(axis_idx,),
-    start_index_map=(axis_idx,))
-  return lax.gather(a, indices[..., None], dimension_numbers=dnums,
-                    slice_sizes=tuple(slice_sizes),
-                    mode=gather_mode, unique_indices=unique_indices,
-                    indices_are_sorted=indices_are_sorted, fill_value=fill_value)
-
-
-def _normalize_index(index, axis_size):
-  """Normalizes an index value in the range [-N, N) to the range [0, N)."""
-  if issubdtype(_dtype(index), np.unsignedinteger):
-    return index
-  if core.is_constant_dim(axis_size):
-    axis_size_val = _lax_const(index, axis_size)
-  else:
-    axis_size_val = lax.convert_element_type(core.dimension_as_value(axis_size),
-                                             _dtype(index))
-  if isinstance(index, (int, np.integer)):
-    return lax.add(index, axis_size_val) if index < 0 else index
-  else:
-    return lax.select(index < 0, lax.add(index, axis_size_val), index)
-
-
-@export
-@partial(jit, static_argnames=('axis', 'mode', 'fill_value'))
-def take_along_axis(
-    arr: ArrayLike,
-    indices: ArrayLike,
-    axis: int | None,
-    mode: str | lax.GatherScatterMode | None = None,
-    fill_value: StaticScalar | None = None,
-) -> Array:
-  """Take elements from an array.
-
-  JAX implementation of :func:`numpy.take_along_axis`, implemented in
-  terms of :func:`jax.lax.gather`. JAX's behavior differs from NumPy
-  in the case of out-of-bound indices; see the ``mode`` parameter below.
-
-  Args:
-    a: array from which to take values.
-    indices: array of integer indices. If ``axis`` is ``None``, must be one-dimensional.
-      If ``axis`` is not None, must have ``a.ndim == indices.ndim``, and ``a`` must be
-      broadcast-compatible with ``indices`` along dimensions other than ``axis``.
-    axis: the axis along which to take values. If not specified, the array will
-      be flattened before indexing is applied.
-    mode: Out-of-bounds indexing mode, either ``"fill"`` or ``"clip"``. The default
-      ``mode="fill"`` returns invalid values (e.g. NaN) for out-of bounds indices.
-      For more discussion of ``mode`` options, see :attr:`jax.numpy.ndarray.at`.
-
-  Returns:
-    Array of values extracted from ``a``.
-
-  See also:
-    - :attr:`jax.numpy.ndarray.at`: take values via indexing syntax.
-    - :func:`jax.numpy.take`: take the same indices along every axis slice.
-
-  Examples:
-    >>> x = jnp.array([[1., 2., 3.],
-    ...                [4., 5., 6.]])
-    >>> indices = jnp.array([[0, 2],
-    ...                      [1, 0]])
-    >>> jnp.take_along_axis(x, indices, axis=1)
-    Array([[1., 3.],
-           [5., 4.]], dtype=float32)
-    >>> x[jnp.arange(2)[:, None], indices]  # equivalent via indexing syntax
-    Array([[1., 3.],
-           [5., 4.]], dtype=float32)
-
-    Out-of-bound indices fill with invalid values. For float inputs, this is `NaN`:
-
-    >>> indices = jnp.array([[1, 0, 2]])
-    >>> jnp.take_along_axis(x, indices, axis=0)
-    Array([[ 4.,  2., nan]], dtype=float32)
-    >>> x.at[indices, jnp.arange(3)].get(
-    ...     mode='fill', fill_value=jnp.nan)  # equivalent via indexing syntax
-    Array([[ 4.,  2., nan]], dtype=float32)
-
-    ``take_along_axis`` is helpful for extracting values from multi-dimensional
-    argsorts and arg reductions. For, here we compute :func:`~jax.numpy.argsort`
-    indices along an axis, and use ``take_along_axis`` to construct the sorted
-    array:
-
-    >>> x = jnp.array([[5, 3, 4],
-    ...                [2, 7, 6]])
-    >>> indices = jnp.argsort(x, axis=1)
-    >>> indices
-    Array([[1, 2, 0],
-           [0, 2, 1]], dtype=int32)
-    >>> jnp.take_along_axis(x, indices, axis=1)
-    Array([[3, 4, 5],
-           [2, 6, 7]], dtype=int32)
-
-    Similarly, we can use :func:`~jax.numpy.argmin` with ``keepdims=True`` and
-    use ``take_along_axis`` to extract the minimum value:
-
-    >>> idx = jnp.argmin(x, axis=1, keepdims=True)
-    >>> idx
-    Array([[1],
-           [0]], dtype=int32)
-    >>> jnp.take_along_axis(x, idx, axis=1)
-    Array([[3],
-           [2]], dtype=int32)
-  """
-  a, indices = util.ensure_arraylike("take_along_axis", arr, indices)
-  index_dtype = dtypes.dtype(indices)
-  idx_shape = shape(indices)
-  if not dtypes.issubdtype(index_dtype, np.integer):
-    raise TypeError("take_along_axis indices must be of integer type, got "
-                    f"{index_dtype}")
-  if axis is None:
-    if ndim(indices) != 1:
-      msg = "take_along_axis indices must be 1D if axis=None, got shape {}"
-      raise ValueError(msg.format(idx_shape))
-    a = a.ravel()
-    axis = 0
-  rank = a.ndim
-  if rank != ndim(indices):
-    msg = "indices and arr must have the same number of dimensions; {} vs. {}"
-    raise ValueError(msg.format(ndim(indices), a.ndim))
-  axis_int = _canonicalize_axis(axis, rank)
-
-  def replace(tup, val):
-    lst = list(tup)
-    lst[axis_int] = val
-    return tuple(lst)
-
-  use_64bit_index = any(not core.is_constant_dim(d) or d >= (1 << 31) for d in a.shape)
-  index_dtype = dtype('int64' if use_64bit_index else 'int32')
-  indices = lax.convert_element_type(indices, index_dtype)
-
-  axis_size = a.shape[axis_int]
-  arr_shape = replace(a.shape, 1)
-  out_shape = lax.broadcast_shapes(idx_shape, arr_shape)
-  if axis_size == 0:
-    return zeros(out_shape, a.dtype)
-
-  if mode == "one_hot":
-    indices = _normalize_index(indices, axis_size)
-    hot = jax.nn.one_hot(indices, axis_size, dtype=np.bool_)
-    if a.ndim == 1:
-      return einsum("...b,b->...", hot, a, preferred_element_type=a.dtype)
-    if axis_int > len(string.ascii_letters) - 2:
-      raise ValueError(
-          "One Hot indexing is only supported for up to 50 leading dimensions."
-      )
-    labels = "".join([string.ascii_letters[i] for i in range(axis_int)])
-    eq = labels + "y...z," + labels + "z...->" + labels + "y..."
-    return einsum(
-        eq,
-        hot,
-        a,
-        precision=lax.Precision.HIGHEST,
-        preferred_element_type=a.dtype,
-    )
-
-  index_dims = [i for i, idx in enumerate(idx_shape) if i == axis_int or not core.definitely_equal(idx, 1)]
-
-  gather_index_shape = tuple(np.array(out_shape)[index_dims]) + (1,)
-  gather_indices = []
-  slice_sizes = []
-  offset_dims = []
-  start_index_map = []
-  collapsed_slice_dims = []
-  operand_batching_dims = []
-  start_indices_batching_dims = []
-
-  # We will squeeze the array. i is the index of the unsqueezed shape, while
-  # new_i is the index of the squeezed shape. j is the index of the gather
-  # indices.
-  dims_to_squeeze = []
-  new_i = 0
-  j = 0
-  for i in range(rank):
-    if i == axis_int:
-      if mode != 'promise_in_bounds':
-        indices = _normalize_index(indices, axis_size)
-      gather_indices.append(lax.reshape(indices, gather_index_shape))
-      slice_sizes.append(1)
-      start_index_map.append(new_i)
-      collapsed_slice_dims.append(new_i)
-      new_i += 1
-      j += 1
-    elif core.definitely_equal(idx_shape[i], 1):
-      # If idx_shape[i] == 1, we can just take the entirety of the arr's axis
-      # and avoid forming an iota index.
-      offset_dims.append(i)
-      slice_sizes.append(arr_shape[i])
-      new_i += 1
-    elif core.definitely_equal(arr_shape[i], 1):
-      # If the array dimension is 1 but the index dimension is not, we will
-      # squeeze this dimension.
-      dims_to_squeeze.append(i)
-      j += 1
-    else:
-      # Otherwise, idx_shape[i] == arr_shape[i]. Mark the dimensions in both
-      # array and index as batching so corresponding elements are gathered.
-      if core.definitely_equal(arr_shape[i], 0):
-        slice_sizes.append(0)
-      else:
-        slice_sizes.append(1)
-      operand_batching_dims.append(new_i)
-      start_indices_batching_dims.append(j)
-      new_i += 1
-      j += 1
-
-  # Squeeze a to remove singleton dimensions.
-  a = lax.squeeze(a, dims_to_squeeze)
-  gather_indices_arr = lax.concatenate(gather_indices, dimension=j)
-  dnums = lax.GatherDimensionNumbers(
-    offset_dims=tuple(offset_dims),
-    collapsed_slice_dims=tuple(collapsed_slice_dims),
-    start_index_map=tuple(start_index_map),
-    operand_batching_dims=tuple(operand_batching_dims),
-    start_indices_batching_dims=tuple(start_indices_batching_dims))
-  return lax.gather(a, gather_indices_arr, dnums, tuple(slice_sizes),
-                    mode="fill" if mode is None else mode, fill_value=fill_value)
-
-
-_indices = indices  # argument below named 'indices' shadows the function
-
-
-def _make_along_axis_idx(shape, indices, axis):
-  return tuple_replace(_indices(shape, sparse=True), axis, indices)
-
-
-@export
-@partial(jit, static_argnames=('axis', 'inplace', 'mode'))
-def put_along_axis(
-  arr: ArrayLike,
-  indices: ArrayLike,
-  values: ArrayLike,
-  axis: int | None,
-  inplace: bool = True,
-  *,
-  mode: str | None = None,
-) -> Array:
-  """Put values into the destination array by matching 1d index and data slices.
-
-  JAX implementation of :func:`numpy.put_along_axis`.
-
-  The semantics of :func:`numpy.put_along_axis` are to modify arrays in-place, which
-  is not possible for JAX's immutable arrays. The JAX version returns a modified
-  copy of the input, and adds the ``inplace`` parameter which must be set to
-  `False`` by the user as a reminder of this API difference.
-
-  Args:
-    arr: array into which values will be put.
-    indices: array of indices at which to put values.
-    values: array of values to put into the array.
-    axis: the axis along which to put values. If not specified, the array will
-      be flattened before indexing is applied.
-    inplace: must be set to False to indicate that the input is not modified
-      in-place, but rather a modified copy is returned.
-    mode: Out-of-bounds indexing mode. For more discussion of ``mode`` options,
-      see :attr:`jax.numpy.ndarray.at`.
-
-  Returns:
-    A copy of ``a`` with specified entries updated.
-
-  See Also:
-    - :func:`jax.numpy.put`: put elements into an array at given indices.
-    - :func:`jax.numpy.place`: place elements into an array via boolean mask.
-    - :func:`jax.numpy.ndarray.at`: array updates using NumPy-style indexing.
-    - :func:`jax.numpy.take`: extract values from an array at given indices.
-    - :func:`jax.numpy.take_along_axis`: extract values from an array along an axis.
-
-  Examples:
-    >>> from jax import numpy as jnp
-    >>> a = jnp.array([[10, 30, 20], [60, 40, 50]])
-    >>> i = jnp.argmax(a, axis=1, keepdims=True)
-    >>> print(i)
-    [[1]
-     [0]]
-    >>> b = jnp.put_along_axis(a, i, 99, axis=1, inplace=False)
-    >>> print(b)
-    [[10 99 20]
-     [99 40 50]]
-  """
-  if inplace:
-    raise ValueError(
-      "jax.numpy.put_along_axis cannot modify arrays in-place, because JAX arrays"
-      "are immutable. Pass inplace=False to instead return an updated array.")
-
-  arr, indices, values = util.ensure_arraylike("put_along_axis", arr, indices, values)
-
-  original_axis = axis
-  original_arr_shape = arr.shape
-
-  if axis is None:
-    arr = arr.ravel()
-    axis = 0
-
-  if not arr.ndim == indices.ndim:
-    raise ValueError(
-      "put_along_axis arguments 'arr' and 'indices' must have same ndim. Got "
-      f"{arr.ndim=} and {indices.ndim=}."
-    )
-
-  try:
-    values = broadcast_to(values, indices.shape)
-  except ValueError:
-    raise ValueError(
-      "put_along_axis argument 'values' must be broadcastable to 'indices'. Got "
-      f"{values.shape=} and {indices.shape=}."
-    )
-
-  idx = _make_along_axis_idx(arr.shape, indices, axis)
-  result = arr.at[idx].set(values, mode=mode)
-
-  if original_axis is None:
-    result = result.reshape(original_arr_shape)
-
-  return result
-
-
-### Indexing
-
-def _is_integer_index(idx: Any) -> bool:
-  return isinstance(idx, (int, np.integer)) and not isinstance(idx, (bool, np.bool_))
-
-def _is_simple_reverse_slice(idx: Any) -> bool:
-  return (isinstance(idx, slice) and
-          idx.start is idx.stop is None and
-          isinstance(idx.step, int) and idx.step == -1)
-
-def _is_valid_integer_index_for_slice(idx, size, mode):
-  if size == 0:
-    return False
-  if _is_integer_index(idx):
-    return -size <= idx < size
-  try:
-    shape, dtype = np.shape(idx), _dtype(idx)
-  except:
-    return False
-  if shape == () and np.issubdtype(dtype, np.integer):
-    # For dynamic integer indices, semantics require promise_inbounds.
-    return mode in [None, 'promise_inbounds']
-  return False
-
-def _is_contiguous_slice(idx):
-  return (isinstance(idx, slice) and
-          (idx.start is None or _is_integer_index(idx.start)) and
-          (idx.stop is None or _is_integer_index(idx.stop)) and
-          (idx.step is None or (_is_integer_index(idx.step) and idx.step == 1)))
-
-def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) -> Array | None:
-  # attempt to compute _rewriting_take via lax.slice(); return None if not possible.
-  idx = idx if isinstance(idx, tuple) else (idx,)
-
-  if not all(isinstance(i, int) for i in arr.shape):
-    return None
-  if len(idx) > arr.ndim:
-    return None
-  if any(i is None for i in idx):
-    return None  # TODO(jakevdp): handle newaxis case
-  # For symbolic dimensions fallback to gather
-  if any(core.is_symbolic_dim(elt)
-         for i in idx if isinstance(i, slice)
-         for elt in (i.start, i.stop, i.step)):
-    return None
-
-  if any(i is Ellipsis for i in idx):
-    # Remove ellipses and add trailing `slice(None)`.
-    idx = _canonicalize_tuple_index(arr.ndim, idx=idx)
-
-  simple_revs = {i for i, ind in enumerate(idx) if _is_simple_reverse_slice(ind)}
-  int_indices = {i for i, (ind, size) in enumerate(zip(idx, arr.shape))
-                 if _is_valid_integer_index_for_slice(ind, size, mode)}
-  contiguous_slices = {i for i, ind in enumerate(idx) if _is_contiguous_slice(ind)}
-
-  # For sharded inputs, indexing (like x[0]) and partial slices (like x[:2] as
-  # opposed to x[:]) lead to incorrect sharding semantics when computed via
-  # dynamic_slice, so we fall back to gather.
-  # TODO(yashkatariya): fix dynamic_slice with sharding
-  is_sharded = (isinstance(arr, ArrayImpl) and
-                not dispatch.is_single_device_sharding(arr.sharding))
-  has_partial_slices = any(idx[i].indices(arr.shape[i]) != (0, arr.shape[i], 1)
-                           for i in contiguous_slices)
-  if is_sharded and (int_indices or has_partial_slices):
-    return None
-
-  if len(simple_revs) + len(int_indices) + len(contiguous_slices) != len(idx):
-    return None
-
-  if simple_revs:
-    arr = lax.rev(arr, tuple(simple_revs))
-    idx = tuple(slice(None) if i in simple_revs else ind
-                for i, ind in enumerate(idx))
-    contiguous_slices |= simple_revs
-
-  if not (int_indices or has_partial_slices):
-    return arr
-
-  idx += (arr.ndim - len(idx)) * (slice(None),)
-  start_indices: Sequence[ArrayLike] = []
-  slice_sizes: Sequence[int] = []
-
-  for ind, size in safe_zip(idx, arr.shape):
-    if isinstance(ind, slice):
-      start, stop, step = ind.indices(size)
-      assert step == 1  # checked above
-      start_indices.append(start)
-      slice_sizes.append(max(0, stop - start))
-    else:
-      assert np.issubdtype(_dtype(ind), np.integer)  # checked above
-      assert np.shape(ind) == ()  # checked above
-      start_indices.append(ind)
-      slice_sizes.append(1)
-  # Try to use static slicing when possible.
-  if all(isinstance(i, (int, np.integer)) and i >= 0 for i in start_indices):
-    int_start_indices = [int(i) for i in start_indices]  # type: ignore
-    int_limit_indices = [i + s for i, s in zip(int_start_indices, slice_sizes)]
-    arr = lax.slice(
-        arr, start_indices=int_start_indices, limit_indices=int_limit_indices)
-  else:
-    # We must be careful with dtypes because dynamic_slice requires all
-    # start indices to have matching types.
-    if len(start_indices) > 1:
-      start_indices = util.promote_dtypes(*start_indices)
-    arr = lax.dynamic_slice(
-        arr, start_indices=start_indices, slice_sizes=slice_sizes)
-  if int_indices:
-    arr = lax.squeeze(arr, tuple(int_indices))
-  return arr
-
-
-def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
-                    mode=None, fill_value=None):
-  # Computes arr[idx].
-  # All supported cases of indexing can be implemented as an XLA gather,
-  # followed by an optional reverse and broadcast_in_dim.
-
-  # For simplicity of generated primitives, we call lax.dynamic_slice in the
-  # simplest cases: i.e. non-dynamic arrays indexed with integers and slices.
-
-  if (result := _attempt_rewriting_take_via_slice(arr, idx, mode)) is not None:
-    return result
-
-  # TODO(mattjj,dougalm): expand dynamic shape indexing support
-  if config.dynamic_shapes.value and arr.ndim > 0:
-    try: aval = core.get_aval(idx)
-    except: pass
-    else:
-      if (isinstance(aval, core.DShapedArray) and aval.shape == () and
-          dtypes.issubdtype(aval.dtype, np.integer) and
-          not dtypes.issubdtype(aval.dtype, dtypes.bool_) and
-          isinstance(arr.shape[0], int)):
-        return lax.dynamic_index_in_dim(arr, idx, keepdims=False)
-
-  treedef, static_idx, dynamic_idx = _split_index_for_jit(idx, arr.shape)
-  return _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
-                 unique_indices, mode, fill_value)
-
-# TODO(phawkins): re-enable jit after fixing excessive recompilation for
-# slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
-# @partial(jit, static_argnums=(1, 2))
-def _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
-            unique_indices, mode, fill_value):
-  idx = _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
-  indexer = _index_to_gather(shape(arr), idx)  # shared with _scatter_update
-  y = arr
-
-  if fill_value is not None:
-    core.concrete_or_error(None, fill_value,
-                           "fill_value argument to indexed get()")
-    if np.ndim(fill_value) != 0:
-      raise ValueError("fill_value argument to indexed get() must be a scalar")
-    if isinstance(fill_value, np.ndarray):
-      fill_value = fill_value.item()
-
-  if indexer.scalar_bool_dims:
-    y = lax.expand_dims(y, indexer.scalar_bool_dims)
-
-  # Avoid calling gather if the slice shape is empty, both as a fast path and to
-  # handle cases like zeros(0)[array([], int32)].
-  if core.is_empty_shape(indexer.slice_shape):
-    return zeros_like(y, shape=indexer.slice_shape)
-
-  # We avoid generating a gather when indexer.gather_indices.size is empty.
-  if not core.is_empty_shape(indexer.gather_indices.shape):
-    y = lax.gather(
-      y, indexer.gather_indices, indexer.dnums, indexer.gather_slice_shape,
-      unique_indices=unique_indices or indexer.unique_indices,
-      indices_are_sorted=indices_are_sorted or indexer.indices_are_sorted,
-      mode=mode, fill_value=fill_value)
-
-  # Reverses axes with negative strides.
-  if indexer.reversed_y_dims:
-    y = lax.rev(y, indexer.reversed_y_dims)
-
-  # This adds np.newaxis/None dimensions.
-  return expand_dims(y, indexer.newaxis_dims)
-
-class _Indexer(NamedTuple):
-  # The expected shape of the slice output.
-  slice_shape: Sequence[int]
-  # The slice shape to pass to lax.gather().
-  gather_slice_shape: Sequence[int]
-  # The gather indices to use.
-  gather_indices: ArrayLike
-  # A GatherDimensionNumbers object describing the gather to perform.
-  dnums: lax.GatherDimensionNumbers
-
-  # Are the gather_indices known to be non-overlapping and/or sorted?
-  # (In practice, these translate to "there no advanced indices", because
-  # only advanced indices could lead to index repetition.)
-  unique_indices: bool
-  indices_are_sorted: bool
-
-  # Slice dimensions that have negative strides, and so must be reversed after
-  # the gather.
-  reversed_y_dims: Sequence[int]
-
-  # Keep track of any axes created by `newaxis`. These must be inserted for
-  # gathers and eliminated for scatters.
-  newaxis_dims: Sequence[int]
-
-  # Keep track of dimensions with scalar bool indices. These must be inserted
-  # for gathers before performing other index operations.
-  scalar_bool_dims: Sequence[int]
-
-
-def _split_index_for_jit(idx, shape):
-  """Splits indices into necessarily-static and dynamic parts.
-
-  Used to pass indices into `jit`-ted function.
-  """
-  # Convert list indices to tuples in cases (deprecated by NumPy.)
-  idx = _eliminate_deprecated_list_indexing(idx)
-  if any(isinstance(i, str) for i in idx):
-    raise TypeError(f"JAX does not support string indexing; got {idx=}")
-
-  # Expand any (concrete) boolean indices. We can then use advanced integer
-  # indexing logic to handle them.
-  idx = _expand_bool_indices(idx, shape)
-
-  leaves, treedef = tree_flatten(idx)
-  dynamic = [None] * len(leaves)
-  static = [None] * len(leaves)
-  for i, x in enumerate(leaves):
-    if x is Ellipsis:
-      static[i] = x
-    elif isinstance(x, slice):
-      # slice objects aren't hashable.
-      static[i] = (x.start, x.stop, x.step)
-    else:
-      dynamic[i] = x
-  return treedef, tuple(static), dynamic
-
-def _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx):
-  """Recombines indices that were split by _split_index_for_jit."""
-  idx = []
-  for s, d in zip(static_idx, dynamic_idx):
-    if d is not None:
-      idx.append(d)
-    elif isinstance(s, tuple):
-      idx.append(slice(s[0], s[1], s[2]))
-    else:
-      idx.append(s)
-  return treedef.unflatten(idx)
-
-def _int(aval):
-  return not aval.shape and issubdtype(aval.dtype, np.integer)
-
-def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
-                     normalize_indices: bool = True) -> _Indexer:
-  # Check whether advanced indices are contiguous. We must do this before
-  # removing ellipses (https://github.com/jax-ml/jax/issues/25109)
-  # If advanced idexing axes do not appear contiguously, NumPy semantics
-  # move the advanced axes to the front.
-  is_advanced, = np.nonzero([isinstance(e, (int, Sequence, Array, np.ndarray))
-                             or isscalar(e) for e in idx])
-  advanced_axes_are_contiguous = np.all(np.diff(is_advanced) == 1)
-
-  # Remove ellipses and add trailing slice(None)s.
-  idx = _canonicalize_tuple_index(len(x_shape), idx)
-
-  # Check for scalar boolean indexing: this requires inserting extra dimensions
-  # before performing the rest of the logic.
-  scalar_bool_dims: Sequence[int] = [n for n, i in enumerate(idx) if isinstance(i, bool)]
-  if scalar_bool_dims:
-    idx = tuple(np.arange(int(i)) if isinstance(i, bool) else i for i in idx)
-    x_shape = list(x_shape)
-    for i in sorted(scalar_bool_dims):
-      x_shape.insert(i, 1)
-    x_shape = tuple(x_shape)
-
-  # Check for advanced indexing:
-  # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
-
-  advanced_indexes: Sequence[Array | np.ndarray] | None = None
-
-  # The positions of the advanced indexing axes in `idx`.
-  idx_advanced_axes: Sequence[int] = []
-
-  # The positions of the advanced indexes in x's shape.
-  # collapsed, after None axes have been removed. See below.
-  x_advanced_axes: Sequence[int] | None = None
-
-  if _is_advanced_int_indexer(idx):
-    idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
-    advanced_pairs = (
-      (asarray(e), i, j) for j, (i, e) in enumerate(idx_no_nones)
-      if isscalar(e) or isinstance(e, (Sequence, Array, np.ndarray)))
-    if normalize_indices:
-      advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
-                        for e, i, j in advanced_pairs)
-    advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
-
-  x_axis = 0  # Current axis in x.
-  y_axis = 0  # Current axis in y, before collapsing. See below.
-  collapsed_y_axis = 0  # Current axis in y, after collapsing.
-
-  # Scatter dimension numbers.
-  offset_dims: Sequence[int] = []
-  collapsed_slice_dims: Sequence[int] = []
-  start_index_map: Sequence[int] = []
-
-  use_64bit_index = (
-    any(not core.is_constant_dim(d) or d >= (1 << 31) for d in x_shape) and
-    config.enable_x64.value)
-  index_dtype = np.dtype('int64') if use_64bit_index else np.dtype('int32')
-
-  # Gather indices.
-  # Pairs of (array, start_dim) values. These will be broadcast into
-  # gather_indices_shape, with the array dimensions aligned to start_dim, and
-  # then concatenated.
-  gather_indices: list[tuple[Array, int]] = []
-  gather_indices_shape: list[int] = []
-
-  # We perform three transformations to y before the scatter op, in order:
-  # First, y is broadcast to slice_shape. In general `y` only need broadcast to
-  # the right shape.
-  slice_shape: Sequence[int] = []
-
-  # Next, y is squeezed to remove newaxis_dims. This removes np.newaxis/`None`
-  # indices, which the scatter cannot remove itself.
-  newaxis_dims: Sequence[int] = []
-
-  # Finally, we reverse reversed_y_dims to handle slices with negative strides.
-  reversed_y_dims: Sequence[int] = []
-
-  gather_slice_shape: Sequence[int] = []
-
-  for idx_pos, i in enumerate(idx):
-    # Handle the advanced indices here if:
-    # * the advanced indices were not contiguous and we are the start.
-    # * we are at the position of the first advanced index.
-    if (advanced_indexes is not None and
-        (advanced_axes_are_contiguous and idx_pos == idx_advanced_axes[0] or
-         not advanced_axes_are_contiguous and idx_pos == 0)):
-      advanced_indexes = broadcast_arrays(*advanced_indexes)
-      shape = advanced_indexes[0].shape
-      ndim = len(shape)
-
-      start_dim = len(gather_indices_shape)
-      gather_indices += ((lax.convert_element_type(a, index_dtype), start_dim)
-                         for a in advanced_indexes)
-      gather_indices_shape += shape
-
-      start_index_map.extend(x_advanced_axes)
-      collapsed_slice_dims.extend(x_advanced_axes)
-      slice_shape.extend(shape)
-      y_axis += ndim
-      collapsed_y_axis += ndim
-
-    # Per-index bookkeeping for advanced indexes.
-    if idx_pos in idx_advanced_axes:
-      x_axis += 1
-      gather_slice_shape.append(1)
-      continue
-
-    try:
-      abstract_i = core.get_aval(i)
-    except TypeError:
-      abstract_i = None
-    # Handle basic int indexes.
-    if isinstance(abstract_i, ShapedArray) and _int(abstract_i):
-      if core.definitely_equal(x_shape[x_axis], 0):
-        # XLA gives error when indexing into an axis of size 0
-        raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
-      i = _normalize_index(i, x_shape[x_axis]) if normalize_indices else i
-      i_converted = lax.convert_element_type(i, index_dtype)
-      gather_indices.append((i_converted, len(gather_indices_shape)))
-      collapsed_slice_dims.append(x_axis)
-      gather_slice_shape.append(1)
-      start_index_map.append(x_axis)
-      x_axis += 1
-    # Handle np.newaxis (None)
-    elif i is None:
-      slice_shape.append(1)
-      newaxis_dims.append(y_axis)
-      y_axis += 1
-
-    elif isinstance(i, slice):
-      # Handle slice index (only static, otherwise an error is raised)
-      if not all(_is_slice_element_none_or_constant_or_symbolic(elt)
-                 for elt in (i.start, i.stop, i.step)):
-        msg = ("Array slice indices must have static start/stop/step to be used "
-               "with NumPy indexing syntax. "
-               f"Found slice({i.start}, {i.stop}, {i.step}). "
-               "To index a statically sized "
-               "array at a dynamic position, try lax.dynamic_slice/"
-               "dynamic_update_slice (JAX does not support dynamically sized "
-               "arrays within JIT compiled functions).")
-        raise IndexError(msg)
-
-      start, step, slice_size = core.canonicalize_slice(i, x_shape[x_axis])
-      slice_shape.append(slice_size)
-
-      if core.definitely_equal(step, 1):
-        # Avoid generating trivial gather (an optimization)
-        if not core.definitely_equal(slice_size, x_shape[x_axis]):
-          gather_indices.append((lax.convert_element_type(start, index_dtype),
-                                len(gather_indices_shape)))
-          start_index_map.append(x_axis)
-        gather_slice_shape.append(slice_size)
-        offset_dims.append(collapsed_y_axis)
-      else:
-        indices = (array(start, dtype=index_dtype) +
-                   array(step, dtype=index_dtype) * lax.iota(index_dtype, slice_size))
-        if step < 0:
-          reversed_y_dims.append(collapsed_y_axis)
-          indices = lax.rev(indices, dimensions=(0,))
-
-        gather_slice_shape.append(1)
-        gather_indices.append((indices, len(gather_indices_shape)))
-        start_index_map.append(x_axis)
-        gather_indices_shape.append(slice_size)
-        collapsed_slice_dims.append(x_axis)
-
-      collapsed_y_axis += 1
-      y_axis += 1
-      x_axis += 1
-    else:
-      if (abstract_i is not None and
-          not (issubdtype(abstract_i.dtype, np.integer) or issubdtype(abstract_i.dtype, np.bool_))):
-        msg = ("Indexer must have integer or boolean type, got indexer "
-               "with type {} at position {}, indexer value {}")
-        raise TypeError(msg.format(abstract_i.dtype.name, idx_pos, i))
-
-      raise IndexError("Indexing mode not yet supported. Got unsupported indexer "
-                      f"at position {idx_pos}: {i!r}")
-
-  if len(gather_indices) == 0:
-    gather_indices_array: ArrayLike = np.zeros((0,), dtype=index_dtype)
-  elif len(gather_indices) == 1:
-    g, _ = gather_indices[0]
-    gather_indices_array = lax.expand_dims(g, (g.ndim,))
-  else:
-    last_dim = len(gather_indices_shape)
-    gather_indices_shape.append(1)
-    gather_indices_array = lax.concatenate([
-      lax.broadcast_in_dim(g, gather_indices_shape, tuple(range(i, i + g.ndim)))
-      for g, i in gather_indices],
-      last_dim)
-
-  dnums = lax.GatherDimensionNumbers(
-    offset_dims = tuple(offset_dims),
-    collapsed_slice_dims = tuple(sorted(collapsed_slice_dims)),
-    start_index_map = tuple(start_index_map)
-  )
-  return _Indexer(
-    slice_shape=slice_shape,
-    newaxis_dims=tuple(newaxis_dims),
-    gather_slice_shape=gather_slice_shape,
-    reversed_y_dims=reversed_y_dims,
-    dnums=dnums,
-    gather_indices=gather_indices_array,
-    unique_indices=advanced_indexes is None,
-    indices_are_sorted=advanced_indexes is None,
-    scalar_bool_dims=scalar_bool_dims)
-
-def _should_unpack_list_index(x):
-  """Helper for _eliminate_deprecated_list_indexing."""
-  return (isinstance(x, (np.ndarray, Array)) and np.ndim(x) != 0
-          or isinstance(x, (Sequence, slice))
-          or x is Ellipsis or x is None)
-
-def _eliminate_deprecated_list_indexing(idx):
-  # "Basic slicing is initiated if the selection object is a non-array,
-  # non-tuple sequence containing slice objects, [Ellipses, or newaxis
-  # objects]". Detects this and raises a TypeError.
-  if not isinstance(idx, tuple):
-    if isinstance(idx, Sequence) and not isinstance(idx, (Array, np.ndarray, str)):
-      # As of numpy 1.16, some non-tuple sequences of indices result in a warning, while
-      # others are converted to arrays, based on a set of somewhat convoluted heuristics
-      # (See https://github.com/numpy/numpy/blob/v1.19.2/numpy/core/src/multiarray/mapping.c#L179-L343)
-      # In JAX, we raise an informative TypeError for *all* non-tuple sequences.
-      if any(_should_unpack_list_index(i) for i in idx):
-        msg = ("Using a non-tuple sequence for multidimensional indexing is not allowed; "
-               "use `arr[tuple(seq)]` instead of `arr[seq]`. "
-               "See https://github.com/jax-ml/jax/issues/4564 for more information.")
-      else:
-        msg = ("Using a non-tuple sequence for multidimensional indexing is not allowed; "
-               "use `arr[array(seq)]` instead of `arr[seq]`. "
-               "See https://github.com/jax-ml/jax/issues/4564 for more information.")
-      raise TypeError(msg)
-    else:
-      idx = (idx,)
-  return idx
-
-def _is_boolean_index(i):
-  try:
-    abstract_i = core.get_aval(i)
-  except TypeError:
-    abstract_i = None
-  return (isinstance(abstract_i, ShapedArray) and issubdtype(abstract_i.dtype, np.bool_)
-          or isinstance(i, list) and i and all(_is_scalar(e)
-          and issubdtype(_dtype(e), np.bool_) for e in i))
-
-def _expand_bool_indices(idx, shape):
-  """Converts concrete bool indexes into advanced integer indexes."""
-  out = []
-  total_dims = len(shape)
-  num_ellipsis = sum(e is Ellipsis for e in idx)
-  if num_ellipsis > 1:
-    raise IndexError("an index can only have a single ellipsis ('...')")
-  elif num_ellipsis == 1:
-    total_dims = sum(_ndim(e) if _is_boolean_index(e) else 1 for e in idx
-                     if e is not None and e is not Ellipsis)
-  ellipsis_offset = 0
-  newaxis_offset = 0
-  for dim_number, i in enumerate(idx):
-    try:
-      abstract_i = core.get_aval(i)
-    except TypeError:
-      abstract_i = None
-    if _is_boolean_index(i):
-      if isinstance(i, list):
-        i = array(i)
-        abstract_i = core.get_aval(i)
-
-      if not core.is_concrete(i):
-        # TODO(mattjj): improve this error by tracking _why_ the indices are not concrete
-        raise errors.NonConcreteBooleanIndexError(abstract_i)
-      elif _ndim(i) == 0:
-        out.append(bool(i))
-      else:
-        i_shape = _shape(i)
-        start = len(out) + ellipsis_offset - newaxis_offset
-        expected_shape = shape[start: start + _ndim(i)]
-        if len(i_shape) != len(expected_shape):
-          raise IndexError(f"too many boolean indices at index {dim_number}: got mask of shape "
-                           f"{i_shape}, but only {len(expected_shape)} dimensions remain.")
-        if not all(s1 in (0, s2) for s1, s2 in zip(i_shape, expected_shape)):
-          raise IndexError("boolean index did not match shape of indexed array in index "
-                           f"{dim_number}: got {i_shape}, expected {expected_shape}")
-        out.extend(np.where(i))
-    else:
-      out.append(i)
-    if i is Ellipsis:
-      ellipsis_offset = len(shape) - total_dims - 1
-    if i is None:
-      newaxis_offset += 1
-  return tuple(out)
-
-
-def _is_slice_element_none_or_constant_or_symbolic(elt):
-  """Return True if elt is a constant or None."""
-  if elt is None: return True
-  if core.is_symbolic_dim(elt): return True
-  try:
-    return core.is_concrete(elt)
-  except TypeError:
-    return False
-
-# TODO(mattjj): clean up this logic
-def _is_advanced_int_indexer(idx):
-  """Returns True if idx should trigger int array indexing, False otherwise."""
-  # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
-  assert isinstance(idx, tuple)
-  if all(e is None or e is Ellipsis or isinstance(e, slice)
-         or _is_scalar(e) and issubdtype(_dtype(e), np.integer) for e in idx):
-    return False
-  return all(e is None or e is Ellipsis or isinstance(e, slice)
-             or _is_int_arraylike(e) for e in idx)
-
-def _is_int_arraylike(x):
-  """Returns True if x is array-like with integer dtype, False otherwise."""
-  return (isinstance(x, int) and not isinstance(x, bool)
-          or issubdtype(getattr(x, "dtype", None), np.integer)
-          or isinstance(x, (list, tuple)) and all(_is_int_arraylike(e) for e in x))
-
-def _is_scalar(x):
-  """Checks if a Python or NumPy scalar."""
-  return  np.isscalar(x) or (isinstance(x, (np.ndarray, Array))
-                             and np.ndim(x) == 0)
-
-def _canonicalize_tuple_index(arr_ndim, idx):
-  """Helper to remove Ellipsis and add in the implicit trailing slice(None)."""
-  num_dimensions_consumed = sum(not (e is None or e is Ellipsis or isinstance(e, bool)) for e in idx)
-  if num_dimensions_consumed > arr_ndim:
-    index_or_indices = "index" if num_dimensions_consumed == 1 else "indices"
-    raise IndexError(
-        f"Too many indices: {arr_ndim}-dimensional array indexed "
-        f"with {num_dimensions_consumed} regular {index_or_indices}.")
-  ellipses = (i for i, elt in enumerate(idx) if elt is Ellipsis)
-  ellipsis_index = next(ellipses, None)
-  if ellipsis_index is not None:
-    if next(ellipses, None) is not None:
-      raise IndexError(
-          f"Multiple ellipses (...) not supported: {list(map(type, idx))}.")
-    colons = (slice(None),) * (arr_ndim - num_dimensions_consumed)
-    idx = idx[:ellipsis_index] + colons + idx[ellipsis_index + 1:]
-  elif num_dimensions_consumed < arr_ndim:
-    colons = (slice(None),) * (arr_ndim - num_dimensions_consumed)
-    idx = tuple(idx) + colons
-  return idx
 
 def _gcd_cond_fn(xs: tuple[Array, Array]) -> Array:
   x1, x2 = xs
@@ -11967,9 +9740,9 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
   w: Array | None = None
   if fweights is not None:
     fweights = util.ensure_arraylike("cov", fweights)
-    if ndim(fweights) > 1:
+    if np.ndim(fweights) > 1:
       raise RuntimeError("cannot handle multidimensional fweights")
-    if shape(fweights)[0] != X.shape[1]:
+    if np.shape(fweights)[0] != X.shape[1]:
       raise RuntimeError("incompatible numbers of samples and fweights")
     if not issubdtype(_dtype(fweights), np.integer):
       raise TypeError("fweights must be integer.")
@@ -11977,9 +9750,9 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
     w = abs(fweights)
   if aweights is not None:
     aweights = util.ensure_arraylike("cov", aweights)
-    if ndim(aweights) > 1:
+    if np.ndim(aweights) > 1:
       raise RuntimeError("cannot handle multidimensional aweights")
-    if shape(aweights)[0] != X.shape[1]:
+    if np.shape(aweights)[0] != X.shape[1]:
       raise RuntimeError("incompatible numbers of samples and aweights")
     # Ensure positive aweights: note that numpy raises an error for negative aweights.
     aweights = abs(aweights)
@@ -11999,7 +9772,7 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
 
   X = X - avg[:, None]
   X_T = X.T if w is None else (X * lax.broadcast_to_rank(w, X.ndim)).T
-  return ufuncs.true_divide(dot(X, X_T.conj()), f).squeeze()
+  return ufuncs.true_divide(tensor_contractions.dot(X, X_T.conj()), f).squeeze()
 
 
 @export
@@ -12080,7 +9853,7 @@ def corrcoef(x: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True) -> A
   """
   util.check_arraylike("corrcoef", x)
   c = cov(x, y, rowvar)
-  if len(shape(c)) == 0:
+  if len(np.shape(c)) == 0:
     # scalar - this should yield nan for values (nan/nan, inf/inf, 0/0), 1 otherwise
     return ufuncs.divide(c, c)
   d = diag(c)
@@ -12205,7 +9978,7 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
     raise ValueError(
         f"{method!r} is an invalid value for keyword 'method'. "
         "Expected one of ['sort', 'scan', 'scan_unrolled', 'compare_all'].")
-  if ndim(a) != 1:
+  if np.ndim(a) != 1:
     raise ValueError("a should be 1-dimensional")
   a, v = util.promote_dtypes(a, v)
   if sorter is not None:
@@ -12383,169 +10156,3 @@ def _tile_to_size(arr: Array, size: int) -> Array:
     arr = tile(arr, int(np.ceil(size / arr.size)))
   assert arr.size >= size
   return arr[:size] if arr.size > size else arr
-
-
-@export
-def place(arr: ArrayLike, mask: ArrayLike, vals: ArrayLike, *,
-          inplace: bool = True) -> Array:
-  """Update array elements based on a mask.
-
-  JAX implementation of :func:`numpy.place`.
-
-  The semantics of :func:`numpy.place` are to modify arrays in-place, which
-  is not possible for JAX's immutable arrays. The JAX version returns a modified
-  copy of the input, and adds the ``inplace`` parameter which must be set to
-  `False`` by the user as a reminder of this API difference.
-
-  Args:
-    arr: array into which values will be placed.
-    mask: boolean mask with the same size as ``arr``.
-    vals: values to be inserted into ``arr`` at the locations indicated
-      by mask. If too many values are supplied, they will be truncated.
-      If not enough values are supplied, they will be repeated.
-    inplace: must be set to False to indicate that the input is not modified
-      in-place, but rather a modified copy is returned.
-
-  Returns:
-    A copy of ``arr`` with masked values set to entries from `vals`.
-
-  See Also:
-    - :func:`jax.numpy.put`: put elements into an array at numerical indices.
-    - :func:`jax.numpy.ndarray.at`: array updates using NumPy-style indexing
-
-  Examples:
-    >>> x = jnp.zeros((3, 5), dtype=int)
-    >>> mask = (jnp.arange(x.size) % 3 == 0).reshape(x.shape)
-    >>> mask
-    Array([[ True, False, False,  True, False],
-           [False,  True, False, False,  True],
-           [False, False,  True, False, False]], dtype=bool)
-
-    Placing a scalar value:
-
-    >>> jnp.place(x, mask, 1, inplace=False)
-    Array([[1, 0, 0, 1, 0],
-           [0, 1, 0, 0, 1],
-           [0, 0, 1, 0, 0]], dtype=int32)
-
-    In this case, ``jnp.place`` is similar to the masked array update syntax:
-
-    >>> x.at[mask].set(1)
-    Array([[1, 0, 0, 1, 0],
-           [0, 1, 0, 0, 1],
-           [0, 0, 1, 0, 0]], dtype=int32)
-
-    ``place`` differs when placing values from an array. The array is repeated
-    to fill the masked entries:
-
-    >>> vals = jnp.array([1, 3, 5])
-    >>> jnp.place(x, mask, vals, inplace=False)
-    Array([[1, 0, 0, 3, 0],
-           [0, 5, 0, 0, 1],
-           [0, 0, 3, 0, 0]], dtype=int32)
-  """
-  data, mask_arr, vals_arr = util.ensure_arraylike("place", arr, mask, vals)
-  vals_arr = vals_arr.ravel()
-  if inplace:
-    raise ValueError(
-      "jax.numpy.place cannot modify arrays in-place, because JAX arrays are immutable. "
-      "Pass inplace=False to instead return an updated array.")
-  if data.size != mask_arr.size:
-    raise ValueError("place: arr and mask must be the same size")
-  if not vals_arr.size:
-    raise ValueError("Cannot place values from an empty array")
-  if not data.size:
-    return data
-  indices = where(mask_arr.ravel(), size=mask_arr.size, fill_value=mask_arr.size)[0]
-  vals_arr = _tile_to_size(vals_arr, len(indices))
-  return data.ravel().at[indices].set(vals_arr, mode='drop').reshape(data.shape)
-
-
-@export
-def put(a: ArrayLike, ind: ArrayLike, v: ArrayLike,
-        mode: str | None = None, *, inplace: bool = True) -> Array:
-  """Put elements into an array at given indices.
-
-  JAX implementation of :func:`numpy.put`.
-
-  The semantics of :func:`numpy.put` are to modify arrays in-place, which
-  is not possible for JAX's immutable arrays. The JAX version returns a modified
-  copy of the input, and adds the ``inplace`` parameter which must be set to
-  `False`` by the user as a reminder of this API difference.
-
-  Args:
-    a: array into which values will be placed.
-    ind: array of indices over the flattened array at which to put values.
-    v: array of values to put into the array.
-    mode: string specifying how to handle out-of-bound indices. Supported values:
-
-      - ``"clip"`` (default): clip out-of-bound indices to the final index.
-      - ``"wrap"``: wrap out-of-bound indices to the beginning of the array.
-
-    inplace: must be set to False to indicate that the input is not modified
-      in-place, but rather a modified copy is returned.
-
-  Returns:
-    A copy of ``a`` with specified entries updated.
-
-  See Also:
-    - :func:`jax.numpy.place`: place elements into an array via boolean mask.
-    - :func:`jax.numpy.ndarray.at`: array updates using NumPy-style indexing.
-    - :func:`jax.numpy.take`: extract values from an array at given indices.
-
-  Examples:
-    >>> x = jnp.zeros(5, dtype=int)
-    >>> indices = jnp.array([0, 2, 4])
-    >>> values = jnp.array([10, 20, 30])
-    >>> jnp.put(x, indices, values, inplace=False)
-    Array([10,  0, 20,  0, 30], dtype=int32)
-
-    This is equivalent to the following :attr:`jax.numpy.ndarray.at` indexing syntax:
-
-    >>> x.at[indices].set(values)
-    Array([10,  0, 20,  0, 30], dtype=int32)
-
-    There are two modes for handling out-of-bound indices. By default they are
-    clipped:
-
-    >>> indices = jnp.array([0, 2, 6])
-    >>> jnp.put(x, indices, values, inplace=False, mode='clip')
-    Array([10,  0, 20,  0, 30], dtype=int32)
-
-    Alternatively, they can be wrapped to the beginning of the array:
-
-    >>> jnp.put(x, indices, values, inplace=False, mode='wrap')
-    Array([10,  30, 20,  0, 0], dtype=int32)
-
-    For N-dimensional inputs, the indices refer to the flattened array:
-
-    >>> x = jnp.zeros((3, 5), dtype=int)
-    >>> indices = jnp.array([0, 7, 14])
-    >>> jnp.put(x, indices, values, inplace=False)
-    Array([[10,  0,  0,  0,  0],
-           [ 0,  0, 20,  0,  0],
-           [ 0,  0,  0,  0, 30]], dtype=int32)
-  """
-  arr, ind_arr, _ = util.ensure_arraylike("put", a, ind, v)
-  ind_arr = ind_arr.ravel()
-  v_arr = ravel(v)
-  if not arr.size or not ind_arr.size or not v_arr.size:
-    return arr
-  v_arr = _tile_to_size(v_arr, len(ind_arr))
-  if inplace:
-    raise ValueError(
-      "jax.numpy.put cannot modify arrays in-place, because JAX arrays are immutable. "
-      "Pass inplace=False to instead return an updated array.")
-  if mode is None:
-    scatter_mode = "drop"
-  elif mode == "clip":
-    ind_arr = clip(ind_arr, 0, arr.size - 1)
-    scatter_mode = "promise_in_bounds"
-  elif mode == "wrap":
-    ind_arr = ind_arr % arr.size
-    scatter_mode = "promise_in_bounds"
-  elif mode == "raise":
-    raise NotImplementedError("The 'raise' mode to jnp.put is not supported.")
-  else:
-    raise ValueError(f"mode should be one of 'wrap' or 'clip'; got {mode=}")
-  return arr.at[unravel_index(ind_arr, arr.shape)].set(v_arr, mode=scatter_mode)

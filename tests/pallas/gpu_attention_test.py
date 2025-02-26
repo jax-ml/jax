@@ -105,6 +105,7 @@ class DecodeAttentionTest(PallasBaseTest):
       return_residuals,
   ):
     del kwargs
+    normalize_output = not return_residuals
 
     k1, k2, k3 = random.split(random.key(0), 3)
     q = random.normal(k1, (batch_size, num_heads, head_dim), dtype=jnp.float16)
@@ -118,6 +119,7 @@ class DecodeAttentionTest(PallasBaseTest):
         start_idx=start_idx,
         kv_seq_len=kv_seq_len,
         return_residuals=return_residuals,
+        normalize_output=normalize_output,
         interpret=self.INTERPRET,
     )
     o_ref, *res_ref = decode_attention.mqa_reference(
@@ -127,6 +129,7 @@ class DecodeAttentionTest(PallasBaseTest):
         start_idx=start_idx,
         kv_seq_len=kv_seq_len,
         return_residuals=return_residuals,
+        normalize_output=normalize_output
     )
     np.testing.assert_allclose(o, o_ref, atol=0.05)
     if return_residuals:
@@ -181,6 +184,7 @@ class DecodeAttentionTest(PallasBaseTest):
       return_residuals,
   ):
     del kwargs
+    normalize_output = not return_residuals
 
     k1, k2, k3 = random.split(random.key(0), 3)
     q = random.normal(
@@ -199,6 +203,7 @@ class DecodeAttentionTest(PallasBaseTest):
         start_idx=start_idx,
         kv_seq_len=kv_seq_len,
         return_residuals=return_residuals,
+        normalize_output=normalize_output,
         interpret=self.INTERPRET,
     )
     o_ref, *res_ref = decode_attention.gqa_reference(
@@ -208,6 +213,7 @@ class DecodeAttentionTest(PallasBaseTest):
         start_idx=start_idx,
         kv_seq_len=kv_seq_len,
         return_residuals=return_residuals,
+        normalize_output=normalize_output
     )
     np.testing.assert_allclose(o, o_ref, atol=0.05)
     if return_residuals:

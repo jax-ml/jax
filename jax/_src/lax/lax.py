@@ -58,6 +58,7 @@ from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
 from jax._src.interpreters.batching import RaggedAxis
 from jax._src.lax import slicing
+from jax._src import mesh as mesh_lib
 from jax._src.lax.utils import (
   _input_dtype, dtype_to_string, standard_abstract_eval,
   standard_multi_result_abstract_eval, standard_primitive)
@@ -137,9 +138,9 @@ def asarray(x: ArrayLike) -> Array:
   if isinstance(x, Array):
     return x
   elif isinstance(x, (bool, np.ndarray, np.generic)):
-    return _convert_element_type(x, weak_type=False)  # type: ignore[bad-return-type]
+    return _convert_element_type(x, weak_type=False)  # pytype: disable=bad-return-type
   elif isinstance(x, (int, float, builtins.complex)):
-    return _convert_element_type(dtypes.coerce_to_array(x), weak_type=True)  # type: ignore[bad-return-type]
+    return _convert_element_type(dtypes.coerce_to_array(x), weak_type=True)
   else:
     raise TypeError(f"asarray: expected ArrayLike, got {x} of type {type(x)}.")
 
@@ -237,7 +238,7 @@ def broadcast_shardings(*avals):
                               sharding=a.sharding.with_spec(new_spec)))
   return broadcasting_sharding_rule('broadcast_shardings', *aval_list)
 
-def _identity(x): return x
+def _identity(x, **_): return x
 
 def _extract_tracers_dyn_shape(
     shape: Sequence[int | core.Tracer]
@@ -500,6 +501,7 @@ def exp(x: ArrayLike) -> Array:
   """
   return exp_p.bind(x)
 
+@export
 def exp2(x: ArrayLike) -> Array:
   r"""Elementwise base-2 exponential: :math:`2^x`.
 
@@ -588,6 +590,7 @@ def log1p(x: ArrayLike) -> Array:
   """
   return log1p_p.bind(x)
 
+@export
 def tanh(x: ArrayLike) -> Array:
   r"""Elementwise hyperbolic tangent: :math:`\mathrm{tanh}(x)`.
 
@@ -685,70 +688,331 @@ def atan2(x: ArrayLike, y: ArrayLike) -> Array:
   """
   return atan2_p.bind(x, y)
 
+@export
 def real(x: ArrayLike) -> Array:
   r"""Elementwise extract real part: :math:`\mathrm{Re}(x)`.
 
-  Returns the real part of a complex number.
+  This function lowers directly to the `stablehlo.real`_ operation.
+
+  Args:
+    x: input array. Must have complex dtype.
+
+  Returns:
+    Array of the same shape as ``x`` containing its real part. Will have dtype
+    float32 if ``x.dtype == complex64``, or float64 if ``x.dtype == complex128``.
+
+  See also:
+    - :func:`jax.lax.complex`: elementwise construct complex number.
+    - :func:`jax.lax.imag`: elementwise extract imaginary part.
+    - :func:`jax.lax.conj`: elementwise complex conjugate.
+
+  .. _stablehlo.real: https://openxla.org/stablehlo/spec#real
   """
   return real_p.bind(x)
 
+@export
 def imag(x: ArrayLike) -> Array:
   r"""Elementwise extract imaginary part: :math:`\mathrm{Im}(x)`.
 
-  Returns the imaginary part of a complex number.
+  This function lowers directly to the `stablehlo.imag`_ operation.
+
+  Args:
+    x: input array. Must have complex dtype.
+
+  Returns:
+    Array of the same shape as ``x`` containing its imaginary part. Will have dtype
+    float32 if ``x.dtype == complex64``, or float64 if ``x.dtype == complex128``.
+
+  See also:
+    - :func:`jax.lax.complex`: elementwise construct complex number.
+    - :func:`jax.lax.real`: elementwise extract real part.
+    - :func:`jax.lax.conj`: elementwise complex conjugate.
+
+  .. _stablehlo.imag: https://openxla.org/stablehlo/spec#imag
   """
   return imag_p.bind(x)
 
+@export
 def complex(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise make complex number: :math:`x + jy`.
 
-  Builds a complex number from real and imaginary parts.
+  This function lowers directly to the `stablehlo.complex`_ operation.
+
+  Args:
+    x, y: input arrays. Must have matching floating-point dtypes. If
+      neither is a scalar, the two arrays must have the same number
+      of dimensions and be broadcast-compatible.
+
+  Returns:
+    The complex array with the real part given by ``x``, and the imaginary
+    part given by ``y``. For inputs of dtype float32 or float64, the result
+    will have dtype complex64 or complex128 respectively.
+
+  See also:
+    - :func:`jax.lax.real`: elementwise extract real part.
+    - :func:`jax.lax.imag`: elementwise extract imaginary part.
+    - :func:`jax.lax.conj`: elementwise complex conjugate.
+
+  .. _stablehlo.complex: https://openxla.org/stablehlo/spec#complex
   """
   return complex_p.bind(x, y)
 
+@export
 def conj(x: ArrayLike) -> Array:
-  r"""Elementwise complex conjugate function: :math:`\overline{x}`."""
+  r"""Elementwise complex conjugate function: :math:`\overline{x}`.
+
+  This function lowers to a combination of `stablehlo.real`_, `stablehlo.imag`_,
+  and  `stablehlo.complex`_.
+
+  Args:
+    x: input array. Must have complex dtype.
+
+  Returns:
+    Array of the same shape and dtype as ``x`` containing its complex conjugate.
+
+  See also:
+    - :func:`jax.lax.complex`: elementwise construct complex number.
+    - :func:`jax.lax.real`: elementwise extract real part.
+    - :func:`jax.lax.imag`: elementwise extract imaginary part.
+    - :func:`jax.lax.abs`: elementwise absolute value / complex magnitude.
+
+  .. _stablehlo.real: https://openxla.org/stablehlo/spec#real
+  .. _stablehlo.imag: https://openxla.org/stablehlo/spec#imag
+  .. _stablehlo.complex: https://openxla.org/stablehlo/spec#complex
+  """
   # TODO(mattjj): remove input_dtype, not needed anymore
   return conj_p.bind(x, input_dtype=_dtype(x))
 
+@export
 def abs(x: ArrayLike) -> Array:
-  r"""Elementwise absolute value: :math:`|x|`."""
+  r"""Elementwise absolute value: :math:`|x|`.
+
+  This function lowers directly to the `stablehlo.abs`_ operation.
+
+  Args:
+    x: Input array. Must have signed integer, floating, or complex dtype.
+
+  Returns:
+    An array of the same shape as ``x`` containing the elementwise absolute value.
+    For complex valued input, :math:`a + ib`, ``abs(x)`` returns :math:`\sqrt{a^2+b^2}`.
+
+  See also:
+    - :func:`jax.numpy.abs`: a more flexible NumPy-style ``abs`` implementation.
+
+  .. _stablehlo.abs: https://openxla.org/stablehlo/spec#abs
+  """
   return abs_p.bind(x)
 
+@export
 def pow(x: ArrayLike, y: ArrayLike) -> Array:
-  r"""Elementwise power: :math:`x^y`."""
+  r"""Elementwise power: :math:`x^y`.
+
+  This function lowers directly to the `stablehlo.pow`_ operation, along with
+  a `stablehlo.convert`_ when the argument dtypes do not match.
+
+  Args:
+    x: Input array giving the base value. Must have floating or complex type.
+    y: Input array giving the exponent value. Must have integer, floating, or
+      complex type. Its dtype will be cast to that of ``x.dtype`` if necessary.
+      If neither ``x`` nor ``y`` is a scalar, then ``x`` and ``y`` must have
+      the same number of dimensions and be broadcast-compatible.
+
+  Returns:
+    An array of the same dtype as ``x`` containing the elementwise power.
+
+  See also:
+    :func:`jax.lax.integer_pow`: Elementwise power where ``y`` is a static integer.
+
+  .. _stablehlo.convert: https://openxla.org/stablehlo/spec#convert
+  .. _stablehlo.pow: https://openxla.org/stablehlo/spec#pow
+  """
   return pow_p.bind(x, y)
 
+@export
 def integer_pow(x: ArrayLike, y: int) -> Array:
-  r"""Elementwise power: :math:`x^y`, where :math:`y` is a fixed integer."""
+  r"""Elementwise power: :math:`x^y`, where :math:`y` is a static integer.
+
+  This will lower to a sequence of :math:`O[\log_2(y)]` repetitions of
+  `stablehlo.multiply`_.
+
+  Args:
+    x: Input array giving the base value. Must have numerical dtype.
+    y: Static scalar integer giving the exponent.
+
+  Returns:
+    An array of the same shape and dtype as ``x`` containing the elementwise power.
+
+  See also:
+    :func:`jax.lax.pow`: Elementwise pwoer where ``y`` is an array.
+
+  .. _stablehlo.multiply: https://openxla.org/stablehlo/spec#multiply
+  """
   return integer_pow_p.bind(x, y=y)
 
+@export
 def sqrt(x: ArrayLike) -> Array:
-  r"""Elementwise square root: :math:`\sqrt{x}`."""
+  r"""Elementwise square root: :math:`\sqrt{x}`.
+
+  This function lowers directly to the `stablehlo.sqrt`_ operation.
+
+  Args:
+    x: Input array. Must have floating or complex dtype.
+
+  Returns:
+    An array of the same shape and dtype as ``x`` containing the square root.
+
+  See also:
+    :func:`jax.lax.pow`: Elementwise power.
+    :func:`jax.lax.cbrt`: Elementwise cube root.
+    :func:`jax.lax.rsqrt`: Elementwise reciporical square root.
+
+  .. _stablehlo.sqrt: https://openxla.org/stablehlo/spec#sqrt
+  """
   return sqrt_p.bind(x)
 
+@export
 def rsqrt(x: ArrayLike) -> Array:
-  r"""Elementwise reciprocal square root:  :math:`1 \over \sqrt{x}`."""
+  r"""Elementwise reciprocal square root:  :math:`1 \over \sqrt{x}`.
+
+  This function lowers directly to the `stablehlo.rsqrt`_ operation.
+
+  Args:
+    x: Input array. Must have floating or complex dtype.
+
+  Returns:
+    An array of the same shape and dtype as ``x`` containing the
+    reciporical square root.
+
+  See also:
+    :func:`jax.lax.pow`: Elementwise power.
+    :func:`jax.lax.sqrt`: Elementwise square root.
+    :func:`jax.lax.cbrt`: Elementwise cube root.
+
+  .. _stablehlo.rsqrt: https://openxla.org/stablehlo/spec#rsqrt
+  """
   return rsqrt_p.bind(x)
 
+@export
 def cbrt(x: ArrayLike) -> Array:
-  r"""Elementwise cube root: :math:`\sqrt[3]{x}`."""
+  r"""Elementwise cube root: :math:`\sqrt[3]{x}`.
+
+  This function lowers directly to the `stablehlo.cbrt`_ operation.
+
+  Args:
+    x: Input array. Must have floating or complex dtype.
+
+  Returns:
+    An array of the same shape and dtype as ``x`` containing the cube root.
+
+  See also:
+    :func:`jax.lax.pow`: Elementwise power.
+    :func:`jax.lax.sqrt`: Elementwise square root.
+    :func:`jax.lax.rsqrt`: Elementwise reciporical square root.
+
+  .. _stablehlo.cbrt: https://openxla.org/stablehlo/spec#cbrt
+  """
   return cbrt_p.bind(x)
 
+@export
 def bitwise_not(x: ArrayLike) -> Array:
-  r"""Elementwise NOT: :math:`\neg x`."""
+  r"""Elementwise NOT: :math:`\neg x`.
+
+  This function lowers directly to the `stablehlo.not`_ operation.
+
+  Args:
+    x: Input array. Must have boolean or integer dtype.
+
+  Returns:
+    An array of the same shape and dtype as ``x`` containing the bitwise
+    inversion of each entry.
+
+  See also:
+    - :func:`jax.numpy.invert`: NumPy wrapper for this API, also accessible
+      via the ``~x`` operator on JAX arrays.
+    - :func:`jax.lax.bitwise_and`: Elementwise AND.
+    - :func:`jax.lax.bitwise_or`: Elementwise OR.
+    - :func:`jax.lax.bitwise_xor`: Elementwise exclusive OR.
+
+  .. _stablehlo.not: https://openxla.org/stablehlo/spec#not
+  """
   return not_p.bind(x)
 
+@export
 def bitwise_and(x: ArrayLike, y: ArrayLike) -> Array:
-  r"""Elementwise AND: :math:`x \wedge y`."""
+  r"""Elementwise AND: :math:`x \wedge y`.
+
+  This function lowers directly to the `stablehlo.and`_ operation.
+
+  Args:
+    x, y: Input arrays. Must have matching boolean or integer dtypes.
+      If neither is a scalar, ``x`` and ``y`` must have the same number
+      of dimensions and be broadcast compatible.
+
+  Returns:
+    An array of the same dtype as ``x`` and ``y`` containing the bitwise
+    AND of each pair of broadcasted entries.
+
+  See also:
+    - :func:`jax.numpy.bitwise_and`: NumPy wrapper for this API, also accessible
+      via the ``x & y`` operator on JAX arrays.
+    - :func:`jax.lax.bitwise_not`: Elementwise NOT.
+    - :func:`jax.lax.bitwise_or`: Elementwise OR.
+    - :func:`jax.lax.bitwise_xor`: Elementwise exclusive OR.
+
+  .. _stablehlo.and: https://openxla.org/stablehlo/spec#and
+  """
   return and_p.bind(x, y)
 
+@export
 def bitwise_or(x: ArrayLike, y: ArrayLike) -> Array:
-  r"""Elementwise OR: :math:`x \vee y`."""
+  r"""Elementwise OR: :math:`x \vee y`.
+
+  This function lowers directly to the `stablehlo.or`_ operation.
+
+  Args:
+    x, y: Input arrays. Must have matching boolean or integer dtypes.
+      If neither is a scalar, ``x`` and ``y`` must have the same number
+      of dimensions and be broadcast compatible.
+
+  Returns:
+    An array of the same dtype as ``x`` and ``y`` containing the bitwise
+    OR of each pair of broadcasted entries.
+
+  See also:
+    - :func:`jax.numpy.invert`: NumPy wrapper for this API, also accessible
+      via the ``x | y`` operator on JAX arrays.
+    - :func:`jax.lax.bitwise_not`: Elementwise NOT.
+    - :func:`jax.lax.bitwise_and`: Elementwise AND.
+    - :func:`jax.lax.bitwise_xor`: Elementwise exclusive OR.
+
+  .. _stablehlo.or: https://openxla.org/stablehlo/spec#or
+  """
   return or_p.bind(x, y)
 
+@export
 def bitwise_xor(x: ArrayLike, y: ArrayLike) -> Array:
-  r"""Elementwise exclusive OR: :math:`x \oplus y`."""
+  r"""Elementwise exclusive OR: :math:`x \oplus y`.
+
+  This function lowers directly to the `stablehlo.xor`_ operation.
+
+  Args:
+    x, y: Input arrays. Must have matching boolean or integer dtypes.
+      If neither is a scalar, ``x`` and ``y`` must have the same number
+      of dimensions and be broadcast compatible.
+
+  Returns:
+    An array of the same dtype as ``x`` and ``y`` containing the bitwise
+    XOR of each pair of broadcasted entries.
+
+  See also:
+    - :func:`jax.numpy.bitwise_xor`: NumPy wrapper for this API, also accessible
+      via the ``x ^ y`` operator on JAX arrays.
+    - :func:`jax.lax.bitwise_not`: Elementwise NOT.
+    - :func:`jax.lax.bitwise_and`: Elementwise AND.
+    - :func:`jax.lax.bitwise_or`: Elementwise OR.
+
+  .. _stablehlo.xor: https://openxla.org/stablehlo/spec#xor
+  """
   return xor_p.bind(x, y)
 
 def population_count(x: ArrayLike) -> Array:
@@ -807,40 +1071,261 @@ def min(x: ArrayLike, y: ArrayLike) -> Array:
   `(real, imaginary)` pairs."""
   return min_p.bind(x, y)
 
+@export
 def shift_left(x: ArrayLike, y: ArrayLike) -> Array:
-  r"""Elementwise left shift: :math:`x \ll y`."""
+  r"""Elementwise left shift: :math:`x \ll y`.
+
+  This function lowers directly to the `stablehlo.shift_left`_ operation.
+
+  Args:
+    x, y: Input arrays. Must have matching integer dtypes. If neither is a
+      scalar, ``x`` and ``y`` must have the same number of dimensions and
+      be broadcast compatible.
+
+  Returns:
+    An array of the same dtype as ``x`` and ``y`` containing the element-wise
+    left shift of each pair of broadcasted entries.
+
+  See also:
+    - :func:`jax.numpy.left_shift`: NumPy wrapper for this API, also accessible
+      via the ``x << y`` operator on JAX arrays.
+    - :func:`jax.lax.shift_right_arithmetic`: Elementwise arithmetic right shift.
+    - :func:`jax.lax.shift_right_logical`: Elementwise logical right shift.
+
+  .. _stablehlo.shift_left: https://openxla.org/stablehlo/spec#shift_left
+  """
   return shift_left_p.bind(x, y)
 
+@export
 def shift_right_arithmetic(x: ArrayLike, y: ArrayLike) -> Array:
-  r"""Elementwise arithmetic right shift: :math:`x \gg y`."""
+  r"""Elementwise arithmetic right shift: :math:`x \gg y`.
+
+  This function lowers directly to the `stablehlo.shift_right_arithmetic`_ operation.
+
+  Args:
+    x, y: Input arrays. Must have matching integer dtypes. If neither is a
+      scalar, ``x`` and ``y`` must have the same number of dimensions and
+      be broadcast compatible.
+
+  Returns:
+    An array of the same dtype as ``x`` and ``y`` containing the element-wise
+    arithmetic right shift of each pair of broadcasted entries.
+
+  See also:
+    - :func:`jax.numpy.right_shift`: NumPy wrapper for this API when applied to
+      signed integers, also accessible via the ``x >> y`` operator on JAX arrays
+      with signed integer dtype.
+    - :func:`jax.lax.shift_left`: Elementwise left shift.
+    - :func:`jax.lax.shift_right_logical`: Elementwise logical right shift.
+
+  .. _stablehlo.shift_right_arithmetic: https://openxla.org/stablehlo/spec#shift_right_arithmetic
+  """
   return shift_right_arithmetic_p.bind(x, y)
 
+@export
 def shift_right_logical(x: ArrayLike, y: ArrayLike) -> Array:
-  r"""Elementwise logical right shift: :math:`x \gg y`."""
+  r"""Elementwise logical right shift: :math:`x \gg y`.
+
+  This function lowers directly to the `stablehlo.shift_right_logical`_ operation.
+
+  Args:
+    x, y: Input arrays. Must have matching integer dtypes. If neither is a
+      scalar, ``x`` and ``y`` must have the same number of dimensions and
+      be broadcast compatible.
+
+  Returns:
+    An array of the same dtype as ``x`` and ``y`` containing the element-wise
+    logical right shift of each pair of broadcasted entries.
+
+  See also:
+    - :func:`jax.numpy.right_shift`: NumPy wrapper for this API when applied to
+      unsigned integers, also accessible via the ``x >> y`` operator on JAX arrays
+      with unsigned integer dtype.
+    - :func:`jax.lax.shift_left`: Elementwise left shift.
+    - :func:`jax.lax.shift_right_arithmetic`: Elementwise arithmetic right shift.
+
+  .. _stablehlo.shift_right_logical: https://openxla.org/stablehlo/spec#shift_right_logical
+  """
   return shift_right_logical_p.bind(x, y)
 
+@export
 def eq(x: ArrayLike, y: ArrayLike) -> Array:
-  r"""Elementwise equals: :math:`x = y`."""
+  r"""Elementwise equals: :math:`x = y`.
+
+  This function lowers directly to the `stablehlo.compare`_ operation
+  with ``comparison_direction=EQ`` and ``compare_type`` set according
+  to the input dtype.
+
+  Args:
+    x, y: Input arrays. Must have matching dtypes. If neither is a
+      scalar, ``x`` and ``y`` must have the same number of dimensions and
+      be broadcast compatible.
+
+  Returns:
+    A boolean array of shape ``lax.broadcast_shapes(x.shape, y.shape)``
+    containing the elementwise equal comparison.
+
+  See also:
+    - :func:`jax.numpy.equal`: NumPy wrapper for this API, also accessible
+      via the ``x == y`` operator on JAX arrays.
+    - :func:`jax.lax.ne`: elementwise not-equal
+    - :func:`jax.lax.ge`: elementwise greater-than-or-equal
+    - :func:`jax.lax.gt`: elementwise greater-than
+    - :func:`jax.lax.le`: elementwise less-than-or-equal
+    - :func:`jax.lax.lt`: elementwise less-than
+
+  .. _stablehlo.compare: https://openxla.org/stablehlo/spec#compare
+  """
   return eq_p.bind(x, y)
 
+@export
 def ne(x: ArrayLike, y: ArrayLike) -> Array:
-  r"""Elementwise not-equals: :math:`x \neq y`."""
+  r"""Elementwise not-equals: :math:`x \neq y`.
+
+  This function lowers directly to the `stablehlo.compare`_ operation
+  with ``comparison_direction=NE`` and ``compare_type`` set according
+  to the input dtype.
+
+  Args:
+    x, y: Input arrays. Must have matching dtypes. If neither is a
+      scalar, ``x`` and ``y`` must have the same number of dimensions and
+      be broadcast compatible.
+
+  Returns:
+    A boolean array of shape ``lax.broadcast_shapes(x.shape, y.shape)``
+    containing the elementwise not-equal comparison.
+
+  See also:
+    - :func:`jax.numpy.not_equal`: NumPy wrapper for this API, also accessible
+      via the ``x != y`` operator on JAX arrays.
+    - :func:`jax.lax.eq`: elementwise equal
+    - :func:`jax.lax.ge`: elementwise greater-than-or-equal
+    - :func:`jax.lax.gt`: elementwise greater-than
+    - :func:`jax.lax.le`: elementwise less-than-or-equal
+    - :func:`jax.lax.lt`: elementwise less-than
+
+  .. _stablehlo.compare: https://openxla.org/stablehlo/spec#compare
+  """
   return ne_p.bind(x, y)
 
+@export
 def ge(x: ArrayLike, y: ArrayLike) -> Array:
-  r"""Elementwise greater-than-or-equals: :math:`x \geq y`."""
+  r"""Elementwise greater-than-or-equals: :math:`x \geq y`.
+
+  This function lowers directly to the `stablehlo.compare`_ operation
+  with ``comparison_direction=GE`` and ``compare_type`` set according
+  to the input dtype.
+
+  Args:
+    x, y: Input arrays. Must have matching non-complex dtypes. If neither is
+      a scalar, ``x`` and ``y`` must have the same number of dimensions and
+      be broadcast compatible.
+
+  Returns:
+    A boolean array of shape ``lax.broadcast_shapes(x.shape, y.shape)``
+    containing the elementwise greater-than-or-equal comparison.
+
+  See also:
+    - :func:`jax.numpy.greater_equal`: NumPy wrapper for this API, also
+      accessible via the ``x >= y`` operator on JAX arrays.
+    - :func:`jax.lax.eq`: elementwise equal
+    - :func:`jax.lax.ne`: elementwise not-equal
+    - :func:`jax.lax.gt`: elementwise greater-than
+    - :func:`jax.lax.le`: elementwise less-than-or-equal
+    - :func:`jax.lax.lt`: elementwise less-than
+
+  .. _stablehlo.compare: https://openxla.org/stablehlo/spec#compare
+  """
   return ge_p.bind(x, y)
 
+@export
 def gt(x: ArrayLike, y: ArrayLike) -> Array:
-  r"""Elementwise greater-than: :math:`x > y`."""
+  r"""Elementwise greater-than: :math:`x > y`.
+
+  This function lowers directly to the `stablehlo.compare`_ operation
+  with ``comparison_direction=GT`` and ``compare_type`` set according
+  to the input dtype.
+
+  Args:
+    x, y: Input arrays. Must have matching non-complex dtypes. If neither is
+      a scalar, ``x`` and ``y`` must have the same number of dimensions and
+      be broadcast compatible.
+
+  Returns:
+    A boolean array of shape ``lax.broadcast_shapes(x.shape, y.shape)``
+    containing the elementwise greater-than comparison.
+
+  See also:
+    - :func:`jax.numpy.greater`: NumPy wrapper for this API, also accessible
+      via the ``x > y`` operator on JAX arrays.
+    - :func:`jax.lax.eq`: elementwise equal
+    - :func:`jax.lax.ne`: elementwise not-equal
+    - :func:`jax.lax.ge`: elementwise greater-than-or-equal
+    - :func:`jax.lax.le`: elementwise less-than-or-equal
+    - :func:`jax.lax.lt`: elementwise less-than
+
+  .. _stablehlo.compare: https://openxla.org/stablehlo/spec#compare
+  """
   return gt_p.bind(x, y)
 
+@export
 def le(x: ArrayLike, y: ArrayLike) -> Array:
-  r"""Elementwise less-than-or-equals: :math:`x \leq y`."""
+  r"""Elementwise less-than-or-equals: :math:`x \leq y`.
+
+  This function lowers directly to the `stablehlo.compare`_ operation
+  with ``comparison_direction=LE`` and ``compare_type`` set according
+  to the input dtype.
+
+  Args:
+    x, y: Input arrays. Must have matching non-complex dtypes. If neither is
+      a scalar, ``x`` and ``y`` must have the same number of dimensions and
+      be broadcast compatible.
+
+  Returns:
+    A boolean array of shape ``lax.broadcast_shapes(x.shape, y.shape)``
+    containing the elementwise less-than-or-equal comparison.
+
+  See also:
+    - :func:`jax.numpy.less_equal`: NumPy wrapper for this API, also
+      accessible via the ``x <= y`` operator on JAX arrays.
+    - :func:`jax.lax.eq`: elementwise equal
+    - :func:`jax.lax.ne`: elementwise not-equal
+    - :func:`jax.lax.ge`: elementwise greater-than-or-equal
+    - :func:`jax.lax.gt`: elementwise greater-than
+    - :func:`jax.lax.lt`: elementwise less-than
+
+  .. _stablehlo.compare: https://openxla.org/stablehlo/spec#compare
+  """
   return le_p.bind(x, y)
 
+@export
 def lt(x: ArrayLike, y: ArrayLike) -> Array:
-  r"""Elementwise less-than: :math:`x < y`."""
+  r"""Elementwise less-than: :math:`x < y`.
+
+  This function lowers directly to the `stablehlo.compare`_ operation
+  with ``comparison_direction=LT`` and ``compare_type`` set according
+  to the input dtype.
+
+  Args:
+    x, y: Input arrays. Must have matching non-complex dtypes. If neither is
+      a scalar, ``x`` and ``y`` must have the same number of dimensions and
+      be broadcast compatible.
+
+  Returns:
+    A boolean array of shape ``lax.broadcast_shapes(x.shape, y.shape)``
+    containing the elementwise less-than comparison.
+
+  See also:
+    - :func:`jax.numpy.less`: NumPy wrapper for this API, also accessible
+      via the ``x < y`` operator on JAX arrays.
+    - :func:`jax.lax.eq`: elementwise equal
+    - :func:`jax.lax.ne`: elementwise not-equal
+    - :func:`jax.lax.ge`: elementwise greater-than-or-equal
+    - :func:`jax.lax.gt`: elementwise greater-than
+    - :func:`jax.lax.le`: elementwise less-than-or-equal
+
+  .. _stablehlo.compare: https://openxla.org/stablehlo/spec#compare
+  """
   return lt_p.bind(x, y)
 
 def convert_element_type(operand: ArrayLike,
@@ -1028,7 +1513,9 @@ def composite(
   Returns:
     out: callable composite function. Note that positional arguments to this
       function should be interpreted as inputs and keyword arguments should be
-      interpreted as attributes of the op.
+      interpreted as attributes of the op. Any keyword arguments that are passed
+      with ``None`` as a value will be omitted from the
+      ``composite_attributes``.
 
   Examples:
     Tangent kernel:
@@ -1113,7 +1600,11 @@ def _composite_lowering(
       ctx.avals_out,
       ctx.tokens_in,
   )
-  composite_attrs = {k : mlir.ir_attribute(v) for k, v in attributes}
+  composite_attrs = {
+      k : mlir.ir_attribute(v)
+      for k, v in attributes
+      if v is not None
+  }
   symbol_name = func_op.name.value
   composite = hlo.CompositeOp(
       func_op.type.results,
@@ -1690,14 +2181,11 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
     by the ``lhs`` non-contracting/non-batch dimensions, and finally the ``rhs``
     non-contracting/non-batch dimensions.
   """
-  if out_sharding is not None and not config.sharding_in_types.value:
-    raise NotImplementedError("out_sharding only works when sharding_in_types "
-                              "config is True.")
   if out_sharding is not None and not isinstance(out_sharding, NamedSharding):
     raise NotImplementedError(
         '`out_sharding` argument of `dot_general` only supports NamedSharding '
         'instances. Please file a bug if this is not enough for your use case.')
-  out_sharding = canonicalize_sharding(out_sharding)
+  out_sharding = canonicalize_sharding(out_sharding, 'dot_general')
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   cdims = (api_util._ensure_index_tuple(lhs_contract),
            api_util._ensure_index_tuple(rhs_contract))
@@ -1740,7 +2228,8 @@ def ragged_dot(
                             group_offset=group_offset)
 
 
-def broadcast(operand: ArrayLike, sizes: Sequence[int], sharding=None) -> Array:
+def broadcast(operand: ArrayLike, sizes: Sequence[int], out_sharding=None
+              ) -> Array:
   """Broadcasts an array, adding new leading dimensions
 
   Args:
@@ -1754,14 +2243,15 @@ def broadcast(operand: ArrayLike, sizes: Sequence[int], sharding=None) -> Array:
   See Also:
     jax.lax.broadcast_in_dim : add new dimensions at any location in the array shape.
   """
-  if len(sizes) == 0 and sharding is None:
+  if len(sizes) == 0 and out_sharding is None:
     return asarray(operand)
   dims = tuple(range(len(sizes), len(sizes) + np.ndim(operand)))
   return broadcast_in_dim(operand, tuple(sizes) + np.shape(operand), dims,
-                          sharding=sharding)
+                          out_sharding=out_sharding)
 
 def broadcast_in_dim(operand: ArrayLike, shape: Shape,
-                     broadcast_dimensions: Sequence[int], sharding=None) -> Array:
+                     broadcast_dimensions: Sequence[int], out_sharding=None
+                     ) -> Array:
   """Wraps XLA's `BroadcastInDim
   <https://www.tensorflow.org/xla/operation_semantics#broadcastindim>`_
   operator.
@@ -1779,12 +2269,9 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
   See Also:
     jax.lax.broadcast : simpler interface to add new leading dimensions.
   """
-  if not config.sharding_in_types.value and sharding is not None:
-    raise NotImplementedError("sharding argument to broadcast_in_dim is only "
-                              "allowed when sharding_in_types config is on.")
-  sharding = canonicalize_sharding(sharding)
+  out_sharding = canonicalize_sharding(out_sharding, 'broadcast_in_dim')
   if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions) and
-      isinstance(operand, Array) and sharding is None):
+      isinstance(operand, Array) and out_sharding is None):
     return operand
   if config.dynamic_shapes.value:
     # We must gate this behavior under a flag because otherwise the errors
@@ -1795,7 +2282,7 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
   return broadcast_in_dim_p.bind(
       operand, *dyn_shape, shape=tuple(static_shape),
       broadcast_dimensions=tuple(broadcast_dimensions),
-      sharding=sharding)
+      sharding=out_sharding)
 
 def broadcast_to_rank(x: ArrayLike, rank: int) -> Array:
   """Adds leading dimensions of ``1`` to give ``x`` rank ``rank``."""
@@ -1806,7 +2293,7 @@ def broadcast_to_rank(x: ArrayLike, rank: int) -> Array:
 
 def reshape(operand: ArrayLike, new_sizes: Shape,
             dimensions: Sequence[int] | None = None,
-            sharding: NamedSharding | P | None = None) -> Array:
+            out_sharding: NamedSharding | P | None = None) -> Array:
   """Wraps XLA's `Reshape
   <https://www.tensorflow.org/xla/operation_semantics#reshape>`_
   operator.
@@ -1857,11 +2344,11 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
     return operand
   else:
     dyn_shape, static_new_sizes = _extract_tracers_dyn_shape(new_sizes)
-    sharding = canonicalize_sharding(sharding)
+    out_sharding = canonicalize_sharding(out_sharding, 'reshape')
     return reshape_p.bind(
       operand, *dyn_shape, new_sizes=tuple(static_new_sizes),
       dimensions=None if dims is None or same_dims else dims,
-      sharding=sharding)
+      sharding=out_sharding)
 
 def pad(operand: ArrayLike, padding_value: ArrayLike,
         padding_config: Sequence[tuple[int, int, int]]) -> Array:
@@ -2086,19 +2573,19 @@ def _get_monoid_reducer(monoid_op: Callable,
     # allow bitwise reductions for boolean and integer types
     _is_intlike = dtype == np.bool_ or dtypes.issubdtype(dtype, np.integer)
     if monoid_op is add:
-      return _reduce_sum if np.equal(val, 0) else None
+      return reduce_sum if np.equal(val, 0) else None
     elif monoid_op is mul:
-      return _reduce_prod if np.equal(val, 1) else None
+      return reduce_prod if np.equal(val, 1) else None
     elif monoid_op is bitwise_or and _is_intlike:
-      return _reduce_or if np.equal(val, _get_bitwise_or_identity(dtype)) else None
+      return reduce_or if np.equal(val, _get_bitwise_or_identity(dtype)) else None
     elif monoid_op is bitwise_and and _is_intlike:
-      return _reduce_and if np.equal(val, _get_bitwise_and_identity(dtype)) else None
+      return reduce_and if np.equal(val, _get_bitwise_and_identity(dtype)) else None
     elif monoid_op is bitwise_xor and _is_intlike:
-      return _reduce_xor if np.equal(val, _get_bitwise_or_identity(dtype)) else None
+      return reduce_xor if np.equal(val, _get_bitwise_or_identity(dtype)) else None
     elif monoid_op is max:
-      return _reduce_max if np.equal(val, _get_max_identity(dtype)) else None
+      return reduce_max if np.equal(val, _get_max_identity(dtype)) else None
     elif monoid_op is min:
-      return _reduce_min if np.equal(val, _get_min_identity(dtype)) else None
+      return reduce_min if np.equal(val, _get_min_identity(dtype)) else None
   return None
 
 def _get_bitwise_and_identity(dtype: DTypeLike) -> np.ndarray:
@@ -2135,25 +2622,164 @@ def _get_min_identity(dtype: DTypeLike) -> np.ndarray:
   else:
     raise ValueError(f"Unsupported dtype for min: {dtype}")
 
-def _reduce_sum(operand: ArrayLike, axes: Sequence[int]) -> Array:
+def reduce_sum(operand: ArrayLike, axes: Sequence[int]) -> Array:
+  """Compute the sum of elements over one or more array axes.
+
+  Args:
+    operand: array over which to sum. Must have numerical dtype.
+    axes: sequence of zero or more unique integers specifying the axes over
+      which to sum. Each entry must satisfy ``0 <= axis < operand.ndim``.
+
+  Returns:
+    An array of the same dtype as ``operand``, with shape corresponding
+    to the dimensions of ``operand.shape`` with ``axes`` removed.
+
+  Notes:
+    Unlike :func:`jax.numpy.sum`, :func:`jax.lax.reduce_sum` does not upcast
+    narrow-width types for accumulation, so sums of 8-bit or 16-bit types
+    may be subject to rounding errors.
+
+  See also:
+    - :func:`jax.numpy.sum`: more flexible NumPy-style summation API, built
+      around :func:`jax.lax.reduce_sum`.
+    - Other low-level :mod:`jax.lax` reduction operators:
+      :func:`jax.lax.reduce_prod`, :func:`jax.lax.reduce_max`, :func:`jax.lax.reduce_min`,
+      :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_or`, :func:`jax.lax.reduce_xor`.
+  """
   return reduce_sum_p.bind(operand, axes=tuple(axes))
 
-def _reduce_prod(operand: ArrayLike, axes: Sequence[int]) -> Array:
+def reduce_prod(operand: ArrayLike, axes: Sequence[int]) -> Array:
+  """Compute the product of elements over one or more array axes.
+
+  Args:
+    operand: array over which to sum. Must have numerical dtype.
+    axes: sequence of zero or more unique integers specifying the axes over
+      which to sum. Each entry must satisfy ``0 <= axis < operand.ndim``.
+
+  Returns:
+    An array of the same dtype as ``operand``, with shape corresponding
+    to the dimensions of ``operand.shape`` with ``axes`` removed.
+
+  Notes:
+    Unlike :func:`jax.numpy.prod`, :func:`jax.lax.reduce_prod` does not upcast
+    narrow-width types for accumulation, so products of 8-bit or 16-bit types
+    may be subject to rounding errors.
+
+  See also:
+    - :func:`jax.numpy.prod`: more flexible NumPy-style product API, built
+      around :func:`jax.lax.reduce_prod`.
+    - Other low-level :mod:`jax.lax` reduction operators:
+      :func:`jax.lax.reduce_sum`, :func:`jax.lax.reduce_max`, :func:`jax.lax.reduce_min`,
+      :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_or`, :func:`jax.lax.reduce_xor`.
+  """
   return reduce_prod_p.bind(operand, axes=tuple(axes))
 
-def _reduce_max(operand: ArrayLike, axes: Sequence[int]) -> Array:
+def reduce_max(operand: ArrayLike, axes: Sequence[int]) -> Array:
+  """Compute the maximum of elements over one or more array axes.
+
+  Args:
+    operand: array over which to compute maximum.
+    axes: sequence of zero or more unique integers specifying the axes over
+      which to reduce. Each entry must satisfy ``0 <= axis < operand.ndim``.
+
+  Returns:
+    An array of the same dtype as ``operand``, with shape corresponding
+    to the dimensions of ``operand.shape`` with ``axes`` removed.
+
+  See also:
+    - :func:`jax.numpy.max`: more flexible NumPy-style max-reduction API, built
+      around :func:`jax.lax.reduce_max`.
+    - Other low-level :mod:`jax.lax` reduction operators:
+      :func:`jax.lax.reduce_sum`, :func:`jax.lax.reduce_prod`, :func:`jax.lax.reduce_min`,
+      :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_or`, :func:`jax.lax.reduce_xor`.
+  """
   return reduce_max_p.bind(operand, axes=tuple(axes))
 
-def _reduce_min(operand: ArrayLike, axes: Sequence[int]) -> Array:
+def reduce_min(operand: ArrayLike, axes: Sequence[int]) -> Array:
+  """Compute the minimum of elements over one or more array axes.
+
+  Args:
+    operand: array over which to compute minimum.
+    axes: sequence of zero or more unique integers specifying the axes over
+      which to reduce. Each entry must satisfy ``0 <= axis < operand.ndim``.
+
+  Returns:
+    An array of the same dtype as ``operand``, with shape corresponding
+    to the dimensions of ``operand.shape`` with ``axes`` removed.
+
+  See also:
+    - :func:`jax.numpy.min`: more flexible NumPy-style min-reduction API, built
+      around :func:`jax.lax.reduce_min`.
+    - Other low-level :mod:`jax.lax` reduction operators:
+      :func:`jax.lax.reduce_sum`, :func:`jax.lax.reduce_prod`, :func:`jax.lax.reduce_max`,
+      :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_or`, :func:`jax.lax.reduce_xor`.
+  """
   return reduce_min_p.bind(operand, axes=tuple(axes))
 
-def _reduce_or(operand: ArrayLike, axes: Sequence[int]) -> Array:
+def reduce_or(operand: ArrayLike, axes: Sequence[int]) -> Array:
+  """Compute the bitwise OR of elements over one or more array axes.
+
+  Args:
+    operand: array over which to compute the reduction. Must have boolean
+      or integer dtype.
+    axes: sequence of zero or more unique integers specifying the axes over
+      which to reduce. Each entry must satisfy ``0 <= axis < operand.ndim``.
+
+  Returns:
+    An array of the same dtype as ``operand``, with shape corresponding
+    to the dimensions of ``operand.shape`` with ``axes`` removed.
+
+  See also:
+    - :func:`jax.numpy.bitwise_or.reduce`: more flexible NumPy-style logical
+      reduction API, built around :func:`jax.lax.reduce_or`.
+    - Other low-level :mod:`jax.lax` reduction operators:
+      :func:`jax.lax.reduce_sum`, :func:`jax.lax.reduce_prod`, :func:`jax.lax.reduce_max`,
+      :func:`jax.lax.reduce_min`, :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_xor`.
+  """
   return reduce_or_p.bind(operand, axes=tuple(axes))
 
-def _reduce_and(operand: ArrayLike, axes: Sequence[int]) -> Array:
+def reduce_and(operand: ArrayLike, axes: Sequence[int]) -> Array:
+  """Compute the bitwise AND of elements over one or more array axes.
+
+  Args:
+    operand: array over which to compute the reduction. Must have boolean
+      or integer dtype.
+    axes: sequence of zero or more unique integers specifying the axes over
+      which to reduce. Each entry must satisfy ``0 <= axis < operand.ndim``.
+
+  Returns:
+    An array of the same dtype as ``operand``, with shape corresponding
+    to the dimensions of ``operand.shape`` with ``axes`` removed.
+
+  See also:
+    - :func:`jax.numpy.bitwise_and.reduce`: more flexible NumPy-style logical
+      reduction API, built around :func:`jax.lax.reduce_and`.
+    - Other low-level :mod:`jax.lax` reduction operators:
+      :func:`jax.lax.reduce_sum`, :func:`jax.lax.reduce_prod`, :func:`jax.lax.reduce_max`,
+      :func:`jax.lax.reduce_min`, :func:`jax.lax.reduce_or`, :func:`jax.lax.reduce_xor`.
+  """
   return reduce_and_p.bind(operand, axes=tuple(axes))
 
-def _reduce_xor(operand: ArrayLike, axes: Sequence[int]) -> Array:
+def reduce_xor(operand: ArrayLike, axes: Sequence[int]) -> Array:
+  """Compute the bitwise XOR of elements over one or more array axes.
+
+  Args:
+    operand: array over which to compute the reduction. Must have boolean
+      or integer dtype.
+    axes: sequence of zero or more unique integers specifying the axes over
+      which to reduce. Each entry must satisfy ``0 <= axis < operand.ndim``.
+
+  Returns:
+    An array of the same dtype as ``operand``, with shape corresponding
+    to the dimensions of ``operand.shape`` with ``axes`` removed.
+
+  See also:
+    - :func:`jax.numpy.bitwise_xor.reduce`: more flexible NumPy-style logical
+      reduction API, built around :func:`jax.lax.reduce_xor`.
+    - Other low-level :mod:`jax.lax` reduction operators:
+      :func:`jax.lax.reduce_sum`, :func:`jax.lax.reduce_prod`, :func:`jax.lax.reduce_max`,
+      :func:`jax.lax.reduce_min`, :func:`jax.lax.reduce_and`, :func:`jax.lax.reduce_or`.
+  """
   return reduce_xor_p.bind(operand, axes=tuple(axes))
 
 @overload
@@ -2272,9 +2898,8 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
     shard = broadcast(fill_value, broadcast_shape)
     return array.make_array_from_callback(shape, sharding, lambda _: shard)
 
-  if (config.sharding_in_types.value and sharding is not None and
-      not sharding._is_concrete):
-    return broadcast(fill_value, shape, sharding=sharding)
+  if sharding is not None and not sharding._is_concrete:
+    return broadcast(fill_value, shape, out_sharding=sharding)
   else:
     return broadcast(fill_value, shape)
 
@@ -2286,9 +2911,7 @@ def zeros_like_shaped_array(aval: ShapedArray) -> Array:
     scalar_zero = np.zeros((), dtype=aval.dtype)
   else:
     scalar_zero = _convert_element_type(0, aval.dtype, aval.weak_type)
-  if config.sharding_in_types.value:
-    return broadcast(scalar_zero, aval.shape, sharding=aval.sharding)
-  return broadcast(scalar_zero, aval.shape)
+  return broadcast(scalar_zero, aval.shape, out_sharding=aval.sharding)
 
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 
@@ -2309,7 +2932,7 @@ def iota(dtype: DTypeLike, size: int) -> Array:
   return broadcasted_iota(dtype, (size,), 0)
 
 def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int,
-                     sharding=None) -> Array:
+                     out_sharding=None) -> Array:
   """Convenience wrapper around ``iota``."""
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = canonicalize_shape(shape)
@@ -2317,12 +2940,9 @@ def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int,
   static_shape = [None if isinstance(d, core.Tracer) else d for d in shape]
   dimension = core.concrete_or_error(
       int, dimension, "dimension argument of lax.broadcasted_iota")
-  if not config.sharding_in_types.value and sharding is not None:
-    raise NotImplementedError('sharding support for broadcasted_iota is not '
-                              'implemented outside of sharding_in_types mode.')
-  sharding = canonicalize_sharding(sharding)
+  out_sharding = canonicalize_sharding(out_sharding, 'broadcasted_iota')
   return iota_p.bind(*dynamic_shape, dtype=dtype, shape=tuple(static_shape),
-                     dimension=dimension, sharding=sharding)
+                     dimension=dimension, sharding=out_sharding)
 
 def _eye(dtype: DTypeLike, shape: Shape, offset: DimSize = 0) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
@@ -2483,8 +3103,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
   if dtypes.issubdtype(dtype, dtypes.extended):
     return dtype._rules.full(fill_shape, fill_value, dtype)  # type: ignore[union-attr]
 
-  if (config.sharding_in_types.value and sharding is None and shape is None and
-      isinstance(x, core.Tracer)):
+  if sharding is None and shape is None and isinstance(x, core.Tracer):
     sharding = x.aval.sharding
   else:
     # If `x` has a sharding but no `_committed` attribute
@@ -2647,6 +3266,7 @@ def atan(x: ArrayLike) -> Array:
   """
   return atan_p.bind(x)
 
+@export
 def sinh(x: ArrayLike) -> Array:
   r"""Elementwise hyperbolic sine: :math:`\mathrm{sinh}(x)`.
 
@@ -2666,6 +3286,7 @@ def sinh(x: ArrayLike) -> Array:
   """
   return sinh_p.bind(x)
 
+@export
 def cosh(x: ArrayLike) -> Array:
   r"""Elementwise hyperbolic cosine: :math:`\mathrm{cosh}(x)`.
 
@@ -2685,6 +3306,7 @@ def cosh(x: ArrayLike) -> Array:
   """
   return cosh_p.bind(x)
 
+@export
 def asinh(x: ArrayLike) -> Array:
   r"""Elementwise inverse hyperbolic sine: :math:`\mathrm{asinh}(x)`.
 
@@ -2704,6 +3326,7 @@ def asinh(x: ArrayLike) -> Array:
   """
   return asinh_p.bind(x)
 
+@export
 def acosh(x: ArrayLike) -> Array:
   r"""Elementwise inverse hyperbolic cosine: :math:`\mathrm{acosh}(x)`.
 
@@ -2723,6 +3346,7 @@ def acosh(x: ArrayLike) -> Array:
   """
   return acosh_p.bind(x)
 
+@export
 def atanh(x: ArrayLike) -> Array:
   r"""Elementwise inverse hyperbolic tangent: :math:`\mathrm{atanh}(x)`.
 
@@ -2782,7 +3406,7 @@ for t in itertools.chain(
 
 _fixed_dtype = \
     lambda dtype: lambda *args, **kwargs: dtypes.canonicalize_dtype(dtype)
-_complex_basetype = lambda dtype: np.abs(np.zeros((), dtype)).dtype
+_complex_basetype = lambda dtype, **kwargs: np.abs(np.zeros((), dtype)).dtype
 
 _strip_weak_type = lambda *args, **_: False
 
@@ -2802,7 +3426,7 @@ def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval, **kwargs):
     typename = dtype_to_string(aval.dtype)
     accepted_typenames = (t.__name__ for t in accepted_dtypes)
     raise TypeError(msg.format(name, typename, ', '.join(accepted_typenames)))
-  return result_dtype(aval.dtype)
+  return result_dtype(aval.dtype, **kwargs)
 
 
 def unop(result_dtype, accepted_dtypes, name):
@@ -2820,7 +3444,6 @@ _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
 
 def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals,
                       require_same=True, allow_extended_dtype=False, **kwargs):
-  del kwargs
   assert len(avals) == len(accepted_dtypes), (avals, accepted_dtypes)
   for i, aval in enumerate(avals):
     if allow_extended_dtype and isinstance(aval.dtype, dtypes.ExtendedDType):
@@ -2843,7 +3466,7 @@ def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals,
         typenames = ', '.join(t.__name__ for t in types)
         raise TypeError(msg.format(name, typename, i, i, typenames))
   if require_same: check_same_dtypes(name, *avals)
-  return result_dtype(*avals)
+  return result_dtype(*avals, **kwargs)
 
 
 def broadcasting_shape_rule(name, *avals):
@@ -2856,13 +3479,13 @@ def broadcasting_shape_rule(name, *avals):
 def broadcasting_sharding_rule(name, *avals):
   mesh = None
   for a in avals:
-    if a.sharding is not None:
+    if a.sharding is not None and not a.sharding.mesh.empty:
       if mesh is not None and mesh != a.sharding.mesh:
         raise ValueError(
             f'Mesh for all inputs should be equal. Got one mesh: {mesh} and'
             f' another mesh: {a.sharding.mesh}')
       mesh = a.sharding.mesh
-  assert mesh is not None
+  mesh = mesh_lib.get_abstract_mesh() if mesh is None else mesh
 
   shapes = [aval.shape for aval in avals if aval.shape]
   if not shapes:
@@ -2923,11 +3546,11 @@ def _unbroadcast(aval, x):
     return x
   assert not aval.shape or len(x_shape) == len(aval.shape)
   if not aval.shape:
-    return _reduce_sum(x, list(range(len(x_shape))))
+    return reduce_sum(x, list(range(len(x_shape))))
   else:
     dims = [i for i, (a, b) in enumerate(zip(x_shape, aval.shape)) if not core.definitely_equal(a, b)]
     if config.enable_checks.value: assert all(aval.shape[i] == 1 for i in dims)
-    return reshape(_reduce_sum(x, dims), aval.shape)
+    return reshape(reduce_sum(x, dims), aval.shape)
 
 def _maybe_broadcast(target_shape, x):
   x_shape = np.shape(x)
@@ -2969,7 +3592,7 @@ def multi_sharding_in_dim(ctx, ops, in_avals, out_aval):
     if in_aval.sharding == out_aval.sharding or in_aval.sharding is None:
       out.append(op)
     else:
-      out.append(mlir.lower_sharding_under_shit(ctx, op, out_aval))
+      out.append(mlir.lower_with_sharding_in_types(ctx, op, out_aval))
   return out
 
 
@@ -2979,15 +3602,11 @@ def _nary_lower_hlo(op: Callable, ctx,
   """
   del params
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
-  args = mlir.multi_broadcast_in_dim(ctx, args, avals_in, aval_out.shape)  # type: ignore
-  if config.sharding_in_types.value:
-    args = multi_sharding_in_dim(ctx, args, avals_in, aval_out)
+  args = mlir.multi_broadcast_in_dim(ctx, args, avals_in, aval_out.shape)
+  args = multi_sharding_in_dim(ctx, args, avals_in, aval_out)
 
   out = op(*args)
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  else:
-    return [out]
+  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 
 _float = {np.floating}
@@ -3218,7 +3837,7 @@ def _complex_transpose_rule(t, x, y):
     else:
       return [None, _unbroadcast(y.aval, imag(neg(t)))]
 
-_complex_dtype = lambda dtype, *args: (np.zeros((), dtype) + np.zeros((), np.complex64)).dtype
+_complex_dtype = lambda dtype, *args, **kwargs: (np.zeros((), dtype) + np.zeros((), np.complex64)).dtype
 complex_p = naryop(_complex_dtype, [_complex_elem_types, _complex_elem_types],
                   'complex')
 ad.deflinear2(complex_p, _complex_transpose_rule)
@@ -3395,10 +4014,8 @@ def _integer_pow_lowering(ctx, x, *, y):
     if builtins.abs(y) >= 3:
       lowering = mlir.cache_lowering(lowering)
     out, = lowering(ctx, x, y=y)
-  if config.sharding_in_types.value:
-    aval_out, = ctx.avals_out
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  aval_out, = ctx.avals_out
+  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 mlir.register_lowering(integer_pow_p, _integer_pow_lowering)
 
@@ -3786,9 +4403,7 @@ def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type,
     operand = hlo.real(operand)
     aval_in = aval_in.update(dtype=_real_dtype(aval_in.dtype))
   out = mlir.convert_hlo(ctx, operand, aval_in, aval_out)
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 mlir.register_lowering(convert_element_type_p, _convert_element_type_lower)
 
@@ -3899,6 +4514,20 @@ def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
         f"but {dim_size} * {old_nbits} != {new_nbits}")
     return operand.shape[:-1]
 
+def _bitcast_convert_type_sharding_rule(operand, *, new_dtype):
+  old_dtype = dtypes.canonicalize_dtype(operand.dtype)
+  new_dtype = dtypes.canonicalize_dtype(new_dtype)
+
+  old_nbits = dtypes.bit_width(old_dtype)
+  new_nbits = dtypes.bit_width(new_dtype)
+
+  if old_nbits == new_nbits:
+    return operand.sharding
+  elif old_nbits > new_nbits:
+    return operand.sharding.with_spec((*operand.sharding.spec, None))
+  else:
+    return operand.sharding.with_spec(operand.sharding.spec[:-1])
+
 def _bitcast_convert_type_dtype_rule(operand, *, new_dtype):
   old_dtype = dtypes.canonicalize_dtype(operand.dtype)
   new_dtype = dtypes.canonicalize_dtype(new_dtype)
@@ -3915,13 +4544,15 @@ def _bitcast_convert_type_dtype_rule(operand, *, new_dtype):
 
 bitcast_convert_type_p = standard_primitive(
     _bitcast_convert_type_shape_rule, _bitcast_convert_type_dtype_rule,
-    'bitcast_convert_type', weak_type_rule=_strip_weak_type)
+    'bitcast_convert_type', weak_type_rule=_strip_weak_type,
+    sharding_rule=_bitcast_convert_type_sharding_rule)
 ad.defjvp_zero(bitcast_convert_type_p)
 batching.defvectorized(bitcast_convert_type_p)
 
 def _bitcast_convert_type_lower(ctx, operand, *, new_dtype):
   aval_out, = ctx.avals_out
-  return [hlo.bitcast_convert(mlir.aval_to_ir_type(aval_out), operand)]
+  out = hlo.bitcast_convert(mlir.aval_to_ir_type(aval_out), operand)
+  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 mlir.register_lowering(bitcast_convert_type_p, _bitcast_convert_type_lower)
 
@@ -4149,12 +4780,9 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   x_contract_sorted_by_y = list(np.take(x_contract, np.argsort(y_contract)))
   unsorted_axes = list(x_batch) + x_kept + x_contract_sorted_by_y
   out_axes = np.argsort(unsorted_axes)
-  if config.sharding_in_types.value:
-    xs = x.aval.sharding
-    inverse_spec = tuple(xs.spec[o] for o in unsorted_axes)
-    ds = xs.with_spec(inverse_spec)
-  else:
-    ds = None
+  xs = x.aval.sharding
+  inverse_spec = tuple(xs.spec[o] for o in unsorted_axes)
+  ds = xs.with_spec(inverse_spec)
   dot_general_out = dot_general(g, y, dims, precision=precision,
                                 preferred_element_type=preferred_element_type,
                                 out_sharding=ds)
@@ -4194,8 +4822,6 @@ def _dot_batch_rule(
 
   lhs, rhs = unpack_args(batched_args)
   lbd, rbd = unpack_dims(batch_dims)
-
-  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   left_stack_dim = lbd.stacked_axis if type(lbd) is RaggedAxis else lbd
   right_stack_dim = rbd.stacked_axis if type(rbd) is RaggedAxis else rbd
   new_dimension_numbers, result_stack_dim = _dot_general_batch_dim_nums(
@@ -4541,8 +5167,8 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       precision_config=precision_attr(precision),
       **algorithm_kwarg,
   )
-  if config.sharding_in_types.value:
-    result = mlir.lower_sharding_under_shit(ctx, result, aval_out)
+
+  result = mlir.lower_with_sharding_in_types(ctx, result, aval_out)
   if accumulation_aval.dtype != aval_out.dtype:
     result = mlir.convert_hlo(ctx, result, accumulation_aval, aval_out)
   return [result]
@@ -4870,7 +5496,7 @@ def _broadcast_in_dim_transpose_rule(ct, operand, *dyn_shape,
                if core.definitely_equal(s, 1)]
   bdims = tuple(np.delete(broadcast_dimensions, unit_dims))
   axes = tuple(np.delete(range(len(shape)), bdims))
-  return ([expand_dims(_reduce_sum(ct, axes), unit_dims)] +
+  return ([expand_dims(reduce_sum(ct, axes), unit_dims)] +
           [None] * len(dyn_shape))
 
 def _broadcast_in_dim_batch_rule(axis_data, batched_args, batch_dims, shape,
@@ -4923,7 +5549,7 @@ def _broadcast_in_dim_batch_rule(axis_data, batched_args, batch_dims, shape,
     sharding = batching.get_sharding_for_vmap(axis_data, sharding, 0)
 
   result = broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions,
-                            sharding=sharding)
+                            out_sharding=sharding)
   out_ragged_axes = [idx+1 for idx, s in enumerate(shape) if s is None]
   out_bdim = batching.make_batch_axis(
       result.ndim, 0, zip(out_ragged_axes, out_ragged_sizes))
@@ -5008,9 +5634,7 @@ def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions,
     aval_out = aval_out.update(shape=_merge_dyn_shape(shape, dyn_shape))
   out = mlir.broadcast_in_dim(ctx, x, aval_out,
                               broadcast_dimensions=broadcast_dimensions)
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions,
                                     sharding):
@@ -5019,12 +5643,9 @@ def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions,
               type(core.get_aval(d).dtype) is core.bint for d in shape)):
     shape = _broadcast_in_dim_shape_rule(  # error checking
         x, shape=shape, broadcast_dimensions=broadcast_dimensions, sharding=None)
-    if config.sharding_in_types.value:
-      new_sharding = _broadcast_in_dim_sharding_rule(
-          x, shape=shape, broadcast_dimensions=broadcast_dimensions,
-          sharding=sharding)
-    else:
-      new_sharding = None
+    new_sharding = _broadcast_in_dim_sharding_rule(
+        x, shape=shape, broadcast_dimensions=broadcast_dimensions,
+        sharding=sharding)
     return core.ShapedArray(shape, x.dtype, x.weak_type, sharding=new_sharding)
   # If any BInts in shape, or Tracers in dyn_shape, produce a DShapedArray
   # (even if x is a ShapedArray)
@@ -5152,11 +5773,14 @@ def _concatenate_shape_rule(*operands, **kwargs):
   return ex_shape[:dimension] + (concat_size,) + ex_shape[dimension+1:]
 
 def _concatenate_sharding_rule(*operands, **kwargs):
-  if not all(o.sharding == operands[0].sharding for o in operands):
+  non_empty_s = [o.sharding for o in operands if not o.sharding.mesh.empty]
+  if not non_empty_s:
+    return core.get_cur_mesh_sharding()
+  if not all(s == non_empty_s[0] for s in non_empty_s):
     ss = ", ".join(str(o.sharding) for o in operands)
     raise TypeError(
         f"All operands should have the same sharding. Got shardings {ss}")
-  return operands[0].sharding
+  return non_empty_s[0]
 
 def _concatenate_dtype_rule(*operands, **kwargs):
   check_same_dtypes('concatenate', *operands)
@@ -5198,9 +5822,7 @@ pe.padding_rules[concatenate_p] = _concatenate_pad_rule
 def _concatenate_lower(ctx, *xs, dimension):
   aval_out, = ctx.avals_out
   out = hlo.concatenate(xs, mlir.i64_attr(dimension))
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 mlir.register_lowering(concatenate_p, _concatenate_lower)
 
 
@@ -5252,8 +5874,7 @@ def _split_lower(ctx, x, *, sizes, axis):
     limit_indices[axis] = start_indices[axis] + aval_out.shape[axis]
     out = mlir.slice_op(ctx, x, aval_out, start_indices=start_indices,
                         limit_indices=limit_indices, strides=strides)
-    outs.append(mlir.lower_sharding_under_shit(ctx, out, aval_out)
-                if config.sharding_in_types.value else out)
+    outs.append(mlir.lower_with_sharding_in_types(ctx, out, aval_out))
     start_indices[axis] = limit_indices[axis]
   return outs
 
@@ -5316,7 +5937,7 @@ def _pad_transpose(t, operand, padding_value, *, padding_config):
     t_padv = ad_util.Zero(padding_value.aval) if ad.is_undefined_primal(padding_value) else None
   else:
     lo, hi, interior = util.unzip3(padding_config)
-    total = lambda x: _reduce_sum(x, list(range(t.ndim)))
+    total = lambda x: reduce_sum(x, list(range(t.ndim)))
 
     def t_op():
       unpad_config = safe_zip(np.negative(lo), np.negative(hi),
@@ -5358,9 +5979,7 @@ def _pad_lower(ctx, x, padding_value, *, padding_config):
   aval_out, = ctx.avals_out
   low, high, interior = util.unzip3(padding_config)
   out = mlir.pad(ctx, aval_out, x, padding_value, low, high, interior)
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 mlir.register_lowering(pad_p, _pad_lower)
 
@@ -5426,9 +6045,7 @@ def _squeeze_lower(ctx, operand, *, dimensions):
   del dimensions  # Implied by the output aval.
   aval_out, = ctx.avals_out
   out = mlir.reshape(ctx, operand, aval_out)
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 mlir.register_lowering(squeeze_p, _squeeze_lower)
 
@@ -5509,17 +6126,19 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
 
   is_split, out_split = _split_on_one_axis(operand.shape, new_sizes, 'Splitting')
   if is_split:
-    return _split_an_axis_sharding_rule(operand, out_split, new_sizes)
+    return _split_an_axis_sharding_rule(operand, out_split, new_sizes,
+                                        dimensions)
 
   is_merge, operand_merge = _merge_on_one_axis(operand, new_sizes)
   if is_merge:
-    return _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes)
+    return _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes,
+                                        dimensions)
 
   raise ValueError(
-      'This reshape is not supported. Only 4 out of the box reshapes are'
-      ' supported.Adding/removing singleton dims and splitting/merging without'
-      ' sharded split/merged axes are supported. Please specify the sharding of'
-      ' the output via the `sharding` argument of jax.lax.reshape.')
+      'This reshape is not supported. Please specify the sharding of'
+      ' the output via the `out_sharding` argument of jax.lax.reshape. Got'
+      f' operand shape: {operand.shape}, new sizes: {new_sizes} and'
+      f' operand spec: {operand.sharding.spec}')
 
 def _split_merge_singleton_dim_sharding_rule(operand, new_sizes):
   filtered_spec = [sp for sh, sp in zip(operand.shape, operand.sharding.spec)
@@ -5534,38 +6153,54 @@ def _split_merge_singleton_dim_sharding_rule(operand, new_sizes):
       new_spec.append(sp)
   return operand.sharding.with_spec(new_spec)
 
-def _split_an_axis_sharding_rule(operand, out_split, new_sizes):
+def _get_spec_size(sp, mesh):
+  tup_sp = sp if isinstance(sp, tuple) else (sp,)
+  return math.prod(mesh.shape[t] for t in tup_sp)
+
+def _split_an_axis_sharding_rule(operand, out_split, new_sizes, dimensions):
   new_spec = []
-  for sh, out, sp in safe_zip(operand.shape, out_split, operand.sharding.spec):
+  mesh = operand.sharding.mesh
+  for out, sp in safe_zip(out_split, operand.sharding.spec):
     if isinstance(out, list):
-      if sp is not None:
+      if sp is None:
+        new_spec.extend([None] * len(out))
+      elif dimensions is None and out[0] % _get_spec_size(sp, mesh) == 0:
+        new_spec.extend([sp] + [None] * (len(out) - 1))
+      else:
         raise ValueError(
-            f'Split axis cannot be sharded. Got operand dim {sh} with spec'
-            f' {sp}. Please specify the sharding of the output via the'
-            ' `sharding` argument of jax.lax.reshape.')
-      new_spec.extend([None] * len(out))
+            'This reshape is not supported. Please specify the sharding of the'
+            ' output via the `sharding` argument of jax.lax.reshape. Got'
+            f' operand shape: {operand.shape}, new sizes: {new_sizes} and'
+            f' operand spec: {operand.sharding.spec}')
     else:
       new_spec.append(sp)
-  assert len(new_spec) == len(new_sizes)
+  assert len(new_spec) == len(new_sizes), (new_spec, new_sizes)
   return operand.sharding.with_spec(new_spec)
 
 
-def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes):
+def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes, dimensions):
   new_spec = []
+  mesh = operand.sharding.mesh
   op_spec = iter(operand.sharding.spec)
-  for op_merge in operand_merge:
+  for new_size, op_merge in zip(new_sizes, operand_merge):
     if isinstance(op_merge, list):
       sp = [next(op_spec) for _ in op_merge]
-      if not all(s is None for s in sp):
+      if all(s is None for s in sp):
+        new_spec.append(None)
+      elif (sp[0] is not None and all(s is None for s in sp[1:]) and
+            dimensions is None):
+        assert new_size % _get_spec_size(sp[0], mesh) == 0
+        new_spec.append(sp[0])
+      else:
         raise ValueError(
-            f'Merged axis cannot be sharded. Got {sp}. Please specify the'
-            ' sharding of the output via the `sharding` argument of'
-            ' jax.lax.reshape.')
-      new_spec.append(None)
+            'This reshape is not supported. Please specify the sharding of the'
+            ' output via the `sharding` argument of jax.lax.reshape. Got'
+            f' operand shape: {operand.shape}, new sizes: {new_sizes} and'
+            f' operand spec: {operand.sharding.spec}')
     else:
       new_spec.append(next(op_spec))
   assert next(op_spec, None) is None
-  assert len(new_spec) == len(new_sizes)
+  assert len(new_spec) == len(new_sizes), (new_spec, new_sizes)
   return operand.sharding.with_spec(new_spec)
 
 
@@ -5591,18 +6226,13 @@ def _reshape_dtype_rule(operand, *, new_sizes, dimensions, sharding):
 def _reshape_transpose_rule(t, operand, *, new_sizes, dimensions, sharding):
   assert ad.is_undefined_primal(operand)
   if dimensions is None:
-    if config.sharding_in_types.value:
-      return [reshape(t, operand.aval.shape, sharding=operand.aval.sharding)]
-    return [reshape(t, operand.aval.shape)]
+    return [reshape(t, operand.aval.shape, out_sharding=operand.aval.sharding)]
   else:
-    if config.sharding_in_types.value:
-      t_s = operand.aval.sharding.with_spec(
-          tuple(map(lambda s: s if s is None else str(s),
-                    np.take(operand.aval.sharding.spec, dimensions))))
-    else:
-      t_s = None
+    t_s = operand.aval.sharding.with_spec(
+        tuple(map(lambda s: s if s is None else str(s),
+                  np.take(operand.aval.sharding.spec, dimensions))))
     return [transpose(reshape(t, np.take(operand.aval.shape, dimensions),
-                              sharding=t_s),
+                              out_sharding=t_s),
                       np.argsort(dimensions))]
 
 def _reshape_batch_rule(axis_data, batched_args, batch_dims, *, new_sizes,
@@ -5617,7 +6247,7 @@ def _reshape_batch_rule(axis_data, batched_args, batch_dims, *, new_sizes,
     sharding = batching.get_sharding_for_vmap(axis_data, sharding, 0)
 
   out = reshape(operand, operand.shape[:1] + new_sizes, dimensions,
-                sharding=sharding)
+                out_sharding=sharding)
   return out, 0
 
 
@@ -5628,9 +6258,7 @@ def _reshape_lower(ctx, x, *dyn_shape, new_sizes, dimensions, sharding):
   if dyn_shape:
     aval_out = aval_out.update(shape=_merge_dyn_shape(new_sizes, dyn_shape))
   out = mlir.reshape(ctx, x, aval_out)
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 def _reshape_staging_rule(
     trace, x, *dyn, new_sizes, dimensions, sharding):
@@ -5680,9 +6308,7 @@ batching.primitive_batchers[rev_p] = _rev_batch_rule
 def _rev_lower(ctx, x, *, dimensions):
   aval_out, = ctx.avals_out
   out = hlo.reverse(x, mlir.dense_int_array(dimensions))
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 mlir.register_lowering(rev_p, _rev_lower)
 
 
@@ -5719,9 +6345,7 @@ def _transpose_lower(ctx, x, *, permutation):
     trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]
     permutation = [*permutation, *trailing_dims]
   out = hlo.transpose(x, mlir.dense_int_array(permutation))
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 transpose_p = standard_primitive(
     _transpose_shape_rule, _input_dtype, 'transpose',
@@ -5746,15 +6370,19 @@ def _select_shape_rule(which, *cases):
   return cases[0].shape
 
 def _select_sharding_rule(which, *cases):
-  if any(case.sharding != cases[0].sharding for case in cases[1:]):
+  non_empty_s = [c.sharding for c in cases if not c.sharding.mesh.empty]
+  if not non_empty_s:
+    return core.get_cur_mesh_sharding()
+  if any(s != non_empty_s[0] for s in non_empty_s[1:]):
     msg = "select cases must have the same shardings, got [{}]."
     raise TypeError(msg.format(", ".join([str(c.sharding) for c in cases])))
-  if which.shape and which.sharding != cases[0].sharding:
+  if (which.shape and not which.sharding.mesh.empty and
+      which.sharding != non_empty_s[0]):
     raise TypeError(
         'select `which` must be scalar or have the same sharding as cases, got'
         f' `which` sharding {which.sharding} but case sharding'
         f' {cases[0].sharding}.')
-  return cases[0].sharding
+  return non_empty_s[0]
 
 
 def _select_dtype_rule(which, *cases):
@@ -5859,10 +6487,6 @@ def _select_hlo_lowering_opaque(ctx, which, *cases):
       avals_in=[aval_which_bcast, *physical_avals_cases],
       avals_out=[physical_aval_out])[0]
 
-def _add_shit_to_select(ctx, op, aval_out):
-  if config.sharding_in_types.value:
-    return mlir.lower_sharding_under_shit(ctx, op, aval_out)
-  return op
 
 def _select_hlo_lowering(ctx, which, *cases):
   which_aval = ctx.avals_in[0]
@@ -5870,13 +6494,13 @@ def _select_hlo_lowering(ctx, which, *cases):
 
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     op = _select_hlo_lowering_opaque(ctx, which, *cases)
-    return [_add_shit_to_select(ctx, op, aval_out)]
+    return [mlir.lower_with_sharding_in_types(ctx, op, aval_out)]
 
   if which_aval.dtype == np.dtype(np.bool_):
     assert len(cases) <= 2
     if len(cases) == 1: return cases
     op = hlo.select(which, cases[1], cases[0])
-    return [_add_shit_to_select(ctx, op, aval_out)]
+    return [mlir.lower_with_sharding_in_types(ctx, op, aval_out)]
 
   if dtypes.issubdtype(which_aval.dtype, np.signedinteger):
     compare_type = 'SIGNED'
@@ -5896,7 +6520,7 @@ def _select_hlo_lowering(ctx, which, *cases):
                       _select(offset + mid, cases[mid:]))
 
   op = _select(0, cases)
-  return [_add_shit_to_select(ctx, op, aval_out)]
+  return [mlir.lower_with_sharding_in_types(ctx, op, aval_out)]
 
 select_n_p = standard_primitive(
     _select_shape_rule, _select_dtype_rule, 'select_n',
@@ -6028,10 +6652,8 @@ def _reduce_lower(ctx, *values, computation, jaxpr, dimensions):
                                       *reducer.arguments,
                                       dim_var_values=ctx.dim_var_values)
     hlo.return_(mlir.flatten_ir_values(out_nodes))
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, r, aval)
-            for r, aval in safe_zip(op.results, ctx.avals_out)]
-  return op.results
+  return [mlir.lower_with_sharding_in_types(ctx, r, aval)
+          for r, aval in safe_zip(op.results, ctx.avals_out)]
 
 mlir.register_lowering(reduce_p, _reduce_lower)
 
@@ -6046,11 +6668,8 @@ def _reduce_sum_transpose_rule(cotangent, operand, *, axes):
   assert ad.is_undefined_primal(operand)
   input_shape = operand.aval.shape
   broadcast_dimensions = tuple(np.delete(np.arange(len(input_shape)), axes))
-  if config.sharding_in_types.value:
-    result = broadcast_in_dim(cotangent, input_shape, broadcast_dimensions,
-                              sharding=operand.aval.sharding)
-  else:
-    result = broadcast_in_dim(cotangent, input_shape, broadcast_dimensions)
+  result = broadcast_in_dim(cotangent, input_shape, broadcast_dimensions,
+                            out_sharding=operand.aval.sharding)
   assert result.shape == input_shape
   return [result]
 
@@ -6088,7 +6707,7 @@ reduce_sum_p = standard_primitive(
   'reduce_sum', sharding_rule=_reduce_op_sharding_rule)
 ad.deflinear2(reduce_sum_p, _reduce_sum_transpose_rule)
 batching.defreducer(reduce_sum_p, _get_sum_identity)
-pe.padding_rules[reduce_sum_p] = partial(_reducer_padding, _reduce_sum,
+pe.padding_rules[reduce_sum_p] = partial(_reducer_padding, reduce_sum,
                                          _get_sum_identity)
 batching.ragged_prop_rules[reduce_sum_p] = batching.ragged_mask_elementwise_rule
 
@@ -6103,7 +6722,7 @@ reduce_prod_p = standard_primitive(
   'reduce_prod', sharding_rule=_reduce_op_sharding_rule)
 ad.primitive_jvps[reduce_prod_p] = _reduce_prod_jvp_rule
 batching.defreducer(reduce_prod_p, _get_prod_identity)
-pe.padding_rules[reduce_prod_p] = partial(_reducer_padding, _reduce_prod,
+pe.padding_rules[reduce_prod_p] = partial(_reducer_padding, reduce_prod,
                                           _get_prod_identity)
 
 
@@ -6114,8 +6733,8 @@ def _reduce_chooser_jvp_rule(g, ans, operand, *, axes):
   shape = [1 if i in axes else d for i, d in enumerate(operand.shape)]
   location_indicators = convert_element_type(
       _eq_meet(operand, reshape(ans, shape)), g.dtype)
-  counts = _reduce_sum(location_indicators, axes)
-  return div(_reduce_sum(mul(g, location_indicators), axes), counts)
+  counts = reduce_sum(location_indicators, axes)
+  return div(reduce_sum(mul(g, location_indicators), axes), counts)
 
 
 reduce_max_p = standard_primitive(
@@ -6123,7 +6742,7 @@ reduce_max_p = standard_primitive(
     sharding_rule=_reduce_op_sharding_rule)
 ad.defjvp2(reduce_max_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_max_p, _get_max_identity)
-pe.padding_rules[reduce_max_p] = partial(_reducer_padding, _reduce_max,
+pe.padding_rules[reduce_max_p] = partial(_reducer_padding, reduce_max,
                                          _get_max_identity)
 batching.ragged_prop_rules[reduce_max_p] = batching.ragged_mask_elementwise_rule
 
@@ -6133,7 +6752,7 @@ reduce_min_p = standard_primitive(
     sharding_rule=_reduce_op_sharding_rule)
 ad.defjvp2(reduce_min_p, _reduce_chooser_jvp_rule)
 batching.defreducer(reduce_min_p, _get_min_identity)
-pe.padding_rules[reduce_min_p] = partial(_reducer_padding, _reduce_min,
+pe.padding_rules[reduce_min_p] = partial(_reducer_padding, reduce_min,
                                          _get_min_identity)
 
 
@@ -6188,7 +6807,7 @@ def _compute_argminmax(value_comparator, get_identity,
   axis, = axes
   indices = broadcasted_iota(
       index_dtype, np.shape(operand), axis,
-      sharding=operand.aval.sharding if config.sharding_in_types.value else None)
+      out_sharding=operand.aval.sharding)
   res = reduce([operand, indices],
                [get_identity(operand.dtype), np.array(0, index_dtype)],
                _ArgMinMaxReducer(value_comparator),
@@ -6253,9 +6872,7 @@ def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes):
   reducer_region = op.regions[0].blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(reducer_region):
     hlo.return_([reducer(*reducer_region.arguments)])
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, op.result, aval_out)]
-  return op.results
+  return [mlir.lower_with_sharding_in_types(ctx, op.result, aval_out)]
 
 mlir.register_lowering(reduce_sum_p, partial(_unary_reduce_lower, hlo.AddOp,
                                              _get_sum_identity))
@@ -6296,9 +6913,7 @@ def _reduce_precision_lower(ctx, operand, *, exponent_bits, mantissa_bits):
   aval_out, = ctx.avals_out
   out = hlo.reduce_precision(operand, mlir.i32_attr(exponent_bits),
                              mlir.i32_attr(mantissa_bits))
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 mlir.register_lowering(reduce_precision_p, _reduce_precision_lower)
 
@@ -6438,8 +7053,7 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
                     mlir.flatten_ir_values(operands),
                     dimension=mlir.i64_attr(dimension),
                     is_stable=ir.BoolAttr.get(is_stable))
-  scalar_s = (lambda a: a.sharding.with_spec(P())
-              if config.sharding_in_types.value else lambda _: None)
+  scalar_s = lambda a: a.sharding.with_spec(P())
   scalar_avals = [aval.update(shape=(), sharding=scalar_s(aval))
                   for aval in ctx.avals_in]
   scalar_types = safe_map(mlir.aval_to_ir_type, scalar_avals)
@@ -6972,9 +7586,7 @@ def _iota_lower(ctx, *dyn_shape, dtype, shape, dimension, sharding):
   if dyn_shape:
     aval_out = aval_out.update(shape=_merge_dyn_shape(shape, dyn_shape))
   out = mlir.iota(ctx, aval_out, dimension=dimension)
-  if config.sharding_in_types.value:
-    return [mlir.lower_sharding_under_shit(ctx, out, aval_out)]
-  return [out]
+  return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 mlir.register_lowering(iota_p, _iota_lower)
 
 def _iota_batching_rule(in_vals, in_dims, *, dtype, shape, dimension,
@@ -7182,20 +7794,16 @@ def _const(example, val):
 _zeros: Callable = partial(full_like, fill_value=0)
 
 def _zero(x):
-  if config.sharding_in_types.value:
-    x_aval = core.get_aval(x)
-    return full_like(x, shape=(), fill_value=0,
-                     sharding=x_aval.sharding.with_spec(P()))  # type: ignore
-  return full_like(x, shape=(), fill_value=0)
+  x_aval = core.get_aval(x)
+  return full_like(x, shape=(), fill_value=0,
+                    sharding=x_aval.sharding.with_spec(P()))
 
 _ones: Callable = partial(full_like, fill_value=1)
 
 def _one(x):
-  if config.sharding_in_types.value:
-    x_aval = core.get_aval(x)
-    return full_like(x, shape=(), fill_value=1,
-                     sharding=x_aval.sharding.with_spec(P()))
-  return full_like(x, shape=(), fill_value=1)
+  x_aval = core.get_aval(x)
+  return full_like(x, shape=(), fill_value=1,
+                    sharding=x_aval.sharding.with_spec(P()))
 
 _twos: Callable = partial(full_like, fill_value=2)
 _two: Callable = partial(full_like, shape=(), fill_value=2)

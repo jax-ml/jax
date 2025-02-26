@@ -37,9 +37,8 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        pip install uv
-        uv pip install --system .[ci]
-        uv pip install --system pytest-xdist -r array-api-tests/requirements.txt
+        pip install uv~=0.5.30
+        uv pip install --system .[ci] pytest-xdist -r array-api-tests/requirements.txt
     - name: Run the test suite
       env:
         ARRAY_API_TESTS_MODULE: jax.numpy

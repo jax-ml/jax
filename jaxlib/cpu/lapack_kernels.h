@@ -147,7 +147,7 @@ struct TriMatrixEquationSolver {
   inline static FnType* fn = nullptr;
   static ::xla::ffi::Error Kernel(
       ::xla::ffi::Buffer<dtype> x, ::xla::ffi::Buffer<dtype> y,
-      ::xla::ffi::BufferR0<dtype> alpha, ::xla::ffi::ResultBuffer<dtype> y_out,
+      ::xla::ffi::RemainingArgs, ::xla::ffi::ResultBuffer<dtype> y_out,
       MatrixParams::Side side, MatrixParams::UpLo uplo,
       MatrixParams::Transpose trans_x, MatrixParams::Diag diag);
 };
@@ -387,6 +387,55 @@ struct SingularValueDecompositionComplex {
                                                   svd::ComputationMode mode);
 };
 
+template <::xla::ffi::DataType dtype>
+struct SingularValueDecompositionQR {
+  static_assert(!::xla::ffi::IsComplexType<dtype>(),
+                "There exists a separate implementation for Complex types");
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using RealType = ValueType;
+  using FnType = void(char* jobu, char* jobvt, lapack_int* m, lapack_int* n,
+                      ValueType* a, lapack_int* lda, ValueType* s, ValueType* u,
+                      lapack_int* ldu, ValueType* vt, lapack_int* ldvt,
+                      ValueType* work, lapack_int* lwork, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(
+      ::xla::ffi::Buffer<dtype> x, ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ResultBuffer<dtype> singular_values,
+      ::xla::ffi::ResultBuffer<dtype> u, ::xla::ffi::ResultBuffer<dtype> vt,
+      ::xla::ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode);
+
+  static absl::StatusOr<lapack_int> GetWorkspaceSize(lapack_int x_rows,
+                                                  lapack_int x_cols,
+                                                  svd::ComputationMode mode);
+};
+
+template <::xla::ffi::DataType dtype>
+struct SingularValueDecompositionQRComplex {
+  static_assert(::xla::ffi::IsComplexType<dtype>());
+
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using RealType = ::xla::ffi::NativeType<::xla::ffi::ToReal(dtype)>;
+  using FnType = void(char* jobu, char* jobvt, lapack_int* m, lapack_int* n,
+                      ValueType* a, lapack_int* lda, RealType* s, ValueType* u,
+                      lapack_int* ldu, ValueType* vt, lapack_int* ldvt,
+                      ValueType* work, lapack_int* lwork, RealType* rwork,
+                      lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(
+      ::xla::ffi::Buffer<dtype> x, ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ResultBuffer<::xla::ffi::ToReal(dtype)> singular_values,
+      ::xla::ffi::ResultBuffer<dtype> u, ::xla::ffi::ResultBuffer<dtype> vt,
+      ::xla::ffi::ResultBuffer<LapackIntDtype> info, svd::ComputationMode mode);
+
+  static absl::StatusOr<lapack_int> GetWorkspaceSize(lapack_int x_rows,
+                                                  lapack_int x_cols,
+                                                  svd::ComputationMode mode);
+};
+
 namespace svd {
 
 template <::xla::ffi::DataType dtype>
@@ -394,9 +443,15 @@ using SVDType = std::conditional_t<::xla::ffi::IsComplexType<dtype>(),
                                    SingularValueDecompositionComplex<dtype>,
                                    SingularValueDecomposition<dtype>>;
 
+template <::xla::ffi::DataType dtype>
+using SVDQRType = std::conditional_t<::xla::ffi::IsComplexType<dtype>(),
+                                     SingularValueDecompositionQRComplex<dtype>,
+                                     SingularValueDecompositionQR<dtype>>;
+
 absl::StatusOr<lapack_int> GetIntWorkspaceSize(int64_t x_rows, int64_t x_cols);
 absl::StatusOr<lapack_int> GetRealWorkspaceSize(int64_t x_rows, int64_t x_cols,
                                                 ComputationMode mode);
+absl::StatusOr<lapack_int> GetRealWorkspaceSizeQR(int64_t x_rows, int64_t x_cols);
 
 }  // namespace svd
 
@@ -817,6 +872,10 @@ XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgesdd_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgesdd_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgesdd_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_zgesdd_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_sgesvd_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dgesvd_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cgesvd_ffi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_zgesvd_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_ssyevd_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_dsyevd_ffi);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(lapack_cheevd_ffi);

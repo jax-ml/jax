@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from functools import partial
 import enum
+from typing import Any
 
 import numpy as np
 
@@ -263,7 +264,7 @@ def _resize_nearest(x, output_shape: core.Shape):
     # TODO(b/206898375): this computation produces the wrong result on
     # CPU and GPU when using float64. Use float32 until the bug is fixed.
     offsets = jnp.floor(offsets.astype(np.float32)).astype(np.int32)
-    indices = [slice(None)] * len(input_shape)
+    indices: list[Any] = [slice(None)] * len(input_shape)
     indices[d] = offsets
     x = x[tuple(indices)]
   return x

@@ -29,6 +29,7 @@ from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects, ir
 from jax._src.util import safe_zip
 from jax._src.mesh import AxisTypes
@@ -81,7 +82,8 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertTrue(dispatch.is_single_device_sharding(s.data.sharding))
       self.assertArraysEqual(s.data, global_data[s.index])
     self.assertArraysEqual(arr._value, global_data)
-    self.assertArraysEqual(arr._npy_value, global_data)
+    if arr._npy_value is not None:
+      self.assertArraysEqual(arr._npy_value, global_data)
 
   @parameterized.named_parameters(
       ("mesh_x_y", P("x", "y"),
@@ -820,6 +822,41 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertArraysEqual(result, data)
     self.assertEqual(result.sharding, s)
 
+  @parameterized.product(dtype=jtu.dtypes.all + jtu.dtypes.custom_floats)
+  @jtu.run_on_devices("gpu")
+  def test_pinned_host_npy_value_doesnt_cache(self, dtype):
+    if xla_extension_version < 314:
+      self.skipTest("Requires XLA extension version >= 314")
+    # see https://github.com/jax-ml/jax/issues/26216
+    d_tensor = jnp.array(0, dtype=dtype)
+    d_sharding = d_tensor.sharding
+    h_sharding = d_sharding.with_memory_kind("pinned_host")
+    h_tensor = jax.device_put(d_tensor, h_sharding)
+    np.array(h_tensor)
+    self.assertIsNone(h_tensor._npy_value)
+
+  def test_make_array_from_single_device_arrays_no_dtype_error(self):
+    mesh = jtu.create_mesh((4, 2), ('x', 'y'))
+    s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
+    with self.assertRaisesRegex(
+        ValueError,
+        'If `arrays` is empty, `dtype` must be provided via the `dtype` '
+        'argument to `jax.make_array_from_single_device_arrays`.'):
+      jax.make_array_from_single_device_arrays((8, 2), s, [])
+
+  def test_make_array_from_single_device_arrays_bad_dtype_error(self):
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    shape = (8, 2)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+    with self.assertRaisesRegex(
+        ValueError,
+        'If `dtype` is provided to `jax.make_array_from_single_device_arrays`, '
+        'it must match the dtype of the arrays in `arrays`.'):
+      jax.make_array_from_single_device_arrays(
+          shape, s, [arr], dtype=jnp.float32)
+
+
 class ShardingTest(jtu.JaxTestCase):
 
   def test_mesh_pspec_sharding_interface(self):
@@ -1371,6 +1408,13 @@ class ShardingTest(jtu.JaxTestCase):
         'Number of axis names in axis_types should match the number of'
         ' axis_names'):
       jax.make_mesh((1, 1), ('data', 'model'), explicit_axes='data')
+
+    mesh1 = jax.make_mesh((1, 1, 1, 1, 1), ('a', 'b', 'c', 'd', 'e'),
+                          auto_axes=('c', 'b'), explicit_axes=('e', 'a', 'd'))
+    mesh2 = jax.make_mesh((1, 1, 1, 1, 1), ('a', 'b', 'c', 'd', 'e'),
+                          auto_axes=('b', 'c'), explicit_axes=('d', 'a', 'e'))
+    self.assertEqual(mesh1, mesh2)
+    self.assertEqual(hash(mesh1), hash(mesh2))
 
 
 @jtu.with_config(jax_use_shardy_partitioner=True)

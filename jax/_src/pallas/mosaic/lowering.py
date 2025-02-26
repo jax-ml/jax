@@ -39,6 +39,7 @@ from jax._src import prng
 from jax._src import source_info_util
 from jax._src import state
 from jax._src import traceback_util
+from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
@@ -499,7 +500,7 @@ class MeshInfo:
 def _check_block_mappings(
     block_mappings: tuple[pallas_core.BlockMapping, ...],
     lowering_context: mlir.LoweringRuleContext,
-    name_and_src_info: pallas_core.NameAndSrcInfo,
+    debug_info: jax_core.DebugInfo,
 ) -> None:
   del lowering_context  # originally needed for forward compat
   for bm in block_mappings:
@@ -513,7 +514,7 @@ def _check_block_mappings(
       continue
 
     def err_details():
-      return (f"Block spec for {bm.origin} in pallas_call {name_and_src_info} "
+      return (f"Block spec for {bm.origin} in pallas_call {debug_info.func_src_info} "
               "has block shape "
               f"{bm.block_shape}, array shape {bm.array_shape_dtype.shape}, "
               # TODO(necula): add index_map source location info
@@ -592,11 +593,16 @@ def lower_jaxpr_to_module(
     jaxpr: jax_core.Jaxpr,
     *,
     dimension_semantics: tuple[str | None, ...] | None,
-    name_and_src_info: pallas_core.NameAndSrcInfo,
     mesh: mesh_lib.Mesh | None = None,
     for_verification: bool = False,
     dynamic_shape_replacement_enabled: bool = False,
 ) -> tuple[Module, tuple[Any, ...]]:
+  # NOTE: We should bump this periodically
+  if is_cloud_tpu_older_than(2025, 1, 10):
+    raise RuntimeError(
+        "Pallas TPU requires a libTPU version that's at most a month old"
+    )
+  debug_info = jaxpr.debug_info
   if dynamic_shape_replacement_enabled:
     _mosaic_lowering_dynamic_shape_env = LoweringDynamicShapeEnv()
 
@@ -614,8 +620,7 @@ def lower_jaxpr_to_module(
     dynamic_shape_replacement_fn = lambda x: x
 
   # Verify that we have legal block mappings to catch errors early.
-  _check_block_mappings(grid_mapping.block_mappings, lowering_context,
-                        name_and_src_info)
+  _check_block_mappings(grid_mapping.block_mappings, lowering_context, debug_info)
 
   mosaic_grid_mapping = MosaicGridMapping(
       jaxpr,
@@ -627,7 +632,7 @@ def lower_jaxpr_to_module(
   mosaic_grid_mapping.maybe_compress_grid()
   m = ir.Module.create()
   attrs = m.operation.attributes
-  module_name = name_and_src_info.name
+  module_name = mlir.sanitize_name(debug_info.func_name)
   attrs["sym_name"] = ir.StringAttr.get(module_name)
   sym_tab = ir.SymbolTable(m.operation)
 
@@ -1845,6 +1850,7 @@ def _dot_general_lowering_rule(
           ir.F32Type,
           ir.Float8E5M2Type,
           ir.Float8E4M3FNType,
+          ir.Float8E4M3B11FNUZType,
       ]
   ):
     val = ir.FloatAttr.get(val_type, 0.0)
@@ -3399,12 +3405,15 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   src, _ = _transform_ref(src, src_aval.dtype, src_aval.shape, src_transforms)
   dst, _ = _transform_ref(dst, dst_aval.dtype, ref_block_shape, transforms)
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
-  if ctx.forward_compatible:
-    # TODO(mvoz): Remove once a month has passed. b/395630795
-    src_memory_space = _memory_space_to_mosaic_attribute(src_aval.memory_space)
-    smem_space = ir.Attribute.parse("#tpu.memory_space<smem>")
-    src_is_smem = src_memory_space == smem_space
-    wait_ref = src if src_is_smem else dst
+  if ctx.forward_compatible or is_cloud_tpu_older_than(2025, 2, 12):
+    # TODO(mvoz): Remove once six months have passed. b/395630795
+    if hasattr(src_aval, "memory_space"):
+      src_memory_space = _memory_space_to_mosaic_attribute(src_aval.memory_space)
+      smem_space = ir.Attribute.parse("#tpu.memory_space<smem>")
+      src_is_smem = src_memory_space == smem_space
+      wait_ref = src if src_is_smem else dst
+    else:
+      wait_ref = dst
     # Legacy instruction emits only an sfence if the target/dst ref is in smem.
     # So, we pass the src ref to the wait instruction if it is in smem to
     # ensure legacy cases are correct, while technically keeping API compat.

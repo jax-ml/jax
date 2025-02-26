@@ -130,8 +130,15 @@ Operators
     real
     reciprocal
     reduce
+    reduce_and
+    reduce_max
+    reduce_min
+    reduce_or
     reduce_precision
+    reduce_prod
+    reduce_sum
     reduce_window
+    reduce_xor
     rem
     reshape
     rev
@@ -231,18 +238,23 @@ Linear algebra operators (jax.lax.linalg)
   :toctree: _autosummary
 
     cholesky
+    cholesky_update
     eig
     eigh
     hessenberg
-    lu
     householder_product
+    lu
+    lu_pivots_to_permutation
     qdwh
     qr
     schur
     svd
+    SvdAlgorithm
+    symmetric_product
     triangular_solve
     tridiagonal
     tridiagonal_solve
+
 
 Argument classes
 ----------------

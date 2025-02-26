@@ -46,8 +46,8 @@ jobs:
           JAXLIB_NIGHTLY: true  # Tag the wheels as dev versions
         run: |
           cd jax
-          python -m pip install -r build/test-requirements.txt
-          python -m pip install --upgrade numpy==2.0.0 scipy==1.13.1
+          python -m pip install uv~=0.5.30
+          python -m uv pip install -r build/test-requirements.txt --upgrade numpy==2.0.0 scipy==1.13.1
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
           python.exe build\build.py build --wheels=jaxlib `
             --bazel_options=--color=yes `
@@ -67,7 +67,7 @@ jobs:
           PY_COLORS: 1
         run: |
           cd jax
-          python -m pip install --pre --find-links ${{ github.workspace }}\jax\dist jaxlib
-          python -m pip install -e ${{ github.workspace }}\jax
+          python -m uv pip install --pre --find-links ${{ github.workspace }}\jax\dist jaxlib `
+            -e ${{ github.workspace }}\jax
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
           pytest -n auto --tb=short tests examples

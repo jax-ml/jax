@@ -361,20 +361,18 @@ class BatchPartitioningTest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("gpu", "cpu")
   def test_batch_partitioning(self):
-    if config.use_shardy_partitioner.value:
-      self.skipTest(
-          "Shardy does not yet support batch partitioning of FFI calls.")
-
     def f(x):
       return batch_partitionable_ffi_call(x)
 
     mesh = jtu.create_mesh((len(jax.devices()),), ("i",))
     x = self.rng().randn(8, 4, 5).astype(np.float32)
-    x = jax.device_put(x, jax.NamedSharding(mesh, P("i")))
+    x_sharding = jax.NamedSharding(mesh, P("i"))
+    x = jax.device_put(x, x_sharding)
+    f_jit = jax.jit(f, out_shardings=x_sharding)
 
     f(x)  # eager mode doesn't crash
-    jax.jit(f)(x)  # neither does JIT
-    self.assertNotIn("all-gather", jax.jit(f).lower(x).compile().as_text())
+    f_jit(x)  # neither does JIT
+    self.assertNotIn("all-gather", f_jit.lower(x).compile().as_text())
 
 
 def batch_partitionable_ffi_call(x):

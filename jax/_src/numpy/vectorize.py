@@ -19,6 +19,8 @@ import re
 from typing import Any
 import warnings
 
+import numpy as np
+
 from jax._src import api
 from jax._src import config
 from jax import lax
@@ -140,7 +142,7 @@ def _check_output_dims(
   """Check that output core dimensions match the signature."""
   def wrapped(*args):
     out = func(*args)
-    out_shapes = map(jnp.shape, out if isinstance(out, tuple) else [out])
+    out_shapes = map(np.shape, out if isinstance(out, tuple) else [out])
 
     if expected_output_core_dims is None:
       output_core_dims = [()] * len(out_shapes)

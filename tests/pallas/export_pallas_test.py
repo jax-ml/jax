@@ -20,9 +20,12 @@ from absl.testing import absltest
 import jax
 from jax import export
 from jax._src import test_util as jtu
-from jax._src.lib import triton
 from jax.experimental import pallas as pl
 import numpy as np
+try:
+  from jax._src.lib import triton
+except ImportError:
+  triton = None  # Windows builds don't have Triton.
 
 
 jax.config.parse_flags_with_absl()
@@ -47,7 +50,8 @@ class ExportTest(jtu.JaxTestCase):
     @jax.jit
     def add_vectors(x: jax.Array, y: jax.Array) -> jax.Array:
       return pl.pallas_call(add_vectors_kernel,
-                            out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype)
+                            out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+                            name="my_custom_kernel_name",
                             )(x, y)
 
     platforms = ["tpu"]
@@ -72,6 +76,16 @@ class ExportTest(jtu.JaxTestCase):
          jtu.is_cuda_compute_capability_at_least("8.0"))):
       res = exp.call(a, a)
       self.assertAllClose(res, a + a)
+
+    # Check that we use the proper kernels names
+    if "tpu" in platforms:
+      self.assertRegex(
+          exp.mlir_module(),
+          r"stablehlo.custom_call @tpu_custom_call.+kernel_name\s*=\s*\"my_custom_kernel_name\"")
+    if "cuda" in platforms:
+      self.assertRegex(
+          exp.mlir_module(),
+          r"stablehlo.custom_call @__gpu\$xla\.gpu\.triton.+name\s*=\s*\"my_custom_kernel_name\"")
 
 
 if __name__ == '__main__':

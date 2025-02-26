@@ -59,11 +59,10 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install JAX test requirements
         run: |
-          $PYTHON -m pip install -U -r build/test-requirements.txt
-          $PYTHON -m pip install -U -r build/collect-profile-requirements.txt
+          $PYTHON -m uv pip install -U -r build/test-requirements.txt -r build/collect-profile-requirements.txt
       - name: Install JAX
         run: |
-          $PYTHON -m pip uninstall -y jax jaxlib libtpu
+          $PYTHON -m uv pip uninstall jax jaxlib libtpu
           if [ "${{ matrix.jaxlib-version }}" == "head" ]; then
             # Build and install jaxlib at head
             $PYTHON build/build.py build --wheels=jaxlib \
@@ -71,30 +70,27 @@ jobs:
                     --local_xla_path="$(pwd)/xla" \
                     --verbose
 
-            $PYTHON -m pip install dist/*.whl
-
-            # Install "jax" at head
-            $PYTHON  -m pip install -U -e .
-
-            # Install libtpu
-            $PYTHON -m pip install --pre libtpu \
-              -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+            # Install jaxlib, "jax" at head, and libtpu
+            $PYTHON -m uv pip install dist/*.whl \
+               -U -e . \
+               --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
           elif [ "${{ matrix.jaxlib-version }}" == "pypi_latest" ]; then
-            $PYTHON -m pip install .[tpu] \
+            $PYTHON -m uv pip install .[tpu] \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
           elif [ "${{ matrix.jaxlib-version }}" == "nightly" ]; then
-            $PYTHON -m pip install --pre . -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
-            $PYTHON -m pip install --pre libtpu \
-              -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-            $PYTHON -m pip install requests
+            $PYTHON -m uv pip install \
+              --pre . -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html \
+              libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html \
+              requests
 
           elif [ "${{ matrix.jaxlib-version }}" == "nightly+oldest_supported_libtpu" ]; then
-            $PYTHON -m pip install --pre . -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
             # TODO(phawkins): switch to libtpu, when the oldest release we support is a libtpu release.
-            $PYTHON -m pip install --pre libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
-              -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-            $PYTHON -m pip install requests
+            $PYTHON -m uv pip install \
+              --pre . -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html \
+              libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
+              -f https://storage.googleapis.com/jax-releases/libtpu_releases.html \
+              requests
           else
             echo "Unknown jaxlib-version: ${{ matrix.jaxlib-version }}"
             exit 1

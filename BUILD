@@ -1,0 +1,86 @@
+# Copyright 2025 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+load("@tsl//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
+load(
+    "//jaxlib:jax.bzl",
+    "jax_wheel",
+)
+
+collect_data_files(
+    name = "transitive_py_data",
+    deps = ["//jax"],
+)
+
+transitive_py_deps(
+    name = "transitive_py_deps",
+    deps = [
+        "//jax",
+        "//jax:compilation_cache",
+        "//jax:experimental",
+        "//jax:experimental_colocated_python",
+        "//jax:experimental_sparse",
+        "//jax:internal_export_back_compat_test_util",
+        "//jax:internal_test_harnesses",
+        "//jax:internal_test_util",
+        "//jax:lax_reference",
+        "//jax:pallas_experimental_gpu_ops",
+        "//jax:pallas_gpu_ops",
+        "//jax:pallas_mosaic_gpu",
+        "//jax:pallas_tpu_ops",
+        "//jax:pallas_triton",
+        "//jax:source_mapper",
+        "//jax:sparse_test_util",
+        "//jax:test_util",
+        "//jax/_src/lib",
+        "//jax/_src/pallas/mosaic_gpu",
+        "//jax/experimental/array_serialization:serialization",
+        "//jax/experimental/jax2tf",
+        "//jax/extend",
+        "//jax/extend:ifrt_programs",
+        "//jax/extend/mlir",
+        "//jax/extend/mlir/dialects",
+        "//jax/tools:colab_tpu",
+        "//jax/tools:jax_to_ir",
+        "//jax/tools:pgo_nsys_converter",
+    ],
+)
+
+py_binary(
+    name = "build_wheel",
+    srcs = ["build_wheel.py"],
+    deps = [
+        "//jaxlib/tools:build_utils",
+        "@pypi_build//:pkg",
+        "@pypi_setuptools//:pkg",
+        "@pypi_wheel//:pkg",
+    ],
+)
+
+jax_wheel(
+    name = "jax_wheel",
+    platform_independent = True,
+    source_files = [
+        ":transitive_py_data",
+        ":transitive_py_deps",
+        "//jax:py.typed",
+        "AUTHORS",
+        "LICENSE",
+        "README.md",
+        "pyproject.toml",
+        "setup.py",
+    ],
+    wheel_binary = ":build_wheel",
+    wheel_name = "jax",
+)

@@ -84,7 +84,7 @@ TODO:
 """
 from functools import partial
 import math
-from typing import cast, Any
+from typing import Any
 
 import jax
 import numpy as np
@@ -256,15 +256,15 @@ def _lstm_cudnn_allow_tf32(precision: lax.PrecisionLike) -> bool:
   if precision is None or not (isinstance(precision, tuple) and len(precision) == 2):
     return True
   # cuDNN allows only one precision specifier per RNN op
-  precision, _ = cast(tuple[lax.Precision, lax.Precision], precision)
-  if precision == lax.Precision.HIGHEST:
-    return False
-  elif precision == lax.Precision.HIGH:
-    return True
-  elif precision == lax.Precision.DEFAULT: # bfloat16
-    raise NotImplementedError("bfloat16 support not implemented for LSTM")
-  else:
-    raise ValueError(f"Unexpected precision specifier value {precision}")
+  match precision:
+    case (lax.Precision.HIGHEST, _):
+      return False
+    case (lax.Precision.HIGH, _):
+      return True
+    case (lax.Precision.DEFAULT, _): # bfloat16
+      raise NotImplementedError("bfloat16 support not implemented for LSTM")
+    case _:
+      raise ValueError(f"Unexpected precision specifier value {precision}")
 
 
 @partial(custom_vjp, nondiff_argnums=(5, 6, 7, 8, 9, 10))

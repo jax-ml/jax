@@ -52,6 +52,7 @@ from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            HashableFunction, HashableWrapper, weakref_lru_cache,
                            partition_list, StrictABCMeta)
 import jax._src.pretty_printer as pp
+from jax._src.named_sharding import NamedSharding
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client
 from jax._src import traceback_util
@@ -93,7 +94,7 @@ class Jaxpr:
   _outvars: list[Atom]
   _eqns: list[JaxprEqn]
   _effects: Effects
-  _debug_info: DebugInfo | None
+  _debug_info: DebugInfo
 
   @property
   def constvars(self) -> list[Var]:
@@ -116,13 +117,17 @@ class Jaxpr:
     return self._effects
 
   @property
-  def debug_info(self) -> DebugInfo | None:
+  def debug_info(self) -> DebugInfo:
     return self._debug_info
 
   def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
                outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
                effects: Effects = no_effects,
-               debug_info: DebugInfo | None = None):
+               # We want all calls to pass a DebugInfo object, but for backwards
+               # compatibility we have to allow calls when the debug_info
+               # is missing.
+               debug_info: DebugInfo = None,  # type: ignore[annotation-type-mismatch,assignment]
+               ):
     """
     Args:
       constvars: list of variables introduced for constants. Array constants are
@@ -133,17 +138,19 @@ class Jaxpr:
       eqns: list of equations.
       effects: set of effects. The effects on a jaxpr are a superset of the
         union of the effects for each equation.
-      debug_info: optional DebugInfo.
+      debug_info: debugging information.
     """
     self._constvars = list(constvars)
     self._invars = list(invars)
     self._outvars = list(outvars)
     self._eqns = list(eqns)
     self._effects = effects
-    self._debug_info = debug_info and debug_info.resolve_result_paths()
+    # TODO(https://github.com/jax-ml/jax/issues/26480)
+    debug_info = debug_info or lu._missing_debug_info("core.Jaxpr")
+    self._debug_info = debug_info.resolve_result_paths()
     # TODO(necula): re-enable these safety checks
-    # assert (not debug_info or len(debug_info.arg_names) == len(invars)), (debug_info, invars)
-    # assert (not debug_info or len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
+    # assert (len(debug_info.arg_names) == len(invars)), (debug_info, invars)
+    # assert (len(debug_info.result_paths) == len(outvars)), (debug_info, outvars)
 
   def __str__(self):
     return str(self.pretty_print())
@@ -491,8 +498,6 @@ class Primitive:
     return f'{self.name}'
 
   def bind(self, *args, **params):
-    if not config.sharding_in_types.value:
-      return self._true_bind(*args, **params)
     args = args if self.skip_canonicalization else map(canonicalize_value, args)
     return self._true_bind(*args, **params)
 
@@ -591,19 +596,21 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
   return map(read, jaxpr.outvars)
 
 def check_avals_context_mesh(avals, prim_name):
-  if config.sharding_in_types.value:
-    cur_mesh = mesh_lib.get_abstract_mesh()
-    for a in avals:
-      # avals can have meshes with different axis_names so allow that in
-      # full auto mode.
-      if a.sharding.mesh._are_all_axes_auto and cur_mesh._are_all_axes_auto:
-        continue
-      if a.sharding.mesh != cur_mesh:
-        raise ValueError(
-            f"For primitive {prim_name}, context mesh {cur_mesh} should match"
-            f" the aval mesh {a.sharding.mesh} for shape {a.str_short()}. This"
-            " error occurs at source: "
-            f" {source_info_util.summarize(source_info_util.current())}")
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  for a in avals:
+    # TODO(yashkatariya): Should be cur_mesh.unset
+    if cur_mesh.empty or a.sharding.mesh.empty:
+      continue
+    # avals can have meshes with different axis_names so allow that in
+    # full auto mode.
+    if a.sharding.mesh._are_all_axes_auto and cur_mesh._are_all_axes_auto:
+      continue
+    if a.sharding.mesh != cur_mesh:
+      raise ValueError(
+          f"For primitive {prim_name}, context mesh {cur_mesh} should match"
+          f" the aval mesh {a.sharding.mesh} for shape {a.str_short()}. This"
+          " error occurs at source: "
+          f" {source_info_util.summarize(source_info_util.current())}")
 
 # -------------------- tracing --------------------
 
@@ -1129,51 +1136,77 @@ class TracingContext(threading.local):
 trace_ctx = TracingContext()
 
 
-@contextmanager
-def take_current_trace():
-  prev = trace_ctx.trace
-  try:
-    trace_ctx.set_trace(eval_trace)
-    yield prev
-  finally:
-    trace_ctx.set_trace(prev)
+class TakeCurrentTraceContextManager:
+  __slots__ = ['prev']
 
-@contextmanager
-def set_current_trace(trace, check_leaks=False):
-  prev = trace_ctx.trace
-  try:
-    trace_ctx.set_trace(trace)
-    yield
-  finally:
-    trace_ctx.set_trace(prev)
-    if check_leaks and config.check_tracer_leaks.value:
-      trace.invalidate()
-      trace_ref = ref(trace)
-      del trace
+  def __enter__(self):
+    self.prev = trace_ctx.trace
+    trace_ctx.set_trace(eval_trace)
+    return self.prev
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    trace_ctx.set_trace(self.prev)
+
+take_current_trace = TakeCurrentTraceContextManager
+
+
+class SetCurrentTraceContextManager:
+  __slots__ = ['trace', 'check_leaks', 'prev']
+
+  def __init__(self, trace, check_leaks=False):
+    self.trace = trace
+    self.check_leaks = check_leaks
+
+  def __enter__(self):
+    self.prev = trace_ctx.trace
+    trace_ctx.set_trace(self.trace)
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    trace_ctx.set_trace(self.prev)
+    if self.check_leaks and config.check_tracer_leaks.value:
+      self.trace.invalidate()
+      trace_ref = ref(self.trace)
+      del self.trace
       live_trace = trace_ref()
       if live_trace is not None:
         leaked_tracers = maybe_find_leaked_tracers(live_trace)
         if leaked_tracers:
           raise leaked_tracer_error("trace", live_trace, leaked_tracers)
 
-@contextmanager
-def extend_axis_env_nd(name_size_pairs : Iterable[tuple[AxisName, int]]):
-  prev = trace_ctx.axis_env
-  try:
-    trace_ctx.set_axis_env(prev.extend_pure(name_size_pairs))
-    yield
-  finally:
-    trace_ctx.set_axis_env(prev)
+set_current_trace = SetCurrentTraceContextManager
 
-@contextmanager
-def add_spmd_axis_names(axis_names: AxisName | None):
-  prev = trace_ctx.axis_env
-  try:
-    if axis_names is not None:
-      trace_ctx.set_axis_env(prev.add_spmd_axis_names(axis_names))
-    yield
-  finally:
-    trace_ctx.set_axis_env(prev)
+class ExtendAxisEnvNdContextManager:
+  __slots__ = ['prev', 'name_size_pairs']
+
+  def __init__(self, name_size_pairs: Iterable[tuple[AxisName, int]]):
+    self.name_size_pairs = name_size_pairs
+
+  def __enter__(self):
+    self.prev = trace_ctx.axis_env
+    trace_ctx.set_axis_env(self.prev.extend_pure(self.name_size_pairs))
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    trace_ctx.set_axis_env(self.prev)
+
+extend_axis_env_nd = ExtendAxisEnvNdContextManager
+
+
+class AddSpmdAxisNamesContextManager:
+  __slots__ = ['prev', 'axis_names']
+
+  def __init__(self, axis_names: AxisName | None):
+    self.axis_names = axis_names
+
+  def __enter__(self):
+    self.prev = trace_ctx.axis_env
+    if self.axis_names is not None:
+      trace_ctx.set_axis_env(self.prev.add_spmd_axis_names(self.axis_names))
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    trace_ctx.set_axis_env(self.prev)
+
+add_spmd_axis_names = AddSpmdAxisNamesContextManager
+
 
 def get_axis_env():
   return trace_ctx.axis_env
@@ -1225,6 +1258,7 @@ def ensure_no_leaks(trace:Trace):
       leaked_tracers = maybe_find_leaked_tracers(live_trace)
       if leaked_tracers:
         raise leaked_tracer_error("trace", live_trace, leaked_tracers)
+
 
 def maybe_find_leaked_tracers(trace: Trace) -> list[Tracer]:
   """Find the leaked tracers holding a reference to the Trace
@@ -1488,8 +1522,7 @@ def check_valid_jaxtype(x):
       f"Value {x!r} of type {type(x)} is not a valid JAX type")
 
 def update_aval_with_sharding(aval, sharding):
-  from jax._src.sharding_impls import NamedSharding  # type: ignore
-  if config.sharding_in_types.value and isinstance(sharding, NamedSharding):
+  if isinstance(sharding, NamedSharding):
     aval = aval.update(sharding=NamedSharding(
         sharding.mesh.abstract_mesh,
         sharding.spec._normalized_spec_for_aval(aval.ndim)))
@@ -1543,6 +1576,7 @@ def get_aval(x):
     return get_aval(x.__jax_array__())
   raise TypeError(f"Argument '{x}' of type '{typ}' is not a valid JAX type")
 
+get_ty = get_aval
 
 def is_concrete(x):
   return to_concrete_value(x) is not None
@@ -1619,7 +1653,9 @@ def physical_aval(aval):
       isinstance(aval.dtype, dtypes.ExtendedDType)):
     elt_aval = physical_element_aval(aval.dtype)
     if isinstance(aval, ShapedArray):
-      return ShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype)
+      from jax._src.sharding_impls import physical_sharding  # type: ignore
+      return ShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype,
+                         sharding=physical_sharding(aval, aval.sharding))
     return DShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype)
   return aval
 
@@ -1751,33 +1787,30 @@ def _make_lengths_same(sharding, ndim):
 # TODO(dougalm): Cast scalar, numpy arrays, etc to jax arrays so that values
 # passed to primitives are always have avals, etc i.e. they are canonical.
 def canonicalize_value(val):
-  if not config.sharding_in_types.value:
-    return val
-
-  from jax._src.pjit import NamedSharding, mesh_cast  # type: ignore
-
   try:
     aval = get_aval(val)
   except TypeError:
     return val
   if not isinstance(aval, ShapedArray):
     return val
+  if aval.sharding.mesh.empty:
+    return val
 
   cur_mesh = mesh_lib.get_abstract_mesh()
-  if cur_mesh == aval.sharding.mesh:  # type: ignore
+  if cur_mesh == aval.sharding.mesh:
     return val
-  if cur_mesh._are_all_axes_manual and aval.sharding.mesh._are_all_axes_auto:  # type: ignore
-    return mesh_cast(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))  # type: ignore
-  if aval.sharding.mesh.empty and not cur_mesh.empty:  # type: ignore
-    return mesh_cast(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))  # type: ignore
+  # Atleast 1 mesh axis should be Manual and all other axes should be
+  # Manual or Auto to allow casting.
+  # TODO(yashkatariy): Casting to Explicit is not yet allowed. Maybe we need
+  # cast_and_slice_p for it since shape might change?
+  if (cur_mesh._any_axis_manual and cur_mesh._are_all_axes_auto_or_manual and
+      aval.sharding.mesh._are_all_axes_auto):
+    from jax._src.pjit import mesh_cast  # pytype: disable=import-error
+    return mesh_cast(val, NamedSharding(cur_mesh, P(*[None] * aval.ndim)))
   return val
 
 
 def get_cur_mesh_sharding(spec=None):
-  if not config.sharding_in_types.value:
-    return None
-
-  from jax._src.sharding_impls import NamedSharding  # type: ignore
   spec = P() if spec is None else spec
   return NamedSharding(mesh_lib.get_abstract_mesh(), spec)
 
@@ -1785,7 +1818,7 @@ def get_cur_mesh_sharding(spec=None):
 # TODO(yashkatariya): Only works with User/Auto. Generalize it to work with
 # Collective too.
 def modify_spec_for_auto_manual(spec, mesh) -> P:
-  new_spec = []  # type: ignore
+  new_spec = []
   for s in spec:
     if not s:
       new_spec.append(s)
@@ -1809,14 +1842,12 @@ def _maybe_modify_sharding(sharding, ndim):
   out = sharding.with_spec(modify_spec_for_auto_manual(
       sharding.spec, sharding.mesh))
   if (len(out.spec) != ndim and
-      (out.mesh._are_all_axes_auto or out.mesh._are_all_axes_manual)):
+      (out.mesh.empty or out.mesh._are_all_axes_auto_or_manual)):
     out = _make_lengths_same(out, ndim)
   return out
 
 
 def get_sharding(sharding, ndim):
-  from jax._src.sharding_impls import NamedSharding  # type: ignore
-
   if sharding is None:
     return NamedSharding(mesh_lib.empty_abstract_mesh, P(*[None] * ndim))
 
@@ -1835,12 +1866,11 @@ class ShapedArray(UnshapedArray):
   __slots__ = ['shape', 'sharding']  # inherits slots from parent
   array_abstraction_level = 2
 
-  def __init__(self, shape, dtype, weak_type=False, sharding=None):
+  def __init__(self, shape, dtype, weak_type=False, *, sharding=None):
     self.shape = canonicalize_shape(shape)
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
-    if config.sharding_in_types.value:
-      self.sharding = get_sharding(sharding, len(self.shape))
+    self.sharding = get_sharding(sharding, len(self.shape))
 
   def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
     if shape is None:
@@ -1850,7 +1880,7 @@ class ShapedArray(UnshapedArray):
     if weak_type is None:
       weak_type = self.weak_type
     if 'sharding' not in kwargs:
-      kwargs['sharding'] = getattr(self, 'sharding', None)
+      kwargs['sharding'] = self.sharding
     return ShapedArray(shape, dtype, weak_type, **kwargs)
 
   ndim = property(lambda self: len(self.shape))
@@ -1867,30 +1897,27 @@ class ShapedArray(UnshapedArray):
     return (type(self) is type(other)
             and self.dtype == other.dtype and self.shape == other.shape
             and self.weak_type == other.weak_type
-            and getattr(self, 'sharding', None) == getattr(other, 'sharding', None))
+            and self.sharding == other.sharding)
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
     # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
-    return hash((self.shape, self.dtype, self.weak_type,
-                 getattr(self, 'sharding', None)))
+    return hash((self.shape, self.dtype, self.weak_type, self.sharding))
 
   def to_tangent_aval(self):
-    if config.sharding_in_types.value:
-      return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-                         self.weak_type, self.sharding)
-    else:
-      return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-                         self.weak_type)
+    return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
+                       self.weak_type, sharding=self.sharding)
 
-  def str_short(self, short_dtypes=False):
+  def str_short(self, short_dtypes=False, mesh_axis_types=False):
     dt_str = (dtypes.short_dtype_name(self.dtype) if short_dtypes else
               self.dtype.name)
     dt_str = dt_str.replace('void', 'float0')
-    if hasattr(self, 'sharding') and self.sharding is not None:
-      shapestr = _get_shape_sharding_str(self.shape, self.sharding.spec)  # type: ignore
-      return f'{dt_str}[{shapestr}]'
+    if self.sharding is not None:
+      shapestr = _get_shape_sharding_str(self.shape, self.sharding.spec)
+      mesh_axes = (f'({self.sharding.mesh.axis_types})'
+                   if mesh_axis_types else '')
+      return f'{dt_str}[{shapestr}]{mesh_axes}'
     else:
       shapestr = ','.join(map(str, self.shape))
       return f'{dt_str}[{shapestr}]'
@@ -1968,7 +1995,6 @@ class DShapedArray(UnshapedArray):
 
   @property
   def sharding(self):
-    from jax._src.sharding_impls import NamedSharding  # type: ignore
     return NamedSharding(mesh_lib.empty_abstract_mesh, P())
 
   def _len(self, tracer):
@@ -2118,7 +2144,7 @@ abstract_token: AbstractToken = AbstractToken()
 
 # Singleton shaped array used by all abstract tokens when shape/dtype is needed.
 def get_token_aval():
-  return ShapedArray((0,), np.dtype(np.bool_), sharding=get_cur_mesh_sharding())
+  return ShapedArray((0,), np.dtype(np.bool_), sharding=None)
 
 # Concrete token object
 class Token:
@@ -2383,8 +2409,7 @@ def dim_constant(ct: int):
     return np.int64(ct)
 
 def dim_value_aval() -> AbstractValue:
-  return ShapedArray((), dim_value_dtype(), weak_type=True,
-                     sharding=get_cur_mesh_sharding())
+  return ShapedArray((), dim_value_dtype(), weak_type=True, sharding=None)
 
 # ------------------- Call -------------------
 
@@ -2480,8 +2505,7 @@ def _map_shaped_array(
   assert axis is None or aval.shape[axis] == size
   # TODO: Extend the named shape
   if axis is None: return aval
-  sharding = (aval.sharding.with_spec(tuple_delete(aval.sharding.spec, axis))
-              if config.sharding_in_types.value else None)
+  sharding = aval.sharding.with_spec(tuple_delete(aval.sharding.spec, axis))
   return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
                      weak_type=aval.weak_type, sharding=sharding)
 
@@ -2490,9 +2514,8 @@ def _unmap_shaped_array(
     ) -> ShapedArray:
   if axis is None: return aval
   elif type(axis) is int:
-    sharding = (aval.sharding.with_spec(tuple_insert(aval.sharding.spec, axis,
-                                                     explicit_mesh_axis))
-                if config.sharding_in_types.value else None)
+    sharding = aval.sharding.with_spec(tuple_insert(
+        aval.sharding.spec, axis, explicit_mesh_axis))
     return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
                        weak_type=aval.weak_type, sharding=sharding)
   else: raise TypeError(axis)
@@ -2604,6 +2627,8 @@ def typematch(t1: AbstractValue, t2: AbstractValue) -> bool:
         isinstance(t2, (ShapedArray, DShapedArray))):
     # This case handles DShapedArray and shape polynomials. Alternatively we
     # could try normalizing first and then doing simple equality.
+    # TODO(yashkatariya): Also check `sharding` here.
+    # See https://github.com/jax-ml/jax/issues/26474
     return t1.dtype == t2.dtype and definitely_equal_shape(t1.shape, t2.shape)
   else:
     return False

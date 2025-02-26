@@ -202,7 +202,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
       a single iteration of a loop. If an integer is provided, it determines how
       many unrolled loop iterations to run within a single rolled iteration of
       the loop. If a boolean is provided, it will determine if the loop is
-      competely unrolled (i.e. `unroll=True`) or left completely unrolled (i.e.
+      competely unrolled (i.e. `unroll=True`) or left completely rolled (i.e.
       `unroll=False`).
     _split_transpose: experimental optional bool specifying whether to further
       split the transpose into a scan (computing activation gradients), and a
@@ -231,8 +231,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   xs_avals = [core.get_aval(x) for x in xs_flat]
 
-  if (config.sharding_in_types.value and
-      not all(a.sharding.spec[0] is None for a in xs_avals)):
+  if not all(a.sharding.spec[0] is None for a in xs_avals):
     raise ValueError('0th dimension of all xs should be replicated. Got '
                      f'{", ".join(str(a.sharding.spec) for a in xs_avals)}')
 
@@ -504,10 +503,9 @@ def _split_leading(sz, x):
 def _concat(a, b): return lax.concatenate([a, b], 0)
 
 def _empty_array(prefix, length_spec, aval):
-  sharding = (aval.sharding.with_spec((length_spec, *aval.sharding.spec))
-              if config.sharding_in_types.value else None)
+  sharding = aval.sharding.with_spec((length_spec, *aval.sharding.spec))
   return lax.broadcast(lax.empty(aval.dtype), (*prefix, *aval.shape),
-                       sharding=sharding)
+                       out_sharding=sharding)
 
 eval_jaxpr_p = core.Primitive('eval_jaxpr')
 eval_jaxpr_p.multiple_results = True
@@ -1277,6 +1275,7 @@ def _scan_state_partial_discharge_rule(should_discharge, in_avals, out_avals, *a
 
 scan_p = core.Primitive("scan")
 scan_p.multiple_results = True
+scan_p.skip_canonicalization = True
 scan_p.def_impl(partial(dispatch.apply_primitive, scan_p))
 scan_p.def_effectful_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp
@@ -1555,7 +1554,7 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
   cond_debug = cond_jaxpr.jaxpr.debug_info
   augmented_debug = cond_debug and (
       cond_debug._replace(
-          arg_names=cond_debug.arg_names + (None,) * len(init_dot)
+          arg_names=cond_debug.arg_names + ("",) * len(init_dot)
       )
   )
   cond_jaxpr_augmented = core.Jaxpr(cond_jaxpr.jaxpr.constvars,
@@ -1752,7 +1751,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
       # Pred can be batched
       pred = core.eval_jaxpr(cond_jaxpr.jaxpr, cond_jaxpr.consts, *args)[0]
       if batched:
-        pred = lax._reduce_or(pred, tuple(range(len(pred_aval.shape))))
+        pred = lax.reduce_or(pred, tuple(range(len(pred_aval.shape))))
       return pred
     def body(args):
       return tuple(core.eval_jaxpr(body_jaxpr.jaxpr, body_jaxpr.consts, *args))
@@ -1958,6 +1957,7 @@ def _while_partial_discharge_rule(should_discharge, in_avals, out_avals, *args, 
 
 while_p = core.Primitive('while')
 while_p.multiple_results = True
+while_p.skip_canonicalization = True
 while_p.def_impl(partial(dispatch.apply_primitive, while_p))
 while_p.def_effectful_abstract_eval(_while_loop_abstract_eval)
 ad.primitive_jvps[while_p] = _while_loop_jvp
@@ -2426,6 +2426,9 @@ def _cumred_shape_rule(x, *, axis: int, reverse: bool):
         f"axis {axis} is out of bounds for array of shape {x.shape}")
   return x.shape
 
+def _cumred_sharding_rule(x, *, axis: int, reverse: bool):
+  return x.sharding
+
 def _cumsum_transpose_rule(t, operand, *, axis: int, reverse: bool):
   return [cumsum(t, axis=axis, reverse=not reverse)]
 
@@ -2476,7 +2479,7 @@ def _cumred_dtype_rule(name, operand, *args, **kw):
 def _cumulative_reduction_primitive(name, reduce_fn, reduce_window_fn):
   reducer_p = lax.standard_primitive(
     _cumred_shape_rule, partial(_cumred_dtype_rule, name),
-    name)
+    name, sharding_rule=_cumred_sharding_rule)
   batching.primitive_batchers[reducer_p] = partial(_cumred_batch_rule,
                                                    reducer_p)
 
@@ -2495,14 +2498,18 @@ def _cumulative_reduction_primitive(name, reduce_fn, reduce_window_fn):
 
   return reducer_p
 
-cumsum_p = _cumulative_reduction_primitive("cumsum", lax.add, windowed_reductions._reduce_window_sum)
+cumsum_p = _cumulative_reduction_primitive(
+    "cumsum", lax.add, windowed_reductions._reduce_window_sum)
 ad.deflinear2(cumsum_p, _cumsum_transpose_rule)
 
 cumlogsumexp_p = _cumulative_reduction_primitive(
     "cumlogsumexp", logaddexp, windowed_reductions._reduce_window_logaddexp)
-cumprod_p = _cumulative_reduction_primitive("cumprod", lax.mul, windowed_reductions._reduce_window_prod)
-cummax_p = _cumulative_reduction_primitive("cummax", lax.max, windowed_reductions._reduce_window_max)
-cummin_p = _cumulative_reduction_primitive("cummin", lax.min, windowed_reductions._reduce_window_min)
+cumprod_p = _cumulative_reduction_primitive(
+    "cumprod", lax.mul, windowed_reductions._reduce_window_prod)
+cummax_p = _cumulative_reduction_primitive(
+    "cummax", lax.max, windowed_reductions._reduce_window_max)
+cummin_p = _cumulative_reduction_primitive(
+    "cummin", lax.min, windowed_reductions._reduce_window_min)
 
 
 def _cumulative_jvp_rule(primals, tangents, *, axis: int, reverse: bool,

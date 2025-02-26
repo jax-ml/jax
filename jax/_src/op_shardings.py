@@ -100,7 +100,7 @@ def op_sharding_to_numpy_indices(
 
   for i, idxs in enumerate(itertools.product(*axis_indices)):
     for _ in range(num_replicas):
-      indices[next(device_it)] = idxs  # type: ignore  # numpy 2.2
+      indices[next(device_it)] = idxs
   return indices
 
 

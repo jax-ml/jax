@@ -277,9 +277,9 @@ def _check_tensor_size(shape: tuple[int | pallas_core.Mapped, ...]):
 def lower_jaxpr_to_triton_module(
     jaxpr: jax_core.Jaxpr,
     grid_mapping: GridMapping,
-    name_and_src_info: pallas_core.NameAndSrcInfo,
     platform: str
 ) -> LoweringResult:
+  debug_info = jaxpr.debug_info
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(
         "dynamic grid bounds not supported in the Triton backend"
@@ -295,7 +295,7 @@ def lower_jaxpr_to_triton_module(
   with _new_ir_context(), ir.Location.unknown():
     module = ir.Module.create()
     attrs = module.operation.attributes
-    module_name = name_and_src_info.name
+    module_name = mlir.sanitize_name(debug_info.func_name)
     attrs["sym_name"] = ir.StringAttr.get(module_name)
     param_types = [
         tt_dialect.PointerType.get(_dtype_to_ir_type(var.aval.dtype), 1)
@@ -304,7 +304,7 @@ def lower_jaxpr_to_triton_module(
     assert len(jaxpr.outvars) == 0
     fn_type = ir.FunctionType.get(param_types, [])
     fn = tt_dialect.FuncOp(
-        name_and_src_info.name,
+        module_name,
         ir.TypeAttr.get(fn_type),
         sym_visibility="public",
         res_attrs=ir.DictAttr.get(dict(noinline=ir.BoolAttr.get(False))),
@@ -324,7 +324,7 @@ def lower_jaxpr_to_triton_module(
           if i not in grid_mapping.vmapped_dims
       ]
       ctx = ModuleContext(
-          name_and_src_info.name,
+          mlir.sanitize_name(debug_info.func_name),
           grid_mapping, local_program_ids, mlir.TracebackCaches(), platform
       )
       if grid_mapping.num_index_operands:
@@ -1733,21 +1733,43 @@ def _reshape_lowering_rule(
     return ValueError("`dimensions` is not supported.")
 
   a = _ensure_ir_value(a, *ctx.avals_in)
+  [a_aval] = ctx.avals_in
   [out_aval] = ctx.avals_out
+  # Triton Reshape doesn't support scalar result types (only 0d tensors).
+  if out_aval.ndim == 0:
+    return _reduce_lowering(jnp.add, ctx, a, axes=tuple(range(a_aval.ndim)))
+  return _reshape(a, out_aval.shape)
+
+
+def _reshape(a: ir.Value, shape: Sequence[int]) -> ir.Value:
   if not ir.RankedTensorType.isinstance(a.type):
-    assert all(dim_size == 1 for dim_size in out_aval.shape)
-    return _splat(a, out_aval.shape)
+    assert all(dim_size == 1 for dim_size in shape)
+    return _splat(a, shape)
 
   ty = ir.RankedTensorType(a.type)
-
-  # Triton Reshape doesn't support scalar result types (only 0d tensors).
-  if not out_aval.shape:
-    return _reduce_lowering(jnp.add, ctx, a, axes=tuple(range(ty.rank)))
-
   return tt_dialect.reshape(
-      ir.RankedTensorType.get([*out_aval.shape], ty.element_type, ty.encoding),
+      ir.RankedTensorType.get(shape, ty.element_type, ty.encoding),
       a,
       allow_reorder=False,
+  )
+
+
+@register_lowering(lax.concatenate_p)
+def _concatenate_lowering_rule(ctx: LoweringRuleContext, *args, dimension):
+  if len(args) != 2:
+    raise NotImplementedError("Only 2-argument concatenate is supported.")
+  x_aval, y_aval = ctx.avals_in
+  x, y = args
+  if dimension != x_aval.ndim-1:
+    raise NotImplementedError(
+        "Only concatenate along the last dimension is supported."
+    )
+  if x_aval.shape[-1] != 1 or y_aval.shape[-1] != 1:
+    raise NotImplementedError(
+        "Only arguments with shape [..., 1] are supported."
+    )
+  return tt_dialect.join(
+      _reshape(x, x_aval.shape[:-1]), _reshape(y, y_aval.shape[:-1])
   )
 
 

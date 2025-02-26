@@ -94,6 +94,7 @@ cc_library(
         "@xla//xla:array",
         "@xla//xla:shape_util",
         "@xla//xla:util",
+        "@xla//xla/tsl/platform:errors",
     ] + pallas_extension_deps,
 )
 
@@ -269,6 +270,7 @@ filegroup(
         "dialect/tpu/transforms/extensions/apply_vector_layout_extensions.cc",
         "dialect/tpu/transforms/extensions/infer_vector_layout_extensions.cc",
     ],
+    # compatible with libtpu
 )
 
 cc_library(

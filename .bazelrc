@@ -2,7 +2,7 @@
 # All default build options below. These apply to all build commands.
 # #############################################################################
 # Make Bazel print out all options from rc files.
-build --announce_rc
+common --announce_rc
 
 # By default, execute all actions locally.
 build --spawn_strategy=local
@@ -11,7 +11,7 @@ build --spawn_strategy=local
 # automatically when building on Linux.
 build --enable_platform_specific_config
 
-build --experimental_cc_shared_library
+common --experimental_cc_shared_library
 
 # Do not use C-Ares when building gRPC.
 build --define=grpc_no_ares=true

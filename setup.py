@@ -19,11 +19,11 @@ from setuptools import setup, find_packages
 
 project_name = 'jax'
 
-_current_jaxlib_version = '0.5.0'
+_current_jaxlib_version = '0.5.1'
 # The following should be updated after each new jaxlib release.
-_latest_jaxlib_version_on_pypi = '0.5.0'
+_latest_jaxlib_version_on_pypi = '0.5.1'
 
-_libtpu_version = '0.0.8'
+_libtpu_version = '0.0.10'
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
@@ -73,7 +73,7 @@ setup(
         'ci': [f'jaxlib=={_latest_jaxlib_version_on_pypi}'],
 
         # Cloud TPU VM jaxlib can be installed via:
-        # $ pip install "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+        # $ pip install "jax[tpu]"
         'tpu': [
           f'jaxlib>={_current_jaxlib_version},<={_jax_version}',
           f'libtpu=={_libtpu_version}',

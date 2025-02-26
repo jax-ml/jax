@@ -42,6 +42,7 @@ from absl.testing import parameterized
 import jax
 from jax import lax
 from jax._src import api
+from jax._src import compilation_cache
 from jax._src import config
 from jax._src import core
 from jax._src import deprecations
@@ -60,7 +61,6 @@ from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
     check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, rand_like, tolerance)
 from jax._src.util import unzip2
-from jax.experimental.compilation_cache import compilation_cache
 from jax.tree_util import tree_all, tree_flatten, tree_map, tree_unflatten
 import numpy as np
 import numpy.random as npr
@@ -471,6 +471,19 @@ def is_cuda_compute_capability_equal(capability: str) -> bool:
   target = tuple(int(x) for x in capability.split("."))
   current = tuple(int(x) for x in d.compute_capability.split("."))
   return current == target
+
+
+class CudaArchSpecificTest:
+  """A mixin with methods allowing to skip arch specific tests."""
+
+  def skip_unless_sm90a(self):
+    if not is_cuda_compute_capability_equal("9.0"):
+      self.skipTest("Only works on GPU with capability sm90a")
+
+  def skip_unless_sm100a(self):
+    if not is_cuda_compute_capability_equal("10.0"):
+      self.skipTest("Only works on GPU with capability sm100a")
+
 
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""
@@ -1252,17 +1265,23 @@ class NotPresent:
 
 @contextmanager
 def assert_global_configs_unchanged():
+  starting_cache = compilation_cache._cache
   starting_config = jax.config.values.copy()
   yield
   ending_config = jax.config.values
+  ending_cache = compilation_cache._cache
 
-  if starting_config == ending_config:
-    return
-  differing = {k: (starting_config.get(k, NotPresent()), ending_config.get(k, NotPresent()))
-                for k in (starting_config.keys() | ending_config.keys())
-                if (k not in starting_config or k not in ending_config
-                    or starting_config[k] != ending_config[k])}
-  raise AssertionError(f"Test changed global config values. Differing values are: {differing}")
+  if starting_config != ending_config:
+    differing = {k: (starting_config.get(k, NotPresent()), ending_config.get(k, NotPresent()))
+                  for k in (starting_config.keys() | ending_config.keys())
+                  if (k not in starting_config or k not in ending_config
+                      or starting_config[k] != ending_config[k])}
+    raise AssertionError(f"Test changed global config values. Differing values are: {differing}")
+  if starting_cache is not ending_cache:
+    raise AssertionError(
+        f"Test changed the compilation cache object: before test it was "
+        f"{starting_cache}, now it is {ending_cache}"
+    )
 
 
 class JaxTestCase(parameterized.TestCase):

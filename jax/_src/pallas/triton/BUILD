@@ -29,7 +29,10 @@ package(
 
 pytype_strict_library(
     name = "core",
-    srcs = ["core.py"],
+    srcs = [
+        "__init__.py",
+        "core.py",
+    ],
     deps = ["//jax/_src/pallas"],
 )
 

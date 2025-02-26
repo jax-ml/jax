@@ -26,7 +26,10 @@ package(
 
 py_library(
     name = "core",
-    srcs = ["core.py"],
+    srcs = [
+        "__init__.py",
+        "core.py",
+    ],
     deps = [
         "//jax",
         "//jax/_src/pallas",

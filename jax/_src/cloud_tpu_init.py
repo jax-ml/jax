@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
 import os
+import re
 from jax import version
 from jax._src import config
 from jax._src import hardware_utils
@@ -98,3 +100,22 @@ def cloud_tpu_init() -> None:
       'jax_pjrt_client_create_options',
       f'ml_framework_name:JAX;ml_framework_version:{version.__version__}'
       )
+
+
+def is_cloud_tpu_older_than(year: int, month: int, day: int):
+  # We import locally because the functions above must run before the runtime
+  # modules are imported.
+  from jax._src import xla_bridge  # pytype: disable=import-error
+  date = datetime.date(year, month, day)
+  if not running_in_cloud_tpu_vm:
+    return False
+  # The format of Cloud TPU platform_version is like:
+  # PJRT C API
+  # TFRT TPU v2
+  # Built on Oct 30 2023 03:04:42 (1698660263) cl/577737722
+  platform_version = xla_bridge.get_backend().platform_version.split('\n')[-1]
+  results = re.findall(r'\(.*?\)', platform_version)
+  if len(results) != 1:
+    return True
+  build_date = date.fromtimestamp(int(results[0][1:-1]))
+  return build_date < date

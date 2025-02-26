@@ -138,6 +138,7 @@ exclude_patterns = [
     'pallas/tpu/matmul.md',
     'jep/9407-type-promotion.md',
     'autodidax.md',
+    'autodidax2_part1.md',
     'sharded-computation.md',
     'ffi.ipynb',
 ]
@@ -221,6 +222,8 @@ nb_execution_excludepatterns = [
     # TODO(jakevdp): enable execution on the following if possible:
     'notebooks/Distributed_arrays_and_automatic_parallelization.*',
     'notebooks/autodiff_remat.*',
+    # Fails on readthedocs with Kernel Died
+    'notebooks/convolutions.ipynb',
     # Requires accelerators
     'pallas/quickstart.*',
     'pallas/tpu/pipelining.*',

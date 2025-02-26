@@ -19,6 +19,7 @@ import math
 import os
 import shutil
 import tempfile
+import warnings
 
 from absl.testing import absltest
 import jax
@@ -54,6 +55,7 @@ class PgleTest(jtu.JaxTestCase):
 
   def tearDown(self):
     cc.set_cache_dir(None)
+    cc.reset_cache()
     super().tearDown()
 
   def testPGLEProfilerGetFDOProfile(self):
@@ -349,6 +351,122 @@ class PgleTest(jtu.JaxTestCase):
     # Test pass fdo_profile as compiler_options API works.
     f_lowered.compile(compiler_options={'fdo_profile': fdo_profile})
 
+  def testPersistentCachePopulatedWithAutoPgle(self):
+    self.skipTest('Test does not cleanly reset the compilation cache')
+    its = 50
+    mesh = jtu.create_mesh((2,), ('x',))
+
+    @partial(
+        jax.jit,
+        in_shardings=NamedSharding(mesh, PartitionSpec('x')),
+        out_shardings=NamedSharding(mesh, PartitionSpec('x')),
+    )
+    def f(x):
+      agg = x
+      for _ in range(its):
+        agg = agg @ x
+      return agg
+
+    @jax.jit
+    def g(x):
+      return x + 4
+
+    @jax.jit
+    def h(x):
+      return x * 42
+
+    shape = (16, 16)
+    x = jnp.arange(math.prod(shape)).reshape(shape).astype(np.float32)
+
+    with tempfile.TemporaryDirectory() as cache_dir:
+      # 1. populate a persistent cache with PGLE enabled
+      with (config.enable_compilation_cache(True),
+            config.enable_pgle(True),
+            config.raise_persistent_cache_errors(True),
+            config.persistent_cache_min_entry_size_bytes(0),
+            config.persistent_cache_min_compile_time_secs(0),
+            config.pgle_profiling_runs(1)):
+        cc.reset_cache()
+        cc.set_cache_dir(cache_dir)
+        # Run 1: Module should miss the cache and be compiled without PGLE
+        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+          f(x)
+        self.assertGreater(cache_miss_count(), 0)
+
+        # Non-pgle profiled version of module should be saved
+        non_pgle_f_files = set(os.listdir(cache_dir))
+        self.assertNotEmpty(non_pgle_f_files)
+
+        # Run 2: Module should be re-compiled with PGLE, miss the cache again
+        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+          f(x)
+        self.assertGreater(cache_miss_count(), 0)
+
+        # PGLE version of the module should now be saved
+        pgle_and_non_pgle_f_files = set(os.listdir(cache_dir))
+        self.assertNotEqual(non_pgle_f_files, pgle_and_non_pgle_f_files)
+
+        # Remove non-PGLE version of `f` from the cache so a hit in run 3 is
+        # definitely the PGLE version
+        for non_pgle_file in non_pgle_f_files:
+          os.remove(os.path.join(cache_dir, non_pgle_file))
+
+        # Run 3: put a non-PGLE version of `g` in the cache
+        with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+          g(x)
+        self.assertGreater(cache_miss_count(), 0)
+
+      api.clear_caches()
+      pjit._pgle_profiler_dict.clear()
+
+      # 2. read from the persistent cache with PGLE disabled-but-expected
+      with (config.enable_compilation_cache(True),
+            config.raise_persistent_cache_errors(True),
+            config.persistent_cache_min_entry_size_bytes(0),
+            config.persistent_cache_min_compile_time_secs(0),
+            config.compilation_cache_expect_pgle(True)):
+        # Run 4 (simulating run 1 in a new process) should pick up the PGLE-optimised
+        # cache entry, even though PGLE is not enabled
+        cache_hit = 0
+        def check_if_cache_hit(event):
+          nonlocal cache_hit
+          if event == '/jax/compilation_cache/cache_hits':
+            cache_hit += 1
+
+        monitoring.register_event_listener(check_if_cache_hit)
+        f(x)
+        monitoring._unregister_event_listener_by_callback(check_if_cache_hit)
+        self.assertGreater(cache_hit, 0)
+
+        # Run 5: `g` was only executed once and did not get re-compiled with PGLE, so
+        # executing it with compilation_cache_expect_pgle will raise a warning and a
+        # cache *hit*, because the non-PGLE version will be loaded
+        with warnings.catch_warnings(record=True) as w:
+          warnings.simplefilter("always")
+          cache_hit = 0
+          monitoring.register_event_listener(check_if_cache_hit)
+          g(x)
+          monitoring._unregister_event_listener_by_callback(check_if_cache_hit)
+          self.assertEqual(cache_hit, 1)
+          if len(w) != 1:
+            print("Warnings:", [str(w_) for w_ in w], flush=True)
+          self.assertLen(w, 1)
+          self.assertIn(
+            "PERSISTENT CACHE MISS for PGLE-optimized jit_g despite non-PGLE hit",
+            str(w[0].message)
+          )
+
+        # Run 6: `h` was not executed during step 1, which populated the cache, so
+        # executing it now and triggering a cache write will emit a warning
+        with warnings.catch_warnings(record=True) as w:
+          warnings.simplefilter("always")
+          with jtu.count_jit_compilation_cache_miss() as cache_miss_count:
+            h(x)
+          self.assertGreater(cache_miss_count(), 0)
+          if len(w) != 1:
+            print("Warnings:", [str(w_) for w_ in w], flush=True)
+          self.assertLen(w, 1)
+          self.assertIn("PERSISTENT CACHE WRITE with key jit_h-", str(w[0].message))
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

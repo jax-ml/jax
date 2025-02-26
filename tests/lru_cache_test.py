@@ -21,7 +21,7 @@ import time
 from absl.testing import absltest
 
 from jax._src import path as pathlib
-from jax._src.lru_cache import _CACHE_SUFFIX, LRUCache
+from jax._src.lru_cache import _ATIME_SUFFIX, _CACHE_SUFFIX, LRUCache
 import jax._src.test_util as jtu
 
 
@@ -152,6 +152,18 @@ class LRUCacheTest(LRUCacheTestCase):
       cache.put("a", b"aaaa")
     self.assertIsNone(cache.get("a"))
     self.assertEqual(set(self.path.glob(f"*{_CACHE_SUFFIX}")), set())
+
+  # Check that we don't write access time file when the eviction policy is
+  # disabled. Writing this file can be extremely unperformant and cause
+  # problems on large-scale network storage.
+  def test_no_atime_file(self):
+    cache = LRUCache(self.name, max_size=-1)
+
+    cache.put("a", b"a")
+    self.assertEmpty(list(self.path.glob(f"*{_ATIME_SUFFIX}")))
+
+    cache.get("a")
+    self.assertEmpty(list(self.path.glob(f"*{_ATIME_SUFFIX}")))
 
 
 if __name__ == "__main__":

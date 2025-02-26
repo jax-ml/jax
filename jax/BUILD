@@ -61,6 +61,7 @@ config_setting(
 exports_files([
     "LICENSE",
     "version.py",
+    "py.typed",
 ])
 
 exports_files(
@@ -117,7 +118,6 @@ py_library(
     # JAX does provide some public test utilities (see jax/test_util.py);
     # these are available in jax.test_util via the standard :jax target.
     name = "test_util",
-    testonly = 1,
     srcs = [
         "_src/test_util.py",
         "_src/test_warning_util.py",
@@ -126,6 +126,7 @@ py_library(
         ":internal",
     ] + jax_test_util_visibility,
     deps = [
+        ":compilation_cache_internal",
         ":jax",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
@@ -133,8 +134,8 @@ py_library(
 # TODO(necula): break the internal_test_util into smaller build targets.
 py_library(
     name = "internal_test_util",
-    testonly = 1,
     srcs = [
+        "_src/internal_test_util/__init__.py",
         "_src/internal_test_util/deprecation_module.py",
         "_src/internal_test_util/lax_test_util.py",
     ] + glob(
@@ -150,7 +151,6 @@ py_library(
 
 py_library(
     name = "internal_test_harnesses",
-    testonly = 1,
     srcs = ["_src/internal_test_util/test_harnesses.py"],
     visibility = [":internal"] + jax_internal_test_harnesses_visibility,
     deps = [
@@ -164,7 +164,6 @@ py_library(
 
 py_library(
     name = "internal_export_back_compat_test_util",
-    testonly = 1,
     srcs = ["_src/internal_test_util/export_back_compat_test_util.py"],
     visibility = [
         ":internal",
@@ -208,6 +207,7 @@ py_library_providing_imports_info(
         "_src/dispatch.py",
         "_src/dlpack.py",
         "_src/earray.py",
+        "_src/error_check.py",
         "_src/ffi.py",
         "_src/flatten_util.py",
         "_src/interpreters/__init__.py",
@@ -297,6 +297,7 @@ py_library_providing_imports_info(
         ":mesh",
         ":mlir",
         ":monitoring",
+        ":named_sharding",
         ":op_shardings",
         ":partial_eval",
         ":partition_spec",
@@ -467,6 +468,7 @@ pytype_strict_library(
         ":dtypes",
         ":effects",
         ":mesh",
+        ":named_sharding",
         ":partition_spec",
         ":pretty_printer",
         ":source_info_util",
@@ -677,7 +679,6 @@ pytype_strict_library(
 
 pytype_strict_library(
     name = "pallas_experimental_gpu_ops",
-    testonly = True,
     srcs = ["//jax/experimental/pallas/ops/gpu:mgpu_ops"],
     visibility = [
         ":mosaic_gpu_users",
@@ -739,6 +740,7 @@ pytype_strict_library(
         ":mosaic_gpu_users",
     ],
     deps = [
+        ":mosaic_gpu",
         "//jax/_src/pallas/mosaic_gpu:core",
         "//jax/_src/pallas/mosaic_gpu:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/mosaic_gpu:pipeline",
@@ -897,6 +899,7 @@ pytype_strict_library(
         ":core",
         ":internal_mesh_utils",
         ":mesh",
+        ":named_sharding",
         ":op_shardings",
         ":partition_spec",
         ":sharding",
@@ -905,6 +908,18 @@ pytype_strict_library(
         ":tree_util",
         ":util",
         ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "named_sharding",
+    srcs = ["_src/named_sharding.py"],
+    deps = [
+        ":mesh",
+        ":partition_spec",
+        ":sharding",
+        ":util",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
@@ -1103,7 +1118,6 @@ pytype_library(
 
 pytype_library(
     name = "sparse_test_util",
-    testonly = 1,
     srcs = [
         "experimental/sparse/test_util.py",
     ],
@@ -1165,6 +1179,7 @@ pytype_library(
 pytype_library(
     name = "compilation_cache",
     srcs = [
+        "experimental/compilation_cache/__init__.py",
         "experimental/compilation_cache/compilation_cache.py",
     ],
     visibility = ["//visibility:public"],
@@ -1221,6 +1236,8 @@ pytype_library(
         "experimental/colocated_python/api.py",
         "experimental/colocated_python/func.py",
         "experimental/colocated_python/func_backend.py",
+        "experimental/colocated_python/obj.py",
+        "experimental/colocated_python/obj_backend.py",
         "experimental/colocated_python/serialization.py",
     ],
     visibility = ["//visibility:public"],

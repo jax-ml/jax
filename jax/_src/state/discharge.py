@@ -809,7 +809,7 @@ def _run_state_partial_eval_custom(
   jaxpr_known, res_avals = _convert_outputs_to_writes(jaxpr_known_resout)
 
   # In a stateful partial_eval, the residuals should be `Ref`s.
-  res_avals = map(AbstractRef, res_avals)  # type: ignore
+  res_avals = map(AbstractRef, res_avals)
 
   known_invars, staged_invars = partition_list(in_unknowns, eqn.invars)
   known_outvars, staged_outvars = partition_list(in_unknowns, eqn.outvars)
@@ -832,7 +832,7 @@ def _run_state_partial_eval_custom(
   eqn_known = pe.new_jaxpr_eqn(known_and_res_invars,
                                [*known_outvars, *known_out_resvars],
                                run_state_p, known_params,
-                               known_effects, eqn.source_info)
+                               known_effects, eqn.source_info, eqn.ctx)
 
   jaxpr_staged = _convert_inputs_to_reads(len(res_avals), jaxpr_staged_resin_)
 
@@ -859,7 +859,7 @@ def _run_state_partial_eval_custom(
                                   staged_outvars,
                                   core.closed_call_p,
                                   dict(call_jaxpr=pe.close_jaxpr(staged_call_jaxpr)),
-                                  staged_effects, eqn.source_info)
+                                  staged_effects, eqn.source_info, eqn.ctx)
     assert len(res_staged_invars) == len(staged_call_jaxpr.invars)
     assert len(staged_outvars) == len(staged_call_jaxpr.outvars)
   else:
@@ -867,7 +867,7 @@ def _run_state_partial_eval_custom(
                                   staged_outvars,
                                   run_state_p,
                                   staged_params,
-                                  staged_effects, eqn.source_info)
+                                  staged_effects, eqn.source_info, eqn.ctx)
   new_vars = [*new_inst, *nonref_resvars, *ref_resvars]
   return eqn_known, eqn_staged, in_unknowns, in_unknowns, new_vars
 pe.partial_eval_jaxpr_custom_rules[run_state_p] = _run_state_partial_eval_custom

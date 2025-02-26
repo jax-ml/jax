@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 import contextlib
+import enum
 import functools
 import itertools
 import logging
@@ -33,6 +34,29 @@ config_ext = xla_client._xla.config
 logger = logging.getLogger(__name__)
 
 _T = TypeVar('_T')
+
+
+class EffortLevel(enum.Enum):
+  """Effort level enum, mirroring the XLA effort options."""
+
+  UNKNOWN = 0
+  O0 = 9
+  O1 = 19
+  O2 = 29
+  O3 = 39
+
+  @classmethod
+  def _missing_(cls, value: object) -> EffortLevel | None:
+    return _effort_from_string.get(value)
+
+
+_effort_from_string: dict[Any, EffortLevel] = {
+    'UNKNOWN': EffortLevel.UNKNOWN,
+    'O0': EffortLevel.O0,
+    'O1': EffortLevel.O1,
+    'O2': EffortLevel.O2,
+    'O3': EffortLevel.O3,
+}
 
 
 def bool_env(varname: str, default: bool) -> bool:
@@ -210,7 +234,6 @@ def trace_context():
           default_device.value, random_seed_offset.value,
           threefry_partitionable.value,
           threefry_gpu_kernel_lowering.value,
-          sharding_in_types.value,
           use_direct_linearize.value,
           softmax_custom_jvp.value,
           disable_jit.value,
@@ -281,31 +304,8 @@ class State(config_ext.Config[_T]):
     if self._update_global_hook:
       self._update_global_hook(value)
 
-  @contextlib.contextmanager
   def __call__(self, new_val: Any = no_default):
-    if new_val is no_default:
-      if self._default_context_manager_value is not no_default:
-        new_val = self._default_context_manager_value  # default_context_manager_value provided to constructor
-      else:
-        # no default_value provided to constructor and no value provided as an
-        # argument, so we raise an error
-        raise TypeError(f"Context manager for {self.__name__} config option "
-                        "requires an argument representing the new value for "
-                        "the config option.")
-    if self._validator:
-      self._validator(new_val)
-    prev_val = self.swap_local(new_val)
-    if self._update_thread_local_hook:
-      self._update_thread_local_hook(new_val)
-    try:
-      yield
-    finally:
-      self.set_local(prev_val)
-      if self._update_thread_local_hook:
-        if prev_val is config_ext.unset:
-          self._update_thread_local_hook(None)
-        else:
-          self._update_thread_local_hook(cast(Optional[Any], prev_val))
+    return StateContextManager(self, new_val)
 
   def _add_hooks(self, update_global_hook, update_thread_local_hook):
     """Private method that adds hooks to an existing context-manager.
@@ -314,6 +314,40 @@ class State(config_ext.Config[_T]):
     self._update_thread_local_hook = update_thread_local_hook
     self._update_global_hook = update_global_hook
     update_global_hook(self.get_global())
+
+
+class StateContextManager(contextlib.ContextDecorator):
+  __slots__ = ['state', 'new_val', 'prev']
+
+  def __init__(self, state, new_val):
+    self.state = state
+    self.new_val = new_val
+
+    if new_val is no_default:
+      if state._default_context_manager_value is not no_default:
+        new_val = state._default_context_manager_value  # default_context_manager_value provided to constructor
+      else:
+        # no default_value provided to constructor and no value provided as an
+        # argument, so we raise an error
+        raise TypeError(f"Context manager for {state.__name__} config option "
+                        "requires an argument representing the new value for "
+                        "the config option.")
+    if state._validator:
+      state._validator(new_val)
+
+
+  def __enter__(self):
+    self.prev = self.state.swap_local(self.new_val)
+    if self.state._update_thread_local_hook:
+      self.state._update_thread_local_hook(self.new_val)
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    self.state.set_local(self.prev)
+    if self.state._update_thread_local_hook:
+      if self.prev is config_ext.unset:
+        self.state._update_thread_local_hook(None)
+      else:
+        self.state._update_thread_local_hook(cast(Optional[Any], self.prev))
 
 
 UPGRADE_BOOL_HELP = (
@@ -1043,13 +1077,6 @@ threefry_gpu_kernel_lowering = bool_state(
           'cost.'),
     include_in_jit_key=True)
 
-sharding_in_types = bool_state(
-    name='jax_sharding_in_types',
-    default=False,
-    help=('When True, enables forward only sharding propagation in JAX and '
-          'avals have sharding on them.'),
-    include_in_jit_key=True)
-
 use_direct_linearize = bool_state(
     name='jax_use_direct_linearize',
     default=False,
@@ -1216,6 +1243,16 @@ compilation_cache_dir = optional_string_state(
           'Precedence: '
           '1. A call to compilation_cache.set_cache_dir(). '
           '2. The value of this flag set in the command line or by default.'),
+)
+
+compilation_cache_expect_pgle = bool_state(
+    name='jax_compilation_cache_expect_pgle',
+    default=False,
+    help=('If set to True, compilation cache entries that were compiled with '
+          'profile data (i.e. PGLE was enabled and the requisite number of '
+          'executions were profiled) will be preferentially loaded, even if '
+          'PGLE is not currently enabled. A warning will be printed when no '
+          'preferred cache entry is found.')
 )
 
 compilation_cache_max_size = int_state(
@@ -1715,6 +1752,37 @@ memory_fitting_effort = float_state(
     name='jax_memory_fitting_effort',
     default=0.0,
     help='Effort for minimizing memory usage (higher means more effort), valid range [-1.0, 1.0].'
+)
+
+optimization_level = enum_state(
+    name='jax_optimization_level',
+    enum_values=[
+        'UNKNOWN',
+        'O0',
+        'O1',
+        'O2',
+        'O3',
+    ],
+    default='UNKNOWN',
+    help='The degree to which the compiler should optimize for execution time',
+    include_in_jit_key=True
+)
+
+memory_fitting_level = enum_state(
+    name='jax_memory_fitting_level',
+    enum_values=[
+        'UNKNOWN',
+        'O0',
+        'O1',
+        'O2',
+        'O3',
+    ],
+    default='UNKNOWN',
+    help=(
+        'The degree to which the compiler should attempt to make the program'
+        ' fit in memory'
+    ),
+    include_in_jit_key=True
 )
 
 cpu_collectives_implementation = optional_enum_state(

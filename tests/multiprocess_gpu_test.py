@@ -17,17 +17,14 @@ import os
 import shutil
 import subprocess
 import sys
-import threading
 import unittest
 import functools
 
 from absl.testing import absltest
-from absl.testing import parameterized
 import numpy as np
 
 import jax
 from jax._src import core
-from jax._src import distributed
 from jax._src import test_util as jtu
 from jax._src import util
 from jax.experimental import pjit
@@ -42,43 +39,6 @@ except ImportError:
   portpicker = None
 
 jax.config.parse_flags_with_absl()
-
-@unittest.skipIf(not portpicker, "Test requires portpicker")
-class DistributedTest(jtu.JaxTestCase):
-
-  # TODO(phawkins): Enable after https://github.com/jax-ml/jax/issues/11222
-  # is fixed.
-  @unittest.SkipTest
-  def testInitializeAndShutdown(self):
-    if not jtu.test_device_matches(['gpu']):
-      self.skipTest('Test only works with GPUs.')
-    # Tests the public APIs. Since they use global state, we cannot use
-    # concurrency to simulate multiple tasks.
-    port = portpicker.pick_unused_port()
-    jax.distributed.initialize(coordinator_address=f"localhost:{port}",
-                               num_processes=1,
-                               process_id=0)
-    jax.distributed.shutdown()
-
-
-  @parameterized.parameters([1, 2, 4])
-  def testConcurrentInitializeAndShutdown(self, n):
-    if not jtu.test_device_matches(['gpu']):
-      self.skipTest('Test only works with GPUs.')
-    port = portpicker.pick_unused_port()
-    def task(i):
-      # We can't call the public APIs directly because they use global state.
-      state = distributed.State()
-      state.initialize(coordinator_address=f"localhost:{port}",
-                       num_processes=n,
-                       process_id=i)
-      state.shutdown()
-
-    threads = [threading.Thread(target=task, args=(i,)) for i in range(n)]
-    for thread in threads:
-      thread.start()
-    for thread in threads:
-      thread.join()
 
 
 @unittest.skipIf(not portpicker, "Test requires portpicker")

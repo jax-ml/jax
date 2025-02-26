@@ -287,14 +287,14 @@ def register_pytree_node(
     >>> jax.jit(f)(m)
     Array([1., 2., 3., 4., 5.], dtype=float32)
   """
-  default_registry.register_node(  # type: ignore[call-arg]
-      nodetype, flatten_func, unflatten_func, flatten_with_keys_func   # type: ignore[arg-type]
+  default_registry.register_node(
+      nodetype, flatten_func, unflatten_func, flatten_with_keys_func
   )
-  none_leaf_registry.register_node(  # type: ignore[call-arg]
-      nodetype, flatten_func, unflatten_func, flatten_with_keys_func   # type: ignore[arg-type]
+  none_leaf_registry.register_node(
+      nodetype, flatten_func, unflatten_func, flatten_with_keys_func
   )
-  dispatch_registry.register_node(  # type: ignore[call-arg]
-      nodetype, flatten_func, unflatten_func, flatten_with_keys_func   # type: ignore[arg-type]
+  dispatch_registry.register_node(
+      nodetype, flatten_func, unflatten_func, flatten_with_keys_func
   )
   _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
 
@@ -715,10 +715,10 @@ def _equality_errors(path, t1, t2, is_leaf):
     yield from _equality_errors((*path, k), c1, c2, is_leaf)
 
 
-SequenceKey: Any = pytree.SequenceKey  # type: ignore
-DictKey: Any = pytree.DictKey  # type: ignore
-GetAttrKey: Any = pytree.GetAttrKey  # type: ignore
-FlattenedIndexKey: Any = pytree.FlattenedIndexKey  # type: ignore
+SequenceKey: Any = pytree.SequenceKey
+DictKey: Any = pytree.DictKey
+GetAttrKey: Any = pytree.GetAttrKey
+FlattenedIndexKey: Any = pytree.FlattenedIndexKey
 
 
 @export

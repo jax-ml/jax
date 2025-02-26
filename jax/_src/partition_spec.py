@@ -19,11 +19,17 @@ class UnconstrainedSingleton:
   def __repr__(self):
     return "UNCONSTRAINED"
 
+  def __reduce__(self):
+    return (_get_default_unconstrained, ())
+
 
 # Unconstrained sentinel value for PartitionSpec, representing a dimension for
 # which the user wants XLA to assign the best partitioning.
 # TODO(yashkatariya): May rename to AUTO.
 _UNCONSTRAINED_PARTITION = UnconstrainedSingleton()
+
+def _get_default_unconstrained():
+  return _UNCONSTRAINED_PARTITION
 
 
 class PartitionSpec(tuple):

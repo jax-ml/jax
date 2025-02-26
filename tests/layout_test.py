@@ -405,7 +405,6 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, inp.T)
 
   def test_device_put_user_concrete_layout(self):
-
     shape = (8, 128)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
     dll = DLL(major_to_minor=(1, 0))
@@ -415,6 +414,27 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertEqual(out.layout.device_local_layout.major_to_minor,
                      dll.major_to_minor)
     self.assertArraysEqual(out, np_inp)
+
+  def test_device_put_user_concrete_layout_multi_device(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    shape = (16, 128)
+    s = NamedSharding(mesh, P('x'))
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    jnp_inp = jnp.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+
+    custom_layout = Layout(DLL(major_to_minor=(0, 1)), s)
+    out1 = jax.device_put(arr, custom_layout)
+
+    with jax.sharding.use_mesh(mesh):
+      out2 = jax.device_put(arr, custom_layout)
+      out3 = jax.device_put(jnp_inp, custom_layout)
+      out4 = jax.device_put(np_inp, custom_layout)
+
+    for o in [out1, out2, out3, out4]:
+      self.assertArraysEqual(o, np_inp)
+      self.assertEqual(o.layout.device_local_layout.major_to_minor,
+                       custom_layout.device_local_layout.major_to_minor)
 
   def test_concrete_layout_jit(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))

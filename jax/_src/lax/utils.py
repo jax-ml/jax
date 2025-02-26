@@ -20,11 +20,11 @@ from functools import partial
 
 from jax._src import core
 from jax._src import dispatch
-from jax._src import config
 from jax._src import dtypes
 from jax._src import mesh as mesh_lib
 from jax._src.util import safe_zip
 from jax._src.partition_spec import PartitionSpec as P
+from jax._src.named_sharding import NamedSharding
 
 zip, unsafe_zip = safe_zip, zip
 
@@ -48,24 +48,38 @@ def standard_primitive(shape_rule, dtype_rule, name,
 
 def _get_array_abstraction_level(a): return a.array_abstraction_level
 
-def call_sharding_rule(prim, rule, num_out, *avals, **kwargs):
-  if config.sharding_in_types.value:
-    from jax._src.pjit import _get_abstract_mesh_from_avals, NamedSharding
-    cur_mesh = mesh_lib.get_abstract_mesh()
-    if cur_mesh._are_all_axes_auto or cur_mesh._are_all_axes_manual:
-      aval_mesh = _get_abstract_mesh_from_avals(avals)
-      # TODO(yashkatariya): `aval_mesh.empty` should be `aval_mesh.unset`
-      aval_mesh = cur_mesh if aval_mesh.empty else aval_mesh
-      s = NamedSharding(aval_mesh, P())
-      return s if num_out is None else [s] * num_out
-    if rule is None:
+def _get_abstract_mesh_from_avals(in_avals) -> mesh_lib.AbstractMesh:
+  m = None
+  for a in in_avals:
+    if a is core.abstract_token:
+      continue
+    if a.sharding.mesh.empty:
+      continue
+    if m is not None and m != a.sharding.mesh:
+      if m._are_all_axes_auto and a.sharding.mesh._are_all_axes_auto:
+        return mesh_lib.empty_abstract_mesh
       raise ValueError(
-          f'sharding rule for {prim.name} is not implemented. Please file a'
-          ' bug at https://github.com/jax-ml/jax/issues. You can work around'
-          ' this error by dropping that operation into full hidden sharding'
-          ' mode via: `jax.experimental.shard.hidden_axes(fun, out_shardings=...)`')
-    return rule(*avals, **kwargs)
-  return None if num_out is None else [None] * num_out
+          f'Mesh for all inputs should be equal. Got one mesh: {m} and'
+          f' another mesh: {a.sharding.mesh}')
+    m = a.sharding.mesh
+  return mesh_lib.empty_abstract_mesh if m is None else m
+
+
+def call_sharding_rule(prim, rule, num_out, *avals, **kwargs):
+  cur_mesh = mesh_lib.get_abstract_mesh()
+  aval_mesh = _get_abstract_mesh_from_avals(avals)
+  if ((cur_mesh.empty or cur_mesh._are_all_axes_auto_or_manual) and
+      (aval_mesh.empty or aval_mesh._are_all_axes_auto_or_manual)):
+    aval_mesh = cur_mesh if aval_mesh.empty else aval_mesh
+    s = NamedSharding(aval_mesh, P())
+    return s if num_out is None else [s] * num_out
+  if rule is None:
+    raise ValueError(
+        f'sharding rule for {prim.name} is not implemented. Please file a'
+        ' bug at https://github.com/jax-ml/jax/issues. You can work around'
+        ' this error by dropping that operation into full auto sharding'
+        ' mode via: `jax.experimental.shard.auto_axes(fun, out_shardings=...)`')
+  return rule(*avals, **kwargs)
 
 def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
                            sharding_rule, *avals, **kwargs):
@@ -104,6 +118,8 @@ def standard_multi_result_abstract_eval(
     core.check_avals_context_mesh(avals, prim.name)
     out_shardings = call_sharding_rule(
         prim, sharding_rule, len(out_shapes), *avals, **kwargs)
+    if isinstance(weak_types, bool):
+      weak_types = (weak_types,) * len(out_shapes)
     out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh)
                  for s, d, weak_type, sh in zip(out_shapes, out_dtypes,
                                                 weak_types, out_shardings)]
@@ -111,6 +127,8 @@ def standard_multi_result_abstract_eval(
     return out_avals
   elif least_specialized is core.UnshapedArray:
     out_dtypes = dtype_rule(*avals, **kwargs)
+    if isinstance(weak_types, bool):
+      weak_types = (weak_types,) * len(out_dtypes)
     return [core.UnshapedArray(dtype, weak_type=weak_type)
             for dtype, weak_type in zip(out_dtypes, weak_types)]
   else:

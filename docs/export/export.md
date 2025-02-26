@@ -44,7 +44,7 @@ Here is an example:
 (ShapedArray(float32[]),)
 
 >>> print(re.search(r".*@main.*", exported.mlir_module()).group(0))
-  func.func public @main(%arg0: tensor<f32> loc("x")) -> (tensor<f32> {jax.result_info = ""}) {
+  func.func public @main(%arg0: tensor<f32> loc("x")) -> (tensor<f32> {jax.result_info = "result"}) {
 
 >>> # And you can serialize the Exported to a bytearray.
 >>> serialized: bytearray = exported.serialize()
@@ -206,7 +206,7 @@ as in the following example:
 >>> _ = mlir.register_lowering(new_prim, lambda ctx, o: mlir.custom_call("my_new_prim", operands=[o], result_types=[o.type]).results)
 >>> print(jax.jit(new_prim.bind).lower(1.).compiler_ir())
 module @jit_bind attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 : i32} {
-  func.func public @main(%arg0: tensor<f32>) -> (tensor<f32> {jax.result_info = ""}) {
+  func.func public @main(%arg0: tensor<f32>) -> (tensor<f32> {jax.result_info = "result"}) {
     %0 = stablehlo.custom_call @my_new_prim(%arg0) {api_version = 2 : i32, backend_config = ""} : (tensor<f32>) -> tensor<f32>
     return %0 : tensor<f32>
   }

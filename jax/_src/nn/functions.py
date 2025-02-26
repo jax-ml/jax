@@ -665,13 +665,10 @@ def _one_hot(x: Array, num_classes: int, *,
   lhs = lax.expand_dims(x, (axis,))
   rhs_shape = [1] * x.ndim
   rhs_shape.insert(output_pos_axis, num_classes)
-  if config.sharding_in_types.value:
-    # TODO(yashkatariya): Maybe expose `out_sharding` on `one_hot` too?
-    rhs_sharding = NamedSharding(x.aval.sharding.mesh, P(*[None] * len(rhs_shape)))  # pytype: disable=attribute-error
-  else:
-    rhs_sharding = None
+  # TODO(yashkatariya): Maybe expose `out_sharding` on `one_hot` too?
+  rhs_sharding = NamedSharding(x.aval.sharding.mesh, P(*[None] * len(rhs_shape)))  # pytype: disable=attribute-error
   rhs = lax.broadcasted_iota(x.dtype, rhs_shape, output_pos_axis,
-                             sharding=rhs_sharding)
+                             out_sharding=rhs_sharding)
   return (lhs == rhs).astype(dtype)
 
 # TODO(slebedev): Change the type of `x` to `ArrayLike`.
@@ -857,8 +854,37 @@ def _apply_masks(logits, mask, is_causal, q_seqlen, kv_seqlen,
 def _dot_product_attention_core(query, key, value, bias, mask, is_causal,
                                 scale, q_seqlen, kv_seqlen, local_window_size):
   logits_dtype = jnp.promote_types(query.dtype, jnp.float32)
-  logits = jnp.einsum('BTNH,BSNH->BNTS', query, key,
-                      preferred_element_type=logits_dtype)
+
+  # If the query and logits dtypes are different, then the default precision
+  # can use inconsistent types in the backwards pass
+  # (see https://github.com/jax-ml/jax/issues/24047).
+  if query.dtype == jnp.bfloat16:
+    precision = jax.lax.DotAlgorithmPreset.BF16_BF16_F32
+  elif query.dtype == jnp.float16:
+    precision = jax.lax.DotAlgorithmPreset.F16_F16_F32
+  # TODO(sbodenstein): Implement this fix for all dtypes.
+  else:
+    precision = None
+
+  # Explicit precision will fail on platforms that don't support it. For example,
+  # some GPUs do not support BF16_BF16_F32, and TPU does not support F16_F16_F32.
+  # Use the default precision as a fallback in these cases.
+  try:
+    logits = jnp.einsum(
+        "BTNH,BSNH->BNTS",
+        query,
+        key,
+        precision=precision,
+        preferred_element_type=logits_dtype,
+    )
+  except:  # pylint: disable=bare-except
+    logits = jnp.einsum(
+        "BTNH,BSNH->BNTS",
+        query,
+        key,
+        precision=None,
+        preferred_element_type=logits_dtype,
+    )
 
   logits *= jnp.array(scale, dtype=logits.dtype)
 

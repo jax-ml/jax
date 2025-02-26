@@ -27,13 +27,14 @@ from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
 from jax.tree_util import (tree_flatten, tree_unflatten,
                            register_pytree_node, Partial, PyTreeDef)
+from jax._src import mesh as mesh_lib
 from jax._src import core
 from jax._src import source_info_util
 from jax._src.ad_util import (
     add_jaxvals, replace_internal_symbolic_zeros,
     replace_rule_output_symbolic_zeros, Zero, zeros_like_aval, SymbolicZero)
 from jax._src.ad_util import zeros_like_p, add_jaxvals_p  # noqa: F401
-from jax._src.api_util import flatten_fun, flatten_fun_nokwargs
+from jax._src.api_util import flatten_fun, flatten_fun_nokwargs, debug_info
 from jax._src.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal)
 from jax._src.dtypes import dtype, float0
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list, wrap_name,
@@ -86,7 +87,7 @@ def jvpfun(f: Callable, instantiate, transform_stack, primals, tangents):
 @lu.transformation_with_aux2
 def linearize_subtrace(_f: Callable, _store: lu.Store, _tag: core.TraceTag,
                        nzs_in: Sequence[bool],
-                       debug_info: core.DebugInfo | None,
+                       debug_info: core.DebugInfo,
                        *primals, **params):
   with core.take_current_trace() as parent_trace:
     tangent_trace = pe.DynamicJaxprTrace(debug_info)
@@ -133,8 +134,8 @@ def jvp_subtrace_aux(f, store, tag, primals, tangents):
   return out_primals, out_tangents
 
 def convert_constvars_jaxpr_constvars_at_end(jaxpr: core.Jaxpr) -> core.Jaxpr:
-  dbg = jaxpr.debug_info and jaxpr.debug_info._replace(
-      arg_names=jaxpr.debug_info.arg_names + (None,) * len(jaxpr.constvars))
+  dbg = jaxpr.debug_info._replace(
+      arg_names=jaxpr.debug_info.arg_names + ("",) * len(jaxpr.constvars))
   return core.Jaxpr(constvars=(),
                     invars=jaxpr.invars + jaxpr.constvars,
                     outvars=jaxpr.outvars, eqns=jaxpr.eqns,
@@ -180,7 +181,7 @@ def _linearize_jaxpr(
   if attrs_tracked:
     raise NotImplementedError("TODO: attrs")
   residuals_and_primals = (*tangent_consts, *out_primals)
-  residuals_and_primals = map(primal_trace.to_jaxpr_tracer, residuals_and_primals)  # type: ignore[assignment]
+  residuals_and_primals = map(primal_trace.to_jaxpr_tracer, residuals_and_primals)
   primal_jaxpr, primal_consts, attrs_tracked = primal_trace.to_jaxpr(residuals_and_primals, debug_info)
   primal_trace.invalidate()
   num_residuals = len(tangent_consts)
@@ -213,7 +214,7 @@ def direct_linearize(traceable: lu.WrappedFun,
       del linearize_trace, ans, tracers
   out_nzs = [type(t) is not Zero for t in out_tangents]
   out_nz_tangents = [t for t, nz in zip(out_tangents, out_nzs) if nz]
-  out_nz_tangents = map(tangent_trace.to_jaxpr_tracer, out_nz_tangents)  # type: ignore
+  out_nz_tangents = map(tangent_trace.to_jaxpr_tracer, out_nz_tangents)
   jaxpr, consts, attrs_tracked = tangent_trace.to_jaxpr(out_nz_tangents, traceable.debug_info)
   tangent_trace.invalidate()
   out_tangents_pvals = [pe.PartialVal.unknown(core.get_aval(t)) if nz else
@@ -343,7 +344,7 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
           ct_out = core.freeze(ref)
           write_cotangent(eqn.primitive, val_var, ct_out)
         elif eqn.primitive is core.freeze_p:
-          val_var, = eqn.outvars  # type: ignore
+          val_var, = eqn.outvars
           ref_var, = eqn.invars   # type: ignore
           ct_in = instantiate_zeros(read_cotangent(val_var))
           write_primal(ref_var, core.mutable_array(ct_in))
@@ -632,7 +633,9 @@ class LinearizeTrace(Trace):
     else:
       return maybe_linearize_tracer(self, primal_out, tangent_nzs_out, tangent_out)
 
-  def process_custom_jvp_call(self, prim, fun, f_jvp, tracers, *, symbolic_zeros):
+  def process_custom_jvp_call(self, prim, fun: lu.WrappedFun,
+                              f_jvp: lu.WrappedFun, tracers, *,
+                              symbolic_zeros: bool):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     if all(type(t) is Zero for t in tangents_in):
       return prim.bind_with_trace(self.parent_trace, (fun, f_jvp, *primals_in),
@@ -647,7 +650,8 @@ class LinearizeTrace(Trace):
       instantiate_zeros = not symbolic_zeros
       nonzeros_in = [type(t) is not Zero for t in tangents_in]
       primals_out, tangent_nzs_out, residuals, linearized = linearize_from_jvp(
-          _f_jvp, True, nonzeros_in, symbolic_zeros, instantiate_zeros, primals_in, {})
+          _f_jvp, True, nonzeros_in, symbolic_zeros, instantiate_zeros,
+          f_jvp.debug_info, primals_in, {})
 
     with core.set_current_trace(self.tangent_trace):
       tangents_out = linearized(residuals, *tangents_in)
@@ -751,15 +755,22 @@ def maybe_linearize_tracer(trace, primal, is_nonzero, tangent):
     assert type(tangent) is Zero
     return primal
 
-def fallback_linearize_rule(_prim, _nonzeros, *primals, **params):
+def fallback_linearize_rule(_prim: core.Primitive,
+                            _nonzeros: Sequence[bool], *primals, **params):
   jvp = primitive_jvps.get(_prim)
   if not jvp:
     msg = f"Differentiation rule for '{_prim}' not implemented"
     raise NotImplementedError(msg)
-  return linearize_from_jvp(jvp, _prim.multiple_results, _nonzeros, False, False, primals, params)
+  debug_jvp = debug_info("linearize_prim_jvp", jvp, primals, params)
+  return linearize_from_jvp(jvp, _prim.multiple_results, _nonzeros, False, False,
+                            debug_jvp, primals, params)
 
-def linearize_from_jvp(jvp, multiple_results, nonzeros,
-                       user_facing_symbolic_zeros, instantiate_input_zeros, primals, params):
+def linearize_from_jvp(jvp: Callable,
+                       multiple_results: bool,
+                       nonzeros: Sequence[bool],
+                       user_facing_symbolic_zeros: bool, instantiate_input_zeros: bool,
+                       debug_info: core.DebugInfo,
+                       primals, params):
   current_name_stack = source_info_util.current_name_stack()
   with core.take_current_trace() as parent_trace:
     trace = pe.JaxprTrace(parent_trace, current_name_stack, core.TraceTag())
@@ -776,7 +787,7 @@ def linearize_from_jvp(jvp, multiple_results, nonzeros,
     if user_facing_symbolic_zeros:
       zero_type = SymbolicZero
     else:
-      zero_type = Zero
+      zero_type = Zero  # type: ignore[assignment]
 
     tangent_args = tuple(trace.new_arg(pe.PartialVal.unknown(aval)) if nz else make_zero(aval)
                          for aval, nz in zip(tangent_avals, nonzeros))
@@ -795,8 +806,7 @@ def linearize_from_jvp(jvp, multiple_results, nonzeros,
     out_nz_tracers = [trace.to_jaxpr_tracer(r)
                       for (r, nz) in zip(out_tangents, out_nzs) if nz]
     in_tracers = [t for t, nz in zip(tangent_args, nonzeros) if nz]
-    # TODO(necula): pass debug_info here
-    jaxpr, out_consts, _ = pe.tracers_to_jaxpr(in_tracers, out_nz_tracers, None)
+    jaxpr, out_consts, _ = pe.tracers_to_jaxpr(in_tracers, out_nz_tracers, debug_info)
 
     def linearized(residuals, *tangents):
       nz_tangents_in = [t for (t, nz) in zip(tangents, nonzeros) if nz]
@@ -936,7 +946,14 @@ deflinear2(add_jaxvals_p, lambda t, *args: (t, t))
 
 
 def instantiate_zeros(tangent):
-  return zeros_like_aval(tangent.aval) if type(tangent) is Zero else tangent
+  if type(tangent) is Zero:
+    if hasattr(tangent.aval, 'sharding'):
+      # TODO(dougalm, yashkatariya): Delete this context manager once we figure
+      # out how to ensure jaxpr arguments always have the context mesh.
+      with mesh_lib.set_abstract_mesh(tangent.aval.sharding.mesh):  # type: ignore
+        return zeros_like_aval(tangent.aval)
+    return zeros_like_aval(tangent.aval)
+  return tangent
 
 @lu.transformation_with_aux2
 def traceable(f, store, in_tree, *primals_and_tangents):
@@ -1091,15 +1108,14 @@ def rearrange_binders(jaxpr: core.ClosedJaxpr, primals_in, tangents_in, primals_
   new_invars = _perm(primals_in, tangents_in, jaxpr.jaxpr.invars)
   new_outvars = _perm(primals_out, tangents_out, jaxpr.jaxpr.outvars)
   new_debug_info = jaxpr.jaxpr.debug_info
-  if new_debug_info is not None:
-    new_arg_names = tuple(_perm(primals_in, tangents_in,
-                                jaxpr.jaxpr.debug_info.safe_arg_names(len(jaxpr.jaxpr.invars))))
-    new_result_paths = tuple(_perm(primals_out, tangents_out,
-                                   jaxpr.jaxpr.debug_info.safe_result_paths(len(jaxpr.jaxpr.outvars))))
-    new_debug_info = new_debug_info._replace(
-        arg_names=new_arg_names,
-        result_paths=new_result_paths,
-    )
+  new_arg_names = tuple(_perm(primals_in, tangents_in,
+                              jaxpr.jaxpr.debug_info.safe_arg_names(len(jaxpr.jaxpr.invars))))
+  new_result_paths = tuple(_perm(primals_out, tangents_out,
+                                  jaxpr.jaxpr.debug_info.safe_result_paths(len(jaxpr.jaxpr.outvars))))
+  new_debug_info = new_debug_info._replace(
+      arg_names=new_arg_names,
+      result_paths=new_result_paths,
+  )
   new_jaxpr = core.Jaxpr(jaxpr.jaxpr.constvars,
                          new_invars, new_outvars, jaxpr.jaxpr.eqns,
                          jaxpr.jaxpr.effects,

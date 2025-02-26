@@ -184,7 +184,6 @@ jax_multiplatform_test(
     deps = [
         "//jax:pallas",
         "//jax:pallas_mosaic_gpu",  # build_cleaner: keep
-        "//jax/_src/pallas/mosaic_gpu",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
@@ -579,7 +578,10 @@ jax_multiplatform_test(
     name = "mgpu_attention_test",
     srcs = ["mgpu_attention_test.py"],
     enable_backends = [],
-    enable_configs = ["gpu_h100_x32"],
+    enable_configs = [
+        "gpu_h100_x32",
+        "gpu_h100",
+    ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     deps = [
         "//jax:pallas",

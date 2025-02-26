@@ -33,6 +33,7 @@ from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 import numpy as np
 
@@ -190,10 +191,18 @@ def get_compile_options(
 
   build_options.exec_time_optimization_effort = config.exec_time_optimization_effort.value
   build_options.memory_fitting_effort = config.memory_fitting_effort.value
+  if xla_extension_version >= 316:
+    build_options.optimization_level = config.EffortLevel(
+        config.optimization_level.value
+    ).value
+    build_options.memory_fitting_level = config.EffortLevel(
+        config.memory_fitting_level.value
+    ).value
 
   # This is a temporary workaround to simplify the AutoPGLE usage.
   # TODO(b/376647494): Remove once the bug is fixed.
-  if config.enable_pgle.value and config.pgle_profiling_runs.value > 0:
+  if ((config.enable_pgle.value and config.pgle_profiling_runs.value > 0)
+      or config.compilation_cache_expect_pgle.value):
     logger.debug("Explicitly disabling command buffer scheduling for AutoPGLE.")
     if env_options_overrides is None:
       env_options_overrides = {}
@@ -202,7 +211,12 @@ def get_compile_options(
   if env_options_overrides is not None:
     # Some overrides are passed directly on build_options.
     overrides_on_build_options = [
-        'exec_time_optimization_effort', 'memory_fitting_effort']
+        "exec_time_optimization_effort", "memory_fitting_effort"]
+    if xla_extension_version >= 316:
+      overrides_on_build_options.extend(
+          ["optimization_level", "memory_fitting_level"]
+      )
+
     env_options_overrides = dict(env_options_overrides)
     for name in overrides_on_build_options:
       if name in env_options_overrides:
@@ -404,7 +418,7 @@ def compile_or_get_cached(
     return backend_compile(backend, computation, compile_options,
                            host_callbacks)
 
-  if is_auto_pgle_used:
+  if is_auto_pgle_used or config.compilation_cache_expect_pgle.value:
     cache_key = _resolve_pgle_module_cache_key(
         computation,
         devices,
@@ -467,7 +481,7 @@ def compile_or_get_cached(
 
 
 # When PGLE is enabled there might be 3 types of situations:
-# 1. PGLE profiled module (the one which was recompiled with FDO profile) is
+# 1. PGLE optimized module (the one which was recompiled with FDO profile) is
 # in the persistent cache. In this case the module should be returned from
 # cache and PGLE should be disabled for this module. Is module is stored in
 # the persistent cache under the "pgle_profiled_module_key" which calculated
@@ -481,6 +495,12 @@ def compile_or_get_cached(
 # 3. PGLE profiled module is not in the persistent cache and the module is
 # getting compiled to be PGLEd (FDO profile is empty). In this case we need to
 # simply return the non-PGLE profiled module from the persistent cache.
+#
+# If the compilation_cache_expect_pgle option is set then in case 1 the PGLE
+# optimized module will be loaded even if PGLE is not enabled in the current
+# process. This is useful if we want to combine the use of PGLE with other
+# profiling tools (e.g. Nsight Systems) that cannot co-exist with PGLE due to
+# contention for CUPTI resources.
 def _resolve_pgle_module_cache_key(
     computation: ir.Module,
     devices: np.ndarray,
@@ -508,29 +528,39 @@ def _resolve_pgle_module_cache_key(
   if _is_executable_in_cache(backend, pgle_profiled_module_key):
     # Load PGLE profiled module from the persistent cache.
     result_key = pgle_profiled_module_key
+    if config.compilation_cache_expect_pgle.value:
+      logging.info(f"PGLE-optimized {module_name} loaded from compilation cache")
     if pgle_profiler is not None:
       pgle_profiler.disable()
-  elif fdo_profile is not None and len(fdo_profile) > 0:
-    # Store module under PGLE profiled module cache key.
-    result_key = pgle_profiled_module_key
-    if is_multi_process and distributed.global_state.client is not None:
-      compile_options.executable_build_options.fdo_profile = (
-          _share_fdo_profiles(
-              computation,
-              devices,
-              compile_options,
-              backend,
-              distributed.global_state.client,
-              min_device_process_id,
-          )
-      )
-    else:
-      compile_options.executable_build_options.fdo_profile = fdo_profile
-      logger.debug(
-          "Compiling module %s with FDO profile of length %d",
-          module_name,
-          len(compile_options.executable_build_options.fdo_profile),
-      )
+  else:
+    # No PGLE-optimised module found in the persistent cache.
+    if (config.compilation_cache_expect_pgle.value
+        and _is_executable_in_cache(backend, cache_key)):
+      # The user asserted this miss was unexpected; emit a warning
+      warnings.warn(f"PERSISTENT CACHE MISS for PGLE-optimized {module_name} "
+                    "despite non-PGLE hit; it may not have been executed "
+                    "enough times when the cache was populated")
+    if fdo_profile is not None and len(fdo_profile) > 0:
+      # Store module under PGLE profiled module cache key.
+      result_key = pgle_profiled_module_key
+      if is_multi_process and distributed.global_state.client is not None:
+        compile_options.executable_build_options.fdo_profile = (
+            _share_fdo_profiles(
+                computation,
+                devices,
+                compile_options,
+                backend,
+                distributed.global_state.client,
+                min_device_process_id,
+            )
+        )
+      else:
+        compile_options.executable_build_options.fdo_profile = fdo_profile
+        logger.debug(
+            "Compiling module %s with FDO profile of length %d",
+            module_name,
+            len(compile_options.executable_build_options.fdo_profile),
+        )
   return result_key
 
 

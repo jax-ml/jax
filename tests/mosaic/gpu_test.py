@@ -14,6 +14,8 @@
 # ==============================================================================
 """Tests for Mosaic GPU DSL functions and utilities."""
 
+from collections.abc import Sequence
+import dataclasses
 import enum
 import itertools
 import math
@@ -33,9 +35,9 @@ from jax._src.lib.mlir import passmanager
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
-from jax.experimental.mosaic.gpu import tcgen05
 from jax.experimental.mosaic.gpu import dialect as mgpu_dialect  # pylint: disable=g-importing-member
 from jax.experimental.mosaic.gpu import fragmented_array as fa
+from jax.experimental.mosaic.gpu import tcgen05
 import jax.numpy as jnp
 import numpy as np
 try:
@@ -232,6 +234,13 @@ class TestCase(parameterized.TestCase):
     self.enter_context(config.traceback_filtering("off"))
     self.enter_context(self.context)
     self.enter_context(ir.Location.unknown())
+
+
+class Sm90ATestCase(TestCase, jtu.CudaArchSpecificTest):
+
+  def setUp(self):
+      self.skip_unless_sm90a()
+      super().setUp()
 
 
 class TestUtilTest(TestCase):
@@ -475,7 +484,7 @@ def get_packed_shape(strides, shape):
   return [packed_shape[i] for i in inv_perm]
 
 
-class WGMMATest(TestCase):
+class WGMMALayoutTest(TestCase):
 
   @parameterized.named_parameters(("f32", jnp.float32), ("f16", jnp.float16))
   def test_store_untiled(self, dtype):
@@ -487,25 +496,6 @@ class WGMMATest(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), (), expected, ()
     )()
     np.testing.assert_array_equal(iota, expected)
-
-  @parameterized.named_parameters(
-      ("f32", jnp.float32, 256),
-      ("f16", jnp.float16, 256),
-      ("f16_small", jnp.float16, 128),
-  )
-  def test_store_untiled_splat(self, jax_dtype, size):
-    mlir_dtype = utils.dtype_to_ir_type(jax_dtype)
-    def kernel(ctx, out, _):
-      del ctx
-      arr = mgpu.FragmentedArray.splat(
-          c(1.0, mlir_dtype), (size,), is_signed=utils.is_signed(jax_dtype)
-      )
-      arr.store_untiled(out)
-    expected = np.ones((size,), jax_dtype)
-    mosaic_ones = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), (), expected, ()
-    )()
-    np.testing.assert_array_equal(mosaic_ones, expected)
 
   @parameterized.product(
       dtype=[jnp.float32, jnp.float16, jnp.int8],
@@ -561,47 +551,6 @@ class WGMMATest(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), (), expected, smem_shape
     )()
     np.testing.assert_array_equal(iota, expected)
-
-  def test_convert_bool_to_u8(self):
-    m, n = 128, 128
-    def kernel(ctx, dst, _):
-      i8 = ir.IntegerType.get_signless(8)
-      iota = iota_tensor(m, n, jnp.uint8)
-      (iota > 10).astype(i8, is_signed=False).store_untiled(dst)
-
-    out_shape = jax.ShapeDtypeStruct((m, n), jnp.int8)
-    result = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
-    )()
-    iota = np.arange(m * n, dtype=jnp.uint8).reshape(m, n)
-    np.testing.assert_array_equal(result, (iota > 10).astype(jnp.uint8))
-
-  @parameterized.parameters(
-      (jnp.uint8, jnp.uint16, 255),
-      (jnp.uint8, jnp.int16, 255),
-      (jnp.int8, jnp.uint16, -127),
-      (jnp.int8, jnp.int16, -127),
-  )
-  def test_convert_int_uint(self, from_dtype, to_dtype, value):
-    m, n = 1, 128
-    def kernel(ctx, dst, _):
-      i8 = ir.IntegerType.get_signless(8)
-      from_mlir_dtype = utils.dtype_to_ir_type(from_dtype)
-      to_mlir_dtype = utils.dtype_to_ir_type(to_dtype)
-      from_arr = mgpu.FragmentedArray.splat(
-          c(value, from_mlir_dtype),
-          (m, n),
-          is_signed=utils.is_signed(from_dtype),
-      )
-      to_arr = from_arr.astype(to_mlir_dtype, is_signed=utils.is_signed(to_dtype))
-      to_arr.store_untiled(dst)
-
-    out_shape = jax.ShapeDtypeStruct((m, n), to_dtype)
-    result = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
-    )()
-    expected = jnp.full((m, n), value, dtype=from_dtype).astype(to_dtype)
-    np.testing.assert_array_equal(result, expected)
 
   @parameterized.named_parameters(
       ("bf16_i8", jnp.bfloat16, jnp.int8),
@@ -686,6 +635,14 @@ class WGMMATest(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), expected, expected, (expected,) * 2
     )(expected)
     np.testing.assert_array_equal(iota, expected)
+
+
+class WGMMATest(TestCase):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.is_cuda_compute_capability_equal("9.0"):
+      self.skipTest("Only works on GPU with capability sm90a")
 
   @parameterized.product(
       lhs_transpose=(False, True),
@@ -953,7 +910,7 @@ class TCGen05Test(TestCase):
       in_jax_dtype=(jnp.float16, jnp.bfloat16),  # TODO(apaszke): f32
       out_jax_dtype=(jnp.float32,),  # TODO(apaszke): f16 accumulation
       m=(128,),  # TODO(apaszke): 64, 192, 256
-      n=(64, 128, 256),  # TODO(apaszke): 192, other non-power-of-2
+      n=(64, 128, 256, 512),  # TODO(apaszke): 192, other non-power-of-2
       k_steps=(1, 2),
       swizzle=(32, 64, 128,),
   )
@@ -1029,7 +986,7 @@ class TCGen05Test(TestCase):
         jax.ShapeDtypeStruct(tile_shape((m, k), (m_tile, nk_tile)), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape((k, n), (nk_tile, nk_tile)), in_jax_dtype),
         mgpu.TMABarrier(3),
-        mgpu.TMEM((128, n), out_jax_dtype, tcgen05.TMEMLayout.D),
+        mgpu.TMEM((128, n), out_jax_dtype),
     ]
     z = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape
@@ -1045,7 +1002,7 @@ class TCGen05Test(TestCase):
       in_jax_dtype=(jnp.float16,),  # TODO(apaszke): f32
       out_jax_dtype=(jnp.float32,),  # TODO(apaszke): f16 accumulation
       m=(256,),  # TODO(apaszke): 64, 192, 256
-      n=(128, 256),  # TODO(apaszke): 192, other non-power-of-2
+      n=(128, 256),  # TODO(apaszke): 512, 192, other non-power-of-2
       k_steps=(1, 2),
       swizzle=(32, 64, 128,),
   )
@@ -1132,7 +1089,7 @@ class TCGen05Test(TestCase):
         jax.ShapeDtypeStruct(tile_shape((m_block_tile, k), (m_tma_tile, nk_tma_tile)), in_jax_dtype),
         jax.ShapeDtypeStruct(tile_shape((k, n_block_tile), (nk_tma_tile, nk_tma_tile)), in_jax_dtype),
         mgpu.TMABarrier(3),
-        mgpu.TMEM((128, n), out_jax_dtype, tcgen05.TMEMLayout.D, collective=True),
+        mgpu.TMEM((128, n), out_jax_dtype, collective=True),
     ]
     z = mgpu.as_gpu_kernel(
         kernel, (2, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape, cluster=(2, 1, 1)
@@ -1223,19 +1180,13 @@ class BarrierTest(TestCase):
       self.skipTest("Cluster too big")
     is_trivial = math.prod(cluster[d] for d in collective_dims) == 1
     def kernel(ctx, dst, mask, collective_barrier):
-      memref.store(arith.constant(i32, 1 << 17), mask, [c(0, index)])
-      gpu.barrier()
-      collective_barrier.arrive()
-      collective_barrier.wait()
+      cluster_idx = ctx.cluster_idx()
       if not is_trivial:
-        llvm.atomicrmw(
-            llvm.AtomicBinOp.min,
-            utils.memref_ptr(mask),
-            collective_barrier.cluster_mask,
-            llvm.AtomicOrdering.monotonic,
-        )
+        memref.store(collective_barrier.cluster_mask, mask, [cluster_idx])
       else:
         assert collective_barrier.cluster_mask is None
+      collective_barrier.arrive()
+      collective_barrier.wait()
       tid = thread_idx()
       linear_idx = arith.index_cast(index, tid)
       stride = c(128, index)
@@ -1244,7 +1195,7 @@ class BarrierTest(TestCase):
         stride = arith.muli(stride, gpu.grid_dim(d))
       memref.store(arith.index_cast(i32, linear_idx), dst, [linear_idx])
     out_shape = jax.ShapeDtypeStruct((math.prod(cluster) * 128,), jnp.int32)
-    mask_shape = jax.ShapeDtypeStruct((1,), jnp.int32)
+    mask_shape = jax.ShapeDtypeStruct((math.prod(cluster),), jnp.int32)
     barrier_dims = collective_dims
     if group_dims:
       barrier_dims = (collective_dims[:2], *collective_dims[2:])
@@ -1267,7 +1218,7 @@ class BarrierTest(TestCase):
         )
         mask_bits = block_bits[least_significant_slice]
         expected_mask |= np.bitwise_or.reduce(mask_bits, axis=None)
-      self.assertEqual(mask, expected_mask)
+      self.assertEqual(min(mask), expected_mask)
 
 
 class TMATest(TestCase):
@@ -2077,6 +2028,47 @@ class FragmentedArrayTest(TestCase):
     f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, None)
     np.testing.assert_array_equal(f(x), x * 3)
 
+  def test_convert_bool_to_u8(self):
+    m, n = 128, 128
+    def kernel(ctx, dst, _):
+      i8 = ir.IntegerType.get_signless(8)
+      iota = iota_tensor(m, n, jnp.uint8)
+      (iota > 10).astype(i8, is_signed=False).store_untiled(dst)
+
+    out_shape = jax.ShapeDtypeStruct((m, n), jnp.int8)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    iota = np.arange(m * n, dtype=jnp.uint8).reshape(m, n)
+    np.testing.assert_array_equal(result, (iota > 10).astype(jnp.uint8))
+
+  @parameterized.parameters(
+      (jnp.uint8, jnp.uint16, 255),
+      (jnp.uint8, jnp.int16, 255),
+      (jnp.int8, jnp.uint16, -127),
+      (jnp.int8, jnp.int16, -127),
+  )
+  def test_convert_int_uint(self, from_dtype, to_dtype, value):
+    m, n = 1, 128
+    def kernel(ctx, dst, _):
+      i8 = ir.IntegerType.get_signless(8)
+      from_mlir_dtype = utils.dtype_to_ir_type(from_dtype)
+      to_mlir_dtype = utils.dtype_to_ir_type(to_dtype)
+      from_arr = mgpu.FragmentedArray.splat(
+          c(value, from_mlir_dtype),
+          (m, n),
+          is_signed=utils.is_signed(from_dtype),
+      )
+      to_arr = from_arr.astype(to_mlir_dtype, is_signed=utils.is_signed(to_dtype))
+      to_arr.store_untiled(dst)
+
+    out_shape = jax.ShapeDtypeStruct((m, n), to_dtype)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
+    )()
+    expected = jnp.full((m, n), value, dtype=from_dtype).astype(to_dtype)
+    np.testing.assert_array_equal(result, expected)
+
 
 class ProfilerTest(TestCase):
 
@@ -2134,6 +2126,25 @@ class TorchTest(TestCase):
 
 
 class LayoutTest(TestCase):
+
+  @parameterized.named_parameters(
+      ("f32", jnp.float32, 256),
+      ("f16", jnp.float16, 256),
+      ("f16_small", jnp.float16, 128),
+  )
+  def test_store_untiled_splat(self, jax_dtype, size):
+    mlir_dtype = utils.dtype_to_ir_type(jax_dtype)
+    def kernel(ctx, out, _):
+      del ctx
+      arr = mgpu.FragmentedArray.splat(
+          c(1.0, mlir_dtype), (size,), is_signed=utils.is_signed(jax_dtype)
+      )
+      arr.store_untiled(out)
+    expected = np.ones((size,), jax_dtype)
+    mosaic_ones = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), expected, ()
+    )()
+    np.testing.assert_array_equal(mosaic_ones, expected)
 
   @parameterized.product(
       shape=((128, 128), (64, 8), (64, 256)),
@@ -2254,6 +2265,71 @@ class LayoutTest(TestCase):
     np.testing.assert_array_equal(f(x), x)
 
 
+@dataclasses.dataclass(frozen=True)
+class Tile:
+  """Defines a Tile transform in a TestCaseInput.
+
+  Note that we cannot simply alias mgpu_dialect.TileTransformAttr.get, because
+  we do not have an MLIR context at the point we define the TestCaseInput.
+  """
+
+  tiling: tuple[int, ...]
+
+  def attr(self):
+    return mgpu_dialect.TileTransformAttr.get(self.tiling)
+
+
+@dataclasses.dataclass(frozen=True)
+class Transpose:
+  """Defines a Transpose transform in a TestCaseInput.
+
+  Note that we cannot simply alias mgpu_dialect.TransposeTransformAttr.get,
+  because we do not have an MLIR context at the point we define the
+  TestCaseInput.
+  """
+
+  permutation: tuple[int, ...]
+
+  def attr(self):
+    return mgpu_dialect.TransposeTransformAttr.get(self.permutation)
+
+
+@dataclasses.dataclass(frozen=True)
+class Swizzle:
+  """Defines a Swizzle transform in a TestCaseInput.
+
+  Note that we cannot simply alias mgpu_dialect.SwizzleTransformAttr.get,
+  because we do not have an MLIR context at the point we define the
+  TestCaseInput.
+  """
+
+  swizzle: mgpu_dialect.SwizzlingMode
+
+  def attr(self):
+    return mgpu_dialect.SwizzleTransformAttr.get(self.swizzle)
+
+
+def memref_with_transforms(
+    mem_ref: ir.Value,
+    transforms: Sequence[Tile | Transpose | Swizzle],
+) -> ir.Value:
+  """Casts the memref to one that has a layout with the given transforms."""
+  mem_ref_type = ir.MemRefType(mem_ref.type)
+
+  transform_attr = [t.attr() for t in transforms]
+  if not transform_attr:
+    return mem_ref
+
+  layout = mgpu_dialect.LayoutAttr.get(mem_ref_type.rank, transform_attr)
+  memref_new_type = ir.MemRefType.get(
+      mem_ref_type.shape,
+      mem_ref_type.element_type,
+      layout,
+      mem_ref_type.memory_space,
+  )
+  return memref.cast(memref_new_type, mem_ref)
+
+
 class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
   """Device tests with lowering from the MLIR dialect and layout inference."""
 
@@ -2269,17 +2345,18 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       elt_type = ir.MemRefType(a.type).element_type
 
       zero_index = arith.constant(ir.IndexType.get(), 0)
+      zero_vector_indices = [zero_index] * len(shape)
 
       # GMEM -> registers
       ab_type = ir.VectorType.get(shape, elt_type)
-      a = vector.load(ab_type, a, [zero_index, zero_index])
-      b = vector.load(ab_type, b, [zero_index, zero_index])
+      a = vector.load(ab_type, a, zero_vector_indices)
+      b = vector.load(ab_type, b, zero_vector_indices)
 
       # Computation
       add = arith.addf(a, b)
 
       # Registers -> GMEM
-      vector.store(add, result, [zero_index, zero_index])
+      vector.store(add, result, zero_vector_indices)
 
     dtype = jnp.bfloat16
     shape = (128, 128)
@@ -2299,8 +2376,58 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
 
     self.assertArraysEqual(jax.jit(kernel)(x, y), x + y)
 
-  @parameterized.parameters(*mgpu_dialect.SwizzlingMode)
-  def test_pointwise_kernel_with_tma(self, swizzle):
+  @staticmethod
+  def pointwise_kernel_with_tma_cases(dtype: jnp.dtype):
+    @dataclasses.dataclass(frozen=True)
+    class TestCaseInput:
+      shape: tuple[int, ...]
+      transforms: tuple[Tile | Transpose | Swizzle, ...] = ()
+
+    result = []
+    for swizzle in mgpu_dialect.SwizzlingMode:
+      n = swizzle * 8 // jnp.finfo(dtype).bits
+      if swizzle == mgpu_dialect.SwizzlingMode.kNoSwizzle:
+        #  We need at least one case with no transforms, as this is handled
+        #  differently.
+        result.append(TestCaseInput(shape=[128, n]))
+      result.extend([
+          TestCaseInput(
+              shape=[128, n],
+              transforms=[Swizzle(swizzle)],
+          ),
+          TestCaseInput(
+              shape=[2, 3, 64, n],
+              transforms=[Transpose([0, 1, 2, 3]), Swizzle(swizzle)],
+          ),
+          TestCaseInput(
+              shape=[2, 3, 64, n],
+              transforms=[
+                  Transpose([1, 0, 2, 3]),
+                  Transpose([1, 0, 2, 3]),
+                  Swizzle(swizzle),
+              ],
+          ),
+          TestCaseInput(
+              shape=[2, 3, 64, n],
+              transforms=[Transpose([1, 0, 2, 3]), Swizzle(swizzle)],
+          ),
+          TestCaseInput(
+              shape=[128, n],
+              transforms=[Tile([64, n]), Swizzle(swizzle)],
+          ),
+          TestCaseInput(
+              shape=[2 * 64, 3 * n],
+              transforms=[
+                  Tile([64, n]),
+                  Transpose([1, 0, 2, 3]),
+                  Swizzle(swizzle),
+              ],
+          ),
+      ])
+    return result
+
+  @parameterized.parameters(pointwise_kernel_with_tma_cases(jnp.bfloat16))
+  def test_pointwise_kernel_with_tma(self, test_case):
     def add(
         ctx: launch_context.LaunchContext,
         a_gmem_ref: ir.Value,
@@ -2316,35 +2443,34 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       shape = memref_type.shape
       elt_type = memref_type.element_type
 
-      zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
-
-      memref_bytes = utils.bytewidth(elt_type)  # Also correct if rank == 0
-      for size in shape:
-        memref_bytes *= size
+      memref_bytes = utils.bytewidth(elt_type) * math.prod(shape)
       mgpu_dialect.arrive_expect_tx(
           barrier=dialect_barrier, expect_tx=2 * memref_bytes
       )
 
+      zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
+      zero_slice_indices = [zero_i32] * memref_type.rank
+
       # GMEM -> SMEM
       mgpu_dialect.async_load(
           source=a_gmem_ref,
-          destination=a_smem_ref,
+          destination=memref_with_transforms(
+              a_smem_ref, test_case.transforms
+          ),
           barrier=dialect_barrier,
-          indices=[zero_i32, zero_i32],
+          indices=zero_slice_indices,
           slice_lengths=shape,
-          transforms=ir.ArrayAttr.get([]),
           collective=ir.ArrayAttr.get([]),
-          swizzle=swizzle,
       )
       mgpu_dialect.async_load(
           source=b_gmem_ref,
-          destination=b_smem_ref,
+          destination=memref_with_transforms(
+              b_smem_ref, test_case.transforms
+          ),
           barrier=dialect_barrier,
-          indices=[zero_i32, zero_i32],
+          indices=zero_slice_indices,
           slice_lengths=shape,
-          transforms=ir.ArrayAttr.get([]),
           collective=ir.ArrayAttr.get([]),
-          swizzle=swizzle,
       )
 
       parities = memref.load(tma_barrier.phases, [])
@@ -2352,34 +2478,34 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       mgpu_dialect.wait(dialect_barrier, parity)
 
       zero_index = arith.constant(ir.IndexType.get(), 0)
+      zero_vector_indices = [zero_index] * memref_type.rank
 
       # SMEM -> registers
       ab_type = ir.VectorType.get(shape, elt_type)
-      a = vector.load(ab_type, a_smem_ref, [zero_index, zero_index])
-      b = vector.load(ab_type, b_smem_ref, [zero_index, zero_index])
+      a = vector.load(ab_type, a_smem_ref, zero_vector_indices)
+      b = vector.load(ab_type, b_smem_ref, zero_vector_indices)
 
       # Computation
       add = arith.addf(arith.addf(a, b), b)
 
       # Registers -> SMEM
-      vector.store(add, result_smem_ref, [zero_index, zero_index])
+      vector.store(add, result_smem_ref, zero_vector_indices)
 
       # SMEM -> GMEM
       mgpu_dialect.async_store(
-          source=result_smem_ref,
+          source=memref_with_transforms(
+              result_smem_ref, test_case.transforms
+          ),
           destination=result_gmem_ref,
-          indices=[zero_i32, zero_i32],
+          indices=zero_slice_indices,
           slice_lengths=shape,
-          transforms=ir.ArrayAttr.get([]),
-          swizzle=swizzle,
       )
       nvvm.cp_async_bulk_wait_group(0)
       utils.warpgroup_barrier()
 
     dtype = jnp.bfloat16
-    shape = (128, swizzle*8 // jnp.finfo(dtype).bits)
 
-    jax_shape = jax.ShapeDtypeStruct(shape, dtype)
+    jax_shape = jax.ShapeDtypeStruct(test_case.shape, dtype)
     kernel = mgpu.as_gpu_kernel(
         add,
         grid=(1, 1, 1),
@@ -2395,21 +2521,48 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         thread_semantics=mgpu.ThreadSemantics.Warpgroup,
     )
 
-    x = self.prng.uniform(-1, 1, shape).astype(dtype)
-    y = self.prng.uniform(-1, 1, shape).astype(dtype)
+    x = self.prng.uniform(-1, 1, test_case.shape).astype(dtype)
+    y = self.prng.uniform(-1, 1, test_case.shape).astype(dtype)
 
     self.assertArraysEqual(jax.jit(kernel)(x, y), x + y + y)
 
-  # TODO(dasenov): Add a test for kNoSwizzle, i.e. all swizzling modes.
-  @parameterized.parameters(mgpu_dialect.SwizzlingMode.k32ByteSwizzle,
-                            mgpu_dialect.SwizzlingMode.k64ByteSwizzle,
-                            mgpu_dialect.SwizzlingMode.k128ByteSwizzle)
-  def test_wgmma_kernel_with_tma(self, swizzle):
-    abtype = jnp.bfloat16
-    acctype = jnp.float32
-    groups_m = 4
-    groups_n = 1
-    groups_k = 1
+
+class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
+
+  @staticmethod
+  def wgmma_kernel_with_tma_cases(abtype: jnp.dtype):
+    @dataclasses.dataclass(frozen=True)
+    class TestCaseInput:
+      shape_a: tuple[int, ...] = ()
+      shape_b: tuple[int, ...] = ()
+      shape_res: tuple[int, ...] = ()
+      transforms_a: tuple[Tile | Transpose | Swizzle, ...] = ()
+      transforms_b: tuple[Tile | Transpose | Swizzle, ...] = ()
+
+    result = []
+    for swizzle in [
+        # TODO(dasenov): Add a test for kNoSwizzle, i.e. all swizzling modes.
+        mgpu_dialect.SwizzlingMode.k32ByteSwizzle,
+        mgpu_dialect.SwizzlingMode.k64ByteSwizzle,
+        mgpu_dialect.SwizzlingMode.k128ByteSwizzle,
+    ]:
+      k = swizzle // np.dtype(abtype).itemsize
+      groups_m = 4
+      groups_n = 1
+      groups_k = 1
+      result.extend([
+          TestCaseInput(
+              shape_a=[groups_m * 64, groups_k * k],
+              shape_b=[groups_k * k, groups_n * k],
+              shape_res=[groups_m * 64, groups_n * k],
+              transforms_a=[Tile([64, k]), Swizzle(swizzle)],
+              transforms_b=[Tile([k, k]), Swizzle(swizzle)],
+          ),
+      ])
+    return result
+
+  @parameterized.parameters(wgmma_kernel_with_tma_cases(jnp.bfloat16))
+  def test_wgmma_kernel_with_tma(self, test_case):
 
     def matmul(
         ctx: launch_context.LaunchContext,
@@ -2420,17 +2573,17 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     ):
       del ctx
       a_smem_ref, b_smem_ref, result_smem_ref, tma_barrier = smem
+      a_smem_ref = memref_with_transforms(a_smem_ref, test_case.transforms_a)
+      b_smem_ref = memref_with_transforms(b_smem_ref, test_case.transforms_b)
       dialect_barrier = tma_barrier.as_dialect_barrier_memref()
 
-      shape_a = ir.MemRefType(a_gmem_ref.type).shape
-      shape_b = ir.MemRefType(b_gmem_ref.type).shape
       ab_elt_type = ir.MemRefType(a_gmem_ref.type).element_type
-      memref_bytes_a = utils.bytewidth(ab_elt_type) * math.prod(shape_a)
-      memref_bytes_b = utils.bytewidth(ab_elt_type) * math.prod(shape_b)
+      bytes_a = utils.bytewidth(ab_elt_type) * math.prod(test_case.shape_a)
+      bytes_b = utils.bytewidth(ab_elt_type) * math.prod(test_case.shape_b)
 
       mgpu_dialect.arrive_expect_tx(
           barrier=dialect_barrier,
-          expect_tx=memref_bytes_a + memref_bytes_b,
+          expect_tx=bytes_a + bytes_b,
       )
 
       zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
@@ -2439,21 +2592,17 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           source=a_gmem_ref,
           destination=a_smem_ref,
           barrier=dialect_barrier,
-          indices=[zero_i32, zero_i32, zero_i32, zero_i32],
-          slice_lengths=shape_a,
-          transforms=ir.ArrayAttr.get([]),
+          indices=[zero_i32] * len(test_case.shape_a),
+          slice_lengths=test_case.shape_a,
           collective=ir.ArrayAttr.get([]),
-          swizzle=swizzle,
       )
       mgpu_dialect.async_load(
           source=b_gmem_ref,
           destination=b_smem_ref,
           barrier=dialect_barrier,
-          indices=[zero_i32, zero_i32, zero_i32, zero_i32],
-          slice_lengths=shape_b,
-          transforms=ir.ArrayAttr.get([]),
+          indices=[zero_i32] * len(test_case.shape_b),
+          slice_lengths=test_case.shape_b,
           collective=ir.ArrayAttr.get([]),
-          swizzle=swizzle,
       )
 
       parities = memref.load(tma_barrier.phases, [])
@@ -2469,12 +2618,10 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       accumulator = vector.splat(
           ir.VectorType.get(shape_result, result_elt_type), zero_acc
       )
-      result = mgpu_dialect.wgmma(
-          accumulator,
-          a_smem_ref,
-          b_smem_ref,
-          swizzle=swizzle,
-      )
+      result = mgpu_dialect.wgmma(accumulator, a_smem_ref, b_smem_ref)
+
+      nvvm.wgmma_commit_group_sync_aligned()
+      nvvm.wgmma_wait_group_sync_aligned(0)
 
       # Registers -> SMEM
       zero_index = arith.constant(ir.IndexType.get(), 0)
@@ -2486,18 +2633,14 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           destination=result_gmem_ref,
           indices=[zero_i32, zero_i32],
           slice_lengths=shape_result,
-          transforms=ir.ArrayAttr.get([]),
-          swizzle=mgpu_dialect.SwizzlingMode.kNoSwizzle,
       )
       nvvm.cp_async_bulk_wait_group(0)
 
-    k = swizzle // np.dtype(abtype).itemsize
-    a_shape = (groups_m, groups_k, 64, k)
-    b_shape = (groups_k, groups_n, k, k)
-    result_shape = (groups_m * 64, groups_n * k)
-    a_jax_shape = jax.ShapeDtypeStruct(a_shape, abtype)
-    b_jax_shape = jax.ShapeDtypeStruct(b_shape, abtype)
-    result_jax_shape = jax.ShapeDtypeStruct(result_shape, acctype)
+    abtype = jnp.bfloat16
+    acctype = jnp.float32
+    a_jax_shape = jax.ShapeDtypeStruct(test_case.shape_a, abtype)
+    b_jax_shape = jax.ShapeDtypeStruct(test_case.shape_b, abtype)
+    result_jax_shape = jax.ShapeDtypeStruct(test_case.shape_res, acctype)
     kernel = mgpu.as_gpu_kernel(
         matmul,
         grid=(1, 1, 1),
@@ -2513,14 +2656,14 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         thread_semantics=mgpu.ThreadSemantics.Warpgroup,
     )
 
-    x = self.prng.uniform(-1, 1, a_shape).astype(abtype)
-    y = self.prng.uniform(-1, 1, b_shape).astype(abtype)
+    x = self.prng.uniform(-1, 1, test_case.shape_a).astype(abtype)
+    y = self.prng.uniform(-1, 1, test_case.shape_b).astype(abtype)
 
     self.assertArraysAllClose(
         jax.jit(kernel)(x, y),
         np.matmul(
-            x.reshape((groups_m * 64, groups_k * k)),
-            y.reshape((groups_k * k, groups_n * k)),
+            x.reshape(test_case.shape_a),
+            y.reshape(test_case.shape_b),
         ),
         atol=1e-5,
         rtol=1e-5,

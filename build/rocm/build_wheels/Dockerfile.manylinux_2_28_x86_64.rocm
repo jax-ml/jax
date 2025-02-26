@@ -9,7 +9,7 @@ ARG ROCM_BUILD_NUM
 #  manylinux base image. However, adding this does fix an issue where Bazel isn't able
 #  to find them.
 RUN --mount=type=cache,target=/var/cache/dnf \
-    dnf install -y gcc-c++-8.5.0-22.el8_10.x86_64
+    dnf install -y gcc-c++-8.5.0-22.el8_10.x86_64 numactl-devel
 
 RUN --mount=type=cache,target=/var/cache/dnf \
     --mount=type=bind,source=build/rocm/tools/get_rocm.py,target=get_rocm.py \
