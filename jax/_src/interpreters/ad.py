@@ -641,6 +641,7 @@ class LinearizeTrace(Trace):
       return prim.bind_with_trace(self.parent_trace, (fun, f_jvp, *primals_in),
                                   dict(symbolic_zeros=symbolic_zeros))
 
+    @partial(lu.wrap_init, debug_info=f_jvp.debug_info)
     def _f_jvp(primals, tangents):
       outs = f_jvp.call_wrapped(*primals, *tangents)
       primals_out, tangents_out = split_list(outs, [len(outs) // 2])
@@ -651,7 +652,7 @@ class LinearizeTrace(Trace):
       nonzeros_in = [type(t) is not Zero for t in tangents_in]
       primals_out, tangent_nzs_out, residuals, linearized = linearize_from_jvp(
           _f_jvp, True, nonzeros_in, symbolic_zeros, instantiate_zeros,
-          f_jvp.debug_info, primals_in, {})
+          primals_in, {})
 
     with core.set_current_trace(self.tangent_trace):
       tangents_out = linearized(residuals, *tangents_in)
@@ -762,14 +763,15 @@ def fallback_linearize_rule(_prim: core.Primitive,
     msg = f"Differentiation rule for '{_prim}' not implemented"
     raise NotImplementedError(msg)
   debug_jvp = debug_info("linearize_prim_jvp", jvp, primals, params)
-  return linearize_from_jvp(jvp, _prim.multiple_results, _nonzeros, False, False,
-                            debug_jvp, primals, params)
+  return linearize_from_jvp(lu.wrap_init(jvp, debug_info=debug_jvp),
+                            _prim.multiple_results, _nonzeros,
+                            False, False, primals, params)
 
-def linearize_from_jvp(jvp: Callable,
+def linearize_from_jvp(jvp: lu.WrappedFun,
                        multiple_results: bool,
                        nonzeros: Sequence[bool],
-                       user_facing_symbolic_zeros: bool, instantiate_input_zeros: bool,
-                       debug_info: core.DebugInfo,
+                       user_facing_symbolic_zeros: bool,
+                       instantiate_input_zeros: bool,
                        primals, params):
   current_name_stack = source_info_util.current_name_stack()
   with core.take_current_trace() as parent_trace:
@@ -792,7 +794,7 @@ def linearize_from_jvp(jvp: Callable,
     tangent_args = tuple(trace.new_arg(pe.PartialVal.unknown(aval)) if nz else make_zero(aval)
                          for aval, nz in zip(tangent_avals, nonzeros))
     with core.set_current_trace(trace):
-      out_primals, out_tangents = jvp(primals, tangent_args, **params)
+      out_primals, out_tangents = jvp.call_wrapped(primals, tangent_args, **params)
 
     if not multiple_results:
       out_primals = [out_primals]
@@ -806,7 +808,7 @@ def linearize_from_jvp(jvp: Callable,
     out_nz_tracers = [trace.to_jaxpr_tracer(r)
                       for (r, nz) in zip(out_tangents, out_nzs) if nz]
     in_tracers = [t for t, nz in zip(tangent_args, nonzeros) if nz]
-    jaxpr, out_consts, _ = pe.tracers_to_jaxpr(in_tracers, out_nz_tracers, debug_info)
+    jaxpr, out_consts, _ = pe.tracers_to_jaxpr(in_tracers, out_nz_tracers, jvp.debug_info)
 
     def linearized(residuals, *tangents):
       nz_tangents_in = [t for (t, nz) in zip(tangents, nonzeros) if nz]
