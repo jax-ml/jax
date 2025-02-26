@@ -17,6 +17,7 @@ race:dump_traceback
 # https://github.com/python/cpython/issues/128137
 # Fixed in Python 3.14, but not backported to 3.13.
 race:immortalize_interned
+race:_PyUnicode_InternMortal
 
 # https://github.com/python/cpython/issues/128144
 # Fixed in Python 3.14, but not backported to 3.13.
@@ -30,6 +31,9 @@ race:split_keys_entry_added
 
 # https://github.com/python/cpython/issues/129748
 race:mi_block_set_nextx
+
+# https://github.com/python/cpython/issues/130571
+race:_PyObject_GetMethod
 
 # Races because the LAPACK and BLAS in our scipy isn't TSAN instrumented.
 race:heevd_ffi
