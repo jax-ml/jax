@@ -87,7 +87,7 @@ def _copy_smem_to_gmem_lowering(
     dst_transforms_treedef,
     has_user_predicate,
 ):
-  predicate = ctx.predicate
+  predicate = ctx.module_ctx.single_wg_lane_predicate
   if has_user_predicate:
     flat_args, user_predicate = flat_args[:-1], flat_args[-1]
     predicate = arith_dialect.andi(
@@ -273,7 +273,12 @@ def _copy_gmem_to_smem_lowering(
     bytes //= WARPGROUP_SIZE
     barrier.arrive_expect_tx(bytes)
     ctx.launch_ctx.async_copy(
-        src_ref=src, dst_ref=dst, barrier=barrier, arrive=False, **copy_params
+        src_ref=src,
+        dst_ref=dst,
+        barrier=barrier,
+        arrive=False,
+        predicate=ctx.module_ctx.single_wg_lane_predicate,
+        **copy_params,
     )
     return ()
 

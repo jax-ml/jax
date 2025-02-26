@@ -236,6 +236,7 @@ class ModuleContext:
   grid_names: Sequence[Hashable] | None
   program_ids: Sequence[ir.Value] | None
   approx_math: bool
+  single_wg_lane_predicate: ir.Value
   runtime_smem: ir.Value  # ir.MemRefType
   smem_used_bytes: int
   runtime_barriers: MutableMapping[
@@ -308,7 +309,6 @@ class ModuleContext:
 class LoweringRuleContext:
   module_ctx: ModuleContext
   launch_ctx: mgpu.LaunchContext
-  predicate: ir.Value
   prim: jax_core.Primitive
   avals_in: Sequence[jax_core.ShapedArray]
   avals_out: Sequence[jax_core.ShapedArray]
@@ -595,6 +595,7 @@ def lower_jaxpr_to_module(
         grid_names,
         [_program_id(axis, squashed_dims) for axis in range(len(grid))],
         approx_math,
+        mgpu.single_thread_predicate(per_block=False),
         runtime_smem,
         smem_used_bytes=0,
         runtime_barriers=grouped_barriers,
@@ -753,7 +754,6 @@ def lower_jaxpr_to_mosaic_gpu(
       rule_ctx = LoweringRuleContext(
           module_ctx,
           launch_ctx,
-          predicate=mgpu.single_thread_predicate(per_block=False),
           avals_in=[cast(jax_core.ShapedArray, v.aval) for v in eqn.invars],
           avals_out=[cast(jax_core.ShapedArray, v.aval) for v in eqn.outvars],
           prim=eqn.primitive,
