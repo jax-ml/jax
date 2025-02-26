@@ -25,7 +25,6 @@ import jax._src.core as jax_core
 from jax._src.interpreters import mlir
 from jax._src.lib import triton
 from jax._src.lib import gpu_triton as triton_kernel_call_lib
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.triton import lowering
@@ -98,7 +97,7 @@ def pallas_call_lowering(
   module_op.write_bytecode(buf)
 
   # TODO(b/394629193): Remove True once the bug is fixed.
-  if True or jaxlib_version < (0, 5, 1):
+  if True:
     # AOT Triton compilation is only available on jaxlib 0.5.1+.
     out_types = [
       ir.RankedTensorType.get(bm.array_shape_dtype.shape,

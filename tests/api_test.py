@@ -61,7 +61,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
@@ -1371,8 +1370,6 @@ class JitTest(jtu.BufferDonationTestCase):
     def f(x):
       return jnp.sqrt(x**2) + 1.0
 
-    if xla_extension_version < 316:
-      self.skipTest("Requires XLA extension version >= 316")
     f_jit = jit(
         f,
         compiler_options={
@@ -1386,8 +1383,6 @@ class JitTest(jtu.BufferDonationTestCase):
     def f(x):
       return jnp.sqrt(x**2) + 1.0
 
-    if xla_extension_version < 316:
-      self.skipTest("Requires XLA extension version >= 316")
     f_jit = jit(
         f,
         compiler_options={
