@@ -2621,6 +2621,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     x = np.arange(3, dtype='float32')
     jax.jvp(g, (x,), (x,))  # doesn't crash
 
+  @jtu.thread_unsafe_test()
   def test_cond_excessive_compilation(self):
     # Regression test for https://github.com/jax-ml/jax/issues/14058
     def f(x):
