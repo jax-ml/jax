@@ -330,12 +330,34 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
   #        forces primal_in to contain UndefinedPrimals for tangent values!
   map(write_primal, jaxpr.invars, primals_in)
 
+  # Start with a forward pass to evaluate any side-effect-free JaxprEqns that
+  # only operate on primals. This is required to support primitives with
+  # linearization rules that include computations on the residuals.
+  lin_eqns = []
+  for eqn in jaxpr.eqns:
+    # TODO (dfm): The effects check is probably stricter than necessary.
+    # Consider adding an allowlist of effects here.
+    if jaxpr.effects or any(
+        type(x) is not Literal and x not in primal_env for x in eqn.invars):
+      lin_eqns.append(eqn)
+      continue
+    subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
+    name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
+    traceback = eqn.source_info.traceback
+    with source_info_util.user_context(
+        traceback, name_stack=name_stack), eqn.ctx.manager:
+      ans = eqn.primitive.bind(*subfuns, *map(read_primal, eqn.invars), **bind_params)
+    if eqn.primitive.multiple_results:
+      map(write_primal, eqn.outvars, ans)
+    else:
+      write_primal(eqn.outvars[0], ans)
+
   ct_env: dict[Any, Any] = {}
   ctx = (source_info_util.transform_name_stack('transpose') if transform_stack
          else contextlib.nullcontext())
   with ctx:
     map(partial(write_cotangent, 'outvars'), jaxpr.outvars, cotangents_in)
-    for eqn in jaxpr.eqns[::-1]:
+    for eqn in lin_eqns[::-1]:
       if eqn.primitive.ref_primitive:
         if eqn.primitive is core.mutable_array_p:
           val_var, = eqn.invars
