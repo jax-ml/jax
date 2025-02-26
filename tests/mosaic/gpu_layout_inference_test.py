@@ -123,7 +123,8 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertEmpty(c.attributes["in_layouts"])
     self.assertSequenceEqual(c.attributes["out_layouts"], [layout])
 
-  def test_infer_splat_layout_for_vector_splat(self):
+  @parameterized.parameters(True, False)
+  def test_infer_splat_layout_for_vector_splat(self, rhs_splat):
     add = splat = None
 
     def body(lhs, rhs):
@@ -135,19 +136,24 @@ class LayoutInferenceTest(parameterized.TestCase):
       shape = (16, 8)
       elt_type = ir.BF16Type.get()
       ty = ir.VectorType.get(shape, elt_type)
-      func.FuncOp.from_py_func(elt_type, ty)(body)
-
-    # Not setting any layouts on the module should default in all ops having a
-    # splat fragmented layout.
-    mgpu.infer_layout(self.module)
+      func_op = func.FuncOp.from_py_func(elt_type, ty)(body).func_op
 
     layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape=shape))
+    if rhs_splat:
+      func_op.attributes["in_layouts"] = ir.ArrayAttr.get([layout])
+    mgpu.infer_layout(self.module)
 
     self.assertEmpty(splat.attributes["in_layouts"])
     self.assertSequenceEqual(splat.attributes["out_layouts"], [layout])
 
-    self.assertSequenceEqual(add.attributes["in_layouts"], [layout, layout])
-    self.assertSequenceEqual(add.attributes["out_layouts"], [layout])
+    add_layout = layout
+    if not rhs_splat:
+      add_layout = layouts.to_layout_attr(
+          mgpu.WGStridedFragLayout.from_shaped_type(ty)
+      )
+
+    self.assertSequenceEqual(add.attributes["in_layouts"], [add_layout, add_layout])
+    self.assertSequenceEqual(add.attributes["out_layouts"], [add_layout])
 
   @parameterized.parameters(
       mgpu.WGSplatFragLayout(shape=(32, 4)),

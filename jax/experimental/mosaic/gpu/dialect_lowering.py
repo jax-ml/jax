@@ -107,9 +107,9 @@ def _fragmented_array_to_ir(
   return conversion_cast.result
 
 
-# TODO(bchetioui): add code that verifies the layout is as inferred.
 def _fragmented_array_from_ir(
     fragmented_array_as_ir: ir.Value,
+    layout: ir.Attribute,
     is_signed: bool | None = None,
 ) -> fa.FragmentedArray:
 
@@ -135,14 +135,14 @@ def _fragmented_array_from_ir(
   registers = np.array(list(converted_outputs)).reshape(
     [attr.value for attr in conversion_cast.attributes["registers_shape"]]
   )
-  layout = layouts.from_layout_attr(conversion_cast.attributes["layout"])
+  producer_layout = layouts.from_layout_attr(conversion_cast.attributes["layout"])
 
   if ir.IntegerType.isinstance(conversion_cast.outputs[0].type.element_type):
     is_signed = False if is_signed is None else is_signed
 
   return fa.FragmentedArray(
-      _registers=registers, _layout=layout, _is_signed=is_signed
-  )
+      _registers=registers, _layout=producer_layout, _is_signed=is_signed
+  ).to_layout(layouts.from_layout_attr(layout))
 
 
 # TODO(dasenov): Remove this when minimum jaxlib version >= 0.5.1.
@@ -277,7 +277,10 @@ def _vector_store_op_lowering_rule(
           f"for {vector_store_op}"
       )
 
-  fragmented_array = _fragmented_array_from_ir(vector_store_op.valueToStore)
+  [to_store_layout] = layouts.in_layouts(vector_store_op)
+  fragmented_array = _fragmented_array_from_ir(
+      vector_store_op.valueToStore, to_store_layout
+  )
 
   # TODO(dasenov): This is not efficient for WGMMA layouts
   fragmented_array.store_untiled(vector_store_op.base)
@@ -434,8 +437,12 @@ def _binary_op_lowering_rule(
         [fa.FragmentedArray, fa.FragmentedArray], fa.FragmentedArray
     ],
 ) -> Sequence[ir.Value]:
-  lhs = _fragmented_array_from_ir(op.lhs, is_signed)
-  rhs = _fragmented_array_from_ir(op.rhs, is_signed)
+  in_layouts = layouts.in_layouts(op)
+  [layout] = layouts.out_layouts(op)
+  if any(in_layout != layout for in_layout in in_layouts):
+    raise ValueError("Layout mismatch")
+  lhs = _fragmented_array_from_ir(op.lhs, layout, is_signed)
+  rhs = _fragmented_array_from_ir(op.rhs, layout, is_signed)
   return [_fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
 
 
@@ -485,9 +492,13 @@ CMPI_IMPLS = {
 def _cmpi_op_lowering_rule(
     _: LoweringContext, op: arith.CmpIOp
 ) -> Sequence[ir.Value]:
+  in_layouts = layouts.in_layouts(op)
+  [layout] = layouts.out_layouts(op)
+  if any(in_layout != layout for in_layout in in_layouts):
+    raise ValueError("Layout mismatch")
   impl, is_signed = CMPI_IMPLS[op.predicate.value]
-  lhs = _fragmented_array_from_ir(op.lhs, is_signed)
-  rhs = _fragmented_array_from_ir(op.rhs, is_signed)
+  lhs = _fragmented_array_from_ir(op.lhs, layout, is_signed)
+  rhs = _fragmented_array_from_ir(op.rhs, layout, is_signed)
   return [_fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
 
 
@@ -505,9 +516,13 @@ CMPF_IMPLS = {
 def _cmpf_op_lowering_rule(
     _: LoweringContext, op: arith.CmpFOp
 ) -> Sequence[ir.Value]:
+  in_layouts = layouts.in_layouts(op)
+  [layout] = layouts.out_layouts(op)
+  if any(in_layout != layout for in_layout in in_layouts):
+    raise ValueError("Layout mismatch")
   impl = CMPF_IMPLS[op.predicate.value]
-  lhs = _fragmented_array_from_ir(op.lhs)
-  rhs = _fragmented_array_from_ir(op.rhs)
+  lhs = _fragmented_array_from_ir(op.lhs, layout)
+  rhs = _fragmented_array_from_ir(op.rhs, layout)
   return [_fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
 
 
@@ -515,11 +530,15 @@ def _cmpf_op_lowering_rule(
 def _mgpu_wgmma_op_lowering_rule(
     _: LoweringContext, wgmma_op: mgpu.WGMMAOp
 ) -> Sequence[ir.Value]:
+  fa_layouts = (*layouts.in_layouts(wgmma_op), *layouts.out_layouts(wgmma_op))
+  if not all(map(layouts.is_wgmma_fragmented_layout, fa_layouts)):
+    raise ValueError("Layout mismatch")
+  wgmma_layout = fa_layouts[0]
 
   # TODO(dasenov): Move the value -> accumulator conversion outisde of wgmma.
   # The associated fence could be a little expensive and is not needed if the
   # result a wgmma feeds into another wgmma (even in another loop step).
-  acc_in = _fragmented_array_from_ir(wgmma_op.accumulator)
+  acc_in = _fragmented_array_from_ir(wgmma_op.accumulator, wgmma_layout)
   regs = acc_in.to_layout(fa.WGMMA_LAYOUT)
   acc = wgmma.WGMMAAccumulator.from_registers(regs)
 
@@ -527,7 +546,7 @@ def _mgpu_wgmma_op_lowering_rule(
   b_swizzle, b_transforms = memref_layout_to_swizzle_and_transforms(b_layout)
 
   if ir.VectorType.isinstance(wgmma_op.a.type):
-    a_operand = _fragmented_array_from_ir(wgmma_op.a)
+    a_operand = _fragmented_array_from_ir(wgmma_op.a, wgmma_layout)
   else:
     a_layout = ir.MemRefType(wgmma_op.a.type).layout
     a_swizzle, a_transforms = memref_layout_to_swizzle_and_transforms(a_layout)

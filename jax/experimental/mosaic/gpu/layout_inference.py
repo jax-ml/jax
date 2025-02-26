@@ -205,11 +205,14 @@ def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
   # We first look at producers; this enables e.g. propagating splat layouts as
   # far down as possible, until since we may be able to propagate splat layouts
   # further down before requiring a relayout in that way.
+  all_inputs_have_layout = True
   for operand in op.operands:
     if not ir.VectorType.isinstance(operand.type):
       continue
     if (layout := _value_layout(operand)) is not None:
       layouts.add(layout)
+    else:
+      all_inputs_have_layout = False
 
   # We only look at consumers if we haven't found a possible layout yet. This is
   # to avoid propagating more complicated layouts up, to e.g. preserve splat
@@ -232,6 +235,10 @@ def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
   # This is left for a future change, and currently we only do "down
   # propagation".
   layout = _choose_representative_layout(layouts)
+  # It is unsafe to t conclude that this op produces a splat if not all inputs
+  # have been inferred: some of them might turn out not to be splats!
+  if layouts_lib.is_splat_fragmented_layout(layout) and not all_inputs_have_layout:
+    return None
   if layout is None:
     return None
 
