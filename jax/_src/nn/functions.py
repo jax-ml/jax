@@ -1241,8 +1241,10 @@ def scaled_dot_general(
   Returns:
       The result of the scaled dot general operation.
   """
-    # Create configs if not provided
+  # Create configs if not provided
   if configs is None:
+    if dtypes.float8_e8m0fnu is None:
+      raise ValueError("Requires >= ml_dtypes 0.5.0 to support float8_e8m0fnu")
     mxfp8_config = BlockScaleConfig(
         mode='mxfp8',
         block_size=32,

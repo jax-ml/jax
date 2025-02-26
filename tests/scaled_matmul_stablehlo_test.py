@@ -16,7 +16,6 @@ from jax._src.cudnn.scaled_matmul_stablehlo import (
     scaled_dot_general_wrapper,
     shape_normalization,
     quantize,
-    quantize_dequantize,
     BlockScaleConfig,
 )
 
@@ -57,6 +56,23 @@ sharding_configs = {
     for input_sharding, hlo, output_spec in zip(input_shardings, expected_hlos, expected_output_spec)
 }
 
+def quantize_to_qtype(x, q_dtype, compute_dtype, scale):
+  # Explicitly cast the max values to the compute dtype to avoid unnecessary
+  # casting to FP32 during the subsequent math operations."
+  assert q_dtype in (jnp.float8_e4m3fn, )
+  dtype_max = jnp.finfo(q_dtype).max.astype(compute_dtype)
+  scaled_x = x / jnp.broadcast_to(
+      jnp.asarray(scale, dtype=compute_dtype), x.shape
+  )
+  clipped_x = jnp.clip(scaled_x, -dtype_max, dtype_max)
+  return clipped_x.astype(q_dtype)
+
+def quantize_dequantize(x, q_dtype, scale, compute_dtype):
+  qx = quantize_to_qtype(x, q_dtype, compute_dtype, scale)
+  out = qx.astype(x.dtype) * jnp.broadcast_to(
+      jnp.asarray(scale, dtype=x.dtype), qx.shape
+  )
+  return out
 
 def generate_quantized_tensors(
     batch, lhs_non_contract, contract, rhs_non_contract,
