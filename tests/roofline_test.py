@@ -136,6 +136,7 @@ class RooflineTest(jtu.JaxTestCase):
         ici_bytes={"x": ici_bytes},
         ici_latency={"x": ici_latency},
         hbm_bytes=2 * itemsize * (mk + kn + mn),
+        unfused_hbm_bytes=2 * itemsize * (mk + kn + mn),
         # Right after all_gather.
         peak_hbm_bytes=itemsize * (mk * axis_size + mk + kn),
     )
@@ -186,6 +187,7 @@ class RooflineTest(jtu.JaxTestCase):
         ici_bytes={axis: ici_bytes for axis in ("x", "y")},
         ici_latency={axis: ici_latency for axis in ("x", "y")},
         hbm_bytes=itemsize * (mk + kn + mn),
+        unfused_hbm_bytes=itemsize * (mk + kn + mn),
         peak_hbm_bytes=itemsize * (mn),
     )
     self.assertDataclassEqual(results, expected)
@@ -301,6 +303,7 @@ class RooflineTest(jtu.JaxTestCase):
         ici_bytes={"x": ici_bytes},
         ici_latency={"x": ici_latency},
         hbm_bytes=itemsize * (mk + kn + mn),
+        unfused_hbm_bytes=itemsize * (mk + kn + mn),
         peak_hbm_bytes=itemsize * (mk + kn),
     )
     self.assertDataclassEqual(fwd_results, expected)
@@ -314,6 +317,7 @@ class RooflineTest(jtu.JaxTestCase):
         ici_bytes={"x": bwd_ici_bytes},
         ici_latency={"x": 3 * ici_latency},
         hbm_bytes=2 * bwd_itemsize * (mk + kn + mn),
+        unfused_hbm_bytes=2 * bwd_itemsize * (mk + kn + mn),
         # Residuals + cotangents.
         peak_hbm_bytes=bwd_itemsize * (mk + kn + mn),
     )
@@ -399,6 +403,7 @@ class RooflineTest(jtu.JaxTestCase):
         ici_bytes={"x": ici_bytes},
         ici_latency={"x": ici_latency},
         hbm_bytes=itemsize * (mk + kn + mn),
+        unfused_hbm_bytes=itemsize * (mk + kn + mn),
         peak_hbm_bytes=itemsize * (mk + kn),
     )
     self.assertDataclassEqual(fwd_results, expected)
@@ -412,6 +417,7 @@ class RooflineTest(jtu.JaxTestCase):
         ici_bytes={"x": bwd_ici_bytes},
         ici_latency={"x": 2 * ici_latency},
         hbm_bytes=2 * bwd_itemsize * (mk + kn + mn),
+        unfused_hbm_bytes=2 * bwd_itemsize * (mk + kn + mn),
         # Residuals + cotangents.
         # We gather kn while computing the kn cotangents.
         peak_hbm_bytes=bwd_itemsize * (kn + kn + mn),
@@ -435,13 +441,17 @@ class RooflineTest(jtu.JaxTestCase):
         lambda a, b: jnp.minimum(a, b),
         lambda a, b: jnp.maximum(a, b),
     ]:
-      _, result = roofline.roofline(
+      out, result = roofline.roofline(
           f,
           mesh=mesh.AbstractMesh(()),
           in_specs=(P(), P()),
           out_specs=P(),
       )(jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int))
       self.assertEqual(result.unfused_flops, 3 * 8)
+      self.assertEqual(
+          result.unfused_hbm_bytes,
+          2 * self._bytes_per_word * 3 * 8 + out.dtype.itemsize * 3 * 8,
+      )
 
   def test_broadcast(self):
     for left, right in [
@@ -495,6 +505,18 @@ class RooflineTest(jtu.JaxTestCase):
         lambda a, b: a + b,
     )(jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int))
     self.assertEqual(result.unfused_flops, 3 * 8)
+
+  def test_dot_general(self):
+    _, result = roofline.roofline(
+        lambda a, b: a @ b,
+        mesh=mesh.AbstractMesh(()),
+        in_specs=(P(), P()),
+        out_specs=P(),
+    )(jnp.zeros((3, 7), dtype=int), jnp.ones((7, 5), dtype=int))
+    self.assertEqual(result.unfused_flops, 2 * 3 * 7 * 5)
+    self.assertEqual(
+        result.unfused_hbm_bytes, self._bytes_per_word * (3 * 7 + 7 * 5 + 3 * 5)
+    )
 
   def test_reduce_sum_no_axis(self):
     _, result = roofline.roofline(

@@ -65,7 +65,14 @@ def _binary_p_roofline(
       max(l, r) for l, r in it.zip_longest(lhs.shape, rhs.shape, fillvalue=1)
   ]
   out = roofline.RooflineShape.from_aval(ctx.avals_out[0])
-  return roofline.RooflineResult(unfused_flops=int(np.prod(broadcasted_shape)))
+  return roofline.RooflineResult(
+      unfused_flops=int(np.prod(broadcasted_shape)),
+      unfused_hbm_bytes=(
+          lhs.dtype.itemsize * lhs.size
+          + rhs.dtype.itemsize * rhs.size
+          + out.dtype.itemsize * out.size
+      ),
+  )
 
 
 roofline.register_roofline(lax.add_p)(_binary_p_roofline)
@@ -113,7 +120,10 @@ def _dot_general_roofline(
     hbm_bytes += rhs.bytes
 
   return roofline.RooflineResult(
-      flops=int(flops), unfused_flops=int(flops), hbm_bytes=hbm_bytes
+      flops=int(flops),
+      unfused_flops=int(flops),
+      hbm_bytes=hbm_bytes,
+      unfused_hbm_bytes=hbm_bytes,
   )
 
 
