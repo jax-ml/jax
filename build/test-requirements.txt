@@ -20,4 +20,4 @@ matplotlib~=3.8.4; python_version=="3.10"
 matplotlib; python_version>="3.11"
 opt-einsum
 auditwheel
-tensorstore==0.1.72
+tensorstore
