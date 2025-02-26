@@ -101,7 +101,7 @@ def _copy_smem_to_gmem_lowering(
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
   src, src_transforms = lowering._handle_indexing(src, src_transforms)
   copy_params = _extract_gmem_copy_params(dst_transforms) | _extract_smem_copy_params(src_transforms)
-  if ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
     ctx.launch_ctx.async_copy(
         src_ref=src,
         dst_ref=dst,
@@ -262,7 +262,7 @@ def _copy_gmem_to_smem_lowering(
     )
   dst_ty = ir.MemRefType(dst.type)
   bytes = math.prod(dst_ty.shape) * mgpu.bytewidth(dst_ty.element_type)
-  if ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
     if bytes % WARPGROUP_SIZE:
       raise NotImplementedError("Only aligned copies are supported")
     # We arrive uniformly from each thread in the WG, so we need to divide the
@@ -880,7 +880,7 @@ def _jaxpr_call_lowering_rule(
     program_ids[axis] = lowering._program_id(axis, ctx.module_ctx.squashed_dims)
   new_module_ctx = dataclasses.replace(ctx.module_ctx, program_ids=program_ids)
   return lowering.lower_jaxpr_to_mosaic_gpu(
-      new_module_ctx, ctx.launch_ctx, jaxpr, args, thread_semantics=ctx.thread_semantics,
+      new_module_ctx, ctx.launch_ctx, jaxpr, args
   )
 
 

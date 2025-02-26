@@ -244,6 +244,7 @@ class ModuleContext:
   name_stack: source_info_util.NameStack
   traceback_caches: mlir.TracebackCaches
   squashed_dims: tuple[int, ...]
+  thread_semantics: mgpu.ThreadSemantics
 
   def reserve_barrier(self, barrier: mgpu.Barrier) -> mgpu.BarrierRef:
     """Reserves a barrier.
@@ -307,7 +308,6 @@ class ModuleContext:
 class LoweringRuleContext:
   module_ctx: ModuleContext
   launch_ctx: mgpu.LaunchContext
-  thread_semantics: mgpu_core.ThreadSemantics
   predicate: ir.Value
   prim: jax_core.Primitive
   avals_in: Sequence[jax_core.ShapedArray]
@@ -317,7 +317,7 @@ class LoweringRuleContext:
 
   @property
   def estimator_ctx(self) -> ResourceEstimatorContext:
-    return ResourceEstimatorContext(thread_semantics=self.thread_semantics)
+    return ResourceEstimatorContext(thread_semantics=self.module_ctx.thread_semantics)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -601,11 +601,12 @@ def lower_jaxpr_to_module(
         name_stack=source_info_util.NameStack(),
         traceback_caches=mlir.TracebackCaches(),
         squashed_dims=squashed_dims,
+        thread_semantics=thread_semantics,
     )
     del runtime_smem, grouped_barriers, runtime_barriers
 
     _ = lower_jaxpr_to_mosaic_gpu(
-        module_ctx, launch_ctx, jaxpr, buffers_gmem, consts, thread_semantics
+        module_ctx, launch_ctx, jaxpr, buffers_gmem, consts
     )
 
   rs = _estimate_resources(ResourceEstimatorContext(thread_semantics), jaxpr)
@@ -685,7 +686,6 @@ def lower_jaxpr_to_mosaic_gpu(
     jaxpr: jax_core.Jaxpr,
     args: Sequence[ir.Value],
     consts=(),
-    thread_semantics: mgpu.ThreadSemantics = mgpu.ThreadSemantics.Lane,
 ) -> Sequence[ir.Value]:
   env = {}
 
@@ -697,7 +697,7 @@ def lower_jaxpr_to_mosaic_gpu(
     # TODO(apaszke): Handle other avals (refs, etc.).
     if isinstance(aval := var.aval, jax_core.ShapedArray):
       # TODO(apaszke): Clarify the type invariants for lane semantics?
-      if thread_semantics == mgpu.ThreadSemantics.Warpgroup:
+      if module_ctx.thread_semantics == mgpu.ThreadSemantics.Warpgroup:
         # Shaped arrays must be vectors if and only if their shape is non-empty.
         # Those with empty shapes should be represented by their scalar type.
         mlir_dtype = mgpu_utils.dtype_to_ir_type(aval.dtype)
@@ -734,7 +734,7 @@ def lower_jaxpr_to_mosaic_gpu(
     )
     loc = mlir._source_info_to_location(module_ctx, eqn.primitive, source_info)
     with source_info_util.user_context(eqn.source_info.traceback), loc:
-      if eqn.primitive not in mosaic_lowering_rules[thread_semantics]:
+      if eqn.primitive not in mosaic_lowering_rules[module_ctx.thread_semantics]:
         raise NotImplementedError(
             "Unimplemented primitive in Pallas Mosaic GPU lowering: "
             f"{eqn.primitive.name}. "
@@ -749,11 +749,10 @@ def lower_jaxpr_to_mosaic_gpu(
         wrapper_stack = contextlib.ExitStack()
         wrapper_stack.enter_context(launch_ctx.named_region(name))
         named_regions.append(wrapper_stack)
-      rule = mosaic_lowering_rules[thread_semantics][eqn.primitive]
+      rule = mosaic_lowering_rules[module_ctx.thread_semantics][eqn.primitive]
       rule_ctx = LoweringRuleContext(
           module_ctx,
           launch_ctx,
-          thread_semantics,
           predicate=mgpu.single_thread_predicate(per_block=False),
           avals_in=[cast(jax_core.ShapedArray, v.aval) for v in eqn.invars],
           avals_out=[cast(jax_core.ShapedArray, v.aval) for v in eqn.outvars],
@@ -1039,7 +1038,6 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **kwargs):
     raise NotImplementedError
   return lower_jaxpr_to_mosaic_gpu(
       ctx.module_ctx, ctx.launch_ctx, jaxpr.jaxpr, args,
-      thread_semantics=ctx.thread_semantics
   )
 
 @register_lowering_rule(pjit.mesh_cast_p, mgpu.ThreadSemantics.Lane)
@@ -1066,7 +1064,7 @@ def _select_n_lowering_rule(ctx: LoweringRuleContext, pred, *cases):
     )
   pred_aval, *cases_avals = ctx.avals_in
   [out_aval] = ctx.avals_out
-  if ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
     pred = _ensure_fa(pred, pred_aval.dtype)
     cases = _bcast(*cases, *cases_avals, out_aval)
     # ``select`` expects the first case to be the true branch, but ``select_n``
@@ -1511,7 +1509,7 @@ def _run_scoped_lowering_rule(
   for v in jaxpr.invars:
     aval = v.aval
     if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
-      if ctx.thread_semantics == mgpu.ThreadSemantics.Warpgroup:
+      if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Warpgroup:
         # TODO(bchetioui): Fix this and remove the NotImplementedError.
         raise NotImplementedError(
             "WGMMA accumulators are not supported with Warpgroup semantics."
@@ -1556,7 +1554,6 @@ def _run_scoped_lowering_rule(
         discharged_jaxpr,
         new_input_vals,
         (),
-        thread_semantics=ctx.thread_semantics,
     )
     # Discharge appends to the output the refs that got discharged.
     outs = outs[:-sum(should_discharge)]
@@ -1567,7 +1564,6 @@ def _run_scoped_lowering_rule(
         jaxpr,
         input_refs,
         consts,
-        thread_semantics=ctx.thread_semantics,
     )
 
   assert len(outs) == len(jaxpr.outvars), (jaxpr, outs)
@@ -1646,7 +1642,7 @@ def _lower_jaxpr_to_for_loop(
 
     _ensure = (
         _ensure_fa
-        if ctx.thread_semantics == mgpu.ThreadSemantics.Lane
+        if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane
         else _ensure_ir_value
     )
     return [v if a else _ensure(v, av) for a, v, av in zip(is_acc, vals, avals)]
@@ -1659,7 +1655,7 @@ def _lower_jaxpr_to_for_loop(
     else:
       jaxpr_args = [*consts, *body_args]
     outs = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, jaxpr, jaxpr_args, thread_semantics=ctx.thread_semantics,
+        ctx.module_ctx, ctx.launch_ctx, jaxpr, jaxpr_args
     )
     return as_values(outs, out_avals)
 
@@ -1854,7 +1850,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
   # extract the return types
   with ir.InsertionPoint(ir.Module.create().body):
     outs = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx, ctx.launch_ctx, branches[0].jaxpr, args, thread_semantics=ctx.thread_semantics,
+        ctx.module_ctx, ctx.launch_ctx, branches[0].jaxpr, args
     )
     yielded_types = [v.type for v in jax.tree.leaves(_yielded_values(outs, ctx.avals_out))]
     del outs
@@ -1876,7 +1872,7 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
   for branch, region in zip(branches, regions):
     with ir.InsertionPoint(region.blocks.append()):
       outs = lower_jaxpr_to_mosaic_gpu(
-          ctx.module_ctx, ctx.launch_ctx, branch.jaxpr, args, consts=branch.consts, thread_semantics=ctx.thread_semantics,
+          ctx.module_ctx, ctx.launch_ctx, branch.jaxpr, args, consts=branch.consts
       )
 
       yielded_leaves, yielded_treedef = jax.tree.flatten(_yielded_values(outs, ctx.avals_out))
