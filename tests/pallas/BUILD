@@ -355,10 +355,12 @@ jax_multiplatform_test(
         "tpu_v5e",
         "tpu_v5p",
     ],
+    shard_count = 3,
     deps = [
         "//jax:extend",
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
+        "//third_party/py/hypothesis",
     ],
 )
 
