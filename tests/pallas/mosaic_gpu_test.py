@@ -902,9 +902,8 @@ class PallasCallTest(PallasTest):
       force_while=[False, True], thread_semantics=[*plgpu.ThreadSemantics]
   )
   def test_fori_loop_array(self, force_while, thread_semantics):
-    if thread_semantics == plgpu.ThreadSemantics.Warpgroup:
-      # TODO(apaszke,bchetioui,slebedev): Support while + array carries.
-      self.skipTest("WG semantics unsupported")
+    if force_while and thread_semantics == plgpu.ThreadSemantics.Warpgroup:
+      self.skipTest("WG semantics does not support force_while.")
 
     @functools.partial(
         pl.pallas_call,

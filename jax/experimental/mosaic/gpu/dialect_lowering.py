@@ -603,10 +603,91 @@ def _for_op_lowering_rule(
   return []
 
 
+@_register_lowering(scf.ForOp)
+def _for_op_lowering_rule(
+    ctx: LoweringContext, for_op: scf.ForOp
+) -> MlirLoweringRuleResult:
+  if not layouts.should_have_layout(for_op):
+    return _traverse_op_lowering_rule(ctx, for_op)
+  in_layouts = layouts.in_layouts(for_op)
+  out_layouts = layouts.out_layouts(for_op)
+  yield_op = for_op.body.operations[len(for_op.body.operations) - 1]
+  yield_layouts = layouts.in_layouts(yield_op)
+  if in_layouts != out_layouts or in_layouts != yield_layouts:
+    raise ValueError("Layout mismatch")
+  fa_layouts = in_layouts
+
+  fa_layouts_it = iter(fa_layouts)
+  arg_template = [
+      (_fragmented_array_from_ir(arg, next(fa_layouts_it)), arg.type)
+      if ir.VectorType.isinstance(arg.type)
+      else (arg, arg.type)
+      for arg in for_op.initArgs
+  ]
+  def lower_carry(carry):
+    fa_layouts_it = iter(fa_layouts)
+    carry_with_fas = [
+        _fragmented_array_from_ir(arg, next(fa_layouts_it))
+        if ir.VectorType.isinstance(arg.type)
+        else arg
+        for arg in carry
+    ]
+    lowered_carry = []
+    for c in carry_with_fas:
+      if isinstance(c, fa.FragmentedArray):
+        lowered_carry.extend(c.registers.flat)
+      else:
+        lowered_carry.append(c)
+    return lowered_carry
+
+  def recreate_carry(lowered_carry):
+    recreated_carry = []
+    arg_it = iter(lowered_carry)
+    for arg_value, arg_type in arg_template:
+      if isinstance(arg_value, fa.FragmentedArray):
+        carry_registers = np.asarray(
+            [next(arg_it) for _ in arg_value.registers.flat], dtype=object
+        )
+        carry_registers = carry_registers.reshape(arg_value.registers.shape)
+        carry = fa.FragmentedArray(
+            _registers=carry_registers,
+            _layout=arg_value.layout,
+            _is_signed=arg_value.is_signed,
+        )
+        recreated_carry.append(_fragmented_array_to_ir(carry, arg_type))
+      else:
+        recreated_carry.append(next(arg_it))
+    return recreated_carry
+
+  new_for_op = scf.ForOp(
+      for_op.lowerBound,
+      for_op.upperBound,
+      for_op.step,
+      lower_carry(for_op.initArgs),
+  )
+  with ir.InsertionPoint(new_for_op.body):
+    recreated_carry = recreate_carry(new_for_op.body.arguments[1:])
+    ops_to_lower = []
+    for op in for_op.body:
+      if op == yield_op:
+        continue
+      mgpu.private_operation_remove_from_parent(op)
+      mgpu.private_block_append_owned_operation(new_for_op.body, op)
+      ops_to_lower.append(op)
+    new_args = (new_for_op.induction_variable, *recreated_carry)
+    for old_carry, new_carry in zip(for_op.body.arguments, new_args, strict=True):
+      old_carry.replace_all_uses_with(new_carry)
+    for op in ops_to_lower:
+      ctx.lower_op(op)
+    new_yield_operands = lower_carry(yield_op.operands)
+    yield_op.erase()
+    scf.yield_(new_yield_operands)
+  return recreate_carry(new_for_op.results)
+
+
 @_register_lowering(func.FuncOp)
 @_register_lowering(gpu.LaunchOp)
 @_register_lowering(scf.IfOp)  # TODO(apaszke,bchetioui): Add a proper rule.
-@_register_lowering(scf.ForOp)  # TODO(apaszke,bchetioui): Add a proper rule.
 @_register_lowering(scf.IndexSwitchOp)  # TODO(apaszke,bchetioui): Add a proper rule.
 def _traverse_op_lowering_rule(
     ctx: LoweringContext, op: ir.OpView
@@ -661,6 +742,7 @@ def _should_lower(op: ir.OpView) -> bool:
 def lower_mgpu_dialect(
     module: ir.Module, launch_context: launch_context.LaunchContext | None
 ):
+  # TODO(apaszke,bchetioui): Make sure the layouts match.
   # TODO(bchetioui): rethink this API. It doesn't make sense to pass in a full
   # module and to traverse all `gpu.LaunchOp`s if we have a `LaunchContext` that
   # references a single `gpu.LaunchOp`.

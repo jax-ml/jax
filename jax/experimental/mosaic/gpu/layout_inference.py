@@ -317,6 +317,8 @@ def _infer_yield_op_layout(op: scf.YieldOp) -> OptionalLayouts:
     if not ir.VectorType.isinstance(result.type):
       continue
     if (layout := _value_layout(result)) is not None:
+      if layouts_lib.is_splat_fragmented_layout(layout):
+        return None
       layouts.append(layout)
     else:
       # Not all layouts could be inferred for vector ops. Return for now.
