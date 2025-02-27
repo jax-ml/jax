@@ -505,13 +505,11 @@ def preprocess(mesh, spec, parsed_pspec, _manual_axes=frozenset()):
         spec, "NamedSharding spec", allow_unconstrained_dims=True)
     _check_unique_resources(parsed_pspec, "NamedSharding spec")
   _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes)
-  _check_axis_type_consistency(mesh, parsed_pspec)
   return parsed_pspec
 
 def check_pspec(mesh, spec, _manual_axes=frozenset()):
   _check_unique_resources(spec, "NamedSharding spec")
   _check_mesh_resource_axis(mesh, spec, _manual_axes)
-  _check_axis_type_consistency(mesh, spec)
 
 def _check_unique_resources(
     pspec: ParsedPartitionSpec | PartitionSpec, arg_name: str
@@ -521,13 +519,14 @@ def _check_unique_resources(
   pspec = (pspec.get_partition_spec() if isinstance(pspec, ParsedPartitionSpec)
            else pspec)
   for d in pspec:
-    if d is not PartitionSpec.UNCONSTRAINED and d is not None:
-      d = d if isinstance(d, tuple) else (d,)
-      for resource in d:
-        count = resource_counts.get(resource, 0)
-        if count > 0:
-          duplicate = True
-        resource_counts[resource] = count + 1
+    if d is PartitionSpec.UNCONSTRAINED or d is None:
+      continue
+    d = d if isinstance(d, tuple) else (d,)
+    for resource in d:
+      count = resource_counts.get(resource, 0)
+      if count > 0:
+        duplicate = True
+      resource_counts[resource] = count + 1
   if duplicate:
     multiple_uses = [r for r, c in resource_counts.items() if c > 1]
     raise ValueError(
@@ -540,31 +539,23 @@ def _check_mesh_resource_axis(mesh, pspec, _manual_axes):
   pspec = (pspec.get_partition_spec() if isinstance(pspec, ParsedPartitionSpec)
            else pspec)
   for p in pspec:
-    if p is not PartitionSpec.UNCONSTRAINED and p is not None:
-      p = p if isinstance(p, tuple) else (p,)
-      for r in p:
-        if r not in mesh.shape:
-          raise ValueError(
-              f"Resource axis: {r} of {pspec} "
-              f"is not found in mesh: {tuple(mesh.shape.keys())}.")
-        if r in _manual_axes:
-          raise ValueError(
-              f"Axis: {r} of {pspec} "
-              f"is also found in manual_axes: {_manual_axes}.") from None
-
-
-@cache(max_size=128, trace_context_in_key=False)
-def _check_axis_type_consistency(mesh, pspec):
-  pspec = (pspec.get_partition_spec() if isinstance(pspec, ParsedPartitionSpec)
-           else pspec)
-  for p in pspec:
-    if p is not PartitionSpec.UNCONSTRAINED and p is not None:
-      p = p if isinstance(p, tuple) else (p,)
-      if not all(mesh._name_to_type[p[0]] == mesh._name_to_type[r] for r in p):
+    if p is PartitionSpec.UNCONSTRAINED or p is None:
+      continue
+    p = p if isinstance(p, tuple) else (p,)
+    for r in p:
+      if r not in mesh.shape:
         raise ValueError(
-            'AxisTypes should be the same in a tuple subset of PartitionSpec:'
-            f' {pspec}. Got subset {p} with axis'
-            f' types: ({", ".join(str(mesh._name_to_type[r]) for r in p)})')
+            f"Resource axis: {r} of {pspec} "
+            f"is not found in mesh: {tuple(mesh.shape.keys())}.")
+      if r in _manual_axes:
+        raise ValueError(
+            f"Axis: {r} of {pspec} "
+            f"is also found in manual_axes: {_manual_axes}.") from None
+    if not all(mesh._name_to_type[p[0]] == mesh._name_to_type[r] for r in p):
+      raise ValueError(
+          'AxisTypes should be the same in a tuple subset of PartitionSpec:'
+          f' {pspec}. Got subset {p} with axis'
+          f' types: ({", ".join(str(mesh._name_to_type[r]) for r in p)})')
   if (mesh_lib.AxisTypes.Auto not in mesh.axis_types and
       PartitionSpec.UNCONSTRAINED in pspec):
     raise ValueError(
