@@ -700,7 +700,8 @@ class LinearizeTrace(Trace):
     tangent_nzs_out = [type(t) is not Zero for t in tangents_out]
     return map(partial(maybe_linearize_tracer, self), primals_out, tangent_nzs_out, tangents_out)
 
-  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun,
+                   tracers, params):
     assert call_primitive.multiple_results
     primals, tangents = unzip2(map(self.to_primal_tangent_pair, tracers))
     nzs_in = tuple(type(t) is not Zero for t in tangents)
@@ -741,24 +742,24 @@ class LinearizeTrace(Trace):
       def new_out_axes_thunk():
         return new_out_axes
       params = dict(params, in_axes=new_in_axes, out_axes_thunk=new_out_axes_thunk)
-      ctx = lambda: core.extend_axis_env_nd([(params['axis_name'], params["global_axis_size"])])
-      with ctx():
-        lin_jaxpr = pe.convert_constvars_jaxpr(lin_jaxpr)
-    else:
-      lin_jaxpr = pe.convert_constvars_jaxpr(lin_jaxpr)
 
     update_params = call_linearize_param_updaters.get(call_primitive)
     num_new_args = len(residuals) + len(env)
     new_params = update_params(params, num_new_args, nzs_in) if update_params else params
     num_residuals = len(residual_avals)
 
-    assert type(self.tangent_trace) is pe.DynamicJaxprTrace
+    @as_hashable_function(closure=(num_residuals, lin_jaxpr))
+    def f_tangent(*args):
+      consts = args[:num_residuals]
+      nz_tangents = args[num_residuals:]
+      return core.eval_jaxpr(lin_jaxpr, consts, *nz_tangents)
+
+    thing = lu.wrap_init(f_tangent, debug_info=lin_jaxpr.debug_info)
     nz_tangents_in = [t for (t, nz) in zip(tangents, nzs_in) if nz]
-    process = (ctx()(self.tangent_trace._process_map)
-               if isinstance(call_primitive, core.MapPrimitive)
-               else self.tangent_trace._process_call)
-    nz_tangents_out = process(
-        call_primitive, lin_jaxpr, (), (*residuals, *env, *nz_tangents_in), new_params)
+    nz_tangents_out = call_primitive.bind_with_trace(
+        self.tangent_trace,
+        (thing,
+         *residuals, *env, *nz_tangents_in), new_params)
     nz_tangents_out_iter = iter(nz_tangents_out)
     tangents_out = [next(nz_tangents_out_iter) if nz else Zero.from_primal_value(primal)
                     for nz, primal in zip(nzs_out, primals_out)]
