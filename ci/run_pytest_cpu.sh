@@ -43,4 +43,4 @@ export JAX_ENABLE_64="$JAXCI_ENABLE_X64"
 # End of test environment variable setup
 
 echo "Running CPU tests..."
-"$JAXCI_PYTHON" -m pytest -n auto --tb=short --maxfail=20 tests examples
+"$JAXCI_PYTHON" -m pytest -n 32 --tb=short --maxfail=20 tests examples

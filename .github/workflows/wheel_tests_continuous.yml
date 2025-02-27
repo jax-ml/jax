@@ -21,6 +21,9 @@ on:
   schedule:
     - cron: "0 */2 * * *" # Run once every 2 hours
   workflow_dispatch: # allows triggering the workflow run manually
+  pull_request:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
