@@ -761,7 +761,10 @@ def fallback_linearize_rule(_prim: core.Primitive,
   if not jvp:
     msg = f"Differentiation rule for '{_prim}' not implemented"
     raise NotImplementedError(msg)
-  debug_jvp = debug_info("linearize_prim_jvp", jvp, primals, params)
+  # TODO(necula): this is needed when JAX_USE_DIRECT_LINEARIZE=1; figure out
+  # how to set the result_paths.
+  debug_jvp = debug_info("linearize_prim_jvp", jvp, primals, params,
+                         result_paths=("",))
   return linearize_from_jvp(jvp, _prim.multiple_results, _nonzeros, False, False,
                             debug_jvp, primals, params)
 
@@ -855,7 +858,7 @@ class LinearizeTracer(Tracer):
 
 primitive_jvps : dict[core.Primitive, Callable] = {}
 primitive_transposes: dict[core.Primitive, Callable] = {}
-primitive_linearizations : dict[core.Primitive, Callable]  = {}
+primitive_linearizations : dict[core.Primitive, Callable] = {}
 
 def deflinear(primitive, transpose_rule):
   primitive_jvps[primitive] = partial(linear_jvp, primitive)
