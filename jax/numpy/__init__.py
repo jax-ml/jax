@@ -254,6 +254,12 @@ from jax._src.numpy.tensor_contractions import (
   vdot as vdot,
 )
 
+from jax._src.numpy.util import (
+  ndim as ndim,
+  shape as shape,
+  size as size,
+)
+
 from jax._src.numpy.window_functions import (
     bartlett as bartlett,
     blackman as blackman,
@@ -279,15 +285,12 @@ from numpy import (
     integer as integer,
     iterable as iterable,
     nan as nan,
-    ndim as ndim,
     newaxis as newaxis,
     number as number,
     object_ as object_,
     pi as pi,
     save as save,
     savez as savez,
-    shape as shape,
-    size as size,
     signedinteger as signedinteger,
     unsignedinteger as unsignedinteger,
 )
