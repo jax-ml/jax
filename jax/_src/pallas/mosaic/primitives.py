@@ -421,6 +421,7 @@ class AsyncCopyDescriptor:
   src_sem_transforms: tuple[Transform, ...] | None
   device_id: int | jax.Array | None
   device_id_type: DeviceIdType = DeviceIdType.MESH
+  core_index: int | jax.Array | None = None
 
   def __post_init__(self):
     if (self.src_sem is None) ^ (self.device_id is None):
@@ -443,6 +444,7 @@ class AsyncCopyDescriptor:
           self.dst_sem,
           self.dst_sem_transforms,
           self.device_id,
+          self.core_index,
       ))
     else:
       return tree_util.tree_flatten((
@@ -455,6 +457,7 @@ class AsyncCopyDescriptor:
           self.src_sem,
           self.src_sem_transforms,
           self.device_id,
+          self.core_index,
       ))
 
   def start(self):
@@ -499,6 +502,7 @@ def _dma_start_abstract_eval(*args, tree, device_id_type):
       src_sem_aval,
       src_sem_transforms_avals,
       device_id_aval,
+      core_index_aval,
   ) = tree_util.tree_unflatten(tree, args)
   dst_sem_shape = dst_sem_aval.shape
   if dst_sem_transforms_avals:
@@ -533,6 +537,7 @@ def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
       src_sem,
       src_sem_transforms,
       device_id,
+      core_index,
   ) = tree_util.tree_unflatten(tree, invars)
   del src_sem_transforms
   # TODO(sharadmv): pretty print source semaphores and device id
@@ -562,6 +567,7 @@ def dma_start_partial_discharge_rule(should_discharge, in_avals, out_avals,
       src_sem,
       src_sem_transforms,
       device_id,
+      core_index,
   ) = tree_util.tree_unflatten(tree, args)
   (
       _,
@@ -573,8 +579,11 @@ def dma_start_partial_discharge_rule(should_discharge, in_avals, out_avals,
       src_sem_aval,
       src_sem_transforms_avals,
       _,
+      _,
   ) = tree_util.tree_unflatten(tree, in_avals)
   del out_avals
+  if core_index is not None:
+    raise NotImplementedError("Core id not supported.")
 
   (
       _,
@@ -737,6 +746,7 @@ def _dma_wait_pp_eqn(eqn: jax_core.JaxprEqn,
       _,
       _,
       _,
+      _,
   ) = tree_util.tree_unflatten(tree, invars)
   return pp.concat([
       pp.text("dma_wait"),
@@ -764,7 +774,10 @@ def dma_wait_partial_discharge_rule(should_discharge,
       src_sem_aval,
       src_sem_transforms_avals,
       device_id_aval,
+      core_index_aval,
   ) = tree_util.tree_unflatten(tree, in_avals)
+  if core_index_aval is not None:
+    raise NotImplementedError("Core id not supported.")
 
   # The only one we can discharge is the dst semaphore. The provided
   # buffers are only specified for their types and not their value so
@@ -815,6 +828,7 @@ def make_async_copy(src_ref, dst_ref, sem):
       None,
       None,
       DeviceIdType.MESH,
+      None,
   )
 
 def async_copy(src_ref, dst_ref, sem):
@@ -824,7 +838,8 @@ def async_copy(src_ref, dst_ref, sem):
   return copy_descriptor
 
 def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
-                           device_id_type: DeviceIdType = DeviceIdType.MESH):
+                           device_id_type: DeviceIdType = DeviceIdType.MESH,
+                           core_index: jax.Array | int | None = None):
   """Creates a description of a remote copy operation.
 
   Copies data from src_ref on the current device to dst_ref on the device
@@ -840,6 +855,7 @@ def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
     recv_sem: The semaphore on the destination device.
     device_id: The device id of the destination device.
     device_id_type: The type of the device id.
+    core_index: The core id of the destination device (only used in Megacore).
   Returns:
     An AsyncCopyDescriptor.
   """
@@ -858,6 +874,7 @@ def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
       send_sem_transforms,
       device_id,
       device_id_type=device_id_type,
+      core_index=core_index,
   )
 
 def async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,

@@ -3376,8 +3376,9 @@ def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
       src_sem,
       src_sem_transforms,
       device_id,
+      core_id,
   ) = tree_util.tree_unflatten(tree, args)
-  (src_ref_aval, _, dst_ref_aval, _, sem_aval, _, src_sem_aval, _, _) = (
+  (src_ref_aval, _, dst_ref_aval, _, sem_aval, _, src_sem_aval, _, _, _) = (
       tree_util.tree_unflatten(tree, ctx.avals_in)
   )
   if src_ref_aval.dtype == jnp.bool_:
@@ -3398,7 +3399,7 @@ def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   if device_id is not None:
     device_id = _device_id_to_logical(ctx, device_id, device_id_type)
   tpu.enqueue_dma(src_ref, dst_ref, sem, source_semaphore=src_sem,
-                  device_id=device_id)
+                  device_id=device_id, core_id=core_id)
 
   return []
 lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
@@ -3407,10 +3408,10 @@ lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
 def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
                             device_id_type: tpu_primitives.DeviceIdType):
   del device_id_type
-  (src, src_transforms, dst, transforms, sem, sem_transforms, _, _, _) = (
+  (src, src_transforms, dst, transforms, sem, sem_transforms, _, _, _, _) = (
       tree_util.tree_unflatten(tree, args)
   )
-  (src_aval, _, dst_aval, _, sem_aval, _, _, _, _) = tree_util.tree_unflatten(
+  (src_aval, _, dst_aval, _, sem_aval, _, _, _, _, _) = tree_util.tree_unflatten(
       tree, ctx.avals_in
   )
   block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)

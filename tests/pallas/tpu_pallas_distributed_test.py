@@ -253,6 +253,78 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     np.testing.assert_allclose(y, expected)
 
 
+class PallasCallRemoteDMAMegacoreTest(parameterized.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    if jax.device_count() < 2:
+      self.skipTest('Only >=2 devices are supported.')
+    if not jtu.is_device_tpu(5, ''):
+      self.skipTest('Only megacore supported.')
+
+  def test_remote_vmem_dma_cross_core(self):
+
+    @pl.run_state
+    def main_body(refs):
+      x_ref, y_ref = refs
+      mesh = pltpu.create_tensorcore_mesh('core')
+
+      @pl.core_map(mesh, compiler_params=pltpu.TPUCompilerParams(collective_id=0))
+      def _():
+        if jax.lax.psum(1, 'core') != 2:
+          self.skipTest('Only works with 2 cores.')
+        core_id = jax.lax.axis_index('core')
+        my_id = jax.lax.axis_index('x')
+        barrier_sem = pltpu.get_barrier_semaphore()
+        
+        pltpu.semaphore_signal(barrier_sem, 1, device_id=1-my_id)
+        pltpu.semaphore_wait(barrier_sem, 1)
+
+        @functools.partial(
+            pl.run_scoped,
+            x_vmem_ref=pltpu.VMEM((8, 128), jnp.float32),
+            y_vmem_ref=pltpu.VMEM((8, 128), jnp.float32),
+            core_sem=pltpu.SemaphoreType.REGULAR,
+            send_sem=pltpu.SemaphoreType.DMA,
+            recv_sem=pltpu.SemaphoreType.DMA,
+        )
+        def _(x_vmem_ref, y_vmem_ref, core_sem, send_sem, recv_sem):
+          pltpu.semaphore_signal(core_sem, core_index=1 - core_id)
+          pltpu.semaphore_wait(core_sem, 1)
+          pltpu.sync_copy(x_ref.at[core_id], x_vmem_ref)
+          desc = pltpu.make_async_remote_copy(
+              x_vmem_ref,
+              y_vmem_ref,
+              send_sem,
+              recv_sem,
+              device_id=1 - my_id,
+              core_index=core_id,
+          )
+          desc.start()
+          desc.wait()
+          pltpu.sync_copy(y_vmem_ref, y_ref.at[core_id])
+
+    def body(x):
+      y = pl.empty_like(x)
+      _, y = main_body((x, y))
+      return y
+
+    def shmap_body(x):
+      y = body(x)
+      return y
+
+    x = jnp.arange(4 * 8 * 128.0).reshape((4, 8, 128))
+
+    devices = jax.devices()[:2]
+    mesh = jax.sharding.Mesh(devices, ['x'])
+    y = jax.jit(
+        shard_map.shard_map(
+            shmap_body, mesh, in_specs=P('x'), out_specs=P('x'), check_rep=False
+        )
+    )(x)
+    np.testing.assert_array_equal(x[jnp.array([2, 3, 0, 1])], y)
+
+
 class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
 
   def setUp(self):
