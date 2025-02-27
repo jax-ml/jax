@@ -18,7 +18,7 @@ jobs:
   asan:
     # Don't execute in fork due to runner type
     if: ${{ github.repository == 'jax-ml/jax' || github.repository == 'google-ml-infra/jax-fork' }}
-    runs-on: linux-x86-n2-128
+    runs-on: linux-x86-n2-64
     container:
       image: index.docker.io/library/ubuntu@sha256:b359f1067efa76f37863778f7b6d0e8d911e3ee8efa807ad01fbf5dc1ef9006b # ratchet:ubuntu:24.04
     strategy:
@@ -90,4 +90,4 @@ jobs:
           echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
           echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
           # The LD_PRELOAD works around https://github.com/google/sanitizers/issues/934#issuecomment-649516500
-          LD_PRELOAD=/lib/x86_64-linux-gnu/libstdc++.so.6 python -m pytest -n auto --tb=short --maxfail=20 tests
+          LD_PRELOAD=/lib/x86_64-linux-gnu/libstdc++.so.6 python -m pytest -n 32 --tb=short --maxfail=20 tests
