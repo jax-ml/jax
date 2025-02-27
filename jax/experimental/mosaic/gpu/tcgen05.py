@@ -123,8 +123,6 @@ def mma(
       a,
       b,
       a_swizzle,
-      _wgmma.WGMMALayout.ROW_MAJOR,
-      _wgmma.WGMMALayout.COL_MAJOR,
       descriptor_const_init=TCGEN05_SMEM_DESCRIPTOR_BIT,
   )
 

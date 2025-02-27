@@ -306,8 +306,6 @@ def _validate_mma(
     a: Any,
     b: ir.Value,
     swizzle: int,
-    a_layout: WGMMALayout,
-    b_layout: WGMMALayout,
     descriptor_const_init: int = 0,
 ):
   # We need swizzle >= 32 to ensure that our K tiling is larger than the MMA
@@ -351,69 +349,113 @@ def _validate_mma(
 
   # Verify the shape and strides of B are as expected.
   k_tiles, n_tiles, k_tiling, n_tiling = b_ty.shape
-  if k_tiling != kn_tiling:
-    raise ValueError(b_ty.shape)
-  # Note that while this technically allows n to be smaller than kn_tile,
-  # the stride checks above will still enforce that the memory region is padded.
-  # It might be possible to relax that requirement, but I haven't tested it.
-  if n_tiling > kn_tiling and n_tiling % kn_tiling:
-    raise ValueError(n_tiling, kn_tiling)
-  k = k_tiles * kn_tiling
+  k = k_tiles * k_tiling
   n = n_tiles * n_tiling
 
   b_strides, _ = b_ty.get_strides_and_offset()
   b_byte_strides = [s * element_bytewidth for s in b_strides]
-  b_k_byte_stride = b_byte_strides[0]
-  if b_byte_strides[1] != swizzle * kn_tiling:
-    raise ValueError(b_byte_strides)
-  if b_byte_strides[2:] == [swizzle, element_bytewidth]:
+  b_k_byte_stride, b_n_byte_stride, *b_tile_byte_strides = b_byte_strides
+  # TODO(apaszke): I think they don't have to, but only if we use the tiling
+  # equal to the swizzle atom shape!
+  if b_byte_strides[1] != n_tiling * k_tiling * element_bytewidth:
+    raise ValueError("B tiles must be contiguous along the N dimension")
+  if b_tile_byte_strides == [swizzle, element_bytewidth]:
     b_order = WGMMALayout.ROW_MAJOR
-  elif b_byte_strides[2:] == [element_bytewidth, swizzle]:
+    if n_tiling != kn_tiling:
+      raise ValueError(
+          "Row major RHS (MN-fastest) requires the N tile size to be equal to"
+          f" the swizzle tile size ({kn_tiling}), but got {n_tiling}"
+      )
+    if k_tiling not in {32 // element_bytewidth, kn_tiling}:
+      raise ValueError(
+          "Row major RHS (MN-fastest) requires the K tile size to be either"
+          f" the swizzle tile size ({kn_tiling}) or 32 bytes"
+          f" ({32 // element_bytewidth}), but got {k_tiling}"
+      )
+  elif b_tile_byte_strides == [element_bytewidth, swizzle]:
     b_order = WGMMALayout.COL_MAJOR
+    if k_tiling != kn_tiling:
+      raise ValueError(
+          "Column major RHS (K-fastest) requires the K tile size to be equal"
+          f" to the swizzle tile size ({kn_tiling}), but got {k_tiling}"
+      )
+    if n_tiling not in {8, kn_tiling}:
+      raise ValueError(
+          "Column major RHS (K-fastest) requires the N tile size to be either"
+          f" to the swizzle tile size ({kn_tiling}) or 8, but got {n_tiling}"
+      )
   else:
     raise ValueError(b_byte_strides)
 
   # Verify the shape and strides of A are as expected.
   if not a_in_smem:
     m = a_shape[0]
-    a_order = m_tiling = None
+    a_order = m_tiling = a_m_byte_stride = None
   else:
     a_ty = ir.MemRefType(a.type)
-    m_tiles, k_tiles, m_tiling, k_tiling = a_ty.shape
+    m_tiles, k_tiles, m_tiling, a_k_tiling = a_ty.shape
     m = m_tiles * m_tiling
-    if k_tiling != kn_tiling or k_tiles * k_tiling != k:
+    if a_k_tiling != kn_tiling or k_tiles * a_k_tiling != k:
       raise ValueError(a_ty.shape)
     a_strides, _ = ir.MemRefType(a.type).get_strides_and_offset()
     a_byte_strides = [s * element_bytewidth for s in a_strides]
+    a_m_byte_stride = a_byte_strides[0]
     if a_byte_strides[2:] == [swizzle, element_bytewidth]:
       a_order = WGMMALayout.ROW_MAJOR
     elif a_byte_strides[2:] == [element_bytewidth, swizzle]:
       a_order = WGMMALayout.COL_MAJOR
     else:
       raise ValueError(a_byte_strides)
-    if a_order != a_layout and m_tiling != kn_tiling:
+    if a_order != WGMMALayout.ROW_MAJOR and m_tiling != kn_tiling:
       # Not sure what the layout is like, since the tiles aren't square.
       raise NotImplementedError
 
-  tnsp_lbo = swizzle * (swizzle // 32)
-  sbo = swizzle // 2
+  b_k_fastest = b_order == WGMMALayout.COL_MAJOR
+  a_k_fastest = a_order == WGMMALayout.ROW_MAJOR
+
+  # Here "leading" refers to the fastest changing dimension.
+  # Leading byte offset (LBO)
+  #   K-fastest: ignored
+  #   MN-fastest: stride between consecutive that share the same K coordinate.
+  # Stride byte offset (SBO)
+  #   K-fastest: offset from one swizzle atom to the next
+  #   MN-fastest: offset from one swizzle atom to the next
+  # This is the number of rows until consecutive repeats of the swizzle pattern.
+  swizzle_pattern_rows = swizzle // 16
   a_desc_fields = dict(
-      leading_byte_offset=(1 if a_order == a_layout else tnsp_lbo) << 4,
-      stride_byte_offset=sbo << 4,
+      # TODO(apaszke): a_m_byte_stride works, but is not convincing to me.
+      # After all MMA can only consume a fixed number of bytes from LHS.
+      leading_byte_offset=16 if a_k_fastest else a_m_byte_stride,
+      stride_byte_offset=128 * swizzle_pattern_rows,
       swizzle=swizzle,
       memory_space=3,
   )
+  # If B is N-fastest, then LBO is the stride between tiles that share the same
+  # K coordinate. In this case our tiles are always (k_tiling, n_tiling), and we
+  # know that the tiles are always laid out in N-fastest order, so the stride
+  # we're looking for is the stride between the N tiles.
   b_desc_fields = dict(
-      leading_byte_offset=(1 if b_order == b_layout else tnsp_lbo) << 4,
-      stride_byte_offset=sbo << 4,
+      leading_byte_offset=16 if b_k_fastest else b_n_byte_stride,
+      stride_byte_offset=128 * swizzle_pattern_rows,
       swizzle=swizzle,
       memory_space=3,
   )
+  # The K strides indicate the stride between the consecutive places where all
+  # coordinates are 0 except for K being incremented by the instruction width.
+  # If an input is K-fastest, we increment the descriptor by 32 bytes, since
+  # that is the K-width of all MMA instructions.
+  # TODO(apaszke): Improve explanation for the MN-fastest case.
   wgmma_params = dict(
-      a_transpose=a_order != a_layout,
-      b_transpose=b_order != b_layout,
-      a_k_stride=(2 if a_order == a_layout else swizzle) << 4,
-      b_k_stride=(2 if b_order == b_layout else swizzle) << 4,
+      a_transpose=not a_k_fastest,
+      b_transpose=not b_k_fastest,
+      a_k_stride=32 if a_k_fastest else swizzle * 16,
+      # If we use the square swizzle tiling for B, the first K tiles are always
+      # contained within the first tile, which is why the offset is swizzle * 16.
+      # If we use the small non-square tiling and N-fastest layout, the next set
+      # of K tiles is far away, because the N tiles are contiguous.
+      b_k_stride=32
+      if b_k_fastest
+      else (swizzle * 16 if k_tiling == kn_tiling else b_k_byte_stride),
       swizzle=swizzle,
       element_type=ir.FloatTF32Type.get()
       if ir.F32Type.isinstance(element_type)
@@ -440,7 +482,7 @@ def _validate_mma(
       element_type,
       wgmma_params,
       a_k_byte_stride,
-      b_k_byte_stride,
+      b_k_byte_stride * (1 if k_tiling == kn_tiling else swizzle // 32),
   )
 
 
@@ -478,7 +520,7 @@ def wgmma(
       wgmma_params,
       a_k_byte_stride,
       b_k_byte_stride,
-  ) = _validate_mma(a, b, swizzle, WGMMALayout.ROW_MAJOR, WGMMALayout.COL_MAJOR)
+  ) = _validate_mma(a, b, swizzle)
 
   if n > 256:
     raise ValueError(f"N must be smaller than 256, got {n}")
