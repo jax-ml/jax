@@ -213,11 +213,15 @@ def get_gcc_major_version(gcc_path: str):
   return major_version
 
 
-def get_jax_configure_bazel_options(bazel_command: list[str]):
+def get_jax_configure_bazel_options(bazel_command: list[str], use_new_wheel_build_rule: bool):
   """Returns the bazel options to be written to .jax_configure.bazelrc."""
   # Get the index of the "run" parameter. Build options will come after "run" so
-  # we find the index of "run" and filter everything after it.
-  start = bazel_command.index("run")
+  # we find the index of "run" and filter everything after it. If we are using
+  # the new wheel build rule, we will find the index of "build" instead.
+  if use_new_wheel_build_rule:
+    start = bazel_command.index("build")
+  else:
+    start = bazel_command.index("run")
   jax_configure_bazel_options = ""
   try:
     for i in range(start + 1, len(bazel_command)):
