@@ -34,6 +34,7 @@ _TPU_V4 = 'TPU v4'
 _TPU_V5_LITE = "TPU v5 lite"
 _TPU_V5E = "TPU v5e"
 _TPU_V5P = "TPU v5p"
+_TPU_V5 = "TPU v5"
 
 # Maps physical topology -> mesh shape -> transpose to use for jekbradbury's
 # famous contiguous mesh trick.
@@ -172,6 +173,12 @@ def _v5p_create_device_mesh(
       devices,
       key=lambda d: tuple(reversed(getattr(d, "coords", (0, 0, 0)))))
 
+  if bound_x == bound_y == 2 and bound_z == 1 and len(devices) == 4:
+    device_mesh = np.asarray(sequential_devices)
+    device_mesh = device_mesh[np.array(_TRAY_2x2_RING_ORDER)]
+    device_mesh = device_mesh.reshape(mesh_shape)
+    return device_mesh
+
   if bound_x == bound_y == 2 and bound_z == 2:
     device_mesh = np.asarray(sequential_devices)
     device_mesh = device_mesh[np.array(_V5P_2x2x2_ORDER)]
@@ -190,6 +197,7 @@ device_kind_handler_dict: dict[
     _TPU_V3: _tpu_v2_v3_create_device_mesh,
     _TPU_V5_LITE: _v5e_create_device_mesh,
     _TPU_V5P: _v5p_create_device_mesh,
+    _TPU_V5: _v5p_create_device_mesh,
 }
 
 
