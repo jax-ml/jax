@@ -90,4 +90,4 @@ jobs:
           echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
           echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
           # The LD_PRELOAD works around https://github.com/google/sanitizers/issues/934#issuecomment-649516500
-          LD_PRELOAD=/lib/x86_64-linux-gnu/libstdc++.so.6 python -m pytest -n auto --tb=short --maxfail=20 tests
+          LD_PRELOAD=/lib/x86_64-linux-gnu/libstdc++.so.6 python -m pytest -n 32 --tb=short --maxfail=20 tests
