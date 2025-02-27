@@ -70,6 +70,7 @@ py_binary(
 
 jax_wheel(
     name = "jax_wheel",
+    build_wheel_only = False,
     platform_independent = True,
     source_files = [
         ":transitive_py_data",

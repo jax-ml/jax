@@ -60,14 +60,23 @@ def platform_tag(cpu: str) -> str:
 
 
 def build_wheel(
-    sources_path: str, output_path: str, package_name: str, git_hash: str = ""
+    sources_path: str,
+    output_path: str,
+    package_name: str,
+    git_hash: str = "",
+    build_wheel_only: bool = True,
 ) -> None:
   """Builds a wheel in `output_path` using the source tree in `sources_path`."""
   env = dict(os.environ)
   if git_hash:
     env["JAX_GIT_HASH"] = git_hash
-  subprocess.run([sys.executable, "-m", "build", "-n", "-w"],
-                 check=True, cwd=sources_path, env=env)
+  subprocess.run(
+      [sys.executable, "-m", "build", "-n"]
+      + (["-w"] if build_wheel_only else []),
+      check=True,
+      cwd=sources_path,
+      env=env,
+  )
   for wheel in glob.glob(os.path.join(sources_path, "dist", "*.whl")):
     output_file = os.path.join(output_path, os.path.basename(wheel))
     sys.stderr.write(f"Output wheel: {output_file}\n\n")
@@ -82,6 +91,12 @@ def build_wheel(
     sys.stderr.write("  bazel run //build:requirements.update" +
                      f" --repo_env=HERMETIC_PYTHON_VERSION={py_version}\n\n")
     shutil.copy(wheel, output_path)
+  if not build_wheel_only:
+    for dist in glob.glob(os.path.join(sources_path, "dist", "*.tar.gz")):
+      output_file = os.path.join(output_path, os.path.basename(dist))
+      sys.stderr.write(f"Output source distribution: {output_file}\n\n")
+      shutil.copy(dist, output_path)
+
 
 def build_editable(
     sources_path: str, output_path: str, package_name: str

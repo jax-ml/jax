@@ -340,6 +340,12 @@ def _get_full_wheel_name(package_name, no_abi, platform_independent, platform_na
         ),
     )
 
+def _get_source_distribution_name(package_name, wheel_version):
+    return "{package_name}-{wheel_version}.tar.gz".format(
+        package_name = package_name,
+        wheel_version = wheel_version,
+    )
+
 def _jax_wheel_impl(ctx):
     include_cuda_libs = ctx.attr.include_cuda_libs[BuildSettingInfo].value
     override_include_cuda_libs = ctx.attr.override_include_cuda_libs[BuildSettingInfo].value
@@ -367,6 +373,7 @@ def _jax_wheel_impl(ctx):
     cpu = ctx.attr.cpu
     no_abi = ctx.attr.no_abi
     platform_independent = ctx.attr.platform_independent
+    build_wheel_only = ctx.attr.build_wheel_only
     platform_name = ctx.attr.platform_name
     wheel_name = _get_full_wheel_name(
         package_name = ctx.attr.wheel_name,
@@ -376,9 +383,18 @@ def _jax_wheel_impl(ctx):
         cpu_name = cpu,
         wheel_version = full_wheel_version,
     )
-    output_file = ctx.actions.declare_file(output_path +
-                                           "/" + wheel_name)
-    wheel_dir = output_file.path[:output_file.path.rfind("/")]
+    wheel_file = ctx.actions.declare_file(output_path +
+                                          "/" + wheel_name)
+    wheel_dir = wheel_file.path[:wheel_file.path.rfind("/")]
+    outputs = [wheel_file]
+    if not build_wheel_only:
+        source_distribution_name = _get_source_distribution_name(
+            package_name = ctx.attr.wheel_name,
+            wheel_version = full_wheel_version,
+        )
+        source_distribution_file = ctx.actions.declare_file(output_path +
+                                                            "/" + source_distribution_name)
+        outputs.append(source_distribution_file)
 
     args.add("--output_path", wheel_dir)  # required argument
     if not platform_independent:
@@ -409,13 +425,13 @@ def _jax_wheel_impl(ctx):
     ctx.actions.run(
         arguments = [args],
         inputs = srcs,
-        outputs = [output_file],
+        outputs = outputs,
         executable = executable,
         env = env,
         mnemonic = "BuildJaxWheel",
     )
 
-    return [DefaultInfo(files = depset(direct = [output_file]))]
+    return [DefaultInfo(files = depset(direct = outputs))]
 
 _jax_wheel = rule(
     attrs = {
@@ -428,6 +444,7 @@ _jax_wheel = rule(
         "wheel_name": attr.string(mandatory = True),
         "no_abi": attr.bool(default = False),
         "platform_independent": attr.bool(default = False),
+        "build_wheel_only": attr.bool(default = True),
         "cpu": attr.string(mandatory = True),
         "platform_name": attr.string(mandatory = True),
         "git_hash": attr.label(default = Label("//jaxlib/tools:jaxlib_git_hash")),
@@ -451,6 +468,7 @@ def jax_wheel(
         wheel_name,
         no_abi = False,
         platform_independent = False,
+        build_wheel_only = True,
         enable_cuda = False,
         platform_version = "",
         source_files = []):
@@ -463,6 +481,7 @@ def jax_wheel(
       wheel_binary: the binary to use to build the wheel
       wheel_name: the name of the wheel
       no_abi: whether to build a wheel without ABI
+      build_wheel_only: whether to build a wheel without source distribution
       platform_independent: whether to build a wheel without platform tag
       enable_cuda: whether to build a cuda wheel
       platform_version: the cuda version to use for the wheel
@@ -477,6 +496,7 @@ def jax_wheel(
         wheel_name = wheel_name,
         no_abi = no_abi,
         platform_independent = platform_independent,
+        build_wheel_only = build_wheel_only,
         enable_cuda = enable_cuda,
         platform_version = platform_version,
         # git_hash is empty by default. Use `--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)`
