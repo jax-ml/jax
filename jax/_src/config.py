@@ -1811,3 +1811,8 @@ enable_empty_arrays = bool_state(
         "arrays. This is to support MPMD/pipeline parallelism in McJAX (WIP)."
     )
 )
+
+rbg_remat_unsafe = define_bool_state(
+    name='jax_rbg_remat_unsafe',
+    default=False,
+    help=('Allows unsafe combination of jax.remat and rbg / unsafe_rbg PRNGs.'))
