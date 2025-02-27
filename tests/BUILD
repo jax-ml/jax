@@ -1656,6 +1656,15 @@ jax_multiplatform_test(
     tags = ["multiaccelerator"],
 )
 
+jax_multiplatform_test(
+    name = "scaled_matmul_stablehlo_test",
+    srcs = ["scaled_matmul_stablehlo_test.py"],
+    enable_backends = ["gpu"],
+    shard_count = {
+        "gpu": 4,
+    },
+)
+
 jax_py_test(
     name = "custom_partitioning_sharding_rule_test",
     srcs = ["custom_partitioning_sharding_rule_test.py"],
