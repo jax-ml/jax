@@ -479,6 +479,7 @@ def jax_wheel(
         build_wheel_only = True,
         editable = False,
         enable_cuda = False,
+        enable_rocm = False,
         platform_version = "",
         source_files = []):
     """Create jax artifact wheels.
@@ -494,6 +495,7 @@ def jax_wheel(
       editable: whether to build an editable wheel
       platform_independent: whether to build a wheel without platform tag
       enable_cuda: whether to build a cuda wheel
+      enable_rocm: whether to build a rocm wheel
       platform_version: the cuda version to use for the wheel
       source_files: the source files to include in the wheel
 
@@ -509,6 +511,7 @@ def jax_wheel(
         build_wheel_only = build_wheel_only,
         editable = editable,
         enable_cuda = enable_cuda,
+        enable_rocm = enable_rocm,
         platform_version = platform_version,
         # git_hash is empty by default. Use `--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)`
         # flag in bazel command to pass the git hash for nightly or release builds.
