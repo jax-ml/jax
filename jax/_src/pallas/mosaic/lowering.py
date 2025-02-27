@@ -3427,9 +3427,7 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
       wait_ref = src if src_is_smem else dst
     else:
       wait_ref = dst
-    # Legacy instruction emits only an sfence if the target/dst ref is in smem.
-    # So, we pass the src ref to the wait instruction if it is in smem to
-    # ensure legacy cases are correct, while technically keeping API compat.
+    # Legacy instruction backwards compatibility.
     tpu.wait_dma(sem, wait_ref)
   else:
     tpu.wait_dma2(sem, src, dst)
