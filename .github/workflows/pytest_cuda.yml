@@ -1,3 +1,4 @@
+
 # CI - Pytest CUDA
 #
 # This workflow runs the CUDA tests with Pytest. It can only be triggered by other workflows via
@@ -10,7 +11,6 @@
 #      - Installs the downloaded wheel artifacts.
 #      - Runs the CUDA tests with Pytest.
 name: CI - Pytest CUDA
-
 on:
   workflow_call:
     inputs:
@@ -49,7 +49,6 @@ on:
         type: boolean
         required: false
         default: false
-
 jobs:
   run-tests:
     defaults:
@@ -61,25 +60,21 @@ jobs:
     container:  ${{ (contains(inputs.cuda, '12.3') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.3-cudnn9.1:latest') ||
                 (contains(inputs.cuda, '12.1') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.1-cudnn9.1:latest') }}
     name: "Pytest CUDA (${{ inputs.runner }}, CUDA ${{ inputs.cuda }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
-
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
       JAXCI_PYTHON: "python${{ inputs.python }}"
       JAXCI_ENABLE_X64: "${{ inputs.enable-x64 }}"
       JAXCI_INSTALL_JAX_CURRENT_COMMIT: "${{ inputs.install-jax-current-commit }}"
-
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Set env vars for use in artifact download URL
         run: |
           os=$(uname -s | awk '{print tolower($0)}')
           arch=$(uname -m)
-
           # Get the major and minor version of Python.
           # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.10, then python_major_minor=310
           # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13-nogil, then python_major_minor=313t
           python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')
-
           echo "OS=${os}" >> $GITHUB_ENV
           echo "ARCH=${arch}" >> $GITHUB_ENV
           # Python wheels follow a naming convention: standard wheels use the pattern
@@ -97,7 +92,6 @@ jobs:
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
-
           # Download the "jax" wheel from GCS if inputs.install-jax-current-commit is not set to 1
           if [[ "${{ inputs.install-jax-current-commit }}" != 1 ]]; then
             gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
@@ -110,7 +104,17 @@ jobs:
           echo "Skipping the test run."
           exit 1
       - name: Install Python dependencies
-        run: $JAXCI_PYTHON -m uv pip install -r build/requirements.in
+        run: |
+          # python 3.13t cannot compile zstandard 0.23.0 due to
+          # https://github.com/indygreg/python-zstandard/issues/231. Remove this once zstandard
+          # has a prebuilt wheel for 3.13t or an env marker is available for free threading python
+          # in requirements.in.
+          if [[ $JAXCI_PYTHON =~ "python3.13-nogil" ]]; then
+            grep -v "zstandard" build/requirements.in > requirements_without_zstandard.txt
+            $JAXCI_PYTHON -m uv pip install -r requirements_without_zstandard.txt
+          else
+            $JAXCI_PYTHON -m uv pip install -r build/requirements.in
+          fi
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@main

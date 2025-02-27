@@ -17,7 +17,7 @@ on:
 jobs:
   asan:
     # Don't execute in fork due to runner type
-    if: ${{ github.repository == 'jax-ml/jax' || github.repository == 'google-ml-infra/jax-fork' }}
+    if: ${{ github.repository == 'jax-ml/jax' }}
     runs-on: linux-x86-n2-64
     container:
       image: index.docker.io/library/ubuntu@sha256:b359f1067efa76f37863778f7b6d0e8d911e3ee8efa807ad01fbf5dc1ef9006b # ratchet:ubuntu:24.04
