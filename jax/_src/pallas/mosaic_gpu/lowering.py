@@ -285,15 +285,21 @@ class ModuleContext:
     off = initial_used_bytes = self.smem_used_bytes
     assert off % _SMEM_ALIGNMENT == 0
     smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+    i32 = ir.IntegerType.get_signless(32)
     for s in structs:
       scratch_ty = ir.MemRefType.get(
           s.shape,
           mgpu_utils.dtype_to_ir_type(s.dtype),
           memory_space=smem,
       )
-      views.append(
-          memref_dialect.view(scratch_ty, self.runtime_smem, _as_index(off), [])
-      )
+      if self.thread_semantics == mgpu.ThreadSemantics.Lane:
+        view = memref_dialect.view(
+            scratch_ty, self.runtime_smem, _as_index(off), []
+        )
+      else:
+        view = mgpu.dialect.slice_smem(scratch_ty, mgpu_utils.c(off, i32))
+      views.append(view)
+
       off += _align_to(
           math.prod(s.shape) * jnp.dtype(s.dtype).itemsize, _SMEM_ALIGNMENT
       )

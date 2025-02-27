@@ -28,12 +28,14 @@ from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import llvm
+from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import numpy as np
 
 from . import fragmented_array as fa
+from . import inference_utils
 from . import launch_context
 from . import layouts
 from . import utils
@@ -61,7 +63,9 @@ class LoweringContext:
     lowering_rule = _lowerings[name]
 
     # TODO(bchetioui): make sure all layouts are set here.
-    if layouts.should_have_layout(op) and not layouts.has_any_layout_set(op):
+    if inference_utils.should_have_layout(
+        op
+    ) and not inference_utils.has_any_layout_set(op):
       raise ValueError(f"{op} is missing a layout and can not be lowered.")
 
     new_results = lowering_rule(self, op)
@@ -277,7 +281,7 @@ def _vector_store_op_lowering_rule(
           f"for {vector_store_op}"
       )
 
-  [to_store_layout] = layouts.in_layouts(vector_store_op)
+  [to_store_layout] = inference_utils.in_layouts(vector_store_op)
   fragmented_array = _fragmented_array_from_ir(
       vector_store_op.valueToStore, to_store_layout
   )
@@ -437,8 +441,8 @@ def _binary_op_lowering_rule(
         [fa.FragmentedArray, fa.FragmentedArray], fa.FragmentedArray
     ],
 ) -> Sequence[ir.Value]:
-  in_layouts = layouts.in_layouts(op)
-  [layout] = layouts.out_layouts(op)
+  in_layouts = inference_utils.in_layouts(op)
+  [layout] = inference_utils.out_layouts(op)
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
   lhs = _fragmented_array_from_ir(op.lhs, layout, is_signed)
@@ -492,8 +496,8 @@ CMPI_IMPLS = {
 def _cmpi_op_lowering_rule(
     _: LoweringContext, op: arith.CmpIOp
 ) -> Sequence[ir.Value]:
-  in_layouts = layouts.in_layouts(op)
-  [layout] = layouts.out_layouts(op)
+  in_layouts = inference_utils.in_layouts(op)
+  [layout] = inference_utils.out_layouts(op)
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
   impl, is_signed = CMPI_IMPLS[op.predicate.value]
@@ -516,8 +520,8 @@ CMPF_IMPLS = {
 def _cmpf_op_lowering_rule(
     _: LoweringContext, op: arith.CmpFOp
 ) -> Sequence[ir.Value]:
-  in_layouts = layouts.in_layouts(op)
-  [layout] = layouts.out_layouts(op)
+  in_layouts = inference_utils.in_layouts(op)
+  [layout] = inference_utils.out_layouts(op)
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
   impl = CMPF_IMPLS[op.predicate.value]
@@ -530,7 +534,10 @@ def _cmpf_op_lowering_rule(
 def _mgpu_wgmma_op_lowering_rule(
     _: LoweringContext, wgmma_op: mgpu.WGMMAOp
 ) -> Sequence[ir.Value]:
-  fa_layouts = (*layouts.in_layouts(wgmma_op), *layouts.out_layouts(wgmma_op))
+  fa_layouts = (
+      *inference_utils.in_layouts(wgmma_op),
+      *inference_utils.out_layouts(wgmma_op),
+  )
   if not all(map(layouts.is_wgmma_fragmented_layout, fa_layouts)):
     raise ValueError("Layout mismatch")
   wgmma_layout = fa_layouts[0]
@@ -544,6 +551,9 @@ def _mgpu_wgmma_op_lowering_rule(
 
   b_layout = ir.MemRefType(wgmma_op.b.type).layout
   b_swizzle, b_transforms = memref_layout_to_swizzle_and_transforms(b_layout)
+  b_operand = transform_memref(wgmma_op.b, b_transforms)
+  if wgmma_op.transpose_b:
+    b_operand = utils.memref_transpose(b_operand, (0, 1, 3, 2))
 
   if ir.VectorType.isinstance(wgmma_op.a.type):
     a_operand = _fragmented_array_from_ir(wgmma_op.a, wgmma_layout)
@@ -556,13 +566,10 @@ def _mgpu_wgmma_op_lowering_rule(
           f" {b_swizzle}"
       )
     a_operand = transform_memref(wgmma_op.a, a_transforms)
+    if wgmma_op.transpose_a:
+      a_operand = utils.memref_transpose(a_operand, (0, 1, 3, 2))
 
-  new_acc = wgmma.wgmma(
-      acc,
-      a_operand,
-      transform_memref(wgmma_op.b, b_transforms),
-      swizzle=b_swizzle,
-  )
+  new_acc = wgmma.wgmma(acc, a_operand, b_operand, swizzle=b_swizzle)
 
   return [_fragmented_array_to_ir(new_acc.value, wgmma_op.accumulator.type)]
 
@@ -592,27 +599,38 @@ def _mgpu_wait_op_lowering_rule(
   return []
 
 
-@_register_lowering(WaitOp)
-def _for_op_lowering_rule(
-    _: LoweringContext, wait_op: scf.ForOp
+@_register_lowering(mgpu.SliceSMEMOp)
+def _mgpu_slice__op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.SliceSMEMOp
 ) -> Sequence[ir.Value]:
+  del ctx
+  i8 = ir.IntegerType.get_signless(8)
+  smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
 
-  barrier = utils.BarrierRef.from_dialect_barrier_memref(wait_op.barrier)
-  barrier.wait_parity(wait_op.parity)
+  smem_base = gpu.dynamic_shared_memory(
+      ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=smem)
+  )
 
-  return []
+  return [
+      memref.view(
+          op.result.type,
+          smem_base,
+          arith.index_cast(ir.IndexType.get(), op.offset),
+          [],
+      )
+  ]
 
 
 @_register_lowering(scf.ForOp)
 def _for_op_lowering_rule(
     ctx: LoweringContext, for_op: scf.ForOp
 ) -> MlirLoweringRuleResult:
-  if not layouts.should_have_layout(for_op):
+  if not inference_utils.should_have_layout(for_op):
     return _traverse_op_lowering_rule(ctx, for_op)
-  in_layouts = layouts.in_layouts(for_op)
-  out_layouts = layouts.out_layouts(for_op)
+  in_layouts = inference_utils.in_layouts(for_op)
+  out_layouts = inference_utils.out_layouts(for_op)
   yield_op = for_op.body.operations[len(for_op.body.operations) - 1]
-  yield_layouts = layouts.in_layouts(yield_op)
+  yield_layouts = inference_utils.in_layouts(yield_op)
   if in_layouts != out_layouts or in_layouts != yield_layouts:
     raise ValueError("Layout mismatch")
   fa_layouts = in_layouts
@@ -692,7 +710,7 @@ def _for_op_lowering_rule(
 def _traverse_op_lowering_rule(
     ctx: LoweringContext, op: ir.OpView
 ) -> MlirLoweringRuleResult:
-  if layouts.should_have_layout(op):
+  if inference_utils.should_have_layout(op):
     raise ValueError(
         f"Rule cannot handle an op with vector operands or results: {op}"
     )
@@ -734,7 +752,7 @@ def _should_lower(op: ir.OpView) -> bool:
   """Returns 'true' if the operation should be lowered."""
   return (
       op.OPERATION_NAME.startswith("mosaic_gpu.")
-      or layouts.should_have_layout(op)
+      or inference_utils.should_have_layout(op)
       or any(bool(b) for r in op.regions for b in r)  # Does it have subblocks?
   )
 
