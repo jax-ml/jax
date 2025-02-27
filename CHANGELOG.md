@@ -23,6 +23,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     true, matching the current behavior. If set to false, JAX does not need to
     emit code clamping negative indices, which improves code size.
 
+* Breaking changes
+  * The ``jax.custom_derivatives.remat_opt_p`` helper primitive was removed.
+
 ## jax 0.5.1 (Feb 24, 2025)
 
 * New Features
