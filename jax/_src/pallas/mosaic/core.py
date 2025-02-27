@@ -246,6 +246,7 @@ def _tensorcore_mesh_discharge_rule(
     interpret: bool,
     debug: bool,
     cost_estimate: pallas_core.CostEstimate | None,
+    name: str,
 ):
   assert isinstance(mesh, TensorCoreMesh)
   if compiler_params and not isinstance(compiler_params, TPUCompilerParams):
@@ -274,6 +275,7 @@ def _tensorcore_mesh_discharge_rule(
       interpret=interpret,
       backend="mosaic_tpu",
       cost_estimate=cost_estimate,
+      name=name,
   )
 
 pallas_core._core_map_mesh_rules[TensorCoreMesh] = (

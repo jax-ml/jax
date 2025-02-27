@@ -545,6 +545,7 @@ def _gpu_mesh_discharge_rule(
     interpret,
     debug,
     cost_estimate,
+    name,
 ):
   if not isinstance(mesh, GPUMesh):
     raise TypeError(f"Mesh must be a GPUMesh, got {type(mesh)}")
@@ -568,6 +569,7 @@ def _gpu_mesh_discharge_rule(
       debug=debug,
       interpret=interpret,
       cost_estimate=cost_estimate,
+      name=name,
   )
 
 
