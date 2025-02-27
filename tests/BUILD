@@ -699,6 +699,22 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "linalg_sharding_test",
+    srcs = ["linalg_sharding_test.py"],
+    enable_backends = [
+        "cpu",
+    ],
+    enable_configs = [
+        "gpu_p100x2",
+        "gpu_p100x2_shardy",
+        "gpu_p100x2_pjrt_c_api",
+    ],
+    tags = [
+        "multiaccelerator",
+    ],
+)
+
+jax_multiplatform_test(
     name = "magma_linalg_test",
     srcs = ["magma_linalg_test.py"],
     enable_backends = ["gpu"],
@@ -1640,6 +1656,15 @@ jax_multiplatform_test(
     tags = ["multiaccelerator"],
 )
 
+jax_multiplatform_test(
+    name = "scaled_matmul_stablehlo_test",
+    srcs = ["scaled_matmul_stablehlo_test.py"],
+    enable_backends = ["gpu"],
+    shard_count = {
+        "gpu": 4,
+    },
+)
+
 jax_py_test(
     name = "custom_partitioning_sharding_rule_test",
     srcs = ["custom_partitioning_sharding_rule_test.py"],
@@ -1647,18 +1672,6 @@ jax_py_test(
         "//jax",
         "//jax:experimental",
         "//jax:test_util",
-    ],
-)
-
-jax_multiplatform_test(
-    name = "serialization_test",
-    srcs = ["serialization_test.py"],
-    enable_configs = [
-        "tpu_v3_2x2",
-    ],
-    deps = [
-        "//jax:experimental",
-        "//jax/experimental/array_serialization:serialization",
     ],
 )
 

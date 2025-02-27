@@ -624,21 +624,31 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.logistic().cdf)
 
   @jtu.sample_product(
-    n=range(1, 5),
+    n=range(5),
     shape=[(), (5,), (10, 5)],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+    m=list(range(5)) + [None],
   )
   @jax.default_matmul_precision("float32")
-  def testOrthogonal(self, n, shape, dtype):
+  def testOrthogonal(self, n, shape, dtype, m):
+    if m is None:
+      m = n
+
     key = self.make_key(0)
-    q = random.orthogonal(key, n, shape, dtype)
-    self.assertEqual(q.shape, (*shape, n, n))
+
+    q = random.orthogonal(key, n, shape, dtype, m)
+    self.assertEqual(q.shape, (*shape, n, m))
     self.assertEqual(q.dtype, dtype)
-    with jax.numpy_rank_promotion('allow'):
-      self.assertAllClose(
-        jnp.einsum('...ij,...jk->...ik', q, jnp.conj(q).swapaxes(-2, -1)),
-        jnp.broadcast_to(jnp.eye(n, dtype=dtype), (*shape, n, n))
-      )
+
+    qT = jnp.conj(q).mT
+
+    if n <= m:
+      I_n = jnp.broadcast_to(jnp.eye(n, dtype=dtype), (*shape, n, n))
+      self.assertAllClose(jnp.linalg.matmul(q, qT), I_n, atol={jnp.complex128: 1e-14})
+
+    if n >= m:
+      I_m = jnp.broadcast_to(jnp.eye(m, dtype=dtype), (*shape, m, m))
+      self.assertAllClose(jnp.linalg.matmul(qT, q), I_m, atol={jnp.complex128: 1e-14})
 
   @jtu.sample_product(
     p=[.5, 1., 1.5, 2., 2.5],

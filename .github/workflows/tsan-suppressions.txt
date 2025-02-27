@@ -32,8 +32,6 @@ race:split_keys_entry_added
 # https://github.com/python/cpython/issues/129748
 race:mi_block_set_nextx
 
-# https://github.com/python/cpython/issues/130571
-race:_PyObject_GetMethod
 
 # Races because the LAPACK and BLAS in our scipy isn't TSAN instrumented.
 race:heevd_ffi
@@ -63,3 +61,6 @@ race:gemm_oncopy
 
 # https://github.com/python/cpython/issues/128133
 # race:bytes_hash
+
+# https://github.com/python/cpython/issues/130571
+# race:_PyObject_GetMethod

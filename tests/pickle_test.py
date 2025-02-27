@@ -136,7 +136,7 @@ class PickleTest(jtu.JaxTestCase):
   def testPickleOfPartitionSpecs(self, partition_spec):
     restored_partition_spec = pickle.loads(pickle.dumps(partition_spec))
     self.assertIsInstance(restored_partition_spec, jax.sharding.PartitionSpec)
-    self.assertTupleEqual(partition_spec, restored_partition_spec)
+    self.assertEqual(partition_spec, restored_partition_spec)
 
   def testPickleX64(self):
     with jax.experimental.enable_x64():

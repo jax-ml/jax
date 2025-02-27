@@ -17,7 +17,6 @@ cusparse wrappers for performing sparse matrix computations in JAX
 
 import math
 from functools import partial
-import importlib
 
 import jaxlib.mlir.ir as ir
 
@@ -27,31 +26,16 @@ from jaxlib import xla_client
 
 from .hlo_helpers import custom_call, mk_result_types_and_shapes
 
-for cuda_module_name in [".cuda", "jax_cuda12_plugin"]:
-  try:
-    _cusparse = importlib.import_module(
-        f"{cuda_module_name}._sparse", package="jaxlib"
-    )
-  except ImportError:
-    _cusparse = None
-  else:
-    break
+from .plugin_support import import_from_plugin
+
+_cusparse = import_from_plugin("cuda", "_sparse")
+_hipsparse = import_from_plugin("rocm", "_sparse")
 
 if _cusparse:
   for _name, _value in _cusparse.registrations().items():
     api_version = 1 if _name.endswith("_ffi") else 0
     xla_client.register_custom_call_target(_name, _value, platform="CUDA",
                                            api_version=api_version)
-
-for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
-  try:
-    _hipsparse = importlib.import_module(
-        f"{rocm_module_name}._sparse", package="jaxlib"
-    )
-  except ImportError:
-    _hipsparse = None
-  else:
-    break
 
 if _hipsparse:
   for _name, _value in _hipsparse.registrations().items():

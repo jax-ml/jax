@@ -270,6 +270,10 @@ class TransformedRef:
     from jax._src.state.primitives import ref_set  # pytype: disable=import-error
     return ref_set(self, idx, value)
 
+  def swap(self, value, idx=()):
+    from jax._src.state.primitives import ref_swap  # pytype: disable=import-error
+    return ref_swap(self, idx, value)
+
   def get(self, idx=()):
     from jax._src.state.primitives import ref_get  # pytype: disable=import-error
     return ref_get(self, idx)
@@ -354,6 +358,12 @@ class AbstractRef(core.AbstractValue):
   def get(tracer, idx=()):
     from jax._src.state.primitives import ref_get  # pytype: disable=import-error
     return ref_get(tracer, idx)
+
+  @core.aval_method
+  @staticmethod
+  def swap(tracer, value, idx=()):
+    from jax._src.state.primitives import ref_swap  # pytype: disable=import-error
+    return ref_swap(tracer, idx, value)
 
   @core.aval_method
   @staticmethod

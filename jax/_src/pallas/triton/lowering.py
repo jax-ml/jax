@@ -40,6 +40,7 @@ from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.control_flow import for_loop
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import math as math_dialect
@@ -87,6 +88,7 @@ class ModuleContext:
 class BlockInfo:
   full_shape_dtype: jax.ShapeDtypeStruct
   start_indices: Sequence[Any]
+  start_indices_alignment: Sequence[int]
   block_shape: tuple[int | pallas_core.Mapped, ...]
 
 
@@ -135,6 +137,14 @@ def _eval_index_map(
   return tuple(
       i if b is pallas_core.mapped else _mul(i, _ir_constant(b, i.type))
       for i, b in zip(block_indices, block_mapping.block_shape)
+  )
+
+
+def _get_index_alignment(block_mapping: BlockMapping) -> tuple[int, ...]:
+  if isinstance(block_mapping.indexing_mode, pallas_core.Unblocked):
+    return (1,) * len(block_mapping.block_shape)
+  return tuple(
+      1 if b is pallas_core.mapped else b for b in block_mapping.block_shape
   )
 
 
@@ -331,20 +341,14 @@ def lower_jaxpr_to_triton_module(
         raise NotImplementedError(
             "Scalar prefetch not supported in Triton lowering."
         )
-      start_indices = map(
-          functools.partial(_eval_index_map, ctx, program_ids),
-          grid_mapping.block_mappings,
-      )
       block_infos = [
           BlockInfo(
               block_mapping.array_shape_dtype,
-              start_idx,
+              _eval_index_map(ctx, program_ids, block_mapping),
+              _get_index_alignment(block_mapping),
               block_mapping.block_shape,
           )
-          for block_mapping, start_idx in zip(
-              grid_mapping.block_mappings,
-              start_indices,
-          )
+          for block_mapping in grid_mapping.block_mappings
       ]
       () = lower_jaxpr_to_triton_ir(ctx, jaxpr, block_infos, *entry.arguments)
       tt_dialect.return_([])
@@ -1957,6 +1961,45 @@ def _load(
   )
 
 
+def _is_contiguous_int4(block_info: BlockInfo, nd_indexer: NDIndexer) -> bool:
+  """Returns True if the block is contiguous in the last dimension."""
+  # In order to loaded as `uint8` the index must be an aligned slice.
+  return (
+      block_info.full_shape_dtype.dtype in (jnp.int4, jnp.uint4)
+      and block_info.start_indices_alignment
+      and (block_info.start_indices_alignment[-1] % 2 == 0)
+      and isinstance(slc := nd_indexer.indices[-1], indexing.Slice)
+      and isinstance(slc.start, int)
+      and isinstance(slc.size, int)
+      and (slc.start % 2 == 0)
+      and (slc.size % 2 == 0)
+      and (slc.stride == 1)
+  )
+
+
+def _reinterpret_int4_as_uint8(
+    block_info: BlockInfo, nd_indexer: NDIndexer
+) -> tuple[BlockInfo, NDIndexer]:
+  """Returns a new block info and indexer that reads `int4` as `uint8`."""
+  last_idx = nd_indexer.indices[-1]
+  new_last_idx = indexing.Slice(last_idx.start // 2, last_idx.size // 2)
+  new_indices = (*nd_indexer.indices[:-1], new_last_idx)
+  new_shape = (*nd_indexer.shape[:-1], nd_indexer.shape[-1] // 2)
+  idx = dataclasses.replace(nd_indexer, indices=new_indices, shape=new_shape)
+
+  full_shape = block_info.full_shape_dtype.shape
+  new_full_shape = (*full_shape[:-1], full_shape[-1] // 2)
+  start_idx = block_info.start_indices[-1]
+  new_start_idx = _floordiv(start_idx, _full(start_idx.type, 2), signed=False)
+  new_start_indices = (*block_info.start_indices[:-1], new_start_idx)
+  block_info = dataclasses.replace(
+      block_info,
+      full_shape_dtype=jax.ShapeDtypeStruct(new_full_shape, jnp.uint8),
+      start_indices=new_start_indices,
+  )
+  return block_info, idx
+
+
 @register_lowering(primitives.load_p)
 def _masked_load_lowering_rule(
     ctx: LoweringRuleContext,
@@ -1977,10 +2020,20 @@ def _masked_load_lowering_rule(
     assert len(ctx.avals_in) == 1
     return ptr
 
+  is_int4 = block_info.full_shape_dtype.dtype in (jnp.int4, jnp.uint4)
+  is_contiguous_int4 = _is_contiguous_int4(block_info, idx)
+
+  if is_contiguous_int4:
+    # If the load reads contiguously in the last dimension, we can reinterpret
+    # the `int4` block as `uint8`. This generates much more efficient code. The
+    # more generic `int4` code below has offsets like `0, 0, 1, 1, ...`, which
+    # Triton doesn't optimize as well.
+    block_info, idx = _reinterpret_int4_as_uint8(block_info, idx)
+
   offsets = _compute_offsets_from_indices(block_info, idx)
   ptr_offsets = offsets
 
-  if block_info.full_shape_dtype.dtype in (jnp.int4, jnp.uint4):
+  if is_int4 and not is_contiguous_int4:
     ptr_offsets = _floordiv(offsets, _full(offsets.type, 2), signed=False)
 
   shape = idx.get_indexer_shape()
@@ -1998,17 +2051,28 @@ def _masked_load_lowering_rule(
       eviction_policy=eviction_policy,
   )
 
-  if block_info.full_shape_dtype.dtype not in (jnp.int4, jnp.uint4):
+  if not is_int4:
     return values
 
-  # XLA packs pairs of `[u]int4` values into a `uint8` value with the first
-  # in the most significant bits and the second in the least significant.
-  offsets = _ir_cast(offsets, ir.IntegerType.get_signless(32), signed=False)
-  in_lsb = _mod(offsets, _full(offsets.type, 2), signed=False)
-  in_msb = arith_dialect.xori(in_lsb, _full(in_lsb.type, 1))
-  shift = _mul(in_msb, _full(in_msb.type, 4))
-  shift = _ir_cast(shift, values.type, signed=False)
-  values = arith_dialect.shrui(values, shift)
+  # After jaxlib 0.5.2, XLA packs pairs of `[u]int4` values into a `uint8`
+  # value with the first in the least significant bits and the second in the
+  # most significant. Before jaxlib 0.5.2, the order was reversed.
+  if is_contiguous_int4:
+    msb_values = arith_dialect.shrui(values, _full(values.type, 4))
+    if jaxlib_version < (0, 5, 2):
+      values = tt_dialect.join(msb_values, values)
+    else:
+      values = tt_dialect.join(values, msb_values)
+    shape = ir.RankedTensorType(values.type).shape
+    values = _reshape(values, (*shape[:-2], shape[-2] * shape[-1]))
+  else:
+    offsets = _ir_cast(offsets, ir.IntegerType.get_signless(32), signed=False)
+    in_msb = _mod(offsets, _full(offsets.type, 2), signed=False)
+    if jaxlib_version < (0, 5, 2):
+      in_msb = arith_dialect.xori(in_msb, _full(in_msb.type, 1))
+    shift = _mul(in_msb, _full(in_msb.type, 4))
+    shift = _ir_cast(shift, values.type, signed=False)
+    values = arith_dialect.shrui(values, shift)
   return _ir_cast(values, ir.IntegerType.get_signless(4), signed=False)
 
 

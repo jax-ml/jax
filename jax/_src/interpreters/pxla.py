@@ -3245,9 +3245,6 @@ def _get_metadata_jit_pmap(local_devices, num_in_shardings, num_out_shardings):
   return in_shardings, out_shardings, committed, tuple(local_devices)
 
 
-create_mesh_pspec_sharding = sharding_impls.create_mesh_pspec_sharding
-
-
 def check_device_backend_on_shardings(shardings) -> bool:
   for i in shardings:
     if isinstance(i, (UnspecifiedValue, AUTO)):
@@ -3318,6 +3315,5 @@ def check_array_xla_sharding_layout_match(
 
 
 def get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
-  parsed_pspec = sharding_impls.prepare_axis_resources(
-      pspec, "pspec to array_mapping")
-  return _get_array_mapping(parsed_pspec)
+  pspec = sharding_impls.prepare_axis_resources(pspec, "pspec to array_mapping")
+  return _get_array_mapping(pspec)

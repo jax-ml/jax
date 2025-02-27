@@ -747,6 +747,20 @@ class PallasCallTest(PallasBaseTest):
     expected = x.astype(dtype).astype(jnp.int8)
     self.assertAllClose(copy_kernel(x.astype(dtype)), expected)
 
+  @parameterized.parameters(jnp.int4, jnp.uint4)
+  def test_subbyte_load_non_contiguous(self, dtype):
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest("`[u]int4` loads only supported on GPU.")
+
+    x = jnp.arange(-128, 64, dtype=jnp.int8)
+    expected = x.astype(dtype).astype(jnp.int8)[::3]
+
+    @functools.partial(self.pallas_call, out_shape=expected)
+    def copy_kernel(x_ref, o_ref):
+      o_ref[()] = x_ref[::3].astype(jnp.int8)
+
+    self.assertAllClose(copy_kernel(x.astype(dtype)), expected)
+
 
 class PallasCallInterpretTest(PallasCallTest):
   INTERPRET = True

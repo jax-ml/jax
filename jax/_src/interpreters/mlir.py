@@ -1009,14 +1009,14 @@ def add_manual_axes(axis_ctx: sharding_impls.SPMDAxisContext, sharding, ndim):
   mesh = axis_ctx.mesh
   if (isinstance(sharding, sharding_impls.NamedSharding) and
       sharding.mesh.shape == mesh.shape):
-    return sharding_impls.NamedSharding._from_parsed_pspec(
-        sharding.mesh, sharding._parsed_pspec, memory_kind=sharding.memory_kind,
+    return sharding_impls.NamedSharding(
+        sharding.mesh, sharding.spec, memory_kind=sharding.memory_kind,
         _manual_axes=axis_ctx.manual_axes)
   else:
-    parsed_pspec = sharding_impls.parse_flatten_op_sharding(
-      sharding._to_xla_hlo_sharding(ndim), mesh)[0]
-    return sharding_impls.NamedSharding._from_parsed_pspec(
-      mesh, parsed_pspec, memory_kind=sharding.memory_kind,
+    spec = sharding_impls.parse_flatten_op_sharding(
+        sharding._to_xla_hlo_sharding(ndim), mesh)[0]
+    return sharding_impls.NamedSharding(
+      mesh, spec, memory_kind=sharding.memory_kind,
       _manual_axes=axis_ctx.manual_axes)
 
 
@@ -1070,14 +1070,14 @@ def _get_mem_kind(s: JSharding | AUTO | None) -> str | None:
 
 def contains_unconstrained(s):
   return (isinstance(s, NamedSharding)
-          and PartitionSpec.UNCONSTRAINED in s._parsed_pspec)
+          and PartitionSpec.UNCONSTRAINED in s.spec)
 
 
 def all_unconstrained(s, aval):
   if isinstance(s, NamedSharding):
-    if aval.ndim != len(s._parsed_pspec):
+    if aval.ndim != len(s.spec):
       return False
-    return all(p is PartitionSpec.UNCONSTRAINED for p in s._parsed_pspec)
+    return all(p is PartitionSpec.UNCONSTRAINED for p in s.spec)
   return False
 
 class UnconstrainedVariants(NamedTuple):
@@ -1087,7 +1087,7 @@ class UnconstrainedVariants(NamedTuple):
 
 def _get_unconstrained_variants(s, aval) -> UnconstrainedVariants:
   us = contains_unconstrained(s)
-  unconstrained_dims = ({i for i, p in enumerate(s._parsed_pspec)
+  unconstrained_dims = ({i for i, p in enumerate(s.spec)
                          if p is PartitionSpec.UNCONSTRAINED} if us else None)
   return UnconstrainedVariants(
       contains_unconstrained=us, all_unconstrained=all_unconstrained(s, aval),

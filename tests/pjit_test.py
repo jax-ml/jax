@@ -885,8 +885,8 @@ class PJitTest(jtu.BufferDonationTestCase):
     def f(x):
       token = lax.create_token(x)
       token = lax.outfeed(token, x, partitions=(None,))
-      token = lax.outfeed(token, x, partitions=(P(nr_devices, 1),))
-      token = lax.outfeed(token, x, partitions=(P(1, nr_devices),))
+      token = lax.outfeed(token, x, partitions=((nr_devices, 1),))
+      token = lax.outfeed(token, x, partitions=((1, nr_devices),))
       return x
 
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
@@ -1206,7 +1206,7 @@ class PJitTest(jtu.BufferDonationTestCase):
           ValueError,
           r"One of with_sharding_constraint.*Sharding "
           r"NamedSharding\(mesh=Mesh\('replica': 1, 'data': 1, 'mdl': 2\), "
-          r"spec=PartitionSpec\(None, \('mdl',\), None, None\).*\) is only "
+          r"spec=PartitionSpec\(None, 'mdl', None, None\).*\) is only "
           "valid for values of rank at least 4, but was applied to a value of rank 1"):
         pjit_f(jnp.array([1, 2, 3]))
 
@@ -6666,14 +6666,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P())
     jax.lax.with_sharding_constraint(np.arange(8), s)
 
-    s = NamedSharding(mesh, P(P.UNCONSTRAINED, 'x'))
+    s = NamedSharding(mesh.update_axis_types({AxisTypes.Auto: 'y'}),
+                      P('x', P.UNCONSTRAINED))
     with self.assertRaisesRegex(
         ValueError,
         "The spec of NamedSharding passed to with_sharding_constraint"):
       jax.lax.with_sharding_constraint(np.arange(8).reshape(4, 2), s)
 
-    s = NamedSharding(mesh, P(P.UNCONSTRAINED))
-    jax.lax.with_sharding_constraint(np.arange(8), s)
+    with self.assertRaisesRegex(
+        ValueError,
+        'PartitionSpec.*cannot contain `P.UNCONSTRAINED` when no mesh'
+        ' axis_types are `Auto`'):
+      NamedSharding(mesh, P(P.UNCONSTRAINED))
 
   def test_use_mesh_legacy_mesh_ctx_mgr_mix_error(self):
     mesh = jtu.create_mesh((1, 1), ('x', 'y'))
@@ -7165,9 +7169,9 @@ class UtilTest(jtu.JaxTestCase):
     aval = core.ShapedArray((len(devices),) * dims, jnp.float32)
     def roundtrip(spec):
       hlo_sharding = NamedSharding(mesh, spec)._to_xla_hlo_sharding(aval.ndim)
-      parsed_spec = parse_flatten_op_sharding(hlo_sharding, mesh)[0].partitions
-      self.assertEqual(parsed_spec[:len(spec)], spec)
-      self.assertEqual(parsed_spec[len(spec):], ((),) * (len(parsed_spec) - len(spec)))
+      recovered_spec = parse_flatten_op_sharding(hlo_sharding, mesh)[0]
+      self.assertEqual(recovered_spec[:len(spec)], spec)
+      self.assertEqual(recovered_spec[len(spec):], ((),) * (len(recovered_spec) - len(spec)))
 
     special_specs = [P()]
     for spec in special_specs:
@@ -7495,10 +7499,12 @@ class UtilTest(jtu.JaxTestCase):
         ),
     )
 
+  @jtu.thread_unsafe_test()
   def test_op_sharding_cache_on_mesh_pspec_sharding(self):
     ndim = 2
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     mps1 = NamedSharding(mesh, P('x', 'y'))
+    sharding_impls.named_sharding_to_xla_hlo_sharding.cache_clear()
     op1 = mps1._to_xla_hlo_sharding(ndim)
     cache_info1 = sharding_impls.named_sharding_to_xla_hlo_sharding.cache_info()
 
@@ -7515,12 +7521,8 @@ class UtilTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y', None))
 
-    self.assertEqual(s._parsed_pspec.get_partition_spec(), P('x', 'y', None))
-
-    recovered_parsed_pspec = parse_flatten_op_sharding(
-        s._to_xla_hlo_sharding(3), mesh)
-    self.assertEqual(recovered_parsed_pspec[0].get_partition_spec(),
-                     P('x', 'y'))
+    spec = parse_flatten_op_sharding(s._to_xla_hlo_sharding(3), mesh)[0]
+    self.assertEqual(spec, P('x', 'y'))
 
   def test_mesh_with_list_devices(self):
     mesh = jax.sharding.Mesh(jax.devices(), ('x',))

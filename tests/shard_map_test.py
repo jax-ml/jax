@@ -1909,8 +1909,8 @@ class ShardMapTest(jtu.JaxTestCase):
     v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
     if config.use_shardy_partitioner.value:
       self.assertIn(
-          'in_shardings=[<@mesh, [{"i", ?}, {?}]>]'
-          ' out_shardings=[<@mesh, [{"i", ?}, {?}]>] manual_axes={"i"}',
+          'in_shardings=[<@mesh, [{"i"}, {?}]>]'
+          ' out_shardings=[<@mesh, [{"i"}, {?}]>] manual_axes={"i"}',
           f.lower(v).as_text(),
       )
     else:
@@ -3093,6 +3093,22 @@ class CustomPartitionerTest(jtu.JaxTestCase):
 
     c = fwd(a)
     self.assertEqual(c.addressable_data(0).shape, (4, 2))
+
+  def test_partially_sharded_dim_with_auto(self):
+    mesh = jtu.create_mesh((4, 2), ('i', 'j'))
+
+    def g(x):
+      return jnp.sum(x)[None]
+
+    @jax.jit
+    def f(x):
+      x = jax.lax.with_sharding_constraint(x, NamedSharding(mesh, P(('i', 'j'))))
+      re = shard_map(g, mesh, in_specs=P('i'), out_specs=P('i'),
+                     check_rep=False, auto=frozenset({'j'}))(x)
+      re = jax.lax.with_sharding_constraint(re, NamedSharding(mesh, P(('i', 'j'))))
+      return re
+
+    self.assertAllClose(f(jnp.arange(8.)), jnp.array([1.,  5.,  9., 13.]))
 
 
 @jtu.with_config(jax_use_shardy_partitioner=True)

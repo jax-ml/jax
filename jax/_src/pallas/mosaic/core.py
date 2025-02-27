@@ -84,7 +84,9 @@ class TPUCompilerParams(pallas_core.CompilerParams):
     device_type: The device type to compile for.
   """
   PLATFORM: ClassVar[str] = "mosaic"
-  dimension_semantics: Sequence[Literal["parallel", "arbitrary"]] | None = None
+  dimension_semantics: (
+      Sequence[Literal["parallel", "arbitrary"] | GridDimensionSemantics] | None
+  ) = None
   allow_input_fusion: Sequence[bool] | None = None
   vmem_limit_bytes: int | None = None
   collective_id: int | None = None
@@ -246,6 +248,7 @@ def _tensorcore_mesh_discharge_rule(
     interpret: bool,
     debug: bool,
     cost_estimate: pallas_core.CostEstimate | None,
+    name: str,
 ):
   assert isinstance(mesh, TensorCoreMesh)
   if compiler_params and not isinstance(compiler_params, TPUCompilerParams):
@@ -268,12 +271,13 @@ def _tensorcore_mesh_discharge_rule(
       jaxpr=jaxpr,
       grid=((core_axis_name, num_cores),),
       compiler_params=compiler_params.replace(
-          dimension_semantics=("parallel",)
+          dimension_semantics=(PARALLEL,)
       ),
       debug=debug,
       interpret=interpret,
       backend="mosaic_tpu",
       cost_estimate=cost_estimate,
+      name=name,
   )
 
 pallas_core._core_map_mesh_rules[TensorCoreMesh] = (
@@ -290,3 +294,10 @@ def _convert_semaphore_type_to_aval(
 pallas_core._out_shape_to_aval_mapping[SemaphoreType] = (
     _convert_semaphore_type_to_aval
 )
+
+
+class GridDimensionSemantics(enum.Enum):
+  PARALLEL = "parallel"
+  ARBITRARY = "arbitrary"
+PARALLEL = GridDimensionSemantics.PARALLEL
+ARBITRARY = GridDimensionSemantics.ARBITRARY

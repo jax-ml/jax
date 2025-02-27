@@ -37,21 +37,29 @@ nvidia-smi
 echo "Running single accelerator tests (without RBE)..."
 
 # Set up test environment variables.
+# Set the number of test jobs to min(num_cpu_cores, gpu_count * max_tests_per_gpu, total_ram_gb / 6)
+# We calculate max_tests_per_gpu as memory_per_gpu_gb / 2gb
+# Calculate gpu_count * max_tests_per_gpu
 export gpu_count=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
-export num_test_jobs=$((gpu_count * JAXCI_MAX_TESTS_PER_GPU))
+export memory_per_gpu_gb=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits --id=0)
+export memory_per_gpu_gb=$((memory_per_gpu_gb / 1024))
+# Allow 2 GB of GPU RAM per test
+export max_tests_per_gpu=$((memory_per_gpu_gb / 2))
+export num_test_jobs=$((gpu_count * max_tests_per_gpu))
+
+# Calculate num_cpu_cores
 export num_cpu_cores=$(nproc)
 
-# tests_jobs = max(gpu_count * max_tests_per_gpu, num_cpu_cores)
-if [[ $num_test_jobs -gt $num_cpu_cores ]]; then
+# Calculate total_ram_gb / 6
+export total_ram_gb=$(awk '/MemTotal/ {printf "%.0f", $2/1048576}' /proc/meminfo)
+export host_memory_limit=$((total_ram_gb / 6))
+
+if [[ $num_cpu_cores -lt $num_test_jobs ]]; then
   num_test_jobs=$num_cpu_cores
 fi
 
-# Use the Bazel remote cache to speed up builds. Pushes to the cache bucket is
-# limited to JAX's CI system.
-if [[ "$JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE" == 1 ]]; then
-  bazel_remote_cache="--config=public_cache_push"
-else
-  bazel_remote_cache="--config=public_cache"
+if [[ $host_memory_limit -lt $num_test_jobs ]]; then
+  num_test_jobs=$host_memory_limit
 fi
 # End of test environment variables setup.
 
@@ -63,14 +71,16 @@ set +e
 # It appears --run_under needs an absolute path.
 # The product of the `JAX_ACCELERATOR_COUNT`` and `JAX_TESTS_PER_ACCELERATOR`
 # should match the VM's CPU core count (set in `--local_test_jobs`).
-bazel test --config=ci_linux_x86_64_cuda "$bazel_remote_cache" \
+bazel test --config=ci_linux_x86_64_cuda \
+      --config=resultstore \
+      --config=rbe_cache \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --//jax:build_jaxlib=false \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
       --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
       --test_output=errors \
       --test_env=JAX_ACCELERATOR_COUNT=$gpu_count \
-      --test_env=JAX_TESTS_PER_ACCELERATOR=$JAXCI_MAX_TESTS_PER_GPU \
+      --test_env=JAX_TESTS_PER_ACCELERATOR=$max_tests_per_gpu \
       --local_test_jobs=$num_test_jobs \
       --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow \
       --test_tag_filters=-multiaccelerator \
@@ -87,7 +97,9 @@ first_bazel_cmd_retval=$?
 
 echo "Running multi-accelerator tests (without RBE)..."
 # Runs multiaccelerator tests with all GPUs directly on the VM without RBE..
-bazel test --config=ci_linux_x86_64_cuda "$bazel_remote_cache" \
+bazel test --config=ci_linux_x86_64_cuda \
+      --config=resultstore \
+      --config=rbe_cache \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --//jax:build_jaxlib=false \
       --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \

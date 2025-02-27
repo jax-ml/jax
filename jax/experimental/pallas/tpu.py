@@ -15,8 +15,11 @@
 """Mosaic-specific Pallas APIs."""
 
 from jax._src.pallas.mosaic import core as core
+from jax._src.pallas.mosaic.core import ARBITRARY as ARBITRARY
 from jax._src.pallas.mosaic.core import create_tensorcore_mesh as create_tensorcore_mesh
 from jax._src.pallas.mosaic.core import dma_semaphore as dma_semaphore
+from jax._src.pallas.mosaic.core import GridDimensionSemantics as GridDimensionSemantics
+from jax._src.pallas.mosaic.core import PARALLEL as PARALLEL
 from jax._src.pallas.mosaic.core import PrefetchScalarGridSpec as PrefetchScalarGridSpec
 from jax._src.pallas.mosaic.core import semaphore as semaphore
 from jax._src.pallas.mosaic.core import SemaphoreType as SemaphoreType
@@ -28,13 +31,11 @@ from jax._src.pallas.mosaic.helpers import sync_copy as sync_copy
 from jax._src.pallas.mosaic.helpers import core_barrier as core_barrier
 from jax._src.pallas.mosaic.helpers import run_on_first_core as run_on_first_core
 from jax._src.pallas.mosaic.lowering import LoweringException as LoweringException
-from jax._src.pallas.mosaic.pipeline import ARBITRARY as ARBITRARY
 from jax._src.pallas.mosaic.pipeline import BufferedRef as BufferedRef
 from jax._src.pallas.mosaic.pipeline import emit_pipeline as emit_pipeline
 from jax._src.pallas.mosaic.pipeline import emit_pipeline_with_allocations as emit_pipeline_with_allocations
 from jax._src.pallas.mosaic.pipeline import get_pipeline_schedule as get_pipeline_schedule
 from jax._src.pallas.mosaic.pipeline import make_pipeline_allocations as make_pipeline_allocations
-from jax._src.pallas.mosaic.pipeline import PARALLEL as PARALLEL
 from jax._src.pallas.mosaic.primitives import async_copy as async_copy
 from jax._src.pallas.mosaic.primitives import async_remote_copy as async_remote_copy
 from jax._src.pallas.mosaic.primitives import bitcast as bitcast

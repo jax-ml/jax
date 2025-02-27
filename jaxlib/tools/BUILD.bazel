@@ -212,6 +212,13 @@ jax_wheel(
 )
 
 jax_wheel(
+    name = "jaxlib_wheel_editable",
+    editable = True,
+    wheel_binary = ":build_wheel",
+    wheel_name = "jaxlib",
+)
+
+jax_wheel(
     name = "jax_cuda_plugin_wheel",
     enable_cuda = True,
     no_abi = False,
@@ -222,9 +229,29 @@ jax_wheel(
 )
 
 jax_wheel(
+    name = "jax_cuda_plugin_wheel_editable",
+    editable = True,
+    enable_cuda = True,
+    # TODO(b/371217563) May use hermetic cuda version here.
+    platform_version = "12",
+    wheel_binary = ":build_gpu_kernels_wheel",
+    wheel_name = "jax_cuda12_plugin",
+)
+
+jax_wheel(
     name = "jax_cuda_pjrt_wheel",
     enable_cuda = True,
     no_abi = True,
+    # TODO(b/371217563) May use hermetic cuda version here.
+    platform_version = "12",
+    wheel_binary = ":build_gpu_plugin_wheel",
+    wheel_name = "jax_cuda12_pjrt",
+)
+
+jax_wheel(
+    name = "jax_cuda_pjrt_wheel_editable",
+    editable = True,
+    enable_cuda = True,
     # TODO(b/371217563) May use hermetic cuda version here.
     platform_version = "12",
     wheel_binary = ":build_gpu_plugin_wheel",

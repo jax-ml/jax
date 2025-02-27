@@ -180,9 +180,6 @@ jobs:
           # Apply a patch to numpy in requirements lock 3.13 ft to use the nightly version
           git apply .github/workflows/requirements_lock_3_13_ft.patch
 
-          # Remove tensorstore dependency from jax/experimental/array_serialization/BUILD
-          sed -i -E '/"tensorstore"/d' $PWD/jax/experimental/array_serialization/BUILD
-
           echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
           echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
           echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
@@ -202,7 +199,5 @@ jobs:
               --local_test_jobs=32 \
               --test_timeout=600 \
               --config=resultstore \
-              --spawn_strategy=local \
-              --remote_cache=remotebuildexecution.googleapis.com \
-              --remote_instance_name=projects/tensorflow-testing/instances/default_instance \
-              //tests:cpu_tests -- -//tests:serialization_test_cpu
+              --config=rbe_cache \
+              //tests:cpu_tests

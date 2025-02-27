@@ -440,7 +440,7 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
     if mesh.empty:
       return callback(
           sharding_impls._op_sharding_to_pos_sharding(hlo_sharding, devices))
-    pspec = parse_flatten_op_sharding(hlo_sharding, mesh)[0].get_partition_spec()
+    pspec = parse_flatten_op_sharding(hlo_sharding, mesh)[0]
     return callback(NamedSharding(mesh, pspec))
 
   if len(devices) == 1:

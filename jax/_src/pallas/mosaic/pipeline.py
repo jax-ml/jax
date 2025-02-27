@@ -42,6 +42,9 @@ SMEM = tpu_core.TPUMemorySpace.SMEM
 VMEM = tpu_core.TPUMemorySpace.VMEM
 DMA = tpu_core.SemaphoreType.DMA
 REF = pallas_core.MemoryRef
+GridDimensionSemantics = tpu_core.GridDimensionSemantics
+PARALLEL = tpu_core.PARALLEL
+ARBITRARY = tpu_core.ARBITRARY
 SemaphoreType = tpu_core.SemaphoreType
 SemaphoreTuple = jax.Array
 ArrayRef = Union[REF, jax.Array]
@@ -913,12 +916,6 @@ def make_pipeline_allocations(
   return (*in_brefs, *out_brefs)
 
 
-class GridDimensionSemantics:
-  pass
-PARALLEL = GridDimensionSemantics()
-ARBITRARY = GridDimensionSemantics()
-
-
 def _partition_grid(
     grid: tuple[int | jax.Array, ...],
     core_axis: int | str | None,
@@ -1154,41 +1151,40 @@ def emit_pipeline(
           init_accumulators=init_accumulators,
           trace_scopes=trace_scopes,
       )
+      with scheduler.grid_env():
 
-      # prepare any local VMEM aliases
-      brefs = map_brefs(scheduler.alias_local_refs, allocations, refs)
+        # prepare any local VMEM aliases
+        brefs = map_brefs(scheduler.alias_local_refs, allocations, refs)
 
-      # loop input handling phase
-      map_brefs(scheduler.initialize, brefs, refs, schedule)
-      map_brefs(scheduler.copy_in, brefs, refs, schedule)
-      map_brefs(scheduler.wait_in, brefs, refs, schedule)
+        # loop input handling phase
+        map_brefs(scheduler.initialize, brefs, refs, schedule)
+        map_brefs(scheduler.copy_in, brefs, refs, schedule)
+        map_brefs(scheduler.wait_in, brefs, refs, schedule)
 
-      # prefetch inputs for the *next* invocation of this pipeline
-      with scheduler._named_scope("ep_prefetch"):
-        if prefetch is not None:
-          lax.cond(step == num_steps - 1,
-                  lambda: prefetch(*brefs, scheduler),
-                  lambda: None)
+        # prefetch inputs for the *next* invocation of this pipeline
+        with scheduler._named_scope("ep_prefetch"):
+          if prefetch is not None:
+            lax.cond(step == num_steps - 1,
+                    lambda: prefetch(*brefs, scheduler),
+                    lambda: None)
 
-      # run the kernel!
-      if body_prologue is not None:
-        with scheduler.grid_env():
+        # run the kernel!
+        if body_prologue is not None:
           body_prologue()
-      current_refs = map_brefs(lambda x: x.current_ref, brefs)
-      with scheduler._named_scope("ep_run_kernel"):
-        with scheduler.grid_env():
+        current_refs = map_brefs(lambda x: x.current_ref, brefs)
+        with scheduler._named_scope("ep_run_kernel"):
           body(*current_refs, *scratches)
 
-      # loop output handling phase
-      map_brefs(scheduler.copy_out, brefs, refs, schedule)
-      map_brefs(scheduler.wait_out, brefs, refs, schedule)
-      # handle writes for the *last* invocation of this pipeline's outputs
-      with scheduler._named_scope("ep_postyeet"):
-        if postyeet is not None:
-          lax.cond(step == 0,
-                  lambda: postyeet(*brefs, scheduler),
-                  lambda: None)
-      map_brefs(scheduler.finalize, brefs, refs, schedule)
+        # loop output handling phase
+        map_brefs(scheduler.copy_out, brefs, refs, schedule)
+        map_brefs(scheduler.wait_out, brefs, refs, schedule)
+        # handle writes for the *last* invocation of this pipeline's outputs
+        with scheduler._named_scope("ep_postyeet"):
+          if postyeet is not None:
+            lax.cond(step == 0,
+                    lambda: postyeet(*brefs, scheduler),
+                    lambda: None)
+        map_brefs(scheduler.finalize, brefs, refs, schedule)
 
       return _next_index(indices, grid)
 

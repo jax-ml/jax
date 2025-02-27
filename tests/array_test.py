@@ -832,27 +832,6 @@ class JaxArrayTest(jtu.JaxTestCase):
     np.array(h_tensor)
     self.assertIsNone(h_tensor._npy_value)
 
-  def test_make_array_from_single_device_arrays_no_dtype_error(self):
-    mesh = jtu.create_mesh((4, 2), ('x', 'y'))
-    s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
-    with self.assertRaisesRegex(
-        ValueError,
-        'If `arrays` is empty, `dtype` must be provided via the `dtype` '
-        'argument to `jax.make_array_from_single_device_arrays`.'):
-      jax.make_array_from_single_device_arrays((8, 2), s, [])
-
-  def test_make_array_from_single_device_arrays_bad_dtype_error(self):
-    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
-    shape = (8, 2)
-    np_inp = np.arange(math.prod(shape)).reshape(shape)
-    arr = jax.device_put(np_inp, s)
-    with self.assertRaisesRegex(
-        ValueError,
-        'If `dtype` is provided to `jax.make_array_from_single_device_arrays`, '
-        'it must match the dtype of the arrays in `arrays`.'):
-      jax.make_array_from_single_device_arrays(
-          shape, s, [arr], dtype=jnp.float32)
-
 
 class ShardingTest(jtu.JaxTestCase):
 
@@ -953,15 +932,13 @@ class ShardingTest(jtu.JaxTestCase):
     shape = (8, 2)
     mesh = jtu.create_mesh((1, 1, 2), ('replica', 'data', 'mdl'))
     mps = jax.sharding.NamedSharding(mesh, P(None, ('mdl',), None, None))
-    new_mps = jax.sharding.NamedSharding._from_parsed_pspec(
-        mps.mesh, mps._parsed_pspec)
 
     with self.assertRaisesRegex(
         ValueError,
         r"Sharding NamedSharding\(mesh=Mesh\('replica': 1, 'data': 1, 'mdl': 2\), "
-        r"spec=PartitionSpec\(None, \('mdl',\), None, None\).*\) is only "
+        r"spec=PartitionSpec\(None, 'mdl', None, None\).*\) is only "
         "valid for values of rank at least 4, but was applied to a value of rank 2"):
-      new_mps.check_compatible_aval(shape)
+      mps.check_compatible_aval(shape)
 
   def test_is_subclass(self):
     # array version of api_test.py::APITest::test_is_subclass
@@ -1131,6 +1108,12 @@ class ShardingTest(jtu.JaxTestCase):
     s = jax.sharding.PositionalSharding(jax.devices()).reshape(jax.device_count(), 1)
     repr(s)  # doesn't crash
     str(s)  # doesn't crash
+
+  def test_pspec_tuple(self):
+    pspec = P('x', 'y', 'z')
+    self.assertEqual(pspec, ('x', 'y', 'z'))
+    self.assertEqual(pspec.index('z'), 2)
+    self.assertEqual(hash(P(None, 'x', 'y', 'z')), hash(P((), 'x', 'y', 'z')))
 
   @parameterized.named_parameters(
       ('sharded_dim_0', (4, 2), 0),

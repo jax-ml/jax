@@ -1081,8 +1081,7 @@ class FragmentedArray:
         reg_8 = vector.bitcast(ir.VectorType.get((1,), i8), reg)
         # The algorithm here is largely the same as CUTLASS's
         # NumericArrayConverter specialization for int4 -> bf16 casts.
-        # We modify it slightly, because we only extract 2 values, and we also
-        # flip them to account for XLA using big-endian packing into bytes.
+        # We modify it slightly, because we only extract 2 values.
         # We first shift the value by 4 bits, to put the high int4 in low bits.
         # The prmt then blends the two values together, by putting them into the
         # low bits of each 16-bit subword of our register. Then, we use the lop3
@@ -1100,7 +1099,7 @@ class FragmentedArray:
             {
             .reg .b32 s<4>;
             shr.s32 s0, $1, 4;
-            prmt.b32 s1, $1, s0, 0xF0F4;
+            prmt.b32 s1, $1, s0, 0xF4F0;
             lop3.b32 s2, s1, 0x000F000F, 0x43084308, (0xf0 & 0xcc) ^ 0xaa;
             mov.b32 s3, 0x43084308;
             sub.bf16x2 $0, s2, s3;

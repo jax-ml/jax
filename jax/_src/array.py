@@ -44,7 +44,7 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding,
     device_replica_id_map, hashed_index, num_addressable_indices, local_to_global_shape)  # pyformat: disable
-from jax._src.typing import ArrayLike, DLDeviceType, DTypeLike
+from jax._src.typing import ArrayLike, DLDeviceType
 from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method, cache
 import numpy as np
 
@@ -984,8 +984,7 @@ def make_array_from_process_local_data(
 
 
 def make_array_from_single_device_arrays(
-    shape: Shape, sharding: Sharding, arrays: Sequence[basearray.Array], *,
-    dtype: DTypeLike | None = None,
+    shape: Shape, sharding: Sharding, arrays: Sequence[basearray.Array]
 ) -> ArrayImpl:
   r"""Returns a ``jax.Array`` from a sequence of ``jax.Array``\s each on a single device.
       Every device in input ``sharding``\'s mesh must have an array in ``arrays``\s.
@@ -998,8 +997,6 @@ def make_array_from_single_device_arrays(
       must equal ``len(sharding.addressable_devices)`` and the shape of each array must be the same. For multiprocess code,
       each process will call with a different ``arrays`` argument that corresponds to that processes' data.
       These arrays are commonly created via ``jax.device_put``.
-    dtype: The dtype of the output ``jax.Array``. If not provided, the dtype of the first array in
-      ``arrays`` is used. If ``arrays`` is empty, the ``dtype`` argument must be provided.
 
   Returns:
     A global ``jax.Array``, sharded as ``sharding``, with shape equal to ``shape``, and with per-device
@@ -1030,27 +1027,10 @@ def make_array_from_single_device_arrays(
   For cases where you have a local array and want to convert it to a global
   jax.Array, use ``jax.make_array_from_process_local_data``.
   """
-  if isinstance(arrays, Sequence):
-    if arrays:
-      if dtype is None:
-        dtype = arrays[0].dtype
-      else:
-        if arrays[0].dtype != dtype:
-          raise ValueError(
-              "If `dtype` is provided to "
-              "`jax.make_array_from_single_device_arrays`, it must match the "
-              f"dtype of the arrays in `arrays`. Got dtype={dtype} and arrays "
-              f"dtype={arrays[0].dtype}`.")
-    else:
-      if dtype is None:
-        raise ValueError(
-            "If `arrays` is empty, `dtype` must be provided via the `dtype` "
-            "argument to `jax.make_array_from_single_device_arrays`.")
-
   # All input arrays should be committed. Checking it is expensive on
   # single-controller systems.
   aval = core.update_aval_with_sharding(
-      core.ShapedArray(shape, dtype, weak_type=False), sharding)
+      core.ShapedArray(shape, arrays[0].dtype, weak_type=False), sharding)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     return aval.dtype._rules.make_sharded_array(aval, sharding, arrays,
                                                 committed=True)
@@ -1249,9 +1229,13 @@ pxla.local_result_handlers[core.ShapedArray] = _array_local_result_handler
 def _token_shard_arg(xs, shardings, layouts, copy_semantics):
   results = []
   for x, sharding, layout in safe_zip(xs, shardings, layouts):
+    assert layout is None
     x.block_until_ready()
     x = np.array([], dtype=bool)
-    results.append(api.device_put(x, Layout(layout, sharding)))
+    aval = core.get_aval(x)
+    devices = sharding._addressable_device_assignment
+    results.append(pxla.batched_device_put(
+        aval, sharding, [x] * len(devices), devices))
   return results
 pxla.shard_arg_handlers[core.Token] = _token_shard_arg
 
