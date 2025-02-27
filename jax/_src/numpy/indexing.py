@@ -571,6 +571,7 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
   idx += (arr.ndim - len(idx)) * (slice(None),)
   start_indices: Sequence[ArrayLike] = []
   slice_sizes: Sequence[int] = []
+  allow_negative_indices: list[bool] = []
 
   for ind, size in safe_zip(idx, arr.shape):
     if isinstance(ind, slice):
@@ -578,11 +579,14 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
       assert step == 1  # checked above
       start_indices.append(start)
       slice_sizes.append(max(0, stop - start))
+      allow_negative_indices.append(start < 0 or stop < 0)
     else:
       assert np.issubdtype(dtypes.dtype(ind), np.integer)  # checked above
       assert np.shape(ind) == ()  # checked above
       start_indices.append(ind)
       slice_sizes.append(1)
+      allow_negative_indices.append(
+          not isinstance(ind, (int, np.integer)) or bool(ind < 0))
   # Try to use static slicing when possible.
   if all(isinstance(i, (int, np.integer)) and i >= 0 for i in start_indices):
     int_start_indices = [int(i) for i in start_indices]  # type: ignore
@@ -595,7 +599,8 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
     if len(start_indices) > 1:
       start_indices = util.promote_dtypes(*start_indices)
     arr = lax.dynamic_slice(
-        arr, start_indices=start_indices, slice_sizes=slice_sizes)
+        arr, start_indices=start_indices, slice_sizes=slice_sizes,
+        allow_negative_indices=allow_negative_indices)
   if int_indices:
     arr = lax.squeeze(arr, tuple(int_indices))
   return arr
