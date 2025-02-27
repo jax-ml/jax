@@ -43,7 +43,6 @@ from jax._src.numpy import array_api_metadata
 from jax._src.numpy import indexing
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import tensor_contractions
-from jax._src.numpy import util
 from jax._src.pjit import PartitionSpec
 from jax._src.sharding_impls import canonicalize_sharding, NamedSharding
 from jax._src.numpy import reductions
@@ -159,17 +158,6 @@ def _conjugate(self: Array) -> Array:
   Refer to :func:`jax.numpy.conjugate` for the full documentation.
   """
   return ufuncs.conjugate(self)
-
-def _contains(self: Array, other: ArrayLike) -> Array:
-  """Implements __contains__ for JAX arrays."""
-  if self.ndim != 1:
-    raise ValueError("Array.__contains__: search array must be one-dimensional,"
-                     f" got arr.shape={self.shape}.")
-  query = util.ensure_arraylike('Array.__contains__', other)
-  if query.ndim != 0:
-    raise ValueError("Array.__contains__: query value must be a scalar,"
-                     f" got {query.shape=}")
-  return reductions.any(self == query)
 
 def _copy(self: Array) -> Array:
   """Return a copy of the array.
@@ -944,7 +932,6 @@ _array_operators = {
   "getitem": _getitem,
   "setitem": _unimplemented_setitem,
   "copy": _copy,
-  "contains": _contains,
   "deepcopy": _deepcopy,
   "neg": lambda self: ufuncs.negative(self),
   "pos": lambda self: ufuncs.positive(self),
