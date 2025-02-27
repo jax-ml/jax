@@ -47,6 +47,13 @@ build:linux --copt=-Wno-array-parameter
 build:macos --config=posix
 build:macos --apple_platform_type=macos
 
+# Bazel 7.0.0 no longer supports dynamic symbol lookup on macOS. To resolve
+# undefined symbol errors in macOS arm64 builds, explicitly add the necessary
+# linker flags until dependencies are well defined. See
+# https://github.com/bazelbuild/bazel/issues/19730.
+build:macos --linkopt=-Wl,-undefined,dynamic_lookup
+build:macos --host_linkopt=-Wl,-undefined,dynamic_lookup
+
 # Windows has a relatively short command line limit, which JAX has begun to hit.
 # See https://docs.bazel.build/versions/main/windows.html
 build:windows --features=compiler_param_file
