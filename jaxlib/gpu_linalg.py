@@ -12,29 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
-
 from jaxlib import xla_client
 
-for cuda_module_name in [".cuda", "jax_cuda12_plugin"]:
-  try:
-    _cuda_linalg = importlib.import_module(
-        f"{cuda_module_name}._linalg", package="jaxlib"
-    )
-  except ImportError:
-    _cuda_linalg = None
-  else:
-    break
+from .plugin_support import import_from_plugin
 
-for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
-  try:
-    _hip_linalg = importlib.import_module(
-        f"{rocm_module_name}._linalg", package="jaxlib"
-    )
-  except ImportError:
-    _hip_linalg = None
-  else:
-    break
+_cuda_linalg = import_from_plugin("cuda", "_linalg")
+_hip_linalg = import_from_plugin("rocm", "_linalg")
 
 if _cuda_linalg:
   for _name, _value in _cuda_linalg.registrations().items():
