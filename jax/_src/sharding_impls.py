@@ -867,16 +867,16 @@ def explode_superdims(sizes, dims):
   return final_dims
 
 def parse_flatten_op_sharding(hlo_sharding: xc.OpSharding | xc.HloSharding,
-                              mesh: mesh_lib.Mesh) -> Sequence[ParsedPartitionSpec]:
+                              mesh: mesh_lib.Mesh) -> Sequence[PartitionSpec]:
   if isinstance(hlo_sharding, xc.OpSharding):
     hlo_sharding = xc.HloSharding.from_proto(hlo_sharding)
   if hlo_sharding.tuple_elements():
-    out: list[ParsedPartitionSpec] = []
+    out: list[PartitionSpec] = []
     for s in hlo_sharding.tuple_elements():
       out.extend(parse_flatten_op_sharding(s, mesh))
     return out
   elif hlo_sharding.is_replicated():
-    return [ParsedPartitionSpec(PartitionSpec(), ())]
+    return [PartitionSpec()]
   elif hlo_sharding.is_tiled():
     mesh_shape = mesh.shape
     mesh_axis_order = unflatten_array(
@@ -902,7 +902,7 @@ def parse_flatten_op_sharding(hlo_sharding: xc.OpSharding | xc.HloSharding,
       partitions = partitions[:-1]
     while partitions and partitions[-1] == ():
       partitions.pop()
-    return [ParsedPartitionSpec(None, partitions)]
+    return [PartitionSpec(*partitions)]
   else:
     raise AssertionError("Unhandled OpSharding type. Please open a bug report!")
 
@@ -1235,11 +1235,9 @@ def create_mesh_pspec_sharding(
 
 def _gspmd_to_named_sharding_via_mesh(
     out_s: GSPMDSharding, mesh: mesh_lib.Mesh) -> NamedSharding:
-  parsed_pspec = parse_flatten_op_sharding(
-      out_s._hlo_sharding, mesh)[0]
+  spec = parse_flatten_op_sharding(out_s._hlo_sharding, mesh)[0]
   return create_mesh_pspec_sharding(
-      mesh, parsed_pspec.get_partition_spec(), parsed_pspec,
-      out_s.memory_kind)
+      mesh, spec, memory_kind=out_s.memory_kind)
 
 def flatten_spec(spec):
   out = []

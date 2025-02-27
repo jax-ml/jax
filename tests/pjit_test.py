@@ -7165,9 +7165,9 @@ class UtilTest(jtu.JaxTestCase):
     aval = core.ShapedArray((len(devices),) * dims, jnp.float32)
     def roundtrip(spec):
       hlo_sharding = NamedSharding(mesh, spec)._to_xla_hlo_sharding(aval.ndim)
-      parsed_spec = parse_flatten_op_sharding(hlo_sharding, mesh)[0].partitions
-      self.assertEqual(parsed_spec[:len(spec)], spec)
-      self.assertEqual(parsed_spec[len(spec):], ((),) * (len(parsed_spec) - len(spec)))
+      recovered_spec = parse_flatten_op_sharding(hlo_sharding, mesh)[0]
+      self.assertEqual(recovered_spec[:len(spec)], spec)
+      self.assertEqual(recovered_spec[len(spec):], ((),) * (len(recovered_spec) - len(spec)))
 
     special_specs = [P()]
     for spec in special_specs:
@@ -7517,12 +7517,8 @@ class UtilTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y', None))
 
-    self.assertEqual(s._parsed_pspec.get_partition_spec(), P('x', 'y', None))
-
-    recovered_parsed_pspec = parse_flatten_op_sharding(
-        s._to_xla_hlo_sharding(3), mesh)
-    self.assertEqual(recovered_parsed_pspec[0].get_partition_spec(),
-                     P('x', 'y'))
+    spec = parse_flatten_op_sharding(s._to_xla_hlo_sharding(3), mesh)[0]
+    self.assertEqual(spec, P('x', 'y'))
 
   def test_mesh_with_list_devices(self):
     mesh = jax.sharding.Mesh(jax.devices(), ('x',))

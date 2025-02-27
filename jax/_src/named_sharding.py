@@ -169,24 +169,13 @@ class NamedSharding(JSharding.Sharding):
     return self.mesh is other.mesh or self.mesh == other.mesh
 
   def check_compatible_aval(self, aval_shape: Shape) -> None:
-    assert self._parsed_pspec is not None
-    if len(aval_shape) < len(self._parsed_pspec):
+    if len(aval_shape) < len(self.spec):
       extra_msg = (' For scalars the PartitionSpec should be P()'
                    if len(aval_shape) == 0 else '')
       raise ValueError(
           f"Sharding {self} is only valid for values of rank at least "
-          f"{len(self._parsed_pspec)}, but was applied to a value of rank "
+          f"{len(self.spec)}, but was applied to a value of rank "
           f"{len(aval_shape)}.{extra_msg}")
-
-  @classmethod
-  def _from_parsed_pspec(
-      cls, mesh, parsed_pspec, *, memory_kind=None, _manual_axes=frozenset(),
-      _logical_device_ids=None,
-  ):
-    return cls(mesh, parsed_pspec.get_partition_spec(),
-                memory_kind=memory_kind, _parsed_pspec=parsed_pspec,
-                _manual_axes=_manual_axes,
-                _logical_device_ids=_logical_device_ids)
 
   @property
   def num_devices(self) -> int:
@@ -239,7 +228,7 @@ class NamedSharding(JSharding.Sharding):
   def is_fully_replicated(self) -> bool:
     if self.mesh.size == 1:
       return True
-    array_mapping = get_array_mapping(self._parsed_pspec)
+    array_mapping = get_array_mapping(self.spec)
     mesh_shape = self.mesh.shape
     num_partitions = 1
     for name in array_mapping:  # type: ignore
@@ -260,27 +249,32 @@ class NamedSharding(JSharding.Sharding):
   def _to_sdy_sharding(self, num_dimensions: int) -> SdyArraySharding:
     dim_shardings = [SdyDimSharding(axes=[], is_closed=True)
                      for _ in range(num_dimensions)]
-    for i, dim_spec in enumerate(self._parsed_pspec):
+    for i, dim_spec in enumerate(self.spec):
       if dim_spec is PartitionSpec.UNCONSTRAINED:
         dim_shardings[i].is_closed = False
-      elif not dim_spec:
+      elif dim_spec is None:
         # Already empty and closed sharding.
         pass
       else:
+        dim_spec = dim_spec if isinstance(dim_spec, tuple) else (dim_spec,)
         dim_shardings[i].axes = dim_spec
     return SdyArraySharding(self.mesh.shape_tuple, dim_shardings,
                             self._logical_device_ids)
 
 
 def get_array_mapping(
-    axis_resources: ParsedPartitionSpec | AUTO | UnspecifiedValue
+    axis_resources: PartitionSpec | AUTO | UnspecifiedValue
 ) -> ArrayMappingOrAutoOrUnspecified:
   if isinstance(axis_resources, (AUTO, UnspecifiedValue)):
     return axis_resources
-  return collections.OrderedDict(
-      (axis, i) for i, axes in enumerate(axis_resources)
-      if axes is not PartitionSpec.UNCONSTRAINED for axis in axes)
-
+  d = collections.OrderedDict()
+  for i, axes in enumerate(axis_resources):
+    if axes is None or axes is PartitionSpec.UNCONSTRAINED:
+      continue
+    axes = axes if isinstance(axes, tuple) else (axes,)
+    for axis in axes:
+      d[axis] = i
+  return d
 
 @dataclasses.dataclass
 class SdyDimSharding:
@@ -414,7 +408,7 @@ class ParsedPartitionSpec:
 def named_sharding_to_xla_hlo_sharding(
     self, num_dimensions: int) -> xc.HloSharding:
   mesh_shape = self.mesh.shape
-  array_mapping = get_array_mapping(self._parsed_pspec)
+  array_mapping = get_array_mapping(self.spec)
   mesh_axis_pos = {name: i for i, name in enumerate(self.mesh.axis_names)}
 
   special_axes = {}

@@ -932,15 +932,13 @@ class ShardingTest(jtu.JaxTestCase):
     shape = (8, 2)
     mesh = jtu.create_mesh((1, 1, 2), ('replica', 'data', 'mdl'))
     mps = jax.sharding.NamedSharding(mesh, P(None, ('mdl',), None, None))
-    new_mps = jax.sharding.NamedSharding._from_parsed_pspec(
-        mps.mesh, mps._parsed_pspec)
 
     with self.assertRaisesRegex(
         ValueError,
         r"Sharding NamedSharding\(mesh=Mesh\('replica': 1, 'data': 1, 'mdl': 2\), "
         r"spec=PartitionSpec\(None, 'mdl', None, None\).*\) is only "
         "valid for values of rank at least 4, but was applied to a value of rank 2"):
-      new_mps.check_compatible_aval(shape)
+      mps.check_compatible_aval(shape)
 
   def test_is_subclass(self):
     # array version of api_test.py::APITest::test_is_subclass
