@@ -321,6 +321,14 @@ def _get_arg_type(
   )
 
 
+def _canonicalize_dimension_semantic(
+    dimension_semantic: str | tpu_core.GridDimensionSemantics,
+) -> str:
+  if isinstance(dimension_semantic, tpu_core.GridDimensionSemantics):
+    return dimension_semantic.value
+  return dimension_semantic
+
+
 @dataclasses.dataclass(init=False)
 class MosaicGridMapping:
   grid: tuple[int, ...] | None
@@ -342,7 +350,7 @@ class MosaicGridMapping:
       self,
       jaxpr: jax_core.Jaxpr,
       grid_mapping: pallas_core.GridMapping,
-      dimension_semantics: tuple[str, ...] | None,
+      dimension_semantics: tuple[str | tpu_core.GridDimensionSemantics, ...] | None,
       mesh: mesh_lib.Mesh | None,
       dynamic_shape_replacement_fn: Callable[
           [tuple[jax.DimSize, ...]], tuple[int, ...]
@@ -359,6 +367,9 @@ class MosaicGridMapping:
     )
     if dimension_semantics is None:
       dimension_semantics = ("arbitrary",) * len(user_grid)
+    dimension_semantics = tuple(
+        _canonicalize_dimension_semantic(s) for s in dimension_semantics
+    )
     if len(user_grid) != len(dimension_semantics):
       raise ValueError(
           "Must have dimension semantics for each dimension of the grid."
@@ -592,7 +603,9 @@ def lower_jaxpr_to_module(
     grid_mapping: pallas_core.GridMapping,
     jaxpr: jax_core.Jaxpr,
     *,
-    dimension_semantics: tuple[str | None, ...] | None,
+    dimension_semantics: (
+        tuple[str | tpu_core.GridDimensionSemantics, None, ...] | None
+    ),
     mesh: mesh_lib.Mesh | None = None,
     for_verification: bool = False,
     dynamic_shape_replacement_enabled: bool = False,

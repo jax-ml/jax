@@ -42,6 +42,9 @@ SMEM = tpu_core.TPUMemorySpace.SMEM
 VMEM = tpu_core.TPUMemorySpace.VMEM
 DMA = tpu_core.SemaphoreType.DMA
 REF = pallas_core.MemoryRef
+GridDimensionSemantics = tpu_core.GridDimensionSemantics
+PARALLEL = tpu_core.PARALLEL
+ARBITRARY = tpu_core.ARBITRARY
 SemaphoreType = tpu_core.SemaphoreType
 SemaphoreTuple = jax.Array
 ArrayRef = Union[REF, jax.Array]
@@ -911,12 +914,6 @@ def make_pipeline_allocations(
   out_brefs = jax.tree.map(
       make_output_bref, out_specs, out_refs, should_accumulate_out)
   return (*in_brefs, *out_brefs)
-
-
-class GridDimensionSemantics:
-  pass
-PARALLEL = GridDimensionSemantics()
-ARBITRARY = GridDimensionSemantics()
 
 
 def _partition_grid(
