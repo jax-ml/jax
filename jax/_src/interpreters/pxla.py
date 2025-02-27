@@ -3315,6 +3315,5 @@ def check_array_xla_sharding_layout_match(
 
 
 def get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
-  parsed_pspec = sharding_impls.prepare_axis_resources(
-      pspec, "pspec to array_mapping")
-  return _get_array_mapping(parsed_pspec)
+  pspec = sharding_impls.prepare_axis_resources(pspec, "pspec to array_mapping")
+  return _get_array_mapping(pspec)

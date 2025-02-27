@@ -112,21 +112,20 @@ class NamedSharding(JSharding.Sharding):
   mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh
   spec: PartitionSpec
   _memory_kind: str | None
-  _parsed_pspec: ParsedPartitionSpec
   _manual_axes: frozenset[MeshAxisName]
   _logical_device_ids: tuple[int, ...] | None
 
   @use_cpp_method()
   def __init__(
       self, mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh, spec: PartitionSpec, *,
-      memory_kind: str | None = None, _parsed_pspec=None,
-      _manual_axes=frozenset(), _logical_device_ids=None):
+      memory_kind: str | None = None, _manual_axes=frozenset(),
+      _logical_device_ids=None):
     self.mesh = mesh
     self.spec = spec
     self._memory_kind = memory_kind
     self._manual_axes = _manual_axes
     self._logical_device_ids = _logical_device_ids
-    self._parsed_pspec = preprocess(self.mesh, self.spec, _parsed_pspec)
+    check_pspec(self.mesh, self.spec, self._manual_axes)
 
   def __repr__(self):
     mem = '' if self.memory_kind is None else f', memory_kind={self.memory_kind}'
@@ -330,6 +329,7 @@ class SdyArraySharding:
            if self.replicated_axes else '')
     return f"SdyArraySharding([{dim_sharding_repr}]{device_id_repr}{rar})"
 
+# TODO(yashkatariya): Remove this after jax 0.5.2 release
 class ParsedPartitionSpec:
   __slots__ = ('_user_spec', 'partitions')
 
@@ -497,7 +497,7 @@ def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
 
 get_single_pspec = lambda p: array_mapping_to_axis_resources(get_array_mapping(p))  # type: ignore
 
-
+# TODO(yashkatariya): Remove this after jax 0.5.2 release
 def preprocess(mesh, spec, parsed_pspec, _manual_axes=frozenset()):
   if parsed_pspec is None:
     spec = PartitionSpec() if spec is None else spec
@@ -507,6 +507,11 @@ def preprocess(mesh, spec, parsed_pspec, _manual_axes=frozenset()):
   _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes)
   _check_axis_type_consistency(mesh, parsed_pspec)
   return parsed_pspec
+
+def check_pspec(mesh, spec, _manual_axes=frozenset()):
+  _check_unique_resources(spec, "NamedSharding spec")
+  _check_mesh_resource_axis(mesh, spec, _manual_axes)
+  _check_axis_type_consistency(mesh, spec)
 
 def _check_unique_resources(
     pspec: ParsedPartitionSpec | PartitionSpec, arg_name: str
