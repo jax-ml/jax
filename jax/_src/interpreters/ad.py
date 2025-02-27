@@ -700,19 +700,19 @@ class LinearizeTrace(Trace):
     tangent_nzs_out = [type(t) is not Zero for t in tangents_out]
     return map(partial(maybe_linearize_tracer, self), primals_out, tangent_nzs_out, tangents_out)
 
-  def process_call(self, call_primitive, f: lu.WrappedFun,
-                   tracers, params):
+  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
     assert call_primitive.multiple_results
     primals, tangents = unzip2(map(self.to_primal_tangent_pair, tracers))
     nzs_in = tuple(type(t) is not Zero for t in tangents)
-    f_primal, linearize_outs_thunk = linearize_subtrace(f, self.tag, nzs_in,
-                                                        f.debug_info)
+    f_primal, linearize_outs_thunk = linearize_subtrace(
+        f, self.tag, nzs_in, f.debug_info)
     if isinstance(call_primitive, core.MapPrimitive):
-      @as_hashable_function(closure=(linearize_outs_thunk))
+      out_axes_thunk = params['out_axes_thunk']
+      @as_hashable_function(closure=out_axes_thunk)
       def new_out_axes_thunk():
         _, _, _, _, in_fwd, out_fwd = linearize_outs_thunk()
         num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
-        out_axes = params['out_axes_thunk']()
+        out_axes = out_axes_thunk()
         return (*(0 for _ in range(num_res_out)), *out_axes)
       primal_params = dict(params, out_axes_thunk=new_out_axes_thunk)
     else:
@@ -737,25 +737,28 @@ class LinearizeTrace(Trace):
       new_out_axes = (*(ax for ax, nz in zip(out_axes, nzs_out) if nz),)
       # NOTE: This assumes that the output tangents being zero is a
       # deterministic function of which input tangents were zero.
-      @as_hashable_function(closure=(new_out_axes))
+      @as_hashable_function(closure=new_out_axes)
       def new_out_axes_thunk():
         return new_out_axes
       params = dict(params, in_axes=new_in_axes, out_axes_thunk=new_out_axes_thunk)
+      ctx = lambda: core.extend_axis_env_nd([(params['axis_name'], params["global_axis_size"])])
+      with ctx():
+        lin_jaxpr = pe.convert_constvars_jaxpr(lin_jaxpr)
+    else:
+      lin_jaxpr = pe.convert_constvars_jaxpr(lin_jaxpr)
 
     update_params = call_linearize_param_updaters.get(call_primitive)
-    new_params = update_params(params, residual_avals, nzs_in) if update_params else params
+    num_new_args = len(residuals) + len(env)
+    new_params = update_params(params, num_new_args, nzs_in) if update_params else params
+    num_residuals = len(residual_avals)
 
-    def f_tangent(*args):
-      num_residuals = len(residual_avals)
-      consts = args[:num_residuals]
-      nz_tangents = args[num_residuals:]
-      return core.eval_jaxpr(lin_jaxpr, consts, *nz_tangents)
-
+    assert type(self.tangent_trace) is pe.DynamicJaxprTrace
     nz_tangents_in = [t for (t, nz) in zip(tangents, nzs_in) if nz]
-    nz_tangents_out = call_primitive.bind_with_trace(
-        self.tangent_trace,
-        (lu.wrap_init(f_tangent, debug_info=lin_jaxpr.debug_info),
-         *residuals, *env, *nz_tangents_in), new_params)
+    process = (ctx()(self.tangent_trace._process_map)
+               if isinstance(call_primitive, core.MapPrimitive)
+               else self.tangent_trace._process_call)
+    nz_tangents_out = process(
+        call_primitive, lin_jaxpr, (), (*residuals, *env, *nz_tangents_in), new_params)
     nz_tangents_out_iter = iter(nz_tangents_out)
     tangents_out = [next(nz_tangents_out_iter) if nz else Zero.from_primal_value(primal)
                     for nz, primal in zip(nzs_out, primals_out)]
@@ -993,9 +996,8 @@ def call_transpose(primitive, params, call_jaxpr: core.Jaxpr, args, ct, _):
   else:
     consts = ()
   all_args, in_tree_def = tree_flatten((consts, args, ct))
-  fun = lu.hashable_partial(lu.wrap_init(backward_pass,
-                                         debug_info=call_jaxpr.debug_info),
-                            call_jaxpr, False)
+  fun = lu.hashable_partial(lu.wrap_init(
+    backward_pass, debug_info=call_jaxpr.debug_info), call_jaxpr, False)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   update_params = call_transpose_param_updaters.get(primitive)
   if update_params:
@@ -1033,9 +1035,8 @@ def map_transpose(primitive: core.Primitive, params,
                   call_jaxpr: core.Jaxpr, args, ct, _):
   all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
   # TODO(necula): use the right debug_info for the backwards pass
-  fun = lu.hashable_partial(lu.wrap_init(backward_pass,
-                                         debug_info=call_jaxpr.debug_info),
-                            call_jaxpr, False)
+  fun = lu.hashable_partial(lu.wrap_init(
+    backward_pass, debug_info=call_jaxpr.debug_info), call_jaxpr, False)
   fun, nz_arg_cts = nonzero_outputs(fun)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   # Preserve axis for primal arguments, skip tangents (represented as undefined primals).

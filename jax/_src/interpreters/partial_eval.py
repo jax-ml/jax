@@ -1951,10 +1951,17 @@ class DynamicJaxprTrace(core.Trace):
     implicit_tracers = _extract_implicit_args(self, f.in_type, explicit_tracers)
     in_tracers = map(self.to_jaxpr_tracer, [*implicit_tracers, *explicit_tracers])
     # TODO(mattjj): check in_tracers are consistent with f.in_type annotation
-    jaxpr, out_type, consts = trace_to_jaxpr_dynamic2(f)
+    jaxpr, _, consts = trace_to_jaxpr_dynamic2(f)
     if params.get('inline', False):
       return core.eval_jaxpr(jaxpr, consts, *in_tracers,
                              propagate_source_info=False)
+    return self._process_call(call_primitive, jaxpr, consts, explicit_tracers, params)
+
+  def _process_call(self, call_primitive, jaxpr, consts, explicit_tracers, params):
+    in_type = tuple((get_aval(t), True) for t in explicit_tracers)
+    implicit_tracers = _extract_implicit_args(self, in_type, explicit_tracers)
+    in_tracers = map(self.to_jaxpr_tracer, [*implicit_tracers, *explicit_tracers])
+    _, out_type = _add_implicit_outputs(jaxpr)
     source_info = source_info_util.current()
     out_tracers: list[Tracer] = []
     for aval, _ in out_type:
@@ -1978,7 +1985,7 @@ class DynamicJaxprTrace(core.Trace):
     return [t for t, (_, keep) in zip(out_tracers, out_type) if keep]
 
   def process_map(self, map_primitive, f: lu.WrappedFun,
-                  tracers: Sequence[core.Tracer], params):
+                  tracers: Sequence[Tracer], params):
     tracers = map(self.to_jaxpr_tracer, tracers)
     in_avals = [t.aval for t in tracers]
     axis_name, axis_size = params['axis_name'], params['axis_size']
@@ -1986,32 +1993,38 @@ class DynamicJaxprTrace(core.Trace):
                         if in_axis is not None else a
                         for a, in_axis in zip(in_avals, params['in_axes'])]
     with core.extend_axis_env_nd([(axis_name, params["global_axis_size"])]):
-      jaxpr, reduced_out_avals, consts, () = trace_to_jaxpr_dynamic(
-          f, reduced_in_avals)
-      ordered_effects = effects.ordered_effects.filter_in(jaxpr.effects)
-      if ordered_effects:
-        raise ValueError("Ordered effects not supported for "
-                         f"map primitives: {ordered_effects}")
-      out_axes = params['out_axes_thunk']()
-      out_avals = [core.unmapped_aval(axis_size, out_axis, a)
-                  if out_axis is not None else a
-                  for a, out_axis in zip(reduced_out_avals, out_axes)]
-      source_info = source_info_util.current()
-      out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
-      invars = map(self.getvar, tracers)
-      constvars = map(self.getvar, map(self.to_jaxpr_tracer, consts))
-      outvars = map(self.makevar, out_tracers)
-      new_in_axes = (None,) * len(consts) + params['in_axes']
-      new_params = dict(params, in_axes=new_in_axes, out_axes=out_axes,
-                        call_jaxpr=convert_constvars_jaxpr(jaxpr))
-      del new_params['out_axes_thunk']
-      update_params = call_param_updaters.get(map_primitive)
-      if update_params:
-        new_params = update_params(new_params, [True] * len(tracers), len(consts))
-      effs = core.filter_named_axis_effects(jaxpr.effects, {axis_name})
-      eqn = new_jaxpr_eqn([*constvars, *invars], outvars, map_primitive,
-                          new_params, effs, source_info)
-      self.frame.add_eqn(eqn)
+      jaxpr, _, consts, () = trace_to_jaxpr_dynamic(f, reduced_in_avals)
+      return self._process_map(map_primitive, jaxpr, consts, tracers, params)
+
+  def _process_map(self, map_primitive, jaxpr: Jaxpr,
+                   consts: Sequence, tracers: Sequence[Tracer], params):
+    tracers = map(self.to_jaxpr_tracer, tracers)
+    axis_name, axis_size = params['axis_name'], params['axis_size']
+    reduced_out_avals = [v.aval for v in jaxpr.outvars]
+    ordered_effects = effects.ordered_effects.filter_in(jaxpr.effects)
+    if ordered_effects:
+      raise ValueError("Ordered effects not supported for "
+                        f"map primitives: {ordered_effects}")
+    out_axes = params['out_axes_thunk']()
+    out_avals = [core.unmapped_aval(axis_size, out_axis, a)
+                if out_axis is not None else a
+                for a, out_axis in zip(reduced_out_avals, out_axes)]
+    source_info = source_info_util.current()
+    out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
+    invars = map(self.getvar, tracers)
+    constvars = map(self.getvar, map(self.to_jaxpr_tracer, consts))
+    outvars = map(self.makevar, out_tracers)
+    new_in_axes = (None,) * len(consts) + params['in_axes']
+    new_params = dict(params, in_axes=new_in_axes, out_axes=out_axes,
+                      call_jaxpr=convert_constvars_jaxpr(jaxpr))
+    del new_params['out_axes_thunk']
+    update_params = call_param_updaters.get(map_primitive)
+    if update_params:
+      new_params = update_params(new_params, [True] * len(tracers), len(consts))
+    effs = core.filter_named_axis_effects(jaxpr.effects, {axis_name})
+    eqn = new_jaxpr_eqn([*constvars, *invars], outvars, map_primitive,
+                        new_params, effs, source_info)
+    self.frame.add_eqn(eqn)
     return out_tracers
 
   def process_custom_jvp_call(self, prim, fun: lu.WrappedFun,

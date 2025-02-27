@@ -503,25 +503,6 @@ def _extend_axis_env(mesh, auto):
   return core.extend_axis_env_nd([(k, v) for k, v in mesh.shape.items()
                                  if k not in auto])
 
-# def _as_manual_mesh(mesh, auto):
-#   if config.sharding_in_types.value:
-#     # The shard_map `auto` names set really means "don't make these manual" ie
-#     # "make everything but these into manual". The user must ensure the `auto`
-#     # axes are not already manual.
-#     if set(mesh.axis_types.get(AxisTypes.Manual, ())) & auto:
-#       raise Exception("shard_map partial auto names cannot already be manual")
-#     auto_names = set(mesh.axis_types.get(AxisTypes.Auto, ()))
-#     expl_names = set(mesh.axis_types.get(AxisTypes.Explicit, ()))
-#     axis_types = {
-#         AxisTypes.Manual:
-#           tuple(i for i in mesh.axis_names if i not in auto),
-#         AxisTypes.Explicit:
-#           tuple(i for i in mesh.axis_names if i in auto and i in expl_names),
-#         AxisTypes.Auto:
-#           tuple(i for i in mesh.axis_names if i in auto and i in auto_names)}
-#     return AbstractMesh(mesh.shape_tuple, axis_types=axis_types)
-#   return None
-
 def _shard_map_staging(
     trace: pe.DynamicJaxprTrace, prim: core.Primitive, f: lu.WrappedFun,
     in_tracers: Sequence[Any], *, mesh: Mesh,
@@ -562,6 +543,8 @@ def _shard_map_staging(
   trace.frame.add_eqn(eqn)
   return out_tracers
 pe.DynamicJaxprTrace.process_shard_map = _shard_map_staging
+
+# TODO add underscore version, for direct-linearize to consume
 
 def _check_shapedarray(aval: core.AbstractValue) -> core.ShapedArray:
   assert isinstance(aval, core.ShapedArray)
@@ -1668,6 +1651,7 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
       out_names_thunk=tangent_out_names_thunk, check_rep=False,
       rewrite=rewrite, auto=auto)
 
+  # TODO TODO don't round-trip
   def f_tangent(*args):
     return core.eval_jaxpr(lin_jaxpr, (), *args)
 
