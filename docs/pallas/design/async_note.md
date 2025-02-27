@@ -261,7 +261,7 @@ First, we rewrite `ppermute_start` to return `x`, aliasing it through the kernel
 
 ```py
 def ppermute_start_kernel(
-    in_ref, send_sem, recv_sem, out_ref, _, *, axis_name,
+    in_ref, send_sem, recv_sem, _, out_ref, *, axis_name,
 ):
   axis_size = jax.lax.psum(1, axis_name)
   left_neighbor = jax.lax.rem(
