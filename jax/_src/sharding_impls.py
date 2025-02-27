@@ -691,10 +691,14 @@ def prepare_axis_resources(axis_resources, arg_name,
                          'allowed.')
       new_entries.append(entry)
     else:
-      parsed_pspec = ParsedPartitionSpec.from_user_input(
-          entry, what, allow_unconstrained_dims=allow_unconstrained_dims)
-      _check_unique_resources(parsed_pspec, arg_name)
-      new_entries.append(parsed_pspec)
+      if not isinstance(entry, PartitionSpec):
+        raise TypeError(f"{what} are expected to be "
+                        f"PartitionSpec instances or None, but got {entry}")
+      for e in entry:
+        if e is PartitionSpec.UNCONSTRAINED and not allow_unconstrained_dims:
+          raise ValueError(f"Unconstrained dims are not allowed: {entry}")
+      _check_unique_resources(entry, arg_name)
+      new_entries.append(entry)
 
   return tree_util.tree_unflatten(treedef, new_entries)
 
@@ -1225,12 +1229,11 @@ def logical_sharding(aval, phys_sharding) -> jsharding.Sharding:
 
 @util.cache()
 def create_mesh_pspec_sharding(
-    mesh: mesh_lib.Mesh, pspec: PartitionSpec | None, parsed_pspec=None,
+    mesh: mesh_lib.Mesh, pspec: PartitionSpec | None,
     memory_kind: str | None = None) -> NamedSharding:
   if pspec is None:
-    pspec, parsed_pspec = PartitionSpec(), None
-  return NamedSharding(mesh, pspec, _parsed_pspec=parsed_pspec,
-                       memory_kind=memory_kind)
+    pspec = PartitionSpec()
+  return NamedSharding(mesh, pspec, memory_kind=memory_kind)
 
 
 def _gspmd_to_named_sharding_via_mesh(

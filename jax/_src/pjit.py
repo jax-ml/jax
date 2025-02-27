@@ -68,8 +68,8 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding,
     SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
-    ParsedPartitionSpec, prepare_axis_resources,
-    parse_flatten_op_sharding, canonicalize_sharding, flatten_spec)
+    prepare_axis_resources, parse_flatten_op_sharding, canonicalize_sharding,
+    flatten_spec)
 from jax._src.layout import Layout, DeviceLocalLayout, AutoLayout
 from jax._src.state import discharge as state_discharge, RefEffect, AbstractRef
 from jax._src.traceback_util import api_boundary
@@ -1033,9 +1033,8 @@ def _create_sharding_for_array(mesh, x, name, api_name):
         f' site? Alternatively, provide `Sharding`s to {name} and'
         ' then the mesh context manager is not required.')
   # A nice user error is raised in prepare_axis_resources.
-  assert x is None or isinstance(x, ParsedPartitionSpec), x
-  return (pxla.create_mesh_pspec_sharding(mesh, x) if x is None else
-          pxla.create_mesh_pspec_sharding(mesh, x.get_partition_spec(), x))
+  assert x is None or isinstance(x, PartitionSpec), x
+  return sharding_impls.create_mesh_pspec_sharding(mesh, x)
 
 
 def _create_sharding_with_device_backend(device, backend):

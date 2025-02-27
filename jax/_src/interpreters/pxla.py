@@ -3245,9 +3245,6 @@ def _get_metadata_jit_pmap(local_devices, num_in_shardings, num_out_shardings):
   return in_shardings, out_shardings, committed, tuple(local_devices)
 
 
-create_mesh_pspec_sharding = sharding_impls.create_mesh_pspec_sharding
-
-
 def check_device_backend_on_shardings(shardings) -> bool:
   for i in shardings:
     if isinstance(i, (UnspecifiedValue, AUTO)):

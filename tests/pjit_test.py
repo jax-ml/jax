@@ -6666,14 +6666,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P())
     jax.lax.with_sharding_constraint(np.arange(8), s)
 
-    s = NamedSharding(mesh, P(P.UNCONSTRAINED, 'x'))
+    s = NamedSharding(mesh.update_axis_types({AxisTypes.Auto: 'y'}),
+                      P('x', P.UNCONSTRAINED))
     with self.assertRaisesRegex(
         ValueError,
         "The spec of NamedSharding passed to with_sharding_constraint"):
       jax.lax.with_sharding_constraint(np.arange(8).reshape(4, 2), s)
 
-    s = NamedSharding(mesh, P(P.UNCONSTRAINED))
-    jax.lax.with_sharding_constraint(np.arange(8), s)
+    with self.assertRaisesRegex(
+        ValueError,
+        'PartitionSpec.*cannot contain `P.UNCONSTRAINED` when no mesh'
+        ' axis_types are `Auto`'):
+      NamedSharding(mesh, P(P.UNCONSTRAINED))
 
   def test_use_mesh_legacy_mesh_ctx_mgr_mix_error(self):
     mesh = jtu.create_mesh((1, 1), ('x', 'y'))
