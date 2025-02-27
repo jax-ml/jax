@@ -21,6 +21,7 @@ import functools
 import math
 from typing import Any, NamedTuple, cast
 
+from jax._src import config
 from jax._src import core
 from jax._src import mesh as mesh_lib
 from jax._src import sharding as jsharding
@@ -28,7 +29,7 @@ from jax._src import sharding_specs
 from jax._src import tree_util
 from jax._src import util
 from jax._src import source_info_util
-from jax._src import xla_bridge
+from jax._src import xla_bridge as xb
 from jax._src import mesh_utils
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
@@ -193,6 +194,8 @@ class SingleDeviceSharding(jsharding.Sharding):
 
   @property
   def is_fully_addressable(self) -> bool:
+    if config.enable_empty_arrays.value:
+      return xb.process_index(self._device.client) == self._device.process_index
     return True
 
 
@@ -291,8 +294,7 @@ class PmapSharding(jsharding.Sharding):
               'Multiple chunks in Chunked dimension not supported.')
 
     if devices is None:
-      pmap_devices: np.ndarray = np.array(
-          xla_bridge.local_devices()[:num_ways_sharded])
+      pmap_devices: np.ndarray = np.array(xb.local_devices()[:num_ways_sharded])
     else:
       pmap_devices = np.array(devices)
     return cls(pmap_devices, sharding_spec)
@@ -1372,7 +1374,7 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
     A `jax.sharding.Mesh` object.
   """
   if devices is None:
-    devices = xla_bridge.devices()
+    devices = xb.devices()
   new_axis_shapes = mesh_utils._canonicalize_axis_sizes(axis_shapes)
   if new_axis_shapes is None:
     raise ValueError(

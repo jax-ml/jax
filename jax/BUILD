@@ -916,10 +916,12 @@ pytype_strict_library(
     name = "named_sharding",
     srcs = ["_src/named_sharding.py"],
     deps = [
+        ":config",
         ":mesh",
         ":partition_spec",
         ":sharding",
         ":util",
+        ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )

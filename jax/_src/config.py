@@ -1802,3 +1802,12 @@ num_cpu_devices = int_state(
         "the XLA flag --xla_force_host_platform_device_count is used."
         " Must be set before JAX is initialized."),
 )
+
+enable_empty_arrays = bool_state(
+    name='jax_enable_empty_arrays',
+    default=False,
+    help=(
+        "Enable the creation of an Array from an empty list of single-device "
+        "arrays. This is to support MPMD/pipeline parallelism in McJAX (WIP)."
+    )
+)
