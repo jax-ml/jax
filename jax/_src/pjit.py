@@ -69,7 +69,7 @@ from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding,
     SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
     ParsedPartitionSpec, get_single_pspec, prepare_axis_resources,
-    parse_flatten_op_sharding, canonicalize_sharding)
+    parse_flatten_op_sharding, canonicalize_sharding, flatten_spec)
 from jax._src.layout import Layout, DeviceLocalLayout, AutoLayout
 from jax._src.state import discharge as state_discharge, RefEffect, AbstractRef
 from jax._src.traceback_util import api_boundary
@@ -2726,7 +2726,8 @@ def _mesh_cast_abstract_eval(aval, dst_sharding):
         f' sharding spec. Got source spec={src_sharding.spec} and destination'
         f' spec={dst_sharding.spec}')
   if src_sharding.mesh._any_axis_explicit and dst_sharding.mesh._any_axis_explicit:
-    for s, d in safe_zip(src_sharding.spec, dst_sharding.spec):
+    for s, d in safe_zip(flatten_spec(src_sharding.spec),
+                         flatten_spec(dst_sharding.spec)):
       if s is None and d is None:
         continue
       if s is None and d is not None:

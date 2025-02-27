@@ -152,7 +152,7 @@ class NamedSharding(JSharding.Sharding):
   def __hash__(self):
     if not hasattr(self, '_hash'):
       self._hash = hash(
-          (self.mesh, self.memory_kind, self._parsed_pspec, self._manual_axes,
+          (self.mesh, self.memory_kind, self.spec, self._manual_axes,
            self._logical_device_ids))
     return self._hash
 
@@ -161,7 +161,7 @@ class NamedSharding(JSharding.Sharding):
       return False
     if self is other:
       return True
-    if (self._parsed_pspec != other._parsed_pspec
+    if (self.spec != other.spec
         or self.memory_kind != other.memory_kind
         or self._manual_axes != other._manual_axes
         or self._logical_device_ids != other._logical_device_ids):

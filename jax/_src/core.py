@@ -48,7 +48,7 @@ from jax._src import linear_util as lu
 
 from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
-                           tuple_delete,
+                           tuple_delete, cache,
                            HashableFunction, HashableWrapper, weakref_lru_cache,
                            partition_list, StrictABCMeta)
 import jax._src.pretty_printer as pp
@@ -1776,13 +1776,6 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
   return TypeError(msg)
 
-def _make_lengths_same(sharding, ndim):
-  if ndim > len(sharding.spec):
-    return sharding.with_spec(sharding.spec._normalized_spec_for_aval(ndim))
-  if ndim < len(sharding.spec):
-    return sharding.with_spec(sharding.spec[:ndim])
-  assert False, "unreachable"
-
 
 # TODO(dougalm): Cast scalar, numpy arrays, etc to jax arrays so that values
 # passed to primitives are always have avals, etc i.e. they are canonical.
@@ -1814,6 +1807,12 @@ def get_cur_mesh_sharding(spec=None):
   spec = P() if spec is None else spec
   return NamedSharding(mesh_lib.get_abstract_mesh(), spec)
 
+def _make_lengths_same(sharding, ndim):
+  if ndim > len(sharding.spec):
+    return sharding.with_spec(sharding.spec._normalized_spec_for_aval(ndim))
+  if ndim < len(sharding.spec):
+    return sharding.with_spec(sharding.spec[:ndim])
+  assert False, "unreachable"
 
 # TODO(yashkatariya): Only works with User/Auto. Generalize it to work with
 # Collective too.
@@ -1847,7 +1846,16 @@ def _maybe_modify_sharding(sharding, ndim):
   return out
 
 
+@cache(max_size=4096, trace_context_in_key=True)
 def get_sharding(sharding, ndim):
+  """Modifies and checks the sharding.
+
+  Some modifications/checks include:
+    * Making the length of specs the same as ndim
+    * If a mesh axis is mentioned in pspec is Auto/Manual, replace it with None
+    * Checking for len(spec)-ndim match
+    * Checking if the mesh is an AbstractMesh.
+  """
   if sharding is None:
     return NamedSharding(mesh_lib.empty_abstract_mesh, P(*[None] * ndim))
 

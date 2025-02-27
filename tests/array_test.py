@@ -938,7 +938,7 @@ class ShardingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         r"Sharding NamedSharding\(mesh=Mesh\('replica': 1, 'data': 1, 'mdl': 2\), "
-        r"spec=PartitionSpec\(None, \('mdl',\), None, None\).*\) is only "
+        r"spec=PartitionSpec\(None, 'mdl', None, None\).*\) is only "
         "valid for values of rank at least 4, but was applied to a value of rank 2"):
       new_mps.check_compatible_aval(shape)
 
@@ -1110,6 +1110,12 @@ class ShardingTest(jtu.JaxTestCase):
     s = jax.sharding.PositionalSharding(jax.devices()).reshape(jax.device_count(), 1)
     repr(s)  # doesn't crash
     str(s)  # doesn't crash
+
+  def test_pspec_tuple(self):
+    pspec = P('x', 'y', 'z')
+    self.assertEqual(pspec, ('x', 'y', 'z'))
+    self.assertEqual(pspec.index('z'), 2)
+    self.assertEqual(hash(P(None, 'x', 'y', 'z')), hash(P((), 'x', 'y', 'z')))
 
   @parameterized.named_parameters(
       ('sharded_dim_0', (4, 2), 0),

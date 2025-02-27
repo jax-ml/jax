@@ -31,6 +31,17 @@ _UNCONSTRAINED_PARTITION = UnconstrainedSingleton()
 def _get_default_unconstrained():
   return _UNCONSTRAINED_PARTITION
 
+def _canonicalize_partition(partition):
+  if not partition:
+    return None
+  if partition is _UNCONSTRAINED_PARTITION:
+    return _UNCONSTRAINED_PARTITION
+  if isinstance(partition, (tuple, list)):
+    if len(partition) == 1:
+      return partition[0]
+    return tuple(partition)
+  return partition
+
 
 class PartitionSpec(tuple):
   """Tuple describing how to partition an array across a mesh of devices.
@@ -49,28 +60,30 @@ class PartitionSpec(tuple):
     pass
 
   def __new__(cls, *partitions):
+    partitions = tuple(_canonicalize_partition(p) for p in partitions)
     return tuple.__new__(PartitionSpec, partitions)
 
   def __repr__(self):
-    return "PartitionSpec%s" % tuple.__repr__(self)
+    return f"PartitionSpec{tuple.__repr__(self)}"
 
   def __reduce__(self):
     return (PartitionSpec, tuple(self))
 
+  def __eq__(self, other):
+    if not isinstance(other, tuple):
+      return False
+    other = tuple(_canonicalize_partition(o) for o in other)
+    return super().__eq__(other)
+
+  def __hash__(self):
+    return super().__hash__()
+
+  def index(self, value):
+    value = _canonicalize_partition(value)
+    return super().index(value)
+
   def _normalized_spec_for_aval(self, ndim: int) -> PartitionSpec:
-    out = []  # type: ignore
-    for p in self:
-      if p is None:
-        out.append(None)
-      elif p is _UNCONSTRAINED_PARTITION:
-        out.append(None)
-      elif isinstance(p, (list, tuple)):
-        if len(p) == 1:
-          out.append(p[0])
-        else:
-          out.append(tuple(p))
-      else:
-        out.append(p)
+    out = [None if p is _UNCONSTRAINED_PARTITION else p for p in self]
     if len(out) < ndim:
       out.extend([None] * (ndim - len(out)))
     return PartitionSpec(*out)

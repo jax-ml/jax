@@ -1244,8 +1244,6 @@ def _gspmd_to_named_sharding_via_mesh(
 def flatten_spec(spec):
   out = []
   for s in spec:
-    if s is None:
-      continue
     if isinstance(s, tuple):
       out.extend(s)
     else:
@@ -1287,6 +1285,8 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
       sharding = NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
 
   for s in flatten_spec(sharding.spec):
+    if s is None:
+      continue
     if sharding.mesh._name_to_type[s] in {
         mesh_lib.AxisTypes.Auto, mesh_lib.AxisTypes.Manual}:
       raise ValueError(
