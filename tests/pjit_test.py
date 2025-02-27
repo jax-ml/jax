@@ -7495,10 +7495,12 @@ class UtilTest(jtu.JaxTestCase):
         ),
     )
 
+  @jtu.thread_unsafe_test()
   def test_op_sharding_cache_on_mesh_pspec_sharding(self):
     ndim = 2
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     mps1 = NamedSharding(mesh, P('x', 'y'))
+    sharding_impls.named_sharding_to_xla_hlo_sharding.cache_clear()
     op1 = mps1._to_xla_hlo_sharding(ndim)
     cache_info1 = sharding_impls.named_sharding_to_xla_hlo_sharding.cache_info()
 
