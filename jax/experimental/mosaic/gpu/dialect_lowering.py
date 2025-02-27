@@ -28,6 +28,7 @@ from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import llvm
+from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
@@ -544,6 +545,9 @@ def _mgpu_wgmma_op_lowering_rule(
 
   b_layout = ir.MemRefType(wgmma_op.b.type).layout
   b_swizzle, b_transforms = memref_layout_to_swizzle_and_transforms(b_layout)
+  b_operand = transform_memref(wgmma_op.b, b_transforms)
+  if wgmma_op.transpose_b:
+    b_operand = utils.memref_transpose(b_operand, (0, 1, 3, 2))
 
   if ir.VectorType.isinstance(wgmma_op.a.type):
     a_operand = _fragmented_array_from_ir(wgmma_op.a, wgmma_layout)
@@ -556,13 +560,10 @@ def _mgpu_wgmma_op_lowering_rule(
           f" {b_swizzle}"
       )
     a_operand = transform_memref(wgmma_op.a, a_transforms)
+    if wgmma_op.transpose_a:
+      a_operand = utils.memref_transpose(a_operand, (0, 1, 3, 2))
 
-  new_acc = wgmma.wgmma(
-      acc,
-      a_operand,
-      transform_memref(wgmma_op.b, b_transforms),
-      swizzle=b_swizzle,
-  )
+  new_acc = wgmma.wgmma(acc, a_operand, b_operand, swizzle=b_swizzle)
 
   return [_fragmented_array_to_ir(new_acc.value, wgmma_op.accumulator.type)]
 
@@ -592,15 +593,26 @@ def _mgpu_wait_op_lowering_rule(
   return []
 
 
-@_register_lowering(WaitOp)
-def _for_op_lowering_rule(
-    _: LoweringContext, wait_op: scf.ForOp
+@_register_lowering(mgpu.SliceSMEMOp)
+def _mgpu_slice__op_lowering_rule(
+    ctx: LoweringContext, op: mgpu.SliceSMEMOp
 ) -> Sequence[ir.Value]:
+  del ctx
+  i8 = ir.IntegerType.get_signless(8)
+  smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
 
-  barrier = utils.BarrierRef.from_dialect_barrier_memref(wait_op.barrier)
-  barrier.wait_parity(wait_op.parity)
+  smem_base = gpu.dynamic_shared_memory(
+      ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=smem)
+  )
 
-  return []
+  return [
+      memref.view(
+          op.result.type,
+          smem_base,
+          arith.index_cast(ir.IndexType.get(), op.offset),
+          [],
+      )
+  ]
 
 
 @_register_lowering(scf.ForOp)

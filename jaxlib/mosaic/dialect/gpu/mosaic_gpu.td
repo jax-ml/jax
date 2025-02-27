@@ -372,6 +372,14 @@ def MosaicGPU_WGMMALayout :
   let cppNamespace = "::mosaic_gpu";
 }
 
+
+def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", []> {
+  let summary = "Gets the slice of dynamic SMEM at the provided offset.";
+
+  let arguments = (ins I32:$offset);
+  let results = (outs MemRefOf<[AnyType]>);
+}
+
 def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
   let summary = "Multiply two matrices asyncronously using warpgroup level matrix multiply operations.";
   let description = [{
@@ -393,6 +401,8 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
     Where:
       - `s == swizzle/element_bytediwth` (for `kNoSwizzle`, `swizzle` is 16.)
         and the tilings are [64, s] for `a` and [s, s] for `b`.
+      - `a` and/or `b` may be transposed if the corresponding attribute is set
+        to `true`.
 
     The output has an identical shape and type as the input accumulator.
 
@@ -415,7 +425,10 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
     AnyTypeOf<[
       MemRefOf<[MosaicGPU_WGMMASupportedType]>,
       VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>]>:$a,
-    MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b
+    MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b,
+
+    DefaultValuedOptionalAttr<BoolAttr, "false">:$transpose_a,
+    DefaultValuedOptionalAttr<BoolAttr, "false">:$transpose_b
   );
   let results = (outs VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>);
 
