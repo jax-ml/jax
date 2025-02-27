@@ -33,6 +33,10 @@ source ./ci/utilities/install_wheels_locally.sh
 # Set up the build environment.
 source "ci/utilities/setup_build_environment.sh"
 
+# Print all the installed packages
+echo "Installed packages:"
+"$JAXCI_PYTHON" -m uv pip list
+
 "$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.devices()); print(len(jax.devices()))"
 "$JAXCI_PYTHON" -c 'import sys; print("python version:", sys.version)'
 "$JAXCI_PYTHON" -c 'import jax; print("jax version:", jax.__version__)'
