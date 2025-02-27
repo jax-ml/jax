@@ -724,6 +724,26 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp @ np_inp.T)
     self.assertArraysEqual(out2, np_inp @ np_inp.T)
 
+  def test_layout_donation_with_default_layout(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    shape = (16, 16)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+    out_layout = Layout(arr.layout.device_local_layout, s)
+
+    @partial(jax.jit, out_shardings=out_layout, donate_argnums=0)
+    def f(x):
+      return x * 2
+
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn('tf.aliasing_output = 0', lowered_text)
+    self.assertNotIn('jax.buffer_donor', lowered_text)
+
+    out = f(arr)
+    self.assertArraysEqual(out, np_inp * 2)
+    self.assertEqual(out.layout, out_layout)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

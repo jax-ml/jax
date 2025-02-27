@@ -1508,9 +1508,17 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
                           f'arg layout: {arg_layout} for '
                           f'arg shape: {core.shaped_abstractify(arg).str_short()}.'
                           f'{extra_msg}')
+      jit_in_l = (None if pxla.is_default_layout(jit_in_l, rs, aval)
+                  else jit_in_l)
       resolved_in_layouts.append(jit_in_l)
   return tuple(resolved_in_layouts)
 
+def _resolve_out_layouts(out_layouts, out_shardings, out_avals):
+  return tuple(
+      None if out_l is None or pxla.is_default_layout(out_l, out_s, out_aval)
+      else out_l
+      for out_l, out_s, out_aval in safe_zip(out_layouts, out_shardings, out_avals)
+  )
 
 def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
                           ) -> Sequence[PjitSharding]:
@@ -1612,6 +1620,7 @@ def _resolve_and_lower(
   in_shardings = _resolve_in_shardings(args, in_shardings)
   in_layouts = _resolve_in_layouts(args, in_layouts, in_shardings,
                                    jaxpr.in_avals)
+  out_layouts = _resolve_out_layouts(out_layouts, out_shardings, jaxpr.out_avals)
   return _pjit_lower(
       jaxpr, in_shardings, out_shardings, in_layouts, out_layouts, resource_env,
       donated_invars, name, keep_unused, inline, compiler_options_kvs,
