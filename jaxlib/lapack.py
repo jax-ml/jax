@@ -21,11 +21,12 @@ from .cpu._lapack import eig
 from .cpu._lapack import schur
 
 for _name, _value in _lapack.registrations().items():
+  api_version = 0
+  if _name.endswith("_ffi"):
+    api_version = 1
+    xla_client.register_custom_call_as_batch_partitionable(_name)
   xla_client.register_custom_call_target(
-      _name,
-      _value,
-      platform="cpu",
-      api_version=(1 if _name.endswith("_ffi") else 0),
+      _name, _value, platform="cpu", api_version=api_version
   )
 
 

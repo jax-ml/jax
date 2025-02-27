@@ -44,7 +44,10 @@ for cuda_module_name in [".cuda", "jax_cuda12_plugin"]:
 if _cusolver:
   for _name, _value in _cusolver.registrations().items():
     # TODO(danfm): Clean up after all legacy custom calls are ported.
-    api_version = 1 if _name.endswith("_ffi") else 0
+    api_version = 0
+    if _name.endswith("_ffi"):
+      api_version = 1
+      xla_client.register_custom_call_as_batch_partitionable(_name)
     xla_client.register_custom_call_target(_name, _value, platform="CUDA",
                                            api_version=api_version)
 
@@ -60,6 +63,7 @@ for cuda_module_name in [".cuda", "jax_cuda12_plugin"]:
 
 if _cuhybrid:
   for _name, _value in _cuhybrid.registrations().items():
+    xla_client.register_custom_call_as_batch_partitionable(_name)
     xla_client.register_custom_call_target(_name, _value, platform="CUDA",
                                            api_version=1)
 
@@ -91,7 +95,10 @@ for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
 if _hipsolver:
   for _name, _value in _hipsolver.registrations().items():
     # TODO(danfm): Clean up after all legacy custom calls are ported.
-    api_version = 1 if _name.endswith("_ffi") else 0
+    api_version = 0
+    if _name.endswith("_ffi"):
+      api_version = 1
+      xla_client.register_custom_call_as_batch_partitionable(_name)
     xla_client.register_custom_call_target(_name, _value, platform="ROCM",
                                            api_version=api_version)
 
@@ -107,6 +114,7 @@ for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
 
 if _hiphybrid:
   for _name, _value in _hiphybrid.registrations().items():
+    xla_client.register_custom_call_as_batch_partitionable(_name)
     xla_client.register_custom_call_target(_name, _value, platform="ROCM",
                                            api_version=1)
 

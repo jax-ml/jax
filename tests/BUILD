@@ -699,6 +699,22 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "linalg_sharding_test",
+    srcs = ["linalg_sharding_test.py"],
+    enable_backends = [
+        "cpu",
+    ],
+    enable_configs = [
+        "gpu_p100x2",
+        "gpu_p100x2_shardy",
+        "gpu_p100x2_pjrt_c_api",
+    ],
+    tags = [
+        "multiaccelerator",
+    ],
+)
+
+jax_multiplatform_test(
     name = "magma_linalg_test",
     srcs = ["magma_linalg_test.py"],
     enable_backends = ["gpu"],

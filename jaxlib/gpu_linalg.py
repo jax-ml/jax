@@ -38,20 +38,16 @@ for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
 
 if _cuda_linalg:
   for _name, _value in _cuda_linalg.registrations().items():
-    # TODO(danfm): remove after JAX 0.5.1 release
-    api_version = (1
-                   if _name.endswith("lu_pivots_to_permutation")
-                   or _name.endswith("_ffi") else 0)
     xla_client.register_custom_call_target(
-        _name, _value, platform="CUDA", api_version=api_version
+        _name, _value, platform="CUDA", api_version=1
     )
+  xla_client.register_custom_call_as_batch_partitionable(
+      "cu_lu_pivots_to_permutation")
 
 if _hip_linalg:
   for _name, _value in _hip_linalg.registrations().items():
-    # TODO(danfm): remove after JAX 0.5.1 release
-    api_version = (1
-                   if _name.endswith("lu_pivots_to_permutation")
-                   or _name.endswith("_ffi") else 0)
     xla_client.register_custom_call_target(
-        _name, _value, platform="ROCM", api_version=api_version
+        _name, _value, platform="ROCM", api_version=1
     )
+  xla_client.register_custom_call_as_batch_partitionable(
+      "hip_lu_pivots_to_permutation")
