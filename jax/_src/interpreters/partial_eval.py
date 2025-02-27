@@ -838,6 +838,11 @@ def tracers_to_jaxpr(
   return jaxpr, const_vals, env_vals
 
 @weakref_lru_cache
+def move_envvars(jaxpr: Jaxpr, which: tuple[bool, ...]) -> Jaxpr:
+  constvars, envvars = partition_list(which, jaxpr.constvars)
+  return jaxpr.replace(constvars=constvars, invars=[*envvars, *jaxpr.invars])
+
+@weakref_lru_cache
 def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
   """Moves the constvars to the start of invars."""
   config.enable_checks.value and core.check_jaxpr(jaxpr)
@@ -1840,7 +1845,7 @@ def _inline_literals(
 
 
 class DynamicJaxprTrace(core.Trace):
-  __slots__ = ("frame",)
+  __slots__ = ("frame", "tag")
 
   def __init__(self, debug_info: core.DebugInfo):
     self.frame = JaxprStackFrame(debug_info)
@@ -1972,14 +1977,15 @@ class DynamicJaxprTrace(core.Trace):
     self.frame.add_eqn(eqn)
     return [t for t, (_, keep) in zip(out_tracers, out_type) if keep]
 
-  def process_map(self, map_primitive, f: lu.WrappedFun,
-                  tracers: Sequence[core.Tracer], params):
+  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
     tracers = map(self.to_jaxpr_tracer, tracers)
     in_avals = [t.aval for t in tracers]
     axis_name, axis_size = params['axis_name'], params['axis_size']
     reduced_in_avals = [core.mapped_aval(axis_size, in_axis, a)
                         if in_axis is not None else a
                         for a, in_axis in zip(in_avals, params['in_axes'])]
+    # TODO DO NOT SUBMIT grab jaxpr from pmap linearize roundtrip object
+    # also pe.convert_constvars_jaxpr
     with core.extend_axis_env_nd([(axis_name, params["global_axis_size"])]):
       jaxpr, reduced_out_avals, consts, () = trace_to_jaxpr_dynamic(
           f, reduced_in_avals)

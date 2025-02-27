@@ -51,6 +51,9 @@ from jax._src.interpreters import pxla
 from jax._src.lax import parallel
 from jax._src.lib import xla_extension
 from jax._src.util import safe_map, safe_zip
+from jax._src import util
+from jax.api_util import flatten_fun_nokwargs, debug_info
+from jax._src import linear_util as lu
 
 config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
