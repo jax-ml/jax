@@ -822,6 +822,11 @@ def linearize_from_jvp(jvp: Callable,
       out_tangents = [out_tangents]
 
     out_primals = [trace.to_jaxpr_tracer(p).pval.get_known() for p in out_primals]
+    if any(p is None for p in out_primals):
+      raise ValueError(
+          "Linearization failed to produce known values for all output primals. "
+          "This is typically caused by attempting to differentiate a function "
+          "uses an operation that does not support reverse-mode autodiff.")
 
     out_nzs = [type(t) is not zero_type and not trace.to_jaxpr_tracer(t).is_known()
                for t in out_tangents]

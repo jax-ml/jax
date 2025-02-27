@@ -1985,6 +1985,7 @@ class DynamicJaxprTrace(core.Trace):
                         if in_axis is not None else a
                         for a, in_axis in zip(in_avals, params['in_axes'])]
     # TODO DO NOT SUBMIT grab jaxpr from pmap linearize roundtrip object
+    # also pe.convert_constvars_jaxpr
     with core.extend_axis_env_nd([(axis_name, params["global_axis_size"])]):
       jaxpr, reduced_out_avals, consts, () = trace_to_jaxpr_dynamic(
           f, reduced_in_avals)
