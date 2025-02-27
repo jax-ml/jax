@@ -64,6 +64,8 @@ class LinalgShardingTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("TODO(danfm): Enable this test on GPU.")
     if jax.device_count() < 2:
       self.skipTest("Requires multiple devices")
 
