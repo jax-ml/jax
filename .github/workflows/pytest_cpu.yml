@@ -127,8 +127,8 @@ jobs:
           # has a prebuilt wheel for 3.13t or an env marker is available for free threading python
           # in requirements.in.
           if [[ $JAXCI_PYTHON =~ "python3.13-nogil" ]]; then
-            grep -v "zstandard" build/requirements.in > requirements_without_zstandard.txt
-            $JAXCI_PYTHON -m uv pip install -r requirements_without_zstandard.txt
+            grep -v "zstandard" build/requirements.in > build/requirements_without_zstandard.txt
+            $JAXCI_PYTHON -m uv pip install -r build/requirements_without_zstandard.txt
           else
             $JAXCI_PYTHON -m uv pip install -r build/requirements.in
           fi
