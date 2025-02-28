@@ -106,6 +106,7 @@ def mma(
     raise ValueError(f"B must be a memref, got: {b.type}")
   if a_swizzle != b_swizzle:
     raise NotImplementedError(f"{a_swizzle=} != {b_swizzle=}")
+  swizzle = a_swizzle
   if isinstance(accumulate, bool):
     accumulate = arith.constant(ir.IntegerType.get_signless(1), accumulate)
   num_cta = 2 if collective else 1
@@ -114,11 +115,11 @@ def mma(
       a_desc_base,
       b_desc_base,
       (m, k, n),
-      (m_mem_tiling, kn_mem_tiling),
+      (m_mem_tiling, n_mem_tiling),
       element_type,
       mma_params,
-      a_k_byte_stride,
-      b_k_byte_stride,
+      a_k_group_stride,
+      b_k_group_stride,
   ) = _wgmma._validate_mma(
       a,
       b,
@@ -127,7 +128,7 @@ def mma(
   )
 
   # The sizes of instruction we'll be using
-  k_instr_tiling = kn_mem_tiling
+  k_instr_tiling = swizzle // utils.bytewidth(element_type)
   if (m_instr_tiling := d.layout.elements_in_tile[0]) != m_mem_tiling:
     raise ValueError(
         f"A's row tiling must be equal to {m_instr_tiling} (inferred from"
@@ -143,14 +144,14 @@ def mma(
     raise NotImplementedError("The only supported N larger than 256 is 512")
 
   a_strides, _ = ir.MemRefType(a.type).get_strides_and_offset()
-  a_m_byte_stride = a_strides[0] * utils.bytewidth(element_type)
+  a_m_group_stride = a_strides[0] * utils.bytewidth(element_type)
   b_strides, _ = ir.MemRefType(b.type).get_strides_and_offset()
-  b_n_byte_stride = b_strides[1] * utils.bytewidth(element_type)
+  b_n_group_stride = b_strides[1] * utils.bytewidth(element_type)
 
   groups_k = k // k_instr_tiling
   groups_m = m // m_instr_tiling
   groups_n = n // n_instr_tiling
-  n_mem_tiles_per_instr = n_instr_tiling // kn_mem_tiling
+  n_mem_tiles_per_instr = n_instr_tiling // n_mem_tiling
 
   # TODO(apaszke): Verify that the cluster shape matches the expectation of
   # collective MMA.
@@ -162,9 +163,9 @@ def mma(
 
   true = arith.constant(ir.IntegerType.get_signless(1), 1)
   for mi, ni, ki in np.ndindex(groups_m, groups_n, groups_k):
-    a_offset = mi * a_m_byte_stride + ki * a_k_byte_stride
+    a_offset = mi * a_m_group_stride + ki * a_k_group_stride
     a_mk = arith.addi(a_desc_base, utils.c(_wgmma.wgmma_encode(a_offset), i64))
-    b_offset = ni * n_mem_tiles_per_instr * b_n_byte_stride + ki * b_k_byte_stride
+    b_offset = ni * n_mem_tiles_per_instr * b_n_group_stride + ki * b_k_group_stride
     b_nk = arith.addi(b_desc_base, utils.c(_wgmma.wgmma_encode(b_offset), i64))
     if groups_m != 1:
       raise NotImplementedError("D needs to be sliced")
