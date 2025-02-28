@@ -1169,7 +1169,22 @@ class FragmentedArray:
     from_integer = ir.IntegerType.isinstance(cur_dtype)
     to_integer = ir.IntegerType.isinstance(new_dtype)
     if from_float and to_float:
-      if ir.FloatType(cur_dtype).width > ir.FloatType(new_dtype).width:
+      cur_ty_width = ir.FloatType(cur_dtype).width
+      new_ty_width = ir.FloatType(new_dtype).width
+      if cur_ty_width == new_ty_width:
+        # There is no instruction to perform conversions between two float types
+        # of the same width. Go through the next-larger standard type.
+        larger_ty = ir.F16Type.get() if cur_ty_width == 8 else ir.F32Type.get()
+        match self.layout:
+          case WGMMAFragLayout() | WGStridedFragLayout() | TiledLayout():
+            shape = ir.VectorType(self.registers.flat[0].type).shape
+            upcast_ty = ir.VectorType.get(shape, larger_ty)
+          case WGMMARowFragLayout() | WGSplatFragLayout():
+            upcast_ty = larger_ty
+          case _:
+            raise NotImplementedError(f"Unsupported layout {self.layout}")
+        convert = lambda ty, x: arith.truncf(ty, arith.extf(upcast_ty, x))
+      elif ir.FloatType(cur_dtype).width > ir.FloatType(new_dtype).width:
         convert = arith.truncf
       else:
         convert = arith.extf

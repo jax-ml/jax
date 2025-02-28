@@ -428,6 +428,41 @@ def _mgpu_async_store_op_lowering_rule(
   return []
 
 
+def _conversion_op_lowering_rule(
+    _: LoweringContext,
+    op: ir.OpView,
+    source_is_signed: bool | None,
+    target_is_signed: bool | None,
+) -> Sequence[ir.Value]:
+  [in_layout] = inference_utils.in_layouts(op)
+  [layout] = inference_utils.out_layouts(op)
+  if in_layout != layout:
+    raise ValueError("Layout mismatch")
+
+  target_ty = op.result.type.element_type  # pytype: disable=attribute-error
+  operand = _fragmented_array_from_ir(op.operands[0], layout, source_is_signed)
+  converted = operand.astype(target_ty, is_signed=target_is_signed)
+  return [_fragmented_array_to_ir(converted, op.result.type)]
+
+
+for op, source_is_signed, target_is_signed in [
+    (arith.ExtFOp, None, None),
+    (arith.ExtSIOp, True, True),
+    (arith.ExtUIOp, False, False),
+    (arith.FPToSIOp, None, True),
+    (arith.FPToUIOp, None, False),
+    (arith.SIToFPOp, True, None),
+    (arith.TruncFOp, None, None),
+    (arith.TruncIOp, False, False),
+    (arith.UIToFPOp, False, None),
+]:
+  _lowerings[op.OPERATION_NAME] = functools.partial(
+      _conversion_op_lowering_rule,
+      source_is_signed=source_is_signed,
+      target_is_signed=target_is_signed,
+  )
+
+
 def _binary_op_lowering_rule(
     _: LoweringContext,
     op: Any,
