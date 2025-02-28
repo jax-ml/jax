@@ -6208,6 +6208,55 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     jaxpr = f.trace(arr).jaxpr
     core.jaxpr_as_fun(jaxpr)(arr)  # doesn't crash
 
+  @jtu.with_user_mesh((4,), ('data',))
+  def test_intermediate_einsum(self, mesh):
+    shape1 = (8, 32, 1, 16)
+    shape2 = (8, 32, 1, 8)
+    np_inp1 = np.arange(math.prod(shape1)).reshape(shape1)
+    np_inp2 = np.arange(math.prod(shape2)).reshape(shape2)
+
+    s = NamedSharding(mesh, P('data'))
+    arr1 = jax.device_put(np_inp1, s)
+    arr2 = jax.device_put(np_inp1, s)
+    arr3 = jax.device_put(np_inp2, s)
+
+    @jax.jit
+    def f(x, y, z):
+      out = jnp.einsum('bthD, bthi, bthj->ijD', x, y, z,
+                       out_sharding=P('data', None, None))
+      self.assertEqual(out.shape, (16, 8, 16))
+      self.assertEqual(out.aval.sharding.spec, P('data', None, None))
+      return out
+
+    out = f(arr1, arr2, arr3)
+    self.assertEqual(out.shape, (16, 8, 16))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('data', None, None)))
+
+  @jtu.with_user_mesh((4,), ('data',))
+  def test_intermediate_einsum_conflict_error(self, mesh):
+    shape1 = (8, 32, 1, 16)
+    shape2 = (8, 32, 1, 8)
+    np_inp1 = np.arange(math.prod(shape1)).reshape(shape1)
+    np_inp2 = np.arange(math.prod(shape2)).reshape(shape2)
+
+    arr1 = jax.device_put(
+        np_inp1, NamedSharding(mesh, P(None, None, None, 'data')))
+    arr2 = jax.device_put(np_inp1, NamedSharding(mesh, P('data')))
+    arr3 = jax.device_put(np_inp2, NamedSharding(mesh, P('data')))
+
+    @jax.jit
+    def f(x, y, z):
+      return jnp.einsum('bthD, bthi, bthj->ijD', x, y, z,
+                        out_sharding=P('data', None, None))
+
+    # Errors out on the intermediate einsum: `bthj,bthD->bthjD`
+    # because of a conflict
+    with self.assertRaisesRegex(
+        ValueError,
+        'A single NamedSharding spec specification can map every mesh axis to'
+        ' at most one positional dimension'):
+      f(arr1, arr2, arr3)
+
   @jtu.with_user_mesh((2, 2), ('x', 'y'),
                       axis_types={mesh_lib.AxisTypes.Explicit: 'x',
                                   mesh_lib.AxisTypes.Auto: 'y'})
