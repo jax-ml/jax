@@ -28,6 +28,7 @@ from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import llvm
+from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
@@ -598,15 +599,25 @@ def _mgpu_wait_op_lowering_rule(
   return []
 
 
-@_register_lowering(WaitOp)
-def _for_op_lowering_rule(
-    _: LoweringContext, wait_op: scf.ForOp
+# TODO(bchetioui): remove this once jaxlib minimum version >= 0.5.2.
+SliceSMEMOp = getattr(mgpu, "SliceSMEMOp", None)
+
+
+@_register_lowering(SliceSMEMOp)
+def _mgpu_slice_smem_op_lowering_rule(
+    ctx: LoweringContext, op: SliceSMEMOp
 ) -> Sequence[ir.Value]:
+  del ctx
+  i8 = ir.IntegerType.get_signless(8)
+  smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
 
-  barrier = utils.BarrierRef.from_dialect_barrier_memref(wait_op.barrier)
-  barrier.wait_parity(wait_op.parity)
+  smem_base = gpu.dynamic_shared_memory(
+      ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=smem)
+  )
 
-  return []
+  offset = arith.index_cast(ir.IndexType.get(), op.offset)
+
+  return [memref.view(op.result.type, smem_base, offset, [])]
 
 
 @_register_lowering(scf.ForOp)

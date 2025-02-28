@@ -802,6 +802,28 @@ class DialectLoweringTest(MosaicGpuTest):
     reg_vec_ty = ir.VectorType.get((2,), i32)
     self.assertSequenceEqual(result_types, [i32, reg_vec_ty, reg_vec_ty])
 
+  def test_lowering_slice_smem_op(self):
+    shift = 1234
+    offset = None
+
+    def body():
+      nonlocal offset
+      i32 = ir.IntegerType.get_signless(32)
+      offset = arith.constant(i32, shift)
+      mgpu.dialect.slice_smem(i32, offset)
+
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func()(body)
+
+    mgpu.lower_mgpu_dialect(self.module, None)
+    # Avoid making a change detector, only validate that lowering runs as
+    # expected.
+    self.assertEmpty(
+        find_if(
+            self.module, lambda op: isinstance(op, mgpu.dialect.SliceSMEMOp)
+        )
+    )
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

@@ -237,7 +237,7 @@ class ModuleContext:
   program_ids: Sequence[ir.Value] | None
   approx_math: bool
   single_wg_lane_predicate: ir.Value
-  runtime_smem: ir.Value  # ir.MemRefType
+  smem_requested_bytes: int
   smem_used_bytes: int
   runtime_barriers: MutableMapping[
       mgpu.Barrier, MutableSequence[mgpu.BarrierRef]
@@ -279,25 +279,38 @@ class ModuleContext:
       and the second element is a sequence of memref views into the
       runtime scratch buffer.
     """
-    smem_scratch_bytes = math.prod(ir.MemRefType(self.runtime_smem.type).shape)
-
+    smem_base = None
+    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+    i8 = ir.IntegerType.get_signless(8)
+    i32 = ir.IntegerType.get_signless(32)
+    if self.thread_semantics == mgpu.ThreadSemantics.Lane:
+      smem_base = gpu_dialect.dynamic_shared_memory(
+          ir.MemRefType.get((mgpu_utils.DYNAMIC,), i8, memory_space=smem)
+      )
     views = []
     off = initial_used_bytes = self.smem_used_bytes
     assert off % _SMEM_ALIGNMENT == 0
-    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
     for s in structs:
       scratch_ty = ir.MemRefType.get(
           s.shape,
           mgpu_utils.dtype_to_ir_type(s.dtype),
           memory_space=smem,
       )
-      views.append(
-          memref_dialect.view(scratch_ty, self.runtime_smem, _as_index(off), [])
-      )
+      # The below code emission relies on the assumption that the first scratch
+      # operand provided by Mosaic GPU always begins at the beginning of
+      # dynamic SMEM. Mosaic GPU is expected to uphold that invariant.
+      if self.thread_semantics == mgpu.ThreadSemantics.Lane:
+        view = memref_dialect.view(
+            scratch_ty, smem_base, _as_index(off), []
+        )
+      else:
+        view = mgpu.dialect.slice_smem(scratch_ty, mgpu_utils.c(off, i32))
+      views.append(view)
+
       off += _align_to(
           math.prod(s.shape) * jnp.dtype(s.dtype).itemsize, _SMEM_ALIGNMENT
       )
-    assert off <= smem_scratch_bytes, "Ran out of scoped SMEM"
+    assert off <= self.smem_requested_bytes, "Ran out of scoped SMEM"
     assert off % _SMEM_ALIGNMENT == 0
 
     self.smem_used_bytes = off
@@ -596,7 +609,7 @@ def lower_jaxpr_to_module(
         [_program_id(axis, squashed_dims) for axis in range(len(grid))],
         approx_math,
         mgpu.single_thread_predicate(per_block=False),
-        runtime_smem,
+        smem_requested_bytes=math.prod(ir.MemRefType(runtime_smem.type).shape),
         smem_used_bytes=0,
         runtime_barriers=grouped_barriers,
         name_stack=source_info_util.NameStack(),

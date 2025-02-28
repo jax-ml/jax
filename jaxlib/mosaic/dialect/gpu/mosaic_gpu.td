@@ -372,6 +372,14 @@ def MosaicGPU_WGMMALayout :
   let cppNamespace = "::mosaic_gpu";
 }
 
+
+def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", []> {
+  let summary = "Constructs an SMEM MemRef with the requested type that begins at the specified SMEM offset address.";
+
+  let arguments = (ins I32:$offset);
+  let results = (outs MemRefOf<[AnyType]>);
+}
+
 def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
   let summary = "Multiply two matrices asyncronously using warpgroup level matrix multiply operations.";
   let description = [{
