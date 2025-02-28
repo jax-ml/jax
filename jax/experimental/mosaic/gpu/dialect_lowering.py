@@ -34,6 +34,7 @@ from jax._src.lib.mlir.dialects import vector
 import numpy as np
 
 from . import fragmented_array as fa
+from . import inference_utils
 from . import launch_context
 from . import layouts
 from . import utils
@@ -61,7 +62,9 @@ class LoweringContext:
     lowering_rule = _lowerings[name]
 
     # TODO(bchetioui): make sure all layouts are set here.
-    if layouts.should_have_layout(op) and not layouts.has_any_layout_set(op):
+    if inference_utils.should_have_layout(
+        op
+    ) and not inference_utils.has_any_layout_set(op):
       raise ValueError(f"{op} is missing a layout and can not be lowered.")
 
     new_results = lowering_rule(self, op)
@@ -277,7 +280,7 @@ def _vector_store_op_lowering_rule(
           f"for {vector_store_op}"
       )
 
-  [to_store_layout] = layouts.in_layouts(vector_store_op)
+  [to_store_layout] = inference_utils.in_layouts(vector_store_op)
   fragmented_array = _fragmented_array_from_ir(
       vector_store_op.valueToStore, to_store_layout
   )
@@ -437,8 +440,8 @@ def _binary_op_lowering_rule(
         [fa.FragmentedArray, fa.FragmentedArray], fa.FragmentedArray
     ],
 ) -> Sequence[ir.Value]:
-  in_layouts = layouts.in_layouts(op)
-  [layout] = layouts.out_layouts(op)
+  in_layouts = inference_utils.in_layouts(op)
+  [layout] = inference_utils.out_layouts(op)
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
   lhs = _fragmented_array_from_ir(op.lhs, layout, is_signed)
@@ -492,8 +495,8 @@ CMPI_IMPLS = {
 def _cmpi_op_lowering_rule(
     _: LoweringContext, op: arith.CmpIOp
 ) -> Sequence[ir.Value]:
-  in_layouts = layouts.in_layouts(op)
-  [layout] = layouts.out_layouts(op)
+  in_layouts = inference_utils.in_layouts(op)
+  [layout] = inference_utils.out_layouts(op)
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
   impl, is_signed = CMPI_IMPLS[op.predicate.value]
@@ -516,8 +519,8 @@ CMPF_IMPLS = {
 def _cmpf_op_lowering_rule(
     _: LoweringContext, op: arith.CmpFOp
 ) -> Sequence[ir.Value]:
-  in_layouts = layouts.in_layouts(op)
-  [layout] = layouts.out_layouts(op)
+  in_layouts = inference_utils.in_layouts(op)
+  [layout] = inference_utils.out_layouts(op)
   if any(in_layout != layout for in_layout in in_layouts):
     raise ValueError("Layout mismatch")
   impl = CMPF_IMPLS[op.predicate.value]
@@ -530,7 +533,10 @@ def _cmpf_op_lowering_rule(
 def _mgpu_wgmma_op_lowering_rule(
     _: LoweringContext, wgmma_op: mgpu.WGMMAOp
 ) -> Sequence[ir.Value]:
-  fa_layouts = (*layouts.in_layouts(wgmma_op), *layouts.out_layouts(wgmma_op))
+  fa_layouts = (
+      *inference_utils.in_layouts(wgmma_op),
+      *inference_utils.out_layouts(wgmma_op),
+  )
   if not all(map(layouts.is_wgmma_fragmented_layout, fa_layouts)):
     raise ValueError("Layout mismatch")
   wgmma_layout = fa_layouts[0]
@@ -607,12 +613,12 @@ def _for_op_lowering_rule(
 def _for_op_lowering_rule(
     ctx: LoweringContext, for_op: scf.ForOp
 ) -> MlirLoweringRuleResult:
-  if not layouts.should_have_layout(for_op):
+  if not inference_utils.should_have_layout(for_op):
     return _traverse_op_lowering_rule(ctx, for_op)
-  in_layouts = layouts.in_layouts(for_op)
-  out_layouts = layouts.out_layouts(for_op)
+  in_layouts = inference_utils.in_layouts(for_op)
+  out_layouts = inference_utils.out_layouts(for_op)
   yield_op = for_op.body.operations[len(for_op.body.operations) - 1]
-  yield_layouts = layouts.in_layouts(yield_op)
+  yield_layouts = inference_utils.in_layouts(yield_op)
   if in_layouts != out_layouts or in_layouts != yield_layouts:
     raise ValueError("Layout mismatch")
   fa_layouts = in_layouts
@@ -692,7 +698,7 @@ def _for_op_lowering_rule(
 def _traverse_op_lowering_rule(
     ctx: LoweringContext, op: ir.OpView
 ) -> MlirLoweringRuleResult:
-  if layouts.should_have_layout(op):
+  if inference_utils.should_have_layout(op):
     raise ValueError(
         f"Rule cannot handle an op with vector operands or results: {op}"
     )
@@ -734,7 +740,7 @@ def _should_lower(op: ir.OpView) -> bool:
   """Returns 'true' if the operation should be lowered."""
   return (
       op.OPERATION_NAME.startswith("mosaic_gpu.")
-      or layouts.should_have_layout(op)
+      or inference_utils.should_have_layout(op)
       or any(bool(b) for r in op.regions for b in r)  # Does it have subblocks?
   )
 

@@ -14,8 +14,6 @@
 
 """Layout utilities."""
 
-from collections.abc import Sequence
-import itertools
 import re
 
 from jax._src.lib.mlir import ir
@@ -159,44 +157,3 @@ def from_layout_attr(
     raise NotImplementedError(
         f"Unsupported layout for conversion from MLIR attribute: {attr}"
     )
-
-
-def in_layouts(op: ir.OpView) -> Sequence[ir.Attribute]:
-  """Returns the in_layouts attribute of the given operation.
-
-  Raises:
-    ValueError: If the operation does not have an in_layouts attribute.
-  """
-  if "in_layouts" not in op.attributes:
-    raise ValueError(f"{op} does not have an in_layouts attribute.")
-  return op.attributes["in_layouts"]  # type: ignore
-
-
-def out_layouts(op: ir.OpView) -> Sequence[ir.Attribute]:
-  """Returns the out_layouts attribute of the given operation.
-
-  Raises:
-    ValueError: If the operation does not have an out_layouts attribute.
-  """
-  if "out_layouts" not in op.attributes:
-    raise ValueError(f"{op} does not have an out_layouts attribute.")
-  return op.attributes["out_layouts"]  # type: ignore
-
-
-def should_have_layout(op: ir.OpView) -> bool:
-  """Returns 'true' if the operation should be assigned a layout."""
-
-  is_array = lambda v: ir.VectorType.isinstance(v.type)
-  return any(map(is_array, itertools.chain(op.operands, op.results)))  # type: ignore
-
-
-def has_in_layouts_set(op: ir.OpView) -> bool:
-  return "in_layouts" in op.attributes
-
-
-def has_out_layouts_set(op: ir.OpView) -> bool:
-  return "out_layouts" in op.attributes
-
-
-def has_any_layout_set(op: ir.OpView) -> bool:
-  return has_in_layouts_set(op) or has_out_layouts_set(op)

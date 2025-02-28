@@ -26,6 +26,7 @@ from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 
 from . import fragmented_array as fa
+from . import inference_utils
 from . import layouts as layouts_lib
 
 # mypy: ignore-errors
@@ -120,63 +121,6 @@ def _choose_representative_layout(
   return layouts_lib.to_layout_attr(splat_layout)
 
 
-def _in_layout_for_operand(
-    op: ir.OpView,
-    operand: ir.Value,
-) -> ir.Attribute | None:
-  """Returns the layout of the operand in the given operation if it is set.
-
-  Raises:
-    ValueError: If `operand` is not an operand of `op`, or if `operand` is not a
-      Vector.
-  """
-  if not ir.VectorType.isinstance(operand.type):
-    raise ValueError(f"{operand} is not a vector.")
-
-  operand_number = [
-      o for o in op.operands if ir.VectorType.isinstance(o.type)
-  ].index(operand)
-
-  if not layouts_lib.has_in_layouts_set(op):
-    return None
-
-  return layouts_lib.in_layouts(op)[operand_number]
-
-
-def _value_layout(value: ir.Value) -> ir.Attribute | None:
-  """Returns the layout for a given value as defined by its owner.
-
-  Raises:
-    ValueError: If `result` is not a Vector.
-  """
-  if not ir.VectorType.isinstance(value.type):
-    raise ValueError(f"{value} is not a vector.")
-
-  owner = value.owner
-  if isinstance(owner, ir.Operation):
-    if not layouts_lib.has_out_layouts_set(owner):
-      return None
-    value_result_number = [
-        r for r in owner.results if ir.VectorType.isinstance(r.type)
-    ].index(value)
-    return layouts_lib.out_layouts(owner)[value_result_number]
-
-  # Block case, useful when attempting to derive layouts for ops
-  # depending on function parameters, or loop block arguments.
-  if isinstance(owner, ir.Block):
-    owner_op = owner.owner
-    block = cast(ir.Block, owner)
-    if not layouts_lib.has_in_layouts_set(owner_op):
-      return None
-    value_arg_number = [
-        r for r in block.arguments if ir.VectorType.isinstance(r.type)
-    ].index(value)
-    return layouts_lib.in_layouts(owner_op)[value_arg_number]
-
-  raise NotImplementedError(
-      f"{owner} is not a function block nor an operation.")
-
-
 def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
 
   def is_array(v: ir.Value) -> bool:
@@ -185,14 +129,14 @@ def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
   num_vector_operands = len([o for o in op.operands if is_array(o)])
   num_vector_results = len([r for r in op.results if is_array(r)])
 
-  if layouts_lib.has_in_layouts_set(op):
-    op_in_layouts = layouts_lib.in_layouts(op)
+  if inference_utils.has_in_layouts_set(op):
+    op_in_layouts = inference_utils.in_layouts(op)
     if op_in_layouts:
       layout = op_in_layouts[0]
       return (num_vector_operands * [layout], num_vector_results * [layout])
 
-  if layouts_lib.has_out_layouts_set(op):
-    op_out_layouts = layouts_lib.out_layouts(op)
+  if inference_utils.has_out_layouts_set(op):
+    op_out_layouts = inference_utils.out_layouts(op)
     if op_out_layouts:
       layout = op_out_layouts[0]
       return (num_vector_operands * [layout], num_vector_results * [layout])
@@ -209,7 +153,7 @@ def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
   for operand in op.operands:
     if not ir.VectorType.isinstance(operand.type):
       continue
-    if (layout := _value_layout(operand)) is not None:
+    if (layout := inference_utils.value_layout(operand)) is not None:
       layouts.add(layout)
     else:
       all_inputs_have_layout = False
@@ -224,7 +168,7 @@ def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
       for op_operand_use in cast(ir.OpResult, op_result).uses:
         consumer = op_operand_use.owner
         op_user = consumer.operands[op_operand_use.operand_number]
-        layout = _in_layout_for_operand(consumer, op_user)
+        layout = inference_utils.in_layout_for_operand(consumer, op_user)
         if layout is not None:
           layouts.add(layout)
 
@@ -295,7 +239,7 @@ def _infer_constant_op_layout(constant_op: arith.ConstantOp) -> OptionalLayouts:
     for use in cast(ir.OpResult, constant_op.result).uses:
       consumer = use.owner
       operand = consumer.operands[use.operand_number]
-      layout = _in_layout_for_operand(consumer, operand)
+      layout = inference_utils.in_layout_for_operand(consumer, operand)
       if layout is not None:
         break
 
@@ -316,7 +260,7 @@ def _infer_yield_op_layout(op: scf.YieldOp) -> OptionalLayouts:
   for result in op.results_:
     if not ir.VectorType.isinstance(result.type):
       continue
-    if (layout := _value_layout(result)) is not None:
+    if (layout := inference_utils.value_layout(result)) is not None:
       if layouts_lib.is_splat_fragmented_layout(layout):
         return None
       layouts.append(layout)
@@ -332,8 +276,8 @@ def _infer_for_op_layout(op: scf.ForOp) -> OptionalLayouts:
   yield_op = op.body.operations[len(op.body.operations) - 1]
   assert isinstance(yield_op, scf.YieldOp)
 
-  if layouts_lib.has_in_layouts_set(yield_op):
-    yield_layouts = list(layouts_lib.in_layouts(yield_op))
+  if inference_utils.has_in_layouts_set(yield_op):
+    yield_layouts = list(inference_utils.in_layouts(yield_op))
     if any(
         layouts_lib.is_splat_fragmented_layout(layout)
         for layout in yield_layouts
@@ -394,7 +338,7 @@ def traverse_op(
 
 def infer_layout(module: ir.Module):
   def inference_step(op: ir.Operation):
-    if not layouts_lib.should_have_layout(op):
+    if not inference_utils.should_have_layout(op):
       return
     elif inference_rule := _layout_inference_rules.get(op.OPERATION_NAME, None):  # pytype: disable=attribute-error
       pass
@@ -419,11 +363,15 @@ def infer_layout(module: ir.Module):
   #
   # Backwards pass
   for op in module.body:
-    traverse_op(op, inference_step, TraversalOrder.BACKWARDS)
+    inference_utils.traverse_op(
+        op, inference_step, inference_utils.TraversalOrder.BACKWARDS
+    )
 
   # Forward pass
   for op in module.body:
-    traverse_op(op, inference_step, TraversalOrder.FORWARD)
+    inference_utils.traverse_op(
+        op, inference_step, inference_utils.TraversalOrder.FORWARD
+    )
 
   # At this point, layouts have been propagated as far as they could be
   # propagated. However, it is possible for some operations to remain
@@ -437,8 +385,9 @@ def infer_layout(module: ir.Module):
     return layouts_lib.to_strided_fragmented_layout_attr(layout)
 
   def set_default_layout(op: ir.OpView):
-    if (layouts_lib.should_have_layout(op) and
-        not layouts_lib.has_any_layout_set(op)):
+    if inference_utils.should_have_layout(
+        op
+    ) and not inference_utils.has_any_layout_set(op):
       in_layouts = []
       for operand in op.operands:
         if (layout := to_default_layout(operand.type)) is not None:
