@@ -79,11 +79,15 @@ jobs:
 
           # Get the major and minor version of Python.
           # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.10, then python_major_minor=310
-          python_major_minor=$(echo "$JAXCI_HERMETIC_PYTHON_VERSION" | tr -d '.')
+          # E.g if JAXCI_HERMETIC_PYTHON_VERSION=3.13-nogil, then python_major_minor=313t
+          python_major_minor=$(echo "${JAXCI_HERMETIC_PYTHON_VERSION//-nogil/t}" | tr -d '.')
 
           echo "OS=${os}" >> $GITHUB_ENV
           echo "ARCH=${arch}" >> $GITHUB_ENV
-          echo "PYTHON_MAJOR_MINOR=${python_major_minor}" >> $GITHUB_ENV
+          # Python wheels follow a naming convention: standard wheels use the pattern
+          # `*-cp<py_version>-cp<py_version>-*`, while free-threaded wheels use
+          # `*-cp<py_version>-cp<py_version>t-*`.
+          echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
       - name: Download jaxlib wheel from GCS (non-Windows runs)
         id: download-wheel-artifacts-nw
         # Set continue-on-error to true to prevent actions from failing the workflow if this step
@@ -128,7 +132,16 @@ jobs:
         run: |
           # TODO(srnitin): Remove after uv is installed in the Windows Dockerfile
           $JAXCI_PYTHON -m pip install uv~=0.5.30
-          $JAXCI_PYTHON -m uv pip install -r build/requirements.in
+          # python 3.13t cannot compile zstandard 0.23.0 due to
+          # https://github.com/indygreg/python-zstandard/issues/231. Remove this once zstandard
+          # has a prebuilt wheel for 3.13t or an env marker is available for free threading python
+          # in requirements.in.
+          if [[ $JAXCI_PYTHON =~ "python3.13-nogil" ]]; then
+            grep -v "zstandard" build/requirements.in > build/requirements_without_zstandard.txt
+            $JAXCI_PYTHON -m uv pip install -r build/requirements_without_zstandard.txt
+          else
+            $JAXCI_PYTHON -m uv pip install -r build/requirements.in
+          fi
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@main
