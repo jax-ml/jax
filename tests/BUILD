@@ -838,7 +838,13 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "profiler_test",
     srcs = ["profiler_test.py"],
-    enable_backends = ["cpu"],
+    enable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    deps = [
+        "//jax:profiler",
+    ],
 )
 
 jax_multiplatform_test(
