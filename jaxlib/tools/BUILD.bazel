@@ -239,6 +239,24 @@ jax_wheel(
 )
 
 jax_wheel(
+    name = "jax_rocm_plugin_wheel",
+    enable_rocm = True,
+    no_abi = False,
+    platform_version = "60",
+    wheel_binary = ":build_gpu_kernels_wheel",
+    wheel_name = "jax_rocm60_plugin",
+)
+
+jax_wheel(
+    name = "jax_rocm_plugin_wheel_editable",
+    editable = True,
+    enable_rocm = True,
+    platform_version = "60",
+    wheel_binary = ":build_gpu_kernels_wheel",
+    wheel_name = "jax_rocm60_plugin",
+)
+
+jax_wheel(
     name = "jax_cuda_pjrt_wheel",
     enable_cuda = True,
     no_abi = True,
@@ -256,6 +274,24 @@ jax_wheel(
     platform_version = "12",
     wheel_binary = ":build_gpu_plugin_wheel",
     wheel_name = "jax_cuda12_pjrt",
+)
+
+jax_wheel(
+    name = "jax_rocm_pjrt_wheel",
+    enable_rocm = True,
+    no_abi = True,
+    platform_version = "60",
+    wheel_binary = ":build_gpu_plugin_wheel",
+    wheel_name = "jax_rocm60_pjrt",
+)
+
+jax_wheel(
+    name = "jax_rocm_pjrt_wheel_editable",
+    editable = True,
+    enable_rocm = True,
+    platform_version = "60",
+    wheel_binary = ":build_gpu_plugin_wheel",
+    wheel_name = "jax_rocm60_pjrt",
 )
 
 AARCH64_MANYLINUX_TAG = "_".join(PLATFORM_TAGS_DICT[("Linux", "aarch64")])
