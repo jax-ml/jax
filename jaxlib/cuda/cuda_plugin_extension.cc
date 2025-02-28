@@ -48,12 +48,23 @@ nb::dict Registrations() {
       jax::EncapsulateFunction(jax::cuda::XlaPythonGpuCallback);
   return dict;
 }
+nb::dict FfiRegistrations() {
+  nb::dict dict;
+  nb::dict gpu_callback_dict;
+  gpu_callback_dict["instantiate"] =
+      jax::EncapsulateFfiHandler(jax::cuda::kGpuTransposePlanCacheInstantiate);
+  gpu_callback_dict["execute"] =
+      jax::EncapsulateFfiHandler(jax::cuda::kXlaFfiPythonGpuCallback);
+  dict["xla_ffi_python_gpu_callback"] = gpu_callback_dict;
+  return dict;
+}
 
 }  // namespace
 
 NB_MODULE(cuda_plugin_extension, m) {
   BuildGpuPluginExtension(m);
   m.def("registrations", &Registrations);
+  m.def("ffi_registrations", &FfiRegistrations);
 
   m.def(
       "get_device_ordinal",
