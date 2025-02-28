@@ -1120,6 +1120,10 @@ class IndexingTest(jtu.JaxTestCase):
       jnp.zeros(2).at[0.].add(1.)
     with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
       jnp.zeros(2).at[0.].set(1.)
+    with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
+      jnp.zeros((2, 2))[jnp.arange(2), 1.0]
+    with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
+      jnp.zeros((2, 2))[jnp.arange(2), 1 + 1j]
 
   def testStrIndexingError(self):
     msg = "JAX does not support string indexing"
