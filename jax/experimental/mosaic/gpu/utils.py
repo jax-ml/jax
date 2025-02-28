@@ -786,7 +786,7 @@ class BarrierRef:
   def as_dialect_barrier_memref(self) -> ir.Value:
     shape = () if self.num_barriers == 1 else (self.num_barriers,)
     return ptr_as_memref(
-        self.base_address,
+        self.get_ptr(),
         ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier")),
         ptr_memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE,
     )
