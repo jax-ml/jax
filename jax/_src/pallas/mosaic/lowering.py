@@ -99,7 +99,12 @@ class MeshContext:
   axis_names: tuple[str, ...]
   mesh_strides: tuple[int, ...]
 
-
+# Note - On Export Placeholders
+#
+# Mosaic uses vector IR, which does not have a concept of dynamic
+# dimensions. We need to come up with a way to represent dynamic dimensions in
+# vector IR, and so we use placeholders, which are later replaced during
+# specialization.
 class LoweringDynamicShapeEnv:
   dim_expr_to_placeholder: dict[Any, ir.Value] = {}
 
