@@ -19,4 +19,5 @@ from jax._src.public_test_util import (
   check_grads as check_grads,
   check_jvp as check_jvp,
   check_vjp as check_vjp,
+  XlaGpuFeatureTestCase as XlaGpuFeatureTestCase,
 )
