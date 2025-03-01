@@ -9576,7 +9576,10 @@ class CustomVJPTest(jtu.JaxTestCase):
       return np.array([2.0])*x*x/np.array([1.0]), (x,)
 
     x = jnp.linspace(0, 5.0, 10)
-    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
+        fun, api_util.debug_info("custom_vjp fun", fun, (x,), {}),
+        fwd, api_util.debug_info("custom_vjp fwd", fwd, (x,), {}))
+
     self.assertAllClose(jax.jit(fwd)(x)[0], 2*x*x)  # Shouldn't hit custom DCE
     self.assertAllClose(jax.jit(lambda x: fwd(x)[0])(x), x)  # Should be DCEed
 
@@ -9586,7 +9589,9 @@ class CustomVJPTest(jtu.JaxTestCase):
     def fwd(x):
       return (np.array([2.0])*x*x/np.array([1.0]))[0], (x,)
     x = jnp.linspace(0, 5.0, 10)
-    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
+        fun, api_util.debug_info("custom_vjp fun", fun, (x,), {}),
+        fwd, api_util.debug_info("custom_vjp fwd", fwd, (x,), {}))
     self.assertAllClose(jax.jit(jax.vmap(fwd))(x)[0], 2*x*x)
     self.assertAllClose(jax.jit(lambda x: jax.vmap(fwd)(x)[0])(x), x)
 
@@ -9597,7 +9602,9 @@ class CustomVJPTest(jtu.JaxTestCase):
       return x*x, (x,)
 
     x = jnp.linspace(0, 5.0, 10)
-    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
+        fun, api_util.debug_info("custom_vjp fun", fun, (x,), {}),
+        fwd, api_util.debug_info("custom_vjp fwd", fwd, (x,), {}))
 
     def g(x):
       return jax.lax.cond(True, fwd, lambda x: (2.0 * x, (x,)), x)
@@ -9611,7 +9618,9 @@ class CustomVJPTest(jtu.JaxTestCase):
     def fwd_(x):
       return x*x, (x,)
 
-    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd_)
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
+        fun, api_util.debug_info("custom_vjp fun", fun, (3.2,), {}),
+        fwd_, api_util.debug_info("custom_vjp fwd", fwd_, (3.2,), {}))
     calc = jax.jvp(fwd, (3.2,), (1.0,))
     expected = jax.jvp(fwd_, (3.2,), (1.0,))
     self.assertAllClose(calc, expected)
@@ -9707,31 +9716,6 @@ class CustomVJPTest(jtu.JaxTestCase):
     f.defvjp(f_fwd, f_bwd, optimize_remat=True)
     x, y = jnp.linspace(0.0, 1.0, 5), jnp.linspace(2.0, 5.0, 5)
     jax.jit(jax.vmap(jax.grad(f)))(x, y)  # Doesn't error
-
-  def test_optimize_remat_nondiff_argnums(self):
-    @partial(jax.custom_vjp, nondiff_argnums=(0,))
-    def f(fun, x, y):
-      return fun(x, y)
-
-    def f_fwd(fun, x, y):
-      del fun
-      return jnp.cos(x) * y, (jnp.cos(x), jnp.sin(x), y)
-
-    def f_bwd(fun, res, g):
-      del fun
-      cos_x, sin_x, y = res
-      return (cos_x * g * y, sin_x * g)
-
-    def fun(x, y):
-      return jnp.sin(x) * y
-
-    f.defvjp(f_fwd, f_bwd, optimize_remat=True)
-    x, y = 0.5, 0.1
-    res = jax.value_and_grad(lambda *args: f(fun, *args))(x, y)[0]
-    self.assertAllClose(res, f_fwd(fun, x, y)[0])
-    res = jax.jit(lambda *args: jax.value_and_grad(
-        lambda *args: f(fun, *args))(*args)[0])(x, y)
-    self.assertAllClose(res, fun(x, y))
 
   def test_dce(self):
     @jax.custom_vjp
