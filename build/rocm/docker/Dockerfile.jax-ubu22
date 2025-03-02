@@ -47,7 +47,6 @@ RUN --mount=type=cache,mode=0755,target=/root/.cache/pip \
         pytest-reportlog \
         pytest-rerunfailures \
         pytest-json-report \
-        pytest-csv \
         cloudpickle \
         portpicker \
         matplotlib \
