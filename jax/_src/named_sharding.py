@@ -21,11 +21,11 @@ import functools
 from typing import Any, Union
 
 from jax._src import config
-from jax._src.util import use_cpp_class, cache, use_cpp_method, tuple_insert
+from jax._src.util import use_cpp_class, cache, use_cpp_method
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import sdy
 from jax._src import mesh as mesh_lib
-from jax._src.partition_spec import PartitionSpec, UnconstrainedSingleton
+from jax._src.partition_spec import PartitionSpec
 from jax._src import sharding as JSharding
 from jax._src import xla_bridge as xb
 import numpy as np
@@ -329,80 +329,6 @@ class SdyArraySharding:
            if self.replicated_axes else '')
     return f"SdyArraySharding([{dim_sharding_repr}]{device_id_repr}{rar})"
 
-# TODO(yashkatariya): Remove this after jax 0.5.2 release
-class ParsedPartitionSpec:
-  __slots__ = ('_user_spec', 'partitions')
-
-  _user_spec: PartitionSpec | None
-  partitions: tuple[tuple[MeshAxisName, ...] | UnconstrainedSingleton, ...]
-
-  def __init__(self, user_spec, partitions):
-    self._user_spec = user_spec
-    assert None not in partitions, partitions
-    self.partitions = tuple(partitions)
-
-  def get_partition_spec(self) -> PartitionSpec:
-    if isinstance(self._user_spec, PartitionSpec):
-      return self._user_spec
-    else:
-      return get_single_pspec(self)
-
-  def insert_axis_partitions(self, dim, val):
-    parts = self.partitions
-    too_short = dim - len(parts)
-    if too_short > 0:
-      parts += ((),) * too_short
-    new_partitions = tuple_insert(parts, dim, val)
-    return ParsedPartitionSpec(None, new_partitions)
-
-  @classmethod
-  def from_user_input(
-      cls,
-      entry: PartitionSpec | None,
-      arg_name: str,
-      allow_unconstrained_dims: bool = False,
-  ) -> ParsedPartitionSpec:
-    if entry is None:
-      return cls(entry, ())
-    if not isinstance(entry, PartitionSpec):
-      raise TypeError(f"{arg_name} are expected to be "
-                      f"PartitionSpec instances or None, but got {entry}")
-    axis_specs = []
-    for axis_spec in entry:
-      if axis_spec is None:
-        axis_spec = ()
-      elif isinstance(axis_spec, (list, tuple)):
-        axis_spec = tuple(axis_spec)
-      elif axis_spec is PartitionSpec.UNCONSTRAINED:
-        if not allow_unconstrained_dims:
-          raise ValueError(f"Unconstrained dims are not allowed: {entry}")
-        axis_spec = PartitionSpec.UNCONSTRAINED
-      else:
-        axis_spec = (axis_spec,)
-      axis_specs.append(axis_spec)
-    new_entry = PartitionSpec(
-        *[tuple(e) if isinstance(e, (list, tuple)) else e for e in entry])
-    return cls(new_entry, axis_specs)
-
-  def __hash__(self):
-    return hash(self.partitions)
-
-  def __eq__(self, other):
-    if not isinstance(other, ParsedPartitionSpec):
-      return False
-    return self.partitions == other.partitions
-
-  def __len__(self):
-    return len(self.partitions)
-
-  def __getitem__(self, i):
-    return self.partitions[i]
-
-  def __iter__(self):
-    return iter(self.partitions)
-
-  def __repr__(self):
-    return f"ParsedPartitionSpec(partitions={self.partitions})"
 
 @cache(max_size=4096, trace_context_in_key=False)
 def named_sharding_to_xla_hlo_sharding(
@@ -495,29 +421,15 @@ def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
       partitions.append(None)
   return PartitionSpec(*partitions)
 
-get_single_pspec = lambda p: array_mapping_to_axis_resources(get_array_mapping(p))  # type: ignore
 
-# TODO(yashkatariya): Remove this after jax 0.5.2 release
-def preprocess(mesh, spec, parsed_pspec, _manual_axes=frozenset()):
-  if parsed_pspec is None:
-    spec = PartitionSpec() if spec is None else spec
-    parsed_pspec = ParsedPartitionSpec.from_user_input(
-        spec, "NamedSharding spec", allow_unconstrained_dims=True)
-    _check_unique_resources(parsed_pspec, "NamedSharding spec")
-  _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes)
-  return parsed_pspec
-
+@cache(max_size=128, trace_context_in_key=False)
 def check_pspec(mesh, spec, _manual_axes=frozenset()):
   _check_unique_resources(spec, "NamedSharding spec")
   _check_mesh_resource_axis(mesh, spec, _manual_axes)
 
-def _check_unique_resources(
-    pspec: ParsedPartitionSpec | PartitionSpec, arg_name: str
-) -> None:
+def _check_unique_resources(pspec: PartitionSpec, arg_name: str) -> None:
   resource_counts: dict[MeshAxisName, int] = {}
   duplicate = False
-  pspec = (pspec.get_partition_spec() if isinstance(pspec, ParsedPartitionSpec)
-           else pspec)
   for d in pspec:
     if d is PartitionSpec.UNCONSTRAINED or d is None:
       continue
@@ -534,10 +446,8 @@ def _check_unique_resources(
         f' most one positional dimension, but {pspec} has duplicate entries'
         f' for {mesh_lib.show_axes(multiple_uses)}')
 
-@cache(max_size=128, trace_context_in_key=False)
+
 def _check_mesh_resource_axis(mesh, pspec, _manual_axes):
-  pspec = (pspec.get_partition_spec() if isinstance(pspec, ParsedPartitionSpec)
-           else pspec)
   for p in pspec:
     if p is PartitionSpec.UNCONSTRAINED or p is None:
       continue
