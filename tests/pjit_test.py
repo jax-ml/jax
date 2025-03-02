@@ -6232,6 +6232,30 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.shape, (16, 8, 16))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('data', None, None)))
 
+  def test_where_with_prng_sharded_inp(self):
+    mesh = jax.sharding.Mesh(jax.devices(), axis_names=['batch'])
+    sharding = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec('batch')
+    )
+    condition = jax.device_put(jnp.zeros([32, 1], dtype=jnp.bool), sharding)
+    x = jax.device_put(
+        jnp.broadcast_to(jax.random.key(0), [32, 32]),
+        sharding,
+    )
+
+    def f(condition, x, y):
+      condition = jnp.asarray(condition)
+      self.assertTrue(x.aval.sharding.mesh._are_all_axes_auto)
+      self.assertTrue(y.aval.sharding.mesh._are_all_axes_auto)
+      x1 = jnp.asarray(x)
+      self.assertEqual(x1.aval.sharding, x.aval.sharding)
+      y1 = jnp.asarray(y)
+      self.assertEqual(y1.aval.sharding, y.aval.sharding)
+      return jnp.where(condition, x1, y1)
+
+    f = jax.jit(f, in_shardings=(sharding, sharding, sharding))
+    f(condition, x, x).block_until_ready()
+
   @jtu.with_user_mesh((4,), ('data',))
   def test_intermediate_einsum_conflict_error(self, mesh):
     shape1 = (8, 32, 1, 16)

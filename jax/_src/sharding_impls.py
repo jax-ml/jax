@@ -1165,9 +1165,7 @@ def make_key_array_phys_sharding(aval, sharding):
   elif isinstance(sharding, NamedSharding):
     elt_aval = core.physical_element_aval(aval.dtype)
     trailing_spec = [None] * elt_aval.ndim
-    return NamedSharding(
-        sharding.mesh,
-        PartitionSpec(*sharding.spec, *trailing_spec))
+    return sharding.with_spec(PartitionSpec(*sharding.spec, *trailing_spec))
   else:
     hlos = sharding._to_xla_hlo_sharding(aval.ndim)
     return GSPMDSharding(
@@ -1179,10 +1177,10 @@ def physical_sharding(
   return make_key_array_phys_sharding(aval, sharding)
 
 
-def get_logical_gspmd_sharding(aval, phys_sharding):
-  elt_aval = core.physical_element_aval(aval.dtype)
+def get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding):
+  elt_aval = core.physical_element_aval(dtype)
   phys_hlo_sharding = phys_sharding._to_xla_hlo_sharding(
-      aval.ndim + elt_aval.ndim)
+      len(logical_shape) + elt_aval.ndim)
   partitions, num_replicas = get_num_ways_dim_sharded(phys_hlo_sharding)
   suffix = [] if num_replicas == 1 else [num_replicas]
   # Create logical sharding by cutting off the replicated trailing dims.
@@ -1192,39 +1190,47 @@ def get_logical_gspmd_sharding(aval, phys_sharding):
   return GSPMDSharding(phys_sharding._device_assignment,
                        xc.HloSharding.from_proto(logical_op_sharding))
 
-def check_replicated_trailing_dims(sharding: jsharding.Sharding, aval):
+def check_replicated_trailing_dims(sharding: jsharding.Sharding,
+                                   logical_shape, dtype):
   if isinstance(sharding, PmapSharding):
     return
-  phys_aval = core.physical_aval(aval)
-  hlo_s = sharding._to_xla_hlo_sharding(phys_aval.ndim)
+  if isinstance(sharding, NamedSharding) and sharding.mesh._any_axis_manual:
+    return
+  phys_shape = core.physical_shape(logical_shape, dtype)
+  hlo_s = sharding._to_xla_hlo_sharding(len(phys_shape))
   partitions, _ = get_num_ways_dim_sharded(hlo_s)
-  num_trailing_dims = phys_aval.ndim - aval.ndim
+  num_trailing_dims = len(phys_shape) - len(logical_shape)
   if not all(i == 1 for i in partitions[-num_trailing_dims:]):
     raise AssertionError(
         "The trailing dims of extended dtypes should be replicated. Got"
         f" sharding: {sharding}, partitions: {partitions}, "
         f"num_trailing_dims: {num_trailing_dims}")
 
-def logical_sharding(aval, phys_sharding) -> jsharding.Sharding:
+def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
   # The trailing dims should always be replicated.
-  check_replicated_trailing_dims(phys_sharding, aval)
+  # TODO(yashkatariya): Maybe remove this check or do this at the pxla level?
+  check_replicated_trailing_dims(phys_sharding, logical_shape, dtype)
 
   if is_single_device_sharding(phys_sharding):
     return phys_sharding
   elif isinstance(phys_sharding, PmapSharding):
-    elt_aval = core.physical_element_aval(aval.dtype)
+    elt_aval = core.physical_element_aval(dtype)
     logical_sharding_spec = sharding_specs.ShardingSpec(
         sharding=phys_sharding.sharding_spec.sharding[:-elt_aval.ndim],
         mesh_mapping=phys_sharding.sharding_spec.mesh_mapping)
     return PmapSharding(devices=phys_sharding.devices,
                         sharding_spec=logical_sharding_spec)
   elif isinstance(phys_sharding, NamedSharding):
-    logical_gs = get_logical_gspmd_sharding(aval, phys_sharding)
-    assert isinstance(phys_sharding.mesh, mesh_lib.Mesh)
-    return _gspmd_to_named_sharding_via_mesh(
-        logical_gs, phys_sharding.mesh)
+    elt_aval = core.physical_element_aval(dtype)
+    phys_shape = core.physical_shape(logical_shape, dtype)
+    if len(phys_sharding.spec) < len(phys_shape):
+      phys_spec = (*phys_sharding.spec,
+                   *[None] * (len(phys_shape) - len(phys_sharding.spec)))
+    else:
+      phys_spec = phys_sharding.spec
+    return phys_sharding.with_spec(phys_spec[:-elt_aval.ndim])
   else:
-    return get_logical_gspmd_sharding(aval, phys_sharding)
+    return get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding)
 
 
 @util.cache()

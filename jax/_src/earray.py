@@ -80,7 +80,7 @@ class EArray(basearray.Array):
   @property
   def sharding(self):
     phys_sharding = self._data.sharding
-    return sharding_impls.logical_sharding(self.aval, phys_sharding)
+    return sharding_impls.logical_sharding(self.shape, self.dtype, phys_sharding)
 
   @property
   def committed(self):

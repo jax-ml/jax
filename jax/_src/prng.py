@@ -168,7 +168,9 @@ class PRNGKeyArray(jax.Array):
 
   @property
   def aval(self):
-    return keys_shaped_array(self._impl, self.shape)
+    logical_sharding = (self.sharding if hasattr(self._base_array, 'sharding')
+                        else None)
+    return keys_shaped_array(self._impl, self.shape, logical_sharding)
 
   @property
   def shape(self):
@@ -230,7 +232,7 @@ class PRNGKeyArray(jax.Array):
 
   @property
   def sharding(self):
-    return logical_sharding(self.aval, self._base_array.sharding)
+    return logical_sharding(self.shape, self.dtype, self._base_array.sharding)
 
   @property
   def committed(self):
@@ -319,8 +321,9 @@ def seed_with_impl(impl: PRNGImpl, seed: int | typing.ArrayLike) -> PRNGKeyArray
   return random_seed(seed, impl=impl)
 
 
-def keys_shaped_array(impl, shape):
-  return core.ShapedArray(shape, KeyTy(impl))
+def keys_shaped_array(impl, shape, sharding):
+  aval = core.ShapedArray(shape, KeyTy(impl))
+  return core.update_aval_with_sharding(aval, sharding)
 
 def base_arr_shape_to_keys_shape(impl, base_arr_shape):
   base_ndim = len(impl.key_shape)
@@ -539,7 +542,7 @@ batching.defvectorized(random_seed_p)
 
 @random_seed_p.def_abstract_eval
 def random_seed_abstract_eval(seeds_aval, *, impl):
-  return keys_shaped_array(impl, seeds_aval.shape)
+  return keys_shaped_array(impl, seeds_aval.shape, seeds_aval.sharding)
 
 @random_seed_p.def_impl
 def random_seed_impl(seeds, *, impl):
@@ -570,7 +573,11 @@ batching.defvectorized(random_split_p)
 
 @random_split_p.def_abstract_eval
 def random_split_abstract_eval(keys_aval, *, shape):
-  return keys_shaped_array(keys_aval.dtype._impl, (*keys_aval.shape, *shape))
+  # TODO(yashkatariya): random_split should take sharding as an arg too so we
+  # don't choose None here?
+  new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
+  return keys_shaped_array(keys_aval.dtype._impl, (*keys_aval.shape, *shape),
+                           keys_aval.sharding.with_spec(new_spec))
 
 @random_split_p.def_impl
 def random_split_impl(keys, *, shape):
@@ -700,7 +707,8 @@ ad.defjvp_zero(random_wrap_p)
 @random_wrap_p.def_abstract_eval
 def random_wrap_abstract_eval(base_arr_aval, *, impl):
   shape = base_arr_shape_to_keys_shape(impl, base_arr_aval.shape)
-  return keys_shaped_array(impl, shape)
+  sharding = logical_sharding(shape, KeyTy(impl), base_arr_aval.sharding)
+  return keys_shaped_array(impl, shape, sharding)
 
 @random_wrap_p.def_impl
 def random_wrap_impl(base_arr, *, impl):

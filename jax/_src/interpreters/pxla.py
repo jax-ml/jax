@@ -2783,7 +2783,7 @@ def _maybe_get_and_check_in_shardings(
     if isinstance(orig, UnspecifiedValue):
       if (aval is not core.abstract_token and
           dtypes.issubdtype(aval.dtype, dtypes.extended)):
-        xla_s = sharding_impls.logical_sharding(aval, xla_s)
+        xla_s = sharding_impls.logical_sharding(aval.shape, aval.dtype, xla_s)
       new_in_shardings.append(xla_s)
     else:
       xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)
@@ -2819,12 +2819,12 @@ def _maybe_get_and_check_out_shardings(
     if isinstance(orig, UnspecifiedValue):
       if (aval is not core.abstract_token and
           dtypes.issubdtype(aval.dtype, dtypes.extended)):
-        xla_s = sharding_impls.logical_sharding(aval, xla_s)
+        xla_s = sharding_impls.logical_sharding(aval.shape, aval.dtype, xla_s)
       new_out_shardings.append(xla_s)
     elif mlir.contains_unconstrained(orig):
       if (aval is not core.abstract_token and
           dtypes.issubdtype(aval.dtype, dtypes.extended)):
-        xla_s = sharding_impls.logical_sharding(aval, xla_s)
+        xla_s = sharding_impls.logical_sharding(aval.shape, aval.dtype, xla_s)
       try:
         new_out_shardings.append(_gspmd_to_named_sharding(xla_s, aval, orig))  # pytype: disable=wrong-arg-types
       except:

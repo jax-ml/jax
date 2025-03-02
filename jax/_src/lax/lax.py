@@ -1361,8 +1361,13 @@ def _convert_element_type(
 
   if (isinstance(new_dtype, dtypes.ExtendedDType) or
       isinstance(old_dtype, dtypes.ExtendedDType)):
-    if sharding is not None or weak_type: raise NotImplementedError
-    if new_dtype == old_dtype: return operand
+    if new_dtype == old_dtype:
+      if sharding is None:
+        return operand
+      if isinstance(operand, core.Tracer) and operand.aval.sharding == sharding:
+        return operand
+    if sharding is not None or weak_type:
+      raise NotImplementedError
     if (isinstance(new_dtype, dtypes.ExtendedDType) and
         isinstance(old_dtype, dtypes.ExtendedDType)):
       old_rep_dtype = core.physical_element_aval(old_dtype).dtype

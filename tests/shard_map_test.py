@@ -2106,7 +2106,8 @@ class ShardMapTest(jtu.JaxTestCase):
           lambda x: x, mesh=mesh.abstract_mesh, in_specs=P(), out_specs=P())(key)
 
     out = shard_key(key)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+    self.assertTrue(out.sharding.is_equivalent_to(NamedSharding(mesh, P()),
+                                                  out.ndim))
 
   def test_partial_auto_error_wsc_manual(self):
     mesh = jtu.create_mesh((2, 2), ('i', 'j'))

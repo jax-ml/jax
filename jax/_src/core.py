@@ -1659,6 +1659,10 @@ def physical_aval(aval):
     return DShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype)
   return aval
 
+def physical_shape(logical_shape, dtype):
+  elt_aval = physical_element_aval(dtype)
+  return (*logical_shape, *elt_aval.shape)
+
 def physical_element_aval(edtype: dtypes.ExtendedDType) -> ShapedArray:
   duck = edtype._rules.physical_element_aval(edtype)  # type: ignore
   return ShapedArray(duck.shape, dtypes.dtype(duck.dtype))
