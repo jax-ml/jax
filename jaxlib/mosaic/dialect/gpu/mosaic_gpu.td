@@ -401,6 +401,8 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
     Where:
       - `s == swizzle/element_bytediwth` (for `kNoSwizzle`, `swizzle` is 16.)
         and the tilings are [64, s] for `a` and [s, s] for `b`.
+      - `a` and/or `b` may be transposed if the corresponding attribute is set
+        to `true`.
 
     The output has an identical shape and type as the input accumulator.
 
@@ -423,7 +425,10 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
     AnyTypeOf<[
       MemRefOf<[MosaicGPU_WGMMASupportedType]>,
       VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>]>:$a,
-    MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b
+    MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b,
+
+    DefaultValuedOptionalAttr<BoolAttr, "false">:$transpose_a,
+    DefaultValuedOptionalAttr<BoolAttr, "false">:$transpose_b
   );
   let results = (outs VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>);
 

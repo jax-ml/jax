@@ -14,7 +14,8 @@
 
 """Layout inference pass for the MLIR Mosaic GPU dialect."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+import dataclasses
 import enum
 from functools import partial
 from typing import cast
@@ -23,6 +24,7 @@ from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import scf
+from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import vector
 
 from . import fragmented_array as fa
@@ -45,8 +47,8 @@ def _set_layout_attributes(
     in_layouts: list[ir.Attribute],
     out_layouts: list[ir.Attribute],
 ):
-  op.attributes["in_layouts"] = ir.ArrayAttr.get(in_layouts)
-  op.attributes["out_layouts"] = ir.ArrayAttr.get(out_layouts)
+    op.attributes["in_layouts"] = ir.ArrayAttr.get(in_layouts)
+    op.attributes["out_layouts"] = ir.ArrayAttr.get(out_layouts)
 
 
 def _choose_representative_layout(
@@ -311,6 +313,114 @@ def _infer_wgmma_op_layout(wgmma_op: mgpu.WGMMAOp) -> OptionalLayouts:
 
   return [layout], [layout]
 
+@dataclasses.dataclass()
+class WGMMATransforms:
+  swizzle: mgpu.SwizzlingMode
+  a_tile: tuple[int, ...]
+  a_transpose: bool
+  b_tile: tuple[int, ...]
+  b_transpose: bool
+
+
+def infer_wgmma_transforms(wgmma_op: mgpu.WGMMAOp) -> WGMMATransforms:
+  a_shape = cast(ir.ShapedType, wgmma_op.a.type).shape
+  k = a_shape[0] if wgmma_op.transpose_a else a_shape[1]
+  bitwidth = cast(ir.ShapedType, wgmma_op.a.type).element_type.width
+
+  # Try tiling with all swizzling modes starting from the largest one.
+  for swizzle in [
+      mgpu.SwizzlingMode.k128ByteSwizzle,
+      mgpu.SwizzlingMode.k64ByteSwizzle,
+      mgpu.SwizzlingMode.k32ByteSwizzle,
+  ]:
+    s = swizzle * 8 // bitwidth
+    if k % s == 0:
+      return WGMMATransforms(
+          swizzle=swizzle,
+          a_tile=(s, 64) if wgmma_op.transpose_a else (64, s),
+          a_transpose=wgmma_op.transpose_a,
+          b_tile=(s, s),
+          b_transpose=wgmma_op.transpose_b,
+      )
+  raise ValueError(
+      "Could not infer layouts for memref feeding into WGMMA. The "
+      "non-contracting dimension ({k}) must be a multiple of "
+      "s = swizzle * (8 / bitwidth) where swizzle is a valid swizzle "
+      f"(32, 64, or 128) and bitwidth ({bitwidth}) is the element size of "
+      "`a` and `b`."
+  )
+
+def _layout_for_memref_view(view_op: memref.ViewOp) -> ir.Attribute | None:
+  wgmma_use = None
+  uses = cast(ir.OpResult, view_op.result).uses
+  for use in uses:
+    user = use.owner
+    if isinstance(user, memref.CastOp):
+      # This memref is already cast, so we don't need to do anything.
+      return None
+    if isinstance(user, mgpu.WGMMAOp):
+      if wgmma_use is not None:
+        raise NotImplementedError(f"Multiple WGMMA consumers of {view_op}.")
+      wgmma_use = use
+      break
+    if (
+        not isinstance(user, mgpu.AsyncLoadOp)
+        and not isinstance(user, mgpu.AsyncStoreOp)
+        and not isinstance(user, vector.LoadOp)
+        and not isinstance(user, vector.StoreOp)
+    ):
+      raise NotImplementedError(f"Unsupported user {user} of {view_op}.")
+
+  if wgmma_use is None:
+    # This memref is not used by a WGMMA operation, so we don't need to do
+    # anything.
+    return None
+
+  transforms = infer_wgmma_transforms(wgmma_use.owner)
+  if wgmma_use.operand_number == 1:
+    tile = transforms.a_tile
+    transpose = transforms.a_transpose
+  else:
+    tile = transforms.b_tile
+    transpose = transforms.b_transpose
+  transpose_attr = (
+      [mgpu.TransposeTransformAttr.get([1, 0, 2, 3])] if transpose else []
+  )
+
+  layout = mgpu.LayoutAttr.get(
+      2,
+      [mgpu.TileTransformAttr.get(tile)]
+      + transpose_attr
+      + [mgpu.SwizzleTransformAttr.get(transforms.swizzle)],
+  )
+
+  return layout
+
+
+def _earliest_use(regions: list[ir.Region], uses: Sequence[ir.OpOperand]) -> ir.OpView:
+  owners = [use.owner for use in uses]
+  for region in regions:
+    for block in region:
+      for op in block:
+        if op in owners:
+          return op
+  raise ValueError("None of uses are in the given block")
+
+
+def _insert_memref_layout_cast(layout: ir.Attribute, view_op: memref.ViewOp):
+  mem_ref_type = ir.MemRefType(view_op.result.type)
+  memref_new_type = ir.MemRefType.get(
+    mem_ref_type.shape,
+    mem_ref_type.element_type,
+    layout,
+    mem_ref_type.memory_space,
+  )
+  uses = list(view_op.result.uses)
+  with ir.InsertionPoint(_earliest_use(view_op.parent.regions, uses)):
+    cast_op = memref.cast(memref_new_type, view_op.result)
+  for use in uses:
+    use.owner.operands[use.operand_number] = cast_op
+
 
 class TraversalOrder(enum.Enum):
   """Traversal orders with respect to the data flow for IR."""
@@ -402,3 +512,11 @@ def infer_layout(module: ir.Module):
 
   for op in module.body:
     traverse_op(op, set_default_layout)
+
+  def infer_memref_layouts_and_insert_casts(op: ir.OpView):
+    if op.name == "memref.view":
+      if layout := _layout_for_memref_view(op):
+        _insert_memref_layout_cast(layout, op)
+
+  for op in module.body:
+    traverse_op(op, infer_memref_layouts_and_insert_casts)

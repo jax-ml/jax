@@ -2701,6 +2701,8 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
       shape_res: tuple[int, ...] = ()
       transforms_a: tuple[Tile | Transpose | Swizzle, ...] = ()
       transforms_b: tuple[Tile | Transpose | Swizzle, ...] = ()
+      transpose_a: bool = False
+      transpose_b: bool = False
 
     result = []
     for swizzle in [
@@ -2718,10 +2720,33 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
               shape_a=[groups_m * 64, groups_k * k],
               shape_b=[groups_k * k, groups_n * k],
               shape_res=[groups_m * 64, groups_n * k],
+          ),
+          TestCaseInput(
+              shape_a=[groups_m * 64, groups_k * k],
+              shape_b=[groups_n * k, groups_k * k],
+              shape_res=[groups_m * 64, groups_n * k],
+              transpose_b=True,
+          ),
+          TestCaseInput(
+              shape_a=[groups_m * 64, groups_k * k],
+              shape_b=[groups_k * k, groups_n * k],
+              shape_res=[groups_m * 64, groups_n * k],
               transforms_a=[Tile([64, k]), Swizzle(swizzle)],
               transforms_b=[Tile([k, k]), Swizzle(swizzle)],
           ),
       ])
+      # The below only works for 128-byte swizzling. Regardless of transposing,
+      # TMA needs the size of the last dimension to be compatible with the
+      # swizzle.
+      if swizzle == mgpu_dialect.SwizzlingMode.k128ByteSwizzle:
+        result.append(
+            TestCaseInput(
+                shape_a=[groups_k * k, groups_m * 64],
+                shape_b=[groups_k * k, groups_n * k],
+                shape_res=[groups_m * 64, groups_n * k],
+                transpose_a=True,
+            )
+        )
     return result
 
   @parameterized.parameters(wgmma_kernel_with_tma_cases(jnp.bfloat16))
@@ -2781,7 +2806,13 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
       accumulator = vector.splat(
           ir.VectorType.get(shape_result, result_elt_type), zero_acc
       )
-      result = mgpu_dialect.wgmma(accumulator, a_smem_ref, b_smem_ref)
+      result = mgpu_dialect.wgmma(
+          accumulator,
+          a_smem_ref,
+          b_smem_ref,
+          transpose_a=test_case.transpose_a,
+          transpose_b=test_case.transpose_b,
+      )
 
       nvvm.wgmma_commit_group_sync_aligned()
       nvvm.wgmma_wait_group_sync_aligned(0)
@@ -2822,11 +2853,12 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
     x = self.prng.uniform(-1, 1, test_case.shape_a).astype(abtype)
     y = self.prng.uniform(-1, 1, test_case.shape_b).astype(abtype)
 
+    transpose = lambda x, t: x.T if t else x
     self.assertArraysAllClose(
         jax.jit(kernel)(x, y),
         np.matmul(
-            x.reshape(test_case.shape_a),
-            y.reshape(test_case.shape_b),
+            transpose(x.reshape(test_case.shape_a), test_case.transpose_a),
+            transpose(y.reshape(test_case.shape_b), test_case.transpose_b),
         ),
         atol=1e-5,
         rtol=1e-5,
