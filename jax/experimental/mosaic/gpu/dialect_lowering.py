@@ -380,8 +380,8 @@ def _mgpu_async_load_op_lowering_rule(
   swizzle, transforms = memref_layout_to_swizzle_and_transforms(dst_layout)
 
   gmem_slice = []
-  for idx, size in zip(load_op.indices, load_op.slice_lengths):
-    idx = arith.index_cast(ir.IndexType.get(), idx)
+  for idx_i32, size in zip(load_op.indices, load_op.slice_lengths):
+    idx = arith.index_cast(ir.IndexType.get(), idx_i32)
     v = idx if size < 0 else utils.DynamicSlice(idx, size)
     gmem_slice.append(v)
 
@@ -410,8 +410,8 @@ def _mgpu_async_store_op_lowering_rule(
   swizzle, transforms = memref_layout_to_swizzle_and_transforms(src_layout)
 
   gmem_slice = []
-  for idx, size in zip(store_op.indices, store_op.slice_lengths):
-    idx = arith.index_cast(ir.IndexType.get(), idx)
+  for idx_i32, size in zip(store_op.indices, store_op.slice_lengths):
+    idx = arith.index_cast(ir.IndexType.get(), idx_i32)
     v = idx if size < 0 else utils.DynamicSlice(idx, size)
     gmem_slice.append(v)
 

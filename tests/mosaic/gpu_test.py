@@ -2389,6 +2389,157 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     self.assertArraysEqual(jax.jit(kernel)(x, y), x + y)
 
   @staticmethod
+  def kernel_with_tma_cases(dtype: jnp.dtype):
+    @dataclasses.dataclass()
+    class TestCaseInput:
+      shape: tuple[int, ...]
+      shape_sliced: tuple[int, ...] = ()
+      slice_indices: tuple[int, ...] = ()
+      slice_lengths: tuple[int, ...] = ()
+      transforms: tuple[Tile | Transpose | Swizzle, ...] = ()
+
+      def __post_init__(self):
+        if not self.shape_sliced:
+          self.shape_sliced = self.shape
+        if not self.slice_lengths:
+          self.slice_lengths = self.shape_sliced
+        if not self.slice_indices:
+          self.slice_indices = tuple([0] * len(self.slice_lengths))
+
+    result = []
+    for swizzle in mgpu_dialect.SwizzlingMode:
+      n = swizzle * 8 // jnp.finfo(dtype).bits
+      if swizzle == mgpu_dialect.SwizzlingMode.kNoSwizzle:
+        #  We need at least one case with no transforms, as this is handled
+        #  differently.
+        result.append(TestCaseInput(shape=[128, n]))
+      result.extend([
+          TestCaseInput(
+              shape=[128, n],
+              transforms=[Swizzle(swizzle)],
+          ),
+          TestCaseInput(
+              shape=[256, n],
+              shape_sliced=[128, n],
+              transforms=[Swizzle(swizzle)],
+          ),
+          TestCaseInput(
+              shape=[2, 128, n],
+              shape_sliced=[128, n],
+              slice_lengths=[-1, 128, n],
+              slice_indices=[1, 0, 0],
+              transforms=[Swizzle(swizzle)],
+          ),
+          TestCaseInput(
+              shape=[2, 3, 64, n],
+              transforms=[Transpose([0, 1, 2, 3]), Swizzle(swizzle)],
+          ),
+          TestCaseInput(
+              shape=[2, 3, 64, n],
+              transforms=[
+                  Transpose([1, 0, 2, 3]),
+                  Transpose([1, 0, 2, 3]),
+                  Swizzle(swizzle),
+              ],
+          ),
+          TestCaseInput(
+              shape=[2, 3, 64, n],
+              transforms=[Transpose([1, 0, 2, 3]), Swizzle(swizzle)],
+          ),
+          TestCaseInput(
+              shape=[256, n],
+              shape_sliced=[128, n],
+              transforms=[Tile([64, n]), Swizzle(swizzle)],
+          ),
+          TestCaseInput(
+              shape=[2 * 64, 3 * n],
+              transforms=[
+                  Tile([64, n]),
+                  Transpose([1, 0, 2, 3]),
+                  Swizzle(swizzle),
+              ],
+          ),
+      ])
+    return result
+
+  @parameterized.parameters(kernel_with_tma_cases(jnp.bfloat16))
+  def test_kernel_with_tma(self, test_case):
+    def add(
+        ctx: launch_context.LaunchContext,
+        in_gmem_ref: ir.Value,
+        result_gmem_ref: ir.Value,
+        smem: list[ir.Value],
+    ):
+      del ctx
+      smem_ref, tma_barrier = smem
+      smem_ref = memref_with_transforms(smem_ref, test_case.transforms)
+      dialect_barrier = tma_barrier.as_dialect_barrier_memref()
+
+      elt_type = ir.MemRefType(in_gmem_ref.type).element_type
+      memref_bytes = utils.bytewidth(elt_type) * math.prod(
+          test_case.shape_sliced
+      )
+      mgpu_dialect.arrive_expect_tx(
+          barrier=dialect_barrier, expect_tx= memref_bytes
+      )
+
+      i32 = ir.IntegerType.get_signless(32)
+      slice_indices = [arith.constant(i32, i) for i in test_case.slice_indices]
+
+      # GMEM -> SMEM
+      mgpu_dialect.async_load(
+          source=in_gmem_ref,
+          destination=smem_ref,
+          barrier=dialect_barrier,
+          indices=slice_indices,
+          slice_lengths=test_case.slice_lengths,
+          collective=ir.ArrayAttr.get([]),
+      )
+
+      parities = memref.load(tma_barrier.phases, [])
+      parity, _ = tma_barrier.update_parities(parities)
+      mgpu_dialect.wait(dialect_barrier, parity)
+
+      # SMEM -> GMEM
+      zero_index = arith.constant(i32, 0)
+      mgpu_dialect.async_store(
+          source=smem_ref,
+          destination=result_gmem_ref,
+          indices=[zero_index] * len(test_case.shape_sliced),
+          slice_lengths=test_case.shape_sliced,
+      )
+      nvvm.cp_async_bulk_wait_group(0)
+      utils.warpgroup_barrier()
+
+    dtype = jnp.bfloat16
+
+    jax_shape = jax.ShapeDtypeStruct(test_case.shape, dtype)
+    jax_shape_sliced = jax.ShapeDtypeStruct(test_case.shape_sliced, dtype)
+    kernel = mgpu.as_gpu_kernel(
+        add,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(jax_shape),
+        out_shape=jax_shape_sliced,
+        smem_scratch_shape=[
+            jax_shape_sliced,
+            core.TMABarrier(1),
+        ],
+        thread_semantics=mgpu.ThreadSemantics.Warpgroup,
+    )
+
+    x = self.prng.uniform(-1, 1, test_case.shape).astype(dtype)
+
+    input_slice = tuple(
+        slice(i * abs(l), (i + 1) * abs(l))
+        for i, l in zip(test_case.slice_indices, test_case.slice_lengths)
+    )
+    self.assertArraysEqual(
+        jax.jit(kernel)(x),
+        (x[input_slice]).reshape(test_case.shape_sliced),
+    )
+
+  @staticmethod
   def pointwise_kernel_with_tma_cases(dtype: jnp.dtype):
     @dataclasses.dataclass(frozen=True)
     class TestCaseInput:
