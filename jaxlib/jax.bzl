@@ -46,7 +46,7 @@ mosaic_gpu_internal_users = []
 mosaic_internal_users = []
 pallas_gpu_internal_users = []
 pallas_tpu_internal_users = []
-pallas_extension_deps = []
+mosaic_extension_deps = []
 
 jax_internal_export_back_compat_test_util_visibility = []
 jax_internal_test_harnesses_visibility = []
