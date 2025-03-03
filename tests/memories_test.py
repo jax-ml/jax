@@ -606,7 +606,6 @@ class DevicePutTest(jtu.JaxTestCase):
         out_host, np_inp * 2, s_host, 'pinned_host')
 
   def test_output_streaming_inside_scan(self):
-    self.skipTest("b/393371838")
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
       self.skipTest("This test requires an xla_version >= 2.")
     mesh = jtu.create_mesh((1, 1, 2), ("x", "y", "z"))
