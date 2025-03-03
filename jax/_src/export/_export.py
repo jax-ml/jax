@@ -552,7 +552,7 @@ def export(
   Usage:
 
       >>> from jax import export
-      >>> exported: export.Exported = export.export(jnp.sin)(
+      >>> exported: export.Exported = export.export(jax.jit(jnp.sin))(
       ...     np.arange(4, dtype=np.float32))
       >>>
       >>> # You can inspect the Exported object

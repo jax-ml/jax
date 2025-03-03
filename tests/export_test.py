@@ -19,7 +19,6 @@ import contextlib
 import dataclasses
 import functools
 import logging
-import json
 import math
 import re
 import unittest
@@ -201,7 +200,7 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertEqual(exp.out_avals, (a_aval, b_aval, a_aval, b_aval, a_aval, b_aval))
 
   def test_basic(self):
-    f = jnp.sin
+    f = jax.jit(jnp.sin)
     x = np.arange(4, dtype=np.float32)
     exp_f = get_exported(f)(x)
 
@@ -448,7 +447,7 @@ class JaxExportTest(jtu.JaxTestCase):
     if test_platform == "gpu":
       test_platform = "rocm" if jtu.is_device_rocm() else "cuda"
     self.assertEqual(export.default_export_platform(), test_platform)
-    exp = export.export(jnp.sin)(1.)
+    exp = export.export(jax.jit(jnp.sin))(1.)
     self.assertEqual(exp.platforms, (export.default_export_platform(),))
 
   @jtu.parameterized_filterable(
@@ -458,7 +457,7 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_error_wrong_platform(self, platform):
     a = np.arange(4, dtype=np.float32)
 
-    exp_f = get_exported(jnp.sin, platforms=(platform,))(a)
+    exp_f = get_exported(jax.jit(jnp.sin), platforms=(platform,))(a)
     if xb.canonicalize_platform(jtu.device_under_test()) == platform:
       raise unittest.SkipTest("Uninteresting scenario")
 
@@ -468,7 +467,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
     # Now try with the platform check disabled
     exp_f_no_platform_check = get_exported(
-      jnp.sin, platforms=(platform,),
+      jax.jit(jnp.sin), platforms=(platform,),
       disabled_checks=[export.DisabledSafetyCheck.platform()])(a)
     res = exp_f_no_platform_check.call(a)
     self.assertAllClose(res, jnp.sin(a))
@@ -745,7 +744,7 @@ class JaxExportTest(jtu.JaxTestCase):
             ValueError,
             f"The requested export calling convention version {v} is outside the range of supported versions"))
 
-        exp = get_exported(jnp.sin)(
+        exp = get_exported(jax.jit(jnp.sin))(
             jax.ShapeDtypeStruct(export.symbolic_shape("w, h"), np.float32))
         x = np.arange(30, dtype=np.float32).reshape((5, 6))
         res = exp.call(x)

@@ -499,7 +499,7 @@ As of June 2024, all function exported with version 9
 
 ```python
 >>> from jax import export
->>> exp: export.Exported = export.export(jnp.cos)(1.)
+>>> exp: export.Exported = export.export(jax.jit(jnp.cos))(1.)
 >>> exp.calling_convention_version
 9
 
@@ -517,7 +517,7 @@ or the `JAX_EXPORT_CALLING_CONVENTION_VERSION` environment variable:
 
 >>> from jax._src import config
 >>> with config.jax_export_calling_convention_version(9):
-...  exp = export.export(jnp.cos)(1.)
+...  exp = export.export(jax.jit(jnp.cos))(1.)
 ...  exp.calling_convention_version
 9
 

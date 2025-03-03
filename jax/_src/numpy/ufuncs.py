@@ -124,22 +124,19 @@ def fabs(x: ArrayLike, /) -> Array:
   return lax.abs(*promote_args_inexact('fabs', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def bitwise_invert(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.invert`."""
   return lax.bitwise_not(*promote_args('bitwise_invert', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def bitwise_not(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.invert`."""
   return lax.bitwise_not(*promote_args('bitwise_not', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def invert(x: ArrayLike, /) -> Array:
   """Compute the bitwise inversion of an input.
 
@@ -231,8 +228,7 @@ def negative(x: ArrayLike, /) -> Array:
   return lax.neg(*promote_args('negative', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def positive(x: ArrayLike, /) -> Array:
   """Return element-wise positive values of the input.
 
@@ -280,8 +276,7 @@ def positive(x: ArrayLike, /) -> Array:
   return lax.asarray(*promote_args('positive', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def sign(x: ArrayLike, /) -> Array:
   r"""Return an element-wise indication of sign of the input.
 
@@ -331,8 +326,7 @@ def sign(x: ArrayLike, /) -> Array:
   return lax.sign(*promote_args('sign', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def floor(x: ArrayLike, /) -> Array:
   """Round input to the nearest integer downwards.
 
@@ -370,8 +364,7 @@ def floor(x: ArrayLike, /) -> Array:
   return lax.floor(*promote_args_inexact('floor', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def ceil(x: ArrayLike, /) -> Array:
   """Round input to the nearest integer upwards.
 
@@ -409,8 +402,7 @@ def ceil(x: ArrayLike, /) -> Array:
   return lax.ceil(*promote_args_inexact('ceil', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def exp(x: ArrayLike, /) -> Array:
   """Calculate element-wise exponential of the input.
 
@@ -451,8 +443,7 @@ def exp(x: ArrayLike, /) -> Array:
   return lax.exp(*promote_args_inexact('exp', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def log(x: ArrayLike, /) -> Array:
   """Calculate element-wise natural logarithm of the input.
 
@@ -489,8 +480,7 @@ def log(x: ArrayLike, /) -> Array:
   return lax.log(*promote_args_inexact('log', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def expm1(x: ArrayLike, /) -> Array:
   """Calculate ``exp(x)-1`` of each element of the input.
 
@@ -534,8 +524,7 @@ def expm1(x: ArrayLike, /) -> Array:
   return lax.expm1(*promote_args_inexact('expm1', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def log1p(x: ArrayLike, /) -> Array:
   """Calculates element-wise logarithm of one plus input, ``log(x+1)``.
 
@@ -575,8 +564,7 @@ def log1p(x: ArrayLike, /) -> Array:
   return lax.log1p(*promote_args_inexact('log1p', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def sin(x: ArrayLike, /) -> Array:
   """Compute a trigonometric sine of each element of input.
 
@@ -607,8 +595,7 @@ def sin(x: ArrayLike, /) -> Array:
   return lax.sin(*promote_args_inexact('sin', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def cos(x: ArrayLike, /) -> Array:
   """Compute a trigonometric cosine of each element of input.
 
@@ -638,8 +625,7 @@ def cos(x: ArrayLike, /) -> Array:
   return lax.cos(*promote_args_inexact('cos', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def tan(x: ArrayLike, /) -> Array:
   """Compute a trigonometric tangent of each element of input.
 
@@ -669,8 +655,7 @@ def tan(x: ArrayLike, /) -> Array:
   return lax.tan(*promote_args_inexact('tan', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def arcsin(x: ArrayLike, /) -> Array:
   r"""Compute element-wise inverse of trigonometric sine of input.
 
@@ -711,8 +696,7 @@ def arcsin(x: ArrayLike, /) -> Array:
   return lax.asin(*promote_args_inexact('arcsin', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def arccos(x: ArrayLike, /) -> Array:
   """Compute element-wise inverse of trigonometric cosine of input.
 
@@ -754,8 +738,7 @@ def arccos(x: ArrayLike, /) -> Array:
   return lax.acos(*promote_args_inexact('arccos', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def arctan(x: ArrayLike, /) -> Array:
   """Compute element-wise inverse of trigonometric tangent of input.
 
@@ -795,8 +778,7 @@ def arctan(x: ArrayLike, /) -> Array:
   return lax.atan(*promote_args_inexact('arctan', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def sinh(x: ArrayLike, /) -> Array:
   r"""Calculate element-wise hyperbolic sine of input.
 
@@ -850,8 +832,7 @@ def sinh(x: ArrayLike, /) -> Array:
   return lax.sinh(*promote_args_inexact('sinh', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def cosh(x: ArrayLike, /) -> Array:
   r"""Calculate element-wise hyperbolic cosine of input.
 
@@ -904,8 +885,7 @@ def cosh(x: ArrayLike, /) -> Array:
   return lax.cosh(*promote_args_inexact('cosh', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def arcsinh(x: ArrayLike, /) -> Array:
   r"""Calculate element-wise inverse of hyperbolic sine of input.
 
@@ -954,8 +934,7 @@ def arcsinh(x: ArrayLike, /) -> Array:
   return lax.asinh(*promote_args_inexact('arcsinh', x))
 
 
-@export
-@jit
+@unary_ufunc
 def arccosh(x: ArrayLike, /) -> Array:
   r"""Calculate element-wise inverse of hyperbolic cosine of input.
 
@@ -1010,8 +989,7 @@ def arccosh(x: ArrayLike, /) -> Array:
   return result
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def tanh(x: ArrayLike, /) -> Array:
   r"""Calculate element-wise hyperbolic tangent of input.
 
@@ -1064,8 +1042,7 @@ def tanh(x: ArrayLike, /) -> Array:
   return lax.tanh(*promote_args_inexact('tanh', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def arctanh(x: ArrayLike, /) -> Array:
   r"""Calculate element-wise inverse of hyperbolic tangent of input.
 
@@ -1113,8 +1090,7 @@ def arctanh(x: ArrayLike, /) -> Array:
   return lax.atanh(*promote_args_inexact('arctanh', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def sqrt(x: ArrayLike, /) -> Array:
   """Calculates element-wise non-negative square root of the input array.
 
@@ -1146,8 +1122,7 @@ def sqrt(x: ArrayLike, /) -> Array:
   return lax.sqrt(*promote_args_inexact('sqrt', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def cbrt(x: ArrayLike, /) -> Array:
   """Calculates element-wise cube root of the input array.
 
@@ -1796,8 +1771,7 @@ def nextafter(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.nextafter(*promote_args_inexact("nextafter", x, y))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def spacing(x: ArrayLike, /) -> Array:
   """Return the spacing between ``x`` and the next adjacent number.
 
@@ -1904,8 +1878,7 @@ def logical_xor(x: ArrayLike, y: ArrayLike, /) -> Array:
   return lax.bitwise_xor(*map(_to_bool, promote_args("logical_xor", x, y)))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def logical_not(x: ArrayLike, /) -> Array:
   """Compute NOT bool(x) element-wise.
 
@@ -2139,43 +2112,37 @@ def less(x: ArrayLike, y: ArrayLike, /) -> Array:
 
 
 # Array API aliases
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def acos(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arccos`"""
   return arccos(*promote_args('acos', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def acosh(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arccosh`"""
   return arccosh(*promote_args('acosh', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def asin(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arcsin`"""
   return arcsin(*promote_args('asin', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def asinh(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arcsinh`"""
   return arcsinh(*promote_args('asinh', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def atan(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arctan`"""
   return arctan(*promote_args('atan', x))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def atanh(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.arctanh`"""
   return arctanh(*promote_args('atanh', x))
@@ -2188,8 +2155,7 @@ def atan2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return arctan2(*promote_args('atan2', x1, x2))
 
 
-@export
-@jit
+@unary_ufunc
 def bitwise_count(x: ArrayLike, /) -> Array:
   r"""Counts the number of 1 bits in the binary representation of the absolute value
   of each element of ``x``.
@@ -2284,8 +2250,7 @@ def bitwise_right_shift(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return right_shift(x1, x2)
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def absolute(x: ArrayLike, /) -> Array:
   r"""Calculate the absolute value element-wise.
 
@@ -2320,15 +2285,13 @@ def absolute(x: ArrayLike, /) -> Array:
   return lax.asarray(x) if dt == np.bool_ or dtypes.issubdtype(dt, np.unsignedinteger) else lax.abs(x)
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def abs(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.absolute`."""
   return absolute(x)
 
 
-@export
-@jit
+@unary_ufunc
 def rint(x: ArrayLike, /) -> Array:
   """Rounds the elements of x to the nearest integer
 
@@ -2745,8 +2708,7 @@ def logaddexp2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return logaddexp(x1 * ln2, x2 * ln2) / ln2
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def log2(x: ArrayLike, /) -> Array:
   """Calculates the base-2 logarithm of ``x`` element-wise.
 
@@ -2774,8 +2736,7 @@ def log2(x: ArrayLike, /) -> Array:
   return lax.div(lax.log(x), lax.log(_constant_like(x, 2)))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def log10(x: ArrayLike, /) -> Array:
   """Calculates the base-10 logarithm of x element-wise
 
@@ -2804,8 +2765,7 @@ def log10(x: ArrayLike, /) -> Array:
   return lax.div(lax.log(x), lax.log(_constant_like(x, 10)))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def exp2(x: ArrayLike, /) -> Array:
   """Calculate element-wise base-2 exponential of input.
 
@@ -2839,8 +2799,7 @@ def exp2(x: ArrayLike, /) -> Array:
   return lax.exp2(x)
 
 
-@export
-@jit
+@unary_ufunc
 def signbit(x: ArrayLike, /) -> Array:
   """Return the sign bit of array elements.
 
@@ -3112,8 +3071,7 @@ def fmod(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return lax.rem(*promote_args_numeric("fmod", x1, x2))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def square(x: ArrayLike, /) -> Array:
   """Calculate element-wise square of the input array.
 
@@ -3162,8 +3120,7 @@ def square(x: ArrayLike, /) -> Array:
   return lax.square(x)
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def deg2rad(x: ArrayLike, /) -> Array:
   r"""Convert angles from degrees to radians.
 
@@ -3197,8 +3154,7 @@ def deg2rad(x: ArrayLike, /) -> Array:
   return lax.mul(x, _lax_const(x, np.pi / 180))
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def rad2deg(x: ArrayLike, /) -> Array:
   r"""Convert angles from radians to degrees.
 
@@ -3245,8 +3201,7 @@ def radians(x: ArrayLike, /) -> Array:
   return deg2rad(x)
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def conjugate(x: ArrayLike, /) -> Array:
   """Return element-wise complex-conjugate of the input.
 
@@ -3275,7 +3230,7 @@ def conjugate(x: ArrayLike, /) -> Array:
   return lax.conj(x) if np.iscomplexobj(x) else lax.asarray(x)
 
 
-@export
+@unary_ufunc
 def conj(x: ArrayLike, /) -> Array:
   """Alias of :func:`jax.numpy.conjugate`"""
   return conjugate(x)
@@ -3379,8 +3334,7 @@ def modf(x: ArrayLike, /, out=None) -> tuple[Array, Array]:
   return x - whole, whole
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def isfinite(x: ArrayLike, /) -> Array:
   """Return a boolean array indicating whether each element of input is finite.
 
@@ -3420,8 +3374,7 @@ def isfinite(x: ArrayLike, /) -> Array:
     return lax.full_like(x, True, dtype=np.bool_)
 
 
-@export
-@jit
+@unary_ufunc
 def isinf(x: ArrayLike, /) -> Array:
   """Return a boolean array indicating whether each element of input is infinite.
 
@@ -3544,8 +3497,7 @@ def isneginf(x, /, out=None):
   return _isposneginf(-np.inf, x, out)
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def isnan(x: ArrayLike, /) -> Array:
   """Returns a boolean array indicating whether each element of input is ``NaN``.
 
@@ -3678,8 +3630,7 @@ def hypot(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return _where(idx_inf, _lax_const(x, np.inf), x)
 
 
-@export
-@partial(jit, inline=True)
+@unary_ufunc
 def reciprocal(x: ArrayLike, /) -> Array:
   """Calculate element-wise reciprocal of the input.
 
