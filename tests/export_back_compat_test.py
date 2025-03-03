@@ -57,6 +57,7 @@ from jax._src.internal_test_util.export_back_compat_test_data import tpu_ApproxT
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Qr
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_Sharding
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_stablehlo_dynamic_reduce_window
+from jax._src.internal_test_util.export_back_compat_test_data import shardy_sharding_ops_with_different_meshes
 from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_rng_bit_generator
 from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_top_k
 from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_approx_top_k
@@ -67,6 +68,7 @@ import jax.numpy as jnp
 
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
+from jax.sharding import NamedSharding as NS
 
 from jax._src import config
 from jax._src import test_util as jtu
@@ -1022,6 +1024,35 @@ class CompatTest(bctu.CompatTestBase):
             "shape_assertion",
         ],
     )
+
+
+@jtu.with_config(jax_use_shardy_partitioner=True)
+class ShardyCompatTest(bctu.CompatTestBase):
+  def test_shardy_sharding_ops_with_different_meshes(self):
+    # Tests whether we can save and load a module with meshes that have the
+    # same axis sizes (and same order) but different axis names.
+    # Also tests "Sharding", "xla.sdy.GlobalToLocalShape",
+    # "xla.sdy.LocalToGlobalShape".
+    if not jtu.test_device_matches(["tpu"]) or len(jax.devices()) < 2:
+      self.skipTest("Test runs only on TPU with at least 2 devices")
+
+    # Must use exactly 2 devices for expected outputs from ppermute.
+    devices = jax.devices()[:2]
+    old_mesh = Mesh(devices, axis_names=('a'))
+
+    def func(x):  # x: f32[4, 4]
+      @partial(shard_map, mesh=old_mesh,
+              in_specs=(P('a', None),), out_specs=P('a', None))
+      def shard_map_func(x):  # b: f32[2, 4]
+        axis_size = lax.psum(1, 'a')
+        perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
+        return lax.ppermute(x, 'a', perm=perm)
+      x = jax.lax.with_sharding_constraint(x, NS(old_mesh, P('a', None)))
+      return shard_map_func(x)
+
+    data = self.load_testdata(shardy_sharding_ops_with_different_meshes.data_2025_02_12)
+    with Mesh(devices, axis_names=('x')):
+      self.run_one_test(func, data)
 
 
 if __name__ == "__main__":
