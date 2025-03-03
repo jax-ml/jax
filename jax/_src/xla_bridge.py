@@ -478,6 +478,7 @@ def make_gpu_client(
       platform_name=platform_name,
       allowed_devices=allowed_devices,
       mock=use_mock_gpu_client,
+      override_boot_id=distributed.global_state.override_boot_id,
   )
 
 
@@ -698,6 +699,7 @@ def register_plugin(
     distribute_options = {
         'node_id': distributed.global_state.process_id,
         'num_nodes': distributed.global_state.num_processes,
+        'override_boot_id': distributed.global_state.override_boot_id,
     }
     if options is not None:
       distribute_options.update(updated_options)
