@@ -663,7 +663,8 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
 @export
 def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = False,
            return_counts: bool = False, axis: int | None = None,
-           *, equal_nan: bool = True, size: int | None = None, fill_value: ArrayLike | None = None):
+           *, equal_nan: bool = True, size: int | None = None, fill_value: ArrayLike | None = None,
+           sorted: bool = True):
   """Return the unique values from an array.
 
   JAX implementation of :func:`numpy.unique`.
@@ -686,6 +687,7 @@ def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = Fal
       unique elements than ``size`` indicates, the return value will be padded with ``fill_value``.
     fill_value: when ``size`` is specified and there are fewer than the indicated number of
       elements, fill the remaining entries ``fill_value``. Defaults to the minimum unique value.
+    sorted: unused by JAX.
 
   Returns:
     An array or tuple of arrays, depending on the values of ``return_index``, ``return_inverse``,
@@ -830,6 +832,10 @@ def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = Fal
     >>> print(counts)
     [2 1]
   """
+  # TODO: Investigate if it's possible that we could save some work in
+  # _unique_sorted_mask when sorting is not requested, but that would require
+  # refactoring the implementation a bit.
+  del sorted  # unused
   arr = ensure_arraylike("unique", ar)
   if size is None:
     arr = core.concrete_or_error(None, arr,
