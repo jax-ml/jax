@@ -1143,7 +1143,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           # (constant,)
           (0,), (2.718,),
           # ((before_const, after_const),)
-          ((0, 2),), ((-1, 3.14),),
+          (0, 2),
+          (-1, 3.14),
           # ((before_1, after_1), ..., (before_N, after_N))
           tuple((i / 2, -3.14 * i) for i in range(len(shape))),
       ]
