@@ -15,8 +15,8 @@
 from __future__ import annotations
 
 import abc
+import pathlib
 
-from jax._src import path as pathlib
 from jax._src import util
 
 
