@@ -1540,6 +1540,9 @@ jax_multiplatform_test(
         "cpu_shardy",  # TODO(b/355263220): enable once export is supported.
     ],
     enable_configs = [
+        "cpu_shardy",
+        "gpu_p100x2_shardy",
+        "tpu_v3_2x2_shardy",
         "tpu_v3_2x2",
     ],
     tags = [],

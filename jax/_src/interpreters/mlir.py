@@ -54,7 +54,7 @@ from jax._src.sharding_impls import (AUTO, NamedSharding,
                                      modify_sdy_sharding_wrt_axis_types,
                                      SdyArraySharding, SdyArrayShardingList)
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension, xla_extension_version
 from jax._src.lib.mlir import dialects, ir, passmanager
 from jax._src.lib.mlir.dialects import func as func_dialect, hlo
 from jax._src.lib.mlir import register_jax_dialects
@@ -2782,7 +2782,7 @@ def merge_mlir_modules(dst_module: ir.Module,
   # are the "main" symbol.
   renamings = {}
   for op in src_module.body.operations:
-    name = op.name.value
+    name = op.sym_name.value
     should_rename = name in dst_symtab or name == "main"
     if should_rename:
       base_name = sym_name if name == "main" else name
@@ -2802,8 +2802,9 @@ def merge_mlir_modules(dst_module: ir.Module,
   # Apply the symbol renamings to symbol definitions.
   private = ir.StringAttr.get("private")
   for op in src_module.body.operations:
-    if op.name.value in renamings:
-      src_symtab.set_symbol_name(op, renamings[op.name.value])
+    name = op.sym_name.value
+    if name in renamings:
+      src_symtab.set_symbol_name(op, renamings[name])
     op.attributes["sym_visibility"] = private
 
   # Apply the symbol renamings to symbol uses.
@@ -3022,9 +3023,15 @@ def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
   Then verifies that there are no more dynamic shapes in the module.
   """
   try:
-    refined_module_str = xla_extension.mlir.refine_polymorphic_shapes(
-      module_to_bytecode(module), enable_shape_assertions=True,
-      validate_static_shapes=True)
+    refine_polymorphic_shapes = partial(xla_extension.mlir.refine_polymorphic_shapes,
+            mlir_module=module_to_bytecode(module),
+            enable_shape_assertions=True,
+            validate_static_shapes=True)
+    if xla_extension_version >= 319:
+      refined_module_str = refine_polymorphic_shapes(
+          enable_shardy=config.use_shardy_partitioner.value)
+    else:
+      refined_module_str = refine_polymorphic_shapes()
   except Exception as e:
     raise ValueError(
         "Error refining shapes. " +
