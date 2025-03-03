@@ -183,6 +183,8 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   the two branches is executed (up to compiler rewrites and optimizations).
   However, when transformed with :func:`~jax.vmap` to operate over a batch of
   predicates, ``cond`` is converted to :func:`~jax.lax.select`.
+  Both branches will be traced in all cases (see :ref:`Key concepts: tracing <key-concepts-tracing>`
+  for a discussion of JAX's tracing model).
 
   Args:
     pred: Boolean scalar type, indicating which branch function to apply.
