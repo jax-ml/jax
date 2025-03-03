@@ -1500,7 +1500,8 @@ def poisson(key: ArrayLike,
 
 def gumbel(key: ArrayLike,
            shape: Shape = (),
-           dtype: DTypeLikeFloat = float) -> Array:
+           dtype: DTypeLikeFloat = float,
+           mode: str | None =None) -> Array:
   """Sample Gumbel random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -1514,6 +1515,7 @@ def gumbel(key: ArrayLike,
       shape. Default ().
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    mode: optional, "high" or "low" for how many bits to use when sampling.
 
   Returns:
     A random array with the specified shape and dtype.
@@ -1525,13 +1527,25 @@ def gumbel(key: ArrayLike,
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  return _gumbel(key, shape, dtype)
+  if mode is None:
+    mode = "high" if config.use_high_dynamic_range_gumbel.value else "low"
+  if mode not in ("high", "low"):
+    raise ValueError("Must provide valid mode for gumbel got: %s" % mode)
+  return _gumbel(key, shape, dtype, mode)
 
-@partial(jit, static_argnums=(1, 2))
-def _gumbel(key, shape, dtype) -> Array:
+@partial(jit, static_argnums=(1, 2, 3))
+def _gumbel(key, shape, dtype, mode) -> Array:
   _check_shape("gumbel", shape)
-  return -jnp.log(-jnp.log(
-      uniform(key, shape, dtype, minval=jnp.finfo(dtype).tiny, maxval=1.)))
+  if mode == "high":
+    high, low = _uniform(key, (2,) + shape, dtype, minval=0., maxval=1.)
+    # TODO(parkers): The condition is to protect against rounding up but
+    # we should be able to add safely with the right addition operation.
+    x = jnp.where(high >= 0.5, high,
+        high + 2 ** -(jnp.finfo(dtype).nmant) * low + jnp.finfo(dtype).tiny)
+    return -jnp.log(-jnp.log1p(-x))
+  else:
+    return -jnp.log(-jnp.log(
+        _uniform(key, shape, dtype, minval=jnp.finfo(dtype).tiny, maxval=1.)))
 
 
 def categorical(key: ArrayLike,
