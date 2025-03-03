@@ -695,7 +695,7 @@ class WGMMATest(TestCase):
     k = nk_tile * k_steps
     assert m % 64 == 0 and n % nk_tile == 0
 
-    small_nk_tile = 8 if rhs_transpose else 16
+    small_nk_tile = 8
     rhs_tiling = (
         (small_nk_tile, nk_tile) if small_rhs_tile else (nk_tile, nk_tile)
     )
@@ -921,7 +921,7 @@ class TCGen05Test(TestCase):
     k = nk_tile * k_steps
     assert m % m_tile == 0 and n % nk_tile == 0
 
-    small_nk_tile = 8 if rhs_transpose else 16
+    small_nk_tile = 8
     rhs_tiling = (small_nk_tile, nk_tile) if small_rhs_tile else (nk_tile, nk_tile)
 
     def kernel(ctx, lhs, rhs, out, scratch):
