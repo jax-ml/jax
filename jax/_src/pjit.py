@@ -2447,7 +2447,9 @@ def dce_jaxpr_pjit_rule(used_outputs: list[bool], eqn: core.JaxprEqn
 pe.dce_rules[pjit_p] = dce_jaxpr_pjit_rule
 
 
-def _pjit_pp_rule(eqn, context, settings):
+def _pjit_pp_rule(eqn: core.JaxprEqn,
+                  context: core.JaxprPpContext,
+                  settings: core.JaxprPpSettings) -> core.pp.Doc:
   params = dict(eqn.params)
   del params['inline']
   if not any(params['donated_invars']):
@@ -2467,6 +2469,10 @@ def _pjit_pp_rule(eqn, context, settings):
     del params['resource_env']
   if not params['compiler_options_kvs']:
     del params['compiler_options_kvs']
+
+  if params['jaxpr'].jaxpr not in context.shared_jaxprs:
+    context.suggest_same_var_names(params['jaxpr'].jaxpr.invars, eqn.invars)
+    context.suggest_same_var_names(params['jaxpr'].jaxpr.outvars, eqn.outvars)
 
   # Move name= to the front to make the resulting equation easier to scan.
   del params["name"]

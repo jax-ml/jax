@@ -1222,13 +1222,75 @@ class PJitTest(jtu.BufferDonationTestCase):
             { lambda ; c:f32[1]. let
                 d:f32[1] = pjit[
                   name=<lambda>
-                  jaxpr={ lambda ; e:f32[1]. let
-                      f:f32[1] = pjit[name=<lambda> jaxpr=lambda] e
-                      g:f32[1] = pjit[name=<lambda> jaxpr=lambda] e
-                      h:f32[1] = add f g
-                    in (h,) }
+                  jaxpr={ lambda ; c:f32[1]. let
+                      e:f32[1] = pjit[name=<lambda> jaxpr=lambda] c
+                      f:f32[1] = pjit[name=<lambda> jaxpr=lambda] c
+                      d:f32[1] = add e f
+                    in (d,) }
                 ] c
               in (d,) }
+        """).strip(),
+    )
+
+  def test_pretty_print_pjit_id(self):
+    f = pjit(lambda x, y: x)
+    x = jnp.array([4.2], dtype=jnp.float32)
+    jaxpr = jax.make_jaxpr(lambda y: y + f(y, y))(x)
+    self.assertEqual(
+        jaxpr.pretty_print(use_color=False),
+        textwrap.dedent("""
+            { lambda ; a:f32[1]. let
+                pjit[name=<lambda> jaxpr={ lambda ; a:f32[1] b:f32[1]. let  in () }] a a
+                c:f32[1] = add a a
+              in (c,) }
+        """).strip(),
+    )
+
+  def test_pretty_print_with_constant_pjit_arg(self):
+    f = pjit(lambda x, y: x * y)
+    x = jnp.array([4.2], dtype=jnp.float32)
+    jaxpr = jax.make_jaxpr(lambda x: f(x, np.float32(1.0)))(x)
+    self.assertEqual(
+        jaxpr.pretty_print(use_color=False),
+        textwrap.dedent("""
+            { lambda ; a:f32[1]. let
+                b:f32[1] = pjit[
+                  name=<lambda>
+                  jaxpr={ lambda ; a:f32[1] c:f32[]. let b:f32[1] = mul a c in (b,) }
+                ] a 1.0
+              in (b,) }
+        """).strip(),
+    )
+
+  def test_pretty_print_with_aliased_args(self):
+    f = pjit(lambda x, y, z: x * y * z)
+    x = jnp.array([4.2], dtype=jnp.float32)
+    jaxpr = jax.make_jaxpr(lambda x: f(x, x, x))(x)
+    self.assertEqual(
+        jaxpr.pretty_print(use_color=False),
+        textwrap.dedent("""
+            { lambda ; a:f32[1]. let
+                b:f32[1] = pjit[
+                  name=<lambda>
+                  jaxpr={ lambda ; a:f32[1] c:f32[1] d:f32[1]. let
+                      e:f32[1] = mul a c
+                      b:f32[1] = mul e d
+                    in (b,) }
+                ] a a a
+              in (b,) }
+        """).strip(),
+    )
+
+  def test_pretty_print_with_literal_outvar(self):
+    f = pjit(lambda x: (np.int32(2), x))
+    x = jnp.array([4.2], dtype=jnp.float32)
+    jaxpr = jax.make_jaxpr(f)(x)
+    self.assertEqual(
+        jaxpr.pretty_print(use_color=False),
+        textwrap.dedent("""
+            { lambda ; a:f32[1]. let
+                b:i32[] = pjit[name=<lambda> jaxpr={ lambda ; a:f32[1]. let  in (2,) }] a
+              in (b, a) }
         """).strip(),
     )
 
@@ -1249,11 +1311,11 @@ class PJitTest(jtu.BufferDonationTestCase):
             { lambda ; d:f32[1] e:f32[1]. let
                 g:f32[1] = pjit[
                   name=g
-                  jaxpr={ lambda ; h:f32[1] i:f32[1]. let
-                      j:f32[1] = pjit[name=f jaxpr=f] i h
-                      k:f32[1] = pjit[name=f jaxpr=f] i i
-                      l:f32[1] = add j k
-                    in (l,) }
+                  jaxpr={ lambda ; d:f32[1] e:f32[1]. let
+                      h:f32[1] = pjit[name=f jaxpr=f] e d
+                      i:f32[1] = pjit[name=f jaxpr=f] e e
+                      g:f32[1] = add h i
+                    in (g,) }
                 ] d e
               in (g,) }
         """).strip(),
@@ -1279,15 +1341,15 @@ class PJitTest(jtu.BufferDonationTestCase):
             { lambda ; c:f32[1] d:f32[2]. let
                 e:f32[2] = pjit[
                   name=g
-                  jaxpr={ lambda ; g:f32[1] h:f32[2]. let
-                      pjit[name=f jaxpr=f] g
-                      pjit[name=f jaxpr=f] g
-                      i:f32[1] = mul g g
-                      pjit[name=f jaxpr=f1] h
-                      pjit[name=f jaxpr=f1] h
-                      j:f32[2] = mul h h
-                      k:f32[2] = add i j
-                    in (k,) }
+                  jaxpr={ lambda ; c:f32[1] d:f32[2]. let
+                      pjit[name=f jaxpr=f] c
+                      pjit[name=f jaxpr=f] c
+                      g:f32[1] = mul c c
+                      pjit[name=f jaxpr=f1] d
+                      pjit[name=f jaxpr=f1] d
+                      h:f32[2] = mul d d
+                      e:f32[2] = add g h
+                    in (e,) }
                 ] c d
               in (e,) }
             """).strip(),
