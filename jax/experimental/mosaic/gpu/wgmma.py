@@ -402,7 +402,7 @@ def _validate_mma(
   # Verify the shape and strides of A are as expected.
   if not a_in_smem:
     m = a_shape[0]
-    a_order = m_tiling = None
+    a_order = m_tiling = a_k_tiling = None
   else:
     a_ty = ir.MemRefType(a.type)
     m_tiles, a_k_tiles, m_tiling, a_k_tiling = a_ty.shape
@@ -466,7 +466,6 @@ def _validate_mma(
   # that is the K-width of all MMA instructions.
   if b_k_fastest:
     b_k_wgmma_stride = 32
-    b_k_group_stride = b_k_byte_stride  # The tile has only one K swizzle atom.
   elif b_k_tiling == swizzle_elems:
     # When B is N-fastest and we use the large square tiling, the relevant
     # slices all fall within the first tile. A single MMA instruction for 16-bit
@@ -474,14 +473,11 @@ def _validate_mma(
     # expression.
     assert n_tiling == swizzle_elems or n_tiles == 1
     b_k_wgmma_stride = swizzle * 16
-    b_k_group_stride = b_k_byte_stride
   else:
     # If we use the small non-square tiling and N-fastest layout, each tile only
     # contains a single swizzle atom with the K coordinate, so we just look up
     # the next tile.
     b_k_wgmma_stride = b_k_byte_stride
-    wgmma_in_group = swizzle // 32
-    b_k_group_stride = b_k_byte_stride * wgmma_in_group
   wgmma_params = dict(
       a_transpose=not a_k_fastest,
       b_transpose=not b_k_fastest,
@@ -498,13 +494,11 @@ def _validate_mma(
   )
   if not a_in_smem:
     wgmma_params["a_k_stride"] = wgmma_params["a_transpose"] = None
-    a_k_group_stride = a_desc_base = None
+    a_desc_base = None
   else:
     a_desc_base = create_descriptor(
         a, **a_desc_fields, const_init=descriptor_const_init
     )
-    a_strides, _ = ir.MemRefType(a.type).get_strides_and_offset()
-    a_k_group_stride = a_strides[1] * element_bytewidth
   b_desc_base = create_descriptor(
       b, **b_desc_fields, const_init=descriptor_const_init
   )
@@ -513,11 +507,9 @@ def _validate_mma(
       a_desc_base,
       b_desc_base,
       (m, k, n),
-      (m_tiling, n_tiling),
+      (m_tiling, a_k_tiling, b_k_tiling, n_tiling),
       element_type,
       wgmma_params,
-      a_k_group_stride,
-      b_k_group_stride,
   )
 
 
@@ -550,16 +542,17 @@ def wgmma(
       a_desc_base,
       b_desc_base,
       (m, k, n),
-      (m_tiling, _),
+      (m_mem_tiling, a_k_mem_tiling, b_k_mem_tiling, _),
       element_type,
       wgmma_params,
-      a_k_group_stride,
-      b_k_group_stride,
   ) = _validate_mma(a, b, swizzle)
+  element_bytewidth = bytewidth(element_type)
 
   if n > 256:
     raise ValueError(f"N must be smaller than 256, got {n}")
 
+  m_group_tiling = 64
+  k_group_tiling = swizzle // element_bytewidth
   if a_in_regs:
     if a.mlir_dtype != ir.F16Type.get() and a.mlir_dtype != ir.BF16Type.get():
       raise ValueError(
@@ -567,16 +560,21 @@ def wgmma(
       )
     if a.shape[0] % 64:
       raise ValueError(f"m must be a multiple of 64, got: {a.shape[0]}")
-    a_m_group_stride = None
+    a_m_group_stride = a_k_group_stride = None
   else:
-    if m_tiling != 64:
-      raise ValueError(f"A must have rows tiled by 64, got: {m_tiling}")
     a_strides, _ = ir.MemRefType(a.type).get_strides_and_offset()
-    a_m_group_stride = a_strides[0] * bytewidth(element_type)
+    if m_mem_tiling != 64:
+      raise ValueError(f"A must have rows tiled by 64, got: {m_mem_tiling}")
+    a_m_group_stride = a_strides[0] * element_bytewidth  # ^ One group per tile
+    a_k_tiles_per_group = k_group_tiling // a_k_mem_tiling
+    a_k_group_stride = a_strides[1] * element_bytewidth * a_k_tiles_per_group
 
-  k_group_width = swizzle // bytewidth(element_type)
-  groups_k = k // k_group_width
-  groups_m = m // 64
+  b_strides, _ = ir.MemRefType(b.type).get_strides_and_offset()
+  b_k_tiles_per_group = k_group_tiling // b_k_mem_tiling
+  b_k_group_stride = b_strides[0] * element_bytewidth * b_k_tiles_per_group
+
+  groups_m = m // m_group_tiling
+  groups_k = k // k_group_tiling
 
   expected_acc_shape = (groups_m * 64, n)
   if acc.value.shape != expected_acc_shape:
@@ -594,8 +592,8 @@ def wgmma(
     for ki in range(groups_k):
       if a_in_regs:
         a_mk = a[
-            mi * 64 : (mi + 1) * 64,
-            ki * k_group_width : (ki + 1) * k_group_width
+            mi * m_group_tiling : (mi + 1) * m_group_tiling,
+            ki * k_group_tiling : (ki + 1) * k_group_tiling
         ]
       else:
         a_mk = llvm_add(
