@@ -1693,7 +1693,8 @@ class FragmentedArrayTest(TestCase):
     rhs = rhs = 0 if rhs_is_literal else iota + 1
     np.testing.assert_array_equal(result, op(iota, rhs))
 
-  def test_foreach(self):
+  @parameterized.product(tiled_layout=(False, True))
+  def test_foreach(self, tiled_layout):
     dtype = jnp.int32
     swizzle = 128
     tile = 64, swizzle // jnp.dtype(dtype).itemsize
@@ -1708,7 +1709,7 @@ class FragmentedArrayTest(TestCase):
 
     tiling = mgpu.TileTransform(tile)
     def kernel(ctx, dst, smem):
-      x = iota_tensor(shape[0], shape[1], dtype)
+      x = iota_tensor(shape[0], shape[1], dtype, tiled_layout=tiled_layout)
       x.foreach(causal, create_array=True, is_signed=False).store_untiled(smem)
       mgpu.commit_shared()
       ctx.async_copy(src_ref=smem, dst_ref=dst)

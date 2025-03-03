@@ -207,6 +207,27 @@ class TiledLayout:
     if math.prod(min_tiled_shape[d] for d in self.lane_dims) != WARP_SIZE:
       raise ValueError
 
+  def thread_idxs(self, shape: tuple[int, ...]) -> Iterable[tuple[ir.Value, ...]]:
+    # We first find the linear index and then divide by the shape to
+    # get the index.
+    i32 = ir.IntegerType.get_signless(32)
+    index = ir.IndexType.get()
+    contig_strides = utils.get_contiguous_strides(shape)
+    tile_strides = self.tiling.tile_strides(contig_strides)
+    dyn_tile_strides = [c(s, i32) for s in tile_strides]
+    warp_offset = utils.dyn_dot(self.warp_indices(), dyn_tile_strides)
+    lane_offset = utils.dyn_dot(self.lane_indices(), dyn_tile_strides)
+    dyn_offset = arith.addi(warp_offset, lane_offset)
+    register_shape = self.registers_shape(shape)
+    for tile_idx in np.ndindex(register_shape):
+      tile_lin_idx = sum(i * s for i, s in zip(tile_idx, tile_strides))
+      dyn_lin_idx = arith.addi(dyn_offset, c(tile_lin_idx, i32))
+      idx = []
+      for stride in contig_strides:
+        idx.append(arith.index_castui(index, arith.divui(dyn_lin_idx, c(stride, i32))))
+        dyn_lin_idx = arith.remui(dyn_lin_idx, c(stride, i32))
+      yield tuple(idx)
+
   @property
   def base_tile_shape(self) -> int:
     """The shape of the first tile in the tiling expression.
@@ -1483,6 +1504,8 @@ class FragmentedArray:
 
   def _store_untiled_tiled(self, ref: ir.Value):
     """Stores an array with a tiled layout. Not optimized at the moment."""
+    if utils.bitwidth(self.mlir_dtype) < 8:
+      raise NotImplementedError(f"Can't store sub-byte types ({self.mlir_dtype=})")
     i32 = ir.IntegerType.get_signless(32)
     layout = self.layout
     assert isinstance(layout, TiledLayout)
@@ -1492,7 +1515,14 @@ class FragmentedArray:
           "Can't use vector stores with non-unit minormost stride"
       )
     strides = layout.tiling.tile_strides(ref_strides)
-    ptr = utils.memref_ptr(ref)
+    smem_space = ir.Attribute.parse("#gpu.address_space<workgroup>")
+    ref_space = ir.MemRefType(ref.type).memory_space
+    memory_space = None
+    if str(ref_space) == str(smem_space):
+      memory_space = 3
+    elif ref_space:
+      raise NotImplementedError(f"Unexpected ref space {ref_space}")
+    ptr = utils.memref_ptr(ref, memory_space=memory_space)
     # Fold warp and lane offsets into the pointer once, since they are dynamic.
     dyn_strides = [arith.constant(i32, s) for s in strides]
     warp_offset = utils.dyn_dot(layout.warp_indices(), dyn_strides)
