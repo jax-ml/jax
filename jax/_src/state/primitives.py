@@ -437,6 +437,8 @@ def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   ref_primal, x_primal, *idx = primals
   assert isinstance(ref_primal.aval, AbstractRef)
   ref_tangent, x_tangent, *_ = tangents
+  if type(ref_tangent) is ad_util.Zero:
+    raise Exception("you're an idiot")
   assert isinstance(ref_tangent.aval, AbstractRef)
   x_tangent = ad_util.instantiate(x_tangent)
   return (swap_p.bind(ref_primal, x_primal, *idx, **params),
@@ -657,5 +659,14 @@ mlir.register_lowering(
 
 # === AD rules for mutable arrays ===
 
-ad.defjvp(core.mutable_array_p, lambda g, _: core.mutable_array(g))
+def _mut_jvp(primals, tangents):
+  (init_val,), (init_val_dot,) = primals, tangents
+  primal_out = core.mutable_array_p.bind(init_val)
+  if type(init_val_dot) is ad_util.Zero:
+    tangent_out = core.mutable_array_p.bind(ad_util.zeros_like_aval(init_val_dot.aval))
+  else:
+    tangent_out = core.mutable_array_p.bind(init_val_dot)
+  return primal_out, tangent_out
+
+ad.primitive_jvps[core.mutable_array_p] = _mut_jvp
 ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))
