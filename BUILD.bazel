@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@tsl//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
+load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
 load(
     "//jaxlib:jax.bzl",
     "jax_wheel",
