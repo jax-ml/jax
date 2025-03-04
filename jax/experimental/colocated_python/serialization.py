@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import base64
 import collections
 import functools
 import io
@@ -185,22 +186,15 @@ def _deserialize(serialized: bytes) -> Any:
 
 def _make_specs_for_serialized_specs(
     devices: DeviceList,
-) -> tuple[api.ShapeDtypeStruct, api.ShapeDtypeStruct]:
+) -> api.ShapeDtypeStruct:
   """Makes output specs for serialized specs."""
-  # TODO(jmudigonda): Use a string-typed array for output structure when it
-  # becomes available. Using a fixed uint8 array is only for prototyping.
   mesh = jax.sharding.Mesh(tuple(devices), ("x",))
   replicated_sharding = jax.sharding.NamedSharding(
       mesh, jax.sharding.PartitionSpec()
   )
   return (
       api.ShapeDtypeStruct(
-          shape=(), dtype=np.int32, sharding=replicated_sharding
-      ),
-      api.ShapeDtypeStruct(
-          shape=(_MAX_SERIALIZED_SPECS_SIZE,),
-          dtype=np.uint8,
-          sharding=replicated_sharding,
+          shape=(), dtype=np.dtypes.StringDType(), sharding=replicated_sharding  # type: ignore
       ),
   )
 
@@ -209,49 +203,30 @@ def _serialize_specs(
     specs_treedef: tree_util.PyTreeDef,
     specs_leaves: tuple[api.ShapeDtypeStruct, ...],
     devices: DeviceList,
-) -> tuple[jax.Array, ...]:
-  """Serializes the output specs into a tuple of arrays.
+) -> jax.Array:
+  """Serializes the output specs into a jax.Array of string type.
 
   DO NOT USE THIS FUNCTION EXCEPT FOR THE INTERNAL IMPLEMENTATION OF
   colocated_python. See serialize() for details.
   """
-  s = _serialize((specs_treedef, specs_leaves))
-  assert (
-      len(s) <= _MAX_SERIALIZED_SPECS_SIZE
-  ), f"Too large serialized spec size: {len(s)}"
-  # TODO(jmudigonda): Use a string-typed array for output structure when it
-  # becomes available. Using a fixed uint8 array is only for prototyping.
+  s_bytes = _serialize((specs_treedef, specs_leaves))
+  s_str = base64.b64encode(s_bytes).decode("ascii")
+  s_np_array = np.array(s_str, dtype=np.dtypes.StringDType())  # type: ignore
   mesh = jax.sharding.Mesh(tuple(devices), ("x",))
   replicated_sharding = jax.sharding.NamedSharding(
       mesh, jax.sharding.PartitionSpec()
   )
-  len_array = jax.make_array_from_callback(
-      shape=(),
-      sharding=replicated_sharding,
-      data_callback=lambda _: np.array(len(s), dtype=np.int32),
-  )
-  data_array = jax.make_array_from_callback(
-      shape=(_MAX_SERIALIZED_SPECS_SIZE,),
-      sharding=replicated_sharding,
-      data_callback=lambda _: np.frombuffer(
-          s + b"\0" * (_MAX_SERIALIZED_SPECS_SIZE - len(s)),
-          dtype=np.uint8,
-      ),
-  )
-  return len_array, data_array
+  return jax.device_put(s_np_array, replicated_sharding)
 
 
 def _deserialize_specs(
-    serialized_specs: tuple[jax.Array, ...],
+    serialized_specs: jax.Array,
 ) -> tuple[tree_util.PyTreeDef, tuple[api.ShapeDtypeStruct, ...]]:
   """Deserializes the specs from the serialized specs.
 
   DO NOT USE THIS FUNCTION EXCEPT FOR THE INTERNAL IMPLEMENTATION OF
   colocated_python. See serialize() for details.
   """
-  # TODO(jmudigonda): Use a string-typed array for output structure when it
-  # becomes available. Using a fixed uint8 array is only for prototyping.
-  len_array, data_array = serialized_specs
-  length = int(len_array.addressable_shards[0].data)
-  data = np.asarray(data_array.addressable_shards[0].data).tobytes()
-  return _deserialize(data[:length])
+  data_array = jax.device_get(serialized_specs)
+  data = base64.b64decode(data_array.item().encode("ascii"))
+  return _deserialize(data)
