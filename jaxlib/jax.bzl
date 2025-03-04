@@ -17,7 +17,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@com_github_google_flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
 load("@jax_wheel//:wheel.bzl", "WHEEL_VERSION")
-load("@jax_wheel_version_suffix//:wheel_version_suffix.bzl", "BUILD_TAG", "WHEEL_VERSION_SUFFIX")
+load("@jax_wheel_version_suffix//:wheel_version_suffix.bzl", "WHEEL_VERSION_SUFFIX")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
@@ -365,10 +365,7 @@ def _jax_wheel_impl(ctx):
 
     full_wheel_version = (WHEEL_VERSION + WHEEL_VERSION_SUFFIX)
     env["WHEEL_VERSION_SUFFIX"] = WHEEL_VERSION_SUFFIX
-    if BUILD_TAG:
-        env["WHEEL_VERSION_SUFFIX"] = ".dev{}+selfbuilt".format(BUILD_TAG)
-        full_wheel_version += env["WHEEL_VERSION_SUFFIX"]
-    if not WHEEL_VERSION_SUFFIX and not BUILD_TAG:
+    if not WHEEL_VERSION_SUFFIX:
         env["JAX_RELEASE"] = "1"
 
     cpu = ctx.attr.cpu
