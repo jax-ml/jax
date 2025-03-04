@@ -4073,10 +4073,24 @@ def _add_transpose(t, x, y):
   else:
     return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, t)]
 
+def _add_lin(tangent_nzs, x, y):
+  x_nz, y_nz = tangent_nzs
+  primal_out = add_p.bind(x, y)
+  if x_nz and y_nz:
+    lin = lambda _, x_, y_: add_p.bind(x_, y_)
+  elif x_nz and not y_nz:
+    lin = lambda _, x_, y_: _maybe_broadcast(primal_out.shape, x_)
+  elif not x_nz and y_nz:
+    lin = lambda _, x_, y_: _maybe_broadcast(primal_out.shape, y_)
+  elif not x_nz and not y_nz:
+    lin = lambda _, x_, y_: ad_util.Zero.from_primal_value(primal_out)
+  return primal_out, x_nz or y_nz, (), lin
+
 # TODO(slebedev): Why does mypy fail to infer the type here?
 add_p: Primitive = standard_naryop([_num, _num], 'add')
 ad.primitive_jvps[add_p] = _add_jvp
 ad.primitive_transposes[add_p] = _add_transpose
+ad.primitive_linearizations[add_p] = _add_lin
 mlir.register_lowering(add_p, partial(_nary_lower_hlo, hlo.add))
 batching.ragged_prop_rules[add_p] = batching.ragged_mask_elementwise_rule
 
