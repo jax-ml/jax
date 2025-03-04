@@ -93,6 +93,8 @@ float8_e4m3fnuz = _make_scalar_type(dtypes.float8_e4m3fnuz)
 float8_e5m2 = _make_scalar_type(dtypes.float8_e5m2)
 float8_e5m2fnuz = _make_scalar_type(dtypes.float8_e5m2fnuz)
 float8_e4m3b11fnuz = _make_scalar_type(dtypes.float8_e4m3b11fnuz)
+if dtypes.float4_e2m1fn is not None:
+  float4_e2m1fn = _make_scalar_type(dtypes.float4_e2m1fn)
 bfloat16 = _make_scalar_type(dtypes.bfloat16)
 float16 = _make_scalar_type(np.float16)
 float32 = single = _make_scalar_type(np.float32)
