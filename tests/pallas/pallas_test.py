@@ -733,6 +733,25 @@ class PallasCallTest(PallasBaseTest):
     )
     self.assertAllClose(dot_kernel(x, y), expected, atol=5e-2, rtol=5e-3)
 
+  def test_dot_with_vector(self):
+    if not jtu.test_device_matches(["gpu"]) or self.INTERPRET:
+      self.skipTest(
+          "jnp.dot is only restricted to 2D on GPU in non-interpret mode."
+      )
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((32,), jnp.float32),
+    )
+    def dot_kernel(x_ref, y_ref, o_ref):
+      o_ref[()] = jnp.dot(x_ref[()], y_ref[()])
+
+    key0, key1 = random.split(random.key(0))
+    x = random.normal(key0, (32, 64), dtype=jnp.float32)
+    y = random.normal(key1, (64,), dtype=jnp.float32)
+    with self.assertRaisesRegex(Exception, "must be 2D"):
+      dot_kernel(x, y)
+
   @parameterized.parameters(jnp.int4, jnp.uint4)
   def test_subbyte_load(self, dtype):
     if not jtu.test_device_matches(["gpu"]):
