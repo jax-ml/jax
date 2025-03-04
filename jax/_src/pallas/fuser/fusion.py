@@ -35,7 +35,7 @@ class Fusion(Generic[A, K]):
   in_type: tuple[tuple[Any, ...], dict[str, Any]]
   out_type: Any
 
-  def __call__(self, *args: A.args, **kwargs: A.kwargs):
+  def __call__(self, *args: A.args, **kwargs: A.kwargs) -> K:
     return self.func(*args, **kwargs)
 
   @property
