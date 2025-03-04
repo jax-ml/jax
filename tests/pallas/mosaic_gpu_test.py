@@ -1177,6 +1177,38 @@ class PallasCallTest(PallasTest):
     y_ref = jax.lax.bitcast_convert_type(x, out_dtype)
     np.testing.assert_array_equal(y, y_ref)
 
+  @parameterized.product(
+      in_dtype=jtu.dtypes.all_floating
+      + jtu.dtypes.all_integer
+      + jtu.dtypes.all_unsigned,
+      out_dtype=jtu.dtypes.all_floating
+      + jtu.dtypes.all_integer
+      + jtu.dtypes.all_unsigned,
+      thread_semantics=[*plgpu.ThreadSemantics],
+  )
+  def test_convert_types(self, in_dtype, out_dtype, thread_semantics):
+    m, n = 8, 16
+    out_shape = jax.ShapeDtypeStruct((m, n), out_dtype)
+    grid = ()
+    compiler_params = plgpu.GPUCompilerParams(thread_semantics=thread_semantics)
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=out_shape,
+        grid=grid,
+        compiler_params=compiler_params,
+    )
+    def convert(x_ref, y_ref):
+      y_ref[...] = x_ref[...].astype(out_dtype)
+
+    if np.issubdtype(in_dtype, np.floating):
+      x = jax.random.uniform(jax.random.key(42), shape=(m, n), dtype=in_dtype)
+    else:
+      x = jnp.arange(m * n, dtype=in_dtype).reshape((m, n))
+    y = convert(x)
+    y_ref = x.astype(out_dtype)
+    np.testing.assert_array_equal(y, y_ref)
+
 
 class PallasCallSm90ATest(PallasSm90ATest):
 

@@ -1162,6 +1162,9 @@ def _convert_element_type_lowering_rule_wg(
   cur_dtype = mgpu_utils.dtype_to_ir_type(x_aval.dtype)
   new_dtype = mgpu_utils.dtype_to_ir_type(new_dtype)
 
+  if cur_dtype == new_dtype:
+    return x
+
   if 1 < mgpu_utils.bitwidth(cur_dtype) < 8 or 1 < mgpu_utils.bitwidth(new_dtype) < 8:
     raise NotImplementedError("Conversion involving sub-byte types unsupported")
 
@@ -1170,7 +1173,21 @@ def _convert_element_type_lowering_rule_wg(
   from_integer = ir.IntegerType.isinstance(cur_dtype)
   to_integer = ir.IntegerType.isinstance(new_dtype)
   if from_float and to_float:
-    if ir.FloatType(cur_dtype).width > ir.FloatType(new_dtype).width:
+    cur_ty_width = ir.FloatType(cur_dtype).width
+    new_ty_width = ir.FloatType(new_dtype).width
+    if cur_ty_width == new_ty_width:
+      # There is no instruction to perform conversions between two float types
+      # of the same width. Go through the next-larger standard type.
+      larger_ty = ir.F16Type.get() if cur_ty_width == 8 else ir.F32Type.get()
+      if x_aval.shape:
+        upcast_ty = ir.VectorType.get(x_aval.shape, larger_ty)
+      else:
+        upcast_ty = larger_ty
+
+      def convert(ty, x):
+        return arith_dialect.truncf(ty, arith_dialect.extf(upcast_ty, x))
+
+    elif ir.FloatType(cur_dtype).width > ir.FloatType(new_dtype).width:
       convert = arith_dialect.truncf
     else:
       convert = arith_dialect.extf
