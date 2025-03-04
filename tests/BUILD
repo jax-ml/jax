@@ -1150,6 +1150,8 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "error_check_test",
     srcs = ["error_check_test.py"],
+    enable_backends = ["tpu"],
+    enable_configs = ["tpu_v3_2x2"],
 )
 
 jax_multiplatform_test(
