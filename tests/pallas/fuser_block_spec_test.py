@@ -772,5 +772,36 @@ class PullBlockSpecHOPTest(jtu.JaxTestCase):
     )
 
 
+class PushBlockSpecTest(parameterized.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    if config.enable_x64.value:
+      self.skipTest('x64 not supported')
+
+  def test_jit(self):
+
+    def f(x):
+      return jax.jit(jnp.sin)(x)
+
+    block_spec = pl.BlockSpec(
+        (None, 1, 128, 128), lambda i, j, k, l, _: (i, l, k, j)
+    )
+    x_type = jax.ShapeDtypeStruct((1, 1, 512, 512), jnp.float32)
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
+    self.assertEqual(out_block_spec.block_shape, block_spec.block_shape)
+
+  def test_custom_jvp(self):
+    def f(x):
+      return jax.nn.relu(x)
+
+    x_type = jax.ShapeDtypeStruct((1, 1, 512, 512), jnp.float32)
+    block_spec = pl.BlockSpec(
+        (None, 1, 128, 128), lambda i, j, k, l, _: (i, l, k, j)
+    )
+    out_block_spec = block_spec_lib.push_block_spec(f, block_spec)(x_type)
+    self.assertEqual(out_block_spec.block_shape, block_spec.block_shape)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

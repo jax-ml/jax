@@ -702,24 +702,6 @@ def _eltwise_usage_rule(
   return [used_out]
 
 
-def register_eltwise_rule(prim: core.Primitive):
-  register_pull_block_spec_rule(prim)(
-      functools.partial(_eltwise_pull_rule, prim)
-  )
-  register_usage_rule(prim)(functools.partial(_eltwise_usage_rule, prim))
-  register_eval_rule(prim)(functools.partial(_eltwise_eval_rule, prim))
-
-
-register_eltwise_rule(lax.exp_p)
-register_eltwise_rule(lax.tanh_p)
-register_eltwise_rule(lax.sin_p)
-register_eltwise_rule(lax.cos_p)
-register_eltwise_rule(lax.sqrt_p)
-register_eltwise_rule(lax.rsqrt_p)
-register_eltwise_rule(lax.log_p)
-register_eltwise_rule(lax.integer_pow_p)
-
-
 def _bcast_block_spec(block_spec: pallas_core.BlockSpec, i: int) -> pallas_core.BlockSpec:
   def new_index_map(i, *args):
     idx = block_spec.index_map(*args)
@@ -1332,22 +1314,19 @@ def push_block_spec(
     flat_block_specs, in_tree_ = tree_util.tree_flatten(
         (in_spec_args, in_spec_kwargs)
     )
-    jaxpr, values, in_tree, out_tree = _make_jaxpr(f, *args, **kwargs)
+    jaxpr, _, in_tree, out_tree = _make_jaxpr(f, *args, **kwargs)
     if in_tree != in_tree_:
       raise ValueError(f'Expected {in_tree} PyTree, got {in_tree_}')
-    return _push_block_spec(jaxpr, values, in_tree, out_tree, flat_block_specs)
+    out_bs = _push_block_spec_jaxpr(jaxpr, *flat_block_specs)
+    return tree_util.tree_unflatten(out_tree, out_bs)
 
   return wrapper
 
 
-def _push_block_spec(
+def _push_block_spec_jaxpr(
     jaxpr: core.Jaxpr,
-    values: tuple[Any, ...],
-    in_tree: Any,
-    out_tree: Any,
-    flat_block_specs,
+    *flat_block_specs,
 ) -> tuple[pallas_core.BlockSpec, ...]:
-  del values, in_tree
   num_inputs = len(jaxpr.invars)
   if len(flat_block_specs) != num_inputs:
     raise ValueError(
@@ -1402,7 +1381,7 @@ def _push_block_spec(
   )
   if any(bs is pallas_core.no_block_spec for bs in out_block_specs):
     raise ValueError('No block spec found for output')
-  return tree_util.tree_unflatten(out_tree, out_block_specs)
+  return out_block_specs  # pytype: disable=bad-return-type
 
 
 push_block_spec_rules: dict[core.Primitive, PushBlockSpecRuleFn] = {}
@@ -1467,15 +1446,14 @@ register_binop_push_rule(lax.and_p)
 register_binop_push_rule(ad_util.add_any_p)
 
 
-def _elementwise_op_push_rule(
-    ctx: PullRuleContext, block_spec: pallas_core.BlockSpec
+def _eltwise_push_rule(
+    prim: core.Primitive,
+    ctx: PullRuleContext,
+    block_spec: pallas_core.BlockSpec,
+    **params,
 ) -> pallas_core.BlockSpec:
-  del ctx
+  del prim, ctx, params
   return block_spec
-
-
-register_push_block_spec_rule(lax.exp_p)(_elementwise_op_push_rule)
-register_push_block_spec_rule(lax.tanh_p)(_elementwise_op_push_rule)
 
 
 @register_push_block_spec_rule(lax.transpose_p)
@@ -1511,3 +1489,40 @@ def _convert_element_type_push_rule(
 ):
   del ctx, new_dtype, weak_type, sharding
   return block_spec
+
+
+@register_push_block_spec_rule(custom_derivatives.custom_jvp_call_p)
+def _custom_jvp_call_push_rule(
+    ctx, *block_specs, call_jaxpr: core.ClosedJaxpr, **_
+):
+  assert not call_jaxpr.consts
+  return _push_block_spec_jaxpr(call_jaxpr.jaxpr, *block_specs)
+
+
+@register_push_block_spec_rule(pjit.pjit_p)
+def _pjit_push_rule(
+    ctx, *block_specs, jaxpr: core.ClosedJaxpr, **_
+):
+  assert not jaxpr.consts
+  return _push_block_spec_jaxpr(jaxpr.jaxpr, *block_specs)
+
+
+def register_eltwise_rule(prim: core.Primitive):
+  register_pull_block_spec_rule(prim)(
+      functools.partial(_eltwise_pull_rule, prim)
+  )
+  register_usage_rule(prim)(functools.partial(_eltwise_usage_rule, prim))
+  register_eval_rule(prim)(functools.partial(_eltwise_eval_rule, prim))
+  register_push_block_spec_rule(prim)(
+      functools.partial(_eltwise_push_rule, prim)
+  )
+
+
+register_eltwise_rule(lax.exp_p)
+register_eltwise_rule(lax.tanh_p)
+register_eltwise_rule(lax.sin_p)
+register_eltwise_rule(lax.cos_p)
+register_eltwise_rule(lax.sqrt_p)
+register_eltwise_rule(lax.rsqrt_p)
+register_eltwise_rule(lax.log_p)
+register_eltwise_rule(lax.integer_pow_p)
