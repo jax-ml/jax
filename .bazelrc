@@ -196,6 +196,9 @@ build:public_cache_push --config=public_cache --remote_upload_local_results=true
 # "oct2023" in the URL is just the date when the bucket was created and can be
 # disregarded. It still contains the latest cache that is being used.
 build:macos_cache --remote_cache="https://storage.googleapis.com/tensorflow-macos-bazel-cache/oct2023" --remote_upload_local_results=false
+# This flag is to address mac arm64 nightly build failures, which are believed
+# to be caused by cache poisoning after the Bazel 7.4.0 toolchain upgrade.
+build:macos_cache --remote_default_platform_properties='properties:{name:"cache-silo-key" value:"cache-poisoning-2025-03-03"}'
 
 # Cache pushes are limited to JAX's CI system.
 build:macos_cache_push --config=macos_cache --remote_upload_local_results=true --google_default_credentials
