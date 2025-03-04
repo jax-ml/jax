@@ -564,8 +564,9 @@ def resolve_kwargs(fun: Callable, args, kwargs) -> tuple[Any, ...]:
     passed_kwargs = [k for k in ba.kwargs if k in kwargs]
     if passed_kwargs:
       raise TypeError(
-          f"keyword arguments ({passed_kwargs}) could not be resolved to "
-          "positions")
+          "The following keyword arguments could not be resolved to positions: "
+          f"{', '.join(passed_kwargs)}"
+      )
   return ba.args
 
 
