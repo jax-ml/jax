@@ -306,8 +306,7 @@ def _validate_mma(
     a: Any,
     b: ir.Value,
     swizzle: int,
-    a_layout: WGMMALayout,
-    b_layout: WGMMALayout,
+    m_group_size: int,  # The M used by a single instruction.
     descriptor_const_init: int = 0,
 ):
   # We need swizzle >= 32 to ensure that our K tiling is larger than the MMA
@@ -347,100 +346,208 @@ def _validate_mma(
   if element_type not in supported_types:
     raise ValueError(a_element_type)
   element_bytewidth = bytewidth(element_type)
-  kn_tiling = swizzle // element_bytewidth
+  swizzle_elems = swizzle // element_bytewidth
 
   # Verify the shape and strides of B are as expected.
-  k_tiles, n_tiles, k_tiling, n_tiling = b_ty.shape
-  if k_tiling != kn_tiling:
-    raise ValueError(b_ty.shape)
-  # Note that while this technically allows n to be smaller than kn_tile,
-  # the stride checks above will still enforce that the memory region is padded.
-  # It might be possible to relax that requirement, but I haven't tested it.
-  if n_tiling > kn_tiling and n_tiling % kn_tiling:
-    raise ValueError(n_tiling, kn_tiling)
-  k = k_tiles * kn_tiling
+  b_k_tiles, n_tiles, b_k_tiling, n_tiling = b_ty.shape
+  k = b_k_tiles * b_k_tiling
   n = n_tiles * n_tiling
 
   b_strides, _ = b_ty.get_strides_and_offset()
   b_byte_strides = [s * element_bytewidth for s in b_strides]
-  b_k_byte_stride = b_byte_strides[0]
-  if b_byte_strides[1] != swizzle * kn_tiling:
-    raise ValueError(b_byte_strides)
-  if b_byte_strides[2:] == [swizzle, element_bytewidth]:
+  b_k_byte_stride, b_n_byte_stride, *b_tile_byte_strides = b_byte_strides
+  if (
+      b_byte_strides[1] != n_tiling * b_k_tiling * element_bytewidth
+      and n_tiles != 1  # When there's only one tile, we never jump between them
+  ):
+    raise ValueError("B tiles must be contiguous along the N dimension")
+  if b_tile_byte_strides == [swizzle, element_bytewidth]:  # N-fastest
     b_order = WGMMALayout.ROW_MAJOR
-  elif b_byte_strides[2:] == [element_bytewidth, swizzle]:
+    # This first case (n_tiles == 1) is to allow the somewhat weird case of
+    # loading a small amount of N-fastest data, that needs to be padded to a
+    # larger tile due to swizzle. In this case we allow slicing the big tile
+    # before WGMMA to avoid unnecessary compute on padding.
+    if n_tiles == 1:
+      if n_tiling % 8:
+        raise ValueError("N tile size must be a multiple of 8")
+    elif n_tiling != swizzle_elems:
+      raise ValueError(
+          "Row major RHS (N-fastest) requires the N tile size to be equal to"
+          f" the swizzle tile size ({swizzle_elems}), but got {n_tiling}"
+      )
+    if b_k_tiling not in {8, swizzle_elems}:
+      raise ValueError(
+          "Row major RHS (N-fastest) requires the K tile size to be either"
+          f" the swizzle tile size ({swizzle_elems}) or 8, but got {b_k_tiling}"
+      )
+  elif b_tile_byte_strides == [element_bytewidth, swizzle]:  # K-fastest
     b_order = WGMMALayout.COL_MAJOR
+    if b_k_tiling != swizzle_elems:
+      raise ValueError(
+          "Column major RHS (K-fastest) requires the K tile size to be equal"
+          f" to the swizzle tile size ({swizzle_elems}), but got {b_k_tiling}"
+      )
+    # See the explanation in the N-fastest case when n_tiles == 1.
+    if n_tiles == 1:
+      if n_tiling % 8:
+        raise ValueError("N tile size must be a multiple of 8")
+    elif n_tiling not in {8, swizzle_elems}:
+      raise ValueError(
+          "Column major RHS (K-fastest) requires the N tile size to be either"
+          f" to the swizzle tile size ({swizzle_elems}) or 8, but got {n_tiling}"
+      )
   else:
     raise ValueError(b_byte_strides)
+
+  if n > 256 and n % 256:
+    raise ValueError(
+        f"N group size must be a multiple of 256 when larger than 256, got: {n}"
+    )
+  k_group_size = swizzle_elems
+  n_group_size = min(n, 256)
+  b_k_tiles_per_group = k_group_size // b_k_tiling
+  b_k_group_stride = b_k_byte_stride * b_k_tiles_per_group
+  n_tiles_per_group = n_group_size // n_tiling
+  b_n_group_stride = b_n_byte_stride * n_tiles_per_group
 
   # Verify the shape and strides of A are as expected.
   if not a_in_smem:
     m = a_shape[0]
-    a_order = m_tiling = None
+    a_order = a_m_group_stride = a_k_group_stride = None
   else:
     a_ty = ir.MemRefType(a.type)
-    m_tiles, k_tiles, m_tiling, k_tiling = a_ty.shape
+    m_tiles, a_k_tiles, m_tiling, a_k_tiling = a_ty.shape
     m = m_tiles * m_tiling
-    if k_tiling != kn_tiling or k_tiles * k_tiling != k:
+    # TODO(apaszke): I'm not actually convinced that we need this check.
+    if m_tiling != m_group_size:
+      raise ValueError(
+          f"A's row tiling must be equal to {m_group_size}, got: {m_tiling}"
+      )
+    if a_k_tiling != swizzle_elems or a_k_tiles * a_k_tiling != k:
       raise ValueError(a_ty.shape)
     a_strides, _ = ir.MemRefType(a.type).get_strides_and_offset()
-    a_byte_strides = [s * element_bytewidth for s in a_strides]
-    if a_byte_strides[2:] == [swizzle, element_bytewidth]:
+    a_m_byte_stride, a_k_byte_stride, *a_tile_byte_strides = [
+        s * element_bytewidth for s in a_strides
+    ]
+    if a_tile_byte_strides == [swizzle, element_bytewidth]:
       a_order = WGMMALayout.ROW_MAJOR
-    elif a_byte_strides[2:] == [element_bytewidth, swizzle]:
+    elif a_tile_byte_strides == [element_bytewidth, swizzle]:
       a_order = WGMMALayout.COL_MAJOR
     else:
-      raise ValueError(a_byte_strides)
-    if a_order != a_layout and m_tiling != kn_tiling:
+      raise ValueError(a_strides)
+    if a_order != WGMMALayout.ROW_MAJOR and m_tiling != swizzle_elems:
       # Not sure what the layout is like, since the tiles aren't square.
       raise NotImplementedError
+    a_m_tiles_per_group = m_group_size // m_tiling
+    a_m_group_stride = a_m_byte_stride * a_m_tiles_per_group
+    a_k_tiles_per_group = k_group_size // a_k_tiling
+    a_k_group_stride = a_k_byte_stride * a_k_tiles_per_group
 
-  tnsp_lbo = swizzle * (swizzle // 32)
-  sbo = swizzle // 2
+  b_k_fastest = b_order == WGMMALayout.COL_MAJOR
+  a_k_fastest = a_order == WGMMALayout.ROW_MAJOR
+  # This is the number of rows until consecutive repeats of the swizzle pattern.
+  swizzle_pattern_rows = swizzle // 16
+  # A swizzle atom is a 2D matrix with the dimensions below.
+  swizzle_atom_bytes = swizzle_pattern_rows * 128
+
+  # Here "leading" refers to the fastest changing dimension. There are two
+  # strides we have to define per value:
+  #   Leading byte offset (LBO)
+  #     K-fastest: ignored
+  #     MN-fastest: stride between consecutive swizzle atoms that share the same
+  #       K coordinate.
+  #   Stride byte offset (SBO)
+  #     As far as I can tell this is just the offset between two consecutive
+  #     swizzle atoms along the non-leading dimension.
+  IGNORED = 0
   a_desc_fields = dict(
-      leading_byte_offset=(1 if a_order == a_layout else tnsp_lbo) << 4,
-      stride_byte_offset=sbo << 4,
+      # I can't fully explain why WGMMA ignores LBO for A. For a_k_fastest, it
+      # is documented in the PTX docs, and my best explanation for the other
+      # case is that the instruction has a fixed shape and so it does not care
+      # about strides. It's possible that it's an artifact of the fact that we
+      # use tiling of 64.
+      leading_byte_offset=IGNORED,
+      stride_byte_offset=swizzle_atom_bytes,
       swizzle=swizzle,
       memory_space=3,
   )
+  # If B is N-fastest, all swizzle atoms within a tile share the same N
+  # coordinate, so we simply take the stride between consecutive N tiles.
+  # If B is K-fastest, all swizzle atoms within a tile share the same K
+  # coordinate, which forces us to lay out the tiles in N-fastest order or else
+  # they would have uneven strides.
   b_desc_fields = dict(
-      leading_byte_offset=(1 if b_order == b_layout else tnsp_lbo) << 4,
-      stride_byte_offset=sbo << 4,
+      leading_byte_offset=IGNORED if b_k_fastest else b_n_byte_stride,
+      # N tiles are contiguous, so the next N swizzle atom follows immediately.
+      # K tiles are not contiguous, so we take the stride between them.
+      stride_byte_offset=swizzle_atom_bytes
+      if b_k_fastest or b_k_tiling == swizzle_elems
+      else b_k_byte_stride,
       swizzle=swizzle,
       memory_space=3,
   )
+  # The K strides indicate the stride between the consecutive places where all
+  # coordinates are 0 except for K being incremented by the instruction width.
+  # If an input is K-fastest, we increment the descriptor by 32 bytes, since
+  # that is the K-width of all MMA instructions.
+  if b_k_fastest:
+    b_k_wgmma_stride = 32
+  elif b_k_tiling == swizzle_elems:
+    # When B is N-fastest and we use the large square tiling, the relevant
+    # slices all fall within the first tile. A single MMA instruction for 16-bit
+    # types reads a subtile of shape 16x(swizzle bytes), giving us the necessary
+    # expression.
+    assert n_tiling == swizzle_elems or n_tiles == 1
+    b_k_wgmma_stride = swizzle * 16
+  else:
+    # If we use the small non-square tiling and N-fastest layout, each tile only
+    # contains a single swizzle atom with the K coordinate. But, each tile has
+    # 8 rows, while the WGMMA K width is 16, so we need to jump over 2 tiles.
+    b_k_wgmma_stride = b_k_byte_stride * 2
   wgmma_params = dict(
-      a_transpose=a_order != a_layout,
-      b_transpose=b_order != b_layout,
-      a_k_stride=(2 if a_order == a_layout else swizzle) << 4,
-      b_k_stride=(2 if b_order == b_layout else swizzle) << 4,
+      a_transpose=not a_k_fastest,
+      b_transpose=not b_k_fastest,
+      # TODO(apaszke): This explanation is quite bad. We should better figure
+      # out how to do LHS transposes.
+      # We only support swizzle=128 for M-fastest A. In this case the tile is
+      # swizzle x 64 (= swizzle elems) and so we just take a quarter of its size.
+      a_k_stride=32 if a_k_fastest else swizzle * 16,
+      b_k_stride=b_k_wgmma_stride,
       swizzle=swizzle,
+      n=n_group_size,
       element_type=ir.FloatTF32Type.get()
       if ir.F32Type.isinstance(element_type)
       else element_type,
   )
   if not a_in_smem:
     wgmma_params["a_k_stride"] = wgmma_params["a_transpose"] = None
-    a_k_byte_stride = a_desc_base = None
+    a_desc_base = None
   else:
     a_desc_base = create_descriptor(
         a, **a_desc_fields, const_init=descriptor_const_init
     )
-    a_strides, _ = ir.MemRefType(a.type).get_strides_and_offset()
-    a_k_byte_stride = a_strides[1] * element_bytewidth
   b_desc_base = create_descriptor(
       b, **b_desc_fields, const_init=descriptor_const_init
   )
+
+  if m % m_group_size:
+    raise ValueError(f"m must be a multiple of {m_group_size}, got: {m}")
+  m_groups = m // m_group_size
+  if k % k_group_size:
+    raise ValueError(f"k must be a multiple of {k_group_size}, got: {k}")
+  k_groups = k // k_group_size
+  if n % n_group_size:
+    raise ValueError(f"n must be a multiple of {n_group_size}, got: {n}")
+  n_groups = n // n_group_size
 
   return (
       a_desc_base,
       b_desc_base,
       (m, k, n),
-      (m_tiling, kn_tiling),
-      element_type,
+      (m_groups, k_groups, n_groups),
+      # Group strides are always in bytes!
+      (a_m_group_stride, a_k_group_stride, b_k_group_stride, b_n_group_stride),
       wgmma_params,
-      a_k_byte_stride,
-      b_k_byte_stride,
   )
 
 
@@ -469,42 +576,32 @@ def wgmma(
   if not ir.MemRefType.isinstance(b.type):
     raise ValueError(f"B must be a memref, got: {b.type}")
 
+  m_group_size = 64  # Hopper has a fixed M instruction shape.
+
   (
       a_desc_base,
       b_desc_base,
       (m, k, n),
-      (m_tiling, kn_tiling),
-      element_type,
+      (m_groups, k_groups, n_groups),
+      (a_m_group_stride, a_k_group_stride, b_k_group_stride, _),
       wgmma_params,
-      a_k_byte_stride,
-      b_k_byte_stride,
-  ) = _validate_mma(a, b, swizzle, WGMMALayout.ROW_MAJOR, WGMMALayout.COL_MAJOR)
+  ) = _validate_mma(a, b, swizzle, m_group_size=m_group_size)
 
-  if n > 256:
-    raise ValueError(f"N must be smaller than 256, got {n}")
+  if n_groups > 1:
+    raise ValueError("N is too big for WGMMA. Only up to 256 is supported.")
 
   if a_in_regs:
     if a.mlir_dtype != ir.F16Type.get() and a.mlir_dtype != ir.BF16Type.get():
       raise ValueError(
           f"Only 16-bit dtypes supported for A in registers, got {a.mlir_dtype}"
       )
-    if a.shape[0] % 64:
+    if a.shape[0] % m_group_size:
       raise ValueError(f"m must be a multiple of 64, got: {a.shape[0]}")
-    a_m_byte_stride = None
-  else:
-    if m_tiling != 64:
-      raise ValueError(f"A must have rows tiled by 64, got: {m_tiling}")
-    a_strides, _ = ir.MemRefType(a.type).get_strides_and_offset()
-    a_m_byte_stride = a_strides[0] * bytewidth(element_type)
+    a_m_group_stride = a_k_group_stride = None
 
-  groups_k = k // kn_tiling
-  groups_m = m // 64
-
-  expected_acc_shape = (groups_m * 64, n)
-  if acc.value.shape != expected_acc_shape:
+  if acc.value.shape != (m, n):
     raise ValueError(
-        f"Accumulator shape mismatch: expected {expected_acc_shape}, got"
-        f" {acc.value.shape}"
+        f"Accumulator shape mismatch: expected {(m, n)}, got {acc.value.shape}"
     )
 
   if a_in_regs:
@@ -512,18 +609,22 @@ def wgmma(
 
   i64 = ir.IntegerType.get_signless(64)
   new_acc_regs = acc.value.registers.copy()
-  for mi in range(groups_m):
-    for ki in range(groups_k):
+  k_group_size = k // k_groups
+  for mi in range(m_groups):
+    for ki in range(k_groups):
       if a_in_regs:
-        a_mk = a[mi * 64 : (mi + 1) * 64, ki * kn_tiling : (ki + 1) * kn_tiling]
+        a_mk = a[
+            mi * m_group_size : (mi + 1) * m_group_size,
+            ki * k_group_size : (ki + 1) * k_group_size,
+        ]
       else:
         a_mk = llvm_add(
             a_desc_base,
-            c(wgmma_encode(mi * a_m_byte_stride + ki * a_k_byte_stride), i64),
+            c(wgmma_encode(mi * a_m_group_stride + ki * a_k_group_stride), i64),
         )
-      b_k = llvm_add(b_desc_base, c(wgmma_encode(ki * b_k_byte_stride), i64))
+      b_k = llvm_add(b_desc_base, c(wgmma_encode(ki * b_k_group_stride), i64))
       new_acc_regs[mi : mi + 1] = wgmma_m64(
-          new_acc_regs[mi : mi + 1], a_mk, b_k, n=n, **wgmma_params
+          new_acc_regs[mi : mi + 1], a_mk, b_k, **wgmma_params
       )
   return WGMMAAccumulator(
       _value=fa.FragmentedArray(

@@ -23,7 +23,6 @@ from jax.sharding import NamedSharding, PartitionSpec as P, SingleDeviceSharding
 from jax._src import config
 from jax._src.layout import Layout, DeviceLocalLayout as DLL
 from jax._src import test_util as jtu
-from jax._src.lib import xla_extension_version
 from jax._src.util import safe_zip
 from jax.experimental.compute_on import compute_on
 
@@ -32,12 +31,6 @@ jtu.request_cpu_devices(8)
 
 
 class LayoutTest(jtu.JaxTestCase):
-
-  # Remove this setUp once the released xla_extension_version is >= 308.
-  def setUp(self):
-    if xla_extension_version < 308 and not jtu.test_device_matches(['tpu', 'gpu']):
-      self.skipTest("Layouts do not work on CPU backend yet.")
-    super().setUp()
 
   def test_auto_layout(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
@@ -730,6 +723,26 @@ class LayoutTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(out, np_inp @ np_inp.T)
     self.assertArraysEqual(out2, np_inp @ np_inp.T)
+
+  def test_layout_donation_with_default_layout(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    shape = (16, 16)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+    out_layout = Layout(arr.layout.device_local_layout, s)
+
+    @partial(jax.jit, out_shardings=out_layout, donate_argnums=0)
+    def f(x):
+      return x * 2
+
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn('tf.aliasing_output = 0', lowered_text)
+    self.assertNotIn('jax.buffer_donor', lowered_text)
+
+    out = f(arr)
+    self.assertArraysEqual(out, np_inp * 2)
+    self.assertEqual(out.layout, out_layout)
 
 
 if __name__ == '__main__':

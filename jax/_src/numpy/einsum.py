@@ -456,7 +456,8 @@ def _einsum(
     sqez_axes, keep_axes = partition_list(keep, list(range(operand.ndim)))
     return lax.squeeze(operand, sqez_axes), "".join(names[i] for i in keep_axes)
 
-  for operand_indices, contracted_names_set, einstr in contractions:
+  for i, (operand_indices, contracted_names_set, einstr) in enumerate(contractions):
+    last_contraction = i == len(contractions) - 1
     contracted_names = sorted(contracted_names_set)
     input_str, result_names = einstr.split('->')
     input_names = input_str.split(',')
@@ -543,11 +544,13 @@ def _einsum(
                                **k_out_sharding)
       else:
         names = batch_names_str + remaining_lhs_names + remaining_rhs_names
-        if out_sharding is not None and names != result_names:
+        if not last_contraction:
+          dot_general_out_sharding = None
+        elif out_sharding is not None and names != result_names:
           spec = out_sharding.spec
           inverse_spec = tuple(spec[result_names.index(name)] for name in names)
-          dot_general_out_sharding = NamedSharding(out_sharding.mesh,
-                                                   P(*inverse_spec))
+          dot_general_out_sharding = NamedSharding(
+              out_sharding.mesh, P(*inverse_spec))
         else:
           dot_general_out_sharding = out_sharding  # type: ignore
         dimension_numbers = ((lhs_cont, rhs_cont), (lhs_batch, rhs_batch))

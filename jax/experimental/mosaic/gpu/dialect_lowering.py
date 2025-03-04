@@ -28,12 +28,14 @@ from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import llvm
+from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
 import numpy as np
 
 from . import fragmented_array as fa
+from . import inference_utils
 from . import launch_context
 from . import layouts
 from . import utils
@@ -61,7 +63,9 @@ class LoweringContext:
     lowering_rule = _lowerings[name]
 
     # TODO(bchetioui): make sure all layouts are set here.
-    if layouts.should_have_layout(op) and not layouts.has_any_layout_set(op):
+    if inference_utils.should_have_layout(
+        op
+    ) and not inference_utils.has_any_layout_set(op):
       raise ValueError(f"{op} is missing a layout and can not be lowered.")
 
     new_results = lowering_rule(self, op)
@@ -107,9 +111,9 @@ def _fragmented_array_to_ir(
   return conversion_cast.result
 
 
-# TODO(bchetioui): add code that verifies the layout is as inferred.
 def _fragmented_array_from_ir(
     fragmented_array_as_ir: ir.Value,
+    layout: ir.Attribute,
     is_signed: bool | None = None,
 ) -> fa.FragmentedArray:
 
@@ -135,20 +139,15 @@ def _fragmented_array_from_ir(
   registers = np.array(list(converted_outputs)).reshape(
     [attr.value for attr in conversion_cast.attributes["registers_shape"]]
   )
-  layout = layouts.from_layout_attr(conversion_cast.attributes["layout"])
+  producer_layout = layouts.from_layout_attr(conversion_cast.attributes["layout"])
 
   if ir.IntegerType.isinstance(conversion_cast.outputs[0].type.element_type):
     is_signed = False if is_signed is None else is_signed
 
   return fa.FragmentedArray(
-      _registers=registers, _layout=layout, _is_signed=is_signed
-  )
+      _registers=registers, _layout=producer_layout, _is_signed=is_signed
+  ).to_layout(layouts.from_layout_attr(layout))
 
-
-# TODO(dasenov): Remove this when minimum jaxlib version >= 0.5.1.
-# Jaxlib doesn't contain the latest Mosaic GPU dialect bindings.
-WaitOp = getattr(mgpu, "WaitOp", None)
-ArriveExpectTxOp = getattr(mgpu, "ArriveExpectTxOp", None)
 
 def _register_lowering(
     op: str | Type[ir.OpView] | None
@@ -277,7 +276,10 @@ def _vector_store_op_lowering_rule(
           f"for {vector_store_op}"
       )
 
-  fragmented_array = _fragmented_array_from_ir(vector_store_op.valueToStore)
+  [to_store_layout] = inference_utils.in_layouts(vector_store_op)
+  fragmented_array = _fragmented_array_from_ir(
+      vector_store_op.valueToStore, to_store_layout
+  )
 
   # TODO(dasenov): This is not efficient for WGMMA layouts
   fragmented_array.store_untiled(vector_store_op.base)
@@ -378,8 +380,8 @@ def _mgpu_async_load_op_lowering_rule(
   swizzle, transforms = memref_layout_to_swizzle_and_transforms(dst_layout)
 
   gmem_slice = []
-  for idx, size in zip(load_op.indices, load_op.slice_lengths):
-    idx = arith.index_cast(ir.IndexType.get(), idx)
+  for idx_i32, size in zip(load_op.indices, load_op.slice_lengths):
+    idx = arith.index_cast(ir.IndexType.get(), idx_i32)
     v = idx if size < 0 else utils.DynamicSlice(idx, size)
     gmem_slice.append(v)
 
@@ -408,8 +410,8 @@ def _mgpu_async_store_op_lowering_rule(
   swizzle, transforms = memref_layout_to_swizzle_and_transforms(src_layout)
 
   gmem_slice = []
-  for idx, size in zip(store_op.indices, store_op.slice_lengths):
-    idx = arith.index_cast(ir.IndexType.get(), idx)
+  for idx_i32, size in zip(store_op.indices, store_op.slice_lengths):
+    idx = arith.index_cast(ir.IndexType.get(), idx_i32)
     v = idx if size < 0 else utils.DynamicSlice(idx, size)
     gmem_slice.append(v)
 
@@ -434,8 +436,12 @@ def _binary_op_lowering_rule(
         [fa.FragmentedArray, fa.FragmentedArray], fa.FragmentedArray
     ],
 ) -> Sequence[ir.Value]:
-  lhs = _fragmented_array_from_ir(op.lhs, is_signed)
-  rhs = _fragmented_array_from_ir(op.rhs, is_signed)
+  in_layouts = inference_utils.in_layouts(op)
+  [layout] = inference_utils.out_layouts(op)
+  if any(in_layout != layout for in_layout in in_layouts):
+    raise ValueError("Layout mismatch")
+  lhs = _fragmented_array_from_ir(op.lhs, layout, is_signed)
+  rhs = _fragmented_array_from_ir(op.rhs, layout, is_signed)
   return [_fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
 
 
@@ -485,9 +491,13 @@ CMPI_IMPLS = {
 def _cmpi_op_lowering_rule(
     _: LoweringContext, op: arith.CmpIOp
 ) -> Sequence[ir.Value]:
+  in_layouts = inference_utils.in_layouts(op)
+  [layout] = inference_utils.out_layouts(op)
+  if any(in_layout != layout for in_layout in in_layouts):
+    raise ValueError("Layout mismatch")
   impl, is_signed = CMPI_IMPLS[op.predicate.value]
-  lhs = _fragmented_array_from_ir(op.lhs, is_signed)
-  rhs = _fragmented_array_from_ir(op.rhs, is_signed)
+  lhs = _fragmented_array_from_ir(op.lhs, layout, is_signed)
+  rhs = _fragmented_array_from_ir(op.rhs, layout, is_signed)
   return [_fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
 
 
@@ -505,9 +515,13 @@ CMPF_IMPLS = {
 def _cmpf_op_lowering_rule(
     _: LoweringContext, op: arith.CmpFOp
 ) -> Sequence[ir.Value]:
+  in_layouts = inference_utils.in_layouts(op)
+  [layout] = inference_utils.out_layouts(op)
+  if any(in_layout != layout for in_layout in in_layouts):
+    raise ValueError("Layout mismatch")
   impl = CMPF_IMPLS[op.predicate.value]
-  lhs = _fragmented_array_from_ir(op.lhs)
-  rhs = _fragmented_array_from_ir(op.rhs)
+  lhs = _fragmented_array_from_ir(op.lhs, layout)
+  rhs = _fragmented_array_from_ir(op.rhs, layout)
   return [_fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
 
 
@@ -515,19 +529,29 @@ def _cmpf_op_lowering_rule(
 def _mgpu_wgmma_op_lowering_rule(
     _: LoweringContext, wgmma_op: mgpu.WGMMAOp
 ) -> Sequence[ir.Value]:
+  fa_layouts = (
+      *inference_utils.in_layouts(wgmma_op),
+      *inference_utils.out_layouts(wgmma_op),
+  )
+  if not all(map(layouts.is_wgmma_fragmented_layout, fa_layouts)):
+    raise ValueError("Layout mismatch")
+  wgmma_layout = fa_layouts[0]
 
   # TODO(dasenov): Move the value -> accumulator conversion outisde of wgmma.
   # The associated fence could be a little expensive and is not needed if the
   # result a wgmma feeds into another wgmma (even in another loop step).
-  acc_in = _fragmented_array_from_ir(wgmma_op.accumulator)
+  acc_in = _fragmented_array_from_ir(wgmma_op.accumulator, wgmma_layout)
   regs = acc_in.to_layout(fa.WGMMA_LAYOUT)
   acc = wgmma.WGMMAAccumulator.from_registers(regs)
 
   b_layout = ir.MemRefType(wgmma_op.b.type).layout
   b_swizzle, b_transforms = memref_layout_to_swizzle_and_transforms(b_layout)
+  b_operand = transform_memref(wgmma_op.b, b_transforms)
+  if wgmma_op.transpose_b:
+    b_operand = utils.memref_transpose(b_operand, (0, 1, 3, 2))
 
   if ir.VectorType.isinstance(wgmma_op.a.type):
-    a_operand = _fragmented_array_from_ir(wgmma_op.a)
+    a_operand = _fragmented_array_from_ir(wgmma_op.a, wgmma_layout)
   else:
     a_layout = ir.MemRefType(wgmma_op.a.type).layout
     a_swizzle, a_transforms = memref_layout_to_swizzle_and_transforms(a_layout)
@@ -537,20 +561,17 @@ def _mgpu_wgmma_op_lowering_rule(
           f" {b_swizzle}"
       )
     a_operand = transform_memref(wgmma_op.a, a_transforms)
+    if wgmma_op.transpose_a:
+      a_operand = utils.memref_transpose(a_operand, (0, 1, 3, 2))
 
-  new_acc = wgmma.wgmma(
-      acc,
-      a_operand,
-      transform_memref(wgmma_op.b, b_transforms),
-      swizzle=b_swizzle,
-  )
+  new_acc = wgmma.wgmma(acc, a_operand, b_operand, swizzle=b_swizzle)
 
   return [_fragmented_array_to_ir(new_acc.value, wgmma_op.accumulator.type)]
 
 
-@_register_lowering(ArriveExpectTxOp)
+@_register_lowering(mgpu.ArriveExpectTxOp)
 def _mgpu_arrive_expect_tx_op_lowering_rule(
-    ctx: LoweringContext, arrive_expect_tx_op: ArriveExpectTxOp
+    ctx: LoweringContext, arrive_expect_tx_op: mgpu.ArriveExpectTxOp
 ) -> Sequence[ir.Value]:
 
   barrier = utils.BarrierRef.from_dialect_barrier_memref(arrive_expect_tx_op.barrier)
@@ -562,9 +583,9 @@ def _mgpu_arrive_expect_tx_op_lowering_rule(
   return []
 
 
-@_register_lowering(WaitOp)
+@_register_lowering(mgpu.WaitOp)
 def _mgpu_wait_op_lowering_rule(
-    _: LoweringContext, wait_op: WaitOp
+    _: LoweringContext, wait_op: mgpu.WaitOp
 ) -> Sequence[ir.Value]:
 
   barrier = utils.BarrierRef.from_dialect_barrier_memref(wait_op.barrier)
@@ -573,26 +594,117 @@ def _mgpu_wait_op_lowering_rule(
   return []
 
 
-@_register_lowering(WaitOp)
+# TODO(bchetioui): remove this once jaxlib minimum version >= 0.5.2.
+SliceSMEMOp = getattr(mgpu, "SliceSMEMOp", None)
+
+
+@_register_lowering(SliceSMEMOp)
+def _mgpu_slice_smem_op_lowering_rule(
+    ctx: LoweringContext, op: SliceSMEMOp
+) -> Sequence[ir.Value]:
+  del ctx
+  i8 = ir.IntegerType.get_signless(8)
+  smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+
+  smem_base = gpu.dynamic_shared_memory(
+      ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=smem)
+  )
+
+  offset = arith.index_cast(ir.IndexType.get(), op.offset)
+
+  return [memref.view(op.result.type, smem_base, offset, [])]
+
+
+@_register_lowering(scf.ForOp)
 def _for_op_lowering_rule(
-    _: LoweringContext, wait_op: scf.ForOp
-) -> Sequence[ir.Value]:
+    ctx: LoweringContext, for_op: scf.ForOp
+) -> MlirLoweringRuleResult:
+  if not inference_utils.should_have_layout(for_op):
+    return _traverse_op_lowering_rule(ctx, for_op)
+  in_layouts = inference_utils.in_layouts(for_op)
+  out_layouts = inference_utils.out_layouts(for_op)
+  yield_op = for_op.body.operations[len(for_op.body.operations) - 1]
+  yield_layouts = inference_utils.in_layouts(yield_op)
+  if in_layouts != out_layouts or in_layouts != yield_layouts:
+    raise ValueError("Layout mismatch")
+  fa_layouts = in_layouts
 
-  barrier = utils.BarrierRef.from_dialect_barrier_memref(wait_op.barrier)
-  barrier.wait_parity(wait_op.parity)
+  fa_layouts_it = iter(fa_layouts)
+  arg_template = [
+      (_fragmented_array_from_ir(arg, next(fa_layouts_it)), arg.type)
+      if ir.VectorType.isinstance(arg.type)
+      else (arg, arg.type)
+      for arg in for_op.initArgs
+  ]
+  def lower_carry(carry):
+    fa_layouts_it = iter(fa_layouts)
+    carry_with_fas = [
+        _fragmented_array_from_ir(arg, next(fa_layouts_it))
+        if ir.VectorType.isinstance(arg.type)
+        else arg
+        for arg in carry
+    ]
+    lowered_carry = []
+    for c in carry_with_fas:
+      if isinstance(c, fa.FragmentedArray):
+        lowered_carry.extend(c.registers.flat)
+      else:
+        lowered_carry.append(c)
+    return lowered_carry
 
-  return []
+  def recreate_carry(lowered_carry):
+    recreated_carry = []
+    arg_it = iter(lowered_carry)
+    for arg_value, arg_type in arg_template:
+      if isinstance(arg_value, fa.FragmentedArray):
+        carry_registers = np.asarray(
+            [next(arg_it) for _ in arg_value.registers.flat], dtype=object
+        )
+        carry_registers = carry_registers.reshape(arg_value.registers.shape)
+        carry = fa.FragmentedArray(
+            _registers=carry_registers,
+            _layout=arg_value.layout,
+            _is_signed=arg_value.is_signed,
+        )
+        recreated_carry.append(_fragmented_array_to_ir(carry, arg_type))
+      else:
+        recreated_carry.append(next(arg_it))
+    return recreated_carry
+
+  new_for_op = scf.ForOp(
+      for_op.lowerBound,
+      for_op.upperBound,
+      for_op.step,
+      lower_carry(for_op.initArgs),
+  )
+  with ir.InsertionPoint(new_for_op.body):
+    recreated_carry = recreate_carry(new_for_op.body.arguments[1:])
+    ops_to_lower = []
+    for op in for_op.body:
+      if op == yield_op:
+        continue
+      mgpu.private_operation_remove_from_parent(op)
+      mgpu.private_block_append_owned_operation(new_for_op.body, op)
+      ops_to_lower.append(op)
+    new_args = (new_for_op.induction_variable, *recreated_carry)
+    for old_carry, new_carry in zip(for_op.body.arguments, new_args, strict=True):
+      old_carry.replace_all_uses_with(new_carry)
+    for op in ops_to_lower:
+      ctx.lower_op(op)
+    new_yield_operands = lower_carry(yield_op.operands)
+    yield_op.erase()
+    scf.yield_(new_yield_operands)
+  return recreate_carry(new_for_op.results)
 
 
 @_register_lowering(func.FuncOp)
 @_register_lowering(gpu.LaunchOp)
 @_register_lowering(scf.IfOp)  # TODO(apaszke,bchetioui): Add a proper rule.
-@_register_lowering(scf.ForOp)  # TODO(apaszke,bchetioui): Add a proper rule.
 @_register_lowering(scf.IndexSwitchOp)  # TODO(apaszke,bchetioui): Add a proper rule.
 def _traverse_op_lowering_rule(
     ctx: LoweringContext, op: ir.OpView
 ) -> MlirLoweringRuleResult:
-  if layouts.should_have_layout(op):
+  if inference_utils.should_have_layout(op):
     raise ValueError(
         f"Rule cannot handle an op with vector operands or results: {op}"
     )
@@ -634,7 +746,7 @@ def _should_lower(op: ir.OpView) -> bool:
   """Returns 'true' if the operation should be lowered."""
   return (
       op.OPERATION_NAME.startswith("mosaic_gpu.")
-      or layouts.should_have_layout(op)
+      or inference_utils.should_have_layout(op)
       or any(bool(b) for r in op.regions for b in r)  # Does it have subblocks?
   )
 
@@ -642,6 +754,7 @@ def _should_lower(op: ir.OpView) -> bool:
 def lower_mgpu_dialect(
     module: ir.Module, launch_context: launch_context.LaunchContext | None
 ):
+  # TODO(apaszke,bchetioui): Make sure the layouts match.
   # TODO(bchetioui): rethink this API. It doesn't make sense to pass in a full
   # module and to traverse all `gpu.LaunchOp`s if we have a `LaunchContext` that
   # references a single `gpu.LaunchOp`.

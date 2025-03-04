@@ -94,6 +94,7 @@ try:
       args.output_path,
       package_name="jax",
       git_hash=args.jaxlib_git_hash,
+      build_wheel_only=False,
   )
 finally:
   if tmpdir:

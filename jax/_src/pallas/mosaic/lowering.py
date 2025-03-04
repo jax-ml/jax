@@ -99,7 +99,12 @@ class MeshContext:
   axis_names: tuple[str, ...]
   mesh_strides: tuple[int, ...]
 
-
+# Note - On Export Placeholders
+#
+# Mosaic uses vector IR, which does not have a concept of dynamic
+# dimensions. We need to come up with a way to represent dynamic dimensions in
+# vector IR, and so we use placeholders, which are later replaced during
+# specialization.
 class LoweringDynamicShapeEnv:
   dim_expr_to_placeholder: dict[Any, ir.Value] = {}
 
@@ -321,6 +326,14 @@ def _get_arg_type(
   )
 
 
+def _canonicalize_dimension_semantic(
+    dimension_semantic: str | tpu_core.GridDimensionSemantics,
+) -> str:
+  if isinstance(dimension_semantic, tpu_core.GridDimensionSemantics):
+    return dimension_semantic.value
+  return dimension_semantic
+
+
 @dataclasses.dataclass(init=False)
 class MosaicGridMapping:
   grid: tuple[int, ...] | None
@@ -342,7 +355,7 @@ class MosaicGridMapping:
       self,
       jaxpr: jax_core.Jaxpr,
       grid_mapping: pallas_core.GridMapping,
-      dimension_semantics: tuple[str, ...] | None,
+      dimension_semantics: tuple[str | tpu_core.GridDimensionSemantics, ...] | None,
       mesh: mesh_lib.Mesh | None,
       dynamic_shape_replacement_fn: Callable[
           [tuple[jax.DimSize, ...]], tuple[int, ...]
@@ -359,6 +372,9 @@ class MosaicGridMapping:
     )
     if dimension_semantics is None:
       dimension_semantics = ("arbitrary",) * len(user_grid)
+    dimension_semantics = tuple(
+        _canonicalize_dimension_semantic(s) for s in dimension_semantics
+    )
     if len(user_grid) != len(dimension_semantics):
       raise ValueError(
           "Must have dimension semantics for each dimension of the grid."
@@ -592,7 +608,9 @@ def lower_jaxpr_to_module(
     grid_mapping: pallas_core.GridMapping,
     jaxpr: jax_core.Jaxpr,
     *,
-    dimension_semantics: tuple[str | None, ...] | None,
+    dimension_semantics: (
+        tuple[str | tpu_core.GridDimensionSemantics, None, ...] | None
+    ),
     mesh: mesh_lib.Mesh | None = None,
     for_verification: bool = False,
     dynamic_shape_replacement_enabled: bool = False,
@@ -3414,9 +3432,7 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
       wait_ref = src if src_is_smem else dst
     else:
       wait_ref = dst
-    # Legacy instruction emits only an sfence if the target/dst ref is in smem.
-    # So, we pass the src ref to the wait instruction if it is in smem to
-    # ensure legacy cases are correct, while technically keeping API compat.
+    # Legacy instruction backwards compatibility.
     tpu.wait_dma(sem, wait_ref)
   else:
     tpu.wait_dma2(sem, src, dst)

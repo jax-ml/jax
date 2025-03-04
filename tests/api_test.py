@@ -61,7 +61,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
@@ -1371,8 +1370,6 @@ class JitTest(jtu.BufferDonationTestCase):
     def f(x):
       return jnp.sqrt(x**2) + 1.0
 
-    if xla_extension_version < 316:
-      self.skipTest("Requires XLA extension version >= 316")
     f_jit = jit(
         f,
         compiler_options={
@@ -1386,8 +1383,6 @@ class JitTest(jtu.BufferDonationTestCase):
     def f(x):
       return jnp.sqrt(x**2) + 1.0
 
-    if xla_extension_version < 316:
-      self.skipTest("Requires XLA extension version >= 316")
     f_jit = jit(
         f,
         compiler_options={
@@ -2585,6 +2580,30 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(pytree[1], jnp.array(2.), check_dtypes=False)
     self.assertAllClose(pytree[2], np.ones(3), check_dtypes=False)
     self.assertEqual(pytree[3], 4)
+
+  def test_copy_to_host_async(self):
+    x = device_put(1.)
+    y = jax.copy_to_host_async(x)
+    # Tests mostly that copy_to_host_async() does not produce an error.
+    self.assertIs(y, x)
+    self.assertEqual(np.asarray(y), 1.)
+
+  def test_copy_to_host_async_non_array(self):
+    # Just tests that we don't error...
+    o = object()
+    mock_array = unittest.mock.Mock()
+    mock_array.copy_to_host_async.return_value = None
+    x = [o, 1, 2, 3, mock_array]
+    y = jax.copy_to_host_async(x)
+    self.assertIs(y, x)
+    self.assertEqual(y, [o, 1, 2, 3, mock_array])
+    mock_array.copy_to_host_async.assert_called_once()
+
+  def test_copy_to_host_async_does_not_hide_attribute_error(self):
+    x = unittest.mock.Mock()
+    x.copy_to_host_async.side_effect = AttributeError("foo")
+    with self.assertRaisesRegex(AttributeError, "foo"):
+      jax.copy_to_host_async(x)
 
   @jtu.thread_unsafe_test()  # Weakref destruction seems unpredictable with threads
   def test_devicearray_weakref_friendly(self):

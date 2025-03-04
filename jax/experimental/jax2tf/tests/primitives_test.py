@@ -206,6 +206,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
           "dot_product_attention_fp8_bwd_wrapper",
       ):
         continue
+      if p.name == "scaled_matmul_wrapper":
+        continue
       if p.name in tf_not_yet_impl:
         self.assertNotIn(
             p, tf_impl)  # Should not be in both tf_impl and tf_not_yet_impl

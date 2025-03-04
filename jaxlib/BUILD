@@ -49,6 +49,7 @@ py_library_providing_imports_info(
         "hlo_helpers.py",
         "init.py",
         "lapack.py",
+        "plugin_support.py",
         ":version",
         ":xla_client",
         ":xla_extension_py",

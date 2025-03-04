@@ -21,6 +21,7 @@ import functools
 import math
 from typing import Any, NamedTuple, cast
 
+from jax._src import config
 from jax._src import core
 from jax._src import mesh as mesh_lib
 from jax._src import sharding as jsharding
@@ -28,9 +29,10 @@ from jax._src import sharding_specs
 from jax._src import tree_util
 from jax._src import util
 from jax._src import source_info_util
-from jax._src import xla_bridge
+from jax._src import xla_bridge as xb
 from jax._src import mesh_utils
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
     SdyArraySharding, SdyDimSharding, UnspecifiedValue, AUTO,
@@ -193,6 +195,8 @@ class SingleDeviceSharding(jsharding.Sharding):
 
   @property
   def is_fully_addressable(self) -> bool:
+    if config.enable_empty_arrays.value:
+      return xb.process_index(self._device.client) == self._device.process_index
     return True
 
 
@@ -291,8 +295,7 @@ class PmapSharding(jsharding.Sharding):
               'Multiple chunks in Chunked dimension not supported.')
 
     if devices is None:
-      pmap_devices: np.ndarray = np.array(
-          xla_bridge.local_devices()[:num_ways_sharded])
+      pmap_devices: np.ndarray = np.array(xb.local_devices()[:num_ways_sharded])
     else:
       pmap_devices = np.array(devices)
     return cls(pmap_devices, sharding_spec)
@@ -689,10 +692,14 @@ def prepare_axis_resources(axis_resources, arg_name,
                          'allowed.')
       new_entries.append(entry)
     else:
-      parsed_pspec = ParsedPartitionSpec.from_user_input(
-          entry, what, allow_unconstrained_dims=allow_unconstrained_dims)
-      _check_unique_resources(parsed_pspec, arg_name)
-      new_entries.append(parsed_pspec)
+      if not isinstance(entry, PartitionSpec):
+        raise TypeError(f"{what} are expected to be "
+                        f"PartitionSpec instances or None, but got {entry}")
+      for e in entry:
+        if e is PartitionSpec.UNCONSTRAINED and not allow_unconstrained_dims:
+          raise ValueError(f"Unconstrained dims are not allowed: {entry}")
+      _check_unique_resources(entry, arg_name)
+      new_entries.append(entry)
 
   return tree_util.tree_unflatten(treedef, new_entries)
 
@@ -864,17 +871,21 @@ def explode_superdims(sizes, dims):
     final_dims += reversed(new_dims)
   return final_dims
 
-def parse_flatten_op_sharding(hlo_sharding: xc.OpSharding | xc.HloSharding,
-                              mesh: mesh_lib.Mesh) -> Sequence[ParsedPartitionSpec]:
+def parse_flatten_op_sharding(
+    hlo_sharding: xc.OpSharding | xc.HloSharding,
+    mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh) -> Sequence[PartitionSpec]:
   if isinstance(hlo_sharding, xc.OpSharding):
     hlo_sharding = xc.HloSharding.from_proto(hlo_sharding)
   if hlo_sharding.tuple_elements():
-    out: list[ParsedPartitionSpec] = []
+    out: list[PartitionSpec] = []
     for s in hlo_sharding.tuple_elements():
       out.extend(parse_flatten_op_sharding(s, mesh))
     return out
   elif hlo_sharding.is_replicated():
-    return [ParsedPartitionSpec(PartitionSpec(), ())]
+    return [PartitionSpec()]
+  elif (xla_extension_version >= 319 and hlo_sharding.is_maximal()
+        and mesh.size == 1):
+    return [PartitionSpec()]
   elif hlo_sharding.is_tiled():
     mesh_shape = mesh.shape
     mesh_axis_order = unflatten_array(
@@ -900,7 +911,7 @@ def parse_flatten_op_sharding(hlo_sharding: xc.OpSharding | xc.HloSharding,
       partitions = partitions[:-1]
     while partitions and partitions[-1] == ():
       partitions.pop()
-    return [ParsedPartitionSpec(None, partitions)]
+    return [PartitionSpec(*partitions)]
   else:
     raise AssertionError("Unhandled OpSharding type. Please open a bug report!")
 
@@ -1159,9 +1170,7 @@ def make_key_array_phys_sharding(aval, sharding):
   elif isinstance(sharding, NamedSharding):
     elt_aval = core.physical_element_aval(aval.dtype)
     trailing_spec = [None] * elt_aval.ndim
-    return NamedSharding(
-        sharding.mesh,
-        PartitionSpec(*sharding.spec, *trailing_spec))
+    return sharding.with_spec(PartitionSpec(*sharding.spec, *trailing_spec))
   else:
     hlos = sharding._to_xla_hlo_sharding(aval.ndim)
     return GSPMDSharding(
@@ -1173,10 +1182,10 @@ def physical_sharding(
   return make_key_array_phys_sharding(aval, sharding)
 
 
-def get_logical_gspmd_sharding(aval, phys_sharding):
-  elt_aval = core.physical_element_aval(aval.dtype)
+def get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding):
+  elt_aval = core.physical_element_aval(dtype)
   phys_hlo_sharding = phys_sharding._to_xla_hlo_sharding(
-      aval.ndim + elt_aval.ndim)
+      len(logical_shape) + elt_aval.ndim)
   partitions, num_replicas = get_num_ways_dim_sharded(phys_hlo_sharding)
   suffix = [] if num_replicas == 1 else [num_replicas]
   # Create logical sharding by cutting off the replicated trailing dims.
@@ -1186,64 +1195,67 @@ def get_logical_gspmd_sharding(aval, phys_sharding):
   return GSPMDSharding(phys_sharding._device_assignment,
                        xc.HloSharding.from_proto(logical_op_sharding))
 
-def check_replicated_trailing_dims(sharding: jsharding.Sharding, aval):
+def check_replicated_trailing_dims(sharding: jsharding.Sharding,
+                                   logical_shape, dtype):
   if isinstance(sharding, PmapSharding):
     return
-  phys_aval = core.physical_aval(aval)
-  hlo_s = sharding._to_xla_hlo_sharding(phys_aval.ndim)
+  if isinstance(sharding, NamedSharding) and sharding.mesh._any_axis_manual:
+    return
+  phys_shape = core.physical_shape(logical_shape, dtype)
+  hlo_s = sharding._to_xla_hlo_sharding(len(phys_shape))
   partitions, _ = get_num_ways_dim_sharded(hlo_s)
-  num_trailing_dims = phys_aval.ndim - aval.ndim
+  num_trailing_dims = len(phys_shape) - len(logical_shape)
   if not all(i == 1 for i in partitions[-num_trailing_dims:]):
     raise AssertionError(
         "The trailing dims of extended dtypes should be replicated. Got"
         f" sharding: {sharding}, partitions: {partitions}, "
         f"num_trailing_dims: {num_trailing_dims}")
 
-def logical_sharding(aval, phys_sharding) -> jsharding.Sharding:
+def logical_sharding(logical_shape, dtype, phys_sharding) -> jsharding.Sharding:
   # The trailing dims should always be replicated.
-  check_replicated_trailing_dims(phys_sharding, aval)
+  # TODO(yashkatariya): Maybe remove this check or do this at the pxla level?
+  check_replicated_trailing_dims(phys_sharding, logical_shape, dtype)
 
   if is_single_device_sharding(phys_sharding):
     return phys_sharding
   elif isinstance(phys_sharding, PmapSharding):
-    elt_aval = core.physical_element_aval(aval.dtype)
+    elt_aval = core.physical_element_aval(dtype)
     logical_sharding_spec = sharding_specs.ShardingSpec(
         sharding=phys_sharding.sharding_spec.sharding[:-elt_aval.ndim],
         mesh_mapping=phys_sharding.sharding_spec.mesh_mapping)
     return PmapSharding(devices=phys_sharding.devices,
                         sharding_spec=logical_sharding_spec)
   elif isinstance(phys_sharding, NamedSharding):
-    logical_gs = get_logical_gspmd_sharding(aval, phys_sharding)
-    assert isinstance(phys_sharding.mesh, mesh_lib.Mesh)
-    return _gspmd_to_named_sharding_via_mesh(
-        logical_gs, phys_sharding.mesh)
+    elt_aval = core.physical_element_aval(dtype)
+    phys_shape = core.physical_shape(logical_shape, dtype)
+    if len(phys_sharding.spec) < len(phys_shape):
+      phys_spec = (*phys_sharding.spec,
+                   *[None] * (len(phys_shape) - len(phys_sharding.spec)))
+    else:
+      phys_spec = phys_sharding.spec
+    return phys_sharding.with_spec(phys_spec[:-elt_aval.ndim])
   else:
-    return get_logical_gspmd_sharding(aval, phys_sharding)
+    return get_logical_gspmd_sharding(logical_shape, dtype, phys_sharding)
 
 
 @util.cache()
 def create_mesh_pspec_sharding(
-    mesh: mesh_lib.Mesh, pspec: PartitionSpec | None, parsed_pspec=None,
+    mesh: mesh_lib.Mesh, pspec: PartitionSpec | None,
     memory_kind: str | None = None) -> NamedSharding:
   if pspec is None:
-    pspec, parsed_pspec = PartitionSpec(), None
-  return NamedSharding(mesh, pspec, _parsed_pspec=parsed_pspec,
-                       memory_kind=memory_kind)
+    pspec = PartitionSpec()
+  return NamedSharding(mesh, pspec, memory_kind=memory_kind)
 
 
 def _gspmd_to_named_sharding_via_mesh(
     out_s: GSPMDSharding, mesh: mesh_lib.Mesh) -> NamedSharding:
-  parsed_pspec = parse_flatten_op_sharding(
-      out_s._hlo_sharding, mesh)[0]
+  spec = parse_flatten_op_sharding(out_s._hlo_sharding, mesh)[0]
   return create_mesh_pspec_sharding(
-      mesh, parsed_pspec.get_partition_spec(), parsed_pspec,
-      out_s.memory_kind)
+      mesh, spec, memory_kind=out_s.memory_kind)
 
 def flatten_spec(spec):
   out = []
   for s in spec:
-    if s is None:
-      continue
     if isinstance(s, tuple):
       out.extend(s)
     else:
@@ -1285,6 +1297,8 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
       sharding = NamedSharding(sharding.mesh.abstract_mesh, sharding.spec)
 
   for s in flatten_spec(sharding.spec):
+    if s is None:
+      continue
     if sharding.mesh._name_to_type[s] in {
         mesh_lib.AxisTypes.Auto, mesh_lib.AxisTypes.Manual}:
       raise ValueError(
@@ -1372,7 +1386,7 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
     A `jax.sharding.Mesh` object.
   """
   if devices is None:
-    devices = xla_bridge.devices()
+    devices = xb.devices()
   new_axis_shapes = mesh_utils._canonicalize_axis_sizes(axis_shapes)
   if new_axis_shapes is None:
     raise ValueError(

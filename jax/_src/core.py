@@ -48,7 +48,7 @@ from jax._src import linear_util as lu
 
 from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
-                           tuple_delete,
+                           tuple_delete, cache,
                            HashableFunction, HashableWrapper, weakref_lru_cache,
                            partition_list, StrictABCMeta)
 import jax._src.pretty_printer as pp
@@ -1659,6 +1659,10 @@ def physical_aval(aval):
     return DShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype)
   return aval
 
+def physical_shape(logical_shape, dtype):
+  elt_aval = physical_element_aval(dtype)
+  return (*logical_shape, *elt_aval.shape)
+
 def physical_element_aval(edtype: dtypes.ExtendedDType) -> ShapedArray:
   duck = edtype._rules.physical_element_aval(edtype)  # type: ignore
   return ShapedArray(duck.shape, dtypes.dtype(duck.dtype))
@@ -1776,13 +1780,6 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
   return TypeError(msg)
 
-def _make_lengths_same(sharding, ndim):
-  if ndim > len(sharding.spec):
-    return sharding.with_spec(sharding.spec._normalized_spec_for_aval(ndim))
-  if ndim < len(sharding.spec):
-    return sharding.with_spec(sharding.spec[:ndim])
-  assert False, "unreachable"
-
 
 # TODO(dougalm): Cast scalar, numpy arrays, etc to jax arrays so that values
 # passed to primitives are always have avals, etc i.e. they are canonical.
@@ -1814,6 +1811,12 @@ def get_cur_mesh_sharding(spec=None):
   spec = P() if spec is None else spec
   return NamedSharding(mesh_lib.get_abstract_mesh(), spec)
 
+def _make_lengths_same(sharding, ndim):
+  if ndim > len(sharding.spec):
+    return sharding.with_spec(sharding.spec._normalized_spec_for_aval(ndim))
+  if ndim < len(sharding.spec):
+    return sharding.with_spec(sharding.spec[:ndim])
+  assert False, "unreachable"
 
 # TODO(yashkatariya): Only works with User/Auto. Generalize it to work with
 # Collective too.
@@ -1847,7 +1850,16 @@ def _maybe_modify_sharding(sharding, ndim):
   return out
 
 
+@cache(max_size=4096, trace_context_in_key=True)
 def get_sharding(sharding, ndim):
+  """Modifies and checks the sharding.
+
+  Some modifications/checks include:
+    * Making the length of specs the same as ndim
+    * If a mesh axis is mentioned in pspec is Auto/Manual, replace it with None
+    * Checking for len(spec)-ndim match
+    * Checking if the mesh is an AbstractMesh.
+  """
   if sharding is None:
     return NamedSharding(mesh_lib.empty_abstract_mesh, P(*[None] * ndim))
 
@@ -2943,8 +2955,11 @@ def _check_map(ctx_factory, prim, in_avals, params):
 
 # ------------------- Jaxpr printed representation -------------------
 
-def pp_toplevel_jaxpr(jaxpr_to_print, *, source_info=False, print_shapes=True,
-                      custom_pp_eqn_rules=True, name_stack=False,
+def pp_toplevel_jaxpr(jaxpr_to_print: Jaxpr, *,
+                      source_info: bool = False,
+                      print_shapes: bool = True,
+                      custom_pp_eqn_rules : bool = True,
+                      name_stack: bool = False,
                       print_effects: bool = False) -> pp.Doc:
     context = JaxprPpContext()
     settings = JaxprPpSettings(
@@ -2986,9 +3001,9 @@ def pp_toplevel_jaxpr(jaxpr_to_print, *, source_info=False, print_shapes=True,
         name_counts[name] += 1
       else:
         name_counts[name] += 1
-      docs.append(pp_top_level_jaxpr(name, jaxpr, context, settings))
-      context.used_names.add(name)
-      context.top_level_jaxprs[jaxpr] = name
+      docs.append(pp_shared_jaxpr(name, jaxpr, context, settings))
+      context.shared_jaxpr_names.add(name)
+      context.shared_jaxprs[jaxpr] = name
     docs.append(pp_jaxpr(jaxpr_to_print, context, settings))
     return pp.concat(docs)
 
@@ -3013,18 +3028,40 @@ def _encode_digits_alphabetic(n: int) -> str:
 # Jaxprs.
 class JaxprPpContext:
   var_names: defaultdict[Var, str]
-  used_names: MutableSet[str]
-  top_level_jaxprs: MutableMapping[Jaxpr, str]
+  # Shared jaxprs are those that are used multiple times and are printed
+  # first.
+  shared_jaxprs: MutableMapping[Jaxpr, str]  # maps shared jaxpr to its name
+  shared_jaxpr_names: MutableSet[str]
 
   def __init__(self) -> None:
-    self.top_level_jaxprs = {}
-    self.used_names = set()
+    self.shared_jaxprs = {}
+    self.shared_jaxpr_names = set()
     fresh_names: Iterator[str] = (
         name
         for i in it.count()
-        if (name := _encode_digits_alphabetic(i)) not in self.used_names
+        if (name := _encode_digits_alphabetic(i)) not in self.shared_jaxpr_names
     )
     self.var_names = defaultdict(fresh_names.__next__)
+
+  def suggest_same_var_names(self,
+                             for_vars: Sequence[Atom],
+                             like_vars: Sequence[Atom]) -> None:
+    """Suggests the names for `for_vars` to match those of `like_vars`.
+
+    `for_vars` are distinct Vars, and are aliased with `like_vars`.
+    """
+    used_like_vars: set[Var] = set()
+    if len(for_vars) != len(like_vars):
+      # The mismatch can happen if a primitive containing a subjaxpr is invoked
+      # with the wrong number of arguments, e.g., when printing an invalid Jaxpr.
+      return
+    for for_v, like_v in zip(for_vars, like_vars):
+      if (isinstance(like_v, Var) and
+          like_v not in used_like_vars and
+          isinstance(for_v, Var) and
+          for_v not in self.var_names):
+        used_like_vars.add(like_v)
+        self.var_names[for_v] = pp_var(like_v, self)
 
 
 def pp_var(v: Var | Literal, context: JaxprPpContext) -> str:
@@ -3039,7 +3076,7 @@ def pp_aval(a: AbstractValue, context: JaxprPpContext) -> str:
   else:
     return a.str_short(short_dtypes=True)
 
-def pp_vars(vs: Sequence[Any], context: JaxprPpContext,
+def pp_vars(vs: Sequence[Atom], context: JaxprPpContext,
             *, separator="", print_shapes: bool = False) -> pp.Doc:
   if print_shapes:
     return pp.nest(2, pp.group(
@@ -3085,7 +3122,8 @@ def pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings
   user_frame = source_info_util.user_frame(eqn.source_info)
   return doc if user_frame is None else pp.source_map(doc, user_frame)
 
-def _pp_eqn(eqn, context, settings, params=None) -> pp.Doc:
+def _pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings,
+            params: Sequence[str] | None = None) -> pp.Doc:
   annotation = (source_info_util.summarize(eqn.source_info)
                 if settings.source_info else None)
   if params is None:
@@ -3100,9 +3138,10 @@ def _pp_eqn(eqn, context, settings, params=None) -> pp.Doc:
   else:
     return pp.concat(rhs)
 CustomPpEqnRule = Callable[[JaxprEqn, JaxprPpContext, JaxprPpSettings], pp.Doc]
-pp_eqn_rules: dict[Primitive, CustomPpEqnRule]  = {}
+pp_eqn_rules: dict[Primitive, CustomPpEqnRule] = {}
 
-def pp_eqns(eqns, context: JaxprPpContext, settings: JaxprPpSettings) -> pp.Doc:
+def pp_eqns(eqns: Sequence[JaxprEqn],
+            context: JaxprPpContext, settings: JaxprPpSettings) -> pp.Doc:
   return pp.join(
     pp.brk("; "),
     [pp_eqn(e, context, settings) for e in eqns])
@@ -3127,7 +3166,7 @@ custom_str_eqn_compact_rules: dict[
     Primitive, Callable[[Primitive, dict[Any, Any]], str]
 ] = {}
 
-def pp_jaxpr_skeleton(jaxpr, eqns_fn, context: JaxprPpContext,
+def pp_jaxpr_skeleton(jaxpr: Jaxpr, eqns_fn, context: JaxprPpContext,
                       settings: JaxprPpSettings) -> pp.Doc:
   constvars = pp_vars(jaxpr.constvars, context, print_shapes=settings.print_shapes)
   invars = pp_vars(jaxpr.invars, context, print_shapes=settings.print_shapes)
@@ -3161,7 +3200,7 @@ def pp_jaxpr_skeleton(jaxpr, eqns_fn, context: JaxprPpContext,
   ])) + pp.text(" }"))
 
 
-def pp_top_level_jaxpr(
+def pp_shared_jaxpr(
     name: str,
     jaxpr: Jaxpr,
     context: JaxprPpContext,
@@ -3180,13 +3219,14 @@ def pp_jaxpr(
     context: JaxprPpContext,
     settings: JaxprPpSettings,
 ) -> pp.Doc:
-  if name := context.top_level_jaxprs.get(jaxpr):
+  if name := context.shared_jaxprs.get(jaxpr):
     return pp.text(name)
   eqns_fn = lambda: pp_eqns(jaxpr.eqns, context, settings)
   return pp_jaxpr_skeleton(jaxpr, eqns_fn, context, settings)
 
 
-def pp_jaxprs(jaxprs, context: JaxprPpContext, settings: JaxprPpSettings) -> pp.Doc:
+def pp_jaxprs(jaxprs: Sequence[ClosedJaxpr | Jaxpr],
+              context: JaxprPpContext, settings: JaxprPpSettings) -> pp.Doc:
   jaxprs = [j.jaxpr if isinstance(j, ClosedJaxpr) else j for j in jaxprs]
   return pp.group(pp.nest(2, pp.concat([
       pp.text('('), pp.brk(""),

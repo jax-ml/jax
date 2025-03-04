@@ -465,10 +465,19 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
   def body_fun(while_carry):
     i_, carry, yss = while_carry
     i = num_trips - i_ - 1 if reverse else i_
-    xs = [slicing.dynamic_index_in_dim(xs, i, keepdims=False) for xs in xss]
+    xs = [
+        slicing.dynamic_index_in_dim(
+            xs, i, keepdims=False, allow_negative_indices=False
+        )
+        for xs in xss
+    ]
     carry, ys = inner(unroll, carry, xs)
-    yss = [slicing.dynamic_update_index_in_dim(ys, upd, i, 0)
-           for ys, upd in zip(yss, ys)]
+    yss = [
+        slicing.dynamic_update_index_in_dim(
+            ys, upd, i, 0, allow_negative_indices=False
+        )
+        for ys, upd in zip(yss, ys)
+    ]
     return i_ + 1, carry, yss
   def inner(n, carry, xs):
     ys = []

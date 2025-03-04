@@ -1143,7 +1143,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           # (constant,)
           (0,), (2.718,),
           # ((before_const, after_const),)
-          ((0, 2),), ((-1, 3.14),),
+          (0, 2),
+          (-1, 3.14),
           # ((before_1, after_1), ..., (before_N, after_N))
           tuple((i / 2, -3.14 * i) for i in range(len(shape))),
       ]
@@ -2126,7 +2127,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if jtu.numpy_version() < (2, 0, 0):
       np_fun = np.unique
     else:
-      np_fun = np.unique_values
+      np_fun = lambda *args: np.sort(np.unique_values(*args))
     self._CheckAgainstNumpy(jnp.unique_values, np_fun, args_maker)
 
   @jtu.sample_product(
@@ -6451,9 +6452,10 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'compress': ['size', 'fill_value'],
       'einsum': ['subscripts', 'precision'],
       'einsum_path': ['subscripts'],
+      'fill_diagonal': ['inplace'],
       'load': ['args', 'kwargs'],
       'take_along_axis': ['mode', 'fill_value'],
-      'fill_diagonal': ['inplace'],
+      'unique': ['size', 'fill_value'],
     }
 
     mismatches = {}

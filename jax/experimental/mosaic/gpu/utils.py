@@ -670,10 +670,10 @@ def parse_indices(
 
 
 def commit_shared():
-  warpgroup_barrier()
   nvvm.fence_proxy(
       nvvm.ProxyKind.async_shared, space=nvvm.SharedSpace.shared_cta
   )
+  warpgroup_barrier()
 
 
 def warpgroup_barrier():
@@ -786,7 +786,7 @@ class BarrierRef:
   def as_dialect_barrier_memref(self) -> ir.Value:
     shape = () if self.num_barriers == 1 else (self.num_barriers,)
     return ptr_as_memref(
-        self.base_address,
+        self.get_ptr(),
         ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier")),
         ptr_memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE,
     )

@@ -811,7 +811,7 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
     except RuntimeError as e:
       self.skipTest(str(e))
       return
-    if cudnn_version < 91000:
+    if cudnn_version < 90100:
       self.skipTest("Requires >= cuDNN 9.1.0")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Requires at least Hopper arch")

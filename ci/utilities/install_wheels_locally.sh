@@ -41,7 +41,7 @@ else
 fi
 
 if [[ "$JAXCI_INSTALL_JAX_CURRENT_COMMIT" == "1" ]]; then
-  echo "Installing the JAX package in editable mode at the current commit..."
+  echo "Installing the JAX package at the current commit..."
   # Install JAX package at the current commit.
-  "$JAXCI_PYTHON" -m uv pip install -U -e .
+  "$JAXCI_PYTHON" -m uv pip install .
 fi

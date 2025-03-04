@@ -1040,7 +1040,7 @@ def _mapped_axis_spec(args_flat, in_axes_flat):
   for arg, i in zip(args_flat, in_axes_flat):
     if i is not None:
       spec = _get_spec(arg, i)
-      if temp_spec and temp_spec != spec:
+      if temp_spec is not None and temp_spec != spec:
         raise ValueError(
             "Mapped away dimension of inputs passed to vmap should be sharded"
             f" the same. Got inconsistent axis specs: {temp_spec} vs {spec}")
@@ -2825,6 +2825,31 @@ def block_until_ready(x):
   else:
     # Optimized for multiple arrays.
     xc.batched_block_until_ready(arrays)
+
+  return x
+
+def copy_to_host_async(x):
+  """
+  Tries to call a ``copy_to_host_async`` method on pytree leaves.
+
+  For each leaf this method will try to call the ``copy_to_host_async`` method
+  on the leaf. If the leaf is not a JAX array, or if the leaf does not have a
+  ``copy_to_host_async`` method, then this method will do nothing to the leaf.
+
+  Args:
+    x: a pytree, usually with at least some JAX array instances at its leaves.
+
+  Returns:
+    A pytree with the same structure and values of the input, where the host
+    copy of the values of all JAX array leaves are started.
+  """
+  for leaf in tree_leaves(x):
+    try:
+      copy_fn = leaf.copy_to_host_async
+    except AttributeError:
+      pass
+    else:
+      copy_fn()
 
   return x
 

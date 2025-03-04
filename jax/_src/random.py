@@ -1500,7 +1500,8 @@ def poisson(key: ArrayLike,
 
 def gumbel(key: ArrayLike,
            shape: Shape = (),
-           dtype: DTypeLikeFloat = float) -> Array:
+           dtype: DTypeLikeFloat = float,
+           mode: str | None =None) -> Array:
   """Sample Gumbel random values with given shape and float dtype.
 
   The values are distributed according to the probability density function:
@@ -1514,6 +1515,7 @@ def gumbel(key: ArrayLike,
       shape. Default ().
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    mode: optional, "high" or "low" for how many bits to use when sampling.
 
   Returns:
     A random array with the specified shape and dtype.
@@ -1525,13 +1527,25 @@ def gumbel(key: ArrayLike,
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  return _gumbel(key, shape, dtype)
+  if mode is None:
+    mode = "high" if config.use_high_dynamic_range_gumbel.value else "low"
+  if mode not in ("high", "low"):
+    raise ValueError("Must provide valid mode for gumbel got: %s" % mode)
+  return _gumbel(key, shape, dtype, mode)
 
-@partial(jit, static_argnums=(1, 2))
-def _gumbel(key, shape, dtype) -> Array:
+@partial(jit, static_argnums=(1, 2, 3))
+def _gumbel(key, shape, dtype, mode) -> Array:
   _check_shape("gumbel", shape)
-  return -jnp.log(-jnp.log(
-      uniform(key, shape, dtype, minval=jnp.finfo(dtype).tiny, maxval=1.)))
+  if mode == "high":
+    high, low = _uniform(key, (2,) + shape, dtype, minval=0., maxval=1.)
+    # TODO(parkers): The condition is to protect against rounding up but
+    # we should be able to add safely with the right addition operation.
+    x = jnp.where(high >= 0.5, high,
+        high + 2 ** -(jnp.finfo(dtype).nmant) * low + jnp.finfo(dtype).tiny)
+    return -jnp.log(-jnp.log1p(-x))
+  else:
+    return -jnp.log(-jnp.log(
+        _uniform(key, shape, dtype, minval=jnp.finfo(dtype).tiny, maxval=1.)))
 
 
 def categorical(key: ArrayLike,
@@ -2042,18 +2056,27 @@ def orthogonal(
   key: ArrayLike,
   n: int,
   shape: Shape = (),
-  dtype: DTypeLikeFloat = float
+  dtype: DTypeLikeFloat = float,
+  m: int | None = None,
 ) -> Array:
-  """Sample uniformly from the orthogonal group O(n).
+  r"""Sample uniformly from the orthogonal group O(n).
 
   If the dtype is complex, sample uniformly from the unitary group U(n).
 
+  For unequal rows and columns, this samples a semi-orthogonal matrix instead.
+  That is, if :math:`A` is the resulting matrix and :math:`A^*` is its conjugate
+  transpose, then:
+
+  - If :math:`n \leq m`, the rows are mutually orthonormal: :math:`A A^* = I_n`.
+  - If :math:`m \leq n`, the columns are mutually orthonormal: :math:`A^* A = I_m`.
+
   Args:
     key: a PRNG key used as the random key.
-    n: an integer indicating the resulting dimension.
+    n: an integer indicating the number of rows.
     shape: optional, the batch dimensions of the result. Default ().
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
+    m: an integer indicating the number of columns. Defaults to `n`.
 
   Returns:
     A random array of shape `(*shape, n, n)` and specified dtype.
@@ -2063,15 +2086,26 @@ def orthogonal(
            the classical compact groups". Notices of the American Mathematical
            Society, 54(5), 592-604. https://arxiv.org/abs/math-ph/0609050.
   """
+  if m is None:
+    _m = n
+  else:
+    _m = m
   shape = core.canonicalize_shape(shape)
   key, _ = _check_prng_key("orthogonal", key)
   dtypes.check_user_dtype_supported(dtype)
   _check_shape("orthogonal", shape)
   n = core.concrete_or_error(index, n, "The error occurred in jax.random.orthogonal()")
-  z = normal(key, (*shape, n, n), dtype)
+  _m = core.concrete_or_error(index, _m, "The error occurred in jax.random.orthogonal()")
+
+  z = normal(key, (*shape, max(n, _m), min(n, _m)), dtype)
   q, r = jnp.linalg.qr(z)
   d = jnp.linalg.diagonal(r)
-  return q * jnp.expand_dims(jnp.sign(d), -2)
+  x = q * jnp.expand_dims(jnp.sign(d), -2)
+
+  if n < _m:
+    return x.mT
+  else:
+    return x
 
 def generalized_normal(
   key: ArrayLike,

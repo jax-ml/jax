@@ -715,6 +715,16 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=1e-3)
     self._CompileAndCheck(jnp_fn, args_maker)
 
+  @jtu.sample_product(
+      shape=[(0, 2), (2, 0), (0, 0)],
+      dtype=float_types + complex_types,
+      ord=[1, 2, np.inf, 'fro', 'nuc'],
+  )
+  def testEmptyMatrixNorm(self, shape, dtype, ord):
+    x = jnp.zeros(shape, dtype)
+    norm = jnp.linalg.matrix_norm(x, ord=ord)
+    self.assertEqual(norm, 0)
+
   @skipIf(jtu.numpy_version() < (2, 0, 0), "np.linalg.vector_norm requires NumPy 2.0")
   @jtu.sample_product(
       [
@@ -734,6 +744,15 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     tol = 1E-3 if jtu.test_device_matches(['tpu']) else None
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
+
+  @jtu.sample_product(
+      dtype=float_types + complex_types,
+      ord=[1, 2, np.inf],
+  )
+  def testEmptyVectorNorm(self, dtype, ord):
+    x = jnp.zeros(0, dtype)
+    norm = jnp.linalg.vector_norm(x, ord=ord)
+    self.assertEqual(norm, 0)
 
   # jnp.linalg.vecdot is an alias of jnp.vecdot; do a minimal test here.
   @jtu.sample_product(
@@ -1707,8 +1726,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     if pivoting:
       if not jtu.test_device_matches(["cpu", "gpu"]):
         self.skipTest("Pivoting is only supported on CPU and GPU.")
-      if jtu.test_device_matches(["gpu"]) and jtu.jaxlib_version() <= (0, 5, 0):
-        self.skipTest("Pivoting is only supported on GPU for jaxlib > 0.5.0")
     rng = jtu.rand_default(self.rng())
     jsp_func = partial(jax.scipy.linalg.qr, mode=mode, pivoting=pivoting)
     sp_func = partial(scipy.linalg.qr, mode=mode, pivoting=pivoting)

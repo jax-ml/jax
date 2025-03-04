@@ -243,10 +243,8 @@ def LayoutAttr : MosaicGPU_Attr<"Layout", "layout",
   let assemblyFormat = "`<` $num_dimensions `,` $transforms `>`";
 }
 
-def GlobalMemory : Resource<"::mosaic_gpu::GlobalMemory">;
-
 def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
-      [AttrSizedOperandSegments, MemoryEffects<[MemRead<GlobalMemory>]>]> {
+      [AttrSizedOperandSegments]> {
   let summary = "Schedules an async load of a MemRef from GMEM to SMEM";
   let description = [{
     Schedules an async copy of the contents of the `source` MemRef in GMEM to
@@ -313,7 +311,7 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
 }
 
 def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
-      [AttrSizedOperandSegments, MemoryEffects<[MemWrite<GlobalMemory>]>]> {
+      [AttrSizedOperandSegments]> {
   let summary = "Schedules an async store of a MemRef from SMEM to GMEM";
   let description = [{
     Schedules an async store of the contents of the `source` MemRef in SMEM to
@@ -374,6 +372,14 @@ def MosaicGPU_WGMMALayout :
   let cppNamespace = "::mosaic_gpu";
 }
 
+
+def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", []> {
+  let summary = "Constructs an SMEM MemRef with the requested type that begins at the specified SMEM offset address.";
+
+  let arguments = (ins I32:$offset);
+  let results = (outs MemRefOf<[AnyType]>);
+}
+
 def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
   let summary = "Multiply two matrices asyncronously using warpgroup level matrix multiply operations.";
   let description = [{
@@ -395,6 +401,8 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
     Where:
       - `s == swizzle/element_bytediwth` (for `kNoSwizzle`, `swizzle` is 16.)
         and the tilings are [64, s] for `a` and [s, s] for `b`.
+      - `a` and/or `b` may be transposed if the corresponding attribute is set
+        to `true`.
 
     The output has an identical shape and type as the input accumulator.
 
@@ -417,7 +425,10 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
     AnyTypeOf<[
       MemRefOf<[MosaicGPU_WGMMASupportedType]>,
       VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>]>:$a,
-    MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b
+    MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b,
+
+    DefaultValuedOptionalAttr<BoolAttr, "false">:$transpose_a,
+    DefaultValuedOptionalAttr<BoolAttr, "false">:$transpose_b
   );
   let results = (outs VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>);
 

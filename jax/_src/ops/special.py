@@ -53,8 +53,8 @@ def logsumexp(a: ArrayLike, axis: Axis = None, b: ArrayLike | None = None,
 
   Args:
     a: the input array
-    axis: the axis or axes over which to reduce. May be either ``None``, an
-      int, or a tuple of ints.
+    axis: int or sequence of ints, default=None. Axis along which the sum to be
+      computed. If None, the sum is computed along all the axes.
     b: scaling factors for :math:`\mathrm{exp}(a)`. Must be broadcastable to the
       shape of `a`.
     keepdims: If ``True``, the axes that are reduced are left in the output as

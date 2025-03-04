@@ -599,6 +599,25 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gumbel_r().cdf)
 
+  def testLowProbabilityGumbel(self):
+    dtype = jnp.bfloat16
+
+    nmant = jnp.finfo(dtype).nmant
+    probs = [x * 2 ** -nmant for x in [0.125, 0.75, 1.25, 2.125]]
+    num_samples = 1024 * 128
+    num_groups = 128
+    key = jax.random.key(0)
+
+    def compute_counts(key):
+      v = jax.random.gumbel(key, (num_samples, 1), dtype=dtype, mode="high")
+      thresholds = np.array([[-np.log(-np.log(1 - x)) for x in probs]],
+                            dtype=dtype)
+      return (v > thresholds).sum(axis=0)
+    pts = [float(x) for x in jax.lax.map(
+        compute_counts, jax.random.split(key, num_groups)).sum(axis=0)]
+    cdf_probs = [x / (num_samples * num_groups) for x in pts]
+    np.testing.assert_allclose(cdf_probs, probs, rtol=0.25, atol=0)
+
   @jtu.sample_product(dtype=float_dtypes)
   def testLaplace(self, dtype):
     key = lambda: self.make_key(0)
@@ -624,21 +643,31 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.logistic().cdf)
 
   @jtu.sample_product(
-    n=range(1, 5),
+    n=range(5),
     shape=[(), (5,), (10, 5)],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+    m=list(range(5)) + [None],
   )
   @jax.default_matmul_precision("float32")
-  def testOrthogonal(self, n, shape, dtype):
+  def testOrthogonal(self, n, shape, dtype, m):
+    if m is None:
+      m = n
+
     key = self.make_key(0)
-    q = random.orthogonal(key, n, shape, dtype)
-    self.assertEqual(q.shape, (*shape, n, n))
+
+    q = random.orthogonal(key, n, shape, dtype, m)
+    self.assertEqual(q.shape, (*shape, n, m))
     self.assertEqual(q.dtype, dtype)
-    with jax.numpy_rank_promotion('allow'):
-      self.assertAllClose(
-        jnp.einsum('...ij,...jk->...ik', q, jnp.conj(q).swapaxes(-2, -1)),
-        jnp.broadcast_to(jnp.eye(n, dtype=dtype), (*shape, n, n))
-      )
+
+    qT = jnp.conj(q).mT
+
+    if n <= m:
+      I_n = jnp.broadcast_to(jnp.eye(n, dtype=dtype), (*shape, n, n))
+      self.assertAllClose(jnp.linalg.matmul(q, qT), I_n, atol={jnp.complex128: 1e-14})
+
+    if n >= m:
+      I_m = jnp.broadcast_to(jnp.eye(m, dtype=dtype), (*shape, m, m))
+      self.assertAllClose(jnp.linalg.matmul(qT, q), I_m, atol={jnp.complex128: 1e-14})
 
   @jtu.sample_product(
     p=[.5, 1., 1.5, 2., 2.5],

@@ -676,7 +676,9 @@ def _shardy_shard_map_sharding(
   sdy_sharding = ns._to_sdy_sharding(aval_in.ndim)
   if auto:
     for dim_sharding in sdy_sharding.dimension_shardings:
-      dim_sharding.is_closed = False
+      # Only allow dimensions which have no sharding to be auto-sharded.
+      if not dim_sharding.axes:
+        dim_sharding.is_closed = False
   return sdy_sharding
 
 
@@ -693,7 +695,6 @@ def _shard_map_lowering_shardy(
   new_axis_context = sharding_impls.SPMDAxisContext(
         mesh, frozenset(mesh.axis_names) - auto)
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
-  args = (*ctx.dim_var_values, *in_nodes)
 
   # The order of manual axes should match the order of mesh.axis_names to avoid
   # non-determinism issues.
@@ -703,7 +704,7 @@ def _shard_map_lowering_shardy(
     # No need for a `ManualComputationOp` if all manual axes are size 1.
     with _extend_axis_env(mesh, auto):
       out_nodes, _ = mlir.jaxpr_subcomp(
-          sub_ctx, jaxpr, ctx.name_stack, mlir.TokenSet(), (), *args,
+          sub_ctx, jaxpr, ctx.name_stack, mlir.TokenSet(), (), *in_nodes,
           dim_var_values=ctx.dim_var_values)
     return out_nodes
 
@@ -715,7 +716,7 @@ def _shard_map_lowering_shardy(
       out_names, ctx.avals_out)).build()
   output_types = map(mlir.aval_to_ir_type, ctx.avals_out)
   manual_computation_op = sdy.ManualComputationOp(
-      output_types, args, in_shardings, out_shardings,
+      output_types, in_nodes, in_shardings, out_shardings,
       sdy.ManualAxesAttr.get(
           ir.ArrayAttr.get([ir.StringAttr.get(i) for i in manual_axes])))
   block = ir.Block.create_at_start(

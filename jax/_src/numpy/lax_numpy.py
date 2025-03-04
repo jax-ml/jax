@@ -49,7 +49,6 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax.lax import (PrecisionLike,_array_copy,
                               _sort_le_comparator, _sort_lt_comparator)
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.numpy.array_creation import (empty, empty_like, full,
                                            ones, ones_like, zeros, zeros_like)
 from jax._src.numpy import indexing
@@ -3987,12 +3986,7 @@ def _pad_constant(array: Array, pad_width: PadValue[int], constant_values: Array
     if constant_values.shape[-1] == 1:
       widths = [(low, high, 0) for (low, high) in pad_width]
       return lax.pad(array, squeeze(constant_values), widths)
-    elif constant_values.shape[-1] == 2:
-      widths = [(low, 0, 0) for (low, _) in pad_width]
-      array = lax.pad(array, constant_values[0], widths)
-      widths = [(0, high, 0) for (_, high) in pad_width]
-      return lax.pad(array, constant_values[1], widths)
-    else:
+    elif constant_values.shape[-1] != 2:
       raise ValueError("jnp.pad: constant_values has unsupported shape "
                       f"{constant_values.shape}. If the shape is 1D or 2D, the "
                       "last dimension must be of size 1 or 2.")
@@ -5357,11 +5351,6 @@ def _make_string_array(
     ndmin: int = 0,
     device: xc.Device | Sharding | None = None,
 ) -> Array:
-  if xla_extension_version < 311:
-    raise TypeError(
-        "String arrays are not supported in JAX before XLA extension version"
-        " 311."
-    )
   if not isinstance(object, np.ndarray):
     raise TypeError(
         "Currently, string arrays can only be made from NumPy"

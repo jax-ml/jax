@@ -17,7 +17,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@com_github_google_flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
 load("@jax_wheel//:wheel.bzl", "WHEEL_VERSION")
-load("@jax_wheel_version_suffix//:wheel_version_suffix.bzl", "BUILD_TAG", "WHEEL_VERSION_SUFFIX")
+load("@jax_wheel_version_suffix//:wheel_version_suffix.bzl", "WHEEL_VERSION_SUFFIX")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
@@ -46,7 +46,8 @@ mosaic_gpu_internal_users = []
 mosaic_internal_users = []
 pallas_gpu_internal_users = []
 pallas_tpu_internal_users = []
-pallas_extension_deps = []
+pallas_fuser_users = []
+mosaic_extension_deps = []
 
 jax_internal_export_back_compat_test_util_visibility = []
 jax_internal_test_harnesses_visibility = []
@@ -64,7 +65,7 @@ PLATFORM_TAGS_DICT = {
 
 # TODO(vam): remove this once zstandard builds against Python 3.13
 def get_zstandard():
-    if HERMETIC_PYTHON_VERSION == "3.13":
+    if HERMETIC_PYTHON_VERSION == "3.13" or HERMETIC_PYTHON_VERSION == "3.13-ft":
         return []
     return ["@pypi_zstandard//:pkg"]
 
@@ -87,7 +88,6 @@ _py_deps = {
     "ml_dtypes": ["@pypi_ml_dtypes//:pkg"],
     "numpy": ["@pypi_numpy//:pkg"],
     "scipy": ["@pypi_scipy//:pkg"],
-    "tensorstore": ["@pypi_tensorstore//:pkg"],
     "tensorflow_core": [],
     "torch": [],
     "zstandard": get_zstandard(),
@@ -341,6 +341,12 @@ def _get_full_wheel_name(package_name, no_abi, platform_independent, platform_na
         ),
     )
 
+def _get_source_distribution_name(package_name, wheel_version):
+    return "{package_name}-{wheel_version}.tar.gz".format(
+        package_name = package_name,
+        wheel_version = wheel_version,
+    )
+
 def _jax_wheel_impl(ctx):
     include_cuda_libs = ctx.attr.include_cuda_libs[BuildSettingInfo].value
     override_include_cuda_libs = ctx.attr.override_include_cuda_libs[BuildSettingInfo].value
@@ -359,27 +365,41 @@ def _jax_wheel_impl(ctx):
 
     full_wheel_version = (WHEEL_VERSION + WHEEL_VERSION_SUFFIX)
     env["WHEEL_VERSION_SUFFIX"] = WHEEL_VERSION_SUFFIX
-    if BUILD_TAG:
-        env["WHEEL_VERSION_SUFFIX"] = ".dev{}+selfbuilt".format(BUILD_TAG)
-        full_wheel_version += env["WHEEL_VERSION_SUFFIX"]
-    if not WHEEL_VERSION_SUFFIX and not BUILD_TAG:
+    if not WHEEL_VERSION_SUFFIX:
         env["JAX_RELEASE"] = "1"
 
     cpu = ctx.attr.cpu
     no_abi = ctx.attr.no_abi
     platform_independent = ctx.attr.platform_independent
+    build_wheel_only = ctx.attr.build_wheel_only
+    editable = ctx.attr.editable
     platform_name = ctx.attr.platform_name
-    wheel_name = _get_full_wheel_name(
-        package_name = ctx.attr.wheel_name,
-        no_abi = no_abi,
-        platform_independent = platform_independent,
-        platform_name = platform_name,
-        cpu_name = cpu,
-        wheel_version = full_wheel_version,
-    )
-    output_file = ctx.actions.declare_file(output_path +
-                                           "/" + wheel_name)
-    wheel_dir = output_file.path[:output_file.path.rfind("/")]
+    if editable:
+        output_dir = ctx.actions.declare_directory(output_path + "/" + ctx.attr.wheel_name)
+        wheel_dir = output_dir.path
+        outputs = [output_dir]
+        args.add("--editable")
+    else:
+        wheel_name = _get_full_wheel_name(
+            package_name = ctx.attr.wheel_name,
+            no_abi = no_abi,
+            platform_independent = platform_independent,
+            platform_name = platform_name,
+            cpu_name = cpu,
+            wheel_version = full_wheel_version,
+        )
+        wheel_file = ctx.actions.declare_file(output_path +
+                                              "/" + wheel_name)
+        wheel_dir = wheel_file.path[:wheel_file.path.rfind("/")]
+        outputs = [wheel_file]
+        if not build_wheel_only:
+            source_distribution_name = _get_source_distribution_name(
+                package_name = ctx.attr.wheel_name,
+                wheel_version = full_wheel_version,
+            )
+            source_distribution_file = ctx.actions.declare_file(output_path +
+                                                                "/" + source_distribution_name)
+            outputs.append(source_distribution_file)
 
     args.add("--output_path", wheel_dir)  # required argument
     if not platform_independent:
@@ -410,13 +430,13 @@ def _jax_wheel_impl(ctx):
     ctx.actions.run(
         arguments = [args],
         inputs = srcs,
-        outputs = [output_file],
+        outputs = outputs,
         executable = executable,
         env = env,
         mnemonic = "BuildJaxWheel",
     )
 
-    return [DefaultInfo(files = depset(direct = [output_file]))]
+    return [DefaultInfo(files = depset(direct = outputs))]
 
 _jax_wheel = rule(
     attrs = {
@@ -429,6 +449,8 @@ _jax_wheel = rule(
         "wheel_name": attr.string(mandatory = True),
         "no_abi": attr.bool(default = False),
         "platform_independent": attr.bool(default = False),
+        "build_wheel_only": attr.bool(default = True),
+        "editable": attr.bool(default = False),
         "cpu": attr.string(mandatory = True),
         "platform_name": attr.string(mandatory = True),
         "git_hash": attr.label(default = Label("//jaxlib/tools:jaxlib_git_hash")),
@@ -452,7 +474,10 @@ def jax_wheel(
         wheel_name,
         no_abi = False,
         platform_independent = False,
+        build_wheel_only = True,
+        editable = False,
         enable_cuda = False,
+        enable_rocm = False,
         platform_version = "",
         source_files = []):
     """Create jax artifact wheels.
@@ -464,8 +489,11 @@ def jax_wheel(
       wheel_binary: the binary to use to build the wheel
       wheel_name: the name of the wheel
       no_abi: whether to build a wheel without ABI
+      build_wheel_only: whether to build a wheel without source distribution
+      editable: whether to build an editable wheel
       platform_independent: whether to build a wheel without platform tag
       enable_cuda: whether to build a cuda wheel
+      enable_rocm: whether to build a rocm wheel
       platform_version: the cuda version to use for the wheel
       source_files: the source files to include in the wheel
 
@@ -478,7 +506,10 @@ def jax_wheel(
         wheel_name = wheel_name,
         no_abi = no_abi,
         platform_independent = platform_independent,
+        build_wheel_only = build_wheel_only,
+        editable = editable,
         enable_cuda = enable_cuda,
+        enable_rocm = enable_rocm,
         platform_version = platform_version,
         # git_hash is empty by default. Use `--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)`
         # flag in bazel command to pass the git hash for nightly or release builds.

@@ -120,8 +120,6 @@ class MagmaLinalgTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("gpu")
   def testPivotedQrFactorization(self, shape, dtype):
-    if jtu.jaxlib_version() <= (0, 5, 0):
-      self.skipTest("qr with `pivoting=True` on GPU requires jaxlib version > 0.5.0")
     if not gpu_solver.has_magma():
       self.skipTest("MAGMA is not installed or can't be loaded.")
     rng = jtu.rand_default(self.rng())
@@ -133,8 +131,6 @@ class MagmaLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(lax_func, args_maker)
 
   def testPivotedQrFactorizationMagmaConfig(self):
-    if jtu.jaxlib_version() <= (0, 5, 0):
-      self.skipTest("qr with `pivoting=True` on GPU requires jaxlib version > 0.5.0")
     if not gpu_solver.has_magma():
       self.skipTest("MAGMA is not installed or can't be loaded.")
     rng = jtu.rand_default(self.rng())

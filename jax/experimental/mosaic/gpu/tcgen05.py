@@ -108,78 +108,59 @@ def mma(
     raise NotImplementedError(f"{a_swizzle=} != {b_swizzle=}")
   if isinstance(accumulate, bool):
     accumulate = arith.constant(ir.IntegerType.get_signless(1), accumulate)
-  num_cta = 2 if collective else 1
+
+  m_group_size = d.layout.elements_in_tile[0]
+  if m_group_size != 128:
+    raise NotImplementedError("Only 128-row accumulators supported for now")
 
   (
       a_desc_base,
       b_desc_base,
       (m, k, n),
-      (m_mem_tiling, kn_mem_tiling),
-      element_type,
+      (m_groups, k_groups, n_groups),
+      (a_m_group_stride, a_k_group_stride, b_k_group_stride, b_n_group_stride),
       mma_params,
-      a_k_byte_stride,
-      b_k_byte_stride,
   ) = _wgmma._validate_mma(
       a,
       b,
       a_swizzle,
-      _wgmma.WGMMALayout.ROW_MAJOR,
-      _wgmma.WGMMALayout.COL_MAJOR,
+      m_group_size=m_group_size,
       descriptor_const_init=TCGEN05_SMEM_DESCRIPTOR_BIT,
   )
-
-  # The sizes of instruction we'll be using
-  k_instr_tiling = kn_mem_tiling
-  if (m_instr_tiling := d.layout.elements_in_tile[0]) != m_mem_tiling:
-    raise ValueError(
-        f"A's row tiling must be equal to {m_instr_tiling} (inferred from"
-        f" accumulator's TMEM layout), got: {m_mem_tiling}"
+  n_group_size = n // n_groups
+  if n > 512:
+    raise ValueError(f"N is too big: at most 512 is supported, but got {n}")
+  num_cta = 2 if collective else 1
+  if num_cta == 2 and n > 256:
+    raise NotImplementedError(
+        "N is too big for collective MMA. Only up to 256 is supported."
     )
-  if n * num_cta <= 256:
-    n_instr_tiling = n
-  elif n * num_cta == 512:
-    if collective:
-      raise NotImplementedError("Collective MMA with effective N=512 is unsupported")
-    n_instr_tiling = 256
-  else:
-    raise NotImplementedError("The only supported N larger than 256 is 512")
-
-  a_strides, _ = ir.MemRefType(a.type).get_strides_and_offset()
-  a_m_byte_stride = a_strides[0] * utils.bytewidth(element_type)
-  b_strides, _ = ir.MemRefType(b.type).get_strides_and_offset()
-  b_n_byte_stride = b_strides[1] * utils.bytewidth(element_type)
-
-  groups_k = k // k_instr_tiling
-  groups_m = m // m_instr_tiling
-  groups_n = n // n_instr_tiling
-  n_mem_tiles_per_instr = n_instr_tiling // kn_mem_tiling
 
   # TODO(apaszke): Verify that the cluster shape matches the expectation of
   # collective MMA.
-  expected_acc_shape = (m, n * (2 if collective else 1))
+  expected_acc_shape = (m, n * num_cta)
   if d.shape != expected_acc_shape:
     raise ValueError(
         f"Accumulator shape mismatch: expected {expected_acc_shape}, got {d.shape}"
     )
 
   true = arith.constant(ir.IntegerType.get_signless(1), 1)
-  for mi, ni, ki in np.ndindex(groups_m, groups_n, groups_k):
-    a_offset = mi * a_m_byte_stride + ki * a_k_byte_stride
+  for mi, ni, ki in np.ndindex(m_groups, n_groups, k_groups):
+    a_offset = mi * a_m_group_stride + ki * a_k_group_stride
     a_mk = arith.addi(a_desc_base, utils.c(_wgmma.wgmma_encode(a_offset), i64))
-    b_offset = ni * n_mem_tiles_per_instr * b_n_byte_stride + ki * b_k_byte_stride
+    b_offset = ni * b_n_group_stride + ki * b_k_group_stride
     b_nk = arith.addi(b_desc_base, utils.c(_wgmma.wgmma_encode(b_offset), i64))
-    if groups_m != 1:
+    if m_groups != 1:
       raise NotImplementedError("D needs to be sliced")
     acc = accumulate if ki == 0 else true
     _do_mma(
         d.slice(
-            slice(None), utils.ds(ni * n_instr_tiling, n_instr_tiling)
+            slice(None), utils.ds(ni * n_group_size, n_group_size)
         ).address,
         a_mk,
         b_nk,
         d_type=ir.F32Type.get(),
-        m=m_instr_tiling,
-        n=n_instr_tiling,
+        m=m_group_size,
         collective=collective,
         **mma_params,
         accumulate=acc,

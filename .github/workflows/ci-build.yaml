@@ -80,7 +80,7 @@ jobs:
         JAX_SKIP_SLOW_TESTS: true
         PY_COLORS: 1
       run: |
-        pip install -e .
+        uv pip install --system -e .
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
         echo "JAX_ENABLE_CUSTOM_PRNG=$JAX_ENABLE_CUSTOM_PRNG"
@@ -171,7 +171,7 @@ jobs:
         JAX_SKIP_SLOW_TESTS: true
         PY_COLORS: 1
       run: |
-        pip install -e .
+        uv pip install --system -e .
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
         echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"

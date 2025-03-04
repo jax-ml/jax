@@ -37,8 +37,6 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
     super().setUp()
     if jtu.test_device_matches(['cpu']):
       self.skipTest('ragged-all-to-all is not supported on CPU')
-    if jtu.jaxlib_version() < (0, 5, 1):
-      self.skipTest('ragged-all-to-all is not supported on jaxlib version < 0.5.1')
 
   @parameterized.named_parameters(
       dict(

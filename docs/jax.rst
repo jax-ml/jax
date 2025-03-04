@@ -80,6 +80,7 @@ Just-in-time compilation (:code:`jit`)
     named_call
     named_scope
     block_until_ready
+    copy_to_host_async
     make_mesh
 
 .. _jax-grad:

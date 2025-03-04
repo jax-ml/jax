@@ -14,6 +14,8 @@
 
 load(
     "//jaxlib:jax.bzl",
+    "jax_generate_backend_suites",
+    "jax_multiplatform_test",
     "py_deps",
     "pytype_library",
 )
@@ -24,6 +26,8 @@ package(
     default_applicable_licenses = [],
 )
 
+jax_generate_backend_suites()
+
 pytype_library(
     name = "serialization",
     srcs = [
@@ -31,11 +35,20 @@ pytype_library(
         "serialization.py",
     ],
     visibility = ["//visibility:public"],
-    deps = [
-        "//jax",
-    ] + py_deps([
+    deps = ["//jax"] + py_deps([
         "numpy",
-        "tensorstore",
         "absl/logging",
     ]),
+)
+
+jax_multiplatform_test(
+    name = "serialization_test",
+    srcs = ["serialization_test.py"],
+    enable_configs = [
+        "tpu_v3_2x2",
+    ],
+    deps = [
+        "//jax:experimental",
+        "//jax/experimental/array_serialization:serialization",
+    ],
 )

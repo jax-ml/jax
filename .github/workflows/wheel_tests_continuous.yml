@@ -33,7 +33,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
             # Runner OS and Python values need to match the matrix stategy in the CPU tests job
-            runner: ["linux-x86-n2-16", "linux-arm64-t2a-48", "windows-x86-n2-16"]
+            runner: ["linux-x86-n2-16", "linux-arm64-t2a-48", "windows-x86-n2-64"]
             artifact: ["jaxlib"]
             python: ["3.10"]
     with:
@@ -65,7 +65,7 @@ jobs:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     needs: build-jaxlib-artifact
     uses: ./.github/workflows/pytest_cpu.yml
     strategy:
@@ -87,7 +87,7 @@ jobs:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     needs: [build-jaxlib-artifact, build-cuda-artifacts]
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
@@ -119,7 +119,7 @@ jobs:
     # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     needs: [build-jaxlib-artifact, build-cuda-artifacts]
     uses: ./.github/workflows/bazel_cuda_non_rbe.yml
     strategy:

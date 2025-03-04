@@ -26,7 +26,6 @@ from jax import lax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.layout import DeviceLocalLayout as DLL, Layout
-from jax._src.lib import xla_extension_version
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.numpy as jnp
@@ -607,7 +606,6 @@ class DevicePutTest(jtu.JaxTestCase):
         out_host, np_inp * 2, s_host, 'pinned_host')
 
   def test_output_streaming_inside_scan(self):
-    self.skipTest("b/393371838")
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
       self.skipTest("This test requires an xla_version >= 2.")
     mesh = jtu.create_mesh((1, 1, 2), ("x", "y", "z"))
@@ -1664,8 +1662,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 class StreamAnnotationTest(jtu.JaxTestCase):
 
   def test_stream_annotation_inside_shmap(self):
-    if xla_extension_version < 313:
-      self.skipTest("Requires xla_extension_version >= 313")
     if not jtu.test_device_matches(["gpu"]):
       self.skipTest("Stream annotation is only supported on GPU.")
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))

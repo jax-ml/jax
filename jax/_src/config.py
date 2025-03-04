@@ -243,7 +243,8 @@ def trace_context():
           hlo_source_file_canonicalization_regex.value,
           pgle_profiling_runs.value,
           enable_pgle.value,
-          use_shardy_partitioner.value)
+          use_shardy_partitioner.value,
+          use_high_dynamic_range_gumbel.value)
 
 config = Config()
 
@@ -1801,4 +1802,20 @@ num_cpu_devices = int_state(
         "Number of CPU devices to use. If not provided, the value of "
         "the XLA flag --xla_force_host_platform_device_count is used."
         " Must be set before JAX is initialized."),
+)
+
+enable_empty_arrays = bool_state(
+    name='jax_enable_empty_arrays',
+    default=False,
+    help=(
+        "Enable the creation of an Array from an empty list of single-device "
+        "arrays. This is to support MPMD/pipeline parallelism in McJAX (WIP)."
+    )
+)
+
+use_high_dynamic_range_gumbel = bool_state(
+    name='jax_high_dynamic_range_gumbel',
+    default=False,
+    help='If True, gumble noise draws two samples to cover low probability '
+         'events with more precision.',
 )

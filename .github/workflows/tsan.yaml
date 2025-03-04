@@ -199,7 +199,5 @@ jobs:
               --local_test_jobs=32 \
               --test_timeout=600 \
               --config=resultstore \
-              --spawn_strategy=local \
-              --remote_cache=remotebuildexecution.googleapis.com \
-              --remote_instance_name=projects/tensorflow-testing/instances/default_instance \
+              --config=rbe_cache \
               //tests:cpu_tests

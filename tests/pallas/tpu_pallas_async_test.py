@@ -280,6 +280,8 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
       y = copy_done(x, fut)
       return y
 
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest('TPU v5+ required for async copy into VMEM')
     x = jax.random.normal(jax.random.key(0), (8, 128), dtype=jnp.float32)
     y = f(x)
     np.testing.assert_array_equal(y, x)
@@ -294,6 +296,8 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
       y2 = copy_done(x2, fut2)
       return y, y2
 
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest('TPU v5+ required for async copy into VMEM')
     x = jax.random.normal(jax.random.key(0), (8, 128), dtype=jnp.float32)
     y, y2 = f(x)
     np.testing.assert_array_equal(y, x)
@@ -610,7 +614,7 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
   def setUp(self):
     super().setUp()
     if not jtu.is_device_tpu_at_least(4):
-      self.skipTest('DMAs only guaranteed to work ou TPU v4+')
+      self.skipTest('DMAs only guaranteed to work on TPU v4+')
     if jax.device_count() < 2:
       self.skipTest('Test only works with >2 devices')
 
