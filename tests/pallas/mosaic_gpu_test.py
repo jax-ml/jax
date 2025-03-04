@@ -88,6 +88,7 @@ class PallasCallTest(PallasTest):
       ("square", lambda x: x ** 2),
       ("rsqrt", jax.lax.rsqrt),
       ("tanh", jax.lax.tanh, 1e-6),
+      ("log", jax.lax.log)
   )
   def test_unary_op(self, unary, rtol=1e-7):
     @functools.partial(
@@ -641,18 +642,25 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + x.sum()*2)
 
-  @parameterized.parameters(False, True)
-  def test_rsqrt(self, approx_math):
+  @parameterized.named_parameters(
+      ("rsqrt", jax.lax.rsqrt, ),
+      ("log", jax.lax.log, 5e-7),
+      ("exp", jax.lax.exp, ),
+      ("exp2", jax.lax.exp2, 5e-7),
+      ("logistic", jax.lax.logistic, ),
+      ("tanh", jax.lax.tanh, 5e-7),
+  )
+  def test_approx_math_unary_op(self, unary_op, rtol=1e-7):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
-        compiler_params=plgpu.GPUCompilerParams(approx_math=approx_math),
+        compiler_params=plgpu.GPUCompilerParams(approx_math=True),
     )
     def kernel(x_ref, o_ref):
-      o_ref[...] = jax.lax.rsqrt(x_ref[...])
+      o_ref[...] = unary_op(x_ref[...])
 
-    x = jnp.arange(128).astype(jnp.float32)
-    np.testing.assert_allclose(kernel(x), jax.lax.rsqrt(x))
+    x = jnp.arange(128).astype(jnp.float32) / 128
+    np.testing.assert_allclose(kernel(x), unary_op(x), rtol=rtol, atol=1e-5)
 
   @parameterized.product(input_factor=[0.001, 1, 10, 100, 100])
   def test_layer_norm(self, input_factor):

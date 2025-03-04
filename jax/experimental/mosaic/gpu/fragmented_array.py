@@ -966,6 +966,24 @@ class FragmentedArray:
       return self._pointwise(self._lift_fast_instr("ex2.approx.ftz.f32"))
     return self._pointwise(mlir_math.exp2)
 
+  def log(self, *, approx: bool = False):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+    if approx:
+      dtype = self.mlir_dtype
+      ln2 = arith.constant(dtype, ir.FloatAttr.get(dtype, 0.6931471805599453))
+      return self.log2(approx=True) * ln2
+    return self._pointwise(mlir_math.log)
+
+  def log2(self, *, approx: bool = False):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError(self.mlir_dtype)
+    if approx:
+      if not ir.F32Type.isinstance(self.mlir_dtype):
+        raise NotImplementedError(self.mlir_dtype)
+      return self._pointwise(self._lift_fast_instr("lg2.approx.ftz.f32"))
+    return self._pointwise(mlir_math.log2)
+
   def sin(self, *, approx: bool = False):
     if not ir.FloatType.isinstance(self.mlir_dtype):
       raise NotImplementedError

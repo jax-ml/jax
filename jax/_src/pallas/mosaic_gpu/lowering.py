@@ -1386,6 +1386,13 @@ def _exp2_lowering_rule(ctx: LoweringRuleContext, x):
   return a.exp2(approx=ctx.module_ctx.approx_math)
 
 
+@register_lowering_rule(lax.log_p, mgpu.ThreadSemantics.Lane)
+def _log_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  a = _ensure_fa(x, x_aval.dtype)
+  return a.log(approx=ctx.module_ctx.approx_math)
+
+
 @register_lowering_rule(lax.reduce_sum_p, mgpu.ThreadSemantics.Lane)
 def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
   [x_aval] = ctx.avals_in
