@@ -8104,6 +8104,29 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(
         api.jvp(f1, (x, y), (0.0, 1.0)), (f1(x, y), -0.5 * jnp.sin(y)))
 
+  def test_resolve_kwargs_error_message(self):
+    @jax.custom_jvp
+    def f(x, y, *, z=None):
+      return jnp.sin(x), x + jnp.cos(y)
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      self.fail("should not be executed")
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"The input arguments to the custom_jvp-decorated function f(.*)\n"
+        r"missing a required argument: 'y'"
+    ):
+      f(0.5)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"The input arguments to the custom_jvp-decorated function f(.*)\n"
+        "The following keyword arguments could not be resolved to positions: z"
+    ):
+      f(0.5, 0.1, z=1.0)
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
@@ -9762,6 +9785,33 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(
         api.grad(f1, argnums=(0, 1))(x, y), (1.5, -0.5 * jnp.sin(y)))
 
+  def test_resolve_kwargs_error_message(self):
+    @jax.custom_vjp
+    def f(x, y, *, z=None):
+      return jnp.sin(x), x + jnp.cos(y)
+
+    def f_fwd(x, y):
+      self.fail("should not be executed")
+
+    def f_bwd(res, cts):
+      self.fail("should not be executed")
+
+    f.defvjp(f_fwd, f_bwd)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"The input arguments to the custom_vjp-decorated function f(.*)\n"
+        r"missing a required argument: 'y'"
+    ):
+      f(0.5)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"The input arguments to the custom_vjp-decorated function f(.*)\n"
+        "The following keyword arguments could not be resolved to positions: z"
+    ):
+      f(0.5, 0.1, z=1.0)
+
 
 def transpose_unary(f, x_example):
   def transposed(y):
@@ -10490,6 +10540,29 @@ class CustomDceTest(jtu.JaxTestCase):
     self.assertAllClose(jax.jit(lambda x: f(x)[0])(x), expected[0])
     self.assertAllClose(jax.jit(lambda x: f(x)[1])(x), expected[1])
 
+  def test_resolve_kwargs_error_message(self):
+    @jax.experimental.custom_dce.custom_dce
+    def f(x, y, *, z=None):
+      return jnp.sin(x) * y, x * jnp.sin(y)
+
+    @f.def_dce
+    def f_dce_rule(used_outs, x, y):
+      self.fail("should not be executed")
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"The input arguments to the custom_dce-decorated function f(.*)\n"
+        r"missing a required argument: 'y'"
+    ):
+      f(0.5)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"The input arguments to the custom_dce-decorated function f(.*)\n"
+        "The following keyword arguments could not be resolved to positions: z"
+    ):
+      f(0.5, 0.1, z=1.0)
+
 
 class CustomVmapTest(jtu.JaxTestCase):
 
@@ -11114,6 +11187,29 @@ class CustomVmapTest(jtu.JaxTestCase):
     f = jax.vmap(jax.jit(fun), in_axes=(0, None))
     out, f_vjp = jax.vjp(f, xs, y)
     f_vjp(out)  # Doesn't crash.
+
+  def test_resolve_kwargs_error_message(self):
+    @jax.custom_batching.custom_vmap
+    def f(x, y, *, z=None):
+      return jnp.sin(x) * y
+
+    @f.def_vmap
+    def f_vmap_rule(axis_size, in_batched, xs, ys):
+      self.fail("should not be executed")
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"The input arguments to the custom_vmap-decorated function f(.*)\n"
+        r"missing a required argument: 'y'"
+    ):
+      f(0.5)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"The input arguments to the custom_vmap-decorated function f(.*)\n"
+        "The following keyword arguments could not be resolved to positions: z"
+    ):
+      f(0.5, 0.1, z=1.0)
 
 
 class CustomApiTest(jtu.JaxTestCase):
