@@ -17,6 +17,11 @@ on:
         required: true
         default: 'gs://jax-nightly-release-transient/nightly/latest'
         type: string
+      test-jax-only-release:
+        description: "Whether to run the tests for a jax only release (1 to enable, 0 to disable)"
+        required: true
+        default: '0'
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -43,6 +48,7 @@ jobs:
       # Don't install "jax" at head. Instead install the nightly/release "jax" wheels found in the
       # GCS bucket.
       install-jax-current-commit: 0
+      test-jax-only-release: ${{inputs.test-jax-only-release}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
 
   run-pytest-cuda:
@@ -64,4 +70,5 @@ jobs:
       # Don't install "jax" at head. Instead install the nightly/release "jax" wheels found in the
       # GCS bucket.
       install-jax-current-commit: 0
+      test-jax-only-release: ${{inputs.test-jax-only-release}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}

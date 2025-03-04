@@ -34,6 +34,11 @@ on:
         type: string
         required: true
         default: "1"
+      test-jax-only-release:
+        description: "Whether to run the tests for a jax only release (1 to enable, 0 to disable)"
+        required: false
+        default: '0'
+        type: string
       gcs_download_uri:
         description: "GCS location prefix from where the artifacts should be downloaded"
         required: true
@@ -63,6 +68,7 @@ jobs:
       JAXCI_PYTHON: "python${{ inputs.python }}"
       JAXCI_ENABLE_X64: "${{ inputs.enable-x64 }}"
       JAXCI_INSTALL_JAX_CURRENT_COMMIT: "${{ inputs.install-jax-current-commit }}"
+      JAXCI_TEST_JAX_ONLY_RELEASE: "${{ inputs.test-jax-only-release }}"
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -96,8 +102,11 @@ jobs:
         continue-on-error: true
         if: ${{ !contains(inputs.runner, 'windows-x86') }}
         run: |
-          mkdir -p $(pwd)/dist &&
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+          mkdir -p $(pwd)/dist
+          # Do not download the jaxlib artifacts if we are testing a jax only release.
+          if [[ "${{ inputs.test-jax-only-release }}" != "1" ]]; then
+            gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+          fi
 
           # Download the "jax" wheel from GCS if inputs.install-jax-current-commit is not set to 1
           if [[ "${{ inputs.install-jax-current-commit }}" != 1 ]]; then
@@ -115,7 +124,10 @@ jobs:
           mkdir dist
           @REM Use `call` so that we can run sequential gsutil commands on Windows
           @REM See https://github.com/GoogleCloudPlatform/gsutil/issues/233#issuecomment-196150652
-          call gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
+          @REM Do not download the jaxlib artifacts if we are testing a jax only release.
+          if not "${{ inputs.test-jax-only-release }}"=="1" (
+            call gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
+          )
 
           @REM Download the "jax" wheel from GCS if inputs.install-jax-current-commit is not set to 1
           if not "${{ inputs.install-jax-current-commit }}"=="1" (
