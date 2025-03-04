@@ -31,7 +31,6 @@ from jax._src import util as jax_util
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as primitives
 from jax._src.pallas.mosaic import core as tpu_core
-from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax.experimental import pallas as pl
 from jax.extend.backend import get_default_device
 import jax.numpy as jnp
@@ -445,7 +444,7 @@ class BufferedRef:
     self.next_slot[0] = next_slot
     src_slice = self.get_dma_slice(src_ref.shape, src_ref.dtype, grid_indices)
     dst_slice = tuple(pl.ds(0, s.size) for s in src_slice)
-    tpu_primitives.make_async_copy(
+    primitives.make_async_copy(
         src_ref.at[src_slice],
         self.window_ref.at[next_slot].at[dst_slice],
         self.sem_recvs.at[next_slot],
@@ -459,7 +458,7 @@ class BufferedRef:
     self.next_slot[0] = lax.rem(slot + 1, 2)
     dst_slice = self.get_dma_slice(dst_ref.shape, dst_ref.dtype, grid_indices)
     src_slice = tuple(pl.ds(0, s.size) for s in dst_slice)
-    tpu_primitives.make_async_copy(
+    primitives.make_async_copy(
         self.window_ref.at[slot].at[src_slice],
         dst_ref.at[dst_slice],
         self.sem_sends.at[slot],
@@ -472,7 +471,7 @@ class BufferedRef:
     src_slice = self.get_dma_slice(src_ref.shape, src_ref.dtype, grid_indices)
     dst_slice = tuple(pl.ds(0, s.size) for s in src_slice)
     current_slot = self.current_slot[0]
-    tpu_primitives.make_async_copy(
+    primitives.make_async_copy(
         src_ref.at[src_slice],  # nb: doesn't matter
         self.window_ref.at[current_slot].at[
             dst_slice
@@ -487,7 +486,7 @@ class BufferedRef:
     prev_slot = lax.rem(self.current_slot[0] + 1, 2)
     dst_slice = self.get_dma_slice(dst_ref.shape, dst_ref.dtype, grid_indices)
     src_slice = tuple(pl.ds(0, s.size) for s in dst_slice)
-    tpu_primitives.make_async_copy(
+    primitives.make_async_copy(
         self.window_ref.at[prev_slot].at[src_slice],  # nb: doesn't matter
         dst_ref.at[dst_slice],  # only dst shape is important
         self.sem_sends.at[prev_slot],

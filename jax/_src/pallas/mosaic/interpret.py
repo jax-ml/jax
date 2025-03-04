@@ -580,9 +580,9 @@ def _device_coords_to_logical_id(device_coords, axis_sizes):
 def _device_id_to_logical(device_id, device_id_type, axis_sizes):
   if device_id is None:
     return None
-  if device_id_type == mosaic_primitives.DeviceIdType.MESH:
+  if device_id_type == primitives.DeviceIdType.MESH:
     return _device_coords_to_logical_id(device_id, axis_sizes)
-  elif device_id_type == mosaic_primitives.DeviceIdType.LOGICAL:
+  elif device_id_type == primitives.DeviceIdType.LOGICAL:
     return device_id
   else:
     raise ValueError(f'Unsupported device ID type: {device_id_type}')
@@ -765,7 +765,7 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
           None,
           ordered=True)
 
-    elif prim is mosaic_primitives.dma_start_p:
+    elif prim is primitives.dma_start_p:
       (src, src_transforms,
        dst, dst_transforms,
        dst_sem, dst_sem_transforms,
@@ -790,7 +790,7 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
           ordered=True)
       out = []
 
-    elif prim is mosaic_primitives.dma_wait_p:
+    elif prim is primitives.dma_wait_p:
       (src, src_transforms,
        dst, dst_transforms,
        dst_sem, dst_sem_transforms,
@@ -815,7 +815,7 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
           compiler_params['mosaic']['collective_id'],
           ordered=True)
 
-    elif prim is mosaic_primitives.semaphore_signal_p:
+    elif prim is primitives.semaphore_signal_p:
       sem, sem_transforms, inc, target_device_id, core_index = (
           jax.tree.unflatten(eqn.params['args_tree'], invals))
       target_device_id = _device_id_to_logical(
@@ -831,7 +831,7 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
           ordered=True)
       out = []
 
-    elif prim is mosaic_primitives.semaphore_wait_p:
+    elif prim is primitives.semaphore_wait_p:
       sem, sem_transforms, value = (
           jax.tree.unflatten(eqn.params['args_tree'], invals))
       callback.io_callback(
