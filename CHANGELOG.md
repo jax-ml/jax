@@ -54,6 +54,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     A downstream effect of this several other internal functions need debug
     info. This change does not affect public APIs.
     See https://github.com/jax-ml/jax/issues/26480 for more detail.
+  * In {func}`jax.numpy.ndim`, {func}`jax.numpy.shape`, and {func}`jax.numpy.size`,
+    non-arraylike inputs (such as lists, tuples, etc.) are now deprecated.
 
 * Bug fixes
   * TPU runtime startup and shutdown time should be significantly improved on

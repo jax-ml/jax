@@ -6140,6 +6140,42 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol,
                           check_dtypes=False)
 
+  @jtu.sample_product(
+      shape=all_shapes,
+      dtype=default_dtypes,
+      op=['ndim', 'shape', 'size'],
+  )
+  def testNdimShapeSize(self, shape, dtype, op):
+    rng = jtu.rand_default(self.rng())
+    jnp_op = getattr(jnp, op)
+    np_op = getattr(np, op)
+    x = rng(shape, dtype)
+    expected = np_op(x)
+    self.assertEqual(expected, jnp_op(x))  # np.ndarray or scalar input.
+    self.assertEqual(expected, jnp_op(jnp.asarray(x)))  # jax.Array input.
+    self.assertEqual(expected, jax.jit(jnp_op)(x))  # Traced input.
+
+  @jtu.sample_product(
+      shape=nonzerodim_shapes,
+      dtype=default_dtypes,
+  )
+  def testSizeAlongAxis(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    axis = self.rng().randint(-len(shape), len(shape))
+    np_op = partial(np.size, axis=axis)
+    jnp_op = partial(jnp.size, axis=axis)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+    self._CompileAndCheck(jnp_op, args_maker)
+
+  @jtu.sample_product(
+      op=[jnp.ndim, jnp.shape, jnp.size],
+  )
+  def testNdimShapeSizeNonArrayInput(self, op):
+    msg = f"{op.__name__} requires ndarray or scalar arguments"
+    with self.assertWarnsRegex(DeprecationWarning, msg):
+      op([1, 2, 3])
+
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
