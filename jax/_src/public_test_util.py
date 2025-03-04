@@ -21,6 +21,7 @@ from jax._src import dtypes as _dtypes
 from jax._src.tree_util import tree_map, tree_reduce
 
 import numpy as np
+import re
 
 
 # The only functions intended to be exported are these; they should be used via
@@ -365,3 +366,60 @@ def check_grads(f, args, order,
         _check_grads(f_vjp, args, order - 1, rev_msg)
 
   _check_grads(f, args, order)
+
+
+class XlaGpuFeatureTestCase:
+
+  def check_collective_matmul(self, hlo_content, expected_unrolled_ag, expected_unrolled_rs):
+    """
+    Verify correctness of collective matmul in the given HLO content.
+
+    Args:
+    hlo_content: The HLO file content as a string.
+    expected_unrolled_ag: Expected number of unrolled all-gather operations.
+    expected_unrolled_rs: Expected number of unrolled reduce-scatter operations.
+
+    Raises:
+    AssertionError: If the HLO content is not a string or if counts don't match expected values.
+    """
+    if not isinstance(hlo_content, str):
+      raise AssertionError("hlo_content should be string")
+
+    expected_unrolled_ag = int(expected_unrolled_ag)
+    expected_unrolled_rs = int(expected_unrolled_rs)
+
+    pattern_ag = r'^unrolled_windowed_dot_general_body_ag'
+    pattern_rs = r'^unrolled_windowed_dot_general_body_rs'
+
+    actual_unrolled_ag = len(re.findall(pattern_ag, hlo_content, re.MULTILINE))
+    actual_unrolled_rs = len(re.findall(pattern_rs, hlo_content, re.MULTILINE))
+
+    np.testing.assert_equal(
+        (actual_unrolled_ag, actual_unrolled_rs),
+        (expected_unrolled_ag, expected_unrolled_rs),
+        err_msg=f"Counts do not match expected values. Expected all-gather: {expected_unrolled_ag}, Actual all-gather: {actual_unrolled_ag}, Expected reduce-scatter: {expected_unrolled_rs}, Actual reduce-scatter: {actual_unrolled_rs}"
+    )
+
+  def check_fp8_gemm(self, hlo_content, expected_fp8_gemm):
+    """
+    Check the number of FP8 GEMM operations in the given HLO content.
+
+    Args:
+        hlo_content: The HLO file content as a string.
+        expected_fp8_gemm: The expected number of FP8 GEMM operations.
+
+    Raises:
+        AssertionError: If the HLO content is not a string, or if the actual count
+                        of FP8 GEMM operations doesn't match the expected count.
+    """
+    if not isinstance(hlo_content, str):
+      raise AssertionError("hlo_content should be string")
+
+    expected_fp8_gemm = int(expected_fp8_gemm)
+
+    pattern_fp8_gemm = r'__cublas\$lt\$matmul\$f8'
+
+    actual_fp8_gemm = len(re.findall(pattern_fp8_gemm, hlo_content, re.MULTILINE))
+
+    np.testing.assert_equal(actual_fp8_gemm, expected_fp8_gemm,
+        err_msg=f"Counts do not match expected values. Expected fp8gemm: {expected_fp8_gemm}, Actual fp8_gemm: {actual_fp8_gemm}")
