@@ -3044,6 +3044,12 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     leak()
     self.assertEqual(base, nbufs())
 
+  def test_cond_dedup_const_non_ref(self):
+    f = lambda x: jax.lax.cond(x > 0., lambda: x + 1., lambda: x + 2.)
+    jaxpr = jax.make_jaxpr(f)(1.0)
+
+    print(jaxpr)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

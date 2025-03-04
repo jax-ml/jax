@@ -32,6 +32,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
+from jax._src import state
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.state.discharge import register_partial_discharge_rule, discharge_state
@@ -281,6 +282,9 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   num_consts = len(consts)
   out_ = iter(out)
 
+  # TODO(dsuo): Now that we've de-duped non-ref consts, they are counted in_fwd. However, ops are operands only and don't include constants, so we get an out of index error.
+  # The "right" behavior might be to pass through constvars as well as invars.
+  # The current hack is just to not pass through constvars.
   out = [
     next(out_) if fwd is None else lax.asarray(ops[fwd - num_consts])
     for fwd in in_fwd
