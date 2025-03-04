@@ -670,10 +670,10 @@ def parse_indices(
 
 
 def commit_shared():
-  warpgroup_barrier()
   nvvm.fence_proxy(
       nvvm.ProxyKind.async_shared, space=nvvm.SharedSpace.shared_cta
   )
+  warpgroup_barrier()
 
 
 def warpgroup_barrier():
