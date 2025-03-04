@@ -14,6 +14,13 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
+## jax 0.5.2 (Mar 4, 2025)
+
+Patch release of 0.5.1
+
+* Bug fixes
+  * Fixes TPU metric logging and `tpu-info`, which was broken in 0.5.1
+
 ## jax 0.5.1 (Feb 24, 2025)
 
 * New Features

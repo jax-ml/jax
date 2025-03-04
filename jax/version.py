@@ -21,7 +21,7 @@ import os
 import pathlib
 import subprocess
 
-_version = "0.5.1"
+_version = "0.5.2"
 # The following line is overwritten by build scripts in distributions &
 # releases. Do not modify this manually, or jax/jaxlib build will fail.
 _release_version: str | None = None
