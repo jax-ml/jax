@@ -21,12 +21,26 @@ on:
   schedule:
     - cron: "0 */2 * * *" # Run once every 2 hours
   workflow_dispatch: # allows triggering the workflow run manually
+  # For testing, DO NOT SUBMIT
+  pull_request:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
 
 jobs:
+  build-jax-artifact:
+    uses: ./.github/workflows/build_artifacts.yml
+    with:
+        # jax is a pure python package so runner OS and Python values don't matter. In addition,
+        # cloning main XLA also has no effect.
+        runner: "linux-x86-n2-16"
+        artifact: "jax"
+        upload_artifacts_to_gcs: true
+        gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+
   build-jaxlib-artifact:
     uses: ./.github/workflows/build_artifacts.yml
     strategy:
@@ -66,7 +80,7 @@ jobs:
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
     if: ${{ !cancelled() }}
-    needs: build-jaxlib-artifact
+    needs: [build-jax-artifact, build-jaxlib-artifact]
     uses: ./.github/workflows/pytest_cpu.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -80,7 +94,6 @@ jobs:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
-      install-jax-current-commit: 1
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
   run-pytest-cuda:
@@ -88,7 +101,7 @@ jobs:
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
     if: ${{ !cancelled() }}
-    needs: [build-jaxlib-artifact, build-cuda-artifacts]
+    needs: [build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
     uses: ./.github/workflows/pytest_cuda.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -111,7 +124,6 @@ jobs:
       python: ${{ matrix.python }}
       cuda:  ${{ matrix.cuda }}
       enable-x64:  ${{ matrix.enable-x64 }}
-      install-jax-current-commit: 1
       # GCS upload URI is the same for both artifact build jobs
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
