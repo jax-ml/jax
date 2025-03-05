@@ -44,29 +44,33 @@ class Dim(enum.Enum):
 def create_descriptor(
     ref: ir.Value,
     swizzle: int,
-    large_tile: tuple[int, int],  # Soft deprecated. Use small tiling instead.
     group_size: tuple[int, int],  # Instruction group size on each operand dim.
     logical_k_major: bool,  # False for LHS, True for RHS.
+    # Soft deprecated. Use small tiling instead.
+    large_tile: tuple[int, int] | None = None,
 ):
   ref_ty = ir.MemRefType(ref.type)
   element_bytewidth = utils.bytewidth(ref_ty.element_type)
   swizzle_elems = swizzle // element_bytewidth
   ref_strides, _ = ref_ty.get_strides_and_offset()
   ref_byte_strides = [s * element_bytewidth for s in ref_strides]
+  mn_large_tile = k_large_tile = None
   if logical_k_major:
     _, mn_tiles, k_tiling, mn_tiling = ref_ty.shape
     k_tile_stride, mn_tile_stride, k_tiling_stride, mn_tiling_stride = (
         ref_byte_strides
     )
-    k_large_tile, mn_large_tile = large_tile
     k_group_size, mn_group_size = group_size
+    if large_tile is not None:
+      k_large_tile, mn_large_tile = large_tile
   else:
     mn_tiles, _, mn_tiling, k_tiling = ref_ty.shape
     mn_tile_stride, k_tile_stride, mn_tiling_stride, k_tiling_stride = (
         ref_byte_strides
     )
-    mn_large_tile, k_large_tile = large_tile
     mn_group_size, k_group_size = group_size
+    if large_tile is not None:
+      mn_large_tile, k_large_tile = large_tile
 
   IGNORED = 0
   MMA_ATOM_ROWS = 8
@@ -83,7 +87,8 @@ def create_descriptor(
   # the same coordinate along that dim. The slower dimension is called a
   # "stride" dimension.
   if (
-      k_large_tile == k_tiling
+      large_tile is not None
+      and k_large_tile == k_tiling
       and (mn_large_tile == mn_tiling or mn_tiles == 1 and mn_tiling < mn_large_tile)
       # There are configurations where large tiles are same size as small ones.
       # We use the small path since it has fewer restrictions.

@@ -911,7 +911,7 @@ class TCGen05Test(TestCase):
       self.skipTest("Only works on GPU with capability sm_100a or sm_101a")
 
   @parameterized.product(
-      lhs_transpose=(False,),  # TODO(apaszke): True
+      lhs_transpose=(False, True),
       rhs_transpose=(False, True),
       in_jax_dtype=(jnp.float16, jnp.bfloat16),  # TODO(apaszke): f32
       out_jax_dtype=(jnp.float32,),  # TODO(apaszke): f16 accumulation
@@ -919,8 +919,8 @@ class TCGen05Test(TestCase):
       n=(64, 128, 256, 512),  # TODO(apaszke): 192, other non-power-of-2
       k_steps=(1, 2),
       swizzle=(32, 64, 128,),
-      rhs_tiling_kind=("large", "small", "small+no_transpose"),
-      lhs_tiling_kind=("large", "small", "small+no_transpose"),
+      rhs_transpose_tiles=(False, True),
+      lhs_transpose_tiles=(False, True),
   )
   def test_mma_basic(
       self,
@@ -932,32 +932,24 @@ class TCGen05Test(TestCase):
       rhs_transpose,
       in_jax_dtype,
       out_jax_dtype,
-      rhs_tiling_kind,
-      lhs_tiling_kind,
+      rhs_transpose_tiles,
+      lhs_transpose_tiles,
   ):
     if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
       self.skipTest("Only f16 input is supported for f16 output.")
 
     in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
-    m_tile = 128
-    nk_tile = swizzle // bytewidth(in_mlir_dtype)
-    k = nk_tile * k_steps
-    assert m % m_tile == 0 and n % nk_tile == 0
-
-    small_rhs_tile = rhs_tiling_kind != "large"
-    transpose_rhs_tiles = rhs_tiling_kind != "small+no_transpose"
-    rhs_tiling = (8, nk_tile) if small_rhs_tile else (nk_tile, nk_tile)
-    small_lhs_tile = lhs_tiling_kind != "large"
-    transpose_lhs_tiles = lhs_tiling_kind != "small+no_transpose"
-    lhs_tiling = (8, nk_tile) if small_lhs_tile else (128, nk_tile)
+    swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
+    k = swizzle_elems * k_steps
+    lhs_tiling = rhs_tiling = (8, swizzle_elems)
 
     def kernel(ctx, lhs, rhs, out, scratch):
       lhs_smem, rhs_smem, barriers, acc = scratch
       lhs_transform = (mgpu.TileTransform(lhs_tiling),)
-      if lhs_transpose and transpose_lhs_tiles:
+      if lhs_transpose_tiles:
         lhs_transform += (mgpu.TransposeTransform((1, 0, 2, 3)),)
       rhs_transform = (mgpu.TileTransform(rhs_tiling),)
-      if rhs_transpose and transpose_rhs_tiles:
+      if rhs_transpose_tiles:
         rhs_transform += (mgpu.TransposeTransform((1, 0, 2, 3)),)
       ctx.async_copy(
           src_ref=lhs,
@@ -976,12 +968,14 @@ class TCGen05Test(TestCase):
       barriers[0].wait()
       barriers[1].wait()
       with mgpu.single_thread():
+        if lhs_transpose_tiles:
+          lhs_smem = memref_transpose(lhs_smem, (1, 0, 2, 3))
         if lhs_transpose:
-          perm = (0, 1, 3, 2) if transpose_lhs_tiles else (1, 0, 3, 2)
-          lhs_smem = memref_transpose(lhs_smem, perm)
+          lhs_smem = memref_transpose(lhs_smem, (1, 0, 3, 2))
+        if rhs_transpose_tiles:
+          rhs_smem = memref_transpose(rhs_smem, (1, 0, 2, 3))
         if rhs_transpose:
-          perm = (0, 1, 3, 2) if transpose_rhs_tiles else (1, 0, 3, 2)
-          rhs_smem = memref_transpose(rhs_smem, perm)
+          rhs_smem = memref_transpose(rhs_smem, (1, 0, 3, 2))
         tcgen05.mma(
             acc, lhs_smem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False,
         )
@@ -1000,14 +994,16 @@ class TCGen05Test(TestCase):
     y_shape = (n, k) if rhs_transpose else (k, n)
     y = quantize(self.prng.uniform(-1, 1, y_shape)).astype(in_jax_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
-    if transpose_rhs_tiles:
-      rhs_tiling_t = rhs_tiling[::-1] if rhs_transpose else rhs_tiling
-      rhs_smem_shape = (k // rhs_tiling_t[0], n // rhs_tiling_t[1], *rhs_tiling)
+    if rhs_transpose_tiles:
+      rhs_smem_shape = (
+          y_shape[1] // rhs_tiling[1], y_shape[0] // rhs_tiling[0], *rhs_tiling,
+      )
     else:
       rhs_smem_shape = tile_shape(y_shape, rhs_tiling)
-    if transpose_lhs_tiles:
-      lhs_tiling_t = lhs_tiling[::-1] if lhs_transpose else lhs_tiling
-      lhs_smem_shape = (m // lhs_tiling_t[0], k // lhs_tiling_t[1], *lhs_tiling)
+    if lhs_transpose_tiles:
+      lhs_smem_shape = (
+          x_shape[1] // lhs_tiling[1], x_shape[0] // lhs_tiling[0], *lhs_tiling,
+      )
     else:
       lhs_smem_shape = tile_shape(x_shape, lhs_tiling)
     scratch_shape = [
@@ -1025,15 +1021,14 @@ class TCGen05Test(TestCase):
     np.testing.assert_allclose(z, ref, atol=atol)
 
   @parameterized.product(
-      lhs_transpose=(False,),  # TODO(apaszke): True
-      rhs_transpose=(True,),
+      lhs_transpose=(False, True),
+      rhs_transpose=(False, True),
       in_jax_dtype=(jnp.float16,),  # TODO(apaszke): f32
       out_jax_dtype=(jnp.float32,),  # TODO(apaszke): f16 accumulation
       m=(256,),  # TODO(apaszke): 64, 192, 256
       n=(128, 256),  # TODO(apaszke): 512, 192, other non-power-of-2
       k_steps=(1, 2),
       swizzle=(32, 64, 128,),
-      small_rhs_tile=(False, True),
   )
   def test_mma_collective(
       self,
@@ -1045,42 +1040,27 @@ class TCGen05Test(TestCase):
       rhs_transpose,
       in_jax_dtype,
       out_jax_dtype,
-      small_rhs_tile,
   ):
     if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
       raise self.skipTest("Only f16 input is supported for f16 output.")
 
     in_mlir_dtype = utils.dtype_to_ir_type(in_jax_dtype)
     m_block_tile = m // 2
-    m_tma_tile = 128
     n_block_tile = n // 2
-    nk_tma_tile = swizzle // bytewidth(in_mlir_dtype)
-    k = nk_tma_tile * k_steps
-    assert m % m_tma_tile == 0 and n % nk_tma_tile == 0
+    swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
+    k = swizzle_elems * k_steps
     index = ir.IndexType.get()
 
-    small_nk_tile = 8 if rhs_transpose else 16
-    rhs_tiling = (
-        (small_nk_tile, nk_tma_tile)
-        if small_rhs_tile
-        else (nk_tma_tile, nk_tma_tile)
-    )
+    tiling = (8, swizzle_elems)
 
     def kernel(ctx, lhs, rhs, out, scratch):
       lhs_smem, rhs_smem, barriers, acc = scratch
-      lhs_transform = (mgpu.TileTransform((m_tma_tile, nk_tma_tile)),)
-      if lhs_transpose:
-        assert nk_tma_tile == m_tma_tile  # Make sure we didn't have to transpose tiling
-        lhs_transform += (mgpu.TransposeTransform((1, 0, 2, 3)),)
-      rhs_transform = (mgpu.TileTransform(rhs_tiling),)
-      if rhs_transpose:
-        rhs_transform += (mgpu.TransposeTransform((1, 0, 2, 3)),)
       block_id = gpu.cluster_block_id(gpu.Dimension.x)
       ctx.async_copy(
           src_ref=lhs,
           dst_ref=lhs_smem,
           swizzle=swizzle,
-          gmem_transform=lhs_transform,
+          gmem_transform=mgpu.TileTransform(tiling),
           barrier=barriers[0],
           collective=gpu.Dimension.x,
           partitioned=1 if lhs_transpose else 0,  # Split non-contracting dim.
@@ -1089,7 +1069,7 @@ class TCGen05Test(TestCase):
           src_ref=rhs,
           dst_ref=rhs_smem,
           swizzle=swizzle,
-          gmem_transform=rhs_transform,
+          gmem_transform=mgpu.TileTransform(tiling),
           barrier=barriers[1],
           collective=gpu.Dimension.x,
           partitioned=0 if rhs_transpose else 1,  # Split non-contracting dim.
@@ -1100,9 +1080,9 @@ class TCGen05Test(TestCase):
         barriers[0].wait()
         barriers[1].wait()
         if lhs_transpose:
-          lhs_smem = memref_transpose(lhs_smem, (0, 1, 3, 2))
+          lhs_smem = memref_transpose(lhs_smem, (1, 0, 3, 2))
         if rhs_transpose:
-          rhs_smem = memref_transpose(rhs_smem, (0, 1, 3, 2))
+          rhs_smem = memref_transpose(rhs_smem, (1, 0, 3, 2))
         tcgen05.mma(
             acc, lhs_smem, rhs_smem, a_swizzle=swizzle, b_swizzle=swizzle, accumulate=False, collective=True
         )
@@ -1118,20 +1098,15 @@ class TCGen05Test(TestCase):
       return jax.lax.reduce_precision(x, exponent_bits, mantissa_bits)
 
     x_shape = (k, m) if lhs_transpose else (m, k)
+    x_block_shape = (k, m_block_tile) if lhs_transpose else (m_block_tile, k)
     x = quantize(self.prng.uniform(-1, 1, x_shape)).astype(in_jax_dtype)
     y_shape = (n, k) if rhs_transpose else (k, n)
+    y_block_shape = (n_block_tile, k) if rhs_transpose else (k, n_block_tile)
     y = quantize(self.prng.uniform(-1, 1, y_shape)).astype(in_jax_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), out_jax_dtype)
-    rhs_tiling_t = rhs_tiling[::-1] if rhs_transpose else rhs_tiling
     scratch_shape = [
-        jax.ShapeDtypeStruct(
-            tile_shape((m_block_tile, k), (m_tma_tile, nk_tma_tile)),
-            in_jax_dtype,
-        ),
-        jax.ShapeDtypeStruct(
-            (k // rhs_tiling_t[0], n_block_tile // rhs_tiling_t[1], *rhs_tiling),
-            in_jax_dtype,
-        ),
+        jax.ShapeDtypeStruct(tile_shape(x_block_shape, tiling), in_jax_dtype),
+        jax.ShapeDtypeStruct(tile_shape(y_block_shape, tiling), in_jax_dtype),
         mgpu.TMABarrier(3),
         mgpu.TMEM((128, n), out_jax_dtype, collective=True),
     ]

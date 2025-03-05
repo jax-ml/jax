@@ -163,7 +163,6 @@ def mma(
   ) = mma_utils.create_descriptor(
       a,
       swizzle=swizzle,
-      large_tile=(m_group_elems, k_group_elems),
       group_size=(m_group_elems, k_group_elems),
       logical_k_major=False,
   )
@@ -174,7 +173,6 @@ def mma(
   ) = mma_utils.create_descriptor(
       b,
       swizzle=swizzle,
-      large_tile=(k_group_elems,) * 2,  # It's not a typo that we use k for n.
       group_size=(k_group_elems, n_group_elems),
       logical_k_major=True,
   )
