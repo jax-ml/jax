@@ -25,6 +25,7 @@ import enum
 import functools
 import io
 import os
+import re
 import time
 from typing import Any
 
@@ -73,10 +74,30 @@ tpu_custom_call_p.def_impl(
 tpu_custom_call_p.multiple_results = True
 
 
-def get_target_shape(hardware_generation: int) -> tuple[int, int]:
+def get_target_shape(hardware_generation: int, suffix: str) -> tuple[int, int]:
   """Returns the target shape for the given hardware generation."""
-  del hardware_generation
+  del hardware_generation, suffix
   return (8, 128)
+
+
+def tpu_generation_from_string(
+    device_kind: str,
+) -> tuple[int | None, str | None]:
+  """Returns the TPU generation and its suffix from a string.
+
+  For example, "TPU v5 lite" returns (5, "lite"), "TPU v4" returns (6, ""), and
+  "TPU v6e" returns (6, "e").
+
+  Args:
+    device_kind: The device kind string.
+
+  Returns:
+    A tuple of (generation, suffix).
+  """
+  match = re.search(r"TPU\s*v?(\d+)([^0-9]*)", device_kind)
+  if match:
+    return int(match.group(1)), match.group(2).strip()
+  return None, None
 
 
 class MemorySpace(enum.Enum):
@@ -468,13 +489,14 @@ def _lower_mosaic_module_to_asm(
       module_op = module.operation
       some_tpu = jax.devices(backend)[0]
       device_kind = some_tpu.device_kind
-      if not device_kind.startswith("TPU v"):
+      hardware_generation, suffix = tpu_generation_from_string(device_kind)
+      if not hardware_generation:
         raise ValueError(
             f"Unrecognized TPU device kind: {device_kind}. "
             "tpu_custom_call cannot be lowered on a machine without TPUs "
-            "when mosaic_use_python_pipeline=True.")
-      hardware_generation = int(device_kind[len("TPU v")])
-      target_shape = get_target_shape(hardware_generation)
+            "when mosaic_use_python_pipeline=True."
+        )
+      target_shape = get_target_shape(hardware_generation, suffix)
       module = _lower_tpu_kernel(
           module, hardware_generation, target_shape=target_shape, kernel_name=kernel_name,
       )
