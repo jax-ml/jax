@@ -6240,6 +6240,30 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out2 = core.jaxpr_as_fun(jaxpr)(arr)
     self.assertEqual(out2[0].sharding, NamedSharding(mesh, P('x', None)))
 
+  @jtu.with_user_mesh((4,), ('x',))
+  def test_concat_vmap(self, mesh):
+    @jax.jit
+    def _f(sharded_array, replicated_array):
+      def _single_array(a, b):
+        return jnp.concatenate([a, b], axis=-1)
+
+      _first_vmap = jax.vmap(_single_array, in_axes=(None, 0))
+      _second_vmap = jax.vmap(_first_vmap, in_axes=(0, None))
+      return jax.vmap(_second_vmap, in_axes=(0, None))(sharded_array, replicated_array)
+
+    np_inp = np.ones((4 * 4, 10, 5, 4))
+    arr1 = jax.device_put(np_inp, NamedSharding(mesh, P('x')))
+    arr2 = jax.device_put(
+        jnp.ones((10, 5, 3)), NamedSharding(mesh, P()))
+
+    out = _f(arr1, arr2)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P('x', None, None, None, None)))
+
+    out = _f(arr1, jnp.ones((10, 5, 3)))
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P('x', None, None, None, None)))
+
   @jtu.with_user_mesh((2, 2), ('x', 'y'),
                       axis_types={mesh_lib.AxisTypes.Auto: ('x', 'y')})
   def test_full_user_mode(self, mesh):

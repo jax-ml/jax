@@ -5802,8 +5802,12 @@ def _concatenate_transpose_rule(t, *operands, dimension):
 def _concatenate_batch_rule(batched_args, batch_dims, *, dimension):
   size = next(op.shape[bdim] for op, bdim in zip(batched_args, batch_dims)
               if bdim is not None)
+  spec = next(core.get_aval(op).sharding.spec[bdim]
+              for op, bdim in zip(batched_args, batch_dims) if bdim is not None)
   operands = [batching.moveaxis(op, bdim, 0) if bdim is not None
-              else broadcast(op, (size,))
+              else broadcast(
+                  op, (size,), out_sharding=core.get_aval(op).sharding.with_spec(
+                      (spec, *core.get_aval(op).sharding.spec)))
               for op, bdim in zip(batched_args, batch_dims)]
   return concatenate(operands, dimension + 1), 0
 
