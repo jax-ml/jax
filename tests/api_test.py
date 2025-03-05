@@ -9599,10 +9599,7 @@ class CustomVJPTest(jtu.JaxTestCase):
       return np.array([2.0])*x*x/np.array([1.0]), (x,)
 
     x = jnp.linspace(0, 5.0, 10)
-    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
-        fun, api_util.debug_info("custom_vjp fun", fun, (x,), {}),
-        fwd, api_util.debug_info("custom_vjp fwd", fwd, (x,), {}))
-
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
     self.assertAllClose(jax.jit(fwd)(x)[0], 2*x*x)  # Shouldn't hit custom DCE
     self.assertAllClose(jax.jit(lambda x: fwd(x)[0])(x), x)  # Should be DCEed
 
@@ -9612,9 +9609,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     def fwd(x):
       return (np.array([2.0])*x*x/np.array([1.0]))[0], (x,)
     x = jnp.linspace(0, 5.0, 10)
-    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
-        fun, api_util.debug_info("custom_vjp fun", fun, (x,), {}),
-        fwd, api_util.debug_info("custom_vjp fwd", fwd, (x,), {}))
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
     self.assertAllClose(jax.jit(jax.vmap(fwd))(x)[0], 2*x*x)
     self.assertAllClose(jax.jit(lambda x: jax.vmap(fwd)(x)[0])(x), x)
 
@@ -9625,9 +9620,7 @@ class CustomVJPTest(jtu.JaxTestCase):
       return x*x, (x,)
 
     x = jnp.linspace(0, 5.0, 10)
-    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
-        fun, api_util.debug_info("custom_vjp fun", fun, (x,), {}),
-        fwd, api_util.debug_info("custom_vjp fwd", fwd, (x,), {}))
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
 
     def g(x):
       return jax.lax.cond(True, fwd, lambda x: (2.0 * x, (x,)), x)
@@ -9641,9 +9634,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     def fwd_(x):
       return x*x, (x,)
 
-    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(
-        fun, api_util.debug_info("custom_vjp fun", fun, (3.2,), {}),
-        fwd_, api_util.debug_info("custom_vjp fwd", fwd_, (3.2,), {}))
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd_)
     calc = jax.jvp(fwd, (3.2,), (1.0,))
     expected = jax.jvp(fwd_, (3.2,), (1.0,))
     self.assertAllClose(calc, expected)
@@ -9739,6 +9730,55 @@ class CustomVJPTest(jtu.JaxTestCase):
     f.defvjp(f_fwd, f_bwd, optimize_remat=True)
     x, y = jnp.linspace(0.0, 1.0, 5), jnp.linspace(2.0, 5.0, 5)
     jax.jit(jax.vmap(jax.grad(f)))(x, y)  # Doesn't error
+
+  def test_optimize_remat_nondiff_argnums(self):
+    @partial(jax.custom_vjp, nondiff_argnums=(2,))
+    def f(x, y, fun):
+      return fun(x, y)
+
+    def f_fwd(x, y, fun):
+      del fun
+      return jnp.cos(x) * y, (jnp.cos(x), jnp.sin(x), y)
+
+    def f_bwd(fun, res, g):
+      del fun
+      cos_x, sin_x, y = res
+      return (cos_x * g * y, sin_x * g)
+
+    def fun(x, y):
+      return jnp.sin(x) * y
+
+    f.defvjp(f_fwd, f_bwd, optimize_remat=True)
+    x, y = 0.5, 0.1
+    res = jax.value_and_grad(lambda *args: f(*args, fun))(x, y)[0]
+    self.assertAllClose(res, f_fwd(x, y, fun)[0])
+    res = jax.jit(lambda *args: jax.value_and_grad(
+        lambda *args: f(*args, fun))(*args)[0])(x, y)
+    self.assertAllClose(res, fun(x, y))
+
+  def test_optimize_remat_incorrect_signature(self):
+    def f_(x, y):
+      return jnp.sin(x) * y
+
+    @jax.custom_vjp
+    def f(x, y):
+      return f_(x, y)
+
+    def wrong_signature(x, y, z):
+      self.fail("wrong_signature should not be called")
+
+    @functools.wraps(wrong_signature)
+    def f_fwd(x, y):
+      return f(x, y), (jnp.cos(x), jnp.sin(x), y)
+
+    def f_bwd(res, g):
+      cos_x, sin_x, y = res
+      return (cos_x * g * y, sin_x * g)
+
+    f.defvjp(f_fwd, f_bwd, optimize_remat=True)
+    x, y = 3.2, 1.0
+    self.assertAllClose(jax.grad(f)(x, y), jax.grad(f_)(x, y))
+
 
   def test_dce(self):
     @jax.custom_vjp
@@ -10468,20 +10508,20 @@ class CustomDceTest(jtu.JaxTestCase):
     self.assertAllClose(v, jnp.tan(3.2)**2)
 
   def test_static_argnums(self):
-    @partial(jax.experimental.custom_dce.custom_dce, static_argnums=(0,))
-    def g(f, x):
+    @partial(jax.experimental.custom_dce.custom_dce, static_argnums=(1,))
+    def g(x, f):
       return f(x), 10 * f(x)
 
     @g.def_dce
     def g_dce(f, used_outs, x):  # note: static_argnums are always passes first
       self.assertTrue(callable(f))
-      return [2 * v if used else None for used, v in zip(used_outs, g(f, x))]
+      return [2 * v if used else None for used, v in zip(used_outs, g(x, f))]
 
     x = 1.1234
     f = lambda x: jnp.exp(x)
-    expected = g(f, x)
-    self.assertAllClose(jax.jit(lambda x: g(f, x)[0])(x), 2 * expected[0])
-    self.assertAllClose(jax.jit(lambda x: g(f, x)[1])(x), 2 * expected[1])
+    expected = g(x, f)
+    self.assertAllClose(jax.jit(lambda x: g(x, f)[0])(x), 2 * expected[0])
+    self.assertAllClose(jax.jit(lambda x: g(x, f)[1])(x), 2 * expected[1])
 
   def test_shape_mismatch_error(self):
     @jax.experimental.custom_dce.custom_dce

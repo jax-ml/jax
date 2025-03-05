@@ -45,6 +45,7 @@ from jax._src import api
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
+from jax._src import custom_dce
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import linear_util as lu
@@ -3473,15 +3474,14 @@ def _custom_lin(*args: TfVal, **_) -> Sequence[TfVal]:
 tf_impl[ad.custom_lin_p] = _custom_lin
 
 
-def _remat_opt(*args: TfVal, num_consts: int, num_res: int,
-                    fwd_jaxpr: core.ClosedJaxpr,
-                    fun_jaxpr_thunk: Callable) -> Sequence[TfVal]:
-  del num_consts, num_res, fun_jaxpr_thunk
-  return _interpret_jaxpr(fwd_jaxpr, *args, extra_name_stack="remat_opt",
+def _custom_dce(*args: TfVal, num_consts: int, fun_jaxpr: core.ClosedJaxpr,
+                dce_jaxpr_thunk: Callable) -> Sequence[TfVal]:
+  del num_consts, dce_jaxpr_thunk
+  return _interpret_jaxpr(fun_jaxpr, *args, extra_name_stack="custom_dce_call",
                           fresh_constant_cache=False)
 
 
-tf_impl[custom_derivatives.remat_opt_p] = _remat_opt
+tf_impl[custom_dce.custom_dce_p] = _custom_dce
 
 
 PartitionsOrReplicated = Union[tuple[int, ...], None]
