@@ -19,11 +19,13 @@ contains only tests that do not use shard_map.
 """
 
 from absl.testing import absltest
+from absl.testing import parameterized
 
 import jax
 from jax._src import test_util as jtu
 import jax._src.pallas.mosaic.interpret as mosaic_interpret
 from jax.experimental import pallas as pl
+from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 
 import numpy as np
@@ -33,13 +35,14 @@ jax.config.parse_flags_with_absl()
 
 
 class InterpretTest(jtu.JaxTestCase):
+  def setUp(self):
+    super().setUp()
+    self.num_devices = jax.device_count()
+    if self.num_devices > 1:
+      # Workaround for https://github.com/jax-ml/jax/issues/25671
+      self.skipTest(f'requires 1 device, found {self.num_devices}')
 
   def test_matmul_example(self):
-    num_devices = jax.device_count()
-    if num_devices > 1:
-      # Workaround for https://github.com/jax-ml/jax/issues/25671
-      self.skipTest(f'requires 1 device, found {num_devices}')
-
     def matmul_kernel(x_ref, y_ref, z_ref):
       z_ref[...] = x_ref[...] @ y_ref[...]
 
@@ -66,11 +69,6 @@ class InterpretTest(jtu.JaxTestCase):
     np.testing.assert_allclose(z, x @ y, atol=1e-4)
 
   def test_dynamic_grid(self):
-    num_devices = jax.device_count()
-    if num_devices > 1:
-      # Workaround for https://github.com/jax-ml/jax/issues/25671
-      self.skipTest(f'requires 1 device, found {num_devices}')
-
     def kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...]
 
@@ -89,6 +87,48 @@ class InterpretTest(jtu.JaxTestCase):
     x = jnp.arange(32 * 128.).reshape((32, 128))
     y = f(x)
     np.testing.assert_allclose(y, x)
+
+  @parameterized.parameters('eager', 'on_wait')
+  def test_race_detection(self, dma_execution_mode):
+    def kernel_without_race(x_ref, o_ref, t_ref, sem):
+      copy = pltpu.make_async_copy(x_ref, t_ref, sem)
+      copy.start()
+      copy.wait()
+      o_ref[...] = t_ref[...] + 1.0
+
+    def kernel_with_race(x_ref, o_ref, t_ref, sem):
+      copy = pltpu.make_async_copy(x_ref, t_ref, sem)
+      copy.start()
+      # This read of t_ref races with the above DMA's write of t_ref.
+      o_ref[...] = t_ref[...] + 1.0
+      copy.wait()
+
+    x = jnp.zeros((8, 128), jnp.float32)
+    y = pl.pallas_call(kernel_without_race,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY)],
+        scratch_shapes=[
+            pltpu.VMEM(x.shape, x.dtype),
+            pltpu.SemaphoreType.DMA,
+        ],
+        interpret=mosaic_interpret.TPUInterpretParams(
+            detect_races=True, dma_execution_mode=dma_execution_mode),
+    )(x).block_until_ready()
+    self.assertFalse(mosaic_interpret.races.races_found)
+    np.testing.assert_allclose(y, x + 1.0)
+
+    pl.pallas_call(kernel_with_race,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY)],
+        scratch_shapes=[
+            pltpu.VMEM(x.shape, x.dtype),
+            pltpu.SemaphoreType.DMA,
+        ],
+        interpret=mosaic_interpret.TPUInterpretParams(
+            detect_races=True, dma_execution_mode=dma_execution_mode),
+    )(x).block_until_ready()
+    self.assertTrue(mosaic_interpret.races.races_found)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
