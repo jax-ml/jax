@@ -17,9 +17,22 @@
 # Install wheels stored in `JAXCI_OUTPUT_DIR` on the system using the Python
 # binary set in JAXCI_PYTHON. Use the absolute path to the `find` utility to
 # avoid using the Windows version of `find` on Msys.
-WHEELS=( $(/usr/bin/find "$JAXCI_OUTPUT_DIR/" -type f \(  -name "*jax*py3*" -o -name "*jaxlib*" -o -name "*jax*cuda*pjrt*" -o -name "*jax*cuda*plugin*" \)) )
 
-if [[ -z "$WHEELS" ]]; then
+# If testing a jax only release, only find and install the jax wheel.
+if [[ "$JAXCI_TEST_JAX_ONLY_RELEASE" == "1" ]]; then
+  WHEEL_SEARCH_PATTERN="-name "*jax*py3*any.whl""
+  # If running CUDA tests, append "[cuda]" to the wheel name to install the
+  # CUDA plugins.
+  if [[ "${BASH_SOURCE[1]}" =~ "*cuda*" ]]; then
+    WHEEL_SEARCH_PATTERN="${WHEEL_SEARCH_PATTERN} -printf "%p\[cuda\]\n""
+  fi
+else
+  WHEEL_SEARCH_PATTERN="-name "*jax*py3*any.whl" -o -name "*jaxlib*" -o -name "*jax*cuda*pjrt*" -o -name "*jax*cuda*plugin*""
+fi
+
+WHEELS=( $(/usr/bin/find "$JAXCI_OUTPUT_DIR/" -type f \( $WHEEL_SEARCH_PATTERN  \)) )
+
+if [[ -z "${WHEELS[@]}" ]]; then
   echo "ERROR: No wheels found under $JAXCI_OUTPUT_DIR"
   exit 1
 fi
