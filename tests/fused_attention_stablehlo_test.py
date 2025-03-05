@@ -14,7 +14,6 @@
 
 from functools import partial
 from absl.testing import absltest
-import os
 
 import numpy as np
 import jax
