@@ -661,6 +661,7 @@ class WGMMATest(TestCase):
       swizzle=(32, 64, 128),
       jax_out_dtype=(jnp.float16, jnp.float32),
       rhs_tiling_kind=("large", "small", "small+no_transpose"),
+      lhs_tiling_kind=("large", "small", "small+no_transpose"),
   )
   def test_wgmma_basic(
       self,
@@ -673,12 +674,15 @@ class WGMMATest(TestCase):
       swizzle,
       jax_out_dtype,
       rhs_tiling_kind,
+      lhs_tiling_kind,
   ):
     if jax_out_dtype == jnp.float16 and in_mlir_dtype_cls is not ir.F16Type:
       self.skipTest("Only f16 input is supported for f16 output.")
-    if swizzle != 128 and lhs_transpose:
+    if swizzle != 128 and lhs_transpose and lhs_tiling_kind == "large":
       self.skipTest("Transpose only supported in 128B swizzled WGMMA")
     if rhs_tiling_kind == "small+no_transpose" and not rhs_transpose:
+      self.skipTest("No transpose happening anyway")
+    if lhs_tiling_kind == "small+no_transpose" and not lhs_transpose:
       self.skipTest("No transpose happening anyway")
 
     in_mlir_dtype = in_mlir_dtype_cls.get()
@@ -705,18 +709,17 @@ class WGMMATest(TestCase):
     k = nk_tile * k_steps
     assert m % 64 == 0 and n % nk_tile == 0
 
-    small_nk_tile = 8
     small_rhs_tile = rhs_tiling_kind != "large"
     transpose_rhs_tiles = rhs_tiling_kind != "small+no_transpose"
-    rhs_tiling = (
-        (small_nk_tile, nk_tile) if small_rhs_tile else (nk_tile, nk_tile)
-    )
+    rhs_tiling = (8, nk_tile) if small_rhs_tile else (nk_tile, nk_tile)
+    small_lhs_tile = lhs_tiling_kind != "large"
+    transpose_lhs_tiles = lhs_tiling_kind != "small+no_transpose"
+    lhs_tiling = (8, nk_tile) if small_lhs_tile else (64, nk_tile)
 
     def kernel(ctx, lhs, rhs, out, scratch):
       lhs_smem, rhs_smem, barriers = scratch
-      lhs_transform = (mgpu.TileTransform((64, nk_tile)),)
-      if lhs_transpose:
-        assert nk_tile == 64  # Make sure we didn't have to transpose tiling.
+      lhs_transform = (mgpu.TileTransform(lhs_tiling),)
+      if lhs_transpose and transpose_lhs_tiles:
         lhs_transform += (mgpu.TransposeTransform((1, 0, 2, 3)),)
       rhs_transform = (mgpu.TileTransform(rhs_tiling),)
       if rhs_transpose and transpose_rhs_tiles:
@@ -739,7 +742,8 @@ class WGMMATest(TestCase):
         barriers[i].wait()
       init_acc = mgpu.WGMMAAccumulator.zero(m=m, n=n, dtype=out_mlir_dtype)
       if lhs_transpose:
-        lhs_smem = memref_transpose(lhs_smem, (0, 1, 3, 2))
+        perm = (0, 1, 3, 2) if transpose_lhs_tiles else (1, 0, 3, 2)
+        lhs_smem = memref_transpose(lhs_smem, perm)
       if rhs_transpose:
         perm = (0, 1, 3, 2) if transpose_rhs_tiles else (1, 0, 3, 2)
         rhs_smem = memref_transpose(rhs_smem, perm)
@@ -762,8 +766,13 @@ class WGMMATest(TestCase):
       rhs_smem_shape = (k // rhs_tiling_t[0], n // rhs_tiling_t[1], *rhs_tiling)
     else:
       rhs_smem_shape = tile_shape(y_shape, rhs_tiling)
+    if transpose_lhs_tiles:
+      lhs_tiling_t = lhs_tiling[::-1] if lhs_transpose else lhs_tiling
+      lhs_smem_shape = (m // lhs_tiling_t[0], k // lhs_tiling_t[1], *lhs_tiling)
+    else:
+      lhs_smem_shape = tile_shape(x_shape, lhs_tiling)
     scratch_shape = [
-        jax.ShapeDtypeStruct((m // 64, k // nk_tile, 64, nk_tile), in_jax_dtype),
+        jax.ShapeDtypeStruct(lhs_smem_shape, in_jax_dtype),
         jax.ShapeDtypeStruct(rhs_smem_shape, in_jax_dtype),
         mgpu.TMABarrier(2),
     ]
@@ -911,6 +920,7 @@ class TCGen05Test(TestCase):
       k_steps=(1, 2),
       swizzle=(32, 64, 128,),
       rhs_tiling_kind=("large", "small", "small+no_transpose"),
+      lhs_tiling_kind=("large", "small", "small+no_transpose"),
   )
   def test_mma_basic(
       self,
@@ -923,6 +933,7 @@ class TCGen05Test(TestCase):
       in_jax_dtype,
       out_jax_dtype,
       rhs_tiling_kind,
+      lhs_tiling_kind,
   ):
     if out_jax_dtype == jnp.float16 and in_jax_dtype != jnp.float16:
       self.skipTest("Only f16 input is supported for f16 output.")
@@ -933,17 +944,17 @@ class TCGen05Test(TestCase):
     k = nk_tile * k_steps
     assert m % m_tile == 0 and n % nk_tile == 0
 
-    small_nk_tile = 8
-
     small_rhs_tile = rhs_tiling_kind != "large"
     transpose_rhs_tiles = rhs_tiling_kind != "small+no_transpose"
-    rhs_tiling = (small_nk_tile, nk_tile) if small_rhs_tile else (nk_tile, nk_tile)
+    rhs_tiling = (8, nk_tile) if small_rhs_tile else (nk_tile, nk_tile)
+    small_lhs_tile = lhs_tiling_kind != "large"
+    transpose_lhs_tiles = lhs_tiling_kind != "small+no_transpose"
+    lhs_tiling = (8, nk_tile) if small_lhs_tile else (128, nk_tile)
 
     def kernel(ctx, lhs, rhs, out, scratch):
       lhs_smem, rhs_smem, barriers, acc = scratch
-      lhs_transform = (mgpu.TileTransform((m_tile, nk_tile)),)
-      if lhs_transpose:
-        assert nk_tile == m_tile  # Make sure we didn't have to transpose tiling
+      lhs_transform = (mgpu.TileTransform(lhs_tiling),)
+      if lhs_transpose and transpose_lhs_tiles:
         lhs_transform += (mgpu.TransposeTransform((1, 0, 2, 3)),)
       rhs_transform = (mgpu.TileTransform(rhs_tiling),)
       if rhs_transpose and transpose_rhs_tiles:
@@ -966,7 +977,8 @@ class TCGen05Test(TestCase):
       barriers[1].wait()
       with mgpu.single_thread():
         if lhs_transpose:
-          lhs_smem = memref_transpose(lhs_smem, (0, 1, 3, 2))
+          perm = (0, 1, 3, 2) if transpose_lhs_tiles else (1, 0, 3, 2)
+          lhs_smem = memref_transpose(lhs_smem, perm)
         if rhs_transpose:
           perm = (0, 1, 3, 2) if transpose_rhs_tiles else (1, 0, 3, 2)
           rhs_smem = memref_transpose(rhs_smem, perm)
@@ -993,8 +1005,13 @@ class TCGen05Test(TestCase):
       rhs_smem_shape = (k // rhs_tiling_t[0], n // rhs_tiling_t[1], *rhs_tiling)
     else:
       rhs_smem_shape = tile_shape(y_shape, rhs_tiling)
+    if transpose_lhs_tiles:
+      lhs_tiling_t = lhs_tiling[::-1] if lhs_transpose else lhs_tiling
+      lhs_smem_shape = (m // lhs_tiling_t[0], k // lhs_tiling_t[1], *lhs_tiling)
+    else:
+      lhs_smem_shape = tile_shape(x_shape, lhs_tiling)
     scratch_shape = [
-        jax.ShapeDtypeStruct(tile_shape((m, k), (m_tile, nk_tile)), in_jax_dtype),
+        jax.ShapeDtypeStruct(lhs_smem_shape, in_jax_dtype),
         jax.ShapeDtypeStruct(rhs_smem_shape, in_jax_dtype),
         mgpu.TMABarrier(3),
         mgpu.TMEM((128, n), out_jax_dtype),

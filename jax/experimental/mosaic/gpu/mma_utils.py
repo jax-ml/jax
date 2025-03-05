@@ -47,7 +47,6 @@ def create_descriptor(
     large_tile: tuple[int, int],  # Soft deprecated. Use small tiling instead.
     group_size: tuple[int, int],  # Instruction group size on each operand dim.
     logical_k_major: bool,  # False for LHS, True for RHS.
-    supports_small_tile: bool = False,  # TODO(apaszke): This is a temporary.
 ):
   ref_ty = ir.MemRefType(ref.type)
   element_bytewidth = utils.bytewidth(ref_ty.element_type)
@@ -135,8 +134,6 @@ def create_descriptor(
     else:
       raise ValueError("MMA tiles must be contiguous")
   else:  # Small tiles.
-    if not supports_small_tile:
-      raise NotImplementedError("Small tiles are not supported yet")
     if k_tiling_stride > mn_tiling_stride:
       slower_tiling, faster_tiling = k_tiling, mn_tiling
     else:

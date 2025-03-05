@@ -347,7 +347,6 @@ def wgmma(
       large_tile=(k_group_elems,) * 2,  # It's not a typo that we use k for n.
       group_size=(k_group_elems, n_group_elems),
       logical_k_major=True,
-      supports_small_tile=True,
   )
   del b_n_group_stride  # We only support one N group.
 
