@@ -1094,6 +1094,9 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
       return f"args{keystr(key_path)}"
     # args is a tuple, so key_path[0].idx is the index into args.
     i = key_path[0].idx
+    # This can happen with star arguments (*args)
+    if i >= len(signature_parameters):
+      return f"args{keystr(key_path)}"
     res = f"argument {signature_parameters[i]}"
     if len(key_path) > 1:
       res += keystr(key_path[1:])
