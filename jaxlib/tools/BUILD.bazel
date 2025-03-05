@@ -187,10 +187,34 @@ selects.config_setting_group(
 )
 
 selects.config_setting_group(
+    name = "macos_x86_64",
+    match_all = [
+        "@platforms//cpu:x86_64",
+        ":macos",
+    ],
+)
+
+selects.config_setting_group(
     name = "win_amd64",
     match_all = [
         "@platforms//cpu:x86_64",
         "@platforms//os:windows",
+    ],
+)
+
+selects.config_setting_group(
+    name = "linux_x86_64",
+    match_all = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+selects.config_setting_group(
+    name = "linux_aarch64",
+    match_all = [
+        ":arm64",
+        "@platforms//os:linux",
     ],
 )
 

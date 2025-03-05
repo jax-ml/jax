@@ -522,9 +522,10 @@ def jax_wheel(
         # TODO(kanglan) Add @platforms//cpu:ppc64le once JAX Bazel is upgraded > 6.5.0.
         cpu = select({
             "//jaxlib/tools:macos_arm64": "arm64",
+            "//jaxlib/tools:macos_x86_64": "x86_64",
             "//jaxlib/tools:win_amd64": "AMD64",
-            "//jaxlib/tools:arm64": "aarch64",
-            "@platforms//cpu:x86_64": "x86_64",
+            "//jaxlib/tools:linux_aarch64": "aarch64",
+            "//jaxlib/tools:linux_x86_64": "x86_64",
         }),
         source_files = source_files,
     )
