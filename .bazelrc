@@ -54,6 +54,12 @@ build:macos --apple_platform_type=macos
 build:macos --linkopt=-Wl,-undefined,dynamic_lookup
 build:macos --host_linkopt=-Wl,-undefined,dynamic_lookup
 
+# Use cc toolchains from apple_support for Apple builds.
+# https://github.com/bazelbuild/apple_support/tree/master?tab=readme-ov-file#bazel-6-setup
+build:macos --apple_crosstool_top=@local_config_apple_cc//:toolchain
+build:macos --crosstool_top=@local_config_apple_cc//:toolchain
+build:macos --host_crosstool_top=@local_config_apple_cc//:toolchain
+
 # Windows has a relatively short command line limit, which JAX has begun to hit.
 # See https://docs.bazel.build/versions/main/windows.html
 build:windows --features=compiler_param_file
@@ -196,9 +202,6 @@ build:public_cache_push --config=public_cache --remote_upload_local_results=true
 # "oct2023" in the URL is just the date when the bucket was created and can be
 # disregarded. It still contains the latest cache that is being used.
 build:macos_cache --remote_cache="https://storage.googleapis.com/tensorflow-macos-bazel-cache/oct2023" --remote_upload_local_results=false
-# This flag is to address mac arm64 nightly build failures, which are believed
-# to be caused by cache poisoning after the Bazel 7.4.0 toolchain upgrade.
-build:macos_cache --remote_default_platform_properties='properties:{name:"cache-silo-key" value:"cache-poisoning-2025-03-03"}'
 
 # Cache pushes are limited to JAX's CI system.
 build:macos_cache_push --config=macos_cache --remote_upload_local_results=true --google_default_credentials
