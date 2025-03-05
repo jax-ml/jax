@@ -275,6 +275,7 @@ def conv_transpose(lhs: Array, rhs: Array, strides: Sequence[int],
                    rhs_dilation: Sequence[int] | None = None,
                    dimension_numbers: ConvGeneralDilatedDimensionNumbers = None,
                    transpose_kernel: bool = False,
+                   tf_style: bool = False,
                    precision: lax.PrecisionLike = None,
                    preferred_element_type: DTypeLike | None = None) -> Array:
   """Convenience wrapper for calculating the N-d convolution "transpose".
