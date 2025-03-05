@@ -18,7 +18,6 @@ from __future__ import annotations
 import dataclasses
 import math
 
-from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import llvm
@@ -27,7 +26,7 @@ import numpy as np
 
 from . import utils
 from . import fragmented_array as fa
-from . import _wgmma
+from . import mma_utils
 from .launch_context import LaunchContext
 
 # MyPy does a terrible job with the MLIR API.
@@ -36,21 +35,6 @@ from .launch_context import LaunchContext
 
 TMEM_ROWS = 128
 TCGEN05_SMEM_DESCRIPTOR_BIT = 1 << 46
-
-def create_smem_descriptor(
-    memref_arg,
-    leading_byte_offset: int,
-    stride_byte_offset: int,
-    swizzle: int | mgpu_dialect.SwizzlingMode | None,
-):
-  return _wgmma.create_descriptor(
-      memref_arg,
-      leading_byte_offset,
-      stride_byte_offset,
-      swizzle,
-      memory_space=3,
-      const_init=TCGEN05_SMEM_DESCRIPTOR_BIT,
-  )
 
 def create_instr_descriptor(
     m: int,
@@ -100,70 +84,129 @@ def mma(
     collective: bool = False,
 ):
   i64 = ir.IntegerType.get_signless(64)
+  if isinstance(accumulate, bool):
+    accumulate = arith.constant(ir.IntegerType.get_signless(1), accumulate)
+  if a_swizzle != b_swizzle:
+    raise NotImplementedError(f"{a_swizzle=} != {b_swizzle=}")
+  swizzle = a_swizzle
+  num_cta = 2 if collective else 1
+
+  # Step 1. Establish the shape and element type of the operation.
   if not ir.MemRefType.isinstance(a.type):
     raise ValueError(f"A must be a memref, got {a.type}")
   if not ir.MemRefType.isinstance(b.type):
     raise ValueError(f"B must be a memref, got: {b.type}")
-  if a_swizzle != b_swizzle:
-    raise NotImplementedError(f"{a_swizzle=} != {b_swizzle=}")
-  if isinstance(accumulate, bool):
-    accumulate = arith.constant(ir.IntegerType.get_signless(1), accumulate)
+  (k, n), element_type = mma_utils.tiled_memref_shape(b)
+  (m, k2), element_type2 = mma_utils.tiled_memref_shape(a)
+  if k != k2:
+    raise ValueError(
+        "MMA requires A and B to have the same contraction dimension (K),"
+        f" got: {k2} and {k}"
+    )
+  if element_type != element_type2:
+    raise ValueError(
+        "MMA requires A and B to have the same element type, got:"
+        f" {element_type2} and {element_type}"
+    )
+  if d.shape != (m, n * num_cta):
+    raise ValueError(
+        f"Accumulator shape mismatch: expected {(m, n * num_cta)}, got {d.shape}"
+    )
+  f32 = ir.F32Type.get()
+  if element_type == f32 or element_type == ir.BF16Type.get():
+    if d.dtype != f32:
+      raise ValueError(
+          f"MMA with element type {element_type} only supports accumulators"
+          f" of type f32, but got: {d.dtype}"
+      )
+  elif element_type == ir.F16Type.get():
+    if d.dtype != element_type and d.dtype != f32:
+      raise ValueError(
+          "MMA with element type f16 only supports accumulators of type f32"
+          f" or f16, but got: {d.dtype}"
+      )
 
-  m_group_size = d.layout.elements_in_tile[0]
-  if m_group_size != 128:
+  # Step 2. Decide on the instruction shapes we'll use. Note that with swizzles,
+  # instructions must be issued in groups of the same width as the swizzle.
+  m_group_elems = d.layout.elements_in_tile[0]
+  if m_group_elems != 128:
     raise NotImplementedError("Only 128-row accumulators supported for now")
-
-  (
-      a_desc_base,
-      b_desc_base,
-      (m, k, n),
-      (m_groups, k_groups, n_groups),
-      (a_m_group_stride, a_k_group_stride, b_k_group_stride, b_n_group_stride),
-      mma_params,
-  ) = _wgmma._validate_mma(
-      a,
-      b,
-      a_swizzle,
-      m_group_size=m_group_size,
-      descriptor_const_init=TCGEN05_SMEM_DESCRIPTOR_BIT,
-  )
-  n_group_size = n // n_groups
-  if n > 512:
-    raise ValueError(f"N is too big: at most 512 is supported, but got {n}")
-  num_cta = 2 if collective else 1
+  k_group_elems = swizzle // utils.bytewidth(element_type)
+  if n % 8:
+    raise ValueError(f"N must be a multiple of 8, got: {n}")
+  elif n > 256 and n != 512:
+    raise ValueError("Only N below 256 or N=512 are supported")
   if num_cta == 2 and n > 256:
     raise NotImplementedError(
         "N is too big for collective MMA. Only up to 256 is supported."
     )
+  n_group_elems = min(n, 256)
+  if m % m_group_elems:
+    raise ValueError(f"M must be a multiple of {m_group_elems}, got: {m}")
+  if k % k_group_elems:
+    raise ValueError(f"K must be a multiple of {k_group_elems}, got: {k}")
+  if n % n_group_elems:
+    raise ValueError(f"N must be a multiple of {n_group_elems}, got: {n}")
+  m_groups = m // m_group_elems
+  k_groups = k // k_group_elems
+  n_groups = n // n_group_elems
+  # TODO(apaszke): Require users to bitcast input refs to tf32 before WGMMA.
+  wgmma_element_type = (
+      ir.FloatTF32Type.get() if element_type == ir.F32Type.get() else element_type
+  )
 
-  # TODO(apaszke): Verify that the cluster shape matches the expectation of
-  # collective MMA.
-  expected_acc_shape = (m, n * num_cta)
-  if d.shape != expected_acc_shape:
-    raise ValueError(
-        f"Accumulator shape mismatch: expected {expected_acc_shape}, got {d.shape}"
-    )
+  # Step 3. Compute the operand descriptors.
+  (
+      (a_desc_base, a_k_instr_stride),
+      (a_m_group_stride, a_k_group_stride),
+      a_fastest,
+  ) = mma_utils.create_descriptor(
+      a,
+      swizzle=swizzle,
+      large_tile=(m_group_elems, k_group_elems),
+      group_size=(m_group_elems, k_group_elems),
+      logical_k_major=False,
+  )
+  (
+      (b_desc_base, b_k_instr_stride),
+      (b_n_group_stride, b_k_group_stride),
+      b_fastest,
+  ) = mma_utils.create_descriptor(
+      b,
+      swizzle=swizzle,
+      large_tile=(k_group_elems,) * 2,  # It's not a typo that we use k for n.
+      group_size=(k_group_elems, n_group_elems),
+      logical_k_major=True,
+      supports_small_tile=True,
+  )
 
+  # Step 4. Issue the instructions.
   true = arith.constant(ir.IntegerType.get_signless(1), 1)
   for mi, ni, ki in np.ndindex(m_groups, n_groups, k_groups):
     a_offset = mi * a_m_group_stride + ki * a_k_group_stride
-    a_mk = arith.addi(a_desc_base, utils.c(_wgmma.wgmma_encode(a_offset), i64))
+    a_mk = arith.addi(a_desc_base, utils.c(mma_utils.encode_addr(a_offset), i64))
     b_offset = ni * b_n_group_stride + ki * b_k_group_stride
-    b_nk = arith.addi(b_desc_base, utils.c(_wgmma.wgmma_encode(b_offset), i64))
+    b_nk = arith.addi(b_desc_base, utils.c(mma_utils.encode_addr(b_offset), i64))
     if m_groups != 1:
       raise NotImplementedError("D needs to be sliced")
     acc = accumulate if ki == 0 else true
     _do_mma(
         d.slice(
-            slice(None), utils.ds(ni * n_group_size, n_group_size)
+            slice(None), utils.ds(ni * n_group_elems, n_group_elems)
         ).address,
         a_mk,
         b_nk,
         d_type=ir.F32Type.get(),
-        m=m_group_size,
+        m=m_group_elems,
+        n=n_group_elems,
         collective=collective,
-        **mma_params,
+        a_transpose=a_fastest != mma_utils.Dim.K,
+        b_transpose=b_fastest != mma_utils.Dim.K,
+        a_k_stride=a_k_instr_stride,
+        b_k_stride=b_k_instr_stride,
         accumulate=acc,
+        swizzle=swizzle,
+        element_type=wgmma_element_type,
     )
 
 
