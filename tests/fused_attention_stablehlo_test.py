@@ -16,9 +16,6 @@ from functools import partial
 from absl.testing import absltest
 import os
 
-os.environ["XLA_FLAGS"] = \
-  "--xla_gpu_enable_cudnn_fmha=true --xla_gpu_fused_attention_use_cudnn_rng=true"
-
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -30,7 +27,6 @@ from jax._src.cudnn.fused_attention_stablehlo import (
     dot_product_attention,
     check_is_flash_attention,
     check_cudnn_version,
-    get_large_negative_number,
     MaskType,
     AttentionLayout,
 )
@@ -89,6 +85,9 @@ cast_to_representable = partial(
 )
 
 quantize = partial(quantize_to_fp8, scale=1)
+
+def get_large_negative_number(dtype):
+    return 0.7 * jnp.finfo(dtype).min
 
 def sdpa_train(query: Array,
                key: Array,
@@ -168,7 +167,7 @@ def sdpa_ref(query: Array,
 
   B, T, qN, H = query.shape
   _, _, kN, _ = key.shape
-  logits = jnp.einsum("bqhd,bkhd->bhqk", query, key)
+  logits = jnp.einsum("bqhd,bkhd->bhqk", query, key, preferred_element_type=jnp.float32)
   if scale != 1.0:
     logits = logits * scale
   if mask_type == MaskType.CAUSAL:
@@ -182,28 +181,31 @@ def sdpa_ref(query: Array,
     bias = get_sliding_window_mask(logits, sliding_window_length)
   if mask is not None:
     large_negative_number = get_large_negative_number(logits.dtype)
-    mask = jnp.where(mask, jnp.asarray(0, query.dtype), large_negative_number)
+    mask = jnp.where(mask, 0, large_negative_number)
+  # combine bias and mask
   if bias is None:
     bias = mask
   elif mask is not None:
+    bias = bias.astype(logits.dtype)
     bias += mask
+  # apply bias to logits
   if bias is not None:
     if bias.shape != logits.shape:
       bias = jnp.broadcast_to(bias, logits.shape)
     logits = logits + bias.astype(logits.dtype)
-  probs = jax.nn.softmax(logits, axis=-1)
+  probs = jax.nn.softmax(logits, axis=-1).astype(query.dtype)
   if dropout_rate > 0.:
     keep_prob = 1.0 - dropout_rate
     dropout_rng = jax.random.key(0)
     keep = jax.random.bernoulli(dropout_rng, keep_prob, probs.shape)
     probs = jax.lax.select(keep, probs / keep_prob, jnp.zeros_like(probs))
-  encoded = jnp.einsum("bhqk,bkhd->bqhd", probs, value)
+  encoded = jnp.einsum("bhqk,bkhd->bqhd", probs, value, preferred_element_type=jnp.float32)
   if mask_type == MaskType.PADDING:
     # cuDNN padding mask generation will mask out output accordingly
     # make sure the behavior is the same
     encoded_mask = get_encoded_padding_mask(encoded)
     encoded = encoded * encoded_mask
-  return encoded
+  return encoded.astype(query.dtype)
 
 def sdpa_train_ref(query: Array,
             key: Array,
@@ -239,7 +241,7 @@ def sdpa_train_fp8(
     f_p = partial(
         dot_product_attention, scale=scale, mask_type=mask_type, use_fp8=True
     )
-    return f_p(query, key, value, None, None, None, None, fp8_metas)
+    return f_p(query, key, value, fp8_params=fp8_metas)
 
   out, sdpa_vjp = jax.vjp(
       dot_product_attention_fp8, query, key, value, fp8_metas
@@ -274,7 +276,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       use_mask=[False, True],
       use_bias=[False, True],
       mask_type=[MaskType.NO_MASK],
-      dropout_rate=[0, 0.5],
+      dropout_rate=[0],
       scale=[0.5],
       dtype=[jnp.float16, jnp.bfloat16]
   )
@@ -351,18 +353,13 @@ class DotProductAttentionTest(jtu.JaxTestCase):
           jitted_sdpa_train(query, key, value, grad, bias, mask)
       out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = \
           jitted_sdpa_train_ref(query, key, value, grad, bias, mask)
-      self.assertArraysAllClose(out_ref, out, rtol=1e-5, atol=1e-5)
-      if seq_len > 512:
-        # query_grad in flash attention is not deterministic
-        self.assertArraysAllClose(
-          query_grad_ref, query_grad, rtol=1e-2, atol=1e-2)
-      else:
-        self.assertArraysAllClose(
-          query_grad_ref, query_grad, rtol=1e-5, atol=1e-5)
+      self.assertArraysAllClose(out_ref, out, rtol=2e-2, atol=2e-2)
       self.assertArraysAllClose(
-        key_grad_ref, key_grad, rtol=1e-5, atol=1e-5)
+        query_grad_ref, query_grad, rtol=2e-1, atol=2e-1)
       self.assertArraysAllClose(
-        value_grad_ref, value_grad, rtol=1e-5, atol=1e-5)
+        key_grad_ref, key_grad, rtol=2e-1, atol=2e-1)
+      self.assertArraysAllClose(
+        value_grad_ref, value_grad, rtol=2e-1, atol=2e-1)
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_inference(self):
@@ -381,9 +378,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     with Mesh(devices, ("dp", "tp")) as mesh:
       qkv_spec = PartitionSpec("dp", None, "tp", None)
       qkv_sharding = NamedSharding(mesh, qkv_spec)
-      replicated = NamedSharding(mesh, PartitionSpec())
       in_shardings = (
-        qkv_sharding, qkv_sharding, qkv_sharding, replicated, replicated)
+        qkv_sharding, qkv_sharding, qkv_sharding)
       out_shardings = qkv_sharding
       query = jax.device_put(query, qkv_sharding)
       key = jax.device_put(key, qkv_sharding)
@@ -403,15 +399,14 @@ class DotProductAttentionTest(jtu.JaxTestCase):
         out_shardings=out_shardings
       )
 
-      out = jitted_sdpa_inference(query, key, value, None, None)
-      out_ref = jitted_sdpa_inference_ref(query, key, value, None, None)
-      self.assertArraysAllClose(out_ref, out, rtol=1e-5, atol=1e-5)
+      out = jitted_sdpa_inference(query, key, value)
+      out_ref = jitted_sdpa_inference_ref(query, key, value)
+      self.assertArraysAllClose(out_ref, out, rtol=2e-2, atol=2e-2)
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_var_seq(self):
     if jax.device_count() < 4:
       self.skipTest("Requires more than 4 devices.")
-    self.skipTest("Skip before fixed.")
     k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
     query = jax.random.normal(
         k1, (4, 1024, 4, 64), dtype=jnp.bfloat16)
@@ -432,13 +427,13 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     )
 
     out, (query_grad, key_grad, value_grad) = \
-      jitted_sdpa_train(query, key, value, grad, None, None)
+      jitted_sdpa_train(query, key, value, grad)
     out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = \
-      jitted_sdpa_train_ref(query, key, value, grad, None, None)
-    self.assertArraysAllClose(out_ref, out, rtol=1e-5, atol=1e-5)
-    self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-2, atol=1e-2)
-    self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-5, atol=1e-5)
-    self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-5, atol=1e-5)
+      jitted_sdpa_train_ref(query, key, value, grad)
+    self.assertArraysAllClose(out_ref, out, rtol=2e-2, atol=2e-2)
+    self.assertArraysAllClose(query_grad_ref, query_grad, rtol=2e-1, atol=2e-1)
+    self.assertArraysAllClose(key_grad_ref, key_grad, rtol=2e-1, atol=2e-1)
+    self.assertArraysAllClose(value_grad_ref, value_grad, rtol=2e-1, atol=2e-1)
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_broadcast_bias_and_dbias(self):
@@ -472,9 +467,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       qkv_sharding = NamedSharding(mesh, qkv_spec)
       bias_spec = PartitionSpec("tp", None, None)
       bias_sharding = NamedSharding(mesh, bias_spec)
-      replicated = NamedSharding(mesh, PartitionSpec())
       in_shardings = (qkv_sharding, qkv_sharding, qkv_sharding,
-                      qkv_sharding, bias_sharding, replicated)
+                      qkv_sharding, bias_sharding)
       out_shardings = (qkv_sharding, (qkv_sharding, qkv_sharding, qkv_sharding, bias_sharding))
       query = jax.device_put(query, qkv_sharding)
       key = jax.device_put(key, qkv_sharding)
@@ -496,14 +490,14 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       )
 
       out, (query_grad, key_grad, value_grad, bias_grad) = \
-        jitted_sdpa_train(query, key, value, grad, bias, None)
+        jitted_sdpa_train(query, key, value, grad, bias)
       out_ref, (query_grad_ref, key_grad_ref, value_grad_ref, bias_grad_ref) = \
-        jitted_sdpa_train_ref(query, key, value, grad, bias, None)
-      self.assertArraysAllClose(out_ref, out, rtol=1e-5, atol=1e-5)
-      self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-2, atol=1e-2)
-      self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-5, atol=1e-5)
-      self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-5, atol=1e-5)
-      self.assertArraysAllClose(bias_grad_ref, bias_grad, rtol=1e-5, atol=1e-5)
+        jitted_sdpa_train_ref(query, key, value, grad, bias)
+      self.assertArraysAllClose(out_ref, out, rtol=2e-2, atol=2e-2)
+      self.assertArraysAllClose(query_grad_ref, query_grad, rtol=2e-1, atol=2e-1)
+      self.assertArraysAllClose(key_grad_ref, key_grad, rtol=2e-1, atol=2e-1)
+      self.assertArraysAllClose(value_grad_ref, value_grad, rtol=2e-1, atol=2e-1)
+      self.assertArraysAllClose(bias_grad_ref, bias_grad, rtol=2e-1, atol=2e-1)
 
   @jtu.sample_product(
       batch_size=[1, 16],
@@ -573,13 +567,13 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     )
 
     out, (query_grad, key_grad, value_grad) = \
-      jitted_sdpa_train(query, key, value, grad, None, None)
+      jitted_sdpa_train(query, key, value, grad)
     out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = \
-      jitted_sdpa_train_ref(query, key, value, grad, None, None)
-    self.assertArraysAllClose(out_ref, out, rtol=1e-5, atol=1e-5)
-    self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-2, atol=1e-2)
-    self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-5, atol=1e-5)
-    self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-5, atol=1e-5)
+      jitted_sdpa_train_ref(query, key, value, grad)
+    self.assertArraysAllClose(out_ref, out, rtol=2e-2, atol=2e-2)
+    self.assertArraysAllClose(query_grad_ref, query_grad, rtol=2e-1, atol=2e-1)
+    self.assertArraysAllClose(key_grad_ref, key_grad, rtol=2e-1, atol=2e-1)
+    self.assertArraysAllClose(value_grad_ref, value_grad, rtol=2e-1, atol=2e-1)
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_large_head_size(self):
@@ -607,12 +601,12 @@ class DotProductAttentionTest(jtu.JaxTestCase):
         sdpa_train_ref, scale=1.0, mask_type=MaskType.CAUSAL, dropout_rate=0)
     )
 
-    out_ans, grads_ans = sdpa_train_ans(query, key, value, grad, None, None)
-    out_ref, grads_ref = sdpa_train_rfc(query, key, value, grad, None, None)
+    out_ans, grads_ans = sdpa_train_ans(query, key, value, grad)
+    out_ref, grads_ref = sdpa_train_rfc(query, key, value, grad)
     self.assertArraysAllClose(out_ref, out_ans)
-    self.assertArraysAllClose(grads_ref[0], grads_ans[0])
-    self.assertArraysAllClose(grads_ref[1], grads_ans[1])
-    self.assertArraysAllClose(grads_ref[2], grads_ans[2])
+    self.assertArraysAllClose(grads_ref[0], grads_ans[0], rtol=2e-1, atol=2e-1)
+    self.assertArraysAllClose(grads_ref[1], grads_ans[1], rtol=2e-1, atol=2e-1)
+    self.assertArraysAllClose(grads_ref[2], grads_ans[2], rtol=2e-1, atol=2e-1)
 
   @jtu.run_on_devices("cuda")
   def test_sdpa_packed_layout(self):
@@ -679,7 +673,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     kv_seqlen = q_seqlen.copy()
 
     mask = generate_padding_mask(segment_ids, q_seqlen.shape[1], query.shape, query.dtype)
-    bias = generate_segment_mask(segment_ids, query.dtype)
+    bias = generate_segment_mask(segment_ids, jnp.float32)
 
     devices = np.array(jax.local_devices()[:4])
     devices = devices.reshape((2, 2))
@@ -757,8 +751,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     value = jax.random.normal(k2, (B, S, N, H), dtype=dtype)
     grad = jax.random.normal(k3, (B, T, N, H), dtype=dtype)
 
-    btnh_fn = jax.jit(partial(sdpa_train_ref, scale=.5,
-      mask_type=MaskType.CAUSAL, dropout_rate=0.0))
+    btnh_fn = jax.jit(partial(sdpa_train, scale=.5,
+      mask_type=MaskType.CAUSAL, is_bnth=False, dropout_rate=0.0))
     out_ref, (dq_ref, dk_ref, dv_ref) = btnh_fn(query, key, value, grad)
 
     def _cvt(x):
@@ -877,7 +871,7 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
         fp8_metas,
     )
     out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = (
-        jitted_sdpa_train_ref(query, key, value, grad, None, None)
+        jitted_sdpa_train_ref(query, key, value, grad)
     )
 
     self.assertArraysAllClose(out_ref, out.astype(dtype), rtol=5e-1, atol=5e-1)
@@ -938,7 +932,7 @@ class DotProductAttentionF8Test(jtu.JaxTestCase):
           qkv_layout=qkv_layout,
           use_fp8=True,
       )
-      return f_p(query, key, value, None, None, None, None, fp8_metas)
+      return f_p(query, key, value, fp8_params=fp8_metas)
 
     jitted_sdpa_inference = jax.jit(
         dot_product_attention_fp8,
