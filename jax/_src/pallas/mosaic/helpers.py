@@ -19,7 +19,6 @@ import jax
 from jax._src.pallas import helpers as pl_helpers
 from jax._src.pallas import primitives as pl_primitives
 from jax._src.pallas.mosaic import core as tpu_core
-from jax._src.pallas.mosaic import primitives as plm_primitives
 
 
 def sync_copy(src_ref, dst_ref):
@@ -38,7 +37,7 @@ def sync_copy(src_ref, dst_ref):
   )
   def _(sem):
     def _copy_start_or_wait(action, src_ref, dst_ref):
-      descriptor = plm_primitives.make_async_copy(src_ref, dst_ref, sem)
+      descriptor = pl_primitives.make_async_copy(src_ref, dst_ref, sem)
       if action == "start":
         descriptor.start()
       elif action == "wait":
@@ -88,8 +87,8 @@ def core_barrier(sem, *, core_axis_name: str):
         # Don't signal ourself
         @pl_helpers.when(core_id != i)
         def _():
-          plm_primitives.semaphore_signal(sem, 1, core_index=i)
+          pl_primitives.semaphore_signal(sem, 1, core_index=i)
 
       for i in range(num_cores):
         signal_core(i)
-      plm_primitives.semaphore_wait(sem, num_cores - 1)
+      pl_primitives.semaphore_wait(sem, num_cores - 1)
