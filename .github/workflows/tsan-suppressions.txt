@@ -26,8 +26,6 @@ race_top:PyMember_GetOne
 # https://github.com/python/cpython/issues/129547
 race:type_get_annotations
 
-# https://github.com/python/cpython/issues/130547
-race:split_keys_entry_added
 
 # https://github.com/python/cpython/issues/129748
 race:mi_block_set_nextx
@@ -64,3 +62,6 @@ race:gemm_oncopy
 
 # https://github.com/python/cpython/issues/130571
 # race:_PyObject_GetMethod
+
+# https://github.com/python/cpython/issues/130547
+# race:split_keys_entry_added
