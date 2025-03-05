@@ -1135,8 +1135,8 @@ def pmap(
     fun: Callable,
     axis_name: AxisName | None = None,
     *,
-    in_axes=0,
-    out_axes=0,
+    in_axes: int | None | Sequence[Any] = 0,
+    out_axes: Any = 0,
     static_broadcasted_argnums: int | Iterable[int] = (),
     devices: Sequence[xc.Device] | None = None,  # noqa: F811
     backend: str | None = None,
