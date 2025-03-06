@@ -1133,12 +1133,14 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
       msg.append(f"  * some axes ({ct} of them) had size {sz}, e.g. axis {ax} of {ex};\n")
   raise ValueError(''.join(msg)[:-2])  # remove last semicolon and newline
 
+from typing import Callable, Sequence, Any, Iterable
+import jaxlib.xla_extension as xc
 
 def pmap(
     fun: Callable,
     axis_name: AxisName | None = None,
     *,
-    in_axes=0,
+    in_axes: int | None | Sequence[Any] = 0,
     out_axes=0,
     static_broadcasted_argnums: int | Iterable[int] = (),
     devices: Sequence[xc.Device] | None = None,  # noqa: F811
