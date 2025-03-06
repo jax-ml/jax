@@ -199,10 +199,9 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
       profiler = None
   except pxla.DeviceAssignmentMismatchError as e:
     fails, = e.args
-    api_name = 'jit' if p.params['resource_env'] is None else 'pjit'
     fun_name = getattr(fun, '__qualname__', getattr(fun, '__name__', str(fun)))
     msg = _device_assignment_mismatch_error(
-        fun_name, fails, args_flat, api_name, p.arg_names)
+        fun_name, fails, args_flat, 'jit', p.arg_names)
     raise ValueError(msg) from None
   except xla.InvalidInputException as e:
     arg_names = [''] * len(args_flat) if p.arg_names is None else p.arg_names
@@ -591,13 +590,12 @@ def _infer_params_impl(
     in_shardings_leaves = out_shardings_leaves = tuple(leaves)
     in_shardings_treedef = out_shardings_treedef = treedef
   else:
-    jit_name = 'pjit' if pjit_mesh is not None else 'jit'
     in_shardings_leaves = tuple(
-        _create_sharding_for_array(pjit_mesh, x, 'in_shardings', jit_name)
+        _create_sharding_for_array(pjit_mesh, x, 'in_shardings', 'jit')
         for x in ji.in_shardings_leaves)
     in_shardings_treedef = ji.in_shardings_treedef
     out_shardings_leaves = tuple(
-        _create_sharding_for_array(pjit_mesh, x, 'out_shardings', jit_name)
+        _create_sharding_for_array(pjit_mesh, x, 'out_shardings', 'jit')
         for x in ji.out_shardings_leaves)
     out_shardings_treedef = ji.out_shardings_treedef
 
@@ -1760,12 +1758,10 @@ def _pjit_lower(
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None):
   util.test_event("pjit_lower")
-  if resource_env is not None:
-    mesh, api_name = resource_env.physical_mesh, 'pjit'
-  else:
-    mesh, api_name = mesh_lib.get_concrete_mesh(), 'jit'
+  mesh = (resource_env.physical_mesh if resource_env is not None else
+          mesh_lib.get_concrete_mesh())
   return pxla.lower_sharding_computation(
-      jaxpr, api_name, name, in_shardings, out_shardings,
+      jaxpr, 'jit', name, in_shardings, out_shardings,
       in_layouts, out_layouts, tuple(donated_invars),
       keep_unused=keep_unused, context_mesh=mesh,
       compiler_options_kvs=compiler_options_kvs,
@@ -1929,7 +1925,7 @@ def _pjit_lowering(ctx: mlir.LoweringRuleContext, *args, name: str,
   func = _pjit_cached_lower_jaxpr_to_fun(
       ctx, name, jaxpr, tuple(effects), in_shardings,
       out_shardings, in_layouts, out_layouts,
-      api_name=('jit' if resource_env is None else 'pjit'))
+      api_name='jit')
 
   tokens_in = [ctx.tokens_in.get(eff) for eff in effects]
   args = (*ctx.dim_var_values, *tokens_in, *args)

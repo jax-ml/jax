@@ -2076,7 +2076,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with global_mesh:
       with self.assertRaisesRegex(
-          ValueError, "Received incompatible devices for pjitted computation"):
+          ValueError, "Received incompatible devices for jitted computation"):
         pjit(lambda x: x)(input_array)
 
   def test_array_lower_compile(self):
@@ -2177,7 +2177,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with m1:
       with self.assertRaisesRegex(
-          ValueError, "Received incompatible devices for pjitted computation"):
+          ValueError, "Received incompatible devices for jitted computation"):
         pjit(lambda x, y: (x, y),
               out_shardings=(NamedSharding(m1, spec),
                              NamedSharding(m2, spec)))(a1, a1)
@@ -2192,7 +2192,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with m1:
       with self.assertRaisesRegex(
-          ValueError, "Received incompatible devices for pjitted computation"):
+          ValueError, "Received incompatible devices for jitted computation"):
         pjit(
             lambda x, y: (x, y),
             in_shardings=NamedSharding(m2, spec),
@@ -2348,7 +2348,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     arr = jnp.array([1, 2, 3])
     with self.assertRaisesRegex(
         RuntimeError,
-        r'pjit requires a non-empty mesh if you are passing `PartitionSpec`s or'
+        r'jit requires a non-empty mesh if you are passing `PartitionSpec`s or'
         r' `None` to in_shardings.*'):
       pjit(lambda x: x, in_shardings=P('x'))(arr)
 
@@ -2396,7 +2396,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jtu.create_mesh((2, 2), ('x', 'y')):
       with self.assertRaisesRegex(
           ValueError,
-          "Received incompatible devices for pjitted computation"):
+          "Received incompatible devices for jitted computation"):
         pjit(lambda x, y: (x, y))(uarr, carr)
 
   def test_pjit_uncommitted_array_multi_devices(self):
@@ -2418,7 +2418,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     b = jax.device_put(np.array([4, 5, 6]), jax.devices()[1])
     with self.assertRaisesRegex(
         ValueError,
-        "Received incompatible devices for pjitted computation. Got argument "
+        "Received incompatible devices for jitted computation. Got argument "
         r"x of.*\<lambda\> with shape int.*\[3\] and device ids \[0\].*and "
         r"argument y of.*\<lambda\> with shape int.*\[3\] and device ids \[1\].*"):
       pjit(lambda x, y: (x, y))(a, b)
@@ -2430,7 +2430,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     b = jax.device_put(np.array([4, 5, 6]), jax.devices()[1])
     with self.assertRaisesRegex(
         ValueError,
-        "Received incompatible devices for pjitted computation. Got argument "
+        "Received incompatible devices for jitted computation. Got argument "
         r"x\[0\] of.*\<lambda\> with shape int.*\[3\] and device ids \[0\].*and "
         r"argument x\[1\] of.*\<lambda\> with shape int.*\[3\] and device ids "
         r"\[1\].*"):
@@ -2443,7 +2443,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     c = jax.device_put(np.arange(16).reshape(8, 2),
                        NamedSharding(mesh, P('x', 'y')))
 
-    msg = ("Received incompatible devices for pjitted computation. Got "
+    msg = ("Received incompatible devices for jitted computation. Got "
            r"argument {} of.*<lambda> with shape int.*\[3\] and device ids "
            r"\[0\].*and argument {} of.*<lambda> with shape int.*\[8,2\] and "
            r"device ids.*")
@@ -2617,9 +2617,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return f(inp1, inp2, inp3)
     with self.assertRaisesRegex(
         ValueError,
-        "Received incompatible devices for pjitted computation. Got argument "
+        "Received incompatible devices for jitted computation. Got argument "
         r"inp1 of.*my_nested_pjit with shape bfloat16\[8,2\] and device ids \[0\].*"
-        r"pjit inside pjit with device ids.*"):
+        r"pjit inside jit with device ids.*"):
       my_nested_pjit(committed_inp, committed_inp, committed_inp)
 
   @jtu.ignore_warning(category=DeprecationWarning,
@@ -7236,7 +7236,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     xshape = (2, 5, 6)
     x = jnp.arange(math.prod(xshape)).reshape(xshape)
     with self.assertRaisesRegex(
-        ValueError, "Received incompatible devices for pjitted computation.*"):
+        ValueError, "Received incompatible devices for jitted computation.*"):
       f(x)
 
   @parameterized.named_parameters(
