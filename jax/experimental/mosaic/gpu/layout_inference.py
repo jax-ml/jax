@@ -194,6 +194,7 @@ def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
 for op in [
     arith.AddIOp, arith.AddFOp,
     arith.AndIOp,
+    arith.BitcastOp,
     arith.CmpFOp,
     arith.CmpIOp,
     arith.ExtFOp, arith.ExtSIOp, arith.ExtUIOp,
