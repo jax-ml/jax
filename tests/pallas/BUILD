@@ -507,6 +507,24 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "tpu_ragged_paged_attention_test",
+    srcs = ["tpu_ragged_paged_attention_test.py"],
+    disable_configs = [
+        "tpu_v5p_1x1",
+    ],
+    enable_backends = ["tpu"],
+    shard_count = 24,
+    tags = [
+        "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
+    ],
+    deps = [
+        "//jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
     name = "tpu_splash_attention_kernel_test",
     srcs = [
         "tpu_splash_attention_kernel_test.py",
