@@ -695,12 +695,14 @@ def dot(a, b, trans_a: bool = False, trans_b: bool = False,
     if precision is not None:
       raise ValueError("Only one of allow_tf32 and precision can be specified")
     precision = lax.Precision.HIGH if allow_tf32 else lax.Precision.HIGHEST
+  dtype = jnp.promote_types(a.dtype, b.dtype)
+  out_dtype = jnp.int32 if jnp.issubdtype(dtype, jnp.integer) else jnp.float32
   return jax.lax.dot_general(
       a,
       b,
       dimension_numbers=(((lhs_contract_dim,), (rhs_contract_dim,)), ((), ())),
       precision=precision,
-      preferred_element_type=jnp.float32,
+      preferred_element_type=out_dtype,
   )
 
 

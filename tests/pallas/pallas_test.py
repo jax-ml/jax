@@ -733,6 +733,27 @@ class PallasCallTest(PallasBaseTest):
     )
     self.assertAllClose(dot_kernel(x, y), expected, atol=5e-2, rtol=5e-3)
 
+  @parameterized.parameters(jnp.int8, jnp.uint8)
+  def test_integer_dot(self, dtype):
+    if jtu.test_device_matches(["tpu"]) and not jtu.is_device_tpu_at_least(5):
+      self.skipTest("`int8` dot is only supported on v5 TPUs and newer.")
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((32, 64), jnp.int32),
+    )
+    def dot_kernel(x_ref, y_ref, o_ref):
+      o_ref[()] = pl.dot(x_ref[()], y_ref[()])
+
+    key0, key1 = random.split(random.key(0))
+    # FIXME(cjfj): TPU fails with `uint8` values >= 128.
+    kwargs = dict(minval=jnp.iinfo(dtype).min, maxval=128, dtype=dtype)
+    # TODO(cjfj): Investigate why this fails on GPU with `k == 16`.
+    x = random.randint(key0, (32, 128), **kwargs)
+    y = random.randint(key1, (128, 64), **kwargs)
+    expected = jnp.dot(x, y, preferred_element_type=jnp.int32)
+    self.assertAllClose(dot_kernel(x, y), expected, atol=0.0, rtol=0.0)
+
   def test_dot_with_vector(self):
     if not jtu.test_device_matches(["gpu"]) or self.INTERPRET:
       self.skipTest(
