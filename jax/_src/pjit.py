@@ -2536,6 +2536,11 @@ def with_sharding_constraint(x, shardings):
   This is a strict constraint for the GSPMD partitioner and not a hint. For examples
   of how to use this function, see `Distributed arrays and automatic parallelization`_.
 
+  Inside of a jitted computation, with_sharding_constraint makes it possible to
+  constrain intermediate values to an uneven sharding. However, if such an
+  unevenly sharded value is output by the jitted computation, it will come out
+  as fully replicated, no matter the sharding annotation given.
+
   Args:
     x: PyTree of jax.Arrays which will have their shardings constrained
     shardings: PyTree of sharding specifications. Valid values are the same as for
