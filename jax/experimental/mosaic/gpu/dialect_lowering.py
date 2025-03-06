@@ -708,8 +708,12 @@ def _for_op_lowering_rule(
     new_args = (new_for_op.induction_variable, *recreated_carry)
     for old_carry, new_carry in zip(for_op.body.arguments, new_args, strict=True):
       old_carry.replace_all_uses_with(new_carry)
-    for op in ops_to_lower:
+
+  for op in ops_to_lower:
+    with ir.InsertionPoint(op):
       ctx.lower_op(op)
+
+  with ir.InsertionPoint(new_for_op.body):
     new_yield_operands = lower_carry(yield_op.operands)
     yield_op.erase()
     scf.yield_(new_yield_operands)
