@@ -2193,15 +2193,18 @@ class LayoutTest(TestCase):
       dtype=[jnp.int8, jnp.int16, jnp.int32],
       swizzle=[16, 32, 64, 128],
       num_col_tiles=[1, 2, 3],
+      row_tiling=[8, 64],
   )
-  def test_copy_tiled(self, load_tiled, store_tiled, dtype, swizzle, num_col_tiles):
+  def test_copy_tiled(self, load_tiled, store_tiled, dtype, swizzle, num_col_tiles, row_tiling):
+    if (not load_tiled or not load_tiled) and row_tiling != 64:
+      self.skipTest("Old code path does not support this")
     mlir_dtype = utils.dtype_to_ir_type(dtype)
     bw = bytewidth(mlir_dtype)
     col_tiling = swizzle // bw
     if col_tiling % 8:
       self.skipTest("WGMMA layout requires col_tiling % 8 == 0")
     m, n = 128, col_tiling * num_col_tiles
-    tiling = (64, col_tiling)
+    tiling = (row_tiling, col_tiling)
     tiled_layout = fa._tiled_wgmma_layout((m, n))
     load_layout = tiled_layout if load_tiled else mgpu.TILED_LAYOUT_WGMMA
     store_layout = tiled_layout if store_tiled else mgpu.TILED_LAYOUT_WGMMA
