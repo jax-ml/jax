@@ -540,10 +540,31 @@ TILED_LAYOUT_WGMMA = TiledLayout(
     lane_dims=(-4, -3),
     vector_dim=-1,
 )
+# This tiled layout is similar to the one above. Above, each warp stores a 8x8
+# submatrix in the following way (we only show the first 4 rows for brevity):
+#
+#   0  0  1  1  2  2  3  3
+#   4  4  5  5  6  6  7  7
+#   8  8  9  9 10 10 11 11
+#  12 12 13 13 14 14 15 15
+#          ...
+#
+# This tiled layout stores the same 8x8 submatrix in the following way:
+#
+#   0  4  1  5  2  6  3  7
+#   0  4  1  5  2  6  3  7
+#   8 12  9 13 10 14 11 15
+#   8 12  9 13 10 14 11 15
+#          ...
+#
+# You can see that we have taken 2x2 submatrices from the above layout and
+# transposed them. The assigment of lanes to elements is such that in both
+# layouts the same two lanes map to a single 2x2 submatrix, making the transpose
+# very cheap (one shuffle and permute suffices to change between those layouts).
 WGMMA_TRANSPOSED_LAYOUT = TiledLayout(
-    Tiling(((64, 8), (16, 8), (8, 8), (2, 8), (2, 2), (2, 1))),
-    warp_dim=-12,
-    lane_dims=(-8, -3, -5),
+    Tiling(((64, 8), (16, 8), (8, 8), (2, 2), (2, 1))),
+    warp_dim=-10,
+    lane_dims=(-6, -3, -5),
     vector_dim=-2,
 )
 
