@@ -355,7 +355,7 @@ def _remat_static_argnums(fun, static_argnums, args):
     raise ValueError("the `static_argnums` argument to `jax.checkpoint` / "
                      "`jax.remat` can only take integer values greater than or "
                      "equal to `-len(args)` and less than `len(args)`, but got "
-                     f"{static_argnums}")
+                     f"{static_argnums}, while `len(args)` = {len(args)}")
 
   if not static_argnums:
     return fun, args
