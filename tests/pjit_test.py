@@ -7080,6 +7080,20 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         ValueError, 'does not evenly divide the dimension size'):
       core.ShapedArray((5, 2), jnp.int32, sharding=s)
 
+  @jtu.with_user_mesh((2, 2), ('x', 'y'))
+  def test_scan_unroll(self, mesh):
+    np_inp = np.arange(64, dtype=jnp.float32).reshape(8, 8)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P(None, 'y')))
+    carry = jnp.ones((8,), dtype=jnp.float32)
+
+    @jax.jit
+    def f(carry, xs):
+      def body(carry, x):
+        return carry + x, x
+      return jax.lax.scan(body, carry, xs, unroll=2)
+
+    f(carry, arr)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

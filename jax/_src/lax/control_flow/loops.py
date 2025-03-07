@@ -450,7 +450,7 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
     num_trips, remainder = 0, length
   if unroll == 1:
     xss = xs_
-    yss = _map(partial(_empty_array, (length,), None), y_avals)
+    yss = _map(partial(_empty_array, (length,), (None,)), y_avals)
   else:
     if remainder:
       if not reverse:
@@ -458,7 +458,7 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
       else:
         xs_rem, xs_ = unzip2(_map(partial(_split_leading, remainder), xs_))
     xss = [lax.reshape(x, (num_trips, unroll, *x.shape[1:])) for x in xs_]
-    yss = _map(partial(_empty_array, (num_trips, unroll), None), y_avals)
+    yss = _map(partial(_empty_array, (num_trips, unroll), (None, None)), y_avals)
 
   def inner(n, carry, xs):
     ys = []
@@ -509,7 +509,7 @@ def _split_leading(sz, x):
 def _concat(a, b): return lax.concatenate([a, b], 0)
 
 def _empty_array(prefix, length_spec, aval):
-  sharding = aval.sharding.with_spec((length_spec, *aval.sharding.spec))
+  sharding = aval.sharding.with_spec((*length_spec, *aval.sharding.spec))
   return lax.broadcast(lax.empty(aval.dtype), (*prefix, *aval.shape),
                        out_sharding=sharding)
 
