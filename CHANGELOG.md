@@ -23,6 +23,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     true, matching the current behavior. If set to false, JAX does not need to
     emit code clamping negative indices, which improves code size.
 
+## jax 0.5.2 (Mar 4, 2025)
+
+Patch release of 0.5.1
+
+* Bug fixes
+  * Fixes TPU metric logging and `tpu-info`, which was broken in 0.5.1
+
 ## jax 0.5.1 (Feb 24, 2025)
 
 * New Features
