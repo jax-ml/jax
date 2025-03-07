@@ -1555,6 +1555,13 @@ class FragmentedArray:
     if create_array:
       return FragmentedArray(_registers=new_regs, _layout=self.layout, _is_signed=is_signed)
 
+  def debug_print(self, fmt: str):
+    idx_fmt = ", ".join(["{}"] * len(self.shape))
+    @self.foreach
+    def _(val, idx):
+      fmt_str = fmt.format(f"[{idx_fmt}]: {{}}")
+      utils.debug_print(fmt_str, *idx, val, uniform=False)
+
   def store_untiled(self, ref: ir.Value, *, vector_store: bool = True):
     if not ir.MemRefType.isinstance(ref.type):
       raise ValueError(ref)

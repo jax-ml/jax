@@ -1491,11 +1491,7 @@ def _debug_print_lowering_rule(
     )
   elif len(ctx.avals_in) == 1:
     [arg] = args
-    @arg.foreach
-    def _(val, idx):
-      idx_fmt = ", ".join(["{}"] * len(idx))
-      fmt_str = fmt.format(f"[{idx_fmt}]/{list(arg.shape)}: {{}}")
-      mgpu.debug_print(fmt_str, *idx, val, uniform=False)
+    arg.debug_print(fmt)
   else:
     raise NotImplementedError(
         "debug_print only supports printing of scalar values, or a single array"

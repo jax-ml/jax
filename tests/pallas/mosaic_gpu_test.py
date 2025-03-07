@@ -714,7 +714,7 @@ class PallasCallTest(PallasTest):
     shape = (128, 64)
     size = math.prod(shape)
     def kernel(x_ref, o_ref):
-      pl.debug_print("{}", x_ref[...])
+      pl.debug_print("prefix {}", x_ref[...])
     spec = plgpu.GPUBlockSpec(shape, lambda: (0, 0), transforms=(plgpu.TilingTransform((64, 32)), plgpu.SwizzleTransform(128)))
     x = jnp.arange(size, dtype=jnp.float32).reshape(shape)
     f = pl.pallas_call(kernel, out_shape=x, in_specs=[spec], out_specs=spec)
@@ -723,8 +723,8 @@ class PallasCallTest(PallasTest):
       jax.block_until_ready(f(x))
 
     output = get_output()
-    results = re.findall(r"\[(\d+), (\d+)\]/\[128, 64\]: (\d+)", output)
-    self.assertLen(results, size)
+    results = re.findall(r"prefix \[(\d+), (\d+)\]: (\d+).?\d*", output)
+    self.assertLen(results, size, output)
     for i, j, v in results:
       i, j, v = map(int, (i, j, v))
       self.assertEqual(v, i * shape[1] + j)
@@ -774,7 +774,7 @@ class PallasCallTest(PallasTest):
     with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
-    self.assertIn(f"x: [1, 0, 43, 23]/{in_shape}: 6871\n", output())
+    self.assertIn("x: [1, 0, 43, 23]: 6871\n", output())
 
   def test_load_scalar(self):
     @functools.partial(
