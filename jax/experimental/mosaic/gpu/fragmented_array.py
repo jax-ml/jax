@@ -540,6 +540,12 @@ TILED_LAYOUT_WGMMA = TiledLayout(
     lane_dims=(-4, -3),
     vector_dim=-1,
 )
+WGMMA_TRANSPOSED_LAYOUT = TiledLayout(
+    Tiling(((64, 8), (16, 8), (8, 8), (2, 8), (2, 2), (2, 1))),
+    warp_dim=-12,
+    lane_dims=(-8, -3, -5),
+    vector_dim=-2,
+)
 
 @jax.tree_util.register_pytree_node_class
 @dataclasses.dataclass(init=False, eq=False, frozen=True, slots=True)
@@ -708,9 +714,35 @@ class FragmentedArray:
 
     At the moment, only conversions from ``WGSplatFragLayout`` are supported.
     """
+    i32 = ir.IntegerType.get_signless(32)
     if self.layout == new_layout:
       return self
     shape = self.shape
+    if (
+        self.layout == TILED_LAYOUT_WGMMA
+        and new_layout == WGMMA_TRANSPOSED_LAYOUT
+        and utils.bitwidth(self.mlir_dtype) == 16
+    ):
+      is_even_row = arith.cmpi(
+          arith.CmpIPredicate.eq,
+          arith.remui(arith.divui(utils.thread_idx(), c(4, i32)), c(2, i32)),
+          c(0, i32),
+      )
+      perm = arith.select(is_even_row, c(0x5410, i32), c(0x3276, i32))
+      new_regs = []
+      for reg in self.registers.flat:
+        reg_ty = reg.type
+        reg = utils.bitcast(reg, i32)
+        reg_shfl = utils.shfl_bfly(reg, 4)
+        new_reg = llvm.inline_asm(
+            i32, [reg, reg_shfl, perm], "prmt.b32 $0, $1, $2, $3;", "=r,r,r,r"
+        )
+        new_regs.append(utils.bitcast(new_reg, reg_ty))
+      return FragmentedArray(
+          _registers=np.asarray(new_regs, dtype=object).reshape(new_layout.registers_shape(shape)),
+          _layout=new_layout,
+          _is_signed=self.is_signed,
+      )
     if len(shape) == 2 and shape[0] % 64 == 0 and shape[1] % 8 == 0:
       tiled_layout = _tiled_wgmma_layout(shape)
       if (self.layout == WGMMA_LAYOUT and new_layout == tiled_layout) or (

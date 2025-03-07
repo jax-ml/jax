@@ -2287,6 +2287,47 @@ class LayoutTest(TestCase):
     )
     np.testing.assert_array_equal(f(x), x)
 
+  @parameterized.product(
+      dtype=[jnp.int16],  # TODO(apaszke): More dtypes
+      # TODO(apaszke): swizzle=64 <- not implemented in transfer_tiled right now
+      swizzle=[16, 32, 128],
+  )
+  def test_transpose_tiled(self, dtype, swizzle):
+    mlir_dtype = utils.dtype_to_ir_type(dtype)
+    bw = bytewidth(mlir_dtype)
+    col_tiling = swizzle // bw
+    m, n = 128, 256
+    tiling = (8, col_tiling)
+    transpose_layout = fa.WGMMA_TRANSPOSED_LAYOUT
+    def kernel(ctx, in_, out, smems):
+      smem_in, smem_out, barrier = smems
+      ctx.async_copy(src_ref=in_, dst_ref=smem_in, swizzle=swizzle, barrier=barrier)
+      barrier.wait()
+      t = mgpu.FragmentedArray.load_tiled(
+          smem_in, swizzle=swizzle, is_signed=True, layout=fa.TILED_LAYOUT_WGMMA
+      )
+      smem_out_t = memref_transpose(smem_out, (1, 0, 3, 2))
+      t.to_layout(transpose_layout).store_tiled(smem_out_t, swizzle=swizzle)
+      mgpu.commit_shared()
+      ctx.async_copy(src_ref=smem_out, dst_ref=out, swizzle=swizzle)
+      ctx.await_async_copy(0)
+    x = (
+        np.arange(m * n, dtype=dtype)
+        .reshape(m // tiling[0], tiling[0], n // tiling[1], tiling[1])
+        .transpose(0, 2, 1, 3)
+    )
+    y_ref = (
+        np.arange(m * n, dtype=dtype)
+        .reshape(m, n)
+        .T.reshape(n // tiling[0], tiling[0], m // tiling[1], tiling[1])
+        .transpose(0, 2, 1, 3)
+    )
+
+    y = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, y_ref, [x, y_ref, mgpu.TMABarrier()],
+    )(x)
+    np.testing.assert_array_equal(y, y_ref)
+
 
 @dataclasses.dataclass(frozen=True)
 class Tile:
