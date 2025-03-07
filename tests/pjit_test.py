@@ -7072,6 +7072,14 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "Context mesh.*cannot be empty"):
       auto_axes(f, out_shardings=s)(arr)
 
+  def test_divisbility_aval_error(self):
+    abstract_mesh = mesh_lib.AbstractMesh(
+        (('x', 2),), axis_types={AxisTypes.Explicit: 'x'})
+    s = NamedSharding(abstract_mesh, P('x'))
+    with self.assertRaisesRegex(
+        ValueError, 'does not evenly divide the dimension size'):
+      core.ShapedArray((5, 2), jnp.int32, sharding=s)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

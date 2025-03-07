@@ -443,6 +443,7 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
   consts, carry, xs_ = split_list(args, [num_consts, num_carry])
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
   num_trips, remainder = divmod(length, unroll)
+
   if unroll != 1 and num_trips == 1 and remainder == 0:
     # In that case, we explicitly want to fully unroll the loop. Put everything
     # into the remainder block and avoid lowering to a while loop.
@@ -459,26 +460,6 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
     xss = [lax.reshape(x, (num_trips, unroll, *x.shape[1:])) for x in xs_]
     yss = _map(partial(_empty_array, (num_trips, unroll), None), y_avals)
 
-  def cond_fun(while_carry):
-    i, _, _ = while_carry
-    return i < num_trips
-  def body_fun(while_carry):
-    i_, carry, yss = while_carry
-    i = num_trips - i_ - 1 if reverse else i_
-    xs = [
-        slicing.dynamic_index_in_dim(
-            xs, i, keepdims=False, allow_negative_indices=False
-        )
-        for xs in xss
-    ]
-    carry, ys = inner(unroll, carry, xs)
-    yss = [
-        slicing.dynamic_update_index_in_dim(
-            ys, upd, i, 0, allow_negative_indices=False
-        )
-        for ys, upd in zip(yss, ys)
-    ]
-    return i_ + 1, carry, yss
   def inner(n, carry, xs):
     ys = []
     if unroll == 1:
@@ -492,6 +473,22 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
       ys.append(y)
     ys = list(reversed(ys)) if reverse else ys
     return carry, _map(_stack, zip(*ys))
+
+  def body_fun(while_carry):
+    i_, carry, yss = while_carry
+    i = num_trips - i_ - 1 if reverse else i_
+    xs = [slicing.dynamic_index_in_dim(xs, i, keepdims=False,
+                                       allow_negative_indices=False)
+          for xs in xss]
+    carry, ys = inner(unroll, carry, xs)
+    yss = [slicing.dynamic_update_index_in_dim(y, upd, i, 0,
+                                               allow_negative_indices=False)
+           for y, upd in zip(yss, ys)]
+    return i_ + 1, carry, yss
+
+  def cond_fun(while_carry):
+    i, _, _ = while_carry
+    return i < num_trips
 
   if num_trips:
     i = lax._const(num_trips, 0)

@@ -1852,9 +1852,22 @@ def _maybe_modify_sharding(sharding, ndim):
     out = _make_lengths_same(out, ndim)
   return out
 
+def _check_divisibility(sharding, shape):
+  mesh = sharding.mesh
+  for dim, (spec, sh) in enumerate(zip(sharding.spec, shape)):
+    if spec is None:
+      continue
+    spec = spec if isinstance(spec, tuple) else (spec,)
+    size = math.prod(mesh.shape[s] for s in spec)
+    _, remainder = divmod(sh, size)
+    if remainder != 0:
+      raise ValueError(
+          f"Sharding spec {spec} implies that array axis {dim} is partitioned"
+          f" {size} times, but does not evenly divide the dimension size {sh}."
+          f" Got shape: {shape} and sharding {sharding}")
 
 @cache(max_size=4096, trace_context_in_key=True)
-def get_sharding(sharding, ndim):
+def get_sharding(sharding, shape):
   """Modifies and checks the sharding.
 
   Some modifications/checks include:
@@ -1863,6 +1876,7 @@ def get_sharding(sharding, ndim):
     * Checking for len(spec)-ndim match
     * Checking if the mesh is an AbstractMesh.
   """
+  ndim = len(shape)
   if sharding is None:
     return NamedSharding(mesh_lib.empty_abstract_mesh, P(*[None] * ndim))
 
@@ -1874,6 +1888,7 @@ def get_sharding(sharding, ndim):
   if not isinstance(out_s.mesh, mesh_lib.AbstractMesh):
     raise ValueError("Mesh of an aval must be an AbstractMesh. "
                      f"Got {out_s.mesh} of type {type(out_s.mesh)}")
+  _check_divisibility(out_s, shape)
   return out_s
 
 
@@ -1885,7 +1900,7 @@ class ShapedArray(UnshapedArray):
     self.shape = canonicalize_shape(shape)
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
-    self.sharding = get_sharding(sharding, len(self.shape))
+    self.sharding = get_sharding(sharding, self.shape)
 
   def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
     if shape is None:
