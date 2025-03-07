@@ -206,6 +206,13 @@ def _dtype_after_transforming(
   return dtype
 
 
+def _sharding_after_transforming(sharding, transforms):
+  for transform in transforms:
+    sharding = transform.transform_sharding(sharding)
+  assert sharding is not None
+  return sharding
+
+
 def _get_abstract_eval(ref_aval: AbstractRef, *args,
                        tree):
   transforms = tree_util.tree_unflatten(tree, args)
@@ -214,10 +221,9 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
     out_shape = _shape_after_transforming(ref_aval.shape, transforms)
     out_dtype = _dtype_after_transforming(ref_aval.dtype, transforms)
-    # TODO(yashkatariya): Transform the sharding too instead of setting it to
-    # None.
-    out_aval = ref_aval.inner_aval.update(shape=out_shape, dtype=out_dtype,
-                                          sharding=core.get_cur_mesh_sharding())
+    out_sharding = _sharding_after_transforming(ref_aval.sharding, transforms)
+    out_aval = ref_aval.inner_aval.update(
+        shape=out_shape, dtype=out_dtype, sharding=out_sharding)
   else:
     if transforms:
       raise ValueError("Cannot index non-shaped array with nontrivial indices.")

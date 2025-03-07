@@ -259,3 +259,26 @@ class NDIndexer:
 
   def transform_dtype(self, dtype):
     return dtype
+
+  def transform_sharding(self, sharding):
+    # If there are no explicit axes, do nothing.
+    if all(p is None for p in sharding.spec):
+      return sharding
+    # If there are explicit axes, we don't support changing the shape, so we
+    # don't support int indexers and instead require all slices.
+    if (self.int_indexer_shape or
+        not all(isinstance(idx, Slice) for idx in self.indices)):
+      raise TypeError("sharded ref (array reference) can only be indexed by "
+                      "slices, not integers")
+    #  Moreover, only allow trivial slice(None) slices on explicitly sharded
+    #  axes. Then the sharding stays the same.
+    _, slice_indexers, _ = unpack_ndindexer(self)
+    for i, (d, sl, s) in enumerate(zip(self.shape, slice_indexers, sharding.spec)):
+      if s is None: continue
+      if not (type(sl.start)  is int and sl.start == 0 and
+              type(sl.size)   is int and sl.size  == d and
+              type(sl.stride) is int and sl.stride == 1):
+        raise ValueError("sharded ref (array reference) can only be sliced "
+                         f"along unsharded axes, but ref of shape {self.shape} "
+                         f"was sliced on axis {i}, which is sharded like {s}")
+    return sharding
