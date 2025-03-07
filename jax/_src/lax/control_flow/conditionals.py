@@ -281,8 +281,9 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   num_consts = len(consts)
   out_ = iter(out)
 
+  all_inputs = [*consts, *ops]
   out = [
-    next(out_) if fwd is None else lax.asarray(ops[fwd - num_consts])
+    next(out_) if fwd is None else lax.asarray(all_inputs[fwd])
     for fwd in in_fwd
   ]
   assert next(out_, None) is None

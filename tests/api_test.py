@@ -6446,14 +6446,10 @@ class JaxprTest(jtu.JaxTestCase):
     e:i32[] = convert_element_type[new_dtype=int32 weak_type=False] b
     f:f32[] = cond[
       branches=(
-        { lambda ; g_:f32[] h:f32[] i:f32[] j:f32[]. let
-            k:f32[] = sub j h
-          in (k,) }
-        { lambda ; l:f32[] m_:f32[] n:f32[] o:f32[]. let
-            p:f32[] = add n l
-          in (p,) }
+        { lambda ; g:f32[] h:f32[] i:f32[]. let j:f32[] = sub i g in (j,) }
+        { lambda ; k:f32[] l:f32[] m:f32[]. let n:f32[] = add l k in (n,) }
       )
-    ] e a a c d
+    ] e a c d
   in (f,) }"""
     jaxpr = api.make_jaxpr(f)(jnp.float32(3.))
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
