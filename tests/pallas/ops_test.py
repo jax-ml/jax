@@ -106,6 +106,9 @@ _DTYPES_SUB_32BIT = (
     "uint8",
     "uint4",
     "bool",
+    "float8_e4m3b11fnuz",
+    "float8_e5m2",
+    "float8_e4m3fn",
 )
 _DTYPES = (*_DTYPES_32BIT, *_DTYPES_SUB_32BIT)
 
@@ -567,6 +570,11 @@ class OpsTest(PallasBaseTest):
   @hp.given(hps.data())
   def test_cast_from_32bit(self, from_dtype, to_dtype, data):
     self.skip_if_mosaic_gpu()
+    if to_dtype in {"float8_e4m3b11fnuz", "float8_e5m2", "float8_e4m3fn"}:
+      if not jtu.test_device_matches(["tpu"]) or jtu.get_tpu_version() < 5:
+        self.skipTest("Not supported on this hardware")
+      if not jtu.if_cloud_tpu_at_least(2025, 3, 8):
+        self.skipTest("Test requires libtpu from 2025/3/8 or later")
 
     if from_dtype == to_dtype:
       self.skipTest("Unnecessary test")
@@ -632,6 +640,18 @@ class OpsTest(PallasBaseTest):
       self.skipTest("Not supported on this TPU generation")
     if jtu.test_device_matches(["gpu"]) and to_dtype in {"int4", "uint4"}:
       self.skipTest("int4/uint4 casts are buggy on GPU")  # b/391292861
+
+    if from_dtype in {
+        "float8_e4m3b11fnuz",
+        "float8_e5m2",
+        "float8_e4m3fn",
+    } or to_dtype in {"float8_e4m3b11fnuz", "float8_e5m2", "float8_e4m3fn"}:
+      if not jtu.test_device_matches(["tpu"]) or jtu.get_tpu_version() < 5:
+        self.skipTest("Not supported on this hardware")
+      if not jtu.if_cloud_tpu_at_least(2025, 3, 8):
+        self.skipTest("Test requires libtpu from 2025/3/8 or later")
+      if to_dtype not in {"float32", "int32", "uint32"}:
+        self.skipTest("Only fp8 to x32 cast is supported")
 
     from_int = np.issubdtype(np.dtype(from_dtype), np.integer)
     to_int = np.issubdtype(np.dtype(to_dtype), np.integer)
