@@ -578,7 +578,7 @@ def _unshard_shaped_array(mesh: Mesh, names: AxisNames,
                     for i, sz in enumerate(aval.shape))
   names_spec = _names_to_pspec(names)._normalized_spec_for_aval(aval.ndim)
   if aval.ndim == 0:
-    out_spec = names_spec
+    out_spec = PartitionSpec()
   else:
     out_spec = []  # type: ignore
     for name_s, aval_s in zip(names_spec, aval.sharding.spec):

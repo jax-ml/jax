@@ -253,7 +253,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
   def test_lax_full_sharding(self):
     devices = jax.devices()
     mesh = Mesh(devices, axis_names=("i"))
-    sharding = NamedSharding(mesh, P('i', None))
+    sharding = NamedSharding(mesh, P('i'))
     x = lax.full((len(devices),), 1.0, sharding=sharding)
     self.assertEqual(x.sharding, sharding)
 

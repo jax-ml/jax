@@ -4438,8 +4438,15 @@ def _to_edtype_abstract_eval(x, *, edtype):
         f" has a representation shape {rep_aval.shape} (rank {rep_aval.ndim}) "
         f"while the given representation array has shape {x.shape} (rank "
         f"{x.ndim} < {rep_aval.ndim}).")
+  if x.sharding.mesh != rep_aval.sharding.mesh:
+    raise ValueError(
+        "can only convert to extended dtype from an array of its "
+        f"representation type, but the extended dtype {dtype_to_string(edtype)}"
+        f" has a representation mesh {rep_aval.sharding.mesh} "
+        f"while the given representation array has mesh {x.sharding.mesh}")
   n = x.ndim - rep_aval.ndim
   shape_prefix, shape_suffix = x.shape[:n], x.shape[n:]
+  spec_prefix, spec_suffix = x.sharding.spec[:n], x.sharding.spec[n:]
   if shape_suffix != rep_aval.shape:
     raise ValueError(
         "can only convert to extended dtype from an array of its "
@@ -4447,7 +4454,19 @@ def _to_edtype_abstract_eval(x, *, edtype):
         f" has a representation shape {rep_aval.shape} while the given "
         f"representation array has shape {x.shape}, so the shape suffix "
         f"does not match: given {shape_suffix} but required {rep_aval.shape}.")
-  return x.update(shape=shape_prefix, dtype=edtype)
+
+  assert all(s is None for s in spec_suffix)
+  if spec_suffix != rep_aval.sharding.spec:
+    raise ValueError(
+        'can only convert to extended dtype from an array of its'
+        ' representation type, but the extended dtype'
+        f' {dtype_to_string(edtype)} has a representation sharding'
+        f' {rep_aval.str_short(mesh_axis_types=True)} while the given'
+        ' representation array has sharding'
+        f' {x.str_short(mesh_axis_types=True)}, so the sharding suffix does not'
+        f' match: given {spec_suffix} but required {rep_aval.sharding.spec}.')
+  return x.update(shape=shape_prefix, dtype=edtype,
+                  sharding=x.sharding.with_spec(spec_prefix))
 
 to_edtype_p = Primitive('to_edtype')
 to_edtype_p.def_impl(partial(dispatch.apply_primitive, to_edtype_p))

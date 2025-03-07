@@ -758,9 +758,10 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
   if positional_axes:
     reducer = mlir.lower_fun(pos_fn, multiple_results=False)
     def _positional_reduce(aval, arg):
+      new_shape = np.delete(np.array(aval.shape, dtype=np.int64), positional_axes)
+      new_spec = lax.tuple_delete(aval.sharding.spec, positional_axes)
       aval_out = aval.update(
-          shape=np.delete(np.array(aval.shape, dtype=np.int64),
-                          positional_axes))
+          shape=new_shape, sharding=aval.sharding.with_spec(new_spec))
       reducer_ctx = ctx.replace(primitive=None, avals_in=[aval], avals_out=[aval_out])
       out, = reducer(reducer_ctx, arg, axes=tuple(positional_axes))
       return out
@@ -1421,7 +1422,7 @@ def _reduce_scatter_lowering(
     axis_index_groups, axis_size, tiled):
   x_aval, = ctx.avals_in
   aval_out, = ctx.avals_out
-  scalar_aval = x_aval.update(shape=())
+  scalar_aval = x_aval.update(shape=(), sharding=x_aval.sharding.with_spec(()))
   replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
                                    axis_index_groups)
   scatter_out_shape = list(x_aval.shape)
@@ -1484,7 +1485,10 @@ def _reduce_scatter_effectful_abstract_eval(
                        f"{scatter_dim_input_size} must match shard count "
                        f"{axis_size}")
     del new_shape[scatter_dimension]
-  return x_aval.update(shape=new_shape), {*map(core.NamedAxisEffect, axis_name)}
+  assert all(s is None for s in x_aval.sharding.spec)
+  new_spec = (None,) * len(new_shape)
+  return (x_aval.update(shape=new_shape, sharding=x_aval.sharding.with_spec(new_spec)),
+          {*map(core.NamedAxisEffect, axis_name)})
 
 
 def _reduce_scatter_transpose_rule(cts, x, *, axis_name, scatter_dimension,
