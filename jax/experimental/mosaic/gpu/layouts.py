@@ -98,7 +98,7 @@ def to_layout_attr(
     layout: (
         fa.WGSplatFragLayout
         | fa.WGStridedFragLayout
-        | fa.WGMMAFragLayout
+        | fa.TiledLayout
         | fa.WGMMARowFragLayout
     ),
 ) -> ir.Attribute:
@@ -108,7 +108,7 @@ def to_layout_attr(
       return to_splat_fragmented_layout_attr(layout)
     case fa.WGStridedFragLayout():
       return to_strided_fragmented_layout_attr(layout)
-    case fa.WGMMAFragLayout():
+    case fa.WGMMA_LAYOUT:
       return ir.Attribute.parse("#mosaic_gpu.WGMMAFragLayout")
     case fa.WGMMARowFragLayout():
       return ir.Attribute.parse("#mosaic_gpu.WGMMARowFragLayout")
@@ -141,7 +141,7 @@ def from_layout_attr(
 ) -> (
     fa.WGSplatFragLayout
     | fa.WGStridedFragLayout
-    | fa.WGMMAFragLayout
+    | fa.TiledLayout
     | fa.WGMMARowFragLayout
 ):
   """Constructs a layout from an MLIR attribute."""
@@ -150,7 +150,7 @@ def from_layout_attr(
   elif is_strided_fragmented_layout(attr):
     return from_strided_fragmented_layout_attr(attr)
   elif is_wgmma_fragmented_layout(attr):
-    return fa.WGMMAFragLayout()
+    return fa.WGMMA_LAYOUT
   elif is_wgmma_row_fragmented_layout(attr):
     return fa.WGMMARowFragLayout()
   else:

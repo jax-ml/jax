@@ -81,7 +81,7 @@ def _choose_representative_layout(
       )
   )
 
-  wgmma_layouts: list[fa.WGMMAFragLayout] = list(
+  wgmma_layouts: list[fa.TiledLayout] = list(
       map(
           layouts_lib.from_layout_attr,
           filter(layouts_lib.is_wgmma_fragmented_layout, layouts),
@@ -307,7 +307,7 @@ def _infer_splat_op_layout(splat_op: vector.SplatOp) -> OptionalLayouts:
 
 @partial(_add_layout_inference_rule, mgpu.WGMMAOp)
 def _infer_wgmma_op_layout(wgmma_op: mgpu.WGMMAOp) -> OptionalLayouts:
-  layout = layouts_lib.to_layout_attr(fa.WGMMAFragLayout())
+  layout = layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)
 
   if ir.VectorType.isinstance(wgmma_op.a.type):
     return [layout, layout], [layout]
