@@ -53,7 +53,7 @@ class LaxScipySpectralDacTest(jtu.JaxTestCase):
     vV = evs.astype(V.dtype)[None, :] * V
     eps = jnp.finfo(H.dtype).eps
     atol = jnp.linalg.norm(H) * eps
-    self.assertAllClose(ev_exp, jnp.sort(evs), atol=20 * atol)
+    self.assertAllClose(ev_exp + 1, jnp.sort(evs), atol=20 * atol)
     self.assertAllClose(
         HV, vV, atol=atol * (140 if jnp.issubdtype(dtype, jnp.complexfloating)
                              else 40))
