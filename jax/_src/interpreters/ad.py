@@ -40,6 +40,7 @@ from jax._src.dtypes import dtype, float0
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list, wrap_name,
                            as_hashable_function, weakref_lru_cache,
                            partition_list)
+from jax._src.state.types import AbstractRef
 
 zip = safe_zip
 map = safe_map
@@ -430,7 +431,7 @@ class JVPTrace(Trace):
 
   def process_primitive(self, primitive, tracers, params):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
-    if all(type(t) is Zero for t in tangents_in):
+    if primitive is not core.mutable_array_p and all(type(t) is Zero for t in tangents_in) and not any(isinstance(get_aval(p), AbstractRef) for p in primals_in):
       return primitive.bind_with_trace(self.parent_trace, primals_in, params)
     jvp = primitive_jvps.get(primitive)
     if not jvp:
@@ -617,7 +618,7 @@ class LinearizeTrace(Trace):
   def process_primitive(self, primitive, args, params):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, args))
     tangent_nzs = [type(t) is not Zero for t in tangents_in]
-    if all(type(t) is Zero for t in tangents_in):
+    if primitive is not core.mutable_array_p and all(type(t) is Zero for t in tangents_in) and not any(isinstance(get_aval(p), AbstractRef) for p in primals_in):
       return primitive.bind_with_trace(self.parent_trace, primals_in, params)
     fallback = partial(fallback_linearize_rule, primitive)
     lin = primitive_linearizations.get(primitive, fallback)

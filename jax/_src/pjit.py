@@ -2043,18 +2043,6 @@ def _pjit_jvp(primals_in, tangents_in,
               jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
               resource_env, donated_invars, name, keep_unused, inline,
               compiler_options_kvs):
-  if any(isinstance(c, core.MutableArray) for c in jaxpr.consts):
-    jaxpr, mut_primals = pxla._move_mutable_consts(jaxpr)
-    mut_tangents = map(ad_util.zeros_like_jaxval, mut_primals)
-    primals_in = [*primals_in, *mut_primals]
-    tangents_in = [*tangents_in, *mut_tangents]
-    in_shardings = (*in_shardings,) + (UNSPECIFIED,) * len(mut_primals)
-    in_layouts = (*in_layouts,) + (None,) * len(mut_primals)
-    donated_invars = (*donated_invars,) + (False,) * len(mut_primals)
-
-  tangents_in = [ad_util.zeros_like_aval(a) if isinstance(a, AbstractRef) else x
-                 for x, a in zip(tangents_in, jaxpr.in_avals)]
-
   is_nz_tangents_in = [type(t) is not ad.Zero for t in tangents_in]
   jaxpr_jvp, is_nz_tangents_out = ad.jvp_jaxpr(
       jaxpr, is_nz_tangents_in, instantiate=False)
