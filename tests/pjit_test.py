@@ -6264,6 +6264,13 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding,
                      NamedSharding(mesh, P('x', None, None, None, None)))
 
+  def test_aval_spec_explicit_auto_complete(self):
+    abstract_mesh = mesh_lib.AbstractMesh(
+        (('x', 2),), axis_types={AxisTypes.Explicit: 'x'})
+    s = NamedSharding(abstract_mesh, P('x'))
+    out = core.ShapedArray((8, 2), jnp.int32, sharding=s)
+    self.assertEqual(out.sharding.spec, P('x', None))
+
   @jtu.with_user_mesh((2, 2), ('x', 'y'),
                       axis_types={mesh_lib.AxisTypes.Auto: ('x', 'y')})
   def test_full_user_mode(self, mesh):
@@ -6316,6 +6323,34 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = f(arr1, arr2, arr3)
     self.assertEqual(out.shape, (16, 8, 16))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('data', None, None)))
+
+  @jtu.with_user_mesh((4,), ('data',))
+  def test_intermediate_einsum_auto_complete_spec(self, mesh):
+    s = NamedSharding(mesh, P('data'))
+
+    shape1 = (8, 32, 2*16)
+    shape2 = (8, 32, 2, 8)
+    shape3 = (8, 32, 2, 8)
+    np_inp1 = np.arange(math.prod(shape1)).reshape(shape1)
+    np_inp2 = np.arange(math.prod(shape2)).reshape(shape2)
+    np_inp3 = np.arange(math.prod(shape3)).reshape(shape3)
+
+    arr1 = jax.device_put(np_inp1, s)
+    arr2 = jax.device_put(np_inp2, s)
+    arr3 = jax.device_put(np_inp3, s)
+
+    @jax.jit
+    def f(x, y, z):
+      x = jnp.reshape(x,  (8, 32, 2, 16))
+      out = jnp.einsum('bthD, bthi, bthj->ijD', x, y, z,
+                       out_sharding=P('data'))
+      self.assertEqual(out.shape, (8, 8, 16))
+      self.assertEqual(out.aval.sharding.spec, P('data', None, None))
+      return out
+
+    out = f(arr1, arr2, arr3)
+    self.assertEqual(out.shape, (8, 8, 16))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('data', None, None)))
 
   def test_where_with_prng_sharded_inp(self):
