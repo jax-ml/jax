@@ -254,6 +254,23 @@ class MutableArrayTest(jtu.JaxTestCase):
     self.assertEqual(s, a.sharding)
     self.assertEqual(s, y.sharding)
 
+  def test_explicit_sharding_after_indexing(self):
+    # https://github.com/jax-ml/jax/issues/26936
+    mesh = jax.make_mesh((1, 1), ('x', 'y'), explicit_axes=('x', 'y'))
+    sharding = NamedSharding(mesh, P('x', 'y'))
+
+    @jax.jit
+    def f(x_ref):
+      self.assertEqual(core.get_ty(x_ref).sharding.spec,
+                       core.get_ty(x_ref[...]).sharding.spec)
+      y = x_ref[...] + 1
+      return y
+
+    with jax.sharding.use_mesh(mesh):
+      x = jnp.zeros((4, 4), jnp.int32, device=sharding)
+      x_ref = core.mutable_array(x)
+      y = f(x_ref)
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
