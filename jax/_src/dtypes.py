@@ -730,6 +730,12 @@ def _least_upper_bound(jax_numpy_dtype_promotion: str, *nodes: JAXType) -> JAXTy
         "promotion path. To avoid unintended promotion, 8-bit floats do not support "
         "implicit promotion. If you'd like your inputs to be promoted to another type, "
         "you can do so explicitly using e.g. x.astype('float32')")
+    elif any(n in _float4_dtypes for n in nodes):
+      msg = (
+        f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
+        "promotion path. To avoid unintended promotion, 4-bit floats do not support "
+        "implicit promotion. If you'd like your inputs to be promoted to another type, "
+        "you can do so explicitly using e.g. x.astype('float32')")
     elif any(n in _intn_dtypes for n in nodes):
       msg = (
         f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
