@@ -480,14 +480,41 @@ def is_finite(x: ArrayLike) -> Array:
   """
   return is_finite_p.bind(x)
 
+class Tolerance:
+  """Specify the tolerances used for computing unary functions.
+
+  Maximum two tolerances can be specified: (atol and rtol) or (atol and ulps).
+  """
+
+  def __init__(self, atol: float = 0.0, rtol: float = 0.0, ulps: int = 0):
+    if atol < 0.0 or rtol < 0.0 or ulps < 0.0:
+      raise ValueError('Tolerances must be non-negative.')
+    if atol == 0.0 and rtol == 0.0 and ulps == 0:
+      raise ValueError('At least one of atol, rtol, or ulps must be set.')
+
+    self.atol = atol
+    self.rtol = rtol
+    self.ulps = ulps
+
+
+class AccuracyMode(enum.Enum):
+  HIGHEST = 1
+  DEFAULT = 2
+
 @export
-def exp(x: ArrayLike) -> Array:
+def exp(x: ArrayLike, accuracy=None) -> Array:
   r"""Elementwise exponential: :math:`e^x`.
 
   This function lowers directly to the  `stablehlo.exponential`_ operation.
 
   Args:
     x: input array. Must have floating-point or complex type.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of exp based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
@@ -499,10 +526,13 @@ def exp(x: ArrayLike) -> Array:
 
   .. _stablehlo.exponential: https://openxla.org/stablehlo/spec#exponential
   """
-  return exp_p.bind(x)
+  params = dict()
+  if accuracy is not None:
+    params['accuracy'] = accuracy
+  return exp_p.bind(x, **params)
 
-@export
-def exp2(x: ArrayLike) -> Array:
+
+def exp2(x: ArrayLike, accuracy=None) -> Array:
   r"""Elementwise base-2 exponential: :math:`2^x`.
 
   This function is implemented in terms of the `stablehlo.exponential`_
@@ -510,6 +540,12 @@ def exp2(x: ArrayLike) -> Array:
 
   Args:
     x: input array. Must have floating-point or complex type.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
@@ -522,10 +558,10 @@ def exp2(x: ArrayLike) -> Array:
   .. _stablehlo.exponential: https://openxla.org/stablehlo/spec#exponential
   .. _stablehlo.multiply: https://openxla.org/stablehlo/spec#multiply
   """
-  return exp2_p.bind(x)
+  return exp2_p.bind(x, accuracy=accuracy)
 
 @export
-def expm1(x: ArrayLike) -> Array:
+def expm1(x: ArrayLike, accuracy=None) -> Array:
   r"""Elementwise :math:`e^{x} - 1`.
 
   This function lowers directly to the `stablehlo.exponential_minus_one`_
@@ -534,6 +570,12 @@ def expm1(x: ArrayLike) -> Array:
 
   Args:
     x: input array. Must have floating-point or complex type.
+    accuracy: optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    accuracy: If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
@@ -545,16 +587,25 @@ def expm1(x: ArrayLike) -> Array:
 
   .. _stablehlo.exponential_minus_one: https://openxla.org/stablehlo/spec#exponential_minus_one
   """
-  return expm1_p.bind(x)
+  params = dict()
+  if accuracy is not None:
+    params['accuracy'] = accuracy
+  return expm1_p.bind(x, **params)
 
 @export
-def log(x: ArrayLike) -> Array:
+def log(x: ArrayLike, accuracy=None) -> Array:
   r"""Elementwise natural logarithm: :math:`\mathrm{log}(x)`.
 
   This function lowers directly to the  `stablehlo.log`_ operation.
 
   Args:
     x: input array. Must have floating-point or complex type.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
@@ -565,10 +616,13 @@ def log(x: ArrayLike) -> Array:
 
   .. _stablehlo.log: https://openxla.org/stablehlo/spec#log
   """
-  return log_p.bind(x)
+  params = dict()
+  if accuracy is not None:
+    params['accuracy'] = accuracy
+  return log_p.bind(x, **params)
 
 @export
-def log1p(x: ArrayLike) -> Array:
+def log1p(x: ArrayLike, accuracy=None) -> Array:
   r"""Elementwise :math:`\mathrm{log}(1 + x)`.
 
   This function lowers directly to the  `stablehlo.log_plus_one`_ operation.
@@ -577,6 +631,12 @@ def log1p(x: ArrayLike) -> Array:
 
   Args:
     x: input array. Must have floating-point or complex type.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
@@ -588,16 +648,25 @@ def log1p(x: ArrayLike) -> Array:
 
   .. _stablehlo.log_plus_one: https://openxla.org/stablehlo/spec#log_plus_one
   """
-  return log1p_p.bind(x)
+  params = dict()
+  if accuracy is not None:
+    params['accuracy'] = accuracy
+  return log1p_p.bind(x, **params)
 
 @export
-def tanh(x: ArrayLike) -> Array:
+def tanh(x: ArrayLike, accuracy=None) -> Array:
   r"""Elementwise hyperbolic tangent: :math:`\mathrm{tanh}(x)`.
 
   This function lowers directly to the `stablehlo.tanh`_ operation.
 
   Args:
     x: input array. Must have floating-point or complex type.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
@@ -610,14 +679,20 @@ def tanh(x: ArrayLike) -> Array:
 
   .. _stablehlo.tanh: https://openxla.org/stablehlo/spec#tanh
   """
-  return tanh_p.bind(x)
+  params = dict()
+  if accuracy is not None:
+    params['accuracy'] = accuracy
+  return tanh_p.bind(x, **params)
 
-def logistic(x: ArrayLike) -> Array:
+def logistic(x: ArrayLike, accuracy=None) -> Array:
   r"""Elementwise logistic (sigmoid) function: :math:`\frac{1}{1 + e^{-x}}`."""
-  return logistic_p.bind(x)
+  params = dict()
+  if accuracy is not None:
+    params['accuracy'] = accuracy
+  return logistic_p.bind(x, **params)
 
 @export
-def sin(x: ArrayLike) -> Array:
+def sin(x: ArrayLike, accuracy=None) -> Array:
   r"""Elementwise sine: :math:`\mathrm{sin}(x)`.
 
   For floating-point inputs, this function lowers directly to the
@@ -626,6 +701,12 @@ def sin(x: ArrayLike) -> Array:
 
   Args:
     x: input array. Must have floating-point or complex type.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
@@ -638,10 +719,13 @@ def sin(x: ArrayLike) -> Array:
 
   .. _stablehlo.sine: https://openxla.org/stablehlo/spec#sine
   """
-  return sin_p.bind(x)
+  params = dict()
+  if accuracy is not None:
+    params['accuracy'] = accuracy
+  return sin_p.bind(x, **params)
 
 @export
-def cos(x: ArrayLike) -> Array:
+def cos(x: ArrayLike, accuracy=None) -> Array:
   r"""Elementwise cosine: :math:`\mathrm{cos}(x)`.
 
   For floating-point inputs, this function lowers directly to the
@@ -650,6 +734,12 @@ def cos(x: ArrayLike) -> Array:
 
   Args:
     x: input array. Must have floating-point or complex type.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of exp based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
@@ -662,7 +752,10 @@ def cos(x: ArrayLike) -> Array:
 
   .. _stablehlo.cosine: https://openxla.org/stablehlo/spec#cosine
   """
-  return cos_p.bind(x)
+  params = dict()
+  if accuracy is not None:
+    params['accuracy'] = accuracy
+  return cos_p.bind(x, **params)
 
 @export
 def atan2(x: ArrayLike, y: ArrayLike) -> Array:
@@ -850,13 +943,19 @@ def integer_pow(x: ArrayLike, y: int) -> Array:
   return integer_pow_p.bind(x, y=y)
 
 @export
-def sqrt(x: ArrayLike) -> Array:
+def sqrt(x: ArrayLike, accuracy=None) -> Array:
   r"""Elementwise square root: :math:`\sqrt{x}`.
 
   This function lowers directly to the `stablehlo.sqrt`_ operation.
 
   Args:
     x: Input array. Must have floating or complex dtype.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     An array of the same shape and dtype as ``x`` containing the square root.
@@ -868,16 +967,25 @@ def sqrt(x: ArrayLike) -> Array:
 
   .. _stablehlo.sqrt: https://openxla.org/stablehlo/spec#sqrt
   """
-  return sqrt_p.bind(x)
+  params = dict()
+  if accuracy is not None:
+    params['accuracy'] = accuracy
+  return sqrt_p.bind(x, **params)
 
 @export
-def rsqrt(x: ArrayLike) -> Array:
+def rsqrt(x: ArrayLike, accuracy=None) -> Array:
   r"""Elementwise reciprocal square root:  :math:`1 \over \sqrt{x}`.
 
   This function lowers directly to the `stablehlo.rsqrt`_ operation.
 
   Args:
     x: Input array. Must have floating or complex dtype.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     An array of the same shape and dtype as ``x`` containing the
@@ -890,16 +998,25 @@ def rsqrt(x: ArrayLike) -> Array:
 
   .. _stablehlo.rsqrt: https://openxla.org/stablehlo/spec#rsqrt
   """
-  return rsqrt_p.bind(x)
+  params = dict()
+  if accuracy is not None:
+    params['accuracy'] = accuracy
+  return rsqrt_p.bind(x, **params)
 
 @export
-def cbrt(x: ArrayLike) -> Array:
+def cbrt(x: ArrayLike, accuracy=None) -> Array:
   r"""Elementwise cube root: :math:`\sqrt[3]{x}`.
 
   This function lowers directly to the `stablehlo.cbrt`_ operation.
 
   Args:
     x: Input array. Must have floating or complex dtype.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of exp based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     An array of the same shape and dtype as ``x`` containing the cube root.
@@ -911,7 +1028,7 @@ def cbrt(x: ArrayLike) -> Array:
 
   .. _stablehlo.cbrt: https://openxla.org/stablehlo/spec#cbrt
   """
-  return cbrt_p.bind(x)
+  return cbrt_p.bind(x, accuracy=accuracy)
 
 @export
 def bitwise_not(x: ArrayLike) -> Array:
@@ -3188,13 +3305,19 @@ def reciprocal(x: ArrayLike) -> Array:
   return integer_pow(x, -1)
 
 @export
-def tan(x: ArrayLike) -> Array:
+def tan(x: ArrayLike, accuracy=None) -> Array:
   r"""Elementwise tangent: :math:`\mathrm{tan}(x)`.
 
   This function lowers directly to the `stablehlo.tangent`_ operation.
 
   Args:
     x: input array. Must have floating-point or complex type.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     Array of the same shape and dtype as ``x`` containing the element-wise
@@ -3208,7 +3331,7 @@ def tan(x: ArrayLike) -> Array:
 
   .. _stablehlo.tangent: https://openxla.org/stablehlo/spec#tangent
   """
-  return tan_p.bind(x)
+  return tan_p.bind(x, accuracy=accuracy)
 
 @export
 def asin(x: ArrayLike) -> Array:
@@ -3601,8 +3724,9 @@ def multi_sharding_in_dim(ctx, ops, in_avals, out_aval):
   return out
 
 
-def _nary_lower_hlo(op: Callable, ctx,
-                    *args: ir.Value, **params) -> Sequence[ir.Value]:
+def _nary_lower_hlo(
+    op: Callable, ctx, *args: ir.Value, accuracy=None, **params
+) -> Sequence[ir.Value]:
   """Lowers an elementwise operator to its MLIR equivalent.
   """
   del params
@@ -3611,6 +3735,8 @@ def _nary_lower_hlo(op: Callable, ctx,
   args = multi_sharding_in_dim(ctx, args, avals_in, aval_out)
 
   out = op(*args)
+  if accuracy:
+    out = op(*args, result_accuracy=accuracy_attr(accuracy))
   return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
 
 
@@ -3672,43 +3798,44 @@ ad.defjvp_zero(is_finite_p)
 mlir.register_lowering(is_finite_p, partial(_nary_lower_hlo, hlo.is_finite))
 
 exp_p = standard_unop(_float | _complex, 'exp')
-ad.defjvp2(exp_p, lambda g, ans, x: mul(g, ans))
+ad.defjvp2(exp_p, lambda g, ans, x, **kwargs: mul(g, ans))
 mlir.register_lowering(exp_p, partial(_nary_lower_hlo, hlo.exponential))
 batching.ragged_prop_rules[exp_p] = batching.ragged_mask_elementwise_rule
 
 exp2_p = standard_unop(_float | _complex, 'exp2')
-ad.defjvp2(exp2_p, lambda g, ans, x: mul(log(_const(x, 2)), mul(g, ans)))
-def _exp2_lower(ctx, x):
+ad.defjvp2(exp2_p, lambda g, ans, x, **kwargs: mul(log(_const(x, 2)), mul(g, ans)))
+def _exp2_lower(ctx, x, accuracy=None):
   x_aval, = ctx.avals_in
   log2 = mlir.ir_constant(np.array(np.log(2), x_aval.dtype))
   log2 = mlir.broadcast_in_dim(ctx, log2, x_aval, broadcast_dimensions=())
-  return [hlo.exponential(hlo.multiply(log2, x))]
+  return [hlo.exponential(hlo.multiply(log2, x),
+                          result_accuracy=accuracy_attr(accuracy))]
 mlir.register_lowering(exp2_p, _exp2_lower)
 
 log_p = standard_unop(_float | _complex, 'log')
-ad.defjvp(log_p, lambda g, x: div(g, x))
+ad.defjvp(log_p, lambda g, x, **kwargs: div(g, x))
 mlir.register_lowering(log_p, partial(_nary_lower_hlo, hlo.log))
 
 expm1_p = standard_unop(_float | _complex, 'expm1')
-ad.defjvp2(expm1_p, lambda g, ans, x: mul(g, add(ans, _one(ans))))
+ad.defjvp2(expm1_p, lambda g, ans, x, **kwargs: mul(g, add(ans, _one(ans))))
 mlir.register_lowering(expm1_p,
                        partial(_nary_lower_hlo, hlo.exponential_minus_one))
 
 log1p_p = standard_unop(_float | _complex, 'log1p')
-ad.defjvp(log1p_p, lambda g, x: div(g, add(x, _one(x))))
+ad.defjvp(log1p_p, lambda g, x, **kwargs: div(g, add(x, _one(x))))
 mlir.register_lowering(log1p_p, partial(_nary_lower_hlo, hlo.log_plus_one))
 
 tanh_p = standard_unop(_float | _complex, 'tanh')
-ad.defjvp2(tanh_p, lambda g, ans, x: mul(add(g, mul(g, ans)),
+ad.defjvp2(tanh_p, lambda g, ans, x, **kwargs: mul(add(g, mul(g, ans)),
                                          sub(_one(x), ans)))
 mlir.register_lowering(tanh_p, partial(_nary_lower_hlo, hlo.tanh))
 
 logistic_p = standard_unop(_float | _complex, 'logistic')
-ad.defjvp2(logistic_p, lambda g, ans, x: mul(g, mul(ans, sub(_one(ans), ans))))
+ad.defjvp2(logistic_p, lambda g, ans, x, **kwargs: mul(g, mul(ans, sub(_one(ans), ans))))
 # TODO(phawkins): switch to LogisticOp lowering; debug numerical problems.
 # mlir.register_lowering(logistic_p, partial(_nary_lower_hlo, hlo.logistic))
 
-def logistic_impl(x):
+def logistic_impl(x, accuracy=None):
   one = _const(x, 1)
   return div(one, add(one, exp(neg(x))))
 
@@ -3730,19 +3857,19 @@ def _sin_complex(x):
   # avoid nan value when real(x) is zero and abs(x) is so large that abs(expm1(x)) is inf
   return select(a_is_zero, complex(_const(a, 0), im), complex(re, im))
 
-def _sin_lowering(ctx, x):
+def _sin_lowering(ctx, x, accuracy=None):
   if dtypes.issubdtype(ctx.avals_in[0].dtype, np.complexfloating):
     sine = mlir.lower_fun(_sin_complex, multiple_results=False)
     return sine(ctx, x)
-  return _nary_lower_hlo(hlo.sine, ctx, x)
+  return _nary_lower_hlo(hlo.sine, ctx, x, result_accuracy=accuracy_attr(accuracy))
 
-def _sin_p_lin(nzs, x):
+def _sin_p_lin(nzs, x, accuracy=None):
   nz, = nzs
   cos_x = cos(x) # TODO: allow this to happen in the linearized computation (need to fix backward_pass)
-  return (sin_p.bind(x), nz, cos_x, lambda cos_x_, t: mul(t, cos_x_))
+  return (sin_p.bind(x, accuracy=accuracy), nz, cos_x, lambda cos_x_, t: mul(t, cos_x_))
 
 sin_p = standard_unop(_float | _complex, 'sin')
-ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
+ad.defjvp(sin_p, lambda g, x, accuracy=None: mul(g, cos(x, accuracy=accuracy)))
 ad.primitive_linearizations[sin_p] = _sin_p_lin
 mlir.register_lowering(sin_p, _sin_lowering)
 batching.ragged_prop_rules[sin_p] = batching.ragged_mask_elementwise_rule
@@ -3758,18 +3885,18 @@ def _cos_complex(x):
   re, im = cs * csh, -sn * snh
   return select(a_is_zero, complex(re, _const(a, 0)), complex(re, im))
 
-def _cos_lowering(ctx, x):
+def _cos_lowering(ctx, x, accuracy=None):
   if dtypes.issubdtype(ctx.avals_in[0].dtype, np.complexfloating):
     cosine = mlir.lower_fun(_cos_complex, multiple_results=False)
     return cosine(ctx, x)
-  return _nary_lower_hlo(hlo.cosine, ctx, x)
+  return _nary_lower_hlo(hlo.cosine, ctx, x, result_accuracy=accuracy_attr(accuracy))
 
 cos_p = standard_unop(_float | _complex, 'cos')
-ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
+ad.defjvp(cos_p, lambda g, x, accuracy=None: neg(mul(g, sin(x, accuracy=accuracy))))
 mlir.register_lowering(cos_p, _cos_lowering)
 
 tan_p = standard_unop(_float | _complex, 'tan')
-ad.defjvp2(tan_p, lambda g, ans, x: mul(g, _const(x, 1) + square(ans)))
+ad.defjvp2(tan_p, lambda g, ans, x, **kwargs: mul(g, _const(x, 1) + square(ans)))
 mlir.register_lowering(tan_p, partial(_nary_lower_hlo, hlo.tan))
 
 asin_p = standard_unop(_float | _complex, 'asin')
@@ -3886,18 +4013,18 @@ _maybe_conj = lambda x: conj(x) if _iscomplex(x) else x
 _maybe_real = lambda x: real(x) if _iscomplex(x) else x
 
 sqrt_p = standard_unop(_float | _complex, 'sqrt')
-ad.defjvp2(sqrt_p, lambda g, ans, x: mul(g, div(_const(x, 0.5), ans)))
+ad.defjvp2(sqrt_p, lambda g, ans, x, **kwargs: mul(g, div(_const(x, 0.5), ans)))
 mlir.register_lowering(sqrt_p, partial(_nary_lower_hlo, hlo.sqrt))
 
 rsqrt_p = standard_unop(_float | _complex, 'rsqrt')
 ad.defjvp2(rsqrt_p,
-           lambda g, ans, x:
+           lambda g, ans, x, **kwargs:
            mul(g, mul(_const(x, -0.5), div(ans, x))))
 mlir.register_lowering(rsqrt_p, partial(_nary_lower_hlo, hlo.rsqrt))
 
 cbrt_p = standard_unop(_float, 'cbrt')
 ad.defjvp2(cbrt_p,
-           lambda g, ans, x: mul(g, mul(_const(x, 1/3), integer_pow(ans, -2))))
+           lambda g, ans, x, **kwargs: mul(g, mul(_const(x, 1/3), integer_pow(ans, -2))))
 mlir.register_lowering(cbrt_p, partial(_nary_lower_hlo, hlo.cbrt))
 
 square_p = standard_unop(_int | _float | _complex, 'square')
@@ -5076,6 +5203,18 @@ def get_algorithm_compute_types(
       out_dtype, algorithm.supported_output_types(lhs_dtype, rhs_dtype)
   )
   return lhs_dtype, rhs_dtype, out_type
+
+
+def accuracy_attr(accuracy) -> hlo.ResultAccuracyAttr:
+  if isinstance(accuracy, AccuracyMode):
+    return hlo.ResultAccuracyAttr.get(0.0, 0.0, int(0), str(accuracy.name))
+  elif isinstance(accuracy, Tolerance):
+    return hlo.ResultAccuracyAttr.get(
+        atol=accuracy.atol,
+        rtol=accuracy.rtol,
+        ulps=accuracy.ulps,
+        mode='TOLERANCE',
+    )
 
 
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,

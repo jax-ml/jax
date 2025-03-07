@@ -653,7 +653,7 @@ def _make_dispatch_table(
     name: str, **tables: Sequence[_Extern | _Fallback]
 ) -> Callable[..., ir.Value]:
 
-  def inner(ctx: LoweringRuleContext, *args: ir.Value) -> ir.Value:
+  def inner(ctx: LoweringRuleContext, *args: ir.Value, accuracy=None) -> ir.Value:
     table = tables[ctx.context.platform]
     h = next((e for e in table if e.matches(ctx.avals_in)), None)
     if h is None:

@@ -410,14 +410,20 @@ def ceil(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
-def exp(x: ArrayLike, /) -> Array:
+@partial(jit, static_argnames=['accuracy'], inline=True)
+def exp(x: ArrayLike, accuracy=None) -> Array:
   """Calculate element-wise exponential of the input.
 
   JAX implementation of :obj:`numpy.exp`.
 
   Args:
-    x: input array or scalar
+    x: input array or scalar.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     An array containing the exponential of each element in ``x``, promotes to
@@ -448,18 +454,24 @@ def exp(x: ArrayLike, /) -> Array:
     >>> jnp.allclose(jnp.exp(3-4j), jnp.exp(3)*jnp.exp(-4j))
     Array(True, dtype=bool)
   """
-  return lax.exp(*promote_args_inexact('exp', x))
+  return lax.exp(*promote_args_inexact('exp', x), accuracy=accuracy)
 
 
 @export
-@partial(jit, inline=True)
-def log(x: ArrayLike, /) -> Array:
+@partial(jit, static_argnames=['accuracy'], inline=True)
+def log(x: ArrayLike, accuracy=None) -> Array:
   """Calculate element-wise natural logarithm of the input.
 
   JAX implementation of :obj:`numpy.log`.
 
   Args:
     x: input array or scalar.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     An array containing the logarithm of each element in ``x``, promotes to inexact
@@ -486,18 +498,24 @@ def log(x: ArrayLike, /) -> Array:
     >>> jnp.allclose(jnp.log(x1*x2), jnp.log(x1)+jnp.log(x2))
     Array(True, dtype=bool)
   """
-  return lax.log(*promote_args_inexact('log', x))
+  return lax.log(*promote_args_inexact('log', x), accuracy=accuracy)
 
 
 @export
-@partial(jit, inline=True)
-def expm1(x: ArrayLike, /) -> Array:
+@partial(jit,  static_argnames=['accuracy'], inline=True)
+def expm1(x: ArrayLike, accuracy=None) -> Array:
   """Calculate ``exp(x)-1`` of each element of the input.
 
   JAX implementation of :obj:`numpy.expm1`.
 
   Args:
     x: input array or scalar.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     An array containing ``exp(x)-1`` of each element in ``x``, promotes to inexact
@@ -531,18 +549,24 @@ def expm1(x: ArrayLike, /) -> Array:
     >>> jnp.exp(x1)-1
     Array([1.00016594e-04, 9.53674316e-07, 0.00000000e+00], dtype=float32)
   """
-  return lax.expm1(*promote_args_inexact('expm1', x))
+  return lax.expm1(*promote_args_inexact('expm1', x), accuracy=accuracy)
 
 
 @export
-@partial(jit, inline=True)
-def log1p(x: ArrayLike, /) -> Array:
+@partial(jit, static_argnames=['accuracy'], inline=True)
+def log1p(x: ArrayLike, accuracy=None) -> Array:
   """Calculates element-wise logarithm of one plus input, ``log(x+1)``.
 
   JAX implementation of :obj:`numpy.log1p`.
 
   Args:
     x: input array or scalar.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     An array containing the logarithm of one plus of each element in ``x``,
@@ -572,18 +596,24 @@ def log1p(x: ArrayLike, /) -> Array:
     >>> jnp.expm1(jnp.log(x1+1))  # doctest: +SKIP
     Array([1.000166e-04, 9.536743e-07, 0.000000e+00], dtype=float32)
   """
-  return lax.log1p(*promote_args_inexact('log1p', x))
+  return lax.log1p(*promote_args_inexact('log1p', x), accuracy=accuracy)
 
 
 @export
-@partial(jit, inline=True)
-def sin(x: ArrayLike, /) -> Array:
+@partial(jit, static_argnames=['accuracy'], inline=True)
+def sin(x: ArrayLike, accuracy=None) -> Array:
   """Compute a trigonometric sine of each element of input.
 
   JAX implementation of :obj:`numpy.sin`.
 
   Args:
     x: array or scalar. Angle in radians.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     An array containing the sine of each element in ``x``, promotes to inexact
@@ -604,18 +634,24 @@ def sin(x: ArrayLike, /) -> Array:
     ...   print(jnp.sin(x))
     [ 0.707  1.     0.707 -0.   ]
   """
-  return lax.sin(*promote_args_inexact('sin', x))
+  return lax.sin(*promote_args_inexact('sin', x), accuracy=accuracy)
 
 
 @export
-@partial(jit, inline=True)
-def cos(x: ArrayLike, /) -> Array:
+@partial(jit, static_argnames=['accuracy'], inline=True)
+def cos(x: ArrayLike, accuracy=None) -> Array:
   """Compute a trigonometric cosine of each element of input.
 
   JAX implementation of :obj:`numpy.cos`.
 
   Args:
     x: scalar or array. Angle in radians.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     An array containing the cosine of each element in ``x``, promotes to inexact
@@ -635,18 +671,24 @@ def cos(x: ArrayLike, /) -> Array:
     ...   print(jnp.cos(x))
     [ 0.707 -0.    -0.707 -0.866]
   """
-  return lax.cos(*promote_args_inexact('cos', x))
+  return lax.cos(*promote_args_inexact('cos', x), accuracy=accuracy)
 
 
 @export
-@partial(jit, inline=True)
-def tan(x: ArrayLike, /) -> Array:
+@partial(jit, static_argnames=['accuracy'], inline=True)
+def tan(x: ArrayLike, accuracy=None) -> Array:
   """Compute a trigonometric tangent of each element of input.
 
   JAX implementation of :obj:`numpy.tan`.
 
   Args:
     x: scalar or array. Angle in radians.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     An array containing the tangent of each element in ``x``, promotes to inexact
@@ -666,7 +708,7 @@ def tan(x: ArrayLike, /) -> Array:
     ...   print(jnp.tan(x))
     [ 0.     0.577  1.    -1.    -0.577]
   """
-  return lax.tan(*promote_args_inexact('tan', x))
+  return lax.tan(*promote_args_inexact('tan', x), accuracy=accuracy)
 
 
 @export
@@ -1011,8 +1053,8 @@ def arccosh(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
-def tanh(x: ArrayLike, /) -> Array:
+@partial(jit, static_argnames=['accuracy'], inline=True)
+def tanh(x: ArrayLike, accuracy=None) -> Array:
   r"""Calculate element-wise hyperbolic tangent of input.
 
   JAX implementation of :obj:`numpy.tanh`.
@@ -1061,7 +1103,7 @@ def tanh(x: ArrayLike, /) -> Array:
     ...   -1j * jnp.tan(1j * (2-5j))
     Array(1.031+0.021j, dtype=complex64, weak_type=True)
   """
-  return lax.tanh(*promote_args_inexact('tanh', x))
+  return lax.tanh(*promote_args_inexact('tanh', x), accuracy=accuracy)
 
 
 @export
@@ -1114,14 +1156,20 @@ def arctanh(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
-def sqrt(x: ArrayLike, /) -> Array:
+@partial(jit, static_argnames=['accuracy'], inline=True)
+def sqrt(x: ArrayLike, accuracy=None) -> Array:
   """Calculates element-wise non-negative square root of the input array.
 
   JAX implementation of :obj:`numpy.sqrt`.
 
   Args:
     x: input array or scalar.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     An array containing the non-negative square root of the elements of ``x``.
@@ -1143,18 +1191,24 @@ def sqrt(x: ArrayLike, /) -> Array:
     >>> jnp.sqrt(-1)
     Array(nan, dtype=float32, weak_type=True)
   """
-  return lax.sqrt(*promote_args_inexact('sqrt', x))
+  return lax.sqrt(*promote_args_inexact('sqrt', x), accuracy=accuracy)
 
 
 @export
-@partial(jit, inline=True)
-def cbrt(x: ArrayLike, /) -> Array:
+@partial(jit, static_argnames=['accuracy'], inline=True)
+def cbrt(x: ArrayLike, accuracy=None) -> Array:
   """Calculates element-wise cube root of the input array.
 
   JAX implementation of :obj:`numpy.cbrt`.
 
   Args:
     x: input array or scalar. ``complex`` dtypes are not supported.
+    accuracy: Optional `lax.Tolerance` or `lax.AccuracyMode` object
+    which selects the implementation of the op based on the requested accuracy.
+    If the implementation error cannot satisfy the requested tolerance, the
+    compiler will return an error. If mode is specified and there are no
+    multiple implmentations available, the default implementation will be
+    used.
 
   Returns:
     An array containing the cube root of the elements of ``x``.
@@ -1172,7 +1226,7 @@ def cbrt(x: ArrayLike, /) -> Array:
     Array([[ 6.,  5.,  4.],
            [-3., -2., -1.]], dtype=float32)
   """
-  return lax.cbrt(*promote_args_inexact('cbrt', x))
+  return lax.cbrt(*promote_args_inexact('cbrt', x), accuracy=accuracy)
 
 
 def _add_at(a: Array, indices: Any, b: ArrayLike) -> Array:
@@ -2805,8 +2859,8 @@ def log10(x: ArrayLike, /) -> Array:
 
 
 @export
-@partial(jit, inline=True)
-def exp2(x: ArrayLike, /) -> Array:
+@partial(jit, static_argnames=["accuracy"], inline=True)
+def exp2(x: ArrayLike, accuracy=None) -> Array:
   """Calculate element-wise base-2 exponential of input.
 
   JAX implementation of :obj:`numpy.exp2`.
@@ -2836,7 +2890,7 @@ def exp2(x: ArrayLike, /) -> Array:
     Array([2. , 0.5, 2. , 4. ], dtype=float32)
   """
   x, = promote_args_inexact("exp2", x)
-  return lax.exp2(x)
+  return lax.exp2(x, accuracy=accuracy)
 
 
 @export
