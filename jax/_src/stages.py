@@ -257,6 +257,7 @@ class XlaExecutable(Executable):
         return xla_ext_exe.cost_analysis()
       except xla_extension.XlaRuntimeError as e:
         msg, *_ = e.args
+        print(msg)
         if not (type(msg) is str and msg.startswith("UNIMPLEMENTED")):
           raise
 
