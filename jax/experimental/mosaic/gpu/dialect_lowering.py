@@ -424,6 +424,7 @@ def _mgpu_async_store_op_lowering_rule(
       gmem_transform=transforms,
       uniform=True,
       predicate=ctx.single_thread_per_warpgroup_predicate,
+      arrive=store_op.commit_group,
   )
   return []
 

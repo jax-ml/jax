@@ -347,7 +347,8 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     PtxPredicate:$predicate,
 
     // Attributes
-    DenseI64ArrayAttr:$slice_lengths
+    DenseI64ArrayAttr:$slice_lengths,
+    DefaultValuedOptionalAttr<BoolAttr, "true">:$commit_group
   );
 
   let assemblyFormat = [{
