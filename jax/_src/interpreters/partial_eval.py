@@ -46,7 +46,8 @@ from jax._src.tree_util import (PyTreeDef, treedef_tuple,
                                 tree_flatten, tree_structure)
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
-                           as_hashable_function, weakref_lru_cache, subs_list)
+                           as_hashable_function, weakref_lru_cache, subs_list,
+                           HashableFunction)
 
 
 map, unsafe_map = safe_map, map
@@ -836,6 +837,11 @@ def tracers_to_jaxpr(
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   # del getvar  # needed to avoid cyclic-reference closure, apparently!
   return jaxpr, const_vals, env_vals
+
+@weakref_lru_cache
+def move_envvars(jaxpr: Jaxpr, which: tuple[bool, ...]) -> Jaxpr:
+  constvars, envvars = partition_list(which, jaxpr.constvars)
+  return jaxpr.replace(constvars=constvars, invars=[*envvars, *jaxpr.invars])
 
 @weakref_lru_cache
 def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
@@ -1840,7 +1846,7 @@ def _inline_literals(
 
 
 class DynamicJaxprTrace(core.Trace):
-  __slots__ = ("frame",)
+  __slots__ = ("frame", "tag")
 
   def __init__(self, debug_info: core.DebugInfo):
     self.frame = JaxprStackFrame(debug_info)
@@ -1972,17 +1978,18 @@ class DynamicJaxprTrace(core.Trace):
     self.frame.add_eqn(eqn)
     return [t for t, (_, keep) in zip(out_tracers, out_type) if keep]
 
-  def process_map(self, map_primitive, f: lu.WrappedFun,
-                  tracers: Sequence[core.Tracer], params):
+  def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
     tracers = map(self.to_jaxpr_tracer, tracers)
     in_avals = [t.aval for t in tracers]
     axis_name, axis_size = params['axis_name'], params['axis_size']
     reduced_in_avals = [core.mapped_aval(axis_size, in_axis, a)
                         if in_axis is not None else a
                         for a, in_axis in zip(in_avals, params['in_axes'])]
+
     with core.extend_axis_env_nd([(axis_name, params["global_axis_size"])]):
       jaxpr, reduced_out_avals, consts, () = trace_to_jaxpr_dynamic(
           f, reduced_in_avals)
+      jaxpr, consts = _linearize_of_pmap_hack(f, jaxpr, consts)
       ordered_effects = effects.ordered_effects.filter_in(jaxpr.effects)
       if ordered_effects:
         raise ValueError("Ordered effects not supported for "
@@ -2582,3 +2589,13 @@ def inline_jaxpr_into_trace(
     return tracer
   return [x.val if isinstance(x, Literal) else tracer_env[x] if x in tracer_env
           else new_tracer(x) for x in jaxpr.outvars]
+
+# TODO(mattjj,dougalm): this special handling is to avoid round-tripping the
+# jaxpr when we do grad-of-pmap. The tag is set by LinearizeTrace.process_call's
+# handling of pmap. Remove when we replace the pmap implementation.
+def _linearize_of_pmap_hack(f: lu.WrappedFun, jaxpr, consts) -> tuple[Jaxpr, list]:
+  if (not f.transforms and type(f.f) is HashableFunction and
+      getattr(f.f, '_pmap_tag', None)):
+    _, jaxpr = f.f.closure
+    return convert_constvars_jaxpr(jaxpr), []
+  return jaxpr, consts
