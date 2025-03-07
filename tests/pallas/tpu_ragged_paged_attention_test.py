@@ -266,7 +266,7 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
   @parameterized.product(
       num_seqs=[1, 5, 16],
       # TODO(jevinjiang): Support more num_heads!
-      num_heads=[(32, 8), (32, 16), (12, 2)],
+      num_heads=[(32, 8), (32, 16), (12, 2), (4, 4)],
       dtype=[jnp.float32, jnp.bfloat16],
       num_kv_pages_per_block=[4, 8],
       num_queries_per_block=[32, 64],

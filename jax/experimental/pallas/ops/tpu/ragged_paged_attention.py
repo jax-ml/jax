@@ -270,6 +270,15 @@ def ragged_paged_attention_kernel(
     b = jnp.left_shift(b, bw * (packing - 1))
     return pltpu.bitcast(b, jnp.float32).astype(jnp.bfloat16)
 
+  def fold_on_2nd_minor(vec):
+    assert vec.dtype == jnp.bfloat16 or vec.dtype == jnp.float32
+    assert len(vec.shape) >= 2
+    last_dim = vec.shape[-1]
+    packing = get_dtype_packing(vec.dtype)
+    if vec.shape[-2] % packing != 0:
+      vec = vec.astype(jnp.float32)
+    return vec.reshape(-1, last_dim)
+
   @pl.when(heads_blk_idx + q_blk_idx == 0)
   def prefetch_first_kv_blk():
     async_copy_k, async_copy_v = create_kv_async_copy_descriptors(
@@ -495,9 +504,9 @@ def ragged_paged_attention_kernel(
         q_head_idx = kv_head_idx * num_q_heads_per_kv_head
         # TODO(jevinjiang): extra handlig for packed type that can start at
         # unaligned position!
-        q = q_ref[
-            :, q_head_idx : q_head_idx + num_q_heads_per_kv_head, :
-        ].reshape(-1, head_dim)
+        q = fold_on_2nd_minor(
+            q_ref[:, q_head_idx : q_head_idx + num_q_heads_per_kv_head, :]
+        )
         k = strided_load_kv(k_ref, kv_head_idx, num_kv_heads_per_blk)
         v = strided_load_kv(v_ref, kv_head_idx, num_kv_heads_per_blk)
         flash_attention(
