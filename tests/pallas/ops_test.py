@@ -648,10 +648,8 @@ class OpsTest(PallasBaseTest):
     } or to_dtype in {"float8_e4m3b11fnuz", "float8_e5m2", "float8_e4m3fn"}:
       if not jtu.test_device_matches(["tpu"]) or jtu.get_tpu_version() < 5:
         self.skipTest("Not supported on this hardware")
-      if not jtu.if_cloud_tpu_at_least(2025, 3, 8):
-        self.skipTest("Test requires libtpu from 2025/3/8 or later")
-      if to_dtype not in {"float32", "int32", "uint32"}:
-        self.skipTest("Only fp8 to x32 cast is supported")
+      if not jtu.if_cloud_tpu_at_least(2025, 3, 9):
+        self.skipTest("Test requires libtpu from 2025/3/9 or later")
 
     from_int = np.issubdtype(np.dtype(from_dtype), np.integer)
     to_int = np.issubdtype(np.dtype(to_dtype), np.integer)
@@ -693,7 +691,9 @@ class OpsTest(PallasBaseTest):
       if randomize:
         x = random.randint(random.key(234), (16, 16), 0, 1, jnp.int32) != 0
       else:
-        x = jnp.asarray([[False, True], [True, False]], dtype="bool")
+        x = jnp.tile(
+            jnp.asarray([[False, True], [True, False]], dtype="bool"), (8, 8)
+        )
     assert x.dtype == jnp.dtype(from_dtype)
     # XLA does not specify the float->int conversion result for NaNs.
     if jnp.issubdtype(from_dtype, jnp.floating):
