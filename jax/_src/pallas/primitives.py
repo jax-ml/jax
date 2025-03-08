@@ -705,6 +705,34 @@ def dot(a, b, trans_a: bool = False, trans_b: bool = False,
       preferred_element_type=out_dtype,
   )
 
+reciprocal_p = jax_core.Primitive("reciprocal")
+
+
+def reciprocal(x, *, approx=False):
+  return reciprocal_p.bind(x, approx=approx)
+
+
+@reciprocal_p.def_abstract_eval
+def _reciprocal_abstract_eval(x, *, approx):
+  del approx
+  return x
+
+
+def _reciprocal_lowering_rule(
+    ctx: mlir.LoweringRuleContext, x, *, approx=False
+):
+  def _reciprocal(x, *, approx=False):
+    if approx:
+      return jnp.reciprocal(x.astype(jnp.bfloat16)).astype(jnp.float32)
+    return jnp.reciprocal(x)
+
+  return mlir.lower_fun(_reciprocal, multiple_results=False)(
+      ctx, x, approx=approx
+  )
+
+
+mlir.register_lowering(reciprocal_p, _reciprocal_lowering_rule)
+
 
 class PrintEffect(effects.Effect):
   __str__ = lambda self: "Print"

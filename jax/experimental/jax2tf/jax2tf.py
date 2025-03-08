@@ -1545,6 +1545,7 @@ tf_not_yet_impl = [
     "symmetric_product",
     "from_edtype",
     "to_edtype",
+    "reciprocal",
     # Pallas TPU primitives
     "bitcast",
     "repeat",

@@ -2459,6 +2459,26 @@ class PallasPrimitivesTest(PallasBaseTest):
         wrap_init(body, 1), [state.shaped_array_ref((4, 3, 2), jnp.int32)])
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
+  @parameterized.product(approx=[False, True])
+  def test_reciprocal(self, approx):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Not implemented on non-TPU devices")
+    if not jtu.if_cloud_tpu_at_least(2025, 3, 8):
+      self.skipTest("Test requires libtpu from 2025/3/8 or later")
+    shape = (32, 256)
+    x = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = pl.reciprocal(x_ref[...], approx=approx)
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct(shape, jnp.float32)
+    )(x)
+    kwargs = {}
+    if approx:
+      kwargs.update(dict(atol=2e-5, rtol=2e-5))
+    np.testing.assert_allclose(out, jax.lax.reciprocal(x), **kwargs)
+
 
 class PallasPrimitivesInterpretTest(PallasPrimitivesTest):
   INTERPRET = True

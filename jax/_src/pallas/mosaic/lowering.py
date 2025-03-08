@@ -3222,6 +3222,14 @@ def _erf_inv_lowering_rule(ctx: LoweringRuleContext, x):
 lowering_rules[lax.erf_inv_p] = _erf_inv_lowering_rule
 
 
+def _reciprocal_lowering_rule(ctx: LoweringRuleContext, x, *, approx):
+  if not isinstance(x.type.element_type, ir.F32Type):
+    raise ValueError("Only float32 is supported.")
+  return tpu.reciprocal(x, approx=approx)
+
+
+lowering_rules[primitives.reciprocal_p] = _reciprocal_lowering_rule
+
 def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty):
   del ty
   (out_aval,) = ctx.avals_out

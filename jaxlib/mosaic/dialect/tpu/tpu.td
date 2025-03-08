@@ -538,6 +538,16 @@ def TPU_WeirdOp : TPU_Op<"weird", [Pure, ElementwiseMappable]> {
   let hasVerifier = 1;
 }
 
+def TPU_ReciprocalOp : TPU_Op<"reciprocal", [Pure, SameOperandsAndResultType, ElementwiseMappable]> {
+  let arguments = (ins
+    AnyVectorOfNonZeroRank:$input,
+    DefaultValuedAttr<BoolAttr, "false">:$approx
+  );
+  let results = (outs AnyVectorOfNonZeroRank:$output);
+  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+  let hasVerifier = 1;
+}
+
 def TPU_RollVectorsOp : TPU_Op<"roll_vectors", [Pure]> {
   let arguments = (ins Variadic<AnyVectorOfNonZeroRank>:$input);
   let results = (outs AnyVectorOfNonZeroRank:$output);
