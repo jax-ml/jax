@@ -58,7 +58,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import (HashableFunction, HashablePartial, unzip2,
                            as_hashable_function, memoize, partition_list,
-                           split_list, subs_list2, foreach)
+                           merge_lists, split_list, subs_list2, foreach)
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -1610,7 +1610,7 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
                           out_tracers, shard_map_p, unk_params,
                           effs, source_info_util.current())
   for t in out_tracers: t.recipe = eqn
-  return pe.merge_lists(out_knowns, out_tracers, out_consts)
+  return merge_lists(out_knowns, out_tracers, out_consts)
 pe.JaxprTrace.process_shard_map = _shard_map_partial_eval
 
 def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
@@ -1624,26 +1624,26 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
   res_names = _all_newly_manual_mesh_names(mesh, auto, trace)
 
   @as_hashable_function(closure=linearize_outs_thunk)
-  def primal_out_names_thunk():
+  def fwd_out_names_thunk():
     _, _, _, _, in_fwd, out_fwd = linearize_outs_thunk()
     out_names = out_names_thunk()
     num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
     # This is incorrect so we set `check_rep=False` in the tangent (as in JVP).
     return (*({0: res_names} for _ in range(num_res_out)), *out_names)
-  primal_params = dict(
+  fwd_params = dict(
       mesh=mesh, in_names=in_names,
-      out_names_thunk=primal_out_names_thunk, check_rep=check_rep,
+      out_names_thunk=fwd_out_names_thunk, check_rep=check_rep,
       rewrite=rewrite, auto=auto)
-  all_primal_results = shard_map_p.bind_with_trace(
-      trace.parent_trace, (f_primal, *primals), primal_params)
+  all_fwd_results = shard_map_p.bind_with_trace(
+      trace.parent_trace, (f_primal, *primals), fwd_params)
   residual_avals, nzs_out, lin_jaxpr, env, in_fwd, out_fwd = linearize_outs_thunk()
   num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
-  non_fwd_res = all_primal_results[:num_res_out]
-  primals_out = all_primal_results[num_res_out:]
+  non_fwd_res = all_fwd_results[:num_res_out]
+  primals_out = all_fwd_results[num_res_out:]
   residuals = subs_list2(in_fwd, out_fwd, primals, primals_out, non_fwd_res)
   args_to_promote = [getattr(aval, 'shape', ()) == () and f1 is None and f2 is None
                      for aval, f1, f2 in zip(residual_avals, in_fwd, out_fwd)]
-  with core.extend_axis_env_nd(mesh.shape.items()):
+  with _extend_axis_env(mesh, auto), use_abstract_mesh(_as_manual_mesh(mesh, auto)):
     lin_jaxpr = _promote_scalar_residuals_jaxpr(lin_jaxpr, args_to_promote)
   out_names = out_names_thunk()
   residual_names = [in_names[f1] if f1 is not None else
@@ -1651,21 +1651,21 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
                     {0: res_names} for f1, f2 in zip(in_fwd, out_fwd)]
   new_in_names = (*residual_names, *({} for _ in range(len(env))),
                   *(ax for ax, nz in zip(in_names, nzs_in) if nz))
-  new_out_names = tuple(ax for ax, nz in zip(out_names, nzs_out) if nz)
-  @as_hashable_function(closure=(new_out_names))
+  tangent_out_names = tuple(ax for ax, nz in zip(out_names_thunk(), nzs_out) if nz)
+  @as_hashable_function(closure=tangent_out_names)
   def tangent_out_names_thunk():
-    return new_out_names
+    return tangent_out_names
   tangent_params = dict(
-      mesh=mesh, in_names=new_in_names,
-      out_names_thunk=tangent_out_names_thunk, check_rep=False,
-      rewrite=rewrite, auto=auto)
+      mesh=mesh, in_names=new_in_names, out_names_thunk=tangent_out_names_thunk,
+      check_rep=False, rewrite=rewrite, auto=auto)
 
-  # TODO TODO don't round-trip
+  # TODO(mattjj): avoid round-tripping the jaxpr through eval_jaxpr here
   def f_tangent(*args):
     return core.eval_jaxpr(lin_jaxpr, (), *args)
 
   nz_tangents_in = [t for (t, nz) in zip(tangents, nzs_in) if nz]
-  nz_tangents_out = shard_map_p.bind_with_trace(trace.tangent_trace,
+  nz_tangents_out = shard_map_p.bind_with_trace(
+      trace.tangent_trace,
       (lu.wrap_init(f_tangent, debug_info=lin_jaxpr.debug_info),
        *residuals, *env, *nz_tangents_in), tangent_params)
   nz_tangents_out_iter = iter(nz_tangents_out)
@@ -1734,21 +1734,24 @@ def _shard_map_transpose(out_cts, *args,
   all_args, in_tree = tree_flatten((out_cts, args))
 
   def fun_trans_callable(out_cts, args):
-    res, undefs = partition_list(map(ad.is_undefined_primal, args), args)
+    # TODO(mattjj): when #26811 lands, delete this and just run backward_pass
+    in_undef = map(ad.is_undefined_primal, args)
+    res, undefs = partition_list(in_undef, args)
     jaxpr_known, jaxpr_unknown, _, _ = pe.partial_eval_jaxpr_nounits(
-        pe.close_jaxpr(jaxpr), map(ad.is_undefined_primal, args), False)
+        pe.close_jaxpr(jaxpr), in_undef, False)
     res_reshaped = core.jaxpr_as_fun(jaxpr_known)(*res)
-    out = ad.backward_pass(
+    in_cts = ad.backward_pass(
         jaxpr_unknown.jaxpr, False, (), (*res_reshaped, *undefs), out_cts
-    )
-    out = [ad.Zero(_unshard_aval(mesh, ns, x.aval)) if type(x) is ad.Zero
-           else x if rewrite
-           else jax.lax.psum(x, tuple(_unmentioned2(mesh, ns, auto)))
-           for ns, x in zip(in_names, out)]
-    return out
+    )[len(res_reshaped):]
+    _, in_ct_names = partition_list(in_undef, in_names)
+    in_cts = [ad.Zero(_unshard_aval(mesh, ns, x.aval)) if type(x) is ad.Zero
+              else x if rewrite
+              else jax.lax.psum(x, tuple(_unmentioned2(mesh, ns, auto)))
+              for ns, x in zip(in_ct_names, in_cts)]
+    res_zeros = [ad_util.zero_from_primal(r) for r in res]
+    return merge_lists(in_undef, res_zeros, in_cts)
 
-  fun_trans = lu.wrap_init(fun_trans_callable,
-                           debug_info=jaxpr.debug_info)
+  fun_trans = lu.wrap_init(fun_trans_callable, debug_info=jaxpr.debug_info)
   fun_trans, nz_arg_cts = ad.nonzero_outputs(fun_trans)
   fun_trans_flat, out_tree = api_util.flatten_fun_nokwargs(fun_trans, in_tree)
 
