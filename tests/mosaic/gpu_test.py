@@ -2755,6 +2755,7 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
       transforms_b: tuple[Tile | Transpose | Swizzle, ...] = ()
       transpose_a: bool = False
       transpose_b: bool = False
+      load_a_in_registers: bool = False
 
     result = []
     for swizzle in [
@@ -2785,6 +2786,13 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
               shape_res=[groups_m * 64, groups_n * k],
               transforms_a=[Tile([64, k]), Swizzle(swizzle)],
               transforms_b=[Tile([k, k]), Swizzle(swizzle)],
+          ),
+          TestCaseInput(
+              shape_a=[groups_m * 64, groups_k * k],
+              shape_b=[groups_k * k, groups_n * k],
+              shape_res=[groups_m * 64, groups_n * k],
+              transforms_a=[Tile([64, k]), Swizzle(swizzle)],
+              load_a_in_registers=True,
           ),
       ])
       # The below only works for 128-byte swizzling. Regardless of transposing,
@@ -2849,6 +2857,14 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
       parity, _ = tma_barrier.update_parities(parities)
       mgpu_dialect.wait(dialect_barrier, parity)
 
+      # SMEM -> Registers
+      a_operand = a_smem_ref
+      zero_index = arith.constant(ir.IndexType.get(), 0)
+      if test_case.load_a_in_registers:
+        a_vector_type = ir.VectorType.get(test_case.shape_a, ab_elt_type)
+        zero_vector_indices = [zero_index] * len(test_case.shape_a)
+        a_operand = vector.load(a_vector_type, a_smem_ref, zero_vector_indices)
+
       # Computation
       shape_result = ir.MemRefType(result_gmem_ref.type).shape
       result_elt_type = ir.MemRefType(result_gmem_ref.type).element_type
@@ -2860,7 +2876,7 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
       )
       result = mgpu_dialect.wgmma(
           accumulator,
-          a_smem_ref,
+          a_operand,
           b_smem_ref,
           transpose_a=test_case.transpose_a,
           transpose_b=test_case.transpose_b,
@@ -2870,8 +2886,7 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
       nvvm.wgmma_wait_group_sync_aligned(0)
 
       # Registers -> SMEM
-      zero_index = arith.constant(ir.IndexType.get(), 0)
-      vector.store(result, result_smem_ref, [zero_index, zero_index])
+      vector.store(result, result_smem_ref, [zero_index] * len(shape_result))
 
       # SMEM -> GMEM
       mgpu_dialect.async_store(
