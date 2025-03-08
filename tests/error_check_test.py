@@ -18,7 +18,9 @@ from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import error_check
+from jax._src import mesh as mesh_lib
 from jax._src import test_util as jtu
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
 import jax.numpy as jnp
 
 
@@ -26,6 +28,7 @@ JaxValueError = error_check.JaxValueError
 
 
 config.parse_flags_with_absl()
+jtu.request_cpu_devices(4)
 
 
 @jtu.with_config(jax_check_tracer_leaks=True)
@@ -169,6 +172,83 @@ class ErrorCheckTests(jtu.JaxTestCase):
     xs = jnp.arange(4, dtype=jnp.int32)
     _ = body(init, xs)
     error_check.raise_if_error()  # should not raise error
+
+  def test_error_checking_auto_mode(self):
+    # this test does not need to work under jit
+    def f(x):
+      error_check.set_error_if(x <= 0, "x must be greater than 0")
+      return x + 1
+
+    x = jnp.full((4, 4), -1, dtype=jnp.int32)
+    f(x)
+    with self.assertRaisesRegex(JaxValueError, "x must be greater than 0"):
+      error_check.raise_if_error()
+
+    mesh = jtu.create_mesh(
+        (2, 2), ("x", "y"), axis_types={mesh_lib.AxisTypes.Auto: ("x", "y")}
+    )
+    sharding = NamedSharding(mesh, P("x", "y"))
+
+    with (
+        jax.sharding.use_mesh(mesh),
+        error_check.error_checking_context(),
+    ):
+      y = jnp.full((4, 4), -1, dtype=jnp.int32, device=sharding)
+      f(y)
+      with self.assertRaisesRegex(JaxValueError, "x must be greater than 0"):
+        error_check.raise_if_error()  # should raise error
+
+    # The unsharded version of `f` should still be able to check errors after
+    # exiting the error checking context.
+    f(x)
+    with self.assertRaisesRegex(JaxValueError, "x must be greater than 0"):
+      error_check.raise_if_error()
+
+  def test_error_check_should_fail_in_auto_mode_under_jit(self):
+    def f(x):
+      error_check.set_error_if(x <= 0, "x must be greater than 0")
+      return x + 1
+
+    f = jax.jit(f)
+
+    mesh = jtu.create_mesh(
+        (2, 2), ("x", "y"), axis_types={mesh_lib.AxisTypes.Auto: ("x", "y")}
+    )
+    sharding = NamedSharding(mesh, P("x", "y"))
+
+    with (
+        jax.sharding.use_mesh(mesh),
+        error_check.error_checking_context(),
+    ):
+      y = jnp.full((4, 4), -1, dtype=jnp.int32, device=sharding)
+      with self.assertRaisesRegex(
+          NotImplementedError,
+          "Error checking in auto mode under jit is not supported yet.",
+      ):
+        f(y)
+
+  @parameterized.product(jit=[True, False])
+  def test_error_check_explicit_mode(self, jit):
+    def f(x):
+      error_check.set_error_if(x <= 0, "x must be greater than 0")
+      return x + 1
+
+    if jit:
+      f = jax.jit(f)
+
+    mesh = jtu.create_mesh(
+        (2, 2), ("x", "y"), axis_types={mesh_lib.AxisTypes.Explicit: ("x", "y")}
+    )
+    sharding = NamedSharding(mesh, P("x", "y"))
+
+    x = jnp.full((4, 4), -1, dtype=jnp.int32, device=sharding)
+    with (
+        jax.sharding.use_mesh(mesh),
+        error_check.error_checking_context(),
+    ):
+      f(x)
+      with self.assertRaisesRegex(JaxValueError, "x must be greater than 0"):
+        error_check.raise_if_error()
 
 
 if __name__ == "__main__":
