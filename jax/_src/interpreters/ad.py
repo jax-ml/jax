@@ -1118,8 +1118,8 @@ def _jvp_jaxpr(jaxpr: core.ClosedJaxpr,
   assert len(jaxpr.in_avals) == len(nonzeros)
   f = lu.wrap_init(core.jaxpr_as_fun(jaxpr),
                    debug_info=jaxpr.jaxpr.debug_info)
-  f_jvp, out_nonzeros = f_jvp_traceable(jvp(f, instantiate=instantiate, transform_stack=False),
-                                        nonzeros)
+  f_jvp, out_nonzeros = f_jvp_traceable(
+      jvp(f, instantiate=instantiate, transform_stack=False), nonzeros)
   tangent_avals = [aval.to_tangent_aval() for aval, nz in zip(jaxpr.in_avals, nonzeros) if nz]
   avals_in = list(it.chain(jaxpr.in_avals, tangent_avals))
   jaxpr_out, avals_out, literals_out, () = pe.trace_to_jaxpr_dynamic(
