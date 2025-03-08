@@ -345,8 +345,6 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
 
   primal_env: dict[Any, Any] = {}
   map(write_primal, jaxpr.constvars, consts)
-  # FIXME: invars can contain both primal and tangent values, and this line
-  #        forces primal_in to contain UndefinedPrimals for tangent values!
   map(write_primal, jaxpr.invars, primals_in)
 
   ct_env: dict[Any, Any] = {}
