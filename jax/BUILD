@@ -59,6 +59,11 @@ config_setting(
     },
 )
 
+bool_flag(
+    name = "py_import",
+    build_setting_default = False,
+)
+
 exports_files([
     "LICENSE",
     "version.py",

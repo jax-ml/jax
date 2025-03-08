@@ -61,3 +61,21 @@ config_setting(
         "@local_config_cuda//:enable_cuda": "True",
     },
 )
+
+config_setting(
+    name = "enable_py_import_for_cpu_build",
+    flag_values = {
+        "//jax:build_jaxlib": "False",
+        "//jax:py_import": "True",
+        "@local_config_cuda//:enable_cuda": "False",
+    },
+)
+
+config_setting(
+    name = "enable_py_import_for_cuda12_build",
+    flag_values = {
+        "//jax:build_jaxlib": "False",
+        "//jax:py_import": "True",
+        "@local_config_cuda//:enable_cuda": "True",
+    },
+)

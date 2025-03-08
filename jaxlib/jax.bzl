@@ -224,7 +224,15 @@ def if_building_jaxlib(
             "@pypi_jax_cuda12_plugin//:pkg",
             "@pypi_jax_cuda12_pjrt//:pkg",
         ],
-        if_not_building_for_cpu = ["@pypi_jaxlib//:pkg"]):
+        if_not_building_for_cpu = ["@pypi_jaxlib//:pkg"],
+        if_py_import = [
+            "//jaxlib/tools:jaxlib_py_import",
+            "//jaxlib/tools:jax_cuda_plugin_py_import",
+            "//jaxlib/tools:jax_cuda_pjrt_py_import",
+        ],
+        if_py_import_for_cpu = [
+            "//jaxlib/tools:jaxlib_py_import",
+        ]):
     """Adds jaxlib and jaxlib cuda plugin wheels as dependencies instead of depending on sources.
 
     This allows us to test prebuilt versions of jaxlib wheels against the rest of the JAX codebase.
@@ -234,12 +242,16 @@ def if_building_jaxlib(
       if_not_building: the jaxlib wheels to depend on including gpu-specific plugins in case of
                        gpu-enabled builds
       if_not_building_for_cpu: the jaxlib wheels to depend on in case of cpu-only builds
+      if_py_import: the py_import targets to depend on in case of gpu-enabled builds
+      if_py_import_for_cpu: the py_import targets to depend on in case of cpu-only builds
     """
 
     return select({
         "//jax:enable_jaxlib_build": if_building,
         "//jax_plugins/cuda:disable_jaxlib_for_cpu_build": if_not_building_for_cpu,
         "//jax_plugins/cuda:disable_jaxlib_for_cuda12_build": if_not_building,
+        "//jax_plugins/cuda:enable_py_import_for_cpu_build": if_py_import_for_cpu,
+        "//jax_plugins/cuda:enable_py_import_for_cuda12_build": if_py_import,
     })
 
 # buildifier: disable=function-docstring
