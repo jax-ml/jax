@@ -305,7 +305,16 @@ class SetNameStackContextManager(contextlib.ContextDecorator):
 
 
 set_name_stack = SetNameStackContextManager
-reset_name_stack = lambda: SetNameStackContextManager(NameStack())
+
+
+# TODO(mattjj,phawkins): figure out why the commented-out reset_name_stack
+# implementation doesn't work. Luckily this context manager isn't called much so
+# the performance shouldn't matter. See blame commit message for repro.
+# reset_name_stack = lambda: SetNameStackContextManager(NameStack())
+@contextlib.contextmanager
+def reset_name_stack() -> Iterator[None]:
+  with set_name_stack(NameStack()):
+    yield
 
 
 class TransformNameStackContextManager(contextlib.ContextDecorator):
