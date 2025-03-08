@@ -76,3 +76,45 @@ jax.jit(f)(-2.)  # ==> Enters PDB breakpoint!
 ##### Limitations
 * Not compatible with `jax.pmap` or `jax.pjit`
 * Running functions without JIT-compilation can be slow
+
+## `jax_debug_infs` configuration option and context manager
+
+**Summary:** Enable the `jax_debug_infs` flag to automatically detect when infinities (infs) are produced in `jax.jit`-compiled code.
+
+`jax_debug_infs` is a JAX flag that, when enabled, raises an error when an infinite value is detected in computations. Similar to `jax_debug_nans`, it has special handling for JIT-compiled functions—when an infinite output is detected, the function is re-run eagerly (without compilation) to pinpoint the specific primitive that caused the issue.
+
+### Usage
+
+To detect infinite values in your functions, enable the flag using one of the following methods:
+* Set the `JAX_DEBUG_INFS=True` environment variable;
+* Add `jax.config.update("jax_debug_infs", True)` near the top of your main file;
+* Add `jax.config.parse_flags_with_absl()` to your main file, then set the option using a command-line flag like `--jax_debug_infs=True`;
+
+### Example
+
+```python
+import jax
+import jax.numpy as jnp
+
+jax.config.update("jax_debug_infs", True)
+
+def f(x):
+  return 1.0 / x
+
+jax.jit(f)(0.)  # ==> raises FloatingPointError exception!
+```
+
+#### Strengths and limitations of `jax_debug_infs`
+
+##### Strengths
+* Easy to apply
+* Precisely detects where infinities were produced
+* Throws a standard Python exception and is compatible with PDB postmortem
+
+##### Limitations
+* Not compatible with `jax.pmap` or `jax.pjit`
+* Re-running functions eagerly can be slow
+* Errors on false positives (e.g., intentionally created infinities)
+
+### Additional Note:
+`jax_debug_infs` is often used in combination with `jax_disable_jit` since infinities might not always propagate to the output like NaNs do. Alternatively, `checkify` can be used to detect infinities in intermediate computations.
