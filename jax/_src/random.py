@@ -34,6 +34,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import prng
 from jax._src import xla_bridge
+from jax._src import util
 from jax._src.api import jit, vmap
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -1548,11 +1549,43 @@ def _gumbel(key, shape, dtype, mode) -> Array:
         _uniform(key, shape, dtype, minval=jnp.finfo(dtype).tiny, maxval=1.)))
 
 
-def categorical(key: ArrayLike,
-                logits: RealArray,
-                axis: int = -1,
-                shape: Shape | None = None) -> Array:
+def _top_k(operand, k, axis):
+  # TODO: Remove once jax/issues/25867 is fixed.
+  operand = jnp.moveaxis(operand, axis, -1)
+  values, indices = lax.top_k(operand, k)
+  values = jnp.moveaxis(values, -1, axis)
+  indices = jnp.moveaxis(indices, -1, axis)
+  return values, indices
+
+
+def _categorical_without_replacement(
+  key: ArrayLike,
+  logits: RealArray,
+  axis: int = -1,
+  shape: Shape | None = None,
+) -> Array:
+  if shape is None:
+    shape = util.tuple_delete(jnp.shape(logits), axis, allow_neg=True)
+  logits += gumbel(key, jnp.shape(logits))
+  batch_shape = shape[: len(shape) - jnp.ndim(logits) + 1]
+  batch_size = math.prod(batch_shape)
+  _, indices = _top_k(logits, batch_size, axis)
+  indices = jnp.moveaxis(indices, axis, 0)
+  indices = indices.reshape(shape)
+  return indices
+
+
+def categorical(
+  key: ArrayLike,
+  logits: RealArray,
+  axis: int = -1,
+  shape: Shape | None = None,
+  replace: bool = True,
+) -> Array:
   """Sample random values from categorical distributions.
+
+  Sampling with replacement uses the Gumbel max trick. Sampling without replacement uses
+  the Gumbel top-k trick. See [1] for reference.
 
   Args:
     key: a PRNG key used as the random key.
@@ -1562,14 +1595,24 @@ def categorical(key: ArrayLike,
     shape: Optional, a tuple of nonnegative integers representing the result shape.
       Must be broadcast-compatible with ``np.delete(logits.shape, axis)``.
       The default (None) produces a result shape equal to ``np.delete(logits.shape, axis)``.
+    replace: Perform sampling without replacement.
 
   Returns:
     A random array with int dtype and shape given by ``shape`` if ``shape``
     is not None, or else ``np.delete(logits.shape, axis)``.
+
+  References:
+    .. [1] Wouter Kool, Herke van Hoof, Max Welling. "Stochastic Beams and Where to Find
+      Them: The Gumbel-Top-k Trick for Sampling Sequences Without Replacement".
+      Proceedings of the 36th International Conference on Machine Learning, PMLR
+      97:3499-3508, 2019. https://proceedings.mlr.press/v97/kool19a.html.
   """
   key, _ = _check_prng_key("categorical", key)
   check_arraylike("categorical", logits)
   logits_arr = jnp.asarray(logits)
+
+  if not replace:
+    return _categorical_without_replacement(key, logits_arr, axis, shape)
 
   if axis >= 0:
     axis -= len(logits_arr.shape)

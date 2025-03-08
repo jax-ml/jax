@@ -40,7 +40,7 @@ from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.tree_util import tree_flatten
 from jax._src.typing import Array, ArrayLike, StaticScalar
-from jax._src.util import canonicalize_axis, set_module, tuple_replace, safe_zip
+from jax._src.util import canonicalize_axis, set_module, tuple_update, safe_zip
 
 export = set_module('jax.numpy')
 
@@ -397,7 +397,7 @@ def take_along_axis(
 
 
 def _make_along_axis_idx(shape, indices, axis):
-  return tuple_replace(lax_numpy.indices(shape, sparse=True), axis, indices)
+  return tuple_update(lax_numpy.indices(shape, sparse=True), axis, indices, allow_neg=True)
 
 
 @export
