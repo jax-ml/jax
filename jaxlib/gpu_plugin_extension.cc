@@ -209,6 +209,13 @@ nb::dict Registrations() {
   return dict;
 }
 
+nb::dict FfiRegistrations() {
+  nb::dict dict;
+  dict["xla_ffi_python_gpu_callback"] =
+      jax::EncapsulateFunction(xla::kXlaFfiPythonGpuCallback);
+  return dict;
+}
+
 }  //  namespace
 
 void BuildGpuPluginExtension(nanobind::module_& m) {
@@ -265,6 +272,7 @@ void BuildGpuPluginExtension(nanobind::module_& m) {
       },
       nb::arg("c_api"), nb::arg("type_name"), nb::arg("type_id"));
   m.def("registrations", &Registrations);
+  m.def("ffi_registrations", &FfiRegistrations);
 }
 
 }  // namespace xla
