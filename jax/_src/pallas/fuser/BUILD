@@ -32,6 +32,7 @@ pytype_strict_library(
     ],
     deps = [
         ":block_spec",
+        ":custom_evaluate",
         ":fusable",
         ":fusion",
         ":jaxpr_fusion",
@@ -44,6 +45,7 @@ pytype_strict_library(
         "block_spec.py",
     ],
     deps = [
+        ":fuser_utils",
         "//jax",
         "//jax:ad_util",
         "//jax:api_util",
@@ -117,5 +119,29 @@ pytype_strict_library(
         "//jax:tree_util",
         "//jax:util",
         "//jax/_src/pallas",
+    ],
+)
+
+pytype_strict_library(
+    name = "custom_evaluate",
+    srcs = ["custom_evaluate.py"],
+    deps = [
+        ":fuser_utils",
+        "//jax",
+        "//jax:core",
+        "//jax:source_info_util",
+        "//jax:tree_util",
+        "//jax:util",
+    ],
+)
+
+pytype_strict_library(
+    name = "fuser_utils",
+    srcs = ["fuser_utils.py"],
+    deps = [
+        "//jax:api_util",
+        "//jax:core",
+        "//jax:partial_eval",
+        "//jax:tree_util",
     ],
 )
