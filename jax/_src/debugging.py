@@ -370,11 +370,23 @@ def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
     **kwargs: Additional keyword arguments to be formatted, as if passed to
       ``fmt.format``.
   """
+  processed_args = []
+  for arg in args:
+    if isinstance(arg, jnp.ndarray) and arg.dtype == jnp.float4_e2m1fn:
+        arg = arg.astype(jnp.float32)
+    processed_args.append(arg)
+
+  processed_kwargs = {}
+  for key, value in kwargs.items():
+    if isinstance(value, jnp.ndarray) and value.dtype == jnp.float4_e2m1fn:
+        processed_kwargs[key] = value.astype(jnp.float32)
+    else:
+        processed_kwargs[key] = value
   # Check that we provide the correct arguments to be formatted.
-  formatter.format(fmt, *args, **kwargs)
+  formatter.format(fmt, *processed_args, **processed_kwargs)
 
   debug_callback(partial(_format_print_callback, fmt, np.get_printoptions()),
-                 *args, **kwargs, ordered=ordered)
+                 *processed_args, **processed_kwargs, ordered=ordered)
 
 
 # Sharding visualization
