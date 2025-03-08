@@ -1151,13 +1151,17 @@ jax_core.custom_typechecks[core_map_p] = _core_map_typecheck_rule
 
 
 def lower_as_mlir(
-    f, *args, dynamic_shapes=False, device=None, **kwargs
+    f, *args, dynamic_shapes=False, device=None, static_argnames=(), **kwargs
 ) -> mlir.ir.Module:
   with pallas_export_experimental(dynamic_shapes):
-    lowered = jax.jit(f, device=device).lower(*args, **kwargs)
-    stablehlo = lowered.compiler_ir(dialect="stablehlo")
+    if not isinstance(f, jax.stages.Wrapped):
+      f = jax.jit(f, device=device, static_argnames=static_argnames)
+    jax.config.update("jax_traceback_filtering", "off")
+    lowered = f.lower(*args, **kwargs)
+    stablehlo = lowered.compiler_ir(dialect="stablehlo")  # type: ignore[return-value]
 
   return stablehlo  # type: ignore[return-value]
+
 
 _out_shape_to_aval_mapping: dict[
     type[Any], Callable[[Any], jax_core.AbstractValue]
