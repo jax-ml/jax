@@ -641,13 +641,22 @@ class FragmentedArray:
         raise NotImplementedError
 
   @classmethod
-  def load_strided(cls, ref: ir.Value, *, is_signed: bool | None = None):
+  def load_strided(
+      cls,
+      ref: ir.Value,
+      *,
+      is_signed: bool | None = None,
+      vec_size: int | None = None,
+  ):
     if not ir.MemRefType.isinstance(ref.type):
       raise TypeError(ref.type)
 
     ref_ty = ir.MemRefType(ref.type)
     shape = tuple(ref_ty.shape)
-    layout = WGStridedFragLayout.from_shaped_type(ref_ty)
+    if vec_size is None:
+      layout = WGStridedFragLayout.from_shaped_type(ref_ty)
+    else:
+      layout = WGStridedFragLayout(shape=shape, vec_size=vec_size)
     vec_ty = ir.VectorType.get((layout.vec_size,), ref_ty.element_type)
     try:
       # Flattening the reference potentially produces simpler PTX but
@@ -1322,7 +1331,30 @@ class FragmentedArray:
     from_integer = ir.IntegerType.isinstance(cur_dtype)
     to_integer = ir.IntegerType.isinstance(new_dtype)
     if from_float and to_float:
-      if ir.FloatType(cur_dtype).width > ir.FloatType(new_dtype).width:
+      cur_ty_width = ir.FloatType(cur_dtype).width
+      new_ty_width = ir.FloatType(new_dtype).width
+      if cur_ty_width == new_ty_width:
+        # There is no instruction to perform conversions between two float types
+        # of the same width. Go through the next-larger standard type.
+        # TODO(bchetioui): support conversions between float types of width 8.
+        # Which larger type to pick will depend on the number of bits in the
+        # smallest exponent.
+        if cur_ty_width != 16:
+          raise NotImplementedError(
+              "Conversion between float types of width other than 16 not"
+              " supported"
+          )
+        larger_ty = ir.F32Type.get()
+        match self.layout:
+          case WGMMAFragLayout() | WGStridedFragLayout() | TiledLayout():
+            shape = ir.VectorType(self.registers.flat[0].type).shape
+            upcast_ty = ir.VectorType.get(shape, larger_ty)
+          case WGMMARowFragLayout() | WGSplatFragLayout():
+            upcast_ty = larger_ty
+          case _:
+            raise NotImplementedError(f"Unsupported layout {self.layout}")
+        convert = lambda ty, x: arith.truncf(ty, arith.extf(upcast_ty, x))
+      elif ir.FloatType(cur_dtype).width > ir.FloatType(new_dtype).width:
         convert = arith.truncf
       else:
         convert = arith.extf
