@@ -57,6 +57,7 @@ from jax._src import xla_bridge
 from jax._src import debugging
 from jax._src import pjit as pjit_lib
 from jax._src.ad_checkpoint import saved_residuals
+from jax._src.interpreters import ad as ad_internal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
@@ -4731,6 +4732,19 @@ class APITest(jtu.JaxTestCase):
       return lax.sin(jax.jit(lax.sin)(x))
 
     check_invariant_to_use_direct_linearize(lambda: jax.grad(sin_of_sin)(1.0))
+
+  def test_deferred_primal_with_direct_linearize(self):
+    def my_sin_lin(nzs, x):
+      nz, = nzs
+      return (my_sin_p.bind(x), nz, x, lambda x, t: lax.mul(t, lax.cos(x)))
+
+    my_sin_p = core.Primitive("my_sin_p")
+    my_sin_p.def_impl(lax.sin)
+    my_sin_p.def_abstract_eval(lambda x: x)
+    ad_internal.primitive_linearizations[my_sin_p] = my_sin_lin
+
+    with config.use_direct_linearize(True):
+      jax.grad(my_sin_p.bind)(1.0)  # doesn't crash
 
 
 class RematTest(jtu.JaxTestCase):
