@@ -81,7 +81,7 @@ int main(int argc, char** argv) {
   xla::XlaComputation xla_computation(test_module_proto);
   xla::CompileOptions compile_options;
   std::unique_ptr<xla::PjRtLoadedExecutable> executable =
-      client->Compile(xla_computation, compile_options).value();
+      client->CompileAndLoad(xla_computation, compile_options).value();
 
   // Prepare inputs.
   xla::Literal literal_x =
