@@ -58,6 +58,7 @@ Operators
     clz
     collapse
     complex
+    composite
     concatenate
     conj
     conv
