@@ -11496,5 +11496,63 @@ class OverrideLoweringTest(jtu.JaxTestCase):
     self.assertNotIn("stablehlo.custom_call @Sharding", lowered_ir)
 
 
+class InputSavedVJPTest(jtu.JaxTestCase):
+
+  def test_basic(self):
+    def f(x, y):
+      return x * y
+
+    primals = 2., 3.
+    y, f_vjp = api.si_vjp(f, [True, True], *primals)
+    arg_cts = f_vjp(1., *primals)
+    self.assertAllClose(y, 6.)
+    self.assertAllClose(arg_cts, (3., 2.))
+
+  def test_basic_unused(self):
+    f = jnp.sin
+    primals = 3.,
+    y, f_vjp = api.si_vjp(f, [True], *primals)
+    x_ct, = f_vjp(1., *primals)
+    self.assertAllClose(y, jnp.sin(3.))
+    self.assertAllClose(x_ct, jnp.cos(3.))
+
+    with self.assertRaisesRegex(Exception, "not used by the backward pass: x"):
+      _ = api.si_vjp(f, [True], *primals, allow_unused=False)
+
+  def test_basic_opaque(self):
+    f = jnp.sin
+    primals = 3.,
+    with self.assertRaisesRegex(Exception, "the backward pass requires opaque"):
+      _ = api.si_vjp(f, [True], *primals, allow_opaque=False)
+
+  def test_basic_pytree_error(self):
+    def f(x):
+      return [x['hi'] * x['bye']]
+
+    y, f_vjp = api.si_vjp(f, [True], {'hi': 2., 'bye': 3.})
+    arg_ct, = f_vjp([1.], {'hi': 2., 'bye': 3.})
+    self.assertAllClose(y, [6.])
+    self.assertAllClose(arg_ct, {'hi': 3., 'bye': 2.})
+
+    with self.assertRaisesRegex(ValueError, "but the structures differ"):
+      f_vjp(1., {'hi': 2.})
+
+  def test_fsdp(self):
+    # see https://github.com/jax-ml/jax/pull/27017 for why this is called "fsdp"
+    def f2(x, w):
+      x = 1. * x
+      x = x @ w
+      x = 2. * x
+      return x
+
+    x = jnp.ones((3, 4))
+    w = jnp.ones((4, 4))
+    y, f2_sivjp = api.si_vjp(f2, [False, True], x, w)
+    y_grad = jnp.ones_like(y)
+    x_grad, w_grad = f2_sivjp(y_grad, w)
+    self.assertAllClose(x_grad, 2. * y_grad @ w.T)
+    self.assertAllClose(w_grad, 2. * x.T @ y_grad)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
