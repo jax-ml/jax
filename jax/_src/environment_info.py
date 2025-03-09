@@ -24,6 +24,17 @@ from jax._src import lib
 from jax._src import xla_bridge as xb
 import numpy as np
 
+try:
+  import jax_cuda12_plugin.version as cuda12_plugin_version  # type: ignore[import-not-found,import-untyped]
+except ImportError:
+  cuda12_plugin_version = None
+
+try:
+  import jax_rocm60_plugin.version as rocm60_plugin_version  # type: ignore[import-not-found,import-untyped]
+except ImportError:
+  rocm60_plugin_version = None
+
+
 def try_nvidia_smi() -> str | None:
   try:
     return subprocess.check_output(['nvidia-smi']).decode()
@@ -41,9 +52,14 @@ def print_environment_info(return_string: bool = False) -> str | None:
   """
   # TODO(jakevdp): should we include other info, e.g. jax.config.values?
   python_version = sys.version.replace('\n', ' ')
+  plugin_versions = ""
+  if cuda12_plugin_version:
+    plugin_versions += f"\n  jax-cuda12-plugin: {cuda12_plugin_version.__version__}"
+  if rocm60_plugin_version:
+    plugin_versions += f"\n  jax-rocm60-plugin: {rocm60_plugin_version.__version__}"
   info = textwrap.dedent(f"""\
   jax:    {version.__version__}
-  jaxlib: {lib.version_str}
+  jaxlib: {lib.version_str}{plugin_versions}
   numpy:  {np.__version__}
   python: {python_version}
   device info: {xb.devices()[0].device_kind}-{xb.device_count()}, {xb.local_device_count()} local devices"
