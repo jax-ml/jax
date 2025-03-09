@@ -1199,7 +1199,7 @@ def butterworth(N: int, Wn: ArrayLike, btype: str = 'low', analog: bool = False,
     raise ValueError("btype must be 'low', 'high', 'band', or 'bandstop' ")
   if output not in ['ba', 'zpk', 'sos']:
     raise ValueError("output must be 'ba', 'zpk', or 'sos'")
-  
+
   Wn_arr = jnp.atleast_1d(Wn)
   if Wn_arr.size > 2 or Wn_arr.size < 1:
     raise ValueError('Wn must have 1 or 2 elements')
@@ -1208,7 +1208,7 @@ def butterworth(N: int, Wn: ArrayLike, btype: str = 'low', analog: bool = False,
       raise ValueError("Bandpass and bandstop filters require Wn to be a 2-element array")
     if Wn_arr[0] >= Wn_arr[1]:
       raise ValueError("Lower cutoof must be less than upper cutoff")
-    
+
   dtype = jnp.float64 if analog else jnp.promote_types(jnp.float64, Wn_arr.dtype)
   Wn_arr = Wn_arr.astype(dtype)
   if not analog:
@@ -1226,7 +1226,7 @@ def butterworth(N: int, Wn: ArrayLike, btype: str = 'low', analog: bool = False,
     if jnp.any(Wn_arr <= 0):
       raise ValueError("Analog filter frequencies must be positive")
     warped = Wn_arr
-  
+
   m = jnp.arange(-N + 1, N, 2, dtype=dtype)
   p = 1j * jnp.exp(1j * jnp.pi * m / (2 * N))
   z = jnp.array([], dtype=complex)
@@ -1260,7 +1260,7 @@ def butterworth(N: int, Wn: ArrayLike, btype: str = 'low', analog: bool = False,
       z_arr = jnp.pad(z_arr, (0, n_poles - n_zeros), constant_values=-1)
     elif n_zeros > n_poles:
       raise ValueError("Number of zeros must not exceed number of poles")
-    
+
     n_sections = (n_poles + 1) // 2
     sos = jnp.zeros((n_sections, 6), dtype=z_arr.dtype)
 
@@ -1281,7 +1281,7 @@ def butterworth(N: int, Wn: ArrayLike, btype: str = 'low', analog: bool = False,
 
     sos = sos.at[0, :3].mul(k_arr.real if jnp.iscomplexobj(k_arr) else k_arr)
     return sos
-  
+
   if output == 'zpk':
     return z, p, k
   elif output == 'sos':
