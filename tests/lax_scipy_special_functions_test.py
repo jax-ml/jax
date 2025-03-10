@@ -273,6 +273,11 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     with self.assertRaises(TypeError):
       lsp_special.beta(x=1, y=1)
 
+  def testExpnTracerLeaks(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/26972
+    with jax.checking_leaks():
+      lsp_special.expi(jnp.ones(()))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
