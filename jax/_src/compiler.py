@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import copy
 import logging
 import time
 from typing import Any, Callable
@@ -196,15 +197,6 @@ def get_compile_options(
   build_options.memory_fitting_level = config.EffortLevel(
       config.memory_fitting_level.value
   ).value
-
-  # This is a temporary workaround to simplify the AutoPGLE usage.
-  # TODO(b/376647494): Remove once the bug is fixed.
-  if ((config.enable_pgle.value and config.pgle_profiling_runs.value > 0)
-      or config.compilation_cache_expect_pgle.value):
-    logger.debug("Explicitly disabling command buffer scheduling for AutoPGLE.")
-    if env_options_overrides is None:
-      env_options_overrides = {}
-    env_options_overrides['xla_gpu_enable_command_buffer'] = ''
 
   if env_options_overrides is not None:
     # Some overrides are passed directly on build_options.
@@ -396,6 +388,13 @@ def compile_or_get_cached(
 
   monitoring.record_event('/jax/compilation_cache/compile_requests_use_cache')
 
+  # This is a temporary workaround to simplify the AutoPGLE usage.
+  # TODO(b/376647494): Remove once the bug is fixed.
+  # Save the un-modified compile options for use when re-compiling with PGLE data
+  original_compile_options = copy.deepcopy(compile_options)
+  if is_auto_pgle_used or config.compilation_cache_expect_pgle.value:
+    compile_options.env_option_overrides += [("xla_gpu_enable_command_buffer", "")]
+
   try:
     if config.remove_custom_partitioning_ptr_from_cache_key.value:
       ignore_callbacks = cache_key_type.IgnoreCallbacks.CUSTOM_PARTITIONING
@@ -416,10 +415,13 @@ def compile_or_get_cached(
                            host_callbacks)
 
   if is_auto_pgle_used or config.compilation_cache_expect_pgle.value:
+    old_cache_key = cache_key
+    # Returns a new cache key, for the PGLE-optimized module, if it already exists in
+    # the cache OR the profile data required to compile it is now available.
     cache_key = _resolve_pgle_module_cache_key(
         computation,
         devices,
-        compile_options,
+        original_compile_options,
         backend,
         pgle_profiler,
         is_multi_process,
@@ -427,6 +429,9 @@ def compile_or_get_cached(
         module_name,
         min_device_process_id,
     )
+    if cache_key != old_cache_key:
+      # Do not apply b/376647494 workaround:
+      compile_options = original_compile_options
 
   cache_retrieval_start = time.monotonic()
   retrieved_executable, retrieved_compile_time = _cache_read(
