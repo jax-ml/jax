@@ -450,21 +450,23 @@ def wraps(
 def assert_unreachable(x):
   raise AssertionError(f"Unhandled case: {type(x).__name__}")
 
-def tuple_insert(t, idx, val):
+def tuple_insert(t, idx, val, allow_neg=False):
+  if allow_neg and idx < 0:
+    idx += len(t)
   assert 0 <= idx <= len(t), (idx, len(t))
   return t[:idx] + (val,) + t[idx:]
 
-def tuple_delete(t, idx):
+def tuple_delete(t, idx, allow_neg=False):
+  if allow_neg and idx < 0:
+    idx += len(t)
   assert 0 <= idx < len(t), (idx, len(t))
   return t[:idx] + t[idx + 1:]
 
-def tuple_update(t, idx, val):
+def tuple_update(t, idx, val, allow_neg=False):
+  if allow_neg and idx < 0:
+    idx += len(t)
   assert 0 <= idx < len(t), (idx, len(t))
   return t[:idx] + (val,) + t[idx+1:]
-
-def tuple_replace(tupl, index, item):
-  # unlike tuple_update, works with negative indices as well
-  return tupl[:index] + (item,) + tupl[index:][1:]
 
 class HashableFunction:
   """Decouples function equality and hash from its identity.

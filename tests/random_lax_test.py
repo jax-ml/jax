@@ -33,6 +33,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src import util
 from jax import vmap
 
 from jax._src import prng as prng_internal
@@ -364,6 +365,39 @@ class LaxRandomTest(jtu.JaxTestCase):
       else:
         pmf = lambda x: np.where(x < len(p), p[np.minimum(len(p) - 1, x)], 0.0)
         self._CheckChiSquared(samples, pmf=pmf)
+
+  @jtu.sample_product(
+    [
+      {
+        "logits_shape": logits_shape,
+        "axis": axis,
+        "batch_shape": batch_shape,
+      }
+      for logits_shape in [(2,), (3,), (2, 3), (2, 5), (2, 3, 5)]
+      for axis in range(-len(logits_shape), len(logits_shape))
+      for batch_shape in [(), (2,), (3,), (2, 3), (2, 5), (2, 3, 5), None]
+    ]
+  )
+  def testCategoricalWithoutReplacement(self, logits_shape, axis, batch_shape):
+    key = random.key(0)
+
+    key, subkey = random.split(key)
+    logits = random.normal(subkey, logits_shape)
+
+    if batch_shape is None:
+      output = random.categorical(key, logits, axis, None, False)
+      assert output.shape == util.tuple_delete(logits_shape, axis, allow_neg=True)
+
+    else:
+      shape = batch_shape + util.tuple_delete(logits_shape, axis, allow_neg=True)
+
+      if math.prod(batch_shape) <= logits_shape[axis]:
+        output = random.categorical(key, logits, axis, shape, False)
+        assert output.shape == shape
+      else:
+        with self.assertRaises(Exception):
+          random.categorical(key, logits, axis, shape, False)
+
 
   def testBernoulliShape(self):
     key = self.make_key(0)
