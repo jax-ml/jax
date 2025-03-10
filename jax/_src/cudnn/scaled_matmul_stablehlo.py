@@ -697,4 +697,3 @@ def scaled_dot_general_wrapper(
   if dn_batched != dimension_numbers:
     return jnp.squeeze(out, axis=0)
   return out
-

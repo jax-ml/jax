@@ -1055,7 +1055,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest('TPU does not support float8_e8m0fnu.')
     if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
-      self.skipTest('TPU does not support float4_e2m1fn.')      
+      self.skipTest('TPU does not support float4_e2m1fn.')
     val = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     rep = repr(val)
     self.assertStartsWith(rep, 'Array(')
