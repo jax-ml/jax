@@ -14,7 +14,7 @@
 
 # JAX is Autograd and XLA
 
-load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
 load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
@@ -66,6 +66,18 @@ config_setting(
     name = "enable_jaxlib_build",
     flag_values = {
         ":build_jaxlib": "true",
+    },
+)
+
+bool_flag(
+    name = "with_libtpu_dependency",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "add_libtpu_dependency",
+    flag_values = {
+        ":with_libtpu_dependency": "True",
     },
 )
 

@@ -13,52 +13,115 @@
 # limitations under the License.
 # ==============================================================================
 
-licenses(["notice"])
-
 load("@python//:defs.bzl", "compile_pip_requirements")
 load("@python_version_repo//:py_version.bzl", "REQUIREMENTS")
 load("//jaxlib:jax.bzl", "all_py_deps")
 
+licenses(["notice"])
+
 compile_pip_requirements(
     name = "requirements",
+    data = [
+        "gpu-test-requirements.txt",
+        "test-requirements.txt",
+    ],
     extra_args = [
         "--allow-unsafe",
         "--build-isolation",
         "--rebuild",
     ],
+    generate_hashes = True,
     requirements_in = "requirements.in",
     requirements_txt = REQUIREMENTS,
+)
+
+compile_pip_requirements(
+    name = "tpu_requirements",
+    data = [
+        "test-requirements.txt",
+        "tpu-test-requirements.txt",
+    ],
+    extra_args = [
+        "--allow-unsafe",
+        "--build-isolation",
+        "--rebuild",
+    ],
     generate_hashes = True,
-    data = ["test-requirements.txt", "gpu-test-requirements.txt"]
+    requirements_in = "tpu_requirements.in",
+    requirements_txt = REQUIREMENTS,
 )
 
 compile_pip_requirements(
     name = "requirements_nightly",
+    data = [
+        "gpu-test-requirements.txt",
+        "test-requirements.txt",
+    ],
     extra_args = [
         "--allow-unsafe",
         "--build-isolation",
         "--extra-index-url=https://pypi.anaconda.org/scientific-python-nightly-wheels/simple",
         "--pre",
-        "--upgrade"
+        "--upgrade",
     ],
+    generate_hashes = False,
     requirements_in = "requirements.in",
     requirements_txt = REQUIREMENTS,
+)
+
+compile_pip_requirements(
+    name = "nightly_tpu_requirements",
+    data = [
+        "test-requirements.txt",
+        "tpu-test-requirements.txt",
+    ],
+    extra_args = [
+        "--allow-unsafe",
+        "--build-isolation",
+        "--extra-index-url=https://pypi.anaconda.org/scientific-python-nightly-wheels/simple",
+        "-f https://storage.googleapis.com/jax-releases/libtpu_releases.html",
+        "--pre",
+        "--upgrade",
+    ],
     generate_hashes = False,
-    data = ["test-requirements.txt", "gpu-test-requirements.txt"]
+    requirements_in = "tpu_requirements.in",
+    requirements_txt = REQUIREMENTS,
+)
+
+compile_pip_requirements(
+    name = "oldest_tpu_requirements",
+    data = [
+        "oldest-tpu-test-requirements.txt",
+        "test-requirements.txt",
+    ],
+    extra_args = [
+        "--allow-unsafe",
+        "--build-isolation",
+        "--extra-index-url=https://pypi.anaconda.org/scientific-python-nightly-wheels/simple",
+        "-f https://storage.googleapis.com/jax-releases/libtpu_releases.html",
+        "--pre",
+        "--upgrade",
+    ],
+    generate_hashes = False,
+    requirements_in = "oldest_tpu_requirements.in",
+    requirements_txt = REQUIREMENTS,
 )
 
 compile_pip_requirements(
     name = "requirements_dev",
+    data = [
+        "gpu-test-requirements.txt",
+        "test-requirements.txt",
+    ],
     extra_args = [
         "--allow-unsafe",
         "--build-isolation",
         "--upgrade",
         "--rebuild",
     ],
+    generate_hashes = False,
     requirements_in = "requirements.in",
     requirements_txt = REQUIREMENTS,
-    generate_hashes = False,
-    data = ["test-requirements.txt", "gpu-test-requirements.txt"]
 )
 
 py_library(

@@ -14,6 +14,9 @@ python_init_repositories(
         "3.12": "//build:requirements_lock_3_12.txt",
         "3.13": "//build:requirements_lock_3_13.txt",
         "3.13-ft": "//build:requirements_lock_3_13_ft.txt",
+        "3.10-tpu": "//build:requirements_lock_3_10_tpu.txt",
+        "3.10-nightlytpu": "//build:requirements_lock_3_10_nightlytpu.txt",
+        "3.10-oldesttpu": "//build:requirements_lock_3_10_oldesttpu.txt",
     },
     local_wheel_inclusion_list = [
         "jaxlib*",
