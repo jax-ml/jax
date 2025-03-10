@@ -235,11 +235,6 @@ def _vector_load_op_lowering_rule(
       ir.ArrayAttr, vector_load_op.attributes["out_layouts"]
   )
 
-  if not layouts.is_strided_fragmented_layout(out_layout_attr):
-    raise ValueError(
-        f"{vector_load_op} has an unsupported layout: {out_layout_attr}"
-    )
-
   for i in vector_load_op.indices:
     index_defining_op = i.owner.opview
     if (
@@ -254,10 +249,29 @@ def _vector_load_op_lowering_rule(
 
   element_type = vector_load_op.result.type.element_type
   is_signed = False if ir.IntegerType.isinstance(element_type) else None
-  strided_layout = layouts.from_strided_fragmented_layout_attr(out_layout_attr)
-  fragmented_array = fa.FragmentedArray.load_strided(
-      vector_load_op.base, is_signed=is_signed, vec_size=strided_layout.vec_size
-  )
+
+  if layouts.is_strided_fragmented_layout(out_layout_attr):
+    strided_layout = layouts.from_strided_fragmented_layout_attr(
+        out_layout_attr
+    )
+    fragmented_array = fa.FragmentedArray.load_strided(
+        vector_load_op.base,
+        is_signed=is_signed,
+        vec_size=strided_layout.vec_size,
+    )
+  elif layouts.is_wgmma_fragmented_layout(out_layout_attr):
+    layout = ir.MemRefType(vector_load_op.base.type).layout
+    swizzle, transforms = memref_layout_to_swizzle_and_transforms(layout)
+    transformed_ref = transform_memref(vector_load_op.base, transforms)
+    fragmented_array = fa.FragmentedArray.load_tiled(
+        transformed_ref,
+        swizzle=swizzle,
+        is_signed=is_signed
+    )
+  else:
+    raise ValueError(
+        f"{vector_load_op} has an unsupported layout: {out_layout_attr}"
+    )
   return [_fragmented_array_to_ir(fragmented_array, vector_load_op.result.type)]
 
 
