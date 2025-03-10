@@ -35,7 +35,7 @@ jobs:
           apt install -y clang-18 libstdc++-14-dev build-essential libssl-dev \
             zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev curl git \
             libncursesw5-dev xz-utils tk-dev libxml2-dev libxmlsec1-dev \
-            libffi-dev liblzma-dev
+            libffi-dev liblzma-dev file zip
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: jax
