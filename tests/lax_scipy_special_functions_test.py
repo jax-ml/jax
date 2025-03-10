@@ -273,6 +273,28 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     with self.assertRaises(TypeError):
       lsp_special.beta(x=1, y=1)
 
+  def testExpiWithJitDisabled(self):
+    # This test verifies that expi works correctly with JIT disabled
+    # for arrays with negative values
+    with jax.disable_jit():
+      # Test with a negative value in the problematic range
+      x = jnp.array([-0.5])
+      result = jsp.expi(x)
+      
+      # Compare with the expected result (computed with JIT enabled)
+      jax.config.update("jax_disable_jit", False)
+      expected = jsp.expi(x)
+      jax.config.update("jax_disable_jit", True)
+      
+      # They should be very close
+      self.assertAllClose(result, expected)
+      
+      # Also test with scalar input
+      scalar_x = -0.5
+      scalar_result = jsp.expi(scalar_x)
+      scalar_expected = jsp.expi(scalar_x) # This should compute correctly even with JIT disabled
+      self.assertAllClose(scalar_result, scalar_expected)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

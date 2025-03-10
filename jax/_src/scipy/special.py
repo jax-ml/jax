@@ -2095,6 +2095,17 @@ def expi(x: ArrayLike) -> Array:
     - :func:`jax.scipy.special.exp1`
   """
   x_arr, = promote_args_inexact("expi", x)
+  # Check if we have a scalar that was promoted to an array
+  scalar_input = not hasattr(x, 'shape') or not x.shape
+  is_scalar_promoted_to_array = not scalar_input and x_arr.size == 1 and x_arr.ndim > 0
+  
+  # When JIT is disabled, handle the one-element negative array case explicitly
+  # to avoid potential broadcasting issues
+  if is_scalar_promoted_to_array and jnp.any(x_arr < 0):
+    # For negative values, we apply _expi_neg element-wise to avoid broadcasting issues
+    return jnp.array([_expi_neg(x_i) for x_i in x_arr.ravel()]).reshape(x_arr.shape)
+  
+  # Normal path with piecewise
   return jnp.piecewise(x_arr, [x_arr < 0], [_expi_neg, _expi_pos])
 
 
