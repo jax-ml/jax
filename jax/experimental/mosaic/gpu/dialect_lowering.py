@@ -28,6 +28,7 @@ from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import llvm
+from jax._src.lib.mlir.dialects import math as mlir_math
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
@@ -461,6 +462,37 @@ for op, source_is_signed, target_is_signed in [
       _conversion_op_lowering_rule,
       source_is_signed=source_is_signed,
       target_is_signed=target_is_signed,
+  )
+
+
+def _unary_op_lowering_rule(
+    _: LoweringContext,
+    op: Any,
+    impl: Callable[[fa.FragmentedArray], fa.FragmentedArray],
+    is_signed: bool | None = None,
+) -> Sequence[ir.Value]:
+  in_layouts = inference_utils.in_layouts(op)
+  [layout] = inference_utils.out_layouts(op)
+  if any(in_layout != layout for in_layout in in_layouts):
+    raise ValueError("Layout mismatch")
+  kwargs = {}
+  if hasattr(op, "fastmath"):
+    kwargs = dict(
+        approx=op.fastmath == ir.Attribute.parse("#arith.fastmath<afn>")
+    )
+  a = _fragmented_array_from_ir(op.operand, layout, is_signed)
+  return [_fragmented_array_to_ir(impl(a, **kwargs), op.result.type)]
+
+
+for op, impl, is_signed in [
+    (mlir_math.RsqrtOp, fa.FragmentedArray.rsqrt, None),
+    (mlir_math.ExpOp, fa.FragmentedArray.exp, None),
+    (mlir_math.Exp2Op, fa.FragmentedArray.exp2, None),
+    (mlir_math.LogOp, fa.FragmentedArray.log, None),
+    (mlir_math.TanhOp, fa.FragmentedArray.tanh, None),
+]:
+  _lowerings[op.OPERATION_NAME] = functools.partial(
+      _unary_op_lowering_rule, impl=impl, is_signed=is_signed
   )
 
 

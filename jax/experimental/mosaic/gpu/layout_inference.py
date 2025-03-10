@@ -18,21 +18,23 @@ from collections.abc import Callable, Sequence
 import dataclasses
 import enum
 from functools import partial
+import math
 from typing import cast
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import math as mlir_math
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
-import math
 import numpy as np
 
 from . import fragmented_array as fa
 from . import inference_utils
 from . import layouts as layouts_lib
 from . import utils
+
 
 # mypy: ignore-errors
 
@@ -228,6 +230,11 @@ for op in [
     arith.TruncFOp,
     arith.TruncIOp,
     arith.XOrIOp,
+    mlir_math.ExpOp,
+    mlir_math.Exp2Op,
+    mlir_math.LogOp,
+    mlir_math.RsqrtOp,
+    mlir_math.TanhOp,
     vector.LoadOp,
     vector.StoreOp,
 ]:

@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Hashable, MutableMapping, MutableSequence, Sequence
+from collections.abc import Callable, Hashable, MutableMapping, MutableSequence, Sequence
 import contextlib
 import dataclasses
 import functools
@@ -25,6 +25,7 @@ import math
 from typing import Any, Protocol, cast
 
 import jax
+from jax import api_util
 from jax import lax
 from jax._src import core as jax_core
 from jax._src import linear_util as lu
@@ -36,6 +37,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
+from jax._src.lib.mlir.dialects import math as math_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.lib.mlir.dialects import scf as scf_dialect
@@ -837,6 +839,29 @@ def _program_id(parallel_axis: int, squashed_dims: tuple[int, ...]) -> ir.Value:
     )
 
 
+def _lower_fun(
+    fun: Callable[..., Any], *, multiple_results: bool
+) -> Callable[..., Any]:
+
+  def lowering_rule(ctx: LoweringRuleContext, *args, **params):
+    wrapped_fun = lu.wrap_init(
+        fun
+        if multiple_results
+        else lambda *args, **params: (fun(*args, **params),),
+        params,
+        debug_info=api_util.debug_info(
+            "Pallas Mosaic GPU lower_fun", fun, args, params
+        ),
+    )
+    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+    out = lower_jaxpr_to_mosaic_gpu(
+        ctx.module_ctx, ctx.launch_ctx, jaxpr, args, consts
+    )
+    return out if multiple_results else out[0]
+
+  return lowering_rule
+
+
 @register_lowering_rule(primitives.num_programs_p, mgpu.ThreadSemantics.Lane)
 @register_lowering_rule(primitives.num_programs_p, mgpu.ThreadSemantics.Warpgroup)
 def _num_programs_lowering_rule(ctx: LoweringRuleContext, axis):
@@ -1247,6 +1272,13 @@ mosaic_lowering_rules[mgpu.ThreadSemantics.Lane].update({
     lax.not_p: lambda ctx, x: ~x,
 })
 
+mosaic_lowering_rules[mgpu.ThreadSemantics.Warpgroup].update({
+    lax.neg_p: _lower_fun(lambda x: jnp.subtract(0, x), multiple_results=False),
+    lax.not_p: _lower_fun(
+        lambda x: jnp.bitwise_xor(x, -1), multiple_results=False
+    ),
+})
+
 
 def _binary_op_lowering_rule(ctx: LoweringRuleContext, x, y, *, impl):
   x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
@@ -1383,55 +1415,98 @@ def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
 
 
 @register_lowering_rule(lax.integer_pow_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(lax.integer_pow_p, mgpu.ThreadSemantics.Warpgroup)
 def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
-  [x_aval] = ctx.avals_in
-  x = _ensure_fa(x, x_aval.dtype)
-  if y == 2:
-    return x * x
-  return NotImplementedError
+  if y != 2:
+    raise NotImplementedError
+  return _square_lowering_rule(ctx, x)
+
 
 @register_lowering_rule(lax.square_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(lax.square_p, mgpu.ThreadSemantics.Warpgroup)
 def _square_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
-  x = _ensure_fa(x, x_aval.dtype)
-  return x * x
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    x = _ensure_fa(x, x_aval.dtype)
+    return x * x
+  if jnp.issubdtype(x_aval.dtype, jnp.integer):
+    return arith_dialect.muli(x, x)
+  if jnp.issubdtype(x_aval.dtype, jnp.floating):
+    return arith_dialect.mulf(x, x)
+  raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
+
 
 @register_lowering_rule(lax.rsqrt_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(lax.rsqrt_p, mgpu.ThreadSemantics.Warpgroup)
 def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
-  return _ensure_fa(x, x_aval.dtype).rsqrt(approx=ctx.module_ctx.approx_math)
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    return _ensure_fa(x, x_aval.dtype).rsqrt(approx=ctx.module_ctx.approx_math)
+  fastmath = (
+      arith_dialect.FastMathFlags.afn if ctx.module_ctx.approx_math else None
+  )
+  return math_dialect.rsqrt(
+      _ensure_ir_value(x, x_aval.dtype), fastmath=fastmath
+  )
+
 
 @register_lowering_rule(lax.tanh_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(lax.tanh_p, mgpu.ThreadSemantics.Warpgroup)
 def _tanh_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
-  return _ensure_fa(x, x_aval.dtype).tanh(approx=ctx.module_ctx.approx_math)
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    return _ensure_fa(x, x_aval.dtype).tanh(approx=ctx.module_ctx.approx_math)
+  fastmath = (
+      arith_dialect.FastMathFlags.afn if ctx.module_ctx.approx_math else None
+  )
+  return math_dialect.tanh(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
 
 
-@register_lowering_rule(lax.logistic_p, mgpu.ThreadSemantics.Lane)
-def _logistic_lowering_rule(ctx: LoweringRuleContext, x):
-  [x_aval] = ctx.avals_in
-  a = _ensure_fa(x, x_aval.dtype)
-  return 1. / (1. + (-a).exp(approx=ctx.module_ctx.approx_math))
+def _logistic(x):
+  return 1.0 / (1 + lax.exp(-x))
+
+
+mosaic_lowering_rules[mgpu.ThreadSemantics.Lane][lax.logistic_p] = _lower_fun(
+    _logistic, multiple_results=False
+)
+mosaic_lowering_rules[mgpu.ThreadSemantics.Warpgroup][lax.logistic_p] = (
+    _lower_fun(_logistic, multiple_results=False)
+)
+
 
 @register_lowering_rule(lax.exp_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(lax.exp_p, mgpu.ThreadSemantics.Warpgroup)
 def _exp_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
-  a = _ensure_fa(x, x_aval.dtype)
-  return a.exp(approx=ctx.module_ctx.approx_math)
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    return _ensure_fa(x, x_aval.dtype).exp(approx=ctx.module_ctx.approx_math)
+  fastmath = (
+      arith_dialect.FastMathFlags.afn if ctx.module_ctx.approx_math else None
+  )
+  return math_dialect.exp(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
 
 
 @register_lowering_rule(lax.exp2_p, mgpu.ThreadSemantics.Lane)
 def _exp2_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
-  a = _ensure_fa(x, x_aval.dtype)
-  return a.exp2(approx=ctx.module_ctx.approx_math)
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    return _ensure_fa(x, x_aval.dtype).exp2(approx=ctx.module_ctx.approx_math)
+  fastmath = (
+      arith_dialect.FastMathFlags.afn if ctx.module_ctx.approx_math else None
+  )
+  return math_dialect.exp2(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
 
 
 @register_lowering_rule(lax.log_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(lax.log_p, mgpu.ThreadSemantics.Warpgroup)
 def _log_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
-  a = _ensure_fa(x, x_aval.dtype)
-  return a.log(approx=ctx.module_ctx.approx_math)
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    return _ensure_fa(x, x_aval.dtype).log(approx=ctx.module_ctx.approx_math)
+  fastmath = (
+      arith_dialect.FastMathFlags.afn if ctx.module_ctx.approx_math else None
+  )
+  return math_dialect.log(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
 
 
 @register_lowering_rule(lax.reduce_sum_p, mgpu.ThreadSemantics.Lane)

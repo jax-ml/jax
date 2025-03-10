@@ -81,25 +81,37 @@ class PallasSm90ATest(PallasTest, jtu.CudaArchSpecificTest):
 
 class PallasCallTest(PallasTest):
 
-  @parameterized.named_parameters(
-      ("add_one", lambda x:  x + 1.),
-      ("logistic", jax.lax.logistic),
-      ("exp", jax.lax.exp),
-      ("square", lambda x: x ** 2),
-      ("rsqrt", jax.lax.rsqrt),
-      ("tanh", jax.lax.tanh, 1e-6),
-      ("log", jax.lax.log)
+  @parameterized.product(
+      op=[
+          lax.neg,
+          lax.bitwise_not,
+          lax.logistic,
+          lax.exp,
+          lambda x: x**2,
+          lax.rsqrt,
+          lax.tanh,
+          lax.log,
+      ],
+      approx_math=[True, False],
+      thread_semantics=[*plgpu.ThreadSemantics],
   )
-  def test_unary_op(self, unary, rtol=1e-7):
+  def test_unary_op(self, op, approx_math, thread_semantics):
+    dtype = jnp.int32 if op is lax.bitwise_not else jnp.float32
+
     @functools.partial(
         pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+        out_shape=jax.ShapeDtypeStruct([256], dtype),
+        compiler_params=plgpu.GPUCompilerParams(
+            approx_math=approx_math, thread_semantics=thread_semantics
+        ),
     )
     def kernel(x_ref, o_ref):
-      o_ref[...] = unary(x_ref[...])
+      o_ref[...] = op(x_ref[...])
 
-    x = jnp.arange(256).astype(jnp.float32)
-    np.testing.assert_allclose(kernel(x), unary(x), rtol=rtol)
+    x = jnp.arange(256).astype(dtype)
+    np.testing.assert_allclose(
+        kernel(x), op(x), rtol=1e-5 if approx_math else 3e-7
+    )
 
   @parameterized.product(
       op=[
