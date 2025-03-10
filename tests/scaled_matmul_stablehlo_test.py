@@ -196,12 +196,24 @@ def generate_nvfp4_quantized_tensors(dot_config, output_type):
   amax_b = jnp.max(jnp.abs(b)).astype(jnp.float32)
 
   # Update global scales
-  data_max = jnp.finfo(block_scale_configs_nvfp4[0].data_type).max.astype(jnp.float32)
-  scale_max = jnp.finfo(block_scale_configs_nvfp4[0].scale_type).max.astype(jnp.float32)
+  data_max = jnp.finfo(block_scale_configs_nvfp4[0].data_type).max.astype(
+      jnp.float32
+  )
+  scale_max = jnp.finfo(block_scale_configs_nvfp4[0].scale_type).max.astype(
+      jnp.float32
+  )
+
+  # The global scaling factor should be bounded to avoid overflow
+  if output_type == jnp.float16:
+    factor = 100.0
+  elif output_type == jnp.bfloat16:
+    factor = 10.0
+  else:
+    factor = 1.0
   block_scale_configs_nvfp4[0] = update_global_scale(
-      block_scale_configs_nvfp4[0], amax_a / (data_max * scale_max))
+      block_scale_configs_nvfp4[0], amax_a / (data_max * scale_max) * factor)
   block_scale_configs_nvfp4[1] = update_global_scale(
-      block_scale_configs_nvfp4[1], amax_b / (data_max * scale_max))
+      block_scale_configs_nvfp4[1], amax_b / (data_max * scale_max) * factor)
 
   # Quantize tensors
   a_nvfp4, a_scale = quantize(a, block_scale_configs_nvfp4[0])
@@ -222,7 +234,12 @@ def generate_nvfp4_quantized_tensors(dot_config, output_type):
   b_dequantized = reshape_and_scale(
       b_nvfp4, b_scale, block_scale_configs_nvfp4[1].global_scale, bs_b, k_b)
 
-  return (a_raw, b_raw), (a_dequantized, b_dequantized), (a_nvfp4, b_nvfp4, a_scale, b_scale), block_scale_configs_nvfp4
+  return (
+      (a_raw, b_raw),
+      (a_dequantized, b_dequantized),
+      (a_nvfp4, b_nvfp4, a_scale, b_scale),
+      block_scale_configs_nvfp4
+  )
 
 def create_mxfp8_configs():
   if _dtypes.float8_e8m0fnu is None:
@@ -277,42 +294,43 @@ class ScaledMatmulTest(jtu.JaxTestCase):
   mxfp8_configs = create_mxfp8_configs()
   nvfp4_configs = create_nvfp4_configs()
 
- @jtu.sample_product(
-     in_shardings=sharding_configs,
-     block_scale_configs=[mxfp8_configs,],
- )
- @jtu.run_on_devices("cuda")
- def test_collectives(self, in_shardings, block_scale_configs):
-   if jtu.device_under_test() != "gpu" or len(jax.local_devices()) < 4:
-     self.skipTest("Partition Test enabled for at least 4 GPUs")
+  @jtu.sample_product(
+      in_shardings=sharding_configs,
+      block_scale_configs=[mxfp8_configs,],
+  )
+  @jtu.run_on_devices("cuda")
+  def test_collectives(self, in_shardings, block_scale_configs):
+    if jtu.device_under_test() != "gpu" or len(jax.local_devices()) < 4:
+      self.skipTest("Partition Test enabled for at least 4 GPUs")
 
-   expected_hlo = sharding_configs[in_shardings][0]
-   hlo_text = get_hlo_text(in_shardings, block_scale_configs)
+    expected_hlo = sharding_configs[in_shardings][0]
+    hlo_text = get_hlo_text(in_shardings, block_scale_configs)
 
-   hlo_pattern = re.compile(
-       r".*".join([re.escape(x) for x in expected_hlo]), flags=re.DOTALL
-   )
-   self.assertRegex(
-       hlo_text, hlo_pattern, msg=f"Failed to find pattern: {expected_hlo}"
-   )
+    hlo_pattern = re.compile(
+        r".*".join([re.escape(x) for x in expected_hlo]), flags=re.DOTALL
+    )
+    self.assertRegex(
+        hlo_text, hlo_pattern, msg=f"Failed to find pattern: {expected_hlo}"
+    )
 
   @jtu.sample_product(
       contract=[160, 96],
       lhs_non_contract=[240, 100],
-      dtype=[jnp.float32, jnp.bfloat16],  #fp16 has inf
+      dtype=[jnp.float32, jnp.bfloat16, jnp.float16],
   )
   @jtu.run_on_devices("cuda")
   def test_scaled_matmul_nvfp4(
       self, contract, lhs_non_contract, dtype,
   ):
     batch, rhs_non_contract = 2, 128
-    dot_config = ((batch, lhs_non_contract, contract), (batch,
-                                                          rhs_non_contract,
-                                                          contract), (([2],
-                                                                       [2]),
-                                                                      ([0],
-                                                                       [0])))
-    _, (a_dq, b_dq), (a_q, b_q, a_s, b_s), block_scale_configs = generate_nvfp4_quantized_tensors(dot_config, dtype)
+    dot_config = (
+        (batch, lhs_non_contract, contract),
+        (batch, rhs_non_contract, contract),
+        (([2], [2]), ([0], [0]))
+    )
+    _, (a_dq, b_dq), (a_q, b_q, a_s, b_s), block_scale_configs = (
+        generate_nvfp4_quantized_tensors(dot_config, dtype)
+    )
     a_gs = block_scale_configs[0].global_scale
     b_gs = block_scale_configs[1].global_scale
 
@@ -345,107 +363,107 @@ class ScaledMatmulTest(jtu.JaxTestCase):
         out, out_ref.astype(dtype), rtol=1e-2, atol=5e-2
     )
 
- @jtu.sample_product(
-     contract=[160, 96],
-     lhs_non_contract=[240, 100],
-     dtype=[jnp.float16, jnp.bfloat16, jnp.float32],
-     block_scale_configs=[mxfp8_configs,],
- )
- @jtu.run_on_devices("cuda")
- def test_scaled_matmul(
-     self, contract, lhs_non_contract, dtype, block_scale_configs,
- ):
-   batch, rhs_non_contract = 2, 128
-   a, b, a_q, b_q, a_scales, b_scales = generate_quantized_tensors(
-       batch, lhs_non_contract, contract, rhs_non_contract,
-       block_scale_configs, dtype=dtype,
-   )
+  @jtu.sample_product(
+      contract=[160, 96],
+      lhs_non_contract=[240, 100],
+      dtype=[jnp.float16, jnp.bfloat16, jnp.float32],
+      block_scale_configs=[mxfp8_configs,],
+  )
+  @jtu.run_on_devices("cuda")
+  def test_scaled_matmul(
+      self, contract, lhs_non_contract, dtype, block_scale_configs,
+  ):
+    batch, rhs_non_contract = 2, 128
+    a, b, a_q, b_q, a_scales, b_scales = generate_quantized_tensors(
+        batch, lhs_non_contract, contract, rhs_non_contract,
+        block_scale_configs, dtype=dtype,
+    )
 
-   def wrapper(lhs, rhs, lhs_scales, rhs_scales, out_type):
-     return scaled_matmul_wrapper(
-         lhs,
-         rhs,
-         lhs_scales,
-         rhs_scales,
-         preferred_element_type=out_type,
-     )
+    def wrapper(lhs, rhs, lhs_scales, rhs_scales, out_type):
+      return scaled_matmul_wrapper(
+          lhs,
+          rhs,
+          lhs_scales,
+          rhs_scales,
+          preferred_element_type=out_type,
+      )
 
-   j_scaled_matmul = jax.jit(partial(wrapper, out_type=dtype))
-   hlo_text = (
-       j_scaled_matmul.lower(a_q, b_q, a_scales, b_scales)
-       .compile()
-       .as_text()
-   )
-   hlo_pattern = re.compile(
-       r".*".join([re.escape(x) for x in ("custom-call", c_name)])
-   )
-   self.assertRegex(hlo_text, hlo_pattern)
+    j_scaled_matmul = jax.jit(partial(wrapper, out_type=dtype))
+    hlo_text = (
+        j_scaled_matmul.lower(a_q, b_q, a_scales, b_scales)
+        .compile()
+        .as_text()
+    )
+    hlo_pattern = re.compile(
+        r".*".join([re.escape(x) for x in ("custom-call", c_name)])
+    )
+    self.assertRegex(hlo_text, hlo_pattern)
 
-   out = j_scaled_matmul(a_q, b_q, a_scales, b_scales)
-   out_ref = np.einsum(
-       "BMK,BNK->BMN", a.astype(jnp.float32), b.astype(jnp.float32)
-   )
-   self.assertArraysAllClose(
-       out, out_ref.astype(dtype), rtol=1e-3, atol=1e-3
-   )
+    out = j_scaled_matmul(a_q, b_q, a_scales, b_scales)
+    out_ref = np.einsum(
+        "BMK,BNK->BMN", a.astype(jnp.float32), b.astype(jnp.float32)
+    )
+    self.assertArraysAllClose(
+        out, out_ref.astype(dtype), rtol=1e-3, atol=1e-3
+    )
 
- @jtu.sample_product(
-       in_shardings=sharding_configs,
-       block_scale_configs=[mxfp8_configs,],
- )
- @jtu.run_on_devices("cuda")
- def test_scaled_matmul_sharded(self, in_shardings, block_scale_configs):
-   if len(jax.local_devices()) < 4:
-     self.skipTest("Require at least 4 devices to run sharding tests.")
-   batch, contract, non_contract = 2, 1024, 256
-   a, b, a_q, b_q, a_scales, b_scales = generate_quantized_tensors(
-       batch, non_contract, contract, non_contract, block_scale_configs,
-   )
+  @jtu.sample_product(
+        in_shardings=sharding_configs,
+        block_scale_configs=[mxfp8_configs,],
+  )
+  @jtu.run_on_devices("cuda")
+  def test_scaled_matmul_sharded(self, in_shardings, block_scale_configs):
+    if len(jax.local_devices()) < 4:
+      self.skipTest("Require at least 4 devices to run sharding tests.")
+    batch, contract, non_contract = 2, 1024, 256
+    a, b, a_q, b_q, a_scales, b_scales = generate_quantized_tensors(
+        batch, non_contract, contract, non_contract, block_scale_configs,
+    )
 
-   devices = np.array(jax.local_devices()[:4])
-   devices = devices.reshape((2, 2))
-   expected_output_spec = sharding_configs[in_shardings][1]
+    devices = np.array(jax.local_devices()[:4])
+    devices = devices.reshape((2, 2))
+    expected_output_spec = sharding_configs[in_shardings][1]
 
-   with Mesh(devices, ("dp", "tp")) as mesh:
-     a_q, b_q, a_scales, b_scales, input_shardings = (
-         shard_and_device_put(
-             mesh,
-             in_shardings[0],
-             in_shardings[1],
-             a_q,
-             b_q,
-             a_scales,
-             b_scales,
-         )
-     )
+    with Mesh(devices, ("dp", "tp")) as mesh:
+      a_q, b_q, a_scales, b_scales, input_shardings = (
+          shard_and_device_put(
+              mesh,
+              in_shardings[0],
+              in_shardings[1],
+              a_q,
+              b_q,
+              a_scales,
+              b_scales,
+          )
+      )
 
-     args = [a_q, b_q, a_scales, b_scales]
-     j_scaled_matmul = jax.jit(
-         scaled_matmul_wrapper, in_shardings=input_shardings
-     )
-     hlo_compiled = j_scaled_matmul.lower(*args).compile()
-     hlo_pattern = re.compile(
-         r".*".join([re.escape(x) for x in ("custom-call", c_name)])
-     )
-     self.assertRegex(hlo_compiled.as_text(), hlo_pattern)
+      args = [a_q, b_q, a_scales, b_scales]
+      j_scaled_matmul = jax.jit(
+          scaled_matmul_wrapper, in_shardings=input_shardings
+      )
+      hlo_compiled = j_scaled_matmul.lower(*args).compile()
+      hlo_pattern = re.compile(
+          r".*".join([re.escape(x) for x in ("custom-call", c_name)])
+      )
+      self.assertRegex(hlo_compiled.as_text(), hlo_pattern)
 
-     j_ref = jax.jit(
-         partial(
-             jax.lax.dot_general,
-             dimension_numbers=(([2], [2]), ([0], [0])),
-         ),
-         in_shardings=input_shardings[:2],
-     )
+      j_ref = jax.jit(
+          partial(
+              jax.lax.dot_general,
+              dimension_numbers=(([2], [2]), ([0], [0])),
+          ),
+          in_shardings=input_shardings[:2],
+      )
 
-     out = j_scaled_matmul(*args)
-     out_ref = j_ref(a, b)
-     expected_output_sharding = NamedSharding(
-         mesh=mesh, spec=expected_output_spec
-     )
-     self.assertArraysAllClose(out, out_ref, rtol=1e-3, atol=1e-3)
-     self.assertTrue(
-         out.sharding.is_equivalent_to(expected_output_sharding, out.ndim)
-     )
+      out = j_scaled_matmul(*args)
+      out_ref = j_ref(a, b)
+      expected_output_sharding = NamedSharding(
+          mesh=mesh, spec=expected_output_spec
+      )
+      self.assertArraysAllClose(out, out_ref, rtol=1e-3, atol=1e-3)
+      self.assertTrue(
+          out.sharding.is_equivalent_to(expected_output_sharding, out.ndim)
+      )
 
 @jtu.with_config(jax_numpy_dtype_promotion="standard")
 class ScaledDotGeneralTest(jtu.JaxTestCase):
@@ -513,11 +531,13 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
               True,
           ),
       ],
-      output_type=[jnp.float32],
+      output_type=[jnp.float32, jnp.float16, jnp.bfloat16],
   )
   @jtu.run_on_devices("cuda")
   def test_dot_general_nvfp4(self, configs, output_type):
-    (a_raw, b_raw), (a_dq, b_dq), _, block_scale_configs = generate_nvfp4_quantized_tensors(configs[:-1], output_type)
+    (a_raw, b_raw), (a_dq, b_dq), _, block_scale_configs = (
+        generate_nvfp4_quantized_tensors(configs[:-1], output_type)
+    )
     a_gs = block_scale_configs[0].global_scale
     b_gs = block_scale_configs[1].global_scale
 
@@ -546,7 +566,9 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
           jax.value_and_grad(partial(fwd, is_ref=True), argnums=[0, 1])
       )
       j_train_fwd_ref = jax.jit(
-          jax.value_and_grad(partial(fwd, is_ref=True, use_normalized=True), argnums=[0, 1])
+          jax.value_and_grad(
+              partial(fwd, is_ref=True, use_normalized=True), argnums=[0, 1]
+          )
       )
       out, (x_grad, w_grad) = j_train(a_raw, b_raw)
       _, (x_grad_ref, w_grad_ref) = j_train_ref(a_raw, b_raw)
@@ -560,196 +582,195 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
       j_inference_ref = jax.jit(partial(fwd, is_ref=True, use_normalized=True))
       out = j_inference(a_raw, b_raw)
       out_ref = jnp.reshape(j_inference_ref(a_dq, b_dq), out.shape)
+      self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=2e-1)
+
+  @jtu.sample_product(
+      configs=[
+          # a_shape, b_shape, dimension_numbers, is_training
+          ((1, 32), (2, 32), (([1], [1]), ([], [])), False),
+          ((30, 64), (100, 64), (([1], [1]), ([], [])), False),
+          ((192, 96), (160, 96), (([1], [1]), ([], [])), True),
+          ((64, 128, 4), (128, 128), (([1], [0]), ([], [])), True),
+          ((1, 128, 1024), (1, 1024, 128), (([2], [1]), ([0], [0])), True),
+          (
+              (1, 128, 128, 2),
+              (128, 1, 2, 128),
+              (([2], [0]), ([0, 3], [1, 2])),
+              True,
+          ),
+      ],
+      output_type=[jnp.float16, jnp.bfloat16, jnp.float32],
+  )
+  @jtu.run_on_devices("cuda")
+  def test_dot_general(self, configs, output_type):
+    cast_to_representable = partial(
+        quantize_dequantize,
+        scale=jnp.ones((1,)),
+        compute_dtype=jnp.float32,
+    )
+    k1, k2 = jax.random.split(jax.random.key(0), 2)
+
+    a_shape, b_shape, dimension_numbers, is_training = configs
+    a = cast_to_representable(
+        jax.random.uniform(k1, a_shape, minval=-1.0, dtype=output_type),
+        self.block_scale_configs[0].data_type,
+    )
+    b = cast_to_representable(
+        jax.random.uniform(k2, b_shape, minval=-1.0, dtype=output_type),
+        self.block_scale_configs[1].data_type,
+    )
+
+    scaled_dot_general = partial(
+        scaled_dot_general_wrapper,
+        configs=self.block_scale_configs
+    )
+    def fwd(a, b, is_ref=False):
+      fn = jax.lax.dot_general if is_ref else scaled_dot_general
+      y = fn(a, b, dimension_numbers,
+              preferred_element_type=output_type)
+      return jnp.sum(y)
+
+    if is_training:
+      j_train = jax.jit(jax.value_and_grad(fwd, argnums=[0, 1]))
+
+      j_train_ref = jax.jit(
+          jax.value_and_grad(partial(fwd, is_ref=True), argnums=[0, 1])
+      )
+      out, (x_grad, w_grad) = j_train(a, b)
+      out_ref, (x_grad_ref, w_grad_ref) = j_train_ref(a, b)
+
+      self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e-2)
+      self.assertArraysAllClose(x_grad, x_grad_ref, rtol=1e-2, atol=1e1)
+      self.assertArraysAllClose(w_grad, w_grad_ref, rtol=1e-2, atol=1e1)
+    else:
+      j_inference = jax.jit(fwd)
+      j_inference_ref = jax.jit(partial(fwd, is_ref=True))
+      out = j_inference(a, b)
+      out_ref = j_inference_ref(a, b)
       self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e-2)
 
- @jtu.sample_product(
-     configs=[
-         # a_shape, b_shape, dimension_numbers, is_training
-         ((1, 32), (2, 32), (([1], [1]), ([], [])), False),
-         ((30, 64), (100, 64), (([1], [1]), ([], [])), False),
-         ((192, 96), (160, 96), (([1], [1]), ([], [])), True),
-         ((64, 128, 4), (128, 128), (([1], [0]), ([], [])), True),
-         ((1, 128, 1024), (1, 1024, 128), (([2], [1]), ([0], [0])), True),
-         (
-             (1, 128, 128, 2),
-             (128, 1, 2, 128),
-             (([2], [0]), ([0, 3], [1, 2])),
-             True,
-         ),
-     ],
-     output_type=[jnp.float16, jnp.bfloat16, jnp.float32],
- )
- @jtu.run_on_devices("cuda")
- def test_dot_general(self, configs, output_type):
-   cast_to_representable = partial(
-       quantize_dequantize,
-       scale=jnp.ones((1,)),
-       compute_dtype=jnp.float32,
-   )
-   k1, k2 = jax.random.split(jax.random.key(0), 2)
+  @jtu.sample_product(in_shardings=sharding_configs)
+  @jtu.run_on_devices("cuda")
+  def test_dot_general_sharded(self, in_shardings):
+    if len(jax.local_devices()) < 4:
+      self.skipTest("Require at least 4 devices to run sharding tests.")
 
-   a_shape, b_shape, dimension_numbers, is_training = configs
-   a = cast_to_representable(
-       jax.random.uniform(k1, a_shape, minval=-1.0, dtype=output_type),
-       self.block_scale_configs[0].data_type,
-   )
-   b = cast_to_representable(
-       jax.random.uniform(k2, b_shape, minval=-1.0, dtype=output_type),
-       self.block_scale_configs[1].data_type,
-   )
+    cast_to_representable = partial(
+        quantize_dequantize,
+        scale=jnp.ones((1,)),
+        compute_dtype=jnp.float32,
+    )
 
-   scaled_dot_general = partial(
-       scaled_dot_general_wrapper,
-       configs=self.block_scale_configs
-   )
-   def fwd(a, b, is_ref=False):
-     fn = jax.lax.dot_general if is_ref else scaled_dot_general
-     y = fn(a, b, dimension_numbers,
-            preferred_element_type=output_type)
-     return jnp.sum(y)
+    dimension_numbers = (([2], [2]), ([0], [0]))
+    a_shape = (2, 128, 512)
+    b_shape = (2, 256, 512)
 
-   if is_training:
-     j_train = jax.jit(jax.value_and_grad(fwd, argnums=[0, 1]))
+    k1, k2 = jax.random.split(jax.random.key(0), 2)
+    a = cast_to_representable(
+        jax.random.uniform(k1, a_shape, minval=-1.0),
+        self.block_scale_configs[0].data_type,
+    )
+    b = cast_to_representable(
+        jax.random.uniform(k2, b_shape, minval=-1.0),
+        self.block_scale_configs[1].data_type,
+    )
 
-     j_train_ref = jax.jit(
-         jax.value_and_grad(partial(fwd, is_ref=True), argnums=[0, 1])
-     )
-     out, (x_grad, w_grad) = j_train(a, b)
-     out_ref, (x_grad_ref, w_grad_ref) = j_train_ref(a, b)
+    scaled_dot_general = partial(
+        scaled_dot_general_wrapper,
+        configs=self.block_scale_configs
+    )
+    def fwd(a, b, is_ref=False):
+      fn = jax.lax.dot_general if is_ref else scaled_dot_general
+      y = fn(a, b, dimension_numbers)
+      # Use a little complex loss function to avoid constant grads, whose
+      # sharding info might be optimized off and then cause issue with the
+      # custom scaled_matmul op.
+      return jnp.sum(jnp.tanh(y))
 
-     self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e-2)
-     self.assertArraysAllClose(x_grad, x_grad_ref, rtol=1e-2, atol=1e1)
-     self.assertArraysAllClose(w_grad, w_grad_ref, rtol=1e-2, atol=1e1)
-   else:
-     j_inference = jax.jit(fwd)
-     j_inference_ref = jax.jit(partial(fwd, is_ref=True))
-     out = j_inference(a, b)
-     out_ref = j_inference_ref(a, b)
-     self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e-2)
+    devices = np.array(jax.local_devices()[:4])
+    devices = devices.reshape((2, 2))
+    with Mesh(devices, ("dp", "tp")) as mesh:
+      a, b, input_shardings = (
+          shard_and_device_put(
+              mesh,
+              in_shardings[0],
+              in_shardings[1],
+              a,
+              b,
+          )
+      )
 
- @jtu.sample_product(in_shardings=sharding_configs)
- @jtu.run_on_devices("cuda")
- def test_dot_general_sharded(self, in_shardings):
-   if len(jax.local_devices()) < 4:
-     self.skipTest("Require at least 4 devices to run sharding tests.")
+      j_train = jax.jit(jax.value_and_grad(partial(fwd), argnums=[0, 1]),
+                        in_shardings=input_shardings)
+      hlo_text = j_train.lower(a, b).compile().as_text()
+      hlo_pattern = re.compile(
+          r".*".join([re.escape(x) for x in ("custom-call", c_name)])
+      )
 
-   cast_to_representable = partial(
-       quantize_dequantize,
-       scale=jnp.ones((1,)),
-       compute_dtype=jnp.float32,
-   )
-
-   dimension_numbers = (([2], [2]), ([0], [0]))
-   a_shape = (2, 128, 512)
-   b_shape = (2, 256, 512)
-
-   k1, k2 = jax.random.split(jax.random.key(0), 2)
-   a = cast_to_representable(
-       jax.random.uniform(k1, a_shape, minval=-1.0),
-       self.block_scale_configs[0].data_type,
-   )
-   b = cast_to_representable(
-       jax.random.uniform(k2, b_shape, minval=-1.0),
-       self.block_scale_configs[1].data_type,
-   )
-
-   scaled_dot_general = partial(
-       scaled_dot_general_wrapper,
-       configs=self.block_scale_configs
-   )
-   def fwd(a, b, is_ref=False):
-     fn = jax.lax.dot_general if is_ref else scaled_dot_general
-     y = fn(a, b, dimension_numbers)
-     # Use a little complex loss function to avoid constant grads, whose
-     # sharding info might be optimized off and then cause issue with the
-     # custom scaled_matmul op.
-     return jnp.sum(jnp.tanh(y))
-
-   devices = np.array(jax.local_devices()[:4])
-   devices = devices.reshape((2, 2))
-   with Mesh(devices, ("dp", "tp")) as mesh:
-     a, b, input_shardings = (
-         shard_and_device_put(
-             mesh,
-             in_shardings[0],
-             in_shardings[1],
-             a,
-             b,
-         )
-     )
-
-     j_train = jax.jit(jax.value_and_grad(partial(fwd), argnums=[0, 1]),
-                       in_shardings=input_shardings)
-     hlo_text = j_train.lower(a, b).compile().as_text()
-     hlo_pattern = re.compile(
-         r".*".join([re.escape(x) for x in ("custom-call", c_name)])
-     )
-
-     j_train_ref = jax.jit(
-         jax.value_and_grad(partial(fwd, is_ref=True), argnums=[0, 1]),
-         in_shardings=input_shardings
-     )
-     out, (x_grad, w_grad) = j_train(a, b)
-     out_ref, (x_grad_ref, w_grad_ref) = j_train_ref(a, b)
-     self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e-2)
-     self.assertArraysAllClose(x_grad, x_grad_ref, rtol=1e-2, atol=1e1)
-     self.assertArraysAllClose(w_grad, w_grad_ref, rtol=1e-2, atol=1e1)
+      j_train_ref = jax.jit(
+          jax.value_and_grad(partial(fwd, is_ref=True), argnums=[0, 1]),
+          in_shardings=input_shardings
+      )
+      out, (x_grad, w_grad) = j_train(a, b)
+      out_ref, (x_grad_ref, w_grad_ref) = j_train_ref(a, b)
+      self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e-2)
+      self.assertArraysAllClose(x_grad, x_grad_ref, rtol=1e-2, atol=1e1)
+      self.assertArraysAllClose(w_grad, w_grad_ref, rtol=1e-2, atol=1e1)
 
 
- @jtu.sample_product(
-     configs=[
-         ((1, 128, 256), (1, 128, 256), (0, 0, 0)),
-         ((2, 128, 128), (2, 128, 128), (0, 0, 0)),
-         ((2, 128, 128), (128, 2, 128), (0, 1, 2)),
-     ]
- )
- @jtu.run_on_devices("cuda")
- def test_dot_general_vmap(self, configs):
-   cast_to_representable = partial(
-       quantize_dequantize,
-       scale=jnp.ones((1,)),
-       compute_dtype=jnp.float32,
-   )
-   k1, k2 = jax.random.split(jax.random.key(0), 2)
+  @jtu.sample_product(
+      configs=[
+          ((1, 128, 256), (1, 128, 256), (0, 0, 0)),
+          ((2, 128, 128), (2, 128, 128), (0, 0, 0)),
+          ((2, 128, 128), (128, 2, 128), (0, 1, 2)),
+      ]
+  )
+  @jtu.run_on_devices("cuda")
+  def test_dot_general_vmap(self, configs):
+    cast_to_representable = partial(
+        quantize_dequantize,
+        scale=jnp.ones((1,)),
+        compute_dtype=jnp.float32,
+    )
+    k1, k2 = jax.random.split(jax.random.key(0), 2)
 
-   a_shape, b_shape, vmap_axes = configs
-   a_axis, b_axis, o_axis = vmap_axes
-   dimension_numbers = (([1], [1]), ([], []))
+    a_shape, b_shape, vmap_axes = configs
+    a_axis, b_axis, o_axis = vmap_axes
+    dimension_numbers = (([1], [1]), ([], []))
 
-   a = cast_to_representable(
-       jax.random.uniform(k1, a_shape, minval=-1.0),
-       self.block_scale_configs[0].data_type,
-   )
-   b = cast_to_representable(
-       jax.random.uniform(k2, b_shape, minval=-1.0),
-       self.block_scale_configs[1].data_type,
-   )
+    a = cast_to_representable(
+        jax.random.uniform(k1, a_shape, minval=-1.0),
+        self.block_scale_configs[0].data_type,
+    )
+    b = cast_to_representable(
+        jax.random.uniform(k2, b_shape, minval=-1.0),
+        self.block_scale_configs[1].data_type,
+    )
 
-   scaled_dot_general = partial(
-       scaled_dot_general_wrapper,
-       configs=self.block_scale_configs
-   )
-   def fwd(a, b, is_ref=False):
-     fn = jax.vmap(
-         jax.lax.dot_general if is_ref else scaled_dot_general,
-         in_axes=(a_axis, b_axis, None),
-         out_axes=o_axis,
-     )
-     y = fn(a, b, dimension_numbers)
-     return jnp.sum(y)
+    scaled_dot_general = partial(
+        scaled_dot_general_wrapper,
+        configs=self.block_scale_configs
+    )
+    def fwd(a, b, is_ref=False):
+      fn = jax.vmap(
+          jax.lax.dot_general if is_ref else scaled_dot_general,
+          in_axes=(a_axis, b_axis, None),
+          out_axes=o_axis,
+      )
+      y = fn(a, b, dimension_numbers)
+      return jnp.sum(y)
 
-   j_train = jax.jit(jax.value_and_grad(fwd, argnums=[0, 1]))
-   j_train_ref = jax.jit(
-       jax.value_and_grad(partial(fwd, is_ref=True), argnums=[0, 1])
-   )
-   out, (x_grad, w_grad) = j_train(a, b)
-   out_ref, (x_grad_ref, w_grad_ref) = j_train_ref(a, b)
+    j_train = jax.jit(jax.value_and_grad(fwd, argnums=[0, 1]))
+    j_train_ref = jax.jit(
+        jax.value_and_grad(partial(fwd, is_ref=True), argnums=[0, 1])
+    )
+    out, (x_grad, w_grad) = j_train(a, b)
+    out_ref, (x_grad_ref, w_grad_ref) = j_train_ref(a, b)
 
-   self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e2)
-   self.assertArraysAllClose(x_grad, x_grad_ref, rtol=1e-2, atol=1e1)
-   self.assertArraysAllClose(w_grad, w_grad_ref, rtol=1e-2, atol=1e1)
+    self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e2)
+    self.assertArraysAllClose(x_grad, x_grad_ref, rtol=1e-2, atol=1e1)
+    self.assertArraysAllClose(w_grad, w_grad_ref, rtol=1e-2, atol=1e1)
 
 
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())
-
