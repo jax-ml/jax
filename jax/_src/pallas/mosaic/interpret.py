@@ -69,18 +69,24 @@ class TPUInterpretParams:
 
   Attributes:
     dma_execution_mode:  If "eager", DMAs are executed as soon as they are
-      issued.  If "on_wait", DMA reads or writes are only executed when a
-      device is waiting on a DMA semaphore that will be signaled when the read
-      or write is complete.
+      issued.  If "on_wait", DMA reads or writes are only executed when a device
+      is waiting on a DMA semaphore that will be signaled when the read or write
+      is complete.
       Default: "on_wait".
     detect_races: If True, a dynamic, happens-before race detector will be
       used to detect data races during kernel interpretation.  If any races are
       detected, a message will be printed and `races.races_found` will be set
       to True.
       Default: False.
+    skip_floating_point_ops: If True, operations that produce only floating
+      point values will not be interpreted; instead, their results will be
+      replaced with arrays all of `jnp.inf`. Additionaly any floating point
+      operands to any operation will be replaced with (arrays of) `jnp.inf`.
+      Default: False.
   """
   dma_execution_mode: Literal["eager", "on_wait"] = "on_wait"
   detect_races: bool = False
+  skip_floating_point_ops: bool = False
 
 
 VectorClock = np.ndarray
@@ -954,16 +960,32 @@ def _is_any(memory_space):
   return ((memory_space == mosaic_core.TPUMemorySpace.ANY) or
           (memory_space == pallas_core.MemorySpace.ANY))
 
+def _is_float(dtype):
+  return jnp.issubdtype(dtype, jnp.floating)
+
+_SENTINEL = jnp.inf
+
+@dataclasses.dataclass(frozen=True)
+class Placeholder:
+  """Placeholder for use in `_interpret_jaxpr` below instead of putting a concrete value into `env`."""
+  shape: tuple[int, ...]
+  dtype: jnp.dtype
+
 def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
   env = {}
 
   def read(var):
     if isinstance(var, jax_core.Literal):
-      return var.val
+      result = var.val
     else:
-      return env[var]
+      result = env[var]
+    if isinstance(result, Placeholder):
+      result = jax.lax.full(result.shape, _SENTINEL, result.dtype)
+    return result
 
   def write(var, value):
+    if interpret_params.skip_floating_point_ops and _is_float(value.dtype):
+      value = Placeholder(value.shape, value.dtype)
     env[var] = value
 
   jax.util.safe_map(write, jaxpr.constvars + jaxpr.invars, args)
@@ -987,11 +1009,16 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
     with source_info_util.user_context(
          eqn.source_info.traceback, name_stack=eqn.source_info.name_stack):
       prim = eqn.primitive
-      invals = jax.util.safe_map(read, eqn.invars)
+      # We defer reading the values for `eqn.invars` into each of the branches
+      # of the if-elif-else statement below. This is because the else branch may
+      # not need to do any reads if `interpret_params.skip_floating_point_ops`
+      # is True. If this is the case, we want to avoid materializing the read
+      # array into the jaxpr when this function is traced.
+      deferred_invals = functools.partial(jax.util.safe_map, read, eqn.invars)
 
       if prim is primitives.load_p:
         (ref, transforms, mask, _) = jax.tree.unflatten(
-            eqn.params['args_tree'], invals)
+            eqn.params['args_tree'], deferred_invals())
         if mask is not None:
           raise NotImplementedError('masked load_p')
         out = callback.io_callback(
@@ -1005,7 +1032,7 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
 
       elif prim is primitives.swap_p:
         (ref, transforms, val, mask) = jax.tree.unflatten(
-            eqn.params['args_tree'], invals)
+            eqn.params['args_tree'], deferred_invals())
         out = callback.io_callback(
             functools.partial(swap, source_info=eqn.source_info),
             eqn.outvars[0].aval,
@@ -1023,6 +1050,7 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
       elif prim is lax.cond_p:
         def _make_branch(jaxpr):
           return lambda *args: _interpret(jaxpr, *args)
+        invals = deferred_invals()
         out = lax.switch(
             invals[0],
             [_make_branch(branch_jaxpr.jaxpr)
@@ -1031,7 +1059,9 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
 
       elif prim is lax.scan_p:
         consts, init_carry, xs = split_list(
-            invals, [eqn.params['num_consts'], eqn.params['num_carry']])
+            deferred_invals(),
+            [eqn.params['num_consts'], eqn.params['num_carry']],
+        )
         def _scan_body(c, a):
           return split_list(
               _interpret(eqn.params['jaxpr'].jaxpr, *consts, *c, *a),
@@ -1041,8 +1071,10 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
         out = carry + out
 
       elif prim is lax.while_p:
-        cond_consts, body_consts, init_vals  = split_list(
-            invals, [eqn.params['cond_nconsts'], eqn.params['body_nconsts']])
+        cond_consts, body_consts, init_vals = split_list(
+            deferred_invals(),
+            [eqn.params['cond_nconsts'], eqn.params['body_nconsts']],
+        )
         out = lax.while_loop(
             lambda args: _interpret(
                 eqn.params['cond_jaxpr'].jaxpr, *cond_consts, *args)[0],
@@ -1056,6 +1088,7 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
       elif prim is pjit.pjit_p:
         def f(*args, jaxpr):
           return _interpret(jaxpr.jaxpr, *jaxpr.consts, *args)
+        invals = deferred_invals()
         in_avals = tuple(jax_core.shaped_abstractify(i) for i in invals)
         new_jaxpr = _to_jaxpr(
             lu.wrap_init(functools.partial(f, jaxpr=eqn.params['jaxpr']),
@@ -1084,7 +1117,7 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
                 primitives.uninitialized_value(v.aval.shape, v.aval.dtype),
                 ordered=True))
 
-        out = _interpret(eqn.params['jaxpr'], *invals, *allocs)
+        out = _interpret(eqn.params['jaxpr'], *deferred_invals(), *allocs)
 
         for a in allocs:
           if isinstance(a, tuple):
@@ -1106,6 +1139,7 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
             pass
 
       elif prim is state_primitives.get_p:
+        invals = deferred_invals()
         out = callback.io_callback(
             functools.partial(get, source_info=eqn.source_info),
             eqn.outvars[0].aval,
@@ -1116,6 +1150,7 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
             ordered=True)
 
       elif prim is state_primitives.swap_p:
+        invals = deferred_invals()
         out = callback.io_callback(
             functools.partial(swap, source_info=eqn.source_info),
             eqn.outvars[0].aval,
@@ -1128,11 +1163,17 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
             ordered=True)
 
       elif prim is mosaic_primitives.dma_start_p:
-        (src, src_transforms,
-        dst, dst_transforms,
-        dst_sem, dst_sem_transforms,
-        src_sem, src_sem_transforms,
-        target_device_id) = jax.tree.unflatten(eqn.params['tree'], invals)
+        (
+            src,
+            src_transforms,
+            dst,
+            dst_transforms,
+            dst_sem,
+            dst_sem_transforms,
+            src_sem,
+            src_sem_transforms,
+            target_device_id,
+        ) = jax.tree.unflatten(eqn.params['tree'], deferred_invals())
         target_device_id = _device_id_to_logical(
             target_device_id, eqn.params['device_id_type'], axis_sizes)
         (orig_src_ref, _, orig_dst_ref, *_
@@ -1152,11 +1193,17 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
         out = []
 
       elif prim is mosaic_primitives.dma_wait_p:
-        (src, src_transforms,
-        dst, dst_transforms,
-        dst_sem, dst_sem_transforms,
-        src_sem, src_sem_transforms,
-        target_device_id) = jax.tree.unflatten(eqn.params['tree'], invals)
+        (
+            src,
+            src_transforms,
+            dst,
+            dst_transforms,
+            dst_sem,
+            dst_sem_transforms,
+            src_sem,
+            src_sem_transforms,
+            target_device_id,
+        ) = jax.tree.unflatten(eqn.params['tree'], deferred_invals())
         read_shape, read_dtype = _compute_transformed_shape_and_dtype(
             eqn.invars[0].aval.shape, eqn.invars[0].aval.dtype, src_transforms)
         callback.io_callback(
@@ -1178,7 +1225,7 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
 
       elif prim is mosaic_primitives.semaphore_signal_p:
         sem, sem_transforms, inc, target_device_id, core_index = (
-            jax.tree.unflatten(eqn.params['args_tree'], invals))
+            jax.tree.unflatten(eqn.params['args_tree'], deferred_invals()))
         target_device_id = _device_id_to_logical(
             target_device_id, eqn.params['device_id_type'], axis_sizes)
         callback.io_callback(
@@ -1194,7 +1241,7 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
 
       elif prim is mosaic_primitives.semaphore_wait_p:
         sem, sem_transforms, value = (
-            jax.tree.unflatten(eqn.params['args_tree'], invals))
+            jax.tree.unflatten(eqn.params['args_tree'], deferred_invals()))
         callback.io_callback(
             semaphore_wait,
             (),
@@ -1211,8 +1258,19 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
         raise NotImplementedError('atomic_cas_p')
 
       else:
-        subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
-        out = prim.bind(*subfuns, *invals, **bind_params)
+        if interpret_params.skip_floating_point_ops and all(
+            _is_float(ovar.aval.dtype) for ovar in eqn.outvars
+        ):
+          # Skip `prim.bind` since `prim` only produces floating-point values.
+          # It is safe to populate `out` with avals since mapping `write` over
+          #  `out` below only relies on the shape and dtype (for writing
+          # `Placeholder`s).
+          out = [ovar.aval for ovar in eqn.outvars]
+          if not prim.multiple_results:
+            out = out[0]
+        else:
+          subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
+          out = prim.bind(*subfuns, *deferred_invals(), **bind_params)
 
       out = out if prim.multiple_results else [out]
       jax.util.safe_map(write, eqn.outvars, out)

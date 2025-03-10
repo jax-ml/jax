@@ -134,6 +134,27 @@ class InterpretTest(jtu.JaxTestCase):
     )(x).block_until_ready()
     self.assertTrue(mosaic_interpret.races.races_found)
 
+  def test_skip_floating_point_ops(self):
+    def matmul_kernel(x_ref, y_ref, z_ref):
+      z_ref[...] = x_ref[...] @ y_ref[...]
+
+    def matmul(x: jax.Array, y: jax.Array):
+      return pl.pallas_call(
+          matmul_kernel,
+          out_shape=jax.ShapeDtypeStruct((x.shape[0], y.shape[1]), x.dtype),
+          interpret=mosaic_interpret.TPUInterpretParams(
+              skip_floating_point_ops=True
+          ),
+      )(x, y)
+
+    k1, k2 = jax.random.split(jax.random.key(0))
+    x = jax.random.normal(k1, (1024, 1024))
+    y = jax.random.normal(k2, (1024, 1024))
+    z = jax.jit(matmul)(x, y)
+    np.testing.assert_array_equal(z, jnp.full_like(z, jnp.inf))
+
+    lowered = jax.jit(matmul).lower(x, y).as_text(dialect="stablehlo")
+    self.assertNotIn("dot_general", lowered)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
