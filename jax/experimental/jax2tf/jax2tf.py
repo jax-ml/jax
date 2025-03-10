@@ -1541,6 +1541,7 @@ tf_not_yet_impl = [
     "assert_consumed_value",
     "consume",
     "ragged_dot",
+    "ragged_dot_general",
     "cholesky_update",
     "symmetric_product",
     "from_edtype",
