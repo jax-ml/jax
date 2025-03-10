@@ -23,13 +23,16 @@ from typing import cast
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
-from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import memref
+from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
+import math
+import numpy as np
 
 from . import fragmented_array as fa
 from . import inference_utils
 from . import layouts as layouts_lib
+from . import utils
 
 # mypy: ignore-errors
 
@@ -192,22 +195,38 @@ def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
 
 
 for op in [
-    arith.AddIOp, arith.AddFOp,
+    arith.AddIOp,
+    arith.AddFOp,
     arith.AndIOp,
     arith.BitcastOp,
     arith.CmpFOp,
     arith.CmpIOp,
-    arith.ExtFOp, arith.ExtSIOp, arith.ExtUIOp,
+    arith.ExtFOp,
+    arith.ExtSIOp,
+    arith.ExtUIOp,
+    arith.FPToSIOp,
+    arith.FPToUIOp,
     arith.MaximumFOp,
-    arith.MaxUIOp, arith.MaxSIOp,
+    arith.MaxUIOp,
+    arith.MaxSIOp,
     arith.MinimumFOp,
-    arith.MinUIOp, arith.MinSIOp,
-    arith.MulIOp, arith.MulFOp,
+    arith.MinUIOp,
+    arith.MinSIOp,
+    arith.MulIOp,
+    arith.MulFOp,
     arith.OrIOp,
-    arith.FloorDivSIOp, arith.DivUIOp, arith.DivFOp,
-    arith.RemUIOp, arith.RemSIOp, arith.RemFOp,
-    arith.SubIOp, arith.SubFOp,
-    arith.TruncFOp, arith.TruncIOp,
+    arith.FloorDivSIOp,
+    arith.DivUIOp,
+    arith.DivFOp,
+    arith.RemUIOp,
+    arith.RemSIOp,
+    arith.RemFOp,
+    arith.SIToFPOp,
+    arith.UIToFPOp,
+    arith.SubIOp,
+    arith.SubFOp,
+    arith.TruncFOp,
+    arith.TruncIOp,
     arith.XOrIOp,
     vector.LoadOp,
     vector.StoreOp,
@@ -488,11 +507,36 @@ def infer_layout(module: ir.Module):
   # propagated. However, it is possible for some operations to remain
   # unannotated---for example, if there were no annotations on any operation in
   # the module at the start of this function. We annotate all the remaining ops
-  # that should be annotated with a strided fragmented layout.
+  # that should be annotated with a strided fragmented layout, whose vector size
+  # is derived from the narrowest type and vector size used in the program. We
+  # make sure to derive a single vector size in order to avoid relayouts at
+  # lowering time.
+  default_vector_size = math.inf
+
+  def update_default_vector_size(op: ir.OpView):
+    nonlocal default_vector_size
+    for v in list(op.operands) + list(op.results):
+      if ir.VectorType.isinstance(v.type):
+        max_vec_size_for_v = (
+            np.prod(cast(ir.ShapedType, v.type).shape) // fa.WARPGROUP_SIZE
+        )
+        desired_vec_size = 8 // utils.bytewidth(v.type.element_type)
+        default_vector_size = min(
+            default_vector_size, max_vec_size_for_v, desired_vec_size
+        )
+
+  for op in module.body:
+    traverse_op(op, update_default_vector_size)
+
+  if default_vector_size is None:  # Nothing to annotate.
+    return
+
   def to_default_layout(ty: ir.Type) -> ir.Attribute | None:
     if not ir.VectorType.isinstance(ty):
       return None
-    layout = fa.WGStridedFragLayout.from_shaped_type(ty)
+    layout = fa.WGStridedFragLayout(
+        shape=cast(ir.ShapedType, ty).shape, vec_size=default_vector_size
+    )
     return layouts_lib.to_strided_fragmented_layout_attr(layout)
 
   def set_default_layout(op: ir.OpView):

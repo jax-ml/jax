@@ -1162,6 +1162,9 @@ def _convert_element_type_lowering_rule_wg(
   cur_dtype = mgpu_utils.dtype_to_ir_type(x_aval.dtype)
   new_dtype = mgpu_utils.dtype_to_ir_type(new_dtype)
 
+  if cur_dtype == new_dtype:
+    return x
+
   if 1 < mgpu_utils.bitwidth(cur_dtype) < 8 or 1 < mgpu_utils.bitwidth(new_dtype) < 8:
     raise NotImplementedError("Conversion involving sub-byte types unsupported")
 
@@ -1170,7 +1173,29 @@ def _convert_element_type_lowering_rule_wg(
   from_integer = ir.IntegerType.isinstance(cur_dtype)
   to_integer = ir.IntegerType.isinstance(new_dtype)
   if from_float and to_float:
-    if ir.FloatType(cur_dtype).width > ir.FloatType(new_dtype).width:
+    cur_ty_width = ir.FloatType(cur_dtype).width
+    new_ty_width = ir.FloatType(new_dtype).width
+    if cur_ty_width == new_ty_width:
+      # There is no instruction to perform conversions between two float types
+      # of the same width. Go through the next-larger standard type.
+      # TODO(bchetioui): support conversions between float types of width 8.
+      # Which larger type to pick will depend on the number of bits in the
+      # smallest exponent.
+      if cur_ty_width != 16:
+        raise NotImplementedError(
+            "Conversion between float types of width other than 16 not"
+            " supported"
+        )
+      larger_ty = ir.F32Type.get()
+      if x_aval.shape:
+        upcast_ty = ir.VectorType.get(x_aval.shape, larger_ty)
+      else:
+        upcast_ty = larger_ty
+
+      def convert(ty, x):
+        return arith_dialect.truncf(ty, arith_dialect.extf(upcast_ty, x))
+
+    elif ir.FloatType(cur_dtype).width > ir.FloatType(new_dtype).width:
       convert = arith_dialect.truncf
     else:
       convert = arith_dialect.extf
@@ -1190,10 +1215,26 @@ def _convert_element_type_lowering_rule_wg(
     else:
       convert = arith_dialect.uitofp
   elif from_float and to_integer:
+    dst_width = mgpu_utils.bitwidth(new_dtype)
+    # We clamp the float value to the min/max integer destination value
+    # in order to match JAX/XLA casting behavior. Note that this differs
+    # from numpy casting behavior.
     if mgpu_utils.is_signed(y_aval.dtype):
+      maxint = 2 ** (dst_width - 1) - 1
+      minint = -(2 ** (dst_width - 1))
       convert = arith_dialect.fptosi
     else:
+      maxint = 2**dst_width - 1
+      minint = 0
       convert = arith_dialect.fptoui
+
+    maxint = _ir_constant(maxint, cur_dtype)
+    minint = _ir_constant(minint, cur_dtype)
+    if x_aval.shape:
+      maxint = vector_dialect.splat(x.type, maxint)
+      minint = vector_dialect.splat(x.type, minint)
+    x = arith_dialect.minimumf(x, maxint)
+    x = arith_dialect.maximumf(x, minint)
   else:
     raise NotImplementedError(f"Unsupported conversion {cur_dtype} -> {new_dtype}")
 

@@ -38,10 +38,15 @@ import jax.numpy as jnp
 import numpy as np
 
 if sys.platform != "win32":
-  from jax.experimental.pallas import triton as plgpu
+  try:
+    from jax.experimental.pallas import mosaic_gpu as plgpu_mgpu
+  except ImportError:
+    plgpu_mgpu = None
+  from jax.experimental.pallas import triton as plgpu_triton
   from jax.experimental.pallas import tpu as pltpu
 else:
-  plgpu = None
+  plgpu_mgpu = None
+  plgpu_triton = None
   pltpu = None
 
 try:
@@ -99,6 +104,7 @@ _DTYPES_32BIT = (
 # TODO(apaszke): Add 8-bit floats.
 _DTYPES_SUB_32BIT = (
     "bfloat16",
+    "float16",
     "int16",
     "int8",
     "int4",
@@ -282,6 +288,13 @@ class PallasBaseTest(jtu.JaxTestCase):
 
   @classmethod
   def pallas_call(cls, *args, **kwargs):
+    if jtu.test_device_matches(["cuda"]) and use_mosaic_gpu:
+      assert plgpu_mgpu is not None
+      compiler_params = plgpu_mgpu.GPUCompilerParams(
+          thread_semantics=plgpu_mgpu.ThreadSemantics.Warpgroup
+      )
+      kwargs["compiler_params"] = compiler_params
+
     return pl.pallas_call(*args, interpret=cls.INTERPRET, **kwargs)
 
   def skip_if_mosaic_gpu(self):
@@ -569,13 +582,12 @@ class OpsTest(PallasBaseTest):
   @parameterized.product(from_dtype=_DTYPES_32BIT, to_dtype=_DTYPES)
   @hp.given(hps.data())
   def test_cast_from_32bit(self, from_dtype, to_dtype, data):
-    self.skip_if_mosaic_gpu()
+    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and use_mosaic_gpu
     if to_dtype in {"float8_e4m3b11fnuz", "float8_e5m2", "float8_e4m3fn"}:
       if not jtu.test_device_matches(["tpu"]) or jtu.get_tpu_version() < 5:
         self.skipTest("Not supported on this hardware")
       if not jtu.if_cloud_tpu_at_least(2025, 3, 8):
         self.skipTest("Test requires libtpu from 2025/3/8 or later")
-
     if from_dtype == to_dtype:
       self.skipTest("Unnecessary test")
     if jtu.is_device_tpu(version=4):
@@ -589,6 +601,10 @@ class OpsTest(PallasBaseTest):
         self.skipTest("Not supported on this TPU generation")
     if jtu.test_device_matches(["gpu"]) and to_dtype in {"int4", "uint4"}:
       self.skipTest("int4/uint4 casts are buggy on GPU")  # b/391292861
+    if to_dtype == "float16" and not sut_is_mosaic_gpu:
+      self.skipTest("float16 is only supported with Mosaic GPU")
+    if sut_is_mosaic_gpu and to_dtype == "bool":
+      self.skipTest("Sub-byte types are not yet supported with Mosaic GPU")
 
     # XLA does not specify the float->int conversion result for NaNs.
     elements = dict(allow_nan=not jnp.issubdtype(to_dtype, jnp.integer))
@@ -620,7 +636,7 @@ class OpsTest(PallasBaseTest):
   # miss bugs that would be hidden due to exhaustive enumeration being in order.
   @parameterized.product(from_dtype=_DTYPES_SUB_32BIT, to_dtype=_DTYPES, randomize=(False, True))
   def test_cast_from_sub_32bit(self, from_dtype, to_dtype, randomize):
-    self.skip_if_mosaic_gpu()
+    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and use_mosaic_gpu
 
     if from_dtype == to_dtype:
       self.skipTest("Unnecessary test")
@@ -640,7 +656,15 @@ class OpsTest(PallasBaseTest):
       self.skipTest("Not supported on this TPU generation")
     if jtu.test_device_matches(["gpu"]) and to_dtype in {"int4", "uint4"}:
       self.skipTest("int4/uint4 casts are buggy on GPU")  # b/391292861
-
+    if from_dtype == "float16" or to_dtype == "float16" and not sut_is_mosaic_gpu:
+      self.skipTest("float16 is only supported with Mosaic GPU")
+    if sut_is_mosaic_gpu:
+      unsupported_types = {"bool", "int4", "uint4"}
+      if to_dtype in unsupported_types or from_dtype in unsupported_types:
+        self.skipTest("Sub-byte types are not yet supported with Mosaic GPU")
+      if not randomize:
+        # TODO(bchetioui): rework the test shapes to make this work.
+        self.skipTest("Exhaustive tests may run out of SMEM with Mosaic GPU")
     if from_dtype in {
         "float8_e4m3b11fnuz",
         "float8_e5m2",
@@ -686,7 +710,14 @@ class OpsTest(PallasBaseTest):
       else:
         x = jax.lax.bitcast_convert_type(
             jnp.arange(1 << from_bitwidth, dtype=from_int_dtype), from_dtype
-        ).reshape(8, -1)
+        )
+        if sut_is_mosaic_gpu:
+          # TMA loads only support max 256 elements per dimension, so we make
+          # sure that all the dimensions don't exceed that.
+          if x.shape[0] > 256:
+            x = x.reshape(256, -1)
+        else:
+          x = x.reshape(8, -1)
     else:
       if randomize:
         x = random.randint(random.key(234), (16, 16), 0, 1, jnp.int32) != 0
@@ -1437,7 +1468,7 @@ class OpsTest(PallasBaseTest):
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), dtype),
     )
     def kernel(x_ref, o_ref):
-      o_ref[...] = plgpu.approx_tanh(x_ref[...])
+      o_ref[...] = plgpu_triton.approx_tanh(x_ref[...])
 
     x = jnp.asarray([-1, 0.42, 0.24, 1]).astype(dtype)
     # We upcast to float32 because NumPy <2.0 does not handle custom dtypes
@@ -1465,7 +1496,7 @@ class OpsTest(PallasBaseTest):
         out_shape=jax.ShapeDtypeStruct((256,), jnp.float16),
     )
     def kernel(x_ref, o_ref):
-      [o_ref[...]] = plgpu.elementwise_inline_asm(
+      [o_ref[...]] = plgpu_triton.elementwise_inline_asm(
           "tanh.approx.f16x2 $0, $1;",
           args=[x_ref[...]],
           constraints="=r,r",
@@ -1491,14 +1522,14 @@ class OpsTest(PallasBaseTest):
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...]
-      plgpu.debug_barrier()
+      plgpu_triton.debug_barrier()
 
     x = jnp.array([4.2, 2.4]).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x)
 
   @unittest.skipIf(
       sys.platform == "win32",
-      "plgpu.TritonCompilerParams unavailable on Windows",
+      "plgpu_triton.TritonCompilerParams unavailable on Windows",
   )
   def test_debug_print(self):
     self.skip_if_mosaic_gpu()
@@ -1513,7 +1544,9 @@ class OpsTest(PallasBaseTest):
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
-        compiler_params=plgpu.TritonCompilerParams(num_warps=1, num_stages=1)
+        compiler_params=plgpu_triton.TritonCompilerParams(
+            num_warps=1, num_stages=1
+        ),
     )
     def kernel(x_ref, o_ref):
       pl.debug_print("It works!")
@@ -1527,7 +1560,7 @@ class OpsTest(PallasBaseTest):
 
   @unittest.skipIf(
       sys.platform == "win32",
-      "plgpu.TritonCompilerParams unavailable on Windows",
+      "plgpu_triton.TritonCompilerParams unavailable on Windows",
   )
   def test_debug_print_with_values(self):
     if jtu.test_device_matches(["tpu"]):
@@ -1540,7 +1573,9 @@ class OpsTest(PallasBaseTest):
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
-        compiler_params=plgpu.TritonCompilerParams(num_warps=1, num_stages=1)
+        compiler_params=plgpu_triton.TritonCompilerParams(
+            num_warps=1, num_stages=1
+        ),
     )
     def kernel(x_ref, o_ref):
       pl.debug_print("x[0] =", x_ref[0])

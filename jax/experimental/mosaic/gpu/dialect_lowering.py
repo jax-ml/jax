@@ -253,9 +253,9 @@ def _vector_load_op_lowering_rule(
 
   element_type = vector_load_op.result.type.element_type
   is_signed = False if ir.IntegerType.isinstance(element_type) else None
-
+  strided_layout = layouts.from_strided_fragmented_layout_attr(out_layout_attr)
   fragmented_array = fa.FragmentedArray.load_strided(
-      vector_load_op.base, is_signed=is_signed
+      vector_load_op.base, is_signed=is_signed, vec_size=strided_layout.vec_size
   )
   return [_fragmented_array_to_ir(fragmented_array, vector_load_op.result.type)]
 
@@ -427,6 +427,41 @@ def _mgpu_async_store_op_lowering_rule(
       arrive=store_op.commit_group,
   )
   return []
+
+
+def _conversion_op_lowering_rule(
+    _: LoweringContext,
+    op: ir.OpView,
+    source_is_signed: bool | None,
+    target_is_signed: bool | None,
+) -> Sequence[ir.Value]:
+  [in_layout] = inference_utils.in_layouts(op)
+  [layout] = inference_utils.out_layouts(op)
+  if in_layout != layout:
+    raise ValueError("Layout mismatch")
+
+  target_ty = op.result.type.element_type  # pytype: disable=attribute-error
+  operand = _fragmented_array_from_ir(op.operands[0], layout, source_is_signed)
+  converted = operand.astype(target_ty, is_signed=target_is_signed)
+  return [_fragmented_array_to_ir(converted, op.result.type)]
+
+
+for op, source_is_signed, target_is_signed in [
+    (arith.ExtFOp, None, None),
+    (arith.ExtSIOp, True, True),
+    (arith.ExtUIOp, False, False),
+    (arith.FPToSIOp, None, True),
+    (arith.FPToUIOp, None, False),
+    (arith.SIToFPOp, True, None),
+    (arith.TruncFOp, None, None),
+    (arith.TruncIOp, False, False),
+    (arith.UIToFPOp, False, None),
+]:
+  _lowerings[op.OPERATION_NAME] = functools.partial(
+      _conversion_op_lowering_rule,
+      source_is_signed=source_is_signed,
+      target_is_signed=target_is_signed,
+  )
 
 
 def _binary_op_lowering_rule(
