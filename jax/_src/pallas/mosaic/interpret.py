@@ -1346,7 +1346,9 @@ def interpret_pallas_call(
   output_buffer_ids = []
   output_buffer_shapes = []
   output_vals = _initialize_output_vals(
-      grid_mapping.block_mappings_output, args, input_output_aliases)
+      grid_mapping.block_mappings_output,
+      scalars + input_args,
+      input_output_aliases)
   num_outputs = grid_mapping.num_outputs
   output_block_shapes = block_shapes[num_inputs : num_inputs + num_outputs]
   for out_val, bs in zip(output_vals, output_block_shapes):

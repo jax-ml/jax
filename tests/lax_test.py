@@ -4820,5 +4820,228 @@ class RaggedTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(
         lax_reference.ragged_dot, lax.ragged_dot, args_maker)
 
+  @parameterized.parameters(
+      {
+          "lhs_shape": lhs_shape,
+          "rhs_shape": rhs_shape,
+          "group_sizes_shape": group_sizes_shape,
+          "ragged_dot_dimension_numbers": ragged_dot_dimension_numbers,
+          "err_msg": err_msg,
+      }
+      for lhs_shape, rhs_shape, group_sizes_shape, ragged_dot_dimension_numbers, err_msg in [
+          (
+              [11, 5],
+              [3, 5, 7],
+              [3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [1]), ([], [])),
+                  lhs_ragged_dimensions=[0, 1],
+                  rhs_group_dimensions=[0],
+              ),
+              "ragged_dot_general expects exactly one lhs ragged dimension",
+          ),
+          (
+              [11, 5],
+              [3, 5, 7],
+              [3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [1]), ([], [])),
+                  lhs_ragged_dimensions=[2],
+                  rhs_group_dimensions=[0],
+              ),
+              (
+                  "ragged_dot_general requires lhs ragged dimension numbers to "
+                  "be nonnegative and less than the number of axes of the lhs"
+              ),
+          ),
+          (
+              [11, 5],
+              [3, 5, 7],
+              [2, 3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [1]), ([], [])),
+                  lhs_ragged_dimensions=[0],
+                  rhs_group_dimensions=[0],
+              ),
+              r"expected group_sizes to have shape \(3,\), got \(2, 3\)",
+          ),
+          (
+              [19, 17, 11, 5],
+              [3, 19, 5, 7],
+              [19, 11, 3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([3], [2]), ([0], [1])),
+                  lhs_ragged_dimensions=[2],
+                  rhs_group_dimensions=[0],
+              ),
+              (
+                  r"expected group_sizes to have shape \(19, 17, 3\), "
+                  r"got \(19, 11, 3\)"
+              ),
+          ),
+          (
+              [19, 11, 17, 5],
+              [19, 17, 5, 7],
+              [19, 11, 3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([2, 3], [1, 2]), ([0], [0])),
+                  lhs_ragged_dimensions=[3],
+                  rhs_group_dimensions=[],
+              ),
+              (
+                  r"expected group_sizes to have shape \(19, 17, 3\), "
+                  r"got \(19, 11, 3\)"
+              ),
+          ),
+          (
+              [17, 19, 11, 5],
+              [17, 19, 5, 7],
+              [19, 3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([3], [2]), ([0, 1], [0, 1])),
+                  lhs_ragged_dimensions=[1],
+                  rhs_group_dimensions=[],
+              ),
+              (
+                  r"expected group_sizes to have shape \(17, 3\), "
+                  r"got \(19, 3\)"
+              ),
+          ),
+          (
+              [19, 11, 5],
+              [19, 5, 7],
+              [19, 3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([2], [1]), ([0], [0])),
+                  lhs_ragged_dimensions=[1],
+                  rhs_group_dimensions=[0],
+              ),
+              (
+                  "ragged_dot_general requires rhs group dimension numbers to "
+                  "be distinct from contracting and batch dimensions"
+              ),
+          ),
+          (
+              [11, 3],
+              [3, 3, 7],
+              [3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [1]), ([], [])),
+                  lhs_ragged_dimensions=[0],
+                  rhs_group_dimensions=[1],
+              ),
+              (
+                  "ragged_dot_general requires rhs group dimension numbers to "
+                  "be distinct from contracting and batch dimensions"
+              ),
+          ),
+          (
+              [11, 5],
+              [3, 5, 7],
+              [2],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [1]), ([], [])),
+                  lhs_ragged_dimensions=[0],
+                  rhs_group_dimensions=[0],
+              ),
+              "expected rhs group dimension size to be 2, got 3",
+          ),
+          (
+              [2, 11, 5],
+              [3, 2, 5, 7],
+              [3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([2], [2]), ([0], [1])),
+                  lhs_ragged_dimensions=[0],
+                  rhs_group_dimensions=[0],
+              ),
+              (
+                  "ragged_dot_general requires zero group dimensions in "
+                  "the rhs when lhs ragged dimension is contracting or batch"
+              ),
+          ),
+          (
+              [11, 5],
+              [3, 5, 7],
+              [3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [1]), ([], [])),
+                  lhs_ragged_dimensions=[1],
+                  rhs_group_dimensions=[0],
+              ),
+              (
+                  "ragged_dot_general requires zero group dimensions in "
+                  "the rhs when lhs ragged dimension is contracting or batch"
+              ),
+          ),
+          (
+              [11, 5],
+              [5, 7],
+              [3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [0]), ([], [])),
+                  lhs_ragged_dimensions=[0],
+                  rhs_group_dimensions=[],
+              ),
+              (
+                  "ragged_dot_general requires exactly one rhs group dimension "
+                  "when lhs ragged dimension is noncontracting"
+              ),
+          ),
+      ]
+  )
+  def test_ragged_dot_general_shape_inference_failure(
+      self, lhs_shape, rhs_shape, group_sizes_shape,
+      ragged_dot_dimension_numbers, err_msg):
+    lhs = jnp.ones(lhs_shape, dtype=jnp.float32)
+    rhs = jnp.ones(rhs_shape, dtype=jnp.float32)
+    group_sizes = jnp.ones(group_sizes_shape, dtype=jnp.int32)
+    with self.assertRaisesRegex(TypeError, err_msg):
+      lax.ragged_dot_general(lhs, rhs, group_sizes,
+                             ragged_dot_dimension_numbers)
+
+  @parameterized.parameters(
+      {
+          "lhs_shape": lhs_shape,
+          "rhs_shape": rhs_shape,
+          "group_sizes_shape": group_sizes_shape,
+          "ragged_dnums": ragged_dnums,
+          "out_shape": out_shape,
+      }
+      for lhs_shape, rhs_shape, group_sizes_shape, ragged_dnums, out_shape in [
+          (
+              [11, 5],
+              [3, 5, 7],
+              [3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [1]), ([], [])),
+                  lhs_ragged_dimensions=[0],
+                  rhs_group_dimensions=[0],
+              ),
+              (11, 7),
+          ),
+          (
+              [11, 5],
+              [5, 7],
+              [3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [0]), ([], [])),
+                  lhs_ragged_dimensions=[1],
+                  rhs_group_dimensions=[],
+              ),
+              (3, 11, 7),
+          ),
+      ]
+  )
+  def test_ragged_dot_general_shape_inference_success(
+      self, lhs_shape, rhs_shape, group_sizes_shape, ragged_dnums, out_shape):
+    lhs = jnp.ones(lhs_shape, dtype=jnp.float32)
+    rhs = jnp.ones(rhs_shape, dtype=jnp.float32)
+    group_sizes = jnp.ones(group_sizes_shape, dtype=jnp.int32)
+    self.assertEqual(
+        lax.ragged_dot_general(lhs, rhs, group_sizes, ragged_dnums).shape,
+        out_shape,
+    )
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

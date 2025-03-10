@@ -310,6 +310,7 @@ try:
     float8_e3m4 as float8_e3m4,
     float8_e4m3 as float8_e4m3,
     float8_e8m0fnu as float8_e8m0fnu,
+    float4_e2m1fn as float4_e2m1fn,
   )
 except ImportError:
   pass
