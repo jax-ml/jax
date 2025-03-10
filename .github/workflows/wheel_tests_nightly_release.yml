@@ -36,6 +36,7 @@ jobs:
           exclude:
             - runner: "windows-x86-n2-64"
               python: "3.13-nogil"
+    name: "CPU tests"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
@@ -53,6 +54,7 @@ jobs:
           python: ["3.10","3.11", "3.12", "3.13", "3.13-nogil"]
           cuda: ["12.3", "12.1"]
           enable-x64: [0]
+    name: "CUDA tests"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}

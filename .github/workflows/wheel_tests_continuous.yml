@@ -21,6 +21,10 @@ on:
   schedule:
     - cron: "0 */2 * * *" # Run once every 2 hours
   workflow_dispatch: # allows triggering the workflow run manually
+  # For testing, DO NOT SUBMIT
+  pull_request:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -29,6 +33,7 @@ concurrency:
 jobs:
   build-jax-artifact:
     uses: ./.github/workflows/build_artifacts.yml
+    name: "Build jax"
     with:
         # Note that since jax is a pure python package, the runner OS and Python values do not
         # matter. In addition, cloning main XLA also has no effect.
@@ -46,6 +51,7 @@ jobs:
             runner: ["linux-x86-n2-16", "linux-arm64-t2a-48", "windows-x86-n2-64"]
             artifact: ["jaxlib"]
             python: ["3.10"]
+    name: "Build jaxlib"
     with:
         runner: ${{ matrix.runner }}
         artifact: ${{ matrix.artifact }}
@@ -63,6 +69,7 @@ jobs:
           runner: ["linux-x86-n2-16"]
           artifact: ["jax-cuda-plugin", "jax-cuda-pjrt"]
           python: ["3.10",]
+    name: "Build JAX CUDA artifacts"
     with:
       runner: ${{ matrix.runner }}
       artifact: ${{ matrix.artifact }}
@@ -86,6 +93,7 @@ jobs:
           runner: ["linux-x86-n2-64", "linux-arm64-t2a-48", "windows-x86-n2-64"]
           python: ["3.10",]
           enable-x64: [1, 0]
+    name: "CPU tests"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
@@ -115,6 +123,7 @@ jobs:
             - runner: "linux-x86-a3-8g-h100-8gpu"
               python: "3.10"
               enable-x64: 0
+    name: "CUDA tests (Pytest)"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
@@ -137,6 +146,7 @@ jobs:
           runner: ["linux-x86-g2-48-l4-4gpu",]
           python: ["3.10",]
           enable-x64: [1, 0]
+    name: "CUDA tests (Bazel)"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
