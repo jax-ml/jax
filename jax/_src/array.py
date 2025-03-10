@@ -406,7 +406,8 @@ class ArrayImpl(basearray.Array):
     else:
       dtype_str = f'dtype={self.dtype.name})'
 
-    if self.is_fully_addressable or self.is_fully_replicated:
+    if (self.is_fully_replicated or
+        (self.sharding.num_devices <= 8 and self.is_fully_addressable)):
       line_width = np.get_printoptions()["linewidth"]
       if self.size == 0:
         s = f"[], shape={self.shape}"
