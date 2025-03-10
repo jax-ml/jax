@@ -2125,13 +2125,15 @@ class PallasOutOfBoundsInterpretTest(PallasBaseTest):
     # TODO(justinfu): This test has low precision on GPU. Improve precision.
     if jtu.test_device_matches(["gpu"]):
       atol = 1e-2
+      rtol = 5e-3
     else:
       atol = 1e-5
+      rtol = 1e-7
 
     # With a masked matmul implementation, uninitialized values will be
     # masked before computation. This should return the correct result.
     with self.subTest('MaskedOutputIsCorrect'):
-      np.testing.assert_allclose(out, expected, atol=atol)
+      np.testing.assert_allclose(out, expected, atol=atol, rtol=rtol)
 
 
 class PallasCheckifyTest(PallasBaseTest):
