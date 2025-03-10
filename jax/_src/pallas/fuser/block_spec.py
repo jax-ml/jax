@@ -25,8 +25,8 @@ from typing import Any, Callable, Protocol, Sequence
 
 import jax
 from jax import lax
-from jax._src import api_util
 from jax._src import ad_util
+from jax._src import api_util
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import linear_util as lu
@@ -351,7 +351,7 @@ def _pull_block_spec(
           jaxpr.constvars,
           jaxpr.invars,
           needed_invars,
-          jaxpr.eqns[:jaxpr.eqns.index(eqn)],
+          jaxpr.eqns[: jaxpr.eqns.index(eqn)],
           debug_info=jaxpr.debug_info,
       )
       scalar_prefetch_jaxpr, used_consts, used_invars = pe.dce_jaxpr_consts(
@@ -426,6 +426,7 @@ def make_kernel_function(
     return tuple(s for s in shape if s is not None)
 
   _no_aval = object()
+
   def _get_block_aval(bs, aval):
     if bs is pallas_core.no_block_spec or bs is None:
       return _no_aval
@@ -441,10 +442,12 @@ def make_kernel_function(
   unflat_arg_usages, unflat_kwarg_usages = tree_util.tree_unflatten(
       in_tree, invar_usages
   )
+
   def sds_like(x):
     if x is _no_aval:
       return _no_aval
     return jax.ShapeDtypeStruct(x.shape, x.dtype)
+
   kernel_in_type = jax.tree.map(
       sds_like, (unflat_in_block_arg_avals, unflat_in_block_kwarg_avals)
   )
@@ -688,8 +691,10 @@ def _eltwise_eval_rule(prim, ctx, x, **params):
 
 
 def _eltwise_pull_rule(
-    prim: core.Primitive, ctx: PullRuleContext, block_spec: pallas_core.BlockSpec,
-    **params
+    prim: core.Primitive,
+    ctx: PullRuleContext,
+    block_spec: pallas_core.BlockSpec,
+    **params,
 ) -> Sequence[pallas_core.BlockSpec]:
   del prim, ctx, params
   return [block_spec]
@@ -702,7 +707,9 @@ def _eltwise_usage_rule(
   return [used_out]
 
 
-def _bcast_block_spec(block_spec: pallas_core.BlockSpec, i: int) -> pallas_core.BlockSpec:
+def _bcast_block_spec(
+    block_spec: pallas_core.BlockSpec, i: int
+) -> pallas_core.BlockSpec:
   def new_index_map(i, *args):
     idx = block_spec.index_map(*args)
     assert len(idx) == len(block_spec.block_shape)
@@ -710,7 +717,9 @@ def _bcast_block_spec(block_spec: pallas_core.BlockSpec, i: int) -> pallas_core.
     return idx
 
   new_block_shape = util.tuple_update(block_spec.block_shape, i, 1)
-  return pallas_core.BlockSpec(new_block_shape, functools.partial(new_index_map, i))
+  return pallas_core.BlockSpec(
+      new_block_shape, functools.partial(new_index_map, i)
+  )
 
 
 def _binop_usage_rule(prim, ctx, used_out: set[Usage]):
@@ -945,7 +954,9 @@ def _dynamic_slice_rule(
     return block_indices
 
   new_block_spec = pallas_core.BlockSpec(block_spec.block_shape, new_index_map)
-  return [new_block_spec] + [pallas_core.no_block_spec] * (len(ctx.avals_in) - 1)
+  return [new_block_spec] + [pallas_core.no_block_spec] * (
+      len(ctx.avals_in) - 1
+  )
 
 
 @register_eval_rule(lax.concatenate_p)
@@ -1348,7 +1359,8 @@ def _push_block_spec_jaxpr(
     return env[atom]
 
   def _write_block_spec(
-      atom: core.Atom, block_spec: pallas_core.BlockSpec | pallas_core.NoBlockSpec
+      atom: core.Atom,
+      block_spec: pallas_core.BlockSpec | pallas_core.NoBlockSpec,
   ):
     if isinstance(atom, core.Literal):
       return
@@ -1374,7 +1386,9 @@ def _push_block_spec_jaxpr(
 
     util.safe_map(_write_block_spec, eqn.outvars, out_block_specs)
   out_block_specs = tuple(util.safe_map(_read_block_spec, jaxpr.outvars))
-  valid_block_spec = [bs for bs in flat_block_specs if bs is not pallas_core.no_block_spec][0]
+  valid_block_spec = [
+      bs for bs in flat_block_specs if bs is not pallas_core.no_block_spec
+  ][0]
   out_block_specs = tuple(
       valid_block_spec if obs is pallas_core.no_block_spec else obs
       for obs in out_block_specs
@@ -1491,6 +1505,18 @@ def _convert_element_type_push_rule(
   return block_spec
 
 
+@register_push_block_spec_rule(lax.select_n_p)
+def _select_n_push_rule(
+    ctx: PushRuleContext,
+    *args: pallas_core.BlockSpec,
+):
+  del ctx
+  block_specs = [b for b in args if b is not pallas_core.no_block_spec]
+  if len(block_specs) > 1:
+    raise NotImplementedError('select_n with multiple inputs not supported yet')
+  return block_specs[0]
+
+
 @register_push_block_spec_rule(custom_derivatives.custom_jvp_call_p)
 def _custom_jvp_call_push_rule(
     ctx, *block_specs, call_jaxpr: core.ClosedJaxpr, **_
@@ -1500,9 +1526,7 @@ def _custom_jvp_call_push_rule(
 
 
 @register_push_block_spec_rule(pjit.pjit_p)
-def _pjit_push_rule(
-    ctx, *block_specs, jaxpr: core.ClosedJaxpr, **_
-):
+def _pjit_push_rule(ctx, *block_specs, jaxpr: core.ClosedJaxpr, **_):
   assert not jaxpr.consts
   return _push_block_spec_jaxpr(jaxpr.jaxpr, *block_specs)
 
