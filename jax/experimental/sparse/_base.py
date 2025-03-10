@@ -19,8 +19,18 @@ import math
 
 import jax
 from jax._src import core
+from jax._src import ffi
 from jax._src import util
 from jax._src.typing import Array
+from jax._src.lib import gpu_sparse
+
+
+if hasattr(gpu_sparse, "registrations"):
+  for platform, targets in gpu_sparse.registrations().items():
+    for name, value, api_version in targets:
+      ffi.register_ffi_target(
+          name, value, platform=platform, api_version=api_version
+      )
 
 
 class JAXSparse(util.StrictABC):
