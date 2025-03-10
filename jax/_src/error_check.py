@@ -88,12 +88,17 @@ def raise_if_error() -> None:
   """Raise error if an error is set.
 
   This function should be called after the computation is finished. It should
-  be used outside jit.
+  not be called within a traced context, such as within a jitted function."
   """
   if _error_storage.ref is None:  # if not initialized, do nothing
     return
 
   error_code = _error_storage.ref[...]
+  if isinstance(error_code, core.Tracer):
+    raise ValueError(
+        "raise_if_error() should not be called within a traced context, such as"
+        " within a jitted function."
+    )
   if error_code == jnp.uint32(_NO_ERROR):
     return
   _error_storage.ref[...] = jnp.uint32(_NO_ERROR)
