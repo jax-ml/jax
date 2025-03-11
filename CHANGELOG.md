@@ -44,6 +44,12 @@ Patch release of 0.5.1
     column-pivoting on CPU and GPU. See {jax-issue}`#20282` and
     {jax-issue}`#25955` for more details.
 
+* Breaking changes
+  * Fixed a numerical issue in the gradients produced by `jax.remat`. This may
+    cause ``f(x) != jax.value_and_grad(f)(x)[0]`` (due to numerical differences)
+    for more functions f than previously. See
+    https://github.com/google/jax/pull/22244 for more information.
+
 * Changes
   * `JAX_CPU_COLLECTIVES_IMPLEMENTATION` and `JAX_NUM_CPU_DEVICES` now work as
     env vars. Before they could only be specified via jax.config or flags.
