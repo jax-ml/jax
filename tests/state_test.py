@@ -40,7 +40,11 @@ try:
   import hypothesis as hp
   import hypothesis.extra.numpy as hnp
   import hypothesis.strategies as hps
+  import sys
   CAN_USE_HYPOTHESIS = True
+  if hasattr(sys, "_is_gil_enabled") and not sys._is_gil_enabled():
+    # Skip running tests with hypothesis as it is not thread-safe
+    CAN_USE_HYPOTHESIS = False
 except (ModuleNotFoundError, ImportError):
   CAN_USE_HYPOTHESIS = False
 
