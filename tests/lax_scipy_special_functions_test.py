@@ -278,6 +278,15 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     with jax.checking_leaks():
       lsp_special.expi(jnp.ones(()))
 
+  def testExpiDisableJit(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/27019
+    x = jnp.array([-0.5])
+    with jax.disable_jit(True):
+      result_nojit = lsp_special.expi(x)
+    with jax.disable_jit(False):
+      result_jit = lsp_special.expi(x)
+    self.assertAllClose(result_jit, result_nojit)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
