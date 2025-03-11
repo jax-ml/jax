@@ -26,15 +26,14 @@ from typing import Any, Callable, Protocol, Sequence
 import jax
 from jax import lax
 from jax._src import ad_util
-from jax._src import api_util
 from jax._src import core
 from jax._src import custom_derivatives
-from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas.fuser import fuser_utils
 import jax.numpy as jnp
 import numpy as np
 
@@ -226,18 +225,6 @@ def _unwrap_block_spec_scalar_prefetch(
   return out_block_spec
 
 
-def _make_jaxpr(f, *args, **kwargs):
-  flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
-  flat_avals = [core.get_aval(x) for x in flat_args]
-  debug_info = api_util.debug_info('make_jaxpr', f, args, kwargs)
-  flat_fun, out_tree_thunk = api_util.flatten_fun(
-      lu.wrap_init(f, debug_info=debug_info), in_tree
-  )
-  jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
-  out_tree = out_tree_thunk()
-  return jaxpr, consts, in_tree, out_tree
-
-
 def pull_block_spec(
     f: Callable,
     out_block_specs: pallas_core.BlockSpec | tuple[pallas_core.BlockSpec, ...],
@@ -246,7 +233,9 @@ def pull_block_spec(
     grid: tuple[int | jax.Array, ...] | None = None,
 ):
   def wrapped(*args, **kwargs):
-    jaxpr, consts, in_tree, out_tree_ = _make_jaxpr(f, *args, **kwargs)
+    jaxpr, consts, in_tree, out_tree_ = fuser_utils.make_jaxpr(
+        f, *args, **kwargs
+    )
     # TODO(sharadmv): handle these consts better, they should correspond to
     # scalar prefetch.
     del consts, out_tree_
@@ -563,7 +552,9 @@ def make_kernel_function(
 def get_fusion_values(
     fusion: Callable, *args, **kwargs
 ) -> tuple[Callable, tuple[jax.Array, ...], tuple[jax.Array, ...]]:
-  jaxpr, values, in_tree, out_tree = _make_jaxpr(fusion, *args, **kwargs)
+  jaxpr, values, in_tree, out_tree = fuser_utils.make_jaxpr(
+      fusion, *args, **kwargs
+  )
   assert len(values) == len(jaxpr.constvars), (jaxpr, values)
   out_usages = tuple({Usage.REGULAR} for _ in jaxpr.outvars)
   read_usage_env = compute_usage(jaxpr, out_usages)
@@ -1325,7 +1316,7 @@ def push_block_spec(
     flat_block_specs, in_tree_ = tree_util.tree_flatten(
         (in_spec_args, in_spec_kwargs)
     )
-    jaxpr, _, in_tree, out_tree = _make_jaxpr(f, *args, **kwargs)
+    jaxpr, _, in_tree, out_tree = fuser_utils.make_jaxpr(f, *args, **kwargs)
     if in_tree != in_tree_:
       raise ValueError(f'Expected {in_tree} PyTree, got {in_tree_}')
     out_bs = _push_block_spec_jaxpr(jaxpr, *flat_block_specs)
