@@ -1364,9 +1364,9 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
     raise TypeError("lax.while_loop: body_fun and cond_fun arguments should be callable.")
   if config.disable_jit.value:
     try:
-      val = init_val
+      val = tree_map(lax.asarray, init_val)
       while cond_fun(val):
-        val = body_fun(val)
+        val = tree_map(lax.asarray, body_fun(val))
       return val
     except core.ConcretizationTypeError:
       # Can't run this while_loop in Python (e.g. because there's a vmap

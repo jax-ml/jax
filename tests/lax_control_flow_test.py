@@ -2502,6 +2502,28 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     x, n = jnp.arange(3), jnp.arange(4)
     jax.vmap(jax.vmap(f, (None, 0)), (0, None))(x, n)  # doesn't crash
 
+  def test_disable_jit_while_loop_with_mutation(self):
+    # https://github.com/jax-ml/jax/issues/27019
+
+    def body_fun(carry):
+      x, y = carry
+      x += 1  # in-place if x is mutable
+      return x, y + x
+
+    def cond_fun(carry):
+      x, _ = carry
+      return x < 10
+
+    def f():
+      val = np.array(1.0)  # mutable value
+      return jax.lax.while_loop(cond_fun, body_fun, (val, val))[1]
+
+    with jax.disable_jit(False):
+      result_jit = f()
+    with jax.disable_jit(True):
+      result_nojit = f()
+    self.assertEqual(result_jit, result_nojit)
+
   @parameterized.named_parameters(
       {"testcase_name": f"_{shape}_{axis=}",
        "shape": shape, "axis": axis}
