@@ -99,20 +99,25 @@ def build_kernel(
     is_warp_leader = nvvm.elect_sync(i1)
     is_leader_of = lambda i: arith.andi(arith.cmpi(arith.CmpIPredicate.eq, warp_idx, c(i, i32)), is_warp_leader)
 
-    cta = gpu.block_id(gpu.Dimension.x)
-    @worker_for(worker_id=cta, worker_count=c(cta_count, index), work_count=c(tile_count, index))
+    worker_id = gpu.block_id(gpu.Dimension.x)
+    worker_count = c(cta_count, index)
+    work_count = c(tile_count, index)
+    @worker_for(worker_id=worker_id, worker_count=worker_count, work_count=work_count)
     def body(work_id):
       m_idx = arith.divui(work_id, c(n_tile_count, index))
       n_idx = arith.remui(work_id, c(n_tile_count, index))
       m_start = arith.muli(m_idx, c(tile_m, index))
       n_start = arith.muli(n_idx, c(tile_n, index))
 
+      local_work_id = arith.divui(work_id, worker_count)
+      get_persistent_ki = lambda ki: arith.addi(ki, arith.muli(local_work_id, c(k_loop_iter,index)))
       with mgpu.when(is_leader_of(TMA_WARP)):
         @mgpu.fori(c(k_loop_iter, index), None)
         def _tma_body(ki, _):
-          slot = arith.remui(ki, c(max_concurrent_steps, index))
+          persistent_ki = get_persistent_ki(ki)
+          slot = arith.remui(persistent_ki, c(max_concurrent_steps, index))
           # TODO(apaszke): Use a predicate instead of a conditional.
-          with mgpu.when(arith.cmpi(arith.CmpIPredicate.uge, ki, c(max_concurrent_steps, index))):
+          with mgpu.when(arith.cmpi(arith.CmpIPredicate.uge, persistent_ki, c(max_concurrent_steps, index))):
             ab_empty_barriers[slot].wait()
           full_barrier = ab_full_barriers[slot]
           full_barrier.arrive_expect_tx(
@@ -143,7 +148,8 @@ def build_kernel(
       with mgpu.when(is_leader_of(MMA_WARP)):
         @mgpu.fori(c(k_loop_iter, index), arith.constant(i1, 0))
         def _mma_body(ki, accumulate):
-          slot = arith.remui(ki, c(max_concurrent_steps, index))
+          persistent_ki = get_persistent_ki(ki)
+          slot = arith.remui(persistent_ki, c(max_concurrent_steps, index))
           ab_full_barriers[slot].wait()
           tcgen05.mma(
               acc,
@@ -154,16 +160,9 @@ def build_kernel(
               accumulate=accumulate,
           )
           accumulate = arith.constant(i1, 1)
-          is_last_iter = arith.cmpi(
-              arith.CmpIPredicate.eq, ki, c(k_loop_iter - 1, index)
-          )
-          barrier_ptr = arith.select(
-              is_last_iter,
-              mma_done_barrier.get_ptr(),
-              ab_empty_barriers[slot].get_ptr(),
-          )
-          tcgen05.commit_arrive(barrier_ptr, ctx=ctx)
+          tcgen05.commit_arrive(ab_empty_barriers[slot].get_ptr(), ctx=ctx)
           return accumulate
+        tcgen05.commit_arrive(mma_done_barrier.get_ptr(), ctx=ctx)
 
       gpu.barrier()
       mma_done_barrier.wait(for_tensor_core=True)
@@ -213,7 +212,6 @@ def build_kernel(
 def main(unused_argv):
   m, k, n = 8192, 4096, 8192
   cta_count = get_sm_count()
-  cta_count = 1  # XXX debug
   ka, kb = jr.split(jr.key(0), 2)
   a = jr.normal(key=ka, shape=(m, k), dtype=jnp.float16)
   b = jr.normal(key=kb, shape=(n, k), dtype=jnp.float16)
