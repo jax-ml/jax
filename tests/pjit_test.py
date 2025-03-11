@@ -1205,8 +1205,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       with self.assertRaisesRegex(
           ValueError,
           r"One of with_sharding_constraint.*Sharding "
-          r"NamedSharding\(mesh=Mesh\('replica': 1, 'data': 1, 'mdl': 2\), "
-          r"spec=PartitionSpec\(None, 'mdl', None, None\).*\) is only "
+          r"NamedSharding.*PartitionSpec\(None, 'mdl', None, None\).*\) is only "
           "valid for values of rank at least 4, but was applied to a value of rank 1"):
         pjit_f(jnp.array([1, 2, 3]))
 
@@ -6872,31 +6871,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         'PartitionSpec.*cannot contain `P.UNCONSTRAINED` when no mesh'
         ' axis_types are `Auto`'):
       NamedSharding(mesh, P(P.UNCONSTRAINED))
-
-  def test_use_mesh_legacy_mesh_ctx_mgr_mix_error(self):
-    mesh = jtu.create_mesh((1, 1), ('x', 'y'))
-
-    with self.assertRaisesRegex(
-        ValueError,
-        'Using `with mesh:` context manager and `jax.sharding.use_mesh`'
-        ' together is not allowed'):
-      with jax.sharding.use_mesh(mesh), mesh:
-        jax.jit(lambda x: x)(jnp.arange(8))
-
-    with self.assertRaisesRegex(
-        ValueError,
-        'Using `with mesh:` context manager and `jax.sharding.use_mesh`'
-        ' together is not allowed'):
-      with jax.sharding.use_mesh(mesh), mesh:
-        jnp.zeros((8, 2), dtype=jnp.int32)
-
-    x = jnp.arange(8)
-    with self.assertRaisesRegex(
-        ValueError,
-        'Using `with mesh:` context manager and `jax.sharding.use_mesh`'
-        ' together is not allowed'):
-      with jax.sharding.use_mesh(mesh), mesh:
-        jax.lax.with_sharding_constraint(x, NamedSharding(mesh, P()))
 
   def test_pspec_einsum_no_context_mesh(self):
     mesh = jtu.create_mesh((1, 1), ('x', 'y'),

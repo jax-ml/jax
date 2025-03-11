@@ -1663,7 +1663,7 @@ class MismatchType(enum.Enum):
     elif self.name == 'OUT_SHARDING':
       return 'explicit output sharding'
     elif self.name == 'CONTEXT_DEVICES':
-      return 'devices'
+      return 'context mesh'
     return f'{self.name}'
 
 
@@ -3060,7 +3060,6 @@ class JitGlobalCppCacheKeys:
   in_layouts_leaves: tuple[Any, ...] | None = None
   out_layouts_treedef: PyTreeDef | None = None
   out_layouts_leaves: tuple[Any, ...] | None = None
-  use_resource_env: bool = False
   compiler_options_kvs: tuple[tuple[str, Any], ...] | None = None
 
   @functools.cached_property
