@@ -181,7 +181,8 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
   closed_jaxpr = jax.make_jaxpr(lower_fn, axis_env=list(mesh.shape.items()))(
       *tiled_args
   )
-  if closed_jaxpr.out_avals != tiled_results:
+  if ([(o.shape, o.dtype) for o in closed_jaxpr.out_avals] !=
+      [(t.shape, t.dtype) for t in tiled_results]):
     raise ValueError(
         "Mismatch in result shapes. %s vs %s"
         % (repr(closed_jaxpr.out_avals), repr(tiled_results))
