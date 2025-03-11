@@ -1826,6 +1826,10 @@ if CAN_USE_HYPOTHESIS:
       y2 = random.normal(jax.random.clone(k1), y.shape)
       self.assertAllClose(impl_vjp(t), ref_vjp(t))
 
+      if jtu.SKIP_SLOW_TESTS.value:
+        # Skip second order tests if JAX_SKIP_SLOW_TESTS=true
+        return
+
       # Second order
       key, k1, k2 = random.split(key, 3)
       t2 = random.normal(k2, t.shape)
