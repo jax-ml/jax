@@ -143,3 +143,29 @@ jobs:
       enable-x64:  ${{ matrix.enable-x64 }}
       # GCS upload URI is the same for both artifact build jobs
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
+
+  run-pytest-tpu:
+    # Run test jobs even if the build job fails. Avoids losing test coverage if a single unrelated
+    # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
+    # still want to run the tests for other platforms.
+    if: ${{ !cancelled() }}
+    needs: [build-jax-artifact, build-jaxlib-artifact]
+    uses: ./.github/workflows/pytest_tpu.yml
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          python: ["3.10",]
+          tpu-specs: [
+            # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
+            {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
+            {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"}
+          ]
+    name: "TPU tests (jax=head, jaxlib=head)"
+    with:
+      runner: ${{ matrix.tpu-specs.runner }}
+      cores: ${{ matrix.tpu-specs.cores }}
+      tpu-type: ${{ matrix.tpu-specs.type }}
+      python: ${{ matrix.python }}
+      run-full-tpu-test-suite: "1"
+      libtpu-version-type: "nightly"
+      gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}

@@ -3,6 +3,7 @@
 # This job currently runs as a non-blocking presubmit. It is experimental and is currently being
 # tested to get to a stable state before we enable it as a blocking presubmit.
 name: CI - Cloud TPU (presubmit)
+
 on:
   workflow_dispatch:
     inputs:
@@ -33,64 +34,32 @@ concurrency:
   cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
 
 jobs:
-  cloud-tpu-test:
+  build-jax-artifacts:
     if: github.event.repository.fork == false
-# Begin Presubmit Naming Check - name modification requires internal check to be updated
+    uses: ./.github/workflows/build_artifacts.yml
     strategy:
-      fail-fast: false # don't cancel all jobs on failure
-      matrix:
-        tpu: [
-          {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"}
-        ]
-        python-version: ["3.10"]
-    name: "TPU test (jaxlib=head, ${{ matrix.tpu.type }})"
-# End Presubmit Naming Check github-tpu-presubmits
-    env:
-      JAXCI_PYTHON: python${{ matrix.python-version }}
-      JAXCI_TPU_CORES: ${{ matrix.tpu.cores }}
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+            artifact: ["jax", "jaxlib"]
+    with:
+        runner: "linux-x86-n2-16"
+        artifact: ${{ matrix.artifact }}
+        python: "3.10"
+        clone_main_xla: 1
+        upload_artifacts_to_gcs: true
+        gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
-    runs-on: ${{ matrix.tpu.runner }}
-    container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest"
-
-    timeout-minutes: 60
-
-    defaults:
-      run:
-        shell: bash -ex {0}
-    steps:
-      # https://opensource.google/documentation/reference/github/services#actions
-      # mandates using a specific commit for non-Google actions. We use
-      # https://github.com/sethvargo/ratchet to pin specific versions.
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-      # Checkout XLA at head, if we're building jaxlib at head.
-      - name: Checkout XLA at head
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-        with:
-          repository: openxla/xla
-          path: xla
-      # We need to mark the GitHub workspace as safe as otherwise git commands will fail.
-      - name: Mark GitHub workspace as safe
-        run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install JAX test requirements
-        run: |
-          $JAXCI_PYTHON -m uv pip install -U -r build/test-requirements.txt -r build/collect-profile-requirements.txt
-      - name: Build jaxlib at head with latest XLA
-        run: |
-          # Build and install jaxlib at head
-          $JAXCI_PYTHON build/build.py build --wheels=jaxlib \
-                  --python_version=${{ matrix.python-version }} \
-                  --bazel_options=--config=rbe_linux_x86_64 \
-                  --local_xla_path="$(pwd)/xla" \
-                  --verbose
-
-          # Install libtpu
-          $JAXCI_PYTHON -m uv pip install --pre libtpu \
-            -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-      # Halt for testing
-      - name: Wait For Connection
-        uses: google-ml-infra/actions/ci_connection@main
-        with:
-          halt-dispatch-input: ${{ inputs.halt-for-connection }}
-      - name: Install jaxlib wheel and run tests
-        run: ./ci/run_pytest_tpu.sh
+  run-pytest-tpu:
+    if: github.event.repository.fork == false
+    needs: [build-jax-artifacts]
+    uses: ./.github/workflows/pytest_tpu.yml
+    # Begin Presubmit Naming Check - name modification requires internal check to be updated
+    name: "TPU test (jaxlib=head, v5e-8)"
+    with:
+      runner: "linux-x86-ct5lp-224-8tpu"
+      cores: "8"
+      tpu-type: "v5e-8"
+      python: "3.10"
+      libtpu-version-type: "nightly"
+      gcs_download_uri: ${{ needs.build-jax-artifacts.outputs.gcs_upload_uri }}
+    # End Presubmit Naming Check github-tpu-presubmits
