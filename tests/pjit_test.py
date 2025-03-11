@@ -1205,8 +1205,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       with self.assertRaisesRegex(
           ValueError,
           r"One of with_sharding_constraint.*Sharding "
-          r"NamedSharding\(mesh=Mesh\('replica': 1, 'data': 1, 'mdl': 2\), "
-          r"spec=PartitionSpec\(None, 'mdl', None, None\).*\) is only "
+          r"NamedSharding.*PartitionSpec\(None, 'mdl', None, None\).*\) is only "
           "valid for values of rank at least 4, but was applied to a value of rank 1"):
         pjit_f(jnp.array([1, 2, 3]))
 
@@ -2076,7 +2075,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with global_mesh:
       with self.assertRaisesRegex(
-          ValueError, "Received incompatible devices for pjitted computation"):
+          ValueError, "Received incompatible devices for jitted computation"):
         pjit(lambda x: x)(input_array)
 
   def test_array_lower_compile(self):
@@ -2177,7 +2176,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with m1:
       with self.assertRaisesRegex(
-          ValueError, "Received incompatible devices for pjitted computation"):
+          ValueError, "Received incompatible devices for jitted computation"):
         pjit(lambda x, y: (x, y),
               out_shardings=(NamedSharding(m1, spec),
                              NamedSharding(m2, spec)))(a1, a1)
@@ -2192,7 +2191,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with m1:
       with self.assertRaisesRegex(
-          ValueError, "Received incompatible devices for pjitted computation"):
+          ValueError, "Received incompatible devices for jitted computation"):
         pjit(
             lambda x, y: (x, y),
             in_shardings=NamedSharding(m2, spec),
@@ -2348,7 +2347,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     arr = jnp.array([1, 2, 3])
     with self.assertRaisesRegex(
         RuntimeError,
-        r'pjit requires a non-empty mesh if you are passing `PartitionSpec`s or'
+        r'jit requires a non-empty mesh if you are passing `PartitionSpec`s or'
         r' `None` to in_shardings.*'):
       pjit(lambda x: x, in_shardings=P('x'))(arr)
 
@@ -2396,7 +2395,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jtu.create_mesh((2, 2), ('x', 'y')):
       with self.assertRaisesRegex(
           ValueError,
-          "Received incompatible devices for pjitted computation"):
+          "Received incompatible devices for jitted computation"):
         pjit(lambda x, y: (x, y))(uarr, carr)
 
   def test_pjit_uncommitted_array_multi_devices(self):
@@ -2418,7 +2417,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     b = jax.device_put(np.array([4, 5, 6]), jax.devices()[1])
     with self.assertRaisesRegex(
         ValueError,
-        "Received incompatible devices for pjitted computation. Got argument "
+        "Received incompatible devices for jitted computation. Got argument "
         r"x of.*\<lambda\> with shape int.*\[3\] and device ids \[0\].*and "
         r"argument y of.*\<lambda\> with shape int.*\[3\] and device ids \[1\].*"):
       pjit(lambda x, y: (x, y))(a, b)
@@ -2430,7 +2429,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     b = jax.device_put(np.array([4, 5, 6]), jax.devices()[1])
     with self.assertRaisesRegex(
         ValueError,
-        "Received incompatible devices for pjitted computation. Got argument "
+        "Received incompatible devices for jitted computation. Got argument "
         r"x\[0\] of.*\<lambda\> with shape int.*\[3\] and device ids \[0\].*and "
         r"argument x\[1\] of.*\<lambda\> with shape int.*\[3\] and device ids "
         r"\[1\].*"):
@@ -2443,7 +2442,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     c = jax.device_put(np.arange(16).reshape(8, 2),
                        NamedSharding(mesh, P('x', 'y')))
 
-    msg = ("Received incompatible devices for pjitted computation. Got "
+    msg = ("Received incompatible devices for jitted computation. Got "
            r"argument {} of.*<lambda> with shape int.*\[3\] and device ids "
            r"\[0\].*and argument {} of.*<lambda> with shape int.*\[8,2\] and "
            r"device ids.*")
@@ -2617,9 +2616,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return f(inp1, inp2, inp3)
     with self.assertRaisesRegex(
         ValueError,
-        "Received incompatible devices for pjitted computation. Got argument "
+        "Received incompatible devices for jitted computation. Got argument "
         r"inp1 of.*my_nested_pjit with shape bfloat16\[8,2\] and device ids \[0\].*"
-        r"pjit inside pjit with device ids.*"):
+        r"pjit inside jit with device ids.*"):
       my_nested_pjit(committed_inp, committed_inp, committed_inp)
 
   @jtu.ignore_warning(category=DeprecationWarning,
@@ -6240,6 +6239,37 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out2 = core.jaxpr_as_fun(jaxpr)(arr)
     self.assertEqual(out2[0].sharding, NamedSharding(mesh, P('x', None)))
 
+  @jtu.with_user_mesh((4,), ('x',))
+  def test_concat_vmap(self, mesh):
+    @jax.jit
+    def _f(sharded_array, replicated_array):
+      def _single_array(a, b):
+        return jnp.concatenate([a, b], axis=-1)
+
+      _first_vmap = jax.vmap(_single_array, in_axes=(None, 0))
+      _second_vmap = jax.vmap(_first_vmap, in_axes=(0, None))
+      return jax.vmap(_second_vmap, in_axes=(0, None))(sharded_array, replicated_array)
+
+    np_inp = np.ones((4 * 4, 10, 5, 4))
+    arr1 = jax.device_put(np_inp, NamedSharding(mesh, P('x')))
+    arr2 = jax.device_put(
+        jnp.ones((10, 5, 3)), NamedSharding(mesh, P()))
+
+    out = _f(arr1, arr2)
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P('x', None, None, None, None)))
+
+    out = _f(arr1, jnp.ones((10, 5, 3)))
+    self.assertEqual(out.sharding,
+                     NamedSharding(mesh, P('x', None, None, None, None)))
+
+  def test_aval_spec_explicit_auto_complete(self):
+    abstract_mesh = mesh_lib.AbstractMesh(
+        (('x', 2),), axis_types={AxisTypes.Explicit: 'x'})
+    s = NamedSharding(abstract_mesh, P('x'))
+    out = core.ShapedArray((8, 2), jnp.int32, sharding=s)
+    self.assertEqual(out.sharding.spec, P('x', None))
+
   @jtu.with_user_mesh((2, 2), ('x', 'y'),
                       axis_types={mesh_lib.AxisTypes.Auto: ('x', 'y')})
   def test_full_user_mode(self, mesh):
@@ -6292,6 +6322,34 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     out = f(arr1, arr2, arr3)
     self.assertEqual(out.shape, (16, 8, 16))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('data', None, None)))
+
+  @jtu.with_user_mesh((4,), ('data',))
+  def test_intermediate_einsum_auto_complete_spec(self, mesh):
+    s = NamedSharding(mesh, P('data'))
+
+    shape1 = (8, 32, 2*16)
+    shape2 = (8, 32, 2, 8)
+    shape3 = (8, 32, 2, 8)
+    np_inp1 = np.arange(math.prod(shape1)).reshape(shape1)
+    np_inp2 = np.arange(math.prod(shape2)).reshape(shape2)
+    np_inp3 = np.arange(math.prod(shape3)).reshape(shape3)
+
+    arr1 = jax.device_put(np_inp1, s)
+    arr2 = jax.device_put(np_inp2, s)
+    arr3 = jax.device_put(np_inp3, s)
+
+    @jax.jit
+    def f(x, y, z):
+      x = jnp.reshape(x,  (8, 32, 2, 16))
+      out = jnp.einsum('bthD, bthi, bthj->ijD', x, y, z,
+                       out_sharding=P('data'))
+      self.assertEqual(out.shape, (8, 8, 16))
+      self.assertEqual(out.aval.sharding.spec, P('data', None, None))
+      return out
+
+    out = f(arr1, arr2, arr3)
+    self.assertEqual(out.shape, (8, 8, 16))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('data', None, None)))
 
   def test_where_with_prng_sharded_inp(self):
@@ -6814,31 +6872,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         ' axis_types are `Auto`'):
       NamedSharding(mesh, P(P.UNCONSTRAINED))
 
-  def test_use_mesh_legacy_mesh_ctx_mgr_mix_error(self):
-    mesh = jtu.create_mesh((1, 1), ('x', 'y'))
-
-    with self.assertRaisesRegex(
-        ValueError,
-        'Using `with mesh:` context manager and `jax.sharding.use_mesh`'
-        ' together is not allowed'):
-      with jax.sharding.use_mesh(mesh), mesh:
-        jax.jit(lambda x: x)(jnp.arange(8))
-
-    with self.assertRaisesRegex(
-        ValueError,
-        'Using `with mesh:` context manager and `jax.sharding.use_mesh`'
-        ' together is not allowed'):
-      with jax.sharding.use_mesh(mesh), mesh:
-        jnp.zeros((8, 2), dtype=jnp.int32)
-
-    x = jnp.arange(8)
-    with self.assertRaisesRegex(
-        ValueError,
-        'Using `with mesh:` context manager and `jax.sharding.use_mesh`'
-        ' together is not allowed'):
-      with jax.sharding.use_mesh(mesh), mesh:
-        jax.lax.with_sharding_constraint(x, NamedSharding(mesh, P()))
-
   def test_pspec_einsum_no_context_mesh(self):
     mesh = jtu.create_mesh((1, 1), ('x', 'y'),
                            axis_types={AxisTypes.Explicit: ('x', 'y')})
@@ -7012,6 +7045,28 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(ValueError, "Context mesh.*cannot be empty"):
       auto_axes(f, out_shardings=s)(arr)
+
+  def test_divisbility_aval_error(self):
+    abstract_mesh = mesh_lib.AbstractMesh(
+        (('x', 2),), axis_types={AxisTypes.Explicit: 'x'})
+    s = NamedSharding(abstract_mesh, P('x'))
+    with self.assertRaisesRegex(
+        ValueError, 'does not evenly divide the dimension size'):
+      core.ShapedArray((5, 2), jnp.int32, sharding=s)
+
+  @jtu.with_user_mesh((2, 2), ('x', 'y'))
+  def test_scan_unroll(self, mesh):
+    np_inp = np.arange(64, dtype=jnp.float32).reshape(8, 8)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P(None, 'y')))
+    carry = jnp.ones((8,), dtype=jnp.float32)
+
+    @jax.jit
+    def f(carry, xs):
+      def body(carry, x):
+        return carry + x, x
+      return jax.lax.scan(body, carry, xs, unroll=2)
+
+    f(carry, arr)  # doesn't crash
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
@@ -7212,7 +7267,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     xshape = (2, 5, 6)
     x = jnp.arange(math.prod(xshape)).reshape(xshape)
     with self.assertRaisesRegex(
-        ValueError, "Received incompatible devices for pjitted computation.*"):
+        ValueError, "Received incompatible devices for jitted computation.*"):
       f(x)
 
   @parameterized.named_parameters(

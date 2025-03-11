@@ -1394,9 +1394,9 @@ def xla_call_jvp_update_params(params, nz_tangents):
   new_donated_invars = (*donated_invars, *donated_tangents)
   return dict(params, donated_invars=new_donated_invars)
 
-def _xla_call_linearize_update_params(params, residual_avals, nz_tangents):
+def _xla_call_linearize_update_params(params, num_new_inputs, nz_tangents):
   donated_invars_prev = params['donated_invars']
-  donated_invars = (*(False for _ in residual_avals),
+  donated_invars = (*(False for _ in range(num_new_inputs)),
                     *(d for d, nz in zip(donated_invars_prev, nz_tangents) if nz))
   return dict(params, donated_invars=donated_invars)
 
@@ -1663,7 +1663,7 @@ class MismatchType(enum.Enum):
     elif self.name == 'OUT_SHARDING':
       return 'explicit output sharding'
     elif self.name == 'CONTEXT_DEVICES':
-      return 'devices'
+      return 'context mesh'
     return f'{self.name}'
 
 
@@ -3060,7 +3060,6 @@ class JitGlobalCppCacheKeys:
   in_layouts_leaves: tuple[Any, ...] | None = None
   out_layouts_treedef: PyTreeDef | None = None
   out_layouts_leaves: tuple[Any, ...] | None = None
-  use_resource_env: bool = False
   compiler_options_kvs: tuple[tuple[str, Any], ...] | None = None
 
   @functools.cached_property

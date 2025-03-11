@@ -54,6 +54,12 @@ build:macos --apple_platform_type=macos
 build:macos --linkopt=-Wl,-undefined,dynamic_lookup
 build:macos --host_linkopt=-Wl,-undefined,dynamic_lookup
 
+# Use cc toolchains from apple_support for Apple builds.
+# https://github.com/bazelbuild/apple_support/tree/master?tab=readme-ov-file#bazel-6-setup
+build:macos --apple_crosstool_top=@local_config_apple_cc//:toolchain
+build:macos --crosstool_top=@local_config_apple_cc//:toolchain
+build:macos --host_crosstool_top=@local_config_apple_cc//:toolchain
+
 # Windows has a relatively short command line limit, which JAX has begun to hit.
 # See https://docs.bazel.build/versions/main/windows.html
 build:windows --features=compiler_param_file

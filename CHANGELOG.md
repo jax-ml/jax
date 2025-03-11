@@ -23,6 +23,13 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     true, matching the current behavior. If set to false, JAX does not need to
     emit code clamping negative indices, which improves code size.
 
+## jax 0.5.2 (Mar 4, 2025)
+
+Patch release of 0.5.1
+
+* Bug fixes
+  * Fixes TPU metric logging and `tpu-info`, which was broken in 0.5.1
+
 ## jax 0.5.1 (Feb 24, 2025)
 
 * New Features
@@ -54,6 +61,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     A downstream effect of this several other internal functions need debug
     info. This change does not affect public APIs.
     See https://github.com/jax-ml/jax/issues/26480 for more detail.
+  * In {func}`jax.numpy.ndim`, {func}`jax.numpy.shape`, and {func}`jax.numpy.size`,
+    non-arraylike inputs (such as lists, tuples, etc.) are now deprecated.
 
 * Bug fixes
   * TPU runtime startup and shutdown time should be significantly improved on
@@ -168,8 +177,6 @@ to signify this.
 ## jax 0.4.37 (Dec 9, 2024)
 
 This is a patch release of jax 0.4.36. Only "jax" was released at this version.
-
-## jax 0.4.37
 
 * Bug fixes
   * Fixed a bug where `jit` would error if an argument was named `f` (#25329).

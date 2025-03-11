@@ -44,6 +44,10 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import svd as lax_svd
 from jax._src.lax import utils as lax_utils
 from jax._src.lax.lax import _float, _complex, _int
+from jax._src.lib import gpu_linalg
+from jax._src.lib import gpu_solver
+from jax._src.lib import gpu_sparse
+from jax._src.lib import lapack
 from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
@@ -51,12 +55,23 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.typing import Array, ArrayLike
 
-# The following imports may be unused but they are needed to register the
-# custom call targets defined in each module.
-from jax._src.lib import gpu_linalg  # pylint:disable=unused-import  # noqa: F401
-from jax._src.lib import gpu_solver  # pylint:disable=unused-import  # noqa: F401
-from jax._src.lib import gpu_sparse  # pylint:disable=unused-import  # noqa: F401
-from jax._src.lib import lapack  # pylint:disable=unused-import  # noqa: F401
+
+def register_module_custom_calls(module):
+  if hasattr(module, "registrations"):
+    for platform, targets in module.registrations().items():
+      for name, value, api_version in targets:
+        ffi.register_ffi_target(
+            name, value, platform=platform, api_version=api_version
+        )
+  if hasattr(module, "batch_partitionable_targets"):
+    for name in module.batch_partitionable_targets():
+      ffi.register_ffi_target_as_batch_partitionable(name)
+
+
+register_module_custom_calls(gpu_linalg)
+register_module_custom_calls(gpu_solver)
+register_module_custom_calls(gpu_sparse)
+register_module_custom_calls(lapack)
 
 
 # Top-level functions in alphabetical order.

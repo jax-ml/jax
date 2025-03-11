@@ -1094,6 +1094,9 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
       return f"args{keystr(key_path)}"
     # args is a tuple, so key_path[0].idx is the index into args.
     i = key_path[0].idx
+    # This can happen with star arguments (*args)
+    if i >= len(signature_parameters):
+      return f"args{keystr(key_path)}"
     res = f"argument {signature_parameters[i]}"
     if len(key_path) > 1:
       res += keystr(key_path[1:])
@@ -1135,8 +1138,8 @@ def pmap(
     fun: Callable,
     axis_name: AxisName | None = None,
     *,
-    in_axes=0,
-    out_axes=0,
+    in_axes: int | None | Sequence[Any] = 0,
+    out_axes: Any = 0,
     static_broadcasted_argnums: int | Iterable[int] = (),
     devices: Sequence[xc.Device] | None = None,  # noqa: F811
     backend: str | None = None,
@@ -2002,8 +2005,8 @@ def vjp(
     raise NotImplementedError("reduce_axes argument to vjp is deprecated")
   del reduce_axes
   check_callable(fun)
-  wrapped_fun = lu.wrap_init(fun,
-                             debug_info=debug_info("vjp", fun, primals, {}))
+  wrapped_fun = lu.wrap_init(
+      fun, debug_info=debug_info("vjp", fun, primals, {}))
   return _vjp(wrapped_fun, *primals, has_aux=has_aux)
 
 def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):

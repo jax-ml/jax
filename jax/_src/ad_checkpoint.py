@@ -69,7 +69,7 @@ def dots_saveable(prim, *_, **__) -> bool:
                   lax_convolution.conv_general_dilated_p}
 checkpoint_dots = dots_saveable
 
-def dot_with_no_batch_dims_saveable(prim, *_, **params) -> bool:
+def dots_with_no_batch_dims_saveable(prim, *_, **params) -> bool:
   # This is a useful heuristic for transformers.
   if prim is lax_internal.dot_general_p:
     (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
@@ -160,8 +160,8 @@ checkpoint_policies = types.SimpleNamespace(
     nothing_saveable=nothing_saveable,
     dots_saveable=dots_saveable,
     checkpoint_dots=dots_saveable,
-    dots_with_no_batch_dims_saveable=dot_with_no_batch_dims_saveable,
-    checkpoint_dots_with_no_batch_dims=dot_with_no_batch_dims_saveable,
+    dots_with_no_batch_dims_saveable=dots_with_no_batch_dims_saveable,
+    checkpoint_dots_with_no_batch_dims=dots_with_no_batch_dims_saveable,
     offload_dot_with_no_batch_dims=offload_dot_with_no_batch_dims,
     save_anything_except_these_names=save_anything_except_these_names,
     save_any_names_but_these=save_any_names_but_these,
@@ -355,7 +355,7 @@ def _remat_static_argnums(fun, static_argnums, args):
     raise ValueError("the `static_argnums` argument to `jax.checkpoint` / "
                      "`jax.remat` can only take integer values greater than or "
                      "equal to `-len(args)` and less than `len(args)`, but got "
-                     f"{static_argnums}")
+                     f"{static_argnums}, while `len(args)` = {len(args)}")
 
   if not static_argnums:
     return fun, args

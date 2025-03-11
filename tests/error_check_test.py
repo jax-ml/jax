@@ -148,13 +148,17 @@ class ErrorCheckTests(jtu.JaxTestCase):
     with self.assertRaisesRegex(JaxValueError, "x must be less than 10"):
       error_check.raise_if_error()
 
-  def test_error_check_works_with_scan(self):
+  @parameterized.product(jit=[True, False])
+  def test_error_check_works_with_scan(self, jit):
     def f(carry, x):
       error_check.set_error_if(x >= 4, "x must be less than 4")
       return carry + x, x + 1
 
     def body(init, xs):
       return jax.lax.scan(f, init=init, xs=xs)
+
+    if jit:
+      body = jax.jit(body)
 
     init = jnp.int32(0)
     xs = jnp.arange(5, dtype=jnp.int32)
@@ -165,6 +169,27 @@ class ErrorCheckTests(jtu.JaxTestCase):
     xs = jnp.arange(4, dtype=jnp.int32)
     _ = body(init, xs)
     error_check.raise_if_error()  # should not raise error
+
+  @parameterized.product(jit=[True, False])
+  def test_raise_if_error_fails_in_traced_context(self, jit):
+    def f(x):
+      error_check.set_error_if(x <= 0, "x must be greater than 0")
+      return x + 1
+
+    if jit:
+      f = jax.jit(f)
+
+    x = jnp.full((4,), 1, dtype=jnp.int32)
+    f(x)
+    with self.assertRaises(
+        ValueError,
+        msg=(
+            "raise_if_error() should not be called within a traced context,"
+            " such as within a jitted function."
+        ),
+    ):
+      jax.jit(error_check.raise_if_error)()
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -91,6 +91,7 @@ class BufferedRef:
         self.smem_ref.at[slot],  # pytype: disable=unsupported-operands
         self.gmem_ref.at[gmem_slices],  # pytype: disable=unsupported-operands
         predicate=predicate,
+        commit_group=False,
     )
 
 
@@ -299,6 +300,8 @@ def emit_pipeline(
             predicate=lax.bitwise_or(slices_changed, is_last_step),
         )
 
+      gpu_primitives.commit_smem_to_gmem_group()
+
       fetch_step = step + (max_concurrent_steps - delay_release)
       fetch_slot = lax.rem(fetch_step, max_concurrent_steps)
 
@@ -343,6 +346,8 @@ def emit_pipeline(
     for bref in out_brefs:
       if bref.is_index_invariant:
         bref.copy_out(last_slot, last_indices, predicate=None)
+
+    gpu_primitives.commit_smem_to_gmem_group()
 
     # Finalize the pipeline.
     gpu_primitives.wait_smem_to_gmem(0)
@@ -578,6 +583,7 @@ def emit_pipeline_warp_specialized(
           bref.copy_out(_get_slot(slot, ~bref.is_index_invariant),
                         indices,
                         predicate=slices_changed)
+        gpu_primitives.commit_smem_to_gmem_group()
         next_indices = _inc_grid_by_1(indices, grid)
         return (next_indices, new_store_slices, next_body_carry)
       init_indices = (jnp.asarray(0, dtype=jnp.int32),) * len(grid)
@@ -618,6 +624,8 @@ def emit_pipeline_warp_specialized(
       for bref in out_brefs:
         if bref.is_index_invariant:
           bref.copy_out(last_slot, last_indices, predicate=None)
+
+      gpu_primitives.commit_smem_to_gmem_group()
 
       # Finalize the pipeline.
       gpu_primitives.wait_smem_to_gmem(0)

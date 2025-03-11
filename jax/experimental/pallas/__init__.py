@@ -53,6 +53,7 @@ from jax._src.pallas.primitives import max_contiguous as max_contiguous
 from jax._src.pallas.primitives import multiple_of as multiple_of
 from jax._src.pallas.primitives import num_programs as num_programs
 from jax._src.pallas.primitives import program_id as program_id
+from jax._src.pallas.primitives import reciprocal as reciprocal
 from jax._src.pallas.primitives import run_scoped as run_scoped
 from jax._src.pallas.primitives import store as store
 from jax._src.pallas.primitives import swap as swap

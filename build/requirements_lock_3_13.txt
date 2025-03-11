@@ -747,9 +747,9 @@ zstandard==0.23.0 \
     # via -r build/requirements.in
 
 # The following packages are considered to be unsafe in a requirements file:
-setuptools==70.3.0 \
-    --hash=sha256:f171bab1dfbc86b132997f26a119f6056a57950d058587841a0082e8830f9dc5 \
-    --hash=sha256:fe384da74336c398e0d956d1cae0669bc02eed936cdb1d49b57de1990dc11ffc
+setuptools==76.0.0 \
+    --hash=sha256:199466a166ff664970d0ee145839f5582cb9bca7a0a3a2e795b6a9cb2308e9c6 \
+    --hash=sha256:43b4ee60e10b0d0ee98ad11918e114c70701bc6051662a9a675a0496c1a158f4
     # via
     #   -r build/requirements.in
     #   -r build/test-requirements.txt

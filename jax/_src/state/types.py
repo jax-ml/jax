@@ -119,6 +119,12 @@ class RefBitcaster:
     del dtype  # Unused
     return self.dtype
 
+  def transform_sharding(self, sharding):
+    # If there are no explicit axes, do nothing.
+    if all(p is None for p in sharding.spec):
+      return sharding
+    raise NotImplementedError
+
 
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
@@ -166,6 +172,12 @@ class RefReshaper:
     del dtype  # Unused
     return self.dtype
 
+  def transform_sharding(self, sharding):
+    # If there are no explicit axes, do nothing.
+    if all(p is None for p in sharding.spec):
+      return sharding
+    raise NotImplementedError
+
 
 class Transform(Protocol):
 
@@ -188,6 +200,10 @@ class Transform(Protocol):
     result when the input dtype is known.
     """
     return dtype
+
+  def transform_sharding(self, sharding):
+    if all(p is None for p in sharding.spec): return sharding # no explicit axes
+    raise NotImplementedError
 
 
 @dataclasses.dataclass

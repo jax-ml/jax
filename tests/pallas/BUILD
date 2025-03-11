@@ -128,6 +128,43 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "ops_test_mgpu",
+    srcs = [
+        "ops_test.py",
+    ],
+    disable_configs = [
+        "gpu_v100",
+        "gpu_v100_x32",
+        "gpu_p100",
+        "gpu_p100_x32",
+        "gpu_a100",
+        "gpu_a100_x32",
+    ],
+    enable_backends = [
+        "gpu",
+    ],
+    enable_configs = [
+        "gpu_h100",
+        "gpu_h100_x32",
+    ],
+    env = {
+        "JAX_PALLAS_USE_MOSAIC_GPU": "1",
+        "JAX_PALLAS_VERBOSE_ERRORS": "0",
+    },
+    tags = [
+        "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_gpu",  # build_cleaner: keep
+        "//jax:pallas_mosaic_gpu",  # build_cleaner: keep
+        "//jax:pallas_tpu",
+    ] + py_deps("absl/testing") + py_deps("hypothesis") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
     name = "indexing_test",
     srcs = [
         "indexing_test.py",
@@ -459,6 +496,24 @@ jax_multiplatform_test(
     ],
     enable_backends = ["tpu"],
     shard_count = 5,
+    tags = [
+        "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
+    ],
+    deps = [
+        "//jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
+    name = "tpu_ragged_paged_attention_test",
+    srcs = ["tpu_ragged_paged_attention_test.py"],
+    disable_configs = [
+        "tpu_v5p_1x1",
+    ],
+    enable_backends = ["tpu"],
+    shard_count = 24,
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.

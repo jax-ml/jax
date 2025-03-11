@@ -20,6 +20,7 @@ from collections.abc import Callable
 import concurrent.futures
 from contextlib import contextmanager
 import copy
+import dataclasses
 import enum
 import functools
 from functools import partial
@@ -57,6 +58,7 @@ from jax._src import xla_bridge
 from jax._src import debugging
 from jax._src import pjit as pjit_lib
 from jax._src.ad_checkpoint import saved_residuals
+from jax._src.interpreters import ad as ad_internal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
@@ -1973,6 +1975,48 @@ class APITest(jtu.JaxTestCase):
         a3=jnp.ones(1, dtype=jnp.float32),
         x2=jnp.ones(2, dtype=jnp.float32)
       )
+
+  def test_vmap_inconsistent_sizes_constructs_proper_error_message_starargs(self):
+    # regression test for https://github.com/jax-ml/jax/issues/26908
+    def f(x, *args):
+      return x - functools.reduce(jnp.add, args)
+
+    with self.assertRaisesRegex(
+      ValueError,
+      "vmap got inconsistent sizes for array axes to be mapped:"
+    ):
+      jax.vmap(f)(jnp.ones(4), jnp.ones(2), jnp.ones(2))
+
+  def test_vmap_sentinel(self):
+
+    @jax.tree_util.register_dataclass
+    @dataclasses.dataclass
+    class Foo:
+      x: jax.Array
+
+      def __init__(self, x):
+        nonlocal saw_sentinel
+        if x is jax._src.api_util.SENTINEL:
+          saw_sentinel += 1
+        self.x = x
+
+    x = jnp.arange(10)
+
+    # assert that sentinel is seen once for vmap in_axes
+    saw_sentinel = 0
+    jax.vmap(lambda f: f.x)(Foo(x))
+    self.assertEqual(saw_sentinel, 1)
+
+    # assert that sentinel is seen once for vmap out_axes
+    saw_sentinel = 0
+    jax.vmap(Foo)(x)
+    self.assertEqual(saw_sentinel, 1)
+
+    # assert that sentinel is seen twice with vmap in_axes and out_axes
+    saw_sentinel = 0
+    jax.vmap(lambda f: Foo(f.x + 1))(Foo(x))
+    self.assertEqual(saw_sentinel, 2)
+
 
   def test_device_get_scalar(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
@@ -4721,6 +4765,19 @@ class APITest(jtu.JaxTestCase):
 
     check_invariant_to_use_direct_linearize(lambda: jax.grad(sin_of_sin)(1.0))
 
+  def test_deferred_primal_with_direct_linearize(self):
+    def my_sin_lin(nzs, x):
+      nz, = nzs
+      return (my_sin_p.bind(x), nz, x, lambda x, t: lax.mul(t, lax.cos(x)))
+
+    my_sin_p = core.Primitive("my_sin_p")
+    my_sin_p.def_impl(lax.sin)
+    my_sin_p.def_abstract_eval(lambda x: x)
+    ad_internal.primitive_linearizations[my_sin_p] = my_sin_lin
+
+    with config.use_direct_linearize(True):
+      jax.grad(my_sin_p.bind)(1.0)  # doesn't crash
+
 
 class RematTest(jtu.JaxTestCase):
 
@@ -6435,14 +6492,10 @@ class JaxprTest(jtu.JaxTestCase):
     e:i32[] = convert_element_type[new_dtype=int32 weak_type=False] b
     f:f32[] = cond[
       branches=(
-        { lambda ; g_:f32[] h:f32[] i:f32[] j:f32[]. let
-            k:f32[] = sub j h
-          in (k,) }
-        { lambda ; l:f32[] m_:f32[] n:f32[] o:f32[]. let
-            p:f32[] = add n l
-          in (p,) }
+        { lambda ; g:f32[] h:f32[] i:f32[]. let j:f32[] = sub i g in (j,) }
+        { lambda ; k:f32[] l:f32[] m:f32[]. let n:f32[] = add l k in (n,) }
       )
-    ] e a a c d
+    ] e a c d
   in (f,) }"""
     jaxpr = api.make_jaxpr(f)(jnp.float32(3.))
     self.assertMultiLineStrippedEqual(expected, str(jaxpr))
@@ -8104,6 +8157,29 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(
         api.jvp(f1, (x, y), (0.0, 1.0)), (f1(x, y), -0.5 * jnp.sin(y)))
 
+  def test_resolve_kwargs_error_message(self):
+    @jax.custom_jvp
+    def f(x, y, *, z=None):
+      return jnp.sin(x), x + jnp.cos(y)
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      self.fail("should not be executed")
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"The input arguments to the custom_jvp-decorated function f(.*)\n"
+        r"missing a required argument: 'y'"
+    ):
+      f(0.5)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"The input arguments to the custom_jvp-decorated function f(.*)\n"
+        "The following keyword arguments could not be resolved to positions: z"
+    ):
+      f(0.5, 0.1, z=1.0)
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
@@ -9762,6 +9838,33 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(
         api.grad(f1, argnums=(0, 1))(x, y), (1.5, -0.5 * jnp.sin(y)))
 
+  def test_resolve_kwargs_error_message(self):
+    @jax.custom_vjp
+    def f(x, y, *, z=None):
+      return jnp.sin(x), x + jnp.cos(y)
+
+    def f_fwd(x, y):
+      self.fail("should not be executed")
+
+    def f_bwd(res, cts):
+      self.fail("should not be executed")
+
+    f.defvjp(f_fwd, f_bwd)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"The input arguments to the custom_vjp-decorated function f(.*)\n"
+        r"missing a required argument: 'y'"
+    ):
+      f(0.5)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"The input arguments to the custom_vjp-decorated function f(.*)\n"
+        "The following keyword arguments could not be resolved to positions: z"
+    ):
+      f(0.5, 0.1, z=1.0)
+
 
 def transpose_unary(f, x_example):
   def transposed(y):
@@ -10490,6 +10593,29 @@ class CustomDceTest(jtu.JaxTestCase):
     self.assertAllClose(jax.jit(lambda x: f(x)[0])(x), expected[0])
     self.assertAllClose(jax.jit(lambda x: f(x)[1])(x), expected[1])
 
+  def test_resolve_kwargs_error_message(self):
+    @jax.experimental.custom_dce.custom_dce
+    def f(x, y, *, z=None):
+      return jnp.sin(x) * y, x * jnp.sin(y)
+
+    @f.def_dce
+    def f_dce_rule(used_outs, x, y):
+      self.fail("should not be executed")
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"The input arguments to the custom_dce-decorated function f(.*)\n"
+        r"missing a required argument: 'y'"
+    ):
+      f(0.5)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"The input arguments to the custom_dce-decorated function f(.*)\n"
+        "The following keyword arguments could not be resolved to positions: z"
+    ):
+      f(0.5, 0.1, z=1.0)
+
 
 class CustomVmapTest(jtu.JaxTestCase):
 
@@ -11114,6 +11240,29 @@ class CustomVmapTest(jtu.JaxTestCase):
     f = jax.vmap(jax.jit(fun), in_axes=(0, None))
     out, f_vjp = jax.vjp(f, xs, y)
     f_vjp(out)  # Doesn't crash.
+
+  def test_resolve_kwargs_error_message(self):
+    @jax.custom_batching.custom_vmap
+    def f(x, y, *, z=None):
+      return jnp.sin(x) * y
+
+    @f.def_vmap
+    def f_vmap_rule(axis_size, in_batched, xs, ys):
+      self.fail("should not be executed")
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"The input arguments to the custom_vmap-decorated function f(.*)\n"
+        r"missing a required argument: 'y'"
+    ):
+      f(0.5)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"The input arguments to the custom_vmap-decorated function f(.*)\n"
+        "The following keyword arguments could not be resolved to positions: z"
+    ):
+      f(0.5, 0.1, z=1.0)
 
 
 class CustomApiTest(jtu.JaxTestCase):

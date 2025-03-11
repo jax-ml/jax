@@ -15,6 +15,7 @@
 import datetime
 import os
 import re
+import warnings
 from jax import version
 from jax._src import config
 from jax._src import hardware_utils
@@ -72,7 +73,19 @@ def cloud_tpu_init() -> None:
 
   # Exit early if we're not running on a Cloud TPU VM or libtpu isn't installed.
   libtpu_path = get_tpu_library_path()
-  num_tpu_chips = hardware_utils.num_available_tpu_chips_and_device_id()[0]
+  num_tpu_chips, tpu_id = hardware_utils.num_available_tpu_chips_and_device_id()
+  if (
+      tpu_id is not None
+      and tpu_id >= hardware_utils.TpuVersion.v5e
+      and not hardware_utils.transparent_hugepages_enabled()
+  ):
+    warnings.warn(
+        'Transparent hugepages are not enabled. TPU runtime startup and'
+        ' shutdown time should be significantly improved on TPU v5e and newer.'
+        ' If not already set, you may need to enable transparent hugepages in'
+        ' your VM image (sudo sh -c "echo always >'
+        ' /sys/kernel/mm/transparent_hugepage/enabled")'
+    )
   if (libtpu_path is None or num_tpu_chips == 0) and not jax_force_tpu_init():
     return
 

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jaxlib import xla_client
+from typing import Any
 
 from .plugin_support import import_from_plugin
 
@@ -24,51 +24,46 @@ _hipblas = import_from_plugin("rocm", "_blas")
 _hipsolver = import_from_plugin("rocm", "_solver")
 _hiphybrid = import_from_plugin("rocm", "_hybrid")
 
-if _cublas:
-  for _name, _value in _cublas.registrations().items():
-    xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 
-if _cusolver:
-  for _name, _value in _cusolver.registrations().items():
-    # TODO(danfm): Clean up after all legacy custom calls are ported.
-    api_version = 0
-    if _name.endswith("_ffi"):
-      api_version = 1
-      xla_client.register_custom_call_as_batch_partitionable(_name)
-    xla_client.register_custom_call_target(_name, _value, platform="CUDA",
-                                           api_version=api_version)
+def registrations() -> dict[str, list[tuple[str, Any, int]]]:
+  registrations = {"CUDA": [], "ROCM": []}
+  for platform, module in [("CUDA", _cublas), ("ROCM", _hipblas)]:
+    if module:
+      registrations[platform].extend(
+          (*i, 0) for i in module.registrations().items())
+  for platform, module in [("CUDA", _cusolver), ("ROCM", _hipsolver)]:
+    if module:
+      registrations[platform].extend(
+          (name, value, int(name.endswith("_ffi")))
+          for name, value in module.registrations().items()
+      )
+  for platform, module in [("CUDA", _cuhybrid), ("ROCM", _hiphybrid)]:
+    if module:
+      registrations[platform].extend(
+          (*i, 1) for i in module.registrations().items())
+  return registrations  # pytype: disable=bad-return-type
 
-if _cuhybrid:
-  for _name, _value in _cuhybrid.registrations().items():
-    xla_client.register_custom_call_as_batch_partitionable(_name)
-    xla_client.register_custom_call_target(_name, _value, platform="CUDA",
-                                           api_version=1)
 
-if _hipblas:
-  for _name, _value in _hipblas.registrations().items():
-    xla_client.register_custom_call_target(_name, _value, platform="ROCM")
+def batch_partitionable_targets() -> list[str]:
+  targets = []
+  for module in [_cusolver, _hipsolver]:
+    if module:
+      targets.extend(
+          name for name in module.registrations()
+          if name.endswith("_ffi")
+      )
+  for module in [_cuhybrid, _hiphybrid]:
+    if module:
+      targets.extend(name for name in module.registrations())
+  return targets
 
-if _hipsolver:
-  for _name, _value in _hipsolver.registrations().items():
-    # TODO(danfm): Clean up after all legacy custom calls are ported.
-    api_version = 0
-    if _name.endswith("_ffi"):
-      api_version = 1
-      xla_client.register_custom_call_as_batch_partitionable(_name)
-    xla_client.register_custom_call_target(_name, _value, platform="ROCM",
-                                           api_version=api_version)
-
-if _hiphybrid:
-  for _name, _value in _hiphybrid.registrations().items():
-    xla_client.register_custom_call_as_batch_partitionable(_name)
-    xla_client.register_custom_call_target(_name, _value, platform="ROCM",
-                                           api_version=1)
 
 def initialize_hybrid_kernels():
   if _cuhybrid:
     _cuhybrid.initialize()
   if _hiphybrid:
     _hiphybrid.initialize()
+
 
 def has_magma():
   if _cuhybrid:

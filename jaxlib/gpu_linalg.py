@@ -12,25 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jaxlib import xla_client
+from typing import Any
 
 from .plugin_support import import_from_plugin
 
 _cuda_linalg = import_from_plugin("cuda", "_linalg")
 _hip_linalg = import_from_plugin("rocm", "_linalg")
 
-if _cuda_linalg:
-  for _name, _value in _cuda_linalg.registrations().items():
-    xla_client.register_custom_call_target(
-        _name, _value, platform="CUDA", api_version=1
-    )
-  xla_client.register_custom_call_as_batch_partitionable(
-      "cu_lu_pivots_to_permutation")
+def registrations() -> dict[str, list[tuple[str, Any, int]]]:
+  registrations = {"CUDA": [], "ROCM": []}
+  for platform, module in [("CUDA", _cuda_linalg), ("ROCM", _hip_linalg)]:
+    if module:
+      registrations[platform].extend(
+          (*i, 1) for i in module.registrations().items())
+  return registrations  # pytype: disable=bad-return-type
 
-if _hip_linalg:
-  for _name, _value in _hip_linalg.registrations().items():
-    xla_client.register_custom_call_target(
-        _name, _value, platform="ROCM", api_version=1
-    )
-  xla_client.register_custom_call_as_batch_partitionable(
-      "hip_lu_pivots_to_permutation")
+
+def batch_partitionable_targets() -> list[str]:
+  targets = []
+  if _cuda_linalg:
+    targets.append("cu_lu_pivots_to_permutation")
+  if _hip_linalg:
+    targets.append("hip_lu_pivots_to_permutation")
+  return targets

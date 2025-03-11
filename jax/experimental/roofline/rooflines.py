@@ -55,6 +55,57 @@ for prim in it.chain(
     roofline.register_standard_roofline(prim)
 
 
+def _unary_p_roofline(
+    ctx: roofline.RooflineRuleContext,
+    *args,
+    **kw,
+) -> roofline.RooflineResult:
+  (x,) = (roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in)
+  out = roofline.RooflineShape.from_aval(ctx.avals_out[0])
+  return roofline.RooflineResult(
+      unfused_flops=x.size,
+      unfused_hbm_bytes=(
+          x.dtype.itemsize * x.size + out.dtype.itemsize * out.size
+      ),
+  )
+
+roofline.register_roofline(lax.abs_p)(_unary_p_roofline)
+roofline.register_roofline(lax.acos_p)(_unary_p_roofline)
+roofline.register_roofline(lax.asin_p)(_unary_p_roofline)
+roofline.register_roofline(lax.atan_p)(_unary_p_roofline)
+roofline.register_roofline(lax.cbrt_p)(_unary_p_roofline)
+roofline.register_roofline(lax.ceil_p)(_unary_p_roofline)
+roofline.register_roofline(lax.conj_p)(_unary_p_roofline)
+roofline.register_roofline(lax.cos_p)(_unary_p_roofline)
+roofline.register_roofline(lax.cosh_p)(_unary_p_roofline)
+roofline.register_roofline(lax.exp_p)(_unary_p_roofline)
+roofline.register_roofline(lax.expm1_p)(_unary_p_roofline)
+roofline.register_roofline(lax.floor_p)(_unary_p_roofline)
+roofline.register_roofline(lax.imag_p)(_unary_p_roofline)
+roofline.register_roofline(lax.integer_pow_p)(_unary_p_roofline)
+roofline.register_roofline(lax.is_finite_p)(_unary_p_roofline)
+roofline.register_roofline(lax.log_p)(_unary_p_roofline)
+roofline.register_roofline(lax.log1p_p)(_unary_p_roofline)
+roofline.register_roofline(lax.logistic_p)(_unary_p_roofline)
+roofline.register_roofline(lax.neg_p)(_unary_p_roofline)
+roofline.register_roofline(lax.not_p)(_unary_p_roofline)
+roofline.register_roofline(lax.real_p)(_unary_p_roofline)
+roofline.register_roofline(lax.round_p)(_unary_p_roofline)
+roofline.register_roofline(lax.rsqrt_p)(_unary_p_roofline)
+roofline.register_roofline(lax.sign_p)(_unary_p_roofline)
+roofline.register_roofline(lax.sin_p)(_unary_p_roofline)
+roofline.register_roofline(lax.sinh_p)(_unary_p_roofline)
+roofline.register_roofline(lax.sqrt_p)(_unary_p_roofline)
+roofline.register_roofline(lax.square_p)(_unary_p_roofline)
+roofline.register_roofline(lax.tan_p)(_unary_p_roofline)
+roofline.register_roofline(special.bessel_i0e_p)(_unary_p_roofline)
+roofline.register_roofline(special.bessel_i1e_p)(_unary_p_roofline)
+roofline.register_roofline(special.digamma_p)(_unary_p_roofline)
+roofline.register_roofline(special.erf_inv_p)(_unary_p_roofline)
+roofline.register_roofline(special.erf_p)(_unary_p_roofline)
+roofline.register_roofline(special.erfc_p)(_unary_p_roofline)
+roofline.register_roofline(special.lgamma_p)(_unary_p_roofline)
+
 def _binary_p_roofline(
     ctx: roofline.RooflineRuleContext,
     *args,

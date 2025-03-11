@@ -199,6 +199,9 @@ if dtypes.float8_e4m3 is not None:
 if dtypes.float8_e8m0fnu is not None:
   _dtype_to_ir_type[np.dtype(dtypes.float8_e8m0fnu)] = ir.Float8E8M0FNUType.get
 
+if dtypes.float4_e2m1fn is not None:
+  _dtype_to_ir_type[np.dtype(dtypes.float4_e2m1fn)] = ir.Float4E2M1FNType.get
+
 def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
   if isinstance(dtype, core.bint):
     # TODO Support different-size underlying dtypes to take advantage of the
@@ -939,7 +942,7 @@ def sharded_aval(aval: core.AbstractValue,
     return aval
   if not isinstance(aval, (core.ShapedArray, core.DShapedArray)):
     raise NotImplementedError
-  return aval.update(sharding.shard_shape(aval.shape))  # type: ignore
+  return aval.update(sharding.shard_shape(aval.shape), sharding=None)  # type: ignore
 
 
 def eval_dynamic_shape(ctx: LoweringRuleContext,

@@ -32,28 +32,42 @@ def _get_aval(x):
   return jax_core.raise_to_shaped(jax_core.get_aval(x))
 
 
-def fuse(f, *, physicalize: bool = False):
+def fuse(f=None, *, physicalize: bool = False, debug: bool = False):
   """Fuses a function into a single fusable.
+
+  Args:
+    f: The function to fuse.
+    physicalize: (experimental) whether to physicalize the function.
+    debug: Whether to print debug information.
 
   There should be a single call to a `fusable` inside the body of `f`. `fuse`
   returns a transformed function that will fuse the surrounding computation into
   the fusable and invoke it.
   """
-  def wrapper(*args, **kwargs):
-    flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
-    debug_info = api_util.debug_info('fuse', f, args, kwargs)
-    flat_fun, out_tree_thunk = api_util.flatten_fun(
-        lu.wrap_init(f, debug_info=debug_info), in_tree
-    )
-    flat_avals = [_get_aval(x) for x in flat_args]
-    jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
-    out_tree = out_tree_thunk()
-    out_flat = fuse_jaxpr(jaxpr, out_tree, consts, *flat_args)
-    return tree_util.tree_unflatten(out_tree, out_flat)
 
-  if physicalize:
-    wrapper = fusable_dtype.physicalize(wrapper)
-  return wrapper
+  def decorator(f):
+    def wrapper(*args, **kwargs):
+      flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
+      debug_info = api_util.debug_info("fuse", f, args, kwargs)
+      flat_fun, out_tree_thunk = api_util.flatten_fun(
+          lu.wrap_init(f, debug_info=debug_info), in_tree
+      )
+      flat_avals = [_get_aval(x) for x in flat_args]
+      jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
+      if debug:
+        print("Jaxpr before fusion:")
+        print(jaxpr)
+      out_tree = out_tree_thunk()
+      out_flat = fuse_jaxpr(jaxpr, out_tree, consts, *flat_args)
+      return tree_util.tree_unflatten(out_tree, out_flat)
+
+    if physicalize:
+      wrapper = fusable_dtype.physicalize(wrapper)
+    return wrapper
+
+  if f is not None:
+    return decorator(f)
+  return decorator
 
 
 _fusable: dict[jax_core.Primitive, Any] = {}

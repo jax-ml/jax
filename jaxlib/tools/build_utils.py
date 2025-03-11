@@ -70,6 +70,12 @@ def build_wheel(
   env = dict(os.environ)
   if git_hash:
     env["JAX_GIT_HASH"] = git_hash
+  if is_windows() and (
+      "USERPROFILE" not in env
+      and "HOMEDRIVE" not in env
+      and "HOMEPATH" not in env
+  ):
+    env["USERPROFILE"] = env.get("SYSTEMDRIVE", "C:")
   subprocess.run(
       [sys.executable, "-m", "build", "-n"]
       + (["-w"] if build_wheel_only else []),

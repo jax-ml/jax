@@ -424,6 +424,59 @@ class RooflineTest(jtu.JaxTestCase):
     )
     self.assertDataclassEqual(bwd_results, expected)
 
+  @jtu.parameterized.named_parameters(
+      ("abs", lax.abs, float),
+      ("acos", lax.acos, float),
+      ("asin", lax.asin, float),
+      ("atan", lax.atan, float),
+      ("cbrt", lax.cbrt, float),
+      ("ceil", lax.ceil, float),
+      ("conj", lax.conj, complex),
+      ("cos", lax.cos, float),
+      ("cosh", lax.cosh, float),
+      ("exp", lax.exp, float),
+      ("expm1", lax.expm1, float),
+      ("floor", lax.floor, float),
+      ("imag", lax.imag, complex),
+      ("integer_pow", lambda a: lax.integer_pow(a, 5), int),
+      ("is_finite", lax.is_finite, float),
+      ("log", lax.log, float),
+      ("log1p", lax.log1p, float),
+      ("logistic", lax.logistic, float),
+      ("neg", lax.neg, float),
+      ("not", lax.bitwise_not, bool),
+      ("real", lax.real, complex),
+      ("round", lax.round, float),
+      ("rsqrt", lax.rsqrt, float),
+      ("sign", lax.sign, float),
+      ("sin", lax.sin, float),
+      ("sinh", lax.sinh, float),
+      ("sqrt", lax.sqrt, float),
+      ("square", lax.square, float),
+      ("tan", lax.tan, float),
+      ("bessel_i0e", lax.bessel_i0e, float),
+      ("bessel_i1e", lax.bessel_i1e, float),
+      ("digamma", lax.digamma, float),
+      ("erf_inv", lax.erf_inv, float),
+      ("erf", lax.erf, float),
+      ("erfc", lax.erfc, float),
+      ("lgamma", lax.lgamma, float),
+  )
+  def test_unary_ops(self, f, dtype):
+    data = jnp.zeros((3, 8), dtype=dtype)
+    out, result = roofline.roofline(
+        f,
+        in_specs=(P()),
+        out_specs=P(),
+    )(data)
+    with self.subTest("flops"):
+      self.assertEqual(result.unfused_flops, 3 * 8)
+    with self.subTest("hbm_bytes"):
+      self.assertEqual(
+          result.unfused_hbm_bytes,
+          data.dtype.itemsize * 3 * 8 + out.dtype.itemsize * 3 * 8,
+      )
+
   def test_binary_ops(self):
     for f in [
         lambda a, b: a ^ b,

@@ -40,9 +40,6 @@ jobs:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
-      # Don't install "jax" at head. Instead install the nightly/release "jax" wheels found in the
-      # GCS bucket.
-      install-jax-current-commit: 0
       gcs_download_uri: ${{inputs.gcs_download_uri}}
 
   run-pytest-cuda:
@@ -61,7 +58,4 @@ jobs:
       python: ${{ matrix.python }}
       cuda:  ${{ matrix.cuda }}
       enable-x64:  ${{ matrix.enable-x64 }}
-      # Don't install "jax" at head. Instead install the nightly/release "jax" wheels found in the
-      # GCS bucket.
-      install-jax-current-commit: 0
       gcs_download_uri: ${{inputs.gcs_download_uri}}

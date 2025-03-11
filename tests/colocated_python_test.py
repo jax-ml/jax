@@ -66,6 +66,14 @@ _count_colocated_python_specialization_cache_miss = jtu.count_events(
 
 class ColocatedPythonTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    super().setUp()
+    if np.lib.NumpyVersion(np.__version__) < "2.0.0":
+      self.skipTest(
+          "Serialization in Colocated Python needs StringDType, and thus"
+          " requires NumPy 2.0.0 or later"
+      )
+
   def testMakeColocatedPythonProgram(self):
     def add_one(x):
       return x + 1
@@ -382,8 +390,6 @@ class ColocatedPythonTest(jtu.JaxTestCase):
         del colocated_python._testing_global_state
 
   def testStringProcessing(self):
-    if np.lib.NumpyVersion(np.__version__) < "2.0.0":
-      self.skipTest("StringDType requires NumPy 2.0.0 or later")
     cpu_devices = _colocated_cpu_devices(jax.local_devices())
     if len(cpu_devices) < 2:
       self.skipTest(f"Need at least two CPU devices, got: {len(cpu_devices)}")
@@ -425,8 +431,6 @@ class ColocatedPythonTest(jtu.JaxTestCase):
     )
 
   def testBinaryDataProcessing(self):
-    if np.lib.NumpyVersion(np.__version__) < "2.0.0":
-      self.skipTest("StringDType requires NumPy 2.0.0 or later")
     cpu_devices = _colocated_cpu_devices(jax.local_devices())
     if len(cpu_devices) < 1:
       self.skipTest("Need at least one CPU devices")

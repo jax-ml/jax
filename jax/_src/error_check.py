@@ -33,12 +33,11 @@ class JaxValueError(ValueError):
   """Exception raised for failed runtime error checks in JAX."""
 
 
+#: The default error code for no error.
+#:
+#: This value is chosen because we can use `jnp.min()` to obtain the
+#: first error when performing reductions.
 _NO_ERROR = jnp.iinfo(jnp.uint32).max
-"""The default error code for no error.
-
-We choose this value because when performing reductions, we can use `min` to
-obtain the smallest error code.
-"""
 
 
 _error_list_lock = threading.Lock()
@@ -62,7 +61,7 @@ def _initialize_error_code_ref() -> None:
 
 
 def set_error_if(pred: jax.Array, msg: str) -> None:
-  """Set error if pred is true.
+  """Set error if any element of pred is true.
 
   If the error is already set, the new error will be ignored. It will not
   override the existing error.
@@ -74,7 +73,7 @@ def set_error_if(pred: jax.Array, msg: str) -> None:
   traceback = source_info_util.current().traceback
   assert traceback is not None
   with _error_list_lock:
-    new_error_code = len(_error_list)
+    new_error_code = jnp.uint32(len(_error_list))
     _error_list.append((msg, traceback))
 
   pred = pred.any()
@@ -86,18 +85,26 @@ def set_error_if(pred: jax.Array, msg: str) -> None:
 
 
 def raise_if_error() -> None:
-  """Raise error if an error is set."""
-  if _error_storage.ref is None:
-    return  # if not initialized, do nothing
+  """Raise error if an error is set.
+
+  This function should be called after the computation is finished. It should
+  not be called within a traced context, such as within a jitted function."
+  """
+  if _error_storage.ref is None:  # if not initialized, do nothing
+    return
 
   error_code = _error_storage.ref[...]
+  if isinstance(error_code, core.Tracer):
+    raise ValueError(
+        "raise_if_error() should not be called within a traced context, such as"
+        " within a jitted function."
+    )
   if error_code == jnp.uint32(_NO_ERROR):
     return
-  try:
-    msg, traceback = _error_list[error_code]
-    exc = JaxValueError(msg)
-    traceback = traceback.as_python_traceback()
-    filtered_traceback = traceback_util.filter_traceback(traceback)
-    raise exc.with_traceback(filtered_traceback)
-  finally:
-    _error_storage.ref[...] = jnp.uint32(_NO_ERROR)
+  _error_storage.ref[...] = jnp.uint32(_NO_ERROR)
+
+  msg, traceback = _error_list[error_code]
+  exc = JaxValueError(msg)
+  traceback = traceback.as_python_traceback()
+  filtered_traceback = traceback_util.filter_traceback(traceback)
+  raise exc.with_traceback(filtered_traceback)

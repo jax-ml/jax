@@ -901,7 +901,7 @@ error_checks[lax.while_p] = while_loop_error_check
 def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
                      in_shardings, out_shardings,
                      in_layouts, out_layouts,
-                     resource_env, donated_invars, name, inline, keep_unused,
+                     donated_invars, ctx_mesh, name, inline, keep_unused,
                      compiler_options_kvs):
   # jaxpr to checked_jaxpr
   err_vals, err_tree = jtu.tree_flatten(error)
@@ -928,8 +928,8 @@ def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
       out_shardings=new_out_shardings,
       in_layouts=new_in_layouts,
       out_layouts=new_out_layouts,
-      resource_env=resource_env,
       donated_invars=new_donated_invars,
+      ctx_mesh=ctx_mesh,
       name=name,
       inline=inline,
       keep_unused=keep_unused,

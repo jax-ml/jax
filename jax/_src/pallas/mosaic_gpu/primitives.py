@@ -86,6 +86,7 @@ def _copy_smem_to_gmem_lowering(
     src_transforms_treedef,
     dst_transforms_treedef,
     has_user_predicate,
+    commit_group,
 ):
   predicate = ctx.module_ctx.single_wg_lane_predicate
   if has_user_predicate:
@@ -106,6 +107,7 @@ def _copy_smem_to_gmem_lowering(
         src_ref=src,
         dst_ref=dst,
         predicate=predicate,
+        arrive=commit_group,
         **copy_params,
     )
     return ()
@@ -119,7 +121,12 @@ def _copy_smem_to_gmem_lowering(
   assert copy_params.get("swizzle") is None
   assert not copy_params.get("gmem_transform")
   mgpu.dialect.async_store(
-      src, dst, indices, slice_lengths, predicate=predicate
+      src,
+      dst,
+      indices,
+      slice_lengths,
+      predicate=predicate,
+      commit_group=commit_group,  # type: ignore[call-arg]
   )
   return ()
 
@@ -174,7 +181,11 @@ def _extract_smem_copy_params(transforms):
 
 
 def copy_smem_to_gmem(
-    src: _Ref, dst: _Ref, predicate: jax.Array | None = None
+    src: _Ref,
+    dst: _Ref,
+    predicate: jax.Array | None = None,
+    *,
+    commit_group: bool = True,
 ) -> None:
   """Asynchronously copies a SMEM reference to a GMEM reference.
 
@@ -183,6 +194,9 @@ def copy_smem_to_gmem(
     dst: The GMEM reference to copy to.
     predicate: A boolean indicating whether the copy should be performed. If
       ``None``, the copy is always performed.
+    commit_group: If ``True``, this and any previously uncommitted copies
+      are committed to a group and can be awaited jointly via
+      :func:`jax.experimental.mosaic.gpu.wait_smem_to_gmem`.
 
   See also:
     :func:`jax.experimental.mosaic.gpu.wait_smem_to_gmem`
@@ -209,6 +223,7 @@ def copy_smem_to_gmem(
       src_transforms_treedef=src_transforms_treedef,
       dst_transforms_treedef=dst_transforms_treedef,
       has_user_predicate=predicate is not None,
+      commit_group=commit_group,
   )
   return None
 
@@ -473,6 +488,28 @@ def wait_smem_to_gmem(n: int, wait_read_only: bool = False) -> None:
       reading from SMEM. The writes to GMEM are not waited for.
   """
   wait_smem_to_gmem_p.bind(n, wait_read_only=wait_read_only)
+
+
+commit_group_p = jax_core.Primitive("commit_group")
+commit_group_p.multiple_results = True
+
+
+@commit_group_p.def_effectful_abstract_eval
+def _commit_group_abstract_eval():
+  return (), {gpu_core._memory_effect}
+
+
+@lowering.register_lowering_rule(commit_group_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(commit_group_p, mgpu.ThreadSemantics.Warpgroup)
+def _commit_group_lowering(ctx: lowering.LoweringRuleContext):
+  del ctx  # Unused.
+  nvvm_dialect.cp_async_bulk_commit_group()
+  return ()
+
+
+def commit_smem_to_gmem_group() -> None:
+  """Commits all issued but uncommited SMEM->GMEM copies to a group."""
+  commit_group_p.bind()
 
 
 # WGMMA on an accumulator reference

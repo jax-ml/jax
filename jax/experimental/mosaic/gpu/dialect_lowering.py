@@ -28,6 +28,7 @@ from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import func
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import llvm
+from jax._src.lib.mlir.dialects import math as mlir_math
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
@@ -234,11 +235,6 @@ def _vector_load_op_lowering_rule(
       ir.ArrayAttr, vector_load_op.attributes["out_layouts"]
   )
 
-  if not layouts.is_strided_fragmented_layout(out_layout_attr):
-    raise ValueError(
-        f"{vector_load_op} has an unsupported layout: {out_layout_attr}"
-    )
-
   for i in vector_load_op.indices:
     index_defining_op = i.owner.opview
     if (
@@ -254,9 +250,28 @@ def _vector_load_op_lowering_rule(
   element_type = vector_load_op.result.type.element_type
   is_signed = False if ir.IntegerType.isinstance(element_type) else None
 
-  fragmented_array = fa.FragmentedArray.load_strided(
-      vector_load_op.base, is_signed=is_signed
-  )
+  if layouts.is_strided_fragmented_layout(out_layout_attr):
+    strided_layout = layouts.from_strided_fragmented_layout_attr(
+        out_layout_attr
+    )
+    fragmented_array = fa.FragmentedArray.load_strided(
+        vector_load_op.base,
+        is_signed=is_signed,
+        vec_size=strided_layout.vec_size,
+    )
+  elif layouts.is_wgmma_fragmented_layout(out_layout_attr):
+    layout = ir.MemRefType(vector_load_op.base.type).layout
+    swizzle, transforms = memref_layout_to_swizzle_and_transforms(layout)
+    transformed_ref = transform_memref(vector_load_op.base, transforms)
+    fragmented_array = fa.FragmentedArray.load_tiled(
+        transformed_ref,
+        swizzle=swizzle,
+        is_signed=is_signed
+    )
+  else:
+    raise ValueError(
+        f"{vector_load_op} has an unsupported layout: {out_layout_attr}"
+    )
   return [_fragmented_array_to_ir(fragmented_array, vector_load_op.result.type)]
 
 
@@ -424,8 +439,75 @@ def _mgpu_async_store_op_lowering_rule(
       gmem_transform=transforms,
       uniform=True,
       predicate=ctx.single_thread_per_warpgroup_predicate,
+      arrive=store_op.commit_group,
   )
   return []
+
+
+def _conversion_op_lowering_rule(
+    _: LoweringContext,
+    op: ir.OpView,
+    source_is_signed: bool | None,
+    target_is_signed: bool | None,
+) -> Sequence[ir.Value]:
+  [in_layout] = inference_utils.in_layouts(op)
+  [layout] = inference_utils.out_layouts(op)
+  if in_layout != layout:
+    raise ValueError("Layout mismatch")
+
+  target_ty = op.result.type.element_type  # pytype: disable=attribute-error
+  operand = _fragmented_array_from_ir(op.operands[0], layout, source_is_signed)
+  converted = operand.astype(target_ty, is_signed=target_is_signed)
+  return [_fragmented_array_to_ir(converted, op.result.type)]
+
+
+for op, source_is_signed, target_is_signed in [
+    (arith.ExtFOp, None, None),
+    (arith.ExtSIOp, True, True),
+    (arith.ExtUIOp, False, False),
+    (arith.FPToSIOp, None, True),
+    (arith.FPToUIOp, None, False),
+    (arith.SIToFPOp, True, None),
+    (arith.TruncFOp, None, None),
+    (arith.TruncIOp, False, False),
+    (arith.UIToFPOp, False, None),
+]:
+  _lowerings[op.OPERATION_NAME] = functools.partial(
+      _conversion_op_lowering_rule,
+      source_is_signed=source_is_signed,
+      target_is_signed=target_is_signed,
+  )
+
+
+def _unary_op_lowering_rule(
+    _: LoweringContext,
+    op: Any,
+    impl: Callable[[fa.FragmentedArray], fa.FragmentedArray],
+    is_signed: bool | None = None,
+) -> Sequence[ir.Value]:
+  in_layouts = inference_utils.in_layouts(op)
+  [layout] = inference_utils.out_layouts(op)
+  if any(in_layout != layout for in_layout in in_layouts):
+    raise ValueError("Layout mismatch")
+  kwargs = {}
+  if hasattr(op, "fastmath"):
+    kwargs = dict(
+        approx=op.fastmath == ir.Attribute.parse("#arith.fastmath<afn>")
+    )
+  a = _fragmented_array_from_ir(op.operand, layout, is_signed)
+  return [_fragmented_array_to_ir(impl(a, **kwargs), op.result.type)]
+
+
+for op, impl, is_signed in [
+    (mlir_math.RsqrtOp, fa.FragmentedArray.rsqrt, None),
+    (mlir_math.ExpOp, fa.FragmentedArray.exp, None),
+    (mlir_math.Exp2Op, fa.FragmentedArray.exp2, None),
+    (mlir_math.LogOp, fa.FragmentedArray.log, None),
+    (mlir_math.TanhOp, fa.FragmentedArray.tanh, None),
+]:
+  _lowerings[op.OPERATION_NAME] = functools.partial(
+      _unary_op_lowering_rule, impl=impl, is_signed=is_signed
+  )
 
 
 def _binary_op_lowering_rule(
@@ -523,6 +605,25 @@ def _cmpf_op_lowering_rule(
   lhs = _fragmented_array_from_ir(op.lhs, layout)
   rhs = _fragmented_array_from_ir(op.rhs, layout)
   return [_fragmented_array_to_ir(impl(lhs, rhs), op.result.type)]
+
+
+@_register_lowering(arith.BitcastOp)
+def _bitcast_op_lowering_rule(
+    _: LoweringContext, op: arith.BitcastOp
+) -> Sequence[ir.Value]:
+  in_layouts = inference_utils.in_layouts(op)
+  [layout] = inference_utils.out_layouts(op)
+  if any(in_layout != layout for in_layout in in_layouts):
+    raise ValueError("Layout mismatch")
+  in_ = _fragmented_array_from_ir(op.in_, layout)
+  out_element_type = ir.VectorType(op.result.type).element_type
+  out = in_.bitcast(
+      out_element_type,
+      output_is_signed=False
+      if ir.IntegerType.isinstance(out_element_type)
+      else None,
+  )
+  return [_fragmented_array_to_ir(out, op.result.type)]
 
 
 @_register_lowering(mgpu.WGMMAOp)
@@ -689,8 +790,12 @@ def _for_op_lowering_rule(
     new_args = (new_for_op.induction_variable, *recreated_carry)
     for old_carry, new_carry in zip(for_op.body.arguments, new_args, strict=True):
       old_carry.replace_all_uses_with(new_carry)
-    for op in ops_to_lower:
+
+  for op in ops_to_lower:
+    with ir.InsertionPoint(op):
       ctx.lower_op(op)
+
+  with ir.InsertionPoint(new_for_op.body):
     new_yield_operands = lower_carry(yield_op.operands)
     yield_op.erase()
     scf.yield_(new_yield_operands)

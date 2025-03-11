@@ -17,12 +17,11 @@ cusparse wrappers for performing sparse matrix computations in JAX
 
 import math
 from functools import partial
+from typing import Any
 
 import jaxlib.mlir.ir as ir
 
 import numpy as np
-
-from jaxlib import xla_client
 
 from .hlo_helpers import custom_call, mk_result_types_and_shapes
 
@@ -31,17 +30,14 @@ from .plugin_support import import_from_plugin
 _cusparse = import_from_plugin("cuda", "_sparse")
 _hipsparse = import_from_plugin("rocm", "_sparse")
 
-if _cusparse:
-  for _name, _value in _cusparse.registrations().items():
-    api_version = 1 if _name.endswith("_ffi") else 0
-    xla_client.register_custom_call_target(_name, _value, platform="CUDA",
-                                           api_version=api_version)
-
-if _hipsparse:
-  for _name, _value in _hipsparse.registrations().items():
-    api_version = 1 if _name.endswith("_ffi") else 0
-    xla_client.register_custom_call_target(_name, _value, platform="ROCM",
-                                           api_version=api_version)
+def registrations() -> dict[str, list[tuple[str, Any, int]]]:
+  registrations = {"CUDA": [], "ROCM": []}
+  for platform, module in [("CUDA", _cusparse), ("ROCM", _hipsparse)]:
+    if module:
+      registrations[platform].extend(
+          (name, value, int(name.endswith("_ffi")))
+          for name, value in module.registrations().items())
+  return registrations  # pytype: disable=bad-return-type
 
 
 cuda_is_supported = bool(_cusparse and _cusparse.sparse_supported)

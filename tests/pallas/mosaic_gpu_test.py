@@ -81,24 +81,37 @@ class PallasSm90ATest(PallasTest, jtu.CudaArchSpecificTest):
 
 class PallasCallTest(PallasTest):
 
-  @parameterized.named_parameters(
-      ("add_one", lambda x:  x + 1.),
-      ("logistic", jax.lax.logistic),
-      ("exp", jax.lax.exp),
-      ("square", lambda x: x ** 2),
-      ("rsqrt", jax.lax.rsqrt),
-      ("tanh", jax.lax.tanh, 1e-6),
+  @parameterized.product(
+      op=[
+          lax.neg,
+          lax.bitwise_not,
+          lax.logistic,
+          lax.exp,
+          lambda x: x**2,
+          lax.rsqrt,
+          lax.tanh,
+          lax.log,
+      ],
+      approx_math=[True, False],
+      thread_semantics=[*plgpu.ThreadSemantics],
   )
-  def test_unary_op(self, unary, rtol=1e-7):
+  def test_unary_op(self, op, approx_math, thread_semantics):
+    dtype = jnp.int32 if op is lax.bitwise_not else jnp.float32
+
     @functools.partial(
         pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+        out_shape=jax.ShapeDtypeStruct([256], dtype),
+        compiler_params=plgpu.GPUCompilerParams(
+            approx_math=approx_math, thread_semantics=thread_semantics
+        ),
     )
     def kernel(x_ref, o_ref):
-      o_ref[...] = unary(x_ref[...])
+      o_ref[...] = op(x_ref[...])
 
-    x = jnp.arange(256).astype(jnp.float32)
-    np.testing.assert_allclose(kernel(x), unary(x), rtol=rtol)
+    x = jnp.arange(256).astype(dtype)
+    np.testing.assert_allclose(
+        kernel(x), op(x), rtol=1e-5 if approx_math else 3e-7
+    )
 
   @parameterized.product(
       op=[
@@ -641,18 +654,25 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + x.sum()*2)
 
-  @parameterized.parameters(False, True)
-  def test_rsqrt(self, approx_math):
+  @parameterized.named_parameters(
+      ("rsqrt", jax.lax.rsqrt, ),
+      ("log", jax.lax.log, 5e-7),
+      ("exp", jax.lax.exp, ),
+      ("exp2", jax.lax.exp2, 5e-7),
+      ("logistic", jax.lax.logistic, ),
+      ("tanh", jax.lax.tanh, 5e-7),
+  )
+  def test_approx_math_unary_op(self, unary_op, rtol=1e-7):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
-        compiler_params=plgpu.GPUCompilerParams(approx_math=approx_math),
+        compiler_params=plgpu.GPUCompilerParams(approx_math=True),
     )
     def kernel(x_ref, o_ref):
-      o_ref[...] = jax.lax.rsqrt(x_ref[...])
+      o_ref[...] = unary_op(x_ref[...])
 
-    x = jnp.arange(128).astype(jnp.float32)
-    np.testing.assert_allclose(kernel(x), jax.lax.rsqrt(x))
+    x = jnp.arange(128).astype(jnp.float32) / 128
+    np.testing.assert_allclose(kernel(x), unary_op(x), rtol=rtol, atol=1e-5)
 
   @parameterized.product(input_factor=[0.001, 1, 10, 100, 100])
   def test_layer_norm(self, input_factor):
@@ -706,7 +726,7 @@ class PallasCallTest(PallasTest):
     shape = (128, 64)
     size = math.prod(shape)
     def kernel(x_ref, o_ref):
-      pl.debug_print("{}", x_ref[...])
+      pl.debug_print("prefix {}", x_ref[...])
     spec = plgpu.GPUBlockSpec(shape, lambda: (0, 0), transforms=(plgpu.TilingTransform((64, 32)), plgpu.SwizzleTransform(128)))
     x = jnp.arange(size, dtype=jnp.float32).reshape(shape)
     f = pl.pallas_call(kernel, out_shape=x, in_specs=[spec], out_specs=spec)
@@ -715,8 +735,8 @@ class PallasCallTest(PallasTest):
       jax.block_until_ready(f(x))
 
     output = get_output()
-    results = re.findall(r"\[(\d+), (\d+)\]/\[128, 64\]: (\d+)", output)
-    self.assertLen(results, size)
+    results = re.findall(r"prefix \[(\d+), (\d+)\]: (\d+).?\d*", output)
+    self.assertLen(results, size, output)
     for i, j, v in results:
       i, j, v = map(int, (i, j, v))
       self.assertEqual(v, i * shape[1] + j)
@@ -766,7 +786,7 @@ class PallasCallTest(PallasTest):
     with self.capture_stdout() as output:
       jax.block_until_ready(kernel(x))
 
-    self.assertIn(f"x: [1, 0, 43, 23]/{in_shape}: 6871\n", output())
+    self.assertIn("x: [1, 0, 43, 23]: 6871\n", output())
 
   def test_load_scalar(self):
     @functools.partial(
@@ -1153,29 +1173,38 @@ class PallasCallTest(PallasTest):
         self.assertEqual(data.count('"name": "store"'), 2)
       np.testing.assert_array_equal(y, x + x)
 
-  @parameterized.parameters(
-      (jnp.float16, jnp.float16),  # Noop
-      (jnp.int16, jnp.bfloat16),
-      (jnp.int16, jnp.float16),
-      (jnp.uint16, jnp.float16),
-      (jnp.float32, jnp.int32),
-      (jnp.float32, jnp.uint32),
-      (jnp.uint32, jnp.int32),
-      (jnp.int32, jnp.uint32),
+  @parameterized.product(
+      dtypes=[
+          (jnp.float16, jnp.float16),  # Noop
+          (jnp.int16, jnp.bfloat16),
+          (jnp.int16, jnp.float16),
+          (jnp.uint16, jnp.float16),
+          (jnp.float32, jnp.int32),
+          (jnp.float32, jnp.uint32),
+          (jnp.uint32, jnp.int32),
+          (jnp.int32, jnp.uint32),
+      ],
+      thread_semantics=[*plgpu.ThreadSemantics],
   )
-  def test_bitcast_convert_type(self, in_dtype, out_dtype):
+  def test_bitcast_convert_type(self, dtypes, thread_semantics):
+    in_dtype, out_dtype = dtypes
     m, n = 16, 8
     out_shape = jax.ShapeDtypeStruct((m, n), out_dtype)
-    grid = ()
 
-    @functools.partial(pl.pallas_call, out_shape=out_shape, grid=grid)
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=out_shape,
+        compiler_params=plgpu.GPUCompilerParams(
+            thread_semantics=thread_semantics
+        ),
+    )
     def convert(x_ref, y_ref):
       y_ref[...] = jax.lax.bitcast_convert_type(x_ref[...], out_shape)
 
     x = jnp.arange(m * n, dtype=in_dtype).reshape((m, n))
-    y = convert(x)
-    y_ref = jax.lax.bitcast_convert_type(x, out_dtype)
-    np.testing.assert_array_equal(y, y_ref)
+    np.testing.assert_array_equal(
+        convert(x), jax.lax.bitcast_convert_type(x, out_dtype)
+    )
 
 
 class PallasCallSm90ATest(PallasSm90ATest):
