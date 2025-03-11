@@ -116,6 +116,9 @@ jobs:
           exit 1
       - name: Install Python dependencies
         run: |
+          # Remove installation of NVIDIA wheels for CPU tests.
+          sed -i 's/-r gpu-test-requirements.txt/# -r gpu-test-requirements.txt/g' build/requirements.in
+
           # TODO(srnitin): Remove after uv is installed in the Windows Dockerfile
           $JAXCI_PYTHON -m pip install uv~=0.5.30
           # python 3.13t cannot compile zstandard 0.23.0 due to
