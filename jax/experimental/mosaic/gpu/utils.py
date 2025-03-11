@@ -1201,3 +1201,7 @@ def bitcast(x: ir.Value, new_type: ir.Type):
     assert x_ty.width == bitwidth(new_type.element_type) * math.prod(new_type.shape)
     return vector.bitcast(new_type, vector.splat(ir.VectorType.get((1,), x_ty), x))
   raise ValueError(f"Can't bitcast {x.type} to {new_type}")
+
+
+def ceil_div(x: int, y: int):
+  return (x + y - 1) // y

@@ -83,6 +83,7 @@ def mma(
     accumulate: ir.Value | bool = True,
     collective: bool = False,
 ):
+  i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
   if isinstance(accumulate, bool):
     accumulate = arith.constant(ir.IntegerType.get_signless(1), accumulate)
@@ -112,6 +113,10 @@ def mma(
     raise ValueError(
         f"Accumulator shape mismatch: expected {(m, n * num_cta)}, got {d.shape}"
     )
+  if d.layout != (expected_layout := _infer_tmem_layout(d.shape, collective)):
+    raise ValueError(
+        f"Accumulator layout mismatch: expected {expected_layout}, got {d.layout}"
+    )
   f32 = ir.F32Type.get()
   if element_type == f32 or element_type == ir.BF16Type.get():
     if d.dtype != f32:
@@ -136,11 +141,7 @@ def mma(
     raise ValueError(f"N must be a multiple of 8, got: {n}")
   elif n > 256 and n != 512:
     raise ValueError("Only N below 256 or N=512 are supported")
-  if num_cta == 2 and n > 256:
-    raise NotImplementedError(
-        "N is too big for collective MMA. Only up to 256 is supported."
-    )
-  n_group_elems = min(n, 256)
+  n_group_elems = min(n, 256 // num_cta)
   if m % m_group_elems:
     raise ValueError(f"M must be a multiple of {m_group_elems}, got: {m}")
   if k % k_group_elems:
@@ -179,6 +180,7 @@ def mma(
 
   # Step 4. Issue the instructions.
   true = arith.constant(ir.IntegerType.get_signless(1), 1)
+  n_collective_group_elems = n_group_elems * num_cta
   for mi, ni, ki in np.ndindex(m_groups, n_groups, k_groups):
     a_offset = mi * a_m_group_stride + ki * a_k_group_stride
     a_mk = arith.addi(a_desc_base, utils.c(mma_utils.encode_addr(a_offset), i64))
@@ -188,9 +190,9 @@ def mma(
       raise NotImplementedError("D needs to be sliced")
     acc = accumulate if ki == 0 else true
     _do_mma(
-        d.slice(
-            slice(None), utils.ds(ni * n_group_elems, n_group_elems)
-        ).address,
+        arith.addi(
+            d.address, arith.constant(i32, ni * n_collective_group_elems)
+        ),
         a_mk,
         b_nk,
         d_type=ir.F32Type.get(),
@@ -377,8 +379,15 @@ class TMEMLayout:
     +------------------+------------------+
     | [0:64, 64:128]   | [64:128, 64:128] |
     +------------------+------------------+
+
+  The above is further complicated by column_tile_stride, which is used to
+  swizzle the ordering of column tiles. That is, if column_tile_stride is 2,
+  we will first lay out all tiles that have the column index 0, 2, 4, and so on
+  until we run out of tiles. Only then we lay out the tiles with column index
+  1, 3, etc.
   """
   elements_in_tile: tuple[int, int]
+  column_tile_stride: int = 1
 
   def __post_init__(self):
     row_tiling = self.elements_in_tile[0]
@@ -405,7 +414,7 @@ class TMEMLayout:
     return num_tiles // tiles_in_row * cols_in_tile
 
 
-def _infer_tmem_layout(shape: tuple[int, int]) -> TMEMLayout:
+def _infer_tmem_layout(shape: tuple[int, int], collective: bool) -> TMEMLayout:
   if shape[0] > TMEM_ROWS:
     raise ValueError(
         "Can only infer TMEM layout for shapes with at most 128 rows, got:"
@@ -421,7 +430,15 @@ def _infer_tmem_layout(shape: tuple[int, int]) -> TMEMLayout:
         "Can only infer TMEM layout for shapes with row count that's a power of"
         f" 2, got: {shape[0]}"
     )
-  return TMEMLayout(elements_in_tile=(shape[0], 1))
+  if shape[1] % 8:
+    raise ValueError(
+        "Can only infer TMEM layout for shapes with column count that's a"
+        f" multiple of 8, got: {shape[1]}"
+    )
+  if collective and shape[1] == 512:
+    return TMEMLayout(elements_in_tile=(shape[0], 128), column_tile_stride=2)
+  else:
+    return TMEMLayout(elements_in_tile=(shape[0], 8))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -432,7 +449,14 @@ class TMEMRef:
   layout: TMEMLayout
 
   @classmethod
-  def from_alloc(cls, tmem_addr_ref: ir.Value, shape: tuple[int, int], dtype, layout: TMEMLayout | None = None):
+  def from_alloc(
+      cls,
+      tmem_addr_ref: ir.Value,
+      shape: tuple[int, int],
+      dtype,
+      collective: bool | None = None,
+      layout: TMEMLayout | None = None,
+  ):
     i32 = ir.IntegerType.get_signless(32)
     if not ir.MemRefType.isinstance(tmem_addr_ref.type):
       raise ValueError(f"tmem_addr_ref must be a memref or a pointer, got: {tmem_addr_ref.type}")
@@ -449,7 +473,11 @@ class TMEMRef:
     if shape[0] < 32:
       raise ValueError(f"TMEM refs must have at least 32 rows, got: {shape[0]}")
     if layout is None:
-      layout = _infer_tmem_layout(shape)
+      if collective is None:
+        raise ValueError(
+            "collective argument must be provided when TMEM layout is inferred"
+        )
+      layout = _infer_tmem_layout(shape, collective)
     else:
       layout.check_shape(shape)
     # TODO: Do we have to do this??
@@ -461,12 +489,17 @@ class TMEMRef:
     base_idx, slice_shape, is_squeezed = utils.parse_indices(idxs, self.shape)
     if any(is_squeezed):
       raise ValueError("TMEM can only be sliced, not indexed")
-    if self.layout.elements_in_tile[0] != TMEM_ROWS:
+    if self.layout != TMEMLayout(elements_in_tile=(TMEM_ROWS, 8)):
       raise NotImplementedError(
-          f"Slicing only implemented for refs with tiling of {TMEM_ROWS} rows"
+          "Slicing only implemented for refs with standard layout, got:"
+          f" {self.layout}"
       )
     if base_idx[0] != 0 or slice_shape[0] != TMEM_ROWS:
       raise NotImplementedError("TMEM cannot be sliced along rows")
+    if slice_shape[1] % 8:
+      raise NotImplementedError(
+          "TMEM column slice length must be a multiple of 8"
+      )
     col_idx = base_idx[1]
     if not isinstance(col_idx, ir.Value):
       col_idx = arith.constant(ir.IntegerType.get_signless(32), col_idx)
@@ -484,47 +517,74 @@ class TMEMRef:
       raise ValueError("TMEM loads only support slicing")
     if any(idx != 0 for idx in base_idxs) or tuple(slice_shape) != self.shape:
       raise NotImplementedError("Slicing of TMEM not impelmented yet")
-    if self.layout.elements_in_tile[0] != TMEM_ROWS:
-      raise NotImplementedError(
-          f"Loads only implemented for refs with tiling of {TMEM_ROWS} rows"
-      )
     if self.shape[1] % 8:
       raise NotImplementedError
     if self.dtype != ir.F32Type.get():
       raise NotImplementedError(self.dtype)
     layout = _m128_256bit_32bit_layout(self.shape)
     regs_shape = layout.registers_shape(self.shape)
-    num = self.shape[1] // 8
-    # TODO(apaszke): Make the tiling configurable through the args too.
-    if num <= 32:
-      num_tiling = num
-    elif num == 64:
-      num_tiling = 32
-    else:
-      raise NotImplementedError(num)
-    registers = np.empty(regs_shape, dtype=object)
-    # We load 16 lanes at a time, but need 32 in total.
-    for row_group in range(2):
-      addr_row = arith.addi(self.address, arith.constant(i32, (row_group * 16) << 16))
-      regs = []
-      cols_per_num_tile = 8  # This depends on the 16x256b below.
-      for num_group in range(num // num_tiling):
-        addr_row_col = arith.addi(
-            addr_row,
-            arith.constant(i32, num_tiling * num_group * cols_per_num_tile),
+    if self.layout == TMEMLayout(elements_in_tile=(TMEM_ROWS, 8)):
+      # load_32xcols returns a 4xN array, but the FA tiling we use here tiles
+      # columns before rows, and so it is Nx4 (after ignoring all 1 dims).
+      registers = _load_32xcols(
+          self.address, self.shape[1], self.dtype
+      ).T.reshape(regs_shape)
+    elif self.layout == TMEMLayout(elements_in_tile=(TMEM_ROWS, 128), column_tile_stride=2):
+      if self.shape[1] % 128 != 0:
+        raise ValueError(
+            f"TMEM layout {self.layout} is not compatible with shape {self.shape}"
         )
-        regs += tmem_load(addr_row_col, "16x256b", num_tiling)
-      regs = [llvm.bitcast(self.dtype, r) for r in regs]
-      vector_regs = []
-      undef = llvm.mlir_undef(ir.VectorType.get((2,), self.dtype))
-      for r_low, r_high in zip(regs[::2], regs[1::2]):
-        high_undef = llvm.insertelement(undef, r_low, utils.c(0, i32))
-        vreg = llvm.insertelement(high_undef, r_high, utils.c(1, i32))
-        vector_regs.append(vreg)
-      # Dimension 4 is the one where we split 32 rows into tiles of 8.
-      regs_slice = (slice(None),) * 4 + (slice(row_group * 2, (row_group + 1) * 2),)
-      registers[regs_slice] = np.asarray(vector_regs, dtype=object).reshape(registers[regs_slice].shape)
+      num_column_tiles = self.shape[1] // 128
+      column_tile_stride = self.layout.column_tile_stride
+      num_strided_col_groups = utils.ceil_div(num_column_tiles, column_tile_stride)
+      tiles = []
+      for col_tile_base in range(num_strided_col_groups):
+        for col_tile in range(col_tile_base, num_column_tiles, column_tile_stride):
+          tiles.append(
+              _load_32xcols(
+                  arith.addi(self.address, arith.constant(i32, col_tile * 128)),
+                  cols=128,
+                  dtype=self.dtype,
+              )
+          )
+      registers = np.concatenate(tiles, axis=1).T.reshape(regs_shape)
+    else:
+      raise NotImplementedError(
+          f"Loads only implemented for refs with standard layout, got: {self.layout}"
+      )
     return fa.FragmentedArray(_registers=registers, _layout=layout, _is_signed=None)
+
+def _load_32xcols(base_addr, cols, dtype):
+  # See https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-matrix-fragments-shape-16256b
+  i32 = ir.IntegerType.get_signless(32)
+  assert cols % 8 == 0
+  cols_per_num_tile = 8
+  load_shape = "16x256b"
+  num = cols // 8
+  if num <= 32:
+    num_tiling = num
+  elif num == 64:
+    num_tiling = 32
+  else:
+    raise NotImplementedError(num)
+  vector_regs = np.ndarray((4, num), dtype=object)
+  # We load 16 lanes at a time, but need 32 in total.
+  for row_group in range(2):
+    addr_row = arith.addi(base_addr, arith.constant(i32, (row_group * 16) << 16))
+    regs = []
+    for num_group in range(num // num_tiling):
+      addr_row_col = arith.addi(
+          addr_row,
+          arith.constant(i32, num_tiling * num_group * cols_per_num_tile),
+      )
+      regs += tmem_load(addr_row_col, load_shape, num_tiling)
+    regs = [llvm.bitcast(dtype, r) for r in regs]
+    undef = llvm.mlir_undef(ir.VectorType.get((2,), dtype))
+    for r_low, r_high, idx in zip(regs[::2], regs[1::2], np.ndindex(num, 2)):
+      high_undef = llvm.insertelement(undef, r_low, utils.c(0, i32))
+      vreg = llvm.insertelement(high_undef, r_high, utils.c(1, i32))
+      vector_regs[idx[1] + 2 * row_group, idx[0]] = vreg
+  return vector_regs
 
 
 def _m128_256bit_32bit_layout(shape: tuple[int, ...]):
