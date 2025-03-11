@@ -158,6 +158,31 @@ bool canReinterpretToUntiledMemref(TypedValue<MemRefType> tiled_memref,
          *(tiled_layout.getTileStrides().end() - 2) == 1;
 }
 
+MemRefType getBaseMemrefType(TypedValue<MemRefType> ref) {
+  if (auto erase_op = ref.getDefiningOp<tpu::EraseLayoutOp>()) {
+    ref = erase_op.getOperand();
+  }
+  auto op = ref.getDefiningOp();
+  while (op) {
+    if (auto def_op = dyn_cast<tpu::MemRefSliceOp>(*op)) {
+      ref = def_op.getMemRef();
+    } else if (auto def_op = dyn_cast<tpu::MemRefBitcastOp>(*op)) {
+      ref = def_op.getInput();
+    } else if (auto def_op = dyn_cast<tpu::MemRefSqueezeOp>(*op)) {
+      ref = def_op.getInput();
+    } else if (auto def_op = dyn_cast<tpu::MemRefReshapeOp>(*op)) {
+      ref = def_op.getInput();
+    } else {
+      return ref.getType();
+    }
+    if (auto erase_op = ref.getDefiningOp<tpu::EraseLayoutOp>()) {
+      ref = erase_op.getOperand();
+    }
+    op = ref.getDefiningOp();
+  }
+  return ref.getType();
+}
+
 bool HasMemorySpace(MemRefType ty, tpu::MemorySpace space) {
   auto memory_space =
       dyn_cast_or_null<tpu::MemorySpaceAttr>(ty.getMemorySpace());
