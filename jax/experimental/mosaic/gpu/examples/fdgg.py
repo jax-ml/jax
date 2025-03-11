@@ -107,8 +107,6 @@ def build_kernel(
       m_start = arith.muli(m_idx, c(tile_m, index))
       n_start = arith.muli(n_idx, c(tile_n, index))
 
-      is_block_0 = arith.cmpi(arith.CmpIPredicate.eq, cta, c(0, index))
-
       with mgpu.when(is_leader_of(TMA_WARP)):
         @mgpu.fori(c(k_loop_iter, index), None)
         def _tma_body(ki, _):
