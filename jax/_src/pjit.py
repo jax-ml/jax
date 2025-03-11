@@ -644,6 +644,9 @@ def _infer_params_impl(
   assert (len(in_shardings_flat) == len(in_layouts_flat) ==
           len(donated_invars) == num_states_in + len(consts) + len(args_flat))
 
+  check_shardings_are_auto(in_shardings_flat, 'in_shardings argument of jax.jit')
+  check_shardings_are_auto(out_shardings_flat, 'out_shardings argument of jax.jit')
+
   params = dict(
       jaxpr=jaxpr,
       in_shardings=in_shardings_flat,
@@ -2483,7 +2486,7 @@ state_discharge.register_discharge_rule(pjit_p)(_pjit_state_discharge_rule)
 
 # -------------------- with_sharding_constraint --------------------
 
-def check_shardings_are_auto(shardings_flat):
+def check_shardings_are_auto(shardings_flat, name):
   for s in shardings_flat:
     if not isinstance(s, NamedSharding):
       continue
@@ -2493,7 +2496,7 @@ def check_shardings_are_auto(shardings_flat):
                if axes is not PartitionSpec.UNCONSTRAINED and axes is not None
                for i in (axes if isinstance(axes, tuple) else (axes,))):
       raise ValueError(
-          'The spec of NamedSharding passed to with_sharding_constraint can'
+          f'The spec of NamedSharding passed to {name} can'
           f' only refer to Auto axes of the mesh. Got spec={s.spec} and'
           f' mesh={mesh}')
 
@@ -2559,7 +2562,7 @@ def with_sharding_constraint(x, shardings):
       "with_sharding_constraint arguments",
       allow_uneven_sharding=True)
 
-  check_shardings_are_auto(shardings_flat)
+  check_shardings_are_auto(shardings_flat, 'with_sharding_constraint')
 
   check_aval_layout_compatibility(user_layouts_flat, x_flat,
                                   ("",) * len(user_layouts_flat),

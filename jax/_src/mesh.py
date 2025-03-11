@@ -544,11 +544,6 @@ class AbstractMesh(_BaseMesh):
   def __exit__(self, exc_type, exc_value, traceback):
     _raise_value_error("__exit__")
 
-  @staticmethod
-  def _extremely_unsafe_enter_tracing_context(mesh: AbstractMesh):
-    prev = jax_config.abstract_mesh_context_manager.swap_local(mesh)
-    return prev
-
 
 # Create this indirection because pytype fails to recognize a property if a
 # property raises an exception unconditionally. Remove this once that is fixed.
