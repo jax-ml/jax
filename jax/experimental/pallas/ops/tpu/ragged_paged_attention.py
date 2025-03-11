@@ -43,14 +43,22 @@ class MultiPageAsyncCopyDescriptor:
   ):
     self._vmem_buf = vmem_buf
     seq_id, kv_pages_start = offset
-    self._async_copies = [
-        pltpu.make_async_copy(
-            pages_hbm_ref.at[page_indices_ref[seq_id, kv_pages_start + i]],
-            vmem_buf.at[i],
-            sem,
-        )
-        for i in range(vmem_buf.shape[0])
-    ]
+    pages_per_seq = page_indices_ref.shape[1]
+    self._async_copies = []
+    # TODO(jevinjiang): Only fetch dynamic shape in need! This will insert
+    # a bunch of if-ops. Check the performance when we have benchmarking setup.
+    for i in range(vmem_buf.shape[0]):
+      page_idx = kv_pages_start + i
+      page_idx = jax.lax.select(
+          page_idx < pages_per_seq, page_idx, pages_per_seq - 1
+      )
+      self._async_copies.append(
+          pltpu.make_async_copy(
+              pages_hbm_ref.at[page_indices_ref[seq_id, page_idx]],
+              vmem_buf.at[i],
+              sem,
+          )
+      )
 
   def start(self):
     """Starts the async copies."""
