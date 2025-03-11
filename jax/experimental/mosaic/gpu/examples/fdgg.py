@@ -98,7 +98,6 @@ def build_kernel(
     warp_idx = mgpu.warp_idx(sync=True)
     is_warp_leader = nvvm.elect_sync(i1)
     is_leader_of = lambda i: arith.andi(arith.cmpi(arith.CmpIPredicate.eq, warp_idx, c(i, i32)), is_warp_leader)
-    is_leader_block = arith.cmpi(arith.CmpIPredicate.eq, ctx.cluster_idx(gpu.Dimension.x), c(0, index))
 
     cta = gpu.block_id(gpu.Dimension.x)
     @worker_for(worker_id=cta, worker_count=c(cta_count, index), work_count=c(tile_count, index))
@@ -118,10 +117,9 @@ def build_kernel(
           with mgpu.when(arith.cmpi(arith.CmpIPredicate.uge, ki, c(max_concurrent_steps, index))):
             ab_empty_barriers[slot].wait()
           full_barrier = ab_full_barriers[slot]
-          with mgpu.when(is_leader_block):
-            full_barrier.arrive_expect_tx(
-                bytecount((tile_m, tile_k), in_dtype) + bytecount((tile_n, tile_k), in_dtype)
-            )
+          full_barrier.arrive_expect_tx(
+              bytecount((tile_m, tile_k), in_dtype) + bytecount((tile_n, tile_k), in_dtype)
+          )
           k_start = arith.muli(ki, c(tile_k, index))
           common_args = dict(
               swizzle=swizzle,
@@ -144,7 +142,7 @@ def build_kernel(
               **common_args,
           )
 
-      with mgpu.when(arith.andi(is_leader_of(MMA_WARP), is_leader_block)):
+      with mgpu.when(is_leader_of(MMA_WARP)):
         @mgpu.fori(c(k_loop_iter, index), arith.constant(i1, 0))
         def _mma_body(ki, accumulate):
           slot = arith.remui(ki, c(max_concurrent_steps, index))
