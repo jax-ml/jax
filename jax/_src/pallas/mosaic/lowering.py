@@ -1853,7 +1853,13 @@ def jax_dot_dims_to_tpu_dot_dot_dims(dimension_numbers, lhs_shape, rhs_shape):
 
 
 def _dot_general_lowering_rule(
-    ctx: LoweringRuleContext, x, y, dimension_numbers, precision, **_
+    ctx: LoweringRuleContext,
+    x,
+    y,
+    dimension_numbers,
+    precision,
+    preferred_element_type,
+    **_,
 ):
   (lhs_dims, rhs_dims), _ = dimension_numbers
   (aval_out,) = ctx.avals_out
@@ -1894,10 +1900,34 @@ def _dot_general_lowering_rule(
         x = vector.broadcast(bcast_shape, x)
       if ctx.avals_in[1].shape != bcast_shape:
         y = vector.broadcast(bcast_shape, y)
+    red_dtype = (
+        preferred_element_type if preferred_element_type else lhs_aval.dtype
+    )
     red_type = aval_to_ir_type(
         ctx.lowering_context.dynamic_shape_replacement_fn,
-        lhs_aval.update(shape=(lhs_aval.shape[0],)),
+        lhs_aval.update(shape=(lhs_aval.shape[0],), dtype=red_dtype),
     )
+
+    if lhs_aval.dtype != red_dtype:
+      lhs_type = aval_to_ir_type(
+          ctx.lowering_context.dynamic_shape_replacement_fn,
+          lhs_aval.update(shape=lhs_aval.shape, dtype=red_dtype),
+      )
+      if red_dtype == jnp.float32:
+        x = arith.extf(lhs_type, x)
+      else:
+        raise NotImplementedError(f"Unsupported {preferred_element_type=}")
+
+    if rhs_aval.dtype != red_dtype:
+      rhs_type = aval_to_ir_type(
+          ctx.lowering_context.dynamic_shape_replacement_fn,
+          rhs_aval.update(shape=rhs_aval.shape, dtype=red_dtype),
+      )
+      if red_dtype == jnp.float32:
+        y = arith.extf(rhs_type, y)
+      else:
+        raise NotImplementedError(f"Unsupported {preferred_element_type=}")
+
     acc = arith.ConstantOp(
         red_type, ir.DenseElementsAttr.get_splat(red_type, val)
     )
