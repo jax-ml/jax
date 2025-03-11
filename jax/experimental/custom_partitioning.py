@@ -18,6 +18,7 @@
 from jax._src.custom_partitioning import (
     custom_partitioning as custom_partitioning,
     custom_partitioning_p as custom_partitioning_p,
+    batch_partitionable as batch_partitionable,
 )
 
 from jax._src.custom_partitioning_sharding_rule import (

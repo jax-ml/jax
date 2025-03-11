@@ -45,7 +45,7 @@ from jax.experimental import multihost_utils
 from jax.experimental.shard_map import shard_map
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax.experimental.custom_partitioning import (
-    custom_partitioning, SdyShardingRule, BATCHING)
+    batch_partitionable, custom_partitioning, SdyShardingRule, BATCHING)
 from jax._src import array
 from jax._src.sharding import Sharding, common_devices_indices_map
 from jax._src import op_shardings
@@ -1678,6 +1678,28 @@ class CustomPartitionerTest(jtu.JaxTestCase):
 
     jit_f = jax.jit(f, in_shardings=s, out_shardings=s)
     self.assertArraysEqual(x, jit_f(x))
+
+  @jtu.with_mesh([('x', 4)])
+  def test_batch_partitionable(self):
+    self.skip_if_custom_partitioning_not_supported()
+
+    @partial(batch_partitionable, num_batch_dims=1)
+    def f(x, y):
+      return x + y, x - y, x * y
+
+    x = np.asarray(np.random.randint(0, 20, (32, 4)), dtype=np.float32)
+    y = np.asarray(np.random.randint(0, 20, (32, 4)), dtype=np.float32)
+    pjit_f = pjit(f, in_shardings=(P('x', None), P('x', None)))
+    results = pjit_f(x, y)
+    self.assertArraysEqual(results[0], x + y)
+    self.assertArraysEqual(results[1], x - y)
+    self.assertArraysEqual(results[2], x * y)
+
+    pjit_f = pjit(f, in_shardings=(P('x', None), P(None, None)))
+    results = pjit_f(x, y)
+    self.assertArraysEqual(results[0], x + y)
+    self.assertArraysEqual(results[1], x - y)
+    self.assertArraysEqual(results[2], x * y)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
