@@ -2445,7 +2445,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       assert b.shape == ()
       return c, b
 
-    xs = jnp.ones((5, 3))
+    xs = jnp.ones((20, 3))
     c = jnp.ones(4)
 
     scan = lambda c, xs: lax.scan(f, c, xs)
