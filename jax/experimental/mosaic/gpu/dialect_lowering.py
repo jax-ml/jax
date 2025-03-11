@@ -259,14 +259,15 @@ def _vector_load_op_lowering_rule(
         is_signed=is_signed,
         vec_size=strided_layout.vec_size,
     )
-  elif layouts.is_wgmma_fragmented_layout(out_layout_attr):
+  elif layouts.from_layout_attr(out_layout_attr) == fa.TILED_LAYOUT_WGMMA:
     layout = ir.MemRefType(vector_load_op.base.type).layout
     swizzle, transforms = memref_layout_to_swizzle_and_transforms(layout)
     transformed_ref = transform_memref(vector_load_op.base, transforms)
     fragmented_array = fa.FragmentedArray.load_tiled(
         transformed_ref,
         swizzle=swizzle,
-        is_signed=is_signed
+        is_signed=is_signed,
+        layout=fa.TILED_LAYOUT_WGMMA,
     )
   else:
     raise ValueError(
@@ -634,7 +635,10 @@ def _mgpu_wgmma_op_lowering_rule(
       *inference_utils.in_layouts(wgmma_op),
       *inference_utils.out_layouts(wgmma_op),
   )
-  if not all(map(layouts.is_wgmma_fragmented_layout, fa_layouts)):
+  is_supported_layout = (
+      lambda l: layouts.from_tiled_layout_attr(l) == fa.TILED_LAYOUT_WGMMA
+  )
+  if not all(map(is_supported_layout, fa_layouts)):
     raise ValueError("Layout mismatch")
   wgmma_layout = fa_layouts[0]
 
@@ -667,7 +671,12 @@ def _mgpu_wgmma_op_lowering_rule(
 
   new_acc = wgmma.wgmma(acc, a_operand, b_operand, swizzle=b_swizzle)
 
-  return [_fragmented_array_to_ir(new_acc.value, wgmma_op.accumulator.type)]
+  return [
+      _fragmented_array_to_ir(
+          new_acc.value.to_layout(fa.TILED_LAYOUT_WGMMA),
+          wgmma_op.accumulator.type,
+      )
+  ]
 
 
 @_register_lowering(mgpu.ArriveExpectTxOp)

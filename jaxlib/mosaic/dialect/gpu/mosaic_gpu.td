@@ -128,7 +128,6 @@ def MosaicGPU_WGStridedFragLayout : AttrDef<MosaicGPU_Dialect, "WGStridedFragLay
   let assemblyFormat = "`<` $shape`,` $vector_size `>`";
 }
 
-
 def MosaicGPU_WGSplatFragLayout : AttrDef<MosaicGPU_Dialect, "WGSplatFragLayout", []> {
   let summary = "Annotates an array that is the result of a splat.";
   let description = [{
@@ -143,20 +142,6 @@ def MosaicGPU_WGSplatFragLayout : AttrDef<MosaicGPU_Dialect, "WGSplatFragLayout"
   let assemblyFormat = "`<` $shape `>`";
 }
 
-def MosaicGPU_WGMMAFragLayout : AttrDef<MosaicGPU_Dialect, "WGMMAFragLayout", []> {
-  let summary = "2D array that can be tiled by supported WGMMA shapes.";
-  let description = [{
-    This layout annotates arrays that are fragmented across all threads in a
-    warpgroup that is executing a WGMMA operation. The shape of the array is
-    (m, n) where:
-      - m % 64 == 0
-      - n %  8 == 0
-  }];
-
-  let mnemonic = "WGMMAFragLayout";
-  let assemblyFormat = "";
-}
-
 def MosaicGPU_WGMMARowFragLayout : AttrDef<MosaicGPU_Dialect, "WGMMARowFragLayout", []> {
   let summary = "1D array that is a row that can be tiled by supported WGMMA shapes.";
   let description = [{
@@ -168,6 +153,24 @@ def MosaicGPU_WGMMARowFragLayout : AttrDef<MosaicGPU_Dialect, "WGMMARowFragLayou
   let mnemonic = "WGMMARowFragLayout";
   let assemblyFormat = "";
 }
+
+def MosaicGPU_TiledLayout : AttrDef<MosaicGPU_Dialect, "TiledLayout", []> {
+  let summary = "A layout derived from a tiling expression.";
+  let description = [{
+    See mosaic/gpu/fragmented_array.py -> TiledLayout for more details.
+  }];
+
+  let parameters = (ins
+    "::mlir::ArrayAttr":$tiling,
+    "int":$warp_dim,
+    "::mlir::ArrayAttr":$lane_dims,
+    "int":$vector_dim
+  );
+  let mnemonic = "TiledLayout";
+  let assemblyFormat = "`<` $tiling `,` `warp_dim` `=` $warp_dim `,` "
+      "`lane_dims` `=` $lane_dims `,` `vector_dim` `=` $vector_dim `>`";
+}
+
 
 // Note: This duplicates the Dimension enum in mlir/Dialect/GPU/IR/GPUOps.td
 // but it was not possible to reuse that definition. Including that file
