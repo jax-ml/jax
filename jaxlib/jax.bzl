@@ -82,22 +82,27 @@ def get_zstandard():
         return []
     return ["@pypi_zstandard//:pkg"]
 
+def get_optional_dep(package, excluded_py_versions=["3.14", "3.14-ft"]):
+    if HERMETIC_PYTHON_VERSION in excluded_py_versions:
+        return []
+    return [package]
+
 _py_deps = {
     "absl/logging": ["@pypi_absl_py//:pkg"],
     "absl/testing": ["@pypi_absl_py//:pkg"],
     "absl/flags": ["@pypi_absl_py//:pkg"],
-    "cloudpickle": ["@pypi_cloudpickle//:pkg"],
-    "colorama": ["@pypi_colorama//:pkg"],
-    "epath": ["@pypi_etils//:pkg"],  # etils.epath
-    "filelock": ["@pypi_filelock//:pkg"],
+    "cloudpickle": get_optional_dep("@pypi_cloudpickle//:pkg"),
+    "colorama": get_optional_dep("@pypi_colorama//:pkg"),
+    "epath": get_optional_dep("@pypi_etils//:pkg"),  # etils.epath
+    "filelock": get_optional_dep("@pypi_filelock//:pkg"),
     "flatbuffers": ["@pypi_flatbuffers//:pkg"],
     "hypothesis": ["@pypi_hypothesis//:pkg"],
     "magma": [],
-    "matplotlib": ["@pypi_matplotlib//:pkg"],
+    "matplotlib": get_optional_dep("@pypi_matplotlib//:pkg"),
     "mpmath": [],
     "opt_einsum": ["@pypi_opt_einsum//:pkg"],
-    "pil": ["@pypi_pillow//:pkg"],
-    "portpicker": ["@pypi_portpicker//:pkg"],
+    "pil": get_optional_dep("@pypi_pillow//:pkg"),
+    "portpicker": get_optional_dep("@pypi_portpicker//:pkg"),
     "ml_dtypes": ["@pypi_ml_dtypes//:pkg"],
     "numpy": ["@pypi_numpy//:pkg"],
     "scipy": ["@pypi_scipy//:pkg"],

@@ -91,7 +91,7 @@ _MAX_CASES_SAMPLING_RETRIES = config.int_flag(
   'sampling process is terminated.'
 )
 
-_SKIP_SLOW_TESTS = config.bool_flag(
+SKIP_SLOW_TESTS = config.bool_flag(
     'jax_skip_slow_tests',
     config.bool_env('JAX_SKIP_SLOW_TESTS', False),
     help='Skip tests marked as slow (> 5 sec).'
