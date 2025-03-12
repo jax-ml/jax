@@ -133,7 +133,15 @@ class custom_dce:
     debug_rule = api_util.debug_info("custom_dce_rule", self.dce_rule,
                                      args, {},
                                      static_argnums=self.static_argnums)
-    args = api_util.resolve_kwargs(self.fun, args, kwargs)
+    try:
+      args = api_util.resolve_kwargs(self.fun, args, kwargs)
+    except TypeError as e:
+      raise TypeError(
+          "The input arguments to the custom_dce-decorated function "
+          f"{debug.func_name} could not be resolved to positional-only "
+          f"arguments. Binding failed with the error:\n{e}"
+      ) from e
+
     if self.static_argnums:
       static_argnums = set(self.static_argnums)
       for i in static_argnums:

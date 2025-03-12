@@ -2,6 +2,7 @@
 # test deps
 #
 -r test-requirements.txt
+-r gpu-test-requirements.txt
 
 #
 # build deps
@@ -18,5 +19,4 @@ ml_dtypes>=0.4.0
 opt_einsum
 zstandard
 etils[epath]
-# TODO(ybaturina): remove setuptools version
-setuptools<71.0.0
+setuptools

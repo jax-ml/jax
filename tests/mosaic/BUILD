@@ -38,8 +38,11 @@ jax_multiplatform_test(
         "gpu_h100x2",
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
-    shard_count = 8,
-    tags = ["multiaccelerator"],
+    shard_count = 16,
+    tags = [
+        "multiaccelerator",
+        "noasan",  # Times out.
+    ],
     deps = [
         "//jax:mosaic_gpu",
     ] + py_deps("absl/testing") + py_deps("numpy"),

@@ -443,42 +443,26 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
   consts, carry, xs_ = split_list(args, [num_consts, num_carry])
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
   num_trips, remainder = divmod(length, unroll)
+
   if unroll != 1 and num_trips == 1 and remainder == 0:
     # In that case, we explicitly want to fully unroll the loop. Put everything
     # into the remainder block and avoid lowering to a while loop.
     num_trips, remainder = 0, length
   if unroll == 1:
     xss = xs_
-    yss = _map(partial(_empty_array, (length,), None), y_avals)
+    yss = _map(partial(_empty_array, (length,), (None,)), y_avals)
   else:
     if remainder:
       if not reverse:
         xs_, xs_rem = unzip2(_map(partial(_split_leading, num_trips*unroll), xs_))
       else:
         xs_rem, xs_ = unzip2(_map(partial(_split_leading, remainder), xs_))
-    xss = [lax.reshape(x, (num_trips, unroll, *x.shape[1:])) for x in xs_]
-    yss = _map(partial(_empty_array, (num_trips, unroll), None), y_avals)
+    if num_trips:
+      xss = [lax.reshape(x, (num_trips, unroll, *x.shape[1:])) for x in xs_]
+      yss = _map(partial(_empty_array, (num_trips, unroll), (None, None)), y_avals)
+    else:
+      yss = _map(partial(_empty_array, (num_trips * unroll,), (None,)), y_avals)
 
-  def cond_fun(while_carry):
-    i, _, _ = while_carry
-    return i < num_trips
-  def body_fun(while_carry):
-    i_, carry, yss = while_carry
-    i = num_trips - i_ - 1 if reverse else i_
-    xs = [
-        slicing.dynamic_index_in_dim(
-            xs, i, keepdims=False, allow_negative_indices=False
-        )
-        for xs in xss
-    ]
-    carry, ys = inner(unroll, carry, xs)
-    yss = [
-        slicing.dynamic_update_index_in_dim(
-            ys, upd, i, 0, allow_negative_indices=False
-        )
-        for ys, upd in zip(yss, ys)
-    ]
-    return i_ + 1, carry, yss
   def inner(n, carry, xs):
     ys = []
     if unroll == 1:
@@ -493,10 +477,26 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
     ys = list(reversed(ys)) if reverse else ys
     return carry, _map(_stack, zip(*ys))
 
+  def body_fun(while_carry):
+    i_, carry, yss = while_carry
+    i = num_trips - i_ - 1 if reverse else i_
+    xs = [slicing.dynamic_index_in_dim(xs, i, keepdims=False,
+                                       allow_negative_indices=False)
+          for xs in xss]
+    carry, ys = inner(unroll, carry, xs)
+    yss = [slicing.dynamic_update_index_in_dim(y, upd, i, 0,
+                                               allow_negative_indices=False)
+           for y, upd in zip(yss, ys)]
+    return i_ + 1, carry, yss
+
+  def cond_fun(while_carry):
+    i, _, _ = while_carry
+    return i < num_trips
+
   if num_trips:
     i = lax._const(num_trips, 0)
     _, carry, yss = while_loop(cond_fun, body_fun, (i, carry, yss))
-  if unroll != 1:
+  if unroll != 1 and num_trips != 0:
     ys = [lax.reshape(ys, (num_trips * unroll, *ys.shape[2:])) for ys in yss]
   else:
     ys = yss
@@ -512,7 +512,7 @@ def _split_leading(sz, x):
 def _concat(a, b): return lax.concatenate([a, b], 0)
 
 def _empty_array(prefix, length_spec, aval):
-  sharding = aval.sharding.with_spec((length_spec, *aval.sharding.spec))
+  sharding = aval.sharding.with_spec((*length_spec, *aval.sharding.spec))
   return lax.broadcast(lax.empty(aval.dtype), (*prefix, *aval.shape),
                        out_sharding=sharding)
 
@@ -1364,9 +1364,9 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
     raise TypeError("lax.while_loop: body_fun and cond_fun arguments should be callable.")
   if config.disable_jit.value:
     try:
-      val = init_val
+      val = tree_map(lax.asarray, init_val)
       while cond_fun(val):
-        val = body_fun(val)
+        val = tree_map(lax.asarray, body_fun(val))
       return val
     except core.ConcretizationTypeError:
       # Can't run this while_loop in Python (e.g. because there's a vmap

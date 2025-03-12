@@ -250,7 +250,15 @@ class custom_jvp(Generic[ReturnValue]):
       msg = f"No JVP defined for custom_jvp function {primal_name} using defjvp."
       raise AttributeError(msg)
 
-    args = resolve_kwargs(self.fun, args, kwargs)
+    try:
+      args = resolve_kwargs(self.fun, args, kwargs)
+    except TypeError as e:
+      raise TypeError(
+          "The input arguments to the custom_jvp-decorated function "
+          f"{primal_name} could not be resolved to positional-only arguments. "
+          f"Binding failed with the error:\n{e}"
+      ) from e
+
     if self.nondiff_argnums:
       nondiff_argnums = set(self.nondiff_argnums)
       args = tuple(_stop_gradient(x) if i in nondiff_argnums else x
@@ -634,7 +642,16 @@ class custom_vjp(Generic[ReturnValue]):
     if not self.fwd or not self.bwd:
       msg = f"No VJP defined for custom_vjp function {debug_fun.func_name} using defvjp."
       raise AttributeError(msg)
-    args = resolve_kwargs(self.fun, args, kwargs)
+
+    try:
+      args = resolve_kwargs(self.fun, args, kwargs)
+    except TypeError as e:
+      raise TypeError(
+          "The input arguments to the custom_vjp-decorated function "
+          f"{debug_fun.func_name} could not be resolved to positional-only "
+          f"arguments. Binding failed with the error:\n{e}"
+      ) from e
+
     debug_fwd = debug_info("custom_vjp fwd", self.fwd, args, kwargs,
                            static_argnums=self.nondiff_argnums)
     # TODO(necula): figure out how to construct the debug_bwd args
@@ -1238,7 +1255,7 @@ def closure_convert(fun: Callable, *example_args) -> tuple[Callable, list[Any]]:
 def _maybe_perturbed(x: Any) -> bool:
   # False if x can't represent an AD-perturbed value (i.e. a value
   # with a nontrivial tangent attached), up to heuristics, and True otherwise.
-  # See https://github.com/google/jax/issues/6415 for motivation.
+  # See https://github.com/jax-ml/jax/issues/6415 for motivation.
   if not isinstance(x, core.Tracer):
     # If x is not a Tracer, it can't be perturbed.
     return False

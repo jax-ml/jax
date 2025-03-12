@@ -733,6 +733,46 @@ class PallasCallTest(PallasBaseTest):
     )
     self.assertAllClose(dot_kernel(x, y), expected, atol=5e-2, rtol=5e-3)
 
+  @parameterized.parameters(jnp.int8, jnp.uint8)
+  def test_integer_dot(self, dtype):
+    if jtu.test_device_matches(["tpu"]) and not jtu.is_device_tpu_at_least(5):
+      self.skipTest("`int8` dot is only supported on v5 TPUs and newer.")
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((32, 64), jnp.int32),
+    )
+    def dot_kernel(x_ref, y_ref, o_ref):
+      o_ref[()] = pl.dot(x_ref[()], y_ref[()])
+
+    key0, key1 = random.split(random.key(0))
+    # FIXME(cjfj): TPU fails with `uint8` values >= 128.
+    kwargs = dict(minval=jnp.iinfo(dtype).min, maxval=128, dtype=dtype)
+    # TODO(cjfj): Investigate why this fails on GPU with `k == 16`.
+    x = random.randint(key0, (32, 128), **kwargs)
+    y = random.randint(key1, (128, 64), **kwargs)
+    expected = jnp.dot(x, y, preferred_element_type=jnp.int32)
+    self.assertAllClose(dot_kernel(x, y), expected, atol=0.0, rtol=0.0)
+
+  def test_dot_with_vector(self):
+    if not jtu.test_device_matches(["gpu"]) or self.INTERPRET:
+      self.skipTest(
+          "jnp.dot is only restricted to 2D on GPU in non-interpret mode."
+      )
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((32,), jnp.float32),
+    )
+    def dot_kernel(x_ref, y_ref, o_ref):
+      o_ref[()] = jnp.dot(x_ref[()], y_ref[()])
+
+    key0, key1 = random.split(random.key(0))
+    x = random.normal(key0, (32, 64), dtype=jnp.float32)
+    y = random.normal(key1, (64,), dtype=jnp.float32)
+    with self.assertRaisesRegex(Exception, "must be 2D"):
+      dot_kernel(x, y)
+
   @parameterized.parameters(jnp.int4, jnp.uint4)
   def test_subbyte_load(self, dtype):
     if not jtu.test_device_matches(["gpu"]):
@@ -2085,13 +2125,15 @@ class PallasOutOfBoundsInterpretTest(PallasBaseTest):
     # TODO(justinfu): This test has low precision on GPU. Improve precision.
     if jtu.test_device_matches(["gpu"]):
       atol = 1e-2
+      rtol = 5e-3
     else:
       atol = 1e-5
+      rtol = 1e-7
 
     # With a masked matmul implementation, uninitialized values will be
     # masked before computation. This should return the correct result.
     with self.subTest('MaskedOutputIsCorrect'):
-      np.testing.assert_allclose(out, expected, atol=atol)
+      np.testing.assert_allclose(out, expected, atol=atol, rtol=rtol)
 
 
 class PallasCheckifyTest(PallasBaseTest):

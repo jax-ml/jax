@@ -260,7 +260,7 @@ def _construct_smem_reftree(
             dynamic_smem, c(dynamic_smem_offset, index), [],
         )
         if layout is None:
-          layout = tcgen05._infer_tmem_layout(shape)
+          layout = tcgen05._infer_tmem_layout(shape, collective)
         num_cols = layout.cols_in_shape(shape)
         delayed_warp_init.append(
             functools.partial(

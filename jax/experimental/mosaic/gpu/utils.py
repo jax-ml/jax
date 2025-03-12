@@ -670,10 +670,10 @@ def parse_indices(
 
 
 def commit_shared():
-  warpgroup_barrier()
   nvvm.fence_proxy(
       nvvm.ProxyKind.async_shared, space=nvvm.SharedSpace.shared_cta
   )
+  warpgroup_barrier()
 
 
 def warpgroup_barrier():
@@ -786,7 +786,7 @@ class BarrierRef:
   def as_dialect_barrier_memref(self) -> ir.Value:
     shape = () if self.num_barriers == 1 else (self.num_barriers,)
     return ptr_as_memref(
-        self.base_address,
+        self.get_ptr(),
         ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier")),
         ptr_memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE,
     )
@@ -1172,4 +1172,36 @@ def getelementptr(
 
 
 def dyn_dot(x, y):
+  assert len(x) == len(y)
   return functools.reduce(arith.addi, (arith.muli(a, b) for a, b in zip(x, y)))
+
+
+def shfl_bfly(x: ir.Value, distance: int | ir.Value):
+  i32 = ir.IntegerType.get_signless(32)
+  if isinstance(distance, int):
+    distance = c(distance, i32)
+  assert x.type == i32
+  return nvvm.shfl_sync(
+      i32, c(0xFFFFFFFF, i32), x, distance, c(0x1F, i32), nvvm.ShflKind.bfly,
+  )
+
+
+def bitcast(x: ir.Value, new_type: ir.Type):
+  if ir.VectorType.isinstance(x.type) and ir.IntegerType.isinstance(new_type):
+    new_type = ir.IntegerType(new_type)
+    x_ty = ir.VectorType(x.type)
+    assert new_type.width == bitwidth(x_ty.element_type) * math.prod(x_ty.shape)
+    i0 = arith.ConstantOp.create_index(0)
+    return vector.extractelement(
+        vector.bitcast(ir.VectorType.get((1,), new_type), x), position=i0
+    )
+  if ir.IntegerType.isinstance(x.type) and ir.VectorType.isinstance(new_type):
+    new_type = ir.VectorType(new_type)
+    x_ty = ir.IntegerType(x.type)
+    assert x_ty.width == bitwidth(new_type.element_type) * math.prod(new_type.shape)
+    return vector.bitcast(new_type, vector.splat(ir.VectorType.get((1,), x_ty), x))
+  raise ValueError(f"Can't bitcast {x.type} to {new_type}")
+
+
+def ceil_div(x: int, y: int):
+  return (x + y - 1) // y

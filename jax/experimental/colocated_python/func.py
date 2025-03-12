@@ -201,7 +201,7 @@ def _make_output_specs_and_push_result_fun(
 
   devices = specialization.devices
 
-  def lowered_fun(*args, **kwargs) -> Sequence[jax.Array]:
+  def lowered_fun(*args, **kwargs) -> jax.Array:
     result = info.fun(*args, **kwargs)
     result_leaves, out_treedef = tree_util.tree_flatten(result)
     out_spec_leaves = tuple(_get_spec(x) for x in result_leaves)

@@ -1674,8 +1674,7 @@ class VectorLayoutInferer {
     auto some_layout = getLayout(op->getOperand(0));
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
     if (dyn_cast<arith::ExtFOp>(op)) {
-      TPU_CHECK_OP(src_bitwidth == 16 && dst_bitwidth == 32,
-                   "Only 16-bit to 32-bit extensions supported");
+      TPU_CHECK_OP(dst_bitwidth == 32, "Only supported extensions to 32-bit");
     }
     auto &layout = *some_layout;
     Layout src_layout;

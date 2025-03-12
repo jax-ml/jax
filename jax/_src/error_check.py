@@ -33,63 +33,78 @@ class JaxValueError(ValueError):
   """Exception raised for failed runtime error checks in JAX."""
 
 
+#: The default error code for no error.
+#:
+#: This value is chosen because we can use `jnp.min()` to obtain the
+#: first error when performing reductions.
 _NO_ERROR = jnp.iinfo(jnp.uint32).max
-"""The default error code for no error.
-
-We choose this value because when performing reductions, we can use `min` to
-obtain the smallest error code.
-"""
 
 
-_error_code_ref: core.MutableArray | None = None
 _error_list_lock = threading.Lock()
 _error_list: list[tuple[str, Traceback]] = []  # (error_message, traceback) pair
 
 
+class _ErrorStorage(threading.local):
+
+  def __init__(self):
+    self.ref: core.MutableArray | None = None
+
+
+_error_storage = _ErrorStorage()
+
+
 def _initialize_error_code_ref() -> None:
+  """Initialize error_code_ref in the current thread."""
   with core.eval_context():
-    global _error_code_ref
     error_code = jnp.uint32(_NO_ERROR)
-    _error_code_ref = core.mutable_array(error_code)
+    _error_storage.ref = core.mutable_array(error_code)
 
 
 def set_error_if(pred: jax.Array, msg: str) -> None:
-  """Set error if pred is true.
+  """Set error if any element of pred is true.
 
   If the error is already set, the new error will be ignored. It will not
   override the existing error.
   """
-  if _error_code_ref is None:
+  if _error_storage.ref is None:
     _initialize_error_code_ref()
-    assert _error_code_ref is not None
+    assert _error_storage.ref is not None
 
   traceback = source_info_util.current().traceback
   assert traceback is not None
   with _error_list_lock:
-    new_error_code = len(_error_list)
+    new_error_code = jnp.uint32(len(_error_list))
     _error_list.append((msg, traceback))
 
   pred = pred.any()
-  error_code = _error_code_ref[...]
+  error_code = _error_storage.ref[...]
   should_update = jnp.logical_and(pred, error_code == jnp.uint32(_NO_ERROR))
   error_code = jnp.where(should_update, new_error_code, error_code)
   # TODO(ayx): support vmap and shard_map.
-  _error_code_ref[...] = error_code  # pytype: disable=unsupported-operands
+  _error_storage.ref[...] = error_code
 
 
 def raise_if_error() -> None:
-  """Raise error if an error is set."""
-  if _error_code_ref is None:  # if not initialized, do nothing
+  """Raise error if an error is set.
+
+  This function should be called after the computation is finished. It should
+  not be called within a traced context, such as within a jitted function."
+  """
+  if _error_storage.ref is None:  # if not initialized, do nothing
     return
 
-  error_code = _error_code_ref[...]
+  error_code = _error_storage.ref[...]
+  if isinstance(error_code, core.Tracer):
+    raise ValueError(
+        "raise_if_error() should not be called within a traced context, such as"
+        " within a jitted function."
+    )
   if error_code == jnp.uint32(_NO_ERROR):
     return
-  try:
-    msg, traceback = _error_list[error_code]
-    exc = JaxValueError(msg)
-    traceback = traceback.as_python_traceback()
-    filtered_traceback = traceback_util.filter_traceback(traceback)
-    raise exc.with_traceback(filtered_traceback)
-  finally:
-    _error_code_ref[...] = jnp.uint32(_NO_ERROR)
+  _error_storage.ref[...] = jnp.uint32(_NO_ERROR)
+
+  msg, traceback = _error_list[error_code]
+  exc = JaxValueError(msg)
+  traceback = traceback.as_python_traceback()
+  filtered_traceback = traceback_util.filter_traceback(traceback)
+  raise exc.with_traceback(filtered_traceback)

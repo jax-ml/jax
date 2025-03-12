@@ -19,7 +19,11 @@ load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load(
-    "@tsl//third_party/py:py_manylinux_compliance_test.bzl",
+    "@xla//third_party/py:py_import.bzl",
+    "py_import",
+)
+load(
+    "@xla//third_party/py:py_manylinux_compliance_test.bzl",
     "verify_manylinux_compliance_test",
 )
 load(
@@ -187,10 +191,34 @@ selects.config_setting_group(
 )
 
 selects.config_setting_group(
+    name = "macos_x86_64",
+    match_all = [
+        "@platforms//cpu:x86_64",
+        ":macos",
+    ],
+)
+
+selects.config_setting_group(
     name = "win_amd64",
     match_all = [
         "@platforms//cpu:x86_64",
         "@platforms//os:windows",
+    ],
+)
+
+selects.config_setting_group(
+    name = "linux_x86_64",
+    match_all = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+selects.config_setting_group(
+    name = "linux_aarch64",
+    match_all = [
+        ":arm64",
+        "@platforms//os:linux",
     ],
 )
 
@@ -204,11 +232,28 @@ string_flag(
     build_setting_default = "dist",
 )
 
+NVIDIA_WHEELS_DEPS = [
+    "@pypi_nvidia_cublas_cu12//:whl",
+    "@pypi_nvidia_cuda_cupti_cu12//:whl",
+    "@pypi_nvidia_cuda_runtime_cu12//:whl",
+    "@pypi_nvidia_cudnn_cu12//:whl",
+    "@pypi_nvidia_cufft_cu12//:whl",
+    "@pypi_nvidia_cusolver_cu12//:whl",
+    "@pypi_nvidia_cusparse_cu12//:whl",
+    "@pypi_nvidia_nccl_cu12//:whl",
+    "@pypi_nvidia_nvjitlink_cu12//:whl",
+]
+
 jax_wheel(
     name = "jaxlib_wheel",
     no_abi = False,
     wheel_binary = ":build_wheel",
     wheel_name = "jaxlib",
+)
+
+py_import(
+    name = "jaxlib_py_import",
+    wheel = ":jaxlib_wheel",
 )
 
 jax_wheel(
@@ -228,6 +273,12 @@ jax_wheel(
     wheel_name = "jax_cuda12_plugin",
 )
 
+py_import(
+    name = "jax_cuda_plugin_py_import",
+    wheel = ":jax_cuda_plugin_wheel",
+    wheel_deps = if_cuda(NVIDIA_WHEELS_DEPS),
+)
+
 jax_wheel(
     name = "jax_cuda_plugin_wheel_editable",
     editable = True,
@@ -236,6 +287,24 @@ jax_wheel(
     platform_version = "12",
     wheel_binary = ":build_gpu_kernels_wheel",
     wheel_name = "jax_cuda12_plugin",
+)
+
+jax_wheel(
+    name = "jax_rocm_plugin_wheel",
+    enable_rocm = True,
+    no_abi = False,
+    platform_version = "60",
+    wheel_binary = ":build_gpu_kernels_wheel",
+    wheel_name = "jax_rocm60_plugin",
+)
+
+jax_wheel(
+    name = "jax_rocm_plugin_wheel_editable",
+    editable = True,
+    enable_rocm = True,
+    platform_version = "60",
+    wheel_binary = ":build_gpu_kernels_wheel",
+    wheel_name = "jax_rocm60_plugin",
 )
 
 jax_wheel(
@@ -248,6 +317,12 @@ jax_wheel(
     wheel_name = "jax_cuda12_pjrt",
 )
 
+py_import(
+    name = "jax_cuda_pjrt_py_import",
+    wheel = ":jax_cuda_pjrt_wheel",
+    wheel_deps = if_cuda(NVIDIA_WHEELS_DEPS),
+)
+
 jax_wheel(
     name = "jax_cuda_pjrt_wheel_editable",
     editable = True,
@@ -256,6 +331,24 @@ jax_wheel(
     platform_version = "12",
     wheel_binary = ":build_gpu_plugin_wheel",
     wheel_name = "jax_cuda12_pjrt",
+)
+
+jax_wheel(
+    name = "jax_rocm_pjrt_wheel",
+    enable_rocm = True,
+    no_abi = True,
+    platform_version = "60",
+    wheel_binary = ":build_gpu_plugin_wheel",
+    wheel_name = "jax_rocm60_pjrt",
+)
+
+jax_wheel(
+    name = "jax_rocm_pjrt_wheel_editable",
+    editable = True,
+    enable_rocm = True,
+    platform_version = "60",
+    wheel_binary = ":build_gpu_plugin_wheel",
+    wheel_name = "jax_rocm60_pjrt",
 )
 
 AARCH64_MANYLINUX_TAG = "_".join(PLATFORM_TAGS_DICT[("Linux", "aarch64")])

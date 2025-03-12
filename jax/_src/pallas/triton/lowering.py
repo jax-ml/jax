@@ -2261,6 +2261,9 @@ def _dot_general_lowering(
 
   a_type = ir.RankedTensorType(a.type)
   b_type = ir.RankedTensorType(b.type)
+  if len(a_type.shape) != len(b_type.shape) != 2:
+    raise ValueError("a and b must be 2D, but got:"
+                     f" {a_type.shape} and {b_type.shape}")
   if min(*b_type.shape) < 16:
     raise ValueError("all dimensions of b must be >= 16 ")
   if a_type.element_type != b_type.element_type:

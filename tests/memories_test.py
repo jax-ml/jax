@@ -606,7 +606,6 @@ class DevicePutTest(jtu.JaxTestCase):
         out_host, np_inp * 2, s_host, 'pinned_host')
 
   def test_output_streaming_inside_scan(self):
-    self.skipTest("b/393371838")
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
       self.skipTest("This test requires an xla_version >= 2.")
     mesh = jtu.create_mesh((1, 1, 2), ("x", "y", "z"))
@@ -1835,7 +1834,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
       self.assertRegex(compiled_text, r"dynamic-update-slice-start.*S\(5\)")
       self.assertRegex(compiled_text, r"dynamic-update-slice-done.*S\(5\)")
       self.assertRegex(compiled_text, r"dynamic-slice-start.*S\(5\)")
-      self.assertRegex(compiled_text, r"dynamic-slice-done.*S\(5\)")
+      self.assertIn("dynamic-slice-start", compiled_text)
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None:

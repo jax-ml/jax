@@ -263,9 +263,9 @@ class NameStackTransformationTest(jtu.JaxTestCase):
       return g(x)
 
     hlo_text = _get_hlo(f)(2.)
-    self.assertIn('jvp(pjit(f))/pjit(g)/sin', hlo_text)
-    self.assertIn('jvp(pjit(f))/pjit(g)/cos', hlo_text)
-    self.assertIn('transpose(jvp(pjit(f)))/pjit(g)/mul', hlo_text)
+    self.assertIn('jvp(jit(f))/jit(g)/sin', hlo_text)
+    self.assertIn('jvp(jit(f))/jit(g)/cos', hlo_text)
+    self.assertIn('transpose(jvp(jit(f)))/jit(g)/mul', hlo_text)
 
   def test_remat_appears_in_hlo(self):
     @ad_checkpoint.remat

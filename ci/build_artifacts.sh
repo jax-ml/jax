@@ -45,52 +45,82 @@ if [[ $os =~ "msys_nt"  && $arch == "x86_64" ]]; then
   arch="amd64"
 fi
 
+# Determine the artifact tag flags based on the artifact type. A release
+# wheel is tagged with the release version (e.g. 0.5.1), a nightly wheel is
+# tagged with the release version and a nightly suffix that contains the
+# current date (e.g. 0.5.2.dev20250227), and a default wheel is tagged with
+# the git commit hash of the HEAD of the current branch and the date of the
+# commit (e.g. 0.5.1.dev20250128+3e75e20c7).
+if [[ "$JAXCI_ARTIFACT_TYPE" == "release" ]]; then
+  artifact_tag_flags="--bazel_options=--repo_env=ML_WHEEL_TYPE=release"
+elif [[ "$JAXCI_ARTIFACT_TYPE" == "nightly" ]]; then
+  current_date=$(date +%Y%m%d)
+  artifact_tag_flags="--bazel_options=--repo_env=ML_WHEEL_BUILD_DATE=${current_date} --bazel_options=--repo_env=ML_WHEEL_TYPE=nightly"
+elif [[ "$JAXCI_ARTIFACT_TYPE" == "default" ]]; then
+  artifact_tag_flags="--bazel_options=--repo_env=ML_WHEEL_TYPE=custom --bazel_options=--repo_env=ML_WHEEL_BUILD_DATE=$(git show -s --format=%as HEAD) --bazel_options=--repo_env=ML_WHEEL_GIT_HASH=$(git rev-parse HEAD) --bazel_options=--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)"
+else
+  echo "Error: Invalid artifact type: $JAXCI_ARTIFACT_TYPE. Allowed values are: release, nightly, default"
+  exit 1
+fi
+
 if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
+  # Figure out the bazelrc config to use. We will use one of the "rbe_"/"ci_"
+  # flags in the .bazelrc depending upon the platform we are building for.
+  bazelrc_config="${os}_${arch}"
 
-  # Build the jax artifact
-  if [[ "$artifact" == "jax" ]]; then
-    python -m build --outdir $JAXCI_OUTPUT_DIR
+  # On platforms with no RBE support, we can use the Bazel remote cache. Set
+  # it to be empty by default to avoid unbound variable errors.
+  bazel_remote_cache=""
+
+  if [[ "$JAXCI_BUILD_ARTIFACT_WITH_RBE" == 1 ]]; then
+    bazelrc_config="rbe_${bazelrc_config}"
   else
+    bazelrc_config="ci_${bazelrc_config}"
 
-    # Figure out the bazelrc config to use. We will use one of the "rbe_"/"ci_"
-    # flags in the .bazelrc depending upon the platform we are building for.
-    bazelrc_config="${os}_${arch}"
-
-    # On platforms with no RBE support, we can use the Bazel remote cache. Set
-    # it to be empty by default to avoid unbound variable errors.
-    bazel_remote_cache=""
-
-    if [[ "$JAXCI_BUILD_ARTIFACT_WITH_RBE" == 1 ]]; then
-      bazelrc_config="rbe_${bazelrc_config}"
+    # Set remote cache flags. Pushes to the cache bucket is limited to JAX's
+    # CI system.
+    if [[ "$JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE" == 1 ]]; then
+      bazel_remote_cache="--bazel_options=--config=public_cache_push"
     else
-      bazelrc_config="ci_${bazelrc_config}"
-
-      # Set remote cache flags. Pushes to the cache bucket is limited to JAX's
-      # CI system.
-      if [[ "$JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE" == 1 ]]; then
-        bazel_remote_cache="--bazel_options=--config=public_cache_push"
-      else
-        bazel_remote_cache="--bazel_options=--config=public_cache"
-      fi
+      bazel_remote_cache="--bazel_options=--config=public_cache"
     fi
+  fi
 
-    # Use the "_cuda" configs when building the CUDA artifacts.
-    if [[ ("$artifact" == "jax-cuda-plugin") || ("$artifact" == "jax-cuda-pjrt") ]]; then
-      bazelrc_config="${bazelrc_config}_cuda"
-    fi
+  # Use the "_cuda" configs when building the CUDA artifacts.
+  if [[ ("$artifact" == "jax-cuda-plugin") || ("$artifact" == "jax-cuda-pjrt") ]]; then
+    bazelrc_config="${bazelrc_config}_cuda"
+  fi
 
-    # Build the artifact.
+  # Build the artifact.
+  python build/build.py build --wheels="$artifact" \
+    --bazel_options=--config="$bazelrc_config" $bazel_remote_cache \
+    --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
+    --verbose --detailed_timestamped_log --use_new_wheel_build_rule \
+    $artifact_tag_flags
+
+  # If building release artifacts, we also build a release candidate ("rc")
+  # tagged wheel.
+  if [[ "$JAXCI_ARTIFACT_TYPE" == "release" ]]; then
     python build/build.py build --wheels="$artifact" \
       --bazel_options=--config="$bazelrc_config" $bazel_remote_cache \
       --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
-      --verbose --detailed_timestamped_log
+      --verbose --detailed_timestamped_log --use_new_wheel_build_rule \
+      $artifact_tag_flags --bazel_options=--repo_env=ML_WHEEL_VERSION_SUFFIX="$JAXCI_WHEEL_RC_VERSION"
+  fi
 
-    # If building `jaxlib` or `jax-cuda-plugin` or `jax-cuda-pjrt` for Linux, we
-    # run `auditwheel show` to verify manylinux compliance.
-    if  [[ "$os" == "linux" ]]; then
-      ./ci/utilities/run_auditwheel.sh
-    fi
+  # Move the built artifacts from the Bazel cache directory to the output
+  # directory.
+  if [[ "$artifact" == "jax" ]]; then
+    mv bazel-bin/dist/*.whl "$JAXCI_OUTPUT_DIR"
+    mv bazel-bin/dist/*.tar.gz "$JAXCI_OUTPUT_DIR"
+  else
+    mv bazel-bin/jaxlib/tools/dist/*.whl "$JAXCI_OUTPUT_DIR"
+  fi
 
+  # If building `jaxlib` or `jax-cuda-plugin` or `jax-cuda-pjrt` for Linux, we
+  # run `auditwheel show` to verify manylinux compliance.
+  if  [[ "$os" == "linux" ]] && [[ "$artifact" != "jax" ]]; then
+    ./ci/utilities/run_auditwheel.sh
   fi
 
 else

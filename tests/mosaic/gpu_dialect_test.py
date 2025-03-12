@@ -18,6 +18,7 @@ from typing import Callable
 
 from absl.testing import parameterized
 import jax
+from jax import numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
@@ -801,6 +802,65 @@ class DialectLoweringTest(MosaicGpuTest):
     result_types = [r.type for r in for_op.results]
     reg_vec_ty = ir.VectorType.get((2,), i32)
     self.assertSequenceEqual(result_types, [i32, reg_vec_ty, reg_vec_ty])
+
+  def test_lowering_slice_smem_op(self):
+    shift = 1234
+    offset = None
+
+    def body():
+      nonlocal offset
+      i32 = ir.IntegerType.get_signless(32)
+      offset = arith.constant(i32, shift)
+      mgpu.dialect.slice_smem(i32, offset)
+
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func()(body)
+
+    mgpu.lower_mgpu_dialect(self.module, None)
+    # Avoid making a change detector, only validate that lowering runs as
+    # expected.
+    self.assertEmpty(
+        find_if(
+            self.module, lambda op: isinstance(op, mgpu.dialect.SliceSMEMOp)
+        )
+    )
+
+  @parameterized.parameters(
+      (arith.ExtFOp, jnp.bfloat16, jnp.float32),
+      (arith.ExtSIOp, jnp.int16, jnp.int32),
+      (arith.ExtUIOp, jnp.int16, jnp.uint32),
+      (arith.FPToSIOp, jnp.float32, jnp.int32),
+      (arith.FPToUIOp, jnp.float32, jnp.uint32),
+      (arith.SIToFPOp, jnp.int16, jnp.float32),
+      (arith.TruncFOp, jnp.float32, jnp.float16),
+      (arith.TruncIOp, jnp.int32, jnp.int16),
+      (arith.UIToFPOp, jnp.uint32, jnp.float32),
+  )
+  def test_lower_conversion_op_lowers_to_same_op(self, op, in_dtype, out_dtype):
+    shape = (4, 32)
+
+    with ir.InsertionPoint(self.module.body):
+      scalar_in_ty = mgpu_utils.dtype_to_ir_type(in_dtype)
+      scalar_out_ty = mgpu_utils.dtype_to_ir_type(out_dtype)
+      in_ty = ir.VectorType.get(shape, scalar_in_ty)
+      out_ty = ir.VectorType.get(shape, scalar_out_ty)
+      if ir.IntegerType.isinstance(scalar_in_ty):
+        zero = ir.IntegerAttr.get(scalar_in_ty, 0)
+      else:
+        zero = ir.FloatAttr.get(scalar_in_ty, 0)
+      splat_zero = arith.ConstantOp(
+          in_ty, ir.DenseElementsAttr.get_splat(in_ty, zero)
+      )
+      op(out_ty, splat_zero)
+
+    mgpu.infer_layout(self.module)
+    mgpu.lower_mgpu_dialect(self.module, None)
+
+    conversion_ops = find_if(self.module, lambda o: isinstance(o, op))
+    # This is a splat, so we expect a single conversion op involving a scalar
+    # after lowering.
+    self.assertLen(conversion_ops, 1)
+    self.assertEqual(conversion_ops[0].result.type, scalar_out_ty)
 
 
 if __name__ == "__main__":

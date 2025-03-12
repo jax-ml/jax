@@ -695,13 +695,43 @@ def dot(a, b, trans_a: bool = False, trans_b: bool = False,
     if precision is not None:
       raise ValueError("Only one of allow_tf32 and precision can be specified")
     precision = lax.Precision.HIGH if allow_tf32 else lax.Precision.HIGHEST
+  dtype = jnp.promote_types(a.dtype, b.dtype)
+  out_dtype = jnp.int32 if jnp.issubdtype(dtype, jnp.integer) else jnp.float32
   return jax.lax.dot_general(
       a,
       b,
       dimension_numbers=(((lhs_contract_dim,), (rhs_contract_dim,)), ((), ())),
       precision=precision,
-      preferred_element_type=jnp.float32,
+      preferred_element_type=out_dtype,
   )
+
+reciprocal_p = jax_core.Primitive("reciprocal")
+
+
+def reciprocal(x, *, approx=False):
+  return reciprocal_p.bind(x, approx=approx)
+
+
+@reciprocal_p.def_abstract_eval
+def _reciprocal_abstract_eval(x, *, approx):
+  del approx
+  return x
+
+
+def _reciprocal_lowering_rule(
+    ctx: mlir.LoweringRuleContext, x, *, approx=False
+):
+  def _reciprocal(x, *, approx=False):
+    if approx:
+      return jnp.reciprocal(x.astype(jnp.bfloat16)).astype(jnp.float32)
+    return jnp.reciprocal(x)
+
+  return mlir.lower_fun(_reciprocal, multiple_results=False)(
+      ctx, x, approx=approx
+  )
+
+
+mlir.register_lowering(reciprocal_p, _reciprocal_lowering_rule)
 
 
 class PrintEffect(effects.Effect):

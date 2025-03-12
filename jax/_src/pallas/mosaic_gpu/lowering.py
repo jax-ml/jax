@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Hashable, MutableMapping, MutableSequence, Sequence
+from collections.abc import Callable, Hashable, MutableMapping, MutableSequence, Sequence
 import contextlib
 import dataclasses
 import functools
@@ -25,6 +25,7 @@ import math
 from typing import Any, Protocol, cast
 
 import jax
+from jax import api_util
 from jax import lax
 from jax._src import core as jax_core
 from jax._src import linear_util as lu
@@ -36,6 +37,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import gpu as gpu_dialect
+from jax._src.lib.mlir.dialects import math as math_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.lib.mlir.dialects import scf as scf_dialect
@@ -237,7 +239,7 @@ class ModuleContext:
   program_ids: Sequence[ir.Value] | None
   approx_math: bool
   single_wg_lane_predicate: ir.Value
-  runtime_smem: ir.Value  # ir.MemRefType
+  smem_requested_bytes: int
   smem_used_bytes: int
   runtime_barriers: MutableMapping[
       mgpu.Barrier, MutableSequence[mgpu.BarrierRef]
@@ -279,25 +281,38 @@ class ModuleContext:
       and the second element is a sequence of memref views into the
       runtime scratch buffer.
     """
-    smem_scratch_bytes = math.prod(ir.MemRefType(self.runtime_smem.type).shape)
-
+    smem_base = None
+    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+    i8 = ir.IntegerType.get_signless(8)
+    i32 = ir.IntegerType.get_signless(32)
+    if self.thread_semantics == mgpu.ThreadSemantics.Lane:
+      smem_base = gpu_dialect.dynamic_shared_memory(
+          ir.MemRefType.get((mgpu_utils.DYNAMIC,), i8, memory_space=smem)
+      )
     views = []
     off = initial_used_bytes = self.smem_used_bytes
     assert off % _SMEM_ALIGNMENT == 0
-    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
     for s in structs:
       scratch_ty = ir.MemRefType.get(
           s.shape,
           mgpu_utils.dtype_to_ir_type(s.dtype),
           memory_space=smem,
       )
-      views.append(
-          memref_dialect.view(scratch_ty, self.runtime_smem, _as_index(off), [])
-      )
+      # The below code emission relies on the assumption that the first scratch
+      # operand provided by Mosaic GPU always begins at the beginning of
+      # dynamic SMEM. Mosaic GPU is expected to uphold that invariant.
+      if self.thread_semantics == mgpu.ThreadSemantics.Lane:
+        view = memref_dialect.view(
+            scratch_ty, smem_base, _as_index(off), []
+        )
+      else:
+        view = mgpu.dialect.slice_smem(scratch_ty, mgpu_utils.c(off, i32))
+      views.append(view)
+
       off += _align_to(
           math.prod(s.shape) * jnp.dtype(s.dtype).itemsize, _SMEM_ALIGNMENT
       )
-    assert off <= smem_scratch_bytes, "Ran out of scoped SMEM"
+    assert off <= self.smem_requested_bytes, "Ran out of scoped SMEM"
     assert off % _SMEM_ALIGNMENT == 0
 
     self.smem_used_bytes = off
@@ -596,7 +611,7 @@ def lower_jaxpr_to_module(
         [_program_id(axis, squashed_dims) for axis in range(len(grid))],
         approx_math,
         mgpu.single_thread_predicate(per_block=False),
-        runtime_smem,
+        smem_requested_bytes=math.prod(ir.MemRefType(runtime_smem.type).shape),
         smem_used_bytes=0,
         runtime_barriers=grouped_barriers,
         name_stack=source_info_util.NameStack(),
@@ -822,6 +837,29 @@ def _program_id(parallel_axis: int, squashed_dims: tuple[int, ...]) -> ir.Value:
         ir.IntegerType.get_signless(32),
         gpu_dialect.block_id(gpu_dialect.Dimension(parallel_axis)),
     )
+
+
+def _lower_fun(
+    fun: Callable[..., Any], *, multiple_results: bool
+) -> Callable[..., Any]:
+
+  def lowering_rule(ctx: LoweringRuleContext, *args, **params):
+    wrapped_fun = lu.wrap_init(
+        fun
+        if multiple_results
+        else lambda *args, **params: (fun(*args, **params),),
+        params,
+        debug_info=api_util.debug_info(
+            "Pallas Mosaic GPU lower_fun", fun, args, params
+        ),
+    )
+    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+    out = lower_jaxpr_to_mosaic_gpu(
+        ctx.module_ctx, ctx.launch_ctx, jaxpr, args, consts
+    )
+    return out if multiple_results else out[0]
+
+  return lowering_rule
 
 
 @register_lowering_rule(primitives.num_programs_p, mgpu.ThreadSemantics.Lane)
@@ -1149,6 +1187,9 @@ def _convert_element_type_lowering_rule_wg(
   cur_dtype = mgpu_utils.dtype_to_ir_type(x_aval.dtype)
   new_dtype = mgpu_utils.dtype_to_ir_type(new_dtype)
 
+  if cur_dtype == new_dtype:
+    return x
+
   if 1 < mgpu_utils.bitwidth(cur_dtype) < 8 or 1 < mgpu_utils.bitwidth(new_dtype) < 8:
     raise NotImplementedError("Conversion involving sub-byte types unsupported")
 
@@ -1157,7 +1198,29 @@ def _convert_element_type_lowering_rule_wg(
   from_integer = ir.IntegerType.isinstance(cur_dtype)
   to_integer = ir.IntegerType.isinstance(new_dtype)
   if from_float and to_float:
-    if ir.FloatType(cur_dtype).width > ir.FloatType(new_dtype).width:
+    cur_ty_width = ir.FloatType(cur_dtype).width
+    new_ty_width = ir.FloatType(new_dtype).width
+    if cur_ty_width == new_ty_width:
+      # There is no instruction to perform conversions between two float types
+      # of the same width. Go through the next-larger standard type.
+      # TODO(bchetioui): support conversions between float types of width 8.
+      # Which larger type to pick will depend on the number of bits in the
+      # smallest exponent.
+      if cur_ty_width != 16:
+        raise NotImplementedError(
+            "Conversion between float types of width other than 16 not"
+            " supported"
+        )
+      larger_ty = ir.F32Type.get()
+      if x_aval.shape:
+        upcast_ty = ir.VectorType.get(x_aval.shape, larger_ty)
+      else:
+        upcast_ty = larger_ty
+
+      def convert(ty, x):
+        return arith_dialect.truncf(ty, arith_dialect.extf(upcast_ty, x))
+
+    elif ir.FloatType(cur_dtype).width > ir.FloatType(new_dtype).width:
       convert = arith_dialect.truncf
     else:
       convert = arith_dialect.extf
@@ -1177,10 +1240,26 @@ def _convert_element_type_lowering_rule_wg(
     else:
       convert = arith_dialect.uitofp
   elif from_float and to_integer:
+    dst_width = mgpu_utils.bitwidth(new_dtype)
+    # We clamp the float value to the min/max integer destination value
+    # in order to match JAX/XLA casting behavior. Note that this differs
+    # from numpy casting behavior.
     if mgpu_utils.is_signed(y_aval.dtype):
+      maxint = 2 ** (dst_width - 1) - 1
+      minint = -(2 ** (dst_width - 1))
       convert = arith_dialect.fptosi
     else:
+      maxint = 2**dst_width - 1
+      minint = 0
       convert = arith_dialect.fptoui
+
+    maxint = _ir_constant(maxint, cur_dtype)
+    minint = _ir_constant(minint, cur_dtype)
+    if x_aval.shape:
+      maxint = vector_dialect.splat(x.type, maxint)
+      minint = vector_dialect.splat(x.type, minint)
+    x = arith_dialect.minimumf(x, maxint)
+    x = arith_dialect.maximumf(x, minint)
   else:
     raise NotImplementedError(f"Unsupported conversion {cur_dtype} -> {new_dtype}")
 
@@ -1191,6 +1270,13 @@ def _convert_element_type_lowering_rule_wg(
 mosaic_lowering_rules[mgpu.ThreadSemantics.Lane].update({
     lax.neg_p: lambda ctx, x: -x,
     lax.not_p: lambda ctx, x: ~x,
+})
+
+mosaic_lowering_rules[mgpu.ThreadSemantics.Warpgroup].update({
+    lax.neg_p: _lower_fun(lambda x: jnp.subtract(0, x), multiple_results=False),
+    lax.not_p: _lower_fun(
+        lambda x: jnp.bitwise_xor(x, -1), multiple_results=False
+    ),
 })
 
 
@@ -1329,48 +1415,98 @@ def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
 
 
 @register_lowering_rule(lax.integer_pow_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(lax.integer_pow_p, mgpu.ThreadSemantics.Warpgroup)
 def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
-  [x_aval] = ctx.avals_in
-  x = _ensure_fa(x, x_aval.dtype)
-  if y == 2:
-    return x * x
-  return NotImplementedError
+  if y != 2:
+    raise NotImplementedError
+  return _square_lowering_rule(ctx, x)
+
 
 @register_lowering_rule(lax.square_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(lax.square_p, mgpu.ThreadSemantics.Warpgroup)
 def _square_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
-  x = _ensure_fa(x, x_aval.dtype)
-  return x * x
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    x = _ensure_fa(x, x_aval.dtype)
+    return x * x
+  if jnp.issubdtype(x_aval.dtype, jnp.integer):
+    return arith_dialect.muli(x, x)
+  if jnp.issubdtype(x_aval.dtype, jnp.floating):
+    return arith_dialect.mulf(x, x)
+  raise NotImplementedError(f"Unsupported dtype {x_aval.dtype}")
+
 
 @register_lowering_rule(lax.rsqrt_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(lax.rsqrt_p, mgpu.ThreadSemantics.Warpgroup)
 def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
-  return _ensure_fa(x, x_aval.dtype).rsqrt(approx=ctx.module_ctx.approx_math)
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    return _ensure_fa(x, x_aval.dtype).rsqrt(approx=ctx.module_ctx.approx_math)
+  fastmath = (
+      arith_dialect.FastMathFlags.afn if ctx.module_ctx.approx_math else None
+  )
+  return math_dialect.rsqrt(
+      _ensure_ir_value(x, x_aval.dtype), fastmath=fastmath
+  )
+
 
 @register_lowering_rule(lax.tanh_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(lax.tanh_p, mgpu.ThreadSemantics.Warpgroup)
 def _tanh_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
-  return _ensure_fa(x, x_aval.dtype).tanh(approx=ctx.module_ctx.approx_math)
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    return _ensure_fa(x, x_aval.dtype).tanh(approx=ctx.module_ctx.approx_math)
+  fastmath = (
+      arith_dialect.FastMathFlags.afn if ctx.module_ctx.approx_math else None
+  )
+  return math_dialect.tanh(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
 
 
-@register_lowering_rule(lax.logistic_p, mgpu.ThreadSemantics.Lane)
-def _logistic_lowering_rule(ctx: LoweringRuleContext, x):
-  [x_aval] = ctx.avals_in
-  a = _ensure_fa(x, x_aval.dtype)
-  return 1. / (1. + (-a).exp(approx=ctx.module_ctx.approx_math))
+def _logistic(x):
+  return 1.0 / (1 + lax.exp(-x))
+
+
+mosaic_lowering_rules[mgpu.ThreadSemantics.Lane][lax.logistic_p] = _lower_fun(
+    _logistic, multiple_results=False
+)
+mosaic_lowering_rules[mgpu.ThreadSemantics.Warpgroup][lax.logistic_p] = (
+    _lower_fun(_logistic, multiple_results=False)
+)
+
 
 @register_lowering_rule(lax.exp_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(lax.exp_p, mgpu.ThreadSemantics.Warpgroup)
 def _exp_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
-  a = _ensure_fa(x, x_aval.dtype)
-  return a.exp(approx=ctx.module_ctx.approx_math)
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    return _ensure_fa(x, x_aval.dtype).exp(approx=ctx.module_ctx.approx_math)
+  fastmath = (
+      arith_dialect.FastMathFlags.afn if ctx.module_ctx.approx_math else None
+  )
+  return math_dialect.exp(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
 
 
 @register_lowering_rule(lax.exp2_p, mgpu.ThreadSemantics.Lane)
 def _exp2_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
-  a = _ensure_fa(x, x_aval.dtype)
-  return a.exp2(approx=ctx.module_ctx.approx_math)
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    return _ensure_fa(x, x_aval.dtype).exp2(approx=ctx.module_ctx.approx_math)
+  fastmath = (
+      arith_dialect.FastMathFlags.afn if ctx.module_ctx.approx_math else None
+  )
+  return math_dialect.exp2(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
+
+
+@register_lowering_rule(lax.log_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(lax.log_p, mgpu.ThreadSemantics.Warpgroup)
+def _log_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    return _ensure_fa(x, x_aval.dtype).log(approx=ctx.module_ctx.approx_math)
+  fastmath = (
+      arith_dialect.FastMathFlags.afn if ctx.module_ctx.approx_math else None
+  )
+  return math_dialect.log(_ensure_ir_value(x, x_aval.dtype), fastmath=fastmath)
 
 
 @register_lowering_rule(lax.reduce_sum_p, mgpu.ThreadSemantics.Lane)
@@ -1471,11 +1607,7 @@ def _debug_print_lowering_rule(
     )
   elif len(ctx.avals_in) == 1:
     [arg] = args
-    @arg.foreach
-    def _(val, idx):
-      idx_fmt = ", ".join(["{}"] * len(idx))
-      fmt_str = fmt.format(f"[{idx_fmt}]/{list(arg.shape)}: {{}}")
-      mgpu.debug_print(fmt_str, *idx, val, uniform=False)
+    arg.debug_print(fmt)
   else:
     raise NotImplementedError(
         "debug_print only supports printing of scalar values, or a single array"
@@ -1888,27 +2020,36 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
 
 
 @register_lowering_rule(lax.bitcast_convert_type_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(
+    lax.bitcast_convert_type_p, mgpu.ThreadSemantics.Warpgroup
+)
 def _bitcast_convert_type_lowering_rule(
-    ctx: LoweringRuleContext, operand, *, new_dtype
+    ctx: LoweringRuleContext, x, *, new_dtype
 ):
-  # TODO(petebu) Handle case where src and dst types have different bitwidths
-  [operand_aval] = ctx.avals_in
-  operand = _ensure_fa(operand, operand_aval.dtype)
-  src_elem_type = mgpu_utils.dtype_to_ir_type(operand_aval.dtype)
+  [x_aval] = ctx.avals_in
+  src_elem_type = mgpu_utils.dtype_to_ir_type(x_aval.dtype)
   dst_elem_type = mgpu_utils.dtype_to_ir_type(new_dtype)
   assert isinstance(src_elem_type, (ir.IntegerType, ir.FloatType))
   assert isinstance(dst_elem_type, (ir.IntegerType, ir.FloatType))
   if src_elem_type.width != dst_elem_type.width:
     raise NotImplementedError(
-        f"Can't bitcast from {operand_aval.dtype} to {new_dtype} because they"
+        f"Cannot bitcast from {x_aval.dtype} to {new_dtype} because they"
         " have different widths"
     )
+
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Warpgroup:
+    x = _ensure_ir_value(x, x_aval.dtype)
+    return arith_dialect.bitcast(
+        ir.VectorType.get(x_aval.shape, dst_elem_type), x
+    )
+
+  x = _ensure_fa(x, x_aval.dtype)
   if ir.IntegerType.isinstance(dst_elem_type):
     output_is_signed = mgpu_utils.is_signed(new_dtype)
   else:
     output_is_signed = None
   return mgpu.FragmentedArray.bitcast(
-      operand, dst_elem_type, output_is_signed=output_is_signed
+      x, dst_elem_type, output_is_signed=output_is_signed
   )
 
 

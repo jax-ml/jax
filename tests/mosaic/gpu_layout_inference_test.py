@@ -210,7 +210,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       for layout in [
           mgpu.WGSplatFragLayout(shape),
           mgpu.WGStridedFragLayout(shape, vec_size=4),
-          mgpu.WGMMAFragLayout(),
+          mgpu.TILED_LAYOUT_WGMMA,
       ]
   )
   def test_infer_layout_from_yield_op_in_layouts_for_for_op(
@@ -278,7 +278,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     mgpu.infer_layout(self.module)
 
-    wgmma_layout = layouts.to_layout_attr(mgpu.WGMMAFragLayout())
+    wgmma_layout = layouts.to_layout_attr(mgpu.TILED_LAYOUT_WGMMA)
     self.assertSequenceEqual(yield_op.attributes["in_layouts"], [wgmma_layout])
     self.assertSequenceEqual(yield_op.attributes["out_layouts"], [])
     self.assertSequenceEqual(for_op.attributes["in_layouts"], [wgmma_layout])
@@ -312,7 +312,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
   @parameterized.parameters(
       mgpu.WGStridedFragLayout((32, 4), vec_size=1),
-      mgpu.WGMMAFragLayout(),
+      mgpu.TILED_LAYOUT_WGMMA,
   )
   def test_infer_layout_picks_non_splat_layout_over_splat_layout(
       self, layout

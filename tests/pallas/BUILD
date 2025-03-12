@@ -128,6 +128,43 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "ops_test_mgpu",
+    srcs = [
+        "ops_test.py",
+    ],
+    disable_configs = [
+        "gpu_v100",
+        "gpu_v100_x32",
+        "gpu_p100",
+        "gpu_p100_x32",
+        "gpu_a100",
+        "gpu_a100_x32",
+    ],
+    enable_backends = [
+        "gpu",
+    ],
+    enable_configs = [
+        "gpu_h100",
+        "gpu_h100_x32",
+    ],
+    env = {
+        "JAX_PALLAS_USE_MOSAIC_GPU": "1",
+        "JAX_PALLAS_VERBOSE_ERRORS": "0",
+    },
+    tags = [
+        "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_gpu",  # build_cleaner: keep
+        "//jax:pallas_mosaic_gpu",  # build_cleaner: keep
+        "//jax:pallas_tpu",
+    ] + py_deps("absl/testing") + py_deps("hypothesis") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
     name = "indexing_test",
     srcs = [
         "indexing_test.py",
@@ -470,6 +507,24 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "tpu_ragged_paged_attention_test",
+    srcs = ["tpu_ragged_paged_attention_test.py"],
+    disable_configs = [
+        "tpu_v5p_1x1",
+    ],
+    enable_backends = ["tpu"],
+    shard_count = 24,
+    tags = [
+        "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
+    ],
+    deps = [
+        "//jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
     name = "tpu_splash_attention_kernel_test",
     srcs = [
         "tpu_splash_attention_kernel_test.py",
@@ -587,5 +642,62 @@ jax_multiplatform_test(
         "//jax:pallas",
         "//jax:pallas_experimental_gpu_ops",
         "//jax:pallas_mosaic_gpu",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
+    name = "fuser_block_spec_test",
+    srcs = [
+        "fuser_block_spec_test.py",
+    ],
+    disable_configs = [
+        "cpu",
+        "cpu_shardy",
+    ],
+    enable_backends = ["cpu"],
+    tags = [
+        "noasan",
+        "nomsan",
+        "notsan",
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax/_src/pallas/fuser",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
+    name = "tpu_fusable_matmul_test",
+    srcs = ["tpu_fusable_matmul_test.py"],
+    disable_configs = [
+        "tpu_v3_1x1",
+        "tpu_pjrt_c_api",
+        "gpu_v100",
+        "gpu_v100_x32",
+        "gpu_a100",
+        "gpu_p100",
+        "gpu_p100_x32",
+        "gpu_h100",
+        "cpu",
+        "cpu_x32",
+        "cpu_shardy",
+    ],
+    enable_backends = ["tpu"],
+    enable_configs = [
+        "tpu_v4_1x1",
+        "tpu_v5e",
+        "tpu_v5p_1x1",
+        "tpu_v6e_1x1",
+    ],
+    shard_count = 4,
+    tags = [
+        "noasan",
+        "nomsan",
+        "notsan",
+    ],
+    deps = [
+        "//jax:pallas_tpu",
+        "//jax:pallas_tpu_ops",
+        "//jax/_src/pallas/fuser",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )

@@ -470,6 +470,27 @@ class OpsTest(PallasBaseTest):
     expected = lax.select(concated_mask, concated_x, jnp.zeros_like(concated_x))
     np.testing.assert_array_equal(out, expected)
 
+  def test_reduce_with_const(self):
+    m = 1
+    d = 1024
+    x = jnp.ones((m, d), jnp.bfloat16)
+
+    def dot(x, y):
+      return jax.lax.dot_general(
+          x,
+          y,
+          (((1,), (1,)), ((), ())),
+          preferred_element_type=jnp.float32,
+      )
+
+    def kernel(x, out):
+      out[:] = dot(x[:], jnp.ones((1, d), jnp.bfloat16))
+
+    run = pl.pallas_call(kernel, jax.ShapeDtypeStruct((m, 1), jnp.float32))
+    output = run(x)
+    expected = dot(x[:], jnp.ones((1, d), jnp.bfloat16))
+    np.testing.assert_array_equal(output, expected)
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True

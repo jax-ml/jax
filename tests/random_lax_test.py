@@ -599,6 +599,25 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gumbel_r().cdf)
 
+  def testLowProbabilityGumbel(self):
+    dtype = jnp.bfloat16
+
+    nmant = jnp.finfo(dtype).nmant
+    probs = [x * 2 ** -nmant for x in [0.125, 0.75, 1.25, 2.125]]
+    num_samples = 1024 * 128
+    num_groups = 128
+    key = jax.random.key(0)
+
+    def compute_counts(key):
+      v = jax.random.gumbel(key, (num_samples, 1), dtype=dtype, mode="high")
+      thresholds = np.array([[-np.log(-np.log(1 - x)) for x in probs]],
+                            dtype=dtype)
+      return (v > thresholds).sum(axis=0)
+    pts = [float(x) for x in jax.lax.map(
+        compute_counts, jax.random.split(key, num_groups)).sum(axis=0)]
+    cdf_probs = [x / (num_samples * num_groups) for x in pts]
+    np.testing.assert_allclose(cdf_probs, probs, rtol=0.25, atol=0)
+
   @jtu.sample_product(dtype=float_dtypes)
   def testLaplace(self, dtype):
     key = lambda: self.make_key(0)

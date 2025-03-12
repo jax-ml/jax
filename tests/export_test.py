@@ -410,7 +410,6 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertEqual(tree_util.tree_structure(res2),
                      tree_util.tree_structure(res))
 
-
   def test_error_wrong_intree(self):
     def f(a_b_pair, *, c):
       return jnp.sin(a_b_pair[0]) + jnp.cos(a_b_pair[1]) + c
@@ -1015,6 +1014,8 @@ class JaxExportTest(jtu.JaxTestCase):
       self.skipTest(f"TODO: serialization not supported for {str(dtype)}")
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest("TPU does not support float8_e8m0fnu.")
+    if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
+      self.skipTest("TPU does not support float4_e2m1fn.")
     @jax.jit
     def f_jax(x):
       return x + x
@@ -1098,16 +1099,30 @@ class JaxExportTest(jtu.JaxTestCase):
     run_devices = export_devices[::-1]  # We can use other devices
     run_mesh = Mesh(run_devices, "y")
     a_device = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P()))
-
-    expected_re = re.compile(
-      # The top-level input it replicated
-      r"func.func .* @main\(%arg0: tensor<16x4xf32>.*mhlo.sharding = \"{replicated}\"}\).*"
-      # We apply the in_shardings for f_jax
-      r".*custom_call @Sharding\(%arg0\).*mhlo.sharding = \"{devices=\[2,1\]<=\[2\]}\"}.*"
-      r"%1 = .*call @call_exported_f_jax.*"
-      # We apply the out_shardings for f_jax
-      r".*custom_call @Sharding\(%1\).*mhlo.sharding = \"{devices=\[1,2\]<=\[2\]}\"}.*",
-      re.DOTALL)
+    if config.use_shardy_partitioner.value:
+      expected_re = re.compile(
+          # The top-level input is replicated
+          r"func.func .* @main\(%arg0: tensor<16x4xf32>.*sdy.sharding ="
+          r" #sdy.sharding<@mesh_0, \[\{\}\, \{\}\]>}\).*"
+          # We apply the in_shardings for f_jax
+          r".*sdy.sharding_constraint %arg0 <@mesh, \[\{\"x\"\}\, \{\}\]>.*"
+          r"%1 = .*call @call_exported_f_jax.*"
+          # We apply the out_shardings for f_jax
+          r".*sdy.sharding_constraint %1 <@mesh, \[\{\}, \{\"x\"\}\]>.*",
+          re.DOTALL)
+    else:
+      expected_re = re.compile(
+          # The top-level input it replicated
+          r"func.func .* @main\(%arg0: tensor<16x4xf32>.*mhlo.sharding ="
+          r" \"{replicated}\"}\).*"
+          # We apply the in_shardings for f_jax
+          r".*custom_call @Sharding\(%arg0\).*mhlo.sharding ="
+          r" \"{devices=\[2,1\]<=\[2\]}\"}.*"
+          r"%1 = .*call @call_exported_f_jax.*"
+          # We apply the out_shardings for f_jax
+          r".*custom_call @Sharding\(%1\).*mhlo.sharding ="
+          r" \"{devices=\[1,2\]<=\[2\]}\"}.*",
+          re.DOTALL)
     hlo = jax.jit(exp.call).lower(a_device).as_text()
     self.assertRegex(hlo, expected_re)
 
@@ -1622,7 +1637,6 @@ class JaxExportTest(jtu.JaxTestCase):
                        platforms=("tpu", "cpu", "cuda", "other"))(x)
     self.assertEqual(exp.platforms, ("tpu", "cpu", "cuda", "other"))
 
-
   def test_multi_platform_with_donation(self):
     f = jax.jit(jnp.sin, donate_argnums=(0,))
     x = np.arange(3, dtype=np.float32)
@@ -1909,6 +1923,43 @@ class JaxExportTest(jtu.JaxTestCase):
     )
     res_exported = exp_f.call(lhs, rhs, group_sizes)
     self.assertAllClose(res_native, res_exported)
+
+  def test_different_meshes(self):
+    if config.use_shardy_partitioner.value:
+      self.skipTest("TODO(b/394265659) can't create NameShardings for Shardy "
+                    "since there are multiple different meshes")
+    # Make sure we can save with various meshes, and load with various meshes,
+    # all different from one another.
+    if jax.local_device_count() < 8:
+      self.skipTest("Need at least 8 devices")
+
+    old_mesh_0 = jtu.create_mesh((4, 2), ("old_a", "old_b"))
+    old_mesh_1 = jtu.create_mesh((2, 4), ("old_x", "old_y"))
+    @jax.jit
+    def f(x, y):
+      z = x + y
+      return jax.lax.with_sharding_constraint(
+          z, NamedSharding(old_mesh_0, P("old_b")))
+
+    exp = get_exported(f)(
+        jax.ShapeDtypeStruct(
+            (32, 32), dtype=np.float32,
+            sharding=NamedSharding(old_mesh_0, P(None, "old_a"))),
+        jax.ShapeDtypeStruct(
+            (32, 32), dtype=np.float32,
+            sharding=NamedSharding(old_mesh_1, P("old_y"))))
+
+    # Call the Exported with a concrete Mesh
+    new_mesh_0 = jtu.create_mesh((2, 2, 2), ("new_1", "new_2", "new_3"))
+    new_mesh_1 = jtu.create_mesh((1, 8), ("newA", "newB"))
+
+    a = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+    a = jax.device_put(a, NamedSharding(new_mesh_0, P(None, "new_1")))
+    b = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+    b = jax.device_put(b, NamedSharding(new_mesh_1, P("newB")))
+
+    r = jax.jit(exp.call, out_shardings=NamedSharding(old_mesh_0, P("old_b")))(a, b)
+    self.assertAllClose(a + b, r)
 
 
 if __name__ == "__main__":

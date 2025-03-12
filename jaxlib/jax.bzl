@@ -17,7 +17,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@com_github_google_flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
 load("@jax_wheel//:wheel.bzl", "WHEEL_VERSION")
-load("@jax_wheel_version_suffix//:wheel_version_suffix.bzl", "BUILD_TAG", "WHEEL_VERSION_SUFFIX")
+load("@jax_wheel_version_suffix//:wheel_version_suffix.bzl", "WHEEL_VERSION_SUFFIX")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
@@ -46,7 +46,8 @@ mosaic_gpu_internal_users = []
 mosaic_internal_users = []
 pallas_gpu_internal_users = []
 pallas_tpu_internal_users = []
-pallas_extension_deps = []
+pallas_fuser_users = []
+mosaic_extension_deps = []
 
 jax_internal_export_back_compat_test_util_visibility = []
 jax_internal_test_harnesses_visibility = []
@@ -223,7 +224,15 @@ def if_building_jaxlib(
             "@pypi_jax_cuda12_plugin//:pkg",
             "@pypi_jax_cuda12_pjrt//:pkg",
         ],
-        if_not_building_for_cpu = ["@pypi_jaxlib//:pkg"]):
+        if_not_building_for_cpu = ["@pypi_jaxlib//:pkg"],
+        if_py_import = [
+            "//jaxlib/tools:jaxlib_py_import",
+            "//jaxlib/tools:jax_cuda_plugin_py_import",
+            "//jaxlib/tools:jax_cuda_pjrt_py_import",
+        ],
+        if_py_import_for_cpu = [
+            "//jaxlib/tools:jaxlib_py_import",
+        ]):
     """Adds jaxlib and jaxlib cuda plugin wheels as dependencies instead of depending on sources.
 
     This allows us to test prebuilt versions of jaxlib wheels against the rest of the JAX codebase.
@@ -233,12 +242,16 @@ def if_building_jaxlib(
       if_not_building: the jaxlib wheels to depend on including gpu-specific plugins in case of
                        gpu-enabled builds
       if_not_building_for_cpu: the jaxlib wheels to depend on in case of cpu-only builds
+      if_py_import: the py_import targets to depend on in case of gpu-enabled builds
+      if_py_import_for_cpu: the py_import targets to depend on in case of cpu-only builds
     """
 
     return select({
         "//jax:enable_jaxlib_build": if_building,
         "//jax_plugins/cuda:disable_jaxlib_for_cpu_build": if_not_building_for_cpu,
         "//jax_plugins/cuda:disable_jaxlib_for_cuda12_build": if_not_building,
+        "//jax_plugins/cuda:enable_py_import_for_cpu_build": if_py_import_for_cpu,
+        "//jax_plugins/cuda:enable_py_import_for_cuda12_build": if_py_import,
     })
 
 # buildifier: disable=function-docstring
@@ -324,11 +337,18 @@ def jax_generate_backend_suites(backends = []):
         tags = ["-jax_test_%s" % backend for backend in backends] + ["-manual"],
     )
 
-def _get_full_wheel_name(package_name, no_abi, platform_independent, platform_name, cpu_name, wheel_version):
+def _get_full_wheel_name(
+        package_name,
+        no_abi,
+        platform_independent,
+        platform_name,
+        cpu_name,
+        wheel_version,
+        py_freethreaded):
     if no_abi or platform_independent:
         wheel_name_template = "{package_name}-{wheel_version}-py{major_python_version}-none-{wheel_platform_tag}.whl"
     else:
-        wheel_name_template = "{package_name}-{wheel_version}-cp{python_version}-cp{python_version}-{wheel_platform_tag}.whl"
+        wheel_name_template = "{package_name}-{wheel_version}-cp{python_version}-cp{python_version}{free_threaded_suffix}-{wheel_platform_tag}.whl"
     python_version = HERMETIC_PYTHON_VERSION.replace(".", "")
     return wheel_name_template.format(
         package_name = package_name,
@@ -338,6 +358,7 @@ def _get_full_wheel_name(package_name, no_abi, platform_independent, platform_na
         wheel_platform_tag = "any" if platform_independent else "_".join(
             PLATFORM_TAGS_DICT[platform_name, cpu_name],
         ),
+        free_threaded_suffix = "t" if py_freethreaded.lower() == "yes" else "",
     )
 
 def _get_source_distribution_name(package_name, wheel_version):
@@ -351,6 +372,7 @@ def _jax_wheel_impl(ctx):
     override_include_cuda_libs = ctx.attr.override_include_cuda_libs[BuildSettingInfo].value
     output_path = ctx.attr.output_path[BuildSettingInfo].value
     git_hash = ctx.attr.git_hash[BuildSettingInfo].value
+    py_freethreaded = ctx.attr.py_freethreaded[BuildSettingInfo].value
     executable = ctx.executable.wheel_binary
 
     if include_cuda_libs and not override_include_cuda_libs:
@@ -364,10 +386,7 @@ def _jax_wheel_impl(ctx):
 
     full_wheel_version = (WHEEL_VERSION + WHEEL_VERSION_SUFFIX)
     env["WHEEL_VERSION_SUFFIX"] = WHEEL_VERSION_SUFFIX
-    if BUILD_TAG:
-        env["WHEEL_VERSION_SUFFIX"] = ".dev{}+selfbuilt".format(BUILD_TAG)
-        full_wheel_version += env["WHEEL_VERSION_SUFFIX"]
-    if not WHEEL_VERSION_SUFFIX and not BUILD_TAG:
+    if not WHEEL_VERSION_SUFFIX:
         env["JAX_RELEASE"] = "1"
 
     cpu = ctx.attr.cpu
@@ -389,6 +408,7 @@ def _jax_wheel_impl(ctx):
             platform_name = platform_name,
             cpu_name = cpu,
             wheel_version = full_wheel_version,
+            py_freethreaded = py_freethreaded,
         )
         wheel_file = ctx.actions.declare_file(output_path +
                                               "/" + wheel_name)
@@ -465,6 +485,7 @@ _jax_wheel = rule(
         "enable_rocm": attr.bool(default = False),
         "include_cuda_libs": attr.label(default = Label("@local_config_cuda//cuda:include_cuda_libs")),
         "override_include_cuda_libs": attr.label(default = Label("@local_config_cuda//cuda:override_include_cuda_libs")),
+        "py_freethreaded": attr.label(default = Label("@rules_python//python/config_settings:py_freethreaded")),
     },
     implementation = _jax_wheel_impl,
     executable = False,
@@ -479,6 +500,7 @@ def jax_wheel(
         build_wheel_only = True,
         editable = False,
         enable_cuda = False,
+        enable_rocm = False,
         platform_version = "",
         source_files = []):
     """Create jax artifact wheels.
@@ -494,6 +516,7 @@ def jax_wheel(
       editable: whether to build an editable wheel
       platform_independent: whether to build a wheel without platform tag
       enable_cuda: whether to build a cuda wheel
+      enable_rocm: whether to build a rocm wheel
       platform_version: the cuda version to use for the wheel
       source_files: the source files to include in the wheel
 
@@ -509,6 +532,7 @@ def jax_wheel(
         build_wheel_only = build_wheel_only,
         editable = editable,
         enable_cuda = enable_cuda,
+        enable_rocm = enable_rocm,
         platform_version = platform_version,
         # git_hash is empty by default. Use `--//jaxlib/tools:jaxlib_git_hash=$(git rev-parse HEAD)`
         # flag in bazel command to pass the git hash for nightly or release builds.
@@ -521,9 +545,10 @@ def jax_wheel(
         # TODO(kanglan) Add @platforms//cpu:ppc64le once JAX Bazel is upgraded > 6.5.0.
         cpu = select({
             "//jaxlib/tools:macos_arm64": "arm64",
+            "//jaxlib/tools:macos_x86_64": "x86_64",
             "//jaxlib/tools:win_amd64": "AMD64",
-            "//jaxlib/tools:arm64": "aarch64",
-            "@platforms//cpu:x86_64": "x86_64",
+            "//jaxlib/tools:linux_aarch64": "aarch64",
+            "//jaxlib/tools:linux_x86_64": "x86_64",
         }),
         source_files = source_files,
     )

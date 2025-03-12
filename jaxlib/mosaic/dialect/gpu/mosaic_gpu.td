@@ -128,7 +128,6 @@ def MosaicGPU_WGStridedFragLayout : AttrDef<MosaicGPU_Dialect, "WGStridedFragLay
   let assemblyFormat = "`<` $shape`,` $vector_size `>`";
 }
 
-
 def MosaicGPU_WGSplatFragLayout : AttrDef<MosaicGPU_Dialect, "WGSplatFragLayout", []> {
   let summary = "Annotates an array that is the result of a splat.";
   let description = [{
@@ -143,20 +142,6 @@ def MosaicGPU_WGSplatFragLayout : AttrDef<MosaicGPU_Dialect, "WGSplatFragLayout"
   let assemblyFormat = "`<` $shape `>`";
 }
 
-def MosaicGPU_WGMMAFragLayout : AttrDef<MosaicGPU_Dialect, "WGMMAFragLayout", []> {
-  let summary = "2D array that can be tiled by supported WGMMA shapes.";
-  let description = [{
-    This layout annotates arrays that are fragmented across all threads in a
-    warpgroup that is executing a WGMMA operation. The shape of the array is
-    (m, n) where:
-      - m % 64 == 0
-      - n %  8 == 0
-  }];
-
-  let mnemonic = "WGMMAFragLayout";
-  let assemblyFormat = "";
-}
-
 def MosaicGPU_WGMMARowFragLayout : AttrDef<MosaicGPU_Dialect, "WGMMARowFragLayout", []> {
   let summary = "1D array that is a row that can be tiled by supported WGMMA shapes.";
   let description = [{
@@ -168,6 +153,24 @@ def MosaicGPU_WGMMARowFragLayout : AttrDef<MosaicGPU_Dialect, "WGMMARowFragLayou
   let mnemonic = "WGMMARowFragLayout";
   let assemblyFormat = "";
 }
+
+def MosaicGPU_TiledLayout : AttrDef<MosaicGPU_Dialect, "TiledLayout", []> {
+  let summary = "A layout derived from a tiling expression.";
+  let description = [{
+    See mosaic/gpu/fragmented_array.py -> TiledLayout for more details.
+  }];
+
+  let parameters = (ins
+    "::mlir::ArrayAttr":$tiling,
+    "int":$warp_dim,
+    "::mlir::ArrayAttr":$lane_dims,
+    "int":$vector_dim
+  );
+  let mnemonic = "TiledLayout";
+  let assemblyFormat = "`<` $tiling `,` `warp_dim` `=` $warp_dim `,` "
+      "`lane_dims` `=` $lane_dims `,` `vector_dim` `=` $vector_dim `>`";
+}
+
 
 // Note: This duplicates the Dimension enum in mlir/Dialect/GPU/IR/GPUOps.td
 // but it was not possible to reuse that definition. Including that file
@@ -347,7 +350,8 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     PtxPredicate:$predicate,
 
     // Attributes
-    DenseI64ArrayAttr:$slice_lengths
+    DenseI64ArrayAttr:$slice_lengths,
+    DefaultValuedOptionalAttr<BoolAttr, "true">:$commit_group
   );
 
   let assemblyFormat = [{
@@ -372,6 +376,14 @@ def MosaicGPU_WGMMALayout :
   let cppNamespace = "::mosaic_gpu";
 }
 
+
+def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", []> {
+  let summary = "Constructs an SMEM MemRef with the requested type that begins at the specified SMEM offset address.";
+
+  let arguments = (ins I32:$offset);
+  let results = (outs MemRefOf<[AnyType]>);
+}
+
 def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
   let summary = "Multiply two matrices asyncronously using warpgroup level matrix multiply operations.";
   let description = [{
@@ -393,6 +405,8 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
     Where:
       - `s == swizzle/element_bytediwth` (for `kNoSwizzle`, `swizzle` is 16.)
         and the tilings are [64, s] for `a` and [s, s] for `b`.
+      - `a` and/or `b` may be transposed if the corresponding attribute is set
+        to `true`.
 
     The output has an identical shape and type as the input accumulator.
 
@@ -415,7 +429,10 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
     AnyTypeOf<[
       MemRefOf<[MosaicGPU_WGMMASupportedType]>,
       VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>]>:$a,
-    MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b
+    MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b,
+
+    DefaultValuedOptionalAttr<BoolAttr, "false">:$transpose_a,
+    DefaultValuedOptionalAttr<BoolAttr, "false">:$transpose_b
   );
   let results = (outs VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>);
 

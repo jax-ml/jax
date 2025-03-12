@@ -10,7 +10,7 @@ DeepMind](https://deepmind.google/), Alphabet more broadly,
 and elsewhere.
 
 At the heart of the project is the [JAX
-core](http://github.com/google/jax) library, which focuses on the
+core](http://github.com/jax-ml/jax) library, which focuses on the
 fundamentals of machine learning and numerical computing, at scale.
 
 When [developing](#development) the core, we want to maintain agility

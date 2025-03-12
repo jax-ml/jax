@@ -62,6 +62,7 @@ class DType(object):
     f8_e5m2fnuz = 21
     f0 = 22
     f8_e8m0fnu = 25
+    f4_e2m1fn = 26
 
 
 class ShardingKind(object):

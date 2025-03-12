@@ -14,7 +14,7 @@
 
 # JAX is Autograd and XLA
 
-load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
@@ -29,6 +29,7 @@ load(
     "jax_visibility",
     "mosaic_gpu_internal_users",
     "mosaic_internal_users",
+    "pallas_fuser_users",
     "pallas_gpu_internal_users",
     "pallas_tpu_internal_users",
     "py_deps",
@@ -44,17 +45,26 @@ package(
 
 licenses(["notice"])
 
-# If this flag is true, jaxlib should be built by bazel. If false, then we do not build jaxlib and
-# assume it has been installed, e.g., by `pip`.
-bool_flag(
+# The flag controls whether jaxlib should be built by Bazel.
+# If ":build_jaxlib=true", then jaxlib will be built.
+# If ":build_jaxlib=false", then jaxlib is not built. It is assumed that the pre-built jaxlib wheel
+# is available in the "dist" folder.
+# If ":build_jaxlib=wheel", then jaxlib wheel will be built as a py_import rule attribute.
+# The py_import rule unpacks the wheel and provides its content as a py_library.
+string_flag(
     name = "build_jaxlib",
-    build_setting_default = True,
+    build_setting_default = "true",
+    values = [
+        "true",
+        "false",
+        "wheel",
+    ],
 )
 
 config_setting(
     name = "enable_jaxlib_build",
     flag_values = {
-        ":build_jaxlib": "True",
+        ":build_jaxlib": "true",
     },
 )
 
@@ -103,6 +113,12 @@ package_group(
     name = "pallas_tpu_users",
     includes = [":internal"],
     packages = pallas_tpu_internal_users,
+)
+
+package_group(
+    name = "pallas_fuser_users",
+    includes = [":internal"],
+    packages = pallas_fuser_users,
 )
 
 package_group(
@@ -628,6 +644,7 @@ pytype_strict_library(
             "experimental/pallas/ops/gpu/**/*.py",
             "experimental/pallas/ops/tpu/**/*.py",
             "experimental/pallas/tpu.py",
+            "experimental/pallas/fuser.py",
             "experimental/pallas/triton.py",
         ],
     ),
@@ -661,6 +678,22 @@ pytype_strict_library(
         "//jax/_src/pallas/mosaic:primitives",
         "//jax/_src/pallas/mosaic:random",
         "//jax/_src/pallas/mosaic:verification",
+    ],
+)
+
+pytype_strict_library(
+    name = "pallas_fuser",
+    srcs = ["experimental/pallas/fuser.py"],
+    visibility = [
+        ":pallas_fuser_users",
+    ],
+    deps = [
+        ":pallas",  # build_cleaner: keep
+        "//jax/_src/pallas/fuser:block_spec",
+        "//jax/_src/pallas/fuser:custom_evaluate",
+        "//jax/_src/pallas/fuser:fusable",
+        "//jax/_src/pallas/fuser:fusion",
+        "//jax/_src/pallas/fuser:jaxpr_fusion",
     ],
 )
 

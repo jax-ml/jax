@@ -143,7 +143,15 @@ class custom_vmap:
   def __call__(self, *args, **kwargs):
     debug_fun = api_util.debug_info("custom_vmap fun", self.fun,
                                     args, kwargs)
-    args = api_util.resolve_kwargs(self.fun, args, kwargs)
+    try:
+      args = api_util.resolve_kwargs(self.fun, args, kwargs)
+    except TypeError as e:
+      raise TypeError(
+          "The input arguments to the custom_vmap-decorated function "
+          f"{debug_fun.func_name} could not be resolved to positional-only "
+          f"arguments. Binding failed with the error:\n{e}"
+      ) from e
+
     if not self.vmap_rule:
       raise AttributeError(
           f"No batching rule defined for custom_vmap function {debug_fun.func_name} "

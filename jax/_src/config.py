@@ -243,7 +243,8 @@ def trace_context():
           hlo_source_file_canonicalization_regex.value,
           pgle_profiling_runs.value,
           enable_pgle.value,
-          use_shardy_partitioner.value)
+          use_shardy_partitioner.value,
+          use_high_dynamic_range_gumbel.value)
 
 config = Config()
 
@@ -1810,4 +1811,11 @@ enable_empty_arrays = bool_state(
         "Enable the creation of an Array from an empty list of single-device "
         "arrays. This is to support MPMD/pipeline parallelism in McJAX (WIP)."
     )
+)
+
+use_high_dynamic_range_gumbel = bool_state(
+    name='jax_high_dynamic_range_gumbel',
+    default=False,
+    help='If True, gumble noise draws two samples to cover low probability '
+         'events with more precision.',
 )

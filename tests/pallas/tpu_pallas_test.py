@@ -1918,6 +1918,38 @@ class PallasCallTest(PallasBaseTest):
     y = test(x)
     np.testing.assert_array_equal(y, jnp.concatenate([x, x], axis=1))
 
+  def test_mixed_precision_dot(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 2, 27):
+      self.skipTest("Needs a newer libTPU")
+
+    if not jtu.is_device_tpu_at_least(5):
+      self.skipTest('float8_e4m3b11fnuz not supported on TPU generations <= 4')
+
+    def kernel(x_ref, w_ref, o_ref):
+      o_ref[:] = jax.lax.dot_general(
+          x_ref[:],
+          w_ref[:],
+          dimension_numbers=(((1,), (0,)), ((), ())),
+          preferred_element_type=jnp.float32,
+      )
+
+    x = jnp.ones((64, 128), dtype=jnp.bfloat16)
+    w = jnp.full((128, 128), jnp.nan, jnp.float8_e4m3b11fnuz)
+
+    run = pl.pallas_call(kernel, jax.ShapeDtypeStruct((64, 128), jnp.float32))
+    run = jax.named_call(run, name='run')
+    run = jax.jit(run)
+
+    expected = jax.lax.dot_general(
+        x,
+        w,
+        dimension_numbers=(((1,), (0,)), ((), ())),
+        preferred_element_type=jnp.float32,
+    )
+    jax_nans = jnp.isnan(expected).sum()
+    mosaic_nans = jnp.isnan(run(x, w)).sum()
+    self.assertEqual(jax_nans, mosaic_nans)
+
   def test_masked_store(self):
     shape = (16, 256)
     mask_shape = (10, 130)

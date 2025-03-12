@@ -22,6 +22,7 @@ import math
 from collections.abc import Callable
 from typing import Iterable, Protocol, Sequence, TypeVar
 
+import itertools
 import jax
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -115,6 +116,65 @@ class Tiling:
       strides = (*untiled, *(s * t for s, t in zip(tiled, tile)), *tiled)
     return strides
 
+  def tile_nested_shape_strides(
+      self,
+      shape: tuple[tuple[int, ...], ...],
+      strides: tuple[tuple[int, ...], ...],
+  ) -> tuple[tuple[tuple[int, ...], ...], tuple[tuple[int, ...], ...]]:
+    """A fused version of `tile_shape` and `tile_strides` for nested shapes.
+
+    By nested shape we mean that each logical dimension (i.e. each element of
+    shape/strides) is actually composed out of multiple physical dimensions.
+    For example, a row-major array of logical shape (128, 128) that is tiled
+    into (64, 64) tiles would have a nested shape ((2, 64), (2, 64)) (i.e. each
+    dim is split into two sub-dims) and nested strides of
+    ((2 * 64 * 64, 64), (64 * 64, 1)).
+    """
+    if len(shape) != len(strides):
+      raise ValueError(
+          f"Shape {shape} and strides {strides} must have the same length"
+      )
+    def fail_if(cond, shape=shape):  # Capture shape now.
+      if cond:
+        raise ValueError(f"Tiling {self.tiles} does not apply to shape {shape}")
+    for tile in self.tiles:
+      fail_if(len(tile) > len(shape))
+      untiled_shape, tiled_shape = shape[:-len(tile)], shape[-len(tile):]
+      untiled_strides, tiled_strides = strides[:-len(tile)], strides[-len(tile):]
+      major_dim_shapes, major_dim_strides = [], []
+      minor_dim_shapes, minor_dim_strides = [], []
+      for t, dim_shape, dim_strides in zip(tile, tiled_shape, tiled_strides):
+        major_dim_shape_rev, major_dim_stride_rev = [], []
+        minor_dim_shape_rev, minor_dim_stride_rev = [], []
+        for d, s in zip(reversed(dim_shape), reversed(dim_strides), strict=True):
+          if d < t:  # We will need to tile more dims
+            fail_if(t % d != 0)
+            t //= d
+            minor_dim_shape_rev.append(d)
+            minor_dim_stride_rev.append(s)
+          elif t != 1:  # Last dim to tile!
+            fail_if(d % t != 0)
+            minor_dim_shape_rev.append(t)
+            minor_dim_stride_rev.append(s)
+            if d != t:  # No need to insert singleton dims.
+              major_dim_shape_rev.append(d // t)
+              major_dim_stride_rev.append(s * t)
+            t = 1
+          else:  # Done tiling!
+            major_dim_shape_rev.append(d)
+            major_dim_stride_rev.append(s)
+        fail_if(t != 1)
+        major_dim_shapes.append(major_dim_shape_rev[::-1])
+        minor_dim_shapes.append(minor_dim_shape_rev[::-1])
+        major_dim_strides.append(major_dim_stride_rev[::-1])
+        minor_dim_strides.append(minor_dim_stride_rev[::-1])
+      shape = (*untiled_shape, *major_dim_shapes, *minor_dim_shapes)
+      strides = (*untiled_strides, *major_dim_strides, *minor_dim_strides)
+    return (
+        tuple(tuple(d) if d else (1,) for d in shape),
+        tuple(tuple(d) if d else (1,) for d in strides),
+    )
+
   def tile_indices(self, indices: tuple[int, ...]) -> tuple[int, ...]:
     for tile in self.tiles:
       untiled, tiled = indices[:-len(tile)], indices[-len(tile):]
@@ -207,6 +267,27 @@ class TiledLayout:
     if math.prod(min_tiled_shape[d] for d in self.lane_dims) != WARP_SIZE:
       raise ValueError
 
+  def thread_idxs(self, shape: tuple[int, ...]) -> Iterable[tuple[ir.Value, ...]]:
+    # We first find the linear index and then divide by the shape to
+    # get the index.
+    i32 = ir.IntegerType.get_signless(32)
+    index = ir.IndexType.get()
+    contig_strides = utils.get_contiguous_strides(shape)
+    tile_strides = self.tiling.tile_strides(contig_strides)
+    dyn_tile_strides = [c(s, i32) for s in tile_strides[-self.tiled_tiling_rank:]]
+    warp_offset = utils.dyn_dot(self.warp_indices(), dyn_tile_strides)
+    lane_offset = utils.dyn_dot(self.lane_indices(), dyn_tile_strides)
+    dyn_offset = arith.addi(warp_offset, lane_offset)
+    register_shape = self.registers_shape(shape)
+    for tile_idx in np.ndindex(register_shape):
+      tile_lin_idx = sum(i * s for i, s in zip(tile_idx, tile_strides))
+      dyn_lin_idx = arith.addi(dyn_offset, c(tile_lin_idx, i32))
+      idx = []
+      for stride in contig_strides:
+        idx.append(arith.index_castui(index, arith.divui(dyn_lin_idx, c(stride, i32))))
+        dyn_lin_idx = arith.remui(dyn_lin_idx, c(stride, i32))
+      yield tuple(idx)
+
   @property
   def base_tile_shape(self) -> int:
     """The shape of the first tile in the tiling expression.
@@ -225,7 +306,12 @@ class TiledLayout:
     so the tiled shape always ends with this suffix, no matter what array shape
     it's applied to.
     """
-    return self.tiling.tile_shape(self.base_tile_shape)
+    base_tile_shape = self.base_tile_shape
+    return self.tiling.tile_shape(base_tile_shape)[len(base_tile_shape):]
+
+  @functools.cached_property
+  def tiled_tiling_rank(self) -> int:
+    return len(self.tiled_tiling_shape)
 
   @property
   def vector_length(self) -> int:
@@ -271,16 +357,12 @@ class TiledLayout:
 
   def warp_indices(self) -> tuple[ir.Value, ...]:
     i32 = ir.IntegerType.get_signless(32)
-    tiled_shape = tuple(
-        d if i == self.warp_dim else 1
-        for i, d in enumerate_negative(self.tiled_tiling_shape)
-    )
-    assert math.prod(tiled_shape) == WARPS_IN_WARPGROUP
+    tiled_shape_rank = len(self.tiled_tiling_shape)
     warp_idx = arith.remui(
         arith.divui(utils.thread_idx(), c(WARP_SIZE, i32)),
         c(WARPS_IN_WARPGROUP, i32),
     )
-    indices = [arith.constant(i32, 0)] * len(tiled_shape)
+    indices = [arith.constant(i32, 0)] * tiled_shape_rank
     indices[self.warp_dim] = warp_idx
     return tuple(indices)
 
@@ -458,6 +540,33 @@ TILED_LAYOUT_WGMMA = TiledLayout(
     lane_dims=(-4, -3),
     vector_dim=-1,
 )
+# This tiled layout is similar to the one above. Above, each warp stores a 8x8
+# submatrix in the following way (we only show the first 4 rows for brevity):
+#
+#   0  0  1  1  2  2  3  3
+#   4  4  5  5  6  6  7  7
+#   8  8  9  9 10 10 11 11
+#  12 12 13 13 14 14 15 15
+#          ...
+#
+# This tiled layout stores the same 8x8 submatrix in the following way:
+#
+#   0  4  1  5  2  6  3  7
+#   0  4  1  5  2  6  3  7
+#   8 12  9 13 10 14 11 15
+#   8 12  9 13 10 14 11 15
+#          ...
+#
+# You can see that we have taken 2x2 submatrices from the above layout and
+# transposed them. The assigment of lanes to elements is such that in both
+# layouts the same two lanes map to a single 2x2 submatrix, making the transpose
+# very cheap (one shuffle and permute suffices to change between those layouts).
+WGMMA_TRANSPOSED_LAYOUT = TiledLayout(
+    Tiling(((64, 8), (16, 8), (8, 8), (2, 2), (2, 1))),
+    warp_dim=-10,
+    lane_dims=(-6, -3, -5),
+    vector_dim=-2,
+)
 
 @jax.tree_util.register_pytree_node_class
 @dataclasses.dataclass(init=False, eq=False, frozen=True, slots=True)
@@ -532,13 +641,22 @@ class FragmentedArray:
         raise NotImplementedError
 
   @classmethod
-  def load_strided(cls, ref: ir.Value, *, is_signed: bool | None = None):
+  def load_strided(
+      cls,
+      ref: ir.Value,
+      *,
+      is_signed: bool | None = None,
+      vec_size: int | None = None,
+  ):
     if not ir.MemRefType.isinstance(ref.type):
       raise TypeError(ref.type)
 
     ref_ty = ir.MemRefType(ref.type)
     shape = tuple(ref_ty.shape)
-    layout = WGStridedFragLayout.from_shaped_type(ref_ty)
+    if vec_size is None:
+      layout = WGStridedFragLayout.from_shaped_type(ref_ty)
+    else:
+      layout = WGStridedFragLayout(shape=shape, vec_size=vec_size)
     vec_ty = ir.VectorType.get((layout.vec_size,), ref_ty.element_type)
     try:
       # Flattening the reference potentially produces simpler PTX but
@@ -626,9 +744,35 @@ class FragmentedArray:
 
     At the moment, only conversions from ``WGSplatFragLayout`` are supported.
     """
+    i32 = ir.IntegerType.get_signless(32)
     if self.layout == new_layout:
       return self
     shape = self.shape
+    if (
+        self.layout == TILED_LAYOUT_WGMMA
+        and new_layout == WGMMA_TRANSPOSED_LAYOUT
+        and utils.bitwidth(self.mlir_dtype) == 16
+    ):
+      is_even_row = arith.cmpi(
+          arith.CmpIPredicate.eq,
+          arith.remui(arith.divui(utils.thread_idx(), c(4, i32)), c(2, i32)),
+          c(0, i32),
+      )
+      perm = arith.select(is_even_row, c(0x5410, i32), c(0x3276, i32))
+      new_regs = []
+      for reg in self.registers.flat:
+        reg_ty = reg.type
+        reg = utils.bitcast(reg, i32)
+        reg_shfl = utils.shfl_bfly(reg, 4)
+        new_reg = llvm.inline_asm(
+            i32, [reg, reg_shfl, perm], "prmt.b32 $0, $1, $2, $3;", "=r,r,r,r"
+        )
+        new_regs.append(utils.bitcast(new_reg, reg_ty))
+      return FragmentedArray(
+          _registers=np.asarray(new_regs, dtype=object).reshape(new_layout.registers_shape(shape)),
+          _layout=new_layout,
+          _is_signed=self.is_signed,
+      )
     if len(shape) == 2 and shape[0] % 64 == 0 and shape[1] % 8 == 0:
       tiled_layout = _tiled_wgmma_layout(shape)
       if (self.layout == WGMMA_LAYOUT and new_layout == tiled_layout) or (
@@ -945,6 +1089,24 @@ class FragmentedArray:
       return self._pointwise(self._lift_fast_instr("ex2.approx.ftz.f32"))
     return self._pointwise(mlir_math.exp2)
 
+  def log(self, *, approx: bool = False):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+    if approx:
+      dtype = self.mlir_dtype
+      ln2 = arith.constant(dtype, ir.FloatAttr.get(dtype, 0.6931471805599453))
+      return self.log2(approx=True) * ln2
+    return self._pointwise(mlir_math.log)
+
+  def log2(self, *, approx: bool = False):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError(self.mlir_dtype)
+    if approx:
+      if not ir.F32Type.isinstance(self.mlir_dtype):
+        raise NotImplementedError(self.mlir_dtype)
+      return self._pointwise(self._lift_fast_instr("lg2.approx.ftz.f32"))
+    return self._pointwise(mlir_math.log2)
+
   def sin(self, *, approx: bool = False):
     if not ir.FloatType.isinstance(self.mlir_dtype):
       raise NotImplementedError
@@ -1169,7 +1331,30 @@ class FragmentedArray:
     from_integer = ir.IntegerType.isinstance(cur_dtype)
     to_integer = ir.IntegerType.isinstance(new_dtype)
     if from_float and to_float:
-      if ir.FloatType(cur_dtype).width > ir.FloatType(new_dtype).width:
+      cur_ty_width = ir.FloatType(cur_dtype).width
+      new_ty_width = ir.FloatType(new_dtype).width
+      if cur_ty_width == new_ty_width:
+        # There is no instruction to perform conversions between two float types
+        # of the same width. Go through the next-larger standard type.
+        # TODO(bchetioui): support conversions between float types of width 8.
+        # Which larger type to pick will depend on the number of bits in the
+        # smallest exponent.
+        if cur_ty_width != 16:
+          raise NotImplementedError(
+              "Conversion between float types of width other than 16 not"
+              " supported"
+          )
+        larger_ty = ir.F32Type.get()
+        match self.layout:
+          case WGMMAFragLayout() | WGStridedFragLayout() | TiledLayout():
+            shape = ir.VectorType(self.registers.flat[0].type).shape
+            upcast_ty = ir.VectorType.get(shape, larger_ty)
+          case WGMMARowFragLayout() | WGSplatFragLayout():
+            upcast_ty = larger_ty
+          case _:
+            raise NotImplementedError(f"Unsupported layout {self.layout}")
+        convert = lambda ty, x: arith.truncf(ty, arith.extf(upcast_ty, x))
+      elif ir.FloatType(cur_dtype).width > ir.FloatType(new_dtype).width:
         convert = arith.truncf
       else:
         convert = arith.extf
@@ -1402,19 +1587,34 @@ class FragmentedArray:
     if create_array:
       return FragmentedArray(_registers=new_regs, _layout=self.layout, _is_signed=is_signed)
 
-  def store_untiled(self, ref: ir.Value):
+  def debug_print(self, fmt: str):
+    idx_fmt = ", ".join(["{}"] * len(self.shape))
+    @self.foreach
+    def _(val, idx):
+      fmt_str = fmt.format(f"[{idx_fmt}]: {{}}")
+      utils.debug_print(fmt_str, *idx, val, uniform=False)
+
+  def store_untiled(self, ref: ir.Value, *, vector_store: bool = True):
     if not ir.MemRefType.isinstance(ref.type):
       raise ValueError(ref)
+
+    def vs_unsupported():
+      if not vector_store:
+        raise NotImplementedError(
+            f"Can't use non-vector stores with layout {self.layout}"
+        )
 
     match self.layout:
       case WGMMAFragLayout():
         self._store_untiled_wgmma(ref)
       case WGSplatFragLayout():
+        vs_unsupported()
         self._store_untiled_splat(ref)
       case WGStridedFragLayout():
+        vs_unsupported()
         self._store_untiled_wg_strided(ref)
       case TiledLayout():
-        self._store_untiled_tiled(ref)
+        self._store_untiled_tiled(ref, vector_store=vector_store)
       case _:
         raise NotImplementedError(self.layout)
 
@@ -1481,29 +1681,52 @@ class FragmentedArray:
         col = arith.addi(col_base, c(col_tile * 8 + col_idx))
         memref.store(value, ref, [row, col])
 
-  def _store_untiled_tiled(self, ref: ir.Value):
+  def _store_untiled_tiled(self, ref: ir.Value, *, vector_store: bool = True):
     """Stores an array with a tiled layout. Not optimized at the moment."""
+    if utils.bitwidth(self.mlir_dtype) < 8:
+      raise NotImplementedError(f"Can't store sub-byte types ({self.mlir_dtype=})")
     i32 = ir.IntegerType.get_signless(32)
     layout = self.layout
     assert isinstance(layout, TiledLayout)
     ref_strides, _ = ir.MemRefType(ref.type).get_strides_and_offset()
-    if ref_strides[layout.vector_dim] != 1:
+    if vector_store and ref_strides[layout.vector_dim] != 1:
       raise NotImplementedError(
           "Can't use vector stores with non-unit minormost stride"
       )
     strides = layout.tiling.tile_strides(ref_strides)
-    ptr = utils.memref_ptr(ref)
+    smem_space = ir.Attribute.parse("#gpu.address_space<workgroup>")
+    ref_space = ir.MemRefType(ref.type).memory_space
+    memory_space = None
+    if str(ref_space) == str(smem_space):
+      memory_space = 3
+    elif ref_space:
+      raise NotImplementedError(f"Unexpected ref space {ref_space}")
+    ptr = utils.memref_ptr(ref, memory_space=memory_space)
     # Fold warp and lane offsets into the pointer once, since they are dynamic.
-    dyn_strides = [arith.constant(i32, s) for s in strides]
+    dyn_strides = [
+        arith.constant(i32, s) for s in strides[-layout.tiled_tiling_rank :]
+    ]
     warp_offset = utils.dyn_dot(layout.warp_indices(), dyn_strides)
     lane_offset = utils.dyn_dot(layout.lane_indices(), dyn_strides)
     dyn_offset = arith.addi(warp_offset, lane_offset)
     ptr = utils.getelementptr(ptr, [dyn_offset], self.mlir_dtype)
     # All warp tile offsets are static and can be fused into the store.
     for tile_idx, reg in np.ndenumerate(self.registers):
-      lin_idx = sum(i * s for i, s in zip(tile_idx, strides, strict=True))
-      reg_ptr = utils.getelementptr(ptr, [lin_idx], self.mlir_dtype)
-      llvm.store(reg, reg_ptr)
+      if vector_store:
+        elems = [reg]
+      else:
+        index = ir.IndexType.get()
+        elems = [
+            vector.extractelement(reg, position=c(i, index))
+            for i in range(ir.VectorType(reg.type).shape[0])
+        ]
+      for i, e in enumerate(elems):
+        tile_idx_local = list(tile_idx)
+        tile_idx_local[layout.vector_dim] += i
+        tile_idx_local = list(tile_idx_local)
+        lin_idx = sum(i * s for i, s in zip(tile_idx_local, strides, strict=True))
+        reg_ptr = utils.getelementptr(ptr, [lin_idx], self.mlir_dtype)
+        llvm.store(e, reg_ptr)
 
   def store_tiled(self, ref, swizzle: int | None):
     match self.layout:
@@ -1684,31 +1907,42 @@ class FragmentedArray:
     ref_ty = ir.MemRefType(ref.type)
     dtype = ref_ty.element_type
     if ref_ty.rank % 2:
-      raise ValueError("Tiled refence must have even rank")
-    ref_tiling_shape = tuple(ref_ty.shape[ref_ty.rank // 2:])
+      raise ValueError("Tiled reference must have even rank")
+    ref_logical_rank = ref_ty.rank // 2
+    ref_tiling_shape = tuple(ref_ty.shape[ref_logical_rank:])
     ref_tiling = Tiling((ref_tiling_shape,))
     ref_strides, _ = ref_ty.get_strides_and_offset()
     if ref_tiling.untile_shape(tuple(ref_ty.shape)) != shape:
       raise ValueError()
-    if len(layout.base_tile_shape) > len(ref_tiling_shape):
-      raise ValueError("Memory tiling must be a multiple of the register tiling")
-    ref_tiling_suffix = ref_tiling_shape[-len(layout.base_tile_shape):]
-    if any(t % wt for t, wt in zip(ref_tiling_suffix, layout.base_tile_shape)):
-      raise ValueError(
-          f"Memory tiling ({ref_tiling_suffix}) must be a multiple of the"
-          f" register tiling ({layout.base_tile_shape})"
-      )
+    nested_ref_shape = tuple(
+        (ref_ty.shape[i], ref_ty.shape[i + ref_logical_rank])
+        for i in range(ref_logical_rank)
+    )
+    nested_ref_strides = tuple(
+        (ref_strides[i], ref_strides[i + ref_logical_rank])
+        for i in range(ref_logical_rank)
+    )
+    tiled_nested_shape, tiled_nested_strides = tiling.tile_nested_shape_strides(
+        nested_ref_shape, nested_ref_strides
+    )
 
-    elem_tiled_strides = list(tiling.tile_strides(tuple(ref_strides)))
-    tiled_shape = list(tiling.tile_shape(tuple(ref_ty.shape)))
+    # We could technically handle this case, but it would be quite complicated.
+    # If tiling dimensions would have to be expanded into multiple, we'd have to
+    # adjust the dimension indices in layouts, including expanding some of them
+    # into multiple indices. Note that for non-tiling dims, we allow the shape
+    # to be arbitrary, which is why we fix it up below in mem_idx_to_reg_idx.
+    if any(
+        len(dim_shape) != 1 for dim_shape in tiled_nested_shape[-layout.tiled_tiling_rank :]
+    ):
+      raise NotImplementedError("Memory and register tiling incompatible")
+    tiled_shape = list(itertools.chain.from_iterable(tiled_nested_shape))
+    elem_tiled_strides = list(itertools.chain.from_iterable(tiled_nested_strides))
     elem_lane_strides = [elem_tiled_strides[d] for d in layout.lane_dims]
     lane_shape = [tiled_shape[d] for d in layout.lane_dims]
     if elem_tiled_strides[layout.vector_dim] != 1:
       raise ValueError("Stride of the vectorized dimension should be 1")
     for d in (layout.warp_dim, *layout.lane_dims, layout.vector_dim):
       tiled_shape[d] = 1
-    full_tiling = Tiling((ref_tiling_shape, *tiling.tiles))
-    full_layout = dataclasses.replace(layout, tiling=full_tiling)
 
     element_bits = mgpu.bitwidth(dtype)
     if (layout.vector_length * element_bits) % 8 != 0:
@@ -1749,9 +1983,11 @@ class FragmentedArray:
     )
 
     # All offsets are in units of transfer_dtype.
-    dyn_tiled_strides = [c(s) for s in transfer_tiled_strides]
-    lane_offset = utils.dyn_dot(full_layout.lane_indices(), dyn_tiled_strides)
-    warp_offset = utils.dyn_dot(full_layout.warp_indices(), dyn_tiled_strides)
+    dyn_tiled_strides = [
+        c(s) for s in transfer_tiled_strides[-layout.tiled_tiling_rank :]
+    ]
+    lane_offset = utils.dyn_dot(layout.lane_indices(), dyn_tiled_strides)
+    warp_offset = utils.dyn_dot(layout.warp_indices(), dyn_tiled_strides)
     dyn_offset = arith.addi(lane_offset, warp_offset)
     if ref_ty.memory_space != ir.Attribute.parse("#gpu.address_space<workgroup>"):
       raise ValueError("Tiled stores can be performed into SMEM")
@@ -1779,10 +2015,23 @@ class FragmentedArray:
       reg_ptr = utils.getelementptr(ptr, [offset], transfer_dtype)
       offset_no_swizzle = plan.select(_as_consts(const_offset_no_swizzle))
       reg_ptr = utils.getelementptr(reg_ptr, [offset_no_swizzle], transfer_dtype)
-      reg_idxs = [
-          tiling.tile_indices(full_tiling.untile_indices(idx))
-          for idx in indices.tolist()
-      ]
+      # Here, registers are organized in an array with shape obtained by tiling
+      # the logical data bounds. But, the reference was tiled and so each
+      # logical tiled dimension can map to multiple dims in tiled_shape.
+      # The transform below maps this potentially higher-rank representation
+      # back to the lower-rank representation used by the register arrays.
+      def mem_idx_to_reg_idx(idx):
+        reg_tiled_idx = []
+        base_idx = 0
+        for dim_shape in tiled_nested_shape[:ref_logical_rank]:
+          dim_strides = utils.get_contiguous_strides(dim_shape)
+          dim_idxs = idx[base_idx:base_idx + len(dim_shape)]
+          base_idx += len(dim_shape)
+          reg_tiled_idx.append(sum(i * s for i, s in zip(dim_idxs, dim_strides)))
+        # We should have fixed up all but the tiling dims.
+        assert base_idx == len(idx) - layout.tiled_tiling_rank
+        return (*reg_tiled_idx, *idx[base_idx:])
+      reg_idxs = [mem_idx_to_reg_idx(idx) for idx in indices.tolist()]
       def get_register(regs, reg_idxs=reg_idxs):
         return plan.select([regs[reg_idx] for reg_idx in reg_idxs])
       def update_registers(regs, new, reg_idxs=reg_idxs):

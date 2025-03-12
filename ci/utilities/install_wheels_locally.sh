@@ -17,9 +17,20 @@
 # Install wheels stored in `JAXCI_OUTPUT_DIR` on the system using the Python
 # binary set in JAXCI_PYTHON. Use the absolute path to the `find` utility to
 # avoid using the Windows version of `find` on Msys.
+
 WHEELS=( $(/usr/bin/find "$JAXCI_OUTPUT_DIR/" -type f \(  -name "*jax*py3*" -o -name "*jaxlib*" -o -name "*jax*cuda*pjrt*" -o -name "*jax*cuda*plugin*" \)) )
 
-if [[ -z "$WHEELS" ]]; then
+for i in "${!WHEELS[@]}"; do
+  if [[ "${WHEELS[$i]}" == *jax*py3*none*any.whl ]]; then
+    if [[ "$JAXCI_ADDITIONAL_WHEELS_INSTALL_FROM_PYPI" == "tpu_pypi" ]]; then
+      # Append [tpu] to the jax wheel name to download the latest libtpu wheel
+      # from PyPI.
+      WHEELS[$i]="${WHEELS[$i]}[tpu]"
+    fi
+  fi
+done
+
+if [[ -z "${WHEELS[@]}" ]]; then
   echo "ERROR: No wheels found under $JAXCI_OUTPUT_DIR"
   exit 1
 fi
@@ -38,10 +49,4 @@ if [[ $(uname -s) =~ "MSYS_NT" ]]; then
   "$JAXCI_PYTHON" -m uv pip install $(cygpath -w "${WHEELS[@]}")
 else
   "$JAXCI_PYTHON" -m uv pip install "${WHEELS[@]}"
-fi
-
-if [[ "$JAXCI_INSTALL_JAX_CURRENT_COMMIT" == "1" ]]; then
-  echo "Installing the JAX package in editable mode at the current commit..."
-  # Install JAX package at the current commit.
-  "$JAXCI_PYTHON" -m uv pip install -U -e .
 fi

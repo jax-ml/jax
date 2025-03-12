@@ -14,13 +14,10 @@
 # ==============================================================================
 
 import dataclasses
-import enum
 import functools
 import itertools
-from typing import Any
 
 import jax
-from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import llvm
@@ -29,6 +26,7 @@ from jaxlib.mlir.dialects import vector
 import numpy as np
 
 from . import fragmented_array as fa
+from . import mma_utils
 from . import utils
 
 # mypy: ignore-errors
@@ -82,60 +80,6 @@ class WGMMAAccumulator:
   def tree_unflatten(cls, aux, value):
     del aux
     return cls(_value=value[0], _sync=False)
-
-
-def wgmma_encode(x: int):
-  result = (x & 0x3FFFF) >> 4
-  if result << 4 != x:
-    raise ValueError(f"Cannot encode value in a WGMMA descriptor: {x}")
-  return result
-
-
-def llvm_add(x, y):
-  return llvm.add(x, y, overflow_flags=llvm.IntegerOverflowFlags.none)
-
-
-def create_descriptor(
-    memref_arg,
-    leading_byte_offset: int,
-    stride_byte_offset: int,
-    swizzle: int | mgpu_dialect.SwizzlingMode | None,
-    memory_space: int | None = None,
-    const_init: int = 0,
-):
-  i64 = ir.IntegerType.get_signless(64)
-  ptr_val = llvm.ptrtoint(i64, utils.memref_ptr(memref_arg, memory_space))
-  if swizzle is None or swizzle == mgpu_dialect.SwizzlingMode.kNoSwizzle:
-    swizzle_encoding = 0
-  elif swizzle == mgpu_dialect.SwizzlingMode.k128ByteSwizzle:
-    swizzle_encoding = 1
-  elif swizzle == mgpu_dialect.SwizzlingMode.k64ByteSwizzle:
-    swizzle_encoding = 2
-  elif swizzle == mgpu_dialect.SwizzlingMode.k32ByteSwizzle:
-    swizzle_encoding = 3
-  else:
-    raise NotImplementedError(swizzle)
-  encoded_base_addr = llvm.LShrOp(
-      llvm.AndOp(ptr_val, c(0x3FFFF, i64)).result, c(4, i64)
-  )
-  # We ignore the offset
-  desc_const = (
-      const_init
-      | (wgmma_encode(leading_byte_offset) << 16)
-      | (wgmma_encode(stride_byte_offset) << 32)
-  )
-  desc = llvm.or_(
-      arith.shli(c(swizzle_encoding, i64), c(62, i64)), c(desc_const, i64)
-  )
-  desc = llvm.or_(encoded_base_addr.result, desc)
-  return desc
-
-
-def _unpack_i32(vec_ty, r):
-  i32 = ir.IntegerType.get_signless(32)
-  return vector.bitcast(
-      vec_ty, vector.splat(ir.VectorType.get((1,), i32), r)
-  )
 
 
 def _supported_wgmma_types(dtype, abtype) -> bool:
@@ -271,14 +215,14 @@ def wgmma_m64(
       a_args = [_as_i32_reg(v) for v in a_slice.registers.flat]
     else:
       if i > 0:
-        a = llvm_add(
+        a = _llvm_add(
             a,
             llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, a_k_stride >> 4)),
         )
       a_args = [a]
     # Advance the B descriptor.
     if i > 0:
-      b_descriptor = llvm_add(
+      b_descriptor = _llvm_add(
           b_descriptor,
           llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, b_k_stride >> 4)),
       )
@@ -297,155 +241,6 @@ def wgmma_m64(
   return to_acc_vec_regs(acc_regs)
 
 
-class WGMMALayout(enum.Enum):
-  ROW_MAJOR = enum.auto()
-  COL_MAJOR = enum.auto()
-
-
-def _validate_mma(
-    a: Any,
-    b: ir.Value,
-    swizzle: int,
-    a_layout: WGMMALayout,
-    b_layout: WGMMALayout,
-    descriptor_const_init: int = 0,
-):
-  # We need swizzle >= 32 to ensure that our K tiling is larger than the MMA
-  # instruction's K width.
-  if swizzle < 32:
-    raise ValueError(f"Unsupported swizzle: {swizzle}")
-
-  # Get A type.
-  if a_in_smem := isinstance(a, ir.Value):
-    if not ir.MemRefType.isinstance(a.type):
-      raise ValueError(f"When A is an ir.Value, it must be a memref, got: {a.type}")
-    a_ty = ir.MemRefType(a.type)
-    a_element_type = a_ty.element_type
-    a_shape = tuple(a_ty.shape)
-    if a_ty.memory_space != ir.Attribute.parse("#gpu.address_space<workgroup>"):
-      raise ValueError("A must be in workgroup memory when it's a reference")
-    if len(a_shape) != 4:
-      raise ValueError(f"A must be 4D when it's a reference, got rank {len(a_shape)}")
-  elif hasattr(a, "shape") and hasattr(a, "mlir_dtype"):
-    a_element_type = a.mlir_dtype
-    a_shape = a.shape
-  else:
-    raise NotImplementedError(f"Unsupported A type: {type(a)}")
-
-  # Get B type (always a reference).
-  b_ty = ir.MemRefType(b.type)
-  if b_ty.rank != 4:
-    raise ValueError(f"B must be 4D, got rank {b_ty.rank}")
-
-  # Veirfy element types and compute the tiling.
-  if (element_type := a_element_type) != b_ty.element_type:
-    raise ValueError(
-        f"A and B must have the same element type, got: {a_element_type} and"
-        f" {b_ty.element_type}"
-    )
-  supported_types = {ir.F16Type.get(), ir.BF16Type.get(), ir.F32Type.get()}
-  if element_type not in supported_types:
-    raise ValueError(a_element_type)
-  element_bytewidth = bytewidth(element_type)
-  kn_tiling = swizzle // element_bytewidth
-
-  # Verify the shape and strides of B are as expected.
-  k_tiles, n_tiles, k_tiling, n_tiling = b_ty.shape
-  if k_tiling != kn_tiling:
-    raise ValueError(b_ty.shape)
-  # Note that while this technically allows n to be smaller than kn_tile,
-  # the stride checks above will still enforce that the memory region is padded.
-  # It might be possible to relax that requirement, but I haven't tested it.
-  if n_tiling > kn_tiling and n_tiling % kn_tiling:
-    raise ValueError(n_tiling, kn_tiling)
-  k = k_tiles * kn_tiling
-  n = n_tiles * n_tiling
-
-  b_strides, _ = b_ty.get_strides_and_offset()
-  b_byte_strides = [s * element_bytewidth for s in b_strides]
-  b_k_byte_stride = b_byte_strides[0]
-  if b_byte_strides[1] != swizzle * kn_tiling:
-    raise ValueError(b_byte_strides)
-  if b_byte_strides[2:] == [swizzle, element_bytewidth]:
-    b_order = WGMMALayout.ROW_MAJOR
-  elif b_byte_strides[2:] == [element_bytewidth, swizzle]:
-    b_order = WGMMALayout.COL_MAJOR
-  else:
-    raise ValueError(b_byte_strides)
-
-  # Verify the shape and strides of A are as expected.
-  if not a_in_smem:
-    m = a_shape[0]
-    a_order = m_tiling = None
-  else:
-    a_ty = ir.MemRefType(a.type)
-    m_tiles, k_tiles, m_tiling, k_tiling = a_ty.shape
-    m = m_tiles * m_tiling
-    if k_tiling != kn_tiling or k_tiles * k_tiling != k:
-      raise ValueError(a_ty.shape)
-    a_strides, _ = ir.MemRefType(a.type).get_strides_and_offset()
-    a_byte_strides = [s * element_bytewidth for s in a_strides]
-    if a_byte_strides[2:] == [swizzle, element_bytewidth]:
-      a_order = WGMMALayout.ROW_MAJOR
-    elif a_byte_strides[2:] == [element_bytewidth, swizzle]:
-      a_order = WGMMALayout.COL_MAJOR
-    else:
-      raise ValueError(a_byte_strides)
-    if a_order != a_layout and m_tiling != kn_tiling:
-      # Not sure what the layout is like, since the tiles aren't square.
-      raise NotImplementedError
-
-  tnsp_lbo = swizzle * (swizzle // 32)
-  sbo = swizzle // 2
-  a_desc_fields = dict(
-      leading_byte_offset=(1 if a_order == a_layout else tnsp_lbo) << 4,
-      stride_byte_offset=sbo << 4,
-      swizzle=swizzle,
-      memory_space=3,
-  )
-  b_desc_fields = dict(
-      leading_byte_offset=(1 if b_order == b_layout else tnsp_lbo) << 4,
-      stride_byte_offset=sbo << 4,
-      swizzle=swizzle,
-      memory_space=3,
-  )
-  wgmma_params = dict(
-      a_transpose=a_order != a_layout,
-      b_transpose=b_order != b_layout,
-      a_k_stride=(2 if a_order == a_layout else swizzle) << 4,
-      b_k_stride=(2 if b_order == b_layout else swizzle) << 4,
-      swizzle=swizzle,
-      element_type=ir.FloatTF32Type.get()
-      if ir.F32Type.isinstance(element_type)
-      else element_type,
-  )
-  if not a_in_smem:
-    wgmma_params["a_k_stride"] = wgmma_params["a_transpose"] = None
-    a_k_byte_stride = a_desc_base = None
-  else:
-    a_desc_base = create_descriptor(
-        a, **a_desc_fields, const_init=descriptor_const_init
-    )
-    a_strides, _ = ir.MemRefType(a.type).get_strides_and_offset()
-    a_k_byte_stride = a_strides[1] * element_bytewidth
-  b_desc_base = create_descriptor(
-      b, **b_desc_fields, const_init=descriptor_const_init
-  )
-
-  return (
-      a_desc_base,
-      b_desc_base,
-      (m, k, n),
-      (m_tiling, kn_tiling),
-      element_type,
-      wgmma_params,
-      a_k_byte_stride,
-      b_k_byte_stride,
-  )
-
-
-# TODO(apaszke): Remove WGMMALayout. Make input shapes logical and infer
-# transpositions from memref strides.
 def wgmma(
     acc: WGMMAAccumulator,
     a: fa.FragmentedArray | ir.Value,
@@ -463,67 +258,129 @@ def wgmma(
   The refs must be contiguous or be contiguous except for having their two minor
   dimensions swapped.
   """
-  a_in_regs = isinstance(a, fa.FragmentedArray)
-  if not a_in_regs and not ir.MemRefType.isinstance(a.type):
-    raise ValueError(f"Unsupported A type: {type(a)}")
+  # Step 1. Establish the shape and element type of the operation.
   if not ir.MemRefType.isinstance(b.type):
     raise ValueError(f"B must be a memref, got: {b.type}")
-
-  (
-      a_desc_base,
-      b_desc_base,
-      (m, k, n),
-      (m_tiling, kn_tiling),
-      element_type,
-      wgmma_params,
-      a_k_byte_stride,
-      b_k_byte_stride,
-  ) = _validate_mma(a, b, swizzle, WGMMALayout.ROW_MAJOR, WGMMALayout.COL_MAJOR)
-
-  if n > 256:
-    raise ValueError(f"N must be smaller than 256, got {n}")
-
-  if a_in_regs:
+  (k, n), element_type = mma_utils.tiled_memref_shape(b)
+  if a_in_regs := isinstance(a, fa.FragmentedArray):
+    m, k2 = a.shape
+    element_type2 = a.mlir_dtype
     if a.mlir_dtype != ir.F16Type.get() and a.mlir_dtype != ir.BF16Type.get():
       raise ValueError(
           f"Only 16-bit dtypes supported for A in registers, got {a.mlir_dtype}"
       )
-    if a.shape[0] % 64:
-      raise ValueError(f"m must be a multiple of 64, got: {a.shape[0]}")
-    a_m_byte_stride = None
+  elif ir.MemRefType.isinstance(a.type):
+    (m, k2), element_type2 = mma_utils.tiled_memref_shape(a)
   else:
-    if m_tiling != 64:
-      raise ValueError(f"A must have rows tiled by 64, got: {m_tiling}")
-    a_strides, _ = ir.MemRefType(a.type).get_strides_and_offset()
-    a_m_byte_stride = a_strides[0] * bytewidth(element_type)
-
-  groups_k = k // kn_tiling
-  groups_m = m // 64
-
-  expected_acc_shape = (groups_m * 64, n)
-  if acc.value.shape != expected_acc_shape:
+    raise ValueError(f"Unsupported A type: {type(a)}")
+  if k != k2:
     raise ValueError(
-        f"Accumulator shape mismatch: expected {expected_acc_shape}, got"
-        f" {acc.value.shape}"
+        "WGMMA requires A and B to have the same contraction dimension (K),"
+        f" got: {k2} and {k}"
     )
+  if element_type != element_type2:
+    raise ValueError(
+        "WGMMA requires A and B to have the same element type, got:"
+        f" {element_type2} and {element_type}"
+    )
+  if acc.value.shape != (m, n):
+    raise ValueError(
+        f"Accumulator shape mismatch: expected {(m, n)}, got {acc.value.shape}"
+    )
+  f32 = ir.F32Type.get()
+  if element_type == f32 or element_type == ir.BF16Type.get():
+    if acc.value.mlir_dtype != f32:
+      raise ValueError(
+          f"WGMMA with element type {element_type} only supports accumulators"
+          f" of type f32, but got: {acc.value.mlir_dtype}"
+      )
+  elif element_type == ir.F16Type.get():
+    if acc.value.mlir_dtype != element_type and acc.value.mlir_dtype != f32:
+      raise ValueError(
+          "WGMMA with element type f16 only supports accumulators of type f32"
+          f" or f16, but got: {acc.value.mlir_dtype}"
+      )
 
+  # Step 2. Decide on the instruction shapes we'll use. Note that with swizzles,
+  # instructions must be issued in groups of the same width as the swizzle.
+  m_group_elems = 64  # Hopper has a fixed M instruction shape.
+  k_group_elems = swizzle // utils.bytewidth(element_type)
+  if n > 256 or n % 8:
+    raise ValueError(f"N must be a multiple of 8 and <= 256, got: {n}")
+  n_group_elems = n  # We assume only one N group below.
+  if m % m_group_elems:
+    raise ValueError(f"M must be a multiple of {m_group_elems}, got: {m}")
+  if k % k_group_elems:
+    raise ValueError(f"K must be a multiple of {k_group_elems}, got: {k}")
+  m_groups = m // m_group_elems
+  k_groups = k // k_group_elems
+  # TODO(apaszke): Require users to bitcast input refs to tf32 before WGMMA.
+  wgmma_element_type = (
+      ir.FloatTF32Type.get() if element_type == ir.F32Type.get() else element_type
+  )
+
+  # Step 3. Compute the operand descriptors.
+  if a_in_regs:
+    a_desc_base = a_m_group_stride = a_k_group_stride = None
+    a_instr_params = dict(a_transpose=None, a_k_stride=None)
+  else:
+    (
+        (a_desc_base, a_k_instr_stride),
+        (a_m_group_stride, a_k_group_stride),
+        a_fastest,
+    ) = mma_utils.create_descriptor(
+        a,
+        swizzle=swizzle,
+        large_tile=(m_group_elems, k_group_elems),
+        group_size=(m_group_elems, k_group_elems),
+        logical_k_major=False,
+    )
+    a_instr_params = dict(a_transpose=a_fastest != mma_utils.Dim.K,
+                          a_k_stride=a_k_instr_stride)
+  (
+      (b_desc_base, b_k_instr_stride),
+      (b_n_group_stride, b_k_group_stride),
+      b_fastest,
+  ) = mma_utils.create_descriptor(
+      b,
+      swizzle=swizzle,
+      large_tile=(k_group_elems,) * 2,  # It's not a typo that we use k for n.
+      group_size=(k_group_elems, n_group_elems),
+      logical_k_major=True,
+  )
+  del b_n_group_stride  # We only support one N group.
+
+  # Step 4. Issue the instructions.
   if a_in_regs:
     a = wgmma_fence(a)  # Make sure the registers are ready.
 
   i64 = ir.IntegerType.get_signless(64)
   new_acc_regs = acc.value.registers.copy()
-  for mi in range(groups_m):
-    for ki in range(groups_k):
+  for mi in range(m_groups):
+    for ki in range(k_groups):
       if a_in_regs:
-        a_mk = a[mi * 64 : (mi + 1) * 64, ki * kn_tiling : (ki + 1) * kn_tiling]
+        a_mk = a[
+            mi * m_group_elems : (mi + 1) * m_group_elems,
+            ki * k_group_elems : (ki + 1) * k_group_elems,
+        ]
       else:
-        a_mk = llvm_add(
-            a_desc_base,
-            c(wgmma_encode(mi * a_m_byte_stride + ki * a_k_byte_stride), i64),
+        a_group_offset = mi * a_m_group_stride + ki * a_k_group_stride
+        a_mk = _llvm_add(
+            a_desc_base, c(mma_utils.encode_addr(a_group_offset), i64),
         )
-      b_k = llvm_add(b_desc_base, c(wgmma_encode(ki * b_k_byte_stride), i64))
+      b_k = _llvm_add(
+          b_desc_base, c(mma_utils.encode_addr(ki * b_k_group_stride), i64)
+      )
       new_acc_regs[mi : mi + 1] = wgmma_m64(
-          new_acc_regs[mi : mi + 1], a_mk, b_k, n=n, **wgmma_params
+          new_acc_regs[mi : mi + 1],
+          a_mk,
+          b_k,
+          swizzle=swizzle,
+          n=n_group_elems,
+          element_type=wgmma_element_type,
+          b_transpose=b_fastest != mma_utils.Dim.K,
+          b_k_stride=b_k_instr_stride,
+          **a_instr_params,
       )
   return WGMMAAccumulator(
       _value=fa.FragmentedArray(
@@ -567,3 +424,14 @@ def _as_i32_reg(v):
 def _lc(x):
   i32 = ir.IntegerType.get_signless(32)
   return llvm.ConstantOp(i32, ir.IntegerAttr.get(i32, x)).result
+
+
+def _llvm_add(x, y):
+  return llvm.add(x, y, overflow_flags=llvm.IntegerOverflowFlags.none)
+
+
+def _unpack_i32(vec_ty, r):
+  i32 = ir.IntegerType.get_signless(32)
+  return vector.bitcast(
+      vec_ty, vector.splat(ir.VectorType.get((1,), i32), r)
+  )

@@ -544,6 +544,8 @@ def _shard_map_staging(
   return out_tracers
 pe.DynamicJaxprTrace.process_shard_map = _shard_map_staging
 
+# TODO add underscore version, for direct-linearize to consume
+
 def _check_shapedarray(aval: core.AbstractValue) -> core.ShapedArray:
   assert isinstance(aval, core.ShapedArray)
   return aval
@@ -695,7 +697,6 @@ def _shard_map_lowering_shardy(
   new_axis_context = sharding_impls.SPMDAxisContext(
         mesh, frozenset(mesh.axis_names) - auto)
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
-  args = (*ctx.dim_var_values, *in_nodes)
 
   # The order of manual axes should match the order of mesh.axis_names to avoid
   # non-determinism issues.
@@ -705,7 +706,7 @@ def _shard_map_lowering_shardy(
     # No need for a `ManualComputationOp` if all manual axes are size 1.
     with _extend_axis_env(mesh, auto):
       out_nodes, _ = mlir.jaxpr_subcomp(
-          sub_ctx, jaxpr, ctx.name_stack, mlir.TokenSet(), (), *args,
+          sub_ctx, jaxpr, ctx.name_stack, mlir.TokenSet(), (), *in_nodes,
           dim_var_values=ctx.dim_var_values)
     return out_nodes
 
@@ -717,7 +718,7 @@ def _shard_map_lowering_shardy(
       out_names, ctx.avals_out)).build()
   output_types = map(mlir.aval_to_ir_type, ctx.avals_out)
   manual_computation_op = sdy.ManualComputationOp(
-      output_types, args, in_shardings, out_shardings,
+      output_types, in_nodes, in_shardings, out_shardings,
       sdy.ManualAxesAttr.get(
           ir.ArrayAttr.get([ir.StringAttr.get(i) for i in manual_axes])))
   block = ir.Block.create_at_start(
@@ -743,9 +744,8 @@ def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
   out_avals_ = [x.aval for x in jaxpr.outvars]
   in_nodes_ = map(partial(_xla_shard, ctx, mesh, auto), in_names, ctx.avals_in,
                   in_avals_, in_nodes)
-  new_axis_context = sharding_impls.SPMDAxisContext(
-      mesh, frozenset(mesh.axis_names) - auto
-  )
+  manual_axes = frozenset(mesh.axis_names) - auto
+  new_axis_context = sharding_impls.SPMDAxisContext(mesh, manual_axes)
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
   with _extend_axis_env(mesh, auto):
     out_nodes_, tokens_out = mlir.call_lowering(
@@ -896,7 +896,6 @@ def _match_spec(mesh: Mesh, check_rep: bool,
 
 def _match(mesh, check_rep, pspec, x):
   src = P(mesh.axis_names)
-  # TODO put back (?) needed for rep checking in eager? for now test rewrite
   return shard_map(_rem_singleton, mesh, (src,), pspec, check_rep=False)(x)
 
 def _rem_singleton(x): return jnp.squeeze(x, axis=0)
@@ -915,6 +914,7 @@ class ShardMapTrace(core.Trace):
   __slots__ = ("mesh", "auto", "check", "context_mesh")
 
   mesh: Mesh
+  auto: frozenset[AxisName]
   check: bool
   context_mesh: AbstractMesh
 
@@ -928,7 +928,7 @@ class ShardMapTrace(core.Trace):
     if isinstance(val, ShardMapTracer):
       return val.val, val.rep
     elif isinstance(val, Tracer):
-      raise Exception("Shouldn't have any non-shard_map tracers")
+      raise Exception(f"Shouldn't have any non-shard_map tracers: {val}")
     else:
       val_ = _unmatch_spec(self.mesh, {}, val, self.context_mesh)
       return val_, None
@@ -1610,34 +1610,40 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
                          out_names_thunk, check_rep, rewrite, auto):
   primals, tangents = unzip2(map(trace.to_primal_tangent_pair, tracers))
   nzs_in = tuple(type(t) is not ad.Zero for t in tangents)
-  f_primal, linearize_outs_thunk = ad.linearize_subtrace(f, trace.tag, nzs_in,
-                                                         f.debug_info)
+  f_primal, linearize_outs_thunk = ad.linearize_subtrace(f, trace.tag, nzs_in, f.debug_info)
   f_primal = _promote_scalar_residuals_lin(f_primal, linearize_outs_thunk)
   tangent_in_names = [ax for ax, nz in zip(in_names, nzs_in) if nz]
-  all_names = _all_newly_manual_mesh_names(mesh, auto, trace)
+  res_names = _all_newly_manual_mesh_names(mesh, auto, trace)
 
-  @as_hashable_function(closure=(linearize_outs_thunk))
+  @as_hashable_function(closure=linearize_outs_thunk)
   def primal_out_names_thunk():
-    residual_avals, _, _ = linearize_outs_thunk()
+    _, _, _, _, in_fwd, out_fwd = linearize_outs_thunk()
     out_names = out_names_thunk()
-    # This is incorrect so we set `check_rep=False` as we do in the JVP rule.
-    return (*({0: all_names} for _ in residual_avals), *out_names)
+    num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
+    # This is incorrect so we set `check_rep=False` in the tangent (as in JVP).
+    return (*({0: res_names} for _ in range(num_res_out)), *out_names)
   primal_params = dict(
       mesh=mesh, in_names=in_names,
       out_names_thunk=primal_out_names_thunk, check_rep=check_rep,
       rewrite=rewrite, auto=auto)
   all_primal_results = shard_map_p.bind_with_trace(
-      trace.parent_trace, (f_primal,) + tuple(primals), primal_params)
-  residual_avals, nzs_out, lin_jaxpr = linearize_outs_thunk()
-  num_residuals = len(residual_avals)
-  residuals = all_primal_results[:num_residuals]
-  primals_out = all_primal_results[num_residuals:]
-  args_to_promote = [getattr(aval, 'shape', ()) == () for aval in residual_avals]
-  lin_jaxpr = _promote_scalar_residuals_jaxpr(lin_jaxpr, args_to_promote)
+      trace.parent_trace, (f_primal, *primals), primal_params)
+  residual_avals, nzs_out, lin_jaxpr, env, in_fwd, out_fwd = linearize_outs_thunk()
+  num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
+  non_fwd_res = all_primal_results[:num_res_out]
+  primals_out = all_primal_results[num_res_out:]
+  residuals = subs_list2(in_fwd, out_fwd, primals, primals_out, non_fwd_res)
+  args_to_promote = [getattr(aval, 'shape', ()) == () and f1 is None and f2 is None
+                     for aval, f1, f2 in zip(residual_avals, in_fwd, out_fwd)]
+  with core.extend_axis_env_nd(mesh.shape.items()):
+    lin_jaxpr = _promote_scalar_residuals_jaxpr(lin_jaxpr, args_to_promote)
   out_names = out_names_thunk()
-  new_in_names = (*({0: all_names} for _ in residual_avals),
+  residual_names = [in_names[f1] if f1 is not None else
+                    out_names[f2] if f2 is not None else
+                    {0: res_names} for f1, f2 in zip(in_fwd, out_fwd)]
+  new_in_names = (*residual_names, *({} for _ in range(len(env))),
                   *(ax for ax, nz in zip(in_names, nzs_in) if nz))
-  new_out_names = (*(ax for ax, nz in zip(out_names, nzs_out) if nz),)
+  new_out_names = tuple(ax for ax, nz in zip(out_names, nzs_out) if nz)
   @as_hashable_function(closure=(new_out_names))
   def tangent_out_names_thunk():
     return new_out_names
@@ -1646,15 +1652,14 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
       out_names_thunk=tangent_out_names_thunk, check_rep=False,
       rewrite=rewrite, auto=auto)
 
+  # TODO TODO don't round-trip
   def f_tangent(*args):
-    residuals = args[:num_residuals]
-    nz_tangents = args[num_residuals:]
-    return core.eval_jaxpr(lin_jaxpr, (), *residuals, *nz_tangents)
+    return core.eval_jaxpr(lin_jaxpr, (), *args)
 
   nz_tangents_in = [t for (t, nz) in zip(tangents, nzs_in) if nz]
   nz_tangents_out = shard_map_p.bind_with_trace(trace.tangent_trace,
       (lu.wrap_init(f_tangent, debug_info=lin_jaxpr.debug_info),
-       *residuals, *nz_tangents_in), tangent_params)
+       *residuals, *env, *nz_tangents_in), tangent_params)
   nz_tangents_out_iter = iter(nz_tangents_out)
   tangents_out = [next(nz_tangents_out_iter) if nz else ad.Zero.from_primal_value(primal)
                   for nz, primal in zip(nzs_out, primals_out)]
@@ -1664,13 +1669,13 @@ ad.LinearizeTrace.process_shard_map = _shard_map_linearize
 @lu.transformation2
 def _promote_scalar_residuals_lin(f, linearize_outs_thunk, *args, **kwargs):
   ans = f(*args, **kwargs)
-  residual_avals, _, _ = linearize_outs_thunk()
-  num_residuals = len(residual_avals)
-  residuals = ans[:num_residuals]
-  primals = ans[num_residuals:]
-  residuals = tuple(jax.lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
-               for x in residuals)
-  return residuals + primals
+  _, _, _, _, in_fwd, out_fwd = linearize_outs_thunk()
+  num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
+  residuals = ans[:num_res_out]
+  primals = ans[num_res_out:]
+  residuals = [jax.lax.broadcast(x, (1,)) if not getattr(x, 'shape', ()) else x
+               for x in residuals]
+  return *residuals, *primals
 
 @lu.transformation2
 def _promote_scalar_residuals(f: Callable, *args, **kwargs):
@@ -1799,10 +1804,10 @@ def _partial_eval_jaxpr_custom_rule(
   _, ins_staged = partition_list(inst_in, eqn.invars)
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   newvar = core.gensym()
-  params_known, params_staged, all_names = _pe_custom_params(
+  params_known, params_staged, res_names = _pe_custom_params(
       unks_in, inst_in, map(op.not_, unks_out), inst_out, in_fwd, out_fwd, which,
       dict(eqn.params, jaxpr=jaxpr_known), dict(eqn.params, jaxpr=jaxpr_staged))
-  residuals = [newvar(_unshard_aval(mesh, {0: all_names}, var.aval))
+  residuals = [newvar(_unshard_aval(mesh, {0: res_names}, var.aval))
                for var, w in zip(jaxpr_staged.invars[:num_res], which) if w]
   eqn_known = pe.new_jaxpr_eqn(ins_known, [*out_binders_known, *residuals],
                                eqn.primitive, params_known, jaxpr_known.effects,
@@ -1854,10 +1859,10 @@ def _pe_custom_params(unks_in, inst_in, kept_outs_known, kept_outs_staged,
   # prune inputs to jaxpr_known according to unks_in
   mesh = params_known['mesh']
   auto = params_known['auto']
-  all_names = _all_newly_manual_mesh_names(mesh, auto)
+  res_names_ = _all_newly_manual_mesh_names(mesh, auto)
   in_names_known, _ = partition_list(unks_in, params_known['in_names'])
   _, out_names_known = partition_list(kept_outs_known, params_known['out_names'])
-  out_names_known = out_names_known + [{0: all_names}] * sum(which)
+  out_names_known = out_names_known + [{0: res_names_}] * sum(which)
   new_params_known = dict(params_known, in_names=tuple(in_names_known),
                           out_names=tuple(out_names_known))
 
@@ -1865,12 +1870,12 @@ def _pe_custom_params(unks_in, inst_in, kept_outs_known, kept_outs_staged,
   _, in_names_staged = partition_list(inst_in, params_staged['in_names'])
   res_names = [in_names_known[f1] if f1 is not None else
                out_names_known[f2] if f2 is not None else
-               {0: all_names} for f1, f2 in zip(in_fwd, out_fwd)]
+               {0: res_names_} for f1, f2 in zip(in_fwd, out_fwd)]
   in_names_staged = res_names + in_names_staged
   _, out_names_staged = partition_list(kept_outs_staged, params_staged['out_names'])
   new_params_staged = dict(params_staged, in_names=tuple(in_names_staged),
                            out_names=tuple(out_names_staged), check_rep=False)
-  return new_params_known, new_params_staged, all_names
+  return new_params_known, new_params_staged, res_names_
 
 # TODO(mattjj): remove this mechanism when we revise mesh scopes
 def _all_mesh_names_except_spmd(
@@ -1881,15 +1886,21 @@ def _all_mesh_names_except_spmd(
   return tuple(name for name in mesh.axis_names if name not in spmd_names and
                name not in auto)
 
-# TODO(mattjj): remove this mechanism when we revise mesh scopes
 def _all_newly_manual_mesh_names(
     mesh: Mesh, auto: frozenset[AxisName], trace=None
 ) -> tuple[AxisName, ...]:
-  axis_env = core.get_axis_env()
-  spmd_names = axis_env.spmd_axis_names
-  axis_sizes = axis_env.axis_sizes
-  return tuple(name for name in mesh.axis_names if name not in spmd_names and
-               name not in auto and name not in axis_sizes)
+  if not (ctx_mesh := get_abstract_mesh()).empty:
+    del mesh
+    already_manual_names = set(ctx_mesh.axis_types.get(AxisTypes.Manual, ()))
+    return tuple(name for name in ctx_mesh.axis_names
+                 if name not in auto | already_manual_names)
+  else:
+    # TODO(mattjj): remove this mechanism when we revise mesh scopes
+    axis_env = core.get_axis_env()
+    vmap_spmd_names = set(axis_env.spmd_axis_names)
+    already_manual_names = set(axis_env.axis_sizes)  # may include vmap axis_names
+    return tuple(name for name in mesh.axis_names
+                 if name not in auto | vmap_spmd_names | already_manual_names)
 
 # DCE
 

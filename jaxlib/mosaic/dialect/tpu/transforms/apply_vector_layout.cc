@@ -684,10 +684,8 @@ LogicalResult arith_extf_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_OP(layouts_in.front().has_value());
   TPU_ASSERT_OP(layouts_out.front().has_value());
   auto extf_op = cast<arith::ExtFOp>(op);
-  if (layouts_in.front()->bitwidth() != 16 ||
-      layouts_out.front()->bitwidth() != 32) {
-    return op.emitOpError(
-        "Not implemented: Only 16-bit to 32-bit conversion supported");
+  if (layouts_out.front()->bitwidth() != 32) {
+    return op.emitOpError("Not implemented: Only support conversion to 32-bit");
   }
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
   FAILUREOR_ASSIGN_OR_RETURN(

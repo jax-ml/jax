@@ -14,8 +14,6 @@
 
 """Layout utilities."""
 
-from collections.abc import Sequence
-import itertools
 import re
 
 from jax._src.lib.mlir import ir
@@ -96,11 +94,67 @@ def is_strided_fragmented_layout(attr: ir.Attribute) -> bool:
   return bool(_strided_fragmented_layout_attr_pattern.search(str(attr)))
 
 
+_tiled_layout_attr_pattern = re.compile(
+    r"^#mosaic_gpu.TiledLayout<\[(?P<tiling>.*)\],"
+    r" warp_dim\s*=\s*(?P<warp_dim>[-\d]+),"
+    r" lane_dims\s*=\s*\[(?P<lane_dims>.*)\],"
+    r" vector_dim\s*=\s*(?P<vector_dim>[-\d]+)>$"
+)
+
+
+def to_tiled_layout_attr(
+    layout: fa.TiledLayout,
+) -> ir.Attribute:
+  """Constructs a #mosaic_gpu.TiledLayout attribute from a TiledLayout."""
+
+  tile_str = lambda tile: "[" + ", ".join(str(d) for d in tile) + "]"
+  tiling = "[" + ", ".join(tile_str(tile) for tile in layout.tiling.tiles) + "]"
+  return ir.Attribute.parse(
+      f"#mosaic_gpu.TiledLayout<{tiling}, warp_dim={layout.warp_dim},"
+      f" lane_dims={list(layout.lane_dims)}, vector_dim={layout.vector_dim}>"
+  )
+
+
+_list_of_lists_delimiter = re.compile(r"\]\s*,\s*\[")
+
+
+def from_tiled_layout_attr(
+    attr: ir.Attribute,
+) -> fa.TiledLayout:
+  """Constructs a TiledLayout from a #mosaic_gpu.TiledLayout attribute.
+
+  Raises:
+    ValueError: If the attribute is not a #mosaic_gpu.TiledLayout
+      attribute.
+  """
+  match = _tiled_layout_attr_pattern.fullmatch(str(attr))
+  if not match:
+    raise ValueError(
+        f"Expected a #mosaic_gpu.TiledLayout attribute, got {attr}"
+    )
+
+  tiling_str = match.group("tiling")
+  tile_strings = []
+  if len(tiling_str) > 2:
+    tile_strings = _list_of_lists_delimiter.split(tiling_str[1:-1])
+  tiles = tuple(tuple(map(int, ts.split(","))) for ts in tile_strings)
+  return fa.TiledLayout(
+      tiling=fa.Tiling(tiles),
+      warp_dim=int(match.group("warp_dim")),
+      lane_dims=tuple(int(s) for s in match.group("lane_dims").split(",")),
+      vector_dim=int(match.group("vector_dim"))
+  )
+
+
+def is_tiled_layout(attr: ir.Attribute) -> bool:
+  return bool(_tiled_layout_attr_pattern.search(str(attr)))
+
+
 def to_layout_attr(
     layout: (
         fa.WGSplatFragLayout
         | fa.WGStridedFragLayout
-        | fa.WGMMAFragLayout
+        | fa.TiledLayout
         | fa.WGMMARowFragLayout
     ),
 ) -> ir.Attribute:
@@ -110,23 +164,14 @@ def to_layout_attr(
       return to_splat_fragmented_layout_attr(layout)
     case fa.WGStridedFragLayout():
       return to_strided_fragmented_layout_attr(layout)
-    case fa.WGMMAFragLayout():
-      return ir.Attribute.parse("#mosaic_gpu.WGMMAFragLayout")
+    case fa.TiledLayout():
+      return to_tiled_layout_attr(layout)
     case fa.WGMMARowFragLayout():
       return ir.Attribute.parse("#mosaic_gpu.WGMMARowFragLayout")
     case _:
       raise NotImplementedError(
           f"Unsupported layout for conversion to MLIR attribute: {layout}"
       )
-
-
-_wgmma_fragmented_layout_attr_pattern = re.compile(
-    r"^#mosaic_gpu.WGMMAFragLayout$"
-)
-
-
-def is_wgmma_fragmented_layout(attr: ir.Attribute) -> bool:
-  return bool(_wgmma_fragmented_layout_attr_pattern.search(str(attr)))
 
 
 _wgmma_row_fragmented_layout_attr_pattern = re.compile(
@@ -143,7 +188,7 @@ def from_layout_attr(
 ) -> (
     fa.WGSplatFragLayout
     | fa.WGStridedFragLayout
-    | fa.WGMMAFragLayout
+    | fa.TiledLayout
     | fa.WGMMARowFragLayout
 ):
   """Constructs a layout from an MLIR attribute."""
@@ -151,52 +196,11 @@ def from_layout_attr(
     return from_splat_fragmented_layout_attr(attr)
   elif is_strided_fragmented_layout(attr):
     return from_strided_fragmented_layout_attr(attr)
-  elif is_wgmma_fragmented_layout(attr):
-    return fa.WGMMAFragLayout()
+  elif is_tiled_layout(attr):
+    return from_tiled_layout_attr(attr)
   elif is_wgmma_row_fragmented_layout(attr):
     return fa.WGMMARowFragLayout()
   else:
     raise NotImplementedError(
         f"Unsupported layout for conversion from MLIR attribute: {attr}"
     )
-
-
-def in_layouts(op: ir.OpView) -> Sequence[ir.Attribute]:
-  """Returns the in_layouts attribute of the given operation.
-
-  Raises:
-    ValueError: If the operation does not have an in_layouts attribute.
-  """
-  if "in_layouts" not in op.attributes:
-    raise ValueError(f"{op} does not have an in_layouts attribute.")
-  return op.attributes["in_layouts"]  # type: ignore
-
-
-def out_layouts(op: ir.OpView) -> Sequence[ir.Attribute]:
-  """Returns the out_layouts attribute of the given operation.
-
-  Raises:
-    ValueError: If the operation does not have an out_layouts attribute.
-  """
-  if "out_layouts" not in op.attributes:
-    raise ValueError(f"{op} does not have an out_layouts attribute.")
-  return op.attributes["out_layouts"]  # type: ignore
-
-
-def should_have_layout(op: ir.OpView) -> bool:
-  """Returns 'true' if the operation should be assigned a layout."""
-
-  is_array = lambda v: ir.VectorType.isinstance(v.type)
-  return any(map(is_array, itertools.chain(op.operands, op.results)))  # type: ignore
-
-
-def has_in_layouts_set(op: ir.OpView) -> bool:
-  return "in_layouts" in op.attributes
-
-
-def has_out_layouts_set(op: ir.OpView) -> bool:
-  return "out_layouts" in op.attributes
-
-
-def has_any_layout_set(op: ir.OpView) -> bool:
-  return has_in_layouts_set(op) or has_out_layouts_set(op)

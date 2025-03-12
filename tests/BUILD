@@ -838,7 +838,20 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "profiler_test",
     srcs = ["profiler_test.py"],
-    enable_backends = ["cpu"],
+    backend_tags = {
+        "gpu": [
+            # disable suspicious leaking in cupti/cuda,
+            # TODO: remove this once b/372714955 is resolved.
+            "noasan",
+        ],
+    },
+    enable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    deps = [
+        "//jax:profiler",
+    ],
 )
 
 jax_multiplatform_test(
@@ -1534,6 +1547,9 @@ jax_multiplatform_test(
         "cpu_shardy",  # TODO(b/355263220): enable once export is supported.
     ],
     enable_configs = [
+        "cpu_shardy",
+        "gpu_p100x2_shardy",
+        "tpu_v3_2x2_shardy",
         "tpu_v3_2x2",
     ],
     tags = [],

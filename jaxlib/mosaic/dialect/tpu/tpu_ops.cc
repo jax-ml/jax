@@ -34,6 +34,7 @@ limitations under the License.
 #include "mlir/include/mlir/IR/Builders.h"
 #include "mlir/include/mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/include/mlir/IR/BuiltinTypes.h"
+#include "mlir/include/mlir/IR/Diagnostics.h"
 #include "mlir/include/mlir/IR/IRMapping.h"
 #include "mlir/include/mlir/IR/OperationSupport.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
@@ -1160,6 +1161,13 @@ LogicalResult LogBufferOp::verify() {
   if (input_type.getRank() != getShape().size()) {
     return emitOpError(
         "Shape must have the same length as the rank of the input");
+  }
+  return success();
+}
+
+LogicalResult ReciprocalOp::verify() {
+  if (!getType().getElementType().isF32()) {
+    return emitOpError("Not implemented: Reciprocal op for non-f32 dtypes");
   }
   return success();
 }

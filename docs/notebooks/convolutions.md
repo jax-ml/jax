@@ -156,7 +156,7 @@ plt.imshow(img[0]);
 
 These are the simple convenience functions for convolutions
 
-️⚠️ The convenience `lax.conv`, `lax.conv_with_general_padding` helper function assume __NCHW__ images and __OIHW__ kernels.
+️⚠️ The convenience `lax.conv`, `lax.conv_with_general_padding` helper functions assume __NCHW__ images and __OIHW__ kernels.
 
 ```{code-cell} ipython3
 :id: kppxbxpZW0nb
@@ -179,7 +179,7 @@ plt.imshow(np.array(out)[0,0,:,:]);
 
 out = lax.conv_with_general_padding(
   jnp.transpose(img,[0,3,1,2]),    # lhs = NCHW image tensor
-  jnp.transpose(kernel,[2,3,0,1]), # rhs = IOHW conv kernel tensor
+  jnp.transpose(kernel,[3,2,0,1]), # rhs = OIHW conv kernel tensor
   (1, 1),  # window strides
   ((2,2),(2,2)), # general padding 2x2
   (1,1),  # lhs/image dilation

@@ -91,8 +91,8 @@ def f(x):
   jax.debug.print("x: {}", x)
   return x
 jax.pmap(f)(xs)
-# Prints: x: 1.0
-#         x: 0.0
+# Prints: x: 0.0
+#         x: 1.0
 # OR
 # Prints: x: 1.0
 #         x: 0.0

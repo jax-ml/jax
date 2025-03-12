@@ -53,13 +53,12 @@ def build_kernel(
   index = ir.IndexType.get()
 
   swizzle = 128
-  tile_k = swizzle // 2
+  swizzle_elems = tile_k = swizzle // 2
+  tiling = (8, swizzle_elems)
 
   in_dtype = jnp.float16
   k_loop_iter = k // tile_k
   max_concurrent_steps = min(max_concurrent_steps, k_loop_iter)
-  tma_tile_m = 128
-  tma_tile_kn = 64
 
   block_tile_m = tile_m
   block_tile_n = tile_n
@@ -123,17 +122,14 @@ def build_kernel(
             src_ref=a,
             dst_ref=mgpu.memref_slice(a_smem, slot),
             gmem_slice=(ds(m_start, tile_m), ds(k_start, tile_k)),
-            gmem_transform=mgpu.TileTransform((tma_tile_m, tma_tile_kn)),
+            gmem_transform=mgpu.TileTransform(tiling),
             **common_args,
         )
         ctx.async_copy(
             src_ref=b,
             dst_ref=mgpu.memref_slice(b_smem, slot),
             gmem_slice=(ds(n_start, tile_n), ds(k_start, tile_k)),
-            gmem_transform=(
-                mgpu.TileTransform((tma_tile_kn, tma_tile_kn)),
-                mgpu.TransposeTransform((1, 0, 2, 3)),
-            ),
+            gmem_transform=mgpu.TileTransform(tiling),
             **common_args,
         )
 
@@ -145,7 +141,7 @@ def build_kernel(
         tcgen05.mma(
             acc,
             mgpu.memref_slice(a_smem, slot),
-            mgpu.memref_transpose(mgpu.memref_slice(b_smem, slot), (0, 1, 3, 2)),
+            mgpu.memref_transpose(mgpu.memref_slice(b_smem, slot), (1, 0, 3, 2)),
             a_swizzle=swizzle,
             b_swizzle=swizzle,
             accumulate=accumulate,
@@ -172,26 +168,23 @@ def build_kernel(
         src_ref=d_smem,
         dst_ref=d,
         gmem_slice=(ds(block_m_start, block_tile_m), ds(n_start, tile_n)),
-        gmem_transform=mgpu.TileTransform((128, 64)),
+        gmem_transform=mgpu.TileTransform((128, swizzle_elems)),
         swizzle=swizzle,
     )
     ctx.await_async_copy(0)
 
   compute_buffers = (
     jax.ShapeDtypeStruct(
-        mgpu.tile_shape((max_concurrent_steps, block_tile_m, tile_k),
-                        (tma_tile_m, tma_tile_kn)),
+        mgpu.tile_shape((max_concurrent_steps, block_tile_m, tile_k), tiling),
         jnp.float16),
     jax.ShapeDtypeStruct(
-         mgpu.tile_shape((max_concurrent_steps, tile_k, block_tile_n),
-                         (tma_tile_kn, tma_tile_kn)),
+         mgpu.tile_shape((max_concurrent_steps, block_tile_n, tile_k), tiling),
          jnp.float16),
   )
   epilogue_buffer = jax.ShapeDtypeStruct(
-      mgpu.tile_shape((block_tile_m, tile_n), (tma_tile_m, tma_tile_kn)),
+      mgpu.tile_shape((block_tile_m, tile_n), (128, swizzle_elems)),
       jnp.float16)
   smem_buffers = mgpu.Union([compute_buffers, epilogue_buffer])
-  assert block_tile_m == 128
   smem = (
       smem_buffers,
       [mgpu.Barrier(arrival_count=1, num_barriers=max_concurrent_steps)] * 2,
@@ -237,8 +230,8 @@ def main(unused_argv):
       tile_n *= 2
     if m < tile_m or n < tile_n:
       continue
-    if kwargs["collective"] and tile_n >= 512:
-      continue  # TODO(apaszke): Support 512
+    if tile_n > 512:
+      continue
     if (m // tile_m) % kwargs["grid_tile_m"]:
       continue
     try:

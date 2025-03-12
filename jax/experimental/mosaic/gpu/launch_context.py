@@ -430,8 +430,8 @@ class LaunchContext:
       gmem_ref, smem_ref = dst_ref, src_ref
       if barrier is not None:
         raise ValueError("Barriers are unsupported for SMEM -> GMEM copies")
-      if arrive is not None:
-        raise ValueError("arrive is unsupported for SMEM -> GMEM copies")
+      if arrive is None:
+        arrive = True  # Commit this copy to the async group by default
     else:
       raise ValueError("Only SMEM <-> GMEM copies supported")
     # TODO(apaszke): This is a very approximate check. Improve it!
@@ -683,7 +683,8 @@ class LaunchContext:
         nvvm.cp_async_bulk_tensor_global_shared_cta(
             tma_desc, smem_ptr, rev_dyn_base_indices, predicate=predicate
         )
-        nvvm.cp_async_bulk_commit_group()
+        if arrive:
+          nvvm.cp_async_bulk_commit_group()
 
   def await_async_copy(
       self, allow_groups: int, await_read_only: bool = False

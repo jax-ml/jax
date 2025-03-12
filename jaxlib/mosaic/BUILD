@@ -14,7 +14,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-load("//jaxlib:jax.bzl", "pallas_extension_deps")
+load("//jaxlib:jax.bzl", "mosaic_extension_deps")
 
 licenses(["notice"])
 
@@ -95,7 +95,7 @@ cc_library(
         "@xla//xla:shape_util",
         "@xla//xla:util",
         "@xla//xla/tsl/platform:errors",
-    ] + pallas_extension_deps,
+    ] + mosaic_extension_deps,
 )
 
 gentbl_cc_library(
