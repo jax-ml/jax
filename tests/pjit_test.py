@@ -6624,6 +6624,10 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = hf(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 
+    hf = auto_axes(f, axes=('x', 'y'), out_shardings=P('x'))
+    out = hf(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
   @jtu.with_user_mesh((2, 2), ('x', 'y'),
                       axis_types={AxisTypes.Auto: ('x', 'y')})
   def test_full_visible_outside_jit(self, mesh):
@@ -7067,6 +7071,17 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return jax.lax.scan(body, carry, xs, unroll=2)
 
     f(carry, arr)  # doesn't crash
+
+  @jtu.with_user_mesh((2,), ('x',))
+  def test_reshard_with_np_array(self, mesh):
+    out = reshard(np.arange(8), P('x'))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+    @jax.jit
+    def f(x):
+      return reshard(x, P('x'))
+    out = f(np.arange(8))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

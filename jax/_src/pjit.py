@@ -2717,11 +2717,6 @@ def _mesh_cast_abstract_eval(aval, dst_sharding):
         f' axis_types={src_sharding.mesh.axis_types} and dst'
         f' axis_types={dst_sharding.mesh.axis_types}. To reshard between the'
         ' same mesh, use `jax.sharding.reshard` instead?')
-  if len(src_sharding.spec) != len(dst_sharding.spec):
-    raise ValueError(
-        'Length of source sharding spec should be equal to destination'
-        f' sharding spec. Got source spec={src_sharding.spec} and destination'
-        f' spec={dst_sharding.spec}')
   if src_sharding.mesh._any_axis_explicit and dst_sharding.mesh._any_axis_explicit:
     for s, d in safe_zip(flatten_spec(src_sharding.spec),
                          flatten_spec(dst_sharding.spec)):
@@ -2786,7 +2781,8 @@ reshard_p = core.Primitive('reshard')
 
 def _reshard_abstract_eval(aval, dst_sharding):
   src_sharding = aval.sharding
-  if src_sharding.mesh.abstract_mesh != dst_sharding.mesh.abstract_mesh:
+  if (not src_sharding.mesh.empty and
+      src_sharding.mesh.abstract_mesh != dst_sharding.mesh.abstract_mesh):
     raise ValueError(
         f'Mesh of the input {src_sharding.mesh.abstract_mesh} does not'
         ' equal the mesh of the target sharding'
