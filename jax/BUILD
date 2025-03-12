@@ -167,22 +167,30 @@ py_library(
         ],
     ),
     visibility = [":internal"],
-    deps = [
-        ":jax",
-    ] + py_deps("numpy"),
+    deps = if_building_jaxlib(
+        if_building = [
+            ":jax",
+        ],
+        if_not_building = [],
+        if_not_building_for_cpu = [],
+    ) + py_deps("numpy"),
 )
 
 py_library(
     name = "internal_test_harnesses",
     srcs = ["_src/internal_test_util/test_harnesses.py"],
     visibility = [":internal"] + jax_internal_test_harnesses_visibility,
-    deps = [
-        ":ad_util",
-        ":config",
-        ":jax",
-        ":test_util",
-        "//jax/_src/lib",
-    ] + py_deps("numpy"),
+    deps = if_building_jaxlib(
+        if_building = [
+            ":ad_util",
+            ":config",
+            ":jax",
+            ":test_util",
+            "//jax/_src/lib",
+        ],
+        if_not_building = [],
+        if_not_building_for_cpu = [],
+    ) + py_deps("numpy"),
 )
 
 py_library(
@@ -191,15 +199,18 @@ py_library(
     visibility = [
         ":internal",
     ] + jax_internal_export_back_compat_test_util_visibility,
-    deps = [
-        ":jax",
-        ":test_util",
-    ] + py_deps("numpy"),
+    deps = if_building_jaxlib(
+        if_building = [
+            ":jax",
+            ":test_util",
+        ],
+        if_not_building = [],
+        if_not_building_for_cpu = [],
+    ) + py_deps("numpy"),
 )
 
 py_library(
     name = "internal_export_back_compat_test_data",
-    testonly = 1,
     srcs = glob([
         "_src/internal_test_util/export_back_compat_test_data/*.py",
         "_src/internal_test_util/export_back_compat_test_data/pallas/*.py",
