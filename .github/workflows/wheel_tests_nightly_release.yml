@@ -65,7 +65,9 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          python: ["3.10","3.11", "3.12", "3.13"]
+          # Skip Python 3.13 as it fails due to missing TensorFlow wheels (used for
+          # profiler_test.py, build/collect-profile-requirements.txt) for that version (b/402590302)
+          python: ["3.10", "3.11", "3.12"]
           tpu-specs: [
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
             {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
@@ -76,17 +78,16 @@ jobs:
             - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
             - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pypi_latest' }}
             # Run a single Python version for v4-8.
-            - tpu-specs.type: "v4-8"
+            - tpu-specs:
+                type: "v4-8"
               python: "3.10"
-            - tpu-specs.type: "v4-8"
+            - tpu-specs:
+                type: "v4-8"
               python: "3.11"
-            - tpu-specs.type: "v4-8"
-              python: "3.12"
             # Run min and max Python versions for v5e-8
-            - tpu-specs.type: "v5e-8"
+            - tpu-specs:
+                type: "v5e-8"
               python: "3.11"
-            - tpu-specs.type: "v5e-8"
-              python: "3.12"
     name: "TPU tests (jax=${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }}, jaxlib=${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.tpu-specs.runner }}
