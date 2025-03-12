@@ -486,7 +486,11 @@ def log(x: ArrayLike, /) -> Array:
     >>> jnp.allclose(jnp.log(x1*x2), jnp.log(x1)+jnp.log(x2))
     Array(True, dtype=bool)
   """
-  return lax.log(*promote_args_inexact('log', x))
+  # TODO(mattjj): fix the circular import issue.
+  from jax._src import error_check as error_check_lib
+  out = lax.log(*promote_args_inexact('log', x))
+  error_check_lib.set_error_if(isnan(out), 'NaN encountered', category='nan')
+  return out
 
 
 @export
