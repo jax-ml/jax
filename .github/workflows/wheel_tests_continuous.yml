@@ -35,7 +35,7 @@ jobs:
         runner: "linux-x86-n2-16"
         artifact: "jax"
         upload_artifacts_to_gcs: true
-        gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
+        gcs_upload_uri: 'gs://general-ml-ci-transient/jax-github-actions/jax-fork/${{ github.workflow }}/${{ github.run_number }}/${{ github.run_attempt }}'
 
   build-jaxlib-artifact:
     uses: ./.github/workflows/build_artifacts.yml
