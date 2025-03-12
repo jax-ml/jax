@@ -1576,7 +1576,7 @@ def with_user_mesh(sizes, names, axis_types=None):
   def decorator(fn):
     def mesh_fn(*args, **kwargs):
       mesh = create_mesh(sizes, names, axis_types=axis_types)
-      with mesh_lib.use_mesh(mesh):
+      with jax.sharding.use_mesh(mesh):
         return fn(*args, **kwargs, mesh=mesh)
     return mesh_fn
   return decorator

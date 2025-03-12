@@ -5943,7 +5943,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       a = z @ x2
       return a
 
-    with mesh_lib.use_mesh(mesh):
+    with jax.sharding.use_mesh(mesh):
       out = f(arr, arr.T)
       self.assertEqual(out.sharding, NamedSharding(mesh, P('x',)))
       lowered_text = f.lower(arr, arr.T).as_text()
@@ -5952,7 +5952,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     mesh2 = jtu.create_mesh((2, 2), ('x', 'y'),
                             axis_types={mesh_lib.AxisTypes.Explicit: 'x',
                                         mesh_lib.AxisTypes.Auto: 'y'})
-    with mesh_lib.use_mesh(mesh2):
+    with jax.sharding.use_mesh(mesh2):
       arr = jax.device_put(arr, NamedSharding(mesh2, P('x', 'y')))
       arr2 = jax.device_put(np_inp.T, NamedSharding(mesh2, P('y', None)))
       out = f(arr, arr2)
@@ -5966,7 +5966,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     mesh3 = jtu.create_mesh((2, 2), ('x', 'y'),
                             axis_types={mesh_lib.AxisTypes.Explicit: 'y',
                                         mesh_lib.AxisTypes.Auto: 'x'})
-    with mesh_lib.use_mesh(mesh3):
+    with jax.sharding.use_mesh(mesh3):
       arr = jax.device_put(arr, NamedSharding(mesh3, P('x', 'y')))
       arr2 = jax.device_put(np_inp.T, NamedSharding(mesh3, P(None, 'x')))
       out = f(arr, arr2)
@@ -6143,7 +6143,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     arr = jax.device_put(np_inp, s)
 
     auto_mesh = jax.make_mesh((2,), 'x', auto_axes='x')
-    with mesh_lib.use_mesh(auto_mesh):
+    with jax.sharding.use_mesh(auto_mesh):
       arr2 = jnp.ones(8)
     self.assertDictEqual(arr2.sharding.mesh.axis_types,
                          {AxisTypes.Auto: ('x',)})
@@ -7082,6 +7082,19 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return reshard(x, P('x'))
     out = f(np.arange(8))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+  def test_set_mesh(self):
+    mesh = jtu.create_mesh((2,), ('x',), axis_types={AxisTypes.Explicit: 'x'})
+    prev_mesh = config.device_context.value
+    prev_abstract_mesh = config.abstract_mesh_context_manager.value
+    try:
+      jax.sharding.set_mesh(mesh)
+
+      out = reshard(np.arange(8), P('x'))
+      self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+    finally:
+      config.device_context.set_local(prev_mesh)
+      config.abstract_mesh_context_manager.set_local(prev_abstract_mesh)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

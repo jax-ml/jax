@@ -587,9 +587,3 @@ def set_concrete_mesh(mesh: Mesh | None):
 
 def get_concrete_mesh():
   return jax_config.device_context.value
-
-
-@contextlib.contextmanager
-def use_mesh(mesh: Mesh):
-  with set_abstract_mesh(mesh.abstract_mesh), set_concrete_mesh(mesh):
-    yield

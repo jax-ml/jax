@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import collections
+import contextlib
 from collections.abc import Mapping, Sequence
 import dataclasses
 import functools
@@ -1410,3 +1411,28 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
       allow_split_physical_axes=allow_split_physical_axes)
   axis_types = _get_axis_types(auto_axes, explicit_axes, manual_axes)
   return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)
+
+
+@contextlib.contextmanager
+def use_mesh(mesh: mesh_lib.Mesh):
+  if not isinstance(mesh, mesh_lib.Mesh):
+    raise ValueError(
+        f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
+
+  # TODO(yashkatariya): Enable this.
+  # if not core.trace_state_clean():
+  #   raise ValueError('`use_mesh` can only be used outside of `jax.jit`')
+
+  with (mesh_lib.set_abstract_mesh(mesh.abstract_mesh),
+        mesh_lib.set_concrete_mesh(mesh)):
+    yield
+
+def set_mesh(mesh: mesh_lib.Mesh) -> None:
+  if not isinstance(mesh, mesh_lib.Mesh):
+    raise ValueError(
+        f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
+  if not core.trace_state_clean():
+    raise ValueError('`set_mesh` can only be used outside of `jax.jit`.')
+
+  config.abstract_mesh_context_manager.set_local(mesh.abstract_mesh)
+  config.device_context.set_local(mesh)

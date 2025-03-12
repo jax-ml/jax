@@ -690,7 +690,7 @@ def _infer_params(
     fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
   ) -> tuple[PjitParams, list[Any]]:
   if ji.use_resource_env:
-    with mesh_lib.use_mesh(mesh_lib.thread_resources.env.physical_mesh):
+    with sharding_impls.use_mesh(mesh_lib.thread_resources.env.physical_mesh):
       return _infer_params_internal(fun, ji, args, kwargs)
   return _infer_params_internal(fun, ji, args, kwargs)
 
