@@ -18,7 +18,11 @@ from absl.testing import absltest
 from jax._src import deprecations
 from jax._src import test_util as jtu
 from jax._src import test_warning_util
-from jax._src.internal_test_util import deprecation_module as m
+
+try:
+  from jax._src.internal_test_util import deprecation_module as m
+except ModuleNotFoundError:
+  import deprecation_module as m  # type: ignore[no-redef,import-not-found]
 
 class DeprecationTest(absltest.TestCase):
 

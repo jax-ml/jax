@@ -16,7 +16,11 @@ import sys
 
 from absl.testing import absltest
 from jax._src import test_util as jtu
-from jax._src.internal_test_util import lazy_loader_module as l
+
+try:
+  from jax._src.internal_test_util import lazy_loader_module as l
+except ModuleNotFoundError:
+  import lazy_loader_module as l  # type: ignore[no-redef,import-not-found]
 
 
 class LazyLoaderTest(absltest.TestCase):

@@ -25,7 +25,12 @@ from jax import numpy as jnp
 from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
-from jax._src.internal_test_util import test_harnesses
+
+try:
+  from jax._src.internal_test_util import test_harnesses
+except ModuleNotFoundError:
+  import test_harnesses  # type: ignore[no-redef,import-not-found]
+
 import numpy as np
 
 DType = Any

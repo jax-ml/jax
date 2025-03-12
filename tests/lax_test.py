@@ -45,7 +45,12 @@ from jax._src import test_util as jtu
 from jax._src.errors import UnexpectedTracerError
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
-from jax._src.internal_test_util import lax_test_util
+
+try:
+  from jax._src.internal_test_util import lax_test_util
+except ModuleNotFoundError:
+  import lax_test_util  # type: ignore[no-redef,import-not-found]
+
 from jax._src.lax import lax as lax_internal
 from jax._src.util import NumpyComplexWarning, safe_zip
 from jax._src.tree_util import tree_map

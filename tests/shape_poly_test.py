@@ -56,8 +56,12 @@ import numpy as np
 config.parse_flags_with_absl()
 
 # Import after parsing flags
-from jax._src.internal_test_util import test_harnesses
-from jax._src.internal_test_util.test_harnesses import Harness, CustomArg, RandArg, StaticArg
+try:
+  from jax._src.internal_test_util import test_harnesses
+  from jax._src.internal_test_util.test_harnesses import Harness, CustomArg, RandArg, StaticArg
+except ModuleNotFoundError:
+  import test_harnesses
+  from test_harnesses import Harness, CustomArg, RandArg, StaticArg  # type: ignore[no-redef,import-not-found]
 
 _f32 = np.float32
 _i32 = np.int32
