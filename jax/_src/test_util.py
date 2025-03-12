@@ -1518,7 +1518,11 @@ class JaxTestCase(parameterized.TestCase):
     args = args_maker()
     lax_ans = lax_op(*args)
     numpy_ans = numpy_reference_op(*args)
-    self.assertAllClose(numpy_ans, lax_ans, check_dtypes=check_dtypes,
+    # assertAllClose(x, y) expands to calling
+    # numpy.testing.assert_allclose(actual=x, desired=y), hence
+    # lax_ans must be the first argument in order to interpret
+    # mismatch messages correctly:
+    self.assertAllClose(lax_ans, numpy_ans, check_dtypes=check_dtypes,
                         atol=atol or tol, rtol=rtol or tol,
                         canonicalize_dtypes=canonicalize_dtypes)
 
