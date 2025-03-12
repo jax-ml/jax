@@ -336,6 +336,22 @@ def _infer_splat_op_layout(splat_op: vector.SplatOp) -> OptionalLayouts:
 
   return [], [layout]
 
+
+@partial(_add_layout_inference_rule, vector.ShapeCastOp)
+def _infer_shape_cast_op_layout(op: vector.ShapeCastOp) -> OptionalLayouts:
+  layout = inference_utils.value_layout(op.source)
+  if layout is None:
+    return None
+  if (
+      layouts_lib.is_splat_fragmented_layout(layout)
+      or layouts_lib.is_strided_fragmented_layout(layout)
+  ):
+    return [layout], [layout]
+  raise NotImplementedError(
+      f"Unsupported operand layout for vector.shape_cast: {layout}"
+  )
+
+
 @partial(_add_layout_inference_rule, vector.ReductionOp)
 def _infer_reduction_op_layout(op: vector.ReductionOp) -> OptionalLayouts:
   if layout := inference_utils.value_layout(op.vector):
