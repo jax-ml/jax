@@ -27,14 +27,14 @@ class SourceMapGeneratorFn(Protocol):
 def generate_sourcemaps(
     f,
     passes: Sequence[common.Pass],
-    **kwargs
+    **pass_kwargs
 ) -> SourceMapGeneratorFn:
   """Generates a SourceMapBundle for the specified compiler passes.
 
   Args:
     f: The function to compile.
     passes: Which compiler passes to generate sourcemaps for.
-    **kwargs: Keyword arguments for generate_dump passes.
+    **pass_kwargs: Keyword arguments for individual passes.
   """
   def wrapper(*args, **kwargs) -> Sequence[common.SourceMapDump]:
     pass_results: list[common.SourceMapDump] = []
@@ -46,11 +46,11 @@ def generate_sourcemaps(
           pass_work_dir = os.path.join(work_dir, dirname)
           os.makedirs(pass_work_dir, exist_ok=False)
           compile_result = pass_to_eval.compile_fn(
-              pass_work_dir, f, args, kwargs
+              pass_work_dir, f, args, kwargs, **pass_kwargs
           )
           compile_cache[pass_to_eval.compile_fn] = compile_result
         compile_result = compile_cache[pass_to_eval.compile_fn]
         pass_results.append(pass_to_eval.generate_dump(compile_result,
-                                                       **kwargs))
+                                                       **pass_kwargs))
     return pass_results
   return wrapper
