@@ -82,6 +82,7 @@ jobs:
           # Python wheels follow a naming convention: standard wheels use the pattern
           # `*-cp<py_version>-cp<py_version>-*`, while free-threaded wheels use
           # `*-cp<py_version>-cp<py_version>t-*`.
+        run: |
           echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
       - name: Download jaxlib wheel from GCS (non-Windows runs)
         id: download-wheel-artifacts-nw
