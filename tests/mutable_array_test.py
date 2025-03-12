@@ -216,8 +216,8 @@ class MutableArrayTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x_ref):
-      self.assertEqual(core.get_ty(x_ref).sharding.spec,
-                       core.get_ty(x_ref[...]).sharding.spec)
+      self.assertEqual(core.typeof(x_ref).sharding.spec,
+                       core.typeof(x_ref[...]).sharding.spec)
       y = x_ref[...] + 1
       return y
 

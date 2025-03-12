@@ -1576,7 +1576,7 @@ def get_aval(x):
     return get_aval(x.__jax_array__())
   raise TypeError(f"Argument '{x}' of type '{typ}' is not a valid JAX type")
 
-get_ty = get_aval
+typeof = get_aval
 
 def is_concrete(x):
   return to_concrete_value(x) is not None

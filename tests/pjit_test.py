@@ -4883,11 +4883,11 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     arr = jax.device_put(np_inp, s)
 
     def f(x):
-      self.assertEqual(jax.get_ty(x).sharding.spec, s.spec)
+      self.assertEqual(jax.typeof(x).sharding.spec, s.spec)
       x = x * 2
-      self.assertEqual(jax.get_ty(x).sharding.spec, s.spec)
+      self.assertEqual(jax.typeof(x).sharding.spec, s.spec)
       x = x * x
-      self.assertEqual(jax.get_ty(x).sharding.spec, s.spec)
+      self.assertEqual(jax.typeof(x).sharding.spec, s.spec)
       return x
 
     # Eager mode
