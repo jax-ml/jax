@@ -75,6 +75,18 @@ jobs:
           exclude:
             - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
             - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pypi_latest' }}
+            # Run a single Python version for v4-8.
+            - tpu-specs.type: "v4-8"
+              python: "3.10"
+            - tpu-specs.type: "v4-8"
+              python: "3.11"
+            - tpu-specs.type: "v4-8"
+              python: "3.12"
+            # Run min and max Python versions for v5e-8
+            - tpu-specs.type: "v5e-8"
+              python: "3.11"
+            - tpu-specs.type: "v5e-8"
+              python: "3.12"
     name: "TPU tests (jax=${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }}, jaxlib=${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.tpu-specs.runner }}
