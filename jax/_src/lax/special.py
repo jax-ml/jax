@@ -306,13 +306,13 @@ def igamma_impl(a, x, *, dtype):
   x_is_infinity = eq(x, _const(x, float('inf')))
   a_is_zero = eq(a, _const(a, 0))
   x_is_zero = eq(x, _const(x, 0))
-  domain_error = _reduce(bitwise_or, [lt(x, _const(x, 0)), lt(a, _const(a, 0)), bitwise_and(a_is_zero, x_is_zero)])
+  domain_error = _reduce(bitwise_or, [lt(x, _const(x, 0)), lt(a, _const(a, 0)), bitwise_and(a_is_zero, x_is_zero), is_nan])
 
   use_igammac = bitwise_and(ge(x, _const(x, 1)), gt(x, a))
   ax = a * log(x) - x - lgamma(a)
   underflow = lt(ax, -log(dtypes.finfo(dtype).max))
   ax = exp(ax)
-  enabled = bitwise_not(_reduce(bitwise_or, [x_is_zero, domain_error, underflow, is_nan, x_is_infinity]))
+  enabled = bitwise_not(_reduce(bitwise_or, [x_is_zero, domain_error, underflow, x_is_infinity]))
 
   output = select(
     use_igammac,
@@ -437,11 +437,11 @@ def igammac_impl(a, x, *, dtype):
   a_is_zero = eq(a, _const(a, 0))
   x_is_zero = eq(x, _const(x, 0))
   x_is_infinity = eq(x, _const(x, float('inf')))
-  domain_error = _reduce(bitwise_or, [lt(x, _const(x, 0)), lt(a, _const(a, 0)), bitwise_and(a_is_zero, x_is_zero)])
+  domain_error = _reduce(bitwise_or, [lt(x, _const(x, 0)), lt(a, _const(a, 0)), bitwise_and(a_is_zero, x_is_zero), is_nan])
   use_igamma = bitwise_or(lt(x, _const(x, 1)), lt(x, a))
   ax = a * log(x) - x - lgamma(a)
   underflow = lt(ax, -log(dtypes.finfo(dtype).max))
-  enabled = bitwise_not(_reduce(bitwise_or, [domain_error, underflow, is_nan, x_is_infinity, a_is_zero]))
+  enabled = bitwise_not(_reduce(bitwise_or, [domain_error, underflow, x_is_infinity, a_is_zero]))
   ax = exp(ax)
 
   igamma_call = _igamma_series(ax, x, a, bitwise_and(enabled, use_igamma),
