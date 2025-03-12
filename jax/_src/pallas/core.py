@@ -343,7 +343,7 @@ class BlockSpec:
     if self.block_shape is None:
       block_shape = array_aval.shape
     else:
-      block_shape = self.block_shape
+      block_shape = self.block_shape  # type: ignore
       if len(array_aval.shape) != len(block_shape):
         raise ValueError(
             f"Block shape for {origin} (= {block_shape}) "
