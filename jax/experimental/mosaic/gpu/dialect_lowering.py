@@ -320,6 +320,34 @@ def _vector_splat_op_lowering_rule(
   return [_fragmented_array_to_ir(fragmented_array, out_vec_ty)]
 
 
+@_register_lowering(vector.ReductionOp)
+def _vector_reduction_op_lowering_rule(
+    ctx: LoweringContext, op: vector.ReductionOp
+) -> Sequence[ir.Value]:
+  del ctx  # Unused.
+  [layout] = inference_utils.in_layouts(op)
+  () = inference_utils.out_layouts(op)
+  element_type = ir.VectorType(op.vector.type).element_type
+  is_signed = False if ir.IntegerType.isinstance(element_type) else None
+  a = _fragmented_array_from_ir(op.vector, layout, is_signed)
+  match str(op.kind):
+    case "#vector.kind<add>":
+      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+      scratch = _slice_smem(
+          ir.MemRefType.get([4], element_type, memory_space=smem),
+          arith.constant(None, op.attributes["offset"]),
+      )
+      result = a.reduce_sum(scratch)
+    case (
+        "#vector.kind<maxsi>" | "#vector.kind<maxui>" | "#vector.kind<maximumf>"
+    ):
+      # TODO(slebedev): Implement this and remove the raise below.
+      raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
+    case _:
+      raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
+  return [_fragmented_array_to_ir(result, op.result.type)]
+
+
 def memref_layout_to_swizzle_and_transforms(
     layout: ir.Attribute,
 ) -> tuple[mgpu.SwizzlingMode, tuple[launch_context.MemRefTransform, ...]]:
@@ -713,16 +741,17 @@ def _mgpu_slice_smem_op_lowering_rule(
     ctx: LoweringContext, op: SliceSMEMOp
 ) -> Sequence[ir.Value]:
   del ctx
+  return [_slice_smem(op.result.type, op.offset)]
+
+
+def _slice_smem(result: ir.Type, offset: ir.Value):
   i8 = ir.IntegerType.get_signless(8)
   smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
-
   smem_base = gpu.dynamic_shared_memory(
       ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=smem)
   )
-
-  offset = arith.index_cast(ir.IndexType.get(), op.offset)
-
-  return [memref.view(op.result.type, smem_base, offset, [])]
+  offset = arith.index_cast(ir.IndexType.get(), offset)
+  return memref.view(result, smem_base, offset, [])
 
 
 @_register_lowering(scf.ForOp)
@@ -866,7 +895,8 @@ def _should_lower(op: ir.OpView) -> bool:
 
 
 def lower_mgpu_dialect(
-    module: ir.Module, launch_context: launch_context.LaunchContext | None
+    module: ir.Module,
+    launch_context: launch_context.LaunchContext | None,
 ):
   # TODO(apaszke,bchetioui): Make sure the layouts match.
   # TODO(bchetioui): rethink this API. It doesn't make sense to pass in a full

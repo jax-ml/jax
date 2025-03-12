@@ -1389,7 +1389,7 @@ class FragmentedArray:
     if isinstance(self.layout, WGSplatFragLayout):
       [reg] = self.registers.flat
       if ir.FloatType.isinstance(self.mlir_dtype):
-        op = arith.mulf
+        op = mulf
       elif ir.IntegerType.isinstance(self.mlir_dtype):
         op = arith.muli
       else:

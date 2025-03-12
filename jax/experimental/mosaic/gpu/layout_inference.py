@@ -336,6 +336,12 @@ def _infer_splat_op_layout(splat_op: vector.SplatOp) -> OptionalLayouts:
 
   return [], [layout]
 
+@partial(_add_layout_inference_rule, vector.ReductionOp)
+def _infer_reduction_op_layout(op: vector.ReductionOp) -> OptionalLayouts:
+  if layout := inference_utils.value_layout(op.vector):
+    return [layout], []
+  return None
+
 
 @partial(_add_layout_inference_rule, mgpu.WGMMAOp)
 def _infer_wgmma_op_layout(wgmma_op: mgpu.WGMMAOp) -> OptionalLayouts:
