@@ -1522,7 +1522,7 @@ class JaxTestCase(parameterized.TestCase):
     args = args_maker()
     lax_ans = lax_op(*args)
     numpy_ans = numpy_reference_op(*args)
-    self.assertAllClose(numpy_ans, lax_ans, check_dtypes=check_dtypes,
+    self.assertAllClose(lax_ans, numpy_ans, check_dtypes=check_dtypes,
                         atol=atol or tol, rtol=rtol or tol,
                         canonicalize_dtypes=canonicalize_dtypes)
 
