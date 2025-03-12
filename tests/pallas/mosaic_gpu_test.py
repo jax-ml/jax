@@ -28,6 +28,7 @@ from jax._src import test_util as jtu
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import mosaic_gpu as plgpu
+from jax.experimental.mosaic.gpu import utils as mgpu_utils
 import jax.numpy as jnp
 import numpy as np
 try:
@@ -346,6 +347,34 @@ class PallasCallTest(PallasTest):
 
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
+
+  @parameterized.named_parameters(
+      {"testcase_name": "4_blocks_f16", "num_blocks": 4, "dtype": 'float16'},
+      {"testcase_name": "4_blocks_f32", "num_blocks": 4, "dtype": 'float32'},
+      {"testcase_name": "2_blocks_bf16", "num_blocks": 2, "dtype": 'bfloat16'},
+      )
+  def test_copy_smem_to_gmem_reduction(self, num_blocks, dtype):
+    @functools.partial(
+    pl.pallas_call,
+    grid=(num_blocks,),
+    in_specs=[pl.BlockSpec((128,), lambda *i: i), pl.BlockSpec(memory_space=plgpu.GMEM)],
+    out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+    out_shape=jax.ShapeDtypeStruct([128], dtype),
+    scratch_shapes=[plgpu.SMEM((128,), dtype)],
+    input_output_aliases={1:0}
+    )
+    def kernel(x_ref, o_ref_gmem, o_ref_gmem_alias, scratch_ref):
+      del o_ref_gmem_alias
+      scratch_ref[...] = x_ref[...]
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(scratch_ref.at[...], o_ref_gmem.at[...], reduction_op=mgpu_utils.TMAReductionKind.ADD)
+      plgpu.wait_smem_to_gmem(0)
+
+    x = jnp.arange(num_blocks * 128).astype(dtype)
+    output = jnp.zeros(128).astype(dtype)
+    output = kernel(x, output)
+    output_val = x.reshape(-1, 128).sum(axis=0)
+    np.testing.assert_array_equal(output, output_val)
 
   @parameterized.named_parameters(
       {"testcase_name": "1d_none",

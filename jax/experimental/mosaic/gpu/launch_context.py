@@ -340,6 +340,7 @@ class LaunchContext:
         args = [
             host_ptr,
             base_ptr,
+            c(utils.get_tma_dtype(ref_ty.element_type), i64),
             c(utils.bitwidth(ref_ty.element_type), i64),
             c(rank, i64),
             utils.pack_array([as_i64(i) for i in sizes_and_strides[:rank]]),
@@ -375,6 +376,7 @@ class LaunchContext:
       collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
       partitioned: int | None = None,
       predicate: ir.Value | None = None,  # Should select 0 or 1 threads from the WG.
+      reduction_op: utils.TMAReductionKind | None = None,
   ):
     """Initiates an async copy between GMEM and SMEM.
 
@@ -452,6 +454,11 @@ class LaunchContext:
           "async_copy requires all GMEM strides except the last one to be a"
           " multiple of 16 bytes"
       )
+
+    if reduction_op is not None and not isinstance(gmem_ref_ty.element_type, ir.FloatType):
+      raise ValueError("TMA with reduction is only supported with float dtype")
+    if reduction_op is not None and reduction_op != utils.TMAReductionKind.ADD:
+      raise ValueError("TMA with reduction is only supported with add operation")
 
     # NOTE: TMA supports OOB indices, so we skip the check.
     base_indices, slice_shape, is_squeezed = utils.parse_indices(
@@ -607,7 +614,7 @@ class LaunchContext:
 
     uniform_ctx = (
         functools.partial(utils.single_thread, per_block=False)
-        if uniform and predicate is None
+        if uniform and (predicate is None or reduction_op is not None)
         else contextlib.nullcontext
     )
 
@@ -679,12 +686,22 @@ class LaunchContext:
           )
     else:
       assert multicast_mask is None
-      with uniform_ctx():
-        nvvm.cp_async_bulk_tensor_global_shared_cta(
-            tma_desc, smem_ptr, rev_dyn_base_indices, predicate=predicate
-        )
-        if arrive:
-          nvvm.cp_async_bulk_commit_group()
+      if reduction_op is not None:
+        with uniform_ctx():
+          reduction_kind = utils.get_tma_reduction_kind(reduction_op)
+          # by default, mode is nvvm.TMAStoreMode.TILE
+          nvvm.cp_async_bulk_tensor_reduce(
+              tma_desc, smem_ptr, reduction_kind, rev_dyn_base_indices
+          )
+          if arrive:
+            nvvm.cp_async_bulk_commit_group()
+      else:
+        with uniform_ctx():
+          nvvm.cp_async_bulk_tensor_global_shared_cta(
+              tma_desc, smem_ptr, rev_dyn_base_indices, predicate=predicate
+          )
+          if arrive:
+            nvvm.cp_async_bulk_commit_group()
 
   def await_async_copy(
       self, allow_groups: int, await_read_only: bool = False
