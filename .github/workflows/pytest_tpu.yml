@@ -135,6 +135,8 @@ jobs:
             echo "Using oldest supported libtpu"
             $JAXCI_PYTHON -m uv pip install --pre libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+
+            echo "libtpu_version_type=oldest_supported_libtpu" >> $GITHUB_ENV
           else
             echo "Unknown libtpu version type: ${{ inputs.libtpu-version-type }}"
             exit 1
