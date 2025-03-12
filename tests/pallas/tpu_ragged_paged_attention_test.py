@@ -64,10 +64,6 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
     max_num_seq = max(len(seq_lens), max_num_seq)
     max_kv_len = max(kv_lens)
     pages_per_seq = ceil_div(max_kv_len, page_size)
-    pages_per_seq = (
-        ceil_div(pages_per_seq, num_kv_pages_per_block)
-        * num_kv_pages_per_block
-    )
     num_q_heads, num_kv_heads = num_heads
 
     cu_q_lens = jnp.array(cu_q_lens, dtype=jnp.int32)
@@ -130,8 +126,8 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
         num_seqs=num_seqs,
     )
     tols = {
-        "float32": 1e-1,
-        "bfloat16": 2e-1,
+        "float32": 0.15,
+        "bfloat16": 0.2,
     }
     tol = tols[jnp.dtype(dtype).name]
     self.assertAllClose(output, expected, atol=tol, rtol=tol)

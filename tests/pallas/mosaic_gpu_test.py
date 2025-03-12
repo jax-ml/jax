@@ -184,6 +184,23 @@ class PallasCallTest(PallasTest):
     y = jnp.flip(x).reshape(1, 256)
     np.testing.assert_array_equal(kernel(x, y), x + y[0])
 
+  @parameterized.product(
+      shape=[(128,)], thread_semantics=[*plgpu.ThreadSemantics]
+  )
+  def test_reduce_sum(self, shape, thread_semantics):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+        compiler_params=plgpu.GPUCompilerParams(
+            thread_semantics=thread_semantics
+        ),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.broadcast_to(_sum_same_dtype(x_ref[...]), o_ref.shape)
+
+    x = jnp.arange(math.prod(shape)).reshape(shape).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), jnp.sum(x))
+
   def test_reshape(self):
     shape1, shape2 = (128,), (2, 16, 4)
 
@@ -200,10 +217,14 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(math.prod(shape1)).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x), x.reshape(shape2))
 
-  def test_add_xy_indexed(self):
+  @parameterized.product(thread_semantics=[*plgpu.ThreadSemantics])
+  def test_add_xy_indexed(self, thread_semantics):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
+        compiler_params=plgpu.GPUCompilerParams(
+            thread_semantics=thread_semantics
+        ),
     )
     def kernel(x_ref, y_ref, o_ref):
       idx = _sum_same_dtype(y_ref[...])
@@ -1078,10 +1099,14 @@ class PallasCallTest(PallasTest):
 
     self.assertIn("acc % 2", output())
 
-  def test_cond_returning_array(self):
+  @parameterized.parameters([*plgpu.ThreadSemantics])
+  def test_cond_returning_array(self, thread_semantics):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
+        compiler_params=plgpu.GPUCompilerParams(
+            thread_semantics=thread_semantics
+        ),
     )
     def kernel(x_ref, o_ref):
       acc = _sum_same_dtype(x_ref[...])

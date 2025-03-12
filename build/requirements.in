@@ -2,6 +2,7 @@
 # test deps
 #
 -r test-requirements.txt
+-r gpu-test-requirements.txt
 
 #
 # build deps

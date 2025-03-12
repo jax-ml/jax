@@ -52,23 +52,46 @@ export JAX_SKIP_SLOW_TESTS=true
 
 echo "Running TPU tests..."
 
-# Run single-accelerator tests in parallel
-JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
-  --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
-  --maxfail=20 -m "not multiaccelerator" \
-  tests/pallas/ops_test.py \
-  tests/pallas/export_back_compat_pallas_test.py \
-  tests/pallas/export_pallas_test.py \
-  tests/pallas/tpu_ops_test.py \
-  tests/pallas/tpu_pallas_test.py \
-  tests/pallas/tpu_pallas_random_test.py \
-  tests/pallas/tpu_pallas_async_test.py \
-  tests/pallas/tpu_pallas_state_test.py
+if [[ "$JAXCI_RUN_FULL_TPU_TEST_SUITE" == "1" ]]; then
+  # We're deselecting all Pallas TPU tests in the oldest libtpu build. Mosaic
+  # TPU does not guarantee anything about forward compatibility (unless
+  # jax.export is used) and the 12 week compatibility window accumulates way
+  # too many failures.
+  IGNORE_FLAGS=""
+  if [ "${libtpu_version_type:-""}" == "oldest_supported_libtpu" ]; then
+    IGNORE_FLAGS="--ignore=tests/pallas"
+  fi
 
-# Run Pallas printing tests, which need to run with I/O capturing disabled.
-TPU_STDERR_LOG_LEVEL=0 "$JAXCI_PYTHON" -m pytest -s tests/pallas/tpu_pallas_test.py::PallasCallPrintTest
+  # Run single-accelerator tests in parallel
+  JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
+    --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
+    --maxfail=20 -m "not multiaccelerator" $IGNORE_FLAGS tests examples
 
-# Run multi-accelerator across all chips
-"$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 -m "multiaccelerator" \
-  tests/pjit_test.py \
-  tests/pallas/tpu_pallas_distributed_test.py
+  # Run Pallas printing tests, which need to run with I/O capturing disabled.
+  TPU_STDERR_LOG_LEVEL=0 "$JAXCI_PYTHON" -m pytest -s \
+    tests/pallas/tpu_pallas_test.py::PallasCallPrintTest
+
+  # Run multi-accelerator across all chips
+  "$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
+else
+  # Run single-accelerator tests in parallel
+  JAX_ENABLE_TPU_XDIST=true "$JAXCI_PYTHON" -m pytest -n="$JAXCI_TPU_CORES" --tb=short \
+    --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
+    --maxfail=20 -m "not multiaccelerator" \
+    tests/pallas/ops_test.py \
+    tests/pallas/export_back_compat_pallas_test.py \
+    tests/pallas/export_pallas_test.py \
+    tests/pallas/tpu_ops_test.py \
+    tests/pallas/tpu_pallas_test.py \
+    tests/pallas/tpu_pallas_random_test.py \
+    tests/pallas/tpu_pallas_async_test.py \
+    tests/pallas/tpu_pallas_state_test.py
+
+  # Run Pallas printing tests, which need to run with I/O capturing disabled.
+  TPU_STDERR_LOG_LEVEL=0 "$JAXCI_PYTHON" -m pytest -s tests/pallas/tpu_pallas_test.py::PallasCallPrintTest
+
+  # Run multi-accelerator across all chips
+  "$JAXCI_PYTHON" -m pytest --tb=short --maxfail=20 -m "multiaccelerator" \
+    tests/pjit_test.py \
+    tests/pallas/tpu_pallas_distributed_test.py
+fi

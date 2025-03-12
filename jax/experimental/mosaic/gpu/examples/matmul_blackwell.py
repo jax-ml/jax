@@ -230,8 +230,8 @@ def main(unused_argv):
       tile_n *= 2
     if m < tile_m or n < tile_n:
       continue
-    if kwargs["collective"] and tile_n >= 512:
-      continue  # TODO(apaszke): Support 512
+    if tile_n > 512:
+      continue
     if (m // tile_m) % kwargs["grid_tile_m"]:
       continue
     try:

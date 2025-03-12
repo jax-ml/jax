@@ -63,7 +63,7 @@ def _choose_representative_layout(
 
   Given the input set of possible layouts, this function extracts a single
   representative layout. Currently, this function only works with strided,
-  splat, and WGMMA fragmented layouts.
+  splat, and tiled layouts.
 
   Returns:
     A single layout that can be used to annotate the operation, or None if the
@@ -86,18 +86,18 @@ def _choose_representative_layout(
       )
   )
 
-  wgmma_layouts: list[fa.WGMMAFragLayout] = list(
+  tiled_layouts: list[fa.TiledLayout] = list(
       map(
           layouts_lib.from_layout_attr,
-          filter(layouts_lib.is_wgmma_fragmented_layout, layouts),
+          filter(layouts_lib.is_tiled_layout, layouts),
       )
   )
 
-  if len(splat_layouts) + len(strided_layouts) + len(wgmma_layouts) != len(
+  if len(splat_layouts) + len(strided_layouts) + len(tiled_layouts) != len(
       layouts
   ):
     raise ValueError(
-        f"Expected only strided, splat, and wgmma layouts, got {layouts}"
+        f"Expected only strided, splat, and tiled layouts, got {layouts}"
     )
 
   if len(splat_layouts) > 1:
@@ -112,13 +112,19 @@ def _choose_representative_layout(
         "is not supported."
     )
 
-  if (wgmma_layouts and strided_layouts):
+  if len(tiled_layouts) > 1:
     raise NotImplementedError(
-        "Mixing strided and WGMMA layouts is not supported."
+        "Finding a representative layout for several distinct tiled layouts "
+        "is not supported."
     )
 
-  if wgmma_layouts:
-    return layouts_lib.to_layout_attr(wgmma_layouts[0])
+  if tiled_layouts and strided_layouts:
+    raise NotImplementedError(
+        "Mixing strided and tiled layouts is not supported."
+    )
+
+  if tiled_layouts:
+    return layouts_lib.to_layout_attr(tiled_layouts[0])
 
   if strided_layouts:
     [strided_layout] = strided_layouts
@@ -330,10 +336,16 @@ def _infer_splat_op_layout(splat_op: vector.SplatOp) -> OptionalLayouts:
 
   return [], [layout]
 
+@partial(_add_layout_inference_rule, vector.ReductionOp)
+def _infer_reduction_op_layout(op: vector.ReductionOp) -> OptionalLayouts:
+  if layout := inference_utils.value_layout(op.vector):
+    return [layout], []
+  return None
+
 
 @partial(_add_layout_inference_rule, mgpu.WGMMAOp)
 def _infer_wgmma_op_layout(wgmma_op: mgpu.WGMMAOp) -> OptionalLayouts:
-  layout = layouts_lib.to_layout_attr(fa.WGMMAFragLayout())
+  layout = layouts_lib.to_layout_attr(fa.TILED_LAYOUT_WGMMA)
 
   if ir.VectorType.isinstance(wgmma_op.a.type):
     return [layout, layout], [layout]

@@ -14,7 +14,7 @@
 
 # JAX is Autograd and XLA
 
-load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
@@ -45,17 +45,26 @@ package(
 
 licenses(["notice"])
 
-# If this flag is true, jaxlib should be built by bazel. If false, then we do not build jaxlib and
-# assume it has been installed, e.g., by `pip`.
-bool_flag(
+# The flag controls whether jaxlib should be built by Bazel.
+# If ":build_jaxlib=true", then jaxlib will be built.
+# If ":build_jaxlib=false", then jaxlib is not built. It is assumed that the pre-built jaxlib wheel
+# is available in the "dist" folder.
+# If ":build_jaxlib=wheel", then jaxlib wheel will be built as a py_import rule attribute.
+# The py_import rule unpacks the wheel and provides its content as a py_library.
+string_flag(
     name = "build_jaxlib",
-    build_setting_default = True,
+    build_setting_default = "true",
+    values = [
+        "true",
+        "false",
+        "wheel",
+    ],
 )
 
 config_setting(
     name = "enable_jaxlib_build",
     flag_values = {
-        ":build_jaxlib": "True",
+        ":build_jaxlib": "true",
     },
 )
 
@@ -681,6 +690,7 @@ pytype_strict_library(
     deps = [
         ":pallas",  # build_cleaner: keep
         "//jax/_src/pallas/fuser:block_spec",
+        "//jax/_src/pallas/fuser:custom_evaluate",
         "//jax/_src/pallas/fuser:fusable",
         "//jax/_src/pallas/fuser:fusion",
         "//jax/_src/pallas/fuser:jaxpr_fusion",
