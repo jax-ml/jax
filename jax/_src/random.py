@@ -2646,7 +2646,7 @@ def binomial(
   dtypes.check_user_dtype_supported(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(
-        "dtype argument to `binomial` must be a float dtype, got {dtype}"
+        f"dtype argument to `binomial` must be a float dtype, got {dtype}"
       )
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
