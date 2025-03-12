@@ -42,6 +42,7 @@ Patch release of 0.5.1
     {func}`jax.lax.reduce_and`, {func}`jax.lax.reduce_or`, and {func}`jax.lax.reduce_xor`.
   * {func}`jax.lax.linalg.qr`, and {func}`jax.scipy.linalg.qr`, now support
     column-pivoting on CPU and GPU. See {jax-issue}`#20282` and
+  * Added {func}`jax.random.multinomial`.
     {jax-issue}`#25955` for more details.
 
 * Changes
