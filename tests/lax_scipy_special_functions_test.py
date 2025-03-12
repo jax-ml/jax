@@ -170,7 +170,7 @@ def _pretty_special_fun_name(case):
   return dict(**case, testcase_name=name)
 
 
-class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
+class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
 
   def _GetArgsMaker(self, rng, shapes, dtypes):
     return lambda: [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
@@ -291,20 +291,30 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     dtype = jax.numpy.zeros(0).dtype  # default float dtype.
     nan = float('nan')
     inf = float('inf')
-    args_maker = lambda: [np.array([0, 0, 0, 1, nan,   1, nan,   0,   1, nan]).astype(dtype),
-                          np.array([0, 1, 2, 0,   1, nan, nan, inf, inf, inf]).astype(dtype)]
+    if jtu.parse_version(scipy.__version__) >= (1, 16):
+      samples_slice = slice(None)
+    else:
+      # disable samples that contradict with scipy/scipy#22441
+      samples_slice = slice(None, -1)
+    args_maker = lambda: [np.array([0, 0, 0, 1, nan,   1, nan,   0,   1, nan][samples_slice]).astype(dtype),
+                          np.array([0, 1, 2, 0,   1, nan, nan, inf, inf, inf][samples_slice]).astype(dtype)]
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
-    self._CheckAgainstNumpy(osp_special.gammainc, lsp_special.gammainc, args_maker, rtol=rtol)
+    self._CheckAgainstNumpy(lsp_special.gammainc, osp_special.gammainc, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.gammainc, args_maker, rtol=rtol)
 
   def testGammaIncCBoundaryValues(self):
     dtype = jax.numpy.zeros(0).dtype  # default float dtype.
     nan = float('nan')
     inf = float('inf')
-    args_maker = lambda: [np.array([0, 0, 0, 1, nan,   1, nan,   0,   1, nan,  1]).astype(dtype),
-                          np.array([0, 1, 2, 0,   1, nan, nan, inf, inf, inf, -1]).astype(dtype)]
+    if jtu.parse_version(scipy.__version__) >= (1, 16):
+      samples_slice = slice(None)
+    else:
+      # disable samples that contradict with scipy/scipy#22441
+      samples_slice = slice(None, -1)
+    args_maker = lambda: [np.array([0, 0, 0, 1, nan,   1, nan,   0,   1, 1, nan][samples_slice]).astype(dtype),
+                          np.array([0, 1, 2, 0,   1, nan, nan, inf, inf, -1, inf][samples_slice]).astype(dtype)]
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
-    self._CheckAgainstNumpy(osp_special.gammaincc, lsp_special.gammaincc, args_maker, rtol=rtol)
+    self._CheckAgainstNumpy(lsp_special.gammaincc, osp_special.gammaincc, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.gammaincc, args_maker, rtol=rtol)
 
 
