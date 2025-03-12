@@ -345,7 +345,7 @@ def _infer_reduction_op_layout(op: vector.ReductionOp) -> OptionalLayouts:
 
 @partial(_add_layout_inference_rule, mgpu.WGMMAOp)
 def _infer_wgmma_op_layout(wgmma_op: mgpu.WGMMAOp) -> OptionalLayouts:
-  layout = layouts_lib.to_layout_attr(fa.TILED_LAYOUT_WGMMA)
+  layout = layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)
 
   if ir.VectorType.isinstance(wgmma_op.a.type):
     return [layout, layout], [layout]
