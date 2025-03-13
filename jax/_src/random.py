@@ -24,6 +24,7 @@ import warnings
 
 import numpy as np
 
+import jax
 import jax.numpy as jnp
 from jax import lax
 from jax.numpy.linalg import cholesky, svd, eigh
@@ -2677,3 +2678,79 @@ def clone(key):
     >>> assert data == same_data
   """
   return random_clone_p.bind(key)
+
+
+def _newton_raphson(f, x, iters):
+    """Use the Newton-Raphson method to find a root of the given function."""
+
+    def update(x, _):
+        y = x - f(x) / jax.grad(f)(x)
+        return y, None
+
+    x, _ = lax.scan(update, x, length=iters)
+    return x
+
+
+def roberts_sequence(
+  num: int,
+  dim: int,
+  root_iters: int = 10_000,
+  complement_basis: bool = True,
+  key: ArrayLike | None = None,
+  perturb: bool = False,
+  shuffle: bool = False,
+  dtype: DTypeLikeFloat = float,
+):
+  """Returns the Roberts sequence, a low-discrepancy quasi-random sequence:
+
+  Low-discrepancy sequences are useful for quasi-Monte Carlo methods.
+
+  Reference:
+  Martin Roberts. The Unreasonable Effectiveness of Quasirandom Sequences.
+  extremelearning.com.au/unreasonable-effectiveness-of-quasirandom-sequences
+
+  Args:
+    num: Number of points to return.
+    dim: The dimensionality of each point in the sequence.
+    root_iters: Number of iterations to use to find the root.
+    complement_basis: Complement the basis to improve precision, as described
+      in https://www.martysmods.com/a-better-r2-sequence.
+    key: a PRNG key.
+    perturb: Apply a uniformly random perturbation to the entire sequence,
+      followed by modulo 1.
+    shuffle: Shuffle the elements of the sequence before returning them.
+      Warning: This degrades the low-discrepancy property for prefixes of
+      the output sequence.
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+
+  Returns:
+    An array of shape (num, dim) containing the sequence.
+  """
+  def f(x):
+      return x ** (dim + 1) - x - 1
+
+  root = _newton_raphson(f, jnp.astype(1.0, dtype), root_iters)
+
+  basis = 1 / root ** (1 + jnp.arange(dim, dtype=dtype))
+
+  if complement_basis:
+    basis = 1 - basis
+
+  n = jnp.arange(num, dtype=dtype)
+  x = n[:, None] * basis[None, :]
+
+  if perturb:
+    if key is None:
+        raise ValueError("key for roberts_sequence cannot be None when perturb=True")
+    key, subkey = split(key)
+    x += uniform(subkey, (dim,), dtype)[None]
+
+  x, _ = jnp.modf(x)
+
+  if shuffle:
+    if key is None:
+        raise ValueError("key for roberts_sequence cannot be None when shuffle=True")
+    x = permutation(key, x)
+
+  return x
