@@ -2850,7 +2850,7 @@ def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,
   def decorator(*args, **kwargs):
     new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Auto, 'auto_axes',
                              error_on_manual_to_auto_explict=True)
-    with mesh_lib.set_abstract_mesh(new_mesh):
+    with mesh_lib.use_abstract_mesh(new_mesh):
       in_specs = tree_map(lambda a: core.modify_spec_for_auto_manual(
           core.get_aval(a).sharding.spec, new_mesh), args)
       args = mesh_cast(args, in_specs)
@@ -2861,7 +2861,7 @@ def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,
 @contextlib.contextmanager
 def use_auto_axes(*axes):
   new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Auto, 'use_auto_axes')
-  with mesh_lib.set_abstract_mesh(new_mesh):
+  with mesh_lib.use_abstract_mesh(new_mesh):
     yield
 
 
@@ -2870,7 +2870,7 @@ def explicit_axes(fun, *, axes: str | tuple[str, ...] | None = None,
   def decorator(*args, **kwargs):
     new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Explicit, 'explicit_axes',
                              error_on_manual_to_auto_explict=True)
-    with mesh_lib.set_abstract_mesh(new_mesh):
+    with mesh_lib.use_abstract_mesh(new_mesh):
       args = mesh_cast(args, in_shardings)
       out = fun(*args, **kwargs)
     out_specs = tree_map(lambda o: core.modify_spec_for_auto_manual(
@@ -2882,7 +2882,7 @@ def explicit_axes(fun, *, axes: str | tuple[str, ...] | None = None,
 def use_explicit_axes(*axes):
   new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Explicit,
                            'use_explicit_axes')
-  with mesh_lib.set_abstract_mesh(new_mesh):
+  with mesh_lib.use_abstract_mesh(new_mesh):
     yield
 
 # -------------------- helpers --------------------

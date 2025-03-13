@@ -972,7 +972,7 @@ def shard_map_error_check(
     in_avals[i] = sharder(mesh, auto, new_in_names[i], v)
 
   with (shard_map._extend_axis_env(mesh, auto),
-        mesh_lib.set_abstract_mesh(shard_map._as_manual_mesh(mesh, auto))):
+        mesh_lib.use_abstract_mesh(shard_map._as_manual_mesh(mesh, auto))):
     # jaxpr to checked_jaxpr
     checked_jaxpr, out_tree, _ = jaxpr_to_checkify_jaxpr(
         pe.close_jaxpr(jaxpr), enabled_errors, err_tree, *in_avals

@@ -33,7 +33,7 @@ from jax._src import errors
 from jax._src import profiler
 from jax._src import util
 from jax._src import xla_bridge
-from jax._src.mesh import set_concrete_mesh
+from jax._src.mesh import use_concrete_mesh
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
@@ -1112,7 +1112,7 @@ def shard_device_array(x, devices, indices, sharding):
   else:
     # TODO(yashkatariya): Maybe this should be set when we call the handler in
     # InputsHandler.__call__?
-    with set_concrete_mesh(None):
+    with use_concrete_mesh(None):
       shards = x._multi_slice(start_indices, limit_indices, removed_dims)
   aval = core.shaped_abstractify(x)
   return pxla.batched_device_put(aval, sharding, shards, devices)

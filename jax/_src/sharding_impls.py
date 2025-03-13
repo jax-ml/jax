@@ -1389,8 +1389,8 @@ def use_mesh(mesh: mesh_lib.Mesh):
   # if not core.trace_state_clean():
   #   raise ValueError('`use_mesh` can only be used outside of `jax.jit`')
 
-  with (mesh_lib.set_abstract_mesh(mesh.abstract_mesh),
-        mesh_lib.set_concrete_mesh(mesh)):
+  with (mesh_lib.use_abstract_mesh(mesh.abstract_mesh),
+        mesh_lib.use_concrete_mesh(mesh)):
     yield
 
 def set_mesh(mesh: mesh_lib.Mesh) -> None:

@@ -1008,7 +1008,7 @@ def instantiate_zeros(tangent):
     if hasattr(tangent.aval, 'sharding'):
       # TODO(dougalm, yashkatariya): Delete this context manager once we figure
       # out how to ensure jaxpr arguments always have the context mesh.
-      with mesh_lib.set_abstract_mesh(tangent.aval.sharding.mesh):  # type: ignore
+      with mesh_lib.use_abstract_mesh(tangent.aval.sharding.mesh):  # type: ignore
         return zeros_like_aval(tangent.aval)
     return zeros_like_aval(tangent.aval)
   return tangent

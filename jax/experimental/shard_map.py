@@ -47,7 +47,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.core import Tracer
-from jax._src.mesh import (AbstractMesh, Mesh, AxisTypes, set_abstract_mesh,
+from jax._src.mesh import (AbstractMesh, Mesh, AxisTypes, use_abstract_mesh,
                            get_abstract_mesh)
 from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.lax import (lax, parallel as lax_parallel, slicing,
@@ -523,7 +523,7 @@ def _shard_map_staging(
   in_avals = [t.aval for t in in_tracers]
   in_avals_ = map(partial(_shard_aval, mesh, auto), in_names, in_avals)
   manual_mesh = _as_manual_mesh(mesh, auto)
-  with _extend_axis_env(mesh, auto), set_abstract_mesh(manual_mesh):
+  with _extend_axis_env(mesh, auto), use_abstract_mesh(manual_mesh):
     jaxpr, out_avals_, consts, () = pe.trace_to_jaxpr_dynamic(f, in_avals_)
   _check_names(out_names_thunk(), out_avals_)
   if check_rep:
@@ -539,7 +539,7 @@ def _shard_map_staging(
   constvars = map(trace.getvar, map(trace.to_jaxpr_tracer, consts))
   outvars = map(trace.makevar, out_tracers)
   in_names_staged = ({},) * len(consts) + tuple(in_names)  # type: ignore
-  with _extend_axis_env(mesh, auto), set_abstract_mesh(manual_mesh):
+  with _extend_axis_env(mesh, auto), use_abstract_mesh(manual_mesh):
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
   params = dict(mesh=mesh, in_names=in_names_staged,
                 out_names=tuple(out_names_thunk()), jaxpr=jaxpr,
@@ -857,7 +857,7 @@ def _run_shmap(f, mesh, auto, args, reps, check_rep, context_mesh):
   in_tracers = map(partial(ShardMapTracer, trace), reps, args)
   manual_mesh = _as_manual_mesh(mesh, auto)
   with (core.set_current_trace(trace), _extend_axis_env(mesh, auto),
-        set_abstract_mesh(manual_mesh)):
+        use_abstract_mesh(manual_mesh)):
     ans = f.call_wrapped(*in_tracers)
     outs, out_rep = unzip2(map(trace.to_val_rep_pair, ans))
   return outs, out_rep
@@ -869,7 +869,7 @@ def _names_to_pspec(names: AxisNames) -> PartitionSpec:
 
 def _unmatch_spec(mesh: Mesh, src: AxisNames, x: JaxType, context_mesh) -> JaxType:
   with (core.eval_context(), jax.disable_jit(False),
-        set_abstract_mesh(context_mesh)):
+        use_abstract_mesh(context_mesh)):
     return jax.jit(HashablePartial(_unmatch, mesh, tuple(src.items())))(x)
 
 def _unmatch(mesh, src_tup, x):
@@ -948,7 +948,7 @@ class ShardMapTrace(core.Trace):
     else:
       f = HashablePartial(_prim_applier, prim, tuple(params.items()), self.mesh)
       with (core.eval_context(), jax.disable_jit(False), jax.debug_nans(False),
-            jax.debug_infs(False), set_abstract_mesh(self.context_mesh)):
+            jax.debug_infs(False), use_abstract_mesh(self.context_mesh)):
         out_vals = jax.jit(f)(*in_vals)
       _maybe_check_special(out_vals)
     rep_rule = _check_rules.get(prim, partial(_rule_missing, prim))
@@ -1018,13 +1018,13 @@ class ShardMapTracer(core.Tracer):
 
   def to_concrete_value(self):
     if self.rep == set(self._trace.mesh.axis_names):
-      with core.eval_context(), set_abstract_mesh(self._trace.context_mesh):
+      with core.eval_context(), use_abstract_mesh(self._trace.context_mesh):
         return core.to_concrete_value(self.val[0])
     else:
       return None
 
   def __str__(self) -> str:
-    with core.eval_context(), set_abstract_mesh(self._trace.context_mesh):
+    with core.eval_context(), use_abstract_mesh(self._trace.context_mesh):
       blocks = list(self.val)
     mesh = self._trace.mesh
     axis_names = f"({', '.join(map(str, mesh.axis_names))},)"
@@ -1801,7 +1801,7 @@ def _partial_eval_jaxpr_custom_rule(
   which = [f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd)]
   mesh = eqn.params['mesh']
   with (_extend_axis_env(mesh, auto),
-        set_abstract_mesh(_as_manual_mesh(mesh, auto))):
+        use_abstract_mesh(_as_manual_mesh(mesh, auto))):
     jaxpr_known = pe.prune_jaxpr_outputs(jaxpr_known, [True] * num_out_primals + which)
     jaxpr_known, jaxpr_staged = _add_reshapes(which, jaxpr_known, jaxpr_staged)
   jaxpr_known = core.remove_named_axis_effects(jaxpr_known, mesh.axis_names)
