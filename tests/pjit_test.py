@@ -55,6 +55,7 @@ from jax._src.sharding_impls import (
     SingleDeviceSharding, parse_flatten_op_sharding)
 from jax._src.pjit import (pjit, mesh_cast, auto_axes, explicit_axes,
                            use_auto_axes, use_explicit_axes, reshard)
+from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisTypes
 from jax._src.interpreters import pxla
@@ -5055,7 +5056,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       ('fail1', P('x', None), P(None, 'x'),
-       "PartitionSpec.*x.*x.*has duplicate entries", ValueError),
+       "dot_general operation.*produces an illegally sharded result",
+       TypeError),
       ('fail2', P('x', 'y'), P('x', 'y'),
        "dot_general requires contracting dimensions to have consistent sharding",
        TypeError),
@@ -6396,9 +6398,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     # Errors out on the intermediate einsum: `bthj,bthD->bthjD`
     # because of a conflict
     with self.assertRaisesRegex(
-        ValueError,
-        'A single NamedSharding spec specification can map every mesh axis to'
-        ' at most one positional dimension'):
+        TypeError,
+        'dot_general operation.*produces an illegally sharded result'):
       f(arr1, arr2, arr3)
 
   @jtu.with_user_mesh((2, 2), ('x', 'y'),
@@ -7227,7 +7228,7 @@ class PJitErrorTest(jtu.JaxTestCase):
       error = (r"A single in_shardings specification can map every mesh "
                r"axis to at most one positional dimension, but " +
                spec_regex(spec) + " has duplicate entries for `x`")
-      with self.assertRaisesRegex(ValueError, error):
+      with self.assertRaisesRegex(DuplicateSpecError, error):
         pjit(lambda x: x, in_shardings=spec, out_shardings=None)(x)
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
@@ -7237,7 +7238,7 @@ class PJitErrorTest(jtu.JaxTestCase):
       error = (r"A single out_shardings specification can map every mesh "
                r"axis to at most one positional dimension, but " +
                spec_regex(spec) + " has duplicate entries for `x`")
-      with self.assertRaisesRegex(ValueError, error):
+      with self.assertRaisesRegex(DuplicateSpecError, error):
         pjit(lambda x: x, in_shardings=None, out_shardings=spec)(x)
 
   def testEmptyMesh(self):

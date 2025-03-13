@@ -24,7 +24,7 @@ from jax._src import dtypes
 from jax._src import mesh as mesh_lib
 from jax._src.util import safe_zip
 from jax._src.partition_spec import PartitionSpec as P
-from jax._src.named_sharding import NamedSharding
+from jax._src.named_sharding import NamedSharding, DuplicateSpecError
 
 zip, unsafe_zip = safe_zip, zip
 
@@ -81,6 +81,26 @@ def call_sharding_rule(prim, rule, num_out, *avals, **kwargs):
         ' mode via: `jax.experimental.shard.auto_axes(fun, out_shardings=...)`')
   return rule(*avals, **kwargs)
 
+def call_shape_dtype_sharding_rule(prim, shape_rule, dtype_rule, sharding_rule,
+                                   multi_out, *avals, **kwargs):
+  out_shapes = shape_rule(*avals, **kwargs)
+  out_dtypes = dtype_rule(*avals, **kwargs)
+  num_out = len(out_shapes) if multi_out else None
+  try:
+    out_shardings = call_sharding_rule(
+        prim, sharding_rule, num_out, *avals, **kwargs)
+  except DuplicateSpecError as e:
+    if multi_out:
+      raise
+    avals_str = ', '.join(i.str_short(short_dtypes=True) for i in avals)
+    mesh = mesh_lib.empty_abstract_mesh if e.mesh is None else e.mesh
+    out_aval_str = core.str_short_aval(out_shapes, out_dtypes, mesh, e.pspec,
+                                       short_dtypes=True)
+    raise TypeError(
+        f'{prim} operation with inputs: {avals_str} produces an illegally'
+        f' sharded result: {out_aval_str}') from e
+  return out_shapes, out_dtypes, out_shardings
+
 def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
                            sharding_rule, *avals, **kwargs):
   assert all(isinstance(aval, core.UnshapedArray) for aval in avals), avals
@@ -89,10 +109,11 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
   least_specialized = type(max(avals, key=_get_array_abstraction_level))
   if least_specialized is core.ShapedArray:
     core.check_avals_context_mesh(avals, prim.name)
+    out_shape, out_dtype, out_sharding = call_shape_dtype_sharding_rule(
+        prim, shape_rule, dtype_rule, sharding_rule, False,
+        *avals, **kwargs)
     out_aval = core.ShapedArray(
-        shape_rule(*avals, **kwargs), dtype_rule(*avals, **kwargs),
-        weak_type=weak_type,
-        sharding=call_sharding_rule(prim, sharding_rule, None, *avals, **kwargs))
+        out_shape, out_dtype, weak_type=weak_type, sharding=out_sharding)
     core.check_avals_context_mesh([out_aval], prim.name)
     return out_aval
   elif least_specialized is core.DShapedArray:
@@ -113,11 +134,9 @@ def standard_multi_result_abstract_eval(
   least_specialized = max(map(type, avals), key=_get_array_abstraction_level)
   weak_types = weak_type_rule(*avals, **kwargs)
   if least_specialized is core.ShapedArray:
-    out_shapes = shape_rule(*avals, **kwargs)
-    out_dtypes = dtype_rule(*avals, **kwargs)
     core.check_avals_context_mesh(avals, prim.name)
-    out_shardings = call_sharding_rule(
-        prim, sharding_rule, len(out_shapes), *avals, **kwargs)
+    out_shapes, out_dtypes, out_shardings = call_shape_dtype_sharding_rule(
+        prim, shape_rule, dtype_rule, sharding_rule, True, *avals, **kwargs)
     if isinstance(weak_types, bool):
       weak_types = (weak_types,) * len(out_shapes)
     out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh)

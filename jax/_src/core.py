@@ -1894,6 +1894,13 @@ def get_sharding(sharding, shape):
   _check_divisibility(out_s, shape)
   return out_s
 
+def str_short_aval(shape, dtype, mesh, spec, short_dtypes=False,
+                   mesh_axis_types=False) -> str:
+  dt_str = dtypes.short_dtype_name(dtype) if short_dtypes else dtype.name
+  dt_str = dt_str.replace('void', 'float0')
+  shapestr = _get_shape_sharding_str(shape, spec)
+  mesh_axes = f'({mesh._axis_types_dict})' if mesh_axis_types else ''
+  return f'{dt_str}[{shapestr}]{mesh_axes}'
 
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape', 'sharding', 'varying_manual_axes']  # inherits slots from parent
@@ -1954,17 +1961,9 @@ class ShapedArray(UnshapedArray):
         varying_manual_axes=getattr(self, 'varying_manual_axes', frozenset()))
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
-    dt_str = (dtypes.short_dtype_name(self.dtype) if short_dtypes else
-              self.dtype.name)
-    dt_str = dt_str.replace('void', 'float0')
-    if self.sharding is not None:
-      shapestr = _get_shape_sharding_str(self.shape, self.sharding.spec)
-      mesh_axes = (f'({self.sharding.mesh._axis_types_dict})'
-                   if mesh_axis_types else '')
-      return f'{dt_str}[{shapestr}]{mesh_axes}'
-    else:
-      shapestr = ','.join(map(str, self.shape))
-      return f'{dt_str}[{shapestr}]'
+    return str_short_aval(
+        self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,
+        short_dtypes, mesh_axis_types)
 
   def _len(self, ignored_tracer):
     try:
