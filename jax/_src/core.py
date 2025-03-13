@@ -1956,7 +1956,7 @@ class ShapedArray(UnshapedArray):
     dt_str = dt_str.replace('void', 'float0')
     if self.sharding is not None:
       shapestr = _get_shape_sharding_str(self.shape, self.sharding.spec)
-      mesh_axes = (f'({self.sharding.mesh.axis_types})'
+      mesh_axes = (f'({self.sharding.mesh._axis_types_dict})'
                    if mesh_axis_types else '')
       return f'{dt_str}[{shapestr}]{mesh_axes}'
     else:

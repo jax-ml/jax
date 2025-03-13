@@ -131,11 +131,7 @@ class NamedSharding(JSharding.Sharding):
     mem = '' if self.memory_kind is None else f', memory_kind={self.memory_kind}'
     ldi = ('' if self._logical_device_ids is None else
            f', logical_device_ids={self._logical_device_ids}')
-    if isinstance(self.mesh, mesh_lib.AbstractMesh):
-      mesh_repr = f"{self.mesh}"
-    else:
-      nv_str = ", ".join(f"'{n}': {v}" for n, v in self.mesh.shape.items())
-      mesh_repr = f"Mesh({nv_str})"
+    mesh_repr = f"{str(self.mesh)}"
     return f'NamedSharding(mesh={mesh_repr}, spec={self.spec}{mem}{ldi})'
 
   def __reduce__(self):
@@ -556,9 +552,9 @@ def _check_mesh_resource_axis(mesh, pspec, _manual_axes):
           'AxisTypes should be the same in a tuple subset of PartitionSpec:'
           f' {pspec}. Got subset {p} with axis'
           f' types: ({", ".join(str(mesh._name_to_type[r]) for r in p)})')
-  if (mesh_lib.AxisTypes.Auto not in mesh.axis_types and
+  if (mesh_lib.AxisTypes.Auto not in mesh._axis_types_dict and
       PartitionSpec.UNCONSTRAINED in pspec):
     raise ValueError(
         f'{pspec} cannot contain'
         ' `P.UNCONSTRAINED` when no mesh axis_types are `Auto`. Got mesh'
-        f' axis_types: {mesh.axis_types}')
+        f' axis_types: {mesh._axis_types_dict}')

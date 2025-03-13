@@ -2709,14 +2709,14 @@ def _mesh_cast_abstract_eval(aval, dst_sharding):
         f'Mesh shape of the input {src_sharding.mesh.shape_tuple} does not'
         ' match the mesh shape of the target sharding'
         f' {dst_sharding.mesh.shape_tuple} for shape {aval.str_short()}')
-  if (src_sharding.mesh.axis_types == dst_sharding.mesh.axis_types and
-      src_sharding.spec != dst_sharding.spec):
+  if (src_sharding.mesh._axis_types_dict == dst_sharding.mesh._axis_types_dict
+      and src_sharding.spec != dst_sharding.spec):
     raise ValueError(
         'mesh_cast should only be used when AxisTypes changes between the'
         ' input mesh and the target mesh. Got src'
-        f' axis_types={src_sharding.mesh.axis_types} and dst'
-        f' axis_types={dst_sharding.mesh.axis_types}. To reshard between the'
-        ' same mesh, use `jax.sharding.reshard` instead?')
+        f' axis_types={src_sharding.mesh._axis_types_dict} and dst'
+        f' axis_types={dst_sharding.mesh._axis_types_dict}. To reshard between'
+        ' the same mesh, use `jax.sharding.reshard` instead?')
   if src_sharding.mesh._any_axis_explicit and dst_sharding.mesh._any_axis_explicit:
     for s, d in safe_zip(flatten_spec(src_sharding.spec),
                          flatten_spec(dst_sharding.spec)):
@@ -2843,8 +2843,7 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
           'Going from `Manual` AxisType to `Auto` or `Explicit` AxisType is not'
           ' allowed. Please file a bug at https://github.com/jax-ml/jax/issues'
           ' with your use case')
-  new_mesh = cur_mesh.update_axis_types({axis_type: axes})
-  return new_mesh
+  return cur_mesh.update_axis_types({a: axis_type for a in axes})
 
 def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,
               out_shardings):

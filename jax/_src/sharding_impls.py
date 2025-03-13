@@ -1310,44 +1310,11 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
           f' {source_info_util.summarize(source_info_util.current())}')
   return sharding
 
-TypeOfAxis = str | tuple[str, ...] | None
-
-def _normalize(axes: TypeOfAxis = None) -> tuple[str, ...]:
-  if axes is None:
-    return ()
-  return (axes,) if isinstance(axes, str) else axes
-
-def _get_axis_types(
-    auto_axes: TypeOfAxis = None, explicit_axes: TypeOfAxis = None,
-    manual_axes: TypeOfAxis = None):
-  if auto_axes is None and explicit_axes is None and manual_axes is None:
-    return None
-
-  auto_axes = _normalize(auto_axes)
-  explicit_axes = _normalize(explicit_axes)
-  manual_axes = _normalize(manual_axes)
-
-  aua, ea, ma = set(auto_axes), set(explicit_axes), set(manual_axes)
-  disjoint = aua.isdisjoint(ea) and aua.isdisjoint(ma) and ea.isdisjoint(ma)
-  if not disjoint:
-    raise ValueError(
-        f'{auto_axes=}, {explicit_axes=} and {manual_axes=} should be'
-        ' non-overlapping.')
-
-  out = {}
-  if auto_axes:
-    out.update({mesh_lib.AxisTypes.Auto: auto_axes})
-  if explicit_axes:
-    out.update({mesh_lib.AxisTypes.Explicit: explicit_axes})
-  if manual_axes:
-    out.update({mesh_lib.AxisTypes.Manual: manual_axes})
-  return out
-
 
 def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
               *, devices: Sequence[xc.Device] | None = None,
-              auto_axes: TypeOfAxis = None, explicit_axes: TypeOfAxis = None,
-              manual_axes: TypeOfAxis = None) -> mesh_lib.Mesh:
+              axis_types: tuple[mesh_lib.AxisTypes, ...] | None = None
+              ) -> mesh_lib.Mesh:
   """Creates an efficient mesh with the shape and axis names specified.
 
   This function attempts to automatically compute a good mapping from a set of
@@ -1409,7 +1376,6 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   mesh_devices = mesh_utils.create_device_mesh(
       new_axis_shapes, devices,
       allow_split_physical_axes=allow_split_physical_axes)
-  axis_types = _get_axis_types(auto_axes, explicit_axes, manual_axes)
   return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)
 
 

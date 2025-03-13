@@ -485,19 +485,25 @@ def _as_manual_mesh(mesh, auto: frozenset):
   cur_mesh = get_abstract_mesh()
   if cur_mesh.empty:
     cur_mesh = mesh
-  explicit_axes, auto_axes = [], []  # type: ignore
+  explicit_axes, auto_axes = set(), set()  # type: ignore
   for a in auto:
     if cur_mesh._name_to_type[a] == AxisTypes.Auto:
-      auto_axes.append(a)
+      auto_axes.add(a)
     else:
       assert cur_mesh._name_to_type[a] == AxisTypes.Explicit
-      explicit_axes.append(a)
-  explicit_axes, auto_axes = tuple(explicit_axes), tuple(auto_axes)  # type: ignore
-  return AbstractMesh(
-      mesh.shape_tuple,
-      axis_types={
-          AxisTypes.Manual: manual_axes, AxisTypes.Auto: auto_axes,
-          AxisTypes.Explicit: explicit_axes})
+      explicit_axes.add(a)
+
+  new_axis_types = []
+  for n in mesh.axis_names:
+    if n in manual_axes:
+      new_axis_types.append(AxisTypes.Manual)
+    elif n in auto_axes:
+      new_axis_types.append(AxisTypes.Auto)
+    else:
+      assert n in explicit_axes
+      new_axis_types.append(AxisTypes.Explicit)
+  return AbstractMesh(mesh.shape_tuple, axis_types=tuple(new_axis_types))
+
 
 def _extend_axis_env(mesh, auto):
   return core.extend_axis_env_nd([(k, v) for k, v in mesh.shape.items()
@@ -1891,7 +1897,7 @@ def _all_newly_manual_mesh_names(
 ) -> tuple[AxisName, ...]:
   if not (ctx_mesh := get_abstract_mesh()).empty:
     del mesh
-    already_manual_names = set(ctx_mesh.axis_types.get(AxisTypes.Manual, ()))
+    already_manual_names = set(ctx_mesh._axis_types_dict.get(AxisTypes.Manual, ()))
     return tuple(name for name in ctx_mesh.axis_names
                  if name not in auto | already_manual_names)
   else:

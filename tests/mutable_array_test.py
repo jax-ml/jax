@@ -21,7 +21,7 @@ import jax
 from jax._src import core
 from jax._src import config
 from jax._src import test_util as jtu
-from jax.sharding import NamedSharding, PartitionSpec as P
+from jax.sharding import NamedSharding, PartitionSpec as P, AxisTypes
 import jax.numpy as jnp
 
 from jax._src.state.types import (RefEffect)
@@ -198,7 +198,7 @@ class MutableArrayTest(jtu.JaxTestCase):
     x + 1  # don't crash
 
   def test_sharding_persists(self):
-    mesh = jax.make_mesh((1,), ('i',))
+    mesh = jtu.create_mesh((1,), ('i',))
     x = jax.device_put(jnp.arange(2), NamedSharding(mesh, P('i')))
     s = x.sharding
     a = core.mutable_array(x)
@@ -211,7 +211,8 @@ class MutableArrayTest(jtu.JaxTestCase):
 
   def test_explicit_sharding_after_indexing(self):
     # https://github.com/jax-ml/jax/issues/26936
-    mesh = jax.make_mesh((1, 1), ('x', 'y'), explicit_axes=('x', 'y'))
+    mesh = jtu.create_mesh((1, 1), ('x', 'y'),
+                           axis_types=(AxisTypes.Explicit,) * 2)
     sharding = NamedSharding(mesh, P('x', 'y'))
 
     @jax.jit
