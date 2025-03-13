@@ -459,6 +459,7 @@ def nonzero_tangent_outputs(f, store, *args, **kwargs):
 
 class JVPTrace(Trace):
   def __init__(self, parent_trace, tag):
+    super().__init__()
     self.tag = tag
     self.parent_trace = parent_trace
 
@@ -640,6 +641,7 @@ call_transpose_param_updaters: dict[core.Primitive, Callable] = {}
 class LinearizeTrace(Trace):
 
   def __init__(self, parent_trace, tangent_trace, tag=None):
+    super().__init__()
     self.tag = core.TraceTag() if tag is None else tag
     self.parent_trace = parent_trace
     self.tangent_trace = tangent_trace

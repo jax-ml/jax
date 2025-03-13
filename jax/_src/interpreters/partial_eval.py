@@ -141,6 +141,7 @@ class PartialVal(tuple):
 class JaxprTrace(Trace['JaxprTracer']):
 
   def __init__(self, parent_trace:Trace, name_stack: source_info_util.NameStack, tag:TraceTag):
+    super().__init__()
     self.name_stack = name_stack
     self.tag = tag
     self.parent_trace = parent_trace
@@ -1849,6 +1850,7 @@ class DynamicJaxprTrace(core.Trace):
   __slots__ = ("frame", "tag")
 
   def __init__(self, debug_info: core.DebugInfo):
+    super().__init__()
     self.frame = JaxprStackFrame(debug_info)
 
   def invalidate(self):

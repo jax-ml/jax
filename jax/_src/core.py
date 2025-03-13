@@ -619,6 +619,9 @@ TracerType = TypeVar('TracerType', bound='Tracer')
 class Trace(Generic[TracerType]):
   __slots__ = ("__weakref__", "_invalidated")
 
+  def __init__(self):
+    self._invalidated = False
+
   def process_primitive(self, primitive, tracers, params):
     raise NotImplementedError("must override")
 
@@ -626,7 +629,7 @@ class Trace(Generic[TracerType]):
     self._invalidated = True
 
   def is_valid(self):
-    return not hasattr(self, "_invalidated")
+    return not self._invalidated
 
   def __repr__(self):
     return '{}'.format(self.__class__.__name__)

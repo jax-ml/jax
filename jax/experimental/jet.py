@@ -205,6 +205,7 @@ class JetTrace(core.Trace):
   __slots__ = ("tag", "parent_trace", "order")
 
   def __init__(self, tag, parent_trace, order):
+    super().__init__()
     self.tag = tag
     self.parent_trace = parent_trace
     self.order = order

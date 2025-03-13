@@ -926,6 +926,7 @@ class ShardMapTrace(core.Trace):
   context_mesh: AbstractMesh
 
   def __init__(self, mesh, auto, check, context_mesh):
+    super().__init__()
     self.mesh = mesh
     self.auto = auto
     self.check = check
@@ -2042,6 +2043,7 @@ class RewriteTrace(core.Trace):
   mesh: Mesh
 
   def __init__(self, parent_trace, tag, mesh):
+    super().__init__()
     self.parent_trace = parent_trace
     self.tag = tag
     self.mesh = mesh

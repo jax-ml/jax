@@ -463,6 +463,7 @@ class MapTrace(core.Trace):
   __slots__ = ("axis_name", "emap_info")
 
   def __init__(self, axis_name, emap_info):
+    super().__init__()
     self.emap_info = emap_info
     self.axis_name = axis_name
 
