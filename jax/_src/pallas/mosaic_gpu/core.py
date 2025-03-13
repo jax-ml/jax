@@ -78,6 +78,10 @@ class GPUCompilerParams(pallas_core.CompilerParams):
       single invocation. It is undefined behavior if a thread collects more
       events than this.
     profile_dir: The directory to which profiling traces will be written to.
+    smem_scratch_bytes: Amount of scratch SMEM to allocate for dynamic memory
+      allocations. Defaults to the maximum estimated usage.
+    tmem_scratch_bytes: Amount of scratch TMEM to allocate for dynamic memory
+      allocations. Defaults to the maximum estimated usage.
   """
   PLATFORM: ClassVar[str] = "mosaic_gpu"
   approx_math: bool = False
@@ -87,6 +91,8 @@ class GPUCompilerParams(pallas_core.CompilerParams):
   profile_space: int = 0
   profile_dir: str = ""
   thread_semantics: mgpu.core.ThreadSemantics = mgpu.core.ThreadSemantics.Lane
+  smem_scratch_bytes: int | None = None
+  tmem_scratch_bytes: int | None = None
 
   def __post_init__(self):
     if bool(self.profile_space) ^ bool(self.profile_dir):
@@ -102,6 +108,8 @@ class GPUMemorySpace(enum.Enum):
   SMEM = "smem"
   #: Registers.
   REGS = "regs"
+  #: Tensor memory.
+  TMEM = "tmem"
 
   def __str__(self) -> str:
     return self.value
@@ -408,6 +416,7 @@ class GPUBlockSpec(pallas_core.BlockSpec):
 
 GMEM = GPUMemorySpace.GMEM
 SMEM = GPUMemorySpace.SMEM
+TMEM = GPUMemorySpace.TMEM
 REGS = GPUMemorySpace.REGS
 
 
