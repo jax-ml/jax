@@ -448,16 +448,18 @@ class AbstractMesh(_BaseMesh):
     self.axis_names = axis_names
     self._size = math.prod(self.axis_sizes) if self.axis_sizes else 0
     self._axis_types = _normalize_axis_types(self.axis_names, axis_types)
+    self._hash = hash((self.axis_sizes, self.axis_names, self._axis_types))
 
   def __hash__(self):
-    return hash((self.shape_tuple, self._axis_types))
+    return self._hash
 
   def __eq__(self, other):
     if id(self) == id(other):
       return True
     if not isinstance(other, AbstractMesh):
       return False
-    return (self.shape_tuple == other.shape_tuple and
+    return (self.axis_sizes == other.axis_sizes and
+            self.axis_names == other.axis_names and
             self._axis_types == other._axis_types)
 
   def __repr__(self):
