@@ -119,7 +119,7 @@ FailureOr<TypedValue<MemRefType>> getInternalScratch(
     return failure();
   }
   if (shape.back() % ctx.target_shape[1] != 0) {
-    return failure();
+    return emitError(loc, "Unaligned scratch shape on minormost dimension");
   }
   int packing = 32 / elem_ty.getIntOrFloatBitWidth();
   int sublane_count = llvm::divideCeil(
@@ -128,7 +128,9 @@ FailureOr<TypedValue<MemRefType>> getInternalScratch(
       packing);
 
   if (sublane_count > ctx.max_sublanes_in_scratch) {
-    return failure();
+    return emitError(
+        loc,
+        "scratch is too small. Try to increase `internal_scratch_in_bytes`.");
   }
   // We can omit tpu_tiling_flags here because, for internal scratch, the
   // tiling does not matter (its shape is (N, 128)).
@@ -5853,7 +5855,7 @@ LogicalResult retileToLargeTileWithScratch(
     TypedValue<MemRefType> scratch_ref, const int64_t store_vreg_delay,
     const int64_t load_vreg_skips) {
   if (dst_tile[0] % src_tile[0] != 0) {
-    return failure();
+    return emitError(loc, "dst_tile[0] must be a multiple of src_tile_size[0]");
   }
   // Number of src vregs needed to assemble one dst vreg.
   int vregs_per_group = dst_tile[0] / src_tile[0];
@@ -6011,7 +6013,7 @@ LogicalResult retileToSmallTileWithScratch(
     TypedValue<MemRefType> scratch_ref, const int64_t store_vreg_delay,
     const int64_t load_vreg_skips) {
   if (src_tile[0] % dst_tile[0] != 0) {
-    return failure();
+    return emitError(loc, "src tile size must be a multiple of dst tile size");
   }
   // Number of src vregs needed to assemble one dst vreg.
   int vregs_per_group = src_tile[0] / dst_tile[0];
@@ -6220,7 +6222,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> retileWithScratch(
   if (!(src_tiling[1] == ctx.target_shape[1] &&
         dst_tiling[1] == ctx.target_shape[1] && src_tiling[0] % packing == 0 &&
         dst_tiling[0] % packing == 0)) {
-    return failure();
+    return emitError(loc, "Unsupported retiling with scratch");
   }
   const std::array<int64_t, 2> src_vreg_slice =
       VectorLayout::vregSlice(ctx.target_shape, bitwidth, src_tiling);
