@@ -4438,6 +4438,14 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, r".*Received invalid value.*"):
       jax.device_put(jnp.arange(8), 'cpu')
 
+  def test_num_cpu_devices_called_after_initialization(self):
+    jax.devices()
+    with self.assertRaisesRegex(
+        RuntimeError,
+        "jax_num_cpu_devices config should be updated before backends are "
+        "initialized"):
+      config.update('jax_num_cpu_devices', 2)
+
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_clear_cache(self):
     @jax.jit

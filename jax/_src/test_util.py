@@ -550,9 +550,14 @@ def request_cpu_devices(nr_devices: int):
   invoked. Test cases that require a specific number of devices should skip
   themselves if that number is not met.
   """
-  if config.num_cpu_devices.value < nr_devices:
+  if xla_bridge.num_cpu_devices.value < nr_devices:
     xla_bridge.get_backend.cache_clear()
-    config.update("jax_num_cpu_devices", nr_devices)
+    # Don't raise an error for `request_cpu_devices` because we initialize the
+    # backend in OSS during collecting tests in pytest via `device_under_test`.
+    try:
+      config.update("jax_num_cpu_devices", nr_devices)
+    except RuntimeError:
+      pass
 
 
 def skip_on_flag(flag_name, skip_value):
