@@ -1882,10 +1882,6 @@ def _dot_general_lowering_rule(
     val = ir.IntegerAttr.get(val_type, 0)
   else:
     raise NotImplementedError(ctx.avals_out[0].dtype)
-  if any(len(a.shape) != 2 for a in ctx.avals_in):
-    raise NotImplementedError(
-        f"Only 2D tensors supported in dot; received: {ctx.avals_in}"
-    )
   lhs_aval, rhs_aval = ctx.avals_in
   # This is really a matrix-vector product. It only looks like matrix-matrix.
   if lhs_dims == (1,) and rhs_dims == (1,) and ctx.avals_in[1].shape[0] == 1:

@@ -1308,6 +1308,33 @@ class OpsTest(PallasBaseTest):
     )(x, y)
     np.testing.assert_array_equal(out, jnp.einsum('mk,mn->kn', x, y))
 
+  def test_dot_dims_batched_simple_dot_general(self):
+    """This test is only meant to exercise a simple batch lowering of dot_general.
+
+    It is not meant to be a comprehensive test of dot_general lowering, for that
+    see pallas_test.py.
+    """
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("TPU only test")
+
+    x = jnp.arange(11 * 16 * 256, dtype=jnp.float32).reshape((11, 16, 256))
+    y = jnp.arange(11 * 256 * 128, dtype=jnp.float32).reshape((11, 256, 128))
+
+    def kernel(x_ref, y_ref, out_ref):
+      out_ref[...] = jax.lax.dot_general(
+          x_ref[...],
+          y_ref[...],
+          dimension_numbers=(([2], [1]), ([0], [0])),
+      )
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((11, 16, 128), jnp.float32)
+    )(x, y)
+    np.testing.assert_array_equal(
+        out,
+        jax.lax.dot_general(x, y, dimension_numbers=(([2], [1]), ([0], [0]))),
+    )
+
   @parameterized.parameters(
       ("int32", "float32"),
       ("float32", "float32"),
