@@ -496,7 +496,7 @@ class RooflineTest(jtu.JaxTestCase):
     ]:
       out, result = roofline.roofline(
           f,
-          mesh=mesh.AbstractMesh(()),
+          mesh=mesh.AbstractMesh((), ()),
           in_specs=(P(), P()),
           out_specs=P(),
       )(jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int))
@@ -516,7 +516,7 @@ class RooflineTest(jtu.JaxTestCase):
     ]:
       _, result = roofline.roofline(
           lambda a, b: a + b,
-          mesh=mesh.AbstractMesh(()),
+          mesh=mesh.AbstractMesh((), ()),
           in_specs=(P(), P()),
           out_specs=P(),
       )(left, right)
@@ -532,7 +532,7 @@ class RooflineTest(jtu.JaxTestCase):
 
     _, result = roofline.roofline(
         f,
-        mesh=mesh.AbstractMesh(()),
+        mesh=mesh.AbstractMesh((), ()),
         in_specs=(P(), P()),
         out_specs=P(),
     )(jnp.zeros((11, 4), dtype=int), jnp.ones((11, 4), dtype=int))
@@ -549,7 +549,7 @@ class RooflineTest(jtu.JaxTestCase):
   def test_no_specs(self):
     _, result = roofline.roofline(
         lambda a, b: a + b,
-        mesh=mesh.AbstractMesh(()),
+        mesh=mesh.AbstractMesh((), ()),
     )(jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int))
     self.assertEqual(result.unfused_flops, 3 * 8)
 
@@ -562,7 +562,7 @@ class RooflineTest(jtu.JaxTestCase):
   def test_dot_general(self):
     _, result = roofline.roofline(
         lambda a, b: a @ b,
-        mesh=mesh.AbstractMesh(()),
+        mesh=mesh.AbstractMesh((), ()),
         in_specs=(P(), P()),
         out_specs=P(),
     )(jnp.zeros((3, 7), dtype=int), jnp.ones((7, 5), dtype=int))
@@ -574,7 +574,7 @@ class RooflineTest(jtu.JaxTestCase):
   def test_reduce_sum_no_axis(self):
     _, result = roofline.roofline(
         lambda x: jnp.sum(x),
-        mesh=mesh.AbstractMesh(()),
+        mesh=mesh.AbstractMesh((), ()),
         in_specs=(P()),
         out_specs=P(),
     )(jnp.zeros((11, 4)))
@@ -592,7 +592,7 @@ class RooflineTest(jtu.JaxTestCase):
     ]:
       _, result = roofline.roofline(
           lambda x: jnp.sum(x, axis=axis),
-          mesh=mesh.AbstractMesh(()),
+          mesh=mesh.AbstractMesh((), ()),
           in_specs=(P()),
           out_specs=P(),
       )(jnp.zeros((11, 4)))

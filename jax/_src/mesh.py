@@ -416,7 +416,8 @@ class Mesh(_BaseMesh, contextlib.ContextDecorator):
 
   @functools.cached_property
   def abstract_mesh(self):
-    return AbstractMesh(self.shape_tuple, axis_types=self._axis_types)
+    return AbstractMesh(self.axis_sizes, self.axis_names,
+                        axis_types=self._axis_types)
 
 
 EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
@@ -441,15 +442,12 @@ class AbstractMesh(_BaseMesh):
   details.
   """
 
-  def __init__(self, shape_tuple: tuple[tuple[str, int], ...], *,
-               axis_types: AxisTypes | tuple[AxisTypes, ...] | None = None):
-    self.shape_tuple = shape_tuple
-    if self.shape_tuple:
-      self._axis_names, self._axis_sizes = list(zip(*self.shape_tuple))
-    else:
-      self._axis_names, self._axis_sizes = (), ()
-    self._size = math.prod(self._axis_sizes) if self._axis_sizes else 0
-    self._axis_types = _normalize_axis_types(self._axis_names, axis_types)
+  def __init__(self, axis_sizes: tuple[int, ...], axis_names: tuple[str, ...],
+               *, axis_types: AxisTypes | tuple[AxisTypes, ...] | None = None):
+    self.axis_sizes = axis_sizes
+    self.axis_names = axis_names
+    self._size = math.prod(self.axis_sizes) if self.axis_sizes else 0
+    self._axis_types = _normalize_axis_types(self.axis_names, axis_types)
 
   def __hash__(self):
     return hash((self.shape_tuple, self._axis_types))
@@ -469,20 +467,18 @@ class AbstractMesh(_BaseMesh):
     return f"AbstractMesh({mesh_repr}{atr})"
 
   @property
-  def axis_names(self):
-    return self._axis_names
-
-  @property
-  def axis_sizes(self) -> tuple[int, ...]:
-    return self._axis_sizes
-
-  @property
   def size(self):
     return self._size
 
   @functools.cached_property
   def shape(self):
     return collections.OrderedDict(self.shape_tuple)
+
+  @functools.cached_property
+  def shape_tuple(self):
+    return tuple(
+        (name, size)
+        for name, size in safe_zip(self.axis_names, self.axis_sizes))
 
   @property
   def _internal_device_list(self):
@@ -499,7 +495,8 @@ class AbstractMesh(_BaseMesh):
   def update_axis_types(self, name_to_type: dict[MeshAxisName, AxisTypes]):
     new_axis_types = tuple(name_to_type[n] if n in name_to_type else a
                            for n, a in zip(self.axis_names, self._axis_types))
-    return AbstractMesh(self.shape_tuple, axis_types=new_axis_types)
+    return AbstractMesh(self.axis_sizes, self.axis_names,
+                        axis_types=new_axis_types)
 
   @property
   def devices(self):
@@ -553,7 +550,7 @@ class SetAbstractMeshContextManager:
 set_abstract_mesh = SetAbstractMeshContextManager
 
 
-empty_abstract_mesh = AbstractMesh(())
+empty_abstract_mesh = AbstractMesh((), ())
 
 def get_abstract_mesh():
   val = jax_config.abstract_mesh_context_manager.value

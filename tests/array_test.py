@@ -1338,14 +1338,14 @@ class ShardingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         'Number of axis names should match the number of axis_types'):
-      jax.sharding.AbstractMesh((('x', 2), ('y', 1)),
+      jax.sharding.AbstractMesh((2, 1), ('x', 'y'),
                                 axis_types=jax.sharding.AxisTypes.Auto)
 
   def test_make_mesh_axis_types(self):
     Auto, Explicit, Manual = AxisTypes.Auto, AxisTypes.Explicit, AxisTypes.Manual
 
-    mesh1 = jax.sharding.AbstractMesh((('x', 2),), axis_types=Auto)
-    mesh2 = jax.sharding.AbstractMesh((('x', 2),), axis_types=Auto)
+    mesh1 = jax.sharding.AbstractMesh((2,), 'x', axis_types=Auto)
+    mesh2 = jax.sharding.AbstractMesh((2,), 'x', axis_types=Auto)
     self.assertEqual(mesh1, mesh2)
 
     mesh = jax.make_mesh((1, 1), ('x', 'y'))
@@ -1501,7 +1501,7 @@ class RngShardingTest(jtu.JaxTestCase):
     self.assertTrue(abstract_mesh.empty)
     self.assertEqual(abstract_mesh.size, 0)
 
-    abstract_mesh2 = jax.sharding.AbstractMesh(())
+    abstract_mesh2 = jax.sharding.AbstractMesh((), ())
     self.assertTrue(abstract_mesh2.empty)
     self.assertEqual(abstract_mesh2.size, 0)
 

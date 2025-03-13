@@ -4677,7 +4677,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       x = with_sharding_constraint(
-          x, NamedSharding(mesh_lib.AbstractMesh(mesh1.shape_tuple), P('x')))
+          x, NamedSharding(mesh1.abstract_mesh, P('x')))
       return jax.lax.sin(x)
 
     with (
@@ -4701,7 +4701,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     np_inp = np.arange(16).reshape(8, 2)
     arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
 
-    abstract_mesh = jax.sharding.AbstractMesh(mesh.shape_tuple)
+    abstract_mesh = mesh.abstract_mesh
 
     def f(x):
       x = with_sharding_constraint(x, NamedSharding(abstract_mesh, P('x')))
@@ -4718,7 +4718,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_wsc_sds_abstract_mesh(self):
     mesh = jtu.create_mesh((2,), 'x')
     s = NamedSharding(mesh, P())
-    abstract_mesh = mesh_lib.AbstractMesh(mesh.shape_tuple)
+    abstract_mesh = mesh.abstract_mesh
 
     @jax.jit
     def f(x):
@@ -4747,7 +4747,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_wsc_abstract_mesh_errors(self):
     mesh = jtu.create_mesh((2,), ('x',))
     np_inp = np.arange(8)
-    abstract_mesh = jax.sharding.AbstractMesh(mesh.shape_tuple)
+    abstract_mesh = mesh.abstract_mesh
     s_abs = NamedSharding(abstract_mesh, P('x'))
 
     with self.assertRaisesRegex(
@@ -4759,8 +4759,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       with_sharding_constraint(jnp.arange(8), s_abs)
 
     arr = jax.device_put(np_inp, NamedSharding(mesh, P('x')))
-    abs_mesh2 = mesh_lib.AbstractMesh(
-        jtu.create_mesh((2,), 'y').shape_tuple)
+    abs_mesh2 = jtu.create_mesh((2,), 'y').abstract_mesh
     with self.assertRaisesRegex(
         ValueError,
         'Mesh shape of the input.*does not'
@@ -5647,7 +5646,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P('x', 'y'))
     arr = jax.device_put(np_inp, s)
     full_user_mesh = mesh_lib.AbstractMesh(
-        (('x', 2), ('y', 2)), axis_types=(AxisTypes.Explicit,) * 2)
+        (2, 2), ('x', 'y'), axis_types=(AxisTypes.Explicit,) * 2)
 
     @jax.jit
     def f(x):
@@ -6266,7 +6265,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   def test_aval_spec_explicit_auto_complete(self):
     abstract_mesh = mesh_lib.AbstractMesh(
-        (('x', 2),), axis_types=(AxisTypes.Explicit,))
+        (2,), 'x', axis_types=AxisTypes.Explicit)
     s = NamedSharding(abstract_mesh, P('x'))
     out = core.ShapedArray((8, 2), jnp.int32, sharding=s)
     self.assertEqual(out.sharding.spec, P('x', None))
@@ -7050,7 +7049,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
 
   def test_divisbility_aval_error(self):
     abstract_mesh = mesh_lib.AbstractMesh(
-        (('x', 2),), axis_types=(AxisTypes.Explicit,))
+        (2,), ('x',), axis_types=AxisTypes.Explicit)
     s = NamedSharding(abstract_mesh, P('x'))
     with self.assertRaisesRegex(
         ValueError, 'does not evenly divide the dimension size'):
@@ -7874,7 +7873,7 @@ class ShardyTest(jtu.JaxTestCase):
     self.assertEqual(repr(sharding), "SdyArraySharding([{'data', 'expert'}, {'model', ?}p2])")
 
   def test_array_sharding_repr_with_logical_ids(self):
-    abstract_mesh = jax.sharding.AbstractMesh((('x', 4), ('y', 8), ('z', 2)))
+    abstract_mesh = jax.sharding.AbstractMesh((4, 8, 2), ('x', 'y', 'z'))
     ns = NamedSharding(abstract_mesh, P(('x', 'y'), 'z', P.UNCONSTRAINED, None),
                        _logical_device_ids=[4, 5, 6, 7, 0, 1, 2, 3])
     self.assertEqual(repr(ns._to_sdy_sharding(4)),

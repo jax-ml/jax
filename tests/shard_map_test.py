@@ -40,7 +40,7 @@ from jax._src import test_util as jtu
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
-from jax._src.mesh import AbstractMesh, AxisTypes
+from jax._src.mesh import AxisTypes
 from jax._src.interpreters import partial_eval as pe
 from jax._src import linear_util as lu
 from jax._src import tree_util
@@ -796,7 +796,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     mesh1 = jax.sharding.Mesh(jax.devices()[:2], 'i')
     mesh2 = jax.sharding.Mesh(jax.devices()[2:4], 'i')
-    abstract_mesh = AbstractMesh(mesh1.shape_tuple)
+    abstract_mesh = mesh1.abstract_mesh
 
     @jax.jit
     def f(x):
@@ -823,7 +823,7 @@ class ShardMapTest(jtu.JaxTestCase):
   def test_shmap_abstract_mesh_errors(self):
     mesh = jtu.create_mesh((2,), ('x',))
     np_inp = np.arange(8)
-    abstract_mesh = jax.sharding.AbstractMesh(mesh.shape_tuple)
+    abstract_mesh = mesh.abstract_mesh
 
     with self.assertRaisesRegex(
         ValueError,
@@ -834,7 +834,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     arr = jax.device_put(np_inp, NamedSharding(mesh, P('x')))
     mesh2 = jtu.create_mesh((2,), 'y')
-    abs_mesh2 = AbstractMesh(mesh2.shape_tuple)
+    abs_mesh2 = mesh2.abstract_mesh
     with self.assertRaisesRegex(
         ValueError,
         'Mesh shape of the input.*does not match the mesh shape passed to'

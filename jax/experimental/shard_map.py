@@ -502,7 +502,8 @@ def _as_manual_mesh(mesh, auto: frozenset):
     else:
       assert n in explicit_axes
       new_axis_types.append(AxisTypes.Explicit)
-  return AbstractMesh(mesh.shape_tuple, axis_types=tuple(new_axis_types))
+  return AbstractMesh(mesh.axis_sizes, mesh.axis_names,
+                      axis_types=tuple(new_axis_types))
 
 
 def _extend_axis_env(mesh, auto):
