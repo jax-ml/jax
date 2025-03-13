@@ -56,7 +56,6 @@ limitations under the License.
 #include "jaxlib/xla/pytree.h"
 #include "jaxlib/xla/sharded_device_array.h"
 #include "jaxlib/xla/sharding.h"
-#include "jaxlib/xla/to_ifrt_sharding.h"
 #include "jaxlib/xla/traceback.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/status_casters.h"
@@ -65,7 +64,6 @@ limitations under the License.
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/memory.h"
-#include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/nb_helpers.h"
 #include "xla/python/nb_numpy.h"
@@ -186,74 +184,36 @@ absl::StatusOr<ShardArgResult> ShardArg(
                                   indices.size(), n_devices);
     }
 
-    std::vector<tsl::RCReference<xla::ifrt::Array>> per_device_arrays;
-    per_device_arrays.reserve(n_devices);
-    absl::InlinedVector<xla::ifrt::Device*, 1> devices;
-    devices.reserve(n_devices);
-    // TODO(hyeontaek): The created array will never be disassembled. We should
-    // omit collecting shapes and make the OpaqueSharding non-disassemblable?
-    std::vector<xla::ifrt::Shape> shapes;
-    shapes.reserve(n_devices);
-
-    nb::list owning_pylist;
     ShardArgResult result;
-    result.owning_sda = owning_pylist;
     const bool jax_enable_x64 = GetEnableX64();
 
-    std::vector<xla::DevicePutResultFn> device_put_fns;
-    device_put_fns.reserve(n_devices);
+    std::vector<nb::object> owning_args;
+    std::vector<nb::handle> args;
+    owning_args.reserve(n_devices);
+    args.reserve(n_devices);
     xla::DevicePutOptions options;
     options.squash_64bit_types = !jax_enable_x64;
     options.allow_zero_copy = true;
+    xla::ifrt::Client* ifrt_client = nullptr;
     for (size_t i = 0; i < n_devices; ++i) {
       auto to_device = nb::cast<xla::PyDevice*>(py_devices_list[i]);
       if (to_device->client().get() == nullptr) {
         return xla::InvalidArgument("Cannot copy to unattached devices.");
       }
-
-      TF_ASSIGN_OR_RETURN(
-          device_put_fns.emplace_back(),
-          DevicePut(arg[indices[i]], to_device->client()->ifrt_client(),
-                    to_device->device(), options, xla::ifrt::MemoryKind()));
-    }
-    std::vector<xla::DevicePutResult> device_puts;
-    device_puts.reserve(n_devices);
-    {
-      nb::gil_scoped_release gil_release;
-      for (auto& device_put_fn : device_put_fns) {
-        TF_ASSIGN_OR_RETURN(auto device_put, std::move(device_put_fn)());
-        device_puts.push_back(std::move(device_put));
+      if (i == 0) {
+        ifrt_client = to_device->client()->ifrt_client();
       }
+      owning_args.push_back(arg[indices[i]]);
+      args.push_back(owning_args.back());
     }
-    for (auto& device_put : device_puts) {
-      per_device_arrays.push_back(std::move(device_put.ifrt_array));
-      devices.push_back(
-          per_device_arrays.back()->sharding().devices()->devices().front());
-      shapes.push_back(per_device_arrays.back()->shape());
-      if (device_put.owning_pybuffer) {
-        owning_pylist.append(device_put.owning_pybuffer);
-      }
-    }
-
-    if (per_device_arrays.empty()) {
-      return xla::InvalidArgument("Per-device arrays must not be empty.");
-    }
-    // TODO(hyeontaek): The logical shape here is inaccurate. We
-    // may want to avoid creating a new Array or specialize Array
-    // to disallow access to the logical shape.
-    xla::ifrt::Shape shape = per_device_arrays.front()->shape();
+    CHECK(ifrt_client != nullptr);
     TF_ASSIGN_OR_RETURN(
-        auto ifrt_sharding,
-        xla::GetIfrtConcreteSharding(input_spec.array_sharding, shape, shapes));
-    TF_ASSIGN_OR_RETURN(
-        result.ifrt_array,
-        per_device_arrays.front()
-            ->client()
-            ->AssembleArrayFromSingleDeviceArrays(
-                std::move(shape), std::move(ifrt_sharding),
-                absl::MakeSpan(per_device_arrays),
-                xla::ifrt::ArrayCopySemantics::kReuseInput,
-                xla::ifrt::SingleDeviceShardSemantics::kAddressableShards));
+        xla::DevicePutResult device_put_result,
+        xla::DevicePutWithSharding(
+            args, ifrt_client, ndarray.dtype(),
+            nb::cast<std::vector<int64_t>>(ndarray.attr("shape")),
+            input_spec.array_sharding, options));
+    result.ifrt_array = std::move(device_put_result.ifrt_array);
     return result;
   }
   tsl::profiler::TraceMe traceme("pmap_lib_shard_arg_python_fallback");
