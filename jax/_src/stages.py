@@ -252,36 +252,12 @@ class XlaExecutable(Executable):
   def cost_analysis(self) -> dict[str, float]:
     xla_ext_exe = self.xla_extension_executable()
 
-    # TODO(b/259255524): Unify/merge the two cost_analysis calls below.
     if hasattr(xla_ext_exe, "cost_analysis"):
       try:
         return xla_ext_exe.cost_analysis()
       except xla_extension.XlaRuntimeError as e:
         msg, *_ = e.args
         if not (type(msg) is str and msg.startswith("UNIMPLEMENTED")):
-          raise
-
-    # Try client method if executable cost_analysis method is unimplemented
-    if hasattr(xla_ext_exe, "client"):
-      try:
-        # TODO(b/384741132): We expect that the executable has only one
-        # HloModule. We should be able to remove this check once we update the
-        # Executable class to have only a single HloModule (see bug).
-        hlo_modules = xla_ext_exe.hlo_modules()
-        assert len(hlo_modules) == 1, (
-            f"Exectuable should have only one HloModule ({len(hlo_modules)})"
-            " were found)."
-        )
-
-        return xla_extension.hlo_module_cost_analysis(
-            xla_ext_exe.client, hlo_modules[0]
-        )
-      except xla_extension.XlaRuntimeError as e:
-        msg, *_ = e.args
-        supported = not (type(msg) is str and
-                         (msg.startswith("UNIMPLEMENTED") or
-                          "PjRt-compatible backend only" in msg))
-        if supported:
           raise
 
     if (
