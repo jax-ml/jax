@@ -19,6 +19,8 @@ import jax
 from jax._src import config
 from jax._src import error_check
 from jax._src import test_util as jtu
+from jax._src.sharding_impls import NamedSharding, PartitionSpec as P
+import jax.export
 import jax.numpy as jnp
 
 
@@ -26,6 +28,7 @@ JaxValueError = error_check.JaxValueError
 
 
 config.parse_flags_with_absl()
+jtu.request_cpu_devices(4)
 
 
 @jtu.with_config(jax_check_tracer_leaks=True)
@@ -189,6 +192,47 @@ class ErrorCheckTests(jtu.JaxTestCase):
         ),
     ):
       jax.jit(error_check.raise_if_error)()
+
+  @parameterized.product(jit=[True, False])
+  @jtu.with_user_mesh((2, 2), ("x", "y"))
+  def test_error_check_explicit_mode(self, mesh, jit):
+    def f(x):
+      error_check.set_error_if(x <= 0, "x must be greater than 0")
+      return x + 1
+
+    if jit:
+      f = jax.jit(f)
+
+    sharding = NamedSharding(mesh, P("x", "y"))
+    x = jnp.full((4, 4), -1, dtype=jnp.int32, device=sharding)
+    with error_check.error_checking_context():
+      f(x)
+      with self.assertRaisesRegex(JaxValueError, "x must be greater than 0"):
+        error_check.raise_if_error()
+
+  def test_error_check_aot(self):
+    def run_export():
+      def f(x):
+        error_check.set_error_if(x <= 0, "x must be greater than 0")
+        return x + 1
+
+      f = error_check.wrap_for_export(f)
+      f = jax.jit(f)
+      x = jax.ShapeDtypeStruct((), jnp.float32)
+      serialized = jax.export.export(f)(x).serialize()
+      return serialized
+
+    def run_import(serialized):
+      f = jax.export.deserialize(serialized).call
+      f = error_check.unwrap_from_import(f)
+      f = jax.jit(f)
+      x = jnp.float32(-3.)
+      _ = f(x)
+      with self.assertRaisesRegex(JaxValueError, "x must be greater than 0"):
+        error_check.raise_if_error()
+
+    serialized = run_export()
+    run_import(serialized)
 
 
 if __name__ == "__main__":
