@@ -7093,6 +7093,26 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       config.device_context.set_local(prev_mesh)
       config.abstract_mesh_context_manager.set_local(prev_abstract_mesh)
 
+  @jtu.with_user_mesh((2,), ('x',))
+  def test_auto_axes_late_bind(self, mesh):
+    @auto_axes
+    def f(x):
+      return x * 2
+
+    out = f(np.arange(8), out_shardings=P('x'))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+    self.assertArraysEqual(out, np.arange(8) * 2)
+
+  @jtu.with_user_mesh((2,), ('x',), axis_types=AxisTypes.Auto)
+  def test_explicit_axes_late_bind(self, mesh):
+    @explicit_axes
+    def f(x):
+      return x * 2
+
+    out = f(np.arange(8), in_shardings=P('x'))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+    self.assertArraysEqual(out, np.arange(8) * 2)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

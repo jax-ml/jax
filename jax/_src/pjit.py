@@ -2846,8 +2846,15 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
   return cur_mesh.update_axis_types({a: axis_type for a in axes})
 
 def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,
-              out_shardings):
+              out_shardings=None):
   def decorator(*args, **kwargs):
+    if out_shardings is None:
+      if "out_shardings" in kwargs:
+        _out_shardings = kwargs.pop("out_shardings")
+      else:
+        raise TypeError("Missing required keyword argument: 'out_shardings'")
+    else:
+      _out_shardings = out_shardings
     new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Auto, 'auto_axes',
                              error_on_manual_to_auto_explict=True)
     with mesh_lib.use_abstract_mesh(new_mesh):
@@ -2855,7 +2862,7 @@ def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,
           core.get_aval(a).sharding.spec, new_mesh), args)
       args = mesh_cast(args, in_specs)
       out = fun(*args, **kwargs)
-    return mesh_cast(out, out_shardings)
+    return mesh_cast(out, _out_shardings)
   return decorator
 
 @contextlib.contextmanager
@@ -2866,12 +2873,19 @@ def use_auto_axes(*axes):
 
 
 def explicit_axes(fun, *, axes: str | tuple[str, ...] | None = None,
-                  in_shardings):
+                  in_shardings=None):
   def decorator(*args, **kwargs):
+    if in_shardings is None:
+      if "in_shardings" in kwargs:
+        _in_shardings = kwargs.pop("in_shardings")
+      else:
+        raise TypeError("Missing required keyword argument: 'in_shardings'")
+    else:
+      _in_shardings = in_shardings
     new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Explicit, 'explicit_axes',
                              error_on_manual_to_auto_explict=True)
     with mesh_lib.use_abstract_mesh(new_mesh):
-      args = mesh_cast(args, in_shardings)
+      args = mesh_cast(args, _in_shardings)
       out = fun(*args, **kwargs)
     out_specs = tree_map(lambda o: core.modify_spec_for_auto_manual(
         core.get_aval(o).sharding.spec, mesh_lib.get_abstract_mesh()), out)
