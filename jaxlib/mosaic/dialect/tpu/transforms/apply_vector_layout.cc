@@ -4219,12 +4219,10 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
       // We pack the final result back into the original type.
       if (acc_layout.packing() > 1) {
         SmallVector<int32_t> positions(acc_layout.packing());
-            std::iota(positions.begin(), positions.end(),
-                      static_cast<int32_t>(0));
+        std::iota(positions.begin(), positions.end(), static_cast<int32_t>(0));
         SmallVector<Value> parts(acc_layout.packing(), *acc_vreg);
         acc_vreg = builder.create<tpu::PackSubelementsOp>(
-                loc, acc_vreg_ty, parts,
-                builder.getDenseI32ArrayAttr(positions),
+            loc, acc_vreg_ty, parts, builder.getDenseI32ArrayAttr(positions),
             tpu::PackFormat::kInterleaved);
       }
     }
@@ -4630,16 +4628,187 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
   VectorType src_ty = transpose_op.getSourceVectorType();
   VectorType dst_ty = transpose_op.getResultVectorType();
   const int64_t rank = src_ty.getRank();
+  auto vec = transpose_op.getVector();
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> src_vregs,
-      disassemble(builder, layout_in, transpose_op.getVector(),
-                  ctx.target_shape));
+      disassemble(builder, layout_in, vec, ctx.target_shape));
   ArrayRef<int64_t> permutation = transpose_op.getPermutation();
   const auto tile_perm = permutation.take_back(2);
   if (tile_perm != ArrayRef<int64_t>{rank - 2, rank - 1} &&
       tile_perm != ArrayRef<int64_t>{rank - 1, rank - 2}) {
-    return transpose_op->emitOpError(
-        "Not implemented: Unsupported permutation");
+    std::vector<int> changed_positions;
+    for (int i = 0; i < permutation.size(); ++i) {
+      if (permutation[i] != i) {
+        changed_positions.push_back(i);
+      }
+    }
+    if (changed_positions.size() != 2) {
+      return transpose_op->emitOpError(
+          "Not implemented: Permutation must have exactly 2 changed "
+          "positions.");
+    }
+    auto x_dim = changed_positions[0];
+    auto y_dim = changed_positions[1];
+    // TODO(mvoz): Change for when we support >3d
+    auto z_dim = 2;
+    auto vec_shape = src_ty.getShape();
+    auto y_is_second_minor = y_dim == layout_in.layout_rank() - 1;
+    auto x_is_second_minor = x_dim == layout_in.layout_rank() - 1;
+    if (!y_is_second_minor && x_is_second_minor) {
+      // Swap
+      std::swap(x_dim, y_dim);
+    }
+    if (!x_is_second_minor && !y_is_second_minor) {
+      return transpose_op->emitOpError(
+          "Not implemented. Major minor transpose only supported for second "
+          "minor dimensions.");
+    }
+    auto y_dim_size = vec_shape[y_dim];
+    auto x_dim_size = vec_shape[x_dim];
+    // auto input_tiling = layout_in.tiling();
+    if (layout_in.offsets() != LayoutOffsets{0, 0}) {
+      return transpose_op->emitOpError(
+          "Not implemented: Layout with offset layout unsupported");
+    }
+    auto sublane_count = 8;
+    if (y_dim_size % sublane_count != 0 || x_dim_size % sublane_count != 0) {
+      // TODO(mvoz): Add support for smaller granularity sublanes, it should be
+      // trivial to skip other stages for other powers of 2, and mask for other
+      // sublane counts between those. 8 -> 3 stages 5-7 -> 3 stages + mask 4 ->
+      // 2 stages 3 -> 2 stages + mask 2 -> 1 stage 1 -> free reshape
+      return transpose_op->emitOpError(
+          "Not implemented: Major minor transpose only supported for multiples "
+          "of 8 in both dimensions.");
+    }
+    if (vec_shape.size() != 3) {
+      return transpose_op->emitOpError(
+          "Not implemented: Major minor transpose only supported for 3D "
+          "vectors.");
+    }
+    if (ctx.hardware_generation < 6) {
+      // TODO(mvoz): combine is only supported on v6, add a backfill here
+      // by using pack/unpack.
+      return transpose_op->emitOpError(
+          "Not implemented: Expected hardware generation >= 6.");
+    }
+    // enforce native tiling
+    if (!layout_in.hasNativeTiling(ctx.target_shape)) {
+      return transpose_op->emitOpError(
+          "Not implemented: Expected native tiling.");
+    }
+    if (!layout_out.hasNativeTiling(ctx.target_shape)) {
+      return transpose_op->emitOpError(
+          "Not implemented: Expected native tiling.");
+    }
+    // The out vregs are always the same input type.
+    xla::Array<Value> dst_vregs(
+        layout_out.tileArrayShape(dst_ty.getShape(), ctx.target_shape));
+
+    xla::Array<Value> current_vregs = src_vregs;
+    auto vreg_type = current_vregs({0, 0, 0}).getType();
+    auto dtype = dyn_cast<VectorType>(src_ty).getElementType();
+    if (!dtype.isF32()) {
+      return transpose_op->emitOpError(
+          "Not implemented: Major minor transpose only supported for f32 "
+          "vectors. Canonicalize should have extended the vector to f32.");
+    }
+    auto vreg_dimensions = current_vregs.dimensions();
+    auto total_major_slice_positions = vreg_dimensions[x_dim] / sublane_count;
+    auto total_second_minor_slice_positions = vreg_dimensions[y_dim];
+    auto total_minormost_slice_positions = vreg_dimensions[z_dim];
+
+    for (int m = 0; m < total_major_slice_positions; ++m) {
+      for (int s = 0; s < total_second_minor_slice_positions; ++s) {
+        for (int l = 0; l < total_minormost_slice_positions; ++l) {
+          auto num_parts = 2;
+          auto y_steps = 4;
+          std::vector<std::vector<Value>> combined_vregs_stage1(
+              y_steps, std::vector<Value>(num_parts));
+
+          std::vector<int> permute_pattern_stage1 = {0, 1, 4, 5, 2, 3, 6, 7};
+          auto denseI32PatternStage1 =
+              builder.getDenseI32ArrayAttr(permute_pattern_stage1);
+          for (int i = 0; i < y_steps; ++i) {
+            Value first_vreg =
+                current_vregs({(2 * i) + (sublane_count * m), s, l});
+            Value second_vreg =
+                current_vregs({(2 * i) + (sublane_count * m) + 1, s, l});
+
+            auto combine_low = builder.create<tpu::CombineSublanesOp>(
+                op.getLoc(), vreg_type, first_vreg, second_vreg, 1);
+            auto combine_high = builder.create<tpu::CombineSublanesOp>(
+                op.getLoc(), vreg_type, first_vreg, second_vreg, 0);
+
+            combined_vregs_stage1[i][0] =
+                builder.create<tpu::VectorSublaneShuffleOp>(
+                    op.getLoc(), vreg_type, combine_low, denseI32PatternStage1);
+            combined_vregs_stage1[i][1] =
+                builder.create<tpu::VectorSublaneShuffleOp>(
+                    op.getLoc(), vreg_type, combine_high,
+                    denseI32PatternStage1);
+          }
+          num_parts = 4;
+          y_steps = 2;
+          std::vector<std::vector<Value>> combined_vregs_stage2(
+              y_steps, std::vector<Value>(num_parts));
+          std::vector<int> permute_pattern_stage2 = {0, 2, 4, 6, 1, 3, 5, 7};
+          auto denseI32PatternStage2 =
+              builder.getDenseI32ArrayAttr(permute_pattern_stage2);
+
+          for (int i = 0; i < y_steps; ++i) {
+            auto &current_pair = combined_vregs_stage1[2 * i];
+            auto &next_pair = combined_vregs_stage1[2 * i + 1];
+
+            combined_vregs_stage2[i][0] =
+                builder.create<tpu::VectorSublaneShuffleOp>(
+                    op.getLoc(), vreg_type,
+                    builder.create<tpu::CombineSublanesOp>(
+                        op.getLoc(), vreg_type, current_pair[0], next_pair[0],
+                        1),
+                    denseI32PatternStage2);
+            combined_vregs_stage2[i][1] =
+                builder.create<tpu::VectorSublaneShuffleOp>(
+                    op.getLoc(), vreg_type,
+                    builder.create<tpu::CombineSublanesOp>(
+                        op.getLoc(), vreg_type, current_pair[0], next_pair[0],
+                        0),
+                    denseI32PatternStage2);
+            combined_vregs_stage2[i][2] =
+                builder.create<tpu::VectorSublaneShuffleOp>(
+                    op.getLoc(), vreg_type,
+                    builder.create<tpu::CombineSublanesOp>(
+                        op.getLoc(), vreg_type, current_pair[1], next_pair[1],
+                        1),
+                    denseI32PatternStage2);
+            combined_vregs_stage2[i][3] =
+                builder.create<tpu::VectorSublaneShuffleOp>(
+                    op.getLoc(), vreg_type,
+                    builder.create<tpu::CombineSublanesOp>(
+                        op.getLoc(), vreg_type, current_pair[1], next_pair[1],
+                        0),
+                    denseI32PatternStage2);
+          }
+          std::vector<int64_t> output_idx{s * sublane_count, m, l};
+          for (int i = 0; i < num_parts; ++i) {
+            auto out_low = builder.create<tpu::CombineSublanesOp>(
+                op.getLoc(), vreg_type, combined_vregs_stage2[0][i],
+                combined_vregs_stage2[1][i], 1);
+            dst_vregs(output_idx) = out_low;
+            output_idx[0] += 1;
+            auto out_high = builder.create<tpu::CombineSublanesOp>(
+                op.getLoc(), vreg_type, combined_vregs_stage2[0][i],
+                combined_vregs_stage2[1][i], 0);
+            dst_vregs(output_idx) = out_high;
+            output_idx[0] += 1;
+          }
+        }
+      }
+    }
+    auto assembled =
+        assemble(builder, dst_ty, layout_out, dst_vregs, ctx.target_shape);
+    transpose_op->replaceAllUsesWith(assembled);
+    transpose_op.erase();
+    return success();
   }
   {
     SmallVector<int64_t> p(permutation);
