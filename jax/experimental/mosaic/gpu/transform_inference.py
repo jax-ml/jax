@@ -98,11 +98,8 @@ def infer_transforms_for_wgmma_ref(ref_ty: ir.MemRefType) -> ir.ArrayAttr:
 
   element_bytewidth = utils.bytewidth(ref_ty.element_type)
   strides, _ = ref_ty.get_strides_and_offset()
-
-  if strides[0] < strides[1]:
-    raise NotImplementedError("Transpositions aren't handled yet.")
-
-  minor_dim = ref_ty.shape[1]
+  transposed = strides[0] < strides[1]
+  minor_dim = ref_ty.shape[0 if transposed else 1]
   major_tiling = 8
 
   # Try tiling with all swizzling modes starting from the largest one.
@@ -118,12 +115,14 @@ def infer_transforms_for_wgmma_ref(ref_ty: ir.MemRefType) -> ir.ArrayAttr:
       break
   else:
     # No valid tile transform can be inferred.
-    raise ValueError(
-        f"{ref_ty.shape} is not a valid WGMMA shape"
-    )
+    raise ValueError(f"{ref_ty.shape} is not a valid WGMMA shape")
 
+  if transposed:
+    tiling = (minor_tiling, major_tiling)
+  else:
+    tiling = (major_tiling, minor_tiling)
   return ir.ArrayAttr.get([
-      mgpu.TileTransformAttr.get((major_tiling, minor_tiling)),
+      mgpu.TileTransformAttr.get(tiling),
       mgpu.SwizzleTransformAttr.get(minor_tiling * element_bytewidth),
   ])
 
@@ -255,6 +254,24 @@ def _infer_dynamic_smem_transforms(
   return None
 
 
+def _get_tile_and_swizzle_transforms(
+    transforms: ir.ArrayAttr | None,
+) -> tuple[ir.Attribute, ir.Attribute]:
+  if transforms is None:
+    return
+
+  if len(transforms) == 2:
+    tile_transform, swizzle_transform = transforms
+    if not (
+        mgpu.TileTransformAttr.isinstance(tile_transform)
+        and mgpu.SwizzleTransformAttr.isinstance(swizzle_transform)
+    ):
+      raise NotImplementedError(f"Unsupported transforms {transforms}.")
+    return tile_transform, swizzle_transform
+  else:
+    raise NotImplementedError(f"Unsupported transforms {transforms}.")
+
+
 # This is used by Pallas' "_handle_indexing" memory transform.
 @partial(_add_transform_inference_rule, memref.SubViewOp)
 def _infer_memref_subview_transforms(
@@ -285,15 +302,7 @@ def _infer_memref_subview_transforms(
   #  - We only propagate transforms if they consist of a single tile transform
   #    and a single swizzle transform.
   # TODO(bchetioui): implement more complex propagation rules.
-  if len(transforms) == 2:
-    tile_transform, swizzle_transform = transforms
-    if not (
-        mgpu.TileTransformAttr.isinstance(tile_transform)
-        and mgpu.SwizzleTransformAttr.isinstance(swizzle_transform)
-    ):
-      raise NotImplementedError(f"Can't propagate transforms {transforms}.")
-  else:
-    raise NotImplementedError(f"Can't propagate transforms {transforms}.")
+  tile_transform, _ = _get_tile_and_swizzle_transforms(transforms)
 
   # Check swizzle transform propagation.
   strides, _ = ir.MemRefType.get_strides_and_offset(op.source.type)
@@ -316,6 +325,42 @@ def _infer_memref_subview_transforms(
       )
 
   return [transforms], [transforms]
+
+
+@partial(_add_transform_inference_rule, memref.TransposeOp)
+def _infer_memref_transpose_transforms(
+    op: memref.TransposeOp,
+) -> OptionalTransforms:
+  in_ty = ir.MemRefType(op.in_.type)
+  if len(in_ty.shape) != 2:
+    raise NotImplementedError(f"Only 2D memrefs are supported, got {in_ty}")
+  in_strides, _ = in_ty.get_strides_and_offset()
+  out_strides, _ = ir.MemRefType(op.result.type).get_strides_and_offset()
+  transpose = in_strides != out_strides
+
+  users = list(op.result.uses)
+  if len(users) != 1:
+    raise NotImplementedError(
+        f"Only memref.transpose with a single use are supported, got {op}"
+    )
+
+  op_operand_use = users[0]
+  consumer = op_operand_use.owner
+  op_user = consumer.operands[op_operand_use.operand_number]
+  out_transforms = inference_utils.in_transforms_for_operand(consumer, op_user)
+
+  in_transforms = []
+  if not transpose:
+    in_transforms = out_transforms
+  else:
+    tile_transform, swizzle_transform = _get_tile_and_swizzle_transforms(
+        out_transforms
+    )
+    transposed_tiling = mgpu.TileTransformAttr(tile_transform).tiling[::-1]
+    in_transforms.append(mgpu.TileTransformAttr.get(transposed_tiling))
+    in_transforms.append(swizzle_transform)
+
+  return [ir.ArrayAttr.get(in_transforms)], [out_transforms]
 
 
 # `memref.load` is used to load barrier phases---the rule needn't do anything

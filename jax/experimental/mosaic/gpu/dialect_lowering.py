@@ -355,7 +355,7 @@ def _vector_load_op_lowering_rule(
     )
     ref_ty = ir.MemRefType(vector_load_op.base.type)
     _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
-    transformed_ref = transform_memref(vector_load_op.base, transforms)
+    transformed_ref = reinterpret_smem_ref(vector_load_op.base, transforms)
     fragmented_array = fa.FragmentedArray.load_tiled(
         transformed_ref,
         swizzle=swizzle,
@@ -397,7 +397,7 @@ def _vector_store_op_lowering_rule(
     ref_ty = ir.MemRefType(vector_store_op.base.type)
     _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
     fragmented_array.store_tiled(
-        transform_memref(vector_store_op.base, transforms), swizzle
+        reinterpret_smem_ref(vector_store_op.base, transforms), swizzle
     )
   elif (isinstance(fragmented_array.layout, fa.WGStridedFragLayout) or
         isinstance(fragmented_array.layout, fa.WGSplatFragLayout)):
@@ -510,32 +510,78 @@ def swizzle_and_transforms_from_transforms_attr(
   return swizzle or mgpu.SwizzlingMode.kNoSwizzle, tuple(gmem_transforms)
 
 
-def transform_memref(
-    mem_ref: ir.Value, transforms: tuple[launch_context.MemRefTransform, ...]
+def _is_memref_transposed(mem_ref_type: ir.MemRefType) -> bool:
+  strides, _ = mem_ref_type.get_strides_and_offset()
+  prev_stride = math.inf
+  for stride in strides:
+    if stride > prev_stride:
+      return True
+    prev_stride = stride
+  return False
+
+
+def reinterpret_smem_ref(
+    ref: ir.Value,
+    transforms: tuple[launch_context.MemRefTransform, ...],
 ) -> ir.Value:
-  """Reinterprets the memref to one where the shape is transformed as given."""
-  if not transforms:
-    return mem_ref
+  """Applies transforms on the ref, and makes sure that their effect is
+  propagated appropriately on the strides.
 
-  mem_ref_type = ir.MemRefType(mem_ref.type)
-  if mem_ref_type.memory_space != ir.Attribute.parse(
-      "#gpu.address_space<workgroup>"
-  ):
-    raise ValueError(f"Only workgroup memory is supported but got {mem_ref}.")
+  This function is used any time we lower from a dialect SMEM ref (2D for wgmma)
+  with given transforms to a "physical" SMEM ref (4D for wgmma) that is fully
+  transformed and transposed as needed.
+  """
+  ref_ty = ir.MemRefType(ref.type)
+  transposed = _is_memref_transposed(ref_ty)
+  if not transforms and not transposed:
+    return ref
 
-  shape = mem_ref_type.shape
+  if ref_ty.memory_space != ir.Attribute.parse("#gpu.address_space<workgroup>"):
+    raise ValueError(f"Only workgroup memory is supported but got {ref}.")
+
+  shape = ref_ty.shape
+  if transposed:
+    if len(shape) != 2:
+      raise NotImplementedError(
+          f"Only 2D shapes can be transposed, but got {shape}"
+      )
+    strides, _ = ref_ty.get_strides_and_offset()
+    if strides[0] != 1 or strides[1] != shape[0]:
+      raise NotImplementedError(
+          f"Only contiguous 2D memrefs can be transposed, but got {ref_ty}"
+      )
+
   for t in transforms:
-    shape = t.transform_shape(shape)
+    shape = list(t.transform_shape(shape))
 
-  memref_new_type = ir.MemRefType.get(
+  if transposed:
+    # The expected output is a transposed ref and `shape` is already transposed.
+    # We need to compute the correct strides to match the shape.
+    if len(shape) == 2:
+      minor_to_major_stride_order = (1, 0)
+    elif len(shape) == 4:
+      minor_to_major_stride_order = (2, 3, 0, 1)
+    else:
+      raise NotImplementedError(
+          f"Expected a 2D or 4D shape after transforms, but got {shape}"
+      )
+    strides = [1]*len(shape)
+    for i in minor_to_major_stride_order[1:]:
+      strides[i] = strides[i-1] * shape[i-1]
+    layout = ir.StridedLayoutAttr.get(0, strides)
+  else:
+    layout = None
+
+  new_ref_ty = ir.MemRefType.get(
       shape,
-      mem_ref_type.element_type,
-      memory_space=mem_ref_type.memory_space,
+      ref_ty.element_type,
+      memory_space=ref_ty.memory_space,
+      layout=layout,
   )
-
   ms = utils.WORKGROUP_NVPTX_ADDRESS_SPACE
-  ptr = utils.memref_ptr(mem_ref, memory_space=ms)
-  return utils.ptr_as_memref(ptr, memref_new_type, ptr_memory_space=ms)
+  ptr = utils.memref_ptr(ref, memory_space=ms)
+  ref = utils.ptr_as_memref(ptr, new_ref_ty, ptr_memory_space=ms)
+  return ref
 
 
 @_register_lowering(mgpu.AsyncLoadOp)
@@ -569,7 +615,7 @@ def _mgpu_async_load_op_lowering_rule(
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=load_op.source,
-      dst_ref=transform_memref(load_op.destination, transforms),
+      dst_ref=reinterpret_smem_ref(load_op.destination, transforms),
       gmem_slice=tuple(gmem_slice),
       barrier=barrier,
       arrive=False,
@@ -610,7 +656,7 @@ def _mgpu_async_store_op_lowering_rule(
 
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
-      src_ref=transform_memref(store_op.source, transforms),
+      src_ref=reinterpret_smem_ref(store_op.source, transforms),
       dst_ref=store_op.destination,
       gmem_slice=tuple(gmem_slice),
       swizzle=swizzle,
@@ -840,7 +886,7 @@ def _mgpu_wgmma_op_lowering_rule(
   _check_transforms_and_swizzle_are_supported(
       ref_ty, b_transforms, b_swizzle, minimum_swizzle
   )
-  b_operand = transform_memref(wgmma_op.b, b_transforms)
+  b_operand = reinterpret_smem_ref(wgmma_op.b, b_transforms)
 
   if ir.VectorType.isinstance(wgmma_op.a.type):
     a_operand = _fragmented_array_from_ir(wgmma_op.a, wgmma_layout)
@@ -857,7 +903,7 @@ def _mgpu_wgmma_op_lowering_rule(
           f"Non-matching swizzles of operands a and b in WGMMA: {a_swizzle} !="
           f" {b_swizzle}"
       )
-    a_operand = transform_memref(wgmma_op.a, a_transforms)
+    a_operand = reinterpret_smem_ref(wgmma_op.a, a_transforms)
 
   new_acc = wgmma.wgmma(acc, a_operand, b_operand, swizzle=b_swizzle)
 
