@@ -23,6 +23,7 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import op_shardings
@@ -831,6 +832,28 @@ class JaxArrayTest(jtu.JaxTestCase):
     h_tensor = jax.device_put(d_tensor, h_sharding)
     np.array(h_tensor)
     self.assertIsNone(h_tensor._npy_value)
+
+  @config.enable_empty_arrays(True)
+  def test_make_array_from_single_device_arrays_no_dtype_error(self):
+    mesh = jtu.create_mesh((4, 2), ('x', 'y'))
+    s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
+    with self.assertRaisesRegex(
+        ValueError,
+        'If `arrays` is empty, `dtype` must be provided via the `dtype` '
+        'argument to `jax.make_array_from_single_device_arrays`.'):
+      jax.make_array_from_single_device_arrays((8, 2), s, [])
+
+  def test_make_array_from_single_device_arrays_bad_dtype_error(self):
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    shape = (8, 2)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+    with self.assertRaisesRegex(
+        ValueError,
+        'If `dtype` is provided to `jax.make_array_from_single_device_arrays`, '
+        'it must match the dtype of the arrays in `arrays`.'):
+      jax.make_array_from_single_device_arrays(
+          shape, s, [arr], dtype=jnp.float32)
 
 
 class ShardingTest(jtu.JaxTestCase):
