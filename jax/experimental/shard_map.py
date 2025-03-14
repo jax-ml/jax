@@ -1897,18 +1897,17 @@ def _all_mesh_names_except_spmd(
 def _all_newly_manual_mesh_names(
     mesh: Mesh, auto: frozenset[AxisName], trace=None
 ) -> tuple[AxisName, ...]:
+  axis_env = core.get_axis_env()
+  vmap_spmd_names = set(axis_env.spmd_axis_names)
   if not (ctx_mesh := get_abstract_mesh()).empty:
-    del mesh
+    mesh = ctx_mesh
     already_manual_names = set(ctx_mesh._axis_types_dict.get(AxisTypes.Manual, ()))
-    return tuple(name for name in ctx_mesh.axis_names
-                 if name not in auto | already_manual_names)
   else:
     # TODO(mattjj): remove this mechanism when we revise mesh scopes
-    axis_env = core.get_axis_env()
-    vmap_spmd_names = set(axis_env.spmd_axis_names)
     already_manual_names = set(axis_env.axis_sizes)  # may include vmap axis_names
-    return tuple(name for name in mesh.axis_names
-                 if name not in auto | vmap_spmd_names | already_manual_names)
+  return tuple(name for name in mesh.axis_names
+               if name not in auto | vmap_spmd_names | already_manual_names)
+
 
 # DCE
 
