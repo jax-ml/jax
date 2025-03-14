@@ -1616,6 +1616,7 @@ def _exp_lowering_rule(ctx: LoweringRuleContext, x):
 
 
 @register_lowering_rule(lax.exp2_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(lax.exp2_p, mgpu.ThreadSemantics.Warpgroup)
 def _exp2_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
   if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
@@ -1917,6 +1918,7 @@ def _run_scoped_lowering_rule(
 
 
 @register_lowering_rule(discharge.run_state_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(discharge.run_state_p, mgpu.ThreadSemantics.Warpgroup)
 def _run_state_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -1934,7 +1936,10 @@ def _run_state_lowering_rule(
   for arg, v, out_aval in zip(args, jaxpr.invars, ctx.avals_out):
     aval = v.aval
     if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
-      new_input_vals.append(mgpu.WGMMAAccumulator.from_registers(arg))
+      if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Warpgroup:
+        new_input_vals.append(arg)
+      else:
+        new_input_vals.append(mgpu.WGMMAAccumulator.from_registers(arg))
       should_discharge.append(True)
       assert isinstance(out_aval, jax_core.ShapedArray)
     else:
