@@ -31,7 +31,6 @@ load("@xla//xla/tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_c
 cc_proto_library = _cc_proto_library
 cuda_library = _cuda_library
 rocm_library = _rocm_library
-pytype_test = native.py_test
 nanobind_extension = _pybind_extension
 if_cuda_is_configured = _if_cuda_is_configured
 if_rocm_is_configured = _if_rocm_is_configured
@@ -62,6 +61,18 @@ PLATFORM_TAGS_DICT = {
     ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
     ("Windows", "AMD64"): ("win", "amd64"),
 }
+
+_GPU_PYPI_WHEEL_DEPS = [
+    "@pypi_jax//:pkg",
+    "@pypi_jaxlib//:pkg",
+    "@pypi_jax_cuda12_plugin//:pkg",
+    "@pypi_jax_cuda12_pjrt//:pkg",
+]
+
+_CPU_PYPI_WHEEL_DEPS = [
+    "@pypi_jax//:pkg",
+    "@pypi_jaxlib//:pkg",
+]
 
 # TODO(vam): remove this once zstandard builds against Python 3.13
 def get_zstandard():
@@ -219,39 +230,78 @@ ALL_BACKENDS = ["cpu", "gpu", "tpu"]
 
 def if_building_jaxlib(
         if_building,
-        if_not_building = [
-            "@pypi_jaxlib//:pkg",
-            "@pypi_jax_cuda12_plugin//:pkg",
-            "@pypi_jax_cuda12_pjrt//:pkg",
-        ],
-        if_not_building_for_cpu = ["@pypi_jaxlib//:pkg"],
-        if_py_import = [
-            "//jaxlib/tools:jaxlib_py_import",
-            "//jaxlib/tools:jax_cuda_plugin_py_import",
-            "//jaxlib/tools:jax_cuda_pjrt_py_import",
-        ],
-        if_py_import_for_cpu = [
-            "//jaxlib/tools:jaxlib_py_import",
-        ]):
+        if_not_building = _GPU_PYPI_WHEEL_DEPS,
+        if_not_building_for_cpu = _CPU_PYPI_WHEEL_DEPS):
     """Adds jaxlib and jaxlib cuda plugin wheels as dependencies instead of depending on sources.
 
     This allows us to test prebuilt versions of jaxlib wheels against the rest of the JAX codebase.
 
     Args:
       if_building: the source code targets to depend on in case we don't depend on the jaxlib wheels
-      if_not_building: the jaxlib wheels to depend on including gpu-specific plugins in case of
+      if_not_building: the wheels to depend on including gpu-specific plugins in case of
                        gpu-enabled builds
-      if_not_building_for_cpu: the jaxlib wheels to depend on in case of cpu-only builds
-      if_py_import: the py_import targets to depend on in case of gpu-enabled builds
-      if_py_import_for_cpu: the py_import targets to depend on in case of cpu-only builds
+      if_not_building_for_cpu: the wheels to depend on in case of cpu-only builds
     """
 
     return select({
         "//jax:enable_jaxlib_build": if_building,
         "//jax_plugins/cuda:disable_jaxlib_for_cpu_build": if_not_building_for_cpu,
         "//jax_plugins/cuda:disable_jaxlib_for_cuda12_build": if_not_building,
-        "//jax_plugins/cuda:enable_py_import_for_cpu_build": if_py_import_for_cpu,
-        "//jax_plugins/cuda:enable_py_import_for_cuda12_build": if_py_import,
+        "//conditions:default": [],
+    })
+
+def get_internal_test_util_imports():
+    return select({
+        "//jax:enable_jaxlib_build": [],
+        "//conditions:default": ["_src/internal_test_util"],
+    })
+
+def _get_final_test_deps(test_deps):
+    # Exclude jax targets except //jax:internal_test_* and //jax:internal_export_*
+    # (they are not included in the jax wheel).
+    test_deps_without_jax = {
+        d: None
+        for d in test_deps
+        if not (d.startswith("//jax") and
+                not d.startswith("//jax:internal_test") and
+                not d.startswith("//jax:internal_export"))
+    }
+
+    # The dependencies below are common for most of the tests.
+    # This block adds them to the test deps if they were transitively included via jax.
+    common_test_deps = {d: None for d in py_deps([
+        "absl/testing",
+        "numpy",
+        "ml_dtypes",
+        "scipy",
+        "opt_einsum",
+    ])}
+    test_deps_without_jax.update(common_test_deps)
+    filtered_test_deps = test_deps_without_jax.keys()
+
+    jaxlib_build_deps = [
+        "//jaxlib/cuda:gpu_only_test_deps",
+        "//jaxlib/rocm:gpu_only_test_deps",
+        "//jax_plugins:gpu_plugin_only_test_deps",
+    ]
+
+    gpu_py_imports = [
+        "//:jax_py_import",
+        "//jaxlib/tools:jaxlib_py_import",
+        "//jaxlib/tools:jax_cuda_plugin_py_import",
+        "//jaxlib/tools:jax_cuda_pjrt_py_import",
+    ]
+    cpu_py_imports = [
+        "//:jax_py_import",
+        "//jaxlib/tools:jaxlib_py_import",
+    ]
+
+    return select({
+        "//jax:enable_jaxlib_build": jaxlib_build_deps + test_deps,
+        "//jax_plugins/cuda:disable_jaxlib_for_cpu_build": _CPU_PYPI_WHEEL_DEPS + filtered_test_deps,
+        "//jax_plugins/cuda:disable_jaxlib_for_cuda12_build": _GPU_PYPI_WHEEL_DEPS + filtered_test_deps,
+        "//jax_plugins/cuda:enable_py_import_for_cpu_build": cpu_py_imports + filtered_test_deps,
+        "//jax_plugins/cuda:enable_py_import_for_cuda12_build": gpu_py_imports + filtered_test_deps,
     })
 
 # buildifier: disable=function-docstring
@@ -304,14 +354,10 @@ def jax_multiplatform_test(
             srcs = srcs,
             args = test_args,
             env = env,
-            deps = [
+            deps = _get_final_test_deps([
                 "//jax",
                 "//jax:test_util",
-            ] + deps + if_building_jaxlib([
-                "//jaxlib/cuda:gpu_only_test_deps",
-                "//jaxlib/rocm:gpu_only_test_deps",
-                "//jax_plugins:gpu_plugin_only_test_deps",
-            ]),
+            ] + deps),
             data = data,
             shard_count = test_shards,
             tags = test_tags,
@@ -567,4 +613,13 @@ def jax_py_test(
     env = dict(env)
     if "PYTHONWARNINGS" not in env:
         env["PYTHONWARNINGS"] = "error"
-    py_test(name = name, env = env, **kwargs)
+    deps = kwargs.get("deps", [])
+    kwargs.pop("deps")
+    final_test_deps = _get_final_test_deps(deps)
+    py_test(name = name, env = env, deps = final_test_deps, **kwargs)
+
+def pytype_test(name, **kwargs):
+    deps = kwargs.get("deps", [])
+    kwargs.pop("deps")
+    final_test_deps = _get_final_test_deps(deps)
+    native.py_test(name = name, deps = final_test_deps, **kwargs)

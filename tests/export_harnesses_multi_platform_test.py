@@ -35,7 +35,12 @@ from jax import export
 from jax import lax
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.internal_test_util import test_harnesses
+
+try:
+  from jax._src.internal_test_util import test_harnesses
+except ModuleNotFoundError:
+  import test_harnesses  # type: ignore[no-redef,import-not-found]
+
 from jax import random
 
 

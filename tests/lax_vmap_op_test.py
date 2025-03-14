@@ -23,7 +23,12 @@ import jax
 from jax import lax
 
 from jax._src import test_util as jtu
-from jax._src.internal_test_util import lax_test_util
+
+try:
+  from jax._src.internal_test_util import lax_test_util
+except ModuleNotFoundError:
+  import lax_test_util  # type: ignore[no-redef,import-not-found]
+
 from jax._src import util
 
 jax.config.parse_flags_with_absl()

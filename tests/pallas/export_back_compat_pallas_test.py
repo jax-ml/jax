@@ -24,10 +24,18 @@ from absl.testing import absltest
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.internal_test_util import export_back_compat_test_util as bctu
-from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosaic_matmul
-from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosaic_semaphore_dma
-from jax._src.internal_test_util.export_back_compat_test_data.pallas import triton_add_one
+
+try:
+  from jax._src.internal_test_util import export_back_compat_test_util as bctu
+  from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosaic_matmul
+  from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosaic_semaphore_dma
+  from jax._src.internal_test_util.export_back_compat_test_data.pallas import triton_add_one
+except ModuleNotFoundError:
+  import export_back_compat_test_util as bctu  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data.pallas import mosaic_matmul  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data.pallas import mosaic_semaphore_dma  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data.pallas import triton_add_one  # type: ignore[no-redef,import-not-found]
+
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas.ops.tpu import matmul

@@ -1491,7 +1491,7 @@ jax_multiplatform_test(
     deps = [
         "//jax:experimental_colocated_python",
         "//jax/extend:ifrt_programs",
-    ],
+    ] + py_deps("cloudpickle"),
 )
 
 jax_multiplatform_test(

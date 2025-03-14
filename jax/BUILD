@@ -18,6 +18,7 @@ load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
+    "get_internal_test_util_imports",
     "if_building_jaxlib",
     "jax_export_file_visibility",
     "jax_extend_internal_users",
@@ -150,6 +151,7 @@ py_library(
 # TODO(necula): break the internal_test_util into smaller build targets.
 py_library(
     name = "internal_test_util",
+    testonly = 1,
     srcs = [
         "_src/internal_test_util/__init__.py",
         "_src/internal_test_util/deprecation_module.py",
@@ -159,6 +161,7 @@ py_library(
             "_src/internal_test_util/lazy_loader_module/*.py",
         ],
     ),
+    imports = get_internal_test_util_imports(),
     visibility = [":internal"],
     deps = [
         ":jax",
@@ -167,7 +170,9 @@ py_library(
 
 py_library(
     name = "internal_test_harnesses",
+    testonly = 1,
     srcs = ["_src/internal_test_util/test_harnesses.py"],
+    imports = get_internal_test_util_imports(),
     visibility = [":internal"] + jax_internal_test_harnesses_visibility,
     deps = [
         ":ad_util",
@@ -180,7 +185,9 @@ py_library(
 
 py_library(
     name = "internal_export_back_compat_test_util",
+    testonly = 1,
     srcs = ["_src/internal_test_util/export_back_compat_test_util.py"],
+    imports = get_internal_test_util_imports(),
     visibility = [
         ":internal",
     ] + jax_internal_export_back_compat_test_util_visibility,
@@ -197,6 +204,7 @@ py_library(
         "_src/internal_test_util/export_back_compat_test_data/*.py",
         "_src/internal_test_util/export_back_compat_test_data/pallas/*.py",
     ]),
+    imports = get_internal_test_util_imports(),
     visibility = [
         ":internal",
     ],

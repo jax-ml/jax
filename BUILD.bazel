@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load(
+    "@xla//third_party/py:py_import.bzl",
+    "py_import",
+)
 load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
 load(
     "//jaxlib:jax.bzl",
@@ -81,4 +85,27 @@ jax_wheel(
     ],
     wheel_binary = ":build_wheel",
     wheel_name = "jax",
+)
+
+jax_wheel(
+    name = "jax_wheel_only",
+    build_wheel_only = True,
+    platform_independent = True,
+    source_files = [
+        ":transitive_py_data",
+        ":transitive_py_deps",
+        "//jax:py.typed",
+        "AUTHORS",
+        "LICENSE",
+        "README.md",
+        "pyproject.toml",
+        "setup.py",
+    ],
+    wheel_binary = ":build_wheel",
+    wheel_name = "jax",
+)
+
+py_import(
+    name = "jax_py_import",
+    wheel = ":jax_wheel_only",
 )

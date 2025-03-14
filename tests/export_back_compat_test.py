@@ -29,38 +29,70 @@ import jax
 from jax import lax
 from jax._src.export import _export
 
-from jax._src.internal_test_util import export_back_compat_test_util as bctu
-
-from jax._src.internal_test_util.export_back_compat_test_data import cpu_cholesky_lapack_potrf
-from jax._src.internal_test_util.export_back_compat_test_data import cpu_eig_lapack_geev
-from jax._src.internal_test_util.export_back_compat_test_data import cuda_eigh_cusolver_syev
-from jax._src.internal_test_util.export_back_compat_test_data import rocm_eigh_hipsolver_syev
-from jax._src.internal_test_util.export_back_compat_test_data import cpu_eigh_lapack_syev
-from jax._src.internal_test_util.export_back_compat_test_data import cpu_lu_lapack_getrf
-from jax._src.internal_test_util.export_back_compat_test_data import cuda_qr_cusolver_geqrf
-from jax._src.internal_test_util.export_back_compat_test_data import rocm_qr_hipsolver_geqrf
-from jax._src.internal_test_util.export_back_compat_test_data import cpu_qr_lapack_geqrf
-from jax._src.internal_test_util.export_back_compat_test_data import cpu_schur_lapack_gees
-from jax._src.internal_test_util.export_back_compat_test_data import cpu_svd_lapack_gesdd
-from jax._src.internal_test_util.export_back_compat_test_data import cpu_triangular_solve_blas_trsm
-from jax._src.internal_test_util.export_back_compat_test_data import cpu_hessenberg_lapack_gehrd
-from jax._src.internal_test_util.export_back_compat_test_data import cpu_tridiagonal_lapack_sytrd_hetrd
-from jax._src.internal_test_util.export_back_compat_test_data import cpu_tridiagonal_solve_lapack_gtsv
-from jax._src.internal_test_util.export_back_compat_test_data import cuda_threefry2x32
-from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_pivots_to_permutation
-from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_cusolver_getrf
-from jax._src.internal_test_util.export_back_compat_test_data import cuda_svd_cusolver_gesvd
-from jax._src.internal_test_util.export_back_compat_test_data import cuda_tridiagonal_cusolver_sytrd
-from jax._src.internal_test_util.export_back_compat_test_data import tpu_Eigh
-from jax._src.internal_test_util.export_back_compat_test_data import tpu_Lu
-from jax._src.internal_test_util.export_back_compat_test_data import tpu_ApproxTopK
-from jax._src.internal_test_util.export_back_compat_test_data import tpu_Qr
-from jax._src.internal_test_util.export_back_compat_test_data import tpu_Sharding
-from jax._src.internal_test_util.export_back_compat_test_data import tpu_stablehlo_dynamic_reduce_window
-from jax._src.internal_test_util.export_back_compat_test_data import shardy_sharding_ops_with_different_meshes
-from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_rng_bit_generator
-from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_top_k
-from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_approx_top_k
+try:
+  from jax._src.internal_test_util import export_back_compat_test_util as bctu
+  from jax._src.internal_test_util.export_back_compat_test_data import cpu_cholesky_lapack_potrf
+  from jax._src.internal_test_util.export_back_compat_test_data import cpu_eig_lapack_geev
+  from jax._src.internal_test_util.export_back_compat_test_data import cuda_eigh_cusolver_syev
+  from jax._src.internal_test_util.export_back_compat_test_data import rocm_eigh_hipsolver_syev
+  from jax._src.internal_test_util.export_back_compat_test_data import cpu_eigh_lapack_syev
+  from jax._src.internal_test_util.export_back_compat_test_data import cpu_lu_lapack_getrf
+  from jax._src.internal_test_util.export_back_compat_test_data import cuda_qr_cusolver_geqrf
+  from jax._src.internal_test_util.export_back_compat_test_data import rocm_qr_hipsolver_geqrf
+  from jax._src.internal_test_util.export_back_compat_test_data import cpu_qr_lapack_geqrf
+  from jax._src.internal_test_util.export_back_compat_test_data import cpu_schur_lapack_gees
+  from jax._src.internal_test_util.export_back_compat_test_data import cpu_svd_lapack_gesdd
+  from jax._src.internal_test_util.export_back_compat_test_data import cpu_triangular_solve_blas_trsm
+  from jax._src.internal_test_util.export_back_compat_test_data import cpu_hessenberg_lapack_gehrd
+  from jax._src.internal_test_util.export_back_compat_test_data import cpu_tridiagonal_lapack_sytrd_hetrd
+  from jax._src.internal_test_util.export_back_compat_test_data import cpu_tridiagonal_solve_lapack_gtsv
+  from jax._src.internal_test_util.export_back_compat_test_data import cuda_threefry2x32
+  from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_pivots_to_permutation
+  from jax._src.internal_test_util.export_back_compat_test_data import cuda_lu_cusolver_getrf
+  from jax._src.internal_test_util.export_back_compat_test_data import cuda_svd_cusolver_gesvd
+  from jax._src.internal_test_util.export_back_compat_test_data import cuda_tridiagonal_cusolver_sytrd
+  from jax._src.internal_test_util.export_back_compat_test_data import tpu_Eigh
+  from jax._src.internal_test_util.export_back_compat_test_data import tpu_Lu
+  from jax._src.internal_test_util.export_back_compat_test_data import tpu_ApproxTopK
+  from jax._src.internal_test_util.export_back_compat_test_data import tpu_Qr
+  from jax._src.internal_test_util.export_back_compat_test_data import tpu_Sharding
+  from jax._src.internal_test_util.export_back_compat_test_data import tpu_stablehlo_dynamic_reduce_window
+  from jax._src.internal_test_util.export_back_compat_test_data import shardy_sharding_ops_with_different_meshes
+  from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_rng_bit_generator
+  from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_top_k
+  from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_approx_top_k
+except ModuleNotFoundError:
+  import export_back_compat_test_util as bctu  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cpu_cholesky_lapack_potrf  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cpu_eig_lapack_geev  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cuda_eigh_cusolver_syev  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import rocm_eigh_hipsolver_syev  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cpu_eigh_lapack_syev  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cpu_lu_lapack_getrf  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cuda_qr_cusolver_geqrf  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import rocm_qr_hipsolver_geqrf  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cpu_qr_lapack_geqrf  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cpu_schur_lapack_gees  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cpu_svd_lapack_gesdd  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cpu_triangular_solve_blas_trsm  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cpu_hessenberg_lapack_gehrd  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cpu_tridiagonal_lapack_sytrd_hetrd  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cpu_tridiagonal_solve_lapack_gtsv  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cuda_threefry2x32  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cuda_lu_pivots_to_permutation  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cuda_lu_cusolver_getrf  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cuda_svd_cusolver_gesvd  # type: ignore[no-redef,import-not-found]  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import cuda_tridiagonal_cusolver_sytrd
+  from export_back_compat_test_data import tpu_Eigh  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import tpu_Lu  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import tpu_ApproxTopK  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import tpu_Qr  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import tpu_Sharding  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import tpu_stablehlo_dynamic_reduce_window  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import shardy_sharding_ops_with_different_meshes  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import stablehlo_dynamic_rng_bit_generator  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import stablehlo_dynamic_top_k  # type: ignore[no-redef,import-not-found]
+  from export_back_compat_test_data import stablehlo_dynamic_approx_top_k  # type: ignore[no-redef,import-not-found]
 
 from jax.experimental import pjit
 from jax.experimental.shard_map import shard_map

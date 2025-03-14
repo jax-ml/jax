@@ -29,7 +29,12 @@ import tarfile
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
-from jax._src.internal_test_util import export_back_compat_test_util as bctu
+
+try:
+  from jax._src.internal_test_util import export_back_compat_test_util as bctu
+except ModuleNotFoundError:
+  import export_back_compat_test_util as bctu  # type: ignore[no-redef,import-not-found]
+
 from jax._src.lib import xla_extension
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests.back_compat_testdata import tf_call_tf_function

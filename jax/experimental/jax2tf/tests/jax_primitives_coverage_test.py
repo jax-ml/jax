@@ -36,7 +36,10 @@ import numpy as np
 config.parse_flags_with_absl()
 
 # Import after parsing flags
-from jax._src.internal_test_util import test_harnesses
+try:
+  from jax._src.internal_test_util import test_harnesses
+except ModuleNotFoundError:
+  import test_harnesses  # type: ignore[no-redef,import-not-found]
 
 
 @jtu.with_config(jax_legacy_prng_key='allow',

@@ -46,7 +46,12 @@ from jax._src import config
 from jax._src import sharding_impls
 from jax._src import sharding_specs
 from jax._src import test_util as jtu
-from jax._src.internal_test_util import lax_test_util
+
+try:
+  from jax._src.internal_test_util import lax_test_util
+except ModuleNotFoundError:
+  import lax_test_util  # type: ignore[no-redef,import-not-found]
+
 from jax._src.interpreters import pxla
 from jax._src.lax import parallel
 from jax._src.lib import xla_extension
