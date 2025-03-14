@@ -98,11 +98,8 @@ def infer_transforms_for_wgmma_ref(ref_ty: ir.MemRefType) -> ir.ArrayAttr:
 
   element_bytewidth = utils.bytewidth(ref_ty.element_type)
   strides, _ = ref_ty.get_strides_and_offset()
-
-  if strides[0] < strides[1]:
-    raise NotImplementedError("Transpositions aren't handled yet.")
-
-  minor_dim = ref_ty.shape[1]
+  transposed = strides[0] < strides[1]
+  minor_dim = ref_ty.shape[0 if transposed else 1]
   major_tiling = 8
 
   # Try tiling with all swizzling modes starting from the largest one.
@@ -118,12 +115,14 @@ def infer_transforms_for_wgmma_ref(ref_ty: ir.MemRefType) -> ir.ArrayAttr:
       break
   else:
     # No valid tile transform can be inferred.
-    raise ValueError(
-        f"{ref_ty.shape} is not a valid WGMMA shape"
-    )
+    raise ValueError(f"{ref_ty.shape} is not a valid WGMMA shape")
 
+  if transposed:
+    tiling = (minor_tiling, major_tiling)
+  else:
+    tiling = (major_tiling, minor_tiling)
   return ir.ArrayAttr.get([
-      mgpu.TileTransformAttr.get((major_tiling, minor_tiling)),
+      mgpu.TileTransformAttr.get(tiling),
       mgpu.SwizzleTransformAttr.get(minor_tiling * element_bytewidth),
   ])
 
@@ -316,6 +315,46 @@ def _infer_memref_subview_transforms(
       )
 
   return [transforms], [transforms]
+
+
+@partial(_add_transform_inference_rule, memref.TransposeOp)
+def _infer_memref_transpose_transforms(
+    op: memref.TransposeOp,
+) -> OptionalTransforms:
+  in_ty = ir.MemRefType(op.in_.type)
+  if len(in_ty.shape) != 2:
+    raise NotImplementedError(f"Only 2D memrefs are supported, got {in_ty}")
+
+  users = list(op.result.uses)
+  if len(users) != 1:
+    raise NotImplementedError(
+        f"Only memref.transpose with a single use are supported, got {op}"
+    )
+
+  op_operand_use = users[0]
+  consumer = op_operand_use.owner
+  if consumer.name != "mosaic_gpu.wgmma":
+    raise NotImplementedError(
+        f"Only a mosacig_gpu.wgmma consumer is supported, got {consumer}"
+    )
+  op_user = consumer.operands[op_operand_use.operand_number]
+  out_transforms = inference_utils.in_transforms_for_operand(consumer, op_user)
+
+  in_strides, _ = in_ty.get_strides_and_offset()
+  out_strides, _ = ir.MemRefType(op.result.type).get_strides_and_offset()
+  transpose = in_strides != out_strides
+
+  in_transforms = []
+  if not transpose:
+    in_transforms = out_transforms
+  else:
+    for t in out_transforms:
+      if mgpu.TileTransformAttr.isinstance(t):
+        transposed_tiling = mgpu.TileTransformAttr(t).tiling[::-1]
+        t = mgpu.TileTransformAttr.get(transposed_tiling)
+      in_transforms.append(t)
+
+  return [ir.ArrayAttr.get(in_transforms)], [out_transforms]
 
 
 # `memref.load` is used to load barrier phases---the rule needn't do anything

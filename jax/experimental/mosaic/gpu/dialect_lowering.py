@@ -510,32 +510,71 @@ def swizzle_and_transforms_from_transforms_attr(
   return swizzle or mgpu.SwizzlingMode.kNoSwizzle, tuple(gmem_transforms)
 
 
+def _is_memref_transposed(mem_ref_type: ir.MemRefType) -> bool:
+  strides, _ = mem_ref_type.get_strides_and_offset()
+  prev_stride = 0
+  for stride in strides[::-1]:
+    if stride < prev_stride:
+      return True
+    prev_stride = stride
+  return False
+
+
+def _transform_shape(
+    shape: Sequence[int],
+    transforms: tuple[launch_context.MemRefTransform, ...],
+    transposed: bool,
+) -> tuple[tuple[int, ...], tuple[int, ...] | None]:
+  """Applies the given transforms and transposes the given shape.
+  Returns the new shape as well as the transpose permutation or None if the
+  shape is not transposed.
+  """
+  if len(shape) > 2:
+    raise NotImplementedError(
+        f"Only 1D and 2D shapes can be transformed, but got {shape}"
+    )
+
+  perm = None
+  for t in transforms:
+    shape = t.transform_shape(shape)
+  if transposed:
+    if len(shape) == 2:
+      perm = (1, 0)
+    elif len(shape) == 4:
+      perm = (1, 0, 3, 2)
+    shape = launch_context.TransposeTransform(perm).transform_shape(shape)
+  return shape, perm
+
+
 def transform_memref(
-    mem_ref: ir.Value, transforms: tuple[launch_context.MemRefTransform, ...]
+    mem_ref: ir.Value,
+    transforms: tuple[launch_context.MemRefTransform, ...],
 ) -> ir.Value:
   """Reinterprets the memref to one where the shape is transformed as given."""
-  if not transforms:
+  mem_ref_type = ir.MemRefType(mem_ref.type)
+  transposed = _is_memref_transposed(mem_ref_type)
+  if not transforms and not transposed:
     return mem_ref
 
-  mem_ref_type = ir.MemRefType(mem_ref.type)
   if mem_ref_type.memory_space != ir.Attribute.parse(
       "#gpu.address_space<workgroup>"
   ):
     raise ValueError(f"Only workgroup memory is supported but got {mem_ref}.")
 
-  shape = mem_ref_type.shape
-  for t in transforms:
-    shape = t.transform_shape(shape)
-
+  shape, permutation = _transform_shape(
+      mem_ref_type.shape, transforms, transposed
+  )
   memref_new_type = ir.MemRefType.get(
       shape,
       mem_ref_type.element_type,
       memory_space=mem_ref_type.memory_space,
   )
-
   ms = utils.WORKGROUP_NVPTX_ADDRESS_SPACE
   ptr = utils.memref_ptr(mem_ref, memory_space=ms)
-  return utils.ptr_as_memref(ptr, memref_new_type, ptr_memory_space=ms)
+  ref = utils.ptr_as_memref(ptr, memref_new_type, ptr_memory_space=ms)
+  if permutation is not None:
+    ref = utils.memref_transpose(ref, permutation)
+  return ref
 
 
 @_register_lowering(mgpu.AsyncLoadOp)
@@ -559,6 +598,11 @@ def _mgpu_async_load_op_lowering_rule(
     idx = arith.index_cast(ir.IndexType.get(), idx_i32)
     v = idx if size < 0 else utils.DynamicSlice(idx, size)
     gmem_slice.append(v)
+
+    # TODO(dasenov): async_copy requires all GMEM strides except the last one
+    # to be a multiple of 16 bytes. This restriction could be worked around with
+    # strided layouts. We could do: flatten -> async_copy -> unflatted here,
+    # as long as flattened size is a multiple of 16.
 
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
@@ -595,6 +639,11 @@ def _mgpu_async_store_op_lowering_rule(
     idx = arith.index_cast(ir.IndexType.get(), idx_i32)
     v = idx if size < 0 else utils.DynamicSlice(idx, size)
     gmem_slice.append(v)
+
+  # TODO(dasenov): async_copy requires all GMEM strides except the last one
+  # to be a multiple of 16 bytes. This restriction could be worked around with
+  # strided layouts. We could do: flatten -> async_copy -> unflatted here,
+  # as long as flattened size is a multiple of 16.
 
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
