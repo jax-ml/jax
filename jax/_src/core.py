@@ -1869,7 +1869,7 @@ def _check_divisibility(sharding, shape):
           f" {size} times, but does not evenly divide the dimension size {sh}."
           f" Got shape: {shape} and sharding {sharding}")
 
-@cache(max_size=4096, trace_context_in_key=True)
+@cache(max_size=4096, trace_context_in_key=False)
 def get_sharding(sharding, shape):
   """Modifies and checks the sharding.
 
