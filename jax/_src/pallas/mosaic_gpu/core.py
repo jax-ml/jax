@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import abc
 import collections
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 import dataclasses
 import enum
 import itertools as it
@@ -519,9 +519,16 @@ class GPUMesh:
       )
 
   @property
-  def shape(self):
+  def backend(self) -> str:
+    return "mosaic_gpu"
+
+  @property
+  def shape(self) -> collections.OrderedDict[object, int]:
+    pairs: Iterable[tuple[object, int]]
     if self.num_threads is not None:
-      pairs = zip(self.axis_names, (*self.grid, *self.cluster, self.num_threads))
+      pairs = zip(
+          self.axis_names, (*self.grid, *self.cluster, self.num_threads)
+      )
     else:
       pairs = tuple(
           zip(
@@ -563,8 +570,7 @@ def _gpu_mesh_discharge_rule(
       out_avals,
       *args,
       jaxpr=jaxpr,
-      grid=tuple(mesh.shape.items()),
-      backend="mosaic_gpu",
+      mesh=mesh,
       compiler_params=compiler_params,
       debug=debug,
       interpret=interpret,
