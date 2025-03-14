@@ -23,6 +23,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import inference_utils
@@ -91,6 +92,75 @@ class TransformInferenceTest(parameterized.TestCase):
         [arg_transforms, arg_transforms],
     )
     self.assertEmpty(inference_utils.out_transforms(wgmma_op))
+
+  def test_infer_transforms_for_async_load_derives_from_destination(self):
+    async_load_op = None
+    shape = (64, 64)
+    elt_ty = ir.BF16Type.get()
+
+    def body(gmem_ref, smem_ref, barrier):
+      nonlocal async_load_op
+      zero = arith.constant(ir.IntegerType.get_signless(32), 0)
+      async_load_op = mgpu.dialect.AsyncLoadOp(
+          source=gmem_ref,
+          destination=smem_ref,
+          barrier=barrier,
+          indices=[zero, zero],
+          slice_lengths=shape,
+          collective=ir.ArrayAttr.get([]),
+      )
+
+    with ir.InsertionPoint(self.module.body):
+      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+      gmem_ty = ir.MemRefType.get(shape, elt_ty)
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+      barrier_ty = ir.Type.parse("!mosaic_gpu.barrier")
+      f = func.FuncOp.from_py_func(gmem_ty, smem_ty, barrier_ty)(body).func_op
+
+    transforms = ir.ArrayAttr.get(
+        [mgpu.dialect.TransposeTransformAttr.get((1, 0))]
+    )
+    f.attributes["in_transforms"] = ir.ArrayAttr.get([transforms])
+
+    mgpu.infer_transforms(self.module)
+
+    self.assertSequenceEqual(
+        inference_utils.in_transforms(async_load_op), [transforms]
+    )
+    self.assertEmpty(inference_utils.out_transforms(async_load_op))
+
+  def test_infer_transforms_for_async_store_op_derives_from_source(self):
+    async_store_op = None
+    shape = (64, 64)
+    elt_ty = ir.BF16Type.get()
+
+    def body(gmem_ref, smem_ref):
+      nonlocal async_store_op
+      zero = arith.constant(ir.IntegerType.get_signless(32), 0)
+      async_store_op = mgpu.dialect.AsyncStoreOp(
+          source=smem_ref,
+          destination=gmem_ref,
+          indices=[zero, zero],
+          slice_lengths=shape,
+      )
+
+    with ir.InsertionPoint(self.module.body):
+      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+      gmem_ty = ir.MemRefType.get(shape, elt_ty)
+      smem_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+      f = func.FuncOp.from_py_func(gmem_ty, smem_ty)(body).func_op
+
+    transforms = ir.ArrayAttr.get(
+        [mgpu.dialect.TransposeTransformAttr.get((1, 0))]
+    )
+    f.attributes["in_transforms"] = ir.ArrayAttr.get([transforms])
+
+    mgpu.infer_transforms(self.module)
+
+    self.assertSequenceEqual(
+        inference_utils.in_transforms(async_store_op), [transforms]
+    )
+    self.assertEmpty(inference_utils.out_transforms(async_store_op))
 
 
 if __name__ == "__main__":

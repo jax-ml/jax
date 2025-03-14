@@ -98,6 +98,18 @@ def infer_wgmma_transforms(op: mgpu.WGMMAOp) -> OptionalTransforms:
   return [b_transforms], []
 
 
+@partial(_add_transform_inference_rule, mgpu.AsyncStoreOp)
+def _infer_async_store_transforms(op: mgpu.AsyncStoreOp) -> OptionalTransforms:
+  in_transforms = inference_utils.value_transforms(op.source)
+  return None if in_transforms is None else ([in_transforms], [])
+
+
+@partial(_add_transform_inference_rule, mgpu.AsyncLoadOp)
+def _infer_async_load_transforms(op: mgpu.AsyncLoadOp) -> OptionalTransforms:
+  in_transforms = inference_utils.value_transforms(op.destination)
+  return None if in_transforms is None else ([in_transforms], [])
+
+
 def _should_have_transforms(op: ir.OpView) -> bool:
   """Returns 'True' if the operation should be assigned in/out transforms."""
   return any(
@@ -111,7 +123,10 @@ def _should_have_transforms(op: ir.OpView) -> bool:
 def infer_transforms(module: ir.Module):
   """Infers transforms for the given module.
 
-  Transforms are to smem refs the what layouts are to vectors.
+  Transforms are to memrefs what layouts are to vectors. More specifically,
+  transforms describe mappings between SMEM refs and GMEM refs, and are
+  determined based on how SMEM refs are used. For that reason, we always
+  annotate and apply memrefs on SMEM refs.
 
   The pass is meant to be called on a module where layouts have been fully
   specified. We error out if two distinct sets of transforms are competing to
