@@ -217,6 +217,20 @@ def generate_group_sizes(expert_count, token_count, key1, key2):
   return group_sizes
 
 
+def get_schedule(group_sizes, chunk_size):
+  group_sizes = group_sizes.tolist()
+  chunks = []
+  group_ids = []
+  for i, g in enumerate(group_sizes):
+    while g > chunk_size:
+      group_ids.append(i)
+      chunks.append(chunk_size)
+      g -= chunk_size
+    group_ids.append(i)
+    chunks.append(g)
+  return jnp.array(chunks), jnp.array(group_ids)
+
+
 def main(unused_argv):
   m, k, n = 8192, 4096, 8192
   e = 64  # experts
@@ -225,6 +239,9 @@ def main(unused_argv):
   a = jr.normal(key=ka, shape=(m, k), dtype=jnp.float16)
   b = jr.normal(key=kb, shape=(n, k), dtype=jnp.float16)
   group_sizes = generate_group_sizes(e, m, ke1, ke2)
+  # this should be set to tile_m
+  chunk_size = 128
+  chunks, group_ids = get_schedule(group_sizes, chunk_size)
 
   tile_m = (128,)
   tile_n = (128, 256, 512)
