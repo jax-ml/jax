@@ -51,3 +51,5 @@ from jax.experimental.mosaic.gpu.core import ThreadSemantics as ThreadSemantics
 GMEM = GPUMemorySpace.GMEM
 #: Alias of :data:`jax.experimental.pallas.mosaic_gpu.GPUMemorySpace.SMEM`.
 SMEM = GPUMemorySpace.SMEM
+#: Alias of :data:`jax.experimental.pallas.mosaic_gpu.GPUMemorySpace.TMEM`.
+TMEM = GPUMemorySpace.TMEM

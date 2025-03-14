@@ -57,6 +57,7 @@ import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core as mgpu_core
 from jax.experimental.mosaic.gpu import profiler as mgpu_profiler
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
+from jax.experimental.mosaic.gpu import tcgen05
 import jax.numpy as jnp
 import numpy as np
 
@@ -74,6 +75,7 @@ SMEM = gpu_core.SMEM
 # sensitive to alignment and while this is quite conservative, it gets the job
 # done. We should make this more refined in the future.
 _SMEM_ALIGNMENT = 1024
+_TMEM_ALIGNMENT = 1024
 WARPGROUP_SIZE = 128
 
 def _align_to(x: int, alignment: int):
@@ -98,6 +100,7 @@ class ResourceEstimatorContext:
 @dataclasses.dataclass(kw_only=True, frozen=True)
 class Resources:
   smem_scratch_bytes: int = 0
+  tmem_scratch_bytes: int = 0
   barrier_counts: collections.Counter[mgpu.Barrier] = dataclasses.field(
       default_factory=collections.Counter
   )
@@ -107,6 +110,11 @@ class Resources:
         self,
         "smem_scratch_bytes",
         _align_to(self.smem_scratch_bytes, _SMEM_ALIGNMENT),
+    )
+    object.__setattr__(
+        self,
+        "tmem_scratch_bytes",
+        _align_to(self.tmem_scratch_bytes, _TMEM_ALIGNMENT),
     )
 
   @property
@@ -120,6 +128,7 @@ class Resources:
     # we will allocate two barriers, even though one would be enough.
     return Resources(
         smem_scratch_bytes=self.smem_scratch_bytes + other.smem_scratch_bytes,
+        tmem_scratch_bytes=self.tmem_scratch_bytes + other.tmem_scratch_bytes,
         barrier_counts=self.barrier_counts + other.barrier_counts,
     )
 
@@ -127,6 +136,9 @@ class Resources:
     return Resources(
         smem_scratch_bytes=max(
             self.smem_scratch_bytes, other.smem_scratch_bytes
+        ),
+        tmem_scratch_bytes=max(
+            self.tmem_scratch_bytes, other.tmem_scratch_bytes
         ),
         barrier_counts=self.barrier_counts | other.barrier_counts,
     )
@@ -216,10 +228,17 @@ def _run_scoped_resource_estimator(
               )
           ])
       )
-    else:
+    elif aval.memory_space == gpu_core.TMEM:
+      rs += Resources(
+          tmem_scratch_bytes=math.prod(aval.shape) * aval.dtype.itemsize
+      )
+    elif aval.memory_space == gpu_core.SMEM:
       rs += Resources(
           smem_scratch_bytes=math.prod(aval.shape) * aval.dtype.itemsize
       )
+    else:
+      raise NotImplementedError(
+          f"Unsupported memory space: {aval.memory_space}")
   return rs + _estimate_resources(ctx, jaxpr)
 
 
@@ -242,6 +261,9 @@ class ModuleContext:
   single_wg_lane_predicate: ir.Value
   smem_requested_bytes: int
   smem_used_bytes: int
+  tmem_requested_bytes: int
+  tmem_used_bytes: int
+  tmem_base_ptr: ir.Value
   runtime_barriers: MutableMapping[
       mgpu.Barrier, MutableSequence[mgpu.BarrierRef]
   ]
@@ -260,6 +282,29 @@ class ModuleContext:
     if not available:
       raise RuntimeError(f"Barrier {barrier} is already reserved")
     return available.pop()
+
+  @contextlib.contextmanager
+  def alloc_tmem(
+      self,
+      struct: jax.ShapeDtypeStruct,
+      layout: tcgen05.TMEMLayout | None = None
+  ) -> Sequence[ir.Value]:
+    if self.tmem_used_bytes > 0:
+      raise NotImplementedError(
+          "Multiple TMEM allocations are not implemented.")
+    if layout is None:
+      layout = tcgen05._infer_tmem_layout(struct.shape, collective=False)
+    self.tmem_used_bytes += math.prod(struct.shape) * struct.dtype.itemsize
+    off = self.tmem_base_ptr
+    # TODO(justinfu): add tmem_used_bytes to offset
+    assert self.tmem_used_bytes % _TMEM_ALIGNMENT == 0
+    tmem_ref = tcgen05.TMEMRef(address=off,
+                               shape=struct.shape,
+                               dtype=mgpu_utils.dtype_to_ir_type(struct.dtype),
+                               layout=layout)
+    yield tmem_ref
+    self.tmem_used_bytes -= math.prod(struct.shape) * struct.dtype.itemsize
+
 
   # TODO(cperivol): Only return the shapes and figure out the sizes when freeing.
   @contextlib.contextmanager
@@ -601,7 +646,7 @@ def lower_jaxpr_to_module(
     parallel_grid = (math.prod(grid[:-2]), *grid[-2:])
 
   def body(launch_ctx: mgpu.LaunchContext, *buffers: ir.Value):
-    *buffers_gmem, (runtime_smem, runtime_barriers) = buffers
+    *buffers_gmem, (runtime_smem, runtime_barriers, runtime_tmem) = buffers
 
     grouped_barriers = collections.defaultdict(list)
     for barrier, barrier_ref in zip(rs.barriers, runtime_barriers):
@@ -614,6 +659,9 @@ def lower_jaxpr_to_module(
         mgpu.single_thread_predicate(per_block=False),
         smem_requested_bytes=math.prod(ir.MemRefType(runtime_smem.type).shape),
         smem_used_bytes=0,
+        tmem_requested_bytes=math.prod(runtime_tmem.shape),
+        tmem_used_bytes=0,
+        tmem_base_ptr=runtime_tmem.address,
         runtime_barriers=grouped_barriers,
         name_stack=source_info_util.NameStack(),
         traceback_caches=mlir.TracebackCaches(),
@@ -631,6 +679,22 @@ def lower_jaxpr_to_module(
   if smem_scratch_bytes is None:
     smem_scratch_bytes = rs.smem_scratch_bytes
 
+  tmem_scratch_bytes = params.get("tmem_scratch_bytes")
+  if tmem_scratch_bytes is None:
+    tmem_scratch_bytes = rs.tmem_scratch_bytes
+  # TODO(justinfu): Mosaic picks a layout when we allocate the scratch block.
+  # so we need this check. How to delay this until runtime?
+  assert tmem_scratch_bytes % 128 == 0, f"{tmem_scratch_bytes} Must be divisible by 128"
+
+  scratch_buffers = [
+    jax.ShapeDtypeStruct(shape=[smem_scratch_bytes], dtype=np.int8),
+    rs.barriers,
+  ]
+  if tmem_scratch_bytes > 0:
+    scratch_buffers.append(
+      mgpu.TMEM(shape=[128, tmem_scratch_bytes // 128], dtype=np.int8),
+    )
+
   prof_ctx = prof_spec = None
   if prof_space := params.get("profile_space", 0):
     # Each range is 2 events, each event is 4 bytes.
@@ -644,10 +708,7 @@ def lower_jaxpr_to_module(
           block=block,
           in_shapes=in_shapes,
           out_shape=out_shapes,
-          smem_scratch_shape=(
-              jax.ShapeDtypeStruct(shape=[smem_scratch_bytes], dtype=np.int8),
-              rs.barriers,
-          ),
+          smem_scratch_shape=scratch_buffers,
           module_name=mlir.sanitize_name(debug_info.func_name),
           prof_spec=prof_spec,
       )
@@ -950,6 +1011,19 @@ def _ndindexer_indices(indexer: indexing.NDIndexer) -> tuple[gpu_core.Index, ...
 
 @register_lowering_rule(sp.get_p, mgpu.ThreadSemantics.Lane)
 def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *leaves, tree):
+  if isinstance(x_smem, tcgen05.TMEMRef):
+    # TODO(justinfu): Add more general indexing support for TMEM refs.
+    transforms = jax.tree.unflatten(tree, leaves)
+    if len(transforms) != 1 or not isinstance(
+        transforms[0], indexing.NDIndexer):
+      raise NotImplementedError(
+          "Only a single indexing transform is supported for TMEM refs.")
+    indexer = cast(indexing.NDIndexer, transforms[0])
+    if not gpu_core.is_trivial_index(indexer.indices, x_smem.shape):
+      raise NotImplementedError(
+          "Only trivial indexing is supported for TMEM refs.")
+    return x_smem[:]
+
   if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
     raise TypeError(f"Can only load from references (got {x_smem}).")
 
@@ -1719,6 +1793,14 @@ def _run_scoped_lowering_rule(
       [input_ref] = alloc_stack.enter_context(
           ctx.module_ctx.scratch_view(
               [jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype)]
+          )
+      )
+      input_refs.append(input_ref)
+      should_discharge.append(False)
+    elif aval.memory_space == gpu_core.TMEM:
+      input_ref = alloc_stack.enter_context(
+          ctx.module_ctx.alloc_tmem(
+              jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype),
           )
       )
       input_refs.append(input_ref)
