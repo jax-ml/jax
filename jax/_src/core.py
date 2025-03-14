@@ -39,7 +39,7 @@ from jax._src import config
 from jax._src import effects
 from jax._src import compute_on
 from jax._src import mesh as mesh_lib
-from jax._src.mesh import AxisTypes
+from jax._src.mesh import AxisType
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
@@ -1835,7 +1835,7 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
       temp_s = s[0] if isinstance(s, tuple) else s
       new_spec.append(
           None
-          if mesh._name_to_type[temp_s] in (AxisTypes.Auto, AxisTypes.Manual)
+          if mesh._name_to_type[temp_s] in (AxisType.Auto, AxisType.Manual)
           else s)
   return P(*new_spec)
 

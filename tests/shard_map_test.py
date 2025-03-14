@@ -40,7 +40,7 @@ from jax._src import test_util as jtu
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
-from jax._src.mesh import AxisTypes
+from jax._src.mesh import AxisType
 from jax._src.interpreters import partial_eval as pe
 from jax._src import linear_util as lu
 from jax._src import tree_util
@@ -1891,7 +1891,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     def g(x):
       self.assertDictEqual(x.aval.sharding.mesh._axis_types_dict,
-                           {AxisTypes.Manual: ('i',), AxisTypes.Auto: ('j',)})
+                           {AxisType.Manual: ('i',), AxisType.Auto: ('j',)})
       x = jax.lax.with_sharding_constraint(
           x, jax.sharding.NamedSharding(mesh, P(None, 'j')))
       return x * x
@@ -1923,11 +1923,11 @@ class ShardMapTest(jtu.JaxTestCase):
 
   def test_partial_auto_explicit_no_use_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('i', 'j'),
-                           axis_types=(AxisTypes.Explicit,) * 2)
+                           axis_types=(AxisType.Explicit,) * 2)
 
     def g(x):
       self.assertDictEqual(x.aval.sharding.mesh._axis_types_dict,
-                           {AxisTypes.Manual: ('i',), AxisTypes.Explicit: ('j',)})
+                           {AxisType.Manual: ('i',), AxisType.Explicit: ('j',)})
       self.assertEqual(x.aval.sharding.spec, P(None, 'j'))
       out = x * x
       self.assertEqual(out.aval.sharding.spec, P(None, 'j'))
@@ -1953,7 +1953,7 @@ class ShardMapTest(jtu.JaxTestCase):
   def test_partial_auto_explicit(self, mesh):
     def g(x):
       self.assertDictEqual(x.aval.sharding.mesh._axis_types_dict,
-                           {AxisTypes.Manual: ('i',), AxisTypes.Explicit: ('j',)})
+                           {AxisType.Manual: ('i',), AxisType.Explicit: ('j',)})
       self.assertEqual(x.aval.sharding.spec, P(None, 'j'))
       out = x * x
       self.assertEqual(out.aval.sharding.spec, P(None, 'j'))
@@ -1997,8 +1997,8 @@ class ShardMapTest(jtu.JaxTestCase):
   def test_partial_auto_explicit_multi_explicit(self, mesh):
     def g(x):
       self.assertDictEqual(x.aval.sharding.mesh._axis_types_dict,
-                           {AxisTypes.Manual: ('i', 'j'),
-                            AxisTypes.Explicit: ('k', 'l')})
+                           {AxisType.Manual: ('i', 'j'),
+                            AxisType.Explicit: ('k', 'l')})
       self.assertEqual(x.aval.sharding.spec, P(None, None, 'k', 'l'))
       out = x.T
       self.assertEqual(out.aval.sharding.spec, P('l', 'k', None, None))

@@ -21,7 +21,7 @@ import jax
 from jax._src import core
 from jax._src import config
 from jax._src import test_util as jtu
-from jax.sharding import NamedSharding, PartitionSpec as P, AxisTypes
+from jax.sharding import NamedSharding, PartitionSpec as P, AxisType
 import jax.numpy as jnp
 
 from jax._src.state.types import (RefEffect)
@@ -212,7 +212,7 @@ class MutableArrayTest(jtu.JaxTestCase):
   def test_explicit_sharding_after_indexing(self):
     # https://github.com/jax-ml/jax/issues/26936
     mesh = jtu.create_mesh((1, 1), ('x', 'y'),
-                           axis_types=(AxisTypes.Explicit,) * 2)
+                           axis_types=(AxisType.Explicit,) * 2)
     sharding = NamedSharding(mesh, P('x', 'y'))
 
     @jax.jit

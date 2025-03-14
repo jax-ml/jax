@@ -47,7 +47,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.core import Tracer
-from jax._src.mesh import (AbstractMesh, Mesh, AxisTypes, use_abstract_mesh,
+from jax._src.mesh import (AbstractMesh, Mesh, AxisType, use_abstract_mesh,
                            get_abstract_mesh)
 from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.lax import (lax, parallel as lax_parallel, slicing,
@@ -487,21 +487,21 @@ def _as_manual_mesh(mesh, auto: frozenset):
     cur_mesh = mesh
   explicit_axes, auto_axes = set(), set()  # type: ignore
   for a in auto:
-    if cur_mesh._name_to_type[a] == AxisTypes.Auto:
+    if cur_mesh._name_to_type[a] == AxisType.Auto:
       auto_axes.add(a)
     else:
-      assert cur_mesh._name_to_type[a] == AxisTypes.Explicit
+      assert cur_mesh._name_to_type[a] == AxisType.Explicit
       explicit_axes.add(a)
 
   new_axis_types = []
   for n in mesh.axis_names:
     if n in manual_axes:
-      new_axis_types.append(AxisTypes.Manual)
+      new_axis_types.append(AxisType.Manual)
     elif n in auto_axes:
-      new_axis_types.append(AxisTypes.Auto)
+      new_axis_types.append(AxisType.Auto)
     else:
       assert n in explicit_axes
-      new_axis_types.append(AxisTypes.Explicit)
+      new_axis_types.append(AxisType.Explicit)
   return AbstractMesh(mesh.axis_sizes, mesh.axis_names,
                       axis_types=tuple(new_axis_types))
 
@@ -1901,7 +1901,7 @@ def _all_newly_manual_mesh_names(
   vmap_spmd_names = set(axis_env.spmd_axis_names)
   if not (ctx_mesh := get_abstract_mesh()).empty:
     mesh = ctx_mesh
-    already_manual_names = set(ctx_mesh._axis_types_dict.get(AxisTypes.Manual, ()))
+    already_manual_names = set(ctx_mesh._axis_types_dict.get(AxisType.Manual, ()))
   else:
     # TODO(mattjj): remove this mechanism when we revise mesh scopes
     already_manual_names = set(axis_env.axis_sizes)  # may include vmap axis_names

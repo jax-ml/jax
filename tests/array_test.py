@@ -32,7 +32,7 @@ from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import dialects, ir
 from jax._src.util import safe_zip
-from jax._src.mesh import AxisTypes
+from jax._src.mesh import AxisType
 from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (
     _op_sharding_to_pos_sharding, pmap_sharding_devices_indices_map,
@@ -1356,40 +1356,40 @@ class ShardingTest(jtu.JaxTestCase):
         ValueError,
         'Number of axis names should match the number of axis_types'):
       jtu.create_mesh((2, 1), ('x', 'y'),
-                      axis_types=jax.sharding.AxisTypes.Auto)
+                      axis_types=jax.sharding.AxisType.Auto)
 
     with self.assertRaisesRegex(
         ValueError,
         'Number of axis names should match the number of axis_types'):
       jax.sharding.AbstractMesh((2, 1), ('x', 'y'),
-                                axis_types=jax.sharding.AxisTypes.Auto)
+                                axis_types=jax.sharding.AxisType.Auto)
 
   def test_make_mesh_axis_types(self):
-    Auto, Explicit, Manual = AxisTypes.Auto, AxisTypes.Explicit, AxisTypes.Manual
+    Auto, Explicit, Manual = AxisType.Auto, AxisType.Explicit, AxisType.Manual
 
     mesh1 = jax.sharding.AbstractMesh((2,), 'x', axis_types=Auto)
     mesh2 = jax.sharding.AbstractMesh((2,), 'x', axis_types=Auto)
     self.assertEqual(mesh1, mesh2)
 
     mesh = jax.make_mesh((1, 1), ('x', 'y'))
-    self.assertDictEqual(mesh._axis_types_dict, {AxisTypes.Auto: ('x', 'y')})
+    self.assertDictEqual(mesh._axis_types_dict, {AxisType.Auto: ('x', 'y')})
 
     mesh = jax.make_mesh((1, 1, 1), ('x', 'y', 'z'),
                          axis_types=(Explicit, Auto, Manual))
     self.assertDictEqual(
-        mesh._axis_types_dict, {AxisTypes.Auto: ('y',), AxisTypes.Explicit: ('x',),
-                          AxisTypes.Manual: ('z',)})
+        mesh._axis_types_dict, {AxisType.Auto: ('y',), AxisType.Explicit: ('x',),
+                          AxisType.Manual: ('z',)})
 
     mesh = jax.make_mesh((1, 1, 1), ('x', 'y', 'z'),
                          axis_types=(Explicit, Explicit, Manual))
-    self.assertDictEqual(mesh._axis_types_dict, {AxisTypes.Explicit: ('x', 'y'),
-                                           AxisTypes.Manual: ('z',)})
+    self.assertDictEqual(mesh._axis_types_dict, {AxisType.Explicit: ('x', 'y'),
+                                           AxisType.Manual: ('z',)})
 
     mesh = jax.make_mesh((1, 1), ('x', 'y'), axis_types=(Explicit, Explicit))
-    self.assertDictEqual(mesh._axis_types_dict, {AxisTypes.Explicit: ('x', 'y')})
+    self.assertDictEqual(mesh._axis_types_dict, {AxisType.Explicit: ('x', 'y')})
 
     mesh = jax.make_mesh((1,), 'model', axis_types=Manual)
-    self.assertDictEqual(mesh._axis_types_dict, {AxisTypes.Manual: ('model',)})
+    self.assertDictEqual(mesh._axis_types_dict, {AxisType.Manual: ('model',)})
 
     with self.assertRaisesRegex(
         ValueError,

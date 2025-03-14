@@ -108,7 +108,7 @@ def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArraySharding, mesh):
       used_axes.extend(d.axes)
     remaining_axes = set(mesh.axis_names) - set(used_axes)
     replicated_axes = tuple(r for r in remaining_axes
-                            if mesh._name_to_type[r] == mesh_lib.AxisTypes.Explicit)
+                            if mesh._name_to_type[r] == mesh_lib.AxisType.Explicit)
     return SdyArraySharding(sdy_sharding.mesh_shape, dim_shardings,
                             sdy_sharding.logical_device_ids, replicated_axes)
   return sdy_sharding
@@ -1301,7 +1301,7 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
     if s is None:
       continue
     if sharding.mesh._name_to_type[s] in {
-        mesh_lib.AxisTypes.Auto, mesh_lib.AxisTypes.Manual}:
+        mesh_lib.AxisType.Auto, mesh_lib.AxisType.Manual}:
       raise ValueError(
           f'PartitionSpec passed to {api_name} cannot contain axis'
           ' names that are of type Auto or Manual. Got PartitionSpec:'
@@ -1313,7 +1313,7 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
 
 def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
               *, devices: Sequence[xc.Device] | None = None,
-              axis_types: tuple[mesh_lib.AxisTypes, ...] | None = None
+              axis_types: tuple[mesh_lib.AxisType, ...] | None = None
               ) -> mesh_lib.Mesh:
   """Creates an efficient mesh with the shape and axis names specified.
 

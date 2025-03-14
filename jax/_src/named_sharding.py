@@ -409,7 +409,7 @@ def named_sharding_to_xla_hlo_sharding(
 
   special_axes = {}
   mesh_manual_axes = {n for n, t in self.mesh._name_to_type.items()
-                      if t == mesh_lib.AxisTypes.Manual}
+                      if t == mesh_lib.AxisType.Manual}
   manual_axes = self._manual_axes.union(mesh_manual_axes)
   if manual_axes:
     axis_names = self.mesh.axis_names
@@ -564,7 +564,7 @@ def _check_mesh_resource_axis(mesh, pspec, _manual_axes):
           'AxisTypes should be the same in a tuple subset of PartitionSpec:'
           f' {pspec}. Got subset {p} with axis'
           f' types: ({", ".join(str(mesh._name_to_type[r]) for r in p)})')
-  if (mesh_lib.AxisTypes.Auto not in mesh._axis_types_dict and
+  if (mesh_lib.AxisType.Auto not in mesh._axis_types_dict and
       PartitionSpec.UNCONSTRAINED in pspec):
     raise ValueError(
         f'{pspec} cannot contain'

@@ -31,7 +31,7 @@ from jax._src.partition_spec import (
 from jax._src.interpreters.pxla import Mesh as Mesh
 from jax._src.mesh import (
     AbstractMesh as AbstractMesh,
-    AxisTypes as AxisTypes,
+    AxisType as AxisType,
 )
 
 _deprecations = {
