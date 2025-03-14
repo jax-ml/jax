@@ -36,6 +36,7 @@ load(
     "py_library_providing_imports_info",
     "pytype_library",
     "pytype_strict_library",
+    "serialize_executable_internal_users",
 )
 
 package(
@@ -125,6 +126,12 @@ package_group(
     name = "mosaic_gpu_users",
     includes = [":internal"],
     packages = mosaic_gpu_internal_users,
+)
+
+package_group(
+    name = "serialize_executable_users",
+    includes = [":internal"],
+    packages = serialize_executable_internal_users,
 )
 
 # JAX-private test utilities.
@@ -616,6 +623,16 @@ pytype_strict_library(
     deps = [
         "//jax/_src/lib",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "serialize_executable",
+    srcs = ["experimental/serialize_executable.py"],
+    visibility = [":serialize_executable_users"],
+    deps = [
+        ":jax",
+        "//jax/_src/lib",
+    ],
 )
 
 pytype_strict_library(
