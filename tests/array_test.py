@@ -839,8 +839,8 @@ class JaxArrayTest(jtu.JaxTestCase):
     s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
     with self.assertRaisesRegex(
         ValueError,
-        'If `arrays` is empty, `dtype` must be provided via the `dtype` '
-        'argument to `jax.make_array_from_single_device_arrays`.'):
+        'If the Array has no addressable shards, `dtype` must be provided via '
+        'the `dtype` argument to `jax.make_array_from_single_device_arrays`.'):
       jax.make_array_from_single_device_arrays((8, 2), s, [])
 
   def test_make_array_from_single_device_arrays_bad_dtype_error(self):
@@ -851,7 +851,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         'If `dtype` is provided to `jax.make_array_from_single_device_arrays`, '
-        'it must match the dtype of the arrays in `arrays`.'):
+        'it must match the dtype of the addressable shards.'):
       jax.make_array_from_single_device_arrays(
           shape, s, [arr], dtype=jnp.float32)
 

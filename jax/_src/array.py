@@ -680,6 +680,28 @@ def _get_shape_from_index(slc: Index, shape: Shape) -> Shape:
       if isinstance(s, slice)  # If element is int, this dimension is reduced
   )
 
+def _get_and_check_dtype(arrays: Sequence[basearray.Array | np.ndarray],
+                         dtype: DTypeLike | None, fname: str):
+  if arrays:
+    if dtype is None:
+      dtype = arrays[0].dtype
+    else:
+      if arrays[0].dtype != dtype:
+        raise ValueError(
+            f"If `dtype` is provided to `jax.{fname}`, it must match the dtype "
+            f"of the addressable shards. Got dtype={dtype} and shard "
+            f"dtype={arrays[0].dtype}`.")
+  else:
+    if not config.enable_empty_arrays.value:
+      raise ValueError(
+          f"Building an Array with no addressable shards with `jax.{fname}` is "
+          "supported only if `jax.config.enable_empty_arrays` is set to True."
+      )
+    if dtype is None:
+      raise ValueError(
+          "If the Array has no addressable shards, `dtype` must be provided "
+          f"via the `dtype` argument to `jax.{fname}`.")
+  return dtype
 
 # explicitly set to be unhashable.
 setattr(ArrayImpl, "__hash__", None)
@@ -689,7 +711,8 @@ setattr(ArrayImpl, "__array_priority__", 100)
 
 def make_array_from_callback(
     shape: Shape, sharding: Sharding | Layout,
-    data_callback: Callable[[Index | None], ArrayLike]) -> ArrayImpl:
+    data_callback: Callable[[Index | None], ArrayLike],
+    dtype: DTypeLike | None = None) -> ArrayImpl:
   # pyformat: disable
   """Returns a ``jax.Array`` via data fetched from ``data_callback``.
 
@@ -705,6 +728,9 @@ def make_array_from_callback(
     data_callback : Callback that takes indices into the global array value as
       input and returns the corresponding data of the global array value.
       The data can be returned as any array-like object, e.g. a ``numpy.ndarray``.
+    dtype: The dtype of the output ``jax.Array``. If not provided, the dtype of
+      the data for the first addressable shard is used. If there are no
+      addressable shards, the ``dtype`` argument must be provided.
 
   Returns:
     A ``jax.Array`` via data fetched from ``data_callback``.
@@ -765,24 +791,28 @@ def make_array_from_callback(
         get_data(device_to_index_map[device]) for device in devices
     ]
 
-  first_value = per_device_values[0]
-  expected_dtype = first_value.dtype
+  dtype = _get_and_check_dtype(
+      per_device_values, dtype, "make_array_from_callback")
   expected_shape = sharding.shard_shape(shape)
   aval = core.update_aval_with_sharding(
-      core.ShapedArray(shape, expected_dtype), sharding)
+      core.ShapedArray(shape, dtype), sharding)
+
   _validate_shape_and_dtype_for_per_device_arrays(
       per_device_values,
       expected_shape=expected_shape,
       aval=aval,
       sharding=sharding,
   )
-  if (isinstance(first_value, ArrayImpl)
-      and first_value._committed
-      and sharding.is_fully_replicated
-      and first_value.is_fully_replicated
-      and first_value.sharding._device_assignment == tuple(devices)
-      and first_value.layout.device_local_layout == dll):
-    return first_value
+  first_value = None
+  if per_device_values:
+    first_value = per_device_values[0]
+    if (isinstance(first_value, ArrayImpl)
+        and first_value._committed
+        and sharding.is_fully_replicated
+        and first_value.is_fully_replicated
+        and first_value.sharding._device_assignment == tuple(devices)
+        and first_value.layout.device_local_layout == dll):
+      return first_value
 
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     # TODO(yashkatariya): Can this also use batched_device_put?
@@ -1031,26 +1061,8 @@ def make_array_from_single_device_arrays(
   jax.Array, use ``jax.make_array_from_process_local_data``.
   """
   if isinstance(arrays, Sequence):
-    if arrays:
-      if dtype is None:
-        dtype = arrays[0].dtype
-      else:
-        if arrays[0].dtype != dtype:
-          raise ValueError(
-              "If `dtype` is provided to "
-              "`jax.make_array_from_single_device_arrays`, it must match the "
-              f"dtype of the arrays in `arrays`. Got dtype={dtype} and arrays "
-              f"dtype={arrays[0].dtype}`.")
-    else:
-      if not config.enable_empty_arrays.value:
-        raise ValueError(
-            "An empty `arrays` list, to make a non-addressable Array, is "
-            "supported only if `jax.config.enable_empty_arrays` is set to True."
-        )
-      if dtype is None:
-        raise ValueError(
-            "If `arrays` is empty, `dtype` must be provided via the `dtype` "
-            "argument to `jax.make_array_from_single_device_arrays`.")
+    dtype = _get_and_check_dtype(
+        arrays, dtype, "make_array_from_single_device_arrays")
 
   # All input arrays should be committed. Checking it is expensive on
   # single-controller systems.
