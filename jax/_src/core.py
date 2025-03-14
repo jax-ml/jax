@@ -30,7 +30,7 @@ import types
 from typing import (Any, ClassVar, Generic, NamedTuple, TypeVar,
                     overload, Union)
 import warnings
-from weakref import ref
+import weakref
 
 import numpy as np
 
@@ -617,10 +617,12 @@ def check_avals_context_mesh(avals, prim_name):
 TracerType = TypeVar('TracerType', bound='Tracer')
 
 class Trace(Generic[TracerType]):
-  __slots__ = ("__weakref__", "_invalidated")
+  __slots__ = ("__weakref__", "_invalidated", "_weakref")
 
   def __init__(self):
     self._invalidated = False
+    # We frequently need a weakref to a trace, so let's precompute one.
+    self._weakref = weakref.ref(self)
 
   def process_primitive(self, primitive, tracers, params):
     raise NotImplementedError("must override")
@@ -1124,7 +1126,7 @@ class TracingContext(threading.local):
 
   def set_trace(self, trace):
     self.trace = trace
-    ts = ref(trace) if trace is not None else None
+    ts = trace._weakref if trace is not None else None
     config.trace_state.set_local(ts)
 
   def set_axis_env(self, axis_env):
@@ -1132,7 +1134,7 @@ class TracingContext(threading.local):
     config.axis_env_state.set_local(axis_env.as_hashable_key())
 
   def update_thread_local_jit_state(self):
-    ts = ref(self.trace) if self.trace is not None else None
+    ts = self.trace._weakref if self.trace is not None else None
     config.trace_state.set_local(ts)
     config.axis_env_state.set_local(self.axis_env.as_hashable_key())
 
@@ -1168,7 +1170,7 @@ class SetCurrentTraceContextManager:
     trace_ctx.set_trace(self.prev)
     if self.check_leaks and config.check_tracer_leaks.value:
       self.trace.invalidate()
-      trace_ref = ref(self.trace)
+      trace_ref = self.trace._weakref
       del self.trace
       live_trace = trace_ref()
       if live_trace is not None:
@@ -1254,7 +1256,7 @@ def ensure_no_leaks(trace:Trace):
   yield
   trace.invalidate()
   if config.check_tracer_leaks.value:
-    trace_ref = ref(trace)
+    trace_ref = trace._weakref
     del trace
     live_trace = trace_ref()
     if live_trace is not None:
@@ -3330,7 +3332,7 @@ class OpaqueTraceState:
 
 def get_opaque_trace_state(convention):
   del convention
-  return OpaqueTraceState(ref(trace_ctx.trace))
+  return OpaqueTraceState(trace_ctx.trace._weakref)
 
 def nonempty_axis_env() -> bool:
   return bool(trace_ctx.axis_env.axis_sizes)
