@@ -16,6 +16,7 @@
 
 from collections.abc import Callable, Sequence
 import enum
+from functools import partial
 import itertools
 from typing import cast
 
@@ -102,7 +103,7 @@ def _in_attr_for_operand(
   if attr_name == "in_layouts":
     predicate = lambda v: ir.VectorType.isinstance(v.type)
   elif attr_name == "in_transforms":
-    predicate = lambda v: ir.MemRefType.isinstance(v.type)
+    predicate = is_transformable_smem_memref
   else:
     raise ValueError(f"Unknown attribute: {attr_name}")
 
@@ -113,37 +114,12 @@ def _in_attr_for_operand(
   return op.attributes[attr_name][operand_number]  # type: ignore
 
 
-def in_layout_for_operand(
-    op: MlirOperation,
-    operand: ir.Value,
-) -> ir.Attribute | None:
-  """Returns the layout of the operand in the given operation if it is set.
-
-  Raises:
-    ValueError: If `operand` is not an operand of `op`, or if `operand` is not a
-      Vector.
-  """
-  if not ir.VectorType.isinstance(operand.type):
-    raise ValueError(f"{operand} is not a vector.")
-
-  return _in_attr_for_operand(op, operand, "in_layouts")
-
-
-def in_transforms_for_operand(
-    op: MlirOperation,
-    operand: ir.Value,
-) -> ir.Attribute | None:
-  """Returns the transforms for the operand in the given operation if it is set.
-
-  Raises:
-    ValueError: If `operand` is not an operand of `op`, or if `operand` is not a
-      memref.
-  """
-  if not ir.MemRefType.isinstance(operand.type):
-    raise ValueError(f"{operand} is not a memref.")
-
-  return _in_attr_for_operand(op, operand, "in_transforms")
-
+in_layout_for_operand = partial(
+    _in_attr_for_operand, attr_name="in_layouts"
+)
+in_transforms_for_operand = partial(
+    _in_attr_for_operand, attr_name="in_transforms"
+)
 
 def is_transformable_smem_memref(v: ir.Value) -> bool:
   """Whether the value is a memref in SMEM on which transforms should be applied."""
