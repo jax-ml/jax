@@ -116,21 +116,8 @@ jobs:
           exit 1
       - name: Install Python dependencies
         run: |
-          # Remove installation of NVIDIA wheels for CPU tests.
-          sed -i 's/-r gpu-test-requirements.txt/# -r gpu-test-requirements.txt/g' build/requirements.in
-
-          # TODO(srnitin): Remove after uv is installed in the Windows Dockerfile
           $JAXCI_PYTHON -m pip install uv~=0.5.30
-          # python 3.13t cannot compile zstandard 0.23.0 due to
-          # https://github.com/indygreg/python-zstandard/issues/231. Remove this once zstandard
-          # has a prebuilt wheel for 3.13t or an env marker is available for free threading python
-          # in requirements.in.
-          if [[ $JAXCI_PYTHON =~ "python3.13-nogil" ]]; then
-            grep -v "zstandard" build/requirements.in > build/requirements_without_zstandard.txt
-            $JAXCI_PYTHON -m uv pip install -r build/requirements_without_zstandard.txt
-          else
-            $JAXCI_PYTHON -m uv pip install -r build/requirements.in
-          fi
+          $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@main
