@@ -39,26 +39,21 @@ namespace mlir::tpu {
 // Arguments:
 //   src_sublane: A number of lanes in the full operand.
 //   hardware_generation: An integer indicating the target TPU generation.
-//   target_sublane_count: The number of sublane in the target shape.
+//   tiling_sublane: The number of sublane in the target shape.
 //   tpu_tiling_flags: A struct of flags indicating which large tiling modes are
 //     enabled by XLA for memrefs.
 //   bitwidth: The bitwidth of the element type of the operand.
 //   is_kernel_argument: Whether the operand is a kernel argument.
-int getTilingFactor(const int src_sublane, const int hardware_generation,
-                    const int64_t target_sublane_count,
+int getTilingFactor(const int src_sublane,
+                    const int hardware_generation,
+                    const int64_t tiling_sublane,
                     const TpuTilingFlags &tpu_tiling_flags,
                     const int8_t bitwidth, const bool is_kernel_argument) {
   CHECK(llvm::isPowerOf2_32(bitwidth));
-  CHECK_LE(2, bitwidth);
+  CHECK_LE(4, bitwidth);
   CHECK_LE(bitwidth, 32);
   const int packing = 32 / bitwidth;
   const int min_tiling = (1 + (hardware_generation < 4)) * packing;
-  // When packing is larger than the sublane count, we want its tiling to be at
-  // least as large as the packing to make sure we can fully pack values. For
-  // example, for int2 on the target with 8 sublanes, we want the tiling to be
-  // at least 16.
-  const int64_t tiling_sublane =
-      std::max(target_sublane_count, static_cast<int64_t>(packing));
   const int max_normal_tiling = tiling_sublane;
 
   int large_tiling = [&] {
