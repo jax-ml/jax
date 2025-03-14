@@ -37,10 +37,9 @@ from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
     SdyArraySharding, SdyDimSharding, UnspecifiedValue, AUTO,
-    ParsedPartitionSpec, _check_unique_resources, NamedSharding, UNSPECIFIED,
+    _check_unique_resources, NamedSharding, UNSPECIFIED,
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, get_array_mapping,
-    array_mapping_to_axis_resources, get_single_pspec, preprocess,
-    named_sharding_to_xla_hlo_sharding)
+    array_mapping_to_axis_resources, named_sharding_to_xla_hlo_sharding)
 from jax._src.op_shardings import (
     are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated)
 from jax._src.partition_spec import PartitionSpec
