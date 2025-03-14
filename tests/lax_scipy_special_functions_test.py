@@ -317,6 +317,33 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(lsp_special.gammaincc, osp_special.gammaincc, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.gammaincc, args_maker, rtol=rtol)
 
+  def testBetaIncBoundaryValues(self):
+    dtype = jax.numpy.zeros(0).dtype  # default float dtype.
+    fi = jax.numpy.finfo(dtype)
+    nan = float('nan')
+    inf = float('inf')
+    tiny = fi.tiny
+    eps = fi.eps
+    # TODO(pearu): enable tiny samples when a fix to scipy/scipy#22682
+    # will be available
+    a_samples = [nan, -0.5, inf, 0, eps, 1, tiny][:-1]
+    b_samples = [nan, -0.5, inf, 0, eps, 1, tiny][:-1]
+    x_samples = [nan, -0.5, 0, 0.5, 1, 1.5]
+    if jtu.parse_version(scipy.__version__) >= (1, 16):
+      samples_slice = slice(None)
+    else:
+      # disable samples that contradict with scipy/scipy#22425
+      samples_slice = slice(None, len(a_samples) * len(b_samples) * 2)
+
+    args_maker = lambda: [
+      np.array(lst[samples_slice]).astype(dtype)
+      for lst in [
+        sum(([a] * (len(b_samples) * len(x_samples)) for a in a_samples), []),
+        list(sum(([b] * len(a_samples) for b in b_samples), [])) * len(x_samples),
+        x_samples * (len(a_samples) * len(b_samples))]]
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 5e-5
+    self._CheckAgainstNumpy(osp_special.betainc, lsp_special.betainc, args_maker, rtol=rtol)
+    self._CompileAndCheck(lsp_special.betainc, args_maker, rtol=rtol)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
