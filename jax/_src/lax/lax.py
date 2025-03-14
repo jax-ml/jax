@@ -8422,3 +8422,13 @@ mlir.register_lowering(optimization_barrier_p,
 def _optimization_barrier_batcher(batched_args, batch_dims, **params):
   return optimization_barrier_p.bind(*batched_args, **params), batch_dims
 batching.primitive_batchers[optimization_barrier_p] = _optimization_barrier_batcher
+
+def _opt_barrier_jvp(primals, tangents):
+  tangents = [ad.instantiate_zeros(t) for t in tangents]
+  return optimization_barrier(primals), optimization_barrier(tangents)
+ad.primitive_jvps[optimization_barrier_p] = _opt_barrier_jvp
+
+def _opt_barrier_transpose(cts, *primals):
+  cts = [ad.instantiate_zeros(ct) for ct in cts]
+  return optimization_barrier(cts)
+ad.primitive_transposes[optimization_barrier_p] = _opt_barrier_transpose
