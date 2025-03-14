@@ -47,7 +47,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.core import Tracer
-from jax._src.mesh import (AbstractMesh, Mesh, AxisTypes, set_abstract_mesh,
+from jax._src.mesh import (AbstractMesh, Mesh, AxisType, use_abstract_mesh,
                            get_abstract_mesh)
 from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.lax import (lax, parallel as lax_parallel, slicing,
@@ -58,7 +58,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import (HashableFunction, HashablePartial, unzip2,
                            as_hashable_function, memoize, partition_list,
-                           split_list, subs_list2)
+                           merge_lists, split_list, subs_list2, foreach)
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -485,19 +485,26 @@ def _as_manual_mesh(mesh, auto: frozenset):
   cur_mesh = get_abstract_mesh()
   if cur_mesh.empty:
     cur_mesh = mesh
-  explicit_axes, auto_axes = [], []  # type: ignore
+  explicit_axes, auto_axes = set(), set()  # type: ignore
   for a in auto:
-    if cur_mesh._name_to_type[a] == AxisTypes.Auto:
-      auto_axes.append(a)
+    if cur_mesh._name_to_type[a] == AxisType.Auto:
+      auto_axes.add(a)
     else:
-      assert cur_mesh._name_to_type[a] == AxisTypes.Explicit
-      explicit_axes.append(a)
-  explicit_axes, auto_axes = tuple(explicit_axes), tuple(auto_axes)  # type: ignore
-  return AbstractMesh(
-      mesh.shape_tuple,
-      axis_types={
-          AxisTypes.Manual: manual_axes, AxisTypes.Auto: auto_axes,
-          AxisTypes.Explicit: explicit_axes})
+      assert cur_mesh._name_to_type[a] == AxisType.Explicit
+      explicit_axes.add(a)
+
+  new_axis_types = []
+  for n in mesh.axis_names:
+    if n in manual_axes:
+      new_axis_types.append(AxisType.Manual)
+    elif n in auto_axes:
+      new_axis_types.append(AxisType.Auto)
+    else:
+      assert n in explicit_axes
+      new_axis_types.append(AxisType.Explicit)
+  return AbstractMesh(mesh.axis_sizes, mesh.axis_names,
+                      axis_types=tuple(new_axis_types))
+
 
 def _extend_axis_env(mesh, auto):
   return core.extend_axis_env_nd([(k, v) for k, v in mesh.shape.items()
@@ -516,7 +523,7 @@ def _shard_map_staging(
   in_avals = [t.aval for t in in_tracers]
   in_avals_ = map(partial(_shard_aval, mesh, auto), in_names, in_avals)
   manual_mesh = _as_manual_mesh(mesh, auto)
-  with _extend_axis_env(mesh, auto), set_abstract_mesh(manual_mesh):
+  with _extend_axis_env(mesh, auto), use_abstract_mesh(manual_mesh):
     jaxpr, out_avals_, consts, () = pe.trace_to_jaxpr_dynamic(f, in_avals_)
   _check_names(out_names_thunk(), out_avals_)
   if check_rep:
@@ -532,7 +539,7 @@ def _shard_map_staging(
   constvars = map(trace.getvar, map(trace.to_jaxpr_tracer, consts))
   outvars = map(trace.makevar, out_tracers)
   in_names_staged = ({},) * len(consts) + tuple(in_names)  # type: ignore
-  with _extend_axis_env(mesh, auto), set_abstract_mesh(manual_mesh):
+  with _extend_axis_env(mesh, auto), use_abstract_mesh(manual_mesh):
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
   params = dict(mesh=mesh, in_names=in_names_staged,
                 out_names=tuple(out_names_thunk()), jaxpr=jaxpr,
@@ -641,15 +648,15 @@ def _check_rep(mesh: Mesh, jaxpr: core.Jaxpr, in_rep: Sequence[RepType]
   def write(v: core.Var, val: RepType) -> None:
     env[v] = val
 
-  map(write, jaxpr.constvars, [set(mesh.axis_names)] * len(jaxpr.constvars))
-  map(write, jaxpr.invars, in_rep)
+  foreach(write, jaxpr.constvars, [set(mesh.axis_names)] * len(jaxpr.constvars))
+  foreach(write, jaxpr.invars, in_rep)
   last_used = core.last_used(jaxpr)
   for e in jaxpr.eqns:
     rule = _check_rules.get(e.primitive, partial(_rule_missing, e.primitive))
     out_rep = rule(mesh, *map(read, e.invars), **e.params)
     if e.primitive.multiple_results:
       out_rep = [out_rep] * len(e.outvars) if type(out_rep) is set else out_rep
-      map(write, e.outvars, out_rep)
+      foreach(write, e.outvars, out_rep)
     else:
       write(e.outvars[0], out_rep)
     core.clean_up_dead_vars(e, env, last_used)
@@ -850,7 +857,7 @@ def _run_shmap(f, mesh, auto, args, reps, check_rep, context_mesh):
   in_tracers = map(partial(ShardMapTracer, trace), reps, args)
   manual_mesh = _as_manual_mesh(mesh, auto)
   with (core.set_current_trace(trace), _extend_axis_env(mesh, auto),
-        set_abstract_mesh(manual_mesh)):
+        use_abstract_mesh(manual_mesh)):
     ans = f.call_wrapped(*in_tracers)
     outs, out_rep = unzip2(map(trace.to_val_rep_pair, ans))
   return outs, out_rep
@@ -862,7 +869,7 @@ def _names_to_pspec(names: AxisNames) -> PartitionSpec:
 
 def _unmatch_spec(mesh: Mesh, src: AxisNames, x: JaxType, context_mesh) -> JaxType:
   with (core.eval_context(), jax.disable_jit(False),
-        set_abstract_mesh(context_mesh)):
+        use_abstract_mesh(context_mesh)):
     return jax.jit(HashablePartial(_unmatch, mesh, tuple(src.items())))(x)
 
 def _unmatch(mesh, src_tup, x):
@@ -919,6 +926,7 @@ class ShardMapTrace(core.Trace):
   context_mesh: AbstractMesh
 
   def __init__(self, mesh, auto, check, context_mesh):
+    super().__init__()
     self.mesh = mesh
     self.auto = auto
     self.check = check
@@ -941,7 +949,7 @@ class ShardMapTrace(core.Trace):
     else:
       f = HashablePartial(_prim_applier, prim, tuple(params.items()), self.mesh)
       with (core.eval_context(), jax.disable_jit(False), jax.debug_nans(False),
-            jax.debug_infs(False), set_abstract_mesh(self.context_mesh)):
+            jax.debug_infs(False), use_abstract_mesh(self.context_mesh)):
         out_vals = jax.jit(f)(*in_vals)
       _maybe_check_special(out_vals)
     rep_rule = _check_rules.get(prim, partial(_rule_missing, prim))
@@ -1011,13 +1019,13 @@ class ShardMapTracer(core.Tracer):
 
   def to_concrete_value(self):
     if self.rep == set(self._trace.mesh.axis_names):
-      with core.eval_context(), set_abstract_mesh(self._trace.context_mesh):
+      with core.eval_context(), use_abstract_mesh(self._trace.context_mesh):
         return core.to_concrete_value(self.val[0])
     else:
       return None
 
   def __str__(self) -> str:
-    with core.eval_context(), set_abstract_mesh(self._trace.context_mesh):
+    with core.eval_context(), use_abstract_mesh(self._trace.context_mesh):
       blocks = list(self.val)
     mesh = self._trace.mesh
     axis_names = f"({', '.join(map(str, mesh.axis_names))},)"
@@ -1602,7 +1610,7 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
                           out_tracers, shard_map_p, unk_params,
                           effs, source_info_util.current())
   for t in out_tracers: t.recipe = eqn
-  return pe.merge_lists(out_knowns, out_tracers, out_consts)
+  return merge_lists(out_knowns, out_tracers, out_consts)
 pe.JaxprTrace.process_shard_map = _shard_map_partial_eval
 
 def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
@@ -1616,26 +1624,26 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
   res_names = _all_newly_manual_mesh_names(mesh, auto, trace)
 
   @as_hashable_function(closure=linearize_outs_thunk)
-  def primal_out_names_thunk():
+  def fwd_out_names_thunk():
     _, _, _, _, in_fwd, out_fwd = linearize_outs_thunk()
     out_names = out_names_thunk()
     num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
     # This is incorrect so we set `check_rep=False` in the tangent (as in JVP).
     return (*({0: res_names} for _ in range(num_res_out)), *out_names)
-  primal_params = dict(
+  fwd_params = dict(
       mesh=mesh, in_names=in_names,
-      out_names_thunk=primal_out_names_thunk, check_rep=check_rep,
+      out_names_thunk=fwd_out_names_thunk, check_rep=check_rep,
       rewrite=rewrite, auto=auto)
-  all_primal_results = shard_map_p.bind_with_trace(
-      trace.parent_trace, (f_primal, *primals), primal_params)
+  all_fwd_results = shard_map_p.bind_with_trace(
+      trace.parent_trace, (f_primal, *primals), fwd_params)
   residual_avals, nzs_out, lin_jaxpr, env, in_fwd, out_fwd = linearize_outs_thunk()
   num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
-  non_fwd_res = all_primal_results[:num_res_out]
-  primals_out = all_primal_results[num_res_out:]
+  non_fwd_res = all_fwd_results[:num_res_out]
+  primals_out = all_fwd_results[num_res_out:]
   residuals = subs_list2(in_fwd, out_fwd, primals, primals_out, non_fwd_res)
   args_to_promote = [getattr(aval, 'shape', ()) == () and f1 is None and f2 is None
                      for aval, f1, f2 in zip(residual_avals, in_fwd, out_fwd)]
-  with core.extend_axis_env_nd(mesh.shape.items()):
+  with _extend_axis_env(mesh, auto), use_abstract_mesh(_as_manual_mesh(mesh, auto)):
     lin_jaxpr = _promote_scalar_residuals_jaxpr(lin_jaxpr, args_to_promote)
   out_names = out_names_thunk()
   residual_names = [in_names[f1] if f1 is not None else
@@ -1643,21 +1651,21 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
                     {0: res_names} for f1, f2 in zip(in_fwd, out_fwd)]
   new_in_names = (*residual_names, *({} for _ in range(len(env))),
                   *(ax for ax, nz in zip(in_names, nzs_in) if nz))
-  new_out_names = tuple(ax for ax, nz in zip(out_names, nzs_out) if nz)
-  @as_hashable_function(closure=(new_out_names))
+  tangent_out_names = tuple(ax for ax, nz in zip(out_names_thunk(), nzs_out) if nz)
+  @as_hashable_function(closure=tangent_out_names)
   def tangent_out_names_thunk():
-    return new_out_names
+    return tangent_out_names
   tangent_params = dict(
-      mesh=mesh, in_names=new_in_names,
-      out_names_thunk=tangent_out_names_thunk, check_rep=False,
-      rewrite=rewrite, auto=auto)
+      mesh=mesh, in_names=new_in_names, out_names_thunk=tangent_out_names_thunk,
+      check_rep=False, rewrite=rewrite, auto=auto)
 
-  # TODO TODO don't round-trip
+  # TODO(mattjj): avoid round-tripping the jaxpr through eval_jaxpr here
   def f_tangent(*args):
     return core.eval_jaxpr(lin_jaxpr, (), *args)
 
   nz_tangents_in = [t for (t, nz) in zip(tangents, nzs_in) if nz]
-  nz_tangents_out = shard_map_p.bind_with_trace(trace.tangent_trace,
+  nz_tangents_out = shard_map_p.bind_with_trace(
+      trace.tangent_trace,
       (lu.wrap_init(f_tangent, debug_info=lin_jaxpr.debug_info),
        *residuals, *env, *nz_tangents_in), tangent_params)
   nz_tangents_out_iter = iter(nz_tangents_out)
@@ -1726,21 +1734,24 @@ def _shard_map_transpose(out_cts, *args,
   all_args, in_tree = tree_flatten((out_cts, args))
 
   def fun_trans_callable(out_cts, args):
-    res, undefs = partition_list(map(ad.is_undefined_primal, args), args)
+    # TODO(mattjj): when #26811 lands, delete this and just run backward_pass
+    in_undef = map(ad.is_undefined_primal, args)
+    res, undefs = partition_list(in_undef, args)
     jaxpr_known, jaxpr_unknown, _, _ = pe.partial_eval_jaxpr_nounits(
-        pe.close_jaxpr(jaxpr), map(ad.is_undefined_primal, args), False)
+        pe.close_jaxpr(jaxpr), in_undef, False)
     res_reshaped = core.jaxpr_as_fun(jaxpr_known)(*res)
-    out = ad.backward_pass(
+    in_cts = ad.backward_pass(
         jaxpr_unknown.jaxpr, False, (), (*res_reshaped, *undefs), out_cts
-    )
-    out = [ad.Zero(_unshard_aval(mesh, ns, x.aval)) if type(x) is ad.Zero
-           else x if rewrite
-           else jax.lax.psum(x, tuple(_unmentioned2(mesh, ns, auto)))
-           for ns, x in zip(in_names, out)]
-    return out
+    )[len(res_reshaped):]
+    _, in_ct_names = partition_list(in_undef, in_names)
+    in_cts = [ad.Zero(_unshard_aval(mesh, ns, x.aval)) if type(x) is ad.Zero
+              else x if rewrite
+              else jax.lax.psum(x, tuple(_unmentioned2(mesh, ns, auto)))
+              for ns, x in zip(in_ct_names, in_cts)]
+    res_zeros = [ad_util.zero_from_primal(r) for r in res]
+    return merge_lists(in_undef, res_zeros, in_cts)
 
-  fun_trans = lu.wrap_init(fun_trans_callable,
-                           debug_info=jaxpr.debug_info)
+  fun_trans = lu.wrap_init(fun_trans_callable, debug_info=jaxpr.debug_info)
   fun_trans, nz_arg_cts = ad.nonzero_outputs(fun_trans)
   fun_trans_flat, out_tree = api_util.flatten_fun_nokwargs(fun_trans, in_tree)
 
@@ -1794,7 +1805,7 @@ def _partial_eval_jaxpr_custom_rule(
   which = [f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd)]
   mesh = eqn.params['mesh']
   with (_extend_axis_env(mesh, auto),
-        set_abstract_mesh(_as_manual_mesh(mesh, auto))):
+        use_abstract_mesh(_as_manual_mesh(mesh, auto))):
     jaxpr_known = pe.prune_jaxpr_outputs(jaxpr_known, [True] * num_out_primals + which)
     jaxpr_known, jaxpr_staged = _add_reshapes(which, jaxpr_known, jaxpr_staged)
   jaxpr_known = core.remove_named_axis_effects(jaxpr_known, mesh.axis_names)
@@ -1889,18 +1900,17 @@ def _all_mesh_names_except_spmd(
 def _all_newly_manual_mesh_names(
     mesh: Mesh, auto: frozenset[AxisName], trace=None
 ) -> tuple[AxisName, ...]:
+  axis_env = core.get_axis_env()
+  vmap_spmd_names = set(axis_env.spmd_axis_names)
   if not (ctx_mesh := get_abstract_mesh()).empty:
-    del mesh
-    already_manual_names = set(ctx_mesh.axis_types.get(AxisTypes.Manual, ()))
-    return tuple(name for name in ctx_mesh.axis_names
-                 if name not in auto | already_manual_names)
+    mesh = ctx_mesh
+    already_manual_names = set(ctx_mesh._axis_types_dict.get(AxisType.Manual, ()))
   else:
     # TODO(mattjj): remove this mechanism when we revise mesh scopes
-    axis_env = core.get_axis_env()
-    vmap_spmd_names = set(axis_env.spmd_axis_names)
     already_manual_names = set(axis_env.axis_sizes)  # may include vmap axis_names
-    return tuple(name for name in mesh.axis_names
-                 if name not in auto | vmap_spmd_names | already_manual_names)
+  return tuple(name for name in mesh.axis_names
+               if name not in auto | vmap_spmd_names | already_manual_names)
+
 
 # DCE
 
@@ -2035,6 +2045,7 @@ class RewriteTrace(core.Trace):
   mesh: Mesh
 
   def __init__(self, parent_trace, tag, mesh):
+    super().__init__()
     self.parent_trace = parent_trace
     self.tag = tag
     self.mesh = mesh

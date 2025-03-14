@@ -301,6 +301,7 @@ class SparseTrace(core.Trace):
   __slots__ = ("parent_trace", "tag", "spenv")
 
   def __init__(self, parent_trace, tag, spenv):
+    super().__init__()
     self.parent_trace = parent_trace
     self.tag = tag
     self.spenv = spenv

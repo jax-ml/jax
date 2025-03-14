@@ -1440,7 +1440,8 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   mesh = None
   if shardy_enabled:
     sdy_mesh_axes = xla_extension.sdy.get_mesh(mlir.module_to_bytecode(submodule))
-    mesh = mesh_lib.AbstractMesh(tuple(sdy_mesh_axes)) if sdy_mesh_axes else None
+    mesh = mesh_lib.AbstractMesh(
+        *list(zip(*sdy_mesh_axes))[::-1]) if sdy_mesh_axes else None
 
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.ShardingContext):

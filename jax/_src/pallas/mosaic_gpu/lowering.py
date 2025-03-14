@@ -52,6 +52,7 @@ from jax._src.state import indexing
 from jax._src.state import primitives as sp
 from jax._src.state import types as state_types
 from jax._src.state.types import RefReshaper
+from jax._src.util import foreach
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core as mgpu_core
 from jax.experimental.mosaic.gpu import profiler as mgpu_profiler
@@ -738,8 +739,8 @@ def lower_jaxpr_to_mosaic_gpu(
           if val.type != mlir_dtype:
             raise AssertionError(f"Scalar type must match ShapedArray dtype, got: {val.type} != {mlir_dtype}")
 
-  map(write_env, jaxpr.constvars, consts)
-  map(lambda v, a: write_env(v, a, require_value=False), jaxpr.invars, args)
+  foreach(write_env, jaxpr.constvars, consts)
+  foreach(lambda v, a: write_env(v, a, require_value=False), jaxpr.invars, args)
   # TODO(justinfu): Handle transform scopes.
   last_local_name_stack: list[str] = []
   named_regions = []
@@ -786,7 +787,7 @@ def lower_jaxpr_to_mosaic_gpu(
             f" {rule_ctx}\nWith inval types={inval_types}\nIn jaxpr:\n{jaxpr}"
         ) from e
       if eqn.primitive.multiple_results:
-        map(write_env, eqn.outvars, outvals)
+        foreach(write_env, eqn.outvars, outvals)
       else:
         write_env(eqn.outvars[0], outvals)
   while named_regions:  # Drain the name stack.
@@ -1938,6 +1939,7 @@ def _lower_while_via_fori(
 
 
 @register_lowering_rule(lax.while_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(lax.while_p, mgpu.ThreadSemantics.Warpgroup)
 def _while_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -1959,17 +1961,19 @@ def _while_lowering_rule(
         body_nconsts=body_nconsts,
     )
 
+  _is_acc = lambda x: isinstance(x, mgpu.WGMMAAccumulator)
+  _ensure = _ensure_ir_value
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    _ensure = lambda v, aval: v if _is_acc(v) else _ensure_fa(v, aval.dtype)
+
   # If we fail conversion to fori, fallback to an ordinary while loop.
   cond_consts, body_consts, carry = util.split_list(
       args, [cond_nconsts, body_nconsts]
   )
-  _cond_avals, body_avals, carry_avals = util.split_list(
+  _cond_avals, _body_avals, carry_avals = util.split_list(
       ctx.avals_in, [cond_nconsts, body_nconsts]
   )
-  carry = [
-      v if isinstance(v, mgpu.WGMMAAccumulator) else _ensure_fa(v, av)
-      for v, av in zip(carry, carry_avals)
-  ]
+  carry = [*map(_ensure, carry, carry_avals)]
   # Flatten the carry to get a concatenated list of registers from each FA.
   # Note that the treedef is also used below to unflatten the body results.
   flat_carry, carry_treedef = jax.tree.flatten(carry)
@@ -1992,12 +1996,8 @@ def _while_lowering_rule(
     loop_out = lower_jaxpr_to_mosaic_gpu(
         ctx.module_ctx, ctx.launch_ctx, body_jaxpr.jaxpr, body_args
     )
-    loop_out = [
-        v if isinstance(v, mgpu.WGMMAAccumulator) else _ensure_fa(v, av)
-        for v, av in zip(loop_out, carry_avals)
-    ]
+    loop_out = [*map(_ensure, loop_out, carry_avals)]
     for idx, (carry_fa, out_fa) in enumerate(zip(carry, loop_out)):
-      _is_acc = lambda x: isinstance(x, mgpu.WGMMAAccumulator)
       if _is_acc(carry_fa) != _is_acc(out_fa):
         raise ValueError(
             f"The loop body output has unexpected accumulator type: output[{idx}]"

@@ -460,6 +460,7 @@ def get_sharding_for_vmap(axis_data, orig_sharding, axis):
 class BatchTrace(Trace):
 
   def __init__(self, parent_trace, tag, axis_data):
+    super().__init__()
     self.parent_trace = parent_trace
     assert isinstance(axis_data, AxisData)
     self.axis_data = axis_data
@@ -1106,7 +1107,7 @@ def broadcast(x, sz, axis, mesh_axis=None):
   sharding = x_aval.sharding.with_spec(new_spec)
   # TODO(dougalm, yashkatariya): Delete this context manager once we figure
   # out how to ensure jaxpr arguments always have the context mesh.
-  with mesh_lib.set_abstract_mesh(sharding.mesh):
+  with mesh_lib.use_abstract_mesh(sharding.mesh):
     return jax.lax.broadcast_in_dim(x, shape, broadcast_dims,
                                     out_sharding=sharding)
 

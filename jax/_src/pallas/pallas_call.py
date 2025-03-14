@@ -44,6 +44,7 @@ from jax._src.pallas import primitives
 from jax._src.state import discharge as state_discharge
 from jax._src.state import types as state_types
 from jax._src.util import (
+    foreach,
     safe_map,
     safe_zip,
     split_list,
@@ -978,7 +979,7 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
           for bm in grid_mapping.block_mappings]
     # We perform a dynamic slice on the i/o blocks, which will be checked by
     # checkify for OOB accesses.
-    map(hlo_interpreter._dynamic_slice, start_indices, block_shapes,
+    foreach(hlo_interpreter._dynamic_slice, start_indices, block_shapes,
         [*input_args, *output_args], is_indexing_dim)
     return (i + 1, hlo_interpreter._get_next_indices(grid, loop_idx))
   def f(_):

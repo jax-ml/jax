@@ -36,6 +36,7 @@ jobs:
           exclude:
             - runner: "windows-x86-n2-64"
               python: "3.13-nogil"
+    name: "Pytest CPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
@@ -53,6 +54,7 @@ jobs:
           python: ["3.10","3.11", "3.12", "3.13", "3.13-nogil"]
           cuda: ["12.3", "12.1"]
           enable-x64: [0]
+    name: "Pytest CUDA (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
@@ -88,7 +90,7 @@ jobs:
             - tpu-specs:
                 type: "v5e-8"
               python: "3.11"
-    name: "TPU tests (jax=${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }}, jaxlib=${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
+    name: "Pytest TPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.tpu-specs.runner }}
       cores: ${{ matrix.tpu-specs.cores }}

@@ -564,6 +564,7 @@ def int_state(
     update_global_hook: Callable[[int], None] | None = None,
     update_thread_local_hook: Callable[[int | None], None] | None = None,
     include_in_jit_key: bool = False,
+    validator: Callable[[Any], None] | None = None,
 ) -> State[int]:
   """Set up thread-local state and return a contextmanager for managing it.
 
@@ -596,6 +597,8 @@ def int_state(
     if new_val is not None and not isinstance(new_val, int):
       raise ValueError(f'new int config value must be None or of type int, '
                        f'got {new_val} of type {type(new_val)}')
+    if new_val is not None and validator is not None:
+      validator(new_val)
 
   s = State[int](name, default, help, update_global_hook,
                  update_thread_local_hook, validate,
@@ -1401,8 +1404,8 @@ default_matmul_precision = optional_enum_state(
         'ANY_F8_ANY_F8_F32', 'ANY_F8_ANY_F8_F32_FAST_ACCUM', 'ANY_F8_ANY_F8_ANY',
         'ANY_F8_ANY_F8_ANY_FAST_ACCUM', 'F16_F16_F16', 'F16_F16_F32',
         'BF16_BF16_BF16', 'BF16_BF16_F32', 'BF16_BF16_F32_X3',
-        'BF16_BF16_F32_X6', 'TF32_TF32_F32', 'TF32_TF32_F32_X3', 'F32_F32_F32',
-        'F64_F64_F64',
+        'BF16_BF16_F32_X6', 'BF16_BF16_F32_X9', 'TF32_TF32_F32',
+        'TF32_TF32_F32_X3', 'F32_F32_F32', 'F64_F64_F64',
     ],
     default=None,
     help=('Control the default matmul and conv precision for 32bit inputs.\n\n'
@@ -1802,15 +1805,6 @@ cpu_collectives_implementation = optional_enum_state(
     help=(
         "Cross-process collective implementation used on CPU. Must be one of "
         '("gloo", "mpi")'),
-)
-
-num_cpu_devices = int_state(
-    name="jax_num_cpu_devices",
-    default=-1,
-    help=(
-        "Number of CPU devices to use. If not provided, the value of "
-        "the XLA flag --xla_force_host_platform_device_count is used."
-        " Must be set before JAX is initialized."),
 )
 
 enable_empty_arrays = bool_state(

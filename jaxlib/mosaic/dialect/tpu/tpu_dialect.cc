@@ -33,6 +33,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/hash/hash.h"
+#include "absl/log/log.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.cc.inc"
@@ -182,7 +183,8 @@ AffineMap TiledLayoutAttr::getAffineMap() const {
     auto dimensions = tile.dimensions();
     int64_t untiled_dims = map.getNumResults() - dimensions.size();
     if (untiled_dims < 0) {
-      LOG(FATAL) << "Invalid TiledLayoutAttr!";
+      LOG(FATAL) << "Invalid TiledLayoutAttr: Number of dims must be larger "
+                    "or equal to the rank of the tile";
     }
     for (int64_t i = 0; i < untiled_dims; ++i) {
       exprs.push_back(getAffineDimExpr(i, getContext()));

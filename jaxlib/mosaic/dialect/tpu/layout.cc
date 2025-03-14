@@ -141,7 +141,7 @@ class SingleRowVRegBounds : public VRegDataBounds {
       OpBuilder& builder, const Location loc, const int generation,
       const std::array<int64_t, 2> target_shape) const override {
     if (maskVariesAlong(Direction::kSubelements, target_shape)) {
-      return emitError(loc, "Not implemented");
+      return emitError(loc, "Not implemented: masked along subelements");
     }
     const auto i32_vreg = VectorType::get(target_shape, builder.getI32Type());
     const auto getI32VregConstant = [&](const int32_t v) {
@@ -151,7 +151,7 @@ class SingleRowVRegBounds : public VRegDataBounds {
     if (layout_.bitwidth() != 32 &&
         (start_offset_ % (target_shape[1] * layout_.packing()) != 0 ||
          stop_offset_ % (target_shape[1] * layout_.packing()) != 0)) {
-      return emitError(loc, "Not implemented");
+      return emitError(loc, "Not implemented: offset not aligned to sublanes");
     }
     const Value start = getI32VregConstant(start_offset_ / layout_.packing());
     const Value end = getI32VregConstant(stop_offset_ / layout_.packing());
@@ -257,7 +257,7 @@ class TiledRectangularVregBounds : public VRegDataBounds {
           if (maskVariesAlong(Direction::kSubelements, target_shape)) {
             if (layout_.packing() != 2) {
               // TODO(b/300082350): Generalize this
-              return emitError(loc, "Not implemented");
+              return emitError(loc, "Not implemented: packing != 2");
             }
             // For older TPUs, we virtualize masking
             if (generation < 4) {
@@ -495,7 +495,8 @@ std::unique_ptr<VRegDataBounds> VectorLayout::tileDataBounds(
                                                    end_offset, target_shape);
     }
     if (tiling_[1] != target_shape[1]) {
-      emitError(UnknownLoc::get(mlir_ctx), "Not implemented");
+      emitError(UnknownLoc::get(mlir_ctx),
+                "Not implemented: Unaligned tiling on minormost dimension");
       return nullptr;
     }
     const int64_t start_sublanes = s == 0 ? so : 0;

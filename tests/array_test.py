@@ -23,6 +23,7 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
+from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import op_shardings
@@ -31,7 +32,7 @@ from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import dialects, ir
 from jax._src.util import safe_zip
-from jax._src.mesh import AxisTypes
+from jax._src.mesh import AxisType
 from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (
     _op_sharding_to_pos_sharding, pmap_sharding_devices_indices_map,
@@ -832,6 +833,28 @@ class JaxArrayTest(jtu.JaxTestCase):
     np.array(h_tensor)
     self.assertIsNone(h_tensor._npy_value)
 
+  @config.enable_empty_arrays(True)
+  def test_make_array_from_single_device_arrays_no_dtype_error(self):
+    mesh = jtu.create_mesh((4, 2), ('x', 'y'))
+    s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
+    with self.assertRaisesRegex(
+        ValueError,
+        'If the Array has no addressable shards, `dtype` must be provided via '
+        'the `dtype` argument to `jax.make_array_from_single_device_arrays`.'):
+      jax.make_array_from_single_device_arrays((8, 2), s, [])
+
+  def test_make_array_from_single_device_arrays_bad_dtype_error(self):
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+    shape = (8, 2)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+    with self.assertRaisesRegex(
+        ValueError,
+        'If `dtype` is provided to `jax.make_array_from_single_device_arrays`, '
+        'it must match the dtype of the addressable shards.'):
+      jax.make_array_from_single_device_arrays(
+          shape, s, [arr], dtype=jnp.float32)
+
 
 class ShardingTest(jtu.JaxTestCase):
 
@@ -935,9 +958,9 @@ class ShardingTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        r"Sharding NamedSharding\(mesh=Mesh\('replica': 1, 'data': 1, 'mdl': 2\), "
-        r"spec=PartitionSpec\(None, 'mdl', None, None\).*\) is only "
-        "valid for values of rank at least 4, but was applied to a value of rank 2"):
+        r"Sharding NamedSharding.*PartitionSpec\(None, 'mdl', None, None\).*\)"
+        ' is only valid for values of rank at least 4, but was applied to a'
+        ' value of rank 2'):
       mps.check_compatible_aval(shape)
 
   def test_is_subclass(self):
@@ -1234,7 +1257,9 @@ class ShardingTest(jtu.JaxTestCase):
 
   def test_mesh_str(self):
     mesh = jtu.create_mesh((2, 2, 2), ('x', 'y', 'z'))
-    self.assertEqual(str(mesh), "Mesh('x': 2, 'y': 2, 'z': 2)")
+    self.assertEqual(
+        str(mesh), "Mesh('x': 2, 'y': 2, 'z': 2, axis_types=(Auto, Auto, Auto))"
+    )
 
   def test_make_array_from_callback_error(self):
     mesh_shape = (2, 3)
@@ -1329,72 +1354,54 @@ class ShardingTest(jtu.JaxTestCase):
   def test_mesh_axis_types_mismatch(self):
     with self.assertRaisesRegex(
         ValueError,
-        'Number of axis names in axis_types should match the number of'
-        ' axis_names'):
+        'Number of axis names should match the number of axis_types'):
       jtu.create_mesh((2, 1), ('x', 'y'),
-                      axis_types={jax.sharding.AxisTypes.Auto: 'x'})
+                      axis_types=jax.sharding.AxisType.Auto)
 
     with self.assertRaisesRegex(
         ValueError,
-        'Number of axis names in axis_types should match the number of'
-        ' axis_names in shape_tuple'):
-      jax.sharding.AbstractMesh((('x', 2), ('y', 1)),
-                                axis_types={jax.sharding.AxisTypes.Auto: 'x'})
+        'Number of axis names should match the number of axis_types'):
+      jax.sharding.AbstractMesh((2, 1), ('x', 'y'),
+                                axis_types=jax.sharding.AxisType.Auto)
 
   def test_make_mesh_axis_types(self):
-    mesh1 = jax.sharding.AbstractMesh(
-        (('x', 2),), axis_types={jax.sharding.AxisTypes.Auto: 'x'})
-    mesh2 = jax.sharding.AbstractMesh(
-        (('x', 2),), axis_types={jax.sharding.AxisTypes.Auto: ('x',)})
+    Auto, Explicit, Manual = AxisType.Auto, AxisType.Explicit, AxisType.Manual
+
+    mesh1 = jax.sharding.AbstractMesh((2,), 'x', axis_types=Auto)
+    mesh2 = jax.sharding.AbstractMesh((2,), 'x', axis_types=Auto)
     self.assertEqual(mesh1, mesh2)
 
     mesh = jax.make_mesh((1, 1), ('x', 'y'))
-    self.assertDictEqual(mesh.axis_types, {AxisTypes.Auto: ('x', 'y')})
+    self.assertDictEqual(mesh._axis_types_dict, {AxisType.Auto: ('x', 'y')})
 
-    mesh = jax.make_mesh((1, 1, 1), ('x', 'y', 'z'), explicit_axes='x',
-                         auto_axes='y', manual_axes='z')
+    mesh = jax.make_mesh((1, 1, 1), ('x', 'y', 'z'),
+                         axis_types=(Explicit, Auto, Manual))
     self.assertDictEqual(
-        mesh.axis_types, {AxisTypes.Auto: ('y',), AxisTypes.Explicit: ('x',),
-                          AxisTypes.Manual: ('z',)})
+        mesh._axis_types_dict, {AxisType.Auto: ('y',), AxisType.Explicit: ('x',),
+                          AxisType.Manual: ('z',)})
 
-    mesh = jax.make_mesh((1, 1, 1), ('x', 'y', 'z'), explicit_axes=('x', 'y'),
-                         manual_axes='z')
-    self.assertDictEqual(mesh.axis_types, {AxisTypes.Explicit: ('x', 'y'),
-                                           AxisTypes.Manual: ('z',)})
+    mesh = jax.make_mesh((1, 1, 1), ('x', 'y', 'z'),
+                         axis_types=(Explicit, Explicit, Manual))
+    self.assertDictEqual(mesh._axis_types_dict, {AxisType.Explicit: ('x', 'y'),
+                                           AxisType.Manual: ('z',)})
 
-    mesh = jax.make_mesh((1, 1), ('x', 'y'), explicit_axes=('x', 'y'))
-    self.assertDictEqual(mesh.axis_types, {AxisTypes.Explicit: ('x', 'y')})
+    mesh = jax.make_mesh((1, 1), ('x', 'y'), axis_types=(Explicit, Explicit))
+    self.assertDictEqual(mesh._axis_types_dict, {AxisType.Explicit: ('x', 'y')})
 
-    mesh = jax.make_mesh((1,), 'model', manual_axes='model')
-    self.assertDictEqual(mesh.axis_types, {AxisTypes.Manual: ('model',)})
-
-    with self.assertRaisesRegex(ValueError, "should be non-overlapping"):
-      jax.make_mesh((1, 1, 1), ('data', 'model', 'seq'),
-                    auto_axes='data', explicit_axes=('data', 'seq'),
-                    manual_axes='model')
-
-    with self.assertRaisesRegex(ValueError, "should be non-overlapping"):
-      jax.make_mesh((1, 1, 1), ('data', 'model', 'seq'),
-                    auto_axes='data', explicit_axes='model',
-                    manual_axes='data')
-
-    with self.assertRaisesRegex(ValueError, "should be non-overlapping"):
-      jax.make_mesh((1, 1, 1), ('data', 'model', 'seq'),
-                    explicit_axes=('data', 'seq'),
-                    manual_axes=('seq', 'model'))
+    mesh = jax.make_mesh((1,), 'model', axis_types=Manual)
+    self.assertDictEqual(mesh._axis_types_dict, {AxisType.Manual: ('model',)})
 
     with self.assertRaisesRegex(
         ValueError,
-        'Number of axis names in axis_types should match the number of'
-        ' axis_names'):
-      jax.make_mesh((1, 1), ('data', 'model'), explicit_axes='data')
+        'Number of axis names should match the number of axis_types'):
+      jax.make_mesh((1, 1), ('data', 'model'), axis_types=Explicit)
 
     mesh1 = jax.make_mesh((1, 1, 1, 1, 1), ('a', 'b', 'c', 'd', 'e'),
-                          auto_axes=('c', 'b'), explicit_axes=('e', 'a', 'd'))
+                          axis_types=(Explicit, Auto, Auto, Explicit, Explicit))
     mesh2 = jax.make_mesh((1, 1, 1, 1, 1), ('a', 'b', 'c', 'd', 'e'),
-                          auto_axes=('b', 'c'), explicit_axes=('d', 'a', 'e'))
-    self.assertEqual(mesh1, mesh2)
-    self.assertEqual(hash(mesh1), hash(mesh2))
+                          axis_types=(Explicit, Auto, Auto, Explicit, Auto))
+    self.assertNotEqual(mesh1, mesh2)
+    self.assertNotEqual(hash(mesh1), hash(mesh2))
 
 
 @jtu.with_config(jax_use_shardy_partitioner=True)
@@ -1517,7 +1524,7 @@ class RngShardingTest(jtu.JaxTestCase):
     self.assertTrue(abstract_mesh.empty)
     self.assertEqual(abstract_mesh.size, 0)
 
-    abstract_mesh2 = jax.sharding.AbstractMesh(())
+    abstract_mesh2 = jax.sharding.AbstractMesh((), ())
     self.assertTrue(abstract_mesh2.empty)
     self.assertEqual(abstract_mesh2.size, 0)
 

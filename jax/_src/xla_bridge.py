@@ -263,7 +263,7 @@ def make_cpu_client(
       # Already validated by config module
       assert collectives_impl is None
 
-  num_devices = config.num_cpu_devices.value if config.num_cpu_devices.value >= 0 else None
+  num_devices = num_cpu_devices.value if num_cpu_devices.value >= 0 else None
   return xla_client.make_cpu_client(
     asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
     distributed_client=distributed.global_state.client,
@@ -1273,3 +1273,20 @@ def make_pjrt_tpu_topology(topology_name='', **kwargs):
   return xla_client.make_tfrt_tpu_c_api_device_topology(
       topology_name, **kwargs
   )
+
+def _validate_backend_not_initialized(new_val):
+  if backends_are_initialized():
+    raise RuntimeError(
+        "jax_num_cpu_devices config should be updated before backends are"
+        " initialized i.e. before any JAX operation is executed. You should"
+        " initialize this config immediately after `import jax`.")
+
+num_cpu_devices = config.int_state(
+    name="jax_num_cpu_devices",
+    default=-1,
+    help=(
+        "Number of CPU devices to use. If not provided, the value of "
+        "the XLA flag --xla_force_host_platform_device_count is used."
+        " Must be set before JAX is initialized."),
+    validator=_validate_backend_not_initialized,
+)

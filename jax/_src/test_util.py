@@ -550,9 +550,14 @@ def request_cpu_devices(nr_devices: int):
   invoked. Test cases that require a specific number of devices should skip
   themselves if that number is not met.
   """
-  if config.num_cpu_devices.value < nr_devices:
+  if xla_bridge.num_cpu_devices.value < nr_devices:
     xla_bridge.get_backend.cache_clear()
-    config.update("jax_num_cpu_devices", nr_devices)
+    # Don't raise an error for `request_cpu_devices` because we initialize the
+    # backend in OSS during collecting tests in pytest via `device_under_test`.
+    try:
+      config.update("jax_num_cpu_devices", nr_devices)
+    except RuntimeError:
+      pass
 
 
 def skip_on_flag(flag_name, skip_value):
@@ -1571,12 +1576,12 @@ def with_and_without_mesh(f):
     ))(with_mesh_from_kwargs(f))
 
 def with_user_mesh(sizes, names, axis_types=None):
-  axis_types = ({mesh_lib.AxisTypes.Explicit: names}
+  axis_types = ((mesh_lib.AxisType.Explicit,) * len(names)
                 if axis_types is None else axis_types)
   def decorator(fn):
     def mesh_fn(*args, **kwargs):
       mesh = create_mesh(sizes, names, axis_types=axis_types)
-      with mesh_lib.use_mesh(mesh):
+      with jax.sharding.use_mesh(mesh):
         return fn(*args, **kwargs, mesh=mesh)
     return mesh_fn
   return decorator
@@ -1591,15 +1596,7 @@ def create_mesh(mesh_shape, axis_names, iota_order=False, axis_types=None):
     mesh_devices = np.array(devices[:size]).reshape(mesh_shape)
     return jax.sharding.Mesh(mesh_devices, axis_names, axis_types=axis_types)
   else:
-    if axis_types is None:
-      explicit_axes = auto_axes = manual_axes = None
-    else:
-      explicit_axes = axis_types.get(mesh_lib.AxisTypes.Explicit, None)
-      auto_axes = axis_types.get(mesh_lib.AxisTypes.Auto, None)
-      manual_axes = axis_types.get(mesh_lib.AxisTypes.Manual, None)
-    return jax.make_mesh(mesh_shape, axis_names, explicit_axes=explicit_axes,
-                         auto_axes=auto_axes,
-                         manual_axes=manual_axes)
+    return jax.make_mesh(mesh_shape, axis_names, axis_types=axis_types)
 
 class _cached_property:
   null = object()

@@ -33,7 +33,7 @@ from jax._src import errors
 from jax._src import profiler
 from jax._src import util
 from jax._src import xla_bridge
-from jax._src.mesh import set_concrete_mesh
+from jax._src.mesh import use_concrete_mesh
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
@@ -44,7 +44,7 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding,
     device_replica_id_map, hashed_index, num_addressable_indices, local_to_global_shape)  # pyformat: disable
-from jax._src.typing import ArrayLike, DLDeviceType
+from jax._src.typing import ArrayLike, DLDeviceType, DTypeLike
 from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method, cache
 import numpy as np
 
@@ -680,6 +680,28 @@ def _get_shape_from_index(slc: Index, shape: Shape) -> Shape:
       if isinstance(s, slice)  # If element is int, this dimension is reduced
   )
 
+def _get_and_check_dtype(arrays: Sequence[basearray.Array | np.ndarray],
+                         dtype: DTypeLike | None, fname: str):
+  if arrays:
+    if dtype is None:
+      dtype = arrays[0].dtype
+    else:
+      if arrays[0].dtype != dtype:
+        raise ValueError(
+            f"If `dtype` is provided to `jax.{fname}`, it must match the dtype "
+            f"of the addressable shards. Got dtype={dtype} and shard "
+            f"dtype={arrays[0].dtype}`.")
+  else:
+    if not config.enable_empty_arrays.value:
+      raise ValueError(
+          f"Building an Array with no addressable shards with `jax.{fname}` is "
+          "supported only if `jax.config.enable_empty_arrays` is set to True."
+      )
+    if dtype is None:
+      raise ValueError(
+          "If the Array has no addressable shards, `dtype` must be provided "
+          f"via the `dtype` argument to `jax.{fname}`.")
+  return dtype
 
 # explicitly set to be unhashable.
 setattr(ArrayImpl, "__hash__", None)
@@ -689,7 +711,8 @@ setattr(ArrayImpl, "__array_priority__", 100)
 
 def make_array_from_callback(
     shape: Shape, sharding: Sharding | Layout,
-    data_callback: Callable[[Index | None], ArrayLike]) -> ArrayImpl:
+    data_callback: Callable[[Index | None], ArrayLike],
+    dtype: DTypeLike | None = None) -> ArrayImpl:
   # pyformat: disable
   """Returns a ``jax.Array`` via data fetched from ``data_callback``.
 
@@ -705,6 +728,9 @@ def make_array_from_callback(
     data_callback : Callback that takes indices into the global array value as
       input and returns the corresponding data of the global array value.
       The data can be returned as any array-like object, e.g. a ``numpy.ndarray``.
+    dtype: The dtype of the output ``jax.Array``. If not provided, the dtype of
+      the data for the first addressable shard is used. If there are no
+      addressable shards, the ``dtype`` argument must be provided.
 
   Returns:
     A ``jax.Array`` via data fetched from ``data_callback``.
@@ -765,24 +791,28 @@ def make_array_from_callback(
         get_data(device_to_index_map[device]) for device in devices
     ]
 
-  first_value = per_device_values[0]
-  expected_dtype = first_value.dtype
+  dtype = _get_and_check_dtype(
+      per_device_values, dtype, "make_array_from_callback")
   expected_shape = sharding.shard_shape(shape)
   aval = core.update_aval_with_sharding(
-      core.ShapedArray(shape, expected_dtype), sharding)
+      core.ShapedArray(shape, dtype), sharding)
+
   _validate_shape_and_dtype_for_per_device_arrays(
       per_device_values,
       expected_shape=expected_shape,
       aval=aval,
       sharding=sharding,
   )
-  if (isinstance(first_value, ArrayImpl)
-      and first_value._committed
-      and sharding.is_fully_replicated
-      and first_value.is_fully_replicated
-      and first_value.sharding._device_assignment == tuple(devices)
-      and first_value.layout.device_local_layout == dll):
-    return first_value
+  first_value = None
+  if per_device_values:
+    first_value = per_device_values[0]
+    if (isinstance(first_value, ArrayImpl)
+        and first_value._committed
+        and sharding.is_fully_replicated
+        and first_value.is_fully_replicated
+        and first_value.sharding._device_assignment == tuple(devices)
+        and first_value.layout.device_local_layout == dll):
+      return first_value
 
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     # TODO(yashkatariya): Can this also use batched_device_put?
@@ -984,7 +1014,8 @@ def make_array_from_process_local_data(
 
 
 def make_array_from_single_device_arrays(
-    shape: Shape, sharding: Sharding, arrays: Sequence[basearray.Array]
+    shape: Shape, sharding: Sharding, arrays: Sequence[basearray.Array], *,
+    dtype: DTypeLike | None = None,
 ) -> ArrayImpl:
   r"""Returns a ``jax.Array`` from a sequence of ``jax.Array``\s each on a single device.
       Every device in input ``sharding``\'s mesh must have an array in ``arrays``\s.
@@ -997,6 +1028,8 @@ def make_array_from_single_device_arrays(
       must equal ``len(sharding.addressable_devices)`` and the shape of each array must be the same. For multiprocess code,
       each process will call with a different ``arrays`` argument that corresponds to that processes' data.
       These arrays are commonly created via ``jax.device_put``.
+    dtype: The dtype of the output ``jax.Array``. If not provided, the dtype of the first array in
+      ``arrays`` is used. If ``arrays`` is empty, the ``dtype`` argument must be provided.
 
   Returns:
     A global ``jax.Array``, sharded as ``sharding``, with shape equal to ``shape``, and with per-device
@@ -1027,10 +1060,14 @@ def make_array_from_single_device_arrays(
   For cases where you have a local array and want to convert it to a global
   jax.Array, use ``jax.make_array_from_process_local_data``.
   """
+  if isinstance(arrays, Sequence):
+    dtype = _get_and_check_dtype(
+        arrays, dtype, "make_array_from_single_device_arrays")
+
   # All input arrays should be committed. Checking it is expensive on
   # single-controller systems.
   aval = core.update_aval_with_sharding(
-      core.ShapedArray(shape, arrays[0].dtype, weak_type=False), sharding)
+      core.ShapedArray(shape, dtype, weak_type=False), sharding)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     return aval.dtype._rules.make_sharded_array(aval, sharding, arrays,
                                                 committed=True)
@@ -1112,7 +1149,7 @@ def shard_device_array(x, devices, indices, sharding):
   else:
     # TODO(yashkatariya): Maybe this should be set when we call the handler in
     # InputsHandler.__call__?
-    with set_concrete_mesh(None):
+    with use_concrete_mesh(None):
       shards = x._multi_slice(start_indices, limit_indices, removed_dims)
   aval = core.shaped_abstractify(x)
   return pxla.batched_device_put(aval, sharding, shards, devices)

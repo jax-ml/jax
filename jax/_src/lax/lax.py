@@ -66,11 +66,13 @@ from jax._src.lax.utils import (
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib import xla_extension_version
 from jax._src.sharding_impls import (PmapSharding, NamedSharding,
                                      PartitionSpec as P, canonicalize_sharding)
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
 from jax._src.util import (NumpyComplexWarning, cache, canonicalize_axis,
-                           safe_map, safe_zip, split_list, weakref_lru_cache)
+                           safe_map, safe_zip, split_list, weakref_lru_cache,
+                           foreach)
 
 _max = builtins.max
 _min = builtins.min
@@ -105,7 +107,7 @@ def _validate_shapes(shapes: Sequence[Shape]):
     # pass dynamic shapes through unchecked
     return
   else:
-    map(_check_static_shape, shapes)
+    foreach(_check_static_shape, shapes)
 
 def _try_broadcast_shapes(*shapes: tuple[int, ...], name: str) -> tuple[int, ...]:
   """
@@ -1911,6 +1913,9 @@ class DotAlgorithmPreset(enum.Enum):
   BF16_BF16_F32_X6 = enum.auto()
   """Like ``BF16_BF16_F32_X3``, but using 6 operations instead of 3."""
 
+  BF16_BF16_F32_X9 = enum.auto()
+  """Like ``BF16_BF16_F32_X3``, but using 9 operations instead of 3."""
+
   TF32_TF32_F32 = enum.auto()
   TF32_TF32_F32_X3 = enum.auto()
   """The ``_X3`` suffix indicates that the algorithm uses 3 operations to
@@ -2064,6 +2069,13 @@ class DotAlgorithmPreset(enum.Enum):
         return hlo.DotAlgorithm.get(bf16, bf16, f32, 1, 1, 3, False)
       case DotAlgorithmPreset.BF16_BF16_F32_X6:
         return hlo.DotAlgorithm.get(bf16, bf16, f32, 1, 1, 6, False)
+      case DotAlgorithmPreset.BF16_BF16_F32_X9:
+        if xla_extension_version < 320:
+          raise ValueError(
+              "The dot algorithm BF16_BF16_F32_X9 requires XLA extension "
+              "version >= 320."
+          )
+        return hlo.DotAlgorithm.get(bf16, bf16, f32, 1, 1, 9, False)
       case DotAlgorithmPreset.TF32_TF32_F32:
         return hlo.DotAlgorithm.get(tf32, tf32, f32, 1, 1, 1, False)
       case DotAlgorithmPreset.TF32_TF32_F32_X3:

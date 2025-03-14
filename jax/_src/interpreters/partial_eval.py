@@ -47,7 +47,7 @@ from jax._src.tree_util import (PyTreeDef, treedef_tuple,
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            as_hashable_function, weakref_lru_cache, subs_list,
-                           HashableFunction)
+                           HashableFunction, foreach)
 
 
 map, unsafe_map = safe_map, map
@@ -141,6 +141,7 @@ class PartialVal(tuple):
 class JaxprTrace(Trace['JaxprTracer']):
 
   def __init__(self, parent_trace:Trace, name_stack: source_info_util.NameStack, tag:TraceTag):
+    super().__init__()
     self.name_stack = name_stack
     self.tag = tag
     self.parent_trace = parent_trace
@@ -1084,8 +1085,8 @@ def _partial_eval_jaxpr_custom_cached(
 
   newvar = core.gensym(suffix='_offload')
   known_eqns, staged_eqns = [], []
-  map(write, in_unknowns, in_inst, jaxpr.invars)
-  map(partial(write, False, True), jaxpr.constvars)
+  foreach(write, in_unknowns, in_inst, jaxpr.invars)
+  foreach(partial(write, False, True), jaxpr.constvars)
   for eqn in jaxpr.eqns:
     unks_in, inst_in = unzip2(map(read, eqn.invars))
     rule = partial_eval_jaxpr_custom_rules.get(eqn.primitive)
@@ -1097,18 +1098,18 @@ def _partial_eval_jaxpr_custom_cached(
           residual_refs.add(r)
         else:
           residuals.add(r)
-      map(write, unks_out, inst_out, eqn.outvars)
+      foreach(write, unks_out, inst_out, eqn.outvars)
     elif any(unks_in):
       inputs = map(ensure_instantiated, inst_in, eqn.invars)
       staged_eqns.append(eqn.replace(invars=inputs))
-      map(partial(write, True, True), eqn.outvars)
+      foreach(partial(write, True, True), eqn.outvars)
     else:
       known_eqns.append(eqn)
       # If it's an effectful primitive, we always to run and avoid staging it.
       policy = ensure_enum(saveable(
           eqn.primitive, *[x.aval for x in eqn.invars], **eqn.params))
       if has_effects(eqn.effects) or isinstance(policy, SaveableType):
-        map(partial(write, False, False), eqn.outvars)
+        foreach(partial(write, False, False), eqn.outvars)
       elif isinstance(policy, Offloadable):
         # TODO(slebedev): This is a legit error which requires a BUILD fix.
         from jax._src.dispatch import device_put_p, TransferToMemoryKind, CopySemantics  # pytype: disable=import-error
@@ -1123,7 +1124,7 @@ def _partial_eval_jaxpr_custom_cached(
             JaxprEqnContext(None, False))
         known_eqns.append(offload_eqn)
         # resvars are known and available in the backward jaxpr.
-        map(partial(write, False, True), resvars)
+        foreach(partial(write, False, True), resvars)
         residuals.update(resvars)
         reload_eqn = core.JaxprEqn(
             resvars, eqn.outvars, device_put_p,
@@ -1134,12 +1135,12 @@ def _partial_eval_jaxpr_custom_cached(
             JaxprEqnContext(None, False))
         staged_eqns.append(reload_eqn)
         # outvars are known and available in the backward jaxpr.
-        map(partial(write, False, True), eqn.outvars)
+        foreach(partial(write, False, True), eqn.outvars)
       else:
         assert isinstance(policy, RecomputeType)
         inputs = map(ensure_instantiated, inst_in, eqn.invars)
         staged_eqns.append(eqn.replace(invars=inputs))
-        map(partial(write, False, True), eqn.outvars)
+        foreach(partial(write, False, True), eqn.outvars)
   unzipped = unzip2(map(read, jaxpr.outvars))
   out_unknowns, out_inst = list(unzipped[0]), list(unzipped[1])
   assert all(type(v) is Var for v in residuals), residuals
@@ -1440,14 +1441,14 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
       env[x] = read(x) or b
 
   new_eqns = []
-  map(write, jaxpr.outvars, used_outputs)
+  foreach(write, jaxpr.outvars, used_outputs)
   for eqn in jaxpr.eqns[::-1]:
     used_outs = map(read, eqn.outvars)
     rule = dce_rules.get(eqn.primitive, _default_dce_rule)
     used_ins, new_eqn = rule(used_outs, eqn)
     if new_eqn is not None:
       new_eqns.append(new_eqn)
-    map(write, eqn.invars, used_ins)
+    foreach(write, eqn.invars, used_ins)
   used_inputs = map(read, jaxpr.invars)
   used_inputs = map(op.or_, instantiate, used_inputs)
 
@@ -1849,6 +1850,7 @@ class DynamicJaxprTrace(core.Trace):
   __slots__ = ("frame", "tag")
 
   def __init__(self, debug_info: core.DebugInfo):
+    super().__init__()
     self.frame = JaxprStackFrame(debug_info)
 
   def invalidate(self):
@@ -2493,15 +2495,15 @@ def _eval_jaxpr_padded(
   def write(v, val) -> None:
     env[v] = val
 
-  map(write, jaxpr.constvars, consts)
-  map(write, jaxpr.invars, args)
+  foreach(write, jaxpr.constvars, consts)
+  foreach(write, jaxpr.invars, args)
   last_used = core.last_used(jaxpr)
   for eqn in jaxpr.eqns:
     in_avals  = [_substitute_axis_sizes(env, v.aval) for v in eqn.invars]
     out_avals = [_substitute_axis_sizes(env, v.aval) for v in eqn.outvars]
     rule = padding_rules[eqn.primitive]
     outs = rule(in_avals, out_avals, *map(read, eqn.invars), **eqn.params)
-    map(write, eqn.outvars, outs)
+    foreach(write, eqn.outvars, outs)
     core.clean_up_dead_vars(eqn, env, last_used)
   return map(read, jaxpr.outvars)
 
@@ -2578,7 +2580,7 @@ def inline_jaxpr_into_trace(
     src_ = (src if not eqn.source_info.name_stack else
             src.replace(name_stack=src.name_stack + eqn.source_info.name_stack))
     trace.frame.add_eqn(eqn.replace(invars, outvars, source_info=src_))
-    map(env.setdefault, eqn.outvars, outvars)
+    foreach(env.setdefault, eqn.outvars, outvars)
 
   tracer_env: dict[Var, Any] = dict(zip([*jaxpr.constvars, *jaxpr.invars],
                                         [*consts, *arg_tracers]))

@@ -53,6 +53,7 @@ from jax._src.pallas import utils as pallas_utils
 from jax._src.state import discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as sp
+from jax._src.util import foreach
 from jax._src.util import merge_lists
 from jax._src.util import partition_list
 from jax._src.util import split_list
@@ -380,7 +381,7 @@ def lower_jaxpr_to_triton_ir(
       if block_info is not None:
         block_info_env[invar] = block_info
 
-  map(write_env, jaxpr.invars, args)
+  foreach(write_env, jaxpr.invars, args)
 
   for eqn in jaxpr.eqns:
     invals = map(read_env, eqn.invars)
@@ -410,7 +411,7 @@ def lower_jaxpr_to_triton_ir(
           f"msg={e}"
       ) from e
     if eqn.primitive.multiple_results:
-      map(write_env, eqn.outvars, outvals)
+      foreach(write_env, eqn.outvars, outvals)
     else:
       write_env(eqn.outvars[0], outvals)
 

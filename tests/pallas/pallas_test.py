@@ -801,6 +801,30 @@ class PallasCallTest(PallasBaseTest):
 
     self.assertAllClose(copy_kernel(x.astype(dtype)), expected)
 
+  @parameterized.parameters(True, False)
+  def test_float8_e4m3b11fnuz_dot(self, transpose):
+    if not jtu.test_device_matches(["tpu"]) or not jtu.is_device_tpu_at_least(5):
+      self.skipTest("`float8_e4m3b11fnuz` dot only supported on TPU.")
+
+    dtype = jnp.float8_e4m3b11fnuz
+    x = jax.random.normal(jax.random.key(0), (2048, 1024), dtype=jnp.bfloat16)
+    y = jax.random.normal(jax.random.key(1), (1024, 1024), dtype=dtype)
+    if transpose:
+      expected = x @ y.T.astype(jnp.bfloat16)
+    else:
+      expected = x @ y.astype(jnp.bfloat16)
+
+    @functools.partial(
+        self.pallas_call,
+        in_specs=(pl.BlockSpec(), pl.BlockSpec()),
+        out_shape=expected,
+    )
+    def dot_kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = pl.dot(
+          x_ref[...], y_ref[...], trans_b=transpose
+      ).astype(o_ref.dtype)
+
+    self.assertAllClose(dot_kernel(x, y), expected)
 
 class PallasCallInterpretTest(PallasCallTest):
   INTERPRET = True

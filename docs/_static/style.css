@@ -296,3 +296,13 @@ html[data-theme="light"] .highlight span.gt {
 html[data-theme="light"] .highlight span.gr {
   color: #ff0000;
 }
+
+.header-article-items__start {
+  display: flex;
+  flex-direction: row;
+  gap: 0.5em;
+}
+
+.bd-breadcrumbs {
+  margin-bottom: 0;
+}

@@ -177,6 +177,10 @@ LogicalResult MemRefSqueezeOp::verify() {
     this->emitOpError("Element types don't match.");
     return failure();
   }
+  if (!HasMemorySpace(source_type, tpu::MemorySpace::kSemaphoreMem) &&
+      source_type.getRank() > 1 && target_type.getRank() == 1) {
+    return emitError("Not implemented: squeeze memref to 1d.");
+  }
   auto source_shape = source_type.getShape();
   auto target_shape = target_type.getShape();
   int source_index = source_shape.size() - 1;

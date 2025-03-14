@@ -40,6 +40,7 @@ from jax._src.pallas import primitives
 from jax._src.state import discharge as state_discharge
 from jax._src import util
 from jax._src.util import (
+    foreach,
     safe_map,
     safe_zip,
     split_list,
@@ -199,8 +200,8 @@ def eval_jaxpr_recursive(
     env[v] = val
 
   env: dict[jax_core.Var, Any] = {}
-  map(write, jaxpr.constvars, consts)
-  map(write, jaxpr.invars, args)
+  foreach(write, jaxpr.constvars, consts)
+  foreach(write, jaxpr.invars, args)
   lu = jax_core.last_used(jaxpr)
   for eqn in jaxpr.eqns:
     in_vals = map(read, eqn.invars)
@@ -216,7 +217,7 @@ def eval_jaxpr_recursive(
         subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
         ans = eqn.primitive.bind(*subfuns, *in_vals, **bind_params)
     if eqn.primitive.multiple_results:
-      map(write, eqn.outvars, ans)
+      foreach(write, eqn.outvars, ans)
     else:
       write(eqn.outvars[0], ans)
     jax_core.clean_up_dead_vars(eqn, env, lu)

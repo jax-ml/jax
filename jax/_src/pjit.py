@@ -690,7 +690,7 @@ def _infer_params(
     fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
   ) -> tuple[PjitParams, list[Any]]:
   if ji.use_resource_env:
-    with mesh_lib.use_mesh(mesh_lib.thread_resources.env.physical_mesh):
+    with sharding_impls.use_mesh(mesh_lib.thread_resources.env.physical_mesh):
       return _infer_params_internal(fun, ji, args, kwargs)
   return _infer_params_internal(fun, ji, args, kwargs)
 
@@ -2488,7 +2488,7 @@ def check_shardings_are_auto(shardings_flat):
     if not isinstance(s, NamedSharding):
       continue
     mesh = s.mesh.abstract_mesh
-    if not all(mesh._name_to_type[i] == mesh_lib.AxisTypes.Auto
+    if not all(mesh._name_to_type[i] == mesh_lib.AxisType.Auto
                for axes in s.spec
                if axes is not PartitionSpec.UNCONSTRAINED and axes is not None
                for i in (axes if isinstance(axes, tuple) else (axes,))):
@@ -2709,31 +2709,26 @@ def _mesh_cast_abstract_eval(aval, dst_sharding):
         f'Mesh shape of the input {src_sharding.mesh.shape_tuple} does not'
         ' match the mesh shape of the target sharding'
         f' {dst_sharding.mesh.shape_tuple} for shape {aval.str_short()}')
-  if (src_sharding.mesh.axis_types == dst_sharding.mesh.axis_types and
-      src_sharding.spec != dst_sharding.spec):
+  if (src_sharding.mesh._axis_types_dict == dst_sharding.mesh._axis_types_dict
+      and src_sharding.spec != dst_sharding.spec):
     raise ValueError(
-        'mesh_cast should only be used when AxisTypes changes between the'
+        'mesh_cast should only be used when AxisType changes between the'
         ' input mesh and the target mesh. Got src'
-        f' axis_types={src_sharding.mesh.axis_types} and dst'
-        f' axis_types={dst_sharding.mesh.axis_types}. To reshard between the'
-        ' same mesh, use `jax.sharding.reshard` instead?')
-  if len(src_sharding.spec) != len(dst_sharding.spec):
-    raise ValueError(
-        'Length of source sharding spec should be equal to destination'
-        f' sharding spec. Got source spec={src_sharding.spec} and destination'
-        f' spec={dst_sharding.spec}')
+        f' axis_types={src_sharding.mesh._axis_types_dict} and dst'
+        f' axis_types={dst_sharding.mesh._axis_types_dict}. To reshard between'
+        ' the same mesh, use `jax.sharding.reshard` instead?')
   if src_sharding.mesh._any_axis_explicit and dst_sharding.mesh._any_axis_explicit:
     for s, d in safe_zip(flatten_spec(src_sharding.spec),
                          flatten_spec(dst_sharding.spec)):
       if s is None and d is None:
         continue
       if s is None and d is not None:
-        assert (src_sharding.mesh._name_to_type[d] == mesh_lib.AxisTypes.Auto
-                and dst_sharding.mesh._name_to_type[d] == mesh_lib.AxisTypes.Explicit)
+        assert (src_sharding.mesh._name_to_type[d] == mesh_lib.AxisType.Auto
+                and dst_sharding.mesh._name_to_type[d] == mesh_lib.AxisType.Explicit)
         continue
       if s is not None and d is None:
-        assert (src_sharding.mesh._name_to_type[s] == mesh_lib.AxisTypes.Explicit
-                and dst_sharding.mesh._name_to_type[s] == mesh_lib.AxisTypes.Auto)
+        assert (src_sharding.mesh._name_to_type[s] == mesh_lib.AxisType.Explicit
+                and dst_sharding.mesh._name_to_type[s] == mesh_lib.AxisType.Auto)
         continue
       if d != s:
         raise ValueError(
@@ -2786,7 +2781,8 @@ reshard_p = core.Primitive('reshard')
 
 def _reshard_abstract_eval(aval, dst_sharding):
   src_sharding = aval.sharding
-  if src_sharding.mesh.abstract_mesh != dst_sharding.mesh.abstract_mesh:
+  if (not src_sharding.mesh.empty and
+      src_sharding.mesh.abstract_mesh != dst_sharding.mesh.abstract_mesh):
     raise ValueError(
         f'Mesh of the input {src_sharding.mesh.abstract_mesh} does not'
         ' equal the mesh of the target sharding'
@@ -2825,7 +2821,7 @@ batching.skippable_batchers[reshard_p] = lambda _: ()
 # -------------------- auto and user mode -------------------------
 
 def _get_new_mesh(axes: str | tuple[str, ...] | None,
-                  axis_type: mesh_lib.AxisTypes, name: str,
+                  axis_type: mesh_lib.AxisType, name: str,
                   error_on_manual_to_auto_explict=False):
   cur_mesh = mesh_lib.get_abstract_mesh()
   # TODO(yashkatariya): Maybe allow fetching mesh from the args to enable
@@ -2841,42 +2837,55 @@ def _get_new_mesh(axes: str | tuple[str, ...] | None,
     axes = (axes,)
   for a in axes:
     if (error_on_manual_to_auto_explict and
-        cur_mesh._name_to_type[a] == mesh_lib.AxisTypes.Manual and
-        axis_type in {mesh_lib.AxisTypes.Auto, mesh_lib.AxisTypes.Explicit}):
+        cur_mesh._name_to_type[a] == mesh_lib.AxisType.Manual and
+        axis_type in {mesh_lib.AxisType.Auto, mesh_lib.AxisType.Explicit}):
       raise NotImplementedError(
           'Going from `Manual` AxisType to `Auto` or `Explicit` AxisType is not'
           ' allowed. Please file a bug at https://github.com/jax-ml/jax/issues'
           ' with your use case')
-  new_mesh = cur_mesh.update_axis_types({axis_type: axes})
-  return new_mesh
+  return cur_mesh.update_axis_types({a: axis_type for a in axes})
 
 def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,
-              out_shardings):
+              out_shardings=None):
   def decorator(*args, **kwargs):
-    new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Auto, 'auto_axes',
+    if out_shardings is None:
+      if "out_shardings" in kwargs:
+        _out_shardings = kwargs.pop("out_shardings")
+      else:
+        raise TypeError("Missing required keyword argument: 'out_shardings'")
+    else:
+      _out_shardings = out_shardings
+    new_mesh = _get_new_mesh(axes, mesh_lib.AxisType.Auto, 'auto_axes',
                              error_on_manual_to_auto_explict=True)
-    with mesh_lib.set_abstract_mesh(new_mesh):
+    with mesh_lib.use_abstract_mesh(new_mesh):
       in_specs = tree_map(lambda a: core.modify_spec_for_auto_manual(
           core.get_aval(a).sharding.spec, new_mesh), args)
       args = mesh_cast(args, in_specs)
       out = fun(*args, **kwargs)
-    return mesh_cast(out, out_shardings)
+    return mesh_cast(out, _out_shardings)
   return decorator
 
 @contextlib.contextmanager
 def use_auto_axes(*axes):
-  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Auto, 'use_auto_axes')
-  with mesh_lib.set_abstract_mesh(new_mesh):
+  new_mesh = _get_new_mesh(axes, mesh_lib.AxisType.Auto, 'use_auto_axes')
+  with mesh_lib.use_abstract_mesh(new_mesh):
     yield
 
 
 def explicit_axes(fun, *, axes: str | tuple[str, ...] | None = None,
-                  in_shardings):
+                  in_shardings=None):
   def decorator(*args, **kwargs):
-    new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Explicit, 'explicit_axes',
+    if in_shardings is None:
+      if "in_shardings" in kwargs:
+        _in_shardings = kwargs.pop("in_shardings")
+      else:
+        raise TypeError("Missing required keyword argument: 'in_shardings'")
+    else:
+      _in_shardings = in_shardings
+    new_mesh = _get_new_mesh(axes, mesh_lib.AxisType.Explicit, 'explicit_axes',
                              error_on_manual_to_auto_explict=True)
-    with mesh_lib.set_abstract_mesh(new_mesh):
-      args = mesh_cast(args, in_shardings)
+    with mesh_lib.use_abstract_mesh(new_mesh):
+      args = mesh_cast(args, _in_shardings)
       out = fun(*args, **kwargs)
     out_specs = tree_map(lambda o: core.modify_spec_for_auto_manual(
         core.get_aval(o).sharding.spec, mesh_lib.get_abstract_mesh()), out)
@@ -2885,9 +2894,9 @@ def explicit_axes(fun, *, axes: str | tuple[str, ...] | None = None,
 
 @contextlib.contextmanager
 def use_explicit_axes(*axes):
-  new_mesh = _get_new_mesh(axes, mesh_lib.AxisTypes.Explicit,
+  new_mesh = _get_new_mesh(axes, mesh_lib.AxisType.Explicit,
                            'use_explicit_axes')
-  with mesh_lib.set_abstract_mesh(new_mesh):
+  with mesh_lib.use_abstract_mesh(new_mesh):
     yield
 
 # -------------------- helpers --------------------

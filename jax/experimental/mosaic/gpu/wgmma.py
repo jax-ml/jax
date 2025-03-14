@@ -16,6 +16,7 @@
 import dataclasses
 import functools
 import itertools
+import math
 
 import jax
 from jaxlib.mlir import ir
@@ -47,7 +48,7 @@ class WGMMAAccumulator:
   value: fa.FragmentedArray
 
   def __init__(self, *, _value: fa.FragmentedArray, _sync: bool = True):
-    if _value.layout not in (fa.WGMMA_LAYOUT, fa.TILED_LAYOUT_WGMMA):
+    if _value.layout != fa.WGMMA_LAYOUT:
       raise ValueError("Only WGMMA layouts supported in WGMMAAccumulator")
     self.value = _value
     if _sync:
@@ -123,7 +124,7 @@ def wgmma_m64(
     if a.mlir_dtype != ir.F16Type.get() and a.mlir_dtype != ir.BF16Type.get():
       raise ValueError(f"Unsupported A register array dtype: {a.mlir_dtype}")
     # Column count must be equal to swizzle // bytewidth.
-    if a.layout not in (fa.TILED_LAYOUT_WGMMA, fa.WGMMA_LAYOUT) or a.shape != (64, swizzle // 2):
+    if a.layout != fa.WGMMA_LAYOUT or a.shape != (64, swizzle // 2):
       raise ValueError("Unsupported A register array layout")
     if a_k_stride is not None or a_transpose is not None:
       raise ValueError("Unsupported WGMMA features with A in registers")
@@ -203,7 +204,7 @@ def wgmma_m64(
     imms += [lc(int(a_transpose)), lc(int(b_transpose))]
   elif supports_transpose:
     imms += [lc(int(b_transpose))]
-  if acc.ndim != 4 or acc.shape[0] != 1 or acc.shape[2:] != (2, 1):
+  if acc.ndim != 10 or acc.shape[0] != 1 or math.prod(acc.shape[2:]) != 2:
     raise ValueError(acc.shape)
   acc_struct_type = ir.Type.parse(
       f"!llvm.struct<({','.join(str(out_ty_field) for _ in acc_regs)})>"

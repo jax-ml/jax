@@ -177,6 +177,23 @@ def _dot_general_roofline(
       unfused_hbm_bytes=hbm_bytes,
   )
 
+@roofline.register_roofline(convolution.conv_general_dilated_p)
+def _conv_general_dilated_roofline(
+  ctx: roofline.RooflineRuleContext,
+  *args,
+  **kw,
+) -> roofline.RooflineResult:
+  lhs, rhs = (roofline.RooflineShape.from_aval(aval) for aval in ctx.avals_in)
+  out = roofline.RooflineShape.from_aval(ctx.avals_out[0])
+  # TODO(b/394648206): support computing unfused_flops for conv.
+  return roofline.RooflineResult(
+      unfused_hbm_bytes=(
+          lhs.dtype.itemsize * lhs.size
+          + rhs.dtype.itemsize * rhs.size
+          + out.dtype.itemsize * out.size
+      ),
+  )
+
 
 def _return_zeros_if_one_sized_axis(
   ctx: roofline.RooflineRuleContext, axes: tuple[str, ...]

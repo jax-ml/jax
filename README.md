@@ -456,4 +456,3 @@ For details about the JAX API, see the
 
 For getting started as a JAX developer, see the
 [developer documentation](https://jax.readthedocs.io/en/latest/developer.html).
-

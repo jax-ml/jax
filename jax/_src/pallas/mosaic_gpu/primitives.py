@@ -737,16 +737,32 @@ def _wgmma_accumulator_deref_lowering(ctx: lowering.LoweringRuleContext, acc):
 
 class Layout(enum.Enum):
   #: [m, n] matrix, where m % 64 == 0 == n % 8.
-  WGMMA = mgpu.WGMMAFragLayout
+  WGMMA = enum.auto()
   #: [m] matrix, where m % 64 == 0.
-  WGMMA_ROW = mgpu.WGMMARowFragLayout
+  WGMMA_ROW = enum.auto()
 
-  WG_SPLAT = mgpu.WGSplatFragLayout
-  WG_STRIDED = mgpu.WGStridedFragLayout
+  WG_SPLAT = enum.auto()
+  WG_STRIDED = enum.auto()
 
   def __call__(self, *args, **kwargs) -> ParameterizedLayout:
     return ParameterizedLayout(self, args, kwargs)
 
+  def to_mgpu(self, *args, **kwargs) -> mgpu.FragmentedLayout:
+    def check_no_args():
+      if args or kwargs:
+        raise ValueError(f"Can't instantiate {self} with arguments.")
+
+    match self:
+      case Layout.WGMMA:
+        check_no_args()
+        return mgpu.WGMMA_LAYOUT
+      case Layout.WGMMA_ROW:
+        check_no_args()
+        return mgpu.WGMMA_ROW_LAYOUT
+      case Layout.WG_SPLAT:
+        return mgpu.WGSplatFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
+      case Layout.WG_STRIDED:
+        return mgpu.WGStridedFragLayout(*args, **kwargs)
 
 @dataclasses.dataclass(frozen=True)
 class ParameterizedLayout:
@@ -754,16 +770,9 @@ class ParameterizedLayout:
   args: Sequence[Any]
   kwargs: Any
 
+  def to_mgpu(self) -> mgpu.FragmentedLayout:
+    return self.layout_cls.to_mgpu(*self.args, **self.kwargs)
 
-def _get_mgpu_layout(layout: Layout | ParameterizedLayout
-                     ) -> mgpu.FragmentedLayout:
-  if isinstance(layout, Layout):
-    return layout.value()
-  elif isinstance(layout, ParameterizedLayout):
-    return layout.layout_cls.value(*layout.args,
-                                   **layout.kwargs)
-  else:
-    raise TypeError(f"Unsupported layout: {layout}")
 
 layout_cast_p = jax_core.Primitive("layout_cast")
 
@@ -777,7 +786,7 @@ def _layout_cast_abstract_eval(x, new_layout):
 @lowering.register_lowering_rule(layout_cast_p, mgpu.ThreadSemantics.Lane)
 def _layout_cast_lowering(ctx: lowering.LoweringRuleContext, x, *, new_layout):
   del ctx  # Unused.
-  return x.to_layout(_get_mgpu_layout(new_layout))
+  return x.to_layout(new_layout.to_mgpu())
 
 
 def layout_cast(x: Any, new_layout: Layout | ParameterizedLayout):
@@ -860,7 +869,7 @@ def _broadcasted_iota_lowering(
   return mgpu.FragmentedArray.splat(
       llvm_dialect.mlir_undef(mlir_dtype),
       shape,
-      _get_mgpu_layout(layout),
+      layout.to_mgpu(),
       is_signed=is_signed,
   ).foreach(
       lambda _, idx: cast(idx[dimension]),

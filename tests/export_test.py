@@ -1173,7 +1173,7 @@ class JaxExportTest(jtu.JaxTestCase):
     if jax.local_device_count() < 2:
       self.skipTest("Need at least 2 devices")
 
-    abs_mesh = jax.sharding.AbstractMesh((("x", 2),))
+    abs_mesh = jax.sharding.AbstractMesh((2,), 'x')
     input_sharding = jax.sharding.NamedSharding(abs_mesh, P("x", None))
     output_sharding = jax.sharding.NamedSharding(abs_mesh, P(None, "x"))
     @jax.jit

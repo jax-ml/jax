@@ -40,8 +40,13 @@ class PRNGTest(jtu.JaxTestCase):
       self.skipTest("Need TPU devices")
     super().setUp()
 
-  def test_to_pallas_key_under_vmap(self):
-    key = jax.random.key(42, impl="rbg")
+  @parameterized.parameters(True, False)
+  @jax.legacy_prng_key('allow')
+  def test_to_pallas_key_under_vmap(self, use_legacy_key: bool):
+    if use_legacy_key:
+      key = jax.random.PRNGKey(42)
+    else:
+      key = jax.random.key(42, impl="rbg")
     key = jax.random.split(key, 10)
     batched_key = plrandom.to_pallas_key(key)
     batched_key_data = jax.random.key_data(batched_key)

@@ -15,6 +15,8 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <cstddef>
+
 #include "nanobind/nanobind.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/inlined_vector.h"
@@ -125,6 +127,79 @@ PyMethodDef safe_map_def = {
     METH_FASTCALL,
 };
 
+// Similar to SafeMap, but ignores the return values of the function and returns
+// None.
+PyObject* ForEach(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
+  if (nargs < 2) {
+    PyErr_SetString(PyExc_TypeError, "foreach() requires at least 2 arguments");
+    return nullptr;
+  }
+  PyObject* fn = args[0];
+  absl::InlinedVector<nb::object, 4> iterators;
+  iterators.reserve(nargs - 1);
+  for (Py_ssize_t i = 1; i < nargs; ++i) {
+    PyObject* it = PyObject_GetIter(args[i]);
+    if (!it) return nullptr;
+    iterators.push_back(nb::steal<nb::object>(it));
+  }
+
+  // The arguments we will pass to fn. We allocate space for one more argument
+  // than we need at the start of the argument list so we can use
+  // PY_VECTORCALL_ARGUMENTS_OFFSET which may speed up the callee.
+  absl::InlinedVector<PyObject*, 4> values(nargs, nullptr);
+  while (true) {
+    absl::Cleanup values_cleanup = [&values]() {
+      for (PyObject* v : values) {
+        Py_XDECREF(v);
+        v = nullptr;
+      }
+    };
+    values[1] = PyIter_Next(iterators[0].ptr());
+    if (PyErr_Occurred()) return nullptr;
+
+    if (values[1]) {
+      for (size_t i = 1; i < iterators.size(); ++i) {
+        values[i + 1] = PyIter_Next(iterators[i].ptr());
+        if (PyErr_Occurred()) return nullptr;
+        if (!values[i + 1]) {
+          PyErr_Format(PyExc_ValueError,
+                       "foreach() argument %u is shorter than argument 1",
+                       i + 1);
+          return nullptr;
+        }
+      }
+    } else {
+      // No more elements should be left. Checks the other iterators are
+      // exhausted.
+      for (size_t i = 1; i < iterators.size(); ++i) {
+        values[i + 1] = PyIter_Next(iterators[i].ptr());
+        if (PyErr_Occurred()) return nullptr;
+        if (values[i + 1]) {
+          PyErr_Format(PyExc_ValueError,
+                       "foreach() argument %u is longer than argument 1",
+                       i + 1);
+          return nullptr;
+        }
+      }
+      Py_INCREF(Py_None);
+      return Py_None;
+    }
+
+    nb::object out = nb::steal<nb::object>(PyObject_Vectorcall(
+        fn, &values[1], (nargs - 1) | PY_VECTORCALL_ARGUMENTS_OFFSET,
+        /*kwnames=*/nullptr));
+    if (PyErr_Occurred()) {
+      return nullptr;
+    }
+  }
+}
+
+PyMethodDef foreach_def = {
+    "foreach", reinterpret_cast<PyCFunction>(ForEach), METH_FASTCALL,
+    "foreach() applies a function elementwise to one or more iterables, "
+    "ignoring the return values and returns None. The iterables must all have "
+    "the same lengths."};
+
 // A variant of zip(...) that:
 // a) returns a list instead of an iterator, and
 // b) checks that the input iterables are of equal length.
@@ -224,6 +299,8 @@ NB_MODULE(utils, m) {
   nb::object module_name = m.attr("__name__");
   m.attr("safe_map") = nb::steal<nb::object>(
       PyCFunction_NewEx(&safe_map_def, /*self=*/nullptr, module_name.ptr()));
+  m.attr("foreach") = nb::steal<nb::object>(
+      PyCFunction_NewEx(&foreach_def, /*self=*/nullptr, module_name.ptr()));
   m.attr("safe_zip") = nb::steal<nb::object>(
       PyCFunction_NewEx(&safe_zip_def, /*self=*/nullptr, module_name.ptr()));
 

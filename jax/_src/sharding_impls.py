@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import collections
+import contextlib
 from collections.abc import Mapping, Sequence
 import dataclasses
 import functools
@@ -107,7 +108,7 @@ def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArraySharding, mesh):
       used_axes.extend(d.axes)
     remaining_axes = set(mesh.axis_names) - set(used_axes)
     replicated_axes = tuple(r for r in remaining_axes
-                            if mesh._name_to_type[r] == mesh_lib.AxisTypes.Explicit)
+                            if mesh._name_to_type[r] == mesh_lib.AxisType.Explicit)
     return SdyArraySharding(sdy_sharding.mesh_shape, dim_shardings,
                             sdy_sharding.logical_device_ids, replicated_axes)
   return sdy_sharding
@@ -1300,7 +1301,7 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
     if s is None:
       continue
     if sharding.mesh._name_to_type[s] in {
-        mesh_lib.AxisTypes.Auto, mesh_lib.AxisTypes.Manual}:
+        mesh_lib.AxisType.Auto, mesh_lib.AxisType.Manual}:
       raise ValueError(
           f'PartitionSpec passed to {api_name} cannot contain axis'
           ' names that are of type Auto or Manual. Got PartitionSpec:'
@@ -1309,44 +1310,11 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
           f' {source_info_util.summarize(source_info_util.current())}')
   return sharding
 
-TypeOfAxis = str | tuple[str, ...] | None
-
-def _normalize(axes: TypeOfAxis = None) -> tuple[str, ...]:
-  if axes is None:
-    return ()
-  return (axes,) if isinstance(axes, str) else axes
-
-def _get_axis_types(
-    auto_axes: TypeOfAxis = None, explicit_axes: TypeOfAxis = None,
-    manual_axes: TypeOfAxis = None):
-  if auto_axes is None and explicit_axes is None and manual_axes is None:
-    return None
-
-  auto_axes = _normalize(auto_axes)
-  explicit_axes = _normalize(explicit_axes)
-  manual_axes = _normalize(manual_axes)
-
-  aua, ea, ma = set(auto_axes), set(explicit_axes), set(manual_axes)
-  disjoint = aua.isdisjoint(ea) and aua.isdisjoint(ma) and ea.isdisjoint(ma)
-  if not disjoint:
-    raise ValueError(
-        f'{auto_axes=}, {explicit_axes=} and {manual_axes=} should be'
-        ' non-overlapping.')
-
-  out = {}
-  if auto_axes:
-    out.update({mesh_lib.AxisTypes.Auto: auto_axes})
-  if explicit_axes:
-    out.update({mesh_lib.AxisTypes.Explicit: explicit_axes})
-  if manual_axes:
-    out.update({mesh_lib.AxisTypes.Manual: manual_axes})
-  return out
-
 
 def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
               *, devices: Sequence[xc.Device] | None = None,
-              auto_axes: TypeOfAxis = None, explicit_axes: TypeOfAxis = None,
-              manual_axes: TypeOfAxis = None) -> mesh_lib.Mesh:
+              axis_types: tuple[mesh_lib.AxisType, ...] | None = None
+              ) -> mesh_lib.Mesh:
   """Creates an efficient mesh with the shape and axis names specified.
 
   This function attempts to automatically compute a good mapping from a set of
@@ -1408,5 +1376,29 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   mesh_devices = mesh_utils.create_device_mesh(
       new_axis_shapes, devices,
       allow_split_physical_axes=allow_split_physical_axes)
-  axis_types = _get_axis_types(auto_axes, explicit_axes, manual_axes)
   return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)
+
+
+@contextlib.contextmanager
+def use_mesh(mesh: mesh_lib.Mesh):
+  if not isinstance(mesh, mesh_lib.Mesh):
+    raise ValueError(
+        f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
+
+  # TODO(yashkatariya): Enable this.
+  # if not core.trace_state_clean():
+  #   raise ValueError('`use_mesh` can only be used outside of `jax.jit`')
+
+  with (mesh_lib.use_abstract_mesh(mesh.abstract_mesh),
+        mesh_lib.use_concrete_mesh(mesh)):
+    yield
+
+def set_mesh(mesh: mesh_lib.Mesh) -> None:
+  if not isinstance(mesh, mesh_lib.Mesh):
+    raise ValueError(
+        f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
+  if not core.trace_state_clean():
+    raise ValueError('`set_mesh` can only be used outside of `jax.jit`.')
+
+  config.abstract_mesh_context_manager.set_local(mesh.abstract_mesh)
+  config.device_context.set_local(mesh)

@@ -33,6 +33,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
+from jax._src.util import foreach
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 
@@ -247,7 +248,7 @@ def emit_pipeline(
         it.islice(it.product(*map(range, grid)), max_concurrent_steps)
     ):
       indices = tuple(map(lambda i: jnp.asarray(i, dtype=jnp.int32), indices))
-      map(lambda bref: bref.copy_in(step, indices, barrier_ref), in_brefs)
+      foreach(lambda bref: bref.copy_in(step, indices, barrier_ref), in_brefs)
 
     # This is true if any of the outputs need to be transferred inside the loop.
     copies_out_in_loop = not all(bref.is_index_invariant for bref in out_brefs)

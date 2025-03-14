@@ -349,7 +349,7 @@ devices in the mesh are ignored for tracing and lowering:
 >>> from jax.sharding import PartitionSpec as P
 >>>
 >>> # Use an AbstractMesh for exporting
->>> export_mesh = AbstractMesh((("a", 4),))
+>>> export_mesh = AbstractMesh((4,), ("a",))
 
 >>> def f(x):
 ...   return x.T

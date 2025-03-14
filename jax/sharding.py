@@ -22,15 +22,17 @@ from jax._src.sharding_impls import (
     PmapSharding as PmapSharding,
     GSPMDSharding as GSPMDSharding,
     PositionalSharding as PositionalSharding,
+    use_mesh as use_mesh,
+    set_mesh as set_mesh,
 )
 from jax._src.partition_spec import (
     PartitionSpec as PartitionSpec,
 )
-from jax._src.interpreters.pxla import Mesh as Mesh
 from jax._src.mesh import (
+    Mesh as Mesh,
     AbstractMesh as AbstractMesh,
-    AxisTypes as AxisTypes,
-    use_mesh as use_mesh
+    AxisType as AxisType,
+    get_abstract_mesh as get_abstract_mesh,
 )
 
 _deprecations = {

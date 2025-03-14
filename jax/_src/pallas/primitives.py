@@ -695,7 +695,14 @@ def dot(a, b, trans_a: bool = False, trans_b: bool = False,
     if precision is not None:
       raise ValueError("Only one of allow_tf32 and precision can be specified")
     precision = lax.Precision.HIGH if allow_tf32 else lax.Precision.HIGHEST
-  dtype = jnp.promote_types(a.dtype, b.dtype)
+
+  def _handle_f8(dtype: jax.typing.DTypeLike):
+    """Ugly workaround to support float8_e4m3b11fnuz in dot."""
+    if dtype == jnp.float8_e4m3b11fnuz:
+      return jnp.bfloat16
+    return dtype
+
+  dtype = jnp.promote_types(_handle_f8(a.dtype), _handle_f8(b.dtype))
   out_dtype = jnp.int32 if jnp.issubdtype(dtype, jnp.integer) else jnp.float32
   return jax.lax.dot_general(
       a,

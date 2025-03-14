@@ -30,7 +30,7 @@ import types
 from typing import (Any, ClassVar, Generic, NamedTuple, TypeVar,
                     overload, Union)
 import warnings
-from weakref import ref
+import weakref
 
 import numpy as np
 
@@ -39,7 +39,7 @@ from jax._src import config
 from jax._src import effects
 from jax._src import compute_on
 from jax._src import mesh as mesh_lib
-from jax._src.mesh import AxisTypes
+from jax._src.mesh import AxisType
 from jax._src.partition_spec import PartitionSpec as P
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
@@ -50,7 +50,7 @@ from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, cache,
                            HashableFunction, HashableWrapper, weakref_lru_cache,
-                           partition_list, StrictABCMeta)
+                           partition_list, StrictABCMeta, foreach)
 import jax._src.pretty_printer as pp
 from jax._src.named_sharding import NamedSharding
 from jax._src.lib import jax_jit
@@ -578,8 +578,8 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
     env[v] = val
 
   env: dict[Var, Any] = {}
-  map(write, jaxpr.constvars, consts)
-  map(write, jaxpr.invars, args)
+  foreach(write, jaxpr.constvars, consts)
+  foreach(write, jaxpr.invars, args)
   lu = last_used(jaxpr)
   for eqn in jaxpr.eqns:
     subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
@@ -589,7 +589,7 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
         traceback, name_stack=name_stack), eqn.ctx.manager:
       ans = eqn.primitive.bind(*subfuns, *map(read, eqn.invars), **bind_params)
     if eqn.primitive.multiple_results:
-      map(write, eqn.outvars, ans)
+      foreach(write, eqn.outvars, ans)
     else:
       write(eqn.outvars[0], ans)
     clean_up_dead_vars(eqn, env, lu)
@@ -617,7 +617,12 @@ def check_avals_context_mesh(avals, prim_name):
 TracerType = TypeVar('TracerType', bound='Tracer')
 
 class Trace(Generic[TracerType]):
-  __slots__ = ("__weakref__", "_invalidated")
+  __slots__ = ("__weakref__", "_invalidated", "_weakref")
+
+  def __init__(self):
+    self._invalidated = False
+    # We frequently need a weakref to a trace, so let's precompute one.
+    self._weakref = weakref.ref(self)
 
   def process_primitive(self, primitive, tracers, params):
     raise NotImplementedError("must override")
@@ -626,7 +631,7 @@ class Trace(Generic[TracerType]):
     self._invalidated = True
 
   def is_valid(self):
-    return not hasattr(self, "_invalidated")
+    return not self._invalidated
 
   def __repr__(self):
     return '{}'.format(self.__class__.__name__)
@@ -1121,7 +1126,7 @@ class TracingContext(threading.local):
 
   def set_trace(self, trace):
     self.trace = trace
-    ts = ref(trace) if trace is not None else None
+    ts = trace._weakref if trace is not None else None
     config.trace_state.set_local(ts)
 
   def set_axis_env(self, axis_env):
@@ -1129,7 +1134,7 @@ class TracingContext(threading.local):
     config.axis_env_state.set_local(axis_env.as_hashable_key())
 
   def update_thread_local_jit_state(self):
-    ts = ref(self.trace) if self.trace is not None else None
+    ts = self.trace._weakref if self.trace is not None else None
     config.trace_state.set_local(ts)
     config.axis_env_state.set_local(self.axis_env.as_hashable_key())
 
@@ -1165,7 +1170,7 @@ class SetCurrentTraceContextManager:
     trace_ctx.set_trace(self.prev)
     if self.check_leaks and config.check_tracer_leaks.value:
       self.trace.invalidate()
-      trace_ref = ref(self.trace)
+      trace_ref = self.trace._weakref
       del self.trace
       live_trace = trace_ref()
       if live_trace is not None:
@@ -1251,7 +1256,7 @@ def ensure_no_leaks(trace:Trace):
   yield
   trace.invalidate()
   if config.check_tracer_leaks.value:
-    trace_ref = ref(trace)
+    trace_ref = trace._weakref
     del trace
     live_trace = trace_ref()
     if live_trace is not None:
@@ -1830,7 +1835,7 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
       temp_s = s[0] if isinstance(s, tuple) else s
       new_spec.append(
           None
-          if mesh._name_to_type[temp_s] in (AxisTypes.Auto, AxisTypes.Manual)
+          if mesh._name_to_type[temp_s] in (AxisType.Auto, AxisType.Manual)
           else s)
   return P(*new_spec)
 
@@ -1866,7 +1871,7 @@ def _check_divisibility(sharding, shape):
           f" {size} times, but does not evenly divide the dimension size {sh}."
           f" Got shape: {shape} and sharding {sharding}")
 
-@cache(max_size=4096, trace_context_in_key=True)
+@cache(max_size=4096, trace_context_in_key=False)
 def get_sharding(sharding, shape):
   """Modifies and checks the sharding.
 
@@ -1891,6 +1896,13 @@ def get_sharding(sharding, shape):
   _check_divisibility(out_s, shape)
   return out_s
 
+def str_short_aval(shape, dtype, mesh, spec, short_dtypes=False,
+                   mesh_axis_types=False) -> str:
+  dt_str = dtypes.short_dtype_name(dtype) if short_dtypes else dtype.name
+  dt_str = dt_str.replace('void', 'float0')
+  shapestr = _get_shape_sharding_str(shape, spec)
+  mesh_axes = f'({mesh._axis_types_dict})' if mesh_axis_types else ''
+  return f'{dt_str}[{shapestr}]{mesh_axes}'
 
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape', 'sharding', 'varying_manual_axes']  # inherits slots from parent
@@ -1951,17 +1963,9 @@ class ShapedArray(UnshapedArray):
         varying_manual_axes=getattr(self, 'varying_manual_axes', frozenset()))
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
-    dt_str = (dtypes.short_dtype_name(self.dtype) if short_dtypes else
-              self.dtype.name)
-    dt_str = dt_str.replace('void', 'float0')
-    if self.sharding is not None:
-      shapestr = _get_shape_sharding_str(self.shape, self.sharding.spec)
-      mesh_axes = (f'({self.sharding.mesh.axis_types})'
-                   if mesh_axis_types else '')
-      return f'{dt_str}[{shapestr}]{mesh_axes}'
-    else:
-      shapestr = ','.join(map(str, self.shape))
-      return f'{dt_str}[{shapestr}]'
+    return str_short_aval(
+        self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,
+        short_dtypes, mesh_axis_types)
 
   def _len(self, ignored_tracer):
     try:
@@ -2833,7 +2837,7 @@ def _check_jaxpr(
 
       # Check out_type matches the let-binders' annotation (after substitution).
       out_type = substitute_vars_in_output_ty(out_type, eqn.invars, eqn.outvars)
-      map(write, eqn.outvars, out_type)
+      foreach(write, eqn.outvars, out_type)
 
     except JaxprTypeError as e:
       ctx, settings = ctx_factory()
@@ -2844,7 +2848,7 @@ def _check_jaxpr(
       raise JaxprTypeError(msg, eqn_idx) from None
 
   # TODO(mattjj): include output type annotation on jaxpr and check it here
-  map(read, jaxpr.outvars)
+  foreach(read, jaxpr.outvars)
 
 def check_type(
     ctx_factory: Callable[[], tuple[JaxprPpContext, JaxprPpSettings]],
@@ -3328,7 +3332,7 @@ class OpaqueTraceState:
 
 def get_opaque_trace_state(convention):
   del convention
-  return OpaqueTraceState(ref(trace_ctx.trace))
+  return OpaqueTraceState(trace_ctx.trace._weakref)
 
 def nonempty_axis_env() -> bool:
   return bool(trace_ctx.axis_env.axis_sizes)

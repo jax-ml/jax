@@ -131,11 +131,7 @@ class NamedSharding(JSharding.Sharding):
     mem = '' if self.memory_kind is None else f', memory_kind={self.memory_kind}'
     ldi = ('' if self._logical_device_ids is None else
            f', logical_device_ids={self._logical_device_ids}')
-    if isinstance(self.mesh, mesh_lib.AbstractMesh):
-      mesh_repr = f"{self.mesh}"
-    else:
-      nv_str = ", ".join(f"'{n}': {v}" for n, v in self.mesh.shape.items())
-      mesh_repr = f"Mesh({nv_str})"
+    mesh_repr = f"{str(self.mesh)}"
     return f'NamedSharding(mesh={mesh_repr}, spec={self.spec}{mem}{ldi})'
 
   def __reduce__(self):
@@ -413,7 +409,7 @@ def named_sharding_to_xla_hlo_sharding(
 
   special_axes = {}
   mesh_manual_axes = {n for n, t in self.mesh._name_to_type.items()
-                      if t == mesh_lib.AxisTypes.Manual}
+                      if t == mesh_lib.AxisType.Manual}
   manual_axes = self._manual_axes.union(mesh_manual_axes)
   if manual_axes:
     axis_names = self.mesh.axis_names
@@ -503,16 +499,26 @@ def preprocess(mesh, spec, parsed_pspec, _manual_axes=frozenset()):
     spec = PartitionSpec() if spec is None else spec
     parsed_pspec = ParsedPartitionSpec.from_user_input(
         spec, "NamedSharding spec", allow_unconstrained_dims=True)
-    _check_unique_resources(parsed_pspec, "NamedSharding spec")
+    _check_unique_resources(parsed_pspec, "NamedSharding spec", mesh)
   _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes)
   return parsed_pspec
 
 def check_pspec(mesh, spec, _manual_axes=frozenset()):
-  _check_unique_resources(spec, "NamedSharding spec")
+  _check_unique_resources(spec, "NamedSharding spec", mesh)
   _check_mesh_resource_axis(mesh, spec, _manual_axes)
 
+class DuplicateSpecError(Exception):
+  def __init__(self, message, mesh, pspec):
+    super().__init__(message)
+    self.message = message
+    self.mesh = mesh
+    self.pspec = pspec
+
+  def __str__(self):
+    return f"{self.message}"
+
 def _check_unique_resources(
-    pspec: ParsedPartitionSpec | PartitionSpec, arg_name: str
+    pspec: ParsedPartitionSpec | PartitionSpec, arg_name: str, mesh=None,
 ) -> None:
   resource_counts: dict[MeshAxisName, int] = {}
   duplicate = False
@@ -529,10 +535,12 @@ def _check_unique_resources(
       resource_counts[resource] = count + 1
   if duplicate:
     multiple_uses = [r for r, c in resource_counts.items() if c > 1]
-    raise ValueError(
-        f'A single {arg_name} specification can map every mesh axis to at'
-        f' most one positional dimension, but {pspec} has duplicate entries'
-        f' for {mesh_lib.show_axes(multiple_uses)}')
+    raise DuplicateSpecError(
+        message=(
+            f'A single {arg_name} specification can map every mesh axis to at'
+            f' most one positional dimension, but {pspec} has duplicate entries'
+            f' for {mesh_lib.show_axes(multiple_uses)}'),
+        mesh=mesh, pspec=pspec)
 
 @cache(max_size=128, trace_context_in_key=False)
 def _check_mesh_resource_axis(mesh, pspec, _manual_axes):
@@ -556,9 +564,9 @@ def _check_mesh_resource_axis(mesh, pspec, _manual_axes):
           'AxisTypes should be the same in a tuple subset of PartitionSpec:'
           f' {pspec}. Got subset {p} with axis'
           f' types: ({", ".join(str(mesh._name_to_type[r]) for r in p)})')
-  if (mesh_lib.AxisTypes.Auto not in mesh.axis_types and
+  if (mesh_lib.AxisType.Auto not in mesh._axis_types_dict and
       PartitionSpec.UNCONSTRAINED in pspec):
     raise ValueError(
         f'{pspec} cannot contain'
         ' `P.UNCONSTRAINED` when no mesh axis_types are `Auto`. Got mesh'
-        f' axis_types: {mesh.axis_types}')
+        f' axis_types: {mesh._axis_types_dict}')
