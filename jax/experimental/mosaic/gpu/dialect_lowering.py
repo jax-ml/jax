@@ -58,7 +58,7 @@ class LoweringContext:
     if not _should_lower(op):
       return
 
-    if (name := op.OPERATION_NAME) not in _lowerings:
+    if (name := op.OPERATION_NAME) not in _lowerings:  # pytype: disable=attribute-error
       raise NotImplementedError(f"Missing lowering rule for {op}")
 
     lowering_rule = _lowerings[name]
@@ -260,8 +260,9 @@ def _vector_load_op_lowering_rule(
         vec_size=strided_layout.vec_size,
     )
   elif layouts.from_layout_attr(out_layout_attr) == fa.WGMMA_LAYOUT:
-    layout = ir.MemRefType(vector_load_op.base.type).layout
-    swizzle, transforms = memref_layout_to_swizzle_and_transforms(layout)
+    swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+        inference_utils.in_transforms(vector_load_op)[0]
+    )
     transformed_ref = transform_memref(vector_load_op.base, transforms)
     fragmented_array = fa.FragmentedArray.load_tiled(
         transformed_ref,
@@ -297,8 +298,20 @@ def _vector_store_op_lowering_rule(
       vector_store_op.valueToStore, to_store_layout
   )
 
-  # TODO(dasenov): This is not efficient for WGMMA layouts
-  fragmented_array.store_untiled(vector_store_op.base)
+  if fragmented_array.layout == fa.WGMMA_LAYOUT:
+    swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+        inference_utils.in_transforms(vector_store_op)[0]
+    )
+    fragmented_array.store_tiled(
+        transform_memref(vector_store_op.base, transforms), swizzle
+    )
+  elif (isinstance(fragmented_array.layout, fa.WGStridedFragLayout) or
+        isinstance(fragmented_array.layout, fa.WGSplatFragLayout)):
+    fragmented_array.store_untiled(vector_store_op.base)
+  else:
+    raise ValueError(
+        f"{vector_store_op} has an unsupported layout: {to_store_layout}"
+    )
 
   return []
 
@@ -348,39 +361,43 @@ def _vector_reduction_op_lowering_rule(
   return [_fragmented_array_to_ir(result, op.result.type)]
 
 
-def memref_layout_to_swizzle_and_transforms(
-    layout: ir.Attribute,
+def swizzle_and_transforms_from_transforms_attr(
+    transforms: ir.ArrayAttr,
 ) -> tuple[mgpu.SwizzlingMode, tuple[launch_context.MemRefTransform, ...]]:
-  """Returns the swizzle and transforms that are encoded in the given layout.
+  """Returns the swizzle and MemrefTransforms for the given transforms.
 
-    If the layout is not a LayoutAttr, the swizzle is kNoSwizzle and the
-    transforms are empty. Otherwise, the layout may have at most one swizzle
-    transform and any combination of tiling and transpose transforms.
+  Args:
+    transforms: a list of transform attributes.
+
+  Returns:
+    A tuple containing the swizzle mode and MemRefTransforms corresponding to
+    the parameter transforms. If `transforms` is empty, or does not contain
+    any swizzling transform, the swizzle mode is assumed to be kNoSwizzle.
+  Raises:
+    ValueError: if a swizzling transform is followed by any transform.
   """
   swizzle = None
   gmem_transforms: list[launch_context.MemRefTransform] = []
 
-  if mgpu.LayoutAttr.isinstance(layout):
-    transforms_attr = mgpu.LayoutAttr(layout).transforms
-    for transform in transforms_attr:
-      if swizzle is not None:
-        raise ValueError(f"{layout} contains more transforms after the initial swizzle.")
-      if mgpu.SwizzleTransformAttr.isinstance(transform):
-        # TODO(dasenov): Swizzling can change if the ref is sliced in certain
-        # ways. We might want to enforce some restrictions here.
-        swizzle = mgpu.SwizzleTransformAttr(transform).swizzle
-      elif mgpu.TileTransformAttr.isinstance(transform):
-        tiling = mgpu.TileTransformAttr(transform).tiling
-        tiling_transform = launch_context.TileTransform(tuple(tiling))
-        gmem_transforms.append(tiling_transform)
-      elif mgpu.TransposeTransformAttr.isinstance(transform):
-        permutation = mgpu.TransposeTransformAttr(transform).permutation
-        transpose_transform = launch_context.TransposeTransform(
-            tuple(permutation)
-        )
-        gmem_transforms.append(transpose_transform)
-      else:
-        raise ValueError(f"{layout} has an unsupported transform: {transform}")
+  for transform in transforms:
+    if swizzle is not None:
+      raise ValueError(f"{transforms} contain more transforms after swizzle.")
+    if mgpu.SwizzleTransformAttr.isinstance(transform):
+      # TODO(dasenov): Swizzling can change if the ref is sliced in certain
+      # ways. We might want to enforce some restrictions here.
+      swizzle = mgpu.SwizzleTransformAttr(transform).swizzle
+    elif mgpu.TileTransformAttr.isinstance(transform):
+      tiling = mgpu.TileTransformAttr(transform).tiling
+      tiling_transform = launch_context.TileTransform(tuple(tiling))
+      gmem_transforms.append(tiling_transform)
+    elif mgpu.TransposeTransformAttr.isinstance(transform):
+      permutation = mgpu.TransposeTransformAttr(transform).permutation
+      transpose_transform = launch_context.TransposeTransform(
+          tuple(permutation)
+      )
+      gmem_transforms.append(transpose_transform)
+    else:
+      raise ValueError("Unknown transform: {transform}")
 
   return swizzle or mgpu.SwizzlingMode.kNoSwizzle, tuple(gmem_transforms)
 
@@ -420,8 +437,14 @@ def _mgpu_async_load_op_lowering_rule(
   assert ctx.launch_context is not None
   barrier = utils.BarrierRef.from_dialect_barrier_memref(load_op.barrier)
 
-  dst_layout = ir.MemRefType(load_op.destination.type).layout
-  swizzle, transforms = memref_layout_to_swizzle_and_transforms(dst_layout)
+  if inference_utils.has_in_transforms_set(load_op):
+    [transforms] = inference_utils.in_transforms(load_op)
+    swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+        transforms
+    )
+  else:
+    swizzle = mgpu.SwizzlingMode.kNoSwizzle
+    transforms = ()
 
   gmem_slice = []
   for idx_i32, size in zip(load_op.indices, load_op.slice_lengths):
@@ -450,8 +473,14 @@ def _mgpu_async_store_op_lowering_rule(
 ) -> Sequence[ir.Value]:
   assert ctx.launch_context is not None
 
-  src_layout = ir.MemRefType(store_op.source.type).layout
-  swizzle, transforms = memref_layout_to_swizzle_and_transforms(src_layout)
+  if inference_utils.has_in_transforms_set(store_op):
+    [transforms] = inference_utils.in_transforms(store_op)
+    swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+        transforms
+    )
+  else:
+    swizzle = mgpu.SwizzlingMode.kNoSwizzle
+    transforms = ()
 
   gmem_slice = []
   for idx_i32, size in zip(store_op.indices, store_op.slice_lengths):
@@ -677,25 +706,29 @@ def _mgpu_wgmma_op_lowering_rule(
   regs = acc_in.to_layout(fa.WGMMA_LAYOUT)
   acc = wgmma.WGMMAAccumulator.from_registers(regs)
 
-  b_layout = ir.MemRefType(wgmma_op.b.type).layout
-  b_swizzle, b_transforms = memref_layout_to_swizzle_and_transforms(b_layout)
+  if ir.VectorType.isinstance(wgmma_op.a.type):
+    a_transforms = None
+    b_transforms = inference_utils.in_transforms(wgmma_op)[0]
+  else:
+    a_transforms, b_transforms = inference_utils.in_transforms(wgmma_op)
+
+  b_swizzle, b_transforms = swizzle_and_transforms_from_transforms_attr(
+      b_transforms
+  )
   b_operand = transform_memref(wgmma_op.b, b_transforms)
-  if wgmma_op.transpose_b:
-    b_operand = utils.memref_transpose(b_operand, (0, 1, 3, 2))
 
   if ir.VectorType.isinstance(wgmma_op.a.type):
     a_operand = _fragmented_array_from_ir(wgmma_op.a, wgmma_layout)
   else:
-    a_layout = ir.MemRefType(wgmma_op.a.type).layout
-    a_swizzle, a_transforms = memref_layout_to_swizzle_and_transforms(a_layout)
+    a_swizzle, a_transforms = swizzle_and_transforms_from_transforms_attr(
+        a_transforms
+    )
     if a_swizzle != b_swizzle:
       raise ValueError(
           f"Non-matching swizzles of operands a and b in WGMMA: {a_swizzle} !="
           f" {b_swizzle}"
       )
     a_operand = transform_memref(wgmma_op.a, a_transforms)
-    if wgmma_op.transpose_a:
-      a_operand = utils.memref_transpose(a_operand, (0, 1, 3, 2))
 
   new_acc = wgmma.wgmma(acc, a_operand, b_operand, swizzle=b_swizzle)
 
@@ -888,7 +921,7 @@ def single_thread_predicates(module: ir.Module) -> tuple[ir.Value, ir.Value]:
 def _should_lower(op: ir.OpView) -> bool:
   """Returns 'true' if the operation should be lowered."""
   return (
-      op.OPERATION_NAME.startswith("mosaic_gpu.")
+      op.OPERATION_NAME.startswith("mosaic_gpu.")  # pytype: disable=attribute-error
       or inference_utils.should_have_layout(op)
       or any(bool(b) for r in op.regions for b in r)  # Does it have subblocks?
   )
