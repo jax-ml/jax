@@ -209,12 +209,22 @@ def build_kernel(
   )
 
 
+def generate_group_sizes(expert_count, token_count, key1, key2):
+  v = jr.truncated_normal(key1, -2., 2., expert_count) + 2.
+  expert_probs = v / jnp.sum(v)
+  expert_assignment = jr.choice(key2, expert_count, (token_count,), p=expert_probs)
+  group_sizes = jnp.bincount(expert_assignment)
+  return group_sizes
+
+
 def main(unused_argv):
   m, k, n = 8192, 4096, 8192
+  e = 64  # experts
   cta_count = get_sm_count()
-  ka, kb = jr.split(jr.key(0), 2)
+  ka, kb, ke1, ke2 = jr.split(jr.key(0), 4)
   a = jr.normal(key=ka, shape=(m, k), dtype=jnp.float16)
   b = jr.normal(key=kb, shape=(n, k), dtype=jnp.float16)
+  group_sizes = generate_group_sizes(e, m, ke1, ke2)
 
   tile_m = (128,)
   tile_n = (128, 256, 512)
