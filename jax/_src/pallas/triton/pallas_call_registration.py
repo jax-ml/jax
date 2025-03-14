@@ -50,6 +50,7 @@ def pallas_call_lowering(
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: pallas_core.GridMapping,
+    mesh: pallas_core.Mesh | None,
     compiler_params: dict[str, Any],
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
@@ -64,6 +65,8 @@ def pallas_call_lowering(
     raise NotImplementedError(
         "scalar prefetch not implemented in the Triton backend"
     )
+  if mesh is not None:
+    raise NotImplementedError("mesh is not supported in the Triton backend")
   triton_params = compiler_params.get("triton", compiler_params)
   num_warps = triton_params.get("num_warps", 4)
   num_warps = 4 if num_warps is None else num_warps

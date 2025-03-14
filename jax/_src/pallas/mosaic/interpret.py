@@ -1351,12 +1351,13 @@ def interpret_pallas_call(
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: GridMapping,
+    mesh: pallas_core.Mesh | None,
     compiler_params: Any,
     cost_estimate: CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
     interpret_params: TPUInterpretParams,
 ):
-  del debug, cost_estimate, out_avals
+  del debug, mesh, cost_estimate, out_avals
 
   # args contains: *dynamic_grid_sizes, *index, *inputs.  (No consts?)
   dynamic_grid_args, scalars, input_args = split_list(

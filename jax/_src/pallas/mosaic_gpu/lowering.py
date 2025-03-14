@@ -449,6 +449,7 @@ def _block_spec_from_block_mapping(
 
 def lower_pipelined_jaxpr_to_module(
     grid_mapping: pallas_core.GridMapping,
+    mesh: pallas_core.Mesh | None,
     jaxpr: jax_core.Jaxpr,
     compiler_params: dict[str, Any],
     cost_estimate: pallas_core.CostEstimate | None,
@@ -472,7 +473,10 @@ def lower_pipelined_jaxpr_to_module(
       block_mappings, [grid_mapping.num_inputs]
   )
 
-  if grid_mapping.grid_names:  # Last dim corresponds to the warpgroup count
+  if mesh is not None:
+    assert isinstance(mesh, gpu_core.GPUMesh)
+  if mesh and mesh.num_threads is not None:
+    # Last dim corresponds to the warpgroup count.
     block = (128 * grid_mapping.grid[-1], 1, 1)
     grid = grid_mapping.grid[:-1]
   else:

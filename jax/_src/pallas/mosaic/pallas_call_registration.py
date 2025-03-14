@@ -108,6 +108,7 @@ def pallas_call_tpu_lowering_rule(
     *in_nodes,
     jaxpr: jax_core.Jaxpr,
     grid_mapping: core.GridMapping,
+    mesh: pallas_core.Mesh | None,
     input_output_aliases: tuple[tuple[int, int], ...],
     debug: bool,
     interpret: bool,
@@ -116,7 +117,8 @@ def pallas_call_tpu_lowering_rule(
     out_avals: tuple[jax_core.AbstractValue, ...],
 ):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
-  del interpret
+  del mesh, interpret  # Unused.
+
   debug_info = jaxpr._debug_info
   if debug:
     print(f"\nThe kernel jaxpr for pallas_call {debug_info.func_src_info}:")
@@ -126,11 +128,11 @@ def pallas_call_tpu_lowering_rule(
   else:
     mosaic_params = {}
 
-  mesh = None
+  jax_mesh = None
   axis_context = ctx.module_context.axis_context
   if axis_context is not None:
     if isinstance(axis_context, sharding_impls.SPMDAxisContext):
-      mesh = axis_context.mesh
+      jax_mesh = axis_context.mesh
   mlir_ctx = mlir.JaxIrContext()
   mlir_ctx.append_dialect_registry(mlir.upstream_dialects)
   mlir_ctx.load_all_available_dialects()
@@ -147,7 +149,7 @@ def pallas_call_tpu_lowering_rule(
           grid_mapping,
           jaxpr,
           dimension_semantics=dimension_semantics,
-          mesh=mesh,
+          mesh=jax_mesh,
           for_verification=for_verification,
           dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
       )
@@ -164,11 +166,11 @@ def pallas_call_tpu_lowering_rule(
   )
 
   if promela_dump_path := _DUMP_PROMELA_TO.value:
-    num_devices = 1 if mesh is None else mesh.devices.size
+    num_devices = 1 if jax_mesh is None else jax_mesh.devices.size
     num_cores = (
         jax.devices()[0].num_cores
-        if mesh is None
-        else mesh.devices[0].num_cores
+        if jax_mesh is None
+        else jax_mesh.devices[0].num_cores
     )
     verification_module, _ = lower_module(for_verification=True)
     model = verification.export_promela_model(
