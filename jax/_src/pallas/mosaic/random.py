@@ -19,6 +19,7 @@ import jax
 from jax import numpy as jnp
 from jax import random as jax_api_random
 from jax._src import blocked_sampler
+from jax._src import dtypes
 from jax._src import typing
 from jax._src.pallas.mosaic.primitives import prng_seed
 from jax._src.pallas.mosaic.primitives import prng_random_bits
@@ -37,15 +38,23 @@ FOLD_IN_ROUNDS = 128
 
 def to_pallas_key(key: jax.Array) -> jax.Array:
   """Helper function for converting non-Pallas PRNG keys into Pallas keys."""
+  # Handle new-style typed PRNG keys.
   generate_key = functools.partial(
       jax.random.bits, shape=tpu_key_impl.key_shape, dtype=jnp.uint32
   )
-  if len(key.shape) == 0:
-    pallas_key_data = generate_key(key)
-  else:
-    pallas_key_data = (jax.vmap(generate_key))(key)
-  return jax_api_random.wrap_key_data(pallas_key_data, impl="pallas_tpu")
+  vmapped_key = False
+  if jnp.issubdtype(key.dtype, dtypes.prng_key):  # New-style typed PRNG key.
+    if len(key.shape) > 0:
+      vmapped_key = True
+  else:  # Legacy uint32 key.
+    if len(key.shape) > 1:
+      vmapped_key = True
 
+  if vmapped_key:
+    pallas_key_data = jax.vmap(generate_key)(key)
+  else:
+    pallas_key_data = generate_key(key)
+  return jax_api_random.wrap_key_data(pallas_key_data, impl="pallas_tpu")
 
 def is_pallas_impl(impl: jax_prng.PRNGImpl) -> bool:
   """Returns True if the PRNGImpl is a Pallas-specific implementation."""
@@ -68,6 +77,10 @@ def _fold_in(key: jax_prng.PRNGKeyArray, data: typing.Array):
   # Because the TPU generates random numbers in (8, 128) blocks at once, we
   # can generate that many values without additional cost which will reduce
   # correlation between the old and new keys.
+
+  # TODO(justinfu): The underlying TPU hardware PRNG doesn't produce robust
+  # random bits when applied in rounds such as below (measured via crush).
+  # We should consider a different strategy for generating keys.
   key_shape = tpu_key_impl.key_shape
 
   prng_seed(data)
