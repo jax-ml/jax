@@ -663,6 +663,7 @@ def lower_jaxpr_to_module(
       for_verification=for_verification,
       forward_compatible=lowering_context.is_forward_compat(),
       dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+      dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
   )
   m.body.append(func_op)
   sym_tab.insert(func_op)
@@ -738,7 +739,6 @@ def lower_jaxpr_to_module(
     ]
     static_grid = dynamic_shape_replacement_fn(static_grid)
     func_op.attributes["iteration_bounds"] = ir.DenseI64ArrayAttr.get(static_grid)
-
   func_op.attributes["scalar_prefetch"] = ir.IntegerAttr.get(
       ir.IntegerType.get_signless(64), len(mosaic_grid_mapping.scalar_prefetch_types))
   func_op.attributes["scratch_operands"] = ir.IntegerAttr.get(
@@ -828,6 +828,7 @@ def lower_jaxpr_to_func(
     dynamic_shape_replacement_fn: (
         Callable[[tuple[jax.DimSize, ...]], tuple[int, ...]] | None
     ) = None,
+    dynamic_shape_replacement_enabled: bool = False,
 ) -> func.FuncOp:
   num_grid = len(mosaic_grid_mapping.grid_types)
   num_scalar_prefetch = len(mosaic_grid_mapping.scalar_prefetch_types)
@@ -874,6 +875,12 @@ def lower_jaxpr_to_func(
     )
   body_func.__name__ = name
   body = func.FuncOp.from_py_func(*arg_types, name=name)(body_func)
+  if dynamic_shape_replacement_enabled:
+    # Skip verification for dynamic shape replacement - you can potentially
+    # produce ir like ex: add(x[placeholder_0, placeholder_1], y[128, 128])
+    # which is not valid, but we don't care since we'll run the verifier again
+    # after the dynamic shape replacement pass.
+    return body.func_op
   try:
     body.func_op.verify()
   except ir.MLIRError as e:
@@ -3851,3 +3858,60 @@ def _platform_index_lowering(
 
 
 lowering_rules[jax._src.lax.control_flow.platform_index_p] = _platform_index_lowering
+
+
+def _dim_as_value_lowering(ctx: mlir.LoweringRuleContext, *, dim):
+  dim_terms = dim._sorted_terms
+
+  # print("DIM TERMS", dim_terms)
+  def traverse_terms(t, collect):
+    if isinstance(t, shape_poly._DimExpr):
+      single_term = t._to_term()
+      # if single_term:
+      # collect(single_term, "single_term")
+      for tt in t._sorted_terms:
+        traverse_terms(tt, collect)
+    elif isinstance(t, tuple):
+      for tt in t:
+        traverse_terms(tt, collect)
+    elif isinstance(t, shape_poly._DimTerm):
+      for f in t._factors:
+        traverse_terms(f, collect)
+    elif isinstance(t, shape_poly._DimFactor):
+      if t.var:
+        collect(t.var, "var")
+      else:
+        collect(t.operation, "operation")
+      for opnd in t.operands:
+        # traverse_terms(opnd, collect)
+        collect(opnd, "operand")
+    else:
+      if t != 1:
+        collect(t, "other")
+
+  expr_parts = []
+
+  def collect(t, classification):
+    expr_parts.append(t)
+    # print("DIM TERM COLLECTED", t, "of type", type(t), "with classification", classification)
+
+  traverse_terms(dim, collect)
+  for i, part in enumerate(expr_parts):
+    if isinstance(part, shape_poly._DimExpr):
+      maybe_constant = shape_poly._DimExpr._to_constant(part)
+      if maybe_constant is not None and False:
+        expr_parts[i] = maybe_constant
+      else:
+        as_placeholder = ctx.lowering_context.dynamic_shape_replacement_fn((
+            part,
+        ))
+        expr_parts[i] = as_placeholder
+  str_expr_parts = [str(e) for e in expr_parts]
+
+  res = tpu.dim_as_value_export(str_expr_parts)
+  return res
+
+
+import jax._src.export.shape_poly as shape_poly
+
+lowering_rules[shape_poly.dim_as_value_p] = _dim_as_value_lowering

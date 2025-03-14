@@ -862,6 +862,24 @@ def TPU_LogBufferOp : TPU_Op<"log_buffer"> {
   let hasVerifier = 1;
 }
 
+// TODO(mvoz): Consider adding an annotation that indicates we should not
+// ever lower this op - it is strictly meant for smuggling the placeholder
+// values into the MLIR module - a specialization pass will handle replacement
+// into actual dynamic operations on dimensions.
+// ex:
+//
+// %110 = "tpu.dim_as_value_export"() <{expression_parts = ["mod", "(2147483643,)", "(2147483642,)"]}> : () -> i32
+// %111 = "vector.broadcast"(%110) : (i32) -> vector<256x256xi32>
+//
+// will replace the placeholders 2147483643 and 2147483642 with the actual
+// values of the dimensions, and pass it as a value to the broadcast.
+def TPU_DimAsValueExportOp : TPU_Op<"dim_as_value_export"> {
+  let arguments = (ins StrArrayAttr:$expression_parts);
+  let results = (outs I32:$result);
+  let assemblyFormat = [{ $expression_parts attr-dict `:` type($result) }];
+}
+
+
 def DebugAssertInsertionPass : Pass<"debug-assert-insertion", "::mlir::func::FuncOp"> {
   let dependentDialects = [
     "::mlir::func::FuncDialect",
