@@ -1870,7 +1870,7 @@ class HashableLiteral:
     if self.value.aval != other.value.aval:
       return False
     if self.data is None:
-      return id(self) == id(other)
+      return self is other
     return self.data == other.data
 
 

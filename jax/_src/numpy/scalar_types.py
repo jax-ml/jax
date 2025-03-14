@@ -40,7 +40,7 @@ class _ScalarMeta(type):
     return hash(self.dtype.type)
 
   def __eq__(self, other: Any) -> bool:
-    return id(self) == id(other) or self.dtype.type == other
+    return self is other or self.dtype.type == other
 
   def __ne__(self, other: Any) -> bool:
     return not (self == other)

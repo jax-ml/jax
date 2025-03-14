@@ -286,7 +286,7 @@ class Mesh(_BaseMesh, contextlib.ContextDecorator):
   def __eq__(self, other):
     # This is a performance optimization. Comparing thousands of devices
     # can be expensive.
-    if id(self) == id(other):
+    if self is other:
       return True
     if not isinstance(other, Mesh):
       return False
@@ -454,7 +454,7 @@ class AbstractMesh(_BaseMesh):
     return self._hash
 
   def __eq__(self, other):
-    if id(self) == id(other):
+    if self is other:
       return True
     if not isinstance(other, AbstractMesh):
       return False
