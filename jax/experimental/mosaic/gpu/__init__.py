@@ -45,6 +45,10 @@ from .layout_inference import (
     infer_layout as infer_layout,
 )
 
+from .transform_inference import (
+    infer_transforms as infer_transforms,
+)
+
 from .fragmented_array import (
     FragmentedArray as FragmentedArray,
     FragmentedLayout as FragmentedLayout,
