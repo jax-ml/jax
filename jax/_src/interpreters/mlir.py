@@ -53,6 +53,7 @@ from jax._src.sharding import Sharding as JSharding
 from jax._src.sharding_impls import (AUTO, NamedSharding,
                                      modify_sdy_sharding_wrt_axis_types,
                                      SdyArraySharding, SdyArrayShardingList)
+from jax._src.util import foreach
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension, xla_extension_version
 from jax._src.lib.mlir import dialects, ir, passmanager
@@ -1941,8 +1942,8 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   assert len(args) == len(jaxpr.invars), (jaxpr, args)
   assert len(consts) == len(jaxpr.constvars), (jaxpr, consts)
   assert len(ctx.shape_poly_state.dim_vars) == len(dim_var_values), (ctx.shape_poly_state.dim_vars, dim_var_values)
-  map(write, jaxpr.constvars, consts)
-  map(write, jaxpr.invars, args)
+  foreach(write, jaxpr.constvars, consts)
+  foreach(write, jaxpr.invars, args)
   last_used = core.last_used(jaxpr)
   for eqn in jaxpr.eqns:
     in_nodes = map(read, eqn.invars)
@@ -2009,7 +2010,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
                        f"{eqn}, got output {ans}") from e
 
     assert len(ans) == len(eqn.outvars), (ans, eqn)
-    map(write, eqn.outvars, out_nodes)
+    foreach(write, eqn.outvars, out_nodes)
     core.clean_up_dead_vars(eqn, env, last_used)
   return tuple(read(v) for v in jaxpr.outvars), tokens
 
@@ -2101,11 +2102,11 @@ def lower_per_platform(ctx: LoweringRuleContext,
   # If there is a single rule left just apply the rule, without conditionals.
   if len(kept_rules) == 1:
     output = kept_rules[0](ctx, *rule_args, **rule_kwargs)
-    map(
+    foreach(
         lambda o: wrap_compute_type_in_place(ctx, o.owner),
         filter(_is_not_block_argument, flatten_ir_values(output)),
     )
-    map(
+    foreach(
         lambda o: wrap_xla_metadata_in_place(ctx, o.owner),
         flatten_ir_values(output),
     )
@@ -2146,11 +2147,11 @@ def lower_per_platform(ctx: LoweringRuleContext,
       except TypeError as e:
         raise ValueError("Output of translation rule must be iterable: "
                         f"{description}, got output {output}") from e
-      map(
+      foreach(
           lambda o: wrap_compute_type_in_place(ctx, o.owner),
           filter(_is_not_block_argument, out_nodes),
       )
-      map(
+      foreach(
           lambda o: wrap_xla_metadata_in_place(ctx, o.owner),
           out_nodes,
       )

@@ -65,6 +65,7 @@ from jax._src.state import primitives as state_primitives
 from jax._src.state.types import RefBitcaster, RefReshaper
 from jax._src.state.utils import dtype_bitwidth
 from jax._src.typing import Array, DTypeLike
+from jax._src.util import foreach
 from jax._src.util import safe_map
 from jax._src.util import safe_zip
 from jax._src.util import split_list
@@ -950,7 +951,7 @@ def jaxpr_subcomp(
 
   for invar, bs in zip(jaxpr.invars, ctx.block_shapes):
     block_shape_env[invar] = bs
-  map(write_env, jaxpr.invars, args)
+  foreach(write_env, jaxpr.invars, args)
 
   initial_name_stack = [scope.name for scope in ctx.name_stack.stack]
   current_name_stack: list[str] = []
@@ -1011,7 +1012,7 @@ def jaxpr_subcomp(
             f"{eqn.primitive.name}. "
             "Please file an issue on https://github.com/jax-ml/jax/issues.")
       if eqn.primitive.multiple_results:
-        map(write_env, eqn.outvars, ans)
+        foreach(write_env, eqn.outvars, ans)
       else:
         write_env(eqn.outvars[0], ans)
 

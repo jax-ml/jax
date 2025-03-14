@@ -90,6 +90,31 @@ if TYPE_CHECKING:
 else:
   safe_map = jaxlib_utils.safe_map
 
+if TYPE_CHECKING:
+  @overload
+  def foreach(f: Callable[[T1], Any], __arg1: Iterable[T1]) -> None: ...
+
+  @overload
+  def foreach(f: Callable[[T1, T2], Any], __arg1: Iterable[T1], __arg2: Iterable[T2]) -> None: ...
+
+  @overload
+  def foreach(f: Callable[[T1, T2, T3], Any], __arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> None: ...
+
+  @overload
+  def foreach(f: Callable[..., Any], __arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> None: ...
+
+  def foreach(f, *args):
+    safe_map(f, *args)
+    return None
+
+else:
+  # TODO(phawkins): remove after jaxlib 0.5.2 is the minimum.
+  if hasattr(jaxlib_utils, 'foreach'):
+    foreach = jaxlib_utils.foreach
+  else:
+    foreach = safe_map
+
+
 def unzip2(xys: Iterable[tuple[T1, T2]]
     ) -> tuple[tuple[T1, ...], tuple[T2, ...]]:
   """Unzip sequence of length-2 tuples into two tuples."""

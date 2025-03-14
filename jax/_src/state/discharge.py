@@ -45,6 +45,7 @@ from jax._src.state.types import (
 from jax._src.state.utils import bitcast, hoist_consts_to_refs
 from jax._src.typing import Array
 from jax._src.util import (
+    foreach,
     merge_lists,
     partition_list,
     safe_map,
@@ -140,10 +141,10 @@ def _eval_jaxpr_discharge_state(
     *args: Any):
   env = Environment({})
 
-  map(env.write, jaxpr.constvars, consts)
+  foreach(env.write, jaxpr.constvars, consts)
   # Here some args may correspond to `Ref` avals but they'll be treated like
   # regular values in this interpreter.
-  map(env.write, jaxpr.invars, args)
+  foreach(env.write, jaxpr.invars, args)
 
   refs_to_discharge = {id(v.aval) for v, d in zip(jaxpr.invars, should_discharge)
                        if d and isinstance(v.aval, AbstractRef)}
@@ -195,7 +196,7 @@ def _eval_jaxpr_discharge_state(
         ans = eqn.primitive.bind(*subfuns, *map(env.read, eqn.invars),
                                 **bind_params)
     if eqn.primitive.multiple_results:
-      map(env.write, eqn.outvars, ans)
+      foreach(env.write, eqn.outvars, ans)
     else:
       env.write(eqn.outvars[0], ans)
   # By convention, we return the outputs of the jaxpr first and then the final

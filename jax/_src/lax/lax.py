@@ -71,7 +71,8 @@ from jax._src.sharding_impls import (PmapSharding, NamedSharding,
                                      PartitionSpec as P, canonicalize_sharding)
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
 from jax._src.util import (NumpyComplexWarning, cache, canonicalize_axis,
-                           safe_map, safe_zip, split_list, weakref_lru_cache)
+                           safe_map, safe_zip, split_list, weakref_lru_cache,
+                           foreach)
 
 _max = builtins.max
 _min = builtins.min
@@ -106,7 +107,7 @@ def _validate_shapes(shapes: Sequence[Shape]):
     # pass dynamic shapes through unchecked
     return
   else:
-    map(_check_static_shape, shapes)
+    foreach(_check_static_shape, shapes)
 
 def _try_broadcast_shapes(*shapes: tuple[int, ...], name: str) -> tuple[int, ...]:
   """

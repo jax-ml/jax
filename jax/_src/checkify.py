@@ -51,7 +51,7 @@ from jax._src.tree_util import tree_map
 from jax._src.tree_util import tree_unflatten
 from jax._src.typing import Array
 from jax._src.util import (as_hashable_function, split_list, safe_map, safe_zip,
-                           unzip3, weakref_lru_cache, HashableWrapper)
+                           unzip3, weakref_lru_cache, HashableWrapper, foreach)
 
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
@@ -413,8 +413,8 @@ def checkify_jaxpr_flat(jaxpr: core.Jaxpr, consts: Sequence[core.Value],
   def write_env(var: core.Var, val: Any):
     env[var] = val
 
-  map(write_env, jaxpr.constvars, consts)
-  map(write_env, jaxpr.invars, in_args)
+  foreach(write_env, jaxpr.constvars, consts)
+  foreach(write_env, jaxpr.invars, in_args)
 
   # interpreter loop
   for eqn in jaxpr.eqns:
@@ -427,7 +427,7 @@ def checkify_jaxpr_flat(jaxpr: core.Jaxpr, consts: Sequence[core.Value],
       error, outvals = checkify_rule(error, enabled_errors,
                                      *invals, **eqn.params)
     if eqn.primitive.multiple_results:
-      map(write_env, eqn.outvars, outvals)
+      foreach(write_env, eqn.outvars, outvals)
     else:
       write_env(eqn.outvars[0], outvals)
     core.clean_up_dead_vars(eqn, env, last_used)

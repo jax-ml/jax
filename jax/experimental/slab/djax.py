@@ -26,6 +26,7 @@ from jax import lax
 
 from jax._src import core
 from jax._src import util
+from jax._src.util import foreach
 
 import jax.experimental.slab.slab as sl
 
@@ -107,11 +108,11 @@ def eval_djaxpr(jaxpr: core.Jaxpr, slab: sl.Slab, *args: jax.Array | sl.SlabView
   def write(v, val):
     env[v] = val
 
-  map(write, jaxpr.invars, args)
+  foreach(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
     invals = map(read, eqn.invars)
     slab, outvals = rules[eqn.primitive](slab, *invals, **eqn.params)
-    map(write, eqn.outvars, outvals)
+    foreach(write, eqn.outvars, outvals)
   return slab, map(read, jaxpr.outvars)
 
 rules: dict[core.Primitive, Callable] = {}

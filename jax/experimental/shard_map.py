@@ -58,7 +58,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import (HashableFunction, HashablePartial, unzip2,
                            as_hashable_function, memoize, partition_list,
-                           split_list, subs_list2)
+                           split_list, subs_list2, foreach)
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -648,15 +648,15 @@ def _check_rep(mesh: Mesh, jaxpr: core.Jaxpr, in_rep: Sequence[RepType]
   def write(v: core.Var, val: RepType) -> None:
     env[v] = val
 
-  map(write, jaxpr.constvars, [set(mesh.axis_names)] * len(jaxpr.constvars))
-  map(write, jaxpr.invars, in_rep)
+  foreach(write, jaxpr.constvars, [set(mesh.axis_names)] * len(jaxpr.constvars))
+  foreach(write, jaxpr.invars, in_rep)
   last_used = core.last_used(jaxpr)
   for e in jaxpr.eqns:
     rule = _check_rules.get(e.primitive, partial(_rule_missing, e.primitive))
     out_rep = rule(mesh, *map(read, e.invars), **e.params)
     if e.primitive.multiple_results:
       out_rep = [out_rep] * len(e.outvars) if type(out_rep) is set else out_rep
-      map(write, e.outvars, out_rep)
+      foreach(write, e.outvars, out_rep)
     else:
       write(e.outvars[0], out_rep)
     core.clean_up_dead_vars(e, env, last_used)

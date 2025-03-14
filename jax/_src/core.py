@@ -50,7 +50,7 @@ from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, cache,
                            HashableFunction, HashableWrapper, weakref_lru_cache,
-                           partition_list, StrictABCMeta)
+                           partition_list, StrictABCMeta, foreach)
 import jax._src.pretty_printer as pp
 from jax._src.named_sharding import NamedSharding
 from jax._src.lib import jax_jit
@@ -578,8 +578,8 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
     env[v] = val
 
   env: dict[Var, Any] = {}
-  map(write, jaxpr.constvars, consts)
-  map(write, jaxpr.invars, args)
+  foreach(write, jaxpr.constvars, consts)
+  foreach(write, jaxpr.invars, args)
   lu = last_used(jaxpr)
   for eqn in jaxpr.eqns:
     subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
@@ -589,7 +589,7 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
         traceback, name_stack=name_stack), eqn.ctx.manager:
       ans = eqn.primitive.bind(*subfuns, *map(read, eqn.invars), **bind_params)
     if eqn.primitive.multiple_results:
-      map(write, eqn.outvars, ans)
+      foreach(write, eqn.outvars, ans)
     else:
       write(eqn.outvars[0], ans)
     clean_up_dead_vars(eqn, env, lu)
@@ -2837,7 +2837,7 @@ def _check_jaxpr(
 
       # Check out_type matches the let-binders' annotation (after substitution).
       out_type = substitute_vars_in_output_ty(out_type, eqn.invars, eqn.outvars)
-      map(write, eqn.outvars, out_type)
+      foreach(write, eqn.outvars, out_type)
 
     except JaxprTypeError as e:
       ctx, settings = ctx_factory()
@@ -2848,7 +2848,7 @@ def _check_jaxpr(
       raise JaxprTypeError(msg, eqn_idx) from None
 
   # TODO(mattjj): include output type annotation on jaxpr and check it here
-  map(read, jaxpr.outvars)
+  foreach(read, jaxpr.outvars)
 
 def check_type(
     ctx_factory: Callable[[], tuple[JaxprPpContext, JaxprPpSettings]],
