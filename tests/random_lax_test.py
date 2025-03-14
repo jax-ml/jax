@@ -740,6 +740,34 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckKolmogorovSmirnovCDF(norms.ravel(), scipy.stats.uniform().cdf)
 
   @jtu.sample_product(
+    num=[1, 4, 16, 64, 256, 1024],
+    dim=[1, 2, 3],
+    perturb=[True, False],
+    shuffle=[True, False],
+    dtype=jtu.dtypes.floating,
+  )
+  def testRobertsSequence(self, num, perturb, shuffle, dim, dtype):
+    key = random.key(0)
+    x = random.roberts_sequence(
+      num=num,
+      dim=dim,
+      perturb=perturb,
+      shuffle=shuffle,
+      key=key,
+      dtype=dtype,
+    )
+    self.assertEqual(x.shape, (num, dim))
+    self.assertEqual(x.dtype, dtype)
+    self.assertTrue((0 <= x).all())
+    self.assertTrue((x <= 1).all())
+
+  def testRobertsSequencePi(self):
+    key = random.key(0)
+    x = random.roberts_sequence(10**5, 2)
+    fraction_inside_ball = (jnp.linalg.norm(x, axis=1) < 1).mean()
+    self.assertAllClose(fraction_inside_ball * 4, jnp.pi, atol=1e-2)
+
+  @jtu.sample_product(
     b=[0.1, 1., 10.],
     dtype=jtu.dtypes.floating,
   )
