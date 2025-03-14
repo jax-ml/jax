@@ -943,9 +943,6 @@ class PallasCallTest(PallasTest):
       force_while=[False, True], thread_semantics=[*plgpu.ThreadSemantics]
   )
   def test_fori_loop_array(self, force_while, thread_semantics):
-    if force_while and thread_semantics == plgpu.ThreadSemantics.Warpgroup:
-      self.skipTest("WG semantics does not support force_while.")
-
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
@@ -962,9 +959,6 @@ class PallasCallTest(PallasTest):
       force_while=[False, True], thread_semantics=[*plgpu.ThreadSemantics]
   )
   def test_fori_loop_scalar(self, force_while, thread_semantics):
-    if force_while and thread_semantics == plgpu.ThreadSemantics.Warpgroup:
-      self.skipTest("WG semantics does not support force_while.")
-
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
@@ -995,11 +989,16 @@ class PallasCallTest(PallasTest):
 
     np.testing.assert_array_equal(kernel(), jnp.full([256], 5, dtype=jnp.int32))
 
-  @parameterized.parameters(False, True)
-  def test_fori_loop_tuple(self, force_while):
+  @parameterized.product(
+      force_while=[False, True], thread_semantics=[*plgpu.ThreadSemantics]
+  )
+  def test_fori_loop_tuple(self, force_while, thread_semantics):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
+        compiler_params=plgpu.GPUCompilerParams(
+            thread_semantics=thread_semantics
+        ),
     )
     def kernel(o_ref):
       def body(step, xs):
@@ -1018,11 +1017,16 @@ class PallasCallTest(PallasTest):
         kernel(), jnp.full([256], 3 * (0 + 1), jnp.int32)
     )
 
-  @parameterized.parameters(False, True)
-  def test_fori_loop_indexed_store(self, force_while):
+  @parameterized.product(
+      force_while=[False, True], thread_semantics=[*plgpu.ThreadSemantics]
+  )
+  def test_fori_loop_indexed_store(self, force_while, thread_semantics):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([4, 128], jnp.float32),
+        compiler_params=plgpu.GPUCompilerParams(
+            thread_semantics=thread_semantics
+        ),
     )
     def kernel(x_ref, y_ref, o_ref):
       def body(idx, _):
@@ -1035,9 +1039,17 @@ class PallasCallTest(PallasTest):
     y = x + 1
     np.testing.assert_array_equal(kernel(x, y), x + y)
 
-  def test_while_loop(self):
+  @parameterized.product(thread_semantics=[*plgpu.ThreadSemantics])
+  def test_while_loop(self, thread_semantics):
+    if thread_semantics == plgpu.ThreadSemantics.Warpgroup:
+      self.skipTest("WG lowering does not support reduce_sum_p needed for this test")
+
     @functools.partial(
-        pl.pallas_call, out_shape=jax.ShapeDtypeStruct([128], jnp.int32)
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([128], jnp.int32),
+        compiler_params=plgpu.GPUCompilerParams(
+            thread_semantics=thread_semantics
+        ),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = jnp.zeros(o_ref.shape, dtype=jnp.int32)
