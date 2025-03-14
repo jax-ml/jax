@@ -565,5 +565,5 @@ def use_concrete_mesh(mesh: Mesh | None):
   finally:
     jax_config.device_context.set_local(prev_val)
 
-def get_concrete_mesh():
+def get_concrete_mesh() -> Mesh | None:
   return jax_config.device_context.value
