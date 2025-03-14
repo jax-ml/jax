@@ -30,7 +30,7 @@ This guide lays out how to do some dev operations, what branches live in this re
      If upstream reviewers request some changes to the new PR before merging, you can add
      or modify commits on the new `-upstream` feature branch.
   b. If this is an urgent change that we want in `rocm-main` right now but also want upstream,
-     add the `open-upstream` label, merge your PR, and then follow the link that 
+     add the `open-upstream` label, merge your PR, and then follow the link that
   c. If this is a change that we only want to keep in `rocm/jax` and not push into upstream,
      squash and merge your PR.
 
@@ -62,4 +62,8 @@ development tasks. These all live in `.github/workflows`.
 | ROCm GPU CI                | `rocm-ci.yml`                    | Open or commit changes to a PR targeting `rocm-main` | Builds and runs JAX on ROCm for PRs going into `rocm-main`                             |
 | ROCm Open Upstream PR      | `rocm-open-upstream-pr.yml`      | Add the `open-upstream` label to a PR                | Copies changes from a PR aimed at `rocm-main` into a new PR aimed at upstream's `main` |
 | ROCm Nightly Upstream Sync | `rocm-nightly-upstream-sync.yml` | Runs nightly, can be triggered manually via Actions  | Opens a PR that merges changes from upstream `main` into our `rocm-main` branch        |
+
+# Test Guidlines
+
+Use `pytest.mark.xfail` or `pytest.mark.xfail(run=False)` to skip failing tests that we will fix later. Use these for tests that we do eventually want to pass, but that we will skip for now to keep CI green. Continue to use `unittest.skip` or `self.skip` for tests that aren't applicable to AMD hardware.
 
