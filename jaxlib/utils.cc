@@ -16,9 +16,13 @@ limitations under the License.
 #include <Python.h>
 
 #include <cstddef>
+#include <utility>
+#include <vector>
 
 #include "nanobind/nanobind.h"
 #include "absl/cleanup/cleanup.h"
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/synchronization/mutex.h"
 
@@ -293,6 +297,69 @@ PyMethodDef safe_zip_def = {
     METH_FASTCALL,
 };
 
+nb::list TopologicalSort(nb::str parents_attr,
+                         nb::iterable end_nodes_iterable) {
+  // This is a direct conversion of the original Python implementation.
+  // More efficient implementations of a topological sort are possible (and
+  // indeed, easier to write), but changing the choice of topological order
+  // would break existing tests.
+  std::vector<nb::object> end_nodes;
+  absl::flat_hash_set<PyObject*> seen;
+  for (nb::handle n : end_nodes_iterable) {
+    nb::object node = nb::borrow(n);
+    if (seen.insert(node.ptr()).second) {
+      end_nodes.push_back(node);
+    }
+  }
+
+  nb::list sorted_nodes;
+  if (end_nodes.empty()) {
+    return sorted_nodes;
+  }
+
+  std::vector<nb::object> stack = end_nodes;
+  absl::flat_hash_map<PyObject*, int> child_counts;
+  while (!stack.empty()) {
+    nb::object node = std::move(stack.back());
+    stack.pop_back();
+    auto& count = child_counts[node.ptr()];
+    if (count == 0) {
+      for (nb::handle parent : node.attr(parents_attr)) {
+        stack.push_back(nb::borrow(parent));
+      }
+    }
+    ++count;
+  }
+
+  for (nb::handle n : end_nodes) {
+    child_counts[n.ptr()] -= 1;
+  }
+
+  std::vector<nb::object> childless_nodes;
+  childless_nodes.reserve(end_nodes.size());
+  for (nb::handle n : end_nodes) {
+    if (child_counts[n.ptr()] == 0) {
+      childless_nodes.push_back(nb::borrow(n));
+    }
+  }
+
+  while (!childless_nodes.empty()) {
+    nb::object node = std::move(childless_nodes.back());
+    childless_nodes.pop_back();
+    sorted_nodes.append(node);
+    for (nb::handle parent : node.attr(parents_attr)) {
+      auto& count = child_counts[parent.ptr()];
+      if (count == 1) {
+        childless_nodes.push_back(nb::borrow(parent));
+      } else {
+        --count;
+      }
+    }
+  }
+  sorted_nodes.reverse();
+  return sorted_nodes;
+}
+
 }  // namespace
 
 NB_MODULE(utils, m) {
@@ -303,6 +370,13 @@ NB_MODULE(utils, m) {
       PyCFunction_NewEx(&foreach_def, /*self=*/nullptr, module_name.ptr()));
   m.attr("safe_zip") = nb::steal<nb::object>(
       PyCFunction_NewEx(&safe_zip_def, /*self=*/nullptr, module_name.ptr()));
+
+  m.def("topological_sort", &TopologicalSort, nb::arg("parents_attr"),
+        nb::arg("end_nodes"),
+        "Computes a topological sort of a graph of objects. parents_attr is "
+        "the name of the attribute on each object that contains the list of "
+        "parent objects. end_nodes is an iterable of objects from which we "
+        "should start a backwards search.");
 
   // Python has no reader-writer lock in its standard library, so we expose
   // bindings around absl::Mutex.
