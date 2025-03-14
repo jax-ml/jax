@@ -14,7 +14,7 @@
 
 import functools
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 import numpy as np
 
 import jax
@@ -64,6 +64,9 @@ class LinalgShardingTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    # TODO(danfm): Remove after 0.5.3 release.
+    if jtu.jaxlib_version() <= (0, 5, 2):
+      self.skipTest("Requires jaxlib version 0.5.3 or later")
     if jax.device_count() < 2:
       self.skipTest("Requires multiple devices")
 
@@ -107,7 +110,7 @@ class LinalgShardingTest(jtu.JaxTestCase):
       return x
     return tuple(arg_maker(shape) for shape in shapes)
 
-  @jtu.sample_product(
+  @parameterized.product(
       fun_and_shapes=ALL_FUN_AND_SHAPES,
       dtype=float_types + complex_types,
   )
@@ -124,18 +127,16 @@ class LinalgShardingTest(jtu.JaxTestCase):
     expected = fun(*args)
     actual = fun_jit(*args_sharded)
     self.assertAllClose(actual, expected)
-    # TODO(danfm): Re-enable this check after diganosing non-determinism.
-    # self.assertNotIn("all-", fun_jit.lower(*args_sharded).compile().as_text())
+    self.assertNotIn("all-", fun_jit.lower(*args_sharded).compile().as_text())
 
     vmap_fun = jax.vmap(fun)
     vmap_fun_jit = jax.jit(vmap_fun)
     actual = vmap_fun_jit(*args_sharded)
     self.assertAllClose(actual, expected)
-    # TODO(danfm): Re-enable this check after diganosing non-determinism.
-    # self.assertNotIn(
-    #     "all-", vmap_fun_jit.lower(*args_sharded).compile().as_text())
+    self.assertNotIn(
+        "all-", vmap_fun_jit.lower(*args_sharded).compile().as_text())
 
-  @jtu.sample_product(
+  @parameterized.product(
       fun_and_shapes=ALL_FUN_AND_SHAPES,
       dtype=float_types + complex_types,
   )
@@ -155,7 +156,7 @@ class LinalgShardingTest(jtu.JaxTestCase):
     self.assertIn(
         "all-gather", fun_jit.lower(*args_sharded).compile().as_text())
 
-  @jtu.sample_product(
+  @parameterized.product(
       fun_and_shapes=ALL_FUN_AND_SHAPES,
       dtype=float_types + complex_types,
   )
@@ -182,11 +183,10 @@ class LinalgShardingTest(jtu.JaxTestCase):
     ]:
       _, actual = jvp_fun_jit(*args)
       self.assertAllClose(actual, expected)
-      # TODO(danfm): Re-enable this check after diganosing non-determinism.
-      # hlo = jvp_fun_jit.lower(primals_sharded, tangents_sharded).compile()
-      # self.assertNotIn("all-", hlo.as_text())
+      hlo = jvp_fun_jit.lower(primals_sharded, tangents_sharded).compile()
+      self.assertNotIn("all-", hlo.as_text())
 
-  @jtu.sample_product(
+  @parameterized.product(
       fun_and_shapes=ALL_FUN_AND_SHAPES,
       dtype=float_types + complex_types,
   )
@@ -205,9 +205,8 @@ class LinalgShardingTest(jtu.JaxTestCase):
     expected = vjp_fun(tangents)
     actual = vjp_fun_jit(tangents_sharded)
     self.assertAllClose(actual, expected)
-    # TODO(danfm): Re-enable this check after diganosing non-determinism.
-    # hlo = vjp_fun_jit.lower(tangents_sharded).compile()
-    # self.assertNotIn("all-", hlo.as_text())
+    hlo = vjp_fun_jit.lower(tangents_sharded).compile()
+    self.assertNotIn("all-", hlo.as_text())
 
 
 if __name__ == "__main__":
