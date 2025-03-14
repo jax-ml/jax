@@ -99,7 +99,8 @@ _XLA_EXTENSION_STUBS = [
     "jax_jit.pyi",
     "ops.pyi",
     "pmap_lib.pyi",
-    "profiler.pyi",
+    "profiler/__init__.pyi",
+    "profiler/profile_data.pyi",
     "pytree.pyi",
     "transfer_guard_lib.pyi",
 ]
@@ -109,6 +110,7 @@ _OPTIONAL_XLA_EXTENSION_STUBS = []
 def patch_copy_xla_extension_stubs(dst_dir):
   xla_extension_dir = os.path.join(dst_dir, "xla_extension")
   os.makedirs(xla_extension_dir)
+  os.makedirs(os.path.join(xla_extension_dir, "profiler"))
   for stub_name in _XLA_EXTENSION_STUBS:
     stub_path = r.Rlocation("xla/xla/python/xla_extension/" + stub_name)
     stub_path = str(stub_path)  # Make pytype accept os.path.exists(stub_path).
