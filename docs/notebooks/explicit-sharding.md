@@ -59,9 +59,8 @@ outputId: a64bcbcb-27f8-4c57-8931-8091c9bb8ebf
 import jax
 import numpy as np
 import jax.numpy as jnp
-from jax.sharding import PartitionSpec as P, AxisType, set_mesh
+from jax.sharding import PartitionSpec as P, AxisType, set_mesh, get_abstract_mesh
 from jax.experimental.shard import reshard, auto_axes
-from jax._src.mesh import get_abstract_mesh
 
 jax.config.update('jax_num_cpu_devices', 8)
 ```
