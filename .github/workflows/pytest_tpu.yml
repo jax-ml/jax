@@ -82,6 +82,7 @@ jobs:
       JAXCI_PYTHON: "python${{ inputs.python }}"
       JAXCI_RUN_FULL_TPU_TEST_SUITE: "${{ inputs.run-full-tpu-test-suite }}"
       JAXCI_TPU_CORES: "${{ inputs.cores }}"
+      JAXCI_LIBTPU_VERSION_TYPE: "${{ inputs.libtpu-version-type }}"
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -123,22 +124,22 @@ jobs:
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt -r build/collect-profile-requirements.txt
       - name: Set up libtpu wheels
         run: |
-          if [[ "${{ inputs.libtpu-version-type }}" == "nightly" ]]; then
+          if [[ "${{ env.JAXCI_LIBTPU_VERSION_TYPE }}" == "nightly" ]]; then
             echo "Using nightly libtpu"
             $JAXCI_PYTHON -m uv pip install --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-          elif [[ "${{ inputs.libtpu-version-type }}" == "pypi_latest" ]]; then
+          elif [[ "${{ env.JAXCI_LIBTPU_VERSION_TYPE }}" == "pypi_latest" ]]; then
             echo "Using latest libtpu from PyPI"
             # Set JAXCI_ADDITIONAL_WHEELS_INSTALL_FROM_PYPI to "tpu_pypi". The `run_pytest_tpu.sh`
             # script will install the latest libtpu wheel from PyPI.
             echo "JAXCI_ADDITIONAL_WHEELS_INSTALL_FROM_PYPI=tpu_pypi" >> $GITHUB_ENV
-          elif [[ "${{ inputs.libtpu-version-type }}" == "oldest_supported_libtpu" ]]; then
+          elif [[ "${{ env.JAXCI_LIBTPU_VERSION_TYPE }}" == "oldest_supported_libtpu" ]]; then
             echo "Using oldest supported libtpu"
             $JAXCI_PYTHON -m uv pip install --pre libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
             echo "libtpu_version_type=oldest_supported_libtpu" >> $GITHUB_ENV
           else
-            echo "Unknown libtpu version type: ${{ inputs.libtpu-version-type }}"
+            echo "Unknown libtpu version type: ${{ env.JAXCI_LIBTPU_VERSION_TYPE }}"
             exit 1
           fi
       # Halt for testing
@@ -149,3 +150,6 @@ jobs:
       - name: Run Pytest TPU tests
         timeout-minutes: ${{ github.event_name == 'pull_request' && 30 || 180 }}
         run: ./ci/run_pytest_tpu.sh
+      - name: Run Bazel TPU tests
+        timeout-minutes: ${{ github.event_name == 'pull_request' && 30 || 180 }}
+        run: ./ci/run_bazel_test_tpu.sh
