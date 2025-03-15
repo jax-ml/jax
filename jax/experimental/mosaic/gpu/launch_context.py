@@ -22,6 +22,8 @@ import math
 from typing import Any
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
+from jax._src.pallas.mosaic_gpu import core as gpu_core
+from jax import numpy as jnp
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import func
@@ -224,6 +226,21 @@ class CollapseLeadingIndicesTransform(MemRefTransform):
 
   def batch(self, leading_rank: int) -> MemRefTransform:
     raise NotImplementedError  # Unused
+
+
+@dataclasses.dataclass(frozen=True)
+class PeerMemTransform(MemRefTransform):
+  """Translate memref to a peer memref."""
+  dev_id: Any
+
+  def apply(self, ref: ir.Value) -> ir.Value:
+    return utils.to_remote_memref(ref, gpu_core._ensure_ir_value(self.dev_id, jnp.int32))
+
+  def transform_index(self, idx: Sequence[ir.Value]) -> tuple[ir.Value, ...]:
+    return tuple(idx)
+
+  def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
+    return tuple(shape)
 
 
 OnDeviceProfiler = profiler.OnDeviceProfiler

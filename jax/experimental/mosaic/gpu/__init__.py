@@ -32,6 +32,7 @@ from .core import (
 from .launch_context import (
     LaunchContext as LaunchContext,
     MemRefTransform as MemRefTransform,
+    PeerMemTransform as PeerMemTransform,
     Rounding as Rounding,
     TileTransform as TileTransform,
     TransposeTransform as TransposeTransform,
