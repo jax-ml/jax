@@ -19,6 +19,10 @@ from jax.experimental.x64_context import (
   enable_x64 as enable_x64,
   disable_x64 as disable_x64,
 )
+from jax._src.api import (
+  saved_input_vjp as saved_input_vjp,
+  si_vjp as si_vjp
+)
 from jax._src.callback import (
   io_callback as io_callback
 )
