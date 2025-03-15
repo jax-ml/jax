@@ -593,6 +593,11 @@ def module_to_bytecode(module: ir.Module) -> bytes:
 
 # Translation rules
 
+# Create one global thread pool that can be shared between multiple ir.Contexts
+# and enabling multi-threading
+global_thread_pool = ir.ThreadPool()
+
+
 class JaxIrContext(ir.Context):
   def __init__(self, *args, **kwargs):
     # Note: we're very intentionally *not* calling the __init__() of our
@@ -613,6 +618,7 @@ def make_ir_context() -> ir.Context:
   # we don't do any heavy computation on MLIR modules from Python anyway, so we
   # just disable threading.
   context.enable_multithreading(False)
+  context.set_thread_pool(global_thread_pool)
   # TODO(bartchr): Once JAX is released with SDY, remove the if.
   if dialects.sdy:
     dialects.sdy.register_dialect(context)
