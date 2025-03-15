@@ -1180,13 +1180,33 @@ def shfl_bfly(x: ir.Value, distance: int | ir.Value):
   i32 = ir.IntegerType.get_signless(32)
   if isinstance(distance, int):
     distance = c(distance, i32)
-  assert x.type == i32
-  return nvvm.shfl_sync(
+  if (result_type := x.type) != i32:
+    x = bitcast(x, i32)
+  y = nvvm.shfl_sync(
       i32, c(0xFFFFFFFF, i32), x, distance, c(0x1F, i32), nvvm.ShflKind.bfly,
   )
+  return bitcast(y, result_type)
+
+
+def prmt(high: ir.Value, low: ir.Value, permutation: ir.Value):
+  i32 = ir.IntegerType.get_signless(32)
+  if (result_type := high.type) != low.type:
+    raise ValueError(f"Types must match, got {high.type} and {low.type}")
+  if high.type != i32:
+    high = bitcast(high, i32)
+  if low.type != i32:
+    low = bitcast(low, i32)
+  if permutation.type != i32:
+    permutation = bitcast(permutation, i32)
+  result = llvm.inline_asm(
+      i32, [high, low, permutation], "prmt.b32 $0, $1, $2, $3;", "=r,r,r,r"
+  )
+  return bitcast(result, result_type)
 
 
 def bitcast(x: ir.Value, new_type: ir.Type):
+  if x.type == new_type:
+    return x
   if ir.VectorType.isinstance(x.type) and ir.IntegerType.isinstance(new_type):
     new_type = ir.IntegerType(new_type)
     x_ty = ir.VectorType(x.type)
@@ -1205,3 +1225,17 @@ def bitcast(x: ir.Value, new_type: ir.Type):
 
 def ceil_div(x: int, y: int):
   return (x + y - 1) // y
+
+
+def vector_slice(v: ir.Value, s: slice):
+  i32 = ir.IntegerType.get_signless(32)
+  v_ty = ir.VectorType(v.type)
+  if len(v_ty.shape) != 1:
+    raise NotImplementedError
+  [v_len] = v_ty.shape
+  it = range(v_len)[s]
+  result = llvm.mlir_undef(ir.VectorType.get((len(it),), v_ty.element_type))
+  for tgt, src in enumerate(it):
+    elem = llvm.extractelement(v, c(src, i32))
+    result = llvm.insertelement(result, elem, c(tgt, i32))
+  return result
