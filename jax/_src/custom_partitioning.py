@@ -19,8 +19,10 @@ It was moved out of ``jax.experimental`` to avoid import cycles.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from functools import partial
 import inspect
+import string
 from typing import Any, Callable
 import weakref
 
@@ -460,7 +462,7 @@ class custom_partitioning:
     self.propagate_user_sharding = propagate_user_sharding
     self.infer_sharding_from_operands = infer_sharding_from_operands
     self.decode_shardings = decode_shardings
-    if (sharding_rule is None or isinstance(sharding_rule, Callable) or
+    if (sharding_rule is None or callable(sharding_rule) or
         isinstance(sharding_rule, SdyShardingRule)):
       self.sharding_rule = sharding_rule
     else:
@@ -617,3 +619,107 @@ xb.register_plugin_callbacks(
         can_side_effecting_have_replicated_sharding=True,
     )
 )
+
+def batch_partitionable(
+    fun: Callable,
+    *,
+    num_batch_dims: int,
+    static_argnums: Sequence[int] = (),
+):
+  """Label a function as batch partitionable.
+
+  A function is "batch partitionable" if it can be trivially partitioned along
+  some number of leading batch dimensions. In other words, along those axes,
+  the function can be applied to subsets of the data without changing behavior.
+
+  Args:
+    fun: The batch partitionable function.
+    num_batch_dims: The number of leading batch dimensions.
+    static_argnums: Passed through to
+      :func:`~jax.experimental.custom_partitioning.custom_partitioning`.
+  """
+  wrapped = custom_partitioning(fun, static_argnums=static_argnums)
+  wrapped.def_partition(
+      infer_sharding_from_operands=partial(batch_infer_sharding_from_operands,
+                                           num_batch_dims),
+      partition=partial(batch_partition, num_batch_dims, fun),
+      sharding_rule=partial(batch_sharding_rule_producer, num_batch_dims),
+  )
+  return wrapped
+
+
+def _get_single_batch_spec(num_batch_dims: int, arg):
+  ndim = len(arg.shape)
+  if arg.sharding is None:
+    return (None,) * ndim
+  spec = tuple(arg.sharding.spec)
+  if num_batch_dims <= len(spec):
+    return spec[:num_batch_dims]
+  else:
+    return spec + (None,) * (num_batch_dims - len(spec))
+
+
+def _get_batch_spec(num_batch_dims: int, arg_shapes):
+  flat_args = tree_util.tree_leaves(arg_shapes)
+  in_specs = [_get_single_batch_spec(num_batch_dims, arg) for arg in flat_args]
+  batch_spec: list[Any] = []
+  for names in zip(*in_specs):
+    unique = set(names) - {None}
+    if len(unique) != 1:
+      # len(unique) > 1 is really an error, but we can't raise here so we just
+      # fall back on replication.
+      batch_spec.append(None)
+    else:
+      name, = unique
+      batch_spec.append(name)
+  return tuple(batch_spec)
+
+
+def _get_supported_sharding(mesh, batch_spec, arg):
+  spec = tuple(batch_spec) + (None,) * (len(arg.shape) - len(batch_spec))
+  return jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec(*spec))
+
+
+def batch_infer_sharding_from_operands(
+    num_batch_dims: int, mesh, arg_shapes, result_shapes
+):
+  batch_spec = _get_batch_spec(num_batch_dims, arg_shapes)
+  return tree_util.tree_map(
+      partial(_get_supported_sharding, mesh, batch_spec),
+      result_shapes,
+  )
+
+
+def batch_partition(
+    num_batch_dims: int, fun: Callable, mesh, arg_shapes, result_shapes
+):
+  batch_spec = _get_batch_spec(num_batch_dims, arg_shapes)
+  arg_shardings = tree_util.tree_map(
+      partial(_get_supported_sharding, mesh, batch_spec),
+      arg_shapes,
+  )
+  result_shardings = tree_util.tree_map(
+      partial(_get_supported_sharding, mesh, batch_spec),
+      result_shapes,
+  )
+  return mesh, fun, result_shardings, arg_shardings
+
+
+def batch_sharding_rule_producer(
+    num_batch_dims: int, mesh, arg_shapes, result_shapes
+):
+  del mesh  # unused
+  letters = iter(string.ascii_letters)
+  args_flat = tree_util.tree_leaves(arg_shapes)
+  results_flat = tree_util.tree_leaves(result_shapes)
+  lhs = ", ".join(_sdy_rule_for_ndim(letters, num_batch_dims, len(x.shape))
+                  for x in args_flat)
+  rhs = ", ".join(_sdy_rule_for_ndim(letters, num_batch_dims, len(x.shape))
+                  for x in results_flat)
+  return f"{lhs} -> {rhs}"
+
+
+def _sdy_rule_for_ndim(letters, num_batch_dims, ndim):
+  return " ".join(
+      ("...", *(next(letters) for _ in range(ndim - num_batch_dims)))
+  )
