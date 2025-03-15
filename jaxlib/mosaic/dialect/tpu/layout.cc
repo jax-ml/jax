@@ -253,12 +253,7 @@ class TiledRectangularVregBounds : public VRegDataBounds {
     const IntegerType i1 = builder.getI1Type();
     FAILUREOR_ASSIGN_OR_RETURN(
         const VectorType mask_vreg_ty, [&]() -> FailureOr<VectorType> {
-          // I'm pretty sure this works for all bitwidths, but it's untested.
           if (maskVariesAlong(Direction::kSubelements, target_shape)) {
-            if (layout_.packing() != 2) {
-              // TODO(b/300082350): Generalize this
-              return emitError(loc, "Not implemented: packing != 2");
-            }
             // For older TPUs, we virtualize masking
             if (generation < 4) {
               return VectorType::get(target_shape, i1);
