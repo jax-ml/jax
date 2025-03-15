@@ -22,6 +22,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     {func}`jax.lax.dynamic_update_slice` and related functions. The default is
     true, matching the current behavior. If set to false, JAX does not need to
     emit code clamping negative indices, which improves code size.
+  * Added a `replace` option to {func}`jax.random.categorical` to enable sampling
+    without replacement.
 
 ## jax 0.5.2 (Mar 4, 2025)
 
