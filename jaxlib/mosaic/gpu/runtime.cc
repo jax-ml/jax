@@ -22,7 +22,7 @@ limitations under the License.
 extern "C" {
 
 void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
-                              int64_t elem_bitwidth, int64_t rank,
+                              int64_t elem_type, int64_t elem_bitwidth, int64_t rank,
                               int64_t *sizes, int64_t *strides,
                               int64_t swizzle_bytes, int64_t *window_shape) {
   if (((uintptr_t)tma_desc) % 64 != 0) {
@@ -55,16 +55,32 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
   }
 
   CUtensorMapDataType data_type;
-  if (elem_bytewidth == 1) {
+  // types are defined in utils.get_tma_dtype() which are defined in:
+  // https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__TYPES.html#group__CUDA__TYPES_1g42bfc19a0751d7183ee94faf9d9e779d
+  if (elem_type == 0){
     data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
-  } else if (elem_bytewidth == 2) {
+  } else if (elem_type == 1){
     data_type = CU_TENSOR_MAP_DATA_TYPE_UINT16;
-  } else if (elem_bytewidth == 4) {
+  } else if (elem_type == 2){
     data_type = CU_TENSOR_MAP_DATA_TYPE_UINT32;
-  } else if (elem_bytewidth == 8) {
+  } else if (elem_type == 3){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_INT32;
+  } else if (elem_type == 4){
     data_type = CU_TENSOR_MAP_DATA_TYPE_UINT64;
-  } else {
-    fprintf(stderr, "Unsupported element size: %ld\n", elem_bytewidth);
+  } else if (elem_type == 5){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_INT64;
+  } else if (elem_type == 6){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_FLOAT16;
+  } else if (elem_type == 7){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_FLOAT32;
+  } else if (elem_type == 8){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_FLOAT64;
+  } else if (elem_type == 9){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16;
+  } else{
+    fprintf(stderr,
+            "Unsupported element type: %ld and element size: %ld\n", 
+            elem_type, elem_bytewidth);
     abort();
   }
   if (rank < 1 || rank > 5) {

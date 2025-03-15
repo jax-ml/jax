@@ -1205,3 +1205,58 @@ def bitcast(x: ir.Value, new_type: ir.Type):
 
 def ceil_div(x: int, y: int):
   return (x + y - 1) // y
+
+
+def get_tma_dtype(elem_type):
+  # types based on CUtensorMapDataType
+  # https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__TYPES.html#group__CUDA__TYPES_1g42bfc19a0751d7183ee94faf9d9e779d
+  if isinstance(elem_type, ir.IntegerType):
+    bitwidth = bitwidth_impl(elem_type)
+    if bitwidth == 8:
+      return 0 # uint8
+    elif bitwidth == 16:
+      return 1 # uint16
+    elif bitwidth == 32:
+      return 2 # uint32
+    elif bitwidth == 64:
+      return 4 # uint64
+  elif ir.F16Type.isinstance(elem_type):
+    return 6
+  elif ir.F32Type.isinstance(elem_type):
+    return 7
+  elif ir.BF16Type.isinstance(elem_type):
+    return 9
+  else:
+    return -1 # unsupported tma dtype
+
+
+class TMAReductionKind(enum.Enum):
+  ADD = 0
+  MIN = 1
+  MAX = 2
+  INC = 3
+  DEC = 4
+  AND = 5
+  OR  = 6
+  XOR = 7
+
+
+def get_tma_reduction_kind(reduction_op: TMAReductionKind):
+  if reduction_op == TMAReductionKind.ADD:
+    return nvvm.TMAReduxKind.ADD
+  elif reduction_op == TMAReductionKind.MIN:
+    return nvvm.TMAReduxKind.MIN
+  elif reduction_op == TMAReductionKind.MAX:
+    return nvvm.TMAReduxKind.MAX
+  elif reduction_op == TMAReductionKind.INC:
+    return nvvm.TMAReduxKind.INC
+  elif reduction_op == TMAReductionKind.DEC:
+    return nvvm.TMAReduxKind.DEC
+  elif reduction_op == TMAReductionKind.AND:
+    return nvvm.TMAReduxKind.AND
+  elif reduction_op == TMAReductionKind.OR:
+    return nvvm.TMAReduxKind.OR
+  elif reduction_op == TMAReductionKind.XOR:
+    return nvvm.TMAReduxKind.XOR
+  else:
+    raise ValueError(f"unsupported reduction kind {reduction_op}")
