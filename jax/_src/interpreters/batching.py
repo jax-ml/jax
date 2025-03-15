@@ -322,12 +322,15 @@ vmappables: dict[type, tuple[type, type]] = {}
 spec_types: set[type] = {JumbleAxis}
 
 def unregister_vmappable(data_type: type) -> None:
-  spec_type, axis_size_type = vmappables.pop(data_type)
-  spec_types.remove(spec_type)
+  _, axis_size_type = vmappables.pop(data_type)
   del to_elt_handlers[data_type]
   del from_elt_handlers[data_type]
   if axis_size_type in make_iota_handlers:
     del make_iota_handlers[axis_size_type]
+  global spec_types
+  spec_types = (
+      {JumbleAxis} | {spec_type for spec_type, _ in vmappables.values()}
+  )
 
 def is_vmappable(x: Any) -> bool:
   return type(x) is Jumble or type(x) in vmappables
