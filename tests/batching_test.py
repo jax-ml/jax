@@ -1356,6 +1356,32 @@ class VmappableTest(jtu.JaxTestCase):
       self.assertEqual(ans.names, expected.names)
       self.assertAllClose(ans.data, expected.data)
 
+  def test_types_with_same_spec(self):
+    # We register NamedArray.
+    batching.register_vmappable(NamedArray, NamedMapSpec, int,
+                              named_to_elt, named_from_elt, None)
+
+    # We then register another type that uses NamedMapSpec as the spec_type too,
+    # and immediately unregister it.
+    class Foo:
+      pass
+    batching.register_vmappable(Foo, NamedMapSpec, int,
+                                named_to_elt, named_from_elt, None)
+    batching.unregister_vmappable(Foo)
+
+    # We should still be able to use vmap on NamedArray.
+    def f(x):
+      return named_mul(x, x)
+
+    x = NamedArray(['i', 'j'], jnp.arange(12.).reshape(3, 4))
+    ans = jax.jit(f)(x)
+    expected = NamedArray(['i', 'j'], jnp.arange(12.).reshape(3, 4) ** 2)
+
+    self.assertEqual(ans.names, expected.names)
+    self.assertAllClose(ans.data, expected.data)
+
+    # And unregister NamedArray without exceptions.
+    batching.unregister_vmappable(NamedArray)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
