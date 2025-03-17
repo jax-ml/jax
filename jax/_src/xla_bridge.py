@@ -478,7 +478,7 @@ def make_gpu_client(
       platform_name=platform_name,
       allowed_devices=allowed_devices,
       mock=use_mock_gpu_client,
-      override_slice_index=distributed.global_state.override_slice_index,
+      slice_index=distributed.global_state.slice_index,
   )
 
 
@@ -700,9 +700,8 @@ def register_plugin(
         'node_id': distributed.global_state.process_id,
         'num_nodes': distributed.global_state.num_processes,
     }
-    override_slice_index = distributed.global_state.override_slice_index
-    if override_slice_index is not None:
-      distribute_options['override_slice_index'] = override_slice_index
+    if (slice_index := distributed.global_state.slice_index) is not None:
+      distribute_options['slice_index'] = slice_index
     if options is not None:
       distribute_options.update(updated_options)
     return xla_client.make_c_api_client(
