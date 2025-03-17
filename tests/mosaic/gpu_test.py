@@ -2214,13 +2214,13 @@ class LayoutTest(TestCase):
     col_tiling = swizzle // bytewidth(utils.dtype_to_ir_type(dtype))
     m, n = 128, col_tiling * 2
     tiling = (64, col_tiling)
-    tiled_layout = fa._tiled_wgmma_layout_for_upcast((m, n))
+    layout = fa.WGMMA_LAYOUT_UPCAST_2X
     def kernel(ctx, in_, out, smems):
       smem_in, smem_out, barrier = smems
       ctx.async_copy(src_ref=in_, dst_ref=smem_in, swizzle=swizzle, barrier=barrier)
       barrier.wait()
       t = mgpu.FragmentedArray.load_tiled(
-          smem_in, swizzle=swizzle, is_signed=True, layout=tiled_layout
+          smem_in, swizzle=swizzle, is_signed=True, layout=layout
       )
       t.store_tiled(smem_out, swizzle=swizzle)
       mgpu.commit_shared()
@@ -2274,6 +2274,41 @@ class LayoutTest(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), x, y_ref, [x, y_ref, mgpu.TMABarrier()],
     )(x)
     np.testing.assert_array_equal(y, y_ref)
+
+  def test_upcast_to_wgmma(self):
+    in_dtype = jnp.dtype(jnp.int8)
+    out_dtype = jnp.dtype(jnp.int16)
+    swizzle = 128
+    in_col_tiling = 8 * swizzle // jnp.iinfo(in_dtype).bits
+    in_tiling = (8, in_col_tiling)
+    out_col_tiling = swizzle // out_dtype.itemsize
+    out_tiling = (8, out_col_tiling)
+    m, n = 128, in_col_tiling * 2
+    def kernel(ctx, in_, out, smems):
+      smem_in, smem_out, barrier = smems
+      ctx.async_copy(src_ref=in_, dst_ref=smem_in, swizzle=swizzle, barrier=barrier)
+      barrier.wait()
+      t = mgpu.FragmentedArray.load_tiled(
+          smem_in, swizzle=swizzle, is_signed=True, layout=fa.WGMMA_LAYOUT_UPCAST_2X
+      )
+      t = t.astype(ir.IntegerType.get_signless(16), is_signed=True)
+      t = t.to_layout(fa.WGMMA_LAYOUT)
+      t.store_tiled(smem_out, swizzle=swizzle)
+      mgpu.commit_shared()
+      ctx.async_copy(src_ref=smem_out, dst_ref=out, swizzle=swizzle)
+      ctx.await_async_copy(0)
+    def tile(x, tiling):
+      return x.reshape(
+          x.shape[0] // tiling[0], tiling[0], x.shape[1] // tiling[1], tiling[1]
+      ).transpose(0, 2, 1, 3)
+    x = jax.random.randint(jax.random.key(42), (m, n), -128, 127, dtype=in_dtype)
+    xt = tile(x, in_tiling)
+    y = x.astype(out_dtype)
+    yt = tile(y, out_tiling)
+    f = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), xt, yt, [xt, yt, mgpu.TMABarrier()],
+    )
+    np.testing.assert_array_equal(f(xt), yt)
 
 
 @dataclasses.dataclass(frozen=True)

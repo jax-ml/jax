@@ -382,21 +382,6 @@ def _tiled_wgmma_layout(shape: tuple[int, ...]):
   return WGMMA_LAYOUT
 
 
-def _tiled_wgmma_layout_for_upcast(shape: tuple[int, ...]):
-  """Returns a tiled layout that is easy to relayout to WGMMA layout after doubling the bitwidth."""
-  if len(shape) != 2:
-    raise ValueError(f"Shape {shape} is not 2D")
-  if shape[0] % 64 != 0 or shape[1] % 8 != 0:
-    raise ValueError(f"Shape {shape} is not a multiple of 64x8")
-  t = Tiling(((64, 16), (16, 16), (8, 16), (4,), (2, 1)))
-  return TiledLayout(
-      t,
-      warp_dim=-9,
-      lane_dims=(-5, -2, -4),
-      vector_dim=-3,
-  )
-
-
 @dataclasses.dataclass(frozen=True)
 class WGMMARowFragLayout:
   """[m] matrix, where m % 64 == 0."""
@@ -505,13 +490,43 @@ WGMMA_ROW_LAYOUT = WGMMARowFragLayout()
 
 # The tiled layout is equivalent to one described here in PTX documentation:
 # https://docs.nvidia.com/cuda/parallel-thread-execution/#wgmma-64n16-d
+# In this layout, we partition the 64x8 tiles over 4 warpgroups into 16x8 tiles.
+# Then, we further split the 16x8 tiles into 8x8 submatrices which are the unit
+# of data that is split across a warp. Since 8*8 = 64, but a warp has only 32
+# threads, we vectorize pairs of elements along columns.
+# The assignment of elements to warp lanes is as follows:
+#
+#   0  0  1  1  2  2  3  3
+#   4  4  5  5  6  6  7  7
+#   8  8  9  9 10 10 11 11
+#  12 12 13 13 14 14 15 15
+#          ...
 WGMMA_LAYOUT = TiledLayout(
     Tiling(((64, 8), (16, 8), (8, 8), (1, 2))),
     warp_dim=-8,
     lane_dims=(-4, -3),
     vector_dim=-1,
 )
-# This tiled layout is similar to the one above. Above, each warp stores a 8x8
+# This tiled layout is similar to the WGMMA layout, only the unit at which we
+# assign submatrices to warps grows from 8x8 to 8x16. The elements within each
+# submatrix are assigned to threads in the following way:
+#
+#   0  0  0  0  2  2  2  2  1  1  1  1  3  3  3  3
+#   4  4  4  4  6  6  6  6  5  5  5  5  7  7  7  7
+#                        ...
+#
+# Our vector length is twice the size of that of WGMMA_LAYOUT, which lets us use
+# 32-bit SMEM loads/stores when dealing with 8-bit values. The conversion
+# to the WGMMA layout only requires communication between with index differing
+# in their 2 bit (i.e. 0 and 1, 2 and 4), so the conversion to WGMMA_LAYOUT
+# only requires a single warp shuffle (plus permutes local to each thread).
+WGMMA_LAYOUT_UPCAST_2X = TiledLayout(
+    Tiling(((64, 16), (16, 16), (8, 16), (8,), (4,))),
+    warp_dim=-8,
+    lane_dims=(-4, -2, -3),
+    vector_dim=-1,
+)
+# This tiled layout is similar to WGMMA_LAYOUT. There, each warp stores a 8x8
 # submatrix in the following way (we only show the first 4 rows for brevity):
 #
 #   0  0  1  1  2  2  3  3
@@ -697,6 +712,7 @@ class FragmentedArray:
     At the moment, only conversions from ``WGSplatFragLayout`` are supported.
     """
     i32 = ir.IntegerType.get_signless(32)
+    c = lambda x: arith.constant(i32, x)
     if self.layout == new_layout:
       return self
     shape = self.shape
@@ -707,10 +723,10 @@ class FragmentedArray:
     ):
       is_even_row = arith.cmpi(
           arith.CmpIPredicate.eq,
-          arith.remui(arith.divui(utils.thread_idx(), c(4, i32)), c(2, i32)),
-          c(0, i32),
+          arith.remui(arith.divui(utils.thread_idx(), c(4)), c(2)),
+          c(0),
       )
-      perm = arith.select(is_even_row, c(0x5410, i32), c(0x3276, i32))
+      perm = arith.select(is_even_row, c(0x5410), c(0x3276))
       new_regs = []
       for reg in self.registers.flat:
         reg_ty = reg.type
@@ -725,6 +741,31 @@ class FragmentedArray:
           _layout=new_layout,
           _is_signed=self.is_signed,
       )
+    if len(shape) == 2 and shape[0] % 64 == 0 and shape[1] % 16 == 0:
+      if (
+          self.layout == WGMMA_LAYOUT_UPCAST_2X
+          and new_layout == WGMMA_LAYOUT
+          and utils.bytewidth(self.mlir_dtype) == 2
+      ):
+        assert shape[1] % 16 == 0  # Should be implied by the layout
+        new_registers = np.empty(new_layout.registers_shape(shape), dtype=object)
+        is_even = arith.cmpi(arith.CmpIPredicate.eq, arith.remui(utils.thread_idx(), c(2)), c(0))
+        for idx, reg in np.ndenumerate(self.registers):
+          assert ir.VectorType(reg.type).shape == [4]
+          # Each slice is exactly 32-bits (we checked bitwidth == 2 above)
+          low = utils.vector_slice(reg, slice(0, 2))
+          high = utils.vector_slice(reg, slice(2, 4))
+          to_exchange = arith.select(is_even, high, low)
+          # Exchange values between even and odd threads.
+          exchanged = utils.shfl_bfly(to_exchange, 1)
+          low = arith.select(is_even, low, exchanged)
+          high = arith.select(is_even, exchanged, high)
+          new_registers[(idx[0], idx[1] * 2, *idx[2:-1])] = low
+          new_registers[(idx[0], idx[1] * 2 + 1, *idx[2:-1])] = high
+        assert all(r is not None for r in new_registers)
+        return FragmentedArray(
+            _registers=new_registers, _layout=new_layout, _is_signed=self.is_signed,
+        )
     if not isinstance(self.layout, WGSplatFragLayout):
       raise NotImplementedError(
           f"Cannot convert from {self.layout} to {new_layout}"
