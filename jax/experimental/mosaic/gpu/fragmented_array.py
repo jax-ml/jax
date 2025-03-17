@@ -732,9 +732,7 @@ class FragmentedArray:
         reg_ty = reg.type
         reg = utils.bitcast(reg, i32)
         reg_shfl = utils.shfl_bfly(reg, 4)
-        new_reg = llvm.inline_asm(
-            i32, [reg, reg_shfl, perm], "prmt.b32 $0, $1, $2, $3;", "=r,r,r,r"
-        )
+        new_reg = utils.prmt(reg, reg_shfl, perm)
         new_regs.append(utils.bitcast(new_reg, reg_ty))
       return FragmentedArray(
           _registers=np.asarray(new_regs, dtype=object).reshape(new_layout.registers_shape(shape)),
@@ -745,21 +743,48 @@ class FragmentedArray:
       if (
           self.layout == WGMMA_LAYOUT_UPCAST_2X
           and new_layout == WGMMA_LAYOUT
-          and utils.bytewidth(self.mlir_dtype) == 2
+          and (dtype_bitwidth := utils.bitwidth(self.mlir_dtype)) in {8, 16}
       ):
         assert shape[1] % 16 == 0  # Should be implied by the layout
         new_registers = np.empty(new_layout.registers_shape(shape), dtype=object)
-        is_even = arith.cmpi(arith.CmpIPredicate.eq, arith.remui(utils.thread_idx(), c(2)), c(0))
+        is_even = arith.cmpi(
+            arith.CmpIPredicate.eq, arith.remui(utils.thread_idx(), c(2)), c(0)
+        )
         for idx, reg in np.ndenumerate(self.registers):
           assert ir.VectorType(reg.type).shape == [4]
-          # Each slice is exactly 32-bits (we checked bitwidth == 2 above)
-          low = utils.vector_slice(reg, slice(0, 2))
-          high = utils.vector_slice(reg, slice(2, 4))
-          to_exchange = arith.select(is_even, high, low)
-          # Exchange values between even and odd threads.
-          exchanged = utils.shfl_bfly(to_exchange, 1)
-          low = arith.select(is_even, low, exchanged)
-          high = arith.select(is_even, exchanged, high)
+          if dtype_bitwidth == 16:
+            # A single vector is 64-bits, but shuffles are only 32-bit wide.
+            # We only shuffle the half that needs to go to other thread.
+            low = utils.vector_slice(reg, slice(0, 2))
+            high = utils.vector_slice(reg, slice(2, 4))
+            to_exchange = arith.select(is_even, high, low)
+            # Exchange values between even and odd threads.
+            exchanged = utils.shfl_bfly(to_exchange, 1)
+            low = arith.select(is_even, low, exchanged)
+            high = arith.select(is_even, exchanged, high)
+          elif dtype_bitwidth == 8:
+            # The vector is 32-bits, so we just shuffle the whole thing and
+            # use prmt to blend it with the local register.
+            exchanged = utils.shfl_bfly(reg, 1)
+            # Consider lanes 0 and 1, because the situation is symmetric for
+            # each pair. If we feed reg[lane] and exchanged[lane] (which is
+            # really the same as reg of the other lane) to prmt, we can index
+            # the elements of the result using the following indices:
+            #     reg[0]:   0 1 2 3       reg[1]:  8 9 10 11
+            #     prmt[0]:  0 1 2 3                4 5  6  7
+            #     prmt[1]:  4 5 6 7                0 1  2  3
+            # The expected outputs and their respective permutations are:
+            #     out[0]:   0 1 8 9       out[1]:  2 3 10 11
+            #     prmt[0]:  0 1 4 5       prmt[1]: 6 7  2  3
+            # Note that the patterns still need to be flipped, since we listed
+            # bytes with LSB on the left, which is the opposite of how the
+            # numeric constants are spelled in Python (LSB on the right).
+            perm = arith.select(is_even, c(0x5410), c(0x3276))
+            blend = utils.prmt(reg, exchanged, perm)
+            low = utils.vector_slice(blend, slice(0, 2))
+            high = utils.vector_slice(blend, slice(2, 4))
+          else:
+            raise NotImplementedError(dtype_bitwidth)
           new_registers[(idx[0], idx[1] * 2, *idx[2:-1])] = low
           new_registers[(idx[0], idx[1] * 2 + 1, *idx[2:-1])] = high
         assert all(r is not None for r in new_registers)

@@ -2275,7 +2275,10 @@ class LayoutTest(TestCase):
     )(x)
     np.testing.assert_array_equal(y, y_ref)
 
-  def test_upcast_to_wgmma(self):
+  @parameterized.product(
+      upcast_before_layout_change=[True, False],
+  )
+  def test_upcast_to_wgmma(self, upcast_before_layout_change):
     in_dtype = jnp.dtype(jnp.int8)
     out_dtype = jnp.dtype(jnp.int16)
     swizzle = 128
@@ -2291,8 +2294,11 @@ class LayoutTest(TestCase):
       t = mgpu.FragmentedArray.load_tiled(
           smem_in, swizzle=swizzle, is_signed=True, layout=fa.WGMMA_LAYOUT_UPCAST_2X
       )
-      t = t.astype(ir.IntegerType.get_signless(16), is_signed=True)
+      if upcast_before_layout_change:
+        t = t.astype(ir.IntegerType.get_signless(16), is_signed=True)
       t = t.to_layout(fa.WGMMA_LAYOUT)
+      if not upcast_before_layout_change:
+        t = t.astype(ir.IntegerType.get_signless(16), is_signed=True)
       t.store_tiled(smem_out, swizzle=swizzle)
       mgpu.commit_shared()
       ctx.async_copy(src_ref=smem_out, dst_ref=out, swizzle=swizzle)

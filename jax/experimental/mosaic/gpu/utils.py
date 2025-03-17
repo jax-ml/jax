@@ -1185,12 +1185,28 @@ def shfl_bfly(x: ir.Value, distance: int | ir.Value):
   y = nvvm.shfl_sync(
       i32, c(0xFFFFFFFF, i32), x, distance, c(0x1F, i32), nvvm.ShflKind.bfly,
   )
-  if result_type != i32:
-    y = bitcast(y, result_type)
-  return y
+  return bitcast(y, result_type)
+
+
+def prmt(high: ir.Value, low: ir.Value, permutation: ir.Value):
+  i32 = ir.IntegerType.get_signless(32)
+  if (result_type := high.type) != low.type:
+    raise ValueError(f"Types must match, got {high.type} and {low.type}")
+  if high.type != i32:
+    high = bitcast(high, i32)
+  if low.type != i32:
+    low = bitcast(low, i32)
+  if permutation.type != i32:
+    permutation = bitcast(permutation, i32)
+  result = llvm.inline_asm(
+      i32, [high, low, permutation], "prmt.b32 $0, $1, $2, $3;", "=r,r,r,r"
+  )
+  return bitcast(result, result_type)
 
 
 def bitcast(x: ir.Value, new_type: ir.Type):
+  if x.type == new_type:
+    return x
   if ir.VectorType.isinstance(x.type) and ir.IntegerType.isinstance(new_type):
     new_type = ir.IntegerType(new_type)
     x_ty = ir.VectorType(x.type)
