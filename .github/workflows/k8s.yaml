@@ -10,8 +10,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
-  actions: write # to cancel previous workflows
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -25,8 +23,6 @@ jobs:
 
   distributed-initialize:
     runs-on: ubuntu-22.04
-    outputs:
-      TAG: ${{ steps.metadata.outputs.tags }}
     steps:
       - name: Checkout
         uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # ratchet:actions/checkout@v4
