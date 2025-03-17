@@ -450,6 +450,7 @@ def _block_spec_from_block_mapping(
 
 def lower_pipelined_jaxpr_to_module(
     grid_mapping: pallas_core.GridMapping,
+    mesh: pallas_core.Mesh | None,
     jaxpr: jax_core.Jaxpr,
     compiler_params: dict[str, Any],
     cost_estimate: pallas_core.CostEstimate | None,
@@ -473,7 +474,10 @@ def lower_pipelined_jaxpr_to_module(
       block_mappings, [grid_mapping.num_inputs]
   )
 
-  if grid_mapping.grid_names:  # Last dim corresponds to the warpgroup count
+  if mesh is not None:
+    assert isinstance(mesh, gpu_core.GPUMesh)
+  if mesh and mesh.num_threads is not None:
+    # Last dim corresponds to the warpgroup count.
     block = (128 * grid_mapping.grid[-1], 1, 1)
     grid = grid_mapping.grid[:-1]
   else:
@@ -566,6 +570,7 @@ def lower_pipelined_jaxpr_to_module(
         parallel_grid,
         grid_mapping.grid_names,
         block,
+        mesh.cluster if mesh is not None else (),
         [bm.array_shape_dtype for bm in in_block_mappings],
         [bm.array_shape_dtype for bm in out_block_mappings],
         new_jaxpr,
@@ -578,6 +583,7 @@ def lower_jaxpr_to_module(
     grid: Sequence[int],
     grid_names: Sequence[str],
     block: Sequence[int],
+    cluster: Sequence[int],
     in_shapes: Sequence[jax.ShapeDtypeStruct],
     out_shapes: Sequence[jax.ShapeDtypeStruct],
     jaxpr: jax_core.Jaxpr,
@@ -640,7 +646,7 @@ def lower_jaxpr_to_module(
       mgpu_core._lower_as_gpu_kernel(
           body,
           grid=parallel_grid,
-          cluster=(),
+          cluster=cluster,
           block=block,
           in_shapes=in_shapes,
           out_shape=out_shapes,

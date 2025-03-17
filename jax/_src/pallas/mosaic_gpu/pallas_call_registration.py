@@ -38,6 +38,7 @@ def pallas_call_lowering(
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: pallas_core.GridMapping,
+    mesh: pallas_core.Mesh | None,
     compiler_params: dict[str, Any],
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
@@ -63,6 +64,7 @@ def pallas_call_lowering(
 
   lowering_result = lowering.lower_pipelined_jaxpr_to_module(
       grid_mapping,
+      mesh,
       jaxpr,
       compiler_params,
       cost_estimate,

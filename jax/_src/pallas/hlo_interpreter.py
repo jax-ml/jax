@@ -340,11 +340,12 @@ def pallas_call_hlo_interpret(
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: GridMapping,
+    mesh: pallas_core.Mesh | None,
     compiler_params: Any,
     cost_estimate: CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
 ):
-  del compiler_params, cost_estimate, out_avals
+  del mesh, compiler_params, cost_estimate, out_avals
   debug_info = jaxpr.debug_info
   # If we're in interpret mode, we *scan* over the grid and eval the
   # discharged jaxpr.
