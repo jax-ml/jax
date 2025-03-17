@@ -733,11 +733,12 @@ def _export_lowered(
     for sharding in itertools.chain.from_iterable(
         [all_in_shardings, lowering.compile_args["out_shardings"]]):
       if isinstance(sharding, sharding_impls.NamedSharding):
-        if mesh is not None and mesh.shape_tuple != sharding.mesh.shape_tuple:
+        if mesh is not None and mesh.axis_sizes != sharding.mesh.axis_sizes:
           raise ValueError(
-              f'Mesh for all inputs should be equal. Got one mesh: {mesh} and'
-              f' another mesh: {sharding.mesh}')
+              'Mesh axis sizes for all inputs should be equal. Got one mesh: '
+              f'{mesh} and another mesh: {sharding.mesh}')
         mesh = sharding.mesh
+        break
     if mesh and isinstance(mesh, mesh_lib.Mesh):
       mesh = mesh.abstract_mesh
 
