@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License
 
-"""Tests for the library of QDWH-based singular value decomposition."""
 import functools
 
 import jax

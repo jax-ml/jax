@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the LAPAX linear algebra module."""
-
 from functools import partial
 import itertools
 from typing import Iterator
