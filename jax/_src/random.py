@@ -1548,11 +1548,17 @@ def _gumbel(key, shape, dtype, mode) -> Array:
         _uniform(key, shape, dtype, minval=jnp.finfo(dtype).tiny, maxval=1.)))
 
 
-def categorical(key: ArrayLike,
-                logits: RealArray,
-                axis: int = -1,
-                shape: Shape | None = None) -> Array:
+def categorical(
+  key: ArrayLike,
+  logits: RealArray,
+  axis: int = -1,
+  shape: Shape | None = None,
+  replace: bool = True,
+) -> Array:
   """Sample random values from categorical distributions.
+
+  Sampling with replacement uses the Gumbel max trick. Sampling without replacement uses
+  the Gumbel top-k trick. See [1] for reference.
 
   Args:
     key: a PRNG key used as the random key.
@@ -1562,32 +1568,57 @@ def categorical(key: ArrayLike,
     shape: Optional, a tuple of nonnegative integers representing the result shape.
       Must be broadcast-compatible with ``np.delete(logits.shape, axis)``.
       The default (None) produces a result shape equal to ``np.delete(logits.shape, axis)``.
+    replace: If True, perform sampling without replacement. Default (False) is to
+      perform sampling with replacement.
 
   Returns:
     A random array with int dtype and shape given by ``shape`` if ``shape``
     is not None, or else ``np.delete(logits.shape, axis)``.
+
+  References:
+    .. [1] Wouter Kool, Herke van Hoof, Max Welling. "Stochastic Beams and Where to Find
+      Them: The Gumbel-Top-k Trick for Sampling Sequences Without Replacement".
+      Proceedings of the 36th International Conference on Machine Learning, PMLR
+      97:3499-3508, 2019. https://proceedings.mlr.press/v97/kool19a.html.
   """
   key, _ = _check_prng_key("categorical", key)
   check_arraylike("categorical", logits)
   logits_arr = jnp.asarray(logits)
-
-  if axis >= 0:
-    axis -= len(logits_arr.shape)
-
   batch_shape = tuple(np.delete(logits_arr.shape, axis))
   if shape is None:
     shape = batch_shape
   else:
     shape = core.canonicalize_shape(shape)
     _check_shape("categorical", shape, batch_shape)
-
   shape_prefix = shape[:len(shape)-len(batch_shape)]
-  logits_shape = list(shape[len(shape) - len(batch_shape):])
-  logits_shape.insert(axis % len(logits_arr.shape), logits_arr.shape[axis])
-  return jnp.argmax(
-      gumbel(key, (*shape_prefix, *logits_shape), logits_arr.dtype) +
-      lax.expand_dims(logits_arr, tuple(range(len(shape_prefix)))),
-      axis=axis)
+
+  if replace:
+    if axis >= 0:
+      axis -= len(logits_arr.shape)
+
+    logits_shape = list(shape[len(shape) - len(batch_shape):])
+    logits_shape.insert(axis % len(logits_arr.shape), logits_arr.shape[axis])
+    return jnp.argmax(
+        gumbel(key, (*shape_prefix, *logits_shape), logits_arr.dtype) +
+        lax.expand_dims(logits_arr, tuple(range(len(shape_prefix)))),
+        axis=axis)
+  else:
+    logits_arr += gumbel(key, logits_arr.shape, logits_arr.dtype)
+    k = math.prod(shape_prefix)
+    if k > logits_arr.shape[axis]:
+      raise ValueError(
+        f"Number of samples without replacement ({k}) cannot exceed number of "
+        f"categories ({logits_arr.shape[axis]})."
+      )
+
+    _, indices = lax.top_k(jnp.moveaxis(logits_arr, axis, -1), k)
+    assert indices.shape == batch_shape + (k,)
+    assert shape == shape_prefix + batch_shape
+
+    dimensions = (indices.ndim - 1, *range(indices.ndim - 1))
+    indices = lax.reshape(indices, shape, dimensions)
+    assert indices.shape == shape
+    return indices
 
 
 def laplace(key: ArrayLike,
