@@ -1244,11 +1244,10 @@ class FragmentedArray:
     is_vector_reg = ir.VectorType.isinstance(reg_type)
     reg_shape = tuple(ir.VectorType(reg_type).shape) if is_vector_reg else (1,)
     [vector_len] = reg_shape  # This is meant to be a 1D assertion.
-    if cur_dtype == i4 and self.is_signed and new_dtype == bf16 and vector_len == 2:
+    if cur_dtype == i4 and self.is_signed and new_dtype == bf16:
       new_registers = np.empty_like(self.registers)
-      empty_vec_32 = llvm.mlir_undef(ir.VectorType.get((1,), i32))
+      out_vec_ty = ir.VectorType.get((vector_len,), new_dtype)
       for idx, reg in np.ndenumerate(self.registers):
-        reg_8 = vector.bitcast(ir.VectorType.get((1,), i8), reg)
         # The algorithm here is largely the same as CUTLASS's
         # NumericArrayConverter specialization for int4 -> bf16 casts.
         # We modify it slightly, because we only extract 2 values.
@@ -1262,25 +1261,41 @@ class FragmentedArray:
         # positive int4s will end up larger than negative int4s, with a bias of
         # 8. Use use the sub to subtract the base (our initial exponent) and the
         # bias coming from flipping the sign bit which is 136 (0x4308 as bits).
-        new_reg_32 = llvm.inline_asm(
-            i32,
-            [reg_8],
-            """
-            {
-            .reg .b32 s<4>;
-            shr.s32 s0, $1, 4;
-            prmt.b32 s1, $1, s0, 0xF4F0;
-            lop3.b32 s2, s1, 0x000F000F, 0x43084308, (0xf0 & 0xcc) ^ 0xaa;
-            mov.b32 s3, 0x43084308;
-            sub.bf16x2 $0, s2, s3;
-            }
-            """,
-            "=r,r",
-        )
-        new_vec_32 = llvm.insertelement(empty_vec_32, new_reg_32, c(0, i32))
-        new_registers[idx] = vector.bitcast(
-            ir.VectorType.get((vector_len,), new_dtype), new_vec_32
-        )
+        def upcast_to_bf16(reg: ir.Value, reg_shr: ir.Value, part: int):
+          assert 0 <= part < 4
+          return llvm.inline_asm(
+              i32,
+              [reg, reg_shr],
+              f"""
+              {{
+              .reg .b32 s<4>;
+              prmt.b32 s1, $1, $2, 0xF{part + 4}F{part};
+              lop3.b32 s2, s1, 0x000F000F, 0x43084308, (0xf0 & 0xcc) ^ 0xaa;
+              mov.b32 s3, 0x43084308;
+              sub.bf16x2 $0, s2, s3;
+              }}
+              """,
+              "=r,r,r",
+          )
+        offset = 0
+        out_int_regs = []
+        for group_size in (8, 4, 2):
+          int_ty = ir.IntegerType.get_signless(group_size * 4)
+          while vector_len - offset >= group_size:
+            reg_slice = utils.vector_slice(reg, slice(offset, offset + group_size))
+            reg_slice_int = arith.extsi(i32, utils.bitcast(reg_slice, int_ty))
+            reg_slice_int_shr = arith.shrui(reg_slice_int, c(4, i32))
+            out_int_regs.extend(
+                upcast_to_bf16(reg_slice_int, reg_slice_int_shr, part=part)
+                for part in range(group_size // 2)
+            )
+            offset += group_size
+        assert offset == vector_len
+        out_vec_int = utils.vector_concat([
+            vector.splat(ir.VectorType.get((1,), i32), reg)
+            for reg in out_int_regs
+        ])
+        new_registers[idx] = utils.bitcast(out_vec_int, out_vec_ty)
       return FragmentedArray(
           _registers=new_registers, _layout=self.layout, _is_signed=None
       )

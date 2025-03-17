@@ -518,14 +518,15 @@ class WGMMALayoutTest(TestCase):
     )()
     np.testing.assert_array_equal(iota, expected)
 
-  @parameterized.named_parameters(
-      ("bf16_i8", jnp.bfloat16, jnp.int8),
-      ("i8_bf16", jnp.int8, jnp.bfloat16),
-      ("i8_i8", jnp.int8, jnp.int8),
-      ("i4_i4", jnp.int4, jnp.int4),
-      ("i4_bf16", jnp.int4, jnp.bfloat16),
+  @parameterized.product(
+      jax_dtype_from_to=(
+          (jnp.int8, jnp.bfloat16),
+          (jnp.int4, jnp.bfloat16),
+      ),
+      layout=(fa.WGMMA_LAYOUT, fa.WGMMA_LAYOUT_UPCAST_2X),
   )
-  def test_convert_tiled(self, jax_dtype_from, jax_dtype_to):
+  def test_optimized_conversion(self, jax_dtype_from_to, layout):
+    jax_dtype_from, jax_dtype_to = jax_dtype_from_to
     mlir_dtype_from = utils.dtype_to_ir_type(jax_dtype_from)
     mlir_dtype_to = utils.dtype_to_ir_type(jax_dtype_to)
     m = 128
@@ -538,7 +539,7 @@ class WGMMALayoutTest(TestCase):
           smem_from,
           swizzle=128,
           is_signed=utils.is_signed(jax_dtype_from),
-          layout=fa._tiled_wgmma_layout((m, n))
+          layout=layout,
       )
       t = t.astype(mlir_dtype_to, is_signed=utils.is_signed(jax_dtype_to))
       t.store_tiled(smem_to, swizzle=128)

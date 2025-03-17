@@ -348,6 +348,9 @@ def bitwidth_impl(ty: ir.Type):
     return ir.FloatType(ty).width
   if dialect is not None and ir.Type.parse("!mosaic_gpu.barrier"):
     return MBARRIER_BYTES * 8
+  if ir.VectorType.isinstance(ty):
+    vty = ir.VectorType(ty)
+    return math.prod(vty.shape) * bitwidth(vty.element_type)
   raise NotImplementedError(ty)
 
 
@@ -1220,6 +1223,12 @@ def bitcast(x: ir.Value, new_type: ir.Type):
     x_ty = ir.IntegerType(x.type)
     assert x_ty.width == bitwidth(new_type.element_type) * math.prod(new_type.shape)
     return vector.bitcast(new_type, vector.splat(ir.VectorType.get((1,), x_ty), x))
+  if ir.VectorType.isinstance(x.type) and ir.VectorType.isinstance(new_type):
+    x_ty = ir.VectorType(x.type)
+    new_ty = ir.VectorType(new_type)
+    if bitwidth(x_ty) != bitwidth(new_ty):
+      raise ValueError(f"Can't bitcast {x.type} to {new_type}")
+    return vector.bitcast(new_type, x)
   raise ValueError(f"Can't bitcast {x.type} to {new_type}")
 
 
@@ -1238,4 +1247,28 @@ def vector_slice(v: ir.Value, s: slice):
   for tgt, src in enumerate(it):
     elem = llvm.extractelement(v, c(src, i32))
     result = llvm.insertelement(result, elem, c(tgt, i32))
+  return result
+
+
+def vector_concat(vectors: Sequence[ir.Value]) -> ir.Value:
+  index = ir.IndexType.get()
+  if not vectors:
+    raise ValueError("Cannot concatenate an empty list of vectors")
+  vty = vectors[0].type
+  if not ir.VectorType.isinstance(vty):
+    raise ValueError("Cannot concatenate non-vector values")
+  if vty.rank != 1:
+    raise NotImplementedError("Only 1D vectors are supported")
+  for v in vectors:
+    if v.type != vty:
+      raise ValueError("Cannot concatenate vectors of different types")
+  result = llvm.mlir_undef(
+      ir.VectorType.get((vty.shape[0] * len(vectors),), vty.element_type)
+  )
+  offset = 0
+  for v in vectors:
+    for i in range(vty.shape[0]):
+      elem = vector.extractelement(v, position=c(i, index))
+      result = vector.insertelement(elem, result, position=c(offset + i, index))
+    offset += vty.shape[0]
   return result
