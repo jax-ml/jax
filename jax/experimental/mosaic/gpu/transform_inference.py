@@ -25,8 +25,12 @@ from typing import cast
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import vector
 
+from . import fragmented_array as fa
 from . import inference_utils
+from . import layouts as layouts_lib
 from . import utils
 
 # mypy: ignore-errors
@@ -40,6 +44,7 @@ def _add_transform_inference_rule(
     op: type[ir.OpView], rule: TransformInferenceRule
 ):
   _transform_inference_rules[op.OPERATION_NAME] = rule  # pytype: disable=attribute-error
+  return rule
 
 
 def _set_transform_attributes(
@@ -108,6 +113,60 @@ def _infer_async_store_transforms(op: mgpu.AsyncStoreOp) -> OptionalTransforms:
 def _infer_async_load_transforms(op: mgpu.AsyncLoadOp) -> OptionalTransforms:
   in_transforms = inference_utils.value_transforms(op.destination)
   return None if in_transforms is None else ([in_transforms], [])
+
+
+@partial(_add_transform_inference_rule, vector.LoadOp)
+@partial(_add_transform_inference_rule, vector.StoreOp)
+def _infer_vector_load_store_transforms(
+    op: vector.LoadOp | vector.StoreOp,
+) -> OptionalTransforms:
+  for i in op.indices:
+    index_defining_op = i.owner.opview
+    if (
+        not isinstance(index_defining_op, arith.ConstantOp)
+        or index_defining_op.literal_value != 0
+    ):
+      # TODO(bchetioui): handle slicing.
+      raise NotImplementedError(
+          f"Only constants with value 0 are supported as indices for {op}"
+      )
+
+  if isinstance(op, vector.LoadOp):
+    [layout_attr] = inference_utils.out_layouts(op)
+  else:
+    assert isinstance(op, vector.StoreOp)
+    [layout_attr] = inference_utils.in_layouts(op)
+
+  layout = layouts_lib.from_layout_attr(layout_attr)
+  transforms = inference_utils.value_transforms(op.base)
+
+  if layout == fa.WGMMA_LAYOUT:
+    layout_transforms = infer_transforms_for_wgmma_ref(
+        ir.MemRefType(op.base.type)
+    )
+  elif (isinstance(layout, fa.WGStridedFragLayout) or
+        isinstance(layout, fa.WGSplatFragLayout)):
+    layout_transforms = None
+  else:
+    raise NotImplementedError(
+        f"Got layout {layout} which is not yet supported"
+    )
+
+  if transforms is not None and layout_transforms is not None:
+    if transforms != layout_transforms:
+      raise NotImplementedError(
+          f"Conflicting transforms for {op.base} in {op}: "
+          f"{transforms} != {layout_transforms}."
+      )
+    return [transforms], []
+
+  if transforms is not None:
+    return [transforms], []
+
+  if layout_transforms is not None:
+    return [layout_transforms], []
+
+  return None
 
 
 def _should_have_transforms(op: ir.OpView) -> bool:
