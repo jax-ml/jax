@@ -320,6 +320,20 @@ def _vector_splat_op_lowering_rule(
   return [_fragmented_array_to_ir(fragmented_array, out_vec_ty)]
 
 
+@_register_lowering(vector.ShapeCastOp)
+def _vector_shape_cast_op_lowering_rule(
+    _: LoweringContext, op: vector.ShapeCastOp
+) -> Sequence[ir.Value]:
+  [layout] = inference_utils.in_layouts(op)
+  out_vec_ty = ir.VectorType(op.result.type)
+  assert out_vec_ty.has_static_shape
+  is_signed = (
+      False if ir.IntegerType.isinstance(out_vec_ty.element_type) else None
+  )
+  a = _fragmented_array_from_ir(op.source, layout, is_signed)
+  return [_fragmented_array_to_ir(a.reshape(out_vec_ty.shape), out_vec_ty)]
+
+
 @_register_lowering(vector.ReductionOp)
 def _vector_reduction_op_lowering_rule(
     ctx: LoweringContext, op: vector.ReductionOp

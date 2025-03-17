@@ -1538,17 +1538,17 @@ class FragmentedArray:
   def reshape(self, shape):
     if self.shape == shape:
       return self
-
-    if not isinstance(self.layout, WGSplatFragLayout):
-      raise NotImplementedError(self.layout)
-
-    if np.prod(shape) != np.prod(self.shape):
+    if math.prod(shape) != math.prod(self.shape):
       raise ValueError(f"Can't reshape {self.shape} to {shape}")
 
+    match self.layout:
+      case WGSplatFragLayout() | WGStridedFragLayout():
+        new_layout = dataclasses.replace(self.layout, shape=shape)
+      case _:
+        raise NotImplementedError(self.layout)
+
     return FragmentedArray(
-        _registers=self.registers,
-        _layout=WGSplatFragLayout(shape),
-        _is_signed=self.is_signed,
+        _registers=self.registers, _layout=new_layout, _is_signed=self.is_signed
     )
 
   def broadcast_minor(self, n):

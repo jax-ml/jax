@@ -336,6 +336,37 @@ def _infer_splat_op_layout(splat_op: vector.SplatOp) -> OptionalLayouts:
 
   return [], [layout]
 
+
+def _update_layout_shape(
+    layout: ir.Attribute, shape: Sequence[int], origin: str
+) -> ir.Attribute:
+  if layouts_lib.is_splat_fragmented_layout(
+      layout
+  ) or layouts_lib.is_strided_fragmented_layout(layout):
+    return layouts_lib.to_layout_attr(
+        dataclasses.replace(layouts_lib.from_layout_attr(layout), shape=shape)
+    )
+  raise NotImplementedError(f"Unsupported {origin} layout: {layout}.")
+
+
+@partial(_add_layout_inference_rule, vector.ShapeCastOp)
+def _infer_shape_cast_op_layout(op: vector.ShapeCastOp) -> OptionalLayouts:
+  in_layout = inference_utils.value_layout(op.source)
+  if in_layout is None:
+    out_layout = inference_utils.value_layout(op.result)
+    if out_layout is None:
+      return None
+    in_layout = _update_layout_shape(
+        out_layout, ir.VectorType(op.source.type).shape, "source"
+    )
+    return [in_layout], [out_layout]
+
+  out_layout = _update_layout_shape(
+      in_layout, ir.VectorType(op.result.type).shape, "result"
+  )
+  return [in_layout], [out_layout]
+
+
 @partial(_add_layout_inference_rule, vector.ReductionOp)
 def _infer_reduction_op_layout(op: vector.ReductionOp) -> OptionalLayouts:
   if layout := inference_utils.value_layout(op.vector):

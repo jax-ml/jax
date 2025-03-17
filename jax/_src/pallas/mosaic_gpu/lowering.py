@@ -1559,9 +1559,10 @@ def _reduce_lowering_rule_wg(
   if not out_aval.shape:
     # Special-case: reducing to a scalar.
     if x_aval.ndim != 1:
-      # TODO(slebedev): Flatten to 1D, since vector.reduction only supports
-      # 1D inputs.
-      raise NotImplementedError("Only 1D inputs are supported")
+      # Flatten to 1D, since vector.reduction only supports 1D inputs.
+      x = vector_dialect.shape_cast(
+          ir.VectorType.get([x_aval.size], out_type), x
+      )
     return vector_dialect.ReductionOp(out_type, kind, x)
   acc = vector_dialect.splat(
       ir.VectorType.get(out_aval.shape, out_type),
