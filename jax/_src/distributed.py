@@ -41,7 +41,7 @@ class State:
   client: Any | None = None
   preemption_sync_manager: Any | None = None
   coordinator_address: str | None = None
-  override_boot_id: str | None = None
+  override_slice_index: int | None = None
 
   def initialize(self,
                  coordinator_address: str | None = None,
@@ -55,7 +55,7 @@ class State:
                  service_max_missing_heartbeats: int = 10,
                  client_heartbeat_interval_seconds: int = 10,
                  client_max_missing_heartbeats: int = 10,
-                 override_boot_id: str | None = None):
+                 override_slice_index: int | None = None):
     coordinator_address = (coordinator_address or
                            os.environ.get('JAX_COORDINATOR_ADDRESS'))
     if isinstance(local_device_ids, int):
@@ -151,8 +151,9 @@ class State:
 
     self.initialize_preemption_sync_manager()
 
-    self.override_boot_id = (override_boot_id or
-                             os.environ.get('JAX_OVERRIDE_BOOT_ID'))
+    if override_slice_index is None and 'JAX_OVERRIDE_SLICE_INDEX' in os.environ:
+      override_slice_index = int(os.environ.get('JAX_OVERRIDE_SLICE_INDEX'))
+    self.override_slice_index = override_slice_index
 
   def shutdown(self):
     if self.client:
@@ -181,7 +182,7 @@ def initialize(coordinator_address: str | None = None,
                cluster_detection_method: str | None = None,
                initialization_timeout: int = 300,
                coordinator_bind_address: str | None = None,
-               override_boot_id: str | None = None):
+               override_slice_index: int | None = None):
   """Initializes the JAX distributed system.
 
   Calling :func:`~jax.distributed.initialize` prepares JAX for execution on
@@ -242,10 +243,7 @@ def initialize(coordinator_address: str | None = None,
       all available addresses on the same port as ``coordinator_address``. On systems
       that have multiple network interfaces per node it may be insufficient to only
       have the coordinator service listen on one address/interface.
-    override_boot_id: An optional string to override the boot id used in XLA. Processes with the same boot id
-      assign their local devices the same slice_index. By default boot ids are unique to each host meaning
-      that all processes on a host end up with the same boot id. Overriding the boot id therefore allows us to
-      control which slice each process' devices end up in.
+    override_slice_index: An optional int to override the slice_index used for this process' local devices.
 
   Raises:
     RuntimeError: If :func:`~jax.distributed.initialize` is called more than once
@@ -272,7 +270,7 @@ def initialize(coordinator_address: str | None = None,
   global_state.initialize(coordinator_address, num_processes, process_id,
                           local_device_ids, cluster_detection_method,
                           initialization_timeout, coordinator_bind_address,
-                          override_boot_id=override_boot_id)
+                          override_slice_index=override_slice_index)
 
 
 def is_initialized() -> bool:
