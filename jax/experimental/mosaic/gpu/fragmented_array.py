@@ -1373,15 +1373,30 @@ class FragmentedArray:
         for group_size in (8, 4, 2):
           int_ty = ir.IntegerType.get_signless(group_size * 4)
           while vector_len - offset >= group_size:
-            reg_slice = utils.vector_slice(reg, slice(offset, offset + group_size))
-            reg_slice_int = utils.bitcast(reg_slice, int_ty)
-            if int_ty != i32:
-              reg_slice_int = arith.extsi(i32, reg_slice_int)
-            reg_slice_int_shr = arith.shrui(reg_slice_int, c(4, i32))
-            out_int_regs.extend(
-                upcast_to_bf16(reg_slice_int, reg_slice_int_shr, part=part)
-                for part in range(group_size // 2)
-            )
+            # If the vector originates from a slice (common after relayouts), we
+            # can fuse the slicing into the conversion and prevent LLVM from
+            # generating a bunch of shifts to align the vector data to the LSB.
+            # This also lets us share the right shift among more vectors.
+            if (isinstance(slice_op := reg.owner.opview, vector.ExtractStridedSliceOp)
+                and utils.bitwidth(slice_op.vector.type) == 32
+                and slice_op.strides[0].value == 1):
+              slice_offset = slice_op.offsets[0].value + offset
+              reg_int = utils.bitcast(slice_op.vector, i32)
+              reg_int_shr = arith.shrui(reg_int, c(4, i32))
+              out_int_regs.extend(
+                  upcast_to_bf16(reg_int, reg_int_shr, part=(slice_offset // 2 + part))
+                  for part in range(group_size // 2)
+              )
+            else:
+              reg_slice = utils.vector_slice(reg, slice(offset, offset + group_size))
+              reg_slice_int = utils.bitcast(reg_slice, int_ty)
+              if int_ty != i32:
+                reg_slice_int = arith.extsi(i32, reg_slice_int)
+              reg_slice_int_shr = arith.shrui(reg_slice_int, c(4, i32))
+              out_int_regs.extend(
+                  upcast_to_bf16(reg_slice_int, reg_slice_int_shr, part=part)
+                  for part in range(group_size // 2)
+              )
             offset += group_size
         assert offset == vector_len
         out_vec_int = utils.vector_concat([

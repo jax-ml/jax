@@ -346,7 +346,7 @@ def bitwidth_impl(ty: ir.Type):
     return ir.IntegerType(ty).width
   if ir.FloatType.isinstance(ty):
     return ir.FloatType(ty).width
-  if dialect is not None and ir.Type.parse("!mosaic_gpu.barrier"):
+  if dialect is not None and ty == ir.Type.parse("!mosaic_gpu.barrier"):
     return MBARRIER_BYTES * 8
   if ir.VectorType.isinstance(ty):
     vty = ir.VectorType(ty)
@@ -1237,17 +1237,15 @@ def ceil_div(x: int, y: int):
 
 
 def vector_slice(v: ir.Value, s: slice):
-  i32 = ir.IntegerType.get_signless(32)
   v_ty = ir.VectorType(v.type)
   if len(v_ty.shape) != 1:
-    raise NotImplementedError
+    raise NotImplementedError(v_ty)
   [v_len] = v_ty.shape
-  it = range(v_len)[s]
-  result = llvm.mlir_undef(ir.VectorType.get((len(it),), v_ty.element_type))
-  for tgt, src in enumerate(it):
-    elem = llvm.extractelement(v, c(src, i32))
-    result = llvm.insertelement(result, elem, c(tgt, i32))
-  return result
+  slice_length = len(range(v_len)[s])
+  return vector.extract_strided_slice(
+      ir.VectorType.get((slice_length,), v_ty.element_type),
+      v, [s.start or 0], [slice_length], [1],
+  )
 
 
 def vector_concat(vectors: Sequence[ir.Value]) -> ir.Value:
