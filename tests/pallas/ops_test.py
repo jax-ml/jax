@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for common JAX operations within pallas_call."""
-
 from collections.abc import Sequence
 import functools
 import itertools

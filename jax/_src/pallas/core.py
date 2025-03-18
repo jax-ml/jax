@@ -15,6 +15,7 @@
 """Module for pallas-core functionality."""
 from __future__ import annotations
 
+import collections
 from collections.abc import Callable, Iterable, Iterator, Sequence
 import contextlib
 import copy
@@ -1068,6 +1069,17 @@ def _core_map_abstract_eval(*args, jaxpr, mesh, **_):
   return [], effs
 
 
+class Mesh(Protocol):
+
+  @property
+  def backend(self) -> str:
+    ...
+
+  @property
+  def shape(self) -> collections.OrderedDict[object, int]:
+    ...
+
+
 _core_map_mesh_rules: dict[type[Any], Callable[..., Any]] = {}
 
 
@@ -1075,9 +1087,8 @@ def default_mesh_discharge_rule(
     in_avals,
     out_avals,
     *args,
-    grid,
+    mesh,
     compiler_params,
-    backend,
     jaxpr,
     debug,
     interpret,
@@ -1100,19 +1111,22 @@ def default_mesh_discharge_rule(
       if isinstance(eff, state_types.WriteEffect)
   )
   any_spec = BlockSpec(memory_space=MemorySpace.ANY)
+  grid_spec = GridSpec(
+      grid=tuple(mesh.shape.items()),
+      in_specs=[any_spec] * len(in_avals),
+      out_specs=[any_spec] * len(modified_idxs),
+  )
   from jax._src.pallas import pallas_call  # Avoid circular dependency.
-  outs = pallas_call.pallas_call(
+  outs = pallas_call._pallas_call(
       body,
       name=name,
       out_shape=[in_avals[idx] for idx in modified_idxs],
-      in_specs=[any_spec] * len(in_avals),
-      out_specs=[any_spec] * len(modified_idxs),
       input_output_aliases={
           in_idx: out_idx for out_idx, in_idx in enumerate(modified_idxs)
       },
-      grid=grid,
+      grid_spec=grid_spec,
+      mesh=mesh,
       compiler_params=compiler_params,
-      backend=backend,
       interpret=interpret,
       debug=debug,
       cost_estimate=cost_estimate,

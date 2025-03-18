@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Tests for Mosaic GPU DSL functions and utilities."""
 
 from collections.abc import Sequence
+import contextlib
 import dataclasses
 import enum
 import itertools
@@ -82,6 +82,20 @@ def mlir_sum(elems):
   for elem in elems[1:]:
     total = arith.addi(total, elem)
   return total
+
+
+@contextlib.contextmanager
+def get_sass():
+  prev_dump = os.environ.get("MOSAIC_GPU_DUMP_SASS", None)
+  os.environ["MOSAIC_GPU_DUMP_SASS"] = "1"
+  try:
+    with jtu.capture_stdout() as output:
+      yield output
+  finally:
+    if prev_dump is not None:
+      os.environ["MOSAIC_GPU_DUMP_SASS"] = prev_dump
+    else:
+      del os.environ["MOSAIC_GPU_DUMP_SASS"]
 
 
 def copy(src: ir.Value, dst: ir.Value, swizzle: int | None = None):
@@ -519,14 +533,38 @@ class WGMMALayoutTest(TestCase):
     )()
     np.testing.assert_array_equal(iota, expected)
 
-  @parameterized.named_parameters(
-      ("bf16_i8", jnp.bfloat16, jnp.int8),
-      ("i8_bf16", jnp.int8, jnp.bfloat16),
-      ("i8_i8", jnp.int8, jnp.int8),
-      ("i4_i4", jnp.int4, jnp.int4),
-      ("i4_bf16", jnp.int4, jnp.bfloat16),
+  @parameterized.parameters(jnp.int8, jnp.int16, jnp.int32)
+  def test_sub_byte_conversion(self, jax_dtype_to):
+    jax_dtype_from = jnp.int4
+    def kernel(ctx, inp, out, smem):
+      del ctx  # Unused.
+      smem_inp, smem_out = smem
+      copy(inp, smem_inp, swizzle=16)
+      t = mgpu.FragmentedArray.load_tiled(smem_inp, is_signed=True, swizzle=16)
+      t = t.astype(utils.dtype_to_ir_type(jax_dtype_to), is_signed=True)
+      t.store_tiled(smem_out, swizzle=32 * jnp.dtype(jax_dtype_to).itemsize)
+      copy(smem_out, out, swizzle=32 * jnp.dtype(jax_dtype_to).itemsize)
+
+    x = self.prng.integers(
+        low=-8, high=7, size=(1, 1, 64, 64), dtype=np.int32
+    ).astype(jax_dtype_from)
+    y = x.astype(jax_dtype_to)
+    f = mgpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, y, (x, y))
+    np.testing.assert_array_equal(f(x), y)
+
+  @parameterized.product(
+      jax_dtype_from_to=(
+          (jnp.int8, jnp.bfloat16),
+          (jnp.int4, jnp.bfloat16),
+      ),
+      layout=(
+          fa.WGMMA_LAYOUT,
+          fa.WGMMA_LAYOUT_UPCAST_2X,
+          fa.WGMMA_LAYOUT_UPCAST_4X,
+      ),
   )
-  def test_convert_tiled(self, jax_dtype_from, jax_dtype_to):
+  def test_optimized_conversion(self, jax_dtype_from_to, layout):
+    jax_dtype_from, jax_dtype_to = jax_dtype_from_to
     mlir_dtype_from = utils.dtype_to_ir_type(jax_dtype_from)
     mlir_dtype_to = utils.dtype_to_ir_type(jax_dtype_to)
     m = 128
@@ -539,7 +577,7 @@ class WGMMALayoutTest(TestCase):
           smem_from,
           swizzle=128,
           is_signed=utils.is_signed(jax_dtype_from),
-          layout=fa._tiled_wgmma_layout((m, n))
+          layout=layout,
       )
       t = t.astype(mlir_dtype_to, is_signed=utils.is_signed(jax_dtype_to))
       t.store_tiled(smem_to, swizzle=128)
@@ -2175,19 +2213,11 @@ class LayoutTest(TestCase):
         .transpose(0, 2, 1, 3)
     )
 
-    prev_dump = os.environ.get("MOSAIC_GPU_DUMP_SASS", None)
-    os.environ["MOSAIC_GPU_DUMP_SASS"] = "1"
-    try:
-      with jtu.capture_stdout() as get_sass:
-        iota = mgpu.as_gpu_kernel(
-            kernel, (1, 1, 1), (128, 1, 1), expected, expected,
-            [expected, expected, mgpu.TMABarrier()],
-        )(expected)
-    finally:
-      if prev_dump is not None:
-        os.environ["MOSAIC_GPU_DUMP_SASS"] = prev_dump
-      else:
-        del os.environ["MOSAIC_GPU_DUMP_SASS"]
+    with get_sass() as sass:
+      iota = mgpu.as_gpu_kernel(
+          kernel, (1, 1, 1), (128, 1, 1), expected, expected,
+          [expected, expected, mgpu.TMABarrier()],
+      )(expected)
     np.testing.assert_array_equal(iota, expected)
 
     # Verify that we don't use too many registers for the transfers.
@@ -2200,7 +2230,7 @@ class LayoutTest(TestCase):
       expected_regs //= 2
     for instr in ("STS", "LDS"):
       with self.subTest(instr + " count"):
-        addrs = re.findall(instr + r".* \[(.*)\]", get_sass())
+        addrs = re.findall(instr + r".* \[(.*)\]", sass())
         def get_reg(addr):
           if (pos := addr.find("+")) != -1:
             return addr[:pos]
@@ -2214,13 +2244,13 @@ class LayoutTest(TestCase):
     col_tiling = swizzle // bytewidth(utils.dtype_to_ir_type(dtype))
     m, n = 128, col_tiling * 2
     tiling = (64, col_tiling)
-    tiled_layout = fa._tiled_wgmma_layout_for_upcast((m, n))
+    layout = fa.WGMMA_LAYOUT_UPCAST_2X
     def kernel(ctx, in_, out, smems):
       smem_in, smem_out, barrier = smems
       ctx.async_copy(src_ref=in_, dst_ref=smem_in, swizzle=swizzle, barrier=barrier)
       barrier.wait()
       t = mgpu.FragmentedArray.load_tiled(
-          smem_in, swizzle=swizzle, is_signed=True, layout=tiled_layout
+          smem_in, swizzle=swizzle, is_signed=True, layout=layout
       )
       t.store_tiled(smem_out, swizzle=swizzle)
       mgpu.commit_shared()
@@ -2274,6 +2304,61 @@ class LayoutTest(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), x, y_ref, [x, y_ref, mgpu.TMABarrier()],
     )(x)
     np.testing.assert_array_equal(y, y_ref)
+
+  @parameterized.parameters(
+      (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, jnp.int8, jnp.int8, 1),
+      (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, jnp.int8, jnp.int16, 1),
+      (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT_UPCAST_2X, jnp.int4, jnp.int4, 1),
+      (fa.WGMMA_LAYOUT_UPCAST_2X, fa.WGMMA_LAYOUT, jnp.int4, jnp.int4, 0.5),
+      (fa.WGMMA_LAYOUT_UPCAST_4X, fa.WGMMA_LAYOUT, jnp.int4, jnp.int4, 2),
+  )
+  def test_upcast_to_wgmma(
+      self, start_layout, end_layout, in_dtype, cast_dtype, shfl_per_reg
+  ):
+    in_dtype = jnp.dtype(in_dtype)
+    out_dtype = jnp.dtype(jnp.int16)
+    out_dtype_mlir = utils.dtype_to_ir_type(out_dtype)
+    swizzle = 128
+    in_col_tiling = 8 * swizzle // jnp.iinfo(in_dtype).bits
+    in_tiling = (8, in_col_tiling)
+    out_col_tiling = swizzle // out_dtype.itemsize
+    out_tiling = (8, out_col_tiling)
+    m, n = 128, in_col_tiling * 2
+    regs_per_thread = None
+    def kernel(ctx, in_, out, smems):
+      nonlocal regs_per_thread
+      smem_in, smem_out, barrier = smems
+      ctx.async_copy(src_ref=in_, dst_ref=smem_in, swizzle=swizzle, barrier=barrier)
+      barrier.wait()
+      t = mgpu.FragmentedArray.load_tiled(
+          smem_in, swizzle=swizzle, is_signed=True, layout=start_layout
+      )
+      regs_per_thread = t.registers.size
+      t = t.astype(utils.dtype_to_ir_type(cast_dtype), is_signed=True)
+      t = t.to_layout(end_layout)
+      t = t.astype(out_dtype_mlir, is_signed=True)
+      t.store_tiled(smem_out, swizzle=swizzle)
+      mgpu.commit_shared()
+      ctx.async_copy(src_ref=smem_out, dst_ref=out, swizzle=swizzle)
+      ctx.await_async_copy(0)
+    def tile(x, tiling):
+      return x.reshape(
+          x.shape[0] // tiling[0], tiling[0], x.shape[1] // tiling[1], tiling[1]
+      ).transpose(0, 2, 1, 3)
+    in_iinfo = jnp.iinfo(in_dtype)
+    x = jax.random.randint(
+        jax.random.key(42), (m, n), in_iinfo.min, in_iinfo.max, dtype=jnp.int32
+    ).astype(in_dtype)
+    xt = tile(x, in_tiling)
+    y = x.astype(out_dtype)
+    yt = tile(y, out_tiling)
+    f = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), xt, yt, [xt, yt, mgpu.TMABarrier()],
+    )
+    with get_sass() as sass:
+      yt_kernel = f(xt)
+    np.testing.assert_array_equal(yt_kernel, yt)
+    self.assertEqual(sass().count("SHFL.BFLY"), regs_per_thread * shfl_per_reg)
 
 
 @dataclasses.dataclass(frozen=True)

@@ -799,7 +799,7 @@ pytype_strict_library(
 )
 
 # This target only supports sm_90 GPUs.
-py_library(
+py_library_providing_imports_info(
     name = "mosaic_gpu",
     srcs = glob(["experimental/mosaic/gpu/*.py"]),
     visibility = [
@@ -824,6 +824,7 @@ py_library(
         "//jaxlib/mlir:pass_manager",
         "//jaxlib/mlir:scf_dialect",
         "//jaxlib/mlir:vector_dialect",
+        "//jaxlib/mosaic/python:gpu_dialect",
     ] + py_deps("absl/flags") + py_deps("numpy"),
 )
 

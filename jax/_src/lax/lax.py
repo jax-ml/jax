@@ -1026,24 +1026,101 @@ def clz(x: ArrayLike) -> Array:
   r"""Elementwise count-leading-zeros."""
   return clz_p.bind(x)
 
+@export
 def add(x: ArrayLike, y: ArrayLike) -> Array:
-  r"""Elementwise addition: :math:`x + y`."""
+  r"""Elementwise addition: :math:`x + y`.
+
+  This function lowers directly to the `stablehlo.add`_ operation.
+
+  Args:
+    x, y: Input arrays. Must have matching numerical dtypes. If neither
+      is a scalar, ``x`` and ``y`` must have the same number of dimensions
+      and be broadcast compatible.
+
+  Returns:
+    An array of the same dtype as ``x`` and ``y`` containing the sum
+    of each pair of broadcasted entries.
+
+  See also:
+    - :func:`jax.numpy.add`: NumPy-style addition supporting inputs
+      with mixed dtypes and ranks.
+
+  .. _stablehlo.add: https://openxla.org/stablehlo/spec#add
+  """
   return add_p.bind(x, y)
 
+@export
 def sub(x: ArrayLike, y: ArrayLike) -> Array:
-  r"""Elementwise subtraction: :math:`x - y`."""
+  r"""Elementwise subtraction: :math:`x - y`.
+
+  This function lowers directly to the `stablehlo.subtract`_ operation.
+
+  Args:
+    x, y: Input arrays. Must have matching numerical dtypes. If neither
+      is a scalar, ``x`` and ``y`` must have the same number of dimensions
+      and be broadcast compatible.
+
+  Returns:
+    An array of the same dtype as ``x`` and ``y`` containing the difference
+    of each pair of broadcasted entries.
+
+  See also:
+    - :func:`jax.numpy.subtract`: NumPy-style subtraction supporting
+      inputs with mixed dtypes and ranks.
+
+  .. _stablehlo.subtract: https://openxla.org/stablehlo/spec#subtract
+  """
   return sub_p.bind(x, y)
 
+@export
 def mul(x: ArrayLike, y: ArrayLike) -> Array:
-  r"""Elementwise multiplication: :math:`x \times y`."""
+  r"""Elementwise multiplication: :math:`x \times y`.
+
+  This function lowers directly to the `stablehlo.multiply`_ operation.
+
+  Args:
+    x, y: Input arrays. Must have matching numerical dtypes. If neither
+      is a scalar, ``x`` and ``y`` must have the same number of dimensions
+      and be broadcast compatible.
+
+  Returns:
+    An array of the same dtype as ``x`` and ``y`` containing the product
+    of each pair of broadcasted entries.
+
+  See also:
+    - :func:`jax.numpy.multiply`: NumPy-style multiplication supporting
+      inputs with mixed dtypes and ranks.
+
+  .. _stablehlo.multiply: https://openxla.org/stablehlo/spec#multiply
+  """
   return mul_p.bind(x, y)
 
+@export
 def div(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise division: :math:`x \over y`.
 
-  Integer division overflow
-  (division by zero or signed division of INT_SMIN with -1)
-  produces an implementation defined value.
+  This function lowers directly to the `stablehlo.divide`_ operation.
+
+  Integer division overflow (division by zero or signed division of
+  INT_SMIN with -1) produces an implementation defined value.
+
+  Args:
+    x, y: Input arrays. Must have matching numerical dtypes. If neither
+      is a scalar, ``x`` and ``y`` must have the same number of dimensions
+      and be broadcast compatible.
+
+  Returns:
+    An array of the same dtype as ``x`` and ``y`` containing the quotient
+    of each pair of broadcasted entries. For integer inputs, any fractional
+    part is discarded.
+
+  See also:
+    - :func:`jax.numpy.divide`: NumPy-style true division supporting
+      inputs with mixed dtypes and ranks.
+    - :func:`jax.numpy.floor_divide`: NumPy-style floor division supporting
+      inputs with mixed dtypes and ranks.
+
+  .. _stablehlo.divide: https://openxla.org/stablehlo/spec#divide
   """
   return div_p.bind(x, y)
 
@@ -8422,3 +8499,13 @@ mlir.register_lowering(optimization_barrier_p,
 def _optimization_barrier_batcher(batched_args, batch_dims, **params):
   return optimization_barrier_p.bind(*batched_args, **params), batch_dims
 batching.primitive_batchers[optimization_barrier_p] = _optimization_barrier_batcher
+
+def _opt_barrier_jvp(primals, tangents):
+  tangents = [ad.instantiate_zeros(t) for t in tangents]
+  return optimization_barrier(primals), optimization_barrier(tangents)
+ad.primitive_jvps[optimization_barrier_p] = _opt_barrier_jvp
+
+def _opt_barrier_transpose(cts, *primals):
+  cts = [ad.instantiate_zeros(ct) for ct in cts]
+  return optimization_barrier(cts)
+ad.primitive_transposes[optimization_barrier_p] = _opt_barrier_transpose

@@ -185,7 +185,7 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x, y), x + y[0])
 
   @parameterized.product(
-      shape=[(128,)], thread_semantics=[*plgpu.ThreadSemantics]
+      shape=[(128,), (128, 128)], thread_semantics=[*plgpu.ThreadSemantics]
   )
   def test_reduce_sum(self, shape, thread_semantics):
     @functools.partial(

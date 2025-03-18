@@ -797,7 +797,7 @@ def tracers_to_jaxpr(
 
   processed_eqn_ids = set()
   eqns: list[core.JaxprEqn] = []
-  for t in toposort([*in_tracers, *out_tracers]):
+  for t in toposort((*in_tracers, *out_tracers)):
     r = t.recipe
     if isinstance(r, JaxprEqnRecipe):
       # TODO broadcast_in_dim can create a new tracer, not present in parents

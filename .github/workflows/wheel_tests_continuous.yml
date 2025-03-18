@@ -110,18 +110,30 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           # Python values need to match the matrix stategy in the artifact build jobs above
-          runner: ["linux-x86-g2-48-l4-4gpu", "linux-x86-a3-8g-h100-8gpu"]
+          # See exlusions for what is fully tested
+          runner: ["linux-x86-g2-48-l4-4gpu", "linux-x86-a3-8g-h100-8gpu","linux-x86-a4-224-b200-1gpu"]
           python: ["3.10",]
-          cuda: ["12.3", "12.1"]
+          cuda: ["12.1","12.3","12.8"]
           enable-x64: [1, 0]
           exclude:
-            # Run only a single configuration on H100 to save resources
+            # L4 does not run on cuda 12.8 but tests other configs
+            - runner: "linux-x86-g2-48-l4-4gpu"
+              cuda: "12.8"
+            # H100 runs only a single config, CUDA 12.3 Enable x64 1
             - runner: "linux-x86-a3-8g-h100-8gpu"
-              python: "3.10"
+              cuda: "12.8"
+            - runner: "linux-x86-a3-8g-h100-8gpu"
               cuda: "12.1"
             - runner: "linux-x86-a3-8g-h100-8gpu"
-              python: "3.10"
-              enable-x64: 0
+              enable-x64: "0"
+            # B200 runs only a single config, CUDA 12.8 Enable x64 1
+            - runner: "linux-x86-a4-224-b200-1gpu"
+              enable-x64: "0"
+            - runner: "linux-x86-a4-224-b200-1gpu"
+              cuda: "12.1"
+            - runner: "linux-x86-a4-224-b200-1gpu"
+              cuda: "12.3"
+
     name: "Pytest CUDA (JAX artifacts version =  ${{ format('{0}', 'head') }})"
     with:
       runner: ${{ matrix.runner }}

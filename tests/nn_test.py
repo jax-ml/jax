@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for nn module."""
-
 import collections
 from functools import partial
 import itertools

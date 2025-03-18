@@ -212,6 +212,10 @@ class TensorCoreMesh:
   axis_names: Sequence[str]
 
   @property
+  def backend(self) -> str:
+    return "mosaic_tpu"
+
+  @property
   def shape(self):
     return collections.OrderedDict(zip(self.axis_names, self.devices.shape))
 
@@ -259,7 +263,6 @@ def _tensorcore_mesh_discharge_rule(
     compiler_params = TPUCompilerParams()
   if len(mesh.shape) > 1:
     raise NotImplementedError("Mesh must be 1D")
-  core_axis_name, num_cores = list(mesh.shape.items())[0]
   if compiler_params.dimension_semantics is not None:
     raise ValueError(
         "dimension_semantics must be None for TensorCoreMesh"
@@ -269,13 +272,12 @@ def _tensorcore_mesh_discharge_rule(
       out_avals,
       *args,
       jaxpr=jaxpr,
-      grid=((core_axis_name, num_cores),),
+      mesh=mesh,
       compiler_params=compiler_params.replace(
           dimension_semantics=(PARALLEL,)
       ),
       debug=debug,
       interpret=interpret,
-      backend="mosaic_tpu",
       cost_estimate=cost_estimate,
       name=name,
   )

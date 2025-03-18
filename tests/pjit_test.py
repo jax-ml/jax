@@ -6139,6 +6139,19 @@ class ShardingInTypesTest(jtu.JaxTestCase):
                          {AxisType.Auto: ('x',)})
 
   @jtu.with_user_mesh((2,), 'x')
+  def test_device_put_use_mesh(self, mesh):
+    out = jax.device_put(np.arange(8), P('x'))
+    self.assertArraysEqual(out, np.arange(8))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
+  def test_device_put_no_use_mesh_error(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        'Please set a mesh via `jax.sharding.use_mesh` if a PartitionSpec is'
+        ' passed to device_put'):
+      jax.device_put(np.arange(8), P('x'))
+
+  @jtu.with_user_mesh((2,), 'x')
   def test_inputs_different_context(self, mesh):
     np_inp = np.arange(16).reshape(8, 2)
     s = NamedSharding(mesh, P('x'))

@@ -365,6 +365,38 @@ class LaxRandomTest(jtu.JaxTestCase):
         pmf = lambda x: np.where(x < len(p), p[np.minimum(len(p) - 1, x)], 0.0)
         self._CheckChiSquared(samples, pmf=pmf)
 
+  @jtu.sample_product(
+    logits_shape=[(7,), (8, 9), (10, 11, 12)],
+    prefix_shape=[(2,), (3, 4), (5, 6)],
+  )
+  def testCategoricalWithoutReplacement(self, logits_shape, prefix_shape):
+    key = random.key(0)
+
+    key, subkey = random.split(key)
+    logits = random.normal(subkey, logits_shape)
+
+    key, subkey = random.split(key)
+    axis = random.randint(subkey, (), -len(logits_shape), len(logits_shape))
+
+    dists_shape = tuple(np.delete(logits_shape, axis))
+    n_categories = logits_shape[axis]
+    shape = prefix_shape + dists_shape
+    prefix_size = math.prod(prefix_shape)
+
+    if n_categories < prefix_size:
+      with self.assertRaisesRegex(ValueError, "Number of samples without replacement"):
+        random.categorical(key, logits, axis=axis, shape=shape, replace=False)
+
+    else:
+      output = random.categorical(key, logits, axis=axis, shape=shape, replace=False)
+      self.assertEqual(output.shape, shape)
+      assert (0 <= output).all()
+      assert (output < n_categories).all()
+      flat = output.reshape((prefix_size, math.prod(dists_shape)))
+      counts = jax.vmap(partial(jnp.bincount, length=n_categories), 1)(flat)
+      assert (counts <= 1).all()
+
+
   def testBernoulliShape(self):
     key = self.make_key(0)
     with jax.numpy_rank_promotion('allow'):

@@ -20,12 +20,14 @@ from jax._src import config
 from jax._src import error_check
 from jax._src import test_util as jtu
 import jax.numpy as jnp
+from jax.sharding import NamedSharding, PartitionSpec as P
 
 
 JaxValueError = error_check.JaxValueError
 
 
 config.parse_flags_with_absl()
+jtu.request_cpu_devices(4)
 
 
 @jtu.with_config(jax_check_tracer_leaks=True)
@@ -189,6 +191,23 @@ class ErrorCheckTests(jtu.JaxTestCase):
         ),
     ):
       jax.jit(error_check.raise_if_error)()
+
+  @parameterized.product(jit=[True, False])
+  @jtu.with_user_mesh((2, 2), ("x", "y"))
+  def test_error_check_explicit_mode(self, mesh, jit):
+    def f(x):
+      error_check.set_error_if(x <= 0, "x must be greater than 0")
+      return x + 1
+
+    if jit:
+      f = jax.jit(f)
+
+    sharding = NamedSharding(mesh, P("x", "y"))
+    x = jnp.full((4, 4), -1, dtype=jnp.int32, device=sharding)
+    with error_check.error_checking_context():
+      f(x)
+      with self.assertRaisesRegex(JaxValueError, "x must be greater than 0"):
+        error_check.raise_if_error()
 
 
 if __name__ == "__main__":

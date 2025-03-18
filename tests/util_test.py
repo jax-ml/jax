@@ -201,5 +201,49 @@ class SafeZipTest(jtu.JaxTestCase):
       util.safe_zip((), range(3))
 
 
+class Node:
+  def __init__(self, parents):
+    self.parents = parents
+
+
+class TopologicalSortTest(jtu.JaxTestCase):
+
+  def _check_topological_sort(self, nodes, order):
+    self.assertEqual(sorted(nodes, key=id), sorted(order, key=id))
+    visited = set()
+    for node in nodes:
+      self.assertTrue(all(id(parent) in visited for parent in node.parents))
+      visited.add(id(node))
+
+  def test_basic(self):
+    a = Node([])
+    b = Node([a])
+    c = Node([a])
+    d = Node([a, c])
+    e = Node([b, c])
+    out = util.toposort([a, d, e])
+    self._check_topological_sort([a, b, c, d, e], out)
+
+  def test_stick(self):
+    a = Node([])
+    b = Node([a])
+    c = Node([b])
+    d = Node([c])
+    e = Node([d])
+    out = util.toposort([e])
+    self._check_topological_sort([a, b, c, d, e], out)
+
+  def test_diamonds(self):
+    a = Node([])
+    b = Node([a])
+    c = Node([a])
+    d = Node([b, c])
+    e = Node([d])
+    f = Node([d])
+    g = Node([e, f])
+    out = util.toposort([g])
+    self._check_topological_sort([a, b, c, d, e, f, g], out)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

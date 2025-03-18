@@ -3618,6 +3618,15 @@ class LaxTest(jtu.JaxTestCase):
     x = lax.optimization_barrier((2, 3))
     self.assertEqual((2, 3), x)
 
+  def test_optimization_barrier_autodiff(self):
+    def f(x):
+      y = 1. * x
+      x, y = lax.optimization_barrier((x, y))
+      z = 2. * x
+      return y + z
+    g = jax.grad(f)(5.)  # doesn't crash
+    self.assertAllClose(g, 3., check_dtypes=False)
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):

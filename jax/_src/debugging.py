@@ -446,7 +446,7 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
   if len(devices) == 1:
     # If we only have one device in our computation, we can construct a
     # replicated HloSharding and call it right now.
-    _hlo_sharding_callback(sharding_impls.get_replicated_hlo_sharding())
+    _hlo_sharding_callback(sharding_impls.replicated_hlo_sharding)
     return []
 
   key = xc.encode_inspect_sharding_callback(_hlo_sharding_callback)

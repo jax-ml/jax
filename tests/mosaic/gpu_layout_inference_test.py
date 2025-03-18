@@ -74,6 +74,37 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertSequenceEqual(add.attributes["in_layouts"], [layout, layout])
     self.assertSequenceEqual(add.attributes["out_layouts"], [layout])
 
+  def test_infer_strided_layout_from_shape_cast(self):
+    shape = (16, 8)
+    elt_type = ir.BF16Type.get()
+    src_type = ir.VectorType.get(shape, elt_type)
+    dst_type = ir.VectorType.get([*reversed(shape)], elt_type)
+    op = None
+
+    def body(x):
+      nonlocal op
+      op = vector.ShapeCastOp(dst_type, x)
+
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(src_type)(body)
+
+    mgpu.infer_layout(self.module)
+
+    in_layout = layouts.to_layout_attr(
+        mgpu.WGStridedFragLayout.from_shaped_type(src_type)
+    )
+    out_layout = layouts.to_layout_attr(
+        mgpu.WGStridedFragLayout.from_shaped_type(dst_type)
+    )
+
+    self.assertSequenceEqual(op.attributes["in_layouts"], [in_layout])
+    self.assertSequenceEqual(op.attributes["out_layouts"], [out_layout])
+
+    # Ensure that we can recover the original layout.
+    del op.attributes["in_layouts"]
+    mgpu.infer_layout(self.module)
+    self.assertSequenceEqual(op.attributes["in_layouts"], [in_layout])
+
   def test_infer_splat_layout_for_splat_constants(self):
     shape = (16, 8)
     elt_type = ir.BF16Type.get()

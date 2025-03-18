@@ -382,21 +382,6 @@ def _tiled_wgmma_layout(shape: tuple[int, ...]):
   return WGMMA_LAYOUT
 
 
-def _tiled_wgmma_layout_for_upcast(shape: tuple[int, ...]):
-  """Returns a tiled layout that is easy to relayout to WGMMA layout after doubling the bitwidth."""
-  if len(shape) != 2:
-    raise ValueError(f"Shape {shape} is not 2D")
-  if shape[0] % 64 != 0 or shape[1] % 8 != 0:
-    raise ValueError(f"Shape {shape} is not a multiple of 64x8")
-  t = Tiling(((64, 16), (16, 16), (8, 16), (4,), (2, 1)))
-  return TiledLayout(
-      t,
-      warp_dim=-9,
-      lane_dims=(-5, -2, -4),
-      vector_dim=-3,
-  )
-
-
 @dataclasses.dataclass(frozen=True)
 class WGMMARowFragLayout:
   """[m] matrix, where m % 64 == 0."""
@@ -505,13 +490,55 @@ WGMMA_ROW_LAYOUT = WGMMARowFragLayout()
 
 # The tiled layout is equivalent to one described here in PTX documentation:
 # https://docs.nvidia.com/cuda/parallel-thread-execution/#wgmma-64n16-d
+# In this layout, we partition the 64x8 tiles over 4 warpgroups into 16x8 tiles.
+# Then, we further split the 16x8 tiles into 8x8 submatrices which are the unit
+# of data that is split across a warp. Since 8*8 = 64, but a warp has only 32
+# threads, we vectorize pairs of elements along columns.
+# The assignment of elements to warp lanes is as follows:
+#
+#   0  0  1  1  2  2  3  3
+#   4  4  5  5  6  6  7  7
+#   8  8  9  9 10 10 11 11
+#  12 12 13 13 14 14 15 15
+#          ...
 WGMMA_LAYOUT = TiledLayout(
     Tiling(((64, 8), (16, 8), (8, 8), (1, 2))),
     warp_dim=-8,
     lane_dims=(-4, -3),
     vector_dim=-1,
 )
-# This tiled layout is similar to the one above. Above, each warp stores a 8x8
+# This tiled layout is similar to the WGMMA layout, only the unit at which we
+# assign submatrices to warps grows from 8x8 to 8x16. The elements within each
+# submatrix are assigned to threads in the following way:
+#
+#   0  0  0  0  2  2  2  2  1  1  1  1  3  3  3  3
+#   4  4  4  4  6  6  6  6  5  5  5  5  7  7  7  7
+#                        ...
+#
+# Our vector length is twice the size of that of WGMMA_LAYOUT, which lets us use
+# 32-bit SMEM loads/stores when dealing with 8-bit values. The conversion
+# to the WGMMA layout only requires communication between with index differing
+# in their 2 bit (i.e. 0 and 1, 2 and 4), so the conversion to WGMMA_LAYOUT
+# only requires a single warp shuffle (plus permutes local to each thread).
+WGMMA_LAYOUT_UPCAST_2X = TiledLayout(
+    Tiling(((64, 16), (16, 16), (8, 16), (8,), (4,))),
+    warp_dim=-8,
+    lane_dims=(-4, -2, -3),
+    vector_dim=-1,
+)
+# This layout should be used when upcasting 4-bit elements to 16-bit, for the
+# purpose of passing them into WGMMA later. The core matrices stored by a warp
+# are 8x32, because each of the 4 threads in a row holds 8 elements in a single
+# vector. Note that unlike WGMMA_LAYOUT_UPCAST_2X, we assign columns to each
+# group of 4 threads in order (as opposed to the swapping between 1 and 2,
+# 5 and 6, etc. that WGMMA_LAYOUT_UPCAST_2X does).
+WGMMA_LAYOUT_UPCAST_4X = TiledLayout(
+    Tiling(((64, 32), (16, 32), (8, 32), (8,))),
+    warp_dim=-7,
+    lane_dims=(-3, -2),
+    vector_dim=-1,
+)
+# This tiled layout is similar to WGMMA_LAYOUT. There, each warp stores a 8x8
 # submatrix in the following way (we only show the first 4 rows for brevity):
 #
 #   0  0  1  1  2  2  3  3
@@ -697,6 +724,7 @@ class FragmentedArray:
     At the moment, only conversions from ``WGSplatFragLayout`` are supported.
     """
     i32 = ir.IntegerType.get_signless(32)
+    c = lambda x: arith.constant(i32, x)
     if self.layout == new_layout:
       return self
     shape = self.shape
@@ -707,24 +735,148 @@ class FragmentedArray:
     ):
       is_even_row = arith.cmpi(
           arith.CmpIPredicate.eq,
-          arith.remui(arith.divui(utils.thread_idx(), c(4, i32)), c(2, i32)),
-          c(0, i32),
+          arith.remui(arith.divui(utils.thread_idx(), c(4)), c(2)),
+          c(0),
       )
-      perm = arith.select(is_even_row, c(0x5410, i32), c(0x3276, i32))
+      perm = arith.select(is_even_row, c(0x5410), c(0x3276))
       new_regs = []
       for reg in self.registers.flat:
         reg_ty = reg.type
         reg = utils.bitcast(reg, i32)
         reg_shfl = utils.shfl_bfly(reg, 4)
-        new_reg = llvm.inline_asm(
-            i32, [reg, reg_shfl, perm], "prmt.b32 $0, $1, $2, $3;", "=r,r,r,r"
-        )
+        new_reg = utils.prmt(reg, reg_shfl, perm)
         new_regs.append(utils.bitcast(new_reg, reg_ty))
       return FragmentedArray(
           _registers=np.asarray(new_regs, dtype=object).reshape(new_layout.registers_shape(shape)),
           _layout=new_layout,
           _is_signed=self.is_signed,
       )
+    if (
+        self.layout == WGMMA_LAYOUT_UPCAST_2X
+        and new_layout == WGMMA_LAYOUT
+        and (dtype_bitwidth := utils.bitwidth(self.mlir_dtype)) <= 16
+    ):
+      assert shape[1] % 16 == 0  # Should be implied by the layout
+      new_registers = np.empty(new_layout.registers_shape(shape), dtype=object)
+      is_even = arith.cmpi(
+          arith.CmpIPredicate.eq, arith.remui(utils.thread_idx(), c(2)), c(0)
+      )
+      registers = self.registers
+      if dtype_bitwidth == 4:
+        if registers.shape[1] % 2:
+          raise NotImplementedError(
+              "This relayout implementation requires an even number of column"
+              " tiles (to pack pairs of them for efficiency)"
+          )
+        # We pair up the consecutive column tiles, so each register is 32-bit.
+        # If this layout originated from a WGMMA_LAYOUT_UPCAST_4X layout,
+        # LLVM will realize that the paired up vectors actually came from the
+        # same 32-bit register and it will become a no-op.
+        col_minor_registers = np.moveaxis(registers, 1, -1)
+        flat_registers = [
+            utils.vector_concat((l, h))
+            for l, h in zip(
+                col_minor_registers.flat[::2], col_minor_registers.flat[1::2]
+            )
+        ]
+        registers = np.asarray(flat_registers, dtype=object).reshape(
+            *col_minor_registers.shape[:-1], col_minor_registers.shape[-1] // 2
+        )
+        registers = np.moveaxis(registers, -1, 1)
+      for idx, reg in np.ndenumerate(registers):
+        if dtype_bitwidth == 16:
+          assert reg.type.shape == [4]
+          # A single vector is 64-bits, but shuffles are only 32-bit wide.
+          # We only shuffle the half that needs to go to other thread.
+          low = utils.vector_slice(reg, slice(0, 2))
+          high = utils.vector_slice(reg, slice(2, 4))
+          to_exchange = arith.select(is_even, high, low)
+          # Exchange values between even and odd threads.
+          exchanged = utils.shfl_bfly(to_exchange, 1)
+          low = arith.select(is_even, low, exchanged)
+          high = arith.select(is_even, exchanged, high)
+          new_registers[(idx[0], idx[1] * 2, *idx[2:-1])] = low
+          new_registers[(idx[0], idx[1] * 2 + 1, *idx[2:-1])] = high
+        elif dtype_bitwidth == 8:
+          assert reg.type.shape == [4]
+          # The vector is 32-bits, so we just shuffle the whole thing and
+          # use prmt to blend it with the local register.
+          exchanged = utils.shfl_bfly(reg, 1)
+          # Consider lanes 0 and 1, because the situation is symmetric for
+          # each pair. If we feed reg[lane] and exchanged[lane] (which is
+          # really the same as reg of the other lane) to prmt, we can index
+          # the elements of the result using the following indices:
+          #     reg[0]:   0 1 2 3       reg[1]:  8 9 10 11
+          #     prmt[0]:  0 1 2 3                4 5  6  7
+          #     prmt[1]:  4 5 6 7                0 1  2  3
+          # The expected outputs and their respective permutations are:
+          #     out[0]:   0 1 8 9       out[1]:  2 3 10 11
+          #     prmt[0]:  0 1 4 5       prmt[1]: 6 7  2  3
+          # Note that the patterns still need to be flipped, since we listed
+          # bytes with LSB on the left, which is the opposite of how the
+          # numeric constants are spelled in Python (LSB on the right).
+          perm = arith.select(is_even, c(0x5410), c(0x3276))
+          blend = utils.prmt(reg, exchanged, perm)
+          for i in range(2):
+            reg = utils.vector_slice(blend, slice(i * 2, i * 2 + 2))
+            new_registers[(idx[0], idx[1] * 2 + i, *idx[2:-1])] = reg
+        else:
+          assert dtype_bitwidth == 4
+          assert reg.type.shape == [8]  # We paired up the registers above.
+          exchanged = utils.shfl_bfly(reg, 1)
+          # See comment above for a more complete explanation.
+          #     reg[0]:   0 1 2 3 16 17 18 19   reg[1]:  8 9 10 11 24 25 26 27
+          #     prmt[0]:  -0- -1- --2-- --3--            -4- --5-- --6-- --7--
+          #     prmt[1]:  -4- -5- --6-- --7--            -0- --1-- --2-- --3--
+          # The expected outputs and their respective permutations are:
+          #     out[0]:   0 1 8 9 16 17 24 25   out[1]:  2 3 10 11 18 19 26 27
+          #     prmt[0]:  -0- -4- --2-- --6--  prmt[1]:  -5- --1-- --7-- --3--
+          perm = arith.select(is_even, c(0x6240), c(0x3715))
+          blend = utils.prmt(reg, exchanged, perm)
+          for i in range(4):
+            reg = utils.vector_slice(blend, slice(i * 2, i * 2 + 2))
+            new_registers[(idx[0], idx[1] * 4 + i, *idx[2:-1])] = reg
+      assert all(r is not None for r in new_registers)
+      return FragmentedArray(
+          _registers=new_registers, _layout=new_layout, _is_signed=self.is_signed,
+      )
+    if (
+        self.layout == WGMMA_LAYOUT_UPCAST_4X
+        and new_layout == WGMMA_LAYOUT_UPCAST_2X
+        and utils.bitwidth(self.mlir_dtype) == 4
+    ):
+      assert shape[0] % 64 == 0  # Should be implied by the layout
+      assert shape[1] % 32 == 0  # Should be implied by the layout
+      new_registers = np.empty(new_layout.registers_shape(shape), dtype=object)
+      i32 = ir.IntegerType.get_signless(32)
+      c = lambda x: arith.constant(i32, x)
+      is_01 = arith.cmpi(
+          arith.CmpIPredicate.ult, arith.remui(utils.thread_idx(), c(4)), c(2)
+      )
+      for idx, reg in np.ndenumerate(self.registers):
+        assert ir.VectorType(reg.type).shape == [8]
+        # The vector is 32-bits, so we just shuffle the whole thing and
+        # use prmt to blend it with the local register.
+        exchanged = utils.shfl_bfly(reg, 2)
+        # See comments above for conventions. Here we exchange data between
+        # threads with lane index related by flipping 2nd bit (e.g. 0 and 2).
+        #     reg[0]:   0 1 2 3 4 5 6 7       reg[2]:  16 17 18 19 20 21 22 23
+        #     prmt[0]:  -0- -1- -2- -3-                --4-- --5-- --6-- --7--
+        #     prmt[1]:  -4- -5- -6- -7-                --0-- --1-- --2-- --3--
+        # The expected outputs and their respective permutations are:
+        #     out[0]:   0 1 2 3 16 17 18 19   out[2]:  4 5 6 7 20 21 22 23
+        #     prmt[0]:  -0- -1- --4-- --5--  prmt[2]:  -6- -7- --2-- --3--
+        perm = arith.select(is_01, c(0x5410), c(0x3276))
+        blend = utils.prmt(reg, exchanged, perm)
+        for i in range(2):
+          reg = utils.vector_slice(blend, slice(i * 4, i * 4 + 4))
+          new_registers[(idx[0], idx[1] * 2 + i, *idx[2:-1])] = reg
+      assert all(r is not None for r in new_registers)
+      return FragmentedArray(
+          _registers=new_registers, _layout=new_layout, _is_signed=self.is_signed,
+      )
+    if self.layout == WGMMA_LAYOUT_UPCAST_4X and new_layout == WGMMA_LAYOUT:
+      return self.to_layout(WGMMA_LAYOUT_UPCAST_2X).to_layout(new_layout)
     if not isinstance(self.layout, WGSplatFragLayout):
       raise NotImplementedError(
           f"Cannot convert from {self.layout} to {new_layout}"
@@ -1178,11 +1330,15 @@ class FragmentedArray:
     is_vector_reg = ir.VectorType.isinstance(reg_type)
     reg_shape = tuple(ir.VectorType(reg_type).shape) if is_vector_reg else (1,)
     [vector_len] = reg_shape  # This is meant to be a 1D assertion.
-    if cur_dtype == i4 and self.is_signed and new_dtype == bf16 and vector_len == 2:
+    if (new_reg_bitwidth := utils.bitwidth(new_dtype) * vector_len) % 8:
+      raise ValueError(
+          "Register bitwidth in target type must be divisible by 8, got"
+          f" {new_reg_bitwidth}"
+      )
+    if cur_dtype == i4 and self.is_signed and new_dtype == bf16:
       new_registers = np.empty_like(self.registers)
-      empty_vec_32 = llvm.mlir_undef(ir.VectorType.get((1,), i32))
+      out_vec_ty = ir.VectorType.get((vector_len,), new_dtype)
       for idx, reg in np.ndenumerate(self.registers):
-        reg_8 = vector.bitcast(ir.VectorType.get((1,), i8), reg)
         # The algorithm here is largely the same as CUTLASS's
         # NumericArrayConverter specialization for int4 -> bf16 casts.
         # We modify it slightly, because we only extract 2 values.
@@ -1196,25 +1352,58 @@ class FragmentedArray:
         # positive int4s will end up larger than negative int4s, with a bias of
         # 8. Use use the sub to subtract the base (our initial exponent) and the
         # bias coming from flipping the sign bit which is 136 (0x4308 as bits).
-        new_reg_32 = llvm.inline_asm(
-            i32,
-            [reg_8],
-            """
-            {
-            .reg .b32 s<4>;
-            shr.s32 s0, $1, 4;
-            prmt.b32 s1, $1, s0, 0xF4F0;
-            lop3.b32 s2, s1, 0x000F000F, 0x43084308, (0xf0 & 0xcc) ^ 0xaa;
-            mov.b32 s3, 0x43084308;
-            sub.bf16x2 $0, s2, s3;
-            }
-            """,
-            "=r,r",
-        )
-        new_vec_32 = llvm.insertelement(empty_vec_32, new_reg_32, c(0, i32))
-        new_registers[idx] = vector.bitcast(
-            ir.VectorType.get((vector_len,), new_dtype), new_vec_32
-        )
+        def upcast_to_bf16(reg: ir.Value, reg_shr: ir.Value, part: int):
+          assert 0 <= part < 4
+          return llvm.inline_asm(
+              i32,
+              [reg, reg_shr],
+              f"""
+              {{
+              .reg .b32 s<4>;
+              prmt.b32 s1, $1, $2, 0xF{part + 4}F{part};
+              lop3.b32 s2, s1, 0x000F000F, 0x43084308, (0xf0 & 0xcc) ^ 0xaa;
+              mov.b32 s3, 0x43084308;
+              sub.bf16x2 $0, s2, s3;
+              }}
+              """,
+              "=r,r,r",
+          )
+        offset = 0
+        out_int_regs = []
+        for group_size in (8, 4, 2):
+          int_ty = ir.IntegerType.get_signless(group_size * 4)
+          while vector_len - offset >= group_size:
+            # If the vector originates from a slice (common after relayouts), we
+            # can fuse the slicing into the conversion and prevent LLVM from
+            # generating a bunch of shifts to align the vector data to the LSB.
+            # This also lets us share the right shift among more vectors.
+            if (isinstance(slice_op := reg.owner.opview, vector.ExtractStridedSliceOp)
+                and utils.bitwidth(slice_op.vector.type) == 32
+                and slice_op.strides[0].value == 1):
+              slice_offset = slice_op.offsets[0].value + offset
+              reg_int = utils.bitcast(slice_op.vector, i32)
+              reg_int_shr = arith.shrui(reg_int, c(4, i32))
+              out_int_regs.extend(
+                  upcast_to_bf16(reg_int, reg_int_shr, part=(slice_offset // 2 + part))
+                  for part in range(group_size // 2)
+              )
+            else:
+              reg_slice = utils.vector_slice(reg, slice(offset, offset + group_size))
+              reg_slice_int = utils.bitcast(reg_slice, int_ty)
+              if int_ty != i32:
+                reg_slice_int = arith.extsi(i32, reg_slice_int)
+              reg_slice_int_shr = arith.shrui(reg_slice_int, c(4, i32))
+              out_int_regs.extend(
+                  upcast_to_bf16(reg_slice_int, reg_slice_int_shr, part=part)
+                  for part in range(group_size // 2)
+              )
+            offset += group_size
+        assert offset == vector_len
+        out_vec_int = utils.vector_concat([
+            vector.splat(ir.VectorType.get((1,), i32), reg)
+            for reg in out_int_regs
+        ])
+        new_registers[idx] = utils.bitcast(out_vec_int, out_vec_ty)
       return FragmentedArray(
           _registers=new_registers, _layout=self.layout, _is_signed=None
       )
@@ -1263,11 +1452,6 @@ class FragmentedArray:
           _registers=new_registers, _layout=self.layout, _is_signed=is_signed
       )
     # Generic path.
-    # XLA packs elements into bytes in big-endian order, while LLVM assumes the
-    # same endianness as the target machine (which is little for NVIDIA GPUs).
-    # We'll need to add specialized casting routines that flip the endianness.
-    if 1 < utils.bitwidth(cur_dtype) < 8 or 1 < utils.bitwidth(new_dtype) < 8:
-      raise NotImplementedError("Conversion involving sub-byte types unsupported")
     from_float = ir.FloatType.isinstance(cur_dtype)
     to_float = ir.FloatType.isinstance(new_dtype)
     from_integer = ir.IntegerType.isinstance(cur_dtype)
@@ -1472,17 +1656,17 @@ class FragmentedArray:
   def reshape(self, shape):
     if self.shape == shape:
       return self
-
-    if not isinstance(self.layout, WGSplatFragLayout):
-      raise NotImplementedError(self.layout)
-
-    if np.prod(shape) != np.prod(self.shape):
+    if math.prod(shape) != math.prod(self.shape):
       raise ValueError(f"Can't reshape {self.shape} to {shape}")
 
+    match self.layout:
+      case WGSplatFragLayout() | WGStridedFragLayout():
+        new_layout = dataclasses.replace(self.layout, shape=shape)
+      case _:
+        raise NotImplementedError(self.layout)
+
     return FragmentedArray(
-        _registers=self.registers,
-        _layout=WGSplatFragLayout(shape),
-        _is_signed=self.is_signed,
+        _registers=self.registers, _layout=new_layout, _is_signed=self.is_signed
     )
 
   def broadcast_minor(self, n):
