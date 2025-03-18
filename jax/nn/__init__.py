@@ -34,6 +34,7 @@ from jax._src.nn.functions import (
   logsumexp as logsumexp,
   standardize as standardize,
   one_hot as one_hot,
+  identity as identity,
   relu as relu,
   relu6 as relu6,
   dot_product_attention as dot_product_attention,

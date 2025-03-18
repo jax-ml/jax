@@ -25,6 +25,7 @@ Activation functions
     sparse_plus
     sparse_sigmoid
     soft_sign
+    identity
     silu
     swish
     log_sigmoid
