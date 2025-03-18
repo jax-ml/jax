@@ -54,11 +54,15 @@ run_tests() {
 
     python3 -m pytest \
         --html="${LOG_DIR}/multi_gpu_pmap_test_log.html" \
+        --json-report \
+        --json-report-file="${LOG_DIR}/multi_gpu_pmap_test_log.json" \
         --reruns 3 \
         tests/pmap_test.py
 
     python3 -m pytest \
         --html="${LOG_DIR}/multi_gpu_multi_device_test_log.html" \
+        --json-report \
+        --json-report-file="${LOG_DIR}/multi_gpu_multi_device_test_log.json" \
         --reruns 3 \
         tests/multi_device_test.py
 

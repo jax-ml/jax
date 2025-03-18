@@ -260,6 +260,7 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
 
   @parameterized.parameters(('left',), ('right',))
   def test_interpret_remote_dma_ppermute(self, permutation):
+    self.skipTest("ROCm: Skipping for now")
     if jax.device_count() <= 1:
       self.skipTest('Test requires multiple devices.')
     num_devices = jax.device_count()

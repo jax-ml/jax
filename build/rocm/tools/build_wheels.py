@@ -35,7 +35,7 @@ import sys
 LOG = logging.getLogger(__name__)
 
 
-GPU_DEVICE_TARGETS = "gfx900 gfx906 gfx908 gfx90a gfx940 gfx941 gfx942 gfx1030 gfx1100 gfx1200 gfx1201"
+GPU_DEVICE_TARGETS = "gfx900 gfx906 gfx908 gfx90a gfx942 gfx1030 gfx1100 gfx1101 gfx1200 gfx1201"
 
 
 def build_rocm_path(rocm_version_str):
@@ -226,7 +226,10 @@ def fix_wheel(path, jax_path):
         py_bin = "/opt/python/cp310-cp310/bin"
         env["PATH"] = "%s:%s" % (py_bin, env["PATH"])
 
-        cmd = ["pip", "install", "auditwheel>=6"]
+        # NOTE(mrodden): auditwheel 6.0 added lddtree module, but 6.3.0 changed
+        # the fuction to ldd and also changed its behavior
+        # constrain range to 6.0 to 6.2.x
+        cmd = ["pip", "install", "auditwheel>=6,<6.3"]
         subprocess.run(cmd, check=True, env=env)
 
         fixwheel_path = os.path.join(jax_path, "build/rocm/tools/fixwheel.py")

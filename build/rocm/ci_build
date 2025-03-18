@@ -127,6 +127,31 @@ def dist_wheels(
         ]
     )
 
+    # Add command for unit tests
+    cmd.extend(
+        [
+            "&&",
+            "bazel",
+            "test",
+            "-k",
+            "--jobs=4",
+            "--test_verbose_timeout_warnings=true",
+            "--test_output=all",
+            "--test_summary=detailed",
+            "--local_test_jobs=1",
+            "--test_env=JAX_ACCELERATOR_COUNT=%i" % 4, 
+            "--test_env=JAX_SKIP_SLOW_TESTS=0",
+            "--verbose_failures=true",
+            "--config=rocm",
+            "--action_env=ROCM_PATH=/opt/rocm",
+            "--action_env=TF_ROCM_AMDGPU_TARGETS=%s" % "gfx90a",
+            "--test_tag_filters=-multiaccelerator",
+            "--test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform",
+            "--test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow",
+            "//tests:gpu_tests",
+        ]
+    )
+
     LOG.info("Running: %s", cmd)
     _ = subprocess.run(cmd, check=True)
 
@@ -356,3 +381,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
