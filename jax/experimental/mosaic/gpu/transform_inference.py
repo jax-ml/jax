@@ -26,6 +26,9 @@ from typing import cast
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import builtin
+from jax._src.lib.mlir.dialects import gpu
+from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import vector
 
 from . import fragmented_array as fa
@@ -169,7 +172,6 @@ def _infer_vector_load_store_transforms(
 
   return None
 
-
 # TODO(bchetioui): remove this once jaxlib minimum version >= 0.5.2.
 SliceSMEMOp = getattr(mgpu, "SliceSMEMOp", None)
 
@@ -196,6 +198,60 @@ def _infer_slice_smem_transforms(op: SliceSMEMOp) -> OptionalTransforms:
   return None if transforms is None else ([], [transforms])
 
 
+# TODO(bchetioui,apaszke): this empty rule is necessary while Mosaic doesn't use
+# the dialect in all cases.
+# The rule is necessary in order to handle the lowering of `utils.memref_ptr`
+# which is used in `_construct_smem_reftree`.
+@partial(_add_transform_inference_rule, builtin.UnrealizedConversionCastOp)
+def _infer_unrealized_conversion_cast_transforms(
+    _: builtin.UnrealizedConversionCastOp,
+) -> OptionalTransforms:
+  return None
+
+
+@partial(_add_transform_inference_rule, memref.ViewOp)
+def _infer_memref_view_transforms(op: memref.ViewOp) -> OptionalTransforms:
+  if not isinstance(op.source.owner.opview, gpu.DynamicSharedMemoryOp):
+    raise NotImplementedError(
+        "Memref view transforms are only inferred when the op is a direct user "
+        f"of a DynamicSharedMemoryOp but got {op}."
+    )
+  transforms = inference_utils.value_transforms(op.source)
+  if transforms is not None:
+    raise NotImplementedError(
+        "memref view with in_transforms aren't yet supported"
+    )
+  uses = cast(ir.OpResult, op.result).uses
+
+  for op_operand_use in uses:
+    consumer = op_operand_use.owner
+    op_user = consumer.operands[op_operand_use.operand_number]
+    out_transforms = inference_utils.in_transforms_for_operand(
+        consumer, op_user
+    )
+    if transforms is not None and out_transforms is not None:
+      if transforms != out_transforms:
+        raise ValueError(
+            f"Conflicting transforms for {op_user} in {op}: "
+            f"{transforms} != {out_transforms}."
+        )
+    elif out_transforms is not None:
+      transforms = out_transforms
+
+  # TODO(bchetioui): do we actually need to assign a transform to the input of
+  # the view op? Presumably, it'll only be used to access scratch memory.
+  return None if transforms is None else ([], [transforms])
+
+
+# TODO(bchetioui,apaszke): this empty rule is necessary while Mosaic doesn't use
+# the dialect in all cases.
+@partial(_add_transform_inference_rule, gpu.DynamicSharedMemoryOp)
+def _infer_dynamic_smem_transforms(
+    _: gpu.DynamicSharedMemoryOp,
+) -> OptionalTransforms:
+  return None
+
+
 def _should_have_transforms(op: ir.OpView) -> bool:
   """Returns 'True' if the operation should be assigned in/out transforms."""
   return any(
@@ -218,7 +274,6 @@ def infer_transforms(module: ir.Module):
   specified. We error out if two distinct sets of transforms are competing to
   annotate the same memref.
   """
-
   def inference_step(op: ir.Operation):
     if not _should_have_transforms(op):
       return
