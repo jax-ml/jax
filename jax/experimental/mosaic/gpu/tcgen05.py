@@ -83,6 +83,8 @@ def mma(
     accumulate: ir.Value | bool = True,
     collective: bool = False,
 ):
+  if a_swizzle == 16 or b_swizzle == 16:
+    raise NotImplementedError("No swizzle is not supported")
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
   if isinstance(accumulate, bool):

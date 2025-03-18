@@ -259,6 +259,8 @@ def wgmma(
   The refs must be contiguous or be contiguous except for having their two minor
   dimensions swapped.
   """
+  if swizzle == 16:
+    raise NotImplementedError("No swizzle is not supported")
   # Step 1. Establish the shape and element type of the operation.
   if not ir.MemRefType.isinstance(b.type):
     raise ValueError(f"B must be a memref, got: {b.type}")
