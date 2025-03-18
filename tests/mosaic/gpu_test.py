@@ -1946,6 +1946,21 @@ class FragmentedArrayTest(TestCase):
     )(inp)
     np.testing.assert_array_equal(inp, result)
 
+  @parameterized.product(in_shape=((128,), (64,)))
+  def test_wgmma_row_load_store_with_layout(self, in_shape):
+    def kernel(ctx, *args):
+      gmem_input, gmem_output, (smem_input, smem_output) = args
+      copy(gmem_input, smem_input)
+      t = mgpu.FragmentedArray.load_wgmma_row(smem_input)
+      t.store_untiled(smem_output)
+      copy(smem_output, gmem_output)
+
+    inp = out = self.prng.uniform(-1, 1, in_shape).astype(jnp.float32)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (inp,), out, [inp, out],
+    )(inp)
+    np.testing.assert_array_equal(inp, result)
+
   def test_warp_tree_reduce(self):
     def kernel(ctx, out, *_):
       del ctx
