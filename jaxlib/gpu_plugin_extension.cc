@@ -206,6 +206,8 @@ nb::dict Registrations() {
   nb::dict dict;
   dict["xla_python_gpu_callback"] =
       jax::EncapsulateFunction(xla::XlaPythonGpuCallback);
+  dict["__gpu$jax.gpu.log"] =
+      jax::EncapsulateFfiHandler(xla::kJaxLog);
   return dict;
 }
 
