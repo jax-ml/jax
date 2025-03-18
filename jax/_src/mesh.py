@@ -543,6 +543,10 @@ class UseAbstractMeshContextManager:
   __slots__ = ['mesh', 'prev']
 
   def __init__(self, mesh: AbstractMesh):
+    if not isinstance(mesh, AbstractMesh):
+      raise ValueError(
+          "Expected mesh of type `jax.sharding.AbstractMesh`. Got type:"
+          f" {type(mesh)}")
     self.mesh = mesh
 
   def __enter__(self):
@@ -556,14 +560,6 @@ use_abstract_mesh = UseAbstractMeshContextManager
 def get_abstract_mesh():
   val = jax_config.abstract_mesh_context_manager.value
   return empty_abstract_mesh if val is None else val
-
-@contextlib.contextmanager
-def use_concrete_mesh(mesh: Mesh | None):
-  prev_val = jax_config.device_context.swap_local(mesh)
-  try:
-    yield
-  finally:
-    jax_config.device_context.set_local(prev_val)
 
 def get_concrete_mesh() -> Mesh | None:
   return jax_config.device_context.value
