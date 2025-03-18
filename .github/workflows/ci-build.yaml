@@ -12,9 +12,11 @@ on:
   push:
     branches:
       - rocm-main
+      - 'rocm-jaxlib-v*'
   pull_request:
     branches:
       - rocm-main
+      - 'rocm-jaxlib-v*'
 
 permissions:
   contents: read  # to fetch code
