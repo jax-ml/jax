@@ -1244,6 +1244,11 @@ class FragmentedArray:
     is_vector_reg = ir.VectorType.isinstance(reg_type)
     reg_shape = tuple(ir.VectorType(reg_type).shape) if is_vector_reg else (1,)
     [vector_len] = reg_shape  # This is meant to be a 1D assertion.
+    if (new_reg_bitwidth := utils.bitwidth(new_dtype) * vector_len) % 8:
+      raise ValueError(
+          "Register bitwidth in target type must be divisible by 8, got"
+          f" {new_reg_bitwidth}"
+      )
     if cur_dtype == i4 and self.is_signed and new_dtype == bf16:
       new_registers = np.empty_like(self.registers)
       out_vec_ty = ir.VectorType.get((vector_len,), new_dtype)
@@ -1344,11 +1349,6 @@ class FragmentedArray:
           _registers=new_registers, _layout=self.layout, _is_signed=is_signed
       )
     # Generic path.
-    # XLA packs elements into bytes in big-endian order, while LLVM assumes the
-    # same endianness as the target machine (which is little for NVIDIA GPUs).
-    # We'll need to add specialized casting routines that flip the endianness.
-    if 1 < utils.bitwidth(cur_dtype) < 8 or 1 < utils.bitwidth(new_dtype) < 8:
-      raise NotImplementedError("Conversion involving sub-byte types unsupported")
     from_float = ir.FloatType.isinstance(cur_dtype)
     to_float = ir.FloatType.isinstance(new_dtype)
     from_integer = ir.IntegerType.isinstance(cur_dtype)
