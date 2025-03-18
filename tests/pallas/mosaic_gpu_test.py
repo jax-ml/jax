@@ -623,6 +623,30 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
     np.testing.assert_array_equal(f(x), np.stack([x, x], axis=0))
 
+  def test_load_from_smem_with_transforms_and_indexing(self):
+    def kernel(x_ref, o_ref):
+      for i in range(2):
+        x = plgpu.load_from_smem(x_ref, (i,), layout=plgpu.Layout.WGMMA_ROW)
+
+        # Checks that `x` is indeed in the right layout.
+        x += plgpu.layout_cast(
+          jnp.full(x.shape, 0, dtype=x.dtype), plgpu.Layout.WGMMA_ROW,
+        )
+        o_ref[i, ...] = x
+
+    in_spec = pl.BlockSpec(memory_space=plgpu.SMEM)
+    out_spec = plgpu.GPUBlockSpec(
+        (2, 128), lambda: (0, 0), memory_space=plgpu.SMEM,
+    )
+    f = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct([2, 128], jnp.float32),
+        in_specs=(in_spec,),
+        out_specs=out_spec,
+    )
+    x = jnp.arange(2 * 128, dtype=jnp.float32).reshape(2, 128)
+    np.testing.assert_array_equal(f(x), x)
+
   def test_indexing_before_transpose(self):
     def kernel(x_ref, o_ref, barrier_ref):
       for i in range(2):
