@@ -526,6 +526,18 @@ WGMMA_LAYOUT_UPCAST_2X = TiledLayout(
     lane_dims=(-4, -2, -3),
     vector_dim=-1,
 )
+# This layout should be used when upcasting 4-bit elements to 16-bit, for the
+# purpose of passing them into WGMMA later. The core matrices stored by a warp
+# are 8x32, because each of the 4 threads in a row holds 8 elements in a single
+# vector. Note that unlike WGMMA_LAYOUT_UPCAST_2X, we assign columns to each
+# group of 4 threads in order (as opposed to the swapping between 1 and 2,
+# 5 and 6, etc. that WGMMA_LAYOUT_UPCAST_2X does).
+WGMMA_LAYOUT_UPCAST_4X = TiledLayout(
+    Tiling(((64, 32), (16, 32), (8, 32), (8,))),
+    warp_dim=-7,
+    lane_dims=(-3, -2),
+    vector_dim=-1,
+)
 # This tiled layout is similar to WGMMA_LAYOUT. There, each warp stores a 8x8
 # submatrix in the following way (we only show the first 4 rows for brevity):
 #
@@ -739,58 +751,132 @@ class FragmentedArray:
           _layout=new_layout,
           _is_signed=self.is_signed,
       )
-    if len(shape) == 2 and shape[0] % 64 == 0 and shape[1] % 16 == 0:
-      if (
-          self.layout == WGMMA_LAYOUT_UPCAST_2X
-          and new_layout == WGMMA_LAYOUT
-          and (dtype_bitwidth := utils.bitwidth(self.mlir_dtype)) in {8, 16}
-      ):
-        assert shape[1] % 16 == 0  # Should be implied by the layout
-        new_registers = np.empty(new_layout.registers_shape(shape), dtype=object)
-        is_even = arith.cmpi(
-            arith.CmpIPredicate.eq, arith.remui(utils.thread_idx(), c(2)), c(0)
+    if (
+        self.layout == WGMMA_LAYOUT_UPCAST_2X
+        and new_layout == WGMMA_LAYOUT
+        and (dtype_bitwidth := utils.bitwidth(self.mlir_dtype)) <= 16
+    ):
+      assert shape[1] % 16 == 0  # Should be implied by the layout
+      new_registers = np.empty(new_layout.registers_shape(shape), dtype=object)
+      is_even = arith.cmpi(
+          arith.CmpIPredicate.eq, arith.remui(utils.thread_idx(), c(2)), c(0)
+      )
+      registers = self.registers
+      if dtype_bitwidth == 4:
+        if registers.shape[1] % 2:
+          raise NotImplementedError(
+              "This relayout implementation requires an even number of column"
+              " tiles (to pack pairs of them for efficiency)"
+          )
+        # We pair up the consecutive column tiles, so each register is 32-bit.
+        # If this layout originated from a WGMMA_LAYOUT_UPCAST_4X layout,
+        # LLVM will realize that the paired up vectors actually came from the
+        # same 32-bit register and it will become a no-op.
+        col_minor_registers = np.moveaxis(registers, 1, -1)
+        flat_registers = [
+            utils.vector_concat((l, h))
+            for l, h in zip(
+                col_minor_registers.flat[::2], col_minor_registers.flat[1::2]
+            )
+        ]
+        registers = np.asarray(flat_registers, dtype=object).reshape(
+            *col_minor_registers.shape[:-1], col_minor_registers.shape[-1] // 2
         )
-        for idx, reg in np.ndenumerate(self.registers):
-          assert ir.VectorType(reg.type).shape == [4]
-          if dtype_bitwidth == 16:
-            # A single vector is 64-bits, but shuffles are only 32-bit wide.
-            # We only shuffle the half that needs to go to other thread.
-            low = utils.vector_slice(reg, slice(0, 2))
-            high = utils.vector_slice(reg, slice(2, 4))
-            to_exchange = arith.select(is_even, high, low)
-            # Exchange values between even and odd threads.
-            exchanged = utils.shfl_bfly(to_exchange, 1)
-            low = arith.select(is_even, low, exchanged)
-            high = arith.select(is_even, exchanged, high)
-          elif dtype_bitwidth == 8:
-            # The vector is 32-bits, so we just shuffle the whole thing and
-            # use prmt to blend it with the local register.
-            exchanged = utils.shfl_bfly(reg, 1)
-            # Consider lanes 0 and 1, because the situation is symmetric for
-            # each pair. If we feed reg[lane] and exchanged[lane] (which is
-            # really the same as reg of the other lane) to prmt, we can index
-            # the elements of the result using the following indices:
-            #     reg[0]:   0 1 2 3       reg[1]:  8 9 10 11
-            #     prmt[0]:  0 1 2 3                4 5  6  7
-            #     prmt[1]:  4 5 6 7                0 1  2  3
-            # The expected outputs and their respective permutations are:
-            #     out[0]:   0 1 8 9       out[1]:  2 3 10 11
-            #     prmt[0]:  0 1 4 5       prmt[1]: 6 7  2  3
-            # Note that the patterns still need to be flipped, since we listed
-            # bytes with LSB on the left, which is the opposite of how the
-            # numeric constants are spelled in Python (LSB on the right).
-            perm = arith.select(is_even, c(0x5410), c(0x3276))
-            blend = utils.prmt(reg, exchanged, perm)
-            low = utils.vector_slice(blend, slice(0, 2))
-            high = utils.vector_slice(blend, slice(2, 4))
-          else:
-            raise NotImplementedError(dtype_bitwidth)
+        registers = np.moveaxis(registers, -1, 1)
+      for idx, reg in np.ndenumerate(registers):
+        if dtype_bitwidth == 16:
+          assert reg.type.shape == [4]
+          # A single vector is 64-bits, but shuffles are only 32-bit wide.
+          # We only shuffle the half that needs to go to other thread.
+          low = utils.vector_slice(reg, slice(0, 2))
+          high = utils.vector_slice(reg, slice(2, 4))
+          to_exchange = arith.select(is_even, high, low)
+          # Exchange values between even and odd threads.
+          exchanged = utils.shfl_bfly(to_exchange, 1)
+          low = arith.select(is_even, low, exchanged)
+          high = arith.select(is_even, exchanged, high)
           new_registers[(idx[0], idx[1] * 2, *idx[2:-1])] = low
           new_registers[(idx[0], idx[1] * 2 + 1, *idx[2:-1])] = high
-        assert all(r is not None for r in new_registers)
-        return FragmentedArray(
-            _registers=new_registers, _layout=new_layout, _is_signed=self.is_signed,
-        )
+        elif dtype_bitwidth == 8:
+          assert reg.type.shape == [4]
+          # The vector is 32-bits, so we just shuffle the whole thing and
+          # use prmt to blend it with the local register.
+          exchanged = utils.shfl_bfly(reg, 1)
+          # Consider lanes 0 and 1, because the situation is symmetric for
+          # each pair. If we feed reg[lane] and exchanged[lane] (which is
+          # really the same as reg of the other lane) to prmt, we can index
+          # the elements of the result using the following indices:
+          #     reg[0]:   0 1 2 3       reg[1]:  8 9 10 11
+          #     prmt[0]:  0 1 2 3                4 5  6  7
+          #     prmt[1]:  4 5 6 7                0 1  2  3
+          # The expected outputs and their respective permutations are:
+          #     out[0]:   0 1 8 9       out[1]:  2 3 10 11
+          #     prmt[0]:  0 1 4 5       prmt[1]: 6 7  2  3
+          # Note that the patterns still need to be flipped, since we listed
+          # bytes with LSB on the left, which is the opposite of how the
+          # numeric constants are spelled in Python (LSB on the right).
+          perm = arith.select(is_even, c(0x5410), c(0x3276))
+          blend = utils.prmt(reg, exchanged, perm)
+          for i in range(2):
+            reg = utils.vector_slice(blend, slice(i * 2, i * 2 + 2))
+            new_registers[(idx[0], idx[1] * 2 + i, *idx[2:-1])] = reg
+        else:
+          assert dtype_bitwidth == 4
+          assert reg.type.shape == [8]  # We paired up the registers above.
+          exchanged = utils.shfl_bfly(reg, 1)
+          # See comment above for a more complete explanation.
+          #     reg[0]:   0 1 2 3 16 17 18 19   reg[1]:  8 9 10 11 24 25 26 27
+          #     prmt[0]:  -0- -1- --2-- --3--            -4- --5-- --6-- --7--
+          #     prmt[1]:  -4- -5- --6-- --7--            -0- --1-- --2-- --3--
+          # The expected outputs and their respective permutations are:
+          #     out[0]:   0 1 8 9 16 17 24 25   out[1]:  2 3 10 11 18 19 26 27
+          #     prmt[0]:  -0- -4- --2-- --6--  prmt[1]:  -5- --1-- --7-- --3--
+          perm = arith.select(is_even, c(0x6240), c(0x3715))
+          blend = utils.prmt(reg, exchanged, perm)
+          for i in range(4):
+            reg = utils.vector_slice(blend, slice(i * 2, i * 2 + 2))
+            new_registers[(idx[0], idx[1] * 4 + i, *idx[2:-1])] = reg
+      assert all(r is not None for r in new_registers)
+      return FragmentedArray(
+          _registers=new_registers, _layout=new_layout, _is_signed=self.is_signed,
+      )
+    if (
+        self.layout == WGMMA_LAYOUT_UPCAST_4X
+        and new_layout == WGMMA_LAYOUT_UPCAST_2X
+        and utils.bitwidth(self.mlir_dtype) == 4
+    ):
+      assert shape[0] % 64 == 0  # Should be implied by the layout
+      assert shape[1] % 32 == 0  # Should be implied by the layout
+      new_registers = np.empty(new_layout.registers_shape(shape), dtype=object)
+      i32 = ir.IntegerType.get_signless(32)
+      c = lambda x: arith.constant(i32, x)
+      is_01 = arith.cmpi(
+          arith.CmpIPredicate.ult, arith.remui(utils.thread_idx(), c(4)), c(2)
+      )
+      for idx, reg in np.ndenumerate(self.registers):
+        assert ir.VectorType(reg.type).shape == [8]
+        # The vector is 32-bits, so we just shuffle the whole thing and
+        # use prmt to blend it with the local register.
+        exchanged = utils.shfl_bfly(reg, 2)
+        # See comments above for conventions. Here we exchange data between
+        # threads with lane index related by flipping 2nd bit (e.g. 0 and 2).
+        #     reg[0]:   0 1 2 3 4 5 6 7       reg[2]:  16 17 18 19 20 21 22 23
+        #     prmt[0]:  -0- -1- -2- -3-                --4-- --5-- --6-- --7--
+        #     prmt[1]:  -4- -5- -6- -7-                --0-- --1-- --2-- --3--
+        # The expected outputs and their respective permutations are:
+        #     out[0]:   0 1 2 3 16 17 18 19   out[2]:  4 5 6 7 20 21 22 23
+        #     prmt[0]:  -0- -1- --4-- --5--  prmt[2]:  -6- -7- --2-- --3--
+        perm = arith.select(is_01, c(0x5410), c(0x3276))
+        blend = utils.prmt(reg, exchanged, perm)
+        for i in range(2):
+          reg = utils.vector_slice(blend, slice(i * 4, i * 4 + 4))
+          new_registers[(idx[0], idx[1] * 2 + i, *idx[2:-1])] = reg
+      assert all(r is not None for r in new_registers)
+      return FragmentedArray(
+          _registers=new_registers, _layout=new_layout, _is_signed=self.is_signed,
+      )
+    if self.layout == WGMMA_LAYOUT_UPCAST_4X and new_layout == WGMMA_LAYOUT:
+      return self.to_layout(WGMMA_LAYOUT_UPCAST_2X).to_layout(new_layout)
     if not isinstance(self.layout, WGSplatFragLayout):
       raise NotImplementedError(
           f"Cannot convert from {self.layout} to {new_layout}"
@@ -1288,7 +1374,9 @@ class FragmentedArray:
           int_ty = ir.IntegerType.get_signless(group_size * 4)
           while vector_len - offset >= group_size:
             reg_slice = utils.vector_slice(reg, slice(offset, offset + group_size))
-            reg_slice_int = arith.extsi(i32, utils.bitcast(reg_slice, int_ty))
+            reg_slice_int = utils.bitcast(reg_slice, int_ty)
+            if int_ty != i32:
+              reg_slice_int = arith.extsi(i32, reg_slice_int)
             reg_slice_int_shr = arith.shrui(reg_slice_int, c(4, i32))
             out_int_regs.extend(
                 upcast_to_bf16(reg_slice_int, reg_slice_int_shr, part=part)
