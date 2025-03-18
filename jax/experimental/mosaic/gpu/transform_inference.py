@@ -43,7 +43,8 @@ _transform_inference_rules: dict[str, TransformInferenceRule] = {}
 def _add_transform_inference_rule(
     op: type[ir.OpView], rule: TransformInferenceRule
 ):
-  _transform_inference_rules[op.OPERATION_NAME] = rule  # pytype: disable=attribute-error
+  if op is not None:
+    _transform_inference_rules[op.OPERATION_NAME] = rule  # pytype: disable=attribute-error
   return rule
 
 
@@ -167,6 +168,32 @@ def _infer_vector_load_store_transforms(
     return [layout_transforms], []
 
   return None
+
+
+# TODO(bchetioui): remove this once jaxlib minimum version >= 0.5.2.
+SliceSMEMOp = getattr(mgpu, "SliceSMEMOp", None)
+
+@partial(_add_transform_inference_rule, SliceSMEMOp)
+def _infer_slice_smem_transforms(op: SliceSMEMOp) -> OptionalTransforms:
+  transforms = None
+  uses = cast(ir.OpResult, op.result).uses
+
+  for op_operand_use in uses:
+    consumer = op_operand_use.owner
+    op_user = consumer.operands[op_operand_use.operand_number]
+    out_transforms = inference_utils.in_transforms_for_operand(
+        consumer, op_user
+    )
+    if transforms is not None and out_transforms is not None:
+      if transforms != out_transforms:
+        raise NotImplementedError(
+            f"Conflicting transforms for {op_user} in {op}: "
+            f"{transforms} != {out_transforms}."
+        )
+    elif out_transforms is not None:
+      transforms = out_transforms
+
+  return None if transforms is None else ([], [transforms])
 
 
 def _should_have_transforms(op: ir.OpView) -> bool:

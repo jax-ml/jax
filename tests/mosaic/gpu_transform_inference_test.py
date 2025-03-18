@@ -346,6 +346,78 @@ class TransformInferenceTest(parameterized.TestCase):
     with self.assertRaisesRegex(NotImplementedError, "Conflicting transforms"):
       mgpu.infer_transforms(self.module)
 
+  def test_infer_transforms_for_slice_smem_op_derives_from_user(self):
+    slice_smem_op = vector_load_op = None
+    shape = (64, 64)
+    elt_ty = ir.BF16Type.get()
+    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+
+    def body(offset):
+      nonlocal slice_smem_op, vector_load_op
+      slice_smem_op = mgpu.dialect.SliceSMEMOp(
+          ir.MemRefType.get(shape, elt_ty, memory_space=smem), offset
+      )
+      zero = arith.constant(ir.IntegerType.get_signless(32), 0)
+      load_offsets = [zero] * len(shape)
+      vector_load_op = vector.LoadOp(
+          ir.VectorType.get(shape, elt_ty), slice_smem_op.result, load_offsets
+      )
+
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(ir.IntegerType.get_signless(32))(body)
+
+    vector_load_op.attributes["out_layouts"] = ir.ArrayAttr.get(
+        [layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)]
+    )
+
+    mgpu.infer_transforms(self.module)
+
+    expected_transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((8, 64)),
+        mgpu.dialect.SwizzleTransformAttr.get(128),
+    ])
+
+    self.assertEmpty(inference_utils.in_transforms(slice_smem_op))
+    self.assertSequenceEqual(
+        inference_utils.out_transforms(slice_smem_op), [expected_transforms]
+    )
+
+  def test_infer_transforms_for_slice_smem_op_raises_on_mismatches(self):
+    slice_smem_op = vector_load_op1 = vector_load_op2 = None
+    shape = (64, 64)
+    elt_ty = ir.BF16Type.get()
+    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+
+    def body(offset):
+      nonlocal slice_smem_op, vector_load_op1, vector_load_op2
+      slice_smem_op = mgpu.dialect.SliceSMEMOp(
+          ir.MemRefType.get(shape, elt_ty, memory_space=smem), offset
+      )
+      zero = arith.constant(ir.IntegerType.get_signless(32), 0)
+      load_offsets = [zero] * len(shape)
+      vector_load_op1 = vector.LoadOp(
+          ir.VectorType.get(shape, elt_ty), slice_smem_op.result, load_offsets
+      )
+      vector_load_op2 = vector.LoadOp(
+          ir.VectorType.get(shape, elt_ty), slice_smem_op.result, load_offsets
+      )
+
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(ir.IntegerType.get_signless(32))(body)
+
+    vector_load_op1.attributes["out_layouts"] = ir.ArrayAttr.get(
+        [layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)]
+    )
+    vector_load_op2.attributes["out_layouts"] = ir.ArrayAttr.get(
+        [layouts_lib.to_layout_attr(fa.WGStridedFragLayout(shape, vec_size=4))]
+    )
+    vector_load_op2.attributes["in_transforms"] = ir.ArrayAttr.get(
+        [ir.ArrayAttr.get([mgpu.dialect.TransposeTransformAttr.get((1, 0))])]
+    )
+
+    with self.assertRaisesRegex(NotImplementedError, "Conflicting transforms"):
+      mgpu.infer_transforms(self.module)
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
