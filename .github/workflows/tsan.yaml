@@ -173,12 +173,18 @@ jobs:
             --bazel_options=--copt=-g \
             --clang_path=/usr/bin/clang-18
 
-          # Update the patch to use TSAN instrumented numpy
+          # Patch build/requirements_lock_3_13_ft.txt to use TSAN instrumented NumPy
           sed -i "s|+--extra-index-url.*|+--extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/|" .github/workflows/requirements_lock_3_13_ft.patch
           cat .github/workflows/requirements_lock_3_13_ft.patch
+          git apply .github/workflows/requirements_lock_3_13_ft.patch || exit 1
 
-          # Apply a patch to numpy in requirements lock 3.13 ft to use the nightly version
-          git apply .github/workflows/requirements_lock_3_13_ft.patch
+          # Display the content for debugging in logs
+          cat build/requirements_lock_3_13_ft.txt | head -15
+          # Check the patch
+          cat build/requirements_lock_3_13_ft.txt | head -15 | grep -E "(--pre|.*${GITHUB_WORKSPACE}/wheelhouse/|numpy)"
+          if [ "$?" == "1" ]; then echo "Could not find the patch in the requirements_lock_3_13_ft.txt"; exit 1; fi
+          cat build/requirements_lock_3_13_ft.txt | grep -E "(numpy==)"
+          if [ "$?" == "0" ]; then "Found original numpy dependency in the requirements_lock_3_13_ft.txt"; exit 1; fi
 
           echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
           echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
@@ -188,6 +194,13 @@ jobs:
           bazel_exec=($(ls bazel-*))
           ln -s ${bazel_exec} bazel
 
+          # Check python version
+          ./bazel run --@rules_python//python/config_settings:py_freethreaded="yes" @python//:python3 -- -VV
+
+          # Check numpy version
+          ./bazel cquery @pypi_numpy//:* | grep whl
+
+          # Build JAX and run tests
           ./bazel test \
               --test_env=JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES \
               --test_env=JAX_ENABLE_X64=$JAX_ENABLE_X64 \
