@@ -143,16 +143,16 @@ py_binary(
     data = [
         "LICENSE.txt",
     ] + if_cuda([
-        "//jaxlib/mosaic/gpu:mosaic_gpu",
-        "//jaxlib:cuda_plugin_extension",
         "//jaxlib:version",
+        "//jaxlib/mosaic/gpu:mosaic_gpu",
+        "//jaxlib/cuda:cuda_plugin_extension",
         "//jaxlib/cuda:cuda_gpu_support",
         "//jax_plugins/cuda:plugin_pyproject.toml",
         "//jax_plugins/cuda:plugin_setup.py",
         "@local_config_cuda//cuda:cuda-nvvm",
     ]) + if_rocm([
-        "//jaxlib:rocm_plugin_extension",
         "//jaxlib:version",
+        "//jaxlib/rocm:rocm_plugin_extension",
         "//jaxlib/rocm:rocm_gpu_support",
         "//jax_plugins/rocm:plugin_pyproject.toml",
         "//jax_plugins/rocm:plugin_setup.py",

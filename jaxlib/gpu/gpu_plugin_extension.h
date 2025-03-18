@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAXLIB_GPU_PLUGIN_EXTENSION_H_
-#define JAXLIB_GPU_PLUGIN_EXTENSION_H_
+#ifndef JAXLIB_GPU_GPU_PLUGIN_EXTENSION_H_
+#define JAXLIB_GPU_GPU_PLUGIN_EXTENSION_H_
 
 #include "nanobind/nanobind.h"
 
@@ -24,4 +24,4 @@ void BuildGpuPluginExtension(nanobind::module_& m);
 
 }  // namespace xla
 
-#endif  // JAXLIB_GPU_PLUGIN_EXTENSION_H_
+#endif  // JAXLIB_GPU_GPU_PLUGIN_EXTENSION_H_

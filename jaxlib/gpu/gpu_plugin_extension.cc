@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/gpu_plugin_extension.h"
+#include "jaxlib/gpu/gpu_plugin_extension.h"
 
 #include <cstddef>
 #include <cstdint>

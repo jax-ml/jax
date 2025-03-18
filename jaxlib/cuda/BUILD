@@ -657,6 +657,22 @@ py_library(
     ],
 )
 
+nanobind_extension(
+    name = "cuda_plugin_extension",
+    srcs = ["cuda_plugin_extension.cc"],
+    module_name = "cuda_plugin_extension",
+    deps = [
+        "//jaxlib/gpu:gpu_plugin_extension",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@nanobind",
+        "@xla//xla/pjrt:status_casters",
+        "@xla//xla/tsl/cuda:cublas",
+        "@xla//xla/tsl/cuda:cudart",
+    ],
+)
+
 # We cannot nest select and if_cuda_is_configured so we introduce
 # a standalone py_library target.
 py_library(
@@ -664,6 +680,6 @@ py_library(
     # `if_cuda_is_configured` will default to `[]`.
     deps = if_cuda_is_configured([
         ":cuda_gpu_support",
-        "//jaxlib:cuda_plugin_extension",
+        ":cuda_plugin_extension",
     ]),
 )
