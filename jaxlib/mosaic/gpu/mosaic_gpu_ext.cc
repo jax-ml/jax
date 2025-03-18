@@ -238,11 +238,12 @@ NB_MODULE(_mosaic_gpu_ext, m) {
         "failed to enable tracking of kernel activity by CUPTI");
   });
   m.def("_cupti_get_timings", []() {
+    THROW_IF_CUPTI_ERROR(
+        cuptiActivityFlushAll(CUPTI_ACTIVITY_FLAG_FLUSH_FORCED),
+        "failed to flush CUPTI activity buffers");
+    THROW_IF_CUPTI_ERROR(cuptiFinalize(), "failed to detach CUPTI");
     THROW_IF_CUPTI_ERROR(cuptiUnsubscribe(profiler_state.subscriber),
                          "failed to unsubscribe from CUPTI");
-    THROW_IF_CUPTI_ERROR(cuptiActivityFlushAll(CUPTI_ACTIVITY_FLAG_NONE),
-                         "failed to flush CUPTI activity buffers");
-    THROW_IF_CUPTI_ERROR(cuptiFinalize(), "failed to detach CUPTI");
     return profiler_state.timings;
   });
 }
