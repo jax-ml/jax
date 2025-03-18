@@ -281,25 +281,3 @@ nanobind_extension(
         "@nanobind",
     ],
 )
-
-# CPU kernels
-
-# TODO(phawkins): Remove this forwarding target.
-cc_library(
-    name = "cpu_kernels",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//jaxlib/cpu:cpu_kernels",
-    ],
-    alwayslink = 1,
-)
-
-# TODO(phawkins): Remove this forwarding target.
-cc_library(
-    name = "gpu_kernels",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//jaxlib/cuda:cuda_gpu_kernels",
-    ],
-    alwayslink = 1,
-)
