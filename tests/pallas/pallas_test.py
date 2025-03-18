@@ -2501,7 +2501,8 @@ class SymbolicPallasTest(PallasBaseTest):
     )
     assert exported_module is not None
     self.assertIn(
-        "tensor<?x?xf32>, %arg6: tensor<?x?xf32>, %arg7: tensor<?x?xf32>",
+        "%arg0: tensor<?x?xf32> loc(unknown), %arg1: tensor<?x?xf32>"
+        " loc(unknown), %arg2: tensor<?x?xf32>",
         str(exported_module),
     )
     x = jax.ShapeDtypeStruct((128, 1024), jax.numpy.float32)
@@ -2512,7 +2513,7 @@ class SymbolicPallasTest(PallasBaseTest):
     )
     assert exported_module is not None
     self.assertIn(
-        "@sym_matmul(%arg0: tensor<128x1024xf32>, %arg1: tensor<1024x512xf32>",
+        "call @sym_matmul(%arg0, %arg1)",
         str(exported_module),
     )
 
