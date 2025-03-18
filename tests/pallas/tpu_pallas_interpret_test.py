@@ -156,5 +156,36 @@ class InterpretTest(jtu.JaxTestCase):
     lowered = jax.jit(matmul).lower(x, y).as_text(dialect="stablehlo")
     self.assertNotIn("dot_general", lowered)
 
+  @parameterized.parameters('nan', 'zero')
+  def test_uninitialized_memory(self, uninitialized_memory):
+    def kernel(o1_ref, o2_ref, o3_ref, t1_ref, t2_ref):
+      o1_ref[...] = t1_ref[...]
+      o2_ref[...] = t2_ref[...]
+
+    x, y, z = pl.pallas_call(
+        kernel,
+        out_shape=[
+            jax.ShapeDtypeStruct((8, 128), jnp.bfloat16),
+            jax.ShapeDtypeStruct((8, 128), jnp.int16),
+            jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        ],
+        in_specs=[],
+        scratch_shapes=[
+            pltpu.VMEM((8, 128), jnp.bfloat16),
+            pltpu.VMEM((8, 128), jnp.int16),
+        ],
+        interpret=mosaic_interpret.TPUInterpretParams(
+            uninitialized_memory=uninitialized_memory),
+    )()
+    if uninitialized_memory == 'nan':
+      self.assertTrue(jnp.isnan(x).all())
+      np.testing.assert_equal(np.array(y), 32767)
+      self.assertTrue(jnp.isnan(z).all())
+    if uninitialized_memory == 'zero':
+      np.testing.assert_equal(np.array(x), 0)
+      np.testing.assert_equal(np.array(y), 0)
+      np.testing.assert_equal(np.array(z), 0)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
