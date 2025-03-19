@@ -100,10 +100,10 @@ static const auto* kEventElapsed =
           gpuStreamSynchronize(stream);
           auto start_event = std::make_unique<gpuEvent_t>();
           auto end_event = std::make_unique<gpuEvent_t>();
-          absl::MakeCleanup([&]() {
+          absl::Cleanup cleanup = [&]() {
             gpuEventDestroy(*start_event);
             gpuEventDestroy(*end_event);
-          });
+          };
           gpuMemcpy(start_event.get(), start.untyped_data(), sizeof(gpuEvent_t),
                     gpuMemcpyDeviceToHost);
           gpuMemcpy(end_event.get(), end.untyped_data(), sizeof(gpuEvent_t),
