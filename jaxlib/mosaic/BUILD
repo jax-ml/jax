@@ -60,9 +60,9 @@ cc_library(
     ]),
     # compatible with libtpu
     deps = [
+        ":pass_boilerplate",
+        ":serde",
         ":tpu_inc_gen",
-        "//jaxlib:pass_boilerplate",
-        "//jaxlib/mosaic:serde",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/hash",
@@ -277,6 +277,17 @@ filegroup(
         "dialect/tpu/transforms/extensions/infer_vector_layout_extensions.cc",
     ],
     # compatible with libtpu
+)
+
+cc_library(
+    name = "pass_boilerplate",
+    hdrs = ["pass_boilerplate.h"],
+    # compatible with libtpu
+    deps = [
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
+    ],
 )
 
 cc_library(
