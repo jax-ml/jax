@@ -1,3 +1,6 @@
+---
+orphan: true
+---
 (jax-array-migration)=
 # jax.Array migration
 
