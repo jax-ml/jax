@@ -306,23 +306,46 @@ def _infer_yield_op_layout(op: scf.YieldOp) -> OptionalLayouts:
   return (layouts, [])
 
 
-@partial(_add_layout_inference_rule, scf.ForOp)
-def _infer_for_op_layout(op: scf.ForOp) -> OptionalLayouts:
-  yield_op = op.body.operations[len(op.body.operations) - 1]
-  assert isinstance(yield_op, scf.YieldOp)
-
-  if inference_utils.has_in_layouts_set(yield_op):
-    yield_layouts = list(inference_utils.in_layouts(yield_op))
+def _infer_from_yield_ops(op: ir.Operation) -> list[ir.Attribute] | None:
+  candidates = []
+  for region in op.regions:
+    [block] = region.blocks
+    yield_op = block.operations[len(block.operations) - 1]
+    assert isinstance(yield_op, scf.YieldOp)
+    if not inference_utils.has_in_layouts_set(yield_op):
+      continue
+    yield_layouts = inference_utils.in_layouts(yield_op)
     if any(
         layouts_lib.is_splat_fragmented_layout(layout)
         for layout in yield_layouts
     ):
-      return None
-    return (yield_layouts, yield_layouts)
+      continue
+    candidates.append(yield_layouts)
+  if not candidates:
+    return None
+  return [_choose_representative_layout(set(c)) for c in zip(*candidates)]
 
+
+@partial(_add_layout_inference_rule, scf.ForOp)
+def _infer_for_op_layout(op: scf.ForOp) -> OptionalLayouts:
   # TODO(bchetioui): we don't attempt to propagate from outside for the moment.
   # For the existing kernels, propagating from the YieldOp should be enough.
+  if layouts := _infer_from_yield_ops(op):
+    return layouts, layouts
+  return None
 
+
+@partial(_add_layout_inference_rule, scf.IfOp)
+def _infer_if_op_layout(op: scf.IfOp) -> OptionalLayouts:
+  if layouts := _infer_from_yield_ops(op):
+    return [], layouts
+  return None
+
+
+@partial(_add_layout_inference_rule, scf.IndexSwitchOp)
+def _infer_index_switch_op_layout(op: scf.IndexSwitchOp) -> OptionalLayouts:
+  if layouts := _infer_from_yield_ops(op):
+    return [], layouts
   return None
 
 
@@ -333,7 +356,6 @@ def _infer_splat_op_layout(splat_op: vector.SplatOp) -> OptionalLayouts:
           shape=cast(ir.ShapedType, splat_op.result.type).shape
       )
   )
-
   return [], [layout]
 
 

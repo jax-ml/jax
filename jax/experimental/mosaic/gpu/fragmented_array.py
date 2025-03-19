@@ -319,6 +319,9 @@ class TiledLayout:
   def vector_length(self) -> int:
     return self.tiled_tiling_shape[self.vector_dim]
 
+  def registers_element_type(self, t: ir.Type) -> ir.Type:
+    return ir.VectorType.get((self.vector_length,), t)
+
   def registers_shape(self, shape: tuple[int, ...]) -> tuple[int, ...]:
     """Returns the shape of the register array needed to represent an array of the given logical shape."""
     tiled_shape = list(self.tiling.tile_shape(shape))
@@ -386,6 +389,19 @@ def _tiled_wgmma_layout(shape: tuple[int, ...]):
 class WGMMARowFragLayout:
   """[m] matrix, where m % 64 == 0."""
 
+  def registers_element_type(self, t: ir.Type) -> ir.Type:
+    return t
+
+  def registers_shape(self, shape: tuple[int, ...]) -> tuple[int, ...]:
+    """Returns the shape of the register array needed to represent an array of the given logical shape."""
+    if len(shape) != 1:
+      raise ValueError("WGMMARowFragLayout requires a 1D shape")
+    if shape[0] % 64:
+      raise ValueError(
+          "WGMMARowFragLayout requires shape[0] to be a multiple of 64"
+      )
+    return (shape[0] // 64, 2)
+
   def thread_idxs(self, shape):
     index = ir.IndexType.get()
     assert len(shape) == 1
@@ -435,6 +451,14 @@ class WGSplatFragLayout:
     """
     return all(dim1 == dim2 or dim1 == 1 for dim1, dim2 in zip(self.shape[::-1], shape[::-1]))
 
+  def registers_element_type(self, t: ir.Type) -> ir.Type:
+    return t
+
+  def registers_shape(self, shape: tuple[int, ...]) -> tuple[int, ...]:
+    """Returns the shape of the register array needed to represent an array of the given logical shape."""
+    del shape  # Unused.
+    return ()
+
   def thread_idxs(self, shape):
     assert shape == self.shape
     raise NotImplementedError
@@ -468,6 +492,15 @@ class WGStridedFragLayout:
     return cls(
         shape=tuple(shaped_ty.shape), vec_size=min(8 // bw, max_vec_size)
     )
+
+  def registers_element_type(self, t: ir.Type) -> ir.Type:
+    return ir.VectorType.get((self.vec_size,), t)
+
+  def registers_shape(self, shape: tuple[int, ...]) -> tuple[int, ...]:
+    """Returns the shape of the register array needed to represent an array of the given logical shape."""
+    if shape != self.shape:
+      raise ValueError(f"Shape {shape} is not compatible with {self}")
+    return (math.prod(self.shape) // (WARPGROUP_SIZE * self.vec_size),)
 
   def thread_idxs(self, shape):
     assert shape == self.shape
@@ -626,8 +659,8 @@ class FragmentedArray:
             != math.prod(_registers.shape) * WARPGROUP_SIZE * reg_size
         ):
           raise ValueError(
-              "Invalid register array shape: math.prod({_registers.shape}) *"
-              " {WARPGROUP_SIZE} * {reg_size}, want: math.prod({shape})"
+              f"Invalid register array shape: math.prod({_registers.shape}) *"
+              f" {WARPGROUP_SIZE} * {reg_size}, want: math.prod({shape})"
           )
 
       # Just a single register
@@ -703,30 +736,15 @@ class FragmentedArray:
   def splat(cls, value, shape, layout=None, *, is_signed: bool | None = None):
     layout = layout or WGSplatFragLayout(shape)
     match layout:
-      case WGMMARowFragLayout():
-        if len(shape) != 1:
-          raise ValueError("WGMMARowFragLayout requires a 1D shape")
-        if shape[0] % 64:
-          raise ValueError(
-              "WGMMARowFragLayout requires shape[0] to be a multiple of 64"
-          )
-        reg_shape = (shape[0] // 64, 2)
-      case WGStridedFragLayout(vec_size=vec_size):
-        assert shape == layout.shape
-        elems = np.prod(shape)
-        reg_shape = (elems // (WARPGROUP_SIZE * vec_size),)
-        value = vector.splat(ir.VectorType.get((vec_size,), value.type), value)
-      case WGSplatFragLayout():
-        assert shape == layout.shape
-        reg_shape = ()
-      case TiledLayout():
-        value = vector.splat(ir.VectorType.get((layout.vector_length,), value.type), value)
-        reg_shape = layout.registers_shape(shape)
+      case WGMMARowFragLayout() | WGSplatFragLayout():
+        pass
+      case WGStridedFragLayout() | TiledLayout():
+        value = vector.splat(layout.registers_element_type(value.type), value)
       case _:
         raise NotImplementedError(layout)
 
     return cls(
-        _registers=np.full(reg_shape, value, dtype=object),
+        _registers=np.full(layout.registers_shape(shape), value, dtype=object),
         _layout=layout,
         _is_signed=is_signed,
     )

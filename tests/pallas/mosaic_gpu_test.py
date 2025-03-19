@@ -1121,13 +1121,13 @@ class PallasCallTest(PallasTest):
         ),
     )
     def kernel(x_ref, o_ref):
-      acc = _sum_same_dtype(x_ref[...])
+      acc_sum = _sum_same_dtype(x_ref[...])
       acc2, acc = jax.lax.cond(
-          acc % 2 == 0,
-          lambda: (acc * 2, acc),
-          lambda: (acc, acc * 2),
+          acc_sum % 2 == 0,
+          lambda: (acc_sum * 2, x_ref[...]),
+          lambda: (acc_sum, x_ref[...]),
       )
-      o_ref[...] = jnp.broadcast_to(acc + acc2, o_ref.shape)
+      o_ref[...] = jnp.broadcast_to(_sum_same_dtype(acc) + acc2, o_ref.shape)
 
     x = jnp.arange(256, dtype=jnp.int32)
     np.testing.assert_array_equal(kernel(x), jnp.broadcast_to(jnp.sum(x) * 3, [256]))
