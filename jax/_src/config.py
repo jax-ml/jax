@@ -105,6 +105,13 @@ class Config:
     self.meta = {}
     self.use_absl = False
     self._contextmanager_flags = set()
+    self.add_option(
+        "jax_default_matmul_precision",   # Option name
+        ValueHolder("float32"),           # Default value: "float32"
+        str,                              # Type is string
+        ("Default precision for matrix multiplication on GPU",),  # Description
+        {"choices": ["float32", "highest"]}  # Allowed values
+    )
 
   def update(self, name, val):
     if name not in self._value_holders:
