@@ -362,7 +362,7 @@ def _get_full_wheel_name(
         free_threaded_suffix = "t" if py_freethreaded.lower() == "yes" else "",
     )
 
-def _get_source_distribution_name(package_name, wheel_version):
+def _get_source_package_name(package_name, wheel_version):
     return "{package_name}-{wheel_version}.tar.gz".format(
         package_name = package_name,
         wheel_version = wheel_version,
@@ -394,37 +394,47 @@ def _jax_wheel_impl(ctx):
     no_abi = ctx.attr.no_abi
     platform_independent = ctx.attr.platform_independent
     build_wheel_only = ctx.attr.build_wheel_only
+    build_source_package_only = ctx.attr.build_source_package_only
     editable = ctx.attr.editable
     platform_name = ctx.attr.platform_name
+
+    output_dir_path = ""
+    outputs = []
     if editable:
         output_dir = ctx.actions.declare_directory(output_path + "/" + ctx.attr.wheel_name)
-        wheel_dir = output_dir.path
+        output_dir_path = output_dir.path
         outputs = [output_dir]
         args.add("--editable")
     else:
-        wheel_name = _get_full_wheel_name(
-            package_name = ctx.attr.wheel_name,
-            no_abi = no_abi,
-            platform_independent = platform_independent,
-            platform_name = platform_name,
-            cpu_name = cpu,
-            wheel_version = full_wheel_version,
-            py_freethreaded = py_freethreaded,
-        )
-        wheel_file = ctx.actions.declare_file(output_path +
-                                              "/" + wheel_name)
-        wheel_dir = wheel_file.path[:wheel_file.path.rfind("/")]
-        outputs = [wheel_file]
-        if not build_wheel_only:
-            source_distribution_name = _get_source_distribution_name(
+        if build_wheel_only:
+            wheel_name = _get_full_wheel_name(
+                package_name = ctx.attr.wheel_name,
+                no_abi = no_abi,
+                platform_independent = platform_independent,
+                platform_name = platform_name,
+                cpu_name = cpu,
+                wheel_version = full_wheel_version,
+                py_freethreaded = py_freethreaded,
+            )
+            wheel_file = ctx.actions.declare_file(output_path +
+                                                  "/" + wheel_name)
+            output_dir_path = wheel_file.path[:wheel_file.path.rfind("/")]
+            outputs = [wheel_file]
+            if ctx.attr.wheel_name == "jax":
+                args.add("--build-wheel-only", "True")
+        if build_source_package_only:
+            source_package_name = _get_source_package_name(
                 package_name = ctx.attr.wheel_name,
                 wheel_version = full_wheel_version,
             )
-            source_distribution_file = ctx.actions.declare_file(output_path +
-                                                                "/" + source_distribution_name)
-            outputs.append(source_distribution_file)
+            source_package_file = ctx.actions.declare_file(output_path +
+                                                           "/" + source_package_name)
+            output_dir_path = source_package_file.path[:source_package_file.path.rfind("/")]
+            outputs = [source_package_file]
+            if ctx.attr.wheel_name == "jax":
+                args.add("--build-source-package-only", "True")
 
-    args.add("--output_path", wheel_dir)  # required argument
+    args.add("--output_path", output_dir_path)  # required argument
     if not platform_independent:
         args.add("--cpu", cpu)
     args.add("--jaxlib_git_hash", git_hash)  # required argument
@@ -472,16 +482,17 @@ _jax_wheel = rule(
         "wheel_name": attr.string(mandatory = True),
         "no_abi": attr.bool(default = False),
         "platform_independent": attr.bool(default = False),
-        "build_wheel_only": attr.bool(default = True),
+        "build_wheel_only": attr.bool(mandatory = True, default = True),
+        "build_source_package_only": attr.bool(mandatory = True, default = False),
         "editable": attr.bool(default = False),
-        "cpu": attr.string(mandatory = True),
-        "platform_name": attr.string(mandatory = True),
+        "cpu": attr.string(),
+        "platform_name": attr.string(),
         "git_hash": attr.label(default = Label("//jaxlib/tools:jaxlib_git_hash")),
         "source_files": attr.label_list(allow_files = True),
         "output_path": attr.label(default = Label("//jaxlib/tools:output_path")),
         "enable_cuda": attr.bool(default = False),
         # A cuda/rocm version is required for gpu wheels; for cpu wheels, it can be an empty string.
-        "platform_version": attr.string(mandatory = True, default = ""),
+        "platform_version": attr.string(),
         "skip_gpu_kernels": attr.bool(default = False),
         "enable_rocm": attr.bool(default = False),
         "include_cuda_libs": attr.label(default = Label("@local_config_cuda//cuda:include_cuda_libs")),
@@ -498,7 +509,6 @@ def jax_wheel(
         wheel_name,
         no_abi = False,
         platform_independent = False,
-        build_wheel_only = True,
         editable = False,
         enable_cuda = False,
         enable_rocm = False,
@@ -509,11 +519,10 @@ def jax_wheel(
     Common artifact attributes are grouped within a single macro.
 
     Args:
-      name: the name of the wheel
+      name: the target name
       wheel_binary: the binary to use to build the wheel
       wheel_name: the name of the wheel
       no_abi: whether to build a wheel without ABI
-      build_wheel_only: whether to build a wheel without source distribution
       editable: whether to build an editable wheel
       platform_independent: whether to build a wheel without platform tag
       enable_cuda: whether to build a cuda wheel
@@ -522,7 +531,7 @@ def jax_wheel(
       source_files: the source files to include in the wheel
 
     Returns:
-      A directory containing the wheel
+      A wheel file or a wheel directory.
     """
     _jax_wheel(
         name = name,
@@ -530,7 +539,8 @@ def jax_wheel(
         wheel_name = wheel_name,
         no_abi = no_abi,
         platform_independent = platform_independent,
-        build_wheel_only = build_wheel_only,
+        build_wheel_only = True,
+        build_source_package_only = False,
         editable = editable,
         enable_cuda = enable_cuda,
         enable_rocm = enable_rocm,
@@ -551,6 +561,34 @@ def jax_wheel(
             "//jaxlib/tools:linux_aarch64": "aarch64",
             "//jaxlib/tools:linux_x86_64": "x86_64",
         }),
+        source_files = source_files,
+    )
+
+def jax_source_package(
+        name,
+        source_package_binary,
+        source_package_name,
+        source_files = []):
+    """Create jax source package.
+
+    Common artifact attributes are grouped within a single macro.
+
+    Args:
+      name: the target name
+      source_package_binary: the binary to use to build the package
+      source_package_name: the name of the source package
+      source_files: the source files to include in the package
+
+    Returns:
+      A jax source package file.
+    """
+    _jax_wheel(
+        name = name,
+        wheel_binary = source_package_binary,
+        wheel_name = source_package_name,
+        build_source_package_only = True,
+        build_wheel_only = False,
+        platform_independent = True,
         source_files = source_files,
     )
 
