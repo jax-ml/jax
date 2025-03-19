@@ -6360,8 +6360,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   def test_intermediate_einsum(self, mesh):
     shape1 = (8, 32, 1, 16)
     shape2 = (8, 32, 1, 8)
-    np_inp1 = np.arange(math.prod(shape1)).reshape(shape1)
-    np_inp2 = np.arange(math.prod(shape2)).reshape(shape2)
+    np_inp1 = np.ones(math.prod(shape1)).reshape(shape1)
+    np_inp2 = np.ones(math.prod(shape2)).reshape(shape2)
 
     s = NamedSharding(mesh, P('data'))
     arr1 = jax.device_put(np_inp1, s)
@@ -6387,9 +6387,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     shape1 = (8, 32, 2*16)
     shape2 = (8, 32, 2, 8)
     shape3 = (8, 32, 2, 8)
-    np_inp1 = np.arange(math.prod(shape1)).reshape(shape1)
-    np_inp2 = np.arange(math.prod(shape2)).reshape(shape2)
-    np_inp3 = np.arange(math.prod(shape3)).reshape(shape3)
+    np_inp1 = np.ones(math.prod(shape1)).reshape(shape1)
+    np_inp2 = np.ones(math.prod(shape2)).reshape(shape2)
+    np_inp3 = np.ones(math.prod(shape3)).reshape(shape3)
 
     arr1 = jax.device_put(np_inp1, s)
     arr2 = jax.device_put(np_inp2, s)
@@ -6436,8 +6436,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
   def test_intermediate_einsum_conflict_error(self, mesh):
     shape1 = (8, 32, 1, 16)
     shape2 = (8, 32, 1, 8)
-    np_inp1 = np.arange(math.prod(shape1)).reshape(shape1)
-    np_inp2 = np.arange(math.prod(shape2)).reshape(shape2)
+    np_inp1 = np.ones(math.prod(shape1)).reshape(shape1)
+    np_inp2 = np.ones(math.prod(shape2)).reshape(shape2)
 
     arr1 = jax.device_put(
         np_inp1, NamedSharding(mesh, P(None, None, None, 'data')))
