@@ -1282,6 +1282,40 @@ class PallasCallTest(PallasTest):
         convert(x), jax.lax.bitcast_convert_type(x, out_dtype)
     )
 
+  def test_warp_specialization_axis_index(self):
+    gpu_mesh = plgpu.GPUMesh(num_threads=1, axis_names=("x"))
+    warp_mesh = plgpu.WarpMesh(axis_name="warp")
+    @pl.run_state
+    def inner(y_ref):
+      @pl.core_map(gpu_mesh)
+      def _kernel():
+        def scope(ones_smem_ref, threes_smem_ref):
+          # Prepare data to copy.
+          ones_smem_ref[:] = jnp.ones((1, 128), jnp.int32)
+          threes_smem_ref[:] = jnp.ones((1, 128), jnp.int32) * 3
+          plgpu.commit_smem()
+          @pl.core_map(warp_mesh)
+          def _():
+            warp_id = lax.axis_index("warp")
+            # We cannot load/store inside of core_map, so we issue async
+            # copies instead to produce a testable result.
+            @pl.when(warp_id == 1)
+            def _():
+              plgpu.copy_smem_to_gmem(ones_smem_ref, y_ref.at[0:1])
+            @pl.when(warp_id == 3)
+            def _():
+              plgpu.copy_smem_to_gmem(threes_smem_ref, y_ref.at[1:2])
+          plgpu.wait_smem_to_gmem(0)
+        pl.run_scoped(scope,
+                      plgpu.SMEM((1, 128), jnp.int32),
+                      plgpu.SMEM((1, 128), jnp.int32)
+                      )
+    y_init = jnp.zeros((2, 128), jnp.int32)
+    result = inner(y_init)
+    expected = jnp.stack((jnp.ones((128,), jnp.int32),
+                          jnp.ones((128,), jnp.int32) * 3), axis=0)
+    np.testing.assert_array_equal(result, expected)
+
 
 class PallasCallSm90ATest(PallasSm90ATest):
 

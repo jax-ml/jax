@@ -88,7 +88,10 @@ def _copy_smem_to_gmem_lowering(
     has_user_predicate,
     commit_group,
 ):
-  predicate = ctx.module_ctx.single_wg_lane_predicate
+  if ctx.in_warp_lowering:
+    predicate = ctx.module_ctx.warp_leader_predicate
+  else:
+    predicate = ctx.module_ctx.single_wg_lane_predicate
   if has_user_predicate:
     flat_args, user_predicate = flat_args[:-1], flat_args[-1]
     predicate = arith_dialect.andi(
@@ -280,6 +283,10 @@ def _copy_gmem_to_smem_lowering(
   if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
     if bytes % WARPGROUP_SIZE:
       raise NotImplementedError("Only aligned copies are supported")
+    if ctx.in_warp_lowering:
+      predicate = ctx.module_ctx.warp_leader_predicate
+    else:
+      predicate = ctx.module_ctx.single_wg_lane_predicate
     # We arrive uniformly from each thread in the WG, so we need to divide the
     # number of bytes by the number of threads in the WG.
     # TODO: apaszke - Relax this. We can just select the WG leader and have it
@@ -292,7 +299,7 @@ def _copy_gmem_to_smem_lowering(
         dst_ref=dst,
         barrier=barrier,
         arrive=False,
-        predicate=ctx.module_ctx.single_wg_lane_predicate,
+        predicate=predicate,
         **copy_params,
     )
     return ()
