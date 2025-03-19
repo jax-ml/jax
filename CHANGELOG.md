@@ -16,6 +16,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## jax 0.5.3 (Mar 19, 2025)
+
 * New Features
 
   * Added a `allow_negative_indices` option to {func}`jax.lax.dynamic_slice`,
