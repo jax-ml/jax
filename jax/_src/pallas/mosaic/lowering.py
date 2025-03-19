@@ -2346,13 +2346,13 @@ def _bcast(x, y, x_aval, y_aval, out_aval):
     y_dtype = x_aval.dtype
   elif x_aval.weak_type:
     x_dtype = y_aval.dtype
-  if isinstance(x, (np.ndarray, np.number, int, float)):
+  if not isinstance(x, ir.Value):
     if getattr(y, "type", None) == ir.IndexType.get():
       mlir_type = y.type
     else:
       mlir_type = _dtype_to_ir_type(x_dtype)
     x = ir_constant(x, mlir_type)
-  if isinstance(y, (np.ndarray, np.number, int, float)):
+  if not isinstance(y, ir.Value):
     if getattr(x, "type", None) == ir.IndexType.get():
       mlir_type = x.type
     else:
