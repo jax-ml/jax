@@ -416,7 +416,6 @@ def compile_or_get_cached(
       # them.
       and len(host_callbacks) == 0
   ):
-    assert compile_options is not None
     log_persistent_cache_miss(module_name, cache_key)
     return _compile_and_share_module(
         backend,
@@ -429,7 +428,6 @@ def compile_or_get_cached(
         min_device_process_id
     )
   else:
-    assert compile_options is not None
     log_persistent_cache_miss(module_name, cache_key)
     return _compile_and_write_cache(
         backend,
@@ -472,7 +470,7 @@ def _resolve_compilation_strategy(
     is_multi_process: bool,
     module_name: str,
     min_device_process_id: int,
-) -> tuple[str | None, xc.CompileOptions | None]:
+) -> tuple[str | None, xc.CompileOptions]:
   is_auto_pgle_used = (
       config.enable_pgle.value and config.pgle_profiling_runs.value > 0
   )
@@ -511,8 +509,7 @@ def _resolve_compilation_strategy(
       # No need to record N profiles in this case
       if pgle_profiler is not None:
         pgle_profiler.disable()
-      # compile_options not needed because the executable is cached
-      return pgle_optimized_cache_key, None
+      return pgle_optimized_cache_key, compile_options
     elif (config.compilation_cache_expect_pgle.value
           and _is_executable_in_cache(backend, cache_key)):
       # No PGLE-optimized module found in the persistent cache, and the user
