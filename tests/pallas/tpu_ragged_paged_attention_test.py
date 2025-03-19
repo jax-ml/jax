@@ -306,7 +306,7 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
     )
 
   def test_ragged_paged_attention_sliding_window_should_be_positive(self):
-    dtype=jnp.float32
+    dtype = jnp.float32
     seq_lens = [(192, 328), (128, 180), (64, 255)]
     num_heads = (32, 8)
     head_dim = 128
