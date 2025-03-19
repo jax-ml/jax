@@ -78,6 +78,9 @@ class GPUCompilerParams(pallas_core.CompilerParams):
       single invocation. It is undefined behavior if a thread collects more
       events than this.
     profile_dir: The directory to which profiling traces will be written to.
+    use_custom_barrier: If True, the kernel is responsible to properly synchronize
+      between GPUs in prolog as needed. If False, an inter-gpu barrier is inserted
+      before each kernel. Defaults to False.
   """
   PLATFORM: ClassVar[str] = "mosaic_gpu"
   approx_math: bool = False
@@ -87,6 +90,7 @@ class GPUCompilerParams(pallas_core.CompilerParams):
   profile_space: int = 0
   profile_dir: str = ""
   thread_semantics: mgpu.core.ThreadSemantics = mgpu.core.ThreadSemantics.Lane
+  use_custom_barrier: bool = False
 
   def __post_init__(self):
     if bool(self.profile_space) ^ bool(self.profile_dir):
