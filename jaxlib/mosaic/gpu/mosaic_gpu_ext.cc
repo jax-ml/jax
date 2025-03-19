@@ -98,19 +98,21 @@ static const auto* kEventElapsed =
         .Ret<ffi::BufferR0<ffi::F32>>()  // elapsed_ms
         .To([](gpuStream_t stream, auto start, auto end, auto out) {
           gpuStreamSynchronize(stream);
-          auto start_event = std::make_unique<gpuEvent_t>();
-          auto end_event = std::make_unique<gpuEvent_t>();
+          gpuEvent_t start_event = nullptr;
+          gpuEvent_t end_event = nullptr;
+
           absl::Cleanup cleanup = [&]() {
-            gpuEventDestroy(*start_event);
-            gpuEventDestroy(*end_event);
+            gpuEventDestroy(start_event);
+            gpuEventDestroy(end_event);
           };
-          gpuMemcpy(start_event.get(), start.untyped_data(), sizeof(gpuEvent_t),
+
+          gpuMemcpy(&start_event, start.untyped_data(), sizeof(gpuEvent_t),
                     gpuMemcpyDeviceToHost);
-          gpuMemcpy(end_event.get(), end.untyped_data(), sizeof(gpuEvent_t),
+          gpuMemcpy(&end_event, end.untyped_data(), sizeof(gpuEvent_t),
                     gpuMemcpyDeviceToHost);
+
           float elapsed;
-          if (auto res =
-                  gpuEventElapsedTime(&elapsed, *start_event, *end_event);
+          if (auto res = gpuEventElapsedTime(&elapsed, start_event, end_event);
               res) {
             return ffi::Error::Internal(absl::StrCat(
                 "Failed to get elapsed time between events: ", ToString(res)));
