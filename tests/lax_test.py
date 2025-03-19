@@ -49,7 +49,6 @@ from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
 from jax._src.util import NumpyComplexWarning, safe_zip
 from jax._src.tree_util import tree_map
-from jax._src.lib import xla_extension_version
 
 config.parse_flags_with_absl()
 
@@ -1128,11 +1127,6 @@ class LaxTest(jtu.JaxTestCase):
         raise SkipTest(
             f"The dot algorithm '{algorithm}' is not supported on CPU.")
     if jtu.test_device_matches(["gpu"]):
-      if (algorithm == lax.DotAlgorithmPreset.BF16_BF16_F32_X9 and
-          xla_extension_version < 320):
-        raise SkipTest(
-              f"The dot algorithm ${algorithm} requires XLA extension version "
-              ">= 320.")
       # GPU algorithm support is a little spotty. It is checked in
       # xla/service/algorithm_util.cc and the logic is copied here.
       if algorithm in {

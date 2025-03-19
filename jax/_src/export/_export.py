@@ -43,7 +43,7 @@ from jax._src import mesh as mesh_lib
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension, xla_extension_version
+from jax._src.lib import xla_extension
 from jax._src.lib.mlir import ir, passmanager
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -674,10 +674,8 @@ def _export_lowered(
   # Shardy was used during lowering if we can find the Shardy mesh in the
   # module. Note that the mesh should have been lifted by the
   # `sdy-lift-inlined-meshes` pass in mlir.py.
-  shardy_enabled = False
-  if xla_extension_version >= 319:
-    shardy_enabled = xla_extension.sdy.lowered_with_shardy(
-        mlir.module_to_bytecode(mlir_module))
+  shardy_enabled = xla_extension.sdy.lowered_with_shardy(
+      mlir.module_to_bytecode(mlir_module))
 
   mlir_module_serialized = _module_to_bytecode(mlir_module, shardy_enabled)
 
@@ -784,7 +782,7 @@ def _export_lowered(
       _get_vjp=_get_exported_vjp)
 
 def _module_to_bytecode(module: ir.Module, shardy_enabled: bool) -> bytes:
-  if xla_extension_version >= 319 and shardy_enabled:
+  if shardy_enabled:
     mlir_str = xla_extension.sdy.sdy_round_trip_export_pipeline(
         mlir.module_to_bytecode(module))
   else:
@@ -1423,10 +1421,8 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     ctx.module_context.shape_poly_state.uses_dim_vars = True
   submodule = ir.Module.parse(exported.mlir_module())
 
-  shardy_enabled = False
-  if xla_extension_version >= 319:
-    shardy_enabled = xla_extension.sdy.lowered_with_shardy(
-        mlir.module_to_bytecode(submodule))
+  shardy_enabled = xla_extension.sdy.lowered_with_shardy(
+      mlir.module_to_bytecode(submodule))
   if shardy_enabled:
     submodule = ir.Module.parse(xla_extension.sdy.sdy_round_trip_import_shardings(
         mlir.module_to_bytecode(submodule)))

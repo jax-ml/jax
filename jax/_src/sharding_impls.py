@@ -33,7 +33,6 @@ from jax._src import source_info_util
 from jax._src import xla_bridge as xb
 from jax._src import mesh_utils
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
     SdyArraySharding, SdyDimSharding, UnspecifiedValue, AUTO,
@@ -881,8 +880,7 @@ def parse_flatten_op_sharding(
     return out
   elif hlo_sharding.is_replicated():
     return [PartitionSpec()]
-  elif (xla_extension_version >= 319 and hlo_sharding.is_maximal()
-        and mesh.size == 1):
+  elif hlo_sharding.is_maximal() and mesh.size == 1:
     return [PartitionSpec()]
   elif hlo_sharding.is_tiled():
     mesh_shape = mesh.shape
