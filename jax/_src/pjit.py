@@ -1573,14 +1573,12 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
             'Passing non-trivial shardings for numpy '
             'inputs is not allowed. To fix this error, either specify a '
             'replicated sharding explicitly or use '
-            '`jax.experimental.multihost_utils.host_local_array_to_global_array(...)` '
+            '`jax.make_array_from_process_local_data(...)` '
             'to convert your host local numpy inputs to a jax.Array which you '
-            'can pass to pjit. '
+            'can pass to jit. '
             'If the numpy input is the same on each process, then you can use '
             '`jax.make_array_from_callback(...) to create a `jax.Array` which '
-            'you can pass to pjit. '
-            'Please see the jax.Array migration guide for more information '
-            'https://jax.readthedocs.io/en/latest/jax_array_migration.html#handling-of-host-local-inputs-to-pjit-like-batch-etc. '
+            'you can pass to jit. '
             f'Got arg shape: {arg.shape}, arg value: {arg}')
       if not isinstance(arg_s, UnspecifiedValue) and arg_s._is_concrete:
         # jax.jit does not allow resharding across different memory kinds even
