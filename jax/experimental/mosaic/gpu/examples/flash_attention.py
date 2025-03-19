@@ -299,7 +299,7 @@ def build_kernel(
       scf.yield_([])
     with ir.InsertionPoint(if_compute.else_block):
       nvvm.setmaxregister(40, nvvm.SetMaxRegisterAction.decrease)
-      with single_thread(per_block=False):
+      with single_thread(scope=ThreadSubset.WARPGROUP):
         k_tr = (TileTransform(tiling), TransposeTransform((1, 0, 2, 3)))
         v_tr = TileTransform(tiling)
         kv_head_idx = arith.divui(q_head_idx, c(q_heads_per_kv_head))

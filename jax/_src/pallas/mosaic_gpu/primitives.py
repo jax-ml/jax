@@ -174,6 +174,8 @@ def _copy_smem_to_gmem_abstract_eval(src, dst, *args, **params):
 
 @lowering.register_lowering_rule(copy_smem_to_gmem_p, mgpu.ThreadSemantics.Lane)
 @lowering.register_lowering_rule(
+    copy_smem_to_gmem_p, mgpu.ThreadSemantics.Warp)
+@lowering.register_lowering_rule(
     copy_smem_to_gmem_p, mgpu.ThreadSemantics.Warpgroup
 )
 def _copy_smem_to_gmem_lowering(
@@ -192,14 +194,15 @@ def _copy_smem_to_gmem_lowering(
   else:
     predicate = None
 
-  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+  if (ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane or
+      ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Warp):
     if predicate is not None:
-      assert ctx.module_ctx.single_wg_lane_predicate is not None
+      assert ctx.module_ctx.single_lane_predicate is not None
       predicate = arith_dialect.andi(
-          predicate, ctx.module_ctx.single_wg_lane_predicate
+          predicate, ctx.module_ctx.single_lane_predicate
       )
     else:
-      predicate = ctx.module_ctx.single_wg_lane_predicate
+      predicate = ctx.module_ctx.single_lane_predicate
 
   flat_src_transforms, flat_dst_transforms = util.split_list(
       flat_args,
@@ -209,7 +212,9 @@ def _copy_smem_to_gmem_lowering(
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
   src, src_transforms = lowering._handle_indexing(src, src_transforms)
   copy_params = _extract_gmem_copy_params(dst_transforms) | _extract_smem_copy_params(src_transforms)
-  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+  if (ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane or
+      ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Warp
+  ):
     ctx.launch_ctx.async_copy(
         src_ref=src,
         dst_ref=dst,
@@ -350,6 +355,8 @@ def _copy_gmem_to_smem_abstract_eval(src, dst, barrier, *args, **params):
 
 @lowering.register_lowering_rule(copy_gmem_to_smem_p, mgpu.ThreadSemantics.Lane)
 @lowering.register_lowering_rule(
+    copy_gmem_to_smem_p, mgpu.ThreadSemantics.Warp)
+@lowering.register_lowering_rule(
     copy_gmem_to_smem_p, mgpu.ThreadSemantics.Warpgroup
 )
 def _copy_gmem_to_smem_lowering(
@@ -384,7 +391,8 @@ def _copy_gmem_to_smem_lowering(
     )
   dst_ty = ir.MemRefType(dst.type)
   bytes = math.prod(dst_ty.shape) * mgpu.bytewidth(dst_ty.element_type)
-  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+  if (ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane or
+      ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Warp):
     if bytes % WARPGROUP_SIZE:
       raise NotImplementedError("Only aligned copies are supported")
     # We arrive uniformly from each thread in the WG, so we need to divide the
@@ -399,7 +407,7 @@ def _copy_gmem_to_smem_lowering(
         dst_ref=dst,
         barrier=barrier,
         arrive=False,
-        predicate=ctx.module_ctx.single_wg_lane_predicate,
+        predicate=ctx.module_ctx.single_lane_predicate,
         **copy_params,
     )
     return ()

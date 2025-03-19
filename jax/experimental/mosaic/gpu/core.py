@@ -182,6 +182,7 @@ class ThreadSemantics(enum.Enum):
   """Semantics for the kernel's instruction stream."""
 
   Lane = enum.auto()
+  Warp = enum.auto()
   Warpgroup = enum.auto()
 
 
