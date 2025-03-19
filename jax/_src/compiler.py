@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import copy
+from functools import partial
 import logging
 import time
 from typing import Any, Callable
@@ -476,28 +477,8 @@ def _resolve_compilation_strategy(
       config.enable_pgle.value and config.pgle_profiling_runs.value > 0
   )
 
-  def get_cache_key(options, override_fdo_profile=None):
-    if not compilation_cache.is_cache_used(backend):
-      return None
-    if config.remove_custom_partitioning_ptr_from_cache_key.value:
-      ignore_callbacks = cache_key_type.IgnoreCallbacks.CUSTOM_PARTITIONING
-    else:
-      ignore_callbacks = cache_key_type.IgnoreCallbacks.NO
-    if override_fdo_profile is not None:
-      options = copy.deepcopy(options)
-      options.executable_build_options.fdo_profile = override_fdo_profile
-    try:
-      return compilation_cache.get_cache_key(
-          computation,
-          devices,
-          options,
-          backend,
-          ignore_callbacks,
-      )
-    except xc._xla.XlaRuntimeError as ex:
-      logger.error("compile_or_get_cached: unable to generate cache key, "
-                    "skipping the cache: %s", ex)
-    return None
+  get_cache_key = partial(_get_cache_key, backend=backend,
+                          computation=computation, devices=devices)
 
   if is_auto_pgle_used or config.compilation_cache_expect_pgle.value:
     # This can be None if cache key generation fails.
@@ -562,6 +543,33 @@ def _resolve_compilation_strategy(
     # enabled. This is also the AutoPGLE-disabled path.
     return cache_key, first_pass_compile_options
 
+def _get_cache_key(
+    options: xc.CompileOptions,
+    backend: xc.Client,
+    computation: ir.Module,
+    devices: np.ndarray,
+    override_fdo_profile: bytes | None = None) -> str | None:
+  if not compilation_cache.is_cache_used(backend):
+    return None
+  if config.remove_custom_partitioning_ptr_from_cache_key.value:
+    ignore_callbacks = cache_key_type.IgnoreCallbacks.CUSTOM_PARTITIONING
+  else:
+    ignore_callbacks = cache_key_type.IgnoreCallbacks.NO
+  if override_fdo_profile is not None:
+    options = copy.deepcopy(options)
+    options.executable_build_options.fdo_profile = override_fdo_profile
+  try:
+    return compilation_cache.get_cache_key(
+        computation,
+        devices,
+        options,
+        backend,
+        ignore_callbacks,
+    )
+  except xc._xla.XlaRuntimeError as ex:
+    logger.error("compile_or_get_cached: unable to generate cache key, "
+                  "skipping the cache: %s", ex)
+  return None
 
 # The process that has the lowest device ID should share FDO profile before
 # compilation with other processes.
