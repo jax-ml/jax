@@ -19,7 +19,6 @@ specifically designed for TPU and compatible with a wide range of model
 specifications. It supports mixed prefill and decoding, enhancing throughput
 during inference.
 """
-
 import functools
 import jax
 from jax import lax
@@ -81,6 +80,7 @@ def ref_ragged_paged_attention(
     num_seqs: jax.Array,  # i32[1],
     *,
     sm_scale: float = 1.0,
+    sliding_window: int | None = None,
     mask_value: float = DEFAULT_MASK_VALUE,
 ):
   _, _, num_kv_heads, head_dim = k_pages.shape
@@ -105,7 +105,10 @@ def ref_ragged_paged_attention(
         jnp.int32, attn.shape, 1
     )
     kv_span = jax.lax.broadcasted_iota(jnp.int32, attn.shape, 2)
-    attn += jnp.where(q_span < kv_span, mask_value, 0.0)
+    mask = q_span < kv_span
+    if sliding_window is not None:
+      mask = jnp.logical_or(mask, q_span - sliding_window >= kv_span)
+    attn += jnp.where(mask, mask_value, 0.0)
     attn = jax.nn.softmax(attn, axis=-1).astype(v.dtype)
     out = jnp.einsum("hqk,khd->qhd", attn, v).astype(queries.dtype)
     outputs.append(out)
@@ -122,6 +125,7 @@ def validate_inputs_on_runtime(
     page_indices: jax.Array,  # i32[max_num_seqs, pages_per_seq]
     cu_q_lens: jax.Array,  # i32[max_num_seqs + 1]
     num_seqs,  # i32[1]
+    sliding_window: int | None = None,
 ):
   check_inputs_shapes(
       q, k_pages, v_pages, kv_lens, page_indices, cu_q_lens, num_seqs
@@ -150,6 +154,8 @@ def validate_inputs_on_runtime(
       raise ValueError(
           f"{q_len=} must be less or equal to {kv_len=} at sequence {i}."
       )
+  if sliding_window is not None and sliding_window <= 0:
+    raise ValueError(f"{sliding_window=} must be positive.")
 
 
 # Expect to run these checks during compile time.
@@ -221,7 +227,8 @@ def ragged_paged_attention_kernel(
     m_ref,  # [num_kv_heads_per_blk, num_q_per_blk * num_q_heads_per_kv_head, 128]
     *,
     sm_scale: float,
-    mask_value: float,
+    sliding_window: int | None = None,
+    mask_value: float = DEFAULT_MASK_VALUE,
 ):
   num_q_per_blk, num_q_heads_per_blk, head_dim = q_ref.shape
   num_seqs = num_seqs_ref[0]
@@ -373,7 +380,7 @@ def ragged_paged_attention_kernel(
       def masked_store(ref, val, start, end, group=1):
         iota = lax.broadcasted_iota(jnp.int32, ref.shape, 0) // group
         mask = jnp.logical_and(iota >= start, iota < end)
-        pl.store(ref, tuple(slice(None) for _ in ref.shape), val, mask=mask)
+        pl.store(ref, idx=tuple(slice(None) for _ in ref.shape), val=val, mask=mask)
 
       qk = (
           jnp.einsum("nd,md->nm", q, k, preferred_element_type=jnp.float32)
@@ -422,6 +429,9 @@ def ragged_paged_attention_kernel(
           1,
       )
       causal_mask = row_ids < col_ids
+      if sliding_window is not None:
+        causal_mask = jnp.logical_or(causal_mask,
+                                     row_ids - sliding_window>=col_ids)
       qk += jnp.where(causal_mask, mask_value, 0.0)
       m_curr = jnp.max(qk, axis=1, keepdims=True)
       s_curr = jnp.exp(qk - m_curr)
@@ -601,6 +611,7 @@ def get_min_heads_per_blk(num_q_heads, num_kv_heads, q_dtype, kv_dtype):
         "num_kv_pages_per_block",
         "num_queries_per_block",
         "vmem_limit_bytes",
+        "sliding_window",
     ],
 )
 def ragged_paged_attention(
@@ -614,6 +625,7 @@ def ragged_paged_attention(
     num_seqs: jax.Array,  # i32[1]
     *,
     sm_scale: float = 1.0,
+    sliding_window: int | None = None,
     mask_value: float = DEFAULT_MASK_VALUE,
     num_kv_pages_per_block: int = 16,
     num_queries_per_block: int = 128,
@@ -632,6 +644,7 @@ def ragged_paged_attention(
       kv_lens, only the first num_seqs+1 values are valid.
     num_seqs: the dynamic number of sequences.
     sm_scale: the softmax scale which will be applied to the Q@K^T.
+    sliding_window: the sliding window size for the attention.
     mask_value: mask value for causal mask.
     num_kv_pages_per_block: number of kv pages to be processed in one flash
       attention block in the pallas kernel.
@@ -705,6 +718,7 @@ def ragged_paged_attention(
       functools.partial(
           ragged_paged_attention_kernel,
           sm_scale=sm_scale,
+          sliding_window=sliding_window,
           mask_value=mask_value,
       ),
       grid_spec=pltpu.PrefetchScalarGridSpec(
@@ -724,6 +738,7 @@ def ragged_paged_attention(
       out_shape=jax.ShapeDtypeStruct(shape=q.shape, dtype=jnp.float32),
       name="ragged_paged_attention_kernel",
   )
+
   # TODO(jevinjiang): Use f32 acc scratch for output! So we only need
   # to transfer output with desired dtype back to HBM.
   return kernel(*scalar_prefetches, q, k_pages, v_pages).astype(q.dtype)
