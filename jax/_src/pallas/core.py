@@ -35,6 +35,7 @@ from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
+from jax._src.export._export import export
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import discharge as state_discharge
@@ -1165,13 +1166,15 @@ jax_core.custom_typechecks[core_map_p] = _core_map_typecheck_rule
 
 
 def lower_as_mlir(
-    f, *args, dynamic_shapes=False, device=None, **kwargs
+    f, *args, dynamic_shapes=False, device=None, static_argnames=(), **kwargs
 ) -> mlir.ir.Module:
   with pallas_export_experimental(dynamic_shapes):
-    lowered = jax.jit(f, device=device).lower(*args, **kwargs)
-    stablehlo = lowered.compiler_ir(dialect="stablehlo")
+    f = jax.jit(f, device=device, static_argnames=static_argnames)
+    exported = export(f, platforms=["tpu"])(*args, **kwargs)
+    stablehlo = exported.mlir_module()
 
   return stablehlo  # type: ignore[return-value]
+
 
 _out_shape_to_aval_mapping: dict[
     type[Any], Callable[[Any], jax_core.AbstractValue]

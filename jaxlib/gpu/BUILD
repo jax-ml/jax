@@ -90,3 +90,32 @@ xla_py_proto_library(
     visibility = jax_visibility("triton_proto_py_users"),
     deps = [":triton_proto"],
 )
+
+cc_library(
+    name = "gpu_plugin_extension",
+    srcs = ["gpu_plugin_extension.cc"],
+    hdrs = ["gpu_plugin_extension.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "//jaxlib:kernel_nanobind_helpers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
+        "@nanobind",
+        "@xla//xla:util",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/pjrt:status_casters",
+        "@xla//xla/pjrt/c:pjrt_c_api_ffi_extension_hdrs",
+        "@xla//xla/pjrt/c:pjrt_c_api_gpu_extension_hdrs",
+        "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
+        "@xla//xla/pjrt/c:pjrt_c_api_helpers",
+        "@xla//xla/pjrt/c:pjrt_c_api_triton_extension_hdrs",
+        "@xla//xla/python:py_client_gpu",
+        "@xla//xla/tsl/python/lib/core:numpy",
+    ],
+)

@@ -555,11 +555,25 @@ py_library(
     ],
 )
 
+nanobind_extension(
+    name = "rocm_plugin_extension",
+    srcs = ["rocm_plugin_extension.cc"],
+    module_name = "rocm_plugin_extension",
+    deps = [
+        "//jaxlib/gpu:gpu_plugin_extension",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
+        "@local_config_rocm//rocm:hip",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@nanobind",
+    ],
+)
+
 py_library(
     name = "gpu_only_test_deps",
     # `if_rocm_is_configured` will default to `[]`.
     deps = if_rocm_is_configured([
         ":rocm_gpu_support",
-        "//jaxlib:rocm_plugin_extension",
+        ":rocm_plugin_extension",
     ]),
 )

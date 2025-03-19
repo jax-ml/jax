@@ -20,7 +20,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "third_party/gpus/cuda/include/cuda.h"
-#include "jaxlib/gpu_plugin_extension.h"
+#include "jaxlib/gpu/gpu_plugin_extension.h"
 #include "xla/pjrt/status_casters.h"
 
 namespace nb = nanobind;

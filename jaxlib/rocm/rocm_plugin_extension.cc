@@ -20,7 +20,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "rocm/include/hip/hip_runtime.h"
-#include "jaxlib/gpu_plugin_extension.h"
+#include "jaxlib/gpu/gpu_plugin_extension.h"
 
 namespace nb = nanobind;
 

@@ -71,7 +71,7 @@ import numpy as np
 
 export = set_module('jax.numpy')
 
-for pkg_name in ['jax_cuda12_plugin', 'jax.jaxlib']:
+for pkg_name in ['jax_cuda12_plugin', 'jax.jaxlib.cuda']:
   try:
     cuda_plugin_extension = importlib.import_module(
         f'{pkg_name}.cuda_plugin_extension'

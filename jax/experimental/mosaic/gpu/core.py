@@ -41,19 +41,15 @@ from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import nvvm
 import numpy as np
 
-if dialect is not None:
-  from . import dialect_lowering
-  from . import layout_inference
-else:
-  dialect_lowering = None
-  layout_inference = None
-
-from . import profiler
-from . import utils
-from . import launch_context
-from . import tcgen05
-
 # mypy: ignore-errors
+
+from . import dialect_lowering
+from . import launch_context
+from . import layout_inference
+from . import profiler
+from . import tcgen05
+from . import transform_inference
+from . import utils
 
 # MLIR can't find libdevice unless we point it to the CUDA path
 # TODO(apaszke): Unify with jax._src.lib.cuda_path
@@ -584,6 +580,7 @@ def as_gpu_kernel(
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
     layout_inference.infer_layout(module)  # pytype: disable=attribute-error
+    transform_inference.infer_transforms(module)  # pytype: disable=attribute-error
     dialect_lowering.lower_mgpu_dialect(module, launch_ctx)  # pytype: disable=attribute-error
 
   _initialize_scratch(launch_ctx, scratch_arr)
@@ -666,6 +663,7 @@ def as_torch_gpu_kernel(
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
     layout_inference.infer_layout(module)  # pytype: disable=attribute-error
+    transform_inference.infer_transforms(module)  # pytype: disable=attribute-error
     dialect_lowering.lower_mgpu_dialect(module, launch_ctx)  # pytype: disable=attribute-error
 
   _initialize_scratch(launch_ctx, scratch_arr)

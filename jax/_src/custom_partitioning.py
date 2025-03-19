@@ -179,7 +179,7 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
       for sharding, s in zip(result_shardings, result_shapes)
   ]
   closed_jaxpr = jax.make_jaxpr(lower_fn, axis_env=list(mesh.shape.items()))(
-      *tiled_args
+      *info.in_tree.unflatten(tiled_args)
   )
   if ([(o.shape, o.dtype) for o in closed_jaxpr.out_avals] !=
       [(t.shape, t.dtype) for t in tiled_results]):

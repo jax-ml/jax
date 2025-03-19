@@ -1387,16 +1387,38 @@ def use_mesh(mesh: mesh_lib.Mesh):
   # if not core.trace_state_clean():
   #   raise ValueError('`use_mesh` can only be used outside of `jax.jit`')
 
-  with (mesh_lib.use_abstract_mesh(mesh.abstract_mesh),
-        mesh_lib.use_concrete_mesh(mesh)):
+  with mesh_lib.use_abstract_mesh(mesh.abstract_mesh), use_concrete_mesh(mesh):
     yield
 
-def set_mesh(mesh: mesh_lib.Mesh) -> None:
-  if not isinstance(mesh, mesh_lib.Mesh):
+def set_mesh(mesh: mesh_lib.Mesh | None) -> mesh_lib.Mesh | None:
+  """Sets the given concrete mesh globally and returns the previous concrete
+     mesh."""
+  if mesh is not None and not isinstance(mesh, mesh_lib.Mesh):
     raise ValueError(
         f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
   if not core.trace_state_clean():
     raise ValueError('`set_mesh` can only be used outside of `jax.jit`.')
 
-  config.abstract_mesh_context_manager.set_local(mesh.abstract_mesh)
-  config.device_context.set_local(mesh)
+  if mesh is None:
+    config.abstract_mesh_context_manager.set_global(mesh_lib.empty_abstract_mesh)  # type: ignore
+  else:
+    config.abstract_mesh_context_manager.set_global(mesh.abstract_mesh)  # type: ignore
+
+  prev_mesh = config.device_context.get_global()
+  config.device_context.set_global(mesh)
+  return prev_mesh
+
+@contextlib.contextmanager
+def use_concrete_mesh(mesh: mesh_lib.Mesh | None):
+  if mesh is not None and not isinstance(mesh, mesh_lib.Mesh):
+    raise ValueError(
+        f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
+  # TODO(yashkatariya): Enable this.
+  # if not core.trace_state_clean():
+  #   raise ValueError('`use_concrete_mesh` can only be used outside of `jax.jit`.')
+
+  prev_val = config.device_context.swap_local(mesh)
+  try:
+    yield
+  finally:
+    config.device_context.set_local(prev_val)
