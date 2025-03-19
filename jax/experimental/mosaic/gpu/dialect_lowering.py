@@ -763,9 +763,6 @@ def _bitcast_op_lowering_rule(
 def _mgpu_wgmma_op_lowering_rule(
     _: LoweringContext, wgmma_op: mgpu.WGMMAOp
 ) -> Sequence[ir.Value]:
-  if wgmma_op.transpose_a or wgmma_op.transpose_b:
-    raise ValueError("Transpose arguments are to be deleted.")
-
   fa_layouts = (
       *inference_utils.in_layouts(wgmma_op),
       *inference_utils.out_layouts(wgmma_op),
