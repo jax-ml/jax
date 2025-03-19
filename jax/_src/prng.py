@@ -31,6 +31,7 @@ from jax._src import config as config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import ffi
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import tree_util as tree_util_internal
@@ -63,6 +64,13 @@ Shape = tuple[int, ...]
 
 UINT_DTYPES = {
     8: jnp.uint8, 16: jnp.uint16, 32: jnp.uint32, 64: jnp.uint64}
+
+if hasattr(gpu_prng, "registrations"):
+  for platform, targets in gpu_prng.registrations().items():
+    for name, value, api_version in targets:
+      ffi.register_ffi_target(
+          name, value, platform=platform, api_version=api_version
+      )
 
 # -- PRNG implementation interface
 
@@ -902,7 +910,7 @@ _threefry2x32_cpu_lowering_rule = mlir.lower_fun(
     multiple_results=True)
 
 
-def _threefry2x32_gpu_lowering_rule(lowering_func, ctx, k1, k2, x1, x2):
+def _threefry2x32_gpu_lowering_rule(ctx, k1, k2, x1, x2, *, target_name_prefix):
   if not config.threefry_gpu_kernel_lowering.value:  # back to default lowering
     return _threefry2x32_lowering_rule(ctx, k1, k2, x1, x2)
 
@@ -917,23 +925,11 @@ def _threefry2x32_gpu_lowering_rule(lowering_func, ctx, k1, k2, x1, x2):
     return mlir.broadcast_in_dim(ctx, x, aval_out,
                                  broadcast_dimensions=range(rank - len(aval.shape), rank))
 
-  out_len = reduce(op.mul, aval_out.shape, 1)
-  if not core.is_constant_dim(out_len):
-    length = mlir.eval_dynamic_shape_as_tensor(ctx, [out_len])
-    length = mlir.hlo.convert(
-        ir.RankedTensorType.get((1,), ir.IntegerType.get_signless(64)),
-        length)
-    output_shape = mlir.eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
-  else:
-    length = int(out_len)  # will be passed statically
-    output_shape = None
-
-  return lowering_func(
-      (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
-      (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)), length,
-      output_shape,
-      False,  # forward_compatibility_mode
-  )
+  sub_ctx = ctx.replace(avals_in=(aval_out,) * 4)
+  rule = ffi.ffi_lowering(
+      f"{target_name_prefix}_threefry2x32_ffi")
+  return rule(sub_ctx, _broadcast(k1, k1_aval), _broadcast(k2, k2_aval),
+              _broadcast(x1, x1_aval), _broadcast(x2, x2_aval))
 
 
 threefry2x32_p = core.Primitive("threefry2x32")
@@ -947,11 +943,11 @@ mlir.register_lowering(
     threefry2x32_p, _threefry2x32_cpu_lowering_rule, platform='cpu')
 mlir.register_lowering(
     threefry2x32_p,
-    partial(_threefry2x32_gpu_lowering_rule, gpu_prng.cuda_threefry2x32),
+    partial(_threefry2x32_gpu_lowering_rule, target_name_prefix='cu'),
     platform='cuda')
 mlir.register_lowering(
     threefry2x32_p,
-    partial(_threefry2x32_gpu_lowering_rule, gpu_prng.rocm_threefry2x32),
+    partial(_threefry2x32_gpu_lowering_rule, target_name_prefix='hip'),
     platform='rocm')
 
 
