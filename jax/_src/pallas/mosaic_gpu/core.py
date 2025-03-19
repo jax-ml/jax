@@ -506,16 +506,20 @@ class GPUMesh:
   axis_names: tuple[str, ...] = ()
 
   def __post_init__(self):
-    if len(self.axis_names) != len(self.grid) + (self.num_threads is not None):
-      raise ValueError("Need as many axis names as grid dimensions + warp groups")
+    if len(self.cluster) > 3:
+      raise ValueError(f"cluster= must be at most 3D, got {self}.")
+    num_axis_names = (
+        len(self.grid) + len(self.cluster) + (self.num_threads is not None)
+    )
+    if len(self.axis_names) != num_axis_names:
+      raise ValueError(
+          "Need an axis name for each grid and cluster dimension plus "
+          f" an additional axis name when num_threads= is given, got {self}."
+      )
     if self.num_threads is not None and self.num_threads > 2048 // 128:
       raise ValueError(
           "Requested too many CUDA threads per block. Each Mosaic thread"
           " corresponds to 128 CUDA threads."
-      )
-    if self.cluster:
-      raise NotImplementedError(
-          "Pallas/MosaicGPU does not support clusters yet."
       )
 
   @property
@@ -556,8 +560,6 @@ def _gpu_mesh_discharge_rule(
 ):
   if not isinstance(mesh, GPUMesh):
     raise TypeError(f"Mesh must be a GPUMesh, got {type(mesh)}")
-  if mesh.cluster:
-    raise NotImplementedError
   if compiler_params and not isinstance(compiler_params, GPUCompilerParams):
     raise TypeError(
         "Compiler params must be a GPUCompilerParams, got"

@@ -2079,7 +2079,6 @@ class CoreMapTest(PallasTest):
         result.shape)
     np.testing.assert_array_equal(result, ref)
 
-
   def test_cross_wg_barrier(self):
     mesh = plgpu.GPUMesh(num_threads=2, axis_names=("wg",))
 
@@ -2099,6 +2098,34 @@ class CoreMapTest(PallasTest):
       y_init = jnp.zeros((2, 128), np.int32)
       return inner(y_init)
     np.testing.assert_array_equal(f(), np.repeat([0, 1], 128).reshape(2, 128))
+
+  def test_cluster(self):
+    mesh = plgpu.GPUMesh(grid=(2,), cluster=(2,), axis_names=("x", "cluster"))
+
+    @jax.jit
+    def f():
+      @pl.run_state
+      def inner(ref):
+        @pl.core_map(mesh)
+        def kernel():
+          block_idx = jax.lax.axis_index("x")
+          cluster_idx = jax.lax.axis_index("cluster")
+          pl.debug_print("block: {} cluster: {}", block_idx, cluster_idx)
+
+          ref[...] = ref[...]
+      return inner(jnp.zeros(128, np.int32))
+
+    with self.capture_stdout() as output:
+      jax.block_until_ready(f())
+    self.assertEqual(
+        set(output().splitlines()),
+        {
+            "block: 0 cluster: 0",
+            "block: 1 cluster: 0",
+            "block: 0 cluster: 1",
+            "block: 1 cluster: 1",
+        },
+    )
 
 
 class ExamplesTest(PallasTest):
