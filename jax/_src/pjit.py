@@ -68,7 +68,7 @@ from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding,
     SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
     prepare_axis_resources, parse_flatten_op_sharding, canonicalize_sharding,
-    flatten_spec)
+    flatten_spec, _internal_use_concrete_mesh)
 from jax._src.layout import Layout, DeviceLocalLayout, AutoLayout
 from jax._src.state import discharge as state_discharge, RefEffect, AbstractRef
 from jax._src.traceback_util import api_boundary
@@ -689,8 +689,10 @@ def _infer_params_cached(
 def _infer_params(
     fun: Callable, ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
   ) -> tuple[PjitParams, list[Any]]:
-  if ji.use_resource_env:
-    with sharding_impls.use_mesh(mesh_lib.thread_resources.env.physical_mesh):
+  if ji.use_resource_env:  # pjit
+    phys_mesh = mesh_lib.thread_resources.env.physical_mesh
+    with (_internal_use_concrete_mesh(phys_mesh),
+          mesh_lib.use_abstract_mesh(phys_mesh.abstract_mesh)):
       return _infer_params_internal(fun, ji, args, kwargs)
   return _infer_params_internal(fun, ji, args, kwargs)
 

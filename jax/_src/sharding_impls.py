@@ -1382,10 +1382,8 @@ def use_mesh(mesh: mesh_lib.Mesh):
   if not isinstance(mesh, mesh_lib.Mesh):
     raise ValueError(
         f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
-
-  # TODO(yashkatariya): Enable this.
-  # if not core.trace_state_clean():
-  #   raise ValueError('`use_mesh` can only be used outside of `jax.jit`')
+  if not core.trace_state_clean():
+    raise ValueError('`use_mesh` can only be used outside of `jax.jit`')
 
   with mesh_lib.use_abstract_mesh(mesh.abstract_mesh), use_concrete_mesh(mesh):
     yield
@@ -1410,13 +1408,16 @@ def set_mesh(mesh: mesh_lib.Mesh | None) -> mesh_lib.Mesh | None:
 
 @contextlib.contextmanager
 def use_concrete_mesh(mesh: mesh_lib.Mesh | None):
+  if not core.trace_state_clean():
+    raise ValueError('`use_concrete_mesh` can only be used outside of `jax.jit`.')
+  with _internal_use_concrete_mesh(mesh):
+    yield
+
+@contextlib.contextmanager
+def _internal_use_concrete_mesh(mesh: mesh_lib.Mesh | None):
   if mesh is not None and not isinstance(mesh, mesh_lib.Mesh):
     raise ValueError(
         f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
-  # TODO(yashkatariya): Enable this.
-  # if not core.trace_state_clean():
-  #   raise ValueError('`use_concrete_mesh` can only be used outside of `jax.jit`.')
-
   prev_val = config.device_context.swap_local(mesh)
   try:
     yield

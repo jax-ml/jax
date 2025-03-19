@@ -43,7 +43,7 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding,
     device_replica_id_map, hashed_index, num_addressable_indices,
-    local_to_global_shape, use_concrete_mesh)  # pyformat: disable
+    local_to_global_shape, _internal_use_concrete_mesh)  # pyformat: disable
 from jax._src.typing import ArrayLike, DLDeviceType, DTypeLike
 from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method, cache
 import numpy as np
@@ -1149,7 +1149,7 @@ def shard_device_array(x, devices, indices, sharding):
   else:
     # TODO(yashkatariya): Maybe this should be set when we call the handler in
     # InputsHandler.__call__?
-    with use_concrete_mesh(None):
+    with _internal_use_concrete_mesh(None):
       shards = x._multi_slice(start_indices, limit_indices, removed_dims)
   aval = core.shaped_abstractify(x)
   return pxla.batched_device_put(aval, sharding, shards, devices)
