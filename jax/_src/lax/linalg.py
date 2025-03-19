@@ -2511,16 +2511,30 @@ def _tridiagonal_solve_shape_rule(dl_shape, d_shape, du_shape, b_shape, **_):
         "equal the dimensions of the diagonal arguments.")
   return b_shape
 
-def _tridiagonal_solve_gpu_lowering(lowering, ctx, dl, d, du, b):
+def _tridiagonal_solve_gpu_lowering(ctx, dl, d, du, b, *, target_name_prefix):
   _, _, _, b_aval = ctx.avals_in
-  if b_aval.dtype != np.float32 and b_aval.dtype != np.float64:
+  *batch_dims, m, n = b_aval.shape
+  batch_size = math.prod(batch_dims)
+
+  mod = gpu_sparse._cusparse if target_name_prefix == "cu" else gpu_sparse._hipsparse
+  assert mod is not None
+  opaque = mod.build_gtsv2_descriptor(batch_size, m, n, m)
+  if b_aval.dtype == np.float32:
+    buffer_size = mod.gtsv2_f32_buffer_size(m, n, m)
+    target_name = "sparse_gtsv2_f32_ffi"
+  elif b_aval.dtype == np.float64:
+    buffer_size = mod.gtsv2_f64_buffer_size(m, n, m)
+    target_name = "sparse_gtsv2_f64_ffi"
+  else:
     raise NotImplementedError(
         "tridiagonal_solve is only implemented for float32 and float64 on GPU.")
-  m, n = b_aval.shape[-2:]
-  b_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, b_aval.shape)
-  return [lowering(
-      dl, d, du, b, m=m, n=n, ldb=m, t=b_aval.dtype,
-      b_shape_vals=b_shape_vals)]
+
+  buffer_aval = core.ShapedArray(shape=(buffer_size,), dtype=np.int8)
+  sub_ctx = ctx.replace(avals_out=[*ctx.avals_out, buffer_aval])
+  rule = _linalg_ffi_lowering(
+      f"{target_name_prefix}{target_name}", operand_output_aliases={3: 0},
+      batch_partitionable=False)
+  return rule(sub_ctx, dl, d, du, b, opaque=opaque)[:1]
 
 def _tridiagonal_solve_cpu_lowering(ctx, dl, d, du, b, **kwargs):
   del kwargs  # unused
@@ -2628,11 +2642,11 @@ mlir.register_lowering(
     platform='cpu')
 mlir.register_lowering(
     tridiagonal_solve_p,
-    partial(_tridiagonal_solve_gpu_lowering, gpu_sparse.cuda_gtsv2),
+    partial(_tridiagonal_solve_gpu_lowering, target_name_prefix='cu'),
     platform='cuda')
 mlir.register_lowering(
     tridiagonal_solve_p,
-    partial(_tridiagonal_solve_gpu_lowering, gpu_sparse.rocm_gtsv2),
+    partial(_tridiagonal_solve_gpu_lowering, target_name_prefix='hip'),
     platform='rocm')
 mlir.register_lowering(tridiagonal_solve_p, mlir.lower_fun(
     _tridiagonal_solve_jax, multiple_results=False))
