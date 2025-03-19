@@ -15,6 +15,7 @@
 load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
 load(
     "//jaxlib:jax.bzl",
+    "jax_source_package",
     "jax_wheel",
 )
 
@@ -67,7 +68,6 @@ py_binary(
 
 jax_wheel(
     name = "jax_wheel",
-    build_wheel_only = False,
     platform_independent = True,
     source_files = [
         ":transitive_py_data",
@@ -81,4 +81,20 @@ jax_wheel(
     ],
     wheel_binary = ":build_wheel",
     wheel_name = "jax",
+)
+
+jax_source_package(
+    name = "jax_source_package",
+    source_files = [
+        ":transitive_py_data",
+        ":transitive_py_deps",
+        "//jax:py.typed",
+        "AUTHORS",
+        "LICENSE",
+        "README.md",
+        "pyproject.toml",
+        "setup.py",
+    ],
+    source_package_binary = ":build_wheel",
+    source_package_name = "jax",
 )

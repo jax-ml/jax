@@ -47,6 +47,20 @@ parser.add_argument(
 parser.add_argument(
     "--srcs", help="source files for the wheel", action="append"
 )
+parser.add_argument(
+    "--build-wheel-only",
+    default=False,
+    help=(
+        "Whether to build the wheel only. Optional."
+    ),
+)
+parser.add_argument(
+    "--build-source-package-only",
+    default=False,
+    help=(
+        "Whether to build the source package only. Optional."
+    ),
+)
 args = parser.parse_args()
 
 
@@ -94,7 +108,8 @@ try:
       args.output_path,
       package_name="jax",
       git_hash=args.jaxlib_git_hash,
-      build_wheel_only=False,
+      build_wheel_only=args.build_wheel_only,
+      build_source_package_only=args.build_source_package_only,
   )
 finally:
   if tmpdir:
