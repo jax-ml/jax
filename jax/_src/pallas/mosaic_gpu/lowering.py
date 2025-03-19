@@ -2036,16 +2036,16 @@ def _cond_lowering_rule(ctx: LoweringRuleContext, index, *args, branches):
         ret.append(_ensure_ir_value(out, aval.dtype))
     return ret
 
-  # We need the branch return mlir types in order to construct the
-  # switch operation. To avoid leaking information about what kind of
-  # mlir types are internal to FragmentedArrays and other mgpu types,
-  # we run one of the branches in a dummy module that we throw away to
-  # extract the return types
+  # We need to know the result types ahead of time to construct the switch
+  # operation. Below we lower the first branch in a throw-away module to
+  # extract them.
   with ir.InsertionPoint(ir.Module.create().body):
     outs = lower_jaxpr_to_mosaic_gpu(
         ctx.module_ctx, ctx.launch_ctx, branches[0].jaxpr, args
     )
-    yielded_types = [v.type for v in jax.tree.leaves(_yielded_values(outs, ctx.avals_out))]
+    yielded_types = [
+        v.type for v in jax.tree.leaves(_yielded_values(outs, ctx.avals_out))
+    ]
     del outs
 
   switch_op = scf_dialect.IndexSwitchOp(
