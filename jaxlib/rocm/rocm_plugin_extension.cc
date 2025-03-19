@@ -21,11 +21,14 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "rocm/include/hip/hip_runtime.h"
 #include "jaxlib/gpu/gpu_plugin_extension.h"
+#include "jaxlib/gpu/py_client_gpu.h"
+#include "jaxlib/kernel_nanobind_helpers.h"
 
 namespace nb = nanobind;
 
 namespace xla {
 namespace {
+
 std::string ToString(hipError_t result) {
 #define OSTREAM_ROCM_ERROR(__name) \
   case hipError##__name:           \
@@ -62,10 +65,19 @@ std::string ToString(hipError_t result) {
       return absl::StrCat("hipError_t(", static_cast<int>(result), ")");
   }
 }
+
+nb::dict Registrations() {
+  nb::dict dict;
+  dict["xla_python_gpu_callback"] =
+      jax::EncapsulateFunction(jax::hip::XlaPythonGpuCallback);
+  return dict;
+}
+
 }  // namespace
 
 NB_MODULE(rocm_plugin_extension, m) {
   BuildGpuPluginExtension(m);
+  m.def("registrations", &Registrations);
   m.def(
       "get_device_ordinal",
       [](std::intptr_t data_value) {

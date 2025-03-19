@@ -48,6 +48,7 @@ limitations under the License.
 
 #define JAX_GPU_NAMESPACE cuda
 #define JAX_GPU_PREFIX "cu"
+#define JAX_GPU_PLUGIN_NAME "cuda"
 
 typedef cuComplex gpuComplex;
 typedef cuDoubleComplex gpuDoubleComplex;
@@ -413,6 +414,7 @@ constexpr uint32_t kNumThreadsPerWarp = 32;
 
 #define JAX_GPU_NAMESPACE hip
 #define JAX_GPU_PREFIX "hip"
+#define JAX_GPU_PLUGIN_NAME "rocm"
 
 #define JAX_GPU_HAVE_SPARSE 1
 #define JAX_GPU_HAVE_64_BIT 0

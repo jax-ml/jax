@@ -35,7 +35,6 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_triton_extension.h"
 #include "xla/pjrt/status_casters.h"
-#include "xla/python/py_client_gpu.h"
 #include "xla/tsl/python/lib/core/numpy.h"
 #include "xla/util.h"
 
@@ -202,13 +201,6 @@ absl::Status RegisterCustomTypeId(const PJRT_Api* c_api,
   return absl::OkStatus();
 }
 
-nb::dict Registrations() {
-  nb::dict dict;
-  dict["xla_python_gpu_callback"] =
-      jax::EncapsulateFunction(xla::XlaPythonGpuCallback);
-  return dict;
-}
-
 }  //  namespace
 
 void BuildGpuPluginExtension(nanobind::module_& m) {
@@ -264,7 +256,6 @@ void BuildGpuPluginExtension(nanobind::module_& m) {
             type_name_size, std::move(type_id)));
       },
       nb::arg("c_api"), nb::arg("type_name"), nb::arg("type_id"));
-  m.def("registrations", &Registrations);
 }
 
 }  // namespace xla
