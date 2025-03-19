@@ -18,6 +18,7 @@ from absl.testing import parameterized
 import jax
 from jax._src import config
 from jax._src import error_check
+from jax._src import mesh as mesh_lib
 from jax._src import test_util as jtu
 import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec as P
@@ -202,9 +203,51 @@ class ErrorCheckTests(jtu.JaxTestCase):
     if jit:
       f = jax.jit(f)
 
-    sharding = NamedSharding(mesh, P("x", "y"))
-    x = jnp.full((4, 4), -1, dtype=jnp.int32, device=sharding)
     with error_check.error_checking_context():
+      x = jnp.full((4, 4), -1, dtype=jnp.int32)
+      f(x)
+      with self.assertRaisesRegex(JaxValueError, "x must be greater than 0"):
+        error_check.raise_if_error()
+
+      sharding = NamedSharding(mesh, P("x", "y"))
+      with error_check.error_checking_context():
+        y = jnp.full((4, 4), -1, dtype=jnp.int32, device=sharding)
+        f(y)
+        with self.assertRaisesRegex(JaxValueError, "x must be greater than 0"):
+          error_check.raise_if_error()
+
+      # The unsharded version of `f` should still be able to check errors after
+      # exiting the error checking context.
+      f(x)
+      with self.assertRaisesRegex(JaxValueError, "x must be greater than 0"):
+        error_check.raise_if_error()
+
+  @parameterized.product(jit=[True, False])
+  @jtu.with_user_mesh(
+      (2, 2),
+      ("x", "y"),
+      axis_types=(mesh_lib.AxisType.Auto, mesh_lib.AxisType.Auto),
+  )
+  @jtu.ignore_warning(
+      message=(
+          "When at least one mesh axis of `pred` is in auto mode, calling"
+          " `set_error_if` will cause implicit communication between devices."
+          " To avoid this, consider converting the mesh axis in auto mode to"
+          " explicit mode."
+      ),
+      category=RuntimeWarning,
+  )
+  def test_error_check_auto_mode(self, jit, mesh):
+    def f(x):
+      error_check.set_error_if(x <= 0, "x must be greater than 0")
+      return x + 1
+
+    if jit:
+      f = jax.jit(f)
+
+    with error_check.error_checking_context():
+      sharding = NamedSharding(mesh, P("x", "y"))
+      x = jnp.full((4, 4), -1, dtype=jnp.int32, device=sharding)
       f(x)
       with self.assertRaisesRegex(JaxValueError, "x must be greater than 0"):
         error_check.raise_if_error()

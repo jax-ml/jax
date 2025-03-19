@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from functools import partial
 import threading
+import warnings
 
 import jax
 from jax._src import core
@@ -58,11 +59,11 @@ _error_storage = _ErrorStorage()
 
 
 def _initialize_error_code_ref() -> None:
-  """Initialize error_code_ref in the current thread.
+  """Initialize the error code ref in the current thread.
 
-  The size of the error code array is determined by the mesh in the context. In
-  single-device environment, the array is a scalar. In multi-device
-  environment, the array has the same shape as the mesh.
+  The shape and size of the error code array depend on the mesh in the context.
+  In single-device environments, the array is a scalar. In multi-device
+  environments, its shape and size match those of the mesh.
   """
   with core.eval_context():
     # Get mesh from the context.
@@ -83,13 +84,18 @@ def _initialize_error_code_ref() -> None:
 
 
 class error_checking_context:
-  """Redefine the error checking state based on the mesh in the context.
+  """Redefine the internal error state based on the mesh in the context.
 
-  This context manager should be used when starting a multi-device
-  computation, and whenever the mesh is changed.
+  When using JAX in multi-device environments in explicit mode, error tracking
+  needs to be properly aligned with the device mesh. This context manager
+  ensures that the internal error state is correctly initialized based on the
+  current mesh configuration.
 
-  When exiting the context, the error checking state will be reset to the
-  original state.
+  This context manager should be used when starting a multi-device computation,
+  or when switching between different device meshes.
+
+  On entering the context, it initializes a new error state based on the mesh in
+  the context. On exiting the context, it restores the previous error state.
   """
 
   __slots__ = ("old_ref",)
@@ -107,12 +113,28 @@ class error_checking_context:
 
 
 def set_error_if(pred: jax.Array, /, msg: str) -> None:
-  """Set error if any element of pred is true.
+  """Set the internal error state if any element of `pred` is `True`.
 
-  If the error is already set, the new error will be ignored. It will not
-  override the existing error.
+  This function is used inside JAX computations to detect runtime errors without
+  immediately halting execution. When this function is traced (e.g., inside
+  :func:`jax.jit`), the corresponding error message and its traceback are
+  recorded. At execution time, if `pred` contains any `True` values, the error
+  state is set, but execution continues without interruption. The recorded error
+  can later be raised using :func:`raise_if_error`.
 
-  In auto mode, this function does not work under jit.
+  If the error state has already been set, subsequent errors are ignored and
+  will not override the existing error.
+
+  For multi-device environments, in explicit mode, users must call
+  :func:`error_checking_context()` to initialize a new error tracking state that
+  matches the device mesh. In auto mode, implicit cross-device communication may
+  occur inside this function, which could impact performance. A warning is
+  issued in such cases.
+
+  Args:
+    pred: A JAX boolean array. If any element of `pred` is `True`, the internal
+      error state will be set.
+    msg: The corresponding error message to be raised later.
   """
   if _error_storage.ref is None:
     _initialize_error_code_ref()
@@ -127,28 +149,34 @@ def set_error_if(pred: jax.Array, /, msg: str) -> None:
   out_sharding = core.typeof(_error_storage.ref).sharding
   in_sharding: NamedSharding = core.typeof(pred).sharding
 
-  if out_sharding.mesh.shape_tuple == ():  # single-device case.
+  # Reduce `pred`.
+  if all(dim is None for dim in out_sharding.spec):  # single-device case.
     pred = pred.any()
   else:  # multi-device case.
     has_auto_axes = mesh_lib.AxisType.Auto in in_sharding.mesh.axis_types
-    if has_auto_axes:
-      raise NotImplementedError(
-          "Error checking in auto mode is not supported yet. Please use"
-          " explicit mode."
+    if has_auto_axes:  # auto mode.
+      warnings.warn(
+          "When at least one mesh axis of `pred` is in auto mode, calling"
+          " `set_error_if` will cause implicit communication between devices."
+          " To avoid this, consider converting the mesh axis in auto mode to"
+          " explicit mode.",
+          RuntimeWarning,
       )
-    if out_sharding.mesh != in_sharding.mesh:
-      raise ValueError(
-          "The error code state and the predicate must be on the same mesh, "
-          f"but got {out_sharding.mesh} and {in_sharding.mesh} respectively. "
-          "Please use `with error_checking_context()` to redefine the error "
-          "code state based on the mesh."
-      )
-    pred = shard_map(
-        partial(jnp.any, keepdims=True),
-        mesh=out_sharding.mesh,
-        in_specs=in_sharding.spec,
-        out_specs=out_sharding.spec,
-    )(pred)  # perform per-device reduction
+      pred = pred.any()  # reduce to a single scalar
+    else:  # explicit mode.
+      if out_sharding.mesh != in_sharding.mesh:
+        raise ValueError(
+            "The error code state and the predicate must be on the same mesh, "
+            f"but got {out_sharding.mesh} and {in_sharding.mesh} respectively. "
+            "Please use `with error_checking_context()` to redefine the error "
+            "code state based on the mesh."
+        )
+      pred = shard_map(
+          partial(jnp.any, keepdims=True),
+          mesh=out_sharding.mesh,
+          in_specs=in_sharding.spec,
+          out_specs=out_sharding.spec,
+      )(pred)  # perform per-device reduction
 
   error_code = _error_storage.ref[...]
   should_update = jnp.logical_and(pred, error_code == jnp.uint32(_NO_ERROR))
@@ -158,10 +186,18 @@ def set_error_if(pred: jax.Array, /, msg: str) -> None:
 
 
 def raise_if_error() -> None:
-  """Raise error if an error is set.
+  """Raise an exception if the internal error state is set.
 
-  This function should be called after the computation is finished. It should
-  not be called within a traced context, such as within a jitted function."
+  This function should be called after a computation completes to check for any
+  errors that were marked during execution via `set_error_if()`. If an error
+  exists, it raises a `JaxValueError` with the corresponding error message.
+
+  This function should not be called inside a traced function (e.g., inside
+  :func:`jax.jit`). Doing so will raise a `ValueError`.
+
+  Raises:
+    JaxValueError: If the internal error state is set.
+    ValueError: If called within a traced JAX function.
   """
   if _error_storage.ref is None:  # if not initialized, do nothing
     return
