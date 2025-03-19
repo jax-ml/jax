@@ -18,7 +18,7 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "jaxlib/gpu/vendor.h"
-#include "jaxlib/handle_pool.h"
+#include "jaxlib/gpu/handle_pool.h"
 
 namespace jax {
 

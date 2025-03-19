@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAXLIB_HANDLE_POOL_H_
-#define JAXLIB_HANDLE_POOL_H_
+#ifndef JAXLIB_GPU_HANDLE_POOL_H_
+#define JAXLIB_GPU_HANDLE_POOL_H_
 
 #include <map>
 #include <vector>
@@ -107,4 +107,4 @@ void HandlePool<HandleType, StreamType>::Return(HandleType handle,
 
 }  // namespace jax
 
-#endif  // JAXLIB_HANDLE_POOL_H_
+#endif  // JAXLIB_GPU_HANDLE_POOL_H_
