@@ -1348,15 +1348,15 @@ class JaxTestCase(parameterized.TestCase):
     else:
       return self.assertWarnsRegex(DeprecationWarning, message)
 
-  def assertArraysEqual(self, x, y, *, check_dtypes=True, err_msg='',
+  def assertArraysEqual(self, actual, desired, *, check_dtypes=True, err_msg='',
                         allow_object_dtype=False, verbose=True):
     """Assert that x and y arrays are exactly equal."""
     if check_dtypes:
-      self.assertDtypesMatch(x, y)
-    x = np.asarray(x)
-    y = np.asarray(y)
+      self.assertDtypesMatch(actual, desired)
+    actual = np.asarray(actual)
+    desired = np.asarray(desired)
 
-    if (not allow_object_dtype) and (x.dtype == object or y.dtype == object):
+    if (not allow_object_dtype) and (actual.dtype == object or desired.dtype == object):
       # See https://github.com/jax-ml/jax/issues/17867
       raise TypeError(
         "assertArraysEqual may be poorly behaved when np.asarray casts to dtype=object. "
@@ -1366,57 +1366,57 @@ class JaxTestCase(parameterized.TestCase):
 
     # Work around https://github.com/numpy/numpy/issues/18992
     with np.errstate(over='ignore'):
-      np.testing.assert_array_equal(x, y, err_msg=err_msg,
+      np.testing.assert_array_equal(actual, desired, err_msg=err_msg,
                                     verbose=verbose)
 
-  def assertArraysAllClose(self, x, y, *, check_dtypes=True, atol=None,
+  def assertArraysAllClose(self, actual, desired, *, check_dtypes=True, atol=None,
                            rtol=None, err_msg=''):
-    """Assert that x and y are close (up to numerical tolerances)."""
-    self.assertEqual(x.shape, y.shape)
-    atol = max(tolerance(_dtype(x), atol), tolerance(_dtype(y), atol))
-    rtol = max(tolerance(_dtype(x), rtol), tolerance(_dtype(y), rtol))
+    """Assert that actual and desired are close (up to numerical tolerances)."""
+    self.assertEqual(actual.shape, desired.shape)
+    atol = max(tolerance(_dtype(actual), atol), tolerance(_dtype(desired), atol))
+    rtol = max(tolerance(_dtype(actual), rtol), tolerance(_dtype(desired), rtol))
 
-    _assert_numpy_allclose(x, y, atol=atol, rtol=rtol, err_msg=err_msg)
+    _assert_numpy_allclose(actual, desired, atol=atol, rtol=rtol, err_msg=err_msg)
 
     if check_dtypes:
-      self.assertDtypesMatch(x, y)
+      self.assertDtypesMatch(actual, desired)
 
-  def assertDtypesMatch(self, x, y, *, canonicalize_dtypes=True):
+  def assertDtypesMatch(self, actual, desired, *, canonicalize_dtypes=True):
     if not config.enable_x64.value and canonicalize_dtypes:
-      self.assertEqual(_dtypes.canonicalize_dtype(_dtype(x), allow_extended_dtype=True),
-                       _dtypes.canonicalize_dtype(_dtype(y), allow_extended_dtype=True))
+      self.assertEqual(_dtypes.canonicalize_dtype(_dtype(actual), allow_extended_dtype=True),
+                       _dtypes.canonicalize_dtype(_dtype(desired), allow_extended_dtype=True))
     else:
-      self.assertEqual(_dtype(x), _dtype(y))
+      self.assertEqual(_dtype(actual), _dtype(desired))
 
-  def assertAllClose(self, x, y, *, check_dtypes=True, atol=None, rtol=None,
+  def assertAllClose(self, actual, desired, *, check_dtypes=True, atol=None, rtol=None,
                      canonicalize_dtypes=True, err_msg=''):
-    """Assert that x and y, either arrays or nested tuples/lists, are close."""
-    if isinstance(x, dict):
-      self.assertIsInstance(y, dict)
-      self.assertEqual(set(x.keys()), set(y.keys()))
-      for k in x.keys():
-        self.assertAllClose(x[k], y[k], check_dtypes=check_dtypes, atol=atol,
+    """Assert that actual and desired, either arrays or nested tuples/lists, are close."""
+    if isinstance(actual, dict):
+      self.assertIsInstance(desired, dict)
+      self.assertEqual(set(actual.keys()), set(desired.keys()))
+      for k in actual.keys():
+        self.assertAllClose(actual[k], desired[k], check_dtypes=check_dtypes, atol=atol,
                             rtol=rtol, canonicalize_dtypes=canonicalize_dtypes,
                             err_msg=err_msg)
-    elif is_sequence(x) and not hasattr(x, '__array__'):
-      self.assertTrue(is_sequence(y) and not hasattr(y, '__array__'))
-      self.assertEqual(len(x), len(y))
-      for x_elt, y_elt in zip(x, y):
-        self.assertAllClose(x_elt, y_elt, check_dtypes=check_dtypes, atol=atol,
+    elif is_sequence(actual) and not hasattr(actual, '__array__'):
+      self.assertTrue(is_sequence(desired) and not hasattr(desired, '__array__'))
+      self.assertEqual(len(actual), len(desired))
+      for actual_elt, desired_elt in zip(actual, desired):
+        self.assertAllClose(actual_elt, desired_elt, check_dtypes=check_dtypes, atol=atol,
                             rtol=rtol, canonicalize_dtypes=canonicalize_dtypes,
                             err_msg=err_msg)
-    elif hasattr(x, '__array__') or np.isscalar(x):
-      self.assertTrue(hasattr(y, '__array__') or np.isscalar(y))
+    elif hasattr(actual, '__array__') or np.isscalar(actual):
+      self.assertTrue(hasattr(desired, '__array__') or np.isscalar(desired))
       if check_dtypes:
-        self.assertDtypesMatch(x, y, canonicalize_dtypes=canonicalize_dtypes)
-      x = np.asarray(x)
-      y = np.asarray(y)
-      self.assertArraysAllClose(x, y, check_dtypes=False, atol=atol, rtol=rtol,
+        self.assertDtypesMatch(actual, desired, canonicalize_dtypes=canonicalize_dtypes)
+      actual = np.asarray(actual)
+      desired = np.asarray(desired)
+      self.assertArraysAllClose(actual, desired, check_dtypes=False, atol=atol, rtol=rtol,
                                 err_msg=err_msg)
-    elif x == y:
+    elif actual == desired:
       return
     else:
-      raise TypeError((type(x), type(y)))
+      raise TypeError((type(actual), type(desired)))
 
   def assertMultiLineStrippedEqual(self, expected, what):
     """Asserts two strings are equal, after dedenting and stripping each line."""
@@ -1430,7 +1430,6 @@ class JaxTestCase(parameterized.TestCase):
       print(f"Found\n{what}\n")
     self.assertMultiLineEqual(expected_clean, what_clean,
                               msg=f"Found\n{what}\nExpecting\n{expected}")
-
 
   @contextmanager
   def assertNoWarnings(self):
@@ -1501,9 +1500,9 @@ class JaxTestCase(parameterized.TestCase):
     python_should_be_executing = False
     compiled_ans = cfun(*args)
 
-    self.assertAllClose(python_ans, monitored_ans, check_dtypes=check_dtypes,
+    self.assertAllClose(monitored_ans, python_ans, check_dtypes=check_dtypes,
                         atol=atol or tol, rtol=rtol or tol)
-    self.assertAllClose(python_ans, compiled_ans, check_dtypes=check_dtypes,
+    self.assertAllClose(compiled_ans, python_ans, check_dtypes=check_dtypes,
                         atol=atol or tol, rtol=rtol or tol)
 
     args = args_maker()
@@ -1514,7 +1513,7 @@ class JaxTestCase(parameterized.TestCase):
     python_should_be_executing = False
     compiled_ans = cfun(*args)
 
-    self.assertAllClose(python_ans, compiled_ans, check_dtypes=check_dtypes,
+    self.assertAllClose(compiled_ans, python_ans, check_dtypes=check_dtypes,
                         atol=atol or tol, rtol=rtol or tol)
 
   def _CheckAgainstNumpy(self, numpy_reference_op, lax_op, args_maker,
