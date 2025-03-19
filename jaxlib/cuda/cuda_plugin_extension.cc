@@ -21,12 +21,15 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "jaxlib/gpu/gpu_plugin_extension.h"
+#include "jaxlib/gpu/py_client_gpu.h"
+#include "jaxlib/kernel_nanobind_helpers.h"
 #include "xla/pjrt/status_casters.h"
 
 namespace nb = nanobind;
 
 namespace xla {
 namespace {
+
 static std::string ToString(CUresult result) {
   const char* error_name;
   if (cuGetErrorName(result, &error_name)) {
@@ -38,10 +41,20 @@ static std::string ToString(CUresult result) {
   }
   return absl::StrCat(error_name, ": ", error_string);
 }
+
+nb::dict Registrations() {
+  nb::dict dict;
+  dict["xla_python_gpu_callback"] =
+      jax::EncapsulateFunction(jax::cuda::XlaPythonGpuCallback);
+  return dict;
+}
+
 }  // namespace
 
 NB_MODULE(cuda_plugin_extension, m) {
   BuildGpuPluginExtension(m);
+  m.def("registrations", &Registrations);
+
   m.def(
       "get_device_ordinal",
       [](std::intptr_t data_value) {

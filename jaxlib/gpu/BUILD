@@ -52,6 +52,8 @@ exports_files(srcs = [
     "prng_kernels.cc",
     "prng_kernels.cu.cc",
     "prng_kernels.h",
+    "py_client_gpu.cc",
+    "py_client_gpu.h",
     "rnn.cc",
     "rnn_kernels.cc",
     "rnn_kernels.h",
@@ -115,7 +117,6 @@ cc_library(
         "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_helpers",
         "@xla//xla/pjrt/c:pjrt_c_api_triton_extension_hdrs",
-        "@xla//xla/python:py_client_gpu",
         "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
