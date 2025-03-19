@@ -55,7 +55,7 @@ from jax._src.sharding_impls import (AUTO, NamedSharding,
                                      SdyArraySharding, SdyArrayShardingList)
 from jax._src.util import foreach
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension, xla_extension_version
+from jax._src.lib import xla_extension
 from jax._src.lib.mlir import dialects, ir, passmanager
 from jax._src.lib.mlir.dialects import func as func_dialect, hlo
 from jax._src.lib.mlir import register_jax_dialects
@@ -3031,11 +3031,8 @@ def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
             mlir_module=module_to_bytecode(module),
             enable_shape_assertions=True,
             validate_static_shapes=True)
-    if xla_extension_version >= 319:
-      refined_module_str = refine_polymorphic_shapes(
-          enable_shardy=config.use_shardy_partitioner.value)
-    else:
-      refined_module_str = refine_polymorphic_shapes()
+    refined_module_str = refine_polymorphic_shapes(
+        enable_shardy=config.use_shardy_partitioner.value)
   except Exception as e:
     raise ValueError(
         "Error refining shapes. " +

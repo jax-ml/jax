@@ -66,7 +66,6 @@ from jax._src.lax.utils import (
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.lib import xla_extension_version
 from jax._src.sharding_impls import (PmapSharding, NamedSharding,
                                      PartitionSpec as P, canonicalize_sharding)
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
@@ -2267,11 +2266,6 @@ class DotAlgorithmPreset(enum.Enum):
       case DotAlgorithmPreset.BF16_BF16_F32_X6:
         return hlo.DotAlgorithm.get(bf16, bf16, f32, 1, 1, 6, False)
       case DotAlgorithmPreset.BF16_BF16_F32_X9:
-        if xla_extension_version < 320:
-          raise ValueError(
-              "The dot algorithm BF16_BF16_F32_X9 requires XLA extension "
-              "version >= 320."
-          )
         return hlo.DotAlgorithm.get(bf16, bf16, f32, 1, 1, 9, False)
       case DotAlgorithmPreset.TF32_TF32_F32:
         return hlo.DotAlgorithm.get(tf32, tf32, f32, 1, 1, 1, False)

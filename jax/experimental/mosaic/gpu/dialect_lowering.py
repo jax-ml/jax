@@ -849,13 +849,9 @@ def _mgpu_wait_op_lowering_rule(
   return []
 
 
-# TODO(bchetioui): remove this once jaxlib minimum version >= 0.5.2.
-SliceSMEMOp = getattr(mgpu, "SliceSMEMOp", None)
-
-
-@_register_lowering(SliceSMEMOp)
+@_register_lowering(mgpu.SliceSMEMOp)
 def _mgpu_slice_smem_op_lowering_rule(
-    ctx: LoweringContext, op: SliceSMEMOp
+    ctx: LoweringContext, op: mgpu.SliceSMEMOp
 ) -> Sequence[ir.Value]:
   del ctx
   return [_slice_smem(op.result.type, op.offset)]

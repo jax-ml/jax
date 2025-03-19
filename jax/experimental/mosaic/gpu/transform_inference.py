@@ -172,11 +172,9 @@ def _infer_vector_load_store_transforms(
 
   return None
 
-# TODO(bchetioui): remove this once jaxlib minimum version >= 0.5.2.
-SliceSMEMOp = getattr(mgpu, "SliceSMEMOp", None)
 
-@partial(_add_transform_inference_rule, SliceSMEMOp)
-def _infer_slice_smem_transforms(op: SliceSMEMOp) -> OptionalTransforms:
+@partial(_add_transform_inference_rule, mgpu.SliceSMEMOp)
+def _infer_slice_smem_transforms(op: mgpu.SliceSMEMOp) -> OptionalTransforms:
   transforms = None
   uses = cast(ir.OpResult, op.result).uses
 

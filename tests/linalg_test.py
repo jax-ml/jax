@@ -867,9 +867,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
         self.skipTest("Hermitian SVD doesn't support the algorithm parameter.")
       if not jtu.test_device_matches(["cpu", "gpu"]):
         self.skipTest("SVD algorithm selection only supported on CPU and GPU.")
-      # TODO(danfm): Remove this check after 0.5.2 is released.
-      if jtu.test_device_matches(["cpu"]) and jtu.jaxlib_version() <= (0, 5, 1):
-        self.skipTest("SVD algorithm selection on CPU requires a newer jaxlib version.")
       if jtu.test_device_matches(["cpu"]) and algorithm == lax.linalg.SvdAlgorithm.JACOBI:
         self.skipTest("Jacobi SVD not supported on GPU.")
 
