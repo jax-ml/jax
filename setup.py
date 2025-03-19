@@ -21,7 +21,7 @@ project_name = 'jax'
 
 _current_jaxlib_version = '0.5.3'
 # The following should be updated after each new jaxlib release.
-_latest_jaxlib_version_on_pypi = '0.5.1'
+_latest_jaxlib_version_on_pypi = '0.5.3'
 
 _libtpu_version = '0.0.11.*'
 
