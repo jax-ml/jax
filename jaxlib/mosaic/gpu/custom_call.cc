@@ -143,7 +143,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::memref::registerMemRefPasses();
     mlir::registerConvertToLLVMPass();
     mlir::registerGPUPasses();
-    mlir::registerGpuLaunchSinkIndexComputations();
+    mlir::registerGpuLaunchSinkIndexComputationsPass();
     mosaic::gpu::registerGpuLaunchLoweringPass();
     mosaic::gpu::registerConvertGpuToLLVMPass();
     mosaic::gpu::registerByvalInsertionPass();
