@@ -94,6 +94,21 @@ xla_py_proto_library(
 )
 
 cc_library(
+    name = "handle_pool",
+    hdrs = ["handle_pool.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+    ],
+)
+
+cc_library(
     name = "gpu_plugin_extension",
     srcs = ["gpu_plugin_extension.cc"],
     hdrs = ["gpu_plugin_extension.h"],

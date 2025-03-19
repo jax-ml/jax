@@ -171,21 +171,6 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "handle_pool",
-    hdrs = ["handle_pool.h"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    deps = [
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/synchronization",
-    ],
-)
-
 # This isn't a CPU kernel. This exists to catch cases where jaxlib is built for the wrong
 # target architecture.
 nanobind_extension(
