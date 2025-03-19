@@ -9,7 +9,7 @@
 #include "mlir/include/mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/include/mlir/Pass/Pass.h"
 #include "mlir/include/mlir/Pass/PassRegistry.h"
-#include "jaxlib/pass_boilerplate.h"
+#include "jaxlib/mosaic/pass_boilerplate.h"
 
 namespace mlir::tpu {
 

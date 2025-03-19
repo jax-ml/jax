@@ -52,7 +52,7 @@ cc_library(
         "serde.h",
     ],
     deps = [
-        "//jaxlib:pass_boilerplate",
+        "//jaxlib/mosaic:pass_boilerplate",
         "//jaxlib/mosaic:serde",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:DataLayoutInterfaces",

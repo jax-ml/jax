@@ -31,7 +31,7 @@ limitations under the License.
 #include "mlir/include/mlir/Pass/PassRegistry.h"
 #include "mlir/include/mlir/Support/LLVM.h"
 #include "mlir/include/mlir/Transforms/DialectConversion.h"
-#include "jaxlib/pass_boilerplate.h"
+#include "jaxlib/mosaic/pass_boilerplate.h"
 
 namespace mosaic {
 namespace gpu {
