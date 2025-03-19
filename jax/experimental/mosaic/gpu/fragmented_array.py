@@ -45,6 +45,7 @@ WARP_SIZE = 32
 WARPS_IN_WARPGROUP = WARPGROUP_SIZE // WARP_SIZE
 SMEM_BANKS = 32
 SMEM_BANK_BYTES = 4
+REGISTER_BYTES = 4
 c = utils.c
 
 
@@ -421,6 +422,32 @@ class WGMMARowFragLayout:
 
 
 @dataclasses.dataclass(frozen=True)
+class WGMMAColFragLayout:
+  """
+    [n] matrix, where n % tile_size == 0.
+  """
+
+  # Default to 2 for 16 bit values.
+  vec_len: int = 2
+
+  @property
+  def tile_size(self):
+    return self.vec_len * 4
+
+  def thread_idxs(self, shape):
+    index = ir.IndexType.get()
+    assert len(shape) == 1
+    assert shape[0] % self.tile_size == 0
+
+    tid = arith.index_cast(ir.IndexType.get(), mgpu.thread_idx())
+    lane_id = arith.remui(tid, c(WARP_SIZE, index))
+    col_base = arith.muli(arith.remui(lane_id, c(4, index)), c(self.vec_len, index))
+
+    for col_group in range(0, shape[0], self.tile_size):
+      col = arith.addi(col_base, c(col_group, index))
+      yield (col,)
+
+@dataclasses.dataclass(frozen=True)
 class WGSplatFragLayout:
   """A fragmented array where all the values are equal represented as a register per thread.
 
@@ -530,7 +557,7 @@ class WGStridedFragLayout:
       yield arith.addi(off, c(i * WARPGROUP_SIZE * self.vec_size, tidx.type))
 
 
-FragmentedLayout = WGSplatFragLayout | WGStridedFragLayout | WGMMARowFragLayout | TiledLayout
+FragmentedLayout = WGSplatFragLayout | WGStridedFragLayout | WGMMARowFragLayout | WGMMAColFragLayout | TiledLayout
 
 
 WGMMA_ROW_LAYOUT = WGMMARowFragLayout()
@@ -651,6 +678,12 @@ class FragmentedArray:
         if _registers.ndim != 2 or _registers.shape[-1] != 2:
           raise ValueError(f"Invalid register array shape: {_registers.shape}")
 
+      # Registers are [n_tiles] in WGMMA_COL layout
+      # Each element is a vector of size `vec_len`.
+      case WGMMAColFragLayout():
+        if _registers.ndim != 1:
+          raise ValueError(f"Invalid register array shape: {_registers.shape}")
+
       # Registers are flat
       case WGStridedFragLayout(shape):
         [reg_size] = ir.VectorType(_registers.flat[0].type).shape
@@ -731,6 +764,43 @@ class FragmentedArray:
     registers = np.array(registers).reshape(-1, 2)
     return cls(_registers=registers, _layout=layout, _is_signed=is_signed)
 
+  @classmethod
+  def load_wgmma_col(
+      cls,
+      ref: ir.Value,
+      *,
+      is_signed: bool | None = None,
+  ):
+    index = ir.IndexType.get()
+    if not ir.MemRefType.isinstance(ref.type):
+      raise TypeError(ref.type)
+
+    ref_ty = ir.MemRefType(ref.type)
+    shape = tuple(ref_ty.shape)
+    vec_len = REGISTER_BYTES // utils.bytewidth(ref_ty.element_type)
+    layout = WGMMAColFragLayout(vec_len=vec_len)
+
+    if len(shape) != 1:
+      raise ValueError("WGMMAColFragLayout requires a 1D shape.")
+
+    if shape[0] % layout.tile_size:
+      raise ValueError(
+          f"WGMMAColFragLayout requires {shape[0]=} to be a multiple of {layout.tile_size=}."
+      )
+
+    vec_ty = ir.VectorType.get((layout.vec_len,), ref_ty.element_type)
+    new_regs = np.full((shape[0] // layout.tile_size,), llvm.mlir_undef(vec_ty))
+
+    for col_tile, (base_idx,) in enumerate(layout.thread_idxs(shape)):
+      reg = new_regs[col_tile]
+
+      for i in range(layout.vec_len):
+        idx = arith.addi(base_idx, c(i, index))
+        value = memref.load(ref, [idx])
+        reg = vector.insertelement(value, reg, position=c(i, index))
+      new_regs[col_tile] = reg
+
+    return cls(_registers=new_regs, _layout=layout, _is_signed=is_signed)
 
   @classmethod
   def splat(cls, value, shape, layout=None, *, is_signed: bool | None = None):
@@ -755,6 +825,9 @@ class FragmentedArray:
       case WGMMARowFragLayout():
         row_tiles = self.registers.shape[0]
         return (row_tiles * 64,)
+      case WGMMAColFragLayout():
+        col_tiles = self.registers.shape[0]
+        return (col_tiles * self.layout.tile_size,)
       case WGStridedFragLayout(shape):
         return shape
       case WGSplatFragLayout(shape=shape):
@@ -768,7 +841,7 @@ class FragmentedArray:
   def mlir_dtype(self):
     reg_ty = self.registers.flat[0].type
     match self.layout:
-      case WGStridedFragLayout() | TiledLayout():
+      case WGStridedFragLayout() | WGMMAColFragLayout() | TiledLayout():
         return ir.VectorType(reg_ty).element_type
       case WGMMARowFragLayout() | WGSplatFragLayout():
         return reg_ty
@@ -1802,6 +1875,8 @@ class FragmentedArray:
     match self.layout:
       case WGMMARowFragLayout():
         self._store_untiled_wgmma_row(ref)
+      case WGMMAColFragLayout():
+        self._store_untiled_wgmma_col(ref)
       case WGSplatFragLayout():
         vs_unsupported()
         self._store_untiled_splat(ref)
@@ -1864,6 +1939,25 @@ class FragmentedArray:
         self.layout.thread_idxs(self.shape), self.registers.flatten()
       ):
         memref.store(value, ref, [idx])
+
+  def _store_untiled_wgmma_col(self, ref: ir.Value):
+    """Stores an array with a WGMMA col layout."""
+    assert isinstance(self.layout, WGMMAColFragLayout)
+    index = ir.IndexType.get()
+    tid = arith.index_cast(ir.IndexType.get(), mgpu.thread_idx())
+
+    # Consecutive groups of 4 threads are replicated 8 times, so we only need to
+    # transfer data from one group.
+    is_first = arith.cmpi(
+        arith.CmpIPredicate.eq, arith.divui(tid, c(8, index)), c(0, index)
+    )
+
+    with utils.when(is_first):
+      for (base_idx,), reg in zip(self.layout.thread_idxs(self.shape), self.registers):
+        for i in range(self.layout.vec_len):
+          idx = arith.addi(base_idx, c(i, index))
+          value = vector.extractelement(reg, position=c(i, index))
+          memref.store(value, ref, [idx])
 
   def _store_untiled_tiled(self, ref: ir.Value, *, vector_store: bool = True):
     """Stores an array with a tiled layout. Not optimized at the moment."""
