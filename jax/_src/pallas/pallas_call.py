@@ -1206,7 +1206,7 @@ def _trace_kernel_to_jaxpr(
   return jaxpr, tuple(consts)
 
 
-_PALLAS_USE_MOSAIC_GPU = config.bool_flag(
+_PALLAS_USE_MOSAIC_GPU = config.bool_state(
     "jax_pallas_use_mosaic_gpu",
     default=config.bool_env("JAX_PALLAS_USE_MOSAIC_GPU", False),
     help=(

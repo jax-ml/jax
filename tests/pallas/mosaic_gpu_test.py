@@ -26,6 +26,7 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
+from jax._src.pallas import pallas_call
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
@@ -59,6 +60,9 @@ class PallasTest(jtu.JaxTestCase):
   def setUp(self):
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Only works on a GPU with capability >= sm90")
+    context_stack = contextlib.ExitStack()
+    context_stack.enter_context(pallas_call._PALLAS_USE_MOSAIC_GPU(True))
+    self.addCleanup(context_stack.close)
 
     super().setUp()
 

@@ -30,6 +30,7 @@ from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import test_util as jtu
+from jax._src.pallas import pallas_call
 from jax.experimental import pallas as pl
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
@@ -61,7 +62,7 @@ import hypothesis.strategies as hps
 jax.config.parse_flags_with_absl()
 jtu.setup_hypothesis(max_examples=50)
 
-use_mosaic_gpu = jax.config.read("jax_pallas_use_mosaic_gpu")
+use_mosaic_gpu = pallas_call._PALLAS_USE_MOSAIC_GPU.value
 
 intx = dtypes.canonicalize_dtype(jnp.int64)
 floatx = dtypes.canonicalize_dtype(jnp.float64)
