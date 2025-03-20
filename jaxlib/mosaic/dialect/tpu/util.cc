@@ -45,18 +45,18 @@ std::ostream &operator<<(std::ostream &os, Print p) {
   return os;
 }
 
-SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
+SmallVector<int64_t> ComputeTileStrides(absl::Span<const int64_t> shape,
                                         absl::Span<const int64_t> tiling) {
-  SmallVector<int64_t> tile_strides(memref_ty.getRank());
+  SmallVector<int64_t> tile_strides(shape.size());
   int64_t stride = 1;
-  for (int64_t i = 0; i < memref_ty.getRank(); ++i) {
-    int64_t idx = memref_ty.getRank() - 1 - i;
+  for (int64_t i = 0; i < shape.size(); ++i) {
+    int64_t idx = shape.size() - 1 - i;
     int64_t tiling_idx = tiling.size() - 1 - i;
     tile_strides[idx] = stride;
     if (tiling_idx >= 0) {
-      stride *= llvm::divideCeil(memref_ty.getShape()[idx], tiling[tiling_idx]);
+      stride *= llvm::divideCeil(shape[idx], tiling[tiling_idx]);
     } else {
-      stride *= memref_ty.getShape()[idx];
+      stride *= shape[idx];
     }
   }
   return tile_strides;
