@@ -194,6 +194,11 @@ def generate_nvfp4_quantized_tensors(dot_config, output_type):
   amax_a = jnp.max(jnp.abs(a)).astype(jnp.float32)
   amax_b = jnp.max(jnp.abs(b)).astype(jnp.float32)
 
+  # To emulate calibrated amax
+  amax_sf = 0.9
+  amax_a *= amax_sf
+  amax_b *= amax_sf
+
   # Update global scales
   data_max = jnp.finfo(block_scale_configs_nvfp4[0].data_type).max.astype(
       jnp.float32
@@ -567,8 +572,27 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
       out_ref, _ = j_train_fwd_ref(a_dq, b_dq)
 
       self.assertArraysAllClose(out, out_ref, rtol=1e-2, atol=1e-2)
+      def _grad_clip(amax, x, grad):
+        return jnp.where(jnp.abs(x) <= amax, grad, 0)
+
+      data_max = jnp.finfo(jnp.float4_e2m1fn).max.astype(output_type)
+      scale_max = jnp.finfo(jnp.float8_e4m3fn).max.astype(output_type)
+      prev_amax_a = a_gs * data_max * scale_max
+      prev_amax_b = b_gs * data_max * scale_max
+
+      x_grad_ref = _grad_clip(prev_amax_a, a_raw, x_grad_ref)
+      w_grad_ref = _grad_clip(prev_amax_b, b_raw, w_grad_ref)
       self.assertArraysAllClose(x_grad, x_grad_ref, rtol=1e-2, atol=1e1)
       self.assertArraysAllClose(w_grad, w_grad_ref, rtol=1e-2, atol=1e1)
+      # Verify straight_through_estimator
+      self.assertArraysEqual(
+          jnp.where(jnp.abs(a_raw) > prev_amax_a, x_grad, 0),
+          jnp.zeros_like(x_grad)
+      )
+      self.assertArraysEqual(
+          jnp.where(jnp.abs(b_raw) > prev_amax_b, w_grad, 0),
+          jnp.zeros_like(w_grad)
+      )
     else:
       j_inference = jax.jit(fwd)
       j_inference_ref = jax.jit(partial(fwd, is_ref=True, use_normalized=True))
