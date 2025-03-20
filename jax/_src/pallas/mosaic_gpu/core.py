@@ -101,6 +101,8 @@ class GPUMemorySpace(enum.Enum):
   GMEM = "gmem"
   #: Shared memory.
   SMEM = "smem"
+  #: Tensor memory.
+  TMEM = "tmem"
   #: Registers.
   REGS = "regs"
 
@@ -452,6 +454,7 @@ class GPUBlockSpec(pallas_core.BlockSpec):
 
 GMEM = GPUMemorySpace.GMEM
 SMEM = GPUMemorySpace.SMEM
+TMEM = GPUMemorySpace.TMEM
 REGS = GPUMemorySpace.REGS
 
 
