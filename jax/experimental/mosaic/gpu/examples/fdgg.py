@@ -64,9 +64,13 @@ def bytecount(shape, dtype):
 def build_kernel(
     m, n, k,
     cta_count: int,
+    expert_count: int,
+    group_chunk_count: int,
+    expert_n: int,
     tile_m: int = 128,
     tile_n: int = 128,
     max_concurrent_steps: int = 2,
+    in_dtype = jnp.float16,
 ):
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
@@ -76,7 +80,6 @@ def build_kernel(
   swizzle_elems = tile_k = swizzle // 2
   tiling = (8, swizzle_elems)
 
-  in_dtype = jnp.float16
   k_loop_iter = k // tile_k
   max_concurrent_steps = min(max_concurrent_steps, k_loop_iter)
 
@@ -86,12 +89,14 @@ def build_kernel(
     raise ValueError(f"{n=} must be divisible by {tile_n=}")
   if k % tile_k != 0:
     raise ValueError(f"{k=} must be divisible by {tile_k=}")
+  if n % expert_count != 0:
+    raise ValueError(f"{n=} must be divisible by {expert_count=}")
 
   m_tile_count = m // tile_m
   n_tile_count = n // tile_n
   tile_count = m_tile_count * n_tile_count
 
-  def kernel(ctx, a, b, d, smem):
+  def kernel(ctx, a, w, group_offsets, expert_ids, d, smem):
     ((a_smem, b_smem), d_smem), barriers, mma_done_barrier, acc = smem
     (ab_full_barriers, ab_empty_barriers) = barriers
 
@@ -138,7 +143,7 @@ def build_kernel(
               **common_args,
           )
           ctx.async_copy(
-              src_ref=b,
+              src_ref=w,
               dst_ref=mgpu.memref_slice(b_smem, slot),
               gmem_slice=(ds(n_start, tile_n), ds(k_start, tile_k)),
               gmem_transform=mgpu.TileTransform(tiling),
@@ -196,17 +201,22 @@ def build_kernel(
       mgpu.Barrier(arrival_count=1),
       mgpu.TMEM((128, tile_n), jnp.float32),
   )
-  return mgpu.as_gpu_kernel(
+
+  f = mgpu.as_gpu_kernel(
       kernel,
       (cta_count, 1, 1),  # persistent kernel
       (128, 1, 1),
       (
           jax.ShapeDtypeStruct((m, k), jnp.float16),
           jax.ShapeDtypeStruct((n, k), jnp.float16),
+          jax.ShapeDtypeStruct((group_chunk_count+1,), jnp.int32),  # group_offsets
+          jax.ShapeDtypeStruct((group_chunk_count+0,), jnp.int32),  # expert_ids
       ),
-      jax.ShapeDtypeStruct((m, n), jnp.float16),
+      jax.ShapeDtypeStruct((m, expert_n), jnp.float16),
       smem,
   )
+
+  return f
 
 
 def generate_group_sizes(expert_count, token_count, key1, key2):
@@ -217,71 +227,86 @@ def generate_group_sizes(expert_count, token_count, key1, key2):
   return group_sizes
 
 
-def get_schedule(group_sizes, chunk_size):
+def get_schedule(group_sizes, n, tile_m, tile_n):
+  assert n % tile_n == 0
   group_sizes = group_sizes.tolist()
   chunks = []
-  group_ids = []
+  expert_ids = []
   for i, g in enumerate(group_sizes):
-    while g > chunk_size:
-      group_ids.append(i)
-      chunks.append(chunk_size)
-      g -= chunk_size
-    group_ids.append(i)
+    while g > tile_m:
+      expert_ids.append(i)
+      chunks.append(tile_m)
+      g -= tile_m
+    expert_ids.append(i)
     chunks.append(g)
-  return jnp.array(chunks), jnp.array(group_ids)
+
+  chunks = jnp.array(chunks)
+  group_offsets = jnp.cumulative_sum(chunks, include_initial=True)
+  expert_ids = jnp.array(expert_ids)
+
+  return group_offsets, expert_ids
+
+
+def ref(activations, weights, group_sizes, expert_n):
+  group_offsets = np.cumulative_sum(group_sizes, include_initial=True).tolist()
+  results = []
+  for i, (a, b) in enumerate(zip(group_offsets, group_offsets[1:])):
+    group = activations[a:b, :]
+    expert = weights[i*expert_n:(i+1)*expert_n, :]
+    results.append(group @ expert.T)
+  return jnp.concatenate(results)
 
 
 def main(unused_argv):
-  m, k, n = 8192, 4096, 8192
-  e = 64  # experts
+  m = 1024  # seqlen
+  k = 512
+  expert_count = 8  # expert count
+  expert_n = 512
+  n = expert_count * expert_n
+  in_dtype = jnp.float16
+  # TODO(aportnoy@nvidia.com) this leads to low occupancy, so unless
+  # each CTA is using tensor cores at all times, we are leaving perf
+  # on the table. A solution would be to separate the epilogue into a
+  # warpgroup of its own, and double buffer the accumulator, so that
+  # the next work item can run while we are storing the previous one
+  # out.
   cta_count = get_sm_count()
   ka, kb, ke1, ke2 = jr.split(jr.key(0), 4)
-  a = jr.normal(key=ka, shape=(m, k), dtype=jnp.float16)
-  b = jr.normal(key=kb, shape=(n, k), dtype=jnp.float16)
-  group_sizes = generate_group_sizes(e, m, ke1, ke2)
-  # this should be set to tile_m
-  chunk_size = 128
-  chunks, group_ids = get_schedule(group_sizes, chunk_size)
+  activations = jr.normal(key=ka, shape=(m, k), dtype=in_dtype)
+  weights     = jr.normal(key=kb, shape=(n, k), dtype=in_dtype)
+  group_sizes = generate_group_sizes(expert_count, m, ke1, ke2)
+  # TODO(aportnoy@nvidia.com) test different tile sizes
+  tile_m = 128
+  tile_n = 128  # 256, 512
+  # TODO(aportnoy@nvidia.com) move this computation into the kernel
+  group_offsets, expert_ids = get_schedule(group_sizes, n, tile_m, tile_n)
+  group_chunk_count = len(expert_ids)
 
-  tile_m = (128,)
-  tile_n = (128, 256, 512)
-  max_concurrent_steps = (2, 4, 5, 6)
-  configs = itertools.product(tile_m, tile_n, max_concurrent_steps)
-  names = ("tile_m", "tile_n", "max_concurrent_steps")
-  best_runtime = float("inf")
-  best_kwargs = {}
-  for config in configs:
-    kwargs = dict(zip(names, config))
-    tile_m = kwargs["tile_m"]
-    tile_n = kwargs["tile_n"]
-    if m < tile_m or n < tile_n:
-      continue
-    try:
-      with mlir.make_ir_context(), ir.Location.unknown():
-        f = build_kernel(m, n, k, cta_count, **kwargs)
-        _, runtime = profiler.measure(f, mode='cupti')(a, b)
-    except ValueError as e:
-      if "Mosaic GPU kernel exceeds available shared memory" not in str(e):
-        raise
-      runtime = float("inf")
-    else:
-      print(" ".join(f"{k}={v}" for k, v in kwargs.items()), int(runtime * 1000))
-    if runtime < best_runtime:
-      best_runtime = runtime
-      best_kwargs = kwargs
-  if not best_kwargs:
-    raise ValueError("No valid configuration found")
-
+  # TODO(aportnoy@nvidia.com) test different stage counts
+  max_concurrent_steps = 2  # 4, 5, 6
   with mlir.make_ir_context(), ir.Location.unknown():
-    d, runtime = profiler.measure(build_kernel(m, n, k, cta_count, **best_kwargs), mode='cupti')(a, b)
-  d_ref, ref_runtime = profiler.measure(jax.jit(lambda a, b: a @ b.T), mode='cupti')(a, b)
-
+    f = build_kernel(
+      m, n, k,
+      cta_count=cta_count,
+      expert_count=expert_count,
+      group_chunk_count=group_chunk_count,
+      expert_n=expert_n,
+      tile_m=tile_m,
+      tile_n=tile_n,
+      max_concurrent_steps=max_concurrent_steps,
+      in_dtype=in_dtype,
+    )
+  d, runtime = profiler.measure(f, mode='cupti')(activations, weights, group_offsets, expert_ids)
   tflops = float(2 * k * m * n) / (runtime / 1e3) / 1e12
-  ref_tflops = float(2 * k * m * n) / (ref_runtime / 1e3) / 1e12
-  print("Best parameters: ", " ".join(f"{k}={v}" for k, v in best_kwargs.items()))
   print(f"Kernel:    {runtime * 1000:.1f} us = {tflops:.1f} TFLOPS")
-  print(f"Reference: {ref_runtime * 1000:.1f} us = {ref_tflops:.1f} TFLOPS")
+
+
+  # TODO(aportnoy@nvidia.com) compute reference and check correctness
+  d_ref = ref(activations, weights, group_sizes, expert_n)
+
+  #ref_tflops = float(2 * k * m * n) / (ref_runtime / 1e3) / 1e12
   np.testing.assert_allclose(d, d_ref, atol=1e-3, rtol=1e-3)
+  #print(f"Reference: {ref_runtime * 1000:.1f} us = {ref_tflops:.1f} TFLOPS")
 
 
 if __name__ == "__main__":
