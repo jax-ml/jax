@@ -756,9 +756,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
   def test_compute_no_inputs_host_replicated(self):
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 3:
       self.skipTest("This test requires an xla_version >= 3.")
-    if config.use_shardy_partitioner.value:
-      self.skipTest("XLA failure due to b/370786664 and b/366411266. "
-                    "Enable when fixed.")
     mesh = jtu.create_mesh((4,), ('data'))
 
     tpu_sharding = NamedSharding(mesh, P('data'))
