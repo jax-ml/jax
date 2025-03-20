@@ -312,7 +312,10 @@ def jax_multiplatform_test(
                 "//jaxlib/cuda:gpu_only_test_deps",
                 "//jaxlib/rocm:gpu_only_test_deps",
                 "//jax_plugins:gpu_plugin_only_test_deps",
-            ]),
+            ]) + select({
+                "//jax:add_libtpu_dependency": ["@pypi_libtpu//:pkg"],
+                "//conditions:default": [],
+            }),
             data = data,
             shard_count = test_shards,
             tags = test_tags,

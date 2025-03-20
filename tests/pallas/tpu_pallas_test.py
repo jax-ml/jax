@@ -20,6 +20,7 @@ import itertools
 import gc
 import io
 import math
+import os
 import re
 import sys
 from typing import Callable
@@ -48,6 +49,8 @@ import numpy as np
 
 
 jax.config.parse_flags_with_absl()
+
+print(os.environ)
 
 P = jax.sharding.PartitionSpec
 
