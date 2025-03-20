@@ -1301,6 +1301,18 @@ class ShardingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, msg):
       jax.jit(f)(x)
 
+  def test_make_array_from_single_device_arrays_tuple(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    shape = (8, 8)
+    s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
+    inp_data = np.arange(math.prod(shape)).reshape(shape)
+
+    arrays = tuple(
+        jax.device_put(inp_data[index], d)
+        for d, index in s.addressable_devices_indices_map(shape).items())
+
+    jax.make_array_from_single_device_arrays(shape, s, arrays)  # doesn't crash
+
   def test_make_array_from_single_device_arrays_bad_inputs(self):
     x = jnp.arange(10)
     mesh = jtu.create_mesh((2,), ('x',))
