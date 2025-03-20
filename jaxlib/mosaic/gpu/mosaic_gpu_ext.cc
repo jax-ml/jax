@@ -195,6 +195,12 @@ void callback_complete(CUcontext context, uint32_t streamId,
       THROW_IF_CUPTI_ERROR(status);
     }
   }
+
+  size_t num_dropped;
+  THROW_IF_CUPTI_ERROR(
+      cuptiActivityGetNumDroppedRecords(context, streamId, &num_dropped),
+      "failed to get number of dropped activity records");
+  THROW_IF(num_dropped > 0, "activity records were dropped");
 }
 
 NB_MODULE(_mosaic_gpu_ext, m) {
