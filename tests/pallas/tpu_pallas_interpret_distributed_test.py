@@ -18,8 +18,6 @@ To work around https://github.com/jax-ml/jax/issues/25671 , this file
 contains only tests that use shard_map.
 """
 
-import functools
-
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -1017,19 +1015,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     input_arr = jax.device_put(input_arr, sharding)
 
     def kernel(src_dst_ids_ref, x_ref, o_ref, send_sem, recv_sem):
-      # Barrier with all devices before doing any DMAs.
-      barrier_sem = pltpu.get_barrier_semaphore()
-      @functools.partial(jax.lax.fori_loop, 0, num_devices, init_val=None)
-      def _(i, _):
-        pltpu.semaphore_signal(
-          barrier_sem,
-          inc=1,
-          device_id=(jnp.int32(i),),
-          device_id_type=pltpu.DeviceIdType.MESH,
-        )
-        return None
-      pltpu.semaphore_wait(barrier_sem, num_devices)
-
       # Send the specified DMAs.
       my_id = lax.axis_index('x')
       src_dst_ids = src_dst_ids_ref[:]
@@ -1076,7 +1061,6 @@ class InterpretDistributedTest(jtu.JaxTestCase):
               ],
               out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
               scratch_shapes=[pltpu.SemaphoreType.DMA, pltpu.SemaphoreType.DMA],
-              compiler_params=pltpu.TPUCompilerParams(collective_id=0),
               interpret=mosaic_interpret.TPUInterpretParams(
                   dma_execution_mode='eager',
                   detect_races=True,

@@ -451,6 +451,7 @@ class SharedMemory:
   num_devices: int
   clocks: list[VectorClock]
   barrier: threading.Barrier
+  clean_up_barrier: threading.Barrier
 
   # (memory_space, buffer_id, device_id) -> NumPy array
   # TODO(jburnim): Handle Megacore.
@@ -502,18 +503,35 @@ def _initialize_shared_memory(device_id, num_devices, *, interpret_params):
           interpret_params=interpret_params,
           num_devices=num_devices,
           clocks=[make_vector_clock(num_devices) for _ in range(num_devices)],
-          barrier=threading.Barrier(num_devices))
+          barrier=threading.Barrier(
+              num_devices, action=_update_clocks_for_global_barrier),
+          clean_up_barrier=threading.Barrier(
+              num_devices, action=_clear_shared_memory))
   assert _shared_memory.num_devices == num_devices
 
   global races
   races = RaceDetectionState(num_devices=num_devices)
 
+def _update_clocks_for_global_barrier():
+  shared_memory = _get_shared_memory()
+  with shared_memory.lock:
+    # Set the vector clock for device 0 to the max over all device clocks.
+    for c in shared_memory.clocks[1:]:
+      update_vector_clock(shared_memory.clocks[0], c)
+    # Set all other device vector clocks to the max over all the clocks.
+    for c in shared_memory.clocks[1:]:
+      update_vector_clock(c, shared_memory.clocks[0])
+
+def _barrier(device_id):
+  device_id = int(device_id)
+  shared_memory = _get_shared_memory()
+  if shared_memory.num_devices > 1:
+    shared_memory.barrier.wait()
+
 def _clean_up_shared_memory(device_id):
   device_id = int(device_id)
   shared_memory = _get_shared_memory()
-  shared_memory.barrier.wait()
-  if device_id == 0:
-    _clear_shared_memory()
+  shared_memory.clean_up_barrier.wait()
 
 def _validate(device_id):
   device_id = int(device_id)
@@ -1359,7 +1377,7 @@ def interpret_pallas_call(
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: GridMapping,
     mesh: pallas_core.Mesh | None,
-    compiler_params: Any,
+    compiler_params: mosaic_core.TPUCompilerParams,
     cost_estimate: CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
     interpret_params: TPUInterpretParams,
@@ -1498,6 +1516,11 @@ def interpret_pallas_call(
           _uninitialized_value(
               var.aval.shape, var.aval.dtype, interpret_params),
           ordered=True))
+
+  if compiler_params.get('mosaic', {}).get('collective_id', None) is None:
+    # The kernel doesn't specify its own barrier semaphore, so we do a global
+    # barrier before running the first iteration of the kernel.
+    callback.io_callback(_barrier, (), device_id, ordered=True)
 
   _, input_ids, kernel_output_ids, _  = split_list(
       kernel_buffer_ids,
