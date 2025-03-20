@@ -2,6 +2,7 @@
 // This module is called by mlir/__init__.py during initialization.
 #include <nanobind/nanobind.h>
 
+#include "shardy/integrations/c/passes.h"
 #include "mlir-c/Dialect/Arith.h"
 #include "mlir-c/Dialect/Func.h"
 #include "mlir-c/Dialect/GPU.h"
@@ -14,9 +15,7 @@
 #include "mlir-c/Dialect/Vector.h"
 #include "mlir-c/Transforms.h"
 #include "mlir/Bindings/Python/NanobindAdaptors.h"
-#include "shardy/integrations/c/passes.h"
 #include "jaxlib/mosaic/gpu/integrations/c/passes.h"
-
 
 namespace nb = nanobind;
 

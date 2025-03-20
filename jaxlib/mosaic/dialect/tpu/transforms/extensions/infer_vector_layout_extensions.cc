@@ -3,9 +3,9 @@
 #include <array>
 #include <cstdint>
 
-#include "mlir/include/mlir/IR/Operation.h"
-#include "mlir/include/mlir/Support/LLVM.h"
-#include "mlir/include/mlir/Support/LogicalResult.h"
+#include "mlir/IR/Operation.h"
+#include "mlir/Support/LLVM.h"
+#include "mlir/Support/LogicalResult.h"
 
 namespace mlir::tpu::extensions {
 

@@ -18,10 +18,10 @@ limitations under the License.
 
 #include <memory>
 
-#include "mlir/include/mlir/IR/DialectRegistry.h"
-#include "mlir/include/mlir/Pass/Pass.h"
-#include "mlir/include/mlir/Support/LLVM.h"
-#include "mlir/include/mlir/Support/TypeID.h"
+#include "mlir/IR/DialectRegistry.h"
+#include "mlir/Pass/Pass.h"
+#include "mlir/Support/LLVM.h"
+#include "mlir/Support/TypeID.h"
 
 namespace jaxlib {
 namespace mlir {

@@ -18,19 +18,17 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
+#include "llvm/ADT/StringMap.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Visitors.h"
 #include "mlir/Support/LLVM.h"
-#include "llvm/include/llvm/ADT/StringMap.h"
-#include "mlir/include/mlir/IR/Attributes.h"
-#include "mlir/include/mlir/IR/BuiltinAttributes.h"
-#include "mlir/include/mlir/IR/OpDefinition.h"
-#include "mlir/include/mlir/IR/OperationSupport.h"
-#include "mlir/include/mlir/Support/LogicalResult.h"
+#include "mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/serde.h"
 

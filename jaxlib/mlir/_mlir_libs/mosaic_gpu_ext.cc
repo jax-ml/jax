@@ -16,9 +16,9 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
+#include "nanobind/nanobind.h"
 #include "mlir-c/IR.h"
 #include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
-#include "nanobind/nanobind.h"
 #include "jaxlib/mosaic/dialect/gpu/integrations/c/attributes.h"
 #include "jaxlib/mosaic/dialect/gpu/integrations/c/gpu_dialect.h"
 
