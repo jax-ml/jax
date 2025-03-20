@@ -102,23 +102,21 @@ def _measure_cupti(f, aggregate):
   if not isinstance(f, (stages.Wrapped, stages.Compiled)):
     f = jax.jit(f)
 
-  def run(*args, **kwargs):
+  def wrapper(*args, **kwargs):
+    jax.block_until_ready(f(*args, **kwargs))  # Warmup.
     mosaic_gpu_lib._mosaic_gpu_ext._cupti_init()
     try:
       results = jax.block_until_ready(f(*args, **kwargs))
     finally:
       timings = mosaic_gpu_lib._mosaic_gpu_ext._cupti_get_timings()
-    return results, timings
 
-  def wrapper(*args, **kwargs):
-    run(*args, **kwargs)  # Warmup.
-    results, timings = run(*args, **kwargs)
     if not timings:
       return results, None
     elif aggregate:
       return results, sum(item[1] for item in timings)
     else:
       return results, timings
+
   return wrapper
 
 
