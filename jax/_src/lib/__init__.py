@@ -109,7 +109,6 @@ import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error  # noqa: 
 import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error  # noqa: F401
 import jaxlib.gpu_prng as gpu_prng  # pytype: disable=import-error  # noqa: F401
 import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error  # noqa: F401
-import jaxlib.hlo_helpers as hlo_helpers  # pytype: disable=import-error  # noqa: F401
 
 # Jaxlib code is split between the Jax and the Tensorflow repositories.
 # Only for the internal usage of the JAX developers, we expose a version
