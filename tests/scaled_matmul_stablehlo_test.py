@@ -174,7 +174,7 @@ def update_global_scale(config, new_global_scale):
   config.global_scale = new_global_scale
   return config
 
-def generate_nvfp4_quantized_tensors(dot_config, output_type):
+def generate_nvfp4_quantized_tensors(dot_config, output_type, enable_grad_clip=False):
   k1, k2 = jax.random.split(jax.random.key(0), 2)
 
   a_shape, b_shape, dimension_numbers = dot_config
@@ -195,7 +195,7 @@ def generate_nvfp4_quantized_tensors(dot_config, output_type):
   amax_b = jnp.max(jnp.abs(b)).astype(jnp.float32)
 
   # To emulate calibrated amax
-  amax_sf = 0.9
+  amax_sf = 0.9 if enable_grad_clip else 1.0
   amax_a *= amax_sf
   amax_b *= amax_sf
 
@@ -514,6 +514,68 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
     self.assertArraysAllClose(scale, scale_ref, rtol=1e-5, atol=1e-5)
 
   @jtu.sample_product(
+      enable_grad_clip=[True, False],
+      configs=[
+          # a_shape, b_shape, dimension_numbers
+          ((1, 128, 128), (1, 128, 128), (([2], [2]), ([0], [0]))),
+          ((30, 64), (100, 64), (([1], [1]), ([], []))),
+      ]
+  )
+  @jtu.run_on_devices("cuda")
+  def test_nvfp4_gradient_clip(self, enable_grad_clip, configs):
+    output_type = jnp.float32
+    (a_raw, b_raw), (a_dq, b_dq), _, block_scale_configs = (
+        generate_nvfp4_quantized_tensors(configs, output_type, enable_grad_clip)
+    )
+    a_gs = block_scale_configs[0].global_scale
+    b_gs = block_scale_configs[1].global_scale
+    dimension_numbers = configs[2]
+
+    scaled_dot_general = partial(
+        scaled_dot_general_wrapper,
+        configs=block_scale_configs
+    )
+
+    def fwd(a, b, use_normalized=False):
+      y = scaled_dot_general(
+          a, b, dimension_numbers,
+          preferred_element_type=output_type
+      )
+      return jnp.sum(y)
+
+    j_train = jax.jit(jax.value_and_grad(fwd, argnums=[0, 1]))
+    _, (x_grad, w_grad) = j_train(a_raw, b_raw)
+
+    data_max = jnp.finfo(jnp.float4_e2m1fn).max.astype(output_type)
+    scale_max = jnp.finfo(jnp.float8_e4m3fn).max.astype(output_type)
+    prev_amax_a = a_gs * data_max * scale_max
+    prev_amax_b = b_gs * data_max * scale_max
+
+    # Use a large value to ensure no clipping
+    threshold_a = prev_amax_a if enable_grad_clip else 1e9
+    threshold_b = prev_amax_b if enable_grad_clip else 1e9
+
+    # Verify gradients are clipped to 0 where |input| > global_scale * MAX * SCALE_MAX
+    self.assertArraysEqual(
+        jnp.where(jnp.abs(a_raw) > threshold_a, x_grad, 0),
+        jnp.zeros_like(x_grad),
+    )
+    self.assertArraysEqual(
+        jnp.where(jnp.abs(b_raw) > threshold_b, w_grad, 0),
+        jnp.zeros_like(w_grad),
+    )
+    if enable_grad_clip:
+      # Verify gradients are preserved where |input| <= global_scale * MAX * SCALE_MAX
+      self.assertArraysEqual(
+          jnp.where(jnp.abs(a_raw) <= prev_amax_a, x_grad, 0),
+          x_grad,
+      )
+      self.assertArraysEqual(
+          jnp.where(jnp.abs(b_raw) <= prev_amax_b, w_grad, 0),
+          w_grad,
+      )
+
+  @jtu.sample_product(
       configs=[
           # a_shape, b_shape, dimension_numbers, is_training
           ((1, 128, 128), (1, 128, 128), (([2], [2]), ([0], [0])), False),
@@ -584,15 +646,6 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
       w_grad_ref = _grad_clip(prev_amax_b, b_raw, w_grad_ref)
       self.assertArraysAllClose(x_grad, x_grad_ref, rtol=1e-2, atol=1e1)
       self.assertArraysAllClose(w_grad, w_grad_ref, rtol=1e-2, atol=1e1)
-      # Verify straight_through_estimator
-      self.assertArraysEqual(
-          jnp.where(jnp.abs(a_raw) > prev_amax_a, x_grad, 0),
-          jnp.zeros_like(x_grad)
-      )
-      self.assertArraysEqual(
-          jnp.where(jnp.abs(b_raw) > prev_amax_b, w_grad, 0),
-          jnp.zeros_like(w_grad)
-      )
     else:
       j_inference = jax.jit(fwd)
       j_inference_ref = jax.jit(partial(fwd, is_ref=True, use_normalized=True))

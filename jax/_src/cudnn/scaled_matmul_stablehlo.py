@@ -489,8 +489,6 @@ def quantize(x, config):
     assert config.scale_type == jnp.float8_e8m0fnu
     scales_q = cast_to_e8m0_with_rounding_up(scales)
     scaled_x = x / e8m0_to_dtype(scales_q, scales.dtype)
-    clipped_x = jnp.clip(scaled_x, -MAX, MAX)
-    x_q = clipped_x.astype(config.data_type)
   elif config.mode == "nvfp4":
     assert config.scale_type == jnp.float8_e4m3fn
     assert config.global_scale.dtype == jnp.float32
@@ -499,14 +497,14 @@ def quantize(x, config):
     prev_amax = config.global_scale * (MAX * SCALE_MAX)
     scales_q = jnp.clip(
         (amax / prev_amax) * SCALE_MAX, 0, SCALE_MAX
-    ).astype(config.scale_type)
-    x_q = jnp.where(
-        amax <= prev_amax,
-        (x * MAX) / amax,
-        jnp.clip((x * MAX) / prev_amax, -MAX, MAX),
-    ).astype(config.data_type)
+    )
+    scaled_x = x / scales_q
+    scales_q = scales_q.astype(config.scale_type)
   else:
     raise ValueError(f"Unrecognized mode: {config.mode}.")
+
+  clipped_x = jnp.clip(scaled_x, -MAX, MAX)
+  x_q = clipped_x.astype(config.data_type)
 
   x_q = x_q.reshape(x_shape)  # shape = (B, M, K)
   scales_q = jnp.reshape(scales_q, scales_q.shape[:-1]).view(
@@ -652,6 +650,7 @@ def scaled_dot_bwd(dimension_numbers, preferred_element_type, configs, res, g):
     SCALE_MAX = jnp.finfo(configs[0].scale_type).max.astype(lhs.dtype)
     grad_lhs = jnp.where(jnp.abs(lhs) <= configs[0].global_scale * MAX * SCALE_MAX, grad_lhs, 0)
     grad_rhs = jnp.where(jnp.abs(rhs) <= configs[1].global_scale * MAX * SCALE_MAX, grad_rhs, 0)
+
   return (grad_lhs, grad_rhs)
 
 
