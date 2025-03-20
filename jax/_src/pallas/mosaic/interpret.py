@@ -610,8 +610,10 @@ def _allocate_semaphores(device_id, shape):
   ).reshape(shape)
 
 
-TPU_MEMORY_SPACE_IDXS : dict[mosaic_core.TPUMemorySpace | None, int] = {
+TPU_MEMORY_SPACE_IDXS : dict[mosaic_core.TPUMemorySpace | pallas_core.MemorySpace | None, int] = {
     v: i for i, v in enumerate(mosaic_core.TPUMemorySpace)}
+TPU_MEMORY_SPACE_IDXS[pallas_core.MemorySpace.ANY] = (
+    TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.ANY])
 TPU_MEMORY_SPACE_NAMES = {
     i: v.value for i, v in enumerate(mosaic_core.TPUMemorySpace)}
 
@@ -1007,7 +1009,7 @@ class Placeholder:
   shape: tuple[int, ...]
   dtype: jnp.dtype
 
-def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
+def _interpret_jaxpr(jaxpr, *args, mesh, compiler_params, interpret_params):
   env = {}
 
   def read(var):
@@ -1039,7 +1041,7 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
   #  - Handle other higher-order primitives?
   #  - Megacore.
   _interpret = functools.partial(
-      _interpret_jaxpr, compiler_params=compiler_params,
+      _interpret_jaxpr, mesh=mesh, compiler_params=compiler_params,
       interpret_params=interpret_params)
   for eqn in jaxpr.eqns:
     with source_info_util.user_context(
@@ -1097,6 +1099,12 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
 
       elif prim is verification.pretend_p:
         out = []
+
+      elif ((prim is lax.axis_index_p)
+            and (mesh is not None) and (eqn.params['axis_name'] in mesh.shape)):
+        # For now, there can only be one core.
+        # TODO(jburnim): Support two Megacore cores.
+        out = jnp.int32(0)
 
       elif prim is lax.cond_p:
         def _make_branch(jaxpr):
@@ -1330,10 +1338,10 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
   return jax.util.safe_map(read, jaxpr.outvars)
 
 def _compute_start_indices(
-    block_mapping, loop_idx, *args, compiler_params, interpret_params):
+    block_mapping, loop_idx, *args, mesh, compiler_params, interpret_params):
   jaxpr = block_mapping.index_map_jaxpr
   block_indices = _interpret_jaxpr(
-      jaxpr.jaxpr, *jaxpr.consts, *loop_idx, *args,
+      jaxpr.jaxpr, *jaxpr.consts, *loop_idx, *args, mesh=mesh,
       compiler_params=compiler_params, interpret_params=interpret_params)
   if isinstance(block_mapping.indexing_mode, pallas_core.Blocked):
     ret = jnp.array(
@@ -1416,7 +1424,7 @@ def interpret_pallas_call(
     out_avals: tuple[jax_core.AbstractValue, ...],
     interpret_params: TPUInterpretParams,
 ):
-  del debug, mesh, cost_estimate, out_avals
+  del debug, cost_estimate, out_avals
 
   # args contains: *dynamic_grid_sizes, *index, *inputs.  (No consts?)
   dynamic_grid_args, scalars, input_args = split_list(
@@ -1615,12 +1623,12 @@ def interpret_pallas_call(
               bm,
               next_loop_idx,
               *scalar_buffer_ids,
+              mesh=mesh,
               compiler_params=compiler_params,
               interpret_params=interpret_params,
           )
           for bm in grid_mapping.block_mappings
       ]
-
       # Copy slices of the input to the kernel buffers.
 
       def _store_slice_to_kernel_input(index, input_var):
@@ -1678,7 +1686,7 @@ def interpret_pallas_call(
         )
 
       # Invoke the kernel.
-      _interpret_jaxpr(jaxpr, *kernel_buffer_ids,
+      _interpret_jaxpr(jaxpr, *kernel_buffer_ids, mesh=mesh,
                        compiler_params=compiler_params,
                        interpret_params=interpret_params)
 
@@ -1745,6 +1753,7 @@ def interpret_pallas_call(
             bm,
             initial_loop_idx,
             *scalar_buffer_ids,
+            mesh=mesh,
             compiler_params=compiler_params,
             interpret_params=interpret_params,
         )
