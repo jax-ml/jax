@@ -21,9 +21,7 @@ limitations under the License.
 #include <vector>
 
 #include "nanobind/nanobind.h"
-#include "absl/algorithm/container.h"
 #include "absl/base/casts.h"
-#include "absl/container/inlined_vector.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -31,24 +29,15 @@ limitations under the License.
 #include "absl/strings/numbers.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
-#include "llvm/include/llvm/Support/Casting.h"
 #include "jaxlib/gpu/vendor.h"
-#include "xla/ffi/ffi.h"
-#include "xla/ffi/ffi_api.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/host_callback.h"
 #include "xla/pjrt/transpose.h"
 #include "xla/primitive_util.h"
 #include "xla/python/callback.h"
-#include "xla/python/ifrt/host_callback.h"
 #include "xla/python/nb_numpy.h"
-#include "xla/python/py_host_callback.h"
-#include "xla/python/types.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
-#include "xla/shape_util.h"
-#include "xla/tsl/concurrency/ref_count.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace nb = nanobind;
 
@@ -166,130 +155,5 @@ void XlaPythonGpuCallback(gpuStream_t stream, void** buffers,
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(
     "xla_python_gpu_callback", &XlaPythonGpuCallback,
     absl::AsciiStrToUpper(JAX_GPU_PLUGIN_NAME));
-
-absl::Status XlaFfiPythonGpuCallback(
-    gpuStream_t stream,
-    std::vector<tsl::RCReference<xla::ifrt::LoadedHostCallback>>* callbacks,
-    uint64_t index, xla::ffi::RemainingArgs args,
-    xla::ffi::RemainingRets rets) {
-  auto loaded_callback = llvm::dyn_cast_or_null<xla::PyCpuLoadedHostCallback>(
-      callbacks->at(index).get());
-  if (loaded_callback == nullptr) {
-    return absl::InternalError(
-        "Expected a PyCpuLoadedHostCallback, got something else.");
-  }
-  xla::CpuCallback* callback = loaded_callback->cpu_callback();
-  size_t arity = args.size();
-  std::vector<void*> host_input_buffers(arity);
-  // Copy input GPU buffers to host
-  for (size_t i = 0; i < arity; ++i) {
-    auto arg = args.get<xla::ffi::AnyBuffer>(i);
-    if (arg->element_type() == xla::TOKEN) {
-      host_input_buffers[i] = nullptr;
-      continue;
-    }
-    void* buf = new char[arg->size_bytes()];
-    host_input_buffers[i] = buf;
-    // TODO(b/238441608): Use pinned memory here to speed up the transfer.
-    auto gpu_res =
-        gpuMemcpyAsync(buf, arg.value().untyped_data(), arg->size_bytes(),
-                       gpuMemcpyDeviceToHost, stream);
-    CHECK_EQ(gpu_res, gpuSuccess) << "Failed to gpuMemcpyAsync";
-  }
-  CHECK_EQ(gpuStreamSynchronize(stream), gpuSuccess)
-      << "Failed to gpuStreamSynchronize";
-  nb::gil_scoped_acquire gil;
-  nb::tuple host_input_arrays = nb::steal<nb::tuple>(PyTuple_New(arity));
-  for (size_t i = 0; i < arity; ++i) {
-    auto arg = args.get<xla::ffi::AnyBuffer>(i);
-    xla::PrimitiveType ptype = arg->element_type();
-    if (ptype == xla::TOKEN) {
-      PyTuple_SET_ITEM(host_input_arrays.ptr(), i, nb::none().inc_ref().ptr());
-    } else {
-      nb::capsule base(host_input_buffers[i], [](void* ptr) noexcept {
-        delete[] static_cast<char*>(ptr);
-      });
-      TF_ASSIGN_OR_RETURN(auto dtype, xla::PrimitiveTypeToNbDtype(ptype));
-      auto array = xla::nb_numpy_ndarray(dtype, arg->dimensions(), std::nullopt,
-                                         host_input_buffers[i], base);
-      array.attr("flags").attr("writeable") = nb::bool_(false);
-      PyTuple_SET_ITEM(host_input_arrays.ptr(), i, array.inc_ref().ptr());
-    }
-  }
-
-  xla::EnterHostCallback();
-  // TODO(dsuo): Change this to use the Python vectorcall protocol, which allows
-  // you to avoid constructing a tuple for the arguments.
-  absl::StatusOr<nb::tuple> maybe_result_tuple =
-      callback->FfiCall(host_input_arrays);
-  xla::LeaveHostCallback();
-  TF_ASSIGN_OR_RETURN(auto result_tuple, maybe_result_tuple);
-
-  std::vector<void*> temp_buffers;
-  for (size_t i = 0; i < rets.size(); ++i) {
-    auto ret = rets.get<xla::ffi::AnyBuffer>(i).value();
-    auto ptype = ret->element_type();
-    if (ptype == xla::TOKEN) continue;
-    nb::object output =
-        nb::borrow<nb::object>(PyTuple_GetItem(result_tuple.ptr(), i));
-    xla::nb_numpy_ndarray array =
-        xla::nb_numpy_ndarray::ensure(std::move(output));
-    absl::Span<int64_t const> strides(
-        reinterpret_cast<const int64_t*>(array.strides()), array.ndim());
-    // We expect the output to be in default numpy layout.
-    TF_ASSIGN_OR_RETURN(auto expected_shape, xla::ShapeUtil::MakeValidatedShape(
-                                                 ptype, ret->dimensions()));
-    auto expected_strides = ByteStridesForShape(expected_shape);
-    if (strides == expected_strides) {
-      auto gpu_res =
-          gpuMemcpyAsync(ret->untyped_data(), array.data(), ret->size_bytes(),
-                         gpuMemcpyHostToDevice, stream);
-      CHECK_EQ(gpu_res, gpuSuccess) << "Failed to gpuMemcpyAsync";
-    } else {
-      void* temp = new char[ret->size_bytes()];
-      temp_buffers.push_back(temp);
-      xla::TransposePlan::Options options;
-      options.elem_size_in_bytes = xla::primitive_util::ByteWidth(ptype);
-      absl::Span<int64_t const> dims(
-          reinterpret_cast<const int64_t*>(array.shape()), array.ndim());
-      options.dims = dims;
-      absl::InlinedVector<int64_t, 4> reversed_layout;
-      reversed_layout.resize(expected_shape.rank());
-      absl::c_reverse_copy(expected_shape.layout().minor_to_major(),
-                           reversed_layout.begin());
-      options.permutation = reversed_layout;
-      options.input_layout = xla::TransposePlan::Striding{strides};
-      TF_ASSIGN_OR_RETURN(auto plan,
-                          callback->transpose_cache().GetOrCreate(options));
-      plan->Execute(array.data(), temp);
-      auto gpu_res =
-          gpuMemcpyAsync(ret->untyped_data(), temp, ret->size_bytes(),
-                         gpuMemcpyHostToDevice, stream);
-      CHECK_EQ(gpu_res, gpuSuccess) << "Failed to gpuMemcpyAsync";
-    }
-  }
-  nb::gil_scoped_release release;
-  CHECK_EQ(gpuStreamSynchronize(stream), gpuSuccess)
-      << "Failed to gpuStreamSynchronize";
-  for (int i = 0; i < temp_buffers.size(); ++i) {
-    delete[] static_cast<char*>(temp_buffers[i]);
-  }
-  return absl::OkStatus();
-}
-
-XLA_FFI_DEFINE_HANDLER_SYMBOL(
-    kXlaFfiPythonGpuCallback, XlaFfiPythonGpuCallback,
-    xla::ffi::Ffi::Bind()
-        .Ctx<xla::ffi::PlatformStream<gpuStream_t>>()
-        .Ctx<xla::ffi::UserData<
-            std::vector<tsl::RCReference<xla::ifrt::LoadedHostCallback>>>>()
-        .Attr<uint64_t>("index")
-        .RemainingArgs()
-        .RemainingRets());
-XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(),
-                         "xla_ffi_python_gpu_callback",
-                         absl::AsciiStrToUpper(JAX_GPU_PLUGIN_NAME),
-                         kXlaFfiPythonGpuCallback);
-
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax
