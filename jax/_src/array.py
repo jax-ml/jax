@@ -1024,7 +1024,7 @@ def make_array_from_single_device_arrays(
     shape : Shape of the output ``jax.Array``. This conveys information already included with
       ``sharding`` and ``arrays`` and serves as a double check.
     sharding: Sharding: A global Sharding instance which describes how the output jax.Array is laid out across devices.
-    arrays: Sequence of ``jax.Array``\s that are each single device addressable. ``len(arrays)``
+    arrays: `list` or `tuple` of ``jax.Array``\s that are each single device addressable. ``len(arrays)``
       must equal ``len(sharding.addressable_devices)`` and the shape of each array must be the same. For multiprocess code,
       each process will call with a different ``arrays`` argument that corresponds to that processes' data.
       These arrays are commonly created via ``jax.device_put``.
@@ -1071,14 +1071,15 @@ def make_array_from_single_device_arrays(
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     return aval.dtype._rules.make_sharded_array(aval, sharding, arrays,
                                                 committed=True)
+  arrays = list(arrays) if isinstance(arrays, tuple) else arrays
   # TODO(phawkins): ideally the cast() could be checked.
   try:
     return ArrayImpl(aval, sharding, cast(Sequence[ArrayImpl], arrays),
                     committed=True)
   except TypeError:
-    if not isinstance(arrays, Sequence):
+    if not isinstance(arrays, list):
       raise TypeError("jax.make_array_from_single_device_arrays `arrays` "
-                      "argument must be a Sequence (list or tuple), but got "
+                      "argument must be a list or tuple, but got "
                       f"{type(arrays)}.")
     if any(isinstance(arr, core.Tracer) for arr in arrays):
       raise ValueError(
