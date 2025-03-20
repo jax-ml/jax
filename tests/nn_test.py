@@ -422,6 +422,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
         jax.grad(nn.sparse_plus)(-2.), nn.sparse_sigmoid(-2.),
         check_dtypes=False)
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSquareplusGrad(self):
     check_grads(nn.squareplus, (1e-8,), order=4,
                 rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
@@ -442,6 +443,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testSquareplusZero(self, dtype):
     self.assertEqual(dtype(1), nn.squareplus(dtype(0), dtype(4)))
 
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testMishGrad(self):
     check_grads(nn.mish, (1e-8,), order=4,
                 rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
