@@ -1664,8 +1664,6 @@ class StreamAnnotationTest(jtu.JaxTestCase):
   def test_stream_annotation_inside_shmap(self):
     if not jtu.test_device_matches(["gpu"]):
       self.skipTest("Stream annotation is only supported on GPU.")
-    if config.use_shardy_partitioner.value:
-      self.skipTest("Doesn't work with shardy")
 
     mesh = jtu.create_mesh((2,), ('x',))
     s = NamedSharding(mesh, P('x'))
