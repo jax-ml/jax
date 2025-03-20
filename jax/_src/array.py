@@ -1093,9 +1093,6 @@ def _get_aval_array(self):
   return core.update_aval_with_sharding(self.aval, self.sharding)
 core.pytype_aval_mappings[ArrayImpl] = _get_aval_array
 
-# TODO(jakevdp) replace this with true inheritance at the C++ level.
-basearray.Array.register(ArrayImpl)
-
 
 def _array_mlir_constant_handler(val):
   try:

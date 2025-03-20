@@ -33,8 +33,9 @@ import ml_dtypes
 import numpy as np
 
 from jax._src import config
+from jax._src import strict_abc
 from jax._src.typing import Array, DType, DTypeLike
-from jax._src.util import set_module, StrictABC
+from jax._src.util import set_module
 
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
@@ -82,7 +83,7 @@ class prng_key(extended):
   """
 
 
-class ExtendedDType(StrictABC):
+class ExtendedDType(strict_abc.ABC):
   """Abstract Base Class for extended dtypes"""
   @property
   @abc.abstractmethod

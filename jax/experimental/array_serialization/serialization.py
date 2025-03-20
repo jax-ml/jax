@@ -31,9 +31,9 @@ import jax
 from jax._src import array
 from jax._src import distributed
 from jax._src import sharding
-from jax._src.layout import Layout
+from jax._src import strict_abc
 from jax._src import typing
-from jax._src import util
+from jax._src.layout import Layout
 from jax._src.lib import xla_extension as xe
 import jax.numpy as jnp
 import numpy as np
@@ -433,7 +433,7 @@ def _get_key(key: int):
   return f'tensorstore_checkpoint_{key}'
 
 
-class GlobalAsyncCheckpointManagerBase(util.StrictABC):
+class GlobalAsyncCheckpointManagerBase(strict_abc.ABC):
   """Interface for checkpointing GDAs asynchronously.
 
   This class manages the state of an ongoing asynchronous checkpoint.

@@ -47,10 +47,11 @@ from jax._src.errors import (
 from jax._src import linear_util as lu
 
 from jax._src import source_info_util
+from jax._src import strict_abc
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, cache,
                            HashableFunction, HashableWrapper, weakref_lru_cache,
-                           partition_list, StrictABCMeta, foreach)
+                           partition_list, foreach)
 import jax._src.pretty_printer as pp
 from jax._src.named_sharding import NamedSharding
 from jax._src.lib import jax_jit
@@ -736,7 +737,7 @@ def _aval_property(name):
   return property(lambda self: getattr(self.aval, name))
 
 
-class Tracer(typing.Array, metaclass=StrictABCMeta):
+class Tracer(typing.Array, metaclass=strict_abc.ABCMeta):
   __array_priority__ = 1000
   __slots__ = ['_trace', '_line_info']
   __hash__ = None  # type: ignore

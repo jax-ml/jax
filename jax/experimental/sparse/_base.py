@@ -19,11 +19,11 @@ import math
 
 import jax
 from jax._src import core
-from jax._src import util
+from jax._src import strict_abc
 from jax._src.typing import Array
 
 
-class JAXSparse(util.StrictABC):
+class JAXSparse(strict_abc.ABC):
   """Base class for high-level JAX sparse objects."""
   data: jax.Array
   shape: tuple[int, ...]
