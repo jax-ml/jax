@@ -540,6 +540,21 @@ jax_multiplatform_test(
     ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
 )
 
+jax_multiplatform_test(
+    name = "tpu_splash_attention_kernel_sharded_test",
+    srcs = ["tpu_splash_attention_kernel_sharded_test.py"],
+    enable_configs = [
+        "tpu_v5e_4x2",
+        "tpu_v5p_2x2",
+    ],
+    shard_count = 5,
+    deps = [
+        "//jax:extend",
+        "//jax:pallas_tpu",
+        "//jax:pallas_tpu_ops",
+    ],
+)
+
 # This test doesn't need a TPU; it only tests numpy-using helpers.
 jax_py_test(
     name = "tpu_splash_attention_mask_test",
