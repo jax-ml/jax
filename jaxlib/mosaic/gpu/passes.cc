@@ -19,18 +19,18 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "llvm/include/llvm/ADT/StringRef.h"
-#include "mlir/include/mlir/Conversion/GPUCommon/GPUCommonPass.h"
-#include "mlir/include/mlir/Conversion/LLVMCommon/TypeConverter.h"
-#include "mlir/include/mlir/Dialect/GPU/IR/GPUDialect.h"
-#include "mlir/include/mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
-#include "mlir/include/mlir/IR/BuiltinAttributes.h"
-#include "mlir/include/mlir/IR/BuiltinOps.h"
-#include "mlir/include/mlir/IR/SymbolTable.h"
-#include "mlir/include/mlir/Pass/PassRegistry.h"
-#include "mlir/include/mlir/Support/LLVM.h"
-#include "mlir/include/mlir/Transforms/DialectConversion.h"
+#include "llvm/ADT/StringRef.h"
+#include "mlir/Conversion/GPUCommon/GPUCommonPass.h"
+#include "mlir/Conversion/LLVMCommon/TypeConverter.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/SymbolTable.h"
+#include "mlir/Pass/PassRegistry.h"
+#include "mlir/Support/LLVM.h"
+#include "mlir/Transforms/DialectConversion.h"
 #include "jaxlib/mosaic/pass_boilerplate.h"
 
 namespace mosaic {

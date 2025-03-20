@@ -22,6 +22,8 @@ limitations under the License.
 #include <optional>
 #include <utility>
 
+#include "absl/log/check.h"
+#include "absl/log/log.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MemAlloc.h"
 #include "llvm/Support/raw_ostream.h"
@@ -39,8 +41,6 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "absl/log/check.h"
-#include "absl/log/log.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/transforms/apply_vector_layout.h"
@@ -410,7 +410,7 @@ MLIR_CAPI_EXPORTED void mlirTpuRegisterMosaicSerdePass() {
   mlir::tpu::registerMosaicSerdePass();
 }
 
-#include "mlir/CAPI/Pass.h"     // IWYU pragma: keep
+#include "mlir/CAPI/Pass.h"  // IWYU pragma: keep
 #include "mlir/CAPI/Support.h"  // IWYU pragma: keep
 
 extern "C" {

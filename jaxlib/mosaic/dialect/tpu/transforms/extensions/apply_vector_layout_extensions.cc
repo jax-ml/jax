@@ -1,7 +1,7 @@
 #include "jaxlib/mosaic/dialect/tpu/transforms/apply_vector_layout_extensions.h"
 
-#include "llvm/include/llvm/ADT/StringMap.h"
-#include "mlir/include/mlir/IR/Operation.h"
+#include "llvm/ADT/StringMap.h"
+#include "mlir/IR/Operation.h"
 
 namespace mlir::tpu::extensions {
 

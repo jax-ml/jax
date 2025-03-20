@@ -3,9 +3,9 @@
 
 #include <functional>
 
-#include "llvm/include/llvm/ADT/StringMap.h"
-#include "mlir/include/mlir/IR/Operation.h"
-#include "mlir/include/mlir/Support/LLVM.h"
+#include "llvm/ADT/StringMap.h"
+#include "mlir/IR/Operation.h"
+#include "mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 

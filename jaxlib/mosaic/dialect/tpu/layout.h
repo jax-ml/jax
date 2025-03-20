@@ -24,6 +24,7 @@ limitations under the License.
 #include <ostream>
 #include <tuple>
 
+#include "absl/log/check.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/bit.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -38,7 +39,6 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "absl/log/check.h"
 
 namespace mlir::tpu {
 

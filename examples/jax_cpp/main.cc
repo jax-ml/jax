@@ -41,7 +41,7 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "third_party/absl/status/statusor.h"
+#include "absl/status/statusor.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
