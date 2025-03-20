@@ -457,4 +457,33 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
   let hasVerifier = 1;
 }
 
+def MosaicGPU_OptimizationBarrierOp : Op<MosaicGPU_Dialect, "optimization_barrier",
+    [InferTypeOpInterface]> {
+  let summary = "Prevents MLIR from moving operations across the barrier.";
+
+  let arguments = (ins
+    Variadic<AnyType>:$operands
+  );
+  let results = (outs Variadic<AnyType>);
+
+  let extraClassDeclaration = [{
+    static llvm::LogicalResult inferReturnTypes(
+        mlir::MLIRContext *,
+        std::optional<mlir::Location> location,
+        mlir::ValueRange operands,
+        mlir::DictionaryAttr attributes,
+        mlir::OpaqueProperties properties,
+        mlir::RegionRange regions,
+        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
+      if (operands.empty()) {
+        return ::mlir::emitOptionalError(
+          location, "expected non-empty operands");
+      }
+      ::mlir::TypeRange operand_types = operands.getTypes();
+      inferredReturnTypes.assign(operand_types.begin(), operand_types.end());
+      return ::mlir::success();
+    }
+  }];
+}
+
 #endif // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_

@@ -442,6 +442,57 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertNotIn("in_layouts", f.attributes)
     self.assertNotIn("out_layouts", f.attributes)
 
+  def test_optimization_barrier_op_propagates_user_layouts(self):
+    add = optimization_barrier = None
+
+    def body(lhs, rhs):
+      nonlocal add, optimization_barrier
+      optimization_barrier = mgpu.dialect.OptimizationBarrierOp([lhs, rhs])
+      lhs, rhs = optimization_barrier.results
+      add = arith.AddFOp(lhs, rhs)
+
+    with ir.InsertionPoint(self.module.body):
+      shape = (32, 4)
+      ty = ir.VectorType.get(shape, ir.BF16Type.get())
+      func.FuncOp.from_py_func(ty, ty)(body)
+
+    splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
+    add.attributes["out_layouts"] = ir.ArrayAttr.get([splat_layout])
+    mgpu.infer_layout(self.module)
+
+    self.assertSequenceEqual(
+        optimization_barrier.attributes["in_layouts"],
+        [splat_layout, splat_layout],
+    )
+    self.assertSequenceEqual(
+        optimization_barrier.attributes["out_layouts"],
+        [splat_layout, splat_layout],
+    )
+
+  def test_optimization_barrier_op_propagates_producer_layouts(self):
+    add = optimization_barrier = None
+
+    def body(lhs, rhs):
+      nonlocal add, optimization_barrier
+      add = arith.AddFOp(lhs, rhs)
+      optimization_barrier = mgpu.dialect.OptimizationBarrierOp([add])
+
+    with ir.InsertionPoint(self.module.body):
+      shape = (32, 4)
+      ty = ir.VectorType.get(shape, ir.BF16Type.get())
+      func.FuncOp.from_py_func(ty, ty)(body)
+
+    splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
+    add.attributes["out_layouts"] = ir.ArrayAttr.get([splat_layout])
+    mgpu.infer_layout(self.module)
+
+    self.assertSequenceEqual(
+        optimization_barrier.attributes["in_layouts"], [splat_layout]
+    )
+    self.assertSequenceEqual(
+        optimization_barrier.attributes["out_layouts"], [splat_layout]
+    )
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())

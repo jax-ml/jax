@@ -35,6 +35,7 @@ from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
+from jax._src.util import safe_zip
 from jax.experimental.mosaic.gpu import layouts as layouts_lib
 import numpy as np
 
@@ -201,6 +202,38 @@ def _initialize_barrier_op_lowering_rule(
 
   return utils.ptr_as_memref(
       barrier_base_ptr, initialize_barrier_op.barriers_ref.type),
+
+
+# TODO(bchetioui): remove once minimum jaxlib >= 0.5.3.
+OptimizationBarrierOp = getattr(mgpu, "OptimizationBarrierOp", None)
+
+
+@_register_lowering(OptimizationBarrierOp)
+def _optimization_barrier_op_lowering_rule(
+    _: LoweringContext,
+    op: OptimizationBarrierOp,
+) -> Sequence[ir.Value]:
+  if not all(ir.VectorType.isinstance(operand.type) for operand in op.operands):
+    raise NotImplementedError(
+        f"Optimization barrier op {op} has non-vector operands."
+    )
+
+  fragmented_arrays = []
+  for operand, layout in safe_zip(op.operands, inference_utils.in_layouts(op)):
+    ty = ir.VectorType(operand.type)
+    is_signed = False if ir.IntegerType.isinstance(ty.element_type) else None
+    fragmented_arrays.append(
+        _fragmented_array_from_ir(operand, layout, is_signed=is_signed)
+    )
+
+  lowered_fragmented_arrays = fa.optimization_barrier(*fragmented_arrays)
+  if isinstance(lowered_fragmented_arrays, fa.FragmentedArray):
+    lowered_fragmented_arrays = [lowered_fragmented_arrays]
+
+  return [
+      _fragmented_array_to_ir(arr, result.type)
+      for arr, result in safe_zip(lowered_fragmented_arrays, op.results)
+  ]
 
 
 @_register_lowering(arith.ConstantOp)
