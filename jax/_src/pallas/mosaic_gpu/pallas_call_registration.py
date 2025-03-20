@@ -96,6 +96,7 @@ def pallas_call_lowering(
       module=module,
       out_types=(*lowering_result.new_out_shapes, *lowering_result.gmem_scratch_shapes),
       input_output_aliases=input_output_aliases,
+      use_custom_barrier=False, # False until we add get_barrier_semaphore() feature
   )
   if lowering_result.gmem_scratch_shapes:  # Drop the GMEM scratch.
     outs = outs[:-len(lowering_result.gmem_scratch_shapes)]
