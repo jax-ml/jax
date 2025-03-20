@@ -17,10 +17,10 @@ from __future__ import annotations
 import abc
 import pathlib
 
-from jax._src import util
+from jax._src import strict_abc
 
 
-class CacheInterface(util.StrictABC):
+class CacheInterface(strict_abc.ABC):
   _path: pathlib.Path
 
   @abc.abstractmethod
