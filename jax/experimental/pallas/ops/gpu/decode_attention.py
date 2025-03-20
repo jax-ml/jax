@@ -359,16 +359,18 @@ def gqa(
       normalize_output=normalize_output,
   )
   with_kv_heads = jax.vmap(inner)
-  o, *res = jax.vmap(with_kv_heads)(
+  outputs = jax.vmap(with_kv_heads)(
       q_reshaped, k_transposed, v_transposed, start_idx, kv_seq_len
   )
-  o = o.reshape(batch_size, q_heads, head_dim)
   if return_residuals:
-    l, m = res[0]
+    o, (l, m) = outputs
+    o = o.reshape(batch_size, q_heads, head_dim)
     l = l.reshape(batch_size, q_heads)
     m = m.reshape(batch_size, q_heads)
     return o, (l, m)
   else:
+    o = outputs
+    o = o.reshape(batch_size, q_heads, head_dim)
     return o
 
 
