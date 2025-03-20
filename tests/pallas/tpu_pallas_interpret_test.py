@@ -486,6 +486,41 @@ class InterpretTest(jtu.JaxTestCase):
     with self.assertRaises(jax.errors.ConcretizationTypeError):
       kernel_call_dynamic_parallel_dimension()
 
+  def test_core_map_over_one_core(self):
+    mesh = pltpu.create_tensorcore_mesh("x", num_cores=1)
+
+    @jax.jit
+    def f(x):
+      y = jnp.zeros_like(x)
+      def inner(refs):
+        x_ref, y_ref = refs
+        @pl.core_map(mesh, interpret=mosaic_interpret.TPUInterpretParams())
+        def _():
+          num_cores = jax.lax.psum(1, "x")
+          slc_size = 16 // num_cores
+          def alloc(x_vmem_ref, y_vmem_ref, sem):
+            core_index = jax.lax.axis_index("x")
+            slc = pl.ds(core_index * slc_size, slc_size)
+            pltpu.async_copy(
+                x_ref.at[slc],
+                x_vmem_ref,
+                sem,
+            ).wait()
+            y = x_vmem_ref[...] + 1 + jax.lax.axis_index("x")
+            y_vmem_ref[...] = y
+            pltpu.async_copy(y_vmem_ref, y_ref.at[slc], sem).wait()
+          pl.run_scoped(
+              alloc,
+              pltpu.VMEM((slc_size, 128), x_ref.dtype),
+              pltpu.VMEM((slc_size, 128), y_ref.dtype),
+              pltpu.SemaphoreType.DMA,
+          )
+      _, y = pl.run_state(inner)((x, y))
+      return y
+    x = jnp.arange(16 * 128, dtype=jnp.int32).reshape((16, 128))
+    y = f(x)
+    np.testing.assert_array_equal(y, x + 1)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

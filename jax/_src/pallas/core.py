@@ -1168,11 +1168,19 @@ def core_map(
 
 
 @core_map_p.def_effectful_abstract_eval
-def _core_map_abstract_eval(*args, jaxpr, mesh, **_):
+def _core_map_abstract_eval(*args, jaxpr, mesh, **kwargs):
   del args
   if jaxpr.outvars:
     raise ValueError("core_map must not return any outputs.")
+  interpret = kwargs.get('interpret', False)
   effs = set()
+  if interpret:
+    try:
+      from jax._src.pallas.mosaic import interpret as mosaic_tpu_interpret  # Avoid circular dependency.
+      if isinstance(interpret, mosaic_tpu_interpret.TPUInterpretParams):
+        effs = mosaic_tpu_interpret.get_interpret_effects()
+    except ImportError:
+      pass
   for eff in jaxpr.effects:
     if mesh.discharges_effect(eff):
       continue
@@ -1264,10 +1272,18 @@ def _core_map_discharge_rule(in_avals, out_avals, *args_flat, jaxpr, mesh, **kwa
 
 
 def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
-  del in_atoms, kwargs
+  del in_atoms
   with jax_core.extend_axis_env_nd(tuple(mesh.shape.items())):
     jax_core.check_jaxpr(jaxpr)
+  interpret = kwargs.get('interpret', False)
   effs = set()
+  if interpret:
+    try:
+      from jax._src.pallas.mosaic import interpret as mosaic_tpu_interpret  # Avoid circular dependency.
+      if isinstance(interpret, mosaic_tpu_interpret.TPUInterpretParams):
+        effs = mosaic_tpu_interpret.get_interpret_effects()
+    except ImportError:
+      pass
   for eff in jaxpr.effects:
     if mesh.discharges_effect(eff):
       continue
