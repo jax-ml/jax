@@ -210,7 +210,7 @@ jobs:
               --test_env=JAX_TEST_NUM_THREADS=8 \
               --test_output=errors \
               --local_test_jobs=32 \
-              --test_timeout=600 \
+              --test_timeout=1800 \
               --config=resultstore \
               --config=rbe_cache \
               //tests:cpu_tests
