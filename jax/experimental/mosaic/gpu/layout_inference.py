@@ -44,7 +44,9 @@ _layout_inference_rules: dict[str, LayoutInferenceRule] = {}
 
 
 def _add_layout_inference_rule(op: type[ir.OpView], rule: LayoutInferenceRule):
-  _layout_inference_rules[op.OPERATION_NAME] = rule  # pytype: disable=attribute-error
+  if op is not None:
+    _layout_inference_rules[op.OPERATION_NAME] = rule  # pytype: disable=attribute-error
+  return rule
 
 
 def _set_layout_attributes(
@@ -192,7 +194,7 @@ def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
   # This is left for a future change, and currently we only do "down
   # propagation".
   layout = _choose_representative_layout(layouts)
-  # It is unsafe to t conclude that this op produces a splat if not all inputs
+  # It is unsafe to conclude that this op produces a splat if not all inputs
   # have been inferred: some of them might turn out not to be splats!
   if layouts_lib.is_splat_fragmented_layout(layout) and not all_inputs_have_layout:
     return None
@@ -245,6 +247,51 @@ for op in [
     vector.StoreOp,
 ]:
   _add_layout_inference_rule(op, _infer_pointwise_op_layouts)
+
+
+# TODO(bchetioui): remove once minimum jaxlib >= 0.5.3.
+OptimizationBarrierOp = getattr(mgpu, "OptimizationBarrierOp", None)
+
+
+@partial(_add_layout_inference_rule, OptimizationBarrierOp)
+def _infer_optimization_barrier_op_layout(
+    op: OptimizationBarrierOp,
+) -> OptionalLayouts:
+  def is_array(v: ir.Value) -> bool:
+    return ir.VectorType.isinstance(v.type)
+
+  if inference_utils.has_in_layouts_set(op):
+    op_in_layouts = list(inference_utils.in_layouts(op))
+    return op_in_layouts, op_in_layouts
+
+  if inference_utils.has_out_layouts_set(op):
+    op_out_layouts = list(inference_utils.out_layouts(op))
+    return op_out_layouts, op_out_layouts
+
+  layouts = [None] * len(op.operands)
+  for i, operand in enumerate(filter(is_array, op.operands)):
+    layouts[i] = inference_utils.value_layout(operand)
+
+  for i, result in enumerate(filter(is_array, op.results)):
+    possible_layouts = set()
+    for op_operand_use in cast(ir.OpResult, result).uses:
+      consumer = op_operand_use.owner
+      op_user = consumer.operands[op_operand_use.operand_number]
+      layout = inference_utils.in_layout_for_operand(consumer, op_user)
+      if layout is not None:
+        possible_layouts.add(layout)
+      if possible_layouts and layouts[i] is None:
+        # TODO(bchetioui): we could actually just pick any user layout here,
+        # and optimize later. This is fine for now.
+        layouts[i] = _choose_representative_layout(possible_layouts)
+
+  # TODO(bchetioui): handle annotating layout for only certain operands.
+  # Otherwise, layouts may not get propagated through optimization barriers, if
+  # a single branch does not carry any forcing layout, which is pretty bad.
+  if any(layout is None for layout in layouts):
+    return None
+
+  return layouts, layouts
 
 
 @partial(_add_layout_inference_rule, arith.ConstantOp)
