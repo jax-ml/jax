@@ -1568,8 +1568,8 @@ def categorical(
     shape: Optional, a tuple of nonnegative integers representing the result shape.
       Must be broadcast-compatible with ``np.delete(logits.shape, axis)``.
       The default (None) produces a result shape equal to ``np.delete(logits.shape, axis)``.
-    replace: If True, perform sampling without replacement. Default (False) is to
-      perform sampling with replacement.
+    replace: If True (default), perform sampling with replacement. If False, perform
+      sampling without replacement.
 
   Returns:
     A random array with int dtype and shape given by ``shape`` if ``shape``
