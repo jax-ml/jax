@@ -87,6 +87,15 @@ if RUNTIME_PATH and RUNTIME_PATH.exists():
   # Set this so that the custom call can find it
   os.environ["MOSAIC_GPU_RUNTIME_LIB_PATH"] = str(RUNTIME_PATH)
 
+if os.environ.get("MOSAIC_GPU_NVSHMEM_LLVM_LIB_PATH") is None:
+  try:
+    from nvidia import nvshmem
+  except ImportError:
+    pass
+  else:
+    os.environ["MOSAIC_GPU_NVSHMEM_LLVM_LIB_PATH"] = (
+      os.path.join(nvshmem.__path__[0], 'lib/libnvshmem_device.bc')
+    )
 
 mosaic_gpu_p = jax._src.core.Primitive("mosaic_gpu_p")
 mosaic_gpu_p.multiple_results = True
@@ -130,8 +139,12 @@ def _mosaic_gpu_lowering_rule(
       operands=args,
       operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
       result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
-      backend_config=kernel_id + module_asm,
+      backend_config=dict(
+          kernel_hash=ir.StringAttr.get(kernel_id),
+          module=ir.StringAttr.get(module_asm),
+      ),
       operand_output_aliases=dict(input_output_aliases),
+      api_version=4,
   )
   return op.results
 
