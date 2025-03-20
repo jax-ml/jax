@@ -1132,6 +1132,34 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256, dtype=jnp.int32)
     np.testing.assert_array_equal(kernel(x), jnp.broadcast_to(jnp.sum(x) * 3, [256]))
 
+  # Not testing with warpgroup semantics, because we want to enforce a layout.
+  def test_tile_slicing(self):
+    shape = (256, 128)
+    block_spec = plgpu.GPUBlockSpec(
+        transforms=(
+            plgpu.TilingTransform((64, 64)),
+            plgpu.SwizzleTransform(128),
+        )
+    )
+    @functools.partial(
+        pl.pallas_call,
+        in_specs=[block_spec],
+        out_specs=block_spec,
+        out_shape=jax.ShapeDtypeStruct((64, 64), jnp.uint16),
+    )
+    def kernel(x_ref, o_ref):
+      def sum_tiles(row, acc):
+        row_slice = pl.ds(row * 64, 64)
+        for col in range(128 // 64):
+          acc += x_ref[row_slice, pl.ds(col * 64, 64)]
+        return acc
+      acc = plgpu.layout_cast(jnp.zeros((64, 64), jnp.uint16), plgpu.Layout.WGMMA)
+      o_ref[...] = _fori_loop(False, 0, 256 // 64, sum_tiles, acc)
+
+    x = jnp.arange(math.prod(shape), dtype=jnp.uint16).reshape(shape)
+    y = x.reshape(256 // 64, 64, 128 // 64, 64).sum(axis=(0, 2), dtype=jnp.uint16)
+    np.testing.assert_array_equal(kernel(x), y)
+
   def test_input_output_aliases(self):
     # Note that we're writing to the input pointer, which should alias b_ptr.
     def kernel(a_ref, b_ref):
