@@ -1670,24 +1670,36 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     arr1 = jax.device_put(np_inp, s)
     arr2 = jax.device_put(np_inp, s)
 
+    # Makes sure the compute wrapped here is fusible.
+    # This is a workaround for limitations in XLA.
+    #  1) Compute-on boxes contain a single instruction cannot work.
+    #  2) Compute-on boxes contain tiny matmul cannot work.
     @compute_on('gpu_stream:1')
     @jax.jit
     def g(x, y):
-      return x * y
+      return x * y + x
 
     @compute_on('gpu_stream:2')
     @jax.jit
     def h(x, y):
-      return x * y
+      return x * y + x
 
     def f(x, y):
       z = g(x, y)
       w = h(3 * x, 2 * y)
       return z + w
 
-    out = jax.jit(shard_map(f, mesh=mesh, in_specs=(P('x'), P('x')),
-                            out_specs=P('x')))(arr1, arr2)
-    self.assertArraysEqual(out, arr1 * 7)
+    compiled_f = jax.jit(
+        shard_map(f, mesh=mesh, in_specs=(P('x'), P('x')),
+                  out_specs=P('x'))).lower(arr1, arr2).compile(
+                    {"xla_gpu_experimental_stream_annotation": True}
+                  )
+    compiled_text = compiled_f.as_text()
+    self.assertIn('call-start', compiled_text)
+    self.assertIn('_xla_stream_annotation="1"', compiled_text)
+    self.assertIn('call-start.1', compiled_f.as_text())
+    self.assertIn('_xla_stream_annotation="2"', compiled_text)
+    self.assertArraysEqual(compiled_f(arr1, arr2), arr1 * 11)
 
 
 class ActivationOffloadingTest(jtu.JaxTestCase):
