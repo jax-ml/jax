@@ -1667,7 +1667,6 @@ class StreamAnnotationTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
     # Tiny matrix size won't trigger GEMM rewrite.
-    # TODO(yunlongl): Update the test to use larger matrix size.
     np_inp = np.ones((16, 16))
     arr1 = jax.device_put(np_inp, s)
     arr2 = jax.device_put(np_inp, s)
