@@ -2340,7 +2340,10 @@ def wrap_compute_type_in_place(ctx, op):
   if ctx.jaxpr_eqn_ctx is not None and ctx.jaxpr_eqn_ctx.compute_type is not None:
     if ctx.jaxpr_eqn_ctx.compute_type.startswith("gpu_stream:"):
       stream = ctx.jaxpr_eqn_ctx.compute_type.split(":")[1]
-      dict_attr = {"_xla_stream_annotation": ir.StringAttr.get(stream)}
+      dict_attr = {
+        "_xla_stream_annotation": ir.StringAttr.get(stream),
+        "inlineable": ir.StringAttr.get("false"),
+      }
       op.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
     else:
       dict_attr = {"_xla_compute_type": ir.StringAttr.get(

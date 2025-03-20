@@ -1666,7 +1666,9 @@ class StreamAnnotationTest(jtu.JaxTestCase):
       self.skipTest("Stream annotation is only supported on GPU.")
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
-    np_inp = np.ones((8, 8))
+    # Tiny matrix size won't trigger GEMM rewrite.
+    # TODO(yunlongl): Update the test to use larger matrix size.
+    np_inp = np.ones((16, 16))
     arr1 = jax.device_put(np_inp, s)
     arr2 = jax.device_put(np_inp, s)
 
@@ -1685,10 +1687,15 @@ class StreamAnnotationTest(jtu.JaxTestCase):
       w = h(3 * x, 2 * y)
       return z + w
 
-    out = jax.jit(shard_map(f, mesh=mesh,
-                            in_specs=(P('x', 'y'), P('x', 'y')),
-                            out_specs=P('x', 'y')))(arr1, arr2)
-    self.assertArraysEqual(out, arr1 * 28)
+    compiled_f = jax.jit(
+        shard_map(f, mesh=mesh, in_specs=(P('x', 'y'), P('x', 'y')),
+                  out_specs=P('x', 'y'))).lower(arr1, arr2).compile()
+    compiled_text = compiled_f.as_text()
+    self.assertIn('call-start', compiled_text)
+    self.assertIn('_xla_stream_annotation="1"', compiled_text)
+    self.assertIn('call-start.1', compiled_f.as_text())
+    self.assertIn('_xla_stream_annotation="2"', compiled_text)
+    self.assertArraysEqual(compiled_f(arr1, arr2), arr1 * 56)
 
 
 class ActivationOffloadingTest(jtu.JaxTestCase):
