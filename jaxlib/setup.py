@@ -68,10 +68,10 @@ setup(
     url='https://github.com/jax-ml/jax',
     license='Apache-2.0',
     classifiers=[
-        "Programming Language :: Python :: 3.10",
-        "Programming Language :: Python :: 3.11",
-        "Programming Language :: Python :: 3.12",
-        "Programming Language :: Python :: 3.13",
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
+        'Programming Language :: Python :: 3.13',
     ],
     package_data={
         'jaxlib': [
@@ -105,7 +105,7 @@ setup(
             'triton/*.so',
             'include/xla/ffi/api/*.h',
         ],
-        'jaxlib.xla_extension': ['*.pyi'],
+        'jaxlib.xla_extension': ['*.pyi', 'profiler/*.pyi'],
     },
     zip_safe=False,
     distclass=BinaryDistribution,
