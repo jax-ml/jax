@@ -1102,20 +1102,6 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "sparse_nm_test",
-    srcs = ["sparse_nm_test.py"],
-    enable_backends = [],
-    enable_configs = [
-        "gpu_a100",
-        "gpu_h100",
-    ],
-    deps = [
-        "//jax:experimental_sparse",
-        "//jax:pallas_gpu",
-    ],
-)
-
-jax_multiplatform_test(
     name = "sparsify_test",
     srcs = ["sparsify_test.py"],
     args = ["--jax_bcoo_cusparse_lowering=true"],
