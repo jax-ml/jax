@@ -307,6 +307,8 @@ def _smem_tree_size(smem_buffers: ShapeTree) -> int:
           raise NotImplementedError("Misaligned barrier allocation")
         size += num_barriers * utils.MBARRIER_BYTES
       case TMEM(_):
+        # TODO(justinfu): This can trigger misaligned barrier allocations
+        # if TMEM is requested before barriers b/c it's not divisible by 8.
         size += 4  # i32 takes up 4 bytes
       case _:
         size += _count_buffer_bytes(l)

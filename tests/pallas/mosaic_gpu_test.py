@@ -83,6 +83,13 @@ class PallasSm90ATest(PallasTest, jtu.CudaArchSpecificTest):
     super().setUp()
 
 
+class PallasSm100ATest(PallasTest, jtu.CudaArchSpecificTest):
+
+  def setUp(self):
+    self.skip_unless_sm100a()
+    super().setUp()
+
+
 class PallasCallTest(PallasTest):
 
   @parameterized.product(
@@ -1529,6 +1536,28 @@ class PallasCallSm90ATest(PallasSm90ATest):
         grid=(1, 1),
     )(a, b)
     np.testing.assert_allclose(res, a @ b, rtol=1e-3)
+
+
+class PallasCallSm100ATest(PallasSm100ATest):
+
+  def test_tmem_alloc(self):
+    mesh = plgpu.GPUMesh(num_threads=1, axis_names=("x"))
+    @pl.run_state
+    def inner(y_ref):
+      @pl.core_map(mesh)
+      def _():
+        def scope(tmem_ref, smem_ref):
+          # Issue a write so the TMEM load is not DCE'd.
+          smem_ref[...] = tmem_ref[...]
+          plgpu.commit_smem()
+          plgpu.copy_smem_to_gmem(smem_ref, y_ref)
+          plgpu.wait_smem_to_gmem(0)
+        pl.run_scoped(scope,
+          plgpu.TMEM((128, 128), jnp.float32),
+          plgpu.SMEM((128, 128), jnp.float32))
+    y_init = jnp.zeros((128, 128), np.float32)
+    # Test that this runs without errors.
+    jax.block_until_ready(inner(y_init))
 
 
 class PipelineTest(PallasTest):
