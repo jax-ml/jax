@@ -192,8 +192,15 @@ std::string shapeToString(const T &shape) {
   return os.str();
 }
 
-SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
+SmallVector<int64_t> ComputeTileStrides(absl::Span<const int64_t> shape,
                                         absl::Span<const int64_t> tiling);
+
+inline SmallVector<int64_t> ComputeTileStrides(
+    MemRefType memref_ty, absl::Span<const int64_t> tiling) {
+  absl::Span<const int64_t> shape(memref_ty.getShape().data(),
+                                  memref_ty.getShape().size());
+  return ComputeTileStrides(shape, tiling);
+}
 // Assuming MKN matmul - This function must only be called after
 // canonicalization passes.
 //
