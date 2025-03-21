@@ -305,6 +305,41 @@ class ErrorCheckTests(jtu.JaxTestCase):
     serialized = run_export()
     run_import(serialized)
 
+  def test_error_check_aot_includes_traceback(self):
+    def run_export():
+      def function_that_triggers_error_for_traceback_test(x):
+        error_check.set_error_if(  # This line must be included in the traceback
+            x <= 0, "x must be greater than 0"
+        )
+        return x + 1
+
+      f = jax.jit(
+          error_check.wrap_for_export(
+              jax.jit(function_that_triggers_error_for_traceback_test)
+          )
+      )
+      x = jax.ShapeDtypeStruct((), jnp.float32)
+      serialized = jax.export.export(f)(x).serialize()
+      return serialized
+
+    def run_import(serialized):
+      f = jax.export.deserialize(serialized).call
+      f = jax.jit(error_check.unwrap_from_import(jax.jit(f)))
+      x = jnp.float32(-3.0)
+      _ = f(x)
+
+      msg = ""
+      try:
+        error_check.raise_if_error()
+      except JaxValueError as e:
+        msg = str(e)
+
+      self.assertIn("function_that_triggers_error_for_traceback_test", msg)
+      self.assertIn("This line must be included in the traceback", msg)
+
+    serialized = run_export()
+    run_import(serialized)
+
   def test_error_check_aot_should_not_override_existing_error(self):
     def f1(x):
       error_check.set_error_if(x <= 0, "x must be greater than 0 in f1")
