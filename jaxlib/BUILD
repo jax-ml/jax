@@ -81,7 +81,7 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:vector_dialect",
         "//jaxlib/mosaic",
         "//jaxlib/triton",
-        "@xla//xla/python:xla_extension",
+        "//jaxlib/xla:xla_client",
     ],
 )
 
@@ -94,7 +94,7 @@ symlink_files(
 
 symlink_files(
     name = "xla_client",
-    srcs = ["@xla//xla/python:xla_client"],
+    srcs = ["//jaxlib/xla:xla_client"],
     dst = ".",
     flatten = True,
 )
