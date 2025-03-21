@@ -1148,7 +1148,7 @@ def _all_to_all_batched_collective(axis_data, vals_in, dims_in,
       return _splitaxis(split_axis, axis_size, x_concat), split_axis
   # Here we have to handle either the major or the minor dimensions
   # We will be accumulating chunks into the three leading dims: [Major, Current, Minor, ...]
-  x, d = lax.expand_dims(_moveaxis(d, 0, x), (0, 2)), 1
+  x = lax.expand_dims(_moveaxis(d, 0, x), (0, 2))
   split_axis += 3; concat_axis += 3  # Offset by extra three leading dims
 
   if major_axes:
