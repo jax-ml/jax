@@ -12,11 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load(
+    "@xla//third_party/py:py_import.bzl",
+    "py_import",
+)
 load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
 load(
     "//jaxlib:jax.bzl",
     "jax_source_package",
     "jax_wheel",
+    "py_deps",
 )
 
 collect_data_files(
@@ -97,4 +102,43 @@ jax_source_package(
     ],
     source_package_binary = ":build_wheel",
     source_package_name = "jax",
+)
+
+genrule(
+    name = "internal_test_util_sources",
+    srcs = [
+        "//jax:internal_export_back_compat_test_util",
+        "//jax:internal_test_harnesses",
+        "//jax:internal_test_util",
+        "//jax:internal_export_back_compat_test_data",
+    ],
+    outs = ["internal_test_util_sources.zip"],
+    cmd = "$(location @bazel_tools//tools/zip:zipper) c $@ $(SRCS)",
+    tools = ["@bazel_tools//tools/zip:zipper"],
+)
+
+COMMON_DEPS = py_deps([
+    "absl/testing",
+    "numpy",
+    "ml_dtypes",
+    "scipy",
+    "opt_einsum",
+    "hypothesis",
+    "cloudpickle",
+])
+
+py_import(
+    name = "jax_py_import",
+    wheel = ":jax_wheel",
+    wheel_deps = [":internal_test_util_sources"],
+    deps = COMMON_DEPS,
+)
+
+# This target is used to add internal test util sources to the jax wheel.
+# This is needed for the tests that depend on jax and use internal test util sources.
+py_import(
+    name = "jax_wheel_with_internal_test_util",
+    wheel = "@pypi_jax//:whl",
+    wheel_deps = [":internal_test_util_sources"],
+    deps = COMMON_DEPS,
 )

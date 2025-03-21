@@ -16,6 +16,7 @@ python_init_repositories(
         "3.13-ft": "//build:requirements_lock_3_13_ft.txt",
     },
     local_wheel_inclusion_list = [
+        "jax-*",
         "jaxlib*",
         "jax_cuda*",
         "jax-cuda*",
