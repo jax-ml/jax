@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src.interpreters.xla import (
-  canonicalize_dtype as canonicalize_dtype,
-  canonicalize_dtype_handlers as canonicalize_dtype_handlers,
+from jax._src.core import (
+  canonicalize_dtype as _canonicalize_dtype,
+  canonicalize_dtype_handlers as _canonicalize_dtype_handlers,
 )
 
 from jax._src.dispatch import (
@@ -50,6 +50,15 @@ _deprecations = {
     "xe": (
         ("jax.interpreters.xla.xe was removed in JAX v0.4.36. "
          "Use jax.lib.xla_extension instead."), None
+    ),
+    "canonicalize_dtype": (
+        "jax.interpreters.xla.canonicalize_dtype is deprecated. Use"
+        "jax.core.canonicalize_dtype instead", _canonicalize_dtype
+    ),
+    "canonicalize_dtype_handlers": (
+        "jax.interpreters.xla.canonicalize_dtype_handlers is deprecated. Use"
+        "jax.core.canonicalize_dtype_handlers instead",
+        _canonicalize_dtype_handlers
     ),
 }
 

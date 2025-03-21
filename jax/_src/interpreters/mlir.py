@@ -1718,7 +1718,7 @@ def lower_jaxpr_to_fun(
       callee_name_stack = name_stack.extend(util.wrap_name(name, api_name))
     else:
       callee_name_stack = name_stack
-    consts = [ir_constant(xla.canonicalize_dtype(x)) for x in jaxpr.consts]
+    consts = [ir_constant(x) for x in jaxpr.consts]
     out_vals, tokens_out = jaxpr_subcomp(
         ctx, jaxpr.jaxpr, callee_name_stack, tokens_in,
         consts, *args, dim_var_values=dim_var_values)
@@ -1909,7 +1909,9 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
       h = HashableLiteral(v)
       c = cached_ir_consts.get(h)
       if c is None:
-        c = ir_constant(xla.canonicalize_dtype(v.val))
+        # It is safe to canonicalize here because this is always called within
+        # the appropriate JaxprEqnContext.
+        c = ir_constant(core.canonicalize_dtype(v.val))
         cached_ir_consts[h] = c
       return c
     else:
@@ -1959,12 +1961,12 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   foreach(write, jaxpr.invars, args)
   last_used = core.last_used(jaxpr)
   for eqn in jaxpr.eqns:
-    in_nodes = map(read, eqn.invars)
     source_info = eqn.source_info.replace(
         name_stack=name_stack + eqn.source_info.name_stack)
     loc = _source_info_to_location(ctx, eqn.primitive, source_info)
     with (source_info_util.user_context(eqn.source_info.traceback), loc,
           eqn.ctx.manager):
+      in_nodes = map(read, eqn.invars)
       override_rule = get_override_lowering_rule(eqn.primitive)
       platform_rules: dict[str, LoweringRule] = {}
       default_rule: LoweringRule | None = None
@@ -2187,6 +2189,8 @@ def lower_per_platform(ctx: LoweringRuleContext,
 def _ir_consts(consts) -> list[IrValues]:
   unique_consts = {id(const): const for const in consts}
   ir_consts = {
+      # This dtype canonicalization here is safe because it is only called from
+      # lower_fun within the appropriate JaxprEqnContext.
       id_: ir_constant(xla.canonicalize_dtype(const))
       for id_, const in unique_consts.items()
   }
@@ -2546,7 +2550,7 @@ def iota(ctx: LoweringRuleContext, aval_out, *, dimension: int):
 
 def full_like_aval(ctx: LoweringRuleContext, value, aval: core.ShapedArray) -> ir.Value:
   """Returns an IR constant shaped full of `value` shaped like `aval`."""
-  zero = ir_constant(np.array(value, dtypes.canonicalize_dtype(aval.dtype)))
+  zero = ir_constant(np.array(value, aval.dtype))
   return broadcast_in_dim(ctx, zero, aval, broadcast_dimensions=())
 
 def add_jaxvals_lowering(ctx, x, y):

@@ -17,14 +17,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from functools import partial
 from typing import Any, Union
 
 import numpy as np
 
 from jax._src import core
 from jax._src import dtypes
-from jax._src.abstract_arrays import numpy_scalar_types
 from jax._src.core import ShapedArray
 from jax._src.util import safe_zip, safe_map
 
@@ -35,11 +33,11 @@ from jax._src.lib import xla_client as xc
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
+# TODO(dfm): Remove these forwards
+canonicalize_dtype = core.canonicalize_dtype
+canonicalize_dtype_handlers = core.canonicalize_dtype_handlers
+
 # Types
-
-def identity(x): return x
-
-_scalar_types = dtypes.python_scalar_dtypes.keys()
 
 def _make_array_shape(aval: ShapedArray) -> Sequence[xc.Shape]:
   aval = core.physical_aval(aval)
@@ -103,48 +101,6 @@ _xla_shape_handlers: dict[type[core.AbstractValue],
     ShapedArray: _make_array_shape,
 }
 _xla_shape_handlers[core.AbstractToken] = lambda _: (xc.Shape.token_shape(),)
-
-
-# IR constants
-
-class InvalidInputException(Exception):
-  pass
-
-
-# TODO(mattjj): try to remove this canonicalize_dtype stuff
-def canonicalize_dtype(x):
-  typ = type(x)
-  handler = canonicalize_dtype_handlers.get(typ)
-  if handler: return handler(x)
-  for typ in typ.__mro__:
-    handler = canonicalize_dtype_handlers.get(typ)
-    if handler: return handler(x)
-  if hasattr(x, '__jax_array__'):
-    return canonicalize_dtype(x.__jax_array__())
-  raise InvalidInputException(
-      f"Argument '{x}' of type {type(x)} is not a valid JAX type.")
-
-def _canonicalize_masked_array_dtype(x):
-  raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
-                   "Use arr.filled() to convert the value to a standard numpy array.")
-
-def _canonicalize_ndarray_dtype(x):
-  return np.asarray(x, dtypes.canonicalize_dtype(x.dtype))
-
-def _canonicalize_python_scalar_dtype(typ, x):
-  return np.asarray(
-      x, dtypes.canonicalize_dtype(dtypes._scalar_type_to_dtype(typ, x)))
-
-canonicalize_dtype_handlers: dict[Any, Callable] = {}
-canonicalize_dtype_handlers.update(
-    (t, _canonicalize_ndarray_dtype) for t in numpy_scalar_types)
-canonicalize_dtype_handlers[np.ndarray] = _canonicalize_ndarray_dtype
-canonicalize_dtype_handlers[np.ma.MaskedArray] = _canonicalize_masked_array_dtype
-canonicalize_dtype_handlers.update(
-    (t, partial(_canonicalize_python_scalar_dtype, t)) for t in _scalar_types)
-canonicalize_dtype_handlers[core.Token] = identity
-canonicalize_dtype_handlers[core.DArray] = identity
-canonicalize_dtype_handlers[core.MutableArray] = identity
 
 initial_style_primitives: set[core.Primitive] = set()
 
