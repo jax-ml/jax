@@ -16,6 +16,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Deprecations
+
+  * {func}`jax.tree_util.build_tree` is deprecated. Use {func}`jax.tree.unflatten`
+    instead.
+
 ## jax 0.5.3 (Mar 19, 2025)
 
 * New Features
