@@ -337,6 +337,92 @@ class ErrorCheckTests(jtu.JaxTestCase):
     ):
       error_check.raise_if_error()
 
+  @parameterized.product(jit=[True, False])
+  def test_error_category_nan_check(self, jit):
+    def f(x):
+      error_check._set_error_if_with_category(
+          jnp.isnan(x), "x is NaN", category="nan"
+      )
+      return x
+
+    if jit:
+      f = jax.jit(f)
+
+    x = jnp.full((4,), jnp.nan, dtype=jnp.float32)
+
+    with error_check.error_checking_behavior(nan="ignore"):
+      _ = f(x)
+      error_check.raise_if_error()  # should not raise error
+
+    with error_check.error_checking_behavior(nan="raise"):
+      _ = f(x)
+      with self.assertRaisesRegex(JaxValueError, "x is NaN"):
+        error_check.raise_if_error()
+
+  @parameterized.product(jit=[True, False])
+  def test_error_category_divide_check(self, jit):
+    def f(x, y):
+      error_check._set_error_if_with_category(
+          y == 0.0, "division by zero", category="divide"
+      )
+      return x / y
+
+    if jit:
+      f = jax.jit(f)
+
+    x = jnp.arange(4, dtype=jnp.float32) + 1
+    y = jnp.arange(4, dtype=jnp.float32)
+
+    with error_check.error_checking_behavior(divide="ignore"):
+      _ = f(x, y)
+      error_check.raise_if_error()  # should not raise error
+
+    with error_check.error_checking_behavior(divide="raise"):
+      _ = f(x, y)
+      with self.assertRaisesRegex(JaxValueError, "division by zero"):
+        error_check.raise_if_error()
+
+  @parameterized.product(jit=[True, False])
+  def test_error_category_oob_check(self, jit):
+    def f(x, start_indices, slice_sizes):
+      error_check._set_error_if_with_category(
+          jnp.logical_or(
+              start_indices < 0,
+              start_indices + jnp.array(slice_sizes, dtype=jnp.int32)
+              >= jnp.array(x.shape, dtype=jnp.int32),
+          ),
+          "Out of bounds in dynamic_slice",
+          category="oob",
+      )
+      y = jax.lax.dynamic_slice(
+          x, start_indices, slice_sizes, allow_negative_indices=False
+      )
+      return y
+
+    if jit:
+      f = jax.jit(f, static_argnums=(2,))
+
+    x = jnp.arange(12).reshape(3, 4)
+    start_indices = jnp.array([0, -1], dtype=jnp.int32)
+    slice_sizes = (3, 4)
+
+    with error_check.error_checking_behavior(oob="ignore"):
+      _ = f(x, start_indices, slice_sizes)
+      error_check.raise_if_error()  # should not raise error
+
+    with error_check.error_checking_behavior(oob="raise"):
+      _ = f(x, start_indices, slice_sizes)
+      with self.assertRaisesRegex(
+          JaxValueError, "Out of bounds in dynamic_slice",
+      ):
+        error_check.raise_if_error()
+
+  def test_error_category_invalid_category(self):
+    with self.assertRaisesRegex(ValueError, "Invalid category"):
+      error_check._set_error_if_with_category(
+          jnp.isnan(jnp.float32(1.0)), "x is NaN", category="invalid"
+      )
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
