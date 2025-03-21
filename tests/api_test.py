@@ -4776,7 +4776,7 @@ class APITest(jtu.JaxTestCase):
   def test_deferred_primal_with_direct_linearize(self):
     def my_sin_lin(nzs, x):
       nz, = nzs
-      return (my_sin_p.bind(x), nz, x, lambda x, t: lax.mul(t, lax.cos(x)))
+      return (my_sin_p.bind(x, accuracy=None), nz, x, lambda x, t: lax.mul(t, lax.cos(x)))
 
     my_sin_p = core.Primitive("my_sin_p")
     my_sin_p.def_impl(lax.sin)
@@ -4823,8 +4823,8 @@ class RematTest(jtu.JaxTestCase):
     sin_impl = lax.sin_p.impl
     cos_impl = lax.cos_p.impl
     try:
-      lax.sin_p.def_impl(lambda x: sin_calls.append(1) or sin_impl(x))
-      lax.cos_p.def_impl(lambda x: cos_calls.append(1) or cos_impl(x))
+      lax.sin_p.def_impl(lambda x, **kwargs: sin_calls.append(1) or sin_impl(x, **kwargs))
+      lax.cos_p.def_impl(lambda x, **kwargs: cos_calls.append(1) or cos_impl(x, **kwargs))
       f_lin(3.)
     finally:
       lax.sin_p.def_impl(sin_impl)
@@ -5088,11 +5088,11 @@ class RematTest(jtu.JaxTestCase):
 
     jaxpr = api.make_jaxpr(api.linearize(f_yesremat, 4.)[1])(1.)
     scan_eqn, = jaxpr.jaxpr.eqns
-    self.assertIn(' cos ', str(scan_eqn.params['jaxpr']))
+    self.assertIn(' cos[', str(scan_eqn.params['jaxpr']))
 
     jaxpr = api.make_jaxpr(api.vjp(f_yesremat, 4.)[1])(1.)
     scan_eqn, = jaxpr.jaxpr.eqns
-    self.assertIn(' cos ', str(scan_eqn.params['jaxpr']))
+    self.assertIn(' cos[', str(scan_eqn.params['jaxpr']))
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -5117,7 +5117,7 @@ class RematTest(jtu.JaxTestCase):
     called = []
     sin_impl = lax.sin_p.impl
     try:
-      lax.sin_p.def_impl(lambda x: called.append(1) or sin_impl(x))
+      lax.sin_p.def_impl(lambda x, **kwargs: called.append(1) or sin_impl(x, **kwargs))
       api.grad(g)(3.)
     finally:
       lax.sin_p.def_impl(sin_impl)
@@ -5445,9 +5445,9 @@ class RematTest(jtu.JaxTestCase):
           ('new_remat', new_checkpoint),
       ]
       for policy_name, policy, in_jaxpr2, not_in_jaxpr2 in [
-          ('save_anything', lambda *_, **__: True, [], [' sin ', ' cos ']),
-          ('save_nothing',  lambda *_, **__: False, [' sin ', ' cos '], []),
-          ('save_sin',  lambda p, *_, **__: str(p) == 'sin', [' cos '], [' sin ']),
+          ('save_anything', lambda *_, **__: True, [], [' sin[', ' cos[[ ']),
+          ('save_nothing',  lambda *_, **__: False, [' sin[', ' cos['], []),
+          ('save_sin',  lambda p, *_, **__: str(p) == 'sin', [' cos['], [' sin[']),
       ])
   def test_remat_custom_policy(self, remat, policy, in_jaxpr2, not_in_jaxpr2):
     for square in [lambda x: x * x, api.jit(lambda x: x * x)]:
@@ -5477,8 +5477,8 @@ class RematTest(jtu.JaxTestCase):
               policy=save_cos)
     _, f_lin = api.linearize(f, 1.)
     jaxpr_text = str(f_lin.func.args[0])
-    self.assertNotIn(' sin ', jaxpr_text)
-    self.assertNotIn(' cos ', jaxpr_text)
+    self.assertNotIn(' sin[', jaxpr_text)
+    self.assertNotIn(' cos[', jaxpr_text)
     jtu.check_grads(f, (3.,), order=2, modes=['fwd', 'rev'])
 
   @parameterized.named_parameters(
@@ -5500,7 +5500,7 @@ class RematTest(jtu.JaxTestCase):
 
     _, f_lin = api.linearize(f, jnp.ones((2, 2)))
     jaxpr_text = str(f_lin.func.args[0])
-    self.assertEqual(jaxpr_text.count(' sin '), 2)
+    self.assertEqual(jaxpr_text.count(' sin['), 2)
     self.assertEqual(jaxpr_text.count(' dot_'), 6)
     jtu.check_grads(f, (jnp.ones((2, 2)),), order=2, modes=['fwd', 'rev'])
 
@@ -5523,7 +5523,7 @@ class RematTest(jtu.JaxTestCase):
 
     _, f_lin = api.linearize(f, jnp.ones((2, 2)))
     jaxpr_text = str(f_lin.func.args[0])
-    self.assertEqual(jaxpr_text.count(' sin '), 2)
+    self.assertEqual(jaxpr_text.count(' sin['), 2)
     self.assertEqual(jaxpr_text.count(' dot_general'), 6)
     jtu.check_grads(f, (jnp.ones((2, 2)),), order=2, modes=['fwd', 'rev'])
 
@@ -5546,7 +5546,7 @@ class RematTest(jtu.JaxTestCase):
 
     _, f_lin = api.linearize(f, jnp.ones((3, 2, 2)))
     jaxpr_text = str(f_lin.func.args[0])
-    self.assertEqual(jaxpr_text.count(' sin '), 2)
+    self.assertEqual(jaxpr_text.count(' sin['), 2)
     self.assertEqual(jaxpr_text.count(' dot_general'), 9)
     jtu.check_grads(f, (jnp.ones((3, 2, 2)),), order=2, modes=['fwd', 'rev'])
 
@@ -5570,7 +5570,7 @@ class RematTest(jtu.JaxTestCase):
 
     _, f_lin = api.linearize(f, jnp.ones((2, 2)))
     jaxpr_text = str(f_lin.func.args[0])
-    self.assertEqual(jaxpr_text.count(' sin '), 2)
+    self.assertEqual(jaxpr_text.count(' sin['), 2)
     self.assertEqual(jaxpr_text.count(' dot_'), 6)
     jtu.check_grads(f, (jnp.ones((2, 2)),), order=2, modes=['fwd', 'rev'])
 
@@ -5594,8 +5594,8 @@ class RematTest(jtu.JaxTestCase):
     # Two sine calls in the backward pass because while we don't save sines
     # within the (rematted) body function, we can save the scan carry, which
     # effectively saves one sine. Three cosines for the Jacobian coefficients.
-    self.assertEqual(jaxpr_text.count(' sin '), 2)
-    self.assertEqual(jaxpr_text.count(' cos '), 3)
+    self.assertEqual(jaxpr_text.count(' sin['), 2)
+    self.assertEqual(jaxpr_text.count(' cos['), 3)
     # Six calls to dot_general in the backward pass because we save the primal
     # matmuls and only compure the backward pass ones (two for each primal one).
     self.assertEqual(jaxpr_text.count(' dot_'), 6)
@@ -5901,8 +5901,8 @@ class RematTest(jtu.JaxTestCase):
     jtu.check_grads(remat(f), (3.,), order=2, modes=['rev'])
 
     jaxpr = api.make_jaxpr(api.linearize(remat(f), 4.)[1])(1.)
-    self.assertIn(' sin ', str(jaxpr))
-    self.assertIn(' cos ', str(jaxpr))
+    self.assertIn(' sin[', str(jaxpr))
+    self.assertIn(' cos[', str(jaxpr))
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -5947,8 +5947,8 @@ class RematTest(jtu.JaxTestCase):
     jaxpr = f_vjp.args[0].func.args[1]
     jaxpr_text = str(jaxpr)
 
-    self.assertEqual(jaxpr_text.count(' sin '), 3)
-    self.assertEqual(jaxpr_text.count(' cos '), 3)
+    self.assertEqual(jaxpr_text.count(' sin['), 3)
+    self.assertEqual(jaxpr_text.count(' cos['), 3)
     # Six calls to dot_general in the backward pass because we save the primal
     # matmuls and only compute the backward pass ones (two for each primal one).
     self.assertEqual(jaxpr_text.count(' dot_'), 6)
@@ -5965,8 +5965,8 @@ class RematTest(jtu.JaxTestCase):
 
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 0)
-    self.assertEqual(jaxpr_text.count(' cos '), 0)
+    self.assertEqual(jaxpr_text.count(' sin['), 0)
+    self.assertEqual(jaxpr_text.count(' cos['), 0)
 
   def test_remat_of_scan_funky_custom_jvp(self):
     def scan_apply(f, x):
@@ -5989,40 +5989,40 @@ class RematTest(jtu.JaxTestCase):
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 0)
-    self.assertEqual(jaxpr_text.count(' cos '), 0)
+    self.assertEqual(jaxpr_text.count(' sin['), 0)
+    self.assertEqual(jaxpr_text.count(' cos['), 0)
 
     save_sin = lambda prim, *_, **__: str(prim) == 'sin'
     f = new_checkpoint(partial(scan_apply, sin), policy=save_sin)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 0)
-    self.assertEqual(jaxpr_text.count(' cos '), 1)
+    self.assertEqual(jaxpr_text.count(' sin['), 0)
+    self.assertEqual(jaxpr_text.count(' cos['), 1)
 
     f = new_checkpoint(partial(scan_apply, sin),
                        policy=jax.checkpoint_policies.everything_saveable)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 0)
-    self.assertEqual(jaxpr_text.count(' cos '), 0)
+    self.assertEqual(jaxpr_text.count(' sin['), 0)
+    self.assertEqual(jaxpr_text.count(' cos['), 0)
 
     f = new_checkpoint(partial(scan_apply, sin),
                        policy=jax.checkpoint_policies.nothing_saveable)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 1)  # +1 b/c dce fixed point
-    self.assertEqual(jaxpr_text.count(' cos '), 1)
+    self.assertEqual(jaxpr_text.count(' sin['), 1)  # +1 b/c dce fixed point
+    self.assertEqual(jaxpr_text.count(' cos['), 1)
 
     f = new_checkpoint(lambda x: scan_apply(sin, scan_apply(sin, x)),
                        policy=jax.checkpoint_policies.nothing_saveable)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 2)  # +1 b/c dce fixed point
-    self.assertEqual(jaxpr_text.count(' cos '), 2)
+    self.assertEqual(jaxpr_text.count(' sin['), 2)  # +1 b/c dce fixed point
+    self.assertEqual(jaxpr_text.count(' cos['), 2)
 
   def test_remat_of_scan_funky_custom_jvp2(self):
     # Like the above test but instead of using jit inside custom_jvp, use scan.
@@ -6047,40 +6047,40 @@ class RematTest(jtu.JaxTestCase):
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 1)  # +1 b/c dce fixed point
-    self.assertEqual(jaxpr_text.count(' cos '), 0)
+    self.assertEqual(jaxpr_text.count(' sin['), 1)  # +1 b/c dce fixed point
+    self.assertEqual(jaxpr_text.count(' cos['), 0)
 
     save_sin = lambda prim, *_, **__: str(prim) == 'sin'
     f = new_checkpoint(partial(scan_apply, sin), policy=save_sin)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 0)
-    self.assertEqual(jaxpr_text.count(' cos '), 1)
+    self.assertEqual(jaxpr_text.count(' sin['), 0)
+    self.assertEqual(jaxpr_text.count(' cos['), 1)
 
     f = new_checkpoint(partial(scan_apply, sin),
                        policy=jax.checkpoint_policies.everything_saveable)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 0)
-    self.assertEqual(jaxpr_text.count(' cos '), 0)
+    self.assertEqual(jaxpr_text.count(' sin['), 0)
+    self.assertEqual(jaxpr_text.count(' cos['), 0)
 
     f = new_checkpoint(partial(scan_apply, sin),
                        policy=jax.checkpoint_policies.nothing_saveable)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 1)  # +1 b/c dce fixed point
-    self.assertEqual(jaxpr_text.count(' cos '), 1)
+    self.assertEqual(jaxpr_text.count(' sin['), 1)  # +1 b/c dce fixed point
+    self.assertEqual(jaxpr_text.count(' cos['), 1)
 
     f = new_checkpoint(lambda x: scan_apply(sin, scan_apply(sin, x)),
                        policy=jax.checkpoint_policies.nothing_saveable)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 2)  # +1 b/c dce fixed point
-    self.assertEqual(jaxpr_text.count(' cos '), 2)
+    self.assertEqual(jaxpr_text.count(' sin['), 2)  # +1 b/c dce fixed point
+    self.assertEqual(jaxpr_text.count(' cos['), 2)
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -6095,8 +6095,8 @@ class RematTest(jtu.JaxTestCase):
     jtu.check_grads(remat(f), (3.,), order=2, modes=['rev'])
 
     jaxpr = api.make_jaxpr(api.linearize(remat(f), 4.)[1])(1.)
-    self.assertNotIn(' sin ', str(jaxpr))
-    self.assertIn(' cos ', str(jaxpr))
+    self.assertNotIn(' sin[', str(jaxpr))
+    self.assertIn(' cos[', str(jaxpr))
 
     true_fn  = lambda c: jnp.sin(jnp.sin(c))
     false_fn = lambda c: c
@@ -6104,8 +6104,8 @@ class RematTest(jtu.JaxTestCase):
     jtu.check_grads(remat(f), (3.,), order=2, modes=['rev'])
 
     jaxpr = api.make_jaxpr(api.linearize(remat(f), 4.)[1])(1.)
-    self.assertIn(' sin ', str(jaxpr))
-    self.assertIn(' cos ', str(jaxpr))
+    self.assertIn(' sin[', str(jaxpr))
+    self.assertIn(' cos[', str(jaxpr))
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -6145,8 +6145,8 @@ class RematTest(jtu.JaxTestCase):
     _, f_vjp = api.vjp(f, jnp.ones((5, 5)))
     jaxpr_text = str(f_vjp.args[0].func.args[1])
 
-    self.assertEqual(jaxpr_text.count(' sin '), 2)
-    self.assertEqual(jaxpr_text.count(' cos '), 3)
+    self.assertEqual(jaxpr_text.count(' sin['), 2)
+    self.assertEqual(jaxpr_text.count(' cos['), 3)
     # Five calls to dot_general in the backward pass because we have two for
     # each forward-pass dot, except for the first which only has one (as we are
     # differentiating with respect to only W and not x).
@@ -6176,8 +6176,8 @@ class RematTest(jtu.JaxTestCase):
     jaxpr = f_vjp.args[0].func.args[1]
     jaxpr_text = str(jaxpr)
 
-    self.assertEqual(jaxpr_text.count(' sin '), 2)
-    self.assertEqual(jaxpr_text.count(' cos '), 3)
+    self.assertEqual(jaxpr_text.count(' sin['), 2)
+    self.assertEqual(jaxpr_text.count(' cos['), 3)
     self.assertEqual(jaxpr_text.count(' dot_'), 5)
 
     jtu.check_grads(api.jit(f), (jnp.ones((5, 5)),), order=2,
@@ -6191,8 +6191,8 @@ class RematTest(jtu.JaxTestCase):
 
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 0)
-    self.assertEqual(jaxpr_text.count(' cos '), 0)
+    self.assertEqual(jaxpr_text.count(' sin['), 0)
+    self.assertEqual(jaxpr_text.count(' cos['), 0)
 
   def test_remat_of_cond_funky_custom_jvp(self):
     def cond_apply(f, x):
@@ -6214,40 +6214,40 @@ class RematTest(jtu.JaxTestCase):
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 0)
-    self.assertEqual(jaxpr_text.count(' cos '), 0)
+    self.assertEqual(jaxpr_text.count(' sin['), 0)
+    self.assertEqual(jaxpr_text.count(' cos['), 0)
 
     save_sin = lambda prim, *_, **__: str(prim) == 'sin'
     f = new_checkpoint(partial(cond_apply, sin), policy=save_sin)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 0)
-    self.assertEqual(jaxpr_text.count(' cos '), 1)
+    self.assertEqual(jaxpr_text.count(' sin['), 0)
+    self.assertEqual(jaxpr_text.count(' cos['), 1)
 
     f = new_checkpoint(partial(cond_apply, sin),
                        policy=jax.checkpoint_policies.everything_saveable)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 0)
-    self.assertEqual(jaxpr_text.count(' cos '), 0)
+    self.assertEqual(jaxpr_text.count(' sin['), 0)
+    self.assertEqual(jaxpr_text.count(' cos['), 0)
 
     f = new_checkpoint(partial(cond_apply, sin),
                        policy=jax.checkpoint_policies.nothing_saveable)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 0)
-    self.assertEqual(jaxpr_text.count(' cos '), 1)
+    self.assertEqual(jaxpr_text.count(' sin['), 0)
+    self.assertEqual(jaxpr_text.count(' cos['), 1)
 
     f = new_checkpoint(lambda x: cond_apply(sin, cond_apply(sin, x)),
                        policy=jax.checkpoint_policies.nothing_saveable)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 1)
-    self.assertEqual(jaxpr_text.count(' cos '), 2)
+    self.assertEqual(jaxpr_text.count(' sin['), 1)
+    self.assertEqual(jaxpr_text.count(' cos['), 2)
 
   def test_remat_of_cond_funky_custom_jvp2(self):
     # Like the above test but instead of using jit inside custom_jvp, use cond.
@@ -6271,40 +6271,40 @@ class RematTest(jtu.JaxTestCase):
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 0)
-    self.assertEqual(jaxpr_text.count(' cos '), 0)
+    self.assertEqual(jaxpr_text.count(' sin['), 0)
+    self.assertEqual(jaxpr_text.count(' cos['), 0)
 
     save_sin = lambda prim, *_, **__: str(prim) == 'sin'
     f = new_checkpoint(partial(cond_apply, sin), policy=save_sin)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 0)
-    self.assertEqual(jaxpr_text.count(' cos '), 1)
+    self.assertEqual(jaxpr_text.count(' sin['), 0)
+    self.assertEqual(jaxpr_text.count(' cos['), 1)
 
     f = new_checkpoint(partial(cond_apply, sin),
                        policy=jax.checkpoint_policies.everything_saveable)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 0)
-    self.assertEqual(jaxpr_text.count(' cos '), 0)
+    self.assertEqual(jaxpr_text.count(' sin['), 0)
+    self.assertEqual(jaxpr_text.count(' cos['), 0)
 
     f = new_checkpoint(partial(cond_apply, sin),
                        policy=jax.checkpoint_policies.nothing_saveable)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 0)
-    self.assertEqual(jaxpr_text.count(' cos '), 1)
+    self.assertEqual(jaxpr_text.count(' sin['), 0)
+    self.assertEqual(jaxpr_text.count(' cos['), 1)
 
     f = new_checkpoint(lambda x: cond_apply(sin, cond_apply(sin, x)),
                        policy=jax.checkpoint_policies.nothing_saveable)
     jtu.check_grads(f, (3.,), order=2, modes=['rev'])
     jaxpr = api.make_jaxpr(api.linearize(f, 4.)[1])(1.)
     jaxpr_text = str(jaxpr)
-    self.assertEqual(jaxpr_text.count(' sin '), 1)
-    self.assertEqual(jaxpr_text.count(' cos '), 2)
+    self.assertEqual(jaxpr_text.count(' sin['), 1)
+    self.assertEqual(jaxpr_text.count(' cos['), 2)
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
@@ -6329,8 +6329,8 @@ class RematTest(jtu.JaxTestCase):
     self.assertArraysAllClose(y_dot, expected, check_dtypes=False)
 
     jaxpr = api.make_jaxpr(jax.linearize(remat(f), 4.)[1])(1.)
-    self.assertIn(' sin ', str(jaxpr))
-    self.assertIn(' cos ', str(jaxpr))
+    self.assertIn(' sin[', str(jaxpr))
+    self.assertIn(' cos[', str(jaxpr))
 
   def test_remat_of_while_loop_policy(self):
     def cond_fn(carry):
@@ -6347,8 +6347,8 @@ class RematTest(jtu.JaxTestCase):
     save_cos = lambda prim, *_, **__: str(prim) == 'cos'
     g = new_checkpoint(f, policy=save_cos)
     jaxpr = api.make_jaxpr(jax.linearize(g, 4.)[1])(1.)
-    self.assertIn(' sin ', str(jaxpr))
-    self.assertIn(' cos ', str(jaxpr))
+    self.assertIn(' sin[', str(jaxpr))
+    self.assertIn(' cos[', str(jaxpr))
 
   @jtu.thread_unsafe_test()  # logging isn't thread-safe
   def test_remat_residual_logging(self):

@@ -2549,14 +2549,18 @@ def _nextafter_lowering_rule(ctx: LoweringRuleContext, x, y):
 lowering_rules[lax.nextafter_p] = _nextafter_lowering_rule
 
 
-def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x):
+def _rsqrt_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   return math.rsqrt(x)
 
 
 lowering_rules[lax.rsqrt_p] = _rsqrt_lowering_rule
 
 
-def _sqrt_lowering_rule(ctx: LoweringRuleContext, x):
+def _sqrt_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   return math.sqrt(x)
 
 
@@ -2572,7 +2576,9 @@ def _square_lowering_rule(ctx: LoweringRuleContext, x):
 lowering_rules[lax.square_p] = _square_lowering_rule
 
 
-def _exp_lowering_rule(ctx: LoweringRuleContext, x):
+def _exp_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   return math.exp(x)
 
 
@@ -2605,9 +2611,11 @@ def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, *, y):
 lowering_rules[lax.integer_pow_p] = _integer_pow_lowering_rule
 
 
-def _exp2_lowering_rule(ctx: LoweringRuleContext, x):
+def _exp2_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
   # exp2 in JAX lowers to exp(ln2 * x), not to pow2. We match that behavior
   # here.
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   return lower_fun(
       lambda x: jnp.exp(jnp.astype(np.log(2), x.dtype) * x),
       multiple_results=False,
@@ -2618,7 +2626,9 @@ lowering_rules[lax.exp2_p] = _exp2_lowering_rule
 skip_mlir_conversions.add(lax.exp2_p)
 
 
-def _logistic_lowering_rule(ctx: LoweringRuleContext, x):
+def _logistic_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   neg_x = arith.negf(x)
   exp_neg_x = math.exp(neg_x)
   aval_out = ctx.avals_out[0]
@@ -2636,42 +2646,54 @@ def _logistic_lowering_rule(ctx: LoweringRuleContext, x):
 lowering_rules[lax.logistic_p] = _logistic_lowering_rule
 
 
-def _sin_lowering_rule(ctx: LoweringRuleContext, x):
+def _sin_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   return math.sin(x)
 
 
 lowering_rules[lax.sin_p] = _sin_lowering_rule
 
 
-def _cos_lowering_rule(ctx: LoweringRuleContext, x):
+def _cos_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   return math.cos(x)
 
 
 lowering_rules[lax.cos_p] = _cos_lowering_rule
 
 
-def _tan_lowering_rule(ctx: LoweringRuleContext, x):
+def _tan_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   return math.tan(x)
 
 
 lowering_rules[lax.tan_p] = _tan_lowering_rule
 
 
-def _tanh_lowering_rule(ctx: LoweringRuleContext, x):
+def _tanh_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   return math.tanh(x)
 
 
 lowering_rules[lax.tanh_p] = _tanh_lowering_rule
 
 
-def _log_lowering_rule(ctx: LoweringRuleContext, x):
+def _log_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   return math.log(x)
 
 
 lowering_rules[lax.log_p] = _log_lowering_rule
 
 
-def _log1p_lowering_rule(ctx: LoweringRuleContext, x):
+def _log1p_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
+  if accuracy is not None:
+    raise NotImplementedError("Not implemented: accuracy")
   return math.log1p(x)
 
 
