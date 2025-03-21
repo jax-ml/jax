@@ -368,8 +368,6 @@ class JaxArrayTest(jtu.JaxTestCase):
       array.ArrayImpl(core.ShapedArray(shape, np.float32), s, bufs, committed=True)
 
   def test_duplicated_devices_in_arrays(self):
-    if xc._version <= 274:
-      self.skipTest('Test requires jaxlib version 275')
     shape = (8, 2)
     mesh = jtu.create_mesh((1, 2), ('x', 'y'))
     # Sharding device ids = {0, 1}

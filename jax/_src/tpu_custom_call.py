@@ -484,13 +484,9 @@ def _lower_mosaic_module_to_asm(
       module_op = module.operation.clone()
     prev_allow_unregistered_dialects = ctx.allow_unregistered_dialects
     ctx.allow_unregistered_dialects = True
-    # TODO(apaszke): Remove once the minimum jaxlib version is at least 0.4.37.
-    if jax.version._version_as_tuple(jax.lib.__version__) < (0, 4, 37):
-      target_version = ""
-    else:
-      target_version = (
-          f"target-version={ir_version}" if ir_version is not None else ""
-      )
+    target_version = (
+        f"target-version={ir_version}" if ir_version is not None else ""
+    )
     try:
       pipeline = PassManager.parse(
           "builtin.module(mosaic-serde{serialize=true " + target_version + "})"
