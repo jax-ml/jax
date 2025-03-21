@@ -630,8 +630,6 @@ def TestFactory(xla_backend,
     def testCustomCallLookup(self):
       if self.backend.platform != "cpu":
         self.skipTest("Test requires cpu platform")
-      if xla_client._version < 241:
-        self.skipTest("Test requires jaxlib version 241")
 
       self.assertTrue(_CUSTOM_CALLS_REGISTERED)
       xla_client.make_cpu_client()
