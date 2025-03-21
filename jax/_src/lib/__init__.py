@@ -40,7 +40,7 @@ except Exception as err:
   raise ImportError(msg) from err
 
 
-# Checks the jaxlib version before importing anything else from jaxlib.
+# Checks the jaxlib version before importing anything else.
 # Returns the jaxlib version string.
 def check_jaxlib_version(jax_version: str, jaxlib_version: str,
                          minimum_jaxlib_version: str) -> tuple[int, ...]:
@@ -77,20 +77,23 @@ version = check_jaxlib_version(
   jaxlib_version=jaxlib.version.__version__,
   minimum_jaxlib_version=jax.version._minimum_jaxlib_version)
 
-# Before importing any C compiled modules from jaxlib, first import the CPU
+# Before importing any C compiled modules, first import the CPU
 # feature guard module to verify that jaxlib was compiled in a way that only
 # uses instructions that are present on this machine.
 import jaxlib.cpu_feature_guard as cpu_feature_guard
 cpu_feature_guard.check_cpu_features()
 
-import jaxlib.utils as utils  # noqa: F401
-import jaxlib.xla_client as xla_client
 import jaxlib.lapack as lapack  # noqa: F401
+import jaxlib.utils as utils  # noqa: F401
+import jaxlib.xla_extension as xla_extension  # noqa: F401
+from jaxlib.xla_extension import guard_lib as guard_lib  # noqa: F401
+from jaxlib.xla_extension import jax_jit as jax_jit  # noqa: F401
+from jaxlib.xla_extension import pmap_lib as pmap_lib  # noqa: F401
+from jaxlib.xla_extension import pytree as pytree  # noqa: F401
+import jaxlib.xla_client as xla_client  # noqa: F401
 
-xla_extension = xla_client._xla
-pytree = xla_client._xla.pytree
-jax_jit = xla_client._xla.jax_jit
-pmap_lib = xla_client._xla.pmap_lib
+from jaxlib.xla_extension import Device as Device  # noqa: F401
+
 
 # XLA garbage collection: see https://github.com/jax-ml/jax/issues/14882
 def _xla_gc_callback(*args):
@@ -167,6 +170,3 @@ def _cuda_path() -> str | None:
   return None
 
 cuda_path = _cuda_path()
-
-guard_lib = xla_client._xla.guard_lib
-Device = xla_client._xla.Device

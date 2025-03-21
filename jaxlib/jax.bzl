@@ -132,6 +132,9 @@ def pytype_strict_library(name, pytype_srcs = [], **kwargs):
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
     native.py_library(name = name, data = data, **new_kwargs)
 
+py_strict_library = native.py_library
+py_strict_test = native.py_test
+
 def py_library_providing_imports_info(*, name, lib_rule = native.py_library, pytype_srcs = [], **kwargs):
     data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
