@@ -52,7 +52,7 @@ jobs:
 
       - name: Restore cached TSAN CPython
         id: cache-cpython-tsan-restore
-        uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        uses: actions/cache/restore@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
           path: |
             ./python-tsan.tgz
@@ -75,7 +75,7 @@ jobs:
       - name: Save TSAN CPython
         id: cache-cpython-tsan-save
         if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        uses: actions/cache/save@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
           path: |
             ./python-tsan.tgz
@@ -88,7 +88,7 @@ jobs:
 
       - name: Restore cached TSAN Numpy
         id: cache-numpy-tsan-restore
-        uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        uses: actions/cache/restore@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
           path: |
             ./wheelhouse
@@ -142,7 +142,7 @@ jobs:
       - name: Save TSAN Numpy wheel
         id: cache-numpy-tsan-save
         if: steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        uses: actions/cache/save@d4323d4df104b026a6aa633fdb11d772146be0bf # v4.2.2
         with:
           path: |
             ./wheelhouse
