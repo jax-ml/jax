@@ -766,6 +766,7 @@ def lower_jaxpr_to_module(
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
     mgpu.infer_layout(module)  # pytype: disable=attribute-error
+    mgpu.infer_transforms(module)  # pytype: disable=attribute-error
     mgpu.lower_mgpu_dialect(module, launch_ctx)  # pytype: disable=attribute-error
 
   mgpu_core._initialize_scratch(launch_ctx, scratch_arr)
@@ -1837,13 +1838,15 @@ def _run_scoped_lowering_rule(
   for v in jaxpr.invars:
     aval = v.aval
     if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
-      if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Warpgroup:
-        # TODO(bchetioui): Fix this and remove the NotImplementedError.
-        raise NotImplementedError(
-            "WGMMA accumulators are not supported with Warpgroup semantics."
-        )
-      mlir_dtype = mlir.dtype_to_ir_type(aval.dtype)
-      input_refs.append(mgpu.WGMMAAccumulator.zero(*aval.shape, mlir_dtype))
+      dtype = mlir.dtype_to_ir_type(aval.dtype)
+      if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+        input_refs.append(mgpu.WGMMAAccumulator.zero(*aval.shape, dtype))
+      else:
+        zero = arith_dialect.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
+        acc = vector_dialect.splat(ir.VectorType.get(aval.shape, dtype), zero)
+        acc = mgpu.dialect.optimization_barrier([acc])
+        nvvm_dialect.wgmma_fence_aligned()
+        input_refs.append(acc)
       should_discharge.append(True)
     elif isinstance(aval.dtype, gpu_core.BarrierType):
       input_refs.append(
