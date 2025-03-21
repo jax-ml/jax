@@ -847,10 +847,17 @@ class LoweringRuleContext:
     """Returns true if the lowering parameters are in forward compatibility mode.
     """
     lowering_parameters = self.module_context.lowering_parameters
-    return (
-        lowering_parameters.for_export
-        and not lowering_parameters.export_ignore_forward_compatibility
+
+    check_platforms: Sequence[str] = (
+        self.platforms or self.module_context.platforms
     )
+    force_forward_compat = any(
+        p in xb.FORCE_FORWARD_COMPAT_LOWERING_PLATFORMS for p in check_platforms
+    )
+
+    return (
+        lowering_parameters.for_export or force_forward_compat
+    ) and not lowering_parameters.export_ignore_forward_compatibility
 
 
 if not MYPY:
