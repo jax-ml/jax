@@ -384,6 +384,9 @@ class UnswizzleRef(state_types.Transform):
 class PeerMemRef(state_types.Transform):
   dev_id: Any
 
+  def apply(self, ref: ir.Value) -> ir.Value:
+    return mgpu_utils.to_remote_memref(ref, _ensure_ir_value(self.dev_id, jnp.int32))
+
   def transform_shape(self, shape):
     return shape
 
@@ -397,9 +400,6 @@ class PeerMemRef(state_types.Transform):
 
   def tree_flatten(self):
     return (self.dev_id,), ()
-
-  def to_gpu_transform(self) -> mgpu.MemRefTransform:
-    return mgpu.PeerMemTransform(self.dev_id)
 
   @classmethod
   def tree_unflatten(cls, metadata, arrays):

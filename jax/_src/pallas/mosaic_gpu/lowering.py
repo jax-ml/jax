@@ -960,9 +960,7 @@ def _handle_peer_transform(
     ref: ir.Value, transforms: Sequence[gpu_core.Transform]
 ) -> tuple[ir.Value, Sequence[gpu_core.Transform]]:
   if len(transforms) != 0 and isinstance(transforms[0], gpu_core.PeerMemRef):
-    transforms[0].dev_id = gpu_core._ensure_ir_value(transforms[0].dev_id, jnp.int32)
-    mgpu_transform = transforms[0].to_gpu_transform()
-    return mgpu_transform.apply(ref), transforms[1:]
+    return transforms[0].apply(ref), transforms[1:]
   return ref, transforms
 
 
