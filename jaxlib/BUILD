@@ -50,8 +50,8 @@ py_library_providing_imports_info(
         "init.py",
         "lapack.py",
         "plugin_support.py",
+        "xla_client.py",
         ":version",
-        ":xla_client",
         ":xla_extension_py",
     ],
     data = [":ffi_headers"],
@@ -88,13 +88,6 @@ py_library_providing_imports_info(
 symlink_files(
     name = "version",
     srcs = ["//jax:version.py"],
-    dst = ".",
-    flatten = True,
-)
-
-symlink_files(
-    name = "xla_client",
-    srcs = ["//jaxlib/xla:xla_client"],
     dst = ".",
     flatten = True,
 )
