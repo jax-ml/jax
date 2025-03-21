@@ -2685,6 +2685,28 @@ class ShardMapTest(jtu.JaxTestCase):
               )(x)  # don't crash
     self.assertArraysEqual(y, np.array([6, 7], dtype=np.float32))
 
+  @config.varying_axes_in_types(True)
+  def test_mul_with_vma_in_types(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+    x = np.arange(8.)
+
+    def f(x):
+      self.assertEqual(x.aval.vma, frozenset({'x'}))
+      out = x * 2
+      self.assertEqual(out.aval.vma, frozenset({'x'}))
+      return out
+
+    f = jax.jit(shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P('x')))
+    jaxpr = f.trace(x).jaxpr
+    self.assertIn("pbroadcast[axes=('x',)", str(jaxpr))
+    out = f(x)
+    self.assertArraysEqual(out, x * 2)
+
+    # TODO(yashkatariya): Enable grad test which requires adding psum_p support.
+    # def g(x, y):
+    #   return jnp.sum(f(x, y))
+    # print(jax.jit(jax.grad(g)).trace(x, y).jaxpr)
+
 
 class FunSpec(NamedTuple):
   name: str

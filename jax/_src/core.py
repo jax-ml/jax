@@ -1900,26 +1900,35 @@ def get_sharding(sharding, shape):
   _check_divisibility(out_s, shape)
   return out_s
 
-def str_short_aval(shape, dtype, mesh, spec, short_dtypes=False,
-                   mesh_axis_types=False) -> str:
+def str_short_aval(shape, dtype, mesh, spec, vma,
+                   short_dtypes=False, mesh_axis_types=False) -> str:
   dt_str = dtypes.short_dtype_name(dtype) if short_dtypes else dtype.name
   dt_str = dt_str.replace('void', 'float0')
   shapestr = _get_shape_sharding_str(shape, spec)
   mesh_axes = f'({mesh._axis_types_dict})' if mesh_axis_types else ''
-  return f'{dt_str}[{shapestr}]{mesh_axes}'
+  vma = f"{{{','.join(i for i in vma)}}}" if vma else ''
+  return f'{dt_str}[{shapestr}]{vma}{mesh_axes}'
+
+def get_vma(vma, mesh):
+  for i in vma:
+    if mesh._name_to_type[i] != AxisType.Manual:
+      raise ValueError(
+          "Axes mentioned in `vma` field of ShapedArray should"
+          f" be of type `Manual`. Got axis: {i} of type {mesh._name_to_type[i]}")
+  return vma
 
 class ShapedArray(UnshapedArray):
-  __slots__ = ['shape', 'sharding', 'varying_manual_axes']  # inherits slots from parent
+  __slots__ = ['shape', 'sharding', 'vma']  # inherits slots from parent
   array_abstraction_level = 2
 
   def __init__(self, shape, dtype, weak_type=False, *, sharding=None,
-               varying_manual_axes: frozenset[AxisName] = frozenset()):
+               vma: frozenset[AxisName] = frozenset()):
     self.shape = canonicalize_shape(shape)
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
     self.sharding = get_sharding(sharding, self.shape)
     if config.varying_axes_in_types.value:
-      self.varying_manual_axes = varying_manual_axes
+      self.vma = get_vma(vma, self.sharding.mesh)
 
   def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
     if shape is None:
@@ -1930,8 +1939,8 @@ class ShapedArray(UnshapedArray):
       weak_type = self.weak_type
     if 'sharding' not in kwargs:
       kwargs['sharding'] = self.sharding
-    if 'varying_manual_axes' not in kwargs:
-      kwargs['varying_manual_axes'] = getattr(self, 'varying_manual_axes',
+    if 'vma' not in kwargs:
+      kwargs['vma'] = getattr(self, 'vma',
                                               frozenset())
     return ShapedArray(shape, dtype, weak_type, **kwargs)
 
@@ -1950,25 +1959,26 @@ class ShapedArray(UnshapedArray):
             and self.dtype == other.dtype and self.shape == other.shape
             and self.weak_type == other.weak_type
             and self.sharding == other.sharding
-            and (getattr(self, 'varying_manual_axes', frozenset()) ==
-                 getattr(other, 'varying_manual_axes', frozenset())))
+            and (getattr(self, 'vma', frozenset()) ==
+                 getattr(other, 'vma', frozenset())))
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
     # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
     return hash((self.shape, self.dtype, self.weak_type, self.sharding,
-                 getattr(self, 'varying_manual_axes', frozenset())))
+                 getattr(self, 'vma', frozenset())))
 
   def to_tangent_aval(self):
     return ShapedArray(
         self.shape, primal_dtype_to_tangent_dtype(self.dtype),
         self.weak_type, sharding=self.sharding,
-        varying_manual_axes=getattr(self, 'varying_manual_axes', frozenset()))
+        vma=getattr(self, 'vma', frozenset()))
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str_short_aval(
         self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,
+        getattr(self, 'varying_manual_axes', frozenset()),
         short_dtypes, mesh_axis_types)
 
   def _len(self, ignored_tracer):
@@ -1999,6 +2009,16 @@ def primal_dtype_to_tangent_dtype(primal_dtype):
   else:
     return primal_dtype
 
+
+def standard_insert_pbroadcast(*args):
+  if not config.varying_axes_in_types.value:
+    return args
+  # TODO(yashkatariya): Move pbroadcast out of shard_map
+  from jax.experimental.shard_map import pbroadcast  # type: ignore
+  in_vma = [get_aval(a).vma for a in args]
+  out_vma = frozenset.union(*in_vma)
+  return [pbroadcast(arg, tuple(n for n in out_vma if n not in src))
+          if out_vma - src else arg for arg, src in zip(args, in_vma)]
 
 # Dynamic shape stuff below here! We keep the abstract values distinct just so
 # as not to interfere with any static shape machinery.

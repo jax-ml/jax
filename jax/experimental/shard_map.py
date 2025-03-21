@@ -189,7 +189,8 @@ def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
         raise e('shard_map out_specs') from None
       return tuple(map(_canonicalize_spec, out_specs_flat))
 
-    if rewrite := check_rep:
+    rewrite = check_rep
+    if not config.varying_axes_in_types.value and rewrite:
       fun = _efficient_transpose_rewrite(fun, mesh, in_names_flat, out_names_thunk)
 
     try:
@@ -577,7 +578,8 @@ def _shard_shaped_array(mesh: Mesh, auto: frozenset, names: AxisNames,
                     for i, sz in enumerate(aval.shape))
   manual_mesh = _as_manual_mesh(mesh, auto)
   new_sharding = NamedSharding(manual_mesh, aval.sharding.spec)
-  return aval.update(shape=new_shape, sharding=new_sharding)
+  vma = frozenset({n for ns in names.values() for n in ns})
+  return aval.update(shape=new_shape, sharding=new_sharding, vma=vma)
 core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
 
 def _unshard_shaped_array(mesh: Mesh, names: AxisNames,
@@ -606,7 +608,7 @@ def _unshard_shaped_array(mesh: Mesh, names: AxisNames,
   new_mesh = (mesh.abstract_mesh if get_abstract_mesh().empty else
               get_abstract_mesh())
   new_sharding = NamedSharding(new_mesh, out_spec)
-  return aval.update(shape=new_shape, sharding=new_sharding)
+  return aval.update(shape=new_shape, sharding=new_sharding, vma=frozenset())
 core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
 
 # Type-checking
@@ -1069,7 +1071,41 @@ eager_rules[dispatch.device_put_p] = _device_put_eager_rule
 psum2_p = core.Primitive('psum2')
 psum2_p.multiple_results = True
 psum2_p.def_impl(lax_parallel.psum_p.impl)
-psum2_p.def_effectful_abstract_eval(lax_parallel.psum_p.abstract_eval)
+
+def _psum2_abstract_eval(*args, axes, axis_index_groups):
+  if not config.varying_axes_in_types.value:
+    return lax_parallel.psum_p.abstract_eval(
+        *args, axes=axes, axis_index_groups=axis_index_groups)
+
+  assert isinstance(axes, tuple)
+  lax_parallel._check_axis_names(axes)
+  arg_vma = [a.vma for a in args]
+  if any(not set(axes) & a for a in arg_vma):
+    raise ValueError(
+        "Collective psum must be applied to a device-varying "
+        f"type, but got {arg_vma} for collective acting "
+        f"over axis name {axes}. Please open an issue at "
+        "https://github.com/jax-ml/jax/issues, and as a temporary "
+        "workaround pass the check_rep=False argument to shard_map")
+
+  named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
+  pos_axes = tuple(axis for axis in axes if isinstance(axis, int))
+  if axis_index_groups is not None:
+    if len(pos_axes) != 0:
+      raise ValueError(
+          "axis_index_groups can only be used with reductions over "
+          f"named axes, but got: {axes}")
+  core.check_avals_context_mesh(args, 'all_reduce')
+  out_avals = [
+      core.ShapedArray(
+          lax._reduce_op_shape_rule(arg, axes=pos_axes), arg.dtype,
+          sharding=lax._reduce_op_sharding_rule(arg, axes=pos_axes),
+          vma=frozenset(a for a in arg.vma if a not in named_axes))
+      for arg in args
+  ]
+  return out_avals, {core.NamedAxisEffect(axis) for axis in named_axes}
+psum2_p.def_effectful_abstract_eval(_psum2_abstract_eval)
+
 mlir.register_lowering(psum2_p, mlir._lowerings[lax_parallel.psum_p])
 batching.fancy_primitive_batchers[psum2_p] = \
   partial(lax_parallel._batched_reduction_collective, psum2_p,
@@ -1088,10 +1124,26 @@ def pbroadcast(x, axis_name):
   xs, treedef = tree_flatten(x)
   ys = pbroadcast_p.bind(*xs, axes=axes, axis_index_groups=None)
   return tree_unflatten(treedef, ys)
+
 pbroadcast_p = core.Primitive('pbroadcast')
 pbroadcast_p.multiple_results = True
 pbroadcast_p.def_impl(lambda *args, axes, axis_index_groups: args)
-pbroadcast_p.def_abstract_eval(lambda *args, axes, axis_index_groups: args)
+
+def _pbroadcast_abstract_eval(*args, axes, axis_index_groups):
+  if not config.varying_axes_in_types.value:
+    return args
+  assert isinstance(axes, tuple)
+  arg_vma = [a.vma for a in args]
+  if any(set(axes) & a for a in arg_vma):
+    raise ValueError(
+        "Collective pbroadcast must be applied to a "
+        f"non-device-varying type, but got {arg_vma} for collective acting "
+        f"over axis name {axes}. Please open an issue at "
+        "https://github.com/jax-ml/jax/issues, and as a temporary "
+        "workaround pass the check_rep=False argument to shard_map")
+  return [a.update(vma=a.vma.union(frozenset(axes))) for a in args]
+pbroadcast_p.def_abstract_eval(_pbroadcast_abstract_eval)
+
 mlir.register_lowering(pbroadcast_p, lambda ctx, *x, axes, axis_index_groups: x)
 def _pbroadcast_batcher(vals_in, dims_in, *, axes, axis_index_groups):
   if any(type(axis) is int for axis in axes): raise NotImplementedError
@@ -1140,7 +1192,7 @@ def _standard_check(prim, mesh, *in_rep, **__):
   # The standard check require args' and outputs' replications to be the same,
   # except for Nones which correspond to constants.
   in_rep_ = [r for r in in_rep if r is not None]
-  if in_rep_ and not in_rep_[:-1] == in_rep_[1:]:
+  if in_rep_ and in_rep_[:-1] != in_rep_[1:]:
     raise Exception(f"Primitive {prim} requires argument replication types "
                     f"to match, but got {in_rep}. Please open an issue at "
                     "https://github.com/jax-ml/jax/issues and as a temporary "

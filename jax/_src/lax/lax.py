@@ -1140,6 +1140,7 @@ def mul(x: ArrayLike, y: ArrayLike) -> Array:
 
   .. _stablehlo.multiply: https://openxla.org/stablehlo/spec#multiply
   """
+  x, y = core.standard_insert_pbroadcast(x, y)
   return mul_p.bind(x, y)
 
 @export
@@ -1610,6 +1611,7 @@ def _convert_element_type(
        (sharding._is_concrete and getattr(operand, 'sharding', None) == sharding))):
     return operand
   else:
+    operand, = core.standard_insert_pbroadcast(operand)
     return convert_element_type_p.bind(
         operand, new_dtype=new_dtype, weak_type=bool(weak_type),
         sharding=sharding)
@@ -3844,6 +3846,15 @@ def broadcasting_sharding_rule(name, *avals):
                 f'{", ".join(map(str, map(tuple, specs)))}.')
   return NamedSharding(mesh, P(*result_specs))
 
+def standard_vma_rule(prim_name, *avals, **kwargs):
+  vma, *vmas = [a.vma for a in avals]
+  if not all(vma == vma_ for vma_ in vmas):
+    raise ValueError(
+        f'Primitive {prim_name} requires varying manual axes '
+        f'to match, but got {[vma, *vmas]}. Please open an issue at '
+        'https://github.com/jax-ml/jax/issues and as a temporary '
+        'workaround pass the check_rep=False argument to shard_map')
+  return vma
 
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
            require_same_dtypes=True):
@@ -3852,8 +3863,9 @@ def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
                        require_same=require_same_dtypes)
   shape_rule = partial(broadcasting_shape_rule, name)
   sharding_rule = partial(broadcasting_sharding_rule, name)
-  prim = standard_primitive(shape_rule, dtype_rule, name,
-                            sharding_rule=sharding_rule)
+  prim = standard_primitive(
+      shape_rule, dtype_rule, name, sharding_rule=sharding_rule,
+      vma_rule=partial(standard_vma_rule, name))
   batching.defbroadcasting(prim)
   pe.def_trivial_padding(prim)
   return prim
@@ -4704,7 +4716,8 @@ convert_element_type_p.def_abstract_eval(
     partial(standard_abstract_eval, convert_element_type_p,
             _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
             _convert_element_type_weak_type_rule,
-            _convert_element_type_sharding_rule))
+            _convert_element_type_sharding_rule,
+            partial(standard_vma_rule, convert_element_type_p.name)))
 ad.defjvp2(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 batching.defvectorized(convert_element_type_p)
