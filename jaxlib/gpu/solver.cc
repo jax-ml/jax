@@ -17,11 +17,11 @@ limitations under the License.
 #include <stdexcept>
 #include <utility>
 
-#include "nanobind/nanobind.h"
-#include "nanobind/stl/pair.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "nanobind/nanobind.h"
+#include "nanobind/stl/pair.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/solver_handle_pool.h"
 #include "jaxlib/gpu/solver_kernels.h"

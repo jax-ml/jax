@@ -16,10 +16,10 @@ limitations under the License.
 #include <cstdint>
 #include <string>
 
-#include "nanobind/nanobind.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#include "nanobind/nanobind.h"
 #include "jaxlib/gpu/gpu_plugin_extension.h"
 #include "jaxlib/gpu/py_client_gpu.h"
 #include "jaxlib/kernel_nanobind_helpers.h"

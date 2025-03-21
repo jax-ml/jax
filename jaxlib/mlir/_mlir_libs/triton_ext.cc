@@ -15,9 +15,9 @@ limitations under the License.
 
 #include <optional>
 
-#include "nanobind/nanobind.h"
 #include "mlir-c/IR.h"
 #include "mlir/Bindings/Python/NanobindAdaptors.h"
+#include "nanobind/nanobind.h"
 #include "jaxlib/triton/triton_dialect_capi.h"
 
 namespace nb = nanobind;

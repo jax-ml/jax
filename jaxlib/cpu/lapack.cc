@@ -15,8 +15,8 @@ limitations under the License.
 
 #include <complex>
 
-#include "nanobind/nanobind.h"
 #include "absl/base/call_once.h"
+#include "nanobind/nanobind.h"
 #include "jaxlib/cpu/lapack_kernels.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 
