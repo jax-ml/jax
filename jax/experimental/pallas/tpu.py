@@ -17,7 +17,7 @@
 from jax._src.pallas.mosaic import core as core
 from jax._src.pallas.mosaic.core import ARBITRARY as ARBITRARY
 from jax._src.pallas.mosaic.core import create_tensorcore_mesh as create_tensorcore_mesh
-from jax._src.pallas.core import dma_semaphore as dma_semaphore
+from jax._src.pallas.mosaic.core import dma_semaphore as dma_semaphore
 from jax._src.pallas.mosaic.core import GridDimensionSemantics as GridDimensionSemantics
 from jax._src.pallas.mosaic.core import PARALLEL as PARALLEL
 from jax._src.pallas.mosaic.core import PrefetchScalarGridSpec as PrefetchScalarGridSpec
