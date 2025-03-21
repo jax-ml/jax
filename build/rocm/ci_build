@@ -352,6 +352,7 @@ def main():
             args.xla_source_dir,
             args.rocm_build_job,
             args.rocm_build_num,
+            compiler=args.compiler,
         )
 
     elif args.action == "test":
@@ -364,7 +365,7 @@ def main():
             args.xla_source_dir,
             args.rocm_build_job,
             args.rocm_build_num,
-            args.compiler,
+            compiler=args.compiler,
         )
         dist_docker(
             args.rocm_version,

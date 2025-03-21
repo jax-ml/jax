@@ -291,6 +291,7 @@ def main():
     print("PYTHON_VERSIONS=%r" % python_versions)
     print("JAX_PATH=%s" % args.jax_path)
     print("XLA_PATH=%s" % args.xla_path)
+    print("COMPILER=%s" % args.compiler)
 
     rocm_path = build_rocm_path(args.rocm_version)
 
