@@ -2518,6 +2518,42 @@ class OpsTest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(out, np.diagonal(x))
 
+  @parameterized.product(
+      # Skip some steps to just run less cases
+      # TODO(mvoz): Hypothesis?
+      x_dim_size=tuple(8 * i for i in range(1, 5)),
+      y_dim_size=tuple(8 * i for i in range(1, 5)),
+      z_dim_size=tuple(128 * i for i in range(1, 3)),
+      dtype=(jnp.bfloat16, jnp.float32),
+  )
+  def test_jnp_swapaxes_major_minor(
+      self, x_dim_size, y_dim_size, z_dim_size, dtype
+  ):
+    if self.INTERPRET:
+      self.skipTest("Not implemented in interpret mode")
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("Not implemented on GPU")
+    if not jtu.is_device_tpu_at_least(6):
+      self.skipTest("Not yet implemented below TPU v6 - combine needs")
+
+    packing = 2 if dtype == jnp.bfloat16 else 1
+
+    x = jnp.arange(
+        x_dim_size * y_dim_size * z_dim_size * packing * packing, dtype=dtype
+    ).reshape((x_dim_size * packing, y_dim_size * packing, z_dim_size))
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = jnp.swapaxes(x_ref[...], 0, 1)
+
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(
+            (y_dim_size * packing, x_dim_size * packing, z_dim_size), dtype
+        ),
+    )(x)
+    expected = jnp.swapaxes(x, 0, 1)
+    np.testing.assert_array_equal(out, expected)
+
 
 class OpsInterpretTest(OpsTest):
   INTERPRET = True
