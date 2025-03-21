@@ -1333,7 +1333,7 @@ def _get_sharding_for_varying_out_shape(out_shape, operand, name):
       operand.shape, out_shape, operand.sharding.spec):
     if (op_sh != out_sh and op_spec is not None and
         out_sh % _get_sub_spec_size(mesh, op_spec) != 0):
-      raise NotImplementedError(
+      raise core.ShardingTypeError(
           f"{name} on sharded dims where out dim ({out_sh}) is not divisble by"
           f" mesh axes ({_get_sub_spec_size(mesh, op_spec)}) with spec"
           f" ({op_spec}) is not implemented.")
@@ -1922,9 +1922,6 @@ def _gather_shape_computation(indices, dimension_numbers, slice_sizes):
               else next(indices_shape_gen) for i in range(output_shape_rank))
   return ans
 
-class GatherShardingError(Exception):
-  pass
-
 def _gather_sharding_rule(operand, indices, *, dimension_numbers,
                           slice_sizes, unique_indices, indices_are_sorted,
                           mode, fill_value):
@@ -1936,7 +1933,7 @@ def _gather_sharding_rule(operand, indices, *, dimension_numbers,
       all(s is None for s in operand.sharding.spec) and
       all(s is None for s in indices.sharding.spec)):
     return core.get_cur_mesh_sharding()
-  raise GatherShardingError(
+  raise core.ShardingTypeError(
       "Use `.at[...].get(out_sharding=)` to provide output PartitionSpec for"
       " the gather indexing.")
 

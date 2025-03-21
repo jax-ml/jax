@@ -3805,7 +3805,7 @@ def broadcasting_sharding_rule(name, *avals):
   for a in avals:
     if a.sharding is not None and not a.sharding.mesh.empty:
       if mesh is not None and mesh != a.sharding.mesh:
-        raise ValueError(
+        raise core.ShardingTypeError(
             f'Mesh for all inputs should be equal. Got one mesh: {mesh} and'
             f' another mesh: {a.sharding.mesh}')
       mesh = a.sharding.mesh
@@ -3839,7 +3839,7 @@ def broadcasting_sharding_rule(name, *avals):
             result_specs[i] = s
           elif (result_specs[i] is not None and s is not None and
                 result_specs[i] != s):
-            raise TypeError(
+            raise core.ShardingTypeError(
                 f'{name} got incompatible shardings for broadcasting: '
                 f'{", ".join(map(str, map(tuple, specs)))}.')
   return NamedSharding(mesh, P(*result_specs))
@@ -4990,13 +4990,13 @@ def _dot_general_shape_computation(lhs_shape, rhs_shape, dimension_numbers):
 def _check_specs_match(lhs_spec, rhs_spec, msg):
   for l, r in zip(lhs_spec, rhs_spec):
     if l is not None and r is not None and l != r:
-      raise TypeError(msg)
+      raise core.ShardingTypeError(msg)
 
 def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
                                preferred_element_type: DTypeLike | None,
                                out_sharding):
   if lhs.sharding.mesh != rhs.sharding.mesh:
-    raise ValueError(
+    raise core.ShardingTypeError(
         'Mesh of both lhs and rhs should match. Got lhs:'
         f' {lhs.sharding.mesh} and rhs: {rhs.sharding.mesh}')
 
@@ -5020,7 +5020,7 @@ def _dot_general_sharding_rule(lhs, rhs, *, dimension_numbers, precision,
 
   for l, r in zip(lhs_contracting_spec, rhs_contracting_spec):
     if l is not None and r is not None:
-      raise ValueError(
+      raise core.ShardingTypeError(
           'Contracting dimensions are sharded and it is ambiguous how the'
           ' output should be sharded. Please specify the output sharding via'
           ' the `out_sharding` parameter of einsum. Or reshard your input via'
@@ -6378,7 +6378,7 @@ def _concatenate_sharding_rule(*operands, **kwargs):
     return core.get_cur_mesh_sharding()
   if not all(s == non_empty_s[0] for s in non_empty_s):
     ss = ", ".join(str(o.sharding) for o in operands)
-    raise TypeError(
+    raise core.ShardingTypeError(
         f"All operands should have the same sharding. Got shardings {ss}")
   return non_empty_s[0]
 
@@ -6697,7 +6697,7 @@ def _split_on_one_axis(op_shape, new_sizes, name):
     else:
       count += 1
       if count > 1:
-        raise ValueError(
+        raise core.ShardingTypeError(
             f'{name} on more than 1 axis is not supported. Please specify'
             ' the sharding of the output via the `sharding` argument of'
             f' jax.lax.reshape. Got operand.shape={op_shape} and {new_sizes=}')
@@ -6738,7 +6738,7 @@ def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
     return _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes,
                                         dimensions)
 
-  raise ValueError(
+  raise core.ShardingTypeError(
       'This reshape is not supported. Please specify the sharding of'
       ' the output via the `out_sharding` argument of jax.lax.reshape. Got'
       f' operand shape: {operand.shape}, new sizes: {new_sizes} and'
@@ -6771,7 +6771,7 @@ def _split_an_axis_sharding_rule(operand, out_split, new_sizes, dimensions):
       elif dimensions is None and out[0] % _get_spec_size(sp, mesh) == 0:
         new_spec.extend([sp] + [None] * (len(out) - 1))
       else:
-        raise ValueError(
+        raise core.ShardingTypeError(
             'This reshape is not supported. Please specify the sharding of the'
             ' output via the `sharding` argument of jax.lax.reshape. Got'
             f' operand shape: {operand.shape}, new sizes: {new_sizes} and'
@@ -6796,7 +6796,7 @@ def _merge_an_axis_sharding_rule(operand, operand_merge, new_sizes, dimensions):
         assert new_size % _get_spec_size(sp[0], mesh) == 0
         new_spec.append(sp[0])
       else:
-        raise ValueError(
+        raise core.ShardingTypeError(
             'This reshape is not supported. Please specify the sharding of the'
             ' output via the `sharding` argument of jax.lax.reshape. Got'
             f' operand shape: {operand.shape}, new sizes: {new_sizes} and'
@@ -6979,10 +6979,11 @@ def _select_sharding_rule(which, *cases):
     return core.get_cur_mesh_sharding()
   if any(s != non_empty_s[0] for s in non_empty_s[1:]):
     msg = "select cases must have the same shardings, got [{}]."
-    raise TypeError(msg.format(", ".join([str(c.sharding) for c in cases])))
+    raise core.ShardingTypeError(
+        msg.format(", ".join([str(c.sharding) for c in cases])))
   if (which.shape and not which.sharding.mesh.empty and
       which.sharding != non_empty_s[0]):
-    raise TypeError(
+    raise core.ShardingTypeError(
         'select `which` must be scalar or have the same sharding as cases, got'
         f' `which` sharding {which.sharding} but case sharding'
         f' {cases[0].sharding}.')
