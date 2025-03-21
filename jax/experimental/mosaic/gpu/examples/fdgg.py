@@ -14,6 +14,7 @@
 # ==============================================================================
 """Matmul kernel for Blackwell."""
 
+from dataclasses import dataclass
 import itertools
 
 import jax
@@ -21,6 +22,7 @@ from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import gpu
+from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax.experimental.mosaic import gpu as mgpu
@@ -60,6 +62,13 @@ def worker_for(worker_id, worker_count, work_count):
 def bytecount(shape, dtype):
   return int(np.prod(shape) * dtype.dtype.itemsize)
 
+integer_binops = {
+  "__add__": arith.addi,
+  "__mul__": arith.muli,
+  "__sub__": arith.subi,
+  "__floordiv__": arith.divui,
+  "__mod__": arith.remui,
+}
 
 def build_kernel(
     m, n, k,
@@ -72,9 +81,24 @@ def build_kernel(
     max_concurrent_steps: int = 2,
     in_dtype = jnp.float16,
 ):
+  print(f"{group_chunk_count=}")
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
   index = ir.IndexType.get()
+
+  cx = lambda v: c(v, index)
+
+  class X:
+    def __init__(self, v):
+      if not isinstance(v, ir.Value):
+        v = cx(v)
+      self.v = v
+
+
+  for method, op in integer_binops.items():
+    def f(self, other):
+      return X(op(self.v, other.v))
+    setattr(X, method, f)
 
   swizzle = 128
   swizzle_elems = tile_k = swizzle // 2
@@ -83,18 +107,19 @@ def build_kernel(
   k_loop_iter = k // tile_k
   max_concurrent_steps = min(max_concurrent_steps, k_loop_iter)
 
-  if m % tile_m != 0:
-    raise ValueError(f"{m=} must be divisible by {tile_m=}")
+  #if m % tile_m != 0:
+  #  raise ValueError(f"{m=} must be divisible by {tile_m=}")
   if n % tile_n != 0:
     raise ValueError(f"{n=} must be divisible by {tile_n=}")
   if k % tile_k != 0:
     raise ValueError(f"{k=} must be divisible by {tile_k=}")
   if n % expert_count != 0:
     raise ValueError(f"{n=} must be divisible by {expert_count=}")
+  if expert_n % tile_n != 0:
+    raise ValueError(f"{expert_n=} must be divisible by {tile_n=}")
 
-  m_tile_count = m // tile_m
-  n_tile_count = n // tile_n
-  tile_count = m_tile_count * n_tile_count
+  n_tile_count = expert_n // tile_n
+  tile_count = group_chunk_count * n_tile_count
 
   def kernel(ctx, a, w, group_offsets, expert_ids, d, smem):
     ((a_smem, b_smem), d_smem), barriers, mma_done_barrier, acc = smem
@@ -105,23 +130,37 @@ def build_kernel(
     is_leader_of = lambda i: arith.andi(arith.cmpi(arith.CmpIPredicate.eq, warp_idx, c(i, i32)), is_warp_leader)
 
     worker_id = gpu.block_id(gpu.Dimension.x)
-    worker_count = c(cta_count, index)
-    work_count = c(tile_count, index)
+    worker_count = cx(cta_count)
+    work_count = cx(tile_count)
     @worker_for(worker_id=worker_id, worker_count=worker_count, work_count=work_count)
     def body(work_id):
-      m_idx = arith.divui(work_id, c(n_tile_count, index))
-      n_idx = arith.remui(work_id, c(n_tile_count, index))
-      m_start = arith.muli(m_idx, c(tile_m, index))
-      n_start = arith.muli(n_idx, c(tile_n, index))
+      group_chunk_id = arith.divui(work_id, cx(n_tile_count))
+      group_chunk_a = arith.index_cast(index,
+                                       memref.load(group_offsets, [group_chunk_id]))
+      group_chunk_b = arith.index_cast(index,
+                                       memref.load(group_offsets, [arith.addi(group_chunk_id, cx(1))]))
+      group_chunk_m = arith.subi(group_chunk_b, group_chunk_a)
+      n_idx = arith.remui(work_id, cx(n_tile_count))
+      n_start = arith.muli(n_idx, cx(tile_n))
 
       local_work_id = arith.divui(work_id, worker_count)
-      get_persistent_ki = lambda ki: arith.addi(ki, arith.muli(local_work_id, c(k_loop_iter,index)))
+      get_persistent_ki = lambda ki: arith.addi(ki, arith.muli(local_work_id, cx(k_loop_iter)))
       with mgpu.when(is_leader_of(TMA_WARP)):
-        @mgpu.fori(c(k_loop_iter, index), None)
+        gpu.printf("tx = %lu, ty = %lu, tz = %lu\n", [gpu.thread_id(gpu.Dimension.x), gpu.thread_id(gpu.Dimension.y), gpu.thread_id(gpu.Dimension.z)])
+        gpu.printf("bx = %lu, by = %lu, bz = %lu\n", [gpu.block_id(gpu.Dimension.x), gpu.block_id(gpu.Dimension.y), gpu.block_id(gpu.Dimension.z)])
+        gpu.printf("n_tile_count = %lu\n", [cx(n_tile_count)])
+        gpu.printf("tile_count = %lu\n", [cx(tile_count)])
+        gpu.printf("worker_id = %lu\n", [worker_id])
+        gpu.printf("work_id = %lu\n", [work_id])
+        gpu.printf("work_count = %lu\n", [work_count])
+        gpu.printf("worker_count = %lu\n", [worker_count])
+        gpu.printf("group_chunk_id = %lu\n", [group_chunk_id])
+        gpu.printf("group_chunk_ab = [%lu, %lu), group_chunk_m = %lu\n", [group_chunk_a, group_chunk_b, group_chunk_m])
+
+        @mgpu.fori(cx(k_loop_iter), None)
         def _tma_body(ki, _):
           persistent_ki = get_persistent_ki(ki)
           slot = arith.remui(persistent_ki, c(max_concurrent_steps, index))
-          # TODO(apaszke): Use a predicate instead of a conditional.
           with mgpu.when(arith.cmpi(arith.CmpIPredicate.uge, persistent_ki, c(max_concurrent_steps, index))):
             ab_empty_barriers[slot].wait()
           full_barrier = ab_full_barriers[slot]
@@ -138,7 +177,10 @@ def build_kernel(
           ctx.async_copy(
               src_ref=a,
               dst_ref=mgpu.memref_slice(a_smem, slot),
-              gmem_slice=(ds(m_start, tile_m), ds(k_start, tile_k)),
+              # We load a fixed tile_m, even though we only need
+              # group_chunk_m. With tensormap.replace we'll be able to
+              # update the window dynamically.
+              gmem_slice=(ds(group_chunk_a, tile_m), ds(k_start, tile_k)),
               gmem_transform=mgpu.TileTransform(tiling),
               **common_args,
           )
@@ -172,12 +214,14 @@ def build_kernel(
       gpu.barrier()
       mma_done_barrier.wait(for_tensor_core=True)
 
+      # TODO(aportnoy@nvidia.com) output_m_start should just equal group_chunk_a
+      output_m_start = arith.muli(cx(tile_m), group_chunk_id)
       acc[:].astype(ir.F16Type.get()).store_tiled(d_smem, swizzle=128)
       mgpu.commit_shared()
       ctx.async_copy(
           src_ref=d_smem,
           dst_ref=d,
-          gmem_slice=(ds(m_start, tile_m), ds(n_start, tile_n)),
+          gmem_slice=(ds(output_m_start, tile_m), ds(n_start, tile_n)),
           gmem_transform=mgpu.TileTransform((128, swizzle_elems)),
           swizzle=swizzle,
       )
@@ -202,6 +246,11 @@ def build_kernel(
       mgpu.TMEM((128, tile_n), jnp.float32),
   )
 
+  # TODO(aportnoy@nvidia.com) Use tensormap.replace to only store the
+  # exact group_chunk_m per group_chunk instead of fixed tile_m. Then
+  # m will replace inflated_m.
+  inflated_m = group_chunk_count * tile_m
+
   f = mgpu.as_gpu_kernel(
       kernel,
       (cta_count, 1, 1),  # persistent kernel
@@ -212,7 +261,7 @@ def build_kernel(
           jax.ShapeDtypeStruct((group_chunk_count+1,), jnp.int32),  # group_offsets
           jax.ShapeDtypeStruct((group_chunk_count+0,), jnp.int32),  # expert_ids
       ),
-      jax.ShapeDtypeStruct((m, expert_n), jnp.float16),
+      jax.ShapeDtypeStruct((inflated_m, expert_n), jnp.float16),
       smem,
   )
 
@@ -258,10 +307,10 @@ def ref(activations, weights, group_sizes, expert_n):
 
 
 def main(unused_argv):
-  m = 1024  # seqlen
-  k = 512
-  expert_count = 8  # expert count
-  expert_n = 512
+  m = 128  # seqlen
+  k = 64
+  expert_count = 2  # expert count
+  expert_n = 64
   n = expert_count * expert_n
   in_dtype = jnp.float16
   # TODO(aportnoy@nvidia.com) this leads to low occupancy, so unless
@@ -271,15 +320,24 @@ def main(unused_argv):
   # the next work item can run while we are storing the previous one
   # out.
   cta_count = get_sm_count()
+  cta_count = 1  # XXX debug
   ka, kb, ke1, ke2 = jr.split(jr.key(0), 4)
   activations = jr.normal(key=ka, shape=(m, k), dtype=in_dtype)
   weights     = jr.normal(key=kb, shape=(n, k), dtype=in_dtype)
+  #activations = jnp.repeat(1+jnp.arange(m, dtype=in_dtype).reshape(-1, 1), k, axis=1)
+  print(f"{activations=}")
+  weights     = jnp.ones((n, k), dtype=in_dtype)  # XXX debug
   group_sizes = generate_group_sizes(expert_count, m, ke1, ke2)
+  group_sizes = jnp.array([47, 128-47]) # XXX debug
+  assert sum(group_sizes) == m
+  print(f"{group_sizes=}")
   # TODO(aportnoy@nvidia.com) test different tile sizes
   tile_m = 128
-  tile_n = 128  # 256, 512
+  tile_n = 64  # 256, 512
   # TODO(aportnoy@nvidia.com) move this computation into the kernel
   group_offsets, expert_ids = get_schedule(group_sizes, n, tile_m, tile_n)
+  print(f"{group_offsets=}")
+  print(f"{expert_ids=}")
   group_chunk_count = len(expert_ids)
 
   # TODO(aportnoy@nvidia.com) test different stage counts
@@ -296,15 +354,34 @@ def main(unused_argv):
       max_concurrent_steps=max_concurrent_steps,
       in_dtype=in_dtype,
     )
-  d, runtime = profiler.measure(f, mode='cupti')(activations, weights, group_offsets, expert_ids)
-  tflops = float(2 * k * m * n) / (runtime / 1e3) / 1e12
-  print(f"Kernel:    {runtime * 1000:.1f} us = {tflops:.1f} TFLOPS")
-
+  d_raw = f(activations, weights, group_offsets, expert_ids)
+  d_chunks = []
+  for i, (a, b) in enumerate(zip(group_offsets, group_offsets[1:])):
+    m = b-a
+    o = i*tile_m
+    d_chunks.append(d_raw[o:o+m])
+  d = jnp.concatenate(d_chunks)
+  print(f"{d.shape=}")
+  print(f"{jnp.argwhere(jnp.isnan(d))=}")
+  #d = jnp.nan_to_num(d)  # XXX debug
+  # TODO(aportnoy@nvidia.com) measure FLOPS
 
   # TODO(aportnoy@nvidia.com) compute reference and check correctness
   d_ref = ref(activations, weights, group_sizes, expert_n)
+  print(f"{d_ref.shape=}")
+  print(f"{jnp.argwhere(jnp.isnan(d_ref))=}")
 
   #ref_tflops = float(2 * k * m * n) / (ref_runtime / 1e3) / 1e12
+  neq = ~jnp.isclose(d, d_ref, atol=1e-3, rtol=1e-3)
+  loc = jnp.argwhere(neq)
+  import sys
+  jnp.set_printoptions(threshold=sys.maxsize, linewidth=300)
+  #print(f"{loc=}")
+  print(f"{jnp.unique(loc[:, 0])=}")
+  #print(f"{d_ref=}")
+  #print(f"{d_raw=}")
+
+
   np.testing.assert_allclose(d, d_ref, atol=1e-3, rtol=1e-3)
   #print(f"Reference: {ref_runtime * 1000:.1f} us = {ref_tflops:.1f} TFLOPS")
 
