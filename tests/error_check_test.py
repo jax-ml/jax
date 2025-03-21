@@ -13,6 +13,8 @@
 # limitations under the License.
 
 
+import traceback
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -107,6 +109,32 @@ class ErrorCheckTests(jtu.JaxTestCase):
     g(x)
     with self.assertRaisesRegex(JaxValueError, "x must be greater than 0 in g"):
       error_check.raise_if_error()
+
+  @parameterized.product(jit=[True, False])
+  def test_error_includes_traceback(self, jit):
+    def function_that_triggers_error_for_traceback_test(x):
+      error_check.set_error_if(  # This line must be included in the traceback.
+          x <= 0, "x must be greater than 0"
+      )
+      return x + 1
+
+    if jit:
+      function_that_triggers_error_for_traceback_test = jax.jit(
+          function_that_triggers_error_for_traceback_test
+      )
+
+    x = jnp.zeros((4,), dtype=jnp.int32)
+    function_that_triggers_error_for_traceback_test(x)
+
+    tb_string = ""
+    try:
+      error_check.raise_if_error()
+    except JaxValueError as e:
+      tb_string = traceback.format_tb(e.__traceback__)
+      tb_string = "".join(tb_string)
+
+    self.assertIn("function_that_triggers_error_for_traceback_test", tb_string)
+    self.assertIn("This line must be included in the traceback", tb_string)
 
   @parameterized.product(jit=[True, False])
   def test_error_check_works_with_cond(self, jit):
