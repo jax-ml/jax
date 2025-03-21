@@ -83,6 +83,7 @@ from .utils import (
     thread_idx as thread_idx,
     tile_shape as tile_shape,
     warp_idx as warp_idx,
+    warp_leader_predicate as warp_leader_predicate,
     warpgroup_barrier as warpgroup_barrier,
     warpgroup_idx as warpgroup_idx,
     when as when,

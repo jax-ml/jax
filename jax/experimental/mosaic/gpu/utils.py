@@ -300,6 +300,9 @@ def single_thread(per_block=True):
   finally:
     _ONCE_PER = prev_scope
 
+def warp_leader_predicate():
+  elected = nvvm.elect_sync(ir.IntegerType.get_signless(1))
+  return elected
 
 def clock():
   i32 = ir.IntegerType.get_signless(32)

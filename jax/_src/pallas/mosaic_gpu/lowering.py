@@ -293,6 +293,7 @@ class ModuleContext:
   program_ids: Sequence[ir.Value] | None
   approx_math: bool
   single_wg_lane_predicate: ir.Value
+  warp_leader_predicate: ir.Value
   smem_requested_bytes: int
   smem_used_bytes: int
   tmem_requested_cols: int
@@ -305,6 +306,7 @@ class ModuleContext:
   traceback_caches: mlir.TracebackCaches
   squashed_dims: tuple[int, ...]
   thread_semantics: mgpu.ThreadSemantics
+  warp_axis_name: str | None = None
 
   def reserve_barrier(self, barrier: mgpu.Barrier) -> mgpu.BarrierRef:
     """Reserves a barrier.
@@ -411,6 +413,13 @@ class LoweringRuleContext:
   @property
   def estimator_ctx(self) -> ResourceEstimatorContext:
     return ResourceEstimatorContext(thread_semantics=self.module_ctx.thread_semantics)
+
+  # TODO(justinfu): Remove this once we fully support warp-level semantics.
+  @property
+  def in_warp_lowering(self) -> bool:
+    """Returns whether we are lowering at the warp-level within a core_map."""
+    return (self.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane and
+            self.module_ctx.warp_axis_name is not None)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -709,6 +718,7 @@ def lower_jaxpr_to_module(
         [_program_id(axis, squashed_dims) for axis in range(len(grid))],
         approx_math,
         mgpu.single_thread_predicate(per_block=False),
+        mgpu.warp_leader_predicate(),
         smem_requested_bytes=math.prod(ir.MemRefType(runtime_smem.type).shape),
         smem_used_bytes=0,
         tmem_requested_cols=tmem_cols,
@@ -1060,6 +1070,11 @@ def _ndindexer_indices(indexer: indexing.NDIndexer) -> tuple[gpu_core.Index, ...
 
 @register_lowering_rule(sp.get_p, mgpu.ThreadSemantics.Lane)
 def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
+  # TODO(justinfu): Remove this once we fully support warp-level semantics.
+  if ctx.in_warp_lowering:
+    raise NotImplementedError(
+        "Load/stores are not supported inside a core_map.")
+
   if isinstance(x_ref, tcgen05.TMEMRef):
     transforms = jax.tree.unflatten(tree, leaves)
     if len(transforms) != 1 or not isinstance(
@@ -1132,6 +1147,12 @@ def _get_lowering_rule_wg(ctx: LoweringRuleContext, x_smem, *leaves, tree):
 def _swap_lowering_rule(
     ctx: LoweringRuleContext, x_smem, value, *leaves, tree
 ):
+  # TODO(justinfu): Remove this once we fully support warp-level semantics.
+  if ctx.in_warp_lowering:
+    # This is disabled because it produces very non-intuitive and layout
+    # dependent results when the user code is programmed at the warpgroup-level.
+    raise NotImplementedError(
+        "Load/stores are not supported inside a core_map.")
   if not isinstance(value, mgpu.FragmentedArray):
     raise TypeError(f"Can only store arrays (got {value}).")
   if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
@@ -1733,10 +1754,12 @@ def _block_id(ctx: LoweringRuleContext, dim: gpu_dialect.Dimension) -> ir.Value:
 
 @register_lowering_rule(lax.axis_index_p, mgpu.ThreadSemantics.Lane)
 def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
+  if ctx.in_warp_lowering and axis_name == ctx.module_ctx.warp_axis_name:
+    return mgpu.warp_idx(sync=True)
   axis_names = ctx.module_ctx.axis_names
   if not axis_names or axis_name not in axis_names:
     raise ValueError(
-        "Named axes can only refer to GPUMesh axes in Mosaic GPU kernels"
+        "Named axes can only refer to GPUMesh/warp axes in Mosaic GPU kernels"
     )
 
   if axis_names.wg is not None and axis_name == axis_names.wg:
@@ -2263,6 +2286,31 @@ def _bitcast_convert_type_lowering_rule(
 def _optimization_barrier_lowering(ctx: LoweringRuleContext, *args):
   args = (_ensure_fa(arg, aval.dtype) for arg, aval in zip(args, ctx.avals_in))
   return mgpu.optimization_barrier(*args)
+
+
+@register_lowering_rule(pallas_core.core_map_p, mgpu.ThreadSemantics.Lane)
+def _core_map_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    jaxpr,
+    mesh,
+    **kwargs,
+):
+  if isinstance(mesh, gpu_core.WarpMesh):
+    # A core_map over a WarpMesh represents a fork/join over individual
+    # warps in a warpgroup.
+    module_ctx = dataclasses.replace(ctx.module_ctx,
+                                     warp_axis_name=mesh.axis_name)
+    _ = lower_jaxpr_to_mosaic_gpu(
+        module_ctx,
+        ctx.launch_ctx,
+        jaxpr,
+        args=(),
+        consts=args,
+    )
+    gpu_dialect.barrier()
+    return []
+  raise ValueError(f"Unsupported mesh: {mesh}")
 
 
 def _bcast(
