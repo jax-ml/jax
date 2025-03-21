@@ -96,7 +96,7 @@ def call_shape_dtype_sharding_rule(prim, shape_rule, dtype_rule, sharding_rule,
     mesh = mesh_lib.empty_abstract_mesh if e.mesh is None else e.mesh
     out_aval_str = core.str_short_aval(out_shapes, out_dtypes, mesh, e.pspec,
                                        short_dtypes=True)
-    raise TypeError(
+    raise core.ShardingTypeError(
         f'{prim} operation with inputs: {avals_str} produces an illegally'
         f' sharded result: {out_aval_str}') from e
   return out_shapes, out_dtypes, out_shardings

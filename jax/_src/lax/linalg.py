@@ -717,14 +717,14 @@ def linalg_sharding_rule(
     spec = aval.sharding.spec
     batch_spec, rest_spec = spec[:len(spec) - rank], spec[len(spec) - rank:]
     if not all(s is None for s in rest_spec):
-      raise ValueError(
+      raise core.ShardingTypeError(
           f"Input {i} to {name} must be unsharded on non-batch dimensions, "
           f"but got {spec}."
       )
     batch_specs.append(batch_spec)
   batch_spec = batch_specs[0]
   if any(b != batch_spec for b in batch_specs[1:]):
-    raise ValueError(
+    raise core.ShardingTypeError(
         f"All inputs to {name} must have the same batch sharding, but got "
         f"{batch_specs}."
     )

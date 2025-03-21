@@ -525,7 +525,7 @@ def reduce_window_sharding_rule(operand, window_dimensions, window_strides,
     if spec is None:
       continue
     if not (wdim == 1 and ws == 1 and pd == 1 and bd == 1 and wdil == 1):
-      raise NotImplementedError(
+      raise core.ShardingTypeError(
           "Only trivial windowing is supported along non-replicated"
           f" dimensions. Got {operand.sharding.spec=}")
   return operand.sharding
@@ -826,7 +826,7 @@ def _select_and_gather_add_sharding_rule(
     tangents, operand, *, select_prim, window_dimensions, window_strides,
     padding, base_dilation, window_dilation):
   if tangents.sharding != operand.sharding:
-    raise TypeError(
+    raise core.ShardingTypeError(
         "select_and_gather_add tangents and operand shardings must match, "
         f"got {tangents.sharding} and {operand.sharding}.")
   return reduce_window_sharding_rule(
