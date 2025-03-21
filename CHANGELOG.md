@@ -80,6 +80,11 @@ Patch release of 0.5.1
     eviction policy isn't enabled. This should improve performance when using
     the cache with large-scale network storage.
 
+* Deprecations
+  * Several previously-deprecated APIs have been removed, including:
+    * From `jax.lib.xla_client`: `FftType`, `PaddingType`, `dtype_to_etype`,
+      and `shape_from_pyval`.
+
 ## jax 0.5.0 (Jan 17, 2025)
 
 As of this release, JAX now uses
