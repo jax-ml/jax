@@ -1260,6 +1260,10 @@ _greater_equal = functools.partial(
 )
 
 
+def _is_nan(x: ir.Value) -> ir.Value:
+  return arith_dialect.cmpf(arith_dialect.CmpFPredicate.UNO, x, x)
+
+
 _JAX_TO_TRITON_BINARY = {
     lax.add_p: _add,
     lax.sub_p: _sub,
@@ -2237,6 +2241,7 @@ def _dot_general_lowering(
           | lax.DotAlgorithmPreset.F16_F16_F32
           | lax.DotAlgorithmPreset.BF16_BF16_BF16
           | lax.DotAlgorithmPreset.BF16_BF16_F32
+          | lax.DotAlgorithmPreset.BF16_BF16_F32_X3
       ):
         input_precision = None
       case _:
@@ -2276,6 +2281,29 @@ def _dot_general_lowering(
   m, _ = a_type.shape
   _, n = b_type.shape
   acc = _full(ir.RankedTensorType.get([m, n], _dtype_to_ir_type(acc_dtype)), 0)
+
+  if precision == lax.DotAlgorithmPreset.BF16_BF16_F32_X3:
+    bf16 = _dtype_to_ir_type(jnp.bfloat16)
+    f32 = _dtype_to_ir_type(jnp.float32)
+    as_bf16 = lambda x: _ir_cast(x, bf16, signed=False)
+    as_f32 = lambda x: _ir_cast(x, f32, signed=False)
+
+    a_bf16 = as_bf16(a)
+    b_bf16 = as_bf16(b)
+    a_err0 = as_bf16(_sub(a, as_f32(a_bf16)))
+    b_err0 = as_bf16(_sub(b, as_f32(b_bf16)))
+    # Accumulate the smallest values first to reduce the numeric error.
+    acc = tt_dialect.dot(a_err0, b_bf16, acc)
+    acc = tt_dialect.dot(a_bf16, b_err0, acc)
+    # If `a_err0` will be zero and `b` is infinite, then `acc` may contain
+    # `NaN`s (as `0 * inf = NaN`), and vice versa.
+    acc = arith_dialect.select(
+        _is_nan(acc),
+        _full(ir.RankedTensorType.get([m, n], _dtype_to_ir_type(acc_dtype)), 0),
+        acc,
+    )
+    a, b = a_bf16, b_bf16
+
   acc = tt_dialect.dot(a, b, acc, input_precision=input_precision)
   return _cast(acc, acc_dtype, out_aval.dtype)
 

@@ -702,6 +702,7 @@ class PallasCallTest(PallasBaseTest):
       ("float32", jax.lax.DotAlgorithmPreset.DEFAULT),
       ("float32", jax.lax.DotAlgorithmPreset.F16_F16_F32),
       ("float32", jax.lax.DotAlgorithmPreset.BF16_BF16_F32),
+      ("float32", jax.lax.DotAlgorithmPreset.BF16_BF16_F32_X3),
       ("float32", jax.lax.DotAlgorithmPreset.TF32_TF32_F32),
       ("float32", jax.lax.DotAlgorithmPreset.TF32_TF32_F32_X3),
       ("float32", jax.lax.DotAlgorithmPreset.F32_F32_F32),
@@ -731,7 +732,18 @@ class PallasCallTest(PallasBaseTest):
         precision=jax.lax.Precision.HIGHEST,
         preferred_element_type=jnp.float32,
     )
-    self.assertAllClose(dot_kernel(x, y), expected, atol=5e-2, rtol=5e-3)
+    if dtype == "bfloat16" or precision in (
+        jax.lax.Precision.HIGHEST, jax.lax.DotAlgorithmPreset.F32_F32_F32
+    ):
+      atol = 0
+    elif precision in (
+        jax.lax.DotAlgorithmPreset.BF16_BF16_F32_X3,
+        jax.lax.DotAlgorithmPreset.TF32_TF32_F32_X3,
+    ):
+      atol = 5e-4
+    else:
+      atol = 5e-2
+    self.assertAllClose(dot_kernel(x, y), expected, atol=atol, rtol=atol / 10)
 
   @parameterized.parameters(jnp.int8, jnp.uint8)
   def test_integer_dot(self, dtype):
