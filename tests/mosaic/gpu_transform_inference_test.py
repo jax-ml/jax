@@ -24,7 +24,9 @@ from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
+from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import func
+from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import vector
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import fragmented_array as fa
@@ -416,6 +418,105 @@ class TransformInferenceTest(parameterized.TestCase):
     )
 
     with self.assertRaisesRegex(NotImplementedError, "Conflicting transforms"):
+      mgpu.infer_transforms(self.module)
+
+  @parameterized.parameters([False, True])
+  def test_infer_transforms_for_subview_op_propagates_undisturbed_tile_and_swizzle_transforms(
+      self, annotate_input
+  ):
+    subview_op = user_op = None
+    shape = (2, 64, 64)
+    elt_ty = ir.BF16Type.get()
+    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+
+    in_ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+    out_ref_ty = ir.MemRefType.get(shape[2:], elt_ty, memory_space=smem)
+
+    def body(in_ref):
+      nonlocal subview_op, user_op
+      subview_op = memref.SubViewOp(
+          out_ref_ty,
+          in_ref,
+          [],
+          [],
+          [],
+          static_offsets=[1, 0, 0],
+          static_sizes=[1, 64, 64],
+          static_strides=[1, 1, 1],
+      )
+      user_op = builtin.UnrealizedConversionCastOp(
+          [out_ref_ty], [subview_op.result]
+      )
+
+    with ir.InsertionPoint(self.module.body):
+      f = func.FuncOp.from_py_func(in_ref_ty)(body).func_op
+
+    transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((32, 16)),
+        mgpu.dialect.SwizzleTransformAttr.get(32),
+    ])
+
+    if annotate_input:
+      f.attributes["in_transforms"] = ir.ArrayAttr.get([transforms])
+    else:
+      user_op.attributes["in_transforms"] = ir.ArrayAttr.get([transforms])
+
+    mgpu.infer_transforms(self.module)
+
+    self.assertSequenceEqual(
+        inference_utils.in_transforms(subview_op), [transforms]
+    )
+    self.assertSequenceEqual(
+        inference_utils.out_transforms(subview_op), [transforms]
+    )
+
+  @parameterized.parameters([False, True])
+  def test_infer_transforms_for_subview_op_raises_on_disturbed_transforms(
+      self, annotate_input
+  ):
+    subview_op = user_op = None
+    shape = (2, 64, 64)
+    elt_ty = ir.BF16Type.get()
+    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+
+    in_ref_ty = ir.MemRefType.get(shape, elt_ty, memory_space=smem)
+    out_ref_ty = ir.MemRefType.get((2, 64, 32), elt_ty, memory_space=smem)
+
+    def body(in_ref):
+      nonlocal subview_op, user_op
+      subview_op = memref.SubViewOp(
+          out_ref_ty,
+          in_ref,
+          [],
+          [],
+          [],
+          static_offsets = [1, 0, 0],
+          static_sizes = [2, 64, 32],
+          static_strides = [1, 1, 1]
+      )
+      user_op = builtin.UnrealizedConversionCastOp(
+          [out_ref_ty], [subview_op.result]
+      )
+
+    with ir.InsertionPoint(self.module.body):
+      f = func.FuncOp.from_py_func(in_ref_ty)(body).func_op
+
+    transforms = ir.ArrayAttr.get([
+        mgpu.dialect.TileTransformAttr.get((32, 16)),
+        mgpu.dialect.SwizzleTransformAttr.get(32),
+    ])
+
+    if annotate_input:
+      f.attributes["in_transforms"] = ir.ArrayAttr.get([transforms])
+    else:
+      user_op.attributes["in_transforms"] = ir.ArrayAttr.get([transforms])
+
+    if annotate_input:
+      f.attributes["in_transforms"] = ir.ArrayAttr.get([transforms])
+    else:
+      user_op.attributes["in_transforms"] = ir.ArrayAttr.get([transforms])
+
+    with self.assertRaises(NotImplementedError):
       mgpu.infer_transforms(self.module)
 
 

@@ -30,6 +30,7 @@ from jax._src.lib.mlir.dialects import builtin
 from jax._src.lib.mlir.dialects import gpu
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import vector
+from jax._src.util import safe_zip
 
 from . import fragmented_array as fa
 from . import inference_utils
@@ -184,21 +185,20 @@ def _infer_slice_smem_transforms(op: mgpu.SliceSMEMOp) -> OptionalTransforms:
     out_transforms = inference_utils.in_transforms_for_operand(
         consumer, op_user
     )
-    if transforms is not None and out_transforms is not None:
-      if transforms != out_transforms:
-        raise NotImplementedError(
-            f"Conflicting transforms for {op_user} in {op}: "
-            f"{transforms} != {out_transforms}."
-        )
-    elif out_transforms is not None:
+    if transforms is None:
       transforms = out_transforms
+    elif out_transforms is not None and transforms != out_transforms:
+      raise NotImplementedError(
+          f"Conflicting transforms for {op_user} in {op}: "
+          f"{transforms} != {out_transforms}."
+      )
 
   return None if transforms is None else ([], [transforms])
 
 
 # TODO(bchetioui,apaszke): this empty rule is necessary while Mosaic doesn't use
 # the dialect in all cases.
-# The rule is necessary in order to handle the lowering of `utils.memref_ptr`
+# The rule is necessary in order to handle the lowering of `utils.memref_ptr`
 # which is used in `_construct_smem_reftree`.
 @partial(_add_transform_inference_rule, builtin.UnrealizedConversionCastOp)
 def _infer_unrealized_conversion_cast_transforms(
@@ -248,6 +248,81 @@ def _infer_dynamic_smem_transforms(
     _: gpu.DynamicSharedMemoryOp,
 ) -> OptionalTransforms:
   return None
+
+
+# This is used by Pallas' "_handle_indexing" memory transform.
+@partial(_add_transform_inference_rule, memref.SubViewOp)
+def _infer_memref_subview_transforms(
+    op: memref.SubViewOp,
+) -> OptionalTransforms:
+  transforms = None
+
+  for result_use in cast(ir.OpResult, op.result).uses:
+    consumer = result_use.owner
+    op_user = consumer.operands[result_use.operand_number]
+    user_transforms = inference_utils.in_transforms_for_operand(
+        consumer, op_user
+    )
+    if transforms is None:
+      transforms = user_transforms
+    elif user_transforms is not None and transforms != user_transforms:
+      raise NotImplementedError(
+          f"Conflicting transforms for {op_user} in {op}: "
+          f"{transforms} != {user_transforms}."
+      )
+
+  in_transforms = inference_utils.value_transforms(op.source)
+  if transforms is None:
+    transforms = in_transforms
+  elif in_transforms is not None and transforms != in_transforms:
+    raise ValueError(
+        f"Conflicting transforms for {op.source} in {op}: "
+        f"{transforms} != {in_transforms}."
+    )
+
+  if transforms is None:
+    return None
+
+  # Here, we have some transforms to propagate one way or the other. For now,
+  # we implement only the following basic propagation rules:
+  #  - A tile transform can be propagated bidirectionally if the axes being
+  #    tiled are not sliced, and are the logical minor axes of the source.
+  #  - A swizzle transform can be propagated towards the input of a subview if
+  #    the physical minormost dimension is unchanged.
+  #  - We only propagate transforms if they consist of a single tile transform
+  #    and a single swizzle transform.
+  # TODO(bchetioui): implement more complex propagation rules.
+  if len(transforms) == 2:
+    tile_transform, swizzle_transform = transforms
+    if not (
+        mgpu.TileTransformAttr.isinstance(tile_transform)
+        and mgpu.SwizzleTransformAttr.isinstance(swizzle_transform)
+    ):
+      raise NotImplementedError(f"Can't propagate transforms {transforms}.")
+  else:
+    raise NotImplementedError(f"Can't propagate transforms {transforms}.")
+
+  # Check swizzle transform propagation.
+  strides, _ = ir.MemRefType.get_strides_and_offset(op.source.type)
+  minor_dim = strides.index(min(strides))
+  if op.source.type.shape[minor_dim] != op.static_sizes[minor_dim]:
+    raise NotImplementedError(
+        "Swizzle transforms can only propagated if the minor dimension is "
+        "unchanged."
+    )
+
+  # Check tile transform propagation.
+  num_tiled_axes = len(mgpu.TileTransformAttr(tile_transform).tiling)
+  last_n_dims = op.source.type.shape[-num_tiled_axes:]
+  last_n_sizes = list(op.static_sizes)[-num_tiled_axes:]
+  for slice_size, dim_size in safe_zip(last_n_sizes, last_n_dims):
+    if slice_size != dim_size:
+      raise NotImplementedError(
+          "Tile transforms are only propagated if the tiled axes are not "
+          "sliced."
+      )
+
+  return [transforms], [transforms]
 
 
 def _should_have_transforms(op: ir.OpView) -> bool:
