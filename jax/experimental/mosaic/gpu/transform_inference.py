@@ -318,6 +318,16 @@ def _infer_memref_subview_transforms(
   return [transforms], [transforms]
 
 
+# `memref.load` is used to load barrier phases---the rule needn't do anything
+# interesting, but we need to have it in order to avoid crashing on it.
+@partial(_add_transform_inference_rule, memref.LoadOp)
+def _infer_memref_load_transforms(op: memref.LoadOp) -> OptionalTransforms:
+  if not ir.MemRefType(op.memref.type).shape:
+    # memref.load returns a scalar, so there is nothing interesting to do here.
+    return None
+  raise NotImplementedError("Non-scalar memref.load transforms")
+
+
 def _should_have_transforms(op: ir.OpView) -> bool:
   """Returns 'True' if the operation should be assigned in/out transforms."""
   return any(
