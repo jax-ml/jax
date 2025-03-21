@@ -199,6 +199,9 @@ def TestFactory(xla_backend,
     def setUp(self):
       super(ComputationTest, self).setUp()
       self.backend = xla_backend()
+      self.execution_devices = xla_client.DeviceList(
+          tuple(self.backend.local_devices()[:1])
+      )
 
       global _CUSTOM_CALLS_REGISTERED
       if self.backend.platform == "cpu" and not _CUSTOM_CALLS_REGISTERED:
@@ -217,7 +220,8 @@ def TestFactory(xla_backend,
 
     def _Execute(self, c, arguments):
       compiled_c = self.backend.compile(
-          xla_computation_to_mlir_module(c.build()))
+          xla_computation_to_mlir_module(c.build()),
+          execution_devices=self.execution_devices)
       return execute_with_python_values(
           compiled_c, arguments, backend=self.backend)
 
@@ -267,6 +271,9 @@ def TestFactory(xla_backend,
     def setUp(self):
       super(ComputationPrinting, self).setUp()
       self.backend = xla_backend()
+      self.execution_devices = xla_client.DeviceList(
+          tuple(self.backend.local_devices()[:1])
+      )
 
     def ExampleComputation(self):
       builder = xla_client.XlaBuilder("acomputation")
@@ -281,7 +288,8 @@ def TestFactory(xla_backend,
     def testCompiledHloModuleToHloText(self):
       computation = self.ExampleComputation()
       executable = self.backend.compile(
-          xla_computation_to_mlir_module(computation))
+          xla_computation_to_mlir_module(computation),
+          self.execution_devices)
       hlo_modules = executable.hlo_modules()
       self.assertLen(hlo_modules, 1)
       hlo_text = hlo_modules[0].to_string()
@@ -292,7 +300,8 @@ def TestFactory(xla_backend,
     def testCompiledHloModuleAsSerializedProto(self):
       computation = self.ExampleComputation()
       executable = self.backend.compile(
-          xla_computation_to_mlir_module(computation))
+          xla_computation_to_mlir_module(computation),
+          self.execution_devices)
       hlo_modules = executable.hlo_modules()
       self.assertLen(hlo_modules, 1)
       hlo_text = hlo_modules[0].to_string()
@@ -322,7 +331,8 @@ def TestFactory(xla_backend,
     def testFingerprint(self):
       computation = self.ExampleComputation()
       executable = self.backend.compile(
-          xla_computation_to_mlir_module(computation))
+          xla_computation_to_mlir_module(computation),
+          self.execution_devices)
       fingerprint = executable.fingerprint
       if (
           self.backend.platform == "tpu"
@@ -655,6 +665,8 @@ def TestFactory(xla_backend,
     def setUp(self):
       super(ComputationFromProtoTest, self).setUp()
       self.backend = xla_backend()
+      self.execution_devices = xla_client.DeviceList(
+          tuple(self.backend.local_devices()[:1]))
 
     def testExecuteFromProto(self):
       # Build the HLO proto
@@ -666,7 +678,8 @@ def TestFactory(xla_backend,
       c = xla_client.XlaComputation(serialized_proto)
       m = xla_computation_to_mlir_module(c)
       ans, = execute_with_python_values(
-          self.backend.compile(m), (), backend=self.backend)
+          self.backend.compile(m, self.execution_devices),
+          (), backend=self.backend)
       np.testing.assert_equal(ans, np.int32(3))
 
   tests.append(ComputationFromProtoTest)
@@ -739,7 +752,7 @@ def TestFactory(xla_backend,
 
       ops.Add(p0, ops.Constant(c, np.ones((2, 3, 4), np.float32)))
       executable = self.backend.compile(
-          xla_computation_to_mlir_module(c.build()))
+          xla_computation_to_mlir_module(c.build()), self.execution_devices)
 
       # Test that compiled executable returns plausible layouts.
       layouts: Sequence[xla_client.Layout] = executable.get_parameter_layouts()
@@ -772,7 +785,8 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       # 'parameter_is_tupled_arguments' causes MLIR untupled arguments to get
       # turned into HLO tupled arguments.
       options.parameter_is_tupled_arguments = True
-      executable = self.backend.compile(module_str, compile_options=options)
+      executable = self.backend.compile(
+          module_str, self.execution_devices, compile_options=options)
 
       # Test that compiled executable returns plausible layouts.
       layouts: Sequence[xla_client.Layout] = executable.get_parameter_layouts()
@@ -798,7 +812,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
   }
 }
 """
-      executable = self.backend.compile(module_str)
+      executable = self.backend.compile(module_str, self.execution_devices)
 
       # Test that compiled executable returns plausible layouts.
       layouts: Sequence[xla_client.Layout] = executable.get_output_layouts()
@@ -834,7 +848,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
   }
 }
       """
-      executable = self.backend.compile(module_str)
+      executable = self.backend.compile(module_str, self.execution_devices)
 
       # Check input layouts.
       input_layouts = executable.get_parameter_layouts()
@@ -846,7 +860,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       # Compile a version with default arg0 layout so we can make sure we
       # actually set it above.
       default_executable = self.backend.compile(
-          module_str.replace('"{0,1,2}"', '"default"')
+          module_str.replace('"{0,1,2}"', '"default"'), self.execution_devices
       )
       self.assertNotEqual(
           self._minor_to_major(input_layouts[0]),
@@ -886,7 +900,9 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       options = xla_client.CompileOptions()
       options.argument_layouts = [shape0, shape1, shape2]
       executable = self.backend.compile(
-          xla_computation_to_mlir_module(c.build()), compile_options=options)
+          xla_computation_to_mlir_module(c.build()),
+          self.execution_devices,
+          compile_options=options)
 
       # Test that compiled executable has expected layouts.
       expected_layouts: Sequence[xla_client.Shape] = [shape0, shape1, shape2]
@@ -926,7 +942,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
   }
 }
       """
-      executable = self.backend.compile(module_str)
+      executable = self.backend.compile(module_str, self.execution_devices)
 
       # Check output layouts.
       output_layouts = executable.get_output_layouts()
@@ -938,7 +954,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       # Compile a version with default first output layout so we can make sure
       # we actually set it above.
       default_executable = self.backend.compile(
-          module_str.replace('"{0,1,2}"', '"default"')
+          module_str.replace('"{0,1,2}"', '"default"'), self.execution_devices
       )
       self.assertNotEqual(
           self._minor_to_major(output_layouts[0]),
@@ -1027,7 +1043,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
   }
 }
 """
-      executable = self.backend.compile(module_str)
+      executable = self.backend.compile(module_str, self.execution_devices)
 
       # Check input layouts.
       input_layouts = executable.get_parameter_layouts()
@@ -1037,7 +1053,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       # Compile a version with default layouts so we can make sure the compiler
       # is actually choosing above.
       default_executable = self.backend.compile(
-          module_str.replace('"auto"', '"default"')
+          module_str.replace('"auto"', '"default"'), self.execution_devices
       )
       # We expect the compiler to choose a non-default layout for the second
       # (1024,8,128) argument.
@@ -1070,7 +1086,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
   }
 }
 """
-      executable = self.backend.compile(module_str)
+      executable = self.backend.compile(module_str, self.execution_devices)
 
       # Check output layout
       output_layout, = executable.get_output_layouts()
@@ -1079,7 +1095,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       # Compile a version with default layouts so we can make sure the compiler
       # is actually choosing above.
       default_executable = self.backend.compile(
-          module_str.replace('"auto"', '"default"')
+          module_str.replace('"auto"', '"default"'), self.execution_devices
       )
       # We expect the compiler to choose a non-default output layout.
       self.assertNotEqual(
@@ -1125,7 +1141,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
           ops.Constant(c, np.float32(3.14)))
       arg = NumpyArrayF32(1.11)
       compiled_c = self.backend.compile(
-          xla_computation_to_mlir_module(c.build()))
+          xla_computation_to_mlir_module(c.build()), self.execution_devices)
       arg_buffer = self.backend.buffer_from_pyval(arg)
       arg_buffer.delete()
       with self.assertRaises(xla_client.XlaRuntimeError):
@@ -1325,7 +1341,10 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
           ops.Constant(c, x), xla_client.dtype_to_etype(dst_dtype))
 
       result = execute_with_python_values(
-          self.backend.compile(xla_computation_to_mlir_module(c.build())), (),
+          self.backend.compile(
+              xla_computation_to_mlir_module(c.build()),
+              self.execution_devices),
+          (),
           backend=self.backend)
       self.assertLen(result, 1)
       expected = np.array(x, dtype=dst_dtype)
@@ -1355,7 +1374,10 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
           ops.Constant(c, x), xla_client.dtype_to_etype(dst_dtype))
 
       result = execute_with_python_values(
-          self.backend.compile(xla_computation_to_mlir_module(c.build())), (),
+          self.backend.compile(
+              xla_computation_to_mlir_module(c.build()),
+              self.execution_devices),
+          (),
           backend=self.backend)
       self.assertLen(result, 1)
       expected = x.view(dst_dtype)
@@ -1954,7 +1976,10 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
           ops.Constant(c, NumpyArrayBool([True, False, False, True]))
       ])
       result = execute_with_python_values(
-          self.backend.compile(xla_computation_to_mlir_module(c.build())), (),
+          self.backend.compile(
+              xla_computation_to_mlir_module(c.build()),
+              self.execution_devices),
+          (),
           backend=self.backend)
       self.assertLen(result, 3)
       np.testing.assert_equal(result[0], 42)
@@ -1994,7 +2019,9 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
           shape=xla_client.Shape.array_shape(xla_client.PrimitiveType.F32,
                                              shape))
       result = execute_with_python_values(
-          self.backend.compile(xla_computation_to_mlir_module(c.build())), (),
+          self.backend.compile(xla_computation_to_mlir_module(c.build()),
+                               self.execution_devices),
+          (),
           backend=self.backend)
       # since the result is random, we just check shape and uniqueness
       self.assertLen(result, 1)
@@ -2011,7 +2038,9 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
           shape=xla_client.Shape.array_shape(xla_client.PrimitiveType.F32,
                                              shape))
       result = execute_with_python_values(
-          self.backend.compile(xla_computation_to_mlir_module(c.build())), (),
+          self.backend.compile(xla_computation_to_mlir_module(c.build()),
+                               self.execution_devices),
+          (),
           backend=self.backend)
       # since the result is random, we just check shape, uniqueness, and range
       self.assertLen(result, 1)
@@ -2030,7 +2059,9 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
           shape=xla_client.Shape.array_shape(xla_client.PrimitiveType.S32,
                                              shape))
       result = execute_with_python_values(
-          self.backend.compile(xla_computation_to_mlir_module(c.build())), (),
+          self.backend.compile(xla_computation_to_mlir_module(c.build()),
+                               self.execution_devices),
+          (),
           backend=self.backend)
       # since the result is random, we just check shape, integrality, and range
       self.assertLen(result, 1)
@@ -2060,7 +2091,10 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       c = self._NewComputation()
       ops.Sort(c, (ops.Constant(c, keys), ops.Constant(c, values)), dimension=0)
       result = execute_with_python_values(
-          self.backend.compile(xla_computation_to_mlir_module(c.build())), (),
+          self.backend.compile(
+              xla_computation_to_mlir_module(c.build()),
+              self.execution_devices),
+          (),
           backend=self.backend)
       self.assertLen(result, 2)
       np.testing.assert_allclose(result[0], [[2, 1, 1, 2], [3, 4, 4, 3]])
@@ -2083,7 +2117,10 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
           dimension=1,
           comparator=comparator)
       result = execute_with_python_values(
-          self.backend.compile(xla_computation_to_mlir_module(c.build())), (),
+          self.backend.compile(
+              xla_computation_to_mlir_module(c.build()),
+              self.execution_devices),
+          (),
           backend=self.backend)
       self.assertLen(result, 2)
       np.testing.assert_allclose(result[0], [[1, 2, 3, 3], [1, 2, 2, 3]])
@@ -2690,10 +2727,10 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
               xla_client.shape_from_pyval(
                   to_infeed[0]).with_major_to_minor_layout_if_absent()), 0)
       compiled_c = self.backend.compile(
-          xla_computation_to_mlir_module(c.build()))
-      device = self.backend.local_devices()[0]
+          xla_computation_to_mlir_module(c.build()),
+          self.execution_devices)
       for item in to_infeed:
-        device.transfer_to_infeed(item)
+        self.execution_devices[0].transfer_to_infeed(item)
 
       for item in to_infeed:
         result, = execute_with_python_values(
@@ -2711,9 +2748,9 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
               xla_client.shape_from_pyval(
                   to_infeed).with_major_to_minor_layout_if_absent()), 0)
       compiled_c = self.backend.compile(
-          xla_computation_to_mlir_module(c.build()))
-      device = self.backend.local_devices()[0]
-      device.transfer_to_infeed(to_infeed)
+          xla_computation_to_mlir_module(c.build()),
+          self.execution_devices)
+      self.execution_devices[0].transfer_to_infeed(to_infeed)
 
       result = execute_with_python_values(
           compiled_c, (), backend=self.backend)
@@ -2738,14 +2775,14 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       ops.Tuple(c, ())
 
       compiled_c = self.backend.compile(
-          xla_computation_to_mlir_module(c.build()))
-      device = self.backend.local_devices()[0]
+          xla_computation_to_mlir_module(c.build()),
+          self.execution_devices)
 
       for want in to_round_trip:
         execution = threading.Thread(target=lambda: compiled_c.execute([]))
         execution.start()
-        device.transfer_to_infeed(want)
-        got = device.transfer_from_outfeed(outfeed_shape)
+        self.execution_devices[0].transfer_to_infeed(want)
+        got = self.execution_devices[0].transfer_from_outfeed(outfeed_shape)
         execution.join()
         self.assertEqual(want, got)
 
@@ -2893,7 +2930,8 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
 
       arg = NumpyArrayF32(1.0)
       compiled_c = self.backend.compile(
-          xla_computation_to_mlir_module(c.build(result)))
+          xla_computation_to_mlir_module(c.build(result)),
+          self.execution_devices)
       ans, = execute_with_python_values(
           compiled_c, [arg], backend=self.backend)
       np.testing.assert_allclose(ans, 4.14)
@@ -2917,7 +2955,8 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       ops.Add(result, ops.Constant(c, np.float32(1.618)))
       arg = NumpyArrayF32(1.0)
       compiled_c = self.backend.compile(
-          xla_computation_to_mlir_module(c.build(result)))
+          xla_computation_to_mlir_module(c.build(result)),
+          self.execution_devices)
       ans, = execute_with_python_values(
           compiled_c, [arg], backend=self.backend)
       np.testing.assert_allclose(ans, 4.14)
@@ -3200,6 +3239,8 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
     def setUp(self):
       super(TracebackTest, self).setUp()
       self.backend = xla_backend()
+      self.execution_devices = xla_client.DeviceList(
+          tuple(self.backend.local_devices()[:1]))
 
     def testNoTracebacksIfDisabled(self):
       with xla_client.tracebacks(enabled=False):
@@ -3209,7 +3250,9 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
 
         b = xla_client.XlaBuilder("computation")
         ops.Add(ops.Constant(b, np.int32(1)), ops.Constant(b, np.int32(2)))
-        e = self.backend.compile(xla_computation_to_mlir_module(b.build()))
+        e = self.backend.compile(
+            xla_computation_to_mlir_module(b.build()),
+            self.execution_devices)
         self.assertEqual(None, e.traceback)
 
     def assertIsTracebackContaining(self, tb, function):
@@ -3232,7 +3275,9 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
 
         b = xla_client.XlaBuilder("computation")
         ops.Add(ops.Constant(b, np.int32(1)), ops.Constant(b, np.int32(2)))
-        e = self.backend.compile(xla_computation_to_mlir_module(b.build()))
+        e = self.backend.compile(
+            xla_computation_to_mlir_module(b.build()),
+            self.execution_devices)
         self.assertIsTracebackContaining(e.traceback, "testTracebacks")
 
     def testNestedFunction(self):
@@ -3387,7 +3432,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
           xla_computation_to_mlir_module(c.build())
       )
       options = xla_client.ifrt_programs.make_xla_compile_options(
-          xla_client.CompileOptions(), []
+          xla_client.CompileOptions(), self.execution_devices, []
       )
 
       compiled_c = self.backend.compile_ifrt_program(program, options)
@@ -3595,7 +3640,8 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
           ops.Constant(c, np.array([2.5, 3.3, -1.2, 0.7], np.float32)),
           ops.Constant(c, np.array([-1.2, 2, -2, -3], np.float32)))
       compiled_c = self.backend.compile(
-          xla_computation_to_mlir_module(c.build()))
+          xla_computation_to_mlir_module(c.build()),
+          self.execution_devices)
       results, token = compiled_c.execute_with_token([])
       token.block_until_ready()
       self.assertLen(results, 1)
@@ -3611,7 +3657,8 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       options = xla_client.CompileOptions()
       options.num_replicas = num_replicas
       compiled_c = self.backend.compile(
-          xla_computation_to_mlir_module(c.build()), compile_options=options)
+          xla_computation_to_mlir_module(c.build()),
+          self.execution_devices, compile_options=options)
       py_results = compiled_c.execute_sharded([], with_tokens=True)
       results = py_results.disassemble_into_single_device_arrays()
       sharded_token = py_results.consume_token()
@@ -3664,7 +3711,9 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       options = xla_client.CompileOptions()
       options.num_replicas = 1
       compiled_c = self.backend.compile(
-          xla_computation_to_mlir_module(c.build()), compile_options=options)
+          xla_computation_to_mlir_module(c.build()),
+          self.execution_devices,
+          compile_options=options)
 
       results = compiled_c.execute_sharded(
           []).disassemble_into_single_device_arrays()
@@ -3690,7 +3739,9 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       options = xla_client.CompileOptions()
       options.num_replicas = 1
       compiled_c = self.backend.compile(
-          xla_computation_to_mlir_module(c.build()), compile_options=options)
+          xla_computation_to_mlir_module(c.build()),
+          self.execution_devices,
+          compile_options=options)
 
       buffer = self.backend.buffer_from_pyval(arg)
 

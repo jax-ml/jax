@@ -109,8 +109,17 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
           device_assignment=device_assignment,
           use_spmd_partitioning=use_spmd_partitioning,
       )
-      jax_optimized_hlo = backend.compile(
-          jax_hlo, compile_options).hlo_modules()[0].to_string()
+      if jax._src.lib.jaxlib_extension_version < 331:
+        executable = backend.compile(  # type: ignore
+            jax_hlo, compile_options=compile_options
+        )
+      else:
+        executable = backend.compile(
+            jax_hlo,
+            compiler._create_da_object(tuple(self.devices.flat)),
+            compile_options,
+        )
+      jax_optimized_hlo = executable.hlo_modules()[0].to_string()
       logging.info("[%s] got JAX optimized HLO for platform %s %s",
                    self._testMethodName, backend.platform, jax_optimized_hlo)
 

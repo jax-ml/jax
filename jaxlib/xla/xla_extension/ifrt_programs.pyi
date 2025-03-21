@@ -37,6 +37,7 @@ def make_colocated_python_compile_options() -> CompileOptions: ...
 
 def make_xla_compile_options(
     compile_options: xla_extension.CompileOptions,
+    execution_devices: xla_extension.DeviceList,
     host_callbacks: Sequence[Any]
 ) -> CompileOptions: ...
 
