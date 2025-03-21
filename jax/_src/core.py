@@ -59,6 +59,7 @@ from jax._src import traceback_util
 from jax._src.typing import Array, DimSize, Shape
 from jax._src import typing
 from jax._src import xla_metadata as xla_metadata_lib
+from jax._src.weak_type_ndarray import WeakTypeNdArray
 
 traceback_util.register_exclusion(__file__)
 
@@ -498,7 +499,8 @@ class Primitive:
     return f'{self.name}'
 
   def bind(self, *args, **params):
-    args = map(lambda x: x if isinstance(x, Tracer) else canonicalize_dtype(x), args)
+    from jax._src.export.shape_poly import _DimExpr  # TODO(dfm): omg
+    args = map(lambda x: x if isinstance(x, (Tracer, _DimExpr)) else canonicalize_dtype(x), args)
     args = args if self.skip_canonicalization else map(canonicalize_value, args)
     return self._true_bind(*args, **params)
 
@@ -3407,10 +3409,11 @@ def _canonicalize_ndarray_dtype(x):
   return np.asarray(x, dtypes.canonicalize_dtype(x.dtype))
 
 def _canonicalize_python_scalar_dtype(typ, x):
-  return np.asarray(
+  arr = np.asarray(
       x, dtypes.canonicalize_dtype(dtypes._scalar_type_to_dtype(typ, x)))
-
-_scalar_types = dtypes.python_scalar_dtypes.keys()
+  arr = arr.view(WeakTypeNdArray)
+  arr.weak_type = True
+  return arr
 
 canonicalize_dtype_handlers: dict[Any, Callable] = {}
 canonicalize_dtype_handlers.update(
@@ -3418,7 +3421,8 @@ canonicalize_dtype_handlers.update(
 canonicalize_dtype_handlers[np.ndarray] = _canonicalize_ndarray_dtype
 canonicalize_dtype_handlers[np.ma.MaskedArray] = _canonicalize_masked_array_dtype
 canonicalize_dtype_handlers.update(
-    (t, partial(_canonicalize_python_scalar_dtype, t)) for t in _scalar_types)
+    (t, partial(_canonicalize_python_scalar_dtype, t))
+    for t in dtypes.python_scalar_dtypes.keys())
 
 def identity(x): return x
 canonicalize_dtype_handlers[Token] = identity

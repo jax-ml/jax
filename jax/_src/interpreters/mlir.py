@@ -46,7 +46,6 @@ from jax._src import source_info_util
 from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding as JSharding
@@ -2191,7 +2190,7 @@ def _ir_consts(consts) -> list[IrValues]:
   ir_consts = {
       # This dtype canonicalization here is safe because it is only called from
       # lower_fun within the appropriate JaxprEqnContext.
-      id_: ir_constant(xla.canonicalize_dtype(const))
+      id_: ir_constant(core.canonicalize_dtype(const))
       for id_, const in unique_consts.items()
   }
   return [ir_consts[id(const)] for const in consts]

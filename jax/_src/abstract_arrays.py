@@ -42,7 +42,8 @@ core.pytype_aval_mappings[np.ma.MaskedArray] = masked_array_error
 def _make_shaped_array_for_numpy_array(x: np.ndarray) -> ShapedArray:
   dtype = x.dtype
   dtypes.check_valid_dtype(dtype)
-  return ShapedArray(x.shape, dtypes.canonicalize_dtype(dtype), sharding=None)
+  return ShapedArray(x.shape, dtypes.canonicalize_dtype(dtype), sharding=None,
+                     weak_type=getattr(x, "weak_type", False))
 
 core.pytype_aval_mappings[np.ndarray] = _make_shaped_array_for_numpy_array
 
