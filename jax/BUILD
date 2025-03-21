@@ -337,6 +337,7 @@ py_library_providing_imports_info(
         ":typing",
         ":util",
         ":version",
+        ":weak_type_ndarray",
         ":xla",
         ":xla_bridge",
         ":xla_metadata",
@@ -1088,6 +1089,15 @@ pytype_strict_library(
 pytype_strict_library(
     name = "version",
     srcs = ["version.py"],
+)
+
+pytype_strict_library(
+    name = "weak_type_ndarray",
+    srcs = ["_src/weak_type_ndarray.py"],
+    deps = [
+        ":dtypes",
+        ":typing",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
