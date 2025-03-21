@@ -61,6 +61,37 @@ def _set_transform_attributes(
   op.attributes["out_transforms"] = ir.ArrayAttr.get(out_transforms)
 
 
+def _resolve_transforms(
+    transforms: ir.ArrayAttr | None,
+    other_transforms: ir.ArrayAttr | None,
+) -> ir.ArrayAttr | None:
+  """Resolves two sets of competing transforms to a single compatible set.
+
+  Args:
+    transforms: one optional set of transforms.
+    other_transforms: another optional set of transforms.
+
+  Returns:
+    A single set of transforms that is compatible with both `transforms` and
+    `other_transforms`, or `None` if both transforms are `None`.
+  Raises:
+    NotImplementedError: if the two sets of transforms can't be resolved to a
+      single set.
+  """
+  if transforms is None:
+    return other_transforms
+
+  if other_transforms is None:
+    return transforms
+
+  if transforms != other_transforms:
+    raise NotImplementedError(
+        f"Conflicting transforms {transforms} != {other_transforms}."
+    )
+
+  return transforms
+
+
 def infer_transforms_for_wgmma_ref(ref_ty: ir.MemRefType) -> ir.ArrayAttr:
   if len(ref_ty.shape) != 2:
     raise ValueError(f"Expected a 2D memref, got {ref_ty}")
@@ -157,21 +188,8 @@ def _infer_vector_load_store_transforms(
         f"Got layout {layout} which is not yet supported"
     )
 
-  if transforms is not None and layout_transforms is not None:
-    if transforms != layout_transforms:
-      raise NotImplementedError(
-          f"Conflicting transforms for {op.base} in {op}: "
-          f"{transforms} != {layout_transforms}."
-      )
-    return [transforms], []
-
-  if transforms is not None:
-    return [transforms], []
-
-  if layout_transforms is not None:
-    return [layout_transforms], []
-
-  return None
+  transforms = _resolve_transforms(transforms, layout_transforms)
+  return None if transforms is None else ([transforms], [])
 
 
 @partial(_add_transform_inference_rule, mgpu.SliceSMEMOp)
@@ -185,13 +203,7 @@ def _infer_slice_smem_transforms(op: mgpu.SliceSMEMOp) -> OptionalTransforms:
     out_transforms = inference_utils.in_transforms_for_operand(
         consumer, op_user
     )
-    if transforms is None:
-      transforms = out_transforms
-    elif out_transforms is not None and transforms != out_transforms:
-      raise NotImplementedError(
-          f"Conflicting transforms for {op_user} in {op}: "
-          f"{transforms} != {out_transforms}."
-      )
+    transforms = _resolve_transforms(transforms, out_transforms)
 
   return None if transforms is None else ([], [transforms])
 
@@ -227,14 +239,7 @@ def _infer_memref_view_transforms(op: memref.ViewOp) -> OptionalTransforms:
     out_transforms = inference_utils.in_transforms_for_operand(
         consumer, op_user
     )
-    if transforms is not None and out_transforms is not None:
-      if transforms != out_transforms:
-        raise ValueError(
-            f"Conflicting transforms for {op_user} in {op}: "
-            f"{transforms} != {out_transforms}."
-        )
-    elif out_transforms is not None:
-      transforms = out_transforms
+    transforms = _resolve_transforms(transforms, out_transforms)
 
   # TODO(bchetioui): do we actually need to assign a transform to the input of
   # the view op? Presumably, it'll only be used to access scratch memory.
@@ -263,22 +268,10 @@ def _infer_memref_subview_transforms(
     user_transforms = inference_utils.in_transforms_for_operand(
         consumer, op_user
     )
-    if transforms is None:
-      transforms = user_transforms
-    elif user_transforms is not None and transforms != user_transforms:
-      raise NotImplementedError(
-          f"Conflicting transforms for {op_user} in {op}: "
-          f"{transforms} != {user_transforms}."
-      )
+    transforms = _resolve_transforms(transforms, user_transforms)
 
   in_transforms = inference_utils.value_transforms(op.source)
-  if transforms is None:
-    transforms = in_transforms
-  elif in_transforms is not None and transforms != in_transforms:
-    raise ValueError(
-        f"Conflicting transforms for {op.source} in {op}: "
-        f"{transforms} != {in_transforms}."
-    )
+  transforms = _resolve_transforms(transforms, in_transforms)
 
   if transforms is None:
     return None
