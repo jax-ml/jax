@@ -1607,7 +1607,7 @@ def _dynamic_update_slice_shape_rule(operand, update, *start_indices):
 
 def _dynamic_update_slice_sharding_rule(operand, update, *start_indices):
   if operand.sharding != update.sharding:
-    raise TypeError(
+    raise core.ShardingTypeError(
         "dynamic_update_slice update sharding must be equal to operand"
         " sharding, got update sharding"
         f" {update.str_short(mesh_axis_types=True)} for operand sharding"

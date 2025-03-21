@@ -1786,6 +1786,10 @@ def _invalid_shape_error(shape: Shape, context: str=""):
   return TypeError(msg)
 
 
+class ShardingTypeError(Exception):
+  pass
+
+
 # TODO(dougalm): Cast scalar, numpy arrays, etc to jax arrays so that values
 # passed to primitives are always have avals, etc i.e. they are canonical.
 def canonicalize_value(val):
