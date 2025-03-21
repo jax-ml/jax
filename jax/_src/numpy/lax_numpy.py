@@ -49,16 +49,15 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax.lax import (PrecisionLike,_array_copy,
                               _sort_le_comparator, _sort_lt_comparator)
 from jax._src.lib import xla_client as xc
+from jax._src.numpy.array_creation import (empty, empty_like, full,
+                                           ones, ones_like, zeros, zeros_like)
 from jax._src.numpy import indexing
 from jax._src.numpy import reductions
 from jax._src.numpy import tensor_contractions
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
-from jax._src.numpy.array_creation import (empty, empty_like, full,
-                                           ones, ones_like, zeros, zeros_like)
 from jax._src.numpy.sorting import argsort, sort
 from jax._src.numpy.vectorize import vectorize
-from jax._src.sharding_impls import SingleDeviceSharding
 from jax._src.typing import (
   Array, ArrayLike, DType, DTypeLike, DeprecatedArg, DimSize, Shape
 )
@@ -66,7 +65,8 @@ from jax._src.util import (
     NumpyComplexWarning, canonicalize_axis as _canonicalize_axis,
     ceil_of_ratio, safe_zip, set_module, unzip2)
 from jax.sharding import Sharding
-from jax.tree_util import tree_flatten, tree_map
+from jax._src.sharding_impls import SingleDeviceSharding
+from jax.tree_util import tree_leaves, tree_map
 import numpy as np
 
 export = set_module('jax.numpy')
@@ -5504,7 +5504,9 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
       object = xc._xla.cuda_array_interface_to_buffer(
           cai=cai, gpu_backend=backend, device_id=device_id)
 
-  leaves, treedef = tree_flatten(object, is_leaf=lambda x: x is None)
+  object = tree_map(lambda leaf: leaf.__jax_array__()
+                    if hasattr(leaf, "__jax_array__") else leaf, object)
+  leaves = tree_leaves(object, is_leaf=lambda x: x is None)
   if any(leaf is None for leaf in leaves):
     # Added Nov 16 2023
     if deprecations.is_accelerated("jax-numpy-array-none"):
@@ -5513,13 +5515,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
       "None encountered in jnp.array(); this is currently treated as NaN. "
       "In the future this will result in an error.",
       FutureWarning, stacklevel=2)
-    leaves, treedef = tree_flatten(object)
-  leaves = [
-      leaf
-      if (leaf_jax_array := getattr(leaf, "__jax_array__", None)) is None
-      else leaf_jax_array()
-      for leaf in leaves
-  ]
+    leaves = tree_leaves(object)
   if dtype is None:
     # Use lattice_result_type rather than result_type to avoid canonicalization.
     # Otherwise, weakly-typed inputs would have their dtypes canonicalized.
@@ -5534,8 +5530,8 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   if not weak_type:
     dtype = dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True)  # type: ignore[assignment]
 
-  object = treedef.unflatten(leaves)
   out: ArrayLike
+
   if all(not isinstance(leaf, Array) for leaf in leaves):
     # TODO(jakevdp): falling back to numpy here fails to overflow for lists
     # containing large integers; see discussion in
