@@ -245,7 +245,10 @@ def trace_context():
           pgle_profiling_runs.value,
           enable_pgle.value,
           use_shardy_partitioner.value,
-          use_high_dynamic_range_gumbel.value)
+          use_high_dynamic_range_gumbel.value,
+          error_checking_behavior_nan.value,
+          error_checking_behavior_divide.value,
+          error_checking_behavior_oob.value)
 
 config = Config()
 
@@ -1315,6 +1318,41 @@ disallow_mesh_context_manager = bool_state(
         'If set to True, trying to use a mesh as a context manager will'
         ' result in a RuntimeError.'
     ),
+)
+
+# TODO(ayx): Move these 3 flags out of config once we have a user-level
+# extension mechanism for adding contexts to which the jit cache is sensitive.
+error_checking_behavior_nan = enum_state(
+    name='jax_error_checking_behavior_nan',
+    enum_values=['ignore', 'raise'],
+    default='ignore',
+    help=(
+        'Specify the behavior when a NaN is encountered. Options are "ignore"'
+        ' or "raise".'
+    ),
+    include_in_jit_key=True,
+)
+
+error_checking_behavior_divide = enum_state(
+    name='jax_error_checking_behavior_divide',
+    enum_values=['ignore', 'raise'],
+    default='ignore',
+    help=(
+        'Specify the behavior when a divide by zero is encountered. Options are'
+        ' "ignore" or "raise".'
+    ),
+    include_in_jit_key=True,
+)
+
+error_checking_behavior_oob = enum_state(
+    name='jax_error_checking_behavior_oob',
+    enum_values=['ignore', 'raise'],
+    default='ignore',
+    help=(
+        'Specify the behavior when an out of bounds access is encountered.'
+        ' Options are "ignore" or "raise".'
+    ),
+    include_in_jit_key=True,
 )
 
 def _update_x64_global(val):
