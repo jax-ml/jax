@@ -517,11 +517,7 @@ wgmma_ref_p = jax_core.Primitive("wgmma_ref")
 wgmma_ref_p.multiple_results = True
 
 
-def wgmma(
-    acc: gpu_core.WGMMAAbstractAccumulatorRef,
-    a,
-    b: pallas_core.TransformedRef,
-) -> None:
+def wgmma(acc: gpu_core.WGMMAAbstractAccumulatorRef, a, b) -> None:
   """Performs an asynchronous warp group matmul-accumulate on the given references.
 
   Conceptually, this is equivalent to doing ``acc[...] += a[...] @ b[...]``,
@@ -555,12 +551,17 @@ def wgmma(
     a = a.ref
   else:
     a_transforms_leaves, a_transforms_tree = [], None
-  b_transforms_leaves, b_transforms_tree = jax.tree.flatten(b.transforms)
+
+  if isinstance(b, pallas_core.TransformedRef):
+    b_transforms_leaves, b_transforms_tree = jax.tree.flatten(b.transforms)
+    b = b.ref
+  else:
+    b_transforms_leaves, b_transforms_tree = [], None
 
   wgmma_ref_p.bind(
       acc,
       a,
-      b.ref,
+      b,
       *a_transforms_leaves,
       *b_transforms_leaves,
       a_transforms_tree=a_transforms_tree,
@@ -674,6 +675,40 @@ def _wgmma_lowering(
   return new_acc
 
 
+@lowering.register_lowering_rule(wgmma_p, mgpu.ThreadSemantics.Warpgroup)
+def _wgmma_warpgroup_lowering(
+    ctx: lowering.LoweringRuleContext,
+    acc,
+    a,
+    b,
+    *transforms_leaves,
+    a_transforms_tree,
+    b_transforms_tree,
+):
+  del ctx, transforms_leaves  # Unused.
+  if a_transforms_tree is not None:
+    match a_transforms_tree:
+      case gpu_core.TransposeRef((1, 0)):
+        raise NotImplementedError("WGMMA lhs transpose not supported.")
+      case _:
+        raise ValueError(
+            f"WGMMA lhs has unsupported transforms: {a_transforms_tree}."
+        )
+
+  if b_transforms_tree is not None:
+    match b_transforms_tree:
+      case gpu_core.TransposeRef((1, 0)):
+        raise NotImplementedError("WGMMA rhs transpose not supported.")
+      case _:
+        raise ValueError(
+            f"WGMMA rhs has unsupported transforms: {b_transforms_tree}."
+        )
+
+  new_acc = mgpu.dialect.wgmma(acc, a, b)
+  nvvm_dialect.wgmma_commit_group_sync_aligned()
+  return new_acc
+
+
 @wgmma_p.def_effectful_abstract_eval
 def _wgmma_effectful_abstract_eval(acc, lhs_ref, *args, **kwargs):
   del args, kwargs
@@ -698,6 +733,7 @@ def wgmma_wait_effectful_abstract_eval(_):
 
 
 @lowering.register_lowering_rule(wgmma_wait_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(wgmma_wait_p, mgpu.ThreadSemantics.Warpgroup)
 def _wgmma_wait_lowering(ctx: lowering.LoweringRuleContext, allow_groups):
   del ctx
   nvvm_dialect.wgmma_wait_group_sync_aligned(allow_groups)
@@ -728,11 +764,19 @@ def _wgmma_accumulator_deref_discharge(in_avals, out_avals, acc):
   return (None,), wgmma_accumulator_deref_p.bind(acc)
 
 
-@lowering.register_lowering_rule(wgmma_accumulator_deref_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(
+    wgmma_accumulator_deref_p, mgpu.ThreadSemantics.Lane
+)
+@lowering.register_lowering_rule(
+    wgmma_accumulator_deref_p, mgpu.ThreadSemantics.Warpgroup
+)
 def _wgmma_accumulator_deref_lowering(ctx: lowering.LoweringRuleContext, acc):
-  del ctx
   nvvm_dialect.wgmma_wait_group_sync_aligned(0)
-  return acc.value
+  return (
+      acc.value
+      if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane
+      else acc
+  )
 
 
 class Layout(enum.Enum):
@@ -835,6 +879,7 @@ def _commit_smem_abstract_eval():
 @lowering.register_lowering_rule(commit_smem_p, mgpu.ThreadSemantics.Lane)
 @lowering.register_lowering_rule(commit_smem_p, mgpu.ThreadSemantics.Warpgroup)
 def _commit_smem_lowering(ctx: lowering.LoweringRuleContext):
+  # TODO(bchetioui): add primitive for commit smem to mosaic_gpu dialect.
   mgpu.commit_shared()
   return ()
 

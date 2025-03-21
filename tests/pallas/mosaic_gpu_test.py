@@ -1302,7 +1302,8 @@ class PallasCallSm90ATest(PallasSm90ATest):
     acc_ini = jnp.ones((64, 64), dtype=jnp.float16)
     np.testing.assert_array_equal(kernel(acc_ini), jnp.full((64, 64), 5, dtype=jnp.float16))
 
-  def test_realistic_matmul(self):
+  @parameterized.parameters([*plgpu.ThreadSemantics])
+  def test_realistic_matmul(self, thread_semantics):
     dtype = jnp.float16
     swizzle = 128
     elems_128b = swizzle // jnp.dtype(dtype).itemsize
@@ -1326,34 +1327,46 @@ class PallasCallSm90ATest(PallasSm90ATest):
     a = jax.random.uniform(key1, shape=(m, k), dtype=dtype)
     b = jax.random.uniform(key2, shape=(k, n), dtype=dtype)
 
+    lhs_spec = pl.BlockSpec(
+        (tile_m, tile_k),
+        lambda m, n, k: (m, k),
+    )
+    rhs_spec = pl.BlockSpec(
+        (tile_k, tile_n),
+        lambda m, n, k: (k, n),
+    )
+    out_spec = pl.BlockSpec(
+        (tile_m, tile_n),
+        lambda m, n, k: (m, n),
+    )
+
+    if thread_semantics == plgpu.ThreadSemantics.Lane:
+      lhs_spec = plgpu.GPUBlockSpec(
+          lhs_spec.block_shape, lhs_spec.index_map,
+          transforms=(
+              plgpu.TilingTransform((64, elems_128b)),
+              plgpu.SwizzleTransform(128),
+          )
+      )
+      rhs_spec = plgpu.GPUBlockSpec(
+          rhs_spec.block_shape, rhs_spec.index_map,
+          transforms=(
+              plgpu.TilingTransform((elems_128b, elems_128b)),
+              plgpu.SwizzleTransform(128),
+          )
+      )
+      out_spec = plgpu.GPUBlockSpec(
+          out_spec.block_shape, out_spec.index_map,
+          transforms=(
+              plgpu.TilingTransform((64, elems_128b)),
+              plgpu.SwizzleTransform(128),
+          )
+      )
+
     res = pl.pallas_call(
         kernel,
-        in_specs=[
-            plgpu.GPUBlockSpec(
-                (tile_m, tile_k),
-                lambda m, n, k: (m, k),
-                transforms=(
-                    plgpu.TilingTransform((64, elems_128b)),
-                    plgpu.SwizzleTransform(128),
-                ),
-            ),
-            plgpu.GPUBlockSpec(
-                (tile_k, tile_n),
-                lambda m, n, k: (k, n),
-                transforms=(
-                    plgpu.TilingTransform((elems_128b, elems_128b)),
-                    plgpu.SwizzleTransform(128),
-                ),
-            ),
-        ],
-        out_specs=plgpu.GPUBlockSpec(
-            (tile_m, tile_n),
-            lambda m, n, k: (m, n),
-            transforms=(
-                plgpu.TilingTransform((64, elems_128b)),
-                plgpu.SwizzleTransform(128),
-            ),
-        ),
+        in_specs=[lhs_spec, rhs_spec],
+        out_specs=out_spec,
         out_shape=jax.ShapeDtypeStruct((m, n), jnp.float16),
         scratch_shapes=[plgpu.ACC((tile_m, tile_n), jnp.float32)],
         grid=(grid_m, grid_n, grid_k),
@@ -1361,6 +1374,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
             dimension_semantics=["parallel", "parallel", "sequential"],
             max_concurrent_steps=2,
             delay_release=1,
+            thread_semantics=thread_semantics,
         ),
     )(a, b)
     np.testing.assert_allclose(res, a @ b, rtol=1e-3)
