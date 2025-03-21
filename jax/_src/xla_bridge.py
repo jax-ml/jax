@@ -60,6 +60,9 @@ traceback_util.register_exclusion(__file__)
 
 XlaBackend = xla_client.Client
 
+# The platforms in this set will force forward compatibility for lowering.
+FORCE_FORWARD_COMPAT_LOWERING_PLATFORMS: set[str] = set()
+
 MIN_COMPUTE_CAPABILITY = 52
 
 _DEFAULT_CPU_COLLECTIVES_IMPL = 'gloo'
