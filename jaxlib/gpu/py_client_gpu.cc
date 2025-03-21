@@ -20,7 +20,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "nanobind/nanobind.h"
 #include "absl/base/casts.h"
 #include "absl/log/check.h"
 #include "absl/status/status.h"
@@ -29,6 +28,7 @@ limitations under the License.
 #include "absl/strings/numbers.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "nanobind/nanobind.h"
 #include "jaxlib/gpu/vendor.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/host_callback.h"

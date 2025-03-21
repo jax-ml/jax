@@ -16,7 +16,7 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 
-#include "third_party/nanobind/include/nanobind/nanobind.h"
+#include "nanobind/nanobind.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
 

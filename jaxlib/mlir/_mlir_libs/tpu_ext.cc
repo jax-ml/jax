@@ -43,13 +43,13 @@ limitations under the License.
 // clang-format off
 #include "mlir-c/Bindings/Python/Interop.h"
 // clang-format on
+#include "absl/log/check.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
-#include "nanobind/stl/pair.h"      // IWYU pragma: keep
-#include "nanobind/stl/string.h"    // IWYU pragma: keep
-#include "nanobind/stl/variant.h"   // IWYU pragma: keep
-#include "nanobind/stl/vector.h"    // IWYU pragma: keep
-#include "absl/log/check.h"
+#include "nanobind/stl/pair.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/variant.h"  // IWYU pragma: keep
+#include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/mosaic/dialect/tpu/integrations/c/tpu_dialect.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/tsl/python/lib/core/numpy.h"

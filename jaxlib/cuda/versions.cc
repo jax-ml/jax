@@ -13,9 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/cuda/versions_helpers.h"
-
 #include "nanobind/nanobind.h"
+#include "jaxlib/cuda/versions_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 
 namespace jax::cuda {
