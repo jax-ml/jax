@@ -4668,7 +4668,7 @@ def _convert_elt_type_folding_rule(consts, eqn):
   c, = consts
   o, = eqn.outvars
   new_dtype = eqn.params['new_dtype']
-  if (type(c) in {np.ndarray, *dtypes.python_scalar_dtypes} and
+  if (type(c) in {np.ndarray, core.WeakNdArray, *dtypes.python_scalar_dtypes} and
       isinstance(o.aval, core.UnshapedArray) and not np.shape(c) and
       not dtypes.issubdtype(new_dtype, dtypes.extended)):
     out = np.array(c)

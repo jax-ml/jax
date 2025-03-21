@@ -56,7 +56,6 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
-from jax._src.interpreters import xla
 from jax._src.layout import DeviceLocalLayout, AutoLayout, Layout
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
@@ -130,7 +129,7 @@ def shard_args(shardings: Sequence[JSharding], layouts, copy_semantics,
   if len(args) == 1:
     arg = args[0]
     if canonicalize:
-      arg = xla.canonicalize_dtype(arg)
+      arg = core.canonicalize_dtype(arg)
     return shard_arg_handlers[type(arg)]([arg], shardings, layouts,
                                          xc_copy_semantics)
 
@@ -140,7 +139,7 @@ def shard_args(shardings: Sequence[JSharding], layouts, copy_semantics,
   for i, (arg, sharding, layout, cs) in enumerate(
       safe_zip(args, shardings, layouts, xc_copy_semantics)):
     if canonicalize:
-      arg = xla.canonicalize_dtype(arg)
+      arg = core.canonicalize_dtype(arg)
     batch = batches[type(arg)]
     batch[0].append(i)
     batch[1].append(arg)
@@ -217,6 +216,7 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
   return results
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_np_array
+shard_arg_handlers[core.WeakNdArray] = _shard_np_array
 
 def _shard_darray(xs, shardings, layouts, copy_semantics):
   return shard_args(shardings, layouts, copy_semantics, [x._data for x in xs])

@@ -36,7 +36,6 @@ from jax.test_util import check_grads
 import jax.util
 
 from jax.interpreters import batching
-from jax.interpreters import xla
 from jax._src import array
 from jax._src import config
 from jax._src import dtypes
@@ -3942,7 +3941,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
   def setUp(self):
     core.pytype_aval_mappings[FooArray] = \
         lambda x: core.ShapedArray(x.shape, FooTy(), sharding=None)
-    xla.canonicalize_dtype_handlers[FooArray] = lambda x: x
+    core.canonicalize_dtype_handlers[FooArray] = lambda x: x
     pxla.shard_arg_handlers[FooArray] = shard_foo_array_handler
     mlir._constant_handlers[FooArray] = foo_array_constant_handler
     mlir.register_lowering(make_p, mlir.lower_fun(make_lowering, False))
@@ -3954,7 +3953,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
 
   def tearDown(self):
     del core.pytype_aval_mappings[FooArray]
-    del xla.canonicalize_dtype_handlers[FooArray]
+    del core.canonicalize_dtype_handlers[FooArray]
     del mlir._constant_handlers[FooArray]
     del mlir._lowerings[make_p]
     del mlir._lowerings[bake_p]

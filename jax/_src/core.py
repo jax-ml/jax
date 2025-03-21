@@ -498,8 +498,17 @@ class Primitive:
     return f'{self.name}'
 
   def bind(self, *args, **params):
+    try:
+      args = map(
+          lambda x: x if isinstance(x, Tracer) else canonicalize_dtype(x), args)
+    except InvalidInputException as e:
+      raise TypeError(str(e)) from e
     args = args if self.skip_canonicalization else map(canonicalize_value, args)
-    return self._true_bind(*args, **params)
+    out = self._true_bind(*args, **params)
+    if self.multiple_results:
+      return map(strip_internal_weak_types, out)
+    else:
+      return strip_internal_weak_types(out)
 
   def _true_bind(self, *args, **params):
     for arg in args:
@@ -3387,3 +3396,76 @@ def unsafe_get_axis_names() -> list[Any]:
 # TODO(douglam): deprecate/delete
 def axis_frame(axis_name):
   return trace_ctx.axis_env.axis_size(axis_name)
+
+# ----------------- dtype canonicalization -----------------
+
+# TODO(dfm): Come up with a better name than "canonicalize_dtype"!!!
+
+numpy_scalar_types: set[type] = {  # pylint: disable=g-bare-generic
+    dtypes.int4, np.int8, np.int16, np.int32, np.int64,
+    dtypes.uint4, np.uint8, np.uint16, np.uint32, np.uint64,
+    np.complex64, np.complex128,
+    np.bool_, np.longlong, np.intc,
+} | {np.dtype(dt).type for dt in dtypes._float_types}
+
+if dtypes.int2 is not None:
+  assert dtypes.uint2 is not None
+  numpy_scalar_types.add(dtypes.int2)
+  numpy_scalar_types.add(dtypes.uint2)
+
+class WeakNdArray(np.ndarray):
+  """An internal subclass of ndarray with weak_type=True."""
+  def __array_finalize__(self, obj):
+    del obj  # unused
+    self.weak_type = True
+
+dtypes.register_weak_scalar_type(WeakNdArray)
+
+def strip_internal_weak_types(x):
+  if not isinstance(x, WeakNdArray):
+    return x
+  if np.dim(x) != 0:
+    return x.view(np.ndarray)
+  return dtypes.scalar_type_of(x)(x)
+
+class InvalidInputException(Exception):
+  pass
+
+# TODO(mattjj): try to remove this canonicalize_dtype stuff
+def canonicalize_dtype(x):
+  typ = type(x)
+  handler = canonicalize_dtype_handlers.get(typ)
+  if handler: return handler(x)
+  for typ in typ.__mro__:
+    handler = canonicalize_dtype_handlers.get(typ)
+    if handler: return handler(x)
+  if hasattr(x, '__jax_array__'):
+    return canonicalize_dtype(x.__jax_array__())
+  raise InvalidInputException(
+      f"Argument '{x}' of type {type(x)} is not a valid JAX type.")
+
+def _canonicalize_masked_array_dtype(x):
+  raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
+                   "Use arr.filled() to convert the value to a standard numpy array.")
+
+def _canonicalize_ndarray_dtype(x):
+  return np.asarray(x, dtypes.canonicalize_dtype(x.dtype))
+
+def _canonicalize_weak_nd_array(x):
+  return x.astype(dtypes.canonicalize_dtype(x.dtype))
+
+def _canonicalize_python_scalar_dtype(x):
+  return dtypes.coerce_to_array(x).view(WeakNdArray)
+
+canonicalize_dtype_handlers: dict[Any, Callable] = {}
+canonicalize_dtype_handlers.update(
+    (t, _canonicalize_ndarray_dtype) for t in numpy_scalar_types)
+canonicalize_dtype_handlers[np.ndarray] = _canonicalize_ndarray_dtype
+canonicalize_dtype_handlers[np.ma.MaskedArray] = _canonicalize_masked_array_dtype
+canonicalize_dtype_handlers.update((t, _canonicalize_python_scalar_dtype)
+                                   for t in dtypes.python_scalar_dtypes.keys())
+canonicalize_dtype_handlers[WeakNdArray] = _canonicalize_weak_nd_array
+def identity(x): return x
+canonicalize_dtype_handlers[Token] = identity
+canonicalize_dtype_handlers[DArray] = identity
+canonicalize_dtype_handlers[MutableArray] = identity

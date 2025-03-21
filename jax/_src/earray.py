@@ -21,7 +21,6 @@ from jax._src import core
 from jax._src import tree_util
 from jax._src import sharding_impls
 from jax._src.interpreters import pxla
-from jax._src.interpreters import xla
 from jax._src.util import safe_zip, safe_map
 
 map, unsafe_map = safe_map, map
@@ -116,6 +115,6 @@ def _earray_shard_arg_handler(xs, shardings, layouts, copy_semantics):
 pxla.shard_arg_handlers[EArray] = _earray_shard_arg_handler
 
 core.pytype_aval_mappings[EArray] = lambda x: x.aval
-xla.canonicalize_dtype_handlers[EArray] = lambda x: x
+core.canonicalize_dtype_handlers[EArray] = lambda x: x
 tree_util.dispatch_registry.register_node(
     EArray, lambda x: ((x._data,), x.aval), lambda a, xs: EArray(a, xs[0]))

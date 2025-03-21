@@ -1611,7 +1611,11 @@ class DynamicJaxprTracer(core.Tracer):
   def get_referent(self):
     frame = self._trace.frame
     val = frame.constvar_to_val.get(frame.tracer_to_var.get(id(self)))
-    return self if val is None else get_referent(val)
+    val = self if val is None else get_referent(val)
+    if isinstance(val, core.WeakNdArray):
+      assert dtypes.dtype(val.dtype) in dtypes._int_types
+      return int(val)
+    return val
 
 core.pytype_aval_mappings[DynamicJaxprTracer] = lambda x: x.aval
 
@@ -1886,6 +1890,13 @@ class DynamicJaxprTrace(core.Trace):
       if hasattr(aval, "weak_type"):
         aval = aval.update_weak_type(dtypes.is_weakly_typed(c))
       aval = self._lift_tracers_in_aval(aval)
+      if not isinstance(c, Tracer):
+        # TODO(dfm): This is currently ok because this makes c match its aval,
+        # but we probably want to remove this eventually.
+        try:
+          c = core.canonicalize_dtype(c)
+        except core.InvalidInputException as e:
+          raise TypeError(str(e)) from e
       tracer = self._new_const(aval, c)
     return tracer
 

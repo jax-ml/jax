@@ -53,7 +53,6 @@ from jax._src.api_util import (
   _check_no_aliased_closed_over_refs)
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
-from jax._src.interpreters import xla
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -202,7 +201,7 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
     msg = _device_assignment_mismatch_error(
         fun_name, fails, args_flat, 'jit', p.arg_names)
     raise ValueError(msg) from None
-  except xla.InvalidInputException as e:
+  except core.InvalidInputException as e:
     arg_names = [''] * len(args_flat) if p.arg_names is None else p.arg_names
     # Run canonicalization again to figure out which arg failed.
     if p.params['jaxpr'].consts:
@@ -210,8 +209,8 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
     else:
       for arg, name, aval in zip(args_flat, arg_names, p.in_avals):
         try:
-          xla.canonicalize_dtype(arg)
-        except xla.InvalidInputException as _:
+          core.canonicalize_dtype(arg)
+        except core.InvalidInputException as _:
           # Reraise as TypeError with the new message.
           raise TypeError(
               f"Argument '{name}' of shape {aval.str_short()} of type"

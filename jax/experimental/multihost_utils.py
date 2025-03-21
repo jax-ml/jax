@@ -29,7 +29,6 @@ from jax._src.interpreters import mlir
 from jax._src import array
 from jax._src import sharding_impls
 from jax._src.interpreters import pxla
-from jax.interpreters import xla
 from jax._src import pjit as pjit_lib
 from jax.sharding import PartitionSpec as P
 from jax._src import distributed
@@ -251,7 +250,7 @@ def host_local_array_to_global_array_impl(
       arr.sharding.is_equivalent_to(local_sharding, arr.ndim)):
     arrays = [x.data for x in arr.addressable_shards]
   else:
-    arr = xla.canonicalize_dtype(arr)
+    arr = core.canonicalize_dtype(arr)
     arrays = [
         arr[index]
         for d, index in local_sharding.devices_indices_map(arr.shape).items()]
@@ -407,7 +406,7 @@ def global_array_to_host_local_array_impl(
     return array.ArrayImpl(local_aval, local_sharding, arrays, committed=True)
   else:
     # numpy array can show up here during AD.
-    arr = xla.canonicalize_dtype(arr)
+    arr = core.canonicalize_dtype(arr)
     arrays = [
         arr[index]
         for d, index in local_sharding.devices_indices_map(arr.shape).items()]
