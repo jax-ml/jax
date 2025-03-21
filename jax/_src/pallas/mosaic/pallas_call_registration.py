@@ -72,19 +72,18 @@ def _get_memory_space_from_aval(
 ) -> tpu_custom_call.MemorySpace | None:
   if not isinstance(out_aval, jax_core.ShapedArray):
     raise ValueError('Memory spaces not defined for non-ShapedArrays')
-  if not isinstance(out_aval, core.ShapedArrayWithMemorySpace):
-    # If we are passed a regular old ShapedArray, we don't constrain the
-    # memory space
-    return None
+  memory_space = getattr(out_aval, "_private_memory_kind", None)
   # If we are passed an aval with an explicit memory space tag, we use it
   # to constrain the memory space.
-  match out_aval.memory_space:
+  match memory_space:
     case None:
       return None
     case tpu_core.TPUMemorySpace.ANY:
       return None
     case tpu_core.TPUMemorySpace.VMEM:
       return tpu_custom_call.MemorySpace.VMEM
+    case tpu_core.TPUMemorySpace.HBM:
+      return tpu_custom_call.MemorySpace.HBM
     case tpu_core.TPUMemorySpace.SMEM:
       return tpu_custom_call.MemorySpace.SMEM
     case tpu_core.TPUMemorySpace.SEMAPHORE:
@@ -97,7 +96,8 @@ def _get_memory_spaces_from_avals(
 ) -> tuple[tpu_custom_call.MemorySpace | None, ...] | None:
   output_memory_spaces = None
   if any(
-      isinstance(out_aval, core.ShapedArrayWithMemorySpace)
+      isinstance(out_aval, jax_core.ShapedArray)
+      and getattr(out_aval, "_private_memory_kind", None) is not None
       for out_aval in out_avals
   ):
     output_memory_spaces = tuple(map(_get_memory_space_from_aval, out_avals))

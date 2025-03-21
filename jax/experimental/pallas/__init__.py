@@ -20,6 +20,7 @@ https://jax.readthedocs.io/en/latest/pallas.html.
 
 from jax._src.pallas.core import Blocked as Blocked
 from jax._src.pallas.core import BlockSpec as BlockSpec
+from jax._src.pallas.core import Buffered as Buffered
 from jax._src.pallas.core import CompilerParams as CompilerParams
 from jax._src.pallas.core import core_map as core_map
 from jax._src.pallas.core import CostEstimate as CostEstimate
@@ -28,7 +29,6 @@ from jax._src.pallas.core import IndexingMode as IndexingMode
 from jax._src.pallas.core import lower_as_mlir as lower_as_mlir
 from jax._src.pallas.core import MemoryRef as MemoryRef
 from jax._src.pallas.core import MemorySpace as MemorySpace
-from jax._src.pallas.core import Buffered as Buffered
 from jax._src.pallas.core import no_block_spec as no_block_spec
 from jax._src.pallas.core import Unblocked as Unblocked
 from jax._src.pallas.core import unblocked as unblocked
@@ -48,6 +48,7 @@ from jax._src.pallas.primitives import atomic_xchg as atomic_xchg
 from jax._src.pallas.primitives import atomic_xor as atomic_xor
 from jax._src.pallas.primitives import debug_print as debug_print
 from jax._src.pallas.primitives import dot as dot
+from jax._src.pallas.primitives import get_memory_space as get_memory_space
 from jax._src.pallas.primitives import load as load
 from jax._src.pallas.primitives import max_contiguous as max_contiguous
 from jax._src.pallas.primitives import multiple_of as multiple_of
@@ -57,6 +58,7 @@ from jax._src.pallas.primitives import reciprocal as reciprocal
 from jax._src.pallas.primitives import run_scoped as run_scoped
 from jax._src.pallas.primitives import store as store
 from jax._src.pallas.primitives import swap as swap
+from jax._src.pallas.primitives import with_memory_constraint as with_memory_constraint
 from jax._src.pallas.utils import cdiv as cdiv
 from jax._src.pallas.utils import next_power_of_2 as next_power_of_2
 from jax._src.pallas.utils import strides_from_shape as strides_from_shape

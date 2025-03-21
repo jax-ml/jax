@@ -1918,17 +1918,19 @@ def get_vma(vma, mesh):
   return vma
 
 class ShapedArray(UnshapedArray):
-  __slots__ = ['shape', 'sharding', 'vma']  # inherits slots from parent
+  __slots__ = ['shape', 'sharding', 'vma', '_private_memory_kind']  # inherits slots from parent
   array_abstraction_level = 2
 
   def __init__(self, shape, dtype, weak_type=False, *, sharding=None,
-               vma: frozenset[AxisName] = frozenset()):
+               vma: frozenset[AxisName] = frozenset(),
+               _private_memory_kind: Any | None = None):
     self.shape = canonicalize_shape(shape)
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
     self.sharding = get_sharding(sharding, self.shape)
     if config.varying_axes_in_types.value:
       self.vma = get_vma(vma, self.sharding.mesh)
+    self._private_memory_kind = _private_memory_kind
 
   def update(self, shape=None, dtype=None, weak_type=None, **kwargs):
     if shape is None:
@@ -1942,6 +1944,8 @@ class ShapedArray(UnshapedArray):
     if 'vma' not in kwargs:
       kwargs['vma'] = getattr(self, 'vma',
                                               frozenset())
+    if '_private_memory_kind' not in kwargs:
+      kwargs['_private_memory_kind'] = self._private_memory_kind
     return ShapedArray(shape, dtype, weak_type, **kwargs)
 
   ndim = property(lambda self: len(self.shape))
@@ -1960,20 +1964,23 @@ class ShapedArray(UnshapedArray):
             and self.weak_type == other.weak_type
             and self.sharding == other.sharding
             and (getattr(self, 'vma', frozenset()) ==
-                 getattr(other, 'vma', frozenset())))
+                 getattr(other, 'vma', frozenset()))
+            and self._private_memory_kind == other._private_memory_kind)
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
     # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
     return hash((self.shape, self.dtype, self.weak_type, self.sharding,
-                 getattr(self, 'vma', frozenset())))
+                 getattr(self, 'vma', frozenset()),
+                 self._private_memory_kind))
 
   def to_tangent_aval(self):
     return ShapedArray(
         self.shape, primal_dtype_to_tangent_dtype(self.dtype),
         self.weak_type, sharding=self.sharding,
-        vma=getattr(self, 'vma', frozenset()))
+        vma=getattr(self, 'vma', frozenset()),
+        _private_memory_kind=self._private_memory_kind)
 
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str_short_aval(

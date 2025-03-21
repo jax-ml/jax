@@ -28,6 +28,7 @@ from typing import Any, ClassVar, Hashable, Protocol, Union, runtime_checkable
 
 import jax
 from jax._src import api_util
+from jax._src import array as jax_array
 from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
@@ -38,6 +39,7 @@ from jax._src import util
 from jax._src.export._export import export
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import pxla
 from jax._src.state import discharge as state_discharge
 from jax._src.state import types as state_types
 from jax._src.state.types import TransformedRef
@@ -86,63 +88,19 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 
-class ShapedArrayWithMemorySpace(jax_core.ShapedArray):
-  __slots__ = ["memory_space"]
-
-  def __init__(self, shape, dtype, weak_type=False, sharding=None,
-               memory_space=None):
-    super().__init__(shape, dtype, weak_type=weak_type, sharding=sharding)
-    self.memory_space = memory_space
-
-  def __eq__(self, other):
-    return super().__eq__(other) and self.memory_space == other.memory_space
-
-  def __hash__(self):
-    return hash((
-        self.shape,
-        self.dtype,
-        self.weak_type,
-        getattr(self, "sharding", None),
-        self.memory_space,
-    ))
-
-  def str_short(self, short_dtypes=False):
-    dt_str = \
-        dtypes.short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
-    dt_str = dt_str.replace("void", "float0")
-    shapestr = ",".join(map(str, self.shape))
-    if hasattr(self, "sharding"):
-      sharding_str = f"{dt_str}[{shapestr}]({self.sharding})"
-    else:
-      sharding_str = ""
-    memoryspace_str = (
-        "" if self.memory_space is None else f"<{self.memory_space}>"
-    )
-    return f"{dt_str}{memoryspace_str}[{shapestr}]{sharding_str}"
-
-  def update(
-      self,
-      shape=None,
-      dtype=None,
-      weak_type=None,
-      sharding=None,
-      memory_space=None,
-  ):
-    if shape is None:
-      shape = self.shape
-    if dtype is None:
-      dtype = self.dtype
-    if weak_type is None:
-      weak_type = self.weak_type
-    if sharding is None:
-      sharding = getattr(self, "sharding", None)
-    if memory_space is None:
-      memory_space = self.memory_space
-    return ShapedArrayWithMemorySpace(
-        shape, dtype, weak_type, sharding=sharding, memory_space=memory_space
-    )
-mlir.ir_type_handlers[ShapedArrayWithMemorySpace] = mlir._array_ir_types
-
+def _get_memory_space_from_aval(aval) -> Any:
+  match aval:
+    case jax_core.ShapedArray():
+      memory_kind = getattr(aval, "_private_memory_kind", None)
+      if memory_kind is not None:
+        return memory_kind
+      return MemorySpace.ANY
+    case AbstractMemoryRef():
+      return aval.memory_space
+    case state.AbstractRef():
+      return _get_memory_space_from_aval(aval.inner_aval)
+    case _:
+      return MemorySpace.ANY
 
 @dataclasses.dataclass(frozen=True)
 class MemoryRef:
@@ -156,13 +114,11 @@ class MemoryRef:
     dtype = self.dtype
     if not isinstance(dtype, (jnp.dtype, dtypes.ExtendedDType)):
       dtype = jnp.dtype(dtype)
-    return ShapedArrayWithMemorySpace(
-        self.shape, dtype, memory_space=self.memory_space
+    return jax_core.ShapedArray(
+        self.shape, dtype, _private_memory_kind=self.memory_space
     )
 
   def get_ref_aval(self) -> TransformedRef | AbstractMemoryRef:
-    # TODO(sharadmv): Clean this up. ShapedArrayWithMemorySpace fails when we
-    # try to apply JAX ops to it.
     return AbstractMemoryRef(
         jax_core.ShapedArray(self.shape, self.dtype), self.memory_space)
 
@@ -173,10 +129,11 @@ class AbstractMemoryRef(state.AbstractRef):
   inner_aval: jax_core.ShapedArray
 
   def __init__(self, inner_aval: jax_core.ShapedArray, memory_space: Any):
-    if isinstance(inner_aval, ShapedArrayWithMemorySpace):
-      if inner_aval.memory_space is not None:
-        assert inner_aval.memory_space == memory_space, (
-            f"Mismatched memory spaces: {inner_aval.memory_space=},"
+    if isinstance(inner_aval, jax_core.ShapedArray):
+      inner_memory_space = getattr(inner_aval, "_private_memory_kind", None)
+      if inner_memory_space is not None:
+        assert inner_memory_space == memory_space, (
+            f"Mismatched memory spaces: {inner_memory_space=},"
             f" {memory_space=}"
         )
     self.inner_aval = inner_aval
@@ -219,6 +176,11 @@ class MemorySpace(enum.Enum):
   ANY = "any"  # Unrestricted memory space (usually HBM)
   ERROR = "error"  # Memory space for checkify errors.
   INDEX = "index"  # Memory space for scalar prefetch arguments.
+
+  def __call__(self, shape, dtype):
+    if self == MemorySpace.ANY:
+      return jax.ShapeDtypeStruct(shape, dtype)
+    raise NotImplementedError(f"Memory space {self} not supported.")
 
   def __str__(self) -> str:
     return self.value
@@ -362,6 +324,9 @@ class BlockSpec:
           block_array_aval.dtype,
           block_array_aval.weak_type,
       )
+    elif isinstance(array_aval, jax_core.ShapedArray):
+      # Scrub the memory space from the block array.
+      block_array_aval = array_aval.update(_private_memory_kind=None)
     block_aval = AbstractMemoryRef(block_array_aval, self.memory_space)
 
     if (
@@ -1111,11 +1076,14 @@ def default_mesh_discharge_rule(
       for eff in jaxpr.effects
       if isinstance(eff, state_types.WriteEffect)
   )
-  any_spec = BlockSpec(memory_space=MemorySpace.ANY)
+  def _get_aval_spec(aval):
+    memory_space = _get_memory_space_from_aval(aval)
+    return BlockSpec(memory_space=memory_space)
+  in_specs = [_get_aval_spec(aval) for aval in in_avals]
   grid_spec = GridSpec(
       grid=tuple(mesh.shape.items()),
-      in_specs=[any_spec] * len(in_avals),
-      out_specs=[any_spec] * len(modified_idxs),
+      in_specs=in_specs,
+      out_specs=[in_specs[idx] for idx in modified_idxs]
   )
   from jax._src.pallas import pallas_call  # Avoid circular dependency.
   outs = pallas_call._pallas_call(
@@ -1179,3 +1147,15 @@ def lower_as_mlir(
 _out_shape_to_aval_mapping: dict[
     type[Any], Callable[[Any], jax_core.AbstractValue]
 ] = {}
+
+
+def _memory_space_to_memory_kind(memory_space: Any) -> str | None:
+  match memory_space:
+    case MemorySpace.ANY:
+      return None
+  if type(memory_space) not in _memory_space_to_memory_kind_mapping:
+    raise ValueError(f"Unsupported memory space: {type(memory_space)}")
+  return _memory_space_to_memory_kind_mapping[type(memory_space)](memory_space)
+
+
+_memory_space_to_memory_kind_mapping: dict[type(Any), Callable[[Any], str | None]] = {}
