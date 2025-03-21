@@ -122,7 +122,7 @@ All told, the array-type-granularity challenge is less of an issue than the othe
 ### Challenge 5: imprecise APIs inherited from NumPy
 
 A large part of JAX’s user-facing API is inherited from NumPy within the {mod}`jax.numpy` submodule.
-NumPy’s API was developed years before static type checking became part of the Python language, and follows Python’s historic recommendations to use a [duck-typing](https://docs.python.org/3/glossary.html#term-duck-typing)/[EAFP](https://docs.python.org/3/glossary.html#term-eafp) coding style, in which strict type-checking at runtime is discouraged. As a concrete example of this, consider the {func}`numpy.tile` function, which is defined like this:
+NumPy’s API was developed years before static type checking became part of the Python language, and follows Python’s historic recommendations to use a [duck-typing](https://docs.python.org/3/glossary.html#term-duck-typing)/[EAFP](https://docs.python.org/3/glossary.html#term-EAFP) coding style, in which strict type-checking at runtime is discouraged. As a concrete example of this, consider the {func}`numpy.tile` function, which is defined like this:
 
 ```python
 def tile(A, reps):
