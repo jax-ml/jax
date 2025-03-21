@@ -74,7 +74,7 @@ def call_sharding_rule(prim, rule, num_out, *avals, **kwargs):
     s = NamedSharding(aval_mesh, P())
     return s if num_out is None else [s] * num_out
   if rule is None:
-    raise ValueError(
+    raise core.ShardingTypeError(
         f'sharding rule for {prim.name} is not implemented. Please file a'
         ' bug at https://github.com/jax-ml/jax/issues. You can work around'
         ' this error by dropping that operation into full auto sharding'

@@ -407,6 +407,12 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
           try:
             cts_out = get_primitive_transpose(eqn.primitive)(
                 cts_in, *invals, **eqn.params)
+          except core.ShardingTypeError as e:
+            extra_msg = ("This is a potential JAX bug. Please file an issue at"
+                         " https://github.com/jax-ml/jax/issues")
+            if extra_msg in str(e):
+              raise
+            raise core.ShardingTypeError(f"{str(e)}\n{extra_msg}")
           except (FloatingPointError, ZeroDivisionError) as e:
             msg = "When differentiating the code at the top of the callstack:"
             if msg not in e.args[0]:
