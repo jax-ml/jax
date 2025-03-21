@@ -81,6 +81,7 @@ def pallas_call_lowering(
       module=module,
       out_types=lowering_result.out_structs,
       input_output_aliases=input_output_aliases,
+      use_custom_barrier=False, # False until we add get_barrier_semaphore() feature
   )
   if (prof_ctx := lowering_result.profiler_context) is not None:
     *outs, prof_buffer = outs

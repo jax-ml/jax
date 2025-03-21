@@ -61,7 +61,7 @@ class NvshmemApi {
   NvshmemApi() {
     const char* env_value = getenv("NVSHMEM_LIBRARY_PATH");
     const char* libnvshmem_path =
-      env_value && strlen(env_value) > 0 ? env_value : NVSHMEM_LIB_SONAME;
+      env_value && *env_value != 0 ? env_value : NVSHMEM_LIB_SONAME;
     void* library = dlopen(libnvshmem_path, RTLD_LAZY);
     if (library == nullptr) {
       fprintf(stderr, "Failed to open %s library: %s", libnvshmem_path, dlerror());

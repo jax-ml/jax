@@ -160,11 +160,8 @@ void* mosaic_gpu_module_load(void *data) {
   CUdeviceptr ptr = 0;
   size_t size = 0;
   // Check if module contains NVSHMEM globals implying NVSHMEM state needs to set
-  if (auto result = cuModuleGetGlobal(&ptr, &size, module,
-                                      "nvshmemi_device_lib_version_d");
-      result == CUDA_SUCCESS) {
-    if (auto result = mosaic::gpu::NvshmemApi::Default().cumodule_int(module);
-        result != NVSHMEM_SUCCESS) {
+  if (cuModuleGetGlobal(&ptr, &size, module, "nvshmemi_device_lib_version_d") == CUDA_SUCCESS) {
+    if (mosaic::gpu::NvshmemApi::Default().cumodule_int(module) != NVSHMEM_SUCCESS) {
       fprintf(stderr, "nvshmemx_cumodule_init failed.\n");
       abort();
     }

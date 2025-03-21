@@ -402,11 +402,7 @@ absl::StatusOr<std::pair<std::unique_ptr<mlir::ExecutionEngine>, bool>> Compile(
   bool is_comm_used = is_nvshmem_used(module);
   std::string nvshmem_path = "";
   if (is_comm_used) {
-    auto nvshmem_path_status = get_nvshmem_llvm_lib_path();
-    if (!nvshmem_path_status.ok()) {
-      return nvshmem_path_status.status();
-    }
-    nvshmem_path = nvshmem_path_status.value();
+    TF_ASSIGN_OR_RETURN(nvshmem_path, get_nvshmem_llvm_lib_path());
   }
   DumpCompilationOutput(module, sm, ptx_isa, nvshmem_path);
   auto passes = GetPassPipeline(
@@ -551,7 +547,7 @@ absl::StatusOr<CompiledKernel> CompileAndInit(const char* module) {
 // Each compiled kernel has a unique init func, and each kernel is used from
 // a single HLO module. So it should be safe to not include the CUDA context
 // in the key.
-absl::StatusOr<std::tuple<void*, MosaicHostFunc*, bool>> CachedCompileAndInit(
+absl::StatusOr<CompiledKernel*> CachedCompileAndInit(
     CacheKey key, const char* module) {
   auto cache_and_mutex = GetKernelCache();
   auto* cache = cache_and_mutex.first;
@@ -562,7 +558,7 @@ absl::StatusOr<std::tuple<void*, MosaicHostFunc*, bool>> CachedCompileAndInit(
     absl::ReaderMutexLock lock(mutex);
     auto it = cache->find(key);
     if (ABSL_PREDICT_TRUE(it != cache->end()))
-      return it->second.GetHostLaunch();
+      return &it->second;
   }
 
   absl::MutexLock lock(mutex);
@@ -574,14 +570,55 @@ absl::StatusOr<std::tuple<void*, MosaicHostFunc*, bool>> CachedCompileAndInit(
     }
     cache->insert_or_assign(key, std::move(*compiled));
   }
-  return cache->at(key).GetHostLaunch();
+  return &cache->at(key);
 }
+
+void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
+                         size_t opaque_len, XlaCustomCallStatus* status) {
+  // Forward-compatible version using the legacy FFI API
+  if (reinterpret_cast<uintptr_t>(opaque) % alignof(KernelHash)) {
+    fprintf(stderr, "Misaligned opaque pointer\n");
+    abort();
+  }
+  auto hash = *reinterpret_cast<KernelHash*>(opaque);
+  CUcontext ctx;
+  if (cuCtxGetCurrent(&ctx) != CUDA_SUCCESS) {
+    fprintf(stderr, "Failed to get current CUDA context\n");
+    abort();
+  }
+  CacheKey key(hash, reinterpret_cast<uintptr_t>(ctx));
+  auto compiled_kernel = CachedCompileAndInit(key, opaque + sizeof(KernelHash));
+  if (!compiled_kernel.ok()) {
+    XlaCustomCallStatusSetFailure(status,
+                                  compiled_kernel.status().message().data(),
+                                  compiled_kernel.status().message().size());
+    return;
+  }
+  auto ctx_kernel_comm = (*compiled_kernel)->GetHostLaunch();
+  bool is_comm_used = std::get<2>(ctx_kernel_comm);
+  void* args[4] = {&std::get<0>(ctx_kernel_comm), &stream, &buffers};
+  if (is_comm_used) {
+    mosaic::gpu::NvshmemApi::Default().barrier_all_on_stream(
+        reinterpret_cast<cudaStream_t>(stream));
+  }
+  std::get<1>(ctx_kernel_comm)(args);
+}
+
+XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("mosaic_gpu", &MosaicGPUCustomCall,
+                                         "CUDA");
 
 absl::Status MosaicGpuExecute(gpuStream_t stream, ffi::RemainingArgs inputs,
                               ffi::RemainingRets results,
                               absl::string_view kernel_hash,
                               absl::string_view module,
+                              bool use_custom_barrier,
                               xla::RunId run_id) {
+  // Updated version using the new FFI API supporting custom barrier
+  // for distributed kernels
+  if (use_custom_barrier) {
+    fprintf(stderr, "Custom barrier is not supported on GPUs.\n");
+    abort();
+  }
   if (reinterpret_cast<const uintptr_t>(kernel_hash.data()) %
           alignof(KernelHash) ||
       kernel_hash.size() != sizeof(KernelHash)) {
@@ -595,7 +632,8 @@ absl::Status MosaicGpuExecute(gpuStream_t stream, ffi::RemainingArgs inputs,
     abort();
   }
   CacheKey key(hash, reinterpret_cast<uintptr_t>(ctx));
-  TF_ASSIGN_OR_RETURN(auto ctx_kernel_comm, CachedCompileAndInit(key, module.data()));
+  TF_ASSIGN_OR_RETURN(auto compiled_kernel, CachedCompileAndInit(key, module.data()));
+  auto ctx_kernel_comm = compiled_kernel->GetHostLaunch();
   bool is_comm_used = std::get<2>(ctx_kernel_comm);
 
   std::vector<void *> buffers;
@@ -624,9 +662,10 @@ XLA_FFI_DEFINE_HANDLER(kMosaicGpuExecute, MosaicGpuExecute,
                            .RemainingRets()
                            .Attr<absl::string_view>("kernel_hash")
                            .Attr<absl::string_view>("module")
+                           .Attr<bool>("use_custom_barrier")
                            .Ctx<xla::RunId>());
 
-XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "mosaic_gpu", "CUDA",
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "mosaic_gpu_v2", "CUDA",
                          {
                              /*instantiate=*/nullptr,
                              /*prepare=*/nullptr,
