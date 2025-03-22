@@ -1120,7 +1120,7 @@ triton_lowering_rules.update({
 def _minus(x: ir.Value) -> ir.Value:
   if tt_dialect.PointerType.isinstance(_element_type(x.type)):
     raise NotImplementedError(f"unsupported type: {x.type}")
-  return _sub(_full(x.type, 0), x)
+  return _sub(_zeros_like(x), x)
 
 
 def _add(x: ir.Value, y: ir.Value):
@@ -1377,7 +1377,7 @@ def _broadcast_to_rule(ctx: LoweringRuleContext, x, shape: Sequence[int]):
 @register_lowering(lax.integer_pow_p)
 def _integer_pow_rule(ctx: LoweringRuleContext, x, *, y: int):
   if y == 0:
-    return _full(x.type, 1)
+    return _ones_like(x)
 
   is_reciprocal = y < 0
   if is_reciprocal:
@@ -1397,7 +1397,7 @@ def _integer_pow_rule(ctx: LoweringRuleContext, x, *, y: int):
   acc = _cast(acc, x_aval.dtype, out_aval.dtype)
   if is_reciprocal:
     signed = jnp.issubdtype(out_aval.dtype, jnp.signedinteger)
-    return  _truediv(_full(acc.type, 1), acc, signed=signed)
+    return  _truediv(_ones_like(acc), acc, signed=signed)
   else:
     return acc
 
@@ -1518,6 +1518,22 @@ def _full(t: ir.Type, v: object) -> ir.Type:
     return result
 
 
+def _zeros(t: ir.Type) -> ir.Value:
+  return _full(t, 0)
+
+
+def _zeros_like(x: ir.Value) -> ir.Value:
+  return _full(x.type, 0)
+
+
+def _ones(t: ir.Type) -> ir.Value:
+  return _full(t, 1)
+
+
+def _ones_like(x: ir.Value) -> ir.Value:
+  return _full(x.type, 1)
+
+
 def _splat(x: ir.value, shape: Sequence[int]) -> ir.Value:
   if ir.RankedTensorType.isinstance(x.type):
     raise TypeError("cannot splat a tensor")
@@ -1556,7 +1572,7 @@ def _int_int_cast(src: ir.Value, dst_type: ir.Type, signed: bool) -> ir.Value:
   dst_element_type = ir.IntegerType(_element_type(dst_type))
   assert src_element_type != dst_element_type
   if dst_element_type.width == 1:
-    return _not_equal(src, _full(src.type, 0), signed=signed)
+    return _not_equal(src, _zeros_like(src), signed=signed)
 
   if src_element_type.width == dst_element_type.width:
     return arith_dialect.bitcast(dst_type, src)
@@ -1576,7 +1592,7 @@ def _float_int_cast(
     raise NotImplementedError(f"cannot cast {src} tp {dst_type}")
   dst_element_type = ir.IntegerType(_element_type(dst_type))
   if dst_element_type.width == 1:
-    return _not_equal(src, _full(src.type, 0), signed=signed)
+    return _not_equal(src, _zeros_like(src), signed=signed)
   else:
     # We clamp the float value to the min/max integer destination value
     # in order to match JAX/XLA casting behavior. Note that this differs
@@ -1679,7 +1695,7 @@ def _ir_cast(src: ir.Value, dst_type: ir.Type, *,
       return tt_dialect.ptr_to_int(dst_type, src)
     elif dst_element_type.width == 1:
       x = _ir_cast(src, ir.IntegerType.get_signless(64), signed=signed)
-      zero = _full(x.type, 0)
+      zero = _zeros_like(x)
       return _ir_cast(_not_equal(x, zero, signed=signed), dst_type, signed=signed)
   if isinstance(
       src_element_type, ir.IntegerType
@@ -1802,7 +1818,7 @@ def _compute_offsets_from_indices(
   # Use 64-bit indexing when offset might be >= 2**32 bytes.
   offset_eltype = ir.IntegerType.get_signless(64 if full_size > 2**32 else 32)
   if indexer_shape:
-    offsets = _full(ir.RankedTensorType.get(indexer_shape, offset_eltype), 0)
+    offsets = _zeros(ir.RankedTensorType.get(indexer_shape, offset_eltype))
   else:
     offsets = _ir_constant(0, offset_eltype)
 
@@ -2074,7 +2090,7 @@ def _masked_load_lowering_rule(
     offsets = _ir_cast(offsets, ir.IntegerType.get_signless(32), signed=False)
     in_msb = _mod(offsets, _full(offsets.type, 2), signed=False)
     if jaxlib_version < (0, 5, 2):
-      in_msb = arith_dialect.xori(in_msb, _full(in_msb.type, 1))
+      in_msb = arith_dialect.xori(in_msb, _ones_like(in_msb))
     shift = _mul(in_msb, _full(in_msb.type, 4))
     shift = _ir_cast(shift, values.type, signed=False)
     values = arith_dialect.shrui(values, shift)
@@ -2280,7 +2296,7 @@ def _dot_general_lowering(
 
   m, _ = a_type.shape
   _, n = b_type.shape
-  acc = _full(ir.RankedTensorType.get([m, n], _dtype_to_ir_type(acc_dtype)), 0)
+  acc = _zeros(ir.RankedTensorType.get([m, n], _dtype_to_ir_type(acc_dtype)))
 
   if precision == lax.DotAlgorithmPreset.BF16_BF16_F32_X3:
     bf16 = _dtype_to_ir_type(jnp.bfloat16)
@@ -2297,11 +2313,7 @@ def _dot_general_lowering(
     acc = tt_dialect.dot(a_bf16, b_err0, acc)
     # If `a_err0` will be zero and `b` is infinite, then `acc` may contain
     # `NaN`s (as `0 * inf = NaN`), and vice versa.
-    acc = arith_dialect.select(
-        _is_nan(acc),
-        _full(ir.RankedTensorType.get([m, n], _dtype_to_ir_type(acc_dtype)), 0),
-        acc,
-    )
+    acc = arith_dialect.select(_is_nan(acc), _zeros_like(acc), acc)
     a, b = a_bf16, b_bf16
 
   acc = tt_dialect.dot(a, b, acc, input_precision=input_precision)
