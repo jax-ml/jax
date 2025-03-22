@@ -67,6 +67,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import (PmapSharding, NamedSharding,
+                                     ShardingContext, SPMDAxisContext,
                                      PartitionSpec as P, canonicalize_sharding)
 from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
 from jax._src.util import (NumpyComplexWarning, cache, canonicalize_axis,
@@ -5378,15 +5379,26 @@ pe.padding_rules[dot_general_p] = _dot_general_padding_rule
 core.pp_eqn_rules[dot_general_p] = _dot_general_pp_rule
 batching.ragged_prop_rules[dot_general_p] = _dot_general_ragged_prop_rule
 
-def precision_attr(precision: Precision) -> ir.ArrayAttr:
+
+def _full_precision(precision: Precision) -> tuple[Precision, Precision]:
   if precision is None or isinstance(precision, (DotAlgorithm, DotAlgorithmPreset)):
-    full_precision = (Precision.DEFAULT, Precision.DEFAULT)
+    return (Precision.DEFAULT, Precision.DEFAULT)
   elif not isinstance(precision, tuple):
-    full_precision = (precision, precision)
+    return (precision, precision)
   else:
-    full_precision = precision
+    return precision
+
+
+def precision_attr(precision: Precision) -> ir.ArrayAttr:
   return ir.ArrayAttr.get(
-      [hlo.PrecisionAttr.get(str(p)) for p in full_precision])
+      [hlo.PrecisionAttr.get(str(p)) for p in _full_precision(precision)]
+  )
+
+
+def chlo_precision_attr(precision: Precision) -> ir.ArrayAttr:
+  return ir.ArrayAttr.get(
+      [chlo.PrecisionAttr.get(str(p)) for p in _full_precision(precision)]
+  )
 
 
 def dot_algorithm_attr(precision: CanonicalPrecision, lhs_dtype: DTypeLike,
@@ -5424,9 +5436,7 @@ def get_algorithm_compute_types(
   return lhs_dtype, rhs_dtype, out_type
 
 
-def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
-                       precision, preferred_element_type: np.dtype | None,
-                       out_sharding, platform: str = "default"):
+def _handle_dot_precision(ctx, lhs, rhs, precision, platform):
   def _is_fp8_mixed_precision_matmul(_lhs_dtypes, _rhs_dtypes):
     fp8_dtypes = (dtypes.float8_e4m3fn, dtypes.float8_e5m2,
                   dtypes.float8_e5m2fnuz, dtypes.float8_e4m3fnuz)
@@ -5437,19 +5447,12 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
     if dtypes.float8_e8m0fnu is not None:
       fp8_dtypes += (dtypes.float8_e8m0fnu,)
     return _lhs_dtypes in fp8_dtypes and _rhs_dtypes in fp8_dtypes
-  del preferred_element_type  # Implied by the output aval
-  lhs_aval, rhs_aval = ctx.avals_in
+
+  # The *_ lets us reuse this for ragged_dot_general, which has group_sizes.
+  lhs_aval, rhs_aval, *_ = ctx.avals_in
   lhs_dtype, rhs_dtype = lhs_aval.dtype, rhs_aval.dtype
   aval_out, = ctx.avals_out
   accumulation_aval = aval_out
-  (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
-
-  dot_dnums = hlo.DotDimensionNumbers.get(
-      lhs_batching_dimensions=list(lhs_batch),
-      rhs_batching_dimensions=list(rhs_batch),
-      lhs_contracting_dimensions=list(lhs_contracting),
-      rhs_contracting_dimensions=list(rhs_contracting))
-
   algorithm_kwarg = {}
   if isinstance(precision, (DotAlgorithm, DotAlgorithmPreset)):
     # The CPU backend silently ignores the algorithm spec, so we check here to
@@ -5507,7 +5510,22 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                                  core.ShapedArray(lhs_aval.shape, aval_out.dtype))
           rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
                                  core.ShapedArray(rhs_aval.shape, aval_out.dtype))
+  return lhs, rhs, accumulation_aval, algorithm_kwarg
 
+
+def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
+                       precision, preferred_element_type: np.dtype | None,
+                       out_sharding, platform: str = "default"):
+  del preferred_element_type  # Implied by the output aval
+  lhs, rhs, accumulation_aval, algorithm_kwarg = _handle_dot_precision(
+      ctx, lhs, rhs, precision, platform
+  )
+  (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
+  dot_dnums = hlo.DotDimensionNumbers.get(
+      lhs_batching_dimensions=list(lhs_batch),
+      rhs_batching_dimensions=list(rhs_batch),
+      lhs_contracting_dimensions=list(lhs_contracting),
+      rhs_contracting_dimensions=list(rhs_contracting))
   result = hlo.dot_general(
       mlir.aval_to_ir_type(accumulation_aval),
       lhs,
@@ -5516,7 +5534,7 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
       precision_config=precision_attr(precision),
       **algorithm_kwarg,
   )
-
+  aval_out, = ctx.avals_out
   result = mlir.lower_with_sharding_in_types(ctx, result, aval_out)
   if accumulation_aval.dtype != aval_out.dtype:
     result = mlir.convert_hlo(ctx, result, accumulation_aval, aval_out)
@@ -6035,9 +6053,84 @@ def _ragged_dot_general_impl(
       )
 
 
+def _ragged_dot_general_lower(
+    ctx,
+    lhs,
+    rhs,
+    group_sizes,
+    *,
+    ragged_dot_dimension_numbers,
+    precision,
+    preferred_element_type: np.dtype | None,
+    group_offset: Array | None = None,
+    platform: str = 'default',
+):
+  if group_offset is not None:
+    raise NotImplementedError('Unimplemented group_offset support.')
+
+  # TODO(pravnar): Remove this once we have sharding support.
+  def use_default_lowering():
+    axis_context = ctx.module_context.axis_context
+    return (
+        isinstance(axis_context, SPMDAxisContext)
+        or isinstance(axis_context, ShardingContext)
+        and axis_context.num_devices > 1
+    )
+  if use_default_lowering():
+    result = mlir.lower_fun(_ragged_dot_general_impl, multiple_results=False)(
+        ctx, lhs, rhs, group_sizes,
+        ragged_dot_dimension_numbers=ragged_dot_dimension_numbers,
+        precision=precision,
+        preferred_element_type=preferred_element_type,
+        group_offset=group_offset
+    )
+    (aval_out,) = ctx.avals_out
+    return mlir.lower_with_sharding_in_types(ctx, result, aval_out)
+
+  del preferred_element_type  # Implied by the output aval
+  lhs, rhs, accumulation_aval, _ = _handle_dot_precision(
+      ctx, lhs, rhs, precision, platform
+  )
+  (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = (
+      ragged_dot_dimension_numbers.dot_dimension_numbers
+  )
+  ragged_dot_dnums = chlo.RaggedDotDimensionNumbers.get(
+      lhs_batching_dimensions=list(lhs_batch),
+      rhs_batching_dimensions=list(rhs_batch),
+      lhs_contracting_dimensions=list(lhs_contracting),
+      rhs_contracting_dimensions=list(rhs_contracting),
+      lhs_ragged_dimensions=list(
+          ragged_dot_dimension_numbers.lhs_ragged_dimensions
+      ),
+      rhs_group_dimensions=list(
+          ragged_dot_dimension_numbers.rhs_group_dimensions
+      ),
+  )
+  result = chlo.ragged_dot(
+      mlir.aval_to_ir_type(accumulation_aval),
+      lhs,
+      rhs,
+      group_sizes,
+      ragged_dot_dnums,
+      precision_config=chlo_precision_attr(precision),
+  )
+  (aval_out,) = ctx.avals_out
+  result = mlir.lower_with_sharding_in_types(ctx, result, aval_out)
+  if accumulation_aval.dtype != aval_out.dtype:
+    result = mlir.convert_hlo(ctx, result, accumulation_aval, aval_out)
+  return [result]
+
+
 mlir.register_lowering(ragged_dot_general_p,
                        mlir.lower_fun(_ragged_dot_general_impl,
                                       multiple_results=False))
+
+for platform in ['tpu']:
+  mlir.register_lowering(
+      ragged_dot_general_p,
+      partial(_ragged_dot_general_lower, platform=platform),
+      platform=platform,
+  )
 
 
 def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions,

@@ -4796,10 +4796,10 @@ class RaggedTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
       [
-          {'m': 5, 'k': 4, 'n': 3, 'num_groups': 1},
-          {'m': 10, 'k': 9, 'n': 8, 'num_groups': 2},
+          {'m': 64, 'k': 4, 'n': 3, 'num_groups': 1},
+          {'m': 64, 'k': 9, 'n': 8, 'num_groups': 2},
       ],
-      dtype=jtu.dtypes.numeric,
+      dtype=jtu.dtypes.all_floating,
   )
   def test_ragged_dot(self, m, k, n, num_groups, dtype):
     """Tests ragged_dot.
@@ -4810,6 +4810,8 @@ class RaggedTest(jtu.JaxTestCase):
     Raises:
       SkipTest: in the case dtype is not supported.
     """
+    if (dtype == np.float16):
+      raise SkipTest(f"unsupported dtype for ragged_dot: {dtype}")
     lhs_shape = (m, k)
     rhs_shape = (num_groups, k, n)
 
@@ -4830,6 +4832,25 @@ class RaggedTest(jtu.JaxTestCase):
     self._CompileAndCheck(lax.ragged_dot, args_maker)
     self._CheckAgainstNumpy(
         lax_reference.ragged_dot, lax.ragged_dot, args_maker)
+
+  @parameterized.parameters(
+        { "m": 5, "k": 4, "n": 3, "num_groups": 1},
+        { "m": 10, "k": 9, "n": 8, "num_groups": 2},
+  )
+  def test_ragged_dot_unsupported(
+      self, m, k, n, num_groups):
+    lhs_shape = (m, k)
+    rhs_shape = (num_groups, k, n)
+    group_sizes_shape = (num_groups,)
+
+    args_maker = lambda: [
+        jnp.ones(lhs_shape, dtype=jnp.float32),
+        jnp.ones(rhs_shape, dtype=jnp.float32),
+        jnp.ones(group_sizes_shape, dtype=jnp.int32),
+    ]
+    if jtu.test_device_matches(["tpu"]):
+      with self.assertRaises(jax.errors.JaxRuntimeError):
+        self._CompileAndCheck(lax.ragged_dot, args_maker)
 
   @parameterized.parameters(
       {
@@ -5049,10 +5070,69 @@ class RaggedTest(jtu.JaxTestCase):
     lhs = jnp.ones(lhs_shape, dtype=jnp.float32)
     rhs = jnp.ones(rhs_shape, dtype=jnp.float32)
     group_sizes = jnp.ones(group_sizes_shape, dtype=jnp.int32)
-    self.assertEqual(
-        lax.ragged_dot_general(lhs, rhs, group_sizes, ragged_dnums).shape,
-        out_shape,
+    if jtu.test_device_matches(["tpu"]):
+      actual_shape = lax_internal._ragged_dot_general_shape_rule(
+          lhs, rhs, group_sizes, ragged_dot_dimension_numbers=ragged_dnums,
+          precision=jax.lax.Precision.DEFAULT,
+          preferred_element_type=jnp.float32,
+      )
+    else:
+      actual_shape = lax.ragged_dot_general(
+          lhs, rhs, group_sizes, ragged_dnums
+      ).shape
+    self.assertEqual(actual_shape, out_shape)
+
+  @parameterized.product(
+      batch_size=[3, 5],
+      m=[128, 1024],
+      k=[128, 1024],
+      n=[128, 1024],
+      num_groups=[2, 4],
+  )
+  def test_ragged_dot_general_vmap(
+      self, batch_size: int, m: int, k: int, n: int, num_groups: int
+  ):
+    if (jtu.test_device_matches(["tpu"])):
+      raise SkipTest("batched ragged_dot not yet supported on TPU")
+
+    lhs_shape = (batch_size, m, k)
+    rhs_shape = (batch_size, num_groups, k, n)
+    dtype = jnp.float32
+
+    def make_group_sizes(m, num_groups):
+      ends_no_final = jnp.sort(self.rng().choice(m, size=num_groups - 1))
+      ends = jnp.concatenate(
+          [ends_no_final, jnp.array([m], dtype=ends_no_final.dtype)])
+      starts = jnp.concatenate(
+          [jnp.zeros(1, dtype=ends_no_final.dtype), ends_no_final])
+      return ends - starts
+
+    rng = jtu.rand_small(self.rng())
+    args_maker = lambda: [
+        rng(lhs_shape, dtype),
+        rng(rhs_shape, dtype),
+        jnp.array([make_group_sizes(m, num_groups) for _ in range(batch_size)]),
+    ]
+    lhs, rhs, group_sizes = args_maker()
+
+    out_dtype = jnp.float32
+    precision = jax.lax.Precision.HIGHEST
+    ragged_dot = partial(
+        jax.lax.ragged_dot,
+        preferred_element_type=out_dtype,
+        precision=precision,
     )
+    tol = 1e-5
+
+    batch_res = jax.vmap(ragged_dot)(lhs, rhs, group_sizes)
+    for i in range(batch_size):
+      # The ragged_dot does not zero out the output in the case sum(group_sizes)
+      # < m, hence we need to compare only the valid part of the output.
+      upper_bound = group_sizes[i].sum(axis=0)
+      ref_res = ragged_dot(lhs[i], rhs[i], group_sizes[i])[0:upper_bound, :]
+      self.assertArraysAllClose(
+          batch_res[i, 0:upper_bound, :], ref_res, rtol=tol, atol=tol
+      )
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

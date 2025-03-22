@@ -1903,8 +1903,8 @@ class JaxExportTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-        {"m": 5, "k": 4, "n": 3, "group_sizes": [5]},
-        {"m": 10, "k": 9, "n": 8, "group_sizes": [3, 7]},
+        {"m": 64, "k": 4, "n": 3, "group_sizes": [5]},
+        {"m": 64, "k": 9, "n": 8, "group_sizes": [3, 7]},
     ])
   def test_ragged_dot(self, m, k, n, group_sizes):
     def f_jax(x, y, gs):
