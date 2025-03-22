@@ -80,6 +80,15 @@ jax_py_test(
     ] + py_deps("absl/testing"),
 )
 
+jax_py_test(
+    name = "array_extensibility_test",
+    srcs = ["array_extensibility_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ] + py_deps("absl/testing"),
+)
+
 jax_multiplatform_test(
     name = "array_interoperability_test",
     srcs = ["array_interoperability_test.py"],
