@@ -110,7 +110,7 @@ def patch_copy_xla_extension_stubs(dst_dir):
   xla_extension_dir = os.path.join(dst_dir, "xla_extension")
   os.makedirs(xla_extension_dir)
   for stub_name in _XLA_EXTENSION_STUBS:
-    stub_path = r.Rlocation("xla/xla/python/xla_extension/" + stub_name)
+    stub_path = r.Rlocation("__main__/jaxlib/xla/xla_extension/" + stub_name)
     stub_path = str(stub_path)  # Make pytype accept os.path.exists(stub_path).
     if stub_name in _OPTIONAL_XLA_EXTENSION_STUBS and not os.path.exists(stub_path):
       continue
@@ -135,7 +135,7 @@ def verify_mac_libraries_dont_reference_chkstack():
   if not _is_mac():
     return
   nm = subprocess.run(
-      ["nm", "-g", r.Rlocation("xla/xla/python/xla_extension.so")],
+      ["nm", "-g", r.Rlocation("__main/jaxlib/xla/xla_extension.so")],
       capture_output=True,
       text=True,
       check=False,
@@ -198,7 +198,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu):
           "__main__/jaxlib/plugin_support.py",
           "__main__/jaxlib/version.py",
           "__main__/jaxlib/xla/xla_client.py",
-          f"xla/xla/python/xla_extension.{pyext}",
+          f"__main__/jaxlib/xla/xla_extension.{pyext}",
       ],
   )
   # This file is required by PEP-561. It marks jaxlib as package containing

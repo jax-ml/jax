@@ -19,7 +19,7 @@ from __future__ import annotations
 import atexit
 from collections.abc import Mapping, Sequence
 import contextlib
-import enum  # pylint: disable=g-bad-import-order
+import enum
 import gzip
 import inspect
 import logging
