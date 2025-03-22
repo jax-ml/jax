@@ -492,13 +492,17 @@ def quantize(x, config):
   elif config.mode == "nvfp4":
     assert config.scale_type == jnp.float8_e4m3fn
     assert config.global_scale.dtype == jnp.float32
+    SCALE_MAX = jnp.finfo(config.scale_type).max.astype(x.dtype)
 
-    scales = scales / config.global_scale
-    scales_q = jax.lax.optimization_barrier(scales.astype(jnp.float8_e4m3fn))
-    scaled_x = x / (scales_q.astype(jnp.float32) *
-                    config.global_scale).astype(x.dtype)
+    prev_amax = config.global_scale * (MAX * SCALE_MAX)
+    scales_q = jnp.clip(
+        (amax / prev_amax) * SCALE_MAX, 0, SCALE_MAX
+    )
+    scaled_x = x / scales_q
+    scales_q = scales_q.astype(config.scale_type)
   else:
     raise ValueError(f"Unrecognized mode: {config.mode}.")
+
   clipped_x = jnp.clip(scaled_x, -MAX, MAX)
   x_q = clipped_x.astype(config.data_type)
 
@@ -639,6 +643,14 @@ def scaled_dot_bwd(dimension_numbers, preferred_element_type, configs, res, g):
   }
   grad_lhs = scaled_dot_general_transpose_lhs(*args, **lhs_kw_args)
   grad_rhs = scaled_dot_general_transpose_rhs(*args, **rhs_kw_args)
+
+  if configs[2].mode == "nvfp4":
+    assert rhs.dtype == lhs.dtype
+    MAX = jnp.finfo(configs[0].data_type).max.astype(lhs.dtype)
+    SCALE_MAX = jnp.finfo(configs[0].scale_type).max.astype(lhs.dtype)
+    grad_lhs = jnp.where(jnp.abs(lhs) <= configs[0].global_scale * MAX * SCALE_MAX, grad_lhs, 0)
+    grad_rhs = jnp.where(jnp.abs(rhs) <= configs[1].global_scale * MAX * SCALE_MAX, grad_rhs, 0)
+
   return (grad_lhs, grad_rhs)
 
 
