@@ -476,6 +476,12 @@ class NNFunctionsTest(jtu.JaxTestCase):
     grad = jax.grad(nn.relu)(0.)
     self.assertEqual(grad, 0.)
 
+  def testIdentity(self):
+    x  = jnp.array([1., 2., 3.])
+    self.assertAllClose(nn.identity(), x, check_dtypes=False)
+    grad = jax.grad(nn.identity)(6.0)
+    self.assertEqual(grad, 1.)
+
   def testRelu6Grad(self):
     rtol = 1e-2 if jtu.test_device_matches(["tpu"]) else None
     check_grads(nn.relu6, (1.,), order=3, rtol=rtol)
@@ -543,7 +549,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
       (jnp.float32, jnp.bfloat16, jnp.float16),
       (partial(nn.gelu, approximate=False),
        partial(nn.gelu, approximate=True),
-       nn.relu, nn.softplus, nn.sparse_plus, nn.sigmoid, nn.squareplus, nn.mish)))
+       nn.relu, nn.identity, nn.softplus, nn.sparse_plus, nn.sigmoid, nn.squareplus, nn.mish)))
   def testDtypeMatchesInput(self, dtype, fn):
     x = jnp.zeros((), dtype=dtype)
     out = fn(x)
