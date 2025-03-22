@@ -20,6 +20,7 @@ contains only tests that do not use shard_map.
 
 from absl.testing import absltest
 from absl.testing import parameterized
+import functools
 
 import jax
 from jax._src import test_util as jtu
@@ -67,6 +68,38 @@ class InterpretTest(jtu.JaxTestCase):
     y = jax.random.normal(k2, (1024, 1024))
     z = matmul(x, y)
     np.testing.assert_allclose(z, x @ y, atol=1e-4)
+
+  def test_scalar_prefetch_example(self):
+    def dynamic_slice_kernel(indices, x_ref, o_ref):
+      del indices
+      o_ref[...] = x_ref[...]
+
+    @functools.partial(jax.jit, static_argnums=(2,))
+    def block_dynamic_slice(x, starts, sizes):
+      grid_spec = pltpu.PrefetchScalarGridSpec(
+          num_scalar_prefetch=1,
+          grid=(1, 1),
+          in_specs=[pl.BlockSpec(
+              sizes,
+              lambda i, j, block_idx: (block_idx[0], block_idx[1]))],
+          out_specs=pl.BlockSpec(sizes, lambda *_: (0, 0)),
+      )
+
+      kernel = pl.pallas_call(
+          dynamic_slice_kernel,
+          grid_spec=grid_spec,
+          out_shape=jax.ShapeDtypeStruct(shape=sizes, dtype=x.dtype),
+          interpret=mosaic_interpret.TPUInterpretParams(),
+      )
+      block_idx = jnp.array([starts[0] // sizes[0], starts[1] // sizes[1]])
+      return kernel(block_idx, x)
+
+    shape = (512, 512)
+    x = jnp.reshape(jnp.arange(np.prod(shape), dtype=jnp.int32), shape)
+    result = block_dynamic_slice(x, starts=jnp.array([128, 256]), sizes=(128, 128))
+    ref = jax.lax.dynamic_slice(x, start_indices=(128, 256), slice_sizes=(128, 128))
+    diff = jnp.max(jnp.abs(result - ref))
+    np.testing.assert_allclose(result, ref)
 
   def test_dynamic_grid_and_aliasing(self):
     self.skipTest('Broken pending fix to extra reads/writes of inputs/outputs')

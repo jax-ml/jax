@@ -1282,17 +1282,20 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
 
   return jax.util.safe_map(read, jaxpr.outvars)
 
-def _compute_start_indices(block_mapping, loop_idx, *args):
-    block_indices = (
-        jax_core.jaxpr_as_fun(block_mapping.index_map_jaxpr)(*loop_idx, *args))
-    if isinstance(block_mapping.indexing_mode, pallas_core.Blocked):
-      ret = tuple(i if b is pallas_core.mapped else b * i
-                  for b, i in zip(block_mapping.block_shape, block_indices))
-    elif isinstance(block_mapping.indexing_mode, pallas_core.Unblocked):
-      ret = block_indices
-    else:
-      raise RuntimeError(f"Unknown indexing mode: {block_mapping.indexing_mode}")
-    return ret
+def _compute_start_indices(
+    block_mapping, loop_idx, *args, compiler_params, interpret_params):
+  jaxpr = block_mapping.index_map_jaxpr
+  block_indices = _interpret_jaxpr(
+      jaxpr.jaxpr, *jaxpr.consts, *loop_idx, *args,
+      compiler_params=compiler_params, interpret_params=interpret_params)
+  if isinstance(block_mapping.indexing_mode, pallas_core.Blocked):
+    ret = tuple(i if b is pallas_core.mapped else b * i
+                for b, i in zip(block_mapping.block_shape, block_indices))
+  elif isinstance(block_mapping.indexing_mode, pallas_core.Unblocked):
+    ret = block_indices
+  else:
+    raise RuntimeError(f"Unknown indexing mode: {block_mapping.indexing_mode}")
+  return ret
 
 def _get_next_indices(grid, indices):
   next_indices = []
@@ -1412,6 +1415,7 @@ def interpret_pallas_call(
   input_buffer_ids = []
   for i, var in enumerate(
       jaxpr.invars[grid_mapping.num_index_operands:][:grid_mapping.num_inputs]):
+    assert var.aval.dtype == input_args[i].dtype
     input_buffer_ids.append(callback.io_callback(
         _allocate_buffer,
         jax.ShapeDtypeStruct((), jnp.int16),
@@ -1451,15 +1455,18 @@ def interpret_pallas_call(
 
   # Allocate buffers for non-HBM kernel arguments (e.g., scalars, inputs,
   # outputs, scratch).
-  kernel_buffer_ids = []
-  for _, val in zip(jaxpr.invars[grid_mapping.slice_index_ops], scalars):
-    kernel_buffer_ids.append(callback.io_callback(
+  scalar_buffer_ids = []
+  for var, val in zip(jaxpr.invars[grid_mapping.slice_index_ops], scalars):
+    assert var.aval.shape == val.shape
+    assert var.aval.dtype == val.dtype
+    scalar_buffer_ids.append(callback.io_callback(
         _allocate_buffer,
         jax.ShapeDtypeStruct((), jnp.int16),
         device_id,
         TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.SMEM],
         val,
         ordered=True))
+  kernel_buffer_ids = scalar_buffer_ids.copy()
   for i, var in enumerate(jaxpr.invars[grid_mapping.num_index_operands:]):
     output_idx = i - grid_mapping.num_inputs
     is_input = i < grid_mapping.num_inputs
@@ -1520,11 +1527,14 @@ def interpret_pallas_call(
       )
 
     with pallas_core.grid_env(local_grid_env):
+      start_indices = [
+          _compute_start_indices(
+              bm, loop_idx, *scalar_buffer_ids, compiler_params=compiler_params,
+              interpret_params=interpret_params)
+          for bm in grid_mapping.block_mappings]
       # Copy slices of the input to the kernel buffers.
       #
       # TODO(jburnim): Only copy slices when the index mapping has changed?
-      start_indices = [_compute_start_indices(bm, loop_idx, *scalars)
-                       for bm in grid_mapping.block_mappings]
       for j, var in enumerate(input_vars):
         if _is_any(var.aval.memory_space):
           continue
