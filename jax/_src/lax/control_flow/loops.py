@@ -1438,7 +1438,29 @@ def _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts, cond_nconsts
 
 def _while_loop_abstract_eval(*avals, cond_jaxpr, body_jaxpr, body_nconsts,
                               cond_nconsts):
-  del avals
+  cond_consts_avals, body_consts_avals, in_avals = \
+      util.split_list(avals, [cond_nconsts, body_nconsts])
+
+  if len(cond_jaxpr.in_avals) != len(cond_consts_avals) + len(in_avals):
+    raise core.JaxprTypeError(
+        f"while_loop {len(cond_jaxpr.in_avals)=} but {len(cond_consts_avals) + len(in_avals)=}")
+  if len(body_jaxpr.in_avals) != len(body_consts_avals) + len(in_avals):
+    raise core.JaxprTypeError(
+        f"while_loop {len(body_jaxpr.in_avals)=} but {len(body_consts_avals) + len(in_avals)=}")
+  # TODO(mattjj): check body carry type
+  # TODO(mattjj): make these typecompat checks work with bints
+  # if not all(_map(core.typecompat, [*cond_consts_avals, *in_avals], cond_jaxpr.in_avals)):  # type: ignore
+  #   cond_avals = [*cond_consts_avals, *in_avals]
+  #   a1, a2 = next((a1, a2) for a1, a2 in zip(cond_avals, cond_jaxpr.in_avals)
+  #                 if not core.typecompat(a1, a2))
+  #   raise core.JaxprTypeError(f"while_loop cond function input type error: {a1} != {a2}")
+  # if not all(_map(core.typecompat, [*body_consts_avals, *in_avals], body_jaxpr.in_avals)):  # type: ignore
+  #   body_avals = [*body_consts_avals, *in_avals]
+  #   a1, a2 = next((a1, a2) for a1, a2 in zip(body_avals, body_jaxpr.in_avals)
+  #                 if not core.typecompat(a1, a2))
+  #   raise core.JaxprTypeError(f"while_loop body function input type error: {a1} != {a2}")
+
+
   joined_effects = _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts,
                                        cond_nconsts)
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
@@ -1679,7 +1701,7 @@ def _while_partial_eval_custom(saveable, unks_in, inst_in, eqn):
     assert False, "Fixpoint not reached"
   assert not num_res
   body_jaxpr_known = core.ClosedJaxpr(jaxpr_known_, body_jaxpr.consts)
-  del jaxpr_known_, carry_uk_out, num_res
+  del jaxpr_known_, carry_uk_out, num_res, unks_in
 
   # Instantiate all inputs (b/c jaxpr_staged will take all inputs).
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)
@@ -1701,6 +1723,7 @@ def _while_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   del cond_uk
 
   # Build the known eqn.
+  unks_in = [*cond_consts_uk, *body_consts_uk, *carry_uk]  # fixpoint carry_uk
   ins_known, _ = partition_list(unks_in, eqn.invars)
   out_binders_known, _ = partition_list(carry_uk, eqn.outvars)
   params_known = dict(cond_jaxpr=cond_jaxpr_known, body_jaxpr=body_jaxpr_known,
@@ -1711,6 +1734,11 @@ def _while_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   eqn_known = pe.new_jaxpr_eqn(ins_known, out_binders_known, while_p,
                                params_known, effects_known, eqn.source_info,
                                eqn.ctx)
+  # Typecheck known eqn.
+  _while_loop_abstract_eval(
+      *[v.aval for v in eqn_known.invars], cond_jaxpr=cond_jaxpr_known,
+      body_jaxpr=body_jaxpr_known, body_nconsts=params_known['body_nconsts'],
+      cond_nconsts=params_known['cond_nconsts'])
 
   # Staged eqn is same as input eqn.
   eqn_staged = eqn
@@ -1798,8 +1826,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
         cond_block.arguments[i] for i in range(len(flat_loop_carry_types))
     ]
     cond_args = mlir.unflatten_ir_values_like_types(flat_cond_args, loop_carry_types)
-    # Remove tokens from cond args
-    cond_args = cond_args[num_tokens:]
+    cond_args = cond_args[num_tokens:]  # Remove tokens from cond args
     x, _, z = util.split_list(cond_args, [cond_nconsts, body_nconsts])
     cond_consts = [
         mlir.ir_constant(xla.canonicalize_dtype(x)) for x in cond_jaxpr.consts
@@ -1861,8 +1888,9 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
           partial(_pred_bcast_select_hlo, ctx, pred_aval, body_pred), new_z, z,
           body_jaxpr.out_avals)
 
-    hlo.return_([*mlir.flatten_ir_values(out_tokens), *mlir.flatten_ir_values(x), *mlir.flatten_ir_values(y),
-                  *mlir.flatten_ir_values(new_z)])
+    hlo.return_([*mlir.flatten_ir_values(out_tokens),
+                 *mlir.flatten_ir_values(x), *mlir.flatten_ir_values(y),
+                 *mlir.flatten_ir_values(new_z)])
 
   outputs = mlir.unflatten_ir_values_like_types(while_op.results, loop_carry_types)
   tokens, _, _, z = util.split_list(outputs, [num_tokens, cond_nconsts, body_nconsts])
@@ -1976,7 +2004,6 @@ ad.primitive_transposes[while_p] = _while_transpose_error
 batching.fancy_primitive_batchers[while_p] = _while_loop_batching_rule
 pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
 mlir.register_lowering(while_p, _while_lowering)
-core.custom_typechecks[while_p] = _while_typecheck
 state_discharge.register_partial_discharge_rule(while_p)(_while_partial_discharge_rule)
 
 

@@ -3066,6 +3066,18 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     leak()
     self.assertEqual(base, nbufs())
 
+  def test_grad_remat_while_fixpoint(self):
+    @jax.remat
+    def f(x, y):
+      def cond(_):
+        return False
+      def body(c):
+        x, y = c
+        return (y, x)
+      x, y = jax.lax.while_loop(cond, body, (x, y))
+      return x + y
+    jax.linearize(f, 1., 2.)  # don't crash
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
