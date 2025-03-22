@@ -19,7 +19,7 @@ import dataclasses
 import enum
 import functools
 import math
-from typing import Any
+from typing import Any, Literal
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
 from jaxlib.mlir import ir
@@ -229,6 +229,29 @@ class CollapseLeadingIndicesTransform(MemRefTransform):
 OnDeviceProfiler = profiler.OnDeviceProfiler
 
 
+def get_tma_dtype(elem_type):
+  # types based on CUtensorMapDataType
+  # https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__TYPES.html#group__CUDA__TYPES_1g42bfc19a0751d7183ee94faf9d9e779d
+  if isinstance(elem_type, ir.IntegerType):
+    bitwidth = utils.bitwidth_impl(elem_type)
+    if bitwidth == 8:
+      return 0 # uint8
+    elif bitwidth == 16:
+      return 1 # uint16
+    elif bitwidth == 32:
+      return 2 # uint32
+    elif bitwidth == 64:
+      return 4 # uint64
+  elif ir.F16Type.isinstance(elem_type):
+    return 6
+  elif ir.F32Type.isinstance(elem_type):
+    return 7
+  elif ir.BF16Type.isinstance(elem_type):
+    return 9
+  else:
+    raise ValueError(f"unsupported TMA dtype {elem_type}")
+
+
 @dataclasses.dataclass()
 class LaunchContext:
   launch_op: gpu.LaunchOp
@@ -340,7 +363,7 @@ class LaunchContext:
         args = [
             host_ptr,
             base_ptr,
-            c(utils.bitwidth(ref_ty.element_type), i64),
+            c(get_tma_dtype(ref_ty.element_type), i64),
             c(rank, i64),
             utils.pack_array([as_i64(i) for i in sizes_and_strides[:rank]]),
             utils.pack_array([as_i64(i) for i in sizes_and_strides[rank:]]),
@@ -375,6 +398,9 @@ class LaunchContext:
       collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
       partitioned: int | None = None,
       predicate: ir.Value | None = None,  # Should select 0 or 1 threads from the WG.
+      reduction_op: Literal[
+        "add","min","max","inc","dec","and","or","xor"
+      ] | None = None,
   ):
     """Initiates an async copy between GMEM and SMEM.
 
@@ -452,6 +478,11 @@ class LaunchContext:
           "async_copy requires all GMEM strides except the last one to be a"
           " multiple of 16 bytes"
       )
+
+    if reduction_op is not None and not isinstance(gmem_ref_ty.element_type, ir.FloatType):
+      raise ValueError("TMA with reduction is only supported with float dtype")
+    if reduction_op is not None and reduction_op != "add":
+      raise ValueError("TMA with reduction is only supported with add operation")
 
     # NOTE: TMA supports OOB indices, so we skip the check.
     base_indices, slice_shape, is_squeezed = utils.parse_indices(
@@ -641,6 +672,7 @@ class LaunchContext:
       )
       barrier_ptr = barrier.get_ptr()
       with uniform_ctx():
+        assert reduction_op is None
         if collective_size > 1 and partitioned is not None:
           if predicate is None:
             predicate = c(1, ir.IntegerType.get_signless(1))
@@ -679,12 +711,28 @@ class LaunchContext:
           )
     else:
       assert multicast_mask is None
-      with uniform_ctx():
-        nvvm.cp_async_bulk_tensor_global_shared_cta(
-            tma_desc, smem_ptr, rev_dyn_base_indices, predicate=predicate
-        )
-        if arrive:
-          nvvm.cp_async_bulk_commit_group()
+      if reduction_op is not None:
+        with uniform_ctx():
+          if predicate is None:
+            predicate = c(1, ir.IntegerType.get_signless(1))
+          rank = len(slice_shape)
+          idx_operands = ",".join(f"${i}" for i in range(3, 3 + rank))
+          llvm.inline_asm(
+            ir.Type.parse("!llvm.void"),
+            [predicate,smem_ptr,tma_desc,*rev_dyn_base_indices],
+            f"@$0 cp.reduce.async.bulk.tensor.{rank}d.global.shared::cta.{reduction_op}.tile.bulk_group [$2,{{{idx_operands}}}], [$1];",
+            "b,r,l" + ",r" * rank,
+            has_side_effects=True,
+          )
+          if arrive:
+            nvvm.cp_async_bulk_commit_group()
+      else:
+        with uniform_ctx():
+          nvvm.cp_async_bulk_tensor_global_shared_cta(
+              tma_desc, smem_ptr, rev_dyn_base_indices, predicate=predicate
+          )
+          if arrive:
+            nvvm.cp_async_bulk_commit_group()
 
   def await_async_copy(
       self, allow_groups: int, await_read_only: bool = False
