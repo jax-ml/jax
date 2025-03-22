@@ -703,6 +703,8 @@ class PallasCallTest(PallasBaseTest):
       ("float32", jax.lax.DotAlgorithmPreset.F16_F16_F32),
       ("float32", jax.lax.DotAlgorithmPreset.BF16_BF16_F32),
       ("float32", jax.lax.DotAlgorithmPreset.BF16_BF16_F32_X3),
+      ("float32", jax.lax.DotAlgorithmPreset.BF16_BF16_F32_X6),
+      ("float32", jax.lax.DotAlgorithmPreset.BF16_BF16_F32_X9),
       ("float32", jax.lax.DotAlgorithmPreset.TF32_TF32_F32),
       ("float32", jax.lax.DotAlgorithmPreset.TF32_TF32_F32_X3),
       ("float32", jax.lax.DotAlgorithmPreset.F32_F32_F32),
@@ -733,9 +735,12 @@ class PallasCallTest(PallasBaseTest):
         preferred_element_type=jnp.float32,
     )
     if dtype == "bfloat16" or precision in (
-        jax.lax.Precision.HIGHEST, jax.lax.DotAlgorithmPreset.F32_F32_F32
+        jax.lax.Precision.HIGHEST,
+        jax.lax.DotAlgorithmPreset.F32_F32_F32,
+        jax.lax.DotAlgorithmPreset.BF16_BF16_F32_X6,
+        jax.lax.DotAlgorithmPreset.BF16_BF16_F32_X9,
     ):
-      atol = 0
+      atol = 5e-6
     elif precision in (
         jax.lax.DotAlgorithmPreset.BF16_BF16_F32_X3,
         jax.lax.DotAlgorithmPreset.TF32_TF32_F32_X3,

@@ -2218,6 +2218,14 @@ def _transpose_lowering(ctx: LoweringRuleContext, x, *, permutation):
 _TF32_PRECISIONS = (lax.Precision.HIGH, lax.Precision.DEFAULT)
 
 
+def _as_bf16(x):
+  return _ir_cast(x, _dtype_to_ir_type(jnp.bfloat16), signed=False)
+
+
+def _as_f32(x):
+  return _ir_cast(x, _dtype_to_ir_type(jnp.float32), signed=False)
+
+
 @register_lowering(lax.dot_general_p)
 def _dot_general_lowering(
     ctx: LoweringRuleContext,
@@ -2258,6 +2266,8 @@ def _dot_general_lowering(
           | lax.DotAlgorithmPreset.BF16_BF16_BF16
           | lax.DotAlgorithmPreset.BF16_BF16_F32
           | lax.DotAlgorithmPreset.BF16_BF16_F32_X3
+          | lax.DotAlgorithmPreset.BF16_BF16_F32_X6
+          | lax.DotAlgorithmPreset.BF16_BF16_F32_X9
       ):
         input_precision = None
       case _:
@@ -2298,20 +2308,34 @@ def _dot_general_lowering(
   _, n = b_type.shape
   acc = _zeros(ir.RankedTensorType.get([m, n], _dtype_to_ir_type(acc_dtype)))
 
-  if precision == lax.DotAlgorithmPreset.BF16_BF16_F32_X3:
-    bf16 = _dtype_to_ir_type(jnp.bfloat16)
-    f32 = _dtype_to_ir_type(jnp.float32)
-    as_bf16 = lambda x: _ir_cast(x, bf16, signed=False)
-    as_f32 = lambda x: _ir_cast(x, f32, signed=False)
-
-    a_bf16 = as_bf16(a)
-    b_bf16 = as_bf16(b)
-    a_err0 = as_bf16(_sub(a, as_f32(a_bf16)))
-    b_err0 = as_bf16(_sub(b, as_f32(b_bf16)))
+  if precision in (
+      lax.DotAlgorithmPreset.BF16_BF16_F32_X3,
+      lax.DotAlgorithmPreset.BF16_BF16_F32_X6,
+      lax.DotAlgorithmPreset.BF16_BF16_F32_X9,
+  ):
+    a_bf16 = _as_bf16(a)
+    b_bf16 = _as_bf16(b)
+    a_err0 = _sub(a, _as_f32(a_bf16))
+    b_err0 = _sub(b, _as_f32(b_bf16))
+    a_err0_bf16 = _as_bf16(a_err0)
+    b_err0_bf16 = _as_bf16(b_err0)
+    a_err1_bf16 = _as_bf16(_sub(a_err0, _as_f32(a_err0_bf16)))
+    b_err1_bf16 = _as_bf16(_sub(b_err0, _as_f32(b_err0_bf16)))
     # Accumulate the smallest values first to reduce the numeric error.
-    acc = tt_dialect.dot(a_err0, b_bf16, acc)
-    acc = tt_dialect.dot(a_bf16, b_err0, acc)
-    # If `a_err0` will be zero and `b` is infinite, then `acc` may contain
+    if precision == lax.DotAlgorithmPreset.BF16_BF16_F32_X9:
+      acc = tt_dialect.dot(a_err1_bf16, b_err0_bf16, acc)
+      acc = tt_dialect.dot(a_err1_bf16, b_err1_bf16, acc)
+      acc = tt_dialect.dot(a_err0_bf16, b_err1_bf16, acc)
+    if precision in (
+        lax.DotAlgorithmPreset.BF16_BF16_F32_X6,
+        lax.DotAlgorithmPreset.BF16_BF16_F32_X9,
+    ):
+      acc = tt_dialect.dot(a_err1_bf16, b_bf16, acc)
+      acc = tt_dialect.dot(a_bf16, b_err1_bf16, acc)
+      acc = tt_dialect.dot(a_err0_bf16, b_err0_bf16, acc)
+    acc = tt_dialect.dot(a_err0_bf16, b_bf16, acc)
+    acc = tt_dialect.dot(a_bf16, b_err0_bf16, acc)
+    # If `a` rounding error is zero and `b` is `inf` then `acc` may contain
     # `NaN`s (as `0 * inf = NaN`), and vice versa.
     acc = arith_dialect.select(_is_nan(acc), _zeros_like(acc), acc)
     a, b = a_bf16, b_bf16
