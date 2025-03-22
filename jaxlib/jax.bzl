@@ -610,3 +610,12 @@ def jax_py_test(
     if "PYTHONWARNINGS" not in env:
         env["PYTHONWARNINGS"] = "error"
     py_test(name = name, env = env, **kwargs)
+
+def if_oss(oss_value, google_value = []):
+    """Returns one of the arguments based on the non-configurable build env.
+
+    Specifically, it does not return a `select`, and can be used to e.g.
+    compute elements of list attributes.
+    """
+    _ = (google_value, oss_value)  # buildifier: disable=unused-variable
+    return oss_value

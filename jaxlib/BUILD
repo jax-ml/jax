@@ -29,13 +29,6 @@ package(
     default_visibility = ["//jax:internal"],
 )
 
-# This makes xla_extension module accessible from jax._src.lib.
-genrule(
-    name = "xla_extension_py",
-    outs = ["xla_extension.py"],
-    cmd = "echo 'from xla.xla.python.xla_extension import *\n' > $@",
-)
-
 py_library_providing_imports_info(
     name = "jaxlib",
     srcs = [
@@ -51,8 +44,8 @@ py_library_providing_imports_info(
         "lapack.py",
         "plugin_support.py",
         "xla_client.py",
+        "xla_extension.py",
         ":version",
-        ":xla_extension_py",
     ],
     data = [":ffi_headers"],
     lib_rule = pytype_library,
@@ -82,6 +75,7 @@ py_library_providing_imports_info(
         "//jaxlib/mosaic",
         "//jaxlib/triton",
         "//jaxlib/xla:xla_client",
+        "//jaxlib/xla:xla_extension",
     ],
 )
 

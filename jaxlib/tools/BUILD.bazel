@@ -62,11 +62,11 @@ py_binary(
         "//jaxlib",
         "//jaxlib:README.md",
         "//jaxlib:setup.py",
+        "//jaxlib/xla:xla_client.py",
+        "//jaxlib/xla:xla_extension",
         "@xla//xla/ffi/api:api.h",
         "@xla//xla/ffi/api:c_api.h",
         "@xla//xla/ffi/api:ffi.h",
-        "@xla//xla/python:xla_client.py",
-        "@xla//xla/python:xla_extension",
     ] + if_windows([
         "//jaxlib/mlir/_mlir_libs:jaxlib_mlir_capi.dll",
     ]),
