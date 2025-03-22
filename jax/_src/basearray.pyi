@@ -11,14 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import abc
 from collections.abc import Callable, Sequence
 from types import ModuleType
-from typing import Any, Protocol, Union, runtime_checkable
+from typing import Any, Protocol, runtime_checkable, Union
+
+from jax._src.partition_spec import PartitionSpec
+from jax._src.sharding import Sharding
+from jax._src import strict_abc
 import numpy as np
 
-from jax._src.sharding import Sharding
-from jax._src.partition_spec import PartitionSpec
 
 # TODO(jakevdp) de-duplicate this with the DTypeLike definition in typing.py.
 # We redefine these here to prevent circular imports.
@@ -39,7 +42,7 @@ Traceback = Any
 PrecisionLike = Any
 
 
-class Array(abc.ABC):
+class Array(strict_abc.ABC):
   aval: Any
 
   @property

@@ -389,6 +389,7 @@ pytype_strict_library(
     deps = [
         ":partition_spec",
         ":sharding",
+        ":strict_abc",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
@@ -432,8 +433,7 @@ pytype_strict_library(
     name = "compilation_cache_interface",
     srcs = ["_src/compilation_cache_interface.py"],
     deps = [
-        ":path",
-        ":util",
+        ":strict_abc",
     ],
 )
 
@@ -495,6 +495,7 @@ pytype_strict_library(
         ":partition_spec",
         ":pretty_printer",
         ":source_info_util",
+        ":strict_abc",
         ":traceback_util",
         ":tree_util",
         ":typing",
@@ -521,6 +522,7 @@ pytype_strict_library(
     ],
     deps = [
         ":config",
+        ":strict_abc",
         ":traceback_util",
         ":typing",
         ":util",
@@ -888,7 +890,7 @@ pytype_strict_library(
     srcs = ["_src/pretty_printer.py"],
     deps = [
         ":config",
-        ":util",
+        ":strict_abc",
     ] + py_deps("colorama"),
 )
 
@@ -1083,6 +1085,11 @@ pytype_strict_library(
         ":config",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "strict_abc",
+    srcs = ["_src/strict_abc.py"],
 )
 
 pytype_strict_library(
