@@ -19,6 +19,7 @@ import jax
 import jax.numpy as jnp
 from jax._src.pallas import pallas_call
 from jax._src.pallas import core as pl_core
+from jax._src.pallas import primitives as pl_primitives
 
 
 @jax.named_call
@@ -29,17 +30,27 @@ def empty(
     # No-op to leave the out_ref uninitialized
     pass
 
-  if memory_space is None:
-    kernel_memory_space = pl_core.MemorySpace.ANY
-    memory_space = jax.ShapeDtypeStruct
-  else:
-    kernel_memory_space = memory_space
-  return pallas_call.pallas_call(
+  # if memory_space is None:
+  #   kernel_memory_space = pl_core.MemorySpace.ANY
+  #   memory_space = jax.ShapeDtypeStruct
+  # else:
+  #   kernel_memory_space = memory_space
+  # return pallas_call.pallas_call(
+  #     _empty_kernel,
+  #     in_specs=[],
+  #     out_specs=pl_core.BlockSpec(memory_space=kernel_memory_space),
+  #     out_shape=memory_space(shape, dtype),
+  # )()
+  out = pallas_call.pallas_call(
       _empty_kernel,
       in_specs=[],
-      out_specs=pl_core.BlockSpec(memory_space=kernel_memory_space),
-      out_shape=memory_space(shape, dtype),
+      out_specs=pl_core.BlockSpec(memory_space=pl_core.MemorySpace.ANY),
+      out_shape=jax.ShapeDtypeStruct(shape, dtype),
   )()
+  if memory_space is not None:
+    out = pl_primitives.with_memory_constraint(out, memory_space)
+  return out
+
 
 
 class ArrayLike(Protocol):
