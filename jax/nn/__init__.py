@@ -35,6 +35,7 @@ from jax._src.nn.functions import (
   standardize as standardize,
   one_hot as one_hot,
   relu as relu,
+  identity as identity,
   relu6 as relu6,
   dot_product_attention as dot_product_attention,
   scaled_dot_general as scaled_dot_general,

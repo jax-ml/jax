@@ -543,7 +543,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
       (jnp.float32, jnp.bfloat16, jnp.float16),
       (partial(nn.gelu, approximate=False),
        partial(nn.gelu, approximate=True),
-       nn.relu, nn.softplus, nn.sparse_plus, nn.sigmoid, nn.squareplus, nn.mish)))
+       nn.relu, nn.identity, nn.softplus, nn.sparse_plus, nn.sigmoid, nn.squareplus, nn.mish)))
   def testDtypeMatchesInput(self, dtype, fn):
     x = jnp.zeros((), dtype=dtype)
     out = fn(x)
@@ -830,6 +830,12 @@ class NNInitializersTest(jtu.JaxTestCase):
       "-dimensional weights tensor. Must be at least 2D."
     ):
       initializer(rng, shape)
+
+  def testIdentity(self):
+    x  = jnp.array([1., 2., 3.])
+    self.assertAllClose(nn.identity(x), x, check_dtypes=False)
+    grad = jax.grad(nn.identity)(6.0)
+    self.assertEqual(grad, 1.)
 
   def testAccidentalUpcasting(self):
     rng = random.PRNGKey(0)
