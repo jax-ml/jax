@@ -356,6 +356,7 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:extend",
+        "//jax:mesh_utils",
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
     ],
