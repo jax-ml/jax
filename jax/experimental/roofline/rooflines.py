@@ -36,6 +36,8 @@ from jax.experimental import roofline
 from jax.experimental import shard_map
 
 
+_FMA_FLOPS_FACTOR = 2
+
 for prim in it.chain(
   ad_util.__dict__.values(),
   ann.__dict__.values(),
@@ -156,7 +158,7 @@ def _dot_general_roofline(
   (lhs_contract, _), (lhs_batch, _) = dimension_numbers
 
   flops = (
-    2
+    _FMA_FLOPS_FACTOR
     * lhs.size
     * rhs.size
     / np.prod([lhs.shape[i] for i in lhs_contract])
