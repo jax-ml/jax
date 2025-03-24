@@ -1262,6 +1262,12 @@ def _broadcast_in_dim_lowering_rule(
       and x.layout == mgpu.WGMMA_ROW_LAYOUT
   ):
     return x.broadcast_minor(y_aval.shape[-1])
+  if (
+        broadcast_dimensions == (1,)
+        and y_aval.ndim == x_aval.ndim + 1
+        and x.layout == mgpu.WGMMA_COL_LAYOUT
+  ):
+    return x.broadcast_major(y_aval.shape[-2])
   if broadcast_dimensions:
     raise NotImplementedError
   return x.broadcast(shape)

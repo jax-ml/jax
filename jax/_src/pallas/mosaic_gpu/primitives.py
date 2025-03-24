@@ -110,6 +110,10 @@ def _load_p_lowering_rule(
           return mgpu.FragmentedArray.load_wgmma_row(
               x_ref, is_signed=mgpu_utils.is_signed(x_aval.dtype)
           )
+        case mgpu.WGMMAColFragLayout():
+          return mgpu.FragmentedArray.load_wgmma_col(
+              x_ref, is_signed=mgpu_utils.is_signed(x_aval.dtype)
+          )
         case mgpu.WGStridedFragLayout(shape=shape, vec_size=vec_size):
           ref_ty = ir.MemRefType(x_ref.type)
           if shape != tuple(ref_ty.shape):
@@ -878,6 +882,8 @@ class Layout(enum.Enum):
   WGMMA = enum.auto()
   #: [m] matrix, where m % 64 == 0.
   WGMMA_ROW = enum.auto()
+  #: [n] matrix, where n % 8 == 0.
+  WGMMA_COL = enum.auto()
 
   WG_SPLAT = enum.auto()
   WG_STRIDED = enum.auto()
@@ -897,6 +903,9 @@ class Layout(enum.Enum):
       case Layout.WGMMA_ROW:
         check_no_args()
         return mgpu.WGMMA_ROW_LAYOUT
+      case Layout.WGMMA_COL:
+        check_no_args()
+        return mgpu.WGMMA_COL_LAYOUT
       case Layout.WG_SPLAT:
         return mgpu.WGSplatFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
       case Layout.WG_STRIDED:

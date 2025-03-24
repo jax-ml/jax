@@ -638,6 +638,7 @@ class PallasCallTest(PallasTest):
       src_memory_space=[plgpu.SMEM, plgpu.GMEM],
       layout=[
           plgpu.Layout.WGMMA_ROW,
+          plgpu.Layout.WGMMA_COL,
           plgpu.Layout.WG_STRIDED((128,), vec_size=1),
           None,
       ],
@@ -661,15 +662,27 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(2 * 128, dtype=jnp.float32).reshape(2, 128)
     np.testing.assert_array_equal(f(x), x)
 
-  @parameterized.product(src_memory_space=[plgpu.SMEM, plgpu.GMEM])
-  def test_load_row_input_to_wgmma_with_transforms(self, src_memory_space):
+  @parameterized.product(src_memory_space=[plgpu.SMEM],
+                         layout=[
+                            plgpu.Layout.WGMMA_ROW,
+                            plgpu.Layout.WGMMA_COL,
+                          ],)
+  def test_load_row_input_to_wgmma_with_transforms(self, src_memory_space, layout):
     m, k, n = 64, 128, 192
     key1, key2 = jax.random.split(jax.random.key(42), 2)
-    a = jax.random.uniform(key1, shape=(m,), dtype=jnp.float16)
+    if layout == plgpu.Layout.WGMMA_ROW:
+      input_shape = (m,)
+      broadcast_dim = 0
+      expand_dim = 1
+    else:
+      input_shape = (k,)
+      broadcast_dim = 1
+      expand_dim = 0
+    a = jax.random.uniform(key1, shape=input_shape, dtype=jnp.float16)
     b = jax.random.uniform(key2, shape=(k, n), dtype=jnp.float16)
     def kernel(x_ref, y_ref, o_ref):
-      x = plgpu.load(x_ref, (), layout=plgpu.Layout.WGMMA_ROW)
-      x = lax.broadcast_in_dim(x, (m, k), [0])
+      x = plgpu.load(x_ref, (), layout=layout)
+      x = lax.broadcast_in_dim(x, (m, k), [broadcast_dim])
 
       def compute(acc_ref):
         plgpu.wgmma(acc_ref, x, y_ref)
@@ -697,7 +710,9 @@ class PallasCallTest(PallasTest):
         out_specs=out_spec,
     )
 
-    out_ref = jnp.broadcast_to(a[:, None], (m, k)) @ b
+    out_ref = (
+        jnp.broadcast_to(jnp.expand_dims(a, axis=expand_dim), (m, k)) @ b
+    )
     np.testing.assert_allclose(f(a, b), out_ref, rtol=1e-3)
 
   def test_indexing_before_transpose(self):
