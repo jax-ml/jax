@@ -17,7 +17,7 @@ import contextlib
 import itertools
 import json
 import math
-from typing import Callable, ParamSpec, TypeVar
+from typing import Callable, ParamSpec, TypeAlias, TypeVar
 import warnings
 
 import jax
@@ -98,30 +98,44 @@ def _measure_events(
   return outs, float(elapsed)
 
 
-def _measure_cupti(f, aggregate, *, finalize=True):
-  if not isinstance(f, (stages.Wrapped, stages.Compiled)):
-    f = jax.jit(f)
-
-  def wrapper(*args, **kwargs):
-    jax.block_until_ready(f(*args, **kwargs))  # Warmup.
-    mosaic_gpu_lib._mosaic_gpu_ext._cupti_init()
-    try:
-      results = jax.block_until_ready(f(*args, **kwargs))
-    finally:
-      timings = mosaic_gpu_lib._mosaic_gpu_ext._cupti_get_timings(finalize)
-
-    if not timings:
-      return results, None
-    elif aggregate:
-      return results, sum(item[1] for item in timings)
-    else:
-      return results, timings
-
-  return wrapper
+Timings: TypeAlias = list[tuple[str, float]] | float | None
 
 
-def measure(f: Callable, *, mode: str = "events", aggregate: bool = True
-) -> Callable:
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class Cupti:
+  """CUPTI-based profiler."""
+
+  # If `True`, detach CUPTI from the process after measurement.
+  finalize: bool = True
+
+  def measure(
+      self, f: Callable[P, T], *, aggregate: bool = True
+  ) -> Callable[P, tuple[T, Timings]]:
+    if not isinstance(f, (stages.Wrapped, stages.Compiled)):
+      f = jax.jit(f)
+
+    def wrapper(*args: P.args, **kwargs: P.kwargs):
+      jax.block_until_ready(f(*args, **kwargs))  # Warmup.
+      ext = mosaic_gpu_lib._mosaic_gpu_ext
+      ext._cupti_init()
+      try:
+        results = jax.block_until_ready(f(*args, **kwargs))
+      finally:
+        timings = ext._cupti_get_timings(self.finalize)
+
+      if not timings:
+        return results, None
+      elif aggregate:
+        return results, sum(item[1] for item in timings)
+      else:
+        return results, timings
+
+    return wrapper
+
+
+def measure(
+    f: Callable[P, T], *, mode: str = "events", aggregate: bool = True
+) -> Callable[P, tuple[T, Timings]]:
   """Sets up a function ``f`` for profiling on GPU.
 
   ``measure`` is a higher-order function that augments the argument ``f`` to
@@ -133,7 +147,6 @@ def measure(f: Callable, *, mode: str = "events", aggregate: bool = True
     mode: The mode of operation. Possible values are:
 
       - "cupti", for CUPTI-based profiling.
-      - "cupti_no_finalize", as above, but CUPTI left attached to the process.
       - "events", for CUDA events-based profiling.
 
       The two modes use different measurement methodologies and should not be
@@ -179,9 +192,7 @@ def measure(f: Callable, *, mode: str = "events", aggregate: bool = True
   """  # fmt: skip
   match mode:
     case "cupti":
-      return _measure_cupti(f, aggregate)
-    case "cupti_no_finalize":
-      return _measure_cupti(f, aggregate, finalize=False)
+      return Cupti().measure(f, aggregate=aggregate)
     case "events":
       if not aggregate:
         raise ValueError(f"{aggregate=} is not supported with {mode=}")
