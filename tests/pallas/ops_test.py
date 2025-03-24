@@ -561,7 +561,11 @@ class OpsTest(PallasBaseTest):
   )
   @hp.given(hps.data())
   def test_unary_primitives(self, name, func, shape_dtype_strategy, data):
-    self.skip_if_mosaic_gpu()
+    if any(
+        name == x
+        for x in ["abs", "log1p", "pow2", "reciprocal", "relu", "sin", "sqrt"]
+    ):
+      self.skip_if_mosaic_gpu()
 
     if self.INTERPRET:
       self.skipTest("This hypothesis test is slow, even more so in interpret mode.")
@@ -578,6 +582,23 @@ class OpsTest(PallasBaseTest):
     def kernel(x_ref, y_ref):
       y_ref[...] = func(x_ref[...])
     x_shape_dtype = data.draw(shape_dtype_strategy)
+
+    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and use_mosaic_gpu
+    if sut_is_mosaic_gpu:
+      shape = list(x_shape_dtype.shape)
+      # We need at least 128 elements, because we're using warpgroup semantics.
+      if np.prod(shape) < 128:
+        shape[-1] = 128
+      # TMA requires that all dimenions except for the last have a stride that
+      # is a multiple of 16.
+      if shape[-1] < 16:
+        multiplier = 16 // shape[-1]
+        shape[-1] = 16
+        # We need to make the shape smaller to fit in SMEM.
+        if shape[-2] > multiplier:
+          shape[-2] = shape[-2] // multiplier
+      x_shape_dtype.shape = tuple(shape)
+
     key = random.key(0)
     x = _random_value(key, x_shape_dtype)
     out = self.pallas_call(kernel, out_shape=x_shape_dtype)(x)

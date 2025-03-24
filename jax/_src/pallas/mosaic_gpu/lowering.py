@@ -1616,6 +1616,7 @@ def _exp_lowering_rule(ctx: LoweringRuleContext, x):
 
 
 @register_lowering_rule(lax.exp2_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(lax.exp2_p, mgpu.ThreadSemantics.Warpgroup)
 def _exp2_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
   if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:

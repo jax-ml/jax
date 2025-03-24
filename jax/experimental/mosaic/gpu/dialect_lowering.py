@@ -513,29 +513,15 @@ def swizzle_and_transforms_from_transforms_attr(
 def transform_memref(
     mem_ref: ir.Value, transforms: tuple[launch_context.MemRefTransform, ...]
 ) -> ir.Value:
-  """Reinterprets the memref to one where the shape is transformed as given."""
-  if not transforms:
-    return mem_ref
-
-  mem_ref_type = ir.MemRefType(mem_ref.type)
-  if mem_ref_type.memory_space != ir.Attribute.parse(
+  """Applies all the transforms to the given memref."""
+  if ir.MemRefType(mem_ref.type).memory_space != ir.Attribute.parse(
       "#gpu.address_space<workgroup>"
   ):
     raise ValueError(f"Only workgroup memory is supported but got {mem_ref}.")
 
-  shape = mem_ref_type.shape
   for t in transforms:
-    shape = t.transform_shape(shape)
-
-  memref_new_type = ir.MemRefType.get(
-      shape,
-      mem_ref_type.element_type,
-      memory_space=mem_ref_type.memory_space,
-  )
-
-  ms = utils.WORKGROUP_NVPTX_ADDRESS_SPACE
-  ptr = utils.memref_ptr(mem_ref, memory_space=ms)
-  return utils.ptr_as_memref(ptr, memref_new_type, ptr_memory_space=ms)
+    mem_ref = t.apply(mem_ref)
+  return mem_ref
 
 
 @_register_lowering(mgpu.AsyncLoadOp)

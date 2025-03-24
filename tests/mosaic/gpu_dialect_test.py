@@ -34,6 +34,7 @@ from jax._src.lib.mlir.dialects import vector
 from jax.experimental.mosaic import gpu as mgpu
 from jax.experimental.mosaic.gpu import layouts
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
+from jax.experimental.mosaic.gpu import dialect_lowering as lowering
 
 _cext = mgpu.dialect._cext if mgpu.dialect is not None else None
 
@@ -861,6 +862,27 @@ class DialectLoweringTest(MosaicGpuTest):
     # after lowering.
     self.assertLen(conversion_ops, 1)
     self.assertEqual(conversion_ops[0].result.type, scalar_out_ty)
+
+  def test_memref_transforms(self):
+    with ir.InsertionPoint(self.module.body):
+      ty_in = ir.MemRefType.get(
+          (128, 64),
+          ir.BF16Type.get(),
+          memory_space=ir.Attribute.parse("#gpu.address_space<workgroup>"),
+      )
+      ref = memref.alloc(ty_in, [], [])
+
+      ref = mgpu_utils.memref_transpose(ref, (1, 0))
+      transforms = [
+          mgpu.TileTransform(tiling=(32, 16)),
+          mgpu.TransposeTransform(permutation=(1, 0, 2, 3)),
+      ]
+      ref = lowering.transform_memref(ref, transforms)
+      ty_out = ir.MemRefType(ref.type)
+
+    self.assertEqual(ty_out.shape, [8, 2, 32, 16])
+    strides, _ = ty_out.get_strides_and_offset()
+    self.assertEqual(strides, [1024, 32, 1, 64])
 
 
 if __name__ == "__main__":
