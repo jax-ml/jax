@@ -599,9 +599,9 @@ def _apply_mask_and_soft_cap(
   masks = []
   if mask_ref is not None:
     if k_in_lanes:
-      mask = pl.load(mask_ref, (slice(None), k_slice))
+      mask = mask_ref[:, k_slice]
     else:
-      mask = pl.load(mask_ref, (k_slice, slice(None)))
+      mask = mask_ref[k_slice, :]
 
     masks.append(
         jnp.bitwise_or(mask, jnp.broadcast_to(should_not_mask, mask.shape))
@@ -630,7 +630,7 @@ def _apply_mask_and_soft_cap(
       k_sequence = k_offset + jax.lax.broadcasted_iota(
           jnp.int32, (k_slice.size, bq), 0
       )
-      q_sequence = pl.load(q_sequence_ref, (pl.ds(1), slice(None)))  # [1, bq]
+      q_sequence = q_sequence_ref[:1, :]  # [1, bq]
       q_sequence = jnp.broadcast_to(q_sequence, (k_slice.size, bq))
 
     assert q_sequence.shape == k_sequence.shape
@@ -644,7 +644,7 @@ def _apply_mask_and_soft_cap(
 
   if q_segment_ids_ref is not None:
     if k_in_lanes:
-      kv_ids = pl.load(kv_segment_ids_ref, (pl.ds(1), k_slice))  # [1, k_slice]
+      kv_ids = kv_segment_ids_ref[:1, k_slice]  # [1, k_slice]
       repeats, rem = divmod(kv_ids.shape[1], NUM_LANES)
       if rem:
         raise NotImplementedError(f"block_kv must be a multiple of {NUM_LANES}")
@@ -655,9 +655,9 @@ def _apply_mask_and_soft_cap(
       if rem:
         raise NotImplementedError(f"block_q must be a multiple of {NUM_LANES}")
       kv_ids = pltpu.repeat(
-          pl.load(kv_segment_ids_ref, (k_slice, slice(None))), repeats, axis=1
+          kv_segment_ids_ref[k_slice, :], repeats, axis=1
       )  # [k_slice, bq]
-      q_ids = pl.load(q_segment_ids_ref, (pl.ds(1), slice(None)))  # [1, bq]
+      q_ids = q_segment_ids_ref[:1, :]  # [1, bq]
     masks.append(q_ids == kv_ids)
 
   def cap_logits(logits):
@@ -743,9 +743,9 @@ def flash_attention_kernel(
     q = q_ref[...] if q_layout == HEAD_DIM_MINOR else q_ref[...].T
     qk_dims = NT_DIM_NUMBERS if k_layout == HEAD_DIM_MINOR else NN_DIM_NUMBERS
     if k_layout == HEAD_DIM_MINOR:
-      k = pl.load(k_ref, (slice_k, slice(None)))
+      k = k_ref[slice_k, :]
     else:
-      k = pl.load(k_ref, (slice(None), slice_k))
+      k = k_ref[:, slice_k]
     qk = lax.dot_general(q, k, qk_dims, preferred_element_type=float32)
 
     assert qk.shape == (bq, bkv_compute)
@@ -794,9 +794,9 @@ def flash_attention_kernel(
 
     sv_dims = NN_DIM_NUMBERS if v_layout == HEAD_DIM_MINOR else NT_DIM_NUMBERS
     if v_layout == HEAD_DIM_MINOR:
-      v = pl.load(v_ref, (slice_k, slice(None)))
+      v = v_ref[slice_k, :]
     else:
-      v = pl.load(v_ref, (slice(None), slice_k))
+      v = v_ref[:, slice_k]
     v = v.astype(float32)
     o_curr = lax.dot_general(s_curr, v, sv_dims)
 
@@ -1688,13 +1688,13 @@ def _flash_attention_dkv_kernel(
     q = q_ref[...]  # We keep q potentially transposed, since it's always RHS
     def _load_kv(ref, layout):
       if layout == HEAD_DIM_MINOR:
-        return pl.load(ref, (slice_k, slice(None)))
-      return pl.load(ref, (slice(None), slice_k)).T
+        return ref[slice_k, :]
+      return ref[:, slice_k].T
     k = _load_kv(k_ref, k_layout)
     v = _load_kv(v_ref, v_layout)
-    logsumexp = pl.load(logsumexp_ref, (pl.ds(1), slice(None)))
+    logsumexp = logsumexp_ref[:1, :]
     do = do_ref[...]
-    di = pl.load(di_ref, (pl.ds(1), slice(None)))
+    di = di_ref[:1, :]
 
     qk_dims = NT_DIM_NUMBERS if q_layout == HEAD_DIM_MINOR else NN_DIM_NUMBERS
     qk_uncapped = lax.dot_general(
@@ -1718,10 +1718,8 @@ def _flash_attention_dkv_kernel(
     )
     p = jnp.exp(qk - logsumexp)
     dv = lax.dot(p.astype(do.dtype), do, preferred_element_type=jnp.float32)
-    dv = dv.astype(dv_scratch_ref.dtype) + pl.load(
-        dv_scratch_ref, (slice_k, slice(None))
-    )
-    pl.store(dv_scratch_ref, (slice_k, slice(None)), dv)
+    dv = dv.astype(dv_scratch_ref.dtype) + dv_scratch_ref[slice_k, :]
+    dv_scratch_ref[slice_k, :] = dv
 
     dp = lax.dot_general(
         v, do, NT_DIM_NUMBERS,
@@ -1737,10 +1735,8 @@ def _flash_attention_dkv_kernel(
     dk = lax.dot_general(
         ds.astype(do.dtype), q, dk_dims, preferred_element_type=jnp.float32
     )
-    dk = dk.astype(dk_scratch_ref.dtype) + pl.load(
-        dk_scratch_ref, (slice_k, slice(None))
-    )
-    pl.store(dk_scratch_ref, (slice_k, slice(None)), dk)
+    dk = dk.astype(dk_scratch_ref.dtype) + dk_scratch_ref[slice_k, :]
+    dk_scratch_ref[slice_k, :] = dk
     if dq_scratch_ref is not None or dq_ref is not None:
       dq = lax.dot_general(
           ds.T.astype(k.dtype), k, NN_DIM_NUMBERS,

@@ -145,8 +145,7 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
     x = jnp.arange(8 * 8 * 128, dtype=jnp.int32).reshape((8 * 8, 128))
 
     def _x_transform(i, s_ref):
-      s = pl.load(s_ref, (i,))
-      return (s, 0)
+      return (s_ref[i], 0)
 
     out = self.pallas_call(
         body,
@@ -225,7 +224,7 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
         assert s2.shape == (3,)
         assert s3 is None
         store_idx = s_ref[pl.program_id(0)]
-        pl.store(dst, (pl.dslice(store_idx, 1), slice(None)), to_store[...])
+        dst[pl.dslice(store_idx, 1), :] = to_store[...]
       # Pass a pytree of scalar
       return kernel((s, np.arange(3, dtype=np.int32), None), x, to_store)
 
@@ -281,7 +280,7 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
     x = jnp.arange(2 * 8 * 8 * 128, dtype=jnp.int32).reshape((2, 8 * 8, 128))
 
     def _x_transform(i, s_ref):
-      s = pl.load(s_ref, (i,))
+      s = s_ref[i]
       return (s, 0)
 
     def f(x):
@@ -423,7 +422,7 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
     x = jnp.arange(8 * 8 * 128, dtype=jnp.int32).reshape((8 * 8, 128))
 
     def _x_transform(i, s_ref):
-      s = pl.load(s_ref, (i,))
+      s = s_ref[i]
       return (s, 0)
 
     s = s[None]
@@ -457,7 +456,7 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
     x = jnp.arange(2 * 8 * 8 * 128, dtype=jnp.int32).reshape((2, 8 * 8, 128))
 
     def _x_transform(i, s_ref):
-      s = pl.load(s_ref, (i,))
+      s = s_ref[i]
       return (s, 0)
 
     s = jnp.tile(s[None], [2, 1])
@@ -1139,8 +1138,7 @@ class PallasCallDMATest(PallasBaseTest):
   def test_hbm_hbm_dma(self):
     def kernel(x_hbm_ref, y_hbm_ref):
       def body(sem):
-        pltpu.async_copy(x_hbm_ref.at[pl.ds(8), :], y_hbm_ref.at[:, pl.ds(128)],
-                         sem).wait()
+        pltpu.async_copy(x_hbm_ref.at[:8, :], y_hbm_ref.at[:, :128], sem).wait()
       pl.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(8 * 128.).reshape((8, 128))
     y = self.pallas_call(
@@ -2570,8 +2568,7 @@ class PallasCallTPUCheckifyTest(PallasBaseTest):
     x = jnp.arange(8 * 8 * 128, dtype=jnp.int32).reshape((8 * 8, 128))
 
     def _x_transform(i, s_ref):
-      s = pl.load(s_ref, (i,))
-      return (s, 0)
+      return (s_ref[i], 0)
 
     pallas_call = self.pallas_call(
         body,
