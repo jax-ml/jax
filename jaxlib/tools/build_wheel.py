@@ -135,7 +135,7 @@ def verify_mac_libraries_dont_reference_chkstack():
   if not _is_mac():
     return
   nm = subprocess.run(
-      ["nm", "-g", r.Rlocation("__main/jaxlib/xla/xla_extension.so")],
+      ["nm", "-g", r.Rlocation("__main__/jaxlib/xla/xla_extension.so")],
       capture_output=True,
       text=True,
       check=False,
