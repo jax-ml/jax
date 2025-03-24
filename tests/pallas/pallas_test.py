@@ -844,15 +844,20 @@ class PallasCallTest(PallasBaseTest):
     self.assertAllClose(dot_kernel(x, y), expected)
 
   @parameterized.parameters(
-      ((32,), 0), ((32, 64), 0), ((32, 16), 1), ((32, 16, 2), 1)
+      ((32,), 2, 0), ((32, 64), 4, 0), ((32, 16), 8, 1), ((32, 16, 2), 16, 1)
   )
-  def test_split(self, shape, axis):
+  def test_split(self, shape, num_parts, axis):
+    if jtu.test_device_matches(["tpu"]) and shape[axis] == num_parts:
+      self.skipTest("TPU doesn't support fully split axis.")
+
     x = jax.random.normal(jax.random.key(0), shape)
-    expected = jnp.split(x, 2, axis)
+    expected = jnp.split(x, num_parts, axis)
 
     @functools.partial(self.pallas_call, out_shape=expected)
-    def kernel(x_ref, o0_ref, o1_ref):
-      o0_ref[()], o1_ref[()] = jnp.split(x_ref[()], 2, axis)
+    def kernel(x_ref, *o_ref):
+      x_parts = jnp.split(x_ref[()], num_parts, axis)
+      for o_ref, x_part in zip(o_ref, x_parts):
+        o_ref[...] = x_part
 
     self.assertAllClose(kernel(x), expected)
 
