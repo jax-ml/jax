@@ -483,6 +483,7 @@ jax_multiplatform_test(
 
 jax_multiplatform_test(
     name = "lax_numpy_test",
+    size = "large",
     srcs = ["lax_numpy_test.py"],
     backend_tags = {
         "cpu": ["notsan"],  # Test times out.
