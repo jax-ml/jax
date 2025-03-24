@@ -1802,15 +1802,22 @@ def _concatenate_lowering_rule(ctx: LoweringRuleContext, *args, dimension):
 def _split_lowering_rule(ctx: LoweringRuleContext, x, *, sizes, axis):
   pass
   # TODO(cjfj): Add support for larger powers of 2.
-  if len(sizes) != 2:
-    raise NotImplementedError("Only splitting into two parts is supported.")
-  if sizes[0] != sizes[1]:
+  num_parts = len(sizes)
+  if num_parts != pallas_utils.next_power_of_2(num_parts):
+    raise NotImplementedError("Only power-of-2 num parts supported.")
+  if any(size != sizes[0] for size in sizes):
     raise NotImplementedError("Only equal-sized splits are supported.")
-  (x_aval,) = ctx.avals_in
-  shape = x_aval.shape
-  x = _reshape(x, shape[:axis] + (2, sizes[0]) + shape[axis + 1 :])
-  permutation = tuple(d for d in range(len(shape) + 1) if d != axis) + (axis,)
-  return tt_dialect.split(tt_dialect.trans(x, permutation))
+
+  def split_into_2(x):
+    shape = ir.RankedTensorType(x.type).shape
+    x = _reshape(x, shape[:axis] + [2, shape[axis] // 2] + shape[axis + 1 :])
+    permutation = tuple(d for d in range(len(shape) + 1) if d != axis) + (axis,)
+    return tuple(tt_dialect.split(tt_dialect.trans(x, permutation)))
+
+  x_parts = (x,)
+  while len(x_parts) < num_parts:
+    x_parts = sum(map(split_into_2, x_parts), ())
+  return x_parts
 
 
 def _compute_offsets_from_indices(
