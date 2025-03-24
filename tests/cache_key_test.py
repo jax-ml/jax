@@ -163,6 +163,8 @@ class CacheKeyTest(jtu.JaxTestCase):
         cache_key.get(computation2, devices, compile_options, backend),
     )
 
+  # TODO(phawkins): this test flakes if test concurrency is enabled.
+  @jtu.thread_unsafe_test()
   def test_custom_partitioning_ptr_removal(self):
     def _partition(mesh, arg_shapes, result_shape):
       arg_shardings = jax.tree.map(lambda x: x.sharding, arg_shapes)
