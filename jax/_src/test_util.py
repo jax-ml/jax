@@ -51,6 +51,7 @@ from jax._src import dtypes as _dtypes
 from jax._src import lib as _jaxlib
 from jax._src import monitoring
 from jax._src import test_warning_util
+from jax._src.typing import ArrayLike, DTypeLike
 from jax._src import xla_bridge
 from jax._src import util
 from jax._src import mesh as mesh_lib
@@ -59,7 +60,7 @@ from jax._src.interpreters import mlir
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
-    check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, rand_like, tolerance)
+    check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, rand_like, tolerance, ToleranceDict)
 from jax._src.util import unzip2
 from jax.tree_util import tree_all, tree_flatten, tree_map, tree_unflatten
 import numpy as np
@@ -131,10 +132,10 @@ kSanitizeNameRE = re.compile(r"[ \"'\[\](){}<>=,._]+")
 def sanitize_test_name(s: str) -> str:
   return kSanitizeNameRE.sub("_", s)
 
-def num_float_bits(dtype):
+def num_float_bits(dtype: DTypeLike) -> int:
   return _dtypes.finfo(_dtypes.canonicalize_dtype(dtype)).bits
 
-def to_default_dtype(arr):
+def to_default_dtype(arr: ArrayLike) -> np.ndarray:
   """Convert a value to an array with JAX's default dtype.
 
   This is generally used for type conversions of values returned by numpy functions,
@@ -145,7 +146,7 @@ def to_default_dtype(arr):
   dtype = _dtypes._default_types.get(arr.dtype.kind)
   return arr.astype(_dtypes.canonicalize_dtype(dtype)) if dtype else arr
 
-def with_jax_dtype_defaults(func, use_defaults=True):
+def with_jax_dtype_defaults(func: Callable[..., Any], use_defaults: bool = True):
   """Return a version of a function with outputs that match JAX's default dtypes.
 
   This is generally used to wrap numpy functions within tests, in order to make
@@ -168,7 +169,7 @@ def with_jax_dtype_defaults(func, use_defaults=True):
       return tree_map(f, result, use_defaults)
   return wrapped
 
-def is_sequence(x):
+def is_sequence(x: Any) -> bool:
   try:
     iter(x)
   except TypeError:
@@ -176,14 +177,16 @@ def is_sequence(x):
   else:
     return True
 
-def _normalize_tolerance(tol):
+def _normalize_tolerance(tol: int | float | ToleranceDict | None) -> ToleranceDict:
   tol = tol or 0
   if isinstance(tol, dict):
     return {np.dtype(k): v for k, v in tol.items()}
   else:
     return dict.fromkeys(_default_tolerance, tol)
 
-def join_tolerance(tol1, tol2):
+def join_tolerance(
+    tol1: int | float | ToleranceDict | None,
+    tol2: int | float | ToleranceDict | None) -> ToleranceDict:
   tol1 = _normalize_tolerance(tol1)
   tol2 = _normalize_tolerance(tol2)
   out = tol1
@@ -192,7 +195,7 @@ def join_tolerance(tol1, tol2):
   return out
 
 
-def check_eq(xs, ys, err_msg=''):
+def check_eq(xs: Any, ys: Any, err_msg: str = '') -> None:
   assert_close = partial(_assert_numpy_allclose, err_msg=err_msg)
   tree_all(tree_map(assert_close, xs, ys))
 

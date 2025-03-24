@@ -14,6 +14,7 @@
 
 from functools import partial
 import operator
+from typing import Any, TypeAlias
 
 from jax._src import api
 from jax._src import config
@@ -32,7 +33,7 @@ __all__ = ['check_grads', 'check_jvp', 'check_vjp']
 EPS = 1e-4
 
 
-def _dtype(x):
+def _dtype(x: Any) -> np.dtype:
   if hasattr(x, 'dtype'):
     return x.dtype
   elif type(x) in _dtypes.python_scalar_dtypes:
@@ -40,8 +41,9 @@ def _dtype(x):
   else:
     return np.asarray(x).dtype
 
+ToleranceDict: TypeAlias = dict[np.dtype, int | float]
 
-_default_tolerance = {
+_default_tolerance: ToleranceDict = {
     _dtypes.float0: 0,
     np.dtype(np.bool_): 0,
     np.dtype(_dtypes.int4): 0,
@@ -76,7 +78,7 @@ def default_tolerance():
   return _default_tolerance
 
 
-default_gradient_tolerance = {
+default_gradient_tolerance: ToleranceDict = {
   np.dtype(_dtypes.float8_e4m3b11fnuz): 1e-1,
   np.dtype(_dtypes.float8_e4m3fn): 1e-1,
   np.dtype(_dtypes.float8_e4m3fnuz): 1e-1,
@@ -104,7 +106,7 @@ if _dtypes.float4_e2m1fn is not None:
   _default_tolerance[np.dtype(_dtypes.float4_e2m1fn)] = 1e0
   default_gradient_tolerance[np.dtype(_dtypes.float4_e2m1fn)] = 1e0
 
-def is_python_scalar(val):
+def is_python_scalar(val: Any) -> bool:
   return not isinstance(val, np.generic) and isinstance(val, (bool, int, float, complex))
 
 def _assert_numpy_allclose(a, b, atol=None, rtol=None, err_msg=''):
@@ -151,7 +153,8 @@ def _assert_numpy_allclose(a, b, atol=None, rtol=None, err_msg=''):
     # value errors. It should not do that.
     np.testing.assert_allclose(a, b, **kw, err_msg=err_msg)
 
-def tolerance(dtype, tol=None):
+
+def tolerance(dtype: np.dtype, tol: int | float | ToleranceDict | None = None) -> int | float:
   tol = {} if tol is None else tol
   if not isinstance(tol, dict):
     return tol
