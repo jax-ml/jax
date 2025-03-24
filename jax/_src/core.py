@@ -3424,7 +3424,7 @@ dtypes.register_weak_scalar_type(WeakNdArray)
 def strip_internal_weak_types(x):
   if not isinstance(x, WeakNdArray):
     return x
-  if np.dim(x) != 0:
+  if np.ndim(x) != 0:
     return x.view(np.ndarray)
   return dtypes.scalar_type_of(x)(x)
 
