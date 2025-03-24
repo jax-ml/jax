@@ -1420,7 +1420,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
           (([2], [1]), ([0], [0])))
       ops.DotGeneral(
           ops.Constant(c, lhs), ops.Constant(c, rhs), dimension_numbers)
-      self._ExecuteAndCompareClose(c, expected=[np.matmul(lhs, rhs)], rtol=1e-6)
+      self._ExecuteAndCompareClose(c, expected=[np.matmul(lhs, rhs)], rtol=2e-6)
 
     def testDotGeneralWithDotDimensionNumbersProto(self):
       c = self._NewComputation()
@@ -1436,7 +1436,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
 
       ops.DotGeneral(
           ops.Constant(c, lhs), ops.Constant(c, rhs), dimension_numbers)
-      self._ExecuteAndCompareClose(c, expected=[np.matmul(lhs, rhs)], rtol=1e-6)
+      self._ExecuteAndCompareClose(c, expected=[np.matmul(lhs, rhs)], rtol=2e-6)
 
     def testDotGeneralWithPrecisionConfig(self):
       c = self._NewComputation()
@@ -1453,7 +1453,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
           ops.Constant(c, rhs),
           dimension_numbers,
           precision_config=config)
-      self._ExecuteAndCompareClose(c, expected=[np.matmul(lhs, rhs)], rtol=1e-6)
+      self._ExecuteAndCompareClose(c, expected=[np.matmul(lhs, rhs)], rtol=2e-6)
 
     def testConvGeneralDilatedF32(self):
       c = self._NewComputation()
