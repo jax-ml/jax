@@ -843,6 +843,20 @@ class PallasCallTest(PallasBaseTest):
 
     self.assertAllClose(dot_kernel(x, y), expected)
 
+  @parameterized.parameters(
+      ((32,), 0), ((32, 64), 0), ((32, 16), 1), ((32, 16, 2), 1)
+  )
+  def test_split(self, shape, axis):
+    x = jax.random.normal(jax.random.key(0), shape)
+    expected = jnp.split(x, 2, axis)
+
+    @functools.partial(self.pallas_call, out_shape=expected)
+    def kernel(x_ref, o0_ref, o1_ref):
+      o0_ref[()], o1_ref[()] = jnp.split(x_ref[()], 2, axis)
+
+    self.assertAllClose(kernel(x), expected)
+
+
 class PallasCallInterpretTest(PallasCallTest):
   INTERPRET = True
 
