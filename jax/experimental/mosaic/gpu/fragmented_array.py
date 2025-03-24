@@ -537,7 +537,7 @@ WGMMA_ROW_LAYOUT = WGMMARowFragLayout()
 
 # The tiled layout is equivalent to one described here in PTX documentation:
 # https://docs.nvidia.com/cuda/parallel-thread-execution/#wgmma-64n16-d
-# In this layout, we partition the 64x8 tiles over 4 warpgroups into 16x8 tiles.
+# In this layout, we partition the 64x8 tiles over 4 warps into 16x8 tiles.
 # Then, we further split the 16x8 tiles into 8x8 submatrices which are the unit
 # of data that is split across a warp. Since 8*8 = 64, but a warp has only 32
 # threads, we vectorize pairs of elements along columns.
