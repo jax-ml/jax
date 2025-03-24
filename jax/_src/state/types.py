@@ -266,6 +266,9 @@ class TransformedRef:
     assert dtype is not None
     return dtype
 
+  ndim = property(lambda self: len(self.shape))
+  size = property(lambda self: math.prod(self.shape))
+
   @property
   def at(self) -> RefIndexer:
     return RefIndexer(self)
