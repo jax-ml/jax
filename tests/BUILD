@@ -596,9 +596,9 @@ jax_multiplatform_test(
     name = "lax_scipy_spectral_dac_test",
     srcs = ["lax_scipy_spectral_dac_test.py"],
     shard_count = {
-        "cpu": 40,
-        "gpu": 40,
-        "tpu": 40,
+        "cpu": 10,
+        "gpu": 10,
+        "tpu": 10,
     },
     deps = [
         "//jax:internal_test_util",
@@ -1432,8 +1432,8 @@ jax_multiplatform_test(
         "gpu_p100x2_shardy",
     ],
     shard_count = {
-        "gpu": 10,
-        "tpu": 10,
+        "gpu": 5,
+        "tpu": 5,
     },
     tags = [
         "multiaccelerator",
