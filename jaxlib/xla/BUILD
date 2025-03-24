@@ -120,6 +120,7 @@ nanobind_extension(
         "@xla//xla/python/pjrt_ifrt",
         "@xla//xla/python/pjrt_ifrt:pjrt_attribute_map_util",
         "@xla//xla/python/pjrt_ifrt:xla_ifrt",
+        "@xla//xla/python/profiler:profile_data_module",
         "@xla//xla/tsl/concurrency:ref_count",
         "@xla//xla/tsl/distributed_runtime/preemption:preemption_sync_manager",
         "@xla//xla/tsl/platform:logging",
