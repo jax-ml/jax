@@ -261,6 +261,7 @@ jax_py_test(
 jax_multiplatform_test(
     name = "memories_test",
     srcs = ["memories_test.py"],
+    args = ["--megascale_port=0"],
     enable_configs = [
         "cpu",
         "gpu_p100x2",
