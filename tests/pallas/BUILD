@@ -328,7 +328,7 @@ jax_multiplatform_test(
         "tpu_gmm_test.py",
     ],
     enable_backends = ["tpu"],
-    shard_count = 50,
+    shard_count = 5,
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
