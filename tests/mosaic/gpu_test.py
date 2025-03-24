@@ -1982,6 +1982,40 @@ class FragmentedArrayTest(TestCase):
     )(inp)
     np.testing.assert_array_equal(inp, result)
 
+  @parameterized.product(
+      in_shape=((128,), (64,)), dtype=[jnp.float16, jnp.float32]
+  )
+  def test_wgmma_col_load_store_with_layout(self, in_shape, dtype):
+    def kernel(ctx, *args):
+      gmem_input, gmem_output, (smem_input, smem_output) = args
+      copy(gmem_input, smem_input)
+      t = mgpu.FragmentedArray.load_wgmma_col(smem_input)
+      t.store_untiled(smem_output)
+      copy(smem_output, gmem_output)
+
+    inp = out = self.prng.uniform(-1, 1, in_shape).astype(dtype)
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (inp,), out, [inp, out],
+    )(inp)
+    np.testing.assert_array_equal(result, inp)
+
+  @parameterized.parameters((128, 128), (128, 64), (64, 128))
+  def test_broadcast_major(self, m, n):
+    def kernel(ctx, *args):
+      gmem_input, gmem_output, () = args
+      t = mgpu.FragmentedArray.load_wgmma_col(gmem_input)
+      t.broadcast_major(m).store_untiled(gmem_output)
+
+    inp = self.prng.uniform(-1, 1, (n,)).astype(jnp.float16)
+    out_shape = jax.ShapeDtypeStruct((m, n), jnp.float16)
+
+    result = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (inp,), out_shape, ()
+    )(inp)
+
+    out_ref = jax.lax.broadcast_in_dim(inp, (m, n), (1,))
+    np.testing.assert_array_equal(result, out_ref)
+
   def test_warp_tree_reduce(self):
     def kernel(ctx, out, *_):
       del ctx
