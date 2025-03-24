@@ -1798,6 +1798,21 @@ def _concatenate_lowering_rule(ctx: LoweringRuleContext, *args, dimension):
   )
 
 
+@register_lowering(lax.split_p)
+def _split_lowering_rule(ctx: LoweringRuleContext, x, *, sizes, axis):
+  pass
+  # TODO(cjfj): Add support for larger powers of 2.
+  if len(sizes) != 2:
+    raise NotImplementedError("Only splitting into two parts is supported.")
+  if sizes[0] != sizes[1]:
+    raise NotImplementedError("Only equal-sized splits are supported.")
+  (x_aval,) = ctx.avals_in
+  shape = x_aval.shape
+  x = _reshape(x, shape[:axis] + (2, sizes[0]) + shape[axis + 1 :])
+  permutation = tuple(d for d in range(len(shape) + 1) if d != axis) + (axis,)
+  return tt_dialect.split(tt_dialect.trans(x, permutation))
+
+
 def _compute_offsets_from_indices(
     block_info: BlockInfo, nd_indexer: NDIndexer
 ) -> ir.Value:
