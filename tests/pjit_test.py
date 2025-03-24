@@ -3438,6 +3438,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         pjit(f)(inp)
     self.assertEqual(count(), 1)
 
+  @jtu.thread_unsafe_test()  # count_pjit_cpp_cache_miss is not thread-safe
   def test_pjit_no_global_cache_hit_axis_resources(self):
     mesh = jtu.create_mesh((1,), ('x',))
     s = NamedSharding(mesh, P('x'))

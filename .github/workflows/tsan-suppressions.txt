@@ -24,6 +24,9 @@ race_top:PyMember_GetOne
 # https://github.com/python/cpython/issues/129748
 race:mi_block_set_nextx
 
+# https://github.com/python/cpython/issues/128130
+race_top:run_eval_code_obj
+
 # Races because the LAPACK and BLAS in our scipy isn't TSAN instrumented.
 race:heevd_ffi
 race:gesdd_ffi
@@ -58,9 +61,6 @@ race:gemm_oncopy
 
 # https://github.com/python/cpython/issues/130547
 # race:split_keys_entry_added
-
-# https://github.com/python/cpython/issues/128130
-# race_top:run_eval_code_obj
 
 # https://github.com/python/cpython/issues/129547
 # Maybe fixed?
