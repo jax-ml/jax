@@ -634,6 +634,72 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
     np.testing.assert_array_equal(f(x), np.stack([x, x], axis=0))
 
+  @parameterized.product(
+      src_memory_space=[plgpu.SMEM, plgpu.GMEM],
+      layout=[
+          plgpu.Layout.WGMMA_ROW,
+          plgpu.Layout.WG_STRIDED((128,), vec_size=1),
+          None,
+      ],
+  )
+  def test_load_to_layout_with_indexing(self, src_memory_space, layout):
+    def kernel(x_ref, o_ref):
+      for i in range(2):
+        x = plgpu.load(x_ref, (i,), layout=layout)
+        o_ref[i, ...] = x
+
+    in_spec = pl.BlockSpec(memory_space=src_memory_space)
+    out_spec = plgpu.GPUBlockSpec(
+        (2, 128), lambda: (0, 0), memory_space=plgpu.SMEM,
+    )
+    f = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct([2, 128], jnp.float32),
+        in_specs=(in_spec,),
+        out_specs=out_spec,
+    )
+    x = jnp.arange(2 * 128, dtype=jnp.float32).reshape(2, 128)
+    np.testing.assert_array_equal(f(x), x)
+
+  @parameterized.product(src_memory_space=[plgpu.SMEM, plgpu.GMEM])
+  def test_load_row_input_to_wgmma_with_transforms(self, src_memory_space):
+    m, k, n = 64, 128, 192
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.uniform(key1, shape=(m,), dtype=jnp.float16)
+    b = jax.random.uniform(key2, shape=(k, n), dtype=jnp.float16)
+    def kernel(x_ref, y_ref, o_ref):
+      x = plgpu.load(x_ref, (), layout=plgpu.Layout.WGMMA_ROW)
+      x = lax.broadcast_in_dim(x, (m, k), [0])
+
+      def compute(acc_ref):
+        plgpu.wgmma(acc_ref, x, y_ref)
+        return acc_ref[...]
+
+      out = pl.run_scoped(compute, plgpu.ACC((m, n), jnp.float32))
+      o_ref[...] = out
+
+    out_spec = plgpu.GPUBlockSpec(
+        (m, n), lambda: (0, 0), memory_space=plgpu.SMEM,
+    )
+    f = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct([m, n], jnp.float32),
+        in_specs=(
+            pl.BlockSpec(memory_space=src_memory_space),
+            plgpu.GPUBlockSpec(
+                (k, n),
+                lambda: (0, 0),
+                transforms=(
+                    plgpu.TilingTransform((64, 64)),
+                    plgpu.SwizzleTransform(128),
+                )
+            )),
+        out_specs=out_spec,
+    )
+
+    out_ref = jnp.broadcast_to(a[:, None], (m, k)) @ b
+    np.testing.assert_allclose(f(a, b), out_ref, rtol=1e-3)
+
   def test_indexing_before_transpose(self):
     def kernel(x_ref, o_ref, barrier_ref):
       for i in range(2):

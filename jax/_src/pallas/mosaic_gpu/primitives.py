@@ -21,7 +21,7 @@ import dataclasses
 import enum
 import itertools
 import math
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 import jax
 from jax._src import core as jax_core
@@ -31,6 +31,7 @@ from jax._src import util
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import llvm as llvm_dialect
+from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
@@ -61,6 +62,99 @@ def _check_ref(
         f"{name} must be a {memory_space.name.upper()} reference, got {aval}"
     )
 
+
+load_p = jax_core.Primitive("load")
+
+@load_p.def_effectful_abstract_eval
+def _load_abstract_eval(src, *avals_flat, args_tree, layout):
+  del layout  # Unused.
+
+  transforms = args_tree.unflatten(avals_flat)
+  return (
+      jax_core.ShapedArray(transforms[-1].get_indexer_shape(), src.dtype),
+      {state.ReadEffect(0)},
+  )
+
+@lowering.register_lowering_rule(load_p, mgpu.ThreadSemantics.Lane)
+def _load_p_lowering_rule(
+    ctx: lowering.LoweringRuleContext, x_ref, *leaves, args_tree, layout
+):
+  if not isinstance(x_ref, ir.Value) or not ir.MemRefType.isinstance(x_ref.type):
+    raise TypeError(f"Can only load from references (got {x_ref}).")
+
+  x_aval = ctx.avals_in[0]
+
+  transforms = jax.tree.unflatten(args_tree, leaves)
+  x_ref, transforms = lowering._handle_reshaping(x_ref, transforms)
+  x_ref, transforms = lowering._handle_indexing(x_ref, transforms)
+
+  if layout is not None:
+    layout = layout.to_mgpu()
+
+  match transforms:
+    case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
+      if tiling != (64, swizzle // x_aval.dtype.itemsize):
+        raise NotImplementedError("Tiling does not fit swizzle")
+      return mgpu.FragmentedArray.load_tiled(
+          x_ref, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=swizzle,
+          layout=layout
+      )
+    case ():
+      # Handle scalar indexing.
+      if not ctx.avals_out[0].shape:
+        is_signed = mgpu_utils.is_signed(x_aval.dtype)
+        val = memref_dialect.load(x_ref, [])
+        return mgpu.FragmentedArray.splat(val, shape=(), layout=layout, is_signed=is_signed)
+      match layout:
+        case mgpu.WGMMARowFragLayout():
+          return mgpu.FragmentedArray.load_wgmma_row(
+              x_ref, is_signed=mgpu_utils.is_signed(x_aval.dtype)
+          )
+        case mgpu.WGStridedFragLayout(shape=shape, vec_size=vec_size):
+          ref_ty = ir.MemRefType(x_ref.type)
+          if shape != tuple(ref_ty.shape):
+            raise ValueError(
+                f"Unsupported shape {shape}, (expected {tuple(ref_ty.shape)})"
+            )
+
+          return mgpu.FragmentedArray.load_strided(
+              x_ref, is_signed=mgpu_utils.is_signed(x_aval.dtype), vec_size=vec_size,
+          )
+        case None:
+          return mgpu.FragmentedArray.load_strided(
+              x_ref, is_signed=mgpu_utils.is_signed(x_aval.dtype)
+          )
+        case _:
+          raise NotImplementedError(f"Unsupported layout: {layout}")
+    case _:
+      raise NotImplementedError(f"Unsupported transforms: {transforms}")
+
+
+def load(
+    src: _Ref, idx, *, layout: Optional[Layout | ParameterizedLayout] = None
+) -> mgpu.FragmentedArray:
+  """ Loads a ref (SMEM or GMEM) into a FragmentedArray with the specified layout.
+
+  Args:
+    src: The reference to copy from.
+    idx: The index to load from.
+    layout: The optional layout to use for the returned FragmentedArray.
+
+  Returns:
+    A FragmentedArray containing the loaded data in the specified layout.
+  """
+  src, src_transforms = state_primitives.get_ref_and_transforms(
+      src, idx, "load", force_trailing_indexer=True,
+  )
+  flat_src_transforms, src_transforms_treedef = tree_util.tree_flatten(
+      src_transforms
+  )
+  return load_p.bind(
+      src,
+      *flat_src_transforms,
+      args_tree=src_transforms_treedef,
+      layout=layout
+  )
 
 copy_smem_to_gmem_p = jax_core.Primitive("copy_smem_to_gmem")
 copy_smem_to_gmem_p.multiple_results = True
