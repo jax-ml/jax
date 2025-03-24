@@ -3351,7 +3351,7 @@ class LaxTest(jtu.JaxTestCase):
                                        (np.int32(1), np.int16(2))))
 
   def test_primitive_jaxtype_error(self):
-    err_str = ("Argument .* is not a valid JAX type.")
+    err_str = "Argument .* is not a valid JAX type."
     with jax.enable_checks(False):
       with self.assertRaisesRegex(TypeError, err_str):
         lax.add(1, 'hi')
@@ -3797,7 +3797,7 @@ class LazyConstantTest(jtu.JaxTestCase):
       # Booleans should have weak types stripped.
       self.assertFalse(py_op.aval.weak_type)
     else:
-      self.assertTrue(py_op.aval.weak_type)
+      self.assertTrue(py_op.aval.weak_type, msg=f"{py_val=}, {py_op=}, {py_op.aval}")
 
   def testCumsumLengthOne(self):
     # regression test for issue 4672
