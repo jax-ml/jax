@@ -66,6 +66,8 @@ import numpy as np
 import numpy.random as npr
 
 
+logger = logging.getLogger(__name__)
+
 # This submodule includes private test utilities that are not exported to
 # jax.test_util. Functionality appearing here is for internal use only, and
 # may be changed or removed at any time and without any deprecation cycle.
@@ -1111,11 +1113,13 @@ class ThreadSafeTestResult:
     self.actions: list[Callable] = []
 
   def startTest(self, test: unittest.TestCase):
+    logger.error("Starting test: %s", test)
     del test
     self.start_time = time.time()
 
   def stopTest(self, test: unittest.TestCase):
     stop_time = time.time()
+    logger.error("Finishing test: %s", test)
     with self.lock:
       # If test_result is an ABSL _TextAndXMLTestResult we override how it gets
       # the time. This affects the timing that shows up in the XML output
@@ -2443,5 +2447,5 @@ def setup_hypothesis(max_examples=30) -> None:
       ),
   )
   profile = HYPOTHESIS_PROFILE.value
-  logging.info("Using hypothesis profile: %s", profile)
+  logger.info("Using hypothesis profile: %s", profile)
   hp.settings.load_profile(profile)
