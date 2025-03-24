@@ -194,16 +194,9 @@ _mesh_object_dict = {}  # type: ignore
 class Mesh(_BaseMesh, contextlib.ContextDecorator):
   """Declare the hardware resources available in the scope of this manager.
 
-  In particular, all ``axis_names`` become valid resource names inside the
-  managed block and can be used e.g. in the ``in_axis_resources`` argument of
-  :py:func:`jax.experimental.pjit.pjit`. Also see JAX's multi-process programming
-  model (https://jax.readthedocs.io/en/latest/multi_process.html)
-  and the Distributed arrays and automatic parallelization tutorial
+  See the Distributed arrays and automatic parallelization tutorial
   (https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html)
-
-  If you are compiling in multiple threads, make sure that the
-  ``with Mesh`` context manager is inside the function that the threads will
-  execute.
+  and Explicit sharding tutorial (https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html)
 
   Args:
     devices: A NumPy ndarray object containing JAX device objects (as
@@ -214,32 +207,17 @@ class Mesh(_BaseMesh, contextlib.ContextDecorator):
 
   Examples:
 
-    >>> from jax.experimental.pjit import pjit
     >>> from jax.sharding import Mesh
-    >>> from jax.sharding import PartitionSpec as P
+    >>> from jax.sharding import PartitionSpec as P, NamedSharding
     >>> import numpy as np
     ...
-    >>> inp = np.arange(16).reshape((8, 2))
-    >>> devices = np.array(jax.devices()).reshape(4, 2)
-    ...
     >>> # Declare a 2D mesh with axes `x` and `y`.
-    >>> global_mesh = Mesh(devices, ('x', 'y'))
-    >>> # Use the mesh object directly as a context manager.
-    >>> with global_mesh:
-    ...   out = pjit(lambda x: x, in_shardings=None, out_shardings=None)(inp)
-
-    >>> # Initialize the Mesh and use the mesh as the context manager.
-    >>> with Mesh(devices, ('x', 'y')) as global_mesh:
-    ...   out = pjit(lambda x: x, in_shardings=None, out_shardings=None)(inp)
-
-    >>> # Also you can use it as `with ... as ...`.
-    >>> global_mesh = Mesh(devices, ('x', 'y'))
-    >>> with global_mesh as m:
-    ...   out = pjit(lambda x: x, in_shardings=None, out_shardings=None)(inp)
-
-    >>> # You can also use it as `with Mesh(...)`.
-    >>> with Mesh(devices, ('x', 'y')):
-    ...   out = pjit(lambda x: x, in_shardings=None, out_shardings=None)(inp)
+    >>> devices = np.array(jax.devices()).reshape(4, 2)
+    >>> mesh = Mesh(devices, ('x', 'y'))
+    >>> inp = np.arange(16).reshape(8, 2)
+    >>> arr = jax.device_put(inp, NamedSharding(mesh, P('x', 'y')))
+    >>> out = jax.jit(lambda x: x * 2)(arr)
+    >>> assert out.sharding == NamedSharding(mesh, P('x', 'y'))
   """
 
   devices: np.ndarray
