@@ -125,6 +125,7 @@ COMMON_DEPS = py_deps([
     "opt_einsum",
     "hypothesis",
     "cloudpickle",
+    "flatbuffers",
 ])
 
 py_import(
