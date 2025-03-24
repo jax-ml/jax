@@ -60,7 +60,6 @@ jobs:
           path: ./dist/*.whl
       - name: Run tests
         env:
-          ROCM_TEST_INCLUDE_SKIPS: "1"
           GPU_COUNT: "8"
           GFX: "gfx90a"
         run: |
