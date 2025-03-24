@@ -135,18 +135,31 @@ class LaxRandomTest(jtu.JaxTestCase):
         lambda: lax.bitcast_convert_type(np.array(1., dtype), bits_dtype))()
     self.assertEqual(numpy_bits, xla_bits)
 
-  @jtu.sample_product(dtype=float_dtypes)
-  def testRngUniform(self, dtype):
+  @jtu.sample_product(dtype=float_dtypes, resolution=['low', 'high'])
+  def testRngUniform(self, dtype, resolution):
     key = lambda: self.make_key(0)
-    rand = lambda key: random.uniform(key, (10000,), dtype)
+    rand = lambda key: random.uniform(key, (10000,), dtype, resolution=resolution)
     crand = jax.jit(rand)
 
     uncompiled_samples = rand(key())
     compiled_samples = crand(key())
 
     for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckCollisions(samples, jnp.finfo(dtype).nmant)
+      if resolution != 'high':
+        self._CheckCollisions(samples, jnp.finfo(dtype).nmant)
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.uniform().cdf)
+
+  @jtu.sample_product(dtype=float_dtypes)
+  def testRngUniformHighResolution(self, dtype):
+    key = self.make_key(0)
+
+    delta = 2 ** -dtypes.finfo(dtype).nmant
+    samples_low = random.uniform(key, (10000,), dtype)
+    samples_high = random.uniform(key, (10000,), dtype, resolution='high')
+
+    self.assertTrue(jnp.all(samples_high >= samples_low))
+    self.assertTrue(jnp.all(samples_high < samples_low + delta))
+
 
   @jtu.sample_product(dtype=int_dtypes + uint_dtypes)
   def testRngRandint(self, dtype):

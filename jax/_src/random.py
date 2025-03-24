@@ -379,7 +379,9 @@ def uniform(key: ArrayLike,
             shape: Shape = (),
             dtype: DTypeLikeFloat = float,
             minval: RealArray = 0.,
-            maxval: RealArray = 1.) -> Array:
+            maxval: RealArray = 1.,
+            *,
+            resolution: str = 'low') -> Array:
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
   Args:
@@ -390,6 +392,9 @@ def uniform(key: ArrayLike,
       jax_enable_x64 is true, otherwise float32).
     minval: optional, a minimum (inclusive) value broadcast-compatible with shape for the range (default 0).
     maxval: optional, a maximum (exclusive) value broadcast-compatible with shape for the range (default 1).
+    resolution: a string 'low' (default) or 'high'. Low resolution randomizes the
+      mantissa bits (i.e. 23 bits for float32). High resolution adds up to 9 bits
+      of additional randomness for float32.
 
   Returns:
     A random array with the specified shape and dtype.
@@ -401,11 +406,14 @@ def uniform(key: ArrayLike,
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `uniform` must be a float dtype, "
                      f"got {dtype}")
+  if resolution not in ['low', 'high']:
+    raise ValueError(f"{resolution=!r} not recognized; expected 'low' or 'high'.")
   dtype = dtypes.canonicalize_dtype(dtype)
-  return _uniform(key, shape, dtype, minval, maxval)
+  return _uniform(key, shape, dtype, minval, maxval, resolution=resolution)
 
-@partial(jit, static_argnums=(1, 2))
-def _uniform(key, shape, dtype, minval, maxval) -> Array:
+
+@partial(jit, static_argnames=['shape', 'dtype', 'resolution'])
+def _uniform(key, shape, dtype, minval, maxval, *, resolution='low') -> Array:
   _check_shape("uniform", shape)
   if not jnp.issubdtype(dtype, np.floating):
     raise TypeError("uniform only accepts floating point dtypes.")
@@ -440,6 +448,20 @@ def _uniform(key, shape, dtype, minval, maxval) -> Array:
       np.array(1.0, dtype).view(uint_dtype),
   )
   floats = lax.bitcast_convert_type(float_bits, dtype) - np.array(1., dtype)
+
+  if resolution == 'high':
+    extra_float_bits = lax.bitwise_or(
+        lax.bitwise_and(bits, _lax_const(bits, (1 << (rng_bits - nmant))) - 1),
+        np.array(1, dtype).view(uint_dtype))
+    extra_floats = lax.bitcast_convert_type(extra_float_bits, dtype) - np.array(1., dtype)
+    # Normalize to [0, 1)
+    extra_floats = lax.mul(extra_floats, _lax_const(extra_floats, 2 ** (nmant - rng_bits)))
+    spacing = np.array(2 ** -nmant, dtype)
+    upper_bound = floats + spacing
+    delta = upper_bound - lax.nextafter(upper_bound, floats)
+    correction = extra_floats // delta
+    floats += correction * delta
+
   return lax.max(
       minval,
       lax.reshape(floats * (maxval - minval) + minval, shape))
