@@ -128,8 +128,8 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
   def matmul_kernel(x_ref, y_ref, o_ref):
     acc = jnp.zeros(o_ref.shape, dtype=jnp.float32)
     def body(i, acc_ref):
-      x_block = pl.load(x_ref, (slice(None), pl.ds(i * bk, bk)))
-      y_block = pl.load(y_ref, (pl.ds(i * bk, bk), slice(None)))
+      x_block = x_ref[:, pl.ds(i * bk, bk)]
+      y_block = y_ref[pl.ds(i * bk, bk), :]
       acc_ref[:, :] += pl.dot(x_block, y_block)
     acc = for_loop(k // bk, body, acc).astype(o_ref.dtype)
     o_ref[:, :] = acc
@@ -624,8 +624,9 @@ class PallasCallTest(PallasBaseTest):
         out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
     )
     def dummy(_, o_ref):
-      pl.store(o_ref, (jnp.arange(m)[:, None], jnp.arange(n)[None, :]),
-               jnp.ones_like(o_ref))
+      o_ref[jnp.arange(m)[:, None], jnp.arange(n)[None, :]] = jnp.ones_like(
+          o_ref
+      )
 
     key = random.key(0)
     x = random.normal(key, (m, n))
@@ -667,8 +668,7 @@ class PallasCallTest(PallasBaseTest):
         out_shape=out_shape,
     )
     def slice_kernel(x_ref, y_ref):
-      x = pl.load(x_ref, (pl.dslice(0, 4), pl.dslice(0, 4)))
-      pl.store(y_ref, (pl.dslice(4), pl.dslice(4)), x)
+      y_ref[:4, :4] = x_ref[:4, :4]
     x = random.normal(random.key(0), (m, n))
     y = slice_kernel(x)
     y_ref = x[:4]
@@ -1733,7 +1733,7 @@ class PallasControlFlowTest(PallasBaseTest):
     def kernel(x_ref, r_ref):
       @pl.when(pl.program_id(0) == 0)
       def _():
-        pl.store(r_ref, (0, 0), 0)
+        r_ref[0, 0] = 0
 
       def cond(carry):
         i, j = carry
@@ -1745,8 +1745,7 @@ class PallasControlFlowTest(PallasBaseTest):
         sl = jax.lax.div(i, 128)
         l = jax.lax.rem(i, 128)
         v = x_ref[0, sl, l]
-        s = pl.load(r_ref, (0, 0))
-        pl.store(r_ref, (0, 0), s + v)
+        r_ref[0, 0] += v
         return io + 1, j
 
       i = 128
@@ -1798,7 +1797,7 @@ class PallasControlFlowTest(PallasBaseTest):
     def kernel(x_ref, r_ref):
       @pl.when(pl.program_id(0) == 0)
       def _():
-        pl.store(r_ref, (0, 0), 0)
+        r_ref[0, 0] = 0
 
       def cond(state):
         i, s = state
@@ -1808,14 +1807,11 @@ class PallasControlFlowTest(PallasBaseTest):
         i, s = state
         sl = jax.lax.div(i, jnp.astype(128, i.dtype))
         l = jax.lax.rem(i, jnp.astype(128, i.dtype))
-        v = pl.load(x_ref, (0, sl, l))
+        v = x_ref[0, sl, l]
         return i + 1, s + v
 
       i = jnp.int32(0)
-      s = pl.load(r_ref, (0, 0))
-
-      i, s = jax.lax.while_loop(cond, body, (i, s))
-      pl.store(r_ref, (0, 0), s)
+      _, r_ref[0, 0] = jax.lax.while_loop(cond, body, (i, r_ref[0, 0]))
 
     x = jnp.arange(4096)
     x = jnp.reshape(x, [4, 8, 128])

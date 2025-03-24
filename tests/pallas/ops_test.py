@@ -1937,7 +1937,7 @@ class OpsTest(PallasBaseTest):
     def masked_oob_load_store_slice(x_ref, mask_ref, start_idx_ref, o_ref):
       x = pl.load(x_ref, (pl.dslice(start_idx_ref[()], n)),
                   mask=mask_ref[:], other=-1.)
-      pl.store(o_ref, (pl.dslice(None),), x)
+      o_ref[...] = x
 
     x = random.normal(random.key(0), (n,))
     slice_start = random.randint(random.key(2), (), 1, n)
