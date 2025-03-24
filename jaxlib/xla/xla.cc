@@ -46,6 +46,7 @@ limitations under the License.
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/xla/sdy.h"
 #include "xla/backends/cpu/collectives/cpu_collectives.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/distributed/client.h"
@@ -64,7 +65,6 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
 #include "xla/python/py_client.h"
 #include "xla/python/py_program.h"
-#include "xla/python/sdy.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/python/lib/core/numpy.h"  // NOLINT
 
@@ -84,6 +84,15 @@ limitations under the License.
 #include "xla/backends/cpu/collectives/mpi_collectives.h"
 #endif  // !_WIN32 && !PLATFORM_GOOGLE
 
+#include "jaxlib/xla/config.h"
+#include "jaxlib/xla/custom_call_sharding.h"
+#include "jaxlib/xla/dlpack.h"
+#include "jaxlib/xla/jax_jit.h"
+#include "jaxlib/xla/mlir.h"
+#include "jaxlib/xla/pjit.h"
+#include "jaxlib/xla/pmap_lib.h"
+#include "jaxlib/xla/weakref_lru_cache.h"
+#include "jaxlib/xla/xla_compiler.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/pjrt_api.h"
@@ -92,22 +101,15 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
-#include "xla/python/config.h"
-#include "xla/python/custom_call_sharding.h"
-#include "xla/python/dlpack.h"
 #include "xla/python/guard_lib.h"
-#include "xla/python/jax_jit.h"
 #include "xla/python/logging.h"  // IWYU pragma: keep
-#include "xla/python/mlir.h"
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/python/nb_class_ptr.h"
 #include "xla/python/ops.h"
-#include "xla/python/pjit.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
-#include "xla/python/pmap_lib.h"
 #include "xla/python/pprof_profile_builder.h"
 #include "xla/python/profiler.h"
 #include "xla/python/py_array.h"
@@ -120,8 +122,6 @@ limitations under the License.
 #include "xla/python/pytree.h"
 #include "xla/python/sharding.h"
 #include "xla/python/traceback.h"
-#include "xla/python/weakref_lru_cache.h"
-#include "xla/python/xla_compiler.h"
 #include "xla/tsl/distributed_runtime/preemption/preemption_sync_manager.h"
 #include "xla/tsl/platform/status.h"
 #include "tsl/platform/platform.h"
