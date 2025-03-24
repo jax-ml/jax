@@ -197,7 +197,7 @@ def mma(
         ),
         a_mk,
         b_nk,
-        d_type=ir.F32Type.get(),
+        d_type=d.dtype,
         m=m_group_elems,
         n=n_group_elems,
         collective=collective,
@@ -327,7 +327,7 @@ def tmem_relinquish_alloc_permit():
       has_side_effects=True,
   )
 
-def tmem_load(tmem_addr, shape, num):
+def tmem_load(tmem_addr, shape, num, packing: int = 1):
   if num.bit_count() != 1 or num > 128:
     raise ValueError(f"num must be a power of 2 and <= 128, got: {num}")
   match shape:
@@ -345,12 +345,18 @@ def tmem_load(tmem_addr, shape, num):
   num_out_regs *= num
   i32 = ir.IntegerType.get_signless(32)
   out_regs = ",".join("$" + str(i) for i in range(num_out_regs))
+  if packing == 1:
+    pack_mod = ""
+  elif packing == 2:
+    pack_mod = ".pack::16b"
+  else:
+    raise ValueError(f"Unsupported packing: {packing}")
   regs = llvm.inline_asm(
       ir.Type.parse(
           "!llvm.struct<(" + ",".join("i32" for _ in range(num_out_regs)) + ")>"
       ),
       [tmem_addr],
-      f"tcgen05.ld.sync.aligned.{shape}.x{num}.b32    {{{out_regs}}}, [${num_out_regs}];",
+      f"tcgen05.ld.sync.aligned.{shape}.x{num}{pack_mod}.b32 {{{out_regs}}}, [${num_out_regs}];",
       "=r," * num_out_regs + "r",
       has_side_effects=True,
   )
@@ -521,9 +527,9 @@ class TMEMRef:
       raise NotImplementedError("Slicing of TMEM not impelmented yet")
     if self.shape[1] % 8:
       raise NotImplementedError
-    if self.dtype != ir.F32Type.get():
-      raise NotImplementedError(self.dtype)
-    layout = _m128_256bit_32bit_layout(self.shape)
+    if utils.bitwidth(self.dtype) not in {16, 32}:
+      raise NotImplementedError(f"Unsupported dtype: {self.dtype}")
+    layout = _m128_layout(self.shape)
     regs_shape = layout.registers_shape(self.shape)
     if self.layout == TMEMLayout(elements_in_tile=(TMEM_ROWS, 8)):
       # load_32xcols returns a 4xN array, but the FA tiling we use here tiles
@@ -556,20 +562,28 @@ class TMEMRef:
       )
     return fa.FragmentedArray(_registers=registers, _layout=layout, _is_signed=None)
 
+
 def _load_32xcols(base_addr, cols, dtype):
   # See https://docs.nvidia.com/cuda/parallel-thread-execution/#tcgen05-matrix-fragments-shape-16256b
   i32 = ir.IntegerType.get_signless(32)
-  assert cols % 8 == 0
-  cols_per_num_tile = 8
-  load_shape = "16x256b"
-  num = cols // 8
+  packing = 32 // utils.bitwidth(dtype)
+  if packing == 1:
+    load_shape = "16x256b"  # 8 columns * 32 bits = 256 bits
+    cols_per_num_tile = 8 * packing
+  elif packing == 2:
+    load_shape = "16x128b"  # 8 columns * 16 bits = 128 bits
+    cols_per_num_tile = 4 * packing
+  else:
+    raise NotImplementedError(packing)
+  assert cols % cols_per_num_tile == 0
+  num = cols // cols_per_num_tile
   if num <= 32:
     num_tiling = num
   elif num == 64:
     num_tiling = 32
   else:
     raise NotImplementedError(num)
-  vector_regs = np.ndarray((4, num), dtype=object)
+  vector_regs = np.ndarray((4, cols // 8), dtype=object)
   # We load 16 lanes at a time, but need 32 in total.
   for row_group in range(2):
     addr_row = arith.addi(base_addr, arith.constant(i32, (row_group * 16) << 16))
@@ -579,17 +593,24 @@ def _load_32xcols(base_addr, cols, dtype):
           addr_row,
           arith.constant(i32, num_tiling * num_group * cols_per_num_tile),
       )
-      regs += tmem_load(addr_row_col, load_shape, num_tiling)
-    regs = [llvm.bitcast(dtype, r) for r in regs]
-    undef = llvm.mlir_undef(ir.VectorType.get((2,), dtype))
-    for r_low, r_high, idx in zip(regs[::2], regs[1::2], np.ndindex(num, 2)):
-      high_undef = llvm.insertelement(undef, r_low, utils.c(0, i32))
-      vreg = llvm.insertelement(high_undef, r_high, utils.c(1, i32))
-      vector_regs[idx[1] + 2 * row_group, idx[0]] = vreg
+      regs += tmem_load(addr_row_col, load_shape, num_tiling, packing)
+    if packing == 1:
+      regs = [llvm.bitcast(dtype, r) for r in regs]
+      undef = llvm.mlir_undef(ir.VectorType.get((2,), dtype))
+      for r_low, r_high, idx in zip(regs[::2], regs[1::2], np.ndindex(cols // 8, 2), strict=True):
+        high_undef = llvm.insertelement(undef, r_low, utils.c(0, i32))
+        vreg = llvm.insertelement(high_undef, r_high, utils.c(1, i32))
+        vector_regs[idx[1] + 2 * row_group, idx[0]] = vreg
+    else:
+      assert packing == 2
+      regs = [llvm.bitcast(ir.VectorType.get((2,), dtype), r) for r in regs]
+      for vreg, idx in zip(regs, np.ndindex(cols // 8, 2), strict=True):
+        vector_regs[idx[1] + 2 * row_group, idx[0]] = vreg
   return vector_regs
 
 
-def _m128_256bit_32bit_layout(shape: tuple[int, ...]):
+# Like WGMMA_LAYOUT, only each warp holds a 32xN strip instead of 16xN.
+def _m128_layout(shape: tuple[int, ...]):
   if len(shape) != 2:
     raise ValueError(f"Shape {shape} is not 2D")
   if shape[0] % 128 != 0 or shape[1] % 8 != 0:
