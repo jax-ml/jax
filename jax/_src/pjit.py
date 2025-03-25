@@ -240,10 +240,10 @@ def _set_states(attrs_tracked, vals):
     jax_setattr(obj, attr, val)
 
 def _get_states(attrs_tracked):
-  from jax.experimental.attrs import jax_getattr
+  from jax.experimental.attrs import jax_getattr, dne_sentinel
   vals = []
   for treedef, _, (obj, attr) in attrs_tracked:
-    tree = jax_getattr(obj, attr)
+    tree = jax_getattr(obj, attr) if hasattr(obj, attr) else dne_sentinel
     leaves, treedef_ = tree_flatten(tree)
     assert treedef == treedef_
     vals.extend(leaves)
@@ -1354,11 +1354,11 @@ def _attr_token(
     fun: lu.WrappedFun,
     in_type: core.InputType | tuple[core.AbstractValue, ...]
 ) -> int:
-  from jax.experimental.attrs import jax_getattr
+  from jax.experimental.attrs import jax_getattr, dne_sentinel
   cases = seen_attrs_get(fun, in_type)
   for i, records in enumerate(cases):
     for obj, attr, treedef, avals in records:
-      val = jax_getattr(obj, attr)
+      val = jax_getattr(obj, attr) if hasattr(obj, attr) else dne_sentinel
       vals, treedef_ = tree_flatten(val)
       avals_ = map(core.shaped_abstractify, vals)
       if treedef != treedef_ or avals != avals_: break
@@ -1367,8 +1367,8 @@ def _attr_token(
   return len(cases)
 
 def _attr_update(fun, in_type, i, attrs_tracked):
-  from jax.experimental.attrs import jax_getattr
-  leaves = lambda obj, attr: tree_leaves(jax_getattr(obj, attr))
+  from jax.experimental.attrs import jax_getattr, dne_sentinel
+  leaves = lambda obj, attr: tree_leaves(jax_getattr(obj, attr) if hasattr(obj, attr) else dne_sentinel)
   records = [(obj, attr, init_tree, map(core.shaped_abstractify, leaves(obj, attr)))
              for init_tree, _, (obj, attr) in attrs_tracked]
   cases = seen_attrs_get(fun, in_type)

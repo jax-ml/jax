@@ -36,6 +36,7 @@ JaxVal = Any
 Pytree = Any
 
 register = api_util.register_class_with_attrs
+dne_sentinel = pe.dne_sentinel
 
 def jax_getattr(obj: Any, attr: str):
   with core.take_current_trace() as t:
@@ -65,7 +66,7 @@ def _ensure_tracked(trace: pe.DynamicJaxprTrace, obj: Any, attr: str):
     return tracer
 
   if (obj, attr) not in frame.attrs_tracked:
-    init_val = getattr(obj, attr)
+    init_val = getattr(obj, attr, dne_sentinel)
     frame.attrs_inits.append(init_val)
     init_vals, init_tree = tree_flatten(init_val)
     tracers = map(new_tracer, init_vals)
