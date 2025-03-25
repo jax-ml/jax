@@ -360,6 +360,49 @@ class AttrsTest(jtu.JaxTestCase):
       return i + 1, None
     _, _ = jax.lax.scan(body, 0, None, length=3)  # don't crash
 
+  @parameterized.parameters([True, False])
+  def test_setattr_doesnt_exist(self, jit):
+    class Thing:
+      ...
+    thing = Thing()
+
+    def f(x):
+      assert (not jit) or tracing_is_ok
+      jax_setattr(thing, 'x', x)
+
+    if jit:
+      f = jax.jit(f)
+
+    tracing_is_ok = True
+    self.assertFalse(hasattr(thing, 'x'))
+    f(1.0)
+    self.assertEqual(thing.x, 1.0)
+    f(2.0)
+    self.assertEqual(thing.x, 2.0)
+
+    tracing_is_ok = False
+    f(3.0)
+    self.assertEqual(thing.x, 3.0)
+
+    del thing.x
+    f(4.0)
+    self.assertEqual(thing.x, 4.0)
+
+    tracing_is_ok = True
+    f(5)
+    self.assertEqual(thing.x, 5)
+
+  def test_setattr_doesnt_exist_doesnt_leave_sentinel_around(self):
+    class Thing:
+      ...
+    thing = Thing()
+
+    def f(x):
+      jax_setattr(thing, 'x', x)
+
+    jax.make_jaxpr(f)(3.)
+    self.assertFalse(hasattr(thing, 'x'))
+
 
 class AttrsJVPTest(jtu.JaxTestCase):
 
