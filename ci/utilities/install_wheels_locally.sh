@@ -26,6 +26,11 @@ for i in "${!WHEELS[@]}"; do
       # Append [tpu] to the jax wheel name to download the latest libtpu wheel
       # from PyPI.
       WHEELS[$i]="${WHEELS[$i]}[tpu]"
+    elif [[ "$JAXCI_ADDITIONAL_WHEELS_INSTALL_FROM_PYPI" == "jax_cuda_pypi" ]]; then
+      # Append [cuda12-local] to the jax wheel name to download the latest
+      # release of JAX's CUDA plugin and PJRT packages from PyPI. This is used
+      # when running CUDA tests for a "jax" only release.
+      WHEELS[$i]="${WHEELS[$i]}[cuda12-local]"
     fi
   fi
 done
