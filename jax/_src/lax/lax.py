@@ -8053,15 +8053,20 @@ def _rng_uniform_lowering(ctx, a, b, *, shape):
 mlir.register_lowering(rng_uniform_p, _rng_uniform_lowering)
 
 
-def _rng_bit_generator_shape_rule(key, *, shape, dtype, algorithm):
+def _rng_bit_generator_shape_rule(key, *, shape, dtype, algorithm, out_sharding):
   del dtype, algorithm
   return (key.shape, tuple(shape))
 
-def _rng_bit_generator_dtype_rule(key, *, shape, dtype, algorithm):
+def _rng_bit_generator_sharding_rule(key, *, shape, dtype, algorithm,
+                                     out_sharding):
+  return (key.sharding, out_sharding)
+
+def _rng_bit_generator_dtype_rule(key, *, shape, dtype, algorithm, out_sharding):
   del shape, algorithm
   return (key.dtype, dtype)
 
-def _rng_bit_generator_weak_type_rule(key, *, shape, dtype, algorithm):
+def _rng_bit_generator_weak_type_rule(key, *, shape, dtype, algorithm,
+                                      out_sharding):
   del shape, dtype, algorithm
   return (key.weak_type, False)
 
@@ -8092,7 +8097,7 @@ def _rng_algorithm(algorithm: RandomAlgorithm):
     assert False
 
 def _rng_bit_generator_lowering(
-    ctx, key, *, shape, dtype, algorithm):
+    ctx, key, *, shape, dtype, algorithm, out_sharding):
   key_type = ir.RankedTensorType(key.type)
   key_shape, key_etype = key_type.shape, key_type.element_type
   # While the RngBitGenerator HLO accepts a u64[2] key on all backends, we
@@ -8121,7 +8126,7 @@ def _rng_bit_generator_lowering(
         ir.RankedTensorType.get([2], u64_type),
         hlo.reshape(ir.RankedTensorType.get([2, 2], u32_type), key))
   algorithm_attr = _rng_algorithm(algorithm)
-  _, out_vals_aval = ctx.avals_out
+  out_key_aval, out_vals_aval = ctx.avals_out
   if any(not core.is_constant_shape(a.shape) for a in ctx.avals_out):
     output_shape = mlir.shape_tensor(
       mlir.eval_dynamic_shape(ctx, out_vals_aval.shape))
@@ -8145,7 +8150,8 @@ def _rng_bit_generator_lowering(
     out_vals = hlo.convert(
       ir.RankedTensorType.get(ir.RankedTensorType(out_vals.type).shape, etype),
       out_vals)
-  return [out_key, out_vals]
+  return [mlir.lower_with_sharding_in_types(ctx, out_key, out_key_aval),
+          mlir.lower_with_sharding_in_types(ctx, out_vals, out_vals_aval)]
 
 
 rng_bit_generator_p = Primitive("rng_bit_generator")
@@ -8155,7 +8161,7 @@ rng_bit_generator_p.def_impl(
 rng_bit_generator_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, rng_bit_generator_p,
             _rng_bit_generator_shape_rule, _rng_bit_generator_dtype_rule,
-            _rng_bit_generator_weak_type_rule, None))
+            _rng_bit_generator_weak_type_rule, _rng_bit_generator_sharding_rule))
 mlir.register_lowering(rng_bit_generator_p,
                        _rng_bit_generator_lowering)
 
@@ -8219,7 +8225,7 @@ def _propagate_mem_kind_copy(in_mem_kind):
 pxla.memory_kind_propagate_rule[copy_p] = _propagate_mem_kind_copy
 
 def rng_bit_generator(key, shape, dtype=np.uint32,
-                      algorithm=RandomAlgorithm.RNG_DEFAULT):
+                      algorithm=RandomAlgorithm.RNG_DEFAULT, out_sharding=None):
   """Stateless PRNG bit generator. Experimental and its use is discouraged.
 
   Returns uniformly distributed random bits with the specified shape and dtype
@@ -8235,12 +8241,14 @@ def rng_bit_generator(key, shape, dtype=np.uint32,
   """
   shape = core.canonicalize_shape(shape)
   dtype = dtypes.canonicalize_dtype(dtype)
+  out_sharding = canonicalize_sharding(out_sharding, 'rng_bit_generator')
   if np.dtype(dtype) not in {np.dtype('uint8'), np.dtype('uint16'),
                              np.dtype('uint32'), np.dtype('uint64')}:
     raise TypeError(f'rng_bit_generator: unsupported dtype {dtype}')
   return tuple(
       rng_bit_generator_p.bind(
-          key, shape=shape, dtype=dtype, algorithm=algorithm))
+          key, shape=shape, dtype=dtype, algorithm=algorithm,
+          out_sharding=out_sharding))
 
 
 def _iota_abstract_eval(*dyn_shape, dtype, shape, dimension, sharding):

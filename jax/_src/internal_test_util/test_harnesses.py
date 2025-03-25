@@ -3375,8 +3375,9 @@ for algorithm in [lax.RandomAlgorithm.RNG_THREE_FRY,
         define(
             lax.rng_bit_generator_p,
             f"{key_dtype=}_shape={jtu.format_shape_dtype_string(shape, dtype)}_{algorithm=}",
-            lambda key, shape, dtype, algorithm: lax.rng_bit_generator(key, shape, dtype=dtype,
-                                                                       algorithm=algorithm),
+            lambda key, shape, dtype, algorithm, out_sharding=None: lax.rng_bit_generator(
+                key, shape, dtype=dtype, algorithm=algorithm,
+                out_sharding=out_sharding),
             [RandArg(key_shape, key_dtype),
              StaticArg(shape), StaticArg(dtype), StaticArg(algorithm)],
             shape=shape,
