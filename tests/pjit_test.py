@@ -7212,6 +7212,20 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out1[0], out2[0])
     self.assertArraysEqual(out1[1], out2[1])
 
+  @jtu.with_user_mesh((2,), ('x',))
+  def test_fold_in(self, mesh):
+    key = jax.random.key(72)
+    key = jax.device_put(key, NamedSharding(mesh, P()))
+
+    @jax.jit
+    def f(key):
+      f1 = jax.random.fold_in(key, 1)
+      self.assertEqual(jax.random.key_data(f1).aval.sharding.spec, P(None))
+      return f1
+
+    out = f(key)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
