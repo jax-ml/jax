@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src.lax.fft import FftType as _FftType
 from jax._src.lib import xla_client as _xc
 
 get_topology_for_devices = _xc.get_topology_for_devices
@@ -48,23 +47,27 @@ _deprecations = {
         ),
         None,
     ),
-    # Added Oct 10 2024
+    # Finalized 2025-03-25; remove after 2025-06-25
     "FftType": (
-        "jax.lib.xla_client.FftType is deprecated; use jax.lax.FftType.",
-        _FftType,
+        "jax.lib.xla_client.FftType was removed in JAX v0.6.0; use jax.lax.FftType.",
+        None,
     ),
     "PaddingType": (
         (
-            "jax.lib.xla_client.PaddingType is deprecated; this type is unused"
-            " by JAX so there is no replacement."
+            "jax.lib.xla_client.PaddingType was removed in JAX v0.6.0;"
+            " this type is unused by JAX so there is no replacement."
         ),
-        _xc.PaddingType,
+        None,
+    ),
+    "dtype_to_etype": (
+        "dtype_to_etype was removed in JAX v0.6.0; use StableHLO instead.",
+        None,
+    ),
+    "shape_from_pyval": (
+        "shape_from_pyval was removed in JAX v0.6.0; use StableHLO instead.",
+        None,
     ),
     # Added Oct 11 2024
-    "dtype_to_etype": (
-        "dtype_to_etype is deprecated; use StableHLO instead.",
-        _xc.dtype_to_etype,
-    ),
     "ops": (
         "ops is deprecated; use StableHLO instead.",
         _xc.ops,
@@ -73,10 +76,6 @@ _deprecations = {
         "register_custom_call_target is deprecated; use the JAX FFI instead "
         "(https://jax.readthedocs.io/en/latest/ffi.html)",
         _xc.register_custom_call_target,
-    ),
-    "shape_from_pyval": (
-        "shape_from_pyval is deprecated; use StableHLO instead.",
-        _xc.shape_from_pyval,
     ),
     "PrimitiveType": (
         "PrimitiveType is deprecated; use StableHLO instead.",
@@ -104,14 +103,10 @@ _deprecations = {
 import typing as _typing
 
 if _typing.TYPE_CHECKING:
-  dtype_to_etype = _xc.dtype_to_etype
   ops = _xc.ops
   register_custom_call_target = _xc.register_custom_call_target
-  shape_from_pyval = _xc.shape_from_pyval
   ArrayImpl = _xc.ArrayImpl
   Device = _xc.Device
-  FftType = _FftType
-  PaddingType = _xc.PaddingType
   PrimitiveType = _xc.PrimitiveType
   Shape = _xc.Shape
   XlaBuilder = _xc.XlaBuilder
@@ -123,5 +118,4 @@ else:
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del _typing
-del _FftType
 del _xc
