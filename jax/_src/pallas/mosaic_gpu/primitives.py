@@ -198,6 +198,7 @@ def _copy_smem_to_gmem_lowering(
   )
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
+  src, src_transforms = lowering._handle_reshaping(src, src_transforms)
   src, src_transforms = lowering._handle_indexing(src, src_transforms)
   copy_params = _extract_gmem_copy_params(dst_transforms) | _extract_smem_copy_params(src_transforms)
   if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
