@@ -137,9 +137,20 @@ jax_multiplatform_test(
     srcs = ["debug_nans_test.py"],
 )
 
+jax_py_test(
+    name = "distributed_initialize_test",
+    srcs = ["distributed_initialize_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ] + py_deps("portpicker"),
+)
+
 jax_multiplatform_test(
     name = "distributed_test",
     srcs = ["distributed_test.py"],
+    enable_backends = ["gpu"],
+    deps = py_deps("portpicker"),
 )
 
 jax_py_test(
