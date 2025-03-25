@@ -92,8 +92,6 @@ def initialize():
             rocm_plugin_extension.register_custom_call_target, c_api
         ),
     )
-    for _name, _value in rocm_plugin_extension.registrations().items():
-      xla_client.register_custom_call_target(_name, _value, platform="ROCM")
     for _name, _value in rocm_plugin_extension.ffi_registrations().items():
       xla_client.register_custom_call_target(
           _name, _value, platform='ROCM', api_version=1
