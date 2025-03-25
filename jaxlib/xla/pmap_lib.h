@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_PMAP_LIB_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_PMAP_LIB_H_
+#ifndef JAXLIB_XLA_PMAP_LIB_H_
+#define JAXLIB_XLA_PMAP_LIB_H_
 
 #include <optional>
 #include <utility>
@@ -34,4 +34,4 @@ void BuildPmapSubmodule(nanobind::module_& m);
 
 }  // namespace jax
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_PMAP_LIB_H_
+#endif  // JAXLIB_XLA_PMAP_LIB_H_

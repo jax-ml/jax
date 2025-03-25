@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_CUSTOM_CALL_SHARDING_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_CUSTOM_CALL_SHARDING_H_
+#ifndef JAXLIB_XLA_CUSTOM_CALL_SHARDING_H_
+#define JAXLIB_XLA_CUSTOM_CALL_SHARDING_H_
 
 // placeholder for index annotation headers
 #include "nanobind/nanobind.h"
@@ -25,4 +25,4 @@ void BuildCustomCallShardingPybindAPI(nanobind::module_& m);
 
 }  // namespace xla
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_CUSTOM_CALL_SHARDING_H_
+#endif  // JAXLIB_XLA_CUSTOM_CALL_SHARDING_H_

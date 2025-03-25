@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_WEAKREF_LRU_CACHE_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_WEAKREF_LRU_CACHE_H_
+#ifndef JAXLIB_XLA_WEAKREF_LRU_CACHE_H_
+#define JAXLIB_XLA_WEAKREF_LRU_CACHE_H_
 
 // placeholder for index annotation headers
 #include "nanobind/nanobind.h"
@@ -25,4 +25,4 @@ void BuildWeakrefLRUCacheAPI(nanobind::module_& m);
 
 }  // namespace jax
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_WEAKREF_LRU_CACHE_H_
+#endif  // JAXLIB_XLA_WEAKREF_LRU_CACHE_H_

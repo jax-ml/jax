@@ -134,10 +134,10 @@ nanobind_extension(
         ],
         "@xla//xla/tsl:windows": [],
         "//conditions:default": [
+            ":py_socket_transfer",
             "@gloo//:transport_tcp",
             "@xla//xla/backends/cpu/collectives:gloo_collectives",
             "@xla//xla/backends/cpu/collectives:gloo_kv_store",
-            "@xla//xla/python/transfer:py_socket_transfer",
         ],
     }) + select({
         # mpitrampoline does not build on windows
@@ -411,6 +411,43 @@ cc_library(
         "@xla//xla/tsl/platform:logging",
         "@xla//xla/tsl/platform:statusor",
         "@xla//xla/tsl/python/lib/core:numpy",
+    ],
+)
+
+cc_library(
+    name = "py_socket_transfer",
+    srcs = ["py_socket_transfer.cc"],
+    hdrs = ["py_socket_transfer.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@nanobind",
+        "@xla//xla:util",
+        "@xla//xla/pjrt:pjrt_client",
+        "@xla//xla/pjrt:status_casters",
+        "@xla//xla/python:nb_class_ptr",
+        "@xla//xla/python:nb_numpy",
+        "@xla//xla/python:py_client",
+        "@xla//xla/python:traceback",
+        "@xla//xla/python:types",
+        "@xla//xla/python/ifrt",
+        "@xla//xla/python/pjrt_ifrt",
+        "@xla//xla/python/pjrt_ifrt:pjrt_dtype",
+        "@xla//xla/python/transfer:event_loop",
+        "@xla//xla/python/transfer:socket-server",
+        "@xla//xla/python/transfer:socket_bulk_transport",
+        "@xla//xla/python/transfer:streaming",
+        "@xla//xla/python/transfer:streaming_ifrt",
+        "@xla//xla/tsl/concurrency:ref_count",
+        "@xla//xla/tsl/platform:statusor",
     ],
 )
 
