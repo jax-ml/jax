@@ -607,6 +607,25 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
     np.testing.assert_array_equal(f(x), x * 2)
 
+  def test_scoped_copy_with_user_transforms(self):
+    def kernel(o_ref):
+      def store_scope(o_smem):
+        o_smem = plgpu.unswizzle_ref(o_smem, 128)
+        o_smem = o_smem.at[:64,:]
+        o_smem = o_smem.reshape(64, 2, 64)
+        o_smem = plgpu.untile_ref(o_smem, (64,))
+        plgpu.copy_smem_to_gmem(o_smem, o_ref.at[:64, :128])
+
+      pl.run_scoped(
+          store_scope,
+          plgpu.SMEM((128, 2, 64), dtype=o_ref.dtype,),
+      )
+    f = plgpu.kernel(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct([128, 128], jnp.bfloat16),
+    )
+    f()
+
   def test_copy_with_transforms_and_indexing(self):
     def kernel(x_ref, o_ref, barrier_ref):
       for i in range(2):
