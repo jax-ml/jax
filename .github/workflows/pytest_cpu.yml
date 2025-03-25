@@ -29,6 +29,11 @@ on:
         type: string
         required: true
         default: "0"
+      download-jax-only-from-gcs:
+        description: "Whether to download only the jax wheel from GCS (e.g for testing a jax only release)"
+        required: false
+        default: '0'
+        type: string
       gcs_download_uri:
         description: "GCS location prefix from where the artifacts should be downloaded"
         required: true
@@ -92,7 +97,12 @@ jobs:
         run: |
           mkdir -p $(pwd)/dist
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+
+          if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
+            echo "JAX only release. Only downloading the jax wheel from the release bucket."
+          else
+            gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+          fi
       - name: Download wheels from GCS (Windows runs)
         id: download-wheel-artifacts-w
         # Set continue-on-error to true to prevent actions from failing the workflow if this step
@@ -106,7 +116,12 @@ jobs:
           @REM Use `call` so that we can run sequential gsutil commands on Windows
           @REM See https://github.com/GoogleCloudPlatform/gsutil/issues/233#issuecomment-196150652
           call gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl dist/
-          call gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
+
+          if "${{ inputs.download-jax-only-from-gcs }}"=="1" (
+            echo "JAX only release. Only downloading the jax wheel from the release bucket."
+          ) else (
+            call gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
+          )
       - name: Skip the test run if the wheel artifacts were not downloaded successfully
         if: steps.download-wheel-artifacts-nw.outcome == 'failure' || steps.download-wheel-artifacts-w.outcome == 'failure'
         run: |
