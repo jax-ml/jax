@@ -42,8 +42,8 @@ from jax._src.core import (Trace, Tracer, TraceTag, Jaxpr, Literal, get_aval,
                            mapped_aval, unmapped_aval, DBIdx, InDBIdx, OutDBIdx,
                            InputType, OutputType, get_referent, JaxprEqnContext)
 from jax._src.state.types import AbstractRef, ReadEffect
-from jax._src.tree_util import (PyTreeDef, treedef_tuple,
-                                tree_flatten, tree_structure)
+from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_flatten,
+                                tree_structure, register_static)
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            as_hashable_function, weakref_lru_cache, subs_list,
@@ -1699,7 +1699,7 @@ class JaxprStackFrame:
     jaxpr, constvals = _const_folding_and_forwarding(jaxpr, constvals)
     jaxpr, constvals = _inline_literals(jaxpr, constvals)
     init_trees = [tree_structure(init_val) for init_val in self.attrs_inits]
-    set_states(self.attrs_tracked, self.attrs_inits)
+    set_states(self.attrs_tracked, self.attrs_inits)  # reset to initial values
     return jaxpr, list(constvals), zip(init_trees, end_trees, self.attrs_tracked)
 
   def to_jaxpr2(self, out_tracers: Sequence[core.Tracer],
@@ -2246,10 +2246,14 @@ AttrsTracked = list[tuple[Any, str]]
 AttrStates = list
 def set_states(attrs_tracked: AttrsTracked, vals: AttrStates):
   for ((obj, attr), val) in zip(attrs_tracked, vals):
-    setattr(obj, attr, val)
+    setattr(obj, attr, val) if val is not dne_sentinel else delattr(obj, attr)
 
 def get_states(attrs_tracked: AttrsTracked):
   return [getattr(obj, attr) for (obj, attr) in attrs_tracked]
+
+@register_static
+class DoesNotExist: ...
+dne_sentinel = DoesNotExist()
 
 
 def infer_lambda_input_type(
