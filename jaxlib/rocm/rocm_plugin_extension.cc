@@ -72,12 +72,24 @@ nb::dict Registrations() {
       jax::EncapsulateFunction(jax::hip::XlaPythonGpuCallback);
   return dict;
 }
+nb::dict FfiRegistrations() {
+  nb::dict dict;
+  nb::dict gpu_callback_dict;
+  gpu_callback_dict["instantiate"] =
+      jax::EncapsulateFfiHandler(jax::hip::kGpuTransposePlanCacheInstantiate);
+  gpu_callback_dict["execute"] =
+      jax::EncapsulateFfiHandler(jax::hip::kXlaFfiPythonGpuCallback);
+  dict["xla_ffi_python_gpu_callback"] = gpu_callback_dict;
+  return dict;
+}
 
 }  // namespace
 
 NB_MODULE(rocm_plugin_extension, m) {
   BuildGpuPluginExtension(m);
   m.def("registrations", &Registrations);
+  m.def("ffi_registrations", &FfiRegistrations);
+
   m.def(
       "get_device_ordinal",
       [](std::intptr_t data_value) {
