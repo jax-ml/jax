@@ -34,11 +34,11 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
+#include "jaxlib/xla/pytree.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/python/nb_helpers.h"
 #include "xla/python/py_values.h"
 #include "xla/python/python_ref_manager.h"
-#include "xla/python/pytree.h"
 #include "xla/python/sharding.h"
 #include "xla/tsl/platform/logging.h"
 
