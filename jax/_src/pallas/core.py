@@ -67,6 +67,9 @@ OriginStr = str  # The origin of a block spec, e.g. input[2]["field"]
 SEMAPHORE_INTERPRET_DTYPE = jnp.int16
 SEMAPHORE_MAX_VALUE = jnp.iinfo(SEMAPHORE_INTERPRET_DTYPE).max
 
+class semaphore_dtype(dtypes.extended): pass
+class semaphore(semaphore_dtype): pass
+class barrier_semaphore(semaphore_dtype): pass
 
 @runtime_checkable
 class CompilerParams(Protocol):

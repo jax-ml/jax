@@ -30,6 +30,7 @@ from jax._src.pallas.core import MemoryRef as MemoryRef
 from jax._src.pallas.core import MemorySpace as MemorySpace
 from jax._src.pallas.core import Buffered as Buffered
 from jax._src.pallas.core import no_block_spec as no_block_spec
+from jax._src.pallas.core import semaphore as semaphore
 from jax._src.pallas.core import Unblocked as Unblocked
 from jax._src.pallas.core import unblocked as unblocked
 from jax._src.pallas.cost_estimate import estimate_cost as estimate_cost
@@ -47,6 +48,7 @@ from jax._src.pallas.primitives import atomic_or as atomic_or
 from jax._src.pallas.primitives import atomic_xchg as atomic_xchg
 from jax._src.pallas.primitives import atomic_xor as atomic_xor
 from jax._src.pallas.primitives import debug_print as debug_print
+from jax._src.pallas.primitives import device_id as device_id
 from jax._src.pallas.primitives import dot as dot
 from jax._src.pallas.primitives import load as load
 from jax._src.pallas.primitives import max_contiguous as max_contiguous
@@ -55,8 +57,12 @@ from jax._src.pallas.primitives import num_programs as num_programs
 from jax._src.pallas.primitives import program_id as program_id
 from jax._src.pallas.primitives import reciprocal as reciprocal
 from jax._src.pallas.primitives import run_scoped as run_scoped
+from jax._src.pallas.primitives import semaphore_read as semaphore_read
+from jax._src.pallas.primitives import semaphore_signal as semaphore_signal
+from jax._src.pallas.primitives import semaphore_wait as semaphore_wait
 from jax._src.pallas.primitives import store as store
 from jax._src.pallas.primitives import swap as swap
+from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
 from jax._src.pallas.utils import cdiv as cdiv
 from jax._src.pallas.utils import next_power_of_2 as next_power_of_2
 from jax._src.pallas.utils import strides_from_shape as strides_from_shape

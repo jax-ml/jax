@@ -112,10 +112,7 @@ class TPUMemorySpace(enum.Enum):
     # A convenience function for constructing MemoryRef types.
     return pallas_core.MemoryRef(shape, dtype, self)
 
-class semaphore_dtype(dtypes.extended): pass
-class semaphore(semaphore_dtype): pass
-class dma_semaphore(semaphore_dtype): pass
-class barrier_semaphore(semaphore_dtype): pass
+class dma_semaphore(pallas_core.semaphore_dtype): pass
 
 class AbstractSemaphoreTyRules:
   @staticmethod
@@ -142,7 +139,7 @@ class AbstractSemaphoreTy(dtypes.ExtendedDType):
 # TODO(sharadmv): implement dtype rules for AbstractSemaphoreTy
 
 class SemaphoreTy(AbstractSemaphoreTy):
-  type = semaphore
+  type = pallas_core.semaphore
   name = "sem"
 
 class DmaSemaphoreTy(AbstractSemaphoreTy):
@@ -150,7 +147,7 @@ class DmaSemaphoreTy(AbstractSemaphoreTy):
   name = "dma_sem"
 
 class BarrierSemaphoreTy(AbstractSemaphoreTy):
-  type = barrier_semaphore
+  type = pallas_core.barrier_semaphore
   name = "barrier_sem"
 
 class SemaphoreType(enum.Enum):
