@@ -112,6 +112,8 @@ class TPUMemorySpace(enum.Enum):
     # A convenience function for constructing MemoryRef types.
     return pallas_core.MemoryRef(shape, dtype, self)
 
+class dma_semaphore(pallas_core.semaphore_dtype): pass
+
 class AbstractSemaphoreTyRules:
   @staticmethod
   def pallas_interpret_element_aval(_) -> jax_core.ShapedArray:
@@ -141,7 +143,7 @@ class SemaphoreTy(AbstractSemaphoreTy):
   name = "sem"
 
 class DmaSemaphoreTy(AbstractSemaphoreTy):
-  type = pallas_core.dma_semaphore
+  type = dma_semaphore
   name = "dma_sem"
 
 class BarrierSemaphoreTy(AbstractSemaphoreTy):

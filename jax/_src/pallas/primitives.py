@@ -1023,16 +1023,15 @@ def check_sem_avals(
     sem_shape = sem_transforms_avals[-1].get_indexer_shape()
   if sem_shape:
     raise ValueError(f"Cannot {name} on a non-()-shaped semaphore: {sem_shape}")
-  # Uncomment when semaphore type works for Mosaic-GPU lowering
-  # sem_dtype = sem_aval.dtype
-  # if not any(
-  #     jnp.issubdtype(sem_dtype, sem_type)
-  #     for sem_type in allowed_semaphore_types
-  # ):
-  #   raise ValueError(
-  #       f"Must {name} semaphores of the following types:"
-  #       f" {allowed_semaphore_types}."
-  #   )
+  sem_dtype = sem_aval.dtype
+  if not any(
+      jnp.issubdtype(sem_dtype, sem_type)
+      for sem_type in allowed_semaphore_types
+  ):
+    raise ValueError(
+        f"Must {name} semaphores of the following types:"
+        f" {allowed_semaphore_types}."
+    )
 
 
 def _transform_semaphore(ref_value, transforms, ref_aval):
@@ -1063,18 +1062,7 @@ def _semaphore_read_abstract_eval(
     *avals,
     args_tree,
 ):
-  sem_aval, sem_transforms_avals = tree_util.tree_unflatten(args_tree, avals)
-  check_sem_avals(
-      sem_aval,
-      sem_transforms_avals,
-      "read",
-      allowed_semaphore_types={
-          pallas_core.dma_semaphore,
-          pallas_core.semaphore,
-          pallas_core.barrier_semaphore,
-          pallas_core.SEMAPHORE_INTERPRET_DTYPE,
-      },
-  )
+  del avals, args_tree
   return jax_core.ShapedArray((), jnp.dtype("int32"))
 
 def _semaphore_read_discharge_rule(in_avals,
