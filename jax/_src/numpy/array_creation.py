@@ -244,6 +244,8 @@ def zeros_like(a: ArrayLike | DuckTypedArray,
            [0, 0, 0]], dtype=int32)
   """
   if not (hasattr(a, 'dtype') and hasattr(a, 'shape')):  # support duck typing
+    if hasattr(a, '__jax_array__'):
+      a = a.__jax_array__()
     util.check_arraylike("zeros_like", a)
   dtypes.check_user_dtype_supported(dtype, "zeros_like")
   if shape is not None:
@@ -287,6 +289,8 @@ def ones_like(a: ArrayLike | DuckTypedArray,
            [1, 1, 1]], dtype=int32)
   """
   if not (hasattr(a, 'dtype') and hasattr(a, 'shape')):  # support duck typing
+    if hasattr(a, '__jax_array__'):
+      a = a.__jax_array__()
     util.check_arraylike("ones_like", a)
   dtypes.check_user_dtype_supported(dtype, "ones_like")
   if shape is not None:
@@ -332,9 +336,13 @@ def empty_like(prototype: ArrayLike | DuckTypedArray,
            [0, 0, 0]], dtype=int32)
   """
   if not (hasattr(prototype, 'dtype') and hasattr(prototype, 'shape')):  # support duck typing
-    util.check_arraylike("empty_like", prototype)
-  dtypes.check_user_dtype_supported(dtype, "empty_like")
-  return zeros_like(prototype, dtype=dtype, shape=shape, device=device)
+    if hasattr(prototype, '__jax_array__'):
+      prototype = prototype.__jax_array__()
+    util.check_arraylike("ones_like", prototype)
+  dtypes.check_user_dtype_supported(dtype, "ones_like")
+  if shape is not None:
+    shape = canonicalize_shape(shape)
+  return lax.full_like(prototype, 0, dtype, shape, sharding=util.normalize_device_to_sharding(device))
 
 
 @export
@@ -382,6 +390,8 @@ def full_like(a: ArrayLike | DuckTypedArray,
     util.check_arraylike("full_like", 0, fill_value)
   else:
     util.check_arraylike("full_like", a, fill_value)
+    if hasattr(a, '__jax_array__'):
+      a = a.__jax_array__()
   dtypes.check_user_dtype_supported(dtype, "full_like")
   if shape is not None:
     shape = canonicalize_shape(shape)

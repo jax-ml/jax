@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
+from typing import Any, Callable, NamedTuple
 
 from absl.testing import absltest
 from absl.testing import parameterized
-from typing import Any, Callable, NamedTuple
+import numpy as np
 
 import jax
 import jax.numpy as jnp
@@ -36,6 +38,15 @@ class JaxArrayWrapper:
 
   def __jax_array__(self) -> jax.Array:
     return jnp.asarray(self.x)
+
+
+class DuckTypedArrayWithErroringJaxArray:
+  """Duck-typed array that provides a __jax_array__ method which fails."""
+  shape = (2, 3)
+  dtype = np.dtype('float32')
+
+  def __jax_array__(self):
+    raise ValueError("jax array was called.")
 
 
 class NumPyAPI(NamedTuple):
@@ -287,7 +298,7 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.dsplit, Float[3, 5, 6], indices_or_sections=2),
   # NumPyAPI.sig(jnp.dstack, Float[3, 5]),
   NumPyAPI.sig(jnp.ediff1d, Float[5]),
-  # NumPyAPI.sig(jnp.empty_like, Float[5]),
+  NumPyAPI.sig(jnp.empty_like, Float[5]),
   NumPyAPI.sig(jnp.equal, Float[5], Float[5]),
   NumPyAPI.sig(jnp.exp, Float[5]),
   NumPyAPI.sig(jnp.exp2, Float[5]),
@@ -312,7 +323,7 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.fmin, Float[5], Float[5]),
   NumPyAPI.sig(jnp.fmod, Float[5], Float[5]),
   NumPyAPI.sig(jnp.frexp, Float[5]),
-  # NumPyAPI.sig(jnp.full_like, Float[5], Float[()]),
+  NumPyAPI.sig(jnp.full_like, Float[5], Float[()]),
   NumPyAPI.sig(jnp.gcd, Int[5], Int[5]),
   NumPyAPI.sig(jnp.greater, Float[5], Float[5]),
   NumPyAPI.sig(jnp.greater_equal, Float[5], Float[5]),
@@ -393,7 +404,7 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.nextafter, Float[5], Float[5]),
   NumPyAPI.sig(jnp.nonzero, Float[5]),
   NumPyAPI.sig(jnp.not_equal, Float[5], Float[5]),
-  # NumPyAPI.sig(jnp.ones_like, Float[5]),
+  NumPyAPI.sig(jnp.ones_like, Float[5]),
   NumPyAPI.sig(jnp.outer, Float[5], Float[5]),
   NumPyAPI.sig(jnp.packbits, Int[5]),
   # NumPyAPI.sig(jnp.pad, Float[5], pad_width=2),
@@ -493,7 +504,7 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.vsplit, Float[6], indices_or_sections=2),
   NumPyAPI.sig(jnp.vstack, [Float[5], Float[2, 5]]),
   NumPyAPI.sig(jnp.where, Bool[5], Float[5], Float[5]),
-  # NumPyAPI.sig(jnp.zeros_like, Float[5]),
+  NumPyAPI.sig(jnp.zeros_like, Float[5]),
 ]
 
 
@@ -510,6 +521,26 @@ class JaxArrayTests(jtu.JaxTestCase):
     wrapped = fun(*wrapped_args, **kwargs)
 
     self.assertAllClose(wrapped, expected, atol=0, rtol=0)
+
+  @parameterized.named_parameters(
+    {'testcase_name': func.__name__, 'func': func}
+    for func in [jnp.zeros_like, jnp.ones_like, jnp.empty_like, jnp.full_like]
+  )
+  def test_array_creation_from_duck_typed_array(self, func):
+    # Ensure that jnp.*_like prefers shape/dtype over __jax_array__ when
+    # both methods are available.
+    if func is jnp.full_like:
+      func = functools.partial(func, fill_value=2.0)
+    obj = DuckTypedArrayWithErroringJaxArray()
+
+    # The test relies on this failing
+    with self.assertRaises(ValueError):
+      jnp.asarray(obj)
+
+    result = func(obj)
+    self.assertIsInstance(result, jax.Array)
+    self.assertEqual(result.shape, obj.shape)
+    self.assertEqual(result.dtype, obj.dtype)
 
 
 if __name__ == "__main__":
