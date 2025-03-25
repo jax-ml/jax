@@ -42,12 +42,6 @@ static std::string ToString(CUresult result) {
   return absl::StrCat(error_name, ": ", error_string);
 }
 
-nb::dict Registrations() {
-  nb::dict dict;
-  dict["xla_python_gpu_callback"] =
-      jax::EncapsulateFunction(jax::cuda::XlaPythonGpuCallback);
-  return dict;
-}
 nb::dict FfiRegistrations() {
   nb::dict dict;
   nb::dict gpu_callback_dict;
@@ -63,7 +57,6 @@ nb::dict FfiRegistrations() {
 
 NB_MODULE(cuda_plugin_extension, m) {
   BuildGpuPluginExtension(m);
-  m.def("registrations", &Registrations);
   m.def("ffi_registrations", &FfiRegistrations);
 
   m.def(

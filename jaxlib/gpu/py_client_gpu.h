@@ -20,15 +20,9 @@ limitations under the License.
 
 #include "jaxlib/gpu/vendor.h"
 #include "xla/ffi/api/ffi.h"
-#include "xla/service/custom_call_status.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
-
-void XlaPythonGpuCallback(gpuStream_t stream, void** buffers,
-                          const char* opaque, size_t opaque_len,
-                          XlaCustomCallStatus* status);
-
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kGpuTransposePlanCacheInstantiate);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(kXlaFfiPythonGpuCallback);
 }  // namespace JAX_GPU_NAMESPACE
