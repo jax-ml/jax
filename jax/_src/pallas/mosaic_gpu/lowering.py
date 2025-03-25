@@ -1404,7 +1404,7 @@ mosaic_lowering_rules[mgpu.ThreadSemantics.Lane].update({
 mosaic_lowering_rules[mgpu.ThreadSemantics.Warpgroup].update({
     lax.neg_p: _lower_fun(lambda x: jnp.subtract(0, x), multiple_results=False),
     lax.not_p: _lower_fun(
-        lambda x: jnp.bitwise_xor(x, -1), multiple_results=False
+        lambda x: jnp.astype(jnp.bitwise_xor(jnp.astype(x, int), -1), jnp.dtype(x)), multiple_results=False,
     ),
 })
 
@@ -1821,7 +1821,7 @@ def _debug_print_lowering_rule(
   return ()
 
 @register_lowering_rule(primitives.debug_print_p, mgpu.ThreadSemantics.Warpgroup)
-def _debug_print_lowering_rule(
+def _debug_print_lowering_rule_wg(
     ctx: LoweringRuleContext,
     *args,
     fmt,
