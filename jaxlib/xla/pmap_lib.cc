@@ -46,6 +46,7 @@ limitations under the License.
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/xla/config.h"
 #include "jaxlib/xla/jax_jit.h"
+#include "jaxlib/xla/pytree.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/array.h"
@@ -64,7 +65,6 @@ limitations under the License.
 #include "xla/python/py_executable.h"
 #include "xla/python/py_values.h"
 #include "xla/python/python_ref_manager.h"
-#include "xla/python/pytree.h"
 #include "xla/python/sharded_device_array.h"
 #include "xla/python/sharding.h"
 #include "xla/python/to_ifrt_sharding.h"

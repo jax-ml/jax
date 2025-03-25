@@ -14,13 +14,16 @@
 
 load(
     "//jaxlib:jax.bzl",
+    "cc_proto_library",
     "if_oss",
+    "jax_visibility",
     "nanobind_extension",
     "py_deps",
     "py_strict_library",
     "py_strict_test",
     "pytype_strict_library",
 )
+# Placeholder: load proto_library
 
 licenses(["notice"])
 
@@ -50,6 +53,7 @@ nanobind_extension(
         ":mlir",
         ":pjit",
         ":pmap_lib",
+        ":pytree",
         ":sdy",
         ":weakref_lru_cache",
         ":xla_compiler",
@@ -103,7 +107,6 @@ nanobind_extension(
         "@xla//xla/python:profiler",
         "@xla//xla/python:py_client",
         "@xla//xla/python:python_ref_manager",
-        "@xla//xla/python:pytree",
         "@xla//xla/python:refine_polymorphic_shapes",
         "@xla//xla/python:traceback",
         "@xla//xla/python:types",
@@ -250,6 +253,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":pytree",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:inlined_vector",
@@ -270,7 +274,6 @@ cc_library(
         "@xla//xla/python:nb_helpers",
         "@xla//xla/python:py_client",
         "@xla//xla/python:python_ref_manager",
-        "@xla//xla/python:pytree",
         "@xla//xla/python:types",
         "@xla//xla/tsl/platform:logging",
     ],
@@ -328,6 +331,7 @@ cc_library(
     deps = [
         ":config",
         ":jax_jit",
+        ":pytree",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -352,7 +356,6 @@ cc_library(
         "@xla//xla/python:nb_numpy",
         "@xla//xla/python:py_client",
         "@xla//xla/python:python_ref_manager",
-        "@xla//xla/python:pytree",
         "@xla//xla/python:traceback",
         "@xla//xla/python/ifrt",
         "@xla//xla/tsl/concurrency:ref_count",
@@ -376,6 +379,7 @@ cc_library(
     deps = [
         ":config",
         ":jax_jit",
+        ":pytree",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",
@@ -399,7 +403,6 @@ cc_library(
         "@xla//xla/python:nb_numpy",
         "@xla//xla/python:py_client",
         "@xla//xla/python:python_ref_manager",
-        "@xla//xla/python:pytree",
         "@xla//xla/python:traceback",
         "@xla//xla/python:types",
         "@xla//xla/python/ifrt",
@@ -408,6 +411,44 @@ cc_library(
         "@xla//xla/tsl/platform:logging",
         "@xla//xla/tsl/platform:statusor",
         "@xla//xla/tsl/python/lib/core:numpy",
+    ],
+)
+
+proto_library(
+    name = "pytree_proto",
+    srcs = ["pytree.proto"],
+)
+
+cc_proto_library(
+    name = "pytree_cc_proto",
+    deps = [":pytree_proto"],
+)
+
+cc_library(
+    name = "pytree",
+    srcs = ["pytree.cc"],
+    hdrs = ["pytree.h"],
+    compatible_with = [],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    visibility = jax_visibility("jaxlib/xla/pytree"),
+    deps = [
+        ":pytree_cc_proto",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@nanobind",
+        "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
+        "@xla//xla/pjrt:exceptions",
+        "@xla//xla/python:nb_class_ptr",
+        "@xla//xla/tsl/platform:logging",
     ],
 )
 
