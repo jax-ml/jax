@@ -27,7 +27,7 @@ from jax._src import core as jax_core
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import lowering
-import jax.experimental.mosaic.gpu.core as mosaic_core
+from jax.experimental.mosaic import gpu as mgpu
 
 
 def pallas_call_lowering(
@@ -57,10 +57,10 @@ def pallas_call_lowering(
     print(grid_mapping)
 
   thread_semantics = compiler_params.get("mosaic_gpu", {}).get(
-      "thread_semantics", mosaic_core.ThreadSemantics.Lane
+      "thread_semantics", mgpu.ThreadSemantics.Warpgroup
   )
-  if thread_semantics == mosaic_core.ThreadSemantics.Warpgroup:
-    mosaic_core.dialect.register_dialect(ctx.module_context.context)  # pytype: disable=attribute-error
+  if thread_semantics == mgpu.ThreadSemantics.Warpgroup:
+    mgpu.dialect.register_dialect(ctx.module_context.context)  # pytype: disable=attribute-error
 
   lowering_result = lowering.lower_pipelined_jaxpr_to_module(
       grid_mapping,
@@ -77,7 +77,7 @@ def pallas_call_lowering(
   new_avals_out = [
       jax_core.ShapedArray(t.shape, t.dtype) for t in lowering_result.out_structs
   ]
-  outs = mosaic_core._mosaic_gpu_lowering_rule(
+  outs = mgpu.core._mosaic_gpu_lowering_rule(
       ctx.replace(avals_out=new_avals_out),
       *args,
       module=module,
