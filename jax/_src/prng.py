@@ -621,7 +621,9 @@ batching.defbroadcasting(random_fold_in_p)
 def random_fold_in_abstract_eval(keys_aval, msgs_aval):
   shape = lax_internal.broadcasting_shape_rule(
       'random_fold_in', keys_aval, msgs_aval)
-  return core.ShapedArray(shape, keys_aval.dtype)
+  sharding = lax_internal.broadcasting_sharding_rule(
+      'random_fold_in', keys_aval, msgs_aval)
+  return core.ShapedArray(shape, keys_aval.dtype, sharding=sharding)
 
 @random_fold_in_p.def_impl
 def random_fold_in_impl(keys, msgs):
