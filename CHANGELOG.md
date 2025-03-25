@@ -32,6 +32,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     * From `jax.lib.xla_client`: `FftType`, `PaddingType`, `dtype_to_etype`,
       and `shape_from_pyval`.
     * From `jax.lib.xla_extension`: `ArrayImpl`, `XlaRuntimeError`.
+    * From `jax`: `jax.treedef_is_leaf`, `jax.tree_flatten`, `jax.tree_map`,
+      `jax.tree_leaves`, `jax.tree_structure`, `jax.tree_transpose`, and
+      `jax.tree_unflatten`. Replacements can be found in {mod}`jax.tree` or
+      {mod}`jax.tree_util`.
 
 ## jax 0.5.3 (Mar 19, 2025)
 
