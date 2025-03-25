@@ -33,16 +33,6 @@ enum class SolverType {
   C128,
 };
 
-// getrf: LU decomposition
-
-struct GetrfDescriptor {
-  SolverType type;
-  int batch, m, n, lwork;
-};
-
-void Getrf(gpuStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len, XlaCustomCallStatus* status);
-
 // geqrf: QR decomposition
 
 struct GeqrfDescriptor {
