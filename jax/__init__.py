@@ -220,11 +220,6 @@ _deprecations = {
     "or jax.tree_util.tree_map (any JAX version).",
     _deprecated_tree_map
   ),
-  # Finalized Nov 12 2024; remove after Feb 12 2025
-  "clear_backends": (
-    "jax.clear_backends was removed in JAX v0.4.36",
-    None
-  ),
 }
 
 import typing as _typing

@@ -160,29 +160,6 @@ _deprecations = {
                      _src_core.lattice_join),
     "raise_to_shaped": ("jax.core.raise_to_shaped is deprecated. It is a no-op as of JAX v0.4.36.",
                         _src_core.raise_to_shaped),
-    # Finalized 2024-12-11; remove after 2025-3-11
-    "check_eqn": ("jax.core.check_eqn was removed in JAX v0.4.38.", None),
-    "check_type": ("jax.core.check_type was removed in JAX v0.4.38.", None),
-    "check_valid_jaxtype": (
-      ("jax.core.check_valid_jaxtype was removed in JAX v0.4.38. Instead, you can manually"
-       " raise an error if core.valid_jaxtype() returns False."),
-      None),
-    "non_negative_dim": (
-      "jax.core.non_negative_dim was removed in JAX v0.4.38. Use max_dim(..., 0).", None,
-    ),
-    # Finalized 2024-09-25; remove after 2024-12-25
-    "pp_aval": ("jax.core.pp_aval was removed in JAX v0.4.34.", None),
-    "pp_eqn": ("jax.core.pp_eqn was removed in JAX v0.4.34.", None),
-    "pp_eqn_rules": ("jax.core.pp_eqn_rules was removed in JAX v0.4.34.", None),
-    "pp_eqns": ("jax.core.pp_eqns was removed in JAX v0.4.34.", None),
-    "pp_jaxpr": ("jax.core.pp_jaxpr was removed in JAX v0.4.34.", None),
-    "pp_jaxpr_eqn_range": ("jax.core.pp_jaxpr_eqn_range was removed in JAX v0.4.34.", None),
-    "pp_jaxpr_skeleton": ("jax.core.pp_jaxpr_skeleton was removed in JAX v0.4.34.", None),
-    "pp_jaxprs": ("jax.core.pp_jaxprs was removed in JAX v0.4.34.", None),
-    "pp_kv_pair": ("jax.core.pp_kv_pair was removed in JAX v0.4.34.", None),
-    "pp_kv_pairs": ("jax.core.pp_kv_pairs was removed in JAX v0.4.34.", None),
-    "pp_var": ("jax.core.pp_var was removed in JAX v0.4.34.", None),
-    "pp_vars": ("jax.core.pp_vars was removed in JAX v0.4.34.", None),
 }
 
 import typing

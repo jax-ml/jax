@@ -26,27 +26,6 @@ OpSharding = _xc.OpSharding
 Traceback = _xc.Traceback
 
 _deprecations = {
-    # Finalized 2024-12-11; remove after 2025-3-11
-    "_xla": (
-        "jax.lib.xla_client._xla was removed in JAX v0.4.38; use jax.lib.xla_extension.",
-        None,
-    ),
-    "bfloat16": (
-        "jax.lib.xla_client.bfloat16 was removed in JAX v0.4.38; use ml_dtypes.bfloat16.",
-        None,
-    ),
-    # Finalized 2024-12-23; remove after 2024-03-23
-    "Device": (
-        "jax.lib.xla_client.Device is deprecated; use jax.Device instead.",
-        None,
-    ),
-    "XlaRuntimeError": (
-        (
-            "jax.lib.xla_client.XlaRuntimeError is deprecated; use"
-            " jax.errors.JaxRuntimeError."
-        ),
-        None,
-    ),
     # Finalized 2025-03-25; remove after 2025-06-25
     "FftType": (
         "jax.lib.xla_client.FftType was removed in JAX v0.6.0; use jax.lax.FftType.",
@@ -106,12 +85,10 @@ if _typing.TYPE_CHECKING:
   ops = _xc.ops
   register_custom_call_target = _xc.register_custom_call_target
   ArrayImpl = _xc.ArrayImpl
-  Device = _xc.Device
   PrimitiveType = _xc.PrimitiveType
   Shape = _xc.Shape
   XlaBuilder = _xc.XlaBuilder
   XlaComputation = _xc.XlaComputation
-  XlaRuntimeError = _xc.XlaRuntimeError
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
 

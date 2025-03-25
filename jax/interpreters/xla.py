@@ -38,19 +38,6 @@ _deprecations = {
         "jax.interpreters.xla.pytype_aval_mappings is deprecated.",
         _src_core.pytype_aval_mappings
     ),
-    # Finalized 2024-10-24; remove after 2025-01-24
-    "xb": (
-        ("jax.interpreters.xla.xb was removed in JAX v0.4.36. "
-         "Use jax.lib.xla_bridge instead."), None
-    ),
-    "xc": (
-        ("jax.interpreters.xla.xc was removed in JAX v0.4.36. "
-         "Use jax.lib.xla_client instead."), None
-    ),
-    "xe": (
-        ("jax.interpreters.xla.xe was removed in JAX v0.4.36. "
-         "Use jax.lib.xla_extension instead."), None
-    ),
 }
 
 import typing as _typing

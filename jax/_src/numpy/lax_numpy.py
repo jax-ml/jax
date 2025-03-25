@@ -1944,8 +1944,7 @@ def isrealobj(x: Any) -> bool:
 
 @export
 def reshape(
-    a: ArrayLike, shape: DimSize | Shape | None = None, order: str = "C", *,
-    newshape: DimSize | Shape | DeprecatedArg = DeprecatedArg(),
+    a: ArrayLike, shape: DimSize | Shape, order: str = "C", *,
     copy: bool | None = None) -> Array:
   """Return a reshaped copy of an array.
 
@@ -1962,8 +1961,6 @@ def reshape(
       JAX does not support ``order="A"``.
     copy: unused by JAX; JAX always returns a copy, though under JIT the compiler
       may optimize such copies away.
-    newshape: deprecated alias of the ``shape`` argument. Will result in a
-      :class:`DeprecationWarning` if used.
 
   Returns:
     reshaped copy of input array with the specified shape.
@@ -2021,14 +2018,6 @@ def reshape(
   __tracebackhide__ = True
   util.check_arraylike("reshape", a)
 
-  # TODO(jakevdp): finalized 2024-12-2; remove argument after JAX v0.4.40.
-  if not isinstance(newshape, DeprecatedArg):
-    raise TypeError("The newshape argument to jnp.reshape was removed in JAX v0.4.36."
-                    " Use shape instead.")
-  if shape is None:
-    raise TypeError(
-      "jnp.shape requires passing a `shape` argument, but none was given."
-    )
   try:
     # forward to method for ndarrays
     return a.reshape(shape, order=order)  # type: ignore[call-overload,union-attr]
