@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
+#include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "jaxlib/xla/pytree.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/python/nb_helpers.h"
