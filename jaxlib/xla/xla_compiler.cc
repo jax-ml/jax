@@ -44,6 +44,7 @@ limitations under the License.
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/xla/dlpack.h"
+#include "jaxlib/xla/py_client.h"
 #include "xla/array.h"
 #include "xla/client/executable_build_options.h"
 #include "xla/debug_options_flags.h"
@@ -71,7 +72,6 @@ limitations under the License.
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/python/nb_helpers.h"
 #include "xla/python/nb_numpy.h"
-#include "xla/python/py_client.h"
 #include "xla/python/types.h"
 #include "xla/service/call_inliner.h"
 #include "xla/service/computation_placer.h"
