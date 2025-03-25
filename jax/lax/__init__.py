@@ -198,6 +198,7 @@ from jax._src.lax.lax import (
   select as select,
   select_n as select_n,
   select_n_p as select_n_p,
+  shape_as_value as shape_as_value,
   shift_left as shift_left,
   shift_left_p as shift_left_p,
   shift_right_arithmetic as shift_right_arithmetic,

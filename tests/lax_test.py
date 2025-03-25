@@ -29,6 +29,7 @@ import numpy as np
 
 import jax
 from jax._src import core
+from jax import export
 from jax import jvp, grad
 from jax import lax
 import jax.numpy as jnp
@@ -3620,6 +3621,37 @@ class LaxTest(jtu.JaxTestCase):
       return y + z
     g = jax.grad(f)(5.)  # doesn't crash
     self.assertAllClose(g, 3., check_dtypes=False)
+
+  def test_shape_as_value_handles_static_shapes(self):
+    result = lax.shape_as_value(())
+    self.assertArraysEqual(result, lax.full((0,), np.array(0, np.int64)))
+
+    result = lax.shape_as_value((2,))
+    self.assertArraysEqual(result, np.asarray((2,), np.int64))
+
+    result = lax.shape_as_value((2, 3))
+    self.assertArraysEqual(result, np.asarray((2, 3), np.int64))
+
+  def test_shape_as_value_handles_polymorphic_shapes(self):
+    @jax.jit
+    def f(x):
+      return lax.shape_as_value(x.shape)
+
+    exported = export.export(f)(
+        jax.ShapeDtypeStruct(export.symbolic_shape("a"), jnp.float32)
+    )
+    result = exported.call(np.ones((1), dtype=np.float32))
+    self.assertArraysEqual(result, np.asarray((1,), np.int64))
+    result = exported.call(np.ones((2), dtype=np.float32))
+    self.assertArraysEqual(result, np.asarray((2,), np.int64))
+
+    exported = export.export(f)(
+        jax.ShapeDtypeStruct(export.symbolic_shape("a, b"), jnp.float32)
+    )
+    result = exported.call(np.ones((1, 2), dtype=np.float32))
+    self.assertArraysEqual(result, np.asarray((1, 2), np.int64))
+    result = exported.call(np.ones((3, 4), dtype=np.float32))
+    self.assertArraysEqual(result, np.asarray((3, 4), np.int64))
 
 
 class LazyConstantTest(jtu.JaxTestCase):
