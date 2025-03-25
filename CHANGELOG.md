@@ -20,6 +20,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
   * {func}`jax.tree_util.build_tree` is deprecated. Use {func}`jax.tree.unflatten`
     instead.
+  * Several previously-deprecated APIs have been removed, including:
+    * From `jax.lib.xla_client`: `FftType`, `PaddingType`, `dtype_to_etype`,
+      and `shape_from_pyval`.
 
 ## jax 0.5.3 (Mar 19, 2025)
 
