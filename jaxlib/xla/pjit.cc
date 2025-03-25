@@ -51,6 +51,7 @@ limitations under the License.
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/xla/config.h"
+#include "jaxlib/xla/guard_lib.h"
 #include "jaxlib/xla/jax_jit.h"
 #include "jaxlib/xla/py_array.h"
 #include "jaxlib/xla/py_executable.h"
@@ -60,7 +61,6 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/lru_cache.h"
-#include "xla/python/guard_lib.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"

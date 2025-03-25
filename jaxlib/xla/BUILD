@@ -18,12 +18,12 @@ load(
     "if_oss",
     "jax_visibility",
     "nanobind_extension",
+    "proto_library",
     "py_deps",
     "py_strict_library",
     "py_strict_test",
     "pytype_strict_library",
 )
-# Placeholder: load proto_library
 
 licenses(["notice"])
 
@@ -49,6 +49,7 @@ nanobind_extension(
         ":config",
         ":custom_call_sharding",
         ":dlpack",
+        ":guard_lib",
         ":ifrt_proxy",
         ":jax_jit",
         ":mlir",
@@ -57,6 +58,7 @@ nanobind_extension(
         ":py_client",
         ":pytree",
         ":sdy",
+        ":util",
         ":weakref_lru_cache",
         ":xla_compiler",
         "@com_google_absl//absl/base",
@@ -99,7 +101,6 @@ nanobind_extension(
         "@xla//xla/pjrt/distributed:service",
         "@xla//xla/pjrt/plugin/xla_cpu:cpu_client_options",
         "@xla//xla/pjrt/plugin/xla_cpu:xla_cpu_pjrt_client",
-        "@xla//xla/python:guard_lib",
         "@xla//xla/python:logging",
         "@xla//xla/python:nb_absl_flat_hash_map",
         "@xla//xla/python:nb_absl_span",
@@ -111,7 +112,6 @@ nanobind_extension(
         "@xla//xla/python:refine_polymorphic_shapes",
         "@xla//xla/python:traceback",
         "@xla//xla/python:types",
-        "@xla//xla/python:util",
         "@xla//xla/python/ifrt",
         "@xla//xla/python/ifrt:plugin_program",
         "@xla//xla/python/ifrt:plugin_program_serdes",
@@ -145,6 +145,41 @@ nanobind_extension(
         # we support MPI collectives only in OSS builds
         "//conditions:default": if_oss(["@xla//xla/backends/cpu/collectives:mpi_collectives"]),
     }),
+)
+
+cc_library(
+    name = "callback",
+    srcs = [
+        "callback.cc",
+    ],
+    hdrs = [
+        "callback.h",
+    ],
+    compatible_with = [],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@nanobind",
+        "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
+        "@xla//xla:comparison_util",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/pjrt:host_callback",
+        "@xla//xla/pjrt:transpose",
+        "@xla//xla/python:nb_numpy",
+        "@xla//xla/python:python_ref_manager",
+        "@xla//xla/service:custom_call_status",
+        "@xla//xla/tsl/platform:statusor",
+    ],
 )
 
 cc_library(
@@ -212,6 +247,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":py_client",
+        ":util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -233,12 +269,31 @@ cc_library(
         "@xla//xla/python:python_ref_manager",
         "@xla//xla/python:traceback",
         "@xla//xla/python:types",
-        "@xla//xla/python:util",
         "@xla//xla/python/ifrt",
         "@xla//xla/python/pjrt_ifrt",
         "@xla//xla/tsl/platform:errors",
         "@xla//xla/tsl/platform:logging",
         "@xla//xla/tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "guard_lib",
+    srcs = ["guard_lib.cc"],
+    hdrs = ["guard_lib.h"],
+    compatible_with = [],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/functional:function_ref",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/status",
+        "@nanobind",
+        "@xla//xla:util",
     ],
 )
 
@@ -361,6 +416,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":config",
+        ":guard_lib",
         ":jax_jit",
         ":py_client",
         ":pytree",
@@ -382,7 +438,6 @@ cc_library(
         "@xla//xla:util",
         "@xla//xla/pjrt:exceptions",
         "@xla//xla/pjrt:lru_cache",
-        "@xla//xla/python:guard_lib",
         "@xla//xla/python:nb_class_ptr",
         "@xla//xla/python:nb_helpers",
         "@xla//xla/python:nb_numpy",
@@ -482,6 +537,12 @@ cc_library(
     features = ["-use_header_modules"],
     visibility = jax_visibility("jaxlib/xla/py_client"),
     deps = [
+        ":callback",
+        ":guard_lib",
+        ":py_client_cpu",
+        ":py_host_callback",
+        ":py_host_callback_cc_proto",
+        ":util",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/cleanup",
@@ -541,20 +602,14 @@ cc_library(
         "@xla//xla/pjrt/distributed",
         "@xla//xla/pjrt/distributed:client",
         "@xla//xla/python:aggregate_profile",
-        "@xla//xla/python:callback",
-        "@xla//xla/python:guard_lib",
         "@xla//xla/python:nb_absl_span",
         "@xla//xla/python:nb_class_ptr",
         "@xla//xla/python:nb_helpers",
         "@xla//xla/python:nb_numpy",
         "@xla//xla/python:pprof_profile_builder",
-        "@xla//xla/python:py_client_cpu",
-        "@xla//xla/python:py_host_callback",
-        "@xla//xla/python:py_host_callback_proto_cc",
         "@xla//xla/python:python_ref_manager",
         "@xla//xla/python:traceback",
         "@xla//xla/python:types",
-        "@xla//xla/python:util",
         "@xla//xla/python:xplane_to_profile_instructions",
         "@xla//xla/python/compile_only_ifrt:client",
         "@xla//xla/python/ifrt",
@@ -586,6 +641,86 @@ cc_library(
         "@xla//xla/tsl/platform:statusor",
         "@xla//xla/tsl/python/lib/core:numpy",
     ],
+)
+
+cc_library(
+    name = "py_client_cpu",
+    srcs = ["py_client_cpu.cc"],
+    hdrs = ["py_client_cpu.h"],
+    compatible_with = [],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@nanobind",
+        "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
+        "@xla//xla:shape_util",
+        "@xla//xla/ffi:ffi_api",
+        "@xla//xla/ffi/api:ffi",
+        "@xla//xla/pjrt:host_callback",
+        "@xla//xla/pjrt:transpose",
+        "@xla//xla/python:nb_numpy",
+        "@xla//xla/python:types",
+    ],
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "py_host_callback",
+    srcs = ["py_host_callback.cc"],
+    hdrs = ["py_host_callback.h"],
+    compatible_with = [],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        ":callback",
+        ":py_host_callback_cc_proto",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@llvm-project//llvm:Support",
+        "@nanobind",
+        "@xla//xla:shape_util",
+        "@xla//xla:status_macros",
+        "@xla//xla:util",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/pjrt:host_callback",
+        "@xla//xla/pjrt:pjrt_compiler",
+        "@xla//xla/python:python_ref_manager",
+        "@xla//xla/python:types",
+        "@xla//xla/python/ifrt",
+        "@xla//xla/python/pjrt_ifrt",
+        "@xla//xla/python/pjrt_ifrt:xla_host_callback_proto_cc",
+        "@xla//xla/tsl/concurrency:ref_count",
+        "@xla//xla/tsl/platform:statusor",
+    ],
+)
+
+proto_library(
+    name = "py_host_callback_proto",
+    srcs = ["py_host_callback.proto"],
+)
+
+cc_proto_library(
+    name = "py_host_callback_cc_proto",
+    visibility = jax_visibility("jaxlib/xla/py_host_callback_cc_proto"),
+    deps = [":py_host_callback_proto"],
 )
 
 cc_library(
@@ -694,6 +829,25 @@ cc_library(
         "@xla//xla/service/spmd/shardy/sdy_round_trip:import_shardy_attrs",
         "@xla//xla/service/spmd/shardy/sdy_round_trip:pipelines",
         "@xla//xla/tsl/framework/mlir:status_scoped_diagnostic_handler",
+    ],
+)
+
+cc_library(
+    name = "util",
+    srcs = ["util.cc"],
+    hdrs = ["util.h"],
+    compatible_with = [],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/types:span",
+        "@xla//xla:util",
+        "@xla//xla/python/ifrt",
+        "@xla//xla/tsl/concurrency:ref_count",
     ],
 )
 

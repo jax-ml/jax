@@ -57,12 +57,14 @@ limitations under the License.
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/xla/guard_lib.h"
 #include "jaxlib/xla/py_client.h"
 #include "jaxlib/xla/py_device.h"
 #include "jaxlib/xla/py_device_list.h"
 #include "jaxlib/xla/py_values.h"
 #include "jaxlib/xla/sharding.h"
 #include "jaxlib/xla/to_ifrt_sharding.h"
+#include "jaxlib/xla/util.h"
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/pjrt/exceptions.h"
@@ -73,7 +75,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/primitive_util.h"
-#include "xla/python/guard_lib.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/array_spec.h"
 #include "xla/python/ifrt/device.h"
@@ -95,7 +96,6 @@ limitations under the License.
 #include "xla/python/python_ref_manager.h"
 #include "xla/python/traceback.h"
 #include "xla/python/types.h"
-#include "xla/python/util.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/status_macros.h"

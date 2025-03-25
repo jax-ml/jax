@@ -31,6 +31,7 @@ load("@xla//xla/tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_c
 cc_proto_library = _cc_proto_library
 cuda_library = _cuda_library
 rocm_library = _rocm_library
+proto_library = native.proto_library
 nanobind_extension = _pybind_extension
 if_cuda_is_configured = _if_cuda_is_configured
 if_rocm_is_configured = _if_rocm_is_configured

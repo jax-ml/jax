@@ -84,6 +84,7 @@ proto_library(
 
 cc_proto_library(
     name = "triton_cc_proto",
+    compatible_with = None,
     deps = [":triton_proto"],
 )
 

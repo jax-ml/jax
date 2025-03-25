@@ -87,6 +87,7 @@ limitations under the License.
 #include "jaxlib/xla/config.h"
 #include "jaxlib/xla/custom_call_sharding.h"
 #include "jaxlib/xla/dlpack.h"
+#include "jaxlib/xla/guard_lib.h"
 #include "jaxlib/xla/jax_jit.h"
 #include "jaxlib/xla/mlir.h"
 #include "jaxlib/xla/pjit.h"
@@ -109,7 +110,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_common.h"
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
-#include "xla/python/guard_lib.h"
 #include "xla/python/logging.h"  // IWYU pragma: keep
 #include "xla/python/nb_absl_flat_hash_map.h"  // IWYU pragma: keep
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
