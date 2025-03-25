@@ -38,7 +38,6 @@ from jax._src.internal_test_util.export_back_compat_test_data import rocm_eigh_h
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eigh_lapack_syev
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_lu_lapack_getrf
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_qr_cusolver_geqrf
-from jax._src.internal_test_util.export_back_compat_test_data import rocm_qr_hipsolver_geqrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_qr_lapack_geqrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_schur_lapack_gees
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_svd_lapack_gesdd
@@ -147,7 +146,6 @@ class CompatTest(bctu.CompatTestBase):
         cuda_svd_cusolver_gesvd.data_2024_10_08,
         cpu_tridiagonal_solve_lapack_gtsv.data_2025_01_09,
         cuda_tridiagonal_cusolver_sytrd.data_2025_01_09,
-        rocm_qr_hipsolver_geqrf.data_2024_08_05,
         rocm_eigh_hipsolver_syev.data_2024_08_05,
         cpu_schur_lapack_gees.data_2023_07_16,
         cpu_svd_lapack_gesdd.data_2023_06_19,
@@ -453,29 +451,6 @@ class CompatTest(bctu.CompatTestBase):
     data = self.load_testdata(cpu_qr_lapack_geqrf.data_2023_03_17[dtype_name])
     self.run_one_test(func, data, rtol=rtol,
                       expect_current_custom_calls=info["custom_call_targets"])
-
-  # TODO(b/369826500): Remove legacy custom call test after mid March 2025.
-  @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}_{batched}",
-           dtype_name=dtype_name, batched=batched)
-      for dtype_name in ("f32",)
-      # For batched qr we use cublas_geqrf_batched/hipblas_geqrf_batched.
-      for batched in ("batched", "unbatched"))
-  def test_gpu_qr_solver_geqrf_legacy(self, dtype_name, batched):
-    if jtu.test_device_matches(["rocm"]):
-      data = self.load_testdata(rocm_qr_hipsolver_geqrf.data_2024_08_05[batched])
-      prefix = "hip"
-    elif jtu.test_device_matches(["cuda"]):
-      data = self.load_testdata(cuda_qr_cusolver_geqrf.data_2023_03_18[batched])
-      prefix = "cu"
-    else:
-      self.skipTest("Unsupported platform")
-    dtype = dict(f32=np.float32)[dtype_name]
-    rtol = dict(f32=1e-3)[dtype_name]
-    shape = dict(batched=(2, 3, 3), unbatched=(3, 3))[batched]
-    func = lambda: CompatTest.qr_harness(shape, dtype)
-    self.run_one_test(func, data, rtol=rtol, expect_current_custom_calls=[
-        f"{prefix}solver_geqrf_ffi", f"{prefix}solver_orgqr_ffi"])
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)

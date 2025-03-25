@@ -102,7 +102,6 @@ def prepare_wheel_cuda(
       dst_dir=plugin_dir,
       src_files=[
           f"__main__/jaxlib/cuda/_solver.{pyext}",
-          f"__main__/jaxlib/cuda/_blas.{pyext}",
           f"__main__/jaxlib/cuda/_linalg.{pyext}",
           f"__main__/jaxlib/cuda/_prng.{pyext}",
           f"__main__/jaxlib/cuda/_rnn.{pyext}",
@@ -140,7 +139,6 @@ def prepare_wheel_rocm(
   copy_runfiles(
       dst_dir=plugin_dir,
       src_files=[
-          f"__main__/jaxlib/rocm/_blas.{pyext}",
           f"__main__/jaxlib/rocm/_linalg.{pyext}",
           f"__main__/jaxlib/rocm/_prng.{pyext}",
           f"__main__/jaxlib/rocm/_solver.{pyext}",
