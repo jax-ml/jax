@@ -53,14 +53,14 @@ limitations under the License.
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/xla/py_values.h"
 #include "jaxlib/xla/pytree.h"
+#include "jaxlib/xla/sharding.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/nb_absl_inlined_vector.h"  // IWYU pragma: keep
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
-#include "xla/python/py_values.h"
-#include "xla/python/sharding.h"
 #include "xla/python/types.h"
 #include "xla/tsl/platform/logging.h"
 #include "tsl/profiler/lib/traceme.h"

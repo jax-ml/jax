@@ -35,12 +35,12 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "jaxlib/xla/py_values.h"
 #include "jaxlib/xla/pytree.h"
+#include "jaxlib/xla/sharding.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/python/nb_helpers.h"
-#include "xla/python/py_values.h"
 #include "xla/python/python_ref_manager.h"
-#include "xla/python/sharding.h"
 #include "xla/tsl/platform/logging.h"
 
 namespace jax {
