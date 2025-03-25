@@ -16,6 +16,7 @@ import collections
 import dataclasses
 import enum
 import functools
+import gc
 import itertools
 import math
 import threading
@@ -28,8 +29,9 @@ from jax._src import core as jax_core
 from jax._src.lax.control_flow import for_loop
 from jax._src import linear_util as lu
 from jax._src import source_info_util
-from jax._src.pallas.mosaic import primitives as mosaic_primitives
 from jax._src.pallas.mosaic import core as mosaic_core
+from jax._src.pallas.mosaic import primitives as mosaic_primitives
+from jax._src.pallas.mosaic import verification
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src import pjit
@@ -477,6 +479,8 @@ class SharedMemory:
 
   next_dma_id: int = 100
 
+  deallocated_bytes: int = 0
+
 
 # TODO(jburnim): Do we want to support multiple instances of SharedMemory?
 # Maybe for running multiple distinct interpreted computations in parallel?
@@ -570,8 +574,18 @@ def _deallocate_buffer(device_id, memory_space, buffer_id):
 
   shared_memory = _get_shared_memory()
   with shared_memory.lock:
-    # TODO(jburnim): Error if buffer doesn't exist?
-    shared_memory.mem.pop((memory_space, buffer_id, device_id), None)
+    buff = shared_memory.mem.pop((memory_space, buffer_id, device_id))
+    shared_memory.deallocated_bytes += buff.size * buff.itemsize
+    del buff
+
+    should_collect = shared_memory.deallocated_bytes > 100_000_000
+    if should_collect:
+      shared_memory.deallocated_bytes = 0
+
+  if should_collect:
+    # Periodic garbage collection here prevents OOMs -- although it's not clear
+    # why arrays are not getting freed without this.
+    gc.collect()
 
 def _allocate_semaphores(device_id, shape):
   device_id = int(device_id)
@@ -1067,6 +1081,21 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
             ordered=True)
 
       elif prim is mosaic_primitives.delay_p:
+        # TODO(jburnim): Implement this properly?
+        out = []
+
+      elif prim is mosaic_primitives.prng_seed_p:
+        # TODO(jburnim): Implement this properly?
+        out = []
+
+      elif prim is mosaic_primitives.prng_random_bits_p:
+        # TODO(jburnim): Implement this properly?
+        out = jnp.zeros(eqn.params['shape'], jnp.int32)
+
+      elif prim is verification.assume_p:
+        out = read(eqn.invars[0])
+
+      elif prim is verification.pretend_p:
         out = []
 
       elif prim is lax.cond_p:
@@ -1142,16 +1171,8 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
 
         out = _interpret(eqn.params['jaxpr'], *deferred_invals(), *allocs)
 
-        for a in allocs:
-          if isinstance(a, tuple):
-            callback.io_callback(
-                _deallocate_buffer,
-                None,
-                device_id,
-                TPU_MEMORY_SPACE_IDXS[v.aval.memory_space],
-                a,
-                ordered=True)
-          else:
+        for a, v in zip(allocs, eqn.params['jaxpr'].invars):
+          if v.aval.memory_space == mosaic_core.TPUMemorySpace.SEMAPHORE:
             # TODO(jburnim): De-allocate semaphores.
             # callback.io_callback(
             #     _deallocate_semaphores,
@@ -1160,6 +1181,14 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
             #     a,
             #     ordered=True)
             pass
+          else:
+            callback.io_callback(
+                _deallocate_buffer,
+                None,
+                device_id,
+                TPU_MEMORY_SPACE_IDXS[v.aval.memory_space],
+                a,
+                ordered=True)
 
       elif prim is state_primitives.get_p:
         invals = deferred_invals()
