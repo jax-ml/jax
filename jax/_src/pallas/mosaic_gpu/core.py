@@ -31,13 +31,13 @@ from jax._src import effects
 from jax._src import tree_util
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import utils as pallas_utils
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import types as state_types
 import jax.experimental.mosaic.gpu as mgpu
 import jax.numpy as jnp
 from jaxlib.mlir import ir
-
 
 AbstractMemoryRef = pallas_core.AbstractMemoryRef
 
@@ -313,7 +313,7 @@ class TransposeTransform(MemoryRefTransform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class TransposeRef(state_types.Transform):
-  permutation: tuple[int, ...]
+  permutation: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
 
   def transform_shape(self, shape):
     if shape is None:
@@ -341,17 +341,30 @@ class TransposeRef(state_types.Transform):
     return mgpu.TransposeTransform(_perm_inverse(self.permutation))
 
 
-def transpose_ref(
-    ref: pallas_core.TransformedRef | Any,
-    permutation: tuple[int, ...],
+def transform_ref(
+    ref: pallas_core.TransformedRef,
+    transform: state_types.Transform
 ) -> pallas_core.TransformedRef:
   if not isinstance(ref, pallas_core.TransformedRef):
     if not isinstance(jax_core.get_aval(ref), pallas_core.AbstractMemoryRef):
       raise TypeError("ref must be a reference")
     ref = pallas_core.TransformedRef(ref, transforms=())
   return pallas_core.TransformedRef(
-      ref.ref, (*ref.transforms, TransposeRef(permutation)),
+      ref.ref, (*ref.transforms, transform),
   )
+
+def transpose_ref(
+    ref: pallas_core.TransformedRef | Any,
+    permutation: tuple[int, ...],
+) -> pallas_core.TransformedRef:
+  return transform_ref(ref, TransposeRef(permutation))
+
+def untile_ref(ref, tiling: tuple[int, ...]) -> pallas_core.TransformedRef:
+  return transform_ref(ref, UntileRef(tiling))
+
+def unswizzle_ref(ref, swizzle: int) -> pallas_core.TransformedRef:
+  swizzle_elems = (swizzle * 8) // pallas_utils.dtype_bitwidth(ref.dtype)
+  return transform_ref(ref, UnswizzleRef(swizzle_elems))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -368,9 +381,10 @@ class SwizzleTransform(MemoryRefTransform):
   def batch(self, leading_rank: int):
     return self
 
+
   def undo(self, ref: pallas_core.TransformedRef) -> pallas_core.TransformedRef:
     return dataclasses.replace(
-        ref, transforms=(*ref.transforms, UnswizzleRef(self.swizzle))
+        ref, transforms=(*ref.transforms, UnswizzleRef((self.swizzle * 8) // pallas_utils.dtype_bitwidth(ref.dtype)))
     )
 
   def to_gpu_transform(self) -> mgpu.MemRefTransform:
@@ -381,7 +395,7 @@ class SwizzleTransform(MemoryRefTransform):
     raise NotImplementedError
 
   def __call__(self, aval: jax_core.ShapedArray) -> jax_core.ShapedArray:
-    swizzle_elems = self.swizzle // aval.dtype.itemsize
+    swizzle_elems = (self.swizzle * 8) // pallas_utils.dtype_bitwidth(aval.dtype)
     if swizzle_elems != aval.shape[-1]:
       raise ValueError(
           f"Swizzle {self.swizzle} requires the trailing dimension to be of"
@@ -393,7 +407,7 @@ class SwizzleTransform(MemoryRefTransform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class UnswizzleRef(state_types.Transform):
-  swizzle: int = dataclasses.field(metadata=dict(static=True))
+  swizzle_elems: int = dataclasses.field(metadata=dict(static=True))
 
   def untransform_index(
       self, idxs: tuple[Index, ...]
@@ -406,14 +420,14 @@ class UnswizzleRef(state_types.Transform):
       )
     last_idx = idxs[-1]
     if isinstance(last_idx, mgpu.DynamicSlice):
-      if last_idx.base != 0 or last_idx.length != self.swizzle:
+      if last_idx.base != 0 or last_idx.length != self.swizzle_elems:
         raise ValueError("Swizzled dims cannot be sliced")
     else:
       assert isinstance(last_idx, slice)
       if (
           (last_idx.step is not None and last_idx.step != 1)
           or (last_idx.start is not None and last_idx.start != 0)
-          or (last_idx.stop is not None and last_idx.stop != self.swizzle)
+          or (last_idx.stop is not None and last_idx.stop != self.swizzle_elems)
       ):
         raise ValueError("Swizzled dims cannot be sliced")
     return idxs, self
