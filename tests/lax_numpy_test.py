@@ -3496,11 +3496,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  def testReshapeDeprecatedArgs(self):
-    msg = "The newshape argument to jnp.reshape was removed in JAX v0.4.36."
-    with self.assertRaisesRegex(TypeError, msg):
-      jnp.reshape(jnp.arange(4), newshape=(2, 2))
-
   @jtu.sample_product(
     [dict(arg_shape=arg_shape, out_shape=out_shape)
       for arg_shape, out_shape in [

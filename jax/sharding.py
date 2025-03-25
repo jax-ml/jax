@@ -34,18 +34,3 @@ from jax._src.mesh import (
     AxisType as AxisType,
     get_abstract_mesh as get_abstract_mesh,
 )
-
-_deprecations = {
-    # Finalized 2024-10-01; remove after 2025-01-01.
-    "XLACompatibleSharding": (
-        (
-            "jax.sharding.XLACompatibleSharding was removed in JAX v0.4.34. "
-            "Use jax.sharding.Sharding instead."
-        ),
-        None,
-    )
-}
-
-from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-__getattr__ = _deprecation_getattr(__name__, _deprecations)
-del _deprecation_getattr

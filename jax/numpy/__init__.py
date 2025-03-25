@@ -506,19 +506,3 @@ from jax._src.numpy.vectorize import vectorize as vectorize
 from jax._src.numpy.array_methods import register_jax_array_methods
 register_jax_array_methods()
 del register_jax_array_methods
-
-
-_deprecations = {
-  # Finalized 2024-12-13; remove after 2024-3-13
-  "round_": (
-    "jnp.round_ was deprecated in JAX 0.4.38; use jnp.round instead.",
-    None
-  ),
-}
-
-import typing
-if not typing.TYPE_CHECKING:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del typing
