@@ -28,6 +28,7 @@ from jax._src.lib.mlir.dialects import scf
 from jax.experimental.mosaic import gpu as mgpu
 from jax.experimental.mosaic.gpu import c, ds
 from jax.experimental.mosaic.gpu import tcgen05
+from jax.experimental.mosaic.gpu import mma_utils
 from jax.experimental.mosaic.gpu import profiler
 import jax.numpy as jnp
 import jax.random as jr
@@ -174,14 +175,18 @@ def build_kernel(
               arrive=False,
               uniform=False,
           )
+
+          a_smem_slot = mgpu.memref_slice(a_smem, slot)
+          a_smem_slot_2d_shape, _ = mma_utils.tiled_memref_shape(a_smem_slot)
+          a_smem_slot_2d = mgpu.memref_reshape(a_smem_slot, a_smem_slot_2d_shape)
+
           ctx.async_copy(
               src_ref=a,
-              dst_ref=mgpu.memref_slice(a_smem, slot),
+              dst_ref=a_smem_slot_2d,
               # We load a fixed tile_m, even though we only need
               # group_chunk_m. With tensormap.replace we'll be able to
               # update the window dynamically.
               gmem_slice=(ds(group_chunk_a, tile_m), ds(k_start, tile_k)),
-              gmem_transform=mgpu.TileTransform(tiling),
               **common_args,
           )
           ctx.async_copy(
