@@ -564,7 +564,7 @@ def infer_layout(module: ir.Module):
   for op in module.body:
     traverse_op(op, update_default_vector_size)
 
-  if default_vector_size is None:  # Nothing to annotate.
+  if default_vector_size == math.inf:  # Nothing to annotate.
     return
 
   def to_default_layout(ty: ir.Type) -> ir.Attribute | None:
