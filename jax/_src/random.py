@@ -38,6 +38,8 @@ from jax._src.api import jit, vmap
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.sharding_impls import canonicalize_sharding
+from jax._src.pjit import auto_axes
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy.lax_numpy import _convert_and_clip_integer
 from jax._src.numpy.util import _arraylike, check_arraylike, promote_dtypes_inexact
@@ -379,7 +381,8 @@ def uniform(key: ArrayLike,
             shape: Shape = (),
             dtype: DTypeLikeFloat = float,
             minval: RealArray = 0.,
-            maxval: RealArray = 1.) -> Array:
+            maxval: RealArray = 1.,
+            out_sharding=None) -> Array:
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
   Args:
@@ -397,14 +400,21 @@ def uniform(key: ArrayLike,
   key, _ = _check_prng_key("uniform", key)
   dtypes.check_user_dtype_supported(dtype)
   shape = core.canonicalize_shape(shape)
+  out_sharding = canonicalize_sharding(out_sharding, "uniform")
 
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `uniform` must be a float dtype, "
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  return _uniform(key, shape, dtype, minval, maxval)
+  return _uniform_auto(key, shape, dtype, minval, maxval, out_sharding)
 
-@partial(jit, static_argnums=(1, 2))
+@partial(jit, static_argnums=(1, 2, 5))
+def _uniform_auto(key, shape, dtype, minval, maxval, out_sharding) -> Array:
+  if out_sharding is None:
+    return _uniform(key, shape, dtype, minval, maxval)
+  def f(key, minval, maxval): return _uniform(key, shape, dtype, minval, maxval)
+  return auto_axes(f, out_shardings=out_sharding)(key, minval, maxval)
+
 def _uniform(key, shape, dtype, minval, maxval) -> Array:
   _check_shape("uniform", shape)
   if not jnp.issubdtype(dtype, np.floating):
