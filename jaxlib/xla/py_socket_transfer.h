@@ -1,4 +1,4 @@
-/* Copyright 2024 The JAX Authors
+/* Copyright 2025 The JAX Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -12,23 +12,15 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+#ifndef JAXLIB_XLA_TRANSFER_PY_SOCKET_TRANSFER_H_
+#define JAXLIB_XLA_TRANSFER_PY_SOCKET_TRANSFER_H_
 
-#ifndef JAXLIB_XLA_CONFIG_H_
-#define JAXLIB_XLA_CONFIG_H_
-
-#include <vector>
-
-// placeholder for index annotation headers
 #include "nanobind/nanobind.h"
 
-namespace jax {
+namespace aux {
 
-// Returns the set of configuration values that should be included in the JIT
-// cache key.
-std::vector<nanobind::object> JitConfigs();
+void RegisterTransferServerTypes(nanobind::module_& m);
 
-void BuildConfigSubmodule(nanobind::module_& m);
+}  // namespace aux
 
-}  // namespace jax
-
-#endif  // JAXLIB_XLA_CONFIG_H_
+#endif  // JAXLIB_XLA_TRANSFER_PY_SOCKET_TRANSFER_H_

@@ -71,9 +71,9 @@ limitations under the License.
 #if defined(__linux__)
 #include "gloo/transport/tcp/attr.h"
 #include "gloo/transport/tcp/device.h"
+#include "jaxlib/xla/py_socket_transfer.h"
 #include "xla/backends/cpu/collectives/gloo_collectives.h"
 #include "xla/backends/cpu/collectives/gloo_kv_store.h"
-#include "xla/python/transfer/py_socket_transfer.h"
 #elif defined(__APPLE__)
 #include "gloo/transport/uv/device.h"
 #include "xla/backends/cpu/collectives/gloo_collectives.h"  // NOLINT

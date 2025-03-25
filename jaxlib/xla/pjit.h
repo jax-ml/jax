@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef TENSORFLOW_COMPILER_XLA_PYTHON_PJIT_H_
-#define TENSORFLOW_COMPILER_XLA_PYTHON_PJIT_H_
+#ifndef JAXLIB_XLA_PJIT_H_
+#define JAXLIB_XLA_PJIT_H_
 
 // placeholder for index annotation headers
 #include "nanobind/nanobind.h"
@@ -24,4 +24,4 @@ namespace jax {
 void BuildPjitSubmodule(nanobind::module_& m);
 }
 
-#endif  // TENSORFLOW_COMPILER_XLA_PYTHON_PJIT_H_
+#endif  // JAXLIB_XLA_PJIT_H_
