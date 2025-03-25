@@ -291,8 +291,17 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     if len(out_tree_children) != 2:
       msg = "scan body output must be a pair, got {}."
       raise TypeError(msg.format(tree_unflatten(out_tree, jaxpr.out_avals)))
-    _, carry_avals_out, _ = split_list(
-        jaxpr.out_avals, [len(attrs_tracked), out_tree_children[0].num_leaves])
+
+    if attrs_tracked:
+      appends_out = [kind is pe.Append for *_, (_, _, kind) in attrs_tracked]
+      jaxpr = pe.move_outvars_to_back(
+          jaxpr, appends_out + [False] * (len(jaxpr.out_avals) - len(appends_out)))
+      num_attr_carry = sum(init_tree.num_leaves for init_tree, _, (_, _, kind)
+                           in attrs_tracked if kind is pe.ReadWrite)
+      _, carry_avals_out, _ = split_list(
+          jaxpr.out_avals, [num_attr_carry, out_tree_children[0].num_leaves])
+    else:
+      carry_avals_out, _ = split_list(jaxpr.out_avals, [out_tree_children[0].num_leaves])
     return (init_flat, carry_avals, carry_avals_out, init_tree, in_flat, jaxpr,
             consts, out_tree, out_tree_children, attrs_tracked)
 
@@ -325,9 +334,8 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     raise ValueError("`unroll` must be a `bool` or a positive `int`.")
   if attrs_tracked:
     in_state = _get_states(attrs_tracked)
-    in_carry, in_ext = split_list(in_flat, [num_carry])
-    in_flat = [*in_state, *in_carry, *in_ext]
-    num_carry += len(attrs_tracked)
+    in_flat = [*in_state, *in_flat]
+    num_carry += len(in_state)
   out = scan_p.bind(*consts, *in_flat,
                     reverse=reverse, length=length, jaxpr=jaxpr,
                     num_consts=len(consts), num_carry=num_carry,
@@ -335,26 +343,49 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
                     unroll=unroll,
                     _split_transpose=_split_transpose)
   if attrs_tracked:
-    out_state, out = split_list(out, [len(attrs_tracked)])
-    _set_states(attrs_tracked, out_state)
+    num_ext = (len(out) - len(in_state)
+               - sum(k is pe.Append for *_, (_, _, k) in attrs_tracked))
+    out_state, out, out_append = split_list(out, [len(in_state), num_ext])
+    out_attrs = _merge_attrs_out(attrs_tracked, out_state, out_append)
+    _set_states(attrs_tracked, out_attrs)
   return tree_unflatten(out_tree, out)
 
 def _set_states(attrs_tracked, vals):
-  from jax.experimental.attrs import jax_setattr
+  from jax.experimental.attrs import jax_setattr, jax_extendattr
   valss = split_list_checked(vals, [td.num_leaves for _, td, _ in attrs_tracked])
-  for ((_, treedef, (obj, attr)), leaves) in zip(attrs_tracked, valss):
-    val = tree_unflatten(treedef, leaves)
-    jax_setattr(obj, attr, val)
+  for ((_, treedef, (obj, attr, kind)), leaves) in zip(attrs_tracked, valss):
+    if kind is pe.ReadWrite:
+      val = tree_unflatten(treedef, leaves)
+      jax_setattr(obj, attr, val)
+    elif kind is pe.Append:
+      val, = leaves
+      jax_extendattr(obj, attr, val.reshape(-1, *val.shape[2:]))
+    else:
+      assert False
 
 def _get_states(attrs_tracked):
   from jax.experimental.attrs import jax_getattr
   vals = []
-  for treedef, _, (obj, attr) in attrs_tracked:
-    tree = jax_getattr(obj, attr)
-    leaves, treedef_ = tree_flatten(tree)
-    assert treedef == treedef_
-    vals.extend(leaves)
+  for treedef, _, (obj, attr, kind) in attrs_tracked:
+    if kind is pe.ReadWrite:
+      tree = jax_getattr(obj, attr)
+      leaves, treedef_ = tree_flatten(tree)
+      assert treedef == treedef_
+      vals.extend(leaves)
+    elif kind is pe.Append:
+      pass
+    else:
+      assert False
   return vals
+
+def _merge_attrs_out(attrs_tracked, out_state, out_append):
+  out_state_, out_append_ = iter(out_state), iter(out_append)
+  out_attrs = [item for _, out_tree, (_, _, k) in attrs_tracked for item in
+               (itertools.islice(out_state_, out_tree.num_leaves)
+               if k is pe.ReadWrite else [next(out_append_)])]
+  assert next(out_state_, None) is next(out_append_, None) is None
+  return out_attrs
+
 
 def _capitalize(s):
   # s.capitalize() converts s[1:] to lowercase which we don't want.
@@ -655,7 +686,7 @@ def _scan_partial_eval(trace, *tracers, reverse: bool,
   # The above trace_to_jaxpr_nounits call computed loop-invariant residuals
   # (known values in invar_pvals_out) and also computed loop-invariant values
   # needed by the new jaxpr_known (in jaxpr_known_consts, which replace the
-  # previous consts). We need to collect the computed inteisive residuals, and
+  # previous consts). We need to collect the computed intensive residuals, and
   # move corresponding intensive residual binders in jaxpr_unknown to the front.
   res_pvals = invar_pvals_out[len(invar_pvals_out) - num_res:]
   intensive_res = [pval.get_known() for pval in res_pvals if pval.is_known()]
@@ -778,16 +809,21 @@ def _scan_transpose(cts, *args, reverse, length, num_consts,
   ct_consts = _map(ad_util.zeros_like_aval, jaxpr.in_avals[num_ires:num_consts])
 
   #       jaxpr :: [ires, T d] -> [T c] -> [T a, eres] -> ([T c], [T b])
-  # jaxpr_trans :: [ires] -> [CT d, CT c] -> [CT b, eres] -> ([CT d, CT c], [CT a])
+  # jaxpr_trans :: [ires] -> [CT d, CT c] -> [CT b, eres] -> ([CT d, CT c], [CT a, e])
   jaxpr_trans, attrs_tracked = _transpose_scan_jaxpr(
       jaxpr, num_ires, num_consts - num_ires, num_eres, ct_ys_is_zeros)
-  linear_trans = ([False] * num_ires + [False] * len(attrs_tracked) +
+  appends_out = [kind is pe.Append for *_, (_, _, kind) in attrs_tracked]
+  jaxpr_trans = pe.move_outvars_to_back(
+      jaxpr_trans, appends_out + [False] * (len(jaxpr_trans.out_avals) - len(appends_out)))
+  num_attr_carry = sum(init_tree.num_leaves for init_tree, _, (_, _, kind)
+                       in attrs_tracked if kind is pe.ReadWrite)
+  linear_trans = ([False] * num_ires + [False] * num_attr_carry +
                   [True] * (len(ct_consts) + len(ct_carry) + len(ct_ys)) +
                   [False] * num_eres)
   in_state = _get_states(attrs_tracked)
 
   transpose_inputs = *ires, *in_state, *ct_consts, *ct_carry, *ct_ys, *eres
-  transpose_num_out_carry = num_consts-num_ires+num_carry+len(attrs_tracked)
+  transpose_num_out_carry = num_consts-num_ires+num_carry+num_attr_carry
 
   if not _split_transpose:
     outs = scan_p.bind(
@@ -882,8 +918,10 @@ def _scan_transpose(cts, *args, reverse, length, num_consts,
         for mask in outs_mask
     ]
 
-  out_state, outs = split_list(outs, [len(attrs_tracked)])
-  _set_states(attrs_tracked, out_state)
+  num_outs = len(outs) - num_attr_carry - sum(appends_out)
+  out_state, outs, out_append = split_list(outs, [num_attr_carry, num_outs])
+  out_attrs = _merge_attrs_out(attrs_tracked, out_state, out_append)
+  _set_states(attrs_tracked, out_attrs)
   ct_consts, ct_init, ct_xs = split_list(outs, [num_consts - num_ires, num_carry])
   return [None] * num_ires + ct_consts + ct_init + ct_xs + [None] * num_eres
 
@@ -928,12 +966,10 @@ def _transpose_scan_jaxpr(jaxpr: core.ClosedJaxpr,
     return c_bar + a_bar
 
   # TODO(necula): fix arg names and results for transposed
-  transposed_wrapped = lu.wrap_init(transposed,
-                                    debug_info=jaxpr.jaxpr.debug_info)
-  return _make_closed_jaxpr_attrs(
-      transposed_wrapped,
-      tuple(res1_avals + c_avals + b_carry_avals +
-            b_ys_avals_stripped + res2_avals))
+  transposed_wrapped = lu.wrap_init(transposed, debug_info=jaxpr.jaxpr.debug_info)
+  trans_avals = (*res1_avals, *c_avals, *b_carry_avals, *b_ys_avals_stripped, *res2_avals)
+  trans_jaxpr, attrs_tracked = _make_closed_jaxpr_attrs(transposed_wrapped, trans_avals)
+  return trans_jaxpr, attrs_tracked
 
 
 def _scan_batching_rule(axis_data, args,
