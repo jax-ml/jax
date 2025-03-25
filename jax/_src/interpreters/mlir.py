@@ -16,8 +16,8 @@
 from __future__ import annotations
 
 import collections
-import contextlib
 from collections.abc import Callable, Iterable, Iterator, Sequence
+import contextlib
 import dataclasses
 import functools
 from functools import partial
@@ -30,8 +30,6 @@ import types
 import typing
 from typing import Any, NamedTuple, Protocol, Union, cast as type_cast
 import warnings
-
-import numpy as np
 
 from jax._src import ad_util
 from jax._src import api_util
@@ -48,18 +46,20 @@ from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
-from jax._src.partition_spec import PartitionSpec
-from jax._src.sharding import Sharding as JSharding
-from jax._src.sharding_impls import (AUTO, NamedSharding,
-                                     modify_sdy_sharding_wrt_axis_types,
-                                     SdyArraySharding, SdyArrayShardingList)
-from jax._src.util import foreach
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
 from jax._src.lib.mlir import dialects, ir, passmanager
-from jax._src.lib.mlir.dialects import func as func_dialect, hlo
 from jax._src.lib.mlir import register_jax_dialects
+from jax._src.lib.mlir.dialects import func as func_dialect, hlo
+from jax._src.partition_spec import PartitionSpec
+from jax._src.sharding import Sharding as JSharding
+from jax._src.sharding_impls import ( AUTO, NamedSharding,
+                                     SdyArraySharding, SdyArrayShardingList,
+                                     modify_sdy_sharding_wrt_axis_types)
 from jax._src.state.types import AbstractRef
+from jax._src.util import foreach
+import numpy as np
+import torch
 
 # mypy: ignore-errors
 
@@ -272,6 +272,8 @@ def ir_constant(val: Any) -> IrValues:
       return out
   if hasattr(val, '__jax_array__'):
     return ir_constant(val.__jax_array__())
+  # if isinstance(val, torch.fx.immutable_collections.immutable_list):
+  #   return ir_constant(list(val))
   raise TypeError(f"No constant handler for type: {type(val)}")
 
 def _numpy_array_constant(x: np.ndarray | np.generic) -> IrValues:
@@ -341,6 +343,39 @@ for ptype, dtype in dtypes.python_scalar_dtypes.items():
 def _token_constant_handler(val):
   return hlo.create_token()
 register_constant_handler(core.Token, _token_constant_handler)
+
+
+# def _list_constant_handler(val: list) -> IrValues:
+#   """Constant handler for list literals."""
+#   return [ir_constant(item) for item in val]
+
+
+# register_constant_handler(list, _list_constant_handler)
+
+
+def _immutable_list_constant_handler(
+    val: torch.fx.immutable_collections.immutable_list,
+) -> IrValues:
+  """Constant handler for immutable list literals."""
+  # return [ir_constant(item) for item in val]
+  return [
+        item if isinstance(item, ir.Value)
+        else ir_constant(item)
+        for item in val
+  ]
+
+
+register_constant_handler(
+    torch.fx.immutable_collections.immutable_list,
+    _immutable_list_constant_handler,
+)
+
+# def _list_constant_handler(val: list) -> IrValues:
+#   """Constant handler for list literals."""
+#   return ir.ArrayAttr.get([ir_attribute(item) for item in val])
+
+
+# register_constant_handler(list, _list_constant_handler)
 
 # Attributes
 
@@ -416,6 +451,9 @@ def _sequence_attribute_handler(val: Sequence[Any]) -> ir.Attribute:
 
 register_attribute_handler(list, _sequence_attribute_handler)
 register_attribute_handler(tuple, _sequence_attribute_handler)
+register_attribute_handler(
+    torch.fx.immutable_collections.immutable_list, _sequence_attribute_handler
+)
 register_attribute_handler(ir.Attribute, lambda x: x)
 register_attribute_handler(ir.Type, lambda x: x)
 
