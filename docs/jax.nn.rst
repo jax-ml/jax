@@ -40,6 +40,7 @@ Activation functions
     glu
     squareplus
     mish
+    identity
 
 Other functions
 ---------------

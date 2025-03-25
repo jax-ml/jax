@@ -54,6 +54,25 @@ _UNSPECIFIED = Unspecified()
 
 
 # activations
+@jax.jit
+def identity(x: ArrayLike) -> Array:
+  r"""Identity activation function.
+
+  Returns the argument unmodified.
+
+  Args:
+    x : input array
+
+  Returns:
+    The argument `x` unmodified.
+
+  Examples:
+    >>> jax.nn.identity(jax.numpy.array([-2., -1., -0.5, 0, 0.5, 1., 2.]))
+    Array([-2. , -1. , -0.5, 0. , 0.5, 1. , 2. ], dtype=float32)
+
+  """
+  numpy_util.check_arraylike("identity", x)
+  return jnp.asarray(x)
 
 @custom_jvp
 @jax.jit
