@@ -141,8 +141,16 @@ def build_kernel(
       group_chunk_b = arith.index_cast(index,
                                        memref.load(group_offsets, [arith.addi(group_chunk_id, cx(1))]))
       group_chunk_m = arith.subi(group_chunk_b, group_chunk_a)
-      n_idx = arith.remui(work_id, cx(n_tile_count))
-      n_start = arith.muli(n_idx, cx(tile_n))
+      expert_id = arith.index_cast(index,
+                                   memref.load(expert_ids, [group_chunk_id]))
+      tile_n_start = arith.muli(arith.remui(work_id, cx(n_tile_count)),
+                                cx(tile_n))
+      # output n_start
+      o_n_start = tile_n_start
+
+      # weight n_start
+      w_n_start = arith.addi(arith.muli(expert_id, cx(expert_n)),
+                             tile_n_start)
 
       local_work_id = arith.divui(work_id, worker_count)
       get_persistent_ki = lambda ki: arith.addi(ki, arith.muli(local_work_id, cx(k_loop_iter)))
@@ -192,7 +200,7 @@ def build_kernel(
           ctx.async_copy(
               src_ref=w,
               dst_ref=mgpu.memref_slice(b_smem, slot),
-              gmem_slice=(ds(n_start, tile_n), ds(k_start, tile_k)),
+              gmem_slice=(ds(w_n_start, tile_n), ds(k_start, tile_k)),
               gmem_transform=mgpu.TileTransform(tiling),
               **common_args,
           )
@@ -226,7 +234,7 @@ def build_kernel(
       ctx.async_copy(
           src_ref=d_smem,
           dst_ref=d,
-          gmem_slice=(ds(output_m_start, tile_m), ds(n_start, tile_n)),
+          gmem_slice=(ds(output_m_start, tile_m), ds(o_n_start, tile_n)),
           gmem_transform=mgpu.TileTransform((128, swizzle_elems)),
           swizzle=swizzle,
       )
