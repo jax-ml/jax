@@ -120,7 +120,7 @@ class GPUMemorySpace(enum.Enum):
     return GPUMemoryRef(shape, dtype, memory_space=self, transforms=transforms)
 
 
-def kernel(body, out_shape, compiler_params=None, **mesh_kwargs):
+def kernel(body, out_shape, *, compiler_params=None, **mesh_kwargs):
   if unwrap_out := not isinstance(out_shape, (tuple, list)):
     out_shape = (out_shape,)
   def wrapper(*operands):
