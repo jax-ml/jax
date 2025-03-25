@@ -7191,6 +7191,27 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
     self.assertArraysEqual(out, np.arange(8) * 2)
 
+  @jtu.with_user_mesh((2,), ('x',))
+  def test_rng_bit_generator(self, mesh):
+    def f(key):
+      out = lax.rng_bit_generator(key, shape=(4, 8), out_sharding=P('x'))
+      self.assertEqual(out[0].aval.sharding.spec, P(None))
+      self.assertEqual(out[1].aval.sharding.spec, P('x', None))
+      return out
+
+    key = np.array((1, 2, 3, 4)).astype(np.uint32)
+    out1 = f(key)
+    jit_f = jax.jit(f)
+    out2 = jit_f(key)
+    self.assertEqual(out1[0].shape, (4,))
+    self.assertEqual(out1[1].shape, (4, 8))
+    self.assertEqual(out2[0].sharding, NamedSharding(mesh, P()))
+    self.assertEqual(out2[1].sharding, NamedSharding(mesh, P('x', None)))
+    self.assertEqual(out1[0].sharding, out2[0].sharding)
+    self.assertEqual(out1[1].sharding, out2[1].sharding)
+    self.assertArraysEqual(out1[0], out2[0])
+    self.assertArraysEqual(out1[1], out2[1])
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

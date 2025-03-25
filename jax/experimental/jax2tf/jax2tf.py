@@ -2822,7 +2822,8 @@ tf_impl_with_avals[random.random_gamma_p] = _convert_jax_impl(
     multiple_results=False, extra_name_stack="random_gamma")
 
 
-def _rng_bit_generator(key: TfVal, *, shape, dtype, algorithm) -> Sequence[TfVal]:
+def _rng_bit_generator(key: TfVal, *, shape, dtype, algorithm,
+                       out_sharding) -> Sequence[TfVal]:
   is_uint32_key = key.dtype == _to_tf_dtype(jnp.uint32)
   if is_uint32_key:
     key = tf.reshape(key, (2, 2))
