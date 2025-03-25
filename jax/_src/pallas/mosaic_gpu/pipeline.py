@@ -360,8 +360,8 @@ def emit_pipeline_warp_specialized(
     *,
     grid: pallas_core.StaticGrid,
     memory_registers: int,
-    in_specs: Sequence[gpu_core.GPUBlockSpec] = (),
-    out_specs: Sequence[gpu_core.GPUBlockSpec] = (),
+    in_specs: Sequence[pl.BlockSpec] = (),
+    out_specs: Sequence[pl.BlockSpec] = (),
     max_concurrent_steps: int = 2,
     wg_axis: str,
     num_compute_wgs: int,
@@ -458,7 +458,7 @@ def emit_pipeline_warp_specialized(
           gpu_core.SMEM(
               (slots, *spec.block_shape),   # type: ignore
               gmem_ref.dtype,
-              transforms=spec.transforms,
+              transforms=getattr(spec, "transforms", ()),
           )
       )
     in_smem_refs, out_smem_refs = util.split_list(

@@ -1624,23 +1624,28 @@ class PallasCallSm90ATest(PallasSm90ATest):
 class PallasCallSm100ATest(PallasSm100ATest):
 
   def test_tmem_alloc(self):
-    mesh = plgpu.GPUMesh(num_threads=1, axis_names=("x"))
-    @pl.run_state
-    def inner(y_ref):
-      @pl.core_map(mesh)
-      def _():
-        def scope(tmem_ref, smem_ref):
-          # Issue a write so the TMEM load is not DCE'd.
-          smem_ref[...] = tmem_ref[...]
-          plgpu.commit_smem()
-          plgpu.copy_smem_to_gmem(smem_ref, y_ref)
-          plgpu.wait_smem_to_gmem(0)
-        pl.run_scoped(scope,
+    @functools.partial(
+        plgpu.kernel,
+        out_shape=jnp.zeros((128, 128), jnp.float32),
+        num_threads=1,
+        axis_names=("x",),
+    )
+    def kernel(y_ref):
+      def scope(tmem_ref, smem_ref):
+        # Issue a write so the TMEM load is not DCE'd.
+        smem_ref[...] = tmem_ref[...]
+        plgpu.commit_smem()
+        plgpu.copy_smem_to_gmem(smem_ref, y_ref)
+        plgpu.wait_smem_to_gmem(0)
+
+      pl.run_scoped(
+          scope,
           plgpu.TMEM((128, 128), jnp.float32),
-          plgpu.SMEM((128, 128), jnp.float32))
-    y_init = jnp.zeros((128, 128), np.float32)
+          plgpu.SMEM((128, 128), jnp.float32),
+      )
+
     # Test that this runs without errors.
-    jax.block_until_ready(inner(y_init))
+    jax.block_until_ready(kernel())
 
 
 class PipelineTest(PallasTest):
@@ -1979,9 +1984,7 @@ class WarpSpecializedPipelineTest(PallasTest):
                          manual_consumed_barriers=[False, True])
   def test_pipelined_copy(self, m, n, manual_consumed_barriers):
     x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float16)
-    o = jnp.zeros((m, n), dtype=jnp.float16)
     blk_m = blk_n = 64
-    o_last_block = jnp.zeros((blk_m, blk_n), dtype=jnp.float16)
 
     def copy_kernel(x_smem, o_smem, o_last_block_smem, *consumed_barriers):
       # TODO(justinfu): Have each wg compute a separate slice
@@ -1992,11 +1995,10 @@ class WarpSpecializedPipelineTest(PallasTest):
       if manual_consumed_barriers:
         [x_barrier] = consumed_barriers
         plgpu.barrier_arrive(x_barrier)
-    block_spec = plgpu.GPUBlockSpec(
-                block_shape=(blk_m, blk_n),
-                index_map=lambda i, j: (i, j),
-                transforms=[],
-            )
+
+    spec = pl.BlockSpec(
+        block_shape=(blk_m, blk_n), index_map=lambda i, j: (i, j)
+    )
     pipeline = mgpu_pipeline.emit_pipeline_warp_specialized(
         copy_kernel,
         grid=(m // blk_m, n // blk_n),
@@ -2005,33 +2007,35 @@ class WarpSpecializedPipelineTest(PallasTest):
         num_compute_wgs=2,
         wg_axis="wg",
         manual_consumed_barriers=manual_consumed_barriers,
-        in_specs=[block_spec],
-        out_specs=[block_spec,
-                   # Create an index-invariant output.
-                   plgpu.GPUBlockSpec(block_shape=(blk_m, blk_n),
-                                      index_map=lambda i, j: (0, 0))
-                   ],
+        in_specs=[spec],
+        out_specs=[
+            spec,
+            # Create an index-invariant output.
+            pl.BlockSpec(
+                block_shape=(blk_m, blk_n), index_map=lambda i, j: (0, 0)
+            ),
+        ],
     )
-    mesh = plgpu.GPUMesh(grid=(1,), num_threads=3, axis_names=("_", "wg"))
-    def run(refs):
-      @pl.core_map(
-          mesh, compiler_params=plgpu.GPUCompilerParams(approx_math=True)
-      )
-      def _kernel_entry():
-        pipeline(*refs)
-    @jax.jit
-    def run_function(x, o, o_last_block):
-      _, out, out_last = pl.run_state(run)((x, o, o_last_block))
-      return (out, out_last)
-    out, out_last_block = run_function(x, o, o_last_block)
+    kernel = plgpu.kernel(
+        pipeline,
+        out_shape=(
+            jax.ShapeDtypeStruct((m, n), jnp.float16),
+            jax.ShapeDtypeStruct((blk_m, blk_n), jnp.float16),
+        ),
+        compiler_params=plgpu.GPUCompilerParams(approx_math=True),
+        grid=(1,),
+        num_threads=3,
+        axis_names=("_", "wg"),
+    )
+    out, out_last_block = kernel(x)
     np.testing.assert_array_equal(out, x)
     np.testing.assert_array_equal(out_last_block, x[-blk_m:, -blk_n:])
 
   def test_elementwise_add(self, m=256, n=256, num_compute_wgs=2):
     blk_m = blk_n = 64
-    x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float32)
-    y = jax.random.uniform(jax.random.key(1), (m, n), dtype=jnp.float32)
-    o = jnp.zeros((m, n), dtype=jnp.float32)
+    spec = pl.BlockSpec(
+        block_shape=(blk_m, blk_n), index_map=lambda i, j: (i, j)
+    )
 
     def tiled_add_kernel(x_smem, y_smem, o_smem):
       # TODO(justinfu): Have each wg compute a separate slice
@@ -2046,43 +2050,23 @@ class WarpSpecializedPipelineTest(PallasTest):
         num_compute_wgs=num_compute_wgs,
         memory_registers=40,
         wg_axis="wg",
-        in_specs=[
-            plgpu.GPUBlockSpec(
-                block_shape=(blk_m, blk_n),
-                index_map=lambda i, j: (i, j),
-                transforms=[]),
-            plgpu.GPUBlockSpec(
-                block_shape=(blk_m, blk_n),
-                index_map=lambda i, j: (i, j),
-                transforms=[]),
-        ],
-        out_specs=[
-            plgpu.GPUBlockSpec(
-                block_shape=(blk_m, blk_n),
-                index_map=lambda i, j: (i, j),
-                transforms=[])],
+        in_specs=[spec, spec],
+        out_specs=[spec],
     )
-    mesh = plgpu.GPUMesh(
-        grid=(1,), num_threads=num_compute_wgs + 1, axis_names=("_", "wg")
+    kernel = plgpu.kernel(
+        pipeline,
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+        compiler_params=plgpu.GPUCompilerParams(approx_math=True),
+        grid=(1,),
+        num_threads=num_compute_wgs + 1,
+        axis_names=("_", "wg"),
     )
-    def run(refs):
-      @pl.core_map(
-          mesh, compiler_params=plgpu.GPUCompilerParams(approx_math=True)
-      )
-      def _kernel_entry():
-        pipeline(*refs)
-    @jax.jit
-    def run_function(x, y, o):
-      _, _, out = pl.run_state(run)((x, y, o))
-      return out
-    out = run_function(x, y, o)
-    reference = x + y
-    np.testing.assert_allclose(out, reference, atol=1e-4)
+    x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float32)
+    y = jax.random.uniform(jax.random.key(1), (m, n), dtype=jnp.float32)
+    np.testing.assert_allclose(kernel(x, y), x + y, atol=1e-4)
 
   def test_carry_accumulate(self, m=256, n=256, num_compute_wgs=2):
     blk_m = blk_n = 64
-    x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float32)
-    acc_init = jnp.zeros((blk_m, blk_n), dtype=jnp.float32)
 
     def _scoped(acc_smem, x_gmem, acc_gmem):
       def _compute_thread():
@@ -2116,77 +2100,70 @@ class WarpSpecializedPipelineTest(PallasTest):
           wg_axis="wg",
           carry_coroutine=_compute_thread,
           in_specs=[
-              plgpu.GPUBlockSpec(
-                  block_shape=(blk_m, blk_n),
-                  index_map=lambda i, j: (i, j),
-                  transforms=[]),
+              pl.BlockSpec(
+                  block_shape=(blk_m, blk_n), index_map=lambda i, j: (i, j)
+              )
           ],
           out_specs=[],
       )
       pipeline(x_gmem)
 
-    mesh = plgpu.GPUMesh(
+    @functools.partial(
+        plgpu.kernel,
+        out_shape=jax.ShapeDtypeStruct((blk_m, blk_n), jnp.float32),
+        compiler_params=plgpu.GPUCompilerParams(approx_math=True),
         grid=(1,),
         num_threads=num_compute_wgs + 1,
-        axis_names=("_", "wg",),
+        axis_names=("_", "wg"),
     )
-    def run(refs):
-      x_ref, acc_ref = refs
-      @pl.core_map(mesh)
-      def _kernel_entry():
-        pl.run_scoped(
-            functools.partial(_scoped, x_gmem=x_ref, acc_gmem=acc_ref),
-            plgpu.SMEM((blk_m, blk_n), jnp.float32)
-        )
-    @jax.jit
-    def run_function(x, acc):
-      _, out_acc = pl.run_state(run)((x, acc))
-      return out_acc
-    out_acc = run_function(x, acc_init)
+    def kernel(x_ref, acc_ref):
+      pl.run_scoped(
+          functools.partial(_scoped, x_gmem=x_ref, acc_gmem=acc_ref),
+          plgpu.SMEM((blk_m, blk_n), jnp.float32),
+      )
+
+    x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float32)
     ref = jnp.sum(jnp.stack(np.split(x, m // blk_m, axis=0)), axis=0)
     ref = jnp.sum(jnp.stack(np.split(ref, n // blk_n, axis=1)), axis=0)
-    np.testing.assert_allclose(out_acc, ref, atol=1e-4)
+    np.testing.assert_allclose(kernel(x), ref, atol=1e-4)
 
 
 class CoreMapTest(PallasTest):
 
   def test_multiple_wg(self):
-    mesh = plgpu.GPUMesh(num_threads=2, axis_names=("y",))
+    @functools.partial(
+        plgpu.kernel,
+        out_shape=jnp.zeros((2, 128), np.int32),
+        num_threads=2,
+        axis_names=("wg",),
+    )
+    def kernel(o_ref):
+      wg_idx = jax.lax.axis_index("wg")
+      o_ref[wg_idx] = jnp.broadcast_to(wg_idx, (128,))
 
-    @jax.jit
-    def f():
-      @pl.run_state
-      def inner(y_ref):
-        @pl.core_map(mesh)
-        def kernel():
-          wg_idx = jax.lax.axis_index("y")
-          y_ref[wg_idx] = jnp.broadcast_to(wg_idx, (128,))
-      y_init = jnp.zeros((2, 128), np.int32)
-      return inner(y_init)
     np.testing.assert_array_equal(
-        f(), np.repeat(np.arange(2), 128).reshape(2, 128)
+        kernel(), np.repeat(np.arange(2), 128).reshape(2, 128)
     )
 
   def test_multiple_wg_with_grid(self):
-    mesh = plgpu.GPUMesh(grid=(2, 2), num_threads=2, axis_names=("x", "y", "wg"))
+    @functools.partial(
+        plgpu.kernel,
+        out_shape=jnp.zeros((4, 2, 128), np.int32),
+        grid=(2, 2),
+        num_threads=2,
+        axis_names=("x", "y", "wg"),
+    )
+    def kernel(o_ref):
+      xy_idx = jax.lax.axis_index(("x", "y"))
+      yx_idx = jax.lax.axis_index(("y", "x"))
+      wg_idx = jax.lax.axis_index("wg")
+      num_wgs = jax.lax.psum(1, "wg")
+      o_ref[xy_idx, wg_idx] = jnp.broadcast_to(
+          yx_idx * num_wgs + wg_idx, (128,)
+      )
 
-    @jax.jit
-    def f():
-      @pl.run_state
-      def inner(y_ref):
-        @pl.core_map(mesh)
-        def kernel():
-          xy_idx = jax.lax.axis_index(("x", "y"))
-          yx_idx = jax.lax.axis_index(("y", "x"))
-          wg_idx = jax.lax.axis_index("wg")
-          num_wgs = jax.lax.psum(1, "wg")
-          y_ref[xy_idx, wg_idx] = jnp.broadcast_to(
-              yx_idx * num_wgs + wg_idx, (128,)
-          )
-      y_init = jnp.zeros((4, 2, 128), np.int32)
-      return inner(y_init)
     np.testing.assert_array_equal(
-        f(), np.repeat([0, 1, 4, 5, 2, 3, 6, 7], 128).reshape(4, 2, 128)
+        kernel(), np.repeat([0, 1, 4, 5, 2, 3, 6, 7], 128).reshape(4, 2, 128)
     )
 
   def test_multiple_wg_with_squashed_grid(self):
@@ -2197,70 +2174,71 @@ class CoreMapTest(PallasTest):
     y_dim = 5
     z_dim = 7
     num_threads = 2
-    mesh = plgpu.GPUMesh(grid=(b, x_dim, y_dim, z_dim),
-                         num_threads=num_threads,
-                         axis_names=("b", "x", "y", "z", "wg"))
 
-    @jax.jit
-    def f():
-      @pl.run_state
-      def inner(y_ref):
-        @pl.core_map(mesh)
-        def _():
-          b_idx = jax.lax.axis_index("b")
-          x_idx = jax.lax.axis_index("x")
-          y_idx = jax.lax.axis_index("y")
-          z_idx = jax.lax.axis_index("z")
-          wg_idx = jax.lax.axis_index("wg")
-          bxyzw_idx = jax.lax.axis_index(("b", "x", "y", "z", "wg"))
-          y_ref[b_idx, x_idx, y_idx, z_idx, wg_idx] = jnp.broadcast_to(
-            bxyzw_idx, (128,)
-          )
-      y_init = jnp.zeros((b, x_dim, y_dim, z_dim, num_threads, 128), np.int32)
-      return inner(y_init)
-    result = f()[:, :, :, :, :, 0]
+    @functools.partial(
+        plgpu.kernel,
+        out_shape=jnp.zeros(
+            (b, x_dim, y_dim, z_dim, num_threads, 128), np.int32
+        ),
+        grid=(b, x_dim, y_dim, z_dim),
+        num_threads=num_threads,
+        axis_names=("b", "x", "y", "z", "wg"),
+    )
+    def kernel(o_ref):
+      b_idx = jax.lax.axis_index("b")
+      x_idx = jax.lax.axis_index("x")
+      y_idx = jax.lax.axis_index("y")
+      z_idx = jax.lax.axis_index("z")
+      wg_idx = jax.lax.axis_index("wg")
+      bxyzw_idx = jax.lax.axis_index(("b", "x", "y", "z", "wg"))
+      o_ref[b_idx, x_idx, y_idx, z_idx, wg_idx] = jnp.broadcast_to(
+          bxyzw_idx, (128,)
+      )
+
+    result = kernel()[:, :, :, :, :, 0]
     ref = np.arange(b * x_dim * y_dim * z_dim * num_threads).reshape(
-        result.shape)
+        result.shape
+    )
     np.testing.assert_array_equal(result, ref)
 
   def test_cross_wg_barrier(self):
-    mesh = plgpu.GPUMesh(num_threads=2, axis_names=("wg",))
+    @functools.partial(
+        plgpu.kernel,
+        out_shape=jnp.zeros((2, 128), np.int32),
+        num_threads=2,
+        axis_names=("wg",),
+    )
+    def kernel(y_ref):
+      def scoped(barrier):
+        plgpu.barrier_arrive(barrier)
+        plgpu.barrier_wait(barrier)
+        wg_idx = jax.lax.axis_index("wg")
+        y_ref[wg_idx] = jnp.broadcast_to(wg_idx, (128,))
 
-    @jax.jit
-    def f():
-      @pl.run_state
-      def inner(y_ref):
-        @pl.core_map(mesh)
-        def kernel():
-          def scoped(barrier):
-            plgpu.barrier_arrive(barrier)
-            plgpu.barrier_wait(barrier)
-            wg_idx = jax.lax.axis_index("wg")
-            y_ref[wg_idx] = jnp.broadcast_to(wg_idx, (128,))
-          # Each warpgroup is a single logical thread!
-          pl.run_scoped(scoped, plgpu.Barrier(num_arrivals=2))
-      y_init = jnp.zeros((2, 128), np.int32)
-      return inner(y_init)
-    np.testing.assert_array_equal(f(), np.repeat([0, 1], 128).reshape(2, 128))
+      # Each warpgroup is a single logical thread!
+      pl.run_scoped(scoped, plgpu.Barrier(num_arrivals=2))
+
+    np.testing.assert_array_equal(
+        kernel(), np.repeat([0, 1], 128).reshape(2, 128)
+    )
 
   def test_cluster(self):
-    mesh = plgpu.GPUMesh(grid=(2,), cluster=(2,), axis_names=("x", "cluster"))
+    @functools.partial(
+        plgpu.kernel,
+        out_shape=jnp.zeros(128, np.int32),
+        grid=(2,),
+        cluster=(2,),
+        axis_names=("x", "cluster"),
+    )
+    def kernel(ref):
+      block_idx = jax.lax.axis_index("x")
+      cluster_idx = jax.lax.axis_index("cluster")
+      pl.debug_print("block: {} cluster: {}", block_idx, cluster_idx)
 
-    @jax.jit
-    def f():
-      @pl.run_state
-      def inner(ref):
-        @pl.core_map(mesh)
-        def kernel():
-          block_idx = jax.lax.axis_index("x")
-          cluster_idx = jax.lax.axis_index("cluster")
-          pl.debug_print("block: {} cluster: {}", block_idx, cluster_idx)
-
-          ref[...] = ref[...]
-      return inner(jnp.zeros(128, np.int32))
+      ref[...] = ref[...]
 
     with self.capture_stdout() as output:
-      jax.block_until_ready(f())
+      jax.block_until_ready(kernel())
     self.assertEqual(
         set(output().splitlines()),
         {
