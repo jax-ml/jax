@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import abc
+import sys
 import numpy as np
 from typing import Any, Union
 from collections.abc import Sequence
@@ -175,7 +176,11 @@ StaticScalar = Union[
   np.bool_, np.number,  # NumPy scalar types
   bool, int, float, complex,  # Python scalar types
 ]
-StaticScalar.__doc__ = "Type annotation for JAX-compatible static scalars."
+
+if sys.version_info[:2] < (3, 14):
+  # Python 3.14 raises
+  # AttributeError: 'typing.Union' object attribute '__doc__' is read-only
+  StaticScalar.__doc__ = "Type annotation for JAX-compatible static scalars."
 
 
 # ArrayLike is a Union of all objects that can be implicitly converted to a
@@ -187,4 +192,8 @@ ArrayLike = Union[
   np.ndarray,  # NumPy array type
   StaticScalar,  # valid scalars
 ]
-ArrayLike.__doc__ = "Type annotation for JAX array-like objects."
+
+if sys.version_info[:2] < (3, 14):
+  # Python 3.14 raises
+  # AttributeError: 'typing.Union' object attribute '__doc__' is read-only
+  ArrayLike.__doc__ = "Type annotation for JAX array-like objects."
