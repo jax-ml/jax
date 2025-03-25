@@ -1738,6 +1738,7 @@ def _block_id(ctx: LoweringRuleContext, dim: gpu_dialect.Dimension) -> ir.Value:
 
 
 @register_lowering_rule(lax.axis_index_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(lax.axis_index_p, mgpu.ThreadSemantics.Warpgroup)
 def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
   axis_names = ctx.module_ctx.axis_names
   if not axis_names or axis_name not in axis_names:
