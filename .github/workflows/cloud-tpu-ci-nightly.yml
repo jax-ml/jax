@@ -72,8 +72,7 @@ jobs:
 
             # Install jaxlib, "jax" at head, and libtpu
             $PYTHON -m uv pip install dist/*.whl \
-               -U -e . \
-               --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+               -U --pre libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
           elif [ "${{ matrix.jaxlib-version }}" == "pypi_latest" ]; then
             $PYTHON -m uv pip install .[tpu] \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
