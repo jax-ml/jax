@@ -2329,6 +2329,22 @@ class LaxLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(
         new_product_with_batching, old_product, atol=atol)
 
+  @jtu.sample_product(
+    n=[0, 1, 5, 10, 20],
+    kind=["symmetric", "lower", "upper"],
+  )
+  @jax.default_matmul_precision("float32")
+  def testPascal(self, n, kind):
+    args_maker = lambda: []
+    osp_fun = partial(osp.linalg.pascal, n=n, kind=kind, exact=False)
+    jsp_fun = partial(jsp.linalg.pascal, n=n, kind=kind)
+    self._CheckAgainstNumpy(osp_fun,
+                            jsp_fun, args_maker,
+                            atol=1e-3,
+                            rtol=1e-2 if jtu.test_device_matches(['tpu']) else 1e-3,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
