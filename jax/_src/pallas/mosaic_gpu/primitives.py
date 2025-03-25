@@ -489,6 +489,7 @@ def _barrier_arrive_abstract_eval(barrier, *args, **params):
 
 
 @lowering.register_lowering_rule(barrier_arrive_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(barrier_arrive_p, mgpu.ThreadSemantics.Warpgroup)
 def _barrier_arrive_lowering(
     ctx: lowering.LoweringRuleContext,
     barrier,
