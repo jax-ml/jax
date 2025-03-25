@@ -1779,6 +1779,12 @@ def _reshape(a: ir.Value, shape: Sequence[int]) -> ir.Value:
   )
 
 
+def get_join_type(old_type: ir.RankedTensorType):
+  shape = old_type.shape
+  shape.append(2)
+  return ir.RankedTensorType.get(shape, old_type.element_type, old_type.encoding)
+
+
 @register_lowering(lax.concatenate_p)
 def _concatenate_lowering_rule(ctx: LoweringRuleContext, *args, dimension):
   if len(args) != 2:
@@ -1793,9 +1799,10 @@ def _concatenate_lowering_rule(ctx: LoweringRuleContext, *args, dimension):
     raise NotImplementedError(
         "Only arguments with shape [..., 1] are supported."
     )
-  return tt_dialect.join(
-      _reshape(x, x_aval.shape[:-1]), _reshape(y, y_aval.shape[:-1])
-  )
+  lhs = _reshape(x, x_aval.shape[:-1])
+  rhs = _reshape(y, y_aval.shape[:-1])
+  ret_type = get_join_type(ir.RankedTensorType(rhs.type))
+  return tt_dialect.join(ret_type, lhs, rhs)
 
 
 @register_lowering(lax.split_p)
@@ -2102,10 +2109,11 @@ def _masked_load_lowering_rule(
   # most significant. Before jaxlib 0.5.2, the order was reversed.
   if is_contiguous_int4:
     msb_values = arith_dialect.shrui(values, _full(values.type, 4))
+    join_type = get_join_type(ir.RankedTensorType(values.type))
     if jaxlib_version < (0, 5, 2):
-      values = tt_dialect.join(msb_values, values)
+      values = tt_dialect.join(join_type, msb_values, values)
     else:
-      values = tt_dialect.join(values, msb_values)
+      values = tt_dialect.join(join_type, values, msb_values)
     shape = ir.RankedTensorType(values.type).shape
     values = _reshape(values, (*shape[:-2], shape[-2] * shape[-1]))
   else:
