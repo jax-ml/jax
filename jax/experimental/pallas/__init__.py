@@ -30,6 +30,7 @@ from jax._src.pallas.core import MemoryRef as MemoryRef
 from jax._src.pallas.core import MemorySpace as MemorySpace
 from jax._src.pallas.core import Buffered as Buffered
 from jax._src.pallas.core import no_block_spec as no_block_spec
+from jax._src.pallas.core import semaphore as semaphore
 from jax._src.pallas.core import Unblocked as Unblocked
 from jax._src.pallas.core import unblocked as unblocked
 from jax._src.pallas.cost_estimate import estimate_cost as estimate_cost

@@ -231,7 +231,7 @@ def _memory_space_to_mosaic_attribute(memory_space: MemorySpace | None
 def _dtype_to_ir_type(dtype: jnp.dtype,
                       is_kernel_boundary: bool = False) -> ir.Type:
   if jnp.issubdtype(dtype, pallas_core.semaphore_dtype):
-    if jnp.issubdtype(dtype, pallas_core.dma_semaphore):
+    if jnp.issubdtype(dtype, tpu_core.dma_semaphore):
       return ir.Type.parse("!tpu.dma_semaphore")
     elif jnp.issubdtype(dtype, pallas_core.semaphore):
       return ir.Type.parse("!tpu.semaphore")
@@ -3468,7 +3468,18 @@ def _semaphore_read_lowering_rule(
     *args,
     args_tree,
 ):
-  sem_aval, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem_aval, sem_transforms_avals = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  primitives.check_sem_avals(
+      sem_aval,
+      sem_transforms_avals,
+      "read",
+      allowed_semaphore_types={
+          tpu_core.dma_semaphore,
+          pallas_core.semaphore,
+          pallas_core.barrier_semaphore,
+          pallas_core.SEMAPHORE_INTERPRET_DTYPE,
+      },
+  )
   sem, transforms = tree_util.tree_unflatten(args_tree, args)
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, transforms)
   return tpu.sem_read(sem)
