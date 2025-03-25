@@ -1082,11 +1082,12 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
   x_smem, transforms = _handle_indexing(x_smem, transforms)
 
   match transforms:
-    case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
-      if tiling != (64, swizzle // x_aval.dtype.itemsize):
-        raise NotImplementedError("Tiling does not fit swizzle")
+    case (gpu_core.UnswizzleRef(swizzle_elems), gpu_core.UntileRef(tiling)):
+      bits = pallas_utils.dtype_bitwidth(x_aval.dtype)
+      if tiling != (64, swizzle_elems):
+        raise NotImplementedError(f"Tiling does not fit swizzle")
       return mgpu.FragmentedArray.load_tiled(
-          x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=swizzle
+          x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=(swizzle_elems * bits) // 8
       )
     case ():
       # Handle scalar indexing.
@@ -1141,11 +1142,16 @@ def _swap_lowering_rule(
   x_smem, transforms = _handle_reshaping(x_smem, transforms)
   x_smem, transforms = _handle_indexing(x_smem, transforms)
   match transforms:
-    case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
-      if tiling != (64, swizzle // x_aval.dtype.itemsize):
+    case (gpu_core.UnswizzleRef(swizzle_elems), gpu_core.UntileRef(tiling)):
+      if tiling != (64, swizzle_elems):
         raise NotImplementedError("Tiling does not fit swizzle")
+
+      swizzle = swizzle_elems * pallas_utils.dtype_bitwidth(x_aval.dtype) // 8
       old_value = mgpu.FragmentedArray.load_tiled(
-          x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=swizzle
+          x_smem,
+          is_signed=mgpu_utils.is_signed(x_aval.dtype),
+          swizzle=swizzle,
+          layout=value.layout,
       )
       value.store_tiled(x_smem, swizzle=swizzle)
       return old_value

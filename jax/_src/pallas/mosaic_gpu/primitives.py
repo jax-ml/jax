@@ -34,6 +34,7 @@ from jax._src.lib.mlir.dialects import llvm as llvm_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering
 from jax._src.pallas.mosaic_gpu.core import state_types
@@ -199,7 +200,8 @@ def _copy_smem_to_gmem_lowering(
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
   src, src_transforms = lowering._handle_indexing(src, src_transforms)
-  copy_params = _extract_gmem_copy_params(dst_transforms) | _extract_smem_copy_params(src_transforms)
+  src, src_transforms = lowering._handle_reshaping(src, src_transforms)
+  copy_params = _extract_gmem_copy_params(dst, dst_transforms) | _extract_smem_copy_params(src, src_transforms)
   if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
     ctx.launch_ctx.async_copy(
         src_ref=src,
@@ -249,7 +251,8 @@ def _split_gmem_slice(gmem_slice):
   return indices, slice_lengths
 
 
-def _extract_gmem_copy_params(transforms):
+def _extract_gmem_copy_params(gref, transforms):
+  del gref
   if not transforms:
     return {}
   for transform in transforms:
@@ -262,13 +265,13 @@ def _extract_gmem_copy_params(transforms):
   )
 
 
-def _extract_smem_copy_params(transforms):
+def _extract_smem_copy_params(sref, transforms):
   if not transforms:
     return {}
   # Split off swizzling, if present
   match transforms:
-    case [gpu_core.UnswizzleRef(swizzle), *transforms]:
-      pass
+    case [gpu_core.UnswizzleRef(swizzle_elems), *transforms]:
+      swizzle = (swizzle_elems * mgpu.bitwidth(ir.MemRefType(sref.type).element_type)) // 8
     case _:
       swizzle = None
   gpu_transforms = tuple(t.undo_to_gpu_transform() for t in transforms[::-1])
@@ -365,7 +368,7 @@ def _copy_gmem_to_smem_lowering(
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
   dst, dst_transforms = lowering._handle_indexing(dst, dst_transforms)
-  copy_params = _extract_smem_copy_params(dst_transforms) | _extract_gmem_copy_params(src_transforms)
+  copy_params = _extract_smem_copy_params(dst, dst_transforms) | _extract_gmem_copy_params(src, src_transforms)
   barrier_indexer = _extract_barrier_indexer(
       barrier_transforms_treedef.unflatten(flat_barrier_transforms)
   )
@@ -374,7 +377,9 @@ def _copy_gmem_to_smem_lowering(
         *map(lowering._as_index, barrier_indexer.indices)
     )
   dst_ty = ir.MemRefType(dst.type)
-  bytes = math.prod(dst_ty.shape) * mgpu.bytewidth(dst_ty.element_type)
+  bits = math.prod(dst_ty.shape) * mgpu.bitwidth(dst_ty.element_type)
+  assert bits % 8 == 0, dst_ty
+  bytes = bits // 8
   if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
     if bytes % WARPGROUP_SIZE:
       raise NotImplementedError("Only aligned copies are supported")
@@ -703,6 +708,10 @@ def _wgmma_lowering(
 ):
   _, a_aval, *_ = ctx.avals_in
   lhs_swizzle: int | None = None
+  a_aval, b_aval = ctx.avals_in[1:3]
+  if a_aval.dtype != b_aval.dtype:
+    raise ValueError(f"Mixed input dtypes for matrix multiplication unsupported: lhs={a_aval.dtype}, rhs={b_aval.dtype}")
+
   if a_transforms_tree is not None:
     a_transforms_leaves, b_transforms_leaves = util.split_list(
         transforms_leaves, [a_transforms_tree.num_leaves]
@@ -710,9 +719,11 @@ def _wgmma_lowering(
     a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
     a, a_transforms = lowering._handle_indexing(a, a_transforms)
     match a_transforms:
-      case (gpu_core.UnswizzleRef(lhs_swizzle), gpu_core.UntileRef(tiling)):
-        swizzle_elems = lhs_swizzle // a_aval.dtype.itemsize
-        if tiling != (64, swizzle_elems):
+      case (
+          gpu_core.UnswizzleRef(lhs_swizzle_elems),
+          gpu_core.UntileRef(tiling),
+      ):
+        if tiling != (64, lhs_swizzle_elems):
           raise NotImplementedError("WGMMA lhs tiling does not fit swizzle")
       case _:
         raise ValueError(f"WGMMA lhs has unsupported transforms: {a_transforms}.")
@@ -727,18 +738,21 @@ def _wgmma_lowering(
   b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
   b, b_transforms = lowering._handle_indexing(b, b_transforms)
 
-  match b_transforms:
-    case (gpu_core.UnswizzleRef(rhs_swizzle), gpu_core.UntileRef(rhs_tiling)):
+  match tuple(b_transforms):
+    case (
+        gpu_core.UnswizzleRef(rhs_swizzle_elsms),
+        gpu_core.UntileRef(rhs_tiling),
+    ):
       rhs_transpose = False
     case (
-        gpu_core.UnswizzleRef(rhs_swizzle),
+        gpu_core.UnswizzleRef(rhs_swizzle_elems),
         gpu_core.TransposeRef((1, 0, 2, 3)),  # Only transpose between tiles
         gpu_core.UntileRef(rhs_tiling),
         gpu_core.TransposeRef((1, 0)),  # Transpose the two logical dims
     ):
       rhs_transpose = True
     case (
-        gpu_core.UnswizzleRef(rhs_swizzle),
+        gpu_core.UnswizzleRef(rhs_swizzle_elems),
         gpu_core.TransposeRef((1, 0, 2, 3, 4)),
         gpu_core.UntileRef(rhs_tiling),
         gpu_core.TransposeRef(permutation=(1, 0, 2)),
@@ -760,15 +774,19 @@ def _wgmma_lowering(
       raise ValueError(f"WGMMA rhs has unsupported transforms: {b_transforms}.")
 
   if lhs_swizzle is not None:
-    swizzle_elems = rhs_swizzle // a_aval.dtype.itemsize
-    if rhs_swizzle != lhs_swizzle:
+    if rhs_swizzle_elems != lhs_swizzle_elems:
       raise NotImplementedError("WGMMA rhs swizzle must match lhs swizzle")
-    if rhs_tiling != (swizzle_elems, swizzle_elems):
+    if rhs_tiling != (rhs_swizzle_elems, rhs_swizzle_elems):
       raise NotImplementedError("WGMMA rhs tiling does not fit swizzle")
 
   if rhs_transpose:
     b = mgpu.memref_transpose(b, (0, 1, 3, 2))
-  new_acc = mgpu.wgmma(acc, a, b, swizzle=rhs_swizzle)
+  new_acc = mgpu.wgmma(
+      acc,
+      a,
+      b,
+      swizzle=(rhs_swizzle_elems * pallas_utils.dtype_bitwidth(b_aval.dtype)) // 8,
+  )
   nvvm_dialect.wgmma_commit_group_sync_aligned()
   return new_acc
 
