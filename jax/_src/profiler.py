@@ -33,6 +33,7 @@ traceback_util.register_exclusion(__file__)
 
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import version as jaxlib_version
 
 _profiler_server: xla_client.profiler.ProfilerServer | None = None
 
@@ -426,6 +427,10 @@ class PGLEProfiler:
     else:
       options = xla_client.profiler.ProfileOptions()
       options.enable_hlo_proto = True
+
+      # ToDo(patrios): Remove when jaxlib version is updated to 0.5.4.
+      if jaxlib_version > (0, 5, 3):
+        options.raise_error_on_start_failure = True
       runner.current_session = xla_client.profiler.ProfilerSession(options)
 
       try:

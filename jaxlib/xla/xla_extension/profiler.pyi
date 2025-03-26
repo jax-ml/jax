@@ -42,6 +42,7 @@ class ProfileOptions:
   start_timestamp_ns: int
   duration_ms: int
   repository_path: str
+  raise_error_on_start_failure: bool
 
 def aggregate_profiled_instructions(profiles: List[bytes], percentile: int) -> str: ...
 
