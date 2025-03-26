@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Matmul kernel for Blackwell."""
+"""Grouped GEMM kernel for Blackwell."""
 
 from dataclasses import dataclass
 import itertools
@@ -86,6 +86,7 @@ def build_kernel(
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
   index = ir.IndexType.get()
+  f32 = ir.F32Type.get()
 
   cx = lambda v: c(v, index)
 
@@ -124,6 +125,8 @@ def build_kernel(
 
   def kernel(ctx, a, w, group_offsets, expert_ids, d, smem):
     ((a_smem, b_smem), d_smem), barriers, mma_done_barrier, acc = smem
+    print(f"{acc=}")
+    #breakpoint()
     (ab_full_barriers, ab_empty_barriers) = barriers
 
     warp_idx = mgpu.warp_idx(sync=True)
@@ -165,6 +168,9 @@ def build_kernel(
         gpu.printf("worker_count = %lu\n", [worker_count])
         gpu.printf("group_chunk_id = %lu\n", [group_chunk_id])
         gpu.printf("group_chunk_ab = [%lu, %lu), group_chunk_m = %lu\n", [group_chunk_a, group_chunk_b, group_chunk_m])
+        gpu.printf("expert_id = %lu\n", [expert_id])
+        gpu.printf("o_n_start = %lu\n", [o_n_start])
+        gpu.printf("w_n_start = %lu\n", [w_n_start])
 
         @mgpu.fori(cx(k_loop_iter), None)
         def _tma_body(ki, _):
@@ -196,6 +202,7 @@ def build_kernel(
               # update the window dynamically.
               gmem_slice=(ds(group_chunk_a, tile_m), ds(k_start, tile_k)),
               **common_args,
+              #debug=True,
           )
           ctx.async_copy(
               src_ref=w,
@@ -211,6 +218,24 @@ def build_kernel(
           persistent_ki = get_persistent_ki(ki)
           slot = arith.remui(persistent_ki, c(max_concurrent_steps, index))
           ab_full_barriers[slot].wait()
+          print(f"{str(a_smem)=}")
+          debug = False
+          if debug:
+            for ii in range(16):
+              for jj in range(8):
+                gpu.printf("a[0, %lu, 0, %lu, 0:64] = ", [cx(ii), cx(jj)])
+                for kk in range(64):
+                  x = arith.extf(f32, memref.load(a_smem, [cx(0), cx(ii), cx(0), cx(jj), cx(kk)]))
+                  gpu.printf(" %0.f", [x])
+                gpu.printf("\n", [])
+          if debug:
+            for ii in range(8):
+              for jj in range(8):
+                gpu.printf("w[0, %lu, 0, %lu, 0:64] = ", [cx(ii), cx(jj)])
+                for kk in range(64):
+                  x = arith.extf(f32, memref.load(b_smem, [cx(0), cx(ii), cx(0), cx(jj), cx(kk)]))
+                  gpu.printf(" %0.f", [x])
+                gpu.printf("\n", [])
           tcgen05.mma(
               acc,
               mgpu.memref_slice(a_smem, slot),
@@ -316,14 +341,15 @@ def ref(activations, weights, group_sizes, expert_n):
     group = activations[a:b, :]
     expert = weights[i*expert_n:(i+1)*expert_n, :]
     results.append(group @ expert.T)
+
   return jnp.concatenate(results)
 
 
 def main(unused_argv):
-  m = 128  # seqlen
-  k = 64
-  expert_count = 2  # expert count
-  expert_n = 64
+  m = 4096  # seqlen
+  k = 1024
+  expert_count = 16
+  expert_n = 256
   n = expert_count * expert_n
   in_dtype = jnp.float16
   # TODO(aportnoy@nvidia.com) this leads to low occupancy, so unless
@@ -333,20 +359,23 @@ def main(unused_argv):
   # the next work item can run while we are storing the previous one
   # out.
   cta_count = get_sm_count()
-  cta_count = 1  # XXX debug
   ka, kb, ke1, ke2 = jr.split(jr.key(0), 4)
   activations = jr.normal(key=ka, shape=(m, k), dtype=in_dtype)
   weights     = jr.normal(key=kb, shape=(n, k), dtype=in_dtype)
   #activations = jnp.repeat(1+jnp.arange(m, dtype=in_dtype).reshape(-1, 1), k, axis=1)
   print(f"{activations=}")
-  weights     = jnp.ones((n, k), dtype=in_dtype)  # XXX debug
+  #weights     = jnp.ones((n, k), dtype=in_dtype)  # XXX debug
+  #weights     = jnp.zeros((n, k), dtype=in_dtype)  # XXX debug
+  #weights = weights.at[:expert_n, 0].set(1)
+  #weights = weights.at[expert_n:, 0].set(2)
+  print(f"{weights=}")
   group_sizes = generate_group_sizes(expert_count, m, ke1, ke2)
-  group_sizes = jnp.array([47, 128-47]) # XXX debug
+  #group_sizes = jnp.array([47, 128-47]) # XXX debug
   assert sum(group_sizes) == m
   print(f"{group_sizes=}")
   # TODO(aportnoy@nvidia.com) test different tile sizes
   tile_m = 128
-  tile_n = 64  # 256, 512
+  tile_n = 128  # 256, 512
   # TODO(aportnoy@nvidia.com) move this computation into the kernel
   group_offsets, expert_ids = get_schedule(group_sizes, n, tile_m, tile_n)
   print(f"{group_offsets=}")
@@ -368,6 +397,7 @@ def main(unused_argv):
       in_dtype=in_dtype,
     )
   d_raw = f(activations, weights, group_offsets, expert_ids)
+  #exit()
   d_chunks = []
   for i, (a, b) in enumerate(zip(group_offsets, group_offsets[1:])):
     m = b-a
@@ -390,9 +420,11 @@ def main(unused_argv):
   import sys
   jnp.set_printoptions(threshold=sys.maxsize, linewidth=300)
   #print(f"{loc=}")
-  print(f"{jnp.unique(loc[:, 0])=}")
+  #print(f"{jnp.unique(loc[:, 0])=}")
   #print(f"{d_ref=}")
   #print(f"{d_raw=}")
+  #print(f"{activations=}")
+  #print(f"{weights=}")
 
 
   np.testing.assert_allclose(d, d_ref, atol=1e-3, rtol=1e-3)
