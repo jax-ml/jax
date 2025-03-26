@@ -186,12 +186,21 @@ def _copy_smem_to_gmem_lowering(
     has_user_predicate,
     commit_group,
 ):
-  predicate = ctx.module_ctx.single_wg_lane_predicate
   if has_user_predicate:
     flat_args, user_predicate = flat_args[:-1], flat_args[-1]
-    predicate = arith_dialect.andi(
-        predicate, lowering._ensure_ir_value(user_predicate, jnp.bool)
-    )
+    predicate = lowering._ensure_ir_value(user_predicate, jnp.bool)
+  else:
+    predicate = None
+
+  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+    if predicate is not None:
+      assert ctx.module_ctx.single_wg_lane_predicate is not None
+      predicate = arith_dialect.andi(
+          predicate, ctx.module_ctx.single_wg_lane_predicate
+      )
+    else:
+      predicate = ctx.module_ctx.single_wg_lane_predicate
+
   flat_src_transforms, flat_dst_transforms = util.split_list(
       flat_args,
       [src_transforms_treedef.num_leaves],
