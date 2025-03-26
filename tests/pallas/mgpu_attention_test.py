@@ -62,6 +62,7 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
           attention_mgpu.attention,
           attention_mgpu.attention_with_pipeline_emitter,
       ),
+      save_residuals=(True,),
   )
   def test_flash_attention(
       self,
@@ -71,22 +72,28 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
       num_q_and_kv_heads,
       head_dim,
       attention_impl,
+      save_residuals,
   ):
     num_q_heads, num_kv_heads = num_q_and_kv_heads
     k1, k2, k3 = jax.random.split(jax.random.key(42), 3)
     q = jax.random.normal(k1, (batch_size, q_seq_len, num_q_heads, head_dim), jnp.float16)
     k = jax.random.normal(k2, (batch_size, kv_seq_len, num_kv_heads, head_dim), jnp.float16)
     v = jax.random.normal(k3, (batch_size, kv_seq_len, num_kv_heads, head_dim), jnp.float16)
-    out = attention_impl(
+    out, *res = attention_impl(
         q,
         k,
         v,
         attention_mgpu.TuningConfig(
             block_q=64, block_kv=64, max_concurrent_steps=2
         ),
+        save_residuals=save_residuals,
     )
-    out_ref = attention_mgpu.attention_reference(q, k, v)
+    out_ref, *res_ref = attention_mgpu.attention_reference(q, k, v, save_residuals=save_residuals)
     np.testing.assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)
+    if save_residuals:
+      (lse,) = res[0]
+      (lse_ref,) = res_ref[0]
+      np.testing.assert_allclose(lse, lse_ref, atol=2e-3, rtol=1e-3)
 
 
 if __name__ == "__main__":
