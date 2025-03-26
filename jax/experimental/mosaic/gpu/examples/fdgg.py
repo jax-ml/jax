@@ -16,6 +16,7 @@
 
 from dataclasses import dataclass
 import itertools
+import math
 
 import jax
 from jax._src.interpreters import mlir
@@ -199,13 +200,32 @@ def build_kernel(
       output_m_start = arith.muli(cx(tile_m), group_chunk_id)
       acc[:].astype(ir.F16Type.get()).store_tiled(d_smem, swizzle=128)
       mgpu.commit_shared()
-      ctx.async_copy(
-          src_ref=d_smem,
-          dst_ref=d,
-          gmem_slice=(ds(output_m_start, tile_m), ds(o_n_start, tile_n)),
-          gmem_transform=mgpu.TileTransform((128, swizzle_elems)),
-          swizzle=swizzle,
-      )
+
+      store_row = cx(0)
+      d_smem_2d_shape, _ = mma_utils.tiled_memref_shape(d_smem)
+      store_smem = mgpu.memref_reshape(d_smem, d_smem_2d_shape)
+      for i in range(math.ceil(math.log2(tile_m)) + 1):
+        num_rows = 1 << i
+        do_store = arith.cmpi(
+            arith.CmpIPredicate.ne, arith.andi(group_chunk_m, cx(num_rows)), cx(0),
+        )
+        with mgpu.when(do_store):
+          gmem_off = arith.addi(group_chunk_a, store_row)
+          out_smem_slice = mgpu.memref_slice(store_smem, ds(store_row, num_rows))
+          out_smem_slice = mgpu.memref_reshape(
+              out_smem_slice,
+              (num_rows, tile_n // swizzle_elems, swizzle_elems)
+          )
+          ctx.async_copy(
+              src_ref=out_smem_slice,
+              dst_ref=d,
+              gmem_slice=(ds(gmem_off, num_rows), ds(o_n_start, tile_n)),
+              swizzle=swizzle,
+              gmem_transform=mgpu.TileTransform((swizzle_elems,)),
+          )
+        store_row = arith.select(
+            do_store, arith.addi(store_row, cx(num_rows)), store_row
+        )
       ctx.await_async_copy(0)
 
   compute_buffers = (
@@ -227,11 +247,6 @@ def build_kernel(
       mgpu.TMEM((128, tile_n), jnp.float32),
   )
 
-  # TODO(aportnoy@nvidia.com) Use tensormap.replace to only store the
-  # exact group_chunk_m per group_chunk instead of fixed tile_m. Then
-  # m will replace inflated_m.
-  inflated_m = group_chunk_count * tile_m
-
   f = mgpu.as_gpu_kernel(
       kernel,
       (cta_count, 1, 1),  # persistent kernel
@@ -242,7 +257,7 @@ def build_kernel(
           jax.ShapeDtypeStruct((group_chunk_count+1,), jnp.int32),  # group_offsets
           jax.ShapeDtypeStruct((group_chunk_count+0,), jnp.int32),  # expert_ids
       ),
-      jax.ShapeDtypeStruct((inflated_m, expert_n), jnp.float16),
+      jax.ShapeDtypeStruct((m, expert_n), jnp.float16),
       smem,
   )
 
@@ -309,7 +324,7 @@ def main(unused_argv):
   assert sum(group_sizes) == m
   # TODO(aportnoy@nvidia.com) test different tile sizes
   tile_m = 128
-  tile_n = 128  # 256, 512
+  tile_n = 64  # 256, 512
   # TODO(aportnoy@nvidia.com) move this computation into the kernel
   group_offsets, expert_ids = get_schedule(group_sizes, n, tile_m, tile_n)
   group_chunk_count = len(expert_ids)
@@ -328,13 +343,7 @@ def main(unused_argv):
       max_concurrent_steps=max_concurrent_steps,
       in_dtype=in_dtype,
     )
-  d_raw = f(activations, weights, group_offsets, expert_ids)
-  d_chunks = []
-  for i, (a, b) in enumerate(zip(group_offsets, group_offsets[1:])):
-    m = b-a
-    o = i*tile_m
-    d_chunks.append(d_raw[o:o+m])
-  d = jnp.concatenate(d_chunks)
+  d = f(activations, weights, group_offsets, expert_ids)
   d_ref = ref(activations, weights, group_sizes, expert_n)
   np.testing.assert_allclose(d, d_ref, atol=1e-3, rtol=1e-3)
   # TODO(aportnoy@nvidia.com) measure FLOPS
