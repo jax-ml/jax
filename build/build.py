@@ -76,6 +76,8 @@ WHEEL_BUILD_TARGET_DICT_NEW = {
     "jax-rocm-pjrt": "//jaxlib/tools:jax_rocm_pjrt_wheel",
 }
 
+_JAX_CUDA_VERSION = "12"
+
 def add_global_arguments(parser: argparse.ArgumentParser):
   """Adds all the global arguments that applies to all the CLI subcommands."""
   parser.add_argument(
@@ -694,6 +696,35 @@ async def main():
       # Exit with error if any wheel build fails.
       if result.return_code != 0:
         raise RuntimeError(f"Command failed with return code {result.return_code}")
+
+  if args.use_new_wheel_build_rule:
+    output_path = args.output_path
+    jax_bazel_dir = os.path.join("bazel-bin", "dist")
+    jaxlib_and_plugins_bazel_dir = os.path.join(
+        "bazel-bin", "jaxlib", "tools", "dist"
+    )
+    for wheel in args.wheels.split(","):
+      if wheel == "jax":
+        bazel_dir = jax_bazel_dir
+      else:
+        bazel_dir = jaxlib_and_plugins_bazel_dir
+      if "cuda" in wheel:
+        wheel_dir = wheel.replace("cuda", f"cuda{_JAX_CUDA_VERSION}").replace(
+            "-", "_"
+        )
+      else:
+        wheel_dir = wheel
+
+      if args.editable:
+        src_dir = os.path.join(bazel_dir, wheel_dir)
+        dst_dir = os.path.join(output_path, wheel_dir)
+        utils.copy_dir_recursively(src_dir, dst_dir)
+      else:
+        utils.copy_individual_files(bazel_dir, output_path, f"{wheel_dir}*.whl")
+        if wheel == "jax":
+          utils.copy_individual_files(
+              bazel_dir, output_path, f"{wheel_dir}*.tar.gz"
+          )
 
   # Exit with success if all wheels in the list were built successfully.
   sys.exit(0)
