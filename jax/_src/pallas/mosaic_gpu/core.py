@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import abc
 import collections
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 import dataclasses
 import enum
 import itertools as it
@@ -31,6 +31,7 @@ from jax._src import effects
 from jax._src import tree_util
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import primitives as pallas_primitives
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import types as state_types
@@ -114,20 +115,29 @@ class GPUMemorySpace(enum.Enum):
       shape: tuple[int, ...],
       dtype: jnp.dtype,
       transforms: Sequence[MemoryRefTransform] = (),
-
   ) -> pallas_core.MemoryRef:
     # A convenience function for constructing MemoryRef types.
     return GPUMemoryRef(shape, dtype, memory_space=self, transforms=transforms)
 
 
-def kernel(body, out_shape, *, compiler_params=None, **mesh_kwargs):
+def kernel(
+    body: Callable[..., None],
+    out_shape: object,
+    *,
+    scratch_shapes: Sequence[pallas_core.ScratchShape] = (),
+    compiler_params: object | None = None,
+    **mesh_kwargs: object,
+):
   if unwrap_out := not isinstance(out_shape, (tuple, list)):
     out_shape = (out_shape,)
   def wrapper(*operands):
     def stateful(operand_and_out_refs):
       operand_refs, out_refs = operand_and_out_refs
       def cmap_body():
-        body(*operand_refs, *out_refs)
+        pallas_primitives.run_scoped(
+            lambda *scratch_refs: body(*operand_refs, *out_refs, *scratch_refs),
+            *scratch_shapes,
+        )
       pallas_core.core_map(
           GPUMesh(**mesh_kwargs), compiler_params=compiler_params
       )(cmap_body)
