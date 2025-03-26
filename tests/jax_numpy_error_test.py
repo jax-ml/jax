@@ -117,65 +117,73 @@ class JaxNumpyErrorTests(jtu.JaxTestCase):
   @staticmethod
   def op_cases(cases):
     for jit in (True, False):
-      for func, operands in cases:
-        if not isinstance(operands, tuple):
-          operands = (operands,)
+      for func, ops_error, ops_no_err in cases:
+        if not isinstance(ops_error, tuple):
+          ops_error = (ops_error,)
+        if not isinstance(ops_no_err, tuple):
+          ops_no_err = (ops_no_err,)
 
         jit_str = "jit" if jit else "nojit"
         func_str = f"{func.__module__}.{func.__name__}"
         name = f"_{jit_str}_{func_str}"
 
-        yield name, jit, func, operands
+        yield name, jit, func, ops_error, ops_no_err
 
   @parameterized.named_parameters(
       op_cases((
-          # list of all NaN-producing jax.numpy functions
+          # List of all NaN-producing jax.numpy functions.
+          # The first group of numbers is the input that will produce a NaN, and
+          # the second group is the input that will not produce a NaN.
           # go/keep-sorted start
-          (jnp.acos, 2.0),
-          (jnp.acosh, 0.5),
-          (jnp.add, (jnp.inf, -jnp.inf)),
-          (jnp.arccos, 2.0),
-          (jnp.arccosh, 0.5),
-          (jnp.arcsin, -2.0),
-          (jnp.arctanh, -2.0),
-          (jnp.asin, -2.0),
-          (jnp.atanh, -2.0),
-          (jnp.cos, jnp.inf),
-          (jnp.divide, (0.0, 0.0)),
-          (jnp.divmod, (1.0, 0.0)),
-          (jnp.float_power, (-1.0, 0.5)),
-          (jnp.fmod, (1.0, 0.0)),
-          (jnp.log, -1.0),
-          (jnp.log10, -1.0),
-          (jnp.log1p, -1.5),
-          (jnp.log2, -1.0),
-          (jnp.mod, (1.0, 0.0)),
-          (jnp.pow, (-1.0, 0.5)),
-          (jnp.power, (-1.0, 0.5)),
-          (jnp.remainder, (1.0, 0.0)),
-          (jnp.sin, jnp.inf),
+          (jnp.acos, 2.0, 0.5),
+          (jnp.acosh, 0.5, 2.0),
+          (jnp.add, (jnp.inf, -jnp.inf), (0.0, 0.0)),
+          (jnp.arccos, 2.0, 0.5),
+          (jnp.arccosh, 0.5, 2.0),
+          (jnp.arcsin, -2.0, 0.5),
+          (jnp.arctanh, -2.0, 0.5),
+          (jnp.asin, -2.0, 0.5),
+          (jnp.atanh, -2.0, 0.5),
+          (jnp.cos, jnp.inf, 1.0),
+          (jnp.divide, (0.0, 0.0), (1.0, 1.0)),
+          (jnp.divmod, (1.0, 0.0), (1.0, 1.0)),
+          (jnp.float_power, (-1.0, 0.5), (1.0, 1.0)),
+          (jnp.fmod, (1.0, 0.0), (1.0, 1.0)),
+          (jnp.log, -1.0, 1.0),
+          (jnp.log10, -1.0, 1.0),
+          (jnp.log1p, -1.5, 1.0),
+          (jnp.log2, -1.0, 1.0),
+          (jnp.mod, (1.0, 0.0), (1.0, 1.0)),
+          (jnp.pow, (-1.0, 0.5), (1.0, 1.0)),
+          (jnp.power, (-1.0, 0.5), (1.0, 1.0)),
+          (jnp.remainder, (1.0, 0.0), (1.0, 1.0)),
+          (jnp.sin, jnp.inf, 1.0),
           # TODO(https://github.com/jax-ml/jax/issues/27470): Not yet supported.
-          # (jnp.sinc, jnp.inf),
-          (jnp.sqrt, -4.0),
-          (jnp.subtract, (jnp.inf, jnp.inf)),
-          (jnp.tan, jnp.inf),
-          (jnp.true_divide, (0.0, 0.0)),
-          (operator.add, (jnp.inf, -jnp.inf)),
-          (operator.mod, (1.0, 0.0)),
-          (operator.pow, (-1.0, 0.5)),
-          (operator.sub, (jnp.inf, jnp.inf)),
-          (operator.truediv, (0.0, 0.0)),
+          # (jnp.sinc, jnp.inf, 1.0),
+          (jnp.sqrt, -4.0, 4.0),
+          (jnp.subtract, (jnp.inf, jnp.inf), (0.0, 0.0)),
+          (jnp.tan, jnp.inf, 1.0),
+          (jnp.true_divide, (0.0, 0.0), (1.0, 1.0)),
+          (operator.add, (jnp.inf, -jnp.inf), (0.0, 0.0)),
+          (operator.mod, (1.0, 0.0), (1.0, 1.0)),
+          (operator.pow, (-1.0, 0.5), (1.0, 1.0)),
+          (operator.sub, (jnp.inf, jnp.inf), (0.0, 0.0)),
+          (operator.truediv, (0.0, 0.0), (1.0, 1.0)),
           # go/keep-sorted end
       ))
   )
-  def test_can_raise_nan_error(self, jit, f, operands):
-    operands = [jnp.float32(x) for x in operands]
+  def test_can_raise_nan_error(self, jit, f, ops_err, ops_no_err):
+    ops_err = [jnp.float32(x) for x in ops_err]
+    ops_no_err = [jnp.float32(x) for x in ops_no_err]
 
     if jit:
       f = jax.jit(f)
 
     with jnp_error.error_checking_behavior(nan="raise"):
-      f(*operands)
+      f(*ops_no_err)
+      error_check.raise_if_error()  # should not raise error
+
+      f(*ops_err)
       with self.assertRaisesRegex(JaxValueError, "NaN"):
         error_check.raise_if_error()
 
