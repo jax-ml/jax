@@ -2272,6 +2272,18 @@ def _optimization_barrier_lowering(ctx: LoweringRuleContext, *args):
   return mgpu.optimization_barrier(*args)
 
 
+@register_lowering_rule(
+    lax.optimization_barrier_p, mgpu.ThreadSemantics.Warpgroup
+)
+def _optimization_barrier_lowering_wg(ctx: LoweringRuleContext, *args):
+  args = [
+      _ensure_ir_value(arg, aval.dtype) for arg, aval in zip(args, ctx.avals_in)
+  ]
+  result = mgpu.dialect.optimization_barrier(args)
+
+  return (result,) if len(args) == 1 else result
+
+
 def _bcast(
     x: ir.Value,
     y: ir.Value,

@@ -1349,6 +1349,36 @@ class PallasCallTest(PallasTest):
         convert(x), jax.lax.bitcast_convert_type(x, out_dtype)
     )
 
+  def test_optimization_barrier(self):
+    if self.THREAD_SEMANTICS == plgpu.ThreadSemantics.Lane:
+      self.skipTest("This test crashes with lane semantics")
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = lax.optimization_barrier(x_ref[...])
+
+    x = jax.lax.iota(jnp.float32, 128)
+    np.testing.assert_array_equal(kernel(x), x)
+
+  def test_optimization_barrier_multiple_inputs(self):
+    if self.THREAD_SEMANTICS == plgpu.ThreadSemantics.Lane:
+      self.skipTest("This test crashes with lane semantics")
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      x, y = lax.optimization_barrier([x_ref[...], y_ref[...]])
+      o_ref[...] = x + y
+
+    x = jax.lax.iota(jnp.float32, 128)
+    y = jax.lax.iota(jnp.float32, 128) * 3
+    np.testing.assert_array_equal(kernel(x, y), x + y)
+
 
 class PallasCallWGTest(
     PallasCallTest, thread_semantics=plgpu.ThreadSemantics.Warpgroup
@@ -1366,7 +1396,6 @@ class PallasCallWGTest(
 
     actual_missing_primitives = lane_lowered_primitives - wg_lowered_primitives
     expected_missing_primitives = {
-        lax.optimization_barrier_p,
         mgpu_primitives.broadcasted_iota_p,
         lax.exp2_p,
         mgpu_primitives.layout_cast_p,
