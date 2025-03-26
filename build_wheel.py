@@ -61,6 +61,11 @@ parser.add_argument(
         "Whether to build the source package only. Optional."
     ),
 )
+parser.add_argument(
+    "--editable",
+    action="store_true",
+    help="Create an 'editable' jax build instead of a wheel.",
+)
 args = parser.parse_args()
 
 
@@ -90,7 +95,11 @@ def prepare_srcs(deps: list[str], srcs_dir: str) -> None:
   """
 
   for file in deps:
-    if not (file.startswith("bazel-out") or file.startswith("external")):
+    if not (
+        file.startswith("bazel-out")
+        or file.startswith("external")
+        or file.startswith("jaxlib")
+    ):
       copy_file(file, srcs_dir)
 
 
@@ -103,14 +112,18 @@ if sources_path is None:
 try:
   os.makedirs(args.output_path, exist_ok=True)
   prepare_srcs(args.srcs, pathlib.Path(sources_path))
-  build_utils.build_wheel(
-      sources_path,
-      args.output_path,
-      package_name="jax",
-      git_hash=args.jaxlib_git_hash,
-      build_wheel_only=args.build_wheel_only,
-      build_source_package_only=args.build_source_package_only,
-  )
+  package_name = "jax"
+  if args.editable:
+    build_utils.build_editable(sources_path, args.output_path, package_name)
+  else:
+    build_utils.build_wheel(
+        sources_path,
+        args.output_path,
+        package_name,
+        git_hash=args.jaxlib_git_hash,
+        build_wheel_only=args.build_wheel_only,
+        build_source_package_only=args.build_source_package_only,
+    )
 finally:
   if tmpdir:
     tmpdir.cleanup()
