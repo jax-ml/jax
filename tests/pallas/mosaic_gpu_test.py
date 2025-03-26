@@ -26,9 +26,13 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import lax
+from jax._src import pjit
 from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
+from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
+from jax._src.pallas.mosaic_gpu import primitives as mgpu_primitives
+from jax._src.state import discharge
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
@@ -1350,6 +1354,29 @@ class PallasCallWGTest(
     PallasCallTest, thread_semantics=plgpu.ThreadSemantics.Warpgroup
 ):
   ...
+
+  def test_missing_primitive_lowerings_are_tracked(self):
+    # This test is a way to keep track of which primitives need to be adapted
+    # to using warpgroup semantics. Once the set is empty, we should be able to
+    # enable warpgroup semantics by default (assuming we haven't overspecialized
+    # lowerings).
+    rules = mgpu_lowering.mosaic_lowering_rules
+    wg_lowered_primitives = set(rules[plgpu.ThreadSemantics.Warpgroup])
+    lane_lowered_primitives = set(rules[plgpu.ThreadSemantics.Lane])
+
+    actual_missing_primitives = lane_lowered_primitives - wg_lowered_primitives
+    expected_missing_primitives = {
+        lax.optimization_barrier_p,
+        mgpu_primitives.broadcasted_iota_p,
+        lax.exp2_p,
+        mgpu_primitives.layout_cast_p,
+        mgpu_primitives.load_p,
+        pjit.mesh_cast_p,
+        lax.slice_p,
+        discharge.run_state_p,
+    }
+
+    self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)
 
 
 class PallasCallSm90ATest(PallasSm90ATest):
