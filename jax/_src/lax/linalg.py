@@ -740,6 +740,14 @@ def linalg_sharding_rule(
     ndim = len(output_shapes) - len(batch_spec)
     return sharding.with_spec(P(*(tuple(batch_spec) + (None,) * ndim)))
 
+def linalg_vma_rule(multiple_results, shape_rule, name, *avals, **kwargs):
+  output_shapes = shape_rule(*avals, **kwargs)
+  out_vma = lax_internal.standard_vma_rule(name, *avals)
+  if multiple_results:
+    return [out_vma] * len(output_shapes)
+  else:
+    return out_vma
+
 def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
                      multiple_results=False, supports_batching=True,
                      require_same=True):
@@ -754,6 +762,7 @@ def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
         linalg_sharding_rule, multiple_results, shape_rule, ranks, name)
   else:
     sharding_rule = None
+  vma_rule = partial(linalg_vma_rule, multiple_results, shape_rule, name)
   prim = core.Primitive(name)
   prim.multiple_results = multiple_results
   prim.def_impl(partial(dispatch.apply_primitive, prim))
@@ -761,11 +770,12 @@ def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
     prim.def_abstract_eval(
         partial(lax_utils.standard_multi_result_abstract_eval, prim,
                 shape_rule, dtype_rule, lax_utils._standard_weak_type_rule,
-                sharding_rule))
+                sharding_rule, vma_rule))
   else:
     prim.def_abstract_eval(
       partial(lax_utils.standard_abstract_eval, prim, shape_rule, dtype_rule,
-              lax_utils._standard_weak_type_rule, sharding_rule, None))
+              lax_utils._standard_weak_type_rule, sharding_rule,
+              partial(lax_internal.standard_vma_rule, name)))
   if supports_batching:
     batching.primitive_batchers[prim] = partial(
         batching.expand_dims_batcher, prim)
