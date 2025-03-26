@@ -657,14 +657,10 @@ class PallasCallTest(PallasTest):
 
   @parameterized.product(
       src_memory_space=[plgpu.SMEM, plgpu.GMEM],
-      layout=[
-          plgpu.Layout.WGMMA_ROW,
-          plgpu.Layout.WGMMA_COL,
-          plgpu.Layout.WG_STRIDED((128,), vec_size=1),
-          None,
-      ],
+      layout=[plgpu.Layout.WG_STRIDED((128,), vec_size=1), None,
+      ]
   )
-  def test_load_to_layout_with_indexing(self, src_memory_space, layout):
+  def test_load_to_strided_layout_with_indexing(self, src_memory_space, layout):
     self.skip_if_wg_semantics()
 
     @functools.partial(
@@ -683,6 +679,32 @@ class PallasCallTest(PallasTest):
         o_ref[i, ...] = x
 
     x = jnp.arange(2 * 128, dtype=jnp.float32).reshape(2, 128)
+    np.testing.assert_array_equal(kernel(x), x)
+
+  @parameterized.product(
+      src_memory_space=[plgpu.SMEM, plgpu.GMEM],
+      layout=[plgpu.Layout.WGMMA_ROW, plgpu.Layout.WGMMA_COL],
+      m=[64, 128, 192],
+  )
+  def test_load_to_wgmma_row_col_layout_with_indexing(self, src_memory_space, layout, m):
+    self.skip_if_wg_semantics()
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([2, m], jnp.float32),
+        in_specs=[pl.BlockSpec(memory_space=src_memory_space)],
+        out_specs=plgpu.GPUBlockSpec(
+            (2, m),
+            lambda: (0, 0),
+            memory_space=plgpu.SMEM,
+        ),
+    )
+    def kernel(x_ref, o_ref):
+      for i in range(2):
+        x = plgpu.load(x_ref, (i,), layout=layout)
+        o_ref[i, ...] = x
+
+    x = jnp.arange(2 * m, dtype=jnp.float32).reshape(2, m)
     np.testing.assert_array_equal(kernel(x), x)
 
   @parameterized.product(
