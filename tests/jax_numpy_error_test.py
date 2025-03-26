@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import operator
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -112,16 +114,68 @@ class JaxNumpyErrorTests(jtu.JaxTestCase):
           jnp.isnan(jnp.float32(1.0)), "x is NaN", category="invalid"
       )
 
-  @parameterized.product(jit=[True, False])
-  def test_can_raise_nan_error(self, jit):
-    x = jnp.arange(4, dtype=jnp.float32) - 1
+  @staticmethod
+  def op_cases(cases):
+    for jit in (True, False):
+      for func, operands in cases:
+        if not isinstance(operands, tuple):
+          operands = (operands,)
 
-    f = jnp.log
+        jit_str = "jit" if jit else "nojit"
+        func_str = f"{func.__module__}.{func.__name__}"
+        name = f"_{jit_str}_{func_str}"
+
+        yield name, jit, func, operands
+
+  @parameterized.named_parameters(
+      op_cases((
+          # list of all NaN-producing jax.numpy functions
+          # go/keep-sorted start
+          (jnp.acos, 2.0),
+          (jnp.acosh, 0.5),
+          (jnp.add, (jnp.inf, -jnp.inf)),
+          (jnp.arccos, 2.0),
+          (jnp.arccosh, 0.5),
+          (jnp.arcsin, -2.0),
+          (jnp.arctanh, -2.0),
+          (jnp.asin, -2.0),
+          (jnp.atanh, -2.0),
+          (jnp.cos, jnp.inf),
+          (jnp.divide, (0.0, 0.0)),
+          (jnp.divmod, (1.0, 0.0)),
+          (jnp.float_power, (-1.0, 0.5)),
+          (jnp.fmod, (1.0, 0.0)),
+          (jnp.log, -1.0),
+          (jnp.log10, -1.0),
+          (jnp.log1p, -1.5),
+          (jnp.log2, -1.0),
+          (jnp.mod, (1.0, 0.0)),
+          (jnp.pow, (-1.0, 0.5)),
+          (jnp.power, (-1.0, 0.5)),
+          (jnp.remainder, (1.0, 0.0)),
+          (jnp.sin, jnp.inf),
+          # TODO(https://github.com/jax-ml/jax/issues/27470): Not yet supported.
+          # (jnp.sinc, jnp.inf),
+          (jnp.sqrt, -4.0),
+          (jnp.subtract, (jnp.inf, jnp.inf)),
+          (jnp.tan, jnp.inf),
+          (jnp.true_divide, (0.0, 0.0)),
+          (operator.add, (jnp.inf, -jnp.inf)),
+          (operator.mod, (1.0, 0.0)),
+          (operator.pow, (-1.0, 0.5)),
+          (operator.sub, (jnp.inf, jnp.inf)),
+          (operator.truediv, (0.0, 0.0)),
+          # go/keep-sorted end
+      ))
+  )
+  def test_can_raise_nan_error(self, jit, f, operands):
+    operands = [jnp.float32(x) for x in operands]
+
     if jit:
       f = jax.jit(f)
 
     with jnp_error.error_checking_behavior(nan="raise"):
-      f(x)
+      f(*operands)
       with self.assertRaisesRegex(JaxValueError, "NaN"):
         error_check.raise_if_error()
 
