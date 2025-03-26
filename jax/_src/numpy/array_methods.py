@@ -613,24 +613,6 @@ def __array_module__(self, types):
     return NotImplemented
 
 
-@partial(jax.jit, static_argnums=(1,2,3))
-def _multi_slice(self: Array,
-                 start_indices: tuple[tuple[int, ...]],
-                 limit_indices: tuple[tuple[int, ...]],
-                 removed_dims: tuple[tuple[int, ...]]) -> list[Array]:
-  """Extracts multiple slices from `arr`.
-
-  This is used to shard Array arguments to pmap. It's implemented as a
-  Array method here to avoid circular imports.
-  """
-  results: list[Array] = []
-  for starts, limits, removed in zip(start_indices, limit_indices, removed_dims):
-    sliced = lax.slice(self, starts, limits)
-    if removed:
-      sliced = lax.squeeze(sliced, removed)
-    results.append(sliced)
-  return results
-
 # The next two functions are related to iter(array), implemented here to
 # avoid circular imports.
 @jax.jit
@@ -1022,7 +1004,6 @@ _array_methods = {
 
   # Methods exposed in order to avoid circular imports
   "_split": lax_numpy.split,  # used in jacfwd/jacrev
-  "_multi_slice": _multi_slice,  # used in pxla for sharding
 }
 
 _impl_only_array_methods = {

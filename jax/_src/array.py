@@ -1113,10 +1113,6 @@ def _array_mlir_constant_handler(val):
 mlir.register_constant_handler(ArrayImpl, _array_mlir_constant_handler)
 
 
-# NOTE(skye): we could refactor to generate _multi_slice parameters directly
-# from the input ShardingSpec, rather than the indices. However, this would
-# require duplicating the ordering logic of spec_to_indices, which is more
-# subtle and more likely to change than the index logic we have to support here.
 def as_slice_indices(arr: Any, idx: Index) -> tuple[
     tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
   """Returns start_indices, limit_indices, removed_dims"""
@@ -1151,7 +1147,7 @@ def shard_device_array(x, devices, indices, sharding):
     # TODO(yashkatariya): Maybe this should be set when we call the handler in
     # InputsHandler.__call__?
     with _internal_use_concrete_mesh(None):
-      shards = x._multi_slice(start_indices, limit_indices, removed_dims)
+      shards = api._multi_slice(x, start_indices, limit_indices, removed_dims)
   aval = core.shaped_abstractify(x)
   return pxla.batched_device_put(aval, sharding, shards, devices)
 

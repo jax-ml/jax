@@ -65,6 +65,7 @@ from jax._src.api_util import (
   apply_flat_fun_nokwargs, check_callable, debug_info,
   flat_out_axes)
 from jax._src.lax import lax as lax_internal
+from jax._src.lax import slicing
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
@@ -3003,3 +3004,17 @@ def clear_caches():
 
   # Clear particular util.cache instances.
   dispatch.xla_primitive_callable.cache_clear()
+
+
+@partial(jit, static_argnums=(1,2,3))
+def _multi_slice(x, start_indices: tuple[tuple[int, ...]],
+                 limit_indices: tuple[tuple[int, ...]],
+                 removed_dims: tuple[tuple[int, ...]]):
+  """Extracts multiple slices from `arr`."""
+  results = []
+  for starts, limits, removed in zip(start_indices, limit_indices, removed_dims):
+    sliced = slicing.slice(x, starts, limits)
+    if removed:
+      sliced = lax_internal.squeeze(sliced, removed)
+    results.append(sliced)
+  return results
