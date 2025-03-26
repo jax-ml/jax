@@ -556,6 +556,9 @@ def infer_layout(module: ir.Module):
         max_vec_size_for_v = (
             np.prod(cast(ir.ShapedType, v.type).shape) // fa.WARPGROUP_SIZE
         )
+        # We cannot create a Fragmented array with vector size 0.
+        if max_vec_size_for_v == 0:
+          continue
         desired_vec_size = 8 // utils.bytewidth(v.type.element_type)
         default_vector_size = min(
             default_vector_size, max_vec_size_for_v, desired_vec_size
