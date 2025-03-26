@@ -31,7 +31,6 @@ from jax._src.lib import cuda_versions
 from jax._src.cudnn.scaled_matmul_stablehlo import (
     quantize,
     shape_normalization,
-    BlockScaleConfig,
 )
 from jax.test_util import check_grads
 from jax import nn
@@ -110,17 +109,7 @@ def create_mxfp8_configs_if_available():
   if _dtypes.float8_e8m0fnu is None:
     raise unittest.SkipTest("float8_e8m0fnu is not available.")
 
-  def _create_mxfp8_config():
-    return BlockScaleConfig(
-        mode='mxfp8',
-        block_size=32,
-        data_type=jnp.float8_e4m3fn,
-        scale_type=jnp.float8_e8m0fnu,
-        global_scale=None,
-        infer_only=False
-    )
-
-  return [_create_mxfp8_config() for _ in range(3)]
+  return [nn.get_scaled_dot_general_config("mxfp8") for _ in range(3)]
 
 
 @jtu.with_config(jax_legacy_prng_key="allow",
@@ -130,10 +119,9 @@ class NNFunctionsTest(jtu.JaxTestCase):
       contract=[160, 96],
       lhs_non_contract=[240, 100],
       dtype=[jnp.float16, jnp.bfloat16, jnp.float32],
-      impl=['cudnn',],
   )
-  def testScaledMatmul(self, contract, lhs_non_contract, dtype, impl):
-    if impl == 'cudnn' and not _is_required_cudnn_version_satisfied("10.0", 90700):
+  def testScaledMatmul(self, contract, lhs_non_contract, dtype):
+    if not _is_required_cudnn_version_satisfied("10.0", 90700):
       raise unittest.SkipTest("CUDA or cuDNN versions are not compatible")
     # Check if float8_e8m0fnu is available
     configs = create_mxfp8_configs_if_available()
@@ -153,11 +141,10 @@ class NNFunctionsTest(jtu.JaxTestCase):
   @parameterized.product(
       is_training=[True, False],
       output_type=[jnp.float16, jnp.bfloat16, jnp.float32],
-      impl=['cudnn',],
   )
   def testScaledDotGeneral(
-      self, is_training, output_type, impl):
-    if impl == 'cudnn' and not _is_required_cudnn_version_satisfied("10.0", 90700):
+      self, is_training, output_type):
+    if not _is_required_cudnn_version_satisfied("10.0", 90700):
       raise unittest.SkipTest("CUDA or cuDNN versions are not compatible")
 
     configs = create_mxfp8_configs_if_available()
