@@ -57,7 +57,7 @@ def pallas_call_lowering(
     print(grid_mapping)
 
   thread_semantics = compiler_params.get("mosaic_gpu", {}).get(
-      "thread_semantics", mgpu.ThreadSemantics.Warpgroup
+      "thread_semantics", mgpu.ThreadSemantics.Lane
   )
   if thread_semantics == mgpu.ThreadSemantics.Warpgroup:
     mgpu.dialect.register_dialect(ctx.module_context.context)  # pytype: disable=attribute-error
