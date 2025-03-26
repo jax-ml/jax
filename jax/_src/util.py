@@ -417,8 +417,9 @@ def wraps(
                      else docstr.format(fun=name, doc=doc, **kwargs))
       fun.__qualname__ = getattr(wrapped, "__qualname__", fun.__name__)
       fun.__wrapped__ = wrapped
-    finally:
-      return fun
+    except Exception:
+      pass
+    return fun
   return wrapper
 
 
