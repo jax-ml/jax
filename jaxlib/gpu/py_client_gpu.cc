@@ -43,6 +43,7 @@ limitations under the License.
 #include "xla/python/nb_numpy.h"
 #include "xla/python/types.h"
 #include "xla/shape_util.h"
+#include "xla/xla_data.pb.h"
 
 namespace nb = nanobind;
 
@@ -79,6 +80,13 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
   for (size_t i = 0; i < arity; ++i) {
     auto arg = args.get<xla::ffi::AnyBuffer>(i);
     auto ptype = static_cast<xla::PrimitiveType>(arg->element_type());
+    // TODO(b/395428868): Remove this check once we support subbyte types.
+    if (ptype == xla::S1 || ptype == xla::S2 || ptype == xla::S4 ||
+        ptype == xla::U1 || ptype == xla::U2 || ptype == xla::U4) {
+      return xla::ffi::Error(xla::ffi::ErrorCode::kUnimplemented,
+                             absl::StrFormat("Unsupported primitive type: %s",
+                                             PrimitiveType_Name(ptype)));
+    }
     if (ptype == xla::TOKEN) {
       host_input_buffers[i] = nullptr;
       continue;
@@ -115,7 +123,7 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
     auto dims = absl::Span<const int64_t>(arg->dimensions().begin(),
                                           arg->dimensions().size());
     auto array = xla::nb_numpy_ndarray(dtype, dims, std::nullopt,
-                                  host_input_buffers[i], base);
+                                       host_input_buffers[i], base);
     array.attr("flags").attr("writeable") = nb::bool_(false);
     PyTuple_SET_ITEM(host_input_arrays.ptr(), i, array.inc_ref().ptr());
   }
@@ -137,6 +145,13 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
   for (size_t i = 0; i < rets.size(); ++i) {
     auto ret = rets.get<xla::ffi::AnyBuffer>(i).value();
     auto ptype = static_cast<xla::PrimitiveType>(ret->element_type());
+    // TODO(b/395428868): Remove this check once we support subbyte types.
+    if (ptype == xla::S1 || ptype == xla::S2 || ptype == xla::S4 ||
+        ptype == xla::U1 || ptype == xla::U2 || ptype == xla::U4) {
+      return xla::ffi::Error(xla::ffi::ErrorCode::kUnimplemented,
+                             absl::StrFormat("Unsupported primitive type: %s",
+                                             PrimitiveType_Name(ptype)));
+    }
     if (ptype == xla::TOKEN) continue;
     nb::object output =
         nb::borrow<nb::object>(PyTuple_GetItem(result_tuple.ptr(), i));
