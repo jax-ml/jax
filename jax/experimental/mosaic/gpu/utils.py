@@ -135,7 +135,7 @@ def _debug_scalar_ty_format(arg):
     return "%llu", arg
   if ir.F32Type.isinstance(arg.type):
     return "%f", arg
-  if ir.F16Type.isinstance(arg.type):
+  if ir.BF16Type.isinstance(arg.type) or ir.F16Type.isinstance(arg.type):
     arg = arith.extf(ir.F32Type.get(), arg)
     return "%f", arg
   raise NotImplementedError(f"Can't print the type {arg.type}")
