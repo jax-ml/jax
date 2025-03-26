@@ -7265,6 +7265,24 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     else:
       self.assertIn('mhlo.sharding = "{devices=[2,2]<=[4]}"}', lowered_text)
 
+  def test_random_normal_wo_mesh_context_error(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'),
+                           axis_types=(AxisType.Explicit,) * 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+
+    @jax.jit
+    def f(key):
+      out = jax.random.normal(key, shape=(8, 12), out_sharding=s)
+      self.assertEqual(out.aval.sharding.spec, P('x', 'y'))
+      self.assertEqual(out.aval.sharding.mesh, mesh.abstract_mesh)
+      return out
+
+    key = jax.random.key(1)
+    with self.assertRaisesRegex(
+        ValueError,
+        'Length of device assignment.*is not equal to the size of the mesh'):
+      f(key)
+
   def test_random_normal_wo_mesh_context(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'),
                            axis_types=(AxisType.Explicit,) * 2)
