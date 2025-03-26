@@ -275,8 +275,9 @@ class ArrayAPIInspectionUtilsTest(jtu.JaxTestCase):
 
   def test_capabilities_info(self):
     capabilities = self.info.capabilities()
-    assert capabilities["boolean indexing"]
+    assert not capabilities["boolean indexing"]
     assert not capabilities["data-dependent shapes"]
+    assert capabilities["max dimensions"] == 64
 
   def test_default_device_info(self):
     assert self.info.default_device() is None
