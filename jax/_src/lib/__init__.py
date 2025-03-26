@@ -117,7 +117,7 @@ import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error  # noqa: 
 # Only for the internal usage of the JAX developers, we expose a version
 # number that can be used to perform changes without breaking the main
 # branch on the Jax github.
-xla_extension_version: int = getattr(xla_client, '_version', 0)
+jaxlib_extension_version: int = getattr(xla_client, '_version', 0)
 
 import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error  # noqa: F401
 import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error  # noqa: F401

@@ -33,7 +33,7 @@ from jax._src import sharding_impls
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge as xb
-from jax._src.lib import xla_extension_version
+from jax._src.lib import jaxlib_extension_version
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -827,7 +827,7 @@ def emit_python_callback(
     return outputs, token, None
 
   # TODO(dsuo): Remove this once we bump minimum_jaxlib_version to "0.5.4".
-  if xla_extension_version <= 320:
+  if jaxlib_extension_version <= 320:
     result_types = mlir.flatten_ir_types([mlir.aval_to_ir_type(aval) for aval in result_avals])
     if token:
 
