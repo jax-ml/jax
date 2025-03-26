@@ -53,6 +53,7 @@ class NumPyAPI(NamedTuple):
   fun: Callable[..., Any]
   args: list[jax.ShapeDtypeStruct]
   kwargs: dict[str, Any]
+  skip_on_devices: list[str] | None
 
   def name(self):
     return self.fun.__name__
@@ -61,9 +62,12 @@ class NumPyAPI(NamedTuple):
     rng = jtu.rand_default(rng)
     return jax.tree.map(lambda arg: rng(arg.shape, arg.dtype), self.args)
 
+  def with_skip_on_devices(self, disabled_devices: list[str]) -> 'NumPyAPI':
+    return self._replace(skip_on_devices=disabled_devices)
+
   @classmethod
   def sig(cls, fun: Callable[..., Any], *args: Any, **kwargs: Any) -> 'NumPyAPI':
-    return cls(fun, args, kwargs)
+    return cls(fun, args, kwargs, None)
 
 
 class ShapeDtype:
@@ -444,7 +448,7 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.rint, Float[5]),
   NumPyAPI.sig(jnp.roll, Float[5], Int[1]),
   NumPyAPI.sig(jnp.rollaxis, Float[5, 4], axis=1),
-  NumPyAPI.sig(jnp.roots, Float[5]),
+  NumPyAPI.sig(jnp.roots, Float[5]).with_skip_on_devices(['tpu']),
   NumPyAPI.sig(jnp.rot90, Float[5, 3]),
   NumPyAPI.sig(jnp.round, Float[5]),
   NumPyAPI.sig(jnp.searchsorted, Float[5], Float[5]),
@@ -512,6 +516,8 @@ class JaxArrayTests(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {'testcase_name': api.name(), 'api': api} for api in NUMPY_APIS)
   def test_numpy_api_supports_jax_array(self, api):
+    if api.skip_on_devices and jtu.test_device_matches(api.skip_on_devices):
+      self.skipTest(f'{api.name()} not supported on {api.skip_on_devices}')
     fun = api.fun
     args = api.make_args(self.rng())
     wrapped_args = jax.tree.map(JaxArrayWrapper, args)
