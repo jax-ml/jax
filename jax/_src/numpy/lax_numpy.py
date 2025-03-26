@@ -60,7 +60,7 @@ from jax._src.numpy.sorting import argsort, sort
 from jax._src.numpy.vectorize import vectorize
 from jax._src.sharding_impls import SingleDeviceSharding
 from jax._src.typing import (
-  Array, ArrayLike, DType, DTypeLike, DeprecatedArg, DimSize, DuckTypedArray, Shape
+  Array, ArrayLike, DType, DTypeLike, DeprecatedArg, DimSize, Shape, SupportsShape
 )
 from jax._src.util import (
     NumpyComplexWarning, canonicalize_axis as _canonicalize_axis,
@@ -7557,7 +7557,7 @@ def tril_indices(n: int, k: int = 0, m: int | None = None) -> tuple[Array, Array
 
 
 @export
-def triu_indices_from(arr: ArrayLike | DuckTypedArray, k: int = 0) -> tuple[Array, Array]:
+def triu_indices_from(arr: ArrayLike | SupportsShape, k: int = 0) -> tuple[Array, Array]:
   """Return the indices of upper triangle of a given array.
 
   JAX implementation of :func:`numpy.triu_indices_from`.
@@ -7619,7 +7619,7 @@ def triu_indices_from(arr: ArrayLike | DuckTypedArray, k: int = 0) -> tuple[Arra
 
 
 @export
-def tril_indices_from(arr: ArrayLike | DuckTypedArray, k: int = 0) -> tuple[Array, Array]:
+def tril_indices_from(arr: ArrayLike | SupportsShape, k: int = 0) -> tuple[Array, Array]:
   """Return the indices of lower triangle of a given array.
 
   JAX implementation of :func:`numpy.tril_indices_from`.
