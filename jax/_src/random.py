@@ -690,7 +690,8 @@ def choice(key: ArrayLike,
 
 def normal(key: ArrayLike,
            shape: Shape = (),
-           dtype: DTypeLikeFloat = float) -> Array:
+           dtype: DTypeLikeFloat = float,
+           out_sharding=None) -> Array:
   r"""Sample standard normal random values with given shape and float dtype.
 
   The values are returned according to the probability density function:
@@ -712,12 +713,16 @@ def normal(key: ArrayLike,
   """
   key, _ = _check_prng_key("normal", key)
   shape = core.canonicalize_shape(shape)
+  out_sharding = canonicalize_sharding(out_sharding, 'normal')
   dtypes.check_user_dtype_supported(dtype)
   if not dtypes.issubdtype(dtype, np.inexact):
     raise ValueError(f"dtype argument to `normal` must be a float or complex dtype, "
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  return _normal(key, shape, dtype)
+  if out_sharding is None:
+    return _normal(key, shape, dtype)
+  return auto_axes(partial(_normal, shape=shape, dtype=dtype),
+                   out_shardings=out_sharding)(key)
 
 @partial(jit, static_argnums=(1, 2))
 def _normal(key, shape, dtype) -> Array:
