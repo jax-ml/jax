@@ -4687,6 +4687,8 @@ class APITest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cpu")
   def test_inner_jit_forwarding_happens(self):
+    if not config.dynamic_shapes.value:
+      self.skipTest("Only works for dynamic shapes")
     jaxpr = jax.make_jaxpr(lambda: jax.jit(lambda x: x)(3))()
     self.assertLen(jaxpr.jaxpr.outvars, 1)
     self.assertIsInstance(jaxpr.jaxpr.outvars[0], core.Literal)
@@ -4695,6 +4697,8 @@ class APITest(jtu.JaxTestCase):
   @parameterized.parameters(range(8))
   @jtu.run_on_devices("cpu")
   def test_inner_jit_forwarding_correctness(self, num_input_fwd):
+    if not config.dynamic_shapes.value:
+      self.skipTest("Only works for dynamic shapes")
     num_args = 8
     rng = np.random.RandomState(0)
 

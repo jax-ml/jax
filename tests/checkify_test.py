@@ -24,7 +24,7 @@ from jax import lax
 from jax.experimental import checkify
 from jax.experimental import pjit
 from jax.experimental import shard_map
-from jax.sharding import NamedSharding
+from jax.sharding import NamedSharding, PartitionSpec as P
 from jax._src import array
 from jax._src import config
 from jax._src import core
@@ -474,6 +474,19 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     err, _ = checked_f(init_val)
     self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), "division by zero")
+
+  def test_checify_donation_no_forwarding(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+
+    @checkify.checkify
+    @partial(jax.jit, donate_argnums=(0,))
+    def f(x: jax.Array) -> jax.Array:
+      checkify.check(jnp.all(x > 0), "a")
+      return x
+
+    x = jax.device_put(jnp.zeros(64, dtype="int32"), NamedSharding(mesh, P()))
+    err, y = f(x)
+    err, z = f(y)  # doesn't crash
 
   @jtu.skip_on_devices("tpu")
   def test_while_loop_body_and_cond_error(self):

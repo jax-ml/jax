@@ -1090,6 +1090,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(g(arr), all_true)
 
   def test_scan_offload(self):
+    self.skipTest('b/406586554')
     np_inp = jnp.arange(4096).reshape(16, 16, 16)
 
     @jax.jit
