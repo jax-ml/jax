@@ -60,7 +60,7 @@ from jax._src.numpy.sorting import argsort, sort
 from jax._src.numpy.vectorize import vectorize
 from jax._src.sharding_impls import SingleDeviceSharding
 from jax._src.typing import (
-  Array, ArrayLike, DType, DTypeLike, DeprecatedArg, DimSize, Shape
+  Array, ArrayLike, DType, DTypeLike, DeprecatedArg, DimSize, DuckTypedArray, Shape
 )
 from jax._src.util import (
     NumpyComplexWarning, canonicalize_axis as _canonicalize_axis,
@@ -7557,7 +7557,7 @@ def tril_indices(n: int, k: int = 0, m: int | None = None) -> tuple[Array, Array
 
 
 @export
-def triu_indices_from(arr: ArrayLike, k: int = 0) -> tuple[Array, Array]:
+def triu_indices_from(arr: ArrayLike | DuckTypedArray, k: int = 0) -> tuple[Array, Array]:
   """Return the indices of upper triangle of a given array.
 
   JAX implementation of :func:`numpy.triu_indices_from`.
@@ -7608,14 +7608,18 @@ def triu_indices_from(arr: ArrayLike, k: int = 0) -> tuple[Array, Array]:
     >>> jnp.triu_indices_from(arr, k=-1)
     (Array([0, 0, 0, 1, 1, 1, 2, 2], dtype=int32), Array([0, 1, 2, 0, 1, 2, 1, 2], dtype=int32))
   """
-  arr_shape = np.shape(arr)
+  if hasattr(arr, "shape"):
+    arr_shape = arr.shape
+  else:
+    arr = util.ensure_arraylike("triu_indices_from", arr)
+    arr_shape = arr.shape
   if len(arr_shape) != 2:
     raise ValueError("Only 2-D inputs are accepted")
   return triu_indices(arr_shape[0], k=k, m=arr_shape[1])
 
 
 @export
-def tril_indices_from(arr: ArrayLike, k: int = 0) -> tuple[Array, Array]:
+def tril_indices_from(arr: ArrayLike | DuckTypedArray, k: int = 0) -> tuple[Array, Array]:
   """Return the indices of lower triangle of a given array.
 
   JAX implementation of :func:`numpy.tril_indices_from`.
@@ -7666,7 +7670,11 @@ def tril_indices_from(arr: ArrayLike, k: int = 0) -> tuple[Array, Array]:
     >>> jnp.tril_indices_from(arr, k=-1)
     (Array([1, 2, 2], dtype=int32), Array([0, 0, 1], dtype=int32))
   """
-  arr_shape = np.shape(arr)
+  if hasattr(arr, "shape"):
+    arr_shape = arr.shape
+  else:
+    arr = util.ensure_arraylike("tril_indices_from", arr)
+    arr_shape = arr.shape
   if len(arr_shape) != 2:
     raise ValueError("Only 2-D inputs are accepted")
   return tril_indices(arr_shape[0], k=k, m=arr_shape[1])
