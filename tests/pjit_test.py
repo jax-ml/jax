@@ -7117,7 +7117,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jax.grad(g)(arr)
     self.assertEqual(out.sharding, arr.sharding)
 
-  def test_auto_axes_computation_follows_data_error(self):
+  def test_auto_axes_computation_follows_data(self):
     mesh = jtu.create_mesh((2,), ('x',), axis_types=(AxisType.Explicit,))
     s = NamedSharding(mesh, P('x'))
     arr = jax.device_put(np.arange(8), s)
@@ -7126,8 +7126,9 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     def f(x):
       return x * 2
 
-    with self.assertRaisesRegex(ValueError, "Context mesh.*cannot be empty"):
-      auto_axes(f, out_shardings=s)(arr)
+    out = auto_axes(f, out_shardings=s)(arr)
+    self.assertEqual(out.sharding, s)
+    self.assertArraysEqual(out, arr * 2)
 
   def test_divisbility_aval_error(self):
     abstract_mesh = mesh_lib.AbstractMesh(
@@ -7263,6 +7264,41 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertIn('<@mesh, [{"x"}, {"y"}]>', lowered_text)
     else:
       self.assertIn('mhlo.sharding = "{devices=[2,2]<=[4]}"}', lowered_text)
+
+  def test_random_normal_wo_mesh_context(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'),
+                           axis_types=(AxisType.Explicit,) * 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+
+    @jax.jit
+    def f(arr, key):
+      out = jax.random.normal(key, shape=(8, 12), out_sharding=s)
+      self.assertEqual(out.aval.sharding.spec, P('x', 'y'))
+      return arr + out
+
+    key = jax.random.key(1)
+    out = f(jax.device_put(np.arange(8 * 12.).reshape(8, 12), s), key)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
+  def test_auto_axes_no_context_mesh(self):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'), axis_types=(AxisType.Explicit,) * 2)
+    np_inp = np.arange(16.).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    @partial(auto_axes, axes='x',
+             out_shardings=NamedSharding(mesh, P('x', 'y')))
+    def h(y):
+      self.assertEqual(y.aval.sharding.spec, P(None, 'y'))
+      z = jnp.sin(y)
+      self.assertEqual(z.aval.sharding.spec, P(None, 'y'))
+      return z
+
+    out = jax.jit(h)(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
+    out = h(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
