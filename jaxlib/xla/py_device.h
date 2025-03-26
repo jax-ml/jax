@@ -24,10 +24,10 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "nanobind/nanobind.h"
+#include "jaxlib/xla/nb_class_ptr.h"
 #include "jaxlib/xla/py_client.h"
 #include "xla/literal.h"
 #include "xla/python/ifrt/device.h"
-#include "xla/python/nb_class_ptr.h"
 #include "xla/shape.h"
 
 namespace xla {

@@ -49,9 +49,9 @@ limitations under the License.
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/tuple.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/xla/nb_class_ptr.h"
 #include "jaxlib/xla/pytree.pb.h"
 #include "xla/pjrt/exceptions.h"
-#include "xla/python/nb_class_ptr.h"
 #include "xla/tsl/platform/logging.h"
 
 namespace xla {

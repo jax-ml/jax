@@ -42,6 +42,7 @@ limitations under the License.
 #include "nanobind/stl/complex.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "jaxlib/xla/py_array.h"
+#include "jaxlib/xla/python_ref_manager.h"
 #include "jaxlib/xla/sharding.h"
 #include "xla/primitive_util.h"
 #include "xla/python/ifrt/array.h"
@@ -53,7 +54,6 @@ limitations under the License.
 #include "xla/python/ifrt/sharding.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
-#include "xla/python/python_ref_manager.h"
 #include "xla/python/types.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/ref_count.h"

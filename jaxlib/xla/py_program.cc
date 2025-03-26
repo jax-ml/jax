@@ -34,8 +34,10 @@ limitations under the License.
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/xla/nb_class_ptr.h"
 #include "jaxlib/xla/py_device.h"
 #include "jaxlib/xla/py_device_list.h"
+#include "jaxlib/xla/python_ref_manager.h"
 #include "jaxlib/xla/sharding.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/pjrt/mlir_to_hlo.h"
@@ -53,11 +55,9 @@ limitations under the License.
 #include "xla/python/ifrt/program.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
-#include "xla/python/nb_class_ptr.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/python/pjrt_ifrt/xla_sharding.h"
-#include "xla/python/python_ref_manager.h"
 #include "xla/python/types.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"

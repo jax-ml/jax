@@ -22,9 +22,9 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "jaxlib/xla/nb_class_ptr.h"
 #include "jaxlib/xla/py_client.h"
 #include "xla/python/ifrt/device.h"
-#include "xla/python/nb_class_ptr.h"
 
 namespace nb = ::nanobind;
 

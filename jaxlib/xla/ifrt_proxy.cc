@@ -36,12 +36,12 @@
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/unordered_map.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
+#include "jaxlib/xla/nb_class_ptr.h"
 #include "jaxlib/xla/py_client.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt_proxy/client/registry.h"
-#include "xla/python/nb_class_ptr.h"
 #include "tsl/platform/env.h"
 #include "tsl/platform/statusor.h"
 

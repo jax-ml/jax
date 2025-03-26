@@ -34,9 +34,11 @@ limitations under the License.
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/xla/nb_class_ptr.h"
 #include "jaxlib/xla/py_array.h"
 #include "jaxlib/xla/py_client.h"
 #include "jaxlib/xla/to_ifrt_sharding.h"
+#include "jaxlib/xla/traceback.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/array.h"
@@ -45,13 +47,11 @@ limitations under the License.
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
-#include "xla/python/nb_class_ptr.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_array.h"
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/pjrt_ifrt/pjrt_memory.h"
-#include "xla/python/traceback.h"
 #include "xla/python/transfer/event_loop.h"
 #include "xla/python/transfer/socket-server.h"
 #include "xla/python/transfer/socket_bulk_transport.h"

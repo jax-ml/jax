@@ -20,8 +20,8 @@ limitations under the License.
 
 // placeholder for index annotation headers
 #include "nanobind/nanobind.h"
+#include "jaxlib/xla/nb_class_ptr.h"
 #include "jaxlib/xla/py_client.h"
-#include "xla/python/nb_class_ptr.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 
 namespace xla {

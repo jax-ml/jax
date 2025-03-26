@@ -30,13 +30,13 @@ limitations under the License.
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "jaxlib/xla/nb_class_ptr.h"
 #include "jaxlib/xla/py_client.h"
 #include "jaxlib/xla/py_device_list.h"
 #include "jaxlib/xla/sharded_device_array.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/device_list.h"
-#include "xla/python/nb_class_ptr.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/logging.h"
