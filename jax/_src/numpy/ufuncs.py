@@ -32,12 +32,13 @@ from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax
 from jax._src.lax import other as lax_other
 from jax._src.typing import Array, ArrayLike
+from jax._src.numpy import error as jnp_error
+from jax._src.numpy import reductions
+from jax._src.numpy.ufunc_api import ufunc
 from jax._src.numpy.util import (
    check_arraylike, promote_args, promote_args_inexact,
    promote_args_numeric, promote_dtypes_inexact, promote_dtypes_numeric,
    promote_shapes, _where, check_no_float0s)
-from jax._src.numpy.ufunc_api import ufunc
-from jax._src.numpy import reductions
 from jax._src.util import set_module
 
 
@@ -486,7 +487,9 @@ def log(x: ArrayLike, /) -> Array:
     >>> jnp.allclose(jnp.log(x1*x2), jnp.log(x1)+jnp.log(x2))
     Array(True, dtype=bool)
   """
-  return lax.log(*promote_args_inexact('log', x))
+  out = lax.log(*promote_args_inexact('log', x))
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 @export
