@@ -46,6 +46,7 @@ from jax._src import test_util as jtu
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.lax.control_flow import for_loop
 from jax._src.interpreters import mlir
+from jax._src import util as util
 
 
 import numpy as np
@@ -241,7 +242,7 @@ class DebugInfoTest(jtu.JaxTestCase):
     dbg = api_util.debug_info("jit", my_f, (1, 2), dict(z=3, w=4))
     self.assertRegex(dbg.func_src_info, r"^my_f at .*debug_info_test.py:\d+")
     self.assertEqual(dbg.func_name, "my_f")
-    self.assertEqual(dbg.arg_names, ("x", "y", "z", "w"))
+    self.assertEqual(dbg.arg_names, ("x", "y", "w", "z"))
     self.assertIsNone(dbg.result_paths)
 
   def test_debug_info_arg_passed_as_kwarg(self):
@@ -261,23 +262,29 @@ class DebugInfoTest(jtu.JaxTestCase):
                                      "y_tree['w']", "y_tree['z']"))
 
   def test_debug_info_with_statics(self):
-    def my_f(x, y, *, z, w):
+    def my_f(x, z, *, w, y):
       pass
 
-    dbg = api_util.debug_info("jit", my_f, (1, 2), dict(z=3, w=4),
+    dbg = api_util.debug_info("jit", my_f, (1,), dict(y=2, z=3, w=4),
                               static_argnums=(1,),
                               static_argnames=("w",))
-    self.assertEqual(dbg.arg_names, ("x", "z"))
+    self.assertEqual(dbg.arg_names, ("x", "y", "z"))
 
   def test_debug_info_with_pytrees_and_statics(self):
-    def my_f(x, y, *, z, w):
+    def my_f(x, y, *, z, w, t):
       pass
 
     dbg = api_util.debug_info("jit", my_f, ((1, 2), (2, 3)),
-                              dict(z=(3, 4), w=(5, 6)),
+                              dict(z=(3, 4), w=(5, 6), t=7),
                               static_argnums=(1,),
                               static_argnames=("w",))
-    self.assertEqual(dbg.arg_names, ("x[0]", "x[1]", "z[0]", "z[1]"))
+    self.assertEqual(dbg.arg_names, ("x[0]", "x[1]", "t", "z[0]", "z[1]"))
+
+    dbg = api_util.debug_info("jit", my_f, ((1, 2),),
+                              dict(z=(3, 4), w=(5, 6), t=7, y=3),
+                              static_argnums=(1,),
+                              static_argnames=("w",))
+    self.assertEqual(dbg.arg_names, ("x[0]", "x[1]", "t", "y", "z[0]", "z[1]"))
 
   def test_debug_info_too_many_args(self):
     def my_f(x):
@@ -287,7 +294,7 @@ class DebugInfoTest(jtu.JaxTestCase):
     self.assertEqual(dbg.arg_names, ('args[0]', 'args[1]', 'args[2]', "kwargs['z']"))
 
   def test_debug_info_no_source_info_built_in(self):
-    # built-in function "int" does not have an inspect.Signature
+    # built-in function "max" does not have an inspect.Signature
     dbg = api_util.debug_info("jit", max, (1,), {})
     self.assertEqual(dbg.func_src_info, "max")
     self.assertEqual(dbg.arg_names, ("args[0]",))
@@ -760,6 +767,122 @@ class DebugInfoTest(jtu.JaxTestCase):
             re.compile(r".*func.func public @main\(.*%arg3: tensor<f..> loc\(\"kwargs\['w'\]\"\)"),
             re.compile(r".*func.func public @main\(.*\{jax.result_info = \"result\"\}"),
         ])
+
+  def test_jit_arg_names_with_out_of_order_kwargs(self):
+    tracer_spy = TracerSpy()
+
+    # The shapes are different, to differentiate them easily
+    a1 = (np.float32(0),)  # a hashable tuple, can be static
+    b2 = np.arange(2, dtype=np.float32)  # b2
+    z3 = np.arange(3, dtype=np.float32)
+    y4 = (np.float32(0.), np.float32(1.), np.float32(2.), np.float32(3.))
+    x5 = np.arange(5, dtype=np.float32)
+    u6 = np.arange(6, dtype=np.float32)
+    t7 = np.arange(7, dtype=np.float32)
+
+    def my_f(a1, b2, z3, y4, x5, *, u6, t7):
+      assert np.shape(a1[0]) == ()
+      assert np.shape(b2) == (2,)
+      assert np.shape(z3) == (3,)
+      assert np.shape(y4) == (4,)
+      assert np.shape(x5) == (5,)
+      assert np.shape(u6) == (6,)
+      assert np.shape(t7) == (7,)
+      tracer_spy.append(b2)
+      tracer_spy.append(x5)
+      return a1[0] + b2[0] + z3[0] + y4[0] + x5[0] + u6[0] + t7[0]
+
+    self._check_tracers_and_jaxprs(
+        jax.jit(my_f, static_argnums=(0,), static_argnames=("y4",)),
+        # Some positional args passed as keyword
+        a1, b2, x5=x5, y4=y4, z3=z3, t7=t7, u6=u6,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=b2,t7,u6,x5,z3, result_paths=result",
+        ],
+        tracer_spy=tracer_spy,
+        expected_tracer_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=b2,t7,u6,x5,z3, from b2",
+            "traced_for=jit, fun=my_f, arg_names=b2,t7,u6,x5,z3, from x5",
+        ],
+        expected_lowering_lines=[
+            re.compile(r".*func.func public @main\(%arg0: tensor<2xf..> loc\(\"b2\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg1: tensor<7xf..> loc\(\"t7\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg2: tensor<6xf..> loc\(\"u6\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg3: tensor<5xf..> loc\(\"x5\"\)"),
+        ]
+    )
+
+    tracer_spy.tracers = []
+    util.clear_all_caches()
+    self._check_tracers_and_jaxprs(
+        jax.jit(my_f, static_argnames=("y4",)),
+        # Positional argument y4 is static and passed by kwarg
+        a1, b2, z3, x5=x5, y4=y4, t7=t7, u6=u6,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=a1[0],b2,z3,t7,u6,x5, result_paths=result",
+        ],
+        tracer_spy=tracer_spy,
+        expected_tracer_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=a1[0],b2,z3,t7,u6,x5, from b2",
+            "traced_for=jit, fun=my_f, arg_names=a1[0],b2,z3,t7,u6,x5, from x5",
+        ],
+        expected_lowering_lines=[
+            re.compile(r".*func.func public @main\(%arg0: tensor<f..> loc\(\"a1\[0\]\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg1: tensor<2xf..> loc\(\"b2\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg2: tensor<3xf..> loc\(\"z3\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg3: tensor<7xf..> loc\(\"t7\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg4: tensor<6xf..> loc\(\"u6\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg5: tensor<5xf..> loc\(\"x5\"\)"),
+        ]
+    )
+
+    tracer_spy.tracers = []
+    util.clear_all_caches()
+    self._check_tracers_and_jaxprs(
+        jax.jit(my_f, static_argnames=("y4",)),
+        # Positional argument y4 is static (declared as static_argnames)
+        a1, b2, z3, y4, x5=x5, t7=t7, u6=u6,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=a1[0],b2,z3,t7,u6,x5, result_paths=result",
+        ],
+        tracer_spy=tracer_spy,
+        expected_tracer_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=a1[0],b2,z3,t7,u6,x5, from b2",
+            "traced_for=jit, fun=my_f, arg_names=a1[0],b2,z3,t7,u6,x5, from x5",
+        ],
+        expected_lowering_lines=[
+            re.compile(r".*func.func public @main\(%arg0: tensor<f..> loc\(\"a1\[0\]\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg1: tensor<2xf..> loc\(\"b2\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg2: tensor<3xf..> loc\(\"z3\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg3: tensor<7xf..> loc\(\"t7\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg4: tensor<6xf..> loc\(\"u6\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg5: tensor<5xf..> loc\(\"x5\"\)"),
+        ]
+    )
+
+    tracer_spy.tracers = []
+    util.clear_all_caches()
+    self._check_tracers_and_jaxprs(
+        jax.jit(my_f, static_argnums=(3,)),
+        # Positional argument y4 is static (declared as static_argnums)
+        a1, b2, z3, y4, x5=x5, t7=t7, u6=u6,
+        expected_jaxpr_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=a1[0],b2,z3,t7,u6,x5, result_paths=result",
+        ],
+        tracer_spy=tracer_spy,
+        expected_tracer_debug_infos=[
+            "traced_for=jit, fun=my_f, arg_names=a1[0],b2,z3,t7,u6,x5, from b2",
+            "traced_for=jit, fun=my_f, arg_names=a1[0],b2,z3,t7,u6,x5, from x5",
+        ],
+        expected_lowering_lines=[
+            re.compile(r".*func.func public @main\(%arg0: tensor<f..> loc\(\"a1\[0\]\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg1: tensor<2xf..> loc\(\"b2\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg2: tensor<3xf..> loc\(\"z3\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg3: tensor<7xf..> loc\(\"t7\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg4: tensor<6xf..> loc\(\"u6\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg5: tensor<5xf..> loc\(\"x5\"\)"),
+        ]
+    )
 
   def test_jit_result_info(self):
     def f(x, y, z):
@@ -1493,34 +1616,50 @@ class DebugInfoTest(jtu.JaxTestCase):
 
   def test_pmap_with_arg_and_result_names(self):
     tracer_spy = TracerSpy()
-    x = np.ones((jax.device_count(),), dtype=np.float32)
-    def my_f(x, y, *args, a, **kwargs):
-      # y and kwargs[c] is dead
+
+    # Use different shapes arguments to distinguish them in the HLO
+    def my_f(x0, y1, *args, b4, **kwargs):
+      assert np.shape(x0) == ()
+      assert np.shape(y1) == (1,)
+      assert np.shape(args[0]) == (2,)
+      assert np.shape(args[1]) == (3,)
+      assert np.shape(b4) == (4,)
+      assert np.shape(kwargs["a5"]) == (5,)
+      assert np.shape(kwargs["c6"]) == (6,)
+      # kwargs[b5] is dead
       tracer_spy.append(args[1])
-      s = x + a + args[1] + kwargs["d"]
-      return dict(u=s, v=x)
+      tracer_spy.append(b4)
+      tracer_spy.append(kwargs["c6"])
+      s0 = x0 + y1[0] + b4[0] + args[1][0] + kwargs["c6"][0]
+      return dict(v1=jnp.broadcast_to(s0, (1,)), u0=s0)
 
     self._check_tracers_and_jaxprs(
         jax.pmap(my_f, static_broadcasted_argnums=(0,)),
-        1., x, x, x,  # x, y, args[0], args[1]
-        d=x, a=x, b=x,  # kwargs
+        1.,  # x0
+        np.ones((jax.device_count(), 1), dtype=np.float32),  # y1
+        np.ones((jax.device_count(), 2), dtype=np.float32),  # args[0]
+        np.ones((jax.device_count(), 3), dtype=np.float32),  # args[1]
+        b4=np.ones((jax.device_count(), 4), dtype=np.float32),
+        a5=np.ones((jax.device_count(), 5), dtype=np.float32),
+        c6=np.ones((jax.device_count(), 6), dtype=np.float32),
         expected_jaxpr_debug_infos=[
-            "traced_for=pmap, fun=my_f, arg_names=y,args[0],args[1],a,kwargs['b'],kwargs['d'], result_paths=result['u'],result['v']",
+            "traced_for=pmap, fun=my_f, arg_names=y1,args[0],args[1],kwargs['a5'],b4,kwargs['c6'], result_paths=result['u0'],result['v1']",
         ],
         tracer_spy=tracer_spy,
         expected_tracer_debug_infos=[
-            "traced_for=pmap, fun=my_f, arg_names=y,args[0],args[1],a,kwargs['b'],kwargs['d'], from args[1]",
+            "traced_for=pmap, fun=my_f, arg_names=y1,args[0],args[1],kwargs['a5'],b4,kwargs['c6'], from args[1]",
+            "traced_for=pmap, fun=my_f, arg_names=y1,args[0],args[1],kwargs['a5'],b4,kwargs['c6'], from b4",
+            "traced_for=pmap, fun=my_f, arg_names=y1,args[0],args[1],kwargs['a5'],b4,kwargs['c6'], from kwargs['c6']",
         ],
         expected_lowering_lines=[
-            # TODO(necula): we did not DCE y?
-            re.compile(r".*func.func public @main\(.*%arg0: tensor<1xf..> loc\(\"y\"\)"),
-            re.compile(r".*func.func public @main\(.*%arg1: tensor<1xf..> loc\(\"args\[0\]\"\)"),
-            re.compile(r".*func.func public @main\(.*%arg2: tensor<1xf..> loc\(\"args\[1\]\"\)"),
-            re.compile(r".*func.func public @main\(.*%arg3: tensor<1xf..> loc\(\"a\"\)"),
-            re.compile(r".*func.func public @main\(.*%arg4: tensor<1xf..> loc\(\"kwargs\['b'\]\"\)"),
-            re.compile(r".*func.func public @main\(.*%arg5: tensor<1xf..> loc\(\"kwargs\['d'\]\"\)"),
-            re.compile(r".*func.func public @main\(.* -> .*\{jax.result_info = \"result\['u'\]\"\}"),
-            re.compile(r".*func.func public @main\(.* -> .*\{jax.result_info = \"result\['v'\]\"\}"),
+            re.compile(r".*func.func public @main\(.*%arg0: tensor<1x1xf..> loc\(\"y1\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg1: tensor<1x2xf..> loc\(\"args\[0\]\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg2: tensor<1x3xf..> loc\(\"args\[1\]\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg3: tensor<1x5xf..> loc\(\"kwargs\['a5'\]\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg4: tensor<1x4xf..> loc\(\"b4\"\)"),
+            re.compile(r".*func.func public @main\(.*%arg5: tensor<1x6xf..> loc\(\"kwargs\['c6'\]\"\)"),
+            re.compile(r".*func.func public @main\(.* -> .*\{jax.result_info = \"result\['u0'\]\"\}"),
+            re.compile(r".*func.func public @main\(.* -> .*\{jax.result_info = \"result\['v1'\]\"\}"),
         ]
     )
 
