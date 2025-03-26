@@ -2281,6 +2281,16 @@ def lower_sharding_computation(
       devices_from_context)
   unique_intermediate_shardings = [js for js, _ in unique_intermediate_shardings]
 
+  for a in global_out_avals:
+    if (a is not core.abstract_token and not a.sharding.mesh.empty and
+        a.sharding.mesh._are_all_axes_explicit and
+        len(device_assignment) != a.sharding.mesh.size):
+      raise ValueError(
+          f"Length of device assignment {len(device_assignment)} is not equal"
+          f" to the size of the mesh {a.sharding.mesh.size} of aval"
+          f" {a.str_short(True, True)}. Please enter your `jit` into a mesh"
+          " context via `jax.sharding.use_mesh`.")
+
   # TODO(parkers): One _raw_platform has been unified with platform,
   # change this back to just read platform.
   platforms = lowering_platforms or (
