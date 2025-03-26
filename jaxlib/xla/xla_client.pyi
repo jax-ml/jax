@@ -106,9 +106,6 @@ def make_gpu_client(
 ) -> Client:
   ...
 
-def make_tfrt_tpu_c_api_client(options: _NameValueMapping | None = None) -> Client:
-  ...
-
 def make_tfrt_tpu_c_api_device_topology(
     topology_name: str | None = None, **kwargs
 ) -> DeviceTopology:

@@ -85,15 +85,6 @@ def make_cpu_client(
   )
 
 
-def make_tfrt_tpu_c_api_client(options: _NameValueMapping | None = None):
-  assert pjrt_plugin_loaded('tpu')
-  if not pjrt_plugin_initialized('tpu'):
-    initialize_pjrt_plugin('tpu')
-  if options is None:
-    options = {}
-  return _xla.get_c_api_client('tpu', options)
-
-
 DeviceTopology = _xla.DeviceTopology
 get_topology_for_devices = _xla.get_topology_for_devices
 
@@ -169,7 +160,12 @@ def make_tpu_client(
   if not pjrt_plugin_loaded('tpu'):
     c_api = load_pjrt_plugin_dynamically('tpu', library_path or 'libtpu.so')
     profiler.register_plugin_profiler(c_api)
-  return make_tfrt_tpu_c_api_client(options)
+    assert pjrt_plugin_loaded('tpu')
+  if not pjrt_plugin_initialized('tpu'):
+    initialize_pjrt_plugin('tpu')
+  if options is None:
+    options = {}
+  return _xla.get_c_api_client('tpu', options)
 
 
 def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
