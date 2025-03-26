@@ -292,7 +292,7 @@ class ModuleContext:
   axis_names: _AxisNames | None
   program_ids: Sequence[ir.Value] | None
   approx_math: bool
-  single_wg_lane_predicate: ir.Value
+  single_wg_lane_predicate: ir.Value | None
   smem_requested_bytes: int
   smem_used_bytes: int
   tmem_requested_cols: int
@@ -703,12 +703,18 @@ def lower_jaxpr_to_module(
       tmem_cols = math.prod(runtime_tmem.shape) // tcgen05.TMEM_ROWS
     else:
       tmem_cols = 0
+
+    if thread_semantics == mgpu.ThreadSemantics.Lane:
+      single_lane_predicate = mgpu.single_thread_predicate(per_block=False)
+    else:  # Warpgroup semantics do not have a single lane predicate.
+      single_lane_predicate = None
+
     module_ctx = ModuleContext(
         mlir.sanitize_name(debug_info.func_name),
         axis_names,
         [_program_id(axis, squashed_dims) for axis in range(len(grid))],
         approx_math,
-        mgpu.single_thread_predicate(per_block=False),
+        single_lane_predicate,
         smem_requested_bytes=math.prod(ir.MemRefType(runtime_smem.type).shape),
         smem_used_bytes=0,
         tmem_requested_cols=tmem_cols,

@@ -281,12 +281,11 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     grouped together in a cluster and need to load the same data. Each block in
     a cluster will first load a slice from GMEM to SMEM and then the slices will
     be multicast to all other blocks in the cluster. In this way TMA multicast
-    guarnatees L2 cache hits. The `collective` attribute is the list of
+    guarantees L2 cache hits. The `collective` attribute is the list of
     cluster dimensions along which to partition the input data loads.
 
-    The `predicate` input should be set to `true` by a single thread in the
-    warpgroup so that it schedules the load operation. All other threads in the
-    warpgroup should set the `predicate` to `false`.
+    The `predicate` allows scheduling the transfer conditionally. The async copy
+   is always scheduled by at most a single lane in the warpgroup.
   }];
 
   let arguments = (ins
@@ -338,9 +337,8 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     contiguous and the transformed data is written to the `destination` GMEM
     which does not need to be contiguous.
 
-    The `predicate` input should be set to `true` by a single thread in the
-    warpgroup so that it schedules the store operation. All other threads in the
-    warpgroup should set the `predicate` to `false`.
+    The `predicate` allows scheduling the transfer conditionally. The async copy
+    is always scheduled by at most a single lane in the warpgroup.
   }];
 
   let arguments = (ins
