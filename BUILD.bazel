@@ -47,6 +47,7 @@ transitive_py_deps(
         "//jax:sparse_test_util",
         "//jax:test_util",
         "//jax/_src/lib",
+        "//jax/_src/pallas/fuser",
         "//jax/_src/pallas/mosaic_gpu",
         "//jax/experimental/array_serialization:serialization",
         "//jax/experimental/jax2tf",
@@ -105,14 +106,19 @@ jax_source_package(
 )
 
 genrule(
-    name = "internal_test_util_sources",
+    name = "wheel_additives",
     srcs = [
         "//jax:internal_export_back_compat_test_util",
         "//jax:internal_test_harnesses",
         "//jax:internal_test_util",
         "//jax:internal_export_back_compat_test_data",
+        "//jax:experimental/pallas/ops/tpu/random/philox.py",
+        "//jax:experimental/pallas/ops/tpu/random/prng_utils.py",
+        "//jax:experimental/pallas/ops/tpu/random/threefry.py",
+        "//jax/experimental/mosaic/gpu/examples:flash_attention.py",
+        "//jax/experimental/mosaic/gpu/examples:matmul.py",
     ],
-    outs = ["internal_test_util_sources.zip"],
+    outs = ["wheel_additives.zip"],
     cmd = "$(location @bazel_tools//tools/zip:zipper) c $@ $(SRCS)",
     tools = ["@bazel_tools//tools/zip:zipper"],
 )
@@ -131,15 +137,16 @@ COMMON_DEPS = py_deps([
 py_import(
     name = "jax_py_import",
     wheel = ":jax_wheel",
-    wheel_deps = [":internal_test_util_sources"],
+    wheel_deps = [":wheel_additives"],
     deps = COMMON_DEPS,
 )
 
-# This target is used to add internal test util sources to the jax wheel.
-# This is needed for the tests that depend on jax and use internal test util sources.
+# This target is used to add more sources to the jax wheel.
+# This is needed for the tests that depend on jax and use modules that are not part of
+# the jax wheel, but share the same package paths as the modules in the jax wheel.
 py_import(
     name = "jax_wheel_with_internal_test_util",
     wheel = "@pypi_jax//:whl",
-    wheel_deps = [":internal_test_util_sources"],
+    wheel_deps = [":wheel_additives"],
     deps = COMMON_DEPS,
 )
