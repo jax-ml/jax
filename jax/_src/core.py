@@ -1940,8 +1940,7 @@ class ShapedArray(UnshapedArray):
     if 'sharding' not in kwargs:
       kwargs['sharding'] = self.sharding
     if 'vma' not in kwargs:
-      kwargs['vma'] = getattr(self, 'vma',
-                                              frozenset())
+      kwargs['vma'] = getattr(self, 'vma', frozenset())
     return ShapedArray(shape, dtype, weak_type, **kwargs)
 
   ndim = property(lambda self: len(self.shape))
@@ -2170,6 +2169,7 @@ class MutableArray:
   def __getitem__(self, idx): return self._aval._getitem(self, idx)
   def __setitem__(self, idx, x): return self._aval._setitem(self, idx, x)
   def __repr__(self) -> str: return 'Mutable' + repr(self[...])
+  def __len__(self) -> int: return self._aval._len(self)
 pytype_aval_mappings[MutableArray] = lambda x: x._aval
 
 def mutable_array(init_val):

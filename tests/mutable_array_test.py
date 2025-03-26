@@ -117,6 +117,18 @@ class MutableArrayTest(jtu.JaxTestCase):
     self.assertAllClose(w, 10, check_dtypes=False)
 
   @parameterized.parameters([True, False])
+  def test_len_mutable_array(self, jit):
+    x_mut = core.mutable_array(jnp.zeros(3))
+
+    def f():
+      return jnp.int32(len(x_mut))
+
+    if jit:
+      f = jax.jit(f)
+
+    self.assertEqual(f(), 3)
+
+  @parameterized.parameters([True, False])
   def test_internal_mutarray_basic(self, jit):
     def f():
       x_mut = core.mutable_array(jnp.zeros(3))
