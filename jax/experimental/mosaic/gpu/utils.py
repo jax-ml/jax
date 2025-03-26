@@ -346,12 +346,19 @@ def bitwidth_impl(ty: ir.Type):
     return ir.IntegerType(ty).width
   if ir.FloatType.isinstance(ty):
     return ir.FloatType(ty).width
-  if dialect is not None and ty == ir.Type.parse("!mosaic_gpu.barrier"):
-    return MBARRIER_BYTES * 8
+
+  # The mosaic_gpu dialect might not be registered.
+  dialect_error = False
+  try:
+    if dialect is not None and ty == ir.Type.parse("!mosaic_gpu.barrier"):
+      return MBARRIER_BYTES * 8
+  except ir.MLIRError:
+    dialect_error = True
+
   if ir.VectorType.isinstance(ty):
     vty = ir.VectorType(ty)
     return math.prod(vty.shape) * bitwidth(vty.element_type)
-  raise NotImplementedError(ty)
+  raise NotImplementedError(ty, dialect_error)
 
 
 def bitwidth(ty: ir.Type):
