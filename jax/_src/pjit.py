@@ -683,7 +683,7 @@ class InferParamsCacheEntry:
 
 # We use an outer cache that is keyed on the signature of the arguments, but
 # when populating a cache entry using _infer_params_impl, we need to provide
-# actual arguments. In principle we could refactor _infer_params_impl to look
+# actual arguments. In principle, we could refactor _infer_params_impl to look
 # only at an argument signature instead of args/kwargs in those cases that we
 # cache, but this was a more minimal change.
 @util.weakref_lru_cache
@@ -730,7 +730,7 @@ def _infer_params_internal(
   if entry.pjit_params is None:
     p, args_flat = _infer_params_impl(
         fun, ji, ctx_mesh, dbg, args, kwargs, in_avals=avals)
-    if p.attrs_tracked:  # if attrs, don't popoulate the cache
+    if p.attrs_tracked:  # if attrs, don't populate the cache
       return p, p.consts + args_flat
     entry.pjit_params = p
   return entry.pjit_params, entry.pjit_params.consts + dynargs
