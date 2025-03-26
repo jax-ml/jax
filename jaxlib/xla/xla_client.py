@@ -85,51 +85,6 @@ def make_cpu_client(
   )
 
 
-def make_gpu_client(
-    distributed_client=None,
-    node_id=0,
-    num_nodes=1,
-    platform_name=None,
-    allowed_devices=None,
-    mock=False,
-    mock_gpu_topology=None,
-):
-  """Returns a GPU client. BFC allocator is used by default."""
-  options = generate_pjrt_gpu_plugin_options()
-  allocator = options['allocator']
-  config = _xla.GpuAllocatorConfig()
-  if allocator == 'default':
-    config.kind = _xla.GpuAllocatorConfig.Kind.DEFAULT
-  if allocator == 'platform':
-    config.kind = _xla.GpuAllocatorConfig.Kind.PLATFORM
-  if allocator == 'bfc':
-    config.kind = _xla.GpuAllocatorConfig.Kind.BFC
-  if allocator == 'cuda_async':
-    config.kind = _xla.GpuAllocatorConfig.Kind.CUDA_ASYNC
-  if 'memory_fraction' in options:
-    config.memory_fraction = options['memory_fraction']
-  if 'preallocate' in options:
-    config.preallocate = options['preallocate']
-  if 'collective_memory_size' in options:
-    config.collective_memory_size = options['collective_memory_size']
-  register_custom_call_handler('CUDA', _xla.register_custom_call_target)
-  register_custom_call_handler('ROCM', _xla.register_custom_call_target)
-  register_custom_type_id_handler('CUDA', _xla.register_custom_type_id)
-  register_custom_type_id_handler('ROCM', _xla.register_custom_type_id)
-
-  return _xla.get_gpu_client(
-      asynchronous=True,
-      allocator_config=config,
-      distributed_client=distributed_client,
-      node_id=node_id,
-      num_nodes=num_nodes,
-      platform_name=platform_name,
-      allowed_devices=allowed_devices,
-      mock=mock,
-      mock_gpu_topology=mock_gpu_topology,
-  )
-
-
 def make_tfrt_tpu_c_api_client(options: _NameValueMapping | None = None):
   assert pjrt_plugin_loaded('tpu')
   if not pjrt_plugin_initialized('tpu'):

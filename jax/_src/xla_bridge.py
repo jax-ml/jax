@@ -89,13 +89,13 @@ _ROCM_VISIBLE_DEVICES = config.string_flag(
     'Restricts the set of ROCM devices that JAX will use. Either "all", or a '
     'comma-separate list of integer device IDs.')
 
-_MOCK_NUM_GPU_PROCESSES = config.int_flag(
+MOCK_NUM_GPU_PROCESSES = config.int_flag(
     name="mock_num_gpu_processes",
     default=0,
     help="Mock number of JAX processes in GPU client. Value zero turns "
          "off mocking.",
 )
-_MOCK_GPU_TOPOLOGY = config.string_flag(
+MOCK_GPU_TOPOLOGY = config.string_flag(
     name="jax_mock_gpu_topology",
     default="",
     help='Mock multi-host GPU topology in GPU client. The value should '
@@ -432,7 +432,7 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
                        f'following issues with CUDA components:\n'
                        f'{join_str.join(errors)}')
 
-def _get_num_nodes_from_gpu_topology(topology: str) -> int:
+def get_num_nodes_from_gpu_topology(topology: str) -> int:
     try:
       slices_str, hosts_per_slice_str, _ = topology.split("x", 2)
       return int(slices_str) * int(hosts_per_slice_str)
@@ -440,69 +440,6 @@ def _get_num_nodes_from_gpu_topology(topology: str) -> int:
       raise ValueError('Mock topology must be of the form '
                        '"<number-of-slices> x <number-of-hosts-per-slice> x '
                        '<number-of-devices-per-host>".')
-
-def make_gpu_client(
-    *, platform_name: str, visible_devices_flag: config.Flag[str]
-) -> xla_client.Client:
-  visible_devices = visible_devices_flag.value
-  allowed_devices = None
-  if visible_devices != "all":
-    allowed_devices = {int(x) for x in visible_devices.split(",")}
-
-  mock_gpu_topology = _MOCK_GPU_TOPOLOGY.value or None
-  mock_num_gpu_processes = (_get_num_nodes_from_gpu_topology(mock_gpu_topology) if
-      mock_gpu_topology else _MOCK_NUM_GPU_PROCESSES.value)
-
-  use_mock_gpu_client = mock_num_gpu_processes > 0
-  num_nodes = (mock_num_gpu_processes if use_mock_gpu_client
-      else distributed.global_state.num_processes)
-
-  if platform_name == "cuda":
-    if not os.getenv("JAX_SKIP_CUDA_CONSTRAINTS_CHECK"):
-      _check_cuda_versions()
-    else:
-      print('Skipped CUDA versions constraints check due to the '
-            'JAX_SKIP_CUDA_CONSTRAINTS_CHECK env var being set.')
-
-    devices_to_check = (
-        allowed_devices
-        if allowed_devices
-        else range(cuda_versions.cuda_device_count())
-    )
-    _check_cuda_compute_capability(devices_to_check)
-
-  return xla_client.make_gpu_client(
-      distributed_client=distributed.global_state.client,
-      node_id=distributed.global_state.process_id,
-      num_nodes=num_nodes,
-      platform_name=platform_name,
-      allowed_devices=allowed_devices,
-      mock=use_mock_gpu_client,
-  )
-
-
-if hasattr(xla_client, "make_gpu_client"):
-  register_backend_factory(
-      "cuda",
-      partial(
-          make_gpu_client,
-          platform_name="cuda",
-          visible_devices_flag=CUDA_VISIBLE_DEVICES,
-      ),
-      priority=200,
-      fail_quietly=True,
-  )
-  register_backend_factory(
-      "rocm",
-      partial(
-          make_gpu_client,
-          platform_name="rocm",
-          visible_devices_flag=_ROCM_VISIBLE_DEVICES,
-      ),
-      priority=200,
-      fail_quietly=True,
-  )
-
 
 if hasattr(xla_client, "make_tpu_client"):
   # TODO(phawkins,skyewm): switch TPU plugin to use the PJRT plugin mechanism,
@@ -652,9 +589,9 @@ def _options_from_jax_configs(plugin_name):
         else _ROCM_VISIBLE_DEVICES.value)
     if visible_devices != 'all':
       options['visible_devices'] = [int(x) for x in visible_devices.split(',')]
-    mock_gpu_topology = _MOCK_GPU_TOPOLOGY.value or None
-    mock_num_processes = (_get_num_nodes_from_gpu_topology(mock_gpu_topology) if
-        mock_gpu_topology else _MOCK_NUM_GPU_PROCESSES.value)
+    mock_gpu_topology = MOCK_GPU_TOPOLOGY.value or None
+    mock_num_processes = (get_num_nodes_from_gpu_topology(mock_gpu_topology) if
+        mock_gpu_topology else MOCK_NUM_GPU_PROCESSES.value)
     options['enable_mock_nccl'] = mock_num_processes > 0
     if mock_num_processes > 0:
       options['num_nodes'] = mock_num_processes
