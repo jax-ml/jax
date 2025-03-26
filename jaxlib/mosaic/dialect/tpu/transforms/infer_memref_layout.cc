@@ -62,18 +62,21 @@ int getTilingFactor(const int src_sublane, const int hardware_generation,
   const int max_normal_tiling = tiling_sublane;
 
   int large_tiling = [&] {
+    if (bitwidth == 2) {
+      return target_sublane_count * 16;
+    }
     if (bitwidth == 4 && tpu_tiling_flags.use_x4_large_second_minor) {
-      return tiling_sublane * 8;
+      return target_sublane_count * 8;
     }
     if (bitwidth == 8 && tpu_tiling_flags.use_x8_large_second_minor) {
-      return tiling_sublane * 4;
+      return target_sublane_count * 4;
     }
     // 16-bit values are generally always possible to relayout on the fly in v6,
     // so we allow large 2nd minor tiling whenever possible. We can't do this
     // for kernel arguments, because the layout of those is controlled by XLA.
     if (bitwidth == 16 && (tpu_tiling_flags.use_x16_large_second_minor ||
                            (!is_kernel_argument && hardware_generation >= 6))) {
-      return tiling_sublane * 2;
+      return target_sublane_count * 2;
     }
     return tiling_sublane;
   }();
