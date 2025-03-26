@@ -65,7 +65,11 @@ class PgleTest(jtu.JaxTestCase):
         jax.jit,
         in_shardings=NamedSharding(mesh, PartitionSpec('x')),
         out_shardings=NamedSharding(mesh, PartitionSpec('x')),
-        compiler_options={'xla_gpu_enable_latency_hiding_scheduler': 'True'},
+        compiler_options={
+            'xla_gpu_enable_latency_hiding_scheduler': 'True',
+            # Make sure that matmul is not emitted as Triton GEMM.
+            'xla_gpu_enable_triton_gemm': 'False',
+        },
     )
     def f(x, y):
       return x @ y
@@ -93,6 +97,8 @@ class PgleTest(jtu.JaxTestCase):
 
     compiler_options = {
         'xla_gpu_enable_latency_hiding_scheduler': 'True',
+        # Make sure that matmul is not emitted as Triton GEMM.
+        'xla_gpu_enable_triton_gemm': 'False',
     }
     # TODO(b/37664749): Remove this flag once the bug is fixed.
     compiler_options['xla_gpu_enable_command_buffer'] = ''
@@ -321,7 +327,11 @@ class PgleTest(jtu.JaxTestCase):
         jax.jit,
         in_shardings=NamedSharding(mesh, PartitionSpec('x')),
         out_shardings=NamedSharding(mesh, PartitionSpec('x')),
-        compiler_options={'xla_gpu_enable_latency_hiding_scheduler': 'True'},
+        compiler_options={
+            'xla_gpu_enable_latency_hiding_scheduler': 'True',
+            # Make sure that matmul is not emitted as Triton GEMM.
+            'xla_gpu_enable_triton_gemm': 'False',
+        },
     )
     def f(x, y):
       return x @ y
