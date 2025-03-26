@@ -27,7 +27,8 @@ from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import SingleDeviceSharding
 from jax._src.util import safe_zip, safe_map, set_module
-from jax._src.typing import Array, ArrayLike, DimSize, DType, DTypeLike, Shape
+from jax._src.typing import (Array, ArrayLike, DimSize, DType, DTypeLike,
+                             Shape, SupportsNdim, SupportsShape, SupportsSize)
 from jax.sharding import Sharding
 
 import numpy as np
@@ -313,7 +314,7 @@ def normalize_device_to_sharding(device: xc.Device | Sharding | None) -> Shardin
 
 
 @export
-def ndim(a: ArrayLike) -> int:
+def ndim(a: ArrayLike | SupportsNdim) -> int:
   """Return the number of dimensions of an array.
 
   JAX implementation of :func:`numpy.ndim`. Unlike ``np.ndim``, this function
@@ -321,7 +322,7 @@ def ndim(a: ArrayLike) -> int:
   tuple.
 
   Args:
-    a: array-like object.
+    a: array-like object, or any object with an ``ndim`` attribute.
 
   Returns:
     An integer specifying the number of dimensions of ``a``.
@@ -346,13 +347,18 @@ def ndim(a: ArrayLike) -> int:
     >>> x.ndim
     1
   """
+  if hasattr(a, "ndim"):
+    return a.ndim
   # Deprecation warning added 2025-2-20.
   check_arraylike("ndim", a, emit_warning=True)
-  return np.ndim(a)  # NumPy dispatches to a.ndim if available.
+  if hasattr(a, "__jax_array__"):
+    a = a.__jax_array__()
+  # NumPy dispatches to a.ndim if available.
+  return np.ndim(a)  # type: ignore[arg-type]
 
 
 @export
-def shape(a: ArrayLike) -> tuple[int, ...]:
+def shape(a: ArrayLike | SupportsShape) -> tuple[int, ...]:
   """Return the shape an array.
 
   JAX implementation of :func:`numpy.shape`. Unlike ``np.shape``, this function
@@ -360,7 +366,7 @@ def shape(a: ArrayLike) -> tuple[int, ...]:
   tuple.
 
   Args:
-    a: array-like object.
+    a: array-like object, or any object with a ``shape`` attribute.
 
   Returns:
     An tuple of integers representing the shape of ``a``.
@@ -385,13 +391,18 @@ def shape(a: ArrayLike) -> tuple[int, ...]:
     >>> x.shape
     (10,)
   """
+  if hasattr(a, "shape"):
+    return a.shape
   # Deprecation warning added 2025-2-20.
   check_arraylike("shape", a, emit_warning=True)
-  return np.shape(a)  # NumPy dispatches to a.shape if available.
+  if hasattr(a, "__jax_array__"):
+    a = a.__jax_array__()
+  # NumPy dispatches to a.shape if available.
+  return np.shape(a)  # type: ignore[arg-type]
 
 
 @export
-def size(a: ArrayLike, axis: int | None = None) -> int:
+def size(a: ArrayLike | SupportsSize | SupportsShape, axis: int | None = None) -> int:
   """Return number of elements along a given axis.
 
   JAX implementation of :func:`numpy.size`. Unlike ``np.size``, this function
@@ -399,7 +410,8 @@ def size(a: ArrayLike, axis: int | None = None) -> int:
   tuple.
 
   Args:
-    a: array-like object
+    a: array-like object, or any object with a ``size`` attribute when ``axis`` is not
+      specified, or with a ``shape`` attribute when ``axis`` is specified.
     axis: optional integer along which to count elements. By default, return
       the total number of elements.
 
@@ -428,6 +440,12 @@ def size(a: ArrayLike, axis: int | None = None) -> int:
     >>> y.size
     6
   """
+  if (axis is None and hasattr(a, "size")) or (axis is not None and hasattr(a, "shape")):
+    # NumPy dispatches to a.size/a.shape if available.
+    return np.size(a, axis=axis)  # type: ignore[arg-type]
   # Deprecation warning added 2025-2-20.
   check_arraylike("size", a, emit_warning=True)
-  return np.size(a, axis=axis)  # NumPy dispatches to a.size if available.
+  if hasattr(a, "__jax_array__"):
+    a = a.__jax_array__()
+  # NumPy dispatches to a.size/a.shape if available.
+  return np.size(a, axis=axis)  # type: ignore[arg-type]

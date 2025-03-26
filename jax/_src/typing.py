@@ -47,7 +47,19 @@ ExtendedDType = Any
 @typing.runtime_checkable
 class SupportsDType(Protocol):
   @property
-  def dtype(self) -> DType: ...
+  def dtype(self, /) -> DType: ...
+
+class SupportsShape(Protocol):
+  @property
+  def shape(self, /) -> tuple[int, ...]: ...
+
+class SupportsSize(Protocol):
+  @property
+  def size(self, /) -> int: ...
+
+class SupportsNdim(Protocol):
+  @property
+  def ndim(self, /) -> int: ...
 
 # DTypeLike is meant to annotate inputs to np.dtype that return
 # a valid JAX dtype. It's different than numpy.typing.DTypeLike
