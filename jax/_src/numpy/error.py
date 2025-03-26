@@ -30,7 +30,9 @@ def _is_category_disabled(
   if category == "nan":
     raise ValueError("nan is deprecated. Use `_set_error_if_nan` instead.")
   if category == "divide":
-    return config.error_checking_behavior_divide.value == "ignore"
+    raise ValueError(
+        "divide is deprecated. Use `_set_error_if_divide_by_zero` instead."
+    )
   if category == "oob":
     return config.error_checking_behavior_oob.value == "ignore"
   raise ValueError(f"Invalid category: {category}")
@@ -79,6 +81,25 @@ def _set_error_if_nan(pred: jax.Array, /):
   # TODO(mattjj): fix the circular import issue.
   from jax._src import error_check as error_check_lib
   error_check_lib.set_error_if(jnp.isnan(pred), "NaN encountered")
+
+
+def _set_error_if_divide_by_zero(pred: jax.Array, /):
+  """Set the internal error state if any element of `pred` is zero.
+
+  This function is intended for checking if the denominator of a division is
+  zero.
+
+  This function is disabled if the `jax_error_checking_behavior_divide` flag is
+  set to "ignore".
+  """
+  if config.error_checking_behavior_divide.value == "ignore":
+    return
+
+  # TODO(ayx): fix the circular import issue.
+  from jax._src import error_check as error_check_lib
+  import jax.numpy as jnp
+  zero = jnp.zeros_like(pred, shape=())
+  error_check_lib.set_error_if(pred == zero, "Division by zero encountered")
 
 
 Behavior = Literal["ignore", "raise"]
