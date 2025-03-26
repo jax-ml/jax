@@ -1202,8 +1202,11 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **kwargs):
   )
 
 @register_lowering_rule(pjit.mesh_cast_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(pjit.mesh_cast_p, mgpu.ThreadSemantics.Warpgroup)
 def _mesh_cast_lowering_rule(ctx, x, dst_sharding):
+  del ctx, dst_sharding  # Unused.
   return x
+
 
 @register_lowering_rule(lax.slice_p, mgpu.ThreadSemantics.Lane)
 def _slice_lowering_rule(
