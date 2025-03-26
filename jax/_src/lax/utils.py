@@ -131,7 +131,7 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
     raise TypeError(avals, least_specialized)
 
 def standard_multi_result_abstract_eval(
-    prim, shape_rule, dtype_rule, weak_type_rule, sharding_rule,
+    prim, shape_rule, dtype_rule, weak_type_rule, sharding_rule, vma_rule,
     *avals, **kwargs):
   assert prim.multiple_results
   assert all(isinstance(aval, core.UnshapedArray) for aval in avals), avals
@@ -141,11 +141,13 @@ def standard_multi_result_abstract_eval(
     core.check_avals_context_mesh(avals, prim.name)
     out_shapes, out_dtypes, out_shardings = call_shape_dtype_sharding_rule(
         prim, shape_rule, dtype_rule, sharding_rule, True, *avals, **kwargs)
+    out_vmas = (vma_rule(*avals, **kwargs) if config.varying_axes_in_types.value
+                else [frozenset()] * len(out_shapes))
     if isinstance(weak_types, bool):
       weak_types = (weak_types,) * len(out_shapes)
-    out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh)
-                 for s, d, weak_type, sh in zip(out_shapes, out_dtypes,
-                                                weak_types, out_shardings)]
+    out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh, vma=vma)
+                 for s, d, weak_type, sh, vma in zip(
+                     out_shapes, out_dtypes, weak_types, out_shardings, out_vmas)]
     core.check_avals_context_mesh(out_avals, prim.name)
     return out_avals
   elif least_specialized is core.UnshapedArray:
