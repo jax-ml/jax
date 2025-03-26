@@ -26,7 +26,6 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import lax
-from jax._src import pjit
 from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
@@ -1400,7 +1399,6 @@ class PallasCallWGTest(
         lax.exp2_p,
         mgpu_primitives.layout_cast_p,
         mgpu_primitives.load_p,
-        pjit.mesh_cast_p,
         lax.slice_p,
         discharge.run_state_p,
     }
