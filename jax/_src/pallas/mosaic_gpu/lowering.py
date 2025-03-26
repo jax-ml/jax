@@ -1838,76 +1838,76 @@ def _run_scoped_lowering_rule(
 ):
   input_refs = []
   should_discharge = []
-  alloc_stack = contextlib.ExitStack()
-  for v in jaxpr.invars:
-    aval = v.aval
-    if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
-      dtype = mlir.dtype_to_ir_type(aval.dtype)
-      if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
-        input_refs.append(mgpu.WGMMAAccumulator.zero(*aval.shape, dtype))
+  with contextlib.ExitStack() as alloc_stack:
+    for v in jaxpr.invars:
+      aval = v.aval
+      if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
+        dtype = mlir.dtype_to_ir_type(aval.dtype)
+        if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+          input_refs.append(mgpu.WGMMAAccumulator.zero(*aval.shape, dtype))
+        else:
+          zero = arith_dialect.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
+          acc = vector_dialect.splat(ir.VectorType.get(aval.shape, dtype), zero)
+          acc = mgpu.dialect.optimization_barrier([acc])
+          nvvm_dialect.wgmma_fence_aligned()
+          input_refs.append(acc)
+        should_discharge.append(True)
+      elif isinstance(aval.dtype, gpu_core.BarrierType):
+        input_refs.append(
+            ctx.module_ctx.reserve_barrier(
+                mgpu.Barrier(
+                    aval.dtype.num_arrivals
+                    * ctx.estimator_ctx.arrival_multiplier,
+                    *aval.shape,
+                )
+            )
+        )
+        should_discharge.append(False)
+      elif aval.memory_space == gpu_core.SMEM:
+        [input_ref] = alloc_stack.enter_context(
+            ctx.module_ctx.scratch_view(
+                [jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype)]
+            )
+        )
+        input_refs.append(input_ref)
+        should_discharge.append(False)
+      elif aval.memory_space == gpu_core.TMEM:
+        input_ref = alloc_stack.enter_context(
+            ctx.module_ctx.alloc_tmem(
+                jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype),
+            )
+        )
+        input_refs.append(input_ref)
+        should_discharge.append(False)
       else:
-        zero = arith_dialect.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
-        acc = vector_dialect.splat(ir.VectorType.get(aval.shape, dtype), zero)
-        acc = mgpu.dialect.optimization_barrier([acc])
-        nvvm_dialect.wgmma_fence_aligned()
-        input_refs.append(acc)
-      should_discharge.append(True)
-    elif isinstance(aval.dtype, gpu_core.BarrierType):
-      input_refs.append(
-          ctx.module_ctx.reserve_barrier(
-              mgpu.Barrier(
-                  aval.dtype.num_arrivals
-                  * ctx.estimator_ctx.arrival_multiplier,
-                  *aval.shape,
-              )
-          )
-      )
-      should_discharge.append(False)
-    elif aval.memory_space == gpu_core.SMEM:
-      [input_ref] = alloc_stack.enter_context(
-          ctx.module_ctx.scratch_view(
-              [jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype)]
-          )
-      )
-      input_refs.append(input_ref)
-      should_discharge.append(False)
-    elif aval.memory_space == gpu_core.TMEM:
-      input_ref = alloc_stack.enter_context(
-          ctx.module_ctx.alloc_tmem(
-              jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype),
-          )
-      )
-      input_refs.append(input_ref)
-      should_discharge.append(False)
-    else:
-      raise ValueError(f"Can't convert to ref: {aval}")
+        raise ValueError(f"Can't convert to ref: {aval}")
 
-  if any(should_discharge):
-    # We convert consts to args, because we only have ir.Values and
-    # not JAX values during lowering. discharge_state() produces JAX
-    # valiues for the aguments but expects them to be provided for the
-    # consts. We also don't want to wrap the values in refs.
-    no_const_jaxpr = pe.convert_constvars_jaxpr(jaxpr)
-    should_discharge = [False] * len(consts) + should_discharge
-    discharged_jaxpr, _ = discharge.discharge_state(no_const_jaxpr, (), should_discharge=should_discharge)
-    new_input_vals = consts + tuple(input_refs)
-    outs = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx,
-        ctx.launch_ctx,
-        discharged_jaxpr,
-        new_input_vals,
-        (),
-    )
-    # Discharge appends to the output the refs that got discharged.
-    outs = outs[:-sum(should_discharge)]
-  else:
-    outs = lower_jaxpr_to_mosaic_gpu(
-        ctx.module_ctx,
-        ctx.launch_ctx,
-        jaxpr,
-        input_refs,
-        consts,
-    )
+    if any(should_discharge):
+      # We convert consts to args, because we only have ir.Values and
+      # not JAX values during lowering. discharge_state() produces JAX
+      # valiues for the aguments but expects them to be provided for the
+      # consts. We also don't want to wrap the values in refs.
+      no_const_jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+      should_discharge = [False] * len(consts) + should_discharge
+      discharged_jaxpr, _ = discharge.discharge_state(no_const_jaxpr, (), should_discharge=should_discharge)
+      new_input_vals = consts + tuple(input_refs)
+      outs = lower_jaxpr_to_mosaic_gpu(
+          ctx.module_ctx,
+          ctx.launch_ctx,
+          discharged_jaxpr,
+          new_input_vals,
+          (),
+      )
+      # Discharge appends to the output the refs that got discharged.
+      outs = outs[:-sum(should_discharge)]
+    else:
+      outs = lower_jaxpr_to_mosaic_gpu(
+          ctx.module_ctx,
+          ctx.launch_ctx,
+          jaxpr,
+          input_refs,
+          consts,
+      )
 
   assert len(outs) == len(jaxpr.outvars), (jaxpr, outs)
   return outs
