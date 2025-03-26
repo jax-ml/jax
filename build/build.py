@@ -68,10 +68,14 @@ WHEEL_BUILD_TARGET_DICT = {
 # rule as the default.
 WHEEL_BUILD_TARGET_DICT_NEW = {
     "jax": "//:jax_wheel",
+    "jax_editable": "//:jax_wheel_editable",
     "jax_source_package": "//:jax_source_package",
     "jaxlib": "//jaxlib/tools:jaxlib_wheel",
+    "jaxlib_editable": "//jaxlib/tools:jaxlib_wheel_editable",
     "jax-cuda-plugin": "//jaxlib/tools:jax_cuda_plugin_wheel",
+    "jax-cuda-plugin_editable": "//jaxlib/tools:jax_cuda_plugin_wheel_editable",
     "jax-cuda-pjrt": "//jaxlib/tools:jax_cuda_pjrt_wheel",
+    "jax-cuda-pjrt_editable": "//jaxlib/tools:jax_cuda_pjrt_wheel_editable",
     "jax-rocm-plugin": "//jaxlib/tools:jax_rocm_plugin_wheel",
     "jax-rocm-pjrt": "//jaxlib/tools:jax_rocm_pjrt_wheel",
 }
@@ -662,9 +666,12 @@ async def main():
       )
 
       # Append the build target to the Bazel command.
-      build_target = wheel_build_targets[wheel]
+      if args.use_new_wheel_build_rule and args.editable:
+        build_target = wheel_build_targets[wheel + "_editable"]
+      else:
+        build_target = wheel_build_targets[wheel]
       wheel_build_command.append(build_target)
-      if args.use_new_wheel_build_rule and wheel == "jax":
+      if args.use_new_wheel_build_rule and wheel == "jax" and not args.editable:
         wheel_build_command.append(wheel_build_targets["jax_source_package"])
 
       if not args.use_new_wheel_build_rule:
