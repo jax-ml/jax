@@ -51,11 +51,9 @@ class JaxNumpyErrorTests(jtu.JaxTestCase):
         error_check.raise_if_error()
 
   @parameterized.product(jit=[True, False])
-  def test_error_category_divide_check(self, jit):
+  def test_set_error_if_divide_by_zero(self, jit):
     def f(x, y):
-      jnp_error._set_error_if_with_category(
-          y == 0.0, "division by zero", category="divide"
-      )
+      jnp_error._set_error_if_divide_by_zero(y)
       return x / y
 
     if jit:
@@ -70,7 +68,7 @@ class JaxNumpyErrorTests(jtu.JaxTestCase):
 
     with jnp_error.error_checking_behavior(divide="raise"):
       _ = f(x, y)
-      with self.assertRaisesRegex(JaxValueError, "division by zero"):
+      with self.assertRaisesRegex(JaxValueError, "Division by zero"):
         error_check.raise_if_error()
 
   @parameterized.product(jit=[True, False])
@@ -115,22 +113,22 @@ class JaxNumpyErrorTests(jtu.JaxTestCase):
       )
 
   @staticmethod
-  def op_cases(cases):
+  def nan_cases(cases):
     for jit in (True, False):
-      for func, ops_error, ops_no_err in cases:
-        if not isinstance(ops_error, tuple):
-          ops_error = (ops_error,)
-        if not isinstance(ops_no_err, tuple):
-          ops_no_err = (ops_no_err,)
+      for func, args_error, args_no_err in cases:
+        if not isinstance(args_error, tuple):
+          args_error = (args_error,)
+        if not isinstance(args_no_err, tuple):
+          args_no_err = (args_no_err,)
 
         jit_str = "jit" if jit else "nojit"
         func_str = f"{func.__module__}.{func.__name__}"
         name = f"_{jit_str}_{func_str}"
 
-        yield name, jit, func, ops_error, ops_no_err
+        yield name, jit, func, args_error, args_no_err
 
   @parameterized.named_parameters(
-      op_cases((
+      nan_cases((
           # List of all NaN-producing jax.numpy functions.
           # The first group of numbers is the input that will produce a NaN, and
           # the second group is the input that will not produce a NaN.
@@ -172,19 +170,65 @@ class JaxNumpyErrorTests(jtu.JaxTestCase):
           # go/keep-sorted end
       ))
   )
-  def test_can_raise_nan_error(self, jit, f, ops_err, ops_no_err):
-    ops_err = [jnp.float32(x) for x in ops_err]
-    ops_no_err = [jnp.float32(x) for x in ops_no_err]
+  def test_can_raise_nan_error(self, jit, f, args_err, args_no_err):
+    args_err = [jnp.float32(x) for x in args_err]
+    args_no_err = [jnp.float32(x) for x in args_no_err]
 
     if jit:
       f = jax.jit(f)
 
     with jnp_error.error_checking_behavior(nan="raise"):
-      f(*ops_no_err)
+      f(*args_no_err)
       error_check.raise_if_error()  # should not raise error
 
-      f(*ops_err)
+      f(*args_err)
       with self.assertRaisesRegex(JaxValueError, "NaN"):
+        error_check.raise_if_error()
+
+  INT_TYPES = (jnp.int32, jnp.uint32, jnp.int64, jnp.uint64, jnp.int16,
+                  jnp.uint16, jnp.int8, jnp.uint8)
+  FLOAT_TYPES = (jnp.float32, jnp.float64, jnp.float16, jnp.bfloat16)
+
+  @staticmethod
+  def divide_cases(cases):
+    for jit in (True, False):
+      for func, dtypes in cases:
+        for dtype in dtypes:
+          jit_str = "jit" if jit else "nojit"
+          func_str = f"{func.__module__}.{func.__name__}"
+          dtype_str = dtype.__name__
+          name = f"_{jit_str}_{func_str}_{dtype_str}"
+          yield name, jit, func, dtype
+
+  @parameterized.named_parameters(
+      divide_cases((
+          # go/keep-sorted start
+          (jnp.divmod, FLOAT_TYPES + INT_TYPES),
+          (jnp.floor_divide, INT_TYPES),
+          (jnp.mod, FLOAT_TYPES + INT_TYPES),
+          (jnp.remainder, FLOAT_TYPES + INT_TYPES),
+          (jnp.true_divide, FLOAT_TYPES),
+          (operator.mod, FLOAT_TYPES + INT_TYPES),
+          (operator.truediv, FLOAT_TYPES),
+          # go/keep-sorted end
+      ))
+  )
+  def test_can_raise_divide_by_zero_error(self, jit, div_func, dtype):
+    if not jax.config.x64_enabled and jnp.dtype(dtype).itemsize == 8:
+      self.skipTest("64-bit types require x64_enabled")
+
+    args_err = (dtype(1), dtype(0))
+    args_no_err = (dtype(1), dtype(1))
+
+    if jit:
+      div_func = jax.jit(div_func)
+
+    with jnp_error.error_checking_behavior(divide="raise"):
+      div_func(*args_no_err)
+      error_check.raise_if_error()  # should not raise error
+
+      div_func(*args_err)
+      with self.assertRaisesRegex(JaxValueError, "Division by zero"):
         error_check.raise_if_error()
 
 

@@ -2471,6 +2471,7 @@ def true_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     :func:`jax.numpy.floor_divide` for integer division
   """
   x1, x2 = promote_args_inexact("true_divide", x1, x2)
+  jnp_error._set_error_if_divide_by_zero(x2)
   out = lax.div(x1, x2)
   jnp_error._set_error_if_nan(out)
   return out
@@ -2523,6 +2524,7 @@ def floor_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     Array([3., 2., 2.], dtype=float32)
   """
   x1, x2 = promote_args_numeric("floor_divide", x1, x2)
+  jnp_error._set_error_if_divide_by_zero(x2)
   dtype = dtypes.dtype(x1)
   if dtypes.issubdtype(dtype, np.unsignedinteger):
     return lax.div(x1, x2)
@@ -2577,6 +2579,7 @@ def divmod(x1: ArrayLike, x2: ArrayLike, /) -> tuple[Array, Array]:
   if dtypes.issubdtype(dtypes.dtype(x1), np.integer):
     return floor_divide(x1, x2), remainder(x1, x2)
   else:
+    jnp_error._set_error_if_divide_by_zero(x2)
     return _float_divmod(x1, x2)
 
 
@@ -3090,6 +3093,7 @@ def remainder(x1: ArrayLike, x2: ArrayLike, /) -> Array:
            [ 0.,  2., -2.]], dtype=float32)
   """
   x1, x2 = promote_args_numeric("remainder", x1, x2)
+  jnp_error._set_error_if_divide_by_zero(x2)
   zero = _constant_like(x1, 0)
   if dtypes.issubdtype(x2.dtype, np.integer):
     x2 = _where(x2 == 0, lax._ones(x2), x2)
