@@ -16,21 +16,15 @@ from typing import Any
 
 from .plugin_support import import_from_plugin
 
-_cublas = import_from_plugin("cuda", "_blas")
 _cusolver = import_from_plugin("cuda", "_solver")
 _cuhybrid = import_from_plugin("cuda", "_hybrid")
 
-_hipblas = import_from_plugin("rocm", "_blas")
 _hipsolver = import_from_plugin("rocm", "_solver")
 _hiphybrid = import_from_plugin("rocm", "_hybrid")
 
 
 def registrations() -> dict[str, list[tuple[str, Any, int]]]:
   registrations = {"CUDA": [], "ROCM": []}
-  for platform, module in [("CUDA", _cublas), ("ROCM", _hipblas)]:
-    if module:
-      registrations[platform].extend(
-          (*i, 0) for i in module.registrations().items())
   for platform, module in [("CUDA", _cusolver), ("ROCM", _hipsolver)]:
     if module:
       registrations[platform].extend(
