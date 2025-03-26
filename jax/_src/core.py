@@ -1977,8 +1977,7 @@ class ShapedArray(UnshapedArray):
   def str_short(self, short_dtypes=False, mesh_axis_types=False):
     return str_short_aval(
         self.shape, self.dtype, self.sharding.mesh, self.sharding.spec,
-        getattr(self, 'varying_manual_axes', frozenset()),
-        short_dtypes, mesh_axis_types)
+        getattr(self, 'vma', frozenset()), short_dtypes, mesh_axis_types)
 
   def _len(self, ignored_tracer):
     try:

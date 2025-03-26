@@ -1240,9 +1240,12 @@ class PJitTest(jtu.BufferDonationTestCase):
         jaxpr.pretty_print(use_color=False),
         textwrap.dedent("""
             { lambda ; a:f32[1]. let
-                pjit[name=<lambda> jaxpr={ lambda ; a:f32[1] b:f32[1]. let  in () }] a a
-                c:f32[1] = add a a
-              in (c,) }
+                b:f32[1] = pjit[
+                  name=<lambda>
+                  jaxpr={ lambda ; a:f32[1] c:f32[1]. let  in (a,) }
+                ] a a
+                d:f32[1] = add a b
+              in (d,) }
         """).strip(),
     )
 
@@ -1289,8 +1292,11 @@ class PJitTest(jtu.BufferDonationTestCase):
         jaxpr.pretty_print(use_color=False),
         textwrap.dedent("""
             { lambda ; a:f32[1]. let
-                b:i32[] = pjit[name=<lambda> jaxpr={ lambda ; a:f32[1]. let  in (2,) }] a
-              in (b, a) }
+                b:i32[] c:f32[1] = pjit[
+                  name=<lambda>
+                  jaxpr={ lambda ; a:f32[1]. let  in (2, a) }
+                ] a
+              in (b, c) }
         """).strip(),
     )
 
@@ -1336,19 +1342,19 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(
         jaxpr.pretty_print(use_color=False),
         textwrap.dedent("""
-            let f = { lambda ; a:f32[1]. let  in () } in
-            let f1 = { lambda ; b:f32[2]. let  in () } in
+            let f = { lambda ; a:f32[1]. let  in (a,) } in
+            let f1 = { lambda ; b:f32[2]. let  in (b,) } in
             { lambda ; c:f32[1] d:f32[2]. let
                 e:f32[2] = pjit[
                   name=g
                   jaxpr={ lambda ; c:f32[1] d:f32[2]. let
-                      pjit[name=f jaxpr=f] c
-                      pjit[name=f jaxpr=f] c
-                      g:f32[1] = mul c c
-                      pjit[name=f jaxpr=f1] d
-                      pjit[name=f jaxpr=f1] d
-                      h:f32[2] = mul d d
-                      e:f32[2] = add g h
+                      g:f32[1] = pjit[name=f jaxpr=f] c
+                      h:f32[1] = pjit[name=f jaxpr=f] c
+                      i:f32[1] = mul g h
+                      j:f32[2] = pjit[name=f jaxpr=f1] d
+                      k:f32[2] = pjit[name=f jaxpr=f1] d
+                      l:f32[2] = mul j k
+                      e:f32[2] = add i l
                     in (e,) }
                 ] c d
               in (e,) }
@@ -2476,6 +2482,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
         r"argument x\[1\] of.*\<lambda\> with shape int.*\[3\] and device ids "
         r"\[1\].*"):
       pjit(lambda *x: x)(a, b)
+
+  def test_jit_no_forwarding(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+
+    @partial(jax.jit, donate_argnums=(0,))
+    def f(x):
+      return x, x * 2
+
+    x = jax.device_put(jnp.zeros(64, dtype="int32"), NamedSharding(mesh, P()))
+    jaxpr = jax.make_jaxpr(f)(x)
+    y = core.jaxpr_as_fun(jaxpr)(x)
+    self.assertTrue(x.is_deleted())
+    self.assertFalse(y[0].is_deleted())
+    self.assertFalse(y[1].is_deleted())
 
   def test_pjit_pytree_inp_device_assignment_mismatch(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
