@@ -5643,6 +5643,9 @@ def astype(x: ArrayLike, dtype: DTypeLike | None,
   return _array_copy(result) if copy else result
 
 
+# Precompile a fast device_put function for CPU fast-path
+_fast_put = jax.jit(lambda a: jax.device_put(a))
+
 @export
 def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None,
             *, copy: bool | None = None,
@@ -5710,6 +5713,23 @@ def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None,
     >>> jnp.asarray(pybuffer)
     Array([2, 3, 5, 7], dtype=int32)
   """
+
+  # --- Begin CPU Fast-Path for asarray ---
+  if jax.default_backend() == 'cpu' and isinstance(a, np.ndarray):
+    if dtype is not None:
+      dtype_converted = np.dtype(dtype)
+    else:
+      dtype_converted = None
+    from typing import cast, Literal
+    order_converted = cast(Literal['K', 'A', 'C', 'F'] | None, order) if order is not None else None
+    if copy:
+      a_converted = np.array(a, dtype=dtype_converted, order=order_converted)
+    else:
+      a_converted = a
+    return _fast_put(a_converted)
+  # --- End CPU Fast-Path for asarray ---
+
+
   # For copy=False, the array API specifies that we raise a ValueError if the input supports
   # the buffer protocol but a copy is required. Since array() supports the buffer protocol
   # via numpy, this is only the case when the default device is not 'cpu'
