@@ -37,7 +37,6 @@ from jax.test_util import check_grads
 import jax.util
 
 from jax.interpreters import batching
-from jax.interpreters import xla
 from jax._src import array
 from jax._src import config
 from jax._src import dtypes
@@ -3353,8 +3352,7 @@ class LaxTest(jtu.JaxTestCase):
                                        (np.int32(1), np.int16(2))))
 
   def test_primitive_jaxtype_error(self):
-    err_str = ("Error interpreting argument to .* as an abstract array. The problematic "
-               r"value is of type .* and was passed to the function at path args\[1\].")
+    err_str = "Argument .* is not a valid JAX type."
     with jax.enable_checks(False):
       with self.assertRaisesRegex(TypeError, err_str):
         lax.add(1, 'hi')
@@ -3831,7 +3829,7 @@ class LazyConstantTest(jtu.JaxTestCase):
       # Booleans should have weak types stripped.
       self.assertFalse(py_op.aval.weak_type)
     else:
-      self.assertTrue(py_op.aval.weak_type)
+      self.assertTrue(py_op.aval.weak_type, msg=f"{py_val=}, {py_op=}, {py_op.aval}")
 
   def testCumsumLengthOne(self):
     # regression test for issue 4672
@@ -3974,7 +3972,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
   def setUp(self):
     core.pytype_aval_mappings[FooArray] = \
         lambda x: core.ShapedArray(x.shape, FooTy(), sharding=None)
-    xla.canonicalize_dtype_handlers[FooArray] = lambda x: x
+    core.canonicalize_dtype_handlers[FooArray] = lambda x: x
     pxla.shard_arg_handlers[FooArray] = shard_foo_array_handler
     mlir._constant_handlers[FooArray] = foo_array_constant_handler
     mlir.register_lowering(make_p, mlir.lower_fun(make_lowering, False))
@@ -3986,7 +3984,7 @@ class CustomElementTypesTest(jtu.JaxTestCase):
 
   def tearDown(self):
     del core.pytype_aval_mappings[FooArray]
-    del xla.canonicalize_dtype_handlers[FooArray]
+    del core.canonicalize_dtype_handlers[FooArray]
     del mlir._constant_handlers[FooArray]
     del mlir._lowerings[make_p]
     del mlir._lowerings[bake_p]

@@ -1197,6 +1197,7 @@ def _geq_decision(e1: DimSize, e2: DimSize, cmp_str: Callable[[], str]) -> bool:
       f"Symbolic dimension comparison {cmp_str()} is inconclusive.{describe_scope}")
 
 core.pytype_aval_mappings[_DimExpr] = _DimExpr._get_aval
+core.canonicalize_dtype_handlers[_DimExpr] = lambda x: x
 dtypes.register_weak_scalar_type(_DimExpr)
 
 def _convertible_to_int(p: DimSize) -> bool:
