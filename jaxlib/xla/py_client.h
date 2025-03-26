@@ -34,6 +34,7 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
+#include "jaxlib/xla/nb_class_ptr.h"
 #include "xla/pjrt/exceptions.h"
 #include "xla/pjrt/pjrt_client.h"
 #include "xla/pjrt/pjrt_executable.h"
@@ -42,7 +43,6 @@ limitations under the License.
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/program.h"
-#include "xla/python/nb_class_ptr.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/shape.h"
 

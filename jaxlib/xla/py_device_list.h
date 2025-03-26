@@ -23,9 +23,9 @@ limitations under the License.
 
 #include "absl/status/statusor.h"
 #include "nanobind/nanobind.h"
+#include "jaxlib/xla/nb_class_ptr.h"
 #include "jaxlib/xla/py_client.h"
 #include "xla/python/ifrt/device_list.h"
-#include "xla/python/nb_class_ptr.h"
 #include "xla/tsl/concurrency/ref_count.h"
 
 namespace jax {

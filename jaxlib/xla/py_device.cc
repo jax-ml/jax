@@ -36,17 +36,17 @@ limitations under the License.
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/xla/nb_class_ptr.h"
 #include "jaxlib/xla/py_client.h"
 #include "jaxlib/xla/py_memory_space.h"
+#include "jaxlib/xla/python_ref_manager.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/device.h"
-#include "xla/python/nb_class_ptr.h"
 #include "xla/python/nb_helpers.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/python/pjrt_ifrt/pjrt_device.h"
-#include "xla/python/python_ref_manager.h"
 #include "xla/python/types.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"

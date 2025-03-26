@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "jaxlib/xla/nb_class_ptr.h"
 #include "jaxlib/xla/py_device_list.h"
 #include "jaxlib/xla/sharding.h"
 #include "xla/hlo/ir/hlo_sharding.h"
@@ -32,7 +33,6 @@ limitations under the License.
 #include "xla/python/ifrt/memory.h"
 #include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
-#include "xla/python/nb_class_ptr.h"
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
 #include "xla/python/pjrt_ifrt/xla_sharding.h"
 #include "xla/shape.h"

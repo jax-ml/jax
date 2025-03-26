@@ -30,6 +30,7 @@ limitations under the License.
 #include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/xla/nb_class_ptr.h"
 #include "jaxlib/xla/py_client.h"
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/pjrt_compiler.h"
@@ -37,7 +38,6 @@ limitations under the License.
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/compile_only_ifrt/client.h"
 #include "xla/python/ifrt/executable.h"
-#include "xla/python/nb_class_ptr.h"
 #include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
