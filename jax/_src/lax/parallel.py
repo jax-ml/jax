@@ -1109,15 +1109,15 @@ def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis,
 def _all_to_all_batched_collective(axis_data, vals_in, dims_in,
                                    axis_name, split_axis, concat_axis,
                                    axis_index_groups, tiled):
-  axis_size, frame_name = axis_data.size, axis_data.name
   if axis_index_groups is not None:
     raise NotImplementedError("Please open a feature request!")
 
+  axis_size, frame_name = axis_data.size, axis_data.name
   if isinstance(axis_name, (list, tuple)):
     axes_names = axis_name
   else:
     axes_names = [axis_name]
-  if axis_data.name not in axes_names:
+  if frame_name not in axes_names:
     return _all_to_all_batcher(
       vals_in, dims_in, axis_name=axis_name, split_axis=split_axis,
       concat_axis=concat_axis, axis_index_groups=axis_index_groups, tiled=tiled)
@@ -1157,6 +1157,7 @@ def _all_to_all_batched_collective(axis_data, vals_in, dims_in,
                           axis_index_groups=axis_index_groups,
                           tiled=tiled)
   # Split out the local part into axis new_d (NOTE: d is already in axis 1)
+  assert d == 1
   x = _splitaxis(split_axis, axis_size, x)
   new_d = split_axis
   concat_axis += (split_axis <= concat_axis)  # Offset the existing axes by the new batch axis
