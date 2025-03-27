@@ -648,7 +648,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
            nb::arg("dimension"))
       .def("set_dynamic_dimension", &Shape::set_dynamic_dimension,
            nb::arg("dimension"), nb::arg("is_dynamic"))
-      .def("rank", &Shape::rank)
+      .def("rank", &Shape::dimensions_size)
       .def("to_serialized_proto",
            [](const Shape& shape) {
              ShapeProto proto = shape.ToProto();
