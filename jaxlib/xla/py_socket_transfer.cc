@@ -29,6 +29,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/synchronization/mutex.h"
+#include "llvm/Support/Casting.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/array.h"  // IWYU pragma: keep
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
@@ -61,6 +62,7 @@ limitations under the License.
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/util.h"
+#include "tsl/platform/casts.h"
 
 namespace aux {
 

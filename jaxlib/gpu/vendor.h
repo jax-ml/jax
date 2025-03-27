@@ -20,6 +20,7 @@ limitations under the License.
 #ifndef JAXLIB_GPU_VENDOR_H_
 #define JAXLIB_GPU_VENDOR_H_
 
+#include <cstdint>
 #if defined(JAX_GPU_CUDA)
 
 // IWYU pragma: begin_exports

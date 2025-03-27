@@ -40,6 +40,7 @@ limitations under the License.
 #include "xla/primitive_util.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/tsl/platform/statusor.h"
+#include "xla/tsl/python/lib/core/numpy.h"
 
 namespace nb = nanobind;
 

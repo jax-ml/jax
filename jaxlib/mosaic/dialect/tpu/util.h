@@ -27,6 +27,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/types/span.h"
+#include "llvm/Support/Compiler.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
@@ -38,7 +39,7 @@ limitations under the License.
 #include "mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/statusor.h"
 
 // TODO: Instead of CHECK_EQs, can we do something like TF_RET_CHECK but with
 // MLIR diagnostics?

@@ -16,9 +16,6 @@ limitations under the License.
 #ifndef JAXLIB_XLA_PMAP_LIB_H_
 #define JAXLIB_XLA_PMAP_LIB_H_
 
-#include <optional>
-#include <utility>
-#include <vector>
 
 // placeholder for index annotation headers
 #include "nanobind/nanobind.h"

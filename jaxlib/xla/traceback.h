@@ -16,7 +16,8 @@ limitations under the License.
 #ifndef JAXLIB_XLA_TRACEBACK_H_
 #define JAXLIB_XLA_TRACEBACK_H_
 
-#include <memory>
+#include <Python.h>
+
 #include <optional>
 #include <string>
 #include <utility>

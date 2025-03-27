@@ -17,6 +17,7 @@ limitations under the License.
 #define JAXLIB_GPU_RNN_KERNELS_H_
 
 #include <cstddef>
+#include <utility>
 
 #include "absl/status/statusor.h"
 #include "jaxlib/gpu/vendor.h"

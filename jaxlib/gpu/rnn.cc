@@ -16,7 +16,7 @@ limitations under the License.
 #include <cstddef>
 
 #include "nanobind/nanobind.h"
-#include "nanobind/stl/pair.h"
+#include "nanobind/stl/pair.h"  // IWYU pragma: keep
 #include "jaxlib/absl_status_casters.h"
 #include "jaxlib/gpu/rnn_kernels.h"
 #include "jaxlib/gpu/vendor.h"

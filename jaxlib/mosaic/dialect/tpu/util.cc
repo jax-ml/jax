@@ -24,6 +24,7 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/types/span.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/Attributes.h"

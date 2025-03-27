@@ -37,7 +37,6 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/xla_sharding.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
-#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 
 namespace xla {

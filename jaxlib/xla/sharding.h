@@ -30,8 +30,9 @@ limitations under the License.
 #include "jaxlib/xla/sharded_device_array.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/pjrt/status_casters.h"
-#include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/device_list.h"
 #include "xla/python/nb_numpy.h"
+#include "xla/util.h"
 #include "xla/xla_data.pb.h"
 
 namespace jax {

@@ -13,20 +13,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <utility>
 #include <vector>
 
+#include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "nanobind/nanobind.h"
-#include "nanobind/stl/pair.h"
-#include "nanobind/stl/string.h"
-#include "nanobind/stl/string_view.h"
-#include "nanobind/stl/tuple.h"
-#include "nanobind/stl/vector.h"
+#include "nanobind/stl/pair.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"  // IWYU pragma: keep
+#include "nanobind/stl/string_view.h"  // IWYU pragma: keep
+#include "nanobind/stl/tuple.h"  // IWYU pragma: keep
+#include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/absl_status_casters.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/triton.pb.h"

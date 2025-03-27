@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef JAX_JAXLIB_GPU_PY_CLIENT_GPU_H_
 #define JAX_JAXLIB_GPU_PY_CLIENT_GPU_H_
 
-#include <cstddef>
 
 #include "jaxlib/gpu/vendor.h"
 #include "xla/ffi/api/ffi.h"

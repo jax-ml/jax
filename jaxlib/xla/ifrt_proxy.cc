@@ -42,8 +42,8 @@
 #include "xla/python/ifrt/attribute_map.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt_proxy/client/registry.h"
-#include "tsl/platform/env.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/env.h"
+#include "xla/tsl/platform/statusor.h"
 
 namespace nb = ::nanobind;
 

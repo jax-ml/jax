@@ -18,6 +18,7 @@ limitations under the License.
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>

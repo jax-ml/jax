@@ -38,7 +38,6 @@ limitations under the License.
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/nb_numpy.h"
-#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"

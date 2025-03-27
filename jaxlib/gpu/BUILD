@@ -133,6 +133,7 @@ cc_library(
         "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_helpers",
         "@xla//xla/pjrt/c:pjrt_c_api_triton_extension_hdrs",
+        "@xla//xla/tsl/platform:statusor",
         "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )

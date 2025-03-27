@@ -50,7 +50,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/statusor.h"
 
 // Generated definitions.
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_dialect.cc.inc"

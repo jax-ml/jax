@@ -26,6 +26,7 @@ limitations under the License.
 
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -61,12 +62,12 @@ limitations under the License.
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/array.h"
+#include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/topology.h"
-#include "xla/python/version.h"
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
-#include "xla/tsl/concurrency/ref_count.h"
+#include "xla/python/version.h"
 #include "xla/tsl/python/lib/core/numpy.h"  // NOLINT
 
 #if defined(__linux__)
@@ -119,7 +120,6 @@ limitations under the License.
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
 #include "xla/python/ops.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
-#include "xla/python/pjrt_ifrt/pjrt_executable.h"
 #include "xla/python/pjrt_ifrt/pjrt_topology.h"
 #include "xla/python/pprof_profile_builder.h"
 #include "xla/python/profiler.h"

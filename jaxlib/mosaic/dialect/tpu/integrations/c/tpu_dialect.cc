@@ -21,10 +21,13 @@ limitations under the License.
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "absl/log/check.h"
 #include "absl/log/log.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/MemAlloc.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir-c/IR.h"
@@ -33,11 +36,11 @@ limitations under the License.
 #include "mlir/CAPI/Registration.h"
 #include "mlir/CAPI/Utils.h"
 #include "mlir/CAPI/Wrap.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"

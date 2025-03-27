@@ -20,7 +20,6 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "absl/types/variant.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "xla/python/types.h"

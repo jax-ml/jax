@@ -21,7 +21,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
 #include "nanobind/nanobind.h"
-#include "nanobind/stl/pair.h"
+#include "nanobind/stl/pair.h"  // IWYU pragma: keep
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/solver_handle_pool.h"
 #include "jaxlib/gpu/solver_kernels.h"

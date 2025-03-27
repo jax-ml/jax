@@ -48,7 +48,6 @@ limitations under the License.
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
-#include "jaxlib/xla/callback.h"
 #include "jaxlib/xla/guard_lib.h"
 #include "jaxlib/xla/nb_class_ptr.h"
 #include "jaxlib/xla/py_array.h"
@@ -83,7 +82,6 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/python/pprof_profile_builder.h"
 #include "xla/python/types.h"
-#include "xla/service/custom_call_target_registry.h"
 #include "xla/service/platform_util.h"  // IWYU pragma: keep
 #include "xla/shape.h"
 #include "xla/status_macros.h"

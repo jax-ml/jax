@@ -35,6 +35,7 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api_triton_extension.h"
 #include "xla/pjrt/status_casters.h"
+#include "xla/tsl/platform/statusor.h"
 #include "xla/tsl/python/lib/core/numpy.h"
 #include "xla/util.h"
 

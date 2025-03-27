@@ -38,9 +38,7 @@ limitations under the License.
 #include "jaxlib/xla/python_ref_manager.h"
 #include "xla/python/ifrt/device.h"
 #include "xla/python/ifrt/device_list.h"
-#include "xla/python/nb_helpers.h"
 #include "xla/python/types.h"
-#include "xla/tsl/concurrency/ref_count.h"
 #include "xla/util.h"
 
 namespace jax {
