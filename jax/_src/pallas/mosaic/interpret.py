@@ -1307,8 +1307,13 @@ def _compute_start_indices(
       jaxpr.jaxpr, *jaxpr.consts, *loop_idx, *args,
       compiler_params=compiler_params, interpret_params=interpret_params)
   if isinstance(block_mapping.indexing_mode, pallas_core.Blocked):
-    ret = tuple(i if b is pallas_core.mapped else b * i
-                for b, i in zip(block_mapping.block_shape, block_indices))
+    ret = jnp.array(
+        tuple(
+            i if b is pallas_core.mapped else b * i
+            for b, i in zip(block_mapping.block_shape, block_indices)
+        ),
+        dtype=jnp.int32,
+    )
   elif isinstance(block_mapping.indexing_mode, pallas_core.Unblocked):
     ret = block_indices
   else:
@@ -1534,64 +1539,114 @@ def interpret_pallas_call(
     # Base case is always one iteration when grid is ()
     num_iterations = 1
 
-  def body(carry):
-    # The loop carry: (i, loop_idx) --
-    #  - i:int32 is the interation index
-    #  - loop_idx: tuple[int32] are the program ids for each grid axis
-    i, loop_idx = carry
-
+  def _get_local_grid_env(loop_idx):
     if grid_mapping.local_grid_env is not None:
-      local_grid_env = grid_mapping.local_grid_env(loop_idx, grid)
+      return grid_mapping.local_grid_env(loop_idx, grid)
     else:
-      local_grid_env = tuple(
+      return tuple(
           pallas_core.GridAxis(idx, b)
           for dim, (idx, b) in enumerate(zip(loop_idx, grid))
           if dim not in grid_mapping.vmapped_dims
       )
 
-    with pallas_core.grid_env(local_grid_env):
-      start_indices = [
+  def body(
+      carry: tuple[
+          jnp.int32, tuple[jnp.int32, ...], list[jnp.ndarray], list[jnp.ndarray]
+      ],
+  ):
+    """Performs a single iteration of `jaxpr` in the device grid.
+
+    Execution of `jaxpr` is preceded by reading kernel input buffers and
+    followed by writing kernel output buffers.
+
+    Args:
+      carry: (iteration_idx, loop_idx, prev_start_indices, cur_start_indices).
+        - iteration_idx is the interation index.
+        - loop_idx are the program ids for each grid axis.
+        - prev_start_indices is a rank-1 array that contains the start indices
+          for the slices of inputs and outputs processed in the previous loop
+          iteration.
+        - cur_start_indices is a rank-1 array that contains the start indices
+          for the slices of inputs and outputs processed in the current loop
+          iteration.
+
+        Note that by carrying the previous *and* current start indices between
+        loop iterations, it suffices to compute only one list of start indices,
+        i.e. `next_start_indices` (see below), per iteration.
+
+    Returns:
+      The carry for the next iteration.
+    """
+    iteration_idx, loop_idx, prev_start_indices, cur_start_indices = carry
+
+    with pallas_core.grid_env(_get_local_grid_env(loop_idx)):
+      next_loop_idx = _get_next_indices(grid, loop_idx)
+      next_start_indices = [
           _compute_start_indices(
-              bm, loop_idx, *scalar_buffer_ids, compiler_params=compiler_params,
-              interpret_params=interpret_params)
-          for bm in grid_mapping.block_mappings]
+              bm,
+              next_loop_idx,
+              *scalar_buffer_ids,
+              compiler_params=compiler_params,
+              interpret_params=interpret_params,
+          )
+          for bm in grid_mapping.block_mappings
+      ]
+
       # Copy slices of the input to the kernel buffers.
-      #
-      # TODO(jburnim): Only copy slices when the index mapping has changed?
-      for j, var in enumerate(input_vars):
-        if _is_any(var.aval.memory_space):
-          continue
+
+      def _store_slice_to_kernel_input(index, input_var):
         # Copy from the HBM buffer for the pallas_call input to the kernel
         # input buffer.
         # TODO(jburnim): Just use input_args[j] when the input is not aliased?
         transform = indexing.NDIndexer(
-            indices=tuple(indexing.ds(st, sz) if not iid else st
-                          for st, sz, iid in zip(start_indices[j],
-                                                 block_shapes[j],
-                                                 is_indexing_dim[j])),
-            shape=input_args[j].shape,
-            int_indexer_shape=())
+            indices=tuple(
+                indexing.ds(st, sz) if not iid else st
+                for st, sz, iid in zip(
+                    cur_start_indices[index],
+                    block_shapes[index],
+                    is_indexing_dim[index],
+                )
+            ),
+            shape=input_args[index].shape,
+            int_indexer_shape=(),
+        )
         sliced_val = callback.io_callback(
             # TODO(jburnim): Pass source_info from the pallas_call, in case this
             # read is involved in a data race.
             get,
-            jax.ShapeDtypeStruct(var.aval.shape, var.aval.dtype),
+            jax.ShapeDtypeStruct(input_var.aval.shape, input_var.aval.dtype),
             device_id,
             TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.ANY],
-            input_buffer_ids[j],
+            input_buffer_ids[index],
             (transform,),
-            ordered=True)
+            ordered=True,
+        )
         callback.io_callback(
             # TODO(jburnim): Pass source_info from the pallas_call, in case this
             # store is involved in a data race.
             store,
             (),
             device_id,
-            TPU_MEMORY_SPACE_IDXS[var.aval.memory_space],
-            input_ids[j],
+            TPU_MEMORY_SPACE_IDXS[input_var.aval.memory_space],
+            input_ids[index],
             (),
             sliced_val,
-            ordered=True)
+            ordered=True,
+        )
+
+      for j, var in enumerate(input_vars):
+        if _is_any(var.aval.memory_space):
+          continue
+        assert len(cur_start_indices[j].shape) == 1
+        assert len(prev_start_indices[j].shape) == 1
+        jax.lax.cond(
+            (iteration_idx == 0)
+            | jax.lax.reduce_or(
+                cur_start_indices[j] != prev_start_indices[j], axes=(0,)
+            ),
+            functools.partial(_store_slice_to_kernel_input, j, var),
+            lambda: None,
+        )
 
       # Invoke the kernel.
       _interpret_jaxpr(jaxpr, *kernel_buffer_ids,
@@ -1599,29 +1654,30 @@ def interpret_pallas_call(
                        interpret_params=interpret_params)
 
       # Copy from the kernel buffers to slices of the output in HBM.
-      #
-      # TODO(jburnim): Only copy if the index mapping will change in the
-      # next iteration (or if this is the last iteration)?
-      for j, var in enumerate(output_vars):
-        if _is_any(var.aval.memory_space):
-          continue
+      def _store_to_output_buffer(index, output_var):
         kernel_output_val = callback.io_callback(
             # TODO(jburnim): Pass source_info from the pallas_call, in case this
             # get is involved in a data race.
             get,
-            var.aval,
+            output_var.aval,
             device_id,
-            TPU_MEMORY_SPACE_IDXS[var.aval.memory_space],
+            TPU_MEMORY_SPACE_IDXS[output_var.aval.memory_space],
             kernel_output_ids[j],
             (),
-            ordered=True)
+            ordered=True,
+        )
         transform = indexing.NDIndexer(
-            indices=tuple(indexing.ds(st, sz) if not iid else st
-                          for st, sz, iid  in zip(start_indices[num_inputs + j],
-                                                  block_shapes[num_inputs + j],
-                                                  is_indexing_dim[num_inputs + j])),
-            shape=output_vals[j].shape,
-            int_indexer_shape=())
+            indices=tuple(
+                indexing.ds(st, sz) if not iid else st
+                for st, sz, iid in zip(
+                    cur_start_indices[num_inputs + index],
+                    block_shapes[num_inputs + index],
+                    is_indexing_dim[num_inputs + index],
+                )
+            ),
+            shape=output_vals[index].shape,
+            int_indexer_shape=(index),
+        )
         callback.io_callback(
             # TODO(jburnim): Pass source_info from the pallas_call, in case this
             # store is involved in a data race.
@@ -1629,18 +1685,52 @@ def interpret_pallas_call(
             (),
             device_id,
             TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.ANY],
-            output_buffer_ids[j],
+            output_buffer_ids[index],
             (transform,),
             kernel_output_val,
-            ordered=True)
+            ordered=True,
+        )
 
-      return i + 1, _get_next_indices(grid, loop_idx)
+      for j, var in enumerate(output_vars):
+        if _is_any(var.aval.memory_space):
+          continue
+        assert len(cur_start_indices[num_inputs + j].shape) == 1
+        assert len(next_start_indices[num_inputs + j].shape) == 1
+        jax.lax.cond(
+            (iteration_idx + 1 == num_iterations)
+            | jax.lax.reduce_or(
+                cur_start_indices[num_inputs + j]
+                != next_start_indices[num_inputs + j],
+                axes=(0,),
+            ),
+            functools.partial(_store_to_output_buffer, j, var),
+            lambda: None,
+        )
 
+      return iteration_idx + 1, next_loop_idx, cur_start_indices, next_start_indices
+
+  initial_loop_idx = (jnp.int32(0),) * len(grid)
+  with pallas_core.grid_env(_get_local_grid_env(initial_loop_idx)):
+    initial_start_indices = [
+        _compute_start_indices(
+            bm,
+            initial_loop_idx,
+            *scalar_buffer_ids,
+            compiler_params=compiler_params,
+            interpret_params=interpret_params,
+        )
+        for bm in grid_mapping.block_mappings
+    ]
   # TODO(jburnim): Handle parallel grid dimensions + megacore.
   _ = lax.while_loop(
       lambda carry: carry[0] < num_iterations,
       body,
-      (jnp.int32(0), (jnp.int32(0),) * len(grid))
+      (
+          jnp.int32(0),
+          initial_loop_idx,
+          initial_start_indices,  # Previous start indices are ignored on the first iteration.
+          initial_start_indices,
+      ),
   )
 
   # Read the output from the allocated output buffers.
