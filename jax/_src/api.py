@@ -2053,8 +2053,8 @@ def saved_input_vjp(f: Callable, which: Sequence[bool], *primals,
   res_spec = [RSpec(id_map[id(r)], True) if id(r) in id_map else
               RSpec(opaque_residuals.append(r) or (len(opaque_residuals) - 1), False)  # type: ignore
               for r in residuals]
-  f_vjp = Partial(_saved_input_vjpfun, res_spec, filt_tree, in_tree, out_tree(),
-                  jaxpr, opaque_residuals)
+  f_vjp = Partial(partial(_saved_input_vjpfun, res_spec, filt_tree, in_tree,
+                          out_tree(), jaxpr), opaque_residuals)
 
   if not allow_unused and not set(id_map).issubset(res_ids := {id(r) for r in residuals}):
     unused = [(i, core.get_aval(x)) for i, (x, w) in enumerate(zip(primals, which))
