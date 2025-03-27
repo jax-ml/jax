@@ -11520,6 +11520,25 @@ class InputSavedVJPTest(jtu.JaxTestCase):
     self.assertAllClose(y, 6.)
     self.assertAllClose(arg_cts, (3., 2.))
 
+  def test_basic_pass_through_jit(self):
+    def f(x, y):
+      return x * y
+
+    @jax.jit
+    def g():
+      primals = 2., 3.
+      y, f_vjp = api.si_vjp(f, [True, True], *primals)
+      return y, f_vjp
+
+    @jax.jit
+    def h(f_vjp):
+      return f_vjp(1., 2., 3.)
+
+    y, f_vjp = g()
+    arg_cts = h(f_vjp)
+    self.assertAllClose(y, 6.)
+    self.assertAllClose(arg_cts, (3., 2.))
+
   def test_basic_unused(self):
     f = jnp.sin
     primals = 3.,
