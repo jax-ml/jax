@@ -111,9 +111,12 @@ cc_library(
 cc_library(
     name = "runtime",
     srcs = ["runtime.cc"],
+    # Linker may prune these symbols if they are not explicitly exported.
+    linkopts = ["-Wl,--export-dynamic-symbol='mosaic_gpu_*'"],
     deps = [
         "@local_config_cuda//cuda:cuda_headers",
     ],
+    alwayslink = True,
 )
 
 cc_library(
