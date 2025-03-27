@@ -64,6 +64,7 @@ limitations under the License.
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/executable.h"
 #include "xla/python/ifrt/topology.h"
+#include "xla/python/version.h"
 #include "xla/python/pjrt_ifrt/pjrt_attribute_map_util.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/python/lib/core/numpy.h"  // NOLINT
@@ -960,6 +961,8 @@ NB_MODULE(xla_extension, m) {
   m.def("check_and_canonicalize_memory_kind",
         &jax::CheckAndCanonicalizeMemoryKind, nb::arg("memory_kind").none(),
         nb::arg("device_list"));
+
+  m.attr("ifrt_version_number") = JAX_IFRT_VERSION_NUMBER;
 }  // NOLINT(readability/fn_size)
 
 }  // namespace xla

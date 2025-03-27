@@ -112,6 +112,7 @@ nanobind_extension(
         "@xla//xla/python:profiler",
         "@xla//xla/python:refine_polymorphic_shapes",
         "@xla//xla/python:types",
+        "@xla//xla/python:version",
         "@xla//xla/python/ifrt",
         "@xla//xla/python/ifrt:plugin_program",
         "@xla//xla/python/ifrt:plugin_program_serdes",

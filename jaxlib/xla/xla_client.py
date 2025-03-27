@@ -52,6 +52,12 @@ profiler = _xla.profiler
 # changes. In JAX, reference this via jax._src.lib.jaxlib_extension_version.
 _version = 322
 
+# An internal increasing version number for protecting jaxlib code against
+# ifrt changes.
+# lives in xla/python/version.h.
+# In JAX, reference this via jax._src.lib.ifrt_version.
+_ifrt_version = _xla.ifrt_version_number
+
 # Version number for MLIR:Python components.
 mlir_api_version = 58
 
