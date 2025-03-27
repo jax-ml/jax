@@ -63,6 +63,7 @@ from jax._src.lib.mlir import dialects
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
+from jax._src.lib import jaxlib_extension_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -1399,6 +1400,18 @@ class PJitTest(jtu.BufferDonationTestCase):
     ir = f.lower(np.float32(1.0)).as_text()
     self.assertIn("stablehlo.constant dense<0.000000e+00>", ir)
     self.assertIn("stablehlo.constant dense<-0.000000e+00>", ir)
+
+  def test_device_put_copy_donate(self):
+    if jaxlib_extension_version < 323:
+      raise unittest.SkipTest("Copy not supported in device put.")
+    x = np.arange(1000)
+    y = jax.device_put(x, device=jax.devices()[0], may_alias=False, donate=False)
+    z = jax.device_put(y, device=jax.devices()[0], may_alias=False, donate=False)
+    a = jax.jit(lambda y: y * 2, donate_argnums=0)(y)
+    self.assertDeleted(y)
+    self.assertNotDeleted(z)
+    self.assertArraysEqual(a, x * 2)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class CustomPartitionerTest(jtu.JaxTestCase):

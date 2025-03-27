@@ -418,6 +418,7 @@ absl::StatusOr<DevicePutResultFn> HandlePyArray(
   }
 
   if (ifrt_array->sharding().devices()->devices().front() == to_device &&
+      options.allow_zero_copy &&
       (!to_memory_kind.memory_kind().has_value() ||
        !ifrt_array->sharding().memory_kind().memory_kind().has_value() ||
        ifrt_array->sharding().memory_kind() == to_memory_kind)) {
@@ -426,15 +427,17 @@ absl::StatusOr<DevicePutResultFn> HandlePyArray(
     return [result = std::move(result)]() mutable { return std::move(result); };
   } else {
     return [ifrt_array = tsl::FormRef(ifrt_array), to_device, to_memory_kind,
-            owning_pybuffer = py_array.weak_type()]() mutable
+            owning_pybuffer = py_array.weak_type(),
+            allow_zero_copy = options.allow_zero_copy]() mutable
                -> absl::StatusOr<DevicePutResult> {
       auto* ifrt_client = ifrt_array->client();
       TF_ASSIGN_OR_RETURN(
           auto copied_ifrt_arrays,
-          ifrt_client->CopyArrays(absl::MakeSpan(&ifrt_array, 1),
-                                  ifrt_client->MakeDeviceList({to_device}),
-                                  to_memory_kind,
-                                  ifrt::ArrayCopySemantics::kReuseInput));
+          ifrt_client->CopyArrays(
+              absl::MakeSpan(&ifrt_array, 1),
+              ifrt_client->MakeDeviceList({to_device}), to_memory_kind,
+              allow_zero_copy ? ifrt::ArrayCopySemantics::kReuseInput
+                              : ifrt::ArrayCopySemantics::kAlwaysCopy));
       return DevicePutResult(std::move(copied_ifrt_arrays[0]),
                              std::move(owning_pybuffer));
     };

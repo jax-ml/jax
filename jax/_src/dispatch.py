@@ -495,6 +495,9 @@ def _device_put_sharding_impl(x, aval, device, copy):
         return _DeferredShardArg(x, x.sharding, aval, x.committed, copy)
     elif is_single_device_sharding(x.sharding):
       device = x.sharding._device_assignment[0] if device is None else device
+      if copy == CopySemantics.COPY:
+        return xc.batched_device_put(aval, SingleDeviceSharding(device), [x],
+                                     [device], True, True)
       return pxla.batched_device_put(aval, SingleDeviceSharding(device), [x],
                                      [device])
 
