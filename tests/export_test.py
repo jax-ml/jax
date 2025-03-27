@@ -2008,6 +2008,32 @@ class JaxExportTest(jtu.JaxTestCase):
     r = jax.jit(exp.call, out_shardings=NamedSharding(old_mesh_0, P("old_b")))(a, b)
     self.assertAllClose(a + b, r)
 
+  def test_lower_wth_different_meshes_axis_names(self):
+    mesh1 = jtu.create_mesh((4, 2), ("a", "b"))
+    mesh2 = jtu.create_mesh((4, 2), ("x", "y"))
+    @jax.jit
+    def f(tree):
+      return tree['foo'] + tree['bar']
+
+    args = {
+          'foo': jax.ShapeDtypeStruct(
+              (32, 32), dtype=np.float32,
+              sharding=NamedSharding(mesh1, P(None, "a"))),
+          'bar': jax.ShapeDtypeStruct(
+              (32, 32), dtype=np.float32,
+              sharding=NamedSharding(mesh2, P("y"))),
+      }
+
+    if config.use_shardy_partitioner.value:
+      with self.assertRaisesRegex(
+          ValueError,
+          r'Mesh for all inputs/outputs should be equal.*'
+          r"args\[0\]\['bar'\].*"):
+        get_exported(f)(args)
+    else:
+       get_exported(f)(args)
+
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
