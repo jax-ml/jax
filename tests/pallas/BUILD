@@ -681,6 +681,27 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "fusion_test",
+    srcs = [
+        "fusion_test.py",
+    ],
+    disable_configs = [
+        "cpu",
+        "cpu_shardy",
+    ],
+    enable_backends = ["cpu"],
+    tags = [
+        "noasan",
+        "nomsan",
+        "notsan",
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_fuser",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
     name = "tpu_fusable_matmul_test",
     srcs = ["tpu_fusable_matmul_test.py"],
     disable_configs = [

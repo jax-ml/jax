@@ -71,7 +71,8 @@ def matmul_kernel(
   def _():
     acc = acc_ref[...].astype(out_dtype)
     z_values = jax.tree.map(lambda ref: ref.get(), z_value_refs)
-    o_ref[...] = z_fn(pids, scalar_prefetch, z_values, acc)
+    out = z_fn(pids, scalar_prefetch, z_values, acc)
+    jax.tree.map(lambda ref, x: ref.set(x), o_ref, out)
 
 
 def _fusable_matmul(
@@ -174,12 +175,12 @@ def _fusable_matmul(
               y_value_block_specs,
               z_value_block_specs,
           ],
-          out_specs=z_out_block_spec,
+          out_specs=[z_out_block_spec],
       ),
       compiler_params=pltpu.TPUCompilerParams(
           dimension_semantics=dimension_semantics,
       ),
-      out_shape=z_out_type,
+      out_shape=[z_out_type],
       interpret=interpret,
       debug=debug,
   )(
@@ -187,7 +188,7 @@ def _fusable_matmul(
       x_values,
       y_values,
       z_values,
-  )
+  )[0]
 
 
 def fusable_matmul(
