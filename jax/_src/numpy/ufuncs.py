@@ -2652,6 +2652,11 @@ def power(x1: ArrayLike, x2: ArrayLike, /) -> Array:
            [nan, 27.,  1.]], dtype=float32)
   """
   check_arraylike("power", x1, x2)
+
+  # Must do __jax_array__ conversion prior to dtype check.
+  x1 = x1.__jax_array__() if hasattr(x1, "__jax_array__") else x1
+  x2 = x2.__jax_array__() if hasattr(x2, "__jax_array__") else x2
+
   check_no_float0s("power", x1, x2)
 
   # We apply special cases, both for algorithmic and autodiff reasons:
