@@ -105,6 +105,9 @@ def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArraySharding, mesh):
                            if not d.axes and d.is_closed else d)
       used_axes.extend(d.axes)
     remaining_axes = set(mesh.axis_names) - set(used_axes)
+    # Sort wrt mesh axis names so order is deterministic and doesn't hang in
+    # McJAX.
+    remaining_axes = [n for n in mesh.axis_names if n in remaining_axes]
     replicated_axes = tuple(r for r in remaining_axes
                             if mesh._name_to_type[r] == mesh_lib.AxisType.Explicit)
     return SdyArraySharding(sdy_sharding.mesh_shape, dim_shardings,
