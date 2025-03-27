@@ -86,7 +86,6 @@ from tensorflow.python.eager import context as tf_context
 # pylint: enable=g-direct-tensorflow-import
 
 NameStack = source_info_util.NameStack
-PolyShape = shape_poly.PolyShape  # TODO: deprecate
 DType = Any
 
 DisabledSafetyCheck = export.DisabledSafetyCheck
@@ -266,26 +265,23 @@ def convert(fun_jax: Callable,
         It is meant to be sound, but it is known to reject some JAX programs
         that are shape polymorphic. The details of this feature can change.
 
-      It should be `None` (all arguments are monomorphic), a single PolyShape
-      or string (applies to all arguments), or a tuple/list of the same length
+      It should be `None` (all arguments are monomorphic), a single
+      string (applies to all arguments), or a tuple/list of the same length
       as the function arguments. For each argument the shape specification
       should be `None` (monomorphic argument), or a Python object with the
       same pytree structure as the argument.
       See [how optional parameters are matched to
       arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
 
-      A shape specification for an array argument should be an object
-      `PolyShape(dim0, dim1, ..., dimn)`
-      where each `dim` is a dimension specification: a positive integer denoting
-      a monomorphic dimension of the given size, or a string denoting a
-      dimension variable assumed to range over non-zero dimension sizes, or
-      the special placeholder string "_" denoting a monomorphic dimension
-      whose size is given by the actual argument. As a shortcut, an Ellipsis
+      A shape specification for an array argument should be a string containing
+      a comma-separated list of dimension specifications each being either a
+      positive integer denoting a known dimension of the given size,
+      or a string denoting a dimension variable assumed to range over
+      non-zero dimension sizes, or the special placeholder string "_" denoting a
+      constant dimension whose size is given by the actual argument.
+      As a shortcut, an Ellipsis
       suffix in the list of dimension specifications stands for a list of "_"
-      placeholders.
-
-      For convenience, a shape specification can also be given as a string
-      representation, e.g.: "batch, ...", "batch, height, width, _", possibly
+      placeholders. E.g.: "batch, ...", "batch, height, width, _", possibly
       with surrounding parentheses: "(batch, ...)".
 
       The lowering fails if it cannot ensure that the it would produce the same
