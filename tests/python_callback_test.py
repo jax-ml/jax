@@ -28,7 +28,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import util
-from jax._src.lib import jaxlib_extension_version
+from jax._src.lib import xla_extension_version
 from jax.experimental import io_callback
 from jax.experimental import pjit
 from jax.experimental.shard_map import shard_map
@@ -588,8 +588,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
 
   @parameterized.parameters("int2", "int4", "uint2", "uint4")
   def test_subbyte_operands(self, dtype: str):
-    if jaxlib_extension_version <= 321:
-      self.skipTest("Requires jaxlib_extension_version >= 322.")
+    if xla_extension_version <= 321:
+      self.skipTest("Requires xla_extension_version >= 322.")
     def get(x):
       return x
     def f(x):
@@ -613,8 +613,8 @@ class PythonCallbackTest(jtu.JaxTestCase):
 
   @parameterized.parameters("int2", "int4", "uint2", "uint4")
   def test_subbyte_results(self, dtype: str):
-    if jaxlib_extension_version <= 321:
-      self.skipTest("Requires jaxlib_extension_version >= 322.")
+    if xla_extension_version <= 321:
+      self.skipTest("Requires xla_extension_version >= 322.")
     def get():
       return np.arange(8, dtype=dtype)
 
