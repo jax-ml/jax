@@ -58,7 +58,7 @@ jobs:
           # that build the wheels.
           runner: ["linux-x86-g2-48-l4-4gpu"]
           python: ["3.10","3.11", "3.12", "3.13", "3.13-nogil"]
-          cuda: ["12.3", "12.1"]
+          cuda: ["12.1", "12.8"]
           enable-x64: [0]
     name: "Pytest CUDA (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
