@@ -58,6 +58,8 @@ from jaxlib.xla_extension import XlaOp as XlaOp
 
 _version: int
 
+_ifrt_version: int
+
 mlir_api_version: int
 
 bfloat16: type[numpy.generic]
