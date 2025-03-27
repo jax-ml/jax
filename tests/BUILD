@@ -97,7 +97,7 @@ jax_multiplatform_test(
         "gpu",
     ],
     enable_configs = [
-        "gpu_p100x2",
+        "gpu_h100x2",
     ],
     env = {
         "PYTHONWARNINGS": "default",  # TODO(b/394123878): protobuf, via TensorFlow, issues a Python warning under Python 3.12+ sometimes.
@@ -190,7 +190,7 @@ jax_multiplatform_test(
     name = "ffi_test",
     srcs = ["ffi_test.py"],
     enable_configs = [
-        "gpu_p100x2",
+        "gpu_h100x2",
     ],
     # TODO(dfm): Remove after removal of jex.ffi imports.
     deps = ["//jax:extend"],
@@ -274,7 +274,7 @@ jax_multiplatform_test(
     srcs = ["memories_test.py"],
     enable_configs = [
         "cpu",
-        "gpu_p100x2",
+        "gpu_h100x2",
         "tpu_v3_2x2",
         "tpu_v4_2x2",
         "tpu_v5p_2x2",
@@ -301,7 +301,7 @@ jax_multiplatform_test(
         "gpu_p100x2_shardy",
         "tpu_v3_2x2_shardy",
         "tpu_v3_2x2",
-        "gpu_p100x2",
+        "gpu_h100x2",
     ],
     shard_count = {
         "cpu": 5,
@@ -725,7 +725,7 @@ jax_multiplatform_test(
         "cpu",
     ],
     enable_configs = [
-        "gpu_p100x2",
+        "gpu_h100x2",
         "gpu_p100x2_shardy",
         "gpu_p100x2_pjrt_c_api",
     ],
@@ -766,7 +766,7 @@ jax_multiplatform_test(
     srcs = ["multibackend_test.py"],
     enable_configs = [
         "tpu_v3_2x2",
-        "gpu_p100x2",
+        "gpu_h100x2",
     ],
 )
 
