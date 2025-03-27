@@ -148,7 +148,7 @@ jobs:
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
     if: ${{ !cancelled() }}
-    needs: [build-jaxlib-artifact, build-cuda-artifacts]
+    needs: [build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
     uses: ./.github/workflows/bazel_cuda_non_rbe.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
