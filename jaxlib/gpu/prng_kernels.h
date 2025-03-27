@@ -16,12 +16,10 @@ limitations under the License.
 #ifndef JAXLIB_GPU_PRNG_KERNELS_H_
 #define JAXLIB_GPU_PRNG_KERNELS_H_
 
-#include <cstddef>
 #include <cstdint>
 
 #include "jaxlib/gpu/vendor.h"
 #include "xla/ffi/api/ffi.h"
-#include "xla/service/custom_call_status.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {

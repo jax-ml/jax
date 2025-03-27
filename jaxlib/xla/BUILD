@@ -66,6 +66,7 @@ nanobind_extension(
         ":xla_compiler",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/log:initialize",
         "@com_google_absl//absl/status",
@@ -164,7 +165,6 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":python_ref_manager",
-        "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -178,8 +178,8 @@ cc_library(
         "@xla//xla/pjrt:host_callback",
         "@xla//xla/pjrt:transpose",
         "@xla//xla/python:nb_numpy",
-        "@xla//xla/service:custom_call_status",
         "@xla//xla/tsl/platform:statusor",
+        "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
 
@@ -319,13 +319,13 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/time",
         "@nanobind",
-        "@tsl//tsl/platform:env",
-        "@tsl//tsl/platform:statusor",
         "@xla//xla/pjrt:status_casters",
         "@xla//xla/python/ifrt",
         "@xla//xla/python/ifrt:attribute_map",
         "@xla//xla/python/ifrt_proxy/client:grpc_client",
         "@xla//xla/python/ifrt_proxy/client:registry",
+        "@xla//xla/tsl/platform:env",
+        "@xla//xla/tsl/platform:statusor",
     ],
 )
 
@@ -752,7 +752,9 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
+        "@llvm-project//llvm:Support",
         "@nanobind",
+        "@tsl//tsl/platform:casts",
         "@xla//xla:util",
         "@xla//xla/pjrt:pjrt_client",
         "@xla//xla/pjrt:status_casters",

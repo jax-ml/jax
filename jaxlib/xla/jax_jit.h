@@ -40,7 +40,7 @@ limitations under the License.
 #include "jaxlib/xla/pytree.h"
 #include "jaxlib/xla/sharding.h"
 #include "xla/pjrt/pjrt_client.h"
-#include "xla/python/nb_helpers.h"
+#include "xla/pjrt/pjrt_layout.h"
 #include "xla/tsl/platform/logging.h"
 
 namespace jax {

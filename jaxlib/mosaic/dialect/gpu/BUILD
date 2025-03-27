@@ -127,7 +127,7 @@ cc_library(
         "@llvm-project//mlir:MemRefUtils",
         "@llvm-project//mlir:SCFUtils",
         "@llvm-project//mlir:Support",
-        "@tsl//tsl/platform:statusor",
+        "@xla//xla/tsl/platform:statusor",
     ],
 )
 
@@ -151,7 +151,7 @@ cc_test(
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:SCFUtils",
         "@llvm-project//mlir:Support",
-        "@tsl//tsl/platform:errors",
+        "@xla//xla/tsl/platform:errors",
     ],
 )
 

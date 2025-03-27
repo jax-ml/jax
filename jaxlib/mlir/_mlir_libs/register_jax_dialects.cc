@@ -17,18 +17,19 @@ limitations under the License.
 // This module is called by mlir/__init__.py during initialization.
 #include <nanobind/nanobind.h>
 
-#include "mlir-c/Dialect/Arith.h"
-#include "mlir-c/Dialect/Func.h"
-#include "mlir-c/Dialect/GPU.h"
-#include "mlir-c/Dialect/LLVM.h"
-#include "mlir-c/Dialect/Math.h"
-#include "mlir-c/Dialect/MemRef.h"
-#include "mlir-c/Dialect/NVGPU.h"
-#include "mlir-c/Dialect/NVVM.h"
-#include "mlir-c/Dialect/SCF.h"
-#include "mlir-c/Dialect/Vector.h"
+#include "mlir-c/Dialect/Arith.h"  // IWYU pragma: keep
+#include "mlir-c/Dialect/Func.h"  // IWYU pragma: keep
+#include "mlir-c/Dialect/GPU.h"  // IWYU pragma: keep
+#include "mlir-c/Dialect/LLVM.h"  // IWYU pragma: keep
+#include "mlir-c/Dialect/Math.h"  // IWYU pragma: keep
+#include "mlir-c/Dialect/MemRef.h"  // IWYU pragma: keep
+#include "mlir-c/Dialect/NVGPU.h"  // IWYU pragma: keep
+#include "mlir-c/Dialect/NVVM.h"  // IWYU pragma: keep
+#include "mlir-c/Dialect/SCF.h"  // IWYU pragma: keep
+#include "mlir-c/Dialect/Vector.h"  // IWYU pragma: keep
+#include "mlir-c/IR.h"
 #include "mlir-c/Transforms.h"
-#include "mlir/Bindings/Python/NanobindAdaptors.h"
+#include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
 #include "shardy/integrations/c/passes.h"
 #include "jaxlib/mosaic/gpu/integrations/c/passes.h"
 

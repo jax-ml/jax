@@ -18,7 +18,6 @@ limitations under the License.
 
 #include <string>
 
-#include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "jaxlib/gpu/vendor.h"

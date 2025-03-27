@@ -16,12 +16,18 @@ limitations under the License.
 #ifndef JAXLIB_XLA_TO_IFRT_SHARDING_H_
 #define JAXLIB_XLA_TO_IFRT_SHARDING_H_
 
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+#include "absl/status/statusor.h"
 #include "nanobind/nanobind.h"
 #include "xla/hlo/ir/hlo_sharding.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/dtype.h"
+#include "xla/python/ifrt/memory.h"
+#include "xla/python/ifrt/shape.h"
 #include "xla/python/ifrt/sharding.h"
-#include "xla/tsl/platform/statusor.h"
 
 namespace xla {
 

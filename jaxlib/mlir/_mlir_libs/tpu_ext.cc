@@ -19,7 +19,6 @@ limitations under the License.
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
-#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -27,9 +26,8 @@ limitations under the License.
 #include <variant>
 #include <vector>
 
-#include "llvm/ADT/ArrayRef.h"
+#include "absl/types/span.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "mlir-c/AffineMap.h"
@@ -41,7 +39,6 @@ limitations under the License.
 #include "mlir-c/Support.h"
 #include "mlir/Bindings/Python/NanobindAdaptors.h"  // IWYU pragma: keep
 // clang-format off
-#include "mlir-c/Bindings/Python/Interop.h"
 // clang-format on
 #include "absl/log/check.h"
 #include "nanobind/nanobind.h"

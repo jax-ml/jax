@@ -95,6 +95,7 @@ cc_library(
         "@xla//xla:shape_util",
         "@xla//xla:util",
         "@xla//xla/tsl/platform:errors",
+        "@xla//xla/tsl/platform:statusor",
     ] + mosaic_extension_deps,
 )
 

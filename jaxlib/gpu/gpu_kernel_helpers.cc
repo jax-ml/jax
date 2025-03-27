@@ -15,12 +15,15 @@ limitations under the License.
 
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 
+#include <cstdint>
+#include <string>
+
 #include "absl/base/optimization.h"
 #include "absl/log/check.h"
-#include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "jaxlib/gpu/vendor.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {

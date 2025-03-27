@@ -19,8 +19,6 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <optional>
-#include <ostream>
-#include <string>
 #include <utility>
 
 #include "absl/log/check.h"
@@ -28,7 +26,6 @@ limitations under the License.
 #include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
-#include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
