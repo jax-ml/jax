@@ -1966,11 +1966,34 @@ class JaxExportTest(jtu.JaxTestCase):
 
     a = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
     a = jax.device_put(a, NamedSharding(new_mesh_0, P(None, "new_1")))
-    b = jnp.arange(32 * 32, dtype=np.float32).reshape((32, 32))
+    b = jnp.arange(32 * 32, dtype=np.int32).reshape((32, 32))
     b = jax.device_put(b, NamedSharding(new_mesh_1, P("newB")))
 
     r = jax.jit(exp.call, out_shardings=NamedSharding(old_mesh_0, P("old_b")))(a, b)
     self.assertAllClose(a + b, r)
+
+  def test_lower_wth_different_meshes_axis_names(self):
+    mesh1 = jtu.create_mesh((4, 2), ("a", "b"))
+    mesh2 = jtu.create_mesh((4, 2), ("x", "y"))
+    @jax.jit
+    def f(tree):
+      return tree['foo'] + tree['bar']
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r'Mesh for all inputs/outputs should be equal.*'
+        r"Mesh\('x': 4, 'y': 2, axis_types=\(Auto, Auto\)\)'.*"
+        r'ShapedArray\(float32\[32,32\]\).*'
+        r"\(SequenceKey\(idx=0\), SequenceKey\(idx=0\), DictKey\(key='bar'\)\).*"):
+      get_exported(f)({
+          'foo': jax.ShapeDtypeStruct(
+              (32, 32), dtype=np.float32,
+              sharding=NamedSharding(mesh1, P(None, "a"))),
+          'bar': jax.ShapeDtypeStruct(
+              (32, 32), dtype=np.float32,
+              sharding=NamedSharding(mesh2, P("y"))),
+      })
+
 
 
 if __name__ == "__main__":

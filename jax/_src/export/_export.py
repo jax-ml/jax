@@ -739,16 +739,29 @@ def _export_lowered(
   if _device_assignment_for_internal_jax2tf_use_only is not None:
     _device_assignment_for_internal_jax2tf_use_only[0] = device_assignment
 
-  mesh = None
+  mesh = arg = k_path = None
+  # lowered.args_info is a tree of the args, but we need the out avals too to
+  # get the key paths for.
+  out_avals_tree = jax.tree_util.tree_unflatten(lowered.out_tree, out_avals_flat)
   if config.use_shardy_partitioner.value:
-    for sharding in itertools.chain.from_iterable(
-        [all_in_shardings, lowering.compile_args["out_shardings"]]):
+    for i, (next_k_path, next_arg) in enumerate(
+        itertools.chain.from_iterable([jax.tree.flatten_with_path(lowered.args_info)[0],
+                                       jax.tree.flatten_with_path(out_avals_tree)[0]])):
+      if i < len(args_avals_flat):
+        sharding = all_in_shardings[i]
+      else:
+        sharding = lowering.compile_args["out_shardings"][i - len(args_avals_flat)]
       if isinstance(sharding, sharding_impls.NamedSharding):
-        if mesh is not None and mesh.shape_tuple != sharding.mesh.shape_tuple:
+        if mesh is None:
+          mesh = sharding.mesh
+          arg = next_arg
+          k_path = next_k_path
+        elif mesh.shape_tuple != sharding.mesh.shape_tuple:
           raise ValueError(
-              f'Mesh for all inputs should be equal. Got one mesh: {mesh} and'
-              f' another mesh: {sharding.mesh}')
-        mesh = sharding.mesh
+              'Mesh for all inputs/outputs should be equal. Got one mesh '
+              f"{mesh}' on a tensor {arg._aval} at {k_path} and "
+              f"another mesh: '{sharding.mesh}' on a tensor "
+              f'{next_arg._aval} at {next_k_path}')
     if mesh and isinstance(mesh, mesh_lib.Mesh):
       mesh = mesh.abstract_mesh
 
