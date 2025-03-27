@@ -500,6 +500,12 @@ class custom_partitioning:
     infer_sharding_from_operands = None
     sharding_rule = None
     if config.use_shardy_partitioner.value:
+      if (self.sharding_rule is None and
+          (self.propagate_user_sharding is not None or
+            self.infer_sharding_from_operands is not None)):
+        raise ValueError("Shardy is used, but sharding propagation callbacks "
+                         "instead of sharding_rule are provided. Need to "
+                         "provide sharding_rule to migrate to Shardy.")
       sharding_rule = self.sharding_rule
     else:
       propagate_user_sharding = self.propagate_user_sharding
