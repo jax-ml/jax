@@ -3105,6 +3105,7 @@ class CustomPartitionerTest(jtu.JaxTestCase):
         infer_sharding_from_operands=infer_sharding_from_operands,
         partition=partition,
         propagate_user_sharding=propagate_user_sharding,
+        sharding_rule='i -> i',
     )
 
     @jax.jit

@@ -8207,5 +8207,44 @@ class ShardyTest(jtu.JaxTestCase):
     self.assertArraysEqual(result, expected_result)
     self.assertEqual(result.sharding, NamedSharding(mesh, P(None, None, 'x')))
 
+  def test_custom_partition_shardy_migration(self):
+    if jtu.is_cloud_tpu():
+      raise unittest.SkipTest("Custom partitioning is not supported on libtpu.")
+
+    def partition(mesh, arg_shapes, result_shape):
+      def lower_fn(x):
+        return x
+
+      return (
+          mesh,
+          lower_fn,
+          arg_shapes[0].sharding,
+          (arg_shapes[0].sharding,),
+      )
+
+    def infer_sharding_from_operands(mesh, arg_shapes, result_shape):
+      return arg_shapes[0].sharding
+
+    def propagate_user_sharding(mesh, user_shape):
+      return user_shape.sharding
+
+    @custom_partitioning
+    def f(x):
+      return x
+
+    f.def_partition(
+        infer_sharding_from_operands=infer_sharding_from_operands,
+        partition=partition,
+        propagate_user_sharding=propagate_user_sharding,
+    )
+
+    mesh = jtu.create_mesh((4, 2), ('x', 'y'))
+    x = jax.device_put(np.arange(32 * 16).reshape(32, 16),
+                       NamedSharding(mesh, P(None, 'x')))
+    with self.assertRaisesRegex(ValueError, "provide sharding_rule to migrate "
+                                "to Shardy"):
+      jax.jit(f)(x)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
