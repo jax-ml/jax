@@ -34,8 +34,8 @@ class MultiPageAsyncCopyDescriptor:
 
   def __init__(
       self,
-      pages_hbm_ref,  # [total_num_pages, page_size, num_kv_heads_per_blk, head_dim]
-      vmem_buf,  # [num_kv_pages_per_blk, page_size, num_kv_heads_per_blk, head_dim]
+      pages_hbm_ref,  # [total_num_pages, page_size, num_combined_kv_heads_per_blk, head_dim]
+      vmem_buf,  # [num_kv_pages_per_blk, page_size, num_combined_kv_heads_per_blk, head_dim]
       sem,
       page_indices_ref,  # i32[max_num_seqs, pages_per_seq]
       offset,  # [seq_idx, kv_pages_start]
@@ -72,8 +72,7 @@ class MultiPageAsyncCopyDescriptor:
 
 def ref_ragged_paged_attention(
     queries: jax.Array,  # [max_num_batched_tokens, num_q_heads, head_dim]
-    k_pages: jax.Array,  # [total_num_pages, page_size, num_kv_heads, head_dim]
-    v_pages: jax.Array,  # [total_num_pages, page_size, num_kv_heads, head_dim]
+    kv_pages: jax.Array,  # [total_num_pages, page_size, num_combined_kv_heads, head_dim]
     kv_lens: jax.Array,  # i32[max_num_seqs]
     page_indices: jax.Array,  # i32[max_num_seqs, pages_per_seq]
     cu_q_lens: jax.Array,  # i32[max_num_seqs + 1]
@@ -82,9 +81,16 @@ def ref_ragged_paged_attention(
     sm_scale: float = 1.0,
     sliding_window: int | None = None,
     soft_cap: float | None = None,
-    mask_value: float = DEFAULT_MASK_VALUE,
+    mask_value: float | None = DEFAULT_MASK_VALUE,
 ):
-  _, _, num_kv_heads, head_dim = k_pages.shape
+  check_inputs_shapes(
+      queries, kv_pages, kv_lens, page_indices, cu_q_lens, num_seqs
+  )
+  if mask_value is None:
+    mask_value = DEFAULT_MASK_VALUE
+  _, _, num_combined_kv_heads, head_dim = kv_pages.shape
+  assert num_combined_kv_heads % 2 == 0
+  num_kv_heads = num_combined_kv_heads // 2
   num_q_heads = queries.shape[1]
   assert num_q_heads % num_kv_heads == 0
   num_query_per_kv = num_q_heads // num_kv_heads
@@ -96,8 +102,12 @@ def ref_ragged_paged_attention(
     kv_len = kv_lens[i]
     indices = page_indices[i]
     q = queries[q_start:q_end]
-    k = k_pages[indices, :, :, :].reshape(-1, num_kv_heads, head_dim)[:kv_len]
-    v = v_pages[indices, :, :, :].reshape(-1, num_kv_heads, head_dim)[:kv_len]
+    k = kv_pages[indices, :, 0::2, :].reshape(-1, num_kv_heads, head_dim)[
+        :kv_len
+    ]
+    v = kv_pages[indices, :, 1::2, :].reshape(-1, num_kv_heads, head_dim)[
+        :kv_len
+    ]
     k = jnp.repeat(k, num_query_per_kv, axis=1)
     v = jnp.repeat(v, num_query_per_kv, axis=1)
     attn = jnp.einsum("qhd,khd->hqk", q, k, preferred_element_type=jnp.float32)
@@ -122,8 +132,7 @@ def ref_ragged_paged_attention(
 # Expect to run these checkes during runtime.
 def validate_inputs_on_runtime(
     q: jax.Array,  # [max_num_batched_tokens, num_q_heads, head_dim]
-    k_pages: jax.Array,  # [total_num_pages, page_size, num_kv_heads, head_dim]
-    v_pages: jax.Array,  # [total_num_pages, page_size, num_kv_heads, head_dim]
+    kv_pages: jax.Array,  # [total_num_pages, page_size, num_combined_kv_heads, head_dim]
     kv_lens: jax.Array,  # i32[max_num_seqs]
     page_indices: jax.Array,  # i32[max_num_seqs, pages_per_seq]
     cu_q_lens: jax.Array,  # i32[max_num_seqs + 1]
@@ -131,16 +140,14 @@ def validate_inputs_on_runtime(
     sliding_window: int | None = None,
     soft_cap: float | None = None,
 ):
-  check_inputs_shapes(
-      q, k_pages, v_pages, kv_lens, page_indices, cu_q_lens, num_seqs
-  )
+  check_inputs_shapes(q, kv_pages, kv_lens, page_indices, cu_q_lens, num_seqs)
   max_num_batched_tokens = q.shape[0]
-  page_size = k_pages.shape[1]
+  page_size = kv_pages.shape[1]
   max_num_seqs, pages_per_seq = page_indices.shape
   if num_seqs[0] > max_num_seqs:
     raise ValueError(f"{num_seqs[0]=} must be less or equal to {max_num_seqs=}")
   max_kv_len = jnp.max(kv_lens)
-  min_pages_per_seq = ceil_div(max_kv_len, page_size)
+  min_pages_per_seq = cdiv(max_kv_len, page_size)
   if pages_per_seq < min_pages_per_seq:
     raise ValueError(
         f"{pages_per_seq=} must be greater or equal to"
@@ -167,22 +174,19 @@ def validate_inputs_on_runtime(
 # Expect to run these checks during compile time.
 def check_inputs_shapes(
     q: jax.Array,  # [max_num_batched_tokens, num_q_heads, head_dim]
-    k_pages: jax.Array,  # [total_num_pages, page_size, num_kv_heads, head_dim]
-    v_pages: jax.Array,  # [total_num_pages, page_size, num_kv_heads, head_dim]
+    kv_pages: jax.Array,  # [total_num_pages, page_size, num_combined_kv_heads, head_dim]
     kv_lens: jax.Array,  # i32[max_num_seqs]
     page_indices: jax.Array,  # i32[max_num_seqs, pages_per_seq]
     cu_q_lens: jax.Array,  # i32[max_num_seqs + 1]
     num_seqs,  # i32[1]
 ):
   _, num_q_heads, head_dim = q.shape
-  _, _, num_kv_heads, head_dim_k = k_pages.shape
+  _, _, num_combined_kv_heads, head_dim_k = kv_pages.shape
+  assert num_combined_kv_heads % 2 == 0
+  num_kv_heads = num_combined_kv_heads // 2
   max_num_seqs, _ = page_indices.shape
   if num_seqs.shape != (1,):
     raise ValueError(f"{num_seqs.shape=} must be (1,)")
-  if k_pages.shape != v_pages.shape:
-    raise ValueError(
-        f"{k_pages.shape=} and {v_pages.shape=} must have the same shape."
-    )
   if head_dim_k != head_dim:
     raise ValueError(
         f"Q head_dim {head_dim} must be the same as that of K/V {head_dim_k}."
@@ -221,13 +225,11 @@ def ragged_paged_attention_kernel(
     num_seqs_ref,
     # Input
     q_ref,  # [num_q_per_blk, num_q_heads_per_blk, head_dim]
-    k_pages_hbm_ref,  # [total_num_pages, page_size, num_kv_heads, head_dim]
-    v_pages_hbm_ref,  # [total_num_pages, page_size, num_kv_heads, head_dim]
+    kv_pages_hbm_ref,  # [total_num_pages, page_size, num_combined_kv_heads, head_dim]
     # Output
     o_ref,  # [num_q_per_blk, num_q_heads_per_blk, head_dim]
     # Scratch
-    k_bufs,  # [2, num_kv_pages_per_blk, page_size, num_kv_heads_per_blk, head_dim]
-    v_bufs,  # [2, num_kv_pages_per_blk, page_size, num_kv_heads_per_blk, head_dim]
+    kv_bufs,  # [2, num_kv_pages_per_blk, page_size, num_combined_kv_heads_per_blk, head_dim]
     sems,  # [2, 2]
     l_ref,  # [num_kv_heads_per_blk, num_q_per_blk * num_q_heads_per_kv_head, 128]
     m_ref,  # [num_kv_heads_per_blk, num_q_per_blk * num_q_heads_per_kv_head, 128]
@@ -235,11 +237,16 @@ def ragged_paged_attention_kernel(
     sm_scale: float,
     sliding_window: int | None = None,
     soft_cap: float | None = None,
-    mask_value: float = DEFAULT_MASK_VALUE,
+    mask_value: float | None = DEFAULT_MASK_VALUE,
 ):
+  if mask_value is None:
+    mask_value = DEFAULT_MASK_VALUE
   num_q_per_blk, num_q_heads_per_blk, head_dim = q_ref.shape
   num_seqs = num_seqs_ref[0]
-  _, num_kv_pages_per_blk, page_size, num_kv_heads_per_blk, _ = k_bufs.shape
+  _, num_kv_pages_per_blk, page_size, num_combined_kv_heads_per_blk, _ = (
+      kv_bufs.shape
+  )
+  num_kv_heads_per_blk = num_combined_kv_heads_per_blk // 2
   num_kv_per_blk = num_kv_pages_per_blk * page_size
   num_q_heads_per_kv_head = num_q_heads_per_blk // num_kv_heads_per_blk
   heads_blk_idx, q_blk_idx = (
@@ -256,22 +263,17 @@ def ragged_paged_attention_kernel(
       heads_blk_idx, seq_idx, kv_blk_idx, buf_idx
   ):
     offset = (seq_idx, kv_blk_idx * num_kv_pages_per_blk)
-    heads_start = heads_blk_idx * num_kv_heads_per_blk
-    async_copy_k = MultiPageAsyncCopyDescriptor(
-        k_pages_hbm_ref.at[:, :, pl.ds(heads_start, num_kv_heads_per_blk), :],
-        k_bufs.at[buf_idx],
-        sems.at[buf_idx, 0],
+    heads_start = heads_blk_idx * num_combined_kv_heads_per_blk
+    async_copy_kv = MultiPageAsyncCopyDescriptor(
+        kv_pages_hbm_ref.at[
+            :, :, pl.ds(heads_start, num_combined_kv_heads_per_blk), :
+        ],
+        kv_bufs.at[buf_idx],
+        sems.at[buf_idx],
         page_indices_ref,
         offset,
     )
-    async_copy_v = MultiPageAsyncCopyDescriptor(
-        v_pages_hbm_ref.at[:, :, pl.ds(heads_start, num_kv_heads_per_blk), :],
-        v_bufs.at[buf_idx],
-        sems.at[buf_idx, 1],
-        page_indices_ref,
-        offset,
-    )
-    return async_copy_k, async_copy_v
+    return async_copy_kv
 
   # TODO(jevinjiang): Add these to Mosaic:
   # 1. Support arbitrary strided load/store for any dtype.
@@ -303,11 +305,10 @@ def ragged_paged_attention_kernel(
 
   @pl.when(heads_blk_idx + q_blk_idx == 0)
   def prefetch_first_kv_blk():
-    async_copy_k, async_copy_v = create_kv_async_copy_descriptors(
+    async_copy_kv = create_kv_async_copy_descriptors(
         heads_blk_idx, init_seq_idx, 0, init_buf_idx
     )
-    async_copy_k.start()
-    async_copy_v.start()
+    async_copy_kv.start()
 
   def is_cur_q_blk_needed(q_states):
     done, cur_seq_idx, _ = q_states
@@ -512,21 +513,18 @@ def ragged_paged_attention_kernel(
         # TODO(jevinjiang): reuse the same buffer if it is already prefetched!
         # TODO(jevinjiang): only fetch effective dynamic size to hold kv_len and
         # DMA to fixed size buffer!
-        next_async_copy_k, next_async_copy_v = create_kv_async_copy_descriptors(
+        next_async_copy_kv = create_kv_async_copy_descriptors(
             next_heads_blk_idx, next_seq_idx, next_kv_blk_idx, next_buf_idx
         )
-        next_async_copy_k.start()
-        next_async_copy_v.start()
+        next_async_copy_kv.start()
 
-      cur_async_copy_k, cur_async_copy_v = create_kv_async_copy_descriptors(
+      cur_async_copy_kv = create_kv_async_copy_descriptors(
           heads_blk_idx, cur_seq_idx, kv_blk_idx, cur_buf_idx
       )
-      kv_to_load_shape = (
-          num_kv_pages_per_blk * page_size * num_kv_heads_per_blk,
+      kv_ref = cur_async_copy_kv.wait().reshape(
+          num_kv_pages_per_blk * page_size * num_combined_kv_heads_per_blk,
           head_dim,
       )
-      k_ref = cur_async_copy_k.wait().reshape(kv_to_load_shape)
-      v_ref = cur_async_copy_v.wait().reshape(kv_to_load_shape)
       for kv_head_idx in range(num_kv_heads_per_blk):
         q_head_idx = kv_head_idx * num_q_heads_per_kv_head
         # TODO(jevinjiang): extra handlig for packed type that can start at
@@ -534,8 +532,12 @@ def ragged_paged_attention_kernel(
         q = fold_on_2nd_minor(
             q_ref[:, q_head_idx : q_head_idx + num_q_heads_per_kv_head, :]
         )
-        k = strided_load_kv(k_ref, kv_head_idx, num_kv_heads_per_blk)
-        v = strided_load_kv(v_ref, kv_head_idx, num_kv_heads_per_blk)
+        k = strided_load_kv(
+            kv_ref, kv_head_idx * 2, num_combined_kv_heads_per_blk
+        )
+        v = strided_load_kv(
+            kv_ref, kv_head_idx * 2 + 1, num_combined_kv_heads_per_blk
+        )
         flash_attention(
             q,
             k,
@@ -566,7 +568,7 @@ def ragged_paged_attention_kernel(
   seq_buf_idx_ref[1] = buf_idx
 
 
-def ceil_div(a, b):
+def cdiv(a, b):
   assert b != 0
   return (a + b - 1) // b
 
@@ -583,7 +585,9 @@ def get_dtype_packing(dtype):
   raise ValueError(f"Not implemented: unsupported {dtype=}")
 
 
-def get_min_heads_per_blk(num_q_heads, num_kv_heads, q_dtype, kv_dtype):
+def get_min_heads_per_blk(
+    num_q_heads, num_combined_kv_heads, q_dtype, kv_dtype
+):
   q_packing = get_dtype_packing(q_dtype)
   kv_packing = get_dtype_packing(kv_dtype)
 
@@ -594,22 +598,26 @@ def get_min_heads_per_blk(num_q_heads, num_kv_heads, q_dtype, kv_dtype):
     return x in (1, 2, 4, 8) or x % 8 == 0
 
   # TODO(jevinjiang): support unaligned number of heads!
-  if not can_be_xla_fully_tiled(num_kv_heads, kv_packing):
+  if not can_be_xla_fully_tiled(num_combined_kv_heads, kv_packing):
     raise ValueError(
-        f"Not implemented: {num_kv_heads=} can not be XLA fully tiled."
+        f"Not implemented: {num_combined_kv_heads=} can not be XLA fully tiled."
     )
+  assert num_combined_kv_heads % 2 == 0
+  num_kv_heads = num_combined_kv_heads // 2
   assert num_q_heads % num_kv_heads == 0
   ratio = num_q_heads // num_kv_heads
   # TODO(jevinjiang): we can choose smaller tiling for packed type if large
   # second minor tiling is not on.
-  max_kv_tiling = 8 * kv_packing
-  min_kv_heads = (
-      max_kv_tiling if num_kv_heads % max_kv_tiling == 0 else num_kv_heads
+  max_combined_kv_tiling = 8 * kv_packing
+  min_combined_kv_heads = (
+      max_combined_kv_tiling
+      if num_combined_kv_heads % max_combined_kv_tiling == 0
+      else num_combined_kv_heads
   )
-  min_q_heads = min_kv_heads * ratio
+  min_q_heads = min_combined_kv_heads // 2 * ratio
   if can_be_xla_fully_tiled(min_q_heads, q_packing):
-    return min_q_heads, min_kv_heads
-  return num_q_heads, num_kv_heads
+    return min_q_heads, min_combined_kv_heads
+  return num_q_heads, num_combined_kv_heads
 
 
 @functools.partial(
@@ -627,8 +635,7 @@ def get_min_heads_per_blk(num_q_heads, num_kv_heads, q_dtype, kv_dtype):
 def ragged_paged_attention(
     q: jax.Array,  # [max_num_batched_tokens, num_q_heads, head_dim]
     # TODO(jevinjiang): create a write_to_kv_cache kernel!
-    k_pages: jax.Array,  # [total_num_pages, page_size, num_kv_heads, head_dim]
-    v_pages: jax.Array,  # [total_num_pages, page_size, num_kv_heads, head_dim]
+    kv_pages: jax.Array,  # [total_num_pages, page_size, num_combined_kv_heads, head_dim]
     kv_lens: jax.Array,  # i32[max_num_seqs]
     page_indices: jax.Array,  # i32[max_num_seqs, pages_per_seq]
     cu_q_lens: jax.Array,  # i32[max_num_seqs + 1]
@@ -637,7 +644,7 @@ def ragged_paged_attention(
     sm_scale: float = 1.0,
     sliding_window: int | None = None,
     soft_cap: float | None = None,
-    mask_value: float = DEFAULT_MASK_VALUE,
+    mask_value: float | None = DEFAULT_MASK_VALUE,
     num_kv_pages_per_block: int = 16,
     num_queries_per_block: int = 128,
     vmem_limit_bytes: int | None = None,
@@ -646,8 +653,7 @@ def ragged_paged_attention(
 
   Args:
     q: concatenated all sequences' queries.
-    k_pages: paged K cache. Normally in HBM.
-    v_pages: paged V cache. Normally in HBM.
+    kv_pages: paged K cache. Normally in HBM.
     kv_lens: padded kv lengths. Only the first num_seqs values are valid.
     page_indices: the first index indicates which page to use in the kv cache
       for each sequence. Only the first num_seqs values are valid.
@@ -666,18 +672,22 @@ def ragged_paged_attention(
   Returns:
     The output of the attention.
   """
-  check_inputs_shapes(
-      q, k_pages, v_pages, kv_lens, page_indices, cu_q_lens, num_seqs
-  )
+  check_inputs_shapes(q, kv_pages, kv_lens, page_indices, cu_q_lens, num_seqs)
+  if mask_value is None:
+    mask_value = DEFAULT_MASK_VALUE
   _, num_q_heads, head_dim = q.shape
-  _, page_size, num_kv_heads, _ = k_pages.shape
+  _, page_size, num_combined_kv_heads, _ = kv_pages.shape
+  assert num_combined_kv_heads % 2 == 0
+  num_kv_heads = num_combined_kv_heads // 2
   num_q_per_blk = num_queries_per_block
   num_kv_pages_per_blk = num_kv_pages_per_block
   num_q_heads_per_kv_head = num_q_heads // num_kv_heads
-  num_q_blks = ceil_div(cu_q_lens[num_seqs[0]], num_q_per_blk)
-  num_q_heads_per_blk, num_kv_heads_per_blk = get_min_heads_per_blk(
-      num_q_heads, num_kv_heads, q.dtype, k_pages.dtype
+  num_q_blks = cdiv(cu_q_lens[num_seqs[0]], num_q_per_blk)
+  num_q_heads_per_blk, num_combined_kv_heads_per_blk = get_min_heads_per_blk(
+      num_q_heads, num_combined_kv_heads, q.dtype, kv_pages.dtype
   )
+  assert num_combined_kv_heads_per_blk % 2 == 0
+  num_kv_heads_per_blk = num_combined_kv_heads_per_blk // 2
   assert num_q_heads_per_blk % num_q_heads_per_kv_head == 0
   num_heads_blks = num_q_heads // num_q_heads_per_blk
   grid = (num_heads_blks, num_q_blks)
@@ -692,7 +702,6 @@ def ragged_paged_attention(
   in_specs = [
       q_block_spec,
       pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
-      pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
   ]
   out_specs = q_block_spec
   lm_scratch = pltpu.VMEM(
@@ -706,15 +715,14 @@ def ragged_paged_attention(
           2,  # For double buffering during DMA copies.
           num_kv_pages_per_blk,
           page_size,
-          num_kv_heads_per_blk,
+          num_combined_kv_heads_per_blk,
           head_dim,
       ),
-      k_pages.dtype,
+      kv_pages.dtype,
   )
   scratch_shapes = [
-      double_buf_scratch,  # k_bufs
-      double_buf_scratch,  # v_bufs
-      pltpu.SemaphoreType.DMA((2, 2)),  # [double_buffers, k_sem/v_sem]
+      double_buf_scratch,  # kv_bufs
+      pltpu.SemaphoreType.DMA((2,)),  # Semaphores for double buffers.
       lm_scratch,  # l_ref
       lm_scratch,  # m_ref
   ]
@@ -753,4 +761,4 @@ def ragged_paged_attention(
 
   # TODO(jevinjiang): Use f32 acc scratch for output! So we only need
   # to transfer output with desired dtype back to HBM.
-  return kernel(*scalar_prefetches, q, k_pages, v_pages).astype(q.dtype)
+  return kernel(*scalar_prefetches, q, kv_pages).astype(q.dtype)

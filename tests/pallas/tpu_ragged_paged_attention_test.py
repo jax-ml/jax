@@ -74,32 +74,26 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
     cu_q_lens = jnp.pad(cu_q_lens, (0, max_num_seq + 1 - cu_q_lens.shape[0]))
     kv_lens = jnp.pad(kv_lens, (0, max_num_seq - kv_lens.shape[0]))
     prng_key = jax.random.key(1234)
-    k0, k1, k2, k3 = jax.random.split(prng_key, 4)
+    k0, k1, k2 = jax.random.split(prng_key, 3)
     q = jax.random.normal(
         k0,
         (max_num_batched_tokens, num_q_heads, head_dim),
         dtype=dtype,
     )
-    k_pages = jax.random.normal(
+    kv_pages = jax.random.normal(
         k1,
-        (num_pages, page_size, num_kv_heads, head_dim),
-        dtype=dtype,
-    )
-    v_pages = jax.random.normal(
-        k2,
-        (num_pages, page_size, num_kv_heads, head_dim),
+        (num_pages, page_size, num_kv_heads * 2, head_dim),
         dtype=dtype,
     )
     page_indices = jax.random.randint(
-        k3, (max_num_seq, pages_per_seq), 0, num_pages, dtype=jnp.int32
+        k2, (max_num_seq, pages_per_seq), 0, num_pages, dtype=jnp.int32
     )
 
     num_seqs = jnp.array([len(seq_lens)], dtype=jnp.int32)
 
     validate_inputs_on_runtime(
         q,
-        k_pages,
-        v_pages,
+        kv_pages,
         kv_lens,
         page_indices,
         cu_q_lens,
@@ -111,8 +105,7 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
     actual_num_q_tokens = cu_q_lens[num_seqs[0]]
     output = ragged_paged_attention(
         q,
-        k_pages,
-        v_pages,
+        kv_pages,
         kv_lens,
         page_indices,
         cu_q_lens,
@@ -126,8 +119,7 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
 
     expected = ref_ragged_paged_attention(
         q,
-        k_pages,
-        v_pages,
+        kv_pages,
         kv_lens,
         page_indices,
         cu_q_lens,
@@ -272,7 +264,7 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
   @parameterized.product(
       num_seqs=[1, 5, 16],
       # TODO(jevinjiang): Support more num_heads!
-      num_heads=[(32, 8), (32, 16), (12, 2), (4, 4)],
+      num_heads=[(32, 8), (32, 16), (12, 2), (4, 4), (8, 1)],
       dtype=[jnp.float32, jnp.bfloat16],
       num_kv_pages_per_block=[4, 8],
       num_queries_per_block=[32, 64],
