@@ -38,7 +38,7 @@ jobs:
       - name: Create branch
         run: |
           git fetch
-          git checkout origin/main 
+          git checkout origin/main
           git checkout -b $SYNC_BRANCH_NAME
           # Try and merge rocm-main into this new branch so that we don't run upstream's CI code
           git config --global user.email "github-actions@github.com"
@@ -60,7 +60,7 @@ jobs:
       - name: Open a PR to rocm-main
         run: |
           gh pr create --repo $GITHUB_REPOSITORY --head $SYNC_BRANCH_NAME --base rocm-main --title "CI: $(date +%x) upstream sync" --body "Daily sync with upstream"
-          gh pr merge --repo $GITHUB_REPOSITORY --merge --auto $SYNC_BRANCH_NAME
+          gh pr merge --repo $GITHUB_REPOSITORY --rebase --auto $SYNC_BRANCH_NAME
         env:
           GH_TOKEN: ${{ steps.generate-token.outputs.token }}
 
