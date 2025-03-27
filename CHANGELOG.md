@@ -16,6 +16,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Changes
+  * The minimum CuDNN version is v9.8.
+  * JAX is now built using CUDA 12.8. All versions of CUDA 12.1 or newer remain
+    supported.
+
 * Deprecations
 
   * {func}`jax.tree_util.build_tree` is deprecated. Use {func}`jax.tree.unflatten`
