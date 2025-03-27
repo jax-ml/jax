@@ -1,7 +1,7 @@
 (building-from-source)=
 # Building from source
 
-<!--* freshness: { reviewed: '2024-05-15' } *-->
+<!--* freshness: { reviewed: '2025-03-27' } *-->
 
 First, obtain the JAX source code:
 
@@ -526,23 +526,27 @@ bazel test //tests:cpu_tests //tests:backend_independent_tests
 `//tests:gpu_tests` and `//tests:tpu_tests` are also available, if you have the
 necessary hardware.
 
-To use a preinstalled `jaxlib` instead of building it you first need to
-make it available in the hermetic Python. To install a specific version of
-`jaxlib` within hermetic Python run (using `jaxlib >= 0.4.26` as an example):
+To use the preinstalled `jax` and `jaxlib` instead of building them you first
+need to make them available in the hermetic Python. To install the specific
+versions of `jax` and `jaxlib` within hermetic Python run (using `jax >= 0.4.26`
+and `jaxlib >= 0.4.26` as an example):
 
 ```
+echo -e "\njax >= 0.4.26" >> build/requirements.in
 echo -e "\njaxlib >= 0.4.26" >> build/requirements.in
 python build/build.py requirements_update
 ```
 
-Alternatively, to install `jaxlib` from a local wheel (assuming Python 3.12):
+Alternatively, to install `jax` and `jaxlib` from the local wheels
+(assuming Python 3.12):
 
 ```
+echo -e "\n$(realpath jax-0.4.26-py3-none-any.whl)" >> build/requirements.in
 echo -e "\n$(realpath jaxlib-0.4.26-cp312-cp312-manylinux2014_x86_64.whl)" >> build/requirements.in
 python build/build.py requirements_update --python_version=3.12
 ```
 
-Once you have `jaxlib` installed hermetically, run:
+Once you have `jax` and `jaxlib` installed hermetically, run:
 
 ```
 bazel test --//jax:build_jaxlib=false //tests:cpu_tests //tests:backend_independent_tests
