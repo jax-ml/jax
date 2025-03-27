@@ -22,9 +22,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     instead.
   * Implemented host callback handlers for CPU and GPU devices using XLA's FFI
     and removed existing CPU/GPU handlers using XLA's custom call.
+  * All APIs in `jax.lib.xla_extension` are now deprecated.
   * Several previously-deprecated APIs have been removed, including:
     * From `jax.lib.xla_client`: `FftType`, `PaddingType`, `dtype_to_etype`,
       and `shape_from_pyval`.
+    * From `jax.lib.xla_extension`: `ArrayImpl`, `XlaRuntimeError`.
 
 ## jax 0.5.3 (Mar 19, 2025)
 
