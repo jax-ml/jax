@@ -1418,7 +1418,6 @@ class PallasCallWGTest(
     actual_missing_primitives = lane_lowered_primitives - wg_lowered_primitives
     expected_missing_primitives = {
         mgpu_primitives.broadcasted_iota_p,
-        lax.exp2_p,
         mgpu_primitives.layout_cast_p,
         mgpu_primitives.load_p,
         lax.slice_p,
@@ -1447,8 +1446,8 @@ class PallasCallSm90ATest(PallasSm90ATest):
     acc_ini = jnp.ones((64, 64), dtype=jnp.float16)
     np.testing.assert_array_equal(kernel(acc_ini), jnp.full((64, 64), 5, dtype=jnp.float16))
 
-  @parameterized.parameters([*plgpu.ThreadSemantics])
-  def test_realistic_matmul(self, thread_semantics):
+  @parameterized.product(thread_semantics=[*plgpu.ThreadSemantics], rhs_transpose=[False, True])
+  def test_realistic_matmul(self, thread_semantics, rhs_transpose):
     dtype = jnp.float16
     swizzle = 128
     elems_128b = swizzle // jnp.dtype(dtype).itemsize
@@ -1459,6 +1458,8 @@ class PallasCallSm90ATest(PallasSm90ATest):
     def kernel(a_ref, b_ref, o_ref, acc_ref):
       # Make sure tiling does not alter the shape of references
       assert a_ref.shape == (tile_m, tile_k)
+      if rhs_transpose:
+        b_ref = plgpu.transpose_ref(b_ref, (1, 0))
       assert b_ref.shape == (tile_k, tile_n)
       assert o_ref.shape == acc_ref.shape == (tile_m, tile_n)
       plgpu.wgmma(acc_ref, a_ref, b_ref)
@@ -1470,16 +1471,23 @@ class PallasCallSm90ATest(PallasSm90ATest):
 
     key1, key2 = jax.random.split(jax.random.key(42), 2)
     a = jax.random.uniform(key1, shape=(m, k), dtype=dtype)
-    b = jax.random.uniform(key2, shape=(k, n), dtype=dtype)
+    b_shape = (n, k) if rhs_transpose else (k, n)
+    b = jax.random.uniform(key2, shape=b_shape, dtype=dtype)
 
     lhs_spec = pl.BlockSpec(
         (tile_m, tile_k),
         lambda m, n, k: (m, k),
     )
-    rhs_spec = pl.BlockSpec(
-        (tile_k, tile_n),
-        lambda m, n, k: (k, n),
-    )
+    if rhs_transpose:
+      rhs_spec = pl.BlockSpec(
+          (tile_n, tile_k),
+          lambda m, n, k: (n, k),
+      )
+    else:
+      rhs_spec = pl.BlockSpec(
+          (tile_k, tile_n),
+          lambda m, n, k: (k, n),
+      )
     out_spec = pl.BlockSpec(
         (tile_m, tile_n),
         lambda m, n, k: (m, n),
@@ -1522,7 +1530,9 @@ class PallasCallSm90ATest(PallasSm90ATest):
             thread_semantics=thread_semantics,
         ),
     )(a, b)
-    np.testing.assert_allclose(res, a @ b, rtol=1e-3)
+    np.testing.assert_allclose(
+        res, a @ (b.T if rhs_transpose else b), rtol=1e-3
+    )
 
   @parameterized.parameters(jnp.float16, jnp.float32)
   def test_wgmma(self, dtype):

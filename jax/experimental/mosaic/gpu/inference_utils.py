@@ -111,6 +111,9 @@ def _in_attr_for_operand(
 
   if attr_name not in op.attributes:
     return None
+  attr = op.attributes[attr_name]
+  if not attr:
+    return None
   return op.attributes[attr_name][operand_number]  # type: ignore
 
 

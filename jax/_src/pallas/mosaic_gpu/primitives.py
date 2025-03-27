@@ -740,6 +740,7 @@ def _wgmma_lowering(
   match b_transforms:
     case (gpu_core.UnswizzleRef(rhs_swizzle), gpu_core.UntileRef(rhs_tiling)):
       rhs_transpose = False
+      rhs_transpose_tiles = False
     case (
         gpu_core.UnswizzleRef(rhs_swizzle),
         gpu_core.TransposeRef((1, 0, 2, 3)),  # Only transpose between tiles
@@ -747,6 +748,14 @@ def _wgmma_lowering(
         gpu_core.TransposeRef((1, 0)),  # Transpose the two logical dims
     ):
       rhs_transpose = True
+      rhs_transpose_tiles = False
+    case (
+        gpu_core.UnswizzleRef(rhs_swizzle),
+        gpu_core.UntileRef(rhs_tiling),
+        gpu_core.TransposeRef((1, 0)),  # Transpose the two logical dims
+    ):
+      rhs_transpose = True
+      rhs_transpose_tiles = True
     case (
         gpu_core.UnswizzleRef(rhs_swizzle),
         gpu_core.TransposeRef((1, 0, 2, 3, 4)),
@@ -766,6 +775,7 @@ def _wgmma_lowering(
       high_dims = [d // t for d, t in util.safe_zip(new_shape, rhs_tiling)]
       b = mgpu.memref_reshape(b, (*high_dims, *rhs_tiling))
       rhs_transpose = False
+      rhs_transpose_tiles = False
     case _:
       raise ValueError(f"WGMMA rhs has unsupported transforms: {b_transforms}.")
 
@@ -777,7 +787,10 @@ def _wgmma_lowering(
       raise NotImplementedError("WGMMA rhs tiling does not fit swizzle")
 
   if rhs_transpose:
-    b = mgpu.memref_transpose(b, (0, 1, 3, 2))
+    if rhs_transpose_tiles:
+      b = mgpu.memref_transpose(b, (1, 0, 3, 2))
+    else:
+      b = mgpu.memref_transpose(b, (0, 1, 3, 2))
   new_acc = mgpu.wgmma(acc, a, b, swizzle=rhs_swizzle)
   nvvm_dialect.wgmma_commit_group_sync_aligned()
   return new_acc
@@ -793,23 +806,31 @@ def _wgmma_warpgroup_lowering(
     a_transforms_tree,
     b_transforms_tree,
 ):
-  del ctx, transforms_leaves  # Unused.
-  if a_transforms_tree is not None:
-    match a_transforms_tree:
-      case gpu_core.TransposeRef((1, 0)):
-        raise NotImplementedError("WGMMA lhs transpose not supported.")
-      case _:
-        raise ValueError(
-            f"WGMMA lhs has unsupported transforms: {a_transforms_tree}."
-        )
+  del ctx  # Unused.
 
+  if a_transforms_tree is not None:
+    a_transforms_leaves, b_transforms_leaves = util.split_list(
+        transforms_leaves, [a_transforms_tree.num_leaves]
+    )
+    a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
+    a, a_transforms = lowering._handle_indexing(a, a_transforms)
+    if a_transforms:
+      raise ValueError(f"WGMMA lhs has unsupported transforms: {a_transforms}.")
+  else:
+    b_transforms_leaves = transforms_leaves  # type: ignore
+
+  b_transforms = None
   if b_transforms_tree is not None:
-    match b_transforms_tree:
-      case gpu_core.TransposeRef((1, 0)):
-        raise NotImplementedError("WGMMA rhs transpose not supported.")
+    b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
+    b, b_transforms = lowering._handle_indexing(b, b_transforms)
+
+  if b_transforms:
+    match b_transforms:
+      case (gpu_core.TransposeRef((1, 0)),):
+        b = mgpu.memref_transpose(b, (1, 0))
       case _:
         raise ValueError(
-            f"WGMMA rhs has unsupported transforms: {b_transforms_tree}."
+            f"WGMMA rhs has unsupported transforms: {b_transforms}."
         )
 
   new_acc = mgpu.dialect.wgmma(acc, a, b)
