@@ -160,7 +160,7 @@ build:cuda_libraries_from_stubs --@local_config_cuda//cuda:include_cuda_libs=fal
 #   via LD_LIBRARY_PATH, if the nvidia-... pip packages are installed. This is
 #   acceptable, because the workaround is "remove the nvidia-..." pip packages.
 # The list of CUDA pip packages that JAX depends on are present in setup.py.
-build:cuda --linkopt=-Wl,--disable-new-dtags
+build:cuda --@xla//xla/tsl/platform:use_rpath_for_cuda_deps=True
 
 # Build CUDA and other C++ targets with Clang
 build:build_cuda_with_clang --@local_config_cuda//:cuda_compiler=clang
