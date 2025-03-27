@@ -50,14 +50,6 @@ BlasType DtypeToBlasType(const dtype& np_type) {
 }
 
 // Returns the descriptor for a GetrfBatched operation.
-std::pair<size_t, nb::bytes> BuildGetrfBatchedDescriptor(const dtype& dtype,
-                                                         int b, int n) {
-  BlasType type = DtypeToBlasType(dtype);
-  size_t size = b * sizeof(void*);
-  return {size, PackDescriptor(GetrfBatchedDescriptor{type, b, n})};
-}
-
-// Returns the descriptor for a GetrfBatched operation.
 std::pair<size_t, nb::bytes> BuildGeqrfBatchedDescriptor(const dtype& dtype,
                                                          int b, int m, int n) {
   BlasType type = DtypeToBlasType(dtype);
@@ -67,7 +59,6 @@ std::pair<size_t, nb::bytes> BuildGeqrfBatchedDescriptor(const dtype& dtype,
 
 nb::dict Registrations() {
   nb::dict dict;
-  dict[JAX_GPU_PREFIX "blas_getrf_batched"] = EncapsulateFunction(GetrfBatched);
   dict[JAX_GPU_PREFIX "blas_geqrf_batched"] = EncapsulateFunction(GeqrfBatched);
   return dict;
 }
@@ -76,7 +67,6 @@ NB_MODULE(_blas, m) {
   tsl::ImportNumpy();
 
   m.def("registrations", &Registrations);
-  m.def("build_getrf_batched_descriptor", &BuildGetrfBatchedDescriptor);
   m.def("build_geqrf_batched_descriptor", &BuildGeqrfBatchedDescriptor);
 }
 
