@@ -414,7 +414,10 @@ async def main():
     for option in args.bazel_startup_options:
       bazel_command_base.append(option)
 
-  if not args.use_new_wheel_build_rule or args.command == "requirements_update":
+  if (
+      not hasattr(args,"use_new_wheel_build_rule")
+      or args.command == "requirements_update"
+  ):
     bazel_command_base.append("run")
   else:
     bazel_command_base.append("build")
