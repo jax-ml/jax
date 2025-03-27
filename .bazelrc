@@ -260,8 +260,8 @@ build:ci_darwin_arm64 --color=yes
 # Windows x86 CI configs
 build:ci_windows_amd64 --config=avx_windows
 build:ci_windows_amd64 --compiler=clang-cl --config=clang --verbose_failures=true
-build:ci_windows_amd64 --crosstool_top="@xla//tools/toolchains/win/20240424:toolchain"
-build:ci_windows_amd64 --extra_toolchains="@xla//tools/toolchains/win/20240424:cc-toolchain-x64_windows-clang-cl"
+build:ci_windows_amd64 --crosstool_top="@xla//tools/toolchains/win2022/20241118:toolchain"
+build:ci_windows_amd64 --extra_toolchains="@xla//tools/toolchains/win2022/20241118:cc-toolchain-x64_windows-clang-cl"
 build:ci_windows_amd64 --host_linkopt=/FORCE:MULTIPLE --linkopt=/FORCE:MULTIPLE
 build:ci_windows_amd64 --color=yes
 
@@ -329,9 +329,9 @@ common:rbe_windows_amd64 --remote_instance_name=projects/tensorflow-testing/inst
 build:rbe_windows_amd64 --config=rbe
 
 # Set the host, execution, and target platform
-build:rbe_windows_amd64 --host_platform="@xla//tools/toolchains/win:x64_windows-clang-cl"
-build:rbe_windows_amd64 --extra_execution_platforms="@xla//tools/toolchains/win:x64_windows-clang-cl"
-build:rbe_windows_amd64 --platforms="@xla//tools/toolchains/win:x64_windows-clang-cl"
+build:rbe_windows_amd64 --host_platform="@xla//tools/toolchains/win2022:windows_ltsc2022_clang"
+build:rbe_windows_amd64 --extra_execution_platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang"
+build:rbe_windows_amd64 --platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang"
 
 build:rbe_windows_amd64 --shell_executable=C:\\tools\\msys64\\usr\\bin\\bash.exe
 build:rbe_windows_amd64 --enable_runfiles
