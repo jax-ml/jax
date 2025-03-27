@@ -21,7 +21,7 @@ import dataclasses
 import enum
 import itertools
 import math
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Callable
 
 import jax
 from jax._src import core as jax_core
@@ -1184,3 +1184,55 @@ def jaxpr_call(
       ref_treedefs=ref_treedefs,
       program_ids_treedef=program_ids_treedef,
   )
+
+inline_mgpu_p = jax_core.Primitive("inline_mgpu_p")
+inline_mgpu_p.multiple_results = True
+
+# TODO(cperivol): Add return values.
+def inline_mgpu(*args):
+  def inner(f):
+    flat_args, treedef = jax.tree.flatten(args)
+    return inline_mgpu_p.bind(*flat_args, args_treedef=treedef, mgpu_fn=f)
+  return inner
+
+
+@inline_mgpu_p.def_effectful_abstract_eval
+def _inline_mgpu_abstract_eval(
+    *flat_args,
+    args_treedef,
+    mgpu_fn,
+):
+  del args_treedef, mgpu_fn  # Unused.
+  # TODO(cperivol): Let the user set the effects.
+  return (), {
+      gpu_core._wgmma_pipeline_effect,
+      gpu_core._memory_effect,
+      *itertools.chain(*(
+          (state.ReadEffect(i), state.WriteEffect(i))
+          for i, r in enumerate(flat_args)
+          if isinstance(r, pallas_core.AbstractMemoryRef)
+      )),
+  }
+
+
+@discharge.register_partial_discharge_rule(inline_mgpu_p)
+def _inline_mgpu_discharge(
+    should_discharge,
+    in_avals,
+    out_avals,
+    *flat_args,
+    args_treedef,
+    mgpu_fn,
+):
+  del should_discharge, in_avals, out_avals, flat_args, args_treedef, mgpu_fn,
+  raise NotImplementedError("inline_mgpu_p does not support discharge.")
+
+@lowering.register_lowering_rule(inline_mgpu_p, mgpu.ThreadSemantics.Lane)
+def _inline_mgpu_lowering_rule(
+    ctx: lowering.LoweringRuleContext,
+    *flat_args,
+    mgpu_fn: Callable[..., Any],
+    args_treedef,
+):
+  mgpu_fn(*jax.tree.unflatten(args_treedef, flat_args))
+  return ()

@@ -33,6 +33,7 @@ from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax._src.pallas.mosaic_gpu import primitives as mgpu_primitives
 from jax._src.state import discharge
 from jax.experimental import pallas as pl
+import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
@@ -361,6 +362,24 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(
         kernel(), jax.lax.broadcasted_iota(dtype, (128, 128), dimension)
     )
+
+  def test_inline_mgpu(self):
+    dtype = jnp.bfloat16
+    self.skip_if_wg_semantics()
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct([256], dtype)
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      @plgpu.inline_mgpu(x_ref, y_ref, o_ref)
+      def _(x_ref, y_ref, o_ref):
+        x = mgpu.FragmentedArray.load_strided(x_ref)
+        y = mgpu.FragmentedArray.load_strided(y_ref)
+        (x + y).store_untiled(o_ref)
+
+    key0, key1 = jax.random.split(jax.random.key(0), 2)
+    x = (jax.random.uniform(key0, [256]) * 42).astype(dtype)
+    y = (jax.random.uniform(key1, [256]) * 42).astype(dtype)
+    np.testing.assert_array_equal(kernel(x, y), x + y)
 
   @parameterized.product(indexer=[..., slice(128), slice(None, 128)])
   def test_copy_smem_to_gmem(self, indexer):
