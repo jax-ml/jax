@@ -2520,7 +2520,8 @@ def _cumred_dtype_rule(name, operand, *args, **kw):
 def _cumulative_reduction_primitive(name, reduce_fn, reduce_window_fn):
   reducer_p = lax.standard_primitive(
     _cumred_shape_rule, partial(_cumred_dtype_rule, name),
-    name, sharding_rule=_cumred_sharding_rule)
+    name, sharding_rule=_cumred_sharding_rule,
+    vma_rule=partial(core.standard_vma_rule, name))
   batching.primitive_batchers[reducer_p] = partial(_cumred_batch_rule,
                                                    reducer_p)
 

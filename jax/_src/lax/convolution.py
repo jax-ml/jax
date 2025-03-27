@@ -158,6 +158,7 @@ def conv_general_dilated(
   preferred_element_type = (
       None if preferred_element_type is None else
       dtypes.canonicalize_dtype(np.dtype(preferred_element_type)))
+  lhs, rhs = core.standard_insert_pbroadcast(lhs, rhs)
   return conv_general_dilated_p.bind(
       lhs, rhs, window_strides=tuple(window_strides), padding=tuple(padding),
       lhs_dilation=tuple(lhs_dilation), rhs_dilation=tuple(rhs_dilation),
@@ -633,7 +634,8 @@ def _conv_general_dilated_batch_rule(
 
 conv_general_dilated_p = lax.standard_primitive(
     _conv_general_dilated_shape_rule, _conv_general_dilated_dtype_rule,
-    'conv_general_dilated')
+    'conv_general_dilated',
+    vma_rule=partial(core.standard_vma_rule, 'conv_general_dilated'))
 
 ad.defbilinear(conv_general_dilated_p,
                _conv_general_dilated_transpose_lhs,

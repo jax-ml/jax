@@ -121,6 +121,7 @@ def cholesky_update(r_matrix: ArrayLike, w_vector: ArrayLike) -> Array:
     A new upper-triangular matrix :math:`R` defining the Cholesky decomposition
     of :math:`A + w \, w^T`.
   """
+  r_matrix, w_vector = core.standard_insert_pbroadcast(r_matrix, w_vector)
   return cholesky_update_p.bind(r_matrix, w_vector)
 
 
@@ -268,6 +269,7 @@ def householder_product(a: ArrayLike, taus: ArrayLike) -> Array:
     A batch of orthogonal (unitary) matrices with the same shape as ``a``,
     containing the products of the elementary Householder reflectors.
   """
+  a, taus = core.standard_insert_pbroadcast(a, taus)
   return householder_product_p.bind(a, taus)
 
 
@@ -545,6 +547,7 @@ def symmetric_product(
     ``symmetrize_output`` is ``True``, the upper triangle is filled with the
     transpose of the lower triangle, and the whole matrix is valid.
   """
+  a_matrix, c_matrix = core.standard_insert_pbroadcast(a_matrix, c_matrix)
   result = symmetric_product_p.bind(a_matrix, c_matrix, alpha=alpha, beta=beta)
   if symmetrize_output:
     upper_half = lax.transpose(
@@ -602,6 +605,7 @@ def triangular_solve(
   singleton = np.ndim(b) == np.ndim(a) - 1
   if singleton:
     b = lax.expand_dims(b, (-1 if left_side else -2,))
+  a, b = core.standard_insert_pbroadcast(a, b)
   out = triangular_solve_p.bind(
       a, b, left_side=left_side, lower=lower, transpose_a=transpose_a,
       conjugate_a=conjugate_a, unit_diagonal=unit_diagonal)
@@ -661,6 +665,7 @@ def tridiagonal_solve(dl: Array, d: Array, du: Array, b: Array) -> Array:
   Returns:
     Solution ``X`` of tridiagonal system.
   """
+  dl, d, du, b = core.standard_insert_pbroadcast(dl, d, du, b)
   return tridiagonal_solve_p.bind(dl, d, du, b)
 
 
@@ -742,7 +747,7 @@ def linalg_sharding_rule(
 
 def linalg_vma_rule(multiple_results, shape_rule, name, *avals, **kwargs):
   output_shapes = shape_rule(*avals, **kwargs)
-  out_vma = lax_internal.standard_vma_rule(name, *avals)
+  out_vma = core.standard_vma_rule(name, *avals)
   if multiple_results:
     return [out_vma] * len(output_shapes)
   else:
@@ -775,7 +780,7 @@ def linalg_primitive(result_dtype, accepted_dtypes, ranks, result_shape, name,
     prim.def_abstract_eval(
       partial(lax_utils.standard_abstract_eval, prim, shape_rule, dtype_rule,
               lax_utils._standard_weak_type_rule, sharding_rule,
-              partial(lax_internal.standard_vma_rule, name)))
+              partial(core.standard_vma_rule, name)))
   if supports_batching:
     batching.primitive_batchers[prim] = partial(
         batching.expand_dims_batcher, prim)
@@ -1768,6 +1773,7 @@ def geqp3(a: ArrayLike, jpvt: ArrayLike, *,
     elementary Householder reflectors, and ``jpvt`` is the column-pivot indices
     such that ``a[:, jpvt] = q @ r``.
   """
+  a, jpvt = core.standard_insert_pbroadcast(a, jpvt)
   a_out, jpvt_out, taus = geqp3_p.bind(a, jpvt, use_magma=use_magma)
   return a_out, jpvt_out, taus
 

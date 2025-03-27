@@ -2018,6 +2018,16 @@ def standard_insert_pbroadcast(*args):
   return [pbroadcast(arg, tuple(n for n in out_vma if n not in src))
           if out_vma - src else arg for arg, src in zip(args, in_vma)]
 
+def standard_vma_rule(prim_name, *avals, **kwargs):
+  vma, *vmas = [a.vma for a in avals]
+  if not all(vma == vma_ for vma_ in vmas):
+    raise ValueError(
+        f'Primitive {prim_name} requires varying manual axes '
+        f'to match, but got {[vma, *vmas]}. Please open an issue at '
+        'https://github.com/jax-ml/jax/issues and as a temporary '
+        'workaround pass the check_rep=False argument to shard_map')
+  return vma
+
 # Dynamic shape stuff below here! We keep the abstract values distinct just so
 # as not to interfere with any static shape machinery.
 
@@ -2697,7 +2707,10 @@ def typematch(t1: AbstractValue, t2: AbstractValue) -> bool:
     # could try normalizing first and then doing simple equality.
     # TODO(yashkatariya): Also check `sharding` here.
     # See https://github.com/jax-ml/jax/issues/26474
-    return t1.dtype == t2.dtype and definitely_equal_shape(t1.shape, t2.shape)
+    sh_dt = t1.dtype == t2.dtype and definitely_equal_shape(t1.shape, t2.shape)
+    if config.varying_axes_in_types.value:
+      return sh_dt and t1.vma == t2.vma  # type: ignore
+    return sh_dt
   else:
     return False
 
