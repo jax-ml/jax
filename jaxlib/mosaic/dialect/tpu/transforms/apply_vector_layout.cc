@@ -6635,6 +6635,66 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
         src_candidate.tileArrayImplicitShape(vty.getShape(), target_shape));
     return std::make_pair(src_candidate, vregs);
   }
+  const int64_t sublanes_per_tile = src.sublanesPerTile(target_shape);
+  const int64_t rows_per_sublane = src.tiling()[0] / sublanes_per_tile;
+  const int64_t bits_per_row = 32 / rows_per_sublane;
+  // Add second minor implicit dim
+  if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+      dst_implicit_dim == VectorLayout::ImplicitDim::kSecondMinor) {
+    // TODO(tlongeri): Detect replicated source 2nd minor as a no-op above
+    const int64_t src_offset = src.offsets()[0].value_or(0);
+    // TODO(tlongeri): Do broadcast (different path) for replicated output
+    const int64_t dst_offset = dst_offset_hints[0].value_or(0);
+    const int64_t dst_offset_in_sublane = dst_offset % rows_per_sublane;
+    VectorLayout dst(src.bitwidth(), {dst_offset, src.offsets()[1]},
+                     src.tiling(), dst_implicit_dim);
+    const VectorType vreg_ty = cast<VectorType>(vregs.begin()->getType());
+    const VectorType i32_vreg_ty =
+        getNativeVregType(builder.getI32Type(), ctx.target_shape);
+    xla::Array<Value> new_vregs(
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
+    // Define src_idx outside loop to avoid reallocation:
+    SmallVector<int64_t> src_idx;
+    new_vregs.Each([&](const absl::Span<const int64_t> idx, Value *new_vreg) {
+      const int64_t src_row_with_offset = *(idx.end() - 3) + src_offset;
+      src_idx.assign(idx.begin(), idx.end() - 3);
+      src_idx.push_back(src_row_with_offset / src.tiling()[0]);
+      src_idx.push_back(idx.back());
+      Value vreg = vregs(src_idx);
+      const int64_t src_offset_in_sublane =
+          src_row_with_offset % rows_per_sublane;
+      if (src_offset_in_sublane != dst_offset_in_sublane) {
+        vreg = builder.create<tpu::BitcastVregOp>(loc, i32_vreg_ty, vreg);
+        if (src_offset_in_sublane < dst_offset_in_sublane) {
+          auto shift_amt = builder.create<arith::ConstantOp>(
+              loc,
+              builder.getIntegerAttr(builder.getI32Type(),
+                                     bits_per_row * (dst_offset_in_sublane -
+                                                     src_offset_in_sublane)));
+          vreg = builder.create<arith::ShLIOp>(loc, vreg, shift_amt);
+        } else {
+          auto shift_amt = builder.create<arith::ConstantOp>(
+              loc,
+              builder.getIntegerAttr(builder.getI32Type(),
+                                     bits_per_row * (src_offset_in_sublane -
+                                                     dst_offset_in_sublane)));
+          vreg = builder.create<arith::ShRUIOp>(loc, vreg, shift_amt);
+        }
+        vreg = builder.create<tpu::BitcastVregOp>(loc, vreg_ty, vreg);
+      }
+      const int64_t src_sublane_offset =
+          src_row_with_offset % src.tiling()[0] / rows_per_sublane;
+      const int64_t dst_sublane_offset = dst_offset / rows_per_sublane;
+      const int64_t rotate_amt =
+          dst_sublane_offset - src_sublane_offset +
+          (dst_sublane_offset < src_sublane_offset ? target_shape[0] : 0);
+      *new_vreg =
+          builder.create<tpu::RotateOp>(loc, vreg, rotate_amt,
+                                        /*dimension=*/0, nullptr, nullptr);
+    });
+    return std::make_pair(dst, new_vregs);
+  }
+
   // Remove second minor implicit dim, for values that have (m, 128) tiling (for
   // m that is a power of 2).
   if (src.implicit_dim() == VectorLayout::ImplicitDim::kSecondMinor &&
@@ -6661,7 +6721,6 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
       // For example, extended offsets allow us to skip copies of low sublanes
       // in tiles with idx.back() == 0.
       const int tiles_per_vreg = src.tilesPerVreg(target_shape);
-      const int sublanes_per_tile = src.sublanesPerTile(target_shape);
       src_idx[dst_2nd_minor_idx] = src.tiling()[0] * idx[dst_2nd_minor_idx] +
                                    dst_sl_start - dst_sublane_offset;
       for (int dst_sl_idx = dst_sl_start;
