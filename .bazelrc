@@ -133,6 +133,11 @@ build:clang --copt=-Qunused-arguments
 build:clang --copt=-Werror=mismatched-tags
 
 # Configs for CUDA
+
+# Default hermetic CUDA and CUDNN versions.
+build:cuda_version --repo_env=HERMETIC_CUDA_VERSION="12.8.0"
+build:cuda_version --repo_env=HERMETIC_CUDNN_VERSION="9.8.0"
+
 build:cuda --repo_env TF_NEED_CUDA=1
 build:cuda --repo_env TF_NCCL_USE_STUB=1
 # "sm" means we emit only cubin, which is forward compatible within a GPU generation.
@@ -141,9 +146,7 @@ build:cuda --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_8
 build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
 build:cuda --@local_config_cuda//:enable_cuda
 
-# Default hermetic CUDA and CUDNN versions.
-build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.8.0"
-build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.8.0"
+build:cuda --config=cuda_version
 build:cuda --@local_config_cuda//cuda:include_cuda_libs=true
 
 # This config is used for building targets with CUDA libraries from stubs.
@@ -318,6 +321,11 @@ build:rbe_linux_x86_64_base --platforms="@ubuntu20.04-clang_manylinux2014-cuda12
 
 build:rbe_linux_x86_64 --config=rbe_linux_x86_64_base
 build:rbe_linux_x86_64 --config=ci_linux_x86_64
+
+# Download CUDA/CUDNN redistributions to preserve the repositories cache between
+# CPU and GPU builds.
+build:rbe_linux_x86_64 --repo_env USE_CUDA_REDISTRIBUTIONS=1
+build:rbe_linux_x86_64 --config=cuda_version
 
 build:rbe_linux_x86_64_cuda --config=rbe_linux_x86_64_base
 build:rbe_linux_x86_64_cuda --config=ci_linux_x86_64_cuda
