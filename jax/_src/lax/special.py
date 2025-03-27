@@ -21,6 +21,7 @@ from enum import Enum
 import numpy as np
 from functools import partial
 
+from jax._src import core
 from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
                               broadcast_in_dim, broadcast_shapes,
                               convert_element_type, div, eq, exp, full_like, ge,
@@ -39,6 +40,7 @@ from jax._src.typing import Array, ArrayLike
 
 def betainc(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise regularized incomplete beta integral."""
+  a, b, x = core.standard_insert_pbroadcast(a, b, x)
   return regularized_incomplete_beta_p.bind(a, b, x)
 
 def lgamma(x: ArrayLike) -> Array:
@@ -51,26 +53,32 @@ def digamma(x: ArrayLike) -> Array:
 
 def polygamma(m: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise polygamma: :math:`\psi^{(m)}(x)`."""
+  m, x = core.standard_insert_pbroadcast(m, x)
   return polygamma_p.bind(m, x)
 
 def igamma(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise regularized incomplete gamma function."""
+  a, x = core.standard_insert_pbroadcast(a, x)
   return igamma_p.bind(a, x)
 
 def igammac(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise complementary regularized incomplete gamma function."""
+  a, x = core.standard_insert_pbroadcast(a, x)
   return igammac_p.bind(a, x)
 
 def igamma_grad_a(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise derivative of the regularized incomplete gamma function."""
+  a, x = core.standard_insert_pbroadcast(a, x)
   return igamma_grad_a_p.bind(a, x)
 
 def random_gamma_grad(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise derivative of samples from `Gamma(a, 1)`."""
+  a, x = core.standard_insert_pbroadcast(a, x)
   return random_gamma_grad_p.bind(a, x)
 
 def zeta(x: ArrayLike, q: ArrayLike) -> Array:
   r"""Elementwise Hurwitz zeta function: :math:`\zeta(x, q)`"""
+  x, q = core.standard_insert_pbroadcast(x, q)
   return zeta_p.bind(x, q)
 
 def bessel_i0e(x: ArrayLike) -> Array:

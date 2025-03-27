@@ -77,6 +77,7 @@ import numpy as np
 from jax._src import ad_util
 from jax._src import core
 from jax._src import dispatch
+from jax._src import config
 from jax._src import dtypes
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -239,9 +240,10 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
          "approx_top_k with aggregate_to_topk=False not yet implemented when "
          f"either the `k` ({k}) or the "
          f" reduction dimension size ({reduction_input_size}) are symbolic")
+  out_vma = operand.vma if config.varying_axes_in_types.value else frozenset()
   return (operand.update(shape=dims, dtype=operand.dtype,
-                         weak_type=operand.weak_type),
-          operand.update(shape=dims, dtype=np.dtype(np.int32)))
+                         weak_type=operand.weak_type, vma=out_vma),
+          operand.update(shape=dims, dtype=np.dtype(np.int32), vma=out_vma))
 
 def _get_init_val_literal(op_type, is_max_k):
   return np.array(-np.inf if is_max_k else np.inf, dtype=op_type)
