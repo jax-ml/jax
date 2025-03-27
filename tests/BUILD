@@ -496,6 +496,7 @@ jax_multiplatform_test(
     name = "lax_numpy_test",
     srcs = ["lax_numpy_test.py"],
     backend_tags = {
+        "tpu": ["notsan"],  # Test times out.
         "cpu": ["notsan"],  # Test times out.
     },
     shard_count = {
