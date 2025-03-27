@@ -59,6 +59,7 @@ def matmul(x, y, *, bm, bn, gm, bk, interpret, debug=False):
       debug=debug,
       grid=pl.cdiv(m, bm) * pl.cdiv(n, bn))
   def matmul_kernel(x_ref, y_ref, o_ref):
+    print("test actions")
     pid = pl.program_id(axis=0)
     num_pid_m = m // bm
     num_pid_n = n // bn
