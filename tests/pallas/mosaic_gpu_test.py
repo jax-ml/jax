@@ -1418,7 +1418,6 @@ class PallasCallWGTest(
     actual_missing_primitives = lane_lowered_primitives - wg_lowered_primitives
     expected_missing_primitives = {
         mgpu_primitives.broadcasted_iota_p,
-        lax.exp2_p,
         mgpu_primitives.layout_cast_p,
         mgpu_primitives.load_p,
         lax.slice_p,

@@ -1671,6 +1671,7 @@ def _exp_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
 
 
 @register_lowering_rule(lax.exp2_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(lax.exp2_p, mgpu.ThreadSemantics.Warpgroup)
 def _exp2_lowering_rule(ctx: LoweringRuleContext, x, accuracy):
   if accuracy is not None:
     raise NotImplementedError("Not implemented: accuracy")
