@@ -548,21 +548,31 @@ def infer_layout(module: ir.Module):
   # make sure to derive a single vector size in order to avoid relayouts at
   # lowering time.
   default_vector_size = math.inf
-
-  def update_default_vector_size(op: ir.OpView):
+  def update_default_vector_size_from_vector(v: ir.Value):
     nonlocal default_vector_size
-    for v in list(op.operands) + list(op.results):
-      if ir.VectorType.isinstance(v.type):
-        max_vec_size_for_v = (
-            np.prod(cast(ir.ShapedType, v.type).shape) // fa.WARPGROUP_SIZE
-        )
-        desired_vec_size = 8 // utils.bytewidth(v.type.element_type)
-        default_vector_size = min(
-            default_vector_size, max_vec_size_for_v, desired_vec_size
-        )
+    max_vec_size_for_v = (
+          np.prod(cast(ir.ShapedType, v.type).shape) // fa.WARPGROUP_SIZE
+      )
+    desired_vec_size = 8 // utils.bytewidth(v.type.element_type)
+    default_vector_size = min(
+        default_vector_size, max_vec_size_for_v, desired_vec_size
+    )
+
+  def update_default_vector_size_from_op(op: ir.OpView):
+    for i, v in enumerate(
+        filter(lambda v: ir.VectorType.isinstance(v.type), op.operands)
+    ):
+      if inference_utils.attr_element("in_layouts", op, i) is None:
+        update_default_vector_size_from_vector(v)
+
+    for i, v in enumerate(
+        filter(lambda v: ir.VectorType.isinstance(v.type), op.results)
+    ):
+      if inference_utils.attr_element("out_layouts", op, i) is None:
+        update_default_vector_size_from_vector(v)
 
   for op in module.body:
-    traverse_op(op, update_default_vector_size)
+    traverse_op(op, update_default_vector_size_from_op)
 
   if default_vector_size == math.inf:  # Nothing to annotate.
     return
