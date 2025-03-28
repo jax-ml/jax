@@ -47,7 +47,7 @@ jobs:
         # Explicitly set the shell to bash
         shell: bash
     runs-on: ${{ inputs.runner }}
-    container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.3-cudnn9.1:latest"
+    container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.8-cudnn9.8:latest"
 
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: ${{ inputs.python }}
