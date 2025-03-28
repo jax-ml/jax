@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from functools import partial
 from typing import Any, Union
 
@@ -25,7 +25,6 @@ import numpy as np
 from jax._src import core
 from jax._src import dtypes
 from jax._src.abstract_arrays import numpy_scalar_types
-from jax._src.core import ShapedArray
 from jax._src.util import safe_zip, safe_map
 
 from jax._src.typing import Shape
@@ -40,11 +39,6 @@ zip, unsafe_zip = safe_zip, zip
 def identity(x): return x
 
 _scalar_types = dtypes.python_scalar_dtypes.keys()
-
-def _make_array_shape(aval: ShapedArray) -> Sequence[xc.Shape]:
-  aval = core.physical_aval(aval)
-  dtype = np.dtype('bool') if aval.dtype == dtypes.float0 else aval.dtype
-  return (xc.Shape.array_shape(dtype, aval.shape),)
 
 # Utilities
 
@@ -89,20 +83,6 @@ def tuple_sharding_proto(elems):
 
 
 ### handlers
-
-# JAX abstract values -> XLA shapes
-
-def aval_to_xla_shapes(aval: core.AbstractValue) -> Sequence[xc.Shape]:
-  try:
-    return _xla_shape_handlers[type(aval)](aval)
-  except KeyError as err:
-    raise TypeError(f"No xla_shape_handler for type: {type(aval)}") from err
-
-_xla_shape_handlers: dict[type[core.AbstractValue],
-                         Callable[[Any], Sequence[xc.Shape]]] = {
-    ShapedArray: _make_array_shape,
-}
-_xla_shape_handlers[core.AbstractToken] = lambda _: (xc.Shape.token_shape(),)
 
 
 # IR constants
