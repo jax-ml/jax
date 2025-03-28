@@ -178,6 +178,11 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     :py:func:`scan` compiles ``f``, so while it can be combined with
     :py:func:`jit`, it's usually unnecessary.
 
+  .. note::
+    :func:`scan` is designed for iterating with a static number of iterations.
+    For iteration with a dynamic number of iterations, use :func:`fori_loop`
+    or :func:`while_loop`.
+
   Args:
     f: a Python function to be scanned of type ``c -> a -> (c, b)``, meaning
       that ``f`` accepts two arguments where the first is a value of the loop
@@ -239,7 +244,9 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     try:
       length = int(length)
     except core.ConcretizationTypeError as err:
-      msg = 'The `length` argument to `scan` expects a concrete `int` value.'
+      msg = ('The `length` argument to `scan` expects a concrete `int` value.'
+             ' For scan-like iteration with a dynamic length, use `while_loop`'
+             ' or `fori_loop`.')
       raise core.ConcretizationTypeError(length, msg) from None  # type: ignore[arg-type]
     if not all(length == l for l in lengths):
       msg = ("scan got `length` argument of {} which disagrees with "
