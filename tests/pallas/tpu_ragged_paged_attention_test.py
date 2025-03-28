@@ -21,7 +21,7 @@ from jax._src import test_util as jtu
 from jax.experimental.pallas.ops.tpu.ragged_paged_attention import (
     ragged_paged_attention,
     ref_ragged_paged_attention,
-    validate_inputs_on_runtime,
+    validate_dynamic_inputs,
 )
 import jax.numpy as jnp
 
@@ -91,15 +91,15 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
 
     num_seqs = jnp.array([len(seq_lens)], dtype=jnp.int32)
 
-    validate_inputs_on_runtime(
+    validate_dynamic_inputs(
         q,
         kv_pages,
         kv_lens,
         page_indices,
         cu_q_lens,
         num_seqs,
-        sliding_window=sliding_window,
-        soft_cap=soft_cap,
+        sliding_window,
+        soft_cap,
     )
 
     actual_num_q_tokens = cu_q_lens[num_seqs[0]]
