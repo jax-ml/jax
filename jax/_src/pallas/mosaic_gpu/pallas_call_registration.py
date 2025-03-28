@@ -23,11 +23,13 @@ from typing import Any
 import warnings
 
 import jax
+from jax import lax
 from jax._src import core as jax_core
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import lowering
 from jax.experimental.mosaic import gpu as mgpu
+import numpy as np
 
 
 def pallas_call_lowering(
@@ -74,16 +76,30 @@ def pallas_call_lowering(
     print(lowering_result.module.operation)
 
   module = lowering_result.module
-  new_avals_out = [
-      jax_core.ShapedArray(t.shape, t.dtype) for t in lowering_result.out_structs
-  ]
+  new_avals_in = list(ctx.avals_in)
+  new_avals_out = list(map(_as_shaped_array, lowering_result.new_out_shapes))
+  scratch_args = ()
+  if lowering_result.gmem_scratch_shapes:
+    input_output_aliases += tuple(
+        (len(new_avals_in) + i, len(new_avals_out) + i)
+        for i in range(len(lowering_result.gmem_scratch_shapes))
+    )
+    new_avals_in.extend(map(_as_shaped_array, lowering_result.gmem_scratch_shapes))
+    new_avals_out.extend(map(_as_shaped_array, lowering_result.gmem_scratch_shapes))
+    def zero_init_gmem_scratch():
+      return [lax.zeros_like_array(s) for s in lowering_result.gmem_scratch_shapes]
+    scratch_args = mlir.lower_fun(
+        zero_init_gmem_scratch, multiple_results=True
+    )(ctx.replace(avals_in=()))
   outs = mgpu.core._mosaic_gpu_lowering_rule(
-      ctx.replace(avals_out=new_avals_out),
-      *args,
+      ctx.replace(avals_in=new_avals_in, avals_out=new_avals_out),
+      *args, *scratch_args,
       module=module,
-      out_types=lowering_result.out_structs,
+      out_types=(*lowering_result.new_out_shapes, *lowering_result.gmem_scratch_shapes),
       input_output_aliases=input_output_aliases,
   )
+  if lowering_result.gmem_scratch_shapes:  # Drop the GMEM scratch.
+    outs = outs[:-len(lowering_result.gmem_scratch_shapes)]
   if (prof_ctx := lowering_result.profiler_context) is not None:
     *outs, prof_buffer = outs
     if (dump_path := prof_ctx.dump_path) == "sponge":
@@ -112,3 +128,7 @@ def pallas_call_lowering(
         ctx.replace(avals_in=(new_avals_out[-1],)), prof_buffer
     )
   return outs
+
+
+def _as_shaped_array(t: jax.ShapeDtypeStruct) -> jax_core.ShapedArray:
+  return jax_core.ShapedArray(t.shape, np.dtype(t.dtype))

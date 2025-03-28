@@ -48,7 +48,7 @@ pytype_strict_library(
         "//jax:mlir",
         "//jax:mosaic_gpu",
         "//jax/_src/pallas",
-    ],
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(

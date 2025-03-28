@@ -23,6 +23,7 @@ from jax._src.pallas.mosaic_gpu.core import GPUCompilerParams as GPUCompilerPara
 from jax._src.pallas.mosaic_gpu.core import GPUMemorySpace as GPUMemorySpace
 from jax._src.pallas.mosaic_gpu.core import GPUMesh as GPUMesh
 from jax._src.pallas.mosaic_gpu.core import kernel as kernel
+from jax._src.pallas.mosaic_gpu.core import SemaphoreType as SemaphoreType
 from jax._src.pallas.mosaic_gpu.core import SwizzleTransform as SwizzleTransform
 from jax._src.pallas.mosaic_gpu.core import TilingTransform as TilingTransform
 from jax._src.pallas.mosaic_gpu.core import transpose_ref as transpose_ref
