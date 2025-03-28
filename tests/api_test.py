@@ -4424,6 +4424,7 @@ class APITest(jtu.JaxTestCase):
     out = jax.grad(f)(3.0)  # doesn't crash
     self.assertAllClose(out, 1., check_dtypes=False)
 
+  @jtu.thread_unsafe_test()
   def test_cache_clear_pmap(self):
     @jax.pmap
     def f(i):
