@@ -599,6 +599,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "mlir",
     srcs = ["_src/interpreters/mlir.py"],
+    visibility = [
+        ":internal",
+        "//third_party/py/ai_edge_torch/odml_torch/experimental/torch_tfl:__subpackages__",
+    ],
     deps = [
         ":ad_util",
         ":api_util",
@@ -620,6 +624,7 @@ pytype_strict_library(
         ":xla",
         ":xla_bridge",
         "//jax/_src/lib",
+        "//third_party/py/torch:pytorch",
     ] + py_deps("numpy"),
 )
 
