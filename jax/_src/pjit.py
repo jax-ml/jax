@@ -233,20 +233,30 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
 
 
 def _set_states(attrs_tracked, vals):
-  from jax.experimental.attrs import jax_setattr
+  from jax.experimental.attrs import jax_setattr, jax_extendattr
   valss = split_list(vals, [td.num_leaves for _, td, _ in attrs_tracked[:-1]])
-  for ((_, treedef, (obj, attr)), leaves) in zip(attrs_tracked, valss):
-    val = tree_unflatten(treedef, leaves)
-    jax_setattr(obj, attr, val)
+  for ((_, treedef, (obj, attr, kind)), leaves) in zip(attrs_tracked, valss):
+    if kind is pe.ReadWrite:
+      val = tree_unflatten(treedef, leaves)
+      jax_setattr(obj, attr, val)
+    elif kind is pe.Append:
+      del treedef
+      val, = leaves
+      jax_extendattr(obj, attr, val)
 
 def _get_states(attrs_tracked):
   from jax.experimental.attrs import jax_getattr, dne_sentinel
   vals = []
-  for treedef, _, (obj, attr) in attrs_tracked:
-    tree = jax_getattr(obj, attr) if hasattr(obj, attr) else dne_sentinel
-    leaves, treedef_ = tree_flatten(tree)
-    assert treedef == treedef_
-    vals.extend(leaves)
+  for treedef, _, (obj, attr, kind) in attrs_tracked:
+    if kind is pe.ReadWrite:
+      tree = jax_getattr(obj, attr) if hasattr(obj, attr) else dne_sentinel
+      leaves, treedef_ = tree_flatten(tree)
+      assert treedef == treedef_
+      vals.extend(leaves)
+    elif kind is pe.Append:
+      pass
+    else:
+      assert False
   return vals
 
 def _need_to_rebuild_with_fdo(pgle_profiler):
@@ -537,7 +547,7 @@ class PjitParams(NamedTuple):
   donated_invars: tuple[bool, ...]
   arg_names: tuple[str, ...]
   num_consts: int
-  attrs_tracked: list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]
+  attrs_tracked: list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str, Any]]]
 
 
 def _infer_params_impl(
@@ -613,14 +623,14 @@ def _infer_params_impl(
       ji.in_layouts_treedef, ji.in_layouts_leaves,
       in_avals, in_tree, flat_fun.debug_info, device_or_backend_set, have_kwargs)
 
-  attr_token = _attr_token(flat_fun, in_type)
+  attr_token = _attr_cache_index(flat_fun, in_type)
 
   jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
       flat_fun, in_type, attr_token, IgnoreKey(ji.inline))
 
   if config.mutable_array_checks.value:
     _check_no_aliased_closed_over_refs(dbg, (*jaxpr.consts, *consts), explicit_args)
-  _attr_update(flat_fun, in_type, attr_token, attrs_tracked)
+  _attr_cachedata_update(flat_fun, in_type, attr_token, attrs_tracked)
 
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
       out_shardings_treedef, out_shardings_leaves, ji.out_layouts_treedef,
@@ -636,13 +646,14 @@ def _infer_params_impl(
     implicit_args = []
   args_flat = [*implicit_args, *explicit_args]
 
-  num_states_in = sum(init_tree.num_leaves for init_tree, _, _ in attrs_tracked)
-  num_extra_args = len(implicit_args) + num_states_in + len(consts)
+  num_attrs_in = sum(init_tree.num_leaves for init_tree, _, (_, _, kind)
+                     in attrs_tracked if kind is pe.ReadWrite)
+  num_extra_args = len(implicit_args) + num_attrs_in + len(consts)
   in_shardings_flat = (UNSPECIFIED,) * num_extra_args + in_shardings_flat
   in_layouts_flat = (None,) * num_extra_args + in_layouts_flat
   donated_invars = (False,) * num_extra_args + donated_invars
   assert (len(in_shardings_flat) == len(in_layouts_flat) ==
-          len(donated_invars) == num_states_in + len(consts) + len(args_flat))
+          len(donated_invars) == num_attrs_in + len(consts) + len(args_flat))
 
   params = dict(
       jaxpr=jaxpr,
@@ -1274,7 +1285,7 @@ def _create_pjit_jaxpr(
     attr_data: int,
     ignored_inline: IgnoreKey
 ) -> tuple[core.ClosedJaxpr, list[Any], list[core.AbstractValue],
-           list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
+           list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str, Any]]]]:
   util.test_event("create_pjit_jaxpr")
   del ignored_inline  # just for explain_cache_miss
   if config.no_tracing.value:
@@ -1350,32 +1361,31 @@ def seen_attrs_get(
   assert fun.in_type is None or fun.in_type == in_type
   return cache[(fun.transforms, fun.params, in_type)]
 
-def _attr_token(
+def _attr_cache_index(
     fun: lu.WrappedFun,
     in_type: core.InputType | tuple[core.AbstractValue, ...]
 ) -> int:
-  from jax.experimental.attrs import jax_getattr, dne_sentinel
+  from jax.experimental.attrs import dne_sentinel
   cases = seen_attrs_get(fun, in_type)
   for i, records in enumerate(cases):
-    for obj, attr, treedef, avals in records:
-      val = jax_getattr(obj, attr) if hasattr(obj, attr) else dne_sentinel
-      vals, treedef_ = tree_flatten(val)
-      avals_ = map(core.shaped_abstractify, vals)
-      if treedef != treedef_ or avals != avals_: break
+    for obj, attr, kind, treedef, avals in records:
+      if kind is pe.ReadWrite:
+        val = getattr(obj, attr, dne_sentinel)
+        vals, treedef_ = tree_flatten(val)
+        avals_ = map(core.shaped_abstractify, vals)
+        if treedef != treedef_ or avals != avals_: break
     else:
       return i
   return len(cases)
 
-def _attr_update(fun, in_type, i, attrs_tracked):
-  from jax.experimental.attrs import jax_getattr, dne_sentinel
-  leaves = lambda obj, attr: tree_leaves(jax_getattr(obj, attr) if hasattr(obj, attr) else dne_sentinel)
-  records = [(obj, attr, init_tree, map(core.shaped_abstractify, leaves(obj, attr)))
-             for init_tree, _, (obj, attr) in attrs_tracked]
+def _attr_cachedata_update(fun, in_type, i, attrs_tracked):
+  from jax.experimental.attrs import dne_sentinel
+  leaves = lambda obj, attr: tree_leaves(getattr(obj, attr, dne_sentinel))
+  records = [(obj, attr, kind, init_tree, map(core.typeof, leaves(obj, attr)))
+             for init_tree, _, (obj, attr, kind) in attrs_tracked]
   cases = seen_attrs_get(fun, in_type)
   if i == len(cases):
     cases.append(records)
-  else:
-    assert i < len(cases) and cases[i] == records
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1540,6 +1550,7 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
       committed_arg_shardings.append((arg_s, pxla.MismatchType.ARG_SHARDING, None))
 
   resolved_in_shardings: list[PjitSharding] = []
+  assert len(args) == len(pjit_in_shardings)
   for arg, pjit_in_s in zip(args, pjit_in_shardings):
     # arg sharding can be None in case of ShapeDtypeStruct. jax.Array does
     # not allow None as the sharding.
@@ -2337,11 +2348,12 @@ def _pjit_transpose(cts_in, *primals_in,
 
   if attrs_tracked:
     init_states =  _get_states(attrs_tracked)
+    num_attr_outs = sum(final_tree.num_leaves for _, final_tree, _ in attrs_tracked)
     primals_and_nz_cts_in = [*init_states, *primals_and_nz_cts_in]
-    transpose_in_shardings = (UNSPECIFIED,) * len(attrs_tracked) + transpose_in_shardings
-    transpose_out_shardings = (UNSPECIFIED,) * len(attrs_tracked) + transpose_out_shardings
-    transpose_in_layouts = (None,) * len(attrs_tracked) + transpose_in_layouts
-    transpose_out_layouts = (None,) * len(attrs_tracked) + transpose_out_layouts
+    transpose_in_shardings = (UNSPECIFIED,) * len(init_states) + transpose_in_shardings
+    transpose_out_shardings = (UNSPECIFIED,) * num_attr_outs + transpose_out_shardings
+    transpose_in_layouts = (None,) * len(init_states) + transpose_in_layouts
+    transpose_out_layouts = (None,) * num_attr_outs + transpose_out_layouts
 
   try:
     nz_cts_out = pjit_p.bind(
@@ -2370,7 +2382,7 @@ def _pjit_transpose(cts_in, *primals_in,
       dispatch._raise_no_nan_in_deoptimized(e)
 
   if attrs_tracked:
-    final_states, nz_cts_out = split_list(nz_cts_out, [len(init_states)])
+    final_states, nz_cts_out = split_list(nz_cts_out, [num_attr_outs])
     _set_states(attrs_tracked, final_states)
 
   return tree_unflatten(cts_out_treedef, nz_cts_out)
