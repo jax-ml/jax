@@ -51,8 +51,9 @@ class ArrayNamespaceInfo:
   .. _Python array API: https://data-apis.org/array-api/
   """
   _capabilities = {
-    "boolean indexing": True,
-    "data-dependent shapes": False,
+    "boolean indexing": False,  # within transformations
+    "data-dependent shapes": False,  # within transformations
+    "max dimensions": 64,  # XLA limitation
   }
 
   def _build_dtype_dict(self):
