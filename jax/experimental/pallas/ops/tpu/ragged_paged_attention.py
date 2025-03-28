@@ -83,8 +83,8 @@ def ref_ragged_paged_attention(
     soft_cap: float | None = None,
     mask_value: float | None = DEFAULT_MASK_VALUE,
 ):
-  check_inputs_shapes(
-      queries, kv_pages, kv_lens, page_indices, cu_q_lens, num_seqs
+  validate_static_inputs(
+      queries, kv_pages, kv_lens, page_indices, cu_q_lens, num_seqs, sliding_window, soft_cap
   )
   if mask_value is None:
     mask_value = DEFAULT_MASK_VALUE
@@ -130,7 +130,7 @@ def ref_ragged_paged_attention(
 
 
 # Expect to run these checkes during runtime.
-def validate_inputs_on_runtime(
+def validate_dynamic_inputs(
     q: jax.Array,  # [max_num_batched_tokens, num_q_heads, head_dim]
     kv_pages: jax.Array,  # [total_num_pages, page_size, num_combined_kv_heads, head_dim]
     kv_lens: jax.Array,  # i32[max_num_seqs]
@@ -140,7 +140,7 @@ def validate_inputs_on_runtime(
     sliding_window: int | None = None,
     soft_cap: float | None = None,
 ):
-  check_inputs_shapes(q, kv_pages, kv_lens, page_indices, cu_q_lens, num_seqs)
+  validate_static_inputs(q, kv_pages, kv_lens, page_indices, cu_q_lens, num_seqs, sliding_window, soft_cap)
   max_num_batched_tokens = q.shape[0]
   page_size = kv_pages.shape[1]
   max_num_seqs, pages_per_seq = page_indices.shape
@@ -165,20 +165,18 @@ def validate_inputs_on_runtime(
       raise ValueError(
           f"{q_len=} must be less or equal to {kv_len=} at sequence {i}."
       )
-  if sliding_window is not None and sliding_window <= 0:
-    raise ValueError(f"{sliding_window=} must be positive.")
-  if soft_cap is not None and soft_cap == 0.0:
-    raise ValueError(f"{soft_cap=} must not be 0.0.")
 
 
 # Expect to run these checks during compile time.
-def check_inputs_shapes(
+def validate_static_inputs(
     q: jax.Array,  # [max_num_batched_tokens, num_q_heads, head_dim]
     kv_pages: jax.Array,  # [total_num_pages, page_size, num_combined_kv_heads, head_dim]
     kv_lens: jax.Array,  # i32[max_num_seqs]
     page_indices: jax.Array,  # i32[max_num_seqs, pages_per_seq]
     cu_q_lens: jax.Array,  # i32[max_num_seqs + 1]
     num_seqs,  # i32[1]
+    sliding_window: int | None = None,
+    soft_cap: float | None = None,
 ):
   _, num_q_heads, head_dim = q.shape
   _, _, num_combined_kv_heads, head_dim_k = kv_pages.shape
@@ -213,6 +211,10 @@ def check_inputs_shapes(
     )
   if num_q_heads % num_kv_heads != 0:
     raise ValueError(f"{num_q_heads=} must be divisible by {num_kv_heads=}")
+  if sliding_window is not None and sliding_window <= 0:
+    raise ValueError(f"{sliding_window=} must be positive.")
+  if soft_cap is not None and soft_cap == 0.0:
+    raise ValueError(f"{soft_cap=} must not be 0.0.")
 
 
 def ragged_paged_attention_kernel(
@@ -233,6 +235,7 @@ def ragged_paged_attention_kernel(
     sems,  # [2, 2]
     l_ref,  # [num_kv_heads_per_blk, num_q_per_blk * num_q_heads_per_kv_head, 128]
     m_ref,  # [num_kv_heads_per_blk, num_q_per_blk * num_q_heads_per_kv_head, 128]
+    acc_ref,  # [num_q_per_blk, num_q_heads_per_blk, head_dim]
     *,
     sm_scale: float,
     sliding_window: int | None = None,
@@ -357,7 +360,7 @@ def ragged_paged_attention_kernel(
         v,  # [num_kv_per_blk, head_dim]
         head_l_ref,  # [num_q_per_blk * num_q_heads_per_kv_head, 128]
         head_m_ref,  # [num_q_per_blk * num_q_heads_per_kv_head, 128]
-        head_o_ref,  # [num_q_per_blk, num_q_heads_per_kv_head, head_dim]
+        head_acc_ref,  # [num_q_per_blk, num_q_heads_per_kv_head, head_dim]
         *,
         kv_blk_idx,
     ):
@@ -378,7 +381,7 @@ def ragged_paged_attention_kernel(
           num_q_per_blk * num_q_heads_per_kv_head,
           128,
       )
-      assert head_o_ref.shape == (
+      assert head_acc_ref.shape == (
           num_q_per_blk,
           num_q_heads_per_kv_head,
           head_dim,
@@ -414,8 +417,8 @@ def ragged_paged_attention_kernel(
             num_q_heads_per_kv_head,
         )
         masked_store(
-            head_o_ref,
-            jnp.zeros_like(head_o_ref),
+            head_acc_ref,
+            jnp.zeros_like(head_acc_ref),
             store_start,
             store_end,
         )
@@ -481,17 +484,17 @@ def ragged_paged_attention_kernel(
             [arr for _ in range(shape[1] // arr.shape[1])], axis=1
         )
 
-      o_curr = head_o_ref[...].reshape(-1, head_dim)
+      o_curr = head_acc_ref[...].reshape(-1, head_dim)
       l_alpha = broadcast_to_shape(l_alpha, qkv.shape)
       beta = broadcast_to_shape(beta, qkv.shape)
       l_next_safe = broadcast_to_shape(l_next_safe, qkv.shape)
       out = lax.div(
           l_alpha * o_curr + beta * qkv,
           l_next_safe,
-      ).astype(head_o_ref.dtype)
+      )
       masked_store(
-          head_o_ref,
-          out.reshape(head_o_ref.shape),
+          head_acc_ref,
+          out.reshape(head_acc_ref.shape),
           store_start,
           store_end,
       )
@@ -544,7 +547,7 @@ def ragged_paged_attention_kernel(
             v,
             l_ref.at[kv_head_idx],
             m_ref.at[kv_head_idx],
-            o_ref.at[:, q_head_idx : q_head_idx + num_q_heads_per_kv_head, :],
+            acc_ref.at[:, q_head_idx : q_head_idx + num_q_heads_per_kv_head, :],
             kv_blk_idx=kv_blk_idx,
         )
       return kv_blk_idx + 1, next_buf_idx
@@ -566,6 +569,7 @@ def ragged_paged_attention_kernel(
   # Reset seq_idx for next kv_heads_blk if run out of seqs!
   seq_buf_idx_ref[0] = lax.select(seq_idx < num_seqs, seq_idx, 0)
   seq_buf_idx_ref[1] = buf_idx
+  o_ref[...] = acc_ref[...].astype(q_ref.dtype)
 
 
 def cdiv(a, b):
@@ -662,6 +666,7 @@ def ragged_paged_attention(
     num_seqs: the dynamic number of sequences.
     sm_scale: the softmax scale which will be applied to the Q@K^T.
     sliding_window: the sliding window size for the attention.
+    soft_cap: the logit soft cap for the attention.
     mask_value: mask value for causal mask.
     num_kv_pages_per_block: number of kv pages to be processed in one flash
       attention block in the pallas kernel.
@@ -672,7 +677,7 @@ def ragged_paged_attention(
   Returns:
     The output of the attention.
   """
-  check_inputs_shapes(q, kv_pages, kv_lens, page_indices, cu_q_lens, num_seqs)
+  validate_static_inputs(q, kv_pages, kv_lens, page_indices, cu_q_lens, num_seqs, sliding_window, soft_cap)
   if mask_value is None:
     mask_value = DEFAULT_MASK_VALUE
   _, num_q_heads, head_dim = q.shape
@@ -710,6 +715,10 @@ def ragged_paged_attention(
       (num_kv_heads_per_blk, num_q_per_blk * num_q_heads_per_kv_head, 128),
       jnp.float32,
   )
+  acc_scratch = pltpu.VMEM(
+      (num_q_per_blk, num_q_heads_per_blk, head_dim),
+      jnp.float32,
+  )
   double_buf_scratch = pltpu.VMEM(
       (
           2,  # For double buffering during DMA copies.
@@ -725,6 +734,7 @@ def ragged_paged_attention(
       pltpu.SemaphoreType.DMA((2,)),  # Semaphores for double buffers.
       lm_scratch,  # l_ref
       lm_scratch,  # m_ref
+      acc_scratch,
   ]
   scalar_prefetches = (
       kv_lens,
@@ -755,10 +765,8 @@ def ragged_paged_attention(
           ),
           vmem_limit_bytes=vmem_limit_bytes,
       ),
-      out_shape=jax.ShapeDtypeStruct(shape=q.shape, dtype=jnp.float32),
+      out_shape=jax.ShapeDtypeStruct(shape=q.shape, dtype=q.dtype),
       name="ragged_paged_attention_kernel",
   )
 
-  # TODO(jevinjiang): Use f32 acc scratch for output! So we only need
-  # to transfer output with desired dtype back to HBM.
-  return kernel(*scalar_prefetches, q, kv_pages).astype(q.dtype)
+  return kernel(*scalar_prefetches, q, kv_pages)
