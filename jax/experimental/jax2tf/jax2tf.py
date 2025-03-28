@@ -1666,17 +1666,18 @@ def _integer_pow(x, *, y: int, _in_avals: Sequence[core.ShapedArray],
 
 
 tf_impl_with_avals[lax.integer_pow_p] = _integer_pow
-tf_impl[lax.exp_p] = tf.math.exp
-tf_impl[lax_internal.exp2_p] = lambda x: \
-    tf.math.exp(tf.math.multiply(tf.math.log(tf.constant(2, x.dtype)), x))
-tf_impl[lax.expm1_p] = tf.math.expm1
-tf_impl[lax.log_p] = tf.math.log
-tf_impl[lax.log1p_p] = tf.math.log1p
-tf_impl[lax.tan_p] = tf.math.tan
-tf_impl[lax.tanh_p] = tf.math.tanh
-tf_impl[lax.sin_p] = tf.math.sin
+tf_impl[lax.exp_p] = lambda x, accuracy: tf.math.exp(x)
+tf_impl[lax_internal.exp2_p] = lambda x, accuracy: tf.math.exp(
+    tf.math.multiply(tf.math.log(tf.constant(2, x.dtype)), x)
+)
+tf_impl[lax.expm1_p] = lambda x, accuracy: tf.math.expm1(x)
+tf_impl[lax.log_p] = lambda x, accuracy: tf.math.log(x)
+tf_impl[lax.log1p_p] = lambda x, accuracy: tf.math.log1p(x)
+tf_impl[lax.tan_p] = lambda x, accuracy: tf.math.tan(x)
+tf_impl[lax.tanh_p] = lambda x, accuracy: tf.math.tanh(x)
+tf_impl[lax.sin_p] = lambda x, accuracy: tf.math.sin(x)
 tf_impl[lax.sinh_p] = tf.math.sinh
-tf_impl[lax.cos_p] = tf.math.cos
+tf_impl[lax.cos_p] = lambda x, accuracy: tf.math.cos(x)
 tf_impl[lax.cosh_p] = tf.math.cosh
 tf_impl_with_avals[lax.atan_p] = _convert_jax_impl(
     lax_internal.atan_impl, multiple_results=False)
@@ -1706,11 +1707,11 @@ tf_impl[lax.asinh_p] = tf.math.asinh
 tf_impl[lax.asin_p] = tf.math.asin
 tf_impl[lax.acos_p] = tf.math.acos
 
-tf_impl[lax.sqrt_p] = tf.math.sqrt
+tf_impl[lax.sqrt_p] = lambda x, accuracy: tf.math.sqrt(x)
 tf_impl[lax.square_p] = tf.math.square
-tf_impl[lax.rsqrt_p] = tf.math.rsqrt
+tf_impl[lax.rsqrt_p] = lambda x, accuracy: tf.math.rsqrt(x)
 
-def _cbrt(x):
+def _cbrt(x, accuracy):
   return tf.math.sign(x) * tf.math.pow(tf.math.abs(x), 1/3)
 
 tf_impl[lax.cbrt_p] = _cbrt

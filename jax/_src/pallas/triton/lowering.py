@@ -654,7 +654,9 @@ def _make_dispatch_table(
     name: str, **tables: Sequence[_Extern | _Fallback]
 ) -> Callable[..., ir.Value]:
 
-  def inner(ctx: LoweringRuleContext, *args: ir.Value) -> ir.Value:
+  def inner(
+      ctx: LoweringRuleContext, *args: ir.Value, **_
+  ) -> ir.Value:
     table = tables[ctx.context.platform]
     h = next((e for e in table if e.matches(ctx.avals_in)), None)
     if h is None:
@@ -1404,7 +1406,7 @@ def _integer_pow_rule(ctx: LoweringRuleContext, x, *, y: int):
 
 _JAX_FN_MAPPING = {
     lax.clamp_p: lambda min, a, max: jnp.minimum(jnp.maximum(min, a), max),
-    lax.logistic_p: lambda a: 1 / (1 + jnp.exp(-a)),
+    lax.logistic_p: lambda a, accuracy: 1 / (1 + jnp.exp(-a)),
 }
 
 for prim, fn in _JAX_FN_MAPPING.items():
