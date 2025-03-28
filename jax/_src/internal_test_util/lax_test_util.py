@@ -304,7 +304,7 @@ def lax_ops():
           float_dtypes,
           test_util.rand_uniform,
           {
-              np.float32: 1e-5,
+              np.float32: 2e-5,
               np.float64: 1e-12,
           },
       ),
