@@ -44,7 +44,7 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
             # Runner OS and Python values need to match the matrix stategy in the CPU tests job
-            runner: ["linux-x86-n2-16", "linux-arm64-t2a-48", "windows-x86-n2-64"]
+            runner: ["linux-x86-n2-16", "linux-arm64-t2a-48", "windows-x86-n2-16"]
             artifact: ["jaxlib"]
             python: ["3.10"]
     # Note: For reasons unknown, Github actions groups jobs with the same top-level name in the
