@@ -25,6 +25,7 @@ import math
 import jax
 from jax import tree_util
 from jax._src import core
+from jax._src import config
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.sharding_impls import (SPMDAxisContext, ShardingContext,
@@ -325,9 +326,10 @@ def ppermute(x, axis_name, perm):
   """
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
-  return tree_util.tree_map(
-      partial(ppermute_p.bind, axis_name=axis_name,
-              perm=tuple(map(tuple, perm))), x)
+  def bind(leaf):
+    leaf = insert_collective_pbroadcast(axis_name, leaf)
+    return ppermute_p.bind(leaf, axis_name=axis_name, perm=tuple(map(tuple, perm)))
+  return tree_util.tree_map(bind, x)
 
 def pshuffle(x, axis_name, perm):
   """Convenience wrapper of jax.lax.ppermute with alternate permutation encoding
@@ -447,6 +449,7 @@ def all_to_all(x, axis_name, split_axis, concat_axis, *, axis_index_groups=None,
       else:  # concat_axis < split_axis
         x = lax.expand_dims(x, (concat_axis,))  # insert the new axis
         split_axis += 1   # we have a new axis before split_axis now
+    x = insert_collective_pbroadcast(axis_name, x)
     result = all_to_all_p.bind(x, split_axis=split_axis, concat_axis=concat_axis,
                                axis_name=axis_name,
                                axis_index_groups=axis_index_groups,
@@ -975,6 +978,7 @@ def _ppermute_batcher(axis_data, vals_in, dims_in, axis_name, perm):
 
 def _raise_to_shaped_abstract_eval(x, *, axis_name, **params):
   _check_axis_names(axis_name)
+  collective_vma_rule('ppermute', axis_name, x)
   return x
 
 ppermute_p = core.Primitive('ppermute')
@@ -1189,7 +1193,8 @@ def _all_to_all_effectful_abstract_eval(
   assert shape[split_axis] % axis_size == 0, (shape[split_axis], axis_size)
   shape[split_axis] //= axis_size
   shape[concat_axis] *= axis_size
-  out_aval = input_aval.update(shape=tuple(shape), weak_type=False)
+  vma = collective_vma_rule('all_to_all', axis_name, input_aval)
+  out_aval = input_aval.update(shape=tuple(shape), weak_type=False, vma=vma)
   effects = {*map(core.NamedAxisEffect, axis_name)}
   return out_aval, effects
 
@@ -1313,6 +1318,19 @@ ad.primitive_transposes[ragged_all_to_all_p] = _ragged_all_to_all_transpose
 mlir.register_lowering(ragged_all_to_all_p, _ragged_all_to_all_lowering)
 batching.skippable_batchers[ragged_all_to_all_p] = partial(_names_in_param, 'axis_name')
 
+def insert_collective_pbroadcast(axis_name, x):
+  if not config.varying_axes_in_types.value:
+    return x
+
+  from jax.experimental import shard_map
+  axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
+  aval = core.get_aval(x)
+  names_union = set(axis_name) | aval.vma
+  pbroadcast_axis_name = tuple(n for n in names_union if n not in aval.vma)
+  if pbroadcast_axis_name:
+    x = shard_map.pbroadcast(x, pbroadcast_axis_name)
+  return x
+
 def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
   """Gather values of x across all replicas.
 
@@ -1382,6 +1400,7 @@ def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   axis_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
   def bind(leaf):
+    leaf = insert_collective_pbroadcast(axis_name, leaf)
     return all_gather_p.bind(
         leaf,
         all_gather_dimension=canonicalize_axis(
@@ -1434,6 +1453,19 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
       **other_args).results
 
 
+def collective_vma_rule(prim_name, axis_name, x_aval):
+  if not config.varying_axes_in_types.value:
+    return frozenset()
+  axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
+  if any(a not in x_aval.vma for a in axis_name):
+    raise ValueError(
+        f"Collective {prim_name} must be applied to a device-varying "
+        f" type, but got {x_aval.vma} for collective acting "
+        f"over axis name {axis_name}. Please open an issue at "
+        "https://github.com/jax-ml/jax/issues and as a temporary "
+        "workaround pass the check_rep=False argument to shard_map")
+  return x_aval.vma
+
 def _all_gather_effectful_abstract_eval(
     x_aval, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled
 ):
@@ -1445,7 +1477,9 @@ def _all_gather_effectful_abstract_eval(
     new_shape[all_gather_dimension] *= axis_size
   else:
     new_shape.insert(all_gather_dimension, axis_size)
-  return x_aval.update(shape=new_shape), {*map(core.NamedAxisEffect, axis_name)}
+  out_vma = collective_vma_rule('all_gather', axis_name, x_aval)
+  return (x_aval.update(shape=new_shape, vma=out_vma),
+          {*map(core.NamedAxisEffect, axis_name)})
 
 def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
   return (psum_scatter(cts, axis_name=axis_name,
@@ -1582,7 +1616,9 @@ def _reduce_scatter_effectful_abstract_eval(
                        f"{scatter_dim_input_size} must match shard count "
                        f"{axis_size}")
     del new_shape[scatter_dimension]
-  return x_aval.update(shape=new_shape), {*map(core.NamedAxisEffect, axis_name)}
+  vma = collective_vma_rule('reduce_scatter', axis_name, x_aval)
+  return (x_aval.update(shape=new_shape, vma=vma),
+          {*map(core.NamedAxisEffect, axis_name)})
 
 
 def _reduce_scatter_transpose_rule(cts, x, *, axis_name, scatter_dimension,
@@ -1726,13 +1762,11 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
     axis_name = axis_name,
   axis_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
-  bind = partial(
-      reduce_scatter_p.bind,
-      axis_name=axis_name,
-      scatter_dimension=scatter_dimension,
-      axis_index_groups=axis_index_groups,
-      axis_size=axis_size,
-      tiled=tiled)
+  def bind(leaf):
+    leaf = insert_collective_pbroadcast(axis_name, leaf)
+    return reduce_scatter_p.bind(
+        leaf, axis_name=axis_name, scatter_dimension=scatter_dimension,
+        axis_index_groups=axis_index_groups, axis_size=axis_size, tiled=tiled)
   return tree_util.tree_map(bind, x)
 
 
