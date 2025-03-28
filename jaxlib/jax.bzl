@@ -255,8 +255,8 @@ def if_building_jaxlib(
         "//conditions:default": [],
     })
 
-def _get_test_deps(deps):
-    jaxlib_build_deps = [
+def _get_test_deps(deps, backend_independent):
+    gpu_build_deps = [
         "//jaxlib/cuda:gpu_only_test_deps",
         "//jaxlib/rocm:gpu_only_test_deps",
         "//jax_plugins:gpu_plugin_only_test_deps",
@@ -273,12 +273,21 @@ def _get_test_deps(deps):
         "//jaxlib/tools:jaxlib_py_import",
     ]
 
+    if backend_independent:
+        jaxlib_build_deps = deps
+        gpu_pypi_wheel_deps = _CPU_PYPI_WHEEL_DEPS
+        gpu_py_import_deps = cpu_py_imports
+    else:
+        jaxlib_build_deps = gpu_build_deps + deps
+        gpu_pypi_wheel_deps = _GPU_PYPI_WHEEL_DEPS
+        gpu_py_import_deps = gpu_py_imports
+
     return select({
-        "//jax:enable_jaxlib_build": jaxlib_build_deps + deps,
+        "//jax:enable_jaxlib_build": jaxlib_build_deps,
         "//jax_plugins/cuda:disable_jaxlib_for_cpu_build": _CPU_PYPI_WHEEL_DEPS,
-        "//jax_plugins/cuda:disable_jaxlib_for_cuda12_build": _GPU_PYPI_WHEEL_DEPS,
+        "//jax_plugins/cuda:disable_jaxlib_for_cuda12_build": gpu_pypi_wheel_deps,
         "//jax_plugins/cuda:enable_py_import_for_cpu_build": cpu_py_imports,
-        "//jax_plugins/cuda:enable_py_import_for_cuda12_build": gpu_py_imports,
+        "//jax_plugins/cuda:enable_py_import_for_cuda12_build": gpu_py_import_deps,
     })
 
 # buildifier: disable=function-docstring
@@ -334,7 +343,7 @@ def jax_multiplatform_test(
             deps = _get_test_deps([
                 "//jax",
                 "//jax:test_util",
-            ] + deps),
+            ] + deps, backend_independent = False),
             data = data,
             shard_count = test_shards,
             tags = test_tags,
@@ -629,15 +638,15 @@ def jax_py_test(
     if "PYTHONWARNINGS" not in env:
         env["PYTHONWARNINGS"] = "error"
     deps = kwargs.get("deps", [])
-    kwargs.pop("deps")
-    test_deps = _get_test_deps(deps)
-    py_test(name = name, env = env, deps = test_deps, **kwargs)
+    test_deps = _get_test_deps(deps, backend_independent = True)
+    kwargs["deps"] = test_deps
+    py_test(name = name, env = env, **kwargs)
 
 def pytype_test(name, **kwargs):
     deps = kwargs.get("deps", [])
-    kwargs.pop("deps")
-    test_deps = _get_test_deps(deps)
-    native.py_test(name = name, deps = test_deps, **kwargs)
+    test_deps = _get_test_deps(deps, backend_independent = True)
+    kwargs["deps"] = test_deps
+    native.py_test(name = name, **kwargs)
 
 def if_oss(oss_value, google_value = []):
     """Returns one of the arguments based on the non-configurable build env.
