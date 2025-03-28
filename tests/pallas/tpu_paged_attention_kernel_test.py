@@ -22,15 +22,12 @@ import jax.numpy as jnp
 import numpy as np
 
 
-jax.config.parse_flags_with_absl()
-
-
-def _generate_qkv(
+def _generate_random_qkv(
     seq_lens,
     page_size,
     max_seq_len,
     num_kv_heads,
-    num_heads,
+    num_q_heads,
     head_dim,
     prng_key,
     dtype=jnp.float32,
@@ -55,7 +52,7 @@ def _generate_qkv(
   page_indices = jnp.arange(batch_size * pages_per_sequence, dtype=jnp.int32)
   page_indices = jax.random.permutation(k3, page_indices, independent=True)
   page_indices = page_indices.reshape(batch_size, pages_per_sequence)
-  q = jax.random.normal(k4, (batch_size, num_heads, head_dim), dtype=dtype)
+  q = jax.random.normal(k4, (batch_size, num_q_heads, head_dim), dtype=dtype)
   return q, k_pages, v_pages, page_indices
 
 
@@ -64,7 +61,7 @@ def _reconstruct_kv(page_indices, pages):
     pages = quantization_utils.unquantize_from_int8(pages, dtype=jnp.float32)
 
   batch_size = page_indices.shape[0]
-  num_heads, _, _, head_dim = pages.shape
+  num_kv_heads, _, _, head_dim = pages.shape
 
   def per_sequence_page_gather(pages, page_indices):
     return jnp.take(pages, page_indices, 1)
@@ -72,15 +69,16 @@ def _reconstruct_kv(page_indices, pages):
   gathered = jax.vmap(per_sequence_page_gather, in_axes=(None, 0))(
       pages, page_indices
   )
-  return gathered.reshape(batch_size, num_heads, -1, head_dim)
+  return gathered.reshape(batch_size, num_kv_heads, -1, head_dim)
 
 
 def _grouped_query_attention_reference(q, k, v, lengths, attn_logits_soft_cap):
-  batch_size, num_heads, head_dim = q.shape
+  batch_size, num_q_heads, head_dim = q.shape
   _, num_kv_heads, max_seq_len, _ = k.shape
   assert k.shape == v.shape
-  assert num_heads % num_kv_heads == 0
-  q = q.reshape(batch_size, num_kv_heads, num_heads // num_kv_heads, head_dim)
+  assert num_q_heads % num_kv_heads == 0
+  num_groups = num_q_heads // num_kv_heads
+  q = q.reshape(batch_size, num_kv_heads, num_groups, head_dim)
 
   if isinstance(k, quantization_utils.QuantizedTensor):
     k = quantization_utils.unquantize_from_int8(k, dtype=jnp.float32)
@@ -97,7 +95,7 @@ def _grouped_query_attention_reference(q, k, v, lengths, attn_logits_soft_cap):
   logits = logits + jnp.where(mask, 0.0, mask_value)[:, None, None, :]
   weights = jax.nn.softmax(logits, axis=-1)
   o = jnp.einsum("bhgt,bhtd->bhgd", weights.astype(v.dtype), v)
-  return o.reshape(batch_size, num_heads, head_dim)
+  return o.reshape(batch_size, num_q_heads, head_dim)
 
 
 def _megacore_enabled():
@@ -149,7 +147,7 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
     max_kv_len = 2048
     block_size = 512
     seq_lens = np.asarray([0, 3, 256, 513, 1023, 2048])
-    q, k_pages, v_pages, page_indices = _generate_qkv(
+    q, k_pages, v_pages, page_indices = _generate_random_qkv(
         seq_lens,
         page_size,
         max_kv_len,
@@ -188,4 +186,5 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
 
 
 if __name__ == "__main__":
+  jax.config.config_with_absl()
   absltest.main(testLoader=jtu.JaxTestLoader())
