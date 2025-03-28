@@ -10,7 +10,10 @@ execute_process(
   OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE XLA_DIR)
 message(STATUS "XLA include directory: ${XLA_DIR}")
 
-find_package(nanobind CONFIG REQUIRED)
+# TODO(dsuo): Relax nanobind versioning once
+# https://github.com/wjakob/nanobind/pull/980 lands.
+
+find_package(nanobind 2.5.0 EXACT CONFIG REQUIRED)
 
 set(
   JAX_FFI_EXAMPLE_CPU_PROJECTS
