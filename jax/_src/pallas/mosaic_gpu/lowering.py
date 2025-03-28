@@ -274,17 +274,6 @@ class _AxisNames:
         self.grid, self.cluster, [self.wg] if self.wg is not None else []
     )
 
-  @classmethod
-  def from_mesh(
-      cls, mesh: gpu_core.GPUMesh, axis_names: Sequence[str]
-  ) -> "_AxisNames":
-    wg_name = None
-    if mesh.num_threads is not None:
-      wg_name = axis_names[-1]
-      axis_names = axis_names[:-1]
-    grid_names, cluster_names = util.split_list(axis_names, [len(mesh.grid)])
-    return cls(grid_names, cluster_names, wg_name)
-
 
 @dataclasses.dataclass
 class ModuleContext:
@@ -552,12 +541,10 @@ def lower_pipelined_jaxpr_to_module(
       block_mappings, [grid_mapping.num_inputs]
   )
 
-  if mesh is not None:
+  if mesh:
     assert isinstance(mesh, gpu_core.GPUMesh)
-  if mesh and mesh.num_threads is not None:
-    # Last dim corresponds to the warpgroup count.
-    block = (128 * grid_mapping.grid[-1], 1, 1)
-    grid = grid_mapping.grid[:-1]
+    block = (128 * (mesh.num_threads or 1), 1, 1)
+    grid = mesh.grid
   else:
     block = (128, 1, 1)
     grid = grid_mapping.grid
@@ -665,9 +652,9 @@ def lower_pipelined_jaxpr_to_module(
     assert not new_consts
 
   axis_names = (
-      _AxisNames.from_mesh(mesh, grid_mapping.grid_names)
+      _AxisNames(mesh.grid_names, mesh.cluster_names, mesh.thread_name)
       if mesh is not None
-      else _AxisNames(grid_mapping.grid_names)
+      else _AxisNames(grid_mapping.grid_names or ())
   )
   with grid_mapping.trace_env():
     return lower_jaxpr_to_module(
