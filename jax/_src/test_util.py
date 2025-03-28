@@ -1632,15 +1632,11 @@ class _LazyDtypes:
       _dtypes.float8_e4m3fnuz,
       _dtypes.float8_e5m2,
       _dtypes.float8_e5m2fnuz,
+      _dtypes.float8_e3m4,
+      _dtypes.float8_e4m3,
+      _dtypes.float8_e8m0fnu,
+      _dtypes.float4_e2m1fn,
     ]
-    if _dtypes.float8_e3m4 is not None:
-      float_dtypes += [_dtypes.float8_e3m4]
-    if _dtypes.float8_e4m3 is not None:
-      float_dtypes += [_dtypes.float8_e4m3]
-    if _dtypes.float8_e8m0fnu is not None:
-      float_dtypes += [_dtypes.float8_e8m0fnu]
-    if _dtypes.float4_e2m1fn is not None:
-      float_dtypes += [_dtypes.float4_e2m1fn]
     return self.supported(float_dtypes)
 
   @_cached_property

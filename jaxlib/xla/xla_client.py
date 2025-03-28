@@ -238,13 +238,10 @@ def CurrentSourceInfoMetadata(op_type=None, op_name=None, skip_frames=1):
 PrimitiveType = _xla.PrimitiveType
 
 bfloat16 = ml_dtypes.bfloat16
-# TODO(reedwm): Uncomment once the minimum ml_dtypes in JAX is >= 0.5.0.
-# Also, it would be better to conditionally import these based on whether they
-# are in the current version of ml_dtypes.
-# float4_e2m1fn = ml_dtypes.float4_e2m1fn
-# float8_e3m4 = ml_dtypes.float8_e3m4
-# float8_e4m3 = ml_dtypes.float8_e4m3
-# float8_e8m0fnu = ml_dtypes.float8_e8m0fnu
+float4_e2m1fn = ml_dtypes.float4_e2m1fn
+float8_e3m4 = ml_dtypes.float8_e3m4
+float8_e4m3 = ml_dtypes.float8_e4m3
+float8_e8m0fnu = ml_dtypes.float8_e8m0fnu
 float8_e4m3fn = ml_dtypes.float8_e4m3fn
 float8_e4m3b11fnuz = ml_dtypes.float8_e4m3b11fnuz
 float8_e4m3fnuz = ml_dtypes.float8_e4m3fnuz
