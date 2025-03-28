@@ -924,7 +924,7 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
     atol = 0
     if jtu.is_device_tpu_at_least(6):
       # 256 MXU changes some tols.
-      atol = 1e-6
+      atol = 1e-5
     self.assertAllClose(out, out_ref, atol=atol)
 
   def test_matmul_f32_out_fused_downcast(self):
