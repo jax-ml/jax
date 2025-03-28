@@ -670,6 +670,25 @@ def receive_from_host(
   return token, result
 
 
+
+def _aval_to_xla_shape(aval: core.AbstractValue) -> xc.Shape:
+  try:
+    return _xla_shape_handlers[type(aval)](aval)
+  except KeyError as err:
+    raise TypeError(f"No xla_shape_handler for type: {type(aval)}") from err
+
+_xla_shape_handlers: dict[type[core.AbstractValue],
+                         Callable[[Any], xc.Shape]] = {}
+
+def _make_array_shape(aval: core.ShapedArray) -> xc.Shape:
+  aval = core.physical_aval(aval)
+  dtype = np.dtype('bool') if aval.dtype == dtypes.float0 else aval.dtype
+  return xc.Shape.array_shape(dtype, aval.shape)
+_xla_shape_handlers[core.ShapedArray] = _make_array_shape
+
+_xla_shape_handlers[core.AbstractToken] = lambda _: xc.Shape.token_shape()
+
+
 def _emit_tpu_python_callback(
     backend: xb.XlaBackend,
     ctx: mlir.LoweringRuleContext,
@@ -699,8 +718,7 @@ def _emit_tpu_python_callback(
     send_channel = ctx.module_context.new_channel()
     dummy_send_aval = core.ShapedArray((1,), np.float32)
     dummy_send_val = mlir.ir_constant(np.zeros(1, np.float32))
-    operand_shapes = [*operand_shapes,
-                      xla.aval_to_xla_shapes(dummy_send_aval)[0]]
+    operand_shapes = [*operand_shapes, _aval_to_xla_shape(dummy_send_aval)]
     token = send_to_host(send_channel, token, dummy_send_val, callback.__name__,
                          sharding=sharding)
     send_channels.append(send_channel)
@@ -763,10 +781,8 @@ def emit_python_callback(
     raise ValueError(
         f"`EmitPythonCallback` not supported on {platform} backend.")
   backend = ctx.module_context.get_backend()
-  result_shapes = util.flatten(
-      [xla.aval_to_xla_shapes(result_aval) for result_aval in result_avals])
-  operand_shapes = util.flatten(
-      [xla.aval_to_xla_shapes(op_aval) for op_aval in operand_avals])
+  result_shapes = [_aval_to_xla_shape(aval) for aval in result_avals]
+  operand_shapes = [_aval_to_xla_shape(aval) for aval in operand_avals]
   # Handling layouts
   if operand_layouts is None:
     operand_layouts = util.concatenate(
@@ -836,10 +852,10 @@ def emit_python_callback(
         return (token, *callback_without_token(*args))
 
       operand_shapes = [
-          xla.aval_to_xla_shapes(core.abstract_token)[0], *operand_shapes
+          _aval_to_xla_shape(core.abstract_token), *operand_shapes
       ]
       result_shapes = [
-          xla.aval_to_xla_shapes(core.abstract_token)[0], *result_shapes
+          _aval_to_xla_shape(core.abstract_token), *result_shapes
       ]
       operands = [token, *operands]
       result_types = [mlir.token_type(), *result_types]

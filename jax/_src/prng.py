@@ -425,7 +425,6 @@ class KeyTyRules:
   @staticmethod
   def device_put_replicated(val, aval, sharding, devices):
     physical_aval = core.physical_aval(aval)
-    assert len(xla.aval_to_xla_shapes(physical_aval)) == 1
     physical_buf = random_unwrap(val)
     phys_sharding = physical_sharding(aval, sharding)
     physical_result = pxla.batched_device_put(

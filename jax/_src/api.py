@@ -82,7 +82,6 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
-from jax._src.interpreters import xla
 
 
 traceback_util.register_exclusion(__file__)
@@ -2591,7 +2590,6 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
     sharding = PmapSharding(np.array(devices), sharding_spec)
     if dtypes.issubdtype(aval.dtype, dtypes.extended):
       return aval.dtype._rules.device_put_replicated(buf, aval, sharding, devices)
-    assert len(xla.aval_to_xla_shapes(aval)) == 1
     return pxla.batched_device_put(aval, sharding, [buf] * len(devices), devices)
 
   with config.explicit_device_put_scope():
