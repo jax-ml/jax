@@ -116,23 +116,16 @@ jobs:
           cuda: ["12.1", "12.8"]
           enable-x64: [1, 0]
           exclude:
-            # L4 does not run on cuda 12.8 but tests other configs
-            - runner: "linux-x86-g2-48-l4-4gpu"
-              cuda: "12.8"
-            # H100 runs only a single config, CUDA 12.3 Enable x64 1
-            - runner: "linux-x86-a3-8g-h100-8gpu"
-              cuda: "12.8"
+            # H100 runs only a single config, CUDA 12.8 Enable x64 1
             - runner: "linux-x86-a3-8g-h100-8gpu"
               cuda: "12.1"
             - runner: "linux-x86-a3-8g-h100-8gpu"
               enable-x64: "0"
             # B200 runs only a single config, CUDA 12.8 Enable x64 1
             - runner: "linux-x86-a4-224-b200-1gpu"
-              enable-x64: "0"
-            - runner: "linux-x86-a4-224-b200-1gpu"
               cuda: "12.1"
             - runner: "linux-x86-a4-224-b200-1gpu"
-              cuda: "12.3"
+              enable-x64: "0"
 
     name: "Pytest CUDA (JAX artifacts version =  ${{ format('{0}', 'head') }})"
     with:
