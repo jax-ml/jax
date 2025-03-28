@@ -67,9 +67,55 @@ OriginStr = str  # The origin of a block spec, e.g. input[2]["field"]
 SEMAPHORE_INTERPRET_DTYPE = jnp.int16
 SEMAPHORE_MAX_VALUE = jnp.iinfo(SEMAPHORE_INTERPRET_DTYPE).max
 
-class semaphore_dtype(dtypes.extended): pass
-class semaphore(semaphore_dtype): pass
-class barrier_semaphore(semaphore_dtype): pass
+class AbstractSemaphoreTyRules:
+  @staticmethod
+  def pallas_interpret_element_aval(_) -> jax_core.ShapedArray:
+    return jax_core.ShapedArray((), SEMAPHORE_INTERPRET_DTYPE)
+
+  @staticmethod
+  def physical_element_aval(_) -> jax_core.ShapedArray:
+    return jax_core.ShapedArray((), jnp.int32)
+
+# TODO(sharadmv): implement dtype rules for AbstractSemaphoreTy
+class AbstractSemaphoreTy(dtypes.ExtendedDType):
+  name: str
+  _rules = AbstractSemaphoreTyRules
+
+  def __repr__(self) -> str:
+    return self.name
+
+  def __eq__(self, other):
+    return self.__class__ == other.__class__
+
+  def __hash__(self) -> int:
+    return hash(self.__class__)
+
+class semaphore_dtype(dtypes.extended):
+  """Common dtype for all kinds of semaphore dtypes.
+
+  This is an abstract class that should never be instantiated, but rather
+  exists for the sake of `jnp.issubdtype`.
+  """
+
+class semaphore(semaphore_dtype):
+  """Regular semaphore dtype.
+
+  Like its superclass, this class should never be instantiated.
+  """
+
+class Semaphore(AbstractSemaphoreTy):
+  name = "semaphore"
+  type = semaphore
+
+class barrier_semaphore(semaphore_dtype):
+  """Barrier semaphore dtype.
+
+  Like its superclass, this class should never be instantiated.
+  """
+
+class BarrierSemaphore(AbstractSemaphoreTy):
+  name = "barrier_semaphore"
+  type = barrier_semaphore
 
 @runtime_checkable
 class CompilerParams(Protocol):
