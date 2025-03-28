@@ -185,23 +185,13 @@ _dtype_to_ir_type : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(np.float64): ir.F64Type.get,
   np.dtype(np.complex64): lambda: ir.ComplexType.get(ir.F32Type.get()),
   np.dtype(np.complex128): lambda: ir.ComplexType.get(ir.F64Type.get()),
+  np.dtype(dtypes.int2): partial(ir.IntegerType.get_signless, 2),
+  np.dtype(dtypes.uint2): partial(ir.IntegerType.get_unsigned, 2),
+  np.dtype(dtypes.float8_e3m4): ir.Float8E3M4Type.get,
+  np.dtype(dtypes.float8_e4m3): ir.Float8E4M3Type.get,
+  np.dtype(dtypes.float8_e8m0fnu): ir.Float8E8M0FNUType.get,
+  np.dtype(dtypes.float4_e2m1fn): ir.Float4E2M1FNType.get,
 }
-
-
-if dtypes.int2 is not None:
-  assert dtypes.uint2 is not None
-  _dtype_to_ir_type[np.dtype(dtypes.int2)] = partial(ir.IntegerType.get_signless, 2)
-  _dtype_to_ir_type[np.dtype(dtypes.uint2)] = partial(ir.IntegerType.get_unsigned, 2)
-
-if dtypes.float8_e3m4 is not None:
-  _dtype_to_ir_type[np.dtype(dtypes.float8_e3m4)] = ir.Float8E3M4Type.get
-if dtypes.float8_e4m3 is not None:
-  _dtype_to_ir_type[np.dtype(dtypes.float8_e4m3)] = ir.Float8E4M3Type.get
-if dtypes.float8_e8m0fnu is not None:
-  _dtype_to_ir_type[np.dtype(dtypes.float8_e8m0fnu)] = ir.Float8E8M0FNUType.get
-
-if dtypes.float4_e2m1fn is not None:
-  _dtype_to_ir_type[np.dtype(dtypes.float4_e2m1fn)] = ir.Float4E2M1FNType.get
 
 def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
   if isinstance(dtype, core.bint):
