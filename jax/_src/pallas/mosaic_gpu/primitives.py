@@ -361,6 +361,7 @@ def _copy_gmem_to_smem_lowering(
     src_transforms_treedef,
     dst_transforms_treedef,
     barrier_transforms_treedef,
+    collective_axes,
 ):
   flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
       util.split_list(
@@ -382,6 +383,12 @@ def _copy_gmem_to_smem_lowering(
     barrier = barrier.__getitem__(
         *map(lowering._as_index, barrier_indexer.indices)
     )
+  collective = None
+  if collective_axes is not None:
+    collective = tuple(
+        lowering._resolve_cluster_axis(ctx.module_ctx.axis_names, axis)
+        for axis in collective_axes
+    )
   dst_ty = ir.MemRefType(dst.type)
   bytes = math.prod(dst_ty.shape) * mgpu.bytewidth(dst_ty.element_type)
   if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
@@ -400,6 +407,7 @@ def _copy_gmem_to_smem_lowering(
         barrier=barrier,
         arrive=False,
         predicate=ctx.module_ctx.single_wg_lane_predicate,
+        collective=collective,
         **copy_params,
     )
     return ()
@@ -425,7 +433,13 @@ def _copy_gmem_to_smem_lowering(
   return ()
 
 
-def copy_gmem_to_smem(src: _Ref, dst: _Ref, barrier: _Ref) -> None:
+def copy_gmem_to_smem(
+    src: _Ref,
+    dst: _Ref,
+    barrier: _Ref,
+    *,
+    collective_axes: str | tuple[str, ...] | None = None,
+) -> None:
   """Asynchronously copies a GMEM reference to a SMEM reference.
 
   See also:
@@ -450,6 +464,8 @@ def copy_gmem_to_smem(src: _Ref, dst: _Ref, barrier: _Ref) -> None:
   flat_barrier_transforms, barrier_transforms_treedef = tree_util.tree_flatten(
       barrier_transforms
   )
+  if isinstance(collective_axes, str):
+    collective_axes = (collective_axes,)
   copy_gmem_to_smem_p.bind(
       src,
       dst,
@@ -460,6 +476,7 @@ def copy_gmem_to_smem(src: _Ref, dst: _Ref, barrier: _Ref) -> None:
       src_transforms_treedef=src_transforms_treedef,
       dst_transforms_treedef=dst_transforms_treedef,
       barrier_transforms_treedef=barrier_transforms_treedef,
+      collective_axes=collective_axes,
   )
   return None
 

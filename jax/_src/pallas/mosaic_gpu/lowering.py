@@ -85,8 +85,9 @@ def _align_to(x: int, alignment: int):
   return x
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class ResourceEstimatorContext:
+  axis_names: _AxisNames
   thread_semantics: mgpu.ThreadSemantics
 
   @property
@@ -98,11 +99,14 @@ class ResourceEstimatorContext:
     )
 
 
+AnyBarrier = mgpu.Barrier | mgpu.ClusterBarrier
+
+
 @dataclasses.dataclass(kw_only=True, frozen=True)
 class Resources:
   smem_scratch_bytes: int = 0
   tmem_scratch_cols: int = 0
-  barrier_counts: collections.Counter[mgpu.Barrier] = dataclasses.field(
+  barrier_counts: collections.Counter[AnyBarrier] = dataclasses.field(
       default_factory=collections.Counter
   )
 
@@ -120,7 +124,7 @@ class Resources:
     )
 
   @property
-  def barriers(self) -> Sequence[mgpu.Barrier]:
+  def barriers(self) -> Sequence[AnyBarrier]:
     return list(self.barrier_counts.elements())
 
   def __add__(self, other: Resources) -> Resources:
@@ -230,6 +234,16 @@ def _run_scoped_resource_estimator(
               )
           ])
       )
+    elif isinstance(aval.dtype, gpu_core.ClusterBarrierType):
+      collective_dims = jax.tree.map(
+          lambda axis: _resolve_cluster_axis(ctx.axis_names, axis),
+          aval.dtype.collective_axes,
+      )
+      rs += Resources(
+          barrier_counts=collections.Counter(
+              [mgpu.ClusterBarrier(collective_dims, *aval.shape)]
+          )
+      )
     elif aval.memory_space == gpu_core.TMEM:
       if aval.dtype.itemsize != 4:
         raise ValueError("TMEM only supports 32-bit types.")
@@ -275,6 +289,9 @@ class _AxisNames:
     )
 
 
+AnyBarrierRef = mgpu.BarrierRef | mgpu.CollectiveBarrierRef
+
+
 @dataclasses.dataclass
 class ModuleContext:
   name: str
@@ -287,9 +304,7 @@ class ModuleContext:
   tmem_requested_cols: int
   tmem_used_cols: int
   tmem_base_ptr: ir.Value
-  runtime_barriers: MutableMapping[
-      mgpu.Barrier, MutableSequence[mgpu.BarrierRef]
-  ]
+  runtime_barriers: MutableMapping[AnyBarrier, MutableSequence[AnyBarrierRef]]
   name_stack: source_info_util.NameStack
   traceback_caches: mlir.TracebackCaches
   squashed_dims: tuple[int, ...]
@@ -399,7 +414,10 @@ class LoweringRuleContext:
 
   @property
   def estimator_ctx(self) -> ResourceEstimatorContext:
-    return ResourceEstimatorContext(thread_semantics=self.module_ctx.thread_semantics)
+    return ResourceEstimatorContext(
+        axis_names=self.module_ctx.axis_names,
+        thread_semantics=self.module_ctx.thread_semantics,
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -746,7 +764,12 @@ def lower_jaxpr_to_module(
         module_ctx, launch_ctx, jaxpr, buffers_gmem, consts
     )
 
-  rs = _estimate_resources(ResourceEstimatorContext(thread_semantics), jaxpr)
+  rs = _estimate_resources(
+      ResourceEstimatorContext(
+          axis_names=axis_names, thread_semantics=thread_semantics
+      ),
+      jaxpr,
+  )
   smem_scratch_bytes = params.get("smem_scratch_bytes")
   if smem_scratch_bytes is None:
     smem_scratch_bytes = rs.smem_scratch_bytes
@@ -1784,23 +1807,43 @@ def _block_id(ctx: LoweringRuleContext, dim: gpu_dialect.Dimension) -> ir.Value:
   return arith_dialect.divui(result, _as_index(cluster_size[dim.value]))
 
 
+def _resolve_cluster_axis(axis_names: _AxisNames | None, axis_name: str):
+  if not axis_names:
+    raise LookupError(
+        "No axis names are available. Make sure you are using `pl.core_map`"
+        " with a `plgpu.GPUMesh`."
+    )
+  if not axis_names or axis_name not in axis_names.cluster:
+    raise LookupError(
+        f"Unknown cluster axis {axis_name}, available axes:"
+        f" {[*axis_names.cluster]}"
+    )
+  return gpu_dialect.Dimension(axis_names.cluster.index(axis_name))
+
+
 @register_lowering_rule(lax.axis_index_p, mgpu.ThreadSemantics.Lane)
 @register_lowering_rule(lax.axis_index_p, mgpu.ThreadSemantics.Warpgroup)
 def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
   axis_names = ctx.module_ctx.axis_names
-  if not axis_names or axis_name not in axis_names:
-    raise ValueError(
-        "Named axes can only refer to GPUMesh axes in Mosaic GPU kernels"
+  if not axis_names:
+    raise LookupError(
+        "No axis names are available. Make sure you are using `pl.core_map`"
+        " with a `plgpu.GPUMesh`."
+    )
+  if axis_name not in axis_names:
+    raise LookupError(
+        f"Unknown axis {axis_name}, available axes: {[*axis_names]}"
     )
 
   if axis_names.wg is not None and axis_name == axis_names.wg:
     return mgpu.warpgroup_idx(sync=True)
 
   if axis_name in axis_names.cluster:
-    idx = axis_names.cluster.index(axis_name)
     return arith_dialect.index_cast(
         ir.IntegerType.get_signless(32),
-        gpu_dialect.cluster_block_id(gpu_dialect.Dimension(idx)),
+        gpu_dialect.cluster_block_id(
+            gpu_dialect.Dimension(axis_names.cluster.index(axis_name))
+        ),
     )
 
   squashed_dims = ctx.module_ctx.squashed_dims
@@ -1910,6 +1953,17 @@ def _run_scoped_lowering_rule(
                     * ctx.estimator_ctx.arrival_multiplier,
                     *aval.shape,
                 )
+            )
+        )
+        should_discharge.append(False)
+      elif isinstance(aval.dtype, gpu_core.ClusterBarrierType):
+        collective_dims = jax.tree.map(
+            lambda axis: _resolve_cluster_axis(ctx.module_ctx.axis_names, axis),
+            aval.dtype.collective_axes,
+        )
+        input_refs.append(
+            ctx.module_ctx.reserve_barrier(
+                mgpu.ClusterBarrier(collective_dims, *aval.shape)
             )
         )
         should_discharge.append(False)

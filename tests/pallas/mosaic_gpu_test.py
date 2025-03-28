@@ -2322,6 +2322,127 @@ class CoreMapTest(PallasTest):
         },
     )
 
+  def test_realistic_matmul_with_cluster(self):
+    dtype = jnp.float16
+    swizzle = 128
+    elems_128b = swizzle // jnp.dtype(dtype).itemsize
+    grid_m, grid_k, grid_n = 132, 10, 32
+    # TODO(slebedev): Remove ``grid_tile_n`` to simplify the test.
+    grid_tile_n = 4
+    assert grid_n % grid_tile_n == 0
+    cluster_m = 2
+    cluster_n = 2
+    cluster_tile_n = min(cluster_n, grid_tile_n)
+    tile_m = tile_n = 128
+    assert tile_m % elems_128b == 0
+    tile_k = elems_128b
+    m, k, n = grid_m * tile_m, grid_k * tile_k, grid_n * tile_n
+
+    transforms = (
+        plgpu.TilingTransform((64, elems_128b)),
+        plgpu.SwizzleTransform(128),
+    )
+
+    max_concurrent_steps = 2
+    delay_release = 1
+
+    @functools.partial(
+        plgpu.kernel,
+        out_shape=jax.ShapeDtypeStruct((m, n), dtype),
+        scratch_shapes=[
+            plgpu.SMEM(
+                (max_concurrent_steps, tile_m, tile_k),
+                dtype,
+                transforms=transforms,
+            ),
+            plgpu.SMEM(
+                (max_concurrent_steps, tile_k, tile_n),
+                dtype,
+                transforms=transforms,
+            ),
+            plgpu.SMEM((tile_m, tile_n), dtype, transforms=transforms),
+            plgpu.ACC((tile_m, tile_n), jnp.float32),
+            plgpu.Barrier(num_arrivals=2, num_barriers=max_concurrent_steps),
+            plgpu.ClusterBarrier(
+                collective_axes=(("x", "z"), "y"),
+                num_barriers=max_concurrent_steps,
+            ),
+        ],
+        grid=(grid_tile_n, grid_m, grid_n // grid_tile_n),
+        grid_names=("tile_n", "m", "n"),
+        cluster=(cluster_tile_n, cluster_m, cluster_n // cluster_tile_n),
+        cluster_names=("x", "y", "z"),
+    )
+    def kernel(
+        a_gmem,
+        b_gmem,
+        o_gmem,
+        a_smem,
+        b_smem,
+        o_smem,
+        acc,
+        barrier,
+        cluster_barrier,
+    ):
+      m_slice = pl.ds(lax.axis_index("m") * tile_m, tile_m)
+      n_slice = pl.ds(
+          (lax.axis_index("tile_n") + lax.axis_index("n") * grid_tile_n)
+          * tile_n,
+          tile_n,
+      )
+
+      def fetch(step, slot):
+        if not isinstance(slot, int):  # Skip in initialization.
+          plgpu.barrier_arrive(cluster_barrier.at[slot])
+          plgpu.barrier_wait(cluster_barrier.at[slot])
+
+        k_slice = pl.ds(step * tile_k, tile_k)
+        plgpu.copy_gmem_to_smem(
+            a_gmem.at[m_slice, k_slice],
+            a_smem.at[slot],
+            barrier.at[slot],
+            collective_axes=("x", "z"),
+        )
+        plgpu.copy_gmem_to_smem(
+            b_gmem.at[k_slice, n_slice],
+            b_smem.at[slot],
+            barrier.at[slot],
+            collective_axes="y",
+        )
+
+      # Initialize the pipeline.
+      for slot in range(min(max_concurrent_steps, grid_k)):
+        fetch(slot, slot)
+
+      def body(step, _):
+        slot = step % max_concurrent_steps
+        plgpu.barrier_wait(barrier.at[slot])
+
+        plgpu.wgmma(acc, a_smem.at[slot], b_smem.at[slot])
+        plgpu.wgmma_wait(delay_release)
+
+        fetch_step = step + (max_concurrent_steps - delay_release)
+        fetch_slot = lax.rem(fetch_step, max_concurrent_steps)
+        jax.lax.cond(
+            lax.bitwise_and(step >= delay_release, fetch_step < grid_k),
+            lambda: fetch(fetch_step, fetch_slot),
+            lambda: None,
+        )
+        return ()
+
+      jax.lax.fori_loop(0, grid_k, body, ())
+
+      # Finalize the pipeline.
+      o_smem[...] = acc[...].astype(dtype)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(o_smem, o_gmem.at[m_slice, n_slice])
+      plgpu.wait_smem_to_gmem(0)
+
+    key1, key2 = jax.random.split(jax.random.key(42), 2)
+    a = jax.random.uniform(key1, shape=(m, k), dtype=dtype)
+    b = jax.random.uniform(key2, shape=(k, n), dtype=dtype)
+    np.testing.assert_array_equal(kernel(a, b), a @ b)
+
 
 class ExamplesTest(PallasTest):
 
