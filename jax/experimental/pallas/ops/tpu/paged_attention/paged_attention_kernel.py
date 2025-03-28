@@ -114,7 +114,7 @@ def paged_flash_attention_kernel(
     lengths_ref,
     page_indices_ref,
     buffer_index_ref,
-    step_ref,
+    init_flag_ref,
     q_ref,
     k_pages_hbm_ref,
     k_scales_pages_hbm_ref,
@@ -223,16 +223,12 @@ def paged_flash_attention_kernel(
 
   @pl.when(i * bk < length)
   def flash_attention():  # pylint: disable=unused-variable
-    step = step_ref[0]
+    init_flag = init_flag_ref[0]
+    init_flag_ref[0] = 0
     buffer_index = buffer_index_ref[0]
+    next_b, next_h, next_i = compute_block_indices(b, h, i + 1)
 
-    @pl.when(i == 0)
-    def init():  # pylint: disable=unused-variable
-      m_ref[...] = jnp.full_like(m_ref, -jnp.inf)
-      l_ref[...] = jnp.zeros_like(l_ref)
-      o_ref[...] = jnp.zeros_like(o_ref)
-
-    @pl.when(step == 0)
+    @pl.when(init_flag)
     def prefetch_first_block():  # pylint: disable=unused-variable
       async_copy_k, async_copy_v = create_kv_async_copy_descriptors(
           b, h, i, buffer_index
@@ -240,7 +236,11 @@ def paged_flash_attention_kernel(
       async_copy_k.start()
       async_copy_v.start()
 
-    next_b, next_h, next_i = compute_block_indices(b, h, i + 1)
+    @pl.when(i == 0)
+    def init():  # pylint: disable=unused-variable
+      m_ref[...] = jnp.full_like(m_ref, -jnp.inf)
+      l_ref[...] = jnp.zeros_like(l_ref)
+      o_ref[...] = jnp.zeros_like(o_ref)
 
     @pl.when(next_b < batch_size)
     def prefetch_next_block():  # pylint: disable=unused-variable
@@ -283,14 +283,12 @@ def paged_flash_attention_kernel(
         (l_prev * alpha * o_ref[...] + beta * o_curr_times_l_curr) / l_next
     ).astype(o_ref.dtype)
 
-    step_ref[0] = step + 1
-
 
 def paged_flash_attention_kernel_inline_seq_dim(
     lengths_ref,
     page_indices_ref,
     buffer_index_ref,
-    step_ref,
+    init_flag_ref,
     q_ref,
     k_pages_hbm_ref,
     k_scales_pages_hbm_ref,
@@ -325,7 +323,7 @@ def paged_flash_attention_kernel_inline_seq_dim(
         lengths_ref,
         page_indices_ref,
         buffer_index_ref,
-        step_ref,
+        init_flag_ref,
         q_ref,
         k_pages_hbm_ref,
         k_scales_pages_hbm_ref,
@@ -631,7 +629,7 @@ def paged_attention(
       ),
       grid_spec=pltpu.PrefetchScalarGridSpec(
           # There are 4 scalars prefetched per kernel call: `lengths_ref`,
-          # `page_indices_ref`, `buffer_index_ref`, `step_ref`
+          # `page_indices_ref`, `buffer_index_ref`, `init_flag_ref`
           num_scalar_prefetch=4,
           in_specs=in_specs,
           out_specs=[
@@ -643,7 +641,8 @@ def paged_attention(
           scratch_shapes=scratch_shapes,
       ),
       compiler_params=pltpu.TPUCompilerParams(
-          dimension_semantics=dimension_semantics),
+          dimension_semantics=dimension_semantics
+      ),
       out_shape=[
           jax.ShapeDtypeStruct(q.shape, q_dtype_for_kernel_launch),
           jax.ShapeDtypeStruct((*q.shape[:-1], 1), jnp.float32),
@@ -653,7 +652,7 @@ def paged_attention(
       lengths,
       page_indices.reshape(-1),
       jnp.zeros((1,), jnp.int32),  # buffer index
-      jnp.zeros((1,), jnp.int32),  # step
+      jnp.ones((1,), jnp.int32),  # init flag
       q.astype(q_dtype_for_kernel_launch),
       k_pages,
       k_scales_pages,
