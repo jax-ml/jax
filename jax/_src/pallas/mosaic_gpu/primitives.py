@@ -93,7 +93,7 @@ def _load_p_lowering_rule(
 
   match transforms:
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
-      if tiling != (64, swizzle // x_aval.dtype.itemsize):
+      if tiling != (8, swizzle // x_aval.dtype.itemsize):
         raise NotImplementedError("Tiling does not fit swizzle")
       return mgpu.FragmentedArray.load_tiled(
           x_ref, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=swizzle,
@@ -722,7 +722,7 @@ def _wgmma_lowering(
     match a_transforms:
       case (gpu_core.UnswizzleRef(lhs_swizzle), gpu_core.UntileRef(tiling)):
         swizzle_elems = lhs_swizzle // a_aval.dtype.itemsize
-        if tiling != (64, swizzle_elems):
+        if tiling != (8, swizzle_elems):
           raise NotImplementedError("WGMMA lhs tiling does not fit swizzle")
       case _:
         raise ValueError(f"WGMMA lhs has unsupported transforms: {a_transforms}.")
@@ -742,9 +742,8 @@ def _wgmma_lowering(
       rhs_transpose = False
     case (
         gpu_core.UnswizzleRef(rhs_swizzle),
-        gpu_core.TransposeRef((1, 0, 2, 3)),  # Only transpose between tiles
         gpu_core.UntileRef(rhs_tiling),
-        gpu_core.TransposeRef((1, 0)),  # Transpose the two logical dims
+        gpu_core.TransposeRef((1, 0)),
     ):
       rhs_transpose = True
     case (
@@ -773,11 +772,11 @@ def _wgmma_lowering(
     swizzle_elems = rhs_swizzle // a_aval.dtype.itemsize
     if rhs_swizzle != lhs_swizzle:
       raise NotImplementedError("WGMMA rhs swizzle must match lhs swizzle")
-    if rhs_tiling != (swizzle_elems, swizzle_elems):
+    if rhs_tiling != (8, swizzle_elems):
       raise NotImplementedError("WGMMA rhs tiling does not fit swizzle")
 
   if rhs_transpose:
-    b = mgpu.memref_transpose(b, (0, 1, 3, 2))
+    b = mgpu.memref_transpose(b, (1, 0, 3, 2))
   new_acc = mgpu.wgmma(acc, a, b, swizzle=rhs_swizzle)
   nvvm_dialect.wgmma_commit_group_sync_aligned()
   return new_acc
