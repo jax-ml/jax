@@ -1,5 +1,7 @@
 [build-system]
-requires = ["scikit-build-core", "nanobind", "jax>=0.4.31"]
+# TODO(dsuo): Remove nanobind pin after
+# https://github.com/wjacob/nanobind/pull/980 lands.
+requires = ["scikit-build-core", "nanobind==2.5.0", "jax>=0.4.31"]
 build-backend = "scikit_build_core.build"
 
 [project]
