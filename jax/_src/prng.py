@@ -199,6 +199,10 @@ class PRNGKeyArray(jax.Array):
     return KeyTy(self._impl)
 
   @property
+  def nbytes(self):
+    return self.itemsize * self.size
+
+  @property
   def itemsize(self):
     return self.dtype.itemsize
 

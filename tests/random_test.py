@@ -657,6 +657,11 @@ class KeyArrayTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "PRNG key seed must be an integer"):
       random.key(seed)
 
+  def test_nbytes_property(self):
+    key = self.make_keys()
+    self.assertEqual(key.nbytes, key._base_array.nbytes)
+    self.assertEqual(key.nbytes, key.itemsize * key.size)
+
   def test_dtype_property(self):
     k1, k2 = self.make_keys(), self.make_keys()
     self.assertEqual(k1.dtype, k2.dtype)
