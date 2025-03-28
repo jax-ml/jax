@@ -39,6 +39,8 @@ licenses(["notice"])  # Apache 2
 
 package(default_visibility = ["//visibility:public"])
 
+exports_files(["wheel_size_test.py"])
+
 genrule(
     name = "platform_tags_py",
     srcs = [],
