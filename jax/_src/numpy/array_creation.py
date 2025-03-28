@@ -50,7 +50,8 @@ def zeros(shape: Any, dtype: DTypeLike | None = None, *,
 
   Args:
     shape: int or sequence of ints specifying the shape of the created array.
-    dtype: optional dtype for the created array; defaults to floating point.
+    dtype: optional dtype for the created array; defaults to float32 or float64
+      depending on the X64 configuration (see :ref:`default-dtypes`).
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
       to which the created array will be committed.
 
@@ -87,7 +88,8 @@ def ones(shape: Any, dtype: DTypeLike | None = None, *,
 
   Args:
     shape: int or sequence of ints specifying the shape of the created array.
-    dtype: optional dtype for the created array; defaults to floating point.
+    dtype: optional dtype for the created array; defaults to float32 or float64
+      depending on the X64 configuration (see :ref:`default-dtypes`).
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
       to which the created array will be committed.
 
@@ -126,7 +128,8 @@ def empty(shape: Any, dtype: DTypeLike | None = None, *,
 
   Args:
     shape: int or sequence of ints specifying the shape of the created array.
-    dtype: optional dtype for the created array; defaults to floating point.
+    dtype: optional dtype for the created array; defaults to float32 or float64
+      depending on the X64 configuration (see :ref:`default-dtypes`).
     device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
       to which the created array will be committed.
 
