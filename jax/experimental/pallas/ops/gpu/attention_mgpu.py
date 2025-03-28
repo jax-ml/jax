@@ -227,8 +227,9 @@ def attention(q, k, v, config: TuningConfig):
       entry,
       out_shape=q,
       grid=(batch_size, num_q_tiles, num_q_heads),
+      grid_names=("batch", "q_seq", "heads"),
       num_threads=3,
-      axis_names=("batch", "q_seq", "heads", "wg"),
+      thread_name="wg",
       compiler_params=plgpu.GPUCompilerParams(approx_math=True),
   )(q, k, v)
 
@@ -366,8 +367,9 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig):
     pipeline(k_ref, v_ref)
   mesh = plgpu.GPUMesh(
       grid=(batch_size, num_q_tiles, num_q_heads),
+      grid_names=("batch", "q_seq", "heads"),
       num_threads=3,
-      axis_names=("batch", "q_seq", "heads", "wg"),
+      thread_name="wg",
   )
   def run(refs):
     q_ref, k_ref, v_ref, out_ref = refs

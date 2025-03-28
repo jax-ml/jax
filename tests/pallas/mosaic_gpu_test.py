@@ -1707,7 +1707,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
             plgpu.SMEM((128, 128), jnp.float32),
         ],
         num_threads=1,
-        axis_names=("x",),
+        thread_name="x",
     )
     def kernel(y_ref, tmem_ref, smem_ref):
       # Issue a write so the TMEM load is not DCE'd.
@@ -2096,8 +2096,9 @@ class WarpSpecializedPipelineTest(PallasTest):
         ),
         compiler_params=plgpu.GPUCompilerParams(approx_math=True),
         grid=(1,),
+        grid_names=("_",),
         num_threads=3,
-        axis_names=("_", "wg"),
+        thread_name="wg",
     )
     out, out_last_block = kernel(x)
     np.testing.assert_array_equal(out, x)
@@ -2130,8 +2131,9 @@ class WarpSpecializedPipelineTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
         compiler_params=plgpu.GPUCompilerParams(approx_math=True),
         grid=(1,),
+        grid_names=("_",),
         num_threads=num_compute_wgs + 1,
-        axis_names=("_", "wg"),
+        thread_name="wg",
     )
     x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float32)
     y = jax.random.uniform(jax.random.key(1), (m, n), dtype=jnp.float32)
@@ -2148,8 +2150,9 @@ class WarpSpecializedPipelineTest(PallasTest):
         ],
         compiler_params=plgpu.GPUCompilerParams(approx_math=True),
         grid=(1,),
+        grid_names=("_",),
         num_threads=num_compute_wgs + 1,
-        axis_names=("_", "wg"),
+        thread_name="wg",
     )
     def kernel(x_gmem, acc_gmem, acc_smem):
       def _compute_thread():
@@ -2204,7 +2207,7 @@ class CoreMapTest(PallasTest):
         plgpu.kernel,
         out_shape=jnp.zeros((2, 128), np.int32),
         num_threads=2,
-        axis_names=("wg",),
+        thread_name="wg",
     )
     def kernel(o_ref):
       wg_idx = jax.lax.axis_index("wg")
@@ -2219,8 +2222,9 @@ class CoreMapTest(PallasTest):
         plgpu.kernel,
         out_shape=jnp.zeros((4, 2, 128), np.int32),
         grid=(2, 2),
+        grid_names=("x", "y"),
         num_threads=2,
-        axis_names=("x", "y", "wg"),
+        thread_name="wg",
     )
     def kernel(o_ref):
       xy_idx = jax.lax.axis_index(("x", "y"))
@@ -2250,8 +2254,9 @@ class CoreMapTest(PallasTest):
             (b, x_dim, y_dim, z_dim, num_threads, 128), np.int32
         ),
         grid=(b, x_dim, y_dim, z_dim),
+        grid_names=("b", "x", "y", "z"),
         num_threads=num_threads,
-        axis_names=("b", "x", "y", "z", "wg"),
+        thread_name="wg",
     )
     def kernel(o_ref):
       b_idx = jax.lax.axis_index("b")
@@ -2277,7 +2282,7 @@ class CoreMapTest(PallasTest):
         # Each warpgroup is a single logical thread!
         scratch_shapes=[plgpu.Barrier(num_arrivals=2)],
         num_threads=2,
-        axis_names=("wg",),
+        thread_name="wg",
     )
     def kernel(o_ref, barrier):
       plgpu.barrier_arrive(barrier)
@@ -2294,8 +2299,9 @@ class CoreMapTest(PallasTest):
         plgpu.kernel,
         out_shape=jnp.zeros(128, np.int32),
         grid=(2,),
+        grid_names=("x",),
         cluster=(2,),
-        axis_names=("x", "cluster"),
+        cluster_names=("cluster",),
     )
     def kernel(ref):
       block_idx = jax.lax.axis_index("x")
@@ -2336,7 +2342,7 @@ class ExamplesTest(PallasTest):
       o_ref[my_slice] = l_ref[my_slice] + r_ref[my_slice]
 
     x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
-    out = plgpu.kernel(body, out_shape=x, grid=(2,), axis_names=("rows",))(x, x)
+    out = plgpu.kernel(body, out_shape=x, grid=(2,), grid_names=("rows",))(x, x)
     np.testing.assert_allclose(out, x + x)
 
   # Async copies
@@ -2351,7 +2357,7 @@ class ExamplesTest(PallasTest):
             plgpu.Barrier(num_arrivals=2),
         ],
         grid=(2,),
-        axis_names=("rows",),
+        grid_names=("rows",),
     )
     def kernel(l_ref, r_ref, o_ref, l_smem, r_smem, o_smem, barrier):
       my_slice = pl.ds(lax.axis_index("rows") * row_block, row_block)
@@ -2382,7 +2388,7 @@ class ExamplesTest(PallasTest):
       )(l_ref, r_ref, o_ref)
 
     x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
-    out = plgpu.kernel(body, out_shape=x, grid=(2,), axis_names=("rows",))(x, x)
+    out = plgpu.kernel(body, out_shape=x, grid=(2,), grid_names=("rows",))(x, x)
     np.testing.assert_allclose(out, x + x)
 
   # Transforms
@@ -2404,7 +2410,7 @@ class ExamplesTest(PallasTest):
       )(l_ref, r_ref, o_ref)
 
     x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
-    out = plgpu.kernel(body, out_shape=x, grid=(2,), axis_names=("rows",))(x, x)
+    out = plgpu.kernel(body, out_shape=x, grid=(2,), grid_names=("rows",))(x, x)
     np.testing.assert_allclose(out, x + x)
 
   def test_semaphore_lowering(self):
@@ -2456,7 +2462,7 @@ class ExamplesSm90ATest(PallasSm90ATest):
       )(l_ref, r_ref, o_ref)
 
     x = jnp.arange(128 * 128, dtype=jnp.float16).reshape(128, 128)
-    out = plgpu.kernel(body, out_shape=x, grid=(2, 2), axis_names=("m", "n"))(x, x)
+    out = plgpu.kernel(body, out_shape=x, grid=(2, 2), grid_names=("m", "n"))(x, x)
     np.testing.assert_allclose(out, x @ x)
 
   # TODO(apaszke): Clusters and multicast

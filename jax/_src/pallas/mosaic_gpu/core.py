@@ -575,22 +575,29 @@ _WARPGROUP_AXIS_NAME = object()
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class GPUMesh:
-  grid: tuple[int, ...] = ()
-  cluster: tuple[int, ...] = ()
+  grid: Sequence[int] = ()
+  grid_names: Sequence[str] = ()
+  cluster: Sequence[int] = ()
+  cluster_names: Sequence[str] = ()
   # Those are NOT CUDA threads. On Hopper they correspond to warpgroups.
   num_threads: int | None = None
-  axis_names: tuple[str, ...] = ()
+  thread_name: str | None = None
 
   def __post_init__(self):
     if len(self.cluster) > 3:
       raise ValueError(f"cluster= must be at most 3D, got {self}.")
-    num_axis_names = (
-        len(self.grid) + len(self.cluster) + (self.num_threads is not None)
-    )
-    if len(self.axis_names) != num_axis_names:
+    if len(self.grid_names) != len(self.grid):
       raise ValueError(
-          "Need an axis name for each grid and cluster dimension plus "
-          f" an additional axis name when num_threads= is given, got {self}."
+          f"grid_names must have the same length as grid, got {self}."
+      )
+    if len(self.cluster_names) != len(self.cluster):
+      raise ValueError(
+          f"cluster_names must have the same length as cluster, got {self}."
+      )
+    if (self.thread_name is None) != (self.num_threads is None):
+      raise ValueError(
+          "num_threads and thread_name must be either both set or both None,"
+          f" got {self}"
       )
     if self.num_threads is not None and self.num_threads > 2048 // 128:
       raise ValueError(
@@ -607,14 +614,13 @@ class GPUMesh:
     pairs: Iterable[tuple[object, int]]
     if self.num_threads is not None:
       pairs = zip(
-          self.axis_names, (*self.grid, *self.cluster, self.num_threads)
+          (*self.grid_names, *self.cluster_names, self.thread_name),
+          (*self.grid, *self.cluster, self.num_threads),
       )
     else:
-      pairs = tuple(
-          zip(
-              (*self.axis_names, _WARPGROUP_AXIS_NAME),
-              (*self.grid, *self.cluster, 1),
-          )
+      pairs = zip(
+          (*self.grid_names, *self.cluster_names),
+          (*self.grid, *self.cluster),
       )
     return collections.OrderedDict(pairs)
 
