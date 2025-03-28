@@ -19,7 +19,6 @@
 from functools import partial
 
 from jax._src import core
-from jax._src import config
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import mesh as mesh_lib
@@ -113,8 +112,7 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
     out_shape, out_dtype, out_sharding = call_shape_dtype_sharding_rule(
         prim, shape_rule, dtype_rule, sharding_rule, False,
         *avals, **kwargs)
-    out_vma = (vma_rule(*avals, **kwargs) if config.varying_axes_in_types.value
-               else frozenset())
+    out_vma = vma_rule(*avals, **kwargs)
     out_aval = core.ShapedArray(
         out_shape, out_dtype, weak_type=weak_type, sharding=out_sharding,
         vma=out_vma)
@@ -141,8 +139,7 @@ def standard_multi_result_abstract_eval(
     core.check_avals_context_mesh(avals, prim.name)
     out_shapes, out_dtypes, out_shardings = call_shape_dtype_sharding_rule(
         prim, shape_rule, dtype_rule, sharding_rule, True, *avals, **kwargs)
-    out_vmas = (vma_rule(*avals, **kwargs) if config.varying_axes_in_types.value
-                else [frozenset()] * len(out_shapes))
+    out_vmas = vma_rule(*avals, **kwargs)
     if isinstance(weak_types, bool):
       weak_types = (weak_types,) * len(out_shapes)
     out_avals = [core.ShapedArray(s, d, weak_type=weak_type, sharding=sh, vma=vma)

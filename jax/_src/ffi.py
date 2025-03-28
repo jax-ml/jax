@@ -24,7 +24,6 @@ import numpy as np
 
 import jax
 from jax._src import core
-from jax._src import config
 from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import effects
@@ -639,8 +638,7 @@ def ffi_call_abstract_eval(
     has_side_effect: bool,
     **_,
 ):
-  out_vma = (core.standard_vma_rule('ffi_call', *avals_in)
-             if config.varying_axes_in_types.value else frozenset())
+  out_vma = core.standard_vma_rule('ffi_call', *avals_in)
   effects = {_FfiEffect} if has_side_effect else core.no_effects
   return tuple(r if r is core.abstract_token else r.update(vma=out_vma)
                for r in result_avals), effects

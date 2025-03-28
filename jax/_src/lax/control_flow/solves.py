@@ -23,7 +23,6 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import core
-from jax._src import config
 from jax._src import custom_derivatives
 from jax._src import linear_util as lu
 from jax._src.interpreters import ad
@@ -325,8 +324,7 @@ def _linear_solve_abstract_eval(*args, const_lengths, jaxprs):
   num_aux = len(jaxprs.solve.out_avals) - len(jaxprs.matvec.out_avals)
   if num_aux > 0:
     args_to_raise += tuple(jaxprs.solve.out_avals[-num_aux:])
-  out_vma = (core.standard_vma_rule('linear_solve', *args_to_raise)
-             if config.varying_axes_in_types.value else frozenset())
+  out_vma = core.standard_vma_rule('linear_solve', *args_to_raise)
   return (tuple(a.update(vma=out_vma) for a in args_to_raise),
           jaxprs.solve.effects)
 

@@ -178,8 +178,8 @@ class PRNGKeyArray(jax.Array):
   def aval(self):
     logical_sharding = (self.sharding if hasattr(self._base_array, 'sharding')
                         else None)
-    vma = (self._base_array.aval.vma if config.varying_axes_in_types.value else frozenset()
-           if hasattr(self._base_array, 'aval') else frozenset())
+    vma = (self._base_array.aval.vma if hasattr(self._base_array, 'aval')
+           else frozenset())
     return keys_shaped_array(self._impl, self.shape, logical_sharding, vma)
 
   @property
@@ -552,8 +552,8 @@ batching.defvectorized(random_seed_p)
 
 @random_seed_p.def_abstract_eval
 def random_seed_abstract_eval(seeds_aval, *, impl):
-  out_vma = seeds_aval.vma if config.varying_axes_in_types.value else frozenset()
-  return keys_shaped_array(impl, seeds_aval.shape, seeds_aval.sharding, out_vma)
+  return keys_shaped_array(impl, seeds_aval.shape, seeds_aval.sharding,
+                           seeds_aval.vma)
 
 @random_seed_p.def_impl
 def random_seed_impl(seeds, *, impl):
@@ -587,9 +587,8 @@ def random_split_abstract_eval(keys_aval, *, shape):
   # TODO(yashkatariya): random_split should take sharding as an arg too so we
   # don't choose None here?
   new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
-  out_vma = keys_aval.vma if config.varying_axes_in_types.value else frozenset()
   return keys_shaped_array(keys_aval.dtype._impl, (*keys_aval.shape, *shape),
-                           keys_aval.sharding.with_spec(new_spec), out_vma)
+                           keys_aval.sharding.with_spec(new_spec), keys_aval.vma)
 
 @random_split_p.def_impl
 def random_split_impl(keys, *, shape):
@@ -629,8 +628,7 @@ def random_fold_in_abstract_eval(keys_aval, msgs_aval):
       'random_fold_in', keys_aval, msgs_aval)
   sharding = lax_internal.broadcasting_sharding_rule(
       'random_fold_in', keys_aval, msgs_aval)
-  vma = (core.standard_vma_rule('random_fold_in', keys_aval, msgs_aval)
-         if config.varying_axes_in_types.value else frozenset())
+  vma = core.standard_vma_rule('random_fold_in', keys_aval, msgs_aval)
   return core.ShapedArray(shape, keys_aval.dtype, sharding=sharding, vma=vma)
 
 @random_fold_in_p.def_impl
@@ -669,8 +667,7 @@ batching.defvectorized(random_bits_p)
 def random_bits_abstract_eval(keys_aval, *, bit_width, shape):
   out_shape = (*keys_aval.shape, *shape)
   out_dtype = dtypes.dtype(f'uint{bit_width}')
-  vma = keys_aval.vma if config.varying_axes_in_types.value else frozenset()
-  return core.ShapedArray(out_shape, out_dtype, vma=vma)
+  return core.ShapedArray(out_shape, out_dtype, vma=keys_aval.vma)
 
 @random_bits_p.def_impl
 def random_bits_impl(keys, *, bit_width, shape):
@@ -727,9 +724,7 @@ ad.defjvp_zero(random_wrap_p)
 def random_wrap_abstract_eval(base_arr_aval, *, impl):
   shape = base_arr_shape_to_keys_shape(impl, base_arr_aval.shape)
   sharding = logical_sharding(shape, KeyTy(impl), base_arr_aval.sharding)
-  out_vma = (base_arr_aval.vma if config.varying_axes_in_types.value else
-             frozenset())
-  return keys_shaped_array(impl, shape, sharding, out_vma)
+  return keys_shaped_array(impl, shape, sharding, base_arr_aval.vma)
 
 @random_wrap_p.def_impl
 def random_wrap_impl(base_arr, *, impl):
