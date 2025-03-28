@@ -63,7 +63,6 @@ from jax._src.interpreters.mlir import (
   register_lowering as register_lowering,
   shape_tensor as shape_tensor,
   token_type as token_type,
-  xla_computation_to_mlir_module as xla_computation_to_mlir_module,
 )
 
 from jax._src.mesh import Mesh as Mesh

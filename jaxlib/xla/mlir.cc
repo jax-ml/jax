@@ -75,6 +75,17 @@ void EnablePrintBeforeAndAfter(mlir::PassManager& pm) {
   pm.enableIRPrinting(print_before, print_after);
 }
 
+absl::StatusOr<nb::bytes> HloToStableHlo(const nb::bytes& hlo_module_proto) {
+  mlir::MLIRContext context;
+  if (VLOG_IS_ON(3)) context.disableMultithreading();
+  HloModuleProto proto;
+  proto.ParseFromArray(hlo_module_proto.c_str(), hlo_module_proto.size());
+  TF_ASSIGN_OR_RETURN(mlir::OwningOpRef<mlir::ModuleOp> module,
+                      ConvertHloToStablehlo(context, &proto));
+  TF_ASSIGN_OR_RETURN(std::string bytecode, SerializeUsingBytecode(*module));
+  return nb::bytes(bytecode.data(), bytecode.size());
+}
+
 // Converts an XlaComputation to a StableHLO mlir::Module string.
 // Exists for backwards compatibility.
 // TODO(phawkins): port remaining users of XlaComputations to use mlir::Modules
@@ -179,6 +190,9 @@ absl::StatusOr<std::string> PyDeserializePortableArtifact(
 
 void BuildMlirSubmodule(nb::module_& m) {
   nb::module_ mlir_module = m.def_submodule("mlir", "MLIR/XLA integration");
+
+  mlir_module.def("hlo_to_stablehlo", xla::ValueOrThrowWrapper(HloToStableHlo),
+                  nb::arg("computation"));
 
   mlir_module.def("xla_computation_to_mlir_module",
                   xla::ValueOrThrowWrapper(PyXlaComputationToMlirModule),

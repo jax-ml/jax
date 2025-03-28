@@ -16,6 +16,7 @@
 from typing import Union
 from . import XlaComputation
 
+def hlo_to_stablehlo(computation: bytes) -> bytes: ...
 def xla_computation_to_mlir_module(computation: XlaComputation) -> str: ...
 def mlir_module_to_xla_computation(
     mlir_module: Union[bytes, str],
