@@ -1281,6 +1281,13 @@ compilation_cache_max_size = int_state(
           'Caching will be disabled if this value is set to 0. A '
           'special value of -1 indicates no limit, allowing the cache '
           'size to grow indefinitely.'),
+    )
+
+captured_constants_warn_bytes = int_state(
+    name='jax_captured_constants_warn_bytes',
+    default=int_env('JAX_CAPTURED_CONSTANTS_WARN_BYTES', 2 ** 24),
+    help=('The number of bytes of parameters that may be captured as constants '
+          'before a warning is issued.')
 )
 
 remove_custom_partitioning_ptr_from_cache_key = bool_state(

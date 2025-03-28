@@ -1403,6 +1403,22 @@ class TokenSet:
         new_tokens.append((eff, self._tokens[eff]))
     return TokenSet(new_tokens)
 
+def check_captured_constants_bytes(jaxpr):
+  if (thresh := config.captured_constants_warn_bytes.value) == -1:
+    return
+
+  consts_bytes = sum(map(lambda const: getattr(const, "nbytes", 0), jaxpr.consts))
+  if consts_bytes == 0:
+    return
+
+  if consts_bytes >= thresh:
+    message = (
+      f"Large amount of captured constants detected during lowering ({consts_bytes} bytes). "
+      "Capturing constants is commonly associated with long compile times. "
+      "If this is intentional, disable this warning by setting JAX_CAPTURED_CONSTANTS_WARN_BYTES=-1."
+    )
+    warnings.warn(message)
+
 def lower_jaxpr_to_fun(
     ctx: ModuleContext,
     name: str,
@@ -1725,6 +1741,8 @@ def lower_jaxpr_to_fun(
       callee_name_stack = name_stack.extend(util.wrap_name(name, api_name))
     else:
       callee_name_stack = name_stack
+
+    check_captured_constants_bytes(jaxpr)
     consts = [ir_constant(xla.canonicalize_dtype(x)) for x in jaxpr.consts]
     out_vals, tokens_out = jaxpr_subcomp(
         ctx, jaxpr.jaxpr, callee_name_stack, tokens_in,
