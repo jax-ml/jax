@@ -17,6 +17,10 @@ Memory and computation usage:
 Programmer guardrails:
   - :doc:`rank_promotion_warning` describes how to configure :mod:`jax.numpy` to avoid implicit rank promotion.
 
+Arrays and data types:
+  - :doc:`type_promotion` describes JAX's implicit type promotion for functions of two or more values.
+  - :doc:`default_dtypes` describes how JAX determines the default dtype for array creation functions.
+
 
 .. toctree::
    :hidden:
@@ -28,3 +32,5 @@ Programmer guardrails:
    concurrency
    gpu_memory_allocation
    rank_promotion_warning
+   type_promotion
+   default_dtypes
