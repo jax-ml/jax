@@ -203,6 +203,7 @@ def pmax(x, axis_name, *, axis_index_groups=None):
   _validate_reduce_axis_index_groups(axis_index_groups)
   leaves, treedef = tree_util.tree_flatten(x)
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
+  leaves = map(partial(insert_collective_pbroadcast, axis_name), leaves)
   out_flat = pmax_p.bind(*leaves, axes=axis_name,
                          axis_index_groups=axis_index_groups)
   return tree_util.tree_unflatten(treedef, out_flat)
@@ -233,6 +234,7 @@ def pmin(x, axis_name, *, axis_index_groups=None):
   _validate_reduce_axis_index_groups(axis_index_groups)
   leaves, treedef = tree_util.tree_flatten(x)
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
+  leaves = map(partial(insert_collective_pbroadcast, axis_name), leaves)
   out_flat = pmin_p.bind(*leaves, axes=axis_name,
                          axis_index_groups=axis_index_groups)
   return tree_util.tree_unflatten(treedef, out_flat)
@@ -803,6 +805,48 @@ def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
   ]
   return out_avals, {core.NamedAxisEffect(axis) for axis in named_axes}
 
+def _psum2_abstract_eval(name, *args, axes, axis_index_groups):
+  if not config.varying_axes_in_types.value:
+    return psum_p.abstract_eval(
+        *args, axes=axes, axis_index_groups=axis_index_groups)
+
+  assert isinstance(axes, tuple)
+  _check_axis_names(axes)
+  arg_vma = [a.vma for a in args]
+  # If intersection between arg_vma and axes is empty, error
+  if any(not set(axes) & a for a in arg_vma):
+    raise ValueError(
+        f"Collective {name} must be applied to a device-varying "
+        f"type, but got {arg_vma} for collective acting "
+        f"over axis name {axes}. Please open an issue at "
+        "https://github.com/jax-ml/jax/issues, and as a temporary "
+        "workaround pass the check_rep=False argument to shard_map")
+
+  named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
+  pos_axes = tuple(axis for axis in axes if isinstance(axis, int))
+  if axis_index_groups is not None:
+    if len(pos_axes) != 0:
+      raise ValueError(
+          "axis_index_groups can only be used with reductions over "
+          f"named axes, but got: {axes}")
+  core.check_avals_context_mesh(args, 'all_reduce')
+  out_avals = [
+      core.ShapedArray(
+          lax._reduce_op_shape_rule(arg, axes=pos_axes), arg.dtype,
+          sharding=lax._reduce_op_sharding_rule(arg, axes=pos_axes),
+          vma=frozenset(a for a in arg.vma if a not in named_axes))
+      for arg in args
+  ]
+  return out_avals, {core.NamedAxisEffect(axis) for axis in named_axes}
+
+# TODO(yashkatariya): Replace this with _psum2_abstract_eval
+def _pmin_pmax_abstract_eval(name, *args, axes, axis_index_groups):
+  if not config.varying_axes_in_types.value:
+    return _allreduce_effectful_abstract_eval(
+        *args, axes=axes, axis_index_groups=axis_index_groups)
+  return _psum2_abstract_eval(name, *args, axes=axes,
+                              axis_index_groups=axis_index_groups)
+
 def _check_axis_names(axes):
   named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
   axis_env = core.get_axis_env()
@@ -902,7 +946,7 @@ batching.skippable_batchers[psum_p] = partial(_names_in_param, 'axes')
 pmax_p = core.Primitive('pmax')
 pmax_p.multiple_results = True
 pmax_p.def_impl(partial(_allreduce_impl, pmax_p, lax.reduce_max))
-pmax_p.def_effectful_abstract_eval(_allreduce_effectful_abstract_eval)
+pmax_p.def_effectful_abstract_eval(partial(_pmin_pmax_abstract_eval, 'pmax'))
 mlir.register_lowering(
     pmax_p, partial(_allreduce_lowering, lax.max_p, lax.reduce_max))
 batching.fancy_primitive_batchers[pmax_p] = \
@@ -913,7 +957,7 @@ batching.skippable_batchers[pmax_p] = partial(_names_in_param, 'axes')
 pmin_p = core.Primitive('pmin')
 pmin_p.multiple_results = True
 pmin_p.def_impl(partial(_allreduce_impl, pmin_p, lax.reduce_min))
-pmin_p.def_effectful_abstract_eval(_allreduce_effectful_abstract_eval)
+pmin_p.def_effectful_abstract_eval(partial(_pmin_pmax_abstract_eval, 'pmin'))
 mlir.register_lowering(
     pmin_p, partial(_allreduce_lowering, lax.min_p, lax.reduce_min))
 batching.fancy_primitive_batchers[pmin_p] = \

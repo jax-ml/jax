@@ -2686,6 +2686,16 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertArraysEqual(y, np.array([6, 7], dtype=np.float32))
 
   @config.varying_axes_in_types(True)
+  def test_pmax_vma_in_types(self):
+    mesh = jtu.create_mesh((4,), ('i',))
+    x = jnp.arange(8., dtype=np.float32)
+    f = jax.jit(shard_map(lambda x: jax.lax.pmax(x, 'i'), mesh=mesh,
+                          in_specs=P(), out_specs=P()))
+    jaxpr = f.trace(x).jaxpr
+    self.assertIn("pbroadcast[axes=('i',)", str(jaxpr))
+    f(x)  # doesn't crash
+
+  @config.varying_axes_in_types(True)
   def test_mul_with_vma_in_types(self):
     mesh = jtu.create_mesh((2,), ('x',))
     x = np.arange(8.)
