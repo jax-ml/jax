@@ -274,14 +274,13 @@ def paged_flash_attention_kernel(
     alpha = jnp.exp(m_prev - m_next)
     beta = jnp.exp(m_curr - m_next)
     l_next = alpha * l_prev + beta * l_curr
-    l_next_safe = jnp.where(l_next == 0.0, 1.0, l_next)
+    m_ref[...], l_ref[...] = m_next, l_next
 
     v = async_copy_v.wait_and_get_loaded()
     o_curr_times_l_curr = jnp.dot(s_curr, v)
 
-    m_ref[...], l_ref[...] = m_next, l_next_safe
     o_ref[...] = (
-        (l_prev * alpha * o_ref[...] + beta * o_curr_times_l_curr) / l_next_safe
+        (l_prev * alpha * o_ref[...] + beta * o_curr_times_l_curr) / l_next
     ).astype(o_ref.dtype)
 
     step_ref[0] = step + 1
