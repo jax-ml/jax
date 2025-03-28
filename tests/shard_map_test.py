@@ -2707,6 +2707,23 @@ class ShardMapTest(jtu.JaxTestCase):
     #   return jnp.sum(f(x, y))
     # print(jax.jit(jax.grad(g)).trace(x, y).jaxpr)
 
+  @config.varying_axes_in_types(True)
+  def test_all_gather_with_vma_in_types(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+    x = np.arange(8.)
+
+    def f(x):
+      self.assertEqual(x.aval.vma, frozenset())
+      out = jax.lax.all_gather(x, 'x')
+      self.assertEqual(out.aval.vma, frozenset({'x'}))
+      return out
+
+    f = jax.jit(shard_map(f, mesh=mesh, in_specs=P(), out_specs=P('x')))
+    jaxpr = f.trace(x).jaxpr
+    self.assertIn("pbroadcast[axes=('x',)", str(jaxpr))
+
+    f(x)  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str
