@@ -120,6 +120,25 @@ class GPUMemorySpace(enum.Enum):
     return GPUMemoryRef(shape, dtype, memory_space=self, transforms=transforms)
 
 
+class SemaphoreType(enum.Enum):
+  REGULAR = "regular"
+  BARRIER = "barrier"
+
+  def __call__(self, shape: tuple[int, ...]):
+    dtype: Any
+    if self == SemaphoreType.BARRIER:
+      dtype = pallas_core.BarrierSemaphore()
+    else:
+      dtype = pallas_core.Semaphore()
+    return pallas_core.MemoryRef(shape, dtype, GPUMemorySpace.GMEM)
+
+  def get_array_aval(self) -> jax_core.ShapedArray:
+    return self(()).get_array_aval()
+
+  def get_ref_aval(self) -> pallas_core.TransformedRef | AbstractMemoryRef:
+    return self(()).get_ref_aval()
+
+
 def kernel(
     body: Callable[..., None],
     out_shape: object,

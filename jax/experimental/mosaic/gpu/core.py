@@ -104,6 +104,7 @@ def _mosaic_gpu_lowering_rule(
     out_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
 ):
+  assert len(args) == len(ctx.avals_in)
   assert len(out_types) == len(ctx.avals_out)
   module = _run_serde_pass(
       module,

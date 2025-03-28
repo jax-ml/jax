@@ -418,8 +418,9 @@ class LoweringResult:
   module: ir.Module
   grid: tuple[int, ...]
   block: tuple[int, ...]
-  out_structs: tuple[jax.ShapeDtypeStruct, ...]
+  new_out_shapes: tuple[jax.ShapeDtypeStruct, ...]  # Does not include gmem scratch!
   profiler_context: ProfilerContext | None
+  gmem_scratch_shapes: tuple[jax.ShapeDtypeStruct, ...]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -588,16 +589,41 @@ def lower_pipelined_jaxpr_to_module(
     else:
       return gpu_core.SMEM(aval.shape, aval.dtype)
 
+  sem_placeholder = None
+  semaphore_ref_avals = []
+  scratch_avals = []
+  # Need to unzip semaphores
+  for v in jaxpr.invars[grid_mapping.slice_scratch_ops]:
+    aval = v.aval
+    if (isinstance(aval, pallas_core.AbstractMemoryRef) and
+        jnp.issubdtype(aval.dtype, pallas_core.semaphore_dtype)):
+      if aval.memory_space != gpu_core.GPUMemorySpace.GMEM:
+        raise ValueError(
+            "Only GMEM memory space is supported for semaphores in Mosaic GPU."
+        )
+      semaphore_ref_avals.append(aval)
+      scratch_avals.append(sem_placeholder)
+    else:
+      scratch_avals.append(aval)
+
   def pipeline_fn(*refs):
-    return primitives.run_scoped(
-        functools.partial(scoped_pipeline_fn, *refs),
+    sem_refs = []
+    if semaphore_ref_avals:
+      refs, sem_refs = util.split_list(refs, [-len(semaphore_ref_avals)])
+    primitives.run_scoped(
+        functools.partial(scoped_pipeline_fn, *refs, sem_refs=sem_refs),
         scratch_refs=[
-            ref_for_aval(v.aval)
-            for v in jaxpr.invars[grid_mapping.slice_scratch_ops]
+            ref_for_aval(aval) if aval is not sem_placeholder else aval
+            for aval in scratch_avals
         ],
     )
+    return ()  # ``wrap_init`` does not support functions returning None.
 
-  def scoped_pipeline_fn(*refs, scratch_refs):
+  def scoped_pipeline_fn(*refs, sem_refs, scratch_refs):
+    sem_refs_it = iter(sem_refs)
+    scratch_refs = [
+        next(sem_refs_it) if r is sem_placeholder else r for r in scratch_refs
+    ]
     def body_fn(*refs):
       grid_env = pallas_core.current_grid_env()
       assert grid_env is not None  # Set by ``emit_pipeline``.
@@ -628,17 +654,13 @@ def lower_pipelined_jaxpr_to_module(
 
   with grid_mapping.trace_env():
     new_jaxpr, _, new_consts, () = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(
-            # ``wrap_init`` does not support functions returning None.
-            lambda *args: pipeline_fn(*args) or (),
-            debug_info=jaxpr.debug_info,
-        ),
+        lu.wrap_init(pipeline_fn, debug_info=jaxpr.debug_info),
         [
             gpu_core.GMEM(
                 bm.array_shape_dtype.shape, bm.array_shape_dtype.dtype
             ).get_ref_aval()
             for bm in block_mappings
-        ],
+        ] + semaphore_ref_avals,
     )
     assert not new_consts
 
@@ -655,6 +677,10 @@ def lower_pipelined_jaxpr_to_module(
         mesh.cluster if mesh is not None else (),
         [bm.array_shape_dtype for bm in in_block_mappings],
         [bm.array_shape_dtype for bm in out_block_mappings],
+        [
+            jax.ShapeDtypeStruct(r.shape, np.dtype(np.int32))
+            for r in semaphore_ref_avals
+        ],
         new_jaxpr,
         compiler_params,
         new_consts,
@@ -668,6 +694,7 @@ def lower_jaxpr_to_module(
     cluster: Sequence[int],
     in_shapes: Sequence[jax.ShapeDtypeStruct],
     out_shapes: Sequence[jax.ShapeDtypeStruct],
+    gmem_scratch_shapes: Sequence[jax.ShapeDtypeStruct],
     jaxpr: jax_core.Jaxpr,
     compiler_params: dict[str, Any],
     consts=(),
@@ -754,14 +781,14 @@ def lower_jaxpr_to_module(
     # Each range is 2 events, each event is 4 bytes.
     prof_spec = mgpu_profiler.ProfilerSpec(prof_space * 2 * 4)
     prof_ctx = ProfilerContext(params["profile_dir"], prof_spec)
-  module, out_structs_gmem, _, launch_ctx, scratch_arr = (
+  module, new_out_shapes, _, launch_ctx, scratch_arr = (
       mgpu_core._lower_as_gpu_kernel(
           body,
           grid=tuple(map(operator.mul, parallel_grid, cluster)),
           cluster=cluster,
           block=block,
           in_shapes=in_shapes,
-          out_shape=out_shapes,
+          out_shape=(*out_shapes, *gmem_scratch_shapes),
           smem_scratch_shape=scratch_buffers,
           module_name=mlir.sanitize_name(debug_info.func_name),
           prof_spec=prof_spec,
@@ -777,8 +804,11 @@ def lower_jaxpr_to_module(
 
   mgpu_core._initialize_scratch(launch_ctx, scratch_arr)
 
+  if gmem_scratch_shapes:
+    new_out_shapes = new_out_shapes[:-len(gmem_scratch_shapes)]
+
   return LoweringResult(
-      module, parallel_grid, block, out_structs_gmem, prof_ctx
+      module, parallel_grid, block, new_out_shapes, prof_ctx, tuple(gmem_scratch_shapes)
   )
 
 

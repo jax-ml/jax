@@ -2408,6 +2408,30 @@ class ExamplesTest(PallasTest):
     out = plgpu.kernel(body, out_shape=x, grid=(2,), axis_names=("rows",))(x, x)
     np.testing.assert_allclose(out, x + x)
 
+  def test_semaphore_lowering(self):
+    # This is a smoke test until we add support for lowering of semaphore ops.
+    def body(i_ref1, i_ref2, o_ref, sem_ref):
+      del i_ref2  # Only here to have a different number of inputs and outputs.
+      assert sem_ref.shape == (4,)
+      assert jnp.issubdtype(sem_ref.dtype, pl.semaphore)
+      o_ref[...] = i_ref1[...]
+    x = jnp.arange(128, dtype=jnp.float32).reshape((128,))
+    kernel = pl.pallas_call(
+        body, out_shape=x, scratch_shapes=[plgpu.SemaphoreType.REGULAR((4,))],
+    )
+    text = jax.jit(kernel).lower(x, x).as_text()
+    self.assertIn(
+        r"output_operand_aliases ="
+        r" [#stablehlo.output_operand_alias<output_tuple_indices = [1],"
+        r" operand_index = 2, operand_tuple_indices = []>]",
+        text,
+    )
+    self.assertIn(
+        r"(tensor<128xf32>, tensor<128xf32>, tensor<4xi32>) ->"
+        r" (tensor<128xf32>, tensor<4xi32>)",
+        text,
+    )
+
 
 class ExamplesSm90ATest(PallasSm90ATest):
 
