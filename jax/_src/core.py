@@ -1528,7 +1528,7 @@ def check_valid_jaxtype(x):
 
 def update_aval_with_sharding(aval, sharding):
   if isinstance(sharding, NamedSharding):
-    aval = aval.update(sharding=NamedSharding(
+    return aval.update(sharding=NamedSharding(
         sharding.mesh.abstract_mesh,
         sharding.spec._normalized_spec_for_aval(aval.ndim)))
   return aval
@@ -1659,8 +1659,10 @@ def physical_aval(aval):
     elt_aval = physical_element_aval(aval.dtype)
     if isinstance(aval, ShapedArray):
       from jax._src.sharding_impls import physical_sharding  # type: ignore
+      vma = aval.vma if config.varying_axes_in_types.value else frozenset()
       return ShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype,
-                         sharding=physical_sharding(aval, aval.sharding))
+                         sharding=physical_sharding(aval, aval.sharding),
+                         vma=vma)
     return DShapedArray((*aval.shape, *elt_aval.shape), elt_aval.dtype)
   return aval
 
@@ -2019,6 +2021,8 @@ def standard_insert_pbroadcast(*args):
           if out_vma - src else arg for arg, src in zip(args, in_vma)]
 
 def standard_vma_rule(prim_name, *avals, **kwargs):
+  if not avals:
+    return avals
   vma, *vmas = [a.vma for a in avals]
   if not all(vma == vma_ for vma_ in vmas):
     raise ValueError(
