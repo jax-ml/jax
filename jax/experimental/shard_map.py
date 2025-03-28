@@ -1072,40 +1072,8 @@ eager_rules[dispatch.device_put_p] = _device_put_eager_rule
 psum2_p = core.Primitive('psum2')
 psum2_p.multiple_results = True
 psum2_p.def_impl(lax_parallel.psum_p.impl)
-
-def _psum2_abstract_eval(*args, axes, axis_index_groups):
-  if not config.varying_axes_in_types.value:
-    return lax_parallel.psum_p.abstract_eval(
-        *args, axes=axes, axis_index_groups=axis_index_groups)
-
-  assert isinstance(axes, tuple)
-  lax_parallel._check_axis_names(axes)
-  arg_vma = [a.vma for a in args]
-  if any(not set(axes) & a for a in arg_vma):
-    raise ValueError(
-        "Collective psum must be applied to a device-varying "
-        f"type, but got {arg_vma} for collective acting "
-        f"over axis name {axes}. Please open an issue at "
-        "https://github.com/jax-ml/jax/issues, and as a temporary "
-        "workaround pass the check_rep=False argument to shard_map")
-
-  named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
-  pos_axes = tuple(axis for axis in axes if isinstance(axis, int))
-  if axis_index_groups is not None:
-    if len(pos_axes) != 0:
-      raise ValueError(
-          "axis_index_groups can only be used with reductions over "
-          f"named axes, but got: {axes}")
-  core.check_avals_context_mesh(args, 'all_reduce')
-  out_avals = [
-      core.ShapedArray(
-          lax._reduce_op_shape_rule(arg, axes=pos_axes), arg.dtype,
-          sharding=lax._reduce_op_sharding_rule(arg, axes=pos_axes),
-          vma=frozenset(a for a in arg.vma if a not in named_axes))
-      for arg in args
-  ]
-  return out_avals, {core.NamedAxisEffect(axis) for axis in named_axes}
-psum2_p.def_effectful_abstract_eval(_psum2_abstract_eval)
+psum2_p.def_effectful_abstract_eval(
+    partial(lax_parallel._psum2_abstract_eval, psum2_p.name))
 
 mlir.register_lowering(psum2_p, mlir._lowerings[lax_parallel.psum_p])
 batching.fancy_primitive_batchers[psum2_p] = \
@@ -1135,6 +1103,7 @@ def _pbroadcast_abstract_eval(*args, axes, axis_index_groups):
     return args
   assert isinstance(axes, tuple)
   arg_vma = [a.vma for a in args]
+  # If there is intersection between arg_vma and axes, error
   if any(set(axes) & a for a in arg_vma):
     raise ValueError(
         "Collective pbroadcast must be applied to a "
