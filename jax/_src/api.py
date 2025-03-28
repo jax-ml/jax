@@ -2269,13 +2269,16 @@ def make_jaxpr(
   >>> print(f(3.0))
   -0.83602
   >>> jax.make_jaxpr(f)(3.0)
-  { lambda ; a:f32[]. let b:f32[] = cos a; c:f32[] = sin b in (c,) }
+  { lambda ; a:f32[]. let
+        b:f32[] = cos[accuracy=None] a
+        c:f32[] = sin[accuracy=None] b
+      in (c,) }
   >>> jax.make_jaxpr(jax.grad(f))(3.0)
   { lambda ; a:f32[]. let
-      b:f32[] = cos a
-      c:f32[] = sin a
-      _:f32[] = sin b
-      d:f32[] = cos b
+      b:f32[] = cos[accuracy=None] a
+      c:f32[] = sin[accuracy=None] a
+      _:f32[] = sin[accuracy=None] b
+      d:f32[] = cos[accuracy=None] b
       e:f32[] = mul 1.0 d
       f:f32[] = neg e
       g:f32[] = mul f c

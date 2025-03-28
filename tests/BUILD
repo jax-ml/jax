@@ -1640,6 +1640,20 @@ jax_multiplatform_test(
     deps = ["//jax:experimental"],
 )
 
+jax_multiplatform_test(
+    name = "unary_ops_accuracy_test",
+    srcs = ["unary_ops_accuracy_test.py"],
+    disable_configs = [
+        "tpu_pjrt_c_api",
+    ],
+    enable_backends = [
+        "tpu",
+    ],
+    deps = [
+        "//jax:experimental",
+    ],
+)
+
 jax_py_test(
     name = "pretty_printer_test",
     srcs = ["pretty_printer_test.py"],

@@ -204,7 +204,7 @@ UNARY_PRIMITIVES = [
     # TODO(sharadmv,apaszke): enable zero dim sizes
     # TODO(sharadmv,apaszke): enable one dim sizes
     (
-        lax.neg_p,
+        lax.neg_p, {},
         make_shape_dtype_strategy(
             min_rank=2,
             max_rank=3,
@@ -214,7 +214,7 @@ UNARY_PRIMITIVES = [
         ),
     ),
     (
-        lax.not_p,
+        lax.not_p, {},
         make_shape_dtype_strategy(
             min_rank=2,
             max_rank=3,
@@ -226,6 +226,7 @@ UNARY_PRIMITIVES = [
     *[
         (
             prim,
+            params,
             make_shape_dtype_strategy(
                 min_rank=2,
                 max_rank=3,
@@ -234,23 +235,23 @@ UNARY_PRIMITIVES = [
                 valid_dtypes=[jnp.dtype("float32")],
             ),
         )
-        for prim in [
-            lax.exp_p,
-            lax.tanh_p,
-            lax.logistic_p,
-            lax.rsqrt_p,
-            lax.log_p,
-            lax.exp2_p,
-            lax.abs_p,
-            lax.log1p_p,
-            lax.sin_p,
-            lax.sqrt_p,
+        for prim, params in [
+            (lax.abs_p, {}),
+            (lax.exp_p, {"accuracy": None}),
+            (lax.tanh_p, {"accuracy": None}),
+            (lax.logistic_p, {"accuracy": None}),
+            (lax.rsqrt_p, {"accuracy": None}),
+            (lax.log_p, {"accuracy": None}),
+            (lax.exp2_p, {"accuracy": None}),
+            (lax.log1p_p, {"accuracy": None}),
+            (lax.sin_p, {"accuracy": None}),
+            (lax.sqrt_p, {"accuracy": None}),
         ]
     ],
 ]
 
 UNARY_FUNCTIONS = [
-    (prim.name, prim.bind, strategy) for prim, strategy in UNARY_PRIMITIVES
+    (prim.name, functools.partial(prim.bind, **params), strategy) for prim, params, strategy in UNARY_PRIMITIVES
 ] + [
     (
         name,
