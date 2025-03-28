@@ -90,19 +90,18 @@ class ExtendedDType(StrictABC):
 
 
 # fp8 support
-# TODO: remove Optional when minimum ml_dtypes version >= 0.5.0
-float8_e3m4: type[np.generic] | None = None
-float8_e4m3: type[np.generic] | None = None
-float8_e8m0fnu: type[np.generic] | None = None
+float8_e3m4: type[np.generic] = ml_dtypes.float8_e3m4
+float8_e4m3: type[np.generic] = ml_dtypes.float8_e4m3
+float8_e8m0fnu: type[np.generic] = ml_dtypes.float8_e8m0fnu
 float8_e4m3b11fnuz: type[np.generic] = ml_dtypes.float8_e4m3b11fnuz
 float8_e4m3fn: type[np.generic] = ml_dtypes.float8_e4m3fn
 float8_e4m3fnuz: type[np.generic] = ml_dtypes.float8_e4m3fnuz
 float8_e5m2: type[np.generic] = ml_dtypes.float8_e5m2
 float8_e5m2fnuz: type[np.generic] = ml_dtypes.float8_e5m2fnuz
 
-_float8_e3m4_dtype: np.dtype | None = None
-_float8_e4m3_dtype: np.dtype | None = None
-_float8_e8m0fnu_dtype: np.dtype | None = None
+_float8_e3m4_dtype: np.dtype = np.dtype(float8_e3m4)
+_float8_e4m3_dtype: np.dtype = np.dtype(float8_e4m3)
+_float8_e8m0fnu_dtype: np.dtype = np.dtype(float8_e8m0fnu)
 _float8_e4m3b11fnuz_dtype: np.dtype = np.dtype(float8_e4m3b11fnuz)
 _float8_e4m3fn_dtype: np.dtype = np.dtype(float8_e4m3fn)
 _float8_e4m3fnuz_dtype: np.dtype = np.dtype(float8_e4m3fnuz)
@@ -111,9 +110,9 @@ _float8_e5m2fnuz_dtype: np.dtype = np.dtype(float8_e5m2fnuz)
 
 # fp4 support
 # TODO: remove Optional when minimum ml_dtypes version >= 0.5.0
-float4_e2m1fn: type[np.generic] | None = None
+float4_e2m1fn: type[np.generic] = ml_dtypes.float4_e2m1fn
 
-_float4_e2m1fn_dtype: np.dtype | None = None
+_float4_e2m1fn_dtype: np.dtype = np.dtype(float4_e2m1fn)
 
 def supports_inf(dtype: DTypeLike) -> bool:
   """Return true if the dtype supports infinity, else return False."""
@@ -127,6 +126,10 @@ bfloat16: type[np.generic] = ml_dtypes.bfloat16
 _bfloat16_dtype: np.dtype = np.dtype(bfloat16)
 
 _custom_float_scalar_types = [
+    float4_e2m1fn,
+    float8_e3m4,
+    float8_e4m3,
+    float8_e8m0fnu,
     float8_e4m3b11fnuz,
     float8_e4m3fn,
     float8_e4m3fnuz,
@@ -135,6 +138,10 @@ _custom_float_scalar_types = [
     bfloat16,
 ]
 _custom_float_dtypes = [
+    _float4_e2m1fn_dtype,
+    _float8_e3m4_dtype,
+    _float8_e4m3_dtype,
+    _float8_e8m0fnu_dtype,
     _float8_e4m3b11fnuz_dtype,
     _float8_e4m3fn_dtype,
     _float8_e4m3fnuz_dtype,
@@ -143,6 +150,9 @@ _custom_float_dtypes = [
     _bfloat16_dtype,
 ]
 _float8_dtypes = [
+    _float8_e3m4_dtype,
+    _float8_e4m3_dtype,
+    _float8_e8m0fnu_dtype,
     _float8_e4m3b11fnuz_dtype,
     _float8_e4m3fn_dtype,
     _float8_e4m3fnuz_dtype,
@@ -150,58 +160,28 @@ _float8_dtypes = [
     _float8_e5m2fnuz_dtype,
 ]
 
-_float4_dtypes: list[np.dtype] = []
+_float4_dtypes: list[np.dtype] = [
+    _float4_e2m1fn_dtype,
+]
 
-# TODO: remove the if statements below when minimum ml_dtypes version >= 0.5.0
-if hasattr(ml_dtypes, "float8_e4m3"):
-  float8_e4m3 = ml_dtypes.float8_e4m3
-  _float8_e4m3_dtype = np.dtype(float8_e4m3)
-  _custom_float_scalar_types.insert(0, float8_e4m3)  # type: ignore[arg-type]
-  _custom_float_dtypes.insert(0, _float8_e4m3_dtype)
-  _float8_dtypes.insert(0, _float8_e4m3_dtype)
-if hasattr(ml_dtypes, "float8_e3m4"):
-  float8_e3m4 = ml_dtypes.float8_e3m4
-  _float8_e3m4_dtype = np.dtype(float8_e3m4)
-  _custom_float_scalar_types.insert(0, float8_e3m4)  # type: ignore[arg-type]
-  _custom_float_dtypes.insert(0, _float8_e3m4_dtype)
-  _float8_dtypes.insert(0, _float8_e3m4_dtype)
-if hasattr(ml_dtypes, "float8_e8m0fnu"):
-  float8_e8m0fnu = ml_dtypes.float8_e8m0fnu
-  _float8_e8m0fnu_dtype = np.dtype(float8_e8m0fnu)
-  _custom_float_scalar_types.insert(0, float8_e8m0fnu)  # type: ignore[arg-type]
-  _custom_float_dtypes.insert(0, _float8_e8m0fnu_dtype)
-  _float8_dtypes.insert(0, _float8_e8m0fnu_dtype)
-if hasattr(ml_dtypes, "float4_e2m1fn"):
-  float4_e2m1fn = ml_dtypes.float4_e2m1fn
-  _float4_e2m1fn_dtype = np.dtype(float4_e2m1fn)
-  _custom_float_scalar_types.insert(0, float4_e2m1fn)  # type: ignore[arg-type]
-  _custom_float_dtypes.insert(0, _float4_e2m1fn_dtype)
-  _float4_dtypes.insert(0, _float4_e2m1fn_dtype)
+int2: type[np.generic] = ml_dtypes.int2
+uint2: type[np.generic] = ml_dtypes.uint2
 
-# 2-bit integer support
-int2: type[np.generic] | None = None
-uint2: type[np.generic] | None = None
-
-_int2_dtype: np.dtype | None = None
-_uint2_dtype: np.dtype | None = None
-
-_intn_dtypes = []
-
-# Remove the condition once the minimum ml_dtypes version required by JAX
-# contains https://github.com/jax-ml/ml_dtypes/pull/154.
-if hasattr(ml_dtypes, 'int2'):
-  int2 = ml_dtypes.int2
-  uint2 = ml_dtypes.uint2
-  _int2_dtype = np.dtype(int2)
-  _uint2_dtype = np.dtype(uint2)
-  _intn_dtypes.extend([_int2_dtype, _uint2_dtype])
+_int2_dtype: np.dtype = np.dtype(int2)
+_uint2_dtype: np.dtype = np.dtype(uint2)
 
 # 4-bit integer support
 int4: type[np.generic] = ml_dtypes.int4
 uint4: type[np.generic] = ml_dtypes.uint4
 _int4_dtype = np.dtype(int4)
 _uint4_dtype = np.dtype(uint4)
-_intn_dtypes.extend([_int4_dtype, _uint4_dtype])
+
+_intn_dtypes = [
+    _int2_dtype,
+    _uint2_dtype,
+    _int4_dtype,
+    _uint4_dtype,
+]
 
 # Default types.
 bool_ = np.bool_
@@ -472,9 +452,9 @@ def _issubdtype_cached(a: type | np.dtype | ExtendedDType,
   # to the normal scalar type hierarchy.
   if a_sctype in _custom_float_scalar_types:
     return b_sctype in {a_sctype, np.floating, np.inexact, np.number, np.generic}
-  if (int2 is not None and a_sctype == int2) or a_sctype == int4:
+  if a_sctype in [int2, int4]:
     return b_sctype in {a_sctype, np.signedinteger, np.integer, np.number, np.generic}
-  if (uint2 is not None and a_sctype == uint2) or a_sctype == uint4:
+  if a_sctype in [uint2, uint4]:
     return b_sctype in {a_sctype, np.unsignedinteger, np.integer, np.number, np.generic}
 
   # Otherwise, fall back to numpy.issubdtype
@@ -491,6 +471,7 @@ _signed_types: list[JAXType]
 _unsigned_types: list[JAXType]
 _int_types: list[JAXType]
 _unsigned_types = [
+    np.dtype(uint2),
     np.dtype(uint4),
     np.dtype('uint8'),
     np.dtype('uint16'),
@@ -498,17 +479,13 @@ _unsigned_types = [
     np.dtype('uint64'),
 ]
 _signed_types = [
+    np.dtype(int2),
     np.dtype(int4),
     np.dtype('int8'),
     np.dtype('int16'),
     np.dtype('int32'),
     np.dtype('int64'),
 ]
-
-if _int2_dtype is not None:
-  _signed_types.insert(0, _int2_dtype)
-if _uint2_dtype is not None:
-  _unsigned_types.insert(0, _uint2_dtype)
 
 _int_types = _unsigned_types + _signed_types
 
@@ -622,11 +599,7 @@ def _type_promotion_lattice(jax_numpy_dtype_promotion: str) -> dict[JAXType, lis
   This DAG maps each type to its immediately higher type on the lattice.
   """
   b1, = _bool_types
-  if _int2_dtype is not None:
-    assert _uint2_dtype is not None
-    _uint2, uint4, u1, u2, u4, u8, _int2, int4, i1, i2, i4, i8 = _int_types
-  else:
-    uint4, u1, u2, u4, u8, int4, i1, i2, i4, i8 = _int_types
+  uint2, uint4, u1, u2, u4, u8, int2, int4, i1, i2, i4, i8 = _int_types
   *f1_types, bf, f2, f4, f8 = _float_types
   c4, c8 = _complex_types
   i_, f_, c_ = _weak_types
@@ -634,19 +607,13 @@ def _type_promotion_lattice(jax_numpy_dtype_promotion: str) -> dict[JAXType, lis
     out: dict[JAXType, list[JAXType]]
     out = {
       b1: [i_],
-      i_: [u1, uint4, i1, int4],
-      uint4: [], u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
-      int4: [], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
+      i_: [u1, uint2, uint4, i1, int2, int4],
+      uint2: [], uint4: [], u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
+      int2: [], int4: [], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
       f_: [*f1_types, bf, f2, c_],
       **{t: [] for t in f1_types}, bf: [f4], f2: [f4], f4: [f8, c4], f8: [c8],
       c_: [c4], c4: [c8], c8: [],
     }
-    if _int2_dtype is not None:
-      out[i_].append(_int2_dtype)
-      out[_int2_dtype] = []
-    if _uint2_dtype is not None:
-      out[i_].append(_uint2_dtype)
-      out[_uint2_dtype] = []
     return out
   elif jax_numpy_dtype_promotion == 'strict':
     return {

@@ -68,33 +68,27 @@ def _make_scalar_type(np_scalar_type: type) -> _ScalarMeta:
   return meta
 
 bool_ = _make_scalar_type(np.bool_)
-if dtypes.uint2 is not None:
-  uint2 = _make_scalar_type(dtypes.uint2)
+uint2 = _make_scalar_type(dtypes.uint2)
 uint4 = _make_scalar_type(dtypes.uint4)
 uint8 = _make_scalar_type(np.uint8)
 uint16 = _make_scalar_type(np.uint16)
 uint32 = _make_scalar_type(np.uint32)
 uint64 = _make_scalar_type(np.uint64)
-if dtypes.int2 is not None:
-  int2 = _make_scalar_type(dtypes.int2)
+int2 = _make_scalar_type(dtypes.int2)
 int4 = _make_scalar_type(dtypes.int4)
 int8 = _make_scalar_type(np.int8)
 int16 = _make_scalar_type(np.int16)
 int32 = _make_scalar_type(np.int32)
 int64 = _make_scalar_type(np.int64)
-if dtypes.float8_e3m4 is not None:
-  float8_e3m4 = _make_scalar_type(dtypes.float8_e3m4)
-if dtypes.float8_e4m3 is not None:
-  float8_e4m3 = _make_scalar_type(dtypes.float8_e4m3)
-if dtypes.float8_e8m0fnu is not None:
-  float8_e8m0fnu = _make_scalar_type(dtypes.float8_e8m0fnu)
+float4_e2m1fn = _make_scalar_type(dtypes.float4_e2m1fn)
+float8_e3m4 = _make_scalar_type(dtypes.float8_e3m4)
+float8_e4m3 = _make_scalar_type(dtypes.float8_e4m3)
+float8_e8m0fnu = _make_scalar_type(dtypes.float8_e8m0fnu)
 float8_e4m3fn = _make_scalar_type(dtypes.float8_e4m3fn)
 float8_e4m3fnuz = _make_scalar_type(dtypes.float8_e4m3fnuz)
 float8_e5m2 = _make_scalar_type(dtypes.float8_e5m2)
 float8_e5m2fnuz = _make_scalar_type(dtypes.float8_e5m2fnuz)
 float8_e4m3b11fnuz = _make_scalar_type(dtypes.float8_e4m3b11fnuz)
-if dtypes.float4_e2m1fn is not None:
-  float4_e2m1fn = _make_scalar_type(dtypes.float4_e2m1fn)
 bfloat16 = _make_scalar_type(dtypes.bfloat16)
 float16 = _make_scalar_type(np.float16)
 float32 = single = _make_scalar_type(np.float32)
