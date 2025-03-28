@@ -562,7 +562,8 @@ class OpsTest(PallasBaseTest):
   )
   @hp.given(hps.data())
   def test_unary_primitives(self, name, func, shape_dtype_strategy, data):
-    self.skip_if_mosaic_gpu()
+    if name in ["abs", "log1p", "pow2", "reciprocal", "relu", "sin", "sqrt"]:
+      self.skip_if_mosaic_gpu()
 
     if self.INTERPRET:
       self.skipTest("This hypothesis test is slow, even more so in interpret mode.")
@@ -579,6 +580,12 @@ class OpsTest(PallasBaseTest):
     def kernel(x_ref, y_ref):
       y_ref[...] = func(x_ref[...])
     x_shape_dtype = data.draw(shape_dtype_strategy)
+
+    sut_is_mosaic_gpu = jtu.test_device_matches(["gpu"]) and use_mosaic_gpu
+    if sut_is_mosaic_gpu:
+      hp.assume(math.prod(x_shape_dtype.shape) % 128 == 0)
+      hp.assume(x_shape_dtype.shape[-1] >= 16)
+
     key = random.key(0)
     x = _random_value(key, x_shape_dtype)
     out = self.pallas_call(kernel, out_shape=x_shape_dtype)(x)

@@ -560,6 +560,12 @@ def _mgpu_async_load_op_lowering_rule(
     v = idx if size < 0 else utils.DynamicSlice(idx, size)
     gmem_slice.append(v)
 
+  # TODO(dasenov): async_copy requires all GMEM strides except the last one
+  # to be a multiple of 16 bytes. This restriction could be loosned with
+  # strided layouts when they are contiguous in GMEM. In that case, we could do:
+  # flatten -> async_copy -> unflatted here, as long as flattened size is a
+  # multiple of 16.
+
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=load_op.source,
@@ -595,6 +601,12 @@ def _mgpu_async_store_op_lowering_rule(
     idx = arith.index_cast(ir.IndexType.get(), idx_i32)
     v = idx if size < 0 else utils.DynamicSlice(idx, size)
     gmem_slice.append(v)
+
+  # TODO(dasenov): async_copy requires all GMEM strides except the last one
+  # to be a multiple of 16 bytes. This restriction could be loosned with
+  # strided layouts when they are contiguous in GMEM. In that case, we could do:
+  # flatten -> async_copy -> unflatted here, as long as flattened size is a
+  # multiple of 16.
 
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
