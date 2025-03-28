@@ -41,11 +41,14 @@ from jax._src import core
 from jax._src import effects
 from jax._src import util
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension as _xla
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir.dialects import hlo
 from jax.experimental.jax2tf import jax2tf as jax2tf_internal
 from jax._src.interpreters import mlir
+import ml_dtypes
 import numpy as np
 import tensorflow as tf
 
@@ -468,6 +471,47 @@ def _call_tf_abstract_eval(
 call_tf_p.def_effectful_abstract_eval(_call_tf_abstract_eval)
 
 
+def _mlir_type_to_numpy_dtype(type: ir.Type) -> np.dtype:
+  """Converts an MLIR scalar type to a NumPy dtype."""
+
+  if ir.IntegerType.isinstance(type):
+    type = ir.IntegerType(type)
+    width = type.width
+    if width == 1:
+      return np.dtype(np.bool_)
+    elif width == 8:
+      return np.dtype(np.uint8 if type.is_unsigned else np.int8)
+    elif width == 16:
+      return np.dtype(np.uint16 if type.is_unsigned else np.int16)
+    elif width == 32:
+      return np.dtype(np.uint32 if type.is_unsigned else np.int32)
+    elif width == 64:
+      return np.dtype(np.uint64 if type.is_unsigned else np.int64)
+    else:
+      raise ValueError(f"Unsupported integer width: {width}")
+
+  elif ir.F16Type.isinstance(type):
+    return np.dtype(np.float16)
+  elif ir.F32Type.isinstance(type):
+    return np.dtype(np.float32)
+  elif ir.F64Type.isinstance(type):
+    return np.dtype(np.float64)
+  elif ir.BF16Type.isinstance(type):
+    return np.dtype(ml_dtypes.bfloat16)
+
+  elif ir.ComplexType.isinstance(type):
+    element_type = ir.ComplexType(type).element_type
+    if ir.F32Type.isinstance(element_type):
+      return np.dtype(np.complex64)
+    elif ir.F64Type.isinstance(element_type):
+      return np.dtype(np.complex128)
+    else:
+      raise ValueError(f"Unsupported complex element type: {element_type}")
+
+  else:
+    raise TypeError(f"Unsupported MLIR type for NumPy conversion: {type}")
+
+
 def _call_tf_lowering(
     ctx: mlir.LoweringRuleContext,
     *args_op,
@@ -555,33 +599,12 @@ def _call_tf_lowering(
              "\n\nCaught TensorFlow exception: " + str(e))
       raise ValueError(msg) from e
 
-  xla_comp = xla_client.XlaComputation(func_tf_hlo)
-
-  # Canonicalize the results; e.g., makes them x32 if JAX is in 32-bit mode
-  def canonical_res_aval(res_shape: xla_client.Shape) -> core.ShapedArray:
-    if not res_shape.is_static():
-      msg = ("Compiled TensorFlow function has dynamic output shape " +
-             f"{res_shape}. call_tf can used " +
-             "in a staged context (under jax.jit, lax.scan, etc.) only with " +
-             "compilable functions with static output shapes. " +
-             "See https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
-      raise ValueError(msg)
-
-    res_dtype = res_shape.numpy_dtype()
-    jax_res_dtype = dtypes.canonicalize_dtype(res_dtype)
-    return core.ShapedArray(res_shape.dimensions(), jax_res_dtype)
-
-  result_shape = xla_comp.program_shape().result_shape()
-  if not result_shape.is_tuple():
-    # TF does not wrap singletons as tuples, but JAX expects tuples because
-    # call_tf is a multiple_results primitive.
-    result_shapes = (result_shape,)
+  if jaxlib_extension_version >= 324:
+    stablehlo = _xla.mlir.hlo_to_stablehlo(func_tf_hlo)
   else:
-    result_shapes = result_shape.tuple_shapes()  # type: ignore
-
-  result_avals = tuple(map(canonical_res_aval, result_shapes))
-
-  submodule = mlir.xla_computation_to_mlir_module(xla_comp)
+    xla_comp = xla_client.XlaComputation(func_tf_hlo)
+    stablehlo = _xla.mlir.xla_computation_to_mlir_module(xla_comp)
+  submodule = ir.Module.parse(stablehlo)
   symtab = ir.SymbolTable(submodule.operation)
   callee_result_types = symtab["main"].type.results
   fn = mlir.merge_mlir_modules(ctx.module_context.module,
@@ -600,10 +623,26 @@ def _call_tf_lowering(
     )
 
   outputs = []
-  for op, res_aval, res_shape in zip(flat_results, result_avals,
-                                     result_shapes):
-    if res_aval.dtype != res_shape.numpy_dtype():
-      op = hlo.ConvertOp(mlir.aval_to_ir_type(res_aval), op).result
+  for op, res_type in zip(flat_results, callee_result_types):
+    if not res_type.has_static_shape:
+      msg = (
+          "Compiled TensorFlow function has dynamic output shape "
+          + f"{res_type}. call_tf can used in a staged context (under jax.jit,"
+          " lax.scan, etc.) only with compilable functions with static"
+          " output shapes. See"
+          " https://github.com/jax-ml/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf"
+          " for a discussion."
+      )
+      raise ValueError(msg)
+
+    res_dtype = _mlir_type_to_numpy_dtype(res_type.element_type)
+    # Canonicalize the results; e.g., makes them x32 if JAX is in 32-bit mode
+    jax_res_dtype = dtypes.canonicalize_dtype(res_dtype)
+    if res_dtype != jax_res_dtype:
+      op = hlo.ConvertOp(
+          mlir.aval_to_ir_type(core.ShapedArray(res_type.shape, jax_res_dtype)),
+          op,
+      ).result
     outputs.append(op)
   return outputs
 
