@@ -31,6 +31,7 @@ build -c opt
 build --output_filter=DONT_MATCH_ANYTHING
 
 build --copt=-DMLIR_PYTHON_PACKAGE_PREFIX=jaxlib.mlir.
+build --copt=-DNB_DOMAIN=jax
 
 # #############################################################################
 # Platform Specific configs below. These are automatically picked up by Bazel
