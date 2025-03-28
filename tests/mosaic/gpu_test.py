@@ -908,6 +908,43 @@ class TCGen05Test(TestCase):
     if not any(jtu.is_cuda_compute_capability_equal(sm) for sm in capabilities):
       self.skipTest("Only works on GPU with capability sm_100a or sm_101a")
 
+  @parameterized.parameters([jnp.float32, jnp.float16])
+  def test_load_store_tmem(self, jax_dtype):
+    swizzle = 128
+    in_mlir_dtype = utils.dtype_to_ir_type(jax_dtype)
+    swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
+    tiling = (8, swizzle_elems)
+
+    def kernel(ctx, input, output, scratch):
+      smem, barrier, tmem = scratch
+      ctx.async_copy(
+          src_ref=input,
+          dst_ref=smem,
+          swizzle=swizzle,
+          gmem_transform=mgpu.TileTransform(tiling),
+          barrier=barrier,
+      )
+      barrier.wait()
+      tmem[:] = fa.FragmentedArray.load_tiled(smem, swizzle, layout=tcgen05.LAYOUT)
+      tcgen05.commit_tmem()
+      tmem[:].store_tiled(smem, swizzle)
+      mgpu.commit_shared()
+      ctx.async_copy(
+          src_ref=smem, dst_ref=output, swizzle=swizzle, gmem_transform=mgpu.TileTransform(tiling),
+      )
+      ctx.await_async_copy(0)
+
+    x = self.prng.uniform(-1, 1, (128, 128)).astype(jax_dtype)
+    scratch_shape = [
+        jax.ShapeDtypeStruct(tile_shape(x.shape, tiling), jax_dtype),
+        mgpu.TMABarrier(),
+        mgpu.TMEM(x.shape, jax_dtype),
+    ]
+    y = mgpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
+    )(x)
+    np.testing.assert_array_equal(x, y)
+
   @parameterized.product(
       lhs_transpose=(False, True),
       rhs_transpose=(False, True),
