@@ -578,7 +578,8 @@ def _shard_shaped_array(mesh: Mesh, auto: frozenset, names: AxisNames,
                     for i, sz in enumerate(aval.shape))
   manual_mesh = _as_manual_mesh(mesh, auto)
   new_sharding = NamedSharding(manual_mesh, aval.sharding.spec)
-  vma = frozenset({n for ns in names.values() for n in ns})
+  vma = (frozenset({n for ns in names.values() for n in ns})
+         if config.varying_axes_in_types.value else frozenset())
   return aval.update(shape=new_shape, sharding=new_sharding, vma=vma)
 core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
 

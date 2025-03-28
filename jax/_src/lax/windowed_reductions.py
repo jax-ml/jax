@@ -21,7 +21,6 @@ import warnings
 from jax import tree_util
 from jax._src import api_util
 from jax._src import core
-from jax._src import config
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import util
@@ -338,10 +337,8 @@ def _reduce_window_abstract_eval_rule(
   out_sharding = reduce_window_sharding_rule(
       operand_avals[0], window_dimensions, window_strides, padding,
       base_dilation, window_dilation)
-  out_vma = (core.standard_vma_rule('reduce_window', *operand_avals)
-             if config.varying_axes_in_types.value else frozenset())
-  return tuple(ShapedArray(out_shape, op.dtype, sharding=out_sharding,
-                           vma=out_vma)
+  vma = core.standard_vma_rule('reduce_window', *operand_avals)
+  return tuple(ShapedArray(out_shape, op.dtype, sharding=out_sharding, vma=vma)
                for op in operand_avals)
 
 

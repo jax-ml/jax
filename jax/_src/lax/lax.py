@@ -6106,6 +6106,7 @@ ragged_dot_general_p = standard_primitive(
     _ragged_dot_general_shape_rule,
     _ragged_dot_general_dtype_rule,
     'ragged_dot_general',
+    vma_rule=partial(core.standard_vma_rule, 'ragged_dot')
 )
 ad.primitive_jvps[ragged_dot_general_p] = _ragged_dot_general_jvp_rule
 ad.primitive_transposes[ragged_dot_general_p] = _ragged_dot_general_transpose_rule
@@ -6515,8 +6516,7 @@ def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions,
     new_sharding = _broadcast_in_dim_sharding_rule(
         x, shape=shape, broadcast_dimensions=broadcast_dimensions,
         sharding=sharding)
-    new_vma = (core.standard_vma_rule('broadcast_in_dim', x)
-               if config.varying_axes_in_types.value else frozenset())
+    new_vma = core.standard_vma_rule('broadcast_in_dim', x)
     return core.ShapedArray(shape, x.dtype, x.weak_type, sharding=new_sharding,
                             vma=new_vma)
   # If any BInts in shape, or Tracers in dyn_shape, produce a DShapedArray
@@ -7435,6 +7435,11 @@ def _reduce_sharding_rule(*avals, computation, jaxpr, dimensions):
   return [op.sharding.with_spec(tuple_delete(op.sharding.spec, dimensions))
           for op in operand_avals]
 
+def _reduce_vma_rule(*avals, computation, jaxpr, dimensions):
+  operand_avals, _ = split_list(avals, [len(avals) // 2])
+  out_vma = core.standard_vma_rule('reduce', *operand_avals)
+  return [out_vma] * len(operand_avals)
+
 def _reduce_dtype_rule(*avals, computation, jaxpr, dimensions):
   operand_avals, init_val_avals = split_list(avals, [len(avals) // 2])
   operand_dtypes = [dtypes.canonicalize_dtype(op.dtype) for op in operand_avals]
@@ -7522,7 +7527,7 @@ reduce_p.def_impl(partial(dispatch.apply_primitive, reduce_p))
 reduce_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, reduce_p, _reduce_shape_rule,
             _reduce_dtype_rule, _reduce_weak_type_rule, _reduce_sharding_rule,
-            None))
+            _reduce_vma_rule))
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 ad.primitive_jvps[reduce_p] = _reduce_jvp_rule
 
@@ -8254,6 +8259,10 @@ def _rng_bit_generator_sharding_rule(key, *, shape, dtype, algorithm,
                                      out_sharding):
   return (key.sharding, out_sharding)
 
+def _rng_bit_generator_vma_rule(key, *, shape, dtype, algorithm, out_sharding):
+  assert key.vma == frozenset()
+  return (key.vma, frozenset())
+
 def _rng_bit_generator_dtype_rule(key, *, shape, dtype, algorithm, out_sharding):
   del shape, algorithm
   return (key.dtype, dtype)
@@ -8355,7 +8364,7 @@ rng_bit_generator_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, rng_bit_generator_p,
             _rng_bit_generator_shape_rule, _rng_bit_generator_dtype_rule,
             _rng_bit_generator_weak_type_rule, _rng_bit_generator_sharding_rule,
-            None))
+            _rng_bit_generator_vma_rule))
 mlir.register_lowering(rng_bit_generator_p,
                        _rng_bit_generator_lowering)
 

@@ -23,7 +23,6 @@ import numpy as np
 
 from jax import lax
 
-from jax._src import config
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.api import jit, linear_transpose, ShapeDtypeStruct
@@ -125,8 +124,7 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
                       f"be equal to fft_lengths {fft_lengths}")
     shape = x.shape
     dtype = x.dtype
-  out_vma = x.vma if config.varying_axes_in_types.value else frozenset()
-  return x.update(shape=shape, dtype=dtype, vma=out_vma)
+  return x.update(shape=shape, dtype=dtype, vma=x.vma)
 
 def _fft_lowering(ctx, x, *, fft_type, fft_lengths):
   if not is_constant_shape(fft_lengths):
