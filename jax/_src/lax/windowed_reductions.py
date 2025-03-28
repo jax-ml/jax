@@ -338,7 +338,7 @@ def _reduce_window_abstract_eval_rule(
   out_sharding = reduce_window_sharding_rule(
       operand_avals[0], window_dimensions, window_strides, padding,
       base_dilation, window_dilation)
-  out_vma = (core.standard_vma_rule('reduce_window', operand_avals)
+  out_vma = (core.standard_vma_rule('reduce_window', *operand_avals)
              if config.varying_axes_in_types.value else frozenset())
   return tuple(ShapedArray(out_shape, op.dtype, sharding=out_sharding,
                            vma=out_vma)
