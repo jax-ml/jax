@@ -623,7 +623,7 @@ get_barrier_semaphore_p = jax_core.Primitive('get_barrier_semaphore')
 @get_barrier_semaphore_p.def_abstract_eval
 def _get_barrier_semaphore_abstract_eval():
   return pl_core.AbstractMemoryRef(
-      jax_core.ShapedArray((), tpu_core.BarrierSemaphoreTy()),
+      jax_core.ShapedArray((), pl_core.BarrierSemaphore()),
       tpu_core.TPUMemorySpace.SEMAPHORE,
   )
 

@@ -25,7 +25,6 @@ from typing import Any, ClassVar, Literal
 import jax
 from jax._src import config
 from jax._src import core as jax_core
-from jax._src import dtypes
 from jax._src import util
 from jax._src.pallas import core as pallas_core
 import jax.numpy as jnp
@@ -114,41 +113,9 @@ class TPUMemorySpace(enum.Enum):
 
 class dma_semaphore(pallas_core.semaphore_dtype): pass
 
-class AbstractSemaphoreTyRules:
-  @staticmethod
-  def pallas_interpret_element_aval(_) -> jax_core.ShapedArray:
-    return jax_core.ShapedArray((), pallas_core.SEMAPHORE_INTERPRET_DTYPE)
-
-  @staticmethod
-  def physical_element_aval(_) -> jax_core.ShapedArray:
-    return jax_core.ShapedArray((), jnp.int32)
-
-class AbstractSemaphoreTy(dtypes.ExtendedDType):
-  name: str
-  _rules = AbstractSemaphoreTyRules
-
-  def __repr__(self) -> str:
-    return self.name
-
-  def __eq__(self, other):
-    return self.__class__ == other.__class__
-
-  def __hash__(self) -> int:
-    return hash(self.__class__)
-
-# TODO(sharadmv): implement dtype rules for AbstractSemaphoreTy
-
-class SemaphoreTy(AbstractSemaphoreTy):
-  type = pallas_core.semaphore
-  name = "sem"
-
-class DmaSemaphoreTy(AbstractSemaphoreTy):
+class DMASemaphore(pallas_core.AbstractSemaphoreTy):
   type = dma_semaphore
   name = "dma_sem"
-
-class BarrierSemaphoreTy(AbstractSemaphoreTy):
-  type = pallas_core.barrier_semaphore
-  name = "barrier_sem"
 
 class SemaphoreType(enum.Enum):
   REGULAR = "regular"
@@ -158,11 +125,11 @@ class SemaphoreType(enum.Enum):
   def __call__(self, shape: tuple[int, ...]):
     dtype: Any
     if self == SemaphoreType.DMA:
-      dtype = DmaSemaphoreTy()
+      dtype = DMASemaphore()
     elif self == SemaphoreType.BARRIER:
-      dtype = BarrierSemaphoreTy()
+      dtype = pallas_core.BarrierSemaphore()
     else:
-      dtype = SemaphoreTy()
+      dtype = pallas_core.Semaphore()
     return pallas_core.MemoryRef(shape, dtype, TPUMemorySpace.SEMAPHORE)
 
   def get_array_aval(self) -> pallas_core.ShapedArrayWithMemorySpace:
