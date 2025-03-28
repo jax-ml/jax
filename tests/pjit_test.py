@@ -7196,6 +7196,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = f(np.arange(8))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
+  @jtu.thread_unsafe_test()
   def test_set_mesh(self):
     mesh = jtu.create_mesh((2,), ('x',), axis_types=(AxisType.Explicit,))
     try:
