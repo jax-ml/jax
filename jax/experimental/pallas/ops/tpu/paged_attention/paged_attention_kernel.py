@@ -257,7 +257,7 @@ def paged_flash_attention_kernel(
     )
     q = q_ref[...].astype(jnp.float32)
     k = async_copy_k.wait_and_get_loaded()
-    qk = jnp.einsum('hd,td->ht', q, k, preferred_element_type=jnp.float32)
+    qk = jnp.einsum("gd,td->gt", q, k, preferred_element_type=jnp.float32)
     if attn_logits_soft_cap is not None:
       capped_qk = jnp.tanh(qk / attn_logits_soft_cap)
       qk = capped_qk * attn_logits_soft_cap
@@ -277,10 +277,10 @@ def paged_flash_attention_kernel(
     m_ref[...], l_ref[...] = m_next, l_next
 
     v = async_copy_v.wait_and_get_loaded()
-    o_curr_times_l_curr = jnp.dot(s_curr, v)
+    o_curr = jnp.einsum("gt,td->gd", s_curr, v)
 
     o_ref[...] = (
-        (l_prev * alpha * o_ref[...] + beta * o_curr_times_l_curr) / l_next
+        (l_prev * alpha * o_ref[...] + beta * o_curr) / l_next
     ).astype(o_ref.dtype)
 
 
@@ -384,7 +384,7 @@ def paged_attention(
   """Paged grouped query attention.
 
   Args:
-    q: A [batch_size, num_heads, head_dim] jax.Array.
+    q: A [batch_size, num_q_heads, head_dim] jax.Array.
     k_pages: A [num_kv_heads, total_num_pages, page_size, head_dim] jax.Array.
     v_pages: A [num_kv_heads, total_num_pages, page_size, head_dim] jax.Array.
     lengths: A i32[batch_size] jax.Array the length of each example.
@@ -409,7 +409,7 @@ def paged_attention(
       one kernel.
 
   Returns:
-    The output of attention([batch_size, num_heads, head_dim]).
+    The output of attention([batch_size, num_q_heads, head_dim]).
   """
   if isinstance(k_pages, quantization_utils.QuantizedTensor):
     k_pages, k_scales_pages = k_pages.weight, k_pages.scales
@@ -428,7 +428,7 @@ def paged_attention(
   else:
     v_scales_pages = None
 
-  batch_size, num_heads, head_dim = q.shape
+  batch_size, num_q_heads, head_dim = q.shape
   num_kv_heads, _, page_size, head_dim_k = k_pages.shape
   batch_size_paged_indices, pages_per_sequence = page_indices.shape
 
@@ -437,10 +437,10 @@ def paged_attention(
         f"k_pages and v_pages must have the same shape. Got {k_pages.shape} and"
         f" {v_pages.shape}"  # pytype: disable=attribute-error
     )
-  if num_heads % num_kv_heads != 0:
+  if num_q_heads % num_kv_heads != 0:
     raise ValueError(
         "Number of Q heads must be divisible by number of KV heads. Got"
-        f" {num_heads} and {num_kv_heads}."
+        f" {num_q_heads} and {num_kv_heads}."
     )
   if head_dim_k != head_dim:
     raise ValueError(
@@ -477,40 +477,41 @@ def paged_attention(
   else:
     raise ValueError("megacore_mode must be one of ['kv_head', 'batch', None]")
 
-  if (num_heads // num_kv_heads) % 8 != 0:
+  num_groups = num_q_heads // num_kv_heads
+  if (num_groups) % 8 != 0:
     # Reshape q to hint XLA to pick a <1x128> layout otherwise it will pick a
     # <8x128> layout for a <1x128> memref inside the kernel and error out.
-    q = q.reshape(batch_size, num_heads, 1, head_dim)
+    q = q.reshape(batch_size, num_q_heads, 1, head_dim)
     if megacore_mode == "kv_head":
       q_block_spec = pl.BlockSpec(
-          (None, num_heads // num_kv_heads, None, head_dim),
+          (None, num_groups, None, head_dim),
           lambda core_index, b, h, *_: (b, h * num_cores + core_index, 0, 0),
       )
     elif megacore_mode == "batch":
       q_block_spec = pl.BlockSpec(
-          (None, num_heads // num_kv_heads, None, head_dim),
+          (None, num_groups, None, head_dim),
           lambda core_index, b, h, *_: (b * num_cores + core_index, h, 0, 0),
       )
     else:
       q_block_spec = pl.BlockSpec(
-          (None, num_heads // num_kv_heads, None, head_dim),
+          (None, num_groups, None, head_dim),
           lambda core_index, b, h, *_: (b, h, 0, 0),
       )
     q_dtype_for_kernel_launch = jnp.float32
   else:
     if megacore_mode == "kv_head":
       q_block_spec = pl.BlockSpec(
-          (None, num_heads // num_kv_heads, head_dim),
+          (None, num_groups, head_dim),
           lambda core_index, b, h, *_: (b, h * num_cores + core_index, 0),
       )
     elif megacore_mode == "batch":
       q_block_spec = pl.BlockSpec(
-          (None, num_heads // num_kv_heads, head_dim),
+          (None, num_groups, head_dim),
           lambda core_index, b, h, *_: (b * num_cores + core_index, h, 0),
       )
     else:
       q_block_spec = pl.BlockSpec(
-          (None, num_heads // num_kv_heads, head_dim),
+          (None, num_groups, head_dim),
           lambda core_index, b, h, *_: (b, h, 0),
       )
     q_dtype_for_kernel_launch = q.dtype
@@ -659,4 +660,4 @@ def paged_attention(
       v_pages,
       v_scales_pages,
   )
-  return out.reshape(batch_size, num_heads, head_dim).astype(q.dtype)
+  return out.reshape(batch_size, num_q_heads, head_dim).astype(q.dtype)
