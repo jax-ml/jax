@@ -95,6 +95,22 @@ def has_out_transforms_set(op: MlirOperation) -> bool:
   return "out_transforms" in op.attributes
 
 
+def attr_element(
+    attr_name: str, op: MlirOperation, index: int
+) -> ir.Attribute | None:
+  """Returns `op.attributes[attr_name][index]` if it exists, otherwise None.
+
+  If `op.attributes[attr_name]` exists, then `index` must be a valid index into
+  the attribute array.
+  """
+  if attr_name not in op.attributes:
+    return None
+  attr = op.attributes[attr_name]
+  if not attr:
+    return None
+  return op.attributes[attr_name][index]  # type: ignore
+
+
 def _in_attr_for_operand(
     op: MlirOperation,
     operand: ir.Value,
@@ -109,9 +125,7 @@ def _in_attr_for_operand(
 
   operand_number = [o for o in op.operands if predicate(o)].index(operand)
 
-  if attr_name not in op.attributes:
-    return None
-  return op.attributes[attr_name][operand_number]  # type: ignore
+  return attr_element(attr_name, op, operand_number)
 
 
 in_layout_for_operand = partial(
