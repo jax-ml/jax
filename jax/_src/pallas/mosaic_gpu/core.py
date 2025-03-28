@@ -503,6 +503,17 @@ class BarrierType(dtypes.ExtendedDType):
 
 
 @dataclasses.dataclass(frozen=True)
+class ClusterBarrierType(dtypes.ExtendedDType):
+  type: ClassVar[Any] = barrier_dtype
+  name: ClassVar[str] = "cluster_barrier"
+
+  collective_axes: tuple[str | tuple[str, ...], ...]
+
+  def __str__(self):
+    return self.name
+
+
+@dataclasses.dataclass(frozen=True)
 class Barrier:
   num_arrivals: int
   num_barriers: int = 1
@@ -510,6 +521,18 @@ class Barrier:
   def get_ref_aval(self) -> AbstractMemoryRef:
     aval = jax_core.ShapedArray(
         [self.num_barriers], BarrierType(self.num_arrivals)
+    )
+    return AbstractMemoryRef(aval, SMEM)
+
+
+@dataclasses.dataclass(frozen=True)
+class ClusterBarrier:
+  collective_axes: tuple[str | tuple[str, ...], ...]
+  num_barriers: int = 1
+
+  def get_ref_aval(self) -> AbstractMemoryRef:
+    aval = jax_core.ShapedArray(
+        [self.num_barriers], ClusterBarrierType(self.collective_axes)
     )
     return AbstractMemoryRef(aval, SMEM)
 
@@ -660,6 +683,7 @@ def _gpu_mesh_discharge_rule(
       interpret=interpret,
       cost_estimate=cost_estimate,
       name=name,
+      memory_space=GMEM,
   )
 
 

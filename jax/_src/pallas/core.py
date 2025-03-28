@@ -1089,7 +1089,10 @@ def core_map(
                      debug_info=api_util.debug_info("pallas_core_map", f,
                                                     (), {})),
         in_tree)
-    with jax_core.extend_axis_env_nd(mesh.shape.items()):
+    with (
+        tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
+        jax_core.extend_axis_env_nd(mesh.shape.items()),
+    ):
       jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, flat_args)
     out = core_map_p.bind(*consts, jaxpr=jaxpr, mesh=mesh,
                           compiler_params=compiler_params,
@@ -1144,6 +1147,7 @@ def default_mesh_discharge_rule(
     interpret,
     cost_estimate,
     name,
+    memory_space=MemorySpace.ANY,
 ):
   """Discharges a ``core_map`` over a mesh to a ``pallas_call``."""
   del out_avals  # Unused.
@@ -1160,13 +1164,9 @@ def default_mesh_discharge_rule(
       for eff in jaxpr.effects
       if isinstance(eff, state_types.WriteEffect)
   )
-  any_spec = BlockSpec(memory_space=MemorySpace.ANY)
-  grid_spec = GridSpec(
-      grid=tuple(mesh.shape.items()),
-      in_specs=[any_spec] * len(in_avals),
-      out_specs=[any_spec] * len(modified_idxs),
-  )
+  spec = BlockSpec(memory_space=memory_space)
   from jax._src.pallas import pallas_call  # Avoid circular dependency.
+
   outs = pallas_call._pallas_call(
       body,
       name=name,
@@ -1174,7 +1174,11 @@ def default_mesh_discharge_rule(
       input_output_aliases={
           in_idx: out_idx for out_idx, in_idx in enumerate(modified_idxs)
       },
-      grid_spec=grid_spec,
+      grid_spec=GridSpec(
+          grid=tuple(mesh.shape.items()),
+          in_specs=[spec] * len(in_avals),
+          out_specs=[spec] * len(modified_idxs),
+      ),
       mesh=mesh,
       compiler_params=compiler_params,
       interpret=interpret,
