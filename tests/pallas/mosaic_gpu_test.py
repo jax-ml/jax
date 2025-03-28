@@ -28,6 +28,7 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
+from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax._src.pallas.mosaic_gpu import primitives as mgpu_primitives
@@ -1400,6 +1401,43 @@ class PallasCallTest(PallasTest):
     y = jax.lax.iota(jnp.float32, 128) * 3
     np.testing.assert_array_equal(kernel(x, y), x + y)
 
+  def test_warp_specialization_axis_index(self):
+    if self.THREAD_SEMANTICS == plgpu.ThreadSemantics.Warpgroup:
+      self.skipTest("Test only works on Lane semantics")
+    gpu_mesh = plgpu.GPUMesh(num_threads=1, axis_names=("x"))
+    warp_mesh = plgpu.WarpMesh(axis_name="warp")
+    @pl.run_state
+    def inner(y_ref):
+      @pl.core_map(gpu_mesh)
+      def _kernel():
+        def scope(ones_smem_ref, threes_smem_ref):
+          # Prepare data to copy.
+          ones_smem_ref[:] = jnp.ones((1, 128), jnp.int32)
+          threes_smem_ref[:] = jnp.ones((1, 128), jnp.int32) * 3
+          plgpu.commit_smem()
+          @pl.core_map(warp_mesh)
+          def _():
+            warp_id = lax.axis_index("warp")
+            # We cannot load/store inside of core_map, so we issue async
+            # copies instead to produce a testable result.
+            @pl.when(warp_id == 1)
+            def _():
+              plgpu.copy_smem_to_gmem(ones_smem_ref, y_ref.at[0:1])
+            @pl.when(warp_id == 3)
+            def _():
+              plgpu.copy_smem_to_gmem(threes_smem_ref, y_ref.at[1:2])
+          plgpu.wait_smem_to_gmem(0)
+        pl.run_scoped(scope,
+                      plgpu.SMEM((1, 128), jnp.int32),
+                      plgpu.SMEM((1, 128), jnp.int32)
+                      )
+    y_init = jnp.zeros((2, 128), jnp.int32)
+    result = inner(y_init)
+    expected = jnp.stack((jnp.ones((128,), jnp.int32),
+                          jnp.ones((128,), jnp.int32) * 3), axis=0)
+    np.testing.assert_array_equal(result, expected)
+
+
 
 class PallasCallWGTest(
     PallasCallTest, thread_semantics=plgpu.ThreadSemantics.Warpgroup
@@ -1423,6 +1461,7 @@ class PallasCallWGTest(
         mgpu_primitives.load_p,
         lax.slice_p,
         discharge.run_state_p,
+        pallas_core.core_map_p,
     }
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)
@@ -1447,7 +1486,8 @@ class PallasCallSm90ATest(PallasSm90ATest):
     acc_ini = jnp.ones((64, 64), dtype=jnp.float16)
     np.testing.assert_array_equal(kernel(acc_ini), jnp.full((64, 64), 5, dtype=jnp.float16))
 
-  @parameterized.parameters([*plgpu.ThreadSemantics])
+  @parameterized.parameters([plgpu.ThreadSemantics.Warpgroup,
+                             plgpu.ThreadSemantics.Lane])
   def test_realistic_matmul(self, thread_semantics):
     dtype = jnp.float16
     swizzle = 128
