@@ -22,13 +22,46 @@ limitations under the License.
 extern "C" {
 
 void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
-                              int64_t elem_bitwidth, int64_t rank,
+                              int64_t elem_type, int64_t rank,
                               int64_t *sizes, int64_t *strides,
                               int64_t swizzle_bytes, int64_t *window_shape) {
   if (((uintptr_t)tma_desc) % 64 != 0) {
     fprintf(stderr,
             "TMA descriptor address must be 64 byte aligned, but got: %p\n",
             tma_desc);
+    abort();
+  }
+
+  CUtensorMapDataType data_type;
+  int64_t elem_bitwidth;
+  // types are defined in: LaunchContext._get_tma_desc()
+  if (elem_type == 0){
+    // this is for int4s
+    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
+    elem_bitwidth = 4;
+  } else if (elem_type == 1){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
+    elem_bitwidth = 8;
+  } else if (elem_type == 2){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT16;
+    elem_bitwidth = 16;
+  } else if (elem_type == 3){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT32;
+    elem_bitwidth = 32;
+  } else if (elem_type == 4){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT64;
+    elem_bitwidth = 64;
+  } else if (elem_type == 5){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_FLOAT16;
+    elem_bitwidth = 16;
+  } else if (elem_type == 6){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_FLOAT32;
+    elem_bitwidth = 32;
+  } else if (elem_type == 7){
+    data_type = CU_TENSOR_MAP_DATA_TYPE_BFLOAT16;
+    elem_bitwidth = 16;
+  } else{
+    fprintf(stderr, "Unsupported element type: %ld \n", elem_type);
     abort();
   }
 
@@ -54,19 +87,6 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
     elem_bytewidth = elem_bitwidth / 8;
   }
 
-  CUtensorMapDataType data_type;
-  if (elem_bytewidth == 1) {
-    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
-  } else if (elem_bytewidth == 2) {
-    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT16;
-  } else if (elem_bytewidth == 4) {
-    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT32;
-  } else if (elem_bytewidth == 8) {
-    data_type = CU_TENSOR_MAP_DATA_TYPE_UINT64;
-  } else {
-    fprintf(stderr, "Unsupported element size: %ld\n", elem_bytewidth);
-    abort();
-  }
   if (rank < 1 || rank > 5) {
     fprintf(stderr, "Rank must be in [1, 5], but got %ld\n", rank);
     abort();
