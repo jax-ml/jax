@@ -202,6 +202,20 @@ def get_clang_major_version(clang_path):
 
   return major_version
 
+def get_clangpp_path(clang_path):
+  clang_path = pathlib.Path(clang_path)
+  clang_exec_name = clang_path.stem
+  clangpp_exec_name = clang_exec_name
+  if "clang++" not in clang_exec_name:
+    clangpp_exec_name = clang_exec_name.replace("clang", "clang++")
+  clangpp_path = clang_path.parent / clangpp_exec_name
+  if not clangpp_path.exists():
+    raise FileNotFoundError(
+      f"Failed to get clang++ path from clang path: '{clang_path!s}'. "
+      f"Tried the path: '{clangpp_path!s}'."
+    )
+  return str(clangpp_path)
+
 def get_gcc_major_version(gcc_path: str):
   gcc_version_proc = subprocess.run(
     [gcc_path, "-dumpversion"],

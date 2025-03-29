@@ -13,13 +13,13 @@ race:dump_traceback
 
 # https://github.com/python/cpython/issues/128137
 # Fixed in Python 3.14, but not backported to 3.13.
-race:immortalize_interned
-race:_PyUnicode_InternMortal
-race:_PyUnicode_InternImmortal
+# race:immortalize_interned
+# race:_PyUnicode_InternMortal
+# race:_PyUnicode_InternImmortal
 
 # https://github.com/python/cpython/issues/128144
 # Fixed in Python 3.14, but not backported to 3.13.
-race_top:PyMember_GetOne
+# race_top:PyMember_GetOne
 
 # https://github.com/python/cpython/issues/129748
 race:mi_block_set_nextx
@@ -34,34 +34,3 @@ race:dscal_k_
 race:scal_k_
 race:gemm_beta
 race:gemm_oncopy
-
-
-
-# Races below this point are likely fixed.
-# TODO(phawkins): remove these if they don't show up in CI again.
-
-# https://github.com/python/cpython/issues/128100
-# race:ensure_nonmanaged_dict
-
-# https://github.com/python/cpython/issues/128657
-# race:py_digest_by_name
-
-# https://github.com/python/cpython/issues/128714
-# race:func_get_annotations
-
-# https://github.com/python/cpython/issues/129533
-# race:PyGC_Disable
-# race:PyGC_Enable
-
-# https://github.com/python/cpython/issues/128133
-# race:bytes_hash
-
-# https://github.com/python/cpython/issues/130571
-# race:_PyObject_GetMethod
-
-# https://github.com/python/cpython/issues/130547
-# race:split_keys_entry_added
-
-# https://github.com/python/cpython/issues/129547
-# Maybe fixed?
-# race:type_get_annotations
