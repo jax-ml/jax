@@ -5508,6 +5508,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       ('4', (1, 4, 1, 6, 1), (1, 4, 6),
        P(None, 'x', None, None, None), P(None, 'x', None), False),
       ('5', (4, 6), (4, 6), P(None, 'x'), P(None, 'x'), False),
+      ('6', (1024, 4096), (1024, 2048, 2, 1, 1, 1, 1),
+       P('x', None), P('x', None, None, None, None, None, None), False),
+      ('7', (1024, 4096, 32), (1024, 2048, 2, 1, 1, 32),
+       P('x', None, None), P('x', None, None, None, None, None), False),
+      ('8', (1024, 4096), (1024, 1, 1, 4096),
+       P('x', None), P('x', None, None, None), False),
+      ('9', (1024, 4096), (1024, 1, 1, 4096),
+       P(None, 'x'), P(None, None, None, 'x'), False),
+      ('10', (1024, 2048, 2, 1, 1, 1), (1024, 4096),
+       P('x', None, None, None, None, None), P('x', None), False),
+      ('11', (1024, 2048, 2, 1, 1, 1), (1024, 4096),
+       P(None, 'x', None, None, None, None), P(None, 'x'), False),
   )
   @jtu.with_user_mesh((2,), ('x',))
   def test_reshape(self, src_shape, dst_shape, src_spec, dst_spec,
@@ -5519,6 +5531,8 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     @partial(jax.jit, static_argnums=1)
     def f(x, new_sharding):
       y = lax.reshape(x, dst_shape, out_sharding=new_sharding)
+      self.assertEqual(y.aval.sharding.spec, dst_spec)
+      self.assertEqual(y.shape, dst_shape)
       y = y * 2
       self.assertEqual(y.aval.sharding.spec, dst_spec)
       return y
