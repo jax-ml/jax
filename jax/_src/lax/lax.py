@@ -6977,11 +6977,16 @@ def _split_on_one_axis(op_shape, new_sizes, name):
             ' the sharding of the output via the `sharding` argument of'
             f' jax.lax.reshape. Got operand.shape={op_shape} and {new_sizes=}')
       temp = [new_sizes[j]]
-      while math.prod(temp) != op_shape[i]:
+      next_j = j + 1
+      while (math.prod(temp) != op_shape[i] or
+             (next_j < len(new_sizes) and new_sizes[next_j] == 1)):
         if math.prod(temp) > op_shape[i]:
           return False, []
         j += 1
+        if j >= len(new_sizes):
+          return False, []
         temp.append(new_sizes[j])
+        next_j += 1
       out.append(temp)
     i += 1
     j += 1
