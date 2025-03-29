@@ -711,12 +711,6 @@ def flash_attention_kernel(
   float32 = jnp.float32
   HEAD_DIM_MINOR = QKVLayout.HEAD_DIM_MINOR
 
-  head_dim_v_repeats, rem = divmod(head_dim_v, NUM_LANES)
-  if rem != 0:
-    raise NotImplementedError(
-        f"{head_dim_v=} should be a multiple of {NUM_LANES}"
-    )
-
   h, i, j = pl.program_id(0), pl.program_id(1), pl.program_id(2)
 
   @pl.when(j == 0)
@@ -800,7 +794,8 @@ def flash_attention_kernel(
     v = v.astype(float32)
     o_curr = lax.dot_general(s_curr, v, sv_dims)
 
-    alpha_o = pltpu.repeat(alpha, head_dim_v_repeats, axis=1)
+    # Use alpha directly; broadcasting will handle expansion.
+    alpha_o = alpha
     o_scratch_ref[:] = alpha_o * o_scratch_ref[:] + o_curr
 
   @pl.when(should_run)
@@ -814,7 +809,8 @@ def flash_attention_kernel(
   @pl.when(j == grid_width - 1)
   def end():
     l = l_scratch_ref[...]
-    l_inv = pltpu.repeat(1.0 / l, head_dim_v_repeats, axis=1)
+    # Directly compute the reciprocal of l. Broadcasting will handle any needed expansion.
+    l_inv = 1.0 / l
     o_ref[...] = (o_scratch_ref[...] * l_inv).astype(o_ref.dtype)
     if logsumexp_ref is not None:
       assert logsumexp_ref.shape == (bq, NUM_LANES)
@@ -1053,8 +1049,8 @@ def _splash_attention_forward(
   num_scalar_prefetch = 3
 
   out_shapes = [
-      jax.ShapeDtypeStruct((bq, NUM_LANES), jnp.float32),  # m_scratch
-      jax.ShapeDtypeStruct((bq, NUM_LANES), jnp.float32),  # l_scratch
+      jax.ShapeDtypeStruct((bq, 1), jnp.float32),  # m_scratch
+      jax.ShapeDtypeStruct((bq, 1), jnp.float32),  # l_scratch
       jax.ShapeDtypeStruct((bq, head_dim_v), jnp.float32),  # o_scratch
       jax.ShapeDtypeStruct((num_q_heads, q_seq_len, head_dim_v), q.dtype),
   ]
