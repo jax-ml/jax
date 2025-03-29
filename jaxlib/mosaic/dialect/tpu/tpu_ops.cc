@@ -955,12 +955,23 @@ LogicalResult EnqueueDMAOp::verify() {
           "device_id or core_id is specified");
     }
   }
+  bool is_remote = getDeviceId() || getCoreId();
   if (getSourceSemaphore()) {
-    if (!getDeviceId() && !getCoreId()) {
+    if (!is_remote) {
       return emitOpError(
           "DMA destination device_id or core_id must be specified when source "
           "semaphore is specified");
     }
+  }
+  int priority = getPriority();
+  if (priority < 0 || priority > 1) {
+    return emitOpError(
+               "Not implemented: only support priority 0 or 1, but got ")
+           << priority;
+  }
+  if (priority != 0 && is_remote) {
+    return emitOpError(
+        "Not implemented: non-zero priority is not supported for remote DMA");
   }
   return success();
 }
