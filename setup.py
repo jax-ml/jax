@@ -82,19 +82,19 @@ setup(
 
         'cuda': [
           f"jaxlib=={_current_jaxlib_version}",
-          f"jax-cuda12-plugin[with_cuda]>={_current_jaxlib_version},<={_jax_version}",
+          f"jax-cuda12-plugin[with-cuda]>={_current_jaxlib_version},<={_jax_version}",
         ],
 
         'cuda12': [
           f"jaxlib=={_current_jaxlib_version}",
-          f"jax-cuda12-plugin[with_cuda]>={_current_jaxlib_version},<={_jax_version}",
+          f"jax-cuda12-plugin[with-cuda]>={_current_jaxlib_version},<={_jax_version}",
         ],
 
         # Deprecated alias for cuda12, kept to avoid breaking users who wrote
         # cuda12_pip in their CI.
         'cuda12_pip': [
           f"jaxlib=={_current_jaxlib_version}",
-          f"jax-cuda12-plugin[with_cuda]>={_current_jaxlib_version},<={_jax_version}",
+          f"jax-cuda12-plugin[with-cuda]>={_current_jaxlib_version},<={_jax_version}",
         ],
 
         # Target that does not depend on the CUDA pip wheels, for those who want
