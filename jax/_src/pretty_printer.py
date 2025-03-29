@@ -34,7 +34,7 @@ import sys
 from typing import Any, NamedTuple
 
 from jax._src import config
-from jax._src import util
+from jax._src import strict_abc
 
 try:
   import colorama  # pytype: disable=import-error
@@ -66,7 +66,7 @@ def _can_use_color() -> bool:
 
 CAN_USE_COLOR = _can_use_color()
 
-class Doc(util.StrictABC):
+class Doc(strict_abc.ABC):
   __slots__ = ()
 
   def format(

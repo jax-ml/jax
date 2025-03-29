@@ -22,6 +22,8 @@ import numpy as np
 from typing import Any, Union
 from collections.abc import Sequence
 
+from jax._src import strict_abc
+
 # TODO(jakevdp): fix import cycles and define these.
 Device = Any
 Shard = Any
@@ -30,7 +32,7 @@ Sharding = Any
 # Array is a type annotation for standard JAX arrays and tracers produced by
 # core functions in jax.lax and jax.numpy; it is not meant to include
 # future non-standard array types like KeyArray and BInt.
-class Array(abc.ABC):
+class Array(strict_abc.ABC):
   """Array base class for JAX
 
   ``jax.Array`` is the public interface for instance checks and type annotation
