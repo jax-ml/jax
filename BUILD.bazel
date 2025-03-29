@@ -24,6 +24,8 @@ load(
     "py_deps",
 )
 
+package(default_visibility = ["//visibility:public"])
+
 collect_data_files(
     name = "transitive_py_data",
     deps = ["//jax"],

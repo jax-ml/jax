@@ -1752,3 +1752,67 @@ filegroup(
         "//jax:internal",
     ],
 )
+
+pytype_test(
+    name = "jax_wheel_size_test",
+    srcs = ["//jaxlib/tools:wheel_size_test.py"],
+    args = [
+        "--wheel-path=$(location {})".format("//:jax_wheel"),
+        "--max-size=5",
+    ],
+    data = ["//:jax_wheel"],
+    main = "wheel_size_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+)
+
+pytype_test(
+    name = "jaxlib_wheel_size_test",
+    srcs = ["//jaxlib/tools:wheel_size_test.py"],
+    args = [
+        "--wheel-path=$(location {})".format("//jaxlib/tools:jaxlib_wheel"),
+        "--max-size=110",
+    ],
+    data = ["//jaxlib/tools:jaxlib_wheel"],
+    main = "wheel_size_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+)
+
+pytype_test(
+    name = "jax_cuda_plugin_wheel_size_test",
+    srcs = ["//jaxlib/tools:wheel_size_test.py"],
+    args = [
+        "--wheel-path=$(location {})".format(
+            "//jaxlib/tools:jax_cuda_plugin_wheel",
+        ),
+        "--max-size=20",
+    ],
+    data = ["//jaxlib/tools:jax_cuda_plugin_wheel"],
+    main = "wheel_size_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+)
+
+pytype_test(
+    name = "jax_cuda_pjrt_wheel_size_test",
+    srcs = ["//jaxlib/tools:wheel_size_test.py"],
+    args = [
+        "--wheel-path=$(location {})".format(
+            "//jaxlib/tools:jax_cuda_pjrt_wheel",
+        ),
+        "--max-size=120",
+    ],
+    data = ["//jaxlib/tools:jax_cuda_pjrt_wheel"],
+    main = "wheel_size_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+)
