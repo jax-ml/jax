@@ -911,6 +911,7 @@ class Layout(enum.Enum):
   WGMMA_ROW = enum.auto()
   #: [n] matrix, where n % 8 == 0.
   WGMMA_COL = enum.auto()
+  WGMMA_TRANSPOSED = enum.auto()
 
   WG_SPLAT = enum.auto()
   WG_STRIDED = enum.auto()
@@ -924,6 +925,9 @@ class Layout(enum.Enum):
         raise ValueError(f"Can't instantiate {self} with arguments.")
 
     match self:
+      case Layout.WGMMA_TRANSPOSED:
+        check_no_args()
+        return mgpu.WGMMA_TRANSPOSED_LAYOUT
       case Layout.WGMMA:
         check_no_args()
         return mgpu.WGMMA_LAYOUT
