@@ -61,8 +61,7 @@ def pallas_call_lowering(
   thread_semantics = compiler_params.get("mosaic_gpu", {}).get(
       "thread_semantics", mgpu.ThreadSemantics.Lane
   )
-  if thread_semantics == mgpu.ThreadSemantics.Warpgroup:
-    mgpu.dialect.register_dialect(ctx.module_context.context)  # pytype: disable=attribute-error
+  mgpu.dialect.register_dialect(ctx.module_context.context)  # pytype: disable=attribute-error
 
   lowering_result = lowering.lower_pipelined_jaxpr_to_module(
       grid_mapping,
