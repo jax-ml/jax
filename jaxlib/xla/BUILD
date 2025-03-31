@@ -25,6 +25,8 @@ load(
     "pytype_strict_library",
 )
 
+load("//jaxlib:python_extension.bzl", "pywrap_extension")
+
 licenses(["notice"])
 
 package(
@@ -39,7 +41,12 @@ package_group(
     ],
 )
 
-nanobind_extension(
+py_library(
+    name = "xla_extension_type_stubs",
+    data = glob(["xla_extension/*.pyi"]),
+)
+
+pywrap_extension(
     name = "xla_extension",
     srcs = ["xla.cc"],
     pytype_deps = py_deps(["numpy"]),

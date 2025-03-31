@@ -2,6 +2,15 @@
 load("//third_party/xla:workspace.bzl", jax_xla_workspace = "repo")
 jax_xla_workspace()
 
+load("//third_party:repo.bzl", "tf_http_archive", "tf_mirror_urls")
+
+tf_http_archive(
+    name = "symbol_locations",
+    sha256 = "5e524ceacc9236278f894fa1fb94ba89d3da35c959a9e7876fd0be9435cacdc5",
+    strip_prefix = "symbol-locations-6148a7a8c4dcc9918a2b5fa3c4b8563a6bf54ddf",
+    urls = tf_mirror_urls("https://github.com/vam-google/symbol-locations/archive/6148a7a8c4dcc9918a2b5fa3c4b8563a6bf54ddf.tar.gz"),
+)
+
 # Initialize hermetic Python
 load("@xla//third_party/py:python_init_rules.bzl", "python_init_rules")
 python_init_rules()
