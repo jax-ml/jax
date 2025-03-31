@@ -523,7 +523,7 @@ class PallasCallTest(PallasTest):
                 index_map=lambda i, j: (i, j),
                 memory_space=plgpu.SMEM,
                 transforms=(
-                    plgpu.TilingTransform((64, 32)),
+                    plgpu.TilingTransform((8, 32)),
                     plgpu.SwizzleTransform(128),
                 ),
             ),
@@ -584,7 +584,7 @@ class PallasCallTest(PallasTest):
         (128, 128),
         lambda: (0, 0),
         transforms=(
-            plgpu.TilingTransform((64, 32)),
+            plgpu.TilingTransform((8, 32)),
             plgpu.SwizzleTransform(128),
         ),
         memory_space=plgpu.SMEM,
@@ -604,7 +604,7 @@ class PallasCallTest(PallasTest):
   def test_scoped_copy_with_transforms(self):
     self.skip_if_wg_semantics()
 
-    ts = (plgpu.TilingTransform((64, 32)), plgpu.SwizzleTransform(128))
+    ts = (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128))
     def kernel(x_ref, o_ref, barrier_ref):
       def body(tmp_ref):
         plgpu.copy_gmem_to_smem(x_ref, tmp_ref, barrier_ref)
@@ -639,7 +639,7 @@ class PallasCallTest(PallasTest):
         (2, 128, 128),
         lambda: (0, 0, 0),
         transforms=(
-            plgpu.TilingTransform((64, 32)),
+            plgpu.TilingTransform((8, 32)),
             plgpu.TransposeTransform((0, 2, 1, 3, 4)),
             plgpu.SwizzleTransform(128),
         ),
@@ -749,8 +749,7 @@ class PallasCallTest(PallasTest):
                 (k, n),
                 lambda: (0, 0),
                 transforms=(
-                    plgpu.TilingTransform((64, 64)),
-                    plgpu.SwizzleTransform(128),
+                    plgpu.TilingTransform((8, 64)), plgpu.SwizzleTransform(128),
                 ),
             ),
         ),
@@ -881,8 +880,7 @@ class PallasCallTest(PallasTest):
                 shape,
                 lambda: (0, 0),
                 transforms=(
-                    plgpu.TilingTransform((64, 32)),
-                    plgpu.SwizzleTransform(128),
+                    plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128),
                 ),
             )
         ],
@@ -1061,8 +1059,7 @@ class PallasCallTest(PallasTest):
         (128, 64),
         lambda *i: i,
         transforms=(
-            plgpu.TilingTransform((64, 64)),
-            plgpu.SwizzleTransform(128),
+            plgpu.TilingTransform((8, 64)), plgpu.SwizzleTransform(128),
         ),
     )
     @functools.partial(
@@ -1243,8 +1240,7 @@ class PallasCallTest(PallasTest):
     shape = (256, 128)
     block_spec = plgpu.GPUBlockSpec(
         transforms=(
-            plgpu.TilingTransform((64, 64)),
-            plgpu.SwizzleTransform(128),
+            plgpu.TilingTransform((8, 64)), plgpu.SwizzleTransform(128),
         )
     )
     @functools.partial(
@@ -1297,7 +1293,7 @@ class PallasCallTest(PallasTest):
         (128, 128),
         lambda: (0, 0),
         transforms=(
-            plgpu.TilingTransform((64, 64)),
+            plgpu.TilingTransform((8, 64)),
             plgpu.SwizzleTransform(128),
         ),
     )
@@ -1431,7 +1427,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
 
   @parameterized.parameters(False, True)
   def test_fori_loop_accumulator(self, force_while):
-    transforms = (plgpu.TilingTransform((64, 64)), plgpu.SwizzleTransform(128))
+    transforms = (plgpu.TilingTransform((8, 64)), plgpu.SwizzleTransform(128))
     @functools.partial(
         pl.pallas_call,
         in_specs=[plgpu.GPUBlockSpec((64, 64), lambda: (0, 0), transforms=transforms)],
@@ -1488,21 +1484,21 @@ class PallasCallSm90ATest(PallasSm90ATest):
       lhs_spec = plgpu.GPUBlockSpec(
           lhs_spec.block_shape, lhs_spec.index_map,
           transforms=(
-              plgpu.TilingTransform((64, elems_128b)),
+              plgpu.TilingTransform((8, elems_128b)),
               plgpu.SwizzleTransform(128),
           )
       )
       rhs_spec = plgpu.GPUBlockSpec(
           rhs_spec.block_shape, rhs_spec.index_map,
           transforms=(
-              plgpu.TilingTransform((elems_128b, elems_128b)),
+              plgpu.TilingTransform((8, elems_128b)),
               plgpu.SwizzleTransform(128),
           )
       )
       out_spec = plgpu.GPUBlockSpec(
           out_spec.block_shape, out_spec.index_map,
           transforms=(
-              plgpu.TilingTransform((64, elems_128b)),
+              plgpu.TilingTransform((8, elems_128b)),
               plgpu.SwizzleTransform(128),
           )
       )
@@ -1546,7 +1542,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
       b_shape = b_shape[::-1]
     b = jax.random.uniform(key2, shape=b_shape, dtype=dtype)
 
-    rhs_transforms = (plgpu.TilingTransform((elems_128b, elems_128b)),)
+    rhs_transforms = (plgpu.TilingTransform((8, elems_128b)),)
     if rhs_transpose:
       rhs_transforms += (plgpu.TransposeTransform((1, 0, 2, 3)),)
     res = pl.pallas_call(
@@ -1556,7 +1552,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
                 (64, 128),
                 lambda i, j: (i, j),
                 transforms=(
-                    plgpu.TilingTransform((64, elems_128b)),
+                    plgpu.TilingTransform((8, elems_128b)),
                     plgpu.SwizzleTransform(128),
                 ),
             ),
@@ -1585,7 +1581,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     a = jax.random.uniform(key1, shape=(64, 128), dtype=jnp.float16)
     b = jax.random.uniform(key2, shape=(128, 192), dtype=jnp.float16)
 
-    transforms = (plgpu.TilingTransform((64, 64)), plgpu.SwizzleTransform(128))
+    transforms = (plgpu.TilingTransform((8, 64)), plgpu.SwizzleTransform(128))
     res = pl.pallas_call(
         kernel,
         in_specs=[
@@ -1608,7 +1604,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     b = jax.random.uniform(key2, shape=(128, 192), dtype=jnp.float16)
     i = jax.random.uniform(key3, shape=(64, 192), dtype=jnp.float16) * 10
 
-    transforms = (plgpu.TilingTransform((64, 64)), plgpu.SwizzleTransform(128))
+    transforms = (plgpu.TilingTransform((8, 64)), plgpu.SwizzleTransform(128))
     res = pl.pallas_call(
         kernel,
         in_specs=[
@@ -1639,14 +1635,14 @@ class PallasCallSm90ATest(PallasSm90ATest):
             plgpu.GPUBlockSpec(
                 (2, 64, 128), lambda: (0, 0, 0),
                 transforms=(
-                    plgpu.TilingTransform((64, 64)),
+                    plgpu.TilingTransform((8, 64)),
                     plgpu.SwizzleTransform(128),
                 ),
             ),
             plgpu.GPUBlockSpec(
                 (2, 128, 192), lambda: (0, 0, 0),
                 transforms=(
-                    plgpu.TilingTransform((64, 64)),
+                    plgpu.TilingTransform((8, 64)),
                     plgpu.SwizzleTransform(128),
                 ),
             ),
@@ -1676,7 +1672,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
                 (64, 128),
                 lambda i, j: (i, j),
                 transforms=(
-                    plgpu.TilingTransform((64, elems_128b)),
+                    plgpu.TilingTransform((8, elems_128b)),
                     plgpu.SwizzleTransform(128),
                 ),
             ),
@@ -1684,7 +1680,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
                 (128, 128),
                 lambda *i: i,
                 transforms=(
-                    plgpu.TilingTransform((elems_128b, elems_128b)),
+                    plgpu.TilingTransform((8, elems_128b)),
                     plgpu.SwizzleTransform(128),
                 ),
             ),
@@ -1820,7 +1816,7 @@ class PipelineTest(PallasTest):
 
   @parameterized.parameters(
       ((),),
-      ((plgpu.TilingTransform((64, 32)), plgpu.SwizzleTransform(128)),),
+      ((plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128)),),
   )
   def test_emit(self, transforms):
     num_steps = 4
@@ -2005,7 +2001,7 @@ class PipelineSm90ATest(PallasSm90ATest):
                 (tile_m, tile_k),
                 lambda k: (pid_m, k),
                 transforms=(
-                    plgpu.TilingTransform((64, elems_128b)),
+                    plgpu.TilingTransform((8, elems_128b)),
                     plgpu.SwizzleTransform(128),
                 ),
             ),
@@ -2013,7 +2009,7 @@ class PipelineSm90ATest(PallasSm90ATest):
                 (tile_k, tile_n),
                 lambda k: (k, pid_n),
                 transforms=(
-                    plgpu.TilingTransform((elems_128b, elems_128b)),
+                    plgpu.TilingTransform((8, elems_128b)),
                     plgpu.SwizzleTransform(128),
                 ),
             ),
@@ -2039,7 +2035,7 @@ class PipelineSm90ATest(PallasSm90ATest):
             (tile_m, tile_n),
             lambda m, n: (m, n),
             transforms=(
-                plgpu.TilingTransform((64, elems_128b)),
+                plgpu.TilingTransform((8, elems_128b)),
                 plgpu.SwizzleTransform(128),
             ),
         ),
@@ -2339,7 +2335,7 @@ class CoreMapTest(PallasTest):
     m, k, n = grid_m * tile_m, grid_k * tile_k, grid_n * tile_n
 
     transforms = (
-        plgpu.TilingTransform((64, elems_128b)),
+        plgpu.TilingTransform((8, elems_128b)),
         plgpu.SwizzleTransform(128),
     )
 
@@ -2521,7 +2517,7 @@ class ExamplesTest(PallasTest):
       r = lax.axis_index("rows")
       block = plgpu.GPUBlockSpec(
           (row_block, col_block), lambda c: (r, c),
-          transforms=(plgpu.TilingTransform((64, 32)), plgpu.SwizzleTransform(64)),
+          transforms=(plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(64)),
       )
       plgpu.emit_pipeline(
           compute,
@@ -2572,8 +2568,8 @@ class ExamplesSm90ATest(PallasSm90ATest):
           return acc_ref[...]
         o_smem[...] += pl.run_scoped(do_wgmma, plgpu.ACC((m_block, n_block), jnp.float16))
       m, n = lax.axis_index("m"), lax.axis_index("n")
-      lo_transforms = (plgpu.TilingTransform((64, 32)), plgpu.SwizzleTransform(64))
-      r_transforms = (plgpu.TilingTransform((32, 32)), plgpu.SwizzleTransform(64))
+      lo_transforms = (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(64))
+      r_transforms = (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(64))
       plgpu.emit_pipeline(
           compute,
           grid=(l_ref.shape[1] // k_block,),
