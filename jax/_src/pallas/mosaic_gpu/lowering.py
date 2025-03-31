@@ -2369,20 +2369,20 @@ def _bitcast_convert_type_lowering_rule(
 
 @register_lowering_rule(lax.optimization_barrier_p, mgpu.ThreadSemantics.Lane)
 def _optimization_barrier_lowering(ctx: LoweringRuleContext, *args):
-  args = (_ensure_fa(arg, aval.dtype) for arg, aval in zip(args, ctx.avals_in))
-  return mgpu.optimization_barrier(*args)
+  result = mgpu.optimization_barrier(
+      *(_ensure_fa(arg, aval.dtype) for arg, aval in zip(args, ctx.avals_in))
+  )
+  return (result,) if len(ctx.avals_in) == 1 else result
 
 
 @register_lowering_rule(
     lax.optimization_barrier_p, mgpu.ThreadSemantics.Warpgroup
 )
 def _optimization_barrier_lowering_wg(ctx: LoweringRuleContext, *args):
-  args = [
+  result = mgpu.dialect.optimization_barrier([
       _ensure_ir_value(arg, aval.dtype) for arg, aval in zip(args, ctx.avals_in)
-  ]
-  result = mgpu.dialect.optimization_barrier(args)
-
-  return (result,) if len(args) == 1 else result
+  ])
+  return (result,) if len(ctx.avals_in) == 1 else result
 
 
 def _bcast(
