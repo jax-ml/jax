@@ -1405,9 +1405,6 @@ class PallasCallTest(PallasTest):
     )
 
   def test_optimization_barrier(self):
-    if self.THREAD_SEMANTICS == plgpu.ThreadSemantics.Lane:
-      self.skipTest("This test crashes with lane semantics")
-
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
@@ -1419,9 +1416,6 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(kernel(x), x)
 
   def test_optimization_barrier_multiple_inputs(self):
-    if self.THREAD_SEMANTICS == plgpu.ThreadSemantics.Lane:
-      self.skipTest("This test crashes with lane semantics")
-
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((128,), jnp.float32),
