@@ -14,9 +14,124 @@
 # ==============================================================================
 
 from types import TracebackType
-from typing import Any, Optional, Type, Union, List, Tuple
+from typing import Any, List, Optional, Tuple, Type, Union, Iterator
 
 _Status = Any
+
+
+class ProfileData:
+  """Program execution data captured by jax.profiler functions."""
+
+  def __init__(self, serialized_xspace: bytes):
+    ...
+
+  @classmethod
+  def from_file(cls, path: str) -> 'ProfileData':
+    """Creates a ProfileData from a serialized XSpace proto file."""
+    ...
+
+  @classmethod
+  def from_serialized_xspace(cls, serialized_xspace: bytes) -> 'ProfileData':
+    """Creates a ProfileData from a serialized XSpace proto."""
+    ...
+
+  @classmethod
+  def from_raw_cpp_ptr(cls, raw_proto_ptr: object) -> 'ProfileData':
+    """Creates a ProfileData from a raw C++ pointer enclosed in a capsule to a XSpace proto."""
+    ...
+
+  @classmethod
+  def from_text_proto(cls, text_proto: str) -> ProfileData:
+    """Creates a ProfileData from a text proto."""
+    ...
+
+  @classmethod
+  def text_proto_to_serialized_xspace(cls, text_proto: str) -> bytes:
+    """Converts a text proto to a serialized XSpace."""
+    ...
+
+  @property
+  def planes(self) -> Iterator['ProfilePlane']:
+    ...
+
+  def find_plane_with_name(self, name: str) -> Optional['ProfilePlane']:
+    """Finds the plane with the given name."""
+    ...
+
+
+class ProfilePlane:
+  """Wraps XPlane protobuf and provides accessors to its contents."""
+
+  @property
+  def name(self) -> str:
+    """Name of the plane."""
+    ...
+
+  @property
+  def lines(self) -> Iterator['ProfileLine']:
+    """Lines in the plane."""
+    ...
+
+  @property
+  def stats(self) -> Iterator[Tuple[str, Any]]:
+    """Stats in the plane.
+
+    Returns
+      An iterator of (name, value) tuples, note that for metadata ids that
+      are not found, the returned tuple will be (None, None). The caller should
+      check the tuple value before using it.
+    """
+    ...
+
+
+class ProfileLine:
+  """Wraps XLine protobuf and provides accessors to its contents."""
+
+  @property
+  def name(self) -> str:
+    """Name of the line."""
+    ...
+
+  @property
+  def events(self) -> Iterator['ProfileEvent']:
+    """Events in the line."""
+    ...
+
+
+class ProfileEvent:
+  """Wraps XEvent protobuf and provides accessors to its contents."""
+
+  @property
+  def start_ns(self) -> float:
+    """Start time of the event in nanoseconds."""
+    ...
+
+  @property
+  def duration_ns(self) -> float:
+    """Duration of the event in nanoseconds."""
+    ...
+
+  @property
+  def end_ns(self) -> float:
+    """End time of the event in nanoseconds."""
+    ...
+
+  @property
+  def name(self) -> str:
+    """Name of the event."""
+    ...
+
+  @property
+  def stats(self) -> Iterator[Tuple[str, Any]]:
+    """Stats of the event.
+
+    Returns
+      An iterator of (name, value) tuples, note that for metadata ids that
+      are not found, the returned tuple will be (None, None). The caller should
+      check the tuple value before using it.
+    """
+    ...
+
 
 class ProfilerServer: ...
 def start_server(port: int) -> ProfilerServer: ...
@@ -31,7 +146,9 @@ def get_fdo_profile(
 
 class ProfilerSession:
   def __init__(self, options: Optional[ProfileOptions] = ...) -> None: ...
-  def stop(self) -> bytes: ...
+  def stop_and_get_bytes(self) -> bytes: ...
+  def stop_and_get_xspace(self) -> ProfileData: ...
+  def stop_and_export(self, log_dir: str) -> None: ...
   def export(self, xspace: bytes, tensorboard_dir: str) -> _Status:...
 
 class ProfileOptions:

@@ -16,6 +16,7 @@
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
 from jax._src.profiler import (
+  ProfileData as ProfileData,
   StepTraceAnnotation as StepTraceAnnotation,
   TraceAnnotation as TraceAnnotation,
   device_memory_profile as device_memory_profile,

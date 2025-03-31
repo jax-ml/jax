@@ -35,10 +35,12 @@ from jax._src import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.lib import version as jaxlib_version
 
+
 _profiler_server: xla_client.profiler.ProfilerServer | None = None
 
 logger = logging.getLogger(__name__)
 
+ProfileData = xla_client.profiler.ProfileData
 
 def start_server(port: int) -> xla_client.profiler.ProfilerServer:
   """Starts the profiler server on port `port`.
@@ -74,7 +76,7 @@ def stop_server():
 
 class _ProfileState:
   def __init__(self):
-    self.profile_session = None
+    self.profile_session: xla_client.profiler.ProfilerSession | None = None
     self.log_dir = None
     self.create_perfetto_link = False
     self.create_perfetto_trace = False
@@ -192,7 +194,7 @@ def _host_perfetto_trace_file(path: os.PathLike | str):
   finally:
     os.chdir(orig_directory)
 
-def stop_trace():
+def stop_trace(return_xspace=False):
   """Stops the currently-running profiler trace.
 
   The trace will be saved to the ``log_dir`` passed to the corresponding
@@ -202,7 +204,11 @@ def stop_trace():
     if _profile_state.profile_session is None:
       raise RuntimeError("No profile started")
     sess = _profile_state.profile_session
-    sess.export(sess.stop(), str(_profile_state.log_dir))
+    if return_xspace:
+        xspace = sess.stop_and_get_xspace()
+        return xspace
+
+    sess.stop_and_export(str(_profile_state.log_dir))
     if _profile_state.create_perfetto_trace:
       abs_filename = _write_perfetto_trace_file(_profile_state.log_dir)
       if _profile_state.create_perfetto_link:
@@ -219,7 +225,7 @@ def stop_and_get_fdo_profile() -> bytes | str:
   with _profile_state.lock:
     if _profile_state.profile_session is None:
       raise RuntimeError("No profile started")
-    xspace = _profile_state.profile_session.stop()
+    xspace = _profile_state.profile_session.stop_and_get_bytes()
     fdo_profile = xla_client.profiler.get_fdo_profile(xspace)
     _profile_state.reset()
     return fdo_profile
@@ -436,7 +442,7 @@ class PGLEProfiler:
       try:
         yield
       finally:
-        xspace = runner.current_session.stop()
+        xspace = runner.current_session.stop_and_get_bytes()
         runner.fdo_profiles.append(
             xla_client.profiler.get_fdo_profile(xspace)
         )
