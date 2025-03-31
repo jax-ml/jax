@@ -342,7 +342,7 @@ class TransposeTransform(MemoryRefTransform):
 @tree_util.register_dataclass
 @dataclasses.dataclass(frozen=True)
 class TransposeRef(state_types.Transform):
-  permutation: tuple[int, ...]
+  permutation: tuple[int, ...] = dataclasses.field(metadata=dict(static=True))
 
   def transform_shape(self, shape):
     if shape is None:
@@ -370,17 +370,29 @@ class TransposeRef(state_types.Transform):
     return mgpu.TransposeTransform(_perm_inverse(self.permutation))
 
 
-def transpose_ref(
-    ref: pallas_core.TransformedRef | Any,
-    permutation: tuple[int, ...],
+def transform_ref(
+    ref: pallas_core.TransformedRef,
+    transform: state_types.Transform
 ) -> pallas_core.TransformedRef:
   if not isinstance(ref, pallas_core.TransformedRef):
     if not isinstance(jax_core.get_aval(ref), pallas_core.AbstractMemoryRef):
       raise TypeError("ref must be a reference")
     ref = pallas_core.TransformedRef(ref, transforms=())
   return pallas_core.TransformedRef(
-      ref.ref, (*ref.transforms, TransposeRef(permutation)),
+      ref.ref, (*ref.transforms, transform),
   )
+
+def transpose_ref(
+    ref: pallas_core.TransformedRef | Any,
+    permutation: tuple[int, ...],
+) -> pallas_core.TransformedRef:
+  return transform_ref(ref, TransposeRef(permutation))
+
+def untile_ref(ref, tiling: tuple[int, ...]) -> pallas_core.TransformedRef:
+  return transform_ref(ref, UntileRef(tiling))
+
+def unswizzle_ref(ref, swizzle: int) -> pallas_core.TransformedRef:
+  return transform_ref(ref, UnswizzleRef(swizzle))
 
 
 @dataclasses.dataclass(frozen=True)
