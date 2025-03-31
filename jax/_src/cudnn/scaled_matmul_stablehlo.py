@@ -495,7 +495,7 @@ def quantize(x, config):
     SCALE_MAX = jnp.finfo(config.scale_type).max.astype(x.dtype)
 
     scales_q = jnp.clip(scales / config.global_scale, 0, SCALE_MAX)
-    scales_q = scales_q.astype(config.scale_type)
+    scales_q = jax.lax.optimization_barrier(scales_q.astype(config.scale_type))
     scaled_x = x / scales_q.astype(jnp.float32)
   else:
     raise ValueError(f"Unrecognized mode: {config.mode}.")
