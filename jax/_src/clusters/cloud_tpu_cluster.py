@@ -17,10 +17,9 @@ from __future__ import annotations
 import logging
 import os
 import re
-import socket
-import time
 from jax._src import clusters
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
+from .util import wait_for_host
 
 logger = logging.getLogger(__name__)
 
@@ -106,29 +105,11 @@ class BaseTpuCluster(clusters.ClusterEnv):
       coordinator_address = cls._get_worker_list_in_slice()[0]
     coordinator_address = coordinator_address.split(':')[0]
     logger.debug("TPU Cluster using coordinator address: %s", coordinator_address)
-    cls.wait_for_coordinator(coordinator_address, timeout_secs)
+    if timeout_secs:
+      # The host may not be up before the other hosts try to
+      # communicate with it. We check for its existence with retries.
+      wait_for_host(coordinator_address, timeout_secs)
     return f'{coordinator_address}:{coordinator_port}'
-
-  @classmethod
-  def wait_for_coordinator(cls, coordinator_address, timeout_secs):
-    # The coordinator may not be up before the other hosts try to
-    # communicate with it. We check for its existence with retries.
-    coordinator_found = False
-    max_time = time.time() + timeout_secs
-    coordinator_retry_secs = 5
-    while not coordinator_found and time.time() < max_time:
-      try:
-        ip_address = socket.gethostbyname(coordinator_address)
-        coordinator_found = True
-        logger.debug("Found coordinator with address %s", coordinator_address)
-      except socket.gaierror:
-        logger.debug(
-            "Failed to recognize coordinator address %s"
-            " retrying...", coordinator_address
-        )
-        time.sleep(coordinator_retry_secs)
-    if not coordinator_found:
-      raise RuntimeError(f"Failed to recognize coordinator address {coordinator_address}")
 
   @classmethod
   def get_process_count(cls) -> int:
