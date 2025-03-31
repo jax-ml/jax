@@ -193,7 +193,7 @@ def attention(q, k, v, config: TuningConfig):
 
   def entry(q_ref, k_ref, v_ref, out_ref):
     compute_wgs = 2
-    tiling = plgpu.TilingTransform((64, 64))
+    tiling = plgpu.TilingTransform((8, 64))
     swizzle = plgpu.SwizzleTransform(128)
     qo_scratch = plgpu.SMEM(
         (compute_wgs, block_q, head_dim), jnp.float16,
@@ -263,7 +263,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig):
   if rem:
     raise NotImplementedError(f"{q_seq_len=} must be a multiple of {block_q * 2=}")
 
-  tiling = plgpu.TilingTransform((64, 64))
+  tiling = plgpu.TilingTransform((8, 64))
   swizzle = plgpu.SwizzleTransform(128)
   transpose = plgpu.TransposeTransform((0, 2, 1, 3, 4))
 
