@@ -423,9 +423,9 @@ def emit_pipeline_warp_specialized(
   # Trace the index maps to determine if they depend on the grid.
   # Grid-independent values will not be multiple-buffered.
   in_spec_has_seq_axis = [
-      ~_is_index_invariant(spec, grid) for spec in in_specs]
+      not _is_index_invariant(spec, grid) for spec in in_specs]
   out_spec_has_seq_axis = [
-      ~_is_index_invariant(spec, grid) for spec in out_specs]
+      not _is_index_invariant(spec, grid) for spec in out_specs]
   spec_has_seq_axis = [*in_spec_has_seq_axis, *out_spec_has_seq_axis]
 
   num_pipeline_steps = math.prod(grid)
@@ -510,13 +510,13 @@ def emit_pipeline_warp_specialized(
       consumed_barrier_refs,
   ):
     in_brefs: Sequence[BufferedRef] = [
-        BufferedRef(spec, ~has_seq_axis, gmem_ref, smem_ref)
+        BufferedRef(spec, not has_seq_axis, gmem_ref, smem_ref)
         for spec, has_seq_axis, gmem_ref, smem_ref in zip(
             in_specs, in_spec_has_seq_axis, in_gmem_refs, in_smem_refs
         )
     ]
     out_brefs: Sequence[BufferedRef] = [
-        BufferedRef(spec, ~has_seq_axis, gmem_ref, smem_ref)
+        BufferedRef(spec, not has_seq_axis, gmem_ref, smem_ref)
         for spec, has_seq_axis, gmem_ref, smem_ref in zip(
             out_specs, out_spec_has_seq_axis, out_gmem_refs, out_smem_refs
         )
@@ -548,7 +548,7 @@ def emit_pipeline_warp_specialized(
         with pallas_core.grid_env(map(pallas_core.GridAxis, indices, grid)):
           body_refs = []
           for bref in it.chain(in_brefs, out_brefs):
-            buf_slot = _get_slot(slot, ~bref.is_index_invariant)
+            buf_slot = _get_slot(slot, not bref.is_index_invariant)
             body_refs.append(bref.get_ref_for_slot(buf_slot))
 
           body_args = body_refs
@@ -581,7 +581,7 @@ def emit_pipeline_warp_specialized(
               new_store_slices[idx],
           )
           slices_changed = ~functools.reduce(lax.bitwise_and, are_same_slices)
-          bref.copy_out(_get_slot(slot, ~bref.is_index_invariant),
+          bref.copy_out(_get_slot(slot, not bref.is_index_invariant),
                         indices,
                         predicate=slices_changed)
         gpu_primitives.commit_smem_to_gmem_group()
@@ -639,7 +639,7 @@ def emit_pipeline_warp_specialized(
       # Begin initial copies.
       for step in range(max_concurrent_steps):
         for bref, barrier in zip(in_brefs, in_smem_barrier_refs):
-          buf_slot = _get_slot(step, ~bref.is_index_invariant)
+          buf_slot = _get_slot(step, not bref.is_index_invariant)
           bref.copy_in(buf_slot, indices, barrier)
         indices = _inc_grid_by_1(indices, grid)
 
@@ -662,7 +662,7 @@ def emit_pipeline_warp_specialized(
           if manual_consumed_barriers:
             gpu_primitives.barrier_wait(consumed_barrier.at[slot])  # pytype: disable=attribute-error
           bref.copy_in(
-              _get_slot(fetch_slot, ~bref.is_index_invariant), indices, barrier)
+              _get_slot(fetch_slot, not bref.is_index_invariant), indices, barrier)
         next_indices = _inc_grid_by_1(indices, grid)
         return (next_indices,)
       lax.fori_loop(0, num_pipeline_steps - max_concurrent_steps,
