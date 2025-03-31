@@ -1203,8 +1203,8 @@ def transpose(a: ArrayLike, axes: Sequence[int] | None = None) -> Array:
     Array([[1, 3],
            [2, 4]], dtype=int32)
   """
-  util.check_arraylike("transpose", a)
-  axes_ = list(range(np.ndim(a))[::-1]) if axes is None else axes
+  a = util.ensure_arraylike("transpose", a)
+  axes_ = list(range(a.ndim)[::-1]) if axes is None else axes
   axes_ = [_canonicalize_axis(i, np.ndim(a)) for i in axes_]
   return lax.transpose(a, axes_)
 
@@ -1285,8 +1285,8 @@ def matrix_transpose(x: ArrayLike, /) -> Array:
            [[5, 7],
             [6, 8]]], dtype=int32)
   """
-  util.check_arraylike("matrix_transpose", x)
-  ndim = np.ndim(x)
+  x = util.ensure_arraylike("matrix_transpose", x)
+  ndim = x.ndim
   if ndim < 2:
     raise ValueError(f"x must be at least two-dimensional for matrix_transpose; got {ndim=}")
   axes = (*range(ndim - 2), ndim - 1, ndim - 2)
