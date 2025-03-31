@@ -98,6 +98,7 @@ build:windows --incompatible_strict_action_env=true
 # #############################################################################
 build:nonccl --define=no_nccl_support=true
 
+build --repo_env USE_PYWRAP_RULES=1
 build:posix --copt=-fvisibility=hidden
 build:posix --copt=-Wno-sign-compare
 build:posix --cxxopt=-std=c++17

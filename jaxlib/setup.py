@@ -76,6 +76,8 @@ setup(
     package_data={
         'jaxlib': [
             '*.so',
+            '*.dylib',
+            '*.dll',
             '*.pyd*',
             'py.typed',
             'cpu/*',

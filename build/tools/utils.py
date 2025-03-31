@@ -204,7 +204,7 @@ def get_clang_major_version(clang_path):
 
 def get_clangpp_path(clang_path):
   clang_path = pathlib.Path(clang_path)
-  clang_exec_name = clang_path.stem
+  clang_exec_name = clang_path.name
   clangpp_exec_name = clang_exec_name
   if "clang++" not in clang_exec_name:
     clangpp_exec_name = clang_exec_name.replace("clang", "clang++")
