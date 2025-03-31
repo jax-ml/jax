@@ -759,9 +759,8 @@ def _wgmma_lowering(
       rhs_transpose = False
     case (
         gpu_core.UnswizzleRef(rhs_swizzle),
-        gpu_core.TransposeRef((1, 0, 2, 3)),  # Only transpose between tiles
         gpu_core.UntileRef(rhs_tiling),
-        gpu_core.TransposeRef((1, 0)),  # Transpose the two logical dims
+        gpu_core.TransposeRef((1, 0)),
     ):
       rhs_transpose = True
     case (
@@ -794,7 +793,7 @@ def _wgmma_lowering(
       raise NotImplementedError("WGMMA rhs tiling does not fit swizzle")
 
   if rhs_transpose:
-    b = mgpu.memref_transpose(b, (0, 1, 3, 2))
+    b = mgpu.memref_transpose(b, (1, 0, 3, 2))
   new_acc = mgpu.wgmma(acc, a, b, swizzle=rhs_swizzle)
   nvvm_dialect.wgmma_commit_group_sync_aligned()
   return new_acc

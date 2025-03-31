@@ -201,7 +201,7 @@ def attention(q, k, v, config: TuningConfig):
     )
     k_scratch = plgpu.SMEM(
         (max_concurrent_steps, block_kv, head_dim), jnp.float16,
-        transforms=(tiling, plgpu.TransposeTransform((0, 2, 1, 3, 4)), swizzle),
+        transforms=(tiling, swizzle),
     )
     v_scratch = plgpu.SMEM(
         (max_concurrent_steps, block_kv, head_dim), jnp.float16,
@@ -265,7 +265,6 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig):
 
   tiling = plgpu.TilingTransform((8, 64))
   swizzle = plgpu.SwizzleTransform(128)
-  transpose = plgpu.TransposeTransform((0, 2, 1, 3, 4))
 
   def fa3_kernel(q_ref, k_ref, v_ref, out_ref, scoped):
     batch = lax.axis_index("batch")
@@ -354,7 +353,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig):
             plgpu.GPUBlockSpec(  # k
                 block_shape=(block_kv, head_dim),
                 index_map=lambda i: (i, 0),
-                transforms=[tiling, transpose, swizzle]),
+                transforms=[tiling, swizzle]),
             plgpu.GPUBlockSpec(  # v
                 block_shape=(block_kv, head_dim),
                 index_map=lambda i: (i, 0),

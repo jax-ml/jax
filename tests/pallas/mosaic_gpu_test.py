@@ -1563,8 +1563,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
     b = jax.random.uniform(key2, shape=b_shape, dtype=dtype)
 
     rhs_transforms = (plgpu.TilingTransform((8, elems_128b)),)
-    if rhs_transpose:
-      rhs_transforms += (plgpu.TransposeTransform((1, 0, 2, 3)),)
     res = pl.pallas_call(
         kernel,
         in_specs=[
