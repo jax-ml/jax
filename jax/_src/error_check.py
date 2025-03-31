@@ -289,6 +289,11 @@ def wrap_for_export(f):
   function scope, making it possible to export the function and later import in
   other processes.
 
+  When the function is later imported, it must be wrapped with
+  :func:`unwrap_from_import` to integrate the error checking mechanism of the
+  imported function into the global error checking mechanism of the current
+  process.
+
   This function should only be applied once to a function; wrapping the same
   function multiple times is unnecessary.
   """
@@ -327,6 +332,9 @@ def unwrap_from_import(f):
   separate from the global error state of the current process. This wrapper
   ensures that errors detected during execution are correctly integrated into
   the global error checking mechanism of the current process.
+
+  This function should only be applied to functions that were previously wrapped
+  with :func:`wrap_for_export` before export.
   """
   if _error_storage.ref is None:
     with core.eval_context():
