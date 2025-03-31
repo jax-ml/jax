@@ -52,66 +52,6 @@ int SizeOfBlasType(BlasType type) {
 
 }  // namespace
 
-// Batched LU decomposition: getrfbatched
-
-static absl::Status GetrfBatched_(gpuStream_t stream, void** buffers,
-                                  const char* opaque, size_t opaque_len) {
-  auto s = UnpackDescriptor<GetrfBatchedDescriptor>(opaque, opaque_len);
-  JAX_RETURN_IF_ERROR(s.status());
-  const GetrfBatchedDescriptor& d = **s;
-  auto h = BlasHandlePool::Borrow(stream);
-  JAX_RETURN_IF_ERROR(h.status());
-  auto& handle = *h;
-  if (buffers[0] != buffers[1]) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMemcpyAsync(
-        buffers[1], buffers[0], SizeOfBlasType(d.type) * d.batch * d.n * d.n,
-        gpuMemcpyDeviceToDevice, stream)));
-  }
-
-  int* ipiv = static_cast<int*>(buffers[2]);
-  int* info = static_cast<int*>(buffers[3]);
-  MakeBatchPointersAsync(stream, buffers[1], buffers[4], d.batch,
-                         SizeOfBlasType(d.type) * d.n * d.n);
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuGetLastError()));
-  switch (d.type) {
-    case BlasType::F32: {
-      float** batch_ptrs = static_cast<float**>(buffers[4]);
-      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpublasSgetrfBatched(
-          handle.get(), d.n, batch_ptrs, d.n, ipiv, info, d.batch)));
-      break;
-    }
-    case BlasType::F64: {
-      double** batch_ptrs = static_cast<double**>(buffers[4]);
-      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpublasDgetrfBatched(
-          handle.get(), d.n, batch_ptrs, d.n, ipiv, info, d.batch)));
-      break;
-    }
-    case BlasType::C64: {
-      gpublasComplex** batch_ptrs = static_cast<gpublasComplex**>(buffers[4]);
-      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpublasCgetrfBatched(
-          handle.get(), d.n, batch_ptrs, d.n, ipiv, info, d.batch)));
-      break;
-    }
-    case BlasType::C128: {
-      gpublasDoubleComplex** batch_ptrs =
-          static_cast<gpublasDoubleComplex**>(buffers[4]);
-      JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpublasZgetrfBatched(
-          handle.get(), d.n, batch_ptrs, d.n, ipiv, info, d.batch)));
-      break;
-    }
-  }
-  return absl::OkStatus();
-}
-
-void GetrfBatched(gpuStream_t stream, void** buffers, const char* opaque,
-                  size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = GetrfBatched_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
-                                  s.message().length());
-  }
-}
-
 // Batched QR decomposition: geqrfbatched
 
 static absl::Status GeqrfBatched_(gpuStream_t stream, void** buffers,

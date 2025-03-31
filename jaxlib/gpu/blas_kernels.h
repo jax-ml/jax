@@ -32,16 +32,6 @@ enum class BlasType {
   C128,
 };
 
-// Batched LU decomposition: getrfbatched
-
-struct GetrfBatchedDescriptor {
-  BlasType type;
-  int batch, n;
-};
-
-void GetrfBatched(gpuStream_t stream, void** buffers, const char* opaque,
-                  size_t opaque_len, XlaCustomCallStatus* status);
-
 // Batched QR decomposition: geqrfbatched
 
 struct GeqrfBatchedDescriptor {
