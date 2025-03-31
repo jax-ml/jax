@@ -35,6 +35,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
+from jax._src.mesh import get_abstract_mesh
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lib.mlir import ir
@@ -1860,8 +1861,14 @@ def _axis_index_lowering(ctx, *, axis_name):
                                          ctx.module_context.axis_env)]
 
 def _axis_index_effectful_abstract_eval(*, axis_name):
-  _check_axis_names([axis_name])
-  return ShapedArray((), np.int32), {core.NamedAxisEffect(axis_name)}
+  effect = {core.NamedAxisEffect(axis_name)}
+  axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
+  _check_axis_names(axis_name)
+  mesh = get_abstract_mesh()
+  sharding = NamedSharding(mesh, P())
+  vma = ((frozenset(axis_name) if mesh._any_axis_manual else frozenset())
+         if config.varying_axes_in_types.value else frozenset())
+  return ShapedArray((), np.int32, sharding=sharding, vma=vma), effect
 
 def _axis_index_batcher(axis_data, vals_in, dims_in, *, axis_name):
   return lax.iota(np.int32, axis_data.size), 0
