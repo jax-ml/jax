@@ -24,7 +24,9 @@ from types import ModuleType
 import jax
 from jax._src.sharding import Sharding
 from jax._src.lib import xla_client as xc
-from jax._src import dtypes as _dtypes, config
+from jax._src import config
+from jax._src import dtypes as _dtypes
+from jax._src import xla_bridge as xb
 
 
 __array_api_version__ = '2023.12'
@@ -73,7 +75,10 @@ class ArrayNamespaceInfo:
     return None
 
   def devices(self):
-    return jax.devices()
+    out = [None]  # None indicates "uncommitted"
+    for backend in xb.backends():
+        out.extend(jax.devices(backend))
+    return out
 
   def capabilities(self):
     return self._capabilities
