@@ -59,7 +59,6 @@ from jax._src.named_sharding import DuplicateSpecError
 from jax._src import mesh as mesh_lib
 from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
-from jax._src.lib.mlir import dialects
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
@@ -8066,12 +8065,6 @@ class UtilTest(jtu.JaxTestCase):
 
 @jtu.with_config(jax_use_shardy_partitioner=True)
 class ShardyTest(jtu.JaxTestCase):
-
-  # TODO(bartchr): Once JAX is released with SDY, remove setUp.
-  def setUp(self):
-    if not dialects.sdy:
-      raise unittest.SkipTest('Shardy is not available.')
-    super().setUp()
 
   def test_lowering_input_output_sharding(self):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
