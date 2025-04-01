@@ -24,6 +24,7 @@ from jax import lax
 from jax._src import array
 from jax._src import core
 from jax._src import op_shardings
+from jax._src import test_util as jtu
 from jax._src.ad_checkpoint import checkpoint  # new jax.remat implementation
 from jax._src.lib import xla_client as xc
 from jax._src.pjit import pjit_check_aval_sharding
@@ -33,6 +34,7 @@ import jax.numpy as jnp
 import numpy as np
 
 jax.config.parse_flags_with_absl()
+jtu.request_cpu_devices(8)
 
 
 partial = functools.partial
