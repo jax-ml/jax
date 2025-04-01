@@ -548,6 +548,29 @@ class JaxArrayTests(jtu.JaxTestCase):
     self.assertEqual(result.shape, obj.shape)
     self.assertEqual(result.dtype, obj.dtype)
 
+  @parameterized.named_parameters(
+      {"testcase_name": "subscript-form", "args": ("jk,k->j", Float[5, 3], Float[3])},
+      {"testcase_name": "index-form", "args": (Float[5, 3], (0, 1), Float[3], (1,), (0,))},
+  )
+  def test_einsum(self, args):
+    rng = jtu.rand_default(self.rng())
+    def make_arg(arg):
+      if isinstance(arg, jax.ShapeDtypeStruct):
+        return rng(arg.shape, arg.dtype)
+      return arg
+    args = jax.tree.map(make_arg, args)
+
+    def wrap_array(arg):
+      if isinstance(arg, (jax.Array, np.ndarray)):
+        return JaxArrayWrapper(arg)
+      return arg
+    wrapped_args = jax.tree.map(wrap_array, args)
+
+    expected = jnp.einsum(*args)
+    actual = jnp.einsum(*wrapped_args)
+
+    self.assertAllClose(actual, expected, atol=0, rtol=0)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
