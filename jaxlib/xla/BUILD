@@ -394,6 +394,7 @@ cc_library(
         "@xla//xla/pjrt:mlir_to_hlo",
         "@xla//xla/pjrt:status_casters",
         "@xla//xla/python:refine_polymorphic_shapes",
+        "@xla//xla/service:hlo_proto_cc",
         "@xla//xla/tsl/platform:errors",
         "@xla//xla/tsl/platform:logging",
         "@xla//xla/tsl/platform:statusor",
