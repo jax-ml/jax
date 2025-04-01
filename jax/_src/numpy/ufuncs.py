@@ -3640,9 +3640,9 @@ def heaviside(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   .. math::
 
     \mathrm{heaviside}(x1, x2) = \begin{cases}
-      0., & x < 0\\
-      x2, & x = 0\\
-      1., & x > 0.
+      0,  & x1 < 0\\
+      x2, & x1 = 0\\
+      1,  & x1 > 0.
     \end{cases}
 
   Args:
