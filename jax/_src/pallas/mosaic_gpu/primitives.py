@@ -185,6 +185,7 @@ def _copy_smem_to_gmem_lowering(
     dst_transforms_treedef,
     has_user_predicate,
     commit_group,
+    reduction_op: Literal["add", "min", "max", "inc", "dec", "and", "or", "xor"] | None,
 ):
   if has_user_predicate:
     flat_args, user_predicate = flat_args[:-1], flat_args[-1]
@@ -215,6 +216,7 @@ def _copy_smem_to_gmem_lowering(
         dst_ref=dst,
         predicate=predicate,
         arrive=commit_group,
+        reduction_op=reduction_op,
         **copy_params,
     )
     return ()
@@ -293,6 +295,9 @@ def copy_smem_to_gmem(
     predicate: jax.Array | None = None,
     *,
     commit_group: bool = True,
+    reduction_op: Literal[
+      "add","min","max","inc","dec","and","or","xor"
+    ] | None = None,
 ) -> None:
   """Asynchronously copies a SMEM reference to a GMEM reference.
 
@@ -304,6 +309,7 @@ def copy_smem_to_gmem(
     commit_group: If ``True``, this and any previously uncommitted copies
       are committed to a group and can be awaited jointly via
       :func:`jax.experimental.mosaic.gpu.wait_smem_to_gmem`.
+    reduction_op: if set, perform the specified reduction op when copy to gmem
 
   See also:
     :func:`jax.experimental.mosaic.gpu.wait_smem_to_gmem`
@@ -331,6 +337,7 @@ def copy_smem_to_gmem(
       dst_transforms_treedef=dst_transforms_treedef,
       has_user_predicate=predicate is not None,
       commit_group=commit_group,
+      reduction_op=reduction_op,
   )
   return None
 

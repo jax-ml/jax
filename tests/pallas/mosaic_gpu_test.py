@@ -386,6 +386,29 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(kernel(x)[indexer], x[indexer] + 1.0)
 
+  @parameterized.parameters(jnp.bfloat16, jnp.float16, jnp.float32)
+  def test_copy_smem_to_gmem_reduction(self, dtype):
+    @functools.partial(
+        pl.pallas_call,
+        grid=(200,),
+        in_specs=[pl.BlockSpec((128,), lambda *i: i), pl.BlockSpec(memory_space=plgpu.GMEM)],
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct([128], dtype),
+        scratch_shapes=[plgpu.SMEM((128,), dtype)],
+        input_output_aliases={1:0}
+    )
+    def kernel(x_ref, o_ref_gmem, o_ref_gmem_alias, scratch_ref):
+      del o_ref_gmem_alias
+      scratch_ref[...] = x_ref[...]
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(scratch_ref.at[...], o_ref_gmem.at[...], reduction_op="add")
+      plgpu.wait_smem_to_gmem(0)
+    x = jnp.ones(200 * 128).astype(dtype) # 200 blocks
+    output = jnp.zeros(128).astype(dtype)
+    output = kernel(x, output)
+    output_val = x.reshape(-1, 128).sum(axis=0)
+    np.testing.assert_array_equal(output, output_val)
+
   @parameterized.named_parameters(
       {"testcase_name": "1d_none",
        "shape": (256,), "indexers": (slice(0, 128), slice(None, 32))},
