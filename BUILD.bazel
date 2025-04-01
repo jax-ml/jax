@@ -16,23 +16,19 @@ load(
     "@xla//third_party/py:py_import.bzl",
     "py_import",
 )
-load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
 load(
     "//jaxlib:jax.bzl",
     "jax_source_package",
     "jax_wheel",
     "py_deps",
     "pytype_test",
+    "wheel_sources",
 )
 
-collect_data_files(
-    name = "transitive_py_data",
-    deps = ["//jax"],
-)
-
-transitive_py_deps(
-    name = "transitive_py_deps",
-    deps = [
+wheel_sources(
+    name = "jax_sources",
+    data_srcs = ["//jax"],
+    py_srcs = [
         "//jax",
         "//jax:compilation_cache",
         "//jax:experimental",
@@ -60,6 +56,14 @@ transitive_py_deps(
         "//jax/tools:jax_to_ir",
         "//jax/tools:pgo_nsys_converter",
     ],
+    static_srcs = [
+        "//jax:py.typed",
+        "AUTHORS",
+        "LICENSE",
+        "README.md",
+        "pyproject.toml",
+        "setup.py",
+    ],
 )
 
 py_binary(
@@ -73,21 +77,10 @@ py_binary(
     ],
 )
 
-WHEEL_SOURCE_FILES = [
-    ":transitive_py_data",
-    ":transitive_py_deps",
-    "//jax:py.typed",
-    "AUTHORS",
-    "LICENSE",
-    "README.md",
-    "pyproject.toml",
-    "setup.py",
-]
-
 jax_wheel(
     name = "jax_wheel",
     platform_independent = True,
-    source_files = WHEEL_SOURCE_FILES,
+    source_files = [":jax_sources"],
     wheel_binary = ":build_wheel",
     wheel_name = "jax",
 )
@@ -96,14 +89,14 @@ jax_wheel(
     name = "jax_wheel_editable",
     editable = True,
     platform_independent = True,
-    source_files = WHEEL_SOURCE_FILES,
+    source_files = [":jax_sources"],
     wheel_binary = ":build_wheel",
     wheel_name = "jax",
 )
 
 jax_source_package(
     name = "jax_source_package",
-    source_files = WHEEL_SOURCE_FILES,
+    source_files = [":jax_sources"],
     source_package_binary = ":build_wheel",
     source_package_name = "jax",
 )
