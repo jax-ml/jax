@@ -83,6 +83,15 @@ if RUNTIME_PATH and RUNTIME_PATH.exists():
   # Set this so that the custom call can find it
   os.environ["MOSAIC_GPU_RUNTIME_LIB_PATH"] = str(RUNTIME_PATH)
 
+if os.environ.get("MOSAIC_GPU_NVSHMEM_LLVM_LIB_PATH") is None:
+  try:
+    from nvidia import nvshmem
+  except ImportError:
+    pass
+  else:
+    os.environ["MOSAIC_GPU_NVSHMEM_LLVM_LIB_PATH"] = (
+      os.path.join(nvshmem.__path__[0], 'lib/libnvshmem_device.bc')
+    )
 
 mosaic_gpu_p = jax._src.core.Primitive("mosaic_gpu_p")
 mosaic_gpu_p.multiple_results = True
@@ -103,6 +112,7 @@ def _mosaic_gpu_lowering_rule(
     module,
     out_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
+    use_custom_barrier: bool = False,
 ):
   assert len(args) == len(ctx.avals_in)
   assert len(out_types) == len(ctx.avals_out)
@@ -121,15 +131,35 @@ def _mosaic_gpu_lowering_rule(
       raise RuntimeError("Hash collision!")
   else:
     KNOWN_KERNELS[kernel_id] = module_asm
-  op = mlir.custom_call(
-      "mosaic_gpu",
-      result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-      operands=args,
-      operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
-      result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
-      backend_config=kernel_id + module_asm,
-      operand_output_aliases=dict(input_output_aliases),
-  )
+
+  if ctx.is_forward_compat():
+    if use_custom_barrier:
+      raise ValueError("Barrier semaphore is not supported in forward compatibility mode. "
+                       "Please, use 'export_ignore_forward_compatibility=True'.")
+    op = mlir.custom_call(
+        "mosaic_gpu",
+        result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
+        operands=args,
+        operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
+        result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
+        backend_config=kernel_id + module,
+        operand_output_aliases=dict(input_output_aliases),
+    )
+  else:
+    op = mlir.custom_call(
+        "mosaic_gpu_v2",
+        result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
+        operands=args,
+        operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
+        result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
+        backend_config=dict(
+            kernel_hash=ir.StringAttr.get(kernel_id),
+            module=ir.StringAttr.get(module_asm),
+            use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
+        ),
+        operand_output_aliases=dict(input_output_aliases),
+        api_version=4,
+    )
   return op.results
 
 
