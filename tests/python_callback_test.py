@@ -586,15 +586,10 @@ class PythonCallbackTest(jtu.JaxTestCase):
         self.assertAllClose(2 * x, fun(x))
     self.assertEqual(count(), 1)
 
-  @parameterized.parameters("int2", "int4", "uint2", "uint4", "float4_e2m1fn")
+  @parameterized.parameters("int2", "int4", "uint2", "uint4")
   def test_subbyte_operands(self, dtype: str):
-    if jaxlib_extension_version < 323:
-      self.skipTest("Requires jaxlib_extension_version >= 323.")
-    if "2" in dtype and jtu.test_device_matches(["tpu"]):
-      self.skipTest(
-          "TODO(dsuo): TPU callbacks send SIGABRT for int2, uint2, and"
-          " float4_e2m1fn."
-      )
+    if jaxlib_extension_version <= 321:
+      self.skipTest("Requires jaxlib_extension_version >= 322.")
     def get(x):
       return x
     def f(x):
@@ -605,17 +600,21 @@ class PythonCallbackTest(jtu.JaxTestCase):
       )
       return y
     x = np.arange(8, dtype=dtype)
-    np.testing.assert_array_equal(jax.jit(f)(x), np.arange(8, dtype=dtype))
+    # TODO(b/395428868): Remove this check once we support subbyte types.
+    if jtu.test_device_matches(["tpu"]):
+      if "2" in dtype:
+        self.skipTest("TODO(dsuo): TPU callbacks send SIGABRT for int2/uint2.")
+      np.testing.assert_array_equal(jax.jit(f)(x), np.arange(8, dtype=dtype))
+    else:
+      with self.assertRaisesRegex(
+          Exception, "Unsupported primitive type"
+      ):
+        _ = jax.jit(f)(x)
 
-  @parameterized.parameters("int2", "int4", "uint2", "uint4", "float4_e2m1fn")
+  @parameterized.parameters("int2", "int4", "uint2", "uint4")
   def test_subbyte_results(self, dtype: str):
-    if jaxlib_extension_version < 323:
-      self.skipTest("Requires jaxlib_extension_version >= 323.")
-    if "2" in dtype and jtu.test_device_matches(["tpu"]):
-      self.skipTest(
-          "TODO(dsuo): TPU callbacks send SIGABRT for int2, uint2, and"
-          " float4_e2m1fn."
-      )
+    if jaxlib_extension_version <= 321:
+      self.skipTest("Requires jaxlib_extension_version >= 322.")
     def get():
       return np.arange(8, dtype=dtype)
 
@@ -626,43 +625,16 @@ class PythonCallbackTest(jtu.JaxTestCase):
       )
       return y
 
-    np.testing.assert_array_equal(jax.jit(f)(), np.arange(8, dtype=dtype))
-
-  @parameterized.parameters("int2", "int4", "uint2", "uint4", "float4_e2m1fn")
-  def test_non_default_stride_subbyte_results(self, dtype: str):
-    if jaxlib_extension_version < 323:
-      self.skipTest("Requires jaxlib_extension_version >= 323.")
-    if "2" in dtype and jtu.test_device_matches(["tpu"]):
-      self.skipTest(
-          "TODO(dsuo): TPU callbacks send SIGABRT for int2, uint2, and"
-          " float4_e2m1fn."
-      )
-    x = jnp.arange(24, dtype=dtype).reshape(2, 3, 4)
-    def callback(x):
-      return np.asfortranarray(x)
-
-    @jax.jit
-    def f(x):
-      return jax.pure_callback(
-          callback, jax.ShapeDtypeStruct(x.shape, x.dtype), x
-      )
-
-    result = f(x)
-    np.testing.assert_array_equal(x, result)
-
-  def test_non_default_stride(self):
-    x = jnp.arange(24, dtype=jnp.float32).reshape(2, 3, 4)
-    def callback(x):
-      return np.asfortranarray(x)
-
-    @jax.jit
-    def f(x):
-      return jax.pure_callback(
-          callback, jax.ShapeDtypeStruct(x.shape, x.dtype), x
-      )
-
-    result = f(x)
-    np.testing.assert_array_equal(x, result)
+    # TODO(b/395428868): Remove this check once we support subbyte types.
+    if jtu.test_device_matches(["tpu"]):
+      if "2" in dtype:
+        self.skipTest("TODO(dsuo): TPU callbacks send SIGABRT for int2/uint2.")
+      np.testing.assert_array_equal(jax.jit(f)(), np.arange(8, dtype=dtype))
+    else:
+      with self.assertRaisesRegex(
+          Exception, "Unsupported primitive type"
+      ):
+        _ = jax.jit(f)()
 
 
 class PureCallbackTest(jtu.JaxTestCase):
@@ -1135,6 +1107,20 @@ class PureCallbackTest(jtu.JaxTestCase):
     for _ in range(10):
       result += fun(jnp.ones((500, 500), jnp.complex64))[1]
     jax.block_until_ready(result)  # doesn't deadlock
+
+  def test_non_default_stride(self):
+    x = jnp.arange(24, dtype=jnp.float32).reshape(2, 3, 4)
+    def callback(x):
+      return np.asfortranarray(x)
+
+    @jax.jit
+    def f(x):
+      return jax.pure_callback(
+          callback, jax.ShapeDtypeStruct(x.shape, x.dtype), x
+      )
+
+    result = f(x)
+    np.testing.assert_array_equal(x, result)
 
 
 class IOCallbackTest(jtu.JaxTestCase):
