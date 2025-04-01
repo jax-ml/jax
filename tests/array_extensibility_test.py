@@ -452,7 +452,7 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.rot90, Float[5, 3]),
   NumPyAPI.sig(jnp.round, Float[5]),
   NumPyAPI.sig(jnp.searchsorted, Float[5], Float[5]),
-  # NumPyAPI.sig(jnp.select, [Bool[5], Bool[5]], [Float[5], Float[5]], Float[5]),
+  NumPyAPI.sig(jnp.select, [Bool[5], Bool[5]], [Float[5], Float[5]], Float[()]),
   NumPyAPI.sig(jnp.setdiff1d, Int[5], Int[5]),
   NumPyAPI.sig(jnp.setxor1d, Int[5], Int[5]),
   NumPyAPI.sig(jnp.shape, Float[5, 3]),
