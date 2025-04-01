@@ -570,9 +570,17 @@ def _prepend_dim_to_aval(sz, aval):
 
 def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
                         linear, unroll, _split_transpose):
-  carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
+  out_carry_avals, y_avals = split_list(jaxpr.out_avals, [num_carry])
+  _, in_carry_avals, _ = split_list(args, [num_consts, num_carry])
+  if [i.vma for i in in_carry_avals] != [o.vma for o in out_carry_avals]:
+    raise ValueError(
+        'Scan carry input and output got mismatched varying manual axes '
+        f'{in_carry_avals} and {out_carry_avals}. Please open an '
+        'issue at https://github.com/jax-ml/jax/issues, and as a '
+        'temporary workaround pass the check_rep=False argument to '
+        'shard_map')
   ys_avals = _map(partial(_prepend_dim_to_aval, length), y_avals)
-  return carry_avals + ys_avals, jaxpr.effects
+  return out_carry_avals + ys_avals, jaxpr.effects
 
 def _scan_jvp(primals, tangents, reverse, length, jaxpr, num_consts, num_carry,
               linear, unroll, _split_transpose):

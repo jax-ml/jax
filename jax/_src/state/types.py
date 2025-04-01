@@ -366,6 +366,15 @@ class AbstractRef(core.AbstractValue):
           f"`Ref{{{self.inner_aval.str_short()}}} has no `sharding`."
       ) from None
 
+  @property
+  def vma(self):
+    try:
+      return self.inner_aval.vma  # pytype: disable=attribute-error
+    except AttributeError:
+      raise AttributeError(
+          f"`Ref{{{self.inner_aval.str_short()}}} has no `vma`."
+      ) from None
+
   @core.aval_property
   def at(self):
     return RefIndexer(self)

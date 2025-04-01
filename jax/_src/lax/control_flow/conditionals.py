@@ -347,6 +347,15 @@ def _cond_abstract_eval(*avals: core.AbstractValue,
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `cond`: {disallowed_effects}')
+  b0_vma = [o.vma for o in branches[0].out_avals]
+  for branch in branches[1:]:
+    b_vma = [o.vma for o in branch.out_avals]
+    if b0_vma != b_vma:
+      raise Exception("The branches of cond produced mismatched varying manual "
+                      f"axes. Got {b0_vma} and {b_vma}. Please open an issue "
+                      "at https://github.com/jax-ml/jax/issues, and as a "
+                      "temporary workaround pass the check_rep=False argument "
+                      "to shard_map")
   return branches[0].out_avals, joined_effects
 
 def _bcast_select(pred, on_true, on_false):

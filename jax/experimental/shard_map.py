@@ -1365,7 +1365,7 @@ def _scan_check(mesh, *in_rep, jaxpr, num_consts, num_carry, **_):
   _, carry_rep_in, _ = split_list(in_rep, [num_consts, num_carry])
   out_rep = _check_rep(mesh, jaxpr.jaxpr, in_rep)
   carry_rep_out, _ = split_list(out_rep, [num_carry])
-  if not carry_rep_in == carry_rep_out:
+  if carry_rep_in != carry_rep_out:
     raise Exception("Scan carry input and output got mismatched replication "
                     f"types {carry_rep_in} and {carry_rep_out}. Please open an "
                     "issue at https://github.com/jax-ml/jax/issues, and as a "
@@ -1403,7 +1403,7 @@ def _cond_rule(mesh, *in_rep, branches):
   out_rep = _check_rep(mesh, branches[0].jaxpr, args_rep)
   for branch in branches[1:]:
     out_rep_ = _check_rep(mesh, branch.jaxpr, args_rep)
-    if not out_rep_ == out_rep:
+    if out_rep_ != out_rep:
       raise Exception("The branches of cond produced mismatched replication "
                       "types. Please open an issue at "
                       "https://github.com/jax-ml/jax/issues, and as a "
