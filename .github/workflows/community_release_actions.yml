@@ -4,6 +4,9 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
 jobs:
   discord_release:
     if: github.repository_owner == 'jax-ml'
