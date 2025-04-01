@@ -1169,3 +1169,8 @@ def add_batched(batched_args, batch_dims):
     x = moveaxis(x, bdx, bdy)
     return add_jaxvals(x, y), bdy
 primitive_batchers[add_jaxvals_p] = add_batched
+
+
+### mutable arrays
+
+defvectorized(core.mutable_array_p)
