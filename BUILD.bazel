@@ -22,6 +22,7 @@ load(
     "jax_source_package",
     "jax_wheel",
     "py_deps",
+    "pytype_test",
 )
 
 collect_data_files(
@@ -151,4 +152,19 @@ py_import(
     wheel = "@pypi_jax//:whl",
     wheel_deps = [":wheel_additives"],
     deps = COMMON_DEPS,
+)
+
+pytype_test(
+    name = "jax_wheel_size_test",
+    srcs = ["//jaxlib/tools:wheel_size_test.py"],
+    args = [
+        "--wheel-path=$(location :jax_wheel)",
+        "--max-size-mib=5",
+    ],
+    data = [":jax_wheel"],
+    main = "wheel_size_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
 )

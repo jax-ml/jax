@@ -33,11 +33,14 @@ load(
     "jax_py_test",
     "jax_wheel",
     "pytype_strict_library",
+    "pytype_test",
 )
 
 licenses(["notice"])  # Apache 2
 
 package(default_visibility = ["//visibility:public"])
+
+exports_files(["wheel_size_test.py"])
 
 genrule(
     name = "platform_tags_py",
@@ -388,4 +391,49 @@ verify_manylinux_compliance_test(
     ],
     wheel = ":jax_cuda_pjrt_wheel",
     x86_64_compliance_tag = X86_64_MANYLINUX_TAG,
+)
+
+pytype_test(
+    name = "jaxlib_wheel_size_test",
+    srcs = [":wheel_size_test.py"],
+    args = [
+        "--wheel-path=$(location :jaxlib_wheel)",
+        "--max-size-mib=110",
+    ],
+    data = [":jaxlib_wheel"],
+    main = "wheel_size_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+)
+
+pytype_test(
+    name = "jax_cuda_plugin_wheel_size_test",
+    srcs = [":wheel_size_test.py"],
+    args = [
+        "--wheel-path=$(location :jax_cuda_plugin_wheel)",
+        "--max-size-mib=20",
+    ],
+    data = [":jax_cuda_plugin_wheel"],
+    main = "wheel_size_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+)
+
+pytype_test(
+    name = "jax_cuda_pjrt_wheel_size_test",
+    srcs = [":wheel_size_test.py"],
+    args = [
+        "--wheel-path=$(location :jax_cuda_pjrt_wheel)",
+        "--max-size-mib=120",
+    ],
+    data = [":jax_cuda_pjrt_wheel"],
+    main = "wheel_size_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
 )
