@@ -29,7 +29,7 @@ import tempfile
 from bazel_tools.tools.python.runfiles import runfiles
 from jaxlib.tools import build_utils
 
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(fromfile_prefix_chars="@")
 parser.add_argument(
     "--sources_path",
     default=None,
@@ -56,6 +56,9 @@ parser.add_argument(
     action="store_true",
     help="Create an 'editable' jaxlib build instead of a wheel.",
 )
+parser.add_argument(
+    "--srcs", help="source files for the wheel", action="append"
+)
 args = parser.parse_args()
 
 r = runfiles.Create()
@@ -67,16 +70,26 @@ def _is_mac():
 
 pyext = "pyd" if build_utils.is_windows() else "so"
 
-
-def exists(src_file):
-  path = r.Rlocation(src_file)
-  if path is None:
-    return False
-  return os.path.exists(path)
+_MAIN_RUNFILES_DIR = "__main__/"
 
 
-def patch_copy_mlir_import(src_file, dst_dir):
-  src_file = r.Rlocation(src_file)
+def _get_file_path(src_file, runfiles=None, transitive_sources=None):
+  if runfiles:
+    return runfiles.Rlocation(src_file)
+  elif transitive_sources:
+    return build_utils.find_transitive_source_file(
+        src_file.replace(_MAIN_RUNFILES_DIR, ""), transitive_sources
+    )
+  else:
+    raise RuntimeError(
+        "Either runfiles or transitive_sources should be provided!"
+    )
+
+
+def patch_copy_mlir_import(
+    src_file, dst_dir, runfiles=None, transitive_sources=None
+):
+  src_file = _get_file_path(src_file, runfiles, transitive_sources)
   src_filename = os.path.basename(src_file)
   with open(src_file) as f:
     src = f.read()
@@ -106,11 +119,17 @@ _XLA_EXTENSION_STUBS = [
 _OPTIONAL_XLA_EXTENSION_STUBS = []
 
 
-def patch_copy_xla_extension_stubs(dst_dir):
+def patch_copy_xla_extension_stubs(
+    dst_dir, runfiles=None, transitive_sources=None
+):
   xla_extension_dir = os.path.join(dst_dir, "xla_extension")
   os.makedirs(xla_extension_dir)
   for stub_name in _XLA_EXTENSION_STUBS:
-    stub_path = r.Rlocation("__main__/jaxlib/xla/xla_extension/" + stub_name)
+    stub_path = _get_file_path(
+        f"__main__/jaxlib/xla/xla_extension/{stub_name}",
+        runfiles,
+        transitive_sources,
+    )
     stub_path = str(stub_path)  # Make pytype accept os.path.exists(stub_path).
     if stub_name in _OPTIONAL_XLA_EXTENSION_STUBS and not os.path.exists(stub_path):
       continue
@@ -123,7 +142,9 @@ def patch_copy_xla_extension_stubs(dst_dir):
       f.write(src)
 
 
-def verify_mac_libraries_dont_reference_chkstack():
+def verify_mac_libraries_dont_reference_chkstack(
+    runfiles=None, transitive_sources=None
+):
   """Verifies that xla_extension.so doesn't depend on ____chkstk_darwin.
 
   We don't entirely know why this happens, but in some build environments
@@ -134,8 +155,11 @@ def verify_mac_libraries_dont_reference_chkstack():
   """
   if not _is_mac():
     return
+  file_path = _get_file_path(
+      "__main__/jaxlib/xla/xla_extension.so", runfiles, transitive_sources
+  )
   nm = subprocess.run(
-      ["nm", "-g", r.Rlocation("__main__/jaxlib/xla/xla_extension.so")],
+      ["nm", "-g", file_path],
       capture_output=True,
       text=True,
       check=False,
@@ -162,214 +186,243 @@ plat_name={tag}
     )
 
 
-def prepare_wheel(sources_path: pathlib.Path, *, cpu):
-  """Assembles a source tree for the wheel in `sources_path`."""
-  copy_runfiles = functools.partial(build_utils.copy_file, runfiles=r)
+def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, transitive_sources):
+  """Assembles a source tree for the wheel in `wheel_sources_path`."""
+  if transitive_sources:
+    runfiles = None
+    source_file_prefix = ""
+  else:
+    runfiles = r
+    source_file_prefix = _MAIN_RUNFILES_DIR
+  copy_files = functools.partial(
+      build_utils.copy_file,
+      runfiles=runfiles,
+      transitive_sources=transitive_sources,
+  )
 
-  verify_mac_libraries_dont_reference_chkstack()
-  copy_runfiles(
-      dst_dir=sources_path,
+  verify_mac_libraries_dont_reference_chkstack(
+      runfiles=runfiles, transitive_sources=transitive_sources
+  )
+  copy_files(
+      dst_dir=wheel_sources_path,
       src_files=[
-          "__main__/jaxlib/tools/LICENSE.txt",
-          "__main__/jaxlib/README.md",
-          "__main__/jaxlib/setup.py",
+          f"{source_file_prefix}jaxlib/tools/LICENSE.txt",
+          f"{source_file_prefix}jaxlib/README.md",
+          f"{source_file_prefix}jaxlib/setup.py",
       ],
   )
-  write_setup_cfg(sources_path, cpu)
+  write_setup_cfg(wheel_sources_path, cpu)
 
-  jaxlib_dir = sources_path / "jaxlib"
-  copy_runfiles(
-      "__main__/jaxlib/init.py", dst_dir=jaxlib_dir, dst_filename="__init__.py"
+  jaxlib_dir = wheel_sources_path / "jaxlib"
+  copy_files(
+      f"{source_file_prefix}jaxlib/init.py",
+      dst_dir=jaxlib_dir,
+      dst_filename="__init__.py",
   )
-  copy_runfiles(
+  copy_files(
       dst_dir=jaxlib_dir,
       src_files=[
-          f"__main__/jaxlib/cpu_feature_guard.{pyext}",
-          f"__main__/jaxlib/utils.{pyext}",
-          "__main__/jaxlib/lapack.py",
-          "__main__/jaxlib/hlo_helpers.py",
-          "__main__/jaxlib/gpu_prng.py",
-          "__main__/jaxlib/gpu_linalg.py",
-          "__main__/jaxlib/gpu_rnn.py",
-          "__main__/jaxlib/gpu_triton.py",
-          "__main__/jaxlib/gpu_common_utils.py",
-          "__main__/jaxlib/gpu_solver.py",
-          "__main__/jaxlib/gpu_sparse.py",
-          "__main__/jaxlib/plugin_support.py",
-          "__main__/jaxlib/version.py",
-          "__main__/jaxlib/xla/xla_client.py",
-          f"__main__/jaxlib/xla/xla_extension.{pyext}",
+          f"{source_file_prefix}jaxlib/cpu_feature_guard.{pyext}",
+          f"{source_file_prefix}jaxlib/utils.{pyext}",
+          f"{source_file_prefix}jaxlib/lapack.py",
+          f"{source_file_prefix}jaxlib/hlo_helpers.py",
+          f"{source_file_prefix}jaxlib/gpu_prng.py",
+          f"{source_file_prefix}jaxlib/gpu_linalg.py",
+          f"{source_file_prefix}jaxlib/gpu_rnn.py",
+          f"{source_file_prefix}jaxlib/gpu_triton.py",
+          f"{source_file_prefix}jaxlib/gpu_common_utils.py",
+          f"{source_file_prefix}jaxlib/gpu_solver.py",
+          f"{source_file_prefix}jaxlib/gpu_sparse.py",
+          f"{source_file_prefix}jaxlib/plugin_support.py",
+          f"{source_file_prefix}jaxlib/version.py",
+          f"{source_file_prefix}jaxlib/xla/xla_client.py",
+          f"{source_file_prefix}jaxlib/xla/xla_extension.{pyext}",
       ],
   )
   # This file is required by PEP-561. It marks jaxlib as package containing
   # type stubs.
   with open(jaxlib_dir / "py.typed", "w"):
     pass
-  patch_copy_xla_extension_stubs(jaxlib_dir)
+  patch_copy_xla_extension_stubs(
+      jaxlib_dir, runfiles=runfiles, transitive_sources=transitive_sources
+  )
 
-  copy_runfiles(
+  copy_files(
       dst_dir=jaxlib_dir / "cpu",
       src_files=[
-          f"__main__/jaxlib/cpu/_lapack.{pyext}",
+          f"{source_file_prefix}jaxlib/cpu/_lapack.{pyext}",
       ],
   )
 
   mosaic_python_dir = jaxlib_dir / "mosaic" / "python"
-  copy_runfiles(
+  copy_files(
       dst_dir=mosaic_python_dir,
       src_files=[
-          "__main__/jaxlib/mosaic/python/layout_defs.py",
-          "__main__/jaxlib/mosaic/python/mosaic_gpu.py",
-          "__main__/jaxlib/mosaic/python/tpu.py",
+          f"{source_file_prefix}jaxlib/mosaic/python/layout_defs.py",
+          f"{source_file_prefix}jaxlib/mosaic/python/mosaic_gpu.py",
+          f"{source_file_prefix}jaxlib/mosaic/python/tpu.py",
       ],
   )
   # TODO (sharadmv,skyewm): can we avoid patching this file?
   patch_copy_mlir_import(
-      "__main__/jaxlib/mosaic/python/_tpu_gen.py", dst_dir=mosaic_python_dir
+      f"{source_file_prefix}jaxlib/mosaic/python/_tpu_gen.py",
+      dst_dir=mosaic_python_dir,
+      runfiles=runfiles,
+      transitive_sources=transitive_sources,
   )
   mosaic_gpu_dir = jaxlib_dir / "mosaic" / "dialect" / "gpu"
   os.makedirs(mosaic_gpu_dir)
   patch_copy_mlir_import(
-      "__main__/jaxlib/mosaic/dialect/gpu/_mosaic_gpu_gen_ops.py",
+      f"{source_file_prefix}jaxlib/mosaic/dialect/gpu/_mosaic_gpu_gen_ops.py",
       dst_dir=mosaic_gpu_dir,
+      runfiles=runfiles,
+      transitive_sources=transitive_sources,
   )
   patch_copy_mlir_import(
-      "__main__/jaxlib/mosaic/dialect/gpu/_mosaic_gpu_gen_enums.py",
+      f"{source_file_prefix}jaxlib/mosaic/dialect/gpu/_mosaic_gpu_gen_enums.py",
       dst_dir=mosaic_gpu_dir,
+      runfiles=runfiles,
+      transitive_sources=transitive_sources,
   )
 
-  copy_runfiles(
+  copy_files(
       dst_dir=jaxlib_dir / "mlir",
       src_files=[
-          "__main__/jaxlib/mlir/ir.py",
-          "__main__/jaxlib/mlir/ir.pyi",
-          "__main__/jaxlib/mlir/passmanager.py",
-          "__main__/jaxlib/mlir/passmanager.pyi",
+          f"{source_file_prefix}jaxlib/mlir/ir.py",
+          f"{source_file_prefix}jaxlib/mlir/ir.pyi",
+          f"{source_file_prefix}jaxlib/mlir/passmanager.py",
+          f"{source_file_prefix}jaxlib/mlir/passmanager.pyi",
       ],
   )
-  copy_runfiles(
+  copy_files(
       dst_dir=jaxlib_dir / "mlir" / "dialects",
       src_files=[
-          "__main__/jaxlib/mlir/dialects/_arith_enum_gen.py",
-          "__main__/jaxlib/mlir/dialects/_arith_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_builtin_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_chlo_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_func_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_math_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_memref_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_mhlo_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_ods_common.py",
-          "__main__/jaxlib/mlir/dialects/_scf_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_sdy_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_sparse_tensor_enum_gen.py",
-          "__main__/jaxlib/mlir/dialects/_sparse_tensor_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_stablehlo_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_vector_enum_gen.py",
-          "__main__/jaxlib/mlir/dialects/_vector_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_gpu_enum_gen.py",
-          "__main__/jaxlib/mlir/dialects/_gpu_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_nvgpu_enum_gen.py",
-          "__main__/jaxlib/mlir/dialects/_nvgpu_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_nvvm_enum_gen.py",
-          "__main__/jaxlib/mlir/dialects/_nvvm_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_llvm_enum_gen.py",
-          "__main__/jaxlib/mlir/dialects/_llvm_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/arith.py",
-          "__main__/jaxlib/mlir/dialects/builtin.py",
-          "__main__/jaxlib/mlir/dialects/chlo.py",
-          "__main__/jaxlib/mlir/dialects/func.py",
-          "__main__/jaxlib/mlir/dialects/math.py",
-          "__main__/jaxlib/mlir/dialects/memref.py",
-          "__main__/jaxlib/mlir/dialects/mhlo.py",
-          "__main__/jaxlib/mlir/dialects/scf.py",
-          "__main__/jaxlib/mlir/dialects/sdy.py",
-          "__main__/jaxlib/mlir/dialects/sparse_tensor.py",
-          "__main__/jaxlib/mlir/dialects/stablehlo.py",
-          "__main__/jaxlib/mlir/dialects/vector.py",
-          "__main__/jaxlib/mlir/dialects/nvgpu.py",
-          "__main__/jaxlib/mlir/dialects/nvvm.py",
-          "__main__/jaxlib/mlir/dialects/llvm.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_arith_enum_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_arith_ops_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_builtin_ops_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_chlo_ops_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_func_ops_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_math_ops_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_memref_ops_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_mhlo_ops_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_ods_common.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_scf_ops_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_sdy_ops_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_sparse_tensor_enum_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_sparse_tensor_ops_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_stablehlo_ops_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_vector_enum_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_vector_ops_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_gpu_enum_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_gpu_ops_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_nvgpu_enum_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_nvgpu_ops_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_nvvm_enum_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_nvvm_ops_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_llvm_enum_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/_llvm_ops_gen.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/arith.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/builtin.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/chlo.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/func.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/math.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/memref.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/mhlo.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/scf.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/sdy.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/sparse_tensor.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/stablehlo.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/vector.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/nvgpu.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/nvvm.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/llvm.py",
       ],
   )
-  copy_runfiles(
+  copy_files(
       dst_dir=jaxlib_dir / "mlir" / "extras",
       src_files=[
-          "__main__/jaxlib/mlir/extras/meta.py",
+          f"{source_file_prefix}jaxlib/mlir/extras/meta.py",
       ],
   )
-  copy_runfiles(
+  copy_files(
       dst_dir=jaxlib_dir / "mlir" / "dialects" / "gpu",
       src_files=[
-          "__main__/jaxlib/mlir/dialects/gpu/__init__.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/gpu/__init__.py",
       ],
   )
-  copy_runfiles(
+  copy_files(
       dst_dir=jaxlib_dir / "mlir" / "dialects" / "gpu" / "passes",
       src_files=[
-          "__main__/jaxlib/mlir/dialects/gpu/passes/__init__.py",
+          f"{source_file_prefix}jaxlib/mlir/dialects/gpu/passes/__init__.py",
       ],
   )
 
 
   if build_utils.is_windows():
-    capi_so = "__main__/jaxlib/mlir/_mlir_libs/jaxlib_mlir_capi.dll"
+    capi_so = f"{source_file_prefix}jaxlib/mlir/_mlir_libs/jaxlib_mlir_capi.dll"
   else:
     so_ext = "dylib" if _is_mac() else "so"
-    capi_so = f"__main__/jaxlib/mlir/_mlir_libs/libjaxlib_mlir_capi.{so_ext}"
+    capi_so = f"{source_file_prefix}jaxlib/mlir/_mlir_libs/libjaxlib_mlir_capi.{so_ext}"
 
   mlir_libs_dir = jaxlib_dir / "mlir" / "_mlir_libs"
-  copy_runfiles(
+  copy_files(
       dst_dir=mlir_libs_dir,
       src_files=[
           capi_so,
-          "__main__/jaxlib/mlir/_mlir_libs/__init__.py",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlir.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_chlo.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirHlo.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsSparseTensor.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirSparseTensorPasses.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mosaic_gpu_ext.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_tpu_ext.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_sdy.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_stablehlo.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/register_jax_dialects.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsGPU.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsLLVM.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsNVGPU.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirGPUPasses.{pyext}",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/__init__.py",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mlir.{pyext}",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_chlo.{pyext}",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mlirHlo.{pyext}",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mlirDialectsSparseTensor.{pyext}",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mlirSparseTensorPasses.{pyext}",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mosaic_gpu_ext.{pyext}",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_tpu_ext.{pyext}",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_sdy.{pyext}",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_stablehlo.{pyext}",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/register_jax_dialects.{pyext}",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mlirDialectsGPU.{pyext}",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mlirDialectsLLVM.{pyext}",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mlirDialectsNVGPU.{pyext}",
+          f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_mlirGPUPasses.{pyext}",
       ]
       + (
           []
           if build_utils.is_windows()
           else [
-              f"__main__/jaxlib/mlir/_mlir_libs/_triton_ext.{pyext}",
-              "__main__/jaxlib/mlir/_mlir_libs/_triton_ext.pyi",
+              f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_triton_ext.{pyext}",
+              f"{source_file_prefix}jaxlib/mlir/_mlir_libs/_triton_ext.pyi",
           ]
       ),
   )
 
   triton_dir = jaxlib_dir / "triton"
-  copy_runfiles(
+  copy_files(
       dst_dir=triton_dir,
       src_files=[
-          "__main__/jaxlib/triton/__init__.py",
-          "__main__/jaxlib/triton/dialect.py",
+          f"{source_file_prefix}jaxlib/triton/__init__.py",
+          f"{source_file_prefix}jaxlib/triton/dialect.py",
       ],
   )
   patch_copy_mlir_import(
-      "__main__/jaxlib/triton/_triton_enum_gen.py", dst_dir=triton_dir
+      f"{source_file_prefix}jaxlib/triton/_triton_enum_gen.py",
+      dst_dir=triton_dir,
+      runfiles=runfiles,
+      transitive_sources=transitive_sources,
   )
   patch_copy_mlir_import(
-      "__main__/jaxlib/triton/_triton_ops_gen.py", dst_dir=triton_dir
+      f"{source_file_prefix}jaxlib/triton/_triton_ops_gen.py",
+      dst_dir=triton_dir,
+      runfiles=runfiles,
+      transitive_sources=transitive_sources,
   )
 
-  copy_runfiles(
-    dst_dir=jaxlib_dir / "include" / "xla" / "ffi" / "api",
-    src_files=[
-        "xla/xla/ffi/api/c_api.h",
-        "xla/xla/ffi/api/api.h",
-        "xla/xla/ffi/api/ffi.h",
-    ],
+  copy_files(
+      dst_dir=jaxlib_dir / "include" / "xla" / "ffi" / "api",
+      src_files=[
+          "xla/xla/ffi/api/c_api.h",
+          "xla/xla/ffi/api/api.h",
+          "xla/xla/ffi/api/ffi.h",
+      ],
   )
 
 tmpdir = None
@@ -383,6 +436,7 @@ try:
   prepare_wheel(
       pathlib.Path(sources_path),
       cpu=args.cpu,
+      transitive_sources=args.srcs,
   )
   package_name = "jaxlib"
   if args.editable:

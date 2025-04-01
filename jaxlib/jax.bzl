@@ -505,10 +505,9 @@ def _jax_wheel_impl(ctx):
 _jax_wheel = rule(
     attrs = {
         "wheel_binary": attr.label(
-            default = Label("//jaxlib/tools:build_wheel"),
+            default = Label("//jaxlib/tools:build_wheel_tool"),
             executable = True,
-            # b/365588895 Investigate cfg = "exec" for multi platform builds
-            cfg = "target",
+            cfg = "exec",
         ),
         "wheel_name": attr.string(mandatory = True),
         "no_abi": attr.bool(default = False),
