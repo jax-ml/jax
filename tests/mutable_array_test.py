@@ -239,6 +239,16 @@ class MutableArrayTest(jtu.JaxTestCase):
       x_ref = core.mutable_array(x)
       y = f(x_ref)
 
+  def test_vmap_basic(self):
+    @jax.vmap
+    def f(x):
+      x_ref = core.mutable_array(x)
+      x_ref[...] =  x_ref[...] * x_ref[...]
+      return x_ref[...]
+    xs = jnp.arange(4.)
+    ys = f(xs)
+    self.assertAllClose(ys, xs ** 2, check_dtypes=False)
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
