@@ -1861,8 +1861,8 @@ def _axis_index_lowering(ctx, *, axis_name):
                                          ctx.module_context.axis_env)]
 
 def _axis_index_effectful_abstract_eval(*, axis_name):
-  effect = {core.NamedAxisEffect(axis_name)}
   axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
+  effect = {core.NamedAxisEffect(axis_name)}
   _check_axis_names(axis_name)
   mesh = get_abstract_mesh()
   sharding = NamedSharding(mesh, P())
