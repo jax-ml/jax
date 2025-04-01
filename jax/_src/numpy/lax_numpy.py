@@ -2907,6 +2907,12 @@ def select(
     raise ValueError(msg.format(len(condlist), len(choicelist)))
   if len(condlist) == 0:
     raise ValueError("condlist must be non-empty")
+
+  util.check_arraylike("select", *condlist, *choicelist, default)
+  condlist = [asarray(cond) for cond in condlist]
+  choicelist = [asarray(choice) for choice in choicelist]
+  default = asarray(default)
+
   # Put the default at front with condition False because
   # argmax returns zero for an array of False values.
   choicelist = util.promote_dtypes(default, *choicelist)
