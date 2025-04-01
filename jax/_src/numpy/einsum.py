@@ -288,6 +288,10 @@ def einsum(
   spec = operands[0] if isinstance(operands[0], str) else None
   path_type = 'optimal' if optimize is True else Unoptimized() if optimize is False else optimize
 
+  # Extract __jax_array__ before passing to contract_path()
+  operands = tuple(op.__jax_array__() if hasattr(op, "__jax_array__") else op
+                   for op in operands)
+
   # Allow handling of shape polymorphism
   non_constant_dim_types = {
       type(d) for op in operands if not isinstance(op, str)
