@@ -616,9 +616,7 @@ def make_ir_context() -> ir.Context:
     # we don't do any heavy computation on MLIR modules from Python anyway, so we
     # just disable threading.
     context.enable_multithreading(False)
-  # TODO(bartchr): Once JAX is released with SDY, remove the if.
-  if dialects.sdy:
-    dialects.sdy.register_dialect(context)
+  dialects.sdy.register_dialect(context)
   dialects.mhlo.register_mhlo_dialect(context)
   dialects.chlo.register_dialect(context)
   dialects.hlo.register_dialect(context)

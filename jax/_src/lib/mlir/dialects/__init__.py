@@ -51,11 +51,7 @@ else:
   ])
   del _lazy
 
-# TODO(bartchr): Once JAX is released with SDY, remove the try/except.
-try:
-  from jaxlib.mlir.dialects import sdy as sdy
-except ImportError:
-  sdy: Any = None  # type: ignore[no-redef]
+from jaxlib.mlir.dialects import sdy
 
 # Alias that is set up to abstract away the transition from MHLO to StableHLO.
 from jaxlib.mlir.dialects import stablehlo as hlo
