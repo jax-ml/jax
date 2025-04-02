@@ -21,7 +21,7 @@ import dataclasses
 import enum
 import itertools
 import math
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Callable
 
 import jax
 from jax._src import core as jax_core
@@ -1211,3 +1211,93 @@ def jaxpr_call(
       ref_treedefs=ref_treedefs,
       program_ids_treedef=program_ids_treedef,
   )
+
+inline_mgpu_p = jax_core.Primitive("inline_mgpu_p")
+inline_mgpu_p.multiple_results = True
+
+
+def inline_mgpu(*args, return_type=None):
+  """Inline gpu code with a `ShapeDTypeArray`s tree return type."""
+  flat_ret_ty, tree_ret = jax.tree.flatten(return_type)
+  if not all(hasattr(r, "dtype") and hasattr(r, "shape") for r in flat_ret_ty):
+    raise ValueError(
+        "inline_mgpu_p only supports ShapeDtypeStruct return types."
+    )
+
+  def inner(f):
+    def wrapper(*args):
+      # Inline mgpu ignores all transformations. It's up to the user to
+      # respect them.
+      flat_args, treedef = jax.tree.flatten(args)
+      if any(isinstance(r, state_types.TransformedRef) for r in flat_args):
+        raise NotImplementedError("inline_mgpu_p does not support transformed refs.")
+
+      flat_ret = inline_mgpu_p.bind(
+          *flat_args,
+          args_treedef=treedef,
+          return_type=return_type,
+          mgpu_fn=f,
+      )
+      return jax.tree.unflatten(tree_ret, flat_ret)
+    return wrapper(*args) if args else wrapper
+
+  return inner
+
+
+@inline_mgpu_p.def_effectful_abstract_eval
+def _inline_mgpu_abstract_eval(
+    *flat_args,
+    args_treedef,
+    return_type,
+    mgpu_fn,
+):
+  del args_treedef, mgpu_fn  # Unused.
+
+  flat_ret_ty = jax.tree.leaves(return_type)
+  aval_return = tuple(
+      jax_core.ShapedArray(x.shape, x.dtype) for x in flat_ret_ty
+  )
+  # TODO(cperivol): Let the user set the effects.
+  return aval_return, {
+      gpu_core._wgmma_pipeline_effect,
+      gpu_core._memory_effect,
+      *itertools.chain(*(
+          (state.ReadEffect(i), state.WriteEffect(i))
+          for i, r in enumerate(flat_args)
+          if isinstance(r, pallas_core.AbstractMemoryRef)
+      )),
+  }
+
+
+@discharge.register_partial_discharge_rule(inline_mgpu_p)
+def _inline_mgpu_discharge(*args, **kwargs):
+  raise NotImplementedError("inline_mgpu_p does not support discharge.")
+
+@lowering.register_lowering_rule(inline_mgpu_p, mgpu.ThreadSemantics.Lane)
+def _inline_mgpu_lowering_rule(
+    ctx: lowering.LoweringRuleContext,
+    *flat_args,
+    mgpu_fn: Callable[..., Any],
+    return_type,
+    args_treedef,
+):
+  args = jax.tree.unflatten(args_treedef, flat_args)
+  ret = mgpu_fn(ctx.launch_ctx, *args)
+  flat_return_type, return_type_tree = jax.tree.flatten(return_type)
+  ret_leaves, ret_tree = jax.tree.flatten(
+      ret, is_leaf=lambda x: isinstance(x, mgpu.FragmentedArray)
+  )
+  def fail():
+    raise ValueError(
+        f"inline_mgpu_p return type mismatch: {ret=} != {return_type=}"
+    )
+
+  if ret_tree != return_type_tree:
+    fail()
+
+  for ty, r in zip(flat_return_type, ret_leaves):
+    mlir_dtype = mgpu_utils.dtype_to_ir_type(ty.dtype)
+    if r.mlir_dtype != mlir_dtype or ty.shape != r.shape:
+      fail()
+
+  return ret_leaves
