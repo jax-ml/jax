@@ -17,13 +17,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-jax-in-docker: # strategy and matrix come here
+  build-jax-in-docker:
     runs-on:  mi-250
+    strategy:
+      matrix:
+        python: ["3.10.13"]
+        rocm: ["6.2.4", "6.3.3"]
     env:
       BASE_IMAGE: "ubuntu:22.04"
       TEST_IMAGE: ubuntu-jax-${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}
-      PYTHON_VERSION: "3.10"
-      ROCM_VERSION: "6.2.4"
+      PYTHON_VERSION: ${{ matrix.python }}
+      ROCM_VERSION: ${{ matrix.rocm }}
       WORKSPACE_DIR: workdir_${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}
     steps:
       - name: Clean up old runs
