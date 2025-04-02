@@ -1018,7 +1018,10 @@ class ShardMapTracer(core.Tracer):
     new_sharding = NamedSharding(
         _as_manual_mesh(self._trace.mesh, self._trace.auto),
         out.sharding.spec)  # pytype: disable=attribute-error
-    return out.update(sharding=new_sharding)
+    manual_axes = set(self._trace.mesh.axis_names) - self._trace.auto
+    vma = (frozenset(manual_axes - self.rep)
+           if config.varying_axes_in_types.value else frozenset())
+    return out.update(sharding=new_sharding, vma=vma)
 
   def to_concrete_value(self):
     if self.rep == set(self._trace.mesh.axis_names):
@@ -1111,7 +1114,9 @@ def _pbroadcast_abstract_eval(*args, axes, axis_index_groups):
         f"over axis name {axes}. Please open an issue at "
         "https://github.com/jax-ml/jax/issues, and as a temporary "
         "workaround pass the check_rep=False argument to shard_map")
-  return [a.update(vma=a.vma.union(frozenset(axes))) for a in args]
+  sharding = NamedSharding(get_abstract_mesh(), P())
+  return [a.update(sharding=sharding, vma=a.vma.union(frozenset(axes)))
+          for a in args]
 pbroadcast_p.def_abstract_eval(_pbroadcast_abstract_eval)
 
 mlir.register_lowering(pbroadcast_p, lambda ctx, *x, axes, axis_index_groups: x)
