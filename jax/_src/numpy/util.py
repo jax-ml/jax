@@ -259,7 +259,7 @@ def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
 
 def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape, sharding=None
                   ) -> Array:
-  check_arraylike("broadcast_to", arr)
+  arr = ensure_arraylike("broadcast_to", arr)
   arr = arr if isinstance(arr, Array) else lax.asarray(arr)
   if not isinstance(shape, tuple) and np.ndim(shape) == 0:
     shape = (shape,)
