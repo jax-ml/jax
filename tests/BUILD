@@ -239,7 +239,10 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lobpcg_test",
     srcs = ["lobpcg_test.py"],
-    env = {"LOBPCG_EMIT_DEBUG_PLOTS": "1"},
+    # Set LOBPCG_EMIT_DEBUG_PLOTS=1 to debug
+    # checkLobpcgMonotonicity and checkApproxEigs tests
+    # using matplotlib plots
+    # env = {"LOBPCG_EMIT_DEBUG_PLOTS": "1"},
     shard_count = {
         "cpu": 48,
         "gpu": 48,
