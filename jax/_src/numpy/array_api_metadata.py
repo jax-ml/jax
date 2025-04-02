@@ -29,7 +29,7 @@ from jax._src import dtypes as _dtypes
 from jax._src import xla_bridge as xb
 
 
-__array_api_version__ = '2023.12'
+__array_api_version__ = '2024.12'
 
 
 def __array_namespace__(self, *, api_version: None | str = None) -> ModuleType:
