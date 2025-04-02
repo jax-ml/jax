@@ -140,7 +140,7 @@ class CompatTest(bctu.CompatTestBase):
         cpu_qr_lapack_geqrf.data_2023_03_17,
         cuda_threefry2x32.data_2024_07_30,
         cpu_lu_lapack_getrf.data_2023_06_14,
-        cuda_lu_pivots_to_permutation.data_2024_08_08,
+        cuda_lu_pivots_to_permutation.data_2025_04_01,
         cuda_lu_cusolver_getrf.data_2024_08_19,
         cuda_qr_cusolver_geqrf.data_2024_09_26,
         cuda_eigh_cusolver_syev.data_2024_09_30,
@@ -411,7 +411,7 @@ class CompatTest(bctu.CompatTestBase):
   def test_cuda_lu_pivots_to_permutation(self):
     shape = (2, 3, 4)
     func = lambda: CompatTest.lu_pivots_to_permutation_harness(shape)
-    data = self.load_testdata(cuda_lu_pivots_to_permutation.data_2024_08_08)
+    data = self.load_testdata(cuda_lu_pivots_to_permutation.data_2025_04_01)
     self.run_one_test(func, data)
 
   @parameterized.named_parameters(
