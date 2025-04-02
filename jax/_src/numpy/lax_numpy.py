@@ -4466,7 +4466,7 @@ def stack(arrays: np.ndarray | Array | Sequence[ArrayLike],
     axis = _canonicalize_axis(axis, arrays.ndim)
     return concatenate(expand_dims(arrays, axis + 1), axis=axis, dtype=dtype)
   else:
-    util.check_arraylike("stack", *arrays)
+    arrays = util.ensure_arraylike_tuple("stack", arrays)
     shape0 = np.shape(arrays[0])
     axis = _canonicalize_axis(axis, len(shape0) + 1)
     new_arrays = []
@@ -4555,7 +4555,7 @@ def tile(A: ArrayLike, reps: DimSize | Sequence[DimSize]) -> Array:
            [1, 2],
            [3, 4]], dtype=int32)
   """
-  util.check_arraylike("tile", A)
+  A = util.ensure_arraylike("tile", A)
   try:
     iter(reps)  # type: ignore[arg-type]
   except TypeError:
@@ -4628,7 +4628,7 @@ def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
   """
   if isinstance(arrays, (np.ndarray, Array)):
     return _concatenate_array(arrays, axis, dtype=dtype)
-  util.check_arraylike("concatenate", *arrays)
+  arrays = util.ensure_arraylike_tuple("concatenate", arrays)
   if not len(arrays):
     raise ValueError("Need at least one array to concatenate.")
   if axis is None:
@@ -4870,6 +4870,7 @@ def dstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   else:
     # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
     util.check_arraylike("dstack", *tup, emit_warning=True)
+    tup = util.ensure_arraylike_tuple("dstack", tup)
     arrs = [atleast_3d(m) for m in tup]
   return concatenate(arrs, axis=2, dtype=dtype)
 
