@@ -38,6 +38,25 @@ from jax._src.interpreters import mlir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.typing import Array, ArrayLike
 
+# TODO(mattjj): this function sucks, delete it
+def _up_and_broadcast(doit):
+  def up_and_broadcast(*args):
+    broadcasted_shape = broadcast_shapes(*(a.shape for a in args))
+    args = [broadcast_in_dim(a, broadcasted_shape, list(range(a.ndim))) for a in args]
+
+    a_dtype = args[0].dtype
+    needs_upcast = a_dtype == dtypes.bfloat16 or a_dtype == np.float16
+    if needs_upcast:
+      args = [convert_element_type(a, np.float32) for a in args]
+      a_x_type = np.float32
+    else:
+      a_x_type = a_dtype
+    result = doit(*args, dtype=a_x_type)
+    if needs_upcast:
+      result = convert_element_type(result, a_dtype)
+    return result
+  return up_and_broadcast
+
 def betainc(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise regularized incomplete beta integral."""
   a, b, x = core.standard_insert_pbroadcast(a, b, x)
@@ -71,10 +90,11 @@ def igamma_grad_a(a: ArrayLike, x: ArrayLike) -> Array:
   a, x = core.standard_insert_pbroadcast(a, x)
   return igamma_grad_a_p.bind(a, x)
 
-def random_gamma_grad(a: ArrayLike, x: ArrayLike) -> Array:
+@_up_and_broadcast
+def random_gamma_grad(a: ArrayLike, x: ArrayLike, *, dtype) -> Array:
   r"""Elementwise derivative of samples from `Gamma(a, 1)`."""
   a, x = core.standard_insert_pbroadcast(a, x)
-  return random_gamma_grad_p.bind(a, x)
+  return random_gamma_grad_impl(a, x, dtype=dtype)
 
 def zeta(x: ArrayLike, q: ArrayLike) -> Array:
   r"""Elementwise Hurwitz zeta function: :math:`\zeta(x, q)`"""
@@ -531,24 +551,6 @@ def random_gamma_grad_impl(a, x, *, dtype):
                   full_like(a, float('nan')), output)
   return output
 
-def _up_and_broadcast(doit):
-  def up_and_broadcast(*args):
-    broadcasted_shape = broadcast_shapes(*(a.shape for a in args))
-    args = [broadcast_in_dim(a, broadcasted_shape, list(range(a.ndim))) for a in args]
-
-    a_dtype = args[0].dtype
-    needs_upcast = a_dtype == dtypes.bfloat16 or a_dtype == np.float16
-    if needs_upcast:
-      args = [convert_element_type(a, np.float32) for a in args]
-      a_x_type = np.float32
-    else:
-      a_x_type = a_dtype
-    result = doit(*args, dtype=a_x_type)
-    if needs_upcast:
-      result = convert_element_type(result, a_dtype)
-    return result
-  return up_and_broadcast
-
 
 def evaluate_chebyshev_polynomial(x, coefficients):
   b0 = full_like(x,0)
@@ -693,11 +695,6 @@ mlir.register_lowering(igammac_p,
                                       multiple_results=False))
 
 ad.defjvp(igammac_p, igammac_grada, igammac_gradx)
-
-random_gamma_grad_p = standard_naryop([_float, _float], 'random_gamma_grad')
-mlir.register_lowering(random_gamma_grad_p,
-                       mlir.lower_fun(_up_and_broadcast(random_gamma_grad_impl),
-                                      multiple_results=False))
 
 zeta_p = standard_naryop([_float, _float], 'zeta')
 mlir.register_lowering(zeta_p, partial(_nary_lower_hlo, chlo.zeta))
