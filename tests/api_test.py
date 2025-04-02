@@ -10387,6 +10387,28 @@ class CustomTransposeTest(jtu.JaxTestCase):
     self.assertAllClose(f_(x), g_(x))
     self.assertAllClose(f_t(x), g_t(x))
 
+  def test_compose_custom_jvp(self):
+    @jax.custom_jvp
+    def f(x):
+      return jnp.sin(x)
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, = primals
+      dx, = tangents
+      return f(x), g(x, dx)
+
+    @custom_transpose
+    def g(x, dx):
+      return jnp.cos(x) * dx
+
+    @g.def_transpose
+    def gt(x, t):
+      return jnp.cos(x) * t
+
+    with config.use_direct_linearize(True):
+      self.assertAllClose(jax.grad(f)(0.5), jnp.cos(0.5))
+
 
 class CustomDceTest(jtu.JaxTestCase):
 
