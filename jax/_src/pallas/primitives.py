@@ -1237,11 +1237,3 @@ def _semaphore_wait_discharge_rule(in_avals,
 state_discharge.register_discharge_rule(semaphore_wait_p)(
     _semaphore_wait_discharge_rule
 )
-
-device_id_p = jax_core.Primitive('device_id')
-
-@device_id_p.def_abstract_eval
-def _device_id_abstract_eval():
-  return jax_core.ShapedArray((), jnp.dtype("int32"))
-
-device_id = device_id_p.bind

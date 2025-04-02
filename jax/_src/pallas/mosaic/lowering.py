@@ -3602,10 +3602,6 @@ def _dma_wait_lowering_rule(ctx: LoweringRuleContext, *args, tree,
 
 lowering_rules[tpu_primitives.dma_wait_p] = _dma_wait_lowering_rule
 
-def _device_id_lowering_rule(ctx: LoweringRuleContext):
-  return tpu.device_id()
-lowering_rules[primitives.device_id_p] = _device_id_lowering_rule
-
 def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
   grid_names = ctx.lowering_context.grid_names
   if grid_names and axis_name in grid_names:
