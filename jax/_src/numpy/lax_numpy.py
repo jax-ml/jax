@@ -5503,7 +5503,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   if any(leaf is None for leaf in leaves):
     # Added Nov 16 2023
     if deprecations.is_accelerated("jax-numpy-array-none"):
-      raise TypeError("None is not a valid value for jnp.array")
+      raise ValueError("None is not a valid value for jnp.array")
     warnings.warn(
       "None encountered in jnp.array(); this is currently treated as NaN. "
       "In the future this will result in an error.",
