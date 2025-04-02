@@ -320,7 +320,7 @@ class JaxprEqnContextManager:
   def __exit__(self, exc_type, exc_value, traceback):
     config.compute_on_context_manager.set_local(self.prev_compute_type)
     config.threefry_partitionable.set_local(self.prev_threefry_partitionable)
-    if self.context.xla_metadata is not None:
+    if self.context.xla_metadata:
       config.xla_metadata_context_manager.set_local(self.prev_xla_metadata)
     config.abstract_mesh_context_manager.set_local(self.prev_abstract_mesh)
 
