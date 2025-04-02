@@ -406,15 +406,13 @@ def uniform(key: ArrayLike,
     raise ValueError(f"dtype argument to `uniform` must be a float dtype, "
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  return _uniform_auto(key, shape, dtype, minval, maxval, out_sharding)
-
-@partial(jit, static_argnums=(1, 2, 5))
-def _uniform_auto(key, shape, dtype, minval, maxval, out_sharding) -> Array:
   if out_sharding is None:
     return _uniform(key, shape, dtype, minval, maxval)
-  def f(key, minval, maxval): return _uniform(key, shape, dtype, minval, maxval)
+  def f(k, minv, maxv):
+    return _uniform(k, shape, dtype, minv, maxv)
   return auto_axes(f, out_shardings=out_sharding)(key, minval, maxval)
 
+@partial(jit, static_argnums=(1, 2))
 def _uniform(key, shape, dtype, minval, maxval) -> Array:
   _check_shape("uniform", shape)
   if not jnp.issubdtype(dtype, np.floating):
