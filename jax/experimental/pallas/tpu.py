@@ -52,7 +52,6 @@ from jax._src.pallas.mosaic.random import to_pallas_key as to_pallas_key
 # Those primitives got moved to Pallas core. Keeping the updated imports
 # here for backward compatibility.
 from jax._src.pallas.core import semaphore as semaphore
-from jax._src.pallas.primitives import device_id as device_id
 from jax._src.pallas.primitives import DeviceIdType as DeviceIdType
 from jax._src.pallas.primitives import semaphore_read as semaphore_read
 from jax._src.pallas.primitives import semaphore_signal as semaphore_signal

@@ -48,7 +48,6 @@ from jax._src.pallas.primitives import atomic_or as atomic_or
 from jax._src.pallas.primitives import atomic_xchg as atomic_xchg
 from jax._src.pallas.primitives import atomic_xor as atomic_xor
 from jax._src.pallas.primitives import debug_print as debug_print
-from jax._src.pallas.primitives import device_id as device_id
 from jax._src.pallas.primitives import dot as dot
 from jax._src.pallas.primitives import load as load
 from jax._src.pallas.primitives import max_contiguous as max_contiguous
