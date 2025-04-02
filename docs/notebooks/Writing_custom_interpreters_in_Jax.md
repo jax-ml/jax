@@ -147,8 +147,8 @@ Let's use `make_jaxpr` to trace a function into a Jaxpr.
 # Importing Jax functions useful for tracing/interpreting.
 from functools import wraps
 
-from jax import core
 from jax import lax
+from jax.extend import core
 from jax._src.util import safe_map
 ```
 
