@@ -7365,6 +7365,26 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = h(arr)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 
+  def test_scan_with_random_key_inside_jit(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+    sharding = NamedSharding(mesh, P(None, 'x'))
+
+    @jax.jit
+    def scan(xs):
+      def step(carry, x):
+        next_carry = jax.vmap(jax.random.fold_in)(carry, x)
+        next_carry = jnp.where(x % 2 == 0, carry, next_carry)
+        return next_carry, None
+      rng = jnp.broadcast_to(jax.random.key(0), xs.shape[1:])
+      rng, _ = jax.lax.scan(step, rng, xs)
+      return rng
+
+    xs = jnp.arange(8).reshape(2, 4)
+    scan(xs)
+
+    xs = jax.device_put(xs, sharding)
+    scan(xs)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
