@@ -5502,14 +5502,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
 
   leaves, treedef = tree_flatten(object, is_leaf=lambda x: x is None)
   if any(leaf is None for leaf in leaves):
-    # Added Nov 16 2023
-    if deprecations.is_accelerated("jax-numpy-array-none"):
-      raise ValueError("None is not a valid value for jnp.array")
-    warnings.warn(
-      "None encountered in jnp.array(); this is currently treated as NaN. "
-      "In the future this will result in an error.",
-      FutureWarning, stacklevel=2)
-    leaves, treedef = tree_flatten(object)
+    raise ValueError("None is not a valid value for jnp.array")
   leaves = [
       leaf
       if (leaf_jax_array := getattr(leaf, "__jax_array__", None)) is None
