@@ -36,7 +36,7 @@ from jax._src.numpy import error as jnp_error
 from jax._src.numpy import reductions
 from jax._src.numpy.ufunc_api import ufunc
 from jax._src.numpy.util import (
-   check_arraylike, promote_args, promote_args_inexact,
+   check_arraylike, ensure_arraylike, promote_args, promote_args_inexact,
    promote_args_numeric, promote_dtypes_inexact, promote_dtypes_numeric,
    promote_shapes, _where, check_no_float0s)
 from jax._src.util import set_module
@@ -3500,7 +3500,7 @@ def isinf(x: ArrayLike, /) -> Array:
     >>> jnp.isinf(x)
     Array([False,  True, False,  True, False], dtype=bool)
   """
-  check_arraylike("isinf", x)
+  x = ensure_arraylike("isinf", x)
   dtype = dtypes.dtype(x)
   if dtypes.issubdtype(dtype, np.floating):
     return lax.eq(lax.abs(x), _constant_like(x, np.inf))
@@ -3513,7 +3513,7 @@ def isinf(x: ArrayLike, /) -> Array:
     return lax.full_like(x, False, dtype=np.bool_)
 
 
-def _isposneginf(infinity: float, x: ArrayLike, out) -> Array:
+def _isposneginf(infinity: float, x: Array, out) -> Array:
   if out is not None:
     raise NotImplementedError("The 'out' argument to isneginf/isposinf is not supported.")
   dtype = dtypes.dtype(x)
@@ -3556,6 +3556,7 @@ def isposinf(x, /, out=None):
     >>> jnp.isposinf(x)
     Array([False, False,  True, False, False], dtype=bool)
   """
+  x = ensure_arraylike("isposinf", x)
   return _isposneginf(np.inf, x, out)
 
 
@@ -3590,6 +3591,7 @@ def isneginf(x, /, out=None):
     >>> jnp.isneginf(x)
     Array([ True, False, False, False, False], dtype=bool)
   """
+  x = ensure_arraylike("isneginf", x)
   return _isposneginf(-np.inf, x, out)
 
 
@@ -3624,7 +3626,7 @@ def isnan(x: ArrayLike, /) -> Array:
     >>> jnp.isnan(x)
     Array([False, False, False,  True], dtype=bool)
   """
-  check_arraylike("isnan", x)
+  x = ensure_arraylike("isnan", x)
   return lax.ne(x, x)
 
 
