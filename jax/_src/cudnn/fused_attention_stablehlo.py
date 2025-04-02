@@ -396,7 +396,7 @@ def is_cuda_compute_capability_equal(capability):
 def _dot_product_attention_fwd(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
     scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, cudnn_version):
+    sliding_window_length, cudnn_version, return_residual):
   # check if flash attention is supported for this attention pattern
   check_is_flash_attention(
       query, key, layout, cudnn_version, bias is not None, False,
@@ -405,14 +405,16 @@ def _dot_product_attention_fwd(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
       scale=scale, seed=seed, dropout_rate=dropout_rate,
       variadic_args=variadic_args, mask_type=mask_type, layout=layout,
-      sliding_window_length=sliding_window_length, is_training=False)
-  output = outputs[0]
-  return output
+      sliding_window_length=sliding_window_length, is_training=False or return_residual)
+  if return_residual:
+    return outputs
+  else:
+    return outputs[0]
 
 def _dot_product_attention_fwd_rule(
     query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
     scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, cudnn_version):
+    sliding_window_length, cudnn_version, return_residual):
   # check if flash attention is supported for this attention pattern
   check_is_flash_attention(
       query, key, layout, cudnn_version, bias is not None, True,
@@ -424,11 +426,14 @@ def _dot_product_attention_fwd_rule(
       sliding_window_length=sliding_window_length, is_training=True)
   res = (query, key, value, bias, q_seqlen, kv_seqlen, q_offsets,
          kv_offsets, outputs[1], outputs[0])
-  return outputs[0], res
+  if return_residual:
+    return outputs, res
+  else:
+    return outputs[0], res
 
 def _dot_product_attention_bwd_rule(
     scale, seed, dropout_rate, variadic_args, mask_type, layout,
-    sliding_window_length, is_training, res, grad_output):
+    sliding_window_length, is_training, return_residual, res, grad_output):
   (query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
    activation, fwd_output) = res
   grads = _dot_product_attention_bwd_p_wrapper.bind(
@@ -1098,7 +1103,7 @@ dispatch.prim_requires_devices_during_lowering.add(
   _dot_product_attention_bwd_p_wrapper
 )
 
-@functools.partial(jax.custom_vjp, nondiff_argnums=(8, 9, 10, 11, 12, 13, 14, 15))
+@functools.partial(jax.custom_vjp, nondiff_argnums=(8, 9, 10, 11, 12, 13, 14, 15, 16))
 def _dot_product_attention(query: Array,
                            key: Array,
                            value: Array,
@@ -1114,13 +1119,14 @@ def _dot_product_attention(query: Array,
                            mask_type: bool,
                            layout: int,
                            sliding_window_length: int | None,
-                           cudnn_version: int):
+                           cudnn_version: int,
+                           return_residual: bool):
   output = _dot_product_attention_fwd(
       query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
       scale=scale, seed=seed, dropout_rate=dropout_rate,
       variadic_args=variadic_args, mask_type=mask_type, layout=layout,
       sliding_window_length=sliding_window_length,
-      cudnn_version=cudnn_version)
+      cudnn_version=cudnn_version, return_residual=return_residual)
   return output
 
 _dot_product_attention.defvjp(
@@ -1720,7 +1726,8 @@ def dot_product_attention(
     dropout_rate: float = 0.,
     qkv_layout: str = "BTNH",
     sliding_window_length: int | None = None,
-    use_fp8: bool = False
+    use_fp8: bool = False,
+    return_residual: bool = False
 ):
   """Computes dot-product attention given query (Q), key (K), and value (V).
 
@@ -1776,6 +1783,7 @@ def dot_product_attention(
       is the index of each token. E.g., if sliding_window_length == 3 and the
       sequence is [0, 1, 2, 3, c, 4, 5], token `c` can attend to [4, 5, c].
     use_fp8: Whether to use FP8 attention mechanism.
+    return_residual: Whether to return softmax stat tensor to users.
   Returns:
     Output of the same shape as the query.
     amax_s: amax of state. (fp8 only)
@@ -1851,5 +1859,5 @@ def dot_product_attention(
     output = _dot_product_attention(
         query, key, value, bias, q_seqlen, kv_seqlen, q_offsets, kv_offsets,
         scale, seed, dropout_rate, variadic_args, mask_type, layout.value,
-        sliding_window_length, cudnn_version)
+        sliding_window_length, cudnn_version, return_residual)
     return output
