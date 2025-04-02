@@ -118,114 +118,6 @@ static_assert(
     std::is_same_v<jax::TriMatrixEquationSolver<ffi::DataType::C128>::FnType,
                    jax::Trsm<std::complex<double>>::FnType>,
     JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(std::is_same_v<jax::LuDecomposition<ffi::DataType::F32>::FnType,
-                             jax::Getrf<float>::FnType>,
-              JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(std::is_same_v<jax::LuDecomposition<ffi::DataType::F64>::FnType,
-                             jax::Getrf<double>::FnType>,
-              JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(std::is_same_v<jax::LuDecomposition<ffi::DataType::C64>::FnType,
-                             jax::Getrf<std::complex<float>>::FnType>,
-              JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(std::is_same_v<jax::LuDecomposition<ffi::DataType::C128>::FnType,
-                             jax::Getrf<std::complex<double>>::FnType>,
-              JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(std::is_same_v<jax::QrFactorization<ffi::DataType::F32>::FnType,
-                             jax::Geqrf<float>::FnType>,
-              JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(std::is_same_v<jax::QrFactorization<ffi::DataType::F64>::FnType,
-                             jax::Geqrf<double>::FnType>,
-              JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(std::is_same_v<jax::QrFactorization<ffi::DataType::C64>::FnType,
-                             jax::Geqrf<std::complex<float>>::FnType>,
-              JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(std::is_same_v<jax::QrFactorization<ffi::DataType::C128>::FnType,
-                             jax::Geqrf<std::complex<double>>::FnType>,
-              JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(std::is_same_v<jax::OrthogonalQr<ffi::DataType::F32>::FnType,
-                             jax::Orgqr<float>::FnType>,
-              JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(std::is_same_v<jax::OrthogonalQr<ffi::DataType::F64>::FnType,
-                             jax::Orgqr<double>::FnType>,
-              JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(std::is_same_v<jax::OrthogonalQr<ffi::DataType::C64>::FnType,
-                             jax::Orgqr<std::complex<float>>::FnType>,
-              JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(std::is_same_v<jax::OrthogonalQr<ffi::DataType::C128>::FnType,
-                             jax::Orgqr<std::complex<double>>::FnType>,
-              JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::CholeskyFactorization<ffi::DataType::F32>::FnType,
-                   jax::Potrf<float>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::CholeskyFactorization<ffi::DataType::F64>::FnType,
-                   jax::Potrf<double>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::CholeskyFactorization<ffi::DataType::C64>::FnType,
-                   jax::Potrf<std::complex<float>>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::CholeskyFactorization<ffi::DataType::C128>::FnType,
-                   jax::Potrf<std::complex<double>>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::SingularValueDecomposition<ffi::DataType::F32>::FnType,
-                   jax::RealGesdd<float>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::SingularValueDecomposition<ffi::DataType::F64>::FnType,
-                   jax::RealGesdd<double>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<
-        jax::SingularValueDecompositionComplex<ffi::DataType::C64>::FnType,
-        jax::ComplexGesdd<std::complex<float>>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<
-        jax::SingularValueDecompositionComplex<ffi::DataType::C128>::FnType,
-        jax::ComplexGesdd<std::complex<double>>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<
-        jax::EigenvalueDecompositionSymmetric<ffi::DataType::F32>::FnType,
-        jax::RealSyevd<float>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<
-        jax::EigenvalueDecompositionSymmetric<ffi::DataType::F64>::FnType,
-        jax::RealSyevd<double>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<
-        jax::EigenvalueDecompositionHermitian<ffi::DataType::C64>::FnType,
-        jax::ComplexHeevd<std::complex<float>>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<
-        jax::EigenvalueDecompositionHermitian<ffi::DataType::C128>::FnType,
-        jax::ComplexHeevd<std::complex<double>>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::EigenvalueDecomposition<ffi::DataType::F32>::FnType,
-                   jax::RealGeev<float>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::EigenvalueDecomposition<ffi::DataType::F64>::FnType,
-                   jax::RealGeev<double>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<
-        jax::EigenvalueDecompositionComplex<ffi::DataType::C64>::FnType,
-        jax::ComplexGeev<std::complex<float>>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<
-        jax::EigenvalueDecompositionComplex<ffi::DataType::C128>::FnType,
-        jax::ComplexGeev<std::complex<double>>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
 static_assert(
     std::is_same_v<jax::TridiagonalReduction<ffi::DataType::F32>::FnType,
                    jax::Sytrd<float>::FnType>,
@@ -258,22 +150,6 @@ static_assert(
     std::is_same_v<jax::SchurDecompositionComplex<ffi::DataType::C128>::FnType,
                    jax::ComplexGees<std::complex<double>>::FnType>,
     JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::HessenbergDecomposition<ffi::DataType::F32>::FnType,
-                   jax::Gehrd<float>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::HessenbergDecomposition<ffi::DataType::F64>::FnType,
-                   jax::Gehrd<double>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::HessenbergDecomposition<ffi::DataType::C64>::FnType,
-                   jax::Gehrd<std::complex<float>>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
-static_assert(
-    std::is_same_v<jax::HessenbergDecomposition<ffi::DataType::C128>::FnType,
-                   jax::Gehrd<std::complex<double>>::FnType>,
-    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
 
 #undef JAX_KERNEL_FNTYPE_MISMATCH_MSG
 
@@ -283,50 +159,10 @@ static auto init = []() -> int {
   AssignKernelFn<Trsm<std::complex<float>>>(ctrsm_);
   AssignKernelFn<Trsm<std::complex<double>>>(ztrsm_);
 
-  AssignKernelFn<Getrf<float>>(sgetrf_);
-  AssignKernelFn<Getrf<double>>(dgetrf_);
-  AssignKernelFn<Getrf<std::complex<float>>>(cgetrf_);
-  AssignKernelFn<Getrf<std::complex<double>>>(zgetrf_);
-
-  AssignKernelFn<Geqrf<float>>(sgeqrf_);
-  AssignKernelFn<Geqrf<double>>(dgeqrf_);
-  AssignKernelFn<Geqrf<std::complex<float>>>(cgeqrf_);
-  AssignKernelFn<Geqrf<std::complex<double>>>(zgeqrf_);
-
-  AssignKernelFn<Orgqr<float>>(sorgqr_);
-  AssignKernelFn<Orgqr<double>>(dorgqr_);
-  AssignKernelFn<Orgqr<std::complex<float>>>(cungqr_);
-  AssignKernelFn<Orgqr<std::complex<double>>>(zungqr_);
-
-  AssignKernelFn<Potrf<float>>(spotrf_);
-  AssignKernelFn<Potrf<double>>(dpotrf_);
-  AssignKernelFn<Potrf<std::complex<float>>>(cpotrf_);
-  AssignKernelFn<Potrf<std::complex<double>>>(zpotrf_);
-
-  AssignKernelFn<RealGesdd<float>>(sgesdd_);
-  AssignKernelFn<RealGesdd<double>>(dgesdd_);
-  AssignKernelFn<ComplexGesdd<std::complex<float>>>(cgesdd_);
-  AssignKernelFn<ComplexGesdd<std::complex<double>>>(zgesdd_);
-
-  AssignKernelFn<RealSyevd<float>>(ssyevd_);
-  AssignKernelFn<RealSyevd<double>>(dsyevd_);
-  AssignKernelFn<ComplexHeevd<std::complex<float>>>(cheevd_);
-  AssignKernelFn<ComplexHeevd<std::complex<double>>>(zheevd_);
-
-  AssignKernelFn<RealGeev<float>>(sgeev_);
-  AssignKernelFn<RealGeev<double>>(dgeev_);
-  AssignKernelFn<ComplexGeev<std::complex<float>>>(cgeev_);
-  AssignKernelFn<ComplexGeev<std::complex<double>>>(zgeev_);
-
   AssignKernelFn<RealGees<float>>(sgees_);
   AssignKernelFn<RealGees<double>>(dgees_);
   AssignKernelFn<ComplexGees<std::complex<float>>>(cgees_);
   AssignKernelFn<ComplexGees<std::complex<double>>>(zgees_);
-
-  AssignKernelFn<Gehrd<float>>(sgehrd_);
-  AssignKernelFn<Gehrd<double>>(dgehrd_);
-  AssignKernelFn<Gehrd<std::complex<float>>>(cgehrd_);
-  AssignKernelFn<Gehrd<std::complex<double>>>(zgehrd_);
 
   AssignKernelFn<Sytrd<float>>(ssytrd_);
   AssignKernelFn<Sytrd<double>>(dsytrd_);
