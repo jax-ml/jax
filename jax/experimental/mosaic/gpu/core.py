@@ -41,6 +41,7 @@ from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import nvvm
 import numpy as np
 
+
 # mypy: ignore-errors
 
 from . import dialect_lowering
@@ -83,15 +84,19 @@ if RUNTIME_PATH and RUNTIME_PATH.exists():
   # Set this so that the custom call can find it
   os.environ["MOSAIC_GPU_RUNTIME_LIB_PATH"] = str(RUNTIME_PATH)
 
-if os.environ.get("MOSAIC_GPU_NVSHMEM_LLVM_LIB_PATH") is None:
+
+def _get_nvshmem_path() -> str | None:
   try:
     from nvidia import nvshmem
   except ImportError:
-    pass
+    return None
   else:
-    os.environ["MOSAIC_GPU_NVSHMEM_LLVM_LIB_PATH"] = (
-      os.path.join(nvshmem.__path__[0], 'lib/libnvshmem_device.bc')
-    )
+    return os.path.join(nvshmem.__path__[0], 'lib/libnvshmem_device.bc')
+
+if os.environ.get("MOSAIC_GPU_NVSHMEM_LLVM_LIB_PATH") is None:
+  if (_nvshmem_path := _get_nvshmem_path()) is not None:
+    os.environ["MOSAIC_GPU_NVSHMEM_LLVM_LIB_PATH"] = _nvshmem_path
+
 
 mosaic_gpu_p = jax._src.core.Primitive("mosaic_gpu_p")
 mosaic_gpu_p.multiple_results = True
@@ -581,6 +586,12 @@ def _declare_runtime_functions():
   func.FuncOp(
       "mosaic_gpu_init_tma_desc", init_tma_desc_type, visibility="private"
   )
+  ftype = ir.Type.parse('!llvm.func<i32()>')
+  ftype_attr = ir.TypeAttr.get(ftype)
+  llvm.LLVMFuncOp("nvshmem_my_pe", ftype_attr)
+  ftype = ir.Type.parse('!llvm.func<!llvm.ptr(!llvm.ptr,i32)>')
+  ftype_attr = ir.TypeAttr.get(ftype)
+  llvm.LLVMFuncOp("nvshmem_ptr", ftype_attr)
 
 
 def as_gpu_kernel(

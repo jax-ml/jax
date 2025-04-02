@@ -33,6 +33,7 @@ from jax._src import core as jax_core
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import source_info_util
+from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -44,11 +45,13 @@ from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
 from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.lib.mlir.dialects import vector as vector_dialect
+from jax._src.lib.mlir.dialects import llvm as llvm_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic_gpu import core as gpu_core
+from jax._src.pallas.primitives import DeviceIdType
 from jax._src.state import discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as sp
@@ -58,8 +61,8 @@ from jax._src.util import foreach
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.mosaic.gpu import core as mgpu_core
 from jax.experimental.mosaic.gpu import profiler as mgpu_profiler
-from jax.experimental.mosaic.gpu import utils as mgpu_utils
 from jax.experimental.mosaic.gpu import tcgen05
+from jax.experimental.mosaic.gpu import utils as mgpu_utils
 import jax.numpy as jnp
 import numpy as np
 
@@ -727,6 +730,11 @@ def lower_jaxpr_to_module(
 
   def body(launch_ctx: mgpu.LaunchContext, *buffers: ir.Value):
     *buffers_gmem, (runtime_smem, runtime_barriers, runtime_tmem) = buffers
+    if gmem_scratch_shapes:
+      in_buffers, _, out_scratch_buffers = util.split_list(
+          buffers_gmem, [len(in_shapes), len(gmem_scratch_shapes)]
+      )
+      buffers_gmem = in_buffers + out_scratch_buffers
 
     grouped_barriers = collections.defaultdict(list)
     for barrier, barrier_ref in zip(rs.barriers, runtime_barriers):
@@ -797,7 +805,7 @@ def lower_jaxpr_to_module(
           grid=tuple(map(operator.mul, parallel_grid, cluster)),
           cluster=cluster,
           block=block,
-          in_shapes=in_shapes,
+          in_shapes=(*in_shapes, *gmem_scratch_shapes),
           out_shape=(*out_shapes, *gmem_scratch_shapes),
           smem_scratch_shape=scratch_buffers,
           module_name=mlir.sanitize_name(debug_info.func_name),
@@ -1124,7 +1132,8 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
   x_aval = ctx.avals_in[0]
 
   transforms = jax.tree.unflatten(tree, leaves)
-  x_smem, transforms = _handle_reshaping(x_ref, transforms)
+  x_smem, transforms = _handle_peer_transform(x_ref, transforms)
+  x_smem, transforms = _handle_reshaping(x_smem, transforms)
   x_smem, transforms = _handle_indexing(x_smem, transforms)
 
   match transforms:
@@ -1156,6 +1165,7 @@ def _get_lowering_rule_wg(ctx: LoweringRuleContext, x_smem, *leaves, tree):
   x_aval = ctx.avals_in[0]
 
   transforms = jax.tree.unflatten(tree, leaves)
+  x_smem, transforms = _handle_peer_transform(x_smem, transforms)
   x_smem, transforms = _handle_reshaping(x_smem, transforms)
   x_smem, transforms = _handle_indexing(x_smem, transforms)
 
@@ -1184,6 +1194,7 @@ def _swap_lowering_rule(
     raise TypeError(f"Can only store to references (got {x_smem}).")
   x_aval = ctx.avals_in[0]
   transforms = jax.tree.unflatten(tree, leaves)
+  x_smem, transforms = _handle_peer_transform(x_smem, transforms)
   x_smem, transforms = _handle_reshaping(x_smem, transforms)
   x_smem, transforms = _handle_indexing(x_smem, transforms)
   match transforms:
@@ -1231,6 +1242,7 @@ def _swap_lowering_rule_wg(
   x_aval = ctx.avals_in[0]
 
   transforms = jax.tree.unflatten(tree, leaves)
+  x_smem, transforms = _handle_peer_transform(x_smem, transforms)
   x_smem, transforms = _handle_reshaping(x_smem, transforms)
   x_smem, transforms = _handle_indexing(x_smem, transforms)
 
@@ -2578,3 +2590,142 @@ def merge_indexers(
       shape=root_shape,
       int_indexer_shape=(),
   )
+
+
+def _device_id_to_logical(
+    ctx, device_id,
+    device_id_type: DeviceIdType):
+  if device_id_type is DeviceIdType.MESH:
+    # Mesh means we are passed the mesh coordinates for the device
+    device_ids = tree_util.tree_leaves(device_id)
+    mesh_strides = ctx.lowering_context.mesh_context.mesh_strides
+
+    i32 = ir.IntegerType.get_signless(32)
+    if len(device_ids) == 0:
+      return arith_dialect.constant(i32, 0)
+    return functools.reduce(
+        arith_dialect.addi,
+        (
+            arith_dialect.muli(a, arith_dialect.constant(i32, b))
+            for a, b in zip(device_ids, mesh_strides)
+        ),
+    )
+  elif device_id_type is DeviceIdType.LOGICAL:
+    return device_id
+  raise NotImplementedError(f"Unsupported device id type: {device_id_type}")
+
+
+@register_lowering_rule(primitives.device_id_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(primitives.device_id_p, mgpu.ThreadSemantics.Warpgroup)
+def device_id_lowering_rule(ctx: LoweringRuleContext):
+  return llvm_dialect.call(
+      ir.IntegerType.get_signless(32),
+      [],
+      op_bundle_operands=[],
+      op_bundle_sizes=[],
+      op_bundle_tags=[],
+      callee="nvshmem_my_pe",
+  )
+
+
+def _handle_peer_transform(
+    ref: ir.Value, transforms: Sequence[gpu_core.Transform]
+) -> tuple[ir.Value, Sequence[gpu_core.Transform]]:
+  if len(transforms) != 0 and isinstance(transforms[0], gpu_core.PeerMemRef):
+    return (
+        mgpu_utils.to_remote_memref(
+            ref, _ensure_ir_value(transforms[0].dev_id, jnp.int32)
+        ),
+        transforms[1:],
+    )
+  return ref, transforms
+
+
+@register_lowering_rule(primitives.semaphore_read_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(primitives.semaphore_read_p, mgpu.ThreadSemantics.Warpgroup)
+def _semaphore_read_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    args_tree,
+):
+  sem_aval, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem, transforms = tree_util.tree_unflatten(args_tree, args)
+  sem, _ = _handle_indexing(sem, transforms)
+  sem_ptr = mgpu.utils.memref_ptr(sem)
+  i32_ty = ir.IntegerType.get_signless(32)
+  return llvm_dialect.inline_asm(
+    i32_ty,
+    [sem_ptr],
+    """
+    ld.acquire.sys.u32 $0,[$1];
+    """,
+    "=r,l",
+    has_side_effects=True,
+  )
+
+
+@register_lowering_rule(primitives.semaphore_signal_p, mgpu.ThreadSemantics.Lane)
+def _semaphore_signal_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    args_tree,
+    device_id_type: primitives.DeviceIdType,
+):
+  sem_aval, _, _, device_id_aval, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem, transforms, value, device_id, core_index = tree_util.tree_unflatten(
+      args_tree, args
+  )
+  sem, _ = _handle_indexing(sem, transforms)
+  if device_id is None:
+    raise NotImplementedError(
+      "'semaphore_signal' requires 'device_id' argument to be set on GPUs."
+    )
+  device_id = _device_id_to_logical(ctx, device_id, device_id_type)
+  device_id = _ensure_ir_value(device_id, device_id_aval.dtype)
+  i32_ty = ir.IntegerType.get_signless(32)
+  peer_ptr = mgpu.utils.to_remote_ptr(mgpu.utils.memref_ptr(sem), device_id)
+  val = _ir_constant(value, i32_ty)
+  mgpu_utils.warpgroup_barrier()
+  with mgpu.single_thread(per_block=False):
+    llvm_dialect.inline_asm(
+      i32_ty,
+      [peer_ptr, val],
+      "atom.add.release.sys.global.u32 $0, [$1], $2;",
+      "=r,l,r",
+      has_side_effects=True,
+    )
+  return ()
+
+
+@register_lowering_rule(primitives.semaphore_wait_p, mgpu.ThreadSemantics.Lane)
+@register_lowering_rule(primitives.semaphore_wait_p, mgpu.ThreadSemantics.Warpgroup)
+def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
+  sem, transforms, value = tree_util.tree_unflatten(args_tree, args)
+  sem, _ = _handle_indexing(sem, transforms)
+
+  sem_ptr = mgpu.utils.memref_ptr(sem)
+  i32_ty = ir.IntegerType.get_signless(32)
+  ne_pred = arith_dialect.CmpIPredicate.ne
+  zero_const = mgpu.utils.c(0, i32_ty)
+  val = _ir_constant(value, i32_ty)
+
+  with mgpu.single_thread(per_block=False):
+    # Create the while loop for busy waiting
+    while_op = scf_dialect.WhileOp([i32_ty], [zero_const])
+    before_block = while_op.before.blocks.append(i32_ty)
+    with ir.InsertionPoint.at_block_begin(before_block):
+      old_val = llvm_dialect.inline_asm(
+        i32_ty,
+        [sem_ptr, val, zero_const],
+        "atom.acquire.sys.global.cas.b32 $0, [$1], $2, $3;",
+        "=r,l,r,r",
+        has_side_effects=True,
+      )
+      comparison = arith_dialect.cmpi(ne_pred, old_val, val)
+      scf_dialect.condition(comparison, before_block.arguments)
+    after_block = while_op.after.blocks.append(i32_ty)
+    with ir.InsertionPoint.at_block_begin(after_block):
+      scf_dialect.yield_(after_block.arguments)
+
+  mgpu_utils.warpgroup_barrier()
+  return ()

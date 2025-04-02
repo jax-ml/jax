@@ -370,6 +370,46 @@ class TransposeRef(state_types.Transform):
     return mgpu.TransposeTransform(_perm_inverse(self.permutation))
 
 
+@tree_util.register_pytree_node_class
+@dataclasses.dataclass
+class PeerMemRef(state_types.Transform):
+  dev_id: Any
+
+
+  def transform_shape(self, shape):
+    return shape
+
+  def transform_dtype(self, dtype):
+    return dtype
+
+  def untransform_index(
+      self, idxs: tuple[Index, ...]
+  ) -> tuple[tuple[Index, ...], state_types.Transform]:
+    return idxs, self
+
+  def tree_flatten(self):
+    return (self.dev_id,), ()
+
+  @classmethod
+  def tree_unflatten(cls, metadata, arrays):
+    del metadata
+    return cls(arrays[0])
+
+
+def remote_ref(
+    ref: pallas_core.TransformedRef | Any,
+    device_id: Any,
+) -> pallas_core.TransformedRef:
+  """Translate memref to a symmetric memref on a peer device."""
+  if not isinstance(ref, pallas_core.TransformedRef):
+    if not isinstance(jax_core.get_aval(ref), pallas_core.AbstractMemoryRef):
+      raise TypeError("ref must be a reference")
+    ref = pallas_core.TransformedRef(ref, transforms=())
+  return pallas_core.TransformedRef(
+      ref.ref, (*ref.transforms, PeerMemRef(device_id)),
+  )
+
+
 def transform_ref(
     ref: pallas_core.TransformedRef,
     transform: state_types.Transform

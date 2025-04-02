@@ -1270,3 +1270,14 @@ def vector_concat(vectors: Sequence[ir.Value]) -> ir.Value:
       result = vector.insertelement(elem, result, position=c(offset + i, index))
     offset += vty.shape[0]
   return result
+
+
+def to_remote_ptr(ptr, peer):
+  assert ptr.type == ir.Type.parse("!llvm.ptr"), ptr.type
+  return llvm.call(
+      ptr.type, [ptr, peer], [], [], callee="nvshmem_ptr",
+  )
+
+
+def to_remote_memref(ref, peer):
+  return ptr_as_memref(to_remote_ptr(memref_ptr(ref), peer), ref.type)

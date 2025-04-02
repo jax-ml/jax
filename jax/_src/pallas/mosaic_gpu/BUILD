@@ -63,6 +63,7 @@ pytype_strict_library(
         "//jax:pallas",
         "//jax:partial_eval",
         "//jax:source_info_util",
+        "//jax:tree_util",
         "//jax:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
