@@ -13,10 +13,11 @@
 # limitations under the License.
 
 import contextlib
-from typing import Literal
+from typing import Literal, Sequence
 
 import jax
 from jax._src import config
+from jax._src.typing import ArrayLike
 
 Category = Literal["nan", "divide", "oob"]
 
@@ -100,6 +101,56 @@ def _set_error_if_divide_by_zero(pred: jax.Array, /):
   import jax.numpy as jnp
   zero = jnp.zeros_like(pred, shape=())
   error_check_lib.set_error_if(pred == zero, "Division by zero encountered")
+
+
+def _check_precondition_oob_gather(
+    shape: tuple[int, ...], gather_indices: ArrayLike
+) -> None:
+  """Check for out of bounds errors before calling `lax.gather`."""
+  if config.error_checking_behavior_oob.value == "ignore":
+    return
+
+  # TODO(mattjj): fix the circular import issue.
+  from jax._src import error_check as error_check_lib
+  import jax.numpy as jnp
+
+  shape = jnp.array(shape, dtype=jnp.int32)
+  error_check_lib.set_error_if(
+      jnp.logical_or(
+          jnp.min(gather_indices) < -shape,
+          jnp.max(gather_indices) >= shape,
+      ),
+      "Out of bounds encountered before calling `lax.gather`",
+  )
+
+
+def _check_precondition_oob_dynamic_slice(
+    shape: tuple[int, ...],
+    start_indices: Sequence[ArrayLike],
+    slice_sizes: list[int],
+    allow_negative_indices: list[bool],
+) -> None:
+  """Check for out of bounds errors before calling `lax.dynamic_slice`."""
+  if config.error_checking_behavior_oob.value == "ignore":
+    return
+
+  # TODO(mattjj): fix the circular import issue.
+  from jax._src import error_check as error_check_lib
+  import jax.numpy as jnp
+
+  shape = jnp.array(shape, dtype=jnp.int32)
+  start_indices = jnp.array(start_indices, dtype=jnp.int32)
+  slice_sizes = jnp.array(slice_sizes, dtype=jnp.int32)
+  allow_negative_indices = jnp.array(allow_negative_indices, dtype=jnp.bool_)
+
+  lower_bound = jnp.where(allow_negative_indices, -shape, 0)
+  error_check_lib.set_error_if(
+      jnp.logical_or(
+          jnp.minimum(start_indices, start_indices + slice_sizes) < lower_bound,
+          jnp.maximum(start_indices, start_indices + slice_sizes) >= shape,
+      ),
+      "Out of bounds encountered before calling `lax.dynamic_slice`",
+  )
 
 
 Behavior = Literal["ignore", "raise"]
