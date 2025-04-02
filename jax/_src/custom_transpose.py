@@ -177,15 +177,19 @@ class CustomTransposePrimitive(core.Primitive):
   # TODO(frostig,mattjj): consider keeping `call` as a named parameter
   # instead of following this "call primitive" convention.
   def get_bind_params(self, params):
-    assert 'call_jaxpr' in params
-    assert 'transpose_jaxpr_thunk' in params
-    new_params: dict[str, Any] = dict(params)
-    new_params['transpose'] = make_transpose_from_thunk(
-        new_params.pop('transpose_jaxpr_thunk'),
-        new_params['lin_tree'])
-    call_jaxpr: core.ClosedJaxpr = new_params.pop('call_jaxpr')
-    call = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr),
-                        debug_info=call_jaxpr.jaxpr.debug_info)
+    if 'call_jaxpr' in params:
+      assert 'transpose_jaxpr_thunk' in params
+      new_params: dict[str, Any] = dict(params)
+      new_params['transpose'] = make_transpose_from_thunk(
+          new_params.pop('transpose_jaxpr_thunk'),
+          new_params['lin_tree'])
+      call_jaxpr: core.ClosedJaxpr = new_params.pop('call_jaxpr')
+      call = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr),
+                          debug_info=call_jaxpr.jaxpr.debug_info)
+    else:
+      assert 'transpose' in params
+      new_params: dict[str, Any] = dict(params)
+      call = new_params.pop("call")
     return [call], new_params
 
 
