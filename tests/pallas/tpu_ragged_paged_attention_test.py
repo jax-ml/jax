@@ -63,8 +63,9 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
       cu_q_lens.append(cu_q_lens[-1] + q_len)
       kv_lens.append(kv_len)
 
+    actual_num_seqs = len(kv_lens)
     max_num_batched_tokens = max(cu_q_lens[-1], max_num_batched_tokens)
-    max_num_seq = max(len(seq_lens), max_num_seq)
+    max_num_seq = max(actual_num_seqs, max_num_seq)
     max_kv_len = max(kv_lens)
     pages_per_seq = ceil_div(max_kv_len, page_size)
     num_q_heads, num_kv_heads = num_heads
@@ -89,7 +90,7 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
         k2, (max_num_seq, pages_per_seq), 0, num_pages, dtype=jnp.int32
     )
 
-    num_seqs = jnp.array([len(seq_lens)], dtype=jnp.int32)
+    num_seqs = jnp.array([actual_num_seqs], dtype=jnp.int32)
 
     validate_dynamic_inputs(
         q,
