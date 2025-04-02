@@ -141,9 +141,27 @@ def psum(x, axis_name, *, axis_index_groups=None):
       size = math.prod([core.get_axis_env().axis_size(name) for name in named_axes])
     out_flat = tuple(lax._const(leaf, size) * pos_reduce(leaf) for leaf in leaves)
   else:
-    out_flat = psum_p.bind(
-        *leaves, axes=tuple(axis_name), axis_index_groups=axis_index_groups)
+    if config.varying_axes_in_types.value:
+      out_flat = bind_psum2_p(leaves, axes=tuple(axis_name),
+                              axis_index_groups=axis_index_groups)
+    else:
+      out_flat = psum_p.bind(
+          *leaves, axes=tuple(axis_name), axis_index_groups=axis_index_groups)
   return tree_util.tree_unflatten(treedef, out_flat)
+
+def bind_psum2_p(leaves, *, axes, axis_index_groups):
+  if axis_index_groups is not None:
+    raise NotImplementedError
+
+  from jax.experimental.shard_map import psum2_p, pbroadcast
+  axes_ = frozenset(axes)
+  args_ = []
+  for x in leaves:
+    in_vma = core.get_aval(x).vma
+    args_.append(pbroadcast(x, tuple(pbroadcast_names))
+                 if (pbroadcast_names := axes_ - in_vma) else x)
+  return psum2_p.bind(*args_, axes=axes, axis_index_groups=axis_index_groups)
+
 
 def pmean(x, axis_name, *, axis_index_groups=None):
   """Compute an all-reduce mean on ``x`` over the pmapped axis ``axis_name``.
