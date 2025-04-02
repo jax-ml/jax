@@ -30,11 +30,8 @@ package(
 )
 
 exports_files(srcs = [
-    "blas.cc",
     "blas_handle_pool.cc",
     "blas_handle_pool.h",
-    "blas_kernels.cc",
-    "blas_kernels.h",
     "ffi_wrapper.h",
     "gpu_kernel_helpers.cc",
     "gpu_kernel_helpers.h",

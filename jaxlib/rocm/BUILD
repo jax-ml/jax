@@ -88,54 +88,6 @@ cc_library(
 )
 
 cc_library(
-    name = "hipblas_kernels",
-    srcs = ["//jaxlib/gpu:blas_kernels.cc"],
-    hdrs = ["//jaxlib/gpu:blas_kernels.h"],
-    deps = [
-        ":hip_blas_handle_pool",
-        ":hip_gpu_kernel_helpers",
-        ":hip_make_batch_pointers",
-        ":hip_vendor",
-        "//jaxlib:kernel_helpers",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/hash",
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/synchronization",
-        "@local_config_rocm//rocm:hipblas",
-        "@local_config_rocm//rocm:rocm_headers",
-        "@xla//xla/service:custom_call_status",
-    ],
-)
-
-nanobind_extension(
-    name = "_blas",
-    srcs = ["//jaxlib/gpu:blas.cc"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    module_name = "_blas",
-    deps = [
-        ":hip_vendor",
-        ":hipblas_kernels",
-        "//jaxlib:kernel_nanobind_helpers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/strings:str_format",
-        "@local_config_rocm//rocm:hipblas",
-        "@local_config_rocm//rocm:rocm_headers",
-        "@nanobind",
-        "@xla//xla/tsl/python/lib/core:numpy",
-    ],
-)
-
-cc_library(
     name = "miopen_rnn_kernels",
     srcs = ["//jaxlib/gpu:rnn_kernels.cc"],
     hdrs = ["//jaxlib/gpu:rnn_kernels.h"],
@@ -552,7 +504,6 @@ nanobind_extension(
 py_library(
     name = "rocm_gpu_support",
     deps = [
-        ":_blas",
         ":_hybrid",
         ":_linalg",
         ":_prng",
