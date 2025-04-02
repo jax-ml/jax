@@ -16,6 +16,11 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* Breaking changes
+
+  * {func}`jax.numpy.array` no longer accepts `None`. This behavior was
+    deprecated since November 2023 and is now removed.
+
 * Changes
   * The minimum CuDNN version is v9.8.
   * JAX is now built using CUDA 12.8. All versions of CUDA 12.1 or newer remain
