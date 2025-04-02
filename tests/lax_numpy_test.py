@@ -47,6 +47,7 @@ from jax.test_util import check_grads
 from jax._src import array
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
@@ -3796,8 +3797,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp.array([0, val])
 
   def testArrayNoneWarning(self):
-    # TODO(jakevdp): make this an error after the deprecation period.
-    with self.assertWarnsRegex(FutureWarning, r"None encountered in jnp.array\(\)"):
+    if deprecations.is_accelerated('jax-numpy-array-none'):
+      ctx = self.assertRaisesRegex(
+          ValueError, 'None is not a valid value for jnp.array'
+      )
+    else:
+      ctx = self.assertWarnsRegex(
+          FutureWarning, r'None encountered in jnp.array\(\)'
+      )
+    with ctx:
       jnp.array([0.0, None])
 
   def testIssue121(self):
