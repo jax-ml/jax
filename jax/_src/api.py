@@ -192,7 +192,7 @@ def jit(
       constant).
 
       Static arguments should be hashable, meaning both ``__hash__`` and
-      ``__eq__`` are implemented, and immutable. Otherwise they can be arbitrary
+      ``__eq__`` are implemented, and immutable. Otherwise, they can be arbitrary
       Python objects. Calling the jitted function with different values for
       these constants will trigger recompilation. Arguments that are not
       array-like or containers thereof must be marked as static.

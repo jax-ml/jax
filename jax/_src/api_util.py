@@ -28,12 +28,12 @@ from jax._src.state.types import AbstractRef
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_map,
     treedef_children, generate_key_paths, broadcast_prefix,
-    prefix_errors)
-from jax._src.tree_util import _replace_nones
+    prefix_errors, _replace_nones)
 from jax._src import linear_util as lu
 from jax._src.util import (safe_map, WrapKwArgs, Hashable, HashableFunction,
-                           Unhashable, safe_zip)
+                           Unhashable, safe_zip as zip)
 from jax._src import traceback_util
+
 traceback_util.register_exclusion(__file__)
 
 map = safe_map
@@ -201,9 +201,11 @@ def _validate_argnames(
                      f"in {argnames_name}. Function does not take these args.")
 
 
-def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
+def argnums_partial(f: lu.WrappedFun, dyn_argnums: int | Sequence[int],
+                    args: Sequence, require_static_args_hashable=True):
   dyn_argnums = _ensure_index_tuple(dyn_argnums)
   dyn_argnums = _ensure_inbounds(False, len(args), dyn_argnums)
+  fixed_args: list
   if require_static_args_hashable:
     fixed_args = []
     for i, arg in enumerate(args):
@@ -273,7 +275,9 @@ def argnums_partial_except(f: lu.WrappedFun, static_argnums: tuple[int, ...],
   return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
 
 @lu.transformation2
-def _argnums_partial(_fun, _dyn_argnums, _fixed_args, *dyn_args, **kwargs):
+def _argnums_partial(_fun: Callable,
+                     _dyn_argnums: Sequence[int],
+                     _fixed_args: Sequence, *dyn_args, **kwargs):
   sentinel = object()
   args = [sentinel] * (len(_fixed_args) + len(dyn_args))
   for i, arg in zip(_dyn_argnums, dyn_args):
@@ -334,7 +338,7 @@ def donation_vector(donate_argnums, donate_argnames, in_tree,
     donate = bool(i in donate_argnums)
     res.extend((donate,) * arg.num_leaves)
   if kwargs_tree is not None:
-    for key, val in safe_zip(kwargs_tree.node_data()[1], kwargs_tree.children()):  # type: ignore
+    for key, val in zip(kwargs_tree.node_data()[1], kwargs_tree.children()):  # type: ignore
       donate = key in donate_argnames
       res.extend((donate,) * val.num_leaves)
   return tuple(res)
@@ -673,28 +677,45 @@ def _non_static_arg_names(fn_signature: inspect.Signature | None,
   top-level arguments. In other cases, including when the `args` and `kwargs`
   do not match the signature, we use names like `args[0[]`, `args[1]`, etc.
   """
+  # Use the same argument parsing as jit: positional followed by kwargs
+  # sorted by keys.
   static = object()
   static_argnums_ = _ensure_inbounds(True, len(args), static_argnums)
   static_argnames_ = set(static_argnames)
   args_ = [static if i in static_argnums_ else x for i, x in enumerate(args)]
-  kwargs_ = {k:static if k in static_argnames_ else x for k, x in kwargs.items()}
+  kwargs_ = {k: static if k in static_argnames_ else x for k, x in kwargs.items()}
+  ordered_args: Sequence[tuple[str, Any]] | None = None
   if fn_signature is not None:
     try:
       ba = fn_signature.bind(*args_, **kwargs_)
     except (ValueError, TypeError):
       pass
     else:
-      return tuple(f'{name}{lu._clean_keystr_arg_names(path)}'
-                   for name, x in ba.arguments.items()
-                   for path, l in generate_key_paths(x) if l is not static)
-  args_arg_names = tuple(f'args{lu._clean_keystr_arg_names(path)}'
-                         for path, l in generate_key_paths(args_)
-                         if l is not static)
-  kwargs_arg_names = tuple(f'kwargs{lu._clean_keystr_arg_names(path)}'
-                           for path, l in generate_key_paths(kwargs_)
-                           if l is not static)
-  arg_names = args_arg_names + kwargs_arg_names
-  return arg_names
+      # Do we have a **kwargs
+      kwargs_name = next((name for name, p in fn_signature.parameters.items()
+                          if p.kind == inspect.Parameter.VAR_KEYWORD), None)
+      # Positional argument are those not passed by keyword and not passed
+      # by **kwargs.
+      positional = [(name, x) for name, x in ba.arguments.items()
+                    if name not in kwargs and name != kwargs_name]
+      # Keyword arguments are passed sorted by actual kwarg keyword
+      sorted_kwargs = sorted(((name, x) for name, x in kwargs_.items()),
+                              key=lambda name_x: name_x[0])
+      sorted_kwargs = [(name if name in ba.arguments else f"{kwargs_name}['{name}']",
+                        x)
+                       for name, x in sorted_kwargs]
+      ordered_args = positional + sorted_kwargs
+
+  if ordered_args is None:
+    positional = [("args", args_)]
+    keyword = sorted([(f"kwargs['{name}']", x) for name, x in kwargs_.items() if x is not static],
+                     key=lambda name_x: name_x[0])
+    ordered_args = positional + keyword
+
+  return tuple(f'{name}{lu._clean_keystr_arg_names(path)}'
+               for name, x in ordered_args
+               for path, l in generate_key_paths(x) if l is not static)
+
 
 def hoist_obj_attrs(f, flat_args):
   idxs, objs, flat_args_ = [], [], []
