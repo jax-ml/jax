@@ -74,7 +74,7 @@ jobs:
 
       - name: Restore cached TSAN CPython ${{ matrix.python-version }}
         id: cache-cpython-tsan-restore
-        uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ./python-tsan.tgz
@@ -97,7 +97,7 @@ jobs:
       - name: Save TSAN CPython ${{ matrix.python-version }}
         id: cache-cpython-tsan-save
         if: steps.cache-cpython-tsan-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ./python-tsan.tgz
@@ -105,7 +105,7 @@ jobs:
 
       - name: Restore cached TSAN Numpy
         id: cache-numpy-tsan-restore
-        uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ./wheelhouse
@@ -160,7 +160,7 @@ jobs:
       - name: Save TSAN Numpy wheel
         id: cache-numpy-tsan-save
         if: steps.cache-numpy-tsan-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ./wheelhouse
@@ -169,7 +169,7 @@ jobs:
       - name: Restore cached Scipy
         if: ${{ matrix.python-version == '3.14' }}
         id: cache-scipy-restore
-        uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ./wheelhouse
@@ -236,7 +236,7 @@ jobs:
       - name: Save Scipy wheel
         id: cache-scipy-save
         if: ${{ steps.cache-scipy-restore.outputs.cache-hit != 'true' && matrix.python-version == '3.14' }}
-        uses: actions/cache/save@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: |
             ./wheelhouse
