@@ -196,8 +196,6 @@ def build_kernel(
       gpu.barrier()
       mma_done_barrier.wait(for_tensor_core=True)
 
-      # TODO(aportnoy@nvidia.com) output_m_start should just equal group_chunk_a
-      output_m_start = arith.muli(cx(tile_m), group_chunk_id)
       acc[:].astype(ir.F16Type.get()).store_tiled(d_smem, swizzle=128)
       mgpu.commit_shared()
 
