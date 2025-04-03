@@ -1273,14 +1273,35 @@ def scaled_matmul(
       >>> b_scales = jnp.ones((3, 128, 4), dtype=jnp.float8_e8m0fnu)  
       >>> scaled_matmul(a, b, a_scales, b_scales)     
     """
-    assert all(x.ndim == 3 for x in (a, b, a_scales, b_scales))
+    if not all(x.ndim == 3 for x in (a, b, a_scales, b_scales)):
+        raise ValueError(
+            "scaled_matmul requires all inputs to be 3-dimensional arrays"
+        )
+    
     B_a, M_a, K_a = a.shape
     B_b, N_b, K_b = b.shape
-    assert K_a == K_b and B_a == B_b
+    if K_a != K_b or B_a != B_b:
+        raise ValueError(
+            "scaled_matmul requires inputs a and b to have matching batch (B) "
+            f"and contract (K) dimensions, but got shapes {a.shape} and "
+            f"{b.shape}"
+        )
+    
     B_as, M_as, K_as = a_scales.shape
     B_bs, N_bs, K_bs = b_scales.shape
-    assert K_as == K_bs and B_as == B_bs
-    assert M_as == M_a and N_bs == N_b
+    if K_as != K_bs or B_as != B_bs:
+        raise ValueError(
+            "scaled_matmul requires scales to have matching batch (B) and "
+            f"contract (K) dimensions, but got shapes {a_scales.shape} and "
+            f"{b_scales.shape}"
+        )
+    
+    if M_as != M_a or N_bs != N_b:
+        raise ValueError(
+            "scaled_matmul requires scales to match non-contract dimensions of "
+            f"inputs, but got shapes a: {a.shape}, b: {b.shape}, a_scales: "
+            f"{a_scales.shape}, b_scales: {b_scales.shape}"
+        )
 
     preferred_element_type = dtypes.canonicalize_dtype(
         np.dtype(preferred_element_type)
