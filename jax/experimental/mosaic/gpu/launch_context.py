@@ -229,6 +229,7 @@ class CollapseLeadingIndicesTransform(MemRefTransform):
 
 OnDeviceProfiler = profiler.OnDeviceProfiler
 
+ReductionOp = Literal["add", "min", "max", "inc", "dec", "and", "or", "xor"]
 
 @dataclasses.dataclass()
 class LaunchContext:
@@ -406,10 +407,10 @@ class LaunchContext:
       uniform: bool = True,
       collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
       partitioned: int | None = None,
-      predicate: ir.Value | None = None,  # Should select 0 or 1 threads from the WG.
-      reduction_op: Literal[
-        "add","min","max","inc","dec","and","or","xor"
-      ] | None = None,
+      predicate: (
+          ir.Value | None
+      ) = None,  # Should select 0 or 1 threads from the WG.
+      reduction_op: ReductionOp | None = None,
   ):
     """Initiates an async copy between GMEM and SMEM.
 

@@ -21,7 +21,7 @@ import dataclasses
 import enum
 import itertools
 import math
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 import jax
 from jax._src import core as jax_core
@@ -135,17 +135,17 @@ def _load_p_lowering_rule(
 
 
 def load(
-    src: _Ref, idx, *, layout: Optional[Layout | ParameterizedLayout] = None
-) -> mgpu.FragmentedArray:
-  """ Loads a ref (SMEM or GMEM) into a FragmentedArray with the specified layout.
+    src: _Ref, idx, *, layout: Layout | ParameterizedLayout | None = None
+) -> jax.Array:
+  """Loads from a reference into an array with the specified layout.
 
   Args:
-    src: The reference to copy from.
+    src: The reference to load from. Can be either in SMEM or GMEM.
     idx: The index to load from.
-    layout: The optional layout to use for the returned FragmentedArray.
+    layout: The optional layout to use for the resulting array.
 
   Returns:
-    A FragmentedArray containing the loaded data in the specified layout.
+    The loaded array.
   """
   src, src_transforms = state_primitives.get_ref_and_transforms(
       src, idx, "load", force_trailing_indexer=True,
@@ -159,6 +159,7 @@ def load(
       args_tree=src_transforms_treedef,
       layout=layout
   )
+
 
 copy_smem_to_gmem_p = jax_core.Primitive("copy_smem_to_gmem")
 copy_smem_to_gmem_p.multiple_results = True
@@ -185,7 +186,7 @@ def _copy_smem_to_gmem_lowering(
     dst_transforms_treedef,
     has_user_predicate,
     commit_group,
-    reduction_op: Literal["add", "min", "max", "inc", "dec", "and", "or", "xor"] | None,
+    reduction_op,
 ):
   if has_user_predicate:
     flat_args, user_predicate = flat_args[:-1], flat_args[-1]
@@ -295,9 +296,7 @@ def copy_smem_to_gmem(
     predicate: jax.Array | None = None,
     *,
     commit_group: bool = True,
-    reduction_op: Literal[
-      "add","min","max","inc","dec","and","or","xor"
-    ] | None = None,
+    reduction_op: mgpu.ReductionOp | None = None,
 ) -> None:
   """Asynchronously copies a SMEM reference to a GMEM reference.
 
@@ -306,10 +305,12 @@ def copy_smem_to_gmem(
     dst: The GMEM reference to copy to.
     predicate: A boolean indicating whether the copy should be performed. If
       ``None``, the copy is always performed.
-    commit_group: If ``True``, this and any previously uncommitted copies
-      are committed to a group and can be awaited jointly via
+    commit_group: If ``True``, this and any previously uncommitted copies are
+      committed to a group and can be awaited jointly via
       :func:`jax.experimental.mosaic.gpu.wait_smem_to_gmem`.
-    reduction_op: if set, perform the specified reduction op when copy to gmem
+    reduction_op: If set, perform the specified reduction operation when storing
+      to GMEM. For example, using ``"add"`` is conceptually equivalent to
+      doing ``src += dst``.
 
   See also:
     :func:`jax.experimental.mosaic.gpu.wait_smem_to_gmem`
