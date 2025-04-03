@@ -2984,7 +2984,7 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
     >>> jnp.bincount(x, length=5)
     Array([2, 1, 0, 1, 0], dtype=int32)
   """
-  util.check_arraylike("bincount", x)
+  x = util.ensure_arraylike("bincount", x)
   if _dtype(x) == bool:
     x = lax.convert_element_type(x, 'int32')
   if not issubdtype(_dtype(x), np.integer):
@@ -5018,7 +5018,7 @@ def choose(a: ArrayLike, choices: Array | np.ndarray | Sequence[ArrayLike],
   """
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.choose is not supported.")
-  util.check_arraylike('choose', a, *choices)
+  a, *choices = util.ensure_arraylike_tuple('choose', (a, *choices))
   if not issubdtype(_dtype(a), np.integer):
     raise ValueError("`a` array must be integer typed")
   N = len(choices)
@@ -8774,6 +8774,7 @@ def argwhere(
     >>> jnp.argwhere(0)
     Array([], shape=(0, 0), dtype=int32)
   """
+  a = util.ensure_arraylike("argwhere", a)
   result = transpose(vstack(nonzero(atleast_1d(a), size=size, fill_value=fill_value)))
   if np.ndim(a) == 0:
     return result[:0].reshape(result.shape[0], 0)
