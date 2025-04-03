@@ -26,7 +26,7 @@ import threading
 from typing import Any, Union
 import warnings
 
-from absl import logging
+import logging
 import numpy as np
 
 import jax
