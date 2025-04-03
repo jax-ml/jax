@@ -1166,13 +1166,37 @@ def _swap_lowering_rule(
     raise TypeError(f"Can only store to references (got {x_smem}).")
   x_aval = ctx.avals_in[0]
   transforms = jax.tree.unflatten(tree, leaves)
-  x_smem, transforms = _handle_transforms(x_smem, transforms)
+  transposed_value = value.layout == mgpu.WGMMA_TRANSPOSED_LAYOUT
+  x_smem, transforms = _handle_transforms(
+      x_smem, transforms, handle_transposes=not transposed_value
+  )
   match transforms:
-    case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
+    case (
+        gpu_core.UnswizzleRef(swizzle),
+        gpu_core.UntileRef(tiling),
+        *maybe_transpose,
+    ):
       if tiling != (8, swizzle // x_aval.dtype.itemsize):
         raise NotImplementedError("Tiling does not fit swizzle")
+
+      if transposed_value != bool(maybe_transpose):
+        raise ValueError(
+            "Either both the ref and the value are transposed or neither is."
+        )
+
+      if maybe_transpose:
+        if maybe_transpose != [gpu_core.TransposeRef((1, 0))]:
+          raise NotImplementedError(
+              f"Unsupported transforms: {transforms} ({maybe_transpose})"
+          )
+
+        x_smem = mgpu.memref_transpose(x_smem, (1, 0, 3, 2))
+
       old_value = mgpu.FragmentedArray.load_tiled(
-          x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=swizzle
+          x_smem,
+          is_signed=mgpu_utils.is_signed(x_aval.dtype),
+          swizzle=swizzle,
+          layout=value.layout,
       )
       value.store_tiled(x_smem, swizzle=swizzle)
       return old_value

@@ -1372,6 +1372,44 @@ class PallasCallTest(PallasTest):
     x = jnp.full(shape, 42.0, jnp.float32)
     np.testing.assert_array_equal(kernel(), x)
 
+  def test_wgmma_transposed_layout(self):
+    """Tests that the result of wgmma can be store transposed using
+    the WGMMA_TRNASPOSED layout.
+    """
+
+    dtype = jnp.dtype(jnp.float16)
+    swizzle_elems = 128 // dtype.itemsize
+    shape = (128, 128)
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+        scratch_shapes=[
+            plgpu.SMEM(
+                shape, dtype,
+                transforms=(
+                    plgpu.TilingTransform((8, swizzle_elems)),
+                    plgpu.SwizzleTransform(128),
+                ),
+            )
+        ]
+    )
+    def kernel(o_ref, smem):
+      iota = plgpu.broadcasted_iota(
+          dtype, o_ref.shape, 0, layout=plgpu.Layout.WGMMA
+      ) * o_ref.shape[0]
+      iota += plgpu.broadcasted_iota(
+          dtype, o_ref.shape, 1, layout=plgpu.Layout.WGMMA
+      )
+
+      smem_trns = plgpu.transpose_ref(smem, (1, 0))
+      smem_trns[...] = plgpu.layout_cast(iota, plgpu.Layout.WGMMA_TRANSPOSED)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(smem, o_ref)
+
+    x = jnp.arange(128 * 128, dtype=dtype).reshape((128, 128)).T
+    np.testing.assert_array_equal(kernel(), x)
+
   def test_profiler(self):
     self.skip_if_wg_semantics()  # Transform inference fails.
 
