@@ -223,9 +223,22 @@ NamedSharding::NamedSharding(nb::object mesh, nb::object spec,
   // TODO(phawkins): this leaks a reference to the check_pspec function.
   // A better way to fix this would be to move PartitionSpec and this check into
   // C++.
-  static nb::object* check_pspec = []() {
+  nb::object* check_pspec = [](){
+    static absl::Mutex mu;
+    static nb::object* output = nullptr;
+    {
+      absl::MutexLock lock(&mu);
+      if (output) {
+        return output;
+      }
+    }
     nb::module_ si = nb::module_::import_("jax._src.named_sharding");
-    return new nb::object(si.attr("check_pspec"));
+    nb::object attr = si.attr("check_pspec");
+    absl::MutexLock lock(&mu);
+    if (!output) {
+      output = new nb::object(attr);
+    }
+    return output;
   }();
   (*check_pspec)(mesh_, spec_, manual_axes_);
 }
