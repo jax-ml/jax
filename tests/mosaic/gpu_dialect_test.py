@@ -862,6 +862,50 @@ class DialectLoweringTest(MosaicGpuTest):
     self.assertLen(conversion_ops, 1)
     self.assertEqual(conversion_ops[0].result.type, scalar_out_ty)
 
+  @parameterized.parameters(
+      (True, False, False),
+      (False, True, False),
+      (False, False, True),
+  )
+  def test_custom_primitive_op_must_have_number_of_annotations_matching_operands_and_results(
+      self, omit_in_layouts, omit_in_transforms, omit_out_layouts
+  ):
+    vec_ty = ir.VectorType.get((4, 32), ir.BF16Type.get())
+    out_layouts = [
+        layouts.to_layout_attr(
+            mgpu.WGStridedFragLayout.from_shaped_type(vec_ty)
+        )
+    ]
+    in_layouts = out_layouts * 2
+    in_transforms = [
+        ir.ArrayAttr.get([mgpu.dialect.SwizzleTransformAttr.get(128)])
+    ]
+
+    in_layouts = [] if omit_in_layouts else in_layouts
+    in_transforms = [] if omit_in_transforms else in_transforms
+    out_layouts = [] if omit_out_layouts else out_layouts
+
+    def body(vec1, vec2, ref):
+      mgpu.dialect.custom_primitive(
+          [vec_ty], [vec1, vec2, ref], in_layouts, in_transforms, out_layouts
+      )
+
+    with ir.InsertionPoint(self.module.body):
+      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+      ref_ty = ir.MemRefType.get((4, 32), ir.BF16Type.get(), memory_space=smem)
+      func.FuncOp.from_py_func(vec_ty, vec_ty, ref_ty)(body)
+
+    if omit_in_layouts:
+      error = "layout for each vector operand"
+    elif omit_in_transforms:
+      error = "transforms for each memref operand in smem"
+    else:
+      assert omit_out_layouts
+      error = "layout for each result"
+
+    with self.assertRaisesRegex(ir.MLIRError, error):
+      self.module.operation.verify()
+
 
 if __name__ == "__main__":
   parameterized.absltest.main(testLoader=jtu.JaxTestLoader())
