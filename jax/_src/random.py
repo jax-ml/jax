@@ -556,7 +556,8 @@ def _randint(key, minval, maxval, shape, dtype) -> Array:
 def permutation(key: ArrayLike,
                 x: int | ArrayLike,
                 axis: int = 0,
-                independent: bool = False) -> Array:
+                independent: bool = False,
+                out_sharding=None) -> Array:
   """Returns a randomly permuted array or range.
 
   Args:
@@ -573,11 +574,17 @@ def permutation(key: ArrayLike,
   key, _ = _check_prng_key("permutation", key)
   check_arraylike("permutation", x)
   axis = canonicalize_axis(axis, np.ndim(x) or 1)
+  out_sharding = canonicalize_sharding(out_sharding, "permutation")
   if not np.ndim(x):
     if not np.issubdtype(lax.dtype(x), np.integer):
       raise TypeError("x must be an integer or at least 1-dimensional")
-    r = core.concrete_or_error(int, x, 'argument x of jax.random.permutation()')
-    return _shuffle(key, jnp.arange(r), axis)
+    r = core.concrete_or_error(int, x, "argument x of jax.random.permutation()")
+    return maybe_auto_axes(lambda key: _shuffle(key, jnp.arange(r), axis),
+                           out_sharding)(key)
+  return maybe_auto_axes(
+      _permutation, out_sharding, axis=axis, independent=independent)(key, x)
+
+def _permutation(key, x, axis, independent):
   if independent or np.ndim(x) == 1:
     return _shuffle(key, x, axis)
   ind = _shuffle(key, jnp.arange(x.shape[axis]), 0)  # type: ignore[union-attr]
