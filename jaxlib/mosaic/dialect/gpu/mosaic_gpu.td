@@ -484,4 +484,30 @@ def MosaicGPU_OptimizationBarrierOp : Op<MosaicGPU_Dialect, "optimization_barrie
   }];
 }
 
+def MosaicGPU_CustomPrimitiveOp : Op<MosaicGPU_Dialect, "custom_primitive", []> {
+  let summary = "Allows defining a custom Mosaic GPU primitive.";
+  let description = [{
+    Allows defining a custom Mosaic GPU primitive.
+
+    Custom primitives should carry input and output layouts for each of their
+    vector operands and outputs, and input transforms for each of their memref
+    operands that live in SMEM.
+
+    Custom primitives can only return vectors.
+  }];
+
+  let arguments = (
+    ins Variadic<AnyType>:$operands,
+    // Attributes
+    ArrayAttr:$in_layouts,
+    ArrayAttr:$in_transforms,
+    ArrayAttr:$out_layouts
+  );
+
+  let results = (outs Variadic<VectorOfAnyRankOf<[AnyType]>>);
+  let regions = (region AnyRegion:$body);
+
+  let hasVerifier = 1;
+}
+
 #endif // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_GPU_MOSAIC_GPU_TD_

@@ -31,10 +31,12 @@ limitations under the License.
 #include "mlir/Conversion/LLVMCommon/MemRefBuilder.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/MemRef/Utils/MemRefUtils.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
@@ -365,6 +367,41 @@ llvm::LogicalResult WGMMAOp::verify() {
         "`b`'s non-contracting dimension {0} must be equal to the "
         "accumulator's second dimension {1}.",
         N, accShape[1]);
+  }
+
+  return llvm::success();
+}
+
+llvm::LogicalResult CustomPrimitiveOp::verify() {
+  int num_vector_operands = 0;
+  int num_smem_ref_operands = 0;
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+  for (auto operand : getOperands()) {
+    if (mlir::isa<mlir::VectorType>(operand.getType())) {
+      ++num_vector_operands;
+    }
+
+    if (auto ref_ty = mlir::dyn_cast<mlir::MemRefType>(operand.getType())) {
+      if (ref_ty.getMemorySpace() == smem) {
+        ++num_smem_ref_operands;
+      }
+    }
+  }
+
+  if (num_vector_operands != getInLayouts().size()) {
+    return emitOpError(
+        "Custom primitive must have a layout for each vector operand.");
+  }
+
+  if (num_smem_ref_operands != getInTransforms().size()) {
+    return emitOpError(
+        "Custom primitive must have transforms for each memref operand in "
+        "smem.");
+  }
+
+  if (getResults().size() != getOutLayouts().size()) {
+    return emitOpError("Custom primitive must have a layout for each result.");
   }
 
   return llvm::success();
