@@ -842,6 +842,10 @@ py_library_providing_imports_info(
 pytype_strict_library(
     name = "partial_eval",
     srcs = ["_src/interpreters/partial_eval.py"],
+    visibility = [
+        ":internal",
+        "//gdm/hw/mlir/hwir/python/_src:__pkg__",
+    ],
     deps = [
         ":ad_util",
         ":api_util",
@@ -1051,7 +1055,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "traceback_util",
     srcs = ["_src/traceback_util.py"],
-    visibility = [":internal"] + jax_visibility("traceback_util"),
+    visibility = [":internal"] + jax_visibility("traceback_util") + ["//gdm/hw/mlir/hwir/python/_src:__pkg__"],
     deps = [
         ":config",
         ":util",
@@ -1090,6 +1094,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "util",
     srcs = ["_src/util.py"],
+    visibility = [
+        ":internal",
+        "//gdm/hw/mlir/hwir/python/_src:__pkg__",
+    ],
     deps = [
         ":config",
         "//jax/_src/lib",
@@ -1262,7 +1270,10 @@ pytype_library(
 # TODO(phawkins): remove this target in favor of the finer-grained targets in jax/extend/...
 pytype_strict_library(
     name = "extend",
-    visibility = [":jax_extend_users"],
+    visibility = [
+        ":jax_extend_users",
+        "//gdm/hw/mlir/hwir/python/_src:__pkg__",
+    ],
     deps = [
         "//jax/extend",
         "//jax/extend:backend",
