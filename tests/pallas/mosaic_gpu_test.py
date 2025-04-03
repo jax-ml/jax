@@ -63,14 +63,14 @@ def _sum_same_dtype(x):
 
 class PallasTestMetaclass(parameterized.TestGeneratorMetaclass):
 
-  def __new__(mcs, *args, thread_semantics=plgpu.ThreadSemantics.Lane):
+  def __new__(mcs, *args, lowering_semantics=plgpu.LoweringSemantics.Lane):
     cls = super().__new__(mcs, *args)
-    cls.THREAD_SEMANTICS = thread_semantics
+    cls.LOWERING_SEMANTICS = lowering_semantics
     return cls
 
 
 class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
-  THREAD_SEMANTICS: ClassVar[plgpu.ThreadSemantics]
+  LOWERING_SEMANTICS: ClassVar[plgpu.LoweringSemantics]
 
   def setUp(self):
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
@@ -82,20 +82,20 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
     super().setUp()
 
   def skip_if_wg_semantics(self):
-    if self.THREAD_SEMANTICS == plgpu.ThreadSemantics.Warpgroup:
+    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Warpgroup:
       self.skipTest("Not supported under WG semantics")
 
   def kernel(self, *args, **kwargs):
     compiler_params = dataclasses.replace(
         kwargs.pop("compiler_params", plgpu.GPUCompilerParams()),
-        thread_semantics=self.THREAD_SEMANTICS,
+        lowering_semantics=self.LOWERING_SEMANTICS,
     )
     return plgpu.kernel(*args, compiler_params=compiler_params, **kwargs)
 
   def pallas_call(self, *args, **kwargs):
     compiler_params = dataclasses.replace(
         kwargs.pop("compiler_params", plgpu.GPUCompilerParams()),
-        thread_semantics=self.THREAD_SEMANTICS,
+        lowering_semantics=self.LOWERING_SEMANTICS,
     )
     return pl.pallas_call(*args, compiler_params=compiler_params, **kwargs)
 
@@ -1453,7 +1453,7 @@ class PallasCallTest(PallasTest):
 
 
 class PallasCallWGTest(
-    PallasCallTest, thread_semantics=plgpu.ThreadSemantics.Warpgroup
+    PallasCallTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
 ):
   ...
 
@@ -1463,10 +1463,14 @@ class PallasCallWGTest(
     # enable warpgroup semantics by default (assuming we haven't overspecialized
     # lowerings).
     rules = mgpu_lowering.mosaic_lowering_rules
-    wg_lowered_primitives = set(rules[plgpu.ThreadSemantics.Warpgroup])
-    lane_lowered_primitives = set(rules[plgpu.ThreadSemantics.Lane])
+    wg_wg_lowered_primitives = set(
+        rules[(plgpu.LoweringSemantics.Warpgroup,
+         plgpu.UserThreadSemantics.Warpgroup)])
+    lane_wg_lowered_primitives = set(rules[
+        (plgpu.LoweringSemantics.Lane, plgpu.UserThreadSemantics.Warpgroup)])
 
-    actual_missing_primitives = lane_lowered_primitives - wg_lowered_primitives
+    actual_missing_primitives = (lane_wg_lowered_primitives -
+                                 wg_wg_lowered_primitives)
     expected_missing_primitives = {
         mgpu_primitives.broadcasted_iota_p,
         mgpu_primitives.layout_cast_p,
@@ -1539,7 +1543,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
         lambda m, n, k: (m, n),
     )
 
-    if self.THREAD_SEMANTICS == plgpu.ThreadSemantics.Lane:
+    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
       lhs_spec = plgpu.GPUBlockSpec(
           lhs_spec.block_shape, lhs_spec.index_map,
           transforms=(
@@ -1640,7 +1644,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     b = jax.random.uniform(key2, shape=(128, 192), dtype=jnp.float16)
 
     transforms = ()
-    if self.THREAD_SEMANTICS == plgpu.ThreadSemantics.Lane:
+    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
       transforms = (plgpu.TilingTransform((8, 64)), plgpu.SwizzleTransform(128))
     res = self.pallas_call(
         kernel,
@@ -1705,7 +1709,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     b = jax.random.uniform(key2, shape=(2, 128, 192), dtype=jnp.float16)
 
     transforms = ()
-    if self.THREAD_SEMANTICS == plgpu.ThreadSemantics.Lane:
+    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
       transforms = (plgpu.TilingTransform((8, 64)), plgpu.SwizzleTransform(128))
 
     res = self.pallas_call(
@@ -1739,7 +1743,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     a = jax.random.uniform(key1, shape=(64, 128), dtype=jnp.float16)
     b = jax.random.uniform(key2, shape=(128, 128), dtype=jnp.float16)
     transforms = ()
-    if self.THREAD_SEMANTICS == plgpu.ThreadSemantics.Lane:
+    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
       transforms = (
           plgpu.TilingTransform((8, elems_128b)),
           plgpu.SwizzleTransform(128),
@@ -1762,7 +1766,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
 
 
 class PallasCallSm90AWGTest(
-    PallasCallSm90ATest, thread_semantics=plgpu.ThreadSemantics.Warpgroup
+    PallasCallSm90ATest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
 ):
   ...
 
@@ -1793,7 +1797,7 @@ class PallasCallSm100ATest(PallasSm100ATest):
 
 
 class PallasCallSm100AWGTest(
-    PallasCallSm100ATest, thread_semantics=plgpu.ThreadSemantics.Warpgroup
+    PallasCallSm100ATest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
 ):
   ...
 
@@ -2059,7 +2063,7 @@ class PipelineTest(PallasTest):
 
 
 class PipelineWGTest(
-    PipelineTest, thread_semantics=plgpu.ThreadSemantics.Warpgroup
+    PipelineTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
 ):
   ...
 
@@ -2079,7 +2083,7 @@ class PipelineSm90ATest(PallasSm90ATest):
     m, k, n = grid_m * tile_m, grid_k * tile_k, grid_n * tile_n
 
     transforms = ()
-    if self.THREAD_SEMANTICS == plgpu.ThreadSemantics.Lane:
+    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
       transforms = (
           plgpu.TilingTransform((8, elems_128b)),
           plgpu.SwizzleTransform(128),
@@ -2132,7 +2136,7 @@ class PipelineSm90ATest(PallasSm90ATest):
 
 
 class PipelineSm90AWGTest(
-    PipelineSm90ATest, thread_semantics=plgpu.ThreadSemantics.Warpgroup
+    PipelineSm90ATest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
 ):
   ...
 
@@ -2296,7 +2300,7 @@ class WarpSpecializedPipelineTest(PallasTest):
 
 class WarpSpecializedPipelineWGTest(
     WarpSpecializedPipelineTest,
-    thread_semantics=plgpu.ThreadSemantics.Warpgroup,
+    lowering_semantics=plgpu.LoweringSemantics.Warpgroup,
 ):
   ...
 
@@ -2554,7 +2558,7 @@ class CoreMapTest(PallasTest):
 
 
 class CoreMapWGTest(
-    CoreMapTest, thread_semantics=plgpu.ThreadSemantics.Warpgroup
+    CoreMapTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
 ):
   ...
 
@@ -2689,7 +2693,7 @@ class ExamplesTest(PallasTest):
 
 
 class ExamplesWGTest(
-    ExamplesTest, thread_semantics=plgpu.ThreadSemantics.Warpgroup
+    ExamplesTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
 ):
   ...
 
@@ -2731,7 +2735,7 @@ class ExamplesSm90ATest(PallasSm90ATest):
 
 
 class ExamplesSm90AWGTest(
-    ExamplesSm90ATest, thread_semantics=plgpu.ThreadSemantics.Warpgroup
+    ExamplesSm90ATest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
 ):
   ...
 

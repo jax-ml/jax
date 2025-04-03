@@ -23,10 +23,13 @@ from .core import (
     Barrier as Barrier,
     ClusterBarrier as ClusterBarrier,
     TMABarrier as TMABarrier,
-    ThreadSemantics as ThreadSemantics,
+    LoweringSemantics as LoweringSemantics,
+    UserThreadSemantics as UserThreadSemantics,
     TMEM as TMEM,
     Union as Union,
     as_gpu_kernel as as_gpu_kernel,
+    LANExWG_SEMANTICS as LANExWG_SEMANTICS,
+    WGxWG_SEMANTICS as WGxWG_SEMANTICS,
 )
 
 from .launch_context import (

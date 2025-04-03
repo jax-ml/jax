@@ -209,11 +209,25 @@ def _count_buffer_bytes(shape_dtype: jax.ShapeDtypeStruct) -> int:
   return math.prod(shape_dtype.shape) * np.dtype(shape_dtype.dtype).itemsize
 
 
-class ThreadSemantics(enum.Enum):
+class LoweringSemantics(enum.Enum):
   """Semantics for the kernel's instruction stream."""
 
   Lane = enum.auto()
   Warpgroup = enum.auto()
+
+
+class UserThreadSemantics(enum.Enum):
+  """Semantics for a thread at the Pallas user-level."""
+
+  Warp = enum.auto()
+  Warpgroup = enum.auto()
+
+
+# Convenience constants for (lowering, user) thread semantics pairs.
+LANExWG_SEMANTICS = (
+    LoweringSemantics.Lane, UserThreadSemantics.Warpgroup)
+WGxWG_SEMANTICS = (
+    LoweringSemantics.Warpgroup, UserThreadSemantics.Warpgroup)
 
 
 def _construct_smem_reftree(
@@ -595,7 +609,7 @@ def as_gpu_kernel(
     module_name: str = "unknown",
     kernel_name: str | None = None,
     ir_version: int | None = None,
-    thread_semantics: ThreadSemantics = ThreadSemantics.Lane,
+    lowering_semantics: LoweringSemantics = LoweringSemantics.Lane,
 ):
   if isinstance(in_shape, list):
     in_shape = tuple(in_shape)
@@ -609,7 +623,7 @@ def as_gpu_kernel(
       )
   )
 
-  if thread_semantics == ThreadSemantics.Warpgroup and dialect is not None:
+  if lowering_semantics == LoweringSemantics.Warpgroup and dialect is not None:
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
     layout_inference.infer_layout(module)  # pytype: disable=attribute-error
@@ -669,7 +683,7 @@ def as_torch_gpu_kernel(
     cluster: tuple[int, int, int] = (1, 1, 1),
     module_name: str = "unknown",
     kernel_name: str | None = None,
-    thread_semantics: ThreadSemantics = ThreadSemantics.Lane,
+    lowering_semantics: LoweringSemantics = LoweringSemantics.Lane,
 ):
   try:
     import torch
@@ -692,7 +706,7 @@ def as_torch_gpu_kernel(
       )
   )
 
-  if thread_semantics == ThreadSemantics.Warpgroup and dialect is not None:
+  if lowering_semantics == LoweringSemantics.Warpgroup and dialect is not None:
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
     layout_inference.infer_layout(module)  # pytype: disable=attribute-error
