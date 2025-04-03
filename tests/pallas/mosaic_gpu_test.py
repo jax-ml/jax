@@ -1923,7 +1923,7 @@ class PipelineTest(PallasTest):
           max_concurrent_steps=2,
       )(x_gmem, o_gmem)
 
-    def kernel_body(x_smem, o_smem):
+    def kernel_body(_, x_smem, o_smem):
       # +1 for the indexing done by ``emit_pipeline`.
       self.assertLen(x_smem.transforms, len(transforms) + 1)
       o_smem[...] = x_smem[...] + 1.0
@@ -1949,7 +1949,7 @@ class PipelineTest(PallasTest):
           grid=(),
       )(x_gmem, o_gmem)
 
-    def nested_kernel(x_gmem, o_gmem):
+    def nested_kernel(_, x_gmem, o_gmem):
       plgpu.emit_pipeline(
           nested_kernel_body,
           in_specs=[pl.BlockSpec((32, 16), lambda i: (0, i))],
@@ -1958,7 +1958,7 @@ class PipelineTest(PallasTest):
           max_concurrent_steps=2,
       )(x_gmem, o_gmem)
 
-    def nested_kernel_body(x_smem, o_smem):
+    def nested_kernel_body(_, x_smem, o_smem):
       o_smem[...] = x_smem[...] + 1.0
 
     x = jnp.arange(32 * num_steps * 16)
@@ -1983,7 +1983,7 @@ class PipelineTest(PallasTest):
           max_concurrent_steps=2,
       )(x_gmem, o_gmem)
 
-    def kernel_body(x_smem, o_smem):
+    def kernel_body(_, x_smem, o_smem):
       o_smem[...] = x_smem[...] + 1.0
 
     x = jnp.arange(32 * num_steps * 16)
@@ -2016,7 +2016,7 @@ class PipelineTest(PallasTest):
           max_concurrent_steps=2,
       )(x_gmem, o_gmem)
 
-    def kernel_body(x_smem, o_smem):
+    def kernel_body(_, x_smem, o_smem):
       o_smem[...] = x_smem[...] + 1.0
 
     x = jnp.arange(num_steps1 * 32 * num_steps2 * 16)
@@ -2044,7 +2044,7 @@ class PipelineTest(PallasTest):
           max_concurrent_steps=2,
       )(x_gmem, o_gmem)
 
-    def kernel_body(x_smem, o_smem):
+    def kernel_body(_, x_smem, o_smem):
       o_smem[...] = x_smem[...] + 1.0
 
     x = jnp.arange(32 * num_steps1 * 16 * num_steps2 * 8)
@@ -2086,7 +2086,7 @@ class PipelineSm90ATest(PallasSm90ATest):
       )
 
     def kernel(a_gmem, b_gmem, o_smem, acc):
-      def kernel_body(a_smem, b_smem):
+      def kernel_body(_, a_smem, b_smem):
         assert a_smem.shape == (tile_m, tile_k)
         assert b_smem.shape == (tile_k, tile_n)
         plgpu.wgmma(acc, a_smem, b_smem)
@@ -2147,7 +2147,7 @@ class WarpSpecializedPipelineTest(PallasTest):
     x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float16)
     blk_m = blk_n = 64
 
-    def copy_kernel(x_smem, o_smem, o_last_block_smem, *consumed_barriers):
+    def copy_kernel(_, x_smem, o_smem, o_last_block_smem, *consumed_barriers):
       # TODO(justinfu): Have each wg compute a separate slice
       # after multiple-indexers are supported.
       # This is currently a race, but the values written are the same.
@@ -2201,7 +2201,7 @@ class WarpSpecializedPipelineTest(PallasTest):
         block_shape=(blk_m, blk_n), index_map=lambda i, j: (i, j)
     )
 
-    def tiled_add_kernel(x_smem, y_smem, o_smem):
+    def tiled_add_kernel(_, x_smem, y_smem, o_smem):
       # TODO(justinfu): Have each wg compute a separate slice
       # after multiple-indexers are supported.
       # This is currently a race, but the values written are the same.
@@ -2265,7 +2265,7 @@ class WarpSpecializedPipelineTest(PallasTest):
         plgpu.copy_smem_to_gmem(acc_smem, acc_gmem)
         plgpu.wait_smem_to_gmem(0)
 
-      def tiled_acc_kernel(x_smem, carry):
+      def tiled_acc_kernel(_, x_smem, carry):
         o_carry, = carry
         new_carry = x_smem[...] + o_carry
         return (new_carry,)
@@ -2620,7 +2620,7 @@ class ExamplesTest(PallasTest):
         self.kernel, out_shape=x, grid=(2,), grid_names=("rows",)
     )
     def kernel(l_ref, r_ref, o_ref):
-      def compute(l_smem, r_smem, o_smem):
+      def compute(_, l_smem, r_smem, o_smem):
         o_smem[...] = l_smem[...] + r_smem[...]
       r = lax.axis_index("rows")
       block = pl.BlockSpec((row_block, col_block), lambda c: (r, c))
@@ -2644,7 +2644,7 @@ class ExamplesTest(PallasTest):
         self.kernel, out_shape=x, grid=(2,), grid_names=("rows",)
     )
     def kernel(l_ref, r_ref, o_ref):
-      def compute(l_smem, r_smem, o_smem):
+      def compute(_, l_smem, r_smem, o_smem):
         o_smem[...] = l_smem[...] + r_smem[...]
       r = lax.axis_index("rows")
       block = plgpu.GPUBlockSpec(
@@ -2707,7 +2707,7 @@ class ExamplesSm90ATest(PallasSm90ATest):
         self.kernel, out_shape=x, grid=(2, 2), grid_names=("m", "n")
     )
     def kernel(l_ref, r_ref, o_ref):
-      def compute(l_smem, r_smem, o_smem):
+      def compute(_, l_smem, r_smem, o_smem):
         def do_wgmma(acc_ref):
           plgpu.wgmma(acc_ref, l_smem, r_smem)
           return acc_ref[...]
