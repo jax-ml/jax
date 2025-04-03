@@ -529,6 +529,7 @@ def export(
     *,
     platforms: Sequence[str] | None = None,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
+    _override_lowering_rules: Sequence[tuple[Any, Any]] | None = None
     ) -> Callable[..., Exported]:
   """Exports a JAX function for persistent serialization.
 
@@ -541,6 +542,13 @@ def export(
         If None, then use the default JAX backend.
         The calling convention for multiple platforms is explained at
         https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention.
+    _override_lowering_rules: an optional sequence of custom lowering rules
+        for some JAX primitives. Each element of the sequence is a pair
+        of a JAX primitive and a lowering function. Defining lowering rules
+        is an advanced feature using JAX internal APIs, which are subject
+        to change. Furthermore, the responsibility for the stability of the
+        MLIR emitted through these custom lowering rules, rests with the user
+        of these rules.
     disabled_checks: the safety checks to disable. See documentation for
         of `jax.export.DisabledSafetyCheck`.
 
@@ -568,7 +576,8 @@ def export(
       Array([0.09983342, 0.19866933, 0.29552022, 0.38941833], dtype=float32)
   """
   return _export_internal(fun_jit, platforms=platforms,
-                          disabled_checks=disabled_checks)
+                          disabled_checks=disabled_checks,
+                          override_lowering_rules=_override_lowering_rules)
 
 
 # TODO(necula): remove this once we improve the integration with jax2tf.
@@ -577,7 +586,8 @@ def _export_internal(
     *,
     platforms: Sequence[str] | None = None,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
-    _device_assignment_for_internal_jax2tf_use_only = None,
+    _device_assignment_for_internal_jax2tf_use_only=None,
+    override_lowering_rules=None,
     ) -> Callable[..., Exported]:
   """Exports native serialization for a JAX function.
 
@@ -604,6 +614,7 @@ def _export_internal(
     lowered = traced.lower(
         lowering_platforms=actual_lowering_platforms,
         _private_parameters=mlir.LoweringParameters(
+            override_lowering_rules=override_lowering_rules,
             for_export=True,
             export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value))
     return _export_lowered(

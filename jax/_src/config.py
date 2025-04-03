@@ -998,7 +998,7 @@ explain_cache_misses = bool_state(
     name='jax_explain_cache_misses',
     default=False,
     help=('Each time there is a miss on one of the main caches (e.g. the '
-          'tracing cache), log an explanation.. Logging is performed with '
+          'tracing cache), log an explanation. Logging is performed with '
           '`logging`. When this option is set, the log level is WARNING; '
           'otherwise the level is DEBUG.'))
 

@@ -19,7 +19,6 @@ import contextlib
 import dataclasses
 import functools
 import logging
-import json
 import math
 import re
 import unittest
@@ -280,6 +279,18 @@ class JaxExportTest(jtu.JaxTestCase):
     exp_f = get_exported(f)(x, y)
 
     self.assertAllClose(f(x, y), exp_f.call(x, y))
+
+  def test_override_lowering_rules(self):
+    @jax.jit
+    def f(x):
+      return jnp.sin(x)
+
+    def my_lowering_rule(ctx, arg, **_):
+      return mlir.hlo.CosineOp(arg).results
+
+    exp = get_exported(f, _override_lowering_rules=(
+        (lax.sin_p, my_lowering_rule),))(42.)
+    self.assertIn("stablehlo.cosine", exp.mlir_module())
 
   def test_pytree(self):
     a = np.arange(4, dtype=np.float32)
