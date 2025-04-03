@@ -629,7 +629,8 @@ def emit_pipeline_warp_specialized(
       last_slot = lax.rem(num_pipeline_steps - 1, max_concurrent_steps)
       for bref in out_brefs:
         if bref.is_index_invariant:
-          bref.copy_out(last_slot, last_indices, predicate=None)
+          bref.copy_out(_get_slot(last_slot, has_seq_dim=False),
+                        last_indices, predicate=None)
 
       gpu_primitives.commit_smem_to_gmem_group()
 
