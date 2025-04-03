@@ -143,6 +143,7 @@ class JaxVersionTest(unittest.TestCase):
                      JAX_NIGHTLY=None, JAXLIB_NIGHTLY=None):
       with assert_no_subprocess_call():
         version = jax.version._get_version_for_build()
+      self.assertFalse(jax.version._is_prerelease())
       self.assertEqual(version, base_version)
       self.assertValidVersion(version)
 
@@ -150,6 +151,7 @@ class JaxVersionTest(unittest.TestCase):
                      JAX_NIGHTLY=None, JAXLIB_NIGHTLY=None):
       with assert_no_subprocess_call():
         version = jax.version._get_version_for_build()
+      self.assertFalse(jax.version._is_prerelease())
       self.assertEqual(version, base_version)
       self.assertValidVersion(version)
 
@@ -183,6 +185,20 @@ class JaxVersionTest(unittest.TestCase):
     ):
       with assert_no_subprocess_call():
         version = jax.version._get_version_for_build()
+      self.assertTrue(jax.version._is_prerelease())
+      self.assertEqual(version, f"{base_version}rc0")
+      self.assertValidVersion(version)
+
+    with jtu.set_env(
+        JAX_RELEASE=None,
+        JAXLIB_RELEASE="1",
+        JAX_NIGHTLY=None,
+        JAXLIB_NIGHTLY=None,
+        WHEEL_VERSION_SUFFIX="rc0",
+    ):
+      with assert_no_subprocess_call():
+        version = jax.version._get_version_for_build()
+      self.assertTrue(jax.version._is_prerelease())
       self.assertEqual(version, f"{base_version}rc0")
       self.assertValidVersion(version)
 
