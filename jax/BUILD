@@ -400,6 +400,7 @@ pytype_strict_library(
     deps = [
         ":partition_spec",
         ":sharding",
+        ":util",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )

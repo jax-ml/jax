@@ -237,12 +237,33 @@ tsl::RCReference<ifrt::Array> CreateIfRtArrayFromSingleDeviceShardedPyArrays(
   return *std::move(ifrt_array);
 }
 
+struct PyBaseArrayObject {
+  PyObject_HEAD;
+#if PY_VERSION_HEX < 0x030C0000
+  PyObject* weakrefs;
+#endif  // PY_VERSION_HEX < 0x030C0000
+};
+
+extern "C" void PyBaseArray_tp_dealloc(PyBaseArrayObject* self) {
+  PyObject_GC_UnTrack(self);
+  PyObject_ClearWeakRefs((PyObject*)self);
+  PyTypeObject* tp = Py_TYPE(self);
+  tp->tp_free((PyObject*)self);
+  Py_DECREF(tp);
+}
+
+extern "C" int PyBaseArray_tp_traverse(PyObject* self, visitproc visit,
+                                       void* arg) {
+  Py_VISIT(Py_TYPE(self));
+  return 0;
+}
+
 struct PyArrayObject {
   PyObject_HEAD;
 #if PY_VERSION_HEX < 0x030C0000
   PyObject* weakrefs;
   PyObject* dict;
-#endif  // PY_VERSION_HEX < 0x030B0000
+#endif  // PY_VERSION_HEX < 0x030C0000
   bool initialized;
   alignas(PyArray::Storage) char array_storage[sizeof(PyArray::Storage)];
 };
@@ -1879,6 +1900,23 @@ absl::Status PyHostValue::CopyToHostAsync(
 }
 
 namespace {
+PyMemberDef PyBaseArray_members[] = {
+#if PY_VERSION_HEX < 0x030C0000
+    {"__weaklistoffset__", T_PYSSIZET,
+     static_cast<Py_ssize_t>(offsetof(PyBaseArrayObject, weakrefs)), READONLY,
+     nullptr},
+#endif  // PY_VERSION_HEX < 0x030C0000
+    {nullptr, 0, 0, 0, nullptr},
+};
+
+PyType_Slot PyBaseArray_slots[] = {
+    {Py_tp_dealloc, reinterpret_cast<void*>(PyBaseArray_tp_dealloc)},
+    {Py_tp_members, reinterpret_cast<void*>(PyBaseArray_members)},
+    {Py_tp_traverse, reinterpret_cast<void*>(PyBaseArray_tp_traverse)},
+    {Py_tp_hash, reinterpret_cast<void*>(PyObject_HashNotImplemented)},
+    {0, nullptr},
+};
+
 PyGetSetDef PyArray_tp_getset[] = {
     {"__dict__", PyObject_GenericGetDict, PyObject_GenericSetDict, nullptr,
      nullptr},
@@ -1911,6 +1949,34 @@ PyType_Slot PyArray_slots[] = {
 }  // namespace
 
 absl::Status PyArray::RegisterTypes(nb::module_& m) {
+  // We are not using nanobind to avoid having a non-standard metaclass, which
+  // would make Array incompatible with abc.ABCMeta.
+  std::string base_name =
+      absl::StrCat(nb::cast<std::string>(m.attr("__name__")), ".Array");
+  PyType_Spec PyBaseArray_spec = {
+#if PY_VERSION_HEX < 0x030B0000
+      // Work around for https://github.com/python/cpython/issues/89478
+      // CPython 3.10 and earlier assume that the .name value remains alive
+      // forever.
+      /*.name=*/strdup(base_name.c_str()),
+#else
+      /*.name=*/base_name.c_str(),
+#endif  // PY_VERSION_HEX < 0x030B0000
+      /*.basicsize=*/static_cast<int>(sizeof(PyBaseArrayObject)),
+      /*.itemsize=*/0,
+#if PY_VERSION_HEX < 0x030C0000
+      /*.flags=*/Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC,
+#else   // PY_VERSION_HEX >= 0x030C0000
+      /*.flags=*/Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC |
+          Py_TPFLAGS_MANAGED_WEAKREF,
+#endif  // PY_VERSION_HEX >= 0x030C0000
+      /*.slots=*/PyBaseArray_slots};
+  auto* base_type = PyType_FromSpec(&PyBaseArray_spec);
+  if (!base_type) {
+    throw nb::python_error();
+  }
+  m.attr("Array") = nb::borrow<nb::object>(base_type);
+
   std::string name =
       absl::StrCat(nb::cast<std::string>(m.attr("__name__")), ".ArrayImpl");
 
@@ -1934,7 +2000,7 @@ absl::Status PyArray::RegisterTypes(nb::module_& m) {
       /*.slots=*/PyArray_slots,
   };
 
-  type_ = PyType_FromSpec(&PyArray_spec);
+  type_ = PyType_FromSpecWithBases(&PyArray_spec, base_type);
   if (!type_) {
     throw nb::python_error();
   }
