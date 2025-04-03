@@ -225,27 +225,6 @@ def SwizzleTransformAttr : MosaicGPU_Attr<"SwizzleTransform", "swizzle"> {
   let assemblyFormat = "`<` $swizzle `>`";
 }
 
-def LayoutAttr : MosaicGPU_Attr<"Layout", "layout",
-    [DeclareAttrInterfaceMethods<MemRefLayoutAttrInterface>]> {
-  let parameters = (ins
-    TypeParameter<"int32_t", "number of dimensions">:$num_dimensions,
-    ArrayRefParameter<"mlir::Attribute", "transforms">:$transforms
-  );
-
-  let summary = "Specifies a layout of a memref in SMEM.";
-  let description = [{
-    This layout attribute is used to specify the layout of a memref in SMEM.
-    It is composed of a number of transforms, which are applied in the order
-    they are provided. The transforms can be any combination of:
-      - TileTransformAttr
-      - TransposeTransformAttr
-      - SwizzleTransformAttr
-
-    The num_dimensions parameter must match the rank of the memref shape.
-  }];
-  let assemblyFormat = "`<` $num_dimensions `,` $transforms `>`";
-}
-
 def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
       [AttrSizedOperandSegments]> {
   let summary = "Schedules an async load of a MemRef from GMEM to SMEM";
@@ -265,16 +244,9 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     indicates that the slice length is 1 and that the corresponding dimension
     should be collapsed and does not appear in the `destination` MemRef.
 
-    Setting the `layout` attribute of the `destination` MemRef to an instance of
-    `LayoutAttr` enables additional `transforms` that control how the `source`
-    data is mapped to the `destination`. The transformations will be composed in
-    the order they are provided. The transforms may contain up to a single
-    swizzle transform that controls what swizzling is applied to the data after
-    it is transformed, before it is finally written to SMEM. The transformed
-    data is written in row-major order to the contiguous SMEM `destination`.
-    The untransformed `source` data does not need to be contiguous, except for
-    the last dimension, which needs to be contiguous and the minor-most
-    dimension.
+    The data is written in row-major order to the contiguous SMEM `destination`.
+    The `source` data does not need to be contiguous, except for the last
+    (and minor-most) dimension.
 
     The `collective` attribute can be provided to use TMA multicast to more
     efficiently load the GMEM data in cases where multiple thread blocks are
@@ -328,14 +300,9 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     indicates that this dimension is collapsed in the `source` and needs to be
     expanded to a slice of size 1 in the `destination`.
 
-    Setting the `layout` attribute of the `source` MemRef to an instance of
-    `LayoutAttr` enables additional `transforms` that control how the
-    `destination` data in GMEM is mapped to the `source` data in SMEM. The
-    transformations will be composed in the order they are provided. The
-    transforms may contain up to a single swizzle transform that is the
-    swizzling mode of the `source` data in SMEM. The `source` SMEM data is
-    contiguous and the transformed data is written to the `destination` GMEM
-    which does not need to be contiguous.
+    The data is written in row-major order to the GMEM `destination`. The
+    `source` data in SMEM needs to be contiguous, but the `destination` GMEM
+    does not.
 
     The `predicate` allows scheduling the transfer conditionally. The async copy
     is always scheduled by at most a single lane in the warpgroup.

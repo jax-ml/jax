@@ -407,14 +407,6 @@ llvm::LogicalResult CustomPrimitiveOp::verify() {
   return llvm::success();
 }
 
-mlir::AffineMap LayoutAttr::getAffineMap() const {
-  // This always returns an identity map. It's technically not correct, but we
-  // don't actually use it anywhere. It's only called during verification of the
-  // layout attribute and needs to be semi-valid.
-  return mlir::AffineMap::getMultiDimIdentityMap(getNumDimensions(),
-                                                 getContext());
-}
-
 void MosaicGPUDialect::initialize() {
   addTypes<
 #define GET_TYPEDEF_LIST
