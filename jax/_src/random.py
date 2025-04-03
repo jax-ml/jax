@@ -417,13 +417,11 @@ def uniform(key: ArrayLike,
     raise ValueError(f"dtype argument to `uniform` must be a float dtype, "
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  def f(key, minval, maxval, shape, dtype):   # reorder args
-    return _uniform(key, shape, dtype, minval, maxval)
-  return maybe_auto_axes(f, out_sharding, shape=shape, dtype=dtype)(
-      key, minval, maxval)
+  return maybe_auto_axes(_uniform, out_sharding,
+                         shape=shape,dtype=dtype)(key, minval, maxval)
 
-@partial(jit, static_argnums=(1, 2))
-def _uniform(key, shape, dtype, minval, maxval) -> Array:
+@partial(jit, static_argnums=(3, 4))
+def _uniform(key, minval, maxval, shape, dtype) -> Array:
   _check_shape("uniform", shape)
   if not jnp.issubdtype(dtype, np.floating):
     raise TypeError("uniform only accepts floating point dtypes.")
@@ -467,7 +465,8 @@ def randint(key: ArrayLike,
             shape: Shape,
             minval: IntegerArray,
             maxval: IntegerArray,
-            dtype: DTypeLikeInt = int) -> Array:
+            dtype: DTypeLikeInt = int,
+            out_sharding=None) -> Array:
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
   Args:
@@ -487,10 +486,12 @@ def randint(key: ArrayLike,
   dtypes.check_user_dtype_supported(dtype)
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
-  return _randint(key, shape, minval, maxval, dtype)
+  out_sharding = canonicalize_sharding(out_sharding, "randint")
+  return maybe_auto_axes(_randint, out_sharding, shape=shape, dtype=dtype)(
+      key, minval, maxval)
 
-@partial(jit, static_argnums=(1, 4))
-def _randint(key, shape, minval, maxval, dtype) -> Array:
+@partial(jit, static_argnums=(3, 4))
+def _randint(key, minval, maxval, shape, dtype) -> Array:
   _check_shape("randint", shape, np.shape(minval), np.shape(maxval))
   if not jnp.issubdtype(dtype, np.integer):
     raise TypeError(f"randint only accepts integer dtypes, got {dtype}")
@@ -1557,7 +1558,8 @@ def gumbel(key: ArrayLike,
 def _gumbel(key, shape, dtype, mode) -> Array:
   _check_shape("gumbel", shape)
   if mode == "high":
-    high, low = _uniform(key, (2,) + shape, dtype, minval=0., maxval=1.)
+    high, low = _uniform(key, minval=0., maxval=1.,
+                         shape=(2,) + shape, dtype=dtype)
     # TODO(parkers): The condition is to protect against rounding up but
     # we should be able to add safely with the right addition operation.
     x = jnp.where(high >= 0.5, high,
@@ -1565,7 +1567,8 @@ def _gumbel(key, shape, dtype, mode) -> Array:
     return -jnp.log(-jnp.log1p(-x))
   else:
     return -jnp.log(-jnp.log(
-        _uniform(key, shape, dtype, minval=jnp.finfo(dtype).tiny, maxval=1.)))
+        _uniform(key, minval=jnp.finfo(dtype).tiny, maxval=1.,
+                 shape=shape, dtype=dtype)))
 
 
 def categorical(

@@ -7313,6 +7313,26 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       self.assertIn('mhlo.sharding = "{devices=[2,2]<=[4]}"}', lowered_text)
 
   @jtu.with_user_mesh((2, 2), ('x', 'y'))
+  def test_random_randint(self, mesh):
+    @jax.jit
+    def f(key):
+      out = jax.random.randint(key, shape=(8, 12), minval=0, maxval=10,
+                               out_sharding=P('x', 'y'))
+      self.assertEqual(out.aval.sharding.spec, P('x', 'y'))
+      return out
+
+    key = jax.random.key(1)
+    out = f(key)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
+    lowered_text = f.lower(key).as_text()
+    if config.use_shardy_partitioner.value:
+      self.assertIn('sdy.sharding_constraint', lowered_text)
+      self.assertIn('<@mesh, [{"x"}, {"y"}]>', lowered_text)
+    else:
+      self.assertIn('mhlo.sharding = "{devices=[2,2]<=[4]}"}', lowered_text)
+
+  @jtu.with_user_mesh((2, 2), ('x', 'y'))
   def test_random_normal(self, mesh):
     @jax.jit
     def f(key):
