@@ -50,7 +50,7 @@ profiler = _xla.profiler
 
 # Just an internal arbitrary increasing number to help with backward-compatible
 # changes. In JAX, reference this via jax._src.lib.jaxlib_extension_version.
-_version = 324
+_version = 325
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -486,6 +486,7 @@ XlaOp = _xla.XlaOp
 FftType = _xla.FftType
 Client = _xla.Client
 Memory = _xla.Memory
+Array = _xla.Array
 ArrayImpl = _xla.ArrayImpl
 LoadedExecutable = _xla.LoadedExecutable
 DeviceList = _xla.DeviceList
