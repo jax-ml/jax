@@ -315,7 +315,9 @@ def ragged_paged_attention_kernel(
 
   def is_cur_q_blk_needed(q_states):
     done, cur_seq_idx, _ = q_states
-    return jnp.logical_and(done == 0, cur_seq_idx < num_seqs)
+    should_run = jnp.logical_and(q_len_start < cu_q_lens_ref[num_seqs],
+                                 cur_seq_idx < num_seqs)
+    return jnp.logical_and(done == 0, should_run)
 
   def compute_with_cur_q_blk(q_states):
     done, cur_seq_idx, cur_buf_idx = q_states
@@ -680,14 +682,14 @@ def ragged_paged_attention(
   validate_static_inputs(q, kv_pages, kv_lens, page_indices, cu_q_lens, num_seqs, sliding_window, soft_cap)
   if mask_value is None:
     mask_value = DEFAULT_MASK_VALUE
-  _, num_q_heads, head_dim = q.shape
+  num_q_tokens, num_q_heads, head_dim = q.shape
   _, page_size, num_combined_kv_heads, _ = kv_pages.shape
   assert num_combined_kv_heads % 2 == 0
   num_kv_heads = num_combined_kv_heads // 2
   num_q_per_blk = num_queries_per_block
   num_kv_pages_per_blk = num_kv_pages_per_block
   num_q_heads_per_kv_head = num_q_heads // num_kv_heads
-  num_q_blks = cdiv(cu_q_lens[num_seqs[0]], num_q_per_blk)
+  num_q_blks = cdiv(num_q_tokens, num_q_per_blk)
   num_q_heads_per_blk, num_combined_kv_heads_per_blk = get_min_heads_per_blk(
       num_q_heads, num_combined_kv_heads, q.dtype, kv_pages.dtype
   )
