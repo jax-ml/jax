@@ -36,6 +36,7 @@ from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import types as state_types
 import jax.experimental.mosaic.gpu as mgpu
+from jax.experimental.mosaic.gpu import utils as mgpu_utils
 import jax.numpy as jnp
 from jaxlib.mlir import ir
 
@@ -263,6 +264,29 @@ class UntileRef(state_types.Transform):
   def transform_dtype(self, dtype):
     return dtype
 
+  def untransform_transpose(
+      self, perm: tuple[int, ...]
+  ) -> tuple[tuple[int, ...], state_types.Transform]:
+    # The transpose in question is applied to the utiled ref so we
+    # need to translate it by duplicating and offseting the last part.
+    off = len(perm)
+    new_suffix = [i + off for i in perm[-len(self.tiling) :]]
+    if set(new_suffix) != set(range(off, off + len(self.tiling))):
+      raise ValueError(
+          "Transpose cannot be moved before a tiling transform when it changes"
+          f" the set of tiled dimensions. (permutation: {perm}, tiling:"
+          f" {self.tiling})"
+      )
+
+    new_tiling = tuple(self.tiling[i - off] for i in new_suffix)
+    return (*perm, *new_suffix), dataclasses.replace(self, tiling=new_tiling)
+
+  def untransform_reshape(
+      self, dtype: jnp.dtype, shape: tuple[int, ...]
+  ) -> tuple[tuple[int, ...], state_types.Transform]:
+    del dtype
+    raise NotImplementedError("Reshapes don't commute with transposes.")
+
   def untransform_index(
       self, idxs: tuple[Index, ...]
   ) -> tuple[tuple[Index, ...], state_types.Transform]:
@@ -352,6 +376,19 @@ class TransposeRef(state_types.Transform):
   def transform_dtype(self, dtype):
     return dtype
 
+  def untransform_transpose(
+      self, perm
+  ) -> tuple[tuple[int, ...], state_types.Transform]:
+    raise NotImplementedError(
+        "Commuting of transpose over transpose is not supported."
+    )
+
+  def untransform_reshape(
+      self, dtype: jnp.dtype | ir.Type, shape: tuple[int, ...]
+  ) -> tuple[tuple[int, ...], state_types.Transform]:
+    del shape, dtype
+    raise NotImplementedError("Can't reshape a transposed memref.")
+
   def untransform_index(
       self, idxs: tuple[Index, ...]
   ) -> tuple[tuple[Index, ...], state_types.Transform]:
@@ -435,6 +472,27 @@ class SwizzleTransform(MemoryRefTransform):
 @dataclasses.dataclass(frozen=True)
 class UnswizzleRef(state_types.Transform):
   swizzle: int = dataclasses.field(metadata=dict(static=True))
+
+  def swizzle_elems(self, dtype: jnp.dtype | ir.Type) -> int:
+    if not isinstance(dtype, ir.Type):
+      dtype = mgpu_utils.dtype_to_ir_type(dtype)
+    return (self.swizzle * 8) // mgpu.bitwidth(dtype)
+
+  def untransform_transpose(self, perm) -> tuple[tuple[int, ...], state_types.Transform]:
+    if perm[-1] != len(perm) - 1:
+      raise ValueError("Can't transpose the swizzled dimension.")
+
+    return perm, self
+
+  def untransform_reshape(
+      self, dtype: jnp.dtype | ir.Type, shape: tuple[int, ...]
+  ) -> tuple[tuple[int, ...], state_types.Transform]:
+    if shape[-1] == self.swizzle_elems(dtype):
+      raise ValueError(
+          f"Reshape shape {shape} is not divisible by swizzle elements"
+          f" {self.swizzle_elems(dtype)}"
+      )
+    return shape, self
 
   def untransform_index(
       self, idxs: tuple[Index, ...]

@@ -85,8 +85,7 @@ def _load_p_lowering_rule(
   x_aval = ctx.avals_in[0]
 
   transforms = jax.tree.unflatten(args_tree, leaves)
-  x_ref, transforms = lowering._handle_reshaping(x_ref, transforms)
-  x_ref, transforms = lowering._handle_indexing(x_ref, transforms)
+  x_ref, transforms = lowering._handle_transforms(x_ref, transforms)
 
   if layout is not None:
     layout = layout.to_mgpu()
@@ -209,7 +208,7 @@ def _copy_smem_to_gmem_lowering(
   )
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
-  src, src_transforms = lowering._handle_indexing(src, src_transforms)
+  src, src_transforms = lowering._handle_transforms(src, src_transforms, handle_transposes=False)
   copy_params = _extract_gmem_copy_params(dst_transforms) | _extract_smem_copy_params(src_transforms)
   if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
     ctx.launch_ctx.async_copy(
@@ -382,7 +381,7 @@ def _copy_gmem_to_smem_lowering(
   )
   src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
-  dst, dst_transforms = lowering._handle_indexing(dst, dst_transforms)
+  dst, dst_transforms = lowering._handle_transforms(dst, dst_transforms, handle_transposes=False)
   copy_params = _extract_smem_copy_params(dst_transforms) | _extract_gmem_copy_params(src_transforms)
   barrier_indexer = _extract_barrier_indexer(
       barrier_transforms_treedef.unflatten(flat_barrier_transforms)
@@ -743,7 +742,7 @@ def _wgmma_lowering(
         transforms_leaves, [a_transforms_tree.num_leaves]
     )
     a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
-    a, a_transforms = lowering._handle_indexing(a, a_transforms)
+    a, a_transforms = lowering._handle_transforms(a, a_transforms)
     match a_transforms:
       case (gpu_core.UnswizzleRef(lhs_swizzle), gpu_core.UntileRef(tiling)):
         swizzle_elems = lhs_swizzle // a_aval.dtype.itemsize
@@ -760,7 +759,9 @@ def _wgmma_lowering(
       )
 
   b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
-  b, b_transforms = lowering._handle_indexing(b, b_transforms)
+  b, b_transforms = lowering._handle_transforms(
+      b, b_transforms, handle_transposes=False, handle_reshapes=False
+  )
 
   match b_transforms:
     case (gpu_core.UnswizzleRef(rhs_swizzle), gpu_core.UntileRef(rhs_tiling)):
@@ -787,6 +788,8 @@ def _wgmma_lowering(
             f" {rhs_tiling}."
         )
 
+      # TODO(cperivol): Find a generic way to move this reshape into
+      # _handle_transforms.
       high_dims = [d // t for d, t in util.safe_zip(new_shape, rhs_tiling)]
       b = mgpu.memref_reshape(b, (*high_dims, *rhs_tiling))
       rhs_transpose = False
@@ -1107,9 +1110,12 @@ def _jaxpr_call_lowering_rule(
   for treedef, flat_ref in zip(ref_treedefs, flat_refs):
     ref = treedef.unflatten(flat_ref)
     if isinstance(ref, tuple):
+      ref, transforms = ref
       # We ignore other transforms here, because they are already embedded
       # in the jaxpr.
-      ref, _ = lowering._handle_indexing(*ref)
+      ref, _ = lowering._handle_transforms(
+          ref, transforms, handle_reshapes=False, handle_transposes=False
+      )
     args.append(ref)
   program_ids = program_ids_treedef.unflatten(flat_program_ids)
   for axis, pid in enumerate(program_ids):

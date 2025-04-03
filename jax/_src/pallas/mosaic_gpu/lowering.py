@@ -1024,61 +1024,49 @@ def _num_programs_lowering_rule(ctx: LoweringRuleContext, axis):
       gpu_dialect.block_dim(gpu_dialect.Dimension(axis)),
   )
 
-
-def _handle_reshaping(
-    ref: ir.Value, transforms: Sequence[gpu_core.Transform]
+def _handle_transforms(
+    ref: ir.Value,
+    transforms: Sequence[gpu_core.Transform],
+    *,
+    handle_transposes=True,
+    handle_reshapes=True,
 ) -> tuple[ir.Value, Sequence[gpu_core.Transform]]:
-  is_trivial_indexer = lambda t: isinstance(
-      t, indexing.NDIndexer
-  ) and gpu_core.is_trivial_index(t.indices, t.shape)
-
-  last_reshaper_idx = next(
-      reversed([i for i, t in enumerate(transforms) if isinstance(t, RefReshaper)]),
-      None,
-  )
-  if last_reshaper_idx is None:
-    return ref, transforms
-  # Check that before the reshape are only trivial indexes and or
-  # other reshapes.
-  # TODO(cperivol): Reshapes should bubble up  rather than being
-  # expected to effectively be the first ref transform.
-  if not all(isinstance(t, RefReshaper) or is_trivial_indexer(t) for t in transforms[:last_reshaper_idx]):
-    raise NotImplementedError(
-        "Reshapes do not compose with other transforms and indexers must be"
-        f" trivial (transforms: {transforms})"
-    )
-  reshaper = cast(RefReshaper, transforms[last_reshaper_idx])
-  # Skip all the reshapes and trivial indexes.
-  return mgpu.memref_reshape(ref, reshaper.shape), transforms[last_reshaper_idx + 1:]
-
-
-def _handle_indexing(
-    ref: ir.Value, transforms: Sequence[gpu_core.Transform]
-) -> tuple[ir.Value, Sequence[gpu_core.Transform]]:
-  if not transforms:
-    pass
-  indexer_idxs = [
-      i for i, t in enumerate(transforms) if isinstance(t, indexing.NDIndexer)
-  ]
-  if not indexer_idxs:
-    return ref, transforms
-  sliced_ref = ref
+  transformed_ref = ref
   new_transforms = []
-  for t in transforms:
-    if not isinstance(t, indexing.NDIndexer):
-      new_transforms.append(t)
-      continue
-    indexer = cast(indexing.NDIndexer, t)
-    if indexer.int_indexer_shape:
-      raise NotImplementedError("int_indexer_shape non-empty")
-    indices = _ndindexer_indices(indexer)
+  def _bubble_up(untransform_fn, data):
+    nonlocal new_transforms
     new_transforms_rev = []
     for t in reversed(new_transforms):
-      indices, new_t = t.untransform_index(indices)
+      data, new_t = untransform_fn(t, data)
       new_transforms_rev.append(new_t)
-    sliced_ref = mgpu.memref_slice(sliced_ref, indices)
+
     new_transforms = list(reversed(new_transforms_rev))
-  return sliced_ref, new_transforms
+    return data
+
+  for t in transforms:
+    match t:
+      case indexing.NDIndexer():
+        indexer = cast(indexing.NDIndexer, t)
+        if indexer.int_indexer_shape:
+          raise NotImplementedError("int_indexer_shape non-empty")
+        indices = _ndindexer_indices(indexer)
+        indices = _bubble_up(
+            lambda t, idxs: t.untransform_index(idxs), indices
+        )
+        transformed_ref = mgpu.memref_slice(transformed_ref, indices)
+      case gpu_core.TransposeRef(perm) if handle_transposes:
+        perm = _bubble_up(lambda t, p: t.untransform_transpose(p),
+                                          perm)
+        transformed_ref = mgpu.memref_transpose(transformed_ref, perm)
+      case RefReshaper(dtype=dtype, shape=shape) if handle_reshapes:
+        shape = _bubble_up(
+            lambda t, p: t.untransform_reshape(dtype, p),  # pylint: disable=cell-var-from-loop
+            shape)
+        transformed_ref = mgpu.memref_reshape(transformed_ref, shape)
+      case _:
+        new_transforms.append(t)
+
+  return transformed_ref, new_transforms
 
 
 def _ndindexer_indices(indexer: indexing.NDIndexer) -> tuple[gpu_core.Index, ...]:
@@ -1120,8 +1108,7 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
   x_aval = ctx.avals_in[0]
 
   transforms = jax.tree.unflatten(tree, leaves)
-  x_smem, transforms = _handle_reshaping(x_ref, transforms)
-  x_smem, transforms = _handle_indexing(x_smem, transforms)
+  x_smem, transforms = _handle_transforms(x_ref, transforms)
 
   match transforms:
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
@@ -1152,8 +1139,7 @@ def _get_lowering_rule_wg(ctx: LoweringRuleContext, x_smem, *leaves, tree):
   x_aval = ctx.avals_in[0]
 
   transforms = jax.tree.unflatten(tree, leaves)
-  x_smem, transforms = _handle_reshaping(x_smem, transforms)
-  x_smem, transforms = _handle_indexing(x_smem, transforms)
+  x_smem, transforms = _handle_transforms(x_smem, transforms)
 
   if transforms:
     raise NotImplementedError(
@@ -1180,8 +1166,7 @@ def _swap_lowering_rule(
     raise TypeError(f"Can only store to references (got {x_smem}).")
   x_aval = ctx.avals_in[0]
   transforms = jax.tree.unflatten(tree, leaves)
-  x_smem, transforms = _handle_reshaping(x_smem, transforms)
-  x_smem, transforms = _handle_indexing(x_smem, transforms)
+  x_smem, transforms = _handle_transforms(x_smem, transforms)
   match transforms:
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
       if tiling != (8, swizzle // x_aval.dtype.itemsize):
@@ -1227,9 +1212,7 @@ def _swap_lowering_rule_wg(
   x_aval = ctx.avals_in[0]
 
   transforms = jax.tree.unflatten(tree, leaves)
-  x_smem, transforms = _handle_reshaping(x_smem, transforms)
-  x_smem, transforms = _handle_indexing(x_smem, transforms)
-
+  x_smem, transforms = _handle_transforms(x_smem, transforms)
   if transforms:
     raise NotImplementedError(
         "Transforms are not yet implemented for warpgroup semantics"
