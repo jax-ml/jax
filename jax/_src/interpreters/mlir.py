@@ -663,7 +663,7 @@ class ShapePolyLoweringState:
 @dataclasses.dataclass(frozen=True)
 class LoweringParameters:
   # A mapping between primitives and user-defined LoweringRules.
-  # When lowering a primitive, give priorioty to the rule in this map over
+  # When lowering a primitive, give priority to the rule in this map over
   # existing Jax rules.
   override_lowering_rules: tuple[tuple[core.Primitive, LoweringRule]] | None = None
 
