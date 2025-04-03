@@ -1839,28 +1839,16 @@ def _inline_literals(
   lit_or_var = (
       lambda a: a if isinstance(a, Literal) else (lit(a) or var(a))
   )
-  dropvar = lambda aval: DropVar(_substitute_vars_in_type(lits, newvars, aval))
-
-  def vars_in_shape(aval: AbstractValue) -> Sequence[Var]:
-    if isinstance(aval, DShapedArray):
-      return [d for d in aval.shape if isinstance(d, Var)]
-    return []
-
-  used = {v for eqn in jaxpr.eqns for atom in eqn.invars
-          for v in it.chain([atom], vars_in_shape(atom.aval))
-          if isinstance(atom, Var)}
-  used |= {v for outvar in jaxpr.outvars
-           for v in it.chain([outvar], vars_in_shape(outvar.aval))}
-  new_constvars = [var(v) for v in jaxpr.constvars if v in used and not lit(v)]
-  new_constvals = [c for v, c in zip(jaxpr.constvars, constvals)
-                   if v in used and not lit(v)]
   new_invars = [var(v) for v in jaxpr.invars]
   new_eqns = []
   for eqn in jaxpr.eqns:
     invars = [lit_or_var(x) for x in eqn.invars]
-    outvars = [var(v) if v in used else dropvar(v.aval) for v in eqn.outvars]
+    outvars = [var(v) for v in eqn.outvars]
     new_eqns.append(eqn.replace(invars=invars, outvars=outvars))
   new_outvars = [lit_or_var(v) for v in jaxpr.outvars]
+  new_constvars = [var(v) for v in jaxpr.constvars if v in newvars and not lit(v)]
+  new_constvals = [c for v, c in zip(jaxpr.constvars, constvals)
+                   if v in newvars and not lit(v)]
   effs = make_jaxpr_effects(new_constvars, new_invars, new_outvars, new_eqns)
   new_jaxpr = Jaxpr(new_constvars, new_invars, new_outvars, new_eqns, effs,
                     jaxpr.debug_info)
