@@ -2142,7 +2142,6 @@ class WarpSpecializedPipelineTest(PallasTest):
   @parameterized.product(m=[512], n=[512],
                          manual_consumed_barriers=[False, True])
   def test_pipelined_copy(self, m, n, manual_consumed_barriers):
-    self.skipTest("TODO(justinfu): Temporary skip for 3.12 update.")
     self.skip_if_wg_semantics()  # Times out!
 
     x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float16)
