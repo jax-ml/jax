@@ -1218,11 +1218,11 @@ def scaled_matmul(
 ) -> Array:
     r"""Scaled matrix multiplication function.
 
-    Performs block-scaled matmul of `a` and `b` using `a_scales` and `b_scales`.  
+    Performs block-scaled matmul of `a` and `b` using `a_scales` and `b_scales`.
     The last dim is the contracting dim, and block size is inferred.
 
     Mathematically, this operation is equivalent to::
- 
+
       a_block_size = a.shape[-1] // a_scales.shape[-1]
       b_block_size = b.shape[-1] // b_scales.shape[-1]
       a_scaled = a * jnp.repeat(a_scales, a_block_size, axis=-1)
@@ -1258,26 +1258,26 @@ def scaled_matmul(
 
       Basic case:
 
-      >>> a = jnp.array([1, 2, 3]).reshape((1, 1, 3))  
-      >>> b = jnp.array([4, 5, 6]).reshape((1, 1, 3))  
-      >>> a_scales = jnp.array([0.5]).reshape((1, 1, 1))  
-      >>> b_scales = jnp.array([0.5]).reshape((1, 1, 1))  
-      >>> scaled_matmul(a, b, a_scales, b_scales)  
-      Array([[[8.]]], dtype=float32)  
-    
+      >>> a = jnp.array([1, 2, 3]).reshape((1, 1, 3))
+      >>> b = jnp.array([4, 5, 6]).reshape((1, 1, 3))
+      >>> a_scales = jnp.array([0.5]).reshape((1, 1, 1))
+      >>> b_scales = jnp.array([0.5]).reshape((1, 1, 1))
+      >>> scaled_matmul(a, b, a_scales, b_scales)
+      Array([[[8.]]], dtype=float32)
+
       Using fused cuDNN call on Blackwell GPUs:
 
-      >>> a = random.normal(keys[0], (3, 128, 64), dtype=jnp.float8_e4m3fn)  
-      >>> b = random.normal(keys[1], (3, 128, 64), dtype=jnp.float8_e4m3fn)  
-      >>> a_scales = jnp.ones((3, 128, 4), dtype=jnp.float8_e8m0fnu)  
-      >>> b_scales = jnp.ones((3, 128, 4), dtype=jnp.float8_e8m0fnu)  
-      >>> scaled_matmul(a, b, a_scales, b_scales)     
+      >>> a = random.normal(keys[0], (3, 128, 64), dtype=jnp.float8_e4m3fn)
+      >>> b = random.normal(keys[1], (3, 128, 64), dtype=jnp.float8_e4m3fn)
+      >>> a_scales = jnp.ones((3, 128, 4), dtype=jnp.float8_e8m0fnu)
+      >>> b_scales = jnp.ones((3, 128, 4), dtype=jnp.float8_e8m0fnu)
+      >>> scaled_matmul(a, b, a_scales, b_scales)
     """
     if not all(x.ndim == 3 for x in (a, b, a_scales, b_scales)):
         raise ValueError(
             "scaled_matmul requires all inputs to be 3-dimensional arrays"
         )
-    
+
     B_a, M_a, K_a = a.shape
     B_b, N_b, K_b = b.shape
     if K_a != K_b or B_a != B_b:
@@ -1286,7 +1286,7 @@ def scaled_matmul(
             f"and contract (K) dimensions, but got shapes {a.shape} and "
             f"{b.shape}"
         )
-    
+
     B_as, M_as, K_as = a_scales.shape
     B_bs, N_bs, K_bs = b_scales.shape
     if K_as != K_bs or B_as != B_bs:
@@ -1295,7 +1295,7 @@ def scaled_matmul(
             f"contract (K) dimensions, but got shapes {a_scales.shape} and "
             f"{b_scales.shape}"
         )
-    
+
     if M_as != M_a or N_bs != N_b:
         raise ValueError(
             "scaled_matmul requires scales to match non-contract dimensions of "
@@ -1378,7 +1378,7 @@ def scaled_dot_general(
       lhs, rhs, and gradients. Users can obtain valid configurations via
       `jax.nn.get_scaled_dot_general_config`. Currently, `nvfp4` and `mxfp8`
       are supported. If `None`, falls back to `lax.dot_general`.
-  
+
   Returns:
     Array: The resulting tensor, with batch dimensions first, followed by
     non-contracting/non-batch dimensions of lhs, and then those of rhs.
@@ -1405,6 +1405,7 @@ def scaled_dot_general(
 
     Using scaled_dot_general with the configs:
 
+    >>> import functools
     >>> scaled_dot_general_fn = functools.partial(jax.nn.scaled_dot_general, configs=configs)
     >>> lhs = random.normal(keys[0], (3, 128, 64))
     >>> rhs = random.normal(keys[1], (3, 128, 64))
