@@ -61,6 +61,20 @@ def worker_for(worker_id, worker_count, work_count):
   return wrapper
 
 
+def subgroup_for(work_id, work_id_group_end, worker_count):
+  def wrapper(f):
+    for_op = scf.ForOp(
+      work_id,  # lowerBound
+      work_id_group_end,  # upperBound
+      worker_count,  # step
+      [],  # initArgs
+    )
+    with ir.InsertionPoint(for_op.body):
+      f(for_op.induction_variable)
+      scf.yield_([])
+  return wrapper
+
+
 def bytecount(shape, dtype):
   return int(np.prod(shape) * dtype.dtype.itemsize)
 
@@ -69,8 +83,6 @@ def build_kernel(
     m, n, k,
     cta_count: int,
     expert_count: int,
-    group_chunk_count: int,
-    expert_n: int,
     tile_m: int = 128,
     tile_n: int = 128,
     max_concurrent_steps: int = 2,
@@ -96,13 +108,21 @@ def build_kernel(
     raise ValueError(f"{k=} must be divisible by {tile_k=}")
   if n % expert_count != 0:
     raise ValueError(f"{n=} must be divisible by {expert_count=}")
+
+  expert_n = n // expert_count
+
   if expert_n % tile_n != 0:
     raise ValueError(f"{expert_n=} must be divisible by {tile_n=}")
 
   n_tile_count = expert_n // tile_n
-  tile_count = group_chunk_count * n_tile_count
 
-  def kernel(ctx, a, w, group_offsets, expert_ids, d, smem):
+
+  def ceil(x, y):
+    return arith.divui(arith.subi(arith.addi(x, y),
+                                  cx(1)),
+                       y)
+
+  def kernel(ctx, a, w, group_sizes,  d, smem):
     ((a_smem, b_smem), d_smem), barriers, mma_done_barrier, acc = smem
     (ab_full_barriers, ab_empty_barriers) = barriers
 
@@ -112,119 +132,135 @@ def build_kernel(
 
     worker_id = gpu.block_id(gpu.Dimension.x)
     worker_count = cx(cta_count)
-    work_count = cx(tile_count)
-    @worker_for(worker_id=worker_id, worker_count=worker_count, work_count=work_count)
-    def body(work_id):
-      group_chunk_id = arith.divui(work_id, cx(n_tile_count))
-      group_chunk_a = arith.index_cast(index,
-                                       memref.load(group_offsets, [group_chunk_id]))
-      group_chunk_b = arith.index_cast(index,
-                                       memref.load(group_offsets, [arith.addi(group_chunk_id, cx(1))]))
-      group_chunk_m = arith.subi(group_chunk_b, group_chunk_a)
-      expert_id = arith.index_cast(index,
-                                   memref.load(expert_ids, [group_chunk_id]))
-      tile_n_start = arith.muli(arith.remui(work_id, cx(n_tile_count)),
-                                cx(tile_n))
-      # output n_start
-      o_n_start = tile_n_start
+    work_id_group_start = cx(0)
+    initial_work_id = worker_id
+    @mgpu.fori(cx(expert_count), [initial_work_id, work_id_group_start])
+    def group_for_body(expert_id, carrys):
+      work_id, work_id_group_start = carrys
+      group_size = arith.index_cast(index,
+                                    memref.load(group_sizes, [expert_id]))
+      group_work_item_count = arith.muli(ceil(group_size, cx(tile_m)),
+                                         cx(n_tile_count))
+      work_id_group_end = arith.addi(work_id_group_start, group_work_item_count)
 
-      # weight n_start
-      w_n_start = arith.addi(arith.muli(expert_id, cx(expert_n)),
-                             tile_n_start)
+      @subgroup_for(work_id, work_id_group_end, worker_count)
+      def subgroup_for_body(work_id):
+        tile_n_start = arith.muli(arith.remui(work_id, cx(n_tile_count)),
+                                  cx(tile_n))
+        group_chunk_id = arith.divui(work_id, cx(n_tile_count))
+        work_id_within_group = arith.subi(work_id, work_id_group_start)
+        subgroup = arith.divui(work_id_within_group, cx(n_tile_count))
+        tile_m_start = arith.muli(subgroup, cx(tile_m))
+        tile_m_end = arith.minui(arith.addi(tile_m_start, cx(tile_m)),
+                                 group_size)
+        # TODO(andportnoy) try to pick better names for all these variables
+        tile_m_count = arith.subi(tile_m_end, tile_m_start)
 
-      local_work_id = arith.divui(work_id, worker_count)
-      get_persistent_ki = lambda ki: arith.addi(ki, arith.muli(local_work_id, cx(k_loop_iter)))
-      with mgpu.when(is_leader_of(TMA_WARP)):
-        @mgpu.fori(cx(k_loop_iter), None)
-        def _tma_body(ki, _):
-          persistent_ki = get_persistent_ki(ki)
-          slot = arith.remui(persistent_ki, c(max_concurrent_steps, index))
-          with mgpu.when(arith.cmpi(arith.CmpIPredicate.uge, persistent_ki, c(max_concurrent_steps, index))):
-            ab_empty_barriers[slot].wait()
-          full_barrier = ab_full_barriers[slot]
-          full_barrier.arrive_expect_tx(
-              bytecount((tile_m, tile_k), in_dtype) + bytecount((tile_n, tile_k), in_dtype)
+        # output n_start
+        o_n_start = tile_n_start
+
+        # weight n_start
+        w_n_start = arith.addi(arith.muli(expert_id, cx(expert_n)),
+                               tile_n_start)
+
+        local_work_id = arith.divui(work_id, worker_count)
+        get_persistent_ki = lambda ki: arith.addi(ki, arith.muli(local_work_id, cx(k_loop_iter)))
+        with mgpu.when(is_leader_of(TMA_WARP)):
+          @mgpu.fori(cx(k_loop_iter), None)
+          def _tma_body(ki, _):
+            persistent_ki = get_persistent_ki(ki)
+            slot = arith.remui(persistent_ki, c(max_concurrent_steps, index))
+            with mgpu.when(arith.cmpi(arith.CmpIPredicate.uge, persistent_ki, c(max_concurrent_steps, index))):
+              ab_empty_barriers[slot].wait()
+            full_barrier = ab_full_barriers[slot]
+            full_barrier.arrive_expect_tx(
+                bytecount((tile_m, tile_k), in_dtype) + bytecount((tile_n, tile_k), in_dtype)
+            )
+            k_start = arith.muli(ki, c(tile_k, index))
+            common_args = dict(
+                swizzle=swizzle,
+                barrier=full_barrier,
+                arrive=False,
+                uniform=False,
+            )
+
+            a_smem_slot = mgpu.memref_slice(a_smem, slot)
+            a_smem_slot_2d_shape, _ = mma_utils.tiled_memref_shape(a_smem_slot)
+            a_smem_slot_2d = mgpu.memref_reshape(a_smem_slot, a_smem_slot_2d_shape)
+
+            ctx.async_copy(
+                src_ref=a,
+                dst_ref=a_smem_slot_2d,
+                # We load a fixed tile_m, even though we only need
+                # group_chunk_m. With tensormap.replace we'll be able to
+                # update the window dynamically.
+                gmem_slice=(ds(tile_m_start, tile_m), ds(k_start, tile_k)),
+                **common_args,
+            )
+            ctx.async_copy(
+                src_ref=w,
+                dst_ref=mgpu.memref_slice(b_smem, slot),
+                gmem_slice=(ds(w_n_start, tile_n), ds(k_start, tile_k)),
+                gmem_transform=mgpu.TileTransform(tiling),
+                **common_args,
+            )
+
+        with mgpu.when(is_leader_of(MMA_WARP)):
+          @mgpu.fori(c(k_loop_iter, index), arith.constant(i1, 0))
+          def _mma_body(ki, accumulate):
+            persistent_ki = get_persistent_ki(ki)
+            slot = arith.remui(persistent_ki, c(max_concurrent_steps, index))
+            ab_full_barriers[slot].wait()
+            tcgen05.mma(
+                acc,
+                mgpu.memref_slice(a_smem, slot),
+                mgpu.memref_transpose(mgpu.memref_slice(b_smem, slot), (1, 0, 3, 2)),
+                a_swizzle=swizzle,
+                b_swizzle=swizzle,
+                accumulate=accumulate,
+            )
+            accumulate = arith.constant(i1, 1)
+            tcgen05.commit_arrive(ab_empty_barriers[slot].get_ptr(), ctx=ctx)
+            return accumulate
+          tcgen05.commit_arrive(mma_done_barrier.get_ptr(), ctx=ctx)
+
+        gpu.barrier()
+        mma_done_barrier.wait(for_tensor_core=True)
+
+        acc[:].astype(ir.F16Type.get()).store_tiled(d_smem, swizzle=128)
+        mgpu.commit_shared()
+
+        store_row = cx(0)
+        d_smem_2d_shape, _ = mma_utils.tiled_memref_shape(d_smem)
+        store_smem = mgpu.memref_reshape(d_smem, d_smem_2d_shape)
+        for i in range(math.ceil(math.log2(tile_m)) + 1):
+          num_rows = 1 << i
+          do_store = arith.cmpi(
+              arith.CmpIPredicate.ne, arith.andi(tile_m_count, cx(num_rows)), cx(0),
           )
-          k_start = arith.muli(ki, c(tile_k, index))
-          common_args = dict(
-              swizzle=swizzle,
-              barrier=full_barrier,
-              arrive=False,
-              uniform=False,
+          with mgpu.when(do_store):
+            gmem_off = arith.addi(tile_m_start, store_row)
+            out_smem_slice = mgpu.memref_slice(store_smem, ds(store_row, num_rows))
+            out_smem_slice = mgpu.memref_reshape(
+                out_smem_slice,
+                (num_rows, tile_n // swizzle_elems, swizzle_elems)
+            )
+            ctx.async_copy(
+                src_ref=out_smem_slice,
+                dst_ref=d,
+                gmem_slice=(ds(gmem_off, num_rows), ds(o_n_start, tile_n)),
+                swizzle=swizzle,
+                gmem_transform=mgpu.TileTransform((swizzle_elems,)),
+            )
+          store_row = arith.select(
+              do_store, arith.addi(store_row, cx(num_rows)), store_row
           )
-
-          a_smem_slot = mgpu.memref_slice(a_smem, slot)
-          a_smem_slot_2d_shape, _ = mma_utils.tiled_memref_shape(a_smem_slot)
-          a_smem_slot_2d = mgpu.memref_reshape(a_smem_slot, a_smem_slot_2d_shape)
-
-          ctx.async_copy(
-              src_ref=a,
-              dst_ref=a_smem_slot_2d,
-              # We load a fixed tile_m, even though we only need
-              # group_chunk_m. With tensormap.replace we'll be able to
-              # update the window dynamically.
-              gmem_slice=(ds(group_chunk_a, tile_m), ds(k_start, tile_k)),
-              **common_args,
-          )
-          ctx.async_copy(
-              src_ref=w,
-              dst_ref=mgpu.memref_slice(b_smem, slot),
-              gmem_slice=(ds(w_n_start, tile_n), ds(k_start, tile_k)),
-              gmem_transform=mgpu.TileTransform(tiling),
-              **common_args,
-          )
-
-      with mgpu.when(is_leader_of(MMA_WARP)):
-        @mgpu.fori(c(k_loop_iter, index), arith.constant(i1, 0))
-        def _mma_body(ki, accumulate):
-          persistent_ki = get_persistent_ki(ki)
-          slot = arith.remui(persistent_ki, c(max_concurrent_steps, index))
-          ab_full_barriers[slot].wait()
-          tcgen05.mma(
-              acc,
-              mgpu.memref_slice(a_smem, slot),
-              mgpu.memref_transpose(mgpu.memref_slice(b_smem, slot), (1, 0, 3, 2)),
-              a_swizzle=swizzle,
-              b_swizzle=swizzle,
-              accumulate=accumulate,
-          )
-          accumulate = arith.constant(i1, 1)
-          tcgen05.commit_arrive(ab_empty_barriers[slot].get_ptr(), ctx=ctx)
-          return accumulate
-        tcgen05.commit_arrive(mma_done_barrier.get_ptr(), ctx=ctx)
-
-      gpu.barrier()
-      mma_done_barrier.wait(for_tensor_core=True)
-
-      acc[:].astype(ir.F16Type.get()).store_tiled(d_smem, swizzle=128)
-      mgpu.commit_shared()
-
-      store_row = cx(0)
-      d_smem_2d_shape, _ = mma_utils.tiled_memref_shape(d_smem)
-      store_smem = mgpu.memref_reshape(d_smem, d_smem_2d_shape)
-      for i in range(math.ceil(math.log2(tile_m)) + 1):
-        num_rows = 1 << i
-        do_store = arith.cmpi(
-            arith.CmpIPredicate.ne, arith.andi(group_chunk_m, cx(num_rows)), cx(0),
-        )
-        with mgpu.when(do_store):
-          gmem_off = arith.addi(group_chunk_a, store_row)
-          out_smem_slice = mgpu.memref_slice(store_smem, ds(store_row, num_rows))
-          out_smem_slice = mgpu.memref_reshape(
-              out_smem_slice,
-              (num_rows, tile_n // swizzle_elems, swizzle_elems)
-          )
-          ctx.async_copy(
-              src_ref=out_smem_slice,
-              dst_ref=d,
-              gmem_slice=(ds(gmem_off, num_rows), ds(o_n_start, tile_n)),
-              swizzle=swizzle,
-              gmem_transform=mgpu.TileTransform((swizzle_elems,)),
-          )
-        store_row = arith.select(
-            do_store, arith.addi(store_row, cx(num_rows)), store_row
-        )
-      ctx.await_async_copy(0)
+        ctx.await_async_copy(0)
+        # subgroup_for
+      work_id_group_start = work_id_group_end
+      carrys = [work_id, work_id_group_start]
+      return carrys
+      # group_for
 
   compute_buffers = (
     jax.ShapeDtypeStruct(
@@ -252,8 +288,7 @@ def build_kernel(
       (
           jax.ShapeDtypeStruct((m, k), jnp.float16),
           jax.ShapeDtypeStruct((n, k), jnp.float16),
-          jax.ShapeDtypeStruct((group_chunk_count+1,), jnp.int32),  # group_offsets
-          jax.ShapeDtypeStruct((group_chunk_count+0,), jnp.int32),  # expert_ids
+          jax.ShapeDtypeStruct((expert_count,), jnp.int32),  # group_sizes
       ),
       jax.ShapeDtypeStruct((m, expert_n), jnp.float16),
       smem,
@@ -302,10 +337,10 @@ def ref(activations, weights, group_sizes, expert_n):
 
 
 def main(unused_argv):
-  m = 4096  # seqlen
-  k = 1024
-  expert_count = 16
-  expert_n = 256
+  m = 128  # seqlen
+  k = 128
+  expert_count = 2
+  expert_n = 64
   n = expert_count * expert_n
   in_dtype = jnp.float16
   # TODO(aportnoy@nvidia.com) this leads to low occupancy, so unless
@@ -315,6 +350,7 @@ def main(unused_argv):
   # the next work item can run while we are storing the previous one
   # out.
   cta_count = get_sm_count()
+  cta_count = 1  # XXX debug
   ka, kb, ke1, ke2 = jr.split(jr.key(0), 4)
   activations = jr.normal(key=ka, shape=(m, k), dtype=in_dtype)
   weights     = jr.normal(key=kb, shape=(n, k), dtype=in_dtype)
@@ -323,9 +359,6 @@ def main(unused_argv):
   # TODO(aportnoy@nvidia.com) test different tile sizes
   tile_m = 128
   tile_n = 64  # 256, 512
-  # TODO(aportnoy@nvidia.com) move this computation into the kernel
-  group_offsets, expert_ids = get_schedule(group_sizes, n, tile_m, tile_n)
-  group_chunk_count = len(expert_ids)
 
   # TODO(aportnoy@nvidia.com) test different stage counts
   max_concurrent_steps = 2  # 4, 5, 6
@@ -334,14 +367,12 @@ def main(unused_argv):
       m, n, k,
       cta_count=cta_count,
       expert_count=expert_count,
-      group_chunk_count=group_chunk_count,
-      expert_n=expert_n,
       tile_m=tile_m,
       tile_n=tile_n,
       max_concurrent_steps=max_concurrent_steps,
       in_dtype=in_dtype,
     )
-  d = f(activations, weights, group_offsets, expert_ids)
+  d = f(activations, weights, group_sizes)
   d_ref = ref(activations, weights, group_sizes, expert_n)
   np.testing.assert_allclose(d, d_ref, atol=1e-3, rtol=1e-3)
   # TODO(aportnoy@nvidia.com) measure FLOPS
