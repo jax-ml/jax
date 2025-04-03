@@ -417,11 +417,10 @@ def uniform(key: ArrayLike,
     raise ValueError(f"dtype argument to `uniform` must be a float dtype, "
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  if out_sharding is None:
+  def f(key, minval, maxval, shape, dtype):   # reorder args
     return _uniform(key, shape, dtype, minval, maxval)
-  def f(k, minv, maxv):
-    return _uniform(k, shape, dtype, minv, maxv)
-  return auto_axes(f, out_shardings=out_sharding)(key, minval, maxval)
+  return maybe_auto_axes(f, out_sharding, shape=shape, dtype=dtype)(
+      key, minval, maxval)
 
 @partial(jit, static_argnums=(1, 2))
 def _uniform(key, shape, dtype, minval, maxval) -> Array:
