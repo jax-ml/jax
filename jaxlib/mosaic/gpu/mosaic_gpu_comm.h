@@ -45,7 +45,7 @@ class NvshmemApi {
     return instance;
   }
 
-  int cumodule_int(CUmodule module) {
+  int cumodule_init(CUmodule module) {
     std::lock_guard<std::mutex> lock(mutex_);
     return nvshmemx_cumodule_init(module);
   }
@@ -61,19 +61,17 @@ class NvshmemApi {
   NvshmemApi() {
     const char* env_value = getenv("NVSHMEM_LIBRARY_PATH");
     const char* libnvshmem_path =
-      env_value && *env_value != 0 ? env_value : NVSHMEM_LIB_SONAME;
+      env_value && *env_value != 0 ? env_value : nullptr;
     void* library = dlopen(libnvshmem_path, RTLD_LAZY);
     if (library == nullptr) {
       fprintf(stderr, "Failed to open %s library: %s", libnvshmem_path, dlerror());
       abort();
     }
 
-    // Initialize supported NVSHMEM host API
-    NVSHMEM_SET_FN(nvshmemx_cumodule_init)
     NVSHMEM_SET_FN(nvshmemx_barrier_all_on_stream)
+    NVSHMEM_SET_FN(nvshmemx_cumodule_init)
   }
 
-  // Dlopened NVSHMEM API
   int (*nvshmemx_cumodule_init)(CUmodule);
   int (*nvshmemx_barrier_all_on_stream)(cudaStream_t);
 
