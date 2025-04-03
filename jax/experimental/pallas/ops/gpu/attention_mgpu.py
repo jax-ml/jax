@@ -310,7 +310,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig):
       )
       plgpu.wait_smem_to_gmem(0)
 
-    def kv_pipeline(k_smem, v_smem,
+    def kv_pipeline(_, k_smem, v_smem,
                     k_consumed_barrier, v_consumed_barrier,
                     carry):
       acc, m_i, l_i = carry

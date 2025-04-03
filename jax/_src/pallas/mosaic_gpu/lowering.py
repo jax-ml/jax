@@ -629,13 +629,9 @@ def lower_pipelined_jaxpr_to_module(
     scratch_refs = [
         next(sem_refs_it) if r is sem_placeholder else r for r in scratch_refs
     ]
-    def body_fn(*refs):
-      grid_env = pallas_core.current_grid_env()
-      assert grid_env is not None  # Set by ``emit_pipeline``.
+    def body_fn(indices, *refs):
       program_ids_template = util.merge_lists(
-          which_parallel,
-          [grid_axis.index for grid_axis in grid_env],
-          [None] * sum(which_parallel),
+          which_parallel, indices, [None] * sum(which_parallel)
       )
       assert len(refs) + len(scratch_refs) == len(jaxpr.invars)
       return gpu_primitives.jaxpr_call(

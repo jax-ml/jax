@@ -33,7 +33,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import primitives as gpu_primitives
-from jax._src.util import foreach
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 
@@ -171,7 +170,8 @@ def emit_pipeline(
   """Creates a function to emit a manual pipeline within a Pallas kernel.
 
   Args:
-    body: The pipeline body.
+    body: The pipeline body, called with the indices for the current step, the
+      input refs, followed by the output refs.
     grid: The grid to use for the pipeline.
     in_specs: The block specs for the inputs.
     out_specs: The block specs for the outputs.
@@ -248,7 +248,8 @@ def emit_pipeline(
         it.islice(it.product(*map(range, grid)), max_concurrent_steps)
     ):
       indices = tuple(map(lambda i: jnp.asarray(i, dtype=jnp.int32), indices))
-      foreach(lambda bref: bref.copy_in(step, indices, barrier_ref), in_brefs)
+      for bref in in_brefs:
+        bref.copy_in(step, indices, barrier_ref)
 
     # This is true if any of the outputs need to be transferred inside the loop.
     copies_out_in_loop = not all(bref.is_index_invariant for bref in out_brefs)
@@ -266,11 +267,13 @@ def emit_pipeline(
             max_concurrent_steps - (1 + delay_release), wait_read_only=True
         )
 
-      with pallas_core.grid_env(map(pallas_core.GridAxis, indices, grid)):
-        body(*(
-            bref.get_ref_for_slot(slot)
-            for bref in it.chain(in_brefs, out_brefs)
-        ))
+      body(
+          indices,
+          *(
+              bref.get_ref_for_slot(slot)
+              for bref in it.chain(in_brefs, out_brefs)
+          ),
+      )
 
       if copies_out_in_loop:
         gpu_primitives.commit_smem()
@@ -355,6 +358,7 @@ def emit_pipeline(
 
   return pipeline
 
+
 def emit_pipeline_warp_specialized(
     body: Callable[..., None],
     *,
@@ -376,14 +380,16 @@ def emit_pipeline_warp_specialized(
   ``manual_consumed_barriers`` argument is True.
 
   ```
-  def body(*input_refs, *output_refs, [consumed_barriers]) -> None:
+  def body(indices, *input_refs, *output_refs, [consumed_barriers]) -> None:
   ```
 
   or with a carries enabled (enabled via the ``carry_coroutine`` argument),
   where the body returns the next carry:
 
   ```
-  def body(*input_refs, *output_refs, [consumed_barriers], carry) -> Carry:
+  def body(
+      indices, *input_refs, *output_refs, [consumed_barriers], carry
+  ) -> Carry:
   ```
 
   Args:
@@ -545,18 +551,17 @@ def emit_pipeline_warp_specialized(
         if copies_out_in_loop:
           gpu_primitives.wait_smem_to_gmem(max_concurrent_steps - 1)
 
-        with pallas_core.grid_env(map(pallas_core.GridAxis, indices, grid)):
-          body_refs = []
-          for bref in it.chain(in_brefs, out_brefs):
-            buf_slot = _get_slot(slot, ~bref.is_index_invariant)
-            body_refs.append(bref.get_ref_for_slot(buf_slot))
+        body_refs = []
+        for bref in it.chain(in_brefs, out_brefs):
+          buf_slot = _get_slot(slot, ~bref.is_index_invariant)
+          body_refs.append(bref.get_ref_for_slot(buf_slot))
 
-          body_args = body_refs
-          if manual_consumed_barriers:
-            body_args += [consumed_barrier_ref.at[slot] for consumed_barrier_ref in consumed_barrier_refs]
-          if has_carry:
-            body_args += [prev_body_carry]
-          next_body_carry = body(*body_args)
+        body_args = body_refs
+        if manual_consumed_barriers:
+          body_args += [consumed_barrier_ref.at[slot] for consumed_barrier_ref in consumed_barrier_refs]
+        if has_carry:
+          body_args += [prev_body_carry]
+        next_body_carry = body(indices, *body_args)
 
         if not manual_consumed_barriers:
           [consumed_barrier_ref] = consumed_barrier_refs
