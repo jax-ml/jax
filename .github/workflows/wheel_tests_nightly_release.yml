@@ -80,18 +80,25 @@ jobs:
           tpu-specs: [
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
             {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
-            {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"}
+            {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
+            {type: "v6e-8", cores: "8", runner: "linux-x86-ct6e-180-8tpu"}
           ]
           libtpu-version-type: ["pypi_latest", "nightly", "oldest_supported_libtpu"]
           exclude:
             - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
             - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pypi_latest' }}
-            # Run a single Python version for v4-8.
+            # Run a single Python version for v4-8 and v6e-8
             - tpu-specs:
                 type: "v4-8"
               python: "3.10"
             - tpu-specs:
                 type: "v4-8"
+              python: "3.11"
+            - tpu-specs:
+                type: "v6e-8"
+              python: "3.10"
+            - tpu-specs:
+                type: "v6e-8"
               python: "3.11"
             # Run min and max Python versions for v5e-8
             - tpu-specs:
