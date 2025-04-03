@@ -145,6 +145,7 @@ def subvals(lst, replace):
 
 def split_list(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
   args = list(args)
+  assert all(n >= 0 for n in ns)
   lists = []
   for n in ns:
     lists.append(args[:n])
@@ -154,7 +155,7 @@ def split_list(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
 
 def split_list_checked(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
   args = list(args)
-  assert sum(ns) == len(args)
+  assert sum(ns) == len(args) and all(n >= 0 for n in ns)
   lists = []
   for n in ns:
     lists.append(args[:n])

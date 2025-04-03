@@ -20,6 +20,7 @@ import contextlib
 import dataclasses
 from functools import partial
 import inspect
+import itertools
 import logging
 import weakref
 from typing import NamedTuple, Any, Union, cast
@@ -74,10 +75,10 @@ from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure, tree_leaves,
     treedef_children, broadcast_prefix, all_leaves, prefix_errors, keystr,
-    PyTreeDef, none_leaf_registry as none_lr, tree_map)
+    PyTreeDef, none_leaf_registry as none_lr, tree_map, tree_flatten_with_path)
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps, tuple_insert,
-    distributed_debug_log, split_list, weakref_lru_cache,
+    distributed_debug_log, split_list, split_list_checked, weakref_lru_cache,
     merge_lists, subs_list, fun_name, fun_qual_name)
 
 map, unsafe_map = safe_map, map
@@ -219,49 +220,38 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
       raise FloatingPointError(f"invalid value ({e.ty}) encountered in {fun.__qualname__}") from None
     dispatch.maybe_recursive_nan_check(e, fun, args, kwargs)
 
+  if p.box_data:
+    box_treedef, out_tree = p.out_tree.children()
+    box_flat, out_flat = split_list_checked(out_flat, [box_treedef.num_leaves, out_tree.num_leaves])
+    box_out = tree_unflatten(box_treedef, box_flat)
+    leaves = tree_leaves((args, kwargs))
+    for (i, kind), b in zip(p.box_data, box_out):
+      if kind is pe.BoxAttr:
+        leaves[i].set(tree_unflatten(b.treedef, b.leaves))
+      elif kind is pe.ListAttr:
+        for item in tree_unflatten(b.treedef, b.leaves):
+          leaves[i].append(item)
+      else:
+        assert False
+  else:
+    out_tree = p.out_tree
+
   if p.attrs_tracked:
     num_states_out = sum(end_tree.num_leaves for _, end_tree, _ in p.attrs_tracked)
     final_states, out_flat = split_list(out_flat, [num_states_out])
     _set_states(p.attrs_tracked, final_states)
 
-  outs = tree_unflatten(p.out_tree, out_flat)
-  return (outs, out_flat, p.out_tree, args_flat, p.params['jaxpr'],
-          p.attrs_tracked, compiled, profiler)
+  outs = tree_unflatten(out_tree, out_flat)
+  return (outs, out_flat, out_tree, args_flat, p.params['jaxpr'],
+          p.attrs_tracked, p.box_data, compiled, profiler)
 
-
-def _set_states(attrs_tracked, vals):
-  from jax.experimental.attrs import jax_setattr, jax_extendattr
-  valss = split_list(vals, [td.num_leaves for _, td, _ in attrs_tracked[:-1]])
-  for ((_, treedef, (obj, attr, kind)), leaves) in zip(attrs_tracked, valss):
-    if kind is pe.ReadWrite:
-      val = tree_unflatten(treedef, leaves)
-      jax_setattr(obj, attr, val)
-    elif kind is pe.Append:
-      del treedef
-      val, = leaves
-      jax_extendattr(obj, attr, val)
-
-def _get_states(attrs_tracked):
-  from jax.experimental.attrs import jax_getattr, dne_sentinel
-  vals = []
-  for treedef, _, (obj, attr, kind) in attrs_tracked:
-    if kind is pe.ReadWrite:
-      tree = jax_getattr(obj, attr) if hasattr(obj, attr) else dne_sentinel
-      leaves, treedef_ = tree_flatten(tree)
-      assert treedef == treedef_
-      vals.extend(leaves)
-    elif kind is pe.Append:
-      pass
-    else:
-      assert False
-  return vals
 
 def _need_to_rebuild_with_fdo(pgle_profiler):
   return (pgle_profiler is not None and pgle_profiler.is_enabled()
           and not pgle_profiler.is_fdo_consumed())
 
 def _get_fastpath_data(
-    executable, out_tree, args_flat, out_flat, attrs_tracked, effects,
+    executable, out_tree, args_flat, out_flat, attrs_tracked, box_data, effects,
     consts, abstracted_axes, pgle_profiler
 ) -> pxla.MeshExecutableFastpathData | None:
   out_reflattened, out_tree = pxla.reflatten_outputs_for_dispatch(out_tree, out_flat)
@@ -278,6 +268,7 @@ def _get_fastpath_data(
       and abstracted_axes is None
       # no attr state effects
       and not attrs_tracked
+      and not box_data
       # no ref state effects
       and not any(isinstance(e, RefEffect) for e in effects)
       # no prng reuse checking
@@ -336,13 +327,12 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
       raise RuntimeError(f"re-tracing function {jit_info.fun_sourceinfo} for "
                          "`jit`, but 'no_tracing' is set")
 
-    (outs, out_flat, out_tree, args_flat, jaxpr, attrs_tracked, executable,
-     pgle_profiler) = _python_pjit_helper(fun, jit_info, *args, **kwargs)
+    (outs, out_flat, out_tree, args_flat, jaxpr, attrs_tracked, box_data,
+     executable, pgle_profiler) = _python_pjit_helper(fun, jit_info, *args, **kwargs)
 
     maybe_fastpath_data = _get_fastpath_data(
-        executable, out_tree, args_flat, out_flat, attrs_tracked, jaxpr.effects,
-        jaxpr.consts, jit_info.abstracted_axes,
-        pgle_profiler)
+        executable, out_tree, args_flat, out_flat, attrs_tracked, box_data,
+        jaxpr.effects, jaxpr.consts, jit_info.abstracted_axes, pgle_profiler)
 
     return outs, maybe_fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
 
@@ -557,6 +547,7 @@ class PjitParams(NamedTuple):
   arg_names: tuple[str, ...]
   num_consts: int
   attrs_tracked: list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str, Any]]]
+  box_data: list
 
 
 def _infer_params_impl(
@@ -585,8 +576,10 @@ def _infer_params_impl(
   f = lu.wrap_init(fun, debug_info=dbg)
   f, dyn_args = argnums_partial_except(f, ji.static_argnums, args, allow_invalid=True)
   del args
-
   f, dyn_kwargs = argnames_partial_except(f, ji.static_argnames, kwargs)
+  del kwargs
+  dyn_args, dyn_kwargs, box_data = _flatten_boxes(dbg, dyn_args, dyn_kwargs)
+  f = _handle_boxes(f, dbg)
   explicit_args, in_tree = tree_flatten((dyn_args, dyn_kwargs))
   flat_fun, out_tree = flatten_fun(f, in_tree)
   flat_fun, explicit_args = hoist_obj_attrs(flat_fun, explicit_args)
@@ -623,6 +616,8 @@ def _infer_params_impl(
     assert in_avals is None
     in_type = pe.infer_lambda_input_type(axes_specs, explicit_args)
     in_avals = tuple(a for a, e in in_type if e)
+  elif box_data:
+    in_type = in_avals = tuple(core.shaped_abstractify(x) for x in explicit_args)  # type: ignore
   else:
     in_type = in_avals  # type: ignore
   assert in_avals is not None
@@ -656,7 +651,7 @@ def _infer_params_impl(
   args_flat = [*implicit_args, *explicit_args]
 
   num_attrs_in = sum(init_tree.num_leaves for init_tree, _, (_, _, kind)
-                     in attrs_tracked if kind is pe.ReadWrite)
+                     in attrs_tracked if kind in (pe.ReadWrite, pe.BoxAttr))
   num_extra_args = len(implicit_args) + num_attrs_in + len(consts)
   in_shardings_flat = (UNSPECIFIED,) * num_extra_args + in_shardings_flat
   in_layouts_flat = (None,) * num_extra_args + in_layouts_flat
@@ -679,7 +674,7 @@ def _infer_params_impl(
   )
   return PjitParams(consts, params, in_avals, in_tree, out_tree(),
                     donated_invars, dbg.arg_names, len(consts),
-                    attrs_tracked), args_flat
+                    attrs_tracked, box_data), args_flat
 
 
 class InferParamsCacheEntry:
@@ -725,7 +720,9 @@ def _infer_params_internal(
       static_argnames=ji.static_argnames, sourceinfo=ji.fun_sourceinfo,
       signature=ji.fun_signature)
 
-  if config.dynamic_shapes.value:  # if dynamic shapes, don't use the cache
+  from jax.experimental.attrs import Box, List
+  any_boxes = any(isinstance(x, (Box, List)) for x in tree_leaves((args, kwargs)))
+  if config.dynamic_shapes.value or any_boxes:  # don't use the cache
     p, args_flat = _infer_params_impl(fun, ji, ctx_mesh, dbg,
                                       args, kwargs, in_avals=None)
     return p, p.consts + args_flat
@@ -739,7 +736,7 @@ def _infer_params_internal(
   if entry.pjit_params is None:
     p, args_flat = _infer_params_impl(
         fun, ji, ctx_mesh, dbg, args, kwargs, in_avals=avals)
-    if p.attrs_tracked:  # if attrs, don't populate the cache
+    if p.attrs_tracked or p.box_data:  # if attrs/boxes, don't populate cache
       return p, p.consts + args_flat
     entry.pjit_params = p
   return entry.pjit_params, entry.pjit_params.consts + dynargs
@@ -1310,10 +1307,13 @@ def diff_tracing_cache_keys(
       for i, (t, ot) in enumerate(zip(fun_transforms_k, fun_transforms_ok)):
         t_name = t[0].__name__
         if t == ot: continue
+
+        # TODO(mattjj): explain box cache misses
+        if t_name == '_handle_boxes': continue
+
         if t[0] != ot[0]:
           unavailable(f"fun_transforms[{i}] transform", t, ot)
           continue
-
         if t_name == "flatten_fun":
           explain_in_tree_diff(t[1][0], ot[1][0])
           continue
@@ -1414,8 +1414,7 @@ def explain_tracing_cache_miss(
     for d in smallest_diffs:
       p_one_diff(d)
 
-  done()
-  return
+  return done()
 
 
 @partial(lu.cache, explain=explain_tracing_cache_miss)
@@ -1509,7 +1508,7 @@ def _attr_cache_index(
   cases = seen_attrs_get(fun, in_type)
   for i, records in enumerate(cases):
     for obj, attr, kind, treedef, avals in records:
-      if kind is pe.ReadWrite:
+      if kind in (pe.ReadWrite, pe.BoxAttr):
         val = getattr(obj, attr, dne_sentinel)
         vals, treedef_ = tree_flatten(val)
         avals_ = map(core.shaped_abstractify, vals)
@@ -1690,7 +1689,6 @@ def _resolve_in_shardings(args, pjit_in_shardings: Sequence[PjitSharding]
       committed_arg_shardings.append((arg_s, pxla.MismatchType.ARG_SHARDING, None))
 
   resolved_in_shardings: list[PjitSharding] = []
-  assert len(args) == len(pjit_in_shardings)
   for arg, pjit_in_s in zip(args, pjit_in_shardings):
     # arg sharding can be None in case of ShapeDtypeStruct. jax.Array does
     # not allow None as the sharding.
@@ -1857,8 +1855,8 @@ def _pjit_call_impl(*args, jaxpr,
         ctx_mesh=ctx_mesh, name=name, keep_unused=keep_unused,
         inline=inline, compiler_options_kvs=compiler_options_kvs)
     fastpath_data = _get_fastpath_data(
-        compiled, tree_structure(out_flat), args, out_flat, [], jaxpr.effects,
-        jaxpr.consts, None, pgle_profiler)
+        compiled, tree_structure(out_flat), args, out_flat, [], [],
+        jaxpr.effects, jaxpr.consts, None, pgle_profiler)
     return out_flat, fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
 
   f = _get_jaxpr_as_fun(
@@ -3170,3 +3168,132 @@ def get_unconstrained_dims(sharding: NamedSharding):
   assert sharding.spec is not None
   return {i for i, axes in enumerate(sharding.spec)
           if axes is PartitionSpec.UNCONSTRAINED}
+
+# -------------------- attrs etc --------------------
+
+def _set_states(attrs_tracked, vals):
+  from jax.experimental.attrs import jax_setattr, jax_extendattr
+  valss = split_list(vals, [td.num_leaves for _, td, _ in attrs_tracked[:-1]])
+  for ((_, treedef, (obj, attr, kind)), leaves) in zip(attrs_tracked, valss):
+    if kind is pe.ReadWrite:
+      val = tree_unflatten(treedef, leaves)
+      jax_setattr(obj, attr, val)
+    elif kind is pe.Append:
+      del treedef
+      val, = leaves
+      jax_extendattr(obj, attr, val)
+    elif kind is pe.BoxAttr:
+      val = tree_unflatten(treedef, leaves)
+      obj.set(val)
+    elif kind is pe.ListAttr:
+      for item in tree_unflatten(treedef, leaves):
+        obj.append(item)
+    else:
+      assert False
+
+def _get_states(attrs_tracked):
+  from jax.experimental.attrs import jax_getattr, dne_sentinel
+  vals = []
+  for treedef, _, (obj, attr, kind) in attrs_tracked:
+    if kind is pe.ReadWrite:
+      tree = jax_getattr(obj, attr) if hasattr(obj, attr) else dne_sentinel
+      leaves, treedef_ = tree_flatten(tree)
+      assert treedef == treedef_
+      vals.extend(leaves)
+    elif kind is pe.Append:
+      pass
+    elif kind is pe.BoxAttr:
+      tree = obj.get()  # not getattr!
+      leaves, treedef_ = tree_flatten(tree)
+      assert treedef == treedef_
+      vals.extend(leaves)
+    elif kind is pe.ListAttr:
+      pass
+    else:
+      assert False
+  return vals
+
+def static():
+  return dataclasses.field(metadata=dict(static=True))
+
+@tree_util.register_dataclass
+@dataclasses.dataclass
+class BoxTree:
+  leaves: list
+  treedef: PyTreeDef = static()
+
+@tree_util.register_dataclass
+@dataclasses.dataclass
+class ListTree:
+  leaves: list
+  treedef: PyTreeDef | None = static()
+
+def _flatten_boxes(dbg, args, kwargs):
+  from jax.experimental.attrs import Box, List
+  box_data = []
+  id_first_occurrences = {}
+  idxs = itertools.count()
+  def visit(x):
+    i = next(idxs)
+    if (isinstance(x, (Box, List)) and
+        (dup_idx := id_first_occurrences.setdefault(id(x), i)) != i):
+      type_name = type(x).__name__
+      raise ValueError(
+          f"a {type_name} instance can't be passed as an argument more than "
+          f"once, but when tracing {dbg.func_src_info} for {dbg.traced_for}, "
+          f"the object {x} appeared at both arguments "
+          f"{dbg.arg_names[dup_idx]} and {dbg.arg_names[i]}"
+          if dbg else
+          f"at both flat index {dup_idx} and flat index {i}")
+    if type(x) is Box:
+      leaves, treedef = tree_flatten(x._val)
+      ty = tuple(core.shaped_abstractify(l) for l in leaves)
+      box_data.append((i, pe.BoxAttr))
+      return BoxTree(leaves, treedef)
+    elif type(x) is List:
+      box_data.append((i, pe.ListAttr))
+      return ListTree([], None)
+    else:
+      return x
+  args, kwargs = tree_map(visit, (args, kwargs))
+  return args, kwargs, box_data
+
+@lu.transformation2
+def _handle_boxes(f, dbg, *args, **kwargs):
+  from jax.experimental.attrs import Box, List
+  new_args = []
+  arg_mutables = []
+  def visit(x):
+    if type(x) is BoxTree:
+      box = Box(tree_unflatten(x.treedef, x.leaves))
+      arg_mutables.append(box)
+      return box
+    elif type(x) is ListTree:
+      lst = List()
+      arg_mutables.append(lst)
+      return lst
+    else:
+      return x
+  args, kwargs = tree_map(visit, (args, kwargs),
+                          is_leaf=lambda x: isinstance(x, (BoxTree, ListTree)))
+  out = f(*args, **kwargs)
+  for path, leaf in tree_flatten_with_path(out)[0]:
+    if isinstance(leaf, (Box, List)):
+      type_name = type(leaf).__name__
+      raise ValueError(
+          f"a {type_name} instance can't be returned from a transformed "
+          f"function, but when tracing {dbg.func_src_info} for {dbg.traced_for} "
+          f"the object {leaf} appeared at result{keystr(path)}")
+  if not arg_mutables:
+    return out
+  extra_outs = []
+  for mutable in arg_mutables:
+    if type(mutable) is Box:
+      leaves, treedef = tree_flatten(mutable._val)
+      extra_outs.append(BoxTree(leaves, treedef))
+    elif type(mutable) is List:
+      leaves, treedef = tree_flatten(mutable._val)
+      extra_outs.append(ListTree(leaves, treedef))
+    else:
+      assert False
+  return extra_outs, out
