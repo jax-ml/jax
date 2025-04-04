@@ -2321,8 +2321,6 @@ lowering_rules[lax.gather_p] = _gather_lowering_rule
 
 
 def _transpose_lowering_rule(ctx: LoweringRuleContext, x, *, permutation):
-  if permutation != (1, 0):
-    raise NotImplementedError
   out_type = aval_to_ir_type(
       ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]
   )

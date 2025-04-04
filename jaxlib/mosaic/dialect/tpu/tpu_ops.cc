@@ -1223,10 +1223,18 @@ LogicalResult PackSubelementsOp::verify() {
   const int packing_factor = cast<VectorType>(getSources().front().getType())
                                  .getElementTypeBitWidth() /
                              getType().getElementTypeBitWidth();
+  if (packing_factor == 0) {
+    return emitOpError("Packing factor must be non-zero, bitwidth: ")
+           << "Operand bitwidth: "
+           << cast<VectorType>(getSources().front().getType())
+                  .getElementTypeBitWidth()
+           << " vs Op type bitwidth: " << getType().getElementTypeBitWidth();
+  }
   SmallVector<bool> seen_positions(packing_factor, false);
   for (const int32_t position : getPositions()) {
     if (position < 0 || packing_factor <= position) {
-      return emitOpError("Positions must be between 0 and the packing factor");
+      return emitOpError("Positions must be between 0 and the packing factor")
+             << position << " vs " << packing_factor;
     }
     if (seen_positions[position]) {
       return emitOpError("Positions must be unique");
