@@ -29,9 +29,10 @@ from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import dialects, ir
 from jax._src.util import safe_zip
-from jax._src.mesh import AxisType
+from jax._src.mesh import AxisType, AbstractMesh
 from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (
     _op_sharding_to_pos_sharding, pmap_sharding_devices_indices_map,
@@ -1417,6 +1418,21 @@ class ShardingTest(jtu.JaxTestCase):
                           axis_types=(Explicit, Auto, Auto, Explicit, Auto))
     self.assertNotEqual(mesh1, mesh2)
     self.assertNotEqual(hash(mesh1), hash(mesh2))
+
+  def test_memory_kind_with_abstract_mesh(self):
+    if jaxlib_extension_version < 326:
+      self.skipTest('Requires jaxlib_extension_version >= 326')
+
+    abstract_mesh = AbstractMesh((2,), ('x',))
+    ns = NamedSharding(abstract_mesh, P(), memory_kind='pinned_host')
+    self.assertEqual(ns.memory_kind, 'pinned_host')
+
+    ns = NamedSharding(abstract_mesh, P())
+    self.assertIsNone(ns.memory_kind)
+
+    with self.assertRaisesRegex(
+        ValueError, 'Got invalid memory kind'):
+      NamedSharding(abstract_mesh, P(), memory_kind='weird_device')
 
 
 @jtu.with_config(jax_use_shardy_partitioner=True)

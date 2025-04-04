@@ -152,7 +152,7 @@ class State:
     self.initialize_preemption_sync_manager()
 
     if slice_index is None and 'JAX_SLICE_INDEX' in os.environ:
-      slice_index = int(os.environ.get('JAX_SLICE_INDEX'))
+      slice_index = int(os.environ.get('JAX_SLICE_INDEX'))  # type: ignore
     self.slice_index = slice_index
 
   def shutdown(self):

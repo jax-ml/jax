@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <array>
 #include <cstdlib>
 #include <optional>
 #include <string>
@@ -192,6 +193,14 @@ bool ShardingEqual(nb::handle a, nb::handle b) {
   return a.equal(b);
 }
 
+// This list is to check for valid memory kinds when an AbstractMesh is passed
+// to NamedSharding.
+static const std::array<absl::string_view, 3> valid_memory_kinds = {
+    "device",
+    "pinned_host",
+    "unpinned_host",
+};
+
 NamedSharding::NamedSharding(nb::object mesh, nb::object spec,
                              nb::object memory_kind, nb::object manual_axes,
                              nb::object logical_device_ids)
@@ -217,7 +226,17 @@ NamedSharding::NamedSharding(nb::object mesh, nb::object spec,
     memory_kind_ =
         CheckAndCanonicalizeMemoryKind(memory_kind_, *internal_device_list_);
   } else {
-    memory_kind_ = nb::none();
+    if (!memory_kind_.is_none() &&
+        (std::find(valid_memory_kinds.begin(), valid_memory_kinds.end(),
+                   nb::cast<absl::string_view>(memory_kind_)) ==
+         valid_memory_kinds.end())) {
+      throw nb::value_error(
+          absl::StrCat("Got invalid memory kind: ",
+                       nb::cast<absl::string_view>(memory_kind_),
+                       ". Valid memory kinds are: ",
+                       absl::StrJoin(valid_memory_kinds, ", "))
+              .c_str());
+    }
   }
 
   // TODO(phawkins): this leaks a reference to the check_pspec function.
