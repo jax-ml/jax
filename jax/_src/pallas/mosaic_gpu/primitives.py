@@ -618,7 +618,7 @@ def _barrier_arrive_pp_eqn(
 ):
   del settings
   barrier, *flat_transforms = eqn.invars
-  transforms_treedef = eqn.params["transforms_tree"]
+  transforms_treedef = eqn.params["transforms_treedef"]
   transforms = transforms_treedef.unflatten(flat_transforms)
   return pp.concat([
       pp.text("barrier_arrive"),
