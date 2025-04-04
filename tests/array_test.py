@@ -655,12 +655,15 @@ class JaxArrayTest(jtu.JaxTestCase):
             output_shardings._to_xla_hlo_sharding(x_dummy.ndim),
             s._to_xla_hlo_sharding(x_dummy.ndim)))
 
-  # TODO(skyewm): remove this test when we can remove the workaround manual
-  # defragment API
-  @jtu.skip_on_devices('cpu')  # defragment not implemented for TFRT CPU
+  # TODO(b/399879011): GPU is the only platform that has an implementation for
+  # this, which exists in py_client.cc. Ideally, this would be replaced with
+  # some kind of auto-defrag-on-OOM.
+  @jtu.run_on_devices('gpu')
   def test_defragment(self):
+    # Since the GPU implementation is in py_client.cc, it cannot be exposed via
+    # the PjRt C API.
     if xb.using_pjrt_c_api():
-      self.skipTest("Manual defragment not exposed via PJRT C API")
+      self.skipTest('Manual defragment not exposed via PJRT C API')
 
     # Create a few arrays
     global_mesh = jtu.create_mesh((jax.local_device_count(),), ('x',))
@@ -673,7 +676,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     # Delete one of them
     arr2.delete()
 
-    # Defragment
+    # Defragment.
     xb.get_backend().defragment()
 
     # Sanity check remaining arrays
