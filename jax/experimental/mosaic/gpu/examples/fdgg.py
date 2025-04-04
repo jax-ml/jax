@@ -52,26 +52,27 @@ def get_sm_count():
   return value
 
 
-def worker_for(worker_id, worker_count, work_count):
-  def wrapper(f):
-    for_op = scf.ForOp(worker_id, work_count, worker_count, [])
-    with ir.InsertionPoint(for_op.body):
-      f(for_op.induction_variable)
-      scf.yield_([])
-  return wrapper
-
-
 def subgroup_for(work_id, work_id_group_end, worker_count):
+  # Maybe use scf.while instead, this is a bit of a kludge to make
+  # work_id both the induction variable and a loop-carried variable.
+  # Here we simulate (using scf.for):
+  #
+  #  while work_id < work_id_group_end:
+  #    ...
+  #    work_id += worker_count
   def wrapper(f):
+    step = worker_count
     for_op = scf.ForOp(
       work_id,  # lowerBound
       work_id_group_end,  # upperBound
-      worker_count,  # step
-      [],  # initArgs
+      step,  # step
+      [work_id],  # initArgs
     )
     with ir.InsertionPoint(for_op.body):
       f(for_op.induction_variable)
-      scf.yield_([])
+      scf.yield_([arith.addi(for_op.induction_variable, step)])
+    final_work_id = for_op.results[0]
+    return final_work_id
   return wrapper
 
 
@@ -116,8 +117,7 @@ def build_kernel(
 
   n_tile_count = expert_n // tile_n
 
-
-  def ceil(x, y):
+  def ceildiv(x, y):
     return arith.divui(arith.subi(arith.addi(x, y),
                                   cx(1)),
                        y)
@@ -134,12 +134,13 @@ def build_kernel(
     worker_count = cx(cta_count)
     work_id_group_start = cx(0)
     initial_work_id = worker_id
-    @mgpu.fori(cx(expert_count), [initial_work_id, work_id_group_start])
+    group_offset = cx(0)
+    @mgpu.fori(cx(expert_count), [initial_work_id, work_id_group_start, group_offset])
     def group_for_body(expert_id, carrys):
-      work_id, work_id_group_start = carrys
+      work_id, work_id_group_start, group_offset = carrys
       group_size = arith.index_cast(index,
                                     memref.load(group_sizes, [expert_id]))
-      group_work_item_count = arith.muli(ceil(group_size, cx(tile_m)),
+      group_work_item_count = arith.muli(ceildiv(group_size, cx(tile_m)),
                                          cx(n_tile_count))
       work_id_group_end = arith.addi(work_id_group_start, group_work_item_count)
 
@@ -147,13 +148,15 @@ def build_kernel(
       def subgroup_for_body(work_id):
         tile_n_start = arith.muli(arith.remui(work_id, cx(n_tile_count)),
                                   cx(tile_n))
-        group_chunk_id = arith.divui(work_id, cx(n_tile_count))
         work_id_within_group = arith.subi(work_id, work_id_group_start)
         subgroup = arith.divui(work_id_within_group, cx(n_tile_count))
-        tile_m_start = arith.muli(subgroup, cx(tile_m))
-        tile_m_end = arith.minui(arith.addi(tile_m_start, cx(tile_m)),
-                                 group_size)
         # TODO(andportnoy) try to pick better names for all these variables
+        #                  and streamline layout calculations in general
+        tile_m_start_within_group = arith.muli(subgroup, cx(tile_m))
+        tile_m_start = arith.addi(group_offset, tile_m_start_within_group)
+        tile_m_end_within_group = arith.minui(arith.addi(tile_m_start_within_group, cx(tile_m)),
+                                              group_size)
+        tile_m_end = arith.addi(group_offset, tile_m_end_within_group)
         tile_m_count = arith.subi(tile_m_end, tile_m_start)
 
         # output n_start
@@ -257,8 +260,10 @@ def build_kernel(
           )
         ctx.await_async_copy(0)
         # subgroup_for
+      work_id = subgroup_for_body
       work_id_group_start = work_id_group_end
-      carrys = [work_id, work_id_group_start]
+      group_offset = arith.addi(group_offset, group_size)
+      carrys = [work_id, work_id_group_start, group_offset]
       return carrys
       # group_for
 
@@ -267,8 +272,8 @@ def build_kernel(
         mgpu.tile_shape((max_concurrent_steps, tile_m, tile_k), tiling),
         jnp.float16),
     jax.ShapeDtypeStruct(
-         mgpu.tile_shape((max_concurrent_steps, tile_n, tile_k), tiling),
-         jnp.float16),
+        mgpu.tile_shape((max_concurrent_steps, tile_n, tile_k), tiling),
+        jnp.float16),
   )
   epilogue_buffer = jax.ShapeDtypeStruct(
       mgpu.tile_shape((tile_m, tile_n), (128, swizzle_elems)),
@@ -305,26 +310,6 @@ def generate_group_sizes(expert_count, token_count, key1, key2):
   return group_sizes
 
 
-def get_schedule(group_sizes, n, tile_m, tile_n):
-  assert n % tile_n == 0
-  group_sizes = group_sizes.tolist()
-  chunks = []
-  expert_ids = []
-  for i, g in enumerate(group_sizes):
-    while g > tile_m:
-      expert_ids.append(i)
-      chunks.append(tile_m)
-      g -= tile_m
-    expert_ids.append(i)
-    chunks.append(g)
-
-  chunks = jnp.array(chunks)
-  group_offsets = jnp.cumulative_sum(chunks, include_initial=True)
-  expert_ids = jnp.array(expert_ids)
-
-  return group_offsets, expert_ids
-
-
 def ref(activations, weights, group_sizes, expert_n):
   group_offsets = np.cumulative_sum(group_sizes, include_initial=True).tolist()
   results = []
@@ -337,30 +322,29 @@ def ref(activations, weights, group_sizes, expert_n):
 
 
 def main(unused_argv):
-  m = 128  # seqlen
-  k = 128
-  expert_count = 2
-  expert_n = 64
+  m = 4096  # seqlen
+  k = 1024
+  expert_count = 16
+  expert_n = 256
   n = expert_count * expert_n
   in_dtype = jnp.float16
-  # TODO(aportnoy@nvidia.com) this leads to low occupancy, so unless
-  # each CTA is using tensor cores at all times, we are leaving perf
-  # on the table. A solution would be to separate the epilogue into a
+  # TODO(andportnoy) this leads to low occupancy, so unless each CTA
+  # is using tensor cores at all times, we are leaving perf on the
+  # table. A solution would be to separate the epilogue into a
   # warpgroup of its own, and double buffer the accumulator, so that
   # the next work item can run while we are storing the previous one
   # out.
   cta_count = get_sm_count()
-  cta_count = 1  # XXX debug
   ka, kb, ke1, ke2 = jr.split(jr.key(0), 4)
   activations = jr.normal(key=ka, shape=(m, k), dtype=in_dtype)
   weights     = jr.normal(key=kb, shape=(n, k), dtype=in_dtype)
   group_sizes = generate_group_sizes(expert_count, m, ke1, ke2)
   assert sum(group_sizes) == m
-  # TODO(aportnoy@nvidia.com) test different tile sizes
+  # TODO(andportnoy) test different tile sizes
   tile_m = 128
   tile_n = 64  # 256, 512
 
-  # TODO(aportnoy@nvidia.com) test different stage counts
+  # TODO(andportnoy) test different stage counts
   max_concurrent_steps = 2  # 4, 5, 6
   with mlir.make_ir_context(), ir.Location.unknown():
     f = build_kernel(
@@ -375,7 +359,7 @@ def main(unused_argv):
   d = f(activations, weights, group_sizes)
   d_ref = ref(activations, weights, group_sizes, expert_n)
   np.testing.assert_allclose(d, d_ref, atol=1e-3, rtol=1e-3)
-  # TODO(aportnoy@nvidia.com) measure FLOPS
+  # TODO(andportnoy) measure FLOPS
 
 
 if __name__ == "__main__":
