@@ -743,6 +743,15 @@ def lower_jaxpr_to_module(
       block_shape = [
           1 if b is pallas_core.mapped else b for b in bm.block_shape
       ]
+
+      # No sense in double-buffering without any windowing pattern.
+      buffer_count = 0
+      if (
+          tpu_memory_space == tpu_core.TPUMemorySpace.VMEM
+          and bm.has_trivial_window()
+      ):
+        buffer_count = 1
+
       # If we have an extended dtype, we need to add the block shape for the
       # remaining physical dtype.
       block_shape += list(_get_aval_physical_dtype_shape(bm.block_aval.inner_aval))
@@ -765,7 +774,8 @@ def lower_jaxpr_to_module(
           raise LoweringException(
               f"Unsupported pipeline mode: {bm.pipeline_mode}."
           )
-        buffer_count = bm.pipeline_mode.buffer_count
+        if buffer_count == 0:
+          buffer_count = bm.pipeline_mode.buffer_count
         if buffer_count < 1 or buffer_count > 2:
           raise LoweringException(
               "Only single (1) and double (2) buffering are supported. Got"
