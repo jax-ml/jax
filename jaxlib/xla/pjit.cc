@@ -245,9 +245,14 @@ std::shared_ptr<PjitFunctionCache::Cache> PjitFunctionCache::DefaultCache() {
   std::shared_ptr<Cache> cache = std::make_shared<Cache>(&self->lru_list_);
   auto callback =
       nb::cpp_function([self, key{std::move(key)}](nb::handle weakref) {
-        nb::ft_object_guard lock(self);
-        auto it = self->functions_.find(key);
-        if (it != self->functions_.end()) {
+        std::unique_ptr<Value> value;
+        {
+          nb::ft_object_guard lock(self);
+          auto it = self->functions_.find(key);
+          if (it == self->functions_.end()) {
+            return;
+          }
+          value = std::move(it->second);
           self->functions_.erase(it);
         }
       });
