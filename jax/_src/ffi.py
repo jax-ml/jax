@@ -685,7 +685,7 @@ def ffi_batching_rule(
     args,
     dims,
     *,
-    vectorized: bool | None | DeprecatedArg,
+    vectorized: bool | None | DeprecatedArg = None,
     vmap_method: str | None,
     result_avals: Sequence[core.ShapedArray],
     **kwargs: Any,

@@ -49,6 +49,7 @@ nanobind_extension(
         ":config",
         ":custom_call_sharding",
         ":dlpack",
+        ":ffi",
         ":guard_lib",
         ":ifrt_proxy",
         ":jax_jit",
@@ -273,6 +274,37 @@ cc_library(
         "@xla//xla/python/pjrt_ifrt",
         "@xla//xla/tsl/platform:errors",
         "@xla//xla/tsl/platform:logging",
+        "@xla//xla/tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "ffi",
+    srcs = ["ffi.cc"],
+    hdrs = ["ffi.h"],
+    compatible_with = [],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/types:span",
+        "@dlpack",
+        "@nanobind",
+        "@xla//third_party/python_runtime:headers",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/ffi:ffi_api",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
+        "@xla//xla/pjrt:host_callback",
+        "@xla//xla/pjrt:status_casters",
+        "@xla//xla/python:nb_numpy",
+        "@xla//xla/python:types",
         "@xla//xla/tsl/platform:statusor",
     ],
 )
@@ -627,6 +659,7 @@ cc_library(
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":ffi",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/status",
@@ -634,6 +667,7 @@ cc_library(
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
+        "@dlpack",
         "@nanobind",
         "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
         "@xla//xla:shape_util",

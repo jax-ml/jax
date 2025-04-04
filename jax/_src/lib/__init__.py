@@ -94,6 +94,11 @@ import jaxlib.xla_client as xla_client  # noqa: F401
 
 from jaxlib.xla_extension import Device as Device  # noqa: F401
 
+# TODO(danfm): Remove the try/except once JAX 0.6.0 is released.
+try:
+  from jaxlib.xla_extension import ffi as ffi  # noqa: F401
+except ImportError:
+  ffi = None
 
 # XLA garbage collection: see https://github.com/jax-ml/jax/issues/14882
 def _xla_gc_callback(*args):
