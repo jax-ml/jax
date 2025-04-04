@@ -7423,6 +7423,26 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = f(jax.device_put(np.arange(8 * 12.).reshape(8, 12), s), key)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 
+  @jtu.with_user_mesh((2, 2), ('x', 'y'))
+  def test_random_truncated_normal(self, mesh):
+    @jax.jit
+    def f(key, lower):
+      out = jax.random.truncated_normal(key, lower, 2., shape=(8, 12),
+                                        out_sharding=P('x', 'y'))
+      self.assertEqual(out.aval.sharding.spec, P('x', 'y'))
+      return out
+
+    key = jax.random.key(1)
+    out = f(key, -1.)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
+    lowered_text = f.lower(key, -1.).as_text()
+    if config.use_shardy_partitioner.value:
+      self.assertIn('sdy.sharding_constraint', lowered_text)
+      self.assertIn('<@mesh, [{"x"}, {"y"}]>', lowered_text)
+    else:
+      self.assertIn('mhlo.sharding = "{devices=[2,2]<=[4]}"}', lowered_text)
+
   def test_auto_axes_no_context_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'), axis_types=(AxisType.Explicit,) * 2)
     np_inp = np.arange(16.).reshape(8, 2)

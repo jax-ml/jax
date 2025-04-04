@@ -851,7 +851,8 @@ def truncated_normal(key: ArrayLike,
                      lower: RealArray,
                      upper: RealArray,
                      shape: Shape | None = None,
-                     dtype: DTypeLikeFloat = float) -> Array:
+                     dtype: DTypeLikeFloat = float,
+                     *, out_sharding=None) -> Array:
   r"""Sample truncated standard normal random values with given shape and dtype.
 
   The values are returned according to the probability density function:
@@ -882,12 +883,14 @@ def truncated_normal(key: ArrayLike,
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   key, _ = _check_prng_key("truncated_normal", key)
+  out_sharding = canonicalize_sharding(out_sharding, "truncated_normal")
   dtypes.check_user_dtype_supported(dtype)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `truncated_normal` must be a float "
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
-  return _truncated_normal(key, lower, upper, shape, dtype)
+  return maybe_auto_axes(_truncated_normal, out_sharding,
+                         shape=shape, dtype=dtype)(key, lower, upper)
 
 @partial(jit, static_argnums=(3, 4))
 def _truncated_normal(key, lower, upper, shape, dtype) -> Array:
