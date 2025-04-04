@@ -7274,116 +7274,60 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = f(key)
     self.assertEqual(out.sharding, NamedSharding(mesh, P()))
 
+  @parameterized.named_parameters(
+      ("bits", partial(jax.random.bits, shape=(8, 12)), P('x', 'y')),
+      ("uniform", partial(jax.random.uniform, shape=(8, 12)), P('x', 'y')),
+      ("normal", partial(jax.random.normal, shape=(8, 12)), P('x', 'y')),
+      ("randint", partial(jax.random.randint, shape=(8, 12), minval=0, maxval=10),
+       P('x', 'y')),
+      ("permutation_1d", partial(jax.random.permutation, x=8), P('x')),
+      ("permutation_2d", partial(jax.random.permutation,
+                                 x=np.arange(8 * 12).reshape(8, 12)),
+       P('x', 'y')),
+  )
   @jtu.with_user_mesh((2, 2), ('x', 'y'))
-  def test_random_bits(self, mesh):
+  def test_random_functions(self, fun, out_spec, mesh):
     @jax.jit
     def f(key):
-      out = jax.random.bits(key, shape=(8, 12), out_sharding=P('x', 'y'))
-      self.assertEqual(out.aval.sharding.spec, P('x', 'y'))
+      out = fun(key, out_sharding=out_spec)
+      self.assertEqual(out.aval.sharding.spec, out_spec)
       return out
 
     key = jax.random.key(1)
     out = f(key)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+    self.assertEqual(out.sharding, NamedSharding(mesh, out_spec))
 
     lowered_text = f.lower(key).as_text()
     if config.use_shardy_partitioner.value:
       self.assertIn('sdy.sharding_constraint', lowered_text)
-      self.assertIn('<@mesh, [{"x"}, {"y"}]>', lowered_text)
+      if out_spec == P('x', 'y'):
+        self.assertIn('<@mesh, [{"x"}, {"y"}]>', lowered_text)
+      else:
+        assert out_spec == P('x')
+        self.assertIn('<@mesh, [{"x"}]>', lowered_text)
     else:
-      self.assertIn('mhlo.sharding = "{devices=[2,2]<=[4]}"}', lowered_text)
+      if out_spec == P('x', 'y'):
+        self.assertIn('mhlo.sharding = "{devices=[2,2]<=[4]}"}', lowered_text)
+      else:
+        assert out_spec == P('x')
+        self.assertIn(
+            'mhlo.sharding = "{devices=[2,2]<=[4] last_tile_dim_replicate}"}',
+            lowered_text)
 
   @jtu.with_user_mesh((2, 2), ('x', 'y'))
-  def test_random_uniform(self, mesh):
+  def test_random_truncated_normal(self, mesh):
     @jax.jit
-    def f(key):
-      out = jax.random.uniform(key, shape=(8, 12), out_sharding=P('x', 'y'))
+    def f(key, lower):
+      out = jax.random.truncated_normal(key, lower, 2., shape=(8, 12),
+                                        out_sharding=P('x', 'y'))
       self.assertEqual(out.aval.sharding.spec, P('x', 'y'))
       return out
 
     key = jax.random.key(1)
-    out = f(key)
+    out = f(key, -1.)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
 
-    lowered_text = f.lower(key).as_text()
-    if config.use_shardy_partitioner.value:
-      self.assertIn('sdy.sharding_constraint', lowered_text)
-      self.assertIn('<@mesh, [{"x"}, {"y"}]>', lowered_text)
-    else:
-      self.assertIn('mhlo.sharding = "{devices=[2,2]<=[4]}"}', lowered_text)
-
-  @jtu.with_user_mesh((2, 2), ('x', 'y'))
-  def test_random_randint(self, mesh):
-    @jax.jit
-    def f(key):
-      out = jax.random.randint(key, shape=(8, 12), minval=0, maxval=10,
-                               out_sharding=P('x', 'y'))
-      self.assertEqual(out.aval.sharding.spec, P('x', 'y'))
-      return out
-
-    key = jax.random.key(1)
-    out = f(key)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
-
-    lowered_text = f.lower(key).as_text()
-    if config.use_shardy_partitioner.value:
-      self.assertIn('sdy.sharding_constraint', lowered_text)
-      self.assertIn('<@mesh, [{"x"}, {"y"}]>', lowered_text)
-    else:
-      self.assertIn('mhlo.sharding = "{devices=[2,2]<=[4]}"}', lowered_text)
-
-  @jtu.with_user_mesh((4,), ('x',))
-  def test_random_permutation_1d(self, mesh):
-    @jax.jit
-    def f(key):
-      out = jax.random.permutation(key, 8, out_sharding=P('x'))
-      self.assertEqual(out.aval.sharding.spec, P('x'))
-      return out
-
-    key = jax.random.key(1)
-    out = f(key)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
-
-    lowered_text = f.lower(key).as_text()
-    if config.use_shardy_partitioner.value:
-      self.assertIn('sdy.sharding_constraint', lowered_text)
-      self.assertIn('<@mesh, [{"x"}]>', lowered_text)
-    else:
-      self.assertIn('mhlo.sharding = "{devices=[4]<=[4]}"}', lowered_text)
-
-  @jtu.with_user_mesh((2, 2), ('x', 'y'))
-  def test_random_permutation_2d(self, mesh):
-    @jax.jit
-    def f(key):
-      out = jax.random.permutation(key, jnp.arange(8 * 12).reshape(8, 12),
-                                   out_sharding=P('x', 'y'))
-      self.assertEqual(out.aval.sharding.spec, P('x', 'y'))
-      return out
-
-    key = jax.random.key(1)
-    out = f(key)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
-
-    lowered_text = f.lower(key).as_text()
-    if config.use_shardy_partitioner.value:
-      self.assertIn('sdy.sharding_constraint', lowered_text)
-      self.assertIn('<@mesh, [{"x"}, {"y"}]>', lowered_text)
-    else:
-      self.assertIn('mhlo.sharding = "{devices=[2,2]<=[4]}"}', lowered_text)
-
-  @jtu.with_user_mesh((2, 2), ('x', 'y'))
-  def test_random_normal(self, mesh):
-    @jax.jit
-    def f(key):
-      out = jax.random.normal(key, shape=(8, 12), out_sharding=P('x', 'y'))
-      self.assertEqual(out.aval.sharding.spec, P('x', 'y'))
-      return out
-
-    key = jax.random.key(1)
-    out = f(key)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
-
-    lowered_text = f.lower(key).as_text()
+    lowered_text = f.lower(key, -1.).as_text()
     if config.use_shardy_partitioner.value:
       self.assertIn('sdy.sharding_constraint', lowered_text)
       self.assertIn('<@mesh, [{"x"}, {"y"}]>', lowered_text)
@@ -7422,26 +7366,6 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     key = jax.random.key(1)
     out = f(jax.device_put(np.arange(8 * 12.).reshape(8, 12), s), key)
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
-
-  @jtu.with_user_mesh((2, 2), ('x', 'y'))
-  def test_random_truncated_normal(self, mesh):
-    @jax.jit
-    def f(key, lower):
-      out = jax.random.truncated_normal(key, lower, 2., shape=(8, 12),
-                                        out_sharding=P('x', 'y'))
-      self.assertEqual(out.aval.sharding.spec, P('x', 'y'))
-      return out
-
-    key = jax.random.key(1)
-    out = f(key, -1.)
-    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
-
-    lowered_text = f.lower(key, -1.).as_text()
-    if config.use_shardy_partitioner.value:
-      self.assertIn('sdy.sharding_constraint', lowered_text)
-      self.assertIn('<@mesh, [{"x"}, {"y"}]>', lowered_text)
-    else:
-      self.assertIn('mhlo.sharding = "{devices=[2,2]<=[4]}"}', lowered_text)
 
   def test_auto_axes_no_context_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'), axis_types=(AxisType.Explicit,) * 2)
