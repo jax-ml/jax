@@ -1391,6 +1391,9 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertDictEqual(
         mesh._axis_types_dict, {AxisType.Auto: ('y',), AxisType.Explicit: ('x',),
                           AxisType.Manual: ('z',)})
+    self.assertEqual(mesh.explicit_axes, ('x',))
+    self.assertEqual(mesh.auto_axes, ('y',))
+    self.assertEqual(mesh.manual_axes, ('z',))
 
     mesh = jax.make_mesh((1, 1, 1), ('x', 'y', 'z'),
                          axis_types=(Explicit, Explicit, Manual))

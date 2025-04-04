@@ -175,6 +175,21 @@ class _BaseMesh:
     return any_axis_types_match(self._axis_types, AxisType.Explicit)
 
   @functools.cached_property
+  def auto_axes(self):
+    return tuple(n for n, t in safe_zip(self.axis_names, self._axis_types)
+                 if t == AxisType.Auto)
+
+  @functools.cached_property
+  def explicit_axes(self):
+    return tuple(n for n, t in safe_zip(self.axis_names, self._axis_types)
+                 if t == AxisType.Explicit)
+
+  @functools.cached_property
+  def manual_axes(self):
+    return tuple(n for n, t in safe_zip(self.axis_names, self._axis_types)
+                 if t == AxisType.Manual)
+
+  @functools.cached_property
   def _axis_types_dict(self):
     if not self.axis_names:
       return {}
