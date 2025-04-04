@@ -636,6 +636,8 @@ def register_plugin(
         'node_id': distributed.global_state.process_id,
         'num_nodes': distributed.global_state.num_processes,
     }
+    if (slice_index := distributed.global_state.slice_index) is not None:
+      distribute_options['slice_index'] = slice_index
     if options is not None:
       distribute_options.update(updated_options)
     return xla_client.make_c_api_client(
