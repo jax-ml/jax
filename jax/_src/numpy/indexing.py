@@ -526,8 +526,6 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
 
   if not all(isinstance(i, int) for i in arr.shape):
     return None
-  if len(idx) > arr.ndim:
-    return None
   if any(i is None for i in idx):
     return None  # TODO(jakevdp): handle newaxis case
   # For symbolic dimensions fallback to gather
@@ -535,10 +533,13 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
          for i in idx if isinstance(i, slice)
          for elt in (i.start, i.stop, i.step)):
     return None
-
   if any(i is Ellipsis for i in idx):
-    # Remove ellipses and add trailing `slice(None)`.
+    # Remove ellipses and pad with trailing `slice(None)` if necessary.
+    # Do this before checking against rank of `arr` so that `...` can
+    # count as no dimensions at all (e.g. `my_1d_array[:, ...]` succeeds)
     idx = _canonicalize_tuple_index(arr.ndim, idx=idx)
+  if len(idx) > arr.ndim:
+    return None
 
   simple_revs = {i for i, ind in enumerate(idx) if _is_simple_reverse_slice(ind)}
   int_indices = {i for i, (ind, size) in enumerate(zip(idx, arr.shape))
