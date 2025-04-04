@@ -494,7 +494,7 @@ class UnswizzleRef(state_types.Transform):
   def untransform_reshape(
       self, dtype: jnp.dtype | ir.Type, shape: tuple[int, ...]
   ) -> tuple[tuple[int, ...], state_types.Transform]:
-    if shape[-1] == self.swizzle_elems(dtype):
+    if shape[-1] != self.swizzle_elems(dtype):
       raise ValueError(
           f"Reshape shape {shape} is not divisible by swizzle elements"
           f" {self.swizzle_elems(dtype)}"
