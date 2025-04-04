@@ -249,6 +249,16 @@ class MutableArrayTest(jtu.JaxTestCase):
     ys = f(xs)
     self.assertAllClose(ys, xs ** 2, check_dtypes=False)
 
+  def test_implicit_bitcast_regression(self):
+    # https://github.com/jax-ml/jax/issues/27683
+    v = core.mutable_array(jnp.array([0, 0, 0]))
+    with self.assertRaises(ValueError):
+      v[...] += 1.0
+
+  def test_implicit_cast_in_swap(self):
+    v = core.mutable_array(jnp.array(0, dtype='bfloat16'))
+    v[...] += 1.0  # don't crash
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
