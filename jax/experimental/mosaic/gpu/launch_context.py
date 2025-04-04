@@ -325,6 +325,14 @@ class LaunchContext:
           ref = t.apply(ref)
         ref_ty = ir.MemRefType(ref.type)
         # TODO(apaszke): Use utils.memref_ptr to compute base_ptr
+        strides, _ = ref_ty.get_strides_and_offset()
+        if strides[-1] != 1:
+          raise ValueError(
+              "TMA requires the stride of the last dimension after"
+              " transforming the GMEM reference to be 1, but it is"
+              f" {strides[-1]}."
+          )
+
         _, offset, *sizes_and_strides = memref.extract_strided_metadata(ref)
         aligned_ptr_idx = memref.extract_aligned_pointer_as_index(ref)
         as_i64 = lambda i: arith.index_cast(i64, i)
