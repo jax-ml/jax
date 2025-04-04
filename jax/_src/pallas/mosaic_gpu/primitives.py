@@ -110,7 +110,7 @@ def _load_p_lowering_rule(
             val, shape=(), layout=layout, is_signed=is_signed
         )
       match layout:
-        case mgpu.WGMMA_ROW_LAYOUT:
+        case mgpu.WGMMA_ROW_LAYOUT | mgpu.WGMMA_COL_LAYOUT:
           return mgpu.FragmentedArray.load_untiled(
               x_ref,
               is_signed=is_signed,
@@ -118,15 +118,12 @@ def _load_p_lowering_rule(
               swizzle=16,
               optimized=optimized,
           )
-        case mgpu.WGMMAColFragLayout():
-          return mgpu.FragmentedArray.load_wgmma_col(x_ref, is_signed=is_signed)
         case mgpu.WGStridedFragLayout(shape=shape, vec_size=vec_size):
           ref_ty = ir.MemRefType(x_ref.type)
           if shape != tuple(ref_ty.shape):
             raise ValueError(
                 f"Unsupported shape {shape}, (expected {tuple(ref_ty.shape)})"
             )
-
           return mgpu.FragmentedArray.load_strided(
               x_ref, is_signed=is_signed, vec_size=vec_size,
           )

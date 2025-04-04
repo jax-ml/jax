@@ -2005,9 +2005,11 @@ class FragmentedArrayTest(TestCase):
     np.testing.assert_array_equal(inp, result)
 
   @parameterized.product(
-      in_shape=((1024,), (256,), (128,), (64,)), swizzle=(16, 32, 64, 128)
+      in_shape=((1024,), (256,), (128,), (64,)),
+      dtype=(jnp.float16, jnp.float32),
+      swizzle=(16, 32, 64, 128)
   )
-  def test_wgmma_row_load_store_with_layout(self, in_shape, swizzle):
+  def test_wgmma_row_load_store_with_layout(self, in_shape, dtype, swizzle):
     def kernel(ctx, gmem_input, gmem_output, smem):
       smem_input, smem_output = smem
       copy(gmem_input, smem_input, swizzle=swizzle)
@@ -2017,20 +2019,24 @@ class FragmentedArrayTest(TestCase):
       t.store_untiled(smem_output)
       copy(smem_output, gmem_output)
 
-    inp = out = self.prng.uniform(-1, 1, in_shape).astype(jnp.float32)
+    inp = out = self.prng.uniform(-1, 1, in_shape).astype(dtype)
     result = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (inp,), out, [inp, out],
     )(inp)
     np.testing.assert_array_equal(inp, result)
 
   @parameterized.product(
-      in_shape=((128,), (64,)), dtype=[jnp.float16, jnp.float32]
+      in_shape=((128,), (64,)),
+      dtype=(jnp.float16, jnp.float32),
+      swizzle=(16, 32, 64, 128),
   )
-  def test_wgmma_col_load_store_with_layout(self, in_shape, dtype):
+  def test_wgmma_col_load_store_with_layout(self, in_shape, dtype, swizzle):
     def kernel(ctx, *args):
       gmem_input, gmem_output, (smem_input, smem_output) = args
-      copy(gmem_input, smem_input)
-      t = mgpu.FragmentedArray.load_wgmma_col(smem_input)
+      copy(gmem_input, smem_input, swizzle=swizzle)
+      t = mgpu.FragmentedArray.load_untiled(
+          smem_input, swizzle=swizzle, layout=mgpu.WGMMA_COL_LAYOUT
+      )
       t.store_untiled(smem_output)
       copy(smem_output, gmem_output)
 
@@ -2042,18 +2048,17 @@ class FragmentedArrayTest(TestCase):
 
   @parameterized.parameters((128, 128), (128, 64), (64, 128))
   def test_broadcast_major(self, m, n):
-    def kernel(ctx, *args):
-      gmem_input, gmem_output, () = args
-      t = mgpu.FragmentedArray.load_wgmma_col(gmem_input)
+    def kernel(ctx, gmem_input, gmem_output, _):
+      t = mgpu.FragmentedArray.load_untiled(
+          gmem_input, layout=mgpu.WGMMA_COL_LAYOUT, optimized=False
+      )
       t.broadcast_major(m).store_untiled(gmem_output)
 
     inp = self.prng.uniform(-1, 1, (n,)).astype(jnp.float16)
     out_shape = jax.ShapeDtypeStruct((m, n), jnp.float16)
-
     result = mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), (inp,), out_shape, ()
+        kernel, (1, 1, 1), (128, 1, 1), (inp,), out_shape, inp
     )(inp)
-
     out_ref = jax.lax.broadcast_in_dim(inp, (m, n), (1,))
     np.testing.assert_array_equal(result, out_ref)
 
