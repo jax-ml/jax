@@ -27,7 +27,7 @@ import json
 import re
 from typing import Any, Protocol, TypeVar, Union, cast
 
-from absl import logging
+import logging
 import numpy as np
 
 import jax
