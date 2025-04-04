@@ -1720,6 +1720,7 @@ class JaxprStackFrame:
                   debug_info)
     jaxpr, constvals = _const_folding_and_forwarding(jaxpr, constvals)
     jaxpr, constvals = _inline_literals(jaxpr, constvals)
+    jaxpr = _insert_dropvars(jaxpr)
     init_trees = [tree_structure(init_val) for init_val in self.attrs_inits]
     return jaxpr, list(constvals), zip(init_trees, end_trees, self.attrs_tracked)
 
@@ -1736,6 +1737,7 @@ class JaxprStackFrame:
     # We can't run check_jaxpr until after we normalize.
     jaxpr, constvals = _const_folding_and_forwarding(jaxpr, constvals)
     jaxpr, constvals = _inline_literals(jaxpr, constvals)
+    jaxpr = _insert_dropvars(jaxpr)
     jaxpr, out_type = _add_implicit_outputs(jaxpr)
     config.enable_checks.value and core.check_jaxpr(jaxpr)
     return jaxpr, out_type, constvals
@@ -1821,51 +1823,81 @@ def _inline_literals(
     jaxpr: Jaxpr, constvals: Sequence[Any]
 ) -> tuple[Jaxpr, list[Any]]:
   # This function also prunes unused constants and inserts `dropvar` symbols.
+
+  # Don't inline any literal with an input effect
   input_effects = {eff for eff in jaxpr.effects
                    if isinstance(eff, effects.JaxprInputEffect)}
-  # Don't inline any literal with an input effect
-  has_input_effect = [any(eff.input_index == i for eff in input_effects)
-                      for i in range(len(constvals))]
-  lits = {v: Literal(c, v.aval) for v, c, e in zip(jaxpr.constvars, constvals,
-                                                   has_input_effect)
-          if type(c) in core.literalable_types and not np.shape(c) and not e}
-  def lit(a: Atom) -> Literal | None:
-      return (a if isinstance(a, Literal) else lits.get(a) if isinstance(a, Var)
-              else None)
+  lits = {
+      v: Literal(c, v.aval)
+      for i, (v, c) in enumerate(zip(jaxpr.constvars, constvals))
+      if type(c) in core.literalable_types and not np.shape(c) and
+      not any(eff.input_index == i for eff in input_effects)
+  }
+
   newname: Callable[[AbstractValue], Var] = core.gensym()
   newvars: dict[Var, Var] = {}
-  newvar = lambda aval: newname(_substitute_vars_in_type(lits, newvars, aval))
-  var = lambda v: newvars.get(v) or newvars.setdefault(v, newvar(v.aval))
+  unused = set(jaxpr.constvars)
+  def var(a: Var) -> Var:
+    v = newvars.get(a)
+    if v:
+      return v
+    unused.discard(a)
+    aval = a.aval
+    if isinstance(aval, DShapedArray) and any(
+        isinstance(d, Var) for d in aval.shape
+    ):
+      for d in aval.shape:
+        if isinstance(d, Var):
+          unused.discard(d)
+      shape = tuple(
+          lits[d].val if d in lits else newvars.get(d, d) for d in aval.shape  # type: ignore
+      )
+      new_aval = aval.update(shape=tuple(shape))
+      return newvars.setdefault(a, newname(new_aval))
+    return a
   lit_or_var = (
-      lambda a: a if isinstance(a, Literal) else (lit(a) or var(a))
+      lambda a: a if isinstance(a, Literal) else (lits.get(a) or var(a))
   )
-  dropvar = lambda aval: DropVar(_substitute_vars_in_type(lits, newvars, aval))
 
-  def vars_in_shape(aval: AbstractValue) -> Sequence[Var]:
-    if isinstance(aval, DShapedArray):
-      return [d for d in aval.shape if isinstance(d, Var)]
-    return []
-
-  used = {v for eqn in jaxpr.eqns for atom in eqn.invars
-          for v in it.chain([atom], vars_in_shape(atom.aval))
-          if isinstance(atom, Var)}
-  used |= {v for outvar in jaxpr.outvars
-           for v in it.chain([outvar], vars_in_shape(outvar.aval))}
-  new_constvars = [var(v) for v in jaxpr.constvars if v in used and not lit(v)]
-  new_constvals = [c for v, c in zip(jaxpr.constvars, constvals)
-                   if v in used and not lit(v)]
-  new_invars = [var(v) for v in jaxpr.invars]
-  new_eqns = []
+  for idx, v in enumerate(jaxpr.invars):
+    jaxpr._invars[idx] = var(v)
   for eqn in jaxpr.eqns:
-    invars = [lit_or_var(x) for x in eqn.invars]
-    outvars = [var(v) if v in used else dropvar(v.aval) for v in eqn.outvars]
-    new_eqns.append(eqn.replace(invars=invars, outvars=outvars))
-  new_outvars = [lit_or_var(v) for v in jaxpr.outvars]
-  effs = make_jaxpr_effects(new_constvars, new_invars, new_outvars, new_eqns)
-  new_jaxpr = Jaxpr(new_constvars, new_invars, new_outvars, new_eqns, effs,
-                    jaxpr.debug_info)
-  return new_jaxpr, new_constvals
+    for idx, x in enumerate(eqn.invars):
+      eqn.invars[idx] = lit_or_var(x)
+    for idx, v in enumerate(eqn.outvars):
+      eqn.outvars[idx] = var(v)
+  for idx, v in enumerate(jaxpr.outvars):
+    jaxpr._outvars[idx] = lit_or_var(v)
 
+  if unused:
+    is_lit = lambda a: isinstance(a, Literal) or a in lits
+    new_constvals = [
+        c for v, c in zip(jaxpr.constvars, constvals)
+        if v not in unused and not is_lit(v)]
+    jaxpr._constvars = [
+        var(v) for v in jaxpr.constvars if v not in unused and not is_lit(v)]
+  else:
+    new_constvals = list(constvals)
+
+  jaxpr._effects = make_jaxpr_effects(jaxpr.constvars, jaxpr.invars,
+                                      jaxpr.outvars, jaxpr.eqns)
+  return jaxpr, new_constvals
+
+
+def _insert_dropvars(jaxpr: Jaxpr) -> Jaxpr:
+  used: set[Var] = set()
+  def use_vars(vars: Sequence[Atom]):
+    used.update(v for v in vars if isinstance(v, Var))
+    for v in vars:
+      if isinstance(v, DShapedArray):
+        used.update(d for d in v.aval.shape if isinstance(d, Var))
+  use_vars(jaxpr.outvars)
+  for eqn in jaxpr.eqns[::-1]:
+    for i, v in enumerate(eqn.outvars):
+      if v not in used:
+        eqn.outvars[i] = DropVar(v.aval)
+    use_vars(eqn.invars)
+  return jaxpr
 
 class DynamicJaxprTrace(core.Trace):
   __slots__ = ("frame", "tag")
@@ -2471,16 +2503,6 @@ def _input_type_to_tracers(
   for a in in_avals:
     in_tracers.append(new_arg(_substitute_tracers_in_aval(a)))
   return in_tracers
-
-def _substitute_vars_in_type(
-    consts: dict[Var, Literal], env: dict[Var, Var], a: AbstractValue
-  ) -> AbstractValue:
-  if isinstance(a, DShapedArray) and any(isinstance(d, Var) for d in a.shape):
-    shape = [consts[d].val if d in consts else env[d]  # type: ignore
-             if isinstance(d, Var) else d for d in a.shape]
-    return a.update(shape=tuple(shape))
-  else:
-    return a
 
 Const = Any
 Val = Any
