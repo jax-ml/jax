@@ -100,6 +100,7 @@ from jax._src.xla_bridge import devices as devices
 from jax._src.api import disable_jit as disable_jit
 from jax._src.api import eval_shape as eval_shape
 from jax._src.dtypes import float0 as float0
+from jax._src.api import fwd_and_bwd as fwd_and_bwd
 from jax._src.api import grad as grad
 from jax._src.api import hessian as hessian
 from jax._src.xla_bridge import host_count as host_count
