@@ -290,8 +290,9 @@ class UntileRef(state_types.Transform):
     raise NotImplementedError("Reshapes don't commute with transposes.")
 
   def untransform_index(
-      self, idxs: tuple[Index, ...]
+      self, dtype: jnp.dtype | ir.Type, idxs: tuple[Index, ...]
   ) -> tuple[tuple[Index, ...], state_types.Transform]:
+    del dtype
     untiled_idxs = idxs[: -len(self.tiling)]
     tiled_idxs = idxs[-len(self.tiling) :]
     idxs_after_tiling: list[Index] = []
@@ -395,8 +396,9 @@ class TransposeRef(state_types.Transform):
     raise NotImplementedError("Can't reshape a transposed memref.")
 
   def untransform_index(
-      self, idxs: tuple[Index, ...]
+      self, dtype: jnp.dtype | ir.Type, idxs: tuple[Index, ...]
   ) -> tuple[tuple[Index, ...], state_types.Transform]:
+    del dtype
     removed_dims = [
         i for i, idx in enumerate(idxs) if not isinstance(idx, (slice, mgpu.ds))
     ]
@@ -503,8 +505,9 @@ class UnswizzleRef(state_types.Transform):
     return shape, self
 
   def untransform_index(
-      self, idxs: tuple[Index, ...]
+      self, dtype: jnp.dtype | ir.Type, idxs: tuple[Index, ...]
   ) -> tuple[tuple[Index, ...], state_types.Transform]:
+    swizzle_elems = self.swizzle_elems(dtype)
     if not idxs:
       return idxs, self
     if not all(isinstance(idx, (slice, mgpu.ds)) for idx in idxs[-2:]):
@@ -513,14 +516,14 @@ class UnswizzleRef(state_types.Transform):
       )
     last_idx = idxs[-1]
     if isinstance(last_idx, mgpu.DynamicSlice):
-      if last_idx.base != 0 or last_idx.length != self.swizzle:
+      if last_idx.base != 0 or last_idx.length != swizzle_elems:
         raise ValueError("Swizzled dims cannot be sliced")
     else:
       assert isinstance(last_idx, slice)
       if (
           (last_idx.step is not None and last_idx.step != 1)
           or (last_idx.start is not None and last_idx.start != 0)
-          or (last_idx.stop is not None and last_idx.stop != self.swizzle)
+          or (last_idx.stop is not None and last_idx.stop != swizzle_elems)
       ):
         raise ValueError("Swizzled dims cannot be sliced")
     return idxs, self

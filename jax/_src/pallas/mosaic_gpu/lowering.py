@@ -1032,6 +1032,7 @@ def _handle_transforms(
     handle_reshapes=True,
 ) -> tuple[ir.Value, Sequence[gpu_core.Transform]]:
   transformed_ref = ref
+  mlir_dtype = ir.MemRefType(ref.type).element_type
   new_transforms = []
   def _bubble_up(untransform_fn, data):
     nonlocal new_transforms
@@ -1051,7 +1052,7 @@ def _handle_transforms(
           raise NotImplementedError("int_indexer_shape non-empty")
         indices = _ndindexer_indices(indexer)
         indices = _bubble_up(
-            lambda t, idxs: t.untransform_index(idxs), indices
+            lambda t, idxs: t.untransform_index(mlir_dtype, idxs), indices
         )
         transformed_ref = mgpu.memref_slice(transformed_ref, indices)
       case gpu_core.TransposeRef(perm) if handle_transposes:
