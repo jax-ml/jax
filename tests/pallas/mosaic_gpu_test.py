@@ -2228,7 +2228,8 @@ class WarpSpecializedPipelineTest(PallasTest):
     np.testing.assert_array_equal(out, x)
     np.testing.assert_array_equal(out_last_block, x[-blk_m:, -blk_n:])
 
-  def test_elementwise_add(self, m=256, n=256, num_compute_wgs=2):
+  @parameterized.product(m=[256], n=[256], num_compute_wgs=[1, 2])
+  def test_elementwise_add(self, m, n, num_compute_wgs):
     self.skip_if_wg_semantics()  # Crashes!
 
     blk_m = blk_n = 64
