@@ -1202,9 +1202,12 @@ def _swap_lowering_rule(
       return old_value
     case ():
       match value.layout:
-        case mgpu.WGMMARowFragLayout():
-          old_value = mgpu.FragmentedArray.load_wgmma_row(
-              x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
+        case mgpu.TiledLayout():
+          old_value = mgpu.FragmentedArray.load_untiled(
+              x_smem,
+              layout=value.layout,
+              is_signed=mgpu_utils.is_signed(x_aval.dtype),
+              optimized=False,
           )
           value.store_untiled(x_smem)
           return old_value

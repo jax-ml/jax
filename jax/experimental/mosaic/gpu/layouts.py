@@ -155,7 +155,6 @@ def to_layout_attr(
         fa.WGSplatFragLayout
         | fa.WGStridedFragLayout
         | fa.TiledLayout
-        | fa.WGMMARowFragLayout
     ),
 ) -> ir.Attribute:
   """Constructs an MLIR attribute that corresponds to the given layout."""
@@ -166,8 +165,6 @@ def to_layout_attr(
       return to_strided_fragmented_layout_attr(layout)
     case fa.TiledLayout():
       return to_tiled_layout_attr(layout)
-    case fa.WGMMARowFragLayout():
-      return ir.Attribute.parse("#mosaic_gpu.WGMMARowFragLayout")
     case _:
       raise NotImplementedError(
           f"Unsupported layout for conversion to MLIR attribute: {layout}"
@@ -189,7 +186,6 @@ def from_layout_attr(
     fa.WGSplatFragLayout
     | fa.WGStridedFragLayout
     | fa.TiledLayout
-    | fa.WGMMARowFragLayout
 ):
   """Constructs a layout from an MLIR attribute."""
   if is_splat_fragmented_layout(attr):

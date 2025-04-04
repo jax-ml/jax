@@ -142,18 +142,6 @@ def MosaicGPU_WGSplatFragLayout : AttrDef<MosaicGPU_Dialect, "WGSplatFragLayout"
   let assemblyFormat = "`<` $shape `>`";
 }
 
-def MosaicGPU_WGMMARowFragLayout : AttrDef<MosaicGPU_Dialect, "WGMMARowFragLayout", []> {
-  let summary = "1D array that is a row that can be tiled by supported WGMMA shapes.";
-  let description = [{
-    This layout is used to handle rows that are fragmented across all threads
-    in a warpgroup that is executing a WGMMA operation. The length of the array
-    must be divisible by 64.
-  }];
-
-  let mnemonic = "WGMMARowFragLayout";
-  let assemblyFormat = "";
-}
-
 def MosaicGPU_TiledLayout : AttrDef<MosaicGPU_Dialect, "TiledLayout", []> {
   let summary = "A layout derived from a tiling expression.";
   let description = [{

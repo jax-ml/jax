@@ -53,11 +53,11 @@ from .transform_inference import (
 from .fragmented_array import (
     FragmentedArray as FragmentedArray,
     FragmentedLayout as FragmentedLayout,
+    TiledLayout as TiledLayout,
     WGMMA_LAYOUT as WGMMA_LAYOUT,
     WGMMA_ROW_LAYOUT as WGMMA_ROW_LAYOUT,
     WGMMA_COL_LAYOUT as WGMMA_COL_LAYOUT,
     WGMMA_TRANSPOSED_LAYOUT as WGMMA_TRANSPOSED_LAYOUT,
-    WGMMARowFragLayout as WGMMARowFragLayout,
     WGMMAColFragLayout as WGMMAColFragLayout,
     WGSplatFragLayout as WGSplatFragLayout,
     WGStridedFragLayout as WGStridedFragLayout,
