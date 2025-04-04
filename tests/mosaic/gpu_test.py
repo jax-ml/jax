@@ -1756,6 +1756,31 @@ class FragmentedArrayTest(TestCase):
     rhs = rhs = 0 if rhs_is_literal else iota + 1
     np.testing.assert_array_equal(result, op(iota, rhs).astype(jnp.int8))
 
+  def test_foreach_wgmma_row_array(self):
+    def kernel(ctx, out, smem):
+      del ctx, smem
+      x = iota_tensor(128, 128, jnp.float32)
+      row = x.reduce("add", 1)
+      # Test returning an array
+      row = row.foreach(
+          lambda x, _: arith.addf(x, c(1, row.mlir_dtype)), create_array=True
+      )
+      # Test no array return
+      @row.foreach
+      def _(v, idx):
+        memref.store(v, out, idx)
+
+    result = mgpu.as_gpu_kernel(
+        kernel,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(),
+        out_shape=jax.ShapeDtypeStruct(shape=(128,), dtype=jnp.float32),
+        smem_scratch_shape=(),
+    )()
+    iota = np.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
+    np.testing.assert_array_equal(result, iota.sum(axis=1) + 1)
+
   def test_foreach(self):
     dtype = jnp.int32
     swizzle = 128

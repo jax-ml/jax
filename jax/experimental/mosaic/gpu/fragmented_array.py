@@ -1765,12 +1765,18 @@ class FragmentedArray:
     for mlir_idx, reg_idx in zip(self.layout.thread_idxs(self.shape), np.ndindex(self.registers.shape), strict=True):
       reg = self.registers[reg_idx]
       assert len(mlir_idx) == len(self.shape), (mlir_idx, self.shape)
-      [elems] = ir.VectorType(reg.type).shape
-      for i in range(elems):
-        i = c(i, index)
-        val = fn(vector.extractelement(reg, position=i), (*mlir_idx[:-1], arith.addi(mlir_idx[-1], i)))
+      if ir.VectorType.isinstance(reg.type):
+        [elems] = ir.VectorType(reg.type).shape
+        for i in range(elems):
+          i = c(i, index)
+          val = fn(vector.extractelement(reg, position=i), (*mlir_idx[:-1], arith.addi(mlir_idx[-1], i)))
+          if create_array:
+            new_regs[reg_idx] = vector.insertelement(val, new_regs[reg_idx], position=i)
+      else:
+        val = fn(reg, mlir_idx)
         if create_array:
-          new_regs[reg_idx] = vector.insertelement(val, new_regs[reg_idx], position=i)
+          new_regs[reg_idx] = val
+
 
     if create_array:
       return FragmentedArray(_registers=new_regs, _layout=self.layout, _is_signed=is_signed)
