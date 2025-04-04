@@ -93,6 +93,12 @@ def _get_version_for_build() -> str:
   return _version_from_git_tree(_version) or _version_from_todays_date(_version)
 
 
+def _is_prerelease() -> bool:
+  """Determine if this is a pre-release ("rc" tagged wheels) build."""
+  rc_version = os.getenv("WHEEL_VERSION_SUFFIX", "")
+  return True if rc_version.startswith("rc") else False
+
+
 def _write_version(fname: str) -> None:
   """Used by setup.py to write the specified version info into the source tree."""
   release_version = _get_version_for_build()

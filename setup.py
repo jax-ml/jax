@@ -38,6 +38,12 @@ _jax_version = _version_module._version  # JAX version, with no .dev suffix.
 _cmdclass = _version_module._get_cmdclass(project_name)
 _minimum_jaxlib_version = _version_module._minimum_jaxlib_version
 
+# If this is a pre-release (i.e "rc" tagged wheels), append "rc0" to
+# _minimum_jaxlib_version and the current rc version to _current_jaxlib_version.
+if _version_module._is_prerelease():
+  _minimum_jaxlib_version += "rc0"
+  _current_jaxlib_version += os.getenv("WHEEL_VERSION_SUFFIX", "")
+
 with open('README.md', encoding='utf-8') as f:
   _long_description = f.read()
 
