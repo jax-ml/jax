@@ -33,6 +33,7 @@ from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax._src.pallas.mosaic_gpu import primitives as mgpu_primitives
 from jax._src.state import discharge
 from jax.experimental import pallas as pl
+import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
@@ -368,6 +369,38 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(
         kernel(), jax.lax.broadcasted_iota(dtype, (128, 128), dimension)
     )
+
+  def test_inline_mgpu(self):
+    dtype = jnp.bfloat16
+    self.skip_if_wg_semantics()
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((128, 128), dtype),
+        in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
+        scratch_shapes=[
+            plgpu.SMEM((128, 128), dtype),
+            plgpu.Barrier(num_arrivals=1),
+        ],
+        out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
+    )
+    def kernel(x_ref, o_ref, smem_ref, barrier):
+      plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier)
+      plgpu.barrier_wait(barrier)
+      arr = jnp.ones_like(x_ref)
+      @plgpu.inline_mgpu(
+          smem_ref,
+          o_ref,
+          arr,
+          arg_types=[plgpu.RefType(), plgpu.RefType(), plgpu.Layout.WG_SPLAT(x_ref.shape)],
+      )
+      def _(ctx, smem_ref, o_ref, y):
+        del ctx
+        x = mgpu.FragmentedArray.load_strided(smem_ref)
+        (x + y).store_untiled(o_ref)
+
+    key = jax.random.key(0)
+    x = (jax.random.uniform(key, (128, 128)) * 42).astype(dtype)
+    np.testing.assert_array_equal(kernel(x), x + 1)
 
   @parameterized.product(indexer=[..., slice(128), slice(None, 128)])
   def test_copy_smem_to_gmem(self, indexer):
@@ -1506,6 +1539,7 @@ class PallasCallWGTest(
 
     actual_missing_primitives = lane_lowered_primitives - wg_lowered_primitives
     expected_missing_primitives = {
+        mgpu_primitives.inline_mgpu_p,
         mgpu_primitives.broadcasted_iota_p,
         mgpu_primitives.layout_cast_p,
         mgpu_primitives.load_p,

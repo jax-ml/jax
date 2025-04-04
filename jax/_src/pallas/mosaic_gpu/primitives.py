@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Sequence, Callable
 import dataclasses
 import enum
 import itertools
@@ -1218,3 +1218,95 @@ def jaxpr_call(
       ref_treedefs=ref_treedefs,
       program_ids_treedef=program_ids_treedef,
   )
+
+inline_mgpu_p = jax_core.Primitive("inline_mgpu_p")
+inline_mgpu_p.multiple_results = True
+
+
+@dataclasses.dataclass(frozen=True)
+class RefType:
+  ...
+
+
+def inline_mgpu(*args, arg_types):
+  flat_args, treedef = jax.tree.flatten(tuple(args))
+  flat_types, treedef_ty = jax.tree.flatten(tuple(arg_types))
+  if treedef != treedef_ty:
+    raise ValueError(f"Mismatched type shape: {treedef} != {treedef_ty}")
+
+  # Strip the transforms from the refs since they will be recorded in
+  # the types.
+  raw_refs_flat_args = []
+  for a, t in zip(flat_args, flat_types):
+    def traced_ty(ty):
+      return isinstance(a, jax_core.Tracer) and isinstance(a.aval, ty)
+
+    if isinstance(t, (ParameterizedLayout, Layout)) and traced_ty(jax_core.ShapedArray):
+      raw_refs_flat_args.append(a)
+    elif isinstance(t, RefType) and traced_ty(_Ref):
+      ref, transforms = a, ()
+      if isinstance(a, state_types.TransformedRef):
+        ref, transforms = ref.ref, ref.transforms
+
+      raw_refs_flat_args.append(ref)
+      if transforms:
+        raise NotImplementedError("Transformed refs (or types) are not supported.")
+    else:
+      raise ValueError(f"Mismatched type: {a, t}")
+
+  def inner(f):
+    return inline_mgpu_p.bind(
+        *raw_refs_flat_args,
+        args_treedef=treedef,
+        flat_types=flat_types,
+        mgpu_fn=f,
+    )
+  return inner
+
+
+@inline_mgpu_p.def_effectful_abstract_eval
+def _inline_mgpu_abstract_eval(
+    *flat_args,
+    args_treedef,
+    flat_types,
+    mgpu_fn,
+):
+  del args_treedef, flat_types, mgpu_fn  # Unused.
+  # TODO(cperivol): Let the user set the effects.
+  return (), {
+      gpu_core._wgmma_pipeline_effect,
+      gpu_core._memory_effect,
+      *itertools.chain.from_iterable(
+          (state.ReadEffect(i), state.WriteEffect(i))
+          for i, r in enumerate(flat_args)
+          if isinstance(r, pallas_core.AbstractMemoryRef)
+      ),
+  }
+
+
+@discharge.register_partial_discharge_rule(inline_mgpu_p)
+def _inline_mgpu_discharge(*args, **kwargs):
+  raise NotImplementedError("inline_mgpu_p does not support discharge.")
+
+@lowering.register_lowering_rule(inline_mgpu_p, mgpu.ThreadSemantics.Lane)
+def _inline_mgpu_lowering_rule(
+    ctx: lowering.LoweringRuleContext,
+    *flat_args,
+    mgpu_fn: Callable[..., Any],
+    flat_types,
+    args_treedef,
+):
+  for a, t in zip(flat_args, flat_types, strict=True):
+    match a:
+      case ir.Value() if ir.MemRefType.isinstance(a.type):
+        # We checked the memory spaces at tracing time.
+        pass
+      case mgpu.FragmentedArray():
+        if a.layout != t.to_mgpu():
+          raise ValueError(f"Unexpected layout for {a} (expected: {t})")
+      case _:
+        raise ValueError(f"Unexpected argument {a}")
+
+  args = jax.tree.unflatten(args_treedef, flat_args)
+  mgpu_fn(ctx.launch_ctx, *args)
+  return ()
