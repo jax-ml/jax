@@ -518,13 +518,11 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
   def body_fun(while_carry):
     i_, carry, yss = while_carry
     i = num_trips - i_ - 1 if reverse else i_
-    xs = [slicing.dynamic_index_in_dim(xs, i, keepdims=False,
-                                       allow_negative_indices=False)
-          for xs in xss]
+    xs = [slicing.dynamic_index_in_dim(
+      xs, i, keepdims=False, allow_negative_indices=False) for xs in xss]
     carry, ys = inner(unroll, carry, xs)
-    yss = [slicing.dynamic_update_index_in_dim(y, upd, i, 0,
-                                               allow_negative_indices=False)
-           for y, upd in zip(yss, ys)]
+    yss = [slicing.dynamic_update_index_in_dim(
+      y, upd, i, 0, allow_negative_indices=False) for y, upd in zip(yss, ys)]
     return i_ + 1, carry, yss
 
   def cond_fun(while_carry):
