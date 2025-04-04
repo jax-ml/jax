@@ -759,7 +759,26 @@ class VectorLayoutInferer {
     }
     auto layout = VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
                                ImplicitDim::kNone);
-    setLayout(op, {layout, kNoLayout}, layout);
+    // Calculate the offsets for the output layout.
+    LayoutOffsets offsets_out = layout.offsets();
+    // We assume there are no implicit dims.
+    int tiling_dim = op.getDimension() - (op.getType().getRank() - 2);
+    if (auto amount = op.getAmount().getDefiningOp<arith::ConstantOp>()) {
+      if (auto integer_attr = dyn_cast<IntegerAttr>(amount.getValue());
+          integer_attr && tiling_dim == 1) {
+        const int64_t tile_size = layout.tiling()[tiling_dim];
+        const int64_t dim_size = op.getType().getShape()[op.getDimension()];
+        const int64_t shift = integer_attr.getValue().getSExtValue();
+        if (dim_size % tile_size != 0) {
+          // TODO(b/337384645): Currently we assume {0, 0} offsets in the input
+          // layout. Relax this assumption.
+          offsets_out[tiling_dim] = (dim_size - (shift % dim_size)) % tile_size;
+        }
+      }
+    }
+    auto out_layout = VectorLayout(bitwidth, offsets_out,
+                                   nativeTiling(bitwidth), ImplicitDim::kNone);
+    setLayout(op, {layout, kNoLayout}, out_layout);
     return success();
   }
 
