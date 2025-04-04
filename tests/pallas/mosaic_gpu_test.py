@@ -1379,7 +1379,8 @@ class PallasCallTest(PallasTest):
     x = jnp.full(shape, 42.0, jnp.float32)
     np.testing.assert_array_equal(kernel(), x)
 
-  def test_wgmma_transposed_layout(self):
+  @parameterized.parameters(False, True)
+  def test_wgmma_transposed_layout(self, store_transposed):
     """Tests that the result of wgmma can be store transposed using
     the WGMMA_TRNASPOSED layout.
     """
@@ -1412,10 +1413,14 @@ class PallasCallTest(PallasTest):
       smem_trns = plgpu.transpose_ref(smem, (1, 0))
       smem_trns[...] = plgpu.layout_cast(iota, plgpu.Layout.WGMMA_TRANSPOSED)
       plgpu.commit_smem()
-      plgpu.copy_smem_to_gmem(smem, o_ref)
+      plgpu.copy_smem_to_gmem(smem_trns if store_transposed else smem, o_ref)
 
     x = jnp.arange(128 * 128, dtype=dtype).reshape((128, 128)).T
-    np.testing.assert_array_equal(kernel(), x)
+    if store_transposed:
+      with self.assertRaises(ValueError):
+        kernel()
+    else:
+      np.testing.assert_array_equal(kernel(), x)
 
   def test_profiler(self):
     self.skip_if_wg_semantics()  # Transform inference fails.
