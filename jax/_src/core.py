@@ -2030,6 +2030,7 @@ def standard_vma_rule(prim_name, *avals, **kwargs) -> frozenset[AxisName]:
     return frozenset()
   vma, *vmas = [a.vma for a in avals]
   if not all(vma == vma_ for vma_ in vmas):
+    breakpoint()
     raise ValueError(
         f'Primitive {prim_name} requires varying manual axes '
         f'to match, but got {[vma, *vmas]}. Please open an issue at '

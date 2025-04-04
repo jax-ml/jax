@@ -550,9 +550,10 @@ def _split_leading(sz, x):
 def _concat(a, b): return lax.concatenate([a, b], 0)
 
 def _empty_array(prefix, length_spec, aval):
+  from jax.experimental.shard_map import pbroadcast
   sharding = aval.sharding.with_spec((*length_spec, *aval.sharding.spec))
-  return lax.broadcast(lax.empty(aval.dtype), (*prefix, *aval.shape),
-                       out_sharding=sharding)
+  empty = pbroadcast(lax.empty(aval.dtype), tuple(aval.vma))
+  return lax.broadcast(empty, (*prefix, *aval.shape), out_sharding=sharding)
 
 eval_jaxpr_p = core.Primitive('eval_jaxpr')
 eval_jaxpr_p.multiple_results = True
@@ -2248,12 +2249,7 @@ def _batch_and_remainder(x, batch_size: int):
   return scan_tree, remainder_tree
 
 @api_boundary
-def map(
-  f,
-  xs,
-  *,
-  batch_size: int | None = None,
-):
+def map(f, xs, *, batch_size: int | None = None):
   """Map a function over leading array axes.
 
   Like Python's builtin map, except inputs and outputs are in the form of
