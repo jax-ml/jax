@@ -37,6 +37,31 @@ source "ci/utilities/setup_build_environment.sh"
 # Run Bazel GPU tests with RBE (single accelerator tests with one GPU apiece).
 echo "Running RBE GPU tests..."
 
+distArray=("cuda_cupti/linux-x86_64/cuda_cupti-linux-x86_64-12.8.57-archive.tar.xz" "cuda_cudart/linux-x86_64/cuda_cudart-linux-x86_64-12.8.57-archive.tar.xz" "libcublas/linux-x86_64/libcublas-linux-x86_64-12.8.3.14-archive.tar.xz" "libcusolver/linux-x86_64/libcusolver-linux-x86_64-11.7.2.55-archive.tar.xz" "libcurand/linux-x86_64/libcurand-linux-x86_64-10.3.9.55-archive.tar.xz" "libcufft/linux-x86_64/libcufft-linux-x86_64-11.3.3.41-archive.tar.xz" "libcusparse/linux-x86_64/libcusparse-linux-x86_64-12.5.7.53-archive.tar.xz" "cuda_nvcc/linux-x86_64/cuda_nvcc-linux-x86_64-12.8.61-archive.tar.xz" "cuda_nvrtc/linux-x86_64/cuda_nvrtc-linux-x86_64-12.8.61-archive.tar.xz" "libnvjitlink/linux-x86_64/libnvjitlink-linux-x86_64-12.8.61-archive.tar.xz" "cuda_nvml_dev/linux-x86_64/cuda_nvml_dev-linux-x86_64-12.8.55-archive.tar.xz" "cuda_nvtx/linux-x86_64/cuda_nvtx-linux-x86_64-12.8.55-archive.tar.xz" "cuda_cccl/linux-x86_64/cuda_cccl-linux-x86_64-12.8.55-archive.tar.xz" "nvidia_driver/linux-x86_64/nvidia_driver-linux-x86_64-570.86.10-archive.tar.xz")
+for str in ${distArray[@]}; do
+  timeBefore=$(date +%s)
+  arch="https://storage.googleapis.com/mirror.tensorflow.org/developer.download.nvidia.com/compute/cuda/redist/$str"
+  wget $arch
+  timeAfter=$(date +%s)
+  diff=$((timeAfter-timeBefore))
+  printf "Downloaded $str in %d seconds\n" $diff
+  timeBefore=$(date +%s)
+  tar -xvf ${arch/*\//}
+  timeAfter=$(date +%s)
+  diff=$((timeAfter-timeBefore))
+  printf "Unzipped $str in %d seconds\n" $diff
+done
+timeBefore=$(date +%s)
+wget "https://storage.googleapis.com/mirror.tensorflow.org/developer.download.nvidia.com/compute/cudnn/redist/cudnn/linux-x86_64/cudnn-linux-x86_64-9.8.0.87_cuda12-archive.tar.xz"
+timeAfter=$(date +%s)
+diff=$((timeAfter-timeBefore))
+printf "Downloaded cudnn in %d seconds\n" $diff
+timeBefore=$(date +%s)
+tar -xvf "cudnn-linux-x86_64-9.8.0.87_cuda12-archive.tar.xz"
+timeAfter=$(date +%s)
+diff=$((timeAfter-timeBefore))
+printf "Unzipped cudnn in %d seconds\n" $diff
+
 bazel test --config=rbe_linux_x86_64_cuda \
       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
       --override_repository=xla="${JAXCI_XLA_GIT_DIR}" \
