@@ -29,6 +29,7 @@ from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import tree_util
+from jax._src import pretty_printer as pp
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
@@ -328,6 +329,9 @@ class UntileRef(state_types.Transform):
   def undo_to_gpu_transform(self) -> mgpu.MemRefTransform:
     return mgpu.TileTransform(self.tiling)
 
+  def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
+    return pp.text(f"{{untile({list(self.tiling)})}}")
+
 
 def _perm_inverse(permutation: tuple[int, ...]) -> tuple[int, ...]:
   inverse = [-1] * len(permutation)
@@ -405,6 +409,9 @@ class TransposeRef(state_types.Transform):
 
   def undo_to_gpu_transform(self) -> mgpu.MemRefTransform:
     return mgpu.TransposeTransform(_perm_inverse(self.permutation))
+
+  def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
+    return pp.text(f"{{transpose({list(self.permutation)})}}")
 
 
 def transform_ref(
@@ -516,6 +523,9 @@ class UnswizzleRef(state_types.Transform):
       ):
         raise ValueError("Swizzled dims cannot be sliced")
     return idxs, self
+
+  def pretty_print(self, context: jax_core.JaxprPpContext) -> pp.Doc:
+    return pp.text(f"{{unswizzle({self.swizzle})}}")
 
 
 @dataclasses.dataclass
