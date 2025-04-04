@@ -40,7 +40,7 @@ constexpr StringRef kMangledDialect = "stable_mosaic.";
 constexpr StringRef kVersionAttrName = "stable_mosaic.version";
 // When this is bumped, we should file a TODO to update the forward-compatible
 // version in tpu_custom_call.py in a month!
-constexpr int kVersion = 3;
+constexpr int kVersion = 4;
 
 using SerdeRuleType = jaxlib::mosaic::SerdeRuleType;
 
@@ -62,12 +62,20 @@ LogicalResult enqueue_dma_upgrade(Operation* op, int version) {
              << op->getNumOperands();
     }
   }
+  if (version < 4) {
+    op->setAttr("priority",
+                mlir::IntegerAttr::get(
+                    mlir::IntegerType::get(op->getContext(), 32), 0));
+  }
   return success();
 }
 
 LogicalResult enqueue_dma_downgrade(Operation* op, int version) {
   if (version < 2) {
     return op->emitError("Downgrade to version ") << version << " unsupported";
+  }
+  if (version < 4) {
+    op->removeAttr("priority");
   }
   return success();
 }

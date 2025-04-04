@@ -752,7 +752,9 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     AnyMemRef:$target,
     MemRefOf<[TPU_DMASemaphoreType]>:$target_semaphore,
     Optional<I32>:$device_id, // For remote DMAs
-    Optional<I32>:$core_id // For megacore
+    Optional<I32>:$core_id, // For megacore
+    // Smaller number means higher priority. 0 is the highest and the default.
+    DefaultValuedAttr<I32Attr, "0">:$priority
   );
   let hasVerifier = 1;
 }
