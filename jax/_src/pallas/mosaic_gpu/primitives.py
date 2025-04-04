@@ -25,6 +25,7 @@ from typing import Any, Literal
 
 import jax
 from jax._src import core as jax_core
+from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
@@ -170,6 +171,40 @@ def _copy_smem_to_gmem_abstract_eval(src, dst, *args, **params):
   _check_ref(dst, "dst", gpu_core.GMEM)
   del args, params  # Unused.
   return (), {state.ReadEffect(0), state.WriteEffect(1)}
+
+
+def _copy_smem_to_gmem_pp_eqn(
+    eqn: jax_core.JaxprEqn,
+    context: jax_core.JaxprPpContext,
+    settings: jax_core.JaxprPpSettings,
+):
+  src, dst, *flat_args = eqn.invars
+  src_transforms_treedef = eqn.params["src_transforms_treedef"]
+  dst_transforms_treedef = eqn.params["dst_transforms_treedef"]
+  pp_params = {}
+  if not (commit_group := eqn.params["commit_group"]):
+    pp_params["commit_group"] = commit_group
+  if has_user_predicate := eqn.params["has_user_predicate"]:
+    pp_params["has_user_predicate"] = has_user_predicate
+  if reduction_op := eqn.params["reduction_op"]:
+    pp_params["reduction_op"] = reduction_op
+  flat_src_transforms, flat_dst_transforms = util.split_list(
+      flat_args,
+      [src_transforms_treedef.num_leaves],
+  )
+  src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
+  dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
+  return pp.concat([
+      pp.text("copy_smem_to_gmem"),
+      jax_core.pp_kv_pairs(pp_params.items(), context, settings),
+      pp.text(" "),
+      state_primitives.pp_ref_transforms(context, src, src_transforms),
+      pp.text(" -> "),
+      state_primitives.pp_ref_transforms(context, dst, dst_transforms),
+  ])
+
+
+jax_core.pp_eqn_rules[copy_smem_to_gmem_p] = _copy_smem_to_gmem_pp_eqn
 
 
 @lowering.register_lowering_rule(copy_smem_to_gmem_p, mgpu.ThreadSemantics.Lane)
@@ -355,6 +390,47 @@ def _copy_gmem_to_smem_abstract_eval(src, dst, barrier, *args, **params):
   return (), {state.ReadEffect(0), state.WriteEffect(1)}
 
 
+def _copy_gmem_to_smem_pp_eqn(
+    eqn: jax_core.JaxprEqn,
+    context: jax_core.JaxprPpContext,
+    settings: jax_core.JaxprPpSettings,
+):
+  src, dst, barrier, *flat_args = eqn.invars
+  src_transforms_treedef = eqn.params["src_transforms_treedef"]
+  dst_transforms_treedef = eqn.params["dst_transforms_treedef"]
+  barrier_transforms_treedef = eqn.params["barrier_transforms_treedef"]
+  pp_params = {}
+  if collective_axes := eqn.params["collective_axes"]:
+    pp_params["collective_axes"] = collective_axes
+  flat_src_transforms, flat_dst_transforms, flat_barrier_transforms = (
+      util.split_list(
+          flat_args,
+          [
+              src_transforms_treedef.num_leaves,
+              dst_transforms_treedef.num_leaves,
+          ],
+      )
+  )
+  src_transforms = src_transforms_treedef.unflatten(flat_src_transforms)
+  dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
+  barrier_transforms = barrier_transforms_treedef.unflatten(
+      flat_barrier_transforms
+  )
+  return pp.concat([
+      pp.text("copy_gmem_to_smem"),
+      jax_core.pp_kv_pairs(pp_params.items(), context, settings),
+      pp.text(" "),
+      state_primitives.pp_ref_transforms(context, src, src_transforms),
+      pp.text(" -> "),
+      state_primitives.pp_ref_transforms(context, dst, dst_transforms),
+      pp.text(" using "),
+      state_primitives.pp_ref_transforms(context, barrier, barrier_transforms),
+  ])
+
+
+jax_core.pp_eqn_rules[copy_gmem_to_smem_p] = _copy_gmem_to_smem_pp_eqn
+
+
 @lowering.register_lowering_rule(copy_gmem_to_smem_p, mgpu.ThreadSemantics.Lane)
 @lowering.register_lowering_rule(
     copy_gmem_to_smem_p, mgpu.ThreadSemantics.Warpgroup
@@ -521,6 +597,25 @@ def _barrier_arrive_abstract_eval(barrier, *args, **params):
   return (), {gpu_core._memory_effect}
 
 
+def _barrier_arrive_pp_eqn(
+    eqn: jax_core.JaxprEqn,
+    context: jax_core.JaxprPpContext,
+    settings: jax_core.JaxprPpSettings,
+):
+  del settings
+  barrier, *flat_transforms = eqn.invars
+  transforms_treedef = eqn.params["transforms_tree"]
+  transforms = transforms_treedef.unflatten(flat_transforms)
+  return pp.concat([
+      pp.text("barrier_arrive"),
+      pp.text(" "),
+      state_primitives.pp_ref_transforms(context, barrier, transforms),
+  ])
+
+
+jax_core.pp_eqn_rules[barrier_arrive_p] = _barrier_arrive_pp_eqn
+
+
 @lowering.register_lowering_rule(barrier_arrive_p, mgpu.ThreadSemantics.Lane)
 @lowering.register_lowering_rule(barrier_arrive_p, mgpu.ThreadSemantics.Warpgroup)
 def _barrier_arrive_lowering(
@@ -558,6 +653,25 @@ def _barrier_wait_abstract_eval(barrier, *args, **params):
   _check_ref(barrier, "barrier", gpu_core.SMEM)
   del args, params  # Unused.
   return (), {gpu_core._memory_effect}
+
+
+def _barrier_wait_pp_eqn(
+    eqn: jax_core.JaxprEqn,
+    context: jax_core.JaxprPpContext,
+    settings: jax_core.JaxprPpSettings,
+):
+  del settings
+  barrier, *flat_transforms = eqn.invars
+  transforms_treedef = eqn.params["transforms_treedef"]
+  transforms = transforms_treedef.unflatten(flat_transforms)
+  return pp.concat([
+      pp.text("barrier_wait"),
+      pp.text(" "),
+      state_primitives.pp_ref_transforms(context, barrier, transforms),
+  ])
+
+
+jax_core.pp_eqn_rules[barrier_wait_p] = _barrier_wait_pp_eqn
 
 
 @lowering.register_lowering_rule(barrier_wait_p, mgpu.ThreadSemantics.Lane)
@@ -713,6 +827,39 @@ def _wgmma_ref_effectful_abstract_eval(acc_aval, a_aval, b_aval, *_, **params):
       state.ReadEffect(2),
       *([state.ReadEffect(1)] if isinstance(a_aval, state.AbstractRef) else [])
   }
+
+
+def _wgmma_ref_pp_eqn(
+    eqn: jax_core.JaxprEqn,
+    context: jax_core.JaxprPpContext,
+    settings: jax_core.JaxprPpSettings,
+):
+  del settings
+  acc, a, b, *leaves = eqn.invars
+  a_transforms_treedef = eqn.params["a_transforms_tree"]
+  b_transforms_treedef = eqn.params["b_transforms_tree"]
+  a_transforms = (
+      a_transforms_treedef.unflatten(leaves[: a_transforms_treedef.num_leaves])
+      if a_transforms_treedef is not None
+      else []
+  )
+  b_transforms = (
+      b_transforms_treedef.unflatten(leaves[a_transforms_treedef.num_leaves :])
+      if b_transforms_treedef is not None
+      else []
+  )
+  return pp.concat([
+      pp.text("wgmma_ref"),
+      pp.text(" "),
+      pp.text(jax_core.pp_var(acc, context)),
+      pp.text(" <- "),
+      state_primitives.pp_ref_transforms(context, a, a_transforms),
+      pp.text(" @ "),
+      state_primitives.pp_ref_transforms(context, b, b_transforms),
+  ])
+
+
+jax_core.pp_eqn_rules[wgmma_ref_p] = _wgmma_ref_pp_eqn
 
 
 @discharge.register_discharge_rule(wgmma_ref_p)
@@ -1088,6 +1235,40 @@ jaxpr_call_p.multiple_results = True
 def _jaxpr_call_abstract_eval(*args, jaxpr: jax_core.Jaxpr, **params):
   del args, params  # Unused.
   return [v.aval for v in jaxpr.outvars]
+
+
+def _jaxpr_call_pp_eqn(
+    eqn: jax_core.JaxprEqn,
+    context: jax_core.JaxprPpContext,
+    settings: jax_core.JaxprPpSettings,
+):
+  flat_args = eqn.invars
+  ref_treedefs = eqn.params["ref_treedefs"]
+  flat_refs, _ = util.split_list(
+      flat_args, [sum(treedef.num_leaves for treedef in ref_treedefs)]
+  )
+  flat_refs = util.split_list(
+      flat_refs,
+      [treedef.num_leaves for treedef in ref_treedefs[: len(ref_treedefs) - 1]],
+  )
+  trailer = []
+  for treedef, flat_ref in zip(ref_treedefs, flat_refs):
+    ref = treedef.unflatten(flat_ref)
+    transforms = []
+    if isinstance(ref, tuple):
+      ref, transforms = ref
+    trailer.append(pp.text(" "))
+    trailer.append(state_primitives.pp_ref_transforms(context, ref, transforms))
+  return pp.concat([
+      pp.text("jaxpr_call"),
+      pp.text("["),
+      jax_core.pp_kv_pair("jaxpr", eqn.params["jaxpr"], context, settings),
+      pp.text("]"),
+      pp.concat(trailer),
+  ])
+
+
+jax_core.pp_eqn_rules[jaxpr_call_p] = _jaxpr_call_pp_eqn
 
 
 @lowering.register_lowering_rule(jaxpr_call_p, mgpu.ThreadSemantics.Lane)

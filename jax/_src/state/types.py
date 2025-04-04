@@ -125,6 +125,10 @@ class RefBitcaster:
       return sharding
     raise NotImplementedError
 
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    del context  # Unused.
+    return pp.text(f"{{bitcast({self.dtype}{list(self.shape)}])}}")
+
 
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
@@ -178,6 +182,10 @@ class RefReshaper:
       return sharding
     raise NotImplementedError
 
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    del context  # Unused.
+    return pp.text(f"{{reshape({self.dtype}{list(self.shape)})}}")
+
 
 class Transform(Protocol):
 
@@ -204,6 +212,9 @@ class Transform(Protocol):
   def transform_sharding(self, sharding):
     if all(p is None for p in sharding.spec): return sharding # no explicit axes
     raise NotImplementedError
+
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    return pp.text(f"{{{self}}}")
 
 
 @dataclasses.dataclass
