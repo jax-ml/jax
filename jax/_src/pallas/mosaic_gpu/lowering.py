@@ -1112,7 +1112,7 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_ref, *leaves, tree):
 
   match transforms:
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
-      if tiling != (8, swizzle // x_aval.dtype.itemsize):
+      if tiling != (8, (swizzle * 8) // pallas_utils.dtype_bitwidth(x_aval.dtype)):
         raise NotImplementedError("Tiling does not fit swizzle")
       return mgpu.FragmentedArray.load_tiled(
           x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=swizzle

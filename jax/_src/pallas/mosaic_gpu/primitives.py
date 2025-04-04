@@ -481,7 +481,13 @@ def _copy_gmem_to_smem_lowering(
         for axis in collective_axes
     )
   dst_ty = ir.MemRefType(dst.type)
-  bytes = math.prod(dst_ty.shape) * mgpu.bytewidth(dst_ty.element_type)
+  bits = math.prod(dst_ty.shape) * mgpu.bitwidth(dst_ty.element_type)
+  if bits % 8:
+    raise ValueError(
+        f"Can only transfer integer bytes (shape={dst_ty.shape},"
+        f" dtype={dst_ty.element_type})"
+    )
+  bytes = bits // 8
   if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
     if bytes % WARPGROUP_SIZE:
       raise NotImplementedError("Only aligned copies are supported")
