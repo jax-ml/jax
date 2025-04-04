@@ -84,9 +84,11 @@ class NamedSharding : public Sharding {
     return logical_device_ids_;
   }
 
-  static nanobind::handle type() {
-    static auto type = nanobind::type<NamedSharding>();
-    return type;
+  static nanobind::handle & type() {
+    static absl::Mutex mu;
+    absl::MutexLock lock(&mu);
+    static nanobind::handle* type = new nanobind::handle(nanobind::type<NamedSharding>());
+    return *type;
   }
 
   absl::StatusOr<xla::nb_class_ptr<PyDeviceList>> internal_device_list() const {
@@ -120,9 +122,11 @@ class SingleDeviceSharding : public Sharding {
   const nanobind::object& device() const { return device_; }
   const nanobind::object& memory_kind() const { return memory_kind_; }
 
-  static nanobind::handle type() {
-    static auto type = nanobind::type<SingleDeviceSharding>();
-    return type;
+  static nanobind::handle & type() {
+    static absl::Mutex mu;
+    absl::MutexLock lock(&mu);
+    static nanobind::handle* type = new nanobind::handle(nanobind::type<SingleDeviceSharding>());
+    return *type;
   }
 
   xla::nb_class_ptr<PyDeviceList> internal_device_list() const {
@@ -147,9 +151,11 @@ class PmapSharding : public Sharding {
 
   const ShardingSpec& sharding_spec() const { return sharding_spec_; }
 
-  static nanobind::handle type() {
-    static auto type = nanobind::type<PmapSharding>();
-    return type;
+  static nanobind::handle & type() {
+    static absl::Mutex mu;
+    absl::MutexLock lock(&mu);
+    static nanobind::handle* type = new nanobind::handle(nanobind::type<PmapSharding>());
+    return *type;
   }
 
   xla::nb_class_ptr<PyDeviceList> internal_device_list() const {
@@ -184,9 +190,11 @@ class GSPMDSharding : public Sharding {
     return *hash_;
   }
 
-  static nanobind::handle type() {
-    static auto type = nanobind::type<GSPMDSharding>();
-    return type;
+  static nanobind::handle & type() {
+    static absl::Mutex mu;
+    absl::MutexLock lock(&mu);
+    static nanobind::handle* type = new nanobind::handle(nanobind::type<GSPMDSharding>());
+    return *type;
   }
 
   const xla::HloSharding& hlo_sharding() const { return hlo_sharding_; }
