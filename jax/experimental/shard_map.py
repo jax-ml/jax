@@ -46,7 +46,7 @@ from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
-from jax._src.core import Tracer
+from jax._src.core import Tracer, typeof
 from jax._src.mesh import (AbstractMesh, Mesh, AxisType, use_abstract_mesh,
                            get_abstract_mesh)
 from jax._src.api import _shared_code_pmap, _prepare_pmap
@@ -138,6 +138,9 @@ def shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
 
   .. _SPMD multi-device parallelism with shard_map: https://jax.readthedocs.io/en/latest/notebooks/shard_map.html
   """
+  # if not check_rep:
+  #   import unittest
+  #   raise unittest.SkipTest('fuck you')
   return _shard_map(f, mesh, in_specs, out_specs, check_rep, auto)
 
 def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
@@ -221,7 +224,7 @@ def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
 @lu.transformation2
 def _implicit_pbroadcasts_on_output(f, out_names_thunk, *args, **kwargs):
   out_flat = f(*args, **kwargs)
-  return [pbroadcast(o, tuple(_names_to_vma(n) - o.vma))
+  return [pbroadcast(o, tuple(_names_to_vma(n) - typeof(o).vma))
           for o, n in zip(out_flat, out_names_thunk())]
 
 # Internally use AxisNames = dict[int, tuple[AxisName, ...]], not PartitionSpecs
@@ -850,6 +853,9 @@ def get_mesh_from_args(args_flat, mesh):
 def _rep_to_vma(mesh, auto, rep: frozenset[AxisName]) -> frozenset[AxisName]:
   return frozenset((set(mesh.axis_names) - auto) - rep)
 
+def _vma_to_rep(mesh, auto, vma):
+  return frozenset((set(mesh.axis_names) - auto) - vma)
+
 def _rep_to_spec(mesh, auto, rep):
   return _vma_to_spec(mesh, _rep_to_vma(mesh, auto, rep))
 
@@ -976,11 +982,11 @@ class ShardMapTrace(core.Trace):
 
   def process_primitive(self, prim, tracers, params):
     in_vals, in_rep = unzip2(map(self.to_val_rep_pair, tracers))
-    rep_rule = _check_rules.get(prim, partial(_rule_missing, prim))
-    out_rep = rep_rule(self.mesh, *in_rep, **params) if self.check else set()
-    out_rep = tuple(out_rep) if type(out_rep) is list else out_rep
     in_vma  = tuple(map(partial(_rep_to_vma, self.mesh, self.auto), in_rep))
-    out_vma = tree_map(partial(_rep_to_vma, self.mesh, self.auto), out_rep)
+    out_avals, _= prim.abstract_eval(*(typeof(t) for t in tracers), **params)
+    out_avals = tuple(out_avals) if type(out_avals) is list else out_avals
+    out_vma = tree_map(lambda a: a.vma, out_avals)
+    out_rep = tree_map(partial(_vma_to_rep, self.mesh, self.auto), out_vma)
 
     eager_rule = eager_rules.get(prim)
     if eager_rule:
@@ -1082,6 +1088,7 @@ def _prim_applier(prim, params_tup, mesh, in_vma, out_vma, *args):
   out_vma = list(out_vma) if type(out_vma) is tuple else out_vma
   in_specs  = tuple(map(partial(_vma_to_spec, mesh), in_vma))
   out_specs = tree_map(partial(_vma_to_spec, mesh), out_vma)
+  if out_specs == [None]: breakpoint()
   return shard_map(apply, mesh, in_specs, out_specs)(*args)
 
 eager_rules: dict[core.Primitive, Callable] = {}
