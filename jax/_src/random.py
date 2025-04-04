@@ -359,6 +359,7 @@ def maybe_auto_axes(f, out_shardings, **hoist_kwargs):
 def bits(key: ArrayLike,
          shape: Shape = (),
          dtype: DTypeLikeUInt | None = None,
+         *,
          out_sharding=None) -> Array:
   """Sample uniform bits in the form of unsigned integers.
 
@@ -393,6 +394,7 @@ def uniform(key: ArrayLike,
             dtype: DTypeLikeFloat = float,
             minval: RealArray = 0.,
             maxval: RealArray = 1.,
+            *,
             out_sharding=None) -> Array:
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
@@ -466,6 +468,7 @@ def randint(key: ArrayLike,
             minval: IntegerArray,
             maxval: IntegerArray,
             dtype: DTypeLikeInt = int,
+            *,
             out_sharding=None) -> Array:
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
@@ -557,6 +560,7 @@ def permutation(key: ArrayLike,
                 x: int | ArrayLike,
                 axis: int = 0,
                 independent: bool = False,
+                *,
                 out_sharding=None) -> Array:
   """Returns a randomly permuted array or range.
 
@@ -707,6 +711,7 @@ def choice(key: ArrayLike,
 def normal(key: ArrayLike,
            shape: Shape = (),
            dtype: DTypeLikeFloat = float,
+           *,
            out_sharding=None) -> Array:
   r"""Sample standard normal random values with given shape and float dtype.
 
