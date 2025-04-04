@@ -2004,12 +2004,16 @@ class FragmentedArrayTest(TestCase):
     )(inp)
     np.testing.assert_array_equal(inp, result)
 
-  @parameterized.product(in_shape=((128,), (64,)))
-  def test_wgmma_row_load_store_with_layout(self, in_shape):
-    def kernel(ctx, *args):
-      gmem_input, gmem_output, (smem_input, smem_output) = args
-      copy(gmem_input, smem_input)
-      t = mgpu.FragmentedArray.load_wgmma_row(smem_input)
+  @parameterized.product(
+      in_shape=((1024,), (256,), (128,), (64,)), swizzle=(16, 32, 64, 128)
+  )
+  def test_wgmma_row_load_store_with_layout(self, in_shape, swizzle):
+    def kernel(ctx, gmem_input, gmem_output, smem):
+      smem_input, smem_output = smem
+      copy(gmem_input, smem_input, swizzle=swizzle)
+      t = mgpu.FragmentedArray.load_untiled(
+          smem_input, layout=mgpu.WGMMA_ROW_LAYOUT, swizzle=swizzle
+      )
       t.store_untiled(smem_output)
       copy(smem_output, gmem_output)
 

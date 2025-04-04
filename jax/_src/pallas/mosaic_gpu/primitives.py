@@ -67,9 +67,8 @@ def _check_ref(
 load_p = jax_core.Primitive("load")
 
 @load_p.def_effectful_abstract_eval
-def _load_abstract_eval(src, *avals_flat, args_tree, layout):
-  del layout  # Unused.
-
+def _load_abstract_eval(src, *avals_flat, args_tree, layout, optimized):
+  del layout, optimized  # Unused.
   transforms = args_tree.unflatten(avals_flat)
   return (
       jax_core.ShapedArray(transforms[-1].get_indexer_shape(), src.dtype),
@@ -78,7 +77,7 @@ def _load_abstract_eval(src, *avals_flat, args_tree, layout):
 
 @lowering.register_lowering_rule(load_p, mgpu.ThreadSemantics.Lane)
 def _load_p_lowering_rule(
-    ctx: lowering.LoweringRuleContext, x_ref, *leaves, args_tree, layout
+    ctx: lowering.LoweringRuleContext, x_ref, *leaves, args_tree, layout, optimized
 ):
   if not isinstance(x_ref, ir.Value) or not ir.MemRefType.isinstance(x_ref.type):
     raise TypeError(f"Can only load from references (got {x_ref}).")
@@ -91,29 +90,36 @@ def _load_p_lowering_rule(
   if layout is not None:
     layout = layout.to_mgpu()
 
+  is_signed = mgpu_utils.is_signed(x_aval.dtype)
   match transforms:
     case (gpu_core.UnswizzleRef(swizzle), gpu_core.UntileRef(tiling)):
       if tiling != (8, swizzle // x_aval.dtype.itemsize):
         raise NotImplementedError("Tiling does not fit swizzle")
       return mgpu.FragmentedArray.load_tiled(
-          x_ref, is_signed=mgpu_utils.is_signed(x_aval.dtype), swizzle=swizzle,
-          layout=layout
+          x_ref,
+          is_signed=is_signed,
+          swizzle=swizzle,
+          layout=layout,
       )
     case ():
       # Handle scalar indexing.
       if not ctx.avals_out[0].shape:
         is_signed = mgpu_utils.is_signed(x_aval.dtype)
         val = memref_dialect.load(x_ref, [])
-        return mgpu.FragmentedArray.splat(val, shape=(), layout=layout, is_signed=is_signed)
+        return mgpu.FragmentedArray.splat(
+            val, shape=(), layout=layout, is_signed=is_signed
+        )
       match layout:
-        case mgpu.WGMMARowFragLayout():
-          return mgpu.FragmentedArray.load_wgmma_row(
-              x_ref, is_signed=mgpu_utils.is_signed(x_aval.dtype)
+        case mgpu.WGMMA_ROW_LAYOUT:
+          return mgpu.FragmentedArray.load_untiled(
+              x_ref,
+              is_signed=is_signed,
+              layout=layout,
+              swizzle=16,
+              optimized=optimized,
           )
         case mgpu.WGMMAColFragLayout():
-          return mgpu.FragmentedArray.load_wgmma_col(
-              x_ref, is_signed=mgpu_utils.is_signed(x_aval.dtype)
-          )
+          return mgpu.FragmentedArray.load_wgmma_col(x_ref, is_signed=is_signed)
         case mgpu.WGStridedFragLayout(shape=shape, vec_size=vec_size):
           ref_ty = ir.MemRefType(x_ref.type)
           if shape != tuple(ref_ty.shape):
@@ -122,12 +128,10 @@ def _load_p_lowering_rule(
             )
 
           return mgpu.FragmentedArray.load_strided(
-              x_ref, is_signed=mgpu_utils.is_signed(x_aval.dtype), vec_size=vec_size,
+              x_ref, is_signed=is_signed, vec_size=vec_size,
           )
         case None:
-          return mgpu.FragmentedArray.load_strided(
-              x_ref, is_signed=mgpu_utils.is_signed(x_aval.dtype)
-          )
+          return mgpu.FragmentedArray.load_strided(x_ref, is_signed=is_signed)
         case _:
           raise NotImplementedError(f"Unsupported layout: {layout}")
     case _:
@@ -135,7 +139,11 @@ def _load_p_lowering_rule(
 
 
 def load(
-    src: _Ref, idx, *, layout: Layout | ParameterizedLayout | None = None
+    src: _Ref,
+    idx,
+    *,
+    layout: Layout | ParameterizedLayout | None = None,
+    optimized: bool = True,
 ) -> jax.Array:
   """Loads from a reference into an array with the specified layout.
 
@@ -143,6 +151,8 @@ def load(
     src: The reference to load from. Can be either in SMEM or GMEM.
     idx: The index to load from.
     layout: The optional layout to use for the resulting array.
+    optimized: If True, a compilation error will be raised if no optimized
+      implementation for the load is available.
 
   Returns:
     The loaded array.
@@ -157,7 +167,8 @@ def load(
       src,
       *flat_src_transforms,
       args_tree=src_transforms_treedef,
-      layout=layout
+      layout=layout,
+      optimized=optimized,
   )
 
 
