@@ -2076,14 +2076,22 @@ def _pjit_linearization(nzs, *primals_in, jaxpr,
                         donated_invars, ctx_mesh, name, keep_unused, inline,
                         compiler_options_kvs):
   primal_jaxpr, num_residuals, nzs_out, tangent_jaxpr = ad.linearize_jaxpr(jaxpr, nzs)
-  # constvars will become residuals. Move them to the end of the ordinary args.
   res_shardings = (UNSPECIFIED,) * num_residuals
   res_layouts = (None,) * num_residuals
   res_donated = (False,) * num_residuals
+
+  in_fwd = pe._jaxpr_forwarding(primal_jaxpr.jaxpr)
+  in_fwd, _ = split_list(in_fwd, [num_residuals])
+  keep = tuple(f is None for f in in_fwd) + (True,) * len(out_shardings)
+  primal_jaxpr = pe.prune_closed_jaxpr_outputs(primal_jaxpr, keep)
+  num_residuals = sum(f is None for f in in_fwd)
+
   def tangent_fun(consts_, *tangents):
+    consts_it = iter(consts_)
+    res = [next(consts_it) if f is None else primals_in[f] for f in in_fwd]
+    assert next(consts_it, None) is None
     tangents_nz = _filter_zeros(nzs, tangents)
-    assert len(consts_) == num_residuals
-    nz_tangents_out = pjit_p.bind(*(*tangents_nz, *consts_),
+    nz_tangents_out = pjit_p.bind(*(*tangents_nz, *res),
         jaxpr=tangent_jaxpr,
         in_shardings=_filter_zeros(nzs, in_shardings) + res_shardings,
         out_shardings=_filter_zeros(nzs_out, out_shardings),
@@ -2106,9 +2114,9 @@ def _pjit_linearization(nzs, *primals_in, jaxpr,
 
   ans = pjit_p.bind(*primals_in, jaxpr=primal_jaxpr,
                     in_shardings=in_shardings,
-                    out_shardings=(*res_shardings, *out_shardings),
+                    out_shardings=(*res_shardings[:num_residuals], *out_shardings),
                     in_layouts=in_layouts,
-                    out_layouts=(*res_layouts, *out_layouts),
+                    out_layouts=(*res_layouts[:num_residuals], *out_layouts),
                     donated_invars=donated_invars,
                     ctx_mesh=ctx_mesh,
                     name=name,
