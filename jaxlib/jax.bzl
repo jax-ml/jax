@@ -82,6 +82,12 @@ def get_zstandard():
         return []
     return ["@pypi_zstandard//:pkg"]
 
+# TODO(rdyro): remove this once tensorstore builds against Python 3.13 and 3.14
+def get_tensorstore():
+    if HERMETIC_PYTHON_VERSION in ("3.13", "3.13-ft", "3.14", "3.14-ft"):
+        return []
+    return ["@pypi_tensorstore//:pkg"]
+
 _py_deps = {
     "absl/logging": ["@pypi_absl_py//:pkg"],
     "absl/testing": ["@pypi_absl_py//:pkg"],
@@ -102,6 +108,7 @@ _py_deps = {
     "numpy": ["@pypi_numpy//:pkg"],
     "scipy": ["@pypi_scipy//:pkg"],
     "tensorflow_core": [],
+    "tensorstore": get_tensorstore(),
     "torch": [],
     "zstandard": get_zstandard(),
 }
