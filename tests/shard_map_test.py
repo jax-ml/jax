@@ -2456,8 +2456,8 @@ class ShardMapTest(jtu.JaxTestCase):
     @partial(
       shard_map,
       mesh=mesh,
-      in_specs=P('j'),
-      out_specs=P('j'),
+      in_specs=P(('i', 'k')),
+      out_specs=P(('i', 'k')),
       )
     def f(x):
       return jnp.sin(x)
@@ -2467,11 +2467,11 @@ class ShardMapTest(jtu.JaxTestCase):
     ir = jax.jit(jax.grad(lambda x: f(x).sum())).lower(xs)
     if config.use_shardy_partitioner.value:
       self.assertIn(
-          'out_shardings=[<@mesh, [{"i", "j", "k", "a"}]>]', ir.as_text()
+          'out_shardings=[<@mesh, [{"i", "k"}]>]', ir.as_text()
       )
     else:
       self.assertIn(
-          "{jax.result_info = \"[('i', 'j', 'k', 'a')]\"}", ir.as_text()
+          "{jax.result_info = \"[('i', 'k')]\"}", ir.as_text()
       )
 
   def test_vmap_spmd_axis_name_error(self):

@@ -138,9 +138,9 @@ def shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
 
   .. _SPMD multi-device parallelism with shard_map: https://jax.readthedocs.io/en/latest/notebooks/shard_map.html
   """
-  # if not check_rep:
-  #   import unittest
-  #   raise unittest.SkipTest('fuck you')
+  if not check_rep:
+    import unittest
+    raise unittest.SkipTest('fuck you')
   return _shard_map(f, mesh, in_specs, out_specs, check_rep, auto)
 
 def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
