@@ -3531,8 +3531,14 @@ def _semaphore_wait_lowering_rule(ctx: LoweringRuleContext, *args, args_tree):
   return []
 lowering_rules[primitives.semaphore_wait_p] = _semaphore_wait_lowering_rule
 
-def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
-                             device_id_type: primitives.DeviceIdType):
+
+def _dma_start_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    tree,
+    device_id_type: primitives.DeviceIdType,
+    priority: int,
+):
   (
       src_ref,
       src_transforms,
@@ -3564,10 +3570,17 @@ def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   sem, _ = _transform_ref(sem, sem_aval.dtype, sem_aval.shape, sem_transforms)
   if device_id is not None:
     device_id = _device_id_to_logical(ctx, device_id, device_id_type)
-  tpu.enqueue_dma(src_ref, dst_ref, sem, source_semaphore=src_sem,
-                  device_id=device_id)
-
+  tpu.enqueue_dma(
+      src_ref,
+      dst_ref,
+      sem,
+      source_semaphore=src_sem,
+      device_id=device_id,
+      priority=priority,
+  )
   return []
+
+
 lowering_rules[tpu_primitives.dma_start_p] = _dma_start_lowering_rule
 
 
