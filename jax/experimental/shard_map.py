@@ -190,8 +190,11 @@ def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
       return tuple(map(_canonicalize_spec, out_specs_flat))
 
     rewrite = check_rep
-    if not config.varying_axes_in_types.value and rewrite:
-      fun = _efficient_transpose_rewrite(fun, mesh, in_names_flat, out_names_thunk)
+    if rewrite:
+      if config.varying_axes_in_types.value:
+        fun = _implicit_pbroadcasts_on_output(fun, out_names_thunk)
+      else:
+        fun = _efficient_transpose_rewrite(fun, mesh, in_names_flat, out_names_thunk)
 
     try:
       out_flat = shard_map_p.bind(
@@ -214,6 +217,12 @@ def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
         raise ValueError(msg) from None
     return tree_unflatten(out_tree(), out_flat)
   return wrapped
+
+@lu.transformation2
+def _implicit_pbroadcasts_on_output(f, out_names_thunk, *args, **kwargs):
+  out_flat = f(*args, **kwargs)
+  return [pbroadcast(o, tuple(_names_to_vma(n) - o.vma))
+          for o, n in zip(out_flat, out_names_thunk())]
 
 # Internally use AxisNames = dict[int, tuple[AxisName, ...]], not PartitionSpecs
 AxisNames = dict[int, tuple[AxisName, ...]]  # TODO(mattjj): make it hashable
@@ -846,6 +855,9 @@ def _rep_to_spec(mesh, auto, rep):
 
 def _vma_to_spec(mesh, vma):
   return P(tuple(i for i in mesh.axis_names if i in vma))
+
+def _names_to_vma(names):
+  return {n for ns in names.values() for n in ns}
 
 def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
                     check_rep, rewrite, auto):
