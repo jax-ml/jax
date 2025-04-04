@@ -194,6 +194,11 @@ def _linearize_jaxpr(
   tangent_trace.invalidate()
   if attrs_tracked:
     raise NotImplementedError("TODO: attrs")
+  tangent_jaxpr, used_consts, _ = pe.dce_jaxpr_consts(
+        tangent_jaxpr, [True] * len(tangent_jaxpr.outvars),
+        [False] * len(tangent_jaxpr.constvars) + [True] * len(tangent_jaxpr.invars))
+  tangent_consts = [c for c, used in zip(tangent_consts, used_consts) if used]
+
   residuals_and_primals = (*tangent_consts, *out_primals)
   residuals_and_primals = map(primal_trace.to_jaxpr_tracer, residuals_and_primals)
   primal_jaxpr, primal_consts, attrs_tracked = primal_trace.to_jaxpr(residuals_and_primals, debug_info)
