@@ -1211,12 +1211,6 @@ def _swap_lowering_rule(
           )
           value.store_untiled(x_smem)
           return old_value
-        case mgpu.WGMMAColFragLayout():
-          old_value = mgpu.FragmentedArray.load_wgmma_col(
-              x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
-          )
-          value.store_untiled(x_smem)
-          return old_value
         case _:
           old_value = mgpu.FragmentedArray.load_strided(
               x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
