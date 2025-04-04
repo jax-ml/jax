@@ -20,6 +20,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
   * {func}`jax.numpy.array` no longer accepts `None`. This behavior was
     deprecated since November 2023 and is now removed.
+  * {func}`jax.random.randint` with 8-bit or 16-bit dtypes has been modifed to
+    avoid producing a biased distribution.
 
 * Changes
   * The minimum CuDNN version is v9.8.

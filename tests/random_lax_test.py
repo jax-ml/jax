@@ -1632,6 +1632,21 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     # TODO(mattjj): enable this test if/when RngBitGenerator supports it
     raise SkipTest('8-bit types not supported with RBG PRNG')
 
+  def test_randint_uint8_bias(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/27702
+    key = self.make_key(7534892)
+    n_samples = 100_000
+    n_bins = 100
+    data = jax.random.randint(key, (n_samples,), 0, n_bins, dtype='uint8')
+
+    # Check that counts within each bin are consistent with a uniform distribution
+    # (within three poisson standard deviations).
+    counts = jnp.bincount(data, length=n_bins).astype(float)
+    expected = n_samples / n_bins
+    std = np.sqrt(expected)
+    self.assertTrue(np.all(abs(counts - expected) < 3 * std),
+                    f"Expected counts = {expected:.1f} +/- {std:.1f}; got {counts=}")
+
 
 @jtu.with_config(jax_default_prng_impl='unsafe_rbg')
 class LaxRandomWithUnsafeRBGPRNGTest(LaxRandomWithRBGPRNGTest):
