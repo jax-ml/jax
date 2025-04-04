@@ -21,6 +21,7 @@ from typing import Any, Union
 from jax._src import ad_util
 from jax._src import core
 from jax._src import dispatch
+# from jax._src import dtypes
 from jax._src import pretty_printer as pp
 from jax._src import traceback_util
 from jax._src import tree_util
@@ -144,6 +145,13 @@ def ref_swap(
     _function_name: str = "ref_swap",
 ) -> Array:
   """Sets a `Ref`'s value and returns the original value."""
+  # aval = core.typeof(value)
+  # if aval.weak_type and aval.dtype != ref_or_view.dtype:
+  #   if (dt := dtypes.promote_types(aval.dtype, ref_or_view.dtype)) == ref_or_view.dtype:
+  #     value = lax.convert_element_type(value, dt)
+  #   else:
+  #     raise ValueError(f"Invalid dtype for `swap`. Ref dtype {ref_or_view.dtype}. "
+  #                      f"Value dtype: {aval.dtype}")
   ref, transforms = get_ref_and_transforms(ref_or_view, idx, _function_name)
   flat_transforms, tree = tree_util.tree_flatten(transforms)
   return swap_p.bind(ref, value, *flat_transforms, tree=tree)
@@ -213,8 +221,7 @@ def _sharding_after_transforming(sharding, transforms):
   return sharding
 
 
-def _get_abstract_eval(ref_aval: AbstractRef, *args,
-                       tree):
+def _get_abstract_eval(ref_aval: AbstractRef, *args, tree):
   transforms = tree_util.tree_unflatten(tree, args)
   if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`get` must be called on `Ref` types: {ref_aval}.")
@@ -248,12 +255,9 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
                        f"Expected shape: {expected_out_shape}. "
                        f"Value shape: {val_aval.shape}. "
                        f"Transforms: {transforms}. ")
-    if expected_out_dtype != val_aval.dtype and not val_aval.weak_type:
-      raise ValueError(
-          "Invalid dtype for `swap`. "
-          f"Ref dtype: {expected_out_dtype}. "
-          f"Value dtype: {val_aval.dtype}. "
-      )
+    if expected_out_dtype != val_aval.dtype:
+        raise ValueError(f"Invalid dtype for `swap`. Ref dtype: {expected_out_dtype}. "
+                         f"Value dtype: {val_aval.dtype}. ")
     out_aval = core.ShapedArray(expected_out_shape, expected_out_dtype)
   else:
     if transforms:
