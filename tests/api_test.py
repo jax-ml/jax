@@ -1627,6 +1627,27 @@ class APITest(jtu.JaxTestCase):
     assert g(2.0) == 4.0
     assert len(side) == 1
 
+  @jtu.thread_unsafe_test()  # Concurrent ache eviction means we may retrace.
+  def test_fwd_and_bwd(self):
+    def f(x, W):
+        return x @ W
+
+    x = W = cot_out = jnp.ones((4,4))
+    expected_y, f_vjp = api.vjp(f, x, W)
+    expected_cot_x, expected_cot_W = f_vjp(cot_out)
+
+    fwd, bwd = api.fwd_and_bwd(f)
+    y, residuals = fwd(x, W)
+    cot_x, cot_W = bwd(residuals, cot_out)
+
+    self.assertArraysAllClose(y, expected_y)
+    self.assertArraysAllClose(cot_x, expected_cot_x)
+    self.assertArraysAllClose(cot_W, expected_cot_W)
+
+    with jax.no_tracing():
+      y, residuals = fwd(x, W)
+      cot_x, cot_W = bwd(residuals, cot_out)  # no recompilation
+
   @parameterized.named_parameters(
       {"testcase_name": f"_{transform.__name__}", "transform": transform}
       for transform in [grad, jacfwd, jacrev])
