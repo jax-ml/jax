@@ -43,8 +43,6 @@ from jax._src.interpreters.mlir import (
   flatten_ir_values as flatten_lowering_ir_args,  # TODO(phawkins): remove me  # noqa: F401
   flatten_ir_values as flatten_ir_values,
   unflatten_ir_values_like_types as unflatten_ir_values_like_types,
-  func_dialect as func_dialect,
-  hlo as hlo,
   i32_attr as i32_attr,
   i64_attr as i64_attr,
   ir as ir,
