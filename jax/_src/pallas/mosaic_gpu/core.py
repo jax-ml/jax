@@ -211,6 +211,9 @@ class MemoryRefTransform(pallas_core.MemoryRefTransform, abc.ABC):
   def to_gpu_transform(self) -> mgpu.MemRefTransform:
     pass
 
+  def redo(self, ref):
+    raise NotImplementedError
+
   def batch(self, leading_rank: int):
     """Returns a transform that accepts a ref with the extra `leading_rank` dims.
 
@@ -240,6 +243,15 @@ class TilingTransform(MemoryRefTransform):
     return dataclasses.replace(
         ref, transforms=(*ref.transforms, UntileRef(self.tiling))
     )
+
+  def redo(self, ref: pallas_core.TransformedRef) -> pallas_core.TransformedRef:
+    if not ref.transforms:
+      raise ValueError("Cannot redo a tiling transform on a non-tiled ref.")
+
+    if ref.transforms[-1] != UntileRef(self.tiling):
+      raise NotImplementedError("Can only redo an immediately undone tiling.")
+
+    return dataclasses.replace(ref, transforms=ref.transforms[:-1])
 
   def batch(self, leading_rank: int):
     return self
@@ -341,6 +353,31 @@ def _perm_inverse(permutation: tuple[int, ...]) -> tuple[int, ...]:
   return tuple(inverse)
 
 
+def _apply_transpose_fusing(ref: pallas_core.TransformedRef, permutation: tuple[int, ...]):
+  if len(permutation) != len(ref.shape):
+    raise ValueError(
+        f"Cannot redo a transpose transform with permutation {permutation}"
+        f" on a ref with shape {ref.shape}"
+    )
+
+  if ref.transforms and isinstance(ref.transforms[-1], TransposeRef):
+    t: TransposeRef = ref.transforms[-1]
+    assert len(permutation) == len(t.permutation)
+    perm = tuple(permutation[i] for i in t.permutation)
+    if perm == tuple(range(len(permutation))):
+      return dataclasses.replace(ref, transforms=ref.transforms[:-1])
+    else:
+      return dataclasses.replace(ref, transforms=(*ref.transforms[:-1], TransposeRef(_perm_inverse(perm))))
+
+  return dataclasses.replace(
+      ref,
+      transforms=(
+          *ref.transforms,
+          TransposeRef(permutation),
+      ),
+  )
+
+
 @dataclasses.dataclass(frozen=True)
 class TransposeTransform(MemoryRefTransform):
   """Transpose a tiled memref."""
@@ -356,13 +393,10 @@ class TransposeTransform(MemoryRefTransform):
     )
 
   def undo(self, ref: pallas_core.TransformedRef) -> pallas_core.TransformedRef:
-    return dataclasses.replace(
-        ref,
-        transforms=(
-            *ref.transforms,
-            TransposeRef(_perm_inverse(self.permutation)),
-        ),
-    )
+    return _apply_transpose_fusing(ref, _perm_inverse(self.permutation))
+
+  def redo(self, ref: pallas_core.TransformedRef) -> pallas_core.TransformedRef:
+    return _apply_transpose_fusing(ref, self.permutation)
 
   def to_gpu_transform(self) -> mgpu.MemRefTransform:
     return mgpu.TransposeTransform(self.permutation)
@@ -415,7 +449,7 @@ class TransposeRef(state_types.Transform):
     return pp.text(f"{{transpose({list(self.permutation)})}}")
 
 
-def transform_ref(
+def _push_transform_ref(
     ref: pallas_core.TransformedRef,
     transform: state_types.Transform
 ) -> pallas_core.TransformedRef:
@@ -431,14 +465,16 @@ def transpose_ref(
     ref: pallas_core.TransformedRef | Any,
     permutation: tuple[int, ...],
 ) -> pallas_core.TransformedRef:
-  return transform_ref(ref, TransposeRef(permutation))
+  return _push_transform_ref(ref, TransposeRef(permutation))
 
 def untile_ref(ref, tiling: tuple[int, ...]) -> pallas_core.TransformedRef:
-  return transform_ref(ref, UntileRef(tiling))
+  return _push_transform_ref(ref, UntileRef(tiling))
 
 def unswizzle_ref(ref, swizzle: int) -> pallas_core.TransformedRef:
-  return transform_ref(ref, UnswizzleRef(swizzle))
+  return _push_transform_ref(ref, UnswizzleRef(swizzle))
 
+def transform_ref(ref, transform: MemoryRefTransform):
+  return transform.redo(ref)
 
 @dataclasses.dataclass(frozen=True)
 class SwizzleTransform(MemoryRefTransform):
@@ -458,6 +494,12 @@ class SwizzleTransform(MemoryRefTransform):
     return dataclasses.replace(
         ref, transforms=(*ref.transforms, UnswizzleRef(self.swizzle))
     )
+
+  def redo(self, ref: pallas_core.TransformedRef) -> pallas_core.TransformedRef:
+    if not ref.transforms or not isinstance(ref.transforms[0], UnswizzleRef):
+      raise ValueError(f"Cannot redo a swizzle transform a non-unswizzled ref. {ref}")
+
+    return dataclasses.replace(ref, transforms=ref.transforms[1:])
 
   def to_gpu_transform(self) -> mgpu.MemRefTransform:
     raise RuntimeError("SwizzleTransform does not have a GPU transform.")

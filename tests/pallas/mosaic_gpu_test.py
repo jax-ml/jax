@@ -705,6 +705,34 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(128 * 128, dtype=jnp.float32).reshape(128, 128)
     np.testing.assert_array_equal(f(x), x * 2)
 
+  @parameterized.named_parameters(
+      (
+          "swizzling",
+          plgpu.SwizzleTransform(128),
+      ),
+      (
+          "transpose",
+          plgpu.TransposeTransform((1, 0, 3, 2)),
+      ),
+      (
+          "tiling",
+          plgpu.TilingTransform((8, 32)),
+      ),
+  )
+  def test_transform_annihilation(self, transform):
+    def kernel(_):
+      def body(untransformed_ref):
+        self.assertEmpty(plgpu.transform_ref(untransformed_ref, transform).transforms)
+      pl.run_scoped(
+          body,
+          plgpu.SMEM((16, 4, 8, 32), jnp.float32, transforms=(transform,)),
+      )
+
+    pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct([128, 128], jnp.float32),
+    )()
+
   def test_copy_with_transforms_and_indexing(self):
     self.skip_if_wg_semantics()
 
