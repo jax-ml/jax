@@ -208,9 +208,14 @@ class AsyncCopyDescriptor:
           self.device_id,
       ))
 
-  def start(self):
+  def start(self, priority: int = 0):
     flat_args, tree = self._get_args_and_tree()
-    dma_start_p.bind(*flat_args, tree=tree, device_id_type=self.device_id_type)
+    dma_start_p.bind(
+        *flat_args,
+        tree=tree,
+        device_id_type=self.device_id_type,
+        priority=priority,
+    )
 
   def wait(self):
     if self.is_remote:
@@ -239,7 +244,9 @@ dma_start_p = jax_core.Primitive('dma_start')
 dma_start_p.multiple_results = True
 
 @dma_start_p.def_effectful_abstract_eval
-def _dma_start_abstract_eval(*args, tree, device_id_type):
+def _dma_start_abstract_eval(*args, tree, device_id_type, priority):
+  if priority < 0:
+    raise ValueError(f"DMA start priority must be non-negative: {priority}")
   (
       src_ref_aval,
       src_transforms_avals,
@@ -274,6 +281,7 @@ def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
                       settings: jax_core.JaxprPpSettings):
   invars = eqn.invars
   tree = eqn.params["tree"]
+  priority = eqn.params["priority"]
   (
       src_ref,
       src_transforms,
@@ -290,7 +298,7 @@ def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
   if src_sem or device_id:
     return jax_core._pp_eqn(eqn, context, settings)
   return pp.concat([
-      pp.text("dma_start"),
+      pp.text(f"dma_start(p{priority})"),
       pp.text(" "),
       sp.pp_ref_transforms(context, src_ref, src_transforms),
       pp.text(" -> "),
@@ -301,8 +309,12 @@ def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
 
 jax_core.pp_eqn_rules[dma_start_p] = _dma_start_pp_eqn
 
-def dma_start_partial_discharge_rule(should_discharge, in_avals, out_avals,
-                                     *args, tree, device_id_type):
+
+def dma_start_partial_discharge_rule(
+    should_discharge, in_avals, out_avals, *args, tree, device_id_type, priority
+):
+  # Note: we ignore the DMA priority in discharge rules.
+  del priority
   (
       src_ref,
       src_transforms,
@@ -461,6 +473,7 @@ def dma_start_partial_discharge_rule(should_discharge, in_avals, out_avals,
 
   return new_vals, []
 
+
 state_discharge.register_partial_discharge_rule(dma_start_p)(dma_start_partial_discharge_rule)
 
 
@@ -550,6 +563,7 @@ def _get_ref_and_transforms(ref):
     return ref.ref, ref.transforms
   return ref, ()
 
+
 def make_async_copy(src_ref, dst_ref, sem):
   """Issues a DMA copying from src_ref to dst_ref."""
   src_ref, src_transforms = _get_ref_and_transforms(src_ref)
@@ -568,11 +582,13 @@ def make_async_copy(src_ref, dst_ref, sem):
       primitives.DeviceIdType.MESH,
   )
 
-def async_copy(src_ref, dst_ref, sem):
+
+def async_copy(src_ref, dst_ref, sem, *, priority: int = 0):
   """Issues a DMA copying from src_ref to dst_ref."""
   copy_descriptor = make_async_copy(src_ref, dst_ref, sem)
-  copy_descriptor.start()
+  copy_descriptor.start(priority=priority)
   return copy_descriptor
+
 
 def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
                            device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH):
