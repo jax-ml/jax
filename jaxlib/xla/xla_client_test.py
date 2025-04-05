@@ -48,12 +48,12 @@ bfloat16 = ml_dtypes.bfloat16
 float4_e2m1fn = ml_dtypes.float4_e2m1fn
 float8_e3m4 = ml_dtypes.float8_e3m4
 float8_e4m3 = ml_dtypes.float8_e4m3
-float8_e8m0fnu = ml_dtypes.float8_e8m0fnu
 float8_e4m3fn = ml_dtypes.float8_e4m3fn
 float8_e4m3fnuz = ml_dtypes.float8_e4m3fnuz
 float8_e4m3b11fnuz = ml_dtypes.float8_e4m3b11fnuz
 float8_e5m2 = ml_dtypes.float8_e5m2
 float8_e5m2fnuz = ml_dtypes.float8_e5m2fnuz
+float8_e8m0fnu = ml_dtypes.float8_e8m0fnu
 ops = xla_client.ops
 xla_computation_to_mlir_module = (
     xla_client._xla.mlir.xla_computation_to_mlir_module)
@@ -178,10 +178,17 @@ def TestFactory(xla_backend,
   # TODO(zhangqiaorjc): test fp8 types when XLA support is complete.
   # standard_dtypes is only used for BufferProtocolTest so we only test fp8
   # round trip tests.
-  fp8_dtypes = [float8_e4m3b11fnuz, float8_e4m3fn, float8_e5m2]
+  fp8_dtypes = [
+      float8_e3m4,
+      float8_e4m3,
+      float8_e4m3fn,
+      float8_e4m3b11fnuz,
+      float8_e5m2,
+      float8_e8m0fnu,
+  ]
   standard_dtypes += fp8_dtypes
-  # TODO(reedwm): Uncomment once the minimum ml_dtypes in JAX is >= 0.5.0.
-  # standard_dtypes += [float4_e2m1fn, float8_e3m4, float8_e4m3, float8_e8m0fnu]
+  # TODO(upwind): testRoundTrip and testLiveBuffers fail for float4_e2m1fn type
+  # standard_dtypes += [float4_e2m1fn]
   dlpack_dtypes = int_dtypes + float_dtypes + [np.bool_] + complex_dtypes
 
   class ComputationTest(parameterized.TestCase):
@@ -2253,6 +2260,8 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
         "dtype": dtype,
     } for dtype in float_dtypes + fp8_dtypes)
     def testNextAfter(self, dtype):
+      if dtype == float8_e8m0fnu:
+        self.skipTest("Test fails on CPU with Mismatched elements error")
       if dtype == np.float64 and self.backend.platform == "tpu":
         self.skipTest("TPU doesn't support float64")
       if dtype == bfloat16 and self.backend.platform == "tpu":
