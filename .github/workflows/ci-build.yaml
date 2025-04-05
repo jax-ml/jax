@@ -140,7 +140,7 @@ jobs:
     - name: Image Setup
       run: |
         apt update
-        apt install -y libssl-dev libsqlite3-dev
+        apt install -y libssl-dev libsqlite3-dev build-essential
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@8d9ed9ac5c53483de85588cdf95a591a75ab9f55  # v5.5.0
       with:
@@ -151,7 +151,7 @@ jobs:
         uv pip install --system -r docs/requirements.txt
     - name: Render documentation
       run: |
-        sphinx-build -j auto --color -W --keep-going -b html -D nb_execution_mode=off docs docs/build/html
+        sphinx-build -j auto --color -W --keep-going -b html docs docs/build/html
 
   jax2tf_test:
     name: "jax2tf_test (py ${{ matrix.python-version }} on ${{ matrix.os }}, x64=${{ matrix.enable-x64}})"
