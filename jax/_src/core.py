@@ -1899,6 +1899,7 @@ def get_sharding(sharding, shape):
     raise ValueError("Mesh of an aval must be an AbstractMesh. "
                      f"Got {out_s.mesh} of type {type(out_s.mesh)}")
   _check_divisibility(out_s, shape)
+  assert out_s.memory_kind is None
   return out_s
 
 def str_short_aval(shape, dtype, mesh, spec, vma,
