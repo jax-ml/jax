@@ -501,6 +501,24 @@ def partial_eval_wrapper_nounits(
   store.store((*maybe_fwds, out_knowns, out_avals, jaxpr, env))
   return (*out_consts, *res)
 
+@lu.transformation_with_aux2
+def partial_eval_wrapper_nounits2(
+    f: Callable,
+    store: lu.Store,
+    in_knowns: Sequence[bool],
+    in_avals: Sequence[AbstractValue],
+    *in_consts: Any):
+  in_avals_, in_consts_ = iter(in_avals), iter(in_consts)
+  in_pvals = [PartialVal.known(next(in_consts_)) if known else
+              PartialVal.unknown(next(in_avals_)) for known in in_knowns]
+  sentinel = object()
+  assert next(in_avals_, sentinel) is next(in_consts_, sentinel) is sentinel
+  jaxpr, (*maybe_fwds, out_pvals, res, env) = f(in_pvals)
+  out_knowns, _, out_consts = partition_pvals(out_pvals)
+  res_avals = [core.typeof(r) for r in res]
+  store.store((*maybe_fwds, out_knowns, res_avals, jaxpr, env))
+  return (*out_consts, *res)
+
 custom_partial_eval_rules: dict[Primitive, Callable] = {}
 call_partial_eval_rules: dict[Primitive, Callable] = {}
 call_param_updaters: dict[Primitive, Callable] = {}

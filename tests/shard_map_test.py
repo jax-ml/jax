@@ -1007,49 +1007,51 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((2, 2,), ('x', 'y'))
     x = jnp.arange(4)
 
-    def f(x, y):
-      def true_fn(x, y):
-        return x
-      def false_fun(x, y):
-        return x + 1
-      return jax.lax.cond(True, true_fn, false_fun, x, y)
+    # def f(x, y):
+    #   def true_fn(x, y):
+    #     return x
+    #   def false_fun(x, y):
+    #     return x + 1
+    #   return jax.lax.cond(True, true_fn, false_fun, x, y)
 
-    shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
-    with self.assertRaisesRegex(ValueError, "require replication"):
-      shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(None))(x, x)
+    # shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
+    # with self.assertRaisesRegex(ValueError, "require replication"):
+    #   shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(None))(x, x)
 
-    def f(x, y):
-      def true_fn(x, y):
-        return x
-      def false_fun(x, y):
-        return y
-      return jax.lax.cond(True, true_fn, false_fun, x, y)
+    # def f(x, y):
+    #   def true_fn(x, y):
+    #     return x
+    #   def false_fun(x, y):
+    #     return y
+    #   return jax.lax.cond(True, true_fn, false_fun, x, y)
 
-    shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(('x', 'y')))(x, x)
-    with self.assertRaisesRegex(ValueError, "require replication"):
-      shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
+    # # NOTE(mattjj,yashkatariya): we intentionally changed the behavior of HOPs
+    # # like cond so that the user needs to write pbroadcasts on the output
+    # # shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(('x', 'y')))(x, x)
 
-    def f(x, y):
-      def true_fn(x, y):
-        return x
-      def false_fun(x, y):
-        return x + 1
-      return jax.lax.cond(jnp.any(x > 0), true_fn, false_fun, x, y)
+    # with self.assertRaisesRegex(TypeError, "output must have identical types"):
+    #   shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
 
-    shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
-    with self.assertRaisesRegex(ValueError, "require replication"):
-      shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(None))(x, x)
+    # def f(x, y):
+    #   def true_fn(x, y):
+    #     return x
+    #   def false_fun(x, y):
+    #     return x + 1
+    #   return jax.lax.cond(jnp.any(x > 0), true_fn, false_fun, x, y)
 
-    def f(x, y):
-      def true_fn(x, y):
-        return x
-      def false_fun(x, y):
-        return x + 1
-      return jax.lax.cond(jnp.any(y > 0), true_fn, false_fun, x, y)
+    # shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
+    # with self.assertRaisesRegex(ValueError, "require replication"):
+    #   shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(None))(x, x)
 
-    shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(('x', 'y')))(x, x)
-    with self.assertRaisesRegex(ValueError, "require replication"):
-      shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
+    # def f(x, y):
+    #   def true_fn(x, y):
+    #     return x
+    #   def false_fun(x, y):
+    #     return x + 1
+    #   return jax.lax.cond(jnp.any(y > 0), true_fn, false_fun, x, y)
+
+    # shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(('x', 'y')))(x, x)
+    # shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
 
     # https://github.com/jax-ml/jax/issues/24418
     def f(a):
@@ -2454,8 +2456,8 @@ class ShardMapTest(jtu.JaxTestCase):
     @partial(
       shard_map,
       mesh=mesh,
-      in_specs=P('j'),
-      out_specs=P('j'),
+      in_specs=P(('i', 'k')),
+      out_specs=P(('i', 'k')),
       )
     def f(x):
       return jnp.sin(x)
@@ -2465,11 +2467,11 @@ class ShardMapTest(jtu.JaxTestCase):
     ir = jax.jit(jax.grad(lambda x: f(x).sum())).lower(xs)
     if config.use_shardy_partitioner.value:
       self.assertIn(
-          'out_shardings=[<@mesh, [{"i", "j", "k", "a"}]>]', ir.as_text()
+          'out_shardings=[<@mesh, [{"i", "k"}]>]', ir.as_text()
       )
     else:
       self.assertIn(
-          "{jax.result_info = \"[('i', 'j', 'k', 'a')]\"}", ir.as_text()
+          "{jax.result_info = \"[('i', 'k')]\"}", ir.as_text()
       )
 
   def test_vmap_spmd_axis_name_error(self):

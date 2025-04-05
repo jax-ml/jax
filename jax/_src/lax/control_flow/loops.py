@@ -518,13 +518,11 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
   def body_fun(while_carry):
     i_, carry, yss = while_carry
     i = num_trips - i_ - 1 if reverse else i_
-    xs = [slicing.dynamic_index_in_dim(xs, i, keepdims=False,
-                                       allow_negative_indices=False)
-          for xs in xss]
+    xs = [slicing.dynamic_index_in_dim(
+      xs, i, keepdims=False, allow_negative_indices=False) for xs in xss]
     carry, ys = inner(unroll, carry, xs)
-    yss = [slicing.dynamic_update_index_in_dim(y, upd, i, 0,
-                                               allow_negative_indices=False)
-           for y, upd in zip(yss, ys)]
+    yss = [slicing.dynamic_update_index_in_dim(
+      y, upd, i, 0, allow_negative_indices=False) for y, upd in zip(yss, ys)]
     return i_ + 1, carry, yss
 
   def cond_fun(while_carry):
@@ -550,9 +548,10 @@ def _split_leading(sz, x):
 def _concat(a, b): return lax.concatenate([a, b], 0)
 
 def _empty_array(prefix, length_spec, aval):
+  from jax.experimental.shard_map import pbroadcast
   sharding = aval.sharding.with_spec((*length_spec, *aval.sharding.spec))
-  return lax.broadcast(lax.empty(aval.dtype), (*prefix, *aval.shape),
-                       out_sharding=sharding)
+  empty = pbroadcast(lax.empty(aval.dtype), tuple(aval.vma))
+  return lax.broadcast(empty, (*prefix, *aval.shape), out_sharding=sharding)
 
 eval_jaxpr_p = core.Primitive('eval_jaxpr')
 eval_jaxpr_p.multiple_results = True
@@ -2248,12 +2247,7 @@ def _batch_and_remainder(x, batch_size: int):
   return scan_tree, remainder_tree
 
 @api_boundary
-def map(
-  f,
-  xs,
-  *,
-  batch_size: int | None = None,
-):
+def map(f, xs, *, batch_size: int | None = None):
   """Map a function over leading array axes.
 
   Like Python's builtin map, except inputs and outputs are in the form of

