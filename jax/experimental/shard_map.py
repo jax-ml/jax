@@ -658,7 +658,8 @@ def _check_rep(mesh: Mesh, jaxpr: core.Jaxpr, in_rep: Sequence[RepType]
     rule = _check_rules.get(e.primitive, partial(_rule_missing, e.primitive))
     out_rep = rule(mesh, *map(read, e.invars), **e.params)
     if e.primitive.multiple_results:
-      out_rep = [out_rep] * len(e.outvars) if type(out_rep) is set else out_rep
+      if isinstance(out_rep, (set, frozenset)):
+        out_rep = [out_rep] * len(e.outvars)
       foreach(write, e.outvars, out_rep)
     else:
       write(e.outvars[0], out_rep)
@@ -942,7 +943,7 @@ class ShardMapTrace(core.Trace):
       raise Exception(f"Shouldn't have any non-shard_map tracers: {val}")
     else:
       val_ = _unmatch_spec(self.mesh, {}, val, self.context_mesh)
-      return val_, None
+      return val_, frozenset(self.mesh.axis_names) - self.auto
 
   def process_primitive(self, prim, tracers, params):
     in_vals, in_rep = unzip2(map(self.to_val_rep_pair, tracers))
@@ -958,7 +959,8 @@ class ShardMapTrace(core.Trace):
     rep_rule = _check_rules.get(prim, partial(_rule_missing, prim))
     out_rep = rep_rule(self.mesh, *in_rep, **params) if self.check else set()
     if prim.multiple_results:
-      out_rep = [out_rep] * len(out_vals) if type(out_rep) is set else out_rep
+      if isinstance(out_rep, (set, frozenset)):
+        out_rep = [out_rep] * len(out_vals)
       return map(partial(ShardMapTracer, self), out_rep, out_vals)
     return ShardMapTracer(self, out_rep, out_vals)
 
