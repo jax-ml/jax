@@ -31,25 +31,41 @@ def is_windows() -> bool:
   return sys.platform.startswith("win32")
 
 
+def find_transitive_source_file(relative_file_path, transitive_sources):
+  for ts in transitive_sources:
+    if ts.endswith(relative_file_path):
+      return ts
+  return None
+
+
 def copy_file(
     src_files: str | Sequence[str],
     dst_dir: pathlib.Path,
-    dst_filename = None,
-    runfiles = None,
+    dst_filename=None,
+    runfiles=None,
+    transitive_sources=None,
 ) -> None:
   dst_dir.mkdir(parents=True, exist_ok=True)
   if isinstance(src_files, str):
     src_files = [src_files]
   for src_file in src_files:
-    src_file_rloc = runfiles.Rlocation(src_file)
-    if src_file_rloc is None:
+    if runfiles:
+      src_file_loc = runfiles.Rlocation(src_file)
+    elif transitive_sources:
+      src_file_loc = find_transitive_source_file(src_file, transitive_sources)
+    else:
+      raise RuntimeError(
+          "Either runfiles or transitive_sources should be provided!"
+      )
+    if src_file_loc is None:
       raise ValueError(f"Unable to find wheel source file {src_file}")
-    src_filename = os.path.basename(src_file_rloc)
+
+    src_filename = os.path.basename(src_file_loc)
     dst_file = os.path.join(dst_dir, dst_filename or src_filename)
     if is_windows():
-      shutil.copyfile(src_file_rloc, dst_file)
+      shutil.copyfile(src_file_loc, dst_file)
     else:
-      shutil.copy(src_file_rloc, dst_file)
+      shutil.copy(src_file_loc, dst_file)
 
 
 def platform_tag(cpu: str) -> str:
