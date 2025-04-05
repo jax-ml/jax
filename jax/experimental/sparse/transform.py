@@ -389,6 +389,7 @@ def eval_sparse(
     spvalues: Sequence[SparsifyValue],  # mix of sparse and dense pointers into spenv
     spenv: SparsifyEnv,
 ) -> Sequence[SparsifyValue]:
+  jaxpr = core.insert_dropvars(jaxpr)
   env : dict[core.Var, SparsifyValue] = {}
 
   def read(var: core.Atom) -> SparsifyValue:

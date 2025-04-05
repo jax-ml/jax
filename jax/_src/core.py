@@ -3032,6 +3032,24 @@ def _check_map(ctx_factory, prim, in_avals, params):
 
 # ------------------- Jaxpr printed representation -------------------
 
+def insert_dropvars(jaxpr: Jaxpr) -> Jaxpr:
+  def vars_in_shape(a):
+    return [
+        d for d in a.shape if isinstance(d, Var)
+    ] if isinstance(a, DShapedArray) else []
+  used = {v for eqn in jaxpr.eqns for atom in eqn.invars
+          for v in it.chain([atom], vars_in_shape(atom.aval))
+          if isinstance(atom, Var) and not isinstance(v, Literal)}
+  used |= {v for outvar in jaxpr.outvars
+           for v in it.chain([outvar], vars_in_shape(outvar.aval))
+           if not isinstance(v, Literal)}
+  new_eqns = []
+  for eqn in jaxpr.eqns:
+    new_outvars = [v if v in used else DropVar(v.aval) for v in eqn.outvars]
+    new_eqns.append(eqn.replace(outvars=new_outvars))
+  return jaxpr.replace(eqns=new_eqns)
+
+
 def pp_toplevel_jaxpr(jaxpr_to_print: Jaxpr, *,
                       source_info: bool = False,
                       print_shapes: bool = True,
@@ -3298,6 +3316,7 @@ def pp_jaxpr(
 ) -> pp.Doc:
   if name := context.shared_jaxprs.get(jaxpr):
     return pp.text(name)
+  jaxpr = insert_dropvars(jaxpr)
   eqns_fn = lambda: pp_eqns(jaxpr.eqns, context, settings)
   return pp_jaxpr_skeleton(jaxpr, eqns_fn, context, settings)
 
