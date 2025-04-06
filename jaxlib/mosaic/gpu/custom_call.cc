@@ -41,6 +41,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/CodeGen.h"
