@@ -16,6 +16,8 @@ limitations under the License.
 #ifndef JAXLIB_XLA_SHARDING_H_
 #define JAXLIB_XLA_SHARDING_H_
 
+#include <Python.h>
+
 #include <cstddef>
 #include <optional>
 #include <utility>
@@ -84,10 +86,8 @@ class NamedSharding : public Sharding {
     return logical_device_ids_;
   }
 
-  static nanobind::handle type() {
-    static auto type = nanobind::type<NamedSharding>();
-    return type;
-  }
+  static nanobind::handle type() { return type_; }
+  static void InitializeType();
 
   absl::StatusOr<xla::nb_class_ptr<PyDeviceList>> internal_device_list() const {
     if (internal_device_list_) {
@@ -105,6 +105,7 @@ class NamedSharding : public Sharding {
   nanobind::object manual_axes_;
   nanobind::object logical_device_ids_;
   std::optional<xla::nb_class_ptr<PyDeviceList>> internal_device_list_;
+  static PyObject* type_;
 };
 
 class SingleDeviceSharding : public Sharding {
@@ -120,10 +121,8 @@ class SingleDeviceSharding : public Sharding {
   const nanobind::object& device() const { return device_; }
   const nanobind::object& memory_kind() const { return memory_kind_; }
 
-  static nanobind::handle type() {
-    static auto type = nanobind::type<SingleDeviceSharding>();
-    return type;
-  }
+  static nanobind::handle type() { return type_; }
+  static void InitializeType();
 
   xla::nb_class_ptr<PyDeviceList> internal_device_list() const {
     return internal_device_list_;
@@ -133,6 +132,8 @@ class SingleDeviceSharding : public Sharding {
   nanobind::object device_;
   nanobind::object memory_kind_;
   xla::nb_class_ptr<PyDeviceList> internal_device_list_;
+
+  static PyObject* type_;
 };
 
 // The C++ implementation of jax.PmapSharding in python. It contains a few key
@@ -147,10 +148,8 @@ class PmapSharding : public Sharding {
 
   const ShardingSpec& sharding_spec() const { return sharding_spec_; }
 
-  static nanobind::handle type() {
-    static auto type = nanobind::type<PmapSharding>();
-    return type;
-  }
+  static nanobind::handle type() { return type_; }
+  static void InitializeType();
 
   xla::nb_class_ptr<PyDeviceList> internal_device_list() const {
     return internal_device_list_;
@@ -160,6 +159,7 @@ class PmapSharding : public Sharding {
   xla::nb_numpy_ndarray devices_;
   ShardingSpec sharding_spec_;
   xla::nb_class_ptr<PyDeviceList> internal_device_list_;
+  static PyObject* type_;
 };
 
 class GSPMDSharding : public Sharding {
@@ -184,10 +184,8 @@ class GSPMDSharding : public Sharding {
     return *hash_;
   }
 
-  static nanobind::handle type() {
-    static auto type = nanobind::type<GSPMDSharding>();
-    return type;
-  }
+  static nanobind::handle type() { return type_; }
+  static void InitializeType();
 
   const xla::HloSharding& hlo_sharding() const { return hlo_sharding_; }
 
@@ -234,6 +232,8 @@ class GSPMDSharding : public Sharding {
   nanobind::object memory_kind_;
   std::optional<size_t> hash_;
   xla::nb_class_ptr<PyDeviceList> internal_device_list_;
+
+  static PyObject* type_;
 };
 
 void RegisterSharding(nanobind::module_& m);
