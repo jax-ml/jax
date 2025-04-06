@@ -372,14 +372,29 @@ class PallasCallTest(PallasTest):
     )
 
   def test_inline_mgpu(self):
-    dtype = jnp.bfloat16
+    dtype = jnp.dtype(jnp.bfloat16)
     self.skip_if_wg_semantics()
+    shape = (128, 128)
+    tile = (64, 128 // dtype.itemsize)
+    tiled_shape = mgpu.tile_shape(shape, tile)
+    tiled_shape_t = list(tiled_shape)
+    tiled_shape_t[0], tiled_shape_t[1] = tiled_shape_t[1], tiled_shape_t[0]
+
+    transforms = (
+        plgpu.TilingTransform(tile),
+        plgpu.TransposeTransform((1, 0, 2, 3)),
+        plgpu.SwizzleTransform(128),
+    )
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((128, 128), dtype),
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
         in_specs=(pl.BlockSpec(memory_space=plgpu.GMEM),),
         scratch_shapes=[
-            plgpu.SMEM((128, 128), dtype),
+            plgpu.SMEM(
+                shape,
+                dtype,
+                transforms=transforms,
+            ),
             plgpu.Barrier(num_arrivals=1),
         ],
         out_specs=pl.BlockSpec(memory_space=plgpu.GMEM),
@@ -387,17 +402,38 @@ class PallasCallTest(PallasTest):
     def kernel(x_ref, o_ref, smem_ref, barrier):
       plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier)
       plgpu.barrier_wait(barrier)
-      arr = jnp.ones_like(x_ref)
       @plgpu.inline_mgpu(
-          smem_ref,
-          o_ref,
-          arr,
-          arg_types=[plgpu.RefType(), plgpu.RefType(), plgpu.Layout.WG_SPLAT(x_ref.shape)],
+          arg_types=(plgpu.RefType(transforms),),
+          return_type=plgpu.GPUShapeDtypeStruct(
+              shape, dtype, layout=plgpu.Layout.WGMMA
+          ),
       )
-      def _(ctx, smem_ref, o_ref, y):
+      def foo(ctx, smem_ref):
         del ctx
-        x = mgpu.FragmentedArray.load_strided(smem_ref)
-        (x + y).store_untiled(o_ref)
+        assert smem_ref.type.shape == tiled_shape_t, (smem_ref.type, tiled_shape_t)
+        x = mgpu.FragmentedArray.load_tiled(smem_ref, swizzle=128)
+        y = mgpu.FragmentedArray.splat(
+            mgpu.c(1, x.mlir_dtype), shape=x.shape, layout=x.layout
+        )
+        return (x + y)
+
+      arr = foo(smem_ref)
+      @plgpu.inline_mgpu(arg_types=(plgpu.Layout.WGMMA, plgpu.RefType(transforms), plgpu.RefType()))
+      def store(ctx, arr, smem_ref, o_ref):
+        arr.store_tiled(smem_ref, swizzle=128)
+        mgpu.commit_shared()
+        ctx.async_copy(
+            src_ref=smem_ref,
+            dst_ref=o_ref,
+            swizzle=128,
+            gmem_transform=(
+                mgpu.TileTransform(tile),
+                mgpu.TransposeTransform((1, 0, 2, 3)),
+            ),
+        )
+        ctx.await_async_copy(0)
+
+      store(arr, smem_ref, o_ref)
 
     key = jax.random.key(0)
     x = (jax.random.uniform(key, (128, 128)) * 42).astype(dtype)
