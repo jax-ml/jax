@@ -25,6 +25,7 @@ limitations under the License.
 #include "jaxlib/xla/nb_class_ptr.h"
 #include "jaxlib/xla/py_client.h"
 #include "xla/python/ifrt/device.h"
+#include "xla/xla_data.pb.h"
 
 namespace xla {
 
