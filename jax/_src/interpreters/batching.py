@@ -616,17 +616,15 @@ def _batch_inner(f: Callable, axis_data, out_dim_dests, tag, in_dims, *in_vals):
     trace = BatchTrace(parent_trace, tag, axis_data)
     idx = memoize(lambda: BatchTracer(trace, make_iota(axis_data.size), 0,
                                       source_info_util.current()))
-    in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)
+    with core.set_current_trace(parent_trace):
+      in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)
     with (core.set_current_trace(trace),
           core.extend_axis_env_nd([(axis_data.name, axis_data.size)]),
           core.add_spmd_axis_names(axis_data.spmd_name)):
       outs = f(*in_tracers)
-
-  out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
-  out_vals = map(partial(from_elt, trace, axis_data.size,
-                         axis_data.explicit_mesh_axis),
-                 range(len(outs)), outs, out_dim_dests)
-
+      out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
+      out_vals = map(partial(from_elt, trace, axis_data.size, axis_data.explicit_mesh_axis),
+                     range(len(outs)), outs, out_dim_dests)
   return out_vals, trace
 
 # NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
