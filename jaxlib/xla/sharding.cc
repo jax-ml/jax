@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <Python.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <optional>
@@ -28,6 +29,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/string.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
@@ -242,7 +244,7 @@ NamedSharding::NamedSharding(nb::object mesh, nb::object spec,
   // TODO(phawkins): this leaks a reference to the check_pspec function.
   // A better way to fix this would be to move PartitionSpec and this check into
   // C++.
-  nb::object* check_pspec = [](){
+  nb::object* check_pspec = []() {
     static absl::Mutex mu;
     static nb::object* output = nullptr;
     {
@@ -262,6 +264,13 @@ NamedSharding::NamedSharding(nb::object mesh, nb::object spec,
   (*check_pspec)(mesh_, spec_, manual_axes_);
 }
 
+/*static*/ PyObject* NamedSharding::type_ = nullptr;
+
+/*static*/ void NamedSharding::InitializeType() {
+  // Intentionally leaks a reference.
+  type_ = nanobind::type<NamedSharding>().inc_ref().ptr();
+}
+
 SingleDeviceSharding::SingleDeviceSharding(nb::object device,
                                            nb::object memory_kind)
     : Sharding(/*num_devices=*/1),
@@ -271,6 +280,13 @@ SingleDeviceSharding::SingleDeviceSharding(nb::object device,
           xla::make_nb_class<PyDeviceList>(nb::make_tuple(std::move(device)))) {
   memory_kind_ =
       CheckAndCanonicalizeMemoryKind(memory_kind_, internal_device_list_);
+}
+
+/*static*/ PyObject* SingleDeviceSharding::type_ = nullptr;
+
+/*static*/ void SingleDeviceSharding::InitializeType() {
+  // Intentionally leaks a reference.
+  type_ = nanobind::type<SingleDeviceSharding>().inc_ref().ptr();
 }
 
 SingleDeviceSharding::SingleDeviceSharding(
@@ -295,6 +311,15 @@ PmapSharding::PmapSharding(xla::nb_numpy_ndarray devices,
       xla::make_nb_class<PyDeviceList>(nb::tuple(flat_devices));
 }
 
+/*static*/ PyObject* PmapSharding::type_ = nullptr;
+
+// /*static*/ nanobind::handle PmapSharding::type() { return type_; }
+
+/*static*/ void PmapSharding::InitializeType() {
+  // Intentionally leaks a reference.
+  type_ = nanobind::type<PmapSharding>().inc_ref().ptr();
+}
+
 GSPMDSharding::GSPMDSharding(nb::sequence devices, xla::HloSharding op_sharding,
                              nb::object memory_kind, nb::object device_list)
     : Sharding(/*num_devices=*/nb::len(devices.ptr())),
@@ -316,6 +341,13 @@ GSPMDSharding::GSPMDSharding(nb::sequence devices, xla::HloSharding op_sharding,
       CheckAndCanonicalizeMemoryKind(memory_kind_, internal_device_list_);
 }
 
+/*static*/ PyObject* GSPMDSharding::type_ = nullptr;
+
+/*static*/ void GSPMDSharding::InitializeType() {
+  // Intentionally leaks a reference.
+  type_ = nanobind::type<GSPMDSharding>().inc_ref().ptr();
+}
+
 void RegisterSharding(nb::module_& m) {
   nb::class_<Sharding>(m, "Sharding").def(nb::init<>());
 
@@ -334,6 +366,7 @@ void RegisterSharding(nb::module_& m) {
       .def_prop_ro("_internal_device_list", [](const NamedSharding& s) {
         return xla::ValueOrThrow(s.internal_device_list());
       });
+  NamedSharding::InitializeType();
 
   nb::class_<SingleDeviceSharding, Sharding>(m, "SingleDeviceSharding",
                                              nb::dynamic_attr())
@@ -343,6 +376,7 @@ void RegisterSharding(nb::module_& m) {
       .def_prop_ro("_memory_kind", &SingleDeviceSharding::memory_kind)
       .def_prop_ro("_internal_device_list",
                    &SingleDeviceSharding::internal_device_list);
+  SingleDeviceSharding::InitializeType();
 
   nb::class_<PmapSharding, Sharding>(m, "PmapSharding", nb::dynamic_attr())
       .def(
@@ -357,6 +391,7 @@ void RegisterSharding(nb::module_& m) {
       .def_prop_ro("sharding_spec", &PmapSharding::sharding_spec)
       .def_prop_ro("_internal_device_list",
                    &PmapSharding::internal_device_list);
+  PmapSharding::InitializeType();
 
   nb::class_<GSPMDSharding, Sharding>(m, "GSPMDSharding", nb::dynamic_attr())
       .def(nb::init<nb::sequence, xla::OpSharding, nb::object, nb::object>(),
@@ -372,6 +407,7 @@ void RegisterSharding(nb::module_& m) {
       .def_prop_ro("_memory_kind", &GSPMDSharding::memory_kind)
       .def_prop_ro("_internal_device_list",
                    &GSPMDSharding::internal_device_list);
+  GSPMDSharding::InitializeType();
 }
 
 }  // namespace jax
