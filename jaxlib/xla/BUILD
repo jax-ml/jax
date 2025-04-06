@@ -732,6 +732,7 @@ cc_library(
         "@xla//xla/python/transfer:socket_bulk_transport",
         "@xla//xla/python/transfer:streaming",
         "@xla//xla/python/transfer:streaming_ifrt",
+        "@xla//xla/python/transfer:transfer_socket_proto_cc",
         "@xla//xla/tsl/concurrency:ref_count",
         "@xla//xla/tsl/platform:statusor",
     ],
