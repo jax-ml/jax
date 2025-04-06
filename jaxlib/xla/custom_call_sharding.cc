@@ -15,6 +15,8 @@ limitations under the License.
 
 #include "jaxlib/xla/custom_call_sharding.h"
 
+#include <Python.h>
+
 #include <cstdint>
 #include <cstring>
 #include <memory>
