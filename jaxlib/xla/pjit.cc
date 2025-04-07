@@ -245,16 +245,17 @@ std::shared_ptr<PjitFunctionCache::Cache> PjitFunctionCache::DefaultCache() {
   std::shared_ptr<Cache> cache = std::make_shared<Cache>(&self->lru_list_);
   auto callback =
       nb::cpp_function([self, key{std::move(key)}](nb::handle weakref) {
-        std::unique_ptr<Value> value;
-        {
-          nb::ft_object_guard lock(self);
-          auto it = self->functions_.find(key);
-          if (it == self->functions_.end()) {
-            return;
-          }
-          value = std::move(it->second);
-          self->functions_.erase(it);
+        nb::ft_object_guard lock(self);
+        auto it = self->functions_.find(key);
+        if (it == self->functions_.end()) {
+          return;
         }
+        // Remove the value from the map before destroying it. Destroying
+        // the value may release `lock` since it may call arbitrary Python
+        // code.
+        std::unique_ptr<Value> value = std::move(it->second);
+        self->functions_.erase(it);
+        value.reset();
       });
   PyObject* weakref = PyWeakref_NewRef(function.ptr(), callback.ptr());
   if (weakref) {
