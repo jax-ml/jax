@@ -646,7 +646,7 @@ def _check_rep(mesh: Mesh, jaxpr: core.Jaxpr, in_rep: Sequence[RepType]
   env: dict[core.Var, RepType] = {}
 
   def read(x: core.Atom) -> RepType:
-    return env[x] if type(x) is core.Var else set(mesh.axis_names)
+    return env[x] if type(x) is core.Var else None
 
   def write(v: core.Var, val: RepType) -> None:
     env[v] = val
@@ -942,7 +942,7 @@ class ShardMapTrace(core.Trace):
       raise Exception(f"Shouldn't have any non-shard_map tracers: {val}")
     else:
       val_ = _unmatch_spec(self.mesh, {}, val, self.context_mesh)
-      return val_, set(self.mesh.axis_names) - set(self.auto)
+      return val_, None
 
   def process_primitive(self, prim, tracers, params):
     in_vals, in_rep = unzip2(map(self.to_val_rep_pair, tracers))
@@ -1008,7 +1008,6 @@ class ShardMapTracer(core.Tracer):
   val: JaxType
 
   def __init__(self, trace, rep, val):
-    rep = set(trace.mesh.axis_names) - set(trace.auto) if rep is None else rep
     self._trace = trace
     self.rep = rep
     self.val = val
@@ -1145,6 +1144,14 @@ _check_rules: dict[core.Primitive, Callable] = {}
 register_check = lambda prim: lambda rule: _check_rules.setdefault(prim, rule)
 register_standard_check = \
     lambda prim: _check_rules.setdefault(prim, partial(_standard_check, prim))
+
+def _eq_rep(mesh, r1, r2) -> bool:
+  if r1 != r2 and r1 is None or r2 is None:
+    r1, r2 = _remove_none_rep(mesh, r1), _remove_none_rep(mesh, r2)
+  return r1 == r2
+
+def _remove_none_rep(mesh, r):
+  return set(mesh.axis_names) if r is None else r
 
 def _no_rewrite(prim, rule, mesh, in_rep, *args, **params):
   out_vals = prim.bind(*args,**params)
@@ -1372,7 +1379,7 @@ def _scan_check(mesh, *in_rep, jaxpr, num_consts, num_carry, **_):
   _, carry_rep_in, _ = split_list(in_rep, [num_consts, num_carry])
   out_rep = _check_rep(mesh, jaxpr.jaxpr, in_rep)
   carry_rep_out, _ = split_list(out_rep, [num_carry])
-  if carry_rep_in != carry_rep_out:
+  if not all(map(partial(_eq_rep, mesh), carry_rep_in, carry_rep_out)):
     raise Exception("Scan carry input and output got mismatched replication "
                     f"types {carry_rep_in} and {carry_rep_out}. Please open an "
                     "issue at https://github.com/jax-ml/jax/issues, and as a "
@@ -1410,7 +1417,7 @@ def _cond_rule(mesh, *in_rep, branches):
   out_rep = _check_rep(mesh, branches[0].jaxpr, args_rep)
   for branch in branches[1:]:
     out_rep_ = _check_rep(mesh, branch.jaxpr, args_rep)
-    if out_rep_ != out_rep:
+    if not all(map(partial(_eq_rep, mesh), out_rep, out_rep_)):
       raise Exception("The branches of cond produced mismatched replication "
                       "types. Please open an issue at "
                       "https://github.com/jax-ml/jax/issues, and as a "
