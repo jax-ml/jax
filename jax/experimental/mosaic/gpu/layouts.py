@@ -107,15 +107,25 @@ def to_tiled_layout_attr(
 ) -> ir.Attribute:
   """Constructs a #mosaic_gpu.TiledLayout attribute from a TiledLayout."""
 
+  def _lane_dim_str(d: int | fa.Replicated) -> str:
+    if isinstance(d, fa.Replicated):
+      return f"#mosaic_gpu.Replicated<times={d.times}>"
+    return str(d)
+
   tile_str = lambda tile: "[" + ", ".join(str(d) for d in tile) + "]"
   tiling = "[" + ", ".join(tile_str(tile) for tile in layout.tiling.tiles) + "]"
+  lane_dims = "[" +  ",".join(_lane_dim_str(d) for d in layout.lane_dims) + "]"
+
   return ir.Attribute.parse(
       f"#mosaic_gpu.TiledLayout<{tiling}, warp_dim={layout.warp_dim},"
-      f" lane_dims={list(layout.lane_dims)}, vector_dim={layout.vector_dim}>"
+      f" lane_dims={lane_dims}, vector_dim={layout.vector_dim}>"
   )
 
 
 _list_of_lists_delimiter = re.compile(r"\]\s*,\s*\[")
+_replicated_pattern = re.compile(
+    r"^#mosaic_gpu.Replicated<\s*times\s*=\s*(?P<times>\d+)\s*>\s*$"
+)
 
 
 def from_tiled_layout_attr(
@@ -133,6 +143,12 @@ def from_tiled_layout_attr(
         f"Expected a #mosaic_gpu.TiledLayout attribute, got {attr}"
     )
 
+  def _lane_dim(lane_dim_str: str) -> int | fa.Replicated:
+    match = _replicated_pattern.fullmatch(lane_dim_str)
+    if match:
+      return fa.Replicated(int(match.group("times")))
+    return int(lane_dim_str)
+
   tiling_str = match.group("tiling")
   tile_strings = []
   if len(tiling_str) > 2:
@@ -141,8 +157,10 @@ def from_tiled_layout_attr(
   return fa.TiledLayout(
       tiling=fa.Tiling(tiles),
       warp_dim=int(match.group("warp_dim")),
-      lane_dims=tuple(int(s) for s in match.group("lane_dims").split(",")),
-      vector_dim=int(match.group("vector_dim"))
+      lane_dims=tuple(
+          _lane_dim(s) for s in match.group("lane_dims").split(",")
+      ),
+      vector_dim=int(match.group("vector_dim")),
   )
 
 

@@ -142,6 +142,17 @@ def MosaicGPU_WGSplatFragLayout : AttrDef<MosaicGPU_Dialect, "WGSplatFragLayout"
   let assemblyFormat = "`<` $shape `>`";
 }
 
+def MosaicGPU_Replicated : AttrDef<MosaicGPU_Dialect, "Replicated", []> {
+  let summary = "Indicates a replicated dimension in a tiled layout.";
+  let description = [{
+    See mosaic/gpu/fragmented_array.py -> Replicated for more details.
+  }];
+
+  let parameters = (ins "int":$times);
+  let mnemonic = "Replicated";
+  let assemblyFormat = "`<` `times` `=` $times `>`";
+}
+
 def MosaicGPU_TiledLayout : AttrDef<MosaicGPU_Dialect, "TiledLayout", []> {
   let summary = "A layout derived from a tiling expression.";
   let description = [{
