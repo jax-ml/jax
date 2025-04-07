@@ -49,8 +49,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     * From `jax.core`: `AxisSize`, `ClosedJaxpr`, `EvalTrace`, `InDBIdx`, `InputType`,
       `Jaxpr`, `JaxprEqn`, `Literal`, `MapPrimitive`, `OpaqueTraceState`, `OutDBIdx`,
       `Primitive`, `Token`, `TRACER_LEAK_DEBUGGER_WARNING`, `Var`, `concrete_aval`,
-      `dedup_referents`, `escaped_tracer_error`, `extend_axis_env_nd`, `get_referent`,
-      `join_effects`, `leaked_tracer_error`, `maybe_find_leaked_tracers`, `raise_to_shaped`,
+      `dedup_referents`, `escaped_tracer_error`, `extend_axis_env_nd`, `full_lower`,  `get_referent`, `jaxpr_as_fun`, `join_effects`, `lattice_join`,
+      `leaked_tracer_error`, `maybe_find_leaked_tracers`, `raise_to_shaped`,
       `raise_to_shaped_mappings`, `reset_trace_state`, `str_eqn_compact`,
       `substitute_vars_in_output_ty`, `typecompat`, and `used_axis_names_jaxpr`. Most
       have no public replacement, though a few are available at {mod}`jax.extend.core`.

@@ -1496,11 +1496,6 @@ def _jaxpr_type_to_callable_annotation(jaxpr: Jaxpr) -> InputType:
          for v in jaxpr.invars]
   return tuple(out)
 
-# TODO(dougalm): Deprecate. This is here for backwards compat.
-def lattice_join(x, y):
-  assert typematch(x, y)
-  return x
-
 # For use in typing annotations to denote either a Tracer or a `valid_jaxtype`.
 Value = Any
 
