@@ -20,6 +20,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added {func}`jax.lax.axis_size` which returns the size of the mapped axis
     given its name.
 
+* Breaking changes:
+  * {func}`jax.random.randint` with 8-bit or 16-bit dtypes has been modifed to
+    avoid producing a biased distribution.
+
 ## JAX 0.6.0 (April 16, 2025)
 
 * Breaking changes
