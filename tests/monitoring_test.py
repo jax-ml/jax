@@ -29,7 +29,7 @@ class MonitoringTest(absltest.TestCase):
 
   def test_record_event(self):
     events = []
-    counters  = {}  # Map event names to frequency.
+    counters = {}  # Map event names to frequency.
     def increment_event_counter(event):
       if event not in counters:
         counters[event] = 0
@@ -48,7 +48,7 @@ class MonitoringTest(absltest.TestCase):
                                     "test_common_event": 2})
 
   def test_record_event_durations(self):
-    durations  = {}  # Map event names to frequency.
+    durations = {}  # Map event names to frequency.
     def increment_event_duration(event, duration):
       if event not in durations:
         durations[event] = 0.
@@ -61,6 +61,30 @@ class MonitoringTest(absltest.TestCase):
 
     self.assertDictEqual(durations, {"test_short_event": 3,
                                      "test_long_event": 10})
+
+  def test_record_scalar(self):
+    observed_keys = []
+    observed_values = []
+
+    monitoring.register_scalar_listener(
+        lambda key, _: observed_keys.append(key),
+    )
+    monitoring.register_scalar_listener(
+        lambda _, value: observed_values.append(value),
+    )
+
+    monitoring.record_scalar("test_unique_event", 1)
+    monitoring.record_scalar("test_common_event", 2.5)
+    monitoring.record_scalar("test_common_event", 5e5)
+
+    self.assertListEqual(
+        observed_keys,
+        ["test_unique_event", "test_common_event", "test_common_event"],
+    )
+    self.assertListEqual(
+        observed_values,
+        [1, 2.5, 5e5],
+    )
 
   def test_unregister_exist_callback_success(self):
     original_duration_listeners = jax_src_monitoring.get_event_duration_listeners()
