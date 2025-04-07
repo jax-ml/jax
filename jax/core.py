@@ -97,13 +97,11 @@ _deprecations = {
     "typecheck": ("jax.core.typecheck is deprecated.", _src_core.typecheck),
     "typematch": ("jax.core.typematch is deprecated.", _src_core.typematch),
     # Added 2024-12-10
-    "full_lower": ("jax.core.full_lower is deprecated. It is a no-op as of JAX v0.4.36.",
-                   _src_core.full_lower),
-    "jaxpr_as_fun": ("jax.core.jaxpr_as_fun is deprecated. Use jax.extend.core.jaxpr_as_fun instead, "
+    "full_lower": ("jax.core.full_lower is deprecated. It is a no-op as of JAX v0.4.36.", None),
+    "jaxpr_as_fun": ("jax.core.jaxpr_as_fun was removed in JAX v0.6.0. Use jax.extend.core.jaxpr_as_fun instead, "
                      "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
-                     _src_core.jaxpr_as_fun),
-    "lattice_join": ("jax.core.lattice_join is deprecated. It is a no-op as of JAX v0.4.36.",
-                     _src_core.lattice_join),
+                     None),
+    "lattice_join": ("jax.core.lattice_join is deprecated. It is a no-op as of JAX v0.4.36.", None),
     # Finalized 2025-03-25 for JAX v0.6.0; remove after 2025-06-25
     "AxisSize": ("jax.core.AxisSize was removed in JAX v0.6.0.", None),
     "ClosedJaxpr": ("jax.core.ClosedJaxpr was removed in JAX v0.6.0. Use jax.extend.core.ClosedJaxpr instead, "
@@ -152,10 +150,7 @@ if typing.TYPE_CHECKING:
   axis_frame = _src_core.axis_frame
   call_p = _src_core.call_p
   closed_call_p = _src_core.closed_call_p
-  full_lower = _src_core.full_lower
   get_type = _src_core.get_aval
-  jaxpr_as_fun = _src_core.jaxpr_as_fun
-  lattice_join = _src_core.lattice_join
   trace_state_clean = _src_core.trace_state_clean
   typecheck = _src_core.typecheck
   typematch = _src_core.typematch
