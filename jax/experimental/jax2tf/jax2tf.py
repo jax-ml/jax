@@ -3173,12 +3173,11 @@ tf_impl_with_avals[lax.scan_p] = _convert_jax_impl(
     lax_control_flow._scan_impl,
     extra_name_stack="scan")
 
-tf_impl_with_avals[ad_checkpoint.remat_p] = \
-  _convert_jax_impl(partial(ad_checkpoint.remat_expansion,
-                            # TODO: jax2tf cannot discriminate by platform
-                            is_gpu_platform=False),
-                    multiple_results=True,
-                    extra_name_stack="checkpoint")
+tf_impl_with_avals[ad_checkpoint.remat_p] = _convert_jax_impl(
+    ad_checkpoint.remat_expansion,
+    multiple_results=True,
+    extra_name_stack="checkpoint",
+)
 
 tf_impl[ad_checkpoint.name_p] = lambda x, *, name: x
 

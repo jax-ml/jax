@@ -1512,13 +1512,6 @@ eager_constant_folding = bool_state(
     help=('Attempt constant folding during staging.'),
     include_in_jit_key=True)
 
-# This flag is temporary during rollout of the remat barrier.
-# TODO(parkers): Remove if there are no complaints.
-remat_opt_barrier = bool_state(
-    name='jax_remat_opt_barrier',
-    default=True,
-    help=('Enables using optimization-barrier op for lowering remat.'))
-
 enable_remat_opt_pass = bool_state(
     name='jax_compiler_enable_remat_pass',
     default=True,
