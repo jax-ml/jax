@@ -2800,6 +2800,8 @@ class ShardMapTest(jtu.JaxTestCase):
 
   def test_rep_none_canonicalization(self):
     # https://github.com/jax-ml/jax/issues/26621
+    if config.use_shardy_partitioner.value:
+      self.skipTest('complex values fail under shardy')
     N = 8
     xs = jnp.ones((8, N), dtype=jnp.int32)
     variables = jax.random.normal(jax.random.key(1), (N, N), jnp.complex64)
