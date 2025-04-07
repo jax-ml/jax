@@ -518,17 +518,11 @@ class MosaicGridMapping:
     nonlocal_axis_names = set()
     def _get_nonlocal_axis_names(jaxpr: jax_core.Jaxpr):
       return {
-            e.name
-            for e in jaxpr.effects
-            if isinstance(e, jax_core.NamedAxisEffect)
-            and (
-                not self.grid_names
-                or all(
-                    name not in self.grid_names
-                    for name in tree_util.tree_leaves(e.name)
-                )
-            )
-        }
+          e.name
+          for e in jaxpr.effects
+          if isinstance(e, jax_core.NamedAxisEffect)
+          and (not self.grid_names or e.name not in self.grid_names)
+      }
     nonlocal_axis_names.update(_get_nonlocal_axis_names(self.jaxpr))
     for bm in self.block_mappings:
       if bm is not None:
