@@ -745,13 +745,13 @@ def lower_jaxpr_to_module(
           1 if b is pallas_core.mapped else b for b in bm.block_shape
       ]
 
-      # Force single-buffering pipelining for trivial windowing in VMEM.
-      pipeline_mode = bm.pipeline_mode
+      # No sense in double-buffering without any windowing pattern.
+      buffer_count = 0
       if (
           tpu_memory_space == tpu_core.TPUMemorySpace.VMEM
           and bm.has_trivial_window()
       ):
-        pipeline_mode = pallas_core.Buffered(1)
+        buffer_count = 1
 
       # If we have an extended dtype, we need to add the block shape for the
       # remaining physical dtype.
@@ -770,20 +770,21 @@ def lower_jaxpr_to_module(
         block_params["window_kind"] = ir.Attribute.parse(
             f"#tpu.element_window<{pad_low},{pad_high}>"
         )
-      if pipeline_mode is not None:
-        if not isinstance(pipeline_mode, pallas_core.Buffered):
+      if bm.pipeline_mode is not None:
+        if not isinstance(bm.pipeline_mode, pallas_core.Buffered):
           raise LoweringException(
-              f"Unsupported pipeline mode: {pipeline_mode}."
+              f"Unsupported pipeline mode: {bm.pipeline_mode}."
           )
-        buffer_count = pipeline_mode.buffer_count
+        if buffer_count == 0:
+          buffer_count = bm.pipeline_mode.buffer_count
         if buffer_count < 1 or buffer_count > 2:
           raise LoweringException(
               "Only single (1) and double (2) buffering are supported. Got"
               f" {buffer_count}."
           )
-        pipeline_mode_str = "synchronous" if buffer_count == 1 else "double_buffered"
+        pipeline_mode = "synchronous" if buffer_count == 1 else "double_buffered"
         block_params["pipeline_mode"] = ir.Attribute.parse(
-            f"#tpu.pipeline_mode<{pipeline_mode_str}>"
+            f"#tpu.pipeline_mode<{pipeline_mode}>"
         )
       window_params.append(ir.DictAttr.get(block_params))
       m.body.append(mlir_func)
