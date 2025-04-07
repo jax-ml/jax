@@ -1401,7 +1401,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertIn("stablehlo.constant dense<-0.000000e+00>", ir)
 
   def test_device_put_copy_donate(self):
-    if jaxlib_extension_version < 323:
+    if jaxlib_extension_version < 327:
       raise unittest.SkipTest("Copy not supported in device put.")
     x = np.arange(1000)
     y = jax.device_put(x, device=jax.devices()[0], may_alias=False, donate=False)
