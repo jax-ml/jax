@@ -911,11 +911,11 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
     Array(True, dtype=bool)
   """
   if weights is None:
-    util.check_arraylike("histogram", a, bins)
+    a, _ = util.ensure_arraylike("histogram", a, bins)
     a, = util.promote_dtypes_inexact(a)
     weights = ones_like(a)
   else:
-    util.check_arraylike("histogram", a, bins, weights)
+    a, _, weights = util.ensure_arraylike("histogram", a, bins, weights)
     if np.shape(a) != np.shape(weights):
       raise ValueError("weights should have the same shape as a.")
     a, weights = util.promote_dtypes_inexact(a, weights)
@@ -1005,7 +1005,7 @@ def histogram2d(x: ArrayLike, y: ArrayLike, bins: ArrayLike | list[ArrayLike] = 
     >>> jnp.allclose(normed_sum, 1.0)
     Array(True, dtype=bool)
   """
-  util.check_arraylike("histogram2d", x, y)
+  x, y = util.ensure_arraylike("histogram2d", x, y)
   try:
     N = len(bins)  # type: ignore[arg-type]
   except TypeError:
@@ -1077,10 +1077,10 @@ def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
     Array(True, dtype=bool)
   """
   if weights is None:
-    util.check_arraylike("histogramdd", sample)
+    sample = util.ensure_arraylike("histogramdd", sample)
     sample, = util.promote_dtypes_inexact(sample)
   else:
-    util.check_arraylike("histogramdd", sample, weights)
+    sample, weights = util.ensure_arraylike("histogramdd", sample, weights)
     if np.shape(weights) != np.shape(sample)[:1]:
       raise ValueError("should have one weight for each sample.")
     sample, weights = util.promote_dtypes_inexact(sample, weights)
@@ -2424,7 +2424,7 @@ def expand_dims(a: ArrayLike, axis: int | Sequence[int]) -> Array:
              [2],
              [3]]]], dtype=int32)
   """
-  util.check_arraylike("expand_dims", a)
+  a = util.ensure_arraylike("expand_dims", a)
   axis = _ensure_index_tuple(axis)
   return lax.expand_dims(a, axis)
 
@@ -4371,7 +4371,7 @@ def pad(array: ArrayLike, pad_width: PadValueLike[int | Array | np.ndarray],
     Array([-10, -10,   2,   3,   4,  10,  10], dtype=int32)
   """
 
-  util.check_arraylike("pad", array)
+  array = util.ensure_arraylike("pad", array)
   pad_width = _broadcast_to_pairs(pad_width, np.ndim(array), "pad_width")
   if pad_width and not all(core.is_dim(p[0]) and core.is_dim(p[1])
                            for p in pad_width):
@@ -6988,8 +6988,10 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
     Array([[1, 1, 2, 2, 2, 2, 2],
            [3, 3, 4, 4, 4, 4, 4]], dtype=int32)
   """
-  arr = util.ensure_arraylike("repeat", a)
-  core.is_dim(repeats) or util.check_arraylike("repeat", repeats)
+  if core.is_dim(repeats):
+    arr = util.ensure_arraylike("repeat", a)
+  else:
+    arr, repeats = util.ensure_arraylike("repeat", a, repeats)
 
   if axis is None:
     arr = arr.ravel()
@@ -7828,7 +7830,7 @@ def diag_indices_from(arr: ArrayLike) -> tuple[Array, ...]:
     Array([0, 1], dtype=int32),
     Array([0, 1], dtype=int32))
   """
-  util.check_arraylike("diag_indices_from", arr)
+  arr = util.ensure_arraylike("diag_indices_from", arr)
   nd = np.ndim(arr)
   if not np.ndim(arr) >= 2:
     raise ValueError("input array must be at least 2-d")
@@ -8244,6 +8246,9 @@ def delete(
   # Case 3: obj is an array
   # NB: pass both arrays to check for appropriate error message.
   util.check_arraylike("delete", a, obj)
+  # Can't use ensure_arraylike here because obj may be static.
+  if hasattr(obj, "__jax_array__"):
+    obj = obj.__jax_array__()
 
   # Case 3a: unique integer indices; delete in a JIT-compatible way
   if issubdtype(_dtype(obj), np.integer) and assume_unique_indices:
