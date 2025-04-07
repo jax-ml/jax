@@ -20,6 +20,12 @@ load(
     "py_library_providing_imports_info",
     "pytype_library",
 )
+load(
+    "//jaxlib:pywrap.bzl",
+    "nanobind_pywrap_extension",
+    "pywrap_binaries",
+    "pywrap_library",
+)
 load("//jaxlib:symlink_files.bzl", "symlink_files")
 
 licenses(["notice"])
@@ -51,6 +57,7 @@ py_library_providing_imports_info(
     lib_rule = pytype_library,
     deps = [
         ":cpu_feature_guard",
+        ":jax",
         ":utils",
         "//jaxlib/cpu:_lapack",
         "//jaxlib/mlir",
@@ -97,6 +104,44 @@ exports_files([
     "README.md",
     "setup.py",
 ])
+
+pywrap_library(
+    name = "jax",
+    common_lib_def_files_or_filters = {
+        "jaxlib/jax_common": "jax_common.json",
+    },
+    common_lib_version_scripts = {
+        "jaxlib/jax_common": select({
+            "@bazel_tools//src/conditions:windows": None,
+            "@bazel_tools//src/conditions:darwin": "libjax_common_darwin.lds",
+            "//conditions:default": "libjax_common.lds",
+        }),
+    },
+    deps = [
+        ":utils",
+        "//jaxlib/mlir/_mlir_libs:_chlo",
+        "//jaxlib/mlir/_mlir_libs:_mlir",
+        "//jaxlib/mlir/_mlir_libs:_mlirDialectsGPU",
+        "//jaxlib/mlir/_mlir_libs:_mlirDialectsLLVM",
+        "//jaxlib/mlir/_mlir_libs:_mlirDialectsNVGPU",
+        "//jaxlib/mlir/_mlir_libs:_mlirDialectsSparseTensor",
+        "//jaxlib/mlir/_mlir_libs:_mlirGPUPasses",
+        "//jaxlib/mlir/_mlir_libs:_mlirHlo",
+        "//jaxlib/mlir/_mlir_libs:_mlirSparseTensorPasses",
+        "//jaxlib/mlir/_mlir_libs:_mosaic_gpu_ext",
+        "//jaxlib/mlir/_mlir_libs:_sdy",
+        "//jaxlib/mlir/_mlir_libs:_stablehlo",
+        "//jaxlib/mlir/_mlir_libs:_tpu_ext",
+        "//jaxlib/mlir/_mlir_libs:_triton_ext",
+        "//jaxlib/mlir/_mlir_libs:register_jax_dialects",
+        "//jaxlib/xla:xla_extension",
+    ],
+)
+
+pywrap_binaries(
+    name = "jaxlib_binaries",
+    dep = ":jax",
+)
 
 cc_library(
     name = "absl_status_casters",
@@ -170,10 +215,9 @@ nanobind_extension(
     ],
 )
 
-nanobind_extension(
+nanobind_pywrap_extension(
     name = "utils",
     srcs = ["utils.cc"],
-    module_name = "utils",
     deps = [
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
