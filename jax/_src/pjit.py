@@ -2077,19 +2077,44 @@ def _pjit_linearization(nzs, *primals_in, jaxpr,
   res_shardings = (UNSPECIFIED,) * num_residuals
   res_layouts = (None,) * num_residuals
   res_donated = (False,) * num_residuals
+  primal_out_shardings = res_shardings + tuple(out_shardings)
+  primal_out_layouts = res_layouts + tuple(out_layouts)
 
+  def keep_where(l, should_keep):
+    return tuple(x for x, keep in zip(l, should_keep) if keep)
+
+  # Input-to-output forwarding.
   in_fwd = pe._jaxpr_forwarding(primal_jaxpr.jaxpr)
-  in_fwd, _ = split_list(in_fwd, [num_residuals])
-  keep = tuple(f is None for f in in_fwd) + (True,) * len(out_shardings)
+  in_fwd_res, in_fwd_primal = split_list(in_fwd, [num_residuals])
+  in_fwd = in_fwd_res + [
+      fwd if isinstance(os, UnspecifiedValue) and ol is None else None
+      for os, ol, fwd in zip(out_shardings, out_layouts, in_fwd_primal)
+  ]
+  del in_fwd_res, in_fwd_primal
+  keep = [f is None for f in in_fwd]
   primal_jaxpr = pe.prune_closed_jaxpr_outputs(primal_jaxpr, keep)
-  num_residuals = sum(f is None for f in in_fwd)
+  primal_out_shardings = keep_where(primal_out_shardings, keep)
+  primal_out_layouts = keep_where(primal_out_layouts, keep)
+  kept_res, _ = split_list(keep, [num_residuals])
+  num_kept_residuals = sum(kept_res)
+  del keep, kept_res
+
+  # Output-to-output forwarding.
+  num_out_primals = len(primal_jaxpr.jaxpr.outvars) - num_kept_residuals
+  res_vars, out_vars = split_list(primal_jaxpr.jaxpr.outvars, [num_kept_residuals])
+  idx_map = {id(v): i for i, v in enumerate(out_vars)}
+  offset = sum(id(v) not in idx_map for v in res_vars)
+  idx_map = {k: v + offset for k, v in idx_map.items()}
+  out_fwd = [idx_map.get(id(v)) for v in res_vars] + [None] * num_out_primals
+  keep = [f is None for f in out_fwd]
+  primal_jaxpr = pe.prune_closed_jaxpr_outputs(primal_jaxpr, keep)
+  primal_out_shardings = keep_where(primal_out_shardings, keep)
+  primal_out_layouts = keep_where(primal_out_layouts, keep)
+  del keep
 
   def tangent_fun(consts_, *tangents):
-    consts_it = iter(consts_)
-    res = [next(consts_it) if f is None else primals_in[f] for f in in_fwd]
-    assert next(consts_it, None) is None
     tangents_nz = _filter_zeros(nzs, tangents)
-    nz_tangents_out = pjit_p.bind(*(*tangents_nz, *res),
+    nz_tangents_out = pjit_p.bind(*tangents_nz, *consts_,
         jaxpr=tangent_jaxpr,
         in_shardings=_filter_zeros(nzs, in_shardings) + res_shardings,
         out_shardings=_filter_zeros(nzs_out, out_shardings),
@@ -2112,15 +2137,17 @@ def _pjit_linearization(nzs, *primals_in, jaxpr,
 
   ans = pjit_p.bind(*primals_in, jaxpr=primal_jaxpr,
                     in_shardings=in_shardings,
-                    out_shardings=(*res_shardings[:num_residuals], *out_shardings),
+                    out_shardings=primal_out_shardings,
                     in_layouts=in_layouts,
-                    out_layouts=(*res_layouts[:num_residuals], *out_layouts),
+                    out_layouts=primal_out_layouts,
                     donated_invars=donated_invars,
                     ctx_mesh=ctx_mesh,
                     name=name,
                     keep_unused=keep_unused,
                     inline=inline,
                     compiler_options_kvs=compiler_options_kvs)
+  ans = subs_list(out_fwd, ans, ans)
+  ans = subs_list(in_fwd, primals_in, ans)
   residuals_ans, primal_ans = split_list(ans, [num_residuals])
 
   return primal_ans, nzs_out, residuals_ans, tangent_fun
