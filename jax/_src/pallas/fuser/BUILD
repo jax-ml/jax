@@ -99,6 +99,7 @@ pytype_strict_library(
         "//jax:core",
         "//jax:partial_eval",
         "//jax:tree_util",
+        "//jax:util",
     ],
 )
 
