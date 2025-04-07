@@ -111,6 +111,10 @@ def get(
           ),
       ),
       (
+          "backend version",
+          lambda hash_obj: _hash_platform(hash_obj, backend)
+      ),
+      (
           "XLA flags",
           lambda hash_obj: _hash_xla_flags(hash_obj, get_flag_prefixes()),
       ),
@@ -126,7 +130,7 @@ def get(
       ),
       (
           "accelerator_config",
-          lambda hash_obj: _hash_accelerator_config(hash_obj, devices, backend),
+          lambda hash_obj: _hash_accelerator_config(hash_obj, devices),
       ),
       (
           "compression",
@@ -220,7 +224,7 @@ def _hash_devices(hash_obj, devices: np.ndarray) -> None:
     _hash_string(hash_obj, device.device_kind)
 
 
-def _hash_accelerator_config(hash_obj, accelerators: np.ndarray, backend):
+def _hash_accelerator_config(hash_obj, accelerators: np.ndarray):
   accelerator_devices = []
   for accelerator in accelerators.flat:
     accelerator_devices.append(accelerator)
@@ -233,9 +237,8 @@ def _hash_accelerator_config(hash_obj, accelerators: np.ndarray, backend):
     # PjRtTopologyDescription as yet.
     logger.info("get (_hash_accelerator_config): unable to hash "
                 "accelerator config, falling back to hashing "
-                "devices + platform: %s (type %s)", ex, type(ex))
+                "devices %s (type %s)", ex, type(ex))
     _hash_devices(hash_obj, accelerators)
-    _hash_platform(hash_obj, backend)
 
 # LINT.IfChange(xla_flags)
 xla_flags_to_exclude_from_cache_key = [
