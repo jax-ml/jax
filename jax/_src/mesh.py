@@ -111,12 +111,16 @@ class AxisType(enum.Enum):
   def __repr__(self):
     return self.name
 
-def _normalize_axis_types(axis_names, axis_types):
+def _normalize_axis_types(axis_names, axis_types, name):
   axis_types = ((AxisType.Auto,) * len(axis_names)
                 if axis_types is None else axis_types)
   if not isinstance(axis_types, tuple):
-    assert isinstance(axis_types, AxisType), axis_types
     axis_types = (axis_types,)
+
+  if not all(isinstance(a, AxisType) for a in axis_types):
+    raise TypeError(
+        f"axis_types passed to {name} must be of type `jax.sharding.AxisType`."
+        f" Got {axis_types} of type {tuple(type(a) for a in axis_types)}")
   if len(axis_names) != len(axis_types):
     raise ValueError(
         "Number of axis names should match the number of axis_types. Got"
@@ -256,7 +260,7 @@ class Mesh(_BaseMesh, contextlib.ContextDecorator):
           f"devices.ndim == {devices.ndim} and "
           f"len(axis_names) == {len(axis_names)}.")
 
-    axis_types = _normalize_axis_types(axis_names, axis_types)
+    axis_types = _normalize_axis_types(axis_names, axis_types, 'Mesh')
 
     key = (axis_names, devices.shape, tuple(devices.flat), axis_types)
     val = _mesh_object_dict.get(key, None)
@@ -440,7 +444,8 @@ class AbstractMesh(_BaseMesh):
     self.axis_sizes = axis_sizes
     self.axis_names = axis_names
     self._size = math.prod(self.axis_sizes) if self.axis_sizes else 0
-    self._axis_types = _normalize_axis_types(self.axis_names, axis_types)
+    self._axis_types = _normalize_axis_types(
+        self.axis_names, axis_types, 'AbstractMesh')
     self._hash = hash((self.axis_sizes, self.axis_names, self._axis_types))
 
   def __hash__(self):

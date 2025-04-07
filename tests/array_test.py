@@ -1377,6 +1377,16 @@ class ShardingTest(jtu.JaxTestCase):
       jax.sharding.AbstractMesh((2, 1), ('x', 'y'),
                                 axis_types=jax.sharding.AxisType.Auto)
 
+    with self.assertRaisesRegex(TypeError, "axis_types.*must be of type"):
+      AbstractMesh((2,), ('x',), axis_types=("explicit",))
+
+    with self.assertRaisesRegex(TypeError, "axis_types.*must be of type"):
+      AbstractMesh((2,), ('x',), axis_types="explicit")
+
+    with self.assertRaisesRegex(TypeError, "axis_types.*must be of type"):
+      AbstractMesh((2, 2), ('x', 'y'),
+                   axis_types=("explicit", AxisType.Explicit))
+
   def test_make_mesh_axis_types(self):
     Auto, Explicit, Manual = AxisType.Auto, AxisType.Explicit, AxisType.Manual
 
