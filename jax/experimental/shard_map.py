@@ -958,7 +958,8 @@ class ShardMapTrace(core.Trace):
     rep_rule = _check_rules.get(prim, partial(_rule_missing, prim))
     out_rep = rep_rule(self.mesh, *in_rep, **params) if self.check else set()
     if prim.multiple_results:
-      out_rep = [out_rep] * len(out_vals) if type(out_rep) is set else out_rep
+      out_rep = (out_rep if isinstance(out_rep, (list, tuple))
+                 else [out_rep] * len(out_vals))
       return map(partial(ShardMapTracer, self), out_rep, out_vals)
     return ShardMapTracer(self, out_rep, out_vals)
 

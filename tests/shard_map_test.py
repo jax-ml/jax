@@ -685,6 +685,19 @@ class ShardMapTest(jtu.JaxTestCase):
     f3()
     jax.jit(f3)()
 
+  def test_multiple_result_primitive_with_none_sharding(self):
+    # https://github.com/jax-ml/jax/issues/27673
+    xs = jnp.arange(20).reshape(2, 10)
+    mesh = jtu.create_mesh((2,), ("i",))
+    y = shard_map(
+          lambda x: jnp.split(x.squeeze(), 2),
+          mesh=mesh,
+          in_specs=(None,),
+          out_specs=P("i"),
+    )(xs)
+    expected = jnp.repeat(xs, 2, axis=0).reshape(2, 2, 10)
+    self.assertArraysEqual(y, expected)
+
   def test_vmap_spmd_axis_name(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
 
