@@ -947,7 +947,7 @@ jax_multiplatform_test(
     },
     shard_count = {
         "cpu": 40,
-        "gpu": 40,
+        "gpu": 50,
         "tpu": 40,
     },
     tags = ["noasan"],  # Times out
@@ -1132,10 +1132,11 @@ jax_multiplatform_test(
     backend_tags = {
         "cpu": [
             "noasan",  # Times out under asan
-            "notsan",  # Times out under asan
+            "notsan",  # Times out under tsan
         ],
         "tpu": [
-            "noasan",  # Times out under asan.
+            "noasan",  # Times out under asan
+            "notsan",  # Times out under tsan
         ],
     },
     shard_count = {
