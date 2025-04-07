@@ -91,7 +91,7 @@ class GPUCompilerParams(pallas_core.CompilerParams):
   delay_release: int = 0
   profile_space: int = 0
   profile_dir: str = ""
-  thread_semantics: mgpu.core.ThreadSemantics = mgpu.core.ThreadSemantics.Lane
+  lowering_semantics: mgpu.core.LoweringSemantics = mgpu.core.LoweringSemantics.Lane
 
   def __post_init__(self):
     if bool(self.profile_space) ^ bool(self.profile_dir):
@@ -140,6 +140,20 @@ class SemaphoreType(enum.Enum):
 
   def get_ref_aval(self) -> pallas_core.TransformedRef | AbstractMemoryRef:
     return self(()).get_ref_aval()
+
+
+class PrimitiveSemantics(enum.Enum):
+  """Thread semantics for a primitives at the Pallas user-level."""
+
+  Warp = enum.auto()
+  Warpgroup = enum.auto()
+
+
+# Convenience constants for (lowering, primitive) thread semantics pairs.
+LANExWG_SEMANTICS = (
+    mgpu.LoweringSemantics.Lane, PrimitiveSemantics.Warpgroup)
+WGxWG_SEMANTICS = (
+    mgpu.LoweringSemantics.Warpgroup, PrimitiveSemantics.Warpgroup)
 
 
 def kernel(

@@ -52,7 +52,7 @@ from jax._src.pallas.mosaic_gpu.primitives import set_max_registers as set_max_r
 from jax._src.pallas.mosaic_gpu.primitives import wait_smem_to_gmem as wait_smem_to_gmem
 from jax._src.pallas.mosaic_gpu.primitives import wgmma as wgmma
 from jax._src.pallas.mosaic_gpu.primitives import wgmma_wait as wgmma_wait
-from jax.experimental.mosaic.gpu.core import ThreadSemantics as ThreadSemantics
+from jax.experimental.mosaic.gpu.core import LoweringSemantics as LoweringSemantics
 
 
 #: Alias of :data:`jax.experimental.pallas.mosaic_gpu.GPUMemorySpace.GMEM`.

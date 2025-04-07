@@ -296,7 +296,7 @@ class PallasBaseTest(jtu.JaxTestCase):
     if jtu.test_device_matches(["cuda"]) and use_mosaic_gpu:
       assert plgpu_mgpu is not None
       compiler_params = plgpu_mgpu.GPUCompilerParams(
-          thread_semantics=plgpu_mgpu.ThreadSemantics.Warpgroup
+          lowering_semantics=plgpu_mgpu.LoweringSemantics.Warpgroup
       )
       kwargs["compiler_params"] = compiler_params
 
