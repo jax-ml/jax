@@ -194,6 +194,11 @@ def _linearize_jaxpr(
   tangent_trace.invalidate()
   if attrs_tracked:
     raise NotImplementedError("TODO: attrs")
+  tangent_jaxpr, used_consts, _ = pe.dce_jaxpr_consts(
+        tangent_jaxpr, [True] * len(tangent_jaxpr.outvars),
+        [False] * len(tangent_jaxpr.constvars) + [True] * len(tangent_jaxpr.invars))
+  tangent_consts = [c for c, used in zip(tangent_consts, used_consts) if used]
+
   residuals_and_primals = (*tangent_consts, *out_primals)
   residuals_and_primals = map(primal_trace.to_jaxpr_tracer, residuals_and_primals)
   primal_jaxpr, primal_consts, attrs_tracked = primal_trace.to_jaxpr(residuals_and_primals, debug_info)
@@ -871,6 +876,10 @@ def linearize_from_jvp(jvp: lu.WrappedFun,
                       for (r, nz) in zip(out_tangents, out_nzs) if nz]
     in_tracers = [t for t, nz in zip(tangent_args, nonzeros) if nz]
     jaxpr, out_consts, _ = pe.tracers_to_jaxpr(in_tracers, out_nz_tracers, jvp.debug_info)
+    jaxpr, used_consts, _ = pe.dce_jaxpr_consts(
+        jaxpr, [True] * len(jaxpr.outvars),
+        [False] * len(jaxpr.constvars) + [True] * len(jaxpr.invars))
+    out_consts = [c for used, c in zip(used_consts, out_consts) if used]
 
     def linearized(residuals, *tangents):
       nz_tangents_in = [t for (t, nz) in zip(tangents, nonzeros) if nz]
