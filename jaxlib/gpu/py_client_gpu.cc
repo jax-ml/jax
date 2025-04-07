@@ -44,7 +44,6 @@ limitations under the License.
 #include "xla/python/types.h"
 #include "xla/shape_util.h"
 #include "xla/xla_data.pb.h"
-#include "xla/util.h"
 
 namespace nb = nanobind;
 
@@ -82,7 +81,8 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
     auto arg = args.get<xla::ffi::AnyBuffer>(i);
     auto ptype = static_cast<xla::PrimitiveType>(arg->element_type());
     // TODO(b/395428868): Remove this check once we support subbyte types.
-    if (ptype == xla::S1 || ptype == xla::U1) {
+    if (ptype == xla::S1 || ptype == xla::S2 || ptype == xla::S4 ||
+        ptype == xla::U1 || ptype == xla::U2 || ptype == xla::U4) {
       return xla::ffi::Error(xla::ffi::ErrorCode::kUnimplemented,
                              absl::StrFormat("Unsupported primitive type: %s",
                                              PrimitiveType_Name(ptype)));
@@ -112,6 +112,9 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
       PyTuple_SET_ITEM(host_input_arrays.ptr(), i, nb::none().inc_ref().ptr());
       continue;
     }
+    nb::capsule base(host_input_buffers[i], [](void* ptr) noexcept {
+      delete[] static_cast<char*>(ptr);
+    });
     auto maybe_dtype = PrimitiveTypeToNbDtype(ptype);
     if (!maybe_dtype.ok()) {
       return xla::ffi::Error::Internal(maybe_dtype.status().ToString());
@@ -119,23 +122,6 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
     auto dtype = maybe_dtype.value();
     auto dims = absl::Span<const int64_t>(arg->dimensions().begin(),
                                           arg->dimensions().size());
-    // TODO(b/402422886): Remove this once we form Jax arrays directly instead
-    // of packing/unpacking to/from numpy arrays.
-    // We pass in data using default numpy layout i.e., std::nullopt.
-    size_t bits_per_element = xla::primitive_util::BitWidth(ptype);
-    if (bits_per_element == 2 || bits_per_element == 4) {
-      // NOTE(dsuo): FFI argument and return buffers are sized assuming
-      // minimum 1-byte element sizes, even if the data itself is packed.
-      size_t packed_size = arg->size_bytes() * bits_per_element / 8;
-      auto buffer = xla::UnpackIntN(
-          bits_per_element, static_cast<const char*>(host_input_buffers[i]),
-          packed_size);
-      delete[] static_cast<char*>(host_input_buffers[i]);
-      host_input_buffers[i] = buffer.release();
-    }
-    nb::capsule base(host_input_buffers[i], [](void* ptr) noexcept {
-      delete[] static_cast<char*>(ptr);
-    });
     auto array = xla::nb_numpy_ndarray(dtype, dims, std::nullopt,
                                        host_input_buffers[i], base);
     array.attr("flags").attr("writeable") = nb::bool_(false);
@@ -160,7 +146,8 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
     auto ret = rets.get<xla::ffi::AnyBuffer>(i).value();
     auto ptype = static_cast<xla::PrimitiveType>(ret->element_type());
     // TODO(b/395428868): Remove this check once we support subbyte types.
-    if (ptype == xla::S1 || ptype == xla::U1) {
+    if (ptype == xla::S1 || ptype == xla::S2 || ptype == xla::S4 ||
+        ptype == xla::U1 || ptype == xla::U2 || ptype == xla::U4) {
       return xla::ffi::Error(xla::ffi::ErrorCode::kUnimplemented,
                              absl::StrFormat("Unsupported primitive type: %s",
                                              PrimitiveType_Name(ptype)));
@@ -181,45 +168,32 @@ xla::ffi::Error XlaFfiPythonGpuCallback(gpuStream_t stream,
     }
     auto expected_shape = maybe_expected_shape.value();
     auto expected_strides = xla::ByteStridesForShape(expected_shape);
-
-    const void* data = array.data();
-    size_t size_bytes = array.size() * array.itemsize();
-    if (strides != expected_strides) {
-      xla::TransposePlan::Options options;
-      options.elem_size_in_bytes = xla::primitive_util::ByteWidth(ptype);
-      options.dims = absl::Span<int64_t const>(
-          reinterpret_cast<const int64_t*>(array.shape()), array.ndim());
-      absl::InlinedVector<int64_t, 4> reversed_layout;
-      reversed_layout.resize(expected_shape.dimensions().size());
-      absl::c_reverse_copy(expected_shape.layout().minor_to_major(),
-                           reversed_layout.begin());
-      options.permutation = reversed_layout;
-      options.input_layout = xla::TransposePlan::Striding{strides};
-      auto maybe_plan = transpose_cache->cache.GetOrCreate(options);
-      if (!maybe_plan.ok()) {
-        return xla::ffi::Error::Internal(maybe_plan.status().ToString());
-      }
-      auto plan = maybe_plan.value();
-      void* temp = new char[size_bytes];
-      temp_buffers.push_back(temp);
-      plan->Execute(data, temp);
-      data = temp;
+    if (strides == expected_strides) {
+      auto gpu_res =
+          gpuMemcpyAsync(ret->untyped_data(), array.data(), ret->size_bytes(),
+                         gpuMemcpyHostToDevice, stream);
+      CHECK_EQ(gpu_res, gpuSuccess) << "Failed to gpuMemcpyAsync";
+      continue;
     }
-
-    // TODO(b/402422886): Remove this once we form Jax arrays directly instead
-    // of packing/unpacking to/from numpy arrays.
-    std::unique_ptr<char[]> buffer;
-    size_t bits_per_element = xla::primitive_util::BitWidth(ptype);
-    if (bits_per_element == 2 || bits_per_element == 4) {
-      // NOTE(dsuo): FFI arguments and return buffers are sized assuming
-      // minimum 1-byte element sizes, even if the data itself is packed.
-      buffer = xla::PackIntN(bits_per_element, static_cast<const char*>(data),
-                             size_bytes);
-      data = buffer.get();
-      size_bytes = (size_bytes * bits_per_element) / 8;
+    void* temp = new char[ret->size_bytes()];
+    temp_buffers.push_back(temp);
+    xla::TransposePlan::Options options;
+    options.elem_size_in_bytes = xla::primitive_util::ByteWidth(ptype);
+    options.dims = absl::Span<int64_t const>(
+        reinterpret_cast<const int64_t*>(array.shape()), array.ndim());
+    absl::InlinedVector<int64_t, 4> reversed_layout;
+    reversed_layout.resize(expected_shape.dimensions().size());
+    absl::c_reverse_copy(expected_shape.layout().minor_to_major(),
+                         reversed_layout.begin());
+    options.permutation = reversed_layout;
+    options.input_layout = xla::TransposePlan::Striding{strides};
+    auto maybe_plan = transpose_cache->cache.GetOrCreate(options);
+    if (!maybe_plan.ok()) {
+      return xla::ffi::Error::Internal(maybe_plan.status().ToString());
     }
-
-    auto gpu_res = gpuMemcpyAsync(ret->untyped_data(), data, size_bytes,
+    auto plan = maybe_plan.value();
+    plan->Execute(array.data(), temp);
+    auto gpu_res = gpuMemcpyAsync(ret->untyped_data(), temp, ret->size_bytes(),
                                   gpuMemcpyHostToDevice, stream);
     CHECK_EQ(gpu_res, gpuSuccess) << "Failed to gpuMemcpyAsync";
   }
