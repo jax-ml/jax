@@ -31,7 +31,6 @@ import jax._src.test_util as jtu
 from jax._src import profiler
 from jax import jit
 
-
 try:
   import portpicker
 except ImportError:
@@ -43,6 +42,11 @@ try:
 except ImportError:
   profiler_client = None
   tf_profiler = None
+
+try:
+    from tensorflow.tsl.profiler.protobuf import xplane_pb2
+except ImportError:
+  xplane_pb2 = None
 
 TBP_ENABLED = False
 try:
@@ -171,8 +175,21 @@ class ProfilerTest(unittest.TestCase):
       if jtu.test_device_matches(["tpu"]):
         self.assertIn(b"/device:TPU", proto)
 
+  def _check_event_metadata_in_xplane(self, xspace, xplane_name, event_metadata_name):
+    """Checks if a specific event metadata name exists in a given plane."""
+    for plane in xspace.planes:
+      if plane.name == xplane_name:
+        for event_metadata in plane.event_metadata.values():
+          if event_metadata.name == event_metadata_name:
+            return True
+        # Found the plane, but not the event metadata, no need to check other planes
+        return False
+    # Plane not found
+    return False
+
   @jtu.run_on_devices("gpu")
   @jtu.thread_unsafe_test()
+  @unittest.skipIf(not xplane_pb2, "Test requires xplane_pb2")
   def testProgrammaticGpuCuptiTracing(self):
     @jit
     def xy_plus_z(x, y, z):
@@ -192,6 +209,14 @@ class ProfilerTest(unittest.TestCase):
       proto_bytes = proto_path[0].read_bytes()
       if jtu.test_device_matches(["gpu"]):
         self.assertIn(b"/device:GPU", proto_bytes)
+
+      # Deserialize the proto and check if the xplane proto contains the GPU module event
+      xspace = xplane_pb2.XSpace.FromString(proto_bytes)
+      self.assertTrue(
+      self._check_event_metadata_in_xplane(
+          xspace,
+          xplane_name="/host:CPU",
+          event_metadata_name="jit_xy_plus_z:XLA GPU module"))
 
   def testProgrammaticProfilingContextManagerPathlib(self):
     with tempfile.TemporaryDirectory() as tmpdir_string:

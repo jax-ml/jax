@@ -879,6 +879,7 @@ jax_multiplatform_test(
     ],
     deps = [
         "//jax:profiler",
+        "@tsl//tsl/profiler/protobuf:xplane_py_pb2",
     ],
 )
 
