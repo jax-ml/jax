@@ -646,7 +646,7 @@ def _check_rep(mesh: Mesh, jaxpr: core.Jaxpr, in_rep: Sequence[RepType]
   env: dict[core.Var, RepType] = {}
 
   def read(x: core.Atom) -> RepType:
-    return env[x] if type(x) is core.Var else None
+    return env[x] if type(x) is core.Var else set(mesh.axis_names)
 
   def write(v: core.Var, val: RepType) -> None:
     env[v] = val
@@ -942,7 +942,7 @@ class ShardMapTrace(core.Trace):
       raise Exception(f"Shouldn't have any non-shard_map tracers: {val}")
     else:
       val_ = _unmatch_spec(self.mesh, {}, val, self.context_mesh)
-      return val_, None
+      return val_, set(self.mesh.axis_names) - set(self.auto)
 
   def process_primitive(self, prim, tracers, params):
     in_vals, in_rep = unzip2(map(self.to_val_rep_pair, tracers))
@@ -1008,6 +1008,7 @@ class ShardMapTracer(core.Tracer):
   val: JaxType
 
   def __init__(self, trace, rep, val):
+    rep = set(trace.mesh.axis_names) - set(trace.auto) if rep is None else rep
     self._trace = trace
     self.rep = rep
     self.val = val
@@ -2189,7 +2190,7 @@ def _efficient_transpose_rewrite(fun, mesh, in_names, out_names_thunk):
 def _efficient_transpose_rewrite_nomatch(f, store, mesh, in_reps, *args):
   with core.take_current_trace() as parent:
     tag = core.TraceTag()
-    t = RewriteTrace(parent_trace = parent, tag = tag, mesh=mesh)
+    t = RewriteTrace(parent_trace=parent, tag=tag, mesh=mesh)
     in_tracers = map(partial(RewriteTracer, t), in_reps, args)
     with core.set_current_trace(t):
       ans = f(*in_tracers)

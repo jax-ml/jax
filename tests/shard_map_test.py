@@ -2798,6 +2798,28 @@ class ShardMapTest(jtu.JaxTestCase):
 
     f(x)  # doesn't crash
 
+  def test_rep_none_canonicalization(self):
+    # https://github.com/jax-ml/jax/issues/26621
+    N = 8
+    xs = jnp.ones((8, N), dtype=jnp.int32)
+    variables = jax.random.normal(jax.random.key(1), (N, N), jnp.complex64)
+    mesh = jtu.create_mesh((2,), ('i',))
+    in_specs = (P(), P("i"),)
+    out_specs = P("i")
+
+    variables = jax.lax.with_sharding_constraint(variables, NamedSharding(mesh, P()))
+    xs = jax.lax.with_sharding_constraint(xs, NamedSharding(mesh, P('i')))
+
+    def fun(v, xs):
+        # Commenting this single line below makes everything work
+        v = jax.scipy.linalg.expm(v)
+        v = v.sum()
+        return v * xs.sum(axis=-1).astype(v.dtype)
+
+    res = fun(variables, xs)
+    fun_shard_map = shard_map(fun, mesh=mesh, in_specs=in_specs, out_specs=out_specs)
+    res = fun_shard_map(variables, xs)  # don't crash
+
 
 class FunSpec(NamedTuple):
   name: str
