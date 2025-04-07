@@ -520,7 +520,28 @@ def _is_contiguous_slice(idx):
           (idx.stop is None or _is_integer_index(idx.stop)) and
           (idx.step is None or (_is_integer_index(idx.step) and idx.step == 1)))
 
-def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) -> Array | None:
+
+def _check_indices_before_slice(
+    shape: tuple[int, ...], start_indices: list[int], limit_indices: list[int]
+) -> None:
+  """Check for out of bounds errors before calling `lax.slice`."""
+  # We use `np` instead of `jnp` here because we can calculate the values
+  # eagerly.
+  shape = np.array(shape, dtype=np.int32)
+  start_indices = np.array(start_indices, dtype=np.int32)
+  limit_indices = np.array(limit_indices, dtype=np.int32)
+
+  err = np.logical_or(
+      np.minimum(start_indices, limit_indices) < 0,
+      np.maximum(start_indices, limit_indices) >= shape,
+  )
+  if err.any():
+    raise ValueError("Out of bounds encountered before calling `lax.slice`")
+
+
+def _attempt_rewriting_take_via_slice(
+    arr: Array, idx: Any, mode: str | None
+) -> Array | None:
   # attempt to compute _rewriting_take via lax.slice(); return None if not possible.
   idx = idx if isinstance(idx, tuple) else (idx,)
 
@@ -593,6 +614,9 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
   if all(isinstance(i, (int, np.integer)) and i >= 0 for i in start_indices):
     int_start_indices = [int(i) for i in start_indices]  # type: ignore
     int_limit_indices = [i + s for i, s in zip(int_start_indices, slice_sizes)]
+    _check_indices_before_slice(
+        arr.shape, int_start_indices, int_limit_indices
+    )
     arr = lax.slice(
         arr, start_indices=int_start_indices, limit_indices=int_limit_indices)
   else:
