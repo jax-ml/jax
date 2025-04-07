@@ -497,9 +497,7 @@ class Primitive:
 
   def _true_bind(self, *args, **params):
     for arg in args:
-      if (isinstance(arg, Tracer)
-          and not arg._trace.is_valid()
-          and not config.data_dependent_tracing_fallback.value):
+      if isinstance(arg, Tracer) and not arg._trace.is_valid():
         raise escaped_tracer_error(arg)
     # TODO: figure out how to handle function arguments
     # assert (not config.enable_checks.value or
@@ -1015,10 +1013,6 @@ class EvalTrace(Trace):
     else:
       # TODO(dougalm): delete. this shouldn't be necessary
       args = map(full_lower, args)
-      if config.data_dependent_tracing_fallback.value:
-        for arg in args:
-          if isinstance(arg, Tracer):
-            return primitive.bind_with_trace(arg._trace, args, params)
       check_eval_args(args)
       return primitive.impl(*args, **params)
 

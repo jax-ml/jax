@@ -1099,12 +1099,6 @@ varying_axes_in_types = bool_state(
           ' transpose rewrite machinery in shard_map'),
     include_in_jit_key=True)
 
-data_dependent_tracing_fallback = bool_state(
-    name='jax_data_dependent_tracing_fallback',
-    default=False,
-    help=('When True, falls back to trace dispatch based on data dependence '
-          'instead of throwing an escaped tracer error.'))
-
 softmax_custom_jvp = bool_state(
     name='jax_softmax_custom_jvp',
     default=False,
