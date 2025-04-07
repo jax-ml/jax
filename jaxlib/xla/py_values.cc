@@ -684,10 +684,12 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
         // float64_dt and complex128_dt which are taken care of in previous if
         // blocks.
         (*p)[dtypes.np_bool.ptr()] = numpy_array_handler;
+        (*p)[dtypes.np_int4.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_int8.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_int16.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_int32.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_int64.ptr()] = np_int_handler;
+        (*p)[dtypes.np_uint4.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_uint8.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_uint16.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_uint32.ptr()] = numpy_array_handler;
