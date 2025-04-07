@@ -171,15 +171,6 @@ def to_layout_attr(
       )
 
 
-_wgmma_row_fragmented_layout_attr_pattern = re.compile(
-    r"^#mosaic_gpu.WGMMARowFragLayout$"
-)
-
-
-def is_wgmma_row_fragmented_layout(attr: ir.Attribute) -> bool:
-  return bool(_wgmma_row_fragmented_layout_attr_pattern.search(str(attr)))
-
-
 def from_layout_attr(
     attr: ir.Attribute,
 ) -> (
@@ -194,8 +185,6 @@ def from_layout_attr(
     return from_strided_fragmented_layout_attr(attr)
   elif is_tiled_layout(attr):
     return from_tiled_layout_attr(attr)
-  elif is_wgmma_row_fragmented_layout(attr):
-    return fa.WGMMARowFragLayout()
   else:
     raise NotImplementedError(
         f"Unsupported layout for conversion from MLIR attribute: {attr}"
