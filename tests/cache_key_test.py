@@ -83,9 +83,9 @@ class CacheKeyTest(jtu.JaxTestCase):
     self.assertEqual(dev_hash1, dev_hash2)
 
     acc_hash1 = self.get_hashed_value(
-        cache_key._hash_accelerator_config, devices, xla_bridge.get_backend())
+        cache_key._hash_accelerator_config, devices)
     acc_hash2 = self.get_hashed_value(
-        cache_key._hash_accelerator_config, devices, xla_bridge.get_backend())
+        cache_key._hash_accelerator_config, devices)
     self.assertEqual(acc_hash1, acc_hash2)
 
   def test_hash_platform(self):
