@@ -186,9 +186,7 @@ def _python_pjit_helper(fun: Callable, jit_info: PjitInfo, *args, **kwargs):
     args_flat = [*init_states, *args_flat]
 
   try:
-    if (core.trace_state_clean() and
-        not config.debug_key_reuse.value and
-        not config.data_dependent_tracing_fallback.value):
+    if core.trace_state_clean() and not config.debug_key_reuse.value:
       args_flat = map(core.full_lower, args_flat)
       core.check_eval_args(args_flat)
       out_flat, compiled, profiler = _pjit_call_impl_python(*args_flat, **p.params)
