@@ -33,7 +33,7 @@ from jax._src.interpreters.mlir import (
   aval_to_ir_type as aval_to_ir_type,
   aval_to_ir_types as aval_to_ir_types,
   core_call_lowering as core_call_lowering,
-  custom_call as custom_call,
+  custom_call as _custom_call,
   dense_bool_elements as dense_bool_elements,
   dense_bool_array as dense_bool_array,
   dense_int_array as dense_int_array,
@@ -77,3 +77,23 @@ from jax._src.sharding_impls import (
 from jax._src.callback import (
   emit_python_callback as emit_python_callback,
 )
+
+_deprecations = {
+    # Added Apr 7 2025
+    "custom_call": (
+        "mlir.custom_call is deprecated; use the APIs provided by jax.ffi instead.",
+        _custom_call,
+    )
+}
+
+import typing as _typing
+
+if _typing.TYPE_CHECKING:
+  custom_call = _custom_call
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _typing
+del _custom_call

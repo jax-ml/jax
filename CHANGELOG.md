@@ -36,6 +36,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * `jax.interpreters.mlir.hlo` and `jax.interpreters.mlir.func_dialect`,
     which were accidental exports, have been removed. If needed, they are
     available from `jax.extend.mlir`.
+  * `jax.interpreters.mlir.custom_call` is deprecated. The APIs provided by
+    {mod}`jax.ffi` should be used instead.
   * Several previously-deprecated APIs have been removed, including:
     * From `jax.lib.xla_client`: `FftType`, `PaddingType`, `dtype_to_etype`,
       and `shape_from_pyval`.
