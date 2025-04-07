@@ -174,6 +174,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         continue
       if p.name == "sharding_constraint":
         continue
+      if p.name == "dll_constraint":
+        continue
       if p.name == "mesh_cast":
         continue
       if p.name == "reshard":

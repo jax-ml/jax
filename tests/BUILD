@@ -325,6 +325,7 @@ jax_multiplatform_test(
     },
     enable_configs = [
         "tpu_v3_2x2_shardy",
+        "tpu_v3_2x2",
     ],
     tags = ["multiaccelerator"],
     deps = [
