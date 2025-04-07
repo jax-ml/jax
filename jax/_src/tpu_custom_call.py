@@ -64,15 +64,22 @@ _MOSAIC_ALLOW_HLO = config.bool_state(
 )
 
 
-# This tracks the latest Mosaic IR version with a monthly delay.
-FWD_COMPAT_IR_VERSION = 4
-DEFAULT_IR_VERSION = None
-# TODO(jevinjiang): Remove this once both jaxlib and libtpu are up to date.
-if is_cloud_tpu_older_than(2025, 4, 5) or jax.version._version_as_tuple(
-    jax.lib.__version__
-) < (0, 5, 4):
-  FWD_COMPAT_IR_VERSION = 3
-  DEFAULT_IR_VERSION = 3
+# Controls the IR serialization version. Upon incrementing the
+# default version in jaxlib/mosaic/dialect/tpu/transforms/serde.cc we must
+# continue to use the old serialization version when in forward compatibility
+# mode: for 1 month when exporting, or when using old cloud TPU.
+#
+# This can be achieved by adding:
+#    if ctx.is_forward_compat() or is_cloud_tpu_older_than(<today>):
+#       return <previous_serialization_version>
+#    return None
+#
+# We should also add a TODO to remove the conditional one month later.
+def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
+  # TODO(jevinjiang): remove the forward compatibility check after 2025-05-05.
+  if ctx.is_forward_compat() or is_cloud_tpu_older_than(2025, 4, 5):
+    return 3
+  return None
 
 
 tpu_custom_call_p = core.Primitive("tpu_custom_call")
@@ -679,9 +686,7 @@ def lower_module_to_custom_call(
       serialization_format=serialization_format,
       output_memory_spaces=output_memory_spaces,
       kernel_name=kernel_name,
-      ir_version=FWD_COMPAT_IR_VERSION
-      if ctx.is_forward_compat()
-      else DEFAULT_IR_VERSION,
+      ir_version=get_ir_version(ctx),
   )
   return _tpu_custom_call_lowering(
       ctx,
