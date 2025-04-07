@@ -28,8 +28,8 @@ from jax._src.lib import cuda_versions
 from jax._src import xla_bridge
 from jax.interpreters import mlir
 from jax.interpreters import xla
-from jax.interpreters.mlir import hlo
-from jax.interpreters.mlir import ir
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import hlo
 import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec
 
