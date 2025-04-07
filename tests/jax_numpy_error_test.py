@@ -30,6 +30,12 @@ JaxValueError = error_check.JaxValueError
 
 
 class JaxNumpyErrorTests(jtu.JaxTestCase):
+  def setUp(self):
+    # TODO(b/408148001): Fix thread safety issue.
+    if jtu.TEST_NUM_THREADS.value > 1:
+      self.skipTest("Test does not work with multiple threads")
+    super().setUp()
+
   @parameterized.product(jit=[True, False])
   def test_set_error_if_nan(self, jit):
     def f(x):
