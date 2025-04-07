@@ -24,6 +24,7 @@ load(
     "py_strict_test",
     "pytype_strict_library",
 )
+load("//jaxlib:pywrap.bzl", "nanobind_pywrap_extension")
 
 licenses(["notice"])
 
@@ -39,7 +40,7 @@ package_group(
     ],
 )
 
-nanobind_extension(
+nanobind_pywrap_extension(
     name = "xla_extension",
     srcs = ["xla.cc"],
     pytype_deps = py_deps(["numpy"]),
