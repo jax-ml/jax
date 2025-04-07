@@ -1403,6 +1403,44 @@ def _scan_rewrite(mesh, in_rep, *args, jaxpr, num_consts, num_carry, **params):
       *args, jaxpr=jaxpr_, num_consts=num_consts, num_carry=num_carry, **params)
   return out_vals, out_rep
 
+@register_check(control_flow.loops.while_p)
+def _while_check(mesh, *in_rep, body_jaxpr, cond_nconsts, body_nconsts, **_):
+  _, bconst_rep, carry_rep_in = split_list(in_rep, [cond_nconsts, body_nconsts])
+  carry_rep_out = _check_rep(mesh, body_jaxpr.jaxpr, [*bconst_rep, *carry_rep_in])
+  if tuple(carry_rep_in) != tuple(carry_rep_out):
+    raise Exception("Scanwhile_loopcarry input and output got mismatched "
+                    "replication types {carry_rep_in} and {carry_rep_out}. "
+                    "Please open an issue at "
+                    "https://github.com/jax-ml/jax/issues, and as a temporary "
+                    "workaround pass the check_rep=False argument to shard_map")
+  return carry_rep_out
+
+@register_rewrite(control_flow.loops.while_p)
+def _while_rewrite(mesh, in_rep, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
+                   body_nconsts):
+  # while while isn't transposable, we insert pbroadcasts for consistent carry
+  cconst_rep, bconst_rep, carry_rep_in = split_list(in_rep, [cond_nconsts, body_nconsts])
+  num_carry = len(args) - cond_nconsts - body_nconsts
+  for _ in range(1 + num_carry):
+    in_rep_ = [*bconst_rep, *carry_rep_in]
+    _, carry_rep_out = _replication_rewrite_nomatch(mesh, body_jaxpr, in_rep_)
+    if tuple(carry_rep_in) == tuple(carry_rep_out):
+      break
+    carry_rep_in = map(op.and_, carry_rep_in, carry_rep_out)
+  else:
+    assert False, "Fixpoint not reached"
+
+  cond_jaxpr_, _ = _replication_rewrite_nomatch(
+      mesh, cond_jaxpr, (*cconst_rep, *carry_rep_in))
+  body_jaxpr_ = _replication_rewrite_match(
+      mesh, body_jaxpr, (*bconst_rep, *carry_rep_in), carry_rep_out)
+  args_ = [pbroadcast(x, tuple(n for n in src if n not in dst))
+           if src - dst else x for x, src, dst in zip(args, in_rep, in_rep_)]
+  out_vals = control_flow.loops.while_p.bind(
+      *args_, cond_jaxpr=cond_jaxpr_, body_jaxpr=body_jaxpr_,
+      cond_nconsts=cond_nconsts, body_nconsts=body_nconsts)
+  return out_vals, carry_rep_out
+
 @register_check(control_flow.conditionals.cond_p)
 def _cond_rule(mesh, *in_rep, branches):
   _, *args_rep = in_rep

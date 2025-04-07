@@ -1016,6 +1016,57 @@ class ShardMapTest(jtu.JaxTestCase):
       shard_map(g, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
                 out_specs=[P(None), P(None), P(('x', 'y'))])(x, x, x)
 
+  def test_while_rep_rule(self):
+    mesh = jtu.create_mesh((2, 2,), ('x', 'y'))
+
+    def f(x, y, z):
+      x, y, z = x.sum(), y.sum(), z.sum()
+      def cond(c):
+        i, *_ = c
+        return i < 5
+      def body(c):
+        i, c, *cs = c
+        return (i + 1, *cs, c)
+      _, *out = jax.lax.while_loop(cond, body, (0, x, y, z))
+      return [jnp.expand_dims(a, 0) for a in out]
+
+    x = jnp.arange(4)
+
+    # doesn't crash, because out_spec assumes no replication (and there is none)
+    shard_map(f, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+              out_specs=P(('x', 'y')))(x, x, x)
+
+    # does crash, because output incorrectly promises replication
+    with self.assertRaisesRegex(ValueError, "require replication"):
+      shard_map(f, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+                out_specs=P('x'))(x, x, x)
+    with self.assertRaisesRegex(ValueError, "require replication"):
+      shard_map(f, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+                out_specs=P('y'))(x, x, x)
+    with self.assertRaisesRegex(ValueError, "require replication"):
+      shard_map(f, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+                out_specs=P(None))(x, x, x)
+
+    def g(x, y, z):
+      x, y, z = x.sum(), y.sum(), z.sum()
+      def cond(c):
+        i, *_ = c
+        return i < 1
+      def body(c):
+        i, *cs = c
+        return (i + 1, *cs)
+      _, *out = jax.lax.while_loop(cond, body, (0, x, y, z))
+      return [jnp.expand_dims(a, 0) for a in out]
+
+    # doesn't crash, because everything matches
+    shard_map(g, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+              out_specs=[P(None), P('x'), P(('x', 'y'))])(x, x, x)
+
+    # does crash, because the second guy is wrong
+    with self.assertRaisesRegex(ValueError, "require replication"):
+      shard_map(g, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+                out_specs=[P(None), P(None), P(('x', 'y'))])(x, x, x)
+
   def test_cond_rep_rule(self):
     mesh = jtu.create_mesh((2, 2,), ('x', 'y'))
     x = jnp.arange(4)
