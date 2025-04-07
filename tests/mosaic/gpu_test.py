@@ -2602,7 +2602,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         in_shape=(jax_shape, jax_shape),
         out_shape=jax_shape,
         smem_scratch_shape=[],
-        thread_semantics=mgpu.ThreadSemantics.Warpgroup,
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
 
     x = self.prng.uniform(-1, 1, shape).astype(dtype)
@@ -2747,7 +2747,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
             jax_shape_sliced,
             core.TMABarrier(1),
         ],
-        thread_semantics=mgpu.ThreadSemantics.Warpgroup,
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
 
     x = self.prng.uniform(-1, 1, test_case.shape).astype(dtype)
@@ -2846,7 +2846,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
             spec,
             core.TMABarrier(1),
         ],
-        thread_semantics=mgpu.ThreadSemantics.Warpgroup,
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
 
     x = self.prng.uniform(-1, 1, spec.shape).astype(dtype)
@@ -2994,7 +2994,7 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
             result_jax_shape,
             core.TMABarrier(1),
         ],
-        thread_semantics=mgpu.ThreadSemantics.Warpgroup,
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
     )
 
     prng_key = jax.random.key(1234)

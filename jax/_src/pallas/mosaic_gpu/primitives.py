@@ -75,7 +75,7 @@ def _load_abstract_eval(src, *avals_flat, args_tree, layout, optimized):
       {state.ReadEffect(0)},
   )
 
-@lowering.register_lowering_rule(load_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(load_p, mgpu.LoweringSemantics.Lane)
 def _load_p_lowering_rule(
     ctx: lowering.LoweringRuleContext, x_ref, *leaves, args_tree, layout, optimized
 ):
@@ -215,9 +215,10 @@ def _copy_smem_to_gmem_pp_eqn(
 jax_core.pp_eqn_rules[copy_smem_to_gmem_p] = _copy_smem_to_gmem_pp_eqn
 
 
-@lowering.register_lowering_rule(copy_smem_to_gmem_p, mgpu.ThreadSemantics.Lane)
 @lowering.register_lowering_rule(
-    copy_smem_to_gmem_p, mgpu.ThreadSemantics.Warpgroup
+    copy_smem_to_gmem_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(
+    copy_smem_to_gmem_p, mgpu.LoweringSemantics.Warpgroup
 )
 def _copy_smem_to_gmem_lowering(
     ctx: lowering.LoweringRuleContext,
@@ -236,7 +237,7 @@ def _copy_smem_to_gmem_lowering(
   else:
     predicate = None
 
-  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     if predicate is not None:
       assert ctx.module_ctx.single_wg_lane_predicate is not None
       predicate = arith_dialect.andi(
@@ -253,7 +254,7 @@ def _copy_smem_to_gmem_lowering(
   dst_transforms = dst_transforms_treedef.unflatten(flat_dst_transforms)
   src, src_transforms = lowering._handle_transforms(src, src_transforms, handle_transposes=False)
   copy_params = _extract_gmem_copy_params(dst_transforms) | _extract_smem_copy_params(src_transforms)
-  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     ctx.launch_ctx.async_copy(
         src_ref=src,
         dst_ref=dst,
@@ -439,9 +440,10 @@ def _copy_gmem_to_smem_pp_eqn(
 jax_core.pp_eqn_rules[copy_gmem_to_smem_p] = _copy_gmem_to_smem_pp_eqn
 
 
-@lowering.register_lowering_rule(copy_gmem_to_smem_p, mgpu.ThreadSemantics.Lane)
 @lowering.register_lowering_rule(
-    copy_gmem_to_smem_p, mgpu.ThreadSemantics.Warpgroup
+    copy_gmem_to_smem_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(
+    copy_gmem_to_smem_p, mgpu.LoweringSemantics.Warpgroup
 )
 def _copy_gmem_to_smem_lowering(
     ctx: lowering.LoweringRuleContext,
@@ -488,7 +490,7 @@ def _copy_gmem_to_smem_lowering(
         f" dtype={dst_ty.element_type})"
     )
   bytes = bits // 8
-  if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane:
+  if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     if bytes % WARPGROUP_SIZE:
       raise NotImplementedError("Only aligned copies are supported")
     # We arrive uniformly from each thread in the WG, so we need to divide the
@@ -630,8 +632,8 @@ def _barrier_arrive_pp_eqn(
 jax_core.pp_eqn_rules[barrier_arrive_p] = _barrier_arrive_pp_eqn
 
 
-@lowering.register_lowering_rule(barrier_arrive_p, mgpu.ThreadSemantics.Lane)
-@lowering.register_lowering_rule(barrier_arrive_p, mgpu.ThreadSemantics.Warpgroup)
+@lowering.register_lowering_rule(barrier_arrive_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(barrier_arrive_p, mgpu.LoweringSemantics.Warpgroup)
 def _barrier_arrive_lowering(
     ctx: lowering.LoweringRuleContext,
     barrier,
@@ -688,8 +690,8 @@ def _barrier_wait_pp_eqn(
 jax_core.pp_eqn_rules[barrier_wait_p] = _barrier_wait_pp_eqn
 
 
-@lowering.register_lowering_rule(barrier_wait_p, mgpu.ThreadSemantics.Lane)
-@lowering.register_lowering_rule(barrier_wait_p, mgpu.ThreadSemantics.Warpgroup)
+@lowering.register_lowering_rule(barrier_wait_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(barrier_wait_p, mgpu.LoweringSemantics.Warpgroup)
 def _barrier_wait_lowering(
     ctx: lowering.LoweringRuleContext,
     barrier,
@@ -726,9 +728,10 @@ def _wait_smem_to_gmem_abstract_eval(n, *, wait_read_only):
   return (), {gpu_core._memory_effect}
 
 
-@lowering.register_lowering_rule(wait_smem_to_gmem_p, mgpu.ThreadSemantics.Lane)
 @lowering.register_lowering_rule(
-    wait_smem_to_gmem_p, mgpu.ThreadSemantics.Warpgroup
+    wait_smem_to_gmem_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(
+    wait_smem_to_gmem_p, mgpu.LoweringSemantics.Warpgroup
 )
 def _wait_smem_to_gmem_lowering(
     ctx: lowering.LoweringRuleContext, n, *, wait_read_only
@@ -759,8 +762,9 @@ def _commit_group_abstract_eval():
   return (), {gpu_core._memory_effect}
 
 
-@lowering.register_lowering_rule(commit_group_p, mgpu.ThreadSemantics.Lane)
-@lowering.register_lowering_rule(commit_group_p, mgpu.ThreadSemantics.Warpgroup)
+@lowering.register_lowering_rule(commit_group_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(
+    commit_group_p, mgpu.LoweringSemantics.Warpgroup)
 def _commit_group_lowering(ctx: lowering.LoweringRuleContext):
   del ctx  # Unused.
   nvvm_dialect.cp_async_bulk_commit_group()
@@ -886,7 +890,7 @@ def _wgmma_ref_discharge(in_avals, out_avals, *args, **kwargs):
 wgmma_p = jax_core.Primitive("wgmma")
 
 
-@lowering.register_lowering_rule(wgmma_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(wgmma_p, mgpu.LoweringSemantics.Lane)
 def _wgmma_lowering(
     ctx: lowering.LoweringRuleContext,
     acc,
@@ -981,7 +985,7 @@ def _wgmma_lowering(
   return new_acc
 
 
-@lowering.register_lowering_rule(wgmma_p, mgpu.ThreadSemantics.Warpgroup)
+@lowering.register_lowering_rule(wgmma_p, mgpu.LoweringSemantics.Warpgroup)
 def _wgmma_warpgroup_lowering(
     ctx: lowering.LoweringRuleContext,
     acc,
@@ -1052,8 +1056,8 @@ def wgmma_wait_effectful_abstract_eval(_):
   return [], {gpu_core._wgmma_pipeline_effect}
 
 
-@lowering.register_lowering_rule(wgmma_wait_p, mgpu.ThreadSemantics.Lane)
-@lowering.register_lowering_rule(wgmma_wait_p, mgpu.ThreadSemantics.Warpgroup)
+@lowering.register_lowering_rule(wgmma_wait_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(wgmma_wait_p, mgpu.LoweringSemantics.Warpgroup)
 def _wgmma_wait_lowering(ctx: lowering.LoweringRuleContext, allow_groups):
   del ctx
   nvvm_dialect.wgmma_wait_group_sync_aligned(allow_groups)
@@ -1085,16 +1089,16 @@ def _wgmma_accumulator_deref_discharge(in_avals, out_avals, acc):
 
 
 @lowering.register_lowering_rule(
-    wgmma_accumulator_deref_p, mgpu.ThreadSemantics.Lane
+    wgmma_accumulator_deref_p, mgpu.LoweringSemantics.Lane
 )
 @lowering.register_lowering_rule(
-    wgmma_accumulator_deref_p, mgpu.ThreadSemantics.Warpgroup
+    wgmma_accumulator_deref_p, mgpu.LoweringSemantics.Warpgroup
 )
 def _wgmma_accumulator_deref_lowering(ctx: lowering.LoweringRuleContext, acc):
   nvvm_dialect.wgmma_wait_group_sync_aligned(0)
   return (
       acc.value
-      if ctx.module_ctx.thread_semantics == mgpu.ThreadSemantics.Lane
+      if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane
       else acc
   )
 
@@ -1156,7 +1160,7 @@ def _layout_cast_abstract_eval(x, new_layout):
   return x
 
 
-@lowering.register_lowering_rule(layout_cast_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(layout_cast_p, mgpu.LoweringSemantics.Lane)
 def _layout_cast_lowering(ctx: lowering.LoweringRuleContext, x, *, new_layout):
   del ctx  # Unused.
   return x.to_layout(new_layout.to_mgpu())
@@ -1177,8 +1181,10 @@ def _set_max_registers_abstract_eval(n, *, action):
   return (), {gpu_core._memory_effect}
 
 
-@lowering.register_lowering_rule(set_max_registers_p, mgpu.ThreadSemantics.Lane)
-@lowering.register_lowering_rule(set_max_registers_p, mgpu.ThreadSemantics.Warpgroup)
+@lowering.register_lowering_rule(
+    set_max_registers_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(
+    set_max_registers_p, mgpu.LoweringSemantics.Warpgroup)
 def _set_max_registers_lowering(
     ctx: lowering.LoweringRuleContext, n, *, action
 ):
@@ -1206,8 +1212,9 @@ def _commit_smem_abstract_eval():
   return (), {gpu_core._memory_effect}
 
 
-@lowering.register_lowering_rule(commit_smem_p, mgpu.ThreadSemantics.Lane)
-@lowering.register_lowering_rule(commit_smem_p, mgpu.ThreadSemantics.Warpgroup)
+@lowering.register_lowering_rule(commit_smem_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(
+    commit_smem_p, mgpu.LoweringSemantics.Warpgroup)
 def _commit_smem_lowering(ctx: lowering.LoweringRuleContext):
   # TODO(bchetioui): add primitive for commit smem to mosaic_gpu dialect.
   mgpu.commit_shared()
@@ -1227,7 +1234,8 @@ def _broadcasted_iota_abstract_eval(dtype, shape, dimension, layout):
   return jax_core.ShapedArray(shape, dtype)
 
 
-@lowering.register_lowering_rule(broadcasted_iota_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(
+    broadcasted_iota_p, mgpu.LoweringSemantics.Lane)
 def _broadcasted_iota_lowering(
     ctx: lowering.LoweringRuleContext, dtype, shape, dimension, layout
 ):
@@ -1309,8 +1317,8 @@ def _jaxpr_call_pp_eqn(
 jax_core.pp_eqn_rules[jaxpr_call_p] = _jaxpr_call_pp_eqn
 
 
-@lowering.register_lowering_rule(jaxpr_call_p, mgpu.ThreadSemantics.Lane)
-@lowering.register_lowering_rule(jaxpr_call_p, mgpu.ThreadSemantics.Warpgroup)
+@lowering.register_lowering_rule(jaxpr_call_p, mgpu.LoweringSemantics.Lane)
+@lowering.register_lowering_rule(jaxpr_call_p, mgpu.LoweringSemantics.Warpgroup)
 def _jaxpr_call_lowering_rule(
     ctx: lowering.LoweringRuleContext,
     *flat_args,
@@ -1507,7 +1515,7 @@ def _inline_mgpu_abstract_eval(
 def _inline_mgpu_discharge(*args, **kwargs):
   raise NotImplementedError("inline_mgpu_p does not support discharge.")
 
-@lowering.register_lowering_rule(inline_mgpu_p, mgpu.ThreadSemantics.Lane)
+@lowering.register_lowering_rule(inline_mgpu_p, mgpu.LoweringSemantics.Lane)
 def _inline_mgpu_lowering_rule(
     ctx: lowering.LoweringRuleContext,
     *flat_args,

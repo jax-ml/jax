@@ -58,8 +58,8 @@ def pallas_call_lowering(
     print(f"The grid mapping for pallas_call {debug_info.func_src_info}:")
     print(grid_mapping)
 
-  thread_semantics = compiler_params.get("mosaic_gpu", {}).get(
-      "thread_semantics", mgpu.ThreadSemantics.Lane
+  lowering_semantics = compiler_params.get("mosaic_gpu", {}).get(
+      "lowering_semantics", mgpu.LoweringSemantics.Lane
   )
   mgpu.dialect.register_dialect(ctx.module_context.context)  # pytype: disable=attribute-error
 
