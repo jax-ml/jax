@@ -857,13 +857,14 @@ def _wgmma_ref_pp_eqn(
   acc, a, b, *leaves = eqn.invars
   a_transforms_treedef = eqn.params["a_transforms_tree"]
   b_transforms_treedef = eqn.params["b_transforms_tree"]
+  split = getattr(a_transforms_treedef, "num_leaves", 0)
   a_transforms = (
-      a_transforms_treedef.unflatten(leaves[: a_transforms_treedef.num_leaves])
+      a_transforms_treedef.unflatten(leaves[:split])
       if a_transforms_treedef is not None
       else []
   )
   b_transforms = (
-      b_transforms_treedef.unflatten(leaves[a_transforms_treedef.num_leaves :])
+      b_transforms_treedef.unflatten(leaves[split:])
       if b_transforms_treedef is not None
       else []
   )
