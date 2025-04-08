@@ -192,8 +192,9 @@ def _copy_smem_to_gmem_pp_eqn(
   pp_params = {}
   if not (commit_group := eqn.params["commit_group"]):
     pp_params["commit_group"] = commit_group
-  if has_user_predicate := eqn.params["has_user_predicate"]:
-    pp_params["has_user_predicate"] = has_user_predicate
+  if eqn.params["has_user_predicate"]:
+    flat_args, user_predicate = flat_args[:-1], flat_args[-1]
+    pp_params["user_predicate"] = jax_core.pp_var(user_predicate, context)
   if reduction_op := eqn.params["reduction_op"]:
     pp_params["reduction_op"] = reduction_op
   flat_src_transforms, flat_dst_transforms = util.split_list(
