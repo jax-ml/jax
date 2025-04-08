@@ -1876,6 +1876,7 @@ class DynamicJaxprTrace(core.Trace):
     # avoid cyclic refs
     self.frame.tracers = []
     self.frame.constid_to_tracer = {}
+    self.frame.constvar_to_val = {}
 
   def to_jaxpr_tracer(self, x):
     as_local_var = self.frame.tracer_to_var.get(id(x))
