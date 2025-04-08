@@ -55,8 +55,10 @@ float8_e5m2 = ml_dtypes.float8_e5m2
 float8_e5m2fnuz = ml_dtypes.float8_e5m2fnuz
 float8_e8m0fnu = ml_dtypes.float8_e8m0fnu
 ops = xla_client.ops
-xla_computation_to_mlir_module = (
-    xla_client._xla.mlir.xla_computation_to_mlir_module)
+
+def xla_computation_to_mlir_module(c: xla_client.XlaComputation) -> bytes:
+  return xla_client._xla.mlir.hlo_to_stablehlo(
+      c.as_serialized_hlo_module_proto())
 
 
 def execute_with_python_values(executable, arguments, backend):  # pylint: disable=invalid-name
