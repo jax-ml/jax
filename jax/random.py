@@ -92,7 +92,7 @@ If you need a new random number, you can use :meth:`jax.random.split` to generat
 
    To learn more about this upgrade, and the design of key types, see
    `JEP 9263
-   <https://jax.readthedocs.io/en/latest/jep/9263-typed-keys.html>`_.
+   <https://docs.jax.dev/en/latest/jep/9263-typed-keys.html>`_.
 
 Advanced
 --------
@@ -178,7 +178,7 @@ variable, e.g. as
 ``XLA_FLAGS=--xla_tpu_spmd_rng_bit_generator_unsafe=1``.
 
 For more about ``jax_threefry_partitionable``, see
-https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html#generating-random-numbers
+https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html#generating-random-numbers
 
 **Summary:**
 

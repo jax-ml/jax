@@ -953,7 +953,7 @@ def pjit(
       be donated.
 
       For more details on buffer donation see the
-      `FAQ <https://jax.readthedocs.io/en/latest/faq.html#buffer-donation>`_.
+      `FAQ <https://docs.jax.dev/en/latest/faq.html#buffer-donation>`_.
     donate_argnames: An optional string or collection of strings specifying
       which named arguments are donated to the computation. See the
       comment on ``donate_argnums`` for details. If not
@@ -1269,7 +1269,7 @@ def explain_tracing_cache_miss(
     if add_weak_type_hint:
       p('where weak_type=True often means a Python builtin numeric value, and ')
       p('weak_type=False means a jax.Array.')
-      p('See https://jax.readthedocs.io/en/latest/type_promotion.html#weak-types')
+      p('See https://docs.jax.dev/en/latest/type_promotion.html#weak-types')
     return done()
 
   # we think this is unreachable...
@@ -2564,7 +2564,7 @@ def with_sharding_constraint(x, shardings):
   Returns:
     x_with_shardings: PyTree of jax.Arrays with specified sharding constraints.
 
-  .. _Distributed arrays and automatic parallelization: https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
+  .. _Distributed arrays and automatic parallelization: https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
   """
   x_flat, tree = tree_flatten(x)
 

@@ -225,7 +225,7 @@ def PRNGKey(seed: int | ArrayLike, *,
 
   This function produces old-style legacy PRNG keys, which are arrays
   of dtype ``uint32``. For more, see the note in the `PRNG keys
-  <https://jax.readthedocs.io/en/latest/jax.random.html#prng-keys>`_
+  <https://docs.jax.dev/en/latest/jax.random.html#prng-keys>`_
   section. When possible, :func:`jax.random.key` is recommended for
   use instead.
 

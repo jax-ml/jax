@@ -4773,7 +4773,7 @@ class CompositeTest(jtu.JaxTestCase):
         ValueError,
         "JVP rule for composite not implemented. You can use `jax.custom_jvp` "
         "to add support. See "
-        "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
+        "https://docs.jax.dev/en/latest/_autosummary/jax.custom_jvp.html"
     ):
       jvp(my_square, (1.0,), (2.0,))
 
@@ -4786,7 +4786,7 @@ class CompositeTest(jtu.JaxTestCase):
         ValueError,
         "JVP rule for composite not implemented. You can use `jax.custom_jvp` "
         "to add support. See "
-        "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
+        "https://docs.jax.dev/en/latest/_autosummary/jax.custom_jvp.html"
     ):
       grad(my_square)(1.0)
 

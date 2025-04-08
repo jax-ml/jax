@@ -338,7 +338,7 @@ class PrngTest(jtu.JaxTestCase):
 
     Any refactoring of random distributions that leads to non-trivial
     differences in this test should follow the procedure outlined at
-    https://jax.readthedocs.io/en/latest/api_compatibility.html#numerics-and-randomness
+    https://docs.jax.dev/en/latest/api_compatibility.html#numerics-and-randomness
 
     This includes:
     * Announcing the change in the CHANGELOG.md

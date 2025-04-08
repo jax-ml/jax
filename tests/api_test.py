@@ -4505,7 +4505,7 @@ class APITest(jtu.JaxTestCase):
       self.assertLen(cm.output, expected_log_len)
       msg = cm.output[0]
       self.assertIn('weak_type=True', msg)
-      self.assertIn('https://jax.readthedocs.io/en/latest/type_promotion.html#weak-types', msg)
+      self.assertIn('https://docs.jax.dev/en/latest/type_promotion.html#weak-types', msg)
 
     # kwarg change
     with config.explain_cache_misses(True):

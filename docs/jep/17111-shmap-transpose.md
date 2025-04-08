@@ -497,7 +497,7 @@ of every function instance along which the outputs are mapped, whereas for mesh
 axes over which the output is unmapped only one copy of the value is used.
 
 See [the `shmap`
-JEP](https://jax.readthedocs.io/en/latest/jep/14273-shard-map.html) for examples
+JEP](https://docs.jax.dev/en/latest/jep/14273-shard-map.html) for examples
 of unmapped inputs and outputs. For comparison, in `vmap` unmapped
 inputs/outputs are indicated by using `in_axes` / `out_axes` of `None` (rather
 than an `int`).

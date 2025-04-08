@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef JAXLIB_XLA_PYTREE_H_
 #define JAXLIB_XLA_PYTREE_H_
 
-// See https://jax.readthedocs.io/en/latest/pytrees.html for the documentation
+// See https://docs.jax.dev/en/latest/pytrees.html for the documentation
 // about pytree.
 
 #include <Python.h>

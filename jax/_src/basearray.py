@@ -142,7 +142,7 @@ class Array:
     a + b  # Raises an error
     ```
 
-    See https://jax.readthedocs.io/en/latest/faq.html#controlling-data-and-computation-placement-on-devices
+    See https://docs.jax.dev/en/latest/faq.html#controlling-data-and-computation-placement-on-devices
     for more information.
     """
     raise NotImplementedError

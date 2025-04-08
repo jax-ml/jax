@@ -430,7 +430,7 @@ def _trace_to_jaxpr(fun: Callable,
           "Consider using the `static_argnums` parameter for `jax.remat` or "
           "`jax.checkpoint`. See the `jax.checkpoint` docstring and its example "
           "involving `static_argnums`:\n"
-          "https://jax.readthedocs.io/en/latest/_autosummary/jax.checkpoint.html"
+          "https://docs.jax.dev/en/latest/_autosummary/jax.checkpoint.html"
           "\n")
       e.args = msg,
     raise
@@ -875,7 +875,7 @@ def checkpoint_wrapper(
            "    else:\n"
            "      return g(x)\n"
            "\n"
-           "See https://jax.readthedocs.io/en/latest/jep/11830-new-remat-checkpoint.html\n")
+           "See https://docs.jax.dev/en/latest/jep/11830-new-remat-checkpoint.html\n")
     raise NotImplementedError(msg)
   return checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
                     static_argnums=static_argnums)

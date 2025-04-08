@@ -93,7 +93,7 @@ package_group(
     includes = [":internal"],
     packages = [
         # Intentionally avoid jax dependencies on jax.extend.
-        # See https://jax.readthedocs.io/en/latest/jep/15856-jex.html
+        # See https://docs.jax.dev/en/latest/jep/15856-jex.html
         "//tests/...",
     ] + jax_extend_internal_users,
 )

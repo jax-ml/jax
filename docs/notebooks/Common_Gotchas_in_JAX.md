@@ -201,7 +201,7 @@ jax_array[1, :] = 1.0
 
 Allowing mutation of variables in-place makes program analysis and transformation difficult. JAX requires that programs are pure functions.
 
-Instead, JAX offers a _functional_ array update using the [`.at` property on JAX arrays](https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html#jax.numpy.ndarray.at).
+Instead, JAX offers a _functional_ array update using the [`.at` property on JAX arrays](https://docs.jax.dev/en/latest/_autosummary/jax.numpy.ndarray.at.html#jax.numpy.ndarray.at).
 
 +++ {"id": "hfloZ1QXCS_J"}
 
@@ -261,7 +261,7 @@ print(new_jax_array)
 
 +++ {"id": "sTjJ3WuaDyqU"}
 
-For more details on indexed array updates, see the [documentation for the `.at` property](https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html#jax.numpy.ndarray.at).
+For more details on indexed array updates, see the [documentation for the `.at` property](https://docs.jax.dev/en/latest/_autosummary/jax.numpy.ndarray.at.html#jax.numpy.ndarray.at).
 
 +++ {"id": "oZ_jE2WAypdL"}
 
@@ -292,7 +292,7 @@ jnp.arange(10)[11]
 
 +++ {"id": "NAcXJNAcDi_v"}
 
-If you would like finer-grained control over the behavior for out-of-bound indices, you can use the optional parameters of [`ndarray.at`](https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html); for example:
+If you would like finer-grained control over the behavior for out-of-bound indices, you can use the optional parameters of [`ndarray.at`](https://docs.jax.dev/en/latest/_autosummary/jax.numpy.ndarray.at.html); for example:
 
 ```{code-cell} ipython3
 :id: -0-MaFddO-xy
@@ -664,7 +664,7 @@ x.dtype # --> dtype('float64')
 While `jax.numpy` makes every attempt to replicate the behavior of numpy's API, there do exist corner cases where the behaviors differ.
 Many such cases are discussed in detail in the sections above; here we list several other known places where the APIs diverge.
 
-- For binary operations, JAX's type promotion rules differ somewhat from those used by NumPy. See [Type Promotion Semantics](https://jax.readthedocs.io/en/latest/type_promotion.html) for more details.
+- For binary operations, JAX's type promotion rules differ somewhat from those used by NumPy. See [Type Promotion Semantics](https://docs.jax.dev/en/latest/type_promotion.html) for more details.
 - When performing unsafe type casts (i.e. casts in which the target dtype cannot represent the input value), JAX's behavior may be backend dependent, and in general may diverge from NumPy's behavior. Numpy allows control over the result in these scenarios via the `casting` argument (see [`np.ndarray.astype`](https://numpy.org/devdocs/reference/generated/numpy.ndarray.astype.html)); JAX does not provide any such configuration, instead directly inheriting the behavior of [XLA:ConvertElementType](https://www.tensorflow.org/xla/operation_semantics#convertelementtype).
 
   Here is an example of an unsafe cast with differing results between NumPy and JAX:

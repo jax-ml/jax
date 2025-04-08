@@ -359,7 +359,7 @@ UPGRADE_BOOL_HELP = (
     " This will be enabled by default in future versions of JAX, at which "
     "point all uses of the flag will be considered deprecated (following "
     "the `API compatibility policy "
-    "<https://jax.readthedocs.io/en/latest/api_compatibility.html>`_).")
+    "<https://docs.jax.dev/en/latest/api_compatibility.html>`_).")
 
 UPGRADE_BOOL_EXTRA_DESC = " (transient)"
 
@@ -911,7 +911,7 @@ jax_export_calling_convention_version = int_state(
         'The calling convention version number to use for exporting. This must be '
         'within the range of versions supported by the tf.XlaCallModule '
         'used in your deployment environment. '
-        'See https://jax.readthedocs.io/en/latest/export/shape_poly.html#calling-convention-versions.'
+        'See https://docs.jax.dev/en/latest/export/shape_poly.html#calling-convention-versions.'
     )
 )
 
@@ -920,7 +920,7 @@ export_ignore_forward_compatibility = bool_state(
     default=bool_env('JAX_EXPORT_IGNORE_FORWARD_COMPATIBILIY', False),
     help=(
         'Whether to ignore the forward compatibility lowering rules. '
-        'See https://jax.readthedocs.io/en/latest/export/export.html#compatibility-guarantees-for-custom-calls.'
+        'See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees-for-custom-calls.'
     )
 )
 
@@ -1668,7 +1668,7 @@ def transfer_guard(new_val: str) -> Iterator[None]:
   """A contextmanager to control the transfer guard level for all transfers.
 
   For more information, see
-  https://jax.readthedocs.io/en/latest/transfer_guard.html
+  https://docs.jax.dev/en/latest/transfer_guard.html
 
   Args:
     new_val: The new thread-local transfer guard level for all transfers.

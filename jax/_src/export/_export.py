@@ -67,7 +67,7 @@ LoweringSharding = Union[sharding.Sharding, pxla.UnspecifiedValue]
 HloSharding = xla_client.HloSharding
 
 # The minimum and maximum supported calling convention version.
-# See https://jax.readthedocs.io/en/latest/export/export.html#export-calling-convention-version
+# See https://docs.jax.dev/en/latest/export/export.html#export-calling-convention-version
 minimum_supported_calling_convention_version = 9
 maximum_supported_calling_convention_version = 9
 
@@ -153,16 +153,16 @@ class Exported:
     platforms: a tuple containing the platforms for which the function should
         be exported. The set of platforms in JAX is open-ended; users can
         add platforms. JAX built-in platforms are: 'tpu', 'cpu', 'cuda', 'rocm'.
-        See https://jax.readthedocs.io/en/latest/export/export.html#cross-platform-and-multi-platform-export.
+        See https://docs.jax.dev/en/latest/export/export.html#cross-platform-and-multi-platform-export.
     ordered_effects: the ordered effects present in the serialized module.
-        This is present from serialization version 9. See https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention
+        This is present from serialization version 9. See https://docs.jax.dev/en/latest/export/export.html#module-calling-convention
         for the calling convention in presence of ordered effects.
     unordered_effects: the unordered effects present in the serialized module.
         This is present from serialization version 9.
     mlir_module_serialized: the serialized lowered VHLO module.
     calling_convention_version: a version number for the calling
         convention of the exported module.
-        See more versioning details at https://jax.readthedocs.io/en/latest/export/export.html#calling-convention-versions.
+        See more versioning details at https://docs.jax.dev/en/latest/export/export.html#calling-convention-versions.
     module_kept_var_idx: the sorted indices of the arguments among `in_avals` that
         must be passed to the module. The other arguments have been dropped
         because they are not used.
@@ -181,7 +181,7 @@ class Exported:
         for each primal output. It returns a tuple with the cotangents
         corresponding to the flattened primal inputs.
 
-  See a [description of the calling convention for the `mlir_module`](https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention).
+  See a [description of the calling convention for the `mlir_module`](https://docs.jax.dev/en/latest/export/export.html#module-calling-convention).
   """
   fun_name: str
   in_tree: tree_util.PyTreeDef
@@ -306,7 +306,7 @@ class Exported:
 
     The invocation supports reverse-mode AD, and all the features supported
     by exporting: shape polymorphism, multi-platform, device polymorphism.
-    See the examples in the [JAX export documentation](https://jax.readthedocs.io/en/latest/export/export.html).
+    See the examples in the [JAX export documentation](https://docs.jax.dev/en/latest/export/export.html).
     """
     return call_exported(self)(*args, **kwargs)
 
@@ -541,7 +541,7 @@ def export(
         the exported code takes an argument specifying the platform.
         If None, then use the default JAX backend.
         The calling convention for multiple platforms is explained at
-        https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention.
+        https://docs.jax.dev/en/latest/export/export.html#module-calling-convention.
     _override_lowering_rules: an optional sequence of custom lowering rules
         for some JAX primitives. Each element of the sequence is a pair
         of a JAX primitive and a lowering function. Defining lowering rules
@@ -593,7 +593,7 @@ def _export_internal(
 
   Note: this function exists only for internal usage by jax2tf. Use
     `jax.export` instead.
-    See https://jax.readthedocs.io/en/latest/export/export.html
+    See https://docs.jax.dev/en/latest/export/export.html
 
   See docstring of `export` for more details.
   """
@@ -837,7 +837,7 @@ def _wrap_main_func(
 ) -> ir.Module:
   """Wraps the lowered module with a new "main" handling dimension arguments.
 
-  See calling convention documentation https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention.
+  See calling convention documentation https://docs.jax.dev/en/latest/export/export.html#module-calling-convention.
 
   Args:
     module: the HLO module as obtained from lowering.
@@ -1187,7 +1187,7 @@ def _check_module(mod: ir.Module, *,
     disallowed_custom_call_ops_str = "\n".join(disallowed_custom_call_ops)
     msg = ("Cannot serialize code with custom calls whose targets have no "
            "compatibility guarantees. "
-           "See https://jax.readthedocs.io/en/latest/export/export.html#compatibility-guarantees-for-custom-calls. "
+           "See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees-for-custom-calls. "
            "Examples are:\n"
            f"{disallowed_custom_call_ops_str}.\n")
     raise ValueError(msg)

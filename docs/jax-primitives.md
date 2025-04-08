@@ -300,7 +300,7 @@ def multiply_add_lowering(ctx, xc, yc, zc):
   return [hlo.AddOp(hlo.MulOp(xc, yc), zc).result]
 
 # Now, register the lowering rule with JAX.
-# For GPU, refer to the https://jax.readthedocs.io/en/latest/Custom_Operation_for_GPUs.html
+# For GPU, refer to the https://docs.jax.dev/en/latest/Custom_Operation_for_GPUs.html
 from jax.interpreters import mlir
 
 mlir.register_lowering(multiply_add_p, multiply_add_lowering, platform='cpu')

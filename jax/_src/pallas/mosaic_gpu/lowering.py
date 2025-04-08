@@ -473,7 +473,7 @@ def _check_block_mappings(
         f" and index_map {bm.index_map_jaxpr.jaxpr} in"
         f" memory space {bm.transformed_block_aval.memory_space}."
         " See details at"
-        " https://jax.readthedocs.io/en/latest/pallas/grid_blockspec.html#pallas-blockspec."
+        " https://docs.jax.dev/en/latest/pallas/grid_blockspec.html#pallas-blockspec."
     )
 
   for bm in block_mappings:

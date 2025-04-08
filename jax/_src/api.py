@@ -232,7 +232,7 @@ def jit(
       be donated.
 
       For more details on buffer donation see the
-      `FAQ <https://jax.readthedocs.io/en/latest/faq.html#buffer-donation>`_.
+      `FAQ <https://docs.jax.dev/en/latest/faq.html#buffer-donation>`_.
     donate_argnames: optional, a string or collection of strings specifying
       which named arguments are donated to the computation. See the
       comment on ``donate_argnums`` for details. If not
@@ -856,7 +856,7 @@ def vmap(fun: F,
       be a container with a matching pytree structure specifying the mapping of its
       container elements. In other words, ``in_axes`` must be a container tree prefix
       of the positional argument tuple passed to ``fun``. See this link for more detail:
-      https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees
+      https://docs.jax.dev/en/latest/pytrees.html#applying-optional-parameters-to-pytrees
 
       Either ``axis_size`` must be provided explicitly, or at least one
       positional argument must have ``in_axes`` not None. The sizes of the
@@ -1242,7 +1242,7 @@ def pmap(
       arguments will not be donated.
 
       For more details on buffer donation see the
-      `FAQ <https://jax.readthedocs.io/en/latest/faq.html#buffer-donation>`_.
+      `FAQ <https://docs.jax.dev/en/latest/faq.html#buffer-donation>`_.
 
   Returns:
     A parallelized version of ``fun`` with arguments that correspond to those of
@@ -1489,7 +1489,7 @@ def _prepare_pmap(fun: Callable, in_axes, out_axes, static_broadcasted_tuple,
               "Instead, each argument passed by keyword is mapped over its "
               "leading axis. See the description of `in_axes` in the `pmap` "
               "docstring: "
-              "https://jax.readthedocs.io/en/latest/_autosummary/jax.pmap.html#jax.pmap")
+              "https://docs.jax.dev/en/latest/_autosummary/jax.pmap.html#jax.pmap")
     msg += ("\n\nCheck that the value of the `in_axes` argument to `pmap` "
             "is a tree prefix of the tuple of arguments passed positionally to "
             "the pmapped function.")

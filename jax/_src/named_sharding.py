@@ -92,7 +92,7 @@ class NamedSharding(JSharding.Sharding):
   across ``y`` axis of the mesh.
 
   The Distributed arrays and automatic parallelization
-  (https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html#namedsharding-gives-a-way-to-express-shardings-with-names)
+  (https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html#namedsharding-gives-a-way-to-express-shardings-with-names)
   tutorial has more details and diagrams that explain how
   :class:`Mesh` and :class:`PartitionSpec` are used.
 

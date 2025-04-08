@@ -576,7 +576,7 @@ def _check_block_mappings(
               # TODO(necula): add index_map source location info
               f"and index_map {bm.index_map_jaxpr.jaxpr}, in "
               f"memory space {bm.block_aval.memory_space}."
-              "\nSee details at https://jax.readthedocs.io/en/latest/pallas/grid_blockspec.html#pallas-blockspec")
+              "\nSee details at https://docs.jax.dev/en/latest/pallas/grid_blockspec.html#pallas-blockspec")
     if rank < 1:
       raise ValueError(
           "The Pallas TPU lowering currently supports only blocks of "

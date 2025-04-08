@@ -41,7 +41,7 @@ def ravel_pytree(pytree):
     component of the output.
 
   For details on dtype promotion, see
-  https://jax.readthedocs.io/en/latest/type_promotion.html.
+  https://docs.jax.dev/en/latest/type_promotion.html.
 
   """
   leaves, treedef = tree_flatten(pytree)

@@ -13,7 +13,7 @@
 # limitations under the License.
 """Shape polymorphism support.
 
-See documentation at https://jax.readthedocs.io/en/latest/export/shape_poly.html.
+See documentation at https://docs.jax.dev/en/latest/export/shape_poly.html.
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ This error arises for comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a boolean value for all values of the symbolic dimensions involved.
 
-Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#comparison-of-symbolic-dimensions-is-partially-supported
+Please see https://docs.jax.dev/en/latest/export/shape_poly.html#comparison-of-symbolic-dimensions-is-partially-supported
 for more details.
 """
 
@@ -227,7 +227,7 @@ class _DimFactor:
           return normalized_var._evaluate(env)  # type: ignore
         err_msg = (
             f"Encountered dimension variable '{self.var}' that is not appearing in the shapes of the function arguments.\n"
-            "Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details.")
+            "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details.")
         raise UnexpectedDimVar(err_msg)
     else:
       operand_values = [opnd._evaluate(env) for opnd in self.operands]
@@ -654,7 +654,7 @@ class _DimExpr:
       # Here we really ought to raise InconclusiveDimensionOperation, but __eq__
       # cannot raise exceptions, because it is used indirectly when hashing.
       # So, we say that the expressions are disequal, which is really unsound.
-      # See https://jax.readthedocs.io/en/latest/export/shape_poly.html#comparison-of-symbolic-dimensions-is-partially-supported
+      # See https://docs.jax.dev/en/latest/export/shape_poly.html#comparison-of-symbolic-dimensions-is-partially-supported
       return False
 
     return diff == 0
@@ -841,7 +841,7 @@ class _DimExpr:
       # Here we really ought to raise InconclusiveDimensionOperation, but __eq__
       # cannot raise exceptions, because it is used indirectly when hashing.
       # So, we say that the expressions are disequal, which is really unsound.
-      # See https://jax.readthedocs.io/en/latest/export/shape_poly.html#comparison-of-symbolic-dimensions-is-partially-supported
+      # See https://docs.jax.dev/en/latest/export/shape_poly.html#comparison-of-symbolic-dimensions-is-partially-supported
       return False
 
     return diff == 0
@@ -986,7 +986,7 @@ class SymbolicScope:
 
   Holds the constraints on symbolic expressions.
 
-  See [the README](https://jax.readthedocs.io/en/latest/export/shape_poly.html#user-specified-symbolic-constraints)
+  See [the README](https://docs.jax.dev/en/latest/export/shape_poly.html#user-specified-symbolic-constraints)
   for more details.
 
   Args:
@@ -1112,7 +1112,7 @@ class SymbolicScope:
           f"Invalid mixing of symbolic scopes {when}.\n"
           f"Expected {self_descr}scope {self}\n"
           f"and found for '{other}' ({other_descr}) scope {other.scope}\n"
-          f"See https://jax.readthedocs.io/en/latest/export/shape_poly.html#user-specified-symbolic-constraints.")
+          f"See https://docs.jax.dev/en/latest/export/shape_poly.html#user-specified-symbolic-constraints.")
 
   def _clear_caches(self):
     self._bounds_cache.clear()
@@ -1384,7 +1384,7 @@ def symbolic_shape(shape_spec: str | None,
                    ) -> Sequence[DimSize]:
   """Constructs a symbolic shape from a string representation.
 
-  See https://jax.readthedocs.io/en/latest/export/shape_poly.html for examples.
+  See https://docs.jax.dev/en/latest/export/shape_poly.html for examples.
 
   Args:
     shape_spec: a symbolic shape specification. None stands for "...".
@@ -1396,13 +1396,13 @@ def symbolic_shape(shape_spec: str | None,
       mod(e1, e2), max(e1, e2), or min(e1, e2).
     constraints: a sequence of constraints on symbolic dimension expressions, of
       the form `e1 >= e2` or `e1 <= e2`, or `e1 == e2`.
-      See [the documentation](https://jax.readthedocs.io/en/latest/export/shape_poly.html#user-specified-symbolic-constraints)
+      See [the documentation](https://docs.jax.dev/en/latest/export/shape_poly.html#user-specified-symbolic-constraints)
       for usage.
     scope: optionally, you can specify that the parsed symbolic expressions
       be created in the given scope. If this is missing, then a new
       `SymbolicScope` is created with the given `constraints`.
       You cannot specify both a `scope` and `constraints`.
-      See [the documentation](https://jax.readthedocs.io/en/latest/export/shape_poly.html#user-specified-symbolic-constraints)
+      See [the documentation](https://docs.jax.dev/en/latest/export/shape_poly.html#user-specified-symbolic-constraints)
       for usage.
     like: when `shape_spec` contains placeholders ("_", "..."), use this
       shape to fill in the placeholders.
@@ -1437,7 +1437,7 @@ def symbolic_args_specs(
   """Constructs a pytree of jax.ShapeDtypeSpec arguments specs for `export`.
 
   See the documentation of :func:`jax.export.symbolic_shape` and
-  the [shape polymorphism documentation](https://jax.readthedocs.io/en/latest/export/shape_poly.html) for details.
+  the [shape polymorphism documentation](https://docs.jax.dev/en/latest/export/shape_poly.html) for details.
 
   Args:
     args: a pytree of arguments. These can be jax.Array, or jax.ShapeDTypeSpec.
@@ -1450,7 +1450,7 @@ def symbolic_args_specs(
       applies to all arguments), or a pytree matching a prefix
       of the `args`.
       See [how optional parameters are matched to
-      arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
+      arguments](https://docs.jax.dev/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
     constraints: as for :func:`jax.export.symbolic_shape`.
     scope: as for :func:`jax.export.symbolic_shape`.
 
@@ -2038,7 +2038,7 @@ def _solve_dim_equations(
     " Using the following polymorphic shapes specifications: " +
     ",".join(f"{arg_name}.shape = {arg_spec}"
              for arg_name, arg_spec in polymorphic_shape_specs)) + "."
-  solution_err_msg_trailer_errors = ". Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
+  solution_err_msg_trailer_errors = ". Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
 
   shape_constraints = ShapeConstraints()  # accumulate shape constraints
   scope: SymbolicScope | None = None
@@ -2171,6 +2171,6 @@ def _solve_dim_equations(
       " Unprocessed specifications: " +
       ", ".join(f"'{eqn.aval_dim_expr}' for dimension size {eqn.dim_name}"
                 for eqn in eqns) +
-      ". Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
+      ". Please see https://docs.jax.dev/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
   )
   raise ValueError(err_msg)

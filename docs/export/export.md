@@ -161,7 +161,7 @@ e.g., the inference system.)
 What **matters is when the exporting and consuming components were built**,
 not the time when the exporting and the compilation happen.
 For external JAX users, it is
-[possible to run JAX and jaxlib at different versions](https://jax.readthedocs.io/en/latest/jep/9419-jax-versioning.html#how-are-jax-and-jaxlib-versioned);
+[possible to run JAX and jaxlib at different versions](https://docs.jax.dev/en/latest/jep/9419-jax-versioning.html#how-are-jax-and-jaxlib-versioned);
 what matters is when the jaxlib release was built.
 
 To reduce chances of incompatibility, internal JAX users should:
