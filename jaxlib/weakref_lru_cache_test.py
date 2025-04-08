@@ -19,8 +19,7 @@ import time
 import weakref
 
 from absl.testing import absltest
-
-from jax.jaxlib.xla import xla_client
+from jax.jaxlib import weakref_lru_cache
 
 
 class WeakrefLRUCacheTest(absltest.TestCase):
@@ -60,7 +59,7 @@ class WeakrefLRUCacheTest(absltest.TestCase):
       del gil_releasing_cache_key
       return None
 
-    cache = xla_client.weakref_lru_cache(lambda: None, CacheFn, 2048)
+    cache = weakref_lru_cache.weakref_lru_cache(lambda: None, CacheFn, 2048)
 
     wrkey = WRKey()
 
@@ -79,7 +78,9 @@ class WeakrefLRUCacheTest(absltest.TestCase):
   def testAnotherMultiThreaded(self):
     num_workers = 5
     barrier = threading.Barrier(num_workers)
-    cache = xla_client.weakref_lru_cache(lambda: None, lambda x, y: y, 2048)
+    cache = weakref_lru_cache.weakref_lru_cache(
+        lambda: None, lambda x, y: y, 2048
+    )
 
     class WRKey:
       pass
@@ -118,7 +119,7 @@ class WeakrefLRUCacheTest(absltest.TestCase):
       miss_id += 1
       return miss_id
 
-    cache = xla_client.weakref_lru_cache(lambda: None, CacheFn, 4)
+    cache = weakref_lru_cache.weakref_lru_cache(lambda: None, CacheFn, 4)
 
     wrkey = WRKey()
 
@@ -131,7 +132,7 @@ class WeakrefLRUCacheTest(absltest.TestCase):
       del obj
       return arg + "extra"
 
-    cache = xla_client.weakref_lru_cache(lambda: None, CacheFn, 4)
+    cache = weakref_lru_cache.weakref_lru_cache(lambda: None, CacheFn, 4)
 
     class WRKey:
       pass
@@ -151,7 +152,7 @@ class WeakrefLRUCacheTest(absltest.TestCase):
     with self.assertRaises(TypeError):
       weakref.ref(non_wr_key)
 
-    cache = xla_client.weakref_lru_cache(lambda: None, lambda x: 2048)
+    cache = weakref_lru_cache.weakref_lru_cache(lambda: None, lambda x: 2048)
     for _ in range(100):
       with self.assertRaises(TypeError):
         cache(non_wr_key)
@@ -169,7 +170,9 @@ class WeakrefLRUCacheTest(absltest.TestCase):
       def __hash__(self):
         raise ValueError("hash")
 
-    cache = xla_client.weakref_lru_cache(lambda: None, lambda x, y: y, 2048)
+    cache = weakref_lru_cache.weakref_lru_cache(
+        lambda: None, lambda x, y: y, 2048
+    )
     wrkey = WRKey()
     with self.assertRaises(ValueError):
       for _ in range(100):
@@ -179,7 +182,9 @@ class WeakrefLRUCacheTest(absltest.TestCase):
     class WRKey:
       pass
 
-    cache = xla_client.weakref_lru_cache(lambda: None, lambda x, y: y, 2048)
+    cache = weakref_lru_cache.weakref_lru_cache(
+        lambda: None, lambda x, y: y, 2048
+    )
     wrkey = WRKey()
     for i in range(10):
       cache(wrkey, i)
@@ -203,7 +208,9 @@ class WeakrefLRUCacheTest(absltest.TestCase):
       def __hash__(self):
         return hash(self.x)
 
-    cache = xla_client.weakref_lru_cache(lambda: None, lambda x, y: y, 2048)
+    cache = weakref_lru_cache.weakref_lru_cache(
+        lambda: None, lambda x, y: y, 2048
+    )
     keys = [WRKey(i) for i in range(10)]
     for i in range(10):
       cache(keys[i], i)
@@ -225,7 +232,7 @@ class WeakrefLRUCacheTest(absltest.TestCase):
       del x, args, kwargs
       return y
 
-    cache = xla_client.weakref_lru_cache(CacheContextFn, CallFn, 2048)
+    cache = weakref_lru_cache.weakref_lru_cache(CacheContextFn, CallFn, 2048)
 
     keys = [WRKey() for _ in range(10)]
     values = [str(i) for i in range(10)]
@@ -239,7 +246,7 @@ class WeakrefLRUCacheTest(absltest.TestCase):
         [
             CacheContextFn,
             CallFn,
-            xla_client._xla.WeakrefLRUCache,
+            weakref_lru_cache.WeakrefLRUCache,
             kwargs,
         ]
         + [weakref.getweakrefs(key)[0] for key in keys]

@@ -17,7 +17,9 @@
 load(
     "//jaxlib:jax.bzl",
     "nanobind_extension",
+    "py_deps",
     "py_library_providing_imports_info",
+    "py_strict_test",
     "pytype_library",
 )
 load(
@@ -59,6 +61,7 @@ py_library_providing_imports_info(
         ":cpu_feature_guard",
         ":jax",
         ":utils",
+        ":weakref_lru_cache",
         "//jaxlib/cpu:_lapack",
         "//jaxlib/mlir",
         "//jaxlib/mlir:arithmetic_dialect",
@@ -119,6 +122,7 @@ pywrap_library(
     },
     deps = [
         ":utils",
+        ":weakref_lru_cache",
         "//jaxlib/mlir/_mlir_libs:_chlo",
         "//jaxlib/mlir/_mlir_libs:_mlir",
         "//jaxlib/mlir/_mlir_libs:_mlirDialectsGPU",
@@ -213,6 +217,35 @@ nanobind_extension(
     deps = [
         "@xla//third_party/python_runtime:headers",
     ],
+)
+
+nanobind_pywrap_extension(
+    name = "weakref_lru_cache",
+    srcs = ["weakref_lru_cache.cc"],
+    pytype_srcs = ["weakref_lru_cache.pyi"],
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@nanobind",
+        "@xla//third_party/python_runtime:headers",
+        "@xla//xla/pjrt:lru_cache",
+        "@xla//xla/tsl/platform:logging",
+    ],
+)
+
+py_strict_test(
+    name = "weakref_lru_cache_test",
+    srcs = ["weakref_lru_cache_test.py"],
+    deps = [
+        ":weakref_lru_cache",
+    ] + py_deps([
+        "absl/flags",
+        "absl/logging",
+        "absl/testing",
+    ]),
 )
 
 nanobind_pywrap_extension(

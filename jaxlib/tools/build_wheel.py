@@ -103,7 +103,6 @@ _XLA_EXTENSION_STUBS = [
     "pytree.pyi",
     "transfer_guard_lib.pyi",
 ]
-_OPTIONAL_XLA_EXTENSION_STUBS = []
 
 
 def patch_copy_xla_extension_stubs(dst_dir):
@@ -112,8 +111,6 @@ def patch_copy_xla_extension_stubs(dst_dir):
   for stub_name in _XLA_EXTENSION_STUBS:
     stub_path = r.Rlocation("__main__/jaxlib/xla/xla_extension/" + stub_name)
     stub_path = str(stub_path)  # Make pytype accept os.path.exists(stub_path).
-    if stub_name in _OPTIONAL_XLA_EXTENSION_STUBS and not os.path.exists(stub_path):
-      continue
     with open(stub_path) as f:
       src = f.read()
     src = src.replace(
@@ -199,6 +196,8 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu):
           "__main__/jaxlib/plugin_support.py",
           "__main__/jaxlib/version.py",
           "__main__/jaxlib/xla/xla_client.py",
+          f"__main__/jaxlib/weakref_lru_cache.{pyext}",
+          "__main__/jaxlib/weakref_lru_cache.pyi",
           f"__main__/jaxlib/xla_extension.{pyext}",
       ],
   )

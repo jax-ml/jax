@@ -50,7 +50,7 @@ profiler = _xla.profiler
 
 # Just an internal arbitrary increasing number to help with backward-compatible
 # changes. In JAX, reference this via jax._src.lib.jaxlib_extension_version.
-_version = 327
+_version = 328
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -973,7 +973,6 @@ XlaRuntimeError = _xla.XlaRuntimeError
 # mostly to keep ASAN happy.
 atexit.register(_xla.collect_garbage)
 
-weakref_lru_cache = _xla.weakref_lru_cache
 array_result_handler = _xla.array_result_handler
 batched_copy_array_to_devices_with_sharding = (
     _xla.batched_copy_array_to_devices_with_sharding

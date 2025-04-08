@@ -27,7 +27,7 @@ import weakref
 import numpy as np
 
 from jax._src import config
-from jax._src.lib import xla_client as xc
+from jax._src.lib import weakref_lru_cache as _weakref_lru_cache
 from jax._src.lib import utils as jaxlib_utils
 
 logger = logging.getLogger(__name__)
@@ -304,8 +304,9 @@ def weakref_lru_cache(call: Callable, maxsize=2048,
   behave similar to `functools.lru_cache`.
   """
   global _weakref_lru_caches
-  cached_call = xc.weakref_lru_cache(
-      config.trace_context if trace_context_in_key else _ignore, call, maxsize)
+  cached_call = _weakref_lru_cache.weakref_lru_cache(
+      config.trace_context if trace_context_in_key else _ignore, call, maxsize
+  )
   _weakref_lru_caches.add(cached_call)
   return cached_call
 

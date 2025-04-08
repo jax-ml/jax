@@ -44,6 +44,7 @@ py_library_providing_imports_info(
         "//jaxlib/mosaic/python:tpu_dialect",
         "//jaxlib:cpu_feature_guard",
         "//jaxlib:utils",
+        "//jaxlib:weakref_lru_cache",
         "//jaxlib/xla:xla_client",
         "//jaxlib/xla:xla_extension",
         "//jaxlib/triton",
