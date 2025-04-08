@@ -42,6 +42,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     available from `jax.extend.mlir`.
   * `jax.interpreters.mlir.custom_call` is deprecated. The APIs provided by
     {mod}`jax.ffi` should be used instead.
+  * The deprecated use of {func}`jax.ffi.ffi_call` with inline arguments is no
+    longer supported. {func}`~jax.ffi.ffi_call` now unconditionally returns a
+    callable.
   * Several previously-deprecated APIs have been removed, including:
     * From `jax.lib.xla_client`: `FftType`, `PaddingType`, `dtype_to_etype`,
       and `shape_from_pyval`.
