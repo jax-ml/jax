@@ -62,16 +62,6 @@ _ifrt_version: int
 
 mlir_api_version: int
 
-bfloat16: type[numpy.generic]
-float4_e2m1fn: type[numpy.generic]
-float8_e3m4: type[numpy.generic]
-float8_e4m3: type[numpy.generic]
-float8_e4m3fn: type[numpy.generic]
-float8_e4m3b11fnuz: type[numpy.generic]
-float8_e4m3fnuz: type[numpy.generic]
-float8_e5m2: type[numpy.generic]
-float8_e5m2fnuz: type[numpy.generic]
-float8_e8m0fnu: type[numpy.generic]
 XLA_ELEMENT_TYPE_TO_DTYPE: dict[PrimitiveType, numpy.dtype]
 
 _NameValueMapping = Mapping[str, Union[str, int, list[int], float, bool]]
