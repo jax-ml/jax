@@ -15,6 +15,7 @@ import contextlib
 
 import functools
 import itertools
+import logging
 import math
 import os
 import re
@@ -1250,6 +1251,13 @@ class PallasCallInputOutputAliasingTest(PallasBaseTest):
     compiled = f.lower(jax.ShapeDtypeStruct(x.shape, x.dtype)).compile()
     mem_analysis = compiled.memory_analysis()
     expected_num_bytes = np.prod(x.shape) * x.dtype.itemsize
+    logging.info(
+        "[clin-pallas] alias_size_in_bytes ="
+        f" {mem_analysis.alias_size_in_bytes}, host_alias_size_in_bytes ="
+        f" {mem_analysis.host_alias_size_in_bytes}, expected_num_bytes ="
+        f" {expected_num_bytes}"
+    )
+    logging.info(f"[clin-pallas] mem_analysis = {mem_analysis}")
     self.assertEqual(mem_analysis.alias_size_in_bytes, expected_num_bytes)
     self.assertEqual(mem_analysis.temp_size_in_bytes, 0)
 
