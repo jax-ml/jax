@@ -3740,10 +3740,6 @@ LogicalResult vector_extract_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
   TPU_ASSERT_OP(layouts_in.front().has_value());
   const VectorLayout &layout_in = *layouts_in.front();
-  if (layout_in.bitwidth() != 32) {
-    return op.emitOpError(
-        "Not implemented: Only 32-bit vector.extract supported");
-  }
   const VectorType res_vty =
       dyn_cast<VectorType>(extract_op.getResult().getType());
   if (res_vty != nullptr) {
@@ -3772,6 +3768,10 @@ LogicalResult vector_extract_rule(RewriteContext &ctx, Operation &op,
     op.erase();
     return success();
   } else {
+    if (layout_in.bitwidth() != 32) {
+      return op.emitOpError(
+          "Not implemented: Only 32-bit vector.extract supported");
+    }
     // TODO(b/367459476): Support non-zero offsets.
     if (layout_in.offsets() != LayoutOffsets{0, 0}) {
       return op.emitOpError("Not implemented: Unsupported layout");
