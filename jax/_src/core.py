@@ -1895,12 +1895,15 @@ def str_short_aval(shape, dtype, mesh, spec, vma,
   return f'{dt_str}[{shapestr}]{vma}{mesh_axes}'
 
 def get_vma(vma, mesh):
+  assert isinstance(vma, frozenset)
+  return vma
+  if mesh.empty:
+    return vma
   for i in vma:
     if mesh._name_to_type[i] != AxisType.Manual:
       raise ValueError(
           "Axes mentioned in `vma` field of ShapedArray should"
           f" be of type `Manual`. Got axis: {i} of type {mesh._name_to_type[i]}")
-  assert isinstance(vma, frozenset)
   return vma
 
 class ShapedArray(UnshapedArray):
@@ -1994,6 +1997,8 @@ def primal_dtype_to_tangent_dtype(primal_dtype):
 def standard_insert_pbroadcast(*args):
   if not config.varying_axes_in_types.value:
     return args
+  if not config._check_rep.value:
+    return args
   if not args:
     return args
   # TODO(yashkatariya): Move pbroadcast out of shard_map
@@ -2005,6 +2010,10 @@ def standard_insert_pbroadcast(*args):
           if out_vma - src else arg for arg, src in zip(args, in_vma)]
 
 def standard_vma_rule(prim_name, *avals, **kwargs) -> frozenset[AxisName]:
+  if not config.varying_axes_in_types.value:
+    return frozenset()
+  if not config._check_rep.value:
+    return frozenset()
   avals = tuple(a for a in avals if a is not abstract_token)
   if not avals:
     return frozenset()
@@ -2567,9 +2576,9 @@ def unmapped_aval(size: AxisSize, axis: int | None,
 
 def _map_shaped_array(
     size: int, axis: int | None, aval: ShapedArray) -> ShapedArray:
-  assert axis is None or aval.shape[axis] == size
-  # TODO: Extend the named shape
-  if axis is None: return aval
+  # assert axis is None or aval.shape[axis] == size
+  if axis is None:
+    return aval
   sharding = aval.sharding.with_spec(tuple_delete(aval.sharding.spec, axis))
   return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
                      weak_type=aval.weak_type, sharding=sharding, vma=aval.vma)

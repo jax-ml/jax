@@ -117,6 +117,8 @@ def psum(x, axis_name, *, axis_index_groups=None):
   """
   if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)
+  if not axis_name:
+    return x
   if any(isinstance(axis, int) for axis in axis_name) and axis_index_groups is not None:
     raise ValueError("axis_index_groups only supported for sums over just named axes")
   _validate_reduce_axis_index_groups(axis_index_groups)
@@ -141,7 +143,7 @@ def psum(x, axis_name, *, axis_index_groups=None):
       size = math.prod([core.get_axis_env().axis_size(name) for name in named_axes])
     out_flat = tuple(lax._const(leaf, size) * pos_reduce(leaf) for leaf in leaves)
   else:
-    if config.varying_axes_in_types.value:
+    if config.varying_axes_in_types.value and config._check_rep.value:
       out_flat = bind_psum2_p(leaves, axes=tuple(axis_name),
                               axis_index_groups=axis_index_groups)
     else:
@@ -828,6 +830,9 @@ def _psum2_abstract_eval(name, *args, axes, axis_index_groups):
   if not config.varying_axes_in_types.value:
     return psum_p.abstract_eval(
         *args, axes=axes, axis_index_groups=axis_index_groups)
+  if not config._check_rep.value:
+    return psum_p.abstract_eval(
+        *args, axes=axes, axis_index_groups=axis_index_groups)
 
   assert isinstance(axes, tuple)
   _check_axis_names(axes)
@@ -861,6 +866,9 @@ def _psum2_abstract_eval(name, *args, axes, axis_index_groups):
 # TODO(yashkatariya): Replace this with _psum2_abstract_eval
 def _pmin_pmax_abstract_eval(name, *args, axes, axis_index_groups):
   if not config.varying_axes_in_types.value:
+    return _allreduce_effectful_abstract_eval(
+        *args, axes=axes, axis_index_groups=axis_index_groups)
+  if not config._check_rep.value:
     return _allreduce_effectful_abstract_eval(
         *args, axes=axes, axis_index_groups=axis_index_groups)
   return _psum2_abstract_eval(name, *args, axes=axes,
@@ -1411,6 +1419,8 @@ batching.skippable_batchers[ragged_all_to_all_p] = partial(_names_in_param, 'axi
 def insert_collective_pbroadcast(axis_name, x):
   if not config.varying_axes_in_types.value:
     return x
+  if not config._check_rep.value:
+    return x
 
   from jax.experimental import shard_map
   axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
@@ -1545,6 +1555,8 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
 
 def collective_vma_rule(prim_name, axis_name, x_aval):
   if not config.varying_axes_in_types.value:
+    return frozenset()
+  if not config._check_rep.value:
     return frozenset()
   axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   if any(a not in x_aval.vma for a in axis_name):
@@ -1912,7 +1924,8 @@ def _axis_index_effectful_abstract_eval(*, axis_name):
   mesh = get_abstract_mesh()
   sharding = NamedSharding(mesh, P())
   vma = ((frozenset(axis_name) if mesh._any_axis_manual else frozenset())
-         if config.varying_axes_in_types.value else frozenset())
+         if config.varying_axes_in_types.value and config._check_rep.value
+         else frozenset())
   return ShapedArray((), np.int32, sharding=sharding, vma=vma), effect
 
 def _axis_index_batcher(axis_data, vals_in, dims_in, *, axis_name):

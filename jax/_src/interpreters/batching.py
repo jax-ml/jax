@@ -408,6 +408,10 @@ class BatchTracer(Tracer):
   @property
   def aval(self):
     aval = core.get_aval(self.val)
+    if self._trace.axis_data.spmd_name is not None:
+      if config._check_rep.value and config.varying_axes_in_types.value:
+        aval = aval.update(
+            vma=aval.vma - frozenset(self._trace.axis_data.spmd_name))
     if self.batch_dim is not_mapped:
       return aval
     elif type(self.batch_dim) is int:
@@ -771,10 +775,17 @@ def _batch_jaxpr2(
       handle_ragged(closed_jaxpr.in_avals, dim, aval)
       if isinstance(dim, RaggedAxis) else (dim, aval)
       for dim, aval in zip(in_axes, closed_jaxpr.in_avals)])
-  avals_in2 = [core.unmapped_aval(axis_data.size, b, aval,
-                                  axis_data.explicit_mesh_axis)
-               if b is not not_mapped else aval
-               for aval, b in unsafe_zip(avals_in, in_axes2)]
+  avals_in2 = []
+  for aval, b in unsafe_zip(avals_in, in_axes2):
+    if b is not_mapped:
+      avals_in2.append(aval)
+    else:
+      aval = core.unmapped_aval(
+          axis_data.size, b, aval, axis_data.explicit_mesh_axis)
+      if axis_data.spmd_name is not None:
+        if config._check_rep.value and config.varying_axes_in_types.value:
+          aval = aval.update(vma=aval.vma | frozenset(axis_data.spmd_name))  # type: ignore
+      avals_in2.append(aval)
   jaxpr_out, _, consts, () = pe.trace_to_jaxpr_dynamic(f, avals_in2)
   return core.ClosedJaxpr(jaxpr_out, consts), out_axes()
 
@@ -1111,8 +1122,16 @@ def broadcast(x, sz, axis, mesh_axis=None):
   # TODO(dougalm, yashkatariya): Delete this context manager once we figure
   # out how to ensure jaxpr arguments always have the context mesh.
   with mesh_lib.use_abstract_mesh(sharding.mesh):
-    return jax.lax.broadcast_in_dim(x, shape, broadcast_dims,
-                                    out_sharding=sharding)
+    x = jax.lax.broadcast_in_dim(x, shape, broadcast_dims, out_sharding=sharding)
+    if config._check_rep.value and config.varying_axes_in_types.value:
+      # TODO(yashkatariya,parkers): don't do this, fix during fixit week 2026
+      spmd_names = core.get_axis_env().spmd_axis_names
+      if len(spmd_names) > 1:
+        raise NotImplementedError
+      if spmd_names:
+        from jax.experimental.shard_map import pbroadcast
+        x = pbroadcast(x, tuple(spmd_names))
+    return x
 
 def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
   if dst == jumble_axis:

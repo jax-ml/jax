@@ -456,7 +456,7 @@ def shaped_array_ref(
     shape: tuple[int, ...], dtype, weak_type: bool = False) -> AbstractRef:
   return AbstractRef(core.ShapedArray(shape, dtype, weak_type=weak_type))
 
-def _shard_ref(mesh, auto, names, ref_aval: AbstractRef):
+def _shard_ref(mesh, auto, check_rep, names, ref_aval: AbstractRef):
   del mesh
   if names:
     # Can't actually shard a ref, can only close over it.
@@ -464,7 +464,7 @@ def _shard_ref(mesh, auto, names, ref_aval: AbstractRef):
   return ref_aval
 core.shard_aval_handlers[AbstractRef] = _shard_ref
 
-def _unshard_ref(mesh, names, ref_aval: AbstractRef):
+def _unshard_ref(mesh, check_rep, names, ref_aval: AbstractRef):
   del mesh
   if names:
     # Can't actually shard a ref, can only close over it.
