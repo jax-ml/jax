@@ -24,6 +24,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     which was added temporarily in v0.4.36 to allow users to opt out of the
     new "stackless" tracing machinery.
   * Removed the `config.jax_eager_pmap` config option.
+  * `jax.dlpack.from_dlpack` no longer accepts a capsule. An object that
+    implements `__dlpack__` and `__dlpack_device__`, such as a torch tensor,
+    should be passed. The capsule behavior has been deprecated since 2023.
 
 * Changes
   * The minimum CuDNN version is v9.8.

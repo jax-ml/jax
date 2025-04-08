@@ -20,8 +20,6 @@ import jax
 import jax.dlpack
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src import xla_bridge
-from jax._src.lib import xla_client
 import jax.numpy as jnp
 
 config.parse_flags_with_absl()
@@ -55,16 +53,12 @@ class DLPackTest(jtu.JaxTestCase):
   def testTorchToJaxFailure(self):
     x = torch.arange(6).reshape((2, 3))
     x = x.cuda() if jtu.test_device_matches(["gpu"]) else x
-    y = torch.utils.dlpack.to_dlpack(x[:, :2])
-
-    backend = xla_bridge.get_backend()
-    client = getattr(backend, "client", backend)
+    y = x[:, :2]
 
     regex_str = (r'UNIMPLEMENTED: Only DLPack tensors with trivial \(compact\) '
                  r'striding are supported')
     with self.assertRaisesRegex(RuntimeError, regex_str):
-      xla_client._xla.dlpack_managed_tensor_to_buffer(
-          y, client, client)
+      jax.dlpack.from_dlpack(y)
 
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
   def testJaxToTorch(self, shape, dtype):
@@ -112,8 +106,7 @@ class DLPackTest(jtu.JaxTestCase):
                       category=DeprecationWarning)
   def testTorchToJaxInt64(self):
     # See https://github.com/jax-ml/jax/issues/11895
-    x = jax.dlpack.from_dlpack(
-        torch.utils.dlpack.to_dlpack(torch.ones((2, 3), dtype=torch.int64)))
+    x = jax.dlpack.from_dlpack(torch.ones((2, 3), dtype=torch.int64))
     dtype_expected = jnp.int64 if config.enable_x64.value else jnp.int32
     self.assertEqual(x.dtype, dtype_expected)
 
@@ -136,7 +129,7 @@ class DLPackTest(jtu.JaxTestCase):
       x = torch.tensor(x_np)
     x = x.cuda() if jtu.test_device_matches(["gpu"]) else x
     x = x.contiguous()
-    y = jax.dlpack.from_dlpack(torch.utils.dlpack.to_dlpack(x))
+    y = jax.dlpack.from_dlpack(x)
     self.assertAllClose(x_np, y)
 
     # Verify the resulting value can be passed to a jit computation.

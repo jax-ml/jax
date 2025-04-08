@@ -2971,42 +2971,34 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
           raise
 
     def _DLPackManagedTensorToBuffer(
-        self, tensor, use_legacy_api, backend=None
+        self, tensor, backend=None
     ):
-      if use_legacy_api:
-        return xla_client._xla.dlpack_managed_tensor_to_buffer(
-            tensor, self.cpu_backend, self.gpu_backend
-        )
-      else:
-        if not backend:
-          backend = self.backend
-        device = backend.local_devices()[0]
-        stream = DLPackTest._GetStreamFromDevice(device)
-        return xla_client._xla.dlpack_managed_tensor_to_buffer(
-            tensor, device, stream
-        )
+      if not backend:
+        backend = self.backend
+      device = backend.local_devices()[0]
+      stream = DLPackTest._GetStreamFromDevice(device)
+      return xla_client._xla.dlpack_managed_tensor_to_buffer(
+          tensor, device, stream
+      )
 
     # pylint: disable=g-complex-comprehension
     # pyformat: disable
     @parameterized.named_parameters(
         {
-            "testcase_name": "{}_gpu={}{}".format(
+            "testcase_name": "{}_gpu={}".format(
                 FormatShapeAndDtype(shape, dtype),
                 gpu,
-                "_legacy" if use_legacy_api else "",
             ),
             "dtype": dtype,
             "shape": shape,
             "gpu": gpu,
-            "use_legacy_api": use_legacy_api,
         }
         for dtype in dlpack_dtypes
         for shape in testcase_shapes
         for gpu in [False, True]
-        for use_legacy_api in [False, True]
     )
     # pyformat: enable
-    def testRoundTrip(self, dtype, shape, gpu, use_legacy_api):
+    def testRoundTrip(self, dtype, shape, gpu):
       if gpu and self.gpu_backend is None:
         raise unittest.SkipTest("Test not running with GPU support")
       backend = self.gpu_backend if gpu else self.cpu_backend
@@ -3018,52 +3010,37 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       dlt = xla_client._xla.buffer_to_dlpack_managed_tensor(buffer)
       del buffer  # Free "buffer" to make sure dlt retains ownership.
       self.assertEqual(type(dlt).__name__, "PyCapsule")
-      y = self._DLPackManagedTensorToBuffer(dlt, use_legacy_api, backend)
+      y = self._DLPackManagedTensorToBuffer(dlt, backend)
       np.testing.assert_array_equal(
           x.astype(np.uint8) if dtype == np.bool_ else x, np.asarray(y))
 
-    @parameterized.named_parameters(
-        {
-            "testcase_name": "{}".format("_legacy" if use_legacy_api else ""),
-            "use_legacy_api": use_legacy_api,
-        }
-        for use_legacy_api in [False, True]
-    )
-    def testTensorsCanBeConsumedOnceOnly(self, use_legacy_api):
+    def testTensorsCanBeConsumedOnceOnly(self):
       x = np.array(np.random.rand(3, 4, 5, 6), dtype=np.float32)
       buffer = self.backend.buffer_from_pyval(x)
       dlt = xla_client._xla.buffer_to_dlpack_managed_tensor(buffer)
 
       def ConsumeDLPackTensor():
-        _ = self._DLPackManagedTensorToBuffer(dlt, use_legacy_api)
+        _ = self._DLPackManagedTensorToBuffer(dlt)
 
       ConsumeDLPackTensor()
       self.assertRaisesRegex(
           RuntimeError, ".*a DLPack tensor may be consumed at most once.*",
           ConsumeDLPackTensor)
 
-    @parameterized.named_parameters(
-        {
-            "testcase_name": "{}".format("_legacy" if use_legacy_api else ""),
-            "use_legacy_api": use_legacy_api,
-        }
-        for use_legacy_api in [False, True]
-    )
-    def testNonOwnedDlpackCanBeViewedTwice(self, use_legacy_api):
+    def testNonOwnedDlpackCanBeViewedTwice(self):
       x = np.array(np.random.rand(3, 4, 5, 6), dtype=np.float32)
       buffer = self.backend.buffer_from_pyval(x)
       d1 = xla_client._xla.buffer_to_dlpack_managed_tensor(buffer)
       d2 = xla_client._xla.buffer_to_dlpack_managed_tensor(buffer)
 
-      y = self._DLPackManagedTensorToBuffer(d1, use_legacy_api)
-      z = self._DLPackManagedTensorToBuffer(d2, use_legacy_api)
+      y = self._DLPackManagedTensorToBuffer(d1)
+      z = self._DLPackManagedTensorToBuffer(d2)
       del d1, d2
       np.testing.assert_array_equal(x, np.asarray(buffer))
       np.testing.assert_array_equal(x, np.asarray(y))
       np.testing.assert_array_equal(x, np.asarray(z))
 
-    @parameterized.parameters(False, True)
-    def testZeroCopyOnAlignedDlpackTensor(self, use_legacy_api):
+    def testZeroCopyOnAlignedDlpackTensor(self):
       # Using CPU only, since this test is about CPU memory alignment.
       if self.backend.platform != "cpu":
         self.skipTest("Test requires CPU")
@@ -3074,7 +3051,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
 
       # Convert it to a DLPack tensor, and then to an XLA buffer.
       dlpack_tensor = x.__dlpack__()
-      buffer = self._DLPackManagedTensorToBuffer(dlpack_tensor, use_legacy_api)
+      buffer = self._DLPackManagedTensorToBuffer(dlpack_tensor)
       y = np.array(buffer, copy=False)
 
       # The input was sufficiently aligned, so input and output should alias.
@@ -3088,23 +3065,17 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
 
     @parameterized.named_parameters(
         {
-            "testcase_name": "{}{}".format(
-                "_legacy" if use_legacy_api else "",
+            "testcase_name": "{}".format(
                 "_transpose" if transpose else "",
             ),
-            "use_legacy_api": use_legacy_api,
             "transpose": transpose,
         }
-        for use_legacy_api in [False, True]
         for transpose in [False, True]
     )
-    def testReturnCopyOnUnalignedDlpackTensor(self, use_legacy_api, transpose):
+    def testReturnCopyOnUnalignedDlpackTensor(self, transpose):
       # Using CPU only, since this test is about CPU memory alignment.
       if self.backend.platform != "cpu":
         self.skipTest("Test requires CPU")
-
-      if transpose and use_legacy_api:
-        self.skipTest("Non-default layout is not supported in legacy API")
 
       # Create a numpy array that is not aligned to XLA requirements. XLA's
       # alignment requirements differ for different hardware, so we use the
@@ -3120,7 +3091,7 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
 
       # Convert it to a DLPack tensor, and then to an XLA buffer.
       dlpack_tensor = x.__dlpack__()
-      buffer = self._DLPackManagedTensorToBuffer(dlpack_tensor, use_legacy_api)
+      buffer = self._DLPackManagedTensorToBuffer(dlpack_tensor)
       y = np.array(buffer, copy=False)
 
       # The input was not sufficiently aligned, so input and output should not

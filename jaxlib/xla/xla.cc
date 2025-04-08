@@ -570,17 +570,6 @@ NB_MODULE(xla_extension, m) {
             tensor, device->device(), device->client(), stream));
       },
       nb::arg("dlpack"), nb::arg("device"), nb::arg("stream").none());
-  // Legacy overload
-  m.def(
-      "dlpack_managed_tensor_to_buffer",
-      [](const nb::capsule& tensor,
-         std::optional<nb_class_ptr<PyClient>> cpu_client,
-         std::optional<nb_class_ptr<PyClient>> gpu_client) {
-        return xla::ValueOrThrow(DLPackManagedTensorToBuffer(
-            tensor, std::move(cpu_client), std::move(gpu_client)));
-      },
-      nb::arg("dlpack"), nb::arg("cpu_backend").none() = nb::none(),
-      nb::arg("gpu_backend").none() = nb::none());
   m.def("cuda_array_interface_to_buffer",
         xla::ValueOrThrowWrapper(CudaArrayInterfaceToBuffer), nb::arg("cai"),
         nb::arg("gpu_backend").none() = nb::none(),
