@@ -18,9 +18,12 @@ from functools import partial
 import types
 from typing import Any, Union
 
+import numpy as np
+
 from jax._src import ad_util
 from jax._src import core
 from jax._src import dispatch
+from jax._src import dtypes
 from jax._src import pretty_printer as pp
 from jax._src import traceback_util
 from jax._src import tree_util
@@ -40,7 +43,6 @@ from jax._src.state.types import (
 )
 from jax._src.typing import Array
 from jax._src.util import safe_map, safe_zip
-import numpy as np
 
 
 ## General utilities
@@ -142,9 +144,24 @@ def ref_swap(
     _function_name: str = "ref_swap",
 ) -> Array:
   """Sets a `Ref`'s value and returns the original value."""
+  if hasattr(ref_or_view, 'dtype'):
+    value = _maybe_implicit_cast(ref_or_view.dtype, value)
   ref, transforms = get_ref_and_transforms(ref_or_view, idx, _function_name)
   flat_transforms, tree = tree_util.tree_flatten(transforms)
   return swap_p.bind(ref, value, *flat_transforms, tree=tree)
+
+# TODO(slebedev,mattjj): replace with special handling of Python numeric types:
+# if (isinstance(value, (int, float, complex)) and
+#     value == np.array(value, dtype).item()): return cast
+def _maybe_implicit_cast(dtype, value):
+  aval = core.typeof(value)
+  if (aval.weak_type and
+      (dtypes.issubdtype(dtype, np.floating) and
+       dtypes.issubdtype(aval.dtype, np.floating)) or
+      (dtypes.issubdtype(dtype, np.integer) and
+       dtypes.issubdtype(aval.dtype, np.integer))):
+    return lax.convert_element_type(value, dtype)
+  return value
 
 
 def ref_set(
@@ -246,7 +263,7 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
                        f"Expected shape: {expected_out_shape}. "
                        f"Value shape: {val_aval.shape}. "
                        f"Transforms: {transforms}. ")
-    if expected_out_dtype != val_aval.dtype and not val_aval.weak_type:
+    if expected_out_dtype != val_aval.dtype:
       raise ValueError(
           "Invalid dtype for `swap`. "
           f"Ref dtype: {expected_out_dtype}. "
