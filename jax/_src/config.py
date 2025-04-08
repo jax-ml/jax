@@ -1514,13 +1514,6 @@ enable_remat_opt_pass = bool_state(
           'compute when encountering OOM errors. However, you are '
           'likely to get better results manually with jax.checkpoint'))
 
-# TODO(sharadmv,mattjj): set default to True, then remove
-eager_pmap = bool_state(
-    name='jax_eager_pmap',
-    default=True,
-    upgrade=True,
-    help='Enable eager-mode pmap when jax_disable_jit is activated.')
-
 no_tracing = bool_state(
     name='jax_no_tracing',
     default=False,

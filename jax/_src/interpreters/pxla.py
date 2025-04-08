@@ -338,8 +338,8 @@ def xla_pmap_impl_lazy(
     donated_invars: Sequence[bool],
     is_explicit_global_axis_size: bool,
 ) -> Callable:
-  if (config.disable_jit.value and config.eager_pmap.value and
-      not is_explicit_global_axis_size and not any(d for d in donated_invars)):
+  if (config.disable_jit.value and
+      not is_explicit_global_axis_size and not any(donated_invars)):
     def _emap_apply_fn(*args):
       return _emap_impl(fun, *args, backend=backend, axis_name=axis_name,
                         axis_size=axis_size, global_axis_size=global_axis_size,
