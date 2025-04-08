@@ -105,7 +105,6 @@ limitations under the License.
 #include "jaxlib/xla/pytree.h"
 #include "jaxlib/xla/sharding.h"
 #include "jaxlib/xla/traceback.h"
-#include "jaxlib/xla/weakref_lru_cache.h"
 #include "jaxlib/xla/xla_compiler.h"
 #include "xla/pjrt/distributed/key_value_store_interface.h"
 #include "xla/pjrt/exceptions.h"
@@ -260,8 +259,6 @@ NB_MODULE(xla_extension, m) {
         ThrowIfError(layout.status());
         new (self) PjRtLayout((*layout)->xla_layout());
       });
-
-  jax::BuildWeakrefLRUCacheAPI(m);
 
   nb::class_<xla::cpu::CpuCollectives> cpu_collectives(m, "CpuCollectives");
 

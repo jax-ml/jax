@@ -63,7 +63,6 @@ nanobind_pywrap_extension(
         ":sdy",
         ":traceback",
         ":util",
-        ":weakref_lru_cache",
         ":xla_compiler",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -877,29 +876,6 @@ cc_library(
 )
 
 cc_library(
-    name = "weakref_lru_cache",
-    srcs = ["weakref_lru_cache.cc"],
-    hdrs = ["weakref_lru_cache.h"],
-    compatible_with = [],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    deps = [
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/cleanup",
-        "@com_google_absl//absl/hash",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/synchronization",
-        "@nanobind",
-        "@xla//third_party/python_runtime:headers",
-        "@xla//xla/pjrt:lru_cache",
-        "@xla//xla/tsl/platform:logging",
-    ],
-)
-
-cc_library(
     name = "xla_compiler",
     srcs = ["xla_compiler.cc"],
     hdrs = ["xla_compiler.h"],
@@ -1038,18 +1014,6 @@ py_strict_test(
         "absl/testing",
         "ml_dtypes",
         "numpy",
-    ]),
-)
-
-py_strict_test(
-    name = "weakref_lru_cache_test",
-    srcs = ["weakref_lru_cache_test.py"],
-    deps = [
-        ":xla_client",
-    ] + py_deps([
-        "absl/flags",
-        "absl/logging",
-        "absl/testing",
     ]),
 )
 

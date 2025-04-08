@@ -90,10 +90,23 @@ from jaxlib.xla_extension import guard_lib as guard_lib  # noqa: F401
 from jaxlib.xla_extension import jax_jit as jax_jit  # noqa: F401
 from jaxlib.xla_extension import pmap_lib as pmap_lib  # noqa: F401
 from jaxlib.xla_extension import pytree as pytree  # noqa: F401
-import jaxlib.xla_client as xla_client  # noqa: F401
 
 from jaxlib.xla_extension import Device as Device  # noqa: F401
 
+import jaxlib.xla_client as xla_client  # noqa: F401
+
+# Jaxlib code is split between the Jax and the XLA repositories.
+# Only for the internal usage of the JAX developers, we expose a version
+# number that can be used to perform changes without breaking the main
+# branch on the Jax github.
+jaxlib_extension_version: int = getattr(xla_client, '_version', 0)
+ifrt_version: int = getattr(xla_client, '_ifrt_version', 0)
+
+# TODO(phawkins): remove type: ignore once the minimum jaxlib is bumped.
+if jaxlib_extension_version >= 328:
+  import jaxlib.weakref_lru_cache as weakref_lru_cache  # type: ignore  # noqa: F401
+else:
+  weakref_lru_cache = xla_extension  # type: ignore  # noqa: F401
 
 # XLA garbage collection: see https://github.com/jax-ml/jax/issues/14882
 def _xla_gc_callback(*args):
@@ -112,13 +125,6 @@ import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error  # noqa: 
 import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error  # noqa: F401
 import jaxlib.gpu_prng as gpu_prng  # pytype: disable=import-error  # noqa: F401
 import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error  # noqa: F401
-
-# Jaxlib code is split between the Jax and the Tensorflow repositories.
-# Only for the internal usage of the JAX developers, we expose a version
-# number that can be used to perform changes without breaking the main
-# branch on the Jax github.
-jaxlib_extension_version: int = getattr(xla_client, '_version', 0)
-ifrt_version: int = getattr(xla_client, '_ifrt_version', 0)
 
 import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error  # noqa: F401
 import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error  # noqa: F401

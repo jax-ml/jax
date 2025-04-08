@@ -13,8 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/xla/weakref_lru_cache.h"
-
 #include <Python.h>
 
 #include <cstddef>
@@ -369,7 +367,7 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
     {0, nullptr},
 };
 
-void BuildWeakrefLRUCacheAPI(nb::module_& m) {
+NB_MODULE(weakref_lru_cache, m) {
   auto weakref_lru_cache =
       nb::class_<WeakrefLRUCache>(m, "WeakrefLRUCache",
                                   nb::is_weak_referenceable(),
