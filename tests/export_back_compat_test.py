@@ -31,6 +31,7 @@ from jax._src.export import _export
 
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
+from jax._src.internal_test_util.export_back_compat_test_data import annotate_data_placement
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_cholesky_lapack_potrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eig_lapack_geev
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_eigh_cusolver_syev
@@ -161,6 +162,8 @@ class CompatTest(bctu.CompatTestBase):
         stablehlo_dynamic_top_k.data_2023_07_16,
         stablehlo_dynamic_top_k.data_2023_08_11,  # with shape_assertion
         stablehlo_dynamic_approx_top_k.data_2024_05_30,
+        annotate_data_placement.data_2025_04_07_tpu,
+        annotate_data_placement.data_2025_04_07_cuda,
     ]
     # Some of the above are nested structures.
     covering_testdatas = itertools.chain(
@@ -817,7 +820,7 @@ class CompatTest(bctu.CompatTestBase):
     )
     self.run_one_test(func, data, rtol=rtol, atol=atol)
 
-  def test_approx_top_k(self):
+  def test_tpu_approx_top_k(self):
     def func():
       x = np.array([3.0, 1.0, 4.0, 2.0, 5.0, 6.0, 7.0])
       y = lax.approx_max_k(x, 3)
@@ -834,7 +837,7 @@ class CompatTest(bctu.CompatTestBase):
       data = self.load_testdata(cuda_threefry2x32.data_2024_07_30)
       self.run_one_test(func, data)
 
-  def test_sharding(self):
+  def test_tpu_sharding(self):
     # Tests "Sharding", "SPMDShardToFullShape", "SPMDFullToShardShape" on TPU
     if not jtu.test_device_matches(["tpu"]) or len(jax.devices()) < 2:
       self.skipTest("Test runs only on TPU with at least 2 devices")
@@ -855,6 +858,31 @@ class CompatTest(bctu.CompatTestBase):
     data = self.load_testdata(tpu_Sharding.data_2023_03_16)
     with mesh:
       self.run_one_test(func, data)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_platform={platform}", platform=platform)
+      for platform in ("tpu", "gpu"))
+  def test_annotate_device_placement(self, platform):
+    if not jtu.test_device_matches([platform]):
+      self.skipTest(f"Test enabled only for {platform}")
+
+    mesh = Mesh(jax.local_devices()[0:1], axis_names=("a"))
+
+    dev_sharding = NS(mesh, P("a"))
+    host_sharding = NS(mesh, P("a"), memory_kind="pinned_host")
+
+    @partial(jax.jit,
+             in_shardings=(dev_sharding, host_sharding),
+             out_shardings=host_sharding)
+    def func(x, y):
+      return x + y
+
+    if platform == "tpu":
+      data = self.load_testdata(annotate_data_placement.data_2025_04_07_tpu)
+    else:
+      data = self.load_testdata(annotate_data_placement.data_2025_04_07_cuda)
+
+    self.run_one_test(func, data)
 
   def test_tpu_stablehlo_dynamic_reduce_window_unary(self):
     # stablehlo.dynamic_reduce_window is used temporarily on TPU for a
