@@ -332,7 +332,6 @@ def annotate_function(func: Callable, name: str | None = None,
   def wrapper(*args, **kwargs):
     with TraceAnnotation(name, **decorator_kwargs):
       return func(*args, **kwargs)
-    return wrapper
   return wrapper
 
 
