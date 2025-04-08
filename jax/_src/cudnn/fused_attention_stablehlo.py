@@ -1782,9 +1782,12 @@ def dot_product_attention(
       is the index of each token. E.g., if sliding_window_length == 3 and the
       sequence is [0, 1, 2, 3, c, 4, 5], token `c` can attend to [4, 5, c].
     use_fp8: Whether to use FP8 attention mechanism.
-    return_residual: Whether to return softmax stat tensor to users.
+    return_residual: Whether to return the logsumexp tensor of shape BTN
+      or BNT to users. See section 3.1.1 in the FlashAttention-2 paper:
+      https://arxiv.org/pdf/2307.08691 to find the definition of logsumexp.
   Returns:
-    Output of the same shape as the query.
+    output: the same shape as the query.
+    residual: the logsumexp tensor if return_residual=True. (non fp8)
     amax_s: amax of state. (fp8 only)
     amax_o: amax of output. (fp8 only)
   """
