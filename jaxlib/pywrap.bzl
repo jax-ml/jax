@@ -73,17 +73,11 @@ def nanobind_pywrap_extension(
         name = name,
         srcs = [src_cc_name],
         deps = [":" + lib_name],
+        data = pytype_srcs,
         linkopts = linkopts,
         visibility = visibility,
         default_deps = [],
         common_lib_packages = [
             "jaxlib",
         ],
-    )
-
-    # Create a py_library with the type stubs as data, on which wheel builds can depend.
-    native.py_library(
-        name = name + "_type_stubs",
-        data = pytype_srcs,
-        deps = pytype_deps,
     )
