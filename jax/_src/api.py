@@ -2142,7 +2142,7 @@ def make_jaxpr(
     return_shape: bool = False,
     abstracted_axes: Any | None = None,
 ) -> Callable[..., core.ClosedJaxpr | tuple[core.ClosedJaxpr, Any]]:
-  """Creates a function that produces its jaxpr given example args.
+  """Create a function that returns the jaxpr of ``fun`` given example args.
 
   Args:
     fun: The function whose ``jaxpr`` is to be computed. Its positional
