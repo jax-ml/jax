@@ -2034,6 +2034,7 @@ def _run_scoped_lowering_rule(
 
 
 @register_lowering_rule(discharge.run_state_p, mgpu.LoweringSemantics.Lane)
+@register_lowering_rule(discharge.run_state_p, mgpu.LoweringSemantics.Warpgroup)
 def _run_state_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -2051,7 +2052,12 @@ def _run_state_lowering_rule(
   for arg, v, out_aval in zip(args, jaxpr.invars, ctx.avals_out):
     aval = v.aval
     if isinstance(aval, gpu_core.WGMMAAbstractAccumulatorRef):
-      new_input_vals.append(mgpu.WGMMAAccumulator.from_registers(arg))
+      if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Warpgroup:
+        arg = mgpu.dialect.optimization_barrier([arg])
+        nvvm_dialect.wgmma_fence_aligned()
+        new_input_vals.append(arg)
+      else:
+        new_input_vals.append(mgpu.WGMMAAccumulator.from_registers(arg))
       should_discharge.append(True)
       assert isinstance(out_aval, jax_core.ShapedArray)
     else:
@@ -2273,18 +2279,19 @@ def _while_lowering_rule(
         ctx.module_ctx, ctx.launch_ctx, body_jaxpr.jaxpr, body_args
     )
     loop_out = [*map(_ensure, loop_out, carry_avals)]
-    for idx, (carry_fa, out_fa) in enumerate(zip(carry, loop_out)):
-      if _is_acc(carry_fa) != _is_acc(out_fa):
-        raise ValueError(
-            f"The loop body output has unexpected accumulator type: output[{idx}]"
-            f" is {out_fa}, when it should be {carry_fa}."
-        )
+    if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
+      for idx, (carry_fa, out_fa) in enumerate(zip(carry, loop_out)):
+        if _is_acc(carry_fa) != _is_acc(out_fa):
+          raise ValueError(
+              f"The loop body output has unexpected accumulator type:"
+              f" output[{idx}] is {out_fa}, when it should be {carry_fa}."
+          )
 
-      if not _is_acc(out_fa) and carry_fa.layout != out_fa.layout:
-        raise ValueError(
-            f"The loop body output has unexpected layout: output[{idx}] has"
-            f" layout {out_fa.layout}, when it should be {carry_fa.layout}."
-        )
+        if not _is_acc(out_fa) and carry_fa.layout != out_fa.layout:
+          raise ValueError(
+              f"The loop body output has unexpected layout: output[{idx}] has"
+              f" layout {out_fa.layout}, when it should be {carry_fa.layout}."
+          )
     scf_dialect.yield_(
         carry_treedef.flatten_up_to(loop_out) if loop_out else []
     )
