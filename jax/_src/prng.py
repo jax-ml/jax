@@ -113,7 +113,7 @@ class PRNGImpl(NamedTuple):
             ]))))
 
 
-prngs = {}
+prngs: dict[str, PRNGImpl] = {}
 
 def register_prng(impl: PRNGImpl):
   if impl.name in prngs:

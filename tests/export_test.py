@@ -421,6 +421,18 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertEqual(tree_util.tree_structure(res2),
                      tree_util.tree_structure(res))
 
+  @jtu.parameterized_filterable(
+    kwargs=[dict(impl=p)
+            for p in ("rbg", "unsafe_rbg", "threefry2x32")])
+  def test_prng_keys(self, *, impl):
+
+    key = jax.random.key(42, impl=impl)
+    @jax.jit
+    def f(key):
+      return key
+    exp_f = get_exported(jax.jit(f))(key)
+    self.assertEqual(f(key), exp_f.call(key))
+
   def test_error_wrong_intree(self):
     def f(a_b_pair, *, c):
       return jnp.sin(a_b_pair[0]) + jnp.cos(a_b_pair[1]) + c
