@@ -1145,6 +1145,14 @@ register_check = lambda prim: lambda rule: _check_rules.setdefault(prim, rule)
 register_standard_check = \
     lambda prim: _check_rules.setdefault(prim, partial(_standard_check, prim))
 
+def _eq_rep(mesh, r1, r2) -> bool:
+  if r1 != r2 and r1 is None or r2 is None:
+    r1, r2 = _remove_none_rep(mesh, r1), _remove_none_rep(mesh, r2)
+  return r1 == r2
+
+def _remove_none_rep(mesh, r):
+  return set(mesh.axis_names) if r is None else r
+
 def _no_rewrite(prim, rule, mesh, in_rep, *args, **params):
   out_vals = prim.bind(*args,**params)
   out_rep = rule(mesh, *in_rep, **params)
@@ -1371,7 +1379,7 @@ def _scan_check(mesh, *in_rep, jaxpr, num_consts, num_carry, **_):
   _, carry_rep_in, _ = split_list(in_rep, [num_consts, num_carry])
   out_rep = _check_rep(mesh, jaxpr.jaxpr, in_rep)
   carry_rep_out, _ = split_list(out_rep, [num_carry])
-  if carry_rep_in != carry_rep_out:
+  if not all(map(partial(_eq_rep, mesh), carry_rep_in, carry_rep_out)):
     raise Exception("Scan carry input and output got mismatched replication "
                     f"types {carry_rep_in} and {carry_rep_out}. Please open an "
                     "issue at https://github.com/jax-ml/jax/issues, and as a "
@@ -1447,7 +1455,7 @@ def _cond_rule(mesh, *in_rep, branches):
   out_rep = _check_rep(mesh, branches[0].jaxpr, args_rep)
   for branch in branches[1:]:
     out_rep_ = _check_rep(mesh, branch.jaxpr, args_rep)
-    if out_rep_ != out_rep:
+    if not all(map(partial(_eq_rep, mesh), out_rep, out_rep_)):
       raise Exception("The branches of cond produced mismatched replication "
                       "types. Please open an issue at "
                       "https://github.com/jax-ml/jax/issues, and as a "
@@ -2189,7 +2197,7 @@ def _efficient_transpose_rewrite(fun, mesh, in_names, out_names_thunk):
 def _efficient_transpose_rewrite_nomatch(f, store, mesh, in_reps, *args):
   with core.take_current_trace() as parent:
     tag = core.TraceTag()
-    t = RewriteTrace(parent_trace = parent, tag = tag, mesh=mesh)
+    t = RewriteTrace(parent_trace=parent, tag=tag, mesh=mesh)
     in_tracers = map(partial(RewriteTracer, t), in_reps, args)
     with core.set_current_trace(t):
       ans = f(*in_tracers)
