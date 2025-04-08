@@ -593,6 +593,18 @@ class DialectTest(MosaicGpuTest):
     ):
       self.module.operation.verify()
 
+  def test_tiled_layout_attr_parsing(self):
+    with ir.InsertionPoint(self.module.body):
+      for layout in (
+          mgpu.WGMMA_LAYOUT,
+          mgpu.WGMMA_ROW_LAYOUT,
+          mgpu.WGMMA_COL_LAYOUT,
+          mgpu.WGMMA_TRANSPOSED_LAYOUT,
+      ):
+        attr = layouts.to_tiled_layout_attr(layout)
+        parsed_layout = layouts.from_tiled_layout_attr(attr)
+        self.assertEqual(layout, parsed_layout)
+
 
 class DialectLoweringTest(MosaicGpuTest):
 
