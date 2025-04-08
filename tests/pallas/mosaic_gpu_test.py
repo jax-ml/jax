@@ -32,7 +32,6 @@ from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
 from jax._src.pallas.mosaic_gpu import primitives as mgpu_primitives
-from jax._src.state import discharge
 from jax.experimental import pallas as pl
 import jax.experimental.mosaic.gpu as mgpu
 from jax.experimental.pallas import mosaic_gpu as plgpu
@@ -1528,7 +1527,6 @@ class PallasCallWGTest(
         mgpu_primitives.layout_cast_p,
         mgpu_primitives.load_p,
         lax.slice_p,
-        discharge.run_state_p,
     }
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)
@@ -1538,10 +1536,14 @@ class PallasCallSm90ATest(PallasSm90ATest):
 
   @parameterized.parameters(False, True)
   def test_fori_loop_accumulator(self, force_while):
-    # ``pl.run_state`` is not supported in WG semantics.
-    self.skip_if_wg_semantics()
-
-    transforms = (plgpu.TilingTransform((8, 64)), plgpu.SwizzleTransform(128))
+    if force_while:
+      # Layout inference and lowering for 'while' are not yet implemented for
+      # warpgroup semantics.
+      self.skip_if_wg_semantics()
+    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
+      transforms = (plgpu.TilingTransform((8, 64)), plgpu.SwizzleTransform(128))
+    else:
+      transforms = ()
     @functools.partial(
         self.pallas_call,
         in_specs=[plgpu.GPUBlockSpec((64, 64), transforms=transforms)],
@@ -1733,9 +1735,6 @@ class PallasCallSm90ATest(PallasSm90ATest):
     np.testing.assert_allclose(res, a @ b, rtol=1e-3)
 
   def test_wgmma_registers_init(self):
-    # ``pl.run_state`` is not supported in WG semantics.
-    self.skip_if_wg_semantics()
-
     def kernel(a_ref, b_ref, i_ref, o_ref):
       def scope(acc_ref):
         plgpu.wgmma(acc_ref, a_ref[...], b_ref)
@@ -1746,7 +1745,10 @@ class PallasCallSm90ATest(PallasSm90ATest):
     b = jax.random.uniform(key2, shape=(128, 192), dtype=jnp.float16)
     i = jax.random.uniform(key3, shape=(64, 192), dtype=jnp.float16) * 10
 
-    transforms = (plgpu.TilingTransform((8, 64)), plgpu.SwizzleTransform(128))
+    if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
+      transforms = (plgpu.TilingTransform((8, 64)), plgpu.SwizzleTransform(128))
+    else:
+      transforms = ()
     res = self.pallas_call(
         kernel,
         in_specs=[
