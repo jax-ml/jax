@@ -176,6 +176,9 @@ class TPU_Op<string mnemonic, list<Trait> traits = []> :
     Op<TPU_Dialect, mnemonic, traits> {
 }
 
+def DefaultMemWrite : MemoryEffects<[MemWrite<DefaultResource>]>;
+def DefaultMemRead : MemoryEffects<[MemRead<DefaultResource>]>;
+
 def TPU_ReductionKind : I32EnumAttr<"ReductionKind", "Reduction kind", [
   I32EnumAttrCase<"SUM", 0, "sum">,
   I32EnumAttrCase<"MAX", 1, "max">,
@@ -198,7 +201,7 @@ def TPU_AllReduceOp : TPU_Op<"all_reduce", [Pure, SameOperandsAndResultType]> {
   }];
 }
 
-def TPU_StoreOp : TPU_Op<"store", [AttrSizedOperandSegments]> {
+def TPU_StoreOp : TPU_Op<"store", [DefaultMemWrite, AttrSizedOperandSegments]> {
   let arguments = (ins
     TPU_Vreg:$valueToStore,
     AnyType:$base,
@@ -213,7 +216,7 @@ def TPU_StoreOp : TPU_Op<"store", [AttrSizedOperandSegments]> {
   }];
 }
 
-def TPU_LoadOp : TPU_Op<"load"> {
+def TPU_LoadOp : TPU_Op<"load", [DefaultMemRead]> {
   let arguments = (ins
     AnyType:$base,
     Variadic<Index>:$indices,
@@ -227,7 +230,7 @@ def TPU_LoadOp : TPU_Op<"load"> {
 }
 
 // TODO(jevinjiang): migrate tpu.strided_store to general vector store op.
-def TPU_VectorStoreOp :TPU_Op<"vector_store", [AttrSizedOperandSegments]> {
+def TPU_VectorStoreOp :TPU_Op<"vector_store", [DefaultMemWrite, AttrSizedOperandSegments]> {
   let arguments = (ins
     AnyVectorOfNonZeroRank:$valueToStore,
     AnyMemRef:$base,
@@ -242,7 +245,7 @@ def TPU_VectorStoreOp :TPU_Op<"vector_store", [AttrSizedOperandSegments]> {
   let hasVerifier = 1;
 }
 
-def TPU_StridedLoadOp : TPU_Op<"strided_load"> {
+def TPU_StridedLoadOp : TPU_Op<"strided_load", [DefaultMemRead]> {
   let arguments = (ins
     AnyMemRef:$base,
     Variadic<Index>:$indices,
@@ -255,7 +258,7 @@ def TPU_StridedLoadOp : TPU_Op<"strided_load"> {
   let hasVerifier = 1;
 }
 
-def TPU_StridedStoreOp : TPU_Op<"strided_store"> {
+def TPU_StridedStoreOp : TPU_Op<"strided_store", [DefaultMemWrite]> {
   let arguments = (ins
     AnyVectorOfNonZeroRank:$valueToStore,
     AnyMemRef:$base,
@@ -269,7 +272,7 @@ def TPU_StridedStoreOp : TPU_Op<"strided_store"> {
   let hasVerifier = 1;
 }
 
-def TPU_ShuffledLoadOp : TPU_Op<"shuffled_load"> {
+def TPU_ShuffledLoadOp : TPU_Op<"shuffled_load", [DefaultMemRead]> {
   let arguments = (ins
     AnyMemRef:$base,
     Variadic<Index>:$indices,
@@ -284,7 +287,7 @@ def TPU_ShuffledLoadOp : TPU_Op<"shuffled_load"> {
   let hasCanonicalizeMethod = 1;
 }
 
-def TPU_ShuffledStoreOp : TPU_Op<"shuffled_store"> {
+def TPU_ShuffledStoreOp : TPU_Op<"shuffled_store", [DefaultMemWrite]> {
   let arguments = (ins
     TPU_Vreg:$valueToStore,
     AnyMemRef:$base,
