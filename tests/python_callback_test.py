@@ -1052,13 +1052,16 @@ class PureCallbackTest(jtu.JaxTestCase):
     def f(x, **kwargs):
       return jax.pure_callback(np.sin, x, x, **kwargs)
 
-    with self.assertWarnsRegex(DeprecationWarning, "The default behavior"):
+    with self.assertDeprecationWarnsOrRaises(
+        "jax-callback-vectorized", "The default behavior"):
       jax.vmap(f)(jnp.arange(4.0))
 
-    with self.assertWarnsRegex(DeprecationWarning, "The vectorized argument"):
+    with self.assertDeprecationWarnsOrRaises(
+        "jax-callback-vectorized", "The vectorized argument"):
       f(jnp.arange(4.0), vectorized=True)
 
-    with self.assertWarnsRegex(DeprecationWarning, "The vectorized argument"):
+    with self.assertDeprecationWarnsOrRaises(
+        "jax-callback-vectorized", "The vectorized argument"):
       f(jnp.arange(4.0), vectorized=False)
 
   def test_vmap_method_expand_dims(self):

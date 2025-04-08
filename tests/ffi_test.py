@@ -203,9 +203,11 @@ class FfiTest(jtu.JaxTestCase):
   @jtu.run_on_devices("gpu", "cpu")
   def test_vectorized_deprecation(self):
     x = self.rng().randn(3, 5, 4).astype(np.float32)
-    with self.assertWarns(DeprecationWarning):
+    with self.assertDeprecationWarnsOrRaises(
+        "jax-callback-vectorized", "The vectorized argument"):
       ffi_call_geqrf(x, vectorized=True)
-    with self.assertWarns(DeprecationWarning):
+    with self.assertDeprecationWarnsOrRaises(
+        "jax-callback-vectorized", "The default behavior"):
       jax.vmap(ffi_call_geqrf)(x)
 
   def test_backward_compat_syntax(self):
