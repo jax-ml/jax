@@ -19,7 +19,7 @@
 from absl import app
 
 import jax
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 import numpy as np
