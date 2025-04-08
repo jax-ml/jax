@@ -23,6 +23,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Removed the `config.jax_data_dependent_tracing_fallback` config option,
     which was added temporarily in v0.4.36 to allow users to opt out of the
     new "stackless" tracing machinery.
+  * Removed the `config.jax_eager_pmap` config option.
 
 * Changes
   * The minimum CuDNN version is v9.8.

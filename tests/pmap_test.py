@@ -3189,7 +3189,7 @@ class EagerPmapMixin:
   def setUp(self):
     super().setUp()
     stack = contextlib.ExitStack()
-    stack.enter_context(jtu.thread_local_config_context(jax_disable_jit=True, jax_eager_pmap=True))
+    stack.enter_context(jtu.thread_local_config_context(jax_disable_jit=True))
     stack.enter_context(jtu.ignore_warning(
         message="Some donated buffers were not usable", category=UserWarning))
     self.addCleanup(stack.close)
