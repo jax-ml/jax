@@ -550,9 +550,8 @@ def _split_leading(sz, x):
 def _concat(a, b): return lax.concatenate([a, b], 0)
 
 def _empty_array(prefix, length_spec, aval):
-  from jax.experimental.shard_map import pbroadcast
   sharding = aval.sharding.with_spec((*length_spec, *aval.sharding.spec))
-  empty = pbroadcast(lax.empty(aval.dtype), tuple(aval.vma))
+  empty = core.pvary(lax.empty(aval.dtype), tuple(aval.vma))
   return lax.broadcast(empty, (*prefix, *aval.shape), out_sharding=sharding)
 
 eval_jaxpr_p = core.Primitive('eval_jaxpr')

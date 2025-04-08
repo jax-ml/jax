@@ -1627,7 +1627,7 @@ class ShardMapTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(jax.vjp(f, jnp.arange(4.))[1])(jnp.array([1.]))
     e, = jaxpr.jaxpr.eqns
     e1, = e.params['jaxpr'].eqns
-    self.assertEqual(str(e1.primitive), 'pbroadcast')
+    self.assertEqual(str(e1.primitive), 'pvary')
 
   def test_psum_with_implicit_fanout_self_transposes(self):
     mesh = jtu.create_mesh((4,), ('x',))
@@ -1640,7 +1640,7 @@ class ShardMapTest(jtu.JaxTestCase):
     e, = jaxpr.jaxpr.eqns
     e1, e2 = e.params['jaxpr'].eqns
     self.assertEqual(str(e1.primitive), 'psum2')
-    self.assertEqual(str(e2.primitive), 'pbroadcast')
+    self.assertEqual(str(e2.primitive), 'pvary')
 
   def test_transpose_float0(self):
     mesh = jtu.create_mesh((4,), ('x',))
@@ -1691,6 +1691,18 @@ class ShardMapTest(jtu.JaxTestCase):
     dx, dy = example(x, y)
     self.assertEqual(dy.dtype, jax.dtypes.float0)
 
+  @config.varying_axes_in_types(True)
+  def test_pvary(self):
+    mesh = jtu.create_mesh((4,), ('x',))
+
+    @partial(shard_map, mesh=mesh, in_specs=P(), out_specs=P('x'))
+    def f(x):
+      y = jax.lax.pvary(x, 'x')
+      self.assertEqual(y.aval.vma, {'x'})
+      return y
+
+    f(jnp.arange(8))
+
   def test_rewrite_binops(self):
     mesh = jtu.create_mesh((4,), ('x',))
 
@@ -1701,7 +1713,7 @@ class ShardMapTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(f)(jnp.arange(1.), jnp.arange(4.))
     e, = jaxpr.jaxpr.eqns
     e = e.params['jaxpr'].eqns[0]
-    self.assertEqual(e.primitive.name, 'pbroadcast')
+    self.assertEqual(e.primitive.name, 'pvary')
     self.assertEqual(e.params['axes'], ('x',))
 
   def test_rewrite_scan(self):
@@ -1718,7 +1730,7 @@ class ShardMapTest(jtu.JaxTestCase):
     e, = e.params['jaxpr'].eqns
     e1, e2 = e.params['jaxpr'].eqns
     self.assertEqual(e1.primitive.name, 'psum2')
-    self.assertEqual(e2.primitive.name, 'pbroadcast')
+    self.assertEqual(e2.primitive.name, 'pvary')
 
   def test_check_rep_false_grads(self):
     if jtu.is_device_tpu(5, 'e'):
@@ -2734,7 +2746,7 @@ class ShardMapTest(jtu.JaxTestCase):
     f = jax.jit(shard_map(lambda x: jax.lax.pmax(x, 'i'), mesh=mesh,
                           in_specs=P(), out_specs=P()))
     jaxpr = f.trace(x).jaxpr
-    self.assertIn("pbroadcast[axes=('i',)", str(jaxpr))
+    self.assertIn("pvary[axes=('i',)", str(jaxpr))
     f(x)  # doesn't crash
 
   @config.varying_axes_in_types(True)
@@ -2750,7 +2762,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     f = jax.jit(shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P('x')))
     jaxpr = f.trace(x).jaxpr
-    self.assertIn("pbroadcast[axes=('x',)", str(jaxpr))
+    self.assertIn("pvary[axes=('x',)", str(jaxpr))
     out = f(x)
     self.assertArraysEqual(out, x * 2)
 
@@ -2772,7 +2784,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     f = jax.jit(shard_map(f, mesh=mesh, in_specs=P(), out_specs=P('x')))
     jaxpr = f.trace(x).jaxpr
-    self.assertIn("pbroadcast[axes=('x',)", str(jaxpr))
+    self.assertIn("pvary[axes=('x',)", str(jaxpr))
 
     f(x)  # doesn't crash
 
