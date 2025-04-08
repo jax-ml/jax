@@ -442,7 +442,7 @@ NUMPY_APIS = [
   NumPyAPI.sig(jnp.real, Complex[5]),
   NumPyAPI.sig(jnp.reciprocal, Float[5]),
   NumPyAPI.sig(jnp.remainder, Float[5], Float[5]),
-  NumPyAPI.sig(jnp.repeat, Float[5], Int[5]),
+  NumPyAPI.sig(jnp.repeat, Float[5], repeats=np.array([2, 3, 1, 5, 4])),
   NumPyAPI.sig(jnp.reshape, Float[6], shape=(2, 3)),
   NumPyAPI.sig(jnp.resize, Float[6], new_shape=(2, 3)),
   NumPyAPI.sig(jnp.right_shift, Int[5], Int[5]),

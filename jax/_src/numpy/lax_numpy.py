@@ -6989,9 +6989,10 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
            [3, 3, 4, 4, 4, 4, 4]], dtype=int32)
   """
   if core.is_dim(repeats):
-    arr = util.ensure_arraylike("repeat", a)
+    util.check_arraylike("repeat", a)
   else:
-    arr, repeats = util.ensure_arraylike("repeat", a, repeats)
+    util.check_arraylike("repeat", a, repeats)
+  arr = asarray(a)
 
   if axis is None:
     arr = arr.ravel()
