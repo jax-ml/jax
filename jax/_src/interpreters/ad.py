@@ -1253,3 +1253,10 @@ class CustomVJPException(Exception):
 
 # TODO(mattjj): remove this vestigial dict
 reducing_transposes: dict[core.Primitive, Callable] = {}
+
+########################### pvary ##################################
+
+def _pvary_transpose_rule(cts, *_, axes, axis_index_groups):
+  from jax.experimental.shard_map import psum2_p
+  return psum2_p.bind(*cts, axes=axes, axis_index_groups=axis_index_groups)
+deflinear2(core.pvary_p, _pvary_transpose_rule)

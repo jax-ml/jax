@@ -45,7 +45,7 @@ from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
 from jax._src import linear_util as lu
-
+from jax._src.tree_util import tree_flatten, tree_unflatten
 from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, cache,
@@ -1994,6 +1994,39 @@ def primal_dtype_to_tangent_dtype(primal_dtype):
     return primal_dtype
 
 
+def pvary(x, axis_name):
+  axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
+  if not axis_name:
+    return x
+  xs, treedef = tree_flatten(x)
+  ys = pvary_p.bind(*xs, axes=axes, axis_index_groups=None)
+  return tree_unflatten(treedef, ys)
+
+pvary_p = Primitive('pvary')
+pvary_p.multiple_results = True
+pvary_p.def_impl(lambda *args, axes, axis_index_groups: args)
+
+def _pvary_abstract_eval(*args, axes, axis_index_groups):
+  if not config.varying_axes_in_types.value:
+    return args
+  if not config._check_rep.value:
+    return args
+  assert isinstance(axes, tuple)
+  arg_vma = [a.vma for a in args]
+  # If there is intersection between arg_vma and axes, error
+  if any(set(axes) & a for a in arg_vma):
+    raise ValueError(
+        "Collective pvary must be applied to a "
+        f"non-device-varying type, but got {arg_vma} for collective acting "
+        f"over axis name {axes}. Please open an issue at "
+        "https://github.com/jax-ml/jax/issues, and as a temporary "
+        "workaround pass the check_rep=False argument to shard_map")
+  sharding = NamedSharding(mesh_lib.get_abstract_mesh(), P())
+  return [a.update(sharding=sharding, vma=a.vma.union(frozenset(axes)))
+          for a in args]
+pvary_p.def_abstract_eval(_pvary_abstract_eval)
+
+
 def standard_insert_pbroadcast(*args):
   if not config.varying_axes_in_types.value:
     return args
@@ -2001,12 +2034,10 @@ def standard_insert_pbroadcast(*args):
     return args
   if not args:
     return args
-  # TODO(yashkatariya): Move pbroadcast out of shard_map
-  from jax.experimental.shard_map import pbroadcast  # type: ignore
   in_vma = [frozenset() if (aval := get_aval(a)) is abstract_token
             else aval.vma for a in args]
   out_vma = frozenset.union(*in_vma)
-  return [pbroadcast(arg, tuple(n for n in out_vma if n not in src))
+  return [pvary(arg, tuple(n for n in out_vma if n not in src))
           if out_vma - src else arg for arg, src in zip(args, in_vma)]
 
 def standard_vma_rule(prim_name, *avals, **kwargs) -> frozenset[AxisName]:

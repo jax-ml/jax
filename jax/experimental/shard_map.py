@@ -46,6 +46,7 @@ from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
+from jax._src.core import pvary, pvary_p
 from jax._src.core import Tracer, typeof
 from jax._src.mesh import (AbstractMesh, Mesh, AxisType, use_abstract_mesh,
                            get_abstract_mesh)
@@ -192,7 +193,7 @@ def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
     rewrite = check_rep
     if rewrite:
       if config.varying_axes_in_types.value:
-        fun = _implicit_pbroadcasts_on_output(fun, out_names_thunk)
+        fun = _implicit_pvary_on_output(fun, out_names_thunk)
       else:
         fun = _efficient_transpose_rewrite(fun, mesh, in_names_flat, out_names_thunk)
 
@@ -1157,52 +1158,8 @@ batching.skippable_batchers[psum2_p] = partial(lax_parallel._names_in_param, 'ax
 
 def _psum2_transpose_rule(cts, *args, axes, axis_index_groups):
   del args
-  return pbroadcast_p.bind(*cts, axes=axes, axis_index_groups=axis_index_groups)
+  return pvary_p.bind(*cts, axes=axes, axis_index_groups=axis_index_groups)
 ad.deflinear2(psum2_p, _psum2_transpose_rule)
-
-# pbroadcast_p is exactly the transpose of psum2_p
-def pbroadcast(x, axis_name):
-  axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
-  if not axis_name:
-    return x
-  xs, treedef = tree_flatten(x)
-  ys = pbroadcast_p.bind(*xs, axes=axes, axis_index_groups=None)
-  return tree_unflatten(treedef, ys)
-
-pbroadcast_p = core.Primitive('pbroadcast')
-pbroadcast_p.multiple_results = True
-pbroadcast_p.def_impl(lambda *args, axes, axis_index_groups: args)
-
-def _pbroadcast_abstract_eval(*args, axes, axis_index_groups):
-  if not config.varying_axes_in_types.value:
-    return args
-  if not config._check_rep.value:
-    return args
-  assert isinstance(axes, tuple)
-  arg_vma = [a.vma for a in args]
-  # If there is intersection between arg_vma and axes, error
-  if any(set(axes) & a for a in arg_vma):
-    raise ValueError(
-        "Collective pbroadcast must be applied to a "
-        f"non-device-varying type, but got {arg_vma} for collective acting "
-        f"over axis name {axes}. Please open an issue at "
-        "https://github.com/jax-ml/jax/issues, and as a temporary "
-        "workaround pass the check_rep=False argument to shard_map")
-  sharding = NamedSharding(get_abstract_mesh(), P())
-  return [a.update(sharding=sharding, vma=a.vma.union(frozenset(axes)))
-          for a in args]
-pbroadcast_p.def_abstract_eval(_pbroadcast_abstract_eval)
-
-mlir.register_lowering(pbroadcast_p, lambda ctx, *x, axes, axis_index_groups: x)
-def _pbroadcast_batcher(vals_in, dims_in, *, axes, axis_index_groups):
-  if any(type(axis) is int for axis in axes): raise NotImplementedError
-  vals_out = pbroadcast_p.bind(*vals_in, axes=axes,
-                               axis_index_groups=axis_index_groups)
-  return vals_out, dims_in
-batching.primitive_batchers[pbroadcast_p] = _pbroadcast_batcher
-ad.deflinear2(pbroadcast_p,
-              lambda cts, *_, axes, axis_index_groups:
-              psum2_p.bind(*cts, axes=axes, axis_index_groups=axis_index_groups))
 
 # Rewrite rules and static replication checking for efficient transposition
 
@@ -1238,7 +1195,7 @@ def _no_rewrite(prim, rule, mesh, in_rep, *args, **params):
 def _standard_rewrite_rule(prim, mesh, in_rep, *args, **params):
   # The standard rewrite inserts pbroadcasts but doesn't change the primitive.
   out_rep_ = set.intersection(*in_rep) if in_rep else set(mesh.axis_names)
-  args_ = [pbroadcast(x, tuple(n for n in src if n not in out_rep_))
+  args_ = [pvary(x, tuple(n for n in src if n not in out_rep_))
            if src - out_rep_ else x for x, src in zip(args, in_rep)]
   out_vals_ = prim.bind(*args_, **params)
   out_rep = [out_rep_] * len(out_vals_) if prim.multiple_results else [out_rep_]
@@ -1281,7 +1238,7 @@ def _standard_collective_rewrite(prim, mesh, in_rep, x, axis_name, **params):
   x_rep, = in_rep
   axis_name_set = set(axis_name)
   if pbroadcast_axis_name := axis_name_set & x_rep:
-    x = pbroadcast(x, tuple(pbroadcast_axis_name))
+    x = pvary(x, tuple(pbroadcast_axis_name))
   out_val = prim.bind(x, axis_name=axis_name, **params)
   return [out_val], [x_rep - axis_name_set]
 
@@ -1303,7 +1260,7 @@ def _reduction_collective_rewrite(prim, mesh, in_rep, x, axes, **params):
   x_rep, = in_rep
   axes_set = set(axes)
   if pbroadcast_axes := axes_set & x_rep:
-    x = pbroadcast(x, tuple(pbroadcast_axes))
+    x = pvary(x, tuple(pbroadcast_axes))
   out_val, = prim.bind(x, axes=axes, **params)
   return [out_val], [x_rep | axes_set]
 
@@ -1338,7 +1295,7 @@ def _psum_rewrite(mesh, in_rep, *args, axes, axis_index_groups):
   axes = (axes,) if not isinstance(axes, tuple) else axes
   axes_ = set(axes)
   out_rep = [r | axes_ for r in in_rep]  # TODO determinism (and elsewhere)
-  args_ = [pbroadcast(x, tuple(n for n in mesh.axis_names if n in axes_ & src))
+  args_ = [pvary(x, tuple(n for n in mesh.axis_names if n in axes_ & src))
            for x, src in zip(args, in_rep)]
   out_val = psum2_p.bind(*args_, axes=axes, axis_index_groups=axis_index_groups)
   return out_val, out_rep
@@ -1358,7 +1315,7 @@ def _psum2_check(mesh, *in_rep, axes, axis_index_groups):
 register_norewrite(psum2_p)
 
 
-@register_check(pbroadcast_p)
+@register_check(pvary_p)
 def _pbroadcast_check(mesh, *in_rep, axes, axis_index_groups):
   assert type(axes) is tuple
   if not all(r is None or set(axes) & r for r in in_rep):
@@ -1370,7 +1327,7 @@ def _pbroadcast_check(mesh, *in_rep, axes, axis_index_groups):
                     "workaround pass the check_rep=False argument to shard_map")
   in_rep = tuple(set(mesh.axis_names) if r is None else r for r in in_rep)
   return [r - set(axes) for r in in_rep]
-register_norewrite(pbroadcast_p)
+register_norewrite(pvary_p)
 
 
 register_standard_collective(lax_parallel.all_gather_p)
@@ -1475,7 +1432,7 @@ def _scan_rewrite(mesh, in_rep, *args, jaxpr, num_consts, num_carry, **params):
   else:
     assert False, 'Fixpoint not reached'
 
-  args = [pbroadcast(x, tuple(n for n in src if n not in dst))
+  args = [pvary(x, tuple(n for n in src if n not in dst))
           if src - dst else x for x, src, dst in zip(args, in_rep, in_rep_)]
   out_rep = [*carry_rep_out, *ys_rep]
   jaxpr_ = _replication_rewrite_match(mesh, jaxpr, in_rep_, out_rep)
@@ -1515,7 +1472,7 @@ def _while_rewrite(mesh, in_rep, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
       mesh, cond_jaxpr, (*cconst_rep, *carry_rep_in))
   body_jaxpr_ = _replication_rewrite_match(
       mesh, body_jaxpr, (*bconst_rep, *carry_rep_in), carry_rep_out)
-  args_ = [pbroadcast(x, tuple(n for n in src if n not in dst))
+  args_ = [pvary(x, tuple(n for n in src if n not in dst))
            if src - dst else x for x, src, dst in zip(args, in_rep, in_rep_)]
   out_vals = control_flow.loops.while_p.bind(
       *args_, cond_jaxpr=cond_jaxpr_, body_jaxpr=body_jaxpr_,
@@ -2201,9 +2158,9 @@ def _get_devices(p, backend):
   return devs[:p.local_axis_size]
 
 @lu.transformation2
-def _implicit_pbroadcasts_on_output(f, out_names_thunk, *args, **kwargs):
+def _implicit_pvary_on_output(f, out_names_thunk, *args, **kwargs):
   out_flat = f(*args, **kwargs)
-  return [pbroadcast(o, tuple(_names_to_vma(n) - typeof(o).vma))
+  return [pvary(o, tuple(_names_to_vma(n) - typeof(o).vma))
           for o, n in zip(out_flat, out_names_thunk())]
 
 ### Rewrite!
@@ -2331,7 +2288,7 @@ def _match_rep(f, mesh, out_reps_src_, out_reps_dst_, *args):
   out_reps_src = out_reps_src_() if callable(out_reps_src_) else out_reps_src_
   out_reps_dst = out_reps_dst_() if callable(out_reps_dst_) else out_reps_dst_
   _check_reps2(mesh, out_reps_dst, out_reps_src)
-  outs = [pbroadcast(x, tuple(n for n in src if n not in dst)) if src - dst
+  outs = [pvary(x, tuple(n for n in src if n not in dst)) if src - dst
           else x for x, src, dst in zip(outs, out_reps_src, out_reps_dst)]
   return outs
 
@@ -2388,5 +2345,5 @@ def _match_replication(src, dst, x):
     x, = psum2_p.bind(x, axes=tuple(n for n in dst if n not in src),
                       axis_index_groups=None)
   if src - dst:
-    x = pbroadcast(x, tuple(n for n in src if n not in dst))
+    x = pvary(x, tuple(n for n in src if n not in dst))
   return x

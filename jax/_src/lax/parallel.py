@@ -36,6 +36,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.mesh import get_abstract_mesh
+from jax._src.core import pvary
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lib.mlir import ir
@@ -155,12 +156,12 @@ def bind_psum2_p(leaves, *, axes, axis_index_groups):
   if axis_index_groups is not None:
     raise NotImplementedError
 
-  from jax.experimental.shard_map import psum2_p, pbroadcast
+  from jax.experimental.shard_map import psum2_p
   axes_ = frozenset(axes)
   args_ = []
   for x in leaves:
     in_vma = core.get_aval(x).vma
-    args_.append(pbroadcast(x, tuple(pbroadcast_names))
+    args_.append(pvary(x, tuple(pbroadcast_names))
                  if (pbroadcast_names := axes_ - in_vma) else x)
   return psum2_p.bind(*args_, axes=axes, axis_index_groups=axis_index_groups)
 
@@ -224,7 +225,7 @@ def pmax(x, axis_name, *, axis_index_groups=None):
   _validate_reduce_axis_index_groups(axis_index_groups)
   leaves, treedef = tree_util.tree_flatten(x)
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
-  leaves = map(partial(insert_collective_pbroadcast, axis_name), leaves)
+  leaves = map(partial(insert_collective_pvary, axis_name), leaves)
   out_flat = pmax_p.bind(*leaves, axes=axis_name,
                          axis_index_groups=axis_index_groups)
   return tree_util.tree_unflatten(treedef, out_flat)
@@ -255,7 +256,7 @@ def pmin(x, axis_name, *, axis_index_groups=None):
   _validate_reduce_axis_index_groups(axis_index_groups)
   leaves, treedef = tree_util.tree_flatten(x)
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
-  leaves = map(partial(insert_collective_pbroadcast, axis_name), leaves)
+  leaves = map(partial(insert_collective_pvary, axis_name), leaves)
   out_flat = pmin_p.bind(*leaves, axes=axis_name,
                          axis_index_groups=axis_index_groups)
   return tree_util.tree_unflatten(treedef, out_flat)
@@ -350,7 +351,7 @@ def ppermute(x, axis_name, perm):
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
   def bind(leaf):
-    leaf = insert_collective_pbroadcast(axis_name, leaf)
+    leaf = insert_collective_pvary(axis_name, leaf)
     return ppermute_p.bind(leaf, axis_name=axis_name, perm=tuple(map(tuple, perm)))
   return tree_util.tree_map(bind, x)
 
@@ -472,7 +473,7 @@ def all_to_all(x, axis_name, split_axis, concat_axis, *, axis_index_groups=None,
       else:  # concat_axis < split_axis
         x = lax.expand_dims(x, (concat_axis,))  # insert the new axis
         split_axis += 1   # we have a new axis before split_axis now
-    x = insert_collective_pbroadcast(axis_name, x)
+    x = insert_collective_pvary(axis_name, x)
     result = all_to_all_p.bind(x, split_axis=split_axis, concat_axis=concat_axis,
                                axis_name=axis_name,
                                axis_index_groups=axis_index_groups,
@@ -1416,19 +1417,16 @@ mlir.register_lowering(ragged_all_to_all_p, _ragged_all_to_all_lowering)
 batching.fancy_primitive_batchers[ragged_all_to_all_p] = _ragged_all_to_all_batched_collective
 batching.skippable_batchers[ragged_all_to_all_p] = partial(_names_in_param, 'axis_name')
 
-def insert_collective_pbroadcast(axis_name, x):
+def insert_collective_pvary(axis_name, x):
   if not config.varying_axes_in_types.value:
     return x
   if not config._check_rep.value:
     return x
 
-  from jax.experimental import shard_map
   axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   aval = core.get_aval(x)
   names_union = set(axis_name) | aval.vma
-  pbroadcast_axis_name = tuple(n for n in names_union if n not in aval.vma)
-  if pbroadcast_axis_name:
-    x = shard_map.pbroadcast(x, pbroadcast_axis_name)
+  x = pvary(x, tuple(n for n in names_union if n not in aval.vma))
   return x
 
 def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
@@ -1500,7 +1498,7 @@ def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   axis_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
   def bind(leaf):
-    leaf = insert_collective_pbroadcast(axis_name, leaf)
+    leaf = insert_collective_pvary(axis_name, leaf)
     return all_gather_p.bind(
         leaf,
         all_gather_dimension=canonicalize_axis(
@@ -1865,7 +1863,7 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
   axis_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   def bind(leaf):
-    leaf = insert_collective_pbroadcast(axis_name, leaf)
+    leaf = insert_collective_pvary(axis_name, leaf)
     return reduce_scatter_p.bind(
         leaf, axis_name=axis_name, scatter_dimension=scatter_dimension,
         axis_index_groups=axis_index_groups, axis_size=axis_size, tiled=tiled)

@@ -1129,8 +1129,7 @@ def broadcast(x, sz, axis, mesh_axis=None):
       if len(spmd_names) > 1:
         raise NotImplementedError
       if spmd_names:
-        from jax.experimental.shard_map import pbroadcast
-        x = pbroadcast(x, tuple(spmd_names))
+        x = core.pvary(x, tuple(spmd_names))
     return x
 
 def matchaxis(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
@@ -1189,6 +1188,15 @@ def add_batched(batched_args, batch_dims):
     return add_jaxvals(x, y), bdy
 primitive_batchers[add_jaxvals_p] = add_batched
 
+########################### core. ##################################
+
+def _pvary_batcher(vals_in, dims_in, *, axes, axis_index_groups):
+  if any(type(axis) is int for axis in axes):
+    raise NotImplementedError
+  vals_out = core.pvary_p.bind(*vals_in, axes=axes,
+                          axis_index_groups=axis_index_groups)
+  return vals_out, dims_in
+primitive_batchers[core.pvary_p] = _pvary_batcher
 
 ### mutable arrays
 
