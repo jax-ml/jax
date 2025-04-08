@@ -161,7 +161,7 @@ def MosaicGPU_TiledLayout : AttrDef<MosaicGPU_Dialect, "TiledLayout", []> {
 
   let parameters = (ins
     "::mlir::ArrayAttr":$tiling,
-    "int":$warp_dim,
+    "::mlir::Attribute":$warp_dim,
     "::mlir::ArrayAttr":$lane_dims,
     "int":$vector_dim
   );
