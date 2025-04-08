@@ -240,6 +240,7 @@ def trace_context():
           disable_jit.value,
           debug_key_reuse.value,
           jax_xla_profile_version.value,
+          _check_rep.value,
           # Technically this affects jaxpr->stablehlo lowering, not tracing.
           hlo_source_file_canonicalization_regex.value,
           pgle_profiling_runs.value,
@@ -1097,6 +1098,13 @@ varying_axes_in_types = bool_state(
     help=('Adds varying manual axes to ShapedArray to track which mesh axes the'
           ' array is varying over. This will help to remove the efficient'
           ' transpose rewrite machinery in shard_map'),
+    include_in_jit_key=True)
+
+# TODO make it so people don't use this, this is internal...
+_check_rep = bool_state(
+    name='check_rep',
+    default=False,
+    help='internal implementation detail of shard_map, DO NOT USE',
     include_in_jit_key=True)
 
 softmax_custom_jvp = bool_state(
