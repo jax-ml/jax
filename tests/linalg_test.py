@@ -96,7 +96,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       a = rng(factor_shape, dtype)
       return [np.matmul(a, jnp.conj(T(a)))]
 
-    jnp_fun = partial(jnp.linalg.cholesky, upper=upper)
+    jnp_fun = partial(jnp.linalg.cholesky, upper=upper, symmetrize_input=True)
 
     def np_fun(x, upper=upper):
       # Upper argument added in NumPy 2.0.0
