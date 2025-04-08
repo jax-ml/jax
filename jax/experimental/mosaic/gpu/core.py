@@ -479,6 +479,7 @@ def _lower_as_gpu_kernel(
     out_ref_tys.append(prof_spec.mlir_buffer_type(grid, block))
 
   module = ir.Module.create()
+  dialect.register_dialect(module.context)
   attrs = module.operation.attributes
   attrs["sym_name"] = ir.StringAttr.get(module_name)
   if kernel_name is None:

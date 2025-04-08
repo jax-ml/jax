@@ -2434,10 +2434,23 @@ def optimization_barrier(*arrays: mgpu.FragmentedArray):
   index = ir.IndexType.get()
   i32 = ir.IntegerType.get_signless(32)
 
+  def _repack(regs_it, reg_ty):
+    if not ir.VectorType.isinstance(reg_ty):
+      result_reg = next(regs_it)
+      assert result_reg.type == reg_ty
+      return result_reg
+
+    num_i32_regs = utils.bitwidth(reg_ty) // 32
+    i32_reg_ty = ir.VectorType.get((num_i32_regs,), i32)
+    reg = llvm.mlir_undef(i32_reg_ty)
+    for i_elem in range(num_i32_regs):
+      val = llvm.bitcast(i32, next(regs_it))
+      reg = llvm.insertelement(reg, val, arith.constant(i32, i_elem))
+    return vector.bitcast(reg_ty, reg)
+
   regs = []
   reg_dtypes = []
   reg_constraints = []
-  repack_fns = []
   # We unpack each array into a flat list of registers, and prepare the
   # functions that invert the transform in repack_fns.
   for array in arrays:
@@ -2451,36 +2464,25 @@ def optimization_barrier(*arrays: mgpu.FragmentedArray):
             for reg in array.registers.flat
             for pos in range(vec_len)
         ]
-        def _repack(regs, reg_ty=reg_ty):
-          reg = llvm.mlir_undef(reg_ty)
-          [vec_len] = ir.VectorType(reg_ty).shape
-          for i_elem in range(vec_len):
-            reg = llvm.insertelement(
-                reg, next(regs), arith.constant(i32, i_elem)
-            )
-          return reg
-        repack_fns.append(_repack)
       else:
         array_regs = list(array.registers.flat)
-        repack_fns.append(lambda regs: next(regs))
       reg_constraint = "f"
     elif ir.BF16Type.isinstance(dtype) or ir.F16Type.isinstance(dtype):
       if not ir.VectorType.isinstance(reg_ty):
         raise NotImplementedError(array.mlir_dtype)
       [vec_len] = ir.VectorType(reg_ty).shape
-      if vec_len != 2:
+      if vec_len % 2:
         raise NotImplementedError(vec_len)
-      i32_reg_ty = ir.VectorType.get((1,), i32)
+      num_i32_regs = vec_len // 2
+      i32_reg_ty = ir.VectorType.get((num_i32_regs,), i32)
       array_regs = [
           vector.extractelement(
-              vector.bitcast(i32_reg_ty, reg), position=c(0, index)
+              vector.bitcast(i32_reg_ty, reg), position=c(i, index)
           )
+          for i in range(num_i32_regs)
           for reg in array.registers.flat
       ]
       reg_constraint = "r"
-      def _repack(regs, reg_ty=reg_ty, i32_reg_ty=i32_reg_ty):
-        return vector.bitcast(reg_ty, vector.splat(i32_reg_ty, next(regs)))
-      repack_fns.append(_repack)
     else:
       raise NotImplementedError(array.mlir_dtype)
     regs += array_regs
@@ -2508,14 +2510,14 @@ def optimization_barrier(*arrays: mgpu.FragmentedArray):
   i32 = ir.IntegerType.get_signless(32)
   results = []
   regs_it = iter(regs)
-  for array, repack_fn in zip(arrays, repack_fns, strict=True):
+  for array in arrays:
     num_regs = array.registers.size
     reg_ty = array.registers.flat[0].type
     if ir.VectorType.isinstance(reg_ty):
       reg_ty = ir.VectorType(reg_ty)
     new_registers = np.empty((num_regs,), dtype=object)
     for i_vreg in range(num_regs):
-      reg = repack_fn(regs_it)
+      reg = _repack(regs_it, reg_ty)
       assert reg.type == reg_ty, (reg.type, reg_ty)
       new_registers[i_vreg] = reg
     results.append(
