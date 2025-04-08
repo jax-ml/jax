@@ -946,9 +946,6 @@ jax_multiplatform_test(
             "notsan",  # Times out
         ],
     },
-    backend_variant_args = {
-        "gpu": ["--jax_num_generated_cases=40"],
-    },
     shard_count = {
         "cpu": 40,
         "gpu": 50,
@@ -1070,12 +1067,6 @@ jax_multiplatform_test(
         ],
         "tpu": ["optonly"],
     },
-    # Use fewer cases to prevent timeouts.
-    backend_variant_args = {
-        "cpu": ["--jax_num_generated_cases=40"],
-        "cpu_x32": ["--jax_num_generated_cases=40"],
-        "gpu": ["--jax_num_generated_cases=40"],
-    },
     shard_count = {
         "cpu": 50,
         "gpu": 50,
@@ -1102,13 +1093,6 @@ jax_multiplatform_test(
             "notsan",  # Times out
         ],
         "tpu": ["optonly"],
-    },
-    # Use fewer cases to prevent timeouts.
-    backend_variant_args = {
-        "cpu": ["--jax_num_generated_cases=40"],
-        "cpu_x32": ["--jax_num_generated_cases=40"],
-        "gpu": ["--jax_num_generated_cases=40"],
-        "tpu": ["--jax_num_generated_cases=40"],
     },
     disable_configs = [
         "cpu_shardy",  # TODO(b/376475853): array values mismatch, need to fix and re-enable.
@@ -1409,13 +1393,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "state_test",
     srcs = ["state_test.py"],
-    # Use fewer cases to prevent timeouts.
-    args = [
-        "--jax_num_generated_cases=5",
-    ],
-    backend_variant_args = {
-        "tpu_pjrt_c_api": ["--jax_num_generated_cases=1"],
-    },
     enable_configs = [
         "gpu_h100",
         "cpu",
