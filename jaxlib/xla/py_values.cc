@@ -694,16 +694,25 @@ absl::StatusOr<PyArgSignature> PyArgSignatureOfValue(nb::handle arg,
         (*p)[dtypes.np_uint16.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_uint32.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_uint64.ptr()] = np_uint64_handler;
-        // TODO: Uncomment once the minimum ml_dtypes in JAX is >= 0.5.0.
-        // (*p)[dtypes.np_float4_e2m1fn.ptr()] = numpy_array_handler;
-        // (*p)[dtypes.np_float8_e3m4.ptr()] = numpy_array_handler;
-        // (*p)[dtypes.np_float8_e4m3.ptr()] = numpy_array_handler;
-        // (*p)[dtypes.np_float8_e8m0fnu.ptr()] = numpy_array_handler;
+        // TODO(upwind): Explore if we can remove std::optional for these types
+        // in xla/python/types.h and xla/python/types.cc
+        if (dtypes.np_float4_e2m1fn.has_value()) {
+          (*p)[dtypes.np_float4_e2m1fn->ptr()] = numpy_array_handler;
+        }
+        if (dtypes.np_float8_e3m4.has_value()) {
+          (*p)[dtypes.np_float8_e3m4->ptr()] = numpy_array_handler;
+        }
+        if (dtypes.np_float8_e4m3.has_value()) {
+          (*p)[dtypes.np_float8_e4m3->ptr()] = numpy_array_handler;
+        }
         (*p)[dtypes.np_float8_e4m3fn.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e4m3b11fnuz.ptr()] = numpy_array_handler;
-        (*p)[dtypes.np_float8_e5m2.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e4m3fnuz.ptr()] = numpy_array_handler;
+        (*p)[dtypes.np_float8_e5m2.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float8_e5m2fnuz.ptr()] = numpy_array_handler;
+        if (dtypes.np_float8_e8m0fnu.has_value()) {
+          (*p)[dtypes.np_float8_e8m0fnu->ptr()] = numpy_array_handler;
+        }
         (*p)[dtypes.np_float16.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_bfloat16.ptr()] = numpy_array_handler;
         (*p)[dtypes.np_float32.ptr()] = numpy_array_handler;
