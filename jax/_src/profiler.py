@@ -272,7 +272,6 @@ class TraceAnnotation(xla_client.profiler.TraceMe):
   This will cause a "my_label" event to show up on the trace timeline if the
   event occurs while the process is being traced.
   """
-  pass
 
 
 class StepTraceAnnotation(TraceAnnotation):
