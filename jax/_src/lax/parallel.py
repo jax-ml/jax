@@ -145,25 +145,24 @@ def psum(x, axis_name, *, axis_index_groups=None):
     out_flat = tuple(lax._const(leaf, size) * pos_reduce(leaf) for leaf in leaves)
   else:
     if config.varying_axes_in_types.value and config._check_rep.value:
-      out_flat = bind_psum2_p(leaves, axes=tuple(axis_name),
-                              axis_index_groups=axis_index_groups)
+      out_flat = bind_psum_invariant(
+          leaves, axes=tuple(axis_name), axis_index_groups=axis_index_groups)
     else:
       out_flat = psum_p.bind(
           *leaves, axes=tuple(axis_name), axis_index_groups=axis_index_groups)
   return tree_util.tree_unflatten(treedef, out_flat)
 
-def bind_psum2_p(leaves, *, axes, axis_index_groups):
+def bind_psum_invariant(leaves, *, axes, axis_index_groups):
   if axis_index_groups is not None:
     raise NotImplementedError
-
-  from jax.experimental.shard_map import psum2_p
   axes_ = frozenset(axes)
   args_ = []
   for x in leaves:
     in_vma = core.get_aval(x).vma
     args_.append(pvary(x, tuple(pbroadcast_names))
                  if (pbroadcast_names := axes_ - in_vma) else x)
-  return psum2_p.bind(*args_, axes=axes, axis_index_groups=axis_index_groups)
+  return psum_invariant_p.bind(*args_, axes=axes,
+                               axis_index_groups=axis_index_groups)
 
 
 def pmean(x, axis_name, *, axis_index_groups=None):
@@ -827,7 +826,7 @@ def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
   ]
   return out_avals, {core.NamedAxisEffect(axis) for axis in named_axes}
 
-def _psum2_abstract_eval(name, *args, axes, axis_index_groups):
+def _psum_invariant_abstract_eval(name, *args, axes, axis_index_groups):
   if not config.varying_axes_in_types.value:
     return psum_p.abstract_eval(
         *args, axes=axes, axis_index_groups=axis_index_groups)
@@ -864,7 +863,7 @@ def _psum2_abstract_eval(name, *args, axes, axis_index_groups):
   ]
   return out_avals, {core.NamedAxisEffect(axis) for axis in named_axes}
 
-# TODO(yashkatariya): Replace this with _psum2_abstract_eval
+# TODO(yashkatariya): Replace this with _psum_invariant_abstract_eval
 def _pmin_pmax_abstract_eval(name, *args, axes, axis_index_groups):
   if not config.varying_axes_in_types.value:
     return _allreduce_effectful_abstract_eval(
@@ -872,8 +871,8 @@ def _pmin_pmax_abstract_eval(name, *args, axes, axis_index_groups):
   if not config._check_rep.value:
     return _allreduce_effectful_abstract_eval(
         *args, axes=axes, axis_index_groups=axis_index_groups)
-  return _psum2_abstract_eval(name, *args, axes=axes,
-                              axis_index_groups=axis_index_groups)
+  return _psum_invariant_abstract_eval(
+      name, *args, axes=axes, axis_index_groups=axis_index_groups)
 
 def _check_axis_names(axes):
   named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
@@ -1998,3 +1997,19 @@ mlir.register_lowering(pgather_p, _pgather_parallel_lowering)
 # TODO: Transpose? That requires adding pscatter...
 batching.fancy_primitive_batchers[pgather_p] = _pgather_collective_batcher
 batching.skippable_batchers[pgather_p] = partial(_names_in_param, 'axes')
+
+psum_invariant_p = core.Primitive('psum_invariant')
+psum_invariant_p.multiple_results = True
+psum_invariant_p.def_impl(psum_p.impl)
+psum_invariant_p.def_effectful_abstract_eval(
+    partial(_psum_invariant_abstract_eval, psum_invariant_p.name))
+mlir.register_lowering(psum_invariant_p, mlir._lowerings[psum_p])
+batching.fancy_primitive_batchers[psum_invariant_p] = partial(
+    _batched_reduction_collective, psum_invariant_p,
+    lambda v, axis_size: axis_size * v)
+batching.skippable_batchers[psum_invariant_p] = partial(_names_in_param, 'axes')
+
+def _psum_invariant_transpose_rule(cts, *args, axes, axis_index_groups):
+  del args
+  return core.pvary_p.bind(*cts, axes=axes, axis_index_groups=axis_index_groups)
+ad.deflinear2(psum_invariant_p, _psum_invariant_transpose_rule)
