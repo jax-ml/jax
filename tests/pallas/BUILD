@@ -488,6 +488,16 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
+    name = "tpu_attention_test",
+    srcs = ["tpu_attention_test.py"],
+    enable_backends = ["tpu"],
+    shard_count = 8,
+    deps = [
+        "//jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
     name = "tpu_paged_attention_kernel_test",
     srcs = ["tpu_paged_attention_kernel_test.py"],
     disable_configs = [
