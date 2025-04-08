@@ -14,6 +14,7 @@ on:
     paths:
       - '**/workflows/tsan.yaml'
       - '**/workflows/tsan-suppressions*.txt'
+      - '**/workflows/requirements_lock_3_13_ft.patch'
 
 jobs:
   tsan:
