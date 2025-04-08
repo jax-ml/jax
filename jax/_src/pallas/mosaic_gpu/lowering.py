@@ -897,8 +897,11 @@ def lower_jaxpr_to_mosaic_gpu(
           if val.type != mlir_dtype:
             raise AssertionError(f"Scalar type must match ShapedArray dtype, got: {val.type} != {mlir_dtype}")
 
-  foreach(write_env, jaxpr.constvars, consts)
-  foreach(lambda v, a: write_env(v, a, require_value=False), jaxpr.invars, args)
+  foreach(
+      functools.partial(write_env, require_value=False), jaxpr.constvars, consts
+  )
+  foreach(functools.partial(write_env, require_value=False), jaxpr.invars, args)
+
   # TODO(justinfu): Handle transform scopes.
   last_local_name_stack: list[str] = []
   named_regions = []

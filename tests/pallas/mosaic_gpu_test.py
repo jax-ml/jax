@@ -2096,16 +2096,21 @@ class PipelineTest(PallasTest):
     y = x + 1.0
     np.testing.assert_array_equal(kernel_fn(x), y)
 
-  def test_emit_with_2d_grid(self):
+  @parameterized.product(static=[False, True])
+  def test_emit_with_2d_grid(self, static):
     num_steps1 = 4
     num_steps2 = 5
 
     def kernel(x_gmem, o_gmem):
+      grid = (num_steps1, num_steps2)
+      if static:
+        grid = jax.tree.map(jnp.asarray, grid)
+
       plgpu.emit_pipeline(
           kernel_body,
           in_specs=[pl.BlockSpec((32, 16, 8), lambda i, j: (0, i, j))],
           out_specs=[pl.BlockSpec((32, 16, 8), lambda i, j: (0, i, j))],
-          grid=(num_steps1, num_steps2),
+          grid=grid,
           max_concurrent_steps=2,
       )(x_gmem, o_gmem)
 
@@ -2258,8 +2263,8 @@ class WarpSpecializedPipelineTest(PallasTest):
     np.testing.assert_array_equal(out, x)
     np.testing.assert_array_equal(out_last_block, x[-blk_m:, -blk_n:])
 
-  @parameterized.product(m=[256], n=[256], num_compute_wgs=[1, 2])
-  def test_elementwise_add(self, m, n, num_compute_wgs):
+  @parameterized.product(m=[256], n=[256], num_compute_wgs=[1, 2], static=[False, True])
+  def test_elementwise_add(self, m, n, num_compute_wgs, static):
     self.skip_if_wg_semantics()  # Crashes!
 
     blk_m = blk_n = 64
@@ -2273,16 +2278,21 @@ class WarpSpecializedPipelineTest(PallasTest):
       # This is currently a race, but the values written are the same.
       o_smem[...] = x_smem[...] + y_smem[...]
 
-    pipeline = mgpu_pipeline.emit_pipeline_warp_specialized(
-        tiled_add_kernel,
-        grid=(m // blk_m, n // blk_n),
-        max_concurrent_steps=2,
-        num_compute_wgs=num_compute_wgs,
-        memory_registers=40,
-        wg_axis="wg",
-        in_specs=[spec, spec],
-        out_specs=[spec],
-    )
+    def pipeline(*gmem_refs):
+      grid = (m // blk_m, n // blk_n)
+      if static:
+        grid = jax.tree.map(jnp.asarray, grid)
+      return mgpu_pipeline.emit_pipeline_warp_specialized(
+          tiled_add_kernel,
+          grid=grid,
+          max_concurrent_steps=2,
+          num_compute_wgs=num_compute_wgs,
+          memory_registers=40,
+          wg_axis="wg",
+          in_specs=[spec, spec],
+          out_specs=[spec],
+      )(*gmem_refs)
+
     kernel = self.kernel(
         pipeline,
         out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
