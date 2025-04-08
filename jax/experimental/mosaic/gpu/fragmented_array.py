@@ -1788,25 +1788,23 @@ class FragmentedArray:
       fmt_str = fmt.format(f"[{idx_fmt}]: {{}}")
       utils.debug_print(fmt_str, *idx, val, uniform=False)
 
-  def store_untiled(self, ref: ir.Value, *, vector_store: bool = True):
+  def store_untiled(
+      self, ref: ir.Value, *, swizzle: int = 16, optimized: bool = True
+  ):
     if not ir.MemRefType.isinstance(ref.type):
       raise ValueError(ref)
-
-    def vs_unsupported():
-      if not vector_store:
-        raise NotImplementedError(
-            f"Can't use non-vector stores with layout {self.layout}"
-        )
-
     match self.layout:
       case WGSplatFragLayout():
-        vs_unsupported()
+        # All values are the same so swizzle does not affect anything here.
         self._store_untiled_splat(ref)
       case WGStridedFragLayout():
-        vs_unsupported()
+        if swizzle != 16:
+          raise NotImplementedError
         self._store_untiled_wg_strided(ref)
       case TiledLayout():
-        self._store_untiled_tiled(ref, vector_store=vector_store)
+        ref_shape = ir.MemRefType(ref.type).shape
+        ref = utils.memref_reshape(ref, (*(1 for _ in ref_shape), *ref_shape))
+        self.store_tiled(ref, swizzle=swizzle, optimized=optimized)
       case _:
         raise NotImplementedError(self.layout)
 
@@ -1861,61 +1859,15 @@ class FragmentedArray:
     for idx, reg in zip(idxs, self.registers.flat):
       vector.store(reg, ref_, idx)
 
-  def _store_untiled_tiled(self, ref: ir.Value, *, vector_store: bool = True):
-    """Stores an array with a tiled layout. Not optimized at the moment."""
-    if utils.bitwidth(self.mlir_dtype) < 8:
-      raise NotImplementedError(f"Can't store sub-byte types ({self.mlir_dtype=})")
-    i32 = ir.IntegerType.get_signless(32)
-    layout = self.layout
-    assert isinstance(layout, TiledLayout)
-    ref_strides, _ = ir.MemRefType(ref.type).get_strides_and_offset()
-    if vector_store and ref_strides[layout.vector_dim] != 1:
-      raise NotImplementedError(
-          "Can't use vector stores with non-unit minormost stride"
-      )
-    strides = layout.tiling.tile_strides(ref_strides)
-    smem_space = ir.Attribute.parse("#gpu.address_space<workgroup>")
-    ref_space = ir.MemRefType(ref.type).memory_space
-    memory_space = None
-    if str(ref_space) == str(smem_space):
-      memory_space = 3
-    elif ref_space:
-      raise NotImplementedError(f"Unexpected ref space {ref_space}")
-    ptr = utils.memref_ptr(ref, memory_space=memory_space)
-    # Fold warp and lane offsets into the pointer once, since they are dynamic.
-    dyn_strides = [
-        arith.constant(i32, s) for s in strides[-layout.tiled_tiling_rank :]
-    ]
-    warp_offset = utils.dyn_dot(layout.warp_indices(), dyn_strides)
-    lane_offset = utils.dyn_dot(layout.lane_indices(), dyn_strides)
-    dyn_offset = arith.addi(warp_offset, lane_offset)
-    ptr = utils.getelementptr(ptr, [dyn_offset], self.mlir_dtype)
-    # All warp tile offsets are static and can be fused into the store.
-    for tile_idx, reg in np.ndenumerate(self.registers):
-      if vector_store:
-        elems = [reg]
-      else:
-        index = ir.IndexType.get()
-        elems = [
-            vector.extractelement(reg, position=c(i, index))
-            for i in range(ir.VectorType(reg.type).shape[0])
-        ]
-      for i, e in enumerate(elems):
-        tile_idx_local = list(tile_idx)
-        tile_idx_local[layout.vector_dim] += i
-        tile_idx_local = list(tile_idx_local)
-        lin_idx = sum(i * s for i, s in zip(tile_idx_local, strides, strict=True))
-        reg_ptr = utils.getelementptr(ptr, [lin_idx], self.mlir_dtype)
-        llvm.store(e, reg_ptr)
-
-  def store_tiled(self, ref, swizzle: int | None):
+  def store_tiled(self, ref, swizzle: int | None, optimized: bool = True):
     if not isinstance(self.layout, TiledLayout):
       raise NotImplementedError(self.layout)
     layout, shape = self.layout, self.shape
     # Note that the loop below will "race" for layouts that replicate data.
     # However, in that case all of the racing writes store the same data, which
     # is ok in the CUDA memory model.
-    for get, _, ptr in self.transfer_tiled2(ref, swizzle, layout, shape):
+    stores = self.transfer_tiled2(ref, swizzle, layout, shape, optimized)
+    for get, _, ptr in stores:
       llvm.store(get(self.registers), ptr)
 
   @classmethod

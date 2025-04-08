@@ -1226,7 +1226,7 @@ def _swap_lowering_rule(
               is_signed=mgpu_utils.is_signed(x_aval.dtype),
               optimized=False,
           )
-          value.store_untiled(x_smem)
+          value.store_untiled(x_smem, optimized=False)
           return old_value
         case _:
           old_value = mgpu.FragmentedArray.load_strided(
