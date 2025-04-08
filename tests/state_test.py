@@ -792,7 +792,7 @@ class StateDischargeTest(jtu.JaxTestCase):
       lax.fori_loop(0, 5, body, init_val=())
       return a_ref[...], b_ref[...]
 
-    ref = lambda x: AbstractRef(core.raise_to_shaped(core.get_aval(x)))
+    ref = lambda x: AbstractRef(core.get_aval(x))
     f_jaxpr = jax.make_jaxpr(f)(ref(1.), ref(2.))
     jaxpr, _ = discharge_state(f_jaxpr.jaxpr, (), should_discharge=[False, True])
     # Effects on y_ref were discharged away but not the effects on x_ref
@@ -1139,7 +1139,7 @@ class StateControlFlowTest(jtu.JaxTestCase):
         y_ref[...] = 2.
       lax.cond(pred, true_fun, false_fun)
       return x_ref[...], y_ref[...]
-    ref = lambda x: AbstractRef(core.raise_to_shaped(core.get_aval(x)))
+    ref = lambda x: AbstractRef(core.get_aval(x))
     f_jaxpr = jax.make_jaxpr(f0)(False, ref(3.), ref(4.))
     jaxpr, _ = discharge_state(f_jaxpr.jaxpr, (), should_discharge=[False, False, True])
     # Effects on y_ref were discharged away but not the effects on x_ref

@@ -2229,11 +2229,6 @@ class Token:
 pytype_aval_mappings[Token] = lambda _: abstract_token
 
 
-# TODO(dougalm): Deprecate these. They're just here for backwards compat.
-def raise_to_shaped(aval):
-  return aval
-raise_to_shaped_mappings: dict[type, Callable] = {}
-
 ### Operations on shapes and dimension sizes.
 
 class InconclusiveDimensionOperation(Exception):

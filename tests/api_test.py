@@ -5024,7 +5024,7 @@ class RematTest(jtu.JaxTestCase):
 
     # Make sure that introducing constants in vmap works.
     constant_introducing_p = core.Primitive('introduce_constant')
-    constant_introducing_p.def_abstract_eval(core.raise_to_shaped)
+    constant_introducing_p.def_abstract_eval(lambda x: x)
     def _constant_introducing_batcher(xs, ds):
       (x,), (d,) = xs, ds
       return (x + np.arange(x.size, dtype=x.dtype).reshape(x.shape)), d
