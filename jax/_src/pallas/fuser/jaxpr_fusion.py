@@ -28,10 +28,6 @@ from jax._src.pallas.fuser import fusion as fusion_lib
 from jax._src.pallas.fuser.fusable import fusable_p
 
 
-def _get_aval(x):
-  return jax_core.raise_to_shaped(jax_core.get_aval(x))
-
-
 def fuse(f=None, *, physicalize: bool = False, debug: bool = False):
   """Fuses a function into a single fusable.
 
@@ -52,7 +48,7 @@ def fuse(f=None, *, physicalize: bool = False, debug: bool = False):
       flat_fun, out_tree_thunk = api_util.flatten_fun(
           lu.wrap_init(f, debug_info=debug_info), in_tree
       )
-      flat_avals = [_get_aval(x) for x in flat_args]
+      flat_avals = [jax_core.get_aval(x) for x in flat_args]
       jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
       if debug:
         print("Jaxpr before fusion:")

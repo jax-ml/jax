@@ -29,10 +29,6 @@ fusable_p = jax_core.Primitive('fusable')
 fusable_p.multiple_results = True
 
 
-def _get_aval(x):
-  return jax_core.raise_to_shaped(jax_core.get_aval(x))
-
-
 def _make_trivial_fusion(x: jax.Array) -> fusion_lib.Fusion:
   return fusion_lib.Fusion(
       func=lambda: x,
@@ -53,7 +49,7 @@ def fusable(f=None, *, output_fusion_prefix: Any = True):
       flat_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
           lu.wrap_init(wrapped, debug_info=debug_info), in_tree
       )
-      flat_avals = [_get_aval(x) for x in flat_args]
+      flat_avals = [jax_core.get_aval(x) for x in flat_args]
       jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
       out_tree = out_tree_thunk()
       out = fusable_p.bind(
