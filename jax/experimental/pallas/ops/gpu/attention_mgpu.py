@@ -25,7 +25,7 @@ import jax.experimental.pallas as pl
 import jax.experimental.pallas.mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
-
+from functools import partial
 
 @dataclasses.dataclass(frozen=True)
 class TuningConfig:
@@ -33,6 +33,11 @@ class TuningConfig:
   block_kv: int
   max_concurrent_steps: int
   use_schedule_barrier: bool = True
+
+  block_q_dkv: int | None = None
+  block_kv_dkv: int | None = None
+  block_q_dq: int | None = None
+  block_kv_dq: int | None = None
 
   def __post_init__(self):
     if self.block_q % 64:
@@ -42,9 +47,18 @@ class TuningConfig:
     if self.max_concurrent_steps < 2:
       raise ValueError(f"{self.max_concurrent_steps=} must be at least 2")
 
+  @property
+  def has_backward_blocks(self) -> bool:
+    backward_blocks = [
+        self.block_q_dkv,
+        self.block_kv_dkv,
+        self.block_q_dq,
+        self.block_kv_dq,
+    ]
+    return all(b is not None for b in backward_blocks)
 
 @functools.partial(jax.jit, static_argnames=["config", "save_residuals"])
-def attention(q, k, v, config: TuningConfig, save_residuals: bool = False):
+def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = False):
   if q.ndim != 4 or k.ndim != 4 or v.ndim != 4:
     raise ValueError(f"q, k, and v should all be 4D, got: {q.ndim=}, {k.ndim=}, {v.ndim=}")
   batch_size, q_seq_len, num_q_heads, head_dim = q.shape
@@ -259,6 +273,334 @@ def attention(q, k, v, config: TuningConfig, save_residuals: bool = False):
 
   return out
 
+@partial(jax.custom_vjp, nondiff_argnums=(3, 4))
+def attention(q, k, v, config: TuningConfig, save_residuals: bool = False):
+  return _attention_forward(q, k, v, config, save_residuals)
+
+def _attention_fwd(q, k, v, config: TuningConfig, save_residuals: bool):
+  del save_residuals
+
+  out, (lse,) = _attention_forward(q, k, v, config, save_residuals=True)
+  return out, (q, k, v, out, lse)
+
+@functools.partial(jax.jit, static_argnames=["config", "save_residuals"])
+def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
+  del save_residuals
+  q, k, v, out, lse = res
+
+  if not config.has_backward_blocks:
+    raise ValueError("Need to specify backward blocks.")
+
+  batch_size, q_seq_len, num_q_heads, head_dim = q.shape
+  _, kv_seq_len, num_kv_heads, _ = k.shape
+  q_heads_per_kv_head = num_q_heads // num_kv_heads
+  dtype = q.dtype
+  compute_wgs = 2
+
+  num_q_tiles, rem = divmod(q_seq_len, config.block_q_dq * compute_wgs)
+  if rem:
+    raise NotImplementedError(f"{q_seq_len=} must be a multiple of {config.block_q_dq=}")
+
+  num_kv_tiles, rem = divmod(kv_seq_len, config.block_kv_dkv * compute_wgs)
+  if rem:
+    raise NotImplementedError(f"{kv_seq_len=} must be a multiple of {config.block_kv_dkv=}")
+
+  if kv_seq_len % config.block_kv_dq:
+    raise NotImplementedError(f"{kv_seq_len=} must be a multiple of {config.block_kv_dq=}")
+
+  if q_seq_len % config.block_q_dkv:
+    raise NotImplementedError(f"{q_seq_len=} must be a multiple of {config.block_q_dkv=}")
+
+  tiling = plgpu.TilingTransform((8, 64))
+  swizzle = plgpu.SwizzleTransform(128)
+
+  max_concurrent_steps = min([config.max_concurrent_steps, num_q_tiles, num_kv_tiles])
+
+  delta = jnp.einsum('bqhd,bqhd->bhq', out.astype(jnp.float32), do.astype(jnp.float32))
+  del out  # Not needed anymore.
+
+  def kernel_dq(q_ref, k_ref, v_ref, do_ref, lse_ref, delta_ref, dq_ref, config, scoped):
+    block_q, block_kv = config.block_q_dq, config.block_kv_dq
+    batch = lax.axis_index("batch")
+    q_head = lax.axis_index("heads")
+    wg_idx = lax.axis_index("wg")
+    kv_head = lax.div(q_head, jnp.array(q_heads_per_kv_head, q_head.dtype))
+    smem_buffers, buffer_barriers = scoped
+    q_smem2, do_smem2, lse_smem2, delta_smem2 = smem_buffers
+    q_barriers, do_barriers, lse_barriers, delta_barriers = buffer_barriers
+    def _compute_thread():
+      q_smem, do_smem, lse_smem, delta_smem = q_smem2.at[wg_idx], do_smem2.at[wg_idx], lse_smem2.at[wg_idx], delta_smem2.at[wg_idx]
+      q_seq_base = lax.axis_index("q_seq") * (compute_wgs * block_q) + wg_idx * block_q
+      q_slice = (batch, pl.ds(q_seq_base, block_q), q_head)
+      plgpu.copy_gmem_to_smem(q_ref.at[q_slice], q_smem, q_barriers.at[wg_idx])
+      plgpu.copy_gmem_to_smem(do_ref.at[q_slice], do_smem, do_barriers.at[wg_idx])
+      plgpu.copy_gmem_to_smem(
+          delta_ref.at[batch, q_head, pl.ds(q_seq_base, block_q)],
+          delta_smem,
+          delta_barriers.at[wg_idx],
+      )
+      plgpu.copy_gmem_to_smem(
+          lse_ref.at[batch, q_head, pl.ds(q_seq_base, block_q)],
+          lse_smem,
+          lse_barriers.at[wg_idx],
+      )
+      for buf in buffer_barriers:
+        plgpu.barrier_wait(buf.at[wg_idx])
+
+      delta = plgpu.load(delta_smem, (), layout=plgpu.Layout.WGMMA_ROW)
+      lse = plgpu.load(lse_smem, (), layout=plgpu.Layout.WGMMA_ROW)
+      dq_acc = plgpu.layout_cast(
+          jnp.full((block_q, head_dim), 0, dtype=jnp.float32), plgpu.Layout.WGMMA,
+      )
+      dq, _, _ = (yield (dq_acc, lse, delta))
+      q_smem[...] = dq.astype(dtype)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(q_smem, dq_ref.at[q_slice])
+      plgpu.wait_smem_to_gmem(0)
+
+    def kv_pipeline(_, k_smem, v_smem, k_consumed_barrier, v_consumed_barrier, carry):
+      q_smem, do_smem = q_smem2.at[wg_idx], do_smem2.at[wg_idx]
+      (dq_acc, lse, delta) = carry
+
+      def compute_s(acc_ref):
+        plgpu.wgmma(acc_ref, q_smem, plgpu.transpose_ref(k_smem, (1, 0)))
+        return acc_ref[...]
+
+      s = pl.run_scoped(compute_s, plgpu.ACC((block_q, block_kv), jnp.float32))
+      s *= math.log2(math.e)
+      p = jnp.exp2(s - lax.broadcast_in_dim(lse, (block_q, block_kv), [0]))
+
+      # dP
+      def compute_dp(acc_ref):
+        plgpu.wgmma(acc_ref, do_smem, plgpu.transpose_ref(v_smem, (1, 0)))
+        return acc_ref[...]
+
+      dp = pl.run_scoped(compute_dp, plgpu.ACC((block_q, block_kv), jnp.float32))
+      plgpu.barrier_arrive(v_consumed_barrier)
+
+      # dS
+      ds = p * (dp - lax.broadcast_in_dim(delta, (block_q, block_kv), [0]))
+
+      # dQ
+      def compute_dq(acc_ref):
+        plgpu.wgmma(acc_ref, ds.astype(k_ref.dtype), k_smem)
+
+      dq_acc = pl.run_state(compute_dq)(plgpu.ACC.init(dq_acc))
+      plgpu.barrier_arrive(k_consumed_barrier)
+
+      return (dq_acc, lse, delta)
+
+    pipeline = plgpu.emit_pipeline_warp_specialized(
+        kv_pipeline,
+        grid=(kv_seq_len // block_kv,),
+        max_concurrent_steps=max_concurrent_steps,
+        num_compute_wgs=compute_wgs,
+        memory_registers=40,
+        wg_axis="wg",
+        manual_consumed_barriers=True,
+        carry_coroutine=_compute_thread,
+        in_specs=[
+            plgpu.GPUBlockSpec(  # k
+                block_shape=(block_kv, head_dim),
+                index_map=lambda i: (i, 0),
+                transforms=[tiling, swizzle]),
+            plgpu.GPUBlockSpec(  # v
+                block_shape=(block_kv, head_dim),
+                index_map=lambda i: (i, 0),
+                transforms=[tiling, swizzle]),
+        ])
+    k_ref = k_ref.at[batch, :, kv_head, :]
+    v_ref = v_ref.at[batch, :, kv_head, :]
+    pipeline(k_ref, v_ref)
+
+  def run_dq(refs, config):
+    q_ref, k_ref, v_ref, do_ref, lse_ref, delta_ref, dq_ref = refs
+    block_q = config.block_q_dq
+    @pl.core_map(
+        plgpu.GPUMesh(
+            grid=(batch_size, num_q_tiles, num_q_heads),
+            grid_names=("batch", "q_seq", "heads"),
+            num_threads=compute_wgs + 1,
+            thread_name="wg",
+        ),
+        compiler_params=plgpu.GPUCompilerParams(
+            approx_math=True, max_concurrent_steps=max_concurrent_steps
+        ),
+    )
+    def _kernel_entry():
+      q_scratch = plgpu.SMEM(
+          (compute_wgs, block_q, head_dim), jnp.float16,
+          transforms=(tiling, swizzle),
+      )
+      do_scratch = q_scratch
+      lse_scratch = plgpu.SMEM((compute_wgs, block_q), jnp.float32)
+      delta_scratch = plgpu.SMEM((compute_wgs, block_q), jnp.float32)
+      pl.run_scoped(
+          lambda *args: kernel_dq(q_ref, k_ref, v_ref, do_ref, lse_ref, delta_ref, dq_ref, config, args),
+          (q_scratch, do_scratch, lse_scratch, delta_scratch),
+          (plgpu.Barrier(1, num_barriers=compute_wgs),) * 4
+      )
+
+  @functools.partial(jax.jit, static_argnames=["config"])
+  def run_function_dq(q, k, v, do, lse, delta, dq, config):
+    run = partial(run_dq, config=config)
+    *_, dq = pl.run_state(run)((q, k, v, do, lse, delta, dq))
+    return dq
+  dq = run_function_dq(q, k, v, do, lse, delta, jnp.full_like(q, jnp.inf), config)
+
+  def kernel_dkv(q_ref, k_ref, v_ref, do_ref, lse_ref, delta_ref, dk_ref, dv_ref, config, scoped):
+    block_q, block_kv = config.block_q_dkv, config.block_kv_dkv
+    batch = lax.axis_index("batch")
+    q_head = lax.axis_index("heads")
+    wg_idx = lax.axis_index("wg")
+    (k_smem2, v_smem2), (k_barriers, v_barriers) = scoped
+
+    def _compute_thread():
+      k_smem, v_smem = k_smem2.at[wg_idx], v_smem2.at[wg_idx]
+      kv_seq_base = lax.axis_index("kv_seq") * (compute_wgs * block_kv) + wg_idx * block_kv
+      kv_head = lax.div(q_head, jnp.array(q_heads_per_kv_head, q_head.dtype))
+      plgpu.copy_gmem_to_smem(
+          k_ref.at[(batch, pl.ds(kv_seq_base, block_kv), kv_head)],
+          k_smem,
+          k_barriers.at[wg_idx])
+      plgpu.copy_gmem_to_smem(
+          v_ref.at[(batch, pl.ds(kv_seq_base, block_kv), kv_head)],
+          v_smem,
+          v_barriers.at[wg_idx])
+      plgpu.barrier_wait(k_barriers.at[wg_idx])
+      plgpu.barrier_wait(v_barriers.at[wg_idx])
+      dk_acc = plgpu.layout_cast(
+          jnp.full((block_kv, head_dim), 0, dtype=jnp.float32), plgpu.Layout.WGMMA,
+      )
+      dv_acc = plgpu.layout_cast(
+          jnp.full((block_kv, head_dim), 0, dtype=jnp.float32), plgpu.Layout.WGMMA,
+      )
+      (dk, dv) = (yield (dv_acc, dk_acc))
+      k_smem[...] = dk.astype(dtype)
+      v_smem[...] = dv.astype(dtype)
+
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(
+          k_smem,
+          dk_ref.at[(batch, pl.ds(kv_seq_base, block_kv), q_head)],
+          commit_group=False)
+      plgpu.copy_smem_to_gmem(
+          v_smem,
+          dv_ref.at[(batch, pl.ds(kv_seq_base, block_kv), q_head)],
+          commit_group=False)
+      plgpu.commit_smem_to_gmem_group()
+      plgpu.wait_smem_to_gmem(0)
+
+    def q_pipeline(_, q_smem, do_smem, lse_smem, delta_smem, q_consumed_barrier, do_consumed_barrier, lse_consumed_barrier, delta_consumed_barrier, carry):
+      k_smem, v_smem = k_smem2.at[wg_idx], v_smem2.at[wg_idx]
+      dk_acc, dv_acc = carry
+
+      def _compute_sT(acc_ref):
+        plgpu.wgmma(acc_ref, k_smem, plgpu.transpose_ref(q_smem, (1, 0)))
+        return acc_ref[...]
+      sT = pl.run_scoped(_compute_sT, plgpu.ACC((block_kv, block_q), jnp.float32))
+      sT *= math.log2(math.e)
+
+      lse = plgpu.load(lse_smem, (), layout=plgpu.Layout.WGMMA_COL)
+      plgpu.barrier_arrive(lse_consumed_barrier)
+      pT = jnp.exp2(sT - lax.broadcast_in_dim(lse, (block_kv, block_q), [1]))
+
+      # dV
+      def compute_dv(acc_ref):
+        plgpu.wgmma(acc_ref, pT.astype(dtype), do_smem)
+
+      dv_acc = pl.run_state(compute_dv)(plgpu.ACC.init(dv_acc))
+
+      # dpT
+      def compute_dp(acc_ref):
+        plgpu.wgmma(acc_ref, v_smem, plgpu.transpose_ref(do_smem, (1, 0)))
+        return acc_ref[...]
+
+      dpT = pl.run_scoped(compute_dp, plgpu.ACC((block_kv, block_q), jnp.float32))
+      plgpu.barrier_arrive(do_consumed_barrier)
+
+      delta = plgpu.load(delta_smem, (), layout=plgpu.Layout.WGMMA_COL)
+      plgpu.barrier_arrive(delta_consumed_barrier)
+
+      dsT = pT * (dpT - lax.broadcast_in_dim(delta, (block_kv, block_q), [1]))
+
+      def compute_dk(acc_ref):
+        plgpu.wgmma(acc_ref, dsT.astype(dtype), q_smem)
+
+      dk_acc = pl.run_state(compute_dk)(plgpu.ACC.init(dk_acc))
+      plgpu.barrier_arrive(q_consumed_barrier)
+
+      return (dk_acc, dv_acc)
+
+    pipeline = plgpu.emit_pipeline_warp_specialized(
+      q_pipeline,
+      grid=(q_seq_len // block_q,),
+      max_concurrent_steps=max_concurrent_steps,
+      num_compute_wgs=compute_wgs,
+      memory_registers=40,
+      wg_axis="wg",
+      manual_consumed_barriers=True,
+      carry_coroutine=_compute_thread,
+      in_specs=[
+          plgpu.GPUBlockSpec(  # q
+              block_shape=(block_q, head_dim),
+              index_map=lambda i: (i, 0),
+              transforms=[tiling, swizzle]),
+          plgpu.GPUBlockSpec(  # do
+              block_shape=(block_q, head_dim),
+              index_map=lambda i: (i, 0),
+              transforms=[tiling, swizzle]),
+          plgpu.GPUBlockSpec(block_shape=(block_q,), index_map=lambda i: (i,)),
+          plgpu.GPUBlockSpec(block_shape=(block_q,), index_map=lambda i: (i,))
+      ])
+    q_ref = q_ref.at[batch, :, q_head, :]
+    do_ref = do_ref.at[batch, :, q_head, :]
+    lse_ref = lse_ref.at[batch, q_head, :]
+    delta_ref = delta_ref.at[batch, q_head, :]
+    pipeline(q_ref, do_ref, lse_ref, delta_ref)
+
+  def run_dkv(refs, config):
+    q_ref, k_ref, v_ref, do_ref, lse_ref, delta_ref, dk_ref, dv_ref = refs
+    block_kv = config.block_kv_dkv
+    @pl.core_map(
+      plgpu.GPUMesh(
+          grid=(batch_size, num_kv_tiles, num_q_heads),
+          grid_names=("batch", "kv_seq", "heads"),
+          num_threads=compute_wgs + 1,
+          thread_name="wg",
+      ),
+      compiler_params=plgpu.GPUCompilerParams(
+          approx_math=True, max_concurrent_steps=max_concurrent_steps
+      ),
+    )
+    def _kernel_entry():
+      k_scratch = plgpu.SMEM(
+          (compute_wgs, block_kv, head_dim), jnp.float16,
+          transforms=(tiling, swizzle),
+      )
+      v_scratch = k_scratch
+      pl.run_scoped(
+          lambda *args: kernel_dkv(q_ref, k_ref, v_ref, do_ref, lse_ref, delta_ref, dk_ref, dv_ref, config, args),
+          (k_scratch, v_scratch),
+          (plgpu.Barrier(1, num_barriers=compute_wgs),) * 2
+      )
+  @functools.partial(jax.jit, static_argnames=["config"])
+  def run_function_dkv(q, k, v, do, lse, delta, dk, dv, config):
+    run = partial(run_dkv, config=config)
+    *_, dk, dv = pl.run_state(run)((q, k, v, do, lse, delta, dk, dv))
+    return dk, dv
+  dk, dv = run_function_dkv(
+      q, k, v, do, lse, delta, jnp.full_like(q, jnp.inf), jnp.full_like(q, jnp.inf), config)
+
+  if q_heads_per_kv_head > 1:
+    sum_shape = (*k.shape[:-1], q_heads_per_kv_head, head_dim)
+    dk = dk.reshape(sum_shape).astype(jnp.float32).sum(axis=-2).astype(dk.dtype)
+    dv = dv.reshape(sum_shape).astype(jnp.float32).sum(axis=-2).astype(dv.dtype)
+
+  return dq, dk, dv
+
+attention.defvjp(_attention_fwd, _attention_bwd)
+
 @functools.partial(jax.jit, static_argnames=["config", "save_residuals"])
 def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residuals=False):
   if q.ndim != 4 or k.ndim != 4 or v.ndim != 4:
@@ -427,7 +769,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
       )
   @jax.jit
   def run_function(q, k, v, o, lse):
-    _, _, _, out, lse = pl.run_state(run)((q, k, v, o, lse))
+    *_, out, lse = pl.run_state(run)((q, k, v, o, lse))
     return out, lse
 
   lse = (
