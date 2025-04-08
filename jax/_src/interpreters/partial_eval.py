@@ -402,8 +402,7 @@ class JaxprTrace(Trace['JaxprTracer']):
         vals = [t.pval[1] for t in tracers]
         return prim.bind(fun, jvp, *vals, symbolic_zeros=symbolic_zeros)
     # We assume non-trivial partial evaluation is only performed to build linear
-    # functions, and hence we don't need to keep the custom JVP rule around
-    # anymore.
+    # functions, and hence we don't need to keep the custom JVP rule around.
     del jvp, symbolic_zeros
     with core.set_current_trace(self):
       return fun.call_wrapped(*tracers)
