@@ -463,6 +463,9 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
     devices = axis_context.mesh._flat_devices_tuple
   else:
     raise NotImplementedError(type(axis_context))
+  if "pathways" in devices[0].client.runtime_type:
+    raise NotImplementedError(
+        "inspect sharding not supported on remote backends.")
   assert devices is not None
 
   # If we have a nontrivial parallel computation, we need to wait until the SPMD
