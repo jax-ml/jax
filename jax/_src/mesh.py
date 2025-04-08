@@ -214,7 +214,7 @@ class Mesh(_BaseMesh, contextlib.ContextDecorator):
   """Declare the hardware resources available in the scope of this manager.
 
   See the Distributed arrays and automatic parallelization tutorial
-  (https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html)
+  (https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html)
   and Explicit sharding tutorial (https://docs.jax.dev/en/latest/notebooks/explicit-sharding.html)
 
   Args:

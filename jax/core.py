@@ -99,32 +99,32 @@ _deprecations = {
     # Added 2024-12-10
     "full_lower": ("jax.core.full_lower is deprecated. It is a no-op as of JAX v0.4.36.", None),
     "jaxpr_as_fun": ("jax.core.jaxpr_as_fun was removed in JAX v0.6.0. Use jax.extend.core.jaxpr_as_fun instead, "
-                     "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.",
+                     "and see https://docs.jax.dev/en/latest/jax.extend.html for details.",
                      None),
     "lattice_join": ("jax.core.lattice_join is deprecated. It is a no-op as of JAX v0.4.36.", None),
     # Finalized 2025-03-25 for JAX v0.6.0; remove after 2025-06-25
     "AxisSize": ("jax.core.AxisSize was removed in JAX v0.6.0.", None),
     "ClosedJaxpr": ("jax.core.ClosedJaxpr was removed in JAX v0.6.0. Use jax.extend.core.ClosedJaxpr instead, "
-                    "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.", None),
+                    "and see https://docs.jax.dev/en/latest/jax.extend.html for details.", None),
     "EvalTrace": ("jax.core.EvalTrace was removed in JAX v0.6.0.", None),
     "InDBIdx": ("jax.core.InDBIdx was removed in JAX v0.6.0.", None),
     "InputType": ("jax.core.InputType was removed in JAX v0.6.0.", None),
     "Jaxpr": ("jax.core.Jaxpr was removed in JAX v0.6.0. Use jax.extend.core.Jaxpr instead, "
-              "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.", None),
+              "and see https://docs.jax.dev/en/latest/jax.extend.html for details.", None),
     "JaxprEqn": ("jax.core.JaxprEqn was removed in JAX v0.6.0. Use jax.extend.core.JaxprEqn instead, "
-                 "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.", None),
+                 "and see https://docs.jax.dev/en/latest/jax.extend.html for details.", None),
     "Literal": ("jax.core.Literal was removed in JAX v0.6.0. Use jax.extend.core.Literal instead, "
-                "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.", None),
+                "and see https://docs.jax.dev/en/latest/jax.extend.html for details.", None),
     "MapPrimitive": ("jax.core.MapPrimitive was removed in JAX v0.6.0.", None),
     "OpaqueTraceState": ("jax.core.OpaqueTraceState was removed in JAX v0.6.0.", None),
     "OutDBIdx": ("jax.core.OutDBIdx was removed in JAX v0.6.0.", None),
     "Primitive": ("jax.core.Primitive was removed in JAX v0.6.0. Use jax.extend.core.Primitive instead, "
-                  "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.", None),
+                  "and see https://docs.jax.dev/en/latest/jax.extend.html for details.", None),
     "Token": ("jax.core.Token was removed in JAX v0.6.0. Use jax.extend.core.Token instead, "
-              "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.", None),
+              "and see https://docs.jax.dev/en/latest/jax.extend.html for details.", None),
     "TRACER_LEAK_DEBUGGER_WARNING": ("jax.core.TRACER_LEAK_DEBUGGER_WARNING was removed in JAX v0.6.0.", None),
     "Var": ("jax.core.Var was removed in JAX v0.6.0. Use jax.extend.core.Var instead, "
-            "and see https://jax.readthedocs.io/en/latest/jax.extend.html for details.", None),
+            "and see https://docs.jax.dev/en/latest/jax.extend.html for details.", None),
     "concrete_aval": ("jax.core.concrete_aval was removed in JAX v0.6.0.", None),
     "dedup_referents": ("jax.core.dedup_referents was removed in JAX v0.6.0.", None),
     "escaped_tracer_error": ("jax.core.escaped_tracer_error was removed in JAX v0.6.0.", None),

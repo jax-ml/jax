@@ -16,7 +16,7 @@
 .. warning::
   The host_callback APIs are deprecated as of March 20, 2024.
   The functionality is subsumed by the
-  `new JAX external callbacks <https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html>`_
+  `new JAX external callbacks <https://docs.jax.dev/en/latest/notebooks/external_callbacks.html>`_
   See https://github.com/jax-ml/jax/issues/20385.
 
 """

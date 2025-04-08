@@ -455,7 +455,7 @@ class CustomErrorsTest(jtu.JaxTestCase):
     ErrorClass = getattr(jax.errors, errorclass)
     err = ErrorClass(FakeTracer(None))
 
-    self.assertIn(f'https://jax.readthedocs.io/en/latest/errors.html#jax.errors.{errorclass}', str(err))
+    self.assertIn(f'https://docs.jax.dev/en/latest/errors.html#jax.errors.{errorclass}', str(err))
 
 
 if __name__ == '__main__':

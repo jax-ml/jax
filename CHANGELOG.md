@@ -1,6 +1,6 @@
 # Change log
 
-Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
+Best viewed [here](https://docs.jax.dev/en/latest/changelog.html).
 For the changes specific to the experimental Pallas APIs,
 see {ref}`pallas-changelog`.
 
@@ -126,7 +126,7 @@ Patch release of 0.5.1
 ## jax 0.5.0 (Jan 17, 2025)
 
 As of this release, JAX now uses
-[effort-based versioning](https://jax.readthedocs.io/en/latest/jep/25516-effver.html).
+[effort-based versioning](https://docs.jax.dev/en/latest/jep/25516-effver.html).
 Since this release makes a breaking change to PRNG key semantics that
 may require users to update their code, we are bumping the "meso" version of JAX
 to signify this.
@@ -217,7 +217,7 @@ to signify this.
 * New Features
   * {func}`jax.export.export` can be used for device-polymorphic export with
     shardings constructed with {func}`jax.sharding.AbstractMesh`.
-    See the [jax.export documentation](https://jax.readthedocs.io/en/latest/export/export.html#device-polymorphic-export).
+    See the [jax.export documentation](https://docs.jax.dev/en/latest/export/export.html#device-polymorphic-export).
   * Added {func}`jax.lax.split`. This is a primitive version of
     {func}`jax.numpy.split`, added because it yields a more compact
     transpose during automatic differentiation.
@@ -259,7 +259,7 @@ This is a patch release of jax 0.4.36. Only "jax" was released at this version.
     after being deprecated in JAX v0.4.31. Instead use `xb = jax.lib.xla_bridge`,
     `xc = jax.lib.xla_client`, and `xe = jax.lib.xla_extension`.
   * The deprecated module `jax.experimental.export` has been removed. It was replaced
-    by {mod}`jax.export` in JAX v0.4.30. See the [migration guide](https://jax.readthedocs.io/en/latest/export/export.html#migration-guide-from-jax-experimental-export)
+    by {mod}`jax.export` in JAX v0.4.30. See the [migration guide](https://docs.jax.dev/en/latest/export/export.html#migration-guide-from-jax-experimental-export)
     for information on migrating to the new API.
   * The `initial` argument to {func}`jax.nn.softmax` and {func}`jax.nn.log_softmax`
     has been removed, after being deprecated in v0.4.27.
@@ -297,7 +297,7 @@ This is a patch release of jax 0.4.36. Only "jax" was released at this version.
     call that we guarantee export stability. This is because this custom call
     relies on Triton IR, which is not guaranteed to be stable. If you need
     to export code that uses this custom call, you can use the `disabled_checks`
-    parameter. See more details in the [documentation](https://jax.readthedocs.io/en/latest/export/export.html#compatibility-guarantees-for-custom-calls).
+    parameter. See more details in the [documentation](https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees-for-custom-calls).
 
 * New Features
   * {func}`jax.jit` got a new `compiler_options: dict[str, Any]` argument, for
@@ -577,7 +577,7 @@ See the 0.4.33 release notes for more details.
   * Added an API for exporting and serializing JAX functions. This used
     to exist in `jax.experimental.export` (which is being deprecated),
     and will now live in `jax.export`.
-    See the [documentation](https://jax.readthedocs.io/en/latest/export/index.html).
+    See the [documentation](https://docs.jax.dev/en/latest/export/index.html).
 
 * Deprecations
   * Internal pretty-printing tools `jax.core.pp_*` are deprecated, and will be removed
@@ -586,7 +586,7 @@ See the 0.4.33 release notes for more details.
     release. This previously was the case, but there was an inadvertent regression in
     the last several JAX releases.
   * `jax.experimental.export` is deprecated. Use {mod}`jax.export` instead.
-    See the [migration guide](https://jax.readthedocs.io/en/latest/export/export.html#migration-guide-from-jax-experimental-export).
+    See the [migration guide](https://docs.jax.dev/en/latest/export/export.html#migration-guide-from-jax-experimental-export).
   * Passing an array in place of a dtype is now deprecated in most cases; e.g. for arrays
     `x` and `y`, `x.astype(y)` will raise a warning. To silence it use `x.astype(y.dtype)`.
   * `jax.xla_computation` is deprecated and will be removed in a future release.
@@ -798,7 +798,7 @@ See the 0.4.33 release notes for more details.
     deprecated. Use `jax.experimental.shard_map` or `jax.vmap` with the
     `spmd_axis_name` argument for expressing SPMD device-parallel computations.
   * The `jax.experimental.host_callback` module is deprecated.
-    Use instead the [new JAX external callbacks](https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html).
+    Use instead the [new JAX external callbacks](https://docs.jax.dev/en/latest/notebooks/external_callbacks.html).
     Added `JAX_HOST_CALLBACK_LEGACY` flag to assist in the transition to the
     new callbacks. See {jax-issue}`#20385` for a discussion.
   * Passing arguments to {func}`jax.numpy.array_equal` and {func}`jax.numpy.array_equiv`
@@ -1270,9 +1270,9 @@ See the 0.4.33 release notes for more details.
 
 * Deprecations
   * Python 3.8 support has been dropped as per
-    https://jax.readthedocs.io/en/latest/deprecation.html
+    https://docs.jax.dev/en/latest/deprecation.html
   * JAX now requires NumPy 1.22 or newer as per
-    https://jax.readthedocs.io/en/latest/deprecation.html
+    https://docs.jax.dev/en/latest/deprecation.html
   * Passing optional arguments to {func}`jax.numpy.ndarray.at` by position is
     no longer supported, after being deprecated in JAX version 0.4.7.
     For example, instead of `x.at[i].get(True)`, use `x.at[i].get(indices_are_sorted=True)`
@@ -1317,7 +1317,7 @@ See the 0.4.33 release notes for more details.
 
 * Deprecations
   * Python 3.8 support has been dropped as per
-      https://jax.readthedocs.io/en/latest/deprecation.html
+      https://docs.jax.dev/en/latest/deprecation.html
 
 ## jax 0.4.13 (June 22, 2023)
 
@@ -1496,7 +1496,7 @@ See the 0.4.33 release notes for more details.
 ## jax 0.4.7 (March 27, 2023)
 
 * Changes
-  * As per https://jax.readthedocs.io/en/latest/jax_array_migration.html#jax-array-migration
+  * As per https://docs.jax.dev/en/latest/jax_array_migration.html#jax-array-migration
     `jax.config.jax_array` cannot be disabled anymore.
   * `jax.config.jax_jit_pjit_api_merge` cannot be disabled anymore.
   * {func}`jax.experimental.jax2tf.convert` now supports the `native_serialization`
@@ -1580,7 +1580,7 @@ Changes:
     on top of each other. With the `jit`-`pjit` implementation merge, `jit`
     becomes an initial style primitive which means that we trace to jaxpr
     as early as possible. For more information see
-    [this section in autodidax](https://jax.readthedocs.io/en/latest/autodidax.html#on-the-fly-final-style-and-staged-initial-style-processing).
+    [this section in autodidax](https://docs.jax.dev/en/latest/autodidax.html#on-the-fly-final-style-and-staged-initial-style-processing).
     Moving to initial style should simplify JAX's internals and make
     development of features like dynamic shapes, etc easier.
     You can disable it only via the environment variable i.e.
@@ -1665,9 +1665,9 @@ Changes:
     simplifies and unifies JAX internals, and allows us to unify `jit` and
     `pjit`.  `jax.Array` has been enabled by default in JAX 0.4 and makes some
     breaking change to the `pjit` API.  The [jax.Array migration
-    guide](https://jax.readthedocs.io/en/latest/jax_array_migration.html) can
+    guide](https://docs.jax.dev/en/latest/jax_array_migration.html) can
     help you migrate your codebase to `jax.Array`. You can also look at the
-    [Distributed arrays and automatic parallelization](https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html)
+    [Distributed arrays and automatic parallelization](https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html)
     tutorial to understand the new concepts.
   * `PartitionSpec` and `Mesh` are now out of experimental. The new API endpoints
     are `jax.sharding.PartitionSpec` and `jax.sharding.Mesh`.
@@ -1696,7 +1696,7 @@ Changes:
   * The behavior of `XLA_PYTHON_CLIENT_MEM_FRACTION=.XX` has been changed to allocate XX% of
     the total GPU memory instead of the previous behavior of using currently available GPU memory
     to calculate preallocation. Please refer to
-    [GPU memory allocation](https://jax.readthedocs.io/en/latest/gpu_memory_allocation.html) for
+    [GPU memory allocation](https://docs.jax.dev/en/latest/gpu_memory_allocation.html) for
     more details.
   * The deprecated method `.block_host_until_ready()` has been removed. Use
     `.block_until_ready()` instead.
@@ -1810,7 +1810,7 @@ Changes:
 * Changes
   * Ahead-of-time lowering and compilation functionality (tracked in
     {jax-issue}`#7733`) is stable and public. See [the
-    overview](https://jax.readthedocs.io/en/latest/aot.html) and the API docs
+    overview](https://docs.jax.dev/en/latest/aot.html) and the API docs
     for {mod}`jax.stages`.
   * Introduced {class}`jax.Array`, intended to be used for both `isinstance` checks
     and type annotations for array types in JAX. Notice that this included some subtle
@@ -1831,7 +1831,7 @@ Changes:
 * Breaking changes
   * {func}`jax.checkpoint`, also known as {func}`jax.remat`, no longer supports
     the `concrete` option, following the previous version's deprecation; see
-    [JEP 11830](https://jax.readthedocs.io/en/latest/jep/11830-new-remat-checkpoint.html).
+    [JEP 11830](https://docs.jax.dev/en/latest/jep/11830-new-remat-checkpoint.html).
 * Changes
   * Added {func}`jax.pure_callback` that enables calling back to pure Python functions from compiled functions (e.g. functions decorated with `jax.jit` or `jax.pmap`).
 * Deprecations:
@@ -1843,7 +1843,7 @@ Changes:
 * [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.3.15...main).
 * Breaking changes
   * Support for NumPy 1.19 has been dropped, per the
-    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    [deprecation policy](https://docs.jax.dev/en/latest/deprecation.html).
     Please upgrade to NumPy 1.20 or newer.
 * Changes
   * Added {mod}`jax.debug` that includes utilities for runtime value debugging such at {func}`jax.debug.print` and {func}`jax.debug.breakpoint`.
@@ -1861,7 +1861,7 @@ Changes:
     {mod}`jax.example_libraries.optimizers`.
   * {func}`jax.checkpoint`, also known as {func}`jax.remat`, has a new
     implementation switched on by default, meaning the old implementation is
-    deprecated; see [JEP 11830](https://jax.readthedocs.io/en/latest/jep/11830-new-remat-checkpoint.html).
+    deprecated; see [JEP 11830](https://docs.jax.dev/en/latest/jep/11830-new-remat-checkpoint.html).
 
 ## jax 0.3.15 (July 22, 2022)
 * [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.3.14...jax-v0.3.15).
@@ -1993,7 +1993,7 @@ Changes:
   * {func}`jax.numpy.linalg.matrix_rank` on TPUs now accepts complex input.
   * {func}`jax.scipy.cluster.vq.vq` has been added.
   * `jax.experimental.maps.mesh` has been deleted.
-    Please use `jax.experimental.maps.Mesh`. Please see https://jax.readthedocs.io/en/latest/_autosummary/jax.experimental.maps.Mesh.html#jax.experimental.maps.Mesh
+    Please use `jax.experimental.maps.Mesh`. Please see https://docs.jax.dev/en/latest/_autosummary/jax.experimental.maps.Mesh.html#jax.experimental.maps.Mesh
     for more information.
   * {func}`jax.scipy.linalg.qr` now returns a length-1 tuple rather than the raw array when
     `mode='r'`, in order to match the behavior of `scipy.linalg.qr` ({jax-issue}`#10452`)
@@ -2109,7 +2109,7 @@ Changes:
 * Changes:
   * The functions `jax.ops.index_update`, `jax.ops.index_add`, which were
     deprecated in 0.2.22, have been removed. Please use
-    [the `.at` property on JAX arrays](https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html)
+    [the `.at` property on JAX arrays](https://docs.jax.dev/en/latest/_autosummary/jax.numpy.ndarray.at.html)
     instead, e.g., `x.at[idx].set(y)`.
   * Moved `jax.experimental.ann.approx_*_k` into `jax.lax`. These functions are
     optimized alternatives to `jax.lax.top_k`.
@@ -2155,13 +2155,13 @@ Changes:
   commits](https://github.com/jax-ml/jax/compare/jax-v0.2.28...jax-v0.3.0).
 
 * Changes
-  * jax version has been bumped to 0.3.0. Please see the [design doc](https://jax.readthedocs.io/en/latest/design_notes/jax_versioning.html)
+  * jax version has been bumped to 0.3.0. Please see the [design doc](https://docs.jax.dev/en/latest/design_notes/jax_versioning.html)
     for the explanation.
 
 ## jaxlib 0.3.0 (Feb 10, 2022)
 * Changes
   * Bazel 5.0.0 is now required to build jaxlib.
-  * jaxlib version has been bumped to 0.3.0. Please see the [design doc](https://jax.readthedocs.io/en/latest/design_notes/jax_versioning.html)
+  * jaxlib version has been bumped to 0.3.0. Please see the [design doc](https://docs.jax.dev/en/latest/design_notes/jax_versioning.html)
     for the explanation.
 
 ## jax 0.2.28 (Feb 1, 2022)
@@ -2183,7 +2183,7 @@ Changes:
     by default.
 * Breaking changes
   * Support for NumPy 1.18 has been dropped, per the
-    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    [deprecation policy](https://docs.jax.dev/en/latest/deprecation.html).
     Please upgrade to a supported NumPy version.
 * Bug fixes
   * Fixed a bug where apparently identical pytreedef objects constructed by different routes
@@ -2195,7 +2195,7 @@ Changes:
 
 * Breaking changes:
   * Support for NumPy 1.18 has been dropped, per the
-    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    [deprecation policy](https://docs.jax.dev/en/latest/deprecation.html).
     Please upgrade to a supported NumPy version.
   * The host_callback primitives have been simplified to drop the
     special autodiff handling for hcb.id_tap and id_print.
@@ -2322,7 +2322,7 @@ Changes:
 * Deprecations
   * The functions `jax.ops.index_update`, `jax.ops.index_add` etc. are
     deprecated and will be removed in a future JAX release. Please use
-    [the `.at` property on JAX arrays](https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html)
+    [the `.at` property on JAX arrays](https://docs.jax.dev/en/latest/_autosummary/jax.numpy.ndarray.at.html)
     instead, e.g., `x.at[idx].set(y)`. For now, these functions produce a
     `DeprecationWarning`.
 * New features:
@@ -2386,7 +2386,7 @@ Changes:
   commits](https://github.com/jax-ml/jax/compare/jax-v0.2.18...jax-v0.2.19).
 * Breaking changes:
   * Support for NumPy 1.17 has been dropped, per the
-    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    [deprecation policy](https://docs.jax.dev/en/latest/deprecation.html).
     Please upgrade to a supported NumPy version.
   * The `jit` decorator has been added around the implementation of a number of
     operators on JAX arrays. This speeds up dispatch times for common
@@ -2407,10 +2407,10 @@ Changes:
 ## jaxlib 0.1.70 (Aug 9, 2021)
 * Breaking changes:
   * Support for Python 3.6 has been dropped, per the
-    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    [deprecation policy](https://docs.jax.dev/en/latest/deprecation.html).
     Please upgrade to a supported Python version.
   * Support for NumPy 1.17 has been dropped, per the
-    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    [deprecation policy](https://docs.jax.dev/en/latest/deprecation.html).
     Please upgrade to a supported NumPy version.
 
   * The host_callback mechanism now uses one thread per local device for
@@ -2424,7 +2424,7 @@ Changes:
 
 * Breaking changes:
   * Support for Python 3.6 has been dropped, per the
-    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    [deprecation policy](https://docs.jax.dev/en/latest/deprecation.html).
     Please upgrade to a supported Python version.
   * The minimum jaxlib version is now 0.1.69.
   * The `backend` argument to {py:func}`jax.dlpack.from_dlpack` has been
@@ -2473,7 +2473,7 @@ Changes:
 
 * Breaking changes:
   * Support for NumPy 1.16 has been dropped, per the
-    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    [deprecation policy](https://docs.jax.dev/en/latest/deprecation.html).
 
 * Bug fixes:
   * Fixed bug that prevented round-tripping from JAX to TF and back:
@@ -3013,7 +3013,7 @@ Changes:
   * Support for reduction over subsets of a pmapped axis using `axis_index_groups`
     {jax-issue}`#2382`.
   * Experimental support for printing and calling host-side Python function from
-    compiled code. See [id_print and id_tap](https://jax.readthedocs.io/en/latest/jax.experimental.host_callback.html)
+    compiled code. See [id_print and id_tap](https://docs.jax.dev/en/latest/jax.experimental.host_callback.html)
     ({jax-issue}`#3006`).
 * Notable changes:
   * The visibility of names exported from {mod}`jax.numpy` has been
@@ -3085,7 +3085,7 @@ Changes:
 ## jax 0.1.63 (April 12, 2020)
 
 * [GitHub commits](https://github.com/jax-ml/jax/compare/jax-v0.1.62...jax-v0.1.63).
-* Added `jax.custom_jvp` and `jax.custom_vjp` from {jax-issue}`#2026`, see the [tutorial notebook](https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html). Deprecated `jax.custom_transforms` and removed it from the docs (though it still works).
+* Added `jax.custom_jvp` and `jax.custom_vjp` from {jax-issue}`#2026`, see the [tutorial notebook](https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html). Deprecated `jax.custom_transforms` and removed it from the docs (though it still works).
 * Add `scipy.sparse.linalg.cg` {jax-issue}`#2566`.
 * Changed how Tracers are printed to show more useful information for debugging {jax-issue}`#2591`.
 * Made `jax.numpy.isclose` handle `nan` and `inf` correctly {jax-issue}`#2501`.

@@ -53,7 +53,7 @@ _deprecations = {
     ),
     "register_custom_call_target": (
         "register_custom_call_target is deprecated; use the JAX FFI instead "
-        "(https://jax.readthedocs.io/en/latest/ffi.html)",
+        "(https://docs.jax.dev/en/latest/ffi.html)",
         _xc.register_custom_call_target,
     ),
     "PrimitiveType": (

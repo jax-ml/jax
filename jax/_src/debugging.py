@@ -284,7 +284,7 @@ def debug_callback(callback: Callable[..., None], *args: Any,
     - :func:`jax.pure_callback`: callback designed for pure functions.
     - :func:`jax.debug.print`: callback designed for printing.
 
-  .. _External Callbacks: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
+  .. _External Callbacks: https://docs.jax.dev/en/latest/notebooks/external_callbacks.html
   """
   if not callable(callback):
     raise TypeError("first argument to jax.debug.callback must be callable, "

@@ -1234,7 +1234,7 @@ def _unsupported_lowering_error(platform: str) -> Exception:
       f"Cannot lower pallas_call on platform: {platform}. To use Pallas on GPU,"
       " install jaxlib GPU 0.4.24 or newer. To use Pallas on TPU, install"
       " jaxlib TPU and libtpu. See"
-      " https://jax.readthedocs.io/en/latest/installation.html."
+      " https://docs.jax.dev/en/latest/installation.html."
   )
 
 _Backend = Literal["mosaic_tpu", "triton", "mosaic_gpu"]
@@ -1489,7 +1489,7 @@ def pallas_call(
 ) -> Callable[..., Any]:
   """Invokes a Pallas kernel on some inputs.
 
-  See `Pallas Quickstart <https://jax.readthedocs.io/en/latest/pallas/quickstart.html>`_.
+  See `Pallas Quickstart <https://docs.jax.dev/en/latest/pallas/quickstart.html>`_.
 
   Args:
     kernel: the kernel function, that receives a Ref for each input and output.

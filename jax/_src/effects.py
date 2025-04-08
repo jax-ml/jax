@@ -47,7 +47,7 @@ dispatching a computation and on which we can block until is ready. We store
 for each thread the `RuntimeToken` returned by the last dispatched computation.
 
 For more details, see the design note:
-https://jax.readthedocs.io/en/latest/jep/10657-sequencing-effects.html.
+https://docs.jax.dev/en/latest/jep/10657-sequencing-effects.html.
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 This directory includes an example project demonstrating the use of JAX's
 foreign function interface (FFI). The JAX docs provide more information about
-this interface in [the FFI tutorial](https://jax.readthedocs.io/en/latest/ffi.html),
+this interface in [the FFI tutorial](https://docs.jax.dev/en/latest/ffi.html),
 but the example in this directory complements that document by demonstrating
 (and testing!) the full packaging workflow, and some more advanced use cases.
 Within the example project, there are several example calls:

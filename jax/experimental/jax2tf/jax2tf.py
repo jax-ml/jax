@@ -272,7 +272,7 @@ def convert(fun_jax: Callable,
       should be `None` (monomorphic argument), or a Python object with the
       same pytree structure as the argument.
       See [how optional parameters are matched to
-      arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
+      arguments](https://docs.jax.dev/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
 
       A shape specification for an array argument should be an object
       `PolyShape(dim0, dim1, ..., dimn)`

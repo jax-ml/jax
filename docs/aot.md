@@ -26,7 +26,7 @@ are arrays, JAX does the following in order:
    carries out this specialization by a process that we call
    _tracing_. During tracing, JAX stages the specialization of `F` to
    a jaxpr, which is a function in the [Jaxpr intermediate
-   language](https://jax.readthedocs.io/en/latest/jaxpr.html).
+   language](https://docs.jax.dev/en/latest/jaxpr.html).
 
 2. **Lower** this specialized, staged-out computation to the XLA compiler's
    input language, StableHLO.

@@ -552,7 +552,7 @@ def result_type(*args: Any) -> DType:
 
     For details on 64-bit values, refer to `Sharp bits - double precision`_:
 
-    .. _Sharp bits - double precision: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision
+    .. _Sharp bits - double precision: https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision
   """
   return dtypes.result_type(*args)
 
@@ -2814,7 +2814,7 @@ def where(condition, x=None, y=None, /, *, size=None, fill_value=None):
     (reverse-mode differentiation), a NaN in either ``x`` or ``y`` will propagate into the
     gradient, regardless of the value of ``condition``.  More information on this behavior
     and workarounds is available in the `JAX FAQ
-    <https://jax.readthedocs.io/en/latest/faq.html#gradients-contain-nan-where-using-where>`_.
+    <https://docs.jax.dev/en/latest/faq.html#gradients-contain-nan-where-using-where>`_.
 
   Examples:
     When ``x`` and ``y`` are not provided, ``where`` behaves equivalently to
@@ -5903,14 +5903,14 @@ def fromfile(*args, **kwargs):
   ``jnp.asarray(np.fromfile(...))`` instead, although care should be taken if ``np.fromfile``
   is used within jax transformations because of its potential side-effect of consuming the
   file object; for more information see `Common Gotchas: Pure Functions
-  <https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions>`_.
+  <https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions>`_.
   """
   raise NotImplementedError(
     "jnp.fromfile() is not implemented because it may be non-pure and thus unsafe for use "
     "with JIT and other JAX transformations. Consider using jnp.asarray(np.fromfile(...)) "
     "instead, although care should be taken if np.fromfile is used within a jax transformations "
     "because of its potential side-effect of consuming the file object; for more information see "
-    "https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions")
+    "https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions")
 
 
 @export
@@ -5922,14 +5922,14 @@ def fromiter(*args, **kwargs):
   ``jnp.asarray(np.fromiter(...))`` instead, although care should be taken if ``np.fromiter``
   is used within jax transformations because of its potential side-effect of consuming the
   iterable object; for more information see `Common Gotchas: Pure Functions
-  <https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions>`_.
+  <https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions>`_.
   """
   raise NotImplementedError(
     "jnp.fromiter() is not implemented because it may be non-pure and thus unsafe for use "
     "with JIT and other JAX transformations. Consider using jnp.asarray(np.fromiter(...)) "
     "instead, although care should be taken if np.fromiter is used within a jax transformations "
     "because of its potential side-effect of consuming the iterable object; for more information see "
-    "https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions")
+    "https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions")
 
 
 @export

@@ -371,7 +371,7 @@ def pure_callback(
     (4,) (4,)
     Array([1., 2., 3., 4.], dtype=float32)
 
-  .. _External Callbacks: https://jax.readthedocs.io/en/latest/external-callbacks.html
+  .. _External Callbacks: https://docs.jax.dev/en/latest/external-callbacks.html
   """
   if not isinstance(vectorized, DeprecatedArg) and not vectorized is None:
     deprecations.warn(
@@ -580,7 +580,7 @@ def io_callback(
     - :func:`jax.debug.callback`: callback designed for general-purpose debugging.
     - :func:`jax.debug.print`: callback designed for printing.
 
-  .. _External Callbacks: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
+  .. _External Callbacks: https://docs.jax.dev/en/latest/notebooks/external_callbacks.html
   """
   flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
   tree_util.tree_map(_check_shape_dtype, result_shape_dtypes)

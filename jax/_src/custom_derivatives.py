@@ -130,7 +130,7 @@ class custom_jvp(Generic[ReturnValue]):
 
   For a more detailed introduction, see the tutorial_.
 
-  .. _tutorial: https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
+  .. _tutorial: https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
   """
   fun: Callable[..., ReturnValue]
   nondiff_argnums: Sequence[int]
@@ -521,7 +521,7 @@ class custom_vjp(Generic[ReturnValue]):
 
   For a more detailed introduction, see the tutorial_.
 
-  .. _tutorial: https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
+  .. _tutorial: https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
   """
 
   def __init__(self,

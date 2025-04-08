@@ -24,7 +24,7 @@ partial support.
 For a detailed description of these XLA ops, please see the
 [XLA Operation Semantics documentation](https://www.tensorflow.org/xla/operation_semantics).
 
-| XLA ops ([documentation](https://www.tensorflow.org/xla/operation_semantics)) | JAX primitive(s) ([documentation](https://jax.readthedocs.io/en/latest/jax.lax.html)) | Supported |
+| XLA ops ([documentation](https://www.tensorflow.org/xla/operation_semantics)) | JAX primitive(s) ([documentation](https://docs.jax.dev/en/latest/jax.lax.html)) | Supported |
 | ------- | ---------------- | ------- |
 | XlaDot  | `lax.dot_general` | Full |
 | XlaDynamicSlice | `lax.dynamic_slice` | Full |
@@ -47,7 +47,7 @@ support and which not.
 ### XlaConv
 
 JAX convolutions are done using
-[`lax.conv_general_dilated`](https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.conv_general_dilated.html).
+[`lax.conv_general_dilated`](https://docs.jax.dev/en/latest/_autosummary/jax.lax.conv_general_dilated.html).
 
 ```
 lax.conv_general_dilated(
@@ -88,7 +88,7 @@ instance, parallelization primitives `vmap` and `pmap` use gather to specify a
 batch dimension, and it is used for slices or multidimensional indexing as well,
 e.g. `x[0, 1]`, `x[:, :1]`, or `x[[0], [1]]`.
 
-The signature of [`lax.gather`](https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.gather.html#jax.lax.gather)
+The signature of [`lax.gather`](https://docs.jax.dev/en/latest/_autosummary/jax.lax.gather.html#jax.lax.gather)
 is as follows:
 
 ```
@@ -128,7 +128,7 @@ All other cases of `lax.gather` are currently not supported.
 
 ### XlaReduceWindow
 
-The signature of [`lax.reduce_window`](https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.reduce_window.html)
+The signature of [`lax.reduce_window`](https://docs.jax.dev/en/latest/_autosummary/jax.lax.reduce_window.html)
 is as follows:
 
 ```

@@ -136,7 +136,7 @@ def shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
   Examples:
     For examples, refer to :ref:`sharded-computation` or `SPMD multi-device parallelism with shard_map`_.
 
-  .. _SPMD multi-device parallelism with shard_map: https://jax.readthedocs.io/en/latest/notebooks/shard_map.html
+  .. _SPMD multi-device parallelism with shard_map: https://docs.jax.dev/en/latest/notebooks/shard_map.html
   """
   return _shard_map(f, mesh, in_specs, out_specs, check_rep, auto)
 

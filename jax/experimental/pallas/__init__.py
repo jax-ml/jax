@@ -15,7 +15,7 @@
 """Module for Pallas, a JAX extension for custom kernels.
 
 See the Pallas documentation at
-https://jax.readthedocs.io/en/latest/pallas.html.
+https://docs.jax.dev/en/latest/pallas.html.
 """
 
 from jax._src.pallas.core import Blocked as Blocked
