@@ -680,4 +680,3 @@ class KeyReuseError(JAXTypeError):
   must be manually split; For more information on this see `the Pseudorandom Numbers
   tutorial <https://jax.readthedocs.io/en/latest/random-numbers.html>`_.
   """
-  pass

@@ -3120,7 +3120,6 @@ class APITest(jtu.JaxTestCase):
   def test_vmap_preserves_docstr(self):
     def superfun(a):
       """Does things with stuff."""
-      pass
 
     self.assertRegex(api.vmap(superfun).__doc__, "\n".join([
         "Vectorized version of superfun.*",

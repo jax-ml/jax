@@ -83,8 +83,6 @@ def unpack(x):
 class FusableElementDType(dtypes.extended):
   """Scalar dtype for fusable dtypes."""
 
-  pass
-
 
 class FusableTyRules:
   allow_conversion: bool = False
