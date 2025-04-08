@@ -67,7 +67,7 @@ py_binary(
         "//jaxlib:jaxlib_binaries",
         "//jaxlib:setup.py",
         "//jaxlib/xla:xla_client.py",
-        "//jaxlib/xla:xla_extension_type_stubs",
+        "//jaxlib/xla:xla_extension",
         "@xla//xla/ffi/api:api.h",
         "@xla//xla/ffi/api:c_api.h",
         "@xla//xla/ffi/api:ffi.h",
