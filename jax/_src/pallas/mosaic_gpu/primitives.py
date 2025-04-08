@@ -16,11 +16,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence, Callable
+from collections.abc import Callable, Sequence
 import dataclasses
 import enum
 import itertools
 import math
+import numpy as np
 from typing import Any, Literal
 
 import jax
@@ -581,6 +582,55 @@ def copy_gmem_to_smem(
   return None
 
 
+def flatten_aliased_smem_ref(ref: gpu_core.AliasedSMEMRef) -> tuple[_Ref, ...]:
+  """Flattens an aliased SMEM reference into a tuple of references.
+
+  This is the moral equivalent of `jax.tree.leaves` for aliased SMEM
+  references.
+  """
+
+  def construct_smem_tree(
+      node: pallas_core.MemoryRef | mgpu.Union,
+      byte_offset: int,
+  ) -> tuple[pallas_core.MemoryRef | mgpu.Union, int]:
+    match node:
+      case mgpu.Union(disjoint_members):
+        refs_and_bytes = [
+            construct_smem_tree(m, byte_offset) for m in disjoint_members
+        ]
+        ref_tree = [r for r, _ in refs_and_bytes]
+        num_tree_bytes = max([n for _, n in refs_and_bytes])
+        return mgpu.Union(ref_tree), num_tree_bytes
+      case list(conjoint_members):
+        ref_tree = []
+        num_tree_bytes = 0
+        for member in conjoint_members:
+          member_ref, num_bytes = construct_smem_tree(
+              member, byte_offset + num_tree_bytes
+          )
+          ref_tree.append(member_ref)
+          num_tree_bytes += num_bytes
+        return ref_tree, num_tree_bytes
+      case leaf:
+        assert isinstance(leaf, pallas_core.AbstractMemoryRef) or isinstance(
+            leaf, pallas_core.TransformedRef
+        )
+        leaf_bytesize = math.prod(leaf.shape) * np.dtype(leaf.dtype).itemsize
+        mem_slice = indexing.NDIndexer(
+            indices=[indexing.Slice(byte_offset, leaf_bytesize)],
+            shape=ref.shape,
+            int_indexer_shape=[],
+        )
+        result = gpu_core.transform_ref(ref, mem_slice)
+        reshape = state_types.RefReshaper(dtype=leaf.dtype, shape=leaf.shape)
+        result = gpu_core.transform_ref(result, reshape)
+        return result, leaf_bytesize
+
+  ref_tree, num_bytes = construct_smem_tree(ref.refs, 0)
+  assert num_bytes == ref.shape[0]
+  return tuple(jax.tree.leaves(ref_tree))
+
+
 def _extract_barrier_indexer(transforms) -> indexing.NDIndexer | None:
   if not transforms:
     return None
@@ -910,7 +960,7 @@ def _wgmma_lowering(
     )
     a_transforms = a_transforms_tree.unflatten(a_transforms_leaves)
     a, a_transforms = lowering._handle_transforms(
-        a, a_transforms, handle_transposes=False, handle_reshapes=False
+        a, a_transforms, handle_transposes=False, handle_bitcasts=False
     )
     match a_transforms:
       case (gpu_core.UnswizzleRef(lhs_swizzle), gpu_core.UntileRef(tiling)):
@@ -937,7 +987,7 @@ def _wgmma_lowering(
 
   b_transforms = b_transforms_tree.unflatten(b_transforms_leaves)
   b, b_transforms = lowering._handle_transforms(
-      b, b_transforms, handle_transposes=False, handle_reshapes=False
+      b, b_transforms, handle_transposes=False, handle_bitcasts=False
   )
 
   match b_transforms:
@@ -1351,7 +1401,7 @@ def _jaxpr_call_lowering_rule(
       # We ignore other transforms here, because they are already embedded
       # in the jaxpr.
       ref, _ = lowering._handle_transforms(
-          ref, transforms, handle_reshapes=False, handle_transposes=False
+          ref, transforms, handle_bitcasts=False, handle_transposes=False
       )
     args.append(ref)
   program_ids = program_ids_treedef.unflatten(flat_program_ids)

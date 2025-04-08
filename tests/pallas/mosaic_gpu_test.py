@@ -1524,6 +1524,35 @@ class PallasCallTest(PallasTest):
     y = jax.lax.iota(jnp.float32, 128) * 3
     np.testing.assert_array_equal(kernel(x, y), x + y)
 
+  def test_smem_aliasing_works(self):
+    self.skip_if_wg_semantics()
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
+        in_specs=[pl.BlockSpec((256,))],
+        out_specs=pl.BlockSpec((128,), memory_space=plgpu.GMEM),
+        scratch_shapes=[
+            plgpu.AliasedSMEMRef(
+                mgpu.Union([
+                    plgpu.SMEM((256,), jnp.float32),
+                    [
+                        plgpu.SMEM((128,), jnp.float32),
+                        plgpu.SMEM((128,), jnp.float32),
+                    ],
+                ])
+            )
+        ],
+    )
+    def kernel(x_ref, o_ref128, aliased_ref):
+      smem_ref256, _, smem_ref128 = plgpu.flatten_aliased_smem_ref(aliased_ref)
+      smem_ref256[...] = x_ref[...] + 1
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(smem_ref128, o_ref128)
+
+    x = jnp.arange(256).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x[128:] + 1)
+
 
 class PallasCallWGTest(
     PallasCallTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
