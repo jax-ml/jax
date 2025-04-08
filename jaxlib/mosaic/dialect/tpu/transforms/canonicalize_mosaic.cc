@@ -672,6 +672,51 @@ LogicalResult canonicalize_repeat(const CanonicalizeContext &ctx,
   return success();
 }
 
+LogicalResult canonicalize_transpose(const CanonicalizeContext &ctx,
+                                     Operation &raw_op) {
+  auto op = dyn_cast<vector::TransposeOp>(raw_op);
+  if (!isa<VectorType>(op.getType())) {
+    return op.emitOpError("Only vector types supported");
+  }
+  auto permutation = op.getPermutation();
+  if (permutation.size() <= 2) {
+    return success();
+  }
+  auto vec = op.getVector();
+  auto result = op.getResult();
+  auto dtype = vec.getType().getElementType();
+  if (dtype.isF32()) {
+    return success();
+  }
+  auto major_minor_permute = false;
+  for (auto dim : permutation.drop_back(2)) {
+    major_minor_permute =
+        major_minor_permute || (dim >= vec.getType().getRank() - 2);
+  }
+  // We handle the bf16 major/minor permute  case by extending to f32,
+  // transposing, and truncating.
+  // We could handle this other ways as well, such as by doing a pack/unpack,
+  // but this is the most straightforward.
+  if (dtype.isBF16() && major_minor_permute) {
+    ImplicitLocOpBuilder builder(op->getLoc(), op.getOperation());
+    auto vec_ty = dyn_cast<VectorType>(vec.getType());
+    auto res_ty = dyn_cast<VectorType>(result.getType());
+    if (!vec_ty) {
+      return op.emitOpError("Only vector types supported");
+    }
+    auto vec_f32 = builder.create<arith::ExtFOp>(
+        VectorType::get(vec_ty.getShape(), builder.getF32Type()), vec);
+    auto transpose = builder.create<vector::TransposeOp>(
+        VectorType::get(res_ty.getShape(), builder.getF32Type()), vec_f32,
+        permutation);
+    auto cast = builder.create<arith::TruncFOp>(res_ty, transpose);
+    op.replaceAllUsesWith(cast.getResult());
+    op.erase();
+    return success();
+  }
+  return success();
+}
+
 using canonicalize_rule_type =
     std::function<LogicalResult(const CanonicalizeContext &ctx, Operation &op)>;
 
@@ -684,6 +729,7 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
        canonicalize_multi_dim_reduction},
       {arith::SelectOp::getOperationName(), canonicalize_select},
       {arith::FPToSIOp::getOperationName(), canonicalize_fptosi},
+      {vector::TransposeOp::getOperationName(), canonicalize_transpose},
       {tpu::RepeatOp::getOperationName(), canonicalize_repeat}};
   return *rules;
 }

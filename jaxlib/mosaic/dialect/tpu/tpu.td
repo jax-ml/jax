@@ -777,6 +777,26 @@ def TPU_WaitDMAOp : TPU_Op<"wait_dma"> {
   let hasVerifier = 1;
 }
 
+def TPU_VectorSublaneShuffleOp : TPU_Op<"sublane_shuffle", [Pure]> {
+  let arguments = (ins
+    AnyVectorOfNonZeroRank:$input,
+    DenseI32ArrayAttr:$indices
+  );
+  let results = (outs AnyType:$output);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `,` `[` $indices `]` `->` type($output)
+  }];
+}
+
+def TPU_CombineSublanesOp : TPU_Op<"vcombine.sublanes", [Pure]> {
+  let arguments = (ins
+    AnyVectorOfNonZeroRank:$lhs,
+    AnyVectorOfNonZeroRank:$rhs,
+    I32Attr:$kind
+  );
+  let results = (outs AnyVectorOfNonZeroRank:$output);
+}
+
 def TPU_RegionOp : TPU_Op<"region", [RecursiveMemoryEffects, SingleBlockImplicitTerminator<"tpu::YieldOp">]> {
   let arguments = (ins);
   let results = (outs Variadic<AnyType>:$results);
