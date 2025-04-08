@@ -129,7 +129,7 @@ def ref_ragged_paged_attention(
   return jnp.concatenate(outputs, axis=0)
 
 
-# Expect to run these checkes during runtime.
+# Expect to run these checks during runtime.
 def validate_dynamic_inputs(
     q: jax.Array,  # [max_num_batched_tokens, num_q_heads, head_dim]
     kv_pages: jax.Array,  # [total_num_pages, page_size, num_combined_kv_heads, head_dim]
@@ -283,19 +283,19 @@ def ragged_paged_attention_kernel(
   # 2. Support arbitrary strided load/store for any last dimension.
   def strided_load_kv(ref, start, step):
     if ref.dtype == jnp.float32:
-      return ref[start::step, :]
+      return ref[start::step, :], ref[start + 1 :: step, :]
     packing = get_dtype_packing(ref.dtype)
     assert ref.dtype == jnp.bfloat16
     assert step % packing == 0
     b_start = start // packing
-    b_offset = start % packing
     b_step = step // packing
-    b_ref = ref.bitcast(jnp.int32)
+    b_ref = ref.bitcast(jnp.uint32)
     b = b_ref[b_start::b_step, :]
-    bw = 32 // packing
-    b = jnp.right_shift(b, bw * b_offset)
-    b = jnp.left_shift(b, bw * (packing - 1))
-    return pltpu.bitcast(b, jnp.float32).astype(jnp.bfloat16)
+    bk = b << 16
+    bv = b & jnp.uint32(0xffff0000)
+    k = pltpu.bitcast(bk, jnp.float32).astype(jnp.bfloat16)
+    v = pltpu.bitcast(bv, jnp.float32).astype(jnp.bfloat16)
+    return k, v
 
   def fold_on_2nd_minor(vec):
     assert vec.dtype == jnp.bfloat16 or vec.dtype == jnp.float32
@@ -537,11 +537,8 @@ def ragged_paged_attention_kernel(
         q = fold_on_2nd_minor(
             q_ref[:, q_head_idx : q_head_idx + num_q_heads_per_kv_head, :]
         )
-        k = strided_load_kv(
+        k, v = strided_load_kv(
             kv_ref, kv_head_idx * 2, num_combined_kv_heads_per_blk
-        )
-        v = strided_load_kv(
-            kv_ref, kv_head_idx * 2 + 1, num_combined_kv_heads_per_blk
         )
         flash_attention(
             q,
