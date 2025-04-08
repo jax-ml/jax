@@ -56,7 +56,7 @@ from jax._src.lax import (lax, parallel as lax_parallel, slicing,
                           special, control_flow, ann)
 from jax._src import ffi
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import sdy
+from jax._src.lib.mlir.dialects import hlo, sdy
 from jax._src.util import (HashableFunction, HashablePartial, unzip2,
                            as_hashable_function, memoize, partition_list,
                            merge_lists, split_list, subs_list2, foreach)
@@ -710,19 +710,31 @@ def _shardy_shard_map_sharding(
   return sdy_sharding
 
 
+def _shardy_shard_map_token_sharding(
+    ctx: mlir.LoweringRuleContext, mesh
+  ) -> ir.Attribute:
+  ns = _make_scoped_manual_sharding(ctx, mesh, {})
+  return ns._to_sdy_sharding(0)
+
+
 def _shard_map_lowering_shardy(
     ctx, in_nodes, jaxpr, mesh, in_names, out_names, auto, check_rep):
   in_avals_ = [v.aval for v in jaxpr.invars]
-  if isinstance(ctx.module_context.axis_context, sharding_impls.SPMDAxisContext):
+  if isinstance(ctx.module_context.axis_context,
+                sharding_impls.SPMDAxisContext):
     # Nested `ManualComputationOp`s cannot refer to axes that are already
     # manual. So figure out what axes are free thus far.
-    free_axes = frozenset(mesh.axis_names) - ctx.module_context.axis_context.manual_axes
+    free_axes = (frozenset(mesh.axis_names)
+                 - ctx.module_context.axis_context.manual_axes)
     shardy_manual_axes = free_axes - auto
   else:
     shardy_manual_axes = frozenset(mesh.axis_names) - auto
   new_axis_context = sharding_impls.SPMDAxisContext(
         mesh, frozenset(mesh.axis_names) - auto)
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
+
+  tokens = [ctx.tokens_in.get(eff) for eff in ctx.tokens_in.effects()]
+  num_tokens = len(tokens)
 
   # The order of manual axes should match the order of mesh.axis_names to avoid
   # non-determinism issues.
@@ -731,32 +743,64 @@ def _shard_map_lowering_shardy(
   if np.prod([mesh.shape[a] for a in manual_axes]) == 1:
     # No need for a `ManualComputationOp` if all manual axes are size 1.
     with _extend_axis_env(mesh, auto), config._check_rep(check_rep):
-      out_nodes, _ = mlir.jaxpr_subcomp(
-          sub_ctx, jaxpr, ctx.name_stack, mlir.TokenSet(), (), *in_nodes,
+      args = (*ctx.dim_var_values, *tokens, *in_nodes)
+      out_nodes, tokens_out = mlir.jaxpr_subcomp(
+          sub_ctx, jaxpr, ctx.name_stack,
+          mlir.TokenSet(zip(ctx.tokens_in.effects(), in_nodes[:num_tokens])),
+        (), *args[num_tokens:],
           dim_var_values=ctx.dim_var_values)
-    return out_nodes
+      num_tokens = len(tokens_out.effects())
+      tokens_out = tokens_out.update_tokens(mlir.TokenSet(zip(
+          ctx.tokens_in.effects(), out_nodes[:num_tokens])))
+      ctx.set_tokens_out(tokens_out)
+    return out_nodes[num_tokens:]
 
-  in_shardings = sharding_impls.SdyArrayShardingList(map(
+  in_shardings = list(map(
       partial(_shardy_shard_map_sharding, ctx, mesh, auto),
-      in_names, ctx.avals_in)).build()
-  out_shardings = sharding_impls.SdyArrayShardingList(map(
+      in_names, ctx.avals_in))
+  in_shardings = [
+      _shardy_shard_map_token_sharding(ctx, mesh)] * num_tokens + in_shardings
+  in_shardings = sharding_impls.SdyArrayShardingList(in_shardings).build()
+
+  out_shardings = list(map(
       partial(_shardy_shard_map_sharding, ctx, mesh, auto),
-      out_names, ctx.avals_out)).build()
-  output_types = map(mlir.aval_to_ir_type, ctx.avals_out)
+      out_names, ctx.avals_out))
+  out_shardings = [
+      _shardy_shard_map_token_sharding(ctx, mesh)] * num_tokens + out_shardings
+  out_shardings = sharding_impls.SdyArrayShardingList(out_shardings).build()
+
+  output_types = ([hlo.TokenType.get()] * num_tokens +
+                  list(map(mlir.aval_to_ir_type, ctx.avals_out)))
+
+  args = (*ctx.dim_var_values, *tokens, *in_nodes)
   manual_computation_op = sdy.ManualComputationOp(
-      output_types, in_nodes, in_shardings, out_shardings,
+      output_types,
+      mlir.flatten_ir_values(args),
+      in_shardings, out_shardings,
       sdy.ManualAxesAttr.get(
           ir.ArrayAttr.get([ir.StringAttr.get(i) for i in manual_axes])))
   block = ir.Block.create_at_start(
-      manual_computation_op.body, map(mlir.aval_to_ir_type, in_avals_))
+      manual_computation_op.body,
+      (*(i.getType() for i in ctx.dim_var_values),
+       *([hlo.TokenType.get()] * num_tokens),
+       *map(mlir.aval_to_ir_type, in_avals_)))
+
   with (ir.InsertionPoint(block), _extend_axis_env(mesh, auto),
         config._check_rep(check_rep)):
-    out_nodes_, _ = mlir.jaxpr_subcomp(
-        sub_ctx, jaxpr, ctx.name_stack, mlir.TokenSet(), (), *block.arguments,
+    out_nodes_, tokens_out = mlir.jaxpr_subcomp(
+        sub_ctx, jaxpr, ctx.name_stack,
+        mlir.TokenSet(zip(
+            ctx.tokens_in.effects(), block.arguments[:num_tokens])),
+        (), *block.arguments[num_tokens:],
         dim_var_values=ctx.dim_var_values)
-    sdy.ReturnOp([ir.Value(x) for x in out_nodes_])
+    sdy.ReturnOp([ir.Value(x) for x in (*list(v for _, v in tokens_out.items()),
+                                        *out_nodes_)])
+    num_tokens = len(tokens_out.effects())
+    tokens_out = tokens_out.update_tokens(mlir.TokenSet(zip(
+        ctx.tokens_in.effects(), manual_computation_op.results[:num_tokens])))
+    ctx.set_tokens_out(tokens_out)
 
-  return manual_computation_op.results
+  return manual_computation_op.results[num_tokens:]
 
 
 def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
@@ -775,7 +819,8 @@ def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
   with _extend_axis_env(mesh, auto), config._check_rep(check_rep):
     out_nodes_, tokens_out = mlir.call_lowering(
         "shmap_body", ctx.name_stack, jaxpr, None, sub_ctx, in_avals_,
-        out_avals_, ctx.tokens_in, *in_nodes_, dim_var_values=ctx.dim_var_values,
+        out_avals_, ctx.tokens_in, *in_nodes_,
+        dim_var_values=ctx.dim_var_values,
         arg_names=map(_pspec_mhlo_attrs, in_names, in_avals_),
         result_names=map(_pspec_mhlo_attrs, out_names, out_avals_))
   ctx.set_tokens_out(tokens_out)
