@@ -10037,6 +10037,25 @@ class CustomTransposeTest(jtu.JaxTestCase):
     self.assertAllClose(transpose_unary(f1, x)(x),
                         jax.jit(transpose_unary(f1, x))(x))
 
+  def test_linear_call_type_mismatch(self):
+    def f(x, y):
+      def fn(r, x): return x / r
+      def tp(r, t): return None
+      return x + jax.custom_derivatives.linear_call(fn, tp, y, x)
+
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+    f1 = lambda x: f(x, y)
+    with self.assertRaisesRegex(TypeError, "transpose output pytree"):
+      transpose_unary(f1, x)(x)
+
+  def test_linear_call_recursion(self):
+    def f(x):
+      def fn(_, x): return x
+      def tp(_, t): return f(t)
+      return jax.custom_derivatives.linear_call(fn, tp, None, x)
+    jax.jit(f)(0.1)
+
   def test_basic(self):
     def f(x, y):
       @custom_transpose(jnp.ones(2))

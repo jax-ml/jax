@@ -1268,7 +1268,6 @@ class DebugInfoTest(jtu.JaxTestCase):
         tracer_spy=tracer_spy,
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=<lambda>, arg_names=x, result_paths=result[0]['c']",
-            "traced_for=linear_call fun, fun=fn, arg_names=r,x['c'], result_paths=result['b']",
             "traced_for=linear_call fun_transpose, fun=fn_tp, arg_names=r,t['c'], result_paths=result['c']",
         ],
         expected_tracer_debug_infos=[
