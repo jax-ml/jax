@@ -976,11 +976,12 @@ class ShardMapTest(jtu.JaxTestCase):
       def body(c, _):
         c, *cs = c
         return (*cs, c), None
+      x = lax.pvary(x, ('x', 'y'))
+      y = lax.pvary(y, 'y')
       out, _  = jax.lax.scan(body, (x, y, z), None, length=3)
       return [jnp.expand_dims(a, 0) for a in out]
 
     x = jnp.arange(4)
-
     # doesn't crash, because out_spec assumes no replication (and there is none)
     shard_map(f, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
               out_specs=P(('x', 'y')))(x, x, x)
@@ -1023,6 +1024,8 @@ class ShardMapTest(jtu.JaxTestCase):
       def body(c):
         i, c, *cs = c
         return (i + 1, *cs, c)
+      x = lax.pvary(x, ('x', 'y'))
+      y = lax.pvary(y, 'y')
       _, *out = jax.lax.while_loop(cond, body, (0, x, y, z))
       return [jnp.expand_dims(a, 0) for a in out]
 
@@ -1075,6 +1078,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return jax.lax.cond(True, true_fn, false_fun, x, y)
 
     shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
+
     with self.assertRaisesRegex(ValueError, "require replication"):
       shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(None))(x, x)
 
@@ -1083,9 +1087,12 @@ class ShardMapTest(jtu.JaxTestCase):
         return x
       def false_fun(x, y):
         return y
+      x = lax.pvary(x, 'y')
+      y = lax.pvary(y, 'x')
       return jax.lax.cond(True, true_fn, false_fun, x, y)
 
     shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(('x', 'y')))(x, x)
+
     with self.assertRaisesRegex(ValueError, "require replication"):
       shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
 
@@ -1097,6 +1104,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return jax.lax.cond(jnp.any(x > 0), true_fn, false_fun, x, y)
 
     shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
+
     with self.assertRaisesRegex(ValueError, "require replication"):
       shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(None))(x, x)
 
@@ -1108,8 +1116,7 @@ class ShardMapTest(jtu.JaxTestCase):
       return jax.lax.cond(jnp.any(y > 0), true_fn, false_fun, x, y)
 
     shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(('x', 'y')))(x, x)
-    with self.assertRaisesRegex(ValueError, "require replication"):
-      shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
+    shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P('x'))(x, x)
 
     # https://github.com/jax-ml/jax/issues/24418
     def f(a):
@@ -1517,38 +1524,6 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(x_spec, y.sharding.spec)
 
   @parameterized.parameters([True, False])
-  def test_rewrite_process_custom_vjp_call_match_less_replicated(self, jit):
-    @jax.custom_vjp
-    def foo(x, y):
-      del y
-      return 2. * x
-
-    def foo_fwd(x, y):
-      return foo(x, y), y
-
-    def foo_bwd(y, _):
-      return y, None  # diff! x_bar less replicated than primal/tangent
-
-    foo.defvjp(foo_fwd, foo_bwd)
-
-    mesh = jtu.create_mesh((4,), ('x',))
-    g = shard_map(lambda x, y: foo(x, y) * y, mesh,
-                  in_specs=(P(), P('x')), out_specs=P('x'))
-    if jit:
-      g = jax.jit(g)
-
-    x = jnp.arange(4.)
-    y = jnp.arange(4 * 4.)
-
-    z = g(x, y)
-    self.assertAllClose(z, 2 * jnp.tile(x, (4,)) * y, check_dtypes=False)
-
-    z_, x_bar = jax.value_and_grad(lambda x, y: g(x, y).sum())(x, y)
-    self.assertAllClose(z.sum(), z_, check_dtypes=False)
-    self.assertAllClose(x_bar, jnp.arange(16).reshape(4, 4).sum(0),
-                        check_dtypes=False)
-
-  @parameterized.parameters([True, False])
   def test_rewrite_custom_vjp_call_jaxpr(self, jit):
     @jax.custom_vjp
     def foo(x):
@@ -1723,8 +1698,9 @@ class ShardMapTest(jtu.JaxTestCase):
 
     @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
     def f(x):
-      x, _ = jax.lax.scan(lambda x, _: (jax.lax.psum(x, 'x'), None), x, None,
-                          length=2)
+      def g(x, _):
+        return lax.pvary(jax.lax.psum(x, 'x'), 'x'), None
+      x, _ = jax.lax.scan(g, x, None, length=2)
       return x
 
     jaxpr = jax.make_jaxpr(f)(jnp.arange(4.))

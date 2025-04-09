@@ -1094,7 +1094,7 @@ use_direct_linearize = bool_state(
 
 varying_axes_in_types = bool_state(
     name='jax_varying_axes_in_types',
-    default=False,
+    default=True,
     help=('Adds varying manual axes to ShapedArray to track which mesh axes the'
           ' array is varying over. This will help to remove the efficient'
           ' transpose rewrite machinery in shard_map'),

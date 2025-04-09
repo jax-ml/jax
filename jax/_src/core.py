@@ -1895,8 +1895,6 @@ def str_short_aval(shape, dtype, mesh, spec, vma,
   return f'{dt_str}[{shapestr}]{vma}{mesh_axes}'
 
 def get_vma(vma, mesh):
-  assert isinstance(vma, frozenset)
-  return vma
   if mesh.empty:
     return vma
   for i in vma:
@@ -1904,6 +1902,7 @@ def get_vma(vma, mesh):
       raise ValueError(
           "Axes mentioned in `vma` field of ShapedArray should"
           f" be of type `Manual`. Got axis: {i} of type {mesh._name_to_type[i]}")
+  assert isinstance(vma, frozenset)
   return vma
 
 class ShapedArray(UnshapedArray):
