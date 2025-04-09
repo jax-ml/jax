@@ -311,6 +311,7 @@ class ModuleContext:
   lowering_semantics: mgpu.LoweringSemantics
   primitive_semantics: gpu_core.PrimitiveSemantics
 
+  @contextlib.contextmanager
   def reserve_barrier(self, barrier: mgpu.Barrier) -> mgpu.BarrierRef:
     """Reserves a barrier.
 
@@ -320,7 +321,9 @@ class ModuleContext:
     available = self.runtime_barriers.get(barrier, [])
     if not available:
       raise RuntimeError(f"Barrier {barrier} is already reserved")
-    return available.pop()
+    barrier = available.pop()
+    yield barrier
+    available.append(barrier)
 
   @contextlib.contextmanager
   def alloc_tmem(
@@ -1965,7 +1968,7 @@ def _run_scoped_lowering_rule(
           input_refs.append(acc)
         should_discharge.append(True)
       elif isinstance(aval.dtype, gpu_core.BarrierType):
-        input_refs.append(
+        barrier_ref = alloc_stack.enter_context(
             ctx.module_ctx.reserve_barrier(
                 mgpu.Barrier(
                     aval.dtype.num_arrivals
@@ -1974,17 +1977,19 @@ def _run_scoped_lowering_rule(
                 )
             )
         )
+        input_refs.append(barrier_ref)
         should_discharge.append(False)
       elif isinstance(aval.dtype, gpu_core.ClusterBarrierType):
         collective_dims = jax.tree.map(
             lambda axis: _resolve_cluster_axis(ctx.module_ctx.axis_names, axis),
             aval.dtype.collective_axes,
         )
-        input_refs.append(
+        barrier_ref = alloc_stack.enter_context(
             ctx.module_ctx.reserve_barrier(
                 mgpu.ClusterBarrier(collective_dims, *aval.shape)
             )
         )
+        input_refs.append(barrier_ref)
         should_discharge.append(False)
       elif aval.memory_space == gpu_core.SMEM:
         [input_ref] = alloc_stack.enter_context(
