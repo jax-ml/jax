@@ -786,6 +786,8 @@ def scatter_apply(
     pass
   jaxpr, consts = lax._reduction_jaxpr(_apply, core.get_aval(lax._zero(operand)))
   # TODO: implement this via its own primitive so we can define appropriate autodiff rules.
+  operand, scatter_indices, unused = core.standard_insert_pbroadcast(
+      operand, scatter_indices, unused)
   return scatter_p.bind(
       operand, scatter_indices, unused, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
