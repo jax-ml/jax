@@ -1614,7 +1614,7 @@ class ShardMapTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(jax.vjp(f, jnp.arange(1.))[1])(jnp.arange(4.))
     e, = jaxpr.jaxpr.eqns
     e2, = e.params['jaxpr'].eqns
-    self.assertEqual(str(e2.primitive), 'psum2')
+    self.assertEqual(str(e2.primitive), 'psum_invariant')
     self.assertEqual(e2.params['axes'], ('x',))
 
   def test_fanin_psum_transposes_to_fanout(self):
@@ -1639,7 +1639,7 @@ class ShardMapTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(jax.vjp(f, jnp.arange(4.))[1])(jnp.arange(4.))
     e, = jaxpr.jaxpr.eqns
     e1, e2 = e.params['jaxpr'].eqns
-    self.assertEqual(str(e1.primitive), 'psum2')
+    self.assertEqual(str(e1.primitive), 'psum_invariant')
     self.assertEqual(str(e2.primitive), 'pvary')
 
   def test_transpose_float0(self):
@@ -1701,7 +1701,8 @@ class ShardMapTest(jtu.JaxTestCase):
       self.assertEqual(y.aval.vma, {'x'})
       return y
 
-    f(jnp.arange(8))
+    f(jnp.arange(8.))
+    jax.grad(lambda x: f(x).sum())(jnp.arange(8.))
 
   def test_rewrite_binops(self):
     mesh = jtu.create_mesh((4,), ('x',))
@@ -1729,7 +1730,7 @@ class ShardMapTest(jtu.JaxTestCase):
     e, = jaxpr.jaxpr.eqns
     e, = e.params['jaxpr'].eqns
     e1, e2 = e.params['jaxpr'].eqns
-    self.assertEqual(e1.primitive.name, 'psum2')
+    self.assertEqual(e1.primitive.name, 'psum_invariant')
     self.assertEqual(e2.primitive.name, 'pvary')
 
   def test_check_rep_false_grads(self):

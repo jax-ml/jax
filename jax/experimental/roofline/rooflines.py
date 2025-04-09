@@ -467,7 +467,7 @@ roofline.register_roofline(lax_parallel.pmin_p)(_scalar_collective_roofline)
 roofline.register_roofline(lax_parallel.pmax_p)(_scalar_collective_roofline)
 
 
-@roofline.register_roofline(shard_map.psum2_p)
+@roofline.register_roofline(lax_parallel.psum_invariant_p)
 def _psum2_roofline(
   ctx: roofline.RooflineRuleContext,
   *args,

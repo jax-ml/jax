@@ -1141,26 +1141,6 @@ def _device_put_eager_rule(mesh, *xs, srcs, devices, copy_semantics):
   return xs
 eager_rules[dispatch.device_put_p] = _device_put_eager_rule
 
-# New primitives for efficient transposition
-
-# psum2_p is like psum_p except has a different transpose, so mostly copied:
-psum2_p = core.Primitive('psum2')
-psum2_p.multiple_results = True
-psum2_p.def_impl(lax_parallel.psum_p.impl)
-psum2_p.def_effectful_abstract_eval(
-    partial(lax_parallel._psum2_abstract_eval, psum2_p.name))
-
-mlir.register_lowering(psum2_p, mlir._lowerings[lax_parallel.psum_p])
-batching.fancy_primitive_batchers[psum2_p] = \
-  partial(lax_parallel._batched_reduction_collective, psum2_p,
-          lambda v, axis_size: axis_size * v)
-batching.skippable_batchers[psum2_p] = partial(lax_parallel._names_in_param, 'axes')
-
-def _psum2_transpose_rule(cts, *args, axes, axis_index_groups):
-  del args
-  return pvary_p.bind(*cts, axes=axes, axis_index_groups=axis_index_groups)
-ad.deflinear2(psum2_p, _psum2_transpose_rule)
-
 # Rewrite rules and static replication checking for efficient transposition
 
 _rewrite_rules: dict[core.Primitive, Callable] = {}
@@ -1297,11 +1277,12 @@ def _psum_rewrite(mesh, in_rep, *args, axes, axis_index_groups):
   out_rep = [r | axes_ for r in in_rep]  # TODO determinism (and elsewhere)
   args_ = [pvary(x, tuple(n for n in mesh.axis_names if n in axes_ & src))
            for x, src in zip(args, in_rep)]
-  out_val = psum2_p.bind(*args_, axes=axes, axis_index_groups=axis_index_groups)
+  out_val = lax_parallel.psum_invariant_p.bind(
+      *args_, axes=axes, axis_index_groups=axis_index_groups)
   return out_val, out_rep
 
 
-@register_check(psum2_p)
+@register_check(lax_parallel.psum_invariant_p)
 def _psum2_check(mesh, *in_rep, axes, axis_index_groups):
   assert type(axes) is tuple
   if any(set(axes) & r for r in in_rep if r is not None):
@@ -1312,7 +1293,7 @@ def _psum2_check(mesh, *in_rep, axes, axis_index_groups):
                     "workaround pass the check_rep=False argument to shard_map")
   in_rep = tuple(set(mesh.axis_names) if r is None else r for r in in_rep)
   return [r | set(axes) for r in in_rep]
-register_norewrite(psum2_p)
+register_norewrite(lax_parallel.psum_invariant_p)
 
 
 @register_check(pvary_p)
@@ -2342,8 +2323,8 @@ def _rewrite_bwd(bwd: lu.WrappedFun,
 
 def _match_replication(src, dst, x):
   if dst - src:
-    x, = psum2_p.bind(x, axes=tuple(n for n in dst if n not in src),
-                      axis_index_groups=None)
+    x, = lax_parallel.psum_invariant_p.bind(
+        x, axes=tuple(n for n in dst if n not in src), axis_index_groups=None)
   if src - dst:
     x = pvary(x, tuple(n for n in src if n not in dst))
   return x
