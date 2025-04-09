@@ -1611,7 +1611,7 @@ class APITest(jtu.JaxTestCase):
     assert grad(f)(2.0) == 4.0
     assert len(side) == 1
 
-  @jtu.thread_unsafe_test()  # Concurrent ache eviction means we may retrace.
+  @jtu.thread_unsafe_test()  # Concurrent cache eviction means we may retrace.
   def test_jit_of_grad(self):
     side = []
 

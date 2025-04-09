@@ -612,8 +612,6 @@ def __array_module__(self, types):
   else:
     return NotImplemented
 
-
-@partial(jax.jit, static_argnums=(1,2,3))
 def _multi_slice(self: Array,
                  start_indices: tuple[tuple[int, ...]],
                  limit_indices: tuple[tuple[int, ...]],
@@ -622,7 +620,16 @@ def _multi_slice(self: Array,
 
   This is used to shard Array arguments to pmap. It's implemented as a
   Array method here to avoid circular imports.
+  We cannot apply `jit` directly to this function because this will turn it into
+  a JitWrapped, which cannot be the value of an object method.
   """
+  return _multi_slice_jitted(self, start_indices, limit_indices, removed_dims)
+
+@partial(jax.jit, static_argnums=(1,2,3))
+def _multi_slice_jitted(self: Array,
+                       start_indices: tuple[tuple[int, ...]],
+                       limit_indices: tuple[tuple[int, ...]],
+                       removed_dims: tuple[tuple[int, ...]]) -> list[Array]:
   results: list[Array] = []
   for starts, limits, removed in zip(start_indices, limit_indices, removed_dims):
     sliced = lax.slice(self, starts, limits)
@@ -633,8 +640,13 @@ def _multi_slice(self: Array,
 
 # The next two functions are related to iter(array), implemented here to
 # avoid circular imports.
-@jax.jit
 def _unstack(x: Array) -> list[Array]:
+  #  We cannot apply `jit` directly to this function because this will turn it into
+  #  a JitWrapped, which cannot be the value of an object method.
+  return _unstack_jitted(x)
+
+@jax.jit
+def _unstack_jitted(x: Array) -> list[Array]:
   dims = (0,)
   return [lax.squeeze(t, dims) for t in lax.split(x, (1,) * x.shape[0])]
 

@@ -18,7 +18,7 @@ from collections import defaultdict
 from collections.abc import Callable, Sequence, Iterable
 import contextlib
 import dataclasses
-from functools import partial
+from functools import partial, update_wrapper
 import inspect
 import logging
 import operator as op
@@ -533,7 +533,10 @@ def make_jit(fun: Callable, in_shardings: Any, out_shardings: Any,
         fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
         static_argnums, static_argnames, device, backend, abstracted_axes,
         keep_unused, inline, compiler_options, use_resource_env)
-  return _make_jit_wrapper(fun, jit_info)
+  if False:  # DO_NOT_SUBMIT
+    return _make_jit_wrapper(fun, jit_info)
+  else:
+    return JitWrapped(fun, jit_info)
 
 
 class PjitParams(NamedTuple):
@@ -799,14 +802,89 @@ def _flat_axes_specs(abstracted_axes, *args, **kwargs
   return broadcast_prefix(abstracted_axes, args, ax_leaf)
 
 
+
 class JitWrapped(stages.Wrapped):
 
-  def eval_shape(self, *args, **kwargs):
-    """See ``jax.eval_shape``."""
-    raise NotImplementedError
+  def __init__(self, fun: Callable, jit_info: PjitInfo):
+    self._fun = fun
+    self._jit_info = jit_info
 
-  def trace(self, *args, **kwargs) -> stages.Traced:
-    raise NotImplementedError
+    @api_boundary
+    def cache_miss(*args, **kwargs):
+      if config.no_tracing.value:
+        raise RuntimeError(f"re-tracing function {jit_info.fun_sourceinfo} for "
+                           "`jit`, but 'no_tracing' is set")
+
+      (outs, out_flat, out_tree, args_flat, jaxpr, attrs_tracked, executable,
+       pgle_profiler) = _python_pjit_helper(fun, jit_info, *args, **kwargs)
+
+      maybe_fastpath_data = _get_fastpath_data(
+          executable, out_tree, args_flat, out_flat, attrs_tracked, jaxpr.effects,
+          jaxpr.consts, jit_info.abstracted_axes,
+          pgle_profiler)
+
+      return outs, maybe_fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
+
+    cache_key = pxla.JitGlobalCppCacheKeys(
+        donate_argnums=jit_info.donate_argnums,
+        donate_argnames=jit_info.donate_argnames,
+        device=jit_info.device, backend=jit_info.backend,
+        in_shardings_treedef=jit_info.in_shardings_treedef,
+        in_shardings_leaves=jit_info.in_shardings_leaves,
+        out_shardings_treedef=jit_info.out_shardings_treedef,
+        out_shardings_leaves=jit_info.out_shardings_leaves,
+        in_layouts_treedef=jit_info.in_layouts_treedef,
+        in_layouts_leaves=jit_info.in_layouts_leaves,
+        out_layouts_treedef=jit_info.out_layouts_treedef,
+        out_layouts_leaves=jit_info.out_layouts_leaves,
+        compiler_options_kvs=jit_info.compiler_options_kvs)
+    self._pjit_func = xc._xla.pjit(
+        fun_name(fun), fun, cache_miss, jit_info.static_argnums,
+        jit_info.static_argnames, cache_key, tree_util.dispatch_registry,
+        pxla.cc_shard_arg,
+        _get_cpp_global_cache(cache_key.contains_explicit_attributes))
+    # type(self._pjit_func).clear_cache =   # DO_NOT_SUBMIT
+    update_wrapper(self, self._fun)
+
+  def __call__(self, *args, **kwargs):
+    return self._pjit_func(*args, **kwargs)
+
+  def trace(self, *args, **kwargs):
+    p, args_flat = _infer_params(self._fun, self._jit_info, args, kwargs)
+    donate_argnums = tuple(i for i, d in enumerate(p.donated_invars) if d)
+    args_info = stages.make_args_info(p.in_tree, p.in_avals, donate_argnums)
+    lower_callable = partial(_resolve_and_lower, args_flat, **p.params,
+                             pgle_profiler=None)
+    return stages.Traced(
+        p.params['jaxpr'], args_info, p.params["name"], p.out_tree,
+        lower_callable, args_flat, p.arg_names, p.num_consts)
+
+  def lower(self, *args, **kwargs):
+    return self.trace(*args, **kwargs).lower()
+
+  def eval_shape(self, *args, **kwargs):
+    p, _ = _infer_params(self._fun, self._jit_info, args, kwargs)
+    out_s = [None if isinstance(s, UnspecifiedValue) else s for s in p.params['out_shardings']]
+    # TODO(yashkatariya): Add `Layout` to SDS.
+    out = [api.ShapeDtypeStruct(x.shape, x.dtype, sharding=s,
+                                weak_type=x.weak_type)
+           for x, s in zip(p.params['jaxpr'].out_avals, out_s)]
+    return tree_unflatten(p.out_tree, out)
+
+  # TODO(necula): turn this into a private method
+  def clear_cache(self) -> None:
+    self._pjit_func._clear_cache()  # pytype: disable=attribute-error
+    _create_pjit_jaxpr.evict_function(self._fun)  # pytype: disable=attribute-error
+    _infer_params_cached.cache_clear()
+
+  def _cache_size(self) -> int:
+    return self._pjit_func._cache_size()
+
+  def __getstate__(self):
+    return self._pjit_func.__getstate__()  # pytype: disable=attribute-error
+
+  def __setstate__(self, state):
+    return self._pjit_func.__setstate__(state)  # pytype: disable=attribute-error
 
 
 # in_shardings and out_shardings can't be None as the default value
