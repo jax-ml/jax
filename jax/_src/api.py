@@ -297,7 +297,7 @@ def jit(
 def disable_jit(disable: bool = True):
   """Context manager that disables :py:func:`jit` behavior under its dynamic context.
 
-  For debugging it is useful to have a mechanism that disables :py:func:`jit`
+  For debugging, it is useful to have a mechanism that disables :py:func:`jit`
   everywhere in a dynamic context. Note that this not only disables explicit
   uses of :func:`jit` by the user, but will also remove any implicit JIT compilation
   used by the JAX library: this includes implicit JIT computation of `body` and

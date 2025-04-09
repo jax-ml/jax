@@ -36,6 +36,7 @@ from jax.sharding import PartitionSpec as P
 from jax import tree_util
 
 from jax._src import config
+from jax._src import compute_on
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
@@ -1724,6 +1725,22 @@ class JaxExportTest(jtu.JaxTestCase):
       a_device = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P()))
       res_exp = exp.call(a_device)
       self.assertArraysAllClose(res_native, res_exp)
+
+  def test_compute_on_host(self):
+    operand = np.float32(0.)
+
+    @jax.jit
+    @compute_on.compute_on("device_host")
+    def f_host(x):
+      # Adds 1 on CPU, which should be the result on all platforms because
+      # this code should always run on the host.
+      return jax.lax.platform_dependent(x,
+                                        cpu=lambda x: x + np.float32(1.),
+                                        default=lambda x: x + np.float32(2.))
+
+    self.assertAllClose(np.float32(1.), f_host(operand))
+    exp = get_exported(f_host, platforms=("cpu", "tpu", "cuda", "rocm"))(operand)
+    self.assertAllClose(np.float32(1.), exp.call(operand))
 
   @jtu.parameterized_filterable(
     kwargs=[
