@@ -8193,6 +8193,23 @@ class CustomJVPTest(jtu.JaxTestCase):
     ):
       f(0.5, 0.1, z=1.0)
 
+  def test_symbolic_zero_custom_jvp_vmap_doesnt_instantiate(self):
+    @jax.custom_jvp
+    def f(x, y):
+      return y
+
+    def f_jvp(primals, tangents):
+      (x, y), (x_dot, y_dot) = primals, tangents
+      assert type(y_dot) is custom_derivatives_public.SymbolicZero
+      return y, y_dot
+
+    f.defjvp(f_jvp, symbolic_zeros=True)
+
+    def g(x):
+      return f(x, f(x, 1.))
+
+    jax.jvp(jax.vmap(g), (jnp.ones(3),), (jnp.ones(3),))  # don't crash
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 

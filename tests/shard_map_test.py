@@ -44,6 +44,7 @@ from jax._src.mesh import AxisType
 from jax._src.interpreters import partial_eval as pe
 from jax._src import linear_util as lu
 from jax._src import tree_util
+from jax.custom_derivatives import SymbolicZero
 import jax.numpy as jnp
 
 from jax.experimental.custom_partitioning import custom_partitioning
@@ -2820,6 +2821,30 @@ class ShardMapTest(jtu.JaxTestCase):
       return jnp.insert(x, 0, 0)[None]
     f = shard_map(f, mesh, P('i'), P('i'))
     f(jnp.zeros(100))  # don't crash
+
+  def test_custom_jvp_symbolic_zeros(self):
+    # https://github.com/jax-ml/jax/issues/26763
+    mesh = jtu.create_mesh((4,), ('i',))
+    @jax.custom_jvp
+    def f(a: jax.Array, b: jax.Array) -> jax.Array:
+        return a + b
+
+    @partial(f.defjvp, symbolic_zeros=True)
+    def f_jvp(primals, tangents):
+        a, b = primals
+        a_dot, b_dot = tangents
+        y = f(a, b)
+        y_dot = jnp.zeros_like(y)
+        if not isinstance(a_dot, SymbolicZero):
+            y_dot += a_dot
+        if not isinstance(b_dot, SymbolicZero):
+            y_dot += b_dot
+        return y, y_dot
+    x = jax.random.normal(jax.random.key(0), (jax.device_count(), 20))
+    A = jax.random.normal(jax.random.key(1), (jax.device_count(), 20))
+
+    g = shard_map(f, mesh, in_specs=P('i'), out_specs=P('i'))
+    jax.jvp(lambda x: g(x, A), (x,), (x,))  # don't crash
 
 
 class FunSpec(NamedTuple):

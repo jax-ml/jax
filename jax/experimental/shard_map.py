@@ -33,7 +33,7 @@ from jax._src import api_util
 from jax._src import callback
 from jax._src import config
 from jax._src import core
-from jax._src import custom_derivatives
+from jax._src import custom_derivatives as cd
 from jax._src import debugging
 from jax._src import dispatch
 from jax._src import dtypes
@@ -1047,11 +1047,6 @@ class ShardMapTrace(core.Trace):
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
     # Since ShardMapTrace is only used as a base main, we can drop the jvp.
-    if symbolic_zeros:
-      msg = ("custom_jvp symbolic_zeros support with shard_map is not "
-             "implemented; please open an issue at "
-             "https://github.com/jax-ml/jax/issues")
-      raise NotImplementedError(msg)
     del prim, jvp, symbolic_zeros
     in_vals, in_rep = unzip2(map(self.to_val_rep_pair, tracers))
     out_vals, out_rep = _run_shmap(fun, self.mesh, self.auto, in_vals, in_rep, self.check,
@@ -1515,12 +1510,12 @@ def _closed_call_check(mesh, *in_rep, call_jaxpr, **kwargs):
   return _check_rep(mesh, call_jaxpr.jaxpr, in_rep)
 
 
-@register_check(custom_derivatives.custom_jvp_call_p)
+@register_check(cd.custom_jvp_call_p)
 def _custom_jvp_call_check(mesh, *in_rep, call_jaxpr, jvp_jaxpr_fun,
                            num_consts, symbolic_zeros):
   return _check_rep(mesh, call_jaxpr.jaxpr, in_rep)
 
-@register_rewrite(custom_derivatives.custom_vjp_call_jaxpr_p)
+@register_rewrite(cd.custom_vjp_call_jaxpr_p)
 def _custom_vjp_call_jaxpr_rewrite(
     mesh, in_rep, *args, fun_jaxpr, fwd_jaxpr_thunk, bwd, num_consts, out_trees,
     symbolic_zeros):
@@ -1543,13 +1538,13 @@ def _custom_vjp_call_jaxpr_rewrite(
 
   bwd_ = _rewrite_bwd(bwd, mesh, lambda: out_rep2[0], in_rep_)
 
-  outs = custom_derivatives.custom_vjp_call_jaxpr_p.bind(
+  outs = cd.custom_vjp_call_jaxpr_p.bind(
       *args, fun_jaxpr=fun_jaxpr_, fwd_jaxpr_thunk=fwd_jaxpr_thunk_, bwd=bwd_,
       num_consts=num_consts, out_trees=out_trees, symbolic_zeros=symbolic_zeros)
   out_rep = out_rep2[0] if out_rep2 else out_rep
   return outs, out_rep
 
-@register_check(custom_derivatives.custom_vjp_call_jaxpr_p)
+@register_check(cd.custom_vjp_call_jaxpr_p)
 def _custom_vjp_call_jaxpr_check(mesh, *in_rep, fun_jaxpr, **_):
   return _check_rep(mesh, fun_jaxpr.jaxpr, in_rep)
 
@@ -2213,25 +2208,16 @@ class RewriteTrace(core.Trace):
     return map(partial(RewriteTracer, self), out_reps(), out_vals)
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
-    if symbolic_zeros:
-      msg = ("Please open an issue at https://github.com/jax-ml/jax/issues and "
-             "as a temporary workaround pass the check_rep=False argument to "
-             "shard_map")
-      raise NotImplementedError(msg)
     in_vals, in_reps = unzip2(map(self.to_val_rep_pair, tracers))
     fun, out_reps1 = _rewrite_subtrace(fun, self.tag, self.mesh, in_reps)
-    jvp, out_reps2 = _rewrite_subtrace(jvp, self.tag, self.mesh, in_reps * 2)
+    jvp, out_reps2 = _rewrite_jvp_subtrace(jvp, self.tag, self.mesh, in_reps * 2)
     with core.set_current_trace(self.parent_trace):
       out_vals = prim.bind(fun, jvp, *in_vals, symbolic_zeros=symbolic_zeros)
     fst, out_reps = lu.merge_linear_aux(out_reps1, out_reps2)
-    if not fst:
-      assert out_reps == out_reps[:len(out_reps) // 2] * 2
-      out_reps = out_reps[:len(out_reps) // 2]
     return map(partial(RewriteTracer, self), out_reps, out_vals)
 
   def process_custom_vjp_call(self, prim: core.Primitive, fun: lu.WrappedFun,
-                              fwd: lu.WrappedFun, bwd: lu.WrappedFun,
-                              tracers,
+                              fwd: lu.WrappedFun, bwd: lu.WrappedFun, tracers,
                               out_trees: Callable[[], Sequence[PyTreeDef]],
                               symbolic_zeros: bool):
     if symbolic_zeros:
@@ -2309,8 +2295,8 @@ def _replication_rewrite_nomatch(
   return core.ClosedJaxpr(jaxpr_, consts), out_rep()
 
 @lu.transformation_with_aux2
-def _rewrite_subtrace(f: Callable, store: lu.Store,
-                      tag: core.TraceTag, mesh: Mesh, in_reps, *in_vals):
+def _rewrite_subtrace(f: Callable, store: lu.Store, tag: core.TraceTag,
+                      mesh: Mesh, in_reps, *in_vals):
   with core.take_current_trace() as parent_trace:
     assert len(in_reps) == len(in_vals), (len(in_reps), len(in_vals))
     t = RewriteTrace(parent_trace, tag, mesh)
@@ -2320,6 +2306,31 @@ def _rewrite_subtrace(f: Callable, store: lu.Store,
     out_vals, out_reps = unzip2(map(t.to_val_rep_pair, outs))
     store.store(out_reps)
     return out_vals
+
+@lu.transformation_with_aux2
+def _rewrite_jvp_subtrace(f: Callable, store: lu.Store, tag: core.TraceTag,
+                          mesh: Mesh, in_reps, *in_vals):
+  with core.take_current_trace() as parent_trace:
+    assert len(in_reps) == len(in_vals), (len(in_reps), len(in_vals))
+    t = RewriteTrace(parent_trace, tag, mesh)
+    in_tracers = [x if type(x) is cd.SymbolicZero else RewriteTracer(t, r, x)
+                  for r, x in zip(in_reps, in_vals)]
+    with core.set_current_trace(t):
+      out_tracers: list[RewriteTracer | cd.SymbolicZero] = f(*in_tracers)
+    out_vals, out_reps = unzip2(map(t.to_val_rep_pair, out_tracers))
+    out_primals, out_tangents = split_list(out_vals, [len(out_vals) // 2])
+    out_primal_reps, out_tangent_reps = split_list(out_reps, [len(out_vals) // 2])
+    out_reps = map(_merge_reps, out_primal_reps, out_tangent_reps, out_tangents)
+    out_tangents = map(_match_replication, out_tangent_reps, out_reps, out_tangents)
+    store.store(out_reps)
+    return out_primals + out_tangents
+
+def _merge_reps(primal_rep, tangent_rep, error_message_val):
+  if primal_rep - tangent_rep:
+    raise ValueError("custom_jvp primal output is more replicated than its "
+                     "corresponding tangent of type "
+                     f"{core.typeof(error_message_val).str_short()}")
+  return primal_rep
 
 def _rewrite_bwd(bwd: lu.WrappedFun,
                  mesh: Mesh, in_reps, reps_dst) -> lu.WrappedFun:
