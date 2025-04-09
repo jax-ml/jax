@@ -69,10 +69,6 @@ from jax._src.interpreters.ad import (
 )
 
 
-def backward_pass(jaxpr, reduce_axes, transform_stack,
-                  consts, primals_in, cotangents_in):
-  if reduce_axes:
-    raise NotImplementedError("reduce_axes on ad.backward_pass is deprecated")
-  del reduce_axes
+def backward_pass(jaxpr, transform_stack, consts, primals_in, cotangents_in):
   return backward_pass_internal(
       jaxpr, transform_stack, consts, primals_in, cotangents_in)

@@ -344,10 +344,13 @@ def disable_jit(disable: bool = True):
     yield
 
 
-def grad(fun: Callable, argnums: int | Sequence[int] = 0,
-         has_aux: bool = False, holomorphic: bool = False,
-         allow_int: bool = False,
-         reduce_axes: Sequence[AxisName] = ()) -> Callable:
+def grad(
+    fun: Callable,
+    argnums: int | Sequence[int] = 0,
+    has_aux: bool = False,
+    holomorphic: bool = False,
+    allow_int: bool = False,
+) -> Callable:
   """Creates a function that evaluates the gradient of ``fun``.
 
   Args:
@@ -384,9 +387,6 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
   >>> print(grad_tanh(0.2))
   0.961043
   """
-  if reduce_axes:
-    raise NotImplementedError("reduce_axes argument to grad is deprecated")
-  del reduce_axes
   value_and_grad_f = value_and_grad(fun, argnums, has_aux=has_aux,
                                     holomorphic=holomorphic,
                                     allow_int=allow_int)
@@ -410,10 +410,14 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
 
   return grad_f_aux if has_aux else grad_f
 
-def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
-                   has_aux: bool = False, holomorphic: bool = False,
-                   allow_int: bool = False, reduce_axes: Sequence[AxisName] = ()
-  ) -> Callable[..., tuple[Any, Any]]:
+
+def value_and_grad(
+    fun: Callable,
+    argnums: int | Sequence[int] = 0,
+    has_aux: bool = False,
+    holomorphic: bool = False,
+    allow_int: bool = False,
+) -> Callable[..., tuple[Any, Any]]:
   """Create a function that evaluates both ``fun`` and the gradient of ``fun``.
 
   Args:
@@ -441,9 +445,6 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
     shapes and types as the corresponding arguments. If ``has_aux`` is True
     then a tuple of ((value, auxiliary_data), gradient) is returned.
   """
-  if reduce_axes:
-    raise NotImplementedError("reduce_axes argument to grad is deprecated")
-  del reduce_axes
 
   docstr = ("Value and gradient of {fun} with respect to positional "
             "argument(s) {argnums}. Takes the same arguments as {fun} but "
@@ -484,6 +485,7 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
       return (ans, aux), g
 
   return value_and_grad_f
+
 
 def _check_scalar(x):
   msg = "Gradient only defined for scalar-output functions. Output {}.".format
@@ -1956,6 +1958,7 @@ def vjp(fun: Callable[..., T],
         reduce_axes: Sequence[AxisName] = ()) -> tuple[T, Callable]:
   ...
 
+
 @overload
 def vjp(fun: Callable[..., tuple[T, U]], *primals: Any,
         has_aux: Literal[True],
@@ -1963,8 +1966,8 @@ def vjp(fun: Callable[..., tuple[T, U]], *primals: Any,
   ...
 @api_boundary
 def vjp(
-    fun: Callable, *primals, has_aux: bool = False, reduce_axes=()
-  ) -> tuple[Any, Callable] | tuple[Any, Callable, Any]:
+    fun: Callable, *primals, has_aux: bool = False
+) -> tuple[Any, Callable] | tuple[Any, Callable, Any]:
   """Compute a (reverse-mode) vector-Jacobian product of ``fun``.
 
   :py:func:`grad` is implemented as a special case of :py:func:`vjp`.
@@ -2004,13 +2007,11 @@ def vjp(
   >>> print(ybar)
   -0.2524413
   """
-  if reduce_axes:
-    raise NotImplementedError("reduce_axes argument to vjp is deprecated")
-  del reduce_axes
   check_callable(fun)
   wrapped_fun = lu.wrap_init(
       fun, debug_info=debug_info("vjp", fun, primals, {}))
   return _vjp(wrapped_fun, *primals, has_aux=has_aux)
+
 
 def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
   """Variant of vjp() that takes an lu.WrappedFun."""
@@ -2110,7 +2111,7 @@ class RSpec:
 si_vjp = saved_input_vjp
 
 
-def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
+def linear_transpose(fun: Callable, *primals) -> Callable:
   """Transpose a function that is promised to be linear.
 
   For linear functions, this transformation is equivalent to :py:func:`vjp`, but
@@ -2146,9 +2147,6 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   >>> f_transpose(1.0)
   (Array(0.5, dtype=float32), Array(-0.5, dtype=float32))
   """
-  if reduce_axes:
-    raise NotImplementedError("reduce_axes argument to transpose is deprecated")
-  del reduce_axes
   primals_flat, in_tree = tree_flatten(primals)
   flat_fun, out_tree = flatten_fun_nokwargs(
       lu.wrap_init(fun,
