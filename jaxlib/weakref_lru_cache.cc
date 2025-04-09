@@ -34,8 +34,8 @@ limitations under the License.
 #include "absl/synchronization/notification.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
-#include "nanobind/stl/string.h"  // IWYU pragma: keep
-#include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "nanobind/stl/string.h"      // IWYU pragma: keep
+#include "nanobind/stl/vector.h"      // IWYU pragma: keep
 #include "xla/pjrt/lru_cache.h"
 #include "xla/tsl/platform/logging.h"
 
@@ -309,16 +309,7 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
     result.currsize = lru_list_.Size();
     return result;
   }
-  void Clear() {
-    total_queries_ = misses_ = 0;
-    std::vector<std::shared_ptr<Cache>> deferred_deletes;
-    deferred_deletes.reserve(entries_.size());
-    for (auto& entry : entries_) {
-      deferred_deletes.push_back(std::move(entry.second.cache));
-    }
-    entries_.clear();
-    deferred_deletes.clear();
-  }
+  void Clear();
 
   nb::callable cache_context_fn_;
   nb::callable fn_;
@@ -360,6 +351,17 @@ class WeakrefLRUCache : public std::enable_shared_from_this<WeakrefLRUCache> {
 
   static PyType_Slot slots_[];
 };
+
+void WeakrefLRUCache::Clear() {
+  total_queries_ = misses_ = 0;
+  std::vector<std::pair<WeakrefCacheKey, WeakrefCacheValue>> deferred_deletes;
+  deferred_deletes.reserve(entries_.size());
+  for (auto& entry : entries_) {
+    deferred_deletes.emplace_back(entry.first, std::move(entry.second));
+  }
+  entries_.clear();
+  deferred_deletes.clear();
+}
 
 /* static */ PyType_Slot WeakrefLRUCache::slots_[] = {
     {Py_tp_traverse, (void*)WeakrefLRUCache::tp_traverse},
