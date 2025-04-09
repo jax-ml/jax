@@ -1046,6 +1046,26 @@ class PallasCallTest(PallasTest):
     x = np.ones((8, 128), jnp.float32)
     np.testing.assert_array_equal(kernel(x), x + 1.0)
 
+  def test_run_scoped_in_cond(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
+        in_specs=[pl.BlockSpec(memory_space=plgpu.GPUMemorySpace.GMEM)],
+        out_specs=pl.BlockSpec(memory_space=plgpu.GPUMemorySpace.SMEM),
+    )
+    def kernel(x_ref_gmem, o_ref):
+      def scoped_kernel(barrier_ref):
+        plgpu.copy_gmem_to_smem(x_ref_gmem, o_ref, barrier_ref)
+        plgpu.barrier_wait(barrier_ref)
+
+      def branch():
+        pl.run_scoped(scoped_kernel, plgpu.Barrier(num_arrivals=1))
+
+      jax.lax.cond(x_ref_gmem[0] % 2 == 0, branch, branch)
+
+    x = jnp.full((256,), 1234, dtype=jnp.int32)
+    np.testing.assert_array_equal(kernel(x), x)
+
   def test_program_id(self):
     @functools.partial(
         self.pallas_call,
