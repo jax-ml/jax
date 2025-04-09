@@ -178,4 +178,8 @@ XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(), "xla_ffi_python_cpu_callback",
                          "HOST",
                          {kCpuTransposePlanCacheInstantiate, nullptr, nullptr,
                           kXlaFfiPythonCpuCallback});
+XLA_FFI_REGISTER_HANDLER(ffi::GetXlaFfiApi(),
+                         "xla_ffi_partitioned_python_cpu_callback", "HOST",
+                         {kCpuTransposePlanCacheInstantiate, nullptr, nullptr,
+                          kXlaFfiPythonCpuCallback});
 }  // namespace xla

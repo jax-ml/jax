@@ -1122,15 +1122,23 @@ def _prim_applier(prim, check_rep, params_tup, mesh, in_specs, out_specs, *args)
 
 eager_rules: dict[core.Primitive, Callable] = {}
 
+
 # TODO(mattjj): working around an apparent XLA or PjRt bug, remove eventually
-def _debug_callback_eager_rule(mesh, *args, callback: Callable[..., Any],
-                               effect: debugging.DebugEffect):
+def _debug_callback_eager_rule(
+    mesh,
+    *args,
+    callback: Callable[..., Any],
+    effect: debugging.DebugEffect,
+    partitioned: bool,
+):
   del effect
   with core.eval_context():
     all_blocks = zip(*map(list, args))
   for (idx, device), blocks in zip(np.ndenumerate(mesh.devices), all_blocks):
     callback(*blocks)
   return []
+
+
 eager_rules[debugging.debug_callback_p] = _debug_callback_eager_rule
 
 def _device_put_eager_rule(mesh, *xs, srcs, devices, copy_semantics):

@@ -25,6 +25,7 @@ from jax._src import ad_checkpoint
 from jax._src import debugging
 from jax._src import dispatch
 from jax._src import test_util as jtu
+from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 import numpy as np
 
@@ -1201,6 +1202,169 @@ class InspectShardingTest(jtu.JaxTestCase):
 
     with mesh:
       f(arr)
+
+
+def _get_output_set(output, num_lines):
+  """Return a set of strings where each string is num_lines."""
+  output = output().strip().split("\n")
+  return {
+      "\n".join(output[i : i + num_lines])
+      for i in range(0, len(output), num_lines)
+  }
+
+
+@jtu.thread_unsafe_test_class()  # printing isn't thread-safe
+class PartitionedDebugCallbackTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if (jtu.device_under_test() not in ("cpu", "gpu")):
+      raise unittest.SkipTest(
+          f"Test requires CPU or GPU devices. Got {jtu.device_under_test()}"
+      )
+    if jaxlib_extension_version < 329:
+      self.skipTest(
+          "Requires jaxlib_extension_version >= 329. Got"
+          f" {jaxlib_extension_version}."
+      )
+    if len(jax.devices()) < 2:
+      raise unittest.SkipTest("Test requires >= 2 devices.")
+
+  def tearDown(self):
+    super().tearDown()
+    dispatch.runtime_tokens.clear()
+
+  def test_partitioned_debug_callback(self):
+    def f_(x):
+      debug_print("hello: {x}", x=x, partitioned=True)
+
+    f = pjit.pjit(f_)
+    mesh = jtu.create_mesh((1, 1, 2,), ("x", "y", "z"))
+    s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x", "y", "z"))
+    arr = jax.device_put(np.arange(24).reshape(2, 3, 4), s)
+
+    with jtu.capture_stdout() as output:
+      with mesh:
+        f(arr)
+      jax.effects_barrier()
+
+    expected = {
+        _format_multiline("""
+            hello: [[[ 0  1]
+              [ 4  5]
+              [ 8  9]]
+
+             [[12 13]
+              [16 17]
+              [20 21]]]"""),
+        _format_multiline("""
+            hello: [[[ 2  3]
+              [ 6  7]
+              [10 11]]
+
+             [[14 15]
+              [18 19]
+              [22 23]]]"""),
+    }
+    self.assertEqual(_get_output_set(output, 7), expected)
+
+  def test_debug_print_batching(self):
+    @jax.vmap
+    def f_(x):
+      debug_print("hello: {}", x, partitioned=True)
+
+    f = pjit.pjit(f_)
+    mesh = jtu.create_mesh((1, 1, 2), ("x", "y", "z"))
+    s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x", "y", "z"))
+    arr = np.arange(24).reshape(2, 3, 4)
+    arr = jax.device_put(arr, s)
+
+    with jtu.capture_stdout() as output:
+      with mesh:
+        f(arr)
+      jax.effects_barrier()
+
+    expected = {
+        _format_multiline("""
+            hello: [[0 1]
+             [4 5]
+             [8 9]]"""),
+        _format_multiline("""
+            hello: [[ 2  3]
+             [ 6  7]
+             [10 11]]"""),
+        _format_multiline("""
+            hello: [[14 15]
+             [18 19]
+             [22 23]]"""),
+        _format_multiline("""
+            hello: [[12 13]
+             [16 17]
+             [20 21]]"""),
+    }
+
+    self.assertEqual(_get_output_set(output, 3), expected)
+
+  def test_debug_print_batching_with_diff_axes(self):
+    @functools.partial(jax.vmap, in_axes=(0, 1))
+    def f_(x, y):
+      debug_print("hello: {} {}", x, y, partitioned=True)
+
+    f = pjit.pjit(f_)
+    mesh = jtu.create_mesh((2,), ("x"))
+    s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x"))
+    x = np.arange(4).reshape(2, 2)
+    x = jax.device_put(x, s)
+    y = np.arange(4).reshape(2, 2) + 6
+    y = jax.device_put(y, s)
+
+    with jtu.capture_stdout() as output:
+      with mesh:
+        f(x, y)
+      jax.effects_barrier()
+
+    expected = {
+        "hello: [2 3] [9]",
+        "hello: [0 1] [6]",
+        "hello: [0 1] [8]",
+        "hello: [2 3] [7]",
+    }
+
+    self.assertEqual(_get_output_set(output, 1), expected)
+
+  def test_debug_print_with_nested_vmap(self):
+    @jax.vmap
+    @jax.vmap
+    def f_(x):
+      debug_print("hello: {}", x, partitioned=True)
+
+    f = pjit.pjit(f_)
+    mesh = jtu.create_mesh((1, 1, 2), ("x", "y", "z"))
+    s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("x", "y", "z"))
+    arr = np.arange(24).reshape(2, 3, 4)
+    arr = jax.device_put(arr, s)
+
+    with jtu.capture_stdout() as output:
+      with mesh:
+        f(arr)
+      jax.effects_barrier()
+
+    expected = {
+        "hello: [14 15]",
+        "hello: [12 13]",
+        "hello: [18 19]",
+        "hello: [16 17]",
+        "hello: [22 23]",
+        "hello: [20 21]",
+        "hello: [2 3]",
+        "hello: [0 1]",
+        "hello: [6 7]",
+        "hello: [10 11]",
+        "hello: [4 5]",
+        "hello: [8 9]",
+    }
+
+    self.assertEqual(_get_output_set(output, 1), expected)
 
 
 if not rich:

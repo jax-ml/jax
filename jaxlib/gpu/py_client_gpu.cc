@@ -220,5 +220,10 @@ XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(),
                          absl::AsciiStrToUpper(JAX_GPU_PLUGIN_NAME),
                          {kGpuTransposePlanCacheInstantiate, nullptr, nullptr,
                           kXlaFfiPythonGpuCallback});
+XLA_FFI_REGISTER_HANDLER(xla::ffi::GetXlaFfiApi(),
+                         "xla_ffi_partitioned_python_gpu_callback",
+                         absl::AsciiStrToUpper(JAX_GPU_PLUGIN_NAME),
+                         {kGpuTransposePlanCacheInstantiate, nullptr, nullptr,
+                          kXlaFfiPythonGpuCallback});
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

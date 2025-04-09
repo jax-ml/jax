@@ -78,8 +78,8 @@ map, unsafe_map = util.safe_map, map
 
 @debug_callback_p.def_impl
 def debug_callback_impl(*args, callback: Callable[..., Any],
-                        effect: DebugEffect):
-  del effect
+                        effect: DebugEffect, partitioned: bool):
+  del effect, partitioned
   try:
     cpu_device, *_ = jax.local_devices(backend="cpu")
   except RuntimeError as e:
@@ -99,8 +99,8 @@ def debug_callback_impl(*args, callback: Callable[..., Any],
 
 @debug_callback_p.def_effectful_abstract_eval
 def debug_callback_abstract_eval(*flat_avals, callback: Callable[..., Any],
-                                 effect: DebugEffect):
-  del flat_avals, callback
+                                 effect: DebugEffect, partitioned: bool):
+  del flat_avals, callback, partitioned
   return [], {effect}
 
 def debug_callback_batching_rule(args, dims, **params):
@@ -144,7 +144,7 @@ def _debug_callback_partial_auto(axis_context, *args, **params):
                         lambda: [])
   return shard_map(f, axis_context.mesh, in_specs=(), out_specs=[])()
 
-def debug_callback_lowering(ctx, *args, effect, callback, **params):
+def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params):
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.SPMDAxisContext):
     # We're a shard_map, which might be partial-manual or full-manual.
@@ -152,8 +152,14 @@ def debug_callback_lowering(ctx, *args, effect, callback, **params):
     if partial_auto:
       # If we have partial manual / partial auto sharding, we gather and
       # conditionally run the callback.
-      lower = partial(_debug_callback_partial_auto, axis_context,
-                      effect=effect, callback=callback, **params)
+      lower = partial(
+          _debug_callback_partial_auto,
+          axis_context,
+          effect=effect,
+          partitioned=partitioned,
+          callback=callback,
+          **params,
+      )
       return mlir.lower_fun(lower)(ctx, *args)
     elif set(axis_context.manual_axes) == set(axis_context.mesh.axis_names):
       # If we have fully manual sharding during lowering, that means the JAX
@@ -191,18 +197,23 @@ def debug_callback_lowering(ctx, *args, effect, callback, **params):
 
   def _callback(*flat_args):
     debug_callback_p.impl(
-        *flat_args, effect=effect, callback=callback, **params)
+        *flat_args,
+        effect=effect,
+        partitioned=partitioned,
+        callback=callback,
+        **params,
+    )
     return ()
   if effects.ordered_effects.contains(effect):
     token = ctx.tokens_in.get(effect)
     result, token, _ = cb.emit_python_callback(
         ctx, _callback, token, list(args), ctx.avals_in, ctx.avals_out,
-        has_side_effect=True)
+        has_side_effect=True, partitioned=partitioned)
     ctx.set_tokens_out(mlir.TokenSet({effect: token}))
   else:
     result, _, _ = cb.emit_python_callback(
         ctx, _callback, None, list(args), ctx.avals_in, ctx.avals_out,
-        has_side_effect=True, sharding=sharding)
+        has_side_effect=True, partitioned=partitioned, sharding=sharding)
   return result
 mlir.register_lowering(debug_callback_p, debug_callback_lowering,
                        platform="cpu")
@@ -244,14 +255,22 @@ pe.partial_eval_jaxpr_custom_rules[debug_callback_p] = (
 
 @state_discharge.register_discharge_rule(debug_callback_p)
 def _debug_callback_state_discharge_rule(
-    in_avals, out_avals, *args, effect, callback, **params
+    in_avals, out_avals, *args, effect, partitioned, callback, **params
 ):
   del in_avals, out_avals  # Unused.
-  out = debug_callback_p.bind(*args, effect=effect, callback=callback, **params)
+  out = debug_callback_p.bind(
+      *args, effect=effect, partitioned=partitioned, callback=callback, **params
+  )
   return args, out
 
-def debug_callback(callback: Callable[..., None], *args: Any,
-                   ordered: bool = False, **kwargs: Any) -> None:
+
+def debug_callback(
+    callback: Callable[..., None],
+    *args: Any,
+    ordered: bool = False,
+    partitioned: bool = False,
+    **kwargs: Any,
+) -> None:
   """Calls a stageable Python callback.
 
   For more explanation, see `External Callbacks`_.
@@ -274,6 +293,9 @@ def debug_callback(callback: Callable[..., None], *args: Any,
     ordered: A keyword only argument used to indicate whether or not the
       staged out computation will enforce ordering of this callback w.r.t.
       other ordered callbacks.
+    partitioned: If True, then print local shards only; this option avoids an
+      all-gather of the operands. If False, print with logical operands; this
+      option requires an all-gather of operands first.
     **kwargs: The keyword arguments to the callback.
 
   Returns:
@@ -312,7 +334,10 @@ def debug_callback(callback: Callable[..., None], *args: Any,
     return ()
 
   effect = ordered_debug_effect if ordered else debug_effect
-  debug_callback_p.bind(*dyn_args, callback=_flat_callback, effect=effect)
+  debug_callback_p.bind(
+      *dyn_args, callback=_flat_callback, effect=effect, partitioned=partitioned
+  )
+
 
 class _DebugPrintFormatChecker(string.Formatter):
 
@@ -338,7 +363,10 @@ def _format_print_callback(fmt: str, np_printoptions, *args, **kwargs):
   with np.printoptions(**np_printoptions):
     sys.stdout.write(fmt.format(*args, **kwargs) + "\n")
 
-def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
+
+def debug_print(
+    fmt: str, *args, ordered: bool = False, partitioned: bool = False, **kwargs
+) -> None:
   """Prints values and works in staged out JAX functions.
 
   This function does *not* work with f-strings because formatting is delayed.
@@ -367,6 +395,9 @@ def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
     ordered: A keyword only argument used to indicate whether or not the
       staged out computation will enforce ordering of this ``jax.debug.print``
       w.r.t. other ordered ``jax.debug.print`` calls.
+    partitioned: If True, then print local shards only; this option avoids an
+      all-gather of the operands. If False, print with logical operands; this
+      option requires an all-gather of operands first.
     **kwargs: Additional keyword arguments to be formatted, as if passed to
       ``fmt.format``.
   """
@@ -374,7 +405,7 @@ def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
   formatter.format(fmt, *args, **kwargs)
 
   debug_callback(partial(_format_print_callback, fmt, np.get_printoptions()),
-                 *args, **kwargs, ordered=ordered)
+                 *args, **kwargs, ordered=ordered, partitioned=partitioned)
 
 
 # Sharding visualization
