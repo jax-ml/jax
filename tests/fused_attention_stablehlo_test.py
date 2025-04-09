@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
+os.environ["XLA_FLAGS"] = "--xla_dump_to=./hlo --xla_dump_hlo_as_text"
 
 from functools import partial
 from absl.testing import absltest
@@ -736,6 +738,56 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-2, atol=1e-2)
       self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-2, atol=1e-2)
       self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-2, atol=1e-2)
+
+  @jtu.run_on_devices("cuda")
+  def test_sdpa_paged_attention(self):
+    try:
+      cudnn_version = check_cudnn_version()
+    except RuntimeError as e:
+      self.skipTest(str(e))
+      return
+    if cudnn_version < 90500:
+      self.skipTest("Requires >= cuDNN 9.5.0")
+    if not jtu.is_cuda_compute_capability_equal("9.0"):
+      self.skipTest("Requires Hopper arch")
+
+    B, T, N, H = 2, 1024, 2, 128
+    keys = jax.random.split(jax.random.key(0), 5)
+    block_size = 64
+    blocks_per_batch = T // block_size
+    num_blocks = B * blocks_per_batch
+
+    q = jax.random.normal(keys[0], (B, T, N, H), dtype=jnp.bfloat16)
+    k_container = jax.random.normal(keys[1], (num_blocks, N, block_size, H), dtype=jnp.bfloat16)
+    v_container = jax.random.normal(keys[2], (num_blocks, N, block_size, H), dtype=jnp.bfloat16)
+    page_table_k = jax.random.randint(keys[3], (B, 1, blocks_per_batch, 1), 0, num_blocks-1, dtype=jnp.int32)
+    page_table_v = jax.random.randint(keys[4], (B, 1, blocks_per_batch, 1), 0, num_blocks-1, dtype=jnp.int32)
+    # full page table
+    q_seqlen = jnp.full((B,), T, jnp.int32)
+    kv_seqlen = jnp.full((B,), T, jnp.int32)
+
+    def unpaged(paged, page_table):
+      output = jnp.zeros((B, T, N, H), dtype=jnp.bfloat16)
+      for b in range(B):
+        for block in range(blocks_per_batch):
+          block_idx = page_table[b, 0, block, 0]
+          output = output.at[b, block*block_size:(block+1)*block_size, :, :].set(paged[block_idx,:,:,:].transpose(1,0,2))
+      return output
+
+    k = unpaged(k_container, page_table_k)
+    v = unpaged(v_container, page_table_v)
+
+    sdpa_infer = jax.jit(partial(
+        dot_product_attention, scale=1.0, mask_type=MaskType.NO_MASK, dropout_rate=0)
+    )
+    sdpa_infer_ref = jax.jit(partial(
+        sdpa_ref, scale=1.0, mask_type=MaskType.NO_MASK, dropout_rate=0)
+    )
+
+    out = sdpa_infer(q, k_container, v_container, q_seqlen=q_seqlen,
+      kv_seqlen=kv_seqlen, page_table_k=page_table_k, page_table_v=page_table_v)
+    out_ref = sdpa_infer_ref(q, k, v)
+    self.assertArraysAllClose(out_ref, out_ref, rtol=1e-2, atol=1e-2)
 
   @jtu.run_on_devices("cuda")
   def test_layouts(self):
