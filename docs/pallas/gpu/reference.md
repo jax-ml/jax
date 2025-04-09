@@ -27,7 +27,7 @@ but multiple warps can be assigned to the same SM subdivision. At each clock cyc
 warp scheduler from each subdivision tries to select one of its resident warps to execute
 the next instruction.
 
-![A diagram of one SM](../../_static/pallas/gpu/nvidia_sm.svg)
+<center><img alt="A diagram of one NVIDIA SM" src="../../_images/nvidia_sm.svg" style="width:60%; min-width: 400px;"></center>
 
 Going further, recent CUDA versions also outline the concept of a _warpgroup_, which are
 4 consecutive warps. Knowing how the hardware looks like, we can see where this is comming
