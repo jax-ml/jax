@@ -19,6 +19,7 @@
 from absl.testing import parameterized
 import jax
 from jax._src import config
+from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
@@ -211,6 +212,32 @@ class LayoutInferenceTest(parameterized.TestCase):
         add.attributes["in_layouts"], [layout_attr, layout_attr]
     )
     self.assertSequenceEqual(add.attributes["out_layouts"], [layout_attr])
+
+  def test_infer_layout_cast_layout(self):
+    # TODO(dasenov): Remove this after the minimal jaxlib version is 0.5.4.
+    if jaxlib.version < (0, 5, 4):
+      self.skipTest("Test requires jaxlib version >= 0.5.4")
+    add = cast = None
+
+    shape = (128, 64)
+    splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape=shape))
+    wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
+
+    def body(x):
+      nonlocal add, cast
+      add = arith.AddFOp(x, x)
+      cast = mgpu.dialect.LayoutCastOp(add.result, wgmma_layout)
+
+    with ir.InsertionPoint(self.module.body):
+      elt_type = ir.BF16Type.get()
+      ty = ir.VectorType.get(shape, elt_type)
+      func_op = func.FuncOp.from_py_func(ty)(body).func_op
+
+    func_op.attributes["in_layouts"] = ir.ArrayAttr.get([splat_layout])
+    mgpu.infer_layout(self.module)
+    self.assertSequenceEqual(add.attributes["out_layouts"], [splat_layout])
+    self.assertSequenceEqual(cast.attributes["in_layouts"], [wgmma_layout])
+    self.assertSequenceEqual(cast.attributes["out_layouts"], [wgmma_layout])
 
   def test_infer_layout_traverses_ops_correctly(self):
     shape = (16, 8)

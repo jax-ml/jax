@@ -1168,6 +1168,14 @@ def _layout_cast_lowering(ctx: lowering.LoweringRuleContext, x, *, new_layout):
   return x.to_layout(new_layout.to_mgpu())
 
 
+@lowering.register_lowering_rule(layout_cast_p, mgpu.LoweringSemantics.Warpgroup)
+def _layout_cast_lowering_wg(
+    ctx: lowering.LoweringRuleContext, x, *, new_layout
+):
+  del ctx  # Unused.
+  return mgpu.dialect.layout_cast(x, mgpu.to_layout_attr(new_layout.to_mgpu()))
+
+
 def layout_cast(x: Any, new_layout: Layout | ParameterizedLayout):
   """Casts the layout of the given array."""
   return layout_cast_p.bind(x, new_layout=new_layout)

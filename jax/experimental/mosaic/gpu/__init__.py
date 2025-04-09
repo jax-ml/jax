@@ -46,6 +46,10 @@ from .layout_inference import (
     infer_layout as infer_layout,
 )
 
+from .layouts import (
+    to_layout_attr as to_layout_attr,
+)
+
 from .transform_inference import (
     infer_transforms as infer_transforms,
 )

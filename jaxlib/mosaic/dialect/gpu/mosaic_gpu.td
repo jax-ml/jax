@@ -340,6 +340,43 @@ def MosaicGPU_WGMMALayout :
   let cppNamespace = "::mosaic_gpu";
 }
 
+def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
+    [InferTypeOpInterface]> {
+  let summary = "Casts a vector to a new layout.";
+  let description = [{Casts a vector value to a new strided or tiled layout.}];
+  let arguments = (ins
+    AnyVectorOfAnyRank:$x,
+
+    // Attributes
+    AnyAttrOf<[
+      MosaicGPU_WGStridedFragLayout,
+      MosaicGPU_TiledLayout
+    ]>:$new_layout
+  );
+
+  let results = (outs AnyVectorOfAnyRank);
+
+  let assemblyFormat = "`x` `(` $x `:` type($x) `)` attr-dict";
+
+  let extraClassDeclaration = [{
+    static llvm::LogicalResult inferReturnTypes(
+        mlir::MLIRContext *,
+        std::optional<mlir::Location> location,
+        mlir::ValueRange operands,
+        mlir::DictionaryAttr attributes,
+        mlir::OpaqueProperties properties,
+        mlir::RegionRange regions,
+        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
+      if (operands.empty()) {
+        return ::mlir::emitOptionalError(
+          location, "expected non-empty operands");
+      }
+      inferredReturnTypes.assign({operands[0].getType()});
+      return ::mlir::success();
+    }
+  }];
+}
+
 
 def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", []> {
   let summary = "Constructs an SMEM MemRef with the requested type that begins at the specified SMEM offset address.";

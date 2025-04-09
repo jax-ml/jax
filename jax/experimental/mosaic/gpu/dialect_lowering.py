@@ -22,6 +22,7 @@ import math
 import operator
 from typing import Any, Sequence, Type, cast
 
+from jax._src import lib as jaxlib
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
@@ -467,6 +468,15 @@ def _vector_reduction_op_lowering_rule(
     case _:
       raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
   return [_fragmented_array_to_ir(result, op.result.type)]
+
+
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.5.4.
+if jaxlib.version >= (0, 5, 4):
+  @_register_lowering(mgpu.LayoutCastOp)
+  def _mgpu_layout_cast_op_lowering_rule(
+      _: LoweringContext, layout_cast_op: mgpu.LayoutCastOp
+  ) -> Sequence[ir.Value]:
+    return [layout_cast_op.x]
 
 
 def swizzle_and_transforms_from_transforms_attr(
