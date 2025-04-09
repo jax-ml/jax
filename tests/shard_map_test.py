@@ -2813,6 +2813,14 @@ class ShardMapTest(jtu.JaxTestCase):
     fun_shard_map = shard_map(fun, mesh=mesh, in_specs=in_specs, out_specs=out_specs)
     res = fun_shard_map(variables, xs)  # don't crash
 
+  def test_rep_none_canonicalization_again(self):
+    # https://github.com/jax-ml/jax/issues/24762
+    mesh = jtu.create_mesh((2,), ('i',))
+    def f(x):
+      return jnp.insert(x, 0, 0)[None]
+    f = shard_map(f, mesh, P('i'), P('i'))
+    f(jnp.zeros(100))  # don't crash
+
 
 class FunSpec(NamedTuple):
   name: str
