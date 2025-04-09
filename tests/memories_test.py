@@ -1635,6 +1635,20 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     # 2 for `f` and `2` for `mul` (compute type changes for `mul`)
     self.assertEqual(count(), 4)
 
+  def test_compute_on_aot(self):
+    operand = np.float32(0.)
+
+    @jax.jit
+    @compute_on("device_host")
+    def f_host(x):
+      # Adds 1 on CPU and adds 2 on other platforms
+      return jax.lax.platform_dependent(x,
+                                        cpu=lambda x: x + 1.,
+                                        default=lambda x: x + 2.)
+
+    self.assertAllClose(1., f_host(operand))
+    self.assertAllClose(1., f_host.lower(operand).compile()(operand))
+
   def test_offload_take_host(self):
     # TODO(apaszke): Remove after 12 weeks have passed.
     if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
