@@ -1658,6 +1658,7 @@ def _generic_lu_pivots_to_permutation(swaps, permutation_size):
   if m == 0 or k == 0:
     return permutation
   upper = np.array(k, np.int32) if is_constant_dim(k) else k
+  permutation, swaps = core.standard_insert_pbroadcast(permutation, swaps)
   result, _ = lax.fori_loop(np.array(0, np.int32), upper, _lu_pivots_body_fn,
                             (permutation, swaps))
   return result
