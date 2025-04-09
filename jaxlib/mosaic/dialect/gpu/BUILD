@@ -39,66 +39,36 @@ td_library(
 
 gentbl_cc_library(
     name = "mosaic_gpu_inc_gen",
-    tbl_outs = [
-        (
-            [
-                "-gen-dialect-decls",
-                "-dialect=mosaic_gpu",
-            ],
-            "mosaic_gpu_dialect.h.inc",
-        ),
-        (
-            [
-                "-gen-dialect-defs",
-                "-dialect=mosaic_gpu",
-            ],
-            "mosaic_gpu_dialect.cc.inc",
-        ),
-        (
-            ["-gen-op-decls"],
-            "mosaic_gpu_ops.h.inc",
-        ),
-        (
-            ["-gen-op-defs"],
-            "mosaic_gpu_ops.cc.inc",
-        ),
-        (
-            [
-                "-gen-typedef-decls",
-                "--typedefs-dialect=mosaic_gpu",
-            ],
-            "mosaic_gpu_types.h.inc",
-        ),
-        (
-            [
-                "-gen-typedef-defs",
-                "--typedefs-dialect=mosaic_gpu",
-            ],
-            "mosaic_gpu_types.cc.inc",
-        ),
-        (
-            ["-gen-enum-decls"],
-            "mosaic_gpu_enums.h.inc",
-        ),
-        (
-            ["-gen-enum-defs"],
-            "mosaic_gpu_enums.cc.inc",
-        ),
-        (
-            [
-                "-gen-attrdef-decls",
-                "--attrdefs-dialect=mosaic_gpu",
-            ],
-            "mosaic_gpu_attrdefs.h.inc",
-        ),
-        (
-            [
-                "-gen-attrdef-defs",
-                "--attrdefs-dialect=mosaic_gpu",
-            ],
-            "mosaic_gpu_attrdefs.cc.inc",
-        ),
-    ],
+    tbl_outs = {
+        "mosaic_gpu_dialect.h.inc": [
+            "-gen-dialect-decls",
+            "-dialect=mosaic_gpu",
+        ],
+        "mosaic_gpu_dialect.cc.inc": [
+            "-gen-dialect-defs",
+            "-dialect=mosaic_gpu",
+        ],
+        "mosaic_gpu_ops.h.inc": ["-gen-op-decls"],
+        "mosaic_gpu_ops.cc.inc": ["-gen-op-defs"],
+        "mosaic_gpu_types.h.inc": [
+            "-gen-typedef-decls",
+            "--typedefs-dialect=mosaic_gpu",
+        ],
+        "mosaic_gpu_types.cc.inc": [
+            "-gen-typedef-defs",
+            "--typedefs-dialect=mosaic_gpu",
+        ],
+        "mosaic_gpu_enums.h.inc": ["-gen-enum-decls"],
+        "mosaic_gpu_enums.cc.inc": ["-gen-enum-defs"],
+        "mosaic_gpu_attrdefs.h.inc": [
+            "-gen-attrdef-decls",
+            "--attrdefs-dialect=mosaic_gpu",
+        ],
+        "mosaic_gpu_attrdefs.cc.inc": [
+            "-gen-attrdef-defs",
+            "--attrdefs-dialect=mosaic_gpu",
+        ],
+    },
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "mosaic_gpu.td",
     deps = [
