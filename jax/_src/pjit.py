@@ -308,12 +308,6 @@ def _get_fastpath_data(
   return fastpath_data
 
 
-def _cpp_pjit_evict_fn(self):
-  self._clear_cache()
-  _create_pjit_jaxpr.evict_function(self._fun)  # pytype: disable=attribute-error
-  _infer_params_cached.cache_clear()
-
-
 # The entries are doubled here from the default 4096 because _pjit_call_impl
 # also has a cpp dispatch path and that would double the number of entries in
 # the global shared cache.
@@ -374,8 +368,49 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 
   cpp_pjitted_f = wraps(fun)(cpp_pjit_f)
   cpp_pjitted_f._fun = fun
-  type(cpp_pjitted_f).clear_cache = _cpp_pjit_evict_fn
+  cpp_pjitted_f._jit_info = jit_info
+  # TODO(necula): move these to top-level; we don't need to do this for
+  # every jit
+  cpp_jitted_f_class = type(cpp_pjitted_f)
+  # TODO(necula): make clear_cache private, no need to have it part of the API
+  cpp_jitted_f_class.clear_cache = jit_evict_fn
+  cpp_jitted_f_class.lower = jit_lower
+  cpp_jitted_f_class.trace = jit_trace
+  cpp_jitted_f_class.eval_shape = jit_eval_shape
+  # We return directly the function produced by _xla.pjit, because we do not
+  # want to have Python in the dispatch path.
   return cpp_pjitted_f
+
+@api_boundary
+def jit_trace(jit_func, *args, **kwargs) -> stages.Traced:
+  p, args_flat = _infer_params(jit_func._fun, jit_func._jit_info, args, kwargs)
+  donate_argnums = tuple(i for i, d in enumerate(p.donated_invars) if d)
+  args_info = stages.make_args_info(p.in_tree, p.in_avals, donate_argnums)
+  lower_callable = partial(_resolve_and_lower, args_flat, **p.params,
+                           pgle_profiler=None)
+  return stages.Traced(
+      p.params['jaxpr'], args_info, p.params["name"], p.out_tree,
+      lower_callable, args_flat, p.arg_names, p.num_consts)
+
+
+@api_boundary
+def jit_lower(jit_func, *args, **kwargs):
+  return jit_trace(jit_func, *args, **kwargs).lower()
+
+@api_boundary
+def jit_eval_shape(jit_func, *args, **kwargs):
+  p, _ = _infer_params(jit_func._fun, jit_func._jit_info, args, kwargs)
+  out_s = [None if isinstance(s, UnspecifiedValue) else s for s in p.params['out_shardings']]
+  # TODO(yashkatariya): Add `Layout` to SDS.
+  out = [api.ShapeDtypeStruct(x.shape, x.dtype, sharding=s,
+                              weak_type=x.weak_type)
+         for x, s in zip(p.params['jaxpr'].out_avals, out_s)]
+  return tree_unflatten(p.out_tree, out)
+
+def jit_evict_fn(self):
+  self._clear_cache()
+  _create_pjit_jaxpr.evict_function(self._fun)  # pytype: disable=attribute-error
+  _infer_params_cached.cache_clear()
 
 
 def _split_layout_and_sharding(entries):
@@ -484,41 +519,6 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
         use_resource_env=use_resource_env,
         compiler_options_kvs=compiler_options_kvs)
 
-
-def _make_jit_wrapper(fun: Callable, jit_info: PjitInfo):
-
-  @api_boundary
-  def lower(*args, **kwargs):
-    return trace(*args, **kwargs).lower()
-
-  @api_boundary
-  def eval_shape(*args, **kwargs):
-    p, _ = _infer_params(fun, jit_info, args, kwargs)
-    out_s = [None if isinstance(s, UnspecifiedValue) else s for s in p.params['out_shardings']]
-    # TODO(yashkatariya): Add `Layout` to SDS.
-    out = [api.ShapeDtypeStruct(x.shape, x.dtype, sharding=s,
-                                weak_type=x.weak_type)
-           for x, s in zip(p.params['jaxpr'].out_avals, out_s)]
-    return tree_unflatten(p.out_tree, out)
-
-  @api_boundary
-  def trace(*args, **kwargs) -> stages.Traced:
-    p, args_flat = _infer_params(fun, jit_info, args, kwargs)
-    donate_argnums = tuple(i for i, d in enumerate(p.donated_invars) if d)
-    args_info = stages.make_args_info(p.in_tree, p.in_avals, donate_argnums)
-    lower_callable = partial(_resolve_and_lower, args_flat, **p.params,
-                             pgle_profiler=None)
-    return stages.Traced(
-        p.params['jaxpr'], args_info, p.params["name"], p.out_tree,
-        lower_callable, args_flat, p.arg_names, p.num_consts)
-
-  wrapped = _cpp_pjit(fun, jit_info)
-  wrapped.lower = lower
-  wrapped.eval_shape = eval_shape
-  wrapped.trace = trace
-  return wrapped
-
-
 def make_jit(fun: Callable, in_shardings: Any, out_shardings: Any,
              donate_argnums: int | Sequence[int] | None,
              donate_argnames: str | Iterable[str] | None,
@@ -533,7 +533,7 @@ def make_jit(fun: Callable, in_shardings: Any, out_shardings: Any,
         fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
         static_argnums, static_argnames, device, backend, abstracted_axes,
         keep_unused, inline, compiler_options, use_resource_env)
-  return _make_jit_wrapper(fun, jit_info)
+  return _cpp_pjit(fun, jit_info)
 
 
 class PjitParams(NamedTuple):

@@ -1501,8 +1501,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     s = NamedSharding(mesh, P(), memory_kind='pinned_host')
     s_dev = s.with_memory_kind('device')
 
-    @compute_on('device_host')
     @functools.partial(jax.jit, out_shardings=(s, s_dev), donate_argnums=(0, 1))
+    @compute_on('device_host')
     def f(inp1, inp2):
       return inp1 * 2, inp2 * 2
 

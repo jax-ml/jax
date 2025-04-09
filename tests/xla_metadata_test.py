@@ -288,10 +288,10 @@ class XlaMetadataTest(jtu.JaxTestCase):
       with set_xla_metadata(a="b"):
         return (x + y, y * 2.0)
 
-    f_vmap_jaxpr = jax.make_jaxpr(jax.vmap(f2, in_axes=(0, None)))
+    f2_vmap = jax.vmap(f2, in_axes=(0, None))
     self.assertIn(
         'mhlo.frontend_attributes = {a = "b"}',
-        f_vmap_jaxpr.lower(jnp.arange(5.0), 1.0).as_text(),
+        jax.jit(f2_vmap).lower(jnp.arange(5.0), 1.0).as_text(),
     )
 
   def test_multiple_instructions(self):
