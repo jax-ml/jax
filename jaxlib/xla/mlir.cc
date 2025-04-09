@@ -137,29 +137,6 @@ absl::StatusOr<nb::bytes> PyMhloToStablehlo(absl::string_view mlir_module) {
   return nb::bytes(bytecode.data(), bytecode.size());
 }
 
-absl::StatusOr<nb::bytes> PyStablehloToMhlo(const nb::bytes& mlir_module) {
-  mlir::MLIRContext context;
-  if (VLOG_IS_ON(3)) context.disableMultithreading();
-  // See PyMhloToStablehlo for an explanation of why we're allowing unregistered
-  // dialects here.
-  context.allowUnregisteredDialects(true);
-  TF_ASSIGN_OR_RETURN(
-      mlir::OwningOpRef<mlir::ModuleOp> module,
-      ParseMlirModuleString(
-          absl::string_view(mlir_module.c_str(), mlir_module.size()), context));
-  mlir::PassManager pm(&context);
-  if (VLOG_IS_ON(3)) EnablePrintBeforeAndAfter(pm);
-  pm.addPass(mlir::mhlo::createStablehloLegalizeToHloPass());
-  if (!mlir::succeeded(pm.run(*module))) {
-    return tsl::errors::InvalidArgument("StableHLO => MHLO failed");
-  }
-
-  // Use bytecode, passing unregistered dialects with properties causes issues
-  // when using textual assembly.
-  TF_ASSIGN_OR_RETURN(std::string bytecode, SerializeUsingBytecode(*module));
-  return nb::bytes(bytecode.data(), bytecode.size());
-}
-
 absl::StatusOr<nb::bytes> PySerializePortableArtifact(
     absl::string_view mlir_module, absl::string_view target) {
   mlir::MLIRContext context;
@@ -219,9 +196,6 @@ void BuildMlirSubmodule(nb::module_& m) {
       nb::arg("mlir_module"));
   mlir_module.def("mhlo_to_stablehlo",
                   xla::ValueOrThrowWrapper(PyMhloToStablehlo),
-                  nb::arg("mlir_module"));
-  mlir_module.def("stablehlo_to_mhlo",
-                  xla::ValueOrThrowWrapper(PyStablehloToMhlo),
                   nb::arg("mlir_module"));
   mlir_module.def(
       "serialize_portable_artifact",
