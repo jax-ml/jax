@@ -17,6 +17,9 @@ race:mi_block_set_nextx
 # https://github.com/python/cpython/issues/128130
 race_top:run_eval_code_obj
 
+# https://github.com/python/cpython/issues/132214
+race_top:update_one_slot
+
 # Races because the LAPACK and BLAS in our scipy isn't TSAN instrumented.
 race:heevd_ffi
 race:gesdd_ffi
