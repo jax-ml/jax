@@ -58,6 +58,7 @@ from jax._src import mesh as mesh_lib
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 from jax._src.interpreters import mlir
 from jax._src.lib import jaxlib_extension_version
+from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
@@ -437,6 +438,12 @@ def pjrt_c_api_version_at_least(major_version: int, minor_version: int):
     return True
   return pjrt_c_api_versions >= (major_version, minor_version)
 
+def stablehlo_version_at_least(required_version: str):
+  plugin_version = xla_bridge.backend_stablehlo_version()
+  if plugin_version is None:
+    return True
+  return hlo.get_smaller_version(plugin_version, required_version) == plugin_version
+
 def get_tpu_version() -> int:
   if device_under_test() != "tpu":
     raise ValueError("Device is not TPU")
@@ -604,6 +611,20 @@ def skip_under_pytest(reason: str):
   reason = "Running under pytest: " + reason
   def skip(test_method):
     return unittest.skipIf(is_running_under_pytest(), reason)(test_method)
+  return skip
+
+
+def skip_if_stablehlo_version_less_than(required_version):
+  def skip(test_method):
+    @functools.wraps(test_method)
+    def test_method_wrapper(self, *args, **kwargs):
+      if not stablehlo_version_at_least(required_version):
+        plugin_version = xla_bridge.backend_stablehlo_version()
+        raise unittest.SkipTest(
+          f"Skipping since test requires StableHLO v{required_version}, and plugin"
+          f" version is v{plugin_version}.")
+      return test_method(self, *args, **kwargs)
+    return test_method_wrapper
   return skip
 
 

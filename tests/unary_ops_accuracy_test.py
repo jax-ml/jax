@@ -171,6 +171,7 @@ def generate_test_cases(op_names):
 
 
 @unittest.skipIf(not jtu.is_device_tpu(), "Skipping test on non TPU devices.")
+@jtu.skip_if_stablehlo_version_less_than("1.10.0")
 class UnaryOpsAccuracyTest(jtu.JaxTestCase):
 
   def test_result_accuracy_mode_attr(self):
