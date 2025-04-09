@@ -191,10 +191,9 @@ class TensorCoreMesh:
 def create_tensorcore_mesh(
     axis_name: str, devices: Sequence[jax.Device] | None = None
 ) -> TensorCoreMesh:
-  # TODO(b/355036384): emit a better error if we don't have tensorcores.
   if devices is None:
     devices = jax.devices()
-  num_cores = devices[0].num_cores
+  num_cores = getattr(devices[0], 'num_cores', 1)
   return TensorCoreMesh(
       np.array([TensorCore(i) for i in range(num_cores)]),
       [axis_name],
