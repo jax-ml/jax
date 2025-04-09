@@ -50,7 +50,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
-from jax._src.util import safe_zip, NumpyComplexWarning, tuple_replace
+from jax._src.util import safe_zip, NumpyComplexWarning, tuple_update
 
 config.parse_flags_with_absl()
 
@@ -6038,7 +6038,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       dict(a_shape=a_shape, i_shape=i_shape, v_shape=v_shape, axis=axis)
       for a_shape in nonempty_array_shapes
       for axis in list(range(-len(a_shape), len(a_shape)))
-      for i_shape in [tuple_replace(a_shape, axis, J) for J in range(a_shape[axis] + 1)]
+      for i_shape in [
+        tuple_update(a_shape, axis if axis >= 0 else axis + len(a_shape), J)
+        for J in range(a_shape[axis] + 1)
+      ]
       for v_shape in [(), (1,), i_shape]
     ] + [
       dict(a_shape=a_shape, i_shape=i_shape, v_shape=v_shape, axis=None)
