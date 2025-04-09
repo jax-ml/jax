@@ -32,6 +32,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
@@ -131,56 +132,49 @@ std::vector<nb_class_ptr<PyDevice>> PyLoadedExecutable::AddressableDevices()
 
 namespace {
 
-// Traits classes of common methods for std::vector<PyArray>.
-template <typename ShardedBufferT>
-struct ShardedBufferAdapter;
-
-template <>
-struct ShardedBufferAdapter<ExecuteShardedArg> {
-  static int num_devices(const ExecuteShardedArg& arg) {
-    if (std::holds_alternative<PyArray>(arg)) {
-      return std::get<PyArray>(arg).num_addressable_shards();
-    } else {
-      return std::get<std::vector<PyArray>>(arg).size();
-    }
+static int GetNumDevices(const ExecuteShardedArg& arg) {
+  if (std::holds_alternative<PyArray>(arg)) {
+    return std::get<PyArray>(arg).num_addressable_shards();
+  } else {
+    return std::get<std::vector<PyArray>>(arg).size();
   }
-  static tsl::RCReference<ifrt::Array> GetIfRtArray(
-      const ExecuteShardedArg& arg) {
-    if (std::holds_alternative<PyArray>(arg)) {
-      return tsl::FormRef(std::get<PyArray>(arg).ifrt_array());
-    }
-    auto& arg_vector = std::get<std::vector<PyArray>>(arg);
-
-    // TODO(hyeontaek): This on-demand Array creation is not efficient and has
-    // insufficient information about the shape (a dummy shape is used). This
-    // should be removed if possible and only be used in the context where the
-    // shape information is unused.
-    std::vector<tsl::RCReference<ifrt::Array>> ifrt_arrays;
-    ifrt_arrays.reserve(arg_vector.size());
-    absl::InlinedVector<ifrt::Device*, 1> devices;
-    devices.reserve(arg_vector.size());
-    for (auto& arr : arg_vector) {
-      CHECK_EQ(arr.ifrt_array()->sharding().devices()->size(), 1)
-          << arr.ifrt_array()->sharding().DebugString();
-      ifrt_arrays.push_back(tsl::FormRef(arr.ifrt_array()));
-      devices.push_back(
-          arr.ifrt_array()->sharding().devices()->devices().front());
-    }
-    CHECK(!ifrt_arrays.empty());
-    // Use a dummy shape.
-    // TODO(hyeontaek): Find a way to compute a correct shape.
-    // TODO(yashkatariya): Plumb sharding or memory_kind here.
-    ifrt::Client* client = ifrt_arrays.front()->client();
-    auto ifrt_array = client->AssembleArrayFromSingleDeviceArrays(
-        ifrt_arrays.front()->shape(),
-        ifrt::OpaqueSharding::Create(client->MakeDeviceList(devices),
-                                     ifrt::MemoryKind()),
-        absl::MakeSpan(ifrt_arrays), ifrt::ArrayCopySemantics::kReuseInput,
-        ifrt::SingleDeviceShardSemantics::kAddressableShards);
-    TF_CHECK_OK(ifrt_array.status());
-    return *ifrt_array;
+}
+static tsl::RCReference<ifrt::Array> GetIfRtArray(
+    const ExecuteShardedArg& arg) {
+  if (std::holds_alternative<PyArray>(arg)) {
+    return tsl::FormRef(std::get<PyArray>(arg).ifrt_array());
   }
-};
+  auto& arg_vector = std::get<std::vector<PyArray>>(arg);
+
+  // TODO(hyeontaek): This on-demand Array creation is not efficient and has
+  // insufficient information about the shape (a dummy shape is used). This
+  // should be removed if possible and only be used in the context where the
+  // shape information is unused.
+  std::vector<tsl::RCReference<ifrt::Array>> ifrt_arrays;
+  ifrt_arrays.reserve(arg_vector.size());
+  absl::InlinedVector<ifrt::Device*, 1> devices;
+  devices.reserve(arg_vector.size());
+  for (auto& arr : arg_vector) {
+    CHECK_EQ(arr.ifrt_array()->sharding().devices()->size(), 1)
+        << arr.ifrt_array()->sharding().DebugString();
+    ifrt_arrays.push_back(tsl::FormRef(arr.ifrt_array()));
+    devices.push_back(
+        arr.ifrt_array()->sharding().devices()->devices().front());
+  }
+  CHECK(!ifrt_arrays.empty());
+  // Use a dummy shape.
+  // TODO(hyeontaek): Find a way to compute a correct shape.
+  // TODO(yashkatariya): Plumb sharding or memory_kind here.
+  ifrt::Client* client = ifrt_arrays.front()->client();
+  auto ifrt_array = client->AssembleArrayFromSingleDeviceArrays(
+      ifrt_arrays.front()->shape(),
+      ifrt::OpaqueSharding::Create(client->MakeDeviceList(devices),
+                                   ifrt::MemoryKind()),
+      absl::MakeSpan(ifrt_arrays), ifrt::ArrayCopySemantics::kReuseInput,
+      ifrt::SingleDeviceShardSemantics::kAddressableShards);
+  TF_CHECK_OK(ifrt_array.status());
+  return *ifrt_array;
+}
 
 void PopulateExecuteShardedResults(
     const nb_class_ptr<PyClient>& client,
@@ -206,10 +200,10 @@ void PopulateExecuteShardedResults(
   }
 }
 
-template <typename ArgT, typename ArgAdapter = ShardedBufferAdapter<ArgT>>
 absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
     const ifrt::ExecuteOptions& options, const nb_class_ptr<PyClient>& client,
-    ifrt::LoadedExecutable* ifrt_loaded_executable, absl::Span<const ArgT> args,
+    ifrt::LoadedExecutable* ifrt_loaded_executable,
+    absl::Span<const ExecuteShardedArg> args,
     std::optional<std::vector<PjRtFuture<>>>& returned_futures) {
   std::vector<tsl::RCReference<ifrt::Array>> output_arrays;
   std::unique_ptr<ifrt::Future<>> returned_future;
@@ -218,20 +212,22 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
   {
     nb::gil_scoped_release gil_release;
     for (const auto& arg : args) {
-      if (ArgAdapter::num_devices(arg) != num_computations) {
+      if (GetNumDevices(arg) != num_computations) {
         return InvalidArgument(
             "Expected args to execute_sharded_on_local_devices to have %d "
             "shards, got: [%s]",
             num_computations,
-            absl::StrJoin(args, ", ", [](std::string* out, const ArgT& arg) {
-              out->append(std::to_string(ArgAdapter::num_devices(arg)));
-            }));
+            absl::StrJoin(args, ", ",
+                          [](std::string* out, const ExecuteShardedArg& arg) {
+                            out->append(std::to_string(GetNumDevices(arg)));
+                          }));
       }
     }
     std::vector<tsl::RCReference<ifrt::Array>> arg_arrays(args.size());
-    absl::c_transform(args, arg_arrays.begin(), [&](const ArgT& arg) mutable {
-      return ArgAdapter::GetIfRtArray(arg);
-    });
+    absl::c_transform(args, arg_arrays.begin(),
+                      [&](const ExecuteShardedArg& arg) mutable {
+                        return GetIfRtArray(arg);
+                      });
     TF_ASSIGN_OR_RETURN(auto result, ifrt_loaded_executable->Execute(
                                          absl::MakeSpan(arg_arrays), options,
                                          /*devices=*/std::nullopt));
@@ -366,38 +362,6 @@ std::vector<nb::object> PyExecuteResults::ConsumeWithHandlers(
     }
   }
   return outputs;
-}
-
-absl::StatusOr<std::vector<std::vector<PyArray>>>
-PyLoadedExecutable::ExecuteShardedOnLocalDevices(
-    absl::Span<const ExecuteShardedArg> args) {
-  xla::ifrt::ExecuteOptions options = options_;
-  options.launch_id = GetNextLaunchId();
-  options.fill_status = false;
-  options.execution_stream_id = tsl::Env::Default()->GetCurrentThreadId();
-  std::optional<std::vector<PjRtFuture<>>> returned_futures;
-  TF_ASSIGN_OR_RETURN(auto outputs_and_tokens,
-                      ExecuteShardedOnLocalDevicesInternal(
-                          options, client_, ifrt_loaded_executable_.get(), args,
-                          returned_futures));
-  return outputs_and_tokens.DisassembleIntoSingleDeviceArrays();
-}
-
-absl::StatusOr<std::pair<std::vector<std::vector<PyArray>>, PyShardedToken>>
-PyLoadedExecutable::ExecuteShardedOnLocalDevicesWithTokens(
-    absl::Span<const ExecuteShardedArg> args) {
-  xla::ifrt::ExecuteOptions options = options_;
-  options.launch_id = GetNextLaunchId();
-  options.fill_status = true;
-  options.execution_stream_id = tsl::Env::Default()->GetCurrentThreadId();
-  std::optional<std::vector<PjRtFuture<>>> returned_futures;
-  returned_futures.emplace();
-  TF_ASSIGN_OR_RETURN(auto outputs_and_tokens,
-                      ExecuteShardedOnLocalDevicesInternal(
-                          options, client_, ifrt_loaded_executable_.get(), args,
-                          returned_futures));
-  return std::make_pair(outputs_and_tokens.DisassembleIntoSingleDeviceArrays(),
-                        outputs_and_tokens.ConsumeToken());
 }
 
 absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(

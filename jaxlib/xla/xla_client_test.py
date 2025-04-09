@@ -3612,9 +3612,9 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       options.num_replicas = num_replicas
       compiled_c = self.backend.compile(
           xla_computation_to_mlir_module(c.build()), compile_options=options)
-      results, sharded_token = (
-          compiled_c.execute_sharded_on_local_devices_with_tokens([])
-      )
+      py_results = compiled_c.execute_sharded([], with_tokens=True)
+      results = py_results.disassemble_into_single_device_arrays()
+      sharded_token = py_results.consume_token()
       sharded_token.block_until_ready()
       self.assertLen(results, 1)
       self.assertLen(results[0], 1)
@@ -3666,14 +3666,16 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       compiled_c = self.backend.compile(
           xla_computation_to_mlir_module(c.build()), compile_options=options)
 
-      results = compiled_c.execute_sharded_on_local_devices([])
+      results = compiled_c.execute_sharded(
+          []).disassemble_into_single_device_arrays()
       self.assertLen(results, 1)
       self.assertIsInstance(results[0], list)
       self.assertLen(results[0], 1)
       results[0][0].block_until_ready()
       self.assertIsInstance(results[0][0], xla_client.ArrayImpl)
 
-      results, _ = compiled_c.execute_sharded_on_local_devices_with_tokens([])
+      results = compiled_c.execute_sharded(
+          [], with_tokens=True).disassemble_into_single_device_arrays()
       self.assertLen(results, 1)
       self.assertIsInstance(results[0], list)
       self.assertLen(results[0], 1)
@@ -3692,15 +3694,16 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
 
       buffer = self.backend.buffer_from_pyval(arg)
 
-      results = compiled_c.execute_sharded_on_local_devices([[buffer]])
+      results = compiled_c.execute_sharded(
+          [[buffer]]).disassemble_into_single_device_arrays()
       self.assertLen(results, 1)
       self.assertIsInstance(results[0], list)
       self.assertLen(results[0], 1)
       results[0][0].block_until_ready()
       self.assertIsInstance(results[0][0], xla_client.ArrayImpl)
 
-      results, _ = compiled_c.execute_sharded_on_local_devices_with_tokens(
-          [[buffer]])
+      results = compiled_c.execute_sharded(
+          [[buffer]], with_tokens=True).disassemble_into_single_device_arrays()
       self.assertLen(results, 1)
       self.assertIsInstance(results[0], list)
       self.assertLen(results[0], 1)

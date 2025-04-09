@@ -173,13 +173,6 @@ class PyLoadedExecutable {
   // PjRtExecutable::Execute. The result is similarly transposed back into the
   // argid,deviceid format.
   // args is [num_args x num_devices].
-  absl::StatusOr<std::vector<std::vector<PyArray>>>
-  ExecuteShardedOnLocalDevices(absl::Span<const ExecuteShardedArg> args);
-
-  absl::StatusOr<std::pair<std::vector<std::vector<PyArray>>, PyShardedToken>>
-  ExecuteShardedOnLocalDevicesWithTokens(
-      absl::Span<const ExecuteShardedArg> args);
-
   absl::StatusOr<PyExecuteResults> ExecuteSharded(
       std::vector<ExecuteShardedArg> args, bool with_tokens);
 
