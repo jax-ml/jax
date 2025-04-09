@@ -15,8 +15,6 @@
 from jax._src.lib import xla_client as _xc
 
 get_topology_for_devices = _xc.get_topology_for_devices
-heap_profile = _xc.heap_profile
-mlir_api_version = _xc.mlir_api_version
 Client = _xc.Client
 CompileOptions = _xc.CompileOptions
 DeviceAssignment = _xc.DeviceAssignment
@@ -28,7 +26,10 @@ Traceback = _xc.Traceback
 _deprecations = {
     # Finalized 2025-03-25; remove after 2025-06-25
     "FftType": (
-        "jax.lib.xla_client.FftType was removed in JAX v0.6.0; use jax.lax.FftType.",
+        (
+            "jax.lib.xla_client.FftType was removed in JAX v0.6.0; use"
+            " jax.lax.FftType."
+        ),
         None,
     ),
     "PaddingType": (
@@ -46,49 +47,60 @@ _deprecations = {
         "shape_from_pyval was removed in JAX v0.6.0; use StableHLO instead.",
         None,
     ),
-    # Added Oct 11 2024
+    # Added Oct 11 2024, finalized 2025-04-09
     "ops": (
-        "ops is deprecated; use StableHLO instead.",
-        _xc.ops,
+        "ops has been removed in JAX v0.6.0; use StableHLO instead.",
+        None,
     ),
     "register_custom_call_target": (
-        "register_custom_call_target is deprecated; use the JAX FFI instead "
-        "(https://docs.jax.dev/en/latest/ffi.html)",
-        _xc.register_custom_call_target,
+        (
+            "register_custom_call_target has been removed in JAX v0.6.0; use"
+            " the JAX FFI instead (https://docs.jax.dev/en/latest/ffi.html)"
+        ),
+        None,
     ),
     "PrimitiveType": (
-        "PrimitiveType is deprecated; use StableHLO instead.",
-        _xc.PrimitiveType,
+        "PrimitiveType has been removed in JAX v0.6.0; use StableHLO instead.",
+        None,
     ),
     "Shape": (
         "Shape is deprecated; use StableHLO instead.",
         _xc.Shape,
     ),
     "XlaBuilder": (
-        "XlaBuilder is deprecated; use StableHLO instead.",
-        _xc.XlaBuilder,
+        "XlaBuilder has been removed in JAX v0.6.0; use StableHLO instead.",
+        None,
     ),
     "XlaComputation": (
         "XlaComputation is deprecated; use StableHLO instead.",
         _xc.XlaComputation,
     ),
-    # Added Nov 20 2024
+    # Added Nov 20 2024, finalized 2025-04-09
     "ArrayImpl": (
-        "jax.lib.xla_client.ArrayImpl is deprecated; use jax.Array instead.",
-        _xc.ArrayImpl,
+        (
+            "jax.lib.xla_client.ArrayImpl has been removed in JAX v0.6.0; use"
+            " jax.Array instead."
+        ),
+        None,
+    ),
+    # Added 2025-04-09.
+    "heap_profile": (
+        "heap_profile has been deprecated in JAX v0.6.0.",
+        _xc.mlir_api_version,
+    ),
+    "mlir_api_version": (
+        "mlir_api_version has been deprecated in JAX v0.6.0.",
+        _xc.mlir_api_version,
     ),
 }
 
 import typing as _typing
 
 if _typing.TYPE_CHECKING:
-  ops = _xc.ops
-  register_custom_call_target = _xc.register_custom_call_target
-  ArrayImpl = _xc.ArrayImpl
-  PrimitiveType = _xc.PrimitiveType
   Shape = _xc.Shape
-  XlaBuilder = _xc.XlaBuilder
   XlaComputation = _xc.XlaComputation
+  heap_profile = _xc.heap_profile
+  mlir_api_version = _xc.mlir_api_version
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
 
