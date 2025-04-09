@@ -3358,7 +3358,9 @@ def zeros_like_shaped_array(aval: ShapedArray) -> Array:
     scalar_zero = np.zeros((), dtype=aval.dtype)
   else:
     scalar_zero = _convert_element_type(0, aval.dtype, aval.weak_type)
-  return broadcast(scalar_zero, aval.shape, out_sharding=aval.sharding)
+  out = broadcast(scalar_zero, aval.shape, out_sharding=aval.sharding)
+  out = core.pvary(out, tuple(aval.vma))
+  return out
 
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
 

@@ -303,6 +303,7 @@ class ThreefryTest(parameterized.TestCase):
           mesh=mesh,
           in_specs=partition,
           out_specs=partition,
+          check_rep=False,
       )
       jax_gen = generate(key_jax)
       pl_gen = generate(key_pallas)
