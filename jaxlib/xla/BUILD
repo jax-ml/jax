@@ -231,6 +231,7 @@ cc_library(
         "@xla//xla/pjrt/c:pjrt_c_api_helpers",
         "@xla//xla/python:custom_call_batch_partitioner",
         "@xla//xla/python:custom_partition_callback",
+        "@xla//xla/python:debug_callback_partitioner",
         "@xla//xla/python:inspect_sharding",
         "@xla//xla/tsl/platform:logging",
         "@xla//xla/tsl/platform:statusor",

@@ -769,17 +769,46 @@ def emit_python_callback(
     result_avals: Sequence[core.ShapedArray],
     *,
     has_side_effect: bool,
+    partitioned: bool = False,
     sharding: SdyArrayShardingList | xc.OpSharding | None = None,
     operand_layouts: Sequence[Sequence[int] | None] | None = None,
     result_layouts: Sequence[Sequence[int] | None] | None = None,
 ) -> tuple[Sequence[mlir.IrValues], Any, Any]:
-  """Emits MLIR that calls back to a provided Python function."""
+  """Emits MLIR that calls back to a provided Python function.
+
+  Args:
+    ctx: The lowering context.
+    callback: The Python callback function.
+    token: The token to use for the callback.
+    operands: The operands to the callback.
+    operand_avals: The abstract values of the operands.
+    result_avals: The abstract values of the results.
+    has_side_effect: Whether the callback has side effects.
+    partitioned: If True, then `callback` is called on local shards only. If
+      False, then `callback` is called on all shards.
+    sharding: The sharding of the callback.
+    operand_layouts: The layouts of the operands.
+    result_layouts: The layouts of the results.
+
+  Returns:
+    A tuple of MLIR result values, a new token (if any), and the host callback
+    object.
+  """
   if len(ctx.module_context.platforms) > 1:
     raise NotImplementedError("multi-platform lowering for python_callback")
   platform = ctx.module_context.platforms[0]
   if platform not in {"cpu", "cuda", "rocm", "tpu"}:
     raise ValueError(
         f"`EmitPythonCallback` not supported on {platform} backend.")
+  if partitioned:
+    if platform not in {"cpu", "cuda", "rocm"}:
+      raise ValueError(
+          f"Partitioned callback not supported on {platform} backend.")
+    if jaxlib_extension_version < 329:
+      raise ValueError(
+          "Partitioned callback not supported on jaxlib version < 329.")
+    if result_avals:
+      raise ValueError("Partitioned callback not supported with return values.")
   backend = ctx.module_context.get_backend()
   result_shapes = [_aval_to_xla_shape(aval) for aval in result_avals]
   operand_shapes = [_aval_to_xla_shape(aval) for aval in operand_avals]
@@ -894,11 +923,9 @@ def emit_python_callback(
         for i in range(len(result_types))
     ]
   else:
-    call_target_name = (
-        "xla_ffi_python_gpu_callback"
-        if platform in {"cuda", "rocm"}
-        else "xla_ffi_python_cpu_callback"
-    )
+    device = "gpu" if platform in {"cuda", "rocm"} else "cpu"
+    partition = "_partitioned" if partitioned else ""
+    call_target_name = f"xla_ffi{partition}_python_{device}_callback"
     if token:
       callback_without_token = _wrapped_callback
       def _wrapped_callback(token, *args):  # type: ignore  # pylint: disable=function-redefined
