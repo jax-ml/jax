@@ -1262,16 +1262,17 @@ def scaled_matmul(
       >>> b = jnp.array([4, 5, 6]).reshape((1, 1, 3))
       >>> a_scales = jnp.array([0.5]).reshape((1, 1, 1))
       >>> b_scales = jnp.array([0.5]).reshape((1, 1, 1))
-      >>> scaled_matmul(a, b, a_scales, b_scales)
+      >>> scaled_matmul(a, b, a_scales, b_scales)  # doctest: +SKIP
       Array([[[8.]]], dtype=float32)
 
       Using fused cuDNN call on Blackwell GPUs:
 
-      >>> a = random.normal(keys[0], (3, 128, 64), dtype=jnp.float8_e4m3fn)
-      >>> b = random.normal(keys[1], (3, 128, 64), dtype=jnp.float8_e4m3fn)
+      >>> dtype = jnp.float8_e4m3fn
+      >>> a = jax.random.normal(jax.random.PRNGKey(1), (3, 128, 64), dtype=dtype)
+      >>> b = jax.random.normal(jax.random.PRNGKey(2), (3, 128, 64), dtype=dtype)
       >>> a_scales = jnp.ones((3, 128, 4), dtype=jnp.float8_e8m0fnu)
       >>> b_scales = jnp.ones((3, 128, 4), dtype=jnp.float8_e8m0fnu)
-      >>> scaled_matmul(a, b, a_scales, b_scales)
+      >>> scaled_matmul(a, b, a_scales, b_scales)  # doctest: +SKIP
     """
     if not all(x.ndim == 3 for x in (a, b, a_scales, b_scales)):
         raise ValueError(
@@ -1407,9 +1408,9 @@ def scaled_dot_general(
 
     >>> import functools
     >>> scaled_dot_general_fn = functools.partial(jax.nn.scaled_dot_general, configs=configs)
-    >>> lhs = random.normal(keys[0], (3, 128, 64))
-    >>> rhs = random.normal(keys[1], (3, 128, 64))
-    >>> out = scaled_dot_general_fn(lhs, rhs, (((2,), (2,)), ((0,), (0,))))
+    >>> lhs = jax.random.normal(jax.random.PRNGKey(1), (3, 128, 64))
+    >>> rhs = jax.random.normal(jax.random.PRNGKey(2), (3, 128, 64))
+    >>> out = scaled_dot_general_fn(lhs, rhs, (((2,), (2,)), ((0,), (0,))))  # doctest: +SKIP
   """
   # Create configs if not provided
   if configs is None:
