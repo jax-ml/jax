@@ -673,7 +673,8 @@ def _check_rep(mesh: Mesh, jaxpr: core.Jaxpr, in_rep: Sequence[RepType]
     rule = _check_rules.get(e.primitive, partial(_rule_missing, e.primitive))
     out_rep = rule(mesh, *map(read, e.invars), **e.params)
     if e.primitive.multiple_results:
-      out_rep = [out_rep] * len(e.outvars) if type(out_rep) is set else out_rep
+      out_rep = (out_rep if isinstance(out_rep, (list, tuple)) else
+                 [out_rep] * len(e.outvars))
       foreach(write, e.outvars, out_rep)
     else:
       write(e.outvars[0], out_rep)
