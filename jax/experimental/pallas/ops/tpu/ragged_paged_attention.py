@@ -465,11 +465,10 @@ def ragged_paged_attention_kernel(
       alpha = jnp.exp(m_prev - m_next)
       beta = jnp.exp(m_curr - m_next)
       l_alpha = alpha * l_prev
-      l_next = l_alpha + beta * l_curr
-      l_next_safe = jnp.where(l_next == 0.0, 1.0, l_next)
+      l_next = l_alpha + beta * l_curr  # >= 1.0
       masked_store(
           head_l_ref,
-          l_next_safe,
+          l_next,
           store_start,
           store_end,
           num_q_heads_per_kv_head,
@@ -489,10 +488,10 @@ def ragged_paged_attention_kernel(
       o_curr = head_acc_ref[...].reshape(-1, head_dim)
       l_alpha = broadcast_to_shape(l_alpha, qkv.shape)
       beta = broadcast_to_shape(beta, qkv.shape)
-      l_next_safe = broadcast_to_shape(l_next_safe, qkv.shape)
+      l_next = broadcast_to_shape(l_next, qkv.shape)
       out = lax.div(
           l_alpha * o_curr + beta * qkv,
-          l_next_safe,
+          l_next,
       )
       masked_store(
           head_acc_ref,

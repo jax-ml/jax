@@ -12,4 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax.experimental.pallas.ops.tpu.paged_attention.paged_attention_kernel import paged_attention as paged_attention
+from jax.experimental.pallas.ops.tpu.paged_attention import attention
+from jax.experimental.pallas.ops.tpu.paged_attention import paged_attention_kernel
+
+grouped_query_attention = attention.grouped_query_attention
+paged_attention = paged_attention_kernel.paged_attention

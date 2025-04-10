@@ -72,32 +72,6 @@ def _reconstruct_kv(page_indices, pages):
   return gathered.reshape(batch_size, num_kv_heads, -1, head_dim)
 
 
-def _grouped_query_attention_reference(q, k, v, lengths, attn_logits_soft_cap):
-  batch_size, num_q_heads, head_dim = q.shape
-  _, num_kv_heads, max_seq_len, _ = k.shape
-  assert k.shape == v.shape
-  assert num_q_heads % num_kv_heads == 0
-  num_groups = num_q_heads // num_kv_heads
-  q = q.reshape(batch_size, num_kv_heads, num_groups, head_dim)
-
-  if isinstance(k, quantization_utils.QuantizedTensor):
-    k = quantization_utils.unquantize_from_int8(k, dtype=jnp.float32)
-  if isinstance(v, quantization_utils.QuantizedTensor):
-    v = quantization_utils.unquantize_from_int8(v, dtype=jnp.float32)
-
-  logits = jnp.einsum(
-      "bhgd,bhtd->bhgt", q.astype(jnp.float32), k.astype(jnp.float32)
-  )
-  if attn_logits_soft_cap is not None:
-    logits = jnp.tanh(logits / attn_logits_soft_cap) * attn_logits_soft_cap
-  mask = jnp.arange(max_seq_len)[None] < lengths[:, None]
-  mask_value = -0.7 * float(np.finfo(np.dtype("float32")).max)
-  logits = logits + jnp.where(mask, 0.0, mask_value)[:, None, None, :]
-  weights = jax.nn.softmax(logits, axis=-1)
-  o = jnp.einsum("bhgt,bhtd->bhgd", weights.astype(v.dtype), v)
-  return o.reshape(batch_size, num_q_heads, head_dim)
-
-
 def _megacore_enabled():
   return jax.devices()[0].device_kind == "TPU v4" or jtu.is_device_tpu(
       version=5, variant="p"
@@ -170,8 +144,9 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
     )
     k = _reconstruct_kv(page_indices, k_pages)
     v = _reconstruct_kv(page_indices, v_pages)
-    o_ref = _grouped_query_attention_reference(
-        q, k, v, seq_lens, attn_logits_soft_cap)
+    o_ref = paged_attention.grouped_query_attention(
+        q, k, v, seq_lens, attn_logits_soft_cap
+    )
 
     if q_kv_head_ratio > 1:
       atol, rtol = 1e-2, 2e-2
