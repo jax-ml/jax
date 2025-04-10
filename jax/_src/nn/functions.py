@@ -1274,6 +1274,7 @@ def scaled_matmul(
       >>> b_scales = jnp.ones((3, 128, 4), dtype=jnp.float8_e8m0fnu)
       >>> scaled_matmul(a, b, a_scales, b_scales)  # doctest: +SKIP
     """
+    a, b, a_scales, b_scales = lhs, rhs, lhs_scales, rhs_scales
     if not all(x.ndim == 3 for x in (a, b, a_scales, b_scales)):
         raise ValueError(
             "scaled_matmul requires all inputs to be 3-dimensional arrays"
