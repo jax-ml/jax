@@ -870,8 +870,6 @@ class ShardMapTest(jtu.JaxTestCase):
   @jtu.run_on_devices('cpu', 'gpu', 'tpu')
   @jtu.thread_unsafe_test()
   def test_debug_print_jit(self, jit):
-    if config.use_shardy_partitioner.value:
-      self.skipTest('TODO(b/384938613): Failing under shardy')
     mesh = Mesh(jax.devices(), ('i',))
 
     @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))

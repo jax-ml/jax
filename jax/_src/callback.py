@@ -162,13 +162,12 @@ def _callback_op_sharding(
           " computations"
       )
     if config.use_shardy_partitioner.value:
-      assert len(avals_out) == 1
       op_sharding = sharding_impls.SdyArrayShardingList([
           sharding_impls.SdyArraySharding(
               mesh_shape=(),
               dimension_shardings=[
                   sharding_impls.SdyDimSharding(axes=[], is_closed=True)
-              ] * avals_out[0].ndim,
+              ] * avals_out[0].ndim if avals_out else [],
               logical_device_ids=())])
     else:
       op_sharding = xc.OpSharding()  # type: ignore[assignment]
