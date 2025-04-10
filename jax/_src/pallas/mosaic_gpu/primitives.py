@@ -219,6 +219,9 @@ jax_core.pp_eqn_rules[copy_smem_to_gmem_p] = _copy_smem_to_gmem_pp_eqn
 @lowering.register_lowering_rule(
     copy_smem_to_gmem_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(
+    copy_smem_to_gmem_p, mgpu.LoweringSemantics.Lane,
+    primitive_semantics=gpu_core.PrimitiveSemantics.Warp)
+@lowering.register_lowering_rule(
     copy_smem_to_gmem_p, mgpu.LoweringSemantics.Warpgroup
 )
 def _copy_smem_to_gmem_lowering(
@@ -240,12 +243,12 @@ def _copy_smem_to_gmem_lowering(
 
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     if predicate is not None:
-      assert ctx.module_ctx.single_wg_lane_predicate is not None
+      assert ctx.module_ctx.single_lane_predicate is not None
       predicate = arith_dialect.andi(
-          predicate, ctx.module_ctx.single_wg_lane_predicate
+          predicate, ctx.module_ctx.single_lane_predicate
       )
     else:
-      predicate = ctx.module_ctx.single_wg_lane_predicate
+      predicate = ctx.module_ctx.single_lane_predicate
 
   flat_src_transforms, flat_dst_transforms = util.split_list(
       flat_args,
@@ -444,6 +447,9 @@ jax_core.pp_eqn_rules[copy_gmem_to_smem_p] = _copy_gmem_to_smem_pp_eqn
 @lowering.register_lowering_rule(
     copy_gmem_to_smem_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(
+    copy_gmem_to_smem_p, mgpu.LoweringSemantics.Lane,
+    primitive_semantics=gpu_core.PrimitiveSemantics.Warp)
+@lowering.register_lowering_rule(
     copy_gmem_to_smem_p, mgpu.LoweringSemantics.Warpgroup
 )
 def _copy_gmem_to_smem_lowering(
@@ -506,7 +512,7 @@ def _copy_gmem_to_smem_lowering(
         dst_ref=dst,
         barrier=barrier,
         arrive=False,
-        predicate=ctx.module_ctx.single_wg_lane_predicate,
+        predicate=ctx.module_ctx.single_lane_predicate,
         collective=collective,
         **copy_params,
     )

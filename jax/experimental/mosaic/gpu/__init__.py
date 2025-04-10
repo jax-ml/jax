@@ -72,6 +72,7 @@ from .utils import (
     DynamicSlice as DynamicSlice,
     Partition as Partition,
     Partition1D as Partition1D,
+    ThreadSubset as ThreadSubset,
     bitwidth as bitwidth,
     bytewidth as bytewidth,
     c as c,

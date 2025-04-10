@@ -657,7 +657,8 @@ class LaunchContext:
     ]
 
     uniform_ctx = (
-        functools.partial(utils.single_thread, per_block=False)
+        functools.partial(
+            utils.single_thread, scope=utils.ThreadSubset.WARPGROUP)
         if uniform and predicate is None
         else contextlib.nullcontext
     )

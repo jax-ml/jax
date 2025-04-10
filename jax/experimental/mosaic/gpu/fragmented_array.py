@@ -1588,7 +1588,7 @@ class FragmentedArray:
     memref.store(warp_result, scratch, [warp_id])
     utils.warpgroup_barrier()
     zero_index = c(0, index)
-    with mgpu.single_thread(per_block=False):
+    with mgpu.single_thread(scope=mgpu.ThreadSubset.WARPGROUP):
       scratch_vec = vector.load(
           ir.VectorType.get((4,), self.mlir_dtype),
           scratch,

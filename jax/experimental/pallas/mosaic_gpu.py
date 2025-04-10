@@ -32,6 +32,7 @@ from jax._src.pallas.mosaic_gpu.core import transpose_ref as transpose_ref
 from jax._src.pallas.mosaic_gpu.core import untile_ref as untile_ref
 from jax._src.pallas.mosaic_gpu.core import unswizzle_ref as unswizzle_ref
 from jax._src.pallas.mosaic_gpu.core import TransposeTransform as TransposeTransform
+from jax._src.pallas.mosaic_gpu.core import WarpMesh as WarpMesh
 from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as ACC  # noqa: F401
 from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as WGMMAAccumulatorRef
 from jax._src.pallas.mosaic_gpu.pipeline import emit_pipeline as emit_pipeline
