@@ -2522,6 +2522,17 @@ class ShardMapTest(jtu.JaxTestCase):
           "{jax.result_info = \"[('i', 'k')]\"}", ir.as_text()
       )
 
+  @parameterized.parameters([P()], [P('x')], [P(('x', 'y'))])
+  def test_print_inside_shard_map(self, specs):
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    x = jnp.arange(4.)
+
+    @partial(shard_map, mesh=mesh, in_specs=specs, out_specs=specs)
+    def f(x):
+      print(x)
+      return 2 * x
+    f(x)  # doesn't crash
+
   def test_vmap_spmd_axis_name_error(self):
     mesh = jtu.create_mesh((4, 2), ('i', 'j'))
 
