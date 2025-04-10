@@ -445,11 +445,11 @@ Sometimes we want to treat a value that is unvarying over a mesh axis as
 varying over that mesh axis. That's what `jax.lax.pvary` does:
 
 ```{code-cell}
-@partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=None)
+@partial(shard_map, mesh=mesh, in_specs=P(), out_specs=None)
 def f(x):
-  print(jax.typeof(x))  # f32[3]
+  print(jax.typeof(x))  # f32[6]
   y = jax.lax.pvary(x, 'i')
-  print(jax.typeof(y))  # f32[3]{i}
+  print(jax.typeof(y))  # f32[6]{i}
 
 x = jnp.arange(6.)
 f(x)
@@ -471,7 +471,8 @@ def f(x, y):
   return x * y
 
 x = jnp.arange(6.)
-print(jax.make_jaxpr(f)(x))
+y = jnp.arange(3.)
+print(jax.make_jaxpr(f)(x, y))
 ```
 
 In a jaxpr, the multiplication operation requires the VMA types of its
