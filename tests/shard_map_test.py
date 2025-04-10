@@ -2822,6 +2822,97 @@ class ShardMapTest(jtu.JaxTestCase):
     g = shard_map(f, mesh, in_specs=P('i'), out_specs=P('i'))
     jax.jvp(lambda x: g(x, A), (x,), (x,))  # don't crash
 
+  def test_cond_pvary_errors(self):
+    mesh = jtu.create_mesh((1, 1), ('x', 'y'))
+    def f(x, y):
+      def true_fn(x, y):
+        return x
+      def false_fun(x, y):
+        return y
+      return jax.lax.cond(True, true_fn, false_fun, x, y)
+    x = jnp.arange(4.)
+    with self.assertRaisesRegex(
+        TypeError, r"applying `jax.lax.pvary\(..., \('y',\)\)` to the output of true_fun"):
+      shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(('x', 'y')))(x, x)
+
+  def test_cond_pvary_errors_pytree(self):
+    mesh = jtu.create_mesh((1, 1), ('x', 'y'))
+
+    def f(x, y):
+      def true_fn(x, y):
+        return x, y
+      def false_fun(x, y):
+        return y, x
+      return jax.lax.cond(True, true_fn, false_fun, x, y)
+    x = jnp.arange(4.)
+    with self.assertRaisesRegex(
+        TypeError, r"applying `jax.lax.pvary\(..., \('y',\)\)` to the output of true_fun"):
+      shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(('x', 'y')))(x, x)
+
+  def test_scan_pvary_errors(self):
+    mesh = jtu.create_mesh((1, 1), ('i', 'j'))
+    x = jnp.arange(3.)
+    y = jnp.arange(3.)
+
+    @partial(shard_map, mesh=mesh, in_specs=(P('i'), P()), out_specs=P('i'))
+    def f(x, y):
+      def body(carry, _):
+        c1, c2 = carry
+        return (c2, c1), ()  # swap the carry
+      (x_, y_), _ = jax.lax.scan(body, (x, y), (), length=2)
+      return x_, y_
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"This might be fixed by applying `jax.lax.pvary\(..., \('i',\)\)` to the initial"):
+      f(x, y)
+
+    @partial(shard_map, mesh=mesh, in_specs=(P('i'), P()), out_specs=P('i'))
+    def g(x, y):
+      def body(carry, _):
+        c1, c2 = carry
+        return (c2, c1), ()
+      y = jax.lax.pvary(y, 'i')  # fix the issue
+      (x_, y_), _ = jax.lax.scan(body, (x, y), (), length=2)
+      return x_, y_
+
+    g(x, y)  # doesn't crash
+
+  def test_scan_pvary_errors2(self):
+    mesh = jtu.create_mesh((1, 1), ('i', 'j'))
+    x = jnp.arange(3.)
+    y = jnp.arange(3.)
+    z = jnp.arange(3.)
+
+    @partial(shard_map, mesh=mesh, in_specs=(P('i'), P(), P(('i', 'j'))), out_specs=P(('i', 'j')))
+    def f(x, y, z):
+      def body(carry, _):
+        c1, c2, c3 = carry
+        return (c3, c1, c2), ()  # swap the carry
+
+      # x = jax.lax.pvary(x, 'j')
+      # y = jax.lax.pvary(y, ('i', 'j'))
+      carry, _ = jax.lax.scan(body, (x, y, z), (), length=2)
+      return carry
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"This might be fixed by:\n  \* applying `jax.lax.pvary\(..., \('j',\)\)`"):
+      f(x, y, z)
+
+    @partial(shard_map, mesh=mesh, in_specs=(P('i'), P(), P(('i', 'j'))), out_specs=P(('i', 'j')))
+    def g(x, y, z):
+      def body(carry, _):
+        c1, c2, c3 = carry
+        return (c3, c1, c2), ()  # swap the carry
+
+      x = jax.lax.pvary(x, 'j')  # fix the issue
+      y = jax.lax.pvary(y, ('i', 'j'))
+      carry, _ = jax.lax.scan(body, (x, y, z), (), length=2)
+      return carry
+
+    g(x, y, z)  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str

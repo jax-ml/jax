@@ -51,7 +51,7 @@ from jax._src.lax import windowed_reductions
 from jax._src.lax.control_flow.common import (
     _avals_short, _initial_style_jaxpr,
     _initial_style_jaxpr_attrs, _make_closed_jaxpr_attrs, _prune_zeros,
-    _typecheck_param)
+    _typecheck_param, _aval_mismatch_extra)
 from jax._src.lax.other import logaddexp
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
@@ -60,24 +60,12 @@ from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import equality_errors
 from jax._src.typing import Array
 from jax._src.util import (
-    merge_lists,
-    partition_list,
-    safe_map,
-    safe_zip,
-    split_list,
-    split_list_checked,
-    unzip2,
-    weakref_lru_cache,
-)
+    merge_lists, partition_list, safe_map, safe_zip, split_list,
+    split_list_checked, unzip2, weakref_lru_cache,)
 from jax._src import xla_bridge as xb
 from jax.tree_util import (
-    keystr,
-    tree_flatten,
-    tree_flatten_with_path,
-    tree_map,
-    tree_unflatten,
-    treedef_is_leaf,
-)
+    keystr, tree_flatten, tree_flatten_with_path, tree_map, tree_unflatten,
+    treedef_is_leaf)
 import numpy as np
 
 _map = safe_map
@@ -428,9 +416,8 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
                for path, thing1, thing2, explanation
                in equality_errors(in_carry, out_carry)]
       if len(diffs) == 0:
-        # The trees may have different aux data but structures are the same.
-        return
-      if len(diffs) == 1:
+        return  # the trees may have different aux data, but structures are same
+      elif len(diffs) == 1:
         differences = f'{_capitalize(diffs[0])}.\n'
       else:
         differences = ('\n'.join(f'  * {d};\n' for d in diffs[:-1])
@@ -447,32 +434,42 @@ def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
              f'{out_aval.str_short()}{_aval_mismatch_extra(in_aval, out_aval)}'
              for path, in_aval, out_aval in zip(paths, in_avals, out_avals)
              if not core.typematch(in_aval, out_aval)]
+
     if len(diffs) == 0:
-      # The trees may have different aux data but structures are the same.
-      return
+      return  # seems unreachable but in any case we don't have a good error msg
     if len(diffs) == 1:
       differences = f'{_capitalize(diffs[0])}.\n'
     else:
       differences = ('\n'.join(f'  * {d};\n' for d in diffs[:-1])
                      + f'  * {diffs[-1]}.\n')
+
+    pvary_applications = [
+        f'applying `jax.lax.pvary(..., {tuple(out_aval.vma - in_aval.vma)})` '
+        f'to the initial carry value corresponding to {component(path)}'
+        for path, in_aval, out_aval in zip(paths, in_avals, out_avals)
+        if not core.typematch(in_aval, out_aval) and 
+        isinstance(in_aval, ShapedArray) and isinstance(out_aval, ShapedArray)
+        and in_aval.vma != out_aval.vma and out_aval.vma - in_aval.vma]
+
+    if not pvary_applications:
+      pvary_msg = ''
+    elif len(pvary_applications) == 1:
+      pvary_msg = f'This might be fixed by {pvary_applications[0]}.\n'
+    else:
+      pvary_msg = ('This might be fixed by:\n' +
+                   '\n'.join(f'  * {d};\n' for d in pvary_applications[:-1])
+                   + f'  * {pvary_applications[-1]}.\n')
+    if pvary_msg:
+      pvary_msg += ("See https://docs.jax.dev/en/latest/notebooks/shard_map.html#scan-vma "
+                    "for more information.\n\n")
+
     raise TypeError(
-        f"{name} function carry input and carry output must have equal types "
-        "(e.g. shapes and dtypes of arrays), "
+        f"{name} function carry input and carry output must have equal types, "
         "but they differ:\n\n"
         f"{differences}\n"
-        "Revise the function so that all output types (e.g. shapes "
-        "and dtypes) match the corresponding input types.")
-
-def _aval_mismatch_extra(a1: core.AbstractValue, a2: core.AbstractValue) -> str:
-  assert not core.typematch(a1, a2)
-  if isinstance(a1, core.ShapedArray) and isinstance(a2, core.ShapedArray):
-    dtype_mismatch = a1.dtype != a2.dtype
-    shape_mismatch = a1.shape != a2.shape
-    return (', so ' * (dtype_mismatch or shape_mismatch) +
-            'the dtypes do not match' * dtype_mismatch +
-            ' and also ' * (dtype_mismatch and shape_mismatch) +
-            'the shapes do not match' * shape_mismatch)
-  return ''
+        f"{pvary_msg}"
+        "Revise the function so that all output types match the corresponding "
+        "input types.")
 
 # TODO(mattjj): re-land #19819 version? simpler, but caused ~1 perf regression.
 def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
