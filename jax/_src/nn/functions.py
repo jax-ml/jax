@@ -1210,10 +1210,10 @@ def dot_product_attention(
   return jnp.reshape(out, output_shape)
 
 def scaled_matmul(
-    a: Array,
-    b: Array,
-    a_scales: Array,
-    b_scales: Array,
+    lhs: Array,
+    rhs: Array,
+    lhs_scales: Array,
+    rhs_scales: Array,
     preferred_element_type: DTypeLike = jnp.float32,
 ) -> Array:
     r"""Scaled matrix multiplication function.
@@ -1230,10 +1230,10 @@ def scaled_matmul(
       jnp.einsum('BMK,BNK->BMN', a_scaled, b_scaled)
 
     Args:
-      a (Array): Shape (B, M, K).
-      b (Array): Shape (B, N, K).
-      a_scales (Array): Shape (B, M, K_a), where `K % K_a == 0`.
-      b_scales (Array): Shape (B, N, K_b), where `K % K_b == 0`.
+      lhs (Array): Operand a, shape (B, M, K).
+      rhs (Array): Operand b, shape (B, N, K).
+      lhs_scales (Array): Shape (B, M, K_a), where `K % K_a == 0`.
+      rhs_scales (Array): Shape (B, N, K_b), where `K % K_b == 0`.
       preferred_element_type (DTypeLike, optional): Defaults to `jnp.float32`.
 
     Returns:
@@ -1353,6 +1353,7 @@ def scaled_dot_general(
     dimension_numbers,
     preferred_element_type=jnp.float32,
     configs: List[BlockScaleConfig] | None = None,
+    implementation: Literal['cudnn'] | None = None,
   ):
   r"""Scaled dot general operation.
 
@@ -1379,6 +1380,9 @@ def scaled_dot_general(
       lhs, rhs, and gradients. Users can obtain valid configurations via
       `jax.nn.get_scaled_dot_general_config`. Currently, `nvfp4` and `mxfp8`
       are supported. If `None`, falls back to `lax.dot_general`.
+    implementation: str
+      (Deprecated) Backend selector, now ignored. The system chooses the backend
+      automatically. Scheduled for removal in future releases.
 
   Returns:
     Array: The resulting tensor, with batch dimensions first, followed by
