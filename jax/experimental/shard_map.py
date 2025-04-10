@@ -1733,38 +1733,50 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
   nzs_in = tuple(type(t) is not ad.Zero for t in tangents)
   f_primal, linearize_outs_thunk = ad.linearize_subtrace(f, trace.tag, nzs_in, f.debug_info)
   f_primal = _promote_scalar_residuals_lin(f_primal, linearize_outs_thunk)
-  tangent_in_names = [ax for ax, nz in zip(in_names, nzs_in) if nz]
-  res_names = _all_newly_manual_mesh_names(mesh, auto, trace)
+  all_names = _all_newly_manual_mesh_names(mesh, auto, trace)
 
   @as_hashable_function(closure=linearize_outs_thunk)
   def fwd_out_names_thunk():
-    _, _, _, _, in_fwd, out_fwd = linearize_outs_thunk()
+    res_avals, _, _, _, _, _ = linearize_outs_thunk()
     out_names = out_names_thunk()
-    num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
-    # This is incorrect so we set `check_rep=False` in the tangent (as in JVP).
-    return (*({0: res_names} for _ in range(num_res_out)), *out_names)
+    if check_rep and config.varying_axes_in_types.value:
+      res_names = [{0: tuple(i for i in mesh.axis_names if i in a.vma)}
+                   for a in res_avals]
+    else:
+      res_names = [{0: all_names}] * len(res_avals)
+    return (*res_names, *out_names)
   fwd_params = dict(
       mesh=mesh, in_names=in_names,
       out_names_thunk=fwd_out_names_thunk, check_rep=check_rep,
       rewrite=rewrite, auto=auto)
   all_fwd_results = shard_map_p.bind_with_trace(
       trace.parent_trace, (f_primal, *primals), fwd_params)
-  residual_avals, nzs_out, lin_jaxpr, env, in_fwd, out_fwd = linearize_outs_thunk()
+  res_avals, nzs_out, lin_jaxpr, env, in_fwd, out_fwd = linearize_outs_thunk()
   num_res_out = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
   non_fwd_res = all_fwd_results[:num_res_out]
   primals_out = all_fwd_results[num_res_out:]
   residuals = subs_list2(in_fwd, out_fwd, primals, primals_out, non_fwd_res)
   args_to_promote = [getattr(aval, 'shape', ()) == () and f1 is None and f2 is None
-                     for aval, f1, f2 in zip(residual_avals, in_fwd, out_fwd)]
+                     for aval, f1, f2 in zip(res_avals, in_fwd, out_fwd)]
   with (_extend_axis_env(mesh, auto),
         use_abstract_mesh(_as_manual_mesh(mesh, auto)),
         config._check_rep(check_rep)):
     lin_jaxpr = _promote_scalar_residuals_jaxpr(lin_jaxpr, args_to_promote)
   out_names = out_names_thunk()
-  residual_names = [in_names[f1] if f1 is not None else
-                    out_names[f2] if f2 is not None else
-                    {0: res_names} for f1, f2 in zip(in_fwd, out_fwd)]
-  new_in_names = (*residual_names, *({} for _ in range(len(env))),
+  res_avals_iter = iter(res_avals)
+  res_names = []
+  for f1, f2 in zip(in_fwd, out_fwd):
+    if f1 is not None:
+      res_names.append(in_names[f1])
+    elif f2 is not None:
+      res_names.append(out_names[f2])
+    else:
+      if check_rep and config.varying_axes_in_types.value:
+        res_vma = next(res_avals_iter).vma
+        res_names.append({0: tuple(n for n in mesh.axis_names if n in res_vma)})
+      else:
+        res_names.append({0: all_names})
+  new_in_names = (*res_names, *({} for _ in range(len(env))),
                   *(ax for ax, nz in zip(in_names, nzs_in) if nz))
   tangent_out_names = tuple(ax for ax, nz in zip(out_names_thunk(), nzs_out) if nz)
   @as_hashable_function(closure=tangent_out_names)
@@ -1772,7 +1784,8 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
     return tangent_out_names
   tangent_params = dict(
       mesh=mesh, in_names=new_in_names, out_names_thunk=tangent_out_names_thunk,
-      check_rep=False, rewrite=rewrite, auto=auto)
+      check_rep=(check_rep if config.varying_axes_in_types.value else False),
+      rewrite=rewrite, auto=auto)
 
   # TODO(mattjj): avoid round-tripping the jaxpr through eval_jaxpr here
   def f_tangent(*args):
