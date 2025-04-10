@@ -568,6 +568,7 @@ because the shape abstraction that JAX tracing uses is given by the
 actual arguments are more specific and would actually work.
 
 Also,
+
 ```python
 jax2tf.convert(lambda x: jnp.matmul(x, x),
                polymorphic_shapes=["(v, 4)"])(np.ones((4, 4)))
@@ -808,6 +809,7 @@ TypeError: add got incompatible shapes for broadcasting: (a,), (floordiv(b, 2),)
 ```
 
 You can fix this by adding a constraint:
+
 ```python
 jax2tf.convert(lambda x, y: x + y[:y.shape[0] // 2],
                polymorphic_shapes=("a", "b"),
@@ -826,12 +828,12 @@ For example,
 the following code will fail because `a1` and `a2`
 use different scopes (created by `export.symbolic_shape`):
 
-````python
+```python
 a1, = export.symbolic_shape("a,")
 a2, = export.symbolic_shape("a,", constraints=("a >= 8",))
 
 a1 + a2
-````
+```
 
 The symbolic expressions that originate from a single call
 to `export.symbolic_shape` share a scope and
