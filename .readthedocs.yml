@@ -9,6 +9,14 @@ build:
   os: "ubuntu-22.04"
   tools:
     python: "3.10"
+  jobs:
+    post_checkout:
+      # Skip building PRs unless tagged with the "documentation" label.
+      - |
+        if [ "$READTHEDOCS_VERSION_TYPE" = "external" ] && (curl -s "https://api.github.com/repos/jax-ml/jax/issues/$READTHEDOCS_VERSION/labels" | grep -vq "https://api.github.com/repos/jax-ml/jax/labels/documentation")
+        then
+          exit 183;
+        fi
 
 # Build documentation in the docs/ directory with Sphinx
 sphinx:
