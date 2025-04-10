@@ -84,12 +84,6 @@ jobs:
           # `*-cp<py_version>-cp<py_version>t-*`.
           echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
       - name: Download wheels from GCS (non-Windows runs)
-          # Python wheels follow a naming convention: standard wheels use the pattern
-          # `*-cp<py_version>-cp<py_version>-*`, while free-threaded wheels use
-          # `*-cp<py_version>-cp<py_version>t-*`.
-        run: |
-          echo "PYTHON_MAJOR_MINOR=cp${python_major_minor%t}-cp${python_major_minor}-" >> $GITHUB_ENV
-      - name: Download jaxlib wheel from GCS (non-Windows runs)
         id: download-wheel-artifacts-nw
         # Set continue-on-error to true to prevent actions from failing the workflow if this step
         # fails. Instead, we verify the outcome in the step below so that we can print a more
