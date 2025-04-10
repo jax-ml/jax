@@ -1381,7 +1381,7 @@ def scaled_dot_general(
     configs (list of BlockScaleConfig, optional): Scaling configurations for
       lhs, rhs, and gradients. Users can obtain valid configurations via
       `jax.nn.get_scaled_dot_general_config`. Currently, `nvfp4` and `mxfp8`
-      are supported. If `None`, `mxfp8` is used.
+      are supported. If `None`, falls back to `lax.dot_general`.
     implementation: str
       (Deprecated) Backend selector, now ignored. The system chooses the backend
       automatically. Scheduled for removal in future releases.
@@ -1422,19 +1422,9 @@ def scaled_dot_general(
     warnings.warn("Backend selector, now ignored. The system chooses the "
                   "backend automatically.", DeprecationWarning)
 
-  # Create configs if not provided
   if configs is None:
-    if dtypes.float8_e8m0fnu is None:
-      raise ValueError("Requires >= ml_dtypes 0.5.0 to support float8_e8m0fnu")
-    mxfp8_config = BlockScaleConfig(
-        mode='mxfp8',
-        block_size=32,
-        data_type=jnp.float8_e4m3fn,
-        scale_type=jnp.float8_e8m0fnu,
-        global_scale=None,
-        infer_only=False
-    )
-    configs = [mxfp8_config for _ in range(3)]
+    return lax.dot_general(lhs, rhs, dimension_numbers,
+                           preferred_element_type=preferred_element_type)
 
   out = cudnn_scaled_dot_general(
       lhs, rhs, dimension_numbers,
