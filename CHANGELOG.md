@@ -24,6 +24,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     which was added temporarily in v0.4.36 to allow users to opt out of the
     new "stackless" tracing machinery.
   * Removed the `config.jax_eager_pmap` config option.
+  * Every argument to `jax.jit` is now a keyword argument except for `fun`.
 
 * Changes
   * The minimum CuDNN version is v9.8.

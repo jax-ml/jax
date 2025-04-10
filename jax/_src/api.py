@@ -32,6 +32,7 @@ import math
 import typing
 from typing import (Any, Literal, NamedTuple, TypeVar, overload,
                     cast)
+import warnings
 import weakref
 
 import numpy as np
@@ -149,6 +150,7 @@ float0 = dtypes.float0
 
 def jit(
   fun: Callable,
+  *args,
   in_shardings: Any = sharding_impls.UNSPECIFIED,
   out_shardings: Any = sharding_impls.UNSPECIFIED,
   static_argnums: int | Sequence[int] | None = None,
@@ -287,6 +289,11 @@ def jit(
     >>> g(jnp.arange(4), 3)
     Array([   0,    1,  256, 6561], dtype=int32)
   """
+  if args:
+    warnings.warn(
+        "Every argument to `jax.jit` except for `fun` is now a keyword-only"
+        " argument. Support for passing them positionally will be removed in an"
+        " upcoming JAX release.", DeprecationWarning)
   return pjit.make_jit(
         fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
         static_argnums, static_argnames, device, backend, abstracted_axes,
