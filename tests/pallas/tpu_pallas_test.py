@@ -1577,6 +1577,7 @@ class PallasCallDMATest(PallasBaseTest):
     )(x)
     np.testing.assert_array_equal(y, x)
 
+  @jtu.thread_unsafe_test()  # Uses a lot of TPU memory.
   def test_large_array_indexing(self):
     n = 6
     dtype = jnp.bfloat16
@@ -2331,6 +2332,7 @@ class PallasCallRefTransformTest(PallasBaseTest):
     np.testing.assert_array_equal(y, x[8:16, :128])
 
 
+@jtu.thread_unsafe_test_class()  # debug print test is not thread safe
 class PallasCallPrintTest(PallasBaseTest):
 
   def test_debug_print(self):

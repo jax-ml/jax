@@ -1496,6 +1496,7 @@ if CAN_USE_HYPOTHESIS:
         grid=(num_cores,),
     )(x, y)
 
+  @jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
   class PaddedPipelineEmitterTest(parameterized.TestCase):
 
     def setUp(self):

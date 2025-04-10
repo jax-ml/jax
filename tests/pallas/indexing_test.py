@@ -127,6 +127,7 @@ class PallasBaseTest(jtu.JaxTestCase):
     return pl.pallas_call(*args, interpret=cls.INTERPRET, **kwargs)
 
 
+@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
 class IndexerTest(jtu.JaxTestCase):
   """These are unit tests for the indexer logic, not using pallas_call."""
 
@@ -246,6 +247,7 @@ class IndexerTest(jtu.JaxTestCase):
                           indexer.get_indexer_shape())
 
 
+@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
 class IndexerOpsTest(PallasBaseTest):
 
   def test_multi_indexing_interpreter_only(self):
