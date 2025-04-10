@@ -2413,7 +2413,7 @@ class WarpSpecializedPipelineWGTest(
   ...
 
 
-class CoreMapTest(PallasTest):
+class CoreMapTest(PallasTest, jtu.CudaArchSpecificTest):
 
   def test_multiple_wg(self):
 
@@ -2543,6 +2543,7 @@ class CoreMapTest(PallasTest):
 
   def test_realistic_matmul_with_cluster(self):
     self.skip_if_wg_semantics()  # Needs WGMMA to support slices.
+    self.skip_unless_sm90a()  # Requires WGMMA.
 
     dtype = jnp.float16
     swizzle = 128
