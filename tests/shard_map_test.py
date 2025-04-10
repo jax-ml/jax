@@ -2522,6 +2522,23 @@ class ShardMapTest(jtu.JaxTestCase):
           "{jax.result_info = \"[('i', 'k')]\"}", ir.as_text()
       )
 
+  def test_dynamic_slice_transpose(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+    arr = np.arange(16., dtype=np.float32)
+
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    def f(x):
+      return lax.dynamic_slice_in_dim(x, jnp.array(1, dtype=np.int32), 2)
+
+    f(arr)  # doesn't crash
+    jax.jit(f)(arr)  # doesn't crash
+
+    def g(x):
+      return jnp.sum(f(x))
+
+    jax.grad(g)(arr)  # doesn't crash
+    jax.jit(jax.grad(g))(arr)  # doesn't crash
+
   @parameterized.parameters([P()], [P('x')], [P(('x', 'y'))])
   def test_print_inside_shard_map(self, specs):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
