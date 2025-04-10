@@ -2126,10 +2126,12 @@ class PipelineTest(PallasTest):
     y = x + 1.0
     np.testing.assert_array_equal(kernel_fn(x), y)
 
-  @parameterized.product(static=[False, True])
-  def test_emit_with_2d_grid(self, static):
+  @parameterized.product(static=[False, True], short=[False, True])
+  def test_emit_with_2d_grid(self, static, short):
     num_steps1 = 4
     num_steps2 = 5
+    if short:
+      num_steps1 = num_steps2 = 1
 
     def kernel(x_gmem, o_gmem):
       grid = (num_steps1, num_steps2)
@@ -2296,7 +2298,9 @@ class WarpSpecializedPipelineTest(PallasTest):
     np.testing.assert_array_equal(out, x)
     np.testing.assert_array_equal(out_last_block, x[-blk_m:, -blk_n:])
 
-  @parameterized.product(m=[256], n=[256], num_compute_wgs=[1, 2], static=[False, True])
+  @parameterized.product(
+      m=[256, 64], n=[256, 64], num_compute_wgs=[1, 2], static=[False, True]
+  )
   def test_elementwise_add(self, m, n, num_compute_wgs, static):
     self.skip_if_wg_semantics()  # Crashes!
 
@@ -2313,7 +2317,7 @@ class WarpSpecializedPipelineTest(PallasTest):
 
     def pipeline(*gmem_refs):
       grid = (m // blk_m, n // blk_n)
-      if static:
+      if not static:
         grid = jax.tree.map(jnp.asarray, grid)
       return mgpu_pipeline.emit_pipeline_warp_specialized(
           tiled_add_kernel,

@@ -2215,7 +2215,7 @@ def fori_loop(lower, upper, body_fun, init_val,
         unroll=unroll,
     )
     return result
-  if unroll is not None:
+  if unroll is not None and unroll is not False and unroll != 1:
     raise ValueError("Can only use `unroll` in `fori_loop` if the loop bounds "
                      "are statically known.")
 
