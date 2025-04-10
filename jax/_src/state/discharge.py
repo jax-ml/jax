@@ -100,35 +100,65 @@ class Environment:
 
 class DischargeRule(Protocol):
 
-  def __call__(self, in_avals: Sequence[core.AbstractValue],
-      out_avals: Sequence[core.AbstractValue], *args: Any,
-      **params: Any) -> tuple[Sequence[Any | None], Sequence[Any]]:
-    ...
+  def __call__(
+      self,
+      in_avals: Sequence[core.AbstractValue],
+      out_avals: Sequence[core.AbstractValue],
+      *args: Any,
+      **params: Any,
+  ) -> tuple[Sequence[Any | None], Any | Sequence[Any]]:
+    """Discharge rule for a primitive.
+
+    Args:
+      in_avals: Sequence of input abstract values.
+      out_avals: Sequence of output abstract values.
+      *args: Input values of the primitive.
+      **params: Parameters of the primitive.
+
+    Returns:
+      A tuple of ``(new_invals, new_outvals)`` where
+
+      * ``new_invals`` is a sequence of new values for the inputs to the
+        primitive. The sequence must have a non-``None`` value for every
+        ``Ref`` that was discharged.
+      * ``new_outvals`` are the new outputs of the primitive. If the primitive
+        has multiple results, this is a sequence of values. Otherwise, it is a
+        single value.
+    """
+
 
 _discharge_rules: dict[core.Primitive, DischargeRule] = {}
 
-class PartialDischargeRule(Protocol):
-  """A partial discharge rule.
-
-  Exactly like a discharge rule only it accepts a `should_discharge`
-  argument that indicates which inputs should be discharged and the
-  return value returns a tuple of which the first element is the new
-  inputs or none but only the ones that correspond to `True` entries
-  in `should_charge`.
-  """
-
-  def __call__(self, should_discharge: Sequence[bool],
-      in_avals: Sequence[core.AbstractValue],
-      out_avals: Sequence[core.AbstractValue], *args: Any,
-      **params: Any) -> tuple[Sequence[Any | None], Sequence[Any]]:
-    ...
-
-_partial_discharge_rules: dict[core.Primitive, PartialDischargeRule] = {}
 
 def register_discharge_rule(prim: core.Primitive):
   def register(f: DischargeRule):
     _discharge_rules[prim] = f
+
   return register
+
+
+class PartialDischargeRule(Protocol):
+  """Partial discharge rule for a primitive.
+
+  This protocol generalizes :class:`DischargeRule` by allowing to specify which
+  input ``Ref``s should be discharged. Note that the returned ``new_invals``
+  must have a non-``None`` value if and only if the corresponding input ``Ref``
+  was asked to be discharged.
+  """
+
+  def __call__(
+      self,
+      should_discharge: Sequence[bool],
+      in_avals: Sequence[core.AbstractValue],
+      out_avals: Sequence[core.AbstractValue],
+      *args: Any,
+      **params: Any,
+  ) -> tuple[Sequence[Any | None], Any | Sequence[Any]]:
+    ...
+
+
+_partial_discharge_rules: dict[core.Primitive, PartialDischargeRule] = {}
+
 
 def register_partial_discharge_rule(prim: core.Primitive):
   def register(f: PartialDischargeRule):
