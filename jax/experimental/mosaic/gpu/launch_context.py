@@ -669,8 +669,8 @@ class LaunchContext:
       )
     if (zeroth_bw := slice_shape[-1] * element_bitwidth) % 128 != 0:
       raise ValueError(
-          "Async copies require the number of bytes copied along the last"
-          f" dimension to be divisible by 16, but got {zeroth_bw}"
+          "Async copies require the number of bits copied along the last"
+          f" dimension to be divisible by 128, but got {zeroth_bw}"
       )
     if (
         swizzle is not None
