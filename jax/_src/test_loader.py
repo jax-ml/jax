@@ -28,6 +28,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+import logging
 import os
 import re
 import threading
@@ -38,6 +39,8 @@ from absl.testing import absltest
 from jax._src import config
 from jax._src import test_warning_util
 from jax._src import util
+
+logger = logging.getLogger(__name__)
 
 
 _TEST_TARGETS = config.string_flag(
@@ -125,10 +128,11 @@ class ThreadSafeTestResult:
     self.actions: list[Callable[[], None]] = []
 
   def startTest(self, test: unittest.TestCase):
-    del test
+    logger.info("Test start: %s", test.id())
     self.start_time = time.time()
 
   def stopTest(self, test: unittest.TestCase):
+    logger.info("Test stop: %s", test.id())
     stop_time = time.time()
     with self.lock:
       # If test_result is an ABSL _TextAndXMLTestResult we override how it gets
