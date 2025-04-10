@@ -22,6 +22,7 @@ import operator
 import math
 import numpy as np
 from typing import Any, List, Literal
+import warnings
 
 import jax
 import jax.numpy as jnp
@@ -1380,7 +1381,7 @@ def scaled_dot_general(
     configs (list of BlockScaleConfig, optional): Scaling configurations for
       lhs, rhs, and gradients. Users can obtain valid configurations via
       `jax.nn.get_scaled_dot_general_config`. Currently, `nvfp4` and `mxfp8`
-      are supported. If `None`, falls back to `lax.dot_general`.
+      are supported. If `None`, `mxfp8` is used.
     implementation: str
       (Deprecated) Backend selector, now ignored. The system chooses the backend
       automatically. Scheduled for removal in future releases.
@@ -1417,6 +1418,10 @@ def scaled_dot_general(
     >>> rhs = jax.random.normal(jax.random.PRNGKey(2), (3, 128, 64))
     >>> out = scaled_dot_general_fn(lhs, rhs, (((2,), (2,)), ((0,), (0,))))  # doctest: +SKIP
   """
+  if implementation is not None:
+    warnings.warn("Backend selector, now ignored. The system chooses the "
+                  "backend automatically.", DeprecationWarning)
+
   # Create configs if not provided
   if configs is None:
     if dtypes.float8_e8m0fnu is None:
