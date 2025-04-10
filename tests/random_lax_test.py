@@ -46,7 +46,7 @@ uint_dtypes = jtu.dtypes.all_unsigned
 
 
 @jtu.with_config(jax_legacy_prng_key='allow')
-class LaxRandomTest(jtu.JaxTestCase):
+class RandomTestBase(jtu.JaxTestCase):
 
   def _CheckCollisions(self, samples, nbits):
     fail_prob = 0.01  # conservative bound on statistical fail prob by Chebyshev
@@ -110,6 +110,11 @@ class LaxRandomTest(jtu.JaxTestCase):
   def make_key(self, seed):
     return random.PRNGKey(seed, impl='threefry2x32')
 
+
+class CommonRandomTest(RandomTestBase):
+  """
+  Tests of common functionality that should be run with all PRNG impls.
+  """
   @jtu.sample_product(
     num=(None, 6, (6,), (2, 3), (2, 3, 4)),
   )
@@ -164,6 +169,60 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.assertTrue(np.all(lo <= samples))
       self.assertTrue(np.all(samples < hi))
 
+  def test_eval_shape_big_random_array(self):
+    def f(x):
+      return random.normal(self.make_key(x), (int(1e12),))
+    with jax.enable_checks(False):  # check_jaxpr will materialize array
+      jax.eval_shape(f, 0)  # doesn't error
+
+  @jtu.sample_product(
+    type_=["int", "np.array", "jnp.array"],
+    seed=[-1, 0, 1, (1 << 32) - 1, (1 << 63) - 1, np.uint64((1 << 64) - 1)],
+  )
+  def test_prng_jit_invariance(self, seed, type_):
+    if type_ == "int" and seed == (1 << 64) - 1:
+      self.skipTest("Expected failure: Python int too large.")
+    if not config.enable_x64.value and seed > np.iinfo(np.int32).max:
+      self.skipTest("Expected failure: Python int too large.")
+    type_ = {"int": int, "np.array": np.array, "jnp.array": jnp.array}[type_]
+    args_maker = lambda: [type_(seed)]
+    f = lambda s: random.key_data(self.make_key(s))
+    self._CompileAndCheck(f, args_maker)
+
+  def test_prng_errors(self):
+    seed = np.iinfo(np.int64).max + 1
+    with self.assertRaises(OverflowError):
+      self.make_key(seed)
+    with self.assertRaises(OverflowError):
+      jax.jit(self.make_key)(seed)
+
+  def test_random_split_doesnt_device_put_during_tracing(self):
+    key = self.make_key(1).block_until_ready()
+    with jtu.count_device_put() as count:
+      jax.jit(random.split)(key)
+    self.assertLessEqual(count(), 1)  # 1 for the argument device_put
+
+  def test_large_prng(self):
+    # https://github.com/jax-ml/jax/issues/11010
+    def f():
+      return random.uniform(
+          self.make_key(3), (308000000, 128), dtype=jnp.bfloat16)
+
+    # TODO(jakevdp): key reuse checks for this OOM because of slice masking.
+    # Can we fix this?
+    with jax.debug_key_reuse(False):
+      # just lower, don't run, takes too long
+      jax.jit(f).lower()
+
+
+class DistributionsTest(RandomTestBase):
+  """
+  Tests of distribution statistics that need only be run with the default PRNG.
+
+  We limit this to the default PRNG to avoid repeated execution of very costly
+  tests. So long as the input bits are valid (as tested in BasicRandomTest) then
+  the distribution logic tested here will apply correctly.
+  """
   @jtu.sample_product(dtype=float_dtypes)
   def testNormal(self, dtype):
     key = lambda: self.make_key(0)
@@ -395,7 +454,6 @@ class LaxRandomTest(jtu.JaxTestCase):
       flat = output.reshape((prefix_size, math.prod(dists_shape)))
       counts = jax.vmap(partial(jnp.bincount, length=n_categories), 1)(flat)
       assert (counts <= 1).all()
-
 
   def testBernoulliShape(self):
     key = self.make_key(0)
@@ -1071,39 +1129,6 @@ class LaxRandomTest(jtu.JaxTestCase):
     with self.assertRaises(TypeError):
       random.choice(key, 5, 2, replace=True)
 
-  def test_eval_shape_big_random_array(self):
-    def f(x):
-      return random.normal(self.make_key(x), (int(1e12),))
-    with jax.enable_checks(False):  # check_jaxpr will materialize array
-      jax.eval_shape(f, 0)  # doesn't error
-
-  @jtu.sample_product(
-    type_=["int", "np.array", "jnp.array"],
-    seed=[-1, 0, 1, (1 << 32) - 1, (1 << 63) - 1, np.uint64((1 << 64) - 1)],
-  )
-  def test_prng_jit_invariance(self, seed, type_):
-    if type_ == "int" and seed == (1 << 64) - 1:
-      self.skipTest("Expected failure: Python int too large.")
-    if not config.enable_x64.value and seed > np.iinfo(np.int32).max:
-      self.skipTest("Expected failure: Python int too large.")
-    type_ = {"int": int, "np.array": np.array, "jnp.array": jnp.array}[type_]
-    args_maker = lambda: [type_(seed)]
-    f = lambda s: random.key_data(self.make_key(s))
-    self._CompileAndCheck(f, args_maker)
-
-  def test_prng_errors(self):
-    seed = np.iinfo(np.int64).max + 1
-    with self.assertRaises(OverflowError):
-      self.make_key(seed)
-    with self.assertRaises(OverflowError):
-      jax.jit(self.make_key)(seed)
-
-  def test_random_split_doesnt_device_put_during_tracing(self):
-    key = self.make_key(1).block_until_ready()
-    with jtu.count_device_put() as count:
-      jax.jit(random.split)(key)
-    self.assertLessEqual(count(), 1)  # 1 for the argument device_put
-
   @jtu.sample_product(dtype=int_dtypes + uint_dtypes)
   def test_randint_bounds(self, dtype):
     min = np.iinfo(dtype).min
@@ -1130,18 +1155,6 @@ class LaxRandomTest(jtu.JaxTestCase):
     r = random.randint(key, (1000,), -1000, 1000, np.uint8)
     self.assertGreater((r == 0).sum(), 0)
     self.assertGreater((r == 255).sum(), 0)
-
-  def test_large_prng(self):
-    # https://github.com/jax-ml/jax/issues/11010
-    def f():
-      return random.uniform(
-          self.make_key(3), (308000000, 128), dtype=jnp.bfloat16)
-
-    # TODO(jakevdp): key reuse checks for this OOM because of slice masking.
-    # Can we fix this?
-    with jax.debug_key_reuse(False):
-      # just lower, don't run, takes too long
-      jax.jit(f).lower()
 
   @jtu.sample_product(shape=[(3, 4)],
                       logits_shape_base=[(3, 4), (3, 1), (1, 4)],
@@ -1461,7 +1474,7 @@ double_threefry_prng_impl = prng_internal.PRNGImpl(
     tag='fry2')
 
 @jtu.with_config(jax_default_prng_impl='threefry2x32')
-class LaxRandomWithCustomPRNGTest(LaxRandomTest):
+class CustomPRNGTest(CommonRandomTest):
   def make_key(self, seed):
     return prng_internal.random_seed(seed, impl=double_threefry_prng_impl)
 
@@ -1522,7 +1535,7 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
 
 
 @jtu.with_config(jax_default_prng_impl='rbg')
-class LaxRandomWithRBGPRNGTest(LaxRandomTest):
+class RBGPRNGTest(CommonRandomTest):
   def make_key(self, seed):
     return random.PRNGKey(seed, impl='rbg')
 
@@ -1634,7 +1647,7 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
 
 
 @jtu.with_config(jax_default_prng_impl='unsafe_rbg')
-class LaxRandomWithUnsafeRBGPRNGTest(LaxRandomWithRBGPRNGTest):
+class UnsafeRBGPRNGTest(RBGPRNGTest):
   def make_key(self, seed):
     return random.PRNGKey(seed, impl="unsafe_rbg")
 
@@ -1647,24 +1660,6 @@ class LaxRandomWithUnsafeRBGPRNGTest(LaxRandomWithRBGPRNGTest):
     ref_keys = random.split(mapped_keys[0], (3, 2))
     self.assertArraysEqual(random.key_data(vmapped_keys),
                            random.key_data(ref_keys))
-
-def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
-  raise SkipTest('sampler only implemented for default RNG')
-
-for test_prefix in [
-    'testPoisson',
-    'testPoissonBatched',
-    'testPoissonShape',
-    'testPoissonZeros',
-]:
-  for attr in dir(LaxRandomTest):
-    if attr.startswith(test_prefix):
-      setattr(LaxRandomWithCustomPRNGTest, attr,
-              _sampler_unimplemented_with_custom_prng)
-      setattr(LaxRandomWithRBGPRNGTest, attr,
-              _sampler_unimplemented_with_custom_prng)
-      setattr(LaxRandomWithUnsafeRBGPRNGTest, attr,
-              _sampler_unimplemented_with_custom_prng)
 
 
 if __name__ == "__main__":
