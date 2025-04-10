@@ -1171,9 +1171,11 @@ def single_thread_predicates(module: ir.Module) -> tuple[ir.Value, ir.Value]:
                 sub_op.operation.regions[0].blocks[0]
             ):
               assert block_predicate is None
-              block_predicate = utils.single_thread_predicate(per_block=True)
+              block_predicate = utils.single_thread_predicate(
+                  scope=utils.ThreadSubset.BLOCK
+              )
               warpgroup_predicate = utils.single_thread_predicate(
-                  per_block=False
+                  scope=utils.ThreadSubset.WARPGROUP
               )
 
   if block_predicate is None:

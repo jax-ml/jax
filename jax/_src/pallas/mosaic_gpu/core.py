@@ -152,6 +152,8 @@ class PrimitiveSemantics(enum.Enum):
 # Convenience constants for (lowering, primitive) thread semantics pairs.
 LANExWG_SEMANTICS = (
     mgpu.LoweringSemantics.Lane, PrimitiveSemantics.Warpgroup)
+LANExWARP_SEMANTICS = (
+    mgpu.LoweringSemantics.Lane, PrimitiveSemantics.Warp)
 WGxWG_SEMANTICS = (
     mgpu.LoweringSemantics.Warpgroup, PrimitiveSemantics.Warpgroup)
 
@@ -748,6 +750,27 @@ class GPUMesh:
   def discharges_effect(self, effect: jax_core.Effect):
     return effect is _wgmma_pipeline_effect or effect is _memory_effect
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class WarpMesh:
+  """Represents a mesh over individual warps within a warpgroup.
+
+  When used in conjunction with `core_map`, the warp ID will be visible
+  within the body of the wrapped scope by querying `lax.axis_index` with
+  the specified axis name.
+  """
+
+  _NUM_WARPS_PER_WARPGROUP: ClassVar[int] = 4
+  axis_name: str
+
+  @property
+  def shape(self):
+    return collections.OrderedDict([
+        (self.axis_name, self._NUM_WARPS_PER_WARPGROUP),
+    ])
+
+  def discharges_effect(self, effect: jax_core.Effect):
+    del effect
+    return False
 
 def _gpu_mesh_discharge_rule(
     in_avals,

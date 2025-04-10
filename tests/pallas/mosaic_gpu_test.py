@@ -29,6 +29,7 @@ from jax import lax
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
+from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
@@ -1524,6 +1525,64 @@ class PallasCallTest(PallasTest):
     y = jax.lax.iota(jnp.float32, 128) * 3
     np.testing.assert_array_equal(kernel(x, y), x + y)
 
+  def test_warp_specialization_axis_index(self):
+    if self.LOWERING_SEMANTICS != plgpu.LoweringSemantics.Lane:
+      self.skipTest("Test only works on Lane semantics")
+    warp_mesh = plgpu.WarpMesh(axis_name="warp")
+    @functools.partial(plgpu.kernel,
+                       out_shape=jax.ShapeDtypeStruct((2, 128), jnp.int32))
+    def kernel(y_ref):
+      def scope(ones_smem_ref, threes_smem_ref):
+        # Prepare data to copy.
+        ones_smem_ref[:] = jnp.ones((1, 128), jnp.int32)
+        threes_smem_ref[:] = jnp.ones((1, 128), jnp.int32) * 3
+        plgpu.commit_smem()
+        @pl.core_map(warp_mesh)
+        def _():
+          warp_id = lax.axis_index("warp")
+          # We cannot load/store inside of core_map, so we issue async
+          # copies instead to produce a testable result.
+          @pl.when(warp_id == 1)
+          def _():
+            plgpu.copy_smem_to_gmem(ones_smem_ref, y_ref.at[0:1])
+          @pl.when(warp_id == 3)
+          def _():
+            plgpu.copy_smem_to_gmem(threes_smem_ref, y_ref.at[1:2])
+        plgpu.wait_smem_to_gmem(0)
+      pl.run_scoped(scope,
+                    plgpu.SMEM((1, 128), jnp.int32),
+                    plgpu.SMEM((1, 128), jnp.int32)
+                    )
+    result = kernel()
+    expected = jnp.stack((jnp.ones((128,), jnp.int32),
+                          jnp.ones((128,), jnp.int32) * 3), axis=0)
+    np.testing.assert_array_equal(result, expected)
+
+  def test_warp_mesh_errors_when_closing_over_array(self):
+    if self.LOWERING_SEMANTICS != plgpu.LoweringSemantics.Lane:
+      self.skipTest("Test only works on Lane semantics")
+    # We currently do not allow closing over arrays when mapping over
+    # a mesh, since we would need to present a view of the array local
+    # to each warp.
+    warp_mesh = plgpu.WarpMesh(axis_name="warp")
+    @functools.partial(plgpu.kernel,
+                       out_shape=jax.ShapeDtypeStruct((32, 32), jnp.float32),
+                       scratch_shapes=[plgpu.SMEM((32, 32), jnp.float32)])
+    def kernel(out_ref, smem_ref):
+      arr = jnp.ones((32, 32), dtype=jnp.float32)
+      @pl.core_map(warp_mesh)
+      def _():
+        smem_ref[...] = arr + 1
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(smem_ref, out_ref)
+      plgpu.wait_smem_to_gmem(0)
+    with self.assertRaisesRegex(
+        mgpu_lowering.LoweringError,
+        "Can only close over scalars and Refs when using core_map with "
+        "WarpMesh",
+    ):
+      kernel()
+
 
 class PallasCallWGTest(
     PallasCallTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
@@ -1549,6 +1608,7 @@ class PallasCallWGTest(
         mgpu_primitives.broadcasted_iota_p,
         mgpu_primitives.load_p,
         lax.slice_p,
+        pallas_core.core_map_p,
     }
 
     # TODO(dasenov): Remove this after the minimal jaxlib version is 0.5.4.
