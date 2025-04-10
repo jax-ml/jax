@@ -1563,9 +1563,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "export_test",
     srcs = ["export_test.py"],
-    disable_configs = [
-        "cpu_shardy",  # TODO(b/355263220): enable once export is supported.
-    ],
     enable_configs = [
         "cpu_shardy",
         "gpu_p100x2_shardy",
