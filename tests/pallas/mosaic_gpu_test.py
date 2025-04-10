@@ -388,17 +388,27 @@ class PallasCallTest(PallasTest):
     def kernel(x_ref, o_ref, smem_ref, barrier):
       plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier)
       plgpu.barrier_wait(barrier)
-      arr = jnp.ones_like(x_ref)
+      layout = plgpu.Layout.WG_STRIDED(x_ref.shape, vec_size=4)
       @plgpu.inline_mgpu(
-          smem_ref,
-          o_ref,
-          arr,
-          arg_types=[plgpu.RefType(), plgpu.RefType(), plgpu.Layout.WG_SPLAT(x_ref.shape)],
+          arg_types=(plgpu.RefType(),),
+          return_type=plgpu.GPUShapeDtypeStruct(
+              (128, 128), dtype, layout=layout
+          ),
       )
-      def _(ctx, smem_ref, o_ref, y):
+      def foo(ctx, smem_ref):
         del ctx
         x = mgpu.FragmentedArray.load_strided(smem_ref)
-        (x + y).store_untiled(o_ref)
+        y = mgpu.FragmentedArray.splat(
+            mgpu.c(1, x.mlir_dtype), shape=x.shape, layout=x.layout
+        )
+        return (x + y)
+
+      arr = foo(smem_ref)
+      @plgpu.inline_mgpu(arg_types=(layout, plgpu.RefType()))
+      def store(ctx, arr, o_ref):
+        del ctx
+        arr.store_untiled(o_ref)
+      store(arr, o_ref)
 
     key = jax.random.key(0)
     x = (jax.random.uniform(key, (128, 128)) * 42).astype(dtype)
