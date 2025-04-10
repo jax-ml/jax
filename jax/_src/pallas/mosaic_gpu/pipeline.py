@@ -675,6 +675,10 @@ def emit_pipeline_warp_specialized(
         return (next_indices,)
       lax.fori_loop(0, num_steps - max_concurrent_steps,
                     memory_loop_body, (indices,))
+      # Await all the arrivals to not leave barriers in a bad state.
+      for step in range(max_concurrent_steps):
+        for barrier in consumed_barrier_refs:
+          gpu_primitives.barrier_wait(barrier.at[step])
 
     wg_idx = lax.axis_index(wg_axis)
     lax.cond(

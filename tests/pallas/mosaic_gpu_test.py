@@ -1987,32 +1987,36 @@ class PipelineTest(PallasTest):
     )
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
 
-  @parameterized.parameters(
-      ((),),
-      ((plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128)),),
+  @parameterized.product(
+      transforms=(
+          (),
+          (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128)),
+      ),
+      repeats=(1, 3),
   )
-  def test_emit(self, transforms):
+  def test_emit(self, transforms, repeats):
     if transforms:
       self.skip_if_wg_semantics()
 
     num_steps = 4
 
     def kernel(x_gmem, o_gmem):
-      plgpu.emit_pipeline(
-          kernel_body,
-          in_specs=[
-              plgpu.GPUBlockSpec(
-                  (64, 64), lambda i: (0, i), transforms=transforms
-              )
-          ],
-          out_specs=[
-              plgpu.GPUBlockSpec(
-                  (64, 64), lambda i: (0, i), transforms=transforms
-              )
-          ],
-          grid=(num_steps,),
-          max_concurrent_steps=2,
-      )(x_gmem, o_gmem)
+      for _ in range(repeats):
+        plgpu.emit_pipeline(
+            kernel_body,
+            in_specs=[
+                plgpu.GPUBlockSpec(
+                    (64, 64), lambda i: (0, i), transforms=transforms
+                )
+            ],
+            out_specs=[
+                plgpu.GPUBlockSpec(
+                    (64, 64), lambda i: (0, i), transforms=transforms
+                )
+            ],
+            grid=(num_steps,),
+            max_concurrent_steps=2,
+        )(x_gmem, o_gmem)
 
     def kernel_body(_, x_smem, o_smem):
       # +1 for the indexing done by ``emit_pipeline`.
@@ -2235,9 +2239,9 @@ class PipelineSm90AWGTest(
 
 class WarpSpecializedPipelineTest(PallasTest):
 
-  @parameterized.product(m=[512], n=[512],
+  @parameterized.product(m=[512], n=[512], repeats=[1, 3],
                          manual_consumed_barriers=[False, True])
-  def test_pipelined_copy(self, m, n, manual_consumed_barriers):
+  def test_pipelined_copy(self, m, n, repeats, manual_consumed_barriers):
     self.skip_if_wg_semantics()  # Times out!
 
     x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float16)
@@ -2256,25 +2260,28 @@ class WarpSpecializedPipelineTest(PallasTest):
     spec = pl.BlockSpec(
         block_shape=(blk_m, blk_n), index_map=lambda i, j: (i, j)
     )
-    pipeline = mgpu_pipeline.emit_pipeline_warp_specialized(
-        copy_kernel,
-        grid=(m // blk_m, n // blk_n),
-        memory_registers=40,
-        max_concurrent_steps=2,
-        num_compute_wgs=2,
-        wg_axis="wg",
-        manual_consumed_barriers=manual_consumed_barriers,
-        in_specs=[spec],
-        out_specs=[
-            spec,
-            # Create an index-invariant output.
-            pl.BlockSpec(
-                block_shape=(blk_m, blk_n), index_map=lambda i, j: (0, 0)
-            ),
-        ],
-    )
+    def body(*gmem_refs):
+      pipeline = mgpu_pipeline.emit_pipeline_warp_specialized(
+          copy_kernel,
+          grid=(m // blk_m, n // blk_n),
+          memory_registers=40,
+          max_concurrent_steps=2,
+          num_compute_wgs=2,
+          wg_axis="wg",
+          manual_consumed_barriers=manual_consumed_barriers,
+          in_specs=[spec],
+          out_specs=[
+              spec,
+              # Create an index-invariant output.
+              pl.BlockSpec(
+                  block_shape=(blk_m, blk_n), index_map=lambda i, j: (0, 0)
+              ),
+          ],
+      )
+      for _ in range(repeats):
+        pipeline(*gmem_refs)  # Make sure we can run the pipeline multiple times
     kernel = self.kernel(
-        pipeline,
+        body,
         out_shape=(
             jax.ShapeDtypeStruct((m, n), jnp.float16),
             jax.ShapeDtypeStruct((blk_m, blk_n), jnp.float16),
