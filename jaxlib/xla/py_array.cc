@@ -814,6 +814,7 @@ absl::Status PyArray::BlockUntilResultStatusIsReady() {
   if (!result_status.IsReady()) {
     // Only release the gil if we need to Await().
     nb::gil_scoped_release release_gil;
+    BlockUntilReadyWithCancel(result_status);
     return result_status.Await();
   }
   return result_status.Await();
@@ -1761,7 +1762,9 @@ absl::StatusOr<std::pair<nb::object, bool>> PyHostValue::AsNumPyArray(
         nb::gil_scoped_release gil;
         TF_ASSIGN_OR_RETURN(hold_ptr->external_reference_hold,
                             pjrt_buffer->AcquireExternalReference());
-        TF_RETURN_IF_ERROR(ifrt_array->GetReadyFuture().Await());
+        auto fut = ifrt_array->GetReadyFuture();
+        BlockUntilReadyWithCancel(fut);
+        TF_RETURN_IF_ERROR(fut.Await());
       }
       void* data =
           hold_ptr->external_reference_hold->OpaqueDeviceMemoryDataPointer();
@@ -1775,6 +1778,7 @@ absl::StatusOr<std::pair<nb::object, bool>> PyHostValue::AsNumPyArray(
   TF_RETURN_IF_ERROR(CopyToHostAsync(dynamic_shape_holder, ifrt_array));
   if (!ready_.IsReady()) {
     nb::gil_scoped_release gil;
+    BlockUntilReadyWithCancel(ready_);
     TF_RETURN_IF_ERROR(ready_.Await());
   } else {
     TF_RETURN_IF_ERROR(ready_.Await());

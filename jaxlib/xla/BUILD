@@ -869,9 +869,15 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/synchronization",
+        "@com_google_absl//absl/time",
         "@com_google_absl//absl/types:span",
+        "@nanobind",
         "@xla//xla:util",
+        "@xla//xla/pjrt:pjrt_future",
+        "@xla//xla/python:version",
         "@xla//xla/python/ifrt",
+        "@xla//xla/tsl/concurrency:async_value",
         "@xla//xla/tsl/concurrency:ref_count",
     ],
 )
