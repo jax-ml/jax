@@ -142,6 +142,7 @@ py_library(
     # these are available in jax.test_util via the standard :jax target.
     name = "test_util",
     srcs = [
+        "_src/test_loader.py",
         "_src/test_util.py",
         "_src/test_warning_util.py",
     ],
