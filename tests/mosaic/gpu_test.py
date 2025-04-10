@@ -1630,7 +1630,7 @@ class TMATest(TestCase):
       run_kernel([1] * 6)
 
     with self.assertRaisesRegex(
-        ValueError, "last dimension to be divisible by 16"
+        ValueError, "last dimension to be divisible by 128"
     ):
       run_kernel([23])
 
