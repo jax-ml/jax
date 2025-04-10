@@ -305,6 +305,11 @@ def TPU_ShuffledStoreOp : TPU_Op<"shuffled_store", [DefaultMemWrite]> {
 
 // TODO(jevinjiang): deprecate to use dynamic_rotate.
 def TPU_RotateOp : TPU_Op<"rotate", [Pure, SameOperandsAndResultType]> {
+  let description = [{
+    Rotates the given vector by the given amount in the given dimension, i.e.,
+    for a 2D vector of shape (m, n), rotating dim 0 by `amount` will shift a row
+    at index `i` to index `(i + amount) % m`
+  }];
   let arguments = (ins
     AnyVectorOfNonZeroRank:$value,
     SI32Attr:$amount,
