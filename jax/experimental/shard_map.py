@@ -874,7 +874,7 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
     mesh = get_mesh_from_args(args, mesh)
   cur_mesh = get_abstract_mesh()
   args = map(partial(_unmatch_spec, mesh, check_rep, context_mesh=cur_mesh),
-              in_names, args)
+             in_names, args)
   in_rep = map(partial(_in_names_to_rep, mesh), in_names)
   outs, out_rep = _run_shmap(fun, mesh, auto, args, in_rep, check_rep, cur_mesh)
   out_avals = [core.mapped_aval(x.shape[0], 0, core.get_aval(x)) for x in outs]
@@ -1097,6 +1097,9 @@ class ShardMapTracer(core.Tracer):
       return None
 
   def __str__(self) -> str:
+    pb_names = set(self._trace.mesh.axis_names) - _rep_to_vma(
+        self._trace.mesh, self._trace.auto, self.rep)
+    self = pvary(self, tuple(pb_names))
     with core.eval_context(), use_abstract_mesh(self._trace.context_mesh):
       blocks = list(self.val)
     mesh = self._trace.mesh
