@@ -3467,9 +3467,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
         f(x_, y)
     self.assertLen(cm.output, expected_log_len)
     msg = cm.output[0]
-    self.assertIn('never seen input type signature', msg)
-    self.assertIn('closest seen input type signature has 1 mismatches', msg)
-    self.assertIn("seen f32[8]({}), but now given f32[8]({Auto: ('x',)})", msg)
+    self.assertIn("different input types", msg)
+    self.assertIn("at x, now f32[8]({Auto: ('x',)}) and before f32[8]({})", msg)
 
   def test_pjit_function_cache_cpp(self):
     def f(x):

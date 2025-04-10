@@ -393,66 +393,6 @@ class DebugInfoTest(jtu.JaxTestCase):
       jax.jit(f)(jnp.int32)
 
   @jtu.thread_unsafe_test()  # logging is not thread-safe
-  def test_arg_names_cache_miss_explanations(self):
-    @jax.jit
-    def f(x, y):
-      return jnp.sin(x) * y['hi']
-
-    x = jnp.float32(1.)
-    y = {'hi': jnp.arange(3., dtype='float32')}
-
-    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
-
-    # print on first miss, not on hit
-    with config.explain_cache_misses(True):
-      with self.assertLogs(level='WARNING') as cm:
-        f(x, y)
-        f(x, y)
-    self.assertLen(cm.output, expected_log_len)
-    msg = cm.output[0]
-    self.assertIn('TRACING CACHE MISS', msg)
-    self.assertIn('never seen function', msg)
-
-    # shape change
-    y_ = {'hi': jnp.arange(4, dtype='float32')}
-    with config.explain_cache_misses(True):
-      with self.assertLogs(level='WARNING') as cm:
-        f(x, y_)
-    self.assertLen(cm.output, expected_log_len)
-    msg = cm.output[0]
-    self.assertIn('never seen input type signature', msg)
-    self.assertIn('closest seen input type signature has 1 mismatches', msg)
-    self.assertIn('seen f32[3], but now given f32[4]', msg)
-
-    # weak type change (assuming no x64)
-    if not config.enable_x64.value:
-      with config.explain_cache_misses(True):
-        with self.assertLogs(level='WARNING') as cm:
-          f(1., y)
-      self.assertLen(cm.output, expected_log_len)
-      msg = cm.output[0]
-      self.assertIn('weak_type=True', msg)
-      self.assertIn('https://docs.jax.dev/en/latest/type_promotion.html#weak-types', msg)
-
-    # kwarg change
-    with config.explain_cache_misses(True):
-      with self.assertLogs(level='WARNING') as cm:
-        f(1, y=y)
-    self.assertLen(cm.output, expected_log_len)
-    msg = cm.output[0]
-    self.assertIn('never seen passing 1 positional args and 1 keyword args', msg)
-
-    # tracing config change
-    with config.explain_cache_misses(True):
-      with self.assertLogs(level='WARNING') as cm:
-        with jax.numpy_rank_promotion('warn'):
-          f(x, y)
-    # depending on the backend, we may or may not get persistent cache warnings
-    self.assertTrue(1 <= len(cm.output) <= expected_log_len)
-    msg = cm.output[0]
-    self.assertIn("tracing context doesn't match", msg)
-
-  @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_arg_names_cache_miss_explanations_new_function_in_loop(self):
     @jax.jit
     def f(x, y):
