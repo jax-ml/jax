@@ -1504,10 +1504,13 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
         starts,
     )
   if load_aval != aval_out:
-    vec_type = ir.VectorType.get(aval_out.shape,
-                                _dtype_to_ir_type(aval_out.dtype,
-                                                  is_kernel_boundary=True))
-    load_val = vector.shape_cast(vec_type, load_val)
+    if aval_out.shape:
+      vec_type = ir.VectorType.get(aval_out.shape,
+                                  _dtype_to_ir_type(aval_out.dtype,
+                                                    is_kernel_boundary=True))
+      load_val = vector.shape_cast(vec_type, load_val)
+    else:
+      load_val = vector.extract(load_val, [], [0] * len(load_aval.shape))
   return _maybe_cast_load_to_bool(ctx, aval_out, load_val)
 
 def _prng_key_load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree) -> KeyScalarBundle:
@@ -1692,6 +1695,8 @@ def _masked_swap_lowering_rule(
     result = vector.load(mem_aval_vec_type, ref, starts)
   val = _maybe_cast_store_to_memref_type(ctx, val_aval, val)
   if mem_aval != aval_out:
+    if not aval_out.shape:
+      raise ValueError("Cannot swap scalars to VMEM.")
     # We are slicing a scalar so provided dummy 1 indices
     result_vec_type = ir.VectorType.get(aval_out.shape,
       _dtype_to_ir_type(aval_out.dtype, is_kernel_boundary=True))
@@ -2174,6 +2179,8 @@ def _reshape_lowering_rule(ctx: LoweringRuleContext, x, new_sizes, dimensions,
         ),
         x,
     )
+  if not ctx.avals_out[0].shape:
+    return vector.extract(x, [], [0] * len(ctx.avals_in[0].shape))
   return vector.shape_cast(
       aval_to_ir_type(
           ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]

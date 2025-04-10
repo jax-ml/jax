@@ -641,6 +641,34 @@ class IndexerOpsTest(PallasBaseTest):
     )(x, indices)
     self.assertAllClose(res[:, start : start + 1, :], x, atol=0., rtol=0.)
 
+  def test_scalar_load_from_vmem(self):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Requires TPU v4 or later")
+    def kernel(x_ref, o_ref, sem_ref):
+      o_ref[...] = jnp.zeros_like(o_ref)
+      scalar_val = x_ref[1, 2]
+      # Use scalar_val in both async_copy and store.
+      o_ref[scalar_val] = jnp.ones_like(o_ref[0]) * scalar_val
+      desc = pltpu.make_async_copy(
+         o_ref.at[scalar_val],
+         o_ref.at[scalar_val + 1],
+         sem_ref,
+      )
+      desc.start()
+      desc.wait()
+
+    x = jnp.array([[1, 2, 3], [4, 5, 6]], dtype=jnp.int32)
+    res = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 8, 128), jnp.int32),
+        grid=(1,),
+        scratch_shapes=[pltpu.SemaphoreType.DMA]
+    )(x)
+    expected = jnp.zeros_like(res)
+    expected = expected.at[6].set(jnp.ones((8, 128), jnp.int32) * 6)
+    expected = expected.at[7].set(jnp.ones((8, 128), jnp.int32) * 6)
+    self.assertArraysEqual(res, expected)
+
 
 class IndexerOpsInterpretTest(IndexerOpsTest):
   INTERPRET = True
