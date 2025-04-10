@@ -56,8 +56,10 @@ def _path_starts_with(path: str, path_prefix: str) -> bool:
     return False
 
 def include_frame(f: types.FrameType) -> bool:
-  return not any(_path_starts_with(f.f_code.co_filename, path)
-                 for path in _exclude_paths)
+  return include_filename(f.f_code.co_filename)
+
+def include_filename(filename: str) -> bool:
+  return not any(_path_starts_with(filename, path) for path in _exclude_paths)
 
 # When scanning stack traces, we might encounter frames from cpython that are
 # removed from printed stack traces, such as frames from parts of importlib. We

@@ -4526,6 +4526,13 @@ class APITest(jtu.JaxTestCase):
     self.assertIn("tracing context doesn't match", msg)
 
   @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_skip_internals(self):
+    with config.explain_cache_misses(True):
+      with self.assertNoLogs(level='WARNING'):
+        for i in range(2):
+          jnp.sin(jnp.arange(i + 1, dtype=np.float32))
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_new_function_in_loop(self):
     @jax.jit
     def f(x, y):
@@ -4560,12 +4567,12 @@ class APITest(jtu.JaxTestCase):
         f(jax.random.key(seed=123))
 
     if is_persistent_cache_enabled():
-      # 5 warnings from tracing cache, 5-10 from persistent cache depending on
+      # 4 warnings from tracing cache, 5-10 from persistent cache depending on
       # the backend
-      self.assertTrue(10 <= len(cm.output) <= 15)
+      self.assertTrue(9 <= len(cm.output) <= 15)
       self.assertTrue(any("TRACING CACHE MISS" in msg for msg in cm.output))
     else:
-      self.assertLen(cm.output, 5)
+      self.assertLen(cm.output, 4)
       for msg in cm.output:
         self.assertIn("TRACING CACHE MISS", msg)
 
