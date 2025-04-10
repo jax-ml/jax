@@ -17,12 +17,10 @@
 
 from __future__ import annotations
 
-from enum import Enum, auto
-from typing import Any, Union
+from typing import Any
 from contextlib import contextmanager
 from dataclasses import dataclass
 import numpy as np
-import io
 
 from jax.extend.mlir import ir
 from jax.extend.mlir.dialects import func
@@ -33,13 +31,14 @@ from jax._src import xla_bridge as xb
 
 # Base class for JAX-level types
 class Ty:
-  def __eq(self, other): raise NotImplementedError(type(self))
+  def __eq__(self, other): raise NotImplementedError(type(self))
   def __str__(self):     raise NotImplementedError(type(self))
 
   # dispatch path for "dunder" methods on values
   def _add_(self, x: Any, y: Any): raise NotImplementedError(type(self))
   def _mul_(self, x: Any, y: Any): raise NotImplementedError(type(self))
 
+  def __repr__(self): return str(self)
 
 # Base class for JAX-level op.
 # See note [op_representation]
@@ -57,6 +56,8 @@ class Tracer:
   def __mul__(self, other): return self.ty._mul_(self, other)
   def __radd__(self, other): return self.ty._add_(other, self)
   def __rmul__(self, other): return self.ty._mul_(other, self)
+  def __getitem__(self, idx): return self.ty._getitem_(self, idx)
+  def __setitem__(self, idx, val): return self.ty._setitem_(self, idx, val)
 
 # Valid runtime value (passes is_valid_runtime_val(x) check).
 # Does *not* include Python scalars.
@@ -71,7 +72,7 @@ class Interpreter:
   def lift(self, val: InterpreterVal) -> ThisInterpreterVal:
     raise NotImplementedError(type(self))
 
-  def interpret_op(self, op:Op, result_ty: Ty, args: tuple(ThisInterpreterVal)) -> ThisInterpreterVal:
+  def interpret_op(self, op:Op, result_ty: Ty | Tuple[Ty], args: tuple(ThisInterpreterVal)) -> ThisInterpreterVal:
     raise NotImplementedError(type(self))
 
 # === pretty printer ===
@@ -121,8 +122,8 @@ class Var(Atom):
   def __str__(self): return f"{self.name}:{self.ty}"
 
 class Eqn:
-  def __init__(self, binder: Var, prim: Op, args: tuple[Atom]):
-    assert isinstance(binder, Var)
+  def __init__(self, binder: Var | tuple[Var], prim: Op, args: tuple[Atom]):
+    assert isinstance(binder, (Var, tuple))
     assert isinstance(prim, Op)
     assert isinstance(args, tuple)
     assert all(isinstance(x, Atom) for x in args)
@@ -147,7 +148,7 @@ class Eqn:
     return p.render()
 
 # We call an IR function a "Jaxpr", for "JAX expression"
-@dataclass
+@dataclass(frozen=True)
 class Jaxpr:
   binders : list[Var]  # The function's formal parameters (arguments)
   eqns: list[Eqn]      # The body of the function, a list of instructions/equations
@@ -230,6 +231,10 @@ def is_python_scalar(x:Any) -> bool:
 def cast_python_scalar(x, ty):
   return np.array(x, dtype=ty.dtype.to_numpy_dtype())
 
+def cast_if_scalar(x, ty):
+  if is_python_scalar(x):
+    return cast_python_scalar(x, ty)
+
 # === dtypes ===
 
 class DType:
@@ -279,7 +284,7 @@ class ArrayTy(Ty):
     self.shape = shape
     self.dtype = dtype
 
-  def __eq(self, other):
+  def __eq__(self, other):
     return (isinstance(other, ArrayTy) and
             self.shape == other.shape and
             self.dtype == other.dtype)
@@ -331,10 +336,15 @@ class StagingInterpreter(Interpreter):
       assert False
 
   def interpret_op(self, op, ty, args):
-    binder = self.fresh_var(ty)
     args = tuple(x.val for x in args)
-    self.equations.append(Eqn(binder, op, args))
-    return StagingTracer(binder, self)
+    if isinstance(ty, tuple):
+      binders = tuple(map(self.fresh_var, ty))
+      self.equations.append(Eqn(binders, op, args))
+      return tuple(StagingTracer(b, self) for b in binders)
+    else:
+      binder = self.fresh_var(ty)
+      self.equations.append(Eqn(binder, op, args))
+      return StagingTracer(binder, self)
 
 def make_jaxpr(f, arg_tys):
   interpreter = StagingInterpreter()
@@ -364,7 +374,17 @@ def emit_op(op: Op, result_ty: Ty, args: list[InterpreterVal]):
   args = tuple(current_interpreter.lift(arg) for arg in args)
   return current_interpreter.interpret_op(op, result_ty, args)
 
-# === first-order primitives ===
+# === Core array ops needed for __add__ and friends ===
+
+def infer_binop(x:InterpreterVal, y:InterpreterVal):
+  # TODO: broadcasting
+  x_val = to_runtime_val(x)
+  y_val = to_runtime_val(y)
+  if is_python_scalar(x):
+    x_val = cast_python_scalar(x_val, typeof(y_val))
+  elif is_python_scalar(y):
+    y_val = cast_python_scalar(y_val, typeof(x_val))
+  return typeof(x_val), x_val, y_val
 
 class Add(Op):
   def eval(self, _, x, y): return x + y
@@ -381,25 +401,3 @@ class Mul(Op):
 def mul(x, y):
   result_ty, x, y = infer_binop(x, y)
   return emit_op(Mul(), result_ty, (x, y))
-
-def infer_binop(x:InterpreterVal, y:InterpreterVal):
-  # TODO: broadcasting
-  x_val = to_runtime_val(x)
-  y_val = to_runtime_val(y)
-  if is_python_scalar(x):
-    x_val = cast_python_scalar(x_val, typeof(y_val))
-  elif is_python_scalar(y):
-    y_val = cast_python_scalar(y_val, typeof(x_val))
-  return typeof(x_val), x_val, y_val
-
-
-# === Testing it out ===
-
-def foo(x):
-  return x * (x + 3.0)
-
-# print(add(1.0, 2.0))
-# print(foo(2.0))
-japxr = make_jaxpr(foo, (f32[()],))
-print(japxr)
-# eval_jaxpr(jaxpr, (2.0,))
