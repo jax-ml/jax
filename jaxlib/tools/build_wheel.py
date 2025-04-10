@@ -260,6 +260,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu):
           "__main__/jaxlib/mlir/dialects/_mhlo_ops_gen.py",
           "__main__/jaxlib/mlir/dialects/_ods_common.py",
           "__main__/jaxlib/mlir/dialects/_scf_ops_gen.py",
+          "__main__/jaxlib/mlir/dialects/_sdy_enums_gen.py",
           "__main__/jaxlib/mlir/dialects/_sdy_ops_gen.py",
           "__main__/jaxlib/mlir/dialects/_sparse_tensor_enum_gen.py",
           "__main__/jaxlib/mlir/dialects/_sparse_tensor_ops_gen.py",
