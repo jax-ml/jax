@@ -17,6 +17,7 @@
 These APIs are highly unstable and can change weekly. Use at your own risk.
 """
 
+from jax._src.pallas.mosaic_gpu.core import AliasedSMEMRef as AliasedSMEMRef
 from jax._src.pallas.mosaic_gpu.core import Barrier as Barrier
 from jax._src.pallas.mosaic_gpu.core import ClusterBarrier as ClusterBarrier
 from jax._src.pallas.mosaic_gpu.core import GPUBlockSpec as GPUBlockSpec
@@ -43,6 +44,7 @@ from jax._src.pallas.mosaic_gpu.primitives import commit_smem as commit_smem
 from jax._src.pallas.mosaic_gpu.primitives import commit_smem_to_gmem_group as commit_smem_to_gmem_group
 from jax._src.pallas.mosaic_gpu.primitives import copy_gmem_to_smem as copy_gmem_to_smem
 from jax._src.pallas.mosaic_gpu.primitives import copy_smem_to_gmem as copy_smem_to_gmem
+from jax._src.pallas.mosaic_gpu.primitives import flatten_aliased_smem_ref as flatten_aliased_smem_ref
 from jax._src.pallas.mosaic_gpu.primitives import inline_mgpu as inline_mgpu
 from jax._src.pallas.mosaic_gpu.primitives import Layout as Layout
 from jax._src.pallas.mosaic_gpu.primitives import layout_cast as layout_cast

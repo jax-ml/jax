@@ -1043,12 +1043,64 @@ def _num_programs_lowering_rule(ctx: LoweringRuleContext, axis):
       gpu_dialect.block_dim(gpu_dialect.Dimension(axis)),
   )
 
+
+def _handle_dtype_bitcast(
+    ref: ir.Value, src_dtype: ir.Type, dst_dtype: ir.Type
+) -> ir.Value:
+  """Allows bitcasting a SMEM ref from one element type to another.
+
+  Args:
+    ref: the reference to bitcast.
+    src_dtype: the source element type.
+    dst_dtype: the destination element type.
+
+  Returns:
+    A bitcasted version of `ref` with element type `dst_dtype`.
+
+  Raises:
+    ValueError: if the source ref is not in SMEM.
+  """
+  if src_dtype == dst_dtype:
+    return ref
+  if src_dtype != ir.IntegerType.get_signless(8):
+    raise NotImplementedError(
+        "Data type bitcast is only supported from i8 to other types."
+    )
+  ref_ty = ir.MemRefType(ref.type)
+  if ref_ty.memory_space != ir.Attribute.parse("#gpu.address_space<workgroup>"):
+    raise ValueError(f"Only workgroup memory is supported but got {ref}.")
+  if len(ref_ty.shape) != 1:
+    raise NotImplementedError(
+        "Data type bitcast is only supported for 1D arrays."
+    )
+  [shape_bytes] = ref_ty.shape
+  target_bytewidth = mgpu_utils.bytewidth(dst_dtype)
+
+  if shape_bytes % target_bytewidth:
+    raise ValueError(
+        f"Can not bitcast memory region of size {shape_bytes} to dtype with "
+        f"{target_bytewidth} bytes width."
+    )
+
+  result_type = ir.MemRefType.get(
+      shape=(shape_bytes // target_bytewidth,),
+      element_type=dst_dtype,
+      memory_space=ref_ty.memory_space,
+  )
+
+  # Do a memref_ptr/ptr_as_memref roundtrip instead of using `memref.view`,
+  # which refuses to take in our source ref.
+  smem = mgpu_utils.WORKGROUP_NVPTX_ADDRESS_SPACE
+  ref = mgpu_utils.memref_ptr(ref, memory_space=smem)
+  return mgpu_utils.ptr_as_memref(ref, result_type, ptr_memory_space=smem)
+
+
 def _handle_transforms(
     ref: ir.Value,
     transforms: Sequence[gpu_core.Transform],
     *,
     handle_transposes=True,
-    handle_reshapes=True,
+    handle_bitcasts=True,
 ) -> tuple[ir.Value, Sequence[gpu_core.Transform]]:
   transformed_ref = ref
   mlir_dtype = ir.MemRefType(ref.type).element_type
@@ -1078,10 +1130,15 @@ def _handle_transforms(
         perm = _bubble_up(lambda t, p: t.untransform_transpose(p),
                                           perm)
         transformed_ref = mgpu.memref_transpose(transformed_ref, perm)
-      case RefReshaper(dtype=dtype, shape=shape) if handle_reshapes:
+      case RefReshaper(dtype=dtype, shape=shape) if handle_bitcasts:
         shape = _bubble_up(
             lambda t, p: t.untransform_reshape(dtype, p),  # pylint: disable=cell-var-from-loop
             shape)
+        target_mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
+        if target_mlir_dtype != mlir_dtype:
+          transformed_ref = _handle_dtype_bitcast(
+              transformed_ref, mlir_dtype, target_mlir_dtype
+          )
         transformed_ref = mgpu.memref_reshape(transformed_ref, shape)
       case _:
         new_transforms.append(t)
@@ -1184,7 +1241,7 @@ def _swap_lowering_rule(
     raise TypeError(f"Can only store arrays (got {value}).")
   if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
     raise TypeError(f"Can only store to references (got {x_smem}).")
-  x_aval = ctx.avals_in[0]
+  v_aval = ctx.avals_in[1]
   transforms = jax.tree.unflatten(tree, leaves)
   transposed_value = value.layout == mgpu.WGMMA_TRANSPOSED_LAYOUT
   x_smem, transforms = _handle_transforms(
@@ -1196,7 +1253,7 @@ def _swap_lowering_rule(
         gpu_core.UntileRef(tiling),
         *maybe_transpose,
     ):
-      if tiling != (8, swizzle // x_aval.dtype.itemsize):
+      if tiling != (8, swizzle // v_aval.dtype.itemsize):
         raise NotImplementedError("Tiling does not fit swizzle")
 
       if transposed_value != bool(maybe_transpose):
@@ -1214,7 +1271,7 @@ def _swap_lowering_rule(
 
       old_value = mgpu.FragmentedArray.load_tiled(
           x_smem,
-          is_signed=mgpu_utils.is_signed(x_aval.dtype),
+          is_signed=mgpu_utils.is_signed(v_aval.dtype),
           swizzle=swizzle,
           layout=value.layout,
       )
@@ -1226,14 +1283,14 @@ def _swap_lowering_rule(
           old_value = mgpu.FragmentedArray.load_untiled(
               x_smem,
               layout=value.layout,
-              is_signed=mgpu_utils.is_signed(x_aval.dtype),
+              is_signed=mgpu_utils.is_signed(v_aval.dtype),
               optimized=False,
           )
           value.store_untiled(x_smem, optimized=False)
           return old_value
         case _:
           old_value = mgpu.FragmentedArray.load_strided(
-              x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
+              x_smem, is_signed=mgpu_utils.is_signed(v_aval.dtype)
           )
           value.store_untiled(x_smem)
           return old_value

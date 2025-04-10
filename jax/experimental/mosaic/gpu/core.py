@@ -172,12 +172,27 @@ RefTree = Any
 T = TypeVar('T')
 
 
+@jax.tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
 class Union(Generic[T]):
   members: Sequence[T]
 
   def __iter__(self):
     return iter(self.members)
+
+  def __or__(self, other):
+    if isinstance(other, Union):
+      return Union(self.members + other.members)
+    return Union(self.members + [other])
+
+  def tree_flatten(self):
+    return tuple(self.members), None
+
+  @classmethod
+  def tree_unflatten(cls, aux_data, members):
+    del aux_data  # Unused.
+    return cls(members)
+
 
 @dataclasses.dataclass(frozen=True)
 class TMABarrier:

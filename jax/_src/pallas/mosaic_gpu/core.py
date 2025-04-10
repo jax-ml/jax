@@ -22,14 +22,16 @@ from collections.abc import Callable, Iterable, Sequence
 import dataclasses
 import enum
 import itertools as it
+import math
+import numpy as np
 from typing import Any, ClassVar, Literal
 
 import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import tree_util
 from jax._src import pretty_printer as pp
+from jax._src import tree_util
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
@@ -218,6 +220,47 @@ class GPUMemoryRef(pallas_core.MemoryRef):
     if not ref.transforms:
       return ref.ref
     return ref
+
+
+def _smem_tree_size(refs: mgpu.Union[GPUMemoryRef] | GPUMemoryRef) -> int:
+  leaves = jax.tree.leaves(refs, is_leaf=lambda x: isinstance(x, mgpu.Union))
+  size = 0
+  for l in leaves:
+    match l:
+      case mgpu.Union(members):
+        size += max(_smem_tree_size(tree) for tree in members)
+      case _:
+        size += math.prod(l.shape) * np.dtype(l.dtype).itemsize
+  return size
+
+
+class AbstractAliasedSMEMRef(pallas_core.AbstractMemoryRef):
+  refs: mgpu.Union[pallas_core.AbstractMemoryRef]
+
+  def __init__(self, aval, refs: mgpu.Union[pallas_core.AbstractMemoryRef]):
+    self.refs = refs
+    super().__init__(aval, memory_space=SMEM)
+
+
+class AliasedSMEMRef(GPUMemoryRef):
+  refs: mgpu.Union
+
+  def __init__(self, refs: tuple[GPUMemoryRef | mgpu.Union[GPUMemoryRef], ...]):
+    if any(ref.memory_space != SMEM for ref in jax.tree.leaves(refs)):
+      raise ValueError("Refs underlying an AliasedSMEMRef must all be in SMEM.")
+    self.refs = mgpu.Union(refs)
+    num_bytes = _smem_tree_size(self.refs)
+    super().__init__(
+        shape=(num_bytes,),
+        dtype=jnp.int8,
+        memory_space=SMEM,
+        transforms=(),
+    )
+
+  def get_ref_aval(self) -> AbstractAliasedSMEMRef:
+    inner_aval = jax.core.ShapedArray(self.shape, self.dtype)
+    refs_aval = jax.tree.map(lambda ref: ref.get_ref_aval(), self.refs)
+    return AbstractAliasedSMEMRef(inner_aval, refs_aval)
 
 
 class MemoryRefTransform(pallas_core.MemoryRefTransform, abc.ABC):
