@@ -307,6 +307,7 @@ class PallasBaseTest(jtu.JaxTestCase):
       self.skipTest("TODO: Mosaic GPU does not support this yet")
 
 
+@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
 class OpsTest(PallasBaseTest):
 
   @parameterized.named_parameters(

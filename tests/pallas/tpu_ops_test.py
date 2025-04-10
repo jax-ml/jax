@@ -66,6 +66,7 @@ class PallasBaseTest(jtu.JaxTestCase):
     return pl.pallas_call(*args, interpret=cls.INTERPRET, **kwargs)
 
 
+@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
 class OpsTest(PallasBaseTest):
 
   @parameterized.product(
@@ -491,6 +492,7 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_array_equal(output, expected)
 
 
+@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
 class OpsInterpretTest(OpsTest):
   INTERPRET = True
 

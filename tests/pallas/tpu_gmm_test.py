@@ -172,6 +172,7 @@ if CAN_USE_HYPOTHESIS:
 
   # TODO(tgale): Fix errors with strict dtype promotion.
   @jtu.with_config(jax_numpy_dtype_promotion="standard")
+  @jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
   class GroupedMatmulTest(jtu.JaxTestCase):
 
     def setUp(self):
