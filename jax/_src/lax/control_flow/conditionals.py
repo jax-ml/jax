@@ -311,7 +311,7 @@ def _check_branch_outputs(
     component = lambda _: ''
   else:
     leaves_and_paths, _ = tree_flatten_with_path(outs1)
-    paths, _ = unzip2(leaves_and_paths)
+    paths, _ = unzip2(leaves_and_paths)  # type: ignore
     component = lambda p: f' at path {keystr(p)}' if p else ''
 
   if out_tree1 != out_tree2:
