@@ -92,7 +92,7 @@ class PallasErrorHandlingTest(jtu.JaxTestCase):
         tb_string = "".join(tb_string)
       self.assertEndsWith(tb_string, "x = input_ref[:, ::8]\n")
 
-  def test_invalid_smem_vmem_verification_error(self):
+  def test_index_with_f32_verification_error(self):
     input_arr = jax.random.uniform(jax.random.key(0), (2, 2), dtype=jnp.float32)
     out_shape = jax.ShapeDtypeStruct((1, 1), jnp.float32)
     grid_spec = pltpu.PrefetchScalarGridSpec(
@@ -105,7 +105,8 @@ class PallasErrorHandlingTest(jtu.JaxTestCase):
 
     @functools.partial(pl.pallas_call, out_shape=out_shape, grid_spec=grid_spec)
     def test_kernel(input_ref, output_ref):
-      output_ref[0, 0] = input_ref[0, 0]
+      idx = input_ref[0, 0]
+      output_ref[idx, 0] = input_ref[0, 0]
 
     # Test that a verification error is raised. This assert is a guard against
     # underlying changes in Pallas lowering.
@@ -113,8 +114,8 @@ class PallasErrorHandlingTest(jtu.JaxTestCase):
     # the test example to force a different error.
     with self.assertRaisesRegex(
         error_handling.VerificationError,
-        "'memref.store' op failed to verify that type of 'value' matches "
-        "element type of 'memref'",
+        "must be signless-integer-like or memref of signless-integer, "
+        "but got 'f32'"
     ):
       test_kernel(input_arr)
 
@@ -125,7 +126,7 @@ class PallasErrorHandlingTest(jtu.JaxTestCase):
     except error_handling.MosaicError as e:
       tb_string = traceback.format_tb(e.__traceback__)
       tb_string = "".join(tb_string)
-    self.assertEndsWith(tb_string, "output_ref[0, 0] = input_ref[0, 0]\n")
+    self.assertEndsWith(tb_string, "output_ref[idx, 0] = input_ref[0, 0]\n")
 
   def test_parse_location_string(self):
     name, frames = error_handling.parse_location_string(LOCATION_TEST_STRING)
