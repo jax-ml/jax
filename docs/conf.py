@@ -80,6 +80,7 @@ extensions = [
     "sphinx_remove_toctrees",
     'sphinx_copybutton',
     'jax_extensions',
+    'jax_list_config_options',
     'sphinx_design',
     'sphinxext.rediraffe',
 ]
