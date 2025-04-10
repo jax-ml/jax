@@ -22,7 +22,7 @@ import itertools
 import logging
 import os
 import sys
-from typing import Any, Generic, NoReturn, Optional, Protocol, TypeVar, cast
+from typing import Any, ContextManager, Generic, NoReturn, Optional, Protocol, TypeVar, cast
 
 from jax._src.lib import guard_lib
 from jax._src.lib import jax_jit
@@ -97,6 +97,20 @@ class ValueHolder(Protocol[_T]):
   def _set(self, value: _T) -> None: ...
 
 
+class _ValueResetter:
+  """A context manager that resets a value holder to its original value."""
+
+  def __init__(self, value_holder: ValueHolder[_T], prev_value: _T):
+    self._value_holder = value_holder
+    self._prev_value = prev_value
+
+  def __enter__(self):
+    pass
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    self._value_holder._set(self._prev_value)
+
+
 class Config:
   _HAS_DYNAMIC_ATTRIBUTES = True
 
@@ -106,10 +120,34 @@ class Config:
     self.use_absl = False
     self._contextmanager_flags = set()
 
-  def update(self, name, val):
-    if name not in self._value_holders:
-      raise AttributeError(f"Unrecognized config option: {name}")
+  def update(self, name, val) -> ContextManager[None]:
+    """Updates the value of a config option.
+
+    You can use this method to update the value of a config option to a new
+    value:
+
+    >>> jax.config.update('jax_log_compiles', True)
+
+    You can also use it to temporarily change the value of a config option
+    within a with statement:
+
+    >>> with jax.config.update('jax_log_compiles', True):
+    ...   # Inside the with statement, the value of `jax_log_compiles` is True.
+    ...   do_some_compilation()
+    >>> # After the with statement, `jax_log_compiles` is restored back to its
+    >>> # previous value.
+
+    Args:
+      name: the name of the config option
+      val: the new value of the config option
+
+    Returns:
+      A context manager that resets the config option to its previous value
+      when it goes out of scope.
+    """
+    prev_val = self._read(name)
     self._value_holders[name]._set(val)
+    return _ValueResetter(self._value_holders[name], prev_val)
 
   def read(self, name):
     if name in self._contextmanager_flags:

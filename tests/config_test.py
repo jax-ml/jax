@@ -42,6 +42,14 @@ class ConfigTest(jtu.JaxTestCase):
     jax.config.update('jax_test_enum_config', 'default')
     self.assertEqual(jax_test_enum_config.value, 'default')
 
+  def test_config_setting_via_update_with_resetter(self):
+    self.assertEqual(jax_test_enum_config.value, 'default')
+
+    with jax.config.update('jax_test_enum_config', 'xxx'):
+      self.assertEqual(jax_test_enum_config.value, 'xxx')
+
+    self.assertEqual(jax_test_enum_config.value, 'default')
+
   def test_config_setting_via_context(self):
     self.assertEqual(jax_test_enum_config.value, 'default')
 
