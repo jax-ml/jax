@@ -1479,6 +1479,31 @@ absl::Status PyArray::BatchedBlockUntilReady(std::vector<nb::object> objs) {
   return AwaitBuffersReady(absl::MakeConstSpan(ifrt_arrays));
 }
 
+absl::Status PyArray::ReplaceWithAlias(PyArray o) {
+  auto& storage = GetStorage();
+  auto& o_storage = o.GetStorage();
+  if (storage.py_client.get() != o_storage.py_client.get()) {
+    return absl::InvalidArgumentError(
+        "Unable to replace a PyArray with a PyArray from a different client.");
+  }
+  storage.aval = o_storage.aval;
+  storage.weak_type = o_storage.weak_type;
+  storage.dtype = o_storage.dtype;
+  storage.shape = o_storage.shape;
+  storage.sharding = o_storage.sharding;
+  storage.npy_value = o_storage.npy_value;
+  storage.committed = o_storage.committed;
+  storage.traceback = o_storage.traceback;
+  storage.ifrt_array = o_storage.ifrt_array;
+  storage.fully_replicated_array = o_storage.fully_replicated_array;
+  storage.py_arrays = o_storage.py_arrays;
+  storage.host_value.Clear();
+  storage.dynamic_shape = o_storage.dynamic_shape;
+  storage.result_status = o_storage.result_status;
+
+  return absl::OkStatus();
+}
+
 std::vector<PyArray> PyClient::LiveArrays() const {
   std::vector<PyArray> result;
   for (auto& shard : arrays_) {
@@ -1899,6 +1924,12 @@ absl::Status PyHostValue::CopyToHostAsync(
   return absl::OkStatus();
 }
 
+void PyHostValue::Clear() {
+  ready_ = {};
+  value_ = {};
+  string_array_contents_ = {};
+}
+
 namespace {
 PyMemberDef PyBaseArray_members[] = {
 #if PY_VERSION_HEX < 0x030C0000
@@ -2057,6 +2088,11 @@ absl::Status PyArray::RegisterTypes(nb::module_& m) {
   type.attr("_copy_single_device_array_to_host_async") = nb::cpp_function(
       [](PyArray& self) {
         xla::ThrowIfError(self.CopySingleDeviceArrayToHostAsync());
+      },
+      nb::is_method());
+  type.attr("_replace_with") = nb::cpp_function(
+      [](PyArray& self, PyArray& o) {
+        xla::ThrowIfError(self.ReplaceWithAlias(o));
       },
       nb::is_method());
   type.attr("block_until_ready") = nb::cpp_function(
