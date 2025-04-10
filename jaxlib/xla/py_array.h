@@ -70,6 +70,8 @@ class PyHostValue {
   absl::StatusOr<std::pair<nanobind::object, bool>> AsNumPyArray(
       std::optional<Shape>& dynamic_shape_holder, ifrt::Array* ifrt_array);
 
+  void Clear();
+
  private:
   absl::Status CopyStringArrayToHostAsync(
       std::optional<Shape>& dynamic_shape_holder, ifrt::Array* ifrt_array);
@@ -313,6 +315,8 @@ class PyArray : public nanobind::object {
 
   static absl::Status BatchedBlockUntilReady(
       std::vector<nanobind::object> objs);
+
+  absl::Status ReplaceWithAlias(PyArray o);
 
  private:
   absl::StatusOr<PyArray> AssertUnsharded(absl::string_view api);
