@@ -1019,7 +1019,7 @@ class DebugInfoTest(jtu.JaxTestCase):
             # TODO(necula): result_paths
             "traced_for=jit, fun=my_g, arg_names=u,v, result_paths=",
             # TODO(necula): arg_names
-            "traced_for=jit, fun=my_g, arg_names=u,v,,, result_paths=,"
+            "traced_for=jit, fun=my_g, arg_names=u,v,,, result_paths=result['c']"
             if config.use_direct_linearize.value else
             "traced_for=jit, fun=my_g, arg_names=,,u,v, result_paths=result['c'],result['d']",
         ],
@@ -1444,6 +1444,8 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=jit, fun=my_f, arg_names=x,as_, result_paths=,,",
             "traced_for=for_loop, fun=f, arg_names=,,, result_paths=,",
             "traced_for=for_loop, fun=f, arg_names=i,refs[0],refs[1],refs[2], result_paths=",
+            "traced_for=jit, fun=my_f, arg_names=as_,,, result_paths=result[0],result[1]"
+            if config.use_direct_linearize.value else
             "traced_for=jit, fun=my_f, arg_names=,,x,as_, result_paths=result[0],result[1]",
             "traced_for=checkpoint / remat, fun=to_remat, arg_names=,,, result_paths=,",
             "traced_for=for_loop, fun=f, arg_names=,,,,,, result_paths=,",
@@ -1749,6 +1751,8 @@ class DebugInfoTest(jtu.JaxTestCase):
         expected_jaxpr_debug_infos=[
             "traced_for=jit, fun=my_f, arg_names=x, result_paths=result",
             "traced_for=jit, fun=my_f, arg_names=x, result_paths=,",
+            "traced_for=jit, fun=my_f, arg_names=x,, result_paths=result"
+            if config.use_direct_linearize.value else
             "traced_for=jit, fun=my_f, arg_names=,x, result_paths=result",
         ],
         tracer_spy=tracer_spy,
