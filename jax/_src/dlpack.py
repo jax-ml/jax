@@ -18,7 +18,6 @@ from typing import Any
 
 from jax import numpy as jnp
 from jax._src import array
-from jax._src import deprecations
 from jax._src import xla_bridge
 from jax._src.api import device_put
 from jax._src.lax.lax import _array_copy
@@ -170,40 +169,6 @@ def _place_array(_arr, device, dlpack_device, copy):
     return jnp.array(_arr, copy=True)
   return _arr
 
-def _legacy_from_dlpack(dlpack, device: xla_client.Device | None = None,
-                        copy: bool | None = None):
-  preferred_platform = getattr(device, "platform", None)
-  if device and preferred_platform == "gpu":
-    preferred_platform = "cuda" if "cuda" in device.client.platform_version else "rocm"
-
-  cpu_backend = xla_bridge.get_backend("cpu")
-  gpu_backend = None
-
-  if preferred_platform in {"cuda", "rocm"}:
-    try:
-      gpu_backend = xla_bridge.get_backend(preferred_platform)
-    except RuntimeError:
-      raise TypeError(
-        f"A {str.upper(preferred_platform)} device was specified, however no "
-        f"{str.upper(preferred_platform)} backend was found."
-      )
-
-  if preferred_platform is None:
-    try:
-      gpu_backend = xla_bridge.get_backend("cuda")
-    except RuntimeError:
-      pass
-    # Try ROCm if CUDA backend not found
-    if gpu_backend is None:
-      try:
-        gpu_backend = xla_bridge.get_backend("rocm")
-      except RuntimeError:
-        pass
-
-  _arr = jnp.asarray(xla_client._xla.dlpack_managed_tensor_to_buffer(
-      dlpack, cpu_backend, gpu_backend))
-  dlpack_device, = _arr.devices()
-  return _place_array(_arr, device, dlpack_device, copy)
 
 def _from_dlpack(external_array, device: xla_client.Device | None = None,
                  copy: bool | None = None):
@@ -272,18 +237,4 @@ def from_dlpack(external_array,
         f"a Sharding with {len(device_set)} devices was provided."
       )
     device, = device_set
-  if hasattr(external_array, "__dlpack__"):
-    return _from_dlpack(external_array, device, copy)
-
-  # Deprecated legacy path.
-  # TODO(slebedev): Remove on or after December 3rd 2023.
-  deprecations.warn(
-      "jax-dlpack-import-legacy",
-      (
-          "Calling from_dlpack with a DLPack tensor is deprecated. The argument"
-          " to from_dlpack should be an array from another framework that"
-          " implements the __dlpack__ protocol."
-      ),
-      stacklevel=2,
-  )
-  return _legacy_from_dlpack(external_array, device, copy)
+  return _from_dlpack(external_array, device, copy)

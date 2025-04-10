@@ -786,12 +786,6 @@ def buffer_to_dlpack_managed_tensor(
 def dlpack_managed_tensor_to_buffer(
     tensor: Any, device: Device, stream: int | None
 ) -> ArrayImpl: ...
-@overload
-def dlpack_managed_tensor_to_buffer( # Legacy overload
-    tensor: Any,
-    cpu_backend: Optional[Client] = ...,
-    gpu_backend: Optional[Client] = ...,
-) -> ArrayImpl: ...
 
 def cuda_array_interface_to_buffer(
     cai: Dict[str, Union[
