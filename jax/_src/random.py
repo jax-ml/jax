@@ -24,6 +24,7 @@ import warnings
 
 import numpy as np
 
+import jax
 import jax.numpy as jnp
 from jax import lax
 from jax.numpy.linalg import cholesky, svd, eigh
@@ -35,7 +36,6 @@ from jax._src import dtypes
 from jax._src import prng
 from jax._src import xla_bridge
 from jax._src.api import jit, vmap
-from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.lax import lax as lax_internal
@@ -1261,13 +1261,15 @@ def _gamma_grad(sample, a, *, log_space):
     gamma_grad = lambda alpha, sample: lax.random_gamma_grad(alpha, sample) / sample
   else:
     gamma_grad = lax.random_gamma_grad
+  # TODO(frostig): swap in favor of lax.platform_dependent? And do we even want
+  # this switch? In primal (not grad), we've already moved to use vmap on CPU.
   if xla_bridge.get_backend().platform == 'cpu':
     grads = lax.map(lambda args: gamma_grad(*args), (alphas, samples))
   else:
     grads = vmap(gamma_grad)(alphas, samples)
   return grads.reshape(np.shape(a))
 
-def _gamma_impl(key, a, *, log_space, use_vmap=False):
+def _gamma_impl(key, a, *, log_space, use_vmap=False):  # TODO(frostig): remove use_vmap?
   # split key to match the shape of a
   a_shape = jnp.shape(a)
   split_count = math.prod(a_shape[key.ndim:])
@@ -1284,28 +1286,17 @@ def _gamma_impl(key, a, *, log_space, use_vmap=False):
 
   return jnp.reshape(samples, a_shape)
 
-def _gamma_batching_rule(batched_args, batch_dims, *, log_space):
-  k, a = batched_args
-  bk, ba = batch_dims
-  size = next(
-      t.shape[i] for t, i in zip(batched_args, batch_dims) if i is not None)
-  k = batching.bdim_at_front(k, bk, size)
-  a = batching.bdim_at_front(a, ba, size)
-  return random_gamma_p.bind(k, a, log_space=log_space), 0
+@partial(jax.custom_jvp, nondiff_argnums=(2,))
+def _gamma_custom(key, a, log_space):
+  return _gamma_impl(key, a, log_space=log_space, use_vmap=True)
 
-random_gamma_p = core.Primitive('random_gamma')
-random_gamma_p.def_impl(_gamma_impl)
-random_gamma_p.def_abstract_eval(lambda key, a, **_: a)
-ad.defjvp2(
-    random_gamma_p, None,
-    lambda tangent, ans, key, a, **kwds: tangent * _gamma_grad(ans, a, **kwds))
-mlir.register_lowering(random_gamma_p, mlir.lower_fun(
-    partial(_gamma_impl, use_vmap=True),
-    multiple_results=False))
-mlir.register_lowering(random_gamma_p, mlir.lower_fun(
-    partial(_gamma_impl, use_vmap=True),
-    multiple_results=False), platform='cpu')
-batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
+@_gamma_custom.defjvp
+def _gamma_jvp(log_space, primals, tangents):
+  key, a = primals
+  _, a_dot = tangents
+  primal_out = _gamma_custom(key, a, log_space=log_space)
+  tangent_out = _gamma_grad(primal_out, a, log_space=log_space) * a_dot
+  return primal_out, tangent_out
 
 def gamma(key: ArrayLike,
           a: RealArray,
@@ -1406,7 +1397,7 @@ def _gamma(key, a, shape, dtype, log_space=False) -> Array:
   a = lax.convert_element_type(a, dtype)
   if np.shape(a) != shape:
     a = jnp.broadcast_to(a, shape)
-  return random_gamma_p.bind(key, a, log_space=log_space)
+  return _gamma_custom(key, a, log_space)
 
 
 @partial(jit, static_argnums=(2, 3, 4))

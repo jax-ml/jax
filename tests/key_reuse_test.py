@@ -45,7 +45,6 @@ primitives_with_static_signatures = {
   prng.random_split_p: (jax.random.split, key),
   prng.random_wrap_p: (jax.random.wrap_key_data, np.uint32([0, 0])),
   # prng.random_unwrap_p: (jax.random.key_data, key),
-  jax.random.random_gamma_p: (jax.random.gamma, key, 1.0),
   jax.lax.broadcast_in_dim_p: (lambda key: key[None], key),
   jax.lax.copy_p: (jnp.array, key),
   jax.lax.convert_element_type_p: (lambda key: jnp.array(key, dtype=key.dtype), key),

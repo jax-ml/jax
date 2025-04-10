@@ -234,5 +234,3 @@ from jax._src.prng import (
   random_split_p as random_split_p,
   threefry2x32_p as threefry2x32_p,
 )
-
-from jax._src.random import random_gamma_p as random_gamma_p
