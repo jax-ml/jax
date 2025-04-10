@@ -17,8 +17,16 @@
 load(
     "//jaxlib:jax.bzl",
     "nanobind_extension",
+    "py_deps",
     "py_library_providing_imports_info",
+    "py_strict_test",
     "pytype_library",
+)
+load(
+    "//jaxlib:pywrap.bzl",
+    "nanobind_pywrap_extension",
+    "pywrap_binaries",
+    "pywrap_library",
 )
 load("//jaxlib:symlink_files.bzl", "symlink_files")
 
@@ -27,13 +35,6 @@ licenses(["notice"])
 package(
     default_applicable_licenses = [],
     default_visibility = ["//jax:internal"],
-)
-
-# This makes xla_extension module accessible from jax._src.lib.
-genrule(
-    name = "xla_extension_py",
-    outs = ["xla_extension.py"],
-    cmd = "echo 'from xla.xla.python.xla_extension import *\n' > $@",
 )
 
 py_library_providing_imports_info(
@@ -50,15 +51,17 @@ py_library_providing_imports_info(
         "init.py",
         "lapack.py",
         "plugin_support.py",
+        "xla_client.py",
+        "xla_extension.py",
         ":version",
-        ":xla_client",
-        ":xla_extension_py",
     ],
     data = [":ffi_headers"],
     lib_rule = pytype_library,
     deps = [
         ":cpu_feature_guard",
+        ":jax",
         ":utils",
+        ":weakref_lru_cache",
         "//jaxlib/cpu:_lapack",
         "//jaxlib/mlir",
         "//jaxlib/mlir:arithmetic_dialect",
@@ -81,20 +84,14 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:vector_dialect",
         "//jaxlib/mosaic",
         "//jaxlib/triton",
-        "@xla//xla/python:xla_extension",
+        "//jaxlib/xla:xla_client",
+        "//jaxlib/xla:xla_extension",
     ],
 )
 
 symlink_files(
     name = "version",
     srcs = ["//jax:version.py"],
-    dst = ".",
-    flatten = True,
-)
-
-symlink_files(
-    name = "xla_client",
-    srcs = ["@xla//xla/python:xla_client"],
     dst = ".",
     flatten = True,
 )
@@ -110,6 +107,45 @@ exports_files([
     "README.md",
     "setup.py",
 ])
+
+pywrap_library(
+    name = "jax",
+    common_lib_def_files_or_filters = {
+        "jaxlib/jax_common": "jax_common.json",
+    },
+    common_lib_version_scripts = {
+        "jaxlib/jax_common": select({
+            "@bazel_tools//src/conditions:windows": None,
+            "@bazel_tools//src/conditions:darwin": "libjax_common_darwin.lds",
+            "//conditions:default": "libjax_common.lds",
+        }),
+    },
+    deps = [
+        ":utils",
+        ":weakref_lru_cache",
+        "//jaxlib/mlir/_mlir_libs:_chlo",
+        "//jaxlib/mlir/_mlir_libs:_mlir",
+        "//jaxlib/mlir/_mlir_libs:_mlirDialectsGPU",
+        "//jaxlib/mlir/_mlir_libs:_mlirDialectsLLVM",
+        "//jaxlib/mlir/_mlir_libs:_mlirDialectsNVGPU",
+        "//jaxlib/mlir/_mlir_libs:_mlirDialectsSparseTensor",
+        "//jaxlib/mlir/_mlir_libs:_mlirGPUPasses",
+        "//jaxlib/mlir/_mlir_libs:_mlirHlo",
+        "//jaxlib/mlir/_mlir_libs:_mlirSparseTensorPasses",
+        "//jaxlib/mlir/_mlir_libs:_mosaic_gpu_ext",
+        "//jaxlib/mlir/_mlir_libs:_sdy",
+        "//jaxlib/mlir/_mlir_libs:_stablehlo",
+        "//jaxlib/mlir/_mlir_libs:_tpu_ext",
+        "//jaxlib/mlir/_mlir_libs:_triton_ext",
+        "//jaxlib/mlir/_mlir_libs:register_jax_dialects",
+        "//jaxlib/xla:xla_extension",
+    ],
+)
+
+pywrap_binaries(
+    name = "jaxlib_binaries",
+    dep = ":jax",
+)
 
 cc_library(
     name = "absl_status_casters",
@@ -167,33 +203,8 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         "@com_google_absl//absl/base",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-    ],
-)
-
-cc_library(
-    name = "pass_boilerplate",
-    hdrs = ["pass_boilerplate.h"],
-    # compatible with libtpu
-    deps = [
-        "@llvm-project//mlir:IR",
-        "@llvm-project//mlir:Pass",
-        "@llvm-project//mlir:Support",
-    ],
-)
-
-cc_library(
-    name = "handle_pool",
-    hdrs = ["handle_pool.h"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    deps = [
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/synchronization",
     ],
 )
 
@@ -208,96 +219,45 @@ nanobind_extension(
     ],
 )
 
-nanobind_extension(
+nanobind_pywrap_extension(
+    name = "weakref_lru_cache",
+    srcs = ["weakref_lru_cache.cc"],
+    pytype_srcs = ["weakref_lru_cache.pyi"],
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/hash",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/synchronization",
+        "@nanobind",
+        "@xla//third_party/python_runtime:headers",
+        "@xla//xla/pjrt:lru_cache",
+        "@xla//xla/tsl/platform:logging",
+    ],
+)
+
+py_strict_test(
+    name = "weakref_lru_cache_test",
+    srcs = ["weakref_lru_cache_test.py"],
+    deps = [
+        ":weakref_lru_cache",
+    ] + py_deps([
+        "absl/flags",
+        "absl/logging",
+        "absl/testing",
+    ]),
+)
+
+nanobind_pywrap_extension(
     name = "utils",
     srcs = ["utils.cc"],
-    module_name = "utils",
     deps = [
         "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/container:inlined_vector",
         "@com_google_absl//absl/synchronization",
         "@nanobind",
         "@xla//third_party/python_runtime:headers",
     ],
-)
-
-cc_library(
-    name = "gpu_plugin_extension",
-    srcs = ["gpu_plugin_extension.cc"],
-    hdrs = ["gpu_plugin_extension.h"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    deps = [
-        ":kernel_nanobind_helpers",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/strings:string_view",
-        "@nanobind",
-        "@xla//xla:util",
-        "@xla//xla/ffi/api:c_api",
-        "@xla//xla/pjrt:status_casters",
-        "@xla//xla/pjrt/c:pjrt_c_api_ffi_extension_hdrs",
-        "@xla//xla/pjrt/c:pjrt_c_api_gpu_extension_hdrs",
-        "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
-        "@xla//xla/pjrt/c:pjrt_c_api_helpers",
-        "@xla//xla/pjrt/c:pjrt_c_api_triton_extension_hdrs",
-        "@xla//xla/python:py_client_gpu",
-        "@xla//xla/tsl/python/lib/core:numpy",
-    ],
-)
-
-nanobind_extension(
-    name = "cuda_plugin_extension",
-    srcs = ["cuda_plugin_extension.cc"],
-    module_name = "cuda_plugin_extension",
-    deps = [
-        ":gpu_plugin_extension",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/strings",
-        "@local_config_cuda//cuda:cuda_headers",
-        "@nanobind",
-        "@xla//xla/pjrt:status_casters",
-        "@xla//xla/tsl/cuda:cublas",
-        "@xla//xla/tsl/cuda:cudart",
-    ],
-)
-
-nanobind_extension(
-    name = "rocm_plugin_extension",
-    srcs = ["rocm_plugin_extension.cc"],
-    module_name = "rocm_plugin_extension",
-    deps = [
-        ":gpu_plugin_extension",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/strings",
-        "@local_config_rocm//rocm:hip",
-        "@local_config_rocm//rocm:rocm_headers",
-        "@nanobind",
-    ],
-)
-
-# CPU kernels
-
-# TODO(phawkins): Remove this forwarding target.
-cc_library(
-    name = "cpu_kernels",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//jaxlib/cpu:cpu_kernels",
-    ],
-    alwayslink = 1,
-)
-
-# TODO(phawkins): Remove this forwarding target.
-cc_library(
-    name = "gpu_kernels",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//jaxlib/cuda:cuda_gpu_kernels",
-    ],
-    alwayslink = 1,
 )

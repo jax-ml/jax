@@ -1,0 +1,21 @@
+--pre
+--extra-index-url https://pypi.anaconda.org/scientific-python-nightly-wheels/simple
+numpy
+
+--pre
+--extra-index-url https://pypi.anaconda.org/scientific-python-nightly-wheels/simple
+scipy
+
+absl-py==2.1.0
+
+attrs==24.3.0
+
+hypothesis==6.123.9
+
+sortedcontainers==2.4.0
+
+flatbuffers==24.12.23
+
+ml-dtypes==0.5.1
+
+opt-einsum==3.4.0

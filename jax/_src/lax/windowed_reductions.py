@@ -97,6 +97,7 @@ def _reduce_window(
       raise ValueError(
         'reduce_window output must have the same tree structure as the operands'
         f' {operand_tree} vs. {out_tree}')
+    flat_operands = core.standard_insert_pbroadcast(*flat_operands)
     out_flat = reduce_window_p.bind(
         *flat_operands,
         *flat_init_values,
@@ -250,6 +251,8 @@ def _select_and_scatter(operand: Array, select: Callable,
     select, core.get_aval(init_value))
   scatter_jaxpr, scatter_consts = lax._reduction_jaxpr(
     scatter, core.get_aval(init_value))
+  operand, source, init_value = core.standard_insert_pbroadcast(
+      operand, source, init_value)
   return select_and_scatter_p.bind(
       operand, source, init_value, select_jaxpr=select_jaxpr,
       select_consts=select_consts, scatter_jaxpr=scatter_jaxpr,
@@ -261,6 +264,7 @@ def _select_and_scatter_add(source: Array, operand: Array,
                             window_dimensions: core.Shape,
                             window_strides: Sequence[int],
                             padding: Sequence[tuple[int, int]]) -> Array:
+  source, operand = core.standard_insert_pbroadcast(source, operand)
   return select_and_scatter_add_p.bind(
       source, operand, select_prim=select_prim,
       window_dimensions=tuple(window_dimensions),
@@ -296,6 +300,7 @@ def _select_and_gather_add(tangents: Array, operand: Array,
     An array containing the elements in `tangents` corresponding to the output
     of the reduction of `operand` fin each window.
   """
+  tangents, operand = core.standard_insert_pbroadcast(tangents, operand)
   return select_and_gather_add_p.bind(
       tangents, operand, select_prim=select_prim,
       window_dimensions=tuple(window_dimensions),
@@ -332,7 +337,8 @@ def _reduce_window_abstract_eval_rule(
   out_sharding = reduce_window_sharding_rule(
       operand_avals[0], window_dimensions, window_strides, padding,
       base_dilation, window_dilation)
-  return tuple(ShapedArray(out_shape, op.dtype, sharding=out_sharding)
+  vma = core.standard_vma_rule('reduce_window', *operand_avals)
+  return tuple(ShapedArray(out_shape, op.dtype, sharding=out_sharding, vma=vma)
                for op in operand_avals)
 
 
@@ -525,14 +531,15 @@ def reduce_window_sharding_rule(operand, window_dimensions, window_strides,
     if spec is None:
       continue
     if not (wdim == 1 and ws == 1 and pd == 1 and bd == 1 and wdil == 1):
-      raise NotImplementedError(
+      raise core.ShardingTypeError(
           "Only trivial windowing is supported along non-replicated"
           f" dimensions. Got {operand.sharding.spec=}")
   return operand.sharding
 
 reduce_window_sum_p = lax.standard_primitive(
     _reduce_window_sum_shape_rule, lax._input_dtype, 'reduce_window_sum',
-    sharding_rule=reduce_window_sharding_rule)
+    sharding_rule=reduce_window_sharding_rule,
+    vma_rule=partial(core.standard_vma_rule, 'reduce_window_sum'))
 ad.deflinear2(reduce_window_sum_p, _reduce_window_sum_transpose_rule)
 batching.primitive_batchers[reduce_window_sum_p] = partial(
   _reduce_window_batch_rule, _reduce_window_sum)
@@ -598,7 +605,8 @@ def reduce_window_shape_tuple(operand_shape, window_dimensions, window_strides,
 
 reduce_window_max_p = lax.standard_primitive(
     _common_reduce_window_shape_rule, lax._input_dtype, 'reduce_window_max',
-    sharding_rule=reduce_window_sharding_rule)
+    sharding_rule=reduce_window_sharding_rule,
+    vma_rule=partial(core.standard_vma_rule, 'reduce_window_max'))
 ad.defjvp(reduce_window_max_p, partial(_reduce_window_chooser_jvp_rule,
                                        lax.max_p))
 batching.primitive_batchers[reduce_window_max_p] = partial(
@@ -606,7 +614,8 @@ batching.primitive_batchers[reduce_window_max_p] = partial(
 
 reduce_window_min_p = lax.standard_primitive(
     _common_reduce_window_shape_rule, lax._input_dtype, 'reduce_window_min',
-    sharding_rule=reduce_window_sharding_rule)
+    sharding_rule=reduce_window_sharding_rule,
+    vma_rule=partial(core.standard_vma_rule, 'reduce_window_min'))
 ad.defjvp(reduce_window_min_p, partial(_reduce_window_chooser_jvp_rule,
                                        lax.min_p))
 
@@ -671,7 +680,8 @@ def _select_and_scatter_shape_rule(
   return operand.shape
 
 select_and_scatter_p = lax.standard_primitive(
-    _select_and_scatter_shape_rule, lax._input_dtype, 'select_and_scatter')
+    _select_and_scatter_shape_rule, lax._input_dtype, 'select_and_scatter',
+    vma_rule=partial(core.standard_vma_rule, 'select_and_scatter'))
 
 def _select_and_scatter_lower(
     ctx, operand, source, init_value, *, select_jaxpr,
@@ -766,7 +776,8 @@ def _select_and_scatter_add_batch_rule(
 
 select_and_scatter_add_p = lax.standard_primitive(
     _select_and_scatter_add_shape_rule, lax._input_dtype,
-    'select_and_scatter_add')
+    'select_and_scatter_add',
+    vma_rule=partial(core.standard_vma_rule, 'select_and_scatter_add'))
 
 ad.primitive_transposes[select_and_scatter_add_p] = \
     _select_and_scatter_add_transpose
@@ -826,7 +837,7 @@ def _select_and_gather_add_sharding_rule(
     tangents, operand, *, select_prim, window_dimensions, window_strides,
     padding, base_dilation, window_dilation):
   if tangents.sharding != operand.sharding:
-    raise TypeError(
+    raise core.ShardingTypeError(
         "select_and_gather_add tangents and operand shardings must match, "
         f"got {tangents.sharding} and {operand.sharding}.")
   return reduce_window_sharding_rule(
@@ -1039,7 +1050,8 @@ def _select_and_gather_add_batching_rule(
 
 select_and_gather_add_p = lax.standard_primitive(
     _select_and_gather_add_shape_rule, lax._input_dtype,
-    'select_and_gather_add', sharding_rule=_select_and_gather_add_sharding_rule)
+    'select_and_gather_add', sharding_rule=_select_and_gather_add_sharding_rule,
+    vma_rule=partial(core.standard_vma_rule, 'select_and_gather_add'))
 ad.primitive_jvps[select_and_gather_add_p] = _select_and_gather_add_jvp
 ad.primitive_transposes[select_and_gather_add_p] = \
   _select_and_gather_add_transpose

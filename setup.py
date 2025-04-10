@@ -19,11 +19,11 @@ from setuptools import setup, find_packages
 
 project_name = 'jax'
 
-_current_jaxlib_version = '0.5.1'
+_current_jaxlib_version = '0.5.3'
 # The following should be updated after each new jaxlib release.
-_latest_jaxlib_version_on_pypi = '0.5.1'
+_latest_jaxlib_version_on_pypi = '0.5.3'
 
-_libtpu_version = '0.0.10.*'
+_libtpu_version = '0.0.11.*'
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
@@ -38,6 +38,13 @@ _jax_version = _version_module._version  # JAX version, with no .dev suffix.
 _cmdclass = _version_module._get_cmdclass(project_name)
 _minimum_jaxlib_version = _version_module._minimum_jaxlib_version
 
+# If this is a pre-release ("rc" wheels), append "rc0" to
+# _minimum_jaxlib_version and _current_jaxlib_version so that we are able to
+# install the rc wheels.
+if _version_module._is_prerelease():
+  _minimum_jaxlib_version += "rc0"
+  _current_jaxlib_version += "rc0"
+
 with open('README.md', encoding='utf-8') as f:
   _long_description = f.read()
 
@@ -50,12 +57,12 @@ setup(
     long_description_content_type='text/markdown',
     author='JAX team',
     author_email='jax-dev@google.com',
-    packages=find_packages(exclude=["examples", "jax/src/internal_test_util"]),
+    packages=find_packages(exclude=["*examples*", "*internal_test_util*"]),
     package_data={'jax': ['py.typed', "*.pyi", "**/*.pyi"]},
     python_requires='>=3.10',
     install_requires=[
         f'jaxlib >={_minimum_jaxlib_version}, <={_jax_version}',
-        'ml_dtypes>=0.4.0',
+        'ml_dtypes>=0.5.0',
         'numpy>=1.25',
         "numpy>=1.26.0; python_version>='3.12'",
         'opt_einsum',
@@ -81,32 +88,32 @@ setup(
         ],
 
         'cuda': [
-          f"jaxlib=={_current_jaxlib_version}",
+          f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
           f"jax-cuda12-plugin[with_cuda]>={_current_jaxlib_version},<={_jax_version}",
         ],
 
         'cuda12': [
-          f"jaxlib=={_current_jaxlib_version}",
+          f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
           f"jax-cuda12-plugin[with_cuda]>={_current_jaxlib_version},<={_jax_version}",
         ],
 
         # Deprecated alias for cuda12, kept to avoid breaking users who wrote
         # cuda12_pip in their CI.
         'cuda12_pip': [
-          f"jaxlib=={_current_jaxlib_version}",
+          f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
           f"jax-cuda12-plugin[with_cuda]>={_current_jaxlib_version},<={_jax_version}",
         ],
 
         # Target that does not depend on the CUDA pip wheels, for those who want
         # to use a preinstalled CUDA.
         'cuda12_local': [
-          f"jaxlib=={_current_jaxlib_version}",
-          f"jax-cuda12-plugin=={_current_jaxlib_version}",
+          f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
+          f"jax-cuda12-plugin>={_current_jaxlib_version},<={_jax_version}",
         ],
 
         # ROCm support for ROCm 6.0 and above.
         'rocm': [
-          f"jaxlib=={_current_jaxlib_version}",
+          f"jaxlib>={_current_jaxlib_version},<={_jax_version}",
           f"jax-rocm60-plugin>={_current_jaxlib_version},<={_jax_version}",
         ],
 

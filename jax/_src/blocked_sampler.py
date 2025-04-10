@@ -28,17 +28,17 @@ class SampleFn(Protocol):
     ...
 
 
-def _compute_scalar_index(iteration_index: Sequence[int],
-                          total_size: Shape,
-                          block_size: Shape,
-                          block_index: Sequence[int]) -> int:
-  ndims = len(iteration_index)
+def _compute_tile_index(block_index: Sequence[int],
+                        block_size_in_tiles: Shape,
+                        total_size_in_tiles: Shape,
+                        tile_index_in_block: Sequence[int]) -> int:
+  ndims = len(block_index)
   dim_size = 1
   total_idx = 0
   for i in range(ndims-1, -1, -1):
-    dim_idx = block_index[i] + iteration_index[i] * block_size[i]
+    dim_idx = tile_index_in_block[i] + block_index[i] * block_size_in_tiles[i]
     total_idx += dim_idx * dim_size
-    dim_size *= total_size[i]
+    dim_size *= total_size_in_tiles[i]
   return total_idx
 
 
@@ -99,18 +99,25 @@ def blocked_fold_in(
     An N-dimensional nested list of keys required to sample the tiles
     corresponding to the block specified by `block_index`.
   """
-  size_in_blocks = tuple(
-      _shape // _element for _shape, _element in zip(block_size, tile_size))
+  block_size_in_tiles = tuple(
+      _shape // _element for _shape, _element in zip(block_size, tile_size)
+  )
+
+  # Round up to make sure every tile is numbered.
+  total_size_in_tiles = tuple(
+      (_shape + _element - 1) // _element
+        for _shape, _element in zip(total_size, tile_size)
+  )
 
   def _keygen_loop(axis, prefix):
-    if axis == len(size_in_blocks):
+    if axis == len(block_size_in_tiles):
       subtile_key = jax.random.fold_in(
-          global_key, _compute_scalar_index(
-              block_index, total_size, size_in_blocks, prefix))
+          global_key, _compute_tile_index(
+              block_index, block_size_in_tiles, total_size_in_tiles, prefix))
       return subtile_key
     else:
       keys = []
-      for i in range(size_in_blocks[axis]):
+      for i in range(block_size_in_tiles[axis]):
         keys.append(_keygen_loop(axis+1, prefix+(i,)))
       return keys
   return _keygen_loop(0, tuple())

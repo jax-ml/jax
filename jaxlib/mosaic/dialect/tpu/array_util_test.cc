@@ -20,7 +20,7 @@ limitations under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "mlir/include/mlir/Support/LLVM.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/array.h"
 
 namespace mlir::tpu {

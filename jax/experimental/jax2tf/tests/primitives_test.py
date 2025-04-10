@@ -172,7 +172,13 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         continue
       if p.name == "composite":
         continue
+      if p.name == "pvary":
+        continue
+      if p.name == "psum_invariant":
+        continue
       if p.name == "sharding_constraint":
+        continue
+      if p.name == "dll_constraint":
         continue
       if p.name == "mesh_cast":
         continue

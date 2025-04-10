@@ -26,12 +26,12 @@ set -exu -o history -o allexport
 # Source default JAXCI environment variables.
 source ci/envs/default.env
 
+# Set up the build environment.
+source "ci/utilities/setup_build_environment.sh"
+
 # Install jaxlib wheel inside the $JAXCI_OUTPUT_DIR directory on the system.
 echo "Installing wheels locally..."
 source ./ci/utilities/install_wheels_locally.sh
-
-# Set up the build environment.
-source "ci/utilities/setup_build_environment.sh"
 
 # Print all the installed packages
 echo "Installed packages:"

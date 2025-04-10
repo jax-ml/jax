@@ -1309,6 +1309,34 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       self.assertAllClose(ans, expected, check_dtypes=False)
       jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
 
+  @parameterized.parameters(itertools.product(range(4), repeat=3))
+  @jtu.run_on_devices("cpu")
+  def testSwitchGradWithForwarding(self, seed, num_input_fwd, num_output_fwd):
+    num_args = 3
+    num_branches = 4
+    rng = np.random.RandomState(seed)
+    in_perm = rng.permutation(num_args)
+    out_perm = rng.permutation(num_args)
+
+    def branch(s, inputs):
+      inputs = [inputs[i] for i in in_perm]
+      outputs = inputs[:num_input_fwd] + [
+          s * jnp.exp(inputs[i]) if i < num_output_fwd else jnp.sin(inputs[i])
+          for i in range(num_args - num_input_fwd)]
+      return [outputs[i] for i in out_perm]
+
+    branches = [partial(branch, i) for i in range(num_branches)]
+
+    @jax.jit
+    def f_(idx, inputs):
+      idx = lax.convert_element_type(idx // 1, np.int32)
+      return lax.switch(idx, branches, inputs)
+
+    for idx in range(num_branches):
+      f = partial(f_, idx)
+      jtu.check_grads(f, (jnp.arange(float(num_args)),),
+                      order=1, modes=['fwd', 'rev'], atol=1e-2, rtol=1e-2)
+
   def testSwitchGradWithWeakTypeMismatch(self):  # issue #4696, PR #4896
     dtype = dtypes.canonicalize_dtype(np.float64)
     dtype = jnp.float32 if dtype == jnp.float32 else jnp.float64
@@ -3065,6 +3093,18 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(base, nbufs())
     leak()
     self.assertEqual(base, nbufs())
+
+  def test_grad_remat_while_fixpoint(self):
+    @jax.remat
+    def f(x, y):
+      def cond(_):
+        return False
+      def body(c):
+        x, y = c
+        return (y, x)
+      x, y = jax.lax.while_loop(cond, body, (x, y))
+      return x + y
+    jax.linearize(f, 1., 2.)  # don't crash
 
 
 if __name__ == '__main__':

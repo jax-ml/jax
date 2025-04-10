@@ -26,6 +26,7 @@ import jax
 import jax.numpy as jnp
 from jax._src import config, test_util as jtu
 from jax._src.dtypes import _default_types, canonicalize_dtype
+from jax._src import xla_bridge as xb
 
 ARRAY_API_NAMESPACE = jnp
 
@@ -275,14 +276,18 @@ class ArrayAPIInspectionUtilsTest(jtu.JaxTestCase):
 
   def test_capabilities_info(self):
     capabilities = self.info.capabilities()
-    assert capabilities["boolean indexing"]
+    assert not capabilities["boolean indexing"]
     assert not capabilities["data-dependent shapes"]
+    assert capabilities["max dimensions"] == 64
 
   def test_default_device_info(self):
     assert self.info.default_device() is None
 
   def test_devices_info(self):
-    assert self.info.devices() == jax.devices()
+    devices = set(self.info.devices())
+    assert None in devices
+    for backend in xb.backends():
+      assert devices.issuperset(jax.devices(backend))
 
   def test_default_dtypes_info(self):
     _default_dtypes = {

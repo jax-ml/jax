@@ -1,3 +1,6 @@
+---
+orphan: true
+---
 (jax-array-migration)=
 # jax.Array migration
 
@@ -24,7 +27,7 @@ the unified jax.Array
 After the migration is complete `jax.Array` will be the only type of array in
 JAX.
 
-This doc explains how to migrate existing codebases to `jax.Array`. For more information on using `jax.Array` and JAX parallelism APIs, see the [Distributed arrays and automatic parallelization](https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html) tutorial.
+This doc explains how to migrate existing codebases to `jax.Array`. For more information on using `jax.Array` and JAX parallelism APIs, see the [Distributed arrays and automatic parallelization](https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html) tutorial.
 
 
 ### How to enable jax.Array?

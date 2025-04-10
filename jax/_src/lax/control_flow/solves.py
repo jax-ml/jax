@@ -309,24 +309,24 @@ def custom_linear_solve(
   jaxprs = _LinearSolveTuple(
       matvec_jaxpr, vecmat_jaxpr, solve_jaxpr, tr_solve_jaxpr)
 
-  out_flat = linear_solve_p.bind(
-      *(_flatten(all_consts) + b_flat),
-      const_lengths=const_lengths, jaxprs=jaxprs)
+  args = _flatten(all_consts) + b_flat
+  args = core.standard_insert_pbroadcast(*args)
+  out_flat = linear_solve_p.bind(*args, const_lengths=const_lengths, jaxprs=jaxprs)
 
   return tree_unflatten(out_tree, out_flat)
 
 
 def _linear_solve_abstract_eval(*args, const_lengths, jaxprs):
   args_to_raise = args[sum(const_lengths):]
-
   # raise aux_args to shaped arrays as well if present
   # number of aux args is the difference in out_avals
   # of solve and matvec (since they map to the same vector space)
-
   num_aux = len(jaxprs.solve.out_avals) - len(jaxprs.matvec.out_avals)
   if num_aux > 0:
     args_to_raise += tuple(jaxprs.solve.out_avals[-num_aux:])
-  return args_to_raise, jaxprs.solve.effects
+  out_vma = core.standard_vma_rule('linear_solve', *args_to_raise)
+  return (tuple(a.update(vma=out_vma) for a in args_to_raise),
+          jaxprs.solve.effects)
 
 
 def _custom_linear_solve_impl(*args, const_lengths, jaxprs):

@@ -14,11 +14,12 @@
 import abc
 from collections.abc import Callable, Sequence
 from types import ModuleType
-from typing import Any, Protocol, Union, runtime_checkable
+from typing import Any, Protocol, runtime_checkable, Union
 import numpy as np
 
-from jax._src.sharding import Sharding
 from jax._src.partition_spec import PartitionSpec
+from jax._src.sharding import Sharding
+
 
 # TODO(jakevdp) de-duplicate this with the DTypeLike definition in typing.py.
 # We redefine these here to prevent circular imports.
@@ -39,7 +40,8 @@ Traceback = Any
 PrecisionLike = Any
 
 
-class Array(abc.ABC):
+# TODO(slebedev): Remove the metaclass once ``jax_extension_version >= 325``.
+class Array(metaclass=abc.ABCMeta):
   aval: Any
 
   @property

@@ -19,13 +19,13 @@ limitations under the License.
 #include <memory>
 #include <utility>
 
-#include "llvm/include/llvm/ADT/StringRef.h"
-#include "llvm/include/llvm/Support/CommandLine.h"
-#include "mlir/include/mlir/IR/BuiltinOps.h"
-#include "mlir/include/mlir/Interfaces/DataLayoutInterfaces.h"
-#include "mlir/include/mlir/Pass/Pass.h"
-#include "mlir/include/mlir/Pass/PassRegistry.h"
-#include "jaxlib/pass_boilerplate.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Support/CommandLine.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/Interfaces/DataLayoutInterfaces.h"
+#include "mlir/Pass/Pass.h"
+#include "mlir/Pass/PassRegistry.h"
+#include "jaxlib/mosaic/pass_boilerplate.h"
 
 namespace mosaic::gpu {
 

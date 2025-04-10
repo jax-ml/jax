@@ -34,6 +34,11 @@ on:
         type: string
         required: true
         default: "0"
+      download-jax-only-from-gcs:
+        description: "Whether to download only the jax wheel from GCS (e.g for testing a jax only release)"
+        required: false
+        default: '0'
+        type: string
       gcs_download_uri:
         description: "GCS location prefix from where the artifacts should be downloaded"
         required: true
@@ -48,12 +53,12 @@ jobs:
   run-tests:
     defaults:
       run:
-        # Explicitly set the shell to bash
+        # Set the shell to bash as GitHub actions run with /bin/sh by default
         shell: bash
     runs-on: ${{ inputs.runner }}
-    # TODO: Update to the generic ML ecosystem test containers when they are ready.
-    container:  ${{ (contains(inputs.cuda, '12.3') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.3-cudnn9.1:latest') ||
-                (contains(inputs.cuda, '12.1') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.1-cudnn9.1:latest') }}
+    # Test the oldest and newest supported CUDA versions.
+    container:  ${{ (contains(inputs.cuda, '12.1') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.1-cudnn9.8:latest') ||
+                (contains(inputs.cuda, '12.8') && 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.8-cudnn9.8:latest') }}
     name: "Pytest CUDA (${{ inputs.runner }}, CUDA ${{ inputs.cuda }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
     env:
       JAXCI_HERMETIC_PYTHON_VERSION: "${{ inputs.python }}"
@@ -85,11 +90,22 @@ jobs:
         # informative error message.
         continue-on-error: true
         run: |
-          mkdir -p $(pwd)/dist &&
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/ &&
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
+          mkdir -p $(pwd)/dist
+          gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+
+          # Do not download the jaxlib and CUDA plugin artifacts if we are testing a jax only
+          # release.
+          if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
+            echo "JAX only release. Only downloading the jax wheel from the release bucket."
+
+            # Set the env var to install the CUDA plugin and PJRT packages from PyPI. jaxlib is
+            # required dependency of jax so that gets installed automatically.
+            echo "JAXCI_ADDITIONAL_WHEELS_INSTALL_FROM_PYPI=jax_cuda_pypi">> $GITHUB_ENV
+          else
+            gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
+            gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
+            gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
+          fi
       - name: Skip the test run if the wheel artifacts were not downloaded successfully
         if: steps.download-wheel-artifacts.outcome == 'failure'
         run: |
@@ -98,17 +114,7 @@ jobs:
           echo "Skipping the test run."
           exit 1
       - name: Install Python dependencies
-        run: |
-          # python 3.13t cannot compile zstandard 0.23.0 due to
-          # https://github.com/indygreg/python-zstandard/issues/231. Remove this once zstandard
-          # has a prebuilt wheel for 3.13t or an env marker is available for free threading python
-          # in requirements.in.
-          if [[ $JAXCI_PYTHON =~ "python3.13-nogil" ]]; then
-            grep -v "zstandard" build/requirements.in > build/requirements_without_zstandard.txt
-            $JAXCI_PYTHON -m uv pip install -r build/requirements_without_zstandard.txt
-          else
-            $JAXCI_PYTHON -m uv pip install -r build/requirements.in
-          fi
+        run: $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@main

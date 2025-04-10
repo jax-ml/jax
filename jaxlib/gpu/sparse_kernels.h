@@ -16,15 +16,12 @@ limitations under the License.
 #ifndef JAXLIB_GPU_SPARSE_KERNELS_H_
 #define JAXLIB_GPU_SPARSE_KERNELS_H_
 
-#include <algorithm>
+#include <cstddef>
 #include <cstdint>
-#include <stdexcept>
-#include <utility>
-#include <vector>
 
 #include "absl/status/statusor.h"
+#include "jaxlib/gpu/handle_pool.h"
 #include "jaxlib/gpu/vendor.h"
-#include "jaxlib/handle_pool.h"
 #include "xla/ffi/api/ffi.h"
 #include "xla/service/custom_call_status.h"
 

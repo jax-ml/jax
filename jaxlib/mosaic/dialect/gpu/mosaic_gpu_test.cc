@@ -18,6 +18,7 @@ limitations under the License.
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -25,26 +26,25 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
-#include "llvm/include/llvm/ADT/ArrayRef.h"
-#include "llvm/include/llvm/ADT/SmallVector.h"
-#include "mlir/include/mlir/Conversion/LLVMCommon/MemRefBuilder.h"
-#include "mlir/include/mlir/Conversion/LLVMCommon/StructBuilder.h"
-#include "mlir/include/mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
-#include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/include/mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/include/mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/include/mlir/Dialect/SCF/Utils/Utils.h"
-#include "mlir/include/mlir/IR/Builders.h"
-#include "mlir/include/mlir/IR/BuiltinOps.h"
-#include "mlir/include/mlir/IR/Diagnostics.h"
-#include "mlir/include/mlir/IR/MLIRContext.h"
-#include "mlir/include/mlir/IR/OwningOpRef.h"
-#include "mlir/include/mlir/IR/Types.h"
-#include "mlir/include/mlir/IR/Value.h"
-#include "mlir/include/mlir/IR/Verifier.h"
-#include "mlir/include/mlir/Interfaces/DataLayoutInterfaces.h"
-#include "mlir/include/mlir/Support/LLVM.h"
-#include "tsl/platform/errors.h"
+#include "llvm/ADT/SmallVector.h"
+#include "mlir/Conversion/LLVMCommon/MemRefBuilder.h"
+#include "mlir/Conversion/LLVMCommon/StructBuilder.h"
+#include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/Utils/Utils.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/OwningOpRef.h"
+#include "mlir/IR/Types.h"
+#include "mlir/IR/Value.h"
+#include "mlir/IR/Verifier.h"
+#include "mlir/Interfaces/DataLayoutInterfaces.h"
+#include "mlir/Support/LLVM.h"
+#include "xla/tsl/platform/errors.h"
 
 namespace mosaic_gpu {
 namespace {

@@ -43,7 +43,7 @@ from jax._src import mesh as mesh_lib
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension, xla_extension_version
+from jax._src.lib import xla_extension
 from jax._src.lib.mlir import ir, passmanager
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -67,7 +67,7 @@ LoweringSharding = Union[sharding.Sharding, pxla.UnspecifiedValue]
 HloSharding = xla_client.HloSharding
 
 # The minimum and maximum supported calling convention version.
-# See https://jax.readthedocs.io/en/latest/export/export.html#export-calling-convention-version
+# See https://docs.jax.dev/en/latest/export/export.html#export-calling-convention-version
 minimum_supported_calling_convention_version = 9
 maximum_supported_calling_convention_version = 9
 
@@ -153,16 +153,16 @@ class Exported:
     platforms: a tuple containing the platforms for which the function should
         be exported. The set of platforms in JAX is open-ended; users can
         add platforms. JAX built-in platforms are: 'tpu', 'cpu', 'cuda', 'rocm'.
-        See https://jax.readthedocs.io/en/latest/export/export.html#cross-platform-and-multi-platform-export.
+        See https://docs.jax.dev/en/latest/export/export.html#cross-platform-and-multi-platform-export.
     ordered_effects: the ordered effects present in the serialized module.
-        This is present from serialization version 9. See https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention
+        This is present from serialization version 9. See https://docs.jax.dev/en/latest/export/export.html#module-calling-convention
         for the calling convention in presence of ordered effects.
     unordered_effects: the unordered effects present in the serialized module.
         This is present from serialization version 9.
     mlir_module_serialized: the serialized lowered VHLO module.
     calling_convention_version: a version number for the calling
         convention of the exported module.
-        See more versioning details at https://jax.readthedocs.io/en/latest/export/export.html#calling-convention-versions.
+        See more versioning details at https://docs.jax.dev/en/latest/export/export.html#calling-convention-versions.
     module_kept_var_idx: the sorted indices of the arguments among `in_avals` that
         must be passed to the module. The other arguments have been dropped
         because they are not used.
@@ -181,7 +181,7 @@ class Exported:
         for each primal output. It returns a tuple with the cotangents
         corresponding to the flattened primal inputs.
 
-  See a [description of the calling convention for the `mlir_module`](https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention).
+  See a [description of the calling convention for the `mlir_module`](https://docs.jax.dev/en/latest/export/export.html#module-calling-convention).
   """
   fun_name: str
   in_tree: tree_util.PyTreeDef
@@ -306,7 +306,7 @@ class Exported:
 
     The invocation supports reverse-mode AD, and all the features supported
     by exporting: shape polymorphism, multi-platform, device polymorphism.
-    See the examples in the [JAX export documentation](https://jax.readthedocs.io/en/latest/export/export.html).
+    See the examples in the [JAX export documentation](https://docs.jax.dev/en/latest/export/export.html).
     """
     return call_exported(self)(*args, **kwargs)
 
@@ -529,6 +529,7 @@ def export(
     *,
     platforms: Sequence[str] | None = None,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
+    _override_lowering_rules: Sequence[tuple[Any, Any]] | None = None
     ) -> Callable[..., Exported]:
   """Exports a JAX function for persistent serialization.
 
@@ -540,7 +541,14 @@ def export(
         the exported code takes an argument specifying the platform.
         If None, then use the default JAX backend.
         The calling convention for multiple platforms is explained at
-        https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention.
+        https://docs.jax.dev/en/latest/export/export.html#module-calling-convention.
+    _override_lowering_rules: an optional sequence of custom lowering rules
+        for some JAX primitives. Each element of the sequence is a pair
+        of a JAX primitive and a lowering function. Defining lowering rules
+        is an advanced feature using JAX internal APIs, which are subject
+        to change. Furthermore, the responsibility for the stability of the
+        MLIR emitted through these custom lowering rules, rests with the user
+        of these rules.
     disabled_checks: the safety checks to disable. See documentation for
         of `jax.export.DisabledSafetyCheck`.
 
@@ -568,7 +576,8 @@ def export(
       Array([0.09983342, 0.19866933, 0.29552022, 0.38941833], dtype=float32)
   """
   return _export_internal(fun_jit, platforms=platforms,
-                          disabled_checks=disabled_checks)
+                          disabled_checks=disabled_checks,
+                          override_lowering_rules=_override_lowering_rules)
 
 
 # TODO(necula): remove this once we improve the integration with jax2tf.
@@ -577,13 +586,14 @@ def _export_internal(
     *,
     platforms: Sequence[str] | None = None,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
-    _device_assignment_for_internal_jax2tf_use_only = None,
+    _device_assignment_for_internal_jax2tf_use_only=None,
+    override_lowering_rules=None,
     ) -> Callable[..., Exported]:
   """Exports native serialization for a JAX function.
 
   Note: this function exists only for internal usage by jax2tf. Use
     `jax.export` instead.
-    See https://jax.readthedocs.io/en/latest/export/export.html
+    See https://docs.jax.dev/en/latest/export/export.html
 
   See docstring of `export` for more details.
   """
@@ -604,6 +614,7 @@ def _export_internal(
     lowered = traced.lower(
         lowering_platforms=actual_lowering_platforms,
         _private_parameters=mlir.LoweringParameters(
+            override_lowering_rules=override_lowering_rules,
             for_export=True,
             export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value))
     return _export_lowered(
@@ -674,10 +685,8 @@ def _export_lowered(
   # Shardy was used during lowering if we can find the Shardy mesh in the
   # module. Note that the mesh should have been lifted by the
   # `sdy-lift-inlined-meshes` pass in mlir.py.
-  shardy_enabled = False
-  if xla_extension_version >= 319:
-    shardy_enabled = xla_extension.sdy.lowered_with_shardy(
-        mlir.module_to_bytecode(mlir_module))
+  shardy_enabled = xla_extension.sdy.lowered_with_shardy(
+      mlir.module_to_bytecode(mlir_module))
 
   mlir_module_serialized = _module_to_bytecode(mlir_module, shardy_enabled)
 
@@ -784,7 +793,7 @@ def _export_lowered(
       _get_vjp=_get_exported_vjp)
 
 def _module_to_bytecode(module: ir.Module, shardy_enabled: bool) -> bytes:
-  if xla_extension_version >= 319 and shardy_enabled:
+  if shardy_enabled:
     mlir_str = xla_extension.sdy.sdy_round_trip_export_pipeline(
         mlir.module_to_bytecode(module))
   else:
@@ -828,7 +837,7 @@ def _wrap_main_func(
 ) -> ir.Module:
   """Wraps the lowered module with a new "main" handling dimension arguments.
 
-  See calling convention documentation https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention.
+  See calling convention documentation https://docs.jax.dev/en/latest/export/export.html#module-calling-convention.
 
   Args:
     module: the HLO module as obtained from lowering.
@@ -1073,6 +1082,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     *_CPU_FFI_KERNELS,
     *_GPU_FFI_KERNELS,
     "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
+    "annotate_device_placement",
     "cu_threefry2x32_ffi",
     # Triton IR does not guarantee stability.
     # "__gpu$xla.gpu.triton",
@@ -1177,7 +1187,7 @@ def _check_module(mod: ir.Module, *,
     disallowed_custom_call_ops_str = "\n".join(disallowed_custom_call_ops)
     msg = ("Cannot serialize code with custom calls whose targets have no "
            "compatibility guarantees. "
-           "See https://jax.readthedocs.io/en/latest/export/export.html#compatibility-guarantees-for-custom-calls. "
+           "See https://docs.jax.dev/en/latest/export/export.html#compatibility-guarantees-for-custom-calls. "
            "Examples are:\n"
            f"{disallowed_custom_call_ops_str}.\n")
     raise ValueError(msg)
@@ -1423,10 +1433,8 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     ctx.module_context.shape_poly_state.uses_dim_vars = True
   submodule = ir.Module.parse(exported.mlir_module())
 
-  shardy_enabled = False
-  if xla_extension_version >= 319:
-    shardy_enabled = xla_extension.sdy.lowered_with_shardy(
-        mlir.module_to_bytecode(submodule))
+  shardy_enabled = xla_extension.sdy.lowered_with_shardy(
+      mlir.module_to_bytecode(submodule))
   if shardy_enabled:
     submodule = ir.Module.parse(xla_extension.sdy.sdy_round_trip_import_shardings(
         mlir.module_to_bytecode(submodule)))
@@ -1440,7 +1448,8 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   mesh = None
   if shardy_enabled:
     sdy_mesh_axes = xla_extension.sdy.get_mesh(mlir.module_to_bytecode(submodule))
-    mesh = mesh_lib.AbstractMesh(tuple(sdy_mesh_axes)) if sdy_mesh_axes else None
+    mesh = mesh_lib.AbstractMesh(
+        *list(zip(*sdy_mesh_axes))[::-1]) if sdy_mesh_axes else None
 
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.ShardingContext):

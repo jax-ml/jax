@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src.lax.fft import FftType as _FftType
 from jax._src.lib import xla_client as _xc
 
 get_topology_for_devices = _xc.get_topology_for_devices
@@ -27,101 +26,76 @@ OpSharding = _xc.OpSharding
 Traceback = _xc.Traceback
 
 _deprecations = {
-    # Finalized 2024-12-11; remove after 2025-3-11
-    "_xla": (
-        "jax.lib.xla_client._xla was removed in JAX v0.4.38; use jax.lib.xla_extension.",
-        None,
-    ),
-    "bfloat16": (
-        "jax.lib.xla_client.bfloat16 was removed in JAX v0.4.38; use ml_dtypes.bfloat16.",
-        None,
-    ),
-    # Finalized 2024-12-23; remove after 2024-03-23
-    "Device": (
-        "jax.lib.xla_client.Device is deprecated; use jax.Device instead.",
-        None,
-    ),
-    "XlaRuntimeError": (
+    # Finalized 2025-03-25; remove after 2025-06-25
+    "FftType": (
         (
-            "jax.lib.xla_client.XlaRuntimeError is deprecated; use"
-            " jax.errors.JaxRuntimeError."
+            "jax.lib.xla_client.FftType was removed in JAX v0.6.0; use"
+            " jax.lax.FftType."
         ),
         None,
-    ),
-    # Added Oct 10 2024
-    "FftType": (
-        "jax.lib.xla_client.FftType is deprecated; use jax.lax.FftType.",
-        _FftType,
     ),
     "PaddingType": (
         (
-            "jax.lib.xla_client.PaddingType is deprecated; this type is unused"
-            " by JAX so there is no replacement."
+            "jax.lib.xla_client.PaddingType was removed in JAX v0.6.0;"
+            " this type is unused by JAX so there is no replacement."
         ),
-        _xc.PaddingType,
+        None,
     ),
-    # Added Oct 11 2024
     "dtype_to_etype": (
-        "dtype_to_etype is deprecated; use StableHLO instead.",
-        _xc.dtype_to_etype,
-    ),
-    "ops": (
-        "ops is deprecated; use StableHLO instead.",
-        _xc.ops,
-    ),
-    "register_custom_call_target": (
-        "register_custom_call_target is deprecated; use the JAX FFI instead "
-        "(https://jax.readthedocs.io/en/latest/ffi.html)",
-        _xc.register_custom_call_target,
+        "dtype_to_etype was removed in JAX v0.6.0; use StableHLO instead.",
+        None,
     ),
     "shape_from_pyval": (
-        "shape_from_pyval is deprecated; use StableHLO instead.",
-        _xc.shape_from_pyval,
+        "shape_from_pyval was removed in JAX v0.6.0; use StableHLO instead.",
+        None,
+    ),
+    # Added Oct 11 2024, finalized 2025-04-09
+    "ops": (
+        "ops has been removed in JAX v0.6.0; use StableHLO instead.",
+        None,
+    ),
+    "register_custom_call_target": (
+        (
+            "register_custom_call_target has been removed in JAX v0.6.0; use"
+            " the JAX FFI instead (https://docs.jax.dev/en/latest/ffi.html)"
+        ),
+        None,
     ),
     "PrimitiveType": (
-        "PrimitiveType is deprecated; use StableHLO instead.",
-        _xc.PrimitiveType,
+        "PrimitiveType has been removed in JAX v0.6.0; use StableHLO instead.",
+        None,
     ),
     "Shape": (
         "Shape is deprecated; use StableHLO instead.",
         _xc.Shape,
     ),
     "XlaBuilder": (
-        "XlaBuilder is deprecated; use StableHLO instead.",
-        _xc.XlaBuilder,
+        "XlaBuilder has been removed in JAX v0.6.0; use StableHLO instead.",
+        None,
     ),
     "XlaComputation": (
         "XlaComputation is deprecated; use StableHLO instead.",
         _xc.XlaComputation,
     ),
-    # Added Nov 20 2024
+    # Added Nov 20 2024, finalized 2025-04-09
     "ArrayImpl": (
-        "jax.lib.xla_client.ArrayImpl is deprecated; use jax.Array instead.",
-        _xc.ArrayImpl,
+        (
+            "jax.lib.xla_client.ArrayImpl has been removed in JAX v0.6.0; use"
+            " jax.Array instead."
+        ),
+        None,
     ),
 }
 
 import typing as _typing
 
 if _typing.TYPE_CHECKING:
-  dtype_to_etype = _xc.dtype_to_etype
-  ops = _xc.ops
-  register_custom_call_target = _xc.register_custom_call_target
-  shape_from_pyval = _xc.shape_from_pyval
-  ArrayImpl = _xc.ArrayImpl
-  Device = _xc.Device
-  FftType = _FftType
-  PaddingType = _xc.PaddingType
-  PrimitiveType = _xc.PrimitiveType
   Shape = _xc.Shape
-  XlaBuilder = _xc.XlaBuilder
   XlaComputation = _xc.XlaComputation
-  XlaRuntimeError = _xc.XlaRuntimeError
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
 
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del _typing
-del _FftType
 del _xc

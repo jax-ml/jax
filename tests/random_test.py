@@ -338,7 +338,7 @@ class PrngTest(jtu.JaxTestCase):
 
     Any refactoring of random distributions that leads to non-trivial
     differences in this test should follow the procedure outlined at
-    https://jax.readthedocs.io/en/latest/api_compatibility.html#numerics-and-randomness
+    https://docs.jax.dev/en/latest/api_compatibility.html#numerics-and-randomness
 
     This includes:
     * Announcing the change in the CHANGELOG.md
@@ -656,6 +656,11 @@ class KeyArrayTest(jtu.JaxTestCase):
       random.PRNGKey(seed)
     with self.assertRaisesRegex(TypeError, "PRNG key seed must be an integer"):
       random.key(seed)
+
+  def test_nbytes_property(self):
+    key = self.make_keys()
+    self.assertEqual(key.nbytes, key._base_array.nbytes)
+    self.assertEqual(key.nbytes, key.itemsize * key.size)
 
   def test_dtype_property(self):
     k1, k2 = self.make_keys(), self.make_keys()

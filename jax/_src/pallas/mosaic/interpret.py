@@ -13,10 +13,10 @@
 # limitations under the License.
 
 import collections
-from collections.abc import Iterable, Sequence
 import dataclasses
 import enum
 import functools
+import gc
 import itertools
 import math
 import threading
@@ -29,8 +29,9 @@ from jax._src import core as jax_core
 from jax._src.lax.control_flow import for_loop
 from jax._src import linear_util as lu
 from jax._src import source_info_util
-from jax._src.pallas.mosaic import primitives as mosaic_primitives
 from jax._src.pallas.mosaic import core as mosaic_core
+from jax._src.pallas.mosaic import primitives as mosaic_primitives
+from jax._src.pallas.mosaic import verification
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src import pjit
@@ -83,10 +84,15 @@ class TPUInterpretParams:
       replaced with arrays all of `jnp.inf`. Additionaly any floating point
       operands to any operation will be replaced with (arrays of) `jnp.inf`.
       Default: False.
+    uninitialized_memory: If "nan", allocated buffers are initialized to
+      to contain all NaNs (or to their maximum possible value for integers).
+      If "zero", allocated buffers are initialized to all zeros.
+      Default: "nan".
   """
   dma_execution_mode: Literal["eager", "on_wait"] = "on_wait"
   detect_races: bool = False
   skip_floating_point_ops: bool = False
+  uninitialized_memory: Literal["nan", "zero"] = "nan"
 
 
 VectorClock = np.ndarray
@@ -447,6 +453,7 @@ class SharedMemory:
   num_devices: int
   clocks: list[VectorClock]
   barrier: threading.Barrier
+  clean_up_barrier: threading.Barrier
 
   # (memory_space, buffer_id, device_id) -> NumPy array
   # TODO(jburnim): Handle Megacore.
@@ -471,6 +478,8 @@ class SharedMemory:
       default_factory=lambda: collections.defaultdict(lambda: 2000))
 
   next_dma_id: int = 100
+
+  deallocated_bytes: int = 0
 
 
 # TODO(jburnim): Do we want to support multiple instances of SharedMemory?
@@ -498,18 +507,35 @@ def _initialize_shared_memory(device_id, num_devices, *, interpret_params):
           interpret_params=interpret_params,
           num_devices=num_devices,
           clocks=[make_vector_clock(num_devices) for _ in range(num_devices)],
-          barrier=threading.Barrier(num_devices))
+          barrier=threading.Barrier(
+              num_devices, action=_update_clocks_for_global_barrier),
+          clean_up_barrier=threading.Barrier(
+              num_devices, action=_clear_shared_memory))
   assert _shared_memory.num_devices == num_devices
 
   global races
   races = RaceDetectionState(num_devices=num_devices)
 
+def _update_clocks_for_global_barrier():
+  shared_memory = _get_shared_memory()
+  with shared_memory.lock:
+    # Set the vector clock for device 0 to the max over all device clocks.
+    for c in shared_memory.clocks[1:]:
+      update_vector_clock(shared_memory.clocks[0], c)
+    # Set all other device vector clocks to the max over all the clocks.
+    for c in shared_memory.clocks[1:]:
+      update_vector_clock(c, shared_memory.clocks[0])
+
+def _barrier(device_id):
+  device_id = int(device_id)
+  shared_memory = _get_shared_memory()
+  if shared_memory.num_devices > 1:
+    shared_memory.barrier.wait()
+
 def _clean_up_shared_memory(device_id):
   device_id = int(device_id)
   shared_memory = _get_shared_memory()
-  shared_memory.barrier.wait()
-  if device_id == 0:
-    _clear_shared_memory()
+  shared_memory.clean_up_barrier.wait()
 
 def _validate(device_id):
   device_id = int(device_id)
@@ -548,8 +574,18 @@ def _deallocate_buffer(device_id, memory_space, buffer_id):
 
   shared_memory = _get_shared_memory()
   with shared_memory.lock:
-    # TODO(jburnim): Error if buffer doesn't exist?
-    shared_memory.mem.pop((memory_space, buffer_id, device_id), None)
+    buff = shared_memory.mem.pop((memory_space, buffer_id, device_id))
+    shared_memory.deallocated_bytes += buff.size * buff.itemsize
+    del buff
+
+    should_collect = shared_memory.deallocated_bytes > 100_000_000
+    if should_collect:
+      shared_memory.deallocated_bytes = 0
+
+  if should_collect:
+    # Periodic garbage collection here prevents OOMs -- although it's not clear
+    # why arrays are not getting freed without this.
+    gc.collect()
 
 def _allocate_semaphores(device_id, shape):
   device_id = int(device_id)
@@ -943,9 +979,9 @@ def _device_coords_to_logical_id(device_coords, axis_sizes):
 def _device_id_to_logical(device_id, device_id_type, axis_sizes):
   if device_id is None:
     return None
-  if device_id_type == mosaic_primitives.DeviceIdType.MESH:
+  if device_id_type == primitives.DeviceIdType.MESH:
     return _device_coords_to_logical_id(device_id, axis_sizes)
-  elif device_id_type == mosaic_primitives.DeviceIdType.LOGICAL:
+  elif device_id_type == primitives.DeviceIdType.LOGICAL:
     return device_id
   else:
     raise ValueError(f'Unsupported device ID type: {device_id_type}')
@@ -1045,6 +1081,21 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
             ordered=True)
 
       elif prim is mosaic_primitives.delay_p:
+        # TODO(jburnim): Implement this properly?
+        out = []
+
+      elif prim is mosaic_primitives.prng_seed_p:
+        # TODO(jburnim): Implement this properly?
+        out = []
+
+      elif prim is mosaic_primitives.prng_random_bits_p:
+        # TODO(jburnim): Implement this properly?
+        out = jnp.zeros(eqn.params['shape'], jnp.int32)
+
+      elif prim is verification.assume_p:
+        out = read(eqn.invars[0])
+
+      elif prim is verification.pretend_p:
         out = []
 
       elif prim is lax.cond_p:
@@ -1114,21 +1165,14 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
                 jax.ShapeDtypeStruct((), jnp.int16),
                 device_id,
                 TPU_MEMORY_SPACE_IDXS[v.aval.memory_space],
-                primitives.uninitialized_value(v.aval.shape, v.aval.dtype),
+                _uninitialized_value(
+                    v.aval.shape, v.aval.dtype, interpret_params),
                 ordered=True))
 
         out = _interpret(eqn.params['jaxpr'], *deferred_invals(), *allocs)
 
-        for a in allocs:
-          if isinstance(a, tuple):
-            callback.io_callback(
-                _deallocate_buffer,
-                None,
-                device_id,
-                TPU_MEMORY_SPACE_IDXS[v.aval.memory_space],
-                a,
-                ordered=True)
-          else:
+        for a, v in zip(allocs, eqn.params['jaxpr'].invars):
+          if v.aval.memory_space == mosaic_core.TPUMemorySpace.SEMAPHORE:
             # TODO(jburnim): De-allocate semaphores.
             # callback.io_callback(
             #     _deallocate_semaphores,
@@ -1137,6 +1181,14 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
             #     a,
             #     ordered=True)
             pass
+          else:
+            callback.io_callback(
+                _deallocate_buffer,
+                None,
+                device_id,
+                TPU_MEMORY_SPACE_IDXS[v.aval.memory_space],
+                a,
+                ordered=True)
 
       elif prim is state_primitives.get_p:
         invals = deferred_invals()
@@ -1223,7 +1275,7 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
             compiler_params['mosaic']['collective_id'],
             ordered=True)
 
-      elif prim is mosaic_primitives.semaphore_signal_p:
+      elif prim is primitives.semaphore_signal_p:
         sem, sem_transforms, inc, target_device_id, core_index = (
             jax.tree.unflatten(eqn.params['args_tree'], deferred_invals()))
         target_device_id = _device_id_to_logical(
@@ -1239,7 +1291,7 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
             ordered=True)
         out = []
 
-      elif prim is mosaic_primitives.semaphore_wait_p:
+      elif prim is primitives.semaphore_wait_p:
         sem, sem_transforms, value = (
             jax.tree.unflatten(eqn.params['args_tree'], deferred_invals()))
         callback.io_callback(
@@ -1277,31 +1329,25 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
 
   return jax.util.safe_map(read, jaxpr.outvars)
 
-def _initialize_output_vals(
-    block_mappings_output: Iterable[BlockMapping],
-    input_args, input_output_aliases) -> Sequence[jax.Array]:
-  oi_map = {v: k for k, v in input_output_aliases}
-  output_vals = []
-  for i, bm in enumerate(block_mappings_output):
-    if i in oi_map:
-      output_vals.append(input_args[oi_map[i]])
-    else:
-      output_vals.append(primitives.uninitialized_value(
-          bm.array_shape_dtype.shape,
-          bm.array_shape_dtype.dtype))
-  return output_vals
-
-def _compute_start_indices(block_mapping, loop_idx, *args):
-    block_indices = (
-        jax_core.jaxpr_as_fun(block_mapping.index_map_jaxpr)(*loop_idx, *args))
-    if isinstance(block_mapping.indexing_mode, pallas_core.Blocked):
-      ret = tuple(i if b is pallas_core.mapped else b * i
-                  for b, i in zip(block_mapping.block_shape, block_indices))
-    elif isinstance(block_mapping.indexing_mode, pallas_core.Unblocked):
-      ret = block_indices
-    else:
-      raise RuntimeError(f"Unknown indexing mode: {block_mapping.indexing_mode}")
-    return ret
+def _compute_start_indices(
+    block_mapping, loop_idx, *args, compiler_params, interpret_params):
+  jaxpr = block_mapping.index_map_jaxpr
+  block_indices = _interpret_jaxpr(
+      jaxpr.jaxpr, *jaxpr.consts, *loop_idx, *args,
+      compiler_params=compiler_params, interpret_params=interpret_params)
+  if isinstance(block_mapping.indexing_mode, pallas_core.Blocked):
+    ret = jnp.array(
+        tuple(
+            i if b is pallas_core.mapped else b * i
+            for b, i in zip(block_mapping.block_shape, block_indices)
+        ),
+        dtype=jnp.int32,
+    )
+  elif isinstance(block_mapping.indexing_mode, pallas_core.Unblocked):
+    ret = block_indices
+  else:
+    raise RuntimeError(f"Unknown indexing mode: {block_mapping.indexing_mode}")
+  return ret
 
 def _get_next_indices(grid, indices):
   next_indices = []
@@ -1319,7 +1365,20 @@ def _maybe_dynamic_slice(start_idx, block_shape, value, is_indexing):
                                                             dtype=np.bool_)])
   return lax.squeeze(output, squeeze_dims)
 
-def _pad_to_block_dimension(value, block_shape):
+def _uninitialized_value(shape, dtype, interpret_params):
+  if interpret_params.uninitialized_memory == 'nan':
+    if jnp.issubdtype(dtype, jnp.floating):
+      return jnp.full(shape, jnp.nan, dtype)
+    elif jnp.issubdtype(dtype, jnp.integer):
+      return jnp.full(shape, jnp.iinfo(dtype).max, dtype)
+    elif jnp.issubdtype(dtype, jnp.bool):
+      return jnp.full(shape, False, dtype)
+  if interpret_params.uninitialized_memory == 'zero':
+    return jnp.full(shape, 0, dtype)
+  raise NotImplementedError(
+      interpret_params.uninitialized_memory + ' + ' + str(dtype))
+
+def _pad_to_block_dimension(value, block_shape, interpret_params):
   """Pads values so the shape evenly divides into block dimensions.
 
   For example, if values has a shape of (33, 2, 5) with a block_shape of
@@ -1338,7 +1397,7 @@ def _pad_to_block_dimension(value, block_shape):
   )
   if padded_shape != value.shape:
     pad_width = tuple((0, a-b) for a, b in zip(padded_shape, value.shape))
-    pad_value = primitives.uninitialized_value(shape=(), dtype=value.dtype)
+    pad_value = _uninitialized_value((), value.dtype, interpret_params)
     value = jnp.pad(value, pad_width, constant_values=pad_value)
   return value
 
@@ -1351,12 +1410,13 @@ def interpret_pallas_call(
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: GridMapping,
-    compiler_params: Any,
+    mesh: pallas_core.Mesh | None,
+    compiler_params: mosaic_core.TPUCompilerParams,
     cost_estimate: CostEstimate,
     out_avals: tuple[jax_core.AbstractValue, ...],
     interpret_params: TPUInterpretParams,
 ):
-  del debug, cost_estimate, out_avals
+  del debug, mesh, cost_estimate, out_avals
 
   # args contains: *dynamic_grid_sizes, *index, *inputs.  (No consts?)
   dynamic_grid_args, scalars, input_args = split_list(
@@ -1396,42 +1456,69 @@ def interpret_pallas_call(
   ]
   num_inputs = grid_mapping.num_inputs
   input_args = [
-      _pad_to_block_dimension(a, bs)
+      _pad_to_block_dimension(a, bs, interpret_params)
       for a, bs in zip(input_args, block_shapes[:num_inputs])
   ]
 
-  # Allocate buffers in HBM for outputs.
-  output_buffer_ids = []
-  output_buffer_shapes = []
-  output_vals = _initialize_output_vals(
-      grid_mapping.block_mappings_output,
-      scalars + input_args,
-      input_output_aliases)
-  num_outputs = grid_mapping.num_outputs
-  output_block_shapes = block_shapes[num_inputs : num_inputs + num_outputs]
-  for out_val, bs in zip(output_vals, output_block_shapes):
-    padded_val = _pad_to_block_dimension(out_val, bs)
-    output_buffer_shapes.append(padded_val.shape)
-    output_buffer_ids.append(callback.io_callback(
+  # Allocate HBM buffers for pallas_call inputs.
+  #
+  # TODO(jburnim): As an optimization, skip allocating buffers for inputs that
+  # are neither aliased nor passed to the kernel in HBM?
+  input_buffer_ids = []
+  for i, var in enumerate(
+      jaxpr.invars[grid_mapping.num_index_operands:][:grid_mapping.num_inputs]):
+    assert var.aval.dtype == input_args[i].dtype
+    input_buffer_ids.append(callback.io_callback(
         _allocate_buffer,
         jax.ShapeDtypeStruct((), jnp.int16),
         device_id,
         TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.ANY],
-        padded_val,
+        input_args[i],
         ordered=True))
-  # Allocate buffers for all kernel arguments (e.g., scalars, inputs,
-  # outputs, scratch).
-  io_alias_map = dict(input_output_aliases)
+
+  # Allocate buffers in HBM for pallas_call outputs.
   oi_alias_map = {v: k for k, v in input_output_aliases}
-  kernel_buffer_ids = []
-  for _, val in zip(jaxpr.invars[grid_mapping.slice_index_ops], scalars):
-    kernel_buffer_ids.append(callback.io_callback(
+  output_buffer_ids = []
+  output_buffer_shapes = []
+  output_vals = []
+  num_outputs = grid_mapping.num_outputs
+  output_block_shapes = block_shapes[num_inputs : num_inputs + num_outputs]
+  for i, bm in enumerate(grid_mapping.block_mappings_output):
+    if i in oi_alias_map:
+      # Re-use the HBM buffer for the aliased pallas_call input.
+      output_buffer_ids.append(input_buffer_ids[oi_alias_map[i]])
+      output_buffer_shapes.append(input_args[oi_alias_map[i]].shape)
+      output_vals.append(input_args[oi_alias_map[i]])
+    else:
+      out_val = _uninitialized_value(bm.array_shape_dtype.shape,
+                                     bm.array_shape_dtype.dtype,
+                                     interpret_params)
+      padded_val = _pad_to_block_dimension(
+          out_val, output_block_shapes[i], interpret_params)
+      output_buffer_ids.append(callback.io_callback(
+          _allocate_buffer,
+          jax.ShapeDtypeStruct((), jnp.int16),
+          device_id,
+          TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.ANY],
+          padded_val,
+          ordered=True))
+      output_buffer_shapes.append(padded_val.shape)
+      output_vals.append(out_val)
+
+  # Allocate buffers for non-HBM kernel arguments (e.g., scalars, inputs,
+  # outputs, scratch).
+  scalar_buffer_ids = []
+  for var, val in zip(jaxpr.invars[grid_mapping.slice_index_ops], scalars):
+    assert var.aval.shape == val.shape
+    assert var.aval.dtype == val.dtype
+    scalar_buffer_ids.append(callback.io_callback(
         _allocate_buffer,
         jax.ShapeDtypeStruct((), jnp.int16),
         device_id,
         TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.SMEM],
         val,
         ordered=True))
+  kernel_buffer_ids = scalar_buffer_ids.copy()
   for i, var in enumerate(jaxpr.invars[grid_mapping.num_index_operands:]):
     output_idx = i - grid_mapping.num_inputs
     is_input = i < grid_mapping.num_inputs
@@ -1443,30 +1530,31 @@ def interpret_pallas_call(
           device_id,
           var.aval.shape,
           ordered=True))
-    elif is_output and _is_any(var.aval.memory_space):
-      # Use the already-allocated HBM output buffer.
+    elif _is_any(var.aval.memory_space):
+      # Use the already-allocated HBM input or output buffer.
       #
-      # TODO(jburnim): For kernel args in HBM, check that block shape is the
-      # same as for the corresponding pallas_call input, and that the index_map
+      # TODO(jburnim): For kernel args in HBM, check that block shape eqals the
+      # shape of the corresponding pallas_call input, and that the index_map
       # is trivial.
-      kernel_buffer_ids.append(output_buffer_ids[output_idx])
-    elif is_output and (output_idx in oi_alias_map):
-      # Use the already-allocated (non-HBM) input buffer.
-      kernel_buffer_ids.append(kernel_buffer_ids[oi_alias_map[output_idx]])
-    elif is_input and (i in io_alias_map) and _is_any(var.aval.memory_space):
-      # Use the already-allocated HBM output buffer.
-      kernel_buffer_ids.append(output_buffer_ids[io_alias_map[i]])
+      assert is_input ^ is_output
+      if is_input:
+        kernel_buffer_ids.append(input_buffer_ids[i])
+      if is_output:
+        kernel_buffer_ids.append(output_buffer_ids[output_idx])
     else:
-      # TODO(jburnim): For kernel args in HBM, check that block shape is the
-      # same as for the corresponding pallas_call input, and that the index_map
-      # is trivial.
       kernel_buffer_ids.append(callback.io_callback(
           _allocate_buffer,
           jax.ShapeDtypeStruct((), jnp.int16),
           device_id,
           TPU_MEMORY_SPACE_IDXS[var.aval.memory_space],
-          primitives.uninitialized_value(var.aval.shape, var.aval.dtype),
+          _uninitialized_value(
+              var.aval.shape, var.aval.dtype, interpret_params),
           ordered=True))
+
+  if compiler_params.get('mosaic', {}).get('collective_id', None) is None:
+    # The kernel doesn't specify its own barrier semaphore, so we do a global
+    # barrier before running the first iteration of the kernel.
+    callback.io_callback(_barrier, (), device_id, ordered=True)
 
   _, input_ids, kernel_output_ids, _  = split_list(
       kernel_buffer_ids,
@@ -1474,68 +1562,120 @@ def interpret_pallas_call(
   input_vars, output_vars = split_list(
       jaxpr.invars[grid_mapping.slice_block_ops], [num_inputs])
 
-  # For kernel inputs that are in HBM, we populate the buffer once before
-  # any kernel invocations.
-  for buffer_id, var, val in zip(input_ids, input_vars, input_args):
-    if not _is_any(var.aval.memory_space):
-      continue
-    if (val.shape != var.aval.shape) or (val.dtype != var.aval.dtype):
-      # TODO(jburnim): Also check that the index_map is trivial.
-      raise ValueError()
-    callback.io_callback(
-        store,
-        (),
-        device_id,
-        TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.ANY],
-        buffer_id,
-        (),
-        val,
-        ordered=True)
-
   if grid:
     num_iterations = functools.reduce(jnp.multiply, grid)  # type: ignore[arg-type]
   else:
     # Base case is always one iteration when grid is ()
     num_iterations = 1
 
-  def body(carry):
-    # The loop carry: (i, loop_idx) --
-    #  - i:int32 is the interation index
-    #  - loop_idx: tuple[int32] are the program ids for each grid axis
-    i, loop_idx = carry
-
+  def _get_local_grid_env(loop_idx):
     if grid_mapping.local_grid_env is not None:
-      local_grid_env = grid_mapping.local_grid_env(loop_idx, grid)
+      return grid_mapping.local_grid_env(loop_idx, grid)
     else:
-      local_grid_env = tuple(
+      return tuple(
           pallas_core.GridAxis(idx, b)
           for dim, (idx, b) in enumerate(zip(loop_idx, grid))
           if dim not in grid_mapping.vmapped_dims
       )
 
-    with pallas_core.grid_env(local_grid_env):
+  def body(
+      carry: tuple[
+          jnp.int32, tuple[jnp.int32, ...], list[jnp.ndarray], list[jnp.ndarray]
+      ],
+  ):
+    """Performs a single iteration of `jaxpr` in the device grid.
+
+    Execution of `jaxpr` is preceded by reading kernel input buffers and
+    followed by writing kernel output buffers.
+
+    Args:
+      carry: (iteration_idx, loop_idx, prev_start_indices, cur_start_indices).
+        - iteration_idx is the interation index.
+        - loop_idx are the program ids for each grid axis.
+        - prev_start_indices is a rank-1 array that contains the start indices
+          for the slices of inputs and outputs processed in the previous loop
+          iteration.
+        - cur_start_indices is a rank-1 array that contains the start indices
+          for the slices of inputs and outputs processed in the current loop
+          iteration.
+
+        Note that by carrying the previous *and* current start indices between
+        loop iterations, it suffices to compute only one list of start indices,
+        i.e. `next_start_indices` (see below), per iteration.
+
+    Returns:
+      The carry for the next iteration.
+    """
+    iteration_idx, loop_idx, prev_start_indices, cur_start_indices = carry
+
+    with pallas_core.grid_env(_get_local_grid_env(loop_idx)):
+      next_loop_idx = _get_next_indices(grid, loop_idx)
+      next_start_indices = [
+          _compute_start_indices(
+              bm,
+              next_loop_idx,
+              *scalar_buffer_ids,
+              compiler_params=compiler_params,
+              interpret_params=interpret_params,
+          )
+          for bm in grid_mapping.block_mappings
+      ]
+
       # Copy slices of the input to the kernel buffers.
-      #
-      # TODO(jburnim): Only copy slices when the index mapping has changed?
-      start_indices = [_compute_start_indices(bm, loop_idx, *scalars)
-                       for bm in grid_mapping.block_mappings]
-      for j, var in enumerate(input_vars):
-        if _is_any(var.aval.memory_space):
-          continue
-        sliced_val = _maybe_dynamic_slice(start_indices[j], block_shapes[j],
-                                          input_args[j], is_indexing_dim[j])
-        assert(sliced_val.shape == var.aval.shape)
+
+      def _store_slice_to_kernel_input(index, input_var):
+        # Copy from the HBM buffer for the pallas_call input to the kernel
+        # input buffer.
+        # TODO(jburnim): Just use input_args[j] when the input is not aliased?
+        transform = indexing.NDIndexer(
+            indices=tuple(
+                indexing.ds(st, sz) if not iid else st
+                for st, sz, iid in zip(
+                    cur_start_indices[index],
+                    block_shapes[index],
+                    is_indexing_dim[index],
+                )
+            ),
+            shape=input_args[index].shape,
+            int_indexer_shape=(),
+        )
+        sliced_val = callback.io_callback(
+            # TODO(jburnim): Pass source_info from the pallas_call, in case this
+            # read is involved in a data race.
+            get,
+            jax.ShapeDtypeStruct(input_var.aval.shape, input_var.aval.dtype),
+            device_id,
+            TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.ANY],
+            input_buffer_ids[index],
+            (transform,),
+            ordered=True,
+        )
         callback.io_callback(
             # TODO(jburnim): Pass source_info from the pallas_call, in case this
             # store is involved in a data race.
             store,
             (),
             device_id,
-            TPU_MEMORY_SPACE_IDXS[var.aval.memory_space],
-            input_ids[j],
+            TPU_MEMORY_SPACE_IDXS[input_var.aval.memory_space],
+            input_ids[index],
             (),
             sliced_val,
-            ordered=True)
+            ordered=True,
+        )
+
+      for j, var in enumerate(input_vars):
+        if _is_any(var.aval.memory_space):
+          continue
+        assert len(cur_start_indices[j].shape) == 1
+        assert len(prev_start_indices[j].shape) == 1
+        jax.lax.cond(
+            (iteration_idx == 0)
+            | jax.lax.reduce_or(
+                cur_start_indices[j] != prev_start_indices[j], axes=(0,)
+            ),
+            functools.partial(_store_slice_to_kernel_input, j, var),
+            lambda: None,
+        )
 
       # Invoke the kernel.
       _interpret_jaxpr(jaxpr, *kernel_buffer_ids,
@@ -1543,29 +1683,30 @@ def interpret_pallas_call(
                        interpret_params=interpret_params)
 
       # Copy from the kernel buffers to slices of the output in HBM.
-      #
-      # TODO(jburnim): Only copy if the index mapping will change in the
-      # next iteration (or if this is the last iteration)?
-      for j, var in enumerate(output_vars):
-        if _is_any(var.aval.memory_space):
-          continue
+      def _store_to_output_buffer(index, output_var):
         kernel_output_val = callback.io_callback(
             # TODO(jburnim): Pass source_info from the pallas_call, in case this
             # get is involved in a data race.
             get,
-            var.aval,
+            output_var.aval,
             device_id,
-            TPU_MEMORY_SPACE_IDXS[var.aval.memory_space],
+            TPU_MEMORY_SPACE_IDXS[output_var.aval.memory_space],
             kernel_output_ids[j],
             (),
-            ordered=True)
+            ordered=True,
+        )
         transform = indexing.NDIndexer(
-            indices=tuple(indexing.ds(st, sz) if not iid else st
-                          for st, sz, iid  in zip(start_indices[num_inputs + j],
-                                                  block_shapes[num_inputs + j],
-                                                  is_indexing_dim[num_inputs + j])),
-            shape=output_vals[j].shape,
-            int_indexer_shape=())
+            indices=tuple(
+                indexing.ds(st, sz) if not iid else st
+                for st, sz, iid in zip(
+                    cur_start_indices[num_inputs + index],
+                    block_shapes[num_inputs + index],
+                    is_indexing_dim[num_inputs + index],
+                )
+            ),
+            shape=output_vals[index].shape,
+            int_indexer_shape=(index),
+        )
         callback.io_callback(
             # TODO(jburnim): Pass source_info from the pallas_call, in case this
             # store is involved in a data race.
@@ -1573,18 +1714,52 @@ def interpret_pallas_call(
             (),
             device_id,
             TPU_MEMORY_SPACE_IDXS[mosaic_core.TPUMemorySpace.ANY],
-            output_buffer_ids[j],
+            output_buffer_ids[index],
             (transform,),
             kernel_output_val,
-            ordered=True)
+            ordered=True,
+        )
 
-      return i + 1, _get_next_indices(grid, loop_idx)
+      for j, var in enumerate(output_vars):
+        if _is_any(var.aval.memory_space):
+          continue
+        assert len(cur_start_indices[num_inputs + j].shape) == 1
+        assert len(next_start_indices[num_inputs + j].shape) == 1
+        jax.lax.cond(
+            (iteration_idx + 1 == num_iterations)
+            | jax.lax.reduce_or(
+                cur_start_indices[num_inputs + j]
+                != next_start_indices[num_inputs + j],
+                axes=(0,),
+            ),
+            functools.partial(_store_to_output_buffer, j, var),
+            lambda: None,
+        )
 
+      return iteration_idx + 1, next_loop_idx, cur_start_indices, next_start_indices
+
+  initial_loop_idx = (jnp.int32(0),) * len(grid)
+  with pallas_core.grid_env(_get_local_grid_env(initial_loop_idx)):
+    initial_start_indices = [
+        _compute_start_indices(
+            bm,
+            initial_loop_idx,
+            *scalar_buffer_ids,
+            compiler_params=compiler_params,
+            interpret_params=interpret_params,
+        )
+        for bm in grid_mapping.block_mappings
+    ]
   # TODO(jburnim): Handle parallel grid dimensions + megacore.
   _ = lax.while_loop(
       lambda carry: carry[0] < num_iterations,
       body,
-      (jnp.int32(0), (jnp.int32(0),) * len(grid))
+      (
+          jnp.int32(0),
+          initial_loop_idx,
+          initial_start_indices,  # Previous start indices are ignored on the first iteration.
+          initial_start_indices,
+      ),
   )
 
   # Read the output from the allocated output buffers.

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import random
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -20,7 +21,7 @@ from jax._src import test_util as jtu
 from jax.experimental.pallas.ops.tpu.ragged_paged_attention import (
     ragged_paged_attention,
     ref_ragged_paged_attention,
-    validate_inputs_on_runtime,
+    validate_dynamic_inputs,
 )
 import jax.numpy as jnp
 
@@ -50,6 +51,8 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
       vmem_limit_bytes=32 * 1024 * 1024,
       max_num_batched_tokens=512,
       max_num_seq=8,
+      sliding_window: int | None = None,
+      soft_cap: float | None = None,
   ):
     if not jtu.is_device_tpu_at_least(version=4):
       self.skipTest("Expect TPUv4+")
@@ -71,42 +74,38 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
     cu_q_lens = jnp.pad(cu_q_lens, (0, max_num_seq + 1 - cu_q_lens.shape[0]))
     kv_lens = jnp.pad(kv_lens, (0, max_num_seq - kv_lens.shape[0]))
     prng_key = jax.random.key(1234)
-    k0, k1, k2, k3 = jax.random.split(prng_key, 4)
+    k0, k1, k2 = jax.random.split(prng_key, 3)
     q = jax.random.normal(
         k0,
         (max_num_batched_tokens, num_q_heads, head_dim),
         dtype=dtype,
     )
-    k_pages = jax.random.normal(
+    kv_pages = jax.random.normal(
         k1,
-        (num_pages, page_size, num_kv_heads, head_dim),
-        dtype=dtype,
-    )
-    v_pages = jax.random.normal(
-        k2,
-        (num_pages, page_size, num_kv_heads, head_dim),
+        (num_pages, page_size, num_kv_heads * 2, head_dim),
         dtype=dtype,
     )
     page_indices = jax.random.randint(
-        k3, (max_num_seq, pages_per_seq), 0, num_pages, dtype=jnp.int32
+        k2, (max_num_seq, pages_per_seq), 0, num_pages, dtype=jnp.int32
     )
 
     num_seqs = jnp.array([len(seq_lens)], dtype=jnp.int32)
 
-    validate_inputs_on_runtime(
+    validate_dynamic_inputs(
         q,
-        k_pages,
-        v_pages,
+        kv_pages,
         kv_lens,
         page_indices,
         cu_q_lens,
         num_seqs,
+        sliding_window,
+        soft_cap,
     )
 
+    actual_num_q_tokens = cu_q_lens[num_seqs[0]]
     output = ragged_paged_attention(
         q,
-        k_pages,
-        v_pages,
+        kv_pages,
         kv_lens,
         page_indices,
         cu_q_lens,
@@ -114,16 +113,19 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
         num_kv_pages_per_block=num_kv_pages_per_block,
         num_queries_per_block=num_queries_per_block,
         vmem_limit_bytes=vmem_limit_bytes,
-    )[: cu_q_lens[num_seqs[0]]]
+        sliding_window=sliding_window,
+        soft_cap=soft_cap,
+    )[: actual_num_q_tokens]
 
     expected = ref_ragged_paged_attention(
         q,
-        k_pages,
-        v_pages,
+        kv_pages,
         kv_lens,
         page_indices,
         cu_q_lens,
         num_seqs=num_seqs,
+        sliding_window=sliding_window,
+        soft_cap=soft_cap,
     )
     tols = {
         "float32": 0.15,
@@ -262,7 +264,7 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
   @parameterized.product(
       num_seqs=[1, 5, 16],
       # TODO(jevinjiang): Support more num_heads!
-      num_heads=[(32, 8), (32, 16), (12, 2), (4, 4)],
+      num_heads=[(32, 8), (32, 16), (12, 2), (4, 4), (8, 1)],
       dtype=[jnp.float32, jnp.bfloat16],
       num_kv_pages_per_block=[4, 8],
       num_queries_per_block=[32, 64],
@@ -295,6 +297,126 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
         num_kv_pages_per_block=num_kv_pages_per_block,
         num_queries_per_block=num_queries_per_block,
     )
+
+  @parameterized.product(
+      num_kv_pages_per_block=[4, 8],
+      num_queries_per_block=[32, 64],
+      sliding_window=[None, 5, 128],
+  )
+  def test_ragged_paged_attention_sliding_window(
+      self,
+      num_kv_pages_per_block,
+      num_queries_per_block,
+      sliding_window: int | None,
+  ):
+    num_seqs = 5
+    num_heads = (4, 4)
+    dtype = jnp.float32
+    seq_lens = []
+    for _ in range(num_seqs):
+      q_len = random.randint(1, 100)
+      kv_len = q_len + random.randint(0, 50)
+      seq_lens.append((q_len, kv_len))
+    # TODO(jevinjiang): Support non-128 head_dim!
+    head_dim = 128
+    page_size = 16
+    num_pages = 1000
+
+    self._test_ragged_paged_attention(
+        seq_lens,
+        num_heads,
+        head_dim,
+        page_size,
+        dtype,
+        num_pages,
+        num_kv_pages_per_block=num_kv_pages_per_block,
+        num_queries_per_block=num_queries_per_block,
+        sliding_window=sliding_window,
+    )
+
+  @parameterized.product(
+      num_kv_pages_per_block=[4, 8],
+      num_queries_per_block=[32, 64],
+      soft_cap=[None, 50.0],
+  )
+  def test_ragged_paged_attention_logit_soft_capping(
+      self,
+      num_kv_pages_per_block,
+      num_queries_per_block,
+      soft_cap: float | None,
+  ):
+    num_heads = (12, 2)
+    num_seqs = 2
+    dtype = jnp.float32
+    seq_lens = []
+    for _ in range(num_seqs):
+      q_len = random.randint(1, 100)
+      kv_len = q_len + random.randint(0, 50)
+      seq_lens.append((q_len, kv_len))
+    head_dim = 128
+    page_size = 16
+    num_pages = 1000
+
+    self._test_ragged_paged_attention(
+        seq_lens,
+        num_heads,
+        head_dim,
+        page_size,
+        dtype,
+        num_pages,
+        num_kv_pages_per_block=num_kv_pages_per_block,
+        num_queries_per_block=num_queries_per_block,
+        soft_cap=soft_cap,
+    )
+
+  def test_ragged_paged_attention_sliding_window_should_be_positive(self):
+    dtype = jnp.float32
+    seq_lens = [(192, 328), (128, 180), (64, 255)]
+    num_heads = (32, 8)
+    head_dim = 128
+    page_size = 16
+    num_pages = 1000
+
+    with self.assertRaisesRegex(ValueError, "must be positive"):
+      self._test_ragged_paged_attention(
+          seq_lens,
+          num_heads,
+          head_dim,
+          page_size,
+          dtype,
+          num_pages,
+          sliding_window=0,
+      )
+
+    with self.assertRaisesRegex(ValueError, "must be positive"):
+      self._test_ragged_paged_attention(
+          seq_lens,
+          num_heads,
+          head_dim,
+          page_size,
+          dtype,
+          num_pages,
+          sliding_window=-1,
+      )
+
+  def test_ragged_paged_attention_soft_cap_cannot_be_zero(self):
+    dtype = jnp.float32
+    seq_lens = [(192, 328), (128, 180), (64, 255)]
+    num_heads = (32, 8)
+    head_dim = 128
+    page_size = 16
+    num_pages = 1000
+
+    with self.assertRaisesRegex(ValueError, "must not be 0.0"):
+      self._test_ragged_paged_attention(
+          seq_lens,
+          num_heads,
+          head_dim,
+          page_size,
+          dtype,
+          num_pages,
+          soft_cap=0.0,
+      )
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@
 from absl.testing import parameterized
 import jax
 from jax._src import config
+from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
@@ -73,6 +74,37 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     self.assertSequenceEqual(add.attributes["in_layouts"], [layout, layout])
     self.assertSequenceEqual(add.attributes["out_layouts"], [layout])
+
+  def test_infer_strided_layout_from_shape_cast(self):
+    shape = (16, 8)
+    elt_type = ir.BF16Type.get()
+    src_type = ir.VectorType.get(shape, elt_type)
+    dst_type = ir.VectorType.get([*reversed(shape)], elt_type)
+    op = None
+
+    def body(x):
+      nonlocal op
+      op = vector.ShapeCastOp(dst_type, x)
+
+    with ir.InsertionPoint(self.module.body):
+      func.FuncOp.from_py_func(src_type)(body)
+
+    mgpu.infer_layout(self.module)
+
+    in_layout = layouts.to_layout_attr(
+        mgpu.WGStridedFragLayout.from_shaped_type(src_type)
+    )
+    out_layout = layouts.to_layout_attr(
+        mgpu.WGStridedFragLayout.from_shaped_type(dst_type)
+    )
+
+    self.assertSequenceEqual(op.attributes["in_layouts"], [in_layout])
+    self.assertSequenceEqual(op.attributes["out_layouts"], [out_layout])
+
+    # Ensure that we can recover the original layout.
+    del op.attributes["in_layouts"]
+    mgpu.infer_layout(self.module)
+    self.assertSequenceEqual(op.attributes["in_layouts"], [in_layout])
 
   def test_infer_splat_layout_for_splat_constants(self):
     shape = (16, 8)
@@ -181,6 +213,32 @@ class LayoutInferenceTest(parameterized.TestCase):
     )
     self.assertSequenceEqual(add.attributes["out_layouts"], [layout_attr])
 
+  def test_infer_layout_cast_layout(self):
+    # TODO(dasenov): Remove this after the minimal jaxlib version is 0.5.4.
+    if jaxlib.version < (0, 5, 4):
+      self.skipTest("Test requires jaxlib version >= 0.5.4")
+    add = cast = None
+
+    shape = (128, 64)
+    splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape=shape))
+    wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
+
+    def body(x):
+      nonlocal add, cast
+      add = arith.AddFOp(x, x)
+      cast = mgpu.dialect.LayoutCastOp(add.result, wgmma_layout)
+
+    with ir.InsertionPoint(self.module.body):
+      elt_type = ir.BF16Type.get()
+      ty = ir.VectorType.get(shape, elt_type)
+      func_op = func.FuncOp.from_py_func(ty)(body).func_op
+
+    func_op.attributes["in_layouts"] = ir.ArrayAttr.get([splat_layout])
+    mgpu.infer_layout(self.module)
+    self.assertSequenceEqual(add.attributes["out_layouts"], [splat_layout])
+    self.assertSequenceEqual(cast.attributes["in_layouts"], [wgmma_layout])
+    self.assertSequenceEqual(cast.attributes["out_layouts"], [wgmma_layout])
+
   def test_infer_layout_traverses_ops_correctly(self):
     shape = (16, 8)
     elt_type = ir.BF16Type.get()
@@ -210,7 +268,7 @@ class LayoutInferenceTest(parameterized.TestCase):
       for layout in [
           mgpu.WGSplatFragLayout(shape),
           mgpu.WGStridedFragLayout(shape, vec_size=4),
-          mgpu.TILED_LAYOUT_WGMMA,
+          mgpu.WGMMA_LAYOUT,
       ]
   )
   def test_infer_layout_from_yield_op_in_layouts_for_for_op(
@@ -278,7 +336,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
     mgpu.infer_layout(self.module)
 
-    wgmma_layout = layouts.to_layout_attr(mgpu.TILED_LAYOUT_WGMMA)
+    wgmma_layout = layouts.to_layout_attr(mgpu.WGMMA_LAYOUT)
     self.assertSequenceEqual(yield_op.attributes["in_layouts"], [wgmma_layout])
     self.assertSequenceEqual(yield_op.attributes["out_layouts"], [])
     self.assertSequenceEqual(for_op.attributes["in_layouts"], [wgmma_layout])
@@ -312,7 +370,7 @@ class LayoutInferenceTest(parameterized.TestCase):
 
   @parameterized.parameters(
       mgpu.WGStridedFragLayout((32, 4), vec_size=1),
-      mgpu.TILED_LAYOUT_WGMMA,
+      mgpu.WGMMA_LAYOUT,
   )
   def test_infer_layout_picks_non_splat_layout_over_splat_layout(
       self, layout
@@ -410,6 +468,57 @@ class LayoutInferenceTest(parameterized.TestCase):
     mgpu.infer_layout(self.module)
     self.assertNotIn("in_layouts", f.attributes)
     self.assertNotIn("out_layouts", f.attributes)
+
+  def test_optimization_barrier_op_propagates_user_layouts(self):
+    add = optimization_barrier = None
+
+    def body(lhs, rhs):
+      nonlocal add, optimization_barrier
+      optimization_barrier = mgpu.dialect.OptimizationBarrierOp([lhs, rhs])
+      lhs, rhs = optimization_barrier.results
+      add = arith.AddFOp(lhs, rhs)
+
+    with ir.InsertionPoint(self.module.body):
+      shape = (32, 4)
+      ty = ir.VectorType.get(shape, ir.BF16Type.get())
+      func.FuncOp.from_py_func(ty, ty)(body)
+
+    splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
+    add.attributes["out_layouts"] = ir.ArrayAttr.get([splat_layout])
+    mgpu.infer_layout(self.module)
+
+    self.assertSequenceEqual(
+        optimization_barrier.attributes["in_layouts"],
+        [splat_layout, splat_layout],
+    )
+    self.assertSequenceEqual(
+        optimization_barrier.attributes["out_layouts"],
+        [splat_layout, splat_layout],
+    )
+
+  def test_optimization_barrier_op_propagates_producer_layouts(self):
+    add = optimization_barrier = None
+
+    def body(lhs, rhs):
+      nonlocal add, optimization_barrier
+      add = arith.AddFOp(lhs, rhs)
+      optimization_barrier = mgpu.dialect.OptimizationBarrierOp([add])
+
+    with ir.InsertionPoint(self.module.body):
+      shape = (32, 4)
+      ty = ir.VectorType.get(shape, ir.BF16Type.get())
+      func.FuncOp.from_py_func(ty, ty)(body)
+
+    splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape))
+    add.attributes["out_layouts"] = ir.ArrayAttr.get([splat_layout])
+    mgpu.infer_layout(self.module)
+
+    self.assertSequenceEqual(
+        optimization_barrier.attributes["in_layouts"], [splat_layout]
+    )
+    self.assertSequenceEqual(
+        optimization_barrier.attributes["out_layouts"], [splat_layout]
+    )
 
 
 if __name__ == "__main__":

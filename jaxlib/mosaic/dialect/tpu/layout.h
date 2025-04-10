@@ -18,15 +18,16 @@ limitations under the License.
 
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
-#include <numeric>
 #include <optional>
 #include <ostream>
 #include <tuple>
 
+#include "absl/log/check.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/bit.h"
-#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
@@ -38,7 +39,6 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "absl/log/check.h"
 
 namespace mlir::tpu {
 

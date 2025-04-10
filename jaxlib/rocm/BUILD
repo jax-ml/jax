@@ -79,59 +79,11 @@ cc_library(
     deps = [
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
-        "//jaxlib:handle_pool",
+        "//jaxlib/gpu:handle_pool",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:hipblas",
         "@local_config_rocm//rocm:rocm_headers",
-    ],
-)
-
-cc_library(
-    name = "hipblas_kernels",
-    srcs = ["//jaxlib/gpu:blas_kernels.cc"],
-    hdrs = ["//jaxlib/gpu:blas_kernels.h"],
-    deps = [
-        ":hip_blas_handle_pool",
-        ":hip_gpu_kernel_helpers",
-        ":hip_make_batch_pointers",
-        ":hip_vendor",
-        "//jaxlib:kernel_helpers",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/hash",
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/synchronization",
-        "@local_config_rocm//rocm:hipblas",
-        "@local_config_rocm//rocm:rocm_headers",
-        "@xla//xla/service:custom_call_status",
-    ],
-)
-
-nanobind_extension(
-    name = "_blas",
-    srcs = ["//jaxlib/gpu:blas.cc"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    module_name = "_blas",
-    deps = [
-        ":hip_vendor",
-        ":hipblas_kernels",
-        "//jaxlib:kernel_nanobind_helpers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/strings:str_format",
-        "@local_config_rocm//rocm:hipblas",
-        "@local_config_rocm//rocm:rocm_headers",
-        "@nanobind",
-        "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
 
@@ -143,11 +95,12 @@ cc_library(
         ":ffi_wrapper",
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
-        "//jaxlib:handle_pool",
         "//jaxlib:kernel_helpers",
+        "//jaxlib/gpu:handle_pool",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:miopen",
         "@local_config_rocm//rocm:rocm_headers",
         "@xla//xla/ffi/api:ffi",
@@ -182,7 +135,7 @@ cc_library(
     deps = [
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
-        "//jaxlib:handle_pool",
+        "//jaxlib/gpu:handle_pool",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:hipsolver",
@@ -291,8 +244,8 @@ cc_library(
         ":ffi_wrapper",
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
-        "//jaxlib:handle_pool",
         "//jaxlib:kernel_helpers",
+        "//jaxlib/gpu:handle_pool",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -318,6 +271,7 @@ nanobind_extension(
         ":hip_vendor",
         ":hipsparse_kernels",
         "//jaxlib:absl_status_casters",
+        "//jaxlib:kernel_helpers",
         "//jaxlib:kernel_nanobind_helpers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
@@ -325,12 +279,14 @@ nanobind_extension(
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:hipsparse",
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",
+        "@xla//xla/service:custom_call_status",
         "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
@@ -496,9 +452,11 @@ cc_library(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:env",
         "@xla//xla/service:custom_call_status",
+        "@xla//xla/tsl/platform:env",
+        "@xla//xla/tsl/platform:errors",
         "@xla//xla/tsl/util:env_var",
     ],
 )
@@ -536,7 +494,9 @@ nanobind_extension(
         "//jaxlib:absl_status_casters",
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/gpu:triton_cc_proto",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
         "@nanobind",
     ],
 )
@@ -544,7 +504,6 @@ nanobind_extension(
 py_library(
     name = "rocm_gpu_support",
     deps = [
-        ":_blas",
         ":_hybrid",
         ":_linalg",
         ":_prng",
@@ -555,11 +514,63 @@ py_library(
     ],
 )
 
+cc_library(
+    name = "py_client_gpu",
+    srcs = ["//jaxlib/gpu:py_client_gpu.cc"],
+    hdrs = ["//jaxlib/gpu:py_client_gpu.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        ":hip_vendor",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        "@nanobind",
+        "@xla//third_party/python_runtime:headers",  # buildcleaner: keep
+        "@xla//xla:comparison_util",
+        "@xla//xla:shape_util",
+        "@xla//xla:xla_data_proto_cc",
+        "@xla//xla/ffi:ffi_api",
+        "@xla//xla/ffi/api:ffi",
+        "@xla//xla/pjrt:host_callback",
+        "@xla//xla/pjrt:transpose",
+        "@xla//xla/python:nb_numpy",
+        "@xla//xla/python:types",
+        "@xla//xla/service:platform_util",
+    ],
+)
+
+nanobind_extension(
+    name = "rocm_plugin_extension",
+    srcs = ["rocm_plugin_extension.cc"],
+    module_name = "rocm_plugin_extension",
+    deps = [
+        ":py_client_gpu",
+        "//jaxlib:kernel_nanobind_helpers",
+        "//jaxlib/gpu:gpu_plugin_extension",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/strings",
+        "@local_config_rocm//rocm:hip",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@nanobind",
+    ],
+)
+
 py_library(
     name = "gpu_only_test_deps",
     # `if_rocm_is_configured` will default to `[]`.
     deps = if_rocm_is_configured([
         ":rocm_gpu_support",
-        "//jaxlib:rocm_plugin_extension",
+        ":rocm_plugin_extension",
     ]),
 )

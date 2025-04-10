@@ -21,7 +21,7 @@ import jax
 from jax._src import core
 from jax._src import config
 from jax._src import test_util as jtu
-from jax.sharding import NamedSharding, PartitionSpec as P
+from jax.sharding import NamedSharding, PartitionSpec as P, AxisType
 import jax.numpy as jnp
 
 from jax._src.state.types import (RefEffect)
@@ -117,6 +117,18 @@ class MutableArrayTest(jtu.JaxTestCase):
     self.assertAllClose(w, 10, check_dtypes=False)
 
   @parameterized.parameters([True, False])
+  def test_len_mutable_array(self, jit):
+    x_mut = core.mutable_array(jnp.zeros(3))
+
+    def f():
+      return jnp.int32(len(x_mut))
+
+    if jit:
+      f = jax.jit(f)
+
+    self.assertEqual(f(), 3)
+
+  @parameterized.parameters([True, False])
   def test_internal_mutarray_basic(self, jit):
     def f():
       x_mut = core.mutable_array(jnp.zeros(3))
@@ -198,7 +210,7 @@ class MutableArrayTest(jtu.JaxTestCase):
     x + 1  # don't crash
 
   def test_sharding_persists(self):
-    mesh = jax.make_mesh((1,), ('i',))
+    mesh = jtu.create_mesh((1,), ('i',))
     x = jax.device_put(jnp.arange(2), NamedSharding(mesh, P('i')))
     s = x.sharding
     a = core.mutable_array(x)
@@ -211,13 +223,14 @@ class MutableArrayTest(jtu.JaxTestCase):
 
   def test_explicit_sharding_after_indexing(self):
     # https://github.com/jax-ml/jax/issues/26936
-    mesh = jax.make_mesh((1, 1), ('x', 'y'), explicit_axes=('x', 'y'))
+    mesh = jtu.create_mesh((1, 1), ('x', 'y'),
+                           axis_types=(AxisType.Explicit,) * 2)
     sharding = NamedSharding(mesh, P('x', 'y'))
 
     @jax.jit
     def f(x_ref):
-      self.assertEqual(core.get_ty(x_ref).sharding.spec,
-                       core.get_ty(x_ref[...]).sharding.spec)
+      self.assertEqual(core.typeof(x_ref).sharding.spec,
+                       core.typeof(x_ref[...]).sharding.spec)
       y = x_ref[...] + 1
       return y
 
@@ -225,6 +238,26 @@ class MutableArrayTest(jtu.JaxTestCase):
       x = jnp.zeros((4, 4), jnp.int32, device=sharding)
       x_ref = core.mutable_array(x)
       y = f(x_ref)
+
+  def test_vmap_basic(self):
+    @jax.vmap
+    def f(x):
+      x_ref = core.mutable_array(x)
+      x_ref[...] =  x_ref[...] * x_ref[...]
+      return x_ref[...]
+    xs = jnp.arange(4.)
+    ys = f(xs)
+    self.assertAllClose(ys, xs ** 2, check_dtypes=False)
+
+  def test_implicit_bitcast_regression(self):
+    # https://github.com/jax-ml/jax/issues/27683
+    v = core.mutable_array(jnp.array([0, 0, 0]))
+    with self.assertRaises(ValueError):
+      v[...] += 1.0
+
+  def test_implicit_cast_in_swap(self):
+    v = core.mutable_array(jnp.array(0, dtype='bfloat16'))
+    v[...] += 1.0  # don't crash
 
 
 @jtu.with_config(jax_mutable_array_checks=True)

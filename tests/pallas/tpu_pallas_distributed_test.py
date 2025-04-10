@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for distributed pallas TPU operations."""
-
 import functools
 import os
 import tempfile
@@ -53,8 +51,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     # Implements very simple collective permute
     def kernel(x_ref, y_ref):
       def body(ready_sem, send_sem, recv_sem):
-        dev_id = pltpu.device_id()
-        other_dev_id = 1 - dev_id
+        other_dev_id = 1 - lax.axis_index('x')
         pltpu.semaphore_signal(ready_sem, device_id=other_dev_id,
                                device_id_type=pltpu.DeviceIdType.LOGICAL)
         pltpu.semaphore_wait(ready_sem)

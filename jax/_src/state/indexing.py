@@ -20,6 +20,7 @@ import dataclasses
 from typing import Any, Sequence, Union
 
 from jax._src import core
+from jax._src import pretty_printer as pp
 from jax._src import tree_util
 from jax._src.typing import Array
 from jax._src.util import merge_lists
@@ -76,6 +77,30 @@ class Slice:
     if step < 1:
       raise ValueError(f"slice must have a step >= 1 (found: {step})")
     return cls(start, size, step)
+
+
+def _pp_slice(context: core.JaxprPpContext, dim, slc: Slice) -> str:
+  start, size = slc.start, slc.size
+  if isinstance(start, core.Var):
+    start_str = core.pp_var(start, context)
+    size_str = (
+        core.pp_var(size, context) if isinstance(size, core.Var) else str(size)
+    )
+    return f"{start_str}:{start_str}+{size_str}"
+  else:
+    start_str = str(start)
+    if start == 0:
+      start_str = ""
+    if isinstance(size, core.Var):
+      size_str = core.pp_var(size, context)
+      if start_str:
+        return f"{start_str}:{start_str}+{size_str}"
+      else:
+        return f":{size_str}"
+    else:
+      end = start + size
+      end_str = "" if end == dim else str(end)
+      return f"{start_str}:{end_str}"
 
 
 def dslice(
@@ -282,3 +307,12 @@ class NDIndexer:
                          f"along unsharded axes, but ref of shape {self.shape} "
                          f"was sliced on axis {i}, which is sharded like {s}")
     return sharding
+
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    indices = []
+    for idx, dim in zip(self.indices, self.shape):
+      if isinstance(idx, Slice):
+        indices.append(_pp_slice(context, dim, idx))
+      else:
+        indices.append(core.pp_var(idx, context))  # type: ignore
+    return pp.concat([pp.text("["), pp.text(",".join(indices)), pp.text("]")])

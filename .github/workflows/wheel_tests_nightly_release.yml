@@ -1,12 +1,14 @@
 # CI - Wheel Tests (Nightly/Release)
 #
-# This workflow builds JAX artifacts and runs CPU/CUDA tests.
+# This workflow is used to test the JAX wheels that was built by internal CI jobs.
 #
-# It orchestrates the following:
-# 1. run-pytest-cpu:  Calls the `pytest_cpu.yml` workflow which downloads the jaxlib wheel that was
+# 1. run-pytest-cpu:  Calls the `pytest_cpu.yml` workflow which downloads the JAX wheels that was
 #                     built by internal CI jobs and runs CPU tests.
-# 2. run-pytest-cuda: Calls the `pytest_cuda.yml` workflow which downloads the jaxlib and CUDA
-#                     artifacts that were built by internal CI jobs and runs the CUDA tests.
+# 2. run-pytest-cuda: Calls the `pytest_cuda.yml` workflow which downloads the JAX wheels that was
+#                     built by internal CI jobs and runs CUDA tests.
+# 3. run-pytest-tpu: Calls the `pytest_tpu.yml` workflow which downloads the JAX wheels that was
+#                     built by internal CI jobs and runs TPU tests.
+# 4. verify-release-wheels-install: Verifies that JAX's release wheels can be installed.
 name: CI - Wheel Tests (Nightly/Release)
 
 on:
@@ -16,6 +18,11 @@ on:
         description: "GCS location URI from where the artifacts should be downloaded"
         required: true
         default: 'gs://jax-nightly-release-transient/nightly/latest'
+        type: string
+      download-jax-only-from-gcs:
+        description: "Whether to download only the jax wheel from GCS (e.g for testing a jax only release)"
+        required: true
+        default: '0'
         type: string
 
 concurrency:
@@ -36,10 +43,12 @@ jobs:
           exclude:
             - runner: "windows-x86-n2-64"
               python: "3.13-nogil"
+    name: "Pytest CPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
+      download-jax-only-from-gcs: ${{inputs.download-jax-only-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
 
   run-pytest-cuda:
@@ -51,13 +60,15 @@ jobs:
           # that build the wheels.
           runner: ["linux-x86-g2-48-l4-4gpu"]
           python: ["3.10","3.11", "3.12", "3.13", "3.13-nogil"]
-          cuda: ["12.3", "12.1"]
+          cuda: ["12.1", "12.8"]
           enable-x64: [0]
+    name: "Pytest CUDA (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       cuda:  ${{ matrix.cuda }}
       enable-x64:  ${{ matrix.enable-x64 }}
+      download-jax-only-from-gcs: ${{inputs.download-jax-only-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
 
   run-pytest-tpu:
@@ -65,7 +76,9 @@ jobs:
     strategy:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
-          python: ["3.10","3.11", "3.12", "3.13"]
+          # Skip Python 3.13 as it fails due to missing TensorFlow wheels (used for
+          # profiler_test.py, build/collect-profile-requirements.txt) for that version (b/402590302)
+          python: ["3.10", "3.11", "3.12"]
           tpu-specs: [
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
             {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
@@ -75,7 +88,18 @@ jobs:
           exclude:
             - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
             - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pypi_latest' }}
-    name: "TPU tests (jax=${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }}, jaxlib=${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
+            # Run a single Python version for v4-8
+            - tpu-specs:
+                type: "v4-8"
+              python: "3.10"
+            - tpu-specs:
+                type: "v4-8"
+              python: "3.11"
+            # Run min and max Python versions for v5e-8
+            - tpu-specs:
+                type: "v5e-8"
+              python: "3.11"
+    name: "Pytest TPU (JAX artifacts version = ${{ startsWith(github.ref_name, 'release/') && 'latest release' || 'nightly' }})"
     with:
       runner: ${{ matrix.tpu-specs.runner }}
       cores: ${{ matrix.tpu-specs.cores }}
@@ -83,4 +107,89 @@ jobs:
       python: ${{ matrix.python }}
       run-full-tpu-test-suite: "1"
       libtpu-version-type: ${{ matrix.libtpu-version-type }}
+      download-jax-only-from-gcs: ${{inputs.download-jax-only-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
+
+  verify-release-wheels-install:
+    if: ${{ startsWith(github.ref_name, 'release/')}}
+    defaults:
+      run:
+        # Set the shell to bash as GitHub actions runs with /bin/sh by default
+        shell: bash
+    runs-on: linux-x86-n2-16
+    strategy:
+        fail-fast: false # don't cancel all jobs on failure
+        matrix:
+          python: ["3.10", "3.13", "3.13-nogil"]
+    container:  "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest"
+
+    # Verifies that JAX's release wheels can be installed
+    name: "Verify release wheels install (Python ${{ matrix.python }})"
+
+    env:
+      PYTHON: "python${{ matrix.python }}"
+
+    steps:
+      - name: Download release wheels from GCS
+        run: |
+          mkdir -p $(pwd)/dist
+          final_gcs_download_uri=${{ inputs.gcs_download_uri }}
+
+          # Get the major and minor version of Python.
+          # E.g if python=3.10, then python_major_minor=310
+          # E.g if python=3.13-nogil, then python_major_minor=313t
+          python_major_minor=${{ matrix.python }}
+          python_major_minor=$(echo "${python_major_minor//-nogil/t}" | tr -d '.')
+          python_major_minor="cp${python_major_minor%t}-cp${python_major_minor}-"
+
+          gsutil -m cp -r "${final_gcs_download_uri}"/jax*py3*none*any.whl $(pwd)/dist/
+
+          jax_wheel=$(ls dist/jax*py3*none*any.whl 2>/dev/null)
+          echo "JAX_WHEEL=$jax_wheel" >> $GITHUB_ENV
+
+          if [[ "${{ inputs.download-jax-only-from-gcs }}" != "1" ]]; then
+            gsutil -m cp -r "${final_gcs_download_uri}/jaxlib*${python_major_minor}*linux*x86_64*.whl" $(pwd)/dist/
+            gsutil -m cp -r "${final_gcs_download_uri}/jax*cuda*plugin*${python_major_minor}*linux*x86_64*.whl" $(pwd)/dist/
+            gsutil -m cp -r "${final_gcs_download_uri}/jax*cuda*pjrt*linux*x86_64*.whl" $(pwd)/dist/
+
+            jaxlib_wheel=$(ls dist/jaxlib*${python_major_minor}*linux*x86_64*.whl 2>/dev/null)
+            jax_cuda_plugin_wheel=$(ls dist/jax*cuda*plugin*${python_major_minor}*linux*x86_64*.whl 2>/dev/null)
+            jax_cuda_pjrt_wheel=$(ls dist/jax*cuda*pjrt*linux*x86_64*.whl 2>/dev/null)
+
+            echo "JAXLIB_WHEEL=$jaxlib_wheel" >> $GITHUB_ENV
+            echo "JAX_CUDA_PLUGIN_WHEEL=$jax_cuda_plugin_wheel" >> $GITHUB_ENV
+            echo "JAX_CUDA_PJRT_WHEEL=$jax_cuda_pjrt_wheel" >> $GITHUB_ENV
+          fi
+      - name: Verify JAX CPU packages can be installed
+        run: |
+          $PYTHON -m uv venv ~/test_cpu && source ~/test_cpu/bin/activate
+          if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
+            uv pip install $JAX_WHEEL
+          else
+            uv pip install $JAX_WHEEL $JAXLIB_WHEEL
+          fi
+      - name: Verify JAX TPU packages can be installed
+        run: |
+          $PYTHON -m uv venv ~/test_tpu && source ~/test_tpu/bin/activate
+
+          if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
+            uv pip install $JAX_WHEEL[tpu]
+          else
+            uv pip install $JAX_WHEEL[tpu] $JAXLIB_WHEEL
+          fi
+      - name: Verify JAX CUDA packages can be installed (Nvidia Pip Packages)
+        run: |
+          $PYTHON -m uv venv ~/test_cuda_pip && source ~/test_cuda_pip/bin/activate
+          if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
+            uv pip install $JAX_WHEEL[cuda]
+          else
+            uv pip install $JAX_WHEEL[cuda] $JAXLIB_WHEEL $JAX_CUDA_PJRT_WHEEL $JAX_CUDA_PLUGIN_WHEEL[with-cuda]
+          fi
+      - name: Verify JAX CUDA packages can be installed (CUDA local)
+        run: |
+          $PYTHON -m uv venv ~/test_cuda_local && source ~/test_cuda_local/bin/activate
+          if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
+            uv pip install $JAX_WHEEL[cuda12-local]
+          else
+            uv pip install $JAX_WHEEL $JAXLIB_WHEEL $JAX_CUDA_PJRT_WHEEL $JAX_CUDA_PLUGIN_WHEEL
+          fi

@@ -48,13 +48,13 @@ from jax._src.tree_util import (
     PyTreeDef as PyTreeDef,
     SequenceKey as SequenceKey,
     all_leaves as all_leaves,
-    build_tree as build_tree,
+    build_tree as _deprecated_build_tree,
     default_registry as default_registry,
     keystr as keystr,
+    register_dataclass as register_dataclass,
     register_pytree_node_class as register_pytree_node_class,
     register_pytree_node as register_pytree_node,
     register_pytree_with_keys_class as register_pytree_with_keys_class,
-    register_dataclass as register_dataclass,
     register_pytree_with_keys as register_pytree_with_keys,
     register_static as register_static,
     tree_all as tree_all,
@@ -72,3 +72,23 @@ from jax._src.tree_util import (
     treedef_is_leaf as treedef_is_leaf,
     treedef_tuple as treedef_tuple,
 )
+
+_deprecations = {
+    # Added March 21, 2025:
+    "build_tree": (
+        (
+            "jax.tree_util.build_tree is deprecated. Use jax.tree.unflatten"
+            " instead."
+        ),
+        _deprecated_build_tree,
+    ),
+}
+
+import typing as _typing
+if _typing.TYPE_CHECKING:
+  from jax._src.tree_util import build_tree as build_tree
+else:
+  from jax._src.deprecations import deprecation_getattr
+  __getattr__ = deprecation_getattr(__name__, _deprecations)
+  del deprecation_getattr, _deprecations
+del _typing

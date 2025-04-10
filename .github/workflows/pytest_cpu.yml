@@ -28,6 +28,11 @@ on:
         type: string
         required: true
         default: "0"
+      download-jax-only-from-gcs:
+        description: "Whether to download only the jax wheel from GCS (e.g for testing a jax only release)"
+        required: false
+        default: '0'
+        type: string
       gcs_download_uri:
         description: "GCS location prefix from where the artifacts should be downloaded"
         required: true
@@ -94,7 +99,12 @@ jobs:
         run: |
           mkdir -p $(pwd)/dist
           gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+
+          if [[ "${{ inputs.download-jax-only-from-gcs }}" == "1" ]]; then
+            echo "JAX only release. Only downloading the jax wheel from the release bucket."
+          else
+            gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/
+          fi
       - name: Download wheels from GCS (Windows runs)
         id: download-wheel-artifacts-w
         # Set continue-on-error to true to prevent actions from failing the workflow if this step
@@ -108,7 +118,12 @@ jobs:
           @REM Use `call` so that we can run sequential gsutil commands on Windows
           @REM See https://github.com/GoogleCloudPlatform/gsutil/issues/233#issuecomment-196150652
           call gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl dist/
-          call gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
+
+          if "${{ inputs.download-jax-only-from-gcs }}"=="1" (
+            echo "JAX only release. Only downloading the jax wheel from the release bucket."
+          ) else (
+            call gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*%PYTHON_MAJOR_MINOR%*%OS%*%ARCH%*.whl" dist/
+          )
       - name: Skip the test run if the wheel artifacts were not downloaded successfully
         if: steps.download-wheel-artifacts-nw.outcome == 'failure' || steps.download-wheel-artifacts-w.outcome == 'failure'
         run: |
@@ -118,20 +133,12 @@ jobs:
           exit 1
       - name: Install Python dependencies
         run: |
-          # Remove installation of NVIDIA wheels for CPU tests.
-          sed -i 's/-r gpu-test-requirements.txt/# -r gpu-test-requirements.txt/g' build/requirements.in
-
-          # TODO(srnitin): Remove after uv is installed in the Windows Dockerfile
           $JAXCI_PYTHON -m pip install uv~=0.5.30
-          # python 3.13t cannot compile zstandard 0.23.0 due to
-          # https://github.com/indygreg/python-zstandard/issues/231. Remove this once zstandard
-          # has a prebuilt wheel for 3.13t or an env marker is available for free threading python
-          # in requirements.in.
-          if [[ $JAXCI_PYTHON =~ "python3.13-nogil" ]]; then
-            grep -v "zstandard" build/requirements.in > build/requirements_without_zstandard.txt
-            $JAXCI_PYTHON -m uv pip install -r build/requirements_without_zstandard.txt
-          else
-            $JAXCI_PYTHON -m uv pip install -r build/requirements.in
+          $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
+
+          # CPU Pytests crash with NumPy 2.2+ on Linux Aarch64; b/399168632
+          if [[ $OS == "linux" && $ARCH == "aarch64" ]]; then
+            $JAXCI_PYTHON -m uv pip install numpy~=2.1.0
           fi
           # python 3.13t cannot compile zstandard 0.23.0 due to
           # https://github.com/indygreg/python-zstandard/issues/231. Remove this once zstandard

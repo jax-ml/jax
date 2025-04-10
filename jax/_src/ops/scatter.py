@@ -272,8 +272,7 @@ def segment_prod(data: ArrayLike,
     data: an array with the values to be reduced.
     segment_ids: an array with integer dtype that indicates the segments of
       `data` (along its leading axis) to be reduced. Values can be repeated and
-      need not be sorted. Values outside of the range [0, num_segments) are
-      dropped and do not contribute to the result.
+      need not be sorted.
     num_segments: optional, an int with nonnegative value indicating the number
       of segments. The default is set to be the minimum number of segments that
       would support all indices in ``segment_ids``, calculated as
@@ -283,11 +282,11 @@ def segment_prod(data: ArrayLike,
     indices_are_sorted: whether ``segment_ids`` is known to be sorted.
     unique_indices: whether `segment_ids` is known to be free of duplicates.
     bucket_size: size of bucket to group indices into. ``segment_prod`` is
-      performed on each bucket separately to improve numerical stability of
-      addition. Default ``None`` means no bucketing.
+      performed on each bucket separately to improve numerical stability.
+      Default ``None`` means no bucketing.
     mode: a :class:`jax.lax.GatherScatterMode` value describing how
       out-of-bounds indices should be handled. By default, values outside of the
-      range [0, num_segments) are dropped and do not contribute to the sum.
+      range [0, num_segments) are dropped and do not contribute to the result.
 
   Returns:
     An array with shape :code:`(num_segments,) + data.shape[1:]` representing the
@@ -328,8 +327,7 @@ def segment_max(data: ArrayLike,
     data: an array with the values to be reduced.
     segment_ids: an array with integer dtype that indicates the segments of
       `data` (along its leading axis) to be reduced. Values can be repeated and
-      need not be sorted. Values outside of the range [0, num_segments) are
-      dropped and do not contribute to the result.
+      need not be sorted.
     num_segments: optional, an int with nonnegative value indicating the number
       of segments. The default is set to be the minimum number of segments that
       would support all indices in ``segment_ids``, calculated as
@@ -342,7 +340,7 @@ def segment_max(data: ArrayLike,
       performed on each bucket separately. Default ``None`` means no bucketing.
     mode: a :class:`jax.lax.GatherScatterMode` value describing how
       out-of-bounds indices should be handled. By default, values outside of the
-      range [0, num_segments) are dropped and do not contribute to the sum.
+      range [0, num_segments) are dropped and do not contribute to the result.
 
   Returns:
     An array with shape :code:`(num_segments,) + data.shape[1:]` representing the
@@ -383,8 +381,7 @@ def segment_min(data: ArrayLike,
     data: an array with the values to be reduced.
     segment_ids: an array with integer dtype that indicates the segments of
       `data` (along its leading axis) to be reduced. Values can be repeated and
-      need not be sorted. Values outside of the range [0, num_segments) are
-      dropped and do not contribute to the result.
+      need not be sorted.
     num_segments: optional, an int with nonnegative value indicating the number
       of segments. The default is set to be the minimum number of segments that
       would support all indices in ``segment_ids``, calculated as
@@ -397,7 +394,7 @@ def segment_min(data: ArrayLike,
       performed on each bucket separately. Default ``None`` means no bucketing.
     mode: a :class:`jax.lax.GatherScatterMode` value describing how
       out-of-bounds indices should be handled. By default, values outside of the
-      range [0, num_segments) are dropped and do not contribute to the sum.
+      range [0, num_segments) are dropped and do not contribute to the result.
 
   Returns:
     An array with shape :code:`(num_segments,) + data.shape[1:]` representing the

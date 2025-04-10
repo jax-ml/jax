@@ -32,12 +32,13 @@ from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax
 from jax._src.lax import other as lax_other
 from jax._src.typing import Array, ArrayLike
+from jax._src.numpy import error as jnp_error
+from jax._src.numpy import reductions
+from jax._src.numpy.ufunc_api import ufunc
 from jax._src.numpy.util import (
-   check_arraylike, promote_args, promote_args_inexact,
+   check_arraylike, ensure_arraylike, promote_args, promote_args_inexact,
    promote_args_numeric, promote_dtypes_inexact, promote_dtypes_numeric,
    promote_shapes, _where, check_no_float0s)
-from jax._src.numpy.ufunc_api import ufunc
-from jax._src.numpy import reductions
 from jax._src.util import set_module
 
 
@@ -486,7 +487,9 @@ def log(x: ArrayLike, /) -> Array:
     >>> jnp.allclose(jnp.log(x1*x2), jnp.log(x1)+jnp.log(x2))
     Array(True, dtype=bool)
   """
-  return lax.log(*promote_args_inexact('log', x))
+  out = lax.log(*promote_args_inexact('log', x))
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 @export
@@ -572,7 +575,9 @@ def log1p(x: ArrayLike, /) -> Array:
     >>> jnp.expm1(jnp.log(x1+1))  # doctest: +SKIP
     Array([1.000166e-04, 9.536743e-07, 0.000000e+00], dtype=float32)
   """
-  return lax.log1p(*promote_args_inexact('log1p', x))
+  out = lax.log1p(*promote_args_inexact('log1p', x))
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 @export
@@ -604,7 +609,9 @@ def sin(x: ArrayLike, /) -> Array:
     ...   print(jnp.sin(x))
     [ 0.707  1.     0.707 -0.   ]
   """
-  return lax.sin(*promote_args_inexact('sin', x))
+  out = lax.sin(*promote_args_inexact('sin', x))
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 @export
@@ -635,7 +642,9 @@ def cos(x: ArrayLike, /) -> Array:
     ...   print(jnp.cos(x))
     [ 0.707 -0.    -0.707 -0.866]
   """
-  return lax.cos(*promote_args_inexact('cos', x))
+  out = lax.cos(*promote_args_inexact('cos', x))
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 @export
@@ -666,7 +675,9 @@ def tan(x: ArrayLike, /) -> Array:
     ...   print(jnp.tan(x))
     [ 0.     0.577  1.    -1.    -0.577]
   """
-  return lax.tan(*promote_args_inexact('tan', x))
+  out = lax.tan(*promote_args_inexact('tan', x))
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 @export
@@ -708,7 +719,9 @@ def arcsin(x: ArrayLike, /) -> Array:
     ...   jnp.arcsin(3+4j)
     Array(0.634+2.306j, dtype=complex64, weak_type=True)
   """
-  return lax.asin(*promote_args_inexact('arcsin', x))
+  out = lax.asin(*promote_args_inexact('arcsin', x))
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 @export
@@ -751,7 +764,9 @@ def arccos(x: ArrayLike, /) -> Array:
     ...   jnp.arccos(4-1j)
     Array(0.252+2.097j, dtype=complex64, weak_type=True)
   """
-  return lax.acos(*promote_args_inexact('arccos', x))
+  out = lax.acos(*promote_args_inexact('arccos', x))
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 @export
@@ -1005,6 +1020,7 @@ def arccosh(x: ArrayLike, /) -> Array:
   # Note: arccosh is multi-valued for complex input, and lax.acosh
   # uses a different convention than np.arccosh.
   result = lax.acosh(*promote_args_inexact("arccosh", x))
+  jnp_error._set_error_if_nan(result)
   if dtypes.issubdtype(result.dtype, np.complexfloating):
     result = _where(real(result) < 0, lax.neg(result), result)
   return result
@@ -1110,7 +1126,9 @@ def arctanh(x: ArrayLike, /) -> Array:
     ...   jnp.arctanh(x1)
     Array([-0.549+1.571j,  0.347+1.571j,  0.239-1.509j], dtype=complex64)
   """
-  return lax.atanh(*promote_args_inexact('arctanh', x))
+  out = lax.atanh(*promote_args_inexact('arctanh', x))
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 @export
@@ -1143,7 +1161,9 @@ def sqrt(x: ArrayLike, /) -> Array:
     >>> jnp.sqrt(-1)
     Array(nan, dtype=float32, weak_type=True)
   """
-  return lax.sqrt(*promote_args_inexact('sqrt', x))
+  out = lax.sqrt(*promote_args_inexact('sqrt', x))
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 @export
@@ -1212,7 +1232,11 @@ def add(x: ArrayLike, y: ArrayLike, /) -> Array:
     Array([10, 11, 12, 13], dtype=int32)
   """
   x, y = promote_args("add", x, y)
-  return lax.add(x, y) if x.dtype != bool else lax.bitwise_or(x, y)
+  if x.dtype == bool:
+    return lax.bitwise_or(x, y)
+  out = lax.add(x, y)
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 def _multiply_at(a: Array, indices: Any, b: ArrayLike) -> Array:
@@ -1541,7 +1565,9 @@ def subtract(x: ArrayLike, y: ArrayLike, /) -> Array:
     >>> x - 10
     Array([-10,  -9,  -8,  -7], dtype=int32)
   """
-  return lax.sub(*promote_args("subtract", x, y))
+  out = lax.sub(*promote_args("subtract", x, y))
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 @export
@@ -1765,7 +1791,9 @@ def float_power(x: ArrayLike, y: ArrayLike, /) -> Array:
     >>> jnp.float_power(-3, 1.7)
     Array(nan, dtype=float32, weak_type=True)
   """
-  return lax.pow(*promote_args_inexact("float_power", x, y))
+  out = lax.pow(*promote_args_inexact("float_power", x, y))
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 @export
@@ -2443,7 +2471,10 @@ def true_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     :func:`jax.numpy.floor_divide` for integer division
   """
   x1, x2 = promote_args_inexact("true_divide", x1, x2)
-  return lax.div(x1, x2)
+  jnp_error._set_error_if_divide_by_zero(x2)
+  out = lax.div(x1, x2)
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 @export
@@ -2493,6 +2524,7 @@ def floor_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     Array([3., 2., 2.], dtype=float32)
   """
   x1, x2 = promote_args_numeric("floor_divide", x1, x2)
+  jnp_error._set_error_if_divide_by_zero(x2)
   dtype = dtypes.dtype(x1)
   if dtypes.issubdtype(dtype, np.unsignedinteger):
     return lax.div(x1, x2)
@@ -2547,6 +2579,7 @@ def divmod(x1: ArrayLike, x2: ArrayLike, /) -> tuple[Array, Array]:
   if dtypes.issubdtype(dtypes.dtype(x1), np.integer):
     return floor_divide(x1, x2), remainder(x1, x2)
   else:
+    jnp_error._set_error_if_divide_by_zero(x2)
     return _float_divmod(x1, x2)
 
 
@@ -2619,6 +2652,11 @@ def power(x1: ArrayLike, x2: ArrayLike, /) -> Array:
            [nan, 27.,  1.]], dtype=float32)
   """
   check_arraylike("power", x1, x2)
+
+  # Must do __jax_array__ conversion prior to dtype check.
+  x1 = x1.__jax_array__() if hasattr(x1, "__jax_array__") else x1
+  x2 = x2.__jax_array__() if hasattr(x2, "__jax_array__") else x2
+
   check_no_float0s("power", x1, x2)
 
   # We apply special cases, both for algorithmic and autodiff reasons:
@@ -2645,7 +2683,9 @@ def power(x1: ArrayLike, x2: ArrayLike, /) -> Array:
       return lax.integer_pow(x1, x2)
 
   # Handle cases #2 and #3 under a jit:
-  return _power(x1, x2)
+  out = _power(x1, x2)
+  jnp_error._set_error_if_nan(out)
+  return out
 
 @export
 def pow(x1: ArrayLike, x2: ArrayLike, /) -> Array:
@@ -2771,7 +2811,9 @@ def log2(x: ArrayLike, /) -> Array:
     im = lax.imag(r)
     ln2 = lax.log(_constant_like(re, 2))
     return lax.complex(lax.div(re, ln2), lax.div(im, ln2))
-  return lax.div(lax.log(x), lax.log(_constant_like(x, 2)))
+  out = lax.div(lax.log(x), lax.log(_constant_like(x, 2)))
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 @export
@@ -2801,7 +2843,9 @@ def log10(x: ArrayLike, /) -> Array:
     im = lax.imag(r)
     ln10 = lax.log(_constant_like(re, 10))
     return lax.complex(lax.div(re, ln10), lax.div(im, ln10))
-  return lax.div(lax.log(x), lax.log(_constant_like(x, 10)))
+  out = lax.div(lax.log(x), lax.log(_constant_like(x, 10)))
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 @export
@@ -3054,6 +3098,7 @@ def remainder(x1: ArrayLike, x2: ArrayLike, /) -> Array:
            [ 0.,  2., -2.]], dtype=float32)
   """
   x1, x2 = promote_args_numeric("remainder", x1, x2)
+  jnp_error._set_error_if_divide_by_zero(x2)
   zero = _constant_like(x1, 0)
   if dtypes.issubdtype(x2.dtype, np.integer):
     x2 = _where(x2 == 0, lax._ones(x2), x2)
@@ -3061,7 +3106,9 @@ def remainder(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   trunc_mod_not_zero = lax.ne(trunc_mod, zero)
   do_plus = lax.bitwise_and(
       lax.ne(lax.lt(trunc_mod, zero), lax.lt(x2, zero)), trunc_mod_not_zero)
-  return lax.select(do_plus, lax.add(trunc_mod, x2), trunc_mod)
+  out = lax.select(do_plus, lax.add(trunc_mod, x2), trunc_mod)
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 @export
@@ -3109,7 +3156,9 @@ def fmod(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   check_arraylike("fmod", x1, x2)
   if dtypes.issubdtype(dtypes.result_type(x1, x2), np.integer):
     x2 = _where(x2 == 0, lax._ones(x2), x2)
-  return lax.rem(*promote_args_numeric("fmod", x1, x2))
+  out = lax.rem(*promote_args_numeric("fmod", x1, x2))
+  jnp_error._set_error_if_nan(out)
+  return out
 
 
 @export
@@ -3451,7 +3500,7 @@ def isinf(x: ArrayLike, /) -> Array:
     >>> jnp.isinf(x)
     Array([False,  True, False,  True, False], dtype=bool)
   """
-  check_arraylike("isinf", x)
+  x = ensure_arraylike("isinf", x)
   dtype = dtypes.dtype(x)
   if dtypes.issubdtype(dtype, np.floating):
     return lax.eq(lax.abs(x), _constant_like(x, np.inf))
@@ -3464,7 +3513,7 @@ def isinf(x: ArrayLike, /) -> Array:
     return lax.full_like(x, False, dtype=np.bool_)
 
 
-def _isposneginf(infinity: float, x: ArrayLike, out) -> Array:
+def _isposneginf(infinity: float, x: Array, out) -> Array:
   if out is not None:
     raise NotImplementedError("The 'out' argument to isneginf/isposinf is not supported.")
   dtype = dtypes.dtype(x)
@@ -3507,6 +3556,7 @@ def isposinf(x, /, out=None):
     >>> jnp.isposinf(x)
     Array([False, False,  True, False, False], dtype=bool)
   """
+  x = ensure_arraylike("isposinf", x)
   return _isposneginf(np.inf, x, out)
 
 
@@ -3541,6 +3591,7 @@ def isneginf(x, /, out=None):
     >>> jnp.isneginf(x)
     Array([ True, False, False, False, False], dtype=bool)
   """
+  x = ensure_arraylike("isneginf", x)
   return _isposneginf(-np.inf, x, out)
 
 
@@ -3575,7 +3626,7 @@ def isnan(x: ArrayLike, /) -> Array:
     >>> jnp.isnan(x)
     Array([False, False, False,  True], dtype=bool)
   """
-  check_arraylike("isnan", x)
+  x = ensure_arraylike("isnan", x)
   return lax.ne(x, x)
 
 
@@ -3591,9 +3642,9 @@ def heaviside(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   .. math::
 
     \mathrm{heaviside}(x1, x2) = \begin{cases}
-      0., & x < 0\\
-      x2, & x = 0\\
-      1., & x > 0.
+      0,  & x1 < 0\\
+      x2, & x1 = 0\\
+      1,  & x1 > 0.
     \end{cases}
 
   Args:

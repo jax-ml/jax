@@ -15,8 +15,8 @@
 | [**Transformations**](#transformations)
 | [**Install guide**](#installation)
 | [**Neural net libraries**](#neural-network-libraries)
-| [**Change logs**](https://jax.readthedocs.io/en/latest/changelog.html)
-| [**Reference docs**](https://jax.readthedocs.io/en/latest/)
+| [**Change logs**](https://docs.jax.dev/en/latest/changelog.html)
+| [**Reference docs**](https://docs.jax.dev/en/latest/)
 
 
 ## What is JAX?
@@ -52,7 +52,7 @@ are instances of such transformations. Others are
 parallel programming of multiple accelerators, with more to come.
 
 This is a research project, not an official Google product. Expect
-[sharp edges](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html).
+[sharp edges](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html).
 Please help by trying it out, [reporting
 bugs](https://github.com/jax-ml/jax/issues), and letting us know what you
 think!
@@ -87,15 +87,15 @@ perex_grads = jit(vmap(grad_loss, in_axes=(None, 0, 0)))  # fast per-example gra
 ## Quickstart: Colab in the Cloud
 Jump right in using a notebook in your browser, connected to a Google Cloud GPU.
 Here are some starter notebooks:
-- [The basics: NumPy on accelerators, `grad` for differentiation, `jit` for compilation, and `vmap` for vectorization](https://jax.readthedocs.io/en/latest/quickstart.html)
+- [The basics: NumPy on accelerators, `grad` for differentiation, `jit` for compilation, and `vmap` for vectorization](https://docs.jax.dev/en/latest/quickstart.html)
 - [Training a Simple Neural Network, with TensorFlow Dataset Data Loading](https://colab.research.google.com/github/jax-ml/jax/blob/main/docs/notebooks/neural_network_with_tfds_data.ipynb)
 
 **JAX now runs on Cloud TPUs.** To try out the preview, see the [Cloud TPU
 Colabs](https://github.com/jax-ml/jax/tree/main/cloud_tpu_colabs).
 
 For a deeper dive into JAX:
-- [The Autodiff Cookbook, Part 1: easy and powerful automatic differentiation in JAX](https://jax.readthedocs.io/en/latest/notebooks/autodiff_cookbook.html)
-- [Common gotchas and sharp edges](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html)
+- [The Autodiff Cookbook, Part 1: easy and powerful automatic differentiation in JAX](https://docs.jax.dev/en/latest/notebooks/autodiff_cookbook.html)
+- [Common gotchas and sharp edges](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html)
 - See the [full list of
 notebooks](https://github.com/jax-ml/jax/tree/main/docs/notebooks).
 
@@ -109,7 +109,7 @@ Here are four transformations of primary interest: `grad`, `jit`, `vmap`, and
 
 JAX has roughly the same API as [Autograd](https://github.com/hips/autograd).
 The most popular function is
-[`grad`](https://jax.readthedocs.io/en/latest/jax.html#jax.grad)
+[`grad`](https://docs.jax.dev/en/latest/jax.html#jax.grad)
 for reverse-mode gradients:
 
 ```python
@@ -133,13 +133,13 @@ print(grad(grad(grad(tanh)))(1.0))
 ```
 
 For more advanced autodiff, you can use
-[`jax.vjp`](https://jax.readthedocs.io/en/latest/jax.html#jax.vjp) for
+[`jax.vjp`](https://docs.jax.dev/en/latest/jax.html#jax.vjp) for
 reverse-mode vector-Jacobian products and
-[`jax.jvp`](https://jax.readthedocs.io/en/latest/jax.html#jax.jvp) for
+[`jax.jvp`](https://docs.jax.dev/en/latest/jax.html#jax.jvp) for
 forward-mode Jacobian-vector products. The two can be composed arbitrarily with
 one another, and with other JAX transformations. Here's one way to compose those
 to make a function that efficiently computes [full Hessian
-matrices](https://jax.readthedocs.io/en/latest/_autosummary/jax.hessian.html#jax.hessian):
+matrices](https://docs.jax.dev/en/latest/_autosummary/jax.hessian.html#jax.hessian):
 
 ```python
 from jax import jit, jacfwd, jacrev
@@ -164,15 +164,15 @@ print(abs_val_grad(-1.0))  # prints -1.0 (abs_val is re-evaluated)
 ```
 
 See the [reference docs on automatic
-differentiation](https://jax.readthedocs.io/en/latest/jax.html#automatic-differentiation)
+differentiation](https://docs.jax.dev/en/latest/jax.html#automatic-differentiation)
 and the [JAX Autodiff
-Cookbook](https://jax.readthedocs.io/en/latest/notebooks/autodiff_cookbook.html)
+Cookbook](https://docs.jax.dev/en/latest/notebooks/autodiff_cookbook.html)
 for more.
 
 ### Compilation with `jit`
 
 You can use XLA to compile your functions end-to-end with
-[`jit`](https://jax.readthedocs.io/en/latest/jax.html#just-in-time-compilation-jit),
+[`jit`](https://docs.jax.dev/en/latest/jax.html#just-in-time-compilation-jit),
 used either as an `@jit` decorator or as a higher-order function.
 
 ```python
@@ -193,12 +193,12 @@ You can mix `jit` and `grad` and any other JAX transformation however you like.
 
 Using `jit` puts constraints on the kind of Python control flow
 the function can use; see
-the tutorial on [Control Flow and Logical Operators with JIT](https://jax.readthedocs.io/en/latest/control-flow.html)
+the tutorial on [Control Flow and Logical Operators with JIT](https://docs.jax.dev/en/latest/control-flow.html)
 for more.
 
 ### Auto-vectorization with `vmap`
 
-[`vmap`](https://jax.readthedocs.io/en/latest/jax.html#vectorization-vmap) is
+[`vmap`](https://docs.jax.dev/en/latest/jax.html#vectorization-vmap) is
 the vectorizing map.
 It has the familiar semantics of mapping a function along array axes, but
 instead of keeping the loop on the outside, it pushes the loop down into a
@@ -263,7 +263,7 @@ differentiation for fast Jacobian and Hessian matrix calculations in
 ### SPMD programming with `pmap`
 
 For parallel programming of multiple accelerators, like multiple GPUs, use
-[`pmap`](https://jax.readthedocs.io/en/latest/jax.html#parallelization-pmap).
+[`pmap`](https://docs.jax.dev/en/latest/jax.html#parallelization-pmap).
 With `pmap` you write single-program multiple-data (SPMD) programs, including
 fast parallel collective communication operations. Applying `pmap` will mean
 that the function you write is compiled by XLA (similarly to `jit`), then
@@ -288,7 +288,7 @@ print(pmap(jnp.mean)(result))
 ```
 
 In addition to expressing pure maps, you can use fast [collective communication
-operations](https://jax.readthedocs.io/en/latest/jax.lax.html#parallel-operators)
+operations](https://docs.jax.dev/en/latest/jax.lax.html#parallel-operators)
 between devices:
 
 ```python
@@ -345,20 +345,20 @@ for more.
 
 For a more thorough survey of current gotchas, with examples and explanations,
 we highly recommend reading the [Gotchas
-Notebook](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html).
+Notebook](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html).
 Some standouts:
 
 1. JAX transformations only work on [pure functions](https://en.wikipedia.org/wiki/Pure_function), which don't have side-effects and respect [referential transparency](https://en.wikipedia.org/wiki/Referential_transparency) (i.e. object identity testing with `is` isn't preserved). If you use a JAX transformation on an impure Python function, you might see an error like `Exception: Can't lift Traced...`  or `Exception: Different traces at same level`.
 1. [In-place mutating updates of
-   arrays](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#in-place-updates), like `x[i] += y`, aren't supported, but [there are functional alternatives](https://jax.readthedocs.io/en/latest/jax.ops.html). Under a `jit`, those functional alternatives will reuse buffers in-place automatically.
+   arrays](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#in-place-updates), like `x[i] += y`, aren't supported, but [there are functional alternatives](https://docs.jax.dev/en/latest/jax.ops.html). Under a `jit`, those functional alternatives will reuse buffers in-place automatically.
 1. [Random numbers are
-   different](https://jax.readthedocs.io/en/latest/random-numbers.html), but for [good reasons](https://github.com/jax-ml/jax/blob/main/docs/jep/263-prng.md).
+   different](https://docs.jax.dev/en/latest/random-numbers.html), but for [good reasons](https://github.com/jax-ml/jax/blob/main/docs/jep/263-prng.md).
 1. If you're looking for [convolution
-   operators](https://jax.readthedocs.io/en/latest/notebooks/convolutions.html),
+   operators](https://docs.jax.dev/en/latest/notebooks/convolutions.html),
    they're in the `jax.lax` package.
 1. JAX enforces single-precision (32-bit, e.g. `float32`) values by default, and
    [to enable
-   double-precision](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision)
+   double-precision](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision)
    (64-bit, e.g. `float64`) one needs to set the `jax_enable_x64` variable at
    startup (or set the environment variable `JAX_ENABLE_X64=True`).
    On TPU, JAX uses 32-bit values by default for everything _except_ internal
@@ -372,14 +372,14 @@ Some standouts:
    and NumPy types aren't preserved, namely `np.add(1, np.array([2],
    np.float32)).dtype` is `float64` rather than `float32`.
 1. Some transformations, like `jit`, [constrain how you can use Python control
-   flow](https://jax.readthedocs.io/en/latest/control-flow.html).
+   flow](https://docs.jax.dev/en/latest/control-flow.html).
    You'll always get loud errors if something goes wrong. You might have to use
    [`jit`'s `static_argnums`
-   parameter](https://jax.readthedocs.io/en/latest/jax.html#just-in-time-compilation-jit),
+   parameter](https://docs.jax.dev/en/latest/jax.html#just-in-time-compilation-jit),
    [structured control flow
-   primitives](https://jax.readthedocs.io/en/latest/jax.lax.html#control-flow-operators)
+   primitives](https://docs.jax.dev/en/latest/jax.lax.html#control-flow-operators)
    like
-   [`lax.scan`](https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.scan.html#jax.lax.scan),
+   [`lax.scan`](https://docs.jax.dev/en/latest/_autosummary/jax.lax.scan.html#jax.lax.scan),
    or just use `jit` on smaller subfunctions.
 
 ## Installation
@@ -407,7 +407,7 @@ Some standouts:
 | Mac GPU         | Follow [Apple's instructions](https://developer.apple.com/metal/jax/).                                          |
 | Intel GPU       | Follow [Intel's instructions](https://github.com/intel/intel-extension-for-openxla/blob/main/docs/acc_jax.md).  |
 
-See [the documentation](https://jax.readthedocs.io/en/latest/installation.html)
+See [the documentation](https://docs.jax.dev/en/latest/installation.html)
 for information on alternative installation strategies. These include compiling
 from source, installing with Docker, using other versions of CUDA, a
 community-supported conda build, and answers to some frequently-asked questions.
@@ -421,7 +421,7 @@ for training neural networks in JAX. If you want a fully featured library for ne
 training with examples and how-to guides, try
 [Flax](https://github.com/google/flax) and its [documentation site](https://flax.readthedocs.io/en/latest/nnx/index.html).
 
-Check out the [JAX Ecosystem section](https://jax.readthedocs.io/en/latest/#ecosystem)
+Check out the [JAX Ecosystem section](https://docs.jax.dev/en/latest/#ecosystem)
 on the JAX documentation site for a list of JAX-based network libraries, which includes
 [Optax](https://github.com/deepmind/optax) for gradient processing and
 optimization, [chex](https://github.com/deepmind/chex) for reliable code and testing, and
@@ -456,7 +456,7 @@ paper.
 ## Reference documentation
 
 For details about the JAX API, see the
-[reference documentation](https://jax.readthedocs.io/).
+[reference documentation](https://docs.jax.dev/).
 
 For getting started as a JAX developer, see the
-[developer documentation](https://jax.readthedocs.io/en/latest/developer.html).
+[developer documentation](https://docs.jax.dev/en/latest/developer.html).

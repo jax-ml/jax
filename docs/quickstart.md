@@ -58,7 +58,7 @@ print(selu(x))
 ```
 
 You'll find a few differences between JAX arrays and NumPy arrays once you begin digging-in;
-these are explored in  [🔪 JAX - The Sharp Bits 🔪](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html).
+these are explored in  [🔪 JAX - The Sharp Bits 🔪](https:docs.jax.devio/en/latest/notebooks/Common_Gotchas_in_JAX.html).
 
 ## Just-in-time compilation with {func}`jax.jit`
 JAX runs transparently on the GPU or TPU (falling back to CPU if you don't have one). However, in the above example, JAX is dispatching kernels to the chip one operation at a time. If we have a sequence of operations, we can use the {func}`jax.jit` function to compile this sequence of operations together using XLA.

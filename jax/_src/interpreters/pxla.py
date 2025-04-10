@@ -237,7 +237,7 @@ def batched_device_put(aval: core.ShapedArray,
             if (isinstance(x, array.ArrayImpl) and
                 dispatch.is_single_device_sharding(x.sharding) and
                 x.devices() == {d})]
-    if len(bufs) == len(xs):
+    if len(bufs) == len(xs) > 0:
       return array.ArrayImpl(
           aval, sharding, bufs, committed=committed, _skip_checks=True)
     return xc.batched_device_put(aval, sharding, xs, list(devices), committed)
@@ -257,7 +257,7 @@ def _shard_abstract_array(size, axis: int, x):
       raise ValueError(f"Axis size {size} does not match dimension {axis} of "
                        f"shape {x.shape}")
   except IndexError:
-    raise ValueError("Cannot split a {x.dim}D value along axis {axis}") from None
+    raise ValueError(f"Cannot split a {x.dim}D value along axis {axis}") from None
   if config.pmap_no_rank_reduction.value:
     return x.update(shape=tuple_update(x.shape, axis, 1))
   else:
@@ -338,8 +338,8 @@ def xla_pmap_impl_lazy(
     donated_invars: Sequence[bool],
     is_explicit_global_axis_size: bool,
 ) -> Callable:
-  if (config.disable_jit.value and config.eager_pmap.value and
-      not is_explicit_global_axis_size and not any(d for d in donated_invars)):
+  if (config.disable_jit.value and
+      not is_explicit_global_axis_size and not any(donated_invars)):
     def _emap_apply_fn(*args):
       return _emap_impl(fun, *args, backend=backend, axis_name=axis_name,
                         axis_size=axis_size, global_axis_size=global_axis_size,
@@ -463,6 +463,7 @@ class MapTrace(core.Trace):
   __slots__ = ("axis_name", "emap_info")
 
   def __init__(self, axis_name, emap_info):
+    super().__init__()
     self.emap_info = emap_info
     self.axis_name = axis_name
 
@@ -2163,7 +2164,7 @@ def _abstract_to_concrete_mesh(abstract_mesh, device_assignment):
   np_dev = np.vectorize(lambda i: device_assignment[i],
                         otypes=[object])(np.arange(len(device_assignment)))
   return Mesh(np_dev.reshape(abstract_mesh.axis_sizes),
-              abstract_mesh.axis_names, axis_types=abstract_mesh.axis_types)
+              abstract_mesh.axis_names, axis_types=abstract_mesh._axis_types)
 
 def _concretize_abstract_out_shardings(shardings, avals, device_assignment,
                                        out_mem_kinds):
@@ -2202,7 +2203,8 @@ def _get_context_mesh(context_mesh: Mesh | None) -> Mesh | None:
     return context_mesh
   if cur_mesh == context_mesh.abstract_mesh:
     return context_mesh
-  return context_mesh.update_axis_types(cur_mesh.axis_types)
+  return Mesh(context_mesh.devices, context_mesh.axis_names,
+              axis_types=cur_mesh._axis_types)
 
 
 @profiler.annotate_function
@@ -2278,6 +2280,16 @@ def lower_sharding_computation(
            for js, source_info in unique_intermediate_shardings)),
       devices_from_context)
   unique_intermediate_shardings = [js for js, _ in unique_intermediate_shardings]
+
+  for a in global_out_avals:
+    if (a is not core.abstract_token and not a.sharding.mesh.empty and
+        a.sharding.mesh._are_all_axes_explicit and
+        len(device_assignment) != a.sharding.mesh.size):
+      raise ValueError(
+          f"Length of device assignment {len(device_assignment)} is not equal"
+          f" to the size of the mesh {a.sharding.mesh.size} of aval"
+          f" {a.str_short(True, True)}. Please enter your `jit` into a mesh"
+          " context via `jax.sharding.use_mesh`.")
 
   # TODO(parkers): One _raw_platform has been unified with platform,
   # change this back to just read platform.
@@ -2461,14 +2473,41 @@ class MeshComputation(stages.XlaLowering):
     return xe.hlo_module_cost_analysis(backend, self.hlo().as_hlo_module())
 
 
+def get_op_sharding_from_executable(
+    executable) -> tuple[Sequence[xc.OpSharding], Sequence[xc.OpSharding]]:
+  in_op_shardings: list[xc.OpSharding] = []
+  parameter_shardings_from_xla = executable.get_parameter_shardings()
+  if parameter_shardings_from_xla is not None:
+    in_op_shardings = parameter_shardings_from_xla
+
+  out_op_shardings: list[xc.OpSharding] = []
+  output_shardings_from_xla = executable.get_output_shardings()
+  if output_shardings_from_xla is not None:
+    out_op_shardings = output_shardings_from_xla
+
+  return in_op_shardings, out_op_shardings
+
+
+def get_pspec_from_executable(
+    executable, mesh: Mesh
+) -> tuple[tuple[PartitionSpec, ...], tuple[PartitionSpec, ...]]:
+  input_op_s, output_op_s = get_op_sharding_from_executable(executable)
+  in_pspec: list[PartitionSpec] = []
+  for s in input_op_s:
+    in_pspec.extend(sharding_impls.parse_flatten_op_sharding(s, mesh))
+
+  out_pspec: list[PartitionSpec] = []
+  for s in output_op_s:
+    out_pspec.extend(sharding_impls.parse_flatten_op_sharding(s, mesh))
+  return tuple(in_pspec), tuple(out_pspec)
+
+
 def get_out_shardings_from_executable(
     xla_executable,
     device_assignment: Sequence[xc.Device],
     num_out_avals: int,
     num_ordered_effects: int,
 ) -> Sequence[sharding_impls.GSPMDSharding] | None:
-  from jax._src import pjit
-
   try:
     omk = xla_executable.get_output_memory_kinds()[0]
     if num_ordered_effects > 0:
@@ -2484,7 +2523,7 @@ def get_out_shardings_from_executable(
     return [sharding_impls.GSPMDSharding.get_replicated(device_assignment, memory_kind=mk)
             for mk in omk]
 
-  _, out_op_shardings = pjit.get_op_sharding_from_executable(xla_executable)
+  _, out_op_shardings = get_op_sharding_from_executable(xla_executable)
   if not out_op_shardings:
     return None
 
@@ -2515,14 +2554,12 @@ def _get_in_shardings_from_xla(
     num_ordered_effects: int
   ) -> Sequence[GSPMDSharding] | None:
   """Returns input shardings from XLA."""
-  from jax._src import pjit
-
   # When the device assignment only has 1 device, SPMD partitioner will not run.
   # Hence the op shardings will not be set on the `hlo_module`.
   if len(device_assignment) == 1:
     return [GSPMDSharding.get_replicated(device_assignment)] * num_in_avals
 
-  in_op_shardings, _ = pjit.get_op_sharding_from_executable(xla_executable)
+  in_op_shardings, _ = get_op_sharding_from_executable(xla_executable)
   if not in_op_shardings:
     return None
 
@@ -2541,9 +2578,7 @@ def _get_in_shardings_from_xla(
 def _get_mesh_pspec_shardings_from_executable(
     xla_executable, mesh: Mesh
 ) -> tuple[Sequence[NamedSharding], Sequence[NamedSharding]]:
-  from jax._src import pjit
-
-  in_pspec, out_pspec = pjit.get_pspec_from_executable(xla_executable, mesh)
+  in_pspec, out_pspec = get_pspec_from_executable(xla_executable, mesh)
   return ([NamedSharding(mesh, i) for i in in_pspec],
           [NamedSharding(mesh, o) for o in out_pspec])
 

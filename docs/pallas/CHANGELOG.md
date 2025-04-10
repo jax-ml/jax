@@ -5,7 +5,7 @@
 <!--* freshness: { reviewed: '2024-07-11' } *-->
 
 This is the list of changes specific to {class}`jax.experimental.pallas`.
-For the overall JAX change log see [here](https://jax.readthedocs.io/en/latest/changelog.html).
+For the overall JAX change log see [here](https://docs.jax.dev/en/latest/changelog.html).
 
 <!--
 Remember to align the itemized text with the first line of an item within a list.

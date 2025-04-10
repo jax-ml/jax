@@ -13,6 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#ifndef _WIN32
+
+#include <cstdint>
 #include <optional>
 
 #include "mlir-c/IR.h"
@@ -73,3 +76,11 @@ NB_MODULE(_triton_ext, m) {
           return encoding;
         });
 }
+
+#else  // _WIN32
+
+#include "nanobind/nanobind.h"
+
+NB_MODULE(_triton_ext, m) {}
+
+#endif  // _WIN32

@@ -24,12 +24,11 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src.custom_partitioning import custom_partitioning
 from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
 from jax._src.lib import cuda_versions
 from jax._src import xla_bridge
-from jax.interpreters import mlir
-from jax.interpreters import xla
-from jax.interpreters.mlir import hlo
-from jax.interpreters.mlir import ir
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import hlo
 import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec
 
@@ -1018,7 +1017,7 @@ def _dot_product_attention_bwd_partition(
 _dot_product_attention_fwd_p = core.Primitive("dot_product_attention_fwd")
 _dot_product_attention_fwd_p.multiple_results = True
 _dot_product_attention_fwd_p.def_impl(
-    functools.partial(xla.apply_primitive, _dot_product_attention_fwd_p)
+    functools.partial(dispatch.apply_primitive, _dot_product_attention_fwd_p)
 )
 _dot_product_attention_fwd_p.def_abstract_eval(
     _dot_product_attention_fwd_abstract
@@ -1043,7 +1042,7 @@ _dot_product_attention_fwd_p_wrapper.def_abstract_eval(
 _dot_product_attention_bwd_p = core.Primitive("dot_product_attention_bwd")
 _dot_product_attention_bwd_p.multiple_results = True
 _dot_product_attention_bwd_p.def_impl(
-    functools.partial(xla.apply_primitive, _dot_product_attention_bwd_p)
+    functools.partial(dispatch.apply_primitive, _dot_product_attention_bwd_p)
 )
 _dot_product_attention_bwd_p.def_abstract_eval(
     _dot_product_attention_bwd_abstract
@@ -1604,7 +1603,7 @@ def _dot_product_attention_fp8_bwd_partition(
 _dot_product_attention_fp8_fwd_p = core.Primitive("dot_product_attention_fp8_fwd")
 _dot_product_attention_fp8_fwd_p.multiple_results = True
 _dot_product_attention_fp8_fwd_p.def_impl(
-    functools.partial(xla.apply_primitive, _dot_product_attention_fp8_fwd_p)
+    functools.partial(dispatch.apply_primitive, _dot_product_attention_fp8_fwd_p)
 )
 _dot_product_attention_fp8_fwd_p.def_abstract_eval(
     _dot_product_attention_fp8_fwd_abstract
@@ -1629,7 +1628,7 @@ _dot_product_attention_fp8_fwd_p_wrapper.def_abstract_eval(
 _dot_product_attention_fp8_bwd_p = core.Primitive("dot_product_attention_fp8_bwd")
 _dot_product_attention_fp8_bwd_p.multiple_results = True
 _dot_product_attention_fp8_bwd_p.def_impl(
-    functools.partial(xla.apply_primitive, _dot_product_attention_fp8_bwd_p)
+    functools.partial(dispatch.apply_primitive, _dot_product_attention_fp8_bwd_p)
 )
 _dot_product_attention_fp8_bwd_p.def_abstract_eval(
     _dot_product_attention_fp8_bwd_abstract

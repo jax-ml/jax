@@ -172,6 +172,7 @@ html_theme_options = {
     'repository_url': 'https://github.com/jax-ml/jax',
     'use_repository_button': True,     # add a "link to repository" button
     'navigation_with_keys': False,
+    'article_header_start': ['toggle-primary-sidebar.html', 'breadcrumbs'],
 }
 
 # The name of an image file (relative to this directory) to place at the top
@@ -221,6 +222,7 @@ nb_execution_excludepatterns = [
     'jep/9407-type-promotion.*',
     # TODO(jakevdp): enable execution on the following if possible:
     'notebooks/Distributed_arrays_and_automatic_parallelization.*',
+    'notebooks/explicit-sharding.*',
     'notebooks/autodiff_remat.*',
     # Fails on readthedocs with Kernel Died
     'notebooks/convolutions.ipynb',

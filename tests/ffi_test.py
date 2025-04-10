@@ -208,13 +208,6 @@ class FfiTest(jtu.JaxTestCase):
     with self.assertWarns(DeprecationWarning):
       jax.vmap(ffi_call_geqrf)(x)
 
-  def test_backward_compat_syntax(self):
-    def fun(x):
-      return jax.ffi.ffi_call("test_ffi", x, x, param=0.5)
-    msg = "Calling ffi_call directly with input arguments is deprecated"
-    with self.assertDeprecationWarnsOrRaises("jax-ffi-call-args", msg):
-      jax.jit(fun).lower(jnp.ones(5))
-
   def test_input_output_aliases(self):
     def fun(x):
       return jax.ffi.ffi_call("test", x, input_output_aliases={0: 0})(x)

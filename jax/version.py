@@ -21,7 +21,7 @@ import os
 import pathlib
 import subprocess
 
-_version = "0.5.3"
+_version = "0.5.4"
 # The following line is overwritten by build scripts in distributions &
 # releases. Do not modify this manually, or jax/jaxlib build will fail.
 _release_version: str | None = None
@@ -93,6 +93,12 @@ def _get_version_for_build() -> str:
   return _version_from_git_tree(_version) or _version_from_todays_date(_version)
 
 
+def _is_prerelease() -> bool:
+  """Determine if this is a pre-release ("rc" wheels) build."""
+  rc_version = os.getenv("WHEEL_VERSION_SUFFIX", "")
+  return True if rc_version.startswith("rc") else False
+
+
 def _write_version(fname: str) -> None:
   """Used by setup.py to write the specified version info into the source tree."""
   release_version = _get_version_for_build()
@@ -146,7 +152,7 @@ def _get_cmdclass(pkg_source_path):
 
 
 __version__ = _get_version_string()
-_minimum_jaxlib_version = "0.5.1"
+_minimum_jaxlib_version = "0.5.3"
 
 def _version_as_tuple(version_str):
   return tuple(int(i) for i in version_str.split(".") if i.isdigit())

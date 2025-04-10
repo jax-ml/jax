@@ -67,6 +67,10 @@ class MaskInfo(NamedTuple):
     q_sequence: A i32[q_sequence_length] NumPy array. When using causal masking,
       this contains the list of indices that correspond to q tokens. For plain
       causal this is just np.arange(q_sequence_length).
+    is_dynamic_mask: A bool indicating whether the mask is dynamic or static.
+      When True, the leading dimensions of `partial_mask_blocks` (num_heads,
+      q_blocks, kv_blocks) are not collapsed, allowing us to shard it along
+      those dimensions.
   """
 
   data_next: np.ndarray | jax.Array | None
@@ -74,6 +78,7 @@ class MaskInfo(NamedTuple):
   block_mask: np.ndarray | jax.Array | None
   partial_mask_blocks: np.ndarray | jax.Array | None
   q_sequence: np.ndarray | None
+  is_dynamic_mask: bool = None
 
 
 def _downcast_to_small_type(array: np.ndarray) -> np.ndarray:
@@ -168,7 +173,7 @@ class _HashableNDArray:
 def _get_mask_info_for_shard(
     output_shape: tuple[int, int, int],
     has_mask_next: bool,
-    mask: mask_lib.MultiHeadMask,
+    mask: mask_lib.MultiHeadMask | jax.Array,
     block_shape: tuple[int, int],
     coords_to_partial_mask_block_index: dict[tuple[int, int, int], int],
     masks_per_head_shard: int,
@@ -338,7 +343,8 @@ def _process_dynamic_mask(
       launched.
     q_seq_shards: Number of Q sequence shards of the mesh in which the kernel is
       launched.
-    shrink_grid: Whether or not we should apply the grid shrinking optimization. This is currently ignored.
+    shrink_grid: Whether or not we should apply the grid shrinking optimization.
+      This is currently ignored.
 
   Returns:
     `MaskInfo`, a sparse representation of the dense mask.
@@ -349,11 +355,6 @@ def _process_dynamic_mask(
   """
 
   del shrink_grid
-
-  # TODO(pobudzey): Properly support sharding.
-  if head_shards != 1 or q_seq_shards != 1:
-    raise ValueError('Dynamic mask processing does not support sharding.')
-
   if len(mask.shape) != 3:
     raise ValueError(f'Expected a 3-dim mask, instead got: {mask.shape}.')
 
@@ -369,6 +370,18 @@ def _process_dynamic_mask(
     raise ValueError(f'{q_block_size=} should divide {q_seq_len=}.')
   if kv_mod != 0:
     raise ValueError(f'{kv_block_size=} should divide {kv_seq_len=}.')
+
+  q_seq_len_per_shard, mod = divmod(q_seq_len, q_seq_shards)
+  if mod != 0:
+    raise ValueError(f'{q_seq_shards=} should divide {q_seq_len=}.')
+
+  q_blocks_per_shard, mod = divmod(q_seq_len_per_shard, q_block_size)
+  if mod != 0:
+    raise ValueError(f'{q_block_size=} should divide {q_seq_len_per_shard=}.')
+
+  heads_per_shard, mod = divmod(head_count, head_shards)
+  if mod != 0:
+    raise ValueError(f'{head_shards=} should divide {head_count=}.')
 
   block_mask_shape = (
       head_count,
@@ -398,26 +411,66 @@ def _process_dynamic_mask(
   block_mask = jnp.where(is_full_mask, 2, block_mask)
   block_mask = jnp.where(is_empty_mask, 0, block_mask)
 
-  # TODO(pobudzey): Return the next valid mask index instead of 0 for a more efficient pipeline.
-  mask_next = jnp.where(
-      jnp.logical_or(is_empty_mask, is_full_mask),
-      0,
-      jnp.arange(math.prod(block_mask_shape), dtype=np.int32).reshape(
-          block_mask_shape
-      ),
-  )
+  q_sequence_axis = 1
+  head_axis = 0
 
-  # data_next stores the index of the next non-empty data block in the sequence.
-  # The indices of empty blocks are set to 0 to avoid copying extra data when
-  # pipeling.
-  if is_dkv:
-    data_next = jnp.arange(q_blocks_count, dtype=np.int32)[None, :, None]
-  else:
-    data_next = jnp.arange(kv_blocks_count, dtype=np.int32)[None, None, :]
-  data_next = jnp.broadcast_to(data_next, block_mask_shape)
-  data_next = jnp.where(is_empty_mask, 0, data_next)
+  # Each iteration of the loop processes a slice of the mask info
+  # tensors of this shape:
+  mask_info_slice_shape = (heads_per_shard, q_blocks_per_shard, kv_blocks_count)
 
-  partial_mask_blocks = partial_mask_blocks.reshape(-1, *block_shape)
+  # Collect mask_info shards along the head dimension, concatentate (or
+  # broadcast) them after the loop.
+  data_next_per_head_list, mask_next_per_head_list = [], []
+  for head_shard in range(head_shards):
+    head_start = head_shard * heads_per_shard
+    mask_head_slice = slice(head_start, head_start + heads_per_shard)
+
+    # Collect mask_info shards along the q_sequence dimension, concatenate them
+    # after the loop.
+    data_next_sequence_slices, mask_next_sequence_slices = [], []
+    for q_seq_len_shard in range(q_seq_shards):
+      q_seq_len_start = q_seq_len_shard * q_blocks_per_shard
+      blocked_q_seq_len_slice = slice(
+          q_seq_len_start, q_seq_len_start + q_blocks_per_shard
+      )
+      local_block_mask = block_mask[mask_head_slice, blocked_q_seq_len_slice]
+
+      mask_next_slice = jnp.arange(
+          math.prod(mask_info_slice_shape), dtype=np.int32
+      ).reshape(mask_info_slice_shape)
+      mask_next_slice = jnp.where(local_block_mask == 1, mask_next_slice, 0)
+
+      # data_next stores the index of the next non-empty data block in the sequence.
+      # The indices of empty blocks are set to 0 to avoid copying extra data when
+      # pipeling.
+      if is_dkv:
+        data_next_slice = jnp.arange(q_blocks_per_shard, dtype=np.int32)[
+            None, :, None
+        ]
+      else:
+        data_next_slice = jnp.arange(kv_blocks_count, dtype=np.int32)[
+            None, None, :
+        ]
+      data_next_slice = jnp.broadcast_to(data_next_slice, mask_info_slice_shape)
+      data_next_slice = jnp.where(local_block_mask == 0, 0, data_next_slice)
+
+      data_next_sequence_slices.append(data_next_slice)
+      mask_next_sequence_slices.append(mask_next_slice)
+
+    # Concatenate the sequence shards.
+    data_next_per_head = jnp.concatenate(
+        data_next_sequence_slices, axis=q_sequence_axis
+    )
+    data_next_per_head_list.append(data_next_per_head)
+    mask_next_per_head = jnp.concatenate(
+        mask_next_sequence_slices, axis=q_sequence_axis
+    )
+    mask_next_per_head_list.append(mask_next_per_head)
+
+  # Concatenate (or broadcast) the head shards.
+  data_next = jnp.concatenate(data_next_per_head_list, axis=head_axis)
+  mask_next = jnp.concatenate(mask_next_per_head_list, axis=head_axis)
+
   if is_dkv:
     partial_mask_blocks = partial_mask_blocks.swapaxes(-1, -2)
 
@@ -438,9 +491,11 @@ def _process_dynamic_mask(
   if downcast_smem_data:
     block_mask = block_mask.astype(np.int8)  # values are in the range [0, 1, 2]
     data_next = _downcast(
-      data_next, q_blocks_count if is_dkv else kv_blocks_count
+        data_next, q_blocks_per_shard if is_dkv else kv_blocks_count
     )
-    mask_next = _downcast(mask_next, math.prod(block_mask_shape))
+    mask_next = _downcast(
+        mask_next, heads_per_shard * q_blocks_per_shard * kv_blocks_count
+    )
 
   return (
       MaskInfo(
@@ -449,6 +504,7 @@ def _process_dynamic_mask(
           block_mask=block_mask,
           partial_mask_blocks=partial_mask_blocks,
           q_sequence=None,
+          is_dynamic_mask=True,
       ),
       None,
   )

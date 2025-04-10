@@ -158,6 +158,7 @@ py_library(
     deps = [
         ":core",
         ":primitives",
+        ":verification",
         "//jax",
         "//jax:core",
         "//jax:source_info_util",

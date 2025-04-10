@@ -114,7 +114,7 @@ def _uses_arguments(
 
 
 def _is_index_invariant(
-    spec: pallas_core.BlockSpec, grid: pallas_core.StaticGrid
+    spec: pallas_core.BlockSpec, grid: pallas_core.TupleGrid
 ) -> bool:
   if (index_map := spec.index_map) is None:
     return True
@@ -122,7 +122,7 @@ def _is_index_invariant(
 
 
 def _inc_grid_by_1(
-    indices: tuple[jax.Array, ...], grid: Sequence[int]
+    indices: tuple[jax.Array, ...], grid: pallas_core.TupleGrid
 ) -> tuple[jax.Array, ...]:
   next_indices = []
   carry: bool | jax.Array = True
@@ -161,7 +161,7 @@ jax.tree_util.register_dataclass(
 def emit_pipeline(
     body: Callable[..., None],
     *,
-    grid: pallas_core.StaticGrid,
+    grid: pallas_core.TupleGrid,
     in_specs: Sequence[pallas_core.BlockSpec] = (),
     out_specs: Sequence[pallas_core.BlockSpec] = (),
     max_concurrent_steps: int = 1,
@@ -170,7 +170,8 @@ def emit_pipeline(
   """Creates a function to emit a manual pipeline within a Pallas kernel.
 
   Args:
-    body: The pipeline body.
+    body: The pipeline body, called with the indices for the current step, the
+      input refs, followed by the output refs.
     grid: The grid to use for the pipeline.
     in_specs: The block specs for the inputs.
     out_specs: The block specs for the outputs.
@@ -181,19 +182,19 @@ def emit_pipeline(
       ``max_concurrent_steps``. Generally, you'll want to set it to 1 if you
       don't await the WGMMA in the body.
   """
-  num_steps = math.prod(grid)
-
   if max_concurrent_steps <= delay_release:
     raise ValueError(
         "max_concurrent_steps must be greater than delay_release, but"
         f" {max_concurrent_steps=}, {delay_release=}"
     )
 
+  num_steps = math.prod(grid)
+  has_dynamic_grid = not isinstance(num_steps, int)
+
   # Shrink ``max_concurrent_steps`` if the total number of steps is lower to
   # reduce the size of the refs allocated in SMEM.
-  if max_concurrent_steps > num_steps:
+  if not has_dynamic_grid and max_concurrent_steps > num_steps:
     max_concurrent_steps = num_steps
-    delay_release = 0  # No need to delay anything.
 
   def pipeline(*gmem_refs: pallas_core.AbstractMemoryRef):
     in_gmem_refs, out_gmem_refs = util.split_list(gmem_refs, [len(in_specs)])
@@ -243,11 +244,14 @@ def emit_pipeline(
         )
     ]
 
-    for step, indices in enumerate(
-        it.islice(it.product(*map(range, grid)), max_concurrent_steps)
-    ):
-      indices = tuple(map(lambda i: jnp.asarray(i, dtype=jnp.int32), indices))
-      map(lambda bref: bref.copy_in(step, indices, barrier_ref), in_brefs)
+    # Initialize the pipeline.
+    indices = (jnp.asarray(0, dtype=jnp.int32),) * len(grid)
+    fetch_indices = indices
+    for step in range(max_concurrent_steps):
+      for bref in in_brefs:
+        bref.copy_in(step, fetch_indices, barrier_ref)
+      fetch_indices = _inc_grid_by_1(fetch_indices, grid)
+    del fetch_indices
 
     # This is true if any of the outputs need to be transferred inside the loop.
     copies_out_in_loop = not all(bref.is_index_invariant for bref in out_brefs)
@@ -265,11 +269,13 @@ def emit_pipeline(
             max_concurrent_steps - (1 + delay_release), wait_read_only=True
         )
 
-      with pallas_core.grid_env(map(pallas_core.GridAxis, indices, grid)):
-        body(*(
-            bref.get_ref_for_slot(slot)
-            for bref in it.chain(in_brefs, out_brefs)
-        ))
+      body(
+          indices,
+          *(
+              bref.get_ref_for_slot(slot)
+              for bref in it.chain(in_brefs, out_brefs)
+          ),
+      )
 
       if copies_out_in_loop:
         gpu_primitives.commit_smem()
@@ -323,7 +329,6 @@ def emit_pipeline(
 
     # Invariant: ``indices`` and ``fetch_indices`` are always
     # ``max_concurrent_steps-delay_release`` apart.
-    indices = (jnp.asarray(0, dtype=jnp.int32),) * len(grid)
     fetch_indices = indices
     for _ in range(max_concurrent_steps-delay_release):
       fetch_indices = _inc_grid_by_1(fetch_indices, grid)
@@ -354,13 +359,14 @@ def emit_pipeline(
 
   return pipeline
 
+
 def emit_pipeline_warp_specialized(
     body: Callable[..., None],
     *,
-    grid: pallas_core.StaticGrid,
+    grid: pallas_core.TupleGrid,
     memory_registers: int,
-    in_specs: Sequence[gpu_core.GPUBlockSpec] = (),
-    out_specs: Sequence[gpu_core.GPUBlockSpec] = (),
+    in_specs: Sequence[pl.BlockSpec] = (),
+    out_specs: Sequence[pl.BlockSpec] = (),
     max_concurrent_steps: int = 2,
     wg_axis: str,
     num_compute_wgs: int,
@@ -375,14 +381,16 @@ def emit_pipeline_warp_specialized(
   ``manual_consumed_barriers`` argument is True.
 
   ```
-  def body(*input_refs, *output_refs, [consumed_barriers]) -> None:
+  def body(indices, *input_refs, *output_refs, [consumed_barriers]) -> None:
   ```
 
   or with a carries enabled (enabled via the ``carry_coroutine`` argument),
   where the body returns the next carry:
 
   ```
-  def body(*input_refs, *output_refs, [consumed_barriers], carry) -> Carry:
+  def body(
+      indices, *input_refs, *output_refs, [consumed_barriers], carry
+  ) -> Carry:
   ```
 
   Args:
@@ -422,12 +430,13 @@ def emit_pipeline_warp_specialized(
   # Trace the index maps to determine if they depend on the grid.
   # Grid-independent values will not be multiple-buffered.
   in_spec_has_seq_axis = [
-      ~_is_index_invariant(spec, grid) for spec in in_specs]
+      not _is_index_invariant(spec, grid) for spec in in_specs]
   out_spec_has_seq_axis = [
-      ~_is_index_invariant(spec, grid) for spec in out_specs]
+      not _is_index_invariant(spec, grid) for spec in out_specs]
   spec_has_seq_axis = [*in_spec_has_seq_axis, *out_spec_has_seq_axis]
 
-  num_pipeline_steps = math.prod(grid)
+  num_steps = math.prod(grid)
+  has_dynamic_grid = not isinstance(num_steps, int)
 
   def _get_slot(step, has_seq_dim):
     """Returns the buffer slot given the pipeline step."""
@@ -438,8 +447,8 @@ def emit_pipeline_warp_specialized(
 
   # Shrink ``max_concurrent_steps`` if the total number of steps is lower to
   # reduce the size of the refs allocated in SMEM.
-  if max_concurrent_steps > num_pipeline_steps:
-    max_concurrent_steps = num_pipeline_steps
+  if not has_dynamic_grid and max_concurrent_steps > num_steps:
+    max_concurrent_steps = num_steps
 
   def pipeline(*gmem_refs: pallas_core.AbstractMemoryRef):
     in_gmem_refs, out_gmem_refs = util.split_list(gmem_refs, [len(in_specs)])
@@ -457,7 +466,7 @@ def emit_pipeline_warp_specialized(
           gpu_core.SMEM(
               (slots, *spec.block_shape),   # type: ignore
               gmem_ref.dtype,
-              transforms=spec.transforms,
+              transforms=getattr(spec, "transforms", ()),
           )
       )
     in_smem_refs, out_smem_refs = util.split_list(
@@ -509,13 +518,13 @@ def emit_pipeline_warp_specialized(
       consumed_barrier_refs,
   ):
     in_brefs: Sequence[BufferedRef] = [
-        BufferedRef(spec, ~has_seq_axis, gmem_ref, smem_ref)
+        BufferedRef(spec, not has_seq_axis, gmem_ref, smem_ref)
         for spec, has_seq_axis, gmem_ref, smem_ref in zip(
             in_specs, in_spec_has_seq_axis, in_gmem_refs, in_smem_refs
         )
     ]
     out_brefs: Sequence[BufferedRef] = [
-        BufferedRef(spec, ~has_seq_axis, gmem_ref, smem_ref)
+        BufferedRef(spec, not has_seq_axis, gmem_ref, smem_ref)
         for spec, has_seq_axis, gmem_ref, smem_ref in zip(
             out_specs, out_spec_has_seq_axis, out_gmem_refs, out_smem_refs
         )
@@ -544,18 +553,17 @@ def emit_pipeline_warp_specialized(
         if copies_out_in_loop:
           gpu_primitives.wait_smem_to_gmem(max_concurrent_steps - 1)
 
-        with pallas_core.grid_env(map(pallas_core.GridAxis, indices, grid)):
-          body_refs = []
-          for bref in it.chain(in_brefs, out_brefs):
-            buf_slot = _get_slot(slot, ~bref.is_index_invariant)
-            body_refs.append(bref.get_ref_for_slot(buf_slot))
+        body_refs = []
+        for bref in it.chain(in_brefs, out_brefs):
+          buf_slot = _get_slot(slot, not bref.is_index_invariant)
+          body_refs.append(bref.get_ref_for_slot(buf_slot))
 
-          body_args = body_refs
-          if manual_consumed_barriers:
-            body_args += [consumed_barrier_ref.at[slot] for consumed_barrier_ref in consumed_barrier_refs]
-          if has_carry:
-            body_args += [prev_body_carry]
-          next_body_carry = body(*body_args)
+        body_args = body_refs
+        if manual_consumed_barriers:
+          body_args += [consumed_barrier_ref.at[slot] for consumed_barrier_ref in consumed_barrier_refs]
+        if has_carry:
+          body_args += [prev_body_carry]
+        next_body_carry = body(indices, *body_args)
 
         if not manual_consumed_barriers:
           [consumed_barrier_ref] = consumed_barrier_refs
@@ -580,7 +588,7 @@ def emit_pipeline_warp_specialized(
               new_store_slices[idx],
           )
           slices_changed = ~functools.reduce(lax.bitwise_and, are_same_slices)
-          bref.copy_out(_get_slot(slot, ~bref.is_index_invariant),
+          bref.copy_out(_get_slot(slot, not bref.is_index_invariant),
                         indices,
                         predicate=slices_changed)
         gpu_primitives.commit_smem_to_gmem_group()
@@ -606,7 +614,7 @@ def emit_pipeline_warp_specialized(
         carry_init = None
       init_loop_carry = (init_indices, last_store_slices, carry_init)
       last_indices, _, final_body_carry = lax.fori_loop(0,
-                    num_pipeline_steps,
+                    num_steps,
                     compute_loop_body,
                     init_loop_carry)
       if has_carry:
@@ -620,10 +628,11 @@ def emit_pipeline_warp_specialized(
       # written in the main pipeline loop.
       if not copies_out_in_loop:
         gpu_primitives.commit_smem()
-      last_slot = lax.rem(num_pipeline_steps - 1, max_concurrent_steps)
+      last_slot = lax.rem(num_steps - 1, max_concurrent_steps)
       for bref in out_brefs:
         if bref.is_index_invariant:
-          bref.copy_out(last_slot, last_indices, predicate=None)
+          bref.copy_out(_get_slot(last_slot, has_seq_dim=False),
+                        last_indices, predicate=None)
 
       gpu_primitives.commit_smem_to_gmem_group()
 
@@ -638,7 +647,7 @@ def emit_pipeline_warp_specialized(
       # Begin initial copies.
       for step in range(max_concurrent_steps):
         for bref, barrier in zip(in_brefs, in_smem_barrier_refs):
-          buf_slot = _get_slot(step, ~bref.is_index_invariant)
+          buf_slot = _get_slot(step, not bref.is_index_invariant)
           bref.copy_in(buf_slot, indices, barrier)
         indices = _inc_grid_by_1(indices, grid)
 
@@ -661,10 +670,10 @@ def emit_pipeline_warp_specialized(
           if manual_consumed_barriers:
             gpu_primitives.barrier_wait(consumed_barrier.at[slot])  # pytype: disable=attribute-error
           bref.copy_in(
-              _get_slot(fetch_slot, ~bref.is_index_invariant), indices, barrier)
+              _get_slot(fetch_slot, not bref.is_index_invariant), indices, barrier)
         next_indices = _inc_grid_by_1(indices, grid)
         return (next_indices,)
-      lax.fori_loop(0, num_pipeline_steps - max_concurrent_steps,
+      lax.fori_loop(0, num_steps - max_concurrent_steps,
                     memory_loop_body, (indices,))
 
     wg_idx = lax.axis_index(wg_axis)
@@ -679,8 +688,16 @@ def _compute_registers(
     memory_registers: int,
     num_compute_wgs: int,
 ) -> int:
-  """Returns the number of registers to use for the compute thread."""
-  # TODO(justinfu): Configure this per-platform.
-  n_registers = (512 - memory_registers) / num_compute_wgs
+  """Returns the max number of registers to use in compute threads.
+
+  We start with the theoretical max registers per thread if one wargroup
+  (128 threads) used the entire SM's 64k register file (64k / 128 = 512).
+  Then reserve `memory_registers` for the producer warpgroup and distribute
+  the remaining registers evenly among the compute warpgroups.
+
+  Note: The maximum number of registers per thread is 255, so we clamp
+  the value.
+  """
+  n_registers = min(256, (512 - memory_registers) / num_compute_wgs)
   # Round down to the nearest multiple of 8.
   return int((n_registers // 8) * 8)

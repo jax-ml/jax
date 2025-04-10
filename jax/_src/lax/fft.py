@@ -124,7 +124,7 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
                       f"be equal to fft_lengths {fft_lengths}")
     shape = x.shape
     dtype = x.dtype
-  return x.update(shape=shape, dtype=dtype)
+  return x.update(shape=shape, dtype=dtype, vma=x.vma)
 
 def _fft_lowering(ctx, x, *, fft_type, fft_lengths):
   if not is_constant_shape(fft_lengths):

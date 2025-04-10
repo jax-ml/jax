@@ -1,3 +1,18 @@
+/* Copyright 2024 The JAX Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
 #include <algorithm>
 #include <cstdint>
 #include <functional>
@@ -7,37 +22,33 @@
 #include <utility>
 #include <vector>
 
-#include "llvm/ADT/STLExtras.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-// It requires these headers, but does not include them.
-// NOLINTNEXTLINE(misc-include-cleaner)
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
-// NOLINTNEXTLINE(misc-include-cleaner)
+#include "absl/log/check.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
-#include "llvm/ADT/StringSet.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"  // IWYU pragma: keep
+#include "mlir/Dialect/SCF/IR/SCF.h"  // IWYU pragma: keep
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/Dialect/Vector/Transforms/VectorTransforms.h"
+#include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/Block.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributeInterfaces.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/ImplicitLocOpBuilder.h"
+#include "mlir/IR/OpDefinition.h"
+#include "mlir/IR/Operation.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Region.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "absl/log/check.h"
-#include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/include/mlir/Dialect/Math/IR/Math.h"
-#include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
-#include "mlir/include/mlir/Dialect/Vector/Transforms/VectorTransforms.h"
-#include "mlir/include/mlir/IR/AffineExpr.h"
-#include "mlir/include/mlir/IR/Attributes.h"
-#include "mlir/include/mlir/IR/Block.h"
-#include "mlir/include/mlir/IR/Builders.h"
-#include "mlir/include/mlir/IR/BuiltinAttributes.h"
-#include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
-#include "mlir/include/mlir/IR/OpDefinition.h"
-#include "mlir/include/mlir/IR/Operation.h"
-#include "mlir/include/mlir/IR/PatternMatch.h"
-#include "mlir/include/mlir/IR/Region.h"
-#include "mlir/include/mlir/IR/Value.h"
-#include "mlir/include/mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/vreg_util.h"
 

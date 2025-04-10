@@ -215,7 +215,6 @@ jax_multiplatform_test(
         "gpu_h100",
     ],
     env = {
-        "JAX_PALLAS_USE_MOSAIC_GPU": "1",
         "JAX_PALLAS_VERBOSE_ERRORS": "0",
     },
     deps = [
@@ -329,7 +328,7 @@ jax_multiplatform_test(
         "tpu_gmm_test.py",
     ],
     enable_backends = ["tpu"],
-    shard_count = 50,
+    shard_count = 5,
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
@@ -541,6 +540,21 @@ jax_multiplatform_test(
     ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
 )
 
+jax_multiplatform_test(
+    name = "tpu_splash_attention_kernel_sharded_test",
+    srcs = ["tpu_splash_attention_kernel_sharded_test.py"],
+    enable_configs = [
+        "tpu_v5e_4x2",
+        "tpu_v5p_2x2",
+    ],
+    shard_count = 5,
+    deps = [
+        "//jax:extend",
+        "//jax:pallas_tpu",
+        "//jax:pallas_tpu_ops",
+    ],
+)
+
 # This test doesn't need a TPU; it only tests numpy-using helpers.
 jax_py_test(
     name = "tpu_splash_attention_mask_test",
@@ -663,6 +677,27 @@ jax_multiplatform_test(
     deps = [
         "//jax:pallas",
         "//jax/_src/pallas/fuser",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
+    name = "fusion_test",
+    srcs = [
+        "fusion_test.py",
+    ],
+    disable_configs = [
+        "cpu",
+        "cpu_shardy",
+    ],
+    enable_backends = ["cpu"],
+    tags = [
+        "noasan",
+        "nomsan",
+        "notsan",
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_fuser",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 

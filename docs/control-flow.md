@@ -244,19 +244,19 @@ lax.cond(False, lambda x: x+1, lambda x: x-1, operand)
 
 `jax.lax` provides two other functions that allow branching on dynamic predicates:
 
-- [`lax.select`](https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.select.html) is
+- [`lax.select`](https://docs.jax.dev/en/latest/_autosummary/jax.lax.select.html) is
   like a batched version of `lax.cond`, with the choices expressed as pre-computed arrays
   rather than as functions.
-- [`lax.switch`](https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.switch.html) is
+- [`lax.switch`](https://docs.jax.dev/en/latest/_autosummary/jax.lax.switch.html) is
   like `lax.cond`, but allows switching between any number of callable choices.
 
 In addition, `jax.numpy` provides several numpy-style interfaces to these functions:
 
-- [`jnp.where`](https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.where.html) with
+- [`jnp.where`](https://docs.jax.dev/en/latest/_autosummary/jax.numpy.where.html) with
   three arguments is the numpy-style wrapper of `lax.select`.
-- [`jnp.piecewise`](https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.piecewise.html)
+- [`jnp.piecewise`](https://docs.jax.dev/en/latest/_autosummary/jax.numpy.piecewise.html)
   is a numpy-style wrapper of `lax.switch`, but switches on a list of boolean conditions rather than a single scalar index.
-- [`jnp.select`](https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.select.html) has
+- [`jnp.select`](https://docs.jax.dev/en/latest/_autosummary/jax.numpy.select.html) has
   an API similar to `jnp.piecewise`, but the choices are given as pre-computed arrays rather
   than as functions. It is implemented in terms of multiple calls to `lax.select`.
 

@@ -20,6 +20,7 @@ limitations under the License.
 #ifndef JAXLIB_GPU_VENDOR_H_
 #define JAXLIB_GPU_VENDOR_H_
 
+#include <cstdint>
 #if defined(JAX_GPU_CUDA)
 
 // IWYU pragma: begin_exports
@@ -29,7 +30,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cublas_v2.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "third_party/gpus/cuda/include/cuda_fp8.h"
-#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
+#include "cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/cufft.h"
 #include "third_party/gpus/cuda/include/cusolverDn.h"
 #include "third_party/gpus/cuda/include/cusolver_common.h"
@@ -48,6 +49,7 @@ limitations under the License.
 
 #define JAX_GPU_NAMESPACE cuda
 #define JAX_GPU_PREFIX "cu"
+#define JAX_GPU_PLUGIN_NAME "cuda"
 
 typedef cuComplex gpuComplex;
 typedef cuDoubleComplex gpuDoubleComplex;
@@ -413,6 +415,7 @@ constexpr uint32_t kNumThreadsPerWarp = 32;
 
 #define JAX_GPU_NAMESPACE hip
 #define JAX_GPU_PREFIX "hip"
+#define JAX_GPU_PLUGIN_NAME "rocm"
 
 #define JAX_GPU_HAVE_SPARSE 1
 #define JAX_GPU_HAVE_64_BIT 0

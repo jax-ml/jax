@@ -29,6 +29,7 @@ concurrency:
 jobs:
   build-jax-artifact:
     uses: ./.github/workflows/build_artifacts.yml
+    name: "Build jax artifact"
     with:
         # Note that since jax is a pure python package, the runner OS and Python values do not
         # matter. In addition, cloning main XLA also has no effect.
@@ -43,9 +44,13 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
             # Runner OS and Python values need to match the matrix stategy in the CPU tests job
-            runner: ["linux-x86-n2-16", "linux-arm64-t2a-48", "windows-x86-n2-64"]
+            runner: ["linux-x86-n2-16", "linux-arm64-t2a-48", "windows-x86-n2-16"]
             artifact: ["jaxlib"]
             python: ["3.10"]
+    # Note: For reasons unknown, Github actions groups jobs with the same top-level name in the
+    # dashboard only if we use an expression in the "name" field. Otherwise, it appends the matrix
+    # values to the name and creates a separate entry for each matrix combination.
+    name: "Build ${{ format('{0}', 'jaxlib') }} artifacts"
     with:
         runner: ${{ matrix.runner }}
         artifact: ${{ matrix.artifact }}
@@ -63,6 +68,7 @@ jobs:
           runner: ["linux-x86-n2-16"]
           artifact: ["jax-cuda-plugin", "jax-cuda-pjrt"]
           python: ["3.10",]
+    name: "Build ${{ format('{0}', 'CUDA') }} artifacts"
     with:
       runner: ${{ matrix.runner }}
       artifact: ${{ matrix.artifact }}
@@ -86,6 +92,7 @@ jobs:
           runner: ["linux-x86-n2-64", "linux-arm64-t2a-48", "windows-x86-n2-64"]
           python: ["3.10",]
           enable-x64: [1, 0]
+    name: "Pytest CPU (JAX artifacts version =  ${{ format('{0}', 'head') }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
@@ -103,18 +110,24 @@ jobs:
         fail-fast: false # don't cancel all jobs on failure
         matrix:
           # Python values need to match the matrix stategy in the artifact build jobs above
-          runner: ["linux-x86-g2-48-l4-4gpu", "linux-x86-a3-8g-h100-8gpu"]
+          # See exlusions for what is fully tested
+          runner: ["linux-x86-g2-48-l4-4gpu", "linux-x86-a3-8g-h100-8gpu", "linux-x86-a4-224-b200-1gpu"]
           python: ["3.10",]
-          cuda: ["12.3", "12.1"]
+          cuda: ["12.1", "12.8"]
           enable-x64: [1, 0]
           exclude:
-            # Run only a single configuration on H100 to save resources
+            # H100 runs only a single config, CUDA 12.8 Enable x64 1
             - runner: "linux-x86-a3-8g-h100-8gpu"
-              python: "3.10"
               cuda: "12.1"
             - runner: "linux-x86-a3-8g-h100-8gpu"
-              python: "3.10"
-              enable-x64: 0
+              enable-x64: "0"
+            # B200 runs only a single config, CUDA 12.8 Enable x64 1
+            - runner: "linux-x86-a4-224-b200-1gpu"
+              cuda: "12.1"
+            - runner: "linux-x86-a4-224-b200-1gpu"
+              enable-x64: "0"
+
+    name: "Pytest CUDA (JAX artifacts version =  ${{ format('{0}', 'head') }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
@@ -128,7 +141,7 @@ jobs:
     # build job fails. E.g Windows build job fails but everything else succeeds. In this case, we
     # still want to run the tests for other platforms.
     if: ${{ !cancelled() }}
-    needs: [build-jaxlib-artifact, build-cuda-artifacts]
+    needs: [build-jax-artifact, build-jaxlib-artifact, build-cuda-artifacts]
     uses: ./.github/workflows/bazel_cuda_non_rbe.yml
     strategy:
         fail-fast: false # don't cancel all jobs on failure
@@ -137,6 +150,7 @@ jobs:
           runner: ["linux-x86-g2-48-l4-4gpu",]
           python: ["3.10",]
           enable-x64: [1, 0]
+    name: "Bazel CUDA Non-RBE (JAX artifacts version =  ${{ format('{0}', 'head') }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
@@ -160,7 +174,7 @@ jobs:
             {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
             {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"}
           ]
-    name: "TPU tests (jax=head, jaxlib=head)"
+    name: "Pytest TPU (JAX artifacts version =  ${{ format('{0}', 'head') }})"
     with:
       runner: ${{ matrix.tpu-specs.runner }}
       cores: ${{ matrix.tpu-specs.cores }}

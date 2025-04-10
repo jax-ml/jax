@@ -14,12 +14,15 @@
 
 """Lowering rules and pass for the MLIR Mosaic GPU dialect."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 import dataclasses
 import functools
+import itertools
+import math
 import operator
 from typing import Any, Sequence, Type, cast
 
+from jax._src import lib as jaxlib
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
@@ -33,6 +36,8 @@ from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
+from jax._src.util import safe_zip
+from jax.experimental.mosaic.gpu import layouts as layouts_lib
 import numpy as np
 
 from . import fragmented_array as fa
@@ -58,7 +63,7 @@ class LoweringContext:
     if not _should_lower(op):
       return
 
-    if (name := op.OPERATION_NAME) not in _lowerings:
+    if (name := op.OPERATION_NAME) not in _lowerings:  # pytype: disable=attribute-error
       raise NotImplementedError(f"Missing lowering rule for {op}")
 
     lowering_rule = _lowerings[name]
@@ -200,6 +205,38 @@ def _initialize_barrier_op_lowering_rule(
       barrier_base_ptr, initialize_barrier_op.barriers_ref.type),
 
 
+# TODO(bchetioui): remove once minimum jaxlib >= 0.5.3.
+OptimizationBarrierOp = getattr(mgpu, "OptimizationBarrierOp", None)
+
+
+@_register_lowering(OptimizationBarrierOp)
+def _optimization_barrier_op_lowering_rule(
+    _: LoweringContext,
+    op: OptimizationBarrierOp,
+) -> Sequence[ir.Value]:
+  if not all(ir.VectorType.isinstance(operand.type) for operand in op.operands):
+    raise NotImplementedError(
+        f"Optimization barrier op {op} has non-vector operands."
+    )
+
+  fragmented_arrays = []
+  for operand, layout in safe_zip(op.operands, inference_utils.in_layouts(op)):
+    ty = ir.VectorType(operand.type)
+    is_signed = False if ir.IntegerType.isinstance(ty.element_type) else None
+    fragmented_arrays.append(
+        _fragmented_array_from_ir(operand, layout, is_signed=is_signed)
+    )
+
+  lowered_fragmented_arrays = fa.optimization_barrier(*fragmented_arrays)
+  if isinstance(lowered_fragmented_arrays, fa.FragmentedArray):
+    lowered_fragmented_arrays = [lowered_fragmented_arrays]
+
+  return [
+      _fragmented_array_to_ir(arr, result.type)
+      for arr, result in safe_zip(lowered_fragmented_arrays, op.results)
+  ]
+
+
 @_register_lowering(arith.ConstantOp)
 def _arith_constant_op_lowering_rule(
     _: LoweringContext, op: arith.ConstantOp
@@ -225,6 +262,60 @@ def _arith_constant_op_lowering_rule(
           op.result.type,
       )
   ]
+
+
+def _check_transforms_and_swizzle_are_supported(
+    ref_ty: ir.MemRefType,
+    transforms: Sequence[launch_context.MemRefTransform],
+    swizzle: mgpu.SwizzlingMode,
+    minimum_swizzle: mgpu.SwizzlingMode = mgpu.SwizzlingMode.kNoSwizzle,
+):
+  """Checks that the list of provided transforms and swizzle are supported.
+
+  Currently, we allow the following:
+    - any swizzle that is larger than or equal to `minimum_swizzle`;
+    - optionally, a single tile transform (with rank equal to the rank of the
+      memref being annotated);
+    - optionally, a single transpose transform.
+  """
+  if swizzle < minimum_swizzle:
+    raise NotImplementedError(
+        f"Unsupported swizzle {swizzle} smaller than {minimum_swizzle}."
+    )
+
+  partitioned_transforms = {
+      k: list(v)
+      for k, v in itertools.groupby(
+          transforms, lambda t: isinstance(t, launch_context.TileTransform)
+      )
+  }
+
+  tile_transforms = partitioned_transforms.get(True, [])
+  other_transforms = partitioned_transforms.get(False, [])
+
+  if len(tile_transforms) > 1:
+    raise NotImplementedError(
+        f"{tile_transforms} contains more than one tile transform."
+    )
+
+  if len(tile_transforms) == 1:
+    if len(tile_transforms[0].tiling) != len(ref_ty.shape):
+      raise NotImplementedError(
+          f"Only tile transforms with rank equal to the rank of the memref "
+          f"being annotated are supported but got {tile_transforms[0]} for "
+          f"{ref_ty}."
+      )
+
+  if len(other_transforms) > 1:
+    raise NotImplementedError(
+        f"{other_transforms} contains more than one transform."
+    )
+
+  if len(other_transforms) == 1:
+    if not isinstance(other_transforms[0], launch_context.TransposeTransform):
+      raise NotImplementedError(
+          f"{other_transforms[0]} is not a transpose transform."
+      )
 
 
 @_register_lowering(vector.LoadOp)
@@ -259,15 +350,18 @@ def _vector_load_op_lowering_rule(
         is_signed=is_signed,
         vec_size=strided_layout.vec_size,
     )
-  elif layouts.from_layout_attr(out_layout_attr) == fa.TILED_LAYOUT_WGMMA:
-    layout = ir.MemRefType(vector_load_op.base.type).layout
-    swizzle, transforms = memref_layout_to_swizzle_and_transforms(layout)
-    transformed_ref = transform_memref(vector_load_op.base, transforms)
+  elif layouts.from_layout_attr(out_layout_attr) == fa.WGMMA_LAYOUT:
+    swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+        inference_utils.in_transforms(vector_load_op)[0]
+    )
+    ref_ty = ir.MemRefType(vector_load_op.base.type)
+    _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
+    transformed_ref = reinterpret_smem_ref(vector_load_op.base, transforms)
     fragmented_array = fa.FragmentedArray.load_tiled(
         transformed_ref,
         swizzle=swizzle,
         is_signed=is_signed,
-        layout=fa.TILED_LAYOUT_WGMMA,
+        layout=fa.WGMMA_LAYOUT,
     )
   else:
     raise ValueError(
@@ -297,8 +391,22 @@ def _vector_store_op_lowering_rule(
       vector_store_op.valueToStore, to_store_layout
   )
 
-  # TODO(dasenov): This is not efficient for WGMMA layouts
-  fragmented_array.store_untiled(vector_store_op.base)
+  if fragmented_array.layout == fa.WGMMA_LAYOUT:
+    swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+        inference_utils.in_transforms(vector_store_op)[0]
+    )
+    ref_ty = ir.MemRefType(vector_store_op.base.type)
+    _check_transforms_and_swizzle_are_supported(ref_ty, transforms, swizzle)
+    fragmented_array.store_tiled(
+        reinterpret_smem_ref(vector_store_op.base, transforms), swizzle
+    )
+  elif (isinstance(fragmented_array.layout, fa.WGStridedFragLayout) or
+        isinstance(fragmented_array.layout, fa.WGSplatFragLayout)):
+    fragmented_array.store_untiled(vector_store_op.base)
+  else:
+    raise ValueError(
+        f"{vector_store_op} has an unsupported layout: {to_store_layout}"
+    )
 
   return []
 
@@ -320,69 +428,170 @@ def _vector_splat_op_lowering_rule(
   return [_fragmented_array_to_ir(fragmented_array, out_vec_ty)]
 
 
-def memref_layout_to_swizzle_and_transforms(
-    layout: ir.Attribute,
-) -> tuple[mgpu.SwizzlingMode, tuple[launch_context.MemRefTransform, ...]]:
-  """Returns the swizzle and transforms that are encoded in the given layout.
+@_register_lowering(vector.ShapeCastOp)
+def _vector_shape_cast_op_lowering_rule(
+    _: LoweringContext, op: vector.ShapeCastOp
+) -> Sequence[ir.Value]:
+  [layout] = inference_utils.in_layouts(op)
+  out_vec_ty = ir.VectorType(op.result.type)
+  assert out_vec_ty.has_static_shape
+  is_signed = (
+      False if ir.IntegerType.isinstance(out_vec_ty.element_type) else None
+  )
+  a = _fragmented_array_from_ir(op.source, layout, is_signed)
+  return [_fragmented_array_to_ir(a.reshape(out_vec_ty.shape), out_vec_ty)]
 
-    If the layout is not a LayoutAttr, the swizzle is kNoSwizzle and the
-    transforms are empty. Otherwise, the layout may have at most one swizzle
-    transform and any combination of tiling and transpose transforms.
+
+@_register_lowering(vector.ReductionOp)
+def _vector_reduction_op_lowering_rule(
+    ctx: LoweringContext, op: vector.ReductionOp
+) -> Sequence[ir.Value]:
+  del ctx  # Unused.
+  [layout] = inference_utils.in_layouts(op)
+  () = inference_utils.out_layouts(op)
+  element_type = ir.VectorType(op.vector.type).element_type
+  is_signed = False if ir.IntegerType.isinstance(element_type) else None
+  a = _fragmented_array_from_ir(op.vector, layout, is_signed)
+  match str(op.kind):
+    case "#vector.kind<add>":
+      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+      scratch = _slice_smem(
+          ir.MemRefType.get([4], element_type, memory_space=smem),
+          arith.constant(None, op.attributes["offset"]),
+      )
+      result = a.reduce_sum(scratch)
+    case (
+        "#vector.kind<maxsi>" | "#vector.kind<maxui>" | "#vector.kind<maximumf>"
+    ):
+      # TODO(slebedev): Implement this and remove the raise below.
+      raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
+    case _:
+      raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
+  return [_fragmented_array_to_ir(result, op.result.type)]
+
+
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.5.4.
+if jaxlib.version >= (0, 5, 4):
+  @_register_lowering(mgpu.LayoutCastOp)
+  def _mgpu_layout_cast_op_lowering_rule(
+      _: LoweringContext, layout_cast_op: mgpu.LayoutCastOp
+  ) -> Sequence[ir.Value]:
+    return [layout_cast_op.x]
+
+
+def swizzle_and_transforms_from_transforms_attr(
+    transforms: ir.ArrayAttr,
+) -> tuple[mgpu.SwizzlingMode, tuple[launch_context.MemRefTransform, ...]]:
+  """Returns the swizzle and MemrefTransforms for the given transforms.
+
+  Args:
+    transforms: a list of transform attributes.
+
+  Returns:
+    A tuple containing the swizzle mode and MemRefTransforms corresponding to
+    the parameter transforms. If `transforms` is empty, or does not contain
+    any swizzling transform, the swizzle mode is assumed to be kNoSwizzle.
+  Raises:
+    ValueError: if a swizzling transform is followed by any transform.
   """
   swizzle = None
   gmem_transforms: list[launch_context.MemRefTransform] = []
 
-  if mgpu.LayoutAttr.isinstance(layout):
-    transforms_attr = mgpu.LayoutAttr(layout).transforms
-    for transform in transforms_attr:
-      if swizzle is not None:
-        raise ValueError(f"{layout} contains more transforms after the initial swizzle.")
-      if mgpu.SwizzleTransformAttr.isinstance(transform):
-        # TODO(dasenov): Swizzling can change if the ref is sliced in certain
-        # ways. We might want to enforce some restrictions here.
-        swizzle = mgpu.SwizzleTransformAttr(transform).swizzle
-      elif mgpu.TileTransformAttr.isinstance(transform):
-        tiling = mgpu.TileTransformAttr(transform).tiling
-        tiling_transform = launch_context.TileTransform(tuple(tiling))
-        gmem_transforms.append(tiling_transform)
-      elif mgpu.TransposeTransformAttr.isinstance(transform):
-        permutation = mgpu.TransposeTransformAttr(transform).permutation
-        transpose_transform = launch_context.TransposeTransform(
-            tuple(permutation)
-        )
-        gmem_transforms.append(transpose_transform)
-      else:
-        raise ValueError(f"{layout} has an unsupported transform: {transform}")
+  for transform in transforms:
+    if swizzle is not None:
+      raise ValueError(f"{transforms} contain more transforms after swizzle.")
+    if mgpu.SwizzleTransformAttr.isinstance(transform):
+      # TODO(dasenov): Swizzling can change if the ref is sliced in certain
+      # ways. We might want to enforce some restrictions here.
+      swizzle = mgpu.SwizzleTransformAttr(transform).swizzle
+    elif mgpu.TileTransformAttr.isinstance(transform):
+      tiling = mgpu.TileTransformAttr(transform).tiling
+      tiling_transform = launch_context.TileTransform(tuple(tiling))
+      gmem_transforms.append(tiling_transform)
+    elif mgpu.TransposeTransformAttr.isinstance(transform):
+      permutation = mgpu.TransposeTransformAttr(transform).permutation
+      transpose_transform = launch_context.TransposeTransform(
+          tuple(permutation)
+      )
+      gmem_transforms.append(transpose_transform)
+    else:
+      raise ValueError("Unknown transform: {transform}")
 
   return swizzle or mgpu.SwizzlingMode.kNoSwizzle, tuple(gmem_transforms)
 
 
-def transform_memref(
-    mem_ref: ir.Value, transforms: tuple[launch_context.MemRefTransform, ...]
+def _is_memref_transposed(mem_ref_type: ir.MemRefType) -> bool:
+  strides, _ = mem_ref_type.get_strides_and_offset()
+  prev_stride = math.inf
+  for stride in strides:
+    if stride > prev_stride:
+      return True
+    prev_stride = stride
+  return False
+
+
+def reinterpret_smem_ref(
+    ref: ir.Value,
+    transforms: tuple[launch_context.MemRefTransform, ...],
 ) -> ir.Value:
-  """Reinterprets the memref to one where the shape is transformed as given."""
-  if not transforms:
-    return mem_ref
+  """Applies transforms on the ref, and makes sure that their effect is
+  propagated appropriately on the strides.
 
-  mem_ref_type = ir.MemRefType(mem_ref.type)
-  if mem_ref_type.memory_space != ir.Attribute.parse(
-      "#gpu.address_space<workgroup>"
-  ):
-    raise ValueError(f"Only workgroup memory is supported but got {mem_ref}.")
+  This function is used any time we lower from a dialect SMEM ref (2D for wgmma)
+  with given transforms to a "physical" SMEM ref (4D for wgmma) that is fully
+  transformed and transposed as needed.
+  """
+  ref_ty = ir.MemRefType(ref.type)
+  transposed = _is_memref_transposed(ref_ty)
+  if not transforms and not transposed:
+    return ref
 
-  shape = mem_ref_type.shape
+  if ref_ty.memory_space != ir.Attribute.parse("#gpu.address_space<workgroup>"):
+    raise ValueError(f"Only workgroup memory is supported but got {ref}.")
+
+  shape = ref_ty.shape
+  if transposed:
+    if len(shape) != 2:
+      raise NotImplementedError(
+          f"Only 2D shapes can be transposed, but got {shape}"
+      )
+    strides, _ = ref_ty.get_strides_and_offset()
+    if strides[0] != 1 or strides[1] != shape[0]:
+      raise NotImplementedError(
+          f"Only contiguous 2D memrefs can be transposed, but got {ref_ty}"
+      )
+
   for t in transforms:
-    shape = t.transform_shape(shape)
+    shape = list(t.transform_shape(shape))
 
-  memref_new_type = ir.MemRefType.get(
+  if transposed:
+    # The expected output is a transposed ref and `shape` is already transposed.
+    # We need to compute the correct strides to match the shape.
+    if len(shape) == 2:
+      minor_to_major_stride_order = (1, 0)
+    elif len(shape) == 4:
+      minor_to_major_stride_order = (2, 3, 0, 1)
+    else:
+      raise NotImplementedError(
+          f"Expected a 2D or 4D shape after transforms, but got {shape}"
+      )
+    strides = [1]*len(shape)
+    for i in minor_to_major_stride_order[1:]:
+      strides[i] = strides[i-1] * shape[i-1]
+    layout = ir.StridedLayoutAttr.get(0, strides)
+  else:
+    layout = None
+
+  new_ref_ty = ir.MemRefType.get(
       shape,
-      mem_ref_type.element_type,
-      memory_space=mem_ref_type.memory_space,
+      ref_ty.element_type,
+      memory_space=ref_ty.memory_space,
+      layout=layout,
   )
-
   ms = utils.WORKGROUP_NVPTX_ADDRESS_SPACE
-  ptr = utils.memref_ptr(mem_ref, memory_space=ms)
-  return utils.ptr_as_memref(ptr, memref_new_type, ptr_memory_space=ms)
+  ptr = utils.memref_ptr(ref, memory_space=ms)
+  ref = utils.ptr_as_memref(ptr, new_ref_ty, ptr_memory_space=ms)
+  return ref
 
 
 @_register_lowering(mgpu.AsyncLoadOp)
@@ -392,8 +601,14 @@ def _mgpu_async_load_op_lowering_rule(
   assert ctx.launch_context is not None
   barrier = utils.BarrierRef.from_dialect_barrier_memref(load_op.barrier)
 
-  dst_layout = ir.MemRefType(load_op.destination.type).layout
-  swizzle, transforms = memref_layout_to_swizzle_and_transforms(dst_layout)
+  if inference_utils.has_in_transforms_set(load_op):
+    [transforms] = inference_utils.in_transforms(load_op)
+    swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+        transforms
+    )
+  else:
+    swizzle = mgpu.SwizzlingMode.kNoSwizzle
+    transforms = ()
 
   gmem_slice = []
   for idx_i32, size in zip(load_op.indices, load_op.slice_lengths):
@@ -401,10 +616,16 @@ def _mgpu_async_load_op_lowering_rule(
     v = idx if size < 0 else utils.DynamicSlice(idx, size)
     gmem_slice.append(v)
 
+  # TODO(dasenov): async_copy requires all GMEM strides except the last one
+  # to be a multiple of 16 bytes. This restriction could be loosned with
+  # strided layouts when they are contiguous in GMEM. In that case, we could do:
+  # flatten -> async_copy -> unflatted here, as long as flattened size is a
+  # multiple of 16.
+
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
       src_ref=load_op.source,
-      dst_ref=transform_memref(load_op.destination, transforms),
+      dst_ref=reinterpret_smem_ref(load_op.destination, transforms),
       gmem_slice=tuple(gmem_slice),
       barrier=barrier,
       arrive=False,
@@ -422,8 +643,14 @@ def _mgpu_async_store_op_lowering_rule(
 ) -> Sequence[ir.Value]:
   assert ctx.launch_context is not None
 
-  src_layout = ir.MemRefType(store_op.source.type).layout
-  swizzle, transforms = memref_layout_to_swizzle_and_transforms(src_layout)
+  if inference_utils.has_in_transforms_set(store_op):
+    [transforms] = inference_utils.in_transforms(store_op)
+    swizzle, transforms = swizzle_and_transforms_from_transforms_attr(
+        transforms
+    )
+  else:
+    swizzle = mgpu.SwizzlingMode.kNoSwizzle
+    transforms = ()
 
   gmem_slice = []
   for idx_i32, size in zip(store_op.indices, store_op.slice_lengths):
@@ -431,9 +658,15 @@ def _mgpu_async_store_op_lowering_rule(
     v = idx if size < 0 else utils.DynamicSlice(idx, size)
     gmem_slice.append(v)
 
+  # TODO(dasenov): async_copy requires all GMEM strides except the last one
+  # to be a multiple of 16 bytes. This restriction could be loosned with
+  # strided layouts when they are contiguous in GMEM. In that case, we could do:
+  # flatten -> async_copy -> unflatted here, as long as flattened size is a
+  # multiple of 16.
+
   # TODO(dasenov): Add support for the remaining op properties.
   ctx.launch_context.async_copy(
-      src_ref=transform_memref(store_op.source, transforms),
+      src_ref=reinterpret_smem_ref(store_op.source, transforms),
       dst_ref=store_op.destination,
       gmem_slice=tuple(gmem_slice),
       swizzle=swizzle,
@@ -636,7 +869,7 @@ def _mgpu_wgmma_op_lowering_rule(
       *inference_utils.out_layouts(wgmma_op),
   )
   is_supported_layout = (
-      lambda l: layouts.from_tiled_layout_attr(l) == fa.TILED_LAYOUT_WGMMA
+      lambda l: layouts.from_tiled_layout_attr(l) == fa.WGMMA_LAYOUT
   )
   if not all(map(is_supported_layout, fa_layouts)):
     raise ValueError("Layout mismatch")
@@ -649,31 +882,44 @@ def _mgpu_wgmma_op_lowering_rule(
   regs = acc_in.to_layout(fa.WGMMA_LAYOUT)
   acc = wgmma.WGMMAAccumulator.from_registers(regs)
 
-  b_layout = ir.MemRefType(wgmma_op.b.type).layout
-  b_swizzle, b_transforms = memref_layout_to_swizzle_and_transforms(b_layout)
-  b_operand = transform_memref(wgmma_op.b, b_transforms)
-  if wgmma_op.transpose_b:
-    b_operand = utils.memref_transpose(b_operand, (0, 1, 3, 2))
+  if ir.VectorType.isinstance(wgmma_op.a.type):
+    a_transforms = None
+    b_transforms = inference_utils.in_transforms(wgmma_op)[0]
+  else:
+    a_transforms, b_transforms = inference_utils.in_transforms(wgmma_op)
+
+  b_swizzle, b_transforms = swizzle_and_transforms_from_transforms_attr(
+      b_transforms
+  )
+  minimum_swizzle = mgpu.SwizzlingMode.k32ByteSwizzle
+  ref_ty = ir.MemRefType(wgmma_op.b.type)
+  _check_transforms_and_swizzle_are_supported(
+      ref_ty, b_transforms, b_swizzle, minimum_swizzle
+  )
+  b_operand = reinterpret_smem_ref(wgmma_op.b, b_transforms)
 
   if ir.VectorType.isinstance(wgmma_op.a.type):
     a_operand = _fragmented_array_from_ir(wgmma_op.a, wgmma_layout)
   else:
-    a_layout = ir.MemRefType(wgmma_op.a.type).layout
-    a_swizzle, a_transforms = memref_layout_to_swizzle_and_transforms(a_layout)
+    a_swizzle, a_transforms = swizzle_and_transforms_from_transforms_attr(
+        a_transforms
+    )
+    ref_ty = ir.MemRefType(wgmma_op.a.type)
+    _check_transforms_and_swizzle_are_supported(
+        ref_ty, a_transforms, a_swizzle, minimum_swizzle
+    )
     if a_swizzle != b_swizzle:
       raise ValueError(
           f"Non-matching swizzles of operands a and b in WGMMA: {a_swizzle} !="
           f" {b_swizzle}"
       )
-    a_operand = transform_memref(wgmma_op.a, a_transforms)
-    if wgmma_op.transpose_a:
-      a_operand = utils.memref_transpose(a_operand, (0, 1, 3, 2))
+    a_operand = reinterpret_smem_ref(wgmma_op.a, a_transforms)
 
   new_acc = wgmma.wgmma(acc, a_operand, b_operand, swizzle=b_swizzle)
 
   return [
       _fragmented_array_to_ir(
-          new_acc.value.to_layout(fa.TILED_LAYOUT_WGMMA),
+          new_acc.value.to_layout(fa.WGMMA_LAYOUT),
           wgmma_op.accumulator.type,
       )
   ]
@@ -704,25 +950,82 @@ def _mgpu_wait_op_lowering_rule(
   return []
 
 
-# TODO(bchetioui): remove this once jaxlib minimum version >= 0.5.2.
-SliceSMEMOp = getattr(mgpu, "SliceSMEMOp", None)
-
-
-@_register_lowering(SliceSMEMOp)
+@_register_lowering(mgpu.SliceSMEMOp)
 def _mgpu_slice_smem_op_lowering_rule(
-    ctx: LoweringContext, op: SliceSMEMOp
+    ctx: LoweringContext, op: mgpu.SliceSMEMOp
 ) -> Sequence[ir.Value]:
   del ctx
+  return [_slice_smem(op.result.type, op.offset)]
+
+
+def _slice_smem(result: ir.Type, offset: ir.Value):
   i8 = ir.IntegerType.get_signless(8)
   smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
-
   smem_base = gpu.dynamic_shared_memory(
       ir.MemRefType.get((utils.DYNAMIC,), i8, memory_space=smem)
   )
+  offset = arith.index_cast(ir.IndexType.get(), offset)
+  return memref.view(result, smem_base, offset, [])
 
-  offset = arith.index_cast(ir.IndexType.get(), op.offset)
 
-  return [memref.view(op.result.type, smem_base, offset, [])]
+# The metadata needed to recostruct a vector from its flattened representation.
+_VectorTemplate = tuple[Sequence[int], fa.FragmentedLayout, ir.VectorType]
+
+
+def _flatten_ir_values(
+    values: Sequence[ir.Value], fa_layouts: Iterable[ir.Attribute]
+) -> tuple[Sequence[ir.Value], Sequence[_VectorTemplate | None]]:
+  """Flattens a sequence of values.
+
+  Non-vector values are preserved as is. Vectors are mapped to fragmented
+  arrays and then flattened into per-register values.
+
+  Args:
+    values: The sequence of values to flatten.
+    fa_layouts: The layouts of vectors in ``values``.
+
+  Returns:
+    A tuple of (flattened values, templates). The templates are used to
+    reconstruct the vectors from the per-register  values.
+  """
+  fa_layouts_it = iter(fa_layouts)
+  result = []
+  templates = []
+  for v in values:
+    if ir.VectorType.isinstance(v.type):
+      fa = _fragmented_array_from_ir(v, next(fa_layouts_it))
+      result.extend(fa.registers.flat)
+      templates.append((fa.registers.shape, fa.layout, ir.VectorType(v.type)))
+    else:
+      result.append(v)
+      templates.append(None)
+  return result, templates
+
+
+def _unflatten_ir_values(
+    flat_values: Sequence[ir.Value], templates: Sequence[_VectorTemplate | None]
+) -> Sequence[ir.Value]:
+  """The inverse of ``_flatten_ir_values``."""
+  result = []
+  flat_values_it = iter(flat_values)
+  for template in templates:
+    if template is None:
+      result.append(next(flat_values_it))
+      continue
+    registers_shape, layout, vec_type = template
+    value_registers = np.asarray(
+        [next(flat_values_it) for _ in range(math.prod(registers_shape))],
+        dtype=object,
+    )
+    value = fa.FragmentedArray(
+        _registers=value_registers.reshape(registers_shape),
+        _layout=layout,
+        _is_signed=False
+        if ir.IntegerType.isinstance(vec_type.element_type)
+        else None,
+    )
+    result.append(_fragmented_array_to_ir(value, vec_type))
+  return result
 
 
 @_register_lowering(scf.ForOp)
@@ -737,60 +1040,22 @@ def _for_op_lowering_rule(
   yield_layouts = inference_utils.in_layouts(yield_op)
   if in_layouts != out_layouts or in_layouts != yield_layouts:
     raise ValueError("Layout mismatch")
-  fa_layouts = in_layouts
 
-  fa_layouts_it = iter(fa_layouts)
-  arg_template = [
-      (_fragmented_array_from_ir(arg, next(fa_layouts_it)), arg.type)
-      if ir.VectorType.isinstance(arg.type)
-      else (arg, arg.type)
-      for arg in for_op.initArgs
-  ]
-  def lower_carry(carry):
-    fa_layouts_it = iter(fa_layouts)
-    carry_with_fas = [
-        _fragmented_array_from_ir(arg, next(fa_layouts_it))
-        if ir.VectorType.isinstance(arg.type)
-        else arg
-        for arg in carry
-    ]
-    lowered_carry = []
-    for c in carry_with_fas:
-      if isinstance(c, fa.FragmentedArray):
-        lowered_carry.extend(c.registers.flat)
-      else:
-        lowered_carry.append(c)
-    return lowered_carry
-
-  def recreate_carry(lowered_carry):
-    recreated_carry = []
-    arg_it = iter(lowered_carry)
-    for arg_value, arg_type in arg_template:
-      if isinstance(arg_value, fa.FragmentedArray):
-        carry_registers = np.asarray(
-            [next(arg_it) for _ in arg_value.registers.flat], dtype=object
-        )
-        carry_registers = carry_registers.reshape(arg_value.registers.shape)
-        carry = fa.FragmentedArray(
-            _registers=carry_registers,
-            _layout=arg_value.layout,
-            _is_signed=arg_value.is_signed,
-        )
-        recreated_carry.append(_fragmented_array_to_ir(carry, arg_type))
-      else:
-        recreated_carry.append(next(arg_it))
-    return recreated_carry
-
+  flat_init_args, args_template = _flatten_ir_values(
+      for_op.initArgs, in_layouts
+  )
   new_for_op = scf.ForOp(
       for_op.lowerBound,
       for_op.upperBound,
       for_op.step,
-      lower_carry(for_op.initArgs),
+      flat_init_args,
   )
   with ir.InsertionPoint(new_for_op.body):
-    recreated_carry = recreate_carry(new_for_op.body.arguments[1:])
+    recreated_carry = _unflatten_ir_values(
+        new_for_op.body.arguments[1:], args_template
+    )
     ops_to_lower = []
-    for op in for_op.body:
+    for op in [*for_op.body]:
       if op == yield_op:
         continue
       mgpu.private_operation_remove_from_parent(op)
@@ -805,16 +1070,80 @@ def _for_op_lowering_rule(
       ctx.lower_op(op)
 
   with ir.InsertionPoint(new_for_op.body):
-    new_yield_operands = lower_carry(yield_op.operands)
+    flat_operands, _ = _flatten_ir_values(yield_op.operands, in_layouts)
     yield_op.erase()
-    scf.yield_(new_yield_operands)
-  return recreate_carry(new_for_op.results)
+    scf.yield_(flat_operands)
+
+  return _unflatten_ir_values(new_for_op.results, args_template)
+
+
+def _infer_flat_result_types(
+    op: ir.OpView, out_layouts: Sequence[ir.Attribute]
+) -> Sequence[ir.Type]:
+  result_types: list[ir.Type] = []
+  out_layouts_it = iter(out_layouts)
+  for r in op.results:
+    if not ir.VectorType.isinstance(r.type):
+      result_types.append(r.type)
+      continue
+    vec_type = ir.VectorType(r.type)
+    layout = layouts_lib.from_layout_attr(next(out_layouts_it))
+    result_types.extend(
+        [layout.registers_element_type(vec_type.element_type)]
+        * math.prod(layout.registers_shape(tuple(vec_type.shape)))
+    )
+  return result_types
+
+
+@_register_lowering(scf.IfOp)
+def _if_op_lowering_rule(
+    ctx: LoweringContext, if_op: scf.IfOp
+) -> MlirLoweringRuleResult:
+  if not inference_utils.should_have_layout(if_op):
+    return _traverse_op_lowering_rule(ctx, if_op)
+
+  raise NotImplementedError
+
+
+@_register_lowering(scf.IndexSwitchOp)
+def _index_switch_op_lowering_rule(
+    ctx: LoweringContext, switch_op: scf.IndexSwitchOp
+) -> MlirLoweringRuleResult:
+  if not inference_utils.should_have_layout(switch_op):
+    return _traverse_op_lowering_rule(ctx, switch_op)
+
+  out_layouts = inference_utils.out_layouts(switch_op)
+  new_switch_op = scf.IndexSwitchOp(
+      _infer_flat_result_types(switch_op, out_layouts),
+      switch_op.arg,
+      switch_op.cases,
+      len(switch_op.regions) - 1,
+  )
+
+  results_template: Sequence[_VectorTemplate | None] = []
+  for region, new_region in zip(
+      switch_op.regions, new_switch_op.regions, strict=True
+  ):
+    [block] = region.blocks
+    new_block = new_region.blocks.append()
+    with ir.InsertionPoint(new_block):
+      for op in [*block]:
+        if not isinstance(op, scf.YieldOp):
+          mgpu.private_operation_remove_from_parent(op)
+          mgpu.private_block_append_owned_operation(new_block, op)
+          ctx.lower_op(op)
+          continue
+        if inference_utils.in_layouts(op) != out_layouts:
+          raise ValueError("Layout mismatch")
+        flat_results, results_template = _flatten_ir_values(
+            op.operands, out_layouts
+        )
+        scf.yield_(flat_results)
+  return _unflatten_ir_values(new_switch_op.results, results_template)
 
 
 @_register_lowering(func.FuncOp)
 @_register_lowering(gpu.LaunchOp)
-@_register_lowering(scf.IfOp)  # TODO(apaszke,bchetioui): Add a proper rule.
-@_register_lowering(scf.IndexSwitchOp)  # TODO(apaszke,bchetioui): Add a proper rule.
 def _traverse_op_lowering_rule(
     ctx: LoweringContext, op: ir.OpView
 ) -> MlirLoweringRuleResult:
@@ -859,14 +1188,15 @@ def single_thread_predicates(module: ir.Module) -> tuple[ir.Value, ir.Value]:
 def _should_lower(op: ir.OpView) -> bool:
   """Returns 'true' if the operation should be lowered."""
   return (
-      op.OPERATION_NAME.startswith("mosaic_gpu.")
+      op.OPERATION_NAME.startswith("mosaic_gpu.")  # pytype: disable=attribute-error
       or inference_utils.should_have_layout(op)
       or any(bool(b) for r in op.regions for b in r)  # Does it have subblocks?
   )
 
 
 def lower_mgpu_dialect(
-    module: ir.Module, launch_context: launch_context.LaunchContext | None
+    module: ir.Module,
+    launch_context: launch_context.LaunchContext | None,
 ):
   # TODO(apaszke,bchetioui): Make sure the layouts match.
   # TODO(bchetioui): rethink this API. It doesn't make sense to pass in a full

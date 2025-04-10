@@ -15,10 +15,10 @@ limitations under the License.
 
 #include "jaxlib/mosaic/gpu/serde.h"
 
-#include "llvm/include/llvm/ADT/StringMap.h"
-#include "llvm/include/llvm/ADT/StringRef.h"
-#include "mlir/include/mlir/IR/BuiltinOps.h"
-#include "mlir/include/mlir/Support/LLVM.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringRef.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/serde.h"
 
 namespace mosaic::gpu {

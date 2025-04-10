@@ -31,6 +31,7 @@ build -c opt
 build --output_filter=DONT_MATCH_ANYTHING
 
 build --copt=-DMLIR_PYTHON_PACKAGE_PREFIX=jaxlib.mlir.
+build --copt=-DNB_DOMAIN=jax
 
 # #############################################################################
 # Platform Specific configs below. These are automatically picked up by Bazel
@@ -97,6 +98,7 @@ build:windows --incompatible_strict_action_env=true
 # #############################################################################
 build:nonccl --define=no_nccl_support=true
 
+build --repo_env USE_PYWRAP_RULES=1
 build:posix --copt=-fvisibility=hidden
 build:posix --copt=-Wno-sign-compare
 build:posix --cxxopt=-std=c++17
@@ -130,19 +132,21 @@ build:clang --copt=-Wno-gnu-offsetof-extensions
 build:clang --copt=-Qunused-arguments
 # Error on struct/class mismatches, since this causes link failures on Windows.
 build:clang --copt=-Werror=mismatched-tags
+# Required when building with clang>=19, see jax-ml/jax#27091
+build:clang --copt=-Wno-error=c23-extensions
 
 # Configs for CUDA
 build:cuda --repo_env TF_NEED_CUDA=1
 build:cuda --repo_env TF_NCCL_USE_STUB=1
 # "sm" means we emit only cubin, which is forward compatible within a GPU generation.
 # "compute" means we emit both cubin and PTX, which is larger but also forward compatible to future GPU generations.
-build:cuda --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_80,compute_90"
+build:cuda --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_80,sm_90,sm_100,compute_120"
 build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
 build:cuda --@local_config_cuda//:enable_cuda
 
 # Default hermetic CUDA and CUDNN versions.
-build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.3.2"
-build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.1.1"
+build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.8.0"
+build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.8.0"
 build:cuda --@local_config_cuda//cuda:include_cuda_libs=true
 
 # This config is used for building targets with CUDA libraries from stubs.

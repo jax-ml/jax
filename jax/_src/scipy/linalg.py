@@ -2182,3 +2182,64 @@ def hilbert(n: int) -> Array:
   """
   a = lax.broadcasted_iota(jnp.float64, (n, 1), 0)
   return 1/(a + a.T + 1)
+
+@partial(jit, static_argnames=("n", "kind",))
+def pascal(n: int, kind: str | None = None) -> Array:
+  r"""Create a Pascal matrix approximation of order n.
+
+  JAX implementation of :func:`scipy.linalg.pascal`.
+
+  The elements of the Pascal matrix approximate the binomial coefficents. This
+  implementation is not exact as JAX does not support exact factorials.
+
+  Args:
+    n: the size of the matrix to create.
+    kind: (optional) must be one of ``lower``, ``upper``, or ``symmetric`` (default).
+
+  Returns:
+    A Pascal matrix of shape ``(n, n)``
+
+  Examples:
+    >>> with jnp.printoptions(precision=3):
+    ...   print(jax.scipy.linalg.pascal(3, kind="lower"))
+    ...   print(jax.scipy.linalg.pascal(4, kind="upper"))
+    ...   print(jax.scipy.linalg.pascal(5))
+    [[1. 0. 0.]
+     [1. 1. 0.]
+     [1. 2. 1.]]
+    [[1. 1. 1. 1.]
+     [0. 1. 2. 3.]
+     [0. 0. 1. 3.]
+     [0. 0. 0. 1.]]
+    [[ 1.  1.  1.  1.  1.]
+     [ 1.  2.  3.  4.  5.]
+     [ 1.  3.  6. 10. 15.]
+     [ 1.  4. 10. 20. 35.]
+     [ 1.  5. 15. 35. 70.]]
+  """
+  if kind is None:
+    kind = "symmetric"
+
+  valid_kind = ["symmetric", "lower", "upper"]
+
+  if kind not in valid_kind:
+    raise ValueError(f"Expected kind to be on of: {valid_kind}; got {kind}")
+
+  a = jnp.arange(n, dtype=jnp.float32)
+
+  L_n = _binom(a[:, None], a[None, :])
+
+  if kind == "lower":
+    return L_n
+
+  if kind == "upper":
+    return L_n.T
+
+  return jnp.dot(L_n, L_n.T)
+
+@jit
+def _binom(n, k):
+  a = lax.lgamma(n + 1.0)
+  b = lax.lgamma(n - k + 1.0)
+  c = lax.lgamma(k + 1.0)
+  return lax.exp(a - b - c)

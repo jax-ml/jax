@@ -35,7 +35,9 @@ pytype_strict_library(
         "//jaxlib/mlir:ir",
     ] + if_windows(
         [],
-        ["//jaxlib/mlir/_mlir_libs:_triton_ext"],
+        [
+            "//jaxlib/mlir/_mlir_libs:_triton_ext",
+        ],
     ),
 )
 

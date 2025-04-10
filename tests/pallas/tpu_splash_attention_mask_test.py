@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for splash_attention_masks."""
 from __future__ import annotations
 
 from absl.testing import absltest
@@ -2167,7 +2166,9 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(mask_info.block_mask, _expected_block_mask)
     self.assertArraysEqual(
-        mask_info.partial_mask_blocks,
+        mask_info.partial_mask_blocks.reshape(
+            -1, *mask_info.partial_mask_blocks.shape[-2:]
+        ),
         _expected_partial_mask_blocks,
     )
     self.assertArraysEqual(mask_info.mask_next, _expected_mask_next)

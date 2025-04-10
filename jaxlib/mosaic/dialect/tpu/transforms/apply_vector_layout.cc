@@ -1,3 +1,18 @@
+/* Copyright 2021 The JAX Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
 #include "jaxlib/mosaic/dialect/tpu/transforms/apply_vector_layout.h"
 
 #include <algorithm>
@@ -13,15 +28,22 @@
 #include <utility>
 #include <vector>
 
+#include "absl/algorithm/container.h"
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/status/status.h"
+#include "absl/types/span.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/iterator_range.h"
-#include "llvm/Support/Compiler.h"
+#include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Traits.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -33,9 +55,11 @@
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Operation.h"
+#include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/Region.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/IR/Types.h"
@@ -45,21 +69,6 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "absl/algorithm/container.h"
-#include "absl/log/check.h"
-#include "absl/log/log.h"
-#include "absl/status/status.h"
-#include "absl/types/span.h"
-#include "llvm/include/llvm/ADT/APInt.h"
-#include "llvm/include/llvm/Support/LogicalResult.h"
-#include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/include/mlir/Dialect/Math/IR/Math.h"
-#include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
-#include "mlir/include/mlir/IR/Attributes.h"
-#include "mlir/include/mlir/IR/Builders.h"
-#include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
-#include "mlir/include/mlir/IR/OperationSupport.h"
 #include "jaxlib/mosaic/dialect/tpu/array_util.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
@@ -119,7 +128,7 @@ FailureOr<TypedValue<MemRefType>> getInternalScratch(
     return failure();
   }
   if (shape.back() % ctx.target_shape[1] != 0) {
-    return failure();
+    return emitError(loc, "Unaligned scratch shape on minormost dimension");
   }
   int packing = 32 / elem_ty.getIntOrFloatBitWidth();
   int sublane_count = llvm::divideCeil(
@@ -128,7 +137,9 @@ FailureOr<TypedValue<MemRefType>> getInternalScratch(
       packing);
 
   if (sublane_count > ctx.max_sublanes_in_scratch) {
-    return failure();
+    return emitError(
+        loc,
+        "scratch is too small. Try to increase `internal_scratch_in_bytes`.");
   }
   // We can omit tpu_tiling_flags here because, for internal scratch, the
   // tiling does not matter (its shape is (N, 128)).
@@ -3419,20 +3430,25 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
       if (tiling[1] != ctx.target_shape[1]) {
         return op.emitOpError("Not implemented: unsupported tiling");
       }
-      int64_t num_tiles = layout_in.tilesPerVreg(ctx.target_shape);
+      const int64_t num_tiles = layout_in.tilesPerVreg(ctx.target_shape);
+      const int64_t sublanes_per_tile =
+          layout_in.sublanesPerTile(ctx.target_shape);
       if (needs_physical_broadcast ==
           std::array{true, false}) {  // Sublane broadcast
         const int packing = layout_in.packing();
-        if (num_tiles != 1) {
-          return op.emitOpError(
-              "Not implemented: Only native tiling supported");
-        }
         TPU_ASSERT_EQ_OP(*(src_tiles.dimensions().end() - 2), 1);
         TPU_ASSERT_OP(offsets_in[0].has_value());
         const int64_t sublane_offset = *offsets_in[0] / packing;
         const int64_t subelement_offset = *offsets_in[0] % packing;
-        const DenseI32ArrayAttr indices = builder.getDenseI32ArrayAttr(
-            SmallVector<int32_t>(ctx.target_shape[0], sublane_offset));
+        SmallVector<int32_t> pattern;
+        pattern.reserve(ctx.target_shape[0]);
+        for (int32_t t = 0; t < num_tiles; ++t) {
+          for (int32_t i = 0; i < sublanes_per_tile; ++i) {
+            pattern.push_back(sublanes_per_tile * t + sublane_offset);
+          }
+        }
+        const DenseI32ArrayAttr sublane_pattern =
+            builder.getDenseI32ArrayAttr(pattern);
         const absl::Status status =
             src_tiles.EachStatus([&](const absl::Span<const int64_t> src_idx,
                                      Value *const src_vreg) {
@@ -3449,8 +3465,8 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
                   return absl::InternalError("");
                 }
               }
-              dst_vreg = builder.create<tpu::GatherOp>(dst_vreg.getType(),
-                                                       dst_vreg, indices, 0);
+              dst_vreg = builder.create<tpu::GatherOp>(
+                  dst_vreg.getType(), dst_vreg, sublane_pattern, 0);
               SmallVector<int64_t> dst_starts(dst_tiles_implicit_shape.size());
               SmallVector<int64_t> dst_limits(dst_tiles_implicit_shape.size());
               for (int64_t i = 0; i < dst_tiles.num_dimensions(); ++i) {
@@ -3472,8 +3488,6 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
                  std::array{false, true}) {  // Lane broadcast
         TPU_ASSERT_EQ_OP(*(src_tiles.dimensions().end() - 1), 1);
         TPU_ASSERT_OP(offsets_in[1].has_value());
-        const int64_t sublanes_per_tile =
-            layout_in.sublanesPerTile(ctx.target_shape);
         const int64_t offset = *offsets_in[1];
         const int64_t lane_offset = offset % ctx.target_shape[1];
         const int64_t tile_offset = offset / ctx.target_shape[1];
@@ -3726,10 +3740,6 @@ LogicalResult vector_extract_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
   TPU_ASSERT_OP(layouts_in.front().has_value());
   const VectorLayout &layout_in = *layouts_in.front();
-  if (layout_in.bitwidth() != 32) {
-    return op.emitOpError(
-        "Not implemented: Only 32-bit vector.extract supported");
-  }
   const VectorType res_vty =
       dyn_cast<VectorType>(extract_op.getResult().getType());
   if (res_vty != nullptr) {
@@ -3758,6 +3768,10 @@ LogicalResult vector_extract_rule(RewriteContext &ctx, Operation &op,
     op.erase();
     return success();
   } else {
+    if (layout_in.bitwidth() != 32) {
+      return op.emitOpError(
+          "Not implemented: Only 32-bit vector.extract supported");
+    }
     // TODO(b/367459476): Support non-zero offsets.
     if (layout_in.offsets() != LayoutOffsets{0, 0}) {
       return op.emitOpError("Not implemented: Unsupported layout");
@@ -5853,7 +5867,7 @@ LogicalResult retileToLargeTileWithScratch(
     TypedValue<MemRefType> scratch_ref, const int64_t store_vreg_delay,
     const int64_t load_vreg_skips) {
   if (dst_tile[0] % src_tile[0] != 0) {
-    return failure();
+    return emitError(loc, "dst_tile[0] must be a multiple of src_tile_size[0]");
   }
   // Number of src vregs needed to assemble one dst vreg.
   int vregs_per_group = dst_tile[0] / src_tile[0];
@@ -6011,7 +6025,7 @@ LogicalResult retileToSmallTileWithScratch(
     TypedValue<MemRefType> scratch_ref, const int64_t store_vreg_delay,
     const int64_t load_vreg_skips) {
   if (src_tile[0] % dst_tile[0] != 0) {
-    return failure();
+    return emitError(loc, "src tile size must be a multiple of dst tile size");
   }
   // Number of src vregs needed to assemble one dst vreg.
   int vregs_per_group = src_tile[0] / dst_tile[0];
@@ -6220,7 +6234,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> retileWithScratch(
   if (!(src_tiling[1] == ctx.target_shape[1] &&
         dst_tiling[1] == ctx.target_shape[1] && src_tiling[0] % packing == 0 &&
         dst_tiling[0] % packing == 0)) {
-    return failure();
+    return emitError(loc, "Unsupported retiling with scratch");
   }
   const std::array<int64_t, 2> src_vreg_slice =
       VectorLayout::vregSlice(ctx.target_shape, bitwidth, src_tiling);

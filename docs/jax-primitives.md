@@ -21,7 +21,7 @@ kernelspec:
 
 A JAX primitive is the basic computational unit of a JAX program. This document explains the interface that a JAX primitive must support to allow JAX to perform all its transformations (this is not a how-to guide).
 
-For example, the multiply-add operation can be implemented in terms of the low-level `jax.lax.*` primitives (which are like XLA operator wrappers) or `jax.core.Primitive("multiply_add")`, as demonstrated further below. 
+For example, the multiply-add operation can be implemented in terms of the low-level `jax.lax.*` primitives (which are like XLA operator wrappers) or `jax.extend.core.Primitive("multiply_add")`, as demonstrated further below.
 
 And JAX is able to take sequences of such primitive operations, and transform them via its composable transformations of Python functions, such as {func}`jax.jit`, {func}`jax.grad` and {func}`jax.vmap`. JAX implements these transforms in a *JAX-traceable* way. This means that when a Python function is executed, the only operations it applies to the data are either:
 
@@ -171,7 +171,7 @@ The JAX traceability property is satisfied as long as the function is written in
 The right way to add support for multiply-add is in terms of existing JAX primitives, as shown above. However, to demonstrate how JAX primitives work, pretend that you want to add a new primitive to JAX for the multiply-add functionality.
 
 ```{code-cell}
-from jax import core
+from jax.extend import core
 
 multiply_add_p = core.Primitive("multiply_add")  # Create the primitive
 
@@ -300,7 +300,7 @@ def multiply_add_lowering(ctx, xc, yc, zc):
   return [hlo.AddOp(hlo.MulOp(xc, yc), zc).result]
 
 # Now, register the lowering rule with JAX.
-# For GPU, refer to the https://jax.readthedocs.io/en/latest/Custom_Operation_for_GPUs.html
+# For GPU, refer to the https://docs.jax.dev/en/latest/Custom_Operation_for_GPUs.html
 from jax.interpreters import mlir
 
 mlir.register_lowering(multiply_add_p, multiply_add_lowering, platform='cpu')

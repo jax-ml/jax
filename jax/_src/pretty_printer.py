@@ -201,26 +201,20 @@ _BreakMode = enum.Enum("_BreakMode", ["FLAT", "BREAK"])
 # non-recursive formulation using an explicit stack, necessary because Python
 # doesn't have a tail recursion optimization.
 
-def _fits(doc: Doc, width: int, agenda: list[tuple[int, _BreakMode, Doc]]
-         ) -> bool:
+def _fits(doc: Doc, width: int) -> bool:
+  agenda = [doc]
   while width >= 0 and len(agenda) > 0:
-    i, m, doc = agenda.pop()
+    doc = agenda.pop()
     if isinstance(doc, _NilDoc):
       pass
     elif isinstance(doc, _TextDoc):
       width -= len(doc.text)
     elif isinstance(doc, _ConcatDoc):
-      agenda.extend((i, m, d) for d in reversed(doc.children))
+      agenda.extend(reversed(doc.children))
     elif isinstance(doc, _BreakDoc):
-      if m == _BreakMode.BREAK:
-        return True
       width -= len(doc.text)
-    elif isinstance(doc, _NestDoc):
-      agenda.append((i + doc.n, m, doc.child))
-    elif isinstance(doc, _GroupDoc):
-      agenda.append((i, _BreakMode.FLAT, doc.child))
-    elif isinstance(doc, _ColorDoc) or isinstance(doc, _SourceMapDoc):
-      agenda.append((i, m, doc.child))
+    elif isinstance(doc, (_NestDoc, _GroupDoc, _ColorDoc, _SourceMapDoc)):
+      agenda.append(doc.child)
     else:
       raise ValueError("Invalid document ", doc)
 
@@ -372,8 +366,7 @@ def _format(
     elif isinstance(doc, _GroupDoc):
       # In Lindig's paper, _fits is passed the remainder of the document.
       # I'm pretty sure that's a bug and we care only if the current group fits!
-      if (_sparse(doc)
-          and _fits(doc, width - k, [(i, _BreakMode.FLAT, doc.child)])):
+      if (_sparse(doc) and _fits(doc, width - k)):
         agenda.append(_State(i, _BreakMode.FLAT, doc.child, color, source))
       else:
         agenda.append(_State(i, _BreakMode.BREAK, doc.child, color, source))

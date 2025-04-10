@@ -272,7 +272,7 @@ class LobpcgTest(jtu.JaxTestCase):
     self._possibly_plot(A, eigs, X, m, matrix_name)
 
   def _possibly_plot(self, A, eigs, X, m, matrix_name):
-    if not os.getenv('LOBPCG_EMIT_DEBUG_PLOTS'):
+    if os.getenv('LOBPCG_EMIT_DEBUG_PLOTS', '0') != '1':
       return
 
     if isinstance(A, (np.ndarray, jax.Array)):

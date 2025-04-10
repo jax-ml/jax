@@ -39,7 +39,7 @@ from jax._src.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal)
 from jax._src.dtypes import dtype, float0
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list, wrap_name,
                            as_hashable_function, weakref_lru_cache,
-                           partition_list, subs_list2)
+                           partition_list, subs_list2, foreach)
 
 zip = safe_zip
 map = safe_map
@@ -194,6 +194,11 @@ def _linearize_jaxpr(
   tangent_trace.invalidate()
   if attrs_tracked:
     raise NotImplementedError("TODO: attrs")
+  tangent_jaxpr, used_consts, _ = pe.dce_jaxpr_consts(
+        tangent_jaxpr, [True] * len(tangent_jaxpr.outvars),
+        [False] * len(tangent_jaxpr.constvars) + [True] * len(tangent_jaxpr.invars))
+  tangent_consts = [c for c, used in zip(tangent_consts, used_consts) if used]
+
   residuals_and_primals = (*tangent_consts, *out_primals)
   residuals_and_primals = map(primal_trace.to_jaxpr_tracer, residuals_and_primals)
   primal_jaxpr, primal_consts, attrs_tracked = primal_trace.to_jaxpr(residuals_and_primals, debug_info)
@@ -344,10 +349,8 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
       primal_env[v] = val
 
   primal_env: dict[Any, Any] = {}
-  map(write_primal, jaxpr.constvars, consts)
-  # FIXME: invars can contain both primal and tangent values, and this line
-  #        forces primal_in to contain UndefinedPrimals for tangent values!
-  map(write_primal, jaxpr.invars, primals_in)
+  foreach(write_primal, jaxpr.constvars, consts)
+  foreach(write_primal, jaxpr.invars, primals_in)
 
   # Start with a forward pass to evaluate any side-effect-free JaxprEqns that
   # only operate on primals. This is required to support primitives with
@@ -367,7 +370,7 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
         traceback, name_stack=name_stack), eqn.ctx.manager:
       ans = eqn.primitive.bind(*subfuns, *map(read_primal, eqn.invars), **bind_params)
     if eqn.primitive.multiple_results:
-      map(write_primal, eqn.outvars, ans)
+      foreach(write_primal, eqn.outvars, ans)
     else:
       write_primal(eqn.outvars[0], ans)
 
@@ -375,7 +378,7 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
   ctx = (source_info_util.transform_name_stack('transpose') if transform_stack
          else contextlib.nullcontext())
   with ctx:
-    map(partial(write_cotangent, 'outvars'), jaxpr.outvars, cotangents_in)
+    foreach(partial(write_cotangent, 'outvars'), jaxpr.outvars, cotangents_in)
     for eqn in lin_eqns[::-1]:
       if eqn.primitive.ref_primitive:
         if eqn.primitive is core.mutable_array_p:
@@ -409,6 +412,12 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
           try:
             cts_out = get_primitive_transpose(eqn.primitive)(
                 cts_in, *invals, **eqn.params)
+          except core.ShardingTypeError as e:
+            extra_msg = ("This is a potential JAX bug. Please file an issue at"
+                         " https://github.com/jax-ml/jax/issues")
+            if extra_msg in str(e):
+              raise
+            raise core.ShardingTypeError(f"{str(e)}\n{extra_msg}")
           except (FloatingPointError, ZeroDivisionError) as e:
             msg = "When differentiating the code at the top of the callstack:"
             if msg not in e.args[0]:
@@ -417,7 +426,7 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
             raise e from None
         cts_out = [Zero(v.aval) for v in eqn.invars] if cts_out is Zero else cts_out
         # FIXME: Some invars correspond to primals!
-        map(partial(write_cotangent, eqn.primitive), eqn.invars, cts_out)
+        foreach(partial(write_cotangent, eqn.primitive), eqn.invars, cts_out)
 
   cotangents_out = map(read_cotangent, jaxpr.invars)
   return cotangents_out
@@ -459,6 +468,7 @@ def nonzero_tangent_outputs(f, store, *args, **kwargs):
 
 class JVPTrace(Trace):
   def __init__(self, parent_trace, tag):
+    super().__init__()
     self.tag = tag
     self.parent_trace = parent_trace
 
@@ -640,6 +650,7 @@ call_transpose_param_updaters: dict[core.Primitive, Callable] = {}
 class LinearizeTrace(Trace):
 
   def __init__(self, parent_trace, tangent_trace, tag=None):
+    super().__init__()
     self.tag = core.TraceTag() if tag is None else tag
     self.parent_trace = parent_trace
     self.tangent_trace = tangent_trace
@@ -865,6 +876,10 @@ def linearize_from_jvp(jvp: lu.WrappedFun,
                       for (r, nz) in zip(out_tangents, out_nzs) if nz]
     in_tracers = [t for t, nz in zip(tangent_args, nonzeros) if nz]
     jaxpr, out_consts, _ = pe.tracers_to_jaxpr(in_tracers, out_nz_tracers, jvp.debug_info)
+    jaxpr, used_consts, _ = pe.dce_jaxpr_consts(
+        jaxpr, [True] * len(jaxpr.outvars),
+        [False] * len(jaxpr.constvars) + [True] * len(jaxpr.invars))
+    out_consts = [c for used, c in zip(used_consts, out_consts) if used]
 
     def linearized(residuals, *tangents):
       nz_tangents_in = [t for (t, nz) in zip(tangents, nonzeros) if nz]
@@ -1008,7 +1023,7 @@ def instantiate_zeros(tangent):
     if hasattr(tangent.aval, 'sharding'):
       # TODO(dougalm, yashkatariya): Delete this context manager once we figure
       # out how to ensure jaxpr arguments always have the context mesh.
-      with mesh_lib.set_abstract_mesh(tangent.aval.sharding.mesh):  # type: ignore
+      with mesh_lib.use_abstract_mesh(tangent.aval.sharding.mesh):  # type: ignore
         return zeros_like_aval(tangent.aval)
     return zeros_like_aval(tangent.aval)
   return tangent
@@ -1238,3 +1253,11 @@ class CustomVJPException(Exception):
 
 # TODO(mattjj): remove this vestigial dict
 reducing_transposes: dict[core.Primitive, Callable] = {}
+
+########################### pvary ##################################
+
+def _pvary_transpose_rule(cts, *_, axes, axis_index_groups):
+  from jax._src.lax import parallel as lax_parallel
+  return lax_parallel.psum_invariant_p.bind(
+      *cts, axes=axes, axis_index_groups=axis_index_groups)
+deflinear2(core.pvary_p, _pvary_transpose_rule)

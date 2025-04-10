@@ -102,7 +102,6 @@ def prepare_wheel_cuda(
       dst_dir=plugin_dir,
       src_files=[
           f"__main__/jaxlib/cuda/_solver.{pyext}",
-          f"__main__/jaxlib/cuda/_blas.{pyext}",
           f"__main__/jaxlib/cuda/_linalg.{pyext}",
           f"__main__/jaxlib/cuda/_prng.{pyext}",
           f"__main__/jaxlib/cuda/_rnn.{pyext}",
@@ -110,7 +109,7 @@ def prepare_wheel_cuda(
           f"__main__/jaxlib/cuda/_triton.{pyext}",
           f"__main__/jaxlib/cuda/_hybrid.{pyext}",
           f"__main__/jaxlib/cuda/_versions.{pyext}",
-          f"__main__/jaxlib/cuda_plugin_extension.{pyext}",
+          f"__main__/jaxlib/cuda/cuda_plugin_extension.{pyext}",
           f"__main__/jaxlib/mosaic/gpu/_mosaic_gpu_ext.{pyext}",
           "__main__/jaxlib/mosaic/gpu/libmosaic_gpu_runtime.so",
           "__main__/jaxlib/version.py",
@@ -140,7 +139,6 @@ def prepare_wheel_rocm(
   copy_runfiles(
       dst_dir=plugin_dir,
       src_files=[
-          f"__main__/jaxlib/rocm/_blas.{pyext}",
           f"__main__/jaxlib/rocm/_linalg.{pyext}",
           f"__main__/jaxlib/rocm/_prng.{pyext}",
           f"__main__/jaxlib/rocm/_solver.{pyext}",
@@ -148,7 +146,7 @@ def prepare_wheel_rocm(
           f"__main__/jaxlib/rocm/_hybrid.{pyext}",
           f"__main__/jaxlib/rocm/_rnn.{pyext}",
           f"__main__/jaxlib/rocm/_triton.{pyext}",
-          f"__main__/jaxlib/rocm_plugin_extension.{pyext}",
+          f"__main__/jaxlib/rocm/rocm_plugin_extension.{pyext}",
           "__main__/jaxlib/version.py",
       ],
   )

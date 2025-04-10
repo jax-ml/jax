@@ -20,7 +20,7 @@ import dataclasses
 import enum
 from functools import partial, reduce
 import types
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import jax
 from jax import lax
@@ -44,6 +44,7 @@ from jax._src.pallas import primitives
 from jax._src.state import discharge as state_discharge
 from jax._src.state import types as state_types
 from jax._src.util import (
+    foreach,
     safe_map,
     safe_zip,
     split_list,
@@ -118,6 +119,7 @@ def _pallas_call_jvp_rule(
     jaxpr: jax_core.Jaxpr,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: GridMapping,
+    mesh: pallas_core.Mesh | None,
     debug: bool,
     interpret: bool,
     compiler_params: Any,
@@ -132,6 +134,8 @@ def _pallas_call_jvp_rule(
     raise NotImplementedError
   if input_output_aliases:
     raise NotImplementedError("JVP with aliasing not supported.")
+  if mesh is not None:
+    raise NotImplementedError("pallas_call with a mesh does not support JVP")
   nonzero_tangents = [not isinstance(t, ad_util.Zero) for t in tangents]
   tangents = [t for t in tangents if type(t) is not ad_util.Zero]
   nonzero_tangents_with_outputs = nonzero_tangents + [True] * grid_mapping.num_outputs
@@ -180,6 +184,7 @@ def _pallas_call_jvp_rule(
       *tangents,
       jaxpr=jvp_jaxpr,
       grid_mapping=jvp_grid_mapping,
+      mesh=mesh,
       interpret=interpret,
       debug=debug,
       input_output_aliases=(),
@@ -316,6 +321,7 @@ def _batch_with_explicit_loop(
     *,
     jaxpr: jax_core.Jaxpr,
     grid_mapping: GridMapping,
+    mesh: pallas_core.Mesh | None,
     input_output_aliases: tuple[tuple[int, int], ...],
     debug: bool,
     interpret: bool,
@@ -383,6 +389,7 @@ def _batch_with_explicit_loop(
         *batch_args,
         jaxpr=jaxpr,
         grid_mapping=grid_mapping,
+        mesh=mesh,
         input_output_aliases=input_output_aliases,
         debug=debug,
         interpret=interpret,
@@ -412,6 +419,7 @@ def _pallas_call_batching_rule(
     *,
     jaxpr: jax_core.Jaxpr,
     grid_mapping: GridMapping,
+    mesh: pallas_core.Mesh | None,
     input_output_aliases: tuple[tuple[int, int], ...],
     debug: bool,
     interpret: bool,
@@ -420,6 +428,11 @@ def _pallas_call_batching_rule(
     out_avals: tuple[jax_core.AbstractValue, ...],
     backend: _Backend | None,
 ):
+  if mesh is not None:
+    raise NotImplementedError(
+        "pallas_call with a mesh does not support batching"
+    )
+
   def _maybe_squeeze_out_bdim(
       x: jax.Array, bdim: int | batching.NotMapped
   ) -> jax.Array:
@@ -444,6 +457,7 @@ def _pallas_call_batching_rule(
         *args,
         jaxpr=jaxpr,
         grid_mapping=grid_mapping,
+        mesh=mesh,
         input_output_aliases=input_output_aliases,
         debug=debug,
         interpret=interpret,
@@ -477,6 +491,7 @@ def _pallas_call_batching_rule(
         dims=dynamic_grid_dims + dims,
         jaxpr=jaxpr,
         grid_mapping=grid_mapping,
+        mesh=mesh,
         input_output_aliases=input_output_aliases,
         debug=debug,
         interpret=interpret,
@@ -511,6 +526,7 @@ def _pallas_call_batching_rule(
           dims=scalar_bdims + bdims,
           jaxpr=jaxpr,
           grid_mapping=grid_mapping,
+          mesh=mesh,
           input_output_aliases=input_output_aliases,
           debug=debug,
           interpret=interpret,
@@ -889,6 +905,7 @@ def _pallas_call_batching_rule(
       *args,
       jaxpr=jaxpr,
       grid_mapping=batched_grid_mapping,
+      mesh=mesh,
       input_output_aliases=input_output_aliases,
       debug=debug,
       interpret=interpret,
@@ -978,7 +995,7 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
           for bm in grid_mapping.block_mappings]
     # We perform a dynamic slice on the i/o blocks, which will be checked by
     # checkify for OOB accesses.
-    map(hlo_interpreter._dynamic_slice, start_indices, block_shapes,
+    foreach(hlo_interpreter._dynamic_slice, start_indices, block_shapes,
         [*input_args, *output_args], is_indexing_dim)
     return (i + 1, hlo_interpreter._get_next_indices(grid, loop_idx))
   def f(_):
@@ -1189,7 +1206,7 @@ def _trace_kernel_to_jaxpr(
   return jaxpr, tuple(consts)
 
 
-_PALLAS_USE_MOSAIC_GPU = config.bool_flag(
+_PALLAS_USE_MOSAIC_GPU = config.bool_state(
     "jax_pallas_use_mosaic_gpu",
     default=config.bool_env("JAX_PALLAS_USE_MOSAIC_GPU", False),
     help=(
@@ -1217,7 +1234,7 @@ def _unsupported_lowering_error(platform: str) -> Exception:
       f"Cannot lower pallas_call on platform: {platform}. To use Pallas on GPU,"
       " install jaxlib GPU 0.4.24 or newer. To use Pallas on TPU, install"
       " jaxlib TPU and libtpu. See"
-      " https://jax.readthedocs.io/en/latest/installation.html."
+      " https://docs.jax.dev/en/latest/installation.html."
   )
 
 _Backend = Literal["mosaic_tpu", "triton", "mosaic_gpu"]
@@ -1338,12 +1355,13 @@ def _pallas_call_state_discharge_rule(
     jaxpr: jax_core.Jaxpr,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: GridMapping,
+    mesh: pallas_core.Mesh | None,
     debug: bool,
     interpret: bool,
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
-    backend: _Backend | None = None
+    backend: _Backend | None = None,
 ):
   del avals_out
   assert all(isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars)
@@ -1439,6 +1457,7 @@ def _pallas_call_state_discharge_rule(
       jaxpr=new_jaxpr,
       input_output_aliases=new_input_output_aliases,
       grid_mapping=new_grid_mapping,
+      mesh=mesh,
       debug=debug,
       interpret=interpret,
       compiler_params=compiler_params,
@@ -1470,7 +1489,7 @@ def pallas_call(
 ) -> Callable[..., Any]:
   """Invokes a Pallas kernel on some inputs.
 
-  See `Pallas Quickstart <https://jax.readthedocs.io/en/latest/pallas/quickstart.html>`_.
+  See `Pallas Quickstart <https://docs.jax.dev/en/latest/pallas/quickstart.html>`_.
 
   Args:
     kernel: the kernel function, that receives a Ref for each input and output.
@@ -1525,16 +1544,6 @@ def pallas_call(
     invoke the Pallas kernel.
 
   """
-  if compiler_params is None:
-    compiler_params = {}
-  if isinstance(compiler_params, pallas_core.CompilerParams):
-    if compiler_params.PLATFORM not in ["mosaic", "mosaic_gpu", "triton"]:
-      raise ValueError(
-          f"Unknown platform in compiler params: {compiler_params.PLATFORM}")
-    compiler_params = {
-        compiler_params.PLATFORM: dataclasses.asdict(compiler_params)
-    }
-
   if grid_spec is None:
     grid_spec = GridSpec(grid, in_specs, out_specs, scratch_shapes)
   else:
@@ -1555,6 +1564,55 @@ def pallas_call(
           "If `grid_spec` is specified, then `scratch_shapes` must "
           f"be `()`. It is {scratch_shapes}")
   del grid, in_specs, out_specs
+  return _pallas_call(
+      kernel,
+      out_shape,
+      grid_spec=grid_spec,
+      input_output_aliases=input_output_aliases,
+      debug=debug,
+      interpret=interpret,
+      name=name,
+      compiler_params=compiler_params,
+      cost_estimate=cost_estimate,
+      backend=backend,
+  )
+
+
+def _pallas_call(
+    kernel: Callable[..., None],
+    out_shape: Any,
+    *,
+    grid_spec: GridSpec,
+    mesh: pallas_core.Mesh | None = None,
+    input_output_aliases: dict[int, int] = {},
+    debug: bool = False,
+    interpret: bool = False,
+    name: str | None = None,
+    compiler_params: dict[str, Any] | pallas_core.CompilerParams | None = None,
+    cost_estimate: CostEstimate | None = None,
+    backend: _Backend | None = None,
+):
+  if compiler_params is None:
+    compiler_params = {}
+  if isinstance(compiler_params, pallas_core.CompilerParams):
+    if compiler_params.PLATFORM not in ["mosaic", "mosaic_gpu", "triton"]:
+      raise ValueError(
+          f"Unknown platform in compiler params: {compiler_params.PLATFORM}"
+      )
+    compiler_params = {
+        compiler_params.PLATFORM: dataclasses.asdict(compiler_params)
+    }
+
+  if mesh is not None:
+    if tuple(mesh.shape.values()) != grid_spec.grid:
+      raise ValueError(
+          f"Mesh shape {tuple(mesh.shape.values())} does not match grid "
+          f"shape {grid_spec.grid}."
+      )
+    if backend is not None:
+      raise ValueError("If `mesh` is specified, then `backend` must be `None`.")
+    backend = cast(_Backend, mesh.backend)
+
   grid_spec, dynamic_grid_bounds = pallas_core.unzip_dynamic_grid_bounds(grid_spec)
   # TODO(necula): this canonicalization may be convenient for some usage
   # but it is lossy, because it prevents expressing functions that return
@@ -1642,6 +1700,7 @@ def pallas_call(
         debug=debug,
         interpret=interpret,
         grid_mapping=grid_mapping,
+        mesh=mesh,
         input_output_aliases=tuple(input_output_aliases.items()),
         compiler_params=compiler_params,
         cost_estimate=cost_estimate,

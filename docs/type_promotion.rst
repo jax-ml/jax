@@ -4,7 +4,7 @@ Type promotion semantics
 ========================
 
 This document describes JAX's type promotion rules–i.e., the result of :func:`jax.numpy.promote_types` for each pair of types.
-For some background on the considerations that went into the design of what is described below, see `Design of Type Promotion Semantics for JAX <https://jax.readthedocs.io/en/latest/jep/9407-type-promotion.html>`_.
+For some background on the considerations that went into the design of what is described below, see `Design of Type Promotion Semantics for JAX <https://docs.jax.dev/en/latest/jep/9407-type-promotion.html>`_.
 
 JAX's type promotion behavior is determined via the following type promotion lattice:
 

@@ -15,26 +15,23 @@ limitations under the License.
 
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 
-#include <algorithm>
-#include <array>
 #include <cstdint>
-#include <memory>
 #include <optional>
-#include <utility>
-#include <vector>
 
+#include "absl/hash/hash.h"
+#include "absl/log/log.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep.
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "absl/hash/hash.h"
-#include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
+#include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.cc.inc"
 #include "jaxlib/mosaic/dialect/tpu/tpu_enums.cc.inc"
 #include "xla/layout.h"
@@ -182,7 +179,8 @@ AffineMap TiledLayoutAttr::getAffineMap() const {
     auto dimensions = tile.dimensions();
     int64_t untiled_dims = map.getNumResults() - dimensions.size();
     if (untiled_dims < 0) {
-      LOG(FATAL) << "Invalid TiledLayoutAttr!";
+      LOG(FATAL) << "Invalid TiledLayoutAttr: Number of dims must be larger "
+                    "or equal to the rank of the tile";
     }
     for (int64_t i = 0; i < untiled_dims; ++i) {
       exprs.push_back(getAffineDimExpr(i, getContext()));

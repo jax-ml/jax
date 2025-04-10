@@ -28,6 +28,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import util
+from jax._src.lib import jaxlib_extension_version
 from jax.experimental import io_callback
 from jax.experimental import pjit
 from jax.experimental.shard_map import shard_map
@@ -584,6 +585,56 @@ class PythonCallbackTest(jtu.JaxTestCase):
       for _ in range(3):
         self.assertAllClose(2 * x, fun(x))
     self.assertEqual(count(), 1)
+
+  @parameterized.parameters("int2", "int4", "uint2", "uint4")
+  def test_subbyte_operands(self, dtype: str):
+    if jaxlib_extension_version <= 321:
+      self.skipTest("Requires jaxlib_extension_version >= 322.")
+    def get(x):
+      return x
+    def f(x):
+      y = jax.pure_callback(
+          get,
+          jax.ShapeDtypeStruct((8,), dtype=dtype),
+          x,
+      )
+      return y
+    x = np.arange(8, dtype=dtype)
+    # TODO(b/395428868): Remove this check once we support subbyte types.
+    if jtu.test_device_matches(["tpu"]):
+      if "2" in dtype:
+        self.skipTest("TODO(dsuo): TPU callbacks send SIGABRT for int2/uint2.")
+      np.testing.assert_array_equal(jax.jit(f)(x), np.arange(8, dtype=dtype))
+    else:
+      with self.assertRaisesRegex(
+          Exception, "Unsupported primitive type"
+      ):
+        _ = jax.jit(f)(x)
+
+  @parameterized.parameters("int2", "int4", "uint2", "uint4")
+  def test_subbyte_results(self, dtype: str):
+    if jaxlib_extension_version <= 321:
+      self.skipTest("Requires jaxlib_extension_version >= 322.")
+    def get():
+      return np.arange(8, dtype=dtype)
+
+    def f():
+      y = jax.pure_callback(
+        get,
+        jax.ShapeDtypeStruct((8,), dtype)
+      )
+      return y
+
+    # TODO(b/395428868): Remove this check once we support subbyte types.
+    if jtu.test_device_matches(["tpu"]):
+      if "2" in dtype:
+        self.skipTest("TODO(dsuo): TPU callbacks send SIGABRT for int2/uint2.")
+      np.testing.assert_array_equal(jax.jit(f)(), np.arange(8, dtype=dtype))
+    else:
+      with self.assertRaisesRegex(
+          Exception, "Unsupported primitive type"
+      ):
+        _ = jax.jit(f)()
 
 
 class PureCallbackTest(jtu.JaxTestCase):

@@ -14,5 +14,8 @@
 
 from jax._src.layout import (
     DeviceLocalLayout as DeviceLocalLayout,
-    Layout as Layout
+    Layout as Layout,
+)
+from jax._src.pjit import (
+    with_dll_constraint as with_dll_constraint,
 )

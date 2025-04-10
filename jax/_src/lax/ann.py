@@ -240,8 +240,8 @@ def _approx_top_k_abstract_eval(operand, *, k, reduction_dimension,
          f"either the `k` ({k}) or the "
          f" reduction dimension size ({reduction_input_size}) are symbolic")
   return (operand.update(shape=dims, dtype=operand.dtype,
-                         weak_type=operand.weak_type),
-          operand.update(shape=dims, dtype=np.dtype(np.int32)))
+                         weak_type=operand.weak_type, vma=operand.vma),
+          operand.update(shape=dims, dtype=np.dtype(np.int32), vma=operand.vma))
 
 def _get_init_val_literal(op_type, is_max_k):
   return np.array(-np.inf if is_max_k else np.inf, dtype=op_type)

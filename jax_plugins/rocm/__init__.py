@@ -23,7 +23,7 @@ import jax._src.xla_bridge as xb
 
 # rocm_plugin_extension locates inside jaxlib. `jaxlib` is for testing without
 # preinstalled jax rocm plugin packages.
-for pkg_name in ['jax_rocm60_plugin', 'jaxlib']:
+for pkg_name in ['jax_rocm60_plugin', 'jaxlib.cuda']:
   try:
     rocm_plugin_extension = importlib.import_module(
         f'{pkg_name}.rocm_plugin_extension'
@@ -92,8 +92,10 @@ def initialize():
             rocm_plugin_extension.register_custom_call_target, c_api
         ),
     )
-    for _name, _value in rocm_plugin_extension.registrations().items():
-      xla_client.register_custom_call_target(_name, _value, platform="ROCM")
+    for _name, _value in rocm_plugin_extension.ffi_registrations().items():
+      xla_client.register_custom_call_target(
+          _name, _value, platform='ROCM', api_version=1
+      )
     xla_client.register_custom_type_id_handler(
         "ROCM",
         functools.partial(

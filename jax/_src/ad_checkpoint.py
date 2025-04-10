@@ -430,7 +430,7 @@ def _trace_to_jaxpr(fun: Callable,
           "Consider using the `static_argnums` parameter for `jax.remat` or "
           "`jax.checkpoint`. See the `jax.checkpoint` docstring and its example "
           "involving `static_argnums`:\n"
-          "https://jax.readthedocs.io/en/latest/_autosummary/jax.checkpoint.html"
+          "https://docs.jax.dev/en/latest/_autosummary/jax.checkpoint.html"
           "\n")
       e.args = msg,
     raise
@@ -757,89 +757,34 @@ def _has_effects(effects) -> bool:
   return bool({e for e in effects if not isinstance(e, core.NamedAxisEffect)})
 
 
-def remat_expansion(*args, jaxpr: core.Jaxpr, prevent_cse: bool,
-                    differentiated: bool, is_gpu_platform: bool = False,
-                    **_):
+def remat_expansion(
+    *args, jaxpr: core.Jaxpr, prevent_cse: bool, differentiated: bool, **_
+):
   assert not jaxpr.constvars
 
   if differentiated and prevent_cse:
-    if config.remat_opt_barrier.value:
-      translation_rule = _remat_translation_using_opt_barrier
-    elif is_gpu_platform:
-      translation_rule = _remat_translation_using_while
-    else:
-      translation_rule = _remat_translation_using_cond
+    translation_rule = _remat_translation_using_opt_barrier
   else:
     translation_rule = lambda *args, jaxpr: core.eval_jaxpr(jaxpr, (), *args)
 
   return api.named_call(translation_rule, name="checkpoint")(*args, jaxpr=jaxpr)
 
+
 def _remat_translation_using_opt_barrier(*args, jaxpr: core.Jaxpr):
   args = lax_internal.optimization_barrier(args)
   return core.eval_jaxpr(jaxpr, (), *args)
 
-# TODO(mattjj): add core utility for 'create dummy value for this type'?
-def _dummy_like(aval: core.AbstractValue) -> Any:
-  if aval is core.abstract_token:
-    return lax_internal.create_token()
-  elif isinstance(aval, (core.ShapedArray, core.DShapedArray)):
-    return lax_internal.broadcast(lax_internal.empty(aval.dtype), aval.shape)  # type: ignore
-  else:
-    raise ValueError(aval)
 
-def _remat_translation_using_while(*args, jaxpr: core.Jaxpr):
-  # Implements:
-  #  for(counter=0, result=0; counter < rng(1, 2); counter ++) {
-  #     result = eval_jaxpr(*args)
-  #  }
-  # The loop carry is a tuple: (counter, result, args)
-  from jax._src.lax import control_flow as lax_control_flow
-
-  avals_out = tuple(v.aval for v in jaxpr.outvars)
-  carry_init = (np.int32(0), tuple(map(_dummy_like, avals_out)), args)
-  def cond(carry):
-    counter, _, _ = carry
-    unif = lax_internal.rng_uniform(np.int32(1), np.int32(2), shape=())
-    return counter < unif
-
-  def body(carry):
-    counter, _, args = carry
-    results = core.eval_jaxpr(jaxpr, (), *args)
-    return (counter + 1, tuple(results), args)
-
-  carry_res = lax_control_flow.while_loop(cond, body, carry_init)
-  return carry_res[1]
-
-def _remat_translation_using_cond(*args, jaxpr: core.Jaxpr):
-  # Implements:
-  #  if(rng(0, 1) < 2)
-  #    return eval_jaxpr(*args)
-  #  else:
-  #    return 0
-  from jax._src.lax import control_flow as lax_control_flow
-
-  avals_out = tuple(v.aval for v in jaxpr.outvars)
-
-  def remat_comp(*args):
-    return tuple(core.eval_jaxpr(jaxpr, (), *args))
-  def dummy_comp(*args):
-    return tuple(map(_dummy_like, avals_out))
-
-  unif = lax_internal.rng_uniform(np.float32(0), np.float32(1), shape=())
-  return lax_control_flow.cond(unif < np.float32(2), remat_comp, dummy_comp, *args)
-
-def _remat_lowering(ctx, *args, jaxpr: core.Jaxpr, prevent_cse: bool,
-                   differentiated: bool, policy, is_gpu_platform=False):
+def _remat_lowering(
+    ctx,
+    *args,
+    jaxpr: core.Jaxpr,
+    prevent_cse: bool,
+    differentiated: bool,
+    policy,
+):
   jaxpr_args: Sequence[mlir.IrValues]
   if differentiated and prevent_cse:
-    # If we're using the loop or cond lowerings, use the slower lower_fun
-    # based path.
-    if not config.remat_opt_barrier.value:
-      return mlir.lower_fun(remat_expansion, multiple_results=True)(
-          ctx, *args, jaxpr=jaxpr, prevent_cse=prevent_cse,
-          differentiated=differentiated, policy=policy,
-          is_gpu_platform=is_gpu_platform)
-
     arg_types = map(mlir.aval_to_ir_type, ctx.avals_in)
     flat_args = mlir.flatten_ir_values(args)
     barrier_op = hlo.OptimizationBarrierOp(flat_args)
@@ -853,9 +798,8 @@ def _remat_lowering(ctx, *args, jaxpr: core.Jaxpr, prevent_cse: bool,
   ctx.set_tokens_out(tokens_out)
   return outs
 
+
 mlir.register_lowering(remat_p, _remat_lowering)
-mlir.register_lowering(remat_p, partial(_remat_lowering, is_gpu_platform=True),
-                       platform="gpu")
 
 
 def checkpoint_name(x, name):
@@ -931,7 +875,7 @@ def checkpoint_wrapper(
            "    else:\n"
            "      return g(x)\n"
            "\n"
-           "See https://jax.readthedocs.io/en/latest/jep/11830-new-remat-checkpoint.html\n")
+           "See https://docs.jax.dev/en/latest/jep/11830-new-remat-checkpoint.html\n")
     raise NotImplementedError(msg)
   return checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
                     static_argnums=static_argnums)

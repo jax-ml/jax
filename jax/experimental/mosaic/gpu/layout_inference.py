@@ -21,6 +21,7 @@ from functools import partial
 import math
 from typing import cast
 
+from jax._src import lib as jaxlib
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -44,7 +45,9 @@ _layout_inference_rules: dict[str, LayoutInferenceRule] = {}
 
 
 def _add_layout_inference_rule(op: type[ir.OpView], rule: LayoutInferenceRule):
-  _layout_inference_rules[op.OPERATION_NAME] = rule  # pytype: disable=attribute-error
+  if op is not None:
+    _layout_inference_rules[op.OPERATION_NAME] = rule  # pytype: disable=attribute-error
+  return rule
 
 
 def _set_layout_attributes(
@@ -192,7 +195,7 @@ def _infer_pointwise_op_layouts(op: ir.OpView) -> OptionalLayouts:
   # This is left for a future change, and currently we only do "down
   # propagation".
   layout = _choose_representative_layout(layouts)
-  # It is unsafe to t conclude that this op produces a splat if not all inputs
+  # It is unsafe to conclude that this op produces a splat if not all inputs
   # have been inferred: some of them might turn out not to be splats!
   if layouts_lib.is_splat_fragmented_layout(layout) and not all_inputs_have_layout:
     return None
@@ -245,6 +248,51 @@ for op in [
     vector.StoreOp,
 ]:
   _add_layout_inference_rule(op, _infer_pointwise_op_layouts)
+
+
+# TODO(bchetioui): remove once minimum jaxlib >= 0.5.3.
+OptimizationBarrierOp = getattr(mgpu, "OptimizationBarrierOp", None)
+
+
+@partial(_add_layout_inference_rule, OptimizationBarrierOp)
+def _infer_optimization_barrier_op_layout(
+    op: OptimizationBarrierOp,
+) -> OptionalLayouts:
+  def is_array(v: ir.Value) -> bool:
+    return ir.VectorType.isinstance(v.type)
+
+  if inference_utils.has_in_layouts_set(op):
+    op_in_layouts = list(inference_utils.in_layouts(op))
+    return op_in_layouts, op_in_layouts
+
+  if inference_utils.has_out_layouts_set(op):
+    op_out_layouts = list(inference_utils.out_layouts(op))
+    return op_out_layouts, op_out_layouts
+
+  layouts = [None] * len(op.operands)
+  for i, operand in enumerate(filter(is_array, op.operands)):
+    layouts[i] = inference_utils.value_layout(operand)
+
+  for i, result in enumerate(filter(is_array, op.results)):
+    possible_layouts = set()
+    for op_operand_use in cast(ir.OpResult, result).uses:
+      consumer = op_operand_use.owner
+      op_user = consumer.operands[op_operand_use.operand_number]
+      layout = inference_utils.in_layout_for_operand(consumer, op_user)
+      if layout is not None:
+        possible_layouts.add(layout)
+      if possible_layouts and layouts[i] is None:
+        # TODO(bchetioui): we could actually just pick any user layout here,
+        # and optimize later. This is fine for now.
+        layouts[i] = _choose_representative_layout(possible_layouts)
+
+  # TODO(bchetioui): handle annotating layout for only certain operands.
+  # Otherwise, layouts may not get propagated through optimization barriers, if
+  # a single branch does not carry any forcing layout, which is pretty bad.
+  if any(layout is None for layout in layouts):
+    return None
+
+  return layouts, layouts
 
 
 @partial(_add_layout_inference_rule, arith.ConstantOp)
@@ -306,23 +354,46 @@ def _infer_yield_op_layout(op: scf.YieldOp) -> OptionalLayouts:
   return (layouts, [])
 
 
-@partial(_add_layout_inference_rule, scf.ForOp)
-def _infer_for_op_layout(op: scf.ForOp) -> OptionalLayouts:
-  yield_op = op.body.operations[len(op.body.operations) - 1]
-  assert isinstance(yield_op, scf.YieldOp)
-
-  if inference_utils.has_in_layouts_set(yield_op):
-    yield_layouts = list(inference_utils.in_layouts(yield_op))
+def _infer_from_yield_ops(op: ir.Operation) -> list[ir.Attribute] | None:
+  candidates = []
+  for region in op.regions:
+    [block] = region.blocks
+    yield_op = block.operations[len(block.operations) - 1]
+    assert isinstance(yield_op, scf.YieldOp)
+    if not inference_utils.has_in_layouts_set(yield_op):
+      continue
+    yield_layouts = inference_utils.in_layouts(yield_op)
     if any(
         layouts_lib.is_splat_fragmented_layout(layout)
         for layout in yield_layouts
     ):
-      return None
-    return (yield_layouts, yield_layouts)
+      continue
+    candidates.append(yield_layouts)
+  if not candidates:
+    return None
+  return [_choose_representative_layout(set(c)) for c in zip(*candidates)]
 
+
+@partial(_add_layout_inference_rule, scf.ForOp)
+def _infer_for_op_layout(op: scf.ForOp) -> OptionalLayouts:
   # TODO(bchetioui): we don't attempt to propagate from outside for the moment.
   # For the existing kernels, propagating from the YieldOp should be enough.
+  if layouts := _infer_from_yield_ops(op):
+    return layouts, layouts
+  return None
 
+
+@partial(_add_layout_inference_rule, scf.IfOp)
+def _infer_if_op_layout(op: scf.IfOp) -> OptionalLayouts:
+  if layouts := _infer_from_yield_ops(op):
+    return [], layouts
+  return None
+
+
+@partial(_add_layout_inference_rule, scf.IndexSwitchOp)
+def _infer_index_switch_op_layout(op: scf.IndexSwitchOp) -> OptionalLayouts:
+  if layouts := _infer_from_yield_ops(op):
+    return [], layouts
   return None
 
 
@@ -333,101 +404,63 @@ def _infer_splat_op_layout(splat_op: vector.SplatOp) -> OptionalLayouts:
           shape=cast(ir.ShapedType, splat_op.result.type).shape
       )
   )
-
   return [], [layout]
+
+
+def _update_layout_shape(
+    layout: ir.Attribute, shape: Sequence[int], origin: str
+) -> ir.Attribute:
+  if layouts_lib.is_splat_fragmented_layout(
+      layout
+  ) or layouts_lib.is_strided_fragmented_layout(layout):
+    return layouts_lib.to_layout_attr(
+        dataclasses.replace(layouts_lib.from_layout_attr(layout), shape=shape)
+    )
+  raise NotImplementedError(f"Unsupported {origin} layout: {layout}.")
+
+
+@partial(_add_layout_inference_rule, vector.ShapeCastOp)
+def _infer_shape_cast_op_layout(op: vector.ShapeCastOp) -> OptionalLayouts:
+  in_layout = inference_utils.value_layout(op.source)
+  if in_layout is None:
+    out_layout = inference_utils.value_layout(op.result)
+    if out_layout is None:
+      return None
+    in_layout = _update_layout_shape(
+        out_layout, ir.VectorType(op.source.type).shape, "source"
+    )
+    return [in_layout], [out_layout]
+
+  out_layout = _update_layout_shape(
+      in_layout, ir.VectorType(op.result.type).shape, "result"
+  )
+  return [in_layout], [out_layout]
+
+
+@partial(_add_layout_inference_rule, vector.ReductionOp)
+def _infer_reduction_op_layout(op: vector.ReductionOp) -> OptionalLayouts:
+  if layout := inference_utils.value_layout(op.vector):
+    return [layout], []
+  return None
+
+
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.5.4.
+if jaxlib.version >= (0, 5, 4):
+  @partial(_add_layout_inference_rule, mgpu.LayoutCastOp)
+  def _infer_layout_cast_op_layout(
+      layout_cast_op: mgpu.LayoutCastOp,
+  ) -> OptionalLayouts:
+    return [layout_cast_op.new_layout], [layout_cast_op.new_layout]
 
 
 @partial(_add_layout_inference_rule, mgpu.WGMMAOp)
 def _infer_wgmma_op_layout(wgmma_op: mgpu.WGMMAOp) -> OptionalLayouts:
-  layout = layouts_lib.to_layout_attr(fa.TILED_LAYOUT_WGMMA)
+  layout = layouts_lib.to_layout_attr(fa.WGMMA_LAYOUT)
 
   if ir.VectorType.isinstance(wgmma_op.a.type):
     return [layout, layout], [layout]
 
   return [layout], [layout]
-
-@dataclasses.dataclass()
-class WGMMATransforms:
-  swizzle: mgpu.SwizzlingMode
-  a_tile: tuple[int, ...]
-  a_transpose: bool
-  b_tile: tuple[int, ...]
-  b_transpose: bool
-
-
-def infer_wgmma_transforms(wgmma_op: mgpu.WGMMAOp) -> WGMMATransforms:
-  a_shape = cast(ir.ShapedType, wgmma_op.a.type).shape
-  k = a_shape[0] if wgmma_op.transpose_a else a_shape[1]
-  bitwidth = cast(ir.ShapedType, wgmma_op.a.type).element_type.width
-
-  # Try tiling with all swizzling modes starting from the largest one.
-  for swizzle in [
-      mgpu.SwizzlingMode.k128ByteSwizzle,
-      mgpu.SwizzlingMode.k64ByteSwizzle,
-      mgpu.SwizzlingMode.k32ByteSwizzle,
-  ]:
-    s = swizzle * 8 // bitwidth
-    if k % s == 0:
-      return WGMMATransforms(
-          swizzle=swizzle,
-          a_tile=(s, 64) if wgmma_op.transpose_a else (64, s),
-          a_transpose=wgmma_op.transpose_a,
-          b_tile=(s, s),
-          b_transpose=wgmma_op.transpose_b,
-      )
-  raise ValueError(
-      "Could not infer layouts for memref feeding into WGMMA. The "
-      "non-contracting dimension ({k}) must be a multiple of "
-      "s = swizzle * (8 / bitwidth) where swizzle is a valid swizzle "
-      f"(32, 64, or 128) and bitwidth ({bitwidth}) is the element size of "
-      "`a` and `b`."
-  )
-
-def _layout_for_memref_view(view_op: memref.ViewOp) -> ir.Attribute | None:
-  wgmma_use = None
-  uses = cast(ir.OpResult, view_op.result).uses
-  for use in uses:
-    user = use.owner
-    if isinstance(user, memref.CastOp):
-      # This memref is already cast, so we don't need to do anything.
-      return None
-    if isinstance(user, mgpu.WGMMAOp):
-      if wgmma_use is not None:
-        raise NotImplementedError(f"Multiple WGMMA consumers of {view_op}.")
-      wgmma_use = use
-      break
-    if (
-        not isinstance(user, mgpu.AsyncLoadOp)
-        and not isinstance(user, mgpu.AsyncStoreOp)
-        and not isinstance(user, vector.LoadOp)
-        and not isinstance(user, vector.StoreOp)
-    ):
-      raise NotImplementedError(f"Unsupported user {user} of {view_op}.")
-
-  if wgmma_use is None:
-    # This memref is not used by a WGMMA operation, so we don't need to do
-    # anything.
-    return None
-
-  transforms = infer_wgmma_transforms(wgmma_use.owner)
-  if wgmma_use.operand_number == 1:
-    tile = transforms.a_tile
-    transpose = transforms.a_transpose
-  else:
-    tile = transforms.b_tile
-    transpose = transforms.b_transpose
-  transpose_attr = (
-      [mgpu.TransposeTransformAttr.get([1, 0, 2, 3])] if transpose else []
-  )
-
-  layout = mgpu.LayoutAttr.get(
-      2,
-      [mgpu.TileTransformAttr.get(tile)]
-      + transpose_attr
-      + [mgpu.SwizzleTransformAttr.get(transforms.swizzle)],
-  )
-
-  return layout
 
 
 def _earliest_use(regions: list[ir.Region], uses: Sequence[ir.OpOperand]) -> ir.OpView:
@@ -525,23 +558,33 @@ def infer_layout(module: ir.Module):
   # make sure to derive a single vector size in order to avoid relayouts at
   # lowering time.
   default_vector_size = math.inf
-
-  def update_default_vector_size(op: ir.OpView):
+  def update_default_vector_size_from_vector(v: ir.Value):
     nonlocal default_vector_size
-    for v in list(op.operands) + list(op.results):
-      if ir.VectorType.isinstance(v.type):
-        max_vec_size_for_v = (
-            np.prod(cast(ir.ShapedType, v.type).shape) // fa.WARPGROUP_SIZE
-        )
-        desired_vec_size = 8 // utils.bytewidth(v.type.element_type)
-        default_vector_size = min(
-            default_vector_size, max_vec_size_for_v, desired_vec_size
-        )
+    max_vec_size_for_v = (
+          np.prod(cast(ir.ShapedType, v.type).shape) // fa.WARPGROUP_SIZE
+      )
+    desired_vec_size = 8 // utils.bytewidth(v.type.element_type)
+    default_vector_size = min(
+        default_vector_size, max_vec_size_for_v, desired_vec_size
+    )
+
+  def update_default_vector_size_from_op(op: ir.OpView):
+    for i, v in enumerate(
+        filter(lambda v: ir.VectorType.isinstance(v.type), op.operands)
+    ):
+      if inference_utils.attr_element("in_layouts", op, i) is None:
+        update_default_vector_size_from_vector(v)
+
+    for i, v in enumerate(
+        filter(lambda v: ir.VectorType.isinstance(v.type), op.results)
+    ):
+      if inference_utils.attr_element("out_layouts", op, i) is None:
+        update_default_vector_size_from_vector(v)
 
   for op in module.body:
-    traverse_op(op, update_default_vector_size)
+    traverse_op(op, update_default_vector_size_from_op)
 
-  if default_vector_size is None:  # Nothing to annotate.
+  if default_vector_size == math.inf:  # Nothing to annotate.
     return
 
   def to_default_layout(ty: ir.Type) -> ir.Attribute | None:
@@ -570,11 +613,3 @@ def infer_layout(module: ir.Module):
 
   for op in module.body:
     traverse_op(op, set_default_layout)
-
-  def infer_memref_layouts_and_insert_casts(op: ir.OpView):
-    if op.name == "memref.view":
-      if layout := _layout_for_memref_view(op):
-        _insert_memref_layout_cast(layout, op)
-
-  for op in module.body:
-    traverse_op(op, infer_memref_layouts_and_insert_casts)

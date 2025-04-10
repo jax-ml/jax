@@ -130,7 +130,7 @@ class custom_jvp(Generic[ReturnValue]):
 
   For a more detailed introduction, see the tutorial_.
 
-  .. _tutorial: https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
+  .. _tutorial: https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
   """
   fun: Callable[..., ReturnValue]
   nondiff_argnums: Sequence[int]
@@ -521,7 +521,7 @@ class custom_vjp(Generic[ReturnValue]):
 
   For a more detailed introduction, see the tutorial_.
 
-  .. _tutorial: https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
+  .. _tutorial: https://docs.jax.dev/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
   """
 
   def __init__(self,
@@ -1424,53 +1424,52 @@ def linear_call(fun: Callable,
                                 (residual_args, linear_args), {})),
       t_in_tree)
 
-  t_jaxpr, t_consts = _initial_style_jaxpr(t, (*res_avals, *out_avals))
-  t_jaxpr_closed = _close_jaxpr(t_jaxpr)
+  @pe._memoize
+  def transpose_thunk():
+    t_jaxpr, t_consts = _initial_style_jaxpr(t, (*res_avals, *out_avals))
+    if t_out_tree() != lin_tree:
+      raise TypeError(
+          'transpose output pytree structure must match that of linear inputs, '
+          f'got output structure {t_out_tree()} '
+          f'and input structure {lin_tree}.')
+    return _close_jaxpr(t_jaxpr), t_consts
 
-  if t_out_tree() != lin_tree:
-    raise TypeError(
-        'transpose output pytree structure must match that of linear inputs, '
-        f'got output structure {t_out_tree()} '
-        f'and input structure {lin_tree}.')
-
-  out = linear_call_p.bind(*f_consts, *t_consts, *operands_res, *operands_lin,
+  out = linear_call_p.bind(*f_consts, *operands_res, *operands_lin,
                            callee=f_jaxpr_closed,
-                           transpose=t_jaxpr_closed,
+                           transpose_thunk=transpose_thunk,
                            num_callee_consts=len(f_consts),
-                           num_transpose_consts=len(t_consts),
                            num_res=len(operands_res))
 
   return tree_unflatten(out_tree(), out)
 
-def _linear_call_impl(*args, callee, transpose, num_callee_consts,
-                      num_transpose_consts, num_res):
-  del transpose
-  consts, _, operands_res, operands_lin = split_list(
-      args, [num_callee_consts, num_transpose_consts, num_res])
-  return core.eval_jaxpr(callee.jaxpr, (), *consts, *operands_res, *operands_lin)
+def _linear_call_impl(*args, callee, transpose_thunk, num_callee_consts,
+                      num_res):
+  del transpose_thunk, num_callee_consts, num_res
+  return core.eval_jaxpr(callee.jaxpr, (), *args)
 
-def _linear_call_transpose_rule(cts, *args, callee, transpose,
-                                num_callee_consts,
-                                num_transpose_consts, num_res):
-  f_consts, t_consts, operands_res, operands_lin = split_list(
-      args, [num_callee_consts, num_transpose_consts, num_res])
+def _linear_call_transpose_rule(cts, *args, callee, transpose_thunk,
+                                num_callee_consts, num_res):
+  transpose, t_consts = transpose_thunk()
+  f_consts, operands_res, operands_lin = split_list(
+      args, [num_callee_consts, num_res])
   _, _, cts_avals = split_list(
-      transpose.in_avals, [num_transpose_consts, num_res])
+      transpose.in_avals, [len(t_consts), num_res])
 
   assert all(ad.is_undefined_primal(x)     for x in operands_lin)
   assert all(not ad.is_undefined_primal(x) for x in operands_res)
 
+  def new_transpose_thunk():
+    return callee, f_consts
+
   cts = [zeros_like_aval(a) if type(ct) is Zero else ct
          for ct, a in zip(cts, cts_avals)]
-
-  cts_out = linear_call_p.bind(*t_consts, *f_consts, *operands_res, *cts,
+  cts_out = linear_call_p.bind(*t_consts, *operands_res, *cts,
                                callee=transpose,
-                               transpose=callee,
+                               transpose_thunk=new_transpose_thunk,
                                num_callee_consts=len(t_consts),
-                               num_transpose_consts=len(f_consts),
                                num_res=len(operands_res))
 
-  return [None] * (num_callee_consts + num_transpose_consts + num_res) + cts_out
+  return [None] * (num_callee_consts + num_res) + cts_out
 
 def _linear_call_abstract_eval(*args, **kwargs):
   return kwargs['callee'].out_avals

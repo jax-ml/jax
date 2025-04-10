@@ -145,8 +145,7 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
     x = jnp.arange(8 * 8 * 128, dtype=jnp.int32).reshape((8 * 8, 128))
 
     def _x_transform(i, s_ref):
-      s = pl.load(s_ref, (i,))
-      return (s, 0)
+      return (s_ref[i], 0)
 
     out = self.pallas_call(
         body,
@@ -225,7 +224,7 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
         assert s2.shape == (3,)
         assert s3 is None
         store_idx = s_ref[pl.program_id(0)]
-        pl.store(dst, (pl.dslice(store_idx, 1), slice(None)), to_store[...])
+        dst[pl.dslice(store_idx, 1), :] = to_store[...]
       # Pass a pytree of scalar
       return kernel((s, np.arange(3, dtype=np.int32), None), x, to_store)
 
@@ -281,7 +280,7 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
     x = jnp.arange(2 * 8 * 8 * 128, dtype=jnp.int32).reshape((2, 8 * 8, 128))
 
     def _x_transform(i, s_ref):
-      s = pl.load(s_ref, (i,))
+      s = s_ref[i]
       return (s, 0)
 
     def f(x):
@@ -423,7 +422,7 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
     x = jnp.arange(8 * 8 * 128, dtype=jnp.int32).reshape((8 * 8, 128))
 
     def _x_transform(i, s_ref):
-      s = pl.load(s_ref, (i,))
+      s = s_ref[i]
       return (s, 0)
 
     s = s[None]
@@ -457,7 +456,7 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
     x = jnp.arange(2 * 8 * 8 * 128, dtype=jnp.int32).reshape((2, 8 * 8, 128))
 
     def _x_transform(i, s_ref):
-      s = pl.load(s_ref, (i,))
+      s = s_ref[i]
       return (s, 0)
 
     s = jnp.tile(s[None], [2, 1])
@@ -1136,11 +1135,43 @@ class PallasCallDMATest(PallasBaseTest):
     np.testing.assert_array_equal(y, x)
     np.testing.assert_array_equal(sem_val, 0)
 
+  def test_set_dma_priority(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 4, 5):
+      self.skipTest('Needs a newer libTPU')
+    if jtu.get_tpu_version() < 5:
+      self.skipTest('Target does not support DMA prefetch between HBM and VMEM')
+    def kernel(x1, x2, y1, y2, scratch1, scratch2, sem1, sem2):
+      copy1 = pltpu.async_copy(x1, scratch1, sem1, priority=1)
+      copy2 = pltpu.async_copy(x2, scratch2, sem2, priority=0)
+      copy1.wait()
+      copy2.wait()
+      copy1 = pltpu.async_copy(scratch1, y1, sem1, priority=0)
+      copy2 = pltpu.async_copy(scratch2, y2, sem2, priority=1)
+      copy1.wait()
+      copy2.wait()
+
+    shape = (8, 128)
+    dtype = jnp.int32
+    x1 = jnp.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    x2 = x1 + 1
+    y1, y2 = self.pallas_call(
+        kernel,
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[pl.BlockSpec(memory_space=pl.ANY)] * 2,
+            scratch_shapes=[pltpu.VMEM(shape, dtype)] * 2
+            + [pltpu.SemaphoreType.DMA] * 2,
+            out_specs=[pl.BlockSpec(memory_space=pl.ANY)] * 2,
+        ),
+        out_shape=[jax.ShapeDtypeStruct(shape, dtype)] * 2,
+    )(x1, x2)
+    np.testing.assert_array_equal(y1, x1)
+    np.testing.assert_array_equal(y2, x2)
+
   def test_hbm_hbm_dma(self):
     def kernel(x_hbm_ref, y_hbm_ref):
       def body(sem):
-        pltpu.async_copy(x_hbm_ref.at[pl.ds(8), :], y_hbm_ref.at[:, pl.ds(128)],
-                         sem).wait()
+        pltpu.async_copy(x_hbm_ref.at[:8, :], y_hbm_ref.at[:, :128], sem).wait()
       pl.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(8 * 128.).reshape((8, 128))
     y = self.pallas_call(
@@ -2570,8 +2601,7 @@ class PallasCallTPUCheckifyTest(PallasBaseTest):
     x = jnp.arange(8 * 8 * 128, dtype=jnp.int32).reshape((8 * 8, 128))
 
     def _x_transform(i, s_ref):
-      s = pl.load(s_ref, (i,))
-      return (s, 0)
+      return (s_ref[i], 0)
 
     pallas_call = self.pallas_call(
         body,
@@ -2668,19 +2698,19 @@ class PrettyPrintingTest(PallasBaseTest):
   @parameterized.parameters(
       (
           lambda i: (i, pl.ds(0, 8), pl.ds(0, 128)),
-          'dma_start c[d,:,:] -> e[...] f',
+          'dma_start(p0) c[d,:,:] -> e[...] f',
       ),
       (
           lambda i: (0, pl.ds(i, 8), pl.ds(0, 128)),
-          'dma_start c[0,d:d+8,:] -> e[...] f',
+          'dma_start(p0) c[0,d:d+8,:] -> e[...] f',
       ),
       (
           lambda i: (i, pl.ds(2, 4), pl.ds(0, 100)),
-          'dma_start c[d,2:6,:100] -> e[...] f',
+          'dma_start(p0) c[d,2:6,:100] -> e[...] f',
       ),
       (
           lambda i: (i, pl.ds(2, 6), pl.ds(4, 100)),
-          'dma_start c[d,2:,4:104] -> e[...] f',
+          'dma_start(p0) c[d,2:,4:104] -> e[...] f',
       ),
   )
   def test_dma_custom_pretty_print(self, indexer, expected):

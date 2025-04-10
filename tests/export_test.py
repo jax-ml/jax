@@ -19,7 +19,6 @@ import contextlib
 import dataclasses
 import functools
 import logging
-import json
 import math
 import re
 import unittest
@@ -281,6 +280,18 @@ class JaxExportTest(jtu.JaxTestCase):
 
     self.assertAllClose(f(x, y), exp_f.call(x, y))
 
+  def test_override_lowering_rules(self):
+    @jax.jit
+    def f(x):
+      return jnp.sin(x)
+
+    def my_lowering_rule(ctx, arg, **_):
+      return mlir.hlo.CosineOp(arg).results
+
+    exp = get_exported(f, _override_lowering_rules=(
+        (lax.sin_p, my_lowering_rule),))(42.)
+    self.assertIn("stablehlo.cosine", exp.mlir_module())
+
   def test_pytree(self):
     a = np.arange(4, dtype=np.float32)
     b = np.arange(6, dtype=np.float32)
@@ -409,6 +420,18 @@ class JaxExportTest(jtu.JaxTestCase):
     res2 = exp2.call(x1, x2)
     self.assertEqual(tree_util.tree_structure(res2),
                      tree_util.tree_structure(res))
+
+  @jtu.parameterized_filterable(
+    kwargs=[dict(impl=p)
+            for p in ("rbg", "unsafe_rbg", "threefry2x32")])
+  def test_prng_keys(self, *, impl):
+
+    key = jax.random.key(42, impl=impl)
+    @jax.jit
+    def f(key):
+      return key
+    exp_f = get_exported(jax.jit(f))(key)
+    self.assertEqual(f(key), exp_f.call(key))
 
   def test_error_wrong_intree(self):
     def f(a_b_pair, *, c):
@@ -941,7 +964,7 @@ class JaxExportTest(jtu.JaxTestCase):
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, c + b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
              "'b' = 0 from specification '2*b + a' for dimension args[0].shape[0] (= 2), . "
-             "Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
+             "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
            )),
       dict(shape=(3, 2, 6),  # a = 2, b = 0.5, c = 4 - b is not integer
            poly_spec="(a + 2*b, a, a + b + c)",
@@ -950,7 +973,7 @@ class JaxExportTest(jtu.JaxTestCase):
              "Division had remainder 1 when computing the value of 'b'. "
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, c + b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), . "
-             "Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
+             "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
            )),
       dict(shape=(8, 2, 6),  # a = 2, b = 3 - inconsistency
            poly_spec="(a + 2*b, a, a + b)",
@@ -960,7 +983,7 @@ class JaxExportTest(jtu.JaxTestCase):
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
              "'b' = 4 from specification 'b + a' for dimension args[0].shape[2] (= 6), . "
-             "Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
+             "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
            )),
       dict(shape=(7, 2, 36),  # a = 2, b = 3, c = 6 - cannot solve c
            poly_spec="(2 * a + b, a, c * c)",
@@ -969,7 +992,7 @@ class JaxExportTest(jtu.JaxTestCase):
              "We can only solve linear uni-variate constraints. "
              "Using the following polymorphic shapes specifications: args[0].shape = (b + 2*a, a, c^2). "
              "Unprocessed specifications: 'c^2' for dimension size args[0].shape[2]. "
-             "Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
+             "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
            )),
   ])
   def test_shape_constraints_errors(self, *,
@@ -1173,7 +1196,7 @@ class JaxExportTest(jtu.JaxTestCase):
     if jax.local_device_count() < 2:
       self.skipTest("Need at least 2 devices")
 
-    abs_mesh = jax.sharding.AbstractMesh((("x", 2),))
+    abs_mesh = jax.sharding.AbstractMesh((2,), 'x')
     input_sharding = jax.sharding.NamedSharding(abs_mesh, P("x", None))
     output_sharding = jax.sharding.NamedSharding(abs_mesh, P(None, "x"))
     @jax.jit
@@ -1903,8 +1926,8 @@ class JaxExportTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-        {"m": 5, "k": 4, "n": 3, "group_sizes": [5]},
-        {"m": 10, "k": 9, "n": 8, "group_sizes": [3, 7]},
+        {"m": 64, "k": 4, "n": 3, "group_sizes": [5]},
+        {"m": 64, "k": 9, "n": 8, "group_sizes": [3, 7]},
     ])
   def test_ragged_dot(self, m, k, n, group_sizes):
     def f_jax(x, y, gs):

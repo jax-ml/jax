@@ -4,7 +4,7 @@ Frequently asked questions (FAQ)
 .. comment RST primer for Sphinx: https://thomas-cokelaer.info/tutorials/sphinx/rest_syntax.html
 .. comment Some links referenced here. Use `JAX - The Sharp Bits`_ (underscore at the end) to reference
 
-.. _JAX - The Sharp Bits: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html
+.. _JAX - The Sharp Bits: https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html
 
 We are collecting answers to frequently asked questions here.
 Contributions welcome!
@@ -116,7 +116,7 @@ code in JAX's internal representation, typically because it makes heavy use of
 Python control flow such as ``for`` loops. For a handful of loop iterations,
 Python is OK, but if you need *many* loop iterations, you should rewrite your
 code to make use of JAX's
-`structured control flow primitives <https://jax.readthedocs.io/en/latest/control-flow.html#Structured-control-flow-primitives>`_
+`structured control flow primitives <https://docs.jax.dev/en/latest/control-flow.html#Structured-control-flow-primitives>`_
 (such as :func:`lax.scan`) or avoid wrapping the loop with ``jit`` (you can
 still use ``jit`` decorated functions *inside* the loop).
 
@@ -454,8 +454,8 @@ performing matrix-matrix multiplication) to amortize the increased overhead of
 JAX/accelerators vs NumPy/CPU. For example, if we switch this example to use
 10x10 input instead, JAX/GPU runs 10x slower than NumPy/CPU (100 µs vs 10 µs).
 
-.. _To JIT or not to JIT: https://jax.readthedocs.io/en/latest/notebooks/thinking_in_jax.html#to-jit-or-not-to-jit
-.. _Double (64 bit) precision: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision
+.. _To JIT or not to JIT: https://docs.jax.dev/en/latest/notebooks/thinking_in_jax.html#to-jit-or-not-to-jit
+.. _Double (64 bit) precision: https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision
 .. _`%time and %timeit magics`: https://ipython.readthedocs.io/en/stable/interactive/magics.html#magic-time
 .. _Colab: https://colab.research.google.com/
 
@@ -841,12 +841,12 @@ reducing :code:`XLA_PYTHON_CLIENT_MEM_FRACTION` from the default of :code:`.75`,
 or setting :code:`XLA_PYTHON_CLIENT_PREALLOCATE=false`. For more details, please
 see the page on `JAX GPU memory allocation`_.
 
-.. _JIT mechanics: https://jax.readthedocs.io/en/latest/notebooks/thinking_in_jax.html#jit-mechanics-tracing-and-static-variables
-.. _External callbacks in JAX: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
-.. _Pure callback example: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html#example-pure-callback-with-custom-jvp
-.. _IO callback example: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html#exploring-jax-experimental-io-callback
+.. _JIT mechanics: https://docs.jax.dev/en/latest/notebooks/thinking_in_jax.html#jit-mechanics-tracing-and-static-variables
+.. _External callbacks in JAX: https://docs.jax.dev/en/latest/notebooks/external_callbacks.html
+.. _Pure callback example: https://docs.jax.dev/en/latest/notebooks/external_callbacks.html#example-pure-callback-with-custom-jvp
+.. _IO callback example: https://docs.jax.dev/en/latest/notebooks/external_callbacks.html#exploring-jax-experimental-io-callback
 .. _Heaviside Step Function: https://en.wikipedia.org/wiki/Heaviside_step_function
 .. _Sigmoid Function: https://en.wikipedia.org/wiki/Sigmoid_function
 .. _algebraic_simplifier.cc: https://github.com/openxla/xla/blob/33f815e190982dac4f20d1f35adb98497a382377/xla/hlo/transforms/simplifiers/algebraic_simplifier.cc#L4851
-.. _JAX GPU memory allocation: https://jax.readthedocs.io/en/latest/gpu_memory_allocation.html
+.. _JAX GPU memory allocation: https://docs.jax.dev/en/latest/gpu_memory_allocation.html
 .. _dynamic linker search pattern: https://man7.org/linux/man-pages/man8/ld.so.8.html

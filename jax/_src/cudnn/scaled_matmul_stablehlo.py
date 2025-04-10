@@ -367,6 +367,7 @@ def scaled_matmul_wrapper(
     preferred_element_type = dtypes.canonicalize_dtype(
         np.dtype(preferred_element_type)
     )
+
     out = _scaled_matmul(
         lhs,
         rhs,
@@ -374,6 +375,7 @@ def scaled_matmul_wrapper(
         rhs_scales,
         preferred_element_type=preferred_element_type,
     )
+
     return out
 
 def shape_normalization(x, dimension_numbers):
@@ -489,9 +491,12 @@ def quantize(x, config):
     scaled_x = x / e8m0_to_dtype(scales_q, scales.dtype)
   elif config.mode == "nvfp4":
     assert config.scale_type == jnp.float8_e4m3fn
-    # shuw(TODO): Add when XLA is ready and e2m1fn is available.
-    scales_q = scales
-    scales_x = x
+    assert config.global_scale.dtype == jnp.float32
+    SCALE_MAX = jnp.finfo(config.scale_type).max.astype(x.dtype)
+
+    scales_q = jnp.clip(scales / config.global_scale, 0, SCALE_MAX)
+    scales_q = jax.lax.optimization_barrier(scales_q.astype(config.scale_type))
+    scaled_x = x / scales_q.astype(jnp.float32)
   else:
     raise ValueError(f"Unrecognized mode: {config.mode}.")
 
@@ -503,10 +508,6 @@ def quantize(x, config):
       config.scale_type
   )
   return x_q, scales_q
-
-
-
-
 
 def scaled_dot_impl(lhs, rhs, dimension_numbers, preferred_element_type,
                     configs):
@@ -529,9 +530,17 @@ def scaled_dot_impl(lhs, rhs, dimension_numbers, preferred_element_type,
   lhs_q, lhs_scales = quantize(lhs_3d, lhs_config)
   rhs_q, rhs_scales = quantize(rhs_3d, rhs_config)
 
+  out_dtype = preferred_element_type
+  if configs[0].mode == 'nvfp4':
+    out_dtype = jnp.float32
+
   out = scaled_matmul_wrapper(
-      lhs_q, rhs_q, lhs_scales, rhs_scales, preferred_element_type
+      lhs_q, rhs_q, lhs_scales, rhs_scales, preferred_element_type=out_dtype
   )
+
+  if configs[0].mode == 'nvfp4':
+    out *= (configs[0].global_scale * configs[1].global_scale)
+    out = out.astype(preferred_element_type)
 
   expanded_out_shape = compute_dot_output_shape(
       lhs.shape, rhs.shape, lhs_dn, rhs_dn
@@ -564,13 +573,15 @@ def scaled_dot_general_transpose_lhs(
   g_3d = shape_normalization(g, g_dn)
 
   g_config, y_config = configs[0], configs[1]
+  if configs[0].mode != 'nvfp4':
+    g_q, g_scales = quantize(g_3d, g_config)
+    y_q, y_scales = quantize(y_3d, y_config)
 
-  g_q, g_scales = quantize(g_3d, g_config)
-  y_q, y_scales = quantize(y_3d, y_config)
-
-  out = scaled_matmul_wrapper(
-      g_q, y_q, g_scales, y_scales, preferred_element_type
-  )
+    out = scaled_matmul_wrapper(
+        g_q, y_q, g_scales, y_scales, preferred_element_type
+    )
+  else:
+    out = jnp.matmul(g_3d, jnp.permute_dims(y_3d, (0, 2, 1)), preferred_element_type=preferred_element_type)
 
   expanded_out_shape = compute_dot_output_shape(g.shape, y.shape, g_dn, y_dn)
   expanded_out = jnp.reshape(out, expanded_out_shape)
@@ -629,6 +640,17 @@ def scaled_dot_bwd(dimension_numbers, preferred_element_type, configs, res, g):
   }
   grad_lhs = scaled_dot_general_transpose_lhs(*args, **lhs_kw_args)
   grad_rhs = scaled_dot_general_transpose_rhs(*args, **rhs_kw_args)
+
+  # We apply a Straight-Through Estimator (STE) with zero-out behavior: if
+  # inputs are clipped during quantization in fprop, their corresponding gradients
+  # are zeroed out; otherwise, they pass through unchanged.
+  if configs[2].mode == "nvfp4":
+    assert rhs.dtype == lhs.dtype
+    MAX = jnp.finfo(configs[0].data_type).max.astype(lhs.dtype)
+    SCALE_MAX = jnp.finfo(configs[0].scale_type).max.astype(lhs.dtype)
+    grad_lhs = jnp.where(jnp.abs(lhs) <= configs[0].global_scale * MAX * SCALE_MAX, grad_lhs, 0)
+    grad_rhs = jnp.where(jnp.abs(rhs) <= configs[1].global_scale * MAX * SCALE_MAX, grad_rhs, 0)
+
   return (grad_lhs, grad_rhs)
 
 

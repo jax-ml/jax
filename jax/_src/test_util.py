@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import collections
 from collections.abc import Callable, Generator, Iterable, Sequence
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
 import datetime
 import functools
@@ -32,12 +31,10 @@ import sys
 import tempfile
 import textwrap
 import threading
-import time
 from typing import Any, TextIO
 import unittest
 import zlib
 
-from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import lax
@@ -51,19 +48,27 @@ from jax._src import dtypes as _dtypes
 from jax._src import lib as _jaxlib
 from jax._src import monitoring
 from jax._src import test_warning_util
+from jax._src.typing import ArrayLike, DTypeLike
 from jax._src import xla_bridge
 from jax._src import util
 from jax._src import mesh as mesh_lib
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 from jax._src.interpreters import mlir
+from jax._src.lib import jaxlib_extension_version
+from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
-    check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, rand_like, tolerance)
+    check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, rand_like, tolerance, ToleranceDict)
+from jax._src.test_loader import thread_unsafe_test as thread_unsafe_test
+from jax._src.test_loader import thread_unsafe_test_class as thread_unsafe_test_class
+from jax._src.test_loader import JaxTestLoader as JaxTestLoader
+from jax._src.test_loader import TEST_NUM_THREADS as TEST_NUM_THREADS
 from jax._src.util import unzip2
 from jax.tree_util import tree_all, tree_flatten, tree_map, tree_unflatten
 import numpy as np
 import numpy.random as npr
+
 
 
 # This submodule includes private test utilities that are not exported to
@@ -89,22 +94,12 @@ _MAX_CASES_SAMPLING_RETRIES = config.int_flag(
   'sampling process is terminated.'
 )
 
-_SKIP_SLOW_TESTS = config.bool_flag(
+SKIP_SLOW_TESTS = config.bool_flag(
     'jax_skip_slow_tests',
     config.bool_env('JAX_SKIP_SLOW_TESTS', False),
     help='Skip tests marked as slow (> 5 sec).'
 )
 
-_TEST_TARGETS = config.string_flag(
-  'test_targets', os.getenv('JAX_TEST_TARGETS', ''),
-  'Regular expression specifying which tests to run, called via re.search on '
-  'the test name. If empty or unspecified, run all tests.'
-)
-_EXCLUDE_TEST_TARGETS = config.string_flag(
-  'exclude_test_targets', os.getenv('JAX_EXCLUDE_TEST_TARGETS', ''),
-  'Regular expression specifying which tests NOT to run, called via re.search '
-  'on the test name. If empty or unspecified, run all tests.'
-)
 TEST_WITH_PERSISTENT_COMPILATION_CACHE = config.bool_flag(
     'jax_test_with_persistent_compilation_cache',
     config.bool_env('JAX_TEST_WITH_PERSISTENT_COMPILATION_CACHE', False),
@@ -118,11 +113,6 @@ HYPOTHESIS_PROFILE = config.string_flag(
           'deterministic, interactive'),
 )
 
-TEST_NUM_THREADS = config.int_flag(
-    'jax_test_num_threads', int(os.getenv('JAX_TEST_NUM_THREADS', '0')),
-    help='Number of threads to use for running tests. 0 means run everything '
-    'in the main thread. Using > 1 thread is experimental.'
-)
 
 # We sanitize test names to ensure they work with "unitttest -k" and
 # "pytest -k" test filtering. pytest accepts '[' and ']' but unittest -k
@@ -131,10 +121,10 @@ kSanitizeNameRE = re.compile(r"[ \"'\[\](){}<>=,._]+")
 def sanitize_test_name(s: str) -> str:
   return kSanitizeNameRE.sub("_", s)
 
-def num_float_bits(dtype):
+def num_float_bits(dtype: DTypeLike) -> int:
   return _dtypes.finfo(_dtypes.canonicalize_dtype(dtype)).bits
 
-def to_default_dtype(arr):
+def to_default_dtype(arr: ArrayLike) -> np.ndarray:
   """Convert a value to an array with JAX's default dtype.
 
   This is generally used for type conversions of values returned by numpy functions,
@@ -145,7 +135,7 @@ def to_default_dtype(arr):
   dtype = _dtypes._default_types.get(arr.dtype.kind)
   return arr.astype(_dtypes.canonicalize_dtype(dtype)) if dtype else arr
 
-def with_jax_dtype_defaults(func, use_defaults=True):
+def with_jax_dtype_defaults(func: Callable[..., Any], use_defaults: bool = True):
   """Return a version of a function with outputs that match JAX's default dtypes.
 
   This is generally used to wrap numpy functions within tests, in order to make
@@ -168,7 +158,7 @@ def with_jax_dtype_defaults(func, use_defaults=True):
       return tree_map(f, result, use_defaults)
   return wrapped
 
-def is_sequence(x):
+def is_sequence(x: Any) -> bool:
   try:
     iter(x)
   except TypeError:
@@ -176,14 +166,16 @@ def is_sequence(x):
   else:
     return True
 
-def _normalize_tolerance(tol):
+def _normalize_tolerance(tol: int | float | ToleranceDict | None) -> ToleranceDict:
   tol = tol or 0
   if isinstance(tol, dict):
     return {np.dtype(k): v for k, v in tol.items()}
   else:
     return dict.fromkeys(_default_tolerance, tol)
 
-def join_tolerance(tol1, tol2):
+def join_tolerance(
+    tol1: int | float | ToleranceDict | None,
+    tol2: int | float | ToleranceDict | None) -> ToleranceDict:
   tol1 = _normalize_tolerance(tol1)
   tol2 = _normalize_tolerance(tol2)
   out = tol1
@@ -192,7 +184,7 @@ def join_tolerance(tol1, tol2):
   return out
 
 
-def check_eq(xs, ys, err_msg=''):
+def check_eq(xs: Any, ys: Any, err_msg: str = '') -> None:
   assert_close = partial(_assert_numpy_allclose, err_msg=err_msg)
   tree_all(tree_map(assert_close, xs, ys))
 
@@ -373,10 +365,13 @@ def device_under_test():
 
 def supported_dtypes():
   if device_under_test() == "tpu":
-    types = {np.bool_, np.int8, np.int16, np.int32, np.uint8, np.uint16,
-             np.uint32, _dtypes.bfloat16, np.float16, np.float32, np.complex64,
+    types = {np.bool_, _dtypes.int4, np.int8, np.int16, np.int32,
+             _dtypes.uint4, np.uint8, np.uint16, np.uint32,
+             _dtypes.bfloat16, np.float16, np.float32, np.complex64,
              _dtypes.float8_e4m3fn, _dtypes.float8_e4m3b11fnuz,
              _dtypes.float8_e5m2}
+    if jaxlib_extension_version < 327:
+      types -= {_dtypes.int4, _dtypes.uint4}
   elif device_under_test() == "gpu":
     types = {np.bool_, np.int8, np.int16, np.int32, np.int64,
              np.uint8, np.uint16, np.uint32, np.uint64,
@@ -386,10 +381,12 @@ def supported_dtypes():
   elif device_under_test() == "METAL":
     types = {np.int32, np.uint32, np.float32}
   else:
-    types = {np.bool_, np.int8, np.int16, np.int32, np.int64,
-             np.uint8, np.uint16, np.uint32, np.uint64,
+    types = {np.bool_, _dtypes.int4, np.int8, np.int16, np.int32, np.int64,
+             _dtypes.uint4, np.uint8, np.uint16, np.uint32, np.uint64,
              _dtypes.bfloat16, np.float16, np.float32, np.float64,
              np.complex64, np.complex128}
+    if jaxlib_extension_version < 327:
+      types -= {_dtypes.int4, _dtypes.uint4}
   if not config.enable_x64.value:
     types -= {np.uint64, np.int64, np.float64, np.complex128}
   return types
@@ -428,14 +425,20 @@ def pjrt_c_api_version_at_least(major_version: int, minor_version: int):
     return True
   return pjrt_c_api_versions >= (major_version, minor_version)
 
+def stablehlo_version_at_least(required_version: str):
+  plugin_version = xla_bridge.backend_stablehlo_version()
+  if plugin_version is None:
+    return True
+  return hlo.get_smaller_version(plugin_version, required_version) == plugin_version
+
 def get_tpu_version() -> int:
   if device_under_test() != "tpu":
     raise ValueError("Device is not TPU")
   kind = jax.devices()[0].device_kind
-  if kind.endswith(' lite'):
-    kind = kind[:-len(' lite')]
-  assert kind[:-1] == "TPU v", kind
-  return int(kind[-1])
+  match = re.match(r"TPU[^\d]*(\d+)", kind)
+  if match is None:
+    raise ValueError(f"Device kind {kind} is not supported")
+  return int(match.group(1))
 
 def is_device_tpu_at_least(version: int) -> bool:
   if device_under_test() != "tpu":
@@ -550,9 +553,14 @@ def request_cpu_devices(nr_devices: int):
   invoked. Test cases that require a specific number of devices should skip
   themselves if that number is not met.
   """
-  if config.num_cpu_devices.value < nr_devices:
+  if xla_bridge.num_cpu_devices.value < nr_devices:
     xla_bridge.get_backend.cache_clear()
-    config.update("jax_num_cpu_devices", nr_devices)
+    # Don't raise an error for `request_cpu_devices` because we initialize the
+    # backend in OSS during collecting tests in pytest via `device_under_test`.
+    try:
+      config.update("jax_num_cpu_devices", nr_devices)
+    except RuntimeError:
+      pass
 
 
 def skip_on_flag(flag_name, skip_value):
@@ -590,6 +598,20 @@ def skip_under_pytest(reason: str):
   reason = "Running under pytest: " + reason
   def skip(test_method):
     return unittest.skipIf(is_running_under_pytest(), reason)(test_method)
+  return skip
+
+
+def skip_if_stablehlo_version_less_than(required_version):
+  def skip(test_method):
+    @functools.wraps(test_method)
+    def test_method_wrapper(self, *args, **kwargs):
+      if not stablehlo_version_at_least(required_version):
+        plugin_version = xla_bridge.backend_stablehlo_version()
+        raise unittest.SkipTest(
+          f"Skipping since test requires StableHLO v{required_version}, and plugin"
+          f" version is v{plugin_version}.")
+      return test_method(self, *args, **kwargs)
+    return test_method_wrapper
   return skip
 
 
@@ -1039,165 +1061,6 @@ def sample_product(*args, **kw):
   """
   return parameterized.parameters(*sample_product_testcases(*args, **kw))
 
-# We use a reader-writer lock to protect test execution. Tests that may run in
-# parallel acquire a read lock; tests that are not thread-safe acquire a write
-# lock.
-_test_rwlock = util.Mutex()
-
-def _run_one_test(test: unittest.TestCase, result: ThreadSafeTestResult):
-  if getattr(test.__class__, "thread_hostile", False):
-    _test_rwlock.writer_lock()
-    try:
-      test(result)  # type: ignore
-    finally:
-      _test_rwlock.writer_unlock()
-  else:
-    _test_rwlock.reader_lock()
-    try:
-      test(result)  # type: ignore
-    finally:
-      _test_rwlock.reader_unlock()
-
-
-@contextmanager
-def thread_unsafe_test():
-  """Decorator for tests that are not thread-safe.
-
-  Note: this decorator (naturally) only applies to what it wraps, not to, say,
-  code in separate setUp() or tearDown() methods.
-  """
-  if TEST_NUM_THREADS.value <= 0:
-    yield
-    return
-
-  _test_rwlock.assert_reader_held()
-  _test_rwlock.reader_unlock()
-  _test_rwlock.writer_lock()
-  try:
-    yield
-  finally:
-    _test_rwlock.writer_unlock()
-    _test_rwlock.reader_lock()
-
-
-def thread_unsafe_test_class():
-  "Decorator that marks a TestCase class as thread-hostile."
-  def f(klass):
-    assert issubclass(klass, unittest.TestCase), type(klass)
-    klass.thread_hostile = True
-    return klass
-  return f
-
-
-class ThreadSafeTestResult:
-  """
-  Wraps a TestResult to make it thread safe.
-
-  We do this by accumulating API calls and applying them in a batch under a
-  lock at the conclusion of each test case.
-
-  We duck type instead of inheriting from TestResult because we aren't actually
-  a perfect implementation of TestResult, and would rather get a loud error
-  for things we haven't implemented.
-  """
-  def __init__(self, lock: threading.Lock, result: unittest.TestResult):
-    self.lock = lock
-    self.test_result = result
-    self.actions: list[Callable] = []
-
-  def startTest(self, test: unittest.TestCase):
-    del test
-    self.start_time = time.time()
-
-  def stopTest(self, test: unittest.TestCase):
-    stop_time = time.time()
-    with self.lock:
-      # If test_result is an ABSL _TextAndXMLTestResult we override how it gets
-      # the time. This affects the timing that shows up in the XML output
-      # consumed by CI.
-      time_getter = getattr(self.test_result, "time_getter", None)
-      try:
-        self.test_result.time_getter = lambda: self.start_time
-        self.test_result.startTest(test)
-        for callback in self.actions:
-          callback()
-        self.test_result.time_getter = lambda: stop_time
-        self.test_result.stopTest(test)
-      finally:
-        if time_getter is not None:
-          self.test_result.time_getter = time_getter
-
-  def addSuccess(self, test: unittest.TestCase):
-    self.actions.append(lambda: self.test_result.addSuccess(test))
-
-  def addSkip(self, test: unittest.TestCase, reason: str):
-    self.actions.append(lambda: self.test_result.addSkip(test, reason))
-
-  def addError(self, test: unittest.TestCase, err):
-    self.actions.append(lambda: self.test_result.addError(test, err))
-
-  def addFailure(self, test: unittest.TestCase, err):
-    self.actions.append(lambda: self.test_result.addFailure(test, err))
-
-  def addExpectedFailure(self, test: unittest.TestCase, err):
-    self.actions.append(lambda: self.test_result.addExpectedFailure(test, err))
-
-  def addDuration(self, test: unittest.TestCase, elapsed):
-    self.actions.append(lambda: self.test_result.addDuration(test, elapsed))
-
-
-class JaxTestSuite(unittest.TestSuite):
-  """Runs tests in parallel using threads if TEST_NUM_THREADS is > 1.
-
-  Caution: this test suite does not run setUpClass or setUpModule methods if
-  thread parallelism is enabled.
-  """
-
-  def __init__(self, suite: unittest.TestSuite):
-    super().__init__(list(suite))
-
-  def run(self, result: unittest.TestResult, debug: bool = False) -> unittest.TestResult:
-    if TEST_NUM_THREADS.value <= 0:
-      return super().run(result)
-
-    test_warning_util.install_threadsafe_warning_handlers()
-
-    executor = ThreadPoolExecutor(TEST_NUM_THREADS.value)
-    lock = threading.Lock()
-    futures = []
-
-    def run_test(test):
-      "Recursively runs tests in a test suite or test case."
-      if isinstance(test, unittest.TestSuite):
-        for subtest in test:
-          run_test(subtest)
-      else:
-        test_result = ThreadSafeTestResult(lock, result)
-        futures.append(executor.submit(_run_one_test, test, test_result))
-
-    with executor:
-      run_test(self)
-      for future in futures:
-        future.result()
-
-    return result
-
-
-class JaxTestLoader(absltest.TestLoader):
-  suiteClass = JaxTestSuite
-
-  def getTestCaseNames(self, testCaseClass):
-    names = super().getTestCaseNames(testCaseClass)
-    if _TEST_TARGETS.value:
-      pattern = re.compile(_TEST_TARGETS.value)
-      names = [name for name in names
-               if pattern.search(f"{testCaseClass.__name__}.{name}")]
-    if _EXCLUDE_TEST_TARGETS.value:
-      pattern = re.compile(_EXCLUDE_TEST_TARGETS.value)
-      names = [name for name in names
-               if not pattern.search(f"{testCaseClass.__name__}.{name}")]
-    return names
-
 
 def with_config(**kwds):
   """Test case decorator for subclasses of JaxTestCase"""
@@ -1343,15 +1206,15 @@ class JaxTestCase(parameterized.TestCase):
     else:
       return self.assertWarnsRegex(DeprecationWarning, message)
 
-  def assertArraysEqual(self, x, y, *, check_dtypes=True, err_msg='',
+  def assertArraysEqual(self, actual, desired, *, check_dtypes=True, err_msg='',
                         allow_object_dtype=False, verbose=True):
     """Assert that x and y arrays are exactly equal."""
     if check_dtypes:
-      self.assertDtypesMatch(x, y)
-    x = np.asarray(x)
-    y = np.asarray(y)
+      self.assertDtypesMatch(actual, desired)
+    actual = np.asarray(actual)
+    desired = np.asarray(desired)
 
-    if (not allow_object_dtype) and (x.dtype == object or y.dtype == object):
+    if (not allow_object_dtype) and (actual.dtype == object or desired.dtype == object):
       # See https://github.com/jax-ml/jax/issues/17867
       raise TypeError(
         "assertArraysEqual may be poorly behaved when np.asarray casts to dtype=object. "
@@ -1361,57 +1224,57 @@ class JaxTestCase(parameterized.TestCase):
 
     # Work around https://github.com/numpy/numpy/issues/18992
     with np.errstate(over='ignore'):
-      np.testing.assert_array_equal(x, y, err_msg=err_msg,
+      np.testing.assert_array_equal(actual, desired, err_msg=err_msg,
                                     verbose=verbose)
 
-  def assertArraysAllClose(self, x, y, *, check_dtypes=True, atol=None,
+  def assertArraysAllClose(self, actual, desired, *, check_dtypes=True, atol=None,
                            rtol=None, err_msg=''):
-    """Assert that x and y are close (up to numerical tolerances)."""
-    self.assertEqual(x.shape, y.shape)
-    atol = max(tolerance(_dtype(x), atol), tolerance(_dtype(y), atol))
-    rtol = max(tolerance(_dtype(x), rtol), tolerance(_dtype(y), rtol))
+    """Assert that actual and desired are close (up to numerical tolerances)."""
+    self.assertEqual(actual.shape, desired.shape)
+    atol = max(tolerance(_dtype(actual), atol), tolerance(_dtype(desired), atol))
+    rtol = max(tolerance(_dtype(actual), rtol), tolerance(_dtype(desired), rtol))
 
-    _assert_numpy_allclose(x, y, atol=atol, rtol=rtol, err_msg=err_msg)
+    _assert_numpy_allclose(actual, desired, atol=atol, rtol=rtol, err_msg=err_msg)
 
     if check_dtypes:
-      self.assertDtypesMatch(x, y)
+      self.assertDtypesMatch(actual, desired)
 
-  def assertDtypesMatch(self, x, y, *, canonicalize_dtypes=True):
+  def assertDtypesMatch(self, actual, desired, *, canonicalize_dtypes=True):
     if not config.enable_x64.value and canonicalize_dtypes:
-      self.assertEqual(_dtypes.canonicalize_dtype(_dtype(x), allow_extended_dtype=True),
-                       _dtypes.canonicalize_dtype(_dtype(y), allow_extended_dtype=True))
+      self.assertEqual(_dtypes.canonicalize_dtype(_dtype(actual), allow_extended_dtype=True),
+                       _dtypes.canonicalize_dtype(_dtype(desired), allow_extended_dtype=True))
     else:
-      self.assertEqual(_dtype(x), _dtype(y))
+      self.assertEqual(_dtype(actual), _dtype(desired))
 
-  def assertAllClose(self, x, y, *, check_dtypes=True, atol=None, rtol=None,
+  def assertAllClose(self, actual, desired, *, check_dtypes=True, atol=None, rtol=None,
                      canonicalize_dtypes=True, err_msg=''):
-    """Assert that x and y, either arrays or nested tuples/lists, are close."""
-    if isinstance(x, dict):
-      self.assertIsInstance(y, dict)
-      self.assertEqual(set(x.keys()), set(y.keys()))
-      for k in x.keys():
-        self.assertAllClose(x[k], y[k], check_dtypes=check_dtypes, atol=atol,
+    """Assert that actual and desired, either arrays or nested tuples/lists, are close."""
+    if isinstance(actual, dict):
+      self.assertIsInstance(desired, dict)
+      self.assertEqual(set(actual.keys()), set(desired.keys()))
+      for k in actual.keys():
+        self.assertAllClose(actual[k], desired[k], check_dtypes=check_dtypes, atol=atol,
                             rtol=rtol, canonicalize_dtypes=canonicalize_dtypes,
                             err_msg=err_msg)
-    elif is_sequence(x) and not hasattr(x, '__array__'):
-      self.assertTrue(is_sequence(y) and not hasattr(y, '__array__'))
-      self.assertEqual(len(x), len(y))
-      for x_elt, y_elt in zip(x, y):
-        self.assertAllClose(x_elt, y_elt, check_dtypes=check_dtypes, atol=atol,
+    elif is_sequence(actual) and not hasattr(actual, '__array__'):
+      self.assertTrue(is_sequence(desired) and not hasattr(desired, '__array__'))
+      self.assertEqual(len(actual), len(desired))
+      for actual_elt, desired_elt in zip(actual, desired):
+        self.assertAllClose(actual_elt, desired_elt, check_dtypes=check_dtypes, atol=atol,
                             rtol=rtol, canonicalize_dtypes=canonicalize_dtypes,
                             err_msg=err_msg)
-    elif hasattr(x, '__array__') or np.isscalar(x):
-      self.assertTrue(hasattr(y, '__array__') or np.isscalar(y))
+    elif hasattr(actual, '__array__') or np.isscalar(actual):
+      self.assertTrue(hasattr(desired, '__array__') or np.isscalar(desired))
       if check_dtypes:
-        self.assertDtypesMatch(x, y, canonicalize_dtypes=canonicalize_dtypes)
-      x = np.asarray(x)
-      y = np.asarray(y)
-      self.assertArraysAllClose(x, y, check_dtypes=False, atol=atol, rtol=rtol,
+        self.assertDtypesMatch(actual, desired, canonicalize_dtypes=canonicalize_dtypes)
+      actual = np.asarray(actual)
+      desired = np.asarray(desired)
+      self.assertArraysAllClose(actual, desired, check_dtypes=False, atol=atol, rtol=rtol,
                                 err_msg=err_msg)
-    elif x == y:
+    elif actual == desired:
       return
     else:
-      raise TypeError((type(x), type(y)))
+      raise TypeError((type(actual), type(desired)))
 
   def assertMultiLineStrippedEqual(self, expected, what):
     """Asserts two strings are equal, after dedenting and stripping each line."""
@@ -1425,7 +1288,6 @@ class JaxTestCase(parameterized.TestCase):
       print(f"Found\n{what}\n")
     self.assertMultiLineEqual(expected_clean, what_clean,
                               msg=f"Found\n{what}\nExpecting\n{expected}")
-
 
   @contextmanager
   def assertNoWarnings(self):
@@ -1496,9 +1358,9 @@ class JaxTestCase(parameterized.TestCase):
     python_should_be_executing = False
     compiled_ans = cfun(*args)
 
-    self.assertAllClose(python_ans, monitored_ans, check_dtypes=check_dtypes,
+    self.assertAllClose(monitored_ans, python_ans, check_dtypes=check_dtypes,
                         atol=atol or tol, rtol=rtol or tol)
-    self.assertAllClose(python_ans, compiled_ans, check_dtypes=check_dtypes,
+    self.assertAllClose(compiled_ans, python_ans, check_dtypes=check_dtypes,
                         atol=atol or tol, rtol=rtol or tol)
 
     args = args_maker()
@@ -1509,7 +1371,7 @@ class JaxTestCase(parameterized.TestCase):
     python_should_be_executing = False
     compiled_ans = cfun(*args)
 
-    self.assertAllClose(python_ans, compiled_ans, check_dtypes=check_dtypes,
+    self.assertAllClose(compiled_ans, python_ans, check_dtypes=check_dtypes,
                         atol=atol or tol, rtol=rtol or tol)
 
   def _CheckAgainstNumpy(self, numpy_reference_op, lax_op, args_maker,
@@ -1518,7 +1380,7 @@ class JaxTestCase(parameterized.TestCase):
     args = args_maker()
     lax_ans = lax_op(*args)
     numpy_ans = numpy_reference_op(*args)
-    self.assertAllClose(numpy_ans, lax_ans, check_dtypes=check_dtypes,
+    self.assertAllClose(lax_ans, numpy_ans, check_dtypes=check_dtypes,
                         atol=atol or tol, rtol=rtol or tol,
                         canonicalize_dtypes=canonicalize_dtypes)
 
@@ -1571,12 +1433,12 @@ def with_and_without_mesh(f):
     ))(with_mesh_from_kwargs(f))
 
 def with_user_mesh(sizes, names, axis_types=None):
-  axis_types = ({mesh_lib.AxisTypes.Explicit: names}
+  axis_types = ((mesh_lib.AxisType.Explicit,) * len(names)
                 if axis_types is None else axis_types)
   def decorator(fn):
     def mesh_fn(*args, **kwargs):
       mesh = create_mesh(sizes, names, axis_types=axis_types)
-      with mesh_lib.use_mesh(mesh):
+      with jax.sharding.use_mesh(mesh):
         return fn(*args, **kwargs, mesh=mesh)
     return mesh_fn
   return decorator
@@ -1591,15 +1453,7 @@ def create_mesh(mesh_shape, axis_names, iota_order=False, axis_types=None):
     mesh_devices = np.array(devices[:size]).reshape(mesh_shape)
     return jax.sharding.Mesh(mesh_devices, axis_names, axis_types=axis_types)
   else:
-    if axis_types is None:
-      explicit_axes = auto_axes = manual_axes = None
-    else:
-      explicit_axes = axis_types.get(mesh_lib.AxisTypes.Explicit, None)
-      auto_axes = axis_types.get(mesh_lib.AxisTypes.Auto, None)
-      manual_axes = axis_types.get(mesh_lib.AxisTypes.Manual, None)
-    return jax.make_mesh(mesh_shape, axis_names, explicit_axes=explicit_axes,
-                         auto_axes=auto_axes,
-                         manual_axes=manual_axes)
+    return jax.make_mesh(mesh_shape, axis_names, axis_types=axis_types)
 
 class _cached_property:
   null = object()
@@ -1633,15 +1487,11 @@ class _LazyDtypes:
       _dtypes.float8_e4m3fnuz,
       _dtypes.float8_e5m2,
       _dtypes.float8_e5m2fnuz,
+      _dtypes.float8_e3m4,
+      _dtypes.float8_e4m3,
+      _dtypes.float8_e8m0fnu,
+      _dtypes.float4_e2m1fn,
     ]
-    if _dtypes.float8_e3m4 is not None:
-      float_dtypes += [_dtypes.float8_e3m4]
-    if _dtypes.float8_e4m3 is not None:
-      float_dtypes += [_dtypes.float8_e4m3]
-    if _dtypes.float8_e8m0fnu is not None:
-      float_dtypes += [_dtypes.float8_e8m0fnu]
-    if _dtypes.float4_e2m1fn is not None:
-      float_dtypes += [_dtypes.float4_e2m1fn]
     return self.supported(float_dtypes)
 
   @_cached_property

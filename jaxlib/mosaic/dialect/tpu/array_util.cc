@@ -19,8 +19,8 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/types/span.h"
-#include "llvm/include/llvm/ADT/STLExtras.h"
-#include "mlir/include/mlir/Support/LLVM.h"
+#include "llvm/ADT/STLExtras.h"
+#include "mlir/Support/LLVM.h"
 
 namespace mlir::tpu::internal {
 

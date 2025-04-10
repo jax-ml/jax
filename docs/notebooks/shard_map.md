@@ -22,9 +22,9 @@ kernelspec:
 
 `shard_map` is a single-program multiple-data (SPMD) multi-device parallelism API to map a function over shards of data. Mapped function applications, or _instances_, communicate with each other via explicit collective communication operations.
 
-`shard_map` is complementary to, and composable with, the automatic compiler-based parallelization built into `jit`. With `jit` you write code as if for a single device, and [the compiler can automatically partition computation over multiple devices](https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html), generating per-device code and communication collectives behind the scenes. With `shard_map` you take control, writing your own partitioned code and explicit collectives. Or you can do a bit of both: take manual control across groups of devices while leaving within-group device partitioning up to the compiler. The two approaches can be mixed, matched, and composed as needed.
+`shard_map` is complementary to, and composable with, the automatic compiler-based parallelization built into `jit`. With `jit` you write code as if for a single device, and [the compiler can automatically partition computation over multiple devices](https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html), generating per-device code and communication collectives behind the scenes. With `shard_map` you take control, writing your own partitioned code and explicit collectives. Or you can do a bit of both: take manual control across groups of devices while leaving within-group device partitioning up to the compiler. The two approaches can be mixed, matched, and composed as needed.
 
-If you're familiar with `pmap`, think of `shard_map` as an evolution. It's more expressive, performant, and composable with other JAX APIs. It even works eagerly, for easier debugging! (For more, see [a detailed comparison to `pmap`.](https://jax.readthedocs.io/en/latest/jep/14273-shard-map.html#why-don-t-pmap-or-xmap-already-solve-this))
+If you're familiar with `pmap`, think of `shard_map` as an evolution. It's more expressive, performant, and composable with other JAX APIs. It even works eagerly, for easier debugging! (For more, see [a detailed comparison to `pmap`.](https://docs.jax.dev/en/latest/jep/14273-shard-map.html#why-don-t-pmap-or-xmap-already-solve-this))
 
 By reading this tutorial, you'll learn how to use `shard_map` to get full control over your multi-device code. You'll see in detail how it composes with `jax.jit`'s automatic parallelization and `jax.grad`'s automatic differentiation. We'll also give some basic examples of neural network parallelization strategies.
 
@@ -328,6 +328,225 @@ Instead, `out_specs` just encodes how to assemble the block outputs into
 `Array`s, or physically how to interpret the buffers across devices as the
 physical layout of a single logical `Array`.
 
+#### Tracking how values vary over manual mesh axes, and `check_rep=True`
+
+Under a `shard_map`, values can vary across function instances, or they can be
+the same. For example, when we use `in_specs` to split an argument over a mesh
+axis, each function instance along that mesh axis gets a different value:
+
+```{code-cell}
+mesh = jax.make_mesh((2,), ('i',))
+
+@partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+def f(x):
+  print(x)
+  return 2 * x
+
+x = jnp.arange(6.)
+f(x)
+```
+
+If instead `in_specs` does not split the argument over a mesh axis, the value
+is the same for each function instance along that axis:
+
+```{code-cell}
+@partial(shard_map, mesh=mesh, in_specs=P(), out_specs=P())
+def f(x):
+  print(x)
+  return 2 * x
+
+x = jnp.arange(6.)
+f(x)
+```
+
+A collective's output may have a different variance than its input. For
+example, applying a `psum` produces the same output on each function instance
+along an axis:
+
+```{code-cell}
+@partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P())
+def f(x):
+  y = jax.lax.psum(x, 'i')
+  print(y)
+  return y
+
+x = jnp.arange(6.)
+f(x)
+```
+
+In general, each intermediate value in a `shard_map` can be either unvarying or
+possibly-varying over each manual mesh axis. That information can be tracked in
+the JAX type system, enabled by the `check_rep=True` argument to `shard_map`:
+
+```{code-cell}
+@partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P())
+def f(x):
+  print(jax.typeof(x))  # f32[3]{i}
+  y = jax.lax.psum(x, 'i')
+  print(jax.typeof(y))  # f32[3]
+  return y
+
+x = jnp.arange(6.)
+f(x)
+```
+
+Here, the type `f32[3]{i}` means that the value of `x` is varying over mesh
+axis `'i'`. The type of `y` printing as `f32[3]` indicates it is unvarying over
+all mesh axes; that is, empty sets are not printed. We call this part of the
+type the _varying manual axes_ (VMA), and it can be accessed via
+`jax.typeof(x).vma`.
+
+In general, the VMA type of a value can include any subset of the manual mesh
+axes over which the `shard_map` is acting:
+
+```{code-cell}
+mesh = jax.make_mesh((4, 2), ('i', 'j'))
+
+@partial(shard_map, mesh=mesh, in_specs=P('i', 'j'), out_specs=P('i'))
+def f(x):
+  print(jax.typeof(x))  # f32[2,2]{i,j}
+  y = jax.lax.psum(x, 'j')
+  assert jax.typeof(y).vma == {'i'}
+  print(jax.typeof(y))  # f32[2,2]{i}
+  return y
+
+x = jnp.arange(8 * 4.).reshape(8, 4)
+f(x)
+```
+
+Tracking varying manual axes can be useful:
+1. Your code can include prints, assertions, or conditionals about whether
+   values are varying over expected mesh axes;
+2. It enables efficient reverse-mode autodiff that doesn't require defensive
+   `psum`s (see [JEP](https://docs.jax.dev/en/latest/jep/17111-shmap-transpose.html));
+3. The correctness of `out_specs` can be checked, ruling out the potential bug
+   example below.
+
+For example, this `out_specs` bug is caught with `check_rep=True`, but uncaught
+without it:
+
+```{code-cell}
+mesh = jax.make_mesh((2,), ('i',))
+
+x = jnp.arange(6.)
+try:
+  y = shard_map(lambda x: x, mesh, in_specs=P('i'), out_specs=P())(x)
+except Exception as e:
+  print(e)
+```
+
+Here the `out_specs` incorrectly promise that each function instance along mesh
+axis `'i'` produces the same value and thus we can choose just one of them.
+With `check_rep=True` (the default) it raises an exception, while with
+`check_rep=False` there is no exception and instead we get silent undefined
+behavior.
+
+Sometimes we want to treat a value that is unvarying over a mesh axis as
+varying over that mesh axis. That's what `jax.lax.pvary` does:
+
+```{code-cell}
+@partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=None)
+def f(x):
+  print(jax.typeof(x))  # f32[3]
+  y = jax.lax.pvary(x, 'i')
+  print(jax.typeof(y))  # f32[3]{i}
+
+x = jnp.arange(6.)
+f(x)
+```
+
+Think of `jax.lax.pvary` as applying a type cast: it's a no-op at runtime,
+though under reverse-mode autodiff it transposes to a `jax.lax.psum` (see
+[JEP](https://docs.jax.dev/en/latest/jep/17111-shmap-transpose.html)). That
+makes sense because they do opposite things to the VMA: where `y: f32[3]{i} =
+jax.lax.pvary(x: f32[3], 'i')`, we correspondingly have `x_grad: f32[3] =
+jax.lax.psum(y_grad: f32[3]{i}, 'i')`.
+
+JAX implicitly inserts `jax.lax.pvary` calls in many cases, especially for
+binary operations:
+
+```{code-cell}
+@partial(shard_map, mesh=mesh, in_specs=(P('i'), P()), out_specs=P('i'))
+def f(x, y):
+  return x * y
+
+x = jnp.arange(6.)
+print(jax.make_jaxpr(f)(x))
+```
+
+In a jaxpr, the multiplication operation requires the VMA types of its
+arguments to match, but for convenience the `jax.numpy` and `jax.lax` APIs
+automatically apply `jax.lax.pvary` to make argument VMA types agree.
+
+<a name="scan-vma"></a>
+
+In some cases, like with `jax.lax.scan`, you might need to apply
+`jax.lax.pvary` yourself to ensure VMA types match as required. For example,
+this code raises an error:
+
+```{code-cell}
+mesh = jax.make_mesh((2,), ('i',))
+
+@partial(shard_map, mesh=mesh, in_specs=(P('i'), P()), out_specs=P('i'))
+def f(x, y):
+  def body(carry, _):
+    c1, c2 = carry
+    return (c2, c1), ()  # swap the carry
+  (x_, y_), _ = jax.lax.scan(body, (x, y), (), length=2)
+  return x_, y_
+
+x = jnp.arange(6.)
+y = jnp.arange(3.)
+
+try:
+  f(x, y)
+except Exception as e:
+  print(e)
+```
+
+To make the types match, we need to apply `jax.lax.pvary` to some arguments to
+the `scan`:
+
+```{code-cell}
+mesh = jax.make_mesh((2,), ('i',))
+
+@partial(shard_map, mesh=mesh, in_specs=(P('i'), P()), out_specs=P('i'))
+def f(x, y):
+  def body(carry, _):
+    c1, c2 = carry
+    return (c2, c1), ()  # swap the carry
+
+  y = jax.lax.pvary(y, 'i')  # apply pvary to fix the error
+  (x_, y_), _ = jax.lax.scan(body, (x, y), (), length=2)
+  return x_, y_
+
+x = jnp.arange(6.)
+y = jnp.arange(3.)
+
+f(x, y)
+```
+
+Here's a summary of collective primitives and how they affect varying manual axis types:
+
+| Name | Device variance type | Example | Lowers to HLO | Transpose |
+| ---  |         ---          |   ---   |     ---       |    ---    |
+| `psum_invariant` | `Varying -> Invariant` | `y:f32[3]{j} = psum(x:f32[3]{i,j}, axis='i')` | `AllReduceSum` (communication) | `pvary` |
+| `pvary` | `Invariant -> Varying` | `y:f32[3]{i} = pvary(x:f32[3], 'i')` | no-op (no communication) | `psum_invariant` |
+| `all_to_all` | `Varying -> Varying` | `y:f32[16]{i} = all_to_all(x:f32[16]{i}, 'i', 0, 0)` `AllToAll` (communication) | `all_to_all` |
+| `axis_index` | `() -> Varying` | `idx:i32[]{i} = axis_index('i')` | `ReplicaId` and some arithmetic (no communication) | n/a |
+| `psum_scatter` | `Varying -> Varying` | `y:f32[2]{i} = psum_scatter(x:f32[16]{i}, 'i')` | `ReduceScatterSum` (communication) | `all_gather` |
+| `all_gather` | `Varying -> Varying` | `y:f32[16]{i} = all_gather(x:f32[2]{i}, 'i')` | `AllGather` (communication) | `psum_scatter` |
+| `pscatter` | `Invariant -> Varying` | `y:f32[2]{i} = pscatter(x:f32[16], 'i')` | `lambda x: x[axis_index('i'), None]` (no communication) | `all_gather_invariant` |
+| `all_gather_invariant` | `Varying -> Invariant` | `y:f32[16] = all_gather_invariant(x:f32[2]{i}, 'i')` | `AllGather` (communication) | `pscatter` |
+
+A few notes on the table:
+* The function `jax.lax.psum` is a convenience wrapper around `psum_invariant`.
+* It's surprising that `all_gather` is `Varying -> Varying`, but that's because
+  it's really the transpose of `psum_scatter` which is `Varying -> Varying`.
+* Neither `pscatter` nor `all_gather_invariant` have user APIs at the time of
+  writing, but they're described here for completeness.
+
+
 ## API Specification
 
 ```python
@@ -346,7 +565,7 @@ where:
 * `mesh` encodes devices arranged in an array and with associated axis names, just like it does for `sharding.NamedSharding`;
 * `in_specs` and `out_specs` are `PartitionSpec`s which can affinely mention axis names from `mesh` to express slicing/unconcatenation and concatenation of inputs and outputs, respectively, with unmentioned names corresponding to replication and untiling (assert-replicated-so-give-me-one-copy), respectively;
 * `auto` is an optional set of axis names corresponding to the subset of names of `mesh` to treat automatically in the body, as in the caller, rather than manually;
-* `check_rep` is an optional boolean indicating whether to check statically for any replication errors in `out_specs`, and also whether to enable a related automatic differentiation optimization (see [JEP](https://jax.readthedocs.io/en/latest/jep/17111-shmap-transpose.html)).
+* `check_rep` is an optional boolean indicating whether to check statically for any replication errors in `out_specs`, and also whether to enable a related automatic differentiation optimization (see [JEP](https://docs.jax.dev/en/latest/jep/17111-shmap-transpose.html)).
 
 The shapes of the arguments passed to `f` have the same ranks as the arguments
 passed to `shard_map`-of-`f`, and the shape of an argument to `f` is computed
@@ -1061,7 +1280,7 @@ params, batch = init(jax.random.key(0), layer_sizes, batch_size)
 
 Compare these examples with the purely [automatic partitioning examples in the
 "Distributed arrays and automatic partitioning"
-doc](https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html).
+doc](https://docs.jax.dev/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html).
 While in those automatic partitioning examples we don't need to edit the model
 functions to use different parallelization strategies, with `shard_map` we
 often do.
@@ -1137,7 +1356,7 @@ There's one other ingredient we need: we don't want to store the fully gathered
 parameters from the forward pass for use on the backward pass. Instead, we want
 to gather them again on the backward pass. We can express that by using
 `jax.remat` with a [custom
-policy](https://jax.readthedocs.io/en/latest/notebooks/autodiff_remat.html#custom-policies-for-what-s-saveable)
+policy](https://docs.jax.dev/en/latest/notebooks/autodiff_remat.html#custom-policies-for-what-s-saveable)
 (or a `custom_vjp`), though XLA typically does that rematerialization
 automatically.
 

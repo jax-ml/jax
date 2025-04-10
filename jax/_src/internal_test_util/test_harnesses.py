@@ -408,11 +408,11 @@ def parameterized(harnesses: Iterable[Harness],
 ###############################################################################
 
 
-def _make_unary_elementwise_harness(*, prim, shape=(20, 20), dtype):
+def _make_unary_elementwise_harness(*, prim, shape=(20, 20), dtype, **kwargs):
   define(
       str(prim),
       f"shape={jtu.format_shape_dtype_string(shape, dtype)}",
-      prim.bind, [RandArg(shape, dtype)],
+      lambda x: prim.bind(x, **kwargs), [RandArg(shape, dtype)],
       prim=prim,
       dtype=dtype,
       shape=shape)
@@ -429,19 +429,19 @@ for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
   _make_unary_elementwise_harness(prim=lax.acos_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.atan_p, dtype=dtype)
   _make_unary_elementwise_harness(prim=lax.asin_p, dtype=dtype)
-  _make_unary_elementwise_harness(prim=lax.cos_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.cos_p, dtype=dtype, accuracy=None)
   _make_unary_elementwise_harness(prim=lax.cosh_p, dtype=dtype)
-  _make_unary_elementwise_harness(prim=lax.exp_p, dtype=dtype)
-  _make_unary_elementwise_harness(prim=lax.expm1_p, dtype=dtype)
-  _make_unary_elementwise_harness(prim=lax.log_p, dtype=dtype)
-  _make_unary_elementwise_harness(prim=lax.log1p_p, dtype=dtype)
-  _make_unary_elementwise_harness(prim=lax.rsqrt_p, dtype=dtype)
-  _make_unary_elementwise_harness(prim=lax.sin_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.exp_p, dtype=dtype, accuracy=None)
+  _make_unary_elementwise_harness(prim=lax.expm1_p, dtype=dtype, accuracy=None)
+  _make_unary_elementwise_harness(prim=lax.log_p, dtype=dtype, accuracy=None)
+  _make_unary_elementwise_harness(prim=lax.log1p_p, dtype=dtype, accuracy=None)
+  _make_unary_elementwise_harness(prim=lax.rsqrt_p, dtype=dtype, accuracy=None)
+  _make_unary_elementwise_harness(prim=lax.sin_p, dtype=dtype, accuracy=None)
   _make_unary_elementwise_harness(prim=lax.sinh_p, dtype=dtype)
-  _make_unary_elementwise_harness(prim=lax.sqrt_p, dtype=dtype)
-  _make_unary_elementwise_harness(prim=lax.tan_p, dtype=dtype)
-  _make_unary_elementwise_harness(prim=lax.tanh_p, dtype=dtype)
-  _make_unary_elementwise_harness(prim=lax.logistic_p, dtype=dtype)
+  _make_unary_elementwise_harness(prim=lax.sqrt_p, dtype=dtype, accuracy=None)
+  _make_unary_elementwise_harness(prim=lax.tan_p, dtype=dtype, accuracy=None)
+  _make_unary_elementwise_harness(prim=lax.tanh_p, dtype=dtype, accuracy=None)
+  _make_unary_elementwise_harness(prim=lax.logistic_p, dtype=dtype, accuracy=None)
 
 for dtype in jtu.dtypes.all_floating:
   _make_unary_elementwise_harness(prim=lax.bessel_i0e_p, dtype=dtype)
@@ -3375,8 +3375,9 @@ for algorithm in [lax.RandomAlgorithm.RNG_THREE_FRY,
         define(
             lax.rng_bit_generator_p,
             f"{key_dtype=}_shape={jtu.format_shape_dtype_string(shape, dtype)}_{algorithm=}",
-            lambda key, shape, dtype, algorithm: lax.rng_bit_generator(key, shape, dtype=dtype,
-                                                                       algorithm=algorithm),
+            lambda key, shape, dtype, algorithm, out_sharding=None: lax.rng_bit_generator(
+                key, shape, dtype=dtype, algorithm=algorithm,
+                out_sharding=out_sharding),
             [RandArg(key_shape, key_dtype),
              StaticArg(shape), StaticArg(dtype), StaticArg(algorithm)],
             shape=shape,

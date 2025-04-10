@@ -40,6 +40,7 @@ Activation functions
     glu
     squareplus
     mish
+    identity
 
 Other functions
 ---------------
@@ -53,3 +54,6 @@ Other functions
     standardize
     one_hot
     dot_product_attention
+    scaled_matmul
+    get_scaled_dot_general_config
+    scaled_dot_general

@@ -83,9 +83,9 @@ class CacheKeyTest(jtu.JaxTestCase):
     self.assertEqual(dev_hash1, dev_hash2)
 
     acc_hash1 = self.get_hashed_value(
-        cache_key._hash_accelerator_config, devices, xla_bridge.get_backend())
+        cache_key._hash_accelerator_config, devices)
     acc_hash2 = self.get_hashed_value(
-        cache_key._hash_accelerator_config, devices, xla_bridge.get_backend())
+        cache_key._hash_accelerator_config, devices)
     self.assertEqual(acc_hash1, acc_hash2)
 
   def test_hash_platform(self):
@@ -163,6 +163,8 @@ class CacheKeyTest(jtu.JaxTestCase):
         cache_key.get(computation2, devices, compile_options, backend),
     )
 
+  # TODO(phawkins): this test flakes if test concurrency is enabled.
+  @jtu.thread_unsafe_test()
   def test_custom_partitioning_ptr_removal(self):
     def _partition(mesh, arg_shapes, result_shape):
       arg_shardings = jax.tree.map(lambda x: x.sharding, arg_shapes)
@@ -178,7 +180,8 @@ class CacheKeyTest(jtu.JaxTestCase):
 
     _cp_add.def_partition(
       infer_sharding_from_operands=_infer_sharding_from_operands,
-      partition=_partition)
+      partition=_partition,
+      sharding_rule='i i -> i')
 
     devices = np.asarray(jax.devices())
     with Mesh(devices, ('x',)) as m:

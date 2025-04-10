@@ -23,7 +23,7 @@ from .core import (
     Barrier as Barrier,
     ClusterBarrier as ClusterBarrier,
     TMABarrier as TMABarrier,
-    ThreadSemantics as ThreadSemantics,
+    LoweringSemantics as LoweringSemantics,
     TMEM as TMEM,
     Union as Union,
     as_gpu_kernel as as_gpu_kernel,
@@ -32,6 +32,7 @@ from .core import (
 from .launch_context import (
     LaunchContext as LaunchContext,
     MemRefTransform as MemRefTransform,
+    ReductionOp as ReductionOp,
     Rounding as Rounding,
     TileTransform as TileTransform,
     TransposeTransform as TransposeTransform,
@@ -45,14 +46,22 @@ from .layout_inference import (
     infer_layout as infer_layout,
 )
 
+from .layouts import (
+    to_layout_attr as to_layout_attr,
+)
+
+from .transform_inference import (
+    infer_transforms as infer_transforms,
+)
+
 from .fragmented_array import (
     FragmentedArray as FragmentedArray,
     FragmentedLayout as FragmentedLayout,
-    TILED_LAYOUT_WGMMA as TILED_LAYOUT_WGMMA,
+    TiledLayout as TiledLayout,
     WGMMA_LAYOUT as WGMMA_LAYOUT,
     WGMMA_ROW_LAYOUT as WGMMA_ROW_LAYOUT,
-    WGMMAFragLayout as WGMMAFragLayout,
-    WGMMARowFragLayout as WGMMARowFragLayout,
+    WGMMA_COL_LAYOUT as WGMMA_COL_LAYOUT,
+    WGMMA_TRANSPOSED_LAYOUT as WGMMA_TRANSPOSED_LAYOUT,
     WGSplatFragLayout as WGSplatFragLayout,
     WGStridedFragLayout as WGStridedFragLayout,
     optimization_barrier as optimization_barrier,

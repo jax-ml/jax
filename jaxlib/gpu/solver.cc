@@ -17,11 +17,11 @@ limitations under the License.
 #include <stdexcept>
 #include <utility>
 
-#include "nanobind/nanobind.h"
-#include "nanobind/stl/pair.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "nanobind/nanobind.h"
+#include "nanobind/stl/pair.h"  // IWYU pragma: keep
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/solver_handle_pool.h"
 #include "jaxlib/gpu/solver_kernels.h"
@@ -54,84 +54,6 @@ SolverType DtypeToSolverType(const dtype& np_type) {
   return it->second;
 }
 
-// getrf: LU decomposition
-
-// Returns the workspace size and a descriptor for a getrf operation.
-std::pair<int, nb::bytes> BuildGetrfDescriptor(const dtype& dtype, int b, int m,
-                                               int n) {
-  SolverType type = DtypeToSolverType(dtype);
-  auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
-  JAX_THROW_IF_ERROR(h.status());
-  auto& handle = *h;
-  int lwork;
-  switch (type) {
-    case SolverType::F32:
-      JAX_THROW_IF_ERROR(
-          JAX_AS_STATUS(gpusolverDnSgetrf_bufferSize(handle.get(), m, n,
-                                                     /*A=*/nullptr,
-                                                     /*lda=*/m, &lwork)));
-      break;
-    case SolverType::F64:
-      JAX_THROW_IF_ERROR(
-          JAX_AS_STATUS(gpusolverDnDgetrf_bufferSize(handle.get(), m, n,
-                                                     /*A=*/nullptr,
-                                                     /*lda=*/m, &lwork)));
-      break;
-    case SolverType::C64:
-      JAX_THROW_IF_ERROR(
-          JAX_AS_STATUS(gpusolverDnCgetrf_bufferSize(handle.get(), m, n,
-                                                     /*A=*/nullptr,
-                                                     /*lda=*/m, &lwork)));
-      break;
-    case SolverType::C128:
-      JAX_THROW_IF_ERROR(
-          JAX_AS_STATUS(gpusolverDnZgetrf_bufferSize(handle.get(), m, n,
-                                                     /*A=*/nullptr,
-                                                     /*lda=*/m, &lwork)));
-      break;
-  }
-  return {lwork, PackDescriptor(GetrfDescriptor{type, b, m, n, lwork})};
-}
-
-// geqrf: QR decomposition
-
-// Returns the workspace size and a descriptor for a geqrf operation.
-std::pair<int, nb::bytes> BuildGeqrfDescriptor(const dtype& dtype, int b, int m,
-                                               int n) {
-  SolverType type = DtypeToSolverType(dtype);
-  auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
-  JAX_THROW_IF_ERROR(h.status());
-  auto& handle = *h;
-  int lwork;
-  switch (type) {
-    case SolverType::F32:
-      JAX_THROW_IF_ERROR(
-          JAX_AS_STATUS(gpusolverDnSgeqrf_bufferSize(handle.get(), m, n,
-                                                     /*A=*/nullptr,
-                                                     /*lda=*/m, &lwork)));
-      break;
-    case SolverType::F64:
-      JAX_THROW_IF_ERROR(
-          JAX_AS_STATUS(gpusolverDnDgeqrf_bufferSize(handle.get(), m, n,
-                                                     /*A=*/nullptr,
-                                                     /*lda=*/m, &lwork)));
-      break;
-    case SolverType::C64:
-      JAX_THROW_IF_ERROR(
-          JAX_AS_STATUS(gpusolverDnCgeqrf_bufferSize(handle.get(), m, n,
-                                                     /*A=*/nullptr,
-                                                     /*lda=*/m, &lwork)));
-      break;
-    case SolverType::C128:
-      JAX_THROW_IF_ERROR(
-          JAX_AS_STATUS(gpusolverDnZgeqrf_bufferSize(handle.get(), m, n,
-                                                     /*A=*/nullptr,
-                                                     /*lda=*/m, &lwork)));
-      break;
-  }
-  return {lwork, PackDescriptor(GeqrfDescriptor{type, b, m, n, lwork})};
-}
-
 #ifdef JAX_GPU_CUDA
 
 // csrlsvqr: Linear system solve via Sparse QR
@@ -144,49 +66,6 @@ nb::bytes BuildCsrlsvqrDescriptor(const dtype& dtype, int n, int nnzA,
 }
 
 #endif  // JAX_GPU_CUDA
-
-// orgqr/ungqr: apply elementary Householder transformations
-
-// Returns the workspace size and a descriptor for a geqrf operation.
-std::pair<int, nb::bytes> BuildOrgqrDescriptor(const dtype& dtype, int b, int m,
-                                               int n, int k) {
-  SolverType type = DtypeToSolverType(dtype);
-  auto h = SolverHandlePool::Borrow(/*stream=*/nullptr);
-  JAX_THROW_IF_ERROR(h.status());
-  auto& handle = *h;
-  int lwork;
-  switch (type) {
-    case SolverType::F32:
-      JAX_THROW_IF_ERROR(
-          JAX_AS_STATUS(gpusolverDnSorgqr_bufferSize(handle.get(), m, n, k,
-                                                     /*A=*/nullptr,
-                                                     /*lda=*/m,
-                                                     /*tau=*/nullptr, &lwork)));
-      break;
-    case SolverType::F64:
-      JAX_THROW_IF_ERROR(
-          JAX_AS_STATUS(gpusolverDnDorgqr_bufferSize(handle.get(), m, n, k,
-                                                     /*A=*/nullptr,
-                                                     /*lda=*/m,
-                                                     /*tau=*/nullptr, &lwork)));
-      break;
-    case SolverType::C64:
-      JAX_THROW_IF_ERROR(
-          JAX_AS_STATUS(gpusolverDnCungqr_bufferSize(handle.get(), m, n, k,
-                                                     /*A=*/nullptr,
-                                                     /*lda=*/m,
-                                                     /*tau=*/nullptr, &lwork)));
-      break;
-    case SolverType::C128:
-      JAX_THROW_IF_ERROR(
-          JAX_AS_STATUS(gpusolverDnZungqr_bufferSize(handle.get(), m, n, k,
-                                                     /*A=*/nullptr,
-                                                     /*lda=*/m,
-                                                     /*tau=*/nullptr, &lwork)));
-      break;
-  }
-  return {lwork, PackDescriptor(OrgqrDescriptor{type, b, m, n, k, lwork})};
-}
 
 // Symmetric (Hermitian) eigendecomposition, QR algorithm: syevd/heevd
 
@@ -462,9 +341,6 @@ std::pair<int, nb::bytes> BuildSytrdDescriptor(const dtype& dtype, bool lower,
 
 nb::dict Registrations() {
   nb::dict dict;
-  dict[JAX_GPU_PREFIX "solver_getrf"] = EncapsulateFunction(Getrf);
-  dict[JAX_GPU_PREFIX "solver_geqrf"] = EncapsulateFunction(Geqrf);
-  dict[JAX_GPU_PREFIX "solver_orgqr"] = EncapsulateFunction(Orgqr);
   dict[JAX_GPU_PREFIX "solver_syevd"] = EncapsulateFunction(Syevd);
   dict[JAX_GPU_PREFIX "solver_syevj"] = EncapsulateFunction(Syevj);
   dict[JAX_GPU_PREFIX "solver_gesvd"] = EncapsulateFunction(Gesvd);
@@ -496,9 +372,6 @@ nb::dict Registrations() {
 NB_MODULE(_solver, m) {
   tsl::ImportNumpy();
   m.def("registrations", &Registrations);
-  m.def("build_getrf_descriptor", &BuildGetrfDescriptor);
-  m.def("build_geqrf_descriptor", &BuildGeqrfDescriptor);
-  m.def("build_orgqr_descriptor", &BuildOrgqrDescriptor);
   m.def("build_syevd_descriptor", &BuildSyevdDescriptor);
   m.def("build_syevj_descriptor", &BuildSyevjDescriptor);
   m.def("build_gesvd_descriptor", &BuildGesvdDescriptor);

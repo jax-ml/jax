@@ -18,14 +18,19 @@ These APIs are highly unstable and can change weekly. Use at your own risk.
 """
 
 from jax._src.pallas.mosaic_gpu.core import Barrier as Barrier
+from jax._src.pallas.mosaic_gpu.core import ClusterBarrier as ClusterBarrier
 from jax._src.pallas.mosaic_gpu.core import GPUBlockSpec as GPUBlockSpec
 from jax._src.pallas.mosaic_gpu.core import GPUCompilerParams as GPUCompilerParams
 from jax._src.pallas.mosaic_gpu.core import GPUMemorySpace as GPUMemorySpace
 from jax._src.pallas.mosaic_gpu.core import GPUMesh as GPUMesh
 from jax._src.pallas.mosaic_gpu.core import kernel as kernel
+from jax._src.pallas.mosaic_gpu.core import SemaphoreType as SemaphoreType
 from jax._src.pallas.mosaic_gpu.core import SwizzleTransform as SwizzleTransform
 from jax._src.pallas.mosaic_gpu.core import TilingTransform as TilingTransform
+from jax._src.pallas.mosaic_gpu.core import transform_ref as transform_ref
 from jax._src.pallas.mosaic_gpu.core import transpose_ref as transpose_ref
+from jax._src.pallas.mosaic_gpu.core import untile_ref as untile_ref
+from jax._src.pallas.mosaic_gpu.core import unswizzle_ref as unswizzle_ref
 from jax._src.pallas.mosaic_gpu.core import TransposeTransform as TransposeTransform
 from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as ACC  # noqa: F401
 from jax._src.pallas.mosaic_gpu.core import WGMMAAccumulatorRef as WGMMAAccumulatorRef
@@ -38,16 +43,21 @@ from jax._src.pallas.mosaic_gpu.primitives import commit_smem as commit_smem
 from jax._src.pallas.mosaic_gpu.primitives import commit_smem_to_gmem_group as commit_smem_to_gmem_group
 from jax._src.pallas.mosaic_gpu.primitives import copy_gmem_to_smem as copy_gmem_to_smem
 from jax._src.pallas.mosaic_gpu.primitives import copy_smem_to_gmem as copy_smem_to_gmem
+from jax._src.pallas.mosaic_gpu.primitives import inline_mgpu as inline_mgpu
 from jax._src.pallas.mosaic_gpu.primitives import Layout as Layout
 from jax._src.pallas.mosaic_gpu.primitives import layout_cast as layout_cast
+from jax._src.pallas.mosaic_gpu.primitives import load as load
+from jax._src.pallas.mosaic_gpu.primitives import RefType as RefType
 from jax._src.pallas.mosaic_gpu.primitives import set_max_registers as set_max_registers
 from jax._src.pallas.mosaic_gpu.primitives import wait_smem_to_gmem as wait_smem_to_gmem
 from jax._src.pallas.mosaic_gpu.primitives import wgmma as wgmma
 from jax._src.pallas.mosaic_gpu.primitives import wgmma_wait as wgmma_wait
-from jax.experimental.mosaic.gpu.core import ThreadSemantics as ThreadSemantics
+from jax.experimental.mosaic.gpu.core import LoweringSemantics as LoweringSemantics
 
 
 #: Alias of :data:`jax.experimental.pallas.mosaic_gpu.GPUMemorySpace.GMEM`.
 GMEM = GPUMemorySpace.GMEM
 #: Alias of :data:`jax.experimental.pallas.mosaic_gpu.GPUMemorySpace.SMEM`.
 SMEM = GPUMemorySpace.SMEM
+#: Alias of :data:`jax.experimental.pallas.mosaic_gpu.GPUMemorySpace.TMEM`.
+TMEM = GPUMemorySpace.TMEM

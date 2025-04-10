@@ -39,11 +39,6 @@ from jax._src.lib.mlir import ir
 from jax._src.typing import (Array, ArrayLike, DeprecatedArg, DuckTypedArray,
                              Shape)
 
-# TODO(dfm): Remove after 6 months or less because there aren't any offical
-# compatibility guarantees for jax.extend (see JEP 15856)
-# Added Oct 13, 2024
-deprecations.register("jax-ffi-call-args")
-
 map, unsafe_map = util.safe_map, map
 FfiLayoutOptions = Sequence[int] | DeviceLocalLayout | None
 
@@ -325,7 +320,7 @@ def _convert_layouts_for_ffi_call(
 def ffi_call(
     target_name: str,
     result_shape_dtypes: ResultMetadata,
-    *deprecated_args: ArrayLike,
+    *,
     has_side_effect: bool = ...,
     vmap_method: str | None = ...,
     input_layouts: Sequence[FfiLayoutOptions] | None = ...,
@@ -334,8 +329,7 @@ def ffi_call(
     custom_call_api_version: int = ...,
     legacy_backend_config: str | None = ...,
     vectorized: bool | DeprecatedArg = ...,
-    **deprecated_kwargs: Any,
-) -> Callable[..., Array] | Array:
+) -> Callable[..., Array]:
   ...
 
 
@@ -343,7 +337,7 @@ def ffi_call(
 def ffi_call(
     target_name: str,
     result_shape_dtypes: Sequence[ResultMetadata],
-    *deprecated_args: ArrayLike,
+    *,
     has_side_effect: bool = ...,
     vmap_method: str | None = ...,
     input_layouts: Sequence[FfiLayoutOptions] | None = ...,
@@ -352,15 +346,14 @@ def ffi_call(
     custom_call_api_version: int = ...,
     legacy_backend_config: str | None = ...,
     vectorized: bool | DeprecatedArg = ...,
-    **deprecated_kwargs: Any,
-) -> Callable[..., Sequence[Array]] | Sequence[Array]:
+) -> Callable[..., Sequence[Array]]:
   ...
 
 
 def ffi_call(
     target_name: str,
     result_shape_dtypes: ResultMetadata | Sequence[ResultMetadata],
-    *deprecated_args: ArrayLike,
+    *,
     has_side_effect: bool = False,
     vmap_method: str | None = None,
     input_layouts: Sequence[FfiLayoutOptions] | None = None,
@@ -369,8 +362,7 @@ def ffi_call(
     custom_call_api_version: int = 4,
     legacy_backend_config: str | None = None,
     vectorized: bool | DeprecatedArg = DeprecatedArg(),
-    **deprecated_kwargs: Any,
-) -> Callable[..., Array | Sequence[Array]] | Array | Sequence[Array]:
+) -> Callable[..., Array | Sequence[Array]]:
   """Call a foreign function interface (FFI) target.
 
   See the :ref:`ffi-tutorial` tutorial for more information.
@@ -515,7 +507,7 @@ def ffi_call(
               "and an output with a different layout "
               f"{static_output_layouts[o_idx]}.")
         static_input_output_aliases += ((i_idx, o_idx),)
-
+    args = core.standard_insert_pbroadcast(*args)
     results = ffi_call_p.bind(
         *args,
         result_avals=result_avals,
@@ -537,19 +529,7 @@ def ffi_call(
     else:
       return results[0]
 
-  if deprecated_args or deprecated_kwargs:
-    deprecations.warn(
-        "jax-ffi-call-args",
-        "Calling ffi_call directly with input arguments is deprecated. "
-        "Instead, ffi_call should be used to construct a callable, which can "
-        "then be called with the appropriate inputs. For example,\n"
-        "  ffi_call('target_name', output_type, x, argument=5)\n"
-        "should be replaced with\n"
-        "  ffi_call('target_name', output_type)(x, argument=5)",
-        stacklevel=2)
-    return wrapped(*deprecated_args, **deprecated_kwargs)
-  else:
-    return wrapped
+  return wrapped
 
 
 # ffi_call must support some small non-hashable input arguments, like np.arrays
@@ -638,9 +618,10 @@ def ffi_call_abstract_eval(
     has_side_effect: bool,
     **_,
 ):
-  del avals_in  # unused
+  out_vma = core.standard_vma_rule('ffi_call', *avals_in)
   effects = {_FfiEffect} if has_side_effect else core.no_effects
-  return result_avals, effects
+  return tuple(r if r is core.abstract_token else r.update(vma=out_vma)
+               for r in result_avals), effects
 
 
 def ffi_call_jvp(*args, target_name, **_):

@@ -29,7 +29,6 @@ from jax.interpreters import xla
 from jax._src import core
 from jax._src import ffi
 from jax._src.interpreters import ad
-from jax._src.lib import gpu_solver
 
 import numpy as np
 from scipy.sparse import csr_matrix, linalg
@@ -534,11 +533,6 @@ def _spsolve_abstract_eval(data, indices, indptr, b, *, tol, reorder):
 
 
 def _spsolve_gpu_lowering(ctx, data, indices, indptr, b, *, tol, reorder):
-  # TODO(danfm): remove after JAX 0.5.1 release.
-  if hasattr(gpu_solver, "cuda_csrlsvqr"):
-    data_aval, _, _, _, = ctx.avals_in
-    return gpu_solver.cuda_csrlsvqr(data_aval.dtype, data, indices,
-                                    indptr, b, tol, reorder)
   return ffi.ffi_lowering("cusolver_csrlsvqr_ffi")(
       ctx, data, indices, indptr, b, tol=np.float64(tol),
       reorder=np.int32(reorder))

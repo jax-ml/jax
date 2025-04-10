@@ -213,8 +213,8 @@ class BufferedRef:
   spec: pl.BlockSpec       # static metadata
   dtype: Any               # static metadata
   buffer_type: BufferType  # static metadata
-  window_ref: REF | None
-  accum_ref: REF | None
+  window_ref: ArrayRef | None
+  accum_ref: ArrayRef | None
   current_slot: ArrayRef | None
   # TODO(ramiroleal): Unused by class. Remove argument from
   # BufferedRef instantiations.
@@ -337,6 +337,7 @@ class BufferedRef:
   def current_ref(self):
     buffer_slice = tuple(
         0 if x is None else slice(None) for x in self.block_shape)
+    assert not (self.window_ref is None or isinstance(self.window_ref, REF))
     if self.memory_space == VMEM:
       return self.window_ref.at[buffer_slice]
     else:
@@ -368,10 +369,12 @@ class BufferedRef:
 
   @property
   def current_slot_index(self):
+    """Index in double buffer corresponding to the current slot."""
     return self.current_slot[0]
 
   @property
   def next_slot_index(self):
+    """Index in double buffer corresponding to the next slot."""
     return lax.rem(self.current_slot_index + 1, 2)
 
   def bind_existing_ref(self, window_ref, indices):
@@ -463,6 +466,8 @@ class BufferedRef:
     """Starts copy of HBM dma slice into the current slot."""
     assert self.is_input
     if self.memory_space == VMEM: return
+    assert not (self.window_ref is None or isinstance(self.window_ref, REF))
+    assert self.sem_recvs is not None
     if self.swap is not None:
       self.swap[0] = True
     next_slot = self.next_slot_index
@@ -470,7 +475,7 @@ class BufferedRef:
     dst_slice = tuple(pl.ds(0, s.size) for s in src_slice)
     tpu_primitives.make_async_copy(
         src_ref.at[src_slice],
-        self.window_ref.at[next_slot].at[dst_slice],
+        self.window_ref.at[(next_slot, *dst_slice)],
         self.sem_recvs.at[next_slot],
     ).start()
 
@@ -478,13 +483,15 @@ class BufferedRef:
     """Starts copy of HBM dma slice from the current slot."""
     assert self.is_output
     if self.memory_space == VMEM: return
+    assert not (self.window_ref is None or isinstance(self.window_ref, REF))
+    assert self.sem_sends is not None
     if self.swap is not None:
       self.swap[0] = True
     slot = self.current_slot_index
     dst_slice = self.get_dma_slice(dst_ref.shape, dst_ref.dtype, grid_indices)
     src_slice = tuple(pl.ds(0, s.size) for s in dst_slice)
     tpu_primitives.make_async_copy(
-        self.window_ref.at[slot].at[src_slice],
+        self.window_ref.at[(slot, *src_slice)],
         dst_ref.at[dst_slice],
         self.sem_sends.at[slot],
     ).start()
@@ -493,13 +500,15 @@ class BufferedRef:
     """Waits for input copy to finish."""
     assert self.is_input
     if self.memory_space == VMEM: return
+    assert not (self.window_ref is None or isinstance(self.window_ref, REF))
+    assert self.sem_recvs is not None
     src_slice = self.get_dma_slice(src_ref.shape, src_ref.dtype, grid_indices)
     dst_slice = tuple(pl.ds(0, s.size) for s in src_slice)
     current_slot = self.current_slot_index
     tpu_primitives.make_async_copy(
         src_ref.at[src_slice],  # nb: doesn't matter
-        self.window_ref.at[current_slot].at[
-            dst_slice
+        self.window_ref.at[
+            (current_slot, *dst_slice)
         ],  # only dst shape is important
         self.sem_recvs.at[current_slot],
     ).wait()
@@ -508,12 +517,14 @@ class BufferedRef:
     """Waits for output copy to finish."""
     assert self.is_output
     if self.memory_space == VMEM: return
+    assert not (self.window_ref is None or isinstance(self.window_ref, REF))
+    assert self.sem_sends is not None
     # In a double buffer, previous slot is the same as next slot.
     prev_slot = self.next_slot_index
     dst_slice = self.get_dma_slice(dst_ref.shape, dst_ref.dtype, grid_indices)
     src_slice = tuple(pl.ds(0, s.size) for s in dst_slice)
     tpu_primitives.make_async_copy(
-        self.window_ref.at[prev_slot].at[src_slice],  # nb: doesn't matter
+        self.window_ref.at[(prev_slot, *src_slice)],  # nb: doesn't matter
         dst_ref.at[dst_slice],  # only dst shape is important
         self.sem_sends.at[prev_slot],
     ).wait()
@@ -533,16 +544,18 @@ class BufferedRef:
     """Set accumulator or zero it out to initialize."""
     assert self.is_accumulator
     if self.accum_ref is not None:
+      accum_dtype = self.accum_ref.dtype
       def _init():
         self.accum_ref[...] = jnp.zeros_like(self.accum_ref[...])
       def _set():
-        self.accum_ref[...] = self.current_ref[...].astype(self.accum_ref.dtype)
+        self.accum_ref[...] = self.current_ref[...].astype(accum_dtype)
       lax.cond(init, _init, _set)
 
   def accumulate(self):
     """Add into the current slot."""
     assert self.is_accumulator
     if self.accum_ref is not None:
+      assert self.window_ref is not None
       accum_dtype = jnp.float32
       if self.window_ref.dtype == jnp.int32:
         accum_dtype = jnp.int32
@@ -1196,9 +1209,8 @@ def emit_pipeline(
     schedule = map_brefs(
         lambda _, x: get_pipeline_schedule(x), allocations, schedule)
 
-    def loop_body(step, indices):
-      nonlocal allocations
-      scheduler = Scheduler(
+    def make_scheduler(step, indices):
+      return Scheduler(
           step,
           indices,
           grid,
@@ -1208,13 +1220,15 @@ def emit_pipeline(
           init_accumulators=init_accumulators,
           trace_scopes=trace_scopes,
       )
+
+    def loop_body(step, indices):
+      scheduler = make_scheduler(step, indices)
       with scheduler.grid_env():
 
         # prepare any local VMEM aliases
         brefs = map_brefs(scheduler.alias_local_refs, allocations, refs)
 
         # loop input handling phase
-        map_brefs(scheduler.initialize, brefs, refs, schedule)
         map_brefs(scheduler.copy_in, brefs, refs, schedule)
         map_brefs(scheduler.wait_in, brefs, refs, schedule)
 
@@ -1243,12 +1257,24 @@ def emit_pipeline(
                     lambda: None)
 
         map_brefs(scheduler.swap_slots, brefs, refs, schedule)
-        map_brefs(scheduler.finalize, brefs, refs, schedule)
-
       return _next_index(indices, grid)
 
-    # run pipeline
-    lax.fori_loop(0, num_steps, loop_body, (0,) * len(grid))
+    @pl.when(num_steps > 0)
+    def _():
+      # pipeline prologue
+      initial_indices = (0,) * len(grid)
+      scheduler = make_scheduler(0, initial_indices)
+      brefs = map_brefs(scheduler.alias_local_refs, allocations, refs)
+      map_brefs(scheduler.initialize, brefs, refs, schedule)
+
+      # pipeline loop
+      next_indices = lax.fori_loop(0, num_steps, loop_body, initial_indices)
+
+      # pipeline epilogue
+      final_indices = _prev_index(next_indices, grid)
+      scheduler = make_scheduler(num_steps - 1, final_indices)
+      brefs = map_brefs(scheduler.alias_local_refs, allocations, refs)
+      map_brefs(scheduler.finalize, brefs, refs, schedule)
 
   return pipeline
 

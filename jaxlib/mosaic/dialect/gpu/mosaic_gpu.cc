@@ -18,6 +18,11 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
+#include "absl/algorithm/container.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep
 #include "llvm/Support/Casting.h"
@@ -26,13 +31,17 @@ limitations under the License.
 #include "mlir/Conversion/LLVMCommon/MemRefBuilder.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/MemRef/Utils/MemRefUtils.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep
 #include "mlir/IR/ImplicitLocOpBuilder.h"
@@ -43,15 +52,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Support/LLVM.h"
-#include "absl/algorithm/container.h"
-#include "absl/status/status.h"
-#include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
-#include "absl/strings/string_view.h"
-#include "mlir/include/mlir/IR/BuiltinTypeInterfaces.h"
-#include "mlir/include/mlir/IR/BuiltinTypes.h"
-#include "mlir/include/mlir/IR/Diagnostics.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/statusor.h"
 
 // Generated definitions.
 #include "jaxlib/mosaic/dialect/gpu/mosaic_gpu_dialect.cc.inc"
@@ -371,12 +372,39 @@ llvm::LogicalResult WGMMAOp::verify() {
   return llvm::success();
 }
 
-mlir::AffineMap LayoutAttr::getAffineMap() const {
-  // This always returns an identity map. It's technically not correct, but we
-  // don't actually use it anywhere. It's only called during verification of the
-  // layout attribute and needs to be semi-valid.
-  return mlir::AffineMap::getMultiDimIdentityMap(getNumDimensions(),
-                                                 getContext());
+llvm::LogicalResult CustomPrimitiveOp::verify() {
+  int num_vector_operands = 0;
+  int num_smem_ref_operands = 0;
+  mlir::Attribute smem = mlir::gpu::AddressSpaceAttr::get(
+      getContext(), mlir::gpu::AddressSpace::Workgroup);
+  for (auto operand : getOperands()) {
+    if (mlir::isa<mlir::VectorType>(operand.getType())) {
+      ++num_vector_operands;
+    }
+
+    if (auto ref_ty = mlir::dyn_cast<mlir::MemRefType>(operand.getType())) {
+      if (ref_ty.getMemorySpace() == smem) {
+        ++num_smem_ref_operands;
+      }
+    }
+  }
+
+  if (num_vector_operands != getInLayouts().size()) {
+    return emitOpError(
+        "Custom primitive must have a layout for each vector operand.");
+  }
+
+  if (num_smem_ref_operands != getInTransforms().size()) {
+    return emitOpError(
+        "Custom primitive must have transforms for each memref operand in "
+        "smem.");
+  }
+
+  if (getResults().size() != getOutLayouts().size()) {
+    return emitOpError("Custom primitive must have a layout for each result.");
+  }
+
+  return llvm::success();
 }
 
 void MosaicGPUDialect::initialize() {

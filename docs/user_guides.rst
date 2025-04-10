@@ -26,7 +26,6 @@ or deployed codebases.
    errors
    aot
    export/index
-   type_promotion
    transfer_guard
 
 .. toctree::

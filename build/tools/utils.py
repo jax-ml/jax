@@ -14,6 +14,7 @@
 # ==============================================================================
 # Helper script for tools/utilities used by the JAX build CLI.
 import collections
+import glob
 import hashlib
 import logging
 import os
@@ -201,6 +202,20 @@ def get_clang_major_version(clang_path):
 
   return major_version
 
+def get_clangpp_path(clang_path):
+  clang_path = pathlib.Path(clang_path)
+  clang_exec_name = clang_path.name
+  clangpp_exec_name = clang_exec_name
+  if "clang++" not in clang_exec_name:
+    clangpp_exec_name = clang_exec_name.replace("clang", "clang++")
+  clangpp_path = clang_path.parent / clangpp_exec_name
+  if not clangpp_path.exists():
+    raise FileNotFoundError(
+      f"Failed to get clang++ path from clang path: '{clang_path!s}'. "
+      f"Tried the path: '{clangpp_path!s}'."
+    )
+  return str(clangpp_path)
+
 def get_gcc_major_version(gcc_path: str):
   gcc_version_proc = subprocess.run(
     [gcc_path, "-dumpversion"],
@@ -256,3 +271,28 @@ def _parse_string_as_bool(s):
     return False
   else:
     raise ValueError(f"Expected either 'true' or 'false'; got {s}")
+
+
+def copy_dir_recursively(src, dst):
+  if os.path.exists(dst):
+    shutil.rmtree(dst)
+  os.makedirs(dst, exist_ok=True)
+  for root, dirs, files in os.walk(src):
+    relative_path = os.path.relpath(root, src)
+    dst_dir = os.path.join(dst, relative_path)
+    os.makedirs(dst_dir, exist_ok=True)
+    for f in files:
+      src_file = os.path.join(root, f)
+      dst_file = os.path.join(dst_dir, f)
+      shutil.copy2(src_file, dst_file)
+  logging.info("Editable wheel path: %s" % dst)
+
+
+def copy_individual_files(src, dst, regex):
+  os.makedirs(dst, exist_ok=True)
+  for f in glob.glob(os.path.join(src, regex)):
+    dst_file = os.path.join(dst, os.path.basename(f))
+    if os.path.exists(dst_file):
+      os.remove(dst_file)
+    shutil.copy2(f, dst_file)
+    logging.info("Distribution path: %s" % dst_file)

@@ -138,7 +138,7 @@ f_tf_graph = tf.function(f_tf, autograph=False)
 ```
 
 Note that when using the default native serialization, the target JAX function
-must be jittable (see [JAX - The Sharp Bits](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html)).
+must be jittable (see [JAX - The Sharp Bits](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html)).
 In the native serialization mode, under TensorFlow eager
 the whole JAX function executes as one op.
 
@@ -461,7 +461,7 @@ presence of shape polymorphism, some dimensions may be dimension variables.
 The `polymorphic_shapes` parameter must be either `None`,
 or a pytree of shape specifiers corresponding to the pytree of arguments.
 (A value `None` for `polymorphic_shapes` is equivalent to a list of `None`.
-See [how optional parameters are matched to arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).)
+See [how optional parameters are matched to arguments](https://docs.jax.dev/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).)
 A shape specifier is combined with a `TensorSpec` as follows:
 
   * A shape specifier of `None` means that the shape is given
@@ -1024,7 +1024,7 @@ always behaves like the JAX function.
 
 JAX interprets the type of Python scalars differently based on
 `JAX_ENABLE_X64` flag. (See
-[JAX - The Sharp Bits: Double (64bit) precision](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision).)
+[JAX - The Sharp Bits: Double (64bit) precision](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision).)
 In the default configuration, the
 flag is unset, and JAX interprets Python constants as 32-bit,
 e.g., the type of `3.14` is `float32`. This is also what
@@ -1086,7 +1086,7 @@ Applies to both native and non-native serialization.
 
 `jax2tf` can lower functions with arguments and results that are nested
 collections (tuples, lists, dictionaries) of numeric values or JAX arrays
-([pytrees](https://jax.readthedocs.io/en/latest/pytrees.html)). The
+([pytrees](https://docs.jax.dev/en/latest/pytrees.html)). The
 resulting TensorFlow function will take the same kind of arguments except the
 leaves can be numeric values or TensorFlow tensors (`tf.Tensor`, `tf.TensorSpec`, `tf.Variable`).
 
@@ -1285,7 +1285,7 @@ per PRNG operation. The "unsafe" part is that it doesn't guarantee
 determinism across JAX/XLA versions, and the quality of random
 streams it generates from different keys is less well understood.
 Nevertheless, this should be fine for most inference/serving cases.
-See more details in the [JAX PRNG documentation](https://jax.readthedocs.io/en/latest/jax.random.html?highlight=unsafe_rbg#advanced-rng-configuration).
+See more details in the [JAX PRNG documentation](https://docs.jax.dev/en/latest/jax.random.html?highlight=unsafe_rbg#advanced-rng-configuration).
 
 ### SavedModel supports only first-order gradients
 

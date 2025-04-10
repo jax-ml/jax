@@ -16,7 +16,7 @@ on:
         default: "linux-x86-n2-16"
         options:
         - "linux-x86-n2-16"
-        - "linux-arm64-c4a-64"
+        - "linux-arm64-t2a-48"
         - "windows-x86-n2-16"
       artifact:
         description: "Which JAX artifact to build?"

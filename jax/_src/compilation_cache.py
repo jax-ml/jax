@@ -275,7 +275,7 @@ def put_executable_and_time(
           f"PERSISTENT CACHE WRITE with key {cache_key}, this is unexpected because "
           "JAX_COMPILATION_CACHE_EXPECT_PGLE is set. The execution that populated the "
           "cache may lack coverage, "
-          "https://jax.readthedocs.io/en/latest/persistent_compilation_cache.html may "
+          "https://docs.jax.dev/en/latest/persistent_compilation_cache.html may "
           "help debug why this has happened")
 
     cache.put(cache_key, executable_and_time)

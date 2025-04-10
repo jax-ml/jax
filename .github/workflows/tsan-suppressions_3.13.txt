@@ -1,0 +1,75 @@
+# false-positive caused because we haven't tsan-instrumented libgcc_s. Multiple threads
+# are racing on a call to __register_frame_info(), but that function appears to be correctly locked internally.
+race:llvm::RuntimeDyldELF::registerEHFrames
+
+# https://github.com/openxla/xla/issues/20686
+race:dnnl_sgemm
+
+# https://github.com/python/cpython/issues/128050
+race:partial_vectorcall_fallback
+
+# Likely only happens when the process is crashing.
+race:dump_traceback
+
+# https://github.com/python/cpython/issues/128137
+# Fixed in Python 3.14, but not backported to 3.13.
+race:immortalize_interned
+race:_PyUnicode_InternMortal
+race:_PyUnicode_InternImmortal
+
+# https://github.com/python/cpython/issues/128144
+# Fixed in Python 3.14, but not backported to 3.13.
+race_top:PyMember_GetOne
+
+# https://github.com/python/cpython/issues/131680
+# Fixed in Python 3.14, but not backported to 3.13.
+race_top: new_reference
+
+# https://github.com/python/cpython/issues/129748
+race:mi_block_set_nextx
+
+# https://github.com/python/cpython/issues/128130
+race_top:run_eval_code_obj
+
+# Races because the LAPACK and BLAS in our scipy isn't TSAN instrumented.
+race:heevd_ffi
+race:gesdd_ffi
+race:dscal_k_
+race:scal_k_
+race:gemm_beta
+race:gemm_oncopy
+
+
+
+# Races below this point are likely fixed.
+# TODO(phawkins): remove these if they don't show up in CI again.
+
+# https://github.com/python/cpython/issues/128100
+# race:ensure_nonmanaged_dict
+
+# https://github.com/python/cpython/issues/128657
+# race:py_digest_by_name
+
+# https://github.com/python/cpython/issues/128714
+# race:func_get_annotations
+
+# https://github.com/python/cpython/issues/129533
+# race:PyGC_Disable
+# race:PyGC_Enable
+
+# https://github.com/python/cpython/issues/128133
+# race:bytes_hash
+
+# https://github.com/python/cpython/issues/130571
+# race:_PyObject_GetMethod
+
+# https://github.com/python/cpython/issues/130547
+# race:split_keys_entry_added
+
+# https://github.com/python/cpython/issues/129547
+# Maybe fixed?
+# race:type_get_annotations
+
+# https://github.com/python/cpython/issues/132013
+# Fixed on 3.14 and not backported to 3.13
+race_top:frozenset_hash

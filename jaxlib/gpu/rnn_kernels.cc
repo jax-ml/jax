@@ -15,14 +15,20 @@ limitations under the License.
 
 #include "jaxlib/gpu/rnn_kernels.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "absl/synchronization/mutex.h"
 #include "jaxlib/gpu/ffi_wrapper.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
-#include "jaxlib/handle_pool.h"
+#include "jaxlib/gpu/handle_pool.h"
+#include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_helpers.h"
 #include "xla/service/custom_call_status.h"
 
@@ -71,7 +77,7 @@ template <>
 
 namespace JAX_GPU_NAMESPACE {
 
-static absl::StatusOr<std::pair<int, int>>
+static absl::StatusOr<std::pair<size_t, size_t>>
 DoRnnComputeWorkspaceReserveSpaceSizes(int input_size, int hidden_size,
                                        int num_layers, int batch_size,
                                        int max_seq_length, float dropout,
@@ -174,7 +180,7 @@ DoRnnComputeWorkspaceReserveSpaceSizes(int input_size, int hidden_size,
   return std::make_pair(workSpaceSize, reserveSpaceSize);
 }
 
-absl::StatusOr<std::pair<int, int>> RnnComputeWorkspaceReserveSpaceSizes(
+absl::StatusOr<std::pair<size_t, size_t>> RnnComputeWorkspaceReserveSpaceSizes(
     int input_size, int hidden_size, int num_layers, int batch_size,
     int max_seq_length, float dropout, bool bidirectional,
     bool cudnn_allow_tf32) {

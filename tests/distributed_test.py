@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import subprocess
-import sys
 import threading
 import unittest
 
@@ -66,22 +64,6 @@ class DistributedTest(jtu.JaxTestCase):
       thread.start()
     for thread in threads:
       thread.join()
-
-  def test_is_distributed_initialized(self):
-    # Run in subprocess to isolate side effects from jax.distributed.initialize which conflict with other
-    # tests. Unfortunately this can't be avoided by calling jax.distributed.shutdown, as the XLA backend
-    # will be warmed up, which yields a RuntimeError on subsequent calls to initialize.
-    port = portpicker.pick_unused_port() # type: ignore
-    cmd = f"""import jax;
-    assert not jax.distributed.is_initialized();
-    jax.distributed.initialize('localhost:{port}', 1, 0);
-    assert jax.distributed.is_initialized();
-    """.replace("\n", ' ')
-
-    result = subprocess.run([sys.executable, "-c", cmd], capture_output=True)
-    self.assertEqual(
-      result.returncode, 0, msg=f"Test failed with:\n{result.stdout}\n{result.stderr}"
-    )
 
 
 if __name__ == "__main__":

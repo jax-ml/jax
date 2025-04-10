@@ -26,27 +26,34 @@ for i in "${!WHEELS[@]}"; do
       # Append [tpu] to the jax wheel name to download the latest libtpu wheel
       # from PyPI.
       WHEELS[$i]="${WHEELS[$i]}[tpu]"
+    elif [[ "$JAXCI_ADDITIONAL_WHEELS_INSTALL_FROM_PYPI" == "jax_cuda_pypi" ]]; then
+      # Append [cuda12-local] to the jax wheel name to download the latest
+      # release of JAX's CUDA plugin and PJRT packages from PyPI. This is used
+      # when running CUDA tests for a "jax" only release.
+      WHEELS[$i]="${WHEELS[$i]}[cuda12-local]"
     fi
   fi
 done
 
-if [[ -z "${WHEELS[@]}" ]]; then
-  echo "ERROR: No wheels found under $JAXCI_OUTPUT_DIR"
-  exit 1
-fi
+if [[ -n "${WHEELS[@]}" ]]; then
+  echo "Installing the following wheels:"
+  echo "${WHEELS[@]}"
 
-echo "Installing the following wheels:"
-echo "${WHEELS[@]}"
+  # Install `uv` if it's not already installed. `uv` is much faster than pip for
+  # installing Python packages.
+  if ! command -v uv >/dev/null 2>&1; then
+    pip install uv~=0.5.30
+  fi
 
-# Install `uv` if it's not already installed. `uv` is much faster than pip for
-# installing Python packages.
-if ! command -v uv >/dev/null 2>&1; then
-  pip install uv~=0.5.30
-fi
-
-# On Windows, convert MSYS Linux-like paths to Windows paths.
-if [[ $(uname -s) =~ "MSYS_NT" ]]; then
-  "$JAXCI_PYTHON" -m uv pip install $(cygpath -w "${WHEELS[@]}")
+  # On Windows, convert MSYS Linux-like paths to Windows paths.
+  if [[ $(uname -s) =~ "MSYS_NT" ]]; then
+    "$JAXCI_PYTHON" -m uv pip install $(cygpath -w "${WHEELS[@]}")
+  else
+    "$JAXCI_PYTHON" -m uv pip install "${WHEELS[@]}"
+  fi
 else
-  "$JAXCI_PYTHON" -m uv pip install "${WHEELS[@]}"
+  # Note that we don't exit here because the wheels may have been installed
+  # earlier in a different step in the CI job.
+  echo "INFO: No wheels found under $JAXCI_OUTPUT_DIR"
+  echo "INFO: Skipping local wheel installation."
 fi

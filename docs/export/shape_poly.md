@@ -86,7 +86,7 @@ matching the structure of the arguments passed to it.
 The polymorphic shapes specification can be a
 pytree prefix in cases where one specification should apply
 to multiple arguments, as in the above example.
-See [how optional parameters are matched to arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
+See [how optional parameters are matched to arguments](https://docs.jax.dev/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
 
 
 A few examples of shape specifications:
@@ -609,7 +609,7 @@ Division had remainder 1 when computing the value of 'd'.
 Using the following polymorphic shapes specifications:
   args[0].shape = (b, b, 2*d).
 Obtained dimension variables: 'b' = 3 from specification 'b' for dimension args[0].shape[0] (= 3), .
-Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#shape-assertion-errors for more details.
+Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details.
 
 ```
 

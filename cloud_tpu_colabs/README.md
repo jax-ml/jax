@@ -4,7 +4,7 @@ The same JAX code that runs on CPU and GPU can also be run on TPU. Cloud TPUs
 have the advantage of quickly giving you access to multiple TPU accelerators,
 including in [Colab](https://research.google.com/colaboratory/). All of the
 example notebooks here use
-[`jax.pmap`](https://jax.readthedocs.io/en/latest/jax.html#jax.pmap) to run JAX
+[`jax.pmap`](https://docs.jax.dev/en/latest/jax.html#jax.pmap) to run JAX
 computation across multiple TPU cores from Colab. You can also run the same code
 directly on a [Cloud TPU
 VM](https://cloud.google.com/tpu/docs/jax-quickstart-tpu-vm).

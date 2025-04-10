@@ -19,12 +19,12 @@ limitations under the License.
 #include <array>
 #include <cstdint>
 
-#include "mlir/include/mlir/IR/Attributes.h"
-#include "mlir/include/mlir/IR/Builders.h"
-#include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
-#include "mlir/include/mlir/IR/Types.h"
-#include "mlir/include/mlir/IR/Value.h"
-#include "mlir/include/mlir/Support/LLVM.h"
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/ImplicitLocOpBuilder.h"
+#include "mlir/IR/Types.h"
+#include "mlir/IR/Value.h"
+#include "mlir/Support/LLVM.h"
 #include "xla/array.h"
 
 namespace mlir::tpu {

@@ -1328,34 +1328,97 @@ def list_insert(lst: list[a], idx: int, val: a) -> list[a]:
 
 @jtu.thread_unsafe_test_class()  # temporary registration isn't thread-safe
 class VmappableTest(jtu.JaxTestCase):
-  def test_basic(self):
+  @parameterized.parameters([False, True])
+  def test_basic(self, jit):
     with temporarily_register_named_array_vmappable():
       def f(x):
         return named_mul(x, x)
+      if jit:
+        f = jax.jit(f)
 
       x = NamedArray(['i', 'j'], jnp.arange(12.).reshape(3, 4))
       g = jax.vmap(f,
-                  in_axes=NamedMapSpec('i', 0),
-                  out_axes=NamedMapSpec('i', 1),
-                  axis_size=3)
+                   in_axes=NamedMapSpec('i', 0),
+                   out_axes=NamedMapSpec('i', 1),
+                   axis_size=3)
       ans = g(x)
       expected = NamedArray(['j', 'i'], jnp.arange(12.).reshape(3, 4).T ** 2)
 
       self.assertEqual(ans.names, expected.names)
       self.assertAllClose(ans.data, expected.data)
 
-  def test_basic_jit(self):
-    with temporarily_register_named_array_vmappable():
-      def f(x):
-        return named_mul(x, x)
+  def test_to_elt_that_binds_primitives(self):
+    class A:
+      data: Array
+      def __init__(self, data):
+        self.data = data
+    def to_elt(cont, _, val, spec):
+      return cont(val.data + 1, spec)
+    def from_elt(cont, size, elt, spec):
+      assert False
 
-      x = NamedArray(['i', 'j'], jnp.arange(12.).reshape(3, 4))
-      ans = jax.jit(f)(x)
-      expected = NamedArray(['i', 'j'], jnp.arange(12.).reshape(3, 4) ** 2)
+    @jax.jit
+    def f():
+      a = A(jnp.arange(3.))
+      return jax.vmap(lambda x: x - 1, axis_size=3)(a)
 
-      self.assertEqual(ans.names, expected.names)
-      self.assertAllClose(ans.data, expected.data)
+    try:
+      batching.register_vmappable(A, int, int, to_elt, from_elt, None)
+      ans = f()
+    finally:
+      batching.unregister_vmappable(A)
 
+    self.assertAllClose(ans, jnp.arange(3.))
+
+  def test_from_elt_that_binds_primitives(self):
+    class A:
+      data: Array
+      def __init__(self, data):
+        self.data = data
+    def to_elt(cont, _, val, spec):
+      return A(cont(val.data, spec))
+    def from_elt(cont, size, elt, spec):
+      return A(cont(size, elt.data + 1, spec))
+
+    @jax.jit
+    def f():
+      a = A(jnp.arange(3.))
+      return jax.vmap(lambda x: x, axis_size=3)(a).data
+
+    try:
+      batching.register_vmappable(A, int, int, to_elt, from_elt, None)
+      ans = f()
+    finally:
+      batching.unregister_vmappable(A)
+
+    self.assertAllClose(ans, jnp.arange(3.) + 1)
+
+  def test_types_with_same_spec(self):
+    # We register NamedArray.
+    batching.register_vmappable(NamedArray, NamedMapSpec, int,
+                              named_to_elt, named_from_elt, None)
+
+    # We then register another type that uses NamedMapSpec as the spec_type too,
+    # and immediately unregister it.
+    class Foo:
+      pass
+    batching.register_vmappable(Foo, NamedMapSpec, int,
+                                named_to_elt, named_from_elt, None)
+    batching.unregister_vmappable(Foo)
+
+    # We should still be able to use vmap on NamedArray.
+    def f(x):
+      return named_mul(x, x)
+
+    x = NamedArray(['i', 'j'], jnp.arange(12.).reshape(3, 4))
+    ans = jax.jit(f)(x)
+    expected = NamedArray(['i', 'j'], jnp.arange(12.).reshape(3, 4) ** 2)
+
+    self.assertEqual(ans.names, expected.names)
+    self.assertAllClose(ans.data, expected.data)
+
+    # And unregister NamedArray without exceptions.
+    batching.unregister_vmappable(NamedArray)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

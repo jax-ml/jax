@@ -81,7 +81,7 @@ license_files = LICENSE.txt
 
 [bdist_wheel]
 plat_name={tag}
-python-tag=py3
+python_tag=py3
 """
     )
 

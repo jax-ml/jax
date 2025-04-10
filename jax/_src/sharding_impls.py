@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import collections
+import contextlib
 from collections.abc import Mapping, Sequence
 import dataclasses
 import functools
@@ -32,14 +33,12 @@ from jax._src import source_info_util
 from jax._src import xla_bridge as xb
 from jax._src import mesh_utils
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.named_sharding import (  # noqa: F401
     SdyArraySharding, SdyDimSharding, UnspecifiedValue, AUTO,
-    ParsedPartitionSpec, _check_unique_resources, NamedSharding, UNSPECIFIED,
+    _check_unique_resources, NamedSharding, UNSPECIFIED,
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, get_array_mapping,
-    array_mapping_to_axis_resources, get_single_pspec, preprocess,
-    named_sharding_to_xla_hlo_sharding)
+    array_mapping_to_axis_resources, named_sharding_to_xla_hlo_sharding)
 from jax._src.op_shardings import (
     are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated)
 from jax._src.partition_spec import PartitionSpec
@@ -106,16 +105,17 @@ def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArraySharding, mesh):
                            if not d.axes and d.is_closed else d)
       used_axes.extend(d.axes)
     remaining_axes = set(mesh.axis_names) - set(used_axes)
+    # Sort wrt mesh axis names so order is deterministic and doesn't hang in
+    # McJAX.
+    remaining_axes = [n for n in mesh.axis_names if n in remaining_axes]
     replicated_axes = tuple(r for r in remaining_axes
-                            if mesh._name_to_type[r] == mesh_lib.AxisTypes.Explicit)
+                            if mesh._name_to_type[r] == mesh_lib.AxisType.Explicit)
     return SdyArraySharding(sdy_sharding.mesh_shape, dim_shardings,
                             sdy_sharding.logical_device_ids, replicated_axes)
   return sdy_sharding
 
 
-@util.cache(max_size=128, trace_context_in_key=False)
-def get_replicated_hlo_sharding():
-  return xc.HloSharding.replicate()
+replicated_hlo_sharding = xc.HloSharding.replicate()
 
 
 @use_cpp_class(xc.SingleDeviceSharding)
@@ -182,7 +182,7 @@ class SingleDeviceSharding(jsharding.Sharding):
     return (self._device,)
 
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
-    return get_replicated_hlo_sharding()
+    return replicated_hlo_sharding
 
   def _to_sdy_sharding(self, num_dimensions: int) -> SdyArraySharding:
     sdy_dim_sharding = [SdyDimSharding(axes=[], is_closed=True)
@@ -400,7 +400,7 @@ def _op_sharding_to_pos_sharding(
 def _positional_sharding_to_xla_hlo_sharding(
     self, num_dimensions: int) -> xc.HloSharding:
   if self.shape == (1,) * self.ndim:
-    return get_replicated_hlo_sharding()
+    return replicated_hlo_sharding
 
   pbuf = xc.OpSharding()
   shape = self.shape[self.ndim - num_dimensions:]  # 'rank promotion' of val
@@ -602,7 +602,7 @@ class GSPMDSharding(jsharding.Sharding):
   @functools.cached_property
   def _hlo_sharding_hash(self):
     if self.is_fully_replicated:
-      return hash(get_replicated_hlo_sharding())
+      return hash(replicated_hlo_sharding)
     return hash(self._hlo_sharding)
 
   def __eq__(self, other):
@@ -668,7 +668,7 @@ class GSPMDSharding(jsharding.Sharding):
 
   @classmethod
   def get_replicated(cls, device_assignment, *, memory_kind: str | None = None):
-    return cls(tuple(device_assignment), get_replicated_hlo_sharding(),
+    return cls(tuple(device_assignment), replicated_hlo_sharding,
                memory_kind=memory_kind)
 
 
@@ -883,8 +883,7 @@ def parse_flatten_op_sharding(
     return out
   elif hlo_sharding.is_replicated():
     return [PartitionSpec()]
-  elif (xla_extension_version >= 319 and hlo_sharding.is_maximal()
-        and mesh.size == 1):
+  elif hlo_sharding.is_maximal() and mesh.size == 1:
     return [PartitionSpec()]
   elif hlo_sharding.is_tiled():
     mesh_shape = mesh.shape
@@ -1300,7 +1299,7 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
     if s is None:
       continue
     if sharding.mesh._name_to_type[s] in {
-        mesh_lib.AxisTypes.Auto, mesh_lib.AxisTypes.Manual}:
+        mesh_lib.AxisType.Auto, mesh_lib.AxisType.Manual}:
       raise ValueError(
           f'PartitionSpec passed to {api_name} cannot contain axis'
           ' names that are of type Auto or Manual. Got PartitionSpec:'
@@ -1309,44 +1308,11 @@ def canonicalize_sharding(sharding: NamedSharding | PartitionSpec | None,
           f' {source_info_util.summarize(source_info_util.current())}')
   return sharding
 
-TypeOfAxis = str | tuple[str, ...] | None
-
-def _normalize(axes: TypeOfAxis = None) -> tuple[str, ...]:
-  if axes is None:
-    return ()
-  return (axes,) if isinstance(axes, str) else axes
-
-def _get_axis_types(
-    auto_axes: TypeOfAxis = None, explicit_axes: TypeOfAxis = None,
-    manual_axes: TypeOfAxis = None):
-  if auto_axes is None and explicit_axes is None and manual_axes is None:
-    return None
-
-  auto_axes = _normalize(auto_axes)
-  explicit_axes = _normalize(explicit_axes)
-  manual_axes = _normalize(manual_axes)
-
-  aua, ea, ma = set(auto_axes), set(explicit_axes), set(manual_axes)
-  disjoint = aua.isdisjoint(ea) and aua.isdisjoint(ma) and ea.isdisjoint(ma)
-  if not disjoint:
-    raise ValueError(
-        f'{auto_axes=}, {explicit_axes=} and {manual_axes=} should be'
-        ' non-overlapping.')
-
-  out = {}
-  if auto_axes:
-    out.update({mesh_lib.AxisTypes.Auto: auto_axes})
-  if explicit_axes:
-    out.update({mesh_lib.AxisTypes.Explicit: explicit_axes})
-  if manual_axes:
-    out.update({mesh_lib.AxisTypes.Manual: manual_axes})
-  return out
-
 
 def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
               *, devices: Sequence[xc.Device] | None = None,
-              auto_axes: TypeOfAxis = None, explicit_axes: TypeOfAxis = None,
-              manual_axes: TypeOfAxis = None) -> mesh_lib.Mesh:
+              axis_types: tuple[mesh_lib.AxisType, ...] | None = None
+              ) -> mesh_lib.Mesh:
   """Creates an efficient mesh with the shape and axis names specified.
 
   This function attempts to automatically compute a good mapping from a set of
@@ -1408,5 +1374,52 @@ def make_mesh(axis_shapes: Sequence[int], axis_names: Sequence[str],
   mesh_devices = mesh_utils.create_device_mesh(
       new_axis_shapes, devices,
       allow_split_physical_axes=allow_split_physical_axes)
-  axis_types = _get_axis_types(auto_axes, explicit_axes, manual_axes)
   return mesh_lib.Mesh(mesh_devices, axis_names, axis_types=axis_types)
+
+
+@contextlib.contextmanager
+def use_mesh(mesh: mesh_lib.Mesh):
+  if not isinstance(mesh, mesh_lib.Mesh):
+    raise ValueError(
+        f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
+  if not core.trace_state_clean():
+    raise ValueError('`use_mesh` can only be used outside of `jax.jit`')
+
+  with mesh_lib.use_abstract_mesh(mesh.abstract_mesh), use_concrete_mesh(mesh):
+    yield
+
+def set_mesh(mesh: mesh_lib.Mesh | None) -> mesh_lib.Mesh | None:
+  """Sets the given concrete mesh globally and returns the previous concrete
+     mesh."""
+  if mesh is not None and not isinstance(mesh, mesh_lib.Mesh):
+    raise ValueError(
+        f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
+  if not core.trace_state_clean():
+    raise ValueError('`set_mesh` can only be used outside of `jax.jit`.')
+
+  if mesh is None:
+    config.abstract_mesh_context_manager.set_global(mesh_lib.empty_abstract_mesh)  # type: ignore
+  else:
+    config.abstract_mesh_context_manager.set_global(mesh.abstract_mesh)  # type: ignore
+
+  prev_mesh = config.device_context.get_global()
+  config.device_context.set_global(mesh)
+  return prev_mesh
+
+@contextlib.contextmanager
+def use_concrete_mesh(mesh: mesh_lib.Mesh | None):
+  if not core.trace_state_clean():
+    raise ValueError('`use_concrete_mesh` can only be used outside of `jax.jit`.')
+  with _internal_use_concrete_mesh(mesh):
+    yield
+
+@contextlib.contextmanager
+def _internal_use_concrete_mesh(mesh: mesh_lib.Mesh | None):
+  if mesh is not None and not isinstance(mesh, mesh_lib.Mesh):
+    raise ValueError(
+        f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
+  prev_val = config.device_context.swap_local(mesh)
+  try:
+    yield
+  finally:
+    config.device_context.set_local(prev_val)

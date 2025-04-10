@@ -151,12 +151,27 @@ def switch(index, branches: Sequence[Callable], *operands,
                           out_trees[0], jaxprs[0].out_avals,
                           f"branch {i + 1} output",
                           out_tree, jaxpr.out_avals)
+  # prune passthrough outputs
+  fwds = [pe._jaxpr_forwarding(jaxpr.jaxpr) for jaxpr in jaxprs]
+  in_fwd = [xs[0] if len(set(xs)) == 1 else None for xs in zip(*fwds)]
+  keep = [f is None for f in in_fwd]
+  jaxprs = [pe.prune_closed_jaxpr_outputs(jaxpr, keep) for jaxpr in jaxprs]
+
   joined_effects = core.join_effects(*(jaxpr.effects for jaxpr in jaxprs))
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `switch`: {disallowed_effects}')
+  jaxprs = [replace_jaxpr_effects(jaxpr, joined_effects) for jaxpr in jaxprs]
   out = cond_p.bind(index, *consts, *ops, branches=tuple(jaxprs))
+  out_ = iter(out)
+
+  all_inputs = [*consts, *ops]
+  out = [
+    next(out_) if fwd is None else lax.asarray(all_inputs[fwd])
+    for fwd in in_fwd
+  ]
+  assert next(out_, None) is None
   return tree_unflatten(out_trees[0], out)
 
 
@@ -259,7 +274,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
                         out_tree, true_jaxpr.out_avals,
                         "false_fun output",
                         false_out_tree, false_jaxpr.out_avals)
-  # prune passhtrough outputs
+  # prune passthrough outputs
   true_fwds = pe._jaxpr_forwarding(true_jaxpr.jaxpr)
   false_fwds = pe._jaxpr_forwarding(false_jaxpr.jaxpr)
   in_fwd = [i if i == j else None for i, j in zip(true_fwds, false_fwds)]
@@ -278,7 +293,6 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   true_jaxpr = replace_jaxpr_effects(true_jaxpr, joined_effects)
 
   out = cond_p.bind(index, *consts, *ops, branches=(false_jaxpr, true_jaxpr))
-  num_consts = len(consts)
   out_ = iter(out)
 
   all_inputs = [*consts, *ops]
@@ -347,6 +361,15 @@ def _cond_abstract_eval(*avals: core.AbstractValue,
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `cond`: {disallowed_effects}')
+  b0_vma = [o.vma for o in branches[0].out_avals]
+  for branch in branches[1:]:
+    b_vma = [o.vma for o in branch.out_avals]
+    if b0_vma != b_vma:
+      raise Exception("The branches of cond produced mismatched varying manual "
+                      f"axes. Got {b0_vma} and {b_vma}. Please open an issue "
+                      "at https://github.com/jax-ml/jax/issues, and as a "
+                      "temporary workaround pass the check_rep=False argument "
+                      "to shard_map")
   return branches[0].out_avals, joined_effects
 
 def _bcast_select(pred, on_true, on_false):

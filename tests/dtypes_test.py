@@ -46,30 +46,19 @@ np_unsigned_dtypes = [np.dtype('uint8'), np.dtype('uint16'), np.dtype('uint32'),
                      np.dtype('uint64')]
 unsigned_dtypes = list(np_unsigned_dtypes)
 
-intn_dtypes = [np.dtype('int4'), np.dtype('uint4')]
-signed_dtypes += [np.dtype('int4')]
-unsigned_dtypes += [np.dtype('uint4')]
-if dtypes.int2 is not None:
-  assert dtypes.uint2 is not None
-  intn_dtypes[:0] = [np.dtype('int2'), np.dtype('uint2')]
-  signed_dtypes[:0] = [np.dtype('int2')]
-  unsigned_dtypes[:0] = [np.dtype('uint2')]
+intn_dtypes = [np.dtype('int2'), np.dtype('uint2'), np.dtype('int4'), np.dtype('uint4')]
+signed_dtypes += [np.dtype('int2'), np.dtype('int4')]
+unsigned_dtypes += [np.dtype('uint2'), np.dtype('uint4')]
 
-np_float_dtypes = [np.dtype('float16'), np.dtype('float32'),
-                   np.dtype('float64')]
+np_float_dtypes = [np.dtype('float16'), np.dtype('float32'), np.dtype('float64')]
 
 float_dtypes = [np.dtype(dtypes.bfloat16)] + np_float_dtypes
 custom_float_dtypes = [np.dtype(dtypes.bfloat16)]
 
 fp8_dtypes = [np.dtype(dtypes.float8_e4m3b11fnuz), np.dtype(dtypes.float8_e4m3fn),
               np.dtype(dtypes.float8_e4m3fnuz), np.dtype(dtypes.float8_e5m2),
-              np.dtype(dtypes.float8_e5m2fnuz)]
-if dtypes.float8_e3m4 is not None:
-  fp8_dtypes += [np.dtype(dtypes.float8_e3m4)]
-if dtypes.float8_e4m3 is not None:
-  fp8_dtypes += [np.dtype(dtypes.float8_e4m3)]
-if dtypes.float8_e8m0fnu is not None:
-  fp8_dtypes += [np.dtype(dtypes.float8_e8m0fnu)]
+              np.dtype(dtypes.float8_e5m2fnuz), np.dtype(dtypes.float8_e3m4),
+              np.dtype(dtypes.float8_e4m3), np.dtype(dtypes.float8_e8m0fnu)]
 float_dtypes += fp8_dtypes
 custom_float_dtypes += fp8_dtypes
 

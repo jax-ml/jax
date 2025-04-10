@@ -52,7 +52,7 @@ cc_library(
         "serde.h",
     ],
     deps = [
-        "//jaxlib:pass_boilerplate",
+        "//jaxlib/mosaic:pass_boilerplate",
         "//jaxlib/mosaic:serde",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:DataLayoutInterfaces",
@@ -65,6 +65,7 @@ cc_library(
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TransformUtils",
+        "@llvm-project//mlir:VectorDialect",
     ],
 )
 
@@ -110,8 +111,21 @@ cc_library(
 cc_library(
     name = "runtime",
     srcs = ["runtime.cc"],
+    # Linker may prune these symbols if they are not explicitly exported.
+    linkopts = ["-Wl,--export-dynamic-symbol='mosaic_gpu_*'"],
+    deps = [
+        ":mosaic_gpu_comm",
+        "@local_config_cuda//cuda:cuda_headers",
+    ],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "mosaic_gpu_comm",
+    hdrs = ["mosaic_gpu_comm.h"],
     deps = [
         "@local_config_cuda//cuda:cuda_headers",
+        "@xla//xla/tsl/cuda:cudart",
     ],
 )
 
@@ -123,9 +137,11 @@ cc_library(
         ":target",
         "//jaxlib/cuda:cuda_vendor",
         "//jaxlib/mosaic/dialect/gpu:mosaic_gpu",
+        "//jaxlib/mosaic/gpu:mosaic_gpu_comm",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -169,6 +185,8 @@ cc_library(
         "@llvm-project//mlir:UBToLLVM",
         "@llvm-project//mlir:VectorDialect",
         "@llvm-project//mlir:VectorToLLVM",
+        "@xla//xla/ffi",
+        "@xla//xla/ffi:ffi_api",
         "@xla//xla/service:custom_call_status",
         "@xla//xla/service:custom_call_target_registry",
     ],
@@ -204,6 +222,7 @@ cc_binary(
         "notap",
     ],
     deps = [
+        "//jaxlib/mosaic/gpu:mosaic_gpu_comm",
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/tsl/cuda:cudart",
     ],

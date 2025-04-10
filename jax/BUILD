@@ -36,6 +36,7 @@ load(
     "py_library_providing_imports_info",
     "pytype_library",
     "pytype_strict_library",
+    "serialize_executable_internal_users",
 )
 
 package(
@@ -92,7 +93,7 @@ package_group(
     includes = [":internal"],
     packages = [
         # Intentionally avoid jax dependencies on jax.extend.
-        # See https://jax.readthedocs.io/en/latest/jep/15856-jex.html
+        # See https://docs.jax.dev/en/latest/jep/15856-jex.html
         "//tests/...",
     ] + jax_extend_internal_users,
 )
@@ -127,6 +128,12 @@ package_group(
     packages = mosaic_gpu_internal_users,
 )
 
+package_group(
+    name = "serialize_executable_users",
+    includes = [":internal"],
+    packages = serialize_executable_internal_users,
+)
+
 # JAX-private test utilities.
 py_library(
     # This build target is required in order to use private test utilities in jax._src.test_util,
@@ -135,6 +142,7 @@ py_library(
     # these are available in jax.test_util via the standard :jax target.
     name = "test_util",
     srcs = [
+        "_src/test_loader.py",
         "_src/test_util.py",
         "_src/test_warning_util.py",
     ],
@@ -160,22 +168,30 @@ py_library(
         ],
     ),
     visibility = [":internal"],
-    deps = [
-        ":jax",
-    ] + py_deps("numpy"),
+    deps = if_building_jaxlib(
+        if_building = [
+            ":jax",
+        ],
+        if_not_building = [],
+        if_not_building_for_cpu = [],
+    ) + py_deps("numpy"),
 )
 
 py_library(
     name = "internal_test_harnesses",
     srcs = ["_src/internal_test_util/test_harnesses.py"],
     visibility = [":internal"] + jax_internal_test_harnesses_visibility,
-    deps = [
-        ":ad_util",
-        ":config",
-        ":jax",
-        ":test_util",
-        "//jax/_src/lib",
-    ] + py_deps("numpy"),
+    deps = if_building_jaxlib(
+        if_building = [
+            ":ad_util",
+            ":config",
+            ":jax",
+            ":test_util",
+            "//jax/_src/lib",
+        ],
+        if_not_building = [],
+        if_not_building_for_cpu = [],
+    ) + py_deps("numpy"),
 )
 
 py_library(
@@ -184,15 +200,18 @@ py_library(
     visibility = [
         ":internal",
     ] + jax_internal_export_back_compat_test_util_visibility,
-    deps = [
-        ":jax",
-        ":test_util",
-    ] + py_deps("numpy"),
+    deps = if_building_jaxlib(
+        if_building = [
+            ":jax",
+            ":test_util",
+        ],
+        if_not_building = [],
+        if_not_building_for_cpu = [],
+    ) + py_deps("numpy"),
 )
 
 py_library(
     name = "internal_export_back_compat_test_data",
-    testonly = 1,
     srcs = glob([
         "_src/internal_test_util/export_back_compat_test_data/*.py",
         "_src/internal_test_util/export_back_compat_test_data/pallas/*.py",
@@ -382,6 +401,7 @@ pytype_strict_library(
     deps = [
         ":partition_spec",
         ":sharding",
+        ":util",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )
@@ -619,6 +639,16 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "serialize_executable",
+    srcs = ["experimental/serialize_executable.py"],
+    visibility = [":serialize_executable_users"],
+    deps = [
+        ":jax",
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_strict_library(
     name = "source_mapper",
     srcs = glob(include = ["experimental/source_mapper/**/*.py"]),
     visibility = [
@@ -782,7 +812,7 @@ pytype_strict_library(
 )
 
 # This target only supports sm_90 GPUs.
-py_library(
+py_library_providing_imports_info(
     name = "mosaic_gpu",
     srcs = glob(["experimental/mosaic/gpu/*.py"]),
     visibility = [
@@ -807,6 +837,7 @@ py_library(
         "//jaxlib/mlir:pass_manager",
         "//jaxlib/mlir:scf_dialect",
         "//jaxlib/mlir:vector_dialect",
+        "//jaxlib/mosaic/python:gpu_dialect",
     ] + py_deps("absl/flags") + py_deps("numpy"),
 )
 
@@ -1043,6 +1074,7 @@ pytype_strict_library(
     srcs = ["_src/tpu_custom_call.py"],
     visibility = [":internal"],
     deps = [
+        ":cloud_tpu_init",
         ":config",
         ":core",
         ":jax",

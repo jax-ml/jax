@@ -173,6 +173,8 @@ def dynamic_slice(
   else:
     dynamic_sizes = []
     static_sizes = core.canonicalize_shape(slice_sizes)  # type: ignore
+  operand, *start_indices = core.standard_insert_pbroadcast(
+      operand, *start_indices)
   return dynamic_slice_p.bind(operand, *start_indices, *dynamic_sizes,
                               slice_sizes=tuple(static_sizes))
 
@@ -234,6 +236,8 @@ def dynamic_update_slice(
   """
   start_indices = _dynamic_slice_indices(
       operand, start_indices, allow_negative_indices)
+  operand, update, *start_indices = core.standard_insert_pbroadcast(
+      operand, update, *start_indices)
   return dynamic_update_slice_p.bind(operand, update, *start_indices)
 
 
@@ -416,6 +420,7 @@ def gather(operand: ArrayLike, start_indices: ArrayLike,
         raise ValueError(f"Unsupported dtype for gather fill_value {dtype}")
   else:
     fill_value = None
+  operand, start_indices = core.standard_insert_pbroadcast(operand, start_indices)
   return gather_p.bind(
       operand, start_indices, dimension_numbers=dimension_numbers,
       slice_sizes=core.canonicalize_shape(slice_sizes),
@@ -505,6 +510,8 @@ def scatter_add(
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.add,
                                        core.get_aval(lax._const(operand, 0)))
+  operand, scatter_indices, updates = core.standard_insert_pbroadcast(
+      operand, scatter_indices, updates)
   return scatter_add_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -559,6 +566,8 @@ def scatter_sub(
   jaxpr, consts = lax._reduction_jaxpr(
       lax.sub, core.get_aval(lax._const(operand, 0))
   )
+  operand, scatter_indices, updates = core.standard_insert_pbroadcast(
+      operand, scatter_indices, updates)
   return scatter_sub_p.bind(
       operand,
       scatter_indices,
@@ -613,6 +622,8 @@ def scatter_mul(
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.mul,
                                        core.get_aval(lax._const(operand, 1)))
+  operand, scatter_indices, updates = core.standard_insert_pbroadcast(
+      operand, scatter_indices, updates)
   return scatter_mul_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -660,6 +671,8 @@ def scatter_min(
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.min,
                                        core.get_aval(lax._const(operand, 0)))
+  operand, scatter_indices, updates = core.standard_insert_pbroadcast(
+      operand, scatter_indices, updates)
   return scatter_min_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -707,6 +720,8 @@ def scatter_max(
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.max,
                                        core.get_aval(lax._const(operand, 0)))
+  operand, scatter_indices, updates = core.standard_insert_pbroadcast(
+      operand, scatter_indices, updates)
   return scatter_max_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -771,6 +786,8 @@ def scatter_apply(
     pass
   jaxpr, consts = lax._reduction_jaxpr(_apply, core.get_aval(lax._zero(operand)))
   # TODO: implement this via its own primitive so we can define appropriate autodiff rules.
+  operand, scatter_indices, unused = core.standard_insert_pbroadcast(
+      operand, scatter_indices, unused)
   return scatter_p.bind(
       operand, scatter_indices, unused, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -854,6 +871,8 @@ def scatter(
     ...             mode=lax.GatherScatterMode.PROMISE_IN_BOUNDS)
     Array([0., 2., 3., 0., 4.], dtype=float32)
   """
+  operand, scatter_indices, updates = core.standard_insert_pbroadcast(
+      operand, scatter_indices, updates)
   return scatter_p.bind(
       operand, scatter_indices, updates, update_jaxpr=None,
       update_consts=(), dimension_numbers=dimension_numbers,
@@ -1333,7 +1352,7 @@ def _get_sharding_for_varying_out_shape(out_shape, operand, name):
       operand.shape, out_shape, operand.sharding.spec):
     if (op_sh != out_sh and op_spec is not None and
         out_sh % _get_sub_spec_size(mesh, op_spec) != 0):
-      raise NotImplementedError(
+      raise core.ShardingTypeError(
           f"{name} on sharded dims where out dim ({out_sh}) is not divisble by"
           f" mesh axes ({_get_sub_spec_size(mesh, op_spec)}) with spec"
           f" ({op_spec}) is not implemented.")
@@ -1393,7 +1412,8 @@ def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
   return out, bdim
 
 slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice',
-                             sharding_rule=_slice_sharding_rule)
+                             sharding_rule=_slice_sharding_rule,
+                             vma_rule=partial(core.standard_vma_rule, 'slice'))
 ad.deflinear2(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
 # TODO(mvoz): A better slice rule for ragged prop, enforcing boundaries
@@ -1476,7 +1496,8 @@ def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes):
   if type(t) is ad_util.Zero:
     return [ad_util.Zero(operand.aval)] + [None] * len(start_indices)
   else:
-    zeros = lax.full(operand_shape, 0, operand_dtype)
+    zeros = lax.full(operand_shape, 0, operand_dtype,
+                     sharding=operand.aval.sharding)
     return ([dynamic_update_slice_p.bind(zeros, t, *start_indices)] +
             [None] * len(start_indices))
 
@@ -1558,7 +1579,8 @@ def _dynamic_slice_padding_rule(in_avals, out_avals, x, *starts_and_dyn,
 dynamic_slice_p = standard_primitive(
     _dynamic_slice_shape_rule, _dynamic_slice_dtype_rule, 'dynamic_slice',
     weak_type_rule=_argnum_weak_type(0),
-    sharding_rule=_dynamic_slice_sharding_rule)
+    sharding_rule=_dynamic_slice_sharding_rule,
+    vma_rule=partial(core.standard_vma_rule, 'dynamic_slice'))
 ad.primitive_jvps[dynamic_slice_p] = _dynamic_slice_jvp
 ad.primitive_transposes[dynamic_slice_p] = _dynamic_slice_transpose_rule
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
@@ -1606,7 +1628,7 @@ def _dynamic_update_slice_shape_rule(operand, update, *start_indices):
 
 def _dynamic_update_slice_sharding_rule(operand, update, *start_indices):
   if operand.sharding != update.sharding:
-    raise TypeError(
+    raise core.ShardingTypeError(
         "dynamic_update_slice update sharding must be equal to operand"
         " sharding, got update sharding"
         f" {update.str_short(mesh_axis_types=True)} for operand sharding"
@@ -1678,7 +1700,8 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
 
 dynamic_update_slice_p = standard_primitive(
     _dynamic_update_slice_shape_rule, _dynamic_update_slice_dtype_rule,
-    'dynamic_update_slice', sharding_rule=_dynamic_update_slice_sharding_rule)
+    'dynamic_update_slice', sharding_rule=_dynamic_update_slice_sharding_rule,
+    vma_rule=partial(core.standard_vma_rule, 'dynamic_update_slice'))
 ad.primitive_jvps[dynamic_update_slice_p] = _dynamic_update_slice_jvp
 ad.primitive_transposes[dynamic_update_slice_p] = \
     _dynamic_update_slice_transpose_rule
@@ -1921,9 +1944,6 @@ def _gather_shape_computation(indices, dimension_numbers, slice_sizes):
               else next(indices_shape_gen) for i in range(output_shape_rank))
   return ans
 
-class GatherShardingError(Exception):
-  pass
-
 def _gather_sharding_rule(operand, indices, *, dimension_numbers,
                           slice_sizes, unique_indices, indices_are_sorted,
                           mode, fill_value):
@@ -1935,7 +1955,7 @@ def _gather_sharding_rule(operand, indices, *, dimension_numbers,
       all(s is None for s in operand.sharding.spec) and
       all(s is None for s in indices.sharding.spec)):
     return core.get_cur_mesh_sharding()
-  raise GatherShardingError(
+  raise core.ShardingTypeError(
       "Use `.at[...].get(out_sharding=)` to provide output PartitionSpec for"
       " the gather indexing.")
 
@@ -2119,7 +2139,8 @@ def _gather_pad_rule(in_avals, out_avals, operand, indices, *,
 
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
-    weak_type_rule=_argnum_weak_type(0), sharding_rule=_gather_sharding_rule)
+    weak_type_rule=_argnum_weak_type(0), sharding_rule=_gather_sharding_rule,
+    vma_rule=partial(core.standard_vma_rule, 'gather'))
 ad.defjvp(gather_p, _gather_jvp_rule, None)
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule
@@ -2601,7 +2622,8 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
 
 scatter_add_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
-    weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0),
+    vma_rule=partial(core.standard_vma_rule, 'scatter_add'))
 ad.primitive_jvps[scatter_add_p] = partial(_scatter_addsub_jvp, scatter_add_p)
 ad.primitive_transposes[scatter_add_p] = partial(_scatter_addsub_transpose_rule, scatter_add_p)
 batching.primitive_batchers[scatter_add_p] = (
@@ -2612,6 +2634,7 @@ scatter_sub_p = standard_primitive(
     _scatter_dtype_rule,
     "scatter-sub",
     weak_type_rule=_argnum_weak_type(0),
+    vma_rule=partial(core.standard_vma_rule, 'scatter_sub')
 )
 ad.primitive_jvps[scatter_sub_p] = partial(_scatter_addsub_jvp, scatter_sub_p)
 ad.primitive_transposes[scatter_sub_p] = partial(_scatter_addsub_transpose_rule, scatter_sub_p)
@@ -2621,7 +2644,8 @@ batching.primitive_batchers[scatter_sub_p] = partial(
 
 scatter_mul_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-mul',
-    weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0),
+    vma_rule=partial(core.standard_vma_rule, 'scatter_mul'))
 
 def _scatter_mul_jvp_rhs(g, x, i, y, *, dimension_numbers,
                          indices_are_sorted, unique_indices, mode, **kw):
@@ -2750,14 +2774,16 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
 
 scatter_min_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-min',
-    weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0),
+    vma_rule=partial(core.standard_vma_rule, 'scatter_min'))
 batching.primitive_batchers[scatter_min_p] = (
   partial(_scatter_batching_rule, scatter_min_p))
 ad.primitive_jvps[scatter_min_p] = partial(_scatter_extremal_jvp, scatter_min_p)
 
 scatter_max_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-max',
-    weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0),
+    vma_rule=partial(core.standard_vma_rule, 'scatter_max'))
 batching.primitive_batchers[scatter_max_p] = (
   partial(_scatter_batching_rule, scatter_max_p))
 ad.primitive_jvps[scatter_max_p] = partial(_scatter_extremal_jvp, scatter_max_p)
@@ -2915,7 +2941,8 @@ def _scatter_transpose_rule(t, operand, indices, updates, *,
 
 scatter_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter',
-    weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0),
+    vma_rule=partial(core.standard_vma_rule, 'scatter'))
 ad.primitive_jvps[scatter_p] = _scatter_jvp
 ad.primitive_transposes[scatter_p] = _scatter_transpose_rule
 batching.primitive_batchers[scatter_p] = (

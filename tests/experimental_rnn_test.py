@@ -213,8 +213,36 @@ class RnnTest(jtu.JaxTestCase):
 
     k = jax.random.split(jax.random.PRNGKey(1), 4)
     stablehlo = jax.jit(f).lower(*k).as_text("stablehlo")
-    self.assertIn('"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\00@\\03\\80\\00@\\01\\00\\00"',
-                  stablehlo)
+    if jtu.jaxlib_version() <= (0, 5, 2):
+      self.assertIn('"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\00@\\03\\80\\00@\\01\\00\\00"',
+                    stablehlo)
+    else:
+      self.assertIn('"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\00@\\03\\80\\00\\00\\00\\00\\00@\\01\\00\\00\\00\\00\\00\\00"',
+                    stablehlo)
+
+  @jtu.run_on_devices("cuda")
+  def test_no_workspace_overflow(self):
+    if jtu.jaxlib_version() <= (0, 5, 2):
+      self.skipTest("Older versions fail because of integer overflow.")
+
+    # Problem sizes known to cause overflows on older versions.
+    batch_size, max_seq_length, input_size = 256, 500, 512
+    num_layers, hidden_size = 1, 256
+    num_params = rnn.get_num_params_in_lstm(
+        input_size, hidden_size, num_layers, True)
+    x = jax.ShapeDtypeStruct(
+        (batch_size, max_seq_length, input_size), jnp.float32)
+    h_0 = jax.ShapeDtypeStruct(
+        (2 * num_layers, batch_size, hidden_size), jnp.float32)
+    c_0 = jax.ShapeDtypeStruct(
+        (2 * num_layers, batch_size, hidden_size), jnp.float32)
+    weights = jax.ShapeDtypeStruct((num_params,), jnp.float32)
+    seq_lengths = jax.ShapeDtypeStruct((batch_size,), jnp.int32)
+    fun = jax.jit(partial(
+        rnn.lstm, input_size=input_size, hidden_size=hidden_size,
+        num_layers=num_layers, dropout=0.0, bidirectional=True))
+    fun.lower(x, h_0, c_0, weights, seq_lengths)  # Doesn't crash.
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

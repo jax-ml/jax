@@ -90,6 +90,7 @@ from jax import export
 from jax.experimental import pjit
 
 from jax._src import core
+from jax._src import stages
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 
@@ -165,7 +166,8 @@ class CompatTestBase(jtu.JaxTestCase):
     else:
       assert False, testdata_nest
 
-  def run_one_test(self, func: Callable[..., jax.Array],
+  def run_one_test(self,
+                   func: Callable[..., jax.Array] | stages.Wrapped,
                    data: CompatTestData,
                    polymorphic_shapes: Sequence[str] | None = None,
                    rtol: float | None = None,
@@ -176,7 +178,8 @@ class CompatTestBase(jtu.JaxTestCase):
     """Run one compatibility test.
 
     Args:
-      func: the JAX function to serialize and run
+      func: the JAX function to serialize and run, either as a Python Callable
+        or as a `jax.jit(callable)`.
       data: the test data
       polymorphic_shapes: when using shape polymorphism, the specification for
         each argument of `func`.
@@ -269,19 +272,22 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       expect_current_custom_calls = data.custom_call_targets
     self.assertItemsEqual(expect_current_custom_calls, current_custom_call_targets)
 
-  def run_current(self, func: Callable, data: CompatTestData):
+  def run_current(self,
+                  func: Callable | stages.Wrapped,
+                  data: CompatTestData):
     """Lowers and runs the test function at the current JAX version."""
-    return jax.jit(func)(*data.inputs)
+    jit_func = func if isinstance(func, stages.Wrapped) else jax.jit(func)
+    return jit_func(*data.inputs)
 
   def serialize(self,
-                func: Callable, data: CompatTestData, *,
+                func: Callable | stages.Wrapped, data: CompatTestData, *,
                 polymorphic_shapes: Sequence[str] | None = None,
                 allow_unstable_custom_call_targets: Sequence[str] = ()
                 ) -> tuple[bytes, str, int, int]:
     """Serializes the test function.
 
     Args:
-      func: the function to serialize
+      func: the function to serialize.
       polymorphic_shapes: the polymorphic_shapes to use for serialization
       allow_unstable_custom_call_targets: whether to allow additional
         custom call targets besides those known as stable.
@@ -292,8 +298,9 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     """
     # Use the native exporter, to make sure we get the proper serialization.
     args_specs = export.symbolic_args_specs(data.inputs, polymorphic_shapes)
+    jit_func = func if isinstance(func, stages.Wrapped) else jax.jit(func)
     exported = export.export(
-      jax.jit(func),
+      jit_func,
       platforms=(self.default_jax_backend(),),
       disabled_checks=tuple(
         export.DisabledSafetyCheck.custom_call(target)

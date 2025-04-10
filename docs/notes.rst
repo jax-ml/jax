@@ -9,9 +9,6 @@ Dependencies and version compatibility:
   - :doc:`api_compatibility` outlines JAX's policies with regard to API compatibility across releases.
   - :doc:`deprecation` outlines JAX's policies with regard to compatibility with Python and NumPy.
 
-Migrations and deprecations:
-  - :doc:`jax_array_migration` summarizes the changes to the default array type in jax v 0.4.1
-
 Memory and computation usage:
   - :doc:`async_dispatch` describes JAX's asynchronous dispatch model.
   - :doc:`concurrency` describes how JAX interacts with other Python concurrency.
@@ -20,6 +17,10 @@ Memory and computation usage:
 Programmer guardrails:
   - :doc:`rank_promotion_warning` describes how to configure :mod:`jax.numpy` to avoid implicit rank promotion.
 
+Arrays and data types:
+  - :doc:`type_promotion` describes JAX's implicit type promotion for functions of two or more values.
+  - :doc:`default_dtypes` describes how JAX determines the default dtype for array creation functions.
+
 
 .. toctree::
    :hidden:
@@ -27,8 +28,9 @@ Programmer guardrails:
 
    api_compatibility
    deprecation
-   jax_array_migration
    async_dispatch
    concurrency
    gpu_memory_allocation
    rank_promotion_warning
+   type_promotion
+   default_dtypes

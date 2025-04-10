@@ -142,16 +142,15 @@ def MosaicGPU_WGSplatFragLayout : AttrDef<MosaicGPU_Dialect, "WGSplatFragLayout"
   let assemblyFormat = "`<` $shape `>`";
 }
 
-def MosaicGPU_WGMMARowFragLayout : AttrDef<MosaicGPU_Dialect, "WGMMARowFragLayout", []> {
-  let summary = "1D array that is a row that can be tiled by supported WGMMA shapes.";
+def MosaicGPU_Replicated : AttrDef<MosaicGPU_Dialect, "Replicated", []> {
+  let summary = "Indicates a replicated dimension in a tiled layout.";
   let description = [{
-    This layout is used to handle rows that are fragmented across all threads
-    in a warpgroup that is executing a WGMMA operation. The length of the array
-    must be divisible by 64.
+    See mosaic/gpu/fragmented_array.py -> Replicated for more details.
   }];
 
-  let mnemonic = "WGMMARowFragLayout";
-  let assemblyFormat = "";
+  let parameters = (ins "int":$times);
+  let mnemonic = "Replicated";
+  let assemblyFormat = "`<` `times` `=` $times `>`";
 }
 
 def MosaicGPU_TiledLayout : AttrDef<MosaicGPU_Dialect, "TiledLayout", []> {
@@ -162,7 +161,7 @@ def MosaicGPU_TiledLayout : AttrDef<MosaicGPU_Dialect, "TiledLayout", []> {
 
   let parameters = (ins
     "::mlir::ArrayAttr":$tiling,
-    "int":$warp_dim,
+    "::mlir::Attribute":$warp_dim,
     "::mlir::ArrayAttr":$lane_dims,
     "int":$vector_dim
   );
@@ -225,27 +224,6 @@ def SwizzleTransformAttr : MosaicGPU_Attr<"SwizzleTransform", "swizzle"> {
   let assemblyFormat = "`<` $swizzle `>`";
 }
 
-def LayoutAttr : MosaicGPU_Attr<"Layout", "layout",
-    [DeclareAttrInterfaceMethods<MemRefLayoutAttrInterface>]> {
-  let parameters = (ins
-    TypeParameter<"int32_t", "number of dimensions">:$num_dimensions,
-    ArrayRefParameter<"mlir::Attribute", "transforms">:$transforms
-  );
-
-  let summary = "Specifies a layout of a memref in SMEM.";
-  let description = [{
-    This layout attribute is used to specify the layout of a memref in SMEM.
-    It is composed of a number of transforms, which are applied in the order
-    they are provided. The transforms can be any combination of:
-      - TileTransformAttr
-      - TransposeTransformAttr
-      - SwizzleTransformAttr
-
-    The num_dimensions parameter must match the rank of the memref shape.
-  }];
-  let assemblyFormat = "`<` $num_dimensions `,` $transforms `>`";
-}
-
 def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
       [AttrSizedOperandSegments]> {
   let summary = "Schedules an async load of a MemRef from GMEM to SMEM";
@@ -265,28 +243,20 @@ def MosaicGPU_AsyncLoadOp : Op<MosaicGPU_Dialect, "async_load",
     indicates that the slice length is 1 and that the corresponding dimension
     should be collapsed and does not appear in the `destination` MemRef.
 
-    Setting the `layout` attribute of the `destination` MemRef to an instance of
-    `LayoutAttr` enables additional `transforms` that control how the `source`
-    data is mapped to the `destination`. The transformations will be composed in
-    the order they are provided. The transforms may contain up to a single
-    swizzle transform that controls what swizzling is applied to the data after
-    it is transformed, before it is finally written to SMEM. The transformed
-    data is written in row-major order to the contiguous SMEM `destination`.
-    The untransformed `source` data does not need to be contiguous, except for
-    the last dimension, which needs to be contiguous and the minor-most
-    dimension.
+    The data is written in row-major order to the contiguous SMEM `destination`.
+    The `source` data does not need to be contiguous, except for the last
+    (and minor-most) dimension.
 
     The `collective` attribute can be provided to use TMA multicast to more
     efficiently load the GMEM data in cases where multiple thread blocks are
     grouped together in a cluster and need to load the same data. Each block in
     a cluster will first load a slice from GMEM to SMEM and then the slices will
     be multicast to all other blocks in the cluster. In this way TMA multicast
-    guarnatees L2 cache hits. The `collective` attribute is the list of
+    guarantees L2 cache hits. The `collective` attribute is the list of
     cluster dimensions along which to partition the input data loads.
 
-    The `predicate` input should be set to `true` by a single thread in the
-    warpgroup so that it schedules the load operation. All other threads in the
-    warpgroup should set the `predicate` to `false`.
+    The `predicate` allows scheduling the transfer conditionally. The async copy
+   is always scheduled by at most a single lane in the warpgroup.
   }];
 
   let arguments = (ins
@@ -329,18 +299,12 @@ def MosaicGPU_AsyncStoreOp : Op<MosaicGPU_Dialect, "async_store",
     indicates that this dimension is collapsed in the `source` and needs to be
     expanded to a slice of size 1 in the `destination`.
 
-    Setting the `layout` attribute of the `source` MemRef to an instance of
-    `LayoutAttr` enables additional `transforms` that control how the
-    `destination` data in GMEM is mapped to the `source` data in SMEM. The
-    transformations will be composed in the order they are provided. The
-    transforms may contain up to a single swizzle transform that is the
-    swizzling mode of the `source` data in SMEM. The `source` SMEM data is
-    contiguous and the transformed data is written to the `destination` GMEM
-    which does not need to be contiguous.
+    The data is written in row-major order to the GMEM `destination`. The
+    `source` data in SMEM needs to be contiguous, but the `destination` GMEM
+    does not.
 
-    The `predicate` input should be set to `true` by a single thread in the
-    warpgroup so that it schedules the store operation. All other threads in the
-    warpgroup should set the `predicate` to `false`.
+    The `predicate` allows scheduling the transfer conditionally. The async copy
+    is always scheduled by at most a single lane in the warpgroup.
   }];
 
   let arguments = (ins
@@ -376,6 +340,43 @@ def MosaicGPU_WGMMALayout :
   let cppNamespace = "::mosaic_gpu";
 }
 
+def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
+    [InferTypeOpInterface]> {
+  let summary = "Casts a vector to a new layout.";
+  let description = [{Casts a vector value to a new strided or tiled layout.}];
+  let arguments = (ins
+    AnyVectorOfAnyRank:$x,
+
+    // Attributes
+    AnyAttrOf<[
+      MosaicGPU_WGStridedFragLayout,
+      MosaicGPU_TiledLayout
+    ]>:$new_layout
+  );
+
+  let results = (outs AnyVectorOfAnyRank);
+
+  let assemblyFormat = "`x` `(` $x `:` type($x) `)` attr-dict";
+
+  let extraClassDeclaration = [{
+    static llvm::LogicalResult inferReturnTypes(
+        mlir::MLIRContext *,
+        std::optional<mlir::Location> location,
+        mlir::ValueRange operands,
+        mlir::DictionaryAttr attributes,
+        mlir::OpaqueProperties properties,
+        mlir::RegionRange regions,
+        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
+      if (operands.empty()) {
+        return ::mlir::emitOptionalError(
+          location, "expected non-empty operands");
+      }
+      inferredReturnTypes.assign({operands[0].getType()});
+      return ::mlir::success();
+    }
+  }];
+}
+
 
 def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", []> {
   let summary = "Constructs an SMEM MemRef with the requested type that begins at the specified SMEM offset address.";
@@ -394,19 +395,14 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
 
     This operation supports larger inputs than the PTX-level WGMMA operation
     and will schedule as many PTX-level WGMMA operations as needed to
-    accomplish the calculation. The `b` matrix, and optionally `a`, needs to be
-    provided as a 2-dimensional memref. All memrefs may have transforms that
-    define swizzling, tiling, and transposition.
+    accomplish the calculation. The `b` matrix, and optionally `a`, need to be
+    provided as a 2-dimensional memref.
 
     The inputs should have the following shapes:
       - a: [groups_m * 64, groups_k * s]
       - b: [groups_k * s, groups_n * s]
       - accumulator: [groups_m * 64, groups_n * s]
-    Where:
-      - `s == swizzle/element_bytediwth` (for `kNoSwizzle`, `swizzle` is 16.)
-        and the tilings are [64, s] for `a` and [s, s] for `b`.
-      - `a` and/or `b` may be transposed if the corresponding attribute is set
-        to `true`.
+    where `s == swizzle / element_bytewidth`.
 
     The output has an identical shape and type as the input accumulator.
 
@@ -429,10 +425,7 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
     AnyTypeOf<[
       MemRefOf<[MosaicGPU_WGMMASupportedType]>,
       VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>]>:$a,
-    MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b,
-
-    DefaultValuedOptionalAttr<BoolAttr, "false">:$transpose_a,
-    DefaultValuedOptionalAttr<BoolAttr, "false">:$transpose_b
+    MemRefOf<[MosaicGPU_WGMMASupportedType]>:$b
   );
   let results = (outs VectorOfAnyRankOf<[MosaicGPU_WGMMASupportedType]>);
 
@@ -461,6 +454,61 @@ def MosaicGPU_WGMMAOp : Op<MosaicGPU_Dialect, "wgmma", [InferTypeOpInterface]> {
       return ::mlir::success();
     }
   }];
+
+  let hasVerifier = 1;
+}
+
+def MosaicGPU_OptimizationBarrierOp : Op<MosaicGPU_Dialect, "optimization_barrier",
+    [InferTypeOpInterface]> {
+  let summary = "Prevents MLIR from moving operations across the barrier.";
+
+  let arguments = (ins
+    Variadic<AnyType>:$operands
+  );
+  let results = (outs Variadic<AnyType>);
+
+  let extraClassDeclaration = [{
+    static llvm::LogicalResult inferReturnTypes(
+        mlir::MLIRContext *,
+        std::optional<mlir::Location> location,
+        mlir::ValueRange operands,
+        mlir::DictionaryAttr attributes,
+        mlir::OpaqueProperties properties,
+        mlir::RegionRange regions,
+        llvm::SmallVectorImpl<mlir::Type> &inferredReturnTypes) {
+      if (operands.empty()) {
+        return ::mlir::emitOptionalError(
+          location, "expected non-empty operands");
+      }
+      ::mlir::TypeRange operand_types = operands.getTypes();
+      inferredReturnTypes.assign(operand_types.begin(), operand_types.end());
+      return ::mlir::success();
+    }
+  }];
+}
+
+def MosaicGPU_CustomPrimitiveOp : Op<MosaicGPU_Dialect, "custom_primitive", []> {
+  let summary = "Allows defining a custom Mosaic GPU primitive.";
+  let description = [{
+    Allows defining a custom Mosaic GPU primitive.
+
+    Custom primitives should carry input and output layouts for each of their
+    vector operands and outputs, and input transforms for each of their memref
+    operands that live in SMEM.
+
+    Custom primitives can only return vectors.
+  }];
+
+  let arguments = (
+    ins Variadic<AnyType>:$operands,
+    // Attributes
+    ArrayAttr:$in_layouts,
+    ArrayAttr:$in_transforms,
+    ArrayAttr:$out_layouts
+  );
+
+  let results = (outs Variadic<VectorOfAnyRankOf<[AnyType]>>);
+  let regions = (region AnyRegion:$body);
 
   let hasVerifier = 1;
 }

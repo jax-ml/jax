@@ -15,7 +15,7 @@
 """
 The JAX typing module is where JAX-specific static type annotations live.
 This submodule is a work in progress; to see the proposal behind the types exported
-here, see https://jax.readthedocs.io/en/latest/jep/12049-type-annotations.html.
+here, see https://docs.jax.dev/en/latest/jep/12049-type-annotations.html.
 
 The currently-available types are:
 
@@ -67,7 +67,7 @@ cause extra overhead in JAX transforms like :func:`~jax.jit` and can behave in u
 batch-wise transforms like :func:`~jax.vmap` or :func:`jax.pmap`. For more information on this,
 see `Non-array inputs NumPy vs JAX`_
 
-.. _Non-array inputs NumPy vs JAX: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#non-array-inputs-numpy-vs-jax
+.. _Non-array inputs NumPy vs JAX: https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#non-array-inputs-numpy-vs-jax
 """
 from jax._src.typing import (
     ArrayLike as ArrayLike,

@@ -487,7 +487,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     self.assertRaisesRegex(
         core.JaxprTypeError,
         r"Value for variable 'b' inconsistently typed as f32\[\] "
-        r"for let-binder of type i32\[\]\n\nin equation:\n\nb:i32\[\] = sin a",
+        r"for let-binder of type i32\[\]\n\nin equation:\n\nb:i32\[\] = sin\ a",
         lambda: core.check_jaxpr(jaxpr))
 
     jaxpr = new_jaxpr()
@@ -496,7 +496,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     self.assertRaisesRegex(
         core.JaxprTypeError,
         r"Value for variable 'b' inconsistently typed as f32\[\] "
-        r"for let-binder of type f32\[2,3\]\n\nin equation:\n\nb:f32\[2,3\] = sin a",
+        r"for let-binder of type f32\[2,3\]\n\nin equation:\n\nb:f32\[2,3\] = sin\ a",
         lambda: core.check_jaxpr(jaxpr))
 
   def test_jaxpr_dropvar_from_jit_call(self):

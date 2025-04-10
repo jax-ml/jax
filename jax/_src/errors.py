@@ -21,7 +21,7 @@ export = set_module('jax.errors')
 
 class _JAXErrorMixin:
   """Mixin for JAX-specific errors"""
-  _error_page = 'https://jax.readthedocs.io/en/latest/errors.html'
+  _error_page = 'https://docs.jax.dev/en/latest/errors.html'
   _module_name = "jax.errors"
 
   def __init__(self, message: str):
@@ -306,7 +306,7 @@ class TracerArrayConversionError(JAXTypeError):
   and concrete vs. abstract values, you may want to read
   :ref:`faq-different-kinds-of-jax-values`.
 
-  .. _External Callbacks: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
+  .. _External Callbacks: https://docs.jax.dev/en/latest/notebooks/external_callbacks.html
   """
   def __init__(self, tracer: core.Tracer):
     super().__init__(
@@ -530,7 +530,7 @@ class UnexpectedTracerError(JAXTypeError):
   function ``f`` that stores, in some scope outside of ``f``, a reference to
   an intermediate value, that value is considered to have been leaked.
   Leaking values is a side effect. (Read more about avoiding side effects in
-  `Pure Functions <https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions>`_)
+  `Pure Functions <https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions>`_)
 
   JAX detects leaks when you then use the leaked value in another
   operation later on, at which point it raises an ``UnexpectedTracerError``.
@@ -678,6 +678,5 @@ class KeyReuseError(JAXTypeError):
 
   This sort of key reuse is problematic because the JAX PRNG is stateless, and keys
   must be manually split; For more information on this see `the Pseudorandom Numbers
-  tutorial <https://jax.readthedocs.io/en/latest/random-numbers.html>`_.
+  tutorial <https://docs.jax.dev/en/latest/random-numbers.html>`_.
   """
-  pass

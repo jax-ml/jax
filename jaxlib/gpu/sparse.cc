@@ -13,24 +13,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <algorithm>
-#include <cstdint>
+#include <cstddef>
 #include <stdexcept>
+#include <string>
 #include <utility>
-#include <vector>
 
-#include "nanobind/nanobind.h"
-#include "nanobind/stl/pair.h"
-#include "absl/base/casts.h"
-#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_format.h"
-#include "absl/synchronization/mutex.h"
+#include "nanobind/nanobind.h"
+#include "nanobind/stl/pair.h"  // IWYU pragma: keep
 #include "jaxlib/absl_status_casters.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/sparse_kernels.h"
 #include "jaxlib/gpu/vendor.h"
+#include "jaxlib/kernel_helpers.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
+#include "xla/service/custom_call_status.h"
 #include "xla/tsl/python/lib/core/numpy.h"
 
 namespace nb = nanobind;

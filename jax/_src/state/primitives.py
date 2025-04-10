@@ -18,9 +18,12 @@ from functools import partial
 import types
 from typing import Any, Union
 
+import numpy as np
+
 from jax._src import ad_util
 from jax._src import core
 from jax._src import dispatch
+from jax._src import dtypes
 from jax._src import pretty_printer as pp
 from jax._src import traceback_util
 from jax._src import tree_util
@@ -34,15 +37,12 @@ from jax._src.state.types import (
     AbstractRef,
     AccumEffect,
     ReadEffect,
-    RefBitcaster,
-    RefReshaper,
     Transform,
     TransformedRef,
     WriteEffect,
 )
 from jax._src.typing import Array
 from jax._src.util import safe_map, safe_zip
-import numpy as np
 
 
 ## General utilities
@@ -144,9 +144,24 @@ def ref_swap(
     _function_name: str = "ref_swap",
 ) -> Array:
   """Sets a `Ref`'s value and returns the original value."""
+  if hasattr(ref_or_view, 'dtype'):
+    value = _maybe_implicit_cast(ref_or_view.dtype, value)
   ref, transforms = get_ref_and_transforms(ref_or_view, idx, _function_name)
   flat_transforms, tree = tree_util.tree_flatten(transforms)
   return swap_p.bind(ref, value, *flat_transforms, tree=tree)
+
+# TODO(slebedev,mattjj): replace with special handling of Python numeric types:
+# if (isinstance(value, (int, float, complex)) and
+#     value == np.array(value, dtype).item()): return cast
+def _maybe_implicit_cast(dtype, value):
+  aval = core.typeof(value)
+  if (aval.weak_type and
+      (dtypes.issubdtype(dtype, np.floating) and
+       dtypes.issubdtype(aval.dtype, np.floating)) or
+      (dtypes.issubdtype(dtype, np.integer) and
+       dtypes.issubdtype(aval.dtype, np.integer))):
+    return lax.convert_element_type(value, dtype)
+  return value
 
 
 def ref_set(
@@ -248,7 +263,7 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
                        f"Expected shape: {expected_out_shape}. "
                        f"Value shape: {val_aval.shape}. "
                        f"Transforms: {transforms}. ")
-    if expected_out_dtype != val_aval.dtype and not val_aval.weak_type:
+    if expected_out_dtype != val_aval.dtype:
       raise ValueError(
           "Invalid dtype for `swap`. "
           f"Ref dtype: {expected_out_dtype}. "
@@ -297,70 +312,6 @@ addupdate_p.def_effectful_abstract_eval(_addupdate_abstract_eval)
 pp_ref_var = partial(pp.color, intensity=pp.Intensity.NORMAL,
                  foreground=pp.Color.GREEN)
 
-def _pp_slice(context: core.JaxprPpContext, dim, slc: indexing.Slice
-              ) -> str:
-  start, size = slc.start, slc.size
-  if isinstance(start, core.Var):
-    start_str = core.pp_var(start, context)
-    size_str = (
-        core.pp_var(size, context)
-        if isinstance(size, core.Var)
-        else str(size)
-    )
-    return f'{start_str}:{start_str}+{size_str}'
-  else:
-    start_str = str(start)
-    if start == 0:
-      start_str = ''
-    if isinstance(size, core.Var):
-      size_str = core.pp_var(size, context)
-      if start_str:
-        return f'{start_str}:{start_str}+{size_str}'
-      else:
-        return f':{size_str}'
-    else:
-      end = start + size
-      end_str = '' if end == dim else str(end)
-      return f'{start_str}:{end_str}'
-
-def pp_indexer(context: core.JaxprPpContext,indexer: indexing.NDIndexer
-                ) -> pp.Doc:
-  indices = []
-  for idx, dim in zip(indexer.indices, indexer.shape):
-    if isinstance(idx, indexing.Slice):
-      indices.append(_pp_slice(context, dim, idx))
-    else:
-      indices.append(core.pp_var(idx, context))  # type: ignore
-  return pp.concat([pp.text("["), pp.text(','.join(indices)), pp.text("]")])
-
-
-def pp_bitcaster(
-    context: core.JaxprPpContext, bitcaster: RefBitcaster
-) -> pp.Doc:
-  del context
-  return pp.text(
-      f"[bitcast({bitcaster.dtype}[{','.join(str(d) for d in bitcaster.shape)}])]"
-  )
-
-
-def pp_reshaper(context: core.JaxprPpContext, reshaper: RefReshaper) -> pp.Doc:
-  del context
-  return pp.text(
-      f"[reshape({reshaper.dtype}[{','.join(str(d) for d in reshaper.shape)}])]"
-  )
-
-
-def pp_transform(context: core.JaxprPpContext, transform: Transform) -> pp.Doc:
-  match transform:
-    case indexing.NDIndexer():
-      return pp_indexer(context, transform)
-    case RefBitcaster():
-      return pp_bitcaster(context, transform)
-    case RefReshaper():
-      return pp_reshaper(context, transform)
-    case _:
-      return pp.text(f"[{transform}]")
-
 
 def _pp_transforms(
     context: core.JaxprPpContext,
@@ -369,7 +320,7 @@ def _pp_transforms(
   if not transforms:
     return pp.text("[...]")
   return pp.concat(
-      [pp_transform(context, transform) for transform in transforms]
+      [transform.pretty_print(context) for transform in transforms]
   )
 
 

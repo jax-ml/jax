@@ -19,9 +19,10 @@ import dataclasses
 import enum
 import functools
 import math
-from typing import Any
+from typing import Any, Literal
 
 from jax._src.lib import mosaic_gpu_dialect as mgpu_dialect
+from jax._src import lib as jaxlib
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import func
@@ -228,6 +229,7 @@ class CollapseLeadingIndicesTransform(MemRefTransform):
 
 OnDeviceProfiler = profiler.OnDeviceProfiler
 
+ReductionOp = Literal["add", "min", "max", "inc", "dec", "and", "or", "xor"]
 
 @dataclasses.dataclass()
 class LaunchContext:
@@ -309,6 +311,9 @@ class LaunchContext:
       gmem_transform: tuple[MemRefTransform, ...],
       transformed_slice_shape: tuple[int, ...],
       swizzle: int | None,
+      reduction_op: Literal[
+        "add","min","max","inc","dec","and","or","xor"
+      ] | None,
   ):
     tma_desc_key = (gmem_ref, transformed_slice_shape, swizzle, gmem_transform)
     if (tma_desc := self.tma_descriptors.get(tma_desc_key, None)) is None:
@@ -320,6 +325,14 @@ class LaunchContext:
           ref = t.apply(ref)
         ref_ty = ir.MemRefType(ref.type)
         # TODO(apaszke): Use utils.memref_ptr to compute base_ptr
+        strides, _ = ref_ty.get_strides_and_offset()
+        if strides[-1] != 1:
+          raise ValueError(
+              "TMA requires the stride of the last dimension after"
+              " transforming the GMEM reference to be 1, but it is"
+              f" {strides[-1]}."
+          )
+
         _, offset, *sizes_and_strides = memref.extract_strided_metadata(ref)
         aligned_ptr_idx = memref.extract_aligned_pointer_as_index(ref)
         as_i64 = lambda i: arith.index_cast(i64, i)
@@ -337,10 +350,38 @@ class LaunchContext:
         )
         # TODO(apaszke): Better verification (e.g. slice is non-zero)
         # TODO(apaszke): We always know strides statically.
+        if jaxlib.version < (0, 5, 4):
+          dtype_or_bitwidth = c(utils.bitwidth(ref_ty.element_type), i64)
+        else:
+          if isinstance(ref_ty.element_type, ir.IntegerType):
+            if reduction_op is not None:
+              raise ValueError(
+                  f"TMA with reduction_op={reduction_op} is not supported with Integers"
+              )
+            bitwidth = utils.bitwidth_impl(ref_ty.element_type)
+            if bitwidth == 4:
+              tma_dtype = 0
+            elif bitwidth == 8:
+              tma_dtype = 1
+            elif bitwidth == 16:
+              tma_dtype = 2
+            elif bitwidth == 32:
+              tma_dtype = 3
+            elif bitwidth == 64:
+              tma_dtype = 4
+          elif ir.F16Type.isinstance(ref_ty.element_type):
+            tma_dtype = 5
+          elif ir.F32Type.isinstance(ref_ty.element_type):
+            tma_dtype = 6
+          elif ir.BF16Type.isinstance(ref_ty.element_type):
+            tma_dtype = 7
+          else:
+            raise ValueError(f"unsupported TMA dtype {ref_ty.element_type}")
+          dtype_or_bitwidth = c(tma_dtype, i64)
         args = [
             host_ptr,
             base_ptr,
-            c(utils.bitwidth(ref_ty.element_type), i64),
+            dtype_or_bitwidth,
             c(rank, i64),
             utils.pack_array([as_i64(i) for i in sizes_and_strides[:rank]]),
             utils.pack_array([as_i64(i) for i in sizes_and_strides[rank:]]),
@@ -374,7 +415,10 @@ class LaunchContext:
       uniform: bool = True,
       collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
       partitioned: int | None = None,
-      predicate: ir.Value | None = None,  # Should select 0 or 1 threads from the WG.
+      predicate: (
+          ir.Value | None
+      ) = None,  # Should select 0 or 1 threads from the WG.
+      reduction_op: ReductionOp | None = None,
   ):
     """Initiates an async copy between GMEM and SMEM.
 
@@ -452,6 +496,13 @@ class LaunchContext:
           "async_copy requires all GMEM strides except the last one to be a"
           " multiple of 16 bytes"
       )
+
+    if reduction_op is not None and jaxlib.version < (0, 5, 4):
+      raise ValueError("TMA with reduction is only supported with jaxlib >= 0.5.4")
+    if reduction_op is not None and not isinstance(gmem_ref_ty.element_type, ir.FloatType):
+      raise ValueError("TMA with reduction is only supported with float dtype")
+    if reduction_op is not None and reduction_op != "add":
+      raise ValueError("TMA with reduction is only supported with add operation")
 
     # NOTE: TMA supports OOB indices, so we skip the check.
     base_indices, slice_shape, is_squeezed = utils.parse_indices(
@@ -597,7 +648,7 @@ class LaunchContext:
       multicast_mask = None
 
     tma_desc = self._get_tma_desc(
-        gmem_ref, gmem_transform, tuple(slice_shape), swizzle,
+        gmem_ref, gmem_transform, tuple(slice_shape), swizzle, reduction_op,
     )
 
     # We constuct TMA descriptors in column-major order.
@@ -641,6 +692,7 @@ class LaunchContext:
       )
       barrier_ptr = barrier.get_ptr()
       with uniform_ctx():
+        assert reduction_op is None
         if collective_size > 1 and partitioned is not None:
           if predicate is None:
             predicate = c(1, ir.IntegerType.get_signless(1))
@@ -679,12 +731,28 @@ class LaunchContext:
           )
     else:
       assert multicast_mask is None
-      with uniform_ctx():
-        nvvm.cp_async_bulk_tensor_global_shared_cta(
-            tma_desc, smem_ptr, rev_dyn_base_indices, predicate=predicate
-        )
-        if arrive:
-          nvvm.cp_async_bulk_commit_group()
+      if reduction_op is not None:
+        with uniform_ctx():
+          if predicate is None:
+            predicate = c(1, ir.IntegerType.get_signless(1))
+          rank = len(slice_shape)
+          idx_operands = ",".join(f"${i}" for i in range(3, 3 + rank))
+          llvm.inline_asm(
+            ir.Type.parse("!llvm.void"),
+            [predicate,smem_ptr,tma_desc,*rev_dyn_base_indices],
+            f"@$0 cp.reduce.async.bulk.tensor.{rank}d.global.shared::cta.{reduction_op}.tile.bulk_group [$2,{{{idx_operands}}}], [$1];",
+            "b,r,l" + ",r" * rank,
+            has_side_effects=True,
+          )
+          if arrive:
+            nvvm.cp_async_bulk_commit_group()
+      else:
+        with uniform_ctx():
+          nvvm.cp_async_bulk_tensor_global_shared_cta(
+              tma_desc, smem_ptr, rev_dyn_base_indices, predicate=predicate
+          )
+          if arrive:
+            nvvm.cp_async_bulk_commit_group()
 
   def await_async_copy(
       self, allow_groups: int, await_read_only: bool = False
