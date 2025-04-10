@@ -280,4 +280,3 @@ def _aval_mismatch_extra(a1: core.AbstractValue, a2: core.AbstractValue) -> str:
     else:
       return ', so ' + ', '.join(mismatches[:-1]) + ', and ' + mismatches[-1]
   return ''
-

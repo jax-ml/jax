@@ -179,7 +179,7 @@ class JaxGroupedQueryAttentionReferenceTest(jtu.JaxTestCase):
 
     # compare the results
     atol, rtol = (3e-3, 5e-3) if dtype == jnp.bfloat16 else (2e-4, 2e-4)
-    np.testing.assert_allclose(attention, expected, atol=atol, rtol=rtol)
+    self.assertAllClose(attention, expected, atol=atol, rtol=rtol)
 
 
 def _generate_random_qkv(
