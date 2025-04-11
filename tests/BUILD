@@ -29,6 +29,8 @@ package(
     default_visibility = ["//visibility:private"],
 )
 
+exports_files(["device_test.py"])
+
 jax_generate_backend_suites()
 
 jax_multiplatform_test(
