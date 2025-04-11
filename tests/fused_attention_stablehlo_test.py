@@ -738,6 +738,26 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-2, atol=1e-2)
 
   @jtu.run_on_devices("cuda")
+  def test_sdpa_residual(self):
+    k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
+    query = jax.random.normal(
+        k1, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+    key = jax.random.normal(
+        k2, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+    value = jax.random.normal(
+        k3, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+    grad = jax.random.normal(
+        k4, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+
+    jitted_sdpa_inference = jax.jit(
+      partial(
+        dot_product_attention, scale=1.0, mask_type=MaskType.NO_MASK,
+        dropout_rate=0, return_residual=True),
+    )
+    outs = jitted_sdpa_inference(query, key, value)
+    assert len(outs) == 2
+
+  @jtu.run_on_devices("cuda")
   def test_layouts(self):
     if jax.device_count() < 4:
       self.skipTest("Requires more than 4 devices.")
