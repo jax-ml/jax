@@ -1535,11 +1535,12 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_allclose(f(x, y), kernel(x, y))
 
   @parameterized.parameters(
+      ((32,), jnp.int32, 0),
       ((8, 4), jnp.int32, 0),
       ((8, 16), jnp.float32, 1),
       ((8, 16, 2), jnp.int8, 1),
   )
-  def test_broadcasted_iota(self, shape, dtype, dimension):
+  def test_iota(self, shape, dtype, dimension):
     self.skip_if_mosaic_gpu()
 
     if jtu.test_device_matches(["tpu"]):

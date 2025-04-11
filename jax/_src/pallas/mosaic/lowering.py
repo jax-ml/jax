@@ -2254,6 +2254,14 @@ lowering_rules[lax.split_p] = _split_lowering_rule
 
 def _iota_lowering_rule(ctx: LoweringRuleContext, dtype, shape, dimension,
                         sharding):
+  if len(shape) == 1:
+    if dimension != 0:
+      raise ValueError("Dimension must be 0 for 1D iota.")
+    def _1d_iota_helper(dtype, shape, dimension, sharding):
+      iota_2d = lax.iota_p.bind(dtype, (1,) + shape, dimension, sharding)
+      return iota_2d[0]
+    return lower_fun(_1d_iota_helper, multiple_results=False)(
+        ctx, dtype, shape, dimension, sharding)
   out_type = aval_to_ir_type(
       ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]
   )
