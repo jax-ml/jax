@@ -19,7 +19,7 @@ name: CI - Wheel Tests (Continuous)
 
 on:
   schedule:
-    - cron: "0 */2 * * *" # Run once every 2 hours
+    - cron: "0 0 * * *" # Run once per day
   workflow_dispatch: # allows triggering the workflow run manually
 
 concurrency:
@@ -111,21 +111,22 @@ jobs:
         matrix:
           # Python values need to match the matrix stategy in the artifact build jobs above
           # See exlusions for what is fully tested
-          runner: ["linux-x86-g2-48-l4-4gpu", "linux-x86-a3-8g-h100-8gpu", "linux-x86-a4-224-b200-1gpu"]
+          # Comment out H100 and B200 on jax-fork to save on resources
+          runner: ["linux-x86-g2-48-l4-4gpu"] #, "linux-x86-a3-8g-h100-8gpu", "linux-x86-a4-224-b200-1gpu"]
           python: ["3.10",]
           cuda: ["12.1", "12.8"]
           enable-x64: [1, 0]
-          exclude:
-            # H100 runs only a single config, CUDA 12.8 Enable x64 1
-            - runner: "linux-x86-a3-8g-h100-8gpu"
-              cuda: "12.1"
-            - runner: "linux-x86-a3-8g-h100-8gpu"
-              enable-x64: "0"
-            # B200 runs only a single config, CUDA 12.8 Enable x64 1
-            - runner: "linux-x86-a4-224-b200-1gpu"
-              cuda: "12.1"
-            - runner: "linux-x86-a4-224-b200-1gpu"
-              enable-x64: "0"
+          # exclude:
+          #   # H100 runs only a single config, CUDA 12.8 Enable x64 1
+          #   - runner: "linux-x86-a3-8g-h100-8gpu"
+          #     cuda: "12.1"
+          #   - runner: "linux-x86-a3-8g-h100-8gpu"
+          #     enable-x64: "0"
+          #   # B200 runs only a single config, CUDA 12.8 Enable x64 1
+          #   - runner: "linux-x86-a4-224-b200-1gpu"
+          #     cuda: "12.1"
+          #   - runner: "linux-x86-a4-224-b200-1gpu"
+          #     enable-x64: "0"
 
     name: "Pytest CUDA (JAX artifacts version =  ${{ format('{0}', 'head') }})"
     with:
