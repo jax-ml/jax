@@ -78,6 +78,8 @@ class InfeedTest(jtu.JaxTestCase):
     self.assertAllClose(f(x), to_infeed)
 
   @jax.numpy_rank_promotion("allow")  # Test explicitly exercises implicit rank promotion.
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message=".*(infeed|outfeed) was deprecated.*")
   def testInfeedThenOutfeed(self):
 
     @jax.jit
@@ -99,6 +101,8 @@ class InfeedTest(jtu.JaxTestCase):
     execution.join()
     self.assertAllClose(out, y + np.float32(1))
 
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message=".*(infeed|outfeed) was deprecated.*")
   def testInfeedThenOutfeedInALoop(self):
 
     def doubler(_, token):
