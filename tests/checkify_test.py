@@ -492,8 +492,8 @@ class CheckifyTransformTests(jtu.JaxTestCase):
   def test_while_loop_body_and_cond_error(self):
     def while_cond(val):
       i, cond_val, _ = val
-      j = jnp.sin(cond_val)
-      return i + (0. * j) < 2  # don't let the sin value be dead code
+      _ = jnp.sin(cond_val)
+      return i < 2
 
     def while_body(val):
       i, cond_val, body_val = val
