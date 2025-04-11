@@ -133,11 +133,12 @@ cc_library(
     name = "custom_call",
     srcs = ["custom_call.cc"],
     deps = [
+        ":mosaic_gpu_comm",
         ":passes",
         ":target",
         "//jaxlib/cuda:cuda_vendor",
         "//jaxlib/mosaic/dialect/gpu:mosaic_gpu",
-        "//jaxlib/mosaic/gpu:mosaic_gpu_comm",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
