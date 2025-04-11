@@ -21,6 +21,7 @@ limitations under the License.
 #include <cstdint>
 #include <cstdlib>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -4252,6 +4253,56 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
+// Gather sublanes from src_vregs via rotating and selecting each relevant
+// sublane from the source, into the destination vreg.
+// Args:
+// sublane_indices: the indices of the sublanes to gather in the order they
+// should be gathered.
+// src_vregs: the vregs to gather from.
+// dst_vreg: the vreg to gather into.
+// dst_ty: the type of the dst vreg to gather into.
+void gather_sublanes(RewriteContext &ctx, Operation &op,
+                     SmallVector<SmallVector<int64_t>> sublane_indices,
+                     const xla::Array<Value> &src_vregs, Value *dst_vreg,
+                     const VectorType &dst_ty) {
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
+  auto boundIdxConst =
+      std::bind(IdxConst, std::placeholders::_1, builder, op.getLoc());
+  *dst_vreg =
+      getZerosVector(builder, cast<VectorType>(src_vregs.begin()->getType()));
+  for (int sublane_index = 0; sublane_index < sublane_indices.size();
+       ++sublane_index) {
+    SmallVector<int64_t> src_vreg_index = sublane_indices[sublane_index];
+    src_vreg_index[src_vreg_index.size() - 2] /= ctx.target_shape[0];
+    Value src_vreg = src_vregs(src_vreg_index);
+    int64_t sublane_in_vreg =
+        sublane_indices[sublane_index]
+                       [sublane_indices[sublane_index].size() - 2] %
+        ctx.target_shape[0];
+    int64_t rotate_amt = sublane_index - sublane_in_vreg;
+    if (rotate_amt < 0) {
+      rotate_amt += ctx.target_shape[0];
+    }
+    Value rotated_src_vreg =
+        builder.create<tpu::RotateOp>(src_vreg.getLoc(), src_vreg, rotate_amt,
+                                      /*dimension=*/0, /*stride=*/nullptr,
+                                      /*stride_dimension=*/nullptr);
+    const auto bitwidth = dst_ty.getElementTypeBitWidth();
+    const VectorType vmask_ty = getNativeVregOrVmaskType(
+        builder.getI1Type(), bitwidth, ctx.target_shape);
+    Value mask = builder.create<tpu::CreateMaskOp>(
+        op.getLoc(), vmask_ty,
+        ArrayRef<Value>{boundIdxConst(sublane_index), boundIdxConst(0)},
+        ArrayRef<Value>{boundIdxConst(sublane_index + 1),
+                        boundIdxConst(ctx.target_shape[1])});
+    CHECK(mask);
+    CHECK(dst_vreg);
+    CHECK(rotated_src_vreg);
+    *dst_vreg = builder.create<arith::SelectOp>(op.getLoc(), mask,
+                                                rotated_src_vreg, *dst_vreg);
+  }
+}
+
 LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
                                      const ArrayRef<Layout> layouts_in,
                                      const ArrayRef<Layout> layouts_out) {
@@ -4348,6 +4399,85 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
       dst_vregs_local.Reshape(
           layout_out.tileArrayImplicitShape(dst_shape, ctx.target_shape));
       return dst_vregs_local;
+    } else if (dst_shape.size() > 1 &&
+               src_shape.size() == dst_shape.size() + 1 &&
+               layout_in.offsets() == LayoutOffsets{0, 0} &&
+               layout_out.offsets() == LayoutOffsets{0, 0} &&
+               layout_in.hasNativeTiling(ctx.target_shape) &&
+               layout_in.bitwidth() == 32 && layout_out.bitwidth() == 32 &&
+               layout_out.hasNativeTiling(ctx.target_shape)) {
+      auto target_sublanes = ctx.target_shape[0];
+      auto target_lanes = ctx.target_shape[1];
+      SmallVector<int64_t> dst_vregs_shape(dst_shape);
+      dst_vregs_shape[dst_shape.size() - 2] =
+          xla::CeilOfRatio(dst_shape[dst_shape.size() - 2], target_sublanes);
+      CHECK_EQ(dst_shape[dst_shape.size() - 1] % target_lanes, 0);
+      dst_vregs_shape[dst_shape.size() - 1] =
+          xla::CeilOfRatio(dst_shape[dst_shape.size() - 1], target_lanes);
+      xla::Array<Value> dst_vregs(dst_vregs_shape);
+      auto to_linear_index = [&](absl::Span<const int64_t> indices,
+                                 absl::Span<const int64_t> bounds) {
+        CHECK_EQ(indices.size(), bounds.size());
+        int linear_index = 0;
+        int multiplier = 1;
+        for (int i = indices.size() - 1; i >= 0; --i) {
+          linear_index += multiplier * indices[i];
+          multiplier *= bounds[i];
+        }
+        return linear_index;
+      };
+      auto from_linear_index = [&](int linear_index,
+                                   absl::Span<const int64_t> bounds) {
+        SmallVector<int64_t> indices(bounds.size(), 0);
+        int64_t divisor = std::accumulate(bounds.begin(), bounds.end(), 1,
+                                          std::multiplies<int64_t>());
+        CHECK_GT(divisor, 0);
+        int64_t remainder = linear_index % divisor;
+        for (int i = 0; i < bounds.size(); ++i) {
+          int64_t radix = bounds[i];
+          CHECK_GT(radix, 0);
+          divisor /= radix;
+          CHECK_GT(divisor, 0);
+          indices[i] = remainder / divisor;
+          remainder = remainder % divisor;
+        }
+        return indices;
+      };
+      SmallVector<int64_t> dst_shape_in_sublanes(dst_shape);
+      dst_shape_in_sublanes[dst_shape.size() - 1] = xla::CeilOfRatio(
+          dst_shape[dst_shape.size() - 1], ctx.target_shape[1]);
+      SmallVector<int64_t> src_shape_in_sublanes(src_shape);
+      src_shape_in_sublanes[src_shape.size() - 1] = xla::CeilOfRatio(
+          src_shape[src_shape.size() - 1], ctx.target_shape[1]);
+      dst_vregs.Each([&](absl::Span<const int64_t> dst_vreg_indices,
+                         Value *dst_vreg) {
+        SmallVector<int64_t> indices;
+        std::copy(dst_vreg_indices.begin(), dst_vreg_indices.end(),
+                  std::back_inserter(indices));
+        indices[indices.size() - 2] *= target_sublanes;
+        int fs = to_linear_index(indices, dst_shape_in_sublanes);
+
+        // TODO(jsreeram): Optimize this to avoid moving padding.
+        int num_non_padding_sublanes = target_sublanes;
+        SmallVector<int64_t> sublanes_to_gather(num_non_padding_sublanes, 0);
+        sublanes_to_gather[0] = fs;
+        CHECK_EQ(dst_shape.back() % target_lanes, 0);
+        int stride_in_sublanes = dst_shape.back() / target_lanes;
+        for (int i = 1; i < sublanes_to_gather.size(); ++i) {
+          sublanes_to_gather[i] =
+              sublanes_to_gather[i - 1] + stride_in_sublanes;
+        }
+        SmallVector<SmallVector<int64_t>> gathered_sublanes(
+            sublanes_to_gather.size(),
+            SmallVector<int64_t>(src_shape.size(), 0));
+        for (int i = 0; i < sublanes_to_gather.size(); ++i) {
+          gathered_sublanes[i] =
+              from_linear_index(sublanes_to_gather[i], src_shape_in_sublanes);
+        }
+        gather_sublanes(ctx, op, gathered_sublanes, src_vregs, dst_vreg,
+                        dst_ty);
+      });
+      return dst_vregs;
     } else {
       return shape_cast_op.emitOpError(
                  "Not implemented: Unsupported vector.shape_cast: ")

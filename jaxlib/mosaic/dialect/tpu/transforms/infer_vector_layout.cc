@@ -1469,6 +1469,20 @@ class VectorLayoutInferer {
                                  implicit_dim));
           return success();
         }
+        // Shape cast (..., m, n, k * 128) -> (..., m, n * k * 128) for
+        // 32-bit types.
+        if ((kNativeBitwidth / bitwidth) == 1 && res_tiled_ishape.size() >= 2 &&
+            res_tiled_ishape[1] == src_tiled_ishape[0] * src_tiled_ishape[1] &&
+            res_tiled_ishape[1] % native_tiling[1] == 0) {
+          setLayout(op,
+                    VectorLayout(layout.bitwidth(), {0, 0},
+                                 {native_tiling[0], native_tiling[1]},
+                                 ImplicitDim::kNone),
+                    VectorLayout(layout.bitwidth(), {0, 0},
+                                 {native_tiling[0], native_tiling[1]},
+                                 ImplicitDim::kNone));
+          return success();
+        }
 
         // When we shapecast from input shape (..., target_shape_[1]) to output
         // shape (..., m * target_shape_[1] * packing), the reshape becomes
