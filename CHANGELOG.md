@@ -60,6 +60,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `Array` directly to the `from_dlpack` function of another framework. If you
     need the functionality of `to_dlpack`, use the `__dlpack__` attribute of an
     array.
+  * `jax.lax.infeed`, `jax.lax.infeed_p`, `jax.lax.outfeed`, and
+    `jax.lax.outfeed_p` are deprecated and will be removed in JAX v0.7.0.
   * Several previously-deprecated APIs have been removed, including:
     * From `jax.lib.xla_client`: `ArrayImpl`, `FftType`, `PaddingType`,
       `PrimitiveType`, `XlaBuilder`, `dtype_to_etype`,
