@@ -32,6 +32,7 @@ import numpy as np
 
 
 jax.config.parse_flags_with_absl()
+jax.config.update('jax_threefry_partitionable', True)
 
 
 class CountStoreCallbacksContext(object):
@@ -56,6 +57,29 @@ class CountStoreCallbacksContext(object):
   @property
   def num_stores(self):
     return self._num_stores
+
+
+class GridPointRecorderContext(object):
+  """Records grid points in the order in which they are traversed."""
+
+  def __init__(self):
+    self._grid_points = []
+
+  def __enter__(self):
+    return self
+
+  def __exit__(self, ty, value, traceback):
+    ...
+
+  def get_recorder(self):
+    def _recorder(grid_point):
+      self._grid_points.append(grid_point)
+
+    return _recorder
+
+  @property
+  def grid_points(self):
+    return self._grid_points
 
 
 class InterpretTest(jtu.JaxTestCase):
@@ -325,6 +349,142 @@ class InterpretTest(jtu.JaxTestCase):
       )
       np.testing.assert_allclose(result[::8, ::256], [[1.0], [5.0]])
       self.assertEqual(store_callbacks_counter.num_stores, 5)
+
+  def test_randomization_of_parallel_dimensions(self):
+    def kernel(s_ref, o_ref):
+      s = s_ref[0]
+      s_ref[0] = s + 1
+      o_ref[:] = jax.lax.full_like(o_ref, s)
+
+    def kernel_call_dimensions_arbitrary_parallel(s, grid_point_recorder):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((32, 512), jnp.float32),
+          grid=(4, 4),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+          out_specs=pl.BlockSpec((8, 128), lambda i, j: (i, j)),
+          interpret=mosaic_interpret.TPUInterpretParams(
+              random_seed=12345, grid_point_recorder=grid_point_recorder
+          ),
+          compiler_params=pltpu.TPUCompilerParams(
+              dimension_semantics=('arbitrary', 'parallel')
+          ),
+      )(s)
+
+    with GridPointRecorderContext() as grid_point_recorder:
+      result = jax.jit(
+          kernel_call_dimensions_arbitrary_parallel, static_argnums=1
+      )(
+          jnp.zeros((1,), jnp.int32),
+          grid_point_recorder.get_recorder(),
+      )
+      np.testing.assert_allclose(
+          result[::8, ::128],
+          [
+              [ 2.0,  3.0,  0.0,  1.0],
+              [ 6.0,  7.0,  4.0,  5.0],
+              [10.0, 11.0,  8.0,  9.0],
+              [14.0, 15.0, 12.0, 13.0],
+          ],
+      )
+      np.testing.assert_array_equal(
+          grid_point_recorder.grid_points,
+          [
+              [0, 2],
+              [0, 3],
+              [0, 0],
+              [0, 1],
+              [1, 2],
+              [1, 3],
+              [1, 0],
+              [1, 1],
+              [2, 2],
+              [2, 3],
+              [2, 0],
+              [2, 1],
+              [3, 2],
+              [3, 3],
+              [3, 0],
+              [3, 1],
+          ],
+      )
+
+    def kernel_call_dimensions_parallel_arbitrary(s, grid_point_recorder):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((32, 512), jnp.float32),
+          grid=(4, 4),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+          out_specs=pl.BlockSpec((8, 128), lambda i, j: (i, j)),
+          interpret=mosaic_interpret.TPUInterpretParams(
+              random_seed=12345, grid_point_recorder=grid_point_recorder
+          ),
+          compiler_params=pltpu.TPUCompilerParams(
+              dimension_semantics=('parallel', 'arbitrary')
+          ),
+      )(s)
+
+    with GridPointRecorderContext() as grid_point_recorder:
+      result = jax.jit(
+          kernel_call_dimensions_parallel_arbitrary, static_argnums=1
+      )(
+          jnp.zeros((1,), jnp.int32),
+          grid_point_recorder.get_recorder(),
+      )
+      np.testing.assert_allclose(
+          result[::8, ::128],
+          [
+              [ 8.0,  9.0, 10.0, 11.0],
+              [12.0, 13.0, 14.0, 15.0],
+              [ 0.0,  1.0,  2.0,  3.0],
+              [ 4.0,  5.0,  6.0,  7.0],
+          ],
+      )
+      np.testing.assert_array_equal(
+          grid_point_recorder.grid_points,
+          [
+              [2, 0],
+              [2, 1],
+              [2, 2],
+              [2, 3],
+              [3, 0],
+              [3, 1],
+              [3, 2],
+              [3, 3],
+              [0, 0],
+              [0, 1],
+              [0, 2],
+              [0, 3],
+              [1, 0],
+              [1, 1],
+              [1, 2],
+              [1, 3],
+          ],
+      )
+
+  def test_dynamic_parallel_dimension_raises(self):
+    def kernel(o_ref):
+      o_ref[0] = 42.0
+
+    @jax.jit
+    def kernel_call_dynamic_parallel_dimension():
+      dim_size = jax.random.randint(
+          jax.random.key(0), (), 10, 20, dtype=jnp.int32
+      )
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct((1,), jnp.float32),
+          grid=(dim_size,),
+          in_specs=[],
+          out_specs=pl.BlockSpec((1,), lambda _: (0,)),
+          interpret=mosaic_interpret.TPUInterpretParams(),
+          compiler_params=pltpu.TPUCompilerParams(
+              dimension_semantics=('parallel',)
+          ),
+      )()
+
+    with self.assertRaises(jax.errors.ConcretizationTypeError):
+      kernel_call_dynamic_parallel_dimension()
 
 
 if __name__ == '__main__':
