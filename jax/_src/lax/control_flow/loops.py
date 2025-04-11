@@ -1461,9 +1461,34 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `while`: {disallowed_effects}')
+
+  # If the body forwards an input carry to an output carry, *and* it's not used
+  # by the cond fun, it can be moved to be a body const. Doing so can lead to
+  # efficiency wins: if e.g. we vmap the loop with a batched predicate, we batch
+  # the carry too, but not the body consts.
+  body_fwd = pe._jaxpr_forwarding(body_jaxpr.jaxpr)
+  carry_nofwd = [len(body_consts) + i != f for i, f in enumerate(body_fwd)]
+  cond_jaxpr_, keep_cond = pe.dce_jaxpr(
+      cond_jaxpr.jaxpr, [True], [True] * len(cond_consts) + carry_nofwd)
+  _, keep_cond_carry = split_list(keep_cond, [len(cond_consts)])
+  move_to_const = _map(operator.not_, keep_cond_carry)
+
+  if any(move_to_const):
+    cond_jaxpr = pe.close_jaxpr(cond_jaxpr_)
+    body_jaxpr = pe.prune_closed_jaxpr_outputs(
+        body_jaxpr, [not m for m in move_to_const])
+    body_jaxpr = pe.move_binders_to_front(
+        body_jaxpr, [False] * len(body_consts) + move_to_const)
+    init_vals, new_body_consts = partition_list(move_to_const, init_vals)
+    body_consts = [*new_body_consts, *body_consts]
+
   outs = while_p.bind(*cond_consts, *body_consts, *init_vals,
                       cond_nconsts=len(cond_consts), cond_jaxpr=cond_jaxpr,
                       body_nconsts=len(body_consts), body_jaxpr=body_jaxpr)
+
+  if any(move_to_const):
+    outs = pe.merge_lists(move_to_const, outs, new_body_consts)
+
   return tree_unflatten(body_tree, outs)
 
 
@@ -1839,18 +1864,19 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
         pred = lax.reduce_or(pred, tuple(range(len(pred_aval.shape))))
       return pred
     def body(args):
-      return tuple(core.eval_jaxpr(body_jaxpr.jaxpr, body_jaxpr.consts, *args))
+      return core.eval_jaxpr(body_jaxpr.jaxpr, body_jaxpr.consts, *args)
     def new_cond(pred_args):
-      pred, _ = pred_args
+      pred, *_ = pred_args
       return pred
     def new_body(pred_args):
-      _, args  = pred_args
-      args = body(args)
-      pred = cond(args)
-      return pred, args
+      _, cond_consts, body_consts, carry = pred_args
+      carry = body((*body_consts, *carry))
+      pred = cond((*cond_consts, *carry))
+      return pred, cond_consts, body_consts, carry
     def fun(*args):
-      pred = cond(args)
-      _, out = while_loop(new_cond, new_body, (pred, args))
+      cond_consts, body_consts, carry = split_list(args, [cond_nconsts, body_nconsts])
+      pred = cond((*cond_consts, *carry))
+      *_, out = while_loop(new_cond, new_body, (pred, cond_consts, body_consts, carry))
       return out
     return mlir.lower_fun(fun)(ctx, *args)
 

@@ -33,7 +33,7 @@ from jax import lax
 from jax import random
 from jax._src import test_util as jtu
 from jax import tree_util
-from jax._src.util import unzip2
+from jax._src.util import unzip2, split_list
 from jax.ad_checkpoint import checkpoint as new_checkpoint, checkpoint_policies
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
@@ -2362,7 +2362,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     elif loop == "fori_inside_cond":
       func = lambda x: lax.cond(
           True,
-          x, lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x),
+          x, lambda x: lax.fori_loop(x, x + 2., lambda i, c: c * 2., x),
           1., lambda x: x)
     elif loop == "fori_inside_scan":
       func = lambda x: lax.scan(
@@ -3121,6 +3121,88 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       x, y = jax.lax.while_loop(cond, body, (x, y))
       return x + y
     jax.linearize(f, 1., 2.)  # don't crash
+
+  def test_readonly_carry_optimization(self):
+    # https://github.com/google/flax/issues/4700
+    def foo(w, x, c_max):
+      def while_cond(val):
+        c, x, w = val
+        return c < c_max
+
+      def while_body(val):
+        c, x, w = val
+        return c + 1, x @ w, w
+
+      _, x, w = jax.lax.while_loop(while_cond, while_body, (0, x, w))
+      return w, x
+
+    w = jnp.ones((2, 2))
+    xs = jnp.ones((4, 2))
+    c_maxs = jnp.arange(4)
+    w_, _ = jax.vmap(foo, in_axes=(None, 0, 0), out_axes=(None, 0)
+                     )(w, xs, c_maxs)  # doesn't crash
+    self.assertAllClose(w, w_, check_dtypes=False)
+
+  @parameterized.parameters(itertools.product(range(3), repeat=5))
+  @jtu.run_on_devices("cpu")
+  def test_while_constification_correctness(
+      self,
+      seed,
+      num_body_consts,
+      num_inplace_fwds_cond_uses,
+      num_inplace_fwds_cond_doesnt_use,
+      num_noninplace_fwds):
+
+    num_fwds = (num_inplace_fwds_cond_uses + num_inplace_fwds_cond_doesnt_use + 
+                num_noninplace_fwds)
+    num_carry = num_fwds + 4
+
+    rng = np.random.RandomState(seed)
+    perm = rng.permutation(num_carry)
+    iperm = np.argsort(perm)
+
+    body_consts = [rng.randn(3) for _ in range(num_body_consts)]
+    init_vals = list(rng.uniform(size=num_carry))
+
+    def cond_fun(c):
+      i, c = c
+      c = [c[i] for i in iperm]
+      c, _ = split_list(c, [num_inplace_fwds_cond_uses])
+      return (i < 2) + (0. * jnp.array(sum(c))).astype(bool)
+
+    def body_fun(c):
+      i, c = c
+      c = [c[i] for i in iperm]
+      inplace_fwds, noninplace_fwds, dont_fwd = split_list(
+          c, [num_inplace_fwds_cond_uses + num_inplace_fwds_cond_doesnt_use,
+              num_noninplace_fwds])
+      dont_fwd = [jnp.sin(x) * sum(jnp.sum(c) for c in body_consts)
+                  for x in dont_fwd]
+      new_c_perm = [*inplace_fwds, *dont_fwd, *noninplace_fwds]
+      new_c = [new_c_perm[i] for i in perm]
+      return (i + 1, new_c)
+
+    i, outs = jax.lax.while_loop(cond_fun, body_fun, (0, init_vals))
+    self.assertEqual(i, 2)
+    _, outs_ref = body_fun(body_fun((0, init_vals)))
+    self.assertAllClose(outs, outs_ref, check_dtypes=False)
+
+  def test_while_constification_correctness_manually(self):
+    # regression test for a particular index-offset logic bug
+
+    def cond_fun(c):
+      # cond doesn't use first or third element of the carry
+      _, i, _ = c
+      return i == 0
+
+    def body_fun(c):
+      # two body consts
+      for _ in range(2): jnp.sin(np.zeros(3))
+      # first element of the carry is forwarded to third element of the carry
+      return 0., 1., c[0]
+
+    outs = jax.lax.while_loop(cond_fun, body_fun, (5., 0., 3.14))
+    self.assertAllClose(outs, (0., 1., 5.))
 
 
 if __name__ == '__main__':
