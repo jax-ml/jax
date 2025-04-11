@@ -14,17 +14,6 @@
 
 from jax._src.lib import xla_client as _xc
 
-get_topology_for_devices = _xc.get_topology_for_devices
-heap_profile = _xc.heap_profile
-mlir_api_version = _xc.mlir_api_version
-Client = _xc.Client
-CompileOptions = _xc.CompileOptions
-DeviceAssignment = _xc.DeviceAssignment
-Frame = _xc.Frame
-HloSharding = _xc.HloSharding
-OpSharding = _xc.OpSharding
-Traceback = _xc.Traceback
-
 _deprecations = {
     # Finalized 2025-03-25; remove after 2025-06-25
     "FftType": (
@@ -85,6 +74,47 @@ _deprecations = {
         ),
         None,
     ),
+    # Added April 4 2025.
+    "get_topology_for_devices": (
+        "jax.lib.xla_client.get_topology_for_devices is deprecated.",
+        _xc.get_topology_for_devices,
+    ),
+    "heap_profile": (
+        "jax.lib.xla_client.heap_profile is deprecated.",
+        _xc.heap_profile,
+    ),
+    "mlir_api_version": (
+        "jax.lib.xla_client.mlir_api_version is deprecated.",
+        _xc.mlir_api_version,
+    ),
+    "Client": (
+        "jax.lib.xla_client.Client is deprecated.",
+        _xc.Client,
+    ),
+    "CompileOptions": (
+        "jax.lib.xla_client.CompileOptions is deprecated.",
+        _xc.CompileOptions,
+    ),
+    "DeviceAssignment": (
+        "jax.lib.xla_client.DeviceAssignment is deprecated.",
+        _xc.DeviceAssignment,
+    ),
+    "Frame": (
+        "jax.lib.xla_client.Frame is deprecated.",
+        _xc.Frame,
+    ),
+    "HloSharding": (
+        "jax.lib.xla_client.HloSharding is deprecated.",
+        _xc.HloSharding,
+    ),
+    "OpSharding": (
+        "jax.lib.xla_client.OpSharding is deprecated.",
+        _xc.OpSharding,
+    ),
+    "Traceback": (
+        "jax.lib.xla_client.Traceback is deprecated.",
+        _xc.Traceback,
+    ),
 }
 
 import typing as _typing
@@ -92,6 +122,16 @@ import typing as _typing
 if _typing.TYPE_CHECKING:
   Shape = _xc.Shape
   XlaComputation = _xc.XlaComputation
+  get_topology_for_devices = _xc.get_topology_for_devices
+  heap_profile = _xc.heap_profile
+  mlir_api_version = _xc.mlir_api_version
+  Client = _xc.Client
+  CompileOptions = _xc.CompileOptions
+  DeviceAssignment = _xc.DeviceAssignment
+  Frame = _xc.Frame
+  HloSharding = _xc.HloSharding
+  OpSharding = _xc.OpSharding
+  Traceback = _xc.Traceback
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
 
