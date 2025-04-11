@@ -45,7 +45,7 @@ jax_multiplatform_test(
     name = "serialization_test",
     srcs = ["serialization_test.py"],
     enable_configs = [
-        "tpu_v3_2x2",
+        "tpu_v3_x4",
     ],
     deps = [
         "//jax:experimental",
