@@ -52,7 +52,7 @@ setup(
     python_requires=">=3.10",
     install_requires=[f"jax-cuda{cuda_version}-pjrt=={__version__}"],
     extras_require={
-      'with_cuda': [
+      'with-cuda': [
           "nvidia-cublas-cu12>=12.1.3.1",
           "nvidia-cuda-cupti-cu12>=12.1.105",
           "nvidia-cuda-nvcc-cu12>=12.6.85",
