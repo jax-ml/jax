@@ -15,7 +15,6 @@
 """Unit test for result accuracy for unary ops."""
 
 from typing import Any, Callable, NamedTuple, Union
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -170,9 +169,14 @@ def generate_test_cases(op_names):
   return test_cases
 
 
-@unittest.skipIf(not jtu.is_device_tpu(), "Skipping test on non TPU devices.")
-@jtu.skip_if_stablehlo_version_less_than("1.10.0")
 class UnaryOpsAccuracyTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    if not jtu.stablehlo_version_at_least("1.10.0"):
+      self.skipTest("Test requires StableHLO v1.10.0 or higher.")
+    if not jtu.is_device_tpu():
+      self.skipTest("Skipping test on non TPU devices.")
+    super().setUp()
 
   def test_result_accuracy_mode_attr(self):
     with ir.Context() as context:
