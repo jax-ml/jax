@@ -1142,7 +1142,7 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
         debug_info.safe_arg_names(len(in_avals)), "jit arguments")  # type: ignore[arg-type]
   return in_shardings_flat, in_layouts_flat
 
-callsites_with_tracing_cache_miss: set[str] = set()
+callsites: set[str] = set()
 
 def explain_tracing_cache_miss(
     fun: lu.WrappedFun, unseen_f: bool, cache: dict, key: tuple):
@@ -1157,10 +1157,6 @@ def explain_tracing_cache_miss(
   if inline: return
 
   debug_info = fun.debug_info
-  func_filename = debug_info.func_filename
-  if func_filename and not traceback_util.include_filename(func_filename):
-   return
-
   msg: list[str] = []
   p = msg.append
   done = lambda: logger.log(logging.WARNING, '\n'.join(msg))
@@ -1169,18 +1165,19 @@ def explain_tracing_cache_miss(
   p(f"TRACING CACHE MISS at {callsite} because:")
 
   # have we seen this function before at all?
-  src_info = debug_info.func_name
-  if func_filename:
-    src_info += f" defined at {func_filename}"
-  if func_lineno := debug_info.func_lineno:
-    src_info += f":{func_lineno}"
+  fun_name = getattr(fun.f, '__qualname__', fun.f)
+  if debug_info.func_src_info:
+    # TODO(necula): clean up the extraction of the source info
+    _, *rest = debug_info.func_src_info.split(' at ')
+    src_info = " defined at "  + ' '.join(rest)
+  else:
+    src_info = ''
   if unseen_f:
     p(f"  never seen function:\n    {fun_name} id={id(fun.f)}{src_info}")
-    if callsite in callsites_with_tracing_cache_miss:
+    if callsite in callsites:
       p("  but seen another function defined on the same line; maybe the function is\n"
         "  being re-defined repeatedly, preventing caching?")
-    else:
-      callsites_with_tracing_cache_miss.add(callsite)
+    callsites.add(callsite)
     return done()
   else:
     p(f"  for {fun_name}{src_info}")
@@ -1242,8 +1239,8 @@ def explain_tracing_cache_miss(
   types_match = [k for k in trees_match if k[1] == in_type]
   if not types_match:
     if len(in_type) < 5:
-      in_type_str = ":\n    {}".format(",  ".join(
-          f"{n}: {ty.str_short(short_dtypes=True)}"
+      in_type_str = ':\n    {}'.format(',  '.join(
+          f'{n}: {ty.str_short(short_dtypes=True)}'
           for n, ty in zip(debug_info.arg_names, in_type)))
     else:
       in_type_str = ''
@@ -1260,8 +1257,8 @@ def explain_tracing_cache_miss(
         if type(ty1) == type(ty2) == core.ShapedArray:
           s1, s2 = ty1.str_short(True), ty2.str_short(True)
           if ty1.weak_type != ty2.weak_type:
-            s1 += f"{{weak_type={ty1.weak_type}}}"
-            s2 += f"{{weak_type={ty2.weak_type}}}"
+            s1 += f'{{weak_type={ty1.weak_type}}}'
+            s2 += f'{{weak_type={ty2.weak_type}}}'
             add_weak_type_hint = True
           elif ty1.sharding != ty2.sharding:
             s1 = ty1.str_short(short_dtypes=True, mesh_axis_types=True)
@@ -1270,9 +1267,9 @@ def explain_tracing_cache_miss(
           s1, s2 = str(ty1), str(ty2)
         p(f"    * at {name}, seen {s1}, but now given {s2}")
     if add_weak_type_hint:
-      p("where weak_type=True often means a Python builtin numeric value, and ")
-      p("weak_type=False means a jax.Array.")
-      p("See https://docs.jax.dev/en/latest/type_promotion.html#weak-types")
+      p('where weak_type=True often means a Python builtin numeric value, and ')
+      p('weak_type=False means a jax.Array.')
+      p('See https://docs.jax.dev/en/latest/type_promotion.html#weak-types')
     return done()
 
   # we think this is unreachable...
