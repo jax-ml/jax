@@ -1169,13 +1169,13 @@ def explain_tracing_cache_miss(
   p(f"TRACING CACHE MISS at {callsite} because:")
 
   # have we seen this function before at all?
-  src_info = debug_info.func_name
+  src_info = ""
   if func_filename:
     src_info += f" defined at {func_filename}"
   if func_lineno := debug_info.func_lineno:
     src_info += f":{func_lineno}"
   if unseen_f:
-    p(f"  never seen function:\n    {fun_name} id={id(fun.f)}{src_info}")
+    p(f"  never seen function:\n    {debug_info.func_name} id={id(fun.f)}{src_info}")
     if callsite in callsites_with_tracing_cache_miss:
       p("  but seen another function defined on the same line; maybe the function is\n"
         "  being re-defined repeatedly, preventing caching?")
@@ -1183,7 +1183,7 @@ def explain_tracing_cache_miss(
       callsites_with_tracing_cache_miss.add(callsite)
     return done()
   else:
-    p(f"  for {fun_name}{src_info}")
+    p(f"  for {debug_info.func_name}{src_info}")
 
   seen_keys = map(unpack, cache.keys())
 
