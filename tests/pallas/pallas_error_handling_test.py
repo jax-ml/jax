@@ -16,10 +16,12 @@ import functools
 import traceback
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import jax
 from jax import numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
+from jax._src.lib import xla_client
 from jax._src.pallas.mosaic import error_handling
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
@@ -127,6 +129,35 @@ class PallasErrorHandlingTest(jtu.JaxTestCase):
       tb_string = traceback.format_tb(e.__traceback__)
       tb_string = "".join(tb_string)
     self.assertEndsWith(tb_string, "output_ref[idx, 0] = input_ref[0, 0]\n")
+
+  @parameterized.parameters(
+      (256,),
+      (512,),
+  )
+  def test_small_1d_block_spec_raises(self, block_size):
+    # https://github.com/jax-ml/jax/issues/25379
+    dtype = jnp.float32
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...] * 2
+
+    x = jnp.arange(2048, dtype=dtype)
+    x_spec = pl.BlockSpec((block_size,), lambda i: (i,))
+    fn = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((1024,), dtype),
+        in_specs=[x_spec],
+        out_specs=x_spec,
+        grid=(2048 // block_size,),
+    )
+    # Having a block size that is too small should raise a suggestion
+    # to increase the block size.
+    with self.assertRaisesRegex(
+        xla_client.XlaRuntimeError,
+        r"Try changing your kernel block shape to \([0-9]+,\) to align with the"
+        " XLA layout",
+    ):
+      fn(x)
 
   def test_parse_location_string(self):
     name, frames = error_handling.parse_location_string(LOCATION_TEST_STRING)
