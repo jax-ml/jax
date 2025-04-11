@@ -207,7 +207,7 @@ def get_clangpp_path(clang_path):
   clang_exec_name = clang_path.name
   clangpp_exec_name = clang_exec_name
   if "clang++" not in clang_exec_name:
-    clangpp_exec_name = clang_exec_name.replace("clang", "clang++")
+    clangpp_exec_name = re.sub("clang(-[0-9.]*)?", "clang++", clangpp_exec_name)
   clangpp_path = clang_path.parent / clangpp_exec_name
   if not clangpp_path.exists():
     raise FileNotFoundError(
