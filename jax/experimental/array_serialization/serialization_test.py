@@ -26,7 +26,7 @@ import jax.numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import array
-from jax.sharding import NamedSharding, GSPMDSharding, SingleDeviceSharding
+from jax._src.sharding_impls import NamedSharding, GSPMDSharding, SingleDeviceSharding
 from jax.sharding import PartitionSpec as P
 from jax.experimental.array_serialization import serialization
 from jax.experimental.layout import Layout, DeviceLocalLayout as DLL
@@ -620,7 +620,7 @@ class CheckpointTest(jtu.JaxTestCase):
     ckpt_dir = pathlib.Path(self.create_tempdir('test_ckpt').full_path)
 
     # Run serialization.
-    sharding = jax.sharding.GSPMDSharding.get_replicated(jax.devices())
+    sharding = GSPMDSharding.get_replicated(jax.devices())
     tspecs = jax.tree_util.tree_map(
         serialization.get_tensorstore_spec, [ckpt_dir]
     )

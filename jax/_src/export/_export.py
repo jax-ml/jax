@@ -1212,10 +1212,11 @@ def _hlo_sharding_to_xla_compatible_sharding(
 
 def _hlo_sharding_to_gspmd_sharding(
     hlo_sharding: HloSharding | None,
-    device_assignment: Sequence[jax.Device]) -> sharding.GSPMDSharding | None:
+    device_assignment: Sequence[jax.Device]
+    ) -> sharding_impls.GSPMDSharding | None:
   if hlo_sharding is None:
     return None
-  return sharding.GSPMDSharding(device_assignment, hlo_sharding)
+  return sharding_impls.GSPMDSharding(device_assignment, hlo_sharding)
 
 
 def _hlo_sharding_to_named_sharding(
