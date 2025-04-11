@@ -847,7 +847,7 @@ def safe_map(state):
   args = tuple(list(range(state.range(0))) for _ in range(state.range(1)))
   def f(*args): return tuple(args)
   while state:
-    jax.util.safe_map(f, *args)
+    jax._src.util.safe_map(f, *args)
 
 @google_benchmark.register
 @google_benchmark.option.arg_names(['arg_lengths', 'num_args'])
@@ -855,7 +855,7 @@ def safe_map(state):
 def safe_zip(state):
   args = tuple(list(range(state.range(0))) for _ in range(state.range(1)))
   while state:
-    jax.util.safe_zip(*args)
+    jax._src.util.safe_zip(*args)
 
 
 @google_benchmark.register
