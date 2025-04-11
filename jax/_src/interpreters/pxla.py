@@ -1116,7 +1116,7 @@ class UnloadedPmapExecutable:
         jaxpr_debug_info=jaxpr_debug_info).load()
 
 
-class PmapExecutable(stages.XlaExecutable):
+class PmapExecutable(stages.Executable):
   __slots__ = ["xla_executable", "_unsafe_call", "build_unsafe_call",
                "fingerprint", "in_avals", "_unloaded_executable"]
 
@@ -1136,7 +1136,7 @@ class PmapExecutable(stages.XlaExecutable):
       self._unsafe_call = self.build_unsafe_call()
     return self._unsafe_call  # type: ignore
 
-  # -- stages.XlaExecutable overrides
+  # -- stages.Executable overrides
 
   def xla_extension_executable(self):
     return self.xla_executable
@@ -3122,7 +3122,7 @@ def reflatten_outputs_for_dispatch(out_tree, out_flat):
   return tree_util.dispatch_registry.flatten(out_unflat, None)
 
 
-class MeshExecutable(stages.XlaExecutable):
+class MeshExecutable(stages.Executable):
   __slots__ = [
       "xla_executable", "_unsafe_call", "build_unsafe_call", "in_avals",
       "out_avals", "_in_shardings", "_out_shardings", "_auto_spmd_lowering",
@@ -3158,7 +3158,7 @@ class MeshExecutable(stages.XlaExecutable):
       self._unsafe_call = self.build_unsafe_call()
     return self._unsafe_call  # type: ignore
 
-  # -- stages.XlaExecutable overrides
+  # -- stages.Executable overrides
 
   def xla_extension_executable(self):
     return self.xla_executable
