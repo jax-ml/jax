@@ -15,18 +15,43 @@ limitations under the License.
 
 #include "jaxlib/xla/util.h"
 
+#include <memory>
 #include <vector>
 
 #include "absl/status/status.h"
+#include "absl/synchronization/notification.h"
+#include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "nanobind/nanobind.h"
+#include "xla/pjrt/pjrt_future.h"
 #include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/future.h"
 #include "xla/python/ifrt/value.h"
+#include "xla/python/version.h"
+#include "xla/tsl/concurrency/async_value.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/util.h"
 
 namespace xla {
+
+void BlockUntilReadyWithCancel(xla::PjRtFuture<>& future) {
+#if JAX_IFRT_VERSION_NUMBER >= 5
+  future.BlockUntilReady([](tsl::AsyncValue* value) {
+    auto state = std::make_shared<absl::Notification>();
+    value->AndThen([state]() { state->Notify(); });
+    while (true) {
+      if (state->WaitForNotificationWithTimeout(absl::Milliseconds(200))) {
+        break;
+      }
+      nanobind::gil_scoped_acquire gil_acquire;
+      if (PyErr_CheckSignals() != 0) {
+        throw nanobind::python_error();
+      }
+    }
+  });
+#endif
+}
 
 absl::Status AwaitBuffersReady(absl::Span<ifrt::Array* const> ifrt_arrays) {
   if (ifrt_arrays.empty()) {
@@ -45,7 +70,7 @@ absl::Status AwaitBuffersReady(absl::Span<ifrt::Array* const> ifrt_arrays) {
     ifrt::Client* const client = ifrt_arrays.front()->client();
     future = client->GetReadyFuture(values);
   }
-
+  BlockUntilReadyWithCancel(future);
   absl::Status s = future.Await();
   if (!s.ok()) {
     // Fix up error string because some clients rely on it.

@@ -1021,13 +1021,13 @@ spmd_mode = enum_state(
     name='jax_spmd_mode',
     enum_values=['allow_all', 'allow_jit'],
     default='allow_jit',
-    help=("Decides whether Math on `jax.Array`'s that are not fully addressable "
-          "(i.e. spans across multiple processes) is allowed. The options are: "
-          "* allow_jit: Default, `pjit` and `jax.jit` computations are allowed "
-          "    to execute on non-fully addressable `jax.Array`s\n"
-          "* allow_all: `jnp`, normal math (like `a + b`, etc), `pjit`, "
-          "    `jax.jit` and all other operations are allowed to "
-          "    execute on non-fully addressable `jax.Array`s."))
+    help=("Decides whether Math on ``jax.Array`` objects that are not fully addressable "
+          "(i.e. spans across multiple processes) is allowed. The options are:\n\n"
+          "* ``allow_jit``: Default, ``pjit`` and ``jax.jit`` computations are allowed "
+          "  to execute on non-fully addressable ``jax.Array`` objects\n"
+          "* ``allow_all``: ``jnp``, normal math (like ``a + b``, etc), ``pjit``, "
+          "  ``jax.jit`` and all other operations are allowed to "
+          "  execute on non-fully addressable ``jax.Array`` objects."))
 
 
 distributed_debug = bool_state(
@@ -1477,18 +1477,17 @@ traceback_filtering = enum_state(
     enum_values=["off", "tracebackhide", "remove_frames", "quiet_remove_frames",
                  "auto"],
     default="auto",
-    help="Controls how JAX filters internal frames out of tracebacks.\n\n"
-         "Valid values are:\n"
-         " * \"off\": disables traceback filtering.\n"
-         " * \"auto\": use \"tracebackhide\" if running under a sufficiently"
-         " new IPython, or \"remove_frames\" otherwise.\n"
-         " * \"tracebackhide\": adds \"__tracebackhide__\" annotations to"
-         " hidden stack frames, which some traceback printers support.\n"
-         " * \"remove_frames\": removes hidden frames from tracebacks, and adds"
-         " the unfiltered traceback as a __cause__ of the exception.\n"
-         " * \"quiet_remove_frames\": removes hidden frames from tracebacks, and adds"
-         " a brief message (to the __cause__ of the exception) describing that this has"
-         " happened.\n")
+    help="Controls how JAX filters internal frames out of tracebacks. Valid values are:\n"
+         "- ``off``: disables traceback filtering.\n"
+         "- ``auto``: use ``tracebackhide`` if running under a sufficiently "
+         "new IPython, or ``remove_frames`` otherwise.\n"
+         "- ``tracebackhide``: adds ``__tracebackhide__`` annotations to "
+         "hidden stack frames, which some traceback printers support.\n"
+         "- ``remove_frames``: removes hidden frames from tracebacks, and adds "
+         "the unfiltered traceback as a ``__cause__`` of the exception.\n"
+         "- ``quiet_remove_frames``: removes hidden frames from tracebacks, and adds "
+         "a brief message (to the ``__cause__`` of the exception) describing that this has "
+         "happened.\n\n")
 
 # This flag is for internal use.
 # TODO(tianjianlu): Removes once we always enable cusparse lowering.
@@ -1711,16 +1710,17 @@ array_garbage_collection_guard = optional_enum_state(
     # The default is applied by guard_lib.
     default=None,
     help=(
-        'Select garbage collection guard level for "jax.Array" objects.\nThis'
-        ' option can be used to control what happens when a "jax.Array"'
-        ' object is garbage collected. It is desirable for "jax.Array"'
-        ' objects to be freed by Python reference couting rather than garbage'
+        'Select garbage collection guard level for ``jax.Array`` objects.\n\n'
+        'This option can be used to control what happens when a ``jax.Array``'
+        ' object is garbage collected. It is desirable for ``jax.Array``'
+        ' objects to be freed by Python reference counting rather than garbage'
         ' collection in order to avoid device memory being held by the arrays'
-        ' until garbage collection occurs.\n\nValid values are:\n * "allow":'
-        ' do not log garbage collection of "jax.Array" objects.\n * "log":'
-        ' log an error when a "jax.Array" is garbage collected.\n * "fatal":'
-        ' fatal error if a "jax.Array" is garbage collected.\nDefault is'
-        ' "allow". Note that not all cycles may be detected.'
+        ' until garbage collection occurs.\n\n'
+        'Valid values are:\n\n'
+        '* ``allow``: do not log garbage collection of ``jax.Array`` objects.\n'
+        '* ``log``: log an error when a ``jax.Array`` is garbage collected.\n'
+        '* ``fatal``: fatal error if a ``jax.Array`` is garbage collected.\n\n'
+        'Default is ``allow``. Note that not all cycles may be detected.'
     ),
     update_global_hook=lambda val: _update_garbage_collection_guard(
         guard_lib.global_state(), 'garbage_collect_array', val

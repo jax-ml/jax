@@ -164,7 +164,7 @@ def debug_print(fmt, *args, uniform=True):
       raise NotImplementedError(arg.type)
     type_formats.append(ty_format)
   ctx = (
-      functools.partial(single_thread, per_block=False)
+      functools.partial(single_thread, scope=ThreadSubset.WARPGROUP)
       if uniform
       else contextlib.nullcontext
   )
@@ -258,6 +258,7 @@ def warpgroup_idx(sync=True):
 
 
 class ThreadSubset(enum.IntEnum):
+  WARP = enum.auto()
   WARPGROUP = enum.auto()
   BLOCK = enum.auto()
 
@@ -266,25 +267,34 @@ class ThreadSubset(enum.IntEnum):
 _ONCE_PER: ThreadSubset | None = None
 
 
-def single_thread_predicate(per_block=True):
+def single_thread_predicate(scope: ThreadSubset = ThreadSubset.BLOCK):
+  """Returns a predicate that selects a single thread.
+
+  Args:
+    scope: What level of the thread hierarchy to select a thread from.
+      For example, if the scope is BLOCK, only one thread per block will be
+      selected.
+  """
+  elected = nvvm.elect_sync(ir.IntegerType.get_signless(1))
+  if scope == ThreadSubset.WARP:
+    return elected
   warp = warp_idx()
-  if not per_block:
+  if scope is not ThreadSubset.BLOCK:
     warp = arith.remui(warp, c(4, warp.type))
   first_warp = arith.cmpi(arith.CmpIPredicate.eq, warp, c(0, warp.type))
-  elected = nvvm.elect_sync(ir.IntegerType.get_signless(1))
   return arith.andi(first_warp, elected)
 
 
 @contextlib.contextmanager
-def single_thread(per_block=True):
+def single_thread(scope: ThreadSubset = ThreadSubset.BLOCK):
   """Runs the context only from a single thread.
 
   Args:
-    per_block: If True, only one thread per block will run the context.
-      Otherwise, only one thread per warp group will run the context.
+    scope: What level of the thread hierarchy to select a thread from.
+      For example, if the scope is BLOCK, only one thread per block will be
+      selected.
   """
   global _ONCE_PER
-  scope = ThreadSubset.BLOCK if per_block else ThreadSubset.WARPGROUP
   # If we're already in a single-thread context, we don't have to do anything.
   if _ONCE_PER is not None and _ONCE_PER >= scope:
     yield
@@ -293,7 +303,7 @@ def single_thread(per_block=True):
   prev_scope = _ONCE_PER
   _ONCE_PER = scope
   try:
-    if_op = scf.IfOp(single_thread_predicate(per_block))
+    if_op = scf.IfOp(single_thread_predicate(scope))
     with ir.InsertionPoint(if_op.then_block):
       yield
       scf.YieldOp([])
@@ -708,7 +718,7 @@ class BarrierRef:
     ptr = ir.Type.parse(f"!llvm.ptr<{WORKGROUP_NVPTX_ADDRESS_SPACE}>")
     phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
     memref.store(c(0, i32), phases, [])
-    with single_thread(per_block=True):
+    with single_thread(scope=ThreadSubset.BLOCK):
       for i in range(num_barriers):
         nvvm.mbarrier_init_shared(
             llvm.getelementptr(ptr, address, [], [i], i64),
@@ -870,7 +880,7 @@ class CollectiveBarrierRef:
     if self.barrier.num_barriers != 1:
       raise ValueError("Can only arrive on a single barrier")
     if self.cluster_mask is None:
-      with single_thread(per_block=False):
+      with single_thread(scope=ThreadSubset.WARPGROUP):
         self.barrier.arrive()
       return
     i32 = ir.IntegerType.get_signless(32)

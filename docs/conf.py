@@ -80,6 +80,7 @@ extensions = [
     "sphinx_remove_toctrees",
     'sphinx_copybutton',
     'jax_extensions',
+    'jax_list_config_options',
     'sphinx_design',
     'sphinxext.rediraffe',
 ]
@@ -222,7 +223,6 @@ nb_execution_excludepatterns = [
     'jep/9407-type-promotion.*',
     # TODO(jakevdp): enable execution on the following if possible:
     'notebooks/Distributed_arrays_and_automatic_parallelization.*',
-    'notebooks/explicit-sharding.*',
     'notebooks/autodiff_remat.*',
     # Fails on readthedocs with Kernel Died
     'notebooks/convolutions.ipynb',

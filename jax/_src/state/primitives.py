@@ -454,11 +454,52 @@ pe.partial_eval_jaxpr_custom_rules[addupdate_p] = partial(
 
 ##  get/swap/addupdate batching rules
 
-def _batch_indexer(indexer: indexing.NDIndexer, dims,
-                   axis_size: int,
-                   ref_shape: tuple[int, ...],
-                   ref_dim: int | batching.NotMapped,
-                   idx_is_batched: bool) -> indexing.NDIndexer:
+def _batch_indexer(
+    indexer: indexing.NDIndexer,
+    dims,
+    axis_size: int,
+    ref_shape: tuple[int, ...],
+    ref_dim: int | batching.NotMapped,
+    idx_is_batched: bool,
+) -> indexing.NDIndexer:
+  """Converts a batched indexer into an unbatched one.
+
+  This function handles the complexity of `vmap`-style batching where either the
+  `ref` being indexed, the indexer, or both may have batched dimensions. The
+  goal is to produce a new indexer that acts as if applied in a batched context,
+  but without actual batching, enabling downstream code to process it as usual.
+
+  If any index in `indexer` is batched, all array indexers are normalized. If
+  the array indexer contains a batched dimension, the dimension is moved to the
+  front (axis 0). If the array indexer not batched, it is broadcasted to include
+  a batch dimension at the front. This is to guarantee that all array indexers
+  are still of the same shape.
+
+  Slices are passed through unchanged unless they contain dynamic elements and
+  are themselves batched, which is currently unsupported.
+
+  If `ref` is batched (`ref_dim` is not `NotMapped`), we simulate per-example
+  indexing by inserting a new iota array at the position corresponding to
+  `ref_dim` in the indexer.
+
+  It is worth noting that if the array indexers in the original indexer are
+  contiguous, but become non-contiguous in the new indexer due to the insertion
+  of the iota, the dimensions corresponding to the array indexers will be moved
+  to the front in the indexing result. The batched dimension will be at axis 0,
+  while the dimensions corresponding to the array indexers in the original
+  indexer will start from axis 1. This behavior would cause a mismatch between
+  the original indexer and the new indexer. Callers must take this behavior into
+  account and properly transpose the arrays involved to avoid this mismatch.
+
+  Args:
+    indexer: An `NDIndexer` that indexes into `ref`.
+    dims: A pytree with the same structure as `indexer`, indicating which
+      dimension (if any) is batched for each array indexer.
+    axis_size: Size of the batch dimension.
+    ref_shape: Shape of `ref`.
+    ref_dim: The dimension of `ref` that is batched (if any).
+    idx_is_batched: Whether any index in the `indexer` is batched.
+  """
   indices = indexer.indices
   indices_dims = dims.indices
   new_indices: list[Array | indexing.Slice | int] = []
@@ -510,9 +551,9 @@ def _batch_indexer(indexer: indexing.NDIndexer, dims,
   if ref_dim is not batching.not_mapped:
     iota = lax.broadcasted_iota(np.dtype('int32'), new_integer_indexer_shape, 0)
     new_indices.insert(ref_dim, iota)
-  return indexing.NDIndexer(tuple(new_indices), ref_shape,
-                            new_integer_indexer_shape,
-                            validate=True)
+  return indexing.NDIndexer(
+      tuple(new_indices), ref_shape, new_integer_indexer_shape, validate=True
+  )
 
 def _get_vmap(batched_args, batched_dims, *, tree):
   axis_size, = {x.shape[d] for x, d in zip(batched_args, batched_dims)
@@ -527,11 +568,42 @@ def _get_vmap(batched_args, batched_dims, *, tree):
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")
   # TODO(sharadmv): handle vmap of multiple indexers
-  indexers = tuple(_batch_indexer(indexer, dims, axis_size,
+  new_indexers = tuple(_batch_indexer(indexer, dims, axis_size,
                                   ref.shape, ref_dim, idx_is_batched)
                      for indexer, dims in zip(indexers, indexers_dims))
-  flat_indexers, tree = tree_util.tree_flatten(indexers)
-  return get_p.bind(ref, *flat_indexers, tree=tree), 0
+  flat_indexers, tree = tree_util.tree_flatten(new_indexers)
+
+  is_int_indexing, _, _ = indexing.unpack_ndindexer(indexers[0])
+  int_indexers_contiguous = bool(
+      np.all(np.diff(np.where(is_int_indexing)[0]) == 1)
+  )
+  is_new_int_indexing, _, _ = indexing.unpack_ndindexer(new_indexers[0])
+  new_int_indexers_contiguous = bool(
+      np.all(np.diff(np.where(is_new_int_indexing)[0]) == 1)
+  )
+
+  out = get_p.bind(ref, *flat_indexers, tree=tree)
+  if not int_indexers_contiguous:  # will always be moved to the front
+    out_bdim = 0
+  else:  # originally not going to be moved to the front
+    if new_int_indexers_contiguous:  # now not going to be moved to the front
+      out_bdim = is_new_int_indexing.index(True)
+    else:  # now going to be moved to the front
+      original_pos = is_int_indexing.index(True)
+      array_indexer_shape = new_indexers[0].int_indexer_shape
+      array_indexer_len = len(array_indexer_shape)
+
+      transpose_order = list(range(len(out.shape)))
+      transpose_order = (
+          transpose_order[0],
+          *transpose_order[array_indexer_len:array_indexer_len+original_pos],
+          *transpose_order[1:array_indexer_len],
+          *transpose_order[array_indexer_len+original_pos:],
+      )
+
+      out = lax.transpose(out, transpose_order)
+      out_bdim = 0
+  return out, out_bdim
 batching.primitive_batchers[get_p] = _get_vmap
 
 def _swap_vmap(batched_args, batched_dims, *, tree):
@@ -549,15 +621,59 @@ def _swap_vmap(batched_args, batched_dims, *, tree):
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")
   # TODO(sharadmv): handle vmap of multiple indexers
-  indexers = tuple(_batch_indexer(indexer, dims, axis_size,
+  new_indexers = tuple(_batch_indexer(indexer, dims, axis_size,
                                   ref.shape, ref_dim, idx_is_batched)
                      for indexer, dims in zip(indexers, indexers_dims))
-  flat_indexers, tree = tree_util.tree_flatten(indexers)
-  if (ref_is_batched or idx_is_batched) and not val_is_batched:
-    val = batching.broadcast(val, axis_size, 0)
-  if val_is_batched:
-    val = batching.moveaxis(val, val_dim, 0)
-  return swap_p.bind(ref, val, *flat_indexers, tree=tree), 0
+  flat_indexers, tree = tree_util.tree_flatten(new_indexers)
+
+  is_int_indexing, _, _ = indexing.unpack_ndindexer(indexers[0])
+  int_indexers_contiguous = bool(
+      np.all(np.diff(np.where(is_int_indexing)[0]) == 1)
+  )
+  is_new_int_indexing, _, _ = indexing.unpack_ndindexer(new_indexers[0])
+  new_int_indexers_contiguous = bool(
+      np.all(np.diff(np.where(is_new_int_indexing)[0]) == 1)
+  )
+
+  if not new_int_indexers_contiguous:  # will be moved to the front
+    batched_dim_in_result = 0
+  else:
+    batched_dim_in_result = is_new_int_indexing.index(True) + 0
+
+  if not val_is_batched:
+    if ref_is_batched or idx_is_batched:
+      val = batching.broadcast(val, axis_size, batched_dim_in_result)
+  else:
+    val = batching.moveaxis(val, val_dim, batched_dim_in_result)
+
+  transpose_order_inversed = None
+
+  # Originally not going to be moved to the front, but now going to be moved to
+  # the front.
+  if int_indexers_contiguous and not new_int_indexers_contiguous:
+    original_pos = is_int_indexing.index(True)
+    array_indexer_shape = new_indexers[0].int_indexer_shape
+    array_indexer_len = len(array_indexer_shape)
+
+    transpose_order = list(range(len(val.shape)))
+    transpose_order = (
+        transpose_order[0],
+        *transpose_order[1+original_pos:(1+original_pos)+(array_indexer_len-1)],
+        *transpose_order[1:1+original_pos],
+        *transpose_order[(1+original_pos)+(array_indexer_len-1):],
+    )
+    val = val.transpose(transpose_order)
+    transpose_order_inversed = np.argsort(transpose_order)
+
+  out = swap_p.bind(ref, val, *flat_indexers, tree=tree)
+
+  # `val` should not be transposed, but we needed to transpose it to match
+  # `swap_p`. As a result, the output of `swap_p` is also transposed. Now we
+  # need to transpose it back.
+  if transpose_order_inversed is not None:
+    out = out.transpose(transpose_order_inversed)
+
+  return out, batched_dim_in_result
 batching.primitive_batchers[swap_p] = _swap_vmap
 
 def _addupdate_vmap(batched_args, batched_dims, *, tree):
@@ -575,14 +691,47 @@ def _addupdate_vmap(batched_args, batched_dims, *, tree):
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")
   # TODO(sharadmv): handle vmap of multiple indexers
-  indexers = tuple(_batch_indexer(indexer, dims, axis_size,
+  new_indexers = tuple(_batch_indexer(indexer, dims, axis_size,
                                   ref.shape, ref_dim, idx_is_batched)
                      for indexer, dims in zip(indexers, indexers_dims))
-  flat_indexers, tree = tree_util.tree_flatten(indexers)
-  if (ref_is_batched or idx_is_batched) and not val_is_batched:
-    val = batching.broadcast(val, axis_size, 0)
-  if val_is_batched:
-    val = batching.moveaxis(val, val_dim, 0)
+  flat_indexers, tree = tree_util.tree_flatten(new_indexers)
+
+  is_int_indexing, _, _ = indexing.unpack_ndindexer(indexers[0])
+  int_indexers_contiguous = bool(
+      np.all(np.diff(np.where(is_int_indexing)[0]) == 1)
+  )
+  is_new_int_indexing, _, _ = indexing.unpack_ndindexer(new_indexers[0])
+  new_int_indexers_contiguous = bool(
+      np.all(np.diff(np.where(is_new_int_indexing)[0]) == 1)
+  )
+
+  if not new_int_indexers_contiguous:  # will be moved to the front
+    batched_dim_in_result = 0
+  else:
+    batched_dim_in_result = is_new_int_indexing.index(True)
+
+  if not val_is_batched:
+    if ref_is_batched or idx_is_batched:
+      val = batching.broadcast(val, axis_size, batched_dim_in_result)
+  else:
+    val = batching.moveaxis(val, val_dim, batched_dim_in_result)
+
+  # Originally not going to be moved to the front, but now going to be moved to
+  # the front.
+  if int_indexers_contiguous and not new_int_indexers_contiguous:
+    original_pos = is_int_indexing.index(True)
+    array_indexer_shape = new_indexers[0].int_indexer_shape
+    array_indexer_len = len(array_indexer_shape)
+
+    transpose_order = list(range(len(val.shape)))
+    transpose_order = (
+        transpose_order[0],
+        *transpose_order[1+original_pos:(1+original_pos)+(array_indexer_len-1)],
+        *transpose_order[1:1+original_pos],
+        *transpose_order[(1+original_pos)+(array_indexer_len-1):],
+    )
+    val = val.transpose(transpose_order)
+
   return addupdate_p.bind(ref, val, *flat_indexers, tree=tree), []
 batching.primitive_batchers[addupdate_p] = _addupdate_vmap
 

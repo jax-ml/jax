@@ -29,7 +29,6 @@ load(
 load(
     "//jaxlib:jax.bzl",
     "PLATFORM_TAGS_DICT",
-    "if_windows",
     "jax_py_test",
     "jax_wheel",
     "pytype_strict_library",
@@ -71,9 +70,7 @@ py_binary(
         "@xla//xla/ffi/api:api.h",
         "@xla//xla/ffi/api:c_api.h",
         "@xla//xla/ffi/api:ffi.h",
-    ] + if_windows([
-        "//jaxlib/mlir/_mlir_libs:jaxlib_mlir_capi.dll",
-    ]),
+    ],
     deps = [
         ":build_utils",
         "@bazel_tools//tools/python/runfiles",

@@ -1447,6 +1447,19 @@ def _linear_call_impl(*args, callee, transpose_thunk, num_callee_consts,
   del transpose_thunk, num_callee_consts, num_res
   return core.eval_jaxpr(callee.jaxpr, (), *args)
 
+def _linear_call_jvp_rule(primals, tangents, callee, transpose_thunk,
+                          num_callee_consts, num_res):
+  consts_and_res, primals = split_list(primals, [num_callee_consts + num_res])
+  const_tangents, tangents = split_list(tangents, [num_callee_consts + num_res])
+  assert all(type(t) is Zero for t in const_tangents)
+  primals_out = linear_call_p.bind(
+      *consts_and_res, *primals, callee=callee, transpose_thunk=transpose_thunk,
+      num_callee_consts=num_callee_consts, num_res=num_res)
+  tangents_out = linear_call_p.bind(
+      *consts_and_res, *tangents, callee=callee, transpose_thunk=transpose_thunk,
+      num_callee_consts=num_callee_consts, num_res=num_res)
+  return primals_out, tangents_out
+
 def _linear_call_transpose_rule(cts, *args, callee, transpose_thunk,
                                 num_callee_consts, num_res):
   transpose, t_consts = transpose_thunk()
@@ -1478,6 +1491,7 @@ linear_call_p = core.Primitive('linear_call')
 linear_call_p.multiple_results = True
 linear_call_p.def_impl(_linear_call_impl)
 linear_call_p.def_abstract_eval(_linear_call_abstract_eval)
+ad.primitive_jvps[linear_call_p] = _linear_call_jvp_rule
 ad.primitive_transposes[linear_call_p] = _linear_call_transpose_rule
 xla.register_initial_style_primitive(linear_call_p)
 mlir.register_lowering(linear_call_p, mlir.lower_fun(

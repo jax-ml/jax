@@ -588,7 +588,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     init = jnp.float32(10)
     self.assertEqual(fori_loop_with_static_upper_and_lower(init), init)
 
-
   def testForiLoopBatched(self):
     def body_fun(i, loop_carry):
       x, y = loop_carry
@@ -994,16 +993,24 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError,
         re.escape("Pred must be a scalar, got (1.0, 1.0) of type <class 'tuple'>")):
       lax.cond((1., 1.), lambda top: 2., lambda fop: 3., 1.)
-    with self.assertRaisesRegex(TypeError,
-        re.compile("true_fun output must have same type structure "
-                   "as false_fun output, but there are differences:.*"
-                   r"at output\['a'\], true_fun output has pytree leaf", re.DOTALL)):
-      lax.cond(True, lambda top: dict(a=2.), lambda fop: dict(a=(3., 3.)), 1.)
+
     with self.assertRaisesRegex(
         TypeError,
-        "true_fun output and false_fun output must have identical types, got\n"
-        r"DIFFERENT ShapedArray\(float32\[1\]\) vs. "
-        r"ShapedArray\(float32\[\].*\)."):
+        re.compile(
+            r"cond branch outputs must have the same pytree structure, but they"
+            r" differ:.*true_fun output at path \['a'\] is a pytree leaf but"
+            r" false_fun output at path \['a'\] is a <class 'tuple'>",
+            re.DOTALL)):
+      lax.cond(True, lambda top: dict(a=2.), lambda fop: dict(a=(3., 3.)), 1.)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        re.compile(
+            r"cond branches must have equal output types but they differ.*The"
+            r" output of true_fun has type float32\[1\] but the corresponding"
+            r" output of false_fun has type float32\[\], so the shapes do not"
+            r" match",
+            re.DOTALL)):
       lax.cond(True,
                lambda top: jnp.array([1.], jnp.float32),
                lambda fop: jnp.float32(1.),
@@ -1023,16 +1030,26 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError,
         re.escape("Empty branch sequence")):
       lax.switch(0, [], 1.)
-    with self.assertRaisesRegex(TypeError,
-        re.compile("branch 0 output must have same type structure "
-                   "as branch 1 output, but there are differences:.*"
-                   r"at output\['a'\], branch 0 output has pytree leaf", re.DOTALL)):
-      lax.switch(1, [lambda _: dict(a=2.), lambda _: dict(a=(3., 3.))], 1.)
+
     with self.assertRaisesRegex(
         TypeError,
-        "branch 0 output and branch 1 output must have identical types, got\n"
-        r"{'a': 'DIFFERENT ShapedArray\(float32\[1\]\) "
-        r"vs. ShapedArray\(float32\[\].*\)'}."):
+        re.compile(
+            "switch branch outputs must have the same pytree structure, but"
+            r" they differ.*branch 0 output at path \['a'\] is a pytree leaf"
+            r" but branch1 output at path \['a'\] is a <class 'tuple'>, so"
+            r" their"
+            " Python types differ.",
+            re.DOTALL)):
+      lax.switch(1, [lambda _: dict(a=2.), lambda _: dict(a=(3., 3.))], 1.)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        re.compile(
+            "switch branches must have equal output types but they differ.*The"
+            r" output of branch 0 at path \['a'\] has type float32\[1\] but the"
+            r" corresponding output of branch1 has type float32\[\], so the"
+            " shapes do not match",
+            re.DOTALL)):
       lax.switch(1, [lambda _: dict(a=jnp.array([1.], jnp.float32)),
                      lambda _: dict(a=jnp.float32(1.))],
                  1.)
@@ -1983,7 +2000,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         TypeError,
         re.escape("function carry input and carry output must have equal "
-                  "types (e.g. shapes and dtypes of arrays), but they differ:\n\n"
+                  "types, but they differ:\n\n"
                   "The input carry x has type int32[] but the corresponding "
                   "output carry component has type float32[], so the dtypes do "
                   "not match"
@@ -1994,7 +2011,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         TypeError,
         re.escape("function carry input and carry output must have equal "
-                  "types (e.g. shapes and dtypes of arrays), but they differ:\n\n"
+                  "types, but they differ:\n\n"
                   "The input carry component x[1] has type int32[] but the "
                   "corresponding output carry component has type float32[], "
                   "so the dtypes do not match"
@@ -2005,13 +2022,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         TypeError,
         re.escape("function carry input and carry output must have equal "
-                  "types (e.g. shapes and dtypes of arrays), but they differ:\n\n"
+                  "types, but they differ:\n\n"
                   "  * the input carry component x[0] has type int32[] but the "
                   "corresponding output carry component has type float32[], "
                   "so the dtypes do not match;\n"
                   "  * the input carry component x[1] has type int32[] but the "
                   "corresponding output carry component has type float32[1,1], "
-                  "so the dtypes do not match and also the shapes do not match."
+                  "so the dtypes do not match, and the shapes do not match."
                   )):
       jax.lax.scan(lambda x, _: ((x[0].astype('float32'),
                                   x[1].astype('float32').reshape(1, 1),
@@ -2345,7 +2362,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     elif loop == "fori_inside_cond":
       func = lambda x: lax.cond(
           True,
-          x, lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x),
+          x, lambda x: lax.fori_loop(x, x + 2., lambda i, c: c * 2., x),
           1., lambda x: x)
     elif loop == "fori_inside_scan":
       func = lambda x: lax.scan(
@@ -2495,7 +2512,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertLess(len(scan_unrolled_hlo), len(scan_fully_unrolled_hlo))
 
     # and the lowering should contain a while loop, unless the scan is fully
-    # unrolled
+    # unrolled
     self.assertIn("while(", scan_hlo)
     self.assertIn("while(", scan_unrolled_hlo)
     self.assertNotIn("while(", scan_fully_unrolled_hlo)
@@ -2786,7 +2803,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     self.assertAllClose(deriv(my_pow)(3.0, 1), 1.0, check_dtypes=False)
 
-
   def test_while_loop_fixed_point_with_batched_pred_and_consts(self):
     def f(i, x):
       def cond(carry):
@@ -3076,7 +3092,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def leak():
       data = jax.device_put(np.zeros((1024), dtype=np.float32) + 1)
       def g():
-          return jax.lax.cond(
+        return jax.lax.cond(
               True,
               lambda: data[0],  # noqa: F821
               lambda: data[1],  # noqa: F821
@@ -3105,6 +3121,27 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       x, y = jax.lax.while_loop(cond, body, (x, y))
       return x + y
     jax.linearize(f, 1., 2.)  # don't crash
+
+  def test_readonly_carry_optimization(self):
+    # https://github.com/google/flax/issues/4700
+    def foo(w, x, c_max):
+      def while_cond(val):
+        c, x, w = val
+        return c < c_max
+
+      def while_body(val):
+        c, x, w = val
+        return c + 1, x @ w, w
+
+      _, x, w = jax.lax.while_loop(while_cond, while_body, (0, x, w))
+      return w, x
+
+    w = jnp.ones((2, 2))
+    xs = jnp.ones((4, 2))
+    c_maxs = jnp.arange(4)
+    w_, _ = jax.vmap(foo, in_axes=(None, 0, 0), out_axes=(None, 0)
+                     )(w, xs, c_maxs)  # doesn't crash
+    self.assertAllClose(w, w_, check_dtypes=False)
 
 
 if __name__ == '__main__':

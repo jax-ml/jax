@@ -643,13 +643,20 @@ def emit_pipeline_warp_specialized(
     def memory_block():
       gpu_primitives.set_max_registers(memory_registers, action="decrease")
       indices = (jnp.asarray(0, dtype=jnp.int32),) * len(grid)
+      if has_dynamic_grid:
+        prologue_steps = lax.min(max_concurrent_steps, num_steps)
+      else:
+        assert max_concurrent_steps <= num_steps
+        prologue_steps = max_concurrent_steps
 
       # Begin initial copies.
-      for step in range(max_concurrent_steps):
+      def _init_step(step, indices):
         for bref, barrier in zip(in_brefs, in_smem_barrier_refs):
           buf_slot = _get_slot(step, not bref.is_index_invariant)
           bref.copy_in(buf_slot, indices, barrier)
-        indices = _inc_grid_by_1(indices, grid)
+        return _inc_grid_by_1(indices, grid)
+      # TODO(apaszke): Unroll when grid is static (need support in lowering).
+      indices = jax.lax.fori_loop(0, prologue_steps, _init_step, indices)
 
       def memory_loop_body(step, carry):
         indices, = carry
@@ -675,6 +682,13 @@ def emit_pipeline_warp_specialized(
         return (next_indices,)
       lax.fori_loop(0, num_steps - max_concurrent_steps,
                     memory_loop_body, (indices,))
+      # Await all the arrivals to not leave barriers in a bad state.
+      # We only need to account for the prologue steps.
+      def _epi_step(step, _):
+        for barrier in consumed_barrier_refs:
+          gpu_primitives.barrier_wait(barrier.at[step])
+      # TODO(apaszke): Unroll when grid is static (need support in lowering).
+      jax.lax.fori_loop(0, prologue_steps, _epi_step, None)
 
     wg_idx = lax.axis_index(wg_axis)
     lax.cond(

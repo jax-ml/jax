@@ -203,7 +203,14 @@ class JaxExportTest(jtu.JaxTestCase):
     f = jnp.sin
     x = np.arange(4, dtype=np.float32)
     exp_f = get_exported(f)(x)
+    self.assertAllClose(f(x), exp_f.call(x))
 
+  def test_basic_single_device_sharding(self):
+    device = jax.local_devices()[0]
+    s = jax.sharding.SingleDeviceSharding(device)
+    x = np.arange(16, dtype=np.float32).reshape(4, -1)
+    f = jax.jit(lambda x: x * 2., in_shardings=s, out_shardings=s)
+    exp_f = get_exported(f)(x)
     self.assertAllClose(f(x), exp_f.call(x))
 
   def test_jit_static_arg(self):

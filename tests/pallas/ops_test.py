@@ -307,6 +307,7 @@ class PallasBaseTest(jtu.JaxTestCase):
       self.skipTest("TODO: Mosaic GPU does not support this yet")
 
 
+@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
 class OpsTest(PallasBaseTest):
 
   @parameterized.named_parameters(
@@ -1746,6 +1747,27 @@ class OpsTest(PallasBaseTest):
 
     x = jnp.arange(int(np.prod(in_shape)), dtype=jnp.float32).reshape(in_shape)
     expected = x.reshape(out_shape)
+    np.testing.assert_allclose(f(x), expected)
+
+  def test_reshape_to_scalar(self):
+    self.skip_if_mosaic_gpu()
+    # Test reshapes from (1, 1) to ().
+    # Because TPUs distinguish between VREGs/SREGs this tests an implicit
+    # copy from VREG -> SREG that must be inserted by Pallas.
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
+    )
+    def f(x_ref, o_ref):
+      o_ref[...] = jnp.zeros_like(o_ref)
+      vector_val = x_ref[1:2, 0:1]
+      scalar_val = jnp.reshape(vector_val, ())
+      o_ref[scalar_val] = jnp.ones_like(o_ref[0]) * scalar_val
+
+    in_shape = (4, 4)
+    x = jnp.arange(int(np.prod(in_shape)), dtype=jnp.int32).reshape(in_shape)
+    expected = jnp.zeros((8, 128), jnp.int32)
+    expected = expected.at[x[1, 0]].set(x[1, 0])
     np.testing.assert_allclose(f(x), expected)
 
   def test_num_programs(self):

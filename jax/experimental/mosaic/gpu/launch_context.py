@@ -159,7 +159,7 @@ class TransposeTransform(MemRefTransform):
 
   def __post_init__(self):
     if len(self.permutation) != len(set(self.permutation)):
-      raise ValueError("Permutation must be a permutation")
+      raise ValueError("All elements of `permutation` must be unique")
 
   def apply(self, ref: ir.Value) -> ir.Value:
     return utils.memref_transpose(ref, self.permutation)
@@ -657,7 +657,8 @@ class LaunchContext:
     ]
 
     uniform_ctx = (
-        functools.partial(utils.single_thread, per_block=False)
+        functools.partial(
+            utils.single_thread, scope=utils.ThreadSubset.WARPGROUP)
         if uniform and predicate is None
         else contextlib.nullcontext
     )
@@ -669,8 +670,8 @@ class LaunchContext:
       )
     if (zeroth_bw := slice_shape[-1] * element_bitwidth) % 128 != 0:
       raise ValueError(
-          "Async copies require the number of bytes copied along the last"
-          f" dimension to be divisible by 16, but got {zeroth_bw}"
+          "Async copies require the number of bits copied along the last"
+          f" dimension to be divisible by 128, but got {zeroth_bw}"
       )
     if (
         swizzle is not None

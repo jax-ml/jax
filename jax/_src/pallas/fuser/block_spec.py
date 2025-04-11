@@ -170,8 +170,11 @@ class KernelEvalContext:
 
 _illegal = object()
 
-_sp_env = threading.local()
-_sp_env.scalar_prefetch = None
+class _SpEnv(threading.local):
+  def __init__(self):
+    self.scalar_prefetch = None
+
+_sp_env = _SpEnv()
 
 
 @contextlib.contextmanager

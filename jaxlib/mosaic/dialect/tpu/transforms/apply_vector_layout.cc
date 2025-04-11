@@ -5508,6 +5508,58 @@ void rotateLanes(OpBuilder &builder, xla::Array<Value> &vregs,
   rotateVregs(builder, vregs, amount, 1);
 }
 
+// Rotate a vreg by a certain amount of rows, and get the low or high bits of
+// each sublane after rotation.
+//
+// For these purposes, the vreg is considered to have shape (row_packing *
+// target_shape[0], target_shape[1])
+//
+// Args:
+//  vreg: The vreg to rotate
+//  rotate_amount: The amount to rotate the vreg by.
+//  rows_per_sublane: The number of rows in a sublane.
+//  is_high: If true, get the high bits of each sublane, otherwise get low bits.
+//
+// Returns:
+//  The rotated vreg.
+Value rotateVregRows(OpBuilder &builder, Location loc, Value vreg,
+                     const int64_t rotate_amount,
+                     const int64_t rows_per_sublane, const bool is_high,
+                     const std::array<int64_t, 2> target_shape) {
+  CHECK_LE(0, rotate_amount);
+  CHECK_LT(0, rows_per_sublane);
+  const int64_t bits_per_row = 32 / rows_per_sublane;
+  const int64_t sublane_rotate_amount =
+      rotate_amount / rows_per_sublane + (is_high ? 0 : 1);
+  const int64_t within_sublane_rotate_amount = rotate_amount % rows_per_sublane;
+  vreg = builder.create<tpu::RotateOp>(vreg.getLoc(), vreg,
+                                       /*amount=*/sublane_rotate_amount,
+                                       /*dimension=*/0, /*stride=*/nullptr,
+                                       /*stride_dimension=*/nullptr);
+  if (within_sublane_rotate_amount != 0) {
+    const VectorType vreg_ty = cast<VectorType>(vreg.getType());
+    const VectorType i32_vreg_ty =
+        getNativeVregType(builder.getI32Type(), target_shape);
+    vreg = builder.create<tpu::BitcastVregOp>(loc, i32_vreg_ty, vreg);
+    if (is_high) {
+      auto shift_amt = builder.create<arith::ConstantOp>(
+          loc,
+          builder.getIntegerAttr(builder.getI32Type(),
+                                 bits_per_row * within_sublane_rotate_amount));
+      vreg = builder.create<arith::ShLIOp>(loc, vreg, shift_amt);
+    } else {
+      auto shift_amt = builder.create<arith::ConstantOp>(
+          loc, builder.getIntegerAttr(
+                   builder.getI32Type(),
+                   bits_per_row *
+                       (rows_per_sublane - within_sublane_rotate_amount)));
+      vreg = builder.create<arith::ShRUIOp>(loc, vreg, shift_amt);
+    }
+    vreg = builder.create<tpu::BitcastVregOp>(loc, vreg_ty, vreg);
+  }
+  return vreg;
+}
+
 // Relayout src_vregs from layout src to layout dst, where dst is the same as
 // src except that the column offset is dst_col_offset.
 FailureOr<xla::Array<Value>> doColumnShiftRelayout(
@@ -6649,6 +6701,59 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
         src_candidate.tileArrayImplicitShape(vty.getShape(), target_shape));
     return std::make_pair(src_candidate, vregs);
   }
+  const int64_t sublanes_per_tile = src.sublanesPerTile(target_shape);
+  CHECK_GT(sublanes_per_tile, 0);
+  if (src.tiling()[0] % sublanes_per_tile != 0) {
+    // Tilings such as 32-bit (4, 256) are not used and not supported.
+    return emitError(
+        loc, "Not implemented: Rows within tile span multiple sublanes");
+  }
+  const int64_t rows_per_sublane = src.tiling()[0] / sublanes_per_tile;
+  // Add second minor implicit dim
+  if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+      dst_implicit_dim == VectorLayout::ImplicitDim::kSecondMinor) {
+    // TODO(tlongeri): Detect replicated source 2nd minor as a no-op above
+    const int64_t src_offset = src.offsets()[0].value_or(0);
+    // TODO(tlongeri): Do broadcast (different path) for replicated output
+    const int64_t dst_offset = dst_offset_hints[0].value_or(0);
+    VectorLayout dst(src.bitwidth(), {dst_offset, src.offsets()[1]},
+                     src.tiling(), dst_implicit_dim);
+    xla::Array<Value> new_vregs(
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
+    DCHECK_EQ(*(new_vregs.dimensions().end() - 2), 1);
+    // Define src_idx outside loop to avoid reallocation
+    SmallVector<int64_t> src_idx;
+    new_vregs.Each([&](const absl::Span<const int64_t> idx, Value *new_vreg) {
+      // Shift the desired row from the source vreg to the desired offset for
+      // the destination vreg. This is done with rotates and, for packed types
+      // with multiple rows per sublane, bitshifts.
+      // Note that the offset of the source row varies but the destination
+      // offset is always the same.
+      const int64_t dst_offset_in_sublane = dst_offset % rows_per_sublane;
+      // src_row_with_offset is the row of the padded implicit shape that we
+      // will place in the destination vreg. The first dst vreg along the
+      // non-implicit 2nd minor has the source row at offset src_offset, the
+      // second has the source row at offset src_offset+1, etc.
+      const int64_t src_row_with_offset = *(idx.end() - 3) + src_offset;
+      src_idx.assign(idx.begin(), idx.end() - 3);
+      src_idx.push_back(src_row_with_offset / src.tiling()[0]);
+      src_idx.push_back(idx.back());
+      Value vreg = vregs(src_idx);
+      const int64_t src_offset_in_vreg = src_row_with_offset % src.tiling()[0];
+      const int64_t src_offset_in_sublane =
+          src_row_with_offset % rows_per_sublane;
+      int64_t row_rotate_amt = dst_offset - src_offset_in_vreg;
+      if (row_rotate_amt < 0) {
+        row_rotate_amt += rows_per_sublane * target_shape[0];
+      }
+      *new_vreg = rotateVregRows(
+          builder, loc, vreg, row_rotate_amt, rows_per_sublane,
+          /*is_high=*/src_offset_in_sublane <= dst_offset_in_sublane,
+          ctx.target_shape);
+    });
+    return std::make_pair(dst, new_vregs);
+  }
+
   // Remove second minor implicit dim, for values that have (m, 128) tiling (for
   // m that is a power of 2).
   if (src.implicit_dim() == VectorLayout::ImplicitDim::kSecondMinor &&
@@ -6675,7 +6780,6 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
       // For example, extended offsets allow us to skip copies of low sublanes
       // in tiles with idx.back() == 0.
       const int tiles_per_vreg = src.tilesPerVreg(target_shape);
-      const int sublanes_per_tile = src.sublanesPerTile(target_shape);
       src_idx[dst_2nd_minor_idx] = src.tiling()[0] * idx[dst_2nd_minor_idx] +
                                    dst_sl_start - dst_sublane_offset;
       for (int dst_sl_idx = dst_sl_start;

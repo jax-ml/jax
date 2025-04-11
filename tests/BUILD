@@ -60,10 +60,13 @@ jax_multiplatform_test(
     srcs = ["device_test.py"],
 )
 
-jax_multiplatform_test(
+jax_py_test(
     name = "dynamic_api_test",
     srcs = ["dynamic_api_test.py"],
-    shard_count = 2,
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -206,7 +209,7 @@ jax_multiplatform_test(
         ],  # Times out on TPU with asan/tsan.
     },
     shard_count = {
-        "tpu": 20,
+        "tpu": 10,
         "cpu": 20,
         "gpu": 10,
     },
@@ -244,9 +247,7 @@ jax_multiplatform_test(
     # using matplotlib plots
     # env = {"LOBPCG_EMIT_DEBUG_PLOTS": "1"},
     shard_count = {
-        "cpu": 48,
-        "gpu": 48,
-        "tpu": 48,
+        "cpu": 8,
     },
     deps = [
         "//jax:experimental_sparse",
@@ -257,9 +258,9 @@ jax_multiplatform_test(
     name = "svd_test",
     srcs = ["svd_test.py"],
     shard_count = {
-        "cpu": 10,
+        "cpu": 20,
         "gpu": 10,
-        "tpu": 40,
+        "tpu": 15,
     },
 )
 
@@ -285,9 +286,6 @@ jax_multiplatform_test(
         "gpu_p100x2_shardy",
         "tpu_v5e_4x2_shardy",
     ],
-    shard_count = {
-        "tpu": 5,
-    },
     deps = [
         "//jax:experimental",
     ],
@@ -307,9 +305,8 @@ jax_multiplatform_test(
         "gpu_h100x2",
     ],
     shard_count = {
-        "cpu": 5,
-        "gpu": 5,
-        "tpu": 5,
+        "cpu": 3,
+        "tpu": 4,
     },
     tags = ["multiaccelerator"],
     deps = [
@@ -423,8 +420,8 @@ jax_multiplatform_test(
     srcs = ["image_test.py"],
     shard_count = {
         "cpu": 10,
-        "gpu": 20,
-        "tpu": 10,
+        "gpu": 10,
+        "tpu": 8,
     },
     tags = ["noasan"],  # Linking TF causes a linker OOM.
     deps = py_deps("pil") + py_deps("tensorflow_core"),
@@ -433,8 +430,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "infeed_test",
     srcs = ["infeed_test.py"],
-    deps = [
-    ],
 )
 
 jax_multiplatform_test(
@@ -468,7 +463,7 @@ jax_multiplatform_test(
     srcs = ["jet_test.py"],
     shard_count = {
         "cpu": 10,
-        "gpu": 10,
+        "gpu": 4,
     },
     deps = [
         "//jax:jet",
@@ -481,8 +476,8 @@ jax_multiplatform_test(
     srcs = ["lax_control_flow_test.py"],
     shard_count = {
         "cpu": 30,
-        "gpu": 40,
-        "tpu": 30,
+        "gpu": 30,
+        "tpu": 20,
     },
 )
 
@@ -547,11 +542,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "lax_numpy_einsum_test",
     srcs = ["lax_numpy_einsum_test.py"],
-    shard_count = {
-        "cpu": 10,
-        "gpu": 10,
-        "tpu": 10,
-    },
 )
 
 jax_multiplatform_test(
@@ -559,8 +549,8 @@ jax_multiplatform_test(
     srcs = ["lax_numpy_ufuncs_test.py"],
     shard_count = {
         "cpu": 10,
-        "gpu": 10,
-        "tpu": 10,
+        "gpu": 5,
+        "tpu": 5,
     },
 )
 
@@ -573,9 +563,9 @@ jax_multiplatform_test(
     name = "lax_scipy_test",
     srcs = ["lax_scipy_test.py"],
     shard_count = {
-        "cpu": 20,
+        "cpu": 30,
         "gpu": 20,
-        "tpu": 20,
+        "tpu": 8,
     },
     deps = py_deps("numpy") + py_deps("scipy") + py_deps("absl/testing"),
 )
@@ -588,8 +578,8 @@ jax_multiplatform_test(
     },
     shard_count = {
         "cpu": 10,
-        "gpu": 10,
-        "tpu": 10,
+        "gpu": 5,
+        "tpu": 5,
     },
 )
 
@@ -605,7 +595,7 @@ jax_multiplatform_test(
     },
     shard_count = {
         "cpu": 20,
-        "gpu": 20,
+        "gpu": 30,
         "tpu": 20,
     },
     deps = py_deps("numpy") + py_deps("scipy") + py_deps("absl/testing"),
@@ -616,8 +606,8 @@ jax_multiplatform_test(
     srcs = ["lax_scipy_spectral_dac_test.py"],
     shard_count = {
         "cpu": 20,
-        "gpu": 10,
-        "tpu": 10,
+        "gpu": 8,
+        "tpu": 8,
     },
     deps = [
         "//jax:internal_test_util",
@@ -658,7 +648,7 @@ jax_multiplatform_test(
     srcs = ["lax_autodiff_test.py"],
     shard_count = {
         "cpu": 40,
-        "gpu": 40,
+        "gpu": 30,
         "tpu": 20,
     },
 )
@@ -831,7 +821,7 @@ jax_multiplatform_test(
     ],
     shard_count = {
         "cpu": 30,
-        "gpu": 30,
+        "gpu": 10,
         "tpu": 30,
     },
     tags = ["multiaccelerator"],
@@ -846,7 +836,7 @@ jax_multiplatform_test(
     # No implementation of nonsymmetric Eigendecomposition.
     enable_backends = ["cpu"],
     shard_count = {
-        "cpu": 10,
+        "cpu": 5,
     },
     # This test ends up calling Fortran code that initializes some memory and
     # passes it to C code. MSan is not able to detect that the memory was
@@ -907,29 +897,12 @@ jax_multiplatform_test(
             "notsan",  # Times out
         ],
     },
-    shard_count = 10,
+    shard_count = 8,
 )
 
 jax_multiplatform_test(
     name = "random_test",
     srcs = ["random_test.py"],
-    backend_tags = {
-        "cpu": [
-            "notsan",  # Times out
-            "nomsan",  # Times out
-        ],
-        "tpu": [
-            "optonly",
-            "nomsan",  # Times out
-            "notsan",  # Times out
-        ],
-    },
-    shard_count = {
-        "cpu": 30,
-        "gpu": 30,
-        "tpu": 40,
-    },
-    tags = ["noasan"],  # Times out
 )
 
 jax_multiplatform_test(
@@ -962,25 +935,7 @@ jax_multiplatform_test(
     name = "random_test_with_custom_prng",
     srcs = ["random_test.py"],
     args = ["--jax_enable_custom_prng=true"],
-    backend_tags = {
-        "cpu": [
-            "noasan",  # Times out under asan/msan/tsan.
-            "nomsan",
-            "notsan",
-        ],
-        "tpu": [
-            "noasan",  # Times out under asan/msan/tsan.
-            "nomsan",
-            "notsan",
-            "optonly",
-        ],
-    },
     main = "random_test.py",
-    shard_count = {
-        "cpu": 40,
-        "gpu": 40,
-        "tpu": 40,
-    },
 )
 
 jax_multiplatform_test(
@@ -1049,9 +1004,9 @@ jax_multiplatform_test(
         "tpu": ["nomsan"],  # Times out
     },
     shard_count = {
-        "cpu": 40,
-        "gpu": 30,
-        "tpu": 40,
+        "cpu": 50,
+        "gpu": 50,
+        "tpu": 50,
     },
     tags = [
         "noasan",
@@ -1078,8 +1033,8 @@ jax_multiplatform_test(
     },
     shard_count = {
         "cpu": 50,
-        "gpu": 50,
-        "tpu": 50,
+        "gpu": 30,
+        "tpu": 20,
     },
     tags = [
         "noasan",
@@ -1182,10 +1137,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "stax_test",
     srcs = ["stax_test.py"],
-    shard_count = {
-        "cpu": 5,
-        "gpu": 5,
-    },
     deps = ["//jax:stax"],
 )
 
@@ -1314,7 +1265,11 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "ann_test",
     srcs = ["ann_test.py"],
-    shard_count = 10,
+    shard_count = {
+        "cpu": 5,
+        "gpu": 5,
+        "tpu": 10,
+    },
 )
 
 jax_py_test(
@@ -1337,9 +1292,13 @@ jax_multiplatform_test(
     srcs = ["garbage_collection_guard_test.py"],
 )
 
-jax_multiplatform_test(
+jax_py_test(
     name = "name_stack_test",
     srcs = ["name_stack_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ] + py_deps("absl/testing"),
 )
 
 jax_multiplatform_test(
@@ -1437,8 +1396,6 @@ jax_multiplatform_test(
     name = "for_loop_test",
     srcs = ["for_loop_test.py"],
     shard_count = {
-        "cpu": 20,
-        "gpu": 10,
         "tpu": 20,
     },
 )
@@ -1456,10 +1413,6 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_p100x2_shardy",
     ],
-    shard_count = {
-        "gpu": 5,
-        "tpu": 5,
-    },
     tags = [
         "multiaccelerator",
     ],
@@ -1563,9 +1516,6 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "export_test",
     srcs = ["export_test.py"],
-    disable_configs = [
-        "cpu_shardy",  # TODO(b/355263220): enable once export is supported.
-    ],
     enable_configs = [
         "cpu_shardy",
         "gpu_p100x2_shardy",
@@ -1586,9 +1536,9 @@ jax_multiplatform_test(
         "cpu_x32",
     ],
     shard_count = {
-        "cpu": 4,
-        "gpu": 6,
-        "tpu": 4,
+        "cpu": 30,
+        "gpu": 20,
+        "tpu": 25,
     },
     tags = [
         "noasan",  # Times out
@@ -1636,9 +1586,6 @@ jax_multiplatform_test(
     name = "fused_attention_stablehlo_test",
     srcs = ["fused_attention_stablehlo_test.py"],
     enable_backends = ["gpu"],
-    shard_count = {
-        "gpu": 4,
-    },
     tags = ["multiaccelerator"],
 )
 

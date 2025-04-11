@@ -814,6 +814,7 @@ absl::Status PyArray::BlockUntilResultStatusIsReady() {
   if (!result_status.IsReady()) {
     // Only release the gil if we need to Await().
     nb::gil_scoped_release release_gil;
+    BlockUntilReadyWithCancel(result_status);
     return result_status.Await();
   }
   return result_status.Await();
@@ -1479,6 +1480,31 @@ absl::Status PyArray::BatchedBlockUntilReady(std::vector<nb::object> objs) {
   return AwaitBuffersReady(absl::MakeConstSpan(ifrt_arrays));
 }
 
+absl::Status PyArray::ReplaceWithAlias(PyArray o) {
+  auto& storage = GetStorage();
+  auto& o_storage = o.GetStorage();
+  if (storage.py_client.get() != o_storage.py_client.get()) {
+    return absl::InvalidArgumentError(
+        "Unable to replace a PyArray with a PyArray from a different client.");
+  }
+  storage.aval = o_storage.aval;
+  storage.weak_type = o_storage.weak_type;
+  storage.dtype = o_storage.dtype;
+  storage.shape = o_storage.shape;
+  storage.sharding = o_storage.sharding;
+  storage.npy_value = o_storage.npy_value;
+  storage.committed = o_storage.committed;
+  storage.traceback = o_storage.traceback;
+  storage.ifrt_array = o_storage.ifrt_array;
+  storage.fully_replicated_array = o_storage.fully_replicated_array;
+  storage.py_arrays = o_storage.py_arrays;
+  storage.host_value.Clear();
+  storage.dynamic_shape = o_storage.dynamic_shape;
+  storage.result_status = o_storage.result_status;
+
+  return absl::OkStatus();
+}
+
 std::vector<PyArray> PyClient::LiveArrays() const {
   std::vector<PyArray> result;
   for (auto& shard : arrays_) {
@@ -1736,7 +1762,9 @@ absl::StatusOr<std::pair<nb::object, bool>> PyHostValue::AsNumPyArray(
         nb::gil_scoped_release gil;
         TF_ASSIGN_OR_RETURN(hold_ptr->external_reference_hold,
                             pjrt_buffer->AcquireExternalReference());
-        TF_RETURN_IF_ERROR(ifrt_array->GetReadyFuture().Await());
+        auto fut = ifrt_array->GetReadyFuture();
+        BlockUntilReadyWithCancel(fut);
+        TF_RETURN_IF_ERROR(fut.Await());
       }
       void* data =
           hold_ptr->external_reference_hold->OpaqueDeviceMemoryDataPointer();
@@ -1750,6 +1778,7 @@ absl::StatusOr<std::pair<nb::object, bool>> PyHostValue::AsNumPyArray(
   TF_RETURN_IF_ERROR(CopyToHostAsync(dynamic_shape_holder, ifrt_array));
   if (!ready_.IsReady()) {
     nb::gil_scoped_release gil;
+    BlockUntilReadyWithCancel(ready_);
     TF_RETURN_IF_ERROR(ready_.Await());
   } else {
     TF_RETURN_IF_ERROR(ready_.Await());
@@ -1897,6 +1926,12 @@ absl::Status PyHostValue::CopyToHostAsync(
   });
   value_.attr("flags").attr("writeable") = nb::bool_(false);
   return absl::OkStatus();
+}
+
+void PyHostValue::Clear() {
+  ready_ = {};
+  value_ = {};
+  string_array_contents_ = {};
 }
 
 namespace {
@@ -2057,6 +2092,11 @@ absl::Status PyArray::RegisterTypes(nb::module_& m) {
   type.attr("_copy_single_device_array_to_host_async") = nb::cpp_function(
       [](PyArray& self) {
         xla::ThrowIfError(self.CopySingleDeviceArrayToHostAsync());
+      },
+      nb::is_method());
+  type.attr("_replace_with") = nb::cpp_function(
+      [](PyArray& self, PyArray& o) {
+        xla::ThrowIfError(self.ReplaceWithAlias(o));
       },
       nb::is_method());
   type.attr("block_until_ready") = nb::cpp_function(

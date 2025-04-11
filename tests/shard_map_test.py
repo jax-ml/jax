@@ -1084,11 +1084,9 @@ class ShardMapTest(jtu.JaxTestCase):
 
     def f(x, y):
       def true_fn(x, y):
-        return x
+        return lax.pvary(x, 'y')
       def false_fun(x, y):
-        return y
-      x = lax.pvary(x, 'y')
-      y = lax.pvary(y, 'x')
+        return lax.pvary(y, 'x')
       return jax.lax.cond(True, true_fn, false_fun, x, y)
 
     shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(('x', 'y')))(x, x)
@@ -2522,6 +2520,23 @@ class ShardMapTest(jtu.JaxTestCase):
           "{jax.result_info = \"[('i', 'k')]\"}", ir.as_text()
       )
 
+  def test_dynamic_slice_transpose(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+    arr = np.arange(16., dtype=np.float32)
+
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    def f(x):
+      return lax.dynamic_slice_in_dim(x, jnp.array(1, dtype=np.int32), 2)
+
+    f(arr)  # doesn't crash
+    jax.jit(f)(arr)  # doesn't crash
+
+    def g(x):
+      return jnp.sum(f(x))
+
+    jax.grad(g)(arr)  # doesn't crash
+    jax.jit(jax.grad(g))(arr)  # doesn't crash
+
   @parameterized.parameters([P()], [P('x')], [P(('x', 'y'))])
   def test_print_inside_shard_map(self, specs):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
@@ -2792,10 +2807,10 @@ class ShardMapTest(jtu.JaxTestCase):
     xs = jax.lax.with_sharding_constraint(xs, NamedSharding(mesh, P('i')))
 
     def fun(v, xs):
-        # Commenting this single line below makes everything work
-        v = jax.scipy.linalg.expm(v)
-        v = v.sum()
-        return v * xs.sum(axis=-1).astype(v.dtype)
+      # Commenting this single line below makes everything work
+      v = jax.scipy.linalg.expm(v)
+      v = v.sum()
+      return v * xs.sum(axis=-1).astype(v.dtype)
 
     res = fun(variables, xs)
     fun_shard_map = shard_map(fun, mesh=mesh, in_specs=in_specs, out_specs=out_specs)
@@ -2814,24 +2829,119 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((4,), ('i',))
     @jax.custom_jvp
     def f(a: jax.Array, b: jax.Array) -> jax.Array:
-        return a + b
+      return a + b
 
     @partial(f.defjvp, symbolic_zeros=True)
     def f_jvp(primals, tangents):
-        a, b = primals
-        a_dot, b_dot = tangents
-        y = f(a, b)
-        y_dot = jnp.zeros_like(y)
-        if not isinstance(a_dot, SymbolicZero):
-            y_dot += a_dot
-        if not isinstance(b_dot, SymbolicZero):
-            y_dot += b_dot
-        return y, y_dot
+      a, b = primals
+      a_dot, b_dot = tangents
+      y = f(a, b)
+      y_dot = jnp.zeros_like(y)
+      if not isinstance(a_dot, SymbolicZero):
+        y_dot += a_dot
+      if not isinstance(b_dot, SymbolicZero):
+        y_dot += b_dot
+      return y, y_dot
     x = jax.random.normal(jax.random.key(0), (jax.device_count(), 20))
     A = jax.random.normal(jax.random.key(1), (jax.device_count(), 20))
 
     g = shard_map(f, mesh, in_specs=P('i'), out_specs=P('i'))
     jax.jvp(lambda x: g(x, A), (x,), (x,))  # don't crash
+
+  def test_cond_pvary_errors(self):
+    mesh = jtu.create_mesh((1, 1), ('x', 'y'))
+    def f(x, y):
+      def true_fn(x, y):
+        return x
+      def false_fun(x, y):
+        return y
+      return jax.lax.cond(True, true_fn, false_fun, x, y)
+    x = jnp.arange(4.)
+    with self.assertRaisesRegex(
+        TypeError,
+        r"applying `jax.lax.pvary\(..., \('y',\)\)` to the output of true_fun"):
+      shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(('x', 'y')))(x, x)
+
+  def test_cond_pvary_errors_pytree(self):
+    mesh = jtu.create_mesh((1, 1), ('x', 'y'))
+
+    def f(x, y):
+      def true_fn(x, y):
+        return x, y
+      def false_fun(x, y):
+        return y, x
+      return jax.lax.cond(True, true_fn, false_fun, x, y)
+    x = jnp.arange(4.)
+    with self.assertRaisesRegex(
+        TypeError,
+        r"applying `jax.lax.pvary\(..., \('y',\)\)` to the output of true_fun"):
+      shard_map(f, mesh, in_specs=(P('x'), P('y')), out_specs=P(('x', 'y')))(x, x)
+
+  def test_scan_pvary_errors(self):
+    mesh = jtu.create_mesh((1, 1), ('i', 'j'))
+    x = jnp.arange(3.)
+    y = jnp.arange(3.)
+
+    @partial(shard_map, mesh=mesh, in_specs=(P('i'), P()), out_specs=P('i'))
+    def f(x, y):
+      def body(carry, _):
+        c1, c2 = carry
+        return (c2, c1), ()  # swap the carry
+      (x_, y_), _ = jax.lax.scan(body, (x, y), (), length=2)
+      return x_, y_
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"This might be fixed by applying `jax.lax.pvary\(..., \('i',\)\)` to"
+        r' the initial'):
+      f(x, y)
+
+    @partial(shard_map, mesh=mesh, in_specs=(P('i'), P()), out_specs=P('i'))
+    def g(x, y):
+      def body(carry, _):
+        c1, c2 = carry
+        return (c2, c1), ()
+      y = jax.lax.pvary(y, 'i')  # fix the issue
+      (x_, y_), _ = jax.lax.scan(body, (x, y), (), length=2)
+      return x_, y_
+
+    g(x, y)  # doesn't crash
+
+  def test_scan_pvary_errors2(self):
+    mesh = jtu.create_mesh((1, 1), ('i', 'j'))
+    x = jnp.arange(3.)
+    y = jnp.arange(3.)
+    z = jnp.arange(3.)
+
+    @partial(shard_map, mesh=mesh, in_specs=(P('i'), P(), P(('i', 'j'))), out_specs=P(('i', 'j')))
+    def f(x, y, z):
+      def body(carry, _):
+        c1, c2, c3 = carry
+        return (c3, c1, c2), ()  # swap the carry
+
+      # x = jax.lax.pvary(x, 'j')
+      # y = jax.lax.pvary(y, ('i', 'j'))
+      carry, _ = jax.lax.scan(body, (x, y, z), (), length=2)
+      return carry
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r'This might be fixed by:\n  \* applying `jax.lax.pvary\(...,'
+        r" \('j',\)\)`"):
+      f(x, y, z)
+
+    @partial(shard_map, mesh=mesh, in_specs=(P('i'), P(), P(('i', 'j'))), out_specs=P(('i', 'j')))
+    def g(x, y, z):
+      def body(carry, _):
+        c1, c2, c3 = carry
+        return (c3, c1, c2), ()  # swap the carry
+
+      x = jax.lax.pvary(x, 'j')  # fix the issue
+      y = jax.lax.pvary(y, ('i', 'j'))
+      carry, _ = jax.lax.scan(body, (x, y, z), (), length=2)
+      return carry
+
+    g(x, y, z)  # doesn't crash
 
 
 class FunSpec(NamedTuple):

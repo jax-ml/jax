@@ -28,6 +28,7 @@ from jax import random
 from jax import lax
 from jax._src import core
 from jax._src import config
+from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
 from jax._src import test_util as jtu
@@ -477,27 +478,17 @@ class StatePrimitivesTest(jtu.JaxTestCase):
     op=[
         lambda x_ref, indexer: [x_ref[indexer]],
         lambda x_ref, indexer: [
-            ref_swap(x_ref, indexer,
-                            jnp.ones(x_ref.shape, x_ref.dtype)[None][(0,
-                              *indexer)])],
+            ref_swap(x_ref, indexer, jnp.ones_like(x_ref[indexer]))],
         lambda x_ref, indexer: (
-            ref_addupdate(x_ref, indexer,
-                                jnp.ones(x_ref.shape, x_ref.dtype)[None][(0,
-                                  *indexer)])
-            or [jnp.ones(x_ref.shape, x_ref.dtype)[None][(0, *indexer)]])
+            ref_addupdate(x_ref, indexer, jnp.ones_like(x_ref[indexer]))
+            or [jnp.ones_like(x_ref[indexer])]),
     ],
   )
   def test_vmap(self, ref_shape, ref_bdim, idx_shape, indexed_dims,
                     idx_bdims, out_bdim, op):
-
-    float_ = (jnp.dtype('float64') if config.enable_x64.value else
-              jnp.dtype('float32'))
-    int_ = (jnp.dtype('int64') if config.enable_x64.value else
-            jnp.dtype('int32'))
+    intx = dtypes.canonicalize_dtype(jnp.int64)
+    floatx = dtypes.canonicalize_dtype(jnp.float64)
     axis_size = 7
-    out_shape = tuple(d for d, b in zip(ref_shape, indexed_dims) if not b)
-    if any(indexed_dims):
-      out_shape = (*idx_shape, *out_shape)
 
     def maybe_insert(shape, idx):
       if idx is None:
@@ -505,13 +496,13 @@ class StatePrimitivesTest(jtu.JaxTestCase):
       return tuple_insert(shape, idx, axis_size)
 
     batched_ref_shape = maybe_insert(ref_shape, ref_bdim)
-    ref_aval = shaped_array_ref(ref_shape, float_)
-    bat_ref_aval = shaped_array_ref(batched_ref_shape, float_)
+    ref_aval = shaped_array_ref(ref_shape, floatx)
+    bat_ref_aval = shaped_array_ref(batched_ref_shape, floatx)
 
-    idx_avals = [core.ShapedArray(idx_shape, int_)
+    idx_avals = [core.ShapedArray(idx_shape, intx)
                  for _ in idx_bdims]
     bat_idx_avals = [
-        core.ShapedArray(maybe_insert(idx_shape, idx_bdim), int_)
+        core.ShapedArray(maybe_insert(idx_shape, idx_bdim), intx)
         for idx_bdim in idx_bdims]
 
     def f(x_ref, *idxs):
@@ -531,6 +522,7 @@ class StatePrimitivesTest(jtu.JaxTestCase):
         wrap_init(f_batched, 1 + len(bat_idx_avals)), [bat_ref_aval, *bat_idx_avals])
     jaxpr, consts = discharge_state(stateful_jaxpr, stateful_consts)
     discharge_of_vmap_ans = core.eval_jaxpr(jaxpr, consts, a, *idxs)
+
     # vmap-of-discharge
     stateful_jaxpr, _, stateful_consts, () = pe.trace_to_jaxpr_dynamic(
         wrap_init(f, 1 + len(idx_avals)), [ref_aval, *idx_avals])
@@ -830,11 +822,22 @@ if CAN_USE_HYPOTHESIS:
                                   min_size=len(ref_shape),
                                   max_size=len(ref_shape)))
     idx_shape = draw(hnp.array_shapes(max_dims=3, max_side=5))
-    if any(indexed_dims):
-      sliced_shape = (s for s, b in zip(ref_shape, indexed_dims) if not b)
-      slice_shape = (*idx_shape, *sliced_shape)
-    else:
+    if not any(indexed_dims):
       slice_shape = ref_shape
+    else:
+      sliced_shape = tuple(s for s, b in zip(ref_shape, indexed_dims) if not b)
+      int_indexers_contiguous = bool(
+          np.all(np.diff(np.where(indexed_dims)[0]) == 1)
+      )
+      if not int_indexers_contiguous:
+        slice_shape = (*idx_shape, *sliced_shape)
+      else:
+        insert_pos = indexed_dims.index(True)
+        slice_shape = (
+          *sliced_shape[:insert_pos],
+          *idx_shape,
+          *sliced_shape[insert_pos:],
+        )
     ref_aval = shaped_array_ref(ref_shape, np.float32)
     idx_avals = tuple(core.ShapedArray(idx_shape, np.int32) for _ in
         range(sum(indexed_dims)))

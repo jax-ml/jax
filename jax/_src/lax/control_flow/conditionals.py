@@ -23,7 +23,9 @@ import itertools
 import operator
 from typing import Any, TypeVar
 
-from jax.tree_util import tree_flatten, tree_unflatten
+from jax._src.tree_util import (
+    tree_flatten, tree_unflatten, tree_flatten_with_path, keystr,
+    equality_errors_pytreedef)
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import config
@@ -44,19 +46,14 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.lax import lax
 from jax._src.traceback_util import api_boundary
-from jax._src.util import (safe_map, split_list, partition_list)
+from jax._src.util import safe_map, split_list, partition_list, unzip2
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 import numpy as np
 
 from jax._src.lax.control_flow.common import (
-    _avals_short,
-    _check_tree_and_avals,
-    _initial_style_jaxprs_with_common_consts,
-    _make_closed_jaxpr,
-    _prune_zeros,
-    _typecheck_param,
-    )
+    _avals_short, _typecheck_param, _aval_mismatch_extra,
+    _initial_style_jaxprs_with_common_consts, _make_closed_jaxpr, _prune_zeros)
 
 map, unsafe_map = safe_map, map
 
@@ -147,10 +144,9 @@ def switch(index, branches: Sequence[Callable], *operands,
   if config.mutable_array_checks.value:
     api_util._check_no_aliased_closed_over_refs(dbgs[0], (*jaxprs[0].consts, *consts), ops)
   for i, (out_tree, jaxpr) in enumerate(zip(out_trees[1:], jaxprs[1:])):
-    _check_tree_and_avals("branch 0 output",
-                          out_trees[0], jaxprs[0].out_avals,
-                          f"branch {i + 1} output",
-                          out_tree, jaxpr.out_avals)
+    _check_branch_outputs(
+        "switch", "branch 0", f"branch{i+1}", branches[0], branches[i+1],
+        out_trees[0], out_tree, jaxprs[0].out_avals, jaxpr.out_avals)
   # prune passthrough outputs
   fwds = [pe._jaxpr_forwarding(jaxpr.jaxpr) for jaxpr in jaxprs]
   in_fwd = [xs[0] if len(set(xs)) == 1 else None for xs in zip(*fwds)]
@@ -270,10 +266,10 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
          true_jaxpr.out_avals + false_jaxpr.out_avals):
     raise ValueError("Cannot return `Ref`s from `cond`.")
 
-  _check_tree_and_avals("true_fun output",
-                        out_tree, true_jaxpr.out_avals,
-                        "false_fun output",
-                        false_out_tree, false_jaxpr.out_avals)
+  _check_branch_outputs(
+      'cond', 'true_fun', 'false_fun', true_fun, false_fun, out_tree,
+      false_out_tree, true_jaxpr.out_avals, false_jaxpr.out_avals)
+
   # prune passthrough outputs
   true_fwds = pe._jaxpr_forwarding(true_jaxpr.jaxpr)
   false_fwds = pe._jaxpr_forwarding(false_jaxpr.jaxpr)
@@ -302,6 +298,90 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   ]
   assert next(out_, None) is None
   return tree_unflatten(out_tree, out)
+
+def _check_branch_outputs(
+    api_name, name1, name2, f1, f2, out_tree1, out_tree2, out_avals1,
+    out_avals2) -> None:
+  info1 = api_util.fun_sourceinfo(f1)
+  info2 = api_util.fun_sourceinfo(f2)
+  try:
+    outs1 = tree_unflatten(out_tree1, out_avals1)
+  except:
+    paths = [None] * len(out_avals1)
+    component = lambda _: ''
+  else:
+    leaves_and_paths, _ = tree_flatten_with_path(outs1)
+    paths, _ = unzip2(leaves_and_paths)  # type: ignore
+    component = lambda p: f' at path {keystr(p)}' if p else ''
+
+  if out_tree1 != out_tree2:
+    diffs = [f'{name1} output{component(p)} is a {thing1} but '
+             f'{name2} output{component(p)} is a {thing2}, so {expl}'
+             for p, thing1, thing2, expl
+             in equality_errors_pytreedef(out_tree1, out_tree2)]
+
+    if len(diffs) == 0:
+      return  # the trees may have different aux data, but structures are same
+    elif len(diffs) == 1:
+      differences = f'{diffs[0]}.\n'
+    else:
+      differences = ('\n'.join(f'  * {d};\n' for d in diffs[:-1])
+                     + f'  * {diffs[-1]}.\n')
+
+    raise TypeError(
+        f'{api_name} branch outputs must have the same pytree structure, but '
+        'they differ:\n\n'
+        f'{name1} is {info1}\n' + f'{name2} is {info2}\n\n'
+        f'{differences}\n'
+        f'Revise {name1} and/or {name2} so that they have the same pytree '
+        'structure.')
+
+  if not all(map(core.typematch, out_avals1, out_avals2)):
+    diffs = [f'the output of {name1}{component(p)} has type {a1.str_short()}'
+             f' but the corresponding output of {name2} has type '
+             f'{a2.str_short()}{_aval_mismatch_extra(a1, a2)}'
+             for p, a1, a2 in zip(paths, out_avals1, out_avals2)
+             if not core.typematch(a1, a2)]
+    if len(diffs) == 0:
+      return  # seems unreachable but in any case we don't have a good error msg
+    elif len(diffs) == 1:
+      differences = f'{_capitalize(diffs[0])}.\n'
+    else:
+      differences = ('\n'.join(f'  * {d};' for d in diffs[:-1])
+                     + f'\n  * {diffs[-1]}.\n')
+
+    pvary_applications = [
+        f'applying `jax.lax.pvary(..., {tuple(a1.vma - a2.vma)})` '
+        f'to the output of {n}{component(p)}'
+        for p, aval1, aval2 in zip(paths, out_avals1, out_avals2)
+        for n, a1, a2 in [(name1, aval2, aval1), (name2, aval1, aval2)]
+        if not core.typematch(a1, a2) and
+        isinstance(a1, core.ShapedArray) and isinstance(a2, core.ShapedArray)
+        and a1.vma != a2.vma and a2.vma - a1.vma]
+
+    if not pvary_applications:
+      pvary_msg = ''
+    elif len(pvary_applications) == 1:
+      pvary_msg = f'This might be fixed by {pvary_applications[0]}.\n'
+    else:
+      pvary_msg = ('This might be fixed by:\n' +
+                   '\n'.join(f'  * {d};' for d in pvary_applications[:-1])
+                   + f'\n  * {pvary_applications[-1]}.\n')
+    if pvary_msg:
+      pvary_msg += ("See https://docs.jax.dev/en/latest/notebooks/shard_map.html#scan-vma "
+                    "for more information.\n\n")
+
+    raise TypeError(
+        f'{api_name} branches must have equal output types but they differ.\n\n'
+        f'{name1} is {info1}\n' + f'{name2} is {info2}\n\n'
+        f'{differences}\n'
+        f'{pvary_msg}'
+        f'Revise {name1} and/or {name2} so that all output types match.')
+
+
+def _capitalize(s):
+  # s.capitalize() converts s[1:] to lowercase which we don't want.
+  return s[0].capitalize() + s[1:]
 
 @api_boundary
 @functools.wraps(_cond)

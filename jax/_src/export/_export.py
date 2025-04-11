@@ -1444,12 +1444,11 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
         'builtin.module(sdy-lift-inlined-meshes)')
     pipeline.run(submodule.operation)
 
-  # TODO(bartchr): delete this once I have JAX export support multiple meshes.
   mesh = None
   if shardy_enabled:
     sdy_mesh_axes = xla_extension.sdy.get_mesh(mlir.module_to_bytecode(submodule))
-    mesh = mesh_lib.AbstractMesh(
-        *list(zip(*sdy_mesh_axes))[::-1]) if sdy_mesh_axes else None
+    mesh = (mesh_lib.AbstractMesh(*list(zip(*sdy_mesh_axes))[::-1])
+            if sdy_mesh_axes else mesh_lib.empty_abstract_mesh)
 
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.ShardingContext):

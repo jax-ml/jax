@@ -22,6 +22,9 @@ limitations under the License.
 
 namespace xla {
 
+// Waits until future is ready but will cancel if ctrl-c is pressed.
+void BlockUntilReadyWithCancel(xla::PjRtFuture<>& future);
+
 // Requests if given buffers are ready, awaits for results and returns OK if
 // all of the buffers are ready or the last non-ok status.
 absl::Status AwaitBuffersReady(absl::Span<ifrt::Array* const> ifrt_arrays);

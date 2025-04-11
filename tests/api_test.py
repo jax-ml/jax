@@ -10073,6 +10073,19 @@ class CustomTransposeTest(jtu.JaxTestCase):
       return jax.custom_derivatives.linear_call(fn, tp, None, x)
     jax.jit(f)(0.1)
 
+  def test_linear_call_grad(self):
+    def f(x, y):
+      def fn(r, x): return x / r
+      def tp(r, t): return t / r
+      return x + jax.custom_derivatives.linear_call(fn, tp, y, x)
+
+    def f_ref(x, y):
+      return x + x / y
+
+    x = jnp.array(6.)
+    y = jnp.array(3.)
+    self.assertAllClose(jax.grad(f)(x, y), jax.grad(f_ref)(x, y))
+
   def test_basic(self):
     def f(x, y):
       @custom_transpose(jnp.ones(2))

@@ -219,6 +219,9 @@ jax_core.pp_eqn_rules[copy_smem_to_gmem_p] = _copy_smem_to_gmem_pp_eqn
 @lowering.register_lowering_rule(
     copy_smem_to_gmem_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(
+    copy_smem_to_gmem_p, mgpu.LoweringSemantics.Lane,
+    primitive_semantics=gpu_core.PrimitiveSemantics.Warp)
+@lowering.register_lowering_rule(
     copy_smem_to_gmem_p, mgpu.LoweringSemantics.Warpgroup
 )
 def _copy_smem_to_gmem_lowering(
@@ -240,12 +243,12 @@ def _copy_smem_to_gmem_lowering(
 
   if ctx.module_ctx.lowering_semantics == mgpu.LoweringSemantics.Lane:
     if predicate is not None:
-      assert ctx.module_ctx.single_wg_lane_predicate is not None
+      assert ctx.module_ctx.single_lane_predicate is not None
       predicate = arith_dialect.andi(
-          predicate, ctx.module_ctx.single_wg_lane_predicate
+          predicate, ctx.module_ctx.single_lane_predicate
       )
     else:
-      predicate = ctx.module_ctx.single_wg_lane_predicate
+      predicate = ctx.module_ctx.single_lane_predicate
 
   flat_src_transforms, flat_dst_transforms = util.split_list(
       flat_args,
@@ -444,6 +447,9 @@ jax_core.pp_eqn_rules[copy_gmem_to_smem_p] = _copy_gmem_to_smem_pp_eqn
 @lowering.register_lowering_rule(
     copy_gmem_to_smem_p, mgpu.LoweringSemantics.Lane)
 @lowering.register_lowering_rule(
+    copy_gmem_to_smem_p, mgpu.LoweringSemantics.Lane,
+    primitive_semantics=gpu_core.PrimitiveSemantics.Warp)
+@lowering.register_lowering_rule(
     copy_gmem_to_smem_p, mgpu.LoweringSemantics.Warpgroup
 )
 def _copy_gmem_to_smem_lowering(
@@ -506,7 +512,7 @@ def _copy_gmem_to_smem_lowering(
         dst_ref=dst,
         barrier=barrier,
         arrive=False,
-        predicate=ctx.module_ctx.single_wg_lane_predicate,
+        predicate=ctx.module_ctx.single_lane_predicate,
         collective=collective,
         **copy_params,
     )
@@ -1141,7 +1147,7 @@ class Layout(enum.Enum):
       case Layout.WG_SPLAT:
         return mgpu.WGSplatFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
       case Layout.WG_STRIDED:
-        return mgpu.WGStridedFragLayout(*args, **kwargs)
+        return mgpu.WGStridedFragLayout(*args, **kwargs)  # pytype: disable=missing-parameter
 
 @dataclasses.dataclass(frozen=True)
 class ParameterizedLayout:
@@ -1456,6 +1462,14 @@ def jaxpr_call(
       program_ids_treedef=program_ids_treedef,
   )
 
+
+@dataclasses.dataclass(frozen=True)
+class GPUShapeDtypeStruct:
+  shape: tuple[int, ...]
+  dtype: jnp.dtype
+  layout: ParameterizedLayout | Layout
+
+
 inline_mgpu_p = jax_core.Primitive("inline_mgpu_p")
 inline_mgpu_p.multiple_results = True
 
@@ -1465,39 +1479,96 @@ class RefType:
   ...
 
 
-def inline_mgpu(*args, arg_types):
-  flat_args, treedef = jax.tree.flatten(tuple(args))
-  flat_types, treedef_ty = jax.tree.flatten(tuple(arg_types))
-  if treedef != treedef_ty:
-    raise ValueError(f"Mismatched type shape: {treedef} != {treedef_ty}")
+def inline_mgpu(arg_types=(), return_type=None):
+  """Decorate a function that inlines mgpu code.
 
-  # Strip the transforms from the refs since they will be recorded in
-  # the types.
-  raw_refs_flat_args = []
-  for a, t in zip(flat_args, flat_types):
-    def traced_ty(ty):
-      return isinstance(a, jax_core.Tracer) and isinstance(a.aval, ty)
+  Arguments provided to the decorated function may be Pallas
+  references or array values. The body will accept the corresponding
+  mgpu values.
 
-    if isinstance(t, (ParameterizedLayout, Layout)) and traced_ty(jax_core.ShapedArray):
-      raw_refs_flat_args.append(a)
-    elif isinstance(t, RefType) and traced_ty(_Ref):
-      ref, transforms = a, ()
-      if isinstance(a, state_types.TransformedRef):
-        ref, transforms = ref.ref, ref.transforms
+  The decorated function may return a tree of `FragmentedArray`s.
 
-      raw_refs_flat_args.append(ref)
-      if transforms:
-        raise NotImplementedError("Transformed refs (or types) are not supported.")
-    else:
-      raise ValueError(f"Mismatched type: {a, t}")
+  ```
+  layout = plgpu.Layout.WG_STRIDED(x_ref.shape, vec_size=4)
+  @plgpu.inline_mgpu(
+      arg_types=(plgpu.RefType(),),
+      return_type=plgpu.GPUShapeDtypeStruct(
+          (128, 128), dtype, layout=layout
+      ),
+  )
+  def foo(ctx, smem_ref):
+    del ctx
+    x = mgpu.FragmentedArray.load_tiled(smem_ref, )
+    y = mgpu.FragmentedArray.splat(
+        mgpu.c(1, x.mlir_dtype), shape=x.shape, layout=x.layout
+    )
+    return (x + y)
+
+  arr = foo(smem_ref)
+  ```
+
+  Args:
+
+    arg_types: a sequence of pytrees where the leaves are `RefType` or
+      `Layout` for references or arrays respectively as the return
+      type.
+
+    return_type: A pytree where the leaves are `GPUShapeDtypeStruct`
+      represeinting the arrays returned by the decorated function.
+
+  Returns:
+    A decorator that creates a function that inlines mgpu code.
+
+  """
+  flat_arg_types, treedef_ty = jax.tree.flatten(tuple(arg_types))
+  flat_ret_ty, pytree_ret_ty = jax.tree.flatten(return_type)
+  if return_type and not all(isinstance(r, GPUShapeDtypeStruct) for r in flat_ret_ty):
+    raise ValueError(
+        "inline_mgpu_p only supports GPUShapeDtypeStructx return types."
+    )
+  if not all(isinstance(r, (Layout, ParameterizedLayout, RefType)) for r in flat_arg_types):
+    raise ValueError(
+        "inline_mgpu_p only supports only Layout, ParameterizedLayout and"
+        " RefType arg types."
+    )
 
   def inner(f):
-    return inline_mgpu_p.bind(
-        *raw_refs_flat_args,
-        args_treedef=treedef,
-        flat_types=flat_types,
-        mgpu_fn=f,
-    )
+    def wrapper(*args):
+      flat_args, treedef = jax.tree.flatten(tuple(args))
+      if treedef != treedef_ty:
+        raise ValueError(f"Mismatched type shape: {treedef} != {treedef_ty}")
+
+      # Strip the transforms from the refs since they will be recorded in
+      # the types.
+      raw_refs_flat_args = []
+      for a, t in zip(flat_args, flat_arg_types):
+        def traced_ty(ty):
+          return isinstance(a, jax_core.Tracer) and isinstance(a.aval, ty)
+
+        if isinstance(t, ParameterizedLayout) and traced_ty(jax_core.ShapedArray):
+          raw_refs_flat_args.append(a)
+        elif isinstance(t, RefType) and traced_ty(_Ref):
+          ref, transforms = a, ()
+          if isinstance(a, state_types.TransformedRef):
+            ref, transforms = ref.ref, ref.transforms
+
+          raw_refs_flat_args.append(ref)
+          if transforms:
+            raise NotImplementedError("Transformed refs (or types) are not supported.")
+        else:
+          raise ValueError(f"Mismatched type: {a, t}")
+
+      flat_ret = inline_mgpu_p.bind(
+          *flat_args,
+          args_treedef=treedef,
+          flat_ret_ty=flat_ret_ty,
+          pytree_ret_ty=pytree_ret_ty,
+          flat_arg_types=flat_arg_types,
+          mgpu_fn=f,
+      )
+      return jax.tree.unflatten(pytree_ret_ty, flat_ret)
+    return wrapper
+
   return inner
 
 
@@ -1505,12 +1576,17 @@ def inline_mgpu(*args, arg_types):
 def _inline_mgpu_abstract_eval(
     *flat_args,
     args_treedef,
-    flat_types,
+    flat_arg_types,
+    flat_ret_ty,
+    pytree_ret_ty,
     mgpu_fn,
 ):
-  del args_treedef, flat_types, mgpu_fn  # Unused.
+  del args_treedef, flat_arg_types, pytree_ret_ty, mgpu_fn  # Unused.
+  aval_return = tuple(
+      jax_core.ShapedArray(x.shape, x.dtype) for x in flat_ret_ty
+  )
   # TODO(cperivol): Let the user set the effects.
-  return (), {
+  return aval_return, {
       gpu_core._wgmma_pipeline_effect,
       gpu_core._memory_effect,
       *itertools.chain.from_iterable(
@@ -1523,27 +1599,51 @@ def _inline_mgpu_abstract_eval(
 
 @discharge.register_partial_discharge_rule(inline_mgpu_p)
 def _inline_mgpu_discharge(*args, **kwargs):
+  del args, kwargs
   raise NotImplementedError("inline_mgpu_p does not support discharge.")
+
+
+def _type_check_mgpu(v, ty):
+  match (ty, v):
+    case (RefType(), ir.Value()) if ir.MemRefType.isinstance(v.type):
+      pass
+    case (GPUShapeDtypeStruct(), mgpu.FragmentedArray()):
+      mlir_dtype = mgpu_utils.dtype_to_ir_type(ty.dtype)
+      if v.mlir_dtype != mlir_dtype or ty.shape != v.shape or v.layout != ty.layout.to_mgpu():
+        raise ValueError(f"Array type mismatch at {v} != {ty}.")
+    case (Layout() , mgpu.FragmentedArray()) | (ParameterizedLayout(), mgpu.FragmentedArray()):
+      if ty.to_mgpu() != v.layout:
+        raise ValueError(f"Unexpected layout for {v} (expected: {ty})")
+    case _:
+      raise ValueError(f"Unexpected type {ty} for value {v}")
+
 
 @lowering.register_lowering_rule(inline_mgpu_p, mgpu.LoweringSemantics.Lane)
 def _inline_mgpu_lowering_rule(
     ctx: lowering.LoweringRuleContext,
     *flat_args,
     mgpu_fn: Callable[..., Any],
-    flat_types,
+    flat_arg_types,
+    flat_ret_ty,
+    pytree_ret_ty,
     args_treedef,
 ):
-  for a, t in zip(flat_args, flat_types, strict=True):
-    match a:
-      case ir.Value() if ir.MemRefType.isinstance(a.type):
-        # We checked the memory spaces at tracing time.
-        pass
-      case mgpu.FragmentedArray():
-        if a.layout != t.to_mgpu():
-          raise ValueError(f"Unexpected layout for {a} (expected: {t})")
-      case _:
-        raise ValueError(f"Unexpected argument {a}")
+  for a, t in zip(flat_args, flat_arg_types):
+    _type_check_mgpu(a, t)
 
   args = jax.tree.unflatten(args_treedef, flat_args)
-  mgpu_fn(ctx.launch_ctx, *args)
-  return ()
+  ret = mgpu_fn(ctx.launch_ctx, *args)
+  ret_leaves, ret_tree = jax.tree.flatten(
+      ret, is_leaf=lambda x: isinstance(x, mgpu.FragmentedArray)
+  )
+
+  if ret_tree != pytree_ret_ty:
+    return_type = jax.tree.unflatten(pytree_ret_ty, flat_ret_ty)
+    raise ValueError(
+        f"inline_mgpu_p return type tree mismatch: {ret} != {return_type}"
+    )
+
+  for ty, r in zip(flat_ret_ty, ret_leaves):
+    _type_check_mgpu(r, ty)
+
+  return ret_leaves

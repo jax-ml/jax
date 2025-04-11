@@ -29,6 +29,7 @@ from jax import lax
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
+from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
@@ -387,17 +388,27 @@ class PallasCallTest(PallasTest):
     def kernel(x_ref, o_ref, smem_ref, barrier):
       plgpu.copy_gmem_to_smem(x_ref, smem_ref, barrier)
       plgpu.barrier_wait(barrier)
-      arr = jnp.ones_like(x_ref)
+      layout = plgpu.Layout.WG_STRIDED(x_ref.shape, vec_size=4)
       @plgpu.inline_mgpu(
-          smem_ref,
-          o_ref,
-          arr,
-          arg_types=[plgpu.RefType(), plgpu.RefType(), plgpu.Layout.WG_SPLAT(x_ref.shape)],
+          arg_types=(plgpu.RefType(),),
+          return_type=plgpu.GPUShapeDtypeStruct(
+              (128, 128), dtype, layout=layout
+          ),
       )
-      def _(ctx, smem_ref, o_ref, y):
+      def foo(ctx, smem_ref):
         del ctx
         x = mgpu.FragmentedArray.load_strided(smem_ref)
-        (x + y).store_untiled(o_ref)
+        y = mgpu.FragmentedArray.splat(
+            mgpu.c(1, x.mlir_dtype), shape=x.shape, layout=x.layout
+        )
+        return (x + y)
+
+      arr = foo(smem_ref)
+      @plgpu.inline_mgpu(arg_types=(layout, plgpu.RefType()))
+      def store(ctx, arr, o_ref):
+        del ctx
+        arr.store_untiled(o_ref)
+      store(arr, o_ref)
 
     key = jax.random.key(0)
     x = (jax.random.uniform(key, (128, 128)) * 42).astype(dtype)
@@ -1524,6 +1535,64 @@ class PallasCallTest(PallasTest):
     y = jax.lax.iota(jnp.float32, 128) * 3
     np.testing.assert_array_equal(kernel(x, y), x + y)
 
+  def test_warp_specialization_axis_index(self):
+    if self.LOWERING_SEMANTICS != plgpu.LoweringSemantics.Lane:
+      self.skipTest("Test only works on Lane semantics")
+    warp_mesh = plgpu.WarpMesh(axis_name="warp")
+    @functools.partial(plgpu.kernel,
+                       out_shape=jax.ShapeDtypeStruct((2, 128), jnp.int32))
+    def kernel(y_ref):
+      def scope(ones_smem_ref, threes_smem_ref):
+        # Prepare data to copy.
+        ones_smem_ref[:] = jnp.ones((1, 128), jnp.int32)
+        threes_smem_ref[:] = jnp.ones((1, 128), jnp.int32) * 3
+        plgpu.commit_smem()
+        @pl.core_map(warp_mesh)
+        def _():
+          warp_id = lax.axis_index("warp")
+          # We cannot load/store inside of core_map, so we issue async
+          # copies instead to produce a testable result.
+          @pl.when(warp_id == 1)
+          def _():
+            plgpu.copy_smem_to_gmem(ones_smem_ref, y_ref.at[0:1])
+          @pl.when(warp_id == 3)
+          def _():
+            plgpu.copy_smem_to_gmem(threes_smem_ref, y_ref.at[1:2])
+        plgpu.wait_smem_to_gmem(0)
+      pl.run_scoped(scope,
+                    plgpu.SMEM((1, 128), jnp.int32),
+                    plgpu.SMEM((1, 128), jnp.int32)
+                    )
+    result = kernel()
+    expected = jnp.stack((jnp.ones((128,), jnp.int32),
+                          jnp.ones((128,), jnp.int32) * 3), axis=0)
+    np.testing.assert_array_equal(result, expected)
+
+  def test_warp_mesh_errors_when_closing_over_array(self):
+    if self.LOWERING_SEMANTICS != plgpu.LoweringSemantics.Lane:
+      self.skipTest("Test only works on Lane semantics")
+    # We currently do not allow closing over arrays when mapping over
+    # a mesh, since we would need to present a view of the array local
+    # to each warp.
+    warp_mesh = plgpu.WarpMesh(axis_name="warp")
+    @functools.partial(plgpu.kernel,
+                       out_shape=jax.ShapeDtypeStruct((32, 32), jnp.float32),
+                       scratch_shapes=[plgpu.SMEM((32, 32), jnp.float32)])
+    def kernel(out_ref, smem_ref):
+      arr = jnp.ones((32, 32), dtype=jnp.float32)
+      @pl.core_map(warp_mesh)
+      def _():
+        smem_ref[...] = arr + 1
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(smem_ref, out_ref)
+      plgpu.wait_smem_to_gmem(0)
+    with self.assertRaisesRegex(
+        mgpu_lowering.LoweringError,
+        "Can only close over scalars and Refs when using core_map with "
+        "WarpMesh",
+    ):
+      kernel()
+
 
 class PallasCallWGTest(
     PallasCallTest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
@@ -1549,6 +1618,7 @@ class PallasCallWGTest(
         mgpu_primitives.broadcasted_iota_p,
         mgpu_primitives.load_p,
         lax.slice_p,
+        pallas_core.core_map_p,
     }
 
     # TODO(dasenov): Remove this after the minimal jaxlib version is 0.5.4.
@@ -1987,32 +2057,36 @@ class PipelineTest(PallasTest):
     )
     np.testing.assert_array_equal(kernel_fn(x), x + 1.0)
 
-  @parameterized.parameters(
-      ((),),
-      ((plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128)),),
+  @parameterized.product(
+      transforms=(
+          (),
+          (plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(128)),
+      ),
+      repeats=(1, 3),
   )
-  def test_emit(self, transforms):
+  def test_emit(self, transforms, repeats):
     if transforms:
       self.skip_if_wg_semantics()
 
     num_steps = 4
 
     def kernel(x_gmem, o_gmem):
-      plgpu.emit_pipeline(
-          kernel_body,
-          in_specs=[
-              plgpu.GPUBlockSpec(
-                  (64, 64), lambda i: (0, i), transforms=transforms
-              )
-          ],
-          out_specs=[
-              plgpu.GPUBlockSpec(
-                  (64, 64), lambda i: (0, i), transforms=transforms
-              )
-          ],
-          grid=(num_steps,),
-          max_concurrent_steps=2,
-      )(x_gmem, o_gmem)
+      for _ in range(repeats):
+        plgpu.emit_pipeline(
+            kernel_body,
+            in_specs=[
+                plgpu.GPUBlockSpec(
+                    (64, 64), lambda i: (0, i), transforms=transforms
+                )
+            ],
+            out_specs=[
+                plgpu.GPUBlockSpec(
+                    (64, 64), lambda i: (0, i), transforms=transforms
+                )
+            ],
+            grid=(num_steps,),
+            max_concurrent_steps=2,
+        )(x_gmem, o_gmem)
 
     def kernel_body(_, x_smem, o_smem):
       # +1 for the indexing done by ``emit_pipeline`.
@@ -2122,10 +2196,12 @@ class PipelineTest(PallasTest):
     y = x + 1.0
     np.testing.assert_array_equal(kernel_fn(x), y)
 
-  @parameterized.product(static=[False, True])
-  def test_emit_with_2d_grid(self, static):
+  @parameterized.product(static=[False, True], short=[False, True])
+  def test_emit_with_2d_grid(self, static, short):
     num_steps1 = 4
     num_steps2 = 5
+    if short:
+      num_steps1 = num_steps2 = 1
 
     def kernel(x_gmem, o_gmem):
       grid = (num_steps1, num_steps2)
@@ -2235,9 +2311,9 @@ class PipelineSm90AWGTest(
 
 class WarpSpecializedPipelineTest(PallasTest):
 
-  @parameterized.product(m=[512], n=[512],
+  @parameterized.product(m=[512], n=[512], repeats=[1, 3],
                          manual_consumed_barriers=[False, True])
-  def test_pipelined_copy(self, m, n, manual_consumed_barriers):
+  def test_pipelined_copy(self, m, n, repeats, manual_consumed_barriers):
     self.skip_if_wg_semantics()  # Times out!
 
     x = jax.random.uniform(jax.random.key(0), (m, n), dtype=jnp.float16)
@@ -2256,25 +2332,28 @@ class WarpSpecializedPipelineTest(PallasTest):
     spec = pl.BlockSpec(
         block_shape=(blk_m, blk_n), index_map=lambda i, j: (i, j)
     )
-    pipeline = mgpu_pipeline.emit_pipeline_warp_specialized(
-        copy_kernel,
-        grid=(m // blk_m, n // blk_n),
-        memory_registers=40,
-        max_concurrent_steps=2,
-        num_compute_wgs=2,
-        wg_axis="wg",
-        manual_consumed_barriers=manual_consumed_barriers,
-        in_specs=[spec],
-        out_specs=[
-            spec,
-            # Create an index-invariant output.
-            pl.BlockSpec(
-                block_shape=(blk_m, blk_n), index_map=lambda i, j: (0, 0)
-            ),
-        ],
-    )
+    def body(*gmem_refs):
+      pipeline = mgpu_pipeline.emit_pipeline_warp_specialized(
+          copy_kernel,
+          grid=(m // blk_m, n // blk_n),
+          memory_registers=40,
+          max_concurrent_steps=2,
+          num_compute_wgs=2,
+          wg_axis="wg",
+          manual_consumed_barriers=manual_consumed_barriers,
+          in_specs=[spec],
+          out_specs=[
+              spec,
+              # Create an index-invariant output.
+              pl.BlockSpec(
+                  block_shape=(blk_m, blk_n), index_map=lambda i, j: (0, 0)
+              ),
+          ],
+      )
+      for _ in range(repeats):
+        pipeline(*gmem_refs)  # Make sure we can run the pipeline multiple times
     kernel = self.kernel(
-        pipeline,
+        body,
         out_shape=(
             jax.ShapeDtypeStruct((m, n), jnp.float16),
             jax.ShapeDtypeStruct((blk_m, blk_n), jnp.float16),
@@ -2289,7 +2368,9 @@ class WarpSpecializedPipelineTest(PallasTest):
     np.testing.assert_array_equal(out, x)
     np.testing.assert_array_equal(out_last_block, x[-blk_m:, -blk_n:])
 
-  @parameterized.product(m=[256], n=[256], num_compute_wgs=[1, 2], static=[False, True])
+  @parameterized.product(
+      m=[256, 64], n=[256, 64], num_compute_wgs=[1, 2], static=[False, True]
+  )
   def test_elementwise_add(self, m, n, num_compute_wgs, static):
     self.skip_if_wg_semantics()  # Crashes!
 
@@ -2306,7 +2387,7 @@ class WarpSpecializedPipelineTest(PallasTest):
 
     def pipeline(*gmem_refs):
       grid = (m // blk_m, n // blk_n)
-      if static:
+      if not static:
         grid = jax.tree.map(jnp.asarray, grid)
       return mgpu_pipeline.emit_pipeline_warp_specialized(
           tiled_add_kernel,
@@ -2402,7 +2483,7 @@ class WarpSpecializedPipelineWGTest(
   ...
 
 
-class CoreMapTest(PallasTest):
+class CoreMapTest(PallasTest, jtu.CudaArchSpecificTest):
 
   def test_multiple_wg(self):
 
@@ -2532,6 +2613,7 @@ class CoreMapTest(PallasTest):
 
   def test_realistic_matmul_with_cluster(self):
     self.skip_if_wg_semantics()  # Needs WGMMA to support slices.
+    self.skip_unless_sm90a()  # Requires WGMMA.
 
     dtype = jnp.float16
     swizzle = 128
