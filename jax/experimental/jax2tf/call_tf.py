@@ -348,8 +348,7 @@ def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
     if (isinstance(arg_jax, jax.Array) and
         list(arg_jax.devices())[0].platform in _DLPACK_PLATFORMS and
         arg_jax.dtype.type in dlpack.SUPPORTED_DTYPES):
-      arg_dlpack = jax.dlpack.to_dlpack(arg_jax)
-      return tf.experimental.dlpack.from_dlpack(arg_dlpack)
+      return tf.experimental.dlpack.from_dlpack(arg_jax.__dlpack__())
     # The following avoids copies to the host on CPU, always for Array
     # and even for ndarray if they are sufficiently aligned.
     # TODO(necula): on TPU this copies to the host!
