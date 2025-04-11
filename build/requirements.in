@@ -19,5 +19,6 @@ scipy>=1.15.2; python_version>="3.13"
 ml_dtypes>=0.4.0
 opt_einsum
 zstandard
+tensorstore
 etils[epath]
 setuptools
