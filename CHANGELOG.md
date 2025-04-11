@@ -30,11 +30,16 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     The workaround is to apply `jax.jit` last among the wrappers,
     and similarly for `jax.pmap`.
     See {jax-issue}`#27873`.
+  * The `cuda12_pip` extra for `jax` has been removed; use `pip install jax[cuda12]`
+    instead.
 
 * Changes
   * The minimum CuDNN version is v9.8.
   * JAX is now built using CUDA 12.8. All versions of CUDA 12.1 or newer remain
     supported.
+  * JAX package extras are now updated to use dash instead of underscore to
+    align with PEP 685. For instance, if you were previously using `pip install jax[cuda12_local]`
+    to install JAX, run `pip install jax[cuda12-local]` instead.
 
 * Deprecations
 
