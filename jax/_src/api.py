@@ -288,9 +288,12 @@ def jit(
     Array([   0,    1,  256, 6561], dtype=int32)
   """
   return pjit.make_jit(
-        fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
-        static_argnums, static_argnames, device, backend, abstracted_axes,
-        keep_unused, inline, compiler_options, use_resource_env=False)
+      fun, in_shardings=in_shardings, out_shardings=out_shardings,
+      static_argnums=static_argnums, static_argnames=static_argnames,
+      donate_argnums=donate_argnums, donate_argnames=donate_argnames,
+      keep_unused=keep_unused, device=device, backend=backend, inline=inline,
+      abstracted_axes=abstracted_axes, compiler_options=compiler_options,
+      use_resource_env=False)
 
 
 @contextmanager
