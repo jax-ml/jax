@@ -32,6 +32,8 @@ build --output_filter=DONT_MATCH_ANYTHING
 
 build --copt=-DMLIR_PYTHON_PACKAGE_PREFIX=jaxlib.mlir.
 build --copt=-DNB_DOMAIN=jax
+build --host_copt=-DMLIR_PYTHON_PACKAGE_PREFIX=jaxlib.mlir.
+build --host_copt=-DNB_DOMAIN=jax
 
 # #############################################################################
 # Platform Specific configs below. These are automatically picked up by Bazel
@@ -39,11 +41,14 @@ build --copt=-DNB_DOMAIN=jax
 # #############################################################################
 build:linux --config=posix
 build:linux --copt=-Wno-unknown-warning-option
+build:linux --host_copt=-Wno-unknown-warning-option
 
 # Workaround for gcc 10+ warnings related to upb.
 # See https://github.com/tensorflow/tensorflow/issues/39467
 build:linux --copt=-Wno-stringop-truncation
 build:linux --copt=-Wno-array-parameter
+build:linux --host_copt=-Wno-stringop-truncation
+build:linux --host_copt=-Wno-array-parameter
 
 build:macos --config=posix
 build:macos --apple_platform_type=macos
@@ -78,6 +83,7 @@ build:windows --host_copt=-DNOGDI
 # https://devblogs.microsoft.com/cppblog/announcing-full-support-for-a-c-c-conformant-preprocessor-in-msvc/
 # otherwise, there will be some compiling error due to preprocessing.
 build:windows --copt=/Zc:preprocessor
+build:windows --host_copt=/Zc:preprocessor
 build:windows --cxxopt=/std:c++17
 build:windows --host_cxxopt=/std:c++17
 # Generate PDB files, to generate useful PDBs, in opt compilation_mode
@@ -101,6 +107,8 @@ build:nonccl --define=no_nccl_support=true
 build --repo_env USE_PYWRAP_RULES=1
 build:posix --copt=-fvisibility=hidden
 build:posix --copt=-Wno-sign-compare
+build:posix --host_copt=-fvisibility=hidden
+build:posix --host_copt=-Wno-sign-compare
 build:posix --cxxopt=-std=c++17
 build:posix --host_cxxopt=-std=c++17
 
@@ -114,6 +122,7 @@ build:avx_linux --copt=-mavx
 build:avx_linux --host_copt=-mavx
 
 build:avx_windows --copt=/arch:AVX
+build:avx_windows --host_copt=/arch:AVX
 
 build:mkl_open_source_only --define=tensorflow_mkldnn_contraction_kernel=1
 
@@ -128,12 +137,16 @@ build:mkl_aarch64_threadpool -c opt
 # offset of in the current version of ubp.
 # See https://github.com/protocolbuffers/upb/blob/9effcbcb27f0a665f9f345030188c0b291e32482/upb/upb.c#L183.
 build:clang --copt=-Wno-gnu-offsetof-extensions
+build:clang --host_copt=-Wno-gnu-offsetof-extensions
 # Disable clang extention that rejects unknown arguments.
 build:clang --copt=-Qunused-arguments
+build:clang --host_copt=-Qunused-arguments
 # Error on struct/class mismatches, since this causes link failures on Windows.
 build:clang --copt=-Werror=mismatched-tags
+build:clang --host_copt=-Werror=mismatched-tags
 # Required when building with clang>=19, see jax-ml/jax#27091
 build:clang --copt=-Wno-error=c23-extensions
+build:clang --host_copt=-Wno-error=c23-extensions
 
 # Configs for CUDA
 build:cuda --repo_env TF_NEED_CUDA=1
@@ -165,6 +178,7 @@ build:cuda_libraries_from_stubs --@local_config_cuda//cuda:include_cuda_libs=fal
 #   acceptable, because the workaround is "remove the nvidia-..." pip packages.
 # The list of CUDA pip packages that JAX depends on are present in setup.py.
 build:cuda --linkopt=-Wl,--disable-new-dtags
+build:cuda --host_linkopt=-Wl,--disable-new-dtags
 
 # Build CUDA and other C++ targets with Clang
 build:build_cuda_with_clang --@local_config_cuda//:cuda_compiler=clang
@@ -189,6 +203,8 @@ build:rocm --action_env=TF_ROCM_CLANG="1"
 build:rocm --action_env=CLANG_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 build:rocm --copt=-Wno-gnu-offsetof-extensions
 build:rocm --copt=-Qunused-arguments
+build:rocm --host_copt=-Wno-gnu-offsetof-extensions
+build:rocm --host_copt=-Qunused-arguments
 build:rocm --action_env=TF_HIPCC_CLANG="1"
 
 # #############################################################################
