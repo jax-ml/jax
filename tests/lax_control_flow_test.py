@@ -2347,7 +2347,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     elif loop == "fori_inside_cond":
       func = lambda x: lax.cond(
           True,
-          x, lambda x: lax.fori_loop(x, x + 2., lambda i, c: c, x),
+          x, lambda x: lax.fori_loop(x, x + 2., lambda i, c: c * 2., x),
           1., lambda x: x)
     elif loop == "fori_inside_scan":
       func = lambda x: lax.scan(
@@ -3107,6 +3107,27 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       x, y = jax.lax.while_loop(cond, body, (x, y))
       return x + y
     jax.linearize(f, 1., 2.)  # don't crash
+
+  def test_readonly_carry_optimization(self):
+    # https://github.com/google/flax/issues/4700
+    def foo(w, x, c_max):
+      def while_cond(val):
+        c, x, w = val
+        return c < c_max
+
+      def while_body(val):
+        c, x, w = val
+        return c + 1, x @ w, w
+
+      _, x, w = jax.lax.while_loop(while_cond, while_body, (0, x, w))
+      return w, x
+
+    w = jnp.ones((2, 2))
+    xs = jnp.ones((4, 2))
+    c_maxs = jnp.arange(4)
+    w_, _ = jax.vmap(foo, in_axes=(None, 0, 0), out_axes=(None, 0)
+                     )(w, xs, c_maxs)  # doesn't crash
+    self.assertAllClose(w, w_, check_dtypes=False)
 
 
 if __name__ == '__main__':
