@@ -78,6 +78,10 @@ or [CUTLASS ping-pong matmul kernels](https://pytorch.org/blog/cutlass-ping-pong
 For more information on how warp scheduling and instruction issue works, we recommend reading
 [Analyzing Modern NVIDIA GPU cores](https://arxiv.org/abs/2503.20481).
 
+### Memory spaces
+
+TODO: GMEM, SMEM, RMEM, (maybe TMEM)
+
 ## Array layouts and reference transforms
 
 TODO
@@ -105,25 +109,103 @@ TODO
 
 ### `commit_smem`
 
-TODO
+Regular reads/writes to references are guaranteed to produce values consistent
+with the sequential program order. For example, in the following program, it is
+guaranteed that `value` is equal to `value2`.
+```python
+ref[...] = value
+value2 = ref[...]
+```
+
+This guarantee, however, does not extend to asynchronous primitives such as async
+copies or MMA operations. To make the SMEM writes visible to those primitives, you
+are required to explicitly synchronize with them using the `plgpu.commit_smem()` function.
+
+For example:
+```python
+smem_ref[...] = value
+plgpu.commit_smem()
+plgpu.copy_smem_to_gmem(smem_ref, ...)
+```
+or:
+```python
+smem_ref[...] = value
+plgpu.commit_smem()
+plgpu.wgmma(smem_ref, ...)
+```
+
+Failing to insert this memory fence is likely to cause subtle data races. Unfortunately
+the fence is relatively expensive, which is why we rely on you, the user, to insert it
+in the minimal number of places where it's necessary.
 
 ### `Barrier`
 
 This is essentially a thin wrapper around an array of PTX `mbarrier` types and is
 passed in as a reference. All functions involving barriers expect to only get a single
 barrier argument, and so if the reference contains multiple, you have to extract one
-of them explicitly using `barriers.at[index]`.
+of them explicitly using `barriers.at[index]`. `Barrier`s are always allocated in SMEM
+and as such have relatively low overheads. Each barrier can be configured to complete
+after a fixed number of "arrivals" (by default 1).
 
-`Barrier`s are always allocated in SMEM and as such have relatively low overheads.
-There are three primary use cases that require the use of `Barrier`s:
+To block a thread until a barrier completes, use the following function:
+```python
+plgpu.barrier_wait(barrier)
+```
 
-1. Awaiting asynchronous GMEM-to-SMEM copies
+There are three operations that can complete a barrier:
 
-TODO
+> It is critical to ensure that the synchronization scheme makes it impossible for two
+  barrier completions to happen without a call to `plgpu.barrier_wait` in between them.
+  For example, if you use `Barrier`s to synchronize two producer/consumer threads, you
+  need to perform barrier synchronization going both ways to introduce "backpressure"
+  that will stop one thread from arriving twice before the other one had a chance to await.
+  Failing to satisfy this will corrupt the data structure and can cause surprising failures
+  (including CUDA runtime errors).
 
-2. Cross-warpgroup synchronization
+1. Asynchronous GMEM-to-SMEM copies
 
-TODO
+When an asynchronous GMEM-to-SMEM copy is being executed by the TMA engine, it will
+post progress updates to the barrier given to `plgpu.copy_gmem_to_smem`. Once the copy
+is complete, the barrier will complete one arrival as well.
+
+2. Explicit arrival (cross-thread synchronization)
+
+Any thread can perform an explicit arrival to a barrier using the following function:
+```python
+plgpu.barrier_arrive(barrier)
+```
+
+This is especially useful when synchronizing two threads that are in producer/consumer
+roles. In this case, we recommend allocating two arrays of `Barrier`s, with size equal
+to the size of the "queue" used to pass data between the two threads. For example,
+assume one thread continues writing tiles of an array to SMEM while another thread
+reads them. We triple-buffer the SMEM region to allow more asynchrony between the two
+threads:
+
+```python
+tid = jax.lax.axis_index("thread")
+assert queue.shape == (buffering, *item_shape)
+assert produced.shape == consumed.shape == (buffering,)
+
+def thread0_body(i, _):
+  buffer = jax.lax.rem(i, buffering)
+  @pl.when(i >= buffering)
+  def _await_consumed():
+    plgpu.barrier_wait(consumed.at[buffer])  # Wait for consumption of the value before overwriting it
+  # Option 1: Compute the buffer value
+  queue[buffer] = produce()
+  plgpu.barrier_arrive(produced.at[buffer])  # Signal the value is ready
+  # Option 2: Produce the value through async_copy
+  # plgpu.copy_gmem_to_smem(..., queue.at[buffer], barrier=produced.at[buffer])
+pl.when(tid == 0)(lambda: jax.lax.fori_loop(0, steps, thread0_body, None))
+
+def thread1_body(i, _):
+  buffer = jax.lax.rem(i, buffering)
+  plgpu.barrier_wait(produced.at[buffer])  # Wait for the value to be ready
+  consume(queue[buffer])  # Load and compute
+  plgpu.barrier_arrive(consumed.at[buffer])  # Signal that the value is consumed
+pl.when(tid == 1)(lambda: jax.lax.fori_loop(0, steps, thread1_body, None))
+```
 
 3. Awaiting `tcgen05` TensorCore instructions
 
