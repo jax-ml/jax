@@ -31,6 +31,7 @@ from jax import numpy as jnp
 from jax import scipy as jsp
 from jax._src import config
 from jax._src.lax import linalg as lax_linalg
+import jax._src.numpy.linalg
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.numpy.util import promote_dtypes_inexact
@@ -690,6 +691,54 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-3)
     self._CompileAndCheck(jnp_fn, args_maker)
+
+  @jtu.sample_product(
+    [dict(axis=axis, shape=shape, ord=ord)
+     for shape in [(1,), (2,), (3,), (4, 5), (6, 7)]
+     for axis in ([None, 0, (-1,), -1] + [1, -2, (-2,), (-1, -2)]
+                  if len(shape) > 1 else [])
+     for ord in (
+         [None, 2] + (['fro', 'f'] if len(shape) >= 2 and isinstance(
+             axis, (tuple, list)) and len(axis) >= 2 else []))
+    ],
+    keepdims=[False, True],
+    dtype=float_types + complex_types,
+  )
+  def testNormGrad(self, shape, dtype, ord, axis, keepdims):
+
+    def unsafe_norm(x):
+      return jnp.sqrt(jnp.sum(jnp.real(x * jnp.conj(x)), axis=axis,
+                              keepdims=keepdims))
+
+    unsafe_jac = jax.jacobian(unsafe_norm)
+    jac = jax.jacobian(partial(jnp.linalg.norm, ord=ord, axis=axis,
+                               keepdims=keepdims))
+    # test zero grad when safe
+    x = jnp.zeros(shape, dtype=dtype)
+    self.assertEqual(jnp.max(jnp.abs(jac(x))), 0)
+    # test grad agreement to the unsafe version
+    x = 1e-2 * jnp.ones(shape, dtype=dtype)
+    self.assertAllClose(jac(x), unsafe_jac(x))
+
+  @jtu.sample_product(
+    shape=[(1,), (2,), (3,), (5,), (7,)],
+    ord=[None, 2],
+    dtype=float_types + complex_types,
+  )
+  def testNormHessianAtZero(self, shape, ord, dtype):
+    x = jnp.zeros(shape[0], dtype=dtype)
+    H = jax.jacobian(jax.grad(partial(jnp.linalg.norm, ord=ord)),
+                     holomorphic=jnp.issubdtype(dtype, jnp.complexfloating))(x)
+    self.assertArraysEqual(jnp.isnan(H), True, check_dtypes=False)
+
+    # assert indepdent Hessian batches do not poison each other with nans
+    x = jnp.stack([jnp.zeros(shape[0], dtype=dtype),
+                   jnp.ones(shape[0], dtype=dtype)], axis=0)
+    H = jax.vmap(jax.jacobian(
+        jax.grad(partial(jnp.linalg.norm, ord=ord)),
+        holomorphic=jnp.issubdtype(dtype, jnp.complexfloating)))(x)
+    self.assertArraysEqual(jnp.isnan(H[0, ...]), True, check_dtypes=False)
+    self.assertArraysEqual(jnp.isnan(H[1, ...]), False, check_dtypes=False)
 
   def testStringInfNorm(self):
     err, msg = ValueError, r"Invalid order 'inf' for vector norm."
