@@ -120,7 +120,7 @@ class CompatTest(bctu.CompatTestBase):
     targets_to_cover = set(_export._CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
     cpu_ffi_testdatas = [
         cpu_cholesky_lapack_potrf.data_2024_05_31,
-        cpu_qr_lapack_geqrf.data_2024_08_22,
+        cpu_qr_lapack_geqrf.data_2025_04_02,
         cpu_eig_lapack_geev.data_2024_08_19,
         cpu_eigh_lapack_syev.data_2024_08_19,
         cpu_lu_lapack_getrf.data_2024_05_31,
@@ -134,12 +134,7 @@ class CompatTest(bctu.CompatTestBase):
     # stable
     covering_testdatas = [
         *cpu_ffi_testdatas,
-        cpu_cholesky_lapack_potrf.data_2023_06_19,
-        cpu_eig_lapack_geev.data_2023_06_19,
-        cpu_eigh_lapack_syev.data_2023_03_17,
-        cpu_qr_lapack_geqrf.data_2023_03_17,
         cuda_threefry2x32.data_2024_07_30,
-        cpu_lu_lapack_getrf.data_2023_06_14,
         cuda_lu_pivots_to_permutation.data_2025_04_01,
         cuda_lu_cusolver_getrf.data_2024_08_19,
         cuda_qr_cusolver_geqrf.data_2024_09_26,
@@ -149,9 +144,7 @@ class CompatTest(bctu.CompatTestBase):
         cuda_tridiagonal_cusolver_sytrd.data_2025_01_09,
         rocm_eigh_hipsolver_syev.data_2024_08_05,
         cpu_schur_lapack_gees.data_2023_07_16,
-        cpu_svd_lapack_gesdd.data_2023_06_19,
         cpu_triangular_solve_blas_trsm.data_2023_07_16,
-        cpu_hessenberg_lapack_gehrd.data_2024_08_30,
         cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_09_03,
         tpu_Eigh.data, tpu_Lu.data_2023_03_21, tpu_Qr.data_2023_03_17,
         tpu_Sharding.data_2023_03_16, tpu_ApproxTopK.data_2023_04_17,
@@ -213,10 +206,6 @@ class CompatTest(bctu.CompatTestBase):
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol)
 
-    data = self.load_testdata(cpu_cholesky_lapack_potrf.data_2023_06_19[dtype_name])
-    self.run_one_test(func, data, rtol=rtol, atol=atol,
-                      expect_current_custom_calls=info["custom_call_targets"])
-
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
@@ -277,10 +266,6 @@ class CompatTest(bctu.CompatTestBase):
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_eig_results)
-    data = self.load_testdata(cpu_eig_lapack_geev.data_2023_06_19[dtype_name])
-    self.run_one_test(func, data, rtol=rtol, atol=atol,
-                      check_results=check_eig_results,
-                      expect_current_custom_calls=info["custom_call_targets"])
 
   @staticmethod
   def eigh_input(shape, dtype):
@@ -333,12 +318,6 @@ class CompatTest(bctu.CompatTestBase):
     data = self.load_testdata(cpu_eigh_lapack_syev.data_2024_08_19[dtype_name])
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_eigh_results, operand))
-
-    # Legacy custom call test
-    data = self.load_testdata(cpu_eigh_lapack_syev.data_2023_03_17[dtype_name])
-    self.run_one_test(func, data, rtol=rtol, atol=atol,
-                      check_results=partial(self.check_eigh_results, operand),
-                      expect_current_custom_calls=info["custom_call_targets"])
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}_{variant}",
@@ -419,7 +398,7 @@ class CompatTest(bctu.CompatTestBase):
       dict(testcase_name=f"_dtype={dtype_name}",
            dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
-  def test_cuda_lu_lapack_getrf(self, dtype_name:str):
+  def test_cuda_lu_cusolver_getrf(self, dtype_name:str):
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
     dtype = dict(f32=np.float32, f64=np.float64,
@@ -446,14 +425,9 @@ class CompatTest(bctu.CompatTestBase):
                  c64=np.complex64, c128=np.complex128)[dtype_name]
     func = lambda: CompatTest.qr_harness((3, 3), dtype)
 
-    info = cpu_qr_lapack_geqrf.data_2024_08_22[dtype_name]
+    info = cpu_qr_lapack_geqrf.data_2025_04_02[dtype_name]
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol)
-
-    # TODO(b/369826500): Remove legacy custom call test after mid March 2025.
-    data = self.load_testdata(cpu_qr_lapack_geqrf.data_2023_03_17[dtype_name])
-    self.run_one_test(func, data, rtol=rtol,
-                      expect_current_custom_calls=info["custom_call_targets"])
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -528,14 +502,6 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_lu_results, operand,
                                             dtype=dtype))
-
-    # TODO(b/357034884): Remove legacy custom call test after mid March 2025.
-    legacy_data = self.load_testdata(
-        cpu_lu_lapack_getrf.data_2023_06_14[dtype_name])
-    self.run_one_test(func, legacy_data, rtol=rtol, atol=atol,
-                      check_results=partial(self.check_lu_results, operand,
-                                            dtype=dtype),
-                      expect_current_custom_calls=info["custom_call_targets"])
 
   def check_svd_results(self, input, res_run, res_exp,
                         rtol=None, atol=None):
@@ -655,12 +621,6 @@ class CompatTest(bctu.CompatTestBase):
                       check_results=partial(self.check_svd_results,
                                             *data.inputs))
 
-    data = self.load_testdata(cpu_svd_lapack_gesdd.data_2023_06_19[dtype_name])
-    self.run_one_test(func, data, rtol=rtol, atol=atol,
-                      check_results=partial(self.check_svd_results,
-                                            *data.inputs),
-                      expect_current_custom_calls=info["custom_call_targets"])
-
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}_algorithm={algorithm_name}",
            dtype_name=dtype_name, algorithm_name=algorithm_name)
@@ -750,12 +710,6 @@ class CompatTest(bctu.CompatTestBase):
     info = cpu_hessenberg_lapack_gehrd.data_2024_08_31[dtype_name]
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol)
-
-    data = self.load_testdata(
-        cpu_hessenberg_lapack_gehrd.data_2024_08_30[dtype_name]
-    )
-    self.run_one_test(func, data, rtol=rtol, atol=atol,
-                      expect_current_custom_calls=info["custom_call_targets"])
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
