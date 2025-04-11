@@ -98,7 +98,10 @@ def dist_wheels(
 
     bw_cmd.append("/jax")
 
-    cmd = ["docker", "run"]
+    cmd = [
+        "docker",
+        "run",
+    ]
 
     mounts = [
         "-v",
