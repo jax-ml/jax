@@ -51,6 +51,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The deprecated use of {func}`jax.ffi.ffi_call` with inline arguments is no
     longer supported. {func}`~jax.ffi.ffi_call` now unconditionally returns a
     callable.
+  * `jax.dlpack.to_dlpack` has been deprecated. You can usually pass a JAX
+    `Array` directly to the `from_dlpack` function of another framework. If you
+    need the functionality of `to_dlpack`, use the `__dlpack__` attribute of an
+    array.
   * Several previously-deprecated APIs have been removed, including:
     * From `jax.lib.xla_client`: `ArrayImpl`, `FftType`, `PaddingType`,
       `PrimitiveType`, `XlaBuilder`, `dtype_to_etype`,
