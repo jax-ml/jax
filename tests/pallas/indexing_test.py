@@ -218,12 +218,13 @@ class IndexerTest(jtu.JaxTestCase):
 
     indices = (ds(0, 2), np.arange(5)[:, None], np.arange(4)[None])
     indexer = NDIndexer.from_indices_shape(indices, shape)
-    self.assertTupleEqual(indexer.get_indexer_shape(), (5, 4, 2))
+    self.assertTupleEqual(indexer.get_indexer_shape(), (2, 5, 4))
 
   @hp.given(hps.data())
   def test_ndindexer(self, data):
     shape = data.draw(hnp.array_shapes())
     indexer = data.draw(nd_indexer_strategy(shape))
+
     is_int_indexer = [not isinstance(idx, Slice) for idx in indexer.indices]
     rest_indexers, int_indexers = util.partition_list(
         is_int_indexer, indexer.indices
@@ -235,16 +236,12 @@ class IndexerTest(jtu.JaxTestCase):
     self.assertTupleEqual(
         indexer.int_indexer_shape, expected_int_indexer_shape
     )
+
     for idx in rest_indexers:
       self.assertIsInstance(idx, (np.ndarray, Slice))
       if isinstance(idx, np.ndarray):
         self.assertTupleEqual(idx.shape, ())
         self.assertEqual(idx.dtype, np.dtype("int32"))
-    rest_shape = tuple(
-        r.size for r in rest_indexers if not isinstance(r, np.ndarray)
-    )
-    self.assertTupleEqual((*indexer.int_indexer_shape, *rest_shape),
-                          indexer.get_indexer_shape())
 
 
 @jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
@@ -692,18 +689,18 @@ _ADVANCED_INDEXER_TEST_CASES = [
     ((4, 3), lambda arr, a, b, c, d: arr[a, 2]),
     # slice + 1-D array
     ((4, 3), lambda arr, a, b, c, d: arr[a, :]),
-    # ((4, 3), lambda arr, a, b, c, d: arr[:, a]),
+    ((4, 3), lambda arr, a, b, c, d: arr[:, a]),
     ((6, 8, 3), lambda arr, a, b, c, d: arr[c, ::3]),
-    # ((8, 6, 3), lambda arr, a, b, c, d: arr[::3, c]),
-    # ((8, 8, 3), lambda arr, a, b, c, d: arr[::4, ::2, a]),
-    # ((8, 8, 3), lambda arr, a, b, c, d: arr[::4, a, ::2]),
+    ((8, 6, 3), lambda arr, a, b, c, d: arr[::3, c]),
+    ((8, 8, 3), lambda arr, a, b, c, d: arr[::4, ::2, a]),
+    ((8, 8, 3), lambda arr, a, b, c, d: arr[::4, a, ::2]),
     ((8, 8, 3, 7), lambda arr, a, b, c, d: arr[b, ::4, a, ::2]),
     ((3, 8, 8, 7), lambda arr, a, b, c, d: arr[b, a, ::4, ::2]),
     # ((8, 8, 3, 7), lambda arr, a, b, c, d: arr[::4, b, a, ::2]),
     ((16, 3, 6, 2), lambda arr, a, b, c, d: arr[::4, a, 1::2, b]),
     ((8, 8, 3, 6), lambda arr, a, b, c, d: arr[b, ::4, a, a]),
     # slice + array w/ broadcasting
-    ((8, 8, 3, 6), lambda arr, a, b, c, d: \
+    ((8, 8, 3, 6), lambda arr, a, b, c, d:
         arr[b[:, None], ::4, a[None], a[:, None]]),
     # integer + slice + 1-D array
     ((5, 8, 8, 3), lambda arr, a, b, c, d: arr[2, ::4, ::2, a]),
