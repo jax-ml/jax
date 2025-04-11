@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 from operator import itemgetter
 from typing import Any, List
 
@@ -21,10 +22,36 @@ from sphinx.util.docutils import SphinxDirective
 
 logger = logging.getLogger(__name__)
 
-_deprecations = (
+# Please add justification for why the option is to be hidden and/or when
+# it should be revealed, e.g. when the option is deprecated or when it is
+# no longer experimental.
+_hidden_config_options = (
   'jax_default_dtype_bits', # an experiment that we never documented, but we can't remove it because Keras depends on its existing broken behavior
-  'jax_serialization_version'
+  'jax_serialization_version',
+  'check_rep', # internal implementation detail of shard_map, DO NOT USE‰
 )
+
+def config_option_to_title_case(name: str) -> str:
+  """Converts a config option name to title case, with special rules.
+
+  Args:
+      name: The configuration option name (e.g., "jax_default_dtype_bits").
+      capitalization_rules: An optional function that takes the name as input
+          and returns the title-cased name. If None, defaults to a basic
+          title-casing.
+  """
+
+  # Define capitalization rules as a list of (string, replacement) tuples
+  capitalization_rules_list = [
+      ("jax", "JAX"), ("xla", "XLA"), ("pgle", "PGLE"), ("cuda", "CUDA"), ("vjp", "VJP"), ("jvp", "JVP"),
+      ("pjrt", "PjRT"), ("gpu", "GPU"), ("tpu", "TPU"), ("prng", "PRNG"), ("roocm", "ROOCM"), ("spmd", "SPMD"),
+      ("bcoo", "BCOO"), ("jit", "JIT"), ("cpu", "CPU"), ("cusparse", "cuSPARSE"), ("ir", "IR"), ("dtype", "DType"),
+      ("pprint", "PPrint"), ("x64", "x64")
+  ]
+  name = name.replace("jax_", "").replace("_", " ").title()
+  for find, replace in capitalization_rules_list:
+      name = re.sub(rf"\b{find}\b", replace, name, flags=re.IGNORECASE)
+  return name
 
 def create_field_item(label, content):
   """Create a field list item with a label and content side by side.
@@ -69,7 +96,7 @@ class ConfigOptionDirective(SphinxDirective):
     result = []
 
     for name, (opt_type, meta_args, meta_kwargs) in config_options:
-      if name in _deprecations:
+      if name in _hidden_config_options:
         continue
 
       holder = jax_config._value_holders[name]
@@ -87,7 +114,7 @@ class ConfigOptionDirective(SphinxDirective):
       # Create a title with the option name (important for TOC)
       title = nodes.title()
       title['classes'] = ['h4']
-      title += nodes.Text(name.replace("jax_", "").replace("_", " ").title())
+      title += nodes.Text(config_option_to_title_case(name))
       option_section += title
 
       # Create a field list for side-by-side display
