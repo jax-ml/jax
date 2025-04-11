@@ -297,12 +297,17 @@ class DebugInfoTest(jtu.JaxTestCase):
     # built-in function "max" does not have an inspect.Signature
     dbg = api_util.debug_info("jit", max, (1,), {})
     self.assertEqual(dbg.func_src_info, "max")
+    self.assertEqual(dbg.func_name, "max")
+    self.assertEqual(dbg.func_filename, None)
+    self.assertEqual(dbg.func_lineno, None)
     self.assertEqual(dbg.arg_names, ("args[0]",))
 
   def test_debug_info_lambda(self):
     # built-in function "int" does not have an inspect.Signature
     dbg = api_util.debug_info("jit", lambda my_arg: False, (1,), {})
     self.assertRegex(dbg.func_src_info, r"^<lambda> at .*debug_info_test.py:\d+")
+    self.assertEndsWith(dbg.func_filename, "debug_info_test.py")
+    self.assertIsNotNone(dbg.func_lineno)
     self.assertEqual(dbg.arg_names, ("my_arg",))
 
   def test_debug_info_save_wrapped_fun_source_info(self):
