@@ -34,7 +34,7 @@ jax_generate_backend_suites()
 jax_multiplatform_test(
     name = "api_test",
     srcs = ["api_test.py"],
-    enable_configs = ["tpu_v3_2x2"],
+    enable_configs = ["tpu_v3_x4"],
     shard_count = 10,
     deps = [
         "//jax:experimental",
@@ -44,7 +44,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "debug_info_test",
     srcs = ["debug_info_test.py"],
-    enable_configs = ["tpu_v3_2x2"],
+    enable_configs = ["tpu_v3_x4"],
     deps = [
         "//jax:experimental",
         "//jax:pallas",
@@ -279,12 +279,12 @@ jax_multiplatform_test(
     enable_configs = [
         "cpu",
         "gpu_h100x2",
-        "tpu_v3_2x2",
-        "tpu_v4_2x2",
-        "tpu_v5p_2x2",
-        "tpu_v5e_4x2",
+        "tpu_v3_x4",
+        "tpu_v4_x4",
+        "tpu_v5p_x4",
+        "tpu_v5e_x8",
         "gpu_p100x2_shardy",
-        "tpu_v5e_4x2_shardy",
+        "tpu_v5e_x8_shardy",
     ],
     deps = [
         "//jax:experimental",
@@ -300,8 +300,8 @@ jax_multiplatform_test(
     },
     enable_configs = [
         "gpu_p100x2_shardy",
-        "tpu_v3_2x2_shardy",
-        "tpu_v3_2x2",
+        "tpu_v3_x4_shardy",
+        "tpu_v3_x4",
         "gpu_h100x2",
     ],
     shard_count = {
@@ -321,8 +321,8 @@ jax_multiplatform_test(
         "tpu": ["requires-mem:16g"],  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
     },
     enable_configs = [
-        "tpu_v3_2x2_shardy",
-        "tpu_v3_2x2",
+        "tpu_v3_x4_shardy",
+        "tpu_v3_x4",
     ],
     tags = ["multiaccelerator"],
     deps = [
@@ -334,10 +334,10 @@ jax_multiplatform_test(
     name = "shard_alike_test",
     srcs = ["shard_alike_test.py"],
     enable_configs = [
-        "tpu_v3_2x2",
-        "tpu_v5e_4x2",
-        "tpu_v4_2x2",
-        "tpu_v3_2x2_shardy",
+        "tpu_v3_x4",
+        "tpu_v5e_x8",
+        "tpu_v4_x4",
+        "tpu_v3_x4_shardy",
     ],
     deps = [
         "//jax:experimental",
@@ -397,7 +397,7 @@ jax_multiplatform_test(
         "tpu": ["requires-mem:16g"],  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
     },
     enable_configs = [
-        "tpu_v3_2x2",
+        "tpu_v3_x4",
     ],
     tags = ["multiaccelerator"],
     deps = [
@@ -763,7 +763,7 @@ jax_multiplatform_test(
     name = "multibackend_test",
     srcs = ["multibackend_test.py"],
     enable_configs = [
-        "tpu_v3_2x2",
+        "tpu_v3_x4",
         "gpu_h100x2",
     ],
 )
@@ -817,7 +817,7 @@ jax_multiplatform_test(
     },
     enable_configs = [
         "gpu_v100",
-        "tpu_v3_2x2",
+        "tpu_v3_x4",
     ],
     shard_count = {
         "cpu": 30,
@@ -1117,7 +1117,7 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "checkify_test",
     srcs = ["checkify_test.py"],
-    enable_configs = ["tpu_v3_2x2"],
+    enable_configs = ["tpu_v3_x4"],
     shard_count = {
         "gpu": 2,
         "tpu": 4,
@@ -1310,9 +1310,9 @@ jax_multiplatform_test(
     enable_configs = [
         "cpu",
         "gpu_h100",
-        "tpu_v2_1x1",
-        "tpu_v3_2x2",
-        "tpu_v4_2x2",
+        "tpu_v2",
+        "tpu_v3_x4",
+        "tpu_v4_x4",
     ],
     tags = ["multiaccelerator"],
 )
@@ -1323,11 +1323,11 @@ jax_multiplatform_test(
     enable_configs = [
         "cpu",
         "gpu_h100",
-        "tpu_v2_1x1",
-        "tpu_v3_2x2",
-        "tpu_v4_2x2",
+        "tpu_v2",
+        "tpu_v3_x4",
+        "tpu_v4_x4",
         "gpu_a100_shardy",
-        "tpu_v3_2x2_shardy",
+        "tpu_v3_x4_shardy",
     ],
 )
 
@@ -1338,10 +1338,10 @@ jax_multiplatform_test(
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
     enable_configs = [
-        "tpu_v2_1x1",
-        "tpu_v3_2x2",
-        "tpu_v4_2x2",
-        "tpu_v3_2x2_shardy",
+        "tpu_v2",
+        "tpu_v3_x4",
+        "tpu_v4_x4",
+        "tpu_v3_x4_shardy",
         "gpu_p100x2_shardy",
     ],
     tags = ["multiaccelerator"],
@@ -1359,9 +1359,9 @@ jax_multiplatform_test(
     enable_configs = [
         "cpu",
         "gpu_h100",
-        "tpu_v2_1x1",
-        "tpu_v3_2x2",
-        "tpu_v4_2x2",
+        "tpu_v2",
+        "tpu_v3_x4",
+        "tpu_v4_x4",
     ],
 )
 
@@ -1426,7 +1426,7 @@ jax_multiplatform_test(
     srcs = ["shard_map_test.py"],
     enable_configs = [
         "gpu_p100x2_shardy",
-        "tpu_v3_2x2_shardy",
+        "tpu_v3_x4_shardy",
     ],
     shard_count = {
         "cpu": 50,
@@ -1519,8 +1519,8 @@ jax_multiplatform_test(
     enable_configs = [
         "cpu_shardy",
         "gpu_p100x2_shardy",
-        "tpu_v3_2x2_shardy",
-        "tpu_v3_2x2",
+        "tpu_v3_x4_shardy",
+        "tpu_v3_x4",
     ],
     tags = [],
 )
