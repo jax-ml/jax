@@ -512,15 +512,6 @@ NB_MODULE(xla_extension, m) {
           "get_compiled_memory_stats",
           xla::ValueOrThrowWrapper(&PyLoadedExecutable::GetCompiledMemoryStats))
       .def("delete", &PyLoadedExecutable::Delete)
-      .def("execute_sharded_on_local_devices",
-           xla::ValueOrThrowWrapper(
-               &PyLoadedExecutable::ExecuteShardedOnLocalDevices),
-           nb::arg("arguments"))
-      .def("execute_sharded_on_local_devices_with_tokens",
-           xla::ValueOrThrowWrapper(
-               &PyLoadedExecutable::ExecuteShardedOnLocalDevicesWithTokens),
-           nb::arg("arguments"))
-      // TODO(parkers): Switch execute_sharded_on_local_devices* to this.
       .def("execute_sharded",
            xla::ValueOrThrowWrapper(&PyLoadedExecutable::ExecuteSharded),
            nb::arg("arguments"), nb::arg("with_tokens") = false)
