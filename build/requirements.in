@@ -13,7 +13,8 @@ numpy~=2.1.0; python_version>="3.13"
 #
 # runtime deps
 #
-scipy>=1.13.1
+scipy>=1.13.1; python_version<="3.12"
+scipy>=1.15.2; python_version>="3.13"
 
 ml_dtypes>=0.4.0
 opt_einsum
