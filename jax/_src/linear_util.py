@@ -326,18 +326,6 @@ class DebugInfo(NamedTuple):
     func_src_comps[0] = name
     return self._replace(func_src_info=" ".join(func_src_comps))
 
-  @property
-  def func_filename(self) -> str | None:
-    m = _re_func_src_info.match(self.func_src_info)
-    if not m: return None
-    return m.group(3)
-
-  @property
-  def func_lineno(self) -> int | None:
-    m = _re_func_src_info.match(self.func_src_info)
-    if not m or m.group(4) is None: return None
-    return int(m.group(4))
-
   def safe_arg_names(self, expected: int) -> tuple[str, ...]:
     """Get the arg_names with a safety check."""
     if len(self.arg_names) == expected:
@@ -364,7 +352,6 @@ class DebugInfo(NamedTuple):
     assert self.result_paths is not None and not callable(self.result_paths), self
     return tuple(v for v, b in zip(self.safe_result_paths(len(keep)), keep) if b)
 
-_re_func_src_info = re.compile(r"([^ ]+)( at (.+):(\d+))?$")
 
 def _missing_debug_info(for_what: str) -> DebugInfo:
   warnings.warn(
