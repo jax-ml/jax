@@ -24,6 +24,12 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     which was added temporarily in v0.4.36 to allow users to opt out of the
     new "stackless" tracing machinery.
   * Removed the `config.jax_eager_pmap` config option.
+  * Disallow the calling of `lower` and `trace` AOT APIs on the result
+    of `jax.jit` if there have been subsequent wrappers applied.
+    Previously this worked, but silently ignored the wrappers.
+    The workaround is to apply `jax.jit` last among the wrappers,
+    and similarly for `jax.pmap`.
+    See {jax-issue}`#27873`.
 
 * Changes
   * The minimum CuDNN version is v9.8.

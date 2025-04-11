@@ -14,7 +14,7 @@
 
 from collections import OrderedDict, namedtuple
 import re
-from functools import partial
+from functools import partial, wraps
 import logging
 import json
 import math
@@ -939,6 +939,18 @@ class PJitTest(jtu.BufferDonationTestCase):
     key = prng.random_seed(87, impl=prng.rbg_prng_impl)
     # Make sure this doesn't crash
     pjit(lambda x: x, in_shardings=None, out_shardings=None)(key)
+
+  def test_lower_with_wrapper_error(self):
+    @jax.jit
+    def f(x):
+      return x
+
+    self.assertAllClose(1., f(1.))
+    self.assertAllClose(1., f.lower(1.).compile()(1.))
+    wrapped_f = wraps(f)(lambda x: f(x + 1))
+
+    with self.assertRaisesRegex(AttributeError, "has no attribute 'lower'"):
+      wrapped_f.lower(1.)
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompile(self):

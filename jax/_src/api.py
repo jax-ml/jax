@@ -1569,11 +1569,13 @@ def _cpp_pmap(
       out_axes)
   del static_broadcasted_argnums, donate_argnums
 
+  prepare_pmap_fn = partial(_prepare_pmap,
+        fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
+        devices, backend, axis_size)
+
   @api_boundary
   def cache_miss(*args, **kwargs):
-    p = _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
-                      donate_tuple, devices, backend,
-                      axis_size, args, kwargs)
+    p = prepare_pmap_fn(args, kwargs)
     for arg in p.flat_args:
       dispatch.check_arg(arg)
 
@@ -1650,48 +1652,56 @@ def _cpp_pmap(
   _pmap_cache_clears.add(cpp_mapped_f)
 
   pmap_f = wraps(fun)(cpp_mapped_f)
+  # Store some data for the `lower` and `trace` methods
   pmap_f._fun = fun
+  pmap_f._prepare_pmap = prepare_pmap_fn
+  pmap_f._backend = backend
+  pmap_f._axis_name = axis_name
+  pmap_f._donate_tuple = donate_tuple
 
-  @api_boundary
-  def lower(*args, **kwargs):
-    return trace(*args, **kwargs).lower()
-
-  @api_boundary
-  def trace(*args, **kwargs):
-    p = _prepare_pmap(
-        fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
-        devices, backend, axis_size, args, kwargs)
-    abstract_args = list(map(shaped_abstractify, p.flat_args))
-    closed_jaxpr, xc_backend, replicas, shards, pci = pxla.get_pmap_jaxpr(
-        p.flat_fun, backend, axis_name,
-        axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
-        devices=p.devices,
-        name=p.flat_fun.__name__,
-        in_axes=p.in_axes_flat,
-        out_axes_thunk=p.out_axes_thunk,
-        avals=abstract_args)
-    lower_callable = partial(
-        pxla.lower_parallel_callable, p.flat_fun, axis_name,
-        axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
-        devices=p.devices,
-        name=p.flat_fun.__name__,
-        in_axes=p.in_axes_flat,
-        donated_invars=p.donated_invars,
-        is_explicit_global_axis_size=p.is_explicit_global_axis_size,
-        avals=abstract_args,
-        closed_jaxpr=closed_jaxpr,
-        backend=xc_backend,
-        replicas=replicas,
-        shards=shards,
-        pci=pci)
-    args_info = stages.make_args_info(p.in_tree, abstract_args, donate_tuple)
-    return stages.Traced(closed_jaxpr, args_info, p.flat_fun.__name__,
-                         p.out_tree(), lower_callable)
-
-  pmap_f.lower = lower
-  pmap_f.trace = trace
-
+  # TODO(necula): move these to top-level; we don't need to do this for
+  # every pmap
+  cpp_mapped_f_class = type(pmap_f)
+  cpp_mapped_f_class.lower = _cpp_mapped_lower
+  cpp_mapped_f_class.trace = _cpp_mapped_trace
+  # We return directly the function produced by pmap_lib.pmap, because we do not
+  # want to have Python in the dispatch path.
   return pmap_f
+
+@api_boundary
+def _cpp_mapped_trace(pmap_f, *args, **kwargs):
+  p = pmap_f._prepare_pmap(args, kwargs)
+  abstract_args = list(map(shaped_abstractify, p.flat_args))
+  closed_jaxpr, xc_backend, replicas, shards, pci = pxla.get_pmap_jaxpr(
+      p.flat_fun, pmap_f._backend, pmap_f._axis_name,
+      axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
+      devices=p.devices,
+      name=p.flat_fun.__name__,
+      in_axes=p.in_axes_flat,
+      out_axes_thunk=p.out_axes_thunk,
+      avals=abstract_args)
+  lower_callable = partial(
+      pxla.lower_parallel_callable, p.flat_fun, pmap_f._axis_name,
+      axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
+      devices=p.devices,
+      name=p.flat_fun.__name__,
+      in_axes=p.in_axes_flat,
+      donated_invars=p.donated_invars,
+      is_explicit_global_axis_size=p.is_explicit_global_axis_size,
+      avals=abstract_args,
+      closed_jaxpr=closed_jaxpr,
+      backend=xc_backend,
+      replicas=replicas,
+      shards=shards,
+      pci=pci)
+  args_info = stages.make_args_info(p.in_tree, abstract_args, pmap_f._donate_tuple)
+  return stages.Traced(closed_jaxpr, args_info, p.flat_fun.__name__,
+                       p.out_tree(), lower_callable)
+
+@api_boundary
+def _cpp_mapped_lower(pmap_f, *args, **kwargs):
+  return _cpp_mapped_trace(pmap_f, *args, **kwargs).lower()
+
 
 _pmap_cache_clears = weakref.WeakSet()  # type: ignore
 
