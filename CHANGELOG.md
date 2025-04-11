@@ -40,6 +40,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * JAX package extras are now updated to use dash instead of underscore to
     align with PEP 685. For instance, if you were previously using `pip install jax[cuda12_local]`
     to install JAX, run `pip install jax[cuda12-local]` instead.
+  * {func}`jax.jit` now requires `fun` to be passed by position, and additional
+    arguments to be passed by keyword. Doing otherwise will result in a
+    DeprecationWarning in v0.6.X, and an error in starting in v0.7.X.
 
 * Deprecations
 

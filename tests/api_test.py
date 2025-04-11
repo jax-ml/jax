@@ -52,6 +52,7 @@ from jax._src import array
 from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
+from jax._src import deprecations
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -10515,6 +10516,19 @@ class CustomTransposeTest(jtu.JaxTestCase):
     self.assertAllClose(f_t(x), jax.jit(f_t)(x))
     self.assertAllClose(f_(x), g_(x))
     self.assertAllClose(f_t(x), g_t(x))
+
+  def test_jit_signature_deprecation(self):
+    fun = lambda x: x
+    if deprecations.is_accelerated('jax-jit-positional-args'):
+      with self.assertRaisesRegex(TypeError, r'jit\(\) got some positional-only arguments passed as keyword arguments.*'):
+        jax.jit(fun=fun)
+      with self.assertRaisesRegex(TypeError, r'jit\(\) takes 1 positional argument but 2 were given.*'):
+        jax.jit(fun, None)
+    else:
+      with self.assertWarnsRegex(DeprecationWarning, r'jax\.jit: passing fun by keyword is deprecated.*'):
+        jax.jit(fun=fun)
+      with self.assertWarnsRegex(DeprecationWarning, r'jax\.jit: passing optional arguments by position is deprecated.*'):
+        jax.jit(fun, None)
 
   def test_cond(self):
     def f(x, y):
