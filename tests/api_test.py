@@ -4527,6 +4527,9 @@ class APITest(jtu.JaxTestCase):
 
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_skip_internals(self):
+    if is_persistent_cache_enabled():
+      self.skipTest('With persistent cache, we see the cache misses')
+
     with config.explain_cache_misses(True):
       with self.assertNoLogs(level='WARNING'):
         for i in range(2):
