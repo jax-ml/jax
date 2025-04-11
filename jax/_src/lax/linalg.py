@@ -528,7 +528,7 @@ def symmetric_product(
 
   Computes the symmetric product
 
-  ..math::
+  .. math::
     \alpha \, A \, A^T + \beta \, C
 
   where :math:`A` is a rectangular matrix and :math:`C` is a symmetric matrix.
