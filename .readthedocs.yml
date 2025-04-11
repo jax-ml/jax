@@ -13,10 +13,8 @@ build:
     post_checkout:
       # Skip building PRs unless tagged with the "documentation" label.
       - |
-        if [ "$READTHEDOCS_VERSION_TYPE" = "external" ] && (curl -s "https://api.github.com/repos/jax-ml/jax/issues/$READTHEDOCS_VERSION/labels" | grep -vq "https://api.github.com/repos/jax-ml/jax/labels/documentation")
-        then
-          exit 183;
-        fi
+        [ "${READTHEDOCS_VERSION_TYPE}" != "external" ] && echo "Building latest" && exit 0
+        (curl -sL https://api.github.com/repos/jax-ml/jax/issues/${READTHEDOCS_VERSION}/labels | grep -q "https://api.github.com/repos/jax-ml/jax/labels/documentation") && echo "Building PR with label" || exit 183
 
 # Build documentation in the docs/ directory with Sphinx
 sphinx:
