@@ -51,6 +51,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The deprecated use of {func}`jax.ffi.ffi_call` with inline arguments is no
     longer supported. {func}`~jax.ffi.ffi_call` now unconditionally returns a
     callable.
+  * `jax.lax.infeed`, `jax.lax.infeed_p`, `jax.lax.outfeed`, and
+    `jax.lax.outfeed_p` are deprecated and will be removed in JAX v0.7.0.
   * Several previously-deprecated APIs have been removed, including:
     * From `jax.lib.xla_client`: `ArrayImpl`, `FftType`, `PaddingType`,
       `PrimitiveType`, `XlaBuilder`, `dtype_to_etype`,
