@@ -26,16 +26,17 @@ Some recommended readings beforehand:
 ```{code-cell} ipython3
 ---
 executionInfo:
-  elapsed: 1978
+  elapsed: 52
   status: ok
-  timestamp: 1722904801801
+  timestamp: 1744390458993
   user:
     displayName: Justin Fu
     userId: '17543197034567316452'
   user_tz: 420
 id: PyAGnWc9yI8T
-outputId: 1d8229bd-cab5-495f-93e9-fff2e41db480
+outputId: c5912653-c34b-4810-c373-4a2787691317
 ---
+import functools
 import jax
 from jax import lax
 from jax import numpy as jnp
@@ -195,15 +196,15 @@ In order to call the kernel in distributed mode, we wrap the `pallas_call` in a 
 ```{code-cell} ipython3
 ---
 executionInfo:
-  elapsed: 1606
+  elapsed: 152
   status: ok
-  timestamp: 1722904803566
+  timestamp: 1744390459367
   user:
     displayName: Justin Fu
     userId: '17543197034567316452'
   user_tz: 420
 id: YkyIKN2thZ-V
-outputId: 9b7ed142-d161-4237-fed8-cbce41adc5f0
+outputId: 26719bb9-87ff-46dd-af90-a114ce332417
 ---
 partition = P(None, 'x')
 mesh = jax.make_mesh((num_devices,), ('x',))
@@ -296,15 +297,15 @@ We can re-purpose Pallas's `grid` argument to implement the loop. Rather than it
 ```{code-cell} ipython3
 ---
 executionInfo:
-  elapsed: 812
+  elapsed: 209
   status: ok
-  timestamp: 1722904804531
+  timestamp: 1744390459789
   user:
     displayName: Justin Fu
     userId: '17543197034567316452'
   user_tz: 420
 id: ojQEZB5mBRqM
-outputId: e1648f54-737c-4921-ca3b-b4c639a38d2b
+outputId: 3a4373f8-1fb5-4a6b-b88e-3461c2609021
 ---
 partition = P('x', None)
 mesh = jax.make_mesh((num_devices,), ('x',))
@@ -411,7 +412,7 @@ print('Difference |Pallas - lax.all_gather| = ',
 
 A detail worth mentioning here is the use of multiple receive semaphores. Because we only block on the receiving device, it is still possible for a sender to have sent multiple DMAs in flight before the receiver has finished processing the first one (see the next section and reduce-sum example which discusses race conditions in more detail). In this situation we may hit a situation where the same semaphore is being used for multiple DMAs occurring simultaneously. To avoid this, we allocate `num_devices-1` semaphores so there is no risk of re-use. While this race condition is unlikely to happen on such a small kernel, on larger kernels there is more chance for devices to fall out of sync and potentially cause a silent failure.
 
-+++ {"id": "KgU7HI2pS4om"}
++++ {"id": "EDCmAaHVtY7x"}
 
 ## Advanced Techniques
 
@@ -563,15 +564,15 @@ Note that this is not an optimal or fully general kernel, as the block sizes mus
 ```{code-cell} ipython3
 ---
 executionInfo:
-  elapsed: 254
+  elapsed: 248
   status: ok
-  timestamp: 1722904804952
+  timestamp: 1744390460289
   user:
     displayName: Justin Fu
     userId: '17543197034567316452'
   user_tz: 420
 id: XrY5bMlvBroQ
-outputId: 77497000-4496-462e-cc3c-73fb640cc14c
+outputId: 9216e749-48d2-43ff-d64b-bd419acf3e11
 ---
 partition = P(None, 'x')
 mesh = jax.make_mesh((num_devices,), ('x',))
@@ -579,6 +580,41 @@ sharding = jax.sharding.NamedSharding(mesh, partition)
 
 input_arr = jax.random.uniform(jax.random.key(0), shape=(8, 128 * num_devices))
 input_arr = jax.device_put(input_arr, sharding)
+
+
+def local_barrier(left_neighbor, right_neighbor, double_barrier=True):
+  """Performs a barrier with neighbors on the global barrier semaphore.
+
+  Optionally performs a second barrier, which prevents a potential race
+  when re-using the same collective_id across kernel invocations.
+  """
+  barrier_sem = pltpu.get_barrier_semaphore()
+  for neighbor in [left_neighbor, right_neighbor]:
+    pltpu.semaphore_signal(
+      barrier_sem,
+      inc=1,
+      device_id=(neighbor,),
+      device_id_type=pltpu.DeviceIdType.MESH,
+    )
+  pltpu.semaphore_wait(barrier_sem, 2)
+  if double_barrier:
+    # The double-barrier prevents a race condition where one neighbor can
+    # re-enter the kernel again on a subsequent call and increment the
+    # barrier semaphore a second time. This would unblock the current device
+    # even if the other neighbor is not ready yet.
+    # To implement a double-barrier, we stack-allocate a second REGULAR
+    # semaphore using run_scoped.
+    @functools.partial(pl.run_scoped,
+                       second_barrier=pltpu.SemaphoreType.REGULAR)
+    def _(second_barrier):
+      for neighbor in [left_neighbor, right_neighbor]:
+        pltpu.semaphore_signal(
+          second_barrier,
+          inc=1,
+          device_id=(neighbor,),
+          device_id_type=pltpu.DeviceIdType.MESH,
+        )
+      pltpu.semaphore_wait(second_barrier, 2)
 
 
 def all_reduce_kernel(
@@ -603,20 +639,7 @@ def all_reduce_kernel(
   def _():
     # Barrier with both neighbors at the start, since we will be
     # communicating with both.
-    barrier_sem = pltpu.get_barrier_semaphore()
-    pltpu.semaphore_signal(
-        barrier_sem,
-        inc=1,
-        device_id=(left_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
-    )
-    pltpu.semaphore_signal(
-        barrier_sem,
-        inc=1,
-        device_id=(right_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
-    )
-    pltpu.semaphore_wait(barrier_sem, 2)
+    local_barrier(left_neighbor, right_neighbor)
 
     # Initialize o_ref, acc_scratch, and hbm_scratch.
     o_ref[...] = jnp.zeros_like(o_ref)
@@ -772,9 +795,9 @@ In terms of construction of the kernel, we introduce an additional `phase` dimen
 ```{code-cell} ipython3
 ---
 executionInfo:
-  elapsed: 544
+  elapsed: 362
   status: ok
-  timestamp: 1722904805699
+  timestamp: 1744390460871
   user:
     displayName: Justin Fu
     userId: '17543197034567316452'
@@ -890,20 +913,7 @@ def reduce_scatter_kernel(
   def _():
     # Barrier with both neighbors at the start, since we will be
     # communicating with both.
-    barrier_sem = pltpu.get_barrier_semaphore()
-    pltpu.semaphore_signal(
-        barrier_sem,
-        inc=1,
-        device_id=(left_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
-    )
-    pltpu.semaphore_signal(
-        barrier_sem,
-        inc=1,
-        device_id=(right_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
-    )
-    pltpu.semaphore_wait(barrier_sem, 2)
+    local_barrier(left_neighbor, right_neighbor)
 
     # Initialize o_ref, acc_scratch, and hbm_scratch with initial copies.
     o_ref[...] = jnp.zeros_like(o_ref[...])
@@ -1053,15 +1063,15 @@ pallas_result = jax.block_until_ready(pallas_result)
 ```{code-cell} ipython3
 ---
 executionInfo:
-  elapsed: 596
+  elapsed: 917
   status: ok
-  timestamp: 1722904806442
+  timestamp: 1744390461967
   user:
     displayName: Justin Fu
     userId: '17543197034567316452'
   user_tz: 420
 id: E-NMh-_teoi4
-outputId: 24beb42f-1bdd-4c34-e8d2-681dd7f2e9c0
+outputId: 6c8b82bc-ed64-4cc1-8c5f-65e29cdb333c
 ---
 # Compare our result to XLA.
 def lax_reduce_sum_scatter(x):
@@ -1197,9 +1207,9 @@ The full kernel is as follows:
 ```{code-cell} ipython3
 ---
 executionInfo:
-  elapsed: 1341
+  elapsed: 997
   status: ok
-  timestamp: 1722904807930
+  timestamp: 1744390463178
   user:
     displayName: Justin Fu
     userId: '17543197034567316452'
@@ -1308,20 +1318,7 @@ def reduce_scatter_kernel(
   def _():
     # Barrier with both neighbors at the start, since we will be
     # communicating with both.
-    barrier_sem = pltpu.get_barrier_semaphore()
-    pltpu.semaphore_signal(
-        barrier_sem,
-        inc=1,
-        device_id=(left_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
-    )
-    pltpu.semaphore_signal(
-        barrier_sem,
-        inc=1,
-        device_id=(right_neighbor,),
-        device_id_type=pltpu.DeviceIdType.MESH,
-    )
-    pltpu.semaphore_wait(barrier_sem, 2)
+    local_barrier(left_neighbor, right_neighbor)
 
     initial_left_copy.start()
     initial_left_copy.wait()
@@ -1470,15 +1467,15 @@ pallas_result = jax.block_until_ready(pallas_result)
 ```{code-cell} ipython3
 ---
 executionInfo:
-  elapsed: 768
+  elapsed: 1132
   status: ok
-  timestamp: 1722904808851
+  timestamp: 1744390464532
   user:
     displayName: Justin Fu
     userId: '17543197034567316452'
   user_tz: 420
 id: cTEyiMDyx9Y0
-outputId: 1de26695-3713-430e-9ab4-4ea646691680
+outputId: 70ce154e-dab2-4ae0-e297-c4774d29da85
 ---
 # Now we compare our result to XLA.
 def lax_reduce_sum_scatter(x):
