@@ -30,6 +30,7 @@ executable protocols described above.
 """
 from __future__ import annotations
 
+import abc
 import functools
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -61,98 +62,9 @@ zip, unsafe_zip = util.safe_zip, zip
 CompilerOptions = dict[str, Union[str, bool]]
 
 
-# -- Internal protocols
+# -- Internal types
 
-class Executable(Protocol):
-  """Protocol for executables, which a user-facing ``Compiled`` encapsulates."""
-
-  def call(self, *args_flat) -> Sequence[Any]:
-    """Execute on the flat list of arguments, returning flat outputs."""
-    # TODO(frostig): improve annotation (sequences of arrays/buffers)
-    raise NotImplementedError
-
-  def input_shardings(self) -> Sequence[jax.sharding.Sharding]:
-    """Flat sequence of input shardings.
-
-    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
-    compiler, or runtime.
-    """
-    raise NotImplementedError
-
-  def output_shardings(self) -> Sequence[jax.sharding.Sharding]:
-    """Flat sequence of output shardings.
-
-    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
-    compiler, or runtime.
-    """
-    raise NotImplementedError
-
-  def input_layouts(self):
-    raise NotImplementedError
-
-  def output_layouts(self):
-    raise NotImplementedError
-
-  def as_text(self) -> str:
-    """A human-readable text representation of this executable.
-
-    Intended for visualization and debugging purposes. This need not be a valid
-    nor reliable serialization. It is relayed directly to external callers.
-
-    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
-    compiler, or runtime.
-    """
-    raise NotImplementedError
-
-  def cost_analysis(self) -> Any:
-    """A summary of execution cost estimates.
-
-    Intended for visualization and debugging purposes. The object output by
-    this is some simple data structure that can easily be printed or serialized
-    (e.g. nested dicts, lists, and tuples with numeric leaves). However, its
-    structure can be arbitrary: it need not be consistent across versions of JAX
-    and jaxlib, or even across invocations. It is relayed directly to external
-    callers.
-
-    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
-    compiler, or runtime.
-    """
-    # TODO(frostig): improve annotation (arbitrary pytree)
-    raise NotImplementedError
-
-  def memory_analysis(self) -> Any:
-    """A summary of estimated memory requirements.
-
-    Intended for visualization and debugging purposes. The object output by
-    this is some simple data structure that can easily be printed or serialized
-    (e.g. nested dicts, lists, and tuples with numeric leaves). However, its
-    structure can be arbitrary: it need not be consistent across versions of JAX
-    and jaxlib, or even across invocations. It is relayed directly to external
-    callers.
-
-    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
-    compiler, or runtime.
-    """
-    # TODO(frostig): improve annotation (arbitrary pytree)
-    raise NotImplementedError
-
-  def runtime_executable(self) -> Any:
-    """An arbitrary object representation of this executable.
-
-    Intended for debugging purposes. This need not be a valid nor reliable
-    serialization. It is relayed directly to external callers, with no
-    guarantee on type, structure, or consistency across invocations.
-
-    May raise ``NotImplementedError`` if unavailable, e.g. based on backend or
-    compiler.
-    """
-    raise NotImplementedError
-
-  def create_cpp_call(self, no_kwargs, in_tree, out_tree) -> Any:
-    """Optionally constructs a fast c++ dispatcher."""
-    return None
-
-
+# TODO(frostig): collapse with XlaLowering
 class Lowering(Protocol):
   """Protocol for lowerings, which a user-facing ``Lowered`` encapsulates."""
 
@@ -208,21 +120,37 @@ class Lowering(Protocol):
     raise NotImplementedError
 
 
-# -- Internal adapters from XLA-related objects to the above protocols
-
-class XlaExecutable(Executable):
+class Executable(metaclass=util.StrictABCMeta):
 
   def xla_extension_executable(self) -> xc.LoadedExecutable:
-    raise NotImplementedError("must override")
+    raise NotImplementedError(
+        "compiled executable carries no loaded XLA executable. It may be "
+        f"that {type(self)} defines an incomplete implementation.")
 
+  @abc.abstractmethod
   def call(self, *args_flat) -> Sequence[Any]:
-    raise NotImplementedError("must override")
+    """Execute on the flat list of arguments, returning flat outputs."""
+    pass
+
+  def create_cpp_call(self, no_kwargs, in_tree, out_tree) -> Any:
+    """Optionally constructs a fast c++ dispatcher."""
+    return None
 
   def input_shardings(self) -> Sequence[jax.sharding.Sharding]:
+    """Flat sequence of input shardings.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
+    compiler, or runtime.
+    """
     raise NotImplementedError(
         "compiled executable carries no input sharding information")
 
   def output_shardings(self) -> Sequence[jax.sharding.Sharding]:
+    """Flat sequence of output shardings.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
+    compiler, or runtime.
+    """
     raise NotImplementedError(
         "compiled executable carries no output sharding information")
 
@@ -235,6 +163,14 @@ class XlaExecutable(Executable):
         "compiled executable carries no input layout information")
 
   def as_text(self) -> str:
+    """A human-readable text representation of this executable.
+
+    Intended for visualization and debugging purposes. This need not be a valid
+    nor reliable serialization. It is relayed directly to external callers.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
+    compiler, or runtime.
+    """
     xla_ext_exe = self.xla_extension_executable()
     err_msg = ("text view unsupported on current XLA backend: "
                f"{type(xla_ext_exe)}")
@@ -249,7 +185,19 @@ class XlaExecutable(Executable):
       else:
         raise
 
-  def cost_analysis(self) -> dict[str, float]:
+  def cost_analysis(self) -> Any:
+    """A summary of execution cost estimates.
+
+    Intended for visualization and debugging purposes. The object output by
+    this is some simple data structure that can easily be printed or serialized
+    (e.g. nested dicts, lists, and tuples with numeric leaves). However, its
+    structure can be arbitrary: it need not be consistent across versions of JAX
+    and jaxlib, or even across invocations. It is relayed directly to external
+    callers.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
+    compiler, or runtime.
+    """
     xla_ext_exe = self.xla_extension_executable()
 
     if hasattr(xla_ext_exe, "cost_analysis"):
@@ -273,6 +221,18 @@ class XlaExecutable(Executable):
     )
 
   def memory_analysis(self) -> Any:
+    """A summary of estimated memory requirements.
+
+    Intended for visualization and debugging purposes. The object output by
+    this is some simple data structure that can easily be printed or serialized
+    (e.g. nested dicts, lists, and tuples with numeric leaves). However, its
+    structure can be arbitrary: it need not be consistent across versions of JAX
+    and jaxlib, or even across invocations. It is relayed directly to external
+    callers.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
+    compiler, or runtime.
+    """
     xla_ext_exe = self.xla_extension_executable()
     err_msg = ("memory analysis unsupported on current XLA backend: "
                f"{type(xla_ext_exe)}")
@@ -288,6 +248,15 @@ class XlaExecutable(Executable):
         raise
 
   def runtime_executable(self) -> Any:
+    """An arbitrary object representation of this executable.
+
+    Intended for debugging purposes. This need not be a valid nor reliable
+    serialization. It is relayed directly to external callers, with no
+    guarantee on type, structure, or consistency across invocations.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend or
+    compiler.
+    """
     return self.xla_extension_executable()
 
 
