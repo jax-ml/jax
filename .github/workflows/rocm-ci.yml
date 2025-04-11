@@ -19,7 +19,7 @@ jobs:
       BASE_IMAGE: "ubuntu:22.04"
       TEST_IMAGE: ubuntu-jax-upstream-${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}
       PYTHON_VERSION: "3.10"
-      ROCM_VERSION: "6.2.4"
+      ROCM_VERSION: "6.3.3"
       WORKSPACE_DIR: workdir_${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}
     steps:
       - name: Clean up old runs
