@@ -396,6 +396,14 @@ typedef cusolverDnParams_t gpusolverDnParams_t;
 #define gpusolverDnXgesvd_bufferSize cusolverDnXgesvd_bufferSize
 #define gpusolverDnXgesvd cusolverDnXgesvd
 
+#if CUDA_VERSION >= 12060
+#define JAX_GPU_HAVE_SOLVER_GEEV 1
+#define gpusolverDnXgeev_bufferSize cusolverDnXgeev_bufferSize
+#define gpusolverDnXgeev cusolverDnXgeev
+#else
+#define JAX_GPU_HAVE_SOLVER_GEEV 0
+#endif  // CUDA_VERSION >= 12060
+
 namespace jax::JAX_GPU_NAMESPACE {
 namespace {
 constexpr uint32_t kNumThreadsPerWarp = 32;
@@ -715,6 +723,8 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuDeviceProp hipDeviceProp_t
 #define gpuGetDeviceProperties hipGetDeviceProperties
 #define gpuLaunchCooperativeKernel hipLaunchCooperativeKernel
+
+#define JAX_GPU_HAVE_SOLVER_GEEV 0
 
 namespace jax::JAX_GPU_NAMESPACE {
 namespace {
