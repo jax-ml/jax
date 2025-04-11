@@ -3139,7 +3139,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       num_inplace_fwds_cond_doesnt_use,
       num_noninplace_fwds):
 
-    num_fwds = (num_inplace_fwds_cond_uses + num_inplace_fwds_cond_doesnt_use + 
+    num_fwds = (num_inplace_fwds_cond_uses + num_inplace_fwds_cond_doesnt_use +
                 num_noninplace_fwds)
     num_carry = num_fwds + 4
 
