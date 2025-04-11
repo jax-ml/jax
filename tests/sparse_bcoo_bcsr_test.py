@@ -36,7 +36,7 @@ from jax.experimental.sparse import test_util as sptu
 from jax.experimental.sparse import util as sparse_util
 import jax.numpy as jnp
 import jax.random
-from jax.util import split_list
+from jax._src.util import split_list
 import numpy as np
 
 jax.config.parse_flags_with_absl()

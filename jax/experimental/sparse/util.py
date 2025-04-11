@@ -25,7 +25,7 @@ from jax import vmap
 from jax._src import core
 from jax._src.api_util import flatten_axes
 import jax.numpy as jnp
-from jax.util import safe_zip
+from jax._src.util import safe_zip
 from jax._src.lax.lax import _dot_general_shape_rule, DotDimensionNumbers
 from jax._src.typing import Array
 

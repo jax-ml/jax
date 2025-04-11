@@ -51,6 +51,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The deprecated use of {func}`jax.ffi.ffi_call` with inline arguments is no
     longer supported. {func}`~jax.ffi.ffi_call` now unconditionally returns a
     callable.
+  * The following internal APIs in `jax._src.util` are deprecated:
+    `HashableFunction`, `as_hashable_function`, `cache`, `safe_map`, `safe_zip`,
+    `split_dict`, `split_list`, `split_list_checked`, `split_merge`, `subvals`,
+    `toposort`, `unzip2`, `wrap_name`, and `wraps`.
   * Several previously-deprecated APIs have been removed, including:
     * From `jax.lib.xla_client`: `ArrayImpl`, `FftType`, `PaddingType`,
       `PrimitiveType`, `XlaBuilder`, `dtype_to_etype`,
