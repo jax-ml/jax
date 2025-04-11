@@ -68,5 +68,6 @@ else
             --color=yes \
             //tests:cpu_tests //tests:backend_independent_tests \
             //jaxlib/tools:jaxlib_wheel_size_test \
-            //:jax_wheel_size_test
+            //:jax_wheel_size_test \
+            //jaxlib/tools:device_test
 fi

@@ -18,6 +18,7 @@ load(
     "jax_multiplatform_test",
     "jax_py_test",
     "jax_test_file_visibility",
+    "jax_wheel_tests_visibility",
     "py_deps",
     "pytype_test",
 )
@@ -1686,6 +1687,11 @@ exports_files(
         "string_array_test.py",
     ],
     visibility = jax_test_file_visibility,
+)
+
+exports_files(
+    ["device_test.py"],
+    visibility = jax_wheel_tests_visibility,
 )
 
 # This filegroup specifies the set of tests known to Bazel, used for a test that

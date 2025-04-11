@@ -557,6 +557,8 @@ jax_test_file_visibility = []
 
 jax_export_file_visibility = []
 
+jax_wheel_tests_visibility = ["//jaxlib/tools:__pkg__"]
+
 def xla_py_proto_library(*args, **kw):  # buildifier: disable=unused-variable
     pass
 

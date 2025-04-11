@@ -54,4 +54,5 @@ bazel test --config=rbe_linux_x86_64_cuda \
       //jaxlib/tools:jax_cuda_plugin_wheel_size_test \
       //jaxlib/tools:jax_cuda_pjrt_wheel_size_test \
       //jaxlib/tools:jaxlib_wheel_size_test \
-      //:jax_wheel_size_test
+      //:jax_wheel_size_test \
+      //jaxlib/tools:device_test
