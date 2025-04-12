@@ -457,7 +457,7 @@ class Compiled(Stage):
 
   @property
   def input_shardings(self):  # PyTree[sharding.Sharding]
-    shardings_flat = self._executable.input_shardings()
+    shardings_flat = self._executable._in_shardings
     # Some input shardings got DCE'd
     if self.in_tree.num_leaves > len(shardings_flat):
       iter_shardings_flat = iter(shardings_flat)
@@ -467,13 +467,14 @@ class Compiled(Stage):
 
   @property
   def output_shardings(self):  # PyTree[sharding.Sharding]
-    shardings_flat = self._executable.output_shardings()
+    shardings_flat = self._executable._out_shardings
     return tree_util.tree_unflatten(self.out_tree, shardings_flat)  # pytype: disable=attribute-error
 
   @property
   def input_layouts(self):
-    layouts_flat = self._executable.input_layouts()
-    assert all(isinstance(l, Layout) for l in layouts_flat)
+    dll_flat = self._executable._xla_in_layouts
+    layouts_flat = [Layout(l, s)
+                    for l, s in zip(dll_flat, self._executable._in_shardings)]
     # Some input layouts got DCE'd
     if self.in_tree.num_leaves > len(layouts_flat):
       iter_layouts_flat = iter(layouts_flat)
@@ -483,8 +484,9 @@ class Compiled(Stage):
 
   @property
   def output_layouts(self):
-    layouts_flat = self._executable.output_layouts()
-    assert all(isinstance(l, Layout) for l in layouts_flat)
+    dll_flat = self._executable._xla_out_layouts
+    layouts_flat = [Layout(l, s)
+                    for l, s in zip(dll_flat, self._executable._out_shardings)]
     return tree_util.tree_unflatten(self.out_tree, layouts_flat)  # pytype: disable=attribute-error
 
   @staticmethod
