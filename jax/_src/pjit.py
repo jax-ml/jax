@@ -1172,7 +1172,7 @@ def explain_tracing_cache_miss(
 
   debug_info = fun.debug_info
   func_filename = debug_info.func_filename
-  if func_filename and not traceback_util.include_filename(func_filename):
+  if func_filename and not source_info_util.is_user_filename(func_filename):
    return
 
   msg: list[str] = []
