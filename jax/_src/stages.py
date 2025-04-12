@@ -30,7 +30,6 @@ executable protocols described above.
 """
 from __future__ import annotations
 
-import abc
 import functools
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -120,17 +119,16 @@ class Lowering(Protocol):
     raise NotImplementedError
 
 
-class Executable(metaclass=util.StrictABCMeta):
+class Executable:
 
   def xla_extension_executable(self) -> xc.LoadedExecutable:
     raise NotImplementedError(
         "compiled executable carries no loaded XLA executable. It may be "
         f"that {type(self)} defines an incomplete implementation.")
 
-  @abc.abstractmethod
   def call(self, *args_flat) -> Sequence[Any]:
     """Execute on the flat list of arguments, returning flat outputs."""
-    pass
+    raise NotImplementedError("compiled executable does not support invocation")
 
   def create_cpp_call(self, no_kwargs, in_tree, out_tree) -> Any:
     """Optionally constructs a fast c++ dispatcher."""
