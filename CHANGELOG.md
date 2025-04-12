@@ -65,7 +65,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Several previously-deprecated APIs have been removed, including:
     * From `jax.lib.xla_client`: `ArrayImpl`, `FftType`, `PaddingType`,
       `PrimitiveType`, `XlaBuilder`, `dtype_to_etype`,
-      `ops`, `register_custom_call_target`, `shape_from_pyval`.
+      `ops`, `register_custom_call_target`, `shape_from_pyval`, `Shape`,
+      `XlaComputation`.
     * From `jax.lib.xla_extension`: `ArrayImpl`, `XlaRuntimeError`.
     * From `jax`: `jax.treedef_is_leaf`, `jax.tree_flatten`, `jax.tree_map`,
       `jax.tree_leaves`, `jax.tree_structure`, `jax.tree_transpose`, and
