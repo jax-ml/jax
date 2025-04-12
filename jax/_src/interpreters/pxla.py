@@ -3186,20 +3186,6 @@ class MeshExecutable(stages.Executable):
         self._kept_var_idx)
     return self.unsafe_call(*args)  # pylint: disable=not-callable
 
-  def input_shardings(self) -> Sequence[JSharding]:
-    return self._in_shardings
-
-  def output_shardings(self) -> Sequence[JSharding]:
-    return self._out_shardings
-
-  def input_layouts(self):
-    return [Layout(l, s)
-            for l, s in safe_zip(self._xla_in_layouts, self._in_shardings)]
-
-  def output_layouts(self):
-    return [Layout(l, s)
-            for l, s in safe_zip(self._xla_out_layouts, self._out_shardings)]
-
   def create_cpp_call(self, no_kwargs, in_tree, out_tree):
     if not (isinstance(self.unsafe_call, ExecuteReplicated) and
             not self.unsafe_call.has_unordered_effects and
