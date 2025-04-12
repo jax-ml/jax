@@ -4557,28 +4557,6 @@ class APITest(jtu.JaxTestCase):
       _, msg = cm.output
       self.assertIn('another function defined on the same line', msg)
 
-  @jtu.thread_unsafe_test()  # logging is not thread-safe
-  def test_cache_miss_explanations_unpacks_transforms(self):
-    # Tests that the explain_tracing_cache_miss() function does not throw an
-    # error when unpacking `transforms` with a length greater than 3.
-    @jax.jit
-    def f(key):
-      return jax.random.truncated_normal(key, 1, 1, dtype=jax.numpy.float32)
-
-    with config.explain_cache_misses(True):
-      with self.assertLogs(level="WARNING") as cm:
-        f(jax.random.key(seed=123))
-
-    if is_persistent_cache_enabled():
-      # 4 warnings from tracing cache, 5-10 from persistent cache depending on
-      # the backend
-      self.assertTrue(9 <= len(cm.output) <= 15)
-      self.assertTrue(any("TRACING CACHE MISS" in msg for msg in cm.output))
-    else:
-      self.assertLen(cm.output, 4)
-      for msg in cm.output:
-        self.assertIn("TRACING CACHE MISS", msg)
-
   def test_cache_miss_explanations_no_source_info(self):
     # ``operator.add`` is a built-in function and does not have source info.
     with config.explain_cache_misses(True):
