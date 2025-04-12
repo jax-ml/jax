@@ -1464,9 +1464,9 @@ class ShardyShardingTest(jtu.JaxTestCase):
         SdyArraySharding(
             mesh.shape_tuple,
             [SdyDimSharding(
-             ('sequence', 'data'), True),
-             SdyDimSharding(('model',), True),
-             SdyDimSharding([], True)]))
+             ('sequence', 'data'), False),
+             SdyDimSharding(('model',), False),
+             SdyDimSharding([], False)]))
     with ir.Context() as ctx:
       dialects.sdy.register_dialect(ctx)
       self.assertEqual(
@@ -1483,9 +1483,9 @@ class ShardyShardingTest(jtu.JaxTestCase):
         sdy_sharding,
         SdyArraySharding(
             mesh.shape_tuple,
-            [SdyDimSharding([], True),
-             SdyDimSharding([], False),
-             SdyDimSharding(('x',), True)]))
+            [SdyDimSharding([], False),
+             SdyDimSharding([], True),
+             SdyDimSharding(('x',), False)]))
     with ir.Context() as ctx:
       dialects.sdy.register_dialect(ctx)
       self.assertEqual(

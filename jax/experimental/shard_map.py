@@ -706,7 +706,7 @@ def _shardy_shard_map_sharding(
     for dim_sharding in sdy_sharding.dimension_shardings:
       # Only allow dimensions which have no sharding to be auto-sharded.
       if not dim_sharding.axes:
-        dim_sharding.is_closed = False
+        dim_sharding.is_open = True
   return sdy_sharding
 
 

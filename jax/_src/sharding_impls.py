@@ -101,8 +101,8 @@ def modify_sdy_sharding_wrt_axis_types(sdy_sharding: SdyArraySharding, mesh):
     dim_shardings, used_axes = [], []  # type: ignore
     for d in sdy_sharding.dimension_shardings:
       # TODO(yashkatariya): Maybe if any mesh axis is auto, mark all axes as open?
-      dim_shardings.append(SdyDimSharding(axes=[], is_closed=False)
-                           if not d.axes and d.is_closed else d)
+      dim_shardings.append(SdyDimSharding(axes=[], is_open=True)
+                           if not d.axes and not d.is_open else d)
       used_axes.extend(d.axes)
     remaining_axes = set(mesh.axis_names) - set(used_axes)
     # Sort wrt mesh axis names so order is deterministic and doesn't hang in
@@ -185,7 +185,7 @@ class SingleDeviceSharding(jsharding.Sharding):
     return replicated_hlo_sharding
 
   def _to_sdy_sharding(self, num_dimensions: int) -> SdyArraySharding:
-    sdy_dim_sharding = [SdyDimSharding(axes=[], is_closed=True)
+    sdy_dim_sharding = [SdyDimSharding(axes=[], is_open=False)
                         for _ in range(num_dimensions)]
     return SdyArraySharding(None, sdy_dim_sharding)
 
