@@ -1795,7 +1795,7 @@ def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
     s = SdyArraySharding(
         mesh_shape=None,
         dimension_shardings=[
-            sharding_impls.SdyDimSharding(axes=[], is_closed=i >= aval.ndim)
+            sharding_impls.SdyDimSharding(axes=[], is_open=i < aval.ndim)
             for i in range(physical_ndim)
         ])
     return wrap_with_sharding_op(ctx, val, aval, s)

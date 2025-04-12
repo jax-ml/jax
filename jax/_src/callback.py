@@ -167,7 +167,7 @@ def _callback_op_sharding(
           sharding_impls.SdyArraySharding(
               mesh_shape=(),
               dimension_shardings=[
-                  sharding_impls.SdyDimSharding(axes=[], is_closed=True)
+                  sharding_impls.SdyDimSharding(axes=[], is_open=False)
               ] * avals_out[0].ndim,
               logical_device_ids=())])
     else:

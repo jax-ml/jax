@@ -8188,8 +8188,8 @@ class ShardyTest(jtu.JaxTestCase):
     sharding = sharding_impls.SdyArraySharding(
         mesh_shape=(('data', 4), ('model', 8), ('expert', 2)),
         dimension_shardings=[
-            sharding_impls.SdyDimSharding(axes=['data', 'expert'], is_closed=True),
-            sharding_impls.SdyDimSharding(axes=['model'], is_closed=False, priority=2)])
+            sharding_impls.SdyDimSharding(axes=['data', 'expert'], is_open=False),
+            sharding_impls.SdyDimSharding(axes=['model'], is_open=True, priority=2)])
     self.assertEqual(repr(sharding), "SdyArraySharding([{'data', 'expert'}, {'model', ?}p2])")
 
   def test_array_sharding_repr_with_logical_ids(self):
@@ -8202,7 +8202,7 @@ class ShardyTest(jtu.JaxTestCase):
 
   def test_dimension_sharding_repr(self):
     dim_sharding = sharding_impls.SdyDimSharding(
-        axes=['data', 'model'], is_closed=False, priority=2)
+        axes=['data', 'model'], is_open=True, priority=2)
     self.assertEqual(repr(dim_sharding),
                      "SdyDimSharding({'data', 'model', ?}p2)")
 
