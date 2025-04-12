@@ -63,61 +63,6 @@ CompilerOptions = dict[str, Union[str, bool]]
 
 # -- Internal types
 
-# TODO(frostig): collapse with XlaLowering
-class Lowering(Protocol):
-  """Protocol for lowerings, which a user-facing ``Lowered`` encapsulates."""
-
-  def compile(
-      self, compiler_options: CompilerOptions | None = None) -> Executable:
-    """Compile and return a corresponding ``Executable``."""
-    raise NotImplementedError
-
-  def as_text(self, dialect: str | None = None, *,
-              debug_info: bool = False) -> str:
-    """A human-readable text representation of this lowering.
-
-    Intended for visualization and debugging purposes. This need not be a valid
-    nor reliable serialization. It is relayed directly to external callers.
-    """
-    raise NotImplementedError
-
-  def compiler_ir(self, dialect: str | None = None) -> Any:
-    """An arbitrary object representation of this lowering.
-
-    Intended for debugging purposes. This need not be a valid nor reliable
-    serialization. It is relayed directly to external callers, with no
-    guarantee on type, structure, or consistency across invocations.
-
-    May raise ``NotImplementedError`` if unavailable, e.g. based on backend or
-    compiler.
-
-    Args:
-      dialect: Optional string specifying a representation dialect
-      (e.g. "stablehlo")
-    """
-    raise NotImplementedError
-
-  def cost_analysis(self) -> Any:
-    """A summary of execution cost estimates.
-
-    Intended for visualization and debugging purposes. The object output by
-    this is some simple data structure that can easily be printed or serialized
-    (e.g. nested dicts, lists, and tuples with numeric leaves). However, its
-    structure can be arbitrary: it need not be consistent across versions of JAX
-    and jaxlib, or even across invocations. It is relayed directly to external
-    callers.
-
-    This function estimates execution cost in the absence of compiler
-    optimizations, which may drastically affect the cost. For execution cost
-    estimates after optimizations, compile this lowering and see
-    ``Compiled.cost_analysis``.
-
-    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
-    compiler, or runtime.
-    """
-    # TODO(frostig): improve annotation (arbitrary pytree)
-    raise NotImplementedError
-
 
 class Executable:
 
@@ -258,8 +203,7 @@ class Executable:
     return self.xla_extension_executable()
 
 
-class XlaLowering(Lowering):
-  """Adapts our various internal XLA-backed computations into a ``Lowering``."""
+class Lowering:
 
   compile_args: dict[str, Any]
 
@@ -273,15 +217,23 @@ class XlaLowering(Lowering):
 
   def stablehlo(self) -> ir.Module:
     """Return a StableHLO representation of this computation."""
-    raise NotImplementedError("must override")
+    raise NotImplementedError(
+        f"cost analysis unsupported on XLA computation: {type(self)}")
 
   def compile(
       self, compiler_options: CompilerOptions | None = None) -> Executable:
-    raise NotImplementedError("must override")
+    """Compile and return a corresponding ``Executable``."""
+    raise NotImplementedError(
+        f"cost analysis unsupported on XLA computation: {type(self)}")
 
   def as_text(self, dialect: str | None = None,
               *,
               debug_info: bool = False) -> str:
+    """A human-readable text representation of this lowering.
+
+    Intended for visualization and debugging purposes. This need not be a valid
+    nor reliable serialization. It is relayed directly to external callers.
+    """
     if dialect is None:
       dialect = "stablehlo"
     if dialect == "stablehlo":
@@ -295,6 +247,19 @@ class XlaLowering(Lowering):
       raise ValueError(f"unknown dialect: {dialect}")
 
   def compiler_ir(self, dialect: str | None = None) -> Any:
+    """An arbitrary object representation of this lowering.
+
+    Intended for debugging purposes. This need not be a valid nor reliable
+    serialization. It is relayed directly to external callers, with no
+    guarantee on type, structure, or consistency across invocations.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend or
+    compiler.
+
+    Args:
+      dialect: Optional string specifying a representation dialect
+      (e.g. "stablehlo")
+    """
     if dialect is None:
       dialect = "stablehlo"
     if dialect == "stablehlo":
@@ -304,8 +269,26 @@ class XlaLowering(Lowering):
     else:
       raise ValueError(f"unknown dialect: {dialect}")
 
-  def cost_analysis(self) -> dict[str, float]:
-    raise NotImplementedError("must override")
+  def cost_analysis(self) -> Any:
+    """A summary of execution cost estimates.
+
+    Intended for visualization and debugging purposes. The object output by
+    this is some simple data structure that can easily be printed or serialized
+    (e.g. nested dicts, lists, and tuples with numeric leaves). However, its
+    structure can be arbitrary: it need not be consistent across versions of JAX
+    and jaxlib, or even across invocations. It is relayed directly to external
+    callers.
+
+    This function estimates execution cost in the absence of compiler
+    optimizations, which may drastically affect the cost. For execution cost
+    estimates after optimizations, compile this lowering and see
+    ``Compiled.cost_analysis``.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
+    compiler, or runtime.
+    """
+    raise NotImplementedError(
+        f"cost analysis unsupported on XLA computation: {type(self)}")
 
 
 # -- Public-facing API, plus helpers
@@ -562,14 +545,14 @@ class Lowered(Stage):
   lowering paths (:func:`~jax.jit`, :func:`~jax.pmap`, etc.).
   """
   __slots__ = ["_lowering", "args_info", "out_tree", "_no_kwargs"]
-  _lowering: XlaLowering
+  _lowering: Lowering
   args_info: Any                # PyTree of ArgInfo
   out_tree: tree_util.PyTreeDef
   _no_kwargs: bool
 
   def __init__(
       self,
-      lowering: XlaLowering,
+      lowering: Lowering,
       args_info,  # PyTree of ArgInfo
       out_tree: tree_util.PyTreeDef,
       no_kwargs: bool = False):
@@ -581,7 +564,7 @@ class Lowered(Stage):
 
   @classmethod
   def from_flat_info(cls,
-                     lowering: XlaLowering,
+                     lowering: Lowering,
                      in_tree: tree_util.PyTreeDef,
                      in_avals,
                      donate_argnums: tuple[int, ...],

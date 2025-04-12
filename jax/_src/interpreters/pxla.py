@@ -922,7 +922,7 @@ def _pmap_unmapped_aval(size: core.AxisSize, axis: int | None,
     raise TypeError(f"no unmapping handler for {aval} of type {type(aval)}")
 
 
-class PmapComputation(stages.XlaLowering):
+class PmapComputation(stages.Lowering):
   _hlo: ir.Module
   _executable: PmapExecutable | None
 
@@ -931,7 +931,7 @@ class PmapComputation(stages.XlaLowering):
     self._hlo = hlo
     self.compile_args = compile_args
 
-  # -- stages.XlaLowering overrides
+  # -- stages.Lowering overrides
 
   def stablehlo(self) -> ir.Module:
     return self._hlo
@@ -2433,7 +2433,7 @@ def _to_logical_sharding(
     raise TypeError(aval)
 
 
-class MeshComputation(stages.XlaLowering):
+class MeshComputation(stages.Lowering):
   _hlo: ir.Module
   _executable: MeshExecutable | None
 
@@ -2449,7 +2449,7 @@ class MeshComputation(stages.XlaLowering):
     self.compile_args = compile_args
     self._executable = None
 
-  # -- stages.XlaLowering overrides
+  # -- stages.Lowering overrides
 
   def stablehlo(self) -> ir.Module:
     return self._hlo
