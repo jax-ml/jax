@@ -49,6 +49,8 @@ discuss later). One notable addition here is that we still allow you to co-sched
 of those Pallas-level threads on the same SM so that they can cooperate and communicate
 through shared memory (we relize that by putting them in the same CUDA block).
 
+> From now on, whenever we say "thread", we refer to the Pallas thread, not a CUDA thread/lane.
+
 > This is very similar to a programming model popularized by [Triton](https://triton-lang.org/),
   but as you will see there are a few differences. Mosaic GPU tends to be more low level,
   which usually means you will have to put in more work, but it also puts you more in control.
@@ -69,7 +71,7 @@ TensorCore operations are so big and take so many cycles to complete, that it is
 try to use other units in the meantime.
 
 To extend this even further, we can take advantage of this hardware-unit-level parallelism by
-allowing multiple Pallas threads (warpgroups) to run concurrently. If one of the threads primarily
+allowing multiple Pallas threads to run concurrently. If one of the threads primarily
 occupies the ALU, while another one primarily issues TensorCore related instructions, we can
 take advantage of the efficient context switching built into the warp schedulers to keep both
 units busy. This is one of the core idea behind algorithms such as [FlashAttention 3](https://arxiv.org/abs/2407.08608)
@@ -89,23 +91,168 @@ TODO
 ## MMA (TensorCore)
 
 In this section, we focus on how Pallas:MGPU kernels can utilize the TensorCore unit.
-NVIDIA continues to change the programming interface of the TensorCore significantly
-between different hardware generations, which is why the lowest-level interfaces
-differ in Pallas:MGPU as well.
+The programming interface of the TensorCore changes significantly between different
+NVIDIA GPU generations, which is why the lowest-level interfaces differ in Pallas:MGPU as well.
+
+Each MMA operation is associated with three operands:
+* the accumulator `D` of shape `(M, N)`,
+* the left input `A` of shape `(M, K)`,
+* the right input `B` of shape `(K, N)`.
+All operands must have the same element type.
+
+Each use of MMA involves a few steps:
+1. Allocating the space for the accumulator (MMA implicitly performs `D += A @ B`)
+2. Preparing the `A` and `B` operands
+3. Issuing the operation
+4. Waiting for the operation to complete
+5. Reading out the result
+
+Steps 2.-4. are usually performed in a loop over the contraction dimension (`K`).
+
+### Memory space of `A` and `B` operands
+
+The `A` and `B` operands are generally best passed in through SMEM, where they can
+be conveniently loaded using `plgpu.copy_gmem_to_smem`. For those operands to be
+compatible with MMA operations, they need to have the appropriate tiling and swizzling
+transforms specified upon their allocation. For all currently supported generations,
+the TensorCore requires the data to be laid out into row-major 2D tiles of shape
+`(8, swizzle_elems)`, where `swizzle_elems` is derived by dividing the swizzle by the
+element type bytewidth.  The currently supported swizzles are: 128, 64, and 32. Larger
+swizzles are preferrable as they improve the performance of GMEM-to-SMEM copies.
+
+```python
+def mma_transforms(shape_dtype: jax.ShapeDtypeStruct):
+  assert len(shape_dtype.shape) == 2
+  if shape_dtype.shape[0] % 8:
+    raise ValueError("Number of rows must be divisible by 8")
+  for swizzle_bytes in (128, 64, 32):
+    swizzle_elems = swizzle_bytes // shape_dtype.dtype.itemsize
+    if shape_dtype.shape[-1] % swizzle_elems == 0:
+      return (plgpu.TilingTransform((8, swizzle_elems)),
+              plgpu.SwizzleTransform(swizzle_bytes))
+  raise ValueError("Failed to find transforms for the specified window type")
+```
+
+If the operands need to be transformed, the `A` operand can be passed in through a different
+memory space (architecture dependent, see below). The `B` operand _must_ be located in SMEM.
+
+### Transposed operands
+
+When performing MMA on 16-bit operands, the TensorCore can automatically transpose the
+input data. For example, the `A` reference is allowed to be of shape `(K, M)`, but it
+has to be transposed before passing it into the mma function. For example:
+```python
+assert acc_ref.shape == (M, N) and a_ref.shape == (K, M) and b_ref.shape == (K, N)
+a_ref_t = plgpu.transpose_ref(a_ref, (1, 0))
+assert a_ref_t.shape == (M, K)  # The shape expected by plgpu.wgmma
+plgpu.wgmma(acc, a_ref_t, b_ref)
+```
+An analogous operation is allowed on the `B` reference in this case too.
 
 ### Hopper (`wgmma`)
 
-TODO
+In this section, we cover the basics of using the Hopper-generation TensorCores, exposed in
+PTX as the [`wgmma.mma_async` instruction](https://docs.nvidia.com/cuda/parallel-thread-execution/#asynchronous-warpgroup-level-matrix-instructions-wgmma-mma).
+
+#### Allocating the accumulator
+
+In the Hopper hardware architecture the accumulator is allocated in registers, but in Pallas
+it is modeled as a mutable reference, as each MMA operation accumulates in-place.
+There are two ways to allocate the accumulator.
+
+To create a zero-initialized accumulator you can use `pl.run_scoped` with a
+`plgpu.ACC((m, n), dtype)` type.
+```python
+def compute(acc_ref):
+  ...
+  return acc_ref[...]
+output = pl.run_scoped(compute, plgpu.ACC((m, n), jnp.float32))
+```
+Dereferencing the accumulator reference, as seen in the end of the `compute` function will
+implicitly await all outstanding WGMMA operations.
+
+If you'd like to initialize it with an existing array, you can use `pl.run_state` with
+`plgpu.ACC.init(init_array)`:
+```python
+def compute(acc_ref):
+  ...
+  return # pl.run_state only returns the final value of the accumulator
+output = pl.run_state(compute)(plgpu.ACC.init(init_array))
+```
+If `pl.run_state` has accumulator operands, it implicitly awaits all outstanding WGMMA
+operations before returning the final values.
+
+#### Preparing the `A` and `B` operands
+
+As discussed above, we recommend passing in `A` and `B` through shared memory. In this
+case the correct tiling and swizzling transforms must be specified.
+
+`plgpu.wgmma` additionally allows passing in `A` through registers (i.e. not an SMEM
+reference but as a regular JAX array). This mode, however, comes with a number of
+significant drawbacks and it is very difficult to ensure sufficient synchronization to
+make this safe.
+
+TODO: Explain the conditions under which it is acceptable to do this.
+
+#### Issuing the operation
+
+The supported MMA shapes are such that:
+* `M` is divisible by 64
+* `N` is divisible by 8 and smaller than 256
+* `K` is a multiple of `swizzle` divided by the bytewidth of element type
+
+The currently supported data types are: `jnp.float32`, `jnp.bfloat16` and `jnp.float16`.
+The accumulator `D` must be a `jnp.float32`, with the exception of `jnp.float16` inputs,
+in which case it is allowed to be `jnp.float16` as well.
+
+#### Waiting for the operation to complete
+
+Each `plgpu.wgmma` call implicitly synchronizes with all previous `plgpu.wgmma` calls, such
+that once control returns from it, we guarantee that no WGMMA other than the last issued
+one is still running. As such, any SMEM regions that were read by previously issued WGMMA
+instructions can be reused. This is especially relevant for pipelining WGMMA with async memory copies:
+```python
+buffers = 3  # In reality you might want even more
+assert a_smem.shape == (buffers, m, k)
+assert b_smem.shape == (buffers, k, n)
+assert acc_ref.shape == (m, n)
+
+def fetch_a_b(ki, slot):
+  a_slice = ... # Replace with the right M/K slice
+  b_slice = ... # Replace with the right K/N slice
+	plgpu.copy_gmem_to_smem(a_gmem.at[a_slice], a_smem.at[slot], a_loaded.at[slot])
+	plgpu.copy_gmem_to_smem(b_gmem.at[b_slice], b_smem.at[slot], b_loaded.at[slot])
+
+def loop_body(i, _):
+	slot = jax.lax.rem(i, buffers)
+	plgpu.barrier_wait(a_loaded.at[slot])
+	plgpu.barrier_wait(b_loaded.at[slot])
+	plgpu.wgmma(acc_ref, a_smem.at[slot], b_smem.at[slot])
+	# We know that only the last issued WGMMA is running, so we can issue a async load in
+	# into the other buffer
+	load_i = i + buffers - 1
+	load_slot = jax.lax.rem(load_i, buffers)
+	@pl.when(jnp.logical_and(load_i >= buffers, load_i < num_steps))
+	def _do_fetch():
+		fetch_a_b(load_i, slot)
+for slot in range(buffers):
+  fetch_a_b(slot, slot)
+jax.lax.fori_loop(0, num_steps, loop_body, None)
+```
 
 ### Blackwell (`tcgen05`)
 
-TODO
+While Mosaic GPU supports `tcgen05` MMA instructions, exposing this capability to Pallas
+is still work in progress. Stay tuned!
 
 ## Using `core_map`
 
 TODO
 
 ## Synchronization structures and primitives
+
+In this section, we go over the most important functions and data structures
+used for synchronization between threads and also some asynchronous operations.
 
 ### `commit_smem`
 
@@ -162,6 +309,20 @@ There are three operations that can complete a barrier:
   Failing to satisfy this will corrupt the data structure and can cause surprising failures
   (including CUDA runtime errors). See below for an example of a valid program with two threads.
 
+> Another critical restriction is that the number of barrier completions must equal the
+  number of barrier waits throughout the barrier's lifetime. It is not allowed to end a scoped
+  allocation of a barrier when it has an unawaited completion. Otherwise, when it is
+  reused by the compiler, leaving it in this state can cause problems downstream.
+
+> Finally, it is crucial to ensure that each thread that ever waits on a `Barrier`
+  takes part in all `wait` operations on it. It is not allowed to e.g. await every
+  other completion of a barrier from one thread, and all other completions from another
+  one. Doing so will lead to deadlocks. To recap: when a `Barrier` is used to wait in
+  some thread, it must observe every single completion of that barrier (by waiting on it).
+
+
+  Note that the `Barrier` can receive arrivals from any source, without restrictions.
+
 #### Asynchronous GMEM-to-SMEM copies
 
 When an asynchronous GMEM-to-SMEM copy is being executed by the TMA engine, it will
@@ -209,7 +370,8 @@ pl.when(tid == 1)(lambda: jax.lax.fori_loop(0, steps, thread1_body, None))
 
 #### Awaiting `tcgen05` TensorCore instructions
 
-TODO
+While Mosaic GPU supports `tcgen05` MMA instructions, exposing this capability to Pallas
+is still work in progress. Stay tuned!
 
 ### `ClusterBarrier`
 
