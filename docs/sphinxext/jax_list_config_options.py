@@ -44,7 +44,7 @@ def config_option_to_title_case(name: str) -> str:
   # Define capitalization rules as a list of (string, replacement) tuples
   capitalization_rules_list = [
       ("jax", "JAX"), ("xla", "XLA"), ("pgle", "PGLE"), ("cuda", "CUDA"), ("vjp", "VJP"), ("jvp", "JVP"),
-      ("pjrt", "PjRT"), ("gpu", "GPU"), ("tpu", "TPU"), ("prng", "PRNG"), ("roocm", "ROOCM"), ("spmd", "SPMD"),
+      ("pjrt", "PjRT"), ("gpu", "GPU"), ("tpu", "TPU"), ("prng", "PRNG"), ("rocm", "ROCm"), ("spmd", "SPMD"),
       ("bcoo", "BCOO"), ("jit", "JIT"), ("cpu", "CPU"), ("cusparse", "cuSPARSE"), ("ir", "IR"), ("dtype", "DType"),
       ("pprint", "PPrint"), ("x64", "x64")
   ]
