@@ -235,7 +235,7 @@ def jit(
   inline: bool = False,
   abstracted_axes: Any | None = None,
   compiler_options: dict[str, Any] | None = None,
-) -> pjit.JitWrapped | Callable[[Callable], pjit.JitWrapped]:
+) -> pjit.JitWrapped | Callable[[Callable[..., Any]], pjit.JitWrapped]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
