@@ -2615,8 +2615,9 @@ def power(x1: ArrayLike, x2: ArrayLike, /) -> Array:
       :func:`jax.lax.integer_pow`.
     - When ``x2`` is a traced scalar or an array, ``jnp.power`` lowers to
       :func:`jax.lax.pow`.
-    - ``jnp.power`` raises a ``TypeError`` for integer type raised to negative
-      integer power.
+    - ``jnp.power`` raises a ``TypeError`` for integer type raised to a concrete
+      negative integer power. For a non-concrete power, the operation is invalid
+      and the returned value is implementation-defined.
     - ``jnp.power`` returns ``nan`` for negative value raised to the power of
       non-integer values.
 
