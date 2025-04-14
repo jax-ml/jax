@@ -23,7 +23,6 @@ from typing import Any
 import jax
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
@@ -47,10 +46,6 @@ from jax._src.typing import DeprecatedArg
 import numpy as np
 
 logger = logging.getLogger(__name__)
-
-# TODO(dfm): Remove after 6 months.
-# Added Oct 1, 2024
-deprecations.register("jax-callback-vectorized")
 
 # `pure_callback_p` is the main primitive for staging out Python pure callbacks.
 pure_callback_p = core.Primitive("pure_callback")
@@ -83,10 +78,9 @@ def pure_callback_impl(
     result_avals,
     callback: _FlatCallback,
     sharding: SingleDeviceSharding | None,
-    vectorized: bool | DeprecatedArg,
     vmap_method: str | None,
 ):
-  del sharding, vectorized, vmap_method, result_avals
+  del sharding, vmap_method, result_avals
   try:
     cpu_device, *_ = jax.local_devices(backend="cpu")
   except RuntimeError as e:
@@ -114,10 +108,9 @@ def pure_callback_abstract_eval(
     callback: _FlatCallback,
     result_avals,
     sharding: SingleDeviceSharding | None,
-    vectorized: bool | DeprecatedArg,
     vmap_method: str | None,
 ):
-  del avals, callback, sharding, vectorized, vmap_method
+  del avals, callback, sharding, vmap_method
   return result_avals
 
 
@@ -292,7 +285,7 @@ def pure_callback(
   When `vmap`-ed the behavior will depend on the value of the ``vmap_method``.
 
   * Calling :func:`~jax.vmap` on a callback without an explicit ``vmap_method``
-    is deprecated and it will eventually raise ``NotImplementedError``.
+    raises a ``NotImplementedError``.
   * ``vmap_method="sequential"`` uses :func:`~jax.lax.map` to loop over
     the batched arguments, calling ``callback`` once for each batch element.
   * ``vmap_method="sequential_unrolled"`` is like ``sequential``, but the loop
@@ -302,9 +295,8 @@ def pure_callback(
   * ``vmap_method="broadcast_all"`` behaves like ``expand_dims``, but the
     inputs are tiled to the expected batched shape.
 
-  If necessary, the legacy behavior provided by the deprecated
-  ``vectorized=True`` argument can be recovered using
-  ``vmap_method="legacy_vectorized"``.
+  If necessary, the legacy behavior provided by the removed ``vectorized=True``
+  argument can be recovered using ``vmap_method="legacy_vectorized"``.
 
   The current default behavior is to use ``vmap_method="sequential"`` when
   not specified, but this behavior is deprecated, and in the future, the
@@ -373,18 +365,11 @@ def pure_callback(
 
   .. _External Callbacks: https://docs.jax.dev/en/latest/external-callbacks.html
   """
-  if not isinstance(vectorized, DeprecatedArg) and not vectorized is None:
-    deprecations.warn(
-        "jax-callback-vectorized",
-        "The vectorized argument of jax.pure_callback is deprecated and setting "
-        "it will soon raise an error. To avoid an error in the future, and to "
-        "suppress this warning, please use the vmap_method argument instead.",
-        stacklevel=2)
-    if vmap_method is not None:
-      raise ValueError(
-          "the vectorized and vmap_method arguments of jax.pure_callback cannot "
-          "be used together. Please use the vmap_method argument.")
-    vmap_method = "legacy_vectorized" if vectorized else "sequential"
+  # TODO(danfm): Remove this check 3 months after v0.6.0 is released.
+  if not isinstance(vectorized, DeprecatedArg):
+    raise ValueError(
+        "The 'vectorized' argument of jax.pure_callback was removed in JAX "
+        "v0.6.0. Use 'vmap_method' instead.")
   allowed_vmap_methods = ["sequential", "sequential_unrolled", "expand_dims",
                           "broadcast_all", "legacy_vectorized", None]
   if vmap_method not in allowed_vmap_methods:
@@ -402,7 +387,6 @@ def pure_callback(
       callback=_FlatCallback(callback, in_tree),
       result_avals=tuple(flat_result_avals),
       sharding=sharding,
-      vectorized=vectorized,
       vmap_method=vmap_method,
   )
   return tree_util.tree_unflatten(out_tree, out_flat)

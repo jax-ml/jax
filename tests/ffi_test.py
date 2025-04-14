@@ -200,14 +200,6 @@ class FfiTest(jtu.JaxTestCase):
       else:
         self.assertArraysEqual(a, b)
 
-  @jtu.run_on_devices("gpu", "cpu")
-  def test_vectorized_deprecation(self):
-    x = self.rng().randn(3, 5, 4).astype(np.float32)
-    with self.assertWarns(DeprecationWarning):
-      ffi_call_geqrf(x, vectorized=True)
-    with self.assertWarns(DeprecationWarning):
-      jax.vmap(ffi_call_geqrf)(x)
-
   def test_input_output_aliases(self):
     def fun(x):
       return jax.ffi.ffi_call("test", x, input_output_aliases={0: 0})(x)

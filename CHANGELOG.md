@@ -80,6 +80,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
       `raise_to_shaped_mappings`, `reset_trace_state`, `str_eqn_compact`,
       `substitute_vars_in_output_ty`, `typecompat`, and `used_axis_names_jaxpr`. Most
       have no public replacement, though a few are available at {mod}`jax.extend.core`.
+    * The `vectorized` argument to {func}`~jax.pure_callback` and
+      {func}`~jax.ffi.ffi_call`. Use the `vmap_method` parameter instead.
 
 ## jax 0.5.3 (Mar 19, 2025)
 
