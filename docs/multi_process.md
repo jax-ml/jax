@@ -26,14 +26,16 @@ The main idea
 This tutorial assumes you've read [Distributed arrays and automatic
 parallelization][distributed_arrays], which is about single-controller JAX.
 
-![alt][location]
+```{figure} _static/multi_process/mcjax_overview.png
+:alt: Illustration of a multi-host TPU pod. Each host in the pod is attached via PCI to a board of four TPU chips. The TPUs chips themselves are connected via high-speed inter-chip interconnects.
 
-*Illustration of a multi-host TPU pod. Each host in the pod (green) is attached
+Illustration of a multi-host TPU pod. Each host in the pod (green) is attached
 via PCI to a board of four TPU chips (blue). The TPUs chips themselves are
 connected via high-speed inter-chip interconnects (ICI). JAX Python code runs on
 each host, e.g. via ssh. The JAX processes on each host are aware of each other,
 allowing you to orchestrate computation across the entire pods' worth of chips.
-The principle is the same for GPU, CPU, and other platforms with JAX support!*
+The principle is the same for GPU, CPU, and other platforms with JAX support!
+```
 
 ## Toy example
 
@@ -170,10 +172,12 @@ one process; that is, the local device sets are disjoint. A process's local
 devices can be queried by evaluating {func}`jax.local_devices()`. We sometimes
 use the term **addressable** to mean the same thing as local.
 
-![alt][TODO]
+```{figure} _static/multi_process/controller_and_local_devices.png
+:alt: Illustration of how a process/controller and local devices fit into a larger multi-host cluster. The "global devices" are all devices in the cluster.
 
-*Illustration of how a process/controller and local devices fit into a larger
-multi-host cluster. The "global devices" are all devices in the cluster.*
+Illustration of how a process/controller and local devices fit into a larger
+multi-host cluster. The "global devices" are all devices in the cluster.
+```
 
 The devices across all processes are called the **global devices**. The list of
 global devices is queried by {func}`jax.devices()`. That list of all devices is
