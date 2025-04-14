@@ -24,7 +24,6 @@ import numpy as np
 
 import jax
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import effects
 from jax._src import util
@@ -328,7 +327,7 @@ def ffi_call(
     input_output_aliases: dict[int, int] | None = ...,
     custom_call_api_version: int = ...,
     legacy_backend_config: str | None = ...,
-    vectorized: bool | DeprecatedArg = ...,
+    vectorized: bool | None | DeprecatedArg = DeprecatedArg(),
 ) -> Callable[..., Array]:
   ...
 
@@ -345,7 +344,7 @@ def ffi_call(
     input_output_aliases: dict[int, int] | None = ...,
     custom_call_api_version: int = ...,
     legacy_backend_config: str | None = ...,
-    vectorized: bool | DeprecatedArg = ...,
+    vectorized: bool | None | DeprecatedArg = DeprecatedArg(),
 ) -> Callable[..., Sequence[Array]]:
   ...
 
@@ -361,7 +360,7 @@ def ffi_call(
     input_output_aliases: dict[int, int] | None = None,
     custom_call_api_version: int = 4,
     legacy_backend_config: str | None = None,
-    vectorized: bool | DeprecatedArg = DeprecatedArg(),
+    vectorized: bool | None | DeprecatedArg = DeprecatedArg(),
 ) -> Callable[..., Array | Sequence[Array]]:
   """Call a foreign function interface (FFI) target.
 
@@ -422,18 +421,11 @@ def ffi_call(
     to execute the FFI handler. Any keyword arguments are passed as named
     attributes to the FFI handler using XLA's FFI interface.
   """
-  if not isinstance(vectorized, DeprecatedArg) and not vectorized is None:
-    deprecations.warn(
-        "jax-callback-vectorized",
-        "The vectorized argument of ffi_call is deprecated and setting "
-        "it will soon raise an error. To avoid an error in the future, and to "
-        "suppress this warning, please use the vmap_method argument instead.",
-        stacklevel=2)
-    if vmap_method is not None:
-      raise ValueError(
-          "the vectorized and vmap_method arguments of ffi_call cannot "
-          "be used together. Please use the vmap_method argument.")
-    vmap_method = "legacy_vectorized" if vectorized else "sequential"
+  # TODO(danfm): Remove this check 3 months after v0.6.0 is released.
+  if not isinstance(vectorized, DeprecatedArg):
+    raise ValueError(
+        "The 'vectorized' argument of jax.ffi.ffi_call was removed in JAX "
+        "v0.6.0. Use 'vmap_method' instead.")
   allowed_vmap_methods = ["sequential", "sequential_unrolled", "expand_dims",
                           "broadcast_all", "legacy_vectorized", None]
   if vmap_method not in allowed_vmap_methods:
@@ -511,7 +503,6 @@ def ffi_call(
     results = ffi_call_p.bind(
         *args,
         result_avals=result_avals,
-        vectorized=vectorized,
         vmap_method=vmap_method,
         target_name=target_name,
         has_side_effect=has_side_effect,
@@ -665,21 +656,10 @@ def ffi_batching_rule(
     args,
     dims,
     *,
-    vectorized: bool | None | DeprecatedArg,
     vmap_method: str | None,
     result_avals: Sequence[core.ShapedArray],
     **kwargs: Any,
 ):
-  if isinstance(vectorized, DeprecatedArg) and vmap_method is None:
-    deprecations.warn(
-        "jax-callback-vectorized",
-        f"The default behavior of {prim.name} under vmap will soon "
-        "change. Currently, the default behavior is to generate a sequential "
-        "vmap (i.e. a loop), but in the future the default will be to raise "
-        "an error. To keep the current default, set vmap_method='sequential'.",
-        stacklevel=6)
-    vmap_method = "sequential"
-
   axis_size, = {a.shape[d] for a, d in zip(args, dims)
                 if d is not batching.not_mapped}
   new_args = [arg if dim is batching.not_mapped else
@@ -707,7 +687,6 @@ def ffi_batching_rule(
           for layout, d in zip(kwargs["input_layouts"], dims))
     outvals = prim.bind(
         *new_args,
-        vectorized=vectorized,
         vmap_method=vmap_method,
         result_avals=batched_result_avals,
         **kwargs,
@@ -723,7 +702,6 @@ def ffi_batching_rule(
           for layout in kwargs["input_layouts"])
     outvals = prim.bind(
       *bcast_args,
-      vectorized=vectorized,
       vmap_method=vmap_method,
       result_avals=batched_result_avals,
       **kwargs,
@@ -736,7 +714,6 @@ def ffi_batching_rule(
       return prim.bind(
           *merged_args,
           result_avals=result_avals,
-          vectorized=vectorized,
           vmap_method=vmap_method,
           **kwargs,
       )
