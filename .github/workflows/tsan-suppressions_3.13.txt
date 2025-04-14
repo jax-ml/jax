@@ -23,7 +23,8 @@ race_top:PyMember_GetOne
 
 # https://github.com/python/cpython/issues/131680
 # Fixed in Python 3.14, but not backported to 3.13.
-race_top: new_reference
+race_top:new_reference
+race:_Py_IsOwnedByCurrentThread
 
 # https://github.com/python/cpython/issues/129748
 race:mi_block_set_nextx
