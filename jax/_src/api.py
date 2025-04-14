@@ -186,7 +186,7 @@ NoFunction = NoFunctionType()
 
 @overload
 def jit(
-  fun: Callable[..., Any], /,
+  fun: Callable, /,
   *,
   in_shardings: Any = ...,
   out_shardings: Any = ...,
@@ -217,11 +217,11 @@ def jit(
   inline: bool = ...,
   abstracted_axes: Any | None = ...,
   compiler_options: dict[str, Any] | None = ...,
-) -> Callable[[Callable[..., Any]], pjit.JitWrapped]: ...
+) -> Callable[[Callable], pjit.JitWrapped]: ...
 
 @_allow_deprecated_jit_signature
 def jit(
-  fun: Callable[..., Any] | NoFunctionType = NoFunction, /,
+  fun: Callable | NoFunctionType = NoFunction, /,
   *,
   in_shardings: Any = sharding_impls.UNSPECIFIED,
   out_shardings: Any = sharding_impls.UNSPECIFIED,
@@ -235,7 +235,7 @@ def jit(
   inline: bool = False,
   abstracted_axes: Any | None = None,
   compiler_options: dict[str, Any] | None = None,
-) -> pjit.JitWrapped | Callable[[Callable[..., Any]], pjit.JitWrapped]:
+) -> pjit.JitWrapped | Callable[[Callable], pjit.JitWrapped]:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
