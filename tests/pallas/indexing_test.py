@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 import sys
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -32,11 +31,7 @@ if sys.platform != "win32":
 else:
   pltpu = None
 
-try:
-  import hypothesis as hp
-except (ModuleNotFoundError, ImportError):
-  raise unittest.SkipTest("tests depend on hypothesis library")
-
+import hypothesis as hp
 import hypothesis.extra.numpy as hnp
 import hypothesis.strategies as hps
 
@@ -95,7 +90,7 @@ def array_indexer_strategy(draw, shape) -> jax.Array:
 
 @hps.composite
 def indexer_strategy(draw, dim, int_indexer_shape
-                     ) -> int | Slice | jax.Array:
+                    ) -> int | Slice | jax.Array:
   return draw(hps.one_of(
       int_indexer_strategy(dim),
       slice_indexer_strategy(dim),
@@ -372,7 +367,7 @@ class IndexerOpsTest(PallasBaseTest):
   def test_vmap_nd_indexing(self, data):
     self.skipTest("TODO(necula): enable this test; was in jax_triton.")
     vmap_shape = data.draw(hnp.array_shapes(min_dims=1, max_dims=3, min_side=2),
-                           label="vmap_shape")
+                          label="vmap_shape")
     el_shape = data.draw(hnp.array_shapes(min_dims=2), label="el_shape")
     # TODO(sharadmv,apaszke): enable rank 0 and rank 1 Refs
     # hp.assume(len(el_shape) >= 2)
@@ -389,7 +384,7 @@ class IndexerOpsTest(PallasBaseTest):
     shape = el_shape
     for vmap_dim in vmap_shape[::-1]:
       index = data.draw(hps.integers(min_value=0,
-                                     max_value=max(0, len(shape) - 2)),
+                                    max_value=max(0, len(shape) - 2)),
                         label="index")
       # hp.assume(index <= max(0, len(shape) - 2))
       # TODO(sharadmv,apaszke): enable vmapping over batch axes in 2 minormost
@@ -649,9 +644,9 @@ class IndexerOpsTest(PallasBaseTest):
       # Use scalar_val in both async_copy and store.
       o_ref[scalar_val] = jnp.ones_like(o_ref[0]) * scalar_val
       desc = pltpu.make_async_copy(
-         o_ref.at[scalar_val],
-         o_ref.at[scalar_val + 1],
-         sem_ref,
+        o_ref.at[scalar_val],
+        o_ref.at[scalar_val + 1],
+        sem_ref,
       )
       desc.start()
       desc.wait()

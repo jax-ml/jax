@@ -15,7 +15,6 @@
 import functools
 import math
 import sys
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -32,12 +31,9 @@ if sys.platform != "win32":
 else:
   pltpu = None
 
-try:
-  import hypothesis as hp
-except (ModuleNotFoundError, ImportError):
-  raise unittest.SkipTest("tests depend on hypothesis library")
-
+import hypothesis as hp
 import hypothesis.strategies as hps
+
 
 jax.config.parse_flags_with_absl()
 jtu.setup_hypothesis(max_examples=100)
