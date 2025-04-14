@@ -18,7 +18,7 @@ limitations under the License.
 
 #include <stddef.h>
 
-#include "mlir/CAPI/Registration.h"
+#include "mlir-c/IR.h"
 
 #ifdef __cplusplus
 extern "C" {

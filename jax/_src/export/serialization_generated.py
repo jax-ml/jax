@@ -53,15 +53,19 @@ class DType(object):
     bf16 = 14
     i4 = 15
     ui4 = 16
-    f8_e3m4 = 24
-    f8_e4m3 = 23
     f8_e4m3b11fnuz = 17
     f8_e4m3fn = 18
     f8_e4m3fnuz = 19
     f8_e5m2 = 20
     f8_e5m2fnuz = 21
     f0 = 22
+    f8_e4m3 = 23
+    f8_e3m4 = 24
     f8_e8m0fnu = 25
+    f4_e2m1fn = 26
+    key_fry = 27
+    key_rbg = 28
+    key_unsafe_rbg = 29
 
 
 class ShardingKind(object):

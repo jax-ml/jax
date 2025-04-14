@@ -20,8 +20,6 @@ import operator
 import string
 from typing import Any, NamedTuple, Sequence
 
-import numpy as np
-
 import jax
 from jax import lax
 from jax._src import array
@@ -30,17 +28,19 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
+from jax._src import mesh as mesh_lib
 from jax._src.api import jit
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy import einsum
-from jax._src import mesh as mesh_lib
-from jax._src.pjit import auto_axes
+from jax._src.numpy import error as jnp_error
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
+from jax._src.pjit import auto_axes
 from jax._src.tree_util import tree_flatten
 from jax._src.typing import Array, ArrayLike, StaticScalar
-from jax._src.util import canonicalize_axis, set_module, tuple_replace, safe_zip
+from jax._src.util import canonicalize_axis, safe_zip, set_module, tuple_update
+import numpy as np
 
 export = set_module('jax.numpy')
 
@@ -397,7 +397,9 @@ def take_along_axis(
 
 
 def _make_along_axis_idx(shape, indices, axis):
-  return tuple_replace(lax_numpy.indices(shape, sparse=True), axis, indices)
+  if axis < 0:
+    axis += len(shape)
+  return tuple_update(lax_numpy.indices(shape, sparse=True), axis, indices)
 
 
 @export
@@ -526,8 +528,6 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
 
   if not all(isinstance(i, int) for i in arr.shape):
     return None
-  if len(idx) > arr.ndim:
-    return None
   if any(i is None for i in idx):
     return None  # TODO(jakevdp): handle newaxis case
   # For symbolic dimensions fallback to gather
@@ -535,10 +535,13 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
          for i in idx if isinstance(i, slice)
          for elt in (i.start, i.stop, i.step)):
     return None
-
   if any(i is Ellipsis for i in idx):
-    # Remove ellipses and add trailing `slice(None)`.
+    # Remove ellipses and pad with trailing `slice(None)` if necessary.
+    # Do this before checking against rank of `arr` so that `...` can
+    # count as no dimensions at all (e.g. `my_1d_array[:, ...]` succeeds)
     idx = _canonicalize_tuple_index(arr.ndim, idx=idx)
+  if len(idx) > arr.ndim:
+    return None
 
   simple_revs = {i for i, ind in enumerate(idx) if _is_simple_reverse_slice(ind)}
   int_indices = {i for i, (ind, size) in enumerate(zip(idx, arr.shape))
@@ -570,7 +573,7 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
 
   idx += (arr.ndim - len(idx)) * (slice(None),)
   start_indices: Sequence[ArrayLike] = []
-  slice_sizes: Sequence[int] = []
+  slice_sizes: list[int] = []
   allow_negative_indices: list[bool] = []
 
   for ind, size in safe_zip(idx, arr.shape):
@@ -587,6 +590,7 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
       slice_sizes.append(1)
       allow_negative_indices.append(
           not isinstance(ind, (int, np.integer)) or bool(ind < 0))
+
   # Try to use static slicing when possible.
   if all(isinstance(i, (int, np.integer)) and i >= 0 for i in start_indices):
     int_start_indices = [int(i) for i in start_indices]  # type: ignore
@@ -598,6 +602,9 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
     # start indices to have matching types.
     if len(start_indices) > 1:
       start_indices = util.promote_dtypes(*start_indices)
+    jnp_error._check_precondition_oob_dynamic_slice(
+        arr.shape, start_indices, slice_sizes, allow_negative_indices
+    )
     arr = lax.dynamic_slice(
         arr, start_indices=start_indices, slice_sizes=slice_sizes,
         allow_negative_indices=allow_negative_indices)
@@ -640,6 +647,7 @@ def _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
             unique_indices, mode, fill_value, out_sharding):
   idx = merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = index_to_gather(np.shape(arr), idx)  # shared with _scatter_update
+  jnp_error._check_precondition_oob_gather(arr.shape, indexer.gather_indices)
   y = arr
 
   if fill_value is not None:

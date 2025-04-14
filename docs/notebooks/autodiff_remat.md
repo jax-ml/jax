@@ -156,7 +156,7 @@ print_fwd_bwd(f3, W1, W2, W3, x)
 
 ### Let's think step by step
 
-You might want to first (re)read [the Autodiff Cookbook Part 1](https://jax.readthedocs.io/en/latest/notebooks/autodiff_cookbook.html).
+You might want to first (re)read [the Autodiff Cookbook Part 1](https://docs.jax.dev/en/latest/notebooks/autodiff_cookbook.html).
 
 +++ {"id": "VMfwm_yinvoZ"}
 

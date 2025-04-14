@@ -31,6 +31,7 @@ build -c opt
 build --output_filter=DONT_MATCH_ANYTHING
 
 build --copt=-DMLIR_PYTHON_PACKAGE_PREFIX=jaxlib.mlir.
+build --copt=-DNB_DOMAIN=jax
 
 # #############################################################################
 # Platform Specific configs below. These are automatically picked up by Bazel
@@ -97,6 +98,7 @@ build:windows --incompatible_strict_action_env=true
 # #############################################################################
 build:nonccl --define=no_nccl_support=true
 
+build --repo_env USE_PYWRAP_RULES=1
 build:posix --copt=-fvisibility=hidden
 build:posix --copt=-Wno-sign-compare
 build:posix --cxxopt=-std=c++17
@@ -130,19 +132,21 @@ build:clang --copt=-Wno-gnu-offsetof-extensions
 build:clang --copt=-Qunused-arguments
 # Error on struct/class mismatches, since this causes link failures on Windows.
 build:clang --copt=-Werror=mismatched-tags
+# Required when building with clang>=19, see jax-ml/jax#27091
+build:clang --copt=-Wno-error=c23-extensions
 
 # Configs for CUDA
 build:cuda --repo_env TF_NEED_CUDA=1
 build:cuda --repo_env TF_NCCL_USE_STUB=1
 # "sm" means we emit only cubin, which is forward compatible within a GPU generation.
 # "compute" means we emit both cubin and PTX, which is larger but also forward compatible to future GPU generations.
-build:cuda --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_80,compute_90"
+build:cuda --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_80,sm_90,sm_100,compute_120"
 build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
 build:cuda --@local_config_cuda//:enable_cuda
 
 # Default hermetic CUDA and CUDNN versions.
-build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.3.2"
-build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.1.1"
+build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.8.0"
+build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.8.0"
 build:cuda --@local_config_cuda//cuda:include_cuda_libs=true
 
 # This config is used for building targets with CUDA libraries from stubs.
@@ -251,14 +255,12 @@ build:ci_linux_aarch64_cuda --config=ci_linux_aarch64_base
 build:ci_linux_aarch64_cuda --config=cuda --config=build_cuda_with_nvcc
 build:ci_linux_aarch64_cuda --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 
-# Mac x86 CI configs
-build:ci_darwin_x86_64 --macos_minimum_os=11.0
-build:ci_darwin_x86_64 --config=macos_cache_push
-build:ci_darwin_x86_64 --verbose_failures=true
-build:ci_darwin_x86_64 --color=yes
-
 # Mac Arm64 CI configs
 build:ci_darwin_arm64 --macos_minimum_os=11.0
+# Clang 19 requires `-Wno-error=c23-extensions` but this flag is not supported
+# on Apple Clang in XCode 16.0 so we suppress unknown warning option errors
+# on Mac CI builds.
+build:ci_darwin_arm64 --copt=-Wno-unknown-warning-option
 build:ci_darwin_arm64 --config=macos_cache_push
 build:ci_darwin_arm64 --verbose_failures=true
 build:ci_darwin_arm64 --color=yes
@@ -266,8 +268,8 @@ build:ci_darwin_arm64 --color=yes
 # Windows x86 CI configs
 build:ci_windows_amd64 --config=avx_windows
 build:ci_windows_amd64 --compiler=clang-cl --config=clang --verbose_failures=true
-build:ci_windows_amd64 --crosstool_top="@xla//tools/toolchains/win/20240424:toolchain"
-build:ci_windows_amd64 --extra_toolchains="@xla//tools/toolchains/win/20240424:cc-toolchain-x64_windows-clang-cl"
+build:ci_windows_amd64 --crosstool_top="@xla//tools/toolchains/win2022/20241118:toolchain"
+build:ci_windows_amd64 --extra_toolchains="@xla//tools/toolchains/win2022/20241118:cc-toolchain-x64_windows-clang-cl"
 build:ci_windows_amd64 --host_linkopt=/FORCE:MULTIPLE --linkopt=/FORCE:MULTIPLE
 build:ci_windows_amd64 --color=yes
 
@@ -335,9 +337,9 @@ common:rbe_windows_amd64 --remote_instance_name=projects/tensorflow-testing/inst
 build:rbe_windows_amd64 --config=rbe
 
 # Set the host, execution, and target platform
-build:rbe_windows_amd64 --host_platform="@xla//tools/toolchains/win:x64_windows-clang-cl"
-build:rbe_windows_amd64 --extra_execution_platforms="@xla//tools/toolchains/win:x64_windows-clang-cl"
-build:rbe_windows_amd64 --platforms="@xla//tools/toolchains/win:x64_windows-clang-cl"
+build:rbe_windows_amd64 --host_platform="@xla//tools/toolchains/win2022:windows_ltsc2022_clang"
+build:rbe_windows_amd64 --extra_execution_platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang"
+build:rbe_windows_amd64 --platforms="@xla//tools/toolchains/win2022:windows_ltsc2022_clang"
 
 build:rbe_windows_amd64 --shell_executable=C:\\tools\\msys64\\usr\\bin\\bash.exe
 build:rbe_windows_amd64 --enable_runfiles

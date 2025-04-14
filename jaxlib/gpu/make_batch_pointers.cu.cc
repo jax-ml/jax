@@ -16,6 +16,7 @@ limitations under the License.
 #include "jaxlib/gpu/make_batch_pointers.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 
 #include "jaxlib/gpu/vendor.h"

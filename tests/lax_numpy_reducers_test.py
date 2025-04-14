@@ -905,8 +905,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   @jtu.ignore_warning(category=NumpyComplexWarning)
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
   def testCumulativeProd(self, shape, axis, dtype, out_dtype, include_initial):
-    if jtu.is_device_tpu(6):
-      raise unittest.SkipTest("TODO(b/364258243): Test fails on TPU v6e")
+    if jtu.is_device_tpu_at_least(6):
+      raise unittest.SkipTest("TODO(b/364258243): Test fails on TPU v6+")
     rng = jtu.rand_some_zero(self.rng())
 
     # We currently "cheat" to ensure we have JAX arrays, not NumPy arrays as

@@ -32,6 +32,7 @@ import jax
 from jax._src import config
 from jax._src import core
 from jax._src import sharding_impls
+from jax._src.cloud_tpu_init import is_cloud_tpu_older_than
 from jax._src.interpreters import mlir
 from jax._src.lib import tpu
 from jax._src.lib import xla_client
@@ -63,8 +64,22 @@ _MOSAIC_ALLOW_HLO = config.bool_state(
 )
 
 
-# This tracks the latest Mosaic IR version with a monthly delay.
-FWD_COMPAT_IR_VERSION = 3
+# Controls the IR serialization version. Upon incrementing the
+# default version in jaxlib/mosaic/dialect/tpu/transforms/serde.cc we must
+# continue to use the old serialization version when in forward compatibility
+# mode: for 1 month when exporting, or when using old cloud TPU.
+#
+# This can be achieved by adding:
+#    if ctx.is_forward_compat() or is_cloud_tpu_older_than(<today>):
+#       return <previous_serialization_version>
+#    return None
+#
+# We should also add a TODO to remove the conditional one month later.
+def get_ir_version(ctx: mlir.LoweringRuleContext) -> int | None:
+  # TODO(jevinjiang): remove the forward compatibility check after 2025-05-05.
+  if ctx.is_forward_compat() or is_cloud_tpu_older_than(2025, 4, 5):
+    return 3
+  return None
 
 
 tpu_custom_call_p = core.Primitive("tpu_custom_call")
@@ -484,13 +499,9 @@ def _lower_mosaic_module_to_asm(
       module_op = module.operation.clone()
     prev_allow_unregistered_dialects = ctx.allow_unregistered_dialects
     ctx.allow_unregistered_dialects = True
-    # TODO(apaszke): Remove once the minimum jaxlib version is at least 0.4.37.
-    if jax.version._version_as_tuple(jax.lib.__version__) < (0, 4, 37):
-      target_version = ""
-    else:
-      target_version = (
-          f"target-version={ir_version}" if ir_version is not None else ""
-      )
+    target_version = (
+        f"target-version={ir_version}" if ir_version is not None else ""
+    )
     try:
       pipeline = PassManager.parse(
           "builtin.module(mosaic-serde{serialize=true " + target_version + "})"
@@ -675,7 +686,7 @@ def lower_module_to_custom_call(
       serialization_format=serialization_format,
       output_memory_spaces=output_memory_spaces,
       kernel_name=kernel_name,
-      ir_version=FWD_COMPAT_IR_VERSION if ctx.is_forward_compat() else None,
+      ir_version=get_ir_version(ctx),
   )
   return _tpu_custom_call_lowering(
       ctx,

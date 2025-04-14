@@ -119,6 +119,16 @@ class RefBitcaster:
     del dtype  # Unused
     return self.dtype
 
+  def transform_sharding(self, sharding):
+    # If there are no explicit axes, do nothing.
+    if all(p is None for p in sharding.spec):
+      return sharding
+    raise NotImplementedError
+
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    del context  # Unused.
+    return pp.text(f"{{bitcast({self.dtype}{list(self.shape)}])}}")
+
 
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
@@ -166,6 +176,16 @@ class RefReshaper:
     del dtype  # Unused
     return self.dtype
 
+  def transform_sharding(self, sharding):
+    # If there are no explicit axes, do nothing.
+    if all(p is None for p in sharding.spec):
+      return sharding
+    raise NotImplementedError
+
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    del context  # Unused.
+    return pp.text(f"{{reshape({self.dtype}{list(self.shape)})}}")
+
 
 class Transform(Protocol):
 
@@ -188,6 +208,13 @@ class Transform(Protocol):
     result when the input dtype is known.
     """
     return dtype
+
+  def transform_sharding(self, sharding):
+    if all(p is None for p in sharding.spec): return sharding # no explicit axes
+    raise NotImplementedError
+
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    return pp.text(f"{{{self}}}")
 
 
 @dataclasses.dataclass
@@ -249,6 +276,9 @@ class TransformedRef:
       dtype = t.transform_dtype(dtype)
     assert dtype is not None
     return dtype
+
+  ndim = property(lambda self: len(self.shape))
+  size = property(lambda self: math.prod(self.shape))
 
   @property
   def at(self) -> RefIndexer:
@@ -314,6 +344,12 @@ class AbstractRef(core.AbstractValue):
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: math.prod(self.shape))
 
+  def _len(self, ignored_tracer) -> int:
+    try:
+      return self.shape[0]
+    except IndexError as err:
+      raise TypeError("len() of unsized object") from err  # same as numpy error
+
   @property
   def shape(self):
     try:
@@ -339,6 +375,15 @@ class AbstractRef(core.AbstractValue):
     except AttributeError:
       raise AttributeError(
           f"`Ref{{{self.inner_aval.str_short()}}} has no `sharding`."
+      ) from None
+
+  @property
+  def vma(self):
+    try:
+      return self.inner_aval.vma  # pytype: disable=attribute-error
+    except AttributeError:
+      raise AttributeError(
+          f"`Ref{{{self.inner_aval.str_short()}}} has no `vma`."
       ) from None
 
   @core.aval_property
@@ -411,7 +456,7 @@ def shaped_array_ref(
     shape: tuple[int, ...], dtype, weak_type: bool = False) -> AbstractRef:
   return AbstractRef(core.ShapedArray(shape, dtype, weak_type=weak_type))
 
-def _shard_ref(mesh, auto, names, ref_aval: AbstractRef):
+def _shard_ref(mesh, auto, check_rep, names, ref_aval: AbstractRef):
   del mesh
   if names:
     # Can't actually shard a ref, can only close over it.
@@ -419,7 +464,7 @@ def _shard_ref(mesh, auto, names, ref_aval: AbstractRef):
   return ref_aval
 core.shard_aval_handlers[AbstractRef] = _shard_ref
 
-def _unshard_ref(mesh, names, ref_aval: AbstractRef):
+def _unshard_ref(mesh, check_rep, names, ref_aval: AbstractRef):
   del mesh
   if names:
     # Can't actually shard a ref, can only close over it.

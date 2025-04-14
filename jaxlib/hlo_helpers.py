@@ -19,11 +19,22 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from functools import partial
 from typing import Union
+import warnings
 
 import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.stablehlo as hlo
 import numpy as np
 
+# TODO(danfm): This module isn't covered by JAX's compatibility policy, so no
+# formal deprecation period is required, but there are enough users that we
+# should keep this warning for at least one full release cycle.
+# Deprecation added 2025-03-19 after the release of v0.5.3. Remove this whole
+# module after the release of v0.5.4 or later.
+warnings.warn(
+    "The jaxlib.hlo_helpers submodule is deprecated. Instead, use jax.ffi if "
+    "possible or, for lower-level operations, jax.interpreters.mlir.",
+    DeprecationWarning,
+)
 
 _dtype_to_ir_type_factory : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(np.bool_): partial(ir.IntegerType.get_signless, 1),

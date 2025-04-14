@@ -62,7 +62,7 @@
 # outputs, we want to override primitive application and let different values
 # flow through our program. For example, we might want to replace the
 # application of every primitive with an application of [its JVP
-# rule](https://jax.readthedocs.io/en/latest/notebooks/autodiff_cookbook.html),
+# rule](https://docs.jax.dev/en/latest/notebooks/autodiff_cookbook.html),
 # and let primal-tangent pairs flow through our program. Moreover, we want to be
 # able to compose multiple transformations, leading to stacks of interpreters.
 
@@ -2837,7 +2837,7 @@ print(out)
 
 # Notice that we're not currently supporting the case where the predicate value
 # itself is batched. In mainline JAX, we handle this case by transforming the
-# conditional to a [select primitive](https://jax.readthedocs.io/en/latest/_autosummary/jax.lax.select.html).
+# conditional to a [select primitive](https://docs.jax.dev/en/latest/_autosummary/jax.lax.select.html).
 # That transformation is semantically correct so long as `true_fun` and
 # `false_fun` do not involve any side-effecting primitives.
 #

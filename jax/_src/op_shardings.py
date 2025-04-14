@@ -55,7 +55,7 @@ def is_op_sharding_replicated(op: xc.OpSharding | xc.HloSharding) -> bool:
 
 def are_op_shardings_equal(op1: xc.OpSharding | xc.HloSharding,
                            op2: xc.OpSharding | xc.HloSharding) -> bool:
-  if id(op1) == id(op2):
+  if op1 is op2:
     return True
   if is_op_sharding_replicated(op1) and is_op_sharding_replicated(op2):
     return True

@@ -27,6 +27,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from jax import tree_util
+from jax.experimental.sparse import _lowerings
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse import bcoo
 from jax.experimental.sparse.util import (
@@ -620,9 +621,9 @@ _bcsr_correct_out_of_bound_indices_lowered = mlir.lower_fun(
     _bcsr_correct_out_of_bound_indices, multiple_results=True)
 
 def _bcsr_dot_general_gpu_lowering(
-    csr_matvec_lowering, csr_matmat_lowering,
+    # csr_matvec_lowering, csr_matmat_lowering,
     ctx, lhs_data, lhs_indices, lhs_indptr, rhs, *, dimension_numbers,
-    preferred_element_type, lhs_spinfo: SparseInfo):
+    preferred_element_type, lhs_spinfo: SparseInfo, target_name_prefix):
 
   if not config.bcoo_cusparse_lowering.value:
     return _bcsr_dot_general_default_lowering(
@@ -674,22 +675,23 @@ def _bcsr_dot_general_gpu_lowering(
   lhs_data, lhs_indices = _bcsr_correct_out_of_bound_indices_lowered(
     ctx, lhs_data, lhs_indices, lhs_indptr, rhs, shape=lhs_spinfo.shape)
 
+  sub_ctx = ctx
   if rhs_aval.ndim == 1:
-    dot_general_fn = csr_matvec_lowering
-    x_dtype = 'x_dtype'
+    dot_general_fn = _lowerings._csr_spmv_gpu_lowering
   elif rhs_aval.ndim == 2:
-    dot_general_fn = csr_matmat_lowering
-    x_dtype = 'B_dtype'
+    dot_general_fn = _lowerings._csr_spmm_gpu_lowering
     if rhs_contract[0] == 1:
       rhs = hlo.transpose(rhs, permutation=mlir.dense_int_array([1, 0]))
+      *avals_in, rhs_aval = sub_ctx.avals_in
+      rhs_aval = core.ShapedArray(
+          shape=(rhs_aval.shape[1], rhs_aval.shape[0]), dtype=rhs_aval.dtype)
+      sub_ctx = sub_ctx.replace(avals_in=[*avals_in, rhs_aval])
   else:
     raise ValueError(f"rhs has to be 1d or 2d; get {rhs_aval.ndim}d.")
 
-  return [dot_general_fn(lhs_data, lhs_indices, lhs_indptr, rhs,
-                         shape=lhs_spinfo.shape, transpose=False,
-                         data_dtype=lhs_data_aval.dtype,
-                         index_dtype=lhs_indices_aval.dtype,
-                         **{x_dtype: rhs_aval.dtype})]
+  return dot_general_fn(sub_ctx, lhs_data, lhs_indices, lhs_indptr, rhs,
+                        shape=lhs_spinfo.shape, transpose=False,
+                        target_name_prefix=target_name_prefix)
 
 _bcsr_dot_general_default_lowering = mlir.lower_fun(
     _bcsr_dot_general_impl, multiple_results=False)
@@ -700,14 +702,12 @@ dispatch.simple_impl(bcsr_dot_general_p)
 if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(bcsr_dot_general_p,
                           partial(_bcsr_dot_general_gpu_lowering,
-                                  gpu_sparse.cuda_csr_matvec,
-                                  gpu_sparse.cuda_csr_matmat),
+                                  target_name_prefix='cu'),
                           platform='cuda')
 if gpu_sparse.rocm_is_supported:
   mlir.register_lowering(bcsr_dot_general_p,
                           partial(_bcsr_dot_general_gpu_lowering,
-                                  gpu_sparse.rocm_csr_matvec,
-                                  gpu_sparse.rocm_csr_matmat),
+                                  target_name_prefix='hip'),
                           platform='rocm')
 
 

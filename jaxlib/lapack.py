@@ -12,22 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
+from typing import Any
 
-from jaxlib import xla_client
+import numpy as np
 
 from .cpu import _lapack
 from .cpu._lapack import eig
 from .cpu._lapack import schur
-
-for _name, _value in _lapack.registrations().items():
-  api_version = 0
-  if _name.endswith("_ffi"):
-    api_version = 1
-    xla_client.register_custom_call_as_batch_partitionable(_name)
-  xla_client.register_custom_call_target(
-      _name, _value, platform="cpu", api_version=api_version
-  )
 
 
 EigComputationMode = eig.ComputationMode
@@ -41,6 +32,17 @@ LAPACK_DTYPE_PREFIX = {
     np.complex64: "c",
     np.complex128: "z",
 }
+
+
+def registrations() -> dict[str, list[tuple[str, Any, int]]]:
+  return {"cpu": [
+      (name, value, int(name.endswith("_ffi")))
+      for name, value in _lapack.registrations().items()
+  ]}
+
+
+def batch_partitionable_targets() -> list[str]:
+  return [name for name in _lapack.registrations() if name.endswith("_ffi")]
 
 
 def prepare_lapack_call(fn_base, dtype):

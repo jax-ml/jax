@@ -30,11 +30,8 @@ package(
 )
 
 exports_files(srcs = [
-    "blas.cc",
     "blas_handle_pool.cc",
     "blas_handle_pool.h",
-    "blas_kernels.cc",
-    "blas_kernels.h",
     "ffi_wrapper.h",
     "gpu_kernel_helpers.cc",
     "gpu_kernel_helpers.h",
@@ -52,6 +49,8 @@ exports_files(srcs = [
     "prng_kernels.cc",
     "prng_kernels.cu.cc",
     "prng_kernels.h",
+    "py_client_gpu.cc",
+    "py_client_gpu.h",
     "rnn.cc",
     "rnn_kernels.cc",
     "rnn_kernels.h",
@@ -82,6 +81,7 @@ proto_library(
 
 cc_proto_library(
     name = "triton_cc_proto",
+    compatible_with = None,
     deps = [":triton_proto"],
 )
 
@@ -89,4 +89,48 @@ xla_py_proto_library(
     name = "triton_py_pb2",
     visibility = jax_visibility("triton_proto_py_users"),
     deps = [":triton_proto"],
+)
+
+cc_library(
+    name = "handle_pool",
+    hdrs = ["handle_pool.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+    ],
+)
+
+cc_library(
+    name = "gpu_plugin_extension",
+    srcs = ["gpu_plugin_extension.cc"],
+    hdrs = ["gpu_plugin_extension.h"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    deps = [
+        "//jaxlib:kernel_nanobind_helpers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
+        "@nanobind",
+        "@xla//xla:util",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/pjrt:status_casters",
+        "@xla//xla/pjrt/c:pjrt_c_api_ffi_extension_hdrs",
+        "@xla//xla/pjrt/c:pjrt_c_api_gpu_extension_hdrs",
+        "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
+        "@xla//xla/pjrt/c:pjrt_c_api_helpers",
+        "@xla//xla/pjrt/c:pjrt_c_api_triton_extension_hdrs",
+        "@xla//xla/tsl/platform:statusor",
+        "@xla//xla/tsl/python/lib/core:numpy",
+    ],
 )

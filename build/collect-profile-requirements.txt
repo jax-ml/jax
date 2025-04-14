@@ -1,4 +1,4 @@
 tensorflow
-tensorboard-plugin-profile
+tensorboard-plugin-profile<=2.19.0
 # Needed for the profile plugin to work without error
 protobuf

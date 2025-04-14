@@ -24,7 +24,7 @@ import jax._src.xla_bridge as xb
 
 # cuda_plugin_extension locates inside jaxlib. `jaxlib` is for testing without
 # preinstalled jax cuda plugin packages.
-for pkg_name in ['jax_cuda12_plugin', 'jaxlib']:
+for pkg_name in ['jax_cuda12_plugin', 'jaxlib.cuda']:
   try:
     cuda_plugin_extension = importlib.import_module(
         f'{pkg_name}.cuda_plugin_extension'
@@ -92,8 +92,10 @@ def initialize():
             cuda_plugin_extension.register_custom_call_target, c_api
         ),
     )
-    for _name, _value in cuda_plugin_extension.registrations().items():
-      xla_client.register_custom_call_target(_name, _value, platform="CUDA")
+    for _name, _value in cuda_plugin_extension.ffi_registrations().items():
+      xla_client.register_custom_call_target(
+          _name, _value, platform='CUDA', api_version=1
+      )
     xla_client.register_custom_type_id_handler(
         "CUDA",
         functools.partial(

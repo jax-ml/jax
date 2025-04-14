@@ -25,7 +25,7 @@ from jax.experimental.source_mapper import common
 source_info_util.register_exclusion(__file__)
 
 
-def compile_jaxpr(work_dir, f, f_args, f_kwargs):
+def compile_jaxpr(work_dir, f, f_args, f_kwargs, **_):
   del work_dir
   return jax.make_jaxpr(f)(*f_args, **f_kwargs)
 
@@ -74,7 +74,7 @@ def make_jaxpr_dump(jaxpr: core.Jaxpr, **_) -> common.SourceMapDump:
 common.register_pass(
     common.Pass(
         name='jaxpr',
-        compile_fn=compile_jaxpr,
+        compile_fn=compile_jaxpr,  # type: ignore[arg-type]
         generate_dump=make_jaxpr_dump,  # type: ignore[arg-type]
     )
 )

@@ -22,11 +22,11 @@ limitations under the License.
 #include <tuple>
 #include <vector>
 
-#include "nanobind/nanobind.h"
-#include "nanobind/stl/tuple.h"
-#include "nanobind/stl/vector.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/strings/str_cat.h"
+#include "nanobind/nanobind.h"
+#include "nanobind/stl/tuple.h"  // IWYU pragma: keep
+#include "nanobind/stl/vector.h"  // IWYU pragma: keep
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 #include "xla/ffi/api/c_api.h"
@@ -98,19 +98,21 @@ static const auto* kEventElapsed =
         .Ret<ffi::BufferR0<ffi::F32>>()  // elapsed_ms
         .To([](gpuStream_t stream, auto start, auto end, auto out) {
           gpuStreamSynchronize(stream);
-          auto start_event = std::make_unique<gpuEvent_t>();
-          auto end_event = std::make_unique<gpuEvent_t>();
-          absl::MakeCleanup([&]() {
-            gpuEventDestroy(*start_event);
-            gpuEventDestroy(*end_event);
-          });
-          gpuMemcpy(start_event.get(), start.untyped_data(), sizeof(gpuEvent_t),
+          gpuEvent_t start_event = nullptr;
+          gpuEvent_t end_event = nullptr;
+
+          absl::Cleanup cleanup = [&]() {
+            gpuEventDestroy(start_event);
+            gpuEventDestroy(end_event);
+          };
+
+          gpuMemcpy(&start_event, start.untyped_data(), sizeof(gpuEvent_t),
                     gpuMemcpyDeviceToHost);
-          gpuMemcpy(end_event.get(), end.untyped_data(), sizeof(gpuEvent_t),
+          gpuMemcpy(&end_event, end.untyped_data(), sizeof(gpuEvent_t),
                     gpuMemcpyDeviceToHost);
+
           float elapsed;
-          if (auto res =
-                  gpuEventElapsedTime(&elapsed, *start_event, *end_event);
+          if (auto res = gpuEventElapsedTime(&elapsed, start_event, end_event);
               res) {
             return ffi::Error::Internal(absl::StrCat(
                 "Failed to get elapsed time between events: ", ToString(res)));
@@ -193,6 +195,12 @@ void callback_complete(CUcontext context, uint32_t streamId,
       THROW_IF_CUPTI_ERROR(status);
     }
   }
+
+  size_t num_dropped;
+  THROW_IF_CUPTI_ERROR(
+      cuptiActivityGetNumDroppedRecords(context, streamId, &num_dropped),
+      "failed to get number of dropped activity records");
+  THROW_IF(num_dropped > 0, "activity records were dropped");
 }
 
 NB_MODULE(_mosaic_gpu_ext, m) {
@@ -237,14 +245,23 @@ NB_MODULE(_mosaic_gpu_ext, m) {
         cuptiActivityEnable(CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL),
         "failed to enable tracking of kernel activity by CUPTI");
   });
-  m.def("_cupti_get_timings", []() {
-    THROW_IF_CUPTI_ERROR(cuptiUnsubscribe(profiler_state.subscriber),
-                         "failed to unsubscribe from CUPTI");
-    THROW_IF_CUPTI_ERROR(cuptiActivityFlushAll(CUPTI_ACTIVITY_FLAG_NONE),
-                         "failed to flush CUPTI activity buffers");
-    THROW_IF_CUPTI_ERROR(cuptiFinalize(), "failed to detach CUPTI");
-    return profiler_state.timings;
-  });
+  m.def(
+      "_cupti_get_timings",
+      [](bool finalize) {
+        THROW_IF_CUPTI_ERROR(
+            cuptiActivityDisable(CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL),
+            "failed to disable tracking of kernel activity by CUPTI");
+        THROW_IF_CUPTI_ERROR(
+            cuptiActivityFlushAll(CUPTI_ACTIVITY_FLAG_FLUSH_FORCED),
+            "failed to flush CUPTI activity buffers");
+        if (finalize) {
+          THROW_IF_CUPTI_ERROR(cuptiFinalize(), "failed to detach CUPTI");
+        }
+        THROW_IF_CUPTI_ERROR(cuptiUnsubscribe(profiler_state.subscriber),
+                             "failed to unsubscribe from CUPTI");
+        return profiler_state.timings;
+      },
+      nb::arg("finalize") = true);
 }
 
 }  // namespace

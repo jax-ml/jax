@@ -31,6 +31,7 @@ from jax._src import config as config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import ffi
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import tree_util as tree_util_internal
@@ -63,6 +64,13 @@ Shape = tuple[int, ...]
 
 UINT_DTYPES = {
     8: jnp.uint8, 16: jnp.uint16, 32: jnp.uint32, 64: jnp.uint64}
+
+if hasattr(gpu_prng, "registrations"):
+  for platform, targets in gpu_prng.registrations().items():
+    for name, value, api_version in targets:
+      ffi.register_ffi_target(
+          name, value, platform=platform, api_version=api_version
+      )
 
 # -- PRNG implementation interface
 
@@ -105,7 +113,7 @@ class PRNGImpl(NamedTuple):
             ]))))
 
 
-prngs = {}
+prngs: dict[str, PRNGImpl] = {}
 
 def register_prng(impl: PRNGImpl):
   if impl.name in prngs:
@@ -170,7 +178,9 @@ class PRNGKeyArray(jax.Array):
   def aval(self):
     logical_sharding = (self.sharding if hasattr(self._base_array, 'sharding')
                         else None)
-    return keys_shaped_array(self._impl, self.shape, logical_sharding)
+    vma = (self._base_array.aval.vma if hasattr(self._base_array, 'aval')
+           else frozenset())
+    return keys_shaped_array(self._impl, self.shape, logical_sharding, vma)
 
   @property
   def shape(self):
@@ -187,6 +197,10 @@ class PRNGKeyArray(jax.Array):
   @property
   def dtype(self):
     return KeyTy(self._impl)
+
+  @property
+  def nbytes(self):
+    return self.itemsize * self.size
 
   @property
   def itemsize(self):
@@ -321,8 +335,8 @@ def seed_with_impl(impl: PRNGImpl, seed: int | typing.ArrayLike) -> PRNGKeyArray
   return random_seed(seed, impl=impl)
 
 
-def keys_shaped_array(impl, shape, sharding):
-  aval = core.ShapedArray(shape, KeyTy(impl))
+def keys_shaped_array(impl, shape, sharding, vma):
+  aval = core.ShapedArray(shape, KeyTy(impl), vma=vma)
   return core.update_aval_with_sharding(aval, sharding)
 
 def base_arr_shape_to_keys_shape(impl, base_arr_shape):
@@ -415,7 +429,6 @@ class KeyTyRules:
   @staticmethod
   def device_put_replicated(val, aval, sharding, devices):
     physical_aval = core.physical_aval(aval)
-    assert len(xla.aval_to_xla_shapes(physical_aval)) == 1
     physical_buf = random_unwrap(val)
     phys_sharding = physical_sharding(aval, sharding)
     physical_result = pxla.batched_device_put(
@@ -542,7 +555,8 @@ batching.defvectorized(random_seed_p)
 
 @random_seed_p.def_abstract_eval
 def random_seed_abstract_eval(seeds_aval, *, impl):
-  return keys_shaped_array(impl, seeds_aval.shape, seeds_aval.sharding)
+  return keys_shaped_array(impl, seeds_aval.shape, seeds_aval.sharding,
+                           seeds_aval.vma)
 
 @random_seed_p.def_impl
 def random_seed_impl(seeds, *, impl):
@@ -577,7 +591,7 @@ def random_split_abstract_eval(keys_aval, *, shape):
   # don't choose None here?
   new_spec = (*keys_aval.sharding.spec, *[None] * len(shape))
   return keys_shaped_array(keys_aval.dtype._impl, (*keys_aval.shape, *shape),
-                           keys_aval.sharding.with_spec(new_spec))
+                           keys_aval.sharding.with_spec(new_spec), keys_aval.vma)
 
 @random_split_p.def_impl
 def random_split_impl(keys, *, shape):
@@ -603,7 +617,9 @@ mlir.register_lowering(random_split_p, random_split_lowering)
 
 
 def random_fold_in(keys, msgs):
-  return random_fold_in_p.bind(keys, jnp.asarray(msgs))
+  msgs = jnp.asarray(msgs)
+  keys, msgs = core.standard_insert_pbroadcast(keys, msgs)
+  return random_fold_in_p.bind(keys, msgs)
 
 random_fold_in_p = core.Primitive('random_fold_in')
 ad.defjvp_zero(random_fold_in_p)
@@ -613,7 +629,10 @@ batching.defbroadcasting(random_fold_in_p)
 def random_fold_in_abstract_eval(keys_aval, msgs_aval):
   shape = lax_internal.broadcasting_shape_rule(
       'random_fold_in', keys_aval, msgs_aval)
-  return core.ShapedArray(shape, keys_aval.dtype)
+  sharding = lax_internal.broadcasting_sharding_rule(
+      'random_fold_in', keys_aval, msgs_aval)
+  vma = core.standard_vma_rule('random_fold_in', keys_aval, msgs_aval)
+  return core.ShapedArray(shape, keys_aval.dtype, sharding=sharding, vma=vma)
 
 @random_fold_in_p.def_impl
 def random_fold_in_impl(keys, msgs):
@@ -651,7 +670,7 @@ batching.defvectorized(random_bits_p)
 def random_bits_abstract_eval(keys_aval, *, bit_width, shape):
   out_shape = (*keys_aval.shape, *shape)
   out_dtype = dtypes.dtype(f'uint{bit_width}')
-  return core.ShapedArray(out_shape, out_dtype)
+  return core.ShapedArray(out_shape, out_dtype, vma=keys_aval.vma)
 
 @random_bits_p.def_impl
 def random_bits_impl(keys, *, bit_width, shape):
@@ -708,7 +727,7 @@ ad.defjvp_zero(random_wrap_p)
 def random_wrap_abstract_eval(base_arr_aval, *, impl):
   shape = base_arr_shape_to_keys_shape(impl, base_arr_aval.shape)
   sharding = logical_sharding(shape, KeyTy(impl), base_arr_aval.sharding)
-  return keys_shaped_array(impl, shape, sharding)
+  return keys_shaped_array(impl, shape, sharding, base_arr_aval.vma)
 
 @random_wrap_p.def_impl
 def random_wrap_impl(base_arr, *, impl):
@@ -902,7 +921,7 @@ _threefry2x32_cpu_lowering_rule = mlir.lower_fun(
     multiple_results=True)
 
 
-def _threefry2x32_gpu_lowering_rule(lowering_func, ctx, k1, k2, x1, x2):
+def _threefry2x32_gpu_lowering_rule(ctx, k1, k2, x1, x2, *, target_name_prefix):
   if not config.threefry_gpu_kernel_lowering.value:  # back to default lowering
     return _threefry2x32_lowering_rule(ctx, k1, k2, x1, x2)
 
@@ -917,23 +936,11 @@ def _threefry2x32_gpu_lowering_rule(lowering_func, ctx, k1, k2, x1, x2):
     return mlir.broadcast_in_dim(ctx, x, aval_out,
                                  broadcast_dimensions=range(rank - len(aval.shape), rank))
 
-  out_len = reduce(op.mul, aval_out.shape, 1)
-  if not core.is_constant_dim(out_len):
-    length = mlir.eval_dynamic_shape_as_tensor(ctx, [out_len])
-    length = mlir.hlo.convert(
-        ir.RankedTensorType.get((1,), ir.IntegerType.get_signless(64)),
-        length)
-    output_shape = mlir.eval_dynamic_shape_as_tensor(ctx, aval_out.shape)
-  else:
-    length = int(out_len)  # will be passed statically
-    output_shape = None
-
-  return lowering_func(
-      (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
-      (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)), length,
-      output_shape,
-      False,  # forward_compatibility_mode
-  )
+  sub_ctx = ctx.replace(avals_in=(aval_out,) * 4)
+  rule = ffi.ffi_lowering(
+      f"{target_name_prefix}_threefry2x32_ffi")
+  return rule(sub_ctx, _broadcast(k1, k1_aval), _broadcast(k2, k2_aval),
+              _broadcast(x1, x1_aval), _broadcast(x2, x2_aval))
 
 
 threefry2x32_p = core.Primitive("threefry2x32")
@@ -947,11 +954,11 @@ mlir.register_lowering(
     threefry2x32_p, _threefry2x32_cpu_lowering_rule, platform='cpu')
 mlir.register_lowering(
     threefry2x32_p,
-    partial(_threefry2x32_gpu_lowering_rule, gpu_prng.cuda_threefry2x32),
+    partial(_threefry2x32_gpu_lowering_rule, target_name_prefix='cu'),
     platform='cuda')
 mlir.register_lowering(
     threefry2x32_p,
-    partial(_threefry2x32_gpu_lowering_rule, gpu_prng.rocm_threefry2x32),
+    partial(_threefry2x32_gpu_lowering_rule, target_name_prefix='hip'),
     platform='rocm')
 
 

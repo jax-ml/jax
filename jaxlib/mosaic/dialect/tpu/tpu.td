@@ -176,6 +176,9 @@ class TPU_Op<string mnemonic, list<Trait> traits = []> :
     Op<TPU_Dialect, mnemonic, traits> {
 }
 
+def DefaultMemWrite : MemoryEffects<[MemWrite<DefaultResource>]>;
+def DefaultMemRead : MemoryEffects<[MemRead<DefaultResource>]>;
+
 def TPU_ReductionKind : I32EnumAttr<"ReductionKind", "Reduction kind", [
   I32EnumAttrCase<"SUM", 0, "sum">,
   I32EnumAttrCase<"MAX", 1, "max">,
@@ -198,7 +201,7 @@ def TPU_AllReduceOp : TPU_Op<"all_reduce", [Pure, SameOperandsAndResultType]> {
   }];
 }
 
-def TPU_StoreOp : TPU_Op<"store", [AttrSizedOperandSegments]> {
+def TPU_StoreOp : TPU_Op<"store", [DefaultMemWrite, AttrSizedOperandSegments]> {
   let arguments = (ins
     TPU_Vreg:$valueToStore,
     AnyType:$base,
@@ -213,7 +216,7 @@ def TPU_StoreOp : TPU_Op<"store", [AttrSizedOperandSegments]> {
   }];
 }
 
-def TPU_LoadOp : TPU_Op<"load"> {
+def TPU_LoadOp : TPU_Op<"load", [DefaultMemRead]> {
   let arguments = (ins
     AnyType:$base,
     Variadic<Index>:$indices,
@@ -227,7 +230,7 @@ def TPU_LoadOp : TPU_Op<"load"> {
 }
 
 // TODO(jevinjiang): migrate tpu.strided_store to general vector store op.
-def TPU_VectorStoreOp :TPU_Op<"vector_store", [AttrSizedOperandSegments]> {
+def TPU_VectorStoreOp :TPU_Op<"vector_store", [DefaultMemWrite, AttrSizedOperandSegments]> {
   let arguments = (ins
     AnyVectorOfNonZeroRank:$valueToStore,
     AnyMemRef:$base,
@@ -242,7 +245,7 @@ def TPU_VectorStoreOp :TPU_Op<"vector_store", [AttrSizedOperandSegments]> {
   let hasVerifier = 1;
 }
 
-def TPU_StridedLoadOp : TPU_Op<"strided_load"> {
+def TPU_StridedLoadOp : TPU_Op<"strided_load", [DefaultMemRead]> {
   let arguments = (ins
     AnyMemRef:$base,
     Variadic<Index>:$indices,
@@ -255,7 +258,7 @@ def TPU_StridedLoadOp : TPU_Op<"strided_load"> {
   let hasVerifier = 1;
 }
 
-def TPU_StridedStoreOp : TPU_Op<"strided_store"> {
+def TPU_StridedStoreOp : TPU_Op<"strided_store", [DefaultMemWrite]> {
   let arguments = (ins
     AnyVectorOfNonZeroRank:$valueToStore,
     AnyMemRef:$base,
@@ -269,7 +272,7 @@ def TPU_StridedStoreOp : TPU_Op<"strided_store"> {
   let hasVerifier = 1;
 }
 
-def TPU_ShuffledLoadOp : TPU_Op<"shuffled_load"> {
+def TPU_ShuffledLoadOp : TPU_Op<"shuffled_load", [DefaultMemRead]> {
   let arguments = (ins
     AnyMemRef:$base,
     Variadic<Index>:$indices,
@@ -284,7 +287,7 @@ def TPU_ShuffledLoadOp : TPU_Op<"shuffled_load"> {
   let hasCanonicalizeMethod = 1;
 }
 
-def TPU_ShuffledStoreOp : TPU_Op<"shuffled_store"> {
+def TPU_ShuffledStoreOp : TPU_Op<"shuffled_store", [DefaultMemWrite]> {
   let arguments = (ins
     TPU_Vreg:$valueToStore,
     AnyMemRef:$base,
@@ -302,6 +305,11 @@ def TPU_ShuffledStoreOp : TPU_Op<"shuffled_store"> {
 
 // TODO(jevinjiang): deprecate to use dynamic_rotate.
 def TPU_RotateOp : TPU_Op<"rotate", [Pure, SameOperandsAndResultType]> {
+  let description = [{
+    Rotates the given vector by the given amount in the given dimension, i.e.,
+    for a 2D vector of shape (m, n), rotating dim 0 by `amount` will shift a row
+    at index `i` to index `(i + amount) % m`
+  }];
   let arguments = (ins
     AnyVectorOfNonZeroRank:$value,
     SI32Attr:$amount,
@@ -538,6 +546,16 @@ def TPU_WeirdOp : TPU_Op<"weird", [Pure, ElementwiseMappable]> {
   let hasVerifier = 1;
 }
 
+def TPU_ReciprocalOp : TPU_Op<"reciprocal", [Pure, SameOperandsAndResultType, ElementwiseMappable]> {
+  let arguments = (ins
+    AnyVectorOfNonZeroRank:$input,
+    DefaultValuedAttr<BoolAttr, "false">:$approx
+  );
+  let results = (outs AnyVectorOfNonZeroRank:$output);
+  let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+  let hasVerifier = 1;
+}
+
 def TPU_RollVectorsOp : TPU_Op<"roll_vectors", [Pure]> {
   let arguments = (ins Variadic<AnyVectorOfNonZeroRank>:$input);
   let results = (outs AnyVectorOfNonZeroRank:$output);
@@ -742,7 +760,9 @@ def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
     AnyMemRef:$target,
     MemRefOf<[TPU_DMASemaphoreType]>:$target_semaphore,
     Optional<I32>:$device_id, // For remote DMAs
-    Optional<I32>:$core_id // For megacore
+    Optional<I32>:$core_id, // For megacore
+    // Smaller number means higher priority. 0 is the highest and the default.
+    DefaultValuedAttr<I32Attr, "0">:$priority
   );
   let hasVerifier = 1;
 }

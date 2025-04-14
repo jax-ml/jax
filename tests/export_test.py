@@ -19,7 +19,6 @@ import contextlib
 import dataclasses
 import functools
 import logging
-import json
 import math
 import re
 import unittest
@@ -37,6 +36,7 @@ from jax.sharding import PartitionSpec as P
 from jax import tree_util
 
 from jax._src import config
+from jax._src import compute_on
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
@@ -204,7 +204,14 @@ class JaxExportTest(jtu.JaxTestCase):
     f = jnp.sin
     x = np.arange(4, dtype=np.float32)
     exp_f = get_exported(f)(x)
+    self.assertAllClose(f(x), exp_f.call(x))
 
+  def test_basic_single_device_sharding(self):
+    device = jax.local_devices()[0]
+    s = jax.sharding.SingleDeviceSharding(device)
+    x = np.arange(16, dtype=np.float32).reshape(4, -1)
+    f = jax.jit(lambda x: x * 2., in_shardings=s, out_shardings=s)
+    exp_f = get_exported(f)(x)
     self.assertAllClose(f(x), exp_f.call(x))
 
   def test_jit_static_arg(self):
@@ -280,6 +287,18 @@ class JaxExportTest(jtu.JaxTestCase):
     exp_f = get_exported(f)(x, y)
 
     self.assertAllClose(f(x, y), exp_f.call(x, y))
+
+  def test_override_lowering_rules(self):
+    @jax.jit
+    def f(x):
+      return jnp.sin(x)
+
+    def my_lowering_rule(ctx, arg, **_):
+      return mlir.hlo.CosineOp(arg).results
+
+    exp = get_exported(f, _override_lowering_rules=(
+        (lax.sin_p, my_lowering_rule),))(42.)
+    self.assertIn("stablehlo.cosine", exp.mlir_module())
 
   def test_pytree(self):
     a = np.arange(4, dtype=np.float32)
@@ -409,6 +428,18 @@ class JaxExportTest(jtu.JaxTestCase):
     res2 = exp2.call(x1, x2)
     self.assertEqual(tree_util.tree_structure(res2),
                      tree_util.tree_structure(res))
+
+  @jtu.parameterized_filterable(
+    kwargs=[dict(impl=p)
+            for p in ("rbg", "unsafe_rbg", "threefry2x32")])
+  def test_prng_keys(self, *, impl):
+
+    key = jax.random.key(42, impl=impl)
+    @jax.jit
+    def f(key):
+      return key
+    exp_f = get_exported(jax.jit(f))(key)
+    self.assertEqual(f(key), exp_f.call(key))
 
   def test_error_wrong_intree(self):
     def f(a_b_pair, *, c):
@@ -941,7 +972,7 @@ class JaxExportTest(jtu.JaxTestCase):
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, c + b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
              "'b' = 0 from specification '2*b + a' for dimension args[0].shape[0] (= 2), . "
-             "Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
+             "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
            )),
       dict(shape=(3, 2, 6),  # a = 2, b = 0.5, c = 4 - b is not integer
            poly_spec="(a + 2*b, a, a + b + c)",
@@ -950,7 +981,7 @@ class JaxExportTest(jtu.JaxTestCase):
              "Division had remainder 1 when computing the value of 'b'. "
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, c + b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), . "
-             "Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
+             "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
            )),
       dict(shape=(8, 2, 6),  # a = 2, b = 3 - inconsistency
            poly_spec="(a + 2*b, a, a + b)",
@@ -960,7 +991,7 @@ class JaxExportTest(jtu.JaxTestCase):
              "Using the following polymorphic shapes specifications: args[0].shape = (2*b + a, a, b + a). "
              "Obtained dimension variables: 'a' = 2 from specification 'a' for dimension args[0].shape[1] (= 2), "
              "'b' = 4 from specification 'b + a' for dimension args[0].shape[2] (= 6), . "
-             "Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
+             "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#shape-assertion-errors for more details."
            )),
       dict(shape=(7, 2, 36),  # a = 2, b = 3, c = 6 - cannot solve c
            poly_spec="(2 * a + b, a, c * c)",
@@ -969,7 +1000,7 @@ class JaxExportTest(jtu.JaxTestCase):
              "We can only solve linear uni-variate constraints. "
              "Using the following polymorphic shapes specifications: args[0].shape = (b + 2*a, a, c^2). "
              "Unprocessed specifications: 'c^2' for dimension size args[0].shape[2]. "
-             "Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
+             "Please see https://docs.jax.dev/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details."
            )),
   ])
   def test_shape_constraints_errors(self, *,
@@ -1014,6 +1045,8 @@ class JaxExportTest(jtu.JaxTestCase):
       self.skipTest(f"TODO: serialization not supported for {str(dtype)}")
     if dtype == dtypes.float8_e8m0fnu and jtu.test_device_matches(['tpu']):
       self.skipTest("TPU does not support float8_e8m0fnu.")
+    if dtype == dtypes.float4_e2m1fn and jtu.test_device_matches(['tpu']):
+      self.skipTest("TPU does not support float4_e2m1fn.")
     @jax.jit
     def f_jax(x):
       return x + x
@@ -1171,7 +1204,7 @@ class JaxExportTest(jtu.JaxTestCase):
     if jax.local_device_count() < 2:
       self.skipTest("Need at least 2 devices")
 
-    abs_mesh = jax.sharding.AbstractMesh((("x", 2),))
+    abs_mesh = jax.sharding.AbstractMesh((2,), 'x')
     input_sharding = jax.sharding.NamedSharding(abs_mesh, P("x", None))
     output_sharding = jax.sharding.NamedSharding(abs_mesh, P(None, "x"))
     @jax.jit
@@ -1693,6 +1726,22 @@ class JaxExportTest(jtu.JaxTestCase):
       res_exp = exp.call(a_device)
       self.assertArraysAllClose(res_native, res_exp)
 
+  def test_compute_on_host(self):
+    operand = np.float32(0.)
+
+    @jax.jit
+    @compute_on.compute_on("device_host")
+    def f_host(x):
+      # Adds 1 on CPU, which should be the result on all platforms because
+      # this code should always run on the host.
+      return jax.lax.platform_dependent(x,
+                                        cpu=lambda x: x + np.float32(1.),
+                                        default=lambda x: x + np.float32(2.))
+
+    self.assertAllClose(np.float32(1.), f_host(operand))
+    exp = get_exported(f_host, platforms=("cpu", "tpu", "cuda", "rocm"))(operand)
+    self.assertAllClose(np.float32(1.), exp.call(operand))
+
   @jtu.parameterized_filterable(
     kwargs=[
       dict(v=v)
@@ -1901,8 +1950,8 @@ class JaxExportTest(jtu.JaxTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-        {"m": 5, "k": 4, "n": 3, "group_sizes": [5]},
-        {"m": 10, "k": 9, "n": 8, "group_sizes": [3, 7]},
+        {"m": 64, "k": 4, "n": 3, "group_sizes": [5]},
+        {"m": 64, "k": 9, "n": 8, "group_sizes": [3, 7]},
     ])
   def test_ragged_dot(self, m, k, n, group_sizes):
     def f_jax(x, y, gs):

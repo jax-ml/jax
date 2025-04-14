@@ -32,7 +32,7 @@ class SourceMapDump:
 
 class CompileFn(Protocol):
 
-  def __call__(self, work_dir, fn, f_args, f_kwargs) -> Any:
+  def __call__(self, work_dir, fn, f_args, f_kwargs, **kwargs) -> Any:
     ...
 
 

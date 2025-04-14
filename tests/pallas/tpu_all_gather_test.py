@@ -81,6 +81,7 @@ if CAN_USE_HYPOTHESIS:
     )
 
 
+  @jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
   class AllGatherTest(jtu.JaxTestCase):
 
     def setUp(self):

@@ -27,7 +27,8 @@ from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import SingleDeviceSharding
 from jax._src.util import safe_zip, safe_map, set_module
-from jax._src.typing import Array, ArrayLike, DimSize, DType, DTypeLike, Shape
+from jax._src.typing import (Array, ArrayLike, DimSize, DType, DTypeLike,
+                             Shape, SupportsNdim, SupportsShape, SupportsSize)
 from jax.sharding import Sharding
 
 import numpy as np
@@ -69,13 +70,13 @@ def _rank_promotion_warning_or_error(fun_name: str, shapes: Sequence[Shape]):
     msg = ("Following NumPy automatic rank promotion for {} on shapes {}. "
            "Set the jax_numpy_rank_promotion config option to 'allow' to "
            "disable this warning; for more information, see "
-           "https://jax.readthedocs.io/en/latest/rank_promotion_warning.html.")
+           "https://docs.jax.dev/en/latest/rank_promotion_warning.html.")
     warnings.warn(msg.format(fun_name, ' '.join(map(str, shapes))))
   elif config.numpy_rank_promotion.value == "raise":
     msg = ("Operands could not be broadcast together for {} on shapes {} "
            "and with the config option jax_numpy_rank_promotion='raise'. "
            "For more information, see "
-           "https://jax.readthedocs.io/en/latest/rank_promotion_warning.html.")
+           "https://docs.jax.dev/en/latest/rank_promotion_warning.html.")
     raise ValueError(msg.format(fun_name, ' '.join(map(str, shapes))))
 
 
@@ -158,7 +159,7 @@ def ensure_arraylike(fun_name: str, /, *args: Any) -> Array | tuple[Array, ...]:
   return tuple(_arraylike_asarray(arg) for arg in args)  # pytype: disable=bad-return-type
 
 
-def ensure_arraylike_tuple(fun_name: str, tup: tuple[Any, ...]) -> tuple[Array, ...]:
+def ensure_arraylike_tuple(fun_name: str, tup: Sequence[Any]) -> tuple[Array, ...]:
   """Check that argument elements are arraylike and convert to a tuple of arrays.
 
   This is useful because ensure_arraylike with a single argument returns a single array.
@@ -258,7 +259,7 @@ def _broadcast_arrays(*args: ArrayLike) -> list[Array]:
 
 def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape, sharding=None
                   ) -> Array:
-  check_arraylike("broadcast_to", arr)
+  arr = ensure_arraylike("broadcast_to", arr)
   arr = arr if isinstance(arr, Array) else lax.asarray(arr)
   if not isinstance(shape, tuple) and np.ndim(shape) == 0:
     shape = (shape,)
@@ -313,7 +314,7 @@ def normalize_device_to_sharding(device: xc.Device | Sharding | None) -> Shardin
 
 
 @export
-def ndim(a: ArrayLike) -> int:
+def ndim(a: ArrayLike | SupportsNdim) -> int:
   """Return the number of dimensions of an array.
 
   JAX implementation of :func:`numpy.ndim`. Unlike ``np.ndim``, this function
@@ -321,7 +322,7 @@ def ndim(a: ArrayLike) -> int:
   tuple.
 
   Args:
-    a: array-like object.
+    a: array-like object, or any object with an ``ndim`` attribute.
 
   Returns:
     An integer specifying the number of dimensions of ``a``.
@@ -346,13 +347,18 @@ def ndim(a: ArrayLike) -> int:
     >>> x.ndim
     1
   """
+  if hasattr(a, "ndim"):
+    return a.ndim
   # Deprecation warning added 2025-2-20.
   check_arraylike("ndim", a, emit_warning=True)
-  return np.ndim(a)  # NumPy dispatches to a.ndim if available.
+  if hasattr(a, "__jax_array__"):
+    a = a.__jax_array__()
+  # NumPy dispatches to a.ndim if available.
+  return np.ndim(a)  # type: ignore[arg-type]
 
 
 @export
-def shape(a: ArrayLike) -> tuple[int, ...]:
+def shape(a: ArrayLike | SupportsShape) -> tuple[int, ...]:
   """Return the shape an array.
 
   JAX implementation of :func:`numpy.shape`. Unlike ``np.shape``, this function
@@ -360,7 +366,7 @@ def shape(a: ArrayLike) -> tuple[int, ...]:
   tuple.
 
   Args:
-    a: array-like object.
+    a: array-like object, or any object with a ``shape`` attribute.
 
   Returns:
     An tuple of integers representing the shape of ``a``.
@@ -385,13 +391,18 @@ def shape(a: ArrayLike) -> tuple[int, ...]:
     >>> x.shape
     (10,)
   """
+  if hasattr(a, "shape"):
+    return a.shape
   # Deprecation warning added 2025-2-20.
   check_arraylike("shape", a, emit_warning=True)
-  return np.shape(a)  # NumPy dispatches to a.shape if available.
+  if hasattr(a, "__jax_array__"):
+    a = a.__jax_array__()
+  # NumPy dispatches to a.shape if available.
+  return np.shape(a)  # type: ignore[arg-type]
 
 
 @export
-def size(a: ArrayLike, axis: int | None = None) -> int:
+def size(a: ArrayLike | SupportsSize | SupportsShape, axis: int | None = None) -> int:
   """Return number of elements along a given axis.
 
   JAX implementation of :func:`numpy.size`. Unlike ``np.size``, this function
@@ -399,7 +410,8 @@ def size(a: ArrayLike, axis: int | None = None) -> int:
   tuple.
 
   Args:
-    a: array-like object
+    a: array-like object, or any object with a ``size`` attribute when ``axis`` is not
+      specified, or with a ``shape`` attribute when ``axis`` is specified.
     axis: optional integer along which to count elements. By default, return
       the total number of elements.
 
@@ -428,6 +440,12 @@ def size(a: ArrayLike, axis: int | None = None) -> int:
     >>> y.size
     6
   """
+  if (axis is None and hasattr(a, "size")) or (axis is not None and hasattr(a, "shape")):
+    # NumPy dispatches to a.size/a.shape if available.
+    return np.size(a, axis=axis)  # type: ignore[arg-type]
   # Deprecation warning added 2025-2-20.
   check_arraylike("size", a, emit_warning=True)
-  return np.size(a, axis=axis)  # NumPy dispatches to a.size if available.
+  if hasattr(a, "__jax_array__"):
+    a = a.__jax_array__()
+  # NumPy dispatches to a.size/a.shape if available.
+  return np.size(a, axis=axis)  # type: ignore[arg-type]

@@ -19,21 +19,27 @@ load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
 load(
+    "@xla//third_party/py:py_import.bzl",
+    "py_import",
+)
+load(
     "@xla//third_party/py:py_manylinux_compliance_test.bzl",
     "verify_manylinux_compliance_test",
 )
 load(
     "//jaxlib:jax.bzl",
     "PLATFORM_TAGS_DICT",
-    "if_windows",
     "jax_py_test",
     "jax_wheel",
     "pytype_strict_library",
+    "pytype_test",
 )
 
 licenses(["notice"])  # Apache 2
 
 package(default_visibility = ["//visibility:public"])
+
+exports_files(["wheel_size_test.py"])
 
 genrule(
     name = "platform_tags_py",
@@ -57,15 +63,14 @@ py_binary(
         "LICENSE.txt",
         "//jaxlib",
         "//jaxlib:README.md",
+        "//jaxlib:jaxlib_binaries",
         "//jaxlib:setup.py",
+        "//jaxlib/xla:xla_client.py",
+        "//jaxlib/xla:xla_extension",
         "@xla//xla/ffi/api:api.h",
         "@xla//xla/ffi/api:c_api.h",
         "@xla//xla/ffi/api:ffi.h",
-        "@xla//xla/python:xla_client.py",
-        "@xla//xla/python:xla_extension",
-    ] + if_windows([
-        "//jaxlib/mlir/_mlir_libs:jaxlib_mlir_capi.dll",
-    ]),
+    ],
     deps = [
         ":build_utils",
         "@bazel_tools//tools/python/runfiles",
@@ -139,16 +144,16 @@ py_binary(
     data = [
         "LICENSE.txt",
     ] + if_cuda([
-        "//jaxlib/mosaic/gpu:mosaic_gpu",
-        "//jaxlib:cuda_plugin_extension",
         "//jaxlib:version",
+        "//jaxlib/mosaic/gpu:mosaic_gpu",
+        "//jaxlib/cuda:cuda_plugin_extension",
         "//jaxlib/cuda:cuda_gpu_support",
         "//jax_plugins/cuda:plugin_pyproject.toml",
         "//jax_plugins/cuda:plugin_setup.py",
         "@local_config_cuda//cuda:cuda-nvvm",
     ]) + if_rocm([
-        "//jaxlib:rocm_plugin_extension",
         "//jaxlib:version",
+        "//jaxlib/rocm:rocm_plugin_extension",
         "//jaxlib/rocm:rocm_gpu_support",
         "//jax_plugins/rocm:plugin_pyproject.toml",
         "//jax_plugins/rocm:plugin_setup.py",
@@ -228,11 +233,28 @@ string_flag(
     build_setting_default = "dist",
 )
 
+NVIDIA_WHEELS_DEPS = [
+    "@pypi_nvidia_cublas_cu12//:whl",
+    "@pypi_nvidia_cuda_cupti_cu12//:whl",
+    "@pypi_nvidia_cuda_runtime_cu12//:whl",
+    "@pypi_nvidia_cudnn_cu12//:whl",
+    "@pypi_nvidia_cufft_cu12//:whl",
+    "@pypi_nvidia_cusolver_cu12//:whl",
+    "@pypi_nvidia_cusparse_cu12//:whl",
+    "@pypi_nvidia_nccl_cu12//:whl",
+    "@pypi_nvidia_nvjitlink_cu12//:whl",
+]
+
 jax_wheel(
     name = "jaxlib_wheel",
     no_abi = False,
     wheel_binary = ":build_wheel",
     wheel_name = "jaxlib",
+)
+
+py_import(
+    name = "jaxlib_py_import",
+    wheel = ":jaxlib_wheel",
 )
 
 jax_wheel(
@@ -250,6 +272,12 @@ jax_wheel(
     platform_version = "12",
     wheel_binary = ":build_gpu_kernels_wheel",
     wheel_name = "jax_cuda12_plugin",
+)
+
+py_import(
+    name = "jax_cuda_plugin_py_import",
+    wheel = ":jax_cuda_plugin_wheel",
+    wheel_deps = if_cuda(NVIDIA_WHEELS_DEPS),
 )
 
 jax_wheel(
@@ -288,6 +316,12 @@ jax_wheel(
     platform_version = "12",
     wheel_binary = ":build_gpu_plugin_wheel",
     wheel_name = "jax_cuda12_pjrt",
+)
+
+py_import(
+    name = "jax_cuda_pjrt_py_import",
+    wheel = ":jax_cuda_pjrt_wheel",
+    wheel_deps = if_cuda(NVIDIA_WHEELS_DEPS),
 )
 
 jax_wheel(
@@ -355,4 +389,49 @@ verify_manylinux_compliance_test(
     ],
     wheel = ":jax_cuda_pjrt_wheel",
     x86_64_compliance_tag = X86_64_MANYLINUX_TAG,
+)
+
+pytype_test(
+    name = "jaxlib_wheel_size_test",
+    srcs = [":wheel_size_test.py"],
+    args = [
+        "--wheel-path=$(location :jaxlib_wheel)",
+        "--max-size-mib=110",
+    ],
+    data = [":jaxlib_wheel"],
+    main = "wheel_size_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+)
+
+pytype_test(
+    name = "jax_cuda_plugin_wheel_size_test",
+    srcs = [":wheel_size_test.py"],
+    args = [
+        "--wheel-path=$(location :jax_cuda_plugin_wheel)",
+        "--max-size-mib=20",
+    ],
+    data = [":jax_cuda_plugin_wheel"],
+    main = "wheel_size_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
+)
+
+pytype_test(
+    name = "jax_cuda_pjrt_wheel_size_test",
+    srcs = [":wheel_size_test.py"],
+    args = [
+        "--wheel-path=$(location :jax_cuda_pjrt_wheel)",
+        "--max-size-mib=120",
+    ],
+    data = [":jax_cuda_pjrt_wheel"],
+    main = "wheel_size_test.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
 )

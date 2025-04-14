@@ -50,7 +50,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
-from jax._src.util import safe_zip, NumpyComplexWarning, tuple_replace
+from jax._src.util import safe_zip, NumpyComplexWarning, tuple_update
 
 config.parse_flags_with_absl()
 
@@ -3496,11 +3496,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  def testReshapeDeprecatedArgs(self):
-    msg = "The newshape argument to jnp.reshape was removed in JAX v0.4.36."
-    with self.assertRaisesRegex(TypeError, msg):
-      jnp.reshape(jnp.arange(4), newshape=(2, 2))
-
   @jtu.sample_product(
     [dict(arg_shape=arg_shape, out_shape=out_shape)
       for arg_shape, out_shape in [
@@ -3800,9 +3795,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with self.assertRaisesRegex(OverflowError, "Python int too large.*"):
       jnp.array([0, val])
 
-  def testArrayNoneWarning(self):
-    # TODO(jakevdp): make this an error after the deprecation period.
-    with self.assertWarnsRegex(FutureWarning, r"None encountered in jnp.array\(\)"):
+  def testArrayNone(self):
+    with self.assertRaisesRegex(
+        ValueError, 'None is not a valid value for jnp.array'
+    ):
       jnp.array([0.0, None])
 
   def testIssue121(self):
@@ -6042,7 +6038,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       dict(a_shape=a_shape, i_shape=i_shape, v_shape=v_shape, axis=axis)
       for a_shape in nonempty_array_shapes
       for axis in list(range(-len(a_shape), len(a_shape)))
-      for i_shape in [tuple_replace(a_shape, axis, J) for J in range(a_shape[axis] + 1)]
+      for i_shape in [
+        tuple_update(a_shape, axis if axis >= 0 else axis + len(a_shape), J)
+        for J in range(a_shape[axis] + 1)
+      ]
       for v_shape in [(), (1,), i_shape]
     ] + [
       dict(a_shape=a_shape, i_shape=i_shape, v_shape=v_shape, axis=None)

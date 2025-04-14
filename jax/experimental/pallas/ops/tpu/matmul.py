@@ -14,7 +14,7 @@
 
 """Example matmul TPU kernel.
 
-See discussion in https://jax.readthedocs.io/en/latest/pallas/tpu/matmul.html.
+See discussion in https://docs.jax.dev/en/latest/pallas/tpu/matmul.html.
 """
 
 import functools

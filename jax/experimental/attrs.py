@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+import jax
 from jax._src import core
 from jax._src import source_info_util
 from jax._src import api_util
@@ -32,18 +33,30 @@ from jax._src.dtypes import dtype, float0
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
+Array = Any
 JaxVal = Any
 Pytree = Any
 
-register = api_util.register_class_with_attrs
+ReadWrite = pe.ReadWrite
+Append = pe.Append
 
-def jax_getattr(obj: Any, attr: str):
+register = api_util.register_class_with_attrs
+dne_sentinel = pe.dne_sentinel
+
+def jax_getattr(obj: Any, attr: str) -> Pytree:
   with core.take_current_trace() as t:
     return t.process_getattr(obj, attr)
 
-def jax_setattr(obj: Any, attr: str, val: Pytree):
+def jax_setattr(obj: Any, attr: str, val: Pytree) -> None:
   with core.take_current_trace() as t:
     return t.process_setattr(obj, attr, val)
+
+def jax_appendattr(obj: Any, attr: str, val: Array) -> None:
+  return jax_extendattr(obj, attr, jax.numpy.expand_dims(val, 0))
+
+def jax_extendattr(obj: Any, attr: str, val: Array) -> None:
+  with core.take_current_trace() as t:
+    return t.process_extendattr(obj, attr, val)
 
 def _getattr_impl(_, obj, attr):
   return getattr(obj, attr)
@@ -52,6 +65,25 @@ core.EvalTrace.process_getattr = _getattr_impl
 def _setattr_impl(_, obj, attr, val):
   setattr(obj, attr, val)
 core.EvalTrace.process_setattr = _setattr_impl
+
+def _extendattr_impl(_, obj, attr, val):
+  cur = getattr(obj, attr, dne_sentinel)
+  if cur is dne_sentinel:
+    new = val
+  else:
+    _check_append_type_agreement(obj, attr, core.typeof(cur), core.typeof(val))
+    new = jax.numpy.concatenate([cur, val])
+  setattr(obj, attr, new)
+core.EvalTrace.process_extendattr = _extendattr_impl
+
+def _check_append_type_agreement(_, attr, curtype, valtype):
+  expected = core.mapped_aval(curtype.shape[0], 0, curtype)
+  got = core.mapped_aval(valtype.shape[0], 0, valtype)
+  if not core.typematch(expected, got):
+    raise TypeError(
+        f"can only append to attr {attr} with values of trailing shape "
+        f"{expected.str_short()}, but appendattr got value of type "
+        f"{valtype.str_short()} which has trailing shape {got.str_short()}.")
 
 def _ensure_tracked(trace: pe.DynamicJaxprTrace, obj: Any, attr: str):
   frame = trace.frame
@@ -64,13 +96,16 @@ def _ensure_tracked(trace: pe.DynamicJaxprTrace, obj: Any, attr: str):
     frame.tracers.append(tracer)
     return tracer
 
-  if (obj, attr) not in frame.attrs_tracked:
-    init_val = getattr(obj, attr)
+  if (obj, attr, Append) in frame.attrs_tracked:
+    raise TypeError(f"can't read/write to append-only attr {attr}")
+
+  if (obj, attr, ReadWrite) not in frame.attrs_tracked:
+    init_val = getattr(obj, attr, dne_sentinel)
     frame.attrs_inits.append(init_val)
     init_vals, init_tree = tree_flatten(init_val)
     tracers = map(new_tracer, init_vals)
     setattr(obj, attr, tree_unflatten(init_tree, tracers))
-    frame.attrs_tracked.append((obj, attr))
+    frame.attrs_tracked.append((obj, attr, ReadWrite))
 pe.DynamicJaxprTrace._ensure_tracked = _ensure_tracked
 
 def _getattr_staging(trace, obj, attr):
@@ -82,6 +117,27 @@ def _setattr_staging(trace, obj, attr, val):
   trace._ensure_tracked(obj, attr)
   setattr(obj, attr, val)
 pe.DynamicJaxprTrace.process_setattr = _setattr_staging
+
+def _extendattr_staging(trace, obj, attr, val):
+  frame = trace.frame
+
+  if (obj, attr, ReadWrite) in frame.attrs_tracked:
+    raise TypeError("can't append to read/write-only attr {attr}")
+
+  first_write = (obj, attr, Append) not in frame.attrs_tracked
+  init_val = getattr(obj, attr, dne_sentinel)
+  if init_val is not dne_sentinel:
+    _check_append_type_agreement(obj, attr, core.typeof(init_val), core.typeof(val))
+  if first_write:
+    frame.attrs_inits.append(init_val)
+    frame.attrs_tracked.append((obj, attr, Append))
+    tracer = val
+  else:
+    assert init_val is not dne_sentinel
+    with core.set_current_trace(trace):
+      tracer = jax.numpy.concatenate([init_val, val])
+  setattr(obj, attr, tracer)
+pe.DynamicJaxprTrace.process_extendattr = _extendattr_staging
 
 
 def jvp(f, primals, tangents, attr_tangents):

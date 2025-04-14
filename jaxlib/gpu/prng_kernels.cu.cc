@@ -15,8 +15,7 @@ limitations under the License.
 
 #include "jaxlib/gpu/prng_kernels.h"
 
-#include <array>
-#include <cstddef>
+#include <algorithm>
 #include <cstdint>
 
 #include "jaxlib/gpu/vendor.h"

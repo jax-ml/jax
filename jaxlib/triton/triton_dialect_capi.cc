@@ -15,12 +15,12 @@ limitations under the License.
 
 #include "jaxlib/triton/triton_dialect_capi.h"
 
-#include "llvm/include/llvm/Support/Casting.h"
-#include "mlir/include/mlir-c/IR.h"
-#include "mlir/include/mlir/CAPI/IR.h"
-#include "mlir/include/mlir/CAPI/Registration.h"
-#include "mlir/include/mlir/IR/Attributes.h"
-#include "mlir/include/mlir/IR/Dialect.h"
+#include "llvm/Support/Casting.h"
+#include "mlir-c/IR.h"
+#include "mlir/CAPI/IR.h"
+#include "mlir/CAPI/Registration.h"
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
 

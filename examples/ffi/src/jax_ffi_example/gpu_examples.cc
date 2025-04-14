@@ -16,8 +16,8 @@ limitations under the License.
 #include <cstdint>
 #include <memory>
 
-#include "nanobind/nanobind.h"
 #include "cuda_runtime_api.h"
+#include "nanobind/nanobind.h"
 #include "xla/ffi/api/ffi.h"
 
 namespace nb = nanobind;

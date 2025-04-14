@@ -15,11 +15,9 @@ limitations under the License.
 
 #include "jaxlib/gpu/sparse_kernels.h"
 
-#include <algorithm>
-#include <cstdint>
-#include <stdexcept>
-#include <utility>
-#include <vector>
+#include <cstddef>
+#include <cstring>
+#include <string>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -27,8 +25,8 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "jaxlib/gpu/ffi_wrapper.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
+#include "jaxlib/gpu/handle_pool.h"
 #include "jaxlib/gpu/vendor.h"
-#include "jaxlib/handle_pool.h"
 #include "jaxlib/kernel_helpers.h"
 #include "xla/service/custom_call_status.h"
 

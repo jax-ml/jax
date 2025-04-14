@@ -69,6 +69,7 @@ jax.scipy.linalg
    lu
    lu_factor
    lu_solve
+   pascal
    polar
    qr
    rsf2csf

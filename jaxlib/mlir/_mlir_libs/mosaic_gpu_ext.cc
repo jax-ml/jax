@@ -138,25 +138,4 @@ NB_MODULE(_mosaic_gpu_ext, m) {
       .def_property_readonly("swizzle", [](MlirAttribute self) {
         return mlirMosaicGpuSwizzleTransformAttrGetSwizzle(self);
       });
-
-  mlir::python::nanobind_adaptors::mlir_attribute_subclass(
-      m, "LayoutAttr", mlirMosaicGpuIsALayoutAttr)
-      .def_classmethod(
-          "get",
-          [](nb::object cls, int32_t num_dimensions,
-             std::vector<MlirAttribute>& transforms, MlirContext ctx) {
-            return cls(mlirMosaicGpuLayoutAttrGet(
-                ctx, num_dimensions, transforms.data(), transforms.size()));
-          },
-          nb::arg("cls"), nb::arg("num_dimensions"), nb::arg("transforms"),
-          nb::arg("context").none() = nb::none(),
-          "Creates a LayoutAttr with the given transforms.")
-      .def_property_readonly("transforms", [](MlirAttribute self) {
-        std::vector<MlirAttribute> result;
-        for (int i = 0; i < mlirMosaicGpuLayoutAttrGetTransformsSize(self);
-             ++i) {
-          result.push_back(mlirMosaicGpuLayoutAttrGetTransform(self, i));
-        }
-        return result;
-      });
 }

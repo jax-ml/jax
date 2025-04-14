@@ -94,12 +94,93 @@ def is_strided_fragmented_layout(attr: ir.Attribute) -> bool:
   return bool(_strided_fragmented_layout_attr_pattern.search(str(attr)))
 
 
+_tiled_layout_attr_pattern = re.compile(
+    r"^#mosaic_gpu.TiledLayout<\[(?P<tiling>.*)\],"
+    r" warp_dim\s*=\s*(?P<warp_dim>.+),"
+    r" lane_dims\s*=\s*\[(?P<lane_dims>.*)\],"
+    r" vector_dim\s*=\s*(?P<vector_dim>[-\d]+)>$"
+)
+
+
+def to_tiled_layout_attr(
+    layout: fa.TiledLayout,
+) -> ir.Attribute:
+  """Constructs a #mosaic_gpu.TiledLayout attribute from a TiledLayout."""
+
+  def _int_or_replicated(d: int | fa.Replicated) -> str:
+    if isinstance(d, fa.Replicated):
+      return f"#mosaic_gpu.Replicated<times={d.times}>"
+    return str(d)
+
+  tile_str = lambda tile: "[" + ", ".join(str(d) for d in tile) + "]"
+  tiling = "[" + ", ".join(tile_str(tile) for tile in layout.tiling.tiles) + "]"
+  lane_dims = (
+      "[" + ",".join(_int_or_replicated(d) for d in layout.lane_dims) + "]"
+  )
+
+  return ir.Attribute.parse(
+      f"#mosaic_gpu.TiledLayout<{tiling},"
+      f" warp_dim={_int_or_replicated(layout.warp_dim)},"
+      f" lane_dims={lane_dims}, vector_dim={layout.vector_dim}>"
+  )
+
+
+_list_of_lists_delimiter = re.compile(r"\]\s*,\s*\[")
+_int_pattern = re.compile(r"^(?P<num>[-\d]+)(\s*:\s*\w+)?$")
+_replicated_pattern = re.compile(
+    r"^#mosaic_gpu.Replicated<\s*times\s*=\s*(?P<times>\d+)\s*>\s*$"
+)
+
+
+def from_tiled_layout_attr(
+    attr: ir.Attribute,
+) -> fa.TiledLayout:
+  """Constructs a TiledLayout from a #mosaic_gpu.TiledLayout attribute.
+
+  Raises:
+    ValueError: If the attribute is not a #mosaic_gpu.TiledLayout
+      attribute.
+  """
+  match = _tiled_layout_attr_pattern.fullmatch(str(attr))
+  if not match:
+    raise ValueError(
+        f"Expected a #mosaic_gpu.TiledLayout attribute, got {attr}"
+    )
+
+  def _int_or_replicated(replicated_dim: str) -> int | fa.Replicated:
+    match = _replicated_pattern.fullmatch(replicated_dim)
+    if match:
+      return fa.Replicated(int(match.group("times")))
+    match = _int_pattern.fullmatch(replicated_dim)
+    if match:
+      return int(match.group("num"))
+    raise ValueError(f"Unexpected format for replicated dim {replicated_dim}")
+
+  tiling_str = match.group("tiling")
+  tile_strings = []
+  if len(tiling_str) > 2:
+    tile_strings = _list_of_lists_delimiter.split(tiling_str[1:-1])
+  tiles = tuple(tuple(map(int, ts.split(","))) for ts in tile_strings)
+  return fa.TiledLayout(
+      tiling=fa.Tiling(tiles),
+      warp_dim=_int_or_replicated(match.group("warp_dim")),
+      lane_dims=tuple(
+          _int_or_replicated(s.strip())
+          for s in match.group("lane_dims").split(",")
+      ),
+      vector_dim=int(match.group("vector_dim")),
+  )
+
+
+def is_tiled_layout(attr: ir.Attribute) -> bool:
+  return bool(_tiled_layout_attr_pattern.search(str(attr)))
+
+
 def to_layout_attr(
     layout: (
         fa.WGSplatFragLayout
         | fa.WGStridedFragLayout
-        | fa.WGMMAFragLayout
-        | fa.WGMMARowFragLayout
+        | fa.TiledLayout
     ),
 ) -> ir.Attribute:
   """Constructs an MLIR attribute that corresponds to the given layout."""
@@ -108,32 +189,12 @@ def to_layout_attr(
       return to_splat_fragmented_layout_attr(layout)
     case fa.WGStridedFragLayout():
       return to_strided_fragmented_layout_attr(layout)
-    case fa.WGMMAFragLayout():
-      return ir.Attribute.parse("#mosaic_gpu.WGMMAFragLayout")
-    case fa.WGMMARowFragLayout():
-      return ir.Attribute.parse("#mosaic_gpu.WGMMARowFragLayout")
+    case fa.TiledLayout():
+      return to_tiled_layout_attr(layout)
     case _:
       raise NotImplementedError(
           f"Unsupported layout for conversion to MLIR attribute: {layout}"
       )
-
-
-_wgmma_fragmented_layout_attr_pattern = re.compile(
-    r"^#mosaic_gpu.WGMMAFragLayout$"
-)
-
-
-def is_wgmma_fragmented_layout(attr: ir.Attribute) -> bool:
-  return bool(_wgmma_fragmented_layout_attr_pattern.search(str(attr)))
-
-
-_wgmma_row_fragmented_layout_attr_pattern = re.compile(
-    r"^#mosaic_gpu.WGMMARowFragLayout$"
-)
-
-
-def is_wgmma_row_fragmented_layout(attr: ir.Attribute) -> bool:
-  return bool(_wgmma_row_fragmented_layout_attr_pattern.search(str(attr)))
 
 
 def from_layout_attr(
@@ -141,18 +202,15 @@ def from_layout_attr(
 ) -> (
     fa.WGSplatFragLayout
     | fa.WGStridedFragLayout
-    | fa.WGMMAFragLayout
-    | fa.WGMMARowFragLayout
+    | fa.TiledLayout
 ):
   """Constructs a layout from an MLIR attribute."""
   if is_splat_fragmented_layout(attr):
     return from_splat_fragmented_layout_attr(attr)
   elif is_strided_fragmented_layout(attr):
     return from_strided_fragmented_layout_attr(attr)
-  elif is_wgmma_fragmented_layout(attr):
-    return fa.WGMMAFragLayout()
-  elif is_wgmma_row_fragmented_layout(attr):
-    return fa.WGMMARowFragLayout()
+  elif is_tiled_layout(attr):
+    return from_tiled_layout_attr(attr)
   else:
     raise NotImplementedError(
         f"Unsupported layout for conversion from MLIR attribute: {attr}"

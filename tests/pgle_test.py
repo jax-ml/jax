@@ -21,7 +21,7 @@ import shutil
 import tempfile
 import warnings
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 import jax
 from jax._src import api
 from jax._src import compilation_cache as cc
@@ -65,7 +65,11 @@ class PgleTest(jtu.JaxTestCase):
         jax.jit,
         in_shardings=NamedSharding(mesh, PartitionSpec('x')),
         out_shardings=NamedSharding(mesh, PartitionSpec('x')),
-        compiler_options={'xla_gpu_enable_latency_hiding_scheduler': 'True'},
+        compiler_options={
+            'xla_gpu_enable_latency_hiding_scheduler': 'True',
+            # Make sure that matmul is not emitted as Triton GEMM.
+            'xla_gpu_enable_triton_gemm': 'False',
+        },
     )
     def f(x, y):
       return x @ y
@@ -93,6 +97,8 @@ class PgleTest(jtu.JaxTestCase):
 
     compiler_options = {
         'xla_gpu_enable_latency_hiding_scheduler': 'True',
+        # Make sure that matmul is not emitted as Triton GEMM.
+        'xla_gpu_enable_triton_gemm': 'False',
     }
     # TODO(b/37664749): Remove this flag once the bug is fixed.
     compiler_options['xla_gpu_enable_command_buffer'] = ''
@@ -321,7 +327,11 @@ class PgleTest(jtu.JaxTestCase):
         jax.jit,
         in_shardings=NamedSharding(mesh, PartitionSpec('x')),
         out_shardings=NamedSharding(mesh, PartitionSpec('x')),
-        compiler_options={'xla_gpu_enable_latency_hiding_scheduler': 'True'},
+        compiler_options={
+            'xla_gpu_enable_latency_hiding_scheduler': 'True',
+            # Make sure that matmul is not emitted as Triton GEMM.
+            'xla_gpu_enable_triton_gemm': 'False',
+        },
     )
     def f(x, y):
       return x @ y
@@ -467,6 +477,56 @@ class PgleTest(jtu.JaxTestCase):
             print("Warnings:", [str(w_) for w_ in w], flush=True)
           self.assertLen(w, 1)
           self.assertIn("PERSISTENT CACHE WRITE with key jit_h-", str(w[0].message))
+
+  @parameterized.parameters([True, False])
+  @jtu.thread_unsafe_test()
+  def testAutoPgleWithCommandBuffers(self, enable_compilation_cache):
+    with (config.pgle_profiling_runs(1),
+          config.enable_compilation_cache(enable_compilation_cache),
+          config.enable_pgle(True),
+          tempfile.TemporaryDirectory() as dump_dir,
+          tempfile.TemporaryDirectory() as cache_dir):
+      if enable_compilation_cache:
+        cc.reset_cache()
+        cc.set_cache_dir(cache_dir)
+      compiler_options = {
+        'xla_dump_to': dump_dir,
+        # FUSION, see https://github.com/openxla/xla/issues/22459
+        'xla_gpu_enable_command_buffer': 1,
+        'xla_gpu_graph_min_graph_size': 1,
+      }
+      @partial(
+          jax.jit,
+          compiler_options=compiler_options,
+      )
+      def f(x):
+        return x * 2
+
+      x = jnp.arange(1)
+      expected = x * 2
+
+      # This is ugly, but it does not seem possible to get the AutoPGLE-recompiled
+      # executable text (.lower(x).compile().as_text() or similar).
+      def get_new_hlo():
+        additions = set(os.listdir(dump_dir)) - get_new_hlo.seen_files
+        get_new_hlo.seen_files |= additions
+        new_hlos = list(filter(lambda f: f.endswith("_gpu_after_optimizations.txt"), additions))
+        assert len(new_hlos) == 1
+        with open(os.path.join(dump_dir, new_hlos[0]), "r") as ifile:
+          return ifile.read()
+
+      get_new_hlo.seen_files = set()
+
+      # Run 1
+      self.assertArraysEqual(f(x), expected)
+      self.assertNotIn("command_buffer", get_new_hlo()) # b/376647494 workaround
+      # Run 2
+      self.assertArraysEqual(f(x), expected)
+      self.assertIn("command_buffer", get_new_hlo()) # workaround disabled
+
+    api.clear_caches()
+    pjit._pgle_profiler_dict.clear()
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -26,7 +26,6 @@ jobs:
       matrix:
         jaxlib-version: ["head", "pypi_latest", "nightly", "nightly+oldest_supported_libtpu"]
         tpu: [
-          # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
           {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
           {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"}
         ]

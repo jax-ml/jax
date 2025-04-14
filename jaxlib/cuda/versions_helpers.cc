@@ -16,6 +16,7 @@ limitations under the License.
 #include "jaxlib/cuda/versions_helpers.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 
 #include "absl/base/dynamic_annotations.h"

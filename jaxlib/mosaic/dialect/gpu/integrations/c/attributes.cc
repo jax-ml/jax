@@ -1,7 +1,21 @@
+/* Copyright 2025 The JAX Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
 #include "jaxlib/mosaic/dialect/gpu/integrations/c/attributes.h"
 
 #include <cstdint>
-#include <vector>
 
 #include "mlir-c/IR.h"
 #include "mlir/CAPI/IR.h"
@@ -81,37 +95,4 @@ int32_t mlirMosaicGpuSwizzleTransformAttrGetSwizzle(MlirAttribute attr) {
       mlir::cast<mosaic_gpu::SwizzleTransformAttr>(unwrap(attr))
           .getSwizzle()
           .getValue());
-}
-
-//===----------------------------------------------------------------------===//
-// LayoutAttr
-//===----------------------------------------------------------------------===//
-
-bool mlirMosaicGpuIsALayoutAttr(MlirAttribute attr) {
-  return mlir::isa<mosaic_gpu::LayoutAttr>(unwrap(attr));
-}
-
-MlirAttribute mlirMosaicGpuLayoutAttrGet(MlirContext ctx,
-                                         int32_t num_dimensions,
-                                         MlirAttribute* transforms,
-                                         int32_t transforms_size) {
-  std::vector<mlir::Attribute> unwrapped_transforms;
-  unwrapped_transforms.reserve(transforms_size);
-  for (int i = 0; i < transforms_size; ++i) {
-    unwrapped_transforms.push_back(unwrap(transforms[i]));
-  }
-  return wrap(mosaic_gpu::LayoutAttr::get(unwrap(ctx), num_dimensions,
-                                          unwrapped_transforms));
-}
-
-int32_t mlirMosaicGpuLayoutAttrGetTransformsSize(MlirAttribute attr) {
-  return mlir::cast<mosaic_gpu::LayoutAttr>(unwrap(attr))
-      .getTransforms()
-      .size();
-}
-
-MlirAttribute mlirMosaicGpuLayoutAttrGetTransform(MlirAttribute attr,
-                                                  int32_t index) {
-  return wrap(
-      mlir::cast<mosaic_gpu::LayoutAttr>(unwrap(attr)).getTransforms()[index]);
 }

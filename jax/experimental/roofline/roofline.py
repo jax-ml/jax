@@ -28,6 +28,7 @@ from jax._src.api import make_jaxpr
 from jax._src.interpreters.partial_eval import dce_jaxpr
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.tree_util import broadcast_prefix, tree_flatten, tree_unflatten, tree_map
+from jax._src.util import foreach
 from jax.experimental import shard_map
 
 
@@ -165,12 +166,12 @@ def _roofline_interpreter(
 
   jaxpr = jaxpr.jaxpr if isinstance(jaxpr, core.ClosedJaxpr) else jaxpr
   make_roofline_shape = lambda x: RooflineShape.from_aval(aval(x))
-  map(
+  foreach(
     write,
     jaxpr.constvars,
     map(make_roofline_shape, jaxpr.constvars),
   )
-  map(write, jaxpr.invars, map(make_roofline_shape, jaxpr.invars))
+  foreach(write, jaxpr.invars, map(make_roofline_shape, jaxpr.invars))
   last_used = core.last_used(jaxpr)
   for eqn in jaxpr.eqns:
     source_info = eqn.source_info.replace(
@@ -210,7 +211,7 @@ def _roofline_interpreter(
           **eqn.params,
         )
 
-      map(write, eqn.outvars, map(make_roofline_shape, eqn.outvars))
+      foreach(write, eqn.outvars, map(make_roofline_shape, eqn.outvars))
       core.clean_up_dead_vars(eqn, env, last_used)
       result += RooflineResult(peak_hbm_bytes=calculate_peak_hbm_bytes())
 

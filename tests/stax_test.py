@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for Stax library."""
-
 from absl.testing import absltest
 
 import numpy as np

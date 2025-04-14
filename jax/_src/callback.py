@@ -23,7 +23,6 @@ from typing import Any
 import jax
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
@@ -33,6 +32,7 @@ from jax._src import sharding_impls
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge as xb
+from jax._src.lib import jaxlib_extension_version
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -46,10 +46,6 @@ from jax._src.typing import DeprecatedArg
 import numpy as np
 
 logger = logging.getLogger(__name__)
-
-# TODO(dfm): Remove after 6 months.
-# Added Oct 1, 2024
-deprecations.register("jax-callback-vectorized")
 
 # `pure_callback_p` is the main primitive for staging out Python pure callbacks.
 pure_callback_p = core.Primitive("pure_callback")
@@ -82,10 +78,9 @@ def pure_callback_impl(
     result_avals,
     callback: _FlatCallback,
     sharding: SingleDeviceSharding | None,
-    vectorized: bool | DeprecatedArg,
     vmap_method: str | None,
 ):
-  del sharding, vectorized, vmap_method, result_avals
+  del sharding, vmap_method, result_avals
   try:
     cpu_device, *_ = jax.local_devices(backend="cpu")
   except RuntimeError as e:
@@ -113,10 +108,9 @@ def pure_callback_abstract_eval(
     callback: _FlatCallback,
     result_avals,
     sharding: SingleDeviceSharding | None,
-    vectorized: bool | DeprecatedArg,
     vmap_method: str | None,
 ):
-  del avals, callback, sharding, vectorized, vmap_method
+  del avals, callback, sharding, vmap_method
   return result_avals
 
 
@@ -166,7 +160,7 @@ def _callback_op_sharding(
           sharding_impls.SdyArraySharding(
               mesh_shape=(),
               dimension_shardings=[
-                  sharding_impls.SdyDimSharding(axes=[], is_closed=True)
+                  sharding_impls.SdyDimSharding(axes=[], is_open=False)
               ] * avals_out[0].ndim,
               logical_device_ids=())])
     else:
@@ -200,7 +194,11 @@ def _callback_op_sharding(
     # program has bulk array semantics, so we run the callback with a MAXIMAL
     # sharding and hence execute it only once on the full logical value).
     if config.use_shardy_partitioner.value:
-      op_sharding = sharding_impls.SdyArrayShardingList([
+      # For shardy, we need to have the same number of shardy annotations as the
+      # number of result ops. If there are no result ops, we need 1 shardy
+      # annotation.
+      num_sdy_shardings = max(1, len(avals_out))
+      op_sharding = sharding_impls.SdyArrayShardingList(num_sdy_shardings * [
           sharding_impls.SdyArraySharding(
               mesh_shape=(),
               dimension_shardings=[],
@@ -287,7 +285,7 @@ def pure_callback(
   When `vmap`-ed the behavior will depend on the value of the ``vmap_method``.
 
   * Calling :func:`~jax.vmap` on a callback without an explicit ``vmap_method``
-    is deprecated and it will eventually raise ``NotImplementedError``.
+    raises a ``NotImplementedError``.
   * ``vmap_method="sequential"`` uses :func:`~jax.lax.map` to loop over
     the batched arguments, calling ``callback`` once for each batch element.
   * ``vmap_method="sequential_unrolled"`` is like ``sequential``, but the loop
@@ -297,9 +295,8 @@ def pure_callback(
   * ``vmap_method="broadcast_all"`` behaves like ``expand_dims``, but the
     inputs are tiled to the expected batched shape.
 
-  If necessary, the legacy behavior provided by the deprecated
-  ``vectorized=True`` argument can be recovered using
-  ``vmap_method="legacy_vectorized"``.
+  If necessary, the legacy behavior provided by the removed ``vectorized=True``
+  argument can be recovered using ``vmap_method="legacy_vectorized"``.
 
   The current default behavior is to use ``vmap_method="sequential"`` when
   not specified, but this behavior is deprecated, and in the future, the
@@ -366,20 +363,13 @@ def pure_callback(
     (4,) (4,)
     Array([1., 2., 3., 4.], dtype=float32)
 
-  .. _External Callbacks: https://jax.readthedocs.io/en/latest/external-callbacks.html
+  .. _External Callbacks: https://docs.jax.dev/en/latest/external-callbacks.html
   """
-  if not isinstance(vectorized, DeprecatedArg) and not vectorized is None:
-    deprecations.warn(
-        "jax-callback-vectorized",
-        "The vectorized argument of jax.pure_callback is deprecated and setting "
-        "it will soon raise an error. To avoid an error in the future, and to "
-        "suppress this warning, please use the vmap_method argument instead.",
-        stacklevel=2)
-    if vmap_method is not None:
-      raise ValueError(
-          "the vectorized and vmap_method arguments of jax.pure_callback cannot "
-          "be used together. Please use the vmap_method argument.")
-    vmap_method = "legacy_vectorized" if vectorized else "sequential"
+  # TODO(danfm): Remove this check 3 months after v0.6.0 is released.
+  if not isinstance(vectorized, DeprecatedArg):
+    raise ValueError(
+        "The 'vectorized' argument of jax.pure_callback was removed in JAX "
+        "v0.6.0. Use 'vmap_method' instead.")
   allowed_vmap_methods = ["sequential", "sequential_unrolled", "expand_dims",
                           "broadcast_all", "legacy_vectorized", None]
   if vmap_method not in allowed_vmap_methods:
@@ -397,7 +387,6 @@ def pure_callback(
       callback=_FlatCallback(callback, in_tree),
       result_avals=tuple(flat_result_avals),
       sharding=sharding,
-      vectorized=vectorized,
       vmap_method=vmap_method,
   )
   return tree_util.tree_unflatten(out_tree, out_flat)
@@ -575,7 +564,7 @@ def io_callback(
     - :func:`jax.debug.callback`: callback designed for general-purpose debugging.
     - :func:`jax.debug.print`: callback designed for printing.
 
-  .. _External Callbacks: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
+  .. _External Callbacks: https://docs.jax.dev/en/latest/notebooks/external_callbacks.html
   """
   flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
   tree_util.tree_map(_check_shape_dtype, result_shape_dtypes)
@@ -590,7 +579,6 @@ def io_callback(
       ordered=ordered,
   )
   return tree_util.tree_unflatten(out_tree, out_flat)
-
 
 
 def is_empty_shape(s: core.Shape) -> bool:
@@ -666,6 +654,25 @@ def receive_from_host(
   return token, result
 
 
+
+def _aval_to_xla_shape(aval: core.AbstractValue) -> xc.Shape:
+  try:
+    return _xla_shape_handlers[type(aval)](aval)
+  except KeyError as err:
+    raise TypeError(f"No xla_shape_handler for type: {type(aval)}") from err
+
+_xla_shape_handlers: dict[type[core.AbstractValue],
+                         Callable[[Any], xc.Shape]] = {}
+
+def _make_array_shape(aval: core.ShapedArray) -> xc.Shape:
+  aval = core.physical_aval(aval)
+  dtype = np.dtype('bool') if aval.dtype == dtypes.float0 else aval.dtype
+  return xc.Shape.array_shape(dtype, aval.shape)
+_xla_shape_handlers[core.ShapedArray] = _make_array_shape
+
+_xla_shape_handlers[core.AbstractToken] = lambda _: xc.Shape.token_shape()
+
+
 def _emit_tpu_python_callback(
     backend: xb.XlaBackend,
     ctx: mlir.LoweringRuleContext,
@@ -695,8 +702,7 @@ def _emit_tpu_python_callback(
     send_channel = ctx.module_context.new_channel()
     dummy_send_aval = core.ShapedArray((1,), np.float32)
     dummy_send_val = mlir.ir_constant(np.zeros(1, np.float32))
-    operand_shapes = [*operand_shapes,
-                      xla.aval_to_xla_shapes(dummy_send_aval)[0]]
+    operand_shapes = [*operand_shapes, _aval_to_xla_shape(dummy_send_aval)]
     token = send_to_host(send_channel, token, dummy_send_val, callback.__name__,
                          sharding=sharding)
     send_channels.append(send_channel)
@@ -747,22 +753,49 @@ def emit_python_callback(
     result_avals: Sequence[core.ShapedArray],
     *,
     has_side_effect: bool,
+    partitioned: bool = False,
     sharding: SdyArrayShardingList | xc.OpSharding | None = None,
     operand_layouts: Sequence[Sequence[int] | None] | None = None,
     result_layouts: Sequence[Sequence[int] | None] | None = None,
 ) -> tuple[Sequence[mlir.IrValues], Any, Any]:
-  """Emits MLIR that calls back to a provided Python function."""
+  """Emits MLIR that calls back to a provided Python function.
+
+  Args:
+    ctx: The lowering context.
+    callback: The Python callback function.
+    token: The token to use for the callback.
+    operands: The operands to the callback.
+    operand_avals: The abstract values of the operands.
+    result_avals: The abstract values of the results.
+    has_side_effect: Whether the callback has side effects.
+    partitioned: If True, then `callback` is called on local shards only. If
+      False, then `callback` is called on all shards.
+    sharding: The sharding of the callback.
+    operand_layouts: The layouts of the operands.
+    result_layouts: The layouts of the results.
+
+  Returns:
+    A tuple of MLIR result values, a new token (if any), and the host callback
+    object.
+  """
   if len(ctx.module_context.platforms) > 1:
     raise NotImplementedError("multi-platform lowering for python_callback")
   platform = ctx.module_context.platforms[0]
   if platform not in {"cpu", "cuda", "rocm", "tpu"}:
     raise ValueError(
         f"`EmitPythonCallback` not supported on {platform} backend.")
+  if partitioned:
+    if platform not in {"cpu", "cuda", "rocm"}:
+      raise ValueError(
+          f"Partitioned callback not supported on {platform} backend.")
+    if jaxlib_extension_version < 329:
+      raise ValueError(
+          "Partitioned callback not supported on jaxlib version < 329.")
+    if result_avals:
+      raise ValueError("Partitioned callback not supported with return values.")
   backend = ctx.module_context.get_backend()
-  result_shapes = util.flatten(
-      [xla.aval_to_xla_shapes(result_aval) for result_aval in result_avals])
-  operand_shapes = util.flatten(
-      [xla.aval_to_xla_shapes(op_aval) for op_aval in operand_avals])
+  result_shapes = [_aval_to_xla_shape(aval) for aval in result_avals]
+  operand_shapes = [_aval_to_xla_shape(aval) for aval in operand_avals]
   # Handling layouts
   if operand_layouts is None:
     operand_layouts = util.concatenate(
@@ -822,55 +855,98 @@ def emit_python_callback(
         for result_aval in result_avals]
     return outputs, token, None
 
-  result_types = mlir.flatten_ir_types([mlir.aval_to_ir_type(aval) for aval in result_avals])
-  if token:
+  # TODO(dsuo): Remove this once we bump minimum_jaxlib_version to "0.5.4".
+  if jaxlib_extension_version <= 320:
+    result_types = mlir.flatten_ir_types([mlir.aval_to_ir_type(aval) for aval in result_avals])
+    if token:
 
-    callback_without_token = _wrapped_callback
-    def _wrapped_callback(token, *args):  # type: ignore  # pylint: disable=function-redefined
-      return (token, *callback_without_token(*args))
+      callback_without_token = _wrapped_callback
+      def _wrapped_callback(token, *args):  # type: ignore  # pylint: disable=function-redefined
+        return (token, *callback_without_token(*args))
 
-    operand_shapes = [
-        xla.aval_to_xla_shapes(core.abstract_token)[0], *operand_shapes
+      operand_shapes = [
+          _aval_to_xla_shape(core.abstract_token), *operand_shapes
+      ]
+      result_shapes = [
+          _aval_to_xla_shape(core.abstract_token), *result_shapes
+      ]
+      operands = [token, *operands]
+      result_types = [mlir.token_type(), *result_types]
+      operand_mlir_layouts = [_layout_to_mlir_layout(None), *operand_mlir_layouts]
+      result_mlir_layouts = [_layout_to_mlir_layout(None), *result_mlir_layouts]
+    callback_descriptor, ifrt_callback = (
+        backend.get_emit_python_callback_descriptor(_wrapped_callback,
+                                                    operand_shapes,
+                                                    result_shapes))
+    ctx.module_context.add_host_callback(ifrt_callback)
+    descriptor_operand = mlir.ir_constant(callback_descriptor)
+    callback_operands = [descriptor_operand, *operands]
+    if operand_mlir_layouts is not None:
+      operand_mlir_layouts = [_layout_to_mlir_layout([]), *operand_mlir_layouts]
+    result_type = ir.TupleType.get_tuple(result_types)
+    call_target_name = ("xla_python_gpu_callback"
+                      if platform in {"cuda", "rocm"} else "xla_python_cpu_callback")
+    result = hlo.CustomCallOp(
+        [result_type],
+        callback_operands,
+        call_target_name=ir.StringAttr.get(call_target_name),
+        has_side_effect=ir.BoolAttr.get(has_side_effect),
+        api_version=mlir.i32_attr(2),
+        called_computations=ir.ArrayAttr.get([]),
+        backend_config=ir.StringAttr.get(str(callback_descriptor)),
+        operand_layouts=(
+          None if operand_mlir_layouts is None
+          else ir.ArrayAttr.get(operand_mlir_layouts)),
+        result_layouts=(
+          None if result_mlir_layouts is None
+          else ir.ArrayAttr.get(result_mlir_layouts)))
+    if sharding is not None:
+      mlir.set_sharding(result, sharding)
+    results = [
+        hlo.get_tuple_element(result, mlir.i32_attr(i))
+        for i in range(len(result_types))
     ]
-    result_shapes = [
-        xla.aval_to_xla_shapes(core.abstract_token)[0], *result_shapes
-    ]
-    operands = [token, *operands]
-    result_types = [mlir.token_type(), *result_types]
-    operand_mlir_layouts = [_layout_to_mlir_layout(None), *operand_mlir_layouts]
-    result_mlir_layouts = [_layout_to_mlir_layout(None), *result_mlir_layouts]
-  callback_descriptor, ifrt_callback = (
-      backend.get_emit_python_callback_descriptor(_wrapped_callback,
-                                                  operand_shapes,
-                                                  result_shapes))
-  ctx.module_context.add_host_callback(ifrt_callback)
-  descriptor_operand = mlir.ir_constant(callback_descriptor)
-  callback_operands = [descriptor_operand, *operands]
-  if operand_mlir_layouts is not None:
-    operand_mlir_layouts = [_layout_to_mlir_layout([]), *operand_mlir_layouts]
-  result_type = ir.TupleType.get_tuple(result_types)
-  call_target_name = ("xla_python_gpu_callback"
-                     if platform in {"cuda", "rocm"} else "xla_python_cpu_callback")
-  result = hlo.CustomCallOp(
-      [result_type],
-      callback_operands,
-      call_target_name=ir.StringAttr.get(call_target_name),
-      has_side_effect=ir.BoolAttr.get(has_side_effect),
-      api_version=mlir.i32_attr(2),
-      called_computations=ir.ArrayAttr.get([]),
-      backend_config=ir.StringAttr.get(str(callback_descriptor)),
-      operand_layouts=(
-        None if operand_mlir_layouts is None
-        else ir.ArrayAttr.get(operand_mlir_layouts)),
-      result_layouts=(
-        None if result_mlir_layouts is None
-        else ir.ArrayAttr.get(result_mlir_layouts)))
-  if sharding is not None:
-    mlir.set_sharding(result, sharding)
-  results = [
-      hlo.get_tuple_element(result, mlir.i32_attr(i))
-      for i in range(len(result_types))
-  ]
+  else:
+    device = "gpu" if platform in {"cuda", "rocm"} else "cpu"
+    partition = "_partitioned" if partitioned else ""
+    call_target_name = f"xla_ffi{partition}_python_{device}_callback"
+    if token:
+      callback_without_token = _wrapped_callback
+      def _wrapped_callback(token, *args):  # type: ignore  # pylint: disable=function-redefined
+        return (token, *callback_without_token(*args))
+      operands = [token, *operands]
+      if (
+          config.use_shardy_partitioner.value
+          and sharding is not None
+          and len(ctx.avals_out) > 0
+          and isinstance(sharding, sharding_impls.SdyArrayShardingList)
+      ):
+        # Add a sharding annotation for the token if we have at least one
+        # output. Otherwise, the single shardy annotation required of all ops
+        # (even those without any results) can annotate the token.
+        sharding = sharding_impls.SdyArrayShardingList(
+            [*sharding.shardings, sharding.shardings[-1]]
+        )
+      ctx = dataclasses.replace(
+          ctx,
+          avals_in=[core.abstract_token, *ctx.avals_in],
+          avals_out=[core.abstract_token, *ctx.avals_out],
+      )
+
+    # TODO(dsuo): Remove this line once we deprecate the XLA custom call
+    # handler.
+    ifrt_callback = _wrapped_callback
+    ctx.module_context.add_host_callback(ifrt_callback)
+    index = np.uint64(len(ctx.module_context.host_callbacks) - 1)
+    result = ffi.build_ffi_lowering_function(  # type: ignore
+        call_target_name,
+        has_side_effect=has_side_effect,
+    )(ctx, *operands, index=np.uint64(index))
+
+    if sharding is not None:
+      mlir.set_sharding(result, sharding)
+
+    results = result.results  # type: ignore
   if token:
     token, *results = results
   return results, token, ifrt_callback

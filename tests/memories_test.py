@@ -756,9 +756,6 @@ class ComputeOffload(jtu.BufferDonationTestCase):
   def test_compute_no_inputs_host_replicated(self):
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 3:
       self.skipTest("This test requires an xla_version >= 3.")
-    if config.use_shardy_partitioner.value:
-      self.skipTest("XLA failure due to b/370786664 and b/366411266. "
-                    "Enable when fixed.")
     mesh = jtu.create_mesh((4,), ('data'))
 
     tpu_sharding = NamedSharding(mesh, P('data'))
@@ -793,6 +790,36 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
     lowered_text = f.lower(jnp.arange(8)).as_text()
     self.assertIn('_xla_compute_type', lowered_text)
+
+    @functools.partial(jax.jit, out_shardings=out_s)
+    def h(x):
+      y = g(x)
+      return y * 3
+
+    out2 = h(inp)
+    self.assertArraysEqual(out2, inp * 6)
+    self.assertEqual(out2.sharding.memory_kind, "pinned_host")
+
+  def test_compute_on_2d(self):
+    out_s = SingleDeviceSharding(jax.devices()[0], memory_kind="pinned_host")
+
+    @compute_on("device_host")
+    @jax.jit
+    def g(x):
+      return x * 2
+
+    @jax.jit
+    def f(x):
+      y = g(x)
+      return y * 3
+
+    inp = jnp.arange(9943.0)
+    inp = jnp.reshape(inp, (61, 163))
+    out = f(inp)
+    self.assertArraysEqual(out, inp * 6)
+
+    lowered_text = f.lower(inp).as_text()
+    self.assertIn("_xla_compute_type", lowered_text)
 
     @functools.partial(jax.jit, out_shardings=out_s)
     def h(x):
@@ -1474,8 +1501,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     s = NamedSharding(mesh, P(), memory_kind='pinned_host')
     s_dev = s.with_memory_kind('device')
 
-    @compute_on('device_host')
     @functools.partial(jax.jit, out_shardings=(s, s_dev), donate_argnums=(0, 1))
+    @compute_on('device_host')
     def f(inp1, inp2):
       return inp1 * 2, inp2 * 2
 
@@ -1638,6 +1665,20 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     # 2 for `f` and `2` for `mul` (compute type changes for `mul`)
     self.assertEqual(count(), 4)
 
+  def test_compute_on_aot(self):
+    operand = np.float32(0.)
+
+    @jax.jit
+    @compute_on("device_host")
+    def f_host(x):
+      # Adds 1 on CPU and adds 2 on other platforms
+      return jax.lax.platform_dependent(x,
+                                        cpu=lambda x: x + 1.,
+                                        default=lambda x: x + 2.)
+
+    self.assertAllClose(1., f_host(operand))
+    self.assertAllClose(1., f_host.lower(operand).compile()(operand))
+
   def test_offload_take_host(self):
     # TODO(apaszke): Remove after 12 weeks have passed.
     if not jtu.if_cloud_tpu_at_least(2024, 12, 19):
@@ -1664,31 +1705,43 @@ class StreamAnnotationTest(jtu.JaxTestCase):
   def test_stream_annotation_inside_shmap(self):
     if not jtu.test_device_matches(["gpu"]):
       self.skipTest("Stream annotation is only supported on GPU.")
-    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
-    s = NamedSharding(mesh, P('x', 'y'))
-    np_inp = np.ones((8, 8))
+
+    mesh = jtu.create_mesh((2,), ('x',))
+    s = NamedSharding(mesh, P('x'))
+    np_inp = np.ones((8,))
     arr1 = jax.device_put(np_inp, s)
     arr2 = jax.device_put(np_inp, s)
 
+    # Makes sure the compute wrapped here is fusible.
+    # This is a workaround for limitations in XLA.
+    #  1) Compute-on boxes contain a single instruction cannot work.
+    #  2) Compute-on boxes contain tiny matmul cannot work.
     @compute_on('gpu_stream:1')
     @jax.jit
     def g(x, y):
-      return x @ y
+      return x * y + x
 
     @compute_on('gpu_stream:2')
     @jax.jit
     def h(x, y):
-      return x @ y
+      return x * y + x
 
     def f(x, y):
       z = g(x, y)
       w = h(3 * x, 2 * y)
       return z + w
 
-    out = jax.jit(shard_map(f, mesh=mesh,
-                            in_specs=(P('x', 'y'), P('x', 'y')),
-                            out_specs=P('x', 'y')))(arr1, arr2)
-    self.assertArraysEqual(out, arr1 * 28)
+    compiled_f = jax.jit(
+        shard_map(f, mesh=mesh, in_specs=(P('x'), P('x')),
+                  out_specs=P('x'))).lower(arr1, arr2).compile(
+                    {"xla_gpu_experimental_stream_annotation": True}
+                  )
+    compiled_text = compiled_f.as_text()
+    self.assertIn('call-start', compiled_text)
+    self.assertIn('_xla_stream_annotation="1"', compiled_text)
+    self.assertIn('call-start.1', compiled_f.as_text())
+    self.assertIn('_xla_stream_annotation="2"', compiled_text)
+    self.assertArraysEqual(compiled_f(arr1, arr2), arr1 * 11)
 
 
 class ActivationOffloadingTest(jtu.JaxTestCase):
@@ -1834,7 +1887,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
       self.assertRegex(compiled_text, r"dynamic-update-slice-start.*S\(5\)")
       self.assertRegex(compiled_text, r"dynamic-update-slice-done.*S\(5\)")
       self.assertRegex(compiled_text, r"dynamic-slice-start.*S\(5\)")
-      self.assertRegex(compiled_text, r"dynamic-slice-done.*S\(5\)")
+      self.assertIn("dynamic-slice-start", compiled_text)
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None:

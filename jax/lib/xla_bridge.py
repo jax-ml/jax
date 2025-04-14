@@ -27,15 +27,6 @@ _deprecations = {
     "jax.lib.xla_bridge.get_backend is deprecated; use jax.extend.backend.get_backend.",
     _deprecated_get_backend
   ),
-  # Finalized 2024-12-11; remove after 2025-3-11
-  "xla_client": (
-    "jax.lib.xla_bridge.xla_client was removed in JAX v0.4.38; use jax.lib.xla_client directly.",
-    None
-  ),
-  "default_backend": (
-    "jax.lib.xla_bridge.default_backend was removed in JAX v0.4.38; use jax.default_backend.",
-    None
-  ),
 }
 
 import typing as _typing

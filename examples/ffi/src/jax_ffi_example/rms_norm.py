@@ -14,7 +14,7 @@
 """An example demontrating the basic end-to-end use of the JAX FFI.
 
 This example is exactly the same as the one in the `FFI tutorial
-<https://jax.readthedocs.io/en/latest/ffi.html>`, so more details can be found
+<https://docs.jax.dev/en/latest/ffi.html>`, so more details can be found
 on that page. But, the high level summary is that we implement our custom
 extension in ``rms_norm.cc``, then call it usin ``jax.ffi.ffi_call`` in
 this module. The behavior under autodiff is implemented using

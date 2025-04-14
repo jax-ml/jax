@@ -49,7 +49,7 @@ py_library_providing_imports_info(
 config_setting(
     name = "disable_jaxlib_for_cpu_build",
     flag_values = {
-        "//jax:build_jaxlib": "False",
+        "//jax:build_jaxlib": "false",
         "@local_config_cuda//:enable_cuda": "False",
     },
 )
@@ -57,7 +57,23 @@ config_setting(
 config_setting(
     name = "disable_jaxlib_for_cuda12_build",
     flag_values = {
-        "//jax:build_jaxlib": "False",
+        "//jax:build_jaxlib": "false",
+        "@local_config_cuda//:enable_cuda": "True",
+    },
+)
+
+config_setting(
+    name = "enable_py_import_for_cpu_build",
+    flag_values = {
+        "//jax:build_jaxlib": "wheel",
+        "@local_config_cuda//:enable_cuda": "False",
+    },
+)
+
+config_setting(
+    name = "enable_py_import_for_cuda12_build",
+    flag_values = {
+        "//jax:build_jaxlib": "wheel",
         "@local_config_cuda//:enable_cuda": "True",
     },
 )

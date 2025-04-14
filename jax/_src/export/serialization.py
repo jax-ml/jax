@@ -31,6 +31,7 @@ except ImportError as e:
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import prng
 from jax._src import tree_util
 from jax._src.export import serialization_generated as ser_flatbuf
 from jax._src.export import _export
@@ -48,6 +49,8 @@ SerT = TypeVar("SerT")
 # Version 2, Dec 16th, 2023, adds the f0 dtype.
 # Version 3, October 16th, 2024, adds serialization for namedtuple and custom types
 #   This version is backwards compatible with Version 2.
+# Version 4, April 7th, 2025, adds serialization for PRNGs key types.
+#   This version is backwards compatible with Version 2 and 3.
 _SERIALIZATION_VERSION = 2
 
 def serialize(exp: _export.Exported, vjp_order: int = 0) -> bytearray:
@@ -357,14 +360,16 @@ _dtype_to_dtype_kind = {
     dtypes._float8_e4m3fnuz_dtype: ser_flatbuf.DType.f8_e4m3fnuz,
     dtypes._float8_e5m2_dtype: ser_flatbuf.DType.f8_e5m2,
     dtypes._float8_e5m2fnuz_dtype: ser_flatbuf.DType.f8_e5m2fnuz,
+    dtypes._float8_e3m4_dtype: ser_flatbuf.DType.f8_e3m4,
+    dtypes._float8_e4m3_dtype: ser_flatbuf.DType.f8_e4m3,
+    dtypes._float8_e8m0fnu_dtype: ser_flatbuf.DType.f8_e8m0fnu,
+    dtypes._float4_e2m1fn_dtype: ser_flatbuf.DType.f4_e2m1fn,
+
+    prng.KeyTy(prng.prngs["threefry2x32"]): ser_flatbuf.DType.key_fry,
+    prng.KeyTy(prng.prngs["rbg"]): ser_flatbuf.DType.key_rbg,
+    prng.KeyTy(prng.prngs["unsafe_rbg"]): ser_flatbuf.DType.key_unsafe_rbg,
 }
 
-if dtypes._float8_e3m4_dtype is not None:
-  _dtype_to_dtype_kind[dtypes._float8_e3m4_dtype] = ser_flatbuf.DType.f8_e3m4
-if dtypes._float8_e4m3_dtype is not None:
-  _dtype_to_dtype_kind[dtypes._float8_e4m3_dtype] = ser_flatbuf.DType.f8_e4m3
-if dtypes._float8_e8m0fnu_dtype is not None:
-  _dtype_to_dtype_kind[dtypes._float8_e8m0fnu_dtype] = ser_flatbuf.DType.f8_e8m0fnu
 _dtype_kind_to_dtype = {
     kind: dtype for dtype, kind in _dtype_to_dtype_kind.items()
 }

@@ -20,7 +20,7 @@ kernelspec:
 JAX transformations like {func}`~jax.jit`, {func}`~jax.vmap`, {func}`~jax.grad`, require the functions
 they wrap to be pure: that is, functions whose outputs depend *solely* on the inputs, and which have
 no side effects such as updating of global state.
-You can find a discussion of this in [JAX sharp bits: Pure functions](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions).
+You can find a discussion of this in [JAX sharp bits: Pure functions](https://docs.jax.dev/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions).
 
 This constraint can pose some challenges in the context of machine learning, where state may exist in
 many forms. For example:
@@ -195,7 +195,7 @@ def update(params: Params, x: jnp.ndarray, y: jnp.ndarray) -> Params:
   # and then use `updates` instead of `grad` to actually update the params.
   # (And we'd include `new_optimizer_state` in the output, naturally.)
 
-  new_params = jax.tree_map(
+  new_params = jax.tree.map(
       lambda param, g: param - g * LEARNING_RATE, params, grad)
 
   return new_params

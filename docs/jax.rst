@@ -57,6 +57,7 @@ Configuration
    enable_custom_prng
    enable_custom_vjp_by_custom_transpose
    log_compiles
+   no_tracing
    numpy_rank_promotion
    transfer_guard
 

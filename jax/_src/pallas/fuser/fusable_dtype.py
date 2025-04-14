@@ -37,6 +37,7 @@ from jax._src.pallas.fuser import block_spec
 from jax._src.pallas.fuser.fusable import fusable_p
 from jax._src.state import discharge as state_discharge
 from jax._src.state import primitives as state_primitives
+from jax._src.util import foreach
 
 # TODO(sharadmv): Enable type checking.
 # mypy: ignore-errors
@@ -81,8 +82,6 @@ def unpack(x):
 
 class FusableElementDType(dtypes.extended):
   """Scalar dtype for fusable dtypes."""
-
-  pass
 
 
 class FusableTyRules:
@@ -216,11 +215,11 @@ def physicalize_interp(
   def write_env(var: core.Var, val: Any):
     env[var] = val
 
-  map(write_env, jaxpr.constvars, consts)
+  foreach(write_env, jaxpr.constvars, consts)
   assert len(jaxpr.invars) == len(
       args
   ), f"Length mismatch: {jaxpr.invars} != {args}"
-  map(write_env, jaxpr.invars, args)
+  foreach(write_env, jaxpr.invars, args)
 
   for eqn in jaxpr.eqns:
     invals = list(map(read_env, eqn.invars))
@@ -248,7 +247,7 @@ def physicalize_interp(
 
     if eqn.primitive.multiple_results:
       assert len(outvals) == len(eqn.outvars)
-      map(write_env, eqn.outvars, outvals)
+      foreach(write_env, eqn.outvars, outvals)
     else:
       write_env(eqn.outvars[0], outvals)
 

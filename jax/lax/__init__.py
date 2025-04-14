@@ -17,6 +17,7 @@
 
 from jax._src.lax.lax import (
   DotDimensionNumbers as DotDimensionNumbers,
+  RaggedDotDimensionNumbers as RaggedDotDimensionNumbers,
   Precision as Precision,
   PrecisionLike as PrecisionLike,
   DotAlgorithm as DotAlgorithm,
@@ -158,6 +159,7 @@ from jax._src.lax.lax import (
   pow as pow,
   pow_p as pow_p,
   ragged_dot as ragged_dot,
+  ragged_dot_general as ragged_dot_general,
   real as real,
   real_p as real_p,
   reciprocal as reciprocal,
@@ -196,6 +198,7 @@ from jax._src.lax.lax import (
   select as select,
   select_n as select_n,
   select_n_p as select_n_p,
+  shape_as_value as shape_as_value,
   shift_left as shift_left,
   shift_left_p as shift_left_p,
   shift_right_arithmetic as shift_right_arithmetic,
@@ -258,7 +261,6 @@ from jax._src.lax.special import (
   polygamma as polygamma,
   polygamma_p as polygamma_p,
   random_gamma_grad as random_gamma_grad,
-  random_gamma_grad_p as random_gamma_grad_p,
   regularized_incomplete_beta_p as regularized_incomplete_beta_p,
   zeta as zeta,
   zeta_p as zeta_p,
@@ -375,6 +377,9 @@ from jax._src.lax.parallel import (
   ragged_all_to_all as ragged_all_to_all,
   ragged_all_to_all_p as ragged_all_to_all_p,
 )
+from jax._src.core import (
+    pvary as pvary,
+)
 from jax._src.lax.other import (
   conv_general_dilated_local as conv_general_dilated_local,
   conv_general_dilated_patches as conv_general_dilated_patches
@@ -390,3 +395,50 @@ from jax.lax import linalg as linalg
 from jax._src.pjit import with_sharding_constraint as with_sharding_constraint
 from jax._src.pjit import sharding_constraint_p as sharding_constraint_p
 from jax._src.dispatch import device_put_p as device_put_p
+
+import jax._src.lax.lax
+
+_deprecations = {
+    "infeed": (
+        (
+            "jax.lax.infeed was deprecated in JAX v0.6.0 and will be removed in"
+            " JAX v0.7.0."
+        ),
+        jax._src.lax.lax.infeed,
+    ),
+    "infeed_p": (
+        (
+            "jax.lax.infeed_p was deprecated in JAX v0.6.0 and will be removed"
+            " in JAX v0.7.0."
+        ),
+        jax._src.lax.lax.infeed_p,
+    ),
+    "outfeed": (
+        (
+            "jax.lax.outfeed was deprecated in JAX v0.6.0 and will be removed"
+            " in JAX v0.7.0."
+        ),
+        jax._src.lax.lax.outfeed,
+    ),
+    "outfeed_p": (
+        (
+            "jax.lax.outfeed_p was deprecated in JAX v0.6.0 and will be removed"
+            " in JAX v0.7.0."
+        ),
+        jax._src.lax.lax.outfeed_p,
+    ),
+}
+
+import typing as _typing
+
+if _typing.TYPE_CHECKING:
+  infeed = jax._src.lax.lax.infeed
+  infeed_p = jax._src.lax.lax.infeed_p
+  outfeed = jax._src.lax.lax.outfeed
+  outfeed_p = jax._src.lax.lax.outfeed_p
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del _typing

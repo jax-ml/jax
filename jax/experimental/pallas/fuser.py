@@ -18,6 +18,7 @@ from jax._src.pallas.fuser.block_spec import get_fusion_values as get_fusion_val
 from jax._src.pallas.fuser.block_spec import make_scalar_prefetch_handler as make_scalar_prefetch_handler
 from jax._src.pallas.fuser.block_spec import pull_block_spec as pull_block_spec
 from jax._src.pallas.fuser.block_spec import push_block_spec as push_block_spec
+from jax._src.pallas.fuser.custom_evaluate import evaluate as evaluate
 from jax._src.pallas.fuser.fusable import fusable as fusable
 from jax._src.pallas.fuser.fusion import Fusion as Fusion
 from jax._src.pallas.fuser.jaxpr_fusion import fuse as fuse

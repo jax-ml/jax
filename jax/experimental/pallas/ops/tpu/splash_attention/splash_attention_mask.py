@@ -92,6 +92,35 @@ def make_local_attention_mask(
   return mask.astype(np.bool_)
 
 
+def make_chunk_attention_mask(
+    shape: tuple[int, int], chunk_size: int
+) -> np.ndarray:
+  """Makes a chunked causal attention mask.
+
+  Args:
+    shape: The desired shape of the mask (q_seq_len, kv_seq_len).
+    chunk_size: The size of the attention chunks.
+
+  Returns:
+    A boolean mask of shape `mask_shape` where True indicates attention is
+    allowed according to chunked causal rules, and False otherwise.
+
+  Raises:
+    ValueError: If chunk_window_size is None or not positive.
+  """
+  if chunk_size <= 0:
+    raise ValueError('chunk_size must be positive')
+
+  q_seq_len, kv_seq_len = shape
+  q_idx = np.arange(q_seq_len, dtype=np.int32)
+  kv_idx = np.arange(kv_seq_len, dtype=np.int32)
+
+  # chunk mask calculation
+  same_chunk = (q_idx[:, None] // chunk_size) == (kv_idx[None, :] // chunk_size)
+  mask = same_chunk & (q_idx[:, None] >= kv_idx[None, :])
+  return mask
+
+
 def make_random_mask(
     shape: tuple[int, int], sparsity: float, seed: int
 ) -> np.ndarray:
@@ -196,15 +225,20 @@ class MultiHeadMask(Mask):
 class _ComputableMask(Mask):
   """Superclass for all masks that can be computed inside the kernel using a callable object.
 
+  This subclass is designed to be used with Splash Attention.
+  It allows the mask logic to be computed on-the-fly or fused into the attention
+  kernel, avoiding the memory cost of materializing the full
+  (sequence_length, sequence_length) boolean mask array, which can be excessive
+  for long sequences.
+
   Attributes:
     _shape: Shape of the 2-dim mask: (q_seq_len, kv_seq_len).
     offset: Offset of q start wrt kv. A positive offset shifts the bottom
       triangle upward, a negative one shifts it downward. A negative offset
       makes the first 'offset' rows of the attention matrix all 0s which leads
       to undefined softmax.
-    q_sequence: Indices of Q sequence.
-      q_sequence is reused across __getitem__ calls which is important for
-      compile-time performance.
+    q_sequence: Indices of Q sequence. q_sequence is reused across __getitem__
+      calls which is important for compile-time performance.
     mask_function: Function used by the SplashAttention kernel to compute the
       mask rather than loading it.
   """
@@ -310,6 +344,66 @@ class CausalMask(_ComputableMask):
         type(self),
         self.shape,
         self.offset,
+        self.q_sequence.tobytes() if self.q_sequence is not None else None,
+    ))
+
+
+class ChunkedCausalMask(_ComputableMask):
+  """Lazy chunked causal mask.
+
+  Attention is causal within each chunk (0, K), (K, 2K), (2K, 3K), ... tokens
+  attend to each other but not accross chunks.
+  Llama4 models use interleaved chunk attention along with global attention.
+
+
+  Attributes:
+    chunk_size: The size of each attention chunk.
+  """
+
+  chunk_size: int
+
+  def __init__(
+      self,
+      shape: tuple[int, int],
+      chunk_size: int,
+      shard_count: int = 1,
+  ):
+    if chunk_size <= 0:
+      raise ValueError('chunk_size must be positive')
+    self.chunk_size = chunk_size
+
+    # Define the mask function for chunk attention
+    def chunked_causal_mask_function(q_ids, kv_ids):
+      """Computes the mask logic for the given slice indices."""
+      # Condition 1: Same chunk
+      same_chunk = (q_ids // self.chunk_size) == (kv_ids // self.chunk_size)
+
+      # Condition 2: Causal
+      causal = q_ids >= kv_ids
+
+      return same_chunk & causal
+
+    super().__init__(
+        shape=shape,
+        mask_function=chunked_causal_mask_function,
+        shard_count=shard_count,
+    )
+
+  def __eq__(self, other: object):
+    if not isinstance(other, type(self)):
+      return NotImplemented
+
+    return (
+        self.shape == other.shape
+        and self.chunk_size == other.chunk_size
+        and np.array_equal(self.q_sequence, other.q_sequence)
+    )
+
+  def __hash__(self):
+    return hash((
+        type(self),
+        self.shape,
+        self.chunk_size,
         self.q_sequence.tobytes() if self.q_sequence is not None else None,
     ))
 

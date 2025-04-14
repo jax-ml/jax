@@ -45,7 +45,7 @@ enum AbstractValueKind: byte {
 }
 
 enum DType: byte {
-  // Last used id: 22
+  // Last used id: 29
   bool = 0,
   i8 = 1,
   i16 = 2,
@@ -75,6 +75,11 @@ enum DType: byte {
   f8_e5m2 = 20,
   f8_e5m2fnuz = 21,
   f8_e8m0fnu = 25,
+  f4_e2m1fn = 26,
+
+  key_fry = 27,
+  key_rbg = 28,
+  key_unsafe_rbg = 29,
 }
 
 table AbstractValue {

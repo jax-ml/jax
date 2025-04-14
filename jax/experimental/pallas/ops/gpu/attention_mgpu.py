@@ -43,8 +43,8 @@ class TuningConfig:
       raise ValueError(f"{self.max_concurrent_steps=} must be at least 2")
 
 
-@functools.partial(jax.jit, static_argnames=["config"])
-def attention(q, k, v, config: TuningConfig):
+@functools.partial(jax.jit, static_argnames=["config", "save_residuals"])
+def attention(q, k, v, config: TuningConfig, save_residuals: bool = False):
   if q.ndim != 4 or k.ndim != 4 or v.ndim != 4:
     raise ValueError(f"q, k, and v should all be 4D, got: {q.ndim=}, {k.ndim=}, {v.ndim=}")
   batch_size, q_seq_len, num_q_heads, head_dim = q.shape
@@ -69,12 +69,12 @@ def attention(q, k, v, config: TuningConfig):
   )
   block_q, block_kv = config.block_q, config.block_kv
 
-  def kernel(q_ref, k_ref, v_ref, out_ref, scoped):
+  def kernel(q_ref, k_ref, v_ref, out_ref, lse_ref, scoped):
     batch = lax.axis_index("batch")
     q_head = lax.axis_index("heads")
     smem_buffers, buffer_barriers, consumed_barriers, schedule_barrier = scoped
     wg_idx = lax.axis_index("wg")
-    qo_smem2, k_smem, v_smem = smem_buffers
+    qo_smem2, k_smem, v_smem, lse_smem2 = smem_buffers
     k_barriers, v_barriers, q_barriers = buffer_barriers
     k_consumed_barriers, v_consumed_barriers = consumed_barriers
     def perform_schedule_barrier():
@@ -85,6 +85,7 @@ def attention(q, k, v, config: TuningConfig):
     def _compute_wg():
       plgpu.set_max_registers(232, action="increase")
       qo_smem = qo_smem2.at[wg_idx]
+      lse_smem = lse_smem2.at[wg_idx] if lse_smem2 is not None else None
       q_seq_base = lax.axis_index("q_seq") * (2 * block_q) + wg_idx * block_q
 
       plgpu.copy_gmem_to_smem(
@@ -162,15 +163,23 @@ def attention(q, k, v, config: TuningConfig):
           0, kv_seq_len // block_kv, kv_loop, (acc, m_i, l_i)
       )
       pl.when(wg_idx == 0)(perform_schedule_barrier)
-      del m_i  # Not needed anymore
 
       # TODO(apaszke): Invert and multiply to avoid expensive divisions.
       acc /= lax.broadcast_in_dim(l_i, (block_q, head_dim), [0])
       qo_smem[...] = acc.astype(dtype)
+      if lse_smem is not None:
+        RCP_LN2 = 1.4426950408889634
+        log2 = lambda x: jnp.log(x) * RCP_LN2
+        lse_smem[...] = m_i + log2(l_i)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(
           qo_smem, out_ref.at[batch, pl.ds(q_seq_base, block_q), q_head],
       )
+      if lse_smem is not None:
+        plgpu.copy_smem_to_gmem(
+            lse_smem,
+            lse_ref.at[batch, q_head, pl.ds(q_seq_base, block_q)],
+        )
       plgpu.wait_smem_to_gmem(0)
     @pl.when(wg_idx == 2)
     def _memory_wg():
@@ -191,9 +200,9 @@ def attention(q, k, v, config: TuningConfig):
         plgpu.copy_gmem_to_smem(v_ref.at[s], v_smem.at[tma_slot], v_barriers.at[tma_slot])
       lax.fori_loop(0, kv_seq_len // block_kv - max_concurrent_steps, kv_loop, None)
 
-  def entry(q_ref, k_ref, v_ref, out_ref):
+  def entry(q_ref, k_ref, v_ref, out_ref, lse_ref):
     compute_wgs = 2
-    tiling = plgpu.TilingTransform((64, 64))
+    tiling = plgpu.TilingTransform((8, 64))
     swizzle = plgpu.SwizzleTransform(128)
     qo_scratch = plgpu.SMEM(
         (compute_wgs, block_q, head_dim), jnp.float16,
@@ -201,15 +210,18 @@ def attention(q, k, v, config: TuningConfig):
     )
     k_scratch = plgpu.SMEM(
         (max_concurrent_steps, block_kv, head_dim), jnp.float16,
-        transforms=(tiling, plgpu.TransposeTransform((0, 2, 1, 3, 4)), swizzle),
+        transforms=(tiling, swizzle),
     )
     v_scratch = plgpu.SMEM(
         (max_concurrent_steps, block_kv, head_dim), jnp.float16,
         transforms=(tiling, swizzle),
     )
+    scratch = [qo_scratch, k_scratch, v_scratch, None]
+    if save_residuals:
+      scratch[3] = plgpu.SMEM((compute_wgs, block_q), jnp.float32)
     pl.run_scoped(
-        lambda *args: kernel(q_ref, k_ref, v_ref, out_ref, args),
-        (qo_scratch, k_scratch, v_scratch),
+        lambda *args: kernel(q_ref, k_ref, v_ref, out_ref, lse_ref, args),
+        scratch,
         (
             plgpu.Barrier(1, num_barriers=max_concurrent_steps),
             plgpu.Barrier(1, num_barriers=max_concurrent_steps),
@@ -223,17 +235,32 @@ def attention(q, k, v, config: TuningConfig):
   if rem:
     raise NotImplementedError(f"{q_seq_len=} must be a multiple of {block_q * 2=}")
 
-  return plgpu.kernel(
+  out_shape = [q, None]
+  if save_residuals:
+    # Note that we keep seq_len in the minor-most dimension so that we can do
+    # 1D TMAs on chunks of `block_q`.
+    out_shape[1] = jax.ShapeDtypeStruct(
+        (batch_size, num_q_heads, q_seq_len), jnp.float32
+    )
+
+  out, lse = plgpu.kernel(
       entry,
-      out_shape=q,
+      out_shape=out_shape,
       grid=(batch_size, num_q_tiles, num_q_heads),
+      grid_names=("batch", "q_seq", "heads"),
       num_threads=3,
-      axis_names=("batch", "q_seq", "heads", "wg"),
+      thread_name="wg",
       compiler_params=plgpu.GPUCompilerParams(approx_math=True),
   )(q, k, v)
 
-@functools.partial(jax.jit, static_argnames=["config"])
-def attention_with_pipeline_emitter(q, k, v, config: TuningConfig):
+  if save_residuals:
+    assert lse is not None
+    return out, (lse,)
+
+  return out
+
+@functools.partial(jax.jit, static_argnames=["config", "save_residuals"])
+def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residuals=False):
   if q.ndim != 4 or k.ndim != 4 or v.ndim != 4:
     raise ValueError(f"q, k, and v should all be 4D, got: {q.ndim=}, {k.ndim=}, {v.ndim=}")
   batch_size, q_seq_len, num_q_heads, head_dim = q.shape
@@ -262,14 +289,14 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig):
   if rem:
     raise NotImplementedError(f"{q_seq_len=} must be a multiple of {block_q * 2=}")
 
-  tiling = plgpu.TilingTransform((64, 64))
+  tiling = plgpu.TilingTransform((8, 64))
   swizzle = plgpu.SwizzleTransform(128)
-  transpose = plgpu.TransposeTransform((0, 2, 1, 3, 4))
 
-  def fa3_kernel(q_ref, k_ref, v_ref, out_ref, scoped):
+  def fa3_kernel(q_ref, k_ref, v_ref, out_ref, lse_ref, scoped):
     batch = lax.axis_index("batch")
     wg_idx = lax.axis_index("wg")
-    qo_smem2, q_barriers, schedule_barrier = scoped
+    smem_buffers, q_barriers, schedule_barrier = scoped
+    qo_smem2, lse_smem2 = smem_buffers
     q_seq_base = lax.axis_index("q_seq") * (2 * block_q) + wg_idx * block_q
     q_head = lax.axis_index("heads")
     kv_head = lax.div(q_head, jnp.array(q_heads_per_kv_head, q_head.dtype))
@@ -281,6 +308,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig):
 
     def _compute_thread():
       qo_smem = qo_smem2.at[wg_idx]
+      lse_smem = lse_smem2.at[wg_idx] if lse_smem2 is not None else None
       m_i = plgpu.layout_cast(
           jnp.full((block_q,), -jnp.inf, dtype=jnp.float32), plgpu.Layout.WGMMA_ROW,
       )
@@ -299,18 +327,26 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig):
       plgpu.barrier_wait(q_barriers.at[wg_idx])
       pl.when(wg_idx == 1)(perform_schedule_barrier)
       final_carry = (yield (acc, m_i, l_i))
-      del m_i  # Unused
       pl.when(wg_idx == 0)(perform_schedule_barrier)
-      acc, _, l_i = final_carry
+      acc, m_i, l_i = final_carry
       acc /= lax.broadcast_in_dim(l_i, (block_q, head_dim), [0])
       qo_smem[...] = acc.astype(dtype)
+      if lse_smem is not None:
+        RCP_LN2 = 1.4426950408889634
+        log2 = lambda x: jnp.log(x) * RCP_LN2
+        lse_smem[...] = m_i + log2(l_i)
       plgpu.commit_smem()
       plgpu.copy_smem_to_gmem(
           qo_smem, out_ref.at[batch, pl.ds(q_seq_base, block_q), q_head],
       )
+      if lse_smem is not None:
+        plgpu.copy_smem_to_gmem(
+            lse_smem,
+            lse_ref.at[batch, q_head, pl.ds(q_seq_base, block_q)],
+        )
       plgpu.wait_smem_to_gmem(0)
 
-    def kv_pipeline(k_smem, v_smem,
+    def kv_pipeline(_, k_smem, v_smem,
                     k_consumed_barrier, v_consumed_barrier,
                     carry):
       acc, m_i, l_i = carry
@@ -353,7 +389,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig):
             plgpu.GPUBlockSpec(  # k
                 block_shape=(block_kv, head_dim),
                 index_map=lambda i: (i, 0),
-                transforms=[tiling, transpose, swizzle]),
+                transforms=[tiling, swizzle]),
             plgpu.GPUBlockSpec(  # v
                 block_shape=(block_kv, head_dim),
                 index_map=lambda i: (i, 0),
@@ -366,11 +402,12 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig):
     pipeline(k_ref, v_ref)
   mesh = plgpu.GPUMesh(
       grid=(batch_size, num_q_tiles, num_q_heads),
+      grid_names=("batch", "q_seq", "heads"),
       num_threads=3,
-      axis_names=("batch", "q_seq", "heads", "wg"),
+      thread_name="wg",
   )
   def run(refs):
-    q_ref, k_ref, v_ref, out_ref = refs
+    q_ref, k_ref, v_ref, out_ref, lse_ref = refs
     @pl.core_map(mesh,
                  compiler_params=plgpu.GPUCompilerParams(approx_math=True),
                  )
@@ -379,22 +416,36 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig):
           (compute_wgs, block_q, head_dim), jnp.float16,
           transforms=(tiling, swizzle),
       )
+      scratch = [qo_scratch, None]
+      if save_residuals:
+        scratch[1] = plgpu.SMEM((compute_wgs, block_q), jnp.float32)
       pl.run_scoped(
-          lambda *args: fa3_kernel(q_ref, k_ref, v_ref, out_ref, args),
-          qo_scratch,
+          lambda *args: fa3_kernel(q_ref, k_ref, v_ref, out_ref, lse_ref, args),
+          scratch,
           plgpu.Barrier(1, num_barriers=compute_wgs),
           plgpu.Barrier(num_arrivals=compute_wgs),
       )
   @jax.jit
-  def run_function(q, k, v, o):
-    _, _, _, out = pl.run_state(run)((q, k, v, o))
-    return out
-  out = run_function(q, k, v, jnp.full_like(q, jnp.inf))
+  def run_function(q, k, v, o, lse):
+    _, _, _, out, lse = pl.run_state(run)((q, k, v, o, lse))
+    return out, lse
+
+  lse = (
+      jnp.full((batch_size, num_q_heads, q_seq_len), -jnp.inf, dtype=jnp.float32)
+      if save_residuals
+      else None
+  )
+  out, lse = run_function(q, k, v, jnp.full_like(q, jnp.inf), lse)
+
+  if save_residuals:
+    assert lse is not None
+    return out, (lse,)
+
   return out
 
 
-@jax.jit
-def attention_reference(q, k, v):
+@functools.partial(jax.jit, static_argnames=["save_residuals"])
+def attention_reference(q, k, v, save_residuals=False):
   batch_size, q_seq_len, num_q_heads, head_dim = q.shape
   num_kv_heads = k.shape[2]
   q, k, v = map(lambda x: x.astype(jnp.float32), (q, k, v))
@@ -406,8 +457,16 @@ def attention_reference(q, k, v):
   unnormalized = jnp.exp(logits - m)
   l = unnormalized.sum(axis=-1, keepdims=True)
   weights = unnormalized / l
-  return jnp.einsum("bqHhk,bkHc->bqHhc", weights, v).reshape(*q.shape)
+  out = jnp.einsum("bqHhk,bkHc->bqHhc", weights, v).reshape(*q.shape)
 
+  if save_residuals:
+    log2e = math.log2(math.e)
+    l = l.reshape(*q.shape[:-1])
+    m = m.reshape(*q.shape[:-1])
+    lse = m * log2e + jnp.log2(l)
+    return out, (lse.swapaxes(-1, -2),)
+  else:
+    return out
 
 def main(unused_argv):
   num_q_heads = 16

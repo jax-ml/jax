@@ -30,7 +30,7 @@ jax.config.parse_flags_with_absl()
 
 npr.seed(0)
 
-from jax._src.util import unzip2, safe_zip, safe_map
+from jax._src.util import foreach, unzip2, safe_zip, safe_map
 
 map = safe_map
 zip = safe_zip
@@ -87,10 +87,10 @@ def eval_fun(fun, *args):
     env[v] = x
 
   env = {}
-  map(write, fun.in_vars, args)
+  foreach(write, fun.in_vars, args)
   for in_vars, out_vars, f in fun.eqns:
     out_vals = f(*map(read, in_vars))
-    map(write, out_vars, out_vals)
+    foreach(write, out_vars, out_vals)
 
   return map(read, fun.out_vars)
 

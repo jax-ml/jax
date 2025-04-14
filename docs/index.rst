@@ -165,6 +165,10 @@ maintains an up-to-date list.
    changelog
    glossary
 
+.. toctree::
+   :maxdepth: 2
+
+   config_options
 
 .. _Awesome JAX: https://github.com/n2cholas/awesome-jax
 .. _AXLearn: https://github.com/apple/axlearn

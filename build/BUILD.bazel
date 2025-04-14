@@ -29,7 +29,7 @@ compile_pip_requirements(
     requirements_in = "requirements.in",
     requirements_txt = REQUIREMENTS,
     generate_hashes = True,
-    data = ["test-requirements.txt"]
+    data = ["test-requirements.txt", "gpu-test-requirements.txt"]
 )
 
 compile_pip_requirements(
@@ -44,7 +44,7 @@ compile_pip_requirements(
     requirements_in = "requirements.in",
     requirements_txt = REQUIREMENTS,
     generate_hashes = False,
-    data = ["test-requirements.txt"]
+    data = ["test-requirements.txt", "gpu-test-requirements.txt"]
 )
 
 compile_pip_requirements(
@@ -58,7 +58,7 @@ compile_pip_requirements(
     requirements_in = "requirements.in",
     requirements_txt = REQUIREMENTS,
     generate_hashes = False,
-    data = ["test-requirements.txt"]
+    data = ["test-requirements.txt", "gpu-test-requirements.txt"]
 )
 
 py_library(

@@ -190,6 +190,39 @@ class XlaMetadataTest(jtu.JaxTestCase):
       if "stablehlo.add" in line:
         self.assertIn('mhlo.frontend_attributes = {a = "c"}', line)
 
+  def test_cond_annotates_branches(self):
+    sin = jnp.sin
+    cos = jnp.cos
+
+    @jax.jit
+    def f(x):
+      with set_xla_metadata(a="b"):
+        return jax.lax.cond(x < 0., sin, cos, x)
+
+    hlo_lines = f.lower(1.).as_text().split("\n")
+    sin_hlo, = [line for line in hlo_lines if "stablehlo.sine"   in line]
+    cos_hlo, = [line for line in hlo_lines if "stablehlo.cosine" in line]
+    self.assertIn('mhlo.frontend_attributes = {a = "b"}', sin_hlo)
+    self.assertIn('mhlo.frontend_attributes = {a = "b"}', cos_hlo)
+
+  def test_cond_annotates_branches_and_none_unsets(self):
+    sin = jnp.sin
+
+    def cos(x):
+      with set_xla_metadata(a=None):
+        return jnp.cos(x)
+
+    @jax.jit
+    def f(x):
+      with set_xla_metadata(a="b"):
+        return jax.lax.cond(x < 0., sin, cos, x)
+
+    hlo_lines = f.lower(1.).as_text().split("\n")
+    sin_hlo, = [line for line in hlo_lines if "stablehlo.sine"   in line]
+    cos_hlo, = [line for line in hlo_lines if "stablehlo.cosine" in line]
+    self.assertIn(   'mhlo.frontend_attributes = {a = "b"}', sin_hlo)
+    self.assertNotIn('mhlo.frontend_attributes = {a = "b"}', cos_hlo)
+
   def test_nested_jit(self):
     @jax.jit
     def f(x, y):
@@ -255,10 +288,10 @@ class XlaMetadataTest(jtu.JaxTestCase):
       with set_xla_metadata(a="b"):
         return (x + y, y * 2.0)
 
-    f_vmap_jaxpr = jax.make_jaxpr(jax.vmap(f2, in_axes=(0, None)))
+    f2_vmap = jax.vmap(f2, in_axes=(0, None))
     self.assertIn(
         'mhlo.frontend_attributes = {a = "b"}',
-        f_vmap_jaxpr.lower(jnp.arange(5.0), 1.0).as_text(),
+        jax.jit(f2_vmap).lower(jnp.arange(5.0), 1.0).as_text(),
     )
 
   def test_multiple_instructions(self):

@@ -158,7 +158,7 @@ pip install --upgrade pip
 
 # Installs the wheel compatible with NVIDIA CUDA 12 and cuDNN 9.0 or newer.
 # Note: wheels only available on linux.
-pip install --upgrade "jax[cuda12_local]"
+pip install --upgrade "jax[cuda12-local]"
 ```
 
 **These `pip` installations do not work with Windows, and may fail silently; refer to the table
@@ -229,7 +229,7 @@ refer to
 JAX has experimental ROCm support. There are two ways to install JAX:
 
 * Use [AMD's Docker container](https://hub.docker.com/r/rocm/jax-community/tags); or
-* Build from source. Refer to the section [Additional notes for building a ROCm jaxlib for AMD GPUs](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-a-rocm-jaxlib-for-amd-gpus).
+* Build from source. Refer to the section [Additional notes for building a ROCm jaxlib for AMD GPUs](https://docs.jax.dev/en/latest/developer.html#additional-notes-for-building-a-rocm-jaxlib-for-amd-gpus).
 
 (install-intel-gpu)=
 ## Intel GPU
@@ -296,7 +296,7 @@ pip install -U --pre jax jaxlib libtpu requests -f https://storage.googleapis.co
 - NVIDIA GPU (CUDA 12):
 
 ```bash
-pip install -U --pre jax jaxlib "jax-cuda12-plugin[with_cuda]" jax-cuda12-pjrt -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
+pip install -U --pre jax jaxlib "jax-cuda12-plugin[with-cuda]" jax-cuda12-pjrt -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
 ```
 
 - NVIDIA GPU (CUDA 12) legacy:

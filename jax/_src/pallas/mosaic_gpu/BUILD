@@ -48,7 +48,7 @@ pytype_strict_library(
         "//jax:mlir",
         "//jax:mosaic_gpu",
         "//jax/_src/pallas",
-    ],
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
@@ -78,8 +78,10 @@ pytype_strict_library(
         "//jax:dtypes",
         "//jax:effects",
         "//jax:mosaic_gpu",
+        "//jax:pretty_printer",
         "//jax:state_types",
         "//jax:tree_util",
+        "//jax/_src/lib",
         "//jax/_src/pallas",
         "//jaxlib/mlir:ir",
     ] + py_deps("numpy"),
@@ -93,8 +95,8 @@ pytype_strict_library(
         ":lowering",
         "//jax",
         "//jax:core",
-        "//jax:mlir",
         "//jax:mosaic_gpu",
+        "//jax:pretty_printer",
         "//jax:tree_util",
         "//jax:util",
         "//jax/_src/lib",

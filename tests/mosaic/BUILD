@@ -39,7 +39,10 @@ jax_multiplatform_test(
     ],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     shard_count = 16,
-    tags = ["multiaccelerator"],
+    tags = [
+        "multiaccelerator",
+        "noasan",  # Times out.
+    ],
     deps = [
         "//jax:mosaic_gpu",
     ] + py_deps("absl/testing") + py_deps("numpy"),
@@ -58,6 +61,16 @@ jax_py_test(
 jax_py_test(
     name = "gpu_layout_inference_test",
     srcs = ["gpu_layout_inference_test.py"],
+    deps = [
+        "//jax",
+        "//jax:mosaic_gpu",
+        "//jax:test_util",
+    ] + py_deps("absl/testing"),
+)
+
+jax_py_test(
+    name = "gpu_transform_inference_test",
+    srcs = ["gpu_transform_inference_test.py"],
     deps = [
         "//jax",
         "//jax:mosaic_gpu",

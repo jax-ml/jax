@@ -41,19 +41,15 @@ from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import nvvm
 import numpy as np
 
-if dialect is not None:
-  from . import dialect_lowering
-  from . import layout_inference
-else:
-  dialect_lowering = None
-  layout_inference = None
-
-from . import profiler
-from . import utils
-from . import launch_context
-from . import tcgen05
-
 # mypy: ignore-errors
+
+from . import dialect_lowering
+from . import launch_context
+from . import layout_inference
+from . import profiler
+from . import tcgen05
+from . import transform_inference
+from . import utils
 
 # MLIR can't find libdevice unless we point it to the CUDA path
 # TODO(apaszke): Unify with jax._src.lib.cuda_path
@@ -87,6 +83,15 @@ if RUNTIME_PATH and RUNTIME_PATH.exists():
   # Set this so that the custom call can find it
   os.environ["MOSAIC_GPU_RUNTIME_LIB_PATH"] = str(RUNTIME_PATH)
 
+if os.environ.get("MOSAIC_GPU_NVSHMEM_LLVM_LIB_PATH") is None:
+  try:
+    from nvidia import nvshmem
+  except ImportError:
+    pass
+  else:
+    os.environ["MOSAIC_GPU_NVSHMEM_LLVM_LIB_PATH"] = (
+      os.path.join(nvshmem.__path__[0], 'lib/libnvshmem_device.bc')
+    )
 
 mosaic_gpu_p = jax._src.core.Primitive("mosaic_gpu_p")
 mosaic_gpu_p.multiple_results = True
@@ -107,7 +112,9 @@ def _mosaic_gpu_lowering_rule(
     module,
     out_types,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
+    use_custom_barrier: bool = False,
 ):
+  assert len(args) == len(ctx.avals_in)
   assert len(out_types) == len(ctx.avals_out)
   module = _run_serde_pass(
       module,
@@ -124,15 +131,35 @@ def _mosaic_gpu_lowering_rule(
       raise RuntimeError("Hash collision!")
   else:
     KNOWN_KERNELS[kernel_id] = module_asm
-  op = mlir.custom_call(
-      "mosaic_gpu",
-      result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-      operands=args,
-      operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
-      result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
-      backend_config=kernel_id + module_asm,
-      operand_output_aliases=dict(input_output_aliases),
-  )
+
+  if ctx.is_forward_compat():
+    if use_custom_barrier:
+      raise ValueError("Barrier semaphore is not supported in forward compatibility mode. "
+                       "Please, use 'export_ignore_forward_compatibility=True'.")
+    op = mlir.custom_call(
+        "mosaic_gpu",
+        result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
+        operands=args,
+        operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
+        result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
+        backend_config=kernel_id + module,
+        operand_output_aliases=dict(input_output_aliases),
+    )
+  else:
+    op = mlir.custom_call(
+        "mosaic_gpu_v2",
+        result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
+        operands=args,
+        operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
+        result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
+        backend_config=dict(
+            kernel_hash=ir.StringAttr.get(kernel_id),
+            module=ir.StringAttr.get(module_asm),
+            use_custom_barrier=ir.BoolAttr.get(use_custom_barrier),
+        ),
+        operand_output_aliases=dict(input_output_aliases),
+        api_version=4,
+    )
   return op.results
 
 
@@ -182,7 +209,7 @@ def _count_buffer_bytes(shape_dtype: jax.ShapeDtypeStruct) -> int:
   return math.prod(shape_dtype.shape) * np.dtype(shape_dtype.dtype).itemsize
 
 
-class ThreadSemantics(enum.Enum):
+class LoweringSemantics(enum.Enum):
   """Semantics for the kernel's instruction stream."""
 
   Lane = enum.auto()
@@ -260,7 +287,7 @@ def _construct_smem_reftree(
             dynamic_smem, c(dynamic_smem_offset, index), [],
         )
         if layout is None:
-          layout = tcgen05._infer_tmem_layout(shape)
+          layout = tcgen05._infer_tmem_layout(shape, collective)
         num_cols = layout.cols_in_shape(shape)
         delayed_warp_init.append(
             functools.partial(
@@ -311,6 +338,8 @@ def _smem_tree_size(smem_buffers: ShapeTree) -> int:
           raise NotImplementedError("Misaligned barrier allocation")
         size += num_barriers * utils.MBARRIER_BYTES
       case TMEM(_):
+        # TODO(justinfu): This can trigger misaligned barrier allocations
+        # if TMEM is requested before barriers b/c it's not divisible by 8.
         size += 4  # i32 takes up 4 bytes
       case _:
         size += _count_buffer_bytes(l)
@@ -450,6 +479,7 @@ def _lower_as_gpu_kernel(
     out_ref_tys.append(prof_spec.mlir_buffer_type(grid, block))
 
   module = ir.Module.create()
+  dialect.register_dialect(module.context)
   attrs = module.operation.attributes
   attrs["sym_name"] = ir.StringAttr.get(module_name)
   if kernel_name is None:
@@ -566,7 +596,7 @@ def as_gpu_kernel(
     module_name: str = "unknown",
     kernel_name: str | None = None,
     ir_version: int | None = None,
-    thread_semantics: ThreadSemantics = ThreadSemantics.Lane,
+    thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
 ):
   if isinstance(in_shape, list):
     in_shape = tuple(in_shape)
@@ -580,10 +610,11 @@ def as_gpu_kernel(
       )
   )
 
-  if thread_semantics == ThreadSemantics.Warpgroup and dialect is not None:
+  if thread_semantics == LoweringSemantics.Warpgroup and dialect is not None:
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
     layout_inference.infer_layout(module)  # pytype: disable=attribute-error
+    transform_inference.infer_transforms(module)  # pytype: disable=attribute-error
     dialect_lowering.lower_mgpu_dialect(module, launch_ctx)  # pytype: disable=attribute-error
 
   _initialize_scratch(launch_ctx, scratch_arr)
@@ -639,7 +670,7 @@ def as_torch_gpu_kernel(
     cluster: tuple[int, int, int] = (1, 1, 1),
     module_name: str = "unknown",
     kernel_name: str | None = None,
-    thread_semantics: ThreadSemantics = ThreadSemantics.Lane,
+    lowering_semantics: LoweringSemantics = LoweringSemantics.Lane,
 ):
   try:
     import torch
@@ -662,10 +693,11 @@ def as_torch_gpu_kernel(
       )
   )
 
-  if thread_semantics == ThreadSemantics.Warpgroup and dialect is not None:
+  if lowering_semantics == LoweringSemantics.Warpgroup and dialect is not None:
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
     layout_inference.infer_layout(module)  # pytype: disable=attribute-error
+    transform_inference.infer_transforms(module)  # pytype: disable=attribute-error
     dialect_lowering.lower_mgpu_dialect(module, launch_ctx)  # pytype: disable=attribute-error
 
   _initialize_scratch(launch_ctx, scratch_arr)

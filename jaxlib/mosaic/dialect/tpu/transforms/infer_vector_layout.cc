@@ -19,35 +19,29 @@ limitations under the License.
 #include <functional>
 #include <memory>
 #include <optional>
-#include <ostream>
-#include <string>
 #include <utility>
 
+#include "absl/log/check.h"
+#include "absl/log/log.h"
+#include "absl/types/span.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
-#include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/ImplicitLocOpBuilder.h"
+#include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Value.h"
+#include "mlir/IR/Visitors.h"
+#include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "absl/log/check.h"
-#include "absl/log/log.h"
-#include "absl/types/span.h"
-#include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/include/mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
-#include "mlir/include/mlir/IR/Attributes.h"
-#include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
-#include "mlir/include/mlir/IR/OpDefinition.h"
-#include "mlir/include/mlir/IR/Visitors.h"
-#include "mlir/include/mlir/Pass/Pass.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/transforms/infer_vector_layout_extensions.h"
@@ -1095,13 +1089,11 @@ class VectorLayoutInferer {
       }
       auto src_tiled_ishape = layout.getImplicitTiledDims(src_ty.getShape(), 1);
       auto dst_tiled_ishape = layout.getImplicitTiledDims(res_ty.getShape(), 1);
-      // Since we can only do sublane broadcasts in the (8, 128) tiling, we
-      // should always use that when sublane broadcasting is required.
       if (src_tiled_ishape[0] != dst_tiled_ishape[0] &&
           layout.offsets()[0] != std::nullopt) {
+        // TODO(tlongeri): Remove this. We support non-native tiling now, but
+        // things may still break downstream due to missing relayouts.
         LayoutOffsets offsets = layout.offsets();
-        // At the moment relayout can only produce replicated sublanes when
-        // converting to (8, 128) if the input was in (1, 128) tiling
         if (layout.tiling()[0] == 1 && layout.bitwidth() == kNativeBitwidth) {
           offsets[0] = std::nullopt;
         }
@@ -1702,6 +1694,33 @@ class VectorLayoutInferer {
       src_layout = layout;
       dst_layout = VectorLayout(dst_bitwidth, layout.offsets(),
                                 src_layout->tiling(), layout.implicit_dim());
+    } else if (layout.packing() > target_shape_[0]) {
+      // When the input dtype has packing greater than the sublane count, we
+      // can't preserve its native tiling in the output (the tile would be too
+      // big to fit in a vreg). At the same time, we can't use the default
+      // tiling either, because the tile size in the input dtype is smaller than
+      // a sublane.
+      // For example, for int2 on the target with 8 sublanes, subelements are
+      // unpacked into 16 consecutive sublanes.
+      // TODO(b/401624977): Perhaps there is a better layout for this case, or
+      // if it's impossible, such layout should be used everywhere for int2, not
+      // just ExtOp.
+      std::array<int64_t, 2> src_native_tiling = nativeTiling(src_bitwidth);
+      std::array<int64_t, 2> dst_native_tiling = nativeTiling(dst_bitwidth);
+      LayoutOffsets src_offsets = {
+          layout.offsets()[0] ? *layout.offsets()[0] % src_native_tiling[0]
+                              : LayoutOffset(),
+          layout.offsets()[1] ? *layout.offsets()[1] % src_native_tiling[1]
+                              : LayoutOffset()};
+      LayoutOffsets dst_offsets = {
+          layout.offsets()[0] ? *layout.offsets()[0] % dst_native_tiling[0]
+                              : LayoutOffset(),
+          layout.offsets()[1] ? *layout.offsets()[1] % dst_native_tiling[1]
+                              : LayoutOffset()};
+      src_layout = VectorLayout(src_bitwidth, src_offsets, src_native_tiling,
+                                layout.implicit_dim());
+      dst_layout = VectorLayout(dst_bitwidth, dst_offsets, dst_native_tiling,
+                                layout.implicit_dim());
     } else {
       LayoutOffsets offsets = {
           layout.offsets()[0] ? *layout.offsets()[0] % default_tiling_[0]
@@ -1742,6 +1761,9 @@ class VectorLayoutInferer {
       select_native |= tpu_tiling_flags_.use_x8_large_second_minor;
     } else if (dst_ty.getElementTypeBitWidth() == 4) {
       select_native |= tpu_tiling_flags_.use_x4_large_second_minor;
+    } else if (dst_ty.getElementTypeBitWidth() == 2) {
+      // Force it to native tiling. See comments in `inferExt`.
+      select_native = true;
     } else {
       return op->emitOpError("Unsupported target bitwidth for truncation");
     }

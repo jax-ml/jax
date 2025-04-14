@@ -23,16 +23,14 @@ limitations under the License.
 #include <utility>
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
-#include "mlir/include/mlir/IR/BuiltinOps.h"
-#include "mlir/include/mlir/IR/BuiltinTypes.h"
-#include "mlir/include/mlir/IR/Value.h"
-#include "mlir/include/mlir/Support/LogicalResult.h"
-#include "jaxlib/mosaic/dialect/tpu/layout.h"
+#include "mlir/Support/LogicalResult.h"
+#include "jaxlib/mosaic/dialect/tpu/layout.h"  // IWYU pragma: keep
 #include "jaxlib/mosaic/dialect/tpu/tpu_enums.h.inc"
-#include "jaxlib/mosaic/dialect/tpu/transforms/serde.h"
-#include "xla/layout.h"
+#include "xla/layout.h"  // IWYU pragma: keep
 
 namespace mlir::tpu {
 class TPUDialect;
@@ -64,11 +62,11 @@ struct ApplyVectorLayoutContext {
   // mxu_shape = {contracting_size, non_contracting_size}
   std::array<int64_t, 2> mxu_shape = {128, 128};
   int64_t max_sublanes_in_scratch = 0;
-  int64_t vmem_banks = -1;  // -1 means "unspecified".
+  int64_t vmem_banks = -1;                  // -1 means "unspecified".
   int32_t max_shuffle_sublane_offset = -1;  // -1 means "unspecified".
 };
 
-std::pair<bool, bool> mightCommunicateBetweenChips(Operation* op);
+std::pair<bool, bool> mightCommunicateBetweenChips(Operation *op);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferMemRefLayoutPass(
     int hardware_generation = -1,

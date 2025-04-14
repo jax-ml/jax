@@ -31,6 +31,7 @@ from jax._src.export import _export
 
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
+from jax._src.internal_test_util.export_back_compat_test_data import annotate_data_placement
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_cholesky_lapack_potrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eig_lapack_geev
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_eigh_cusolver_syev
@@ -38,7 +39,6 @@ from jax._src.internal_test_util.export_back_compat_test_data import rocm_eigh_h
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eigh_lapack_syev
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_lu_lapack_getrf
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_qr_cusolver_geqrf
-from jax._src.internal_test_util.export_back_compat_test_data import rocm_qr_hipsolver_geqrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_qr_lapack_geqrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_schur_lapack_gees
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_svd_lapack_gesdd
@@ -120,7 +120,7 @@ class CompatTest(bctu.CompatTestBase):
     targets_to_cover = set(_export._CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
     cpu_ffi_testdatas = [
         cpu_cholesky_lapack_potrf.data_2024_05_31,
-        cpu_qr_lapack_geqrf.data_2024_08_22,
+        cpu_qr_lapack_geqrf.data_2025_04_02,
         cpu_eig_lapack_geev.data_2024_08_19,
         cpu_eigh_lapack_syev.data_2024_08_19,
         cpu_lu_lapack_getrf.data_2024_05_31,
@@ -134,25 +134,17 @@ class CompatTest(bctu.CompatTestBase):
     # stable
     covering_testdatas = [
         *cpu_ffi_testdatas,
-        cpu_cholesky_lapack_potrf.data_2023_06_19,
-        cpu_eig_lapack_geev.data_2023_06_19,
-        cpu_eigh_lapack_syev.data_2023_03_17,
-        cpu_qr_lapack_geqrf.data_2023_03_17,
         cuda_threefry2x32.data_2024_07_30,
-        cpu_lu_lapack_getrf.data_2023_06_14,
-        cuda_lu_pivots_to_permutation.data_2024_08_08,
+        cuda_lu_pivots_to_permutation.data_2025_04_01,
         cuda_lu_cusolver_getrf.data_2024_08_19,
         cuda_qr_cusolver_geqrf.data_2024_09_26,
         cuda_eigh_cusolver_syev.data_2024_09_30,
         cuda_svd_cusolver_gesvd.data_2024_10_08,
         cpu_tridiagonal_solve_lapack_gtsv.data_2025_01_09,
         cuda_tridiagonal_cusolver_sytrd.data_2025_01_09,
-        rocm_qr_hipsolver_geqrf.data_2024_08_05,
         rocm_eigh_hipsolver_syev.data_2024_08_05,
         cpu_schur_lapack_gees.data_2023_07_16,
-        cpu_svd_lapack_gesdd.data_2023_06_19,
         cpu_triangular_solve_blas_trsm.data_2023_07_16,
-        cpu_hessenberg_lapack_gehrd.data_2024_08_30,
         cpu_tridiagonal_lapack_sytrd_hetrd.data_2024_09_03,
         tpu_Eigh.data, tpu_Lu.data_2023_03_21, tpu_Qr.data_2023_03_17,
         tpu_Sharding.data_2023_03_16, tpu_ApproxTopK.data_2023_04_17,
@@ -163,6 +155,8 @@ class CompatTest(bctu.CompatTestBase):
         stablehlo_dynamic_top_k.data_2023_07_16,
         stablehlo_dynamic_top_k.data_2023_08_11,  # with shape_assertion
         stablehlo_dynamic_approx_top_k.data_2024_05_30,
+        annotate_data_placement.data_2025_04_07_tpu,
+        annotate_data_placement.data_2025_04_07_cuda,
     ]
     # Some of the above are nested structures.
     covering_testdatas = itertools.chain(
@@ -211,10 +205,6 @@ class CompatTest(bctu.CompatTestBase):
     info = cpu_cholesky_lapack_potrf.data_2024_05_31[dtype_name]
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol)
-
-    data = self.load_testdata(cpu_cholesky_lapack_potrf.data_2023_06_19[dtype_name])
-    self.run_one_test(func, data, rtol=rtol, atol=atol,
-                      expect_current_custom_calls=info["custom_call_targets"])
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -276,10 +266,6 @@ class CompatTest(bctu.CompatTestBase):
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=check_eig_results)
-    data = self.load_testdata(cpu_eig_lapack_geev.data_2023_06_19[dtype_name])
-    self.run_one_test(func, data, rtol=rtol, atol=atol,
-                      check_results=check_eig_results,
-                      expect_current_custom_calls=info["custom_call_targets"])
 
   @staticmethod
   def eigh_input(shape, dtype):
@@ -332,12 +318,6 @@ class CompatTest(bctu.CompatTestBase):
     data = self.load_testdata(cpu_eigh_lapack_syev.data_2024_08_19[dtype_name])
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_eigh_results, operand))
-
-    # Legacy custom call test
-    data = self.load_testdata(cpu_eigh_lapack_syev.data_2023_03_17[dtype_name])
-    self.run_one_test(func, data, rtol=rtol, atol=atol,
-                      check_results=partial(self.check_eigh_results, operand),
-                      expect_current_custom_calls=info["custom_call_targets"])
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}_{variant}",
@@ -411,14 +391,14 @@ class CompatTest(bctu.CompatTestBase):
   def test_cuda_lu_pivots_to_permutation(self):
     shape = (2, 3, 4)
     func = lambda: CompatTest.lu_pivots_to_permutation_harness(shape)
-    data = self.load_testdata(cuda_lu_pivots_to_permutation.data_2024_08_08)
+    data = self.load_testdata(cuda_lu_pivots_to_permutation.data_2025_04_01)
     self.run_one_test(func, data)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}",
            dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
-  def test_cuda_lu_lapack_getrf(self, dtype_name:str):
+  def test_cuda_lu_cusolver_getrf(self, dtype_name:str):
     if not config.enable_x64.value and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
     dtype = dict(f32=np.float32, f64=np.float64,
@@ -445,37 +425,9 @@ class CompatTest(bctu.CompatTestBase):
                  c64=np.complex64, c128=np.complex128)[dtype_name]
     func = lambda: CompatTest.qr_harness((3, 3), dtype)
 
-    info = cpu_qr_lapack_geqrf.data_2024_08_22[dtype_name]
+    info = cpu_qr_lapack_geqrf.data_2025_04_02[dtype_name]
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol)
-
-    # TODO(b/369826500): Remove legacy custom call test after mid March 2025.
-    data = self.load_testdata(cpu_qr_lapack_geqrf.data_2023_03_17[dtype_name])
-    self.run_one_test(func, data, rtol=rtol,
-                      expect_current_custom_calls=info["custom_call_targets"])
-
-  # TODO(b/369826500): Remove legacy custom call test after mid March 2025.
-  @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}_{batched}",
-           dtype_name=dtype_name, batched=batched)
-      for dtype_name in ("f32",)
-      # For batched qr we use cublas_geqrf_batched/hipblas_geqrf_batched.
-      for batched in ("batched", "unbatched"))
-  def test_gpu_qr_solver_geqrf_legacy(self, dtype_name, batched):
-    if jtu.test_device_matches(["rocm"]):
-      data = self.load_testdata(rocm_qr_hipsolver_geqrf.data_2024_08_05[batched])
-      prefix = "hip"
-    elif jtu.test_device_matches(["cuda"]):
-      data = self.load_testdata(cuda_qr_cusolver_geqrf.data_2023_03_18[batched])
-      prefix = "cu"
-    else:
-      self.skipTest("Unsupported platform")
-    dtype = dict(f32=np.float32)[dtype_name]
-    rtol = dict(f32=1e-3)[dtype_name]
-    shape = dict(batched=(2, 3, 3), unbatched=(3, 3))[batched]
-    func = lambda: CompatTest.qr_harness(shape, dtype)
-    self.run_one_test(func, data, rtol=rtol, expect_current_custom_calls=[
-        f"{prefix}solver_geqrf_ffi", f"{prefix}solver_orgqr_ffi"])
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -550,14 +502,6 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data, rtol=rtol, atol=atol,
                       check_results=partial(self.check_lu_results, operand,
                                             dtype=dtype))
-
-    # TODO(b/357034884): Remove legacy custom call test after mid March 2025.
-    legacy_data = self.load_testdata(
-        cpu_lu_lapack_getrf.data_2023_06_14[dtype_name])
-    self.run_one_test(func, legacy_data, rtol=rtol, atol=atol,
-                      check_results=partial(self.check_lu_results, operand,
-                                            dtype=dtype),
-                      expect_current_custom_calls=info["custom_call_targets"])
 
   def check_svd_results(self, input, res_run, res_exp,
                         rtol=None, atol=None):
@@ -677,12 +621,6 @@ class CompatTest(bctu.CompatTestBase):
                       check_results=partial(self.check_svd_results,
                                             *data.inputs))
 
-    data = self.load_testdata(cpu_svd_lapack_gesdd.data_2023_06_19[dtype_name])
-    self.run_one_test(func, data, rtol=rtol, atol=atol,
-                      check_results=partial(self.check_svd_results,
-                                            *data.inputs),
-                      expect_current_custom_calls=info["custom_call_targets"])
-
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}_algorithm={algorithm_name}",
            dtype_name=dtype_name, algorithm_name=algorithm_name)
@@ -773,12 +711,6 @@ class CompatTest(bctu.CompatTestBase):
     data = self.load_testdata(info)
     self.run_one_test(func, data, rtol=rtol, atol=atol)
 
-    data = self.load_testdata(
-        cpu_hessenberg_lapack_gehrd.data_2024_08_30[dtype_name]
-    )
-    self.run_one_test(func, data, rtol=rtol, atol=atol,
-                      expect_current_custom_calls=info["custom_call_targets"])
-
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
@@ -842,7 +774,7 @@ class CompatTest(bctu.CompatTestBase):
     )
     self.run_one_test(func, data, rtol=rtol, atol=atol)
 
-  def test_approx_top_k(self):
+  def test_tpu_approx_top_k(self):
     def func():
       x = np.array([3.0, 1.0, 4.0, 2.0, 5.0, 6.0, 7.0])
       y = lax.approx_max_k(x, 3)
@@ -859,7 +791,7 @@ class CompatTest(bctu.CompatTestBase):
       data = self.load_testdata(cuda_threefry2x32.data_2024_07_30)
       self.run_one_test(func, data)
 
-  def test_sharding(self):
+  def test_tpu_sharding(self):
     # Tests "Sharding", "SPMDShardToFullShape", "SPMDFullToShardShape" on TPU
     if not jtu.test_device_matches(["tpu"]) or len(jax.devices()) < 2:
       self.skipTest("Test runs only on TPU with at least 2 devices")
@@ -880,6 +812,31 @@ class CompatTest(bctu.CompatTestBase):
     data = self.load_testdata(tpu_Sharding.data_2023_03_16)
     with mesh:
       self.run_one_test(func, data)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_platform={platform}", platform=platform)
+      for platform in ("tpu", "gpu"))
+  def test_annotate_device_placement(self, platform):
+    if not jtu.test_device_matches([platform]):
+      self.skipTest(f"Test enabled only for {platform}")
+
+    mesh = Mesh(jax.local_devices()[0:1], axis_names=("a"))
+
+    dev_sharding = NS(mesh, P("a"))
+    host_sharding = NS(mesh, P("a"), memory_kind="pinned_host")
+
+    @partial(jax.jit,
+             in_shardings=(dev_sharding, host_sharding),
+             out_shardings=host_sharding)
+    def func(x, y):
+      return x + y
+
+    if platform == "tpu":
+      data = self.load_testdata(annotate_data_placement.data_2025_04_07_tpu)
+    else:
+      data = self.load_testdata(annotate_data_placement.data_2025_04_07_cuda)
+
+    self.run_one_test(func, data)
 
   def test_tpu_stablehlo_dynamic_reduce_window_unary(self):
     # stablehlo.dynamic_reduce_window is used temporarily on TPU for a

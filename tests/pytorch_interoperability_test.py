@@ -67,6 +67,8 @@ class DLPackTest(jtu.JaxTestCase):
           y, client, client)
 
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
+  @jtu.ignore_warning(message="jax.dlpack.to_dlpack was deprecated.*",
+                      category=DeprecationWarning)
   def testJaxToTorch(self, shape, dtype):
     if not config.enable_x64.value and dtype in [
         jnp.int64,

@@ -307,7 +307,7 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
                f" promotion for jnp.vectorize function with signature {signature}."
                " Set the jax_numpy_rank_promotion config option to 'allow' to"
                " disable this message; for more information, see"
-               " https://jax.readthedocs.io/en/latest/rank_promotion_warning.html.")
+               " https://docs.jax.dev/en/latest/rank_promotion_warning.html.")
         if config.numpy_rank_promotion.value == "warn":
           warnings.warn(msg)
         elif config.numpy_rank_promotion.value == "raise":

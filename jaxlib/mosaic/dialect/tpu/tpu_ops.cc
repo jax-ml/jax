@@ -19,25 +19,27 @@ limitations under the License.
 #include <string_view>
 #include <vector>
 
+#include "absl/log/check.h"
+#include "absl/strings/str_format.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/IRMapping.h"
+#include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "absl/log/check.h"
-#include "absl/strings/str_format.h"
-#include "mlir/include/mlir/Dialect/Math/IR/Math.h"
-#include "mlir/include/mlir/IR/Builders.h"
-#include "mlir/include/mlir/IR/BuiltinTypeInterfaces.h"
-#include "mlir/include/mlir/IR/BuiltinTypes.h"
-#include "mlir/include/mlir/IR/IRMapping.h"
-#include "mlir/include/mlir/IR/OperationSupport.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
+#include "xla/layout.h"
 
 namespace mlir {
 namespace tpu {
@@ -175,6 +177,10 @@ LogicalResult MemRefSqueezeOp::verify() {
   if (target_type.getElementType() != source_type.getElementType()) {
     this->emitOpError("Element types don't match.");
     return failure();
+  }
+  if (!HasMemorySpace(source_type, tpu::MemorySpace::kSemaphoreMem) &&
+      source_type.getRank() > 1 && target_type.getRank() == 1) {
+    return emitError("Not implemented: squeeze memref to 1d.");
   }
   auto source_shape = source_type.getShape();
   auto target_shape = target_type.getShape();
@@ -949,12 +955,23 @@ LogicalResult EnqueueDMAOp::verify() {
           "device_id or core_id is specified");
     }
   }
+  bool is_remote = getDeviceId() || getCoreId();
   if (getSourceSemaphore()) {
-    if (!getDeviceId() && !getCoreId()) {
+    if (!is_remote) {
       return emitOpError(
           "DMA destination device_id or core_id must be specified when source "
           "semaphore is specified");
     }
+  }
+  int priority = getPriority();
+  if (priority < 0 || priority > 1) {
+    return emitOpError(
+               "Not implemented: only support priority 0 or 1, but got ")
+           << priority;
+  }
+  if (priority != 0 && is_remote) {
+    return emitOpError(
+        "Not implemented: non-zero priority is not supported for remote DMA");
   }
   return success();
 }
@@ -1160,6 +1177,13 @@ LogicalResult LogBufferOp::verify() {
   if (input_type.getRank() != getShape().size()) {
     return emitOpError(
         "Shape must have the same length as the rank of the input");
+  }
+  return success();
+}
+
+LogicalResult ReciprocalOp::verify() {
+  if (!getType().getElementType().isF32()) {
+    return emitOpError("Not implemented: Reciprocal op for non-f32 dtypes");
   }
   return success();
 }

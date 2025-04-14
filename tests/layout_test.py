@@ -21,9 +21,10 @@ import jax
 import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec as P, SingleDeviceSharding
 from jax._src import config
-from jax._src.layout import Layout, DeviceLocalLayout as DLL
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip
+from jax.experimental.layout import (with_dll_constraint, Layout,
+                                     DeviceLocalLayout as DLL)
 from jax.experimental.compute_on import compute_on
 
 config.parse_flags_with_absl()
@@ -743,6 +744,36 @@ class LayoutTest(jtu.JaxTestCase):
     out = f(arr)
     self.assertArraysEqual(out, np_inp * 2)
     self.assertEqual(out.layout, out_layout)
+
+  def test_with_dll_constraint(self):
+    if not jtu.test_device_matches(['tpu']):
+      self.skipTest('Only works for TPU')
+    mesh = jtu.create_mesh((2, 2), ('x', 'y'))
+    shape = (16, 128)
+    s = NamedSharding(mesh, P('x'))
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+
+    # Create a custom layout instead of using `arr.layout` to test the API.
+    custom_dll = DLL(major_to_minor=arr.layout.dll.major_to_minor[::-1])
+
+    def f(x):
+      y = x.T
+      # Constrain `y` to the original layout of `arr` because without it,
+      # the layout of `y` would be the transpose of `arr`.
+      y = with_dll_constraint(y, custom_dll)
+      return y * 2
+
+    f(arr)  # doesn't crash
+
+    f = jax.jit(f)
+    out = f(arr)
+    self.assertEqual(out.layout.device_local_layout.major_to_minor,
+                     custom_dll.major_to_minor)
+    self.assertArraysEqual(out, np_inp.T * 2)
+
+    lowered_text = f.lower(arr).as_text()
+    self.assertIn('LayoutConstraint', lowered_text)
 
 
 if __name__ == '__main__':

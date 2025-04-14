@@ -16,8 +16,8 @@ limitations under the License.
 #ifndef JAXLIB_TRITON_TRITON_DIALECT_CAPI_H_
 #define JAXLIB_TRITON_TRITON_DIALECT_CAPI_H_
 
-#include "mlir/include/mlir-c/IR.h"
-#include "mlir/include/mlir-c/Support.h"
+#include "mlir-c/IR.h"
+#include "mlir-c/Support.h"
 
 #ifdef __cplusplus
 extern "C" {

@@ -28,6 +28,15 @@ def colocated_cpu_devices(
     devices: Sequence[jax.Device],
 ) -> Sequence[jax.Device]:
   """Finds CPU devices colocated with the given devices."""
+  if not isinstance(devices, tuple):
+    devices = tuple(devices)
+  return _colocated_cpu_devices_cached(devices)
+
+
+@jax.util.cache(max_size=1024, trace_context_in_key=False)
+def _colocated_cpu_devices_cached(
+    devices: tuple[jax.Device, ...],
+) -> Sequence[jax.Device]:
   cpu_devices_by_colocation_id = collections.defaultdict(list)
   for device in devices[0].client._get_all_devices():  # pylint: disable=protected-access
     if device.device_kind == "cpu":

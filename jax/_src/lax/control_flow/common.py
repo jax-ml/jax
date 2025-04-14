@@ -260,3 +260,23 @@ def _show_diff(array1, array2):
 def _avals_short(avals):
   to_str = lambda aval: getattr(aval, 'str_short', partial(str, aval))()
   return ' '.join(map(to_str, avals))
+
+def _aval_mismatch_extra(a1: core.AbstractValue, a2: core.AbstractValue) -> str:
+  assert not core.typematch(a1, a2)
+  if isinstance(a1, core.ShapedArray) and isinstance(a2, core.ShapedArray):
+    mismatches = []
+    if a1.dtype != a2.dtype:
+      mismatches.append('the dtypes do not match')
+    if a1.shape != a2.shape:
+      mismatches.append('the shapes do not match')
+    if a1.vma != a2.vma:
+      mismatches.append('the varying manual axes do not match')
+    # TODO(yashkatariya,mattjj): add check for sharding-in-types mismatch
+
+    if len(mismatches) == 0:
+      return ''
+    elif len(mismatches) == 1:
+      return ', so ' + mismatches[0]
+    else:
+      return ', so ' + ', '.join(mismatches[:-1]) + ', and ' + mismatches[-1]
+  return ''

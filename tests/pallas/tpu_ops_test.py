@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for TPU specific operations within pallas_call."""
 
 import functools
 import math
@@ -67,6 +66,7 @@ class PallasBaseTest(jtu.JaxTestCase):
     return pl.pallas_call(*args, interpret=cls.INTERPRET, **kwargs)
 
 
+@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
 class OpsTest(PallasBaseTest):
 
   @parameterized.product(
@@ -470,7 +470,29 @@ class OpsTest(PallasBaseTest):
     expected = lax.select(concated_mask, concated_x, jnp.zeros_like(concated_x))
     np.testing.assert_array_equal(out, expected)
 
+  def test_reduce_with_const(self):
+    m = 1
+    d = 1024
+    x = jnp.ones((m, d), jnp.bfloat16)
 
+    def dot(x, y):
+      return jax.lax.dot_general(
+          x,
+          y,
+          (((1,), (1,)), ((), ())),
+          preferred_element_type=jnp.float32,
+      )
+
+    def kernel(x, out):
+      out[:] = dot(x[:], jnp.ones((1, d), jnp.bfloat16))
+
+    run = pl.pallas_call(kernel, jax.ShapeDtypeStruct((m, 1), jnp.float32))
+    output = run(x)
+    expected = dot(x[:], jnp.ones((1, d), jnp.bfloat16))
+    np.testing.assert_array_equal(output, expected)
+
+
+@jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
 class OpsInterpretTest(OpsTest):
   INTERPRET = True
 

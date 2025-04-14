@@ -20,7 +20,7 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "absl/types/span.h"
-#include "mlir/include/mlir/Support/LLVM.h"
+#include "mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "xla/array.h"
 

@@ -16,11 +16,10 @@ limitations under the License.
 #ifndef JAXLIB_GPU_GPU_KERNEL_HELPERS_H_
 #define JAXLIB_GPU_GPU_KERNEL_HELPERS_H_
 
-#include <memory>
+#include <cstdint>
 
 #include "absl/base/optimization.h"
 #include "absl/status/status.h"
-#include "absl/status/statusor.h"
 #include "jaxlib/gpu/vendor.h"
 
 #define JAX_AS_STATUS(expr) \

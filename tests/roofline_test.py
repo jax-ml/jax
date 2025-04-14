@@ -14,10 +14,10 @@
 from __future__ import annotations
 
 from functools import partial
+from typing import Sequence
 
 from absl.testing import absltest
 import jax
-from jax._src import mesh
 from jax._src import test_util as jtu
 from jax.experimental import roofline
 import jax.lax as lax
@@ -27,6 +27,8 @@ from jax.sharding import PartitionSpec as P
 
 jax.config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
+
+_VERY_LARGE_NUMBER = 512 * 1024
 
 
 def create_inputs(
@@ -464,11 +466,7 @@ class RooflineTest(jtu.JaxTestCase):
   )
   def test_unary_ops(self, f, dtype):
     data = jnp.zeros((3, 8), dtype=dtype)
-    out, result = roofline.roofline(
-        f,
-        in_specs=(P()),
-        out_specs=P(),
-    )(data)
+    out, result = roofline.roofline(f)(data)
     with self.subTest("flops"):
       self.assertEqual(result.unfused_flops, 3 * 8)
     with self.subTest("hbm_bytes"):
@@ -494,12 +492,9 @@ class RooflineTest(jtu.JaxTestCase):
         lambda a, b: jnp.minimum(a, b),
         lambda a, b: jnp.maximum(a, b),
     ]:
-      out, result = roofline.roofline(
-          f,
-          mesh=mesh.AbstractMesh(()),
-          in_specs=(P(), P()),
-          out_specs=P(),
-      )(jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int))
+      out, result = roofline.roofline(f)(
+          jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int)
+      )
       self.assertEqual(result.unfused_flops, 3 * 8)
       self.assertEqual(
           result.unfused_hbm_bytes,
@@ -514,12 +509,7 @@ class RooflineTest(jtu.JaxTestCase):
         (2.0, jnp.ones((3, 8))),
         (jnp.zeros((3, 8)), 2.0),
     ]:
-      _, result = roofline.roofline(
-          lambda a, b: a + b,
-          mesh=mesh.AbstractMesh(()),
-          in_specs=(P(), P()),
-          out_specs=P(),
-      )(left, right)
+      _, result = roofline.roofline(lambda a, b: a + b)(left, right)
       self.assertEqual(result.unfused_flops, 3 * 8)
 
   def test_nested(self):
@@ -530,27 +520,21 @@ class RooflineTest(jtu.JaxTestCase):
 
       return g(x) + g(y)
 
-    _, result = roofline.roofline(
-        f,
-        mesh=mesh.AbstractMesh(()),
-        in_specs=(P(), P()),
-        out_specs=P(),
-    )(jnp.zeros((11, 4), dtype=int), jnp.ones((11, 4), dtype=int))
+    _, result = roofline.roofline(f)(
+        jnp.zeros((11, 4), dtype=int), jnp.ones((11, 4), dtype=int)
+    )
     self.assertEqual(result.unfused_flops, 3 * (11 * 4))
 
   def test_no_mesh(self):
-    _, result = roofline.roofline(
-        lambda a, b: a + b,
-        in_specs=(P(), P()),
-        out_specs=P(),
-    )(jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int))
+    _, result = roofline.roofline(lambda a, b: a + b)(
+        jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int)
+    )
     self.assertEqual(result.unfused_flops, 3 * 8)
 
   def test_no_specs(self):
-    _, result = roofline.roofline(
-        lambda a, b: a + b,
-        mesh=mesh.AbstractMesh(()),
-    )(jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int))
+    _, result = roofline.roofline(lambda a, b: a + b)(
+        jnp.zeros((3, 8), dtype=int), jnp.ones((3, 8), dtype=int)
+    )
     self.assertEqual(result.unfused_flops, 3 * 8)
 
   def test_no_mesh_and_no_specs(self):
@@ -560,24 +544,245 @@ class RooflineTest(jtu.JaxTestCase):
     self.assertEqual(result.unfused_flops, 3 * 8)
 
   def test_dot_general(self):
-    _, result = roofline.roofline(
-        lambda a, b: a @ b,
-        mesh=mesh.AbstractMesh(()),
-        in_specs=(P(), P()),
-        out_specs=P(),
-    )(jnp.zeros((3, 7), dtype=int), jnp.ones((7, 5), dtype=int))
+    _, result = roofline.roofline(lambda a, b: a @ b)(
+        jnp.zeros((3, 7), dtype=int), jnp.ones((7, 5), dtype=int)
+    )
     self.assertEqual(result.unfused_flops, 2 * 3 * 7 * 5)
     self.assertEqual(
         result.unfused_hbm_bytes, self._bytes_per_word * (3 * 7 + 7 * 5 + 3 * 5)
     )
 
+  def get_conv_output_dim(self, i, k, pad_low, pad_high, stride) -> int:
+    return jnp.floor((i - k + pad_low + pad_high) / stride) + 1
+
+  def get_conv_num_output_channels(
+      self, batch_group_count: int, feature_group_count: int
+  ) -> int:
+    if batch_group_count > 1:
+      return batch_group_count
+    elif feature_group_count > 1:
+      return feature_group_count
+    else:
+      return 1
+
+  @jtu.parameterized.product(
+      window_strides=[(1, 1), (2, 2)],
+      padding=[((0, 0), (0, 0)), ((1, 2), (3, 4))],
+      # batch must be divisible by batch_group_count, so we only include factors
+      # of batch_group_count.
+      batch=[6, 12],
+      batch_group_count=[1, 3],
+      # num_input_channels must be divisible by feature_group_count, so we only
+      # include factors of feature_group_count.
+      num_input_channels=[6, 12],
+      feature_group_count=[1, 3],
+  )
+  def test_conv_general_dilated_unfused_hbm_bytes(
+      self,
+      window_strides: Sequence[int, int],
+      padding: Sequence[int, int],
+      batch: int,
+      batch_group_count: int,
+      num_input_channels: int,
+      feature_group_count: int,
+  ):
+    if batch_group_count > 1 and feature_group_count > 1:
+      self.skipTest(
+          "batch_group_count and feature_group_count cannot both be > 1"
+      )
+
+    num_output_channels = self.get_conv_num_output_channels(
+        batch_group_count, feature_group_count
+    )
+
+    num_input_features = int(num_input_channels / feature_group_count)
+    iw, ih = 100, 200
+    kw, kh = 7, 7
+    input_data = jnp.zeros((batch, num_input_channels, iw, ih), dtype=int)
+    kernel_data = jnp.ones(
+        (num_output_channels, num_input_features, kw, kh), dtype=int
+    )
+    conv = lambda a, b: lax.conv_general_dilated(
+        lhs=a,
+        rhs=b,
+        window_strides=window_strides,
+        padding=padding,
+        batch_group_count=batch_group_count,
+        feature_group_count=feature_group_count,
+    )
+
+    _, result = roofline.roofline(conv)(input_data, kernel_data)
+
+    expected_input_size = batch * num_input_channels * iw * ih
+    expected_kernel_size = num_output_channels * num_input_features * kw * kh
+
+    ow = self.get_conv_output_dim(
+        iw, kw, padding[0][0], padding[0][1], window_strides[0]
+    )
+    oh = self.get_conv_output_dim(
+        ih, kh, padding[1][0], padding[1][1], window_strides[1]
+    )
+    expected_output_shape = jnp.array(
+        (batch / batch_group_count, num_output_channels, ow, oh)
+    )
+    expected_output_size = jnp.prod((expected_output_shape))
+    # Bytes accessed is sum of inputs and output.
+    expected_unfused_hbm_bytes = self._bytes_per_word * (
+        expected_input_size + expected_kernel_size + expected_output_size
+    )
+    self.assertEqual(result.unfused_hbm_bytes, expected_unfused_hbm_bytes)
+
+  @jtu.parameterized.named_parameters(
+      dict(
+          testcase_name="same",
+          padding="SAME",
+      ),
+      dict(
+          testcase_name="same_lower",
+          padding="SAME_LOWER",
+      ),
+  )
+  def test_conv_general_dilated_padding_string(
+      self, padding: str
+  ):
+    input_data = jnp.zeros((1, 1, 3, 3), dtype=int)
+    kernel_data = jnp.ones((1, 1, 3, 3), dtype=int)
+    conv = lambda a, b: lax.conv_general_dilated(
+        lhs=a, rhs=b, window_strides=(1, 1), padding=padding
+    )
+
+    _, result = roofline.roofline(conv)(input_data, kernel_data)
+
+    # Test hbm bytes.
+    expected_input_size = 1 * 1 * 3 * 3
+    expected_kernel_size = 1 * 1 * 3 * 3
+    # Because of same{_lower} padding, output shape should equal to input shape.
+    # This may not be true for other `{feature, batch}`_group_count`s.
+    expected_output_size = expected_input_size
+    # Bytes accessed is sum of inputs and output.
+    expected_unfused_hbm_bytes = self._bytes_per_word * (
+        expected_input_size + expected_kernel_size + expected_output_size
+    )
+    self.assertEqual(result.unfused_hbm_bytes, expected_unfused_hbm_bytes)
+
+    # Test flops.
+    # For spatial_valid_position_counts, we have 3x3 output with the following
+    # flops for each element:
+    #    4 6 4
+    #    6 9 6
+    #    4 6 4
+    # Non_spatial_dims_factor = 1 because `{batch, feature}_group_count` are
+    # both equal to 1.
+    # Each FMA is 2 flops.
+    self.assertEqual(
+        result.unfused_flops,
+        2 * (4 + 6 + 4 + 6 + 9 + 6 + 4 + 6 + 4),
+    )
+
+  def test_conv_general_dilated_padding_string_valid(self):
+    input_data = jnp.zeros((1, 1, 10, 20), dtype=int)
+    kernel_data = jnp.ones((1, 1, 3, 3), dtype=int)
+    conv = lambda a, b: lax.conv_general_dilated(
+        lhs=a, rhs=b, window_strides=(1, 1), padding="VALID"
+    )
+
+    _, result = roofline.roofline(conv)(input_data, kernel_data)
+
+    expected_input_size = 1 * 1 * 10 * 20
+    expected_kernel_size = 1 * 1 * 3 * 3
+    # Valid padding is same as 0 padding.
+    expected_output_size = (
+        1
+        * 1
+        * self.get_conv_output_dim(10, 3, 0, 0, 1)
+        * self.get_conv_output_dim(20, 3, 0, 0, 1)
+    )
+
+    # Bytes accessed is sum of inputs and output.
+    expected_unfused_hbm_bytes = self._bytes_per_word * (
+        expected_input_size + expected_kernel_size + expected_output_size
+    )
+    self.assertEqual(result.unfused_hbm_bytes, expected_unfused_hbm_bytes)
+
+    # Output shape is [1x1x8x18] and each output element requires (3x3) FMAs,
+    # and each FMA is 2 flops.
+    self.assertEqual(
+        result.unfused_flops, 2 * expected_output_size * 3 * 3
+    )
+
+
+  @jtu.parameterized.named_parameters(
+      dict(
+          testcase_name="padding",
+          input_spatial_dim=1,
+          window_strides=[1],
+          padding=[(_VERY_LARGE_NUMBER - 1, _VERY_LARGE_NUMBER - 1)],
+          lhs_dilation=[1],
+      ),
+      dict(
+          testcase_name="input",
+          input_spatial_dim=_VERY_LARGE_NUMBER,
+          window_strides=[_VERY_LARGE_NUMBER - 1],
+          padding=[(0, 0)],
+          lhs_dilation=[_VERY_LARGE_NUMBER],
+      ),
+  )
+  def test_conv_general_dilated_flops_very_large(
+      self, input_spatial_dim, window_strides, padding, lhs_dilation
+  ):
+    input_data = jnp.zeros((1, 1, input_spatial_dim), dtype=int)
+    kernel_data = jnp.ones((1, 1, _VERY_LARGE_NUMBER), dtype=int)
+    conv = lambda a, b: lax.conv_general_dilated(
+        lhs=a,
+        rhs=b,
+        window_strides=window_strides,
+        padding=padding,
+        lhs_dilation=lhs_dilation,
+    )
+    _, result = roofline.roofline(conv)(input_data, kernel_data)
+
+    self.assertEqual(result.unfused_flops, 2 * _VERY_LARGE_NUMBER)
+
+  def test_conv_general_dilated_flops_feature_group_count(self):
+    feature_group_count = 120
+    input_data = jnp.zeros((1, feature_group_count, 10, 20), dtype=int)
+    kernel_data = jnp.ones((feature_group_count, 1, 3, 3), dtype=int)
+    conv = lambda a, b: lax.conv_general_dilated(
+        lhs=a,
+        rhs=b,
+        window_strides=(1, 1),
+        padding=((0, 0), (0, 0)),
+        feature_group_count=feature_group_count,
+    )
+    _, result = roofline.roofline(conv)(input_data, kernel_data)
+
+    # Output shape is [1x120x8x18] and each output element requires (3x3)
+    # FMAs and one FMA is 2 flops.
+    self.assertEqual(
+        result.unfused_flops, 2 * 120 * 8 * 18 * 3 * 3
+    )
+
+  def test_conv_general_dilated_flops_batch_group_count(self):
+    batch_group_count = 120
+    input_data = jnp.zeros((batch_group_count, 1, 10, 20), dtype=int)
+    kernel_data = jnp.ones((batch_group_count, 1, 3, 3), dtype=int)
+    conv = lambda a, b: lax.conv_general_dilated(
+        lhs=a,
+        rhs=b,
+        window_strides=(1, 1),
+        padding=((0, 0), (0, 0)),
+        batch_group_count=batch_group_count,
+    )
+    _, result = roofline.roofline(conv)(input_data, kernel_data)
+
+    # Output shape is [120x1x8x18] and each output element requires (3x3)
+    # FMAs and one FMA is 2 flops.
+    self.assertEqual(
+        result.unfused_flops, 2 * 120 * 8 * 18 * 3 * 3
+    )
+
   def test_reduce_sum_no_axis(self):
-    _, result = roofline.roofline(
-        lambda x: jnp.sum(x),
-        mesh=mesh.AbstractMesh(()),
-        in_specs=(P()),
-        out_specs=P(),
-    )(jnp.zeros((11, 4)))
+    _, result = roofline.roofline(lambda x: jnp.sum(x))(jnp.zeros((11, 4)))
     self.assertEqual(result.unfused_flops, 11 * 4 - 1)
     self.assertEqual(
         result.unfused_hbm_bytes, self._bytes_per_word * (11 * 4 + 1)
@@ -590,12 +795,9 @@ class RooflineTest(jtu.JaxTestCase):
         ([0, 1], 11 * 4 - 1, 11 * 4 + 1),
         ([], 0, 11 * 4 + 11 * 4),
     ]:
-      _, result = roofline.roofline(
-          lambda x: jnp.sum(x, axis=axis),
-          mesh=mesh.AbstractMesh(()),
-          in_specs=(P()),
-          out_specs=P(),
-      )(jnp.zeros((11, 4)))
+      _, result = roofline.roofline(lambda x: jnp.sum(x, axis=axis))(
+          jnp.zeros((11, 4))
+      )
       self.assertEqual(result.unfused_flops, expected_flops)
       self.assertEqual(
           result.unfused_hbm_bytes, self._bytes_per_word * expected_memory

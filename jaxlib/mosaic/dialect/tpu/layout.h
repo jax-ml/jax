@@ -18,15 +18,16 @@ limitations under the License.
 
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
-#include <numeric>
 #include <optional>
 #include <ostream>
 #include <tuple>
 
+#include "absl/log/check.h"
+#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/bit.h"
-#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
@@ -38,7 +39,6 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "absl/log/check.h"
 
 namespace mlir::tpu {
 
@@ -233,6 +233,11 @@ class VectorLayout {
         implicit_dim_(implicit_dim) {
     // TODO(b/275751535): Allow more bitwidths.
     CHECK(llvm::has_single_bit<unsigned>(bitwidth_) && bitwidth_ <= 32);
+    CHECK_GT(tiling_[0], 0);
+    CHECK_GT(tiling_[1], 0);
+    CHECK_GE(offsets_[0].value_or(0), 0);
+    CHECK_GE(offsets_[1].value_or(0), 0);
+    CHECK_LT(offsets_[0].value_or(0), tiling_[0]);
   }
 
   static int num_implicit_dims(const ImplicitDim implicit_dim) {

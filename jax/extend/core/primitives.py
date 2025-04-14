@@ -149,7 +149,6 @@ from jax._src.lax.special import (
   igamma_p as igamma_p,
   lgamma_p as lgamma_p,
   polygamma_p as polygamma_p,
-  random_gamma_grad_p as random_gamma_grad_p,
   regularized_incomplete_beta_p as regularized_incomplete_beta_p,
   zeta_p as zeta_p,
 )

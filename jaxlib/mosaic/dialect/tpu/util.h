@@ -1,3 +1,18 @@
+/* Copyright 2023 The JAX Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+==============================================================================*/
+
 #ifndef THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_
 #define THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_
 
@@ -10,22 +25,21 @@
 #include <type_traits>
 #include <utility>
 
+#include "absl/status/status.h"
+#include "absl/types/span.h"
+#include "llvm/Support/Compiler.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/Location.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "absl/status/status.h"
-#include "absl/types/span.h"
-#include "mlir/include/mlir/IR/Attributes.h"
-#include "mlir/include/mlir/IR/BuiltinTypes.h"
-#include "mlir/include/mlir/IR/Diagnostics.h"
-#include "mlir/include/mlir/IR/Value.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
-#include "tsl/platform/statusor.h"
+#include "xla/tsl/platform/statusor.h"
 
 // TODO: Instead of CHECK_EQs, can we do something like TF_RET_CHECK but with
 // MLIR diagnostics?
@@ -192,8 +206,15 @@ std::string shapeToString(const T &shape) {
   return os.str();
 }
 
-SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
+SmallVector<int64_t> ComputeTileStrides(absl::Span<const int64_t> shape,
                                         absl::Span<const int64_t> tiling);
+
+inline SmallVector<int64_t> ComputeTileStrides(
+    MemRefType memref_ty, absl::Span<const int64_t> tiling) {
+  absl::Span<const int64_t> shape(memref_ty.getShape().data(),
+                                  memref_ty.getShape().size());
+  return ComputeTileStrides(shape, tiling);
+}
 // Assuming MKN matmul - This function must only be called after
 // canonicalization passes.
 //

@@ -96,6 +96,7 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
     --bazel_options=--config="$bazelrc_config" $bazel_remote_cache \
     --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
     --verbose --detailed_timestamped_log --use_new_wheel_build_rule \
+    --output_path="$JAXCI_OUTPUT_DIR" \
     $artifact_tag_flags
 
   # If building release artifacts, we also build a release candidate ("rc")
@@ -105,16 +106,8 @@ if [[ "${allowed_artifacts[@]}" =~ "${artifact}" ]]; then
       --bazel_options=--config="$bazelrc_config" $bazel_remote_cache \
       --python_version=$JAXCI_HERMETIC_PYTHON_VERSION \
       --verbose --detailed_timestamped_log --use_new_wheel_build_rule \
+      --output_path="$JAXCI_OUTPUT_DIR" \
       $artifact_tag_flags --bazel_options=--repo_env=ML_WHEEL_VERSION_SUFFIX="$JAXCI_WHEEL_RC_VERSION"
-  fi
-
-  # Move the built artifacts from the Bazel cache directory to the output
-  # directory.
-  if [[ "$artifact" == "jax" ]]; then
-    mv bazel-bin/dist/*.whl "$JAXCI_OUTPUT_DIR"
-    mv bazel-bin/dist/*.tar.gz "$JAXCI_OUTPUT_DIR"
-  else
-    mv bazel-bin/jaxlib/tools/dist/*.whl "$JAXCI_OUTPUT_DIR"
   fi
 
   # If building `jaxlib` or `jax-cuda-plugin` or `jax-cuda-pjrt` for Linux, we

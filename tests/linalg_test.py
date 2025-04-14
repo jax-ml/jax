@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the LAPAX linear algebra module."""
-
 from functools import partial
 import itertools
 from typing import Iterator
@@ -98,7 +96,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       a = rng(factor_shape, dtype)
       return [np.matmul(a, jnp.conj(T(a)))]
 
-    jnp_fun = partial(jnp.linalg.cholesky, upper=upper)
+    jnp_fun = partial(jnp.linalg.cholesky, upper=upper, symmetrize_input=True)
 
     def np_fun(x, upper=upper):
       # Upper argument added in NumPy 2.0.0
@@ -869,9 +867,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
         self.skipTest("Hermitian SVD doesn't support the algorithm parameter.")
       if not jtu.test_device_matches(["cpu", "gpu"]):
         self.skipTest("SVD algorithm selection only supported on CPU and GPU.")
-      # TODO(danfm): Remove this check after 0.5.2 is released.
-      if jtu.test_device_matches(["cpu"]) and jtu.jaxlib_version() <= (0, 5, 1):
-        self.skipTest("SVD algorithm selection on CPU requires a newer jaxlib version.")
       if jtu.test_device_matches(["cpu"]) and algorithm == lax.linalg.SvdAlgorithm.JACOBI:
         self.skipTest("Jacobi SVD not supported on GPU.")
 
@@ -2333,6 +2328,22 @@ class LaxLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(new_product, old_product, atol=atol)
     self.assertAllClose(
         new_product_with_batching, old_product, atol=atol)
+
+  @jtu.sample_product(
+    n=[0, 1, 5, 10, 20],
+    kind=["symmetric", "lower", "upper"],
+  )
+  @jax.default_matmul_precision("float32")
+  def testPascal(self, n, kind):
+    args_maker = lambda: []
+    osp_fun = partial(osp.linalg.pascal, n=n, kind=kind, exact=False)
+    jsp_fun = partial(jsp.linalg.pascal, n=n, kind=kind)
+    self._CheckAgainstNumpy(osp_fun,
+                            jsp_fun, args_maker,
+                            atol=1e-3,
+                            rtol=1e-2 if jtu.test_device_matches(['tpu']) else 1e-3,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker)
 
 
 if __name__ == "__main__":

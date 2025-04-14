@@ -21,6 +21,7 @@ from enum import Enum
 import numpy as np
 from functools import partial
 
+from jax._src import core
 from jax._src.lax.lax import (add, bitwise_and, bitwise_not, bitwise_or,
                               broadcast_in_dim, broadcast_shapes,
                               convert_element_type, div, eq, exp, full_like, ge,
@@ -37,8 +38,28 @@ from jax._src.interpreters import mlir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.typing import Array, ArrayLike
 
+# TODO(mattjj): this function sucks, delete it
+def _up_and_broadcast(doit):
+  def up_and_broadcast(*args):
+    broadcasted_shape = broadcast_shapes(*(a.shape for a in args))
+    args = [broadcast_in_dim(a, broadcasted_shape, list(range(a.ndim))) for a in args]
+
+    a_dtype = args[0].dtype
+    needs_upcast = a_dtype == dtypes.bfloat16 or a_dtype == np.float16
+    if needs_upcast:
+      args = [convert_element_type(a, np.float32) for a in args]
+      a_x_type = np.float32
+    else:
+      a_x_type = a_dtype
+    result = doit(*args, dtype=a_x_type)
+    if needs_upcast:
+      result = convert_element_type(result, a_dtype)
+    return result
+  return up_and_broadcast
+
 def betainc(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise regularized incomplete beta integral."""
+  a, b, x = core.standard_insert_pbroadcast(a, b, x)
   return regularized_incomplete_beta_p.bind(a, b, x)
 
 def lgamma(x: ArrayLike) -> Array:
@@ -51,26 +72,33 @@ def digamma(x: ArrayLike) -> Array:
 
 def polygamma(m: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise polygamma: :math:`\psi^{(m)}(x)`."""
+  m, x = core.standard_insert_pbroadcast(m, x)
   return polygamma_p.bind(m, x)
 
 def igamma(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise regularized incomplete gamma function."""
+  a, x = core.standard_insert_pbroadcast(a, x)
   return igamma_p.bind(a, x)
 
 def igammac(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise complementary regularized incomplete gamma function."""
+  a, x = core.standard_insert_pbroadcast(a, x)
   return igammac_p.bind(a, x)
 
 def igamma_grad_a(a: ArrayLike, x: ArrayLike) -> Array:
   r"""Elementwise derivative of the regularized incomplete gamma function."""
+  a, x = core.standard_insert_pbroadcast(a, x)
   return igamma_grad_a_p.bind(a, x)
 
-def random_gamma_grad(a: ArrayLike, x: ArrayLike) -> Array:
+@_up_and_broadcast
+def random_gamma_grad(a: ArrayLike, x: ArrayLike, *, dtype) -> Array:
   r"""Elementwise derivative of samples from `Gamma(a, 1)`."""
-  return random_gamma_grad_p.bind(a, x)
+  a, x = core.standard_insert_pbroadcast(a, x)
+  return random_gamma_grad_impl(a, x, dtype=dtype)
 
 def zeta(x: ArrayLike, q: ArrayLike) -> Array:
   r"""Elementwise Hurwitz zeta function: :math:`\zeta(x, q)`"""
+  x, q = core.standard_insert_pbroadcast(x, q)
   return zeta_p.bind(x, q)
 
 def bessel_i0e(x: ArrayLike) -> Array:
@@ -194,12 +222,18 @@ def regularized_incomplete_beta_impl(a, b, x, *, dtype):
     iteration_is_one = eq(iteration_bcast, full_like(iteration_bcast, 1))
     iteration_minus_one = iteration_bcast - full_like(iteration_bcast, 1)
     m = iteration_minus_one // full_like(iteration_minus_one, 2)
+    m_is_zero = eq(m, full_like(m, 0))
     m = convert_element_type(m, dtype)
     one = full_like(a, 1)
     two = full_like(a, 2.0)
     # Partial numerator terms
-    even_numerator = -(a + m) * (a + b + m) * x / (
-        (a + two * m) * (a + two * m + one))
+
+    # When a is close to zero and m == 0, using zero_numerator avoids
+    # inaccuracies when FTZ or DAZ is enabled:
+    zero_numerator = -(a + b) * x / (a + one)
+    even_numerator = select(m_is_zero, zero_numerator,
+                            -(a + m) * (a + b + m) * x / (
+                              (a + two * m) * (a + two * m + one)))
     odd_numerator = m * (b - m) * x / ((a + two * m - one) * (a + two * m))
     one_numerator = full_like(x, 1.0)
     numerator = select(iteration_is_even, even_numerator, odd_numerator)
@@ -210,12 +244,24 @@ def regularized_incomplete_beta_impl(a, b, x, *, dtype):
     return select(eq(iteration_bcast, full_like(iteration_bcast, 0)),
                   full_like(x, 0), full_like(x, 1))
 
-  result_is_nan = bitwise_or(bitwise_or(bitwise_or(
-    le(a, full_like(a, 0)), le(b, full_like(b, 0))),
-    lt(x, full_like(x, 0))), gt(x, full_like(x, 1)))
+  a_is_zero = bitwise_or(eq(a, full_like(a, 0)), eq(b, full_like(b, float('inf'))))
+  b_is_zero = bitwise_or(eq(b, full_like(b, 0)), eq(a, full_like(a, float('inf'))))
+  x_is_zero = eq(x, full_like(x, 0))
+  x_is_one = eq(x, full_like(x, 1))
+  x_is_not_zero = bitwise_not(x_is_zero)
+  x_is_not_one = bitwise_not(x_is_one)
+  is_nan = bitwise_or(bitwise_or(_isnan(a), _isnan(b)), _isnan(x))
 
-  # The continued fraction will converge rapidly when x < (a+1)/(a+b+2)
-  # as per: http://dlmf.nist.gov/8.17.E23
+  result_is_zero = bitwise_or(bitwise_and(b_is_zero, x_is_not_one), bitwise_and(a_is_zero, x_is_zero))
+  result_is_one = bitwise_or(bitwise_and(a_is_zero, x_is_not_zero), bitwise_and(b_is_zero, x_is_one))
+
+  result_is_nan = bitwise_or(bitwise_or(bitwise_or(
+    lt(a, full_like(a, 0)), lt(b, full_like(b, 0))),
+    lt(x, full_like(x, 0))), gt(x, full_like(x, 1)))
+  result_is_nan = bitwise_or(result_is_nan, bitwise_or(bitwise_and(a_is_zero, b_is_zero), is_nan))
+
+  # The continued fraction will converge rapidly when x <
+  # (a+1)/(a+b+2) as per: http://dlmf.nist.gov/8.17.E23.
   #
   # Otherwise, we can rewrite using the symmetry relation as per:
   # http://dlmf.nist.gov/8.17.E4
@@ -234,10 +280,21 @@ def regularized_incomplete_beta_impl(a, b, x, *, dtype):
     inputs=[a, b, x]
   )
 
-  lbeta_ab = lgamma(a) + lgamma(b) - lgamma(a + b)
-  result = continued_fraction * exp(log(x) * a + log1p(-x) * b - lbeta_ab) / a
+  # For very small a and to avoid division by zero, we'll use
+  # a * gamma(a) = gamma(a + 1) -> 1 as a -> 0+.
+  very_small = (dtypes.finfo(dtype).tiny * 2).astype(dtype)
+  lbeta_ab_small_a = lgamma(b) - lgamma(a + b)
+  lbeta_ab = lgamma(a) + lbeta_ab_small_a
+  factor = select(lt(a, full_like(a, very_small)),
+                  exp(log1p(-x) * b - lbeta_ab_small_a),
+                  exp(log(x) * a + log1p(-x) * b - lbeta_ab) / a)
+  result = continued_fraction * factor
+  result = select(converges_rapidly, result, sub(full_like(result, 1), result))
+
+  result = select(result_is_zero, full_like(a, 0), result)
+  result = select(result_is_one, full_like(a, 1), result)
   result = select(result_is_nan, full_like(a, float('nan')), result)
-  return select(converges_rapidly, result, sub(full_like(result, 1), result))
+  return result
 
 class IgammaMode(Enum):
   VALUE = 1
@@ -303,15 +360,16 @@ def _igamma_series(ax, x, a, enabled, dtype, mode):
 
 def igamma_impl(a, x, *, dtype):
   is_nan = bitwise_or(_isnan(a), _isnan(x))
-  x_is_zero = eq(x, _const(x, 0))
   x_is_infinity = eq(x, _const(x, float('inf')))
-  domain_error = bitwise_or(lt(x, _const(x, 0)), le(a, _const(a, 0)))
-  use_igammac = bitwise_and(gt(x, _const(x, 1)), gt(x, a))
+  a_is_zero = eq(a, _const(a, 0))
+  x_is_zero = eq(x, _const(x, 0))
+  domain_error = _reduce(bitwise_or, [lt(x, _const(x, 0)), lt(a, _const(a, 0)), bitwise_and(a_is_zero, x_is_zero), is_nan])
+
+  use_igammac = bitwise_and(ge(x, _const(x, 1)), gt(x, a))
   ax = a * log(x) - x - lgamma(a)
   underflow = lt(ax, -log(dtypes.finfo(dtype).max))
   ax = exp(ax)
-  enabled = bitwise_not(
-      _reduce(bitwise_or,[x_is_zero, domain_error, underflow, is_nan]))
+  enabled = bitwise_not(_reduce(bitwise_or, [x_is_zero, domain_error, underflow, x_is_infinity]))
 
   output = select(
     use_igammac,
@@ -323,8 +381,7 @@ def igamma_impl(a, x, *, dtype):
   )
   output = select(x_is_zero, full_like(a, 0), output)
   output = select(x_is_infinity, full_like(a, 1), output)
-  output = select(bitwise_or(domain_error, is_nan),
-                  full_like(a, float('nan')), output)
+  output = select(domain_error, full_like(a, float('nan')), output)
   return output
 
 def _igammac_continued_fraction(ax, x, a, enabled, dtype, mode):
@@ -433,11 +490,15 @@ def _igammac_continued_fraction(ax, x, a, enabled, dtype, mode):
     raise ValueError(f"Invalid mode: {mode}")
 
 def igammac_impl(a, x, *, dtype):
-  out_of_range = bitwise_or(le(x, _const(x, 0)), le(a, _const(a, 0)))
+  is_nan = bitwise_or(_isnan(a), _isnan(x))
+  a_is_zero = eq(a, _const(a, 0))
+  x_is_zero = eq(x, _const(x, 0))
+  x_is_infinity = eq(x, _const(x, float('inf')))
+  domain_error = _reduce(bitwise_or, [lt(x, _const(x, 0)), lt(a, _const(a, 0)), bitwise_and(a_is_zero, x_is_zero), is_nan])
   use_igamma = bitwise_or(lt(x, _const(x, 1)), lt(x, a))
   ax = a * log(x) - x - lgamma(a)
   underflow = lt(ax, -log(dtypes.finfo(dtype).max))
-  enabled = bitwise_not(bitwise_or(out_of_range, underflow))
+  enabled = bitwise_not(_reduce(bitwise_or, [domain_error, underflow, x_is_infinity, a_is_zero]))
   ax = exp(ax)
 
   igamma_call = _igamma_series(ax, x, a, bitwise_and(enabled, use_igamma),
@@ -445,10 +506,10 @@ def igammac_impl(a, x, *, dtype):
   igammac_cf_call = _igammac_continued_fraction(ax, x, a,
     bitwise_and(enabled, bitwise_not(use_igamma)), dtype, IgammaMode.VALUE)
 
-  result = select(use_igamma, _const(a, 1) - igamma_call, igammac_cf_call)
-  x_is_infinity = eq(x, _const(x, float('inf')))
-  result = select(x_is_infinity, full_like(result, 0), result)
-  return select(out_of_range, full_like(a, 1), result)
+  output = select(use_igamma, _const(a, 1) - igamma_call, igammac_cf_call)
+  output = select(bitwise_or(x_is_infinity, a_is_zero), full_like(output, 0), output)
+  output = select(domain_error, full_like(a, float('nan')), output)
+  return output
 
 def igamma_grad_a_impl(a, x, *, dtype):
   is_nan = bitwise_or(_isnan(a), _isnan(x))
@@ -489,24 +550,6 @@ def random_gamma_grad_impl(a, x, *, dtype):
   output = select(bitwise_or(domain_error, is_nan),
                   full_like(a, float('nan')), output)
   return output
-
-def _up_and_broadcast(doit):
-  def up_and_broadcast(*args):
-    broadcasted_shape = broadcast_shapes(*(a.shape for a in args))
-    args = [broadcast_in_dim(a, broadcasted_shape, list(range(a.ndim))) for a in args]
-
-    a_dtype = args[0].dtype
-    needs_upcast = a_dtype == dtypes.bfloat16 or a_dtype == np.float16
-    if needs_upcast:
-      args = [convert_element_type(a, np.float32) for a in args]
-      a_x_type = np.float32
-    else:
-      a_x_type = a_dtype
-    result = doit(*args, dtype=a_x_type)
-    if needs_upcast:
-      result = convert_element_type(result, a_dtype)
-    return result
-  return up_and_broadcast
 
 
 def evaluate_chebyshev_polynomial(x, coefficients):
@@ -652,11 +695,6 @@ mlir.register_lowering(igammac_p,
                                       multiple_results=False))
 
 ad.defjvp(igammac_p, igammac_grada, igammac_gradx)
-
-random_gamma_grad_p = standard_naryop([_float, _float], 'random_gamma_grad')
-mlir.register_lowering(random_gamma_grad_p,
-                       mlir.lower_fun(_up_and_broadcast(random_gamma_grad_impl),
-                                      multiple_results=False))
 
 zeta_p = standard_naryop([_float, _float], 'zeta')
 mlir.register_lowering(zeta_p, partial(_nary_lower_hlo, chlo.zeta))

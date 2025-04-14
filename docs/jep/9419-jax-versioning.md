@@ -167,16 +167,16 @@ We maintain an additional version number (`_version`) in
 [`xla_client.py` in the XLA repository](https://github.com/openxla/xla/blob/main/xla/python/xla_client.py).
 The idea is that this version number, is defined in `xla/python`
 together with the C++ parts of JAX, is also accessible to JAX Python as
-`jax._src.lib.xla_extension_version`, and must
+`jax._src.lib.jaxlib_extension_version`, and must
 be incremented every time that a change is made to the XLA/Python code that has
 backwards compatibility implications for `jax`. The JAX Python code can then use
 this version number to maintain backwards compatibility, e.g.:
 
 ```
-from jax._src.lib import xla_extension_version
+from jax._src.lib import jaxlib_extension_version
 
 # 123 is the new version number for _version in xla_client.py
-if xla_extension_version >= 123:
+if jaxlib_extension_version >= 123:
   # Use new code path
   ...
 else:

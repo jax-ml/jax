@@ -1,7 +1,7 @@
 (building-from-source)=
 # Building from source
 
-<!--* freshness: { reviewed: '2024-05-15' } *-->
+<!--* freshness: { reviewed: '2025-03-27' } *-->
 
 First, obtain the JAX source code:
 
@@ -526,23 +526,27 @@ bazel test //tests:cpu_tests //tests:backend_independent_tests
 `//tests:gpu_tests` and `//tests:tpu_tests` are also available, if you have the
 necessary hardware.
 
-To use a preinstalled `jaxlib` instead of building it you first need to
-make it available in the hermetic Python. To install a specific version of
-`jaxlib` within hermetic Python run (using `jaxlib >= 0.4.26` as an example):
+To use the preinstalled `jax` and `jaxlib` instead of building them you first
+need to make them available in the hermetic Python. To install the specific
+versions of `jax` and `jaxlib` within hermetic Python run (using `jax >= 0.4.26`
+and `jaxlib >= 0.4.26` as an example):
 
 ```
+echo -e "\njax >= 0.4.26" >> build/requirements.in
 echo -e "\njaxlib >= 0.4.26" >> build/requirements.in
 python build/build.py requirements_update
 ```
 
-Alternatively, to install `jaxlib` from a local wheel (assuming Python 3.12):
+Alternatively, to install `jax` and `jaxlib` from the local wheels
+(assuming Python 3.12):
 
 ```
+echo -e "\n$(realpath jax-0.4.26-py3-none-any.whl)" >> build/requirements.in
 echo -e "\n$(realpath jaxlib-0.4.26-cp312-cp312-manylinux2014_x86_64.whl)" >> build/requirements.in
 python build/build.py requirements_update --python_version=3.12
 ```
 
-Once you have `jaxlib` installed hermetically, run:
+Once you have `jax` and `jaxlib` installed hermetically, run:
 
 ```
 bazel test --//jax:build_jaxlib=false //tests:cpu_tests //tests:backend_independent_tests
@@ -785,7 +789,7 @@ desired formats, and which the `jupytext --sync` command recognizes when invoked
 #### Notebooks within the Sphinx build
 
 Some of the notebooks are built automatically as part of the pre-submit checks and
-as part of the [Read the docs](https://jax.readthedocs.io/en/latest) build.
+as part of the [Read the docs](https://docs.jax.dev/en/latest) build.
 The build will fail if cells raise errors. If the errors are intentional, you can either catch them,
 or tag the cell with `raises-exceptions` metadata ([example PR](https://github.com/jax-ml/jax/pull/2402/files)).
 You have to add this metadata by hand in the `.ipynb` file. It will be preserved when somebody else
@@ -796,7 +800,7 @@ See `exclude_patterns` in [conf.py](https://github.com/jax-ml/jax/blob/main/docs
 
 ### Documentation building on `readthedocs.io`
 
-JAX's auto-generated documentation is at <https://jax.readthedocs.io/>.
+JAX's auto-generated documentation is at <https://docs.jax.dev/>.
 
 The documentation building is controlled for the entire project by the
 [readthedocs JAX settings](https://readthedocs.org/dashboard/jax). The current settings
@@ -809,7 +813,7 @@ For each automated documentation build you can see the
 
 If you want to test the documentation generation on Readthedocs, you can push code to the `test-docs`
 branch. That branch is also built automatically, and you can
-see the generated documentation [here](https://jax.readthedocs.io/en/test-docs/). If the documentation build
+see the generated documentation [here](https://docs.jax.dev/en/test-docs/). If the documentation build
 fails you may want to [wipe the build environment for test-docs](https://docs.readthedocs.io/en/stable/guides/wipe-environment.html).
 
 For a local test, I was able to do it in a fresh directory by replaying the commands

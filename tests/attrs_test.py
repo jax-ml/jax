@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import itertools as it
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -28,7 +29,7 @@ from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map
 
 from jax.experimental import attrs
-from jax.experimental.attrs import jax_setattr, jax_getattr
+from jax.experimental.attrs import jax_setattr, jax_getattr, jax_appendattr
 
 config.parse_flags_with_absl()
 
@@ -65,6 +66,19 @@ class AttrsTest(jtu.JaxTestCase):
     self.assertEqual(thing.x, 8.0)
     double_it()
     self.assertEqual(thing.x, 16.0)
+
+  def test_setattr_doesnt_leak(self):
+    thing = Thing(1.0)
+
+    @jax.jit
+    def f(x):
+      jax_setattr(thing, 'x', x)
+      raise Exception
+
+    try: f(1.)
+    except: pass
+    self.assertNotIsInstance(thing.x, jax.core.Tracer)
+
 
   @parameterized.parameters([True, False])
   def test_jit_basic_tree(self, jit: bool):
@@ -260,6 +274,26 @@ class AttrsTest(jtu.JaxTestCase):
     double_it_10()
     self.assertAllClose(thing.x, 1024., check_dtypes=False)
 
+  @parameterized.parameters([True, False])
+  def test_scan_basic_pytree(self, jit):
+    class Thing: ...
+    thing = Thing()
+    thing.x = (1.0, 1.0)
+
+    def double_it_10():
+      def body(_, __):
+        cur_x, _ = jax_getattr(thing ,"x")
+        jax_setattr(thing, "x", (cur_x * 2.0, 3.0))
+        return None, None
+      _, _ = jax.lax.scan(body, None, None, length=10)
+
+    if jit:
+      double_it_10 = jax.jit(double_it_10)
+
+    double_it_10()
+    self.assertAllClose(thing.x[0], 1024., check_dtypes=False)
+    self.assertAllClose(thing.x[1],    3., check_dtypes=False)
+
   def test_scan_basic_consts_and_args(self):
     thing = Thing(1.0)
 
@@ -359,6 +393,227 @@ class AttrsTest(jtu.JaxTestCase):
       jax_setattr(a, 'x', x)
       return i + 1, None
     _, _ = jax.lax.scan(body, 0, None, length=3)  # don't crash
+
+  @parameterized.parameters([True, False])
+  def test_setattr_doesnt_exist(self, jit):
+    class Thing:
+      ...
+    thing = Thing()
+
+    def f(x):
+      assert (not jit) or tracing_is_ok
+      jax_setattr(thing, 'x', x)
+
+    if jit:
+      f = jax.jit(f)
+
+    tracing_is_ok = True
+    self.assertFalse(hasattr(thing, 'x'))
+    f(1.0)
+    self.assertEqual(thing.x, 1.0)
+    f(2.0)
+    self.assertEqual(thing.x, 2.0)
+
+    tracing_is_ok = False
+    f(3.0)
+    self.assertEqual(thing.x, 3.0)
+
+    del thing.x
+    f(4.0)
+    self.assertEqual(thing.x, 4.0)
+
+    tracing_is_ok = True
+    f(5)
+    self.assertEqual(thing.x, 5)
+
+  def test_setattr_doesnt_exist_doesnt_leave_sentinel_around(self):
+    class Thing:
+      ...
+    thing = Thing()
+
+    def f(x):
+      jax_setattr(thing, 'x', x)
+
+    jax.make_jaxpr(f)(3.)
+    self.assertFalse(hasattr(thing, 'x'))
+    tracing_ok = True
+    f(0.0)
+    self.assertAllClose(thing.x, 0.)
+    tracing_ok = False
+    f(1.0)
+    self.assertAllClose(thing.x, 1.)
+
+  @parameterized.parameters(it.product([False, True], repeat=2))
+  def test_appendattr_basic(self, jit, initialized):
+    class Thing:
+      ...
+    thing = Thing()
+
+    if initialized:
+      thing.x = jnp.arange(0.)
+
+    def f(x):
+      assert (not jit) or tracing_ok
+      jax_appendattr(thing, 'x', x)
+      jax_appendattr(thing, 'x', x + 1)
+
+    if jit:
+      f = jax.jit(f)
+
+    tracing_ok = True
+    f(0.0)
+    self.assertAllClose(thing.x, jnp.array([0., 1.]))
+    tracing_ok = False
+    f(2.0)
+    self.assertAllClose(thing.x, jnp.array([0., 1., 2., 3.]))
+    f(4.0)
+    self.assertAllClose(thing.x, jnp.array([0., 1., 2., 3., 4., 5.]))
+
+  @parameterized.parameters(it.product([False, True], repeat=2))
+  def test_appendattr_constant(self, jit, initialized):
+    class Thing: ...
+    thing = Thing()
+
+    if initialized:
+      thing.x = jnp.arange(0.)
+
+    def f():
+      assert (not jit) or tracing_ok
+      jax_appendattr(thing, 'x', 0.0)
+      jax_appendattr(thing, 'x', 1.0)
+
+    if jit:
+      f = jax.jit(f)
+
+    tracing_ok = True
+    f()
+    self.assertAllClose(thing.x, jnp.array([0., 1.]))
+    tracing_ok = False
+    f()
+    self.assertAllClose(thing.x, jnp.array([0., 1., 0., 1.]))
+
+  @parameterized.parameters([True, False])
+  def test_appendattr_getattr_errors(self, initialized):
+    class Thing: ...
+    thing = Thing()
+
+    if initialized:
+      thing.x = jnp.arange(0.)
+
+    @jax.jit
+    def f(x):
+      jax_appendattr(thing, 'x', x)
+      jax_getattr(thing, 'x')
+
+    with self.assertRaisesRegex(TypeError, "can't read/write"):
+      f(1.0)
+
+    @jax.jit
+    def g(x):
+      jax_setattr(thing, 'x', x)
+      jax_appendattr(thing, 'x', x)
+
+    with self.assertRaisesRegex(TypeError, "can't append"):
+      g(1.0)
+
+    if initialized:
+      self.assertNotIsInstance(thing.x, jax.core.Tracer)
+    else:
+      self.assertFalse(hasattr(thing, 'x'))
+
+  @parameterized.parameters(it.product([False, True], repeat=2))
+  def test_appendattr_dtype_disagreement(self, jit, initialized):
+    class Thing: ...
+    thing = Thing()
+
+    if initialized:
+      thing.x = jnp.array([], 'float32')
+
+    def f(x):
+      jax_appendattr(thing, 'x', x)
+      jax_appendattr(thing, 'x', x.astype('complex64'))
+
+    if jit:
+      f = jax.jit(f)
+
+    msg = "can only append to attr x with values of trailing shape "
+    msg += "float32" if initialized else "int32"
+    with self.assertRaisesRegex(TypeError, msg):
+      f(jnp.array(1, 'int32'))
+
+  @parameterized.parameters(it.product([False, True], repeat=2))
+  def test_appendattr_shape_disagreement(self, jit, initialized):
+    class Thing: ...
+    thing = Thing()
+
+    if initialized:
+      thing.x = jnp.array([])
+
+    def f(x):
+      jax_appendattr(thing, 'x', x)
+      jax_appendattr(thing, 'x', jnp.stack([x, x]))
+
+    if jit:
+      f = jax.jit(f)
+
+    msg = "can only append to attr x with values of trailing shape"
+    with self.assertRaisesRegex(TypeError, msg):
+      f(1)
+
+  @parameterized.parameters(it.product([False, True], repeat=2))
+  def test_appendattr_scan(self, jit, initialized):
+    class Thing: ...
+    thing = Thing()
+
+    if initialized:
+      thing.x = jnp.array([])
+
+    def f():
+      def body(c, x):
+        jax_appendattr(thing, 'x', 2 * x)
+        jax_appendattr(thing, 'x', 2 * x + 1)
+        return c, ()
+      _, () = jax.lax.scan(body, 0, jnp.arange(3.))
+
+    if jit:
+      f = jax.jit(f)
+
+    f()
+
+    self.assertAllClose(thing.x, jnp.array([0., 1., 2., 3., 4., 5.]))
+
+  @parameterized.parameters(it.product([False, True], repeat=2))
+  def test_appendattr_scan_vjp(self, jit, initialized):
+    class Thing: ...
+    thing = Thing()
+
+    if initialized:
+      thing.y_bar = jnp.array([])
+
+    def f(x):
+      def body(c, _):
+        return 0.5 * g(2 * c), ()
+      y, _ = jax.lax.scan(body, x, (), length=5)
+      return y
+
+    if jit:
+      f = jax.jit(f)
+
+    @jax.custom_vjp
+    def g(x):
+      return x
+
+    def g_fwd(x):
+      return g(x), None
+
+    def g_bwd(_, y_bar):
+      jax_appendattr(thing, 'y_bar', y_bar)
+      return y_bar,
+
+    g.defvjp(g_fwd, g_bwd)
+    jax.grad(f)(3.)
+
+    self.assertAllClose(thing.y_bar, jnp.array([0.5] * 5))
 
 
 class AttrsJVPTest(jtu.JaxTestCase):
@@ -499,6 +754,7 @@ class AttrsJVPTest(jtu.JaxTestCase):
     self.assertAllClose(z_dot2, z_dot2_, check_dtypes=False)
     self.assertAllClose(w_ddot, w_ddot_, check_dtypes=False)
     self.assertAllClose(z_ddot, z_ddot_, check_dtypes=False)
+
 
 class AttrsLinTest(jtu.JaxTestCase):
 

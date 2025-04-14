@@ -79,7 +79,7 @@ from jax._src.lib import xla_client as _xc
 Device = _xc.Device
 del _xc
 
-from jax._src.core import get_ty as get_ty
+from jax._src.core import typeof as typeof
 from jax._src.api import effects_barrier as effects_barrier
 from jax._src.api import block_until_ready as block_until_ready
 from jax._src.ad_checkpoint import checkpoint_wrapper as checkpoint  # noqa: F401
@@ -141,16 +141,6 @@ from jax._src.array import (
     make_array_from_process_local_data as make_array_from_process_local_data,
 )
 
-from jax._src.tree_util import (
-  tree_map as _deprecated_tree_map,
-  treedef_is_leaf as _deprecated_treedef_is_leaf,
-  tree_flatten as _deprecated_tree_flatten,
-  tree_leaves as _deprecated_tree_leaves,
-  tree_structure as _deprecated_tree_structure,
-  tree_transpose as _deprecated_tree_transpose,
-  tree_unflatten as _deprecated_tree_unflatten,
-)
-
 # These submodules are separate because they are in an import cycle with
 # jax and rely on the names imported above.
 from jax import custom_derivatives as custom_derivatives
@@ -184,59 +174,46 @@ import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
 _deprecations = {
-  # Added July 2022
+  # Finalized 2025-03-25; remove after 2025-06-25
   "treedef_is_leaf": (
-    "jax.treedef_is_leaf is deprecated: use jax.tree_util.treedef_is_leaf.",
-    _deprecated_treedef_is_leaf
+    "jax.treedef_is_leaf was removed in JAX v0.6.0: use jax.tree_util.treedef_is_leaf.",
+    None
   ),
   "tree_flatten": (
-    "jax.tree_flatten is deprecated: use jax.tree.flatten (jax v0.4.25 or newer) "
+    "jax.tree_flatten was removed in JAX v0.6.0: use jax.tree.flatten (jax v0.4.25 or newer) "
     "or jax.tree_util.tree_flatten (any JAX version).",
-    _deprecated_tree_flatten
+    None
   ),
   "tree_leaves": (
-    "jax.tree_leaves is deprecated: use jax.tree.leaves (jax v0.4.25 or newer) "
+    "jax.tree_leaves was removed in JAX v0.6.0: use jax.tree.leaves (jax v0.4.25 or newer) "
     "or jax.tree_util.tree_leaves (any JAX version).",
-    _deprecated_tree_leaves
+    None
   ),
   "tree_structure": (
-    "jax.tree_structure is deprecated: use jax.tree.structure (jax v0.4.25 or newer) "
+    "jax.tree_structure was removed in JAX v0.6.0: use jax.tree.structure (jax v0.4.25 or newer) "
     "or jax.tree_util.tree_structure (any JAX version).",
-    _deprecated_tree_structure
+    None
   ),
   "tree_transpose": (
-    "jax.tree_transpose is deprecated: use jax.tree.transpose (jax v0.4.25 or newer) "
+    "jax.tree_transpose was removed in JAX v0.6.0: use jax.tree.transpose (jax v0.4.25 or newer) "
     "or jax.tree_util.tree_transpose (any JAX version).",
-    _deprecated_tree_transpose
+    None
   ),
   "tree_unflatten": (
-    "jax.tree_unflatten is deprecated: use jax.tree.unflatten (jax v0.4.25 or newer) "
+    "jax.tree_unflatten was removed in JAX v0.6.0: use jax.tree.unflatten (jax v0.4.25 or newer) "
     "or jax.tree_util.tree_unflatten (any JAX version).",
-    _deprecated_tree_unflatten
+    None
   ),
-  # Added Feb 28, 2024
   "tree_map": (
-    "jax.tree_map is deprecated: use jax.tree.map (jax v0.4.25 or newer) "
+    "jax.tree_map was removed in JAX v0.6.0: use jax.tree.map (jax v0.4.25 or newer) "
     "or jax.tree_util.tree_map (any JAX version).",
-    _deprecated_tree_map
-  ),
-  # Finalized Nov 12 2024; remove after Feb 12 2025
-  "clear_backends": (
-    "jax.clear_backends was removed in JAX v0.4.36",
     None
   ),
 }
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  from jax._src.tree_util import treedef_is_leaf as treedef_is_leaf
-  from jax._src.tree_util import tree_flatten as tree_flatten
-  from jax._src.tree_util import tree_leaves as tree_leaves
-  from jax._src.tree_util import tree_map as tree_map
-  from jax._src.tree_util import tree_structure as tree_structure
-  from jax._src.tree_util import tree_transpose as tree_transpose
-  from jax._src.tree_util import tree_unflatten as tree_unflatten
-
+  pass
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

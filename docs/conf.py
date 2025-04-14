@@ -80,6 +80,7 @@ extensions = [
     "sphinx_remove_toctrees",
     'sphinx_copybutton',
     'jax_extensions',
+    'jax_list_config_options',
     'sphinx_design',
     'sphinxext.rediraffe',
 ]
@@ -172,6 +173,7 @@ html_theme_options = {
     'repository_url': 'https://github.com/jax-ml/jax',
     'use_repository_button': True,     # add a "link to repository" button
     'navigation_with_keys': False,
+    'article_header_start': ['toggle-primary-sidebar.html', 'breadcrumbs'],
 }
 
 # The name of an image file (relative to this directory) to place at the top

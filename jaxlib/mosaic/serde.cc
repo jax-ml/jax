@@ -18,15 +18,15 @@ limitations under the License.
 #include <optional>
 #include <string>
 
-#include "llvm/include/llvm/ADT/StringMap.h"
-#include "llvm/include/llvm/ADT/StringRef.h"
-#include "mlir/include/mlir/IR/BuiltinAttributes.h"
-#include "mlir/include/mlir/IR/BuiltinOps.h"
-#include "mlir/include/mlir/IR/Operation.h"
-#include "mlir/include/mlir/IR/OperationSupport.h"
-#include "mlir/include/mlir/IR/Visitors.h"
-#include "mlir/include/mlir/Interfaces/DataLayoutInterfaces.h"
-#include "mlir/include/mlir/Support/LLVM.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringRef.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Operation.h"
+#include "mlir/IR/OperationSupport.h"
+#include "mlir/IR/Visitors.h"
+#include "mlir/Interfaces/DataLayoutInterfaces.h"
+#include "mlir/Support/LLVM.h"
 
 namespace jaxlib::mosaic {
 

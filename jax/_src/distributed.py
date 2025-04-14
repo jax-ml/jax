@@ -41,6 +41,7 @@ class State:
   client: Any | None = None
   preemption_sync_manager: Any | None = None
   coordinator_address: str | None = None
+  slice_index: int | None = None
 
   def initialize(self,
                  coordinator_address: str | None = None,
@@ -53,7 +54,8 @@ class State:
                  service_heartbeat_interval_seconds: int = 10,
                  service_max_missing_heartbeats: int = 10,
                  client_heartbeat_interval_seconds: int = 10,
-                 client_max_missing_heartbeats: int = 10):
+                 client_max_missing_heartbeats: int = 10,
+                 slice_index: int | None = None):
     coordinator_address = (coordinator_address or
                            os.environ.get('JAX_COORDINATOR_ADDRESS'))
     if isinstance(local_device_ids, int):
@@ -149,6 +151,10 @@ class State:
 
     self.initialize_preemption_sync_manager()
 
+    if slice_index is None and 'JAX_SLICE_INDEX' in os.environ:
+      slice_index = int(os.environ.get('JAX_SLICE_INDEX'))  # type: ignore
+    self.slice_index = slice_index
+
   def shutdown(self):
     if self.client:
       self.client.shutdown()
@@ -175,7 +181,8 @@ def initialize(coordinator_address: str | None = None,
                local_device_ids: int | Sequence[int] | None = None,
                cluster_detection_method: str | None = None,
                initialization_timeout: int = 300,
-               coordinator_bind_address: str | None = None):
+               coordinator_bind_address: str | None = None,
+               slice_index: int | None = None):
   """Initializes the JAX distributed system.
 
   Calling :func:`~jax.distributed.initialize` prepares JAX for execution on
@@ -236,6 +243,8 @@ def initialize(coordinator_address: str | None = None,
       all available addresses on the same port as ``coordinator_address``. On systems
       that have multiple network interfaces per node it may be insufficient to only
       have the coordinator service listen on one address/interface.
+    slice_index: The slice index assigned to this process' local devices. If any process sets ``slice_index``,
+      then all processes must do so. If ``None`` the slice indices will be chosen automatically.
 
   Raises:
     RuntimeError: If :func:`~jax.distributed.initialize` is called more than once
@@ -261,7 +270,8 @@ def initialize(coordinator_address: str | None = None,
                         "This includes any computation, but also calls to jax.devices, jax.device_put, and others.")
   global_state.initialize(coordinator_address, num_processes, process_id,
                           local_device_ids, cluster_detection_method,
-                          initialization_timeout, coordinator_bind_address)
+                          initialization_timeout, coordinator_bind_address,
+                          slice_index=slice_index)
 
 
 def is_initialized() -> bool:

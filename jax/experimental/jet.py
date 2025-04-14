@@ -76,7 +76,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.util import unzip2, weakref_lru_cache, safe_zip
 
 
-def jet(fun, primals, series):
+def jet(fun, primals, series, **_):
   r"""Taylor-mode higher-order automatic differentiation.
 
   Args:
@@ -205,6 +205,7 @@ class JetTrace(core.Trace):
   __slots__ = ("tag", "parent_trace", "order")
 
   def __init__(self, tag, parent_trace, order):
+    super().__init__()
     self.tag = tag
     self.parent_trace = parent_trace
     self.order = order
@@ -404,11 +405,11 @@ def_deriv(lax.erf_p,
               lax.exp(lax.neg(lax.square(x)))))
 
 
-def def_comp(prim, comp):
+def def_comp(prim, comp, **kwargs):
   """
   Define the jet rule for a primitive in terms of a composition of simpler primitives.
   """
-  jet_rules[prim] = partial(jet, comp)
+  jet_rules[prim] = partial(jet, comp, **kwargs)
 
 
 def_comp(lax.expm1_p, lambda x: lax.exp(x) - 1)
@@ -477,7 +478,7 @@ def _scale(k, j):
 def _scale2(k, j):
   return 1. / (fact(k - j) * fact(j))
 
-def _exp_taylor(primals_in, series_in):
+def _exp_taylor(primals_in, series_in, **_):
   x, = primals_in
   series, = series_in
   u = [x] + series
@@ -521,7 +522,7 @@ def _integer_pow_taylor(primals_in, series_in, *, y):
 jet_rules[lax.integer_pow_p] = _integer_pow_taylor
 
 
-def _logistic_taylor(primals_in, series_in):
+def _logistic_taylor(primals_in, series_in, **_):
   x, = primals_in
   series, = series_in
   u = [x] + series
@@ -537,7 +538,7 @@ def _logistic_taylor(primals_in, series_in):
 jet_rules[lax.logistic_p] = _logistic_taylor
 
 
-def _tanh_taylor(primals_in, series_in):
+def _tanh_taylor(primals_in, series_in, **_):
   x, = primals_in
   series, = series_in
   u = [2*x] + [2 * series_ for series_ in series]
@@ -547,7 +548,7 @@ def _tanh_taylor(primals_in, series_in):
   return 2 * primal_out - 1, series_out
 jet_rules[lax.tanh_p] = _tanh_taylor
 
-def _log_taylor(primals_in, series_in):
+def _log_taylor(primals_in, series_in, **_):
   x, = primals_in
   series, = series_in
   u = [x] + series
@@ -589,7 +590,7 @@ def _div_taylor_rule(primals_in, series_in):
   return primal_out, series_out
 jet_rules[lax.div_p] = _div_taylor_rule
 
-def _sinusoidal_rule(sign, prims, primals_in, series_in):
+def _sinusoidal_rule(sign, prims, primals_in, series_in, **_):
   x, = primals_in
   series, = series_in
   u = [x] + series
@@ -602,7 +603,7 @@ def _sinusoidal_rule(sign, prims, primals_in, series_in):
   return (s[0], s[1:]), (c[0], c[1:])
 
 def _get_ind(f, ind):
-  return lambda *args: f(*args)[ind]
+  return lambda *args, **kwargs: f(*args, **kwargs)[ind]
 
 jet_rules[lax.sin_p] = _get_ind(partial(_sinusoidal_rule, -1, (lax.sin, lax.cos)), 0)
 jet_rules[lax.cos_p] = _get_ind(partial(_sinusoidal_rule, -1, (lax.sin, lax.cos)), 1)

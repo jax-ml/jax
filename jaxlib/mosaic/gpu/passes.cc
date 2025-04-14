@@ -14,27 +14,76 @@ limitations under the License.
 ==============================================================================*/
 
 #include "jaxlib/mosaic/gpu/passes.h"
+
+#include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "llvm/include/llvm/ADT/StringRef.h"
-#include "mlir/include/mlir/Conversion/GPUCommon/GPUCommonPass.h"
-#include "mlir/include/mlir/Conversion/LLVMCommon/TypeConverter.h"
-#include "mlir/include/mlir/Dialect/GPU/IR/GPUDialect.h"
-#include "mlir/include/mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/include/mlir/IR/BuiltinAttributes.h"
-#include "mlir/include/mlir/IR/BuiltinOps.h"
-#include "mlir/include/mlir/IR/SymbolTable.h"
-#include "mlir/include/mlir/Pass/PassRegistry.h"
-#include "mlir/include/mlir/Support/LLVM.h"
-#include "mlir/include/mlir/Transforms/DialectConversion.h"
-#include "jaxlib/pass_boilerplate.h"
+#include "llvm/ADT/StringRef.h"
+#include "mlir/Conversion/GPUCommon/GPUCommonPass.h"
+#include "mlir/Conversion/LLVMCommon/TypeConverter.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/LLVMIR/LLVMTypes.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/Value.h"
+#include "mlir/IR/Visitors.h"
+#include "mlir/Pass/PassRegistry.h"
+#include "mlir/Support/LLVM.h"
+#include "mlir/Transforms/DialectConversion.h"
+#include "jaxlib/mosaic/pass_boilerplate.h"
 
 namespace mosaic {
 namespace gpu {
 
 namespace {
+
+// Upstream MLIR does not implement an LLVM lowering pattern for this op.
+struct ConvertExtractStridedSlicePattern final
+    : public mlir::OpConversionPattern<mlir::vector::ExtractStridedSliceOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult matchAndRewrite(
+      mlir::vector::ExtractStridedSliceOp op, OpAdaptor subst,
+      mlir::ConversionPatternRewriter &rewriter) const override {
+    auto vty = op.getSourceVectorType();
+    if (vty.getRank() != 1) {
+      return rewriter.notifyMatchFailure(op, "only 1-D vectors are supported");
+    }
+    int64_t size =
+        (*op.getSizes().getAsRange<mlir::IntegerAttr>().begin()).getSInt();
+    if (size < 0) {
+      return rewriter.notifyMatchFailure(op, "size is negative");
+    }
+    int64_t start =
+        (*op.getOffsets().getAsRange<mlir::IntegerAttr>().begin()).getSInt();
+    int64_t stride =
+        (*op.getStrides().getAsRange<mlir::IntegerAttr>().begin()).getSInt();
+    if (stride != 1) {
+      return rewriter.notifyMatchFailure(op, "only stride 1 is supported");
+    }
+    if (start < 0 || start + size > vty.getShape()[0]) {
+      return rewriter.notifyMatchFailure(op, "slice is out of bounds");
+    }
+    mlir::Value result = rewriter.create<mlir::LLVM::UndefOp>(
+        op.getLoc(), op.getResult().getType());
+    for (int64_t i = 0; i < size; ++i) {
+      result = rewriter.create<mlir::LLVM::InsertElementOp>(
+          op.getLoc(), result,
+          rewriter.create<mlir::LLVM::ExtractElementOp>(
+              op.getLoc(), subst.getVector(),
+              rewriter.create<mlir::LLVM::ConstantOp>(
+                  op.getLoc(), rewriter.getI32IntegerAttr(i + start))),
+          rewriter.create<mlir::LLVM::ConstantOp>(
+              op.getLoc(), rewriter.getI32IntegerAttr(i)));
+    }
+    rewriter.replaceOp(op, result);
+    return mlir::success();
+  }
+};
 
 class ConvertGpuToLLVMPass
     : public jaxlib::mlir::Pass<ConvertGpuToLLVMPass, mlir::ModuleOp> {
@@ -58,6 +107,7 @@ class ConvertGpuToLLVMPass
         });
     auto symtab = mlir::SymbolTable(getOperation());
     mlir::populateGpuToLLVMConversionPatterns(converter, patterns, false);
+    patterns.insert<ConvertExtractStridedSlicePattern>(&getContext());
     if (mlir::applyPartialConversion(getOperation(), target,
                                      std::move(patterns))
             .failed()) {

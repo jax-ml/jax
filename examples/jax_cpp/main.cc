@@ -41,7 +41,8 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "third_party/absl/status/statusor.h"
+#include "absl/log/log.h"
+#include "absl/status/statusor.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_module.h"
 #include "xla/literal.h"
@@ -50,6 +51,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/plugin/xla_cpu/cpu_client_options.h"
 #include "xla/pjrt/plugin/xla_cpu/xla_cpu_pjrt_client.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_module_config.h"
 #include "xla/tools/hlo_module_loader.h"
 #include "tsl/platform/init_main.h"
@@ -81,7 +83,7 @@ int main(int argc, char** argv) {
   xla::XlaComputation xla_computation(test_module_proto);
   xla::CompileOptions compile_options;
   std::unique_ptr<xla::PjRtLoadedExecutable> executable =
-      client->Compile(xla_computation, compile_options).value();
+      client->CompileAndLoad(xla_computation, compile_options).value();
 
   // Prepare inputs.
   xla::Literal literal_x =

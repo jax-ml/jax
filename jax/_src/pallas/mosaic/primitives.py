@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import dataclasses
-import enum
 from typing import Any
 
 import jax
@@ -28,6 +27,7 @@ from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pl_core
+from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.state import discharge as state_discharge
@@ -160,255 +160,6 @@ def _roll_lowering_rule(
 mlir.register_lowering(roll_p, _roll_lowering_rule)
 
 
-class DeviceIdType(enum.Enum):
-  MESH = "mesh"
-  LOGICAL = "logical"
-
-
-def check_sem_avals(
-    sem_aval, sem_transforms_avals, name, allowed_semaphore_types=None
-):
-  if allowed_semaphore_types is None:
-    allowed_semaphore_types = {
-        tpu_core.semaphore,
-        tpu_core.barrier_semaphore,
-        # For interpret mode.
-        pl_core.SEMAPHORE_INTERPRET_DTYPE,
-    }
-  if not isinstance(sem_aval, state.AbstractRef):
-    raise ValueError(f"Cannot {name} on a non-semaphore Ref: {sem_aval}")
-  sem_shape = sem_aval.shape
-  if sem_transforms_avals:
-    sem_shape = sem_transforms_avals[-1].get_indexer_shape()
-  if sem_shape:
-    raise ValueError(f"Cannot {name} on a non-()-shaped semaphore: {sem_shape}")
-  sem_dtype = sem_aval.dtype
-  if not any(
-      jnp.issubdtype(sem_dtype, sem_type)
-      for sem_type in allowed_semaphore_types
-  ):
-    raise ValueError(
-        f"Must {name} semaphores of the following types:"
-        f" {allowed_semaphore_types}. Got {sem_dtype}."
-    )
-
-
-def _transform_semaphore(ref_value, transforms, ref_aval):
-  """Helper function for indexing into a semaphore during state_discharge."""
-  if ref_value.shape == ref_aval.shape:
-    return state_discharge.transform_array(ref_value, transforms)
-  elif len(ref_value.shape) == 0:
-    return ref_value
-  else:
-    raise ValueError(
-        f"Semaphore value shape {ref_value.shape} does not match aval shape"
-        f" {ref_aval.shape}"
-    )
-
-
-semaphore_read_p = jax_core.Primitive("semaphore_read")
-semaphore_read_p.multiple_results = False
-
-
-def semaphore_read(sem_or_view):
-  ref, transforms = _get_ref_and_transforms(sem_or_view)
-  args = [ref, transforms]
-  flat_args, args_tree = tree_util.tree_flatten(args)
-  return semaphore_read_p.bind(*flat_args, args_tree=args_tree)
-
-@semaphore_read_p.def_abstract_eval
-def _semaphore_read_abstract_eval(
-    *avals,
-    args_tree,
-):
-  sem_aval, sem_transforms_avals = tree_util.tree_unflatten(args_tree, avals)
-  check_sem_avals(
-      sem_aval,
-      sem_transforms_avals,
-      "read",
-      allowed_semaphore_types={
-          tpu_core.dma_semaphore,
-          tpu_core.semaphore,
-          tpu_core.barrier_semaphore,
-          pl_core.SEMAPHORE_INTERPRET_DTYPE,
-      },
-  )
-  return jax_core.ShapedArray((), jnp.dtype("int32"))
-
-def _semaphore_read_discharge_rule(in_avals,
-                                   out_avals,
-                                   *flat_args,
-                                   args_tree):
-  del out_avals
-  [ref, transforms] = args_tree.unflatten(flat_args)
-  sem_value = _transform_semaphore(ref, transforms, in_avals[0])
-  sem_value = sem_value.astype(jnp.int32)
-  return (None,) * len(in_avals), sem_value
-state_discharge.register_discharge_rule(semaphore_read_p)(
-    _semaphore_read_discharge_rule
-)
-
-
-semaphore_signal_p = jax_core.Primitive('semaphore_signal')
-semaphore_signal_p.multiple_results = True
-
-
-def semaphore_signal(
-    sem_or_view,
-    inc: int | jax.Array = 1,
-    *,
-    device_id: int | jax.Array | None | tuple[int | jax.Array, ...] = None,
-    device_id_type: DeviceIdType = DeviceIdType.MESH,
-    core_index: int | jax.Array | None = None,
-):
-  ref, transforms = _get_ref_and_transforms(sem_or_view)
-  inc = jnp.asarray(inc, dtype=jnp.int32)
-  args = [ref, transforms, inc, device_id, core_index]
-  flat_args, args_tree = tree_util.tree_flatten(args)
-  semaphore_signal_p.bind(
-      *flat_args,
-      args_tree=args_tree,
-      device_id_type=device_id_type,
-  )
-
-
-@semaphore_signal_p.def_abstract_eval
-def _semaphore_signal_abstract_eval(
-    *avals,
-    args_tree,
-    device_id_type: DeviceIdType,
-):
-  del device_id_type
-  (
-      sem_aval,
-      sem_transforms_avals,
-      value_aval,
-      device_id_avals,
-      core_index_aval,
-  ) = tree_util.tree_unflatten(args_tree, avals)
-  check_sem_avals(sem_aval, sem_transforms_avals, "signal")
-  if value_aval.dtype != jnp.dtype("int32"):
-    raise ValueError("Must signal an int32 value.")
-  if device_id_avals is not None:
-    device_id_flat_avals = tree_util.tree_leaves(device_id_avals)
-    for aval in device_id_flat_avals:
-      if aval.dtype != jnp.dtype("int32"):
-        raise ValueError("`device_id`s must be an int32 value.")
-  return []
-
-
-def _semaphore_signal_pp_eqn(eqn: jax_core.JaxprEqn,
-                             context: jax_core.JaxprPpContext,
-                             settings: jax_core.JaxprPpSettings):
-  del settings
-  invars = eqn.invars
-  tree = eqn.params["args_tree"]
-  (
-      sem,
-      sem_transforms,
-      value,
-      device_ids,
-      _,
-  ) = tree_util.tree_unflatten(tree, invars)
-  out = pp.concat([
-      pp.text("semaphore_signal"),
-      pp.text(" "),
-      sp.pp_ref_transforms(context, sem, sem_transforms),
-      pp.text(" "),
-      pp.text(jax_core.pp_var(value, context)),
-  ])
-  if device_ids is not None:
-    flat_device_ids = tree_util.tree_leaves(device_ids)
-    if not flat_device_ids:
-      return out
-    device_ids_pp = [pp.text(jax_core.pp_var(flat_device_ids[0], context))]
-    for device_id in flat_device_ids[1:]:
-      device_ids_pp.append(pp.text(" "))
-      device_ids_pp.append(pp.text(jax_core.pp_var(device_id, context)))
-    out = pp.concat([out, pp.concat(device_ids_pp)])
-  return out
-jax_core.pp_eqn_rules[semaphore_signal_p] = _semaphore_signal_pp_eqn
-
-
-def _semaphore_signal_discharge_rule(in_avals,
-                                     out_avals,
-                                     *flat_args,
-                                     args_tree,
-                                     device_id_type):
-  del out_avals, device_id_type
-  [ref, transforms, inc, device_id, core_index] = args_tree.unflatten(flat_args)
-  if device_id is not None:
-    raise NotImplementedError("Remote signal not implemented.")
-  if core_index is not None:
-    raise NotImplementedError("Multiple core support not implemented.")
-  sem_value = _transform_semaphore(ref, transforms, in_avals[0])
-  inc = inc.astype(pl_core.SEMAPHORE_INTERPRET_DTYPE)
-  _, new_sem_value = state_discharge.transform_swap_array(
-      ref, transforms, sem_value + inc
-  )
-  return (new_sem_value,) + (None,) * (len(in_avals) - 1), ()
-state_discharge.register_discharge_rule(semaphore_signal_p)(
-    _semaphore_signal_discharge_rule
-)
-
-
-semaphore_wait_p = jax_core.Primitive('semaphore_wait')
-semaphore_wait_p.multiple_results = True
-
-def semaphore_wait(sem_or_view, dec: int | jax.Array = 1):
-  ref, transforms = _get_ref_and_transforms(sem_or_view)
-  dec = jnp.asarray(dec, dtype=jnp.int32)
-  args = [ref, transforms, dec]
-  flat_args, args_tree = tree_util.tree_flatten(args)
-  semaphore_wait_p.bind(*flat_args, args_tree=args_tree)
-
-@semaphore_wait_p.def_abstract_eval
-def _semaphore_wait_abstract_eval(*avals, args_tree):
-  sem_aval, sem_transforms_avals, value_aval = tree_util.tree_unflatten(
-      args_tree, avals
-  )
-  check_sem_avals(sem_aval, sem_transforms_avals, "wait")
-  if value_aval.dtype != jnp.dtype("int32"):
-    raise ValueError("Must wait an int32 value.")
-  return []
-
-def _semaphore_wait_pp_eqn(eqn: jax_core.JaxprEqn,
-                             context: jax_core.JaxprPpContext,
-                             settings: jax_core.JaxprPpSettings):
-  del settings
-  invars = eqn.invars
-  tree = eqn.params["args_tree"]
-  (
-      sem,
-      sem_transforms,
-      value,
-  ) = tree_util.tree_unflatten(tree, invars)
-  return pp.concat([
-      pp.text("semaphore_wait"),
-      pp.text(" "),
-      sp.pp_ref_transforms(context, sem, sem_transforms),
-      pp.text(" "),
-      pp.text(jax_core.pp_var(value, context)),
-  ])
-jax_core.pp_eqn_rules[semaphore_wait_p] = _semaphore_wait_pp_eqn
-
-def _semaphore_wait_discharge_rule(in_avals,
-                                     out_avals,
-                                     *flat_args,
-                                     args_tree):
-  del out_avals
-  [ref, transforms, dec] = args_tree.unflatten(flat_args)
-  sem_value = _transform_semaphore(ref, transforms, in_avals[0])
-  dec = dec.astype(pl_core.SEMAPHORE_INTERPRET_DTYPE)
-  _, new_sem_value = state_discharge.transform_swap_array(
-      ref, transforms, sem_value - dec
-  )
-  return (new_sem_value,) + (None,) * (len(in_avals) - 1), ()
-state_discharge.register_discharge_rule(semaphore_wait_p)(
-    _semaphore_wait_discharge_rule
-)
-
-
 @dataclasses.dataclass
 class AsyncCopyDescriptor:
   src_ref: Any
@@ -420,7 +171,7 @@ class AsyncCopyDescriptor:
   src_sem: int | jax.Array | None
   src_sem_transforms: tuple[Transform, ...] | None
   device_id: int | jax.Array | None
-  device_id_type: DeviceIdType = DeviceIdType.MESH
+  device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH
 
   def __post_init__(self):
     if (self.src_sem is None) ^ (self.device_id is None):
@@ -457,9 +208,14 @@ class AsyncCopyDescriptor:
           self.device_id,
       ))
 
-  def start(self):
+  def start(self, priority: int = 0):
     flat_args, tree = self._get_args_and_tree()
-    dma_start_p.bind(*flat_args, tree=tree, device_id_type=self.device_id_type)
+    dma_start_p.bind(
+        *flat_args,
+        tree=tree,
+        device_id_type=self.device_id_type,
+        priority=priority,
+    )
 
   def wait(self):
     if self.is_remote:
@@ -488,7 +244,9 @@ dma_start_p = jax_core.Primitive('dma_start')
 dma_start_p.multiple_results = True
 
 @dma_start_p.def_effectful_abstract_eval
-def _dma_start_abstract_eval(*args, tree, device_id_type):
+def _dma_start_abstract_eval(*args, tree, device_id_type, priority):
+  if priority < 0:
+    raise ValueError(f"DMA start priority must be non-negative: {priority}")
   (
       src_ref_aval,
       src_transforms_avals,
@@ -523,6 +281,7 @@ def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
                       settings: jax_core.JaxprPpSettings):
   invars = eqn.invars
   tree = eqn.params["tree"]
+  priority = eqn.params["priority"]
   (
       src_ref,
       src_transforms,
@@ -539,7 +298,7 @@ def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
   if src_sem or device_id:
     return jax_core._pp_eqn(eqn, context, settings)
   return pp.concat([
-      pp.text("dma_start"),
+      pp.text(f"dma_start(p{priority})"),
       pp.text(" "),
       sp.pp_ref_transforms(context, src_ref, src_transforms),
       pp.text(" -> "),
@@ -550,8 +309,12 @@ def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
 
 jax_core.pp_eqn_rules[dma_start_p] = _dma_start_pp_eqn
 
-def dma_start_partial_discharge_rule(should_discharge, in_avals, out_avals,
-                                     *args, tree, device_id_type):
+
+def dma_start_partial_discharge_rule(
+    should_discharge, in_avals, out_avals, *args, tree, device_id_type, priority
+):
+  # Note: we ignore the DMA priority in discharge rules.
+  del priority
   (
       src_ref,
       src_transforms,
@@ -610,14 +373,14 @@ def dma_start_partial_discharge_rule(should_discharge, in_avals, out_avals,
     # TODO(justinfu): Verify that code only works in SPMD mode.
     axis_env = jax_core.get_axis_env()
     nonempty_axes = [name for name in axis_env.axis_sizes if name is not None]
-    if device_id_type == DeviceIdType.LOGICAL:
+    if device_id_type == primitives.DeviceIdType.LOGICAL:
       if len(nonempty_axes) > 1:
         raise NotImplementedError("Sharding with more than one named axis not "
                                   "implemented in dma_start_p for LOGICAL "
                                   "device_id_type.")
       shard_axis = nonempty_axes[0]
       my_axis = jax.lax.axis_index(shard_axis)
-    elif device_id_type == DeviceIdType.MESH:
+    elif device_id_type == primitives.DeviceIdType.MESH:
       device_id_len = 1
       if isinstance(device_id, jax.Array):
         device_id_len = device_id.size
@@ -667,7 +430,7 @@ def dma_start_partial_discharge_rule(should_discharge, in_avals, out_avals,
   def do_discharge_dst_sem(dst_sem=dst_sem):
     recv_size = jnp.minimum(updates.size, pl_core.SEMAPHORE_MAX_VALUE)
     recv_size = jnp.array(recv_size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
-    dst_sem_value = _transform_semaphore(
+    dst_sem_value = primitives._transform_semaphore(
         dst_sem, dst_sem_transforms, dst_sem_aval
     )
     _, ret = state_discharge.transform_swap_array(
@@ -678,7 +441,7 @@ def dma_start_partial_discharge_rule(should_discharge, in_avals, out_avals,
   def do_discharge_src_sem(src_sem=src_sem):
     send_size = jnp.minimum(local_src.size, pl_core.SEMAPHORE_MAX_VALUE)
     send_size = jnp.array(send_size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
-    src_sem_value = _transform_semaphore(
+    src_sem_value = primitives._transform_semaphore(
         src_sem, src_sem_transforms, src_sem_aval
     )
     _, ret = state_discharge.transform_swap_array(
@@ -709,6 +472,7 @@ def dma_start_partial_discharge_rule(should_discharge, in_avals, out_avals,
     sp.ref_set(src_sem, None, do_discharge_src_sem(src_sem=src_sem[...]))
 
   return new_vals, []
+
 
 state_discharge.register_partial_discharge_rule(dma_start_p)(dma_start_partial_discharge_rule)
 
@@ -778,7 +542,7 @@ def dma_wait_partial_discharge_rule(should_discharge,
   updates = state_discharge.transform_array(dst_ref, dst_ref_transforms)
   copy_size = jnp.minimum(updates.size, pl_core.SEMAPHORE_MAX_VALUE)
   copy_size = jnp.array(copy_size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
-  sem_value = _transform_semaphore(dst_sem, dst_sem_transforms, dst_sem_aval)
+  sem_value = primitives._transform_semaphore(dst_sem, dst_sem_transforms, dst_sem_aval)
   _, new_sem = state_discharge.transform_swap_array(
       dst_sem, dst_sem_transforms, sem_value - copy_size
   )
@@ -799,6 +563,7 @@ def _get_ref_and_transforms(ref):
     return ref.ref, ref.transforms
   return ref, ()
 
+
 def make_async_copy(src_ref, dst_ref, sem):
   """Issues a DMA copying from src_ref to dst_ref."""
   src_ref, src_transforms = _get_ref_and_transforms(src_ref)
@@ -814,17 +579,19 @@ def make_async_copy(src_ref, dst_ref, sem):
       None,
       None,
       None,
-      DeviceIdType.MESH,
+      primitives.DeviceIdType.MESH,
   )
 
-def async_copy(src_ref, dst_ref, sem):
+
+def async_copy(src_ref, dst_ref, sem, *, priority: int = 0):
   """Issues a DMA copying from src_ref to dst_ref."""
   copy_descriptor = make_async_copy(src_ref, dst_ref, sem)
-  copy_descriptor.start()
+  copy_descriptor.start(priority=priority)
   return copy_descriptor
 
+
 def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
-                           device_id_type: DeviceIdType = DeviceIdType.MESH):
+                           device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH):
   """Creates a description of a remote copy operation.
 
   Copies data from src_ref on the current device to dst_ref on the device
@@ -861,26 +628,18 @@ def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
   )
 
 def async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
-                      device_id_type: DeviceIdType = DeviceIdType.MESH):
+                      device_id_type: primitives.DeviceIdType = primitives.DeviceIdType.MESH):
   copy_descriptor = make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem,
                                            device_id, device_id_type)
   copy_descriptor.start()
   return copy_descriptor
-
-device_id_p = jax_core.Primitive('device_id')
-
-@device_id_p.def_abstract_eval
-def _device_id_abstract_eval():
-  return jax_core.ShapedArray((), jnp.dtype("int32"))
-
-device_id = device_id_p.bind
 
 get_barrier_semaphore_p = jax_core.Primitive('get_barrier_semaphore')
 
 @get_barrier_semaphore_p.def_abstract_eval
 def _get_barrier_semaphore_abstract_eval():
   return pl_core.AbstractMemoryRef(
-      jax_core.ShapedArray((), tpu_core.BarrierSemaphoreTy()),
+      jax_core.ShapedArray((), pl_core.BarrierSemaphore()),
       tpu_core.TPUMemorySpace.SEMAPHORE,
   )
 

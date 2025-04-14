@@ -43,13 +43,14 @@ __ = pe.PartialVal.unknown(ShapedArray((), np.float32))
 def call(f, *args):
   return jit(f)(*args)
 
-@util.curry
 def core_call(f, *args):
   args, in_tree = jax.tree.flatten(args)
   dbg = debug_info("core_call_test", f, args, {})
   f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f, debug_info=dbg), in_tree)
   out = core.call_p.bind(f, *args)
   return jax.tree.unflatten(out_tree(), out)
+# call = core_call
+core_call = util.curry(core_call)
 
 @util.curry
 def core_closed_call(f, *args):
@@ -396,6 +397,12 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     lax_control_flow._initial_style_jaxpr.cache_clear()
     lax_control_flow.common._pad_jaxpr_constvars.cache_clear()
 
+  def tearDown(self):
+    super().tearDown()
+    lax_control_flow._initial_style_open_jaxpr.cache_clear()
+    lax_control_flow._initial_style_jaxpr.cache_clear()
+    lax_control_flow.common._pad_jaxpr_constvars.cache_clear()
+
   def test_check_jaxpr_correct(self):
     jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr
     core.check_jaxpr(jaxpr)
@@ -404,6 +411,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     jaxpr = make_jaxpr(lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
     core.check_jaxpr(jaxpr)
 
+  @jtu.thread_unsafe_test()  # in-place mutation of possibly-cached jaxpr
   def test_check_jaxpr_jit_invalid(self):
     jaxpr = make_jaxpr(jax.jit(lambda x, y: x + 1))(1., 2.).jaxpr
     pjit_eqn, = jaxpr.eqns
@@ -413,6 +421,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
         '0 operands cannot call jaxpr with 2 inputs',
         lambda: core.check_jaxpr(jaxpr))
 
+  @jtu.thread_unsafe_test()  # in-place mutation of possibly-cached jaxpr
   def test_check_jaxpr_cond_invalid(self):
     jaxpr = make_jaxpr(lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
     cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')
@@ -432,6 +441,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     jaxpr = make_jaxpr(partial(lax.scan, f))(c, xs).jaxpr
     core.check_jaxpr(jaxpr)
 
+  @jtu.thread_unsafe_test()  # in-place mutation of possibly-cached jaxpr
   def test_check_jaxpr_invalid_long(self):
     # jaxprs can be large, and this tests that when large ones are printed for
     # context in jaxpr typechecking errors, they're not printed entirely
@@ -463,6 +473,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     self.assertIn('while checking jaxpr:', msg)
     self.assertLess(msg.count('\n'), 200)
 
+  @jtu.thread_unsafe_test()  # in-place mutation of possibly-cached jaxpr
   def test_check_jaxpr_eqn_mismatch(self):
     def f(x):
       return jnp.sin(x) + jnp.cos(x)
@@ -486,7 +497,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     self.assertRaisesRegex(
         core.JaxprTypeError,
         r"Value for variable 'b' inconsistently typed as f32\[\] "
-        r"for let-binder of type i32\[\]\n\nin equation:\n\nb:i32\[\] = sin a",
+        r"for let-binder of type i32\[\]\n\nin equation:\n\nb:i32\[\] = sin\ a",
         lambda: core.check_jaxpr(jaxpr))
 
     jaxpr = new_jaxpr()
@@ -495,7 +506,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     self.assertRaisesRegex(
         core.JaxprTypeError,
         r"Value for variable 'b' inconsistently typed as f32\[\] "
-        r"for let-binder of type f32\[2,3\]\n\nin equation:\n\nb:f32\[2,3\] = sin a",
+        r"for let-binder of type f32\[2,3\]\n\nin equation:\n\nb:f32\[2,3\] = sin\ a",
         lambda: core.check_jaxpr(jaxpr))
 
   def test_jaxpr_dropvar_from_jit_call(self):
@@ -533,6 +544,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     assert isinstance(jaxpr.eqns[-1].outvars[0], core.DropVar)
     core.check_jaxpr(jaxpr)
 
+  @jtu.thread_unsafe_test()  # in-place mutation of possibly-cached jaxpr
   def test_jaxpr_undefined_eqn_invar(self):
     jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr
     cos = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cos')

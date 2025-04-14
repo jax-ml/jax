@@ -29,6 +29,7 @@ import numpy as np
 
 import jax
 from jax._src import core
+from jax import export
 from jax import jvp, grad
 from jax import lax
 import jax.numpy as jnp
@@ -1105,6 +1106,7 @@ class LaxTest(jtu.JaxTestCase):
           (lax.DotAlgorithmPreset.BF16_BF16_F32, [dtypes.bfloat16]),
           (lax.DotAlgorithmPreset.BF16_BF16_F32_X3, [np.float32]),
           (lax.DotAlgorithmPreset.BF16_BF16_F32_X6, [np.float32]),
+          (lax.DotAlgorithmPreset.BF16_BF16_F32_X9, [np.float32]),
           (lax.DotAlgorithmPreset.TF32_TF32_F32, [np.float32]),
           (lax.DotAlgorithmPreset.TF32_TF32_F32_X3, [np.float32]),
           (lax.DotAlgorithmPreset.F32_F32_F32, [np.float32]),
@@ -1134,6 +1136,7 @@ class LaxTest(jtu.JaxTestCase):
           lax.DotAlgorithmPreset.BF16_BF16_F32,
           lax.DotAlgorithmPreset.BF16_BF16_F32_X3,
           lax.DotAlgorithmPreset.BF16_BF16_F32_X6,
+          lax.DotAlgorithmPreset.BF16_BF16_F32_X9,
       }:
         if not jtu.is_cuda_compute_capability_at_least("8.0"):
           raise SkipTest(
@@ -3610,6 +3613,46 @@ class LaxTest(jtu.JaxTestCase):
     x = lax.optimization_barrier((2, 3))
     self.assertEqual((2, 3), x)
 
+  def test_optimization_barrier_autodiff(self):
+    def f(x):
+      y = 1. * x
+      x, y = lax.optimization_barrier((x, y))
+      z = 2. * x
+      return y + z
+    g = jax.grad(f)(5.)  # doesn't crash
+    self.assertAllClose(g, 3., check_dtypes=False)
+
+  def test_shape_as_value_handles_static_shapes(self):
+    result = lax.shape_as_value(())
+    self.assertArraysEqual(result, lax.full((0,), np.array(0, np.int64)))
+
+    result = lax.shape_as_value((2,))
+    self.assertArraysEqual(result, np.asarray((2,), np.int64))
+
+    result = lax.shape_as_value((2, 3))
+    self.assertArraysEqual(result, np.asarray((2, 3), np.int64))
+
+  def test_shape_as_value_handles_polymorphic_shapes(self):
+    @jax.jit
+    def f(x):
+      return lax.shape_as_value(x.shape)
+
+    exported = export.export(f)(
+        jax.ShapeDtypeStruct(export.symbolic_shape("a"), jnp.float32)
+    )
+    result = exported.call(np.ones((1), dtype=np.float32))
+    self.assertArraysEqual(result, np.asarray((1,), np.int64))
+    result = exported.call(np.ones((2), dtype=np.float32))
+    self.assertArraysEqual(result, np.asarray((2,), np.int64))
+
+    exported = export.export(f)(
+        jax.ShapeDtypeStruct(export.symbolic_shape("a, b"), jnp.float32)
+    )
+    result = exported.call(np.ones((1, 2), dtype=np.float32))
+    self.assertArraysEqual(result, np.asarray((1, 2), np.int64))
+    result = exported.call(np.ones((3, 4), dtype=np.float32))
+    self.assertArraysEqual(result, np.asarray((3, 4), np.int64))
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
@@ -4730,7 +4773,7 @@ class CompositeTest(jtu.JaxTestCase):
         ValueError,
         "JVP rule for composite not implemented. You can use `jax.custom_jvp` "
         "to add support. See "
-        "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
+        "https://docs.jax.dev/en/latest/_autosummary/jax.custom_jvp.html"
     ):
       jvp(my_square, (1.0,), (2.0,))
 
@@ -4743,7 +4786,7 @@ class CompositeTest(jtu.JaxTestCase):
         ValueError,
         "JVP rule for composite not implemented. You can use `jax.custom_jvp` "
         "to add support. See "
-        "https://jax.readthedocs.io/en/latest/_autosummary/jax.custom_jvp.html"
+        "https://docs.jax.dev/en/latest/_autosummary/jax.custom_jvp.html"
     ):
       grad(my_square)(1.0)
 
@@ -4785,10 +4828,10 @@ class RaggedTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
       [
-          {'m': 5, 'k': 4, 'n': 3, 'num_groups': 1},
-          {'m': 10, 'k': 9, 'n': 8, 'num_groups': 2},
+          {'m': 64, 'k': 4, 'n': 3, 'num_groups': 1},
+          {'m': 64, 'k': 9, 'n': 8, 'num_groups': 2},
       ],
-      dtype=jtu.dtypes.numeric,
+      dtype=jtu.dtypes.all_floating,
   )
   def test_ragged_dot(self, m, k, n, num_groups, dtype):
     """Tests ragged_dot.
@@ -4799,6 +4842,8 @@ class RaggedTest(jtu.JaxTestCase):
     Raises:
       SkipTest: in the case dtype is not supported.
     """
+    if (dtype == np.float16):
+      raise SkipTest(f"unsupported dtype for ragged_dot: {dtype}")
     lhs_shape = (m, k)
     rhs_shape = (num_groups, k, n)
 
@@ -4819,6 +4864,307 @@ class RaggedTest(jtu.JaxTestCase):
     self._CompileAndCheck(lax.ragged_dot, args_maker)
     self._CheckAgainstNumpy(
         lax_reference.ragged_dot, lax.ragged_dot, args_maker)
+
+  @parameterized.parameters(
+        { "m": 5, "k": 4, "n": 3, "num_groups": 1},
+        { "m": 10, "k": 9, "n": 8, "num_groups": 2},
+  )
+  def test_ragged_dot_unsupported(
+      self, m, k, n, num_groups):
+    lhs_shape = (m, k)
+    rhs_shape = (num_groups, k, n)
+    group_sizes_shape = (num_groups,)
+
+    args_maker = lambda: [
+        jnp.ones(lhs_shape, dtype=jnp.float32),
+        jnp.ones(rhs_shape, dtype=jnp.float32),
+        jnp.ones(group_sizes_shape, dtype=jnp.int32),
+    ]
+    if jtu.test_device_matches(["tpu"]):
+      with self.assertRaises(jax.errors.JaxRuntimeError):
+        self._CompileAndCheck(lax.ragged_dot, args_maker)
+
+  @parameterized.parameters(
+      {
+          "lhs_shape": lhs_shape,
+          "rhs_shape": rhs_shape,
+          "group_sizes_shape": group_sizes_shape,
+          "ragged_dot_dimension_numbers": ragged_dot_dimension_numbers,
+          "err_msg": err_msg,
+      }
+      for lhs_shape, rhs_shape, group_sizes_shape, ragged_dot_dimension_numbers, err_msg in [
+          (
+              [11, 5],
+              [3, 5, 7],
+              [3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [1]), ([], [])),
+                  lhs_ragged_dimensions=[0, 1],
+                  rhs_group_dimensions=[0],
+              ),
+              "ragged_dot_general expects exactly one lhs ragged dimension",
+          ),
+          (
+              [11, 5],
+              [3, 5, 7],
+              [3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [1]), ([], [])),
+                  lhs_ragged_dimensions=[2],
+                  rhs_group_dimensions=[0],
+              ),
+              (
+                  "ragged_dot_general requires lhs ragged dimension numbers to "
+                  "be nonnegative and less than the number of axes of the lhs"
+              ),
+          ),
+          (
+              [11, 5],
+              [3, 5, 7],
+              [2, 3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [1]), ([], [])),
+                  lhs_ragged_dimensions=[0],
+                  rhs_group_dimensions=[0],
+              ),
+              r"expected group_sizes to have shape \(3,\), got \(2, 3\)",
+          ),
+          (
+              [19, 17, 11, 5],
+              [3, 19, 5, 7],
+              [19, 11, 3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([3], [2]), ([0], [1])),
+                  lhs_ragged_dimensions=[2],
+                  rhs_group_dimensions=[0],
+              ),
+              (
+                  r"expected group_sizes to have shape \(19, 17, 3\), "
+                  r"got \(19, 11, 3\)"
+              ),
+          ),
+          (
+              [19, 11, 17, 5],
+              [19, 17, 5, 7],
+              [19, 11, 3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([2, 3], [1, 2]), ([0], [0])),
+                  lhs_ragged_dimensions=[3],
+                  rhs_group_dimensions=[],
+              ),
+              (
+                  r"expected group_sizes to have shape \(19, 17, 3\), "
+                  r"got \(19, 11, 3\)"
+              ),
+          ),
+          (
+              [17, 19, 11, 5],
+              [17, 19, 5, 7],
+              [19, 3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([3], [2]), ([0, 1], [0, 1])),
+                  lhs_ragged_dimensions=[1],
+                  rhs_group_dimensions=[],
+              ),
+              (
+                  r"expected group_sizes to have shape \(17, 3\), "
+                  r"got \(19, 3\)"
+              ),
+          ),
+          (
+              [19, 11, 5],
+              [19, 5, 7],
+              [19, 3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([2], [1]), ([0], [0])),
+                  lhs_ragged_dimensions=[1],
+                  rhs_group_dimensions=[0],
+              ),
+              (
+                  "ragged_dot_general requires rhs group dimension numbers to "
+                  "be distinct from contracting and batch dimensions"
+              ),
+          ),
+          (
+              [11, 3],
+              [3, 3, 7],
+              [3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [1]), ([], [])),
+                  lhs_ragged_dimensions=[0],
+                  rhs_group_dimensions=[1],
+              ),
+              (
+                  "ragged_dot_general requires rhs group dimension numbers to "
+                  "be distinct from contracting and batch dimensions"
+              ),
+          ),
+          (
+              [11, 5],
+              [3, 5, 7],
+              [2],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [1]), ([], [])),
+                  lhs_ragged_dimensions=[0],
+                  rhs_group_dimensions=[0],
+              ),
+              "expected rhs group dimension size to be 2, got 3",
+          ),
+          (
+              [2, 11, 5],
+              [3, 2, 5, 7],
+              [3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([2], [2]), ([0], [1])),
+                  lhs_ragged_dimensions=[0],
+                  rhs_group_dimensions=[0],
+              ),
+              (
+                  "ragged_dot_general requires zero group dimensions in "
+                  "the rhs when lhs ragged dimension is contracting or batch"
+              ),
+          ),
+          (
+              [11, 5],
+              [3, 5, 7],
+              [3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [1]), ([], [])),
+                  lhs_ragged_dimensions=[1],
+                  rhs_group_dimensions=[0],
+              ),
+              (
+                  "ragged_dot_general requires zero group dimensions in "
+                  "the rhs when lhs ragged dimension is contracting or batch"
+              ),
+          ),
+          (
+              [11, 5],
+              [5, 7],
+              [3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [0]), ([], [])),
+                  lhs_ragged_dimensions=[0],
+                  rhs_group_dimensions=[],
+              ),
+              (
+                  "ragged_dot_general requires exactly one rhs group dimension "
+                  "when lhs ragged dimension is noncontracting"
+              ),
+          ),
+      ]
+  )
+  def test_ragged_dot_general_shape_inference_failure(
+      self, lhs_shape, rhs_shape, group_sizes_shape,
+      ragged_dot_dimension_numbers, err_msg):
+    lhs = jnp.ones(lhs_shape, dtype=jnp.float32)
+    rhs = jnp.ones(rhs_shape, dtype=jnp.float32)
+    group_sizes = jnp.ones(group_sizes_shape, dtype=jnp.int32)
+    with self.assertRaisesRegex(TypeError, err_msg):
+      lax.ragged_dot_general(lhs, rhs, group_sizes,
+                             ragged_dot_dimension_numbers)
+
+  @parameterized.parameters(
+      {
+          "lhs_shape": lhs_shape,
+          "rhs_shape": rhs_shape,
+          "group_sizes_shape": group_sizes_shape,
+          "ragged_dnums": ragged_dnums,
+          "out_shape": out_shape,
+      }
+      for lhs_shape, rhs_shape, group_sizes_shape, ragged_dnums, out_shape in [
+          (
+              [11, 5],
+              [3, 5, 7],
+              [3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [1]), ([], [])),
+                  lhs_ragged_dimensions=[0],
+                  rhs_group_dimensions=[0],
+              ),
+              (11, 7),
+          ),
+          (
+              [11, 5],
+              [5, 7],
+              [3],
+              lax.RaggedDotDimensionNumbers(
+                  dot_dimension_numbers=(([1], [0]), ([], [])),
+                  lhs_ragged_dimensions=[1],
+                  rhs_group_dimensions=[],
+              ),
+              (3, 11, 7),
+          ),
+      ]
+  )
+  def test_ragged_dot_general_shape_inference_success(
+      self, lhs_shape, rhs_shape, group_sizes_shape, ragged_dnums, out_shape):
+    lhs = jnp.ones(lhs_shape, dtype=jnp.float32)
+    rhs = jnp.ones(rhs_shape, dtype=jnp.float32)
+    group_sizes = jnp.ones(group_sizes_shape, dtype=jnp.int32)
+    if jtu.test_device_matches(["tpu"]):
+      actual_shape = lax_internal._ragged_dot_general_shape_rule(
+          lhs, rhs, group_sizes, ragged_dot_dimension_numbers=ragged_dnums,
+          precision=jax.lax.Precision.DEFAULT,
+          preferred_element_type=jnp.float32,
+      )
+    else:
+      actual_shape = lax.ragged_dot_general(
+          lhs, rhs, group_sizes, ragged_dnums
+      ).shape
+    self.assertEqual(actual_shape, out_shape)
+
+  @parameterized.product(
+      batch_size=[3, 5],
+      m=[128, 1024],
+      k=[128, 1024],
+      n=[128, 1024],
+      num_groups=[2, 4],
+  )
+  def test_ragged_dot_general_vmap(
+      self, batch_size: int, m: int, k: int, n: int, num_groups: int
+  ):
+    if (jtu.test_device_matches(["tpu"])):
+      raise SkipTest("batched ragged_dot not yet supported on TPU")
+
+    lhs_shape = (batch_size, m, k)
+    rhs_shape = (batch_size, num_groups, k, n)
+    dtype = jnp.float32
+
+    def make_group_sizes(m, num_groups):
+      ends_no_final = jnp.sort(self.rng().choice(m, size=num_groups - 1))
+      ends = jnp.concatenate(
+          [ends_no_final, jnp.array([m], dtype=ends_no_final.dtype)])
+      starts = jnp.concatenate(
+          [jnp.zeros(1, dtype=ends_no_final.dtype), ends_no_final])
+      return ends - starts
+
+    rng = jtu.rand_small(self.rng())
+    args_maker = lambda: [
+        rng(lhs_shape, dtype),
+        rng(rhs_shape, dtype),
+        jnp.array([make_group_sizes(m, num_groups) for _ in range(batch_size)]),
+    ]
+    lhs, rhs, group_sizes = args_maker()
+
+    out_dtype = jnp.float32
+    precision = jax.lax.Precision.HIGHEST
+    ragged_dot = partial(
+        jax.lax.ragged_dot,
+        preferred_element_type=out_dtype,
+        precision=precision,
+    )
+    tol = 1e-5
+
+    batch_res = jax.vmap(ragged_dot)(lhs, rhs, group_sizes)
+    for i in range(batch_size):
+      # The ragged_dot does not zero out the output in the case sum(group_sizes)
+      # < m, hence we need to compare only the valid part of the output.
+      upper_bound = group_sizes[i].sum(axis=0)
+      ref_res = ragged_dot(lhs[i], rhs[i], group_sizes[i])[0:upper_bound, :]
+      self.assertArraysAllClose(
+          batch_res[i, 0:upper_bound, :], ref_res, rtol=tol, atol=tol
+      )
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -20,6 +20,7 @@ import dataclasses
 from typing import Any, Sequence, Union
 
 from jax._src import core
+from jax._src import pretty_printer as pp
 from jax._src import tree_util
 from jax._src.typing import Array
 from jax._src.util import merge_lists
@@ -76,6 +77,30 @@ class Slice:
     if step < 1:
       raise ValueError(f"slice must have a step >= 1 (found: {step})")
     return cls(start, size, step)
+
+
+def _pp_slice(context: core.JaxprPpContext, dim, slc: Slice) -> str:
+  start, size = slc.start, slc.size
+  if isinstance(start, core.Var):
+    start_str = core.pp_var(start, context)
+    size_str = (
+        core.pp_var(size, context) if isinstance(size, core.Var) else str(size)
+    )
+    return f"{start_str}:{start_str}+{size_str}"
+  else:
+    start_str = str(start)
+    if start == 0:
+      start_str = ""
+    if isinstance(size, core.Var):
+      size_str = core.pp_var(size, context)
+      if start_str:
+        return f"{start_str}:{start_str}+{size_str}"
+      else:
+        return f":{size_str}"
+    else:
+      end = start + size
+      end_str = "" if end == dim else str(end)
+      return f"{start_str}:{end_str}"
 
 
 def dslice(
@@ -247,11 +272,21 @@ class NDIndexer:
     return cls(indices, shape, int_indexer_shape, validate=True)
 
   def get_indexer_shape(self) -> tuple[int | Array, ...]:
-    _, slice_indexers, _ = unpack_ndindexer(self)
-    slice_shape = [s.size for s in slice_indexers]
-    # In NDIndexers, the int_indexer_shape is *always* at the front of the
-    # result.
-    return (*self.int_indexer_shape, *slice_shape)
+    is_int_indexing, slice_indexers, _ = unpack_ndindexer(self)
+
+    slice_shape = tuple(s.size for s in slice_indexers)
+    int_indexers_contiguous = bool(
+        np.all(np.diff(np.where(is_int_indexing)[0]) == 1)
+    )
+    if not int_indexers_contiguous:
+      return self.int_indexer_shape + slice_shape
+
+    has_int_indexers = any(is_int_indexing)
+    if has_int_indexers:
+      pos = is_int_indexing.index(True)
+      return slice_shape[:pos] + self.int_indexer_shape + slice_shape[pos:]
+
+    return slice_shape
 
   def transform_shape(self, shape: None | tuple[int | Array, ...]) -> None | tuple[int | Array, ...]:
     del shape  # Unused
@@ -259,3 +294,35 @@ class NDIndexer:
 
   def transform_dtype(self, dtype):
     return dtype
+
+  def transform_sharding(self, sharding):
+    # If there are no explicit axes, do nothing.
+    if all(p is None for p in sharding.spec):
+      return sharding
+    # If there are explicit axes, we don't support changing the shape, so we
+    # don't support int indexers and instead require all slices.
+    if (self.int_indexer_shape or
+        not all(isinstance(idx, Slice) for idx in self.indices)):
+      raise TypeError("sharded ref (array reference) can only be indexed by "
+                      "slices, not integers")
+    #  Moreover, only allow trivial slice(None) slices on explicitly sharded
+    #  axes. Then the sharding stays the same.
+    _, slice_indexers, _ = unpack_ndindexer(self)
+    for i, (d, sl, s) in enumerate(zip(self.shape, slice_indexers, sharding.spec)):
+      if s is None: continue
+      if not (type(sl.start)  is int and sl.start == 0 and
+              type(sl.size)   is int and sl.size  == d and
+              type(sl.stride) is int and sl.stride == 1):
+        raise ValueError("sharded ref (array reference) can only be sliced "
+                         f"along unsharded axes, but ref of shape {self.shape} "
+                         f"was sliced on axis {i}, which is sharded like {s}")
+    return sharding
+
+  def pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    indices = []
+    for idx, dim in zip(self.indices, self.shape):
+      if isinstance(idx, Slice):
+        indices.append(_pp_slice(context, dim, idx))
+      else:
+        indices.append(core.pp_var(idx, context))  # type: ignore
+    return pp.concat([pp.text("["), pp.text(",".join(indices)), pp.text("]")])

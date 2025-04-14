@@ -24,6 +24,8 @@ config_ext = xla_client._xla.config
 class XlaMetadata:
   __slots__ = ['val', 'hash']
 
+  val: dict[str, Any]
+
   def __init__(self, val):
     self.val = val
     self.hash = hash(tuple(sorted(self.val.items())))
@@ -35,14 +37,19 @@ class XlaMetadata:
     return other is not None and self.val == other.val
 
 
+def filter_nones(d: dict) -> dict:
+  return {k: v for k, v in d.items() if v is not None}
+
+
 def update_metadata(a, b: dict[str, Any]):
   if not b:
     return a
   if a is None or a is config_ext.unset:
-    return XlaMetadata(b)
-  val = a.val.copy()
+    val = {}
+  else:
+    val = a.val.copy()
   val.update(b)
-  return XlaMetadata(val)
+  return XlaMetadata(filter_nones(val))
 
 
 def current_xla_metadata():

@@ -16,8 +16,8 @@ import functools
 import jax
 from jax._src import core as jax_core
 from jax.interpreters import mlir
-from jax.interpreters.mlir import hlo
-from jax.interpreters.mlir import ir
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import hlo
 
 
 

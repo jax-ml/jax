@@ -2,6 +2,7 @@
 # test deps
 #
 -r test-requirements.txt
+-r gpu-test-requirements.txt
 
 #
 # build deps
@@ -12,11 +13,11 @@ numpy~=2.1.0; python_version>="3.13"
 #
 # runtime deps
 #
-scipy>=1.13.1
+scipy>=1.13.1; python_version<="3.12"
+scipy>=1.15.2; python_version>="3.13"
 
 ml_dtypes>=0.4.0
 opt_einsum
 zstandard
 etils[epath]
-# TODO(ybaturina): remove setuptools version
-setuptools<71.0.0
+setuptools

@@ -44,14 +44,15 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
 from jax._src.layout import DeviceLocalLayout, Layout
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.monitoring import record_event_duration_secs, record_event_time_span
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import ( NamedSharding,
-    SingleDeviceSharding, TransferToMemoryKind,
-    is_single_device_sharding)
+from jax._src.sharding_impls import (
+    NamedSharding, SingleDeviceSharding, TransferToMemoryKind, GSPMDSharding,
+    PositionalSharding, is_single_device_sharding)
 import numpy as np
 
 
@@ -132,11 +133,11 @@ class RuntimeTokenSet(threading.local):
       # TODO(yueshengys): This might still be buggy in a multi-process SPMD
       # scenario. Revise the logic later. A distributed shutdown barrier inside
       # the XLA program may be needed.
-      return jax.device_put(tok, jax.sharding.PositionalSharding(devices))
+      return jax.device_put(tok, PositionalSharding(devices))
 
     # We only use replicated sharding for the first time when the token for the
     # order effect hasn't been created.
-    s = jax.sharding.GSPMDSharding.get_replicated(devices)
+    s = GSPMDSharding.get_replicated(devices)
     sharded_tok = core.Token(pxla.shard_args([s], [None], [None], [tok])[0])
     self.current_tokens[eff] = sharded_tok
     return sharded_tok
@@ -466,11 +467,14 @@ def _device_put_sharding_impl(x, aval, device, copy):
     if not s.is_fully_addressable:
       if ((isinstance(x, array.ArrayImpl) and not x._committed) or
           type(x) in array_types):
-        multihost_utils.assert_equal(
-            x, fail_message=(
-                f"{type(x)} passed to device_put is not the same on each"
-                " process. Make sure you are passing the same value of"
-                f" {type(x)} on each process."))
+        # TODO(emilyaf): Remove this condition when jit works when a sharding
+        # has no local devices.
+        if not config.enable_empty_arrays.value:
+          multihost_utils.assert_equal(
+              x, fail_message=(
+                  f"{type(x)} passed to device_put is not the same on each"
+                  " process. Make sure you are passing the same value of"
+                  f" {type(x)} on each process."))
         return _DeferredShardArg(x, s, aval, True, copy)
       # TODO(yashkatariya,mattjj): Link to a doc about McJAX and jax.Array.
       raise ValueError(
@@ -492,6 +496,9 @@ def _device_put_sharding_impl(x, aval, device, copy):
         return _DeferredShardArg(x, x.sharding, aval, x.committed, copy)
     elif is_single_device_sharding(x.sharding):
       device = x.sharding._device_assignment[0] if device is None else device
+      if copy == CopySemantics.COPY and jaxlib_extension_version >= 327:
+        return xc.batched_device_put(aval, SingleDeviceSharding(device), [x],
+                                     [device], True, True)
       return pxla.batched_device_put(aval, SingleDeviceSharding(device), [x],
                                      [device])
 

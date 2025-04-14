@@ -47,7 +47,7 @@ g()
 In many cases, JAX will execute `f` and `g` *in parallel*, dispatching
 the computations onto different threads -- `g` might actually be executed
 before `f`. Parallel execution is a nice performance optimization, especially if copying
-to and from a device is expensive (see the [asynchronous dispatch note](https://jax.readthedocs.io/en/latest/async_dispatch.html) for more details).
+to and from a device is expensive (see the [asynchronous dispatch note](https://docs.jax.dev/en/latest/async_dispatch.html) for more details).
 In practice, however, we often don't need to
 think about asynchronous dispatch because we're writing pure functions and only
 care about the inputs and outputs of functions -- we'll naturally block on future

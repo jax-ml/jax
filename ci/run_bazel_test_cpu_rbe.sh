@@ -64,5 +64,7 @@ else
             --action_env=JAX_ENABLE_X64="$JAXCI_ENABLE_X64" \
             --test_output=errors \
             --color=yes \
-            //tests:cpu_tests //tests:backend_independent_tests
+            //tests:cpu_tests //tests:backend_independent_tests \
+            //jaxlib/tools:jaxlib_wheel_size_test \
+            //:jax_wheel_size_test
 fi

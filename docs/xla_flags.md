@@ -85,4 +85,4 @@ XLA_FLAGS='--flag1=value1 --flag2=value2'  python3 source.py
 | `xla_gpu_enable_reduce_scatter_combine_by_dim` | Boolean (true/false) | Combine reduce-scatter ops with the same dimension or irrespective of their dimension. |
 
 **Additional reading:**
-* [GPU performance tips](https://jax.readthedocs.io/en/latest/gpu_performance_tips.html#xla-performance-flags)
+* [GPU performance tips](https://docs.jax.dev/en/latest/gpu_performance_tips.html#xla-performance-flags)

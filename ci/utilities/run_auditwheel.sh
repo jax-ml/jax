@@ -26,6 +26,10 @@ if [[ -z "$WHEELS" ]]; then
 fi
 
 for wheel in $WHEELS; do
+    # Skip checking manylinux compliance for jax wheel.
+    if [[ "$wheel" =~ 'jax-' ]]; then
+      continue
+    fi
     printf "\nRunning auditwheel on the following wheel:"
     ls $wheel
     OUTPUT_FULL=$(python -m auditwheel show $wheel)

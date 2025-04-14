@@ -33,26 +33,6 @@ enum class SolverType {
   C128,
 };
 
-// getrf: LU decomposition
-
-struct GetrfDescriptor {
-  SolverType type;
-  int batch, m, n, lwork;
-};
-
-void Getrf(gpuStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len, XlaCustomCallStatus* status);
-
-// geqrf: QR decomposition
-
-struct GeqrfDescriptor {
-  SolverType type;
-  int batch, m, n, lwork;
-};
-
-void Geqrf(gpuStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len, XlaCustomCallStatus* status);
-
 #ifdef JAX_GPU_CUDA
 
 // csrlsvpr: Linear system solve via Sparse QR
@@ -67,16 +47,6 @@ void Csrlsvqr(gpuStream_t stream, void** buffers, const char* opaque,
               size_t opaque_len, XlaCustomCallStatus* status);
 
 #endif  // JAX_GPU_CUDA
-
-// orgqr/ungqr: apply elementary Householder transformations
-
-struct OrgqrDescriptor {
-  SolverType type;
-  int batch, m, n, k, lwork;
-};
-
-void Orgqr(gpuStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len, XlaCustomCallStatus* status);
 
 // Symmetric (Hermitian) eigendecomposition, QR algorithm: syevd/heevd
 

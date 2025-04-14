@@ -391,9 +391,9 @@ def _flash_attention_kernel_single_batch(
       l_prev = l_scratch_ref[batch_idx]
       q = q_tile_ref[batch_idx]  # [block_q, head_dim]
       start_k = i * block_k
-      k = pl.load(
-          k_tile_ref, (*batch_idx, pl.dslice(start_k, block_k), slice(None))
-      )  # [block_k, head_dim]
+      k = k_tile_ref[
+          (*batch_idx, pl.dslice(start_k, block_k), slice(None))
+      ]  # [block_k, head_dim]
 
       s = jax.lax.dot_general(
           q, k, TRANS_B_DIM_NUMBERS, preferred_element_type=jnp.float32
@@ -403,10 +403,9 @@ def _flash_attention_kernel_single_batch(
       # TODO(tanburn) Should the attention bias be added before or after
       # multiplication by sm_scale?
       if ab_tile_ref is not None:
-        ab = pl.load(
-            ab_tile_ref,
+        ab = ab_tile_ref[
             (*batch_idx, pl.dslice(None), pl.dslice(start_k, block_k))
-        ).astype(jnp.float32)
+        ].astype(jnp.float32)
         s += ab
 
       if sm_scale != 1.0:
@@ -422,10 +421,9 @@ def _flash_attention_kernel_single_batch(
         q_segment_ids = pltpu.repeat(
             q_segment_ids_tile_ref[batch_idx[0]], repeats, axis=1
         )  # [block_q, block_k].
-        kv_segment_ids = pl.load(
-            kv_segment_ids_tile_ref,
-            (batch_idx[0], pl.dslice(1), pl.dslice(start_k, block_k)),
-        )  # [1, block_k].
+        kv_segment_ids = kv_segment_ids_tile_ref[
+            batch_idx[0], :1, pl.dslice(start_k, block_k)
+        ]  # [1, block_k].
         mask = jnp.equal(q_segment_ids, kv_segment_ids).astype(jnp.bool_)
 
       if causal:
@@ -471,9 +469,7 @@ def _flash_attention_kernel_single_batch(
 
       l_next_inv_safe = jnp.where(l_next == 0.0, 1.0, 1.0 / l_next)
       acc_scratch_ref[batch_idx] *= l_broadcast(l_corr * l_next_inv_safe)
-      v = pl.load(
-          v_tile_ref, (*batch_idx, pl.dslice(start_k, block_k), slice(None))
-      )
+      v = v_tile_ref[(*batch_idx, pl.dslice(start_k, block_k), slice(None))]
       o_curr = jax.lax.dot(
           p.astype(v.dtype), v, preferred_element_type=jnp.float32
       )
@@ -529,15 +525,13 @@ def _flash_attention_kernel_single_batch_single_step(
       raise NotImplementedError(
           f"kv block size must be a multiple of {NUM_LANES}"
       )
-    q_segment_ids = pl.load(
-        q_segment_ids_tile_ref, (batch_idx[0],)
-    )  # [block_q, NUM_LANES].
+    q_segment_ids = q_segment_ids_tile_ref[
+        batch_idx[0]
+    ]  # [block_q, NUM_LANES].
     q_segment_ids = pltpu.repeat(
         q_segment_ids, repeats, axis=1
     )  # [block_q, block_k].
-    kv_segment_ids = pl.load(
-        kv_segment_ids_tile_ref, (batch_idx[0], pl.dslice(1))
-    )  # [1, block_k].
+    kv_segment_ids = kv_segment_ids_tile_ref[batch_idx[0], :1]  # [1, block_k].
     mask = jnp.equal(q_segment_ids, kv_segment_ids).astype(jnp.bool_)
 
   if causal:
@@ -840,33 +834,27 @@ def _flash_attention_dkv_kernel(
     start_q = j * block_q
     def k_body(i, _):
       start_k = i * block_k
-      k = pl.load(k_tile_ref, (0, 0, pl.ds(start_k, block_k), slice(None)))
-      v = pl.load(v_tile_ref, (0, 0, pl.ds(start_k, block_k), slice(None)))
-      q = pl.load(q_tile_ref, (0, 0, pl.ds(start_q, block_q), slice(None))
-                  )  # [block_q, head_dim]
-      l = pl.load(l_tile_ref, (0, 0, pl.ds(start_q, block_q), slice(None))
-                  )  # [block_q, 128]
-      m = pl.load(m_tile_ref, (0, 0, pl.ds(start_q, block_q), slice(None))
-                  )  # [block_q, 128]
-      do = pl.load(do_tile_ref, (0, 0, pl.ds(start_q, block_q), slice(None))
-                  )  # [block_q, 128]
-      di = pl.load(di_tile_ref, (0, 0, pl.ds(start_q, block_q), slice(None))
-                  ).astype(jnp.float32)  # [block_q, 128]
+      k = k_tile_ref[0, 0, pl.ds(start_k, block_k), :]
+      v = v_tile_ref[0, 0, pl.ds(start_k, block_k), :]
+      q = q_tile_ref[0, 0, pl.ds(start_q, block_q), :]  # [block_q, head_dim]
+      l = l_tile_ref[0, 0, pl.ds(start_q, block_q), :]  # [block_q, 128]
+      m = m_tile_ref[0, 0, pl.ds(start_q, block_q), :]  # [block_q, 128]
+      do = do_tile_ref[0, 0, pl.ds(start_q, block_q), :]  # [block_q, 128]
+      di = di_tile_ref[0, 0, pl.ds(start_q, block_q), :].astype(
+          jnp.float32
+      )  # [block_q, 128]
 
       capped_logits = lax.dot_general(
           q, k, TRANS_B_DIM_NUMBERS, preferred_element_type=jnp.float32
       )  # [block_q_major, block_k]
 
       if ab_tile_ref is not None:
-        ab = pl.load(
-            ab_tile_ref,
-            (
-                0,
-                0,
-                pl.dslice(j * block_q, block_q),
-                pl.dslice(i * block_k, block_k),
-            ),
-        ).astype(jnp.float32)
+        ab = ab_tile_ref[
+            0,
+            0,
+            pl.dslice(j * block_q, block_q),
+            pl.dslice(i * block_k, block_k),
+        ].astype(jnp.float32)
         capped_logits += ab
 
       if sm_scale != 1.0:
@@ -878,15 +866,15 @@ def _flash_attention_dkv_kernel(
         if rem:
           raise NotImplementedError(
           )
-        q_segment_ids = pl.load(
-            q_segment_ids_tile_ref, (0, pl.ds(start_q, block_q), slice(None))
-        )  # [block_q, NUM_LANES].
+        q_segment_ids = q_segment_ids_tile_ref[
+            0, pl.ds(start_q, block_q), :
+        ]  # [block_q, NUM_LANES].
         q_segment_ids = pltpu.repeat(
             q_segment_ids, repeats, axis=1
         )  # [block_q, block_k].
-        kv_segment_ids = pl.load(
-            kv_segment_ids_tile_ref, (slice(None), 0, pl.ds(start_k, block_k))
-        )  # [1, block_k].
+        kv_segment_ids = kv_segment_ids_tile_ref[
+            :, 0, pl.ds(start_k, block_k)
+        ]  # [1, block_k].
         mask = jnp.equal(q_segment_ids, kv_segment_ids).astype(jnp.bool_)
 
       if causal:
@@ -913,9 +901,9 @@ def _flash_attention_dkv_kernel(
           1 / l, block_k // MIN_BLOCK_SIZE, axis=1
       )  # [block_q_major, block_k_major]
       dv = lax.dot(p.T.astype(do.dtype), do, preferred_element_type=jnp.float32)
-      pl.store(dv_scratch_ref, (pl.ds(start_k, block_k), slice(None)),
-               pl.load(dv_scratch_ref, (pl.ds(start_k, block_k), slice(None)))
-               + dv.astype(dv_scratch_ref.dtype))
+      dv_scratch_ref[pl.ds(start_k, block_k), :] += dv.astype(
+          dv_scratch_ref.dtype
+      )
 
       # di: [block_q, 128]
       # do: [block_q, head_dim]
@@ -931,9 +919,9 @@ def _flash_attention_dkv_kernel(
       # ds: [block_q_major, block_k_major]
       # q: [block_q_major, head_dim]
       dk = lax.dot(ds.T.astype(do.dtype), q, preferred_element_type=jnp.float32)
-      pl.store(dk_scratch_ref, (pl.ds(start_k, block_k), slice(None)),
-               pl.load(dk_scratch_ref, (pl.ds(start_k, block_k), slice(None)))
-               + dk.astype(dk_scratch_ref.dtype))
+      dk_scratch_ref[pl.ds(start_k, block_k), :] += dk.astype(
+          dk_scratch_ref.dtype
+      )
     lax.fori_loop(0, block_k_major // block_k, k_body, None, unroll=True)
 
   if causal:
@@ -1192,12 +1180,8 @@ def _flash_attention_dq_kernel(
   def body(i, _):
     k_slice = pl.ds(i * block_k, block_k)
     q = q_tile_ref[0, 0, :, :]
-    k = pl.load(
-        k_tile_ref, (0, 0, k_slice, slice(None)),
-    )  # [block_k, head_dim]
-    v = pl.load(
-        v_tile_ref, (0, 0, k_slice, slice(None)),
-    )  # [block_k, head_dim]
+    k = k_tile_ref[0, 0, k_slice, :]  # [block_k, head_dim]
+    v = v_tile_ref[0, 0, k_slice, :]  # [block_k, head_dim]
     l = l_tile_ref[0, 0, :, :]  # [block_q_major, 128]
     m = m_tile_ref[0, 0, :, :]  # [block_q_major, 128]
     do = do_tile_ref[0, 0, :, :]  # [block_q_major, head_dim]
@@ -1208,9 +1192,9 @@ def _flash_attention_dq_kernel(
     )
 
     if ab_tile_ref is not None:
-      ab = pl.load(
-          ab_tile_ref, (0, 0, pl.dslice(None), pl.dslice(i * block_k, block_k))
-      ).astype(jnp.float32)
+      ab = ab_tile_ref[0, 0, :, pl.dslice(i * block_k, block_k)].astype(
+          jnp.float32
+      )
       capped_logits += ab
 
     if sm_scale != 1.0:
@@ -1226,9 +1210,7 @@ def _flash_attention_dq_kernel(
       q_segment_ids = pltpu.repeat(
           q_segment_ids_tile_ref[0], repeats, axis=1
       )  # [block_q, block_k].
-      kv_segment_ids = pl.load(
-          kv_segment_ids_tile_ref, (slice(None), 0, k_slice)
-      )  # [1, block_k].
+      kv_segment_ids = kv_segment_ids_tile_ref[:, 0, k_slice]  # [1, block_k].
       mask = jnp.equal(q_segment_ids, kv_segment_ids).astype(jnp.bool_)
 
     if causal:
@@ -1269,10 +1251,8 @@ def _flash_attention_dq_kernel(
       ds = ds * sm_scale
 
     if ds_tile_ref is not None:
-      pl.store(
-          ds_tile_ref,
-          (0, 0, pl.dslice(None), pl.dslice(i * block_k, block_k)),
-          ds.astype(ds_tile_ref.dtype),
+      ds_tile_ref[0, 0, :, pl.dslice(i * block_k, block_k)] = ds.astype(
+          ds_tile_ref.dtype
       )
 
     # dp: [block_q_major, block_k]

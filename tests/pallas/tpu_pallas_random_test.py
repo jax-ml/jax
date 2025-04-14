@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Tests for random ops in Pallas + Mosaic."""
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -40,8 +39,13 @@ class PRNGTest(jtu.JaxTestCase):
       self.skipTest("Need TPU devices")
     super().setUp()
 
-  def test_to_pallas_key_under_vmap(self):
-    key = jax.random.key(42, impl="rbg")
+  @parameterized.parameters(True, False)
+  @jax.legacy_prng_key('allow')
+  def test_to_pallas_key_under_vmap(self, use_legacy_key: bool):
+    if use_legacy_key:
+      key = jax.random.PRNGKey(42)
+    else:
+      key = jax.random.key(42, impl="rbg")
     key = jax.random.split(key, 10)
     batched_key = plrandom.to_pallas_key(key)
     batched_key_data = jax.random.key_data(batched_key)
@@ -299,6 +303,7 @@ class ThreefryTest(parameterized.TestCase):
           mesh=mesh,
           in_specs=partition,
           out_specs=partition,
+          check_rep=False,
       )
       jax_gen = generate(key_jax)
       pl_gen = generate(key_pallas)

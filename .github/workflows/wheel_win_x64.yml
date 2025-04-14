@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38  # v5.4.0
+      - uses: actions/setup-python@8d9ed9ac5c53483de85588cdf95a591a75ab9f55  # v5.5.0
         with:
           python-version: ${{ matrix.pyver }}
           cache: 'pip'
@@ -38,7 +38,7 @@ jobs:
           JAXLIB_RELEASE: true
         run: |
           python -m pip install uv~=0.5.30
-          python -m uv pip install -r build/test-requirements.txt \
+          python -m uv pip install -r build/test-requirements.txt `
             --upgrade numpy==2.0.0 scipy==1.13.1
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
           python.exe build\build.py build --wheels=jaxlib `
@@ -58,7 +58,7 @@ jobs:
           JAX_SKIP_SLOW_TESTS: true
           PY_COLORS: 1
         run: |
-          python -m uv pip install --find-links ${{ github.workspace }}\dist jaxlib \
+          python -m uv pip install --find-links ${{ github.workspace }}\dist jaxlib `
             -e ${{ github.workspace }}
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
           pytest -n auto --tb=short tests examples

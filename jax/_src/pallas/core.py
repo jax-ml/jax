@@ -15,6 +15,7 @@
 """Module for pallas-core functionality."""
 from __future__ import annotations
 
+import collections
 from collections.abc import Callable, Iterable, Iterator, Sequence
 import contextlib
 import copy
@@ -34,6 +35,7 @@ from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
+from jax._src.export._export import export
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import discharge as state_discharge
@@ -65,6 +67,55 @@ OriginStr = str  # The origin of a block spec, e.g. input[2]["field"]
 SEMAPHORE_INTERPRET_DTYPE = jnp.int16
 SEMAPHORE_MAX_VALUE = jnp.iinfo(SEMAPHORE_INTERPRET_DTYPE).max
 
+class AbstractSemaphoreTyRules:
+  @staticmethod
+  def pallas_interpret_element_aval(_) -> jax_core.ShapedArray:
+    return jax_core.ShapedArray((), SEMAPHORE_INTERPRET_DTYPE)
+
+  @staticmethod
+  def physical_element_aval(_) -> jax_core.ShapedArray:
+    return jax_core.ShapedArray((), jnp.int32)
+
+# TODO(sharadmv): implement dtype rules for AbstractSemaphoreTy
+class AbstractSemaphoreTy(dtypes.ExtendedDType):
+  name: str
+  _rules = AbstractSemaphoreTyRules
+
+  def __repr__(self) -> str:
+    return self.name
+
+  def __eq__(self, other):
+    return self.__class__ == other.__class__
+
+  def __hash__(self) -> int:
+    return hash(self.__class__)
+
+class semaphore_dtype(dtypes.extended):
+  """Common dtype for all kinds of semaphore dtypes.
+
+  This is an abstract class that should never be instantiated, but rather
+  exists for the sake of `jnp.issubdtype`.
+  """
+
+class semaphore(semaphore_dtype):
+  """Regular semaphore dtype.
+
+  Like its superclass, this class should never be instantiated.
+  """
+
+class Semaphore(AbstractSemaphoreTy):
+  name = "semaphore"
+  type = semaphore
+
+class barrier_semaphore(semaphore_dtype):
+  """Barrier semaphore dtype.
+
+  Like its superclass, this class should never be instantiated.
+  """
+
+class BarrierSemaphore(AbstractSemaphoreTy):
+  name = "barrier_semaphore"
+  type = barrier_semaphore
 
 @runtime_checkable
 class CompilerParams(Protocol):
@@ -343,7 +394,7 @@ class BlockSpec:
     if self.block_shape is None:
       block_shape = array_aval.shape
     else:
-      block_shape = self.block_shape
+      block_shape = self.block_shape  # type: ignore
       if len(array_aval.shape) != len(block_shape):
         raise ValueError(
             f"Block shape for {origin} (= {block_shape}) "
@@ -1038,7 +1089,10 @@ def core_map(
                      debug_info=api_util.debug_info("pallas_core_map", f,
                                                     (), {})),
         in_tree)
-    with jax_core.extend_axis_env_nd(mesh.shape.items()):
+    with (
+        tracing_grid_env(tuple(mesh.shape.values()), mapped_dims=()),
+        jax_core.extend_axis_env_nd(mesh.shape.items()),
+    ):
       jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, flat_args)
     out = core_map_p.bind(*consts, jaxpr=jaxpr, mesh=mesh,
                           compiler_params=compiler_params,
@@ -1068,6 +1122,17 @@ def _core_map_abstract_eval(*args, jaxpr, mesh, **_):
   return [], effs
 
 
+class Mesh(Protocol):
+
+  @property
+  def backend(self) -> str:
+    ...
+
+  @property
+  def shape(self) -> collections.OrderedDict[object, int]:
+    ...
+
+
 _core_map_mesh_rules: dict[type[Any], Callable[..., Any]] = {}
 
 
@@ -1075,14 +1140,14 @@ def default_mesh_discharge_rule(
     in_avals,
     out_avals,
     *args,
-    grid,
+    mesh,
     compiler_params,
-    backend,
     jaxpr,
     debug,
     interpret,
     cost_estimate,
     name,
+    memory_space=MemorySpace.ANY,
 ):
   """Discharges a ``core_map`` over a mesh to a ``pallas_call``."""
   del out_avals  # Unused.
@@ -1099,20 +1164,23 @@ def default_mesh_discharge_rule(
       for eff in jaxpr.effects
       if isinstance(eff, state_types.WriteEffect)
   )
-  any_spec = BlockSpec(memory_space=MemorySpace.ANY)
+  spec = BlockSpec(memory_space=memory_space)
   from jax._src.pallas import pallas_call  # Avoid circular dependency.
-  outs = pallas_call.pallas_call(
+
+  outs = pallas_call._pallas_call(
       body,
       name=name,
       out_shape=[in_avals[idx] for idx in modified_idxs],
-      in_specs=[any_spec] * len(in_avals),
-      out_specs=[any_spec] * len(modified_idxs),
       input_output_aliases={
           in_idx: out_idx for out_idx, in_idx in enumerate(modified_idxs)
       },
-      grid=grid,
+      grid_spec=GridSpec(
+          grid=tuple(mesh.shape.items()),
+          in_specs=[spec] * len(in_avals),
+          out_specs=[spec] * len(modified_idxs),
+      ),
+      mesh=mesh,
       compiler_params=compiler_params,
-      backend=backend,
       interpret=interpret,
       debug=debug,
       cost_estimate=cost_estimate,
@@ -1151,13 +1219,15 @@ jax_core.custom_typechecks[core_map_p] = _core_map_typecheck_rule
 
 
 def lower_as_mlir(
-    f, *args, dynamic_shapes=False, device=None, **kwargs
+    f, *args, dynamic_shapes=False, device=None, static_argnames=(), **kwargs
 ) -> mlir.ir.Module:
   with pallas_export_experimental(dynamic_shapes):
-    lowered = jax.jit(f, device=device).lower(*args, **kwargs)
-    stablehlo = lowered.compiler_ir(dialect="stablehlo")
+    f = jax.jit(f, device=device, static_argnames=static_argnames)
+    exported = export(f, platforms=["tpu"])(*args, **kwargs)
+    stablehlo = exported.mlir_module()
 
   return stablehlo  # type: ignore[return-value]
+
 
 _out_shape_to_aval_mapping: dict[
     type[Any], Callable[[Any], jax_core.AbstractValue]

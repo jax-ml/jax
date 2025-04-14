@@ -301,6 +301,7 @@ class SparseTrace(core.Trace):
   __slots__ = ("parent_trace", "tag", "spenv")
 
   def __init__(self, parent_trace, tag, spenv):
+    super().__init__()
     self.parent_trace = parent_trace
     self.tag = tag
     self.spenv = spenv
@@ -775,7 +776,7 @@ sparse_rules_bcoo[lax.while_p] = _while_sparse
 
 
 def _pjit_sparse(spenv, *spvalues, jaxpr, in_shardings, out_shardings,
-                 in_layouts, out_layouts, resource_env, donated_invars, name,
+                 in_layouts, out_layouts, donated_invars, ctx_mesh, name,
                  keep_unused, inline, compiler_options_kvs):
   if any(donated_invars):
     raise NotImplementedError("sparse xla_call with donated_invars")
@@ -808,8 +809,8 @@ def _pjit_sparse(spenv, *spvalues, jaxpr, in_shardings, out_shardings,
       out_shardings=out_shardings,
       in_layouts=in_layouts,
       out_layouts=out_layouts,
-      resource_env=resource_env,
       donated_invars=donated_invars,
+      ctx_mesh=ctx_mesh,
       name=name,
       keep_unused=keep_unused,
       inline=inline,

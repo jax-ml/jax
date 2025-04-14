@@ -69,7 +69,7 @@ Common causes of OOM failures
   disabling the automatic remat pass produces different trade-offs between compute and 
   memory. Note however, that the algorithm is basic and you can often get better 
   trade-off between compute and memory by disabling the automatic remat pass and doing
-  it manually with `the jax.remat API <https://jax.readthedocs.io/en/latest/jep/11830-new-remat-checkpoint.html>`_
+  it manually with `the jax.remat API <https://docs.jax.dev/en/latest/jep/11830-new-remat-checkpoint.html>`_
 
 
 Experimental features

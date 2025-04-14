@@ -1,0 +1,60 @@
+# CI - Oldest Supported NumPy (presubmit)
+# This workflow tests the oldest supported NumPy and jaxlib versions.
+
+name: CI - Oldest Supported NumPy (presubmit)
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - 'release/**'
+
+# This should also be set to read-only in the project settings, but it's nice to
+# document and enforce the permissions here.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  # Don't cancel in-progress jobs for main/release branches.
+  cancel-in-progress: ${{ !contains(github.ref, 'release/') && github.ref != 'main' }}
+
+jobs:
+  test-oldest-supported-numpy:
+    if: github.event.repository.fork == false
+    defaults:
+      run:
+        shell: bash
+    runs-on: "linux-x86-n2-64"
+    container: "us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest"
+# Begin Presubmit Naming Check - name modification requires internal check to be updated
+    name: "CI - Oldest Supported NumPy (Python 3.10, x64=0)"
+# End Presubmit Naming Check github-oldest-supported-numpy-presubmit
+
+    env:
+      JAXCI_PYTHON: "python3.10"
+      JAXCI_ENABLE_X64: 0
+      JAX_NUM_GENERATED_CASES: 5
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install Python dependencies
+        run: |
+          $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
+
+          # Install NumPy and SciPy with the oldest supported versions
+          $JAXCI_PYTHON -m uv pip install numpy==1.25.2 scipy==1.11.1
+
+          # Install JAX using the changes in the PR
+          $JAXCI_PYTHON -m uv pip install -e .[minimum-jaxlib]
+      # Halt for testing
+      - name: Wait For Connection
+        uses: google-ml-infra/actions/ci_connection@main
+        with:
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Run Pytest CPU tests
+        timeout-minutes: 30
+        run: ./ci/run_pytest_cpu.sh

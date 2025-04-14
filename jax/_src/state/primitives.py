@@ -18,9 +18,12 @@ from functools import partial
 import types
 from typing import Any, Union
 
+import numpy as np
+
 from jax._src import ad_util
 from jax._src import core
 from jax._src import dispatch
+from jax._src import dtypes
 from jax._src import pretty_printer as pp
 from jax._src import traceback_util
 from jax._src import tree_util
@@ -34,15 +37,12 @@ from jax._src.state.types import (
     AbstractRef,
     AccumEffect,
     ReadEffect,
-    RefBitcaster,
-    RefReshaper,
     Transform,
     TransformedRef,
     WriteEffect,
 )
 from jax._src.typing import Array
 from jax._src.util import safe_map, safe_zip
-import numpy as np
 
 
 ## General utilities
@@ -144,9 +144,24 @@ def ref_swap(
     _function_name: str = "ref_swap",
 ) -> Array:
   """Sets a `Ref`'s value and returns the original value."""
+  if hasattr(ref_or_view, 'dtype'):
+    value = _maybe_implicit_cast(ref_or_view.dtype, value)
   ref, transforms = get_ref_and_transforms(ref_or_view, idx, _function_name)
   flat_transforms, tree = tree_util.tree_flatten(transforms)
   return swap_p.bind(ref, value, *flat_transforms, tree=tree)
+
+# TODO(slebedev,mattjj): replace with special handling of Python numeric types:
+# if (isinstance(value, (int, float, complex)) and
+#     value == np.array(value, dtype).item()): return cast
+def _maybe_implicit_cast(dtype, value):
+  aval = core.typeof(value)
+  if (aval.weak_type and
+      (dtypes.issubdtype(dtype, np.floating) and
+       dtypes.issubdtype(aval.dtype, np.floating)) or
+      (dtypes.issubdtype(dtype, np.integer) and
+       dtypes.issubdtype(aval.dtype, np.integer))):
+    return lax.convert_element_type(value, dtype)
+  return value
 
 
 def ref_set(
@@ -206,6 +221,13 @@ def _dtype_after_transforming(
   return dtype
 
 
+def _sharding_after_transforming(sharding, transforms):
+  for transform in transforms:
+    sharding = transform.transform_sharding(sharding)
+  assert sharding is not None
+  return sharding
+
+
 def _get_abstract_eval(ref_aval: AbstractRef, *args,
                        tree):
   transforms = tree_util.tree_unflatten(tree, args)
@@ -214,10 +236,9 @@ def _get_abstract_eval(ref_aval: AbstractRef, *args,
   if isinstance(ref_aval.inner_aval, core.ShapedArray):
     out_shape = _shape_after_transforming(ref_aval.shape, transforms)
     out_dtype = _dtype_after_transforming(ref_aval.dtype, transforms)
-    # TODO(yashkatariya): Transform the sharding too instead of setting it to
-    # None.
-    out_aval = ref_aval.inner_aval.update(shape=out_shape, dtype=out_dtype,
-                                          sharding=core.get_cur_mesh_sharding())
+    out_sharding = _sharding_after_transforming(ref_aval.sharding, transforms)
+    out_aval = ref_aval.inner_aval.update(
+        shape=out_shape, dtype=out_dtype, sharding=out_sharding)
   else:
     if transforms:
       raise ValueError("Cannot index non-shaped array with nontrivial indices.")
@@ -242,7 +263,7 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
                        f"Expected shape: {expected_out_shape}. "
                        f"Value shape: {val_aval.shape}. "
                        f"Transforms: {transforms}. ")
-    if expected_out_dtype != val_aval.dtype and not val_aval.weak_type:
+    if expected_out_dtype != val_aval.dtype:
       raise ValueError(
           "Invalid dtype for `swap`. "
           f"Ref dtype: {expected_out_dtype}. "
@@ -291,70 +312,6 @@ addupdate_p.def_effectful_abstract_eval(_addupdate_abstract_eval)
 pp_ref_var = partial(pp.color, intensity=pp.Intensity.NORMAL,
                  foreground=pp.Color.GREEN)
 
-def _pp_slice(context: core.JaxprPpContext, dim, slc: indexing.Slice
-              ) -> str:
-  start, size = slc.start, slc.size
-  if isinstance(start, core.Var):
-    start_str = core.pp_var(start, context)
-    size_str = (
-        core.pp_var(size, context)
-        if isinstance(size, core.Var)
-        else str(size)
-    )
-    return f'{start_str}:{start_str}+{size_str}'
-  else:
-    start_str = str(start)
-    if start == 0:
-      start_str = ''
-    if isinstance(size, core.Var):
-      size_str = core.pp_var(size, context)
-      if start_str:
-        return f'{start_str}:{start_str}+{size_str}'
-      else:
-        return f':{size_str}'
-    else:
-      end = start + size
-      end_str = '' if end == dim else str(end)
-      return f'{start_str}:{end_str}'
-
-def pp_indexer(context: core.JaxprPpContext,indexer: indexing.NDIndexer
-                ) -> pp.Doc:
-  indices = []
-  for idx, dim in zip(indexer.indices, indexer.shape):
-    if isinstance(idx, indexing.Slice):
-      indices.append(_pp_slice(context, dim, idx))
-    else:
-      indices.append(core.pp_var(idx, context))  # type: ignore
-  return pp.concat([pp.text("["), pp.text(','.join(indices)), pp.text("]")])
-
-
-def pp_bitcaster(
-    context: core.JaxprPpContext, bitcaster: RefBitcaster
-) -> pp.Doc:
-  del context
-  return pp.text(
-      f"[bitcast({bitcaster.dtype}[{','.join(str(d) for d in bitcaster.shape)}])]"
-  )
-
-
-def pp_reshaper(context: core.JaxprPpContext, reshaper: RefReshaper) -> pp.Doc:
-  del context
-  return pp.text(
-      f"[reshape({reshaper.dtype}[{','.join(str(d) for d in reshaper.shape)}])]"
-  )
-
-
-def pp_transform(context: core.JaxprPpContext, transform: Transform) -> pp.Doc:
-  match transform:
-    case indexing.NDIndexer():
-      return pp_indexer(context, transform)
-    case RefBitcaster():
-      return pp_bitcaster(context, transform)
-    case RefReshaper():
-      return pp_reshaper(context, transform)
-    case _:
-      return pp.text(f"[{transform}]")
-
 
 def _pp_transforms(
     context: core.JaxprPpContext,
@@ -363,7 +320,7 @@ def _pp_transforms(
   if not transforms:
     return pp.text("[...]")
   return pp.concat(
-      [pp_transform(context, transform) for transform in transforms]
+      [transform.pretty_print(context) for transform in transforms]
   )
 
 
@@ -437,6 +394,8 @@ def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   ref_primal, x_primal, *idx = primals
   assert isinstance(ref_primal.aval, AbstractRef)
   ref_tangent, x_tangent, *_ = tangents
+  # if type(ref_tangent) is ad_util.Zero:
+  #   raise Exception("you're an idiot")
   assert isinstance(ref_tangent.aval, AbstractRef)
   x_tangent = ad_util.instantiate(x_tangent)
   return (swap_p.bind(ref_primal, x_primal, *idx, **params),
@@ -495,11 +454,52 @@ pe.partial_eval_jaxpr_custom_rules[addupdate_p] = partial(
 
 ##  get/swap/addupdate batching rules
 
-def _batch_indexer(indexer: indexing.NDIndexer, dims,
-                   axis_size: int,
-                   ref_shape: tuple[int, ...],
-                   ref_dim: int | batching.NotMapped,
-                   idx_is_batched: bool) -> indexing.NDIndexer:
+def _batch_indexer(
+    indexer: indexing.NDIndexer,
+    dims,
+    axis_size: int,
+    ref_shape: tuple[int, ...],
+    ref_dim: int | batching.NotMapped,
+    idx_is_batched: bool,
+) -> indexing.NDIndexer:
+  """Converts a batched indexer into an unbatched one.
+
+  This function handles the complexity of `vmap`-style batching where either the
+  `ref` being indexed, the indexer, or both may have batched dimensions. The
+  goal is to produce a new indexer that acts as if applied in a batched context,
+  but without actual batching, enabling downstream code to process it as usual.
+
+  If any index in `indexer` is batched, all array indexers are normalized. If
+  the array indexer contains a batched dimension, the dimension is moved to the
+  front (axis 0). If the array indexer not batched, it is broadcasted to include
+  a batch dimension at the front. This is to guarantee that all array indexers
+  are still of the same shape.
+
+  Slices are passed through unchanged unless they contain dynamic elements and
+  are themselves batched, which is currently unsupported.
+
+  If `ref` is batched (`ref_dim` is not `NotMapped`), we simulate per-example
+  indexing by inserting a new iota array at the position corresponding to
+  `ref_dim` in the indexer.
+
+  It is worth noting that if the array indexers in the original indexer are
+  contiguous, but become non-contiguous in the new indexer due to the insertion
+  of the iota, the dimensions corresponding to the array indexers will be moved
+  to the front in the indexing result. The batched dimension will be at axis 0,
+  while the dimensions corresponding to the array indexers in the original
+  indexer will start from axis 1. This behavior would cause a mismatch between
+  the original indexer and the new indexer. Callers must take this behavior into
+  account and properly transpose the arrays involved to avoid this mismatch.
+
+  Args:
+    indexer: An `NDIndexer` that indexes into `ref`.
+    dims: A pytree with the same structure as `indexer`, indicating which
+      dimension (if any) is batched for each array indexer.
+    axis_size: Size of the batch dimension.
+    ref_shape: Shape of `ref`.
+    ref_dim: The dimension of `ref` that is batched (if any).
+    idx_is_batched: Whether any index in the `indexer` is batched.
+  """
   indices = indexer.indices
   indices_dims = dims.indices
   new_indices: list[Array | indexing.Slice | int] = []
@@ -551,9 +551,9 @@ def _batch_indexer(indexer: indexing.NDIndexer, dims,
   if ref_dim is not batching.not_mapped:
     iota = lax.broadcasted_iota(np.dtype('int32'), new_integer_indexer_shape, 0)
     new_indices.insert(ref_dim, iota)
-  return indexing.NDIndexer(tuple(new_indices), ref_shape,
-                            new_integer_indexer_shape,
-                            validate=True)
+  return indexing.NDIndexer(
+      tuple(new_indices), ref_shape, new_integer_indexer_shape, validate=True
+  )
 
 def _get_vmap(batched_args, batched_dims, *, tree):
   axis_size, = {x.shape[d] for x, d in zip(batched_args, batched_dims)
@@ -568,11 +568,42 @@ def _get_vmap(batched_args, batched_dims, *, tree):
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")
   # TODO(sharadmv): handle vmap of multiple indexers
-  indexers = tuple(_batch_indexer(indexer, dims, axis_size,
+  new_indexers = tuple(_batch_indexer(indexer, dims, axis_size,
                                   ref.shape, ref_dim, idx_is_batched)
                      for indexer, dims in zip(indexers, indexers_dims))
-  flat_indexers, tree = tree_util.tree_flatten(indexers)
-  return get_p.bind(ref, *flat_indexers, tree=tree), 0
+  flat_indexers, tree = tree_util.tree_flatten(new_indexers)
+
+  is_int_indexing, _, _ = indexing.unpack_ndindexer(indexers[0])
+  int_indexers_contiguous = bool(
+      np.all(np.diff(np.where(is_int_indexing)[0]) == 1)
+  )
+  is_new_int_indexing, _, _ = indexing.unpack_ndindexer(new_indexers[0])
+  new_int_indexers_contiguous = bool(
+      np.all(np.diff(np.where(is_new_int_indexing)[0]) == 1)
+  )
+
+  out = get_p.bind(ref, *flat_indexers, tree=tree)
+  if not int_indexers_contiguous:  # will always be moved to the front
+    out_bdim = 0
+  else:  # originally not going to be moved to the front
+    if new_int_indexers_contiguous:  # now not going to be moved to the front
+      out_bdim = is_new_int_indexing.index(True)
+    else:  # now going to be moved to the front
+      original_pos = is_int_indexing.index(True)
+      array_indexer_shape = new_indexers[0].int_indexer_shape
+      array_indexer_len = len(array_indexer_shape)
+
+      transpose_order = list(range(len(out.shape)))
+      transpose_order = (
+          transpose_order[0],
+          *transpose_order[array_indexer_len:array_indexer_len+original_pos],
+          *transpose_order[1:array_indexer_len],
+          *transpose_order[array_indexer_len+original_pos:],
+      )
+
+      out = lax.transpose(out, transpose_order)
+      out_bdim = 0
+  return out, out_bdim
 batching.primitive_batchers[get_p] = _get_vmap
 
 def _swap_vmap(batched_args, batched_dims, *, tree):
@@ -590,15 +621,59 @@ def _swap_vmap(batched_args, batched_dims, *, tree):
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")
   # TODO(sharadmv): handle vmap of multiple indexers
-  indexers = tuple(_batch_indexer(indexer, dims, axis_size,
+  new_indexers = tuple(_batch_indexer(indexer, dims, axis_size,
                                   ref.shape, ref_dim, idx_is_batched)
                      for indexer, dims in zip(indexers, indexers_dims))
-  flat_indexers, tree = tree_util.tree_flatten(indexers)
-  if (ref_is_batched or idx_is_batched) and not val_is_batched:
-    val = batching.broadcast(val, axis_size, 0)
-  if val_is_batched:
-    val = batching.moveaxis(val, val_dim, 0)
-  return swap_p.bind(ref, val, *flat_indexers, tree=tree), 0
+  flat_indexers, tree = tree_util.tree_flatten(new_indexers)
+
+  is_int_indexing, _, _ = indexing.unpack_ndindexer(indexers[0])
+  int_indexers_contiguous = bool(
+      np.all(np.diff(np.where(is_int_indexing)[0]) == 1)
+  )
+  is_new_int_indexing, _, _ = indexing.unpack_ndindexer(new_indexers[0])
+  new_int_indexers_contiguous = bool(
+      np.all(np.diff(np.where(is_new_int_indexing)[0]) == 1)
+  )
+
+  if not new_int_indexers_contiguous:  # will be moved to the front
+    batched_dim_in_result = 0
+  else:
+    batched_dim_in_result = is_new_int_indexing.index(True) + 0
+
+  if not val_is_batched:
+    if ref_is_batched or idx_is_batched:
+      val = batching.broadcast(val, axis_size, batched_dim_in_result)
+  else:
+    val = batching.moveaxis(val, val_dim, batched_dim_in_result)
+
+  transpose_order_inversed = None
+
+  # Originally not going to be moved to the front, but now going to be moved to
+  # the front.
+  if int_indexers_contiguous and not new_int_indexers_contiguous:
+    original_pos = is_int_indexing.index(True)
+    array_indexer_shape = new_indexers[0].int_indexer_shape
+    array_indexer_len = len(array_indexer_shape)
+
+    transpose_order = list(range(len(val.shape)))
+    transpose_order = (
+        transpose_order[0],
+        *transpose_order[1+original_pos:(1+original_pos)+(array_indexer_len-1)],
+        *transpose_order[1:1+original_pos],
+        *transpose_order[(1+original_pos)+(array_indexer_len-1):],
+    )
+    val = val.transpose(transpose_order)
+    transpose_order_inversed = np.argsort(transpose_order)
+
+  out = swap_p.bind(ref, val, *flat_indexers, tree=tree)
+
+  # `val` should not be transposed, but we needed to transpose it to match
+  # `swap_p`. As a result, the output of `swap_p` is also transposed. Now we
+  # need to transpose it back.
+  if transpose_order_inversed is not None:
+    out = out.transpose(transpose_order_inversed)
+
+  return out, batched_dim_in_result
 batching.primitive_batchers[swap_p] = _swap_vmap
 
 def _addupdate_vmap(batched_args, batched_dims, *, tree):
@@ -616,14 +691,47 @@ def _addupdate_vmap(batched_args, batched_dims, *, tree):
   if len(indexers) > 1:
     raise NotImplementedError("Batching with multiple indexers not supported.")
   # TODO(sharadmv): handle vmap of multiple indexers
-  indexers = tuple(_batch_indexer(indexer, dims, axis_size,
+  new_indexers = tuple(_batch_indexer(indexer, dims, axis_size,
                                   ref.shape, ref_dim, idx_is_batched)
                      for indexer, dims in zip(indexers, indexers_dims))
-  flat_indexers, tree = tree_util.tree_flatten(indexers)
-  if (ref_is_batched or idx_is_batched) and not val_is_batched:
-    val = batching.broadcast(val, axis_size, 0)
-  if val_is_batched:
-    val = batching.moveaxis(val, val_dim, 0)
+  flat_indexers, tree = tree_util.tree_flatten(new_indexers)
+
+  is_int_indexing, _, _ = indexing.unpack_ndindexer(indexers[0])
+  int_indexers_contiguous = bool(
+      np.all(np.diff(np.where(is_int_indexing)[0]) == 1)
+  )
+  is_new_int_indexing, _, _ = indexing.unpack_ndindexer(new_indexers[0])
+  new_int_indexers_contiguous = bool(
+      np.all(np.diff(np.where(is_new_int_indexing)[0]) == 1)
+  )
+
+  if not new_int_indexers_contiguous:  # will be moved to the front
+    batched_dim_in_result = 0
+  else:
+    batched_dim_in_result = is_new_int_indexing.index(True)
+
+  if not val_is_batched:
+    if ref_is_batched or idx_is_batched:
+      val = batching.broadcast(val, axis_size, batched_dim_in_result)
+  else:
+    val = batching.moveaxis(val, val_dim, batched_dim_in_result)
+
+  # Originally not going to be moved to the front, but now going to be moved to
+  # the front.
+  if int_indexers_contiguous and not new_int_indexers_contiguous:
+    original_pos = is_int_indexing.index(True)
+    array_indexer_shape = new_indexers[0].int_indexer_shape
+    array_indexer_len = len(array_indexer_shape)
+
+    transpose_order = list(range(len(val.shape)))
+    transpose_order = (
+        transpose_order[0],
+        *transpose_order[1+original_pos:(1+original_pos)+(array_indexer_len-1)],
+        *transpose_order[1:1+original_pos],
+        *transpose_order[(1+original_pos)+(array_indexer_len-1):],
+    )
+    val = val.transpose(transpose_order)
+
   return addupdate_p.bind(ref, val, *flat_indexers, tree=tree), []
 batching.primitive_batchers[addupdate_p] = _addupdate_vmap
 
@@ -657,5 +765,14 @@ mlir.register_lowering(
 
 # === AD rules for mutable arrays ===
 
-ad.defjvp(core.mutable_array_p, lambda g, _: core.mutable_array(g))
+def _mut_jvp(primals, tangents):
+  (init_val,), (init_val_dot,) = primals, tangents
+  primal_out = core.mutable_array_p.bind(init_val)
+  if type(init_val_dot) is ad_util.Zero:
+    tangent_out = core.mutable_array_p.bind(ad_util.zeros_like_aval(init_val_dot.aval))
+  else:
+    tangent_out = core.mutable_array_p.bind(init_val_dot)
+  return primal_out, tangent_out
+
+ad.primitive_jvps[core.mutable_array_p] = _mut_jvp
 ad.defjvp(core.freeze_p, lambda g, _: core.freeze(g))

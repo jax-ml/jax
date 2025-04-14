@@ -23,8 +23,11 @@ module = [
     "jax.experimental.jax2tf.tests.back_compat_testdata",
     "jax.experimental.jax2tf.tests.flax_models",
     "jax_cuda12_plugin.*",
-    "jaxlib.*",
+    "jaxlib.cpu_feature_guard",
+    "jaxlib.cuda.*",
     "jaxlib.mlir.*",
+    "jaxlib.utils",
+    "jaxlib.xla_extension.utils",
     "jraph.*",
     "libtpu.*",
     "matplotlib.*",
@@ -65,6 +68,9 @@ filterwarnings = [
     # "error" entry above promotes DeprecationWarnings into errors. See also:
     # https://github.com/protocolbuffers/protobuf/issues/12186#issuecomment-1745679358
     "ignore:Type google\\._upb\\._message\\.(Scalar|Message)MapContainer uses PyType_Spec with a metaclass that has custom tp_new\\. This is deprecated and will no longer be allowed in Python 3\\.14\\.:DeprecationWarning",
+
+    # TODO(b/401588349): Remove this once transparent hugepages are enabled.
+    "ignore:Transparent hugepages",
 
     # NOTE: this is probably not where you want to add code to suppress a
     # warning. Only pytest tests look at this list, whereas Bazel tests also

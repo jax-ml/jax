@@ -24,11 +24,15 @@ import jax
 from jax._src.lib import check_jaxlib_version
 from jax._src import test_util as jtu
 
-# This is a subset of the full PEP440 pattern; for example we skip pre & post releases
+# This is a subset of the full PEP440 pattern; for example we skip post releases
 VERSION_PATTERN = re.compile(r"""
   ^                                    # start of string
   (?P<version>[0-9]+\.[0-9]+\.[0-9]+)  # main version; like '0.4.16'
-  (?:\.dev(?P<dev>[0-9]+))?            # optional dev version; like '.dev20230908'
+  (?:
+      (?:rc(?P<rc>[0-9]+))?             # optional rc version; like 'rc1'
+      |                                 # or
+      (?:\.dev(?P<dev>[0-9]+))?         # optional dev version; like '.dev20230908'
+  )?
   (?:\+(?P<local>[a-zA-Z0-9_.]+))?     # optional local version; like '+g6643af3c3'
   $                                    # end of string
 """, re.VERBOSE)
@@ -139,6 +143,7 @@ class JaxVersionTest(unittest.TestCase):
                      JAX_NIGHTLY=None, JAXLIB_NIGHTLY=None):
       with assert_no_subprocess_call():
         version = jax.version._get_version_for_build()
+      self.assertFalse(jax.version._is_prerelease())
       self.assertEqual(version, base_version)
       self.assertValidVersion(version)
 
@@ -146,6 +151,7 @@ class JaxVersionTest(unittest.TestCase):
                      JAX_NIGHTLY=None, JAXLIB_NIGHTLY=None):
       with assert_no_subprocess_call():
         version = jax.version._get_version_for_build()
+      self.assertFalse(jax.version._is_prerelease())
       self.assertEqual(version, base_version)
       self.assertValidVersion(version)
 
@@ -168,6 +174,32 @@ class JaxVersionTest(unittest.TestCase):
       with assert_no_subprocess_call():
         version = jax.version._get_version_for_build()
       self.assertEqual(version, f"{base_version}.dev20250101+1c0f1076erc1")
+      self.assertValidVersion(version)
+
+    with jtu.set_env(
+        JAX_RELEASE="1",
+        JAXLIB_RELEASE=None,
+        JAX_NIGHTLY=None,
+        JAXLIB_NIGHTLY=None,
+        WHEEL_VERSION_SUFFIX="rc0",
+    ):
+      with assert_no_subprocess_call():
+        version = jax.version._get_version_for_build()
+      self.assertTrue(jax.version._is_prerelease())
+      self.assertEqual(version, f"{base_version}rc0")
+      self.assertValidVersion(version)
+
+    with jtu.set_env(
+        JAX_RELEASE=None,
+        JAXLIB_RELEASE="1",
+        JAX_NIGHTLY=None,
+        JAXLIB_NIGHTLY=None,
+        WHEEL_VERSION_SUFFIX="rc0",
+    ):
+      with assert_no_subprocess_call():
+        version = jax.version._get_version_for_build()
+      self.assertTrue(jax.version._is_prerelease())
+      self.assertEqual(version, f"{base_version}rc0")
       self.assertValidVersion(version)
 
   def testVersions(self):

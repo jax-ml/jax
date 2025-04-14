@@ -60,11 +60,11 @@ args = parser.parse_args()
 
 r = runfiles.Create()
 
-
 def _is_mac():
   return platform.system() == "Darwin"
 
 
+soext = "dll" if build_utils.is_windows() else ("dylib" if _is_mac() else "so")
 pyext = "pyd" if build_utils.is_windows() else "so"
 
 
@@ -103,17 +103,14 @@ _XLA_EXTENSION_STUBS = [
     "pytree.pyi",
     "transfer_guard_lib.pyi",
 ]
-_OPTIONAL_XLA_EXTENSION_STUBS = []
 
 
 def patch_copy_xla_extension_stubs(dst_dir):
   xla_extension_dir = os.path.join(dst_dir, "xla_extension")
   os.makedirs(xla_extension_dir)
   for stub_name in _XLA_EXTENSION_STUBS:
-    stub_path = r.Rlocation("xla/xla/python/xla_extension/" + stub_name)
+    stub_path = r.Rlocation("__main__/jaxlib/xla/xla_extension/" + stub_name)
     stub_path = str(stub_path)  # Make pytype accept os.path.exists(stub_path).
-    if stub_name in _OPTIONAL_XLA_EXTENSION_STUBS and not os.path.exists(stub_path):
-      continue
     with open(stub_path) as f:
       src = f.read()
     src = src.replace(
@@ -135,7 +132,7 @@ def verify_mac_libraries_dont_reference_chkstack():
   if not _is_mac():
     return
   nm = subprocess.run(
-      ["nm", "-g", r.Rlocation("xla/xla/python/xla_extension.so")],
+      ["nm", "-g", r.Rlocation(f"__main__/jaxlib/xla_extension.{pyext}")],
       capture_output=True,
       text=True,
       check=False,
@@ -186,6 +183,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu):
       src_files=[
           f"__main__/jaxlib/cpu_feature_guard.{pyext}",
           f"__main__/jaxlib/utils.{pyext}",
+          "__main__/jaxlib/jax_common.dll" if build_utils.is_windows() else f"__main__/jaxlib/libjax_common.{soext}",
           "__main__/jaxlib/lapack.py",
           "__main__/jaxlib/hlo_helpers.py",
           "__main__/jaxlib/gpu_prng.py",
@@ -197,8 +195,10 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu):
           "__main__/jaxlib/gpu_sparse.py",
           "__main__/jaxlib/plugin_support.py",
           "__main__/jaxlib/version.py",
-          "__main__/jaxlib/xla_client.py",
-          f"xla/xla/python/xla_extension.{pyext}",
+          "__main__/jaxlib/xla/xla_client.py",
+          f"__main__/jaxlib/weakref_lru_cache.{pyext}",
+          "__main__/jaxlib/weakref_lru_cache.pyi",
+          f"__main__/jaxlib/xla_extension.{pyext}",
       ],
   )
   # This file is required by PEP-561. It marks jaxlib as package containing
@@ -260,6 +260,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu):
           "__main__/jaxlib/mlir/dialects/_mhlo_ops_gen.py",
           "__main__/jaxlib/mlir/dialects/_ods_common.py",
           "__main__/jaxlib/mlir/dialects/_scf_ops_gen.py",
+          "__main__/jaxlib/mlir/dialects/_sdy_enums_gen.py",
           "__main__/jaxlib/mlir/dialects/_sdy_ops_gen.py",
           "__main__/jaxlib/mlir/dialects/_sparse_tensor_enum_gen.py",
           "__main__/jaxlib/mlir/dialects/_sparse_tensor_ops_gen.py",
@@ -311,38 +312,31 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu):
   )
 
 
-  if build_utils.is_windows():
-    capi_so = "__main__/jaxlib/mlir/_mlir_libs/jaxlib_mlir_capi.dll"
-  else:
-    so_ext = "dylib" if _is_mac() else "so"
-    capi_so = f"__main__/jaxlib/mlir/_mlir_libs/libjaxlib_mlir_capi.{so_ext}"
-
   mlir_libs_dir = jaxlib_dir / "mlir" / "_mlir_libs"
   copy_runfiles(
       dst_dir=mlir_libs_dir,
       src_files=[
-          capi_so,
           "__main__/jaxlib/mlir/_mlir_libs/__init__.py",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlir.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_chlo.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirHlo.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsSparseTensor.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirSparseTensorPasses.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mosaic_gpu_ext.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_tpu_ext.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_sdy.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_stablehlo.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/register_jax_dialects.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsGPU.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsLLVM.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsNVGPU.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirGPUPasses.{pyext}",
+          f"__main__/jaxlib/_mlir.{pyext}",
+          f"__main__/jaxlib/_chlo.{pyext}",
+          f"__main__/jaxlib/_mlirHlo.{pyext}",
+          f"__main__/jaxlib/_mlirDialectsSparseTensor.{pyext}",
+          f"__main__/jaxlib/_mlirSparseTensorPasses.{pyext}",
+          f"__main__/jaxlib/_mosaic_gpu_ext.{pyext}",
+          f"__main__/jaxlib/_tpu_ext.{pyext}",
+          f"__main__/jaxlib/_sdy.{pyext}",
+          f"__main__/jaxlib/_stablehlo.{pyext}",
+          f"__main__/jaxlib/register_jax_dialects.{pyext}",
+          f"__main__/jaxlib/_mlirDialectsGPU.{pyext}",
+          f"__main__/jaxlib/_mlirDialectsLLVM.{pyext}",
+          f"__main__/jaxlib/_mlirDialectsNVGPU.{pyext}",
+          f"__main__/jaxlib/_mlirGPUPasses.{pyext}",
       ]
       + (
           []
           if build_utils.is_windows()
           else [
-              f"__main__/jaxlib/mlir/_mlir_libs/_triton_ext.{pyext}",
+              f"__main__/jaxlib/_triton_ext.{pyext}",
               "__main__/jaxlib/mlir/_mlir_libs/_triton_ext.pyi",
           ]
       ),

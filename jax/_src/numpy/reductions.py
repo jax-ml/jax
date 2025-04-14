@@ -30,7 +30,7 @@ from jax._src import core
 from jax._src import deprecations
 from jax._src import dtypes
 from jax._src.numpy.util import (
-    _broadcast_to, check_arraylike, _complex_elem_type,
+    _broadcast_to, check_arraylike, _complex_elem_type, ensure_arraylike,
     promote_dtypes_inexact, promote_dtypes_numeric, _where)
 from jax._src.lax import lax as lax_internal
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike, DeprecatedArg
@@ -1992,7 +1992,7 @@ def _cumulative_reduction(
     fill_nan: bool = False, fill_value: ArrayLike = 0,
     promote_integers: bool = False) -> Array:
   """Helper function for implementing cumulative reductions."""
-  check_arraylike(name, a)
+  a = ensure_arraylike(name, a)
   if out is not None:
     raise NotImplementedError(f"The 'out' argument to jnp.{name} is not supported")
   dtypes.check_user_dtype_supported(dtype, name)
@@ -2242,8 +2242,7 @@ def cumulative_sum(
     Array([[ 0,  1,  3,  6],
            [ 0,  4,  9, 15]], dtype=int32)
   """
-  check_arraylike("cumulative_sum", x)
-  x = lax_internal.asarray(x)
+  x = ensure_arraylike("cumulative_sum", x)
   if x.ndim == 0:
     raise ValueError(
       "The input must be non-scalar to take a cumulative sum, however a "
@@ -2304,8 +2303,7 @@ def cumulative_prod(
     Array([[  1,   1,   2,   6],
            [  1,   4,  20, 120]], dtype=int32)
   """
-  check_arraylike("cumulative_prod", x)
-  x = lax_internal.asarray(x)
+  x = ensure_arraylike("cumulative_prod", x)
   if x.ndim == 0:
     raise ValueError(
       "The input must be non-scalar to take a cumulative product, however a "

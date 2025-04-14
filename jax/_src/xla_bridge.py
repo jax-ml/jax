@@ -60,6 +60,9 @@ traceback_util.register_exclusion(__file__)
 
 XlaBackend = xla_client.Client
 
+# The platforms in this set will force forward compatibility for lowering.
+FORCE_FORWARD_COMPAT_LOWERING_PLATFORMS: set[str] = set()
+
 MIN_COMPUTE_CAPABILITY = 52
 
 _DEFAULT_CPU_COLLECTIVES_IMPL = 'gloo'
@@ -86,13 +89,13 @@ _ROCM_VISIBLE_DEVICES = config.string_flag(
     'Restricts the set of ROCM devices that JAX will use. Either "all", or a '
     'comma-separate list of integer device IDs.')
 
-_MOCK_NUM_GPU_PROCESSES = config.int_flag(
+MOCK_NUM_GPU_PROCESSES = config.int_flag(
     name="mock_num_gpu_processes",
     default=0,
     help="Mock number of JAX processes in GPU client. Value zero turns "
          "off mocking.",
 )
-_MOCK_GPU_TOPOLOGY = config.string_flag(
+MOCK_GPU_TOPOLOGY = config.string_flag(
     name="jax_mock_gpu_topology",
     default="",
     help='Mock multi-host GPU topology in GPU client. The value should '
@@ -131,7 +134,7 @@ def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
     warnings.warn(
       f'TPU backend initialization is taking more than {timer_secs} seconds. '
       'Did you run your code on all TPU hosts? '
-      'See https://jax.readthedocs.io/en/latest/multi_process.html '
+      'See https://docs.jax.dev/en/latest/multi_process.html '
       'for more information.')
 
   # Will log a warning after `timer_secs`.
@@ -263,7 +266,7 @@ def make_cpu_client(
       # Already validated by config module
       assert collectives_impl is None
 
-  num_devices = config.num_cpu_devices.value if config.num_cpu_devices.value >= 0 else None
+  num_devices = num_cpu_devices.value if num_cpu_devices.value >= 0 else None
   return xla_client.make_cpu_client(
     asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
     distributed_client=distributed.global_state.client,
@@ -287,7 +290,7 @@ def _check_cuda_compute_capability(devices_to_check):
         f"Device {idx} has CUDA compute capability {compute_cap/10} which is "
         "lower than the minimum supported compute capability "
         f"{MIN_COMPUTE_CAPABILITY/10}. See "
-        "https://jax.readthedocs.io/en/latest/installation.html#nvidia-gpu for "
+        "https://docs.jax.dev/en/latest/installation.html#nvidia-gpu for "
         "more details",
         RuntimeWarning
       )
@@ -429,7 +432,7 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
                        f'following issues with CUDA components:\n'
                        f'{join_str.join(errors)}')
 
-def _get_num_nodes_from_gpu_topology(topology: str) -> int:
+def get_num_nodes_from_gpu_topology(topology: str) -> int:
     try:
       slices_str, hosts_per_slice_str, _ = topology.split("x", 2)
       return int(slices_str) * int(hosts_per_slice_str)
@@ -437,69 +440,6 @@ def _get_num_nodes_from_gpu_topology(topology: str) -> int:
       raise ValueError('Mock topology must be of the form '
                        '"<number-of-slices> x <number-of-hosts-per-slice> x '
                        '<number-of-devices-per-host>".')
-
-def make_gpu_client(
-    *, platform_name: str, visible_devices_flag: config.Flag[str]
-) -> xla_client.Client:
-  visible_devices = visible_devices_flag.value
-  allowed_devices = None
-  if visible_devices != "all":
-    allowed_devices = {int(x) for x in visible_devices.split(",")}
-
-  mock_gpu_topology = _MOCK_GPU_TOPOLOGY.value or None
-  mock_num_gpu_processes = (_get_num_nodes_from_gpu_topology(mock_gpu_topology) if
-      mock_gpu_topology else _MOCK_NUM_GPU_PROCESSES.value)
-
-  use_mock_gpu_client = mock_num_gpu_processes > 0
-  num_nodes = (mock_num_gpu_processes if use_mock_gpu_client
-      else distributed.global_state.num_processes)
-
-  if platform_name == "cuda":
-    if not os.getenv("JAX_SKIP_CUDA_CONSTRAINTS_CHECK"):
-      _check_cuda_versions()
-    else:
-      print('Skipped CUDA versions constraints check due to the '
-            'JAX_SKIP_CUDA_CONSTRAINTS_CHECK env var being set.')
-
-    devices_to_check = (
-        allowed_devices
-        if allowed_devices
-        else range(cuda_versions.cuda_device_count())
-    )
-    _check_cuda_compute_capability(devices_to_check)
-
-  return xla_client.make_gpu_client(
-      distributed_client=distributed.global_state.client,
-      node_id=distributed.global_state.process_id,
-      num_nodes=num_nodes,
-      platform_name=platform_name,
-      allowed_devices=allowed_devices,
-      mock=use_mock_gpu_client,
-  )
-
-
-if hasattr(xla_client, "make_gpu_client"):
-  register_backend_factory(
-      "cuda",
-      partial(
-          make_gpu_client,
-          platform_name="cuda",
-          visible_devices_flag=CUDA_VISIBLE_DEVICES,
-      ),
-      priority=200,
-      fail_quietly=True,
-  )
-  register_backend_factory(
-      "rocm",
-      partial(
-          make_gpu_client,
-          platform_name="rocm",
-          visible_devices_flag=_ROCM_VISIBLE_DEVICES,
-      ),
-      priority=200,
-      fail_quietly=True,
-  )
-
 
 if hasattr(xla_client, "make_tpu_client"):
   # TODO(phawkins,skyewm): switch TPU plugin to use the PJRT plugin mechanism,
@@ -649,9 +589,9 @@ def _options_from_jax_configs(plugin_name):
         else _ROCM_VISIBLE_DEVICES.value)
     if visible_devices != 'all':
       options['visible_devices'] = [int(x) for x in visible_devices.split(',')]
-    mock_gpu_topology = _MOCK_GPU_TOPOLOGY.value or None
-    mock_num_processes = (_get_num_nodes_from_gpu_topology(mock_gpu_topology) if
-        mock_gpu_topology else _MOCK_NUM_GPU_PROCESSES.value)
+    mock_gpu_topology = MOCK_GPU_TOPOLOGY.value or None
+    mock_num_processes = (get_num_nodes_from_gpu_topology(mock_gpu_topology) if
+        mock_gpu_topology else MOCK_NUM_GPU_PROCESSES.value)
     options['enable_mock_nccl'] = mock_num_processes > 0
     if mock_num_processes > 0:
       options['num_nodes'] = mock_num_processes
@@ -696,6 +636,8 @@ def register_plugin(
         'node_id': distributed.global_state.process_id,
         'num_nodes': distributed.global_state.num_processes,
     }
+    if (slice_index := distributed.global_state.slice_index) is not None:
+      distribute_options['slice_index'] = slice_index
     if options is not None:
       distribute_options.update(updated_options)
     return xla_client.make_c_api_client(
@@ -957,7 +899,7 @@ def _suggest_missing_backends():
         warning_msg += (
           "This may be due to JAX pre-allocating too much device "
           "memory, leaving too little for CUDA library initialization. See "
-          "https://jax.readthedocs.io/en/latest/gpu_memory_allocation.html "
+          "https://docs.jax.dev/en/latest/gpu_memory_allocation.html "
           "for more details and potential workarounds."
         )
       warning_msg += "(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)"
@@ -1144,6 +1086,16 @@ def backend_xla_version(platform=None) -> int | None:
   backend = get_backend(platform)
   return getattr(backend, "xla_version", None)
 
+def backend_stablehlo_version(platform=None) -> int | None:
+  """Returns the StableHLO version of the backend.
+
+  Returns None if the backend does not use PJRT C API or does not have
+  stablehlo_current_version in the plugin attributes. This methon can be used to
+  skip features that are not available before certain stablehlo_current_version
+  if the backend is a plugin and uses stablehlo_current_version.
+  """
+  backend = get_backend(platform)
+  return getattr(backend, "stablehlo_current_version", None)
 
 @lru_cache
 def local_devices(process_index: int | None = None,
@@ -1273,3 +1225,20 @@ def make_pjrt_tpu_topology(topology_name='', **kwargs):
   return xla_client.make_tfrt_tpu_c_api_device_topology(
       topology_name, **kwargs
   )
+
+def _validate_backend_not_initialized(new_val):
+  if backends_are_initialized():
+    raise RuntimeError(
+        "jax_num_cpu_devices config should be updated before backends are"
+        " initialized i.e. before any JAX operation is executed. You should"
+        " initialize this config immediately after `import jax`.")
+
+num_cpu_devices = config.int_state(
+    name="jax_num_cpu_devices",
+    default=-1,
+    help=(
+        "Number of CPU devices to use. If not provided, the value of "
+        "the XLA flag --xla_force_host_platform_device_count is used."
+        " Must be set before JAX is initialized."),
+    validator=_validate_backend_not_initialized,
+)

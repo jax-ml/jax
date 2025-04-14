@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License
 
-"""Tests for the library of QDWH-based polar decomposition."""
 import functools
 
 from absl.testing import absltest

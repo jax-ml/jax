@@ -18,6 +18,7 @@ from typing import Callable
 
 from absl.testing import parameterized
 import jax
+from jax import numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
@@ -33,6 +34,7 @@ from jax._src.lib.mlir.dialects import vector
 from jax.experimental.mosaic import gpu as mgpu
 from jax.experimental.mosaic.gpu import layouts
 from jax.experimental.mosaic.gpu import utils as mgpu_utils
+from jax.experimental.mosaic.gpu import dialect_lowering as lowering
 
 _cext = mgpu.dialect._cext if mgpu.dialect is not None else None
 
@@ -591,6 +593,18 @@ class DialectTest(MosaicGpuTest):
     ):
       self.module.operation.verify()
 
+  def test_tiled_layout_attr_parsing(self):
+    with ir.InsertionPoint(self.module.body):
+      for layout in (
+          mgpu.WGMMA_LAYOUT,
+          mgpu.WGMMA_ROW_LAYOUT,
+          mgpu.WGMMA_COL_LAYOUT,
+          mgpu.WGMMA_TRANSPOSED_LAYOUT,
+      ):
+        attr = layouts.to_tiled_layout_attr(layout)
+        parsed_layout = layouts.from_tiled_layout_attr(attr)
+        self.assertEqual(layout, parsed_layout)
+
 
 class DialectLoweringTest(MosaicGpuTest):
 
@@ -823,6 +837,108 @@ class DialectLoweringTest(MosaicGpuTest):
             self.module, lambda op: isinstance(op, mgpu.dialect.SliceSMEMOp)
         )
     )
+
+  @parameterized.parameters(
+      (arith.ExtFOp, jnp.bfloat16, jnp.float32),
+      (arith.ExtSIOp, jnp.int16, jnp.int32),
+      (arith.ExtUIOp, jnp.int16, jnp.uint32),
+      (arith.FPToSIOp, jnp.float32, jnp.int32),
+      (arith.FPToUIOp, jnp.float32, jnp.uint32),
+      (arith.SIToFPOp, jnp.int16, jnp.float32),
+      (arith.TruncFOp, jnp.float32, jnp.float16),
+      (arith.TruncIOp, jnp.int32, jnp.int16),
+      (arith.UIToFPOp, jnp.uint32, jnp.float32),
+  )
+  def test_lower_conversion_op_lowers_to_same_op(self, op, in_dtype, out_dtype):
+    shape = (4, 32)
+
+    with ir.InsertionPoint(self.module.body):
+      scalar_in_ty = mgpu_utils.dtype_to_ir_type(in_dtype)
+      scalar_out_ty = mgpu_utils.dtype_to_ir_type(out_dtype)
+      in_ty = ir.VectorType.get(shape, scalar_in_ty)
+      out_ty = ir.VectorType.get(shape, scalar_out_ty)
+      if ir.IntegerType.isinstance(scalar_in_ty):
+        zero = ir.IntegerAttr.get(scalar_in_ty, 0)
+      else:
+        zero = ir.FloatAttr.get(scalar_in_ty, 0)
+      splat_zero = arith.ConstantOp(
+          in_ty, ir.DenseElementsAttr.get_splat(in_ty, zero)
+      )
+      op(out_ty, splat_zero)
+
+    mgpu.infer_layout(self.module)
+    mgpu.lower_mgpu_dialect(self.module, None)
+
+    conversion_ops = find_if(self.module, lambda o: isinstance(o, op))
+    # This is a splat, so we expect a single conversion op involving a scalar
+    # after lowering.
+    self.assertLen(conversion_ops, 1)
+    self.assertEqual(conversion_ops[0].result.type, scalar_out_ty)
+
+  @parameterized.parameters(
+      (True, False, False),
+      (False, True, False),
+      (False, False, True),
+  )
+  def test_custom_primitive_op_must_have_number_of_annotations_matching_operands_and_results(
+      self, omit_in_layouts, omit_in_transforms, omit_out_layouts
+  ):
+    vec_ty = ir.VectorType.get((4, 32), ir.BF16Type.get())
+    out_layouts = [
+        layouts.to_layout_attr(
+            mgpu.WGStridedFragLayout.from_shaped_type(vec_ty)
+        )
+    ]
+    in_layouts = out_layouts * 2
+    in_transforms = [
+        ir.ArrayAttr.get([mgpu.dialect.SwizzleTransformAttr.get(128)])
+    ]
+
+    in_layouts = [] if omit_in_layouts else in_layouts
+    in_transforms = [] if omit_in_transforms else in_transforms
+    out_layouts = [] if omit_out_layouts else out_layouts
+
+    def body(vec1, vec2, ref):
+      mgpu.dialect.custom_primitive(
+          [vec_ty], [vec1, vec2, ref], in_layouts, in_transforms, out_layouts
+      )
+
+    with ir.InsertionPoint(self.module.body):
+      smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+      ref_ty = ir.MemRefType.get((4, 32), ir.BF16Type.get(), memory_space=smem)
+      func.FuncOp.from_py_func(vec_ty, vec_ty, ref_ty)(body)
+
+    if omit_in_layouts:
+      error = "layout for each vector operand"
+    elif omit_in_transforms:
+      error = "transforms for each memref operand in smem"
+    else:
+      assert omit_out_layouts
+      error = "layout for each result"
+
+    with self.assertRaisesRegex(ir.MLIRError, error):
+      self.module.operation.verify()
+
+  def test_memref_transforms_with_transpose(self):
+    with ir.InsertionPoint(self.module.body):
+      ty_in = ir.MemRefType.get(
+          (64, 128),
+          ir.BF16Type.get(),
+          memory_space=ir.Attribute.parse("#gpu.address_space<workgroup>"),
+      )
+      ref = memref.alloc(ty_in, [], [])
+
+      ref = mgpu_utils.memref_transpose(ref, (1, 0))
+      # This tiling is applied to the transposed memref.
+      transforms = [mgpu.TileTransform(tiling=(16, 32))]
+
+      ref_transformed = lowering.reinterpret_smem_ref(ref, transforms)
+      ty_transformed = ir.MemRefType(ref_transformed.type)
+      self.assertEqual(ty_transformed.shape, [8, 2, 16, 32])
+      strides, _ = ty_transformed.get_strides_and_offset()
+      self.assertEqual(strides, [512, 4096, 1, 16])
+
+
 
 
 if __name__ == "__main__":

@@ -170,7 +170,7 @@ def _pretty_special_fun_name(case):
   return dict(**case, testcase_name=name)
 
 
-class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
+class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
 
   def _GetArgsMaker(self, rng, shapes, dtypes):
     return lambda: [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
@@ -273,6 +273,86 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     with self.assertRaises(TypeError):
       lsp_special.beta(x=1, y=1)
 
+  def testExpnTracerLeaks(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/26972
+    with jax.checking_leaks():
+      lsp_special.expi(jnp.ones(()))
+
+  def testExpiDisableJit(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/27019
+    x = jnp.array([-0.5])
+    with jax.disable_jit(True):
+      result_nojit = lsp_special.expi(x)
+    with jax.disable_jit(False):
+      result_jit = lsp_special.expi(x)
+    self.assertAllClose(result_jit, result_nojit)
+
+  def testGammaIncBoundaryValues(self):
+    dtype = jax.dtypes.canonicalize_dtype(float)
+    nan = float('nan')
+    inf = float('inf')
+    if jtu.parse_version(scipy.__version__) >= (1, 16):
+      a_samples = [0, 0, 0, 1, nan,   1, nan,   0,   1, 1, nan]
+      x_samples = [0, 1, 2, 0,   1, nan, nan, inf, inf, -1, inf]
+    else:
+      # disable samples that contradict with scipy/scipy#22441
+      a_samples = [0, 0, 0, 1, nan,   1, nan,   0,   1, 1]
+      x_samples = [0, 1, 2, 0,   1, nan, nan, inf, inf, -1]
+
+    args_maker = lambda: (np.array(a_samples, dtype=dtype), np.array(x_samples, dtype=dtype))
+
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self._CheckAgainstNumpy(lsp_special.gammainc, osp_special.gammainc, args_maker, rtol=rtol)
+    self._CompileAndCheck(lsp_special.gammainc, args_maker, rtol=rtol)
+
+  def testGammaIncCBoundaryValues(self):
+    dtype = jax.dtypes.canonicalize_dtype(float)
+    nan = float('nan')
+    inf = float('inf')
+    if jtu.parse_version(scipy.__version__) >= (1, 16):
+      a_samples = [0, 0, 0, 1, nan,   1, nan,   0,   1, 1, nan]
+      x_samples = [0, 1, 2, 0,   1, nan, nan, inf, inf, -1, inf]
+    else:
+      # disable samples that contradict with scipy/scipy#22441
+      a_samples = [0, 0, 0, 1, nan,   1, nan,   0,   1, 1]
+      x_samples = [0, 1, 2, 0,   1, nan, nan, inf, inf, -1]
+
+    args_maker = lambda: (np.array(a_samples, dtype=dtype), np.array(x_samples, dtype=dtype))
+
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self._CheckAgainstNumpy(lsp_special.gammaincc, osp_special.gammaincc, args_maker, rtol=rtol)
+    self._CompileAndCheck(lsp_special.gammaincc, args_maker, rtol=rtol)
+
+  def testBetaIncBoundaryValues(self):
+    dtype = jax.dtypes.canonicalize_dtype(float)
+    fi = jax.numpy.finfo(dtype)
+    nan = float('nan')
+    inf = float('inf')
+    tiny = fi.tiny
+    eps = fi.eps
+    if jtu.parse_version(scipy.__version__) >= (1, 16):
+      # TODO(pearu): enable tiny samples when a fix to scipy/scipy#22682
+      # will be available
+      a_samples = [nan, -0.5, inf, 0, eps, 1, tiny][:-1]
+      b_samples = [nan, -0.5, inf, 0, eps, 1, tiny][:-1]
+    elif jtu.parse_version(scipy.__version__) >= (1, 12):
+      # disabled samples that contradict with scipy/scipy#22425
+      a_samples = [nan, -0.5, 0.5]
+      b_samples = [nan, -0.5, 0.5]
+    else:
+      a_samples = [-0.5, 0.5]
+      b_samples = [-0.5, 0.5]
+    x_samples = [nan, -0.5, 0, 0.5, 1, 1.5]
+
+    a_samples = np.array(a_samples, dtype=dtype)
+    b_samples = np.array(b_samples, dtype=dtype)
+    x_samples = np.array(x_samples, dtype=dtype)
+
+    args_maker = lambda: np.meshgrid(a_samples, b_samples, x_samples)
+
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 5e-5
+    self._CheckAgainstNumpy(osp_special.betainc, lsp_special.betainc, args_maker, rtol=rtol)
+    self._CompileAndCheck(lsp_special.betainc, args_maker, rtol=rtol)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

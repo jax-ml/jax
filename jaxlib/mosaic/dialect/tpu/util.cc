@@ -22,16 +22,17 @@ limitations under the License.
 #include <string>
 #include <utility>
 
-#include "llvm/Support/MathExtras.h"
 #include "absl/log/check.h"
 #include "absl/types/span.h"
-#include "llvm/include/llvm/Support/raw_ostream.h"
-#include "mlir/include/mlir/IR/Attributes.h"
-#include "mlir/include/mlir/IR/BuiltinAttributes.h"
-#include "mlir/include/mlir/IR/BuiltinTypes.h"
-#include "mlir/include/mlir/IR/Value.h"
-#include "mlir/include/mlir/IR/ValueRange.h"
-#include "mlir/include/mlir/Support/LLVM.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/MathExtras.h"
+#include "llvm/Support/raw_ostream.h"
+#include "mlir/IR/Attributes.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Value.h"
+#include "mlir/IR/ValueRange.h"
+#include "mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 
@@ -45,18 +46,18 @@ std::ostream &operator<<(std::ostream &os, Print p) {
   return os;
 }
 
-SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
+SmallVector<int64_t> ComputeTileStrides(absl::Span<const int64_t> shape,
                                         absl::Span<const int64_t> tiling) {
-  SmallVector<int64_t> tile_strides(memref_ty.getRank());
+  SmallVector<int64_t> tile_strides(shape.size());
   int64_t stride = 1;
-  for (int64_t i = 0; i < memref_ty.getRank(); ++i) {
-    int64_t idx = memref_ty.getRank() - 1 - i;
+  for (int64_t i = 0; i < shape.size(); ++i) {
+    int64_t idx = shape.size() - 1 - i;
     int64_t tiling_idx = tiling.size() - 1 - i;
     tile_strides[idx] = stride;
     if (tiling_idx >= 0) {
-      stride *= llvm::divideCeil(memref_ty.getShape()[idx], tiling[tiling_idx]);
+      stride *= llvm::divideCeil(shape[idx], tiling[tiling_idx]);
     } else {
-      stride *= memref_ty.getShape()[idx];
+      stride *= shape[idx];
     }
   }
   return tile_strides;

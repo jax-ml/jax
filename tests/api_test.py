@@ -20,6 +20,7 @@ from collections.abc import Callable
 import concurrent.futures
 from contextlib import contextmanager
 import copy
+import dataclasses
 import enum
 import functools
 from functools import partial
@@ -51,12 +52,14 @@ from jax._src import array
 from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
+from jax._src import deprecations
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src import debugging
 from jax._src import pjit as pjit_lib
 from jax._src.ad_checkpoint import saved_residuals
+from jax._src.interpreters import ad as ad_internal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
@@ -1985,6 +1988,37 @@ class APITest(jtu.JaxTestCase):
     ):
       jax.vmap(f)(jnp.ones(4), jnp.ones(2), jnp.ones(2))
 
+  def test_vmap_sentinel(self):
+
+    @jax.tree_util.register_dataclass
+    @dataclasses.dataclass
+    class Foo:
+      x: jax.Array
+
+      def __init__(self, x):
+        nonlocal saw_sentinel
+        if x is jax._src.api_util.SENTINEL:
+          saw_sentinel += 1
+        self.x = x
+
+    x = jnp.arange(10)
+
+    # assert that sentinel is seen once for vmap in_axes
+    saw_sentinel = 0
+    jax.vmap(lambda f: f.x)(Foo(x))
+    self.assertEqual(saw_sentinel, 1)
+
+    # assert that sentinel is seen once for vmap out_axes
+    saw_sentinel = 0
+    jax.vmap(Foo)(x)
+    self.assertEqual(saw_sentinel, 1)
+
+    # assert that sentinel is seen twice with vmap in_axes and out_axes
+    saw_sentinel = 0
+    jax.vmap(lambda f: Foo(f.x + 1))(Foo(x))
+    self.assertEqual(saw_sentinel, 2)
+
+
   def test_device_get_scalar(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     x = api.device_put(x)
@@ -3087,7 +3121,6 @@ class APITest(jtu.JaxTestCase):
   def test_vmap_preserves_docstr(self):
     def superfun(a):
       """Does things with stuff."""
-      pass
 
     self.assertRegex(api.vmap(superfun).__doc__, "\n".join([
         "Vectorized version of superfun.*",
@@ -4391,6 +4424,7 @@ class APITest(jtu.JaxTestCase):
     out = jax.grad(f)(3.0)  # doesn't crash
     self.assertAllClose(out, 1., check_dtypes=False)
 
+  @jtu.thread_unsafe_test()
   def test_cache_clear_pmap(self):
     @jax.pmap
     def f(i):
@@ -4404,6 +4438,14 @@ class APITest(jtu.JaxTestCase):
   def test_invalid_value_device_put(self):
     with self.assertRaisesRegex(ValueError, r".*Received invalid value.*"):
       jax.device_put(jnp.arange(8), 'cpu')
+
+  def test_num_cpu_devices_called_after_initialization(self):
+    jax.devices()
+    with self.assertRaisesRegex(
+        RuntimeError,
+        "jax_num_cpu_devices config should be updated before backends are "
+        "initialized"):
+      config.update('jax_num_cpu_devices', 2)
 
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_clear_cache(self):
@@ -4425,64 +4467,214 @@ class APITest(jtu.JaxTestCase):
       self.assertEqual(tracing_add_count, 2)
 
   @jtu.thread_unsafe_test()  # logging is not thread-safe
-  def test_cache_miss_explanations(self):
-    @jax.jit
-    def f(x, y):
-      return jnp.sin(x) * y['hi']
+  def test_cache_miss_explanations_skip_internals(self):
+    if is_persistent_cache_enabled():
+      self.skipTest('With persistent cache, we see the cache misses')
 
+    with config.explain_cache_misses(True):
+      with self.assertNoLogs(level='WARNING'):
+        for i in range(2):
+          jnp.sin(jnp.arange(i + 1, dtype=np.float32))
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_first_miss(self):
+    @jax.jit
+    def f(x): return x
     x = jnp.float32(1.)
-    y = {'hi': jnp.arange(3., dtype='float32')}
 
     expected_log_len = 1 if not is_persistent_cache_enabled() else 3
-
     # print on first miss, not on hit
     with config.explain_cache_misses(True):
-      with self.assertLogs(level='WARNING') as cm:
-        f(x, y)
-        f(x, y)
+      with self.assertLogs(level="WARNING") as cm:
+        f(x)
+        f(x)
     self.assertLen(cm.output, expected_log_len)
     msg = cm.output[0]
-    self.assertIn('TRACING CACHE MISS', msg)
-    self.assertIn('never seen function', msg)
+    self.assertIn("TRACING CACHE MISS", msg)
+    self.assertIn("never seen function", msg)
+    self.assertNotIn("explanation unavailable!", msg)
 
-    # shape change
-    y_ = {'hi': jnp.arange(4, dtype='float32')}
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_in_tree(self):
+    @jax.jit
+    def f(*args, **kwargs): return args[0]
+
+    f(0., 1., y=(2., 2.1))
+
     with config.explain_cache_misses(True):
-      with self.assertLogs(level='WARNING') as cm:
-        f(x, y_)
-    self.assertLen(cm.output, expected_log_len)
+      with self.assertLogs(level="WARNING") as cm:
+        # Same number of leaves but different trees
+        f(0., (1., 1.1), y=2.)
+    self.assertLen(cm.output, 1)
     msg = cm.output[0]
-    self.assertIn('never seen input type signature', msg)
-    self.assertIn('closest seen input type signature has 1 mismatches', msg)
-    self.assertIn('seen f32[3], but now given f32[4]', msg)
+    self.assertIn("different input pytree", msg)
+    self.assertNotIn("explanation unavailable!", msg)
 
-    # weak type change (assuming no x64)
-    if not config.enable_x64.value:
-      with config.explain_cache_misses(True):
-        with self.assertLogs(level='WARNING') as cm:
-          f(1., y)
-      self.assertLen(cm.output, expected_log_len)
-      msg = cm.output[0]
-      self.assertIn('weak_type=True', msg)
-      self.assertIn('https://jax.readthedocs.io/en/latest/type_promotion.html#weak-types', msg)
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_arg_passed_as_kwarg(self):
+    @jax.jit
+    def f(x, y): return jnp.sin(x) + y
+
+    f(0., 1.)
 
     # kwarg change
     with config.explain_cache_misses(True):
-      with self.assertLogs(level='WARNING') as cm:
-        f(1, y=y)
-    self.assertLen(cm.output, expected_log_len)
-    msg = cm.output[0]
-    self.assertIn('never seen passing 1 positional args and 1 keyword args', msg)
+      with self.assertLogs(level="WARNING") as cm:
+        f(0., y=1.)
 
-    # tracing config change
+    self.assertLen(cm.output, 1)
+    msg = cm.output[0]
+    self.assertIn("different number of args and kwargs, but same total number", msg)
+    self.assertIn("now 1 args and kwargs with keys ['y']", msg)
+    self.assertIn("before 1 args and kwargs with keys []", msg)
+    self.assertNotIn("explanation unavailable!", msg)
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_static_argnums(self):
+    @partial(jax.jit, static_argnums=(0, 2))
+    def f(x, y, z):
+      return y
+
+    f(1., 2., "foo")
+
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        f(1., 2., "bar")
+    self.assertLen(cm.output, 1)
+    msg = cm.output[0]
+    self.assertIn("different value of static args", msg)
+    self.assertIn("now 1.0, 'bar' and before 1.0, 'foo'", msg)
+    self.assertNotIn("explanation unavailable!", msg)
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_static_argnames(self):
+    @partial(jax.jit, static_argnames="foo")
+    def f(*, foo):
+      return 1
+
+    f(foo="foo")
+
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        f(foo="bar")
+    self.assertLen(cm.output, 1)
+    msg = cm.output[0]
+    self.assertIn("different value of static kwargs", msg)
+    self.assertIn("now {foo: 'bar'} and before {foo: 'foo'}", msg)
+    self.assertNotIn('explanation unavailable!', msg)
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_dtype(self):
+    @jax.jit
+    def f(x, y): return x
+    f(np.float32(0), np.float32(1))
+
     with config.explain_cache_misses(True):
       with self.assertLogs(level='WARNING') as cm:
-        with jax.numpy_rank_promotion('warn'):
-          f(x, y)
-    # depending on the backend, we may or may not get persistent cache warnings
+        f(np.float32(0), np.int32(1))
+    self.assertLen(cm.output, 1)
+    msg = cm.output[0]
+    self.assertIn("different input types", msg)
+    self.assertIn("at y, now i32[] and before f32[]", msg)
+    self.assertNotIn("explanation unavailable!", msg)
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_weak_type(self):
+    @jax.jit
+    def f(x, y): return jnp.sin(x) + y
+
+    y = jnp.arange(4, dtype="float32")
+    f(jnp.float32(0.), y)
+    # weak type change (assuming no x64)
+    if config.enable_x64.value:
+      self.skipTest("Work only for 32 bit mode")
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        f(0., y)
+    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
+    self.assertLen(cm.output, expected_log_len)
+    msg = cm.output[0]
+    self.assertIn("different input types", msg)
+    self.assertIn("at x, now f32[]{weak_type=True} and before f32[]{weak_type=False}", msg)
+    self.assertIn("https://docs.jax.dev/en/latest/type_promotion.html#weak-types", msg)
+    self.assertNotIn("explanation unavailable!", msg)
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_shape(self):
+    @jax.jit
+    def f(x, y): return jnp.sin(x) + y
+    f(np.float32(0), np.arange(1, dtype=np.float32))
+
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level='WARNING') as cm:
+        f(np.float32(0), np.arange(2, dtype=np.float32))
+    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
+    self.assertLen(cm.output, expected_log_len)
+    msg = cm.output[0]
+    self.assertIn("different input types", msg)
+    self.assertIn("at y, now f32[2] and before f32[1]", msg)
+    self.assertNotIn("explanation unavailable!", msg)
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_shape_explain_closest(self):
+    @jax.jit
+    def f(x): return x
+    f(np.ones((1, 2), dtype=np.float32))
+    f(np.ones((10, 20, 30), dtype=np.float32))
+    f(np.ones((1, 2, 3), dtype=np.float32))
+
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level='WARNING') as cm:
+        f(np.ones((10, 2, 30), dtype=np.float32))
+    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
+    self.assertLen(cm.output, expected_log_len)
+    msg = cm.output[0]
+    self.assertIn("key with different input types", msg)
+    self.assertIn("at x, now f32[10,2,30] and before f32[10,20,30]", msg)
+    self.assertNotIn("explanation unavailable!", msg)
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_tracing_config(self):
+    @jax.jit
+    def f(x, y): return jnp.sin(x) + y
+
+    f(0., 1.)
+    # tracing config change
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        with jax.numpy_rank_promotion("warn"):
+          with jax.default_matmul_precision("high"):
+            f(0., 1.)
+
+    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
     self.assertTrue(1 <= len(cm.output) <= expected_log_len)
     msg = cm.output[0]
-    self.assertIn("tracing context doesn't match", msg)
+    self.assertIn("key with different tracing context", msg)
+    self.assertIn("now warn and before", msg)
+    self.assertIn("now high and before", msg)
+    self.assertNotIn("explanation unavailable!", msg)
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_multiple_changes(self):
+    @jax.jit
+    def f(x): return jnp.sin(x)
+
+    call_1 = f(np.arange(4, dtype=np.float32))
+    with jax.numpy_rank_promotion("warn"):
+      call_2 = f(np.arange(8, dtype=np.float32))
+
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level='WARNING') as cm:
+        # Matches call_2 in shape but not context, and call_1 in context but
+        # not in shape.
+        f(np.arange(8, dtype=np.float32))
+
+    self.assertLen(cm.output, 1)
+    msg = cm.output[0]
+    self.assertIn("key with different input types", msg)
+    self.assertIn("at x, now f32[8] and before f32[4]", msg)
+    self.assertIn("key with different tracing context", msg)
+    self.assertNotIn("explanation unavailable!", msg)
 
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_new_function_in_loop(self):
@@ -4505,28 +4697,6 @@ class APITest(jtu.JaxTestCase):
       self.assertLen(cm.output, 2)
       _, msg = cm.output
       self.assertIn('another function defined on the same line', msg)
-
-  @jtu.thread_unsafe_test()  # logging is not thread-safe
-  def test_cache_miss_explanations_unpacks_transforms(self):
-    # Tests that the explain_tracing_cache_miss() function does not throw an
-    # error when unpacking `transforms` with a length greater than 3.
-    @jax.jit
-    def f(key):
-      return jax.random.truncated_normal(key, 1, 1, dtype=jax.numpy.float32)
-
-    with config.explain_cache_misses(True):
-      with self.assertLogs(level="WARNING") as cm:
-        f(jax.random.key(seed=123))
-
-    if is_persistent_cache_enabled():
-      # 5 warnings from tracing cache, 5-10 from persistent cache depending on
-      # the backend
-      self.assertTrue(10 <= len(cm.output) <= 15)
-      self.assertTrue(any("TRACING CACHE MISS" in msg for msg in cm.output))
-    else:
-      self.assertLen(cm.output, 5)
-      for msg in cm.output:
-        self.assertIn("TRACING CACHE MISS", msg)
 
   def test_cache_miss_explanations_no_source_info(self):
     # ``operator.add`` is a built-in function and does not have source info.
@@ -4646,6 +4816,8 @@ class APITest(jtu.JaxTestCase):
 
   @jtu.run_on_devices("cpu")
   def test_inner_jit_forwarding_happens(self):
+    if not config.dynamic_shapes.value:
+      self.skipTest("Only works for dynamic shapes")
     jaxpr = jax.make_jaxpr(lambda: jax.jit(lambda x: x)(3))()
     self.assertLen(jaxpr.jaxpr.outvars, 1)
     self.assertIsInstance(jaxpr.jaxpr.outvars[0], core.Literal)
@@ -4654,6 +4826,8 @@ class APITest(jtu.JaxTestCase):
   @parameterized.parameters(range(8))
   @jtu.run_on_devices("cpu")
   def test_inner_jit_forwarding_correctness(self, num_input_fwd):
+    if not config.dynamic_shapes.value:
+      self.skipTest("Only works for dynamic shapes")
     num_args = 8
     rng = np.random.RandomState(0)
 
@@ -4732,6 +4906,19 @@ class APITest(jtu.JaxTestCase):
 
     check_invariant_to_use_direct_linearize(lambda: jax.grad(sin_of_sin)(1.0))
 
+  def test_deferred_primal_with_direct_linearize(self):
+    def my_sin_lin(nzs, x):
+      nz, = nzs
+      return (my_sin_p.bind(x, accuracy=None), nz, x, lambda x, t: lax.mul(t, lax.cos(x)))
+
+    my_sin_p = core.Primitive("my_sin_p")
+    my_sin_p.def_impl(lax.sin)
+    my_sin_p.def_abstract_eval(lambda x: x)
+    ad_internal.primitive_linearizations[my_sin_p] = my_sin_lin
+
+    with config.use_direct_linearize(True):
+      jax.grad(my_sin_p.bind)(1.0)  # doesn't crash
+
 
 class RematTest(jtu.JaxTestCase):
 
@@ -4769,8 +4956,8 @@ class RematTest(jtu.JaxTestCase):
     sin_impl = lax.sin_p.impl
     cos_impl = lax.cos_p.impl
     try:
-      lax.sin_p.def_impl(lambda x: sin_calls.append(1) or sin_impl(x))
-      lax.cos_p.def_impl(lambda x: cos_calls.append(1) or cos_impl(x))
+      lax.sin_p.def_impl(lambda x, **kwargs: sin_calls.append(1) or sin_impl(x, **kwargs))
+      lax.cos_p.def_impl(lambda x, **kwargs: cos_calls.append(1) or cos_impl(x, **kwargs))
       f_lin(3.)
     finally:
       lax.sin_p.def_impl(sin_impl)
@@ -4965,7 +5152,7 @@ class RematTest(jtu.JaxTestCase):
 
     # Make sure that introducing constants in vmap works.
     constant_introducing_p = core.Primitive('introduce_constant')
-    constant_introducing_p.def_abstract_eval(core.raise_to_shaped)
+    constant_introducing_p.def_abstract_eval(lambda x: x)
     def _constant_introducing_batcher(xs, ds):
       (x,), (d,) = xs, ds
       return (x + np.arange(x.size, dtype=x.dtype).reshape(x.shape)), d
@@ -5063,7 +5250,7 @@ class RematTest(jtu.JaxTestCase):
     called = []
     sin_impl = lax.sin_p.impl
     try:
-      lax.sin_p.def_impl(lambda x: called.append(1) or sin_impl(x))
+      lax.sin_p.def_impl(lambda x, **kwargs: called.append(1) or sin_impl(x, **kwargs))
       api.grad(g)(3.)
     finally:
       lax.sin_p.def_impl(sin_impl)
@@ -5847,6 +6034,7 @@ class RematTest(jtu.JaxTestCase):
     jtu.check_grads(remat(f), (3.,), order=2, modes=['rev'])
 
     jaxpr = api.make_jaxpr(api.linearize(remat(f), 4.)[1])(1.)
+    print("debug jaxpr: ", str(jaxpr))
     self.assertIn(' sin ', str(jaxpr))
     self.assertIn(' cos ', str(jaxpr))
 
@@ -8134,6 +8322,23 @@ class CustomJVPTest(jtu.JaxTestCase):
     ):
       f(0.5, 0.1, z=1.0)
 
+  def test_symbolic_zero_custom_jvp_vmap_doesnt_instantiate(self):
+    @jax.custom_jvp
+    def f(x, y):
+      return y
+
+    def f_jvp(primals, tangents):
+      (x, y), (x_dot, y_dot) = primals, tangents
+      assert type(y_dot) is custom_derivatives_public.SymbolicZero
+      return y, y_dot
+
+    f.defjvp(f_jvp, symbolic_zeros=True)
+
+    def g(x):
+      return f(x, f(x, 1.))
+
+    jax.jvp(jax.vmap(g), (jnp.ones(3),), (jnp.ones(3),))  # don't crash
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
@@ -9978,6 +10183,38 @@ class CustomTransposeTest(jtu.JaxTestCase):
     self.assertAllClose(transpose_unary(f1, x)(x),
                         jax.jit(transpose_unary(f1, x))(x))
 
+  def test_linear_call_type_mismatch(self):
+    def f(x, y):
+      def fn(r, x): return x / r
+      def tp(r, t): return None
+      return x + jax.custom_derivatives.linear_call(fn, tp, y, x)
+
+    x = jnp.ones(2) * 6.
+    y = jnp.ones(2) * 3.
+    f1 = lambda x: f(x, y)
+    with self.assertRaisesRegex(TypeError, "transpose output pytree"):
+      transpose_unary(f1, x)(x)
+
+  def test_linear_call_recursion(self):
+    def f(x):
+      def fn(_, x): return x
+      def tp(_, t): return f(t)
+      return jax.custom_derivatives.linear_call(fn, tp, None, x)
+    jax.jit(f)(0.1)
+
+  def test_linear_call_grad(self):
+    def f(x, y):
+      def fn(r, x): return x / r
+      def tp(r, t): return t / r
+      return x + jax.custom_derivatives.linear_call(fn, tp, y, x)
+
+    def f_ref(x, y):
+      return x + x / y
+
+    x = jnp.array(6.)
+    y = jnp.array(3.)
+    self.assertAllClose(jax.grad(f)(x, y), jax.grad(f_ref)(x, y))
+
   def test_basic(self):
     def f(x, y):
       @custom_transpose(jnp.ones(2))
@@ -10280,6 +10517,19 @@ class CustomTransposeTest(jtu.JaxTestCase):
     self.assertAllClose(f_(x), g_(x))
     self.assertAllClose(f_t(x), g_t(x))
 
+  def test_jit_signature_deprecation(self):
+    fun = lambda x: x
+    if deprecations.is_accelerated('jax-jit-positional-args'):
+      with self.assertRaisesRegex(TypeError, r'jit\(\) got some positional-only arguments passed as keyword arguments.*'):
+        jax.jit(fun=fun)
+      with self.assertRaisesRegex(TypeError, r'jit\(\) takes 1 positional argument but 2 were given.*'):
+        jax.jit(fun, None)
+    else:
+      with self.assertWarnsRegex(DeprecationWarning, r'jax\.jit: passing fun by keyword is deprecated.*'):
+        jax.jit(fun=fun)
+      with self.assertWarnsRegex(DeprecationWarning, r'jax\.jit: passing optional arguments by position is deprecated.*'):
+        jax.jit(fun, None)
+
   def test_cond(self):
     def f(x, y):
       @custom_transpose(jnp.ones(2))
@@ -10327,6 +10577,28 @@ class CustomTransposeTest(jtu.JaxTestCase):
 
     self.assertAllClose(f_(x), g_(x))
     self.assertAllClose(f_t(x), g_t(x))
+
+  def test_compose_custom_jvp(self):
+    @jax.custom_jvp
+    def f(x):
+      return jnp.sin(x)
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, = primals
+      dx, = tangents
+      return f(x), g(x, dx)
+
+    @custom_transpose
+    def g(x, dx):
+      return jnp.cos(x) * dx
+
+    @g.def_transpose
+    def gt(x, t):
+      return jnp.cos(x) * t
+
+    with config.use_direct_linearize(True):
+      self.assertAllClose(jax.grad(f)(0.5), jnp.cos(0.5))
 
 
 class CustomDceTest(jtu.JaxTestCase):
@@ -11448,6 +11720,83 @@ class OverrideLoweringTest(jtu.JaxTestCase):
         .as_text()
     )
     self.assertNotIn("stablehlo.custom_call @Sharding", lowered_ir)
+
+
+class InputSavedVJPTest(jtu.JaxTestCase):
+
+  def test_basic(self):
+    def f(x, y):
+      return x * y
+
+    primals = 2., 3.
+    y, f_vjp = api.si_vjp(f, [True, True], *primals)
+    arg_cts = f_vjp(1., *primals)
+    self.assertAllClose(y, 6.)
+    self.assertAllClose(arg_cts, (3., 2.))
+
+  def test_basic_pass_through_jit(self):
+    def f(x, y):
+      return x * y
+
+    @jax.jit
+    def g():
+      primals = 2., 3.
+      y, f_vjp = api.si_vjp(f, [True, True], *primals)
+      return y, f_vjp
+
+    @jax.jit
+    def h(f_vjp):
+      return f_vjp(1., 2., 3.)
+
+    y, f_vjp = g()
+    arg_cts = h(f_vjp)
+    self.assertAllClose(y, 6.)
+    self.assertAllClose(arg_cts, (3., 2.))
+
+  def test_basic_unused(self):
+    f = jnp.sin
+    primals = 3.,
+    y, f_vjp = api.si_vjp(f, [True], *primals)
+    x_ct, = f_vjp(1., *primals)
+    self.assertAllClose(y, jnp.sin(3.))
+    self.assertAllClose(x_ct, jnp.cos(3.))
+
+    with self.assertRaisesRegex(Exception, "not used by the backward pass: x"):
+      _ = api.si_vjp(f, [True], *primals, allow_unused=False)
+
+  def test_basic_opaque(self):
+    f = jnp.sin
+    primals = 3.,
+    with self.assertRaisesRegex(Exception, "the backward pass requires opaque"):
+      _ = api.si_vjp(f, [True], *primals, allow_opaque=False)
+
+  def test_basic_pytree_error(self):
+    def f(x):
+      return [x['hi'] * x['bye']]
+
+    y, f_vjp = api.si_vjp(f, [True], {'hi': 2., 'bye': 3.})
+    arg_ct, = f_vjp([1.], {'hi': 2., 'bye': 3.})
+    self.assertAllClose(y, [6.])
+    self.assertAllClose(arg_ct, {'hi': 3., 'bye': 2.})
+
+    with self.assertRaisesRegex(ValueError, "but the structures differ"):
+      f_vjp(1., {'hi': 2.})
+
+  def test_fsdp(self):
+    # see https://github.com/jax-ml/jax/pull/27017 for why this is called "fsdp"
+    def f2(x, w):
+      x = 1. * x
+      x = x @ w
+      x = 2. * x
+      return x
+
+    x = jnp.ones((3, 4))
+    w = jnp.ones((4, 4))
+    y, f2_sivjp = api.si_vjp(f2, [False, True], x, w)
+    y_grad = jnp.ones_like(y)
+    x_grad, w_grad = f2_sivjp(y_grad, w)
+    self.assertAllClose(x_grad, 2. * y_grad @ w.T)
+    self.assertAllClose(w_grad, 2. * x.T @ y_grad)
 
 
 if __name__ == '__main__':
