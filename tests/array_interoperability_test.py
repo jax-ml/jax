@@ -110,9 +110,9 @@ class DLPackTest(jtu.JaxTestCase):
     dl_device = y.__dlpack_device__()
     if use_stream:
       stream = tuple(y.devices())[0].get_stream_for_external_ready_events()
-      dlpack = jax.dlpack.to_dlpack(y, copy=copy, stream=stream)
+      dlpack = y.__dlpack__(copy=copy, stream=stream)
     else:
-      dlpack = jax.dlpack.to_dlpack(y, copy=copy)
+      dlpack = y.__dlpack__(copy=copy)
     z = jax.dlpack.from_dlpack(dlpack)
 
     self.assertEqual(z.devices(), {device})
@@ -201,7 +201,7 @@ class DLPackTest(jtu.JaxTestCase):
     # TODO(b/171320191): this line works around a missing context initialization
     # bug in TensorFlow.
     _ = tf.add(1, 1)
-    dlpack = jax.dlpack.to_dlpack(x)
+    dlpack = x.__dlpack__()
     y = tf.experimental.dlpack.from_dlpack(dlpack)
     self.assertAllClose(np, y.numpy())
 
