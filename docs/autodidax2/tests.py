@@ -20,7 +20,7 @@ from absl.testing import parameterized
 
 
 
-from core import make_jaxpr, f32, jit
+from core import make_jaxpr, f32, jit, jvp
 import ops
 
 class CoreTest(parameterized.TestCase):
@@ -45,29 +45,11 @@ class CoreTest(parameterized.TestCase):
     assert f(1) == 2
     assert len(f.cache) == 2
     assert f(2.0) == 4.0
+    assert len(f.cache) == 2
 
+  def test_jvp(self):
+    # @jit
+    def f(x):
+      return x + x
 
-# # === Testing it out ===
-
-# def foo(x):
-#   return x * (x + 3.0)
-
-# # print(add(1.0, 2.0))
-# # print(foo(2.0))
-# japxr = make_jaxpr(foo, (f32[()],))
-# print(japxr)
-# # eval_jaxpr(jaxpr, (2.0,))
-
-
-# m = MutableArray(1.0)
-
-# def doit(m):
-#   m[...] = 2.0
-#   return m[...]
-
-# japxr = make_jaxpr(doit, (MutableArrayTy(f32[()]),))
-# print(japxr)
-# print(m.val)
-# eval_jaxpr(jaxpr, (m,))
-# print(m.val)
-
+    assert jvp(f, (1.0,), (2.0,)) == (2.0, 4.0)

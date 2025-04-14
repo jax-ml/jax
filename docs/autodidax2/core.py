@@ -34,6 +34,8 @@ class Ty:
   def __eq__(self, other): raise NotImplementedError(type(self))
   def __str__(self):     raise NotImplementedError(type(self))
 
+  def tangent_ty(self): raise NotImplementedError(type(self))
+
   # dispatch path for "dunder" methods on values
   def _add_(self, x: Any, y: Any): raise NotImplementedError(type(self))
   def _mul_(self, x: Any, y: Any): raise NotImplementedError(type(self))
@@ -45,6 +47,8 @@ class Ty:
 class Op:
   def eval(self, ty: Ty, *args: RuntimeVal): raise NotImplementedError(type(self))
   def check(self, ty: Ty, *arg_tys, Ty):     raise NotImplementedError(type(self))
+
+class TraceTag: pass
 
 class Tracer:
   ty: Ty
@@ -209,6 +213,8 @@ runtime_types : dict[type, RuntimeValueHandler] = {
   float : PythonScalarRuntimeValueHandler(),
   int   : PythonScalarRuntimeValueHandler(),
   bool  : PythonScalarRuntimeValueHandler(),
+  np.float32 : ArrayRuntimeValueHandler(),
+  np.float64 : ArrayRuntimeValueHandler(),
   np.ndarray : ArrayRuntimeValueHandler()
 }
 
@@ -298,6 +304,12 @@ def to_jax_dtype(numpy_dtype):
 class ArrayTy(Ty):
   shape : tuple[int]
   dtype: DType
+
+  def tangent_ty(self):
+    return ArrayTy(self.shape, self.dtype)  # TODO: tangent types of ints
+
+  def zeros_like(self):
+    return np.zeros(self.shape, self.dtype.to_numpy_dtype())
 
   def __str__(self):
     return f"{self.dtype}[{",".join(self.shape)}]"
@@ -409,6 +421,46 @@ def emit_op(op: Op, result_ty: Ty, args: list[InterpreterVal]):
   args = tuple(current_interpreter.lift(arg) for arg in args)
   return current_interpreter.interpret_op(op, result_ty, args)
 
+# === jvp ===
+
+class JVPInterpreter:
+  def __init__(self, parent, tag):
+    self.parent = parent
+    self.tag = tag
+
+  def interpret_op(self, op, result_ty, args):
+    primals = tuple(arg.primal for arg in args)
+    tangents = tuple(arg.tangent for arg in args)
+    with set_interpreter(self.parent):
+      p, t = op.jvp(result_ty, primals, tangents)
+    return self.new_tracer(p, t)
+
+  def lift(self, val):
+    if isinstance(val, JVPTracer) and val.tag is self.tag:
+      return val
+    else:
+      ty = typeof(val)
+      return JVPTracer(self.tag, val, ty.tangent_ty().zeros_like())
+
+  def new_tracer(self, primal, tangent):
+    return JVPTracer(self.tag, primal, tangent)
+
+class JVPTracer(Tracer):
+  def __init__(self, tag, primal, tangent):
+    self.tag = tag
+    self.primal = primal
+    self.tangent = tangent
+    self.ty = typeof(primal)
+
+def jvp(f, primals, tangents):
+  assert tuple(map(typeof, primals)) == tuple(map(typeof, tangents))
+  interpreter = JVPInterpreter(current_interpreter, TraceTag())
+  arg_tracers = tuple(interpreter.new_tracer(p, t) for p, t in zip(primals, tangents))
+  with set_interpreter(interpreter):
+    result = f(*arg_tracers)
+  result = interpreter.lift(result)
+  return result.primal, result.tangent
+
 # === jit ===
 
 @dataclass(frozen=True)
@@ -471,6 +523,11 @@ def infer_binop(x:InterpreterVal, y:InterpreterVal):
 
 class Add(Op):
   def eval(self, _, x, y): return x + y
+  def jvp(self, _, primals, tangents):
+    x, y = primals
+    xt, yt = tangents
+    return add(x, y), add(xt, yt)
+
   def __str__(self): return "add"
 
 def add(x, y):
