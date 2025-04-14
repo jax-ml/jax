@@ -23,6 +23,7 @@ from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import gpu
+from jax._src.lib.mlir.dialects import llvm
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import nvvm
 from jax._src.lib.mlir.dialects import scf
@@ -39,6 +40,18 @@ from cuda.bindings.runtime import cudaDeviceGetAttribute, cudaDeviceAttr, cudaGe
 
 TMA_WARP = 1
 MMA_WARP = 0
+
+
+# TODO(andportnoy) move into tcgen05.py
+def tmem_dealloc(tmem: ir.Value, ncols: int, collective: bool = False):
+  num_cta = 2 if collective else 1
+  return llvm.inline_asm(
+    ir.Type.parse("!llvm.void"),
+    [tmem],
+    f"tcgen05.dealloc.cta_group::{num_cta}.sync.aligned.b32 $0, {ncols};",
+    "r",
+    has_side_effects=True,
+  )
 
 
 def get_sm_count():
@@ -266,6 +279,9 @@ def build_kernel(
       carrys = [work_id, work_id_group_start, group_offset]
       return carrys
       # group_for
+    is_init_warp = arith.cmpi(arith.CmpIPredicate.eq, warp_idx, c(0, i32))
+    with mgpu.when(is_init_warp):
+      tmem_dealloc(acc.address, acc.shape[1], collective=False)
 
   compute_buffers = (
     jax.ShapeDtypeStruct(
