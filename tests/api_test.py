@@ -4504,8 +4504,7 @@ class APITest(jtu.JaxTestCase):
       with self.assertLogs(level="WARNING") as cm:
         # Same number of leaves but different trees
         f(0., (1., 1.1), y=2.)
-    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
-    self.assertLen(cm.output, expected_log_len)
+    self.assertLen(cm.output, 1)
     msg = cm.output[0]
     self.assertIn("different input pytree", msg)
     self.assertNotIn("explanation unavailable!", msg)
@@ -4521,8 +4520,8 @@ class APITest(jtu.JaxTestCase):
     with config.explain_cache_misses(True):
       with self.assertLogs(level="WARNING") as cm:
         f(0., y=1.)
-    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
-    self.assertLen(cm.output, expected_log_len)
+
+    self.assertLen(cm.output, 1)
     msg = cm.output[0]
     self.assertIn("different number of args and kwargs, but same total number", msg)
     self.assertIn("now 1 args and kwargs with keys ['y']", msg)
@@ -4540,16 +4539,15 @@ class APITest(jtu.JaxTestCase):
     with config.explain_cache_misses(True):
       with self.assertLogs(level="WARNING") as cm:
         f(1., 2., "bar")
-    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
-    self.assertLen(cm.output, expected_log_len)
+    self.assertLen(cm.output, 1)
     msg = cm.output[0]
     self.assertIn("different value of static args", msg)
     self.assertIn("now 1.0, 'bar' and before 1.0, 'foo'", msg)
-    self.assertNotIn('explanation unavailable!', msg)
+    self.assertNotIn("explanation unavailable!", msg)
 
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_other_static_argnames(self):
-    @partial(jax.jit, static_argnames='foo')
+    @partial(jax.jit, static_argnames="foo")
     def f(*, foo):
       return 1
 
@@ -4558,8 +4556,7 @@ class APITest(jtu.JaxTestCase):
     with config.explain_cache_misses(True):
       with self.assertLogs(level="WARNING") as cm:
         f(foo="bar")
-    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
-    self.assertLen(cm.output, expected_log_len)
+    self.assertLen(cm.output, 1)
     msg = cm.output[0]
     self.assertIn("different value of static kwargs", msg)
     self.assertIn("now {foo: 'bar'} and before {foo: 'foo'}", msg)
@@ -4574,8 +4571,7 @@ class APITest(jtu.JaxTestCase):
     with config.explain_cache_misses(True):
       with self.assertLogs(level='WARNING') as cm:
         f(np.float32(0), np.int32(1))
-    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
-    self.assertLen(cm.output, expected_log_len)
+    self.assertLen(cm.output, 1)
     msg = cm.output[0]
     self.assertIn("different input types", msg)
     self.assertIn("at y, now i32[] and before f32[]", msg)
@@ -4672,8 +4668,7 @@ class APITest(jtu.JaxTestCase):
         # not in shape.
         f(np.arange(8, dtype=np.float32))
 
-    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
-    self.assertLen(cm.output, expected_log_len)
+    self.assertLen(cm.output, 1)
     msg = cm.output[0]
     self.assertIn("key with different input types", msg)
     self.assertIn("at x, now f32[8] and before f32[4]", msg)
