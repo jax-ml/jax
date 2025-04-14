@@ -1357,7 +1357,8 @@ def diff_tracing_cache_keys(
 
 
 def explain_tracing_cache_miss(
-    fun: lu.WrappedFun, unseen_f: bool, cache: dict, key: tuple):
+    fun: lu.WrappedFun, unseen_f: bool, cache: dict,
+    key: tuple, elapsed_sec: float):
   if config.check_tracer_leaks.value: return
   if key[3][2].val: return  # No explanations for "inline" functions
 
@@ -1371,7 +1372,7 @@ def explain_tracing_cache_miss(
   done = lambda: logger.log(logging.WARNING, "\n".join(msg))
 
   callsite = source_info_util.summarize(source_info_util.current())
-  p(f"TRACING CACHE MISS at {callsite} because:")
+  p(f"TRACING CACHE MISS at {callsite} costing {elapsed_sec * 1e3:.3f} ms because:")
 
   # have we seen this function before at all?
   src_info = ""
