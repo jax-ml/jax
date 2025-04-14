@@ -37,6 +37,7 @@ import weakref
 import numpy as np
 from contextlib import contextmanager
 
+from jax._src import deprecations
 from jax._src import linear_util as lu
 from jax._src import stages
 from jax._src.tree_util import (
@@ -147,8 +148,39 @@ config.debug_infs._add_hooks(_update_debug_special_global,
 float0 = dtypes.float0
 
 
+# TODO(jakevdp): remove this for v0.7.0 (~July 2025)
+def _allow_deprecated_jit_signature(f: F) -> F:
+  """Temporary decorator for the jit signature deprecation."""
+  @wraps(f)
+  def wrapped(*args, **kwargs):
+    if len(args) == 1 or deprecations.is_accelerated('jax-jit-positional-args'):
+      # Fast path for typical usage.
+      return f(*args, **kwargs)
+    if 'fun' in kwargs:
+      deprecations.warn(
+        'jax-jit-positional-args',
+        ('jax.jit: passing fun by keyword is deprecated.'
+         ' Pass it by position to silence this warning.'),
+        stacklevel=2
+      )
+      return f(kwargs.pop('fun'), **kwargs)
+    if len(args) > 1:
+      deprecations.warn(
+        'jax-jit-positional-args',
+        ('jax.jit: passing optional arguments by position is deprecated. '
+         ' Pass them by keyword to silence this warning.'),
+        stacklevel=2
+      )
+      sig = inspect.signature(f)
+      kwds = dict(unsafe_zip((p.name for p in sig.parameters.values()), args))
+      return f(kwds.pop('fun'), **kwds, **kwargs)
+    return f(*args, **kwargs)
+  return cast(F, wrapped)
+
+
+@_allow_deprecated_jit_signature
 def jit(
-  fun: Callable,
+  fun: Callable, /, *,
   in_shardings: Any = sharding_impls.UNSPECIFIED,
   out_shardings: Any = sharding_impls.UNSPECIFIED,
   static_argnums: int | Sequence[int] | None = None,
