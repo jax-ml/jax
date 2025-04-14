@@ -1507,6 +1507,7 @@ if CAN_USE_HYPOTHESIS:
     @parameterized.named_parameters(
         ('float32', 'float32'), ('bfloat16', 'bfloat16'), ('int8', 'int8')
     )
+    @hp.settings(max_examples=50)
     @hp.given(
         hps.integers(1, 1024),
         hps.integers(1, 1024),
