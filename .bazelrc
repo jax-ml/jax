@@ -257,6 +257,10 @@ build:ci_linux_aarch64_cuda --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm
 
 # Mac Arm64 CI configs
 build:ci_darwin_arm64 --macos_minimum_os=11.0
+# Clang 19 requires `-Wno-error=c23-extensions` but this flag is not supported
+# on Apple Clang in XCode 16.0 so we suppress unknown warning option errors
+# on Mac CI builds.
+build:ci_darwin_arm64 --copt=-Wno-unknown-warning-option
 build:ci_darwin_arm64 --config=macos_cache_push
 build:ci_darwin_arm64 --verbose_failures=true
 build:ci_darwin_arm64 --color=yes
