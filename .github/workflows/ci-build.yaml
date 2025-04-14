@@ -43,7 +43,7 @@ jobs:
 
   build:
     # Don't execute in fork due to runner type
-    if: github.repository == 'jax-ml/jax'
+    if: ${{ github.repository == 'jax-ml/jax' || github.repository == 'google-ml-infra/jax-fork' }}
     name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ubuntu-20.04, x64=${{ matrix.enable-x64}})"
     runs-on: linux-x86-n2-32
     container:
