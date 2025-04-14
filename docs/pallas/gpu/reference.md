@@ -220,21 +220,21 @@ assert acc_ref.shape == (m, n)
 def fetch_a_b(ki, slot):
   a_slice = ... # Replace with the right M/K slice
   b_slice = ... # Replace with the right K/N slice
-	plgpu.copy_gmem_to_smem(a_gmem.at[a_slice], a_smem.at[slot], a_loaded.at[slot])
-	plgpu.copy_gmem_to_smem(b_gmem.at[b_slice], b_smem.at[slot], b_loaded.at[slot])
+  plgpu.copy_gmem_to_smem(a_gmem.at[a_slice], a_smem.at[slot], a_loaded.at[slot])
+  plgpu.copy_gmem_to_smem(b_gmem.at[b_slice], b_smem.at[slot], b_loaded.at[slot])
 
 def loop_body(i, _):
-	slot = jax.lax.rem(i, buffers)
-	plgpu.barrier_wait(a_loaded.at[slot])
-	plgpu.barrier_wait(b_loaded.at[slot])
-	plgpu.wgmma(acc_ref, a_smem.at[slot], b_smem.at[slot])
-	# We know that only the last issued WGMMA is running, so we can issue a async load in
-	# into the other buffer
-	load_i = i + buffers - 1
-	load_slot = jax.lax.rem(load_i, buffers)
-	@pl.when(jnp.logical_and(load_i >= buffers, load_i < num_steps))
-	def _do_fetch():
-		fetch_a_b(load_i, slot)
+  slot = jax.lax.rem(i, buffers)
+  plgpu.barrier_wait(a_loaded.at[slot])
+  plgpu.barrier_wait(b_loaded.at[slot])
+  plgpu.wgmma(acc_ref, a_smem.at[slot], b_smem.at[slot])
+  # We know that only the last issued WGMMA is running, so we can issue a async load in
+  # into the other buffer
+  load_i = i + buffers - 1
+  load_slot = jax.lax.rem(load_i, buffers)
+  @pl.when(jnp.logical_and(load_i >= buffers, load_i < num_steps))
+  def _do_fetch():
+    fetch_a_b(load_i, slot)
 for slot in range(buffers):
   fetch_a_b(slot, slot)
 jax.lax.fori_loop(0, num_steps, loop_body, None)
