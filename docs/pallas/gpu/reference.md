@@ -175,9 +175,119 @@ access pattern:
 Note that even though the number of active blocks hasn't changed, the total footprint of the data they
 access has halved! We get a much higher chance of getting L2 hits now.
 
-## Array layouts and reference transforms
+## Array layouts and memory reference transforms
 
-TODO
+In Pallas, the data structures you work with (arrays and references) have a
+**logical shape** (e.g., a 128x128 matrix). This
+logical shape must be mapped to a **physical representation** (how the data is
+actually represented in the GPU's memory). The specific mapping depends on where the
+data resides:
+
+1.  **Array Layouts:** Arrays are stored in register memory and we call this mapping
+    a _layout_. Layouts define how the elements of an array are
+    distributed across the registers available to the CUDA lanes that form a Pallas thread.
+2.  **Memory Reference Transforms:** For mutable references pointing
+    to `SMEM`, this mapping is called a _transform_.
+    Transforms describe how the logical data structure is arranged within that
+    block of memory.
+
+These concepts are crucial for performance, especially when interacting with
+specialized hardware units like TensorCores or optimizing memory access
+patterns.
+
+> We are working on a mode that will deal with assigning layouts and transforms fully
+  automatically (although with way to provide hints and more control). The APIs listed
+  below will likely continue to function, but will become optional.
+
+### Memory reference transforms
+
+Transforms are applied when a memory reference is first allocated. Pallas
+primitives that operate on these references will automatically account for their
+associated transforms.
+
+```
+def body(..., scratch_ref):
+  # Asynchronous copy will reformat the GMEM data to match the SMEM transforms
+  plgpu.copy_gmem_to_smem(..., scratch_ref, barrier)
+  barrier.wait()
+  plgpu.wgmma(..., scratch_ref)  # wgmma only accepts properly transformed refs
+  ...
+```
+
+There are two ways in which references are allocated and each has a way to select
+the desired transforms:
+
+**1. Using `GPUBlockSpec`**
+
+```python
+transforms = (plgpu.TileTransform((8, 64)), plgpu.SwizzleTransform(128))
+f = pl.pallas_call(
+  in_specs=plgpu.GPUBlockSpec(in_block_shape, in_index_map, transforms=transforms),
+  out_specs=plgpu.GPUBlockSpec(out_block_shape, out_index_map, transforms=transforms),
+  ...
+)
+```
+
+**2. Specifying the `transforms` argument on the allocated `SMEM`**
+
+```python
+transforms = (plgpu.TileTransform((8, 64)), plgpu.SwizzleTransform(128))
+f = pl.pallas_call(
+  scratch_shapes=plgpu.SMEM((128, 128), jnp.float16, transforms=transforms),
+  ...
+)
+```
+
+The available transforms are:
+* `plgpu.TileTransform(tile_shape)`, which organizes the data into contiguous,
+  non-overlapping tiles of shape `tile_shape`.  The data of one tile is always
+  fully linearized (row-major), before another tile begins (tiles are also
+  traversed in row-major order). As an example, applying `TileTransform((8,
+  64))` to a `(128, 128)` reference means the data corresponding to the logical
+  slice `[0:8, 0:64]` will be stored first (row-major), followed by
+  `[0:8, 64:128], [8:16, 0:64], [8:16, 64:128]`, and so on. A different way to achieve
+  this would be to take the input array `x` and traverse
+  `x.reshape(128 // 8, 128 // 64, 8, 64).transpose(0, 2, 1, 3)` in row-major order.
+* `plgpu.SwizzleTransform(swizzle_in_bytes)`, which transforms the data as described in the
+  [PTX docs](https://docs.nvidia.com/cuda/parallel-thread-execution/#tensor-swizzling-modes) and
+  [CUDA docs](https://docs.nvidia.com/cuda/cuda-c-programming-guide/#the-swizzle-modes).
+  Swizzling is useful, because it allows transferring data in MMA-related layouts
+  between register and shared memory without bank conflicts. The exact details
+  of how the memory looks like after swizzling _are not that important_, since
+  all primitives will account for it automatically. Note that the swizzle amount
+  is specified in bytes (only 128, 64, 32 and 16 are supported), and is usually
+  accompanied by a `TileTransform` (which uses elements in its shape!).
+* `plgpu.TransposeTransform(permutation)`, which permutes the dimensions of the array before it is linearized.
+  This is primarily useful in that it lets you change the layout during the GMEM-SMEM copies (only
+  do keep in mind that changing the minormost/last dimension is not supported by the hardware).
+
+
+### Array layouts
+
+There are a few useful layouts we have defined for you so far:
+* `plgpu.Layout.WGMMA`, which is the layout in which the Hopper-generation TensorCore
+  expects the MMA accumulator or 16-bit input operands to have in registers.
+* `plgpu.Layout.WGMMA_ROW`, which is the layout obtained after the above after reducing
+  it along the rows. Re-broadcasting the rows is free and will produce a value with `WGMMA`
+  layout.
+* `plgpu.Layout.WGMMA_COL`, which is an analogue of the one above, only reduced along
+  columns instead of rows.
+* `plgpu.Layout.WG_STRIDED`, where the value is partitioned equally among the 128
+  CUDA lanes making up a Pallas thread. The consecutive elements (after vectorization)
+  are assigned to the lanes in a round-robin fashion. Very simple and effective when
+  no interaction with TensorCores is needed.
+* `plgpu.Layout.WG_SPLAT`, indicating that the value is constant. Each CUDA lane will
+  hold a single register that contains the value. You normally never have to interact
+  with this layout, as it is implicitly used when constant values are created and
+  is always implicitly convertible to other layouts.
+
+At the moment, in the default mode of operation, array layout propagation happens
+only in a forward direction and there is little implicit support for reconciling
+layout conflicts: only splat layouts can be implicitly converted into any other
+layout. If you e.g. try to add two arrays that have a different layout, the lowering
+will complain and fail. There are very limited facilities that let you convert between
+layouts, and we usually recommend storing the value to SMEM and reading it back in
+the target layout.
 
 ## MMA (TensorCore)
 
