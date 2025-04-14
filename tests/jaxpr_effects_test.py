@@ -947,7 +947,7 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
       def f(x):
         def body(y):
           input_effect(x, y, index=index)
-          return y
+          return 2 * y
         lax.while_loop(lambda _: True, body, y)
       return f
     jaxpr = jax.make_jaxpr(make_fun(0))(0)
@@ -959,7 +959,7 @@ class JaxprInputEffectTest(jtu.JaxTestCase):
     def f(x):
       def body(y):
         input_effect(x, y, index=1)
-        return y
+        return 2 * y
       lax.while_loop(lambda _: (x > 0).all(), body, y)
     jaxpr = jax.make_jaxpr(f)(0)
     self.assertIn(InputEffect(0), jaxpr.effects)

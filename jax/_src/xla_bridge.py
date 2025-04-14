@@ -32,7 +32,7 @@ import pkgutil
 import platform as py_platform
 import threading
 import traceback
-from typing import Any, Union
+from typing import Any, Sequence, Union
 import warnings
 
 from jax._src import config
@@ -1086,7 +1086,7 @@ def backend_xla_version(platform=None) -> int | None:
   backend = get_backend(platform)
   return getattr(backend, "xla_version", None)
 
-def backend_stablehlo_version(platform=None) -> int | None:
+def backend_stablehlo_version(platform=None) -> Sequence[int] | None:
   """Returns the StableHLO version of the backend.
 
   Returns None if the backend does not use PJRT C API or does not have

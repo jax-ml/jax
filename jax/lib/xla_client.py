@@ -66,16 +66,16 @@ _deprecations = {
         None,
     ),
     "Shape": (
-        "Shape is deprecated; use StableHLO instead.",
-        _xc.Shape,
+        "Shape has been removed in JAX v0.6.0; use StableHLO instead.",
+        None,
     ),
     "XlaBuilder": (
         "XlaBuilder has been removed in JAX v0.6.0; use StableHLO instead.",
         None,
     ),
     "XlaComputation": (
-        "XlaComputation is deprecated; use StableHLO instead.",
-        _xc.XlaComputation,
+        "XlaComputation has been removed in JAX v0.6.0; use StableHLO instead.",
+        None,
     ),
     # Added Nov 20 2024, finalized 2025-04-09
     "ArrayImpl": (

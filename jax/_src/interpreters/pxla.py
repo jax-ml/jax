@@ -922,7 +922,7 @@ def _pmap_unmapped_aval(size: core.AxisSize, axis: int | None,
     raise TypeError(f"no unmapping handler for {aval} of type {type(aval)}")
 
 
-class PmapComputation(stages.XlaLowering):
+class PmapComputation(stages.Lowering):
   _hlo: ir.Module
   _executable: PmapExecutable | None
 
@@ -931,7 +931,7 @@ class PmapComputation(stages.XlaLowering):
     self._hlo = hlo
     self.compile_args = compile_args
 
-  # -- stages.XlaLowering overrides
+  # -- stages.Lowering overrides
 
   def stablehlo(self) -> ir.Module:
     return self._hlo
@@ -1116,7 +1116,7 @@ class UnloadedPmapExecutable:
         jaxpr_debug_info=jaxpr_debug_info).load()
 
 
-class PmapExecutable(stages.XlaExecutable):
+class PmapExecutable(stages.Executable):
   __slots__ = ["xla_executable", "_unsafe_call", "build_unsafe_call",
                "fingerprint", "in_avals", "_unloaded_executable"]
 
@@ -1136,7 +1136,7 @@ class PmapExecutable(stages.XlaExecutable):
       self._unsafe_call = self.build_unsafe_call()
     return self._unsafe_call  # type: ignore
 
-  # -- stages.XlaExecutable overrides
+  # -- stages.Executable overrides
 
   def xla_extension_executable(self):
     return self.xla_executable
@@ -2433,7 +2433,7 @@ def _to_logical_sharding(
     raise TypeError(aval)
 
 
-class MeshComputation(stages.XlaLowering):
+class MeshComputation(stages.Lowering):
   _hlo: ir.Module
   _executable: MeshExecutable | None
 
@@ -2449,7 +2449,7 @@ class MeshComputation(stages.XlaLowering):
     self.compile_args = compile_args
     self._executable = None
 
-  # -- stages.XlaLowering overrides
+  # -- stages.Lowering overrides
 
   def stablehlo(self) -> ir.Module:
     return self._hlo
@@ -3122,7 +3122,7 @@ def reflatten_outputs_for_dispatch(out_tree, out_flat):
   return tree_util.dispatch_registry.flatten(out_unflat, None)
 
 
-class MeshExecutable(stages.XlaExecutable):
+class MeshExecutable(stages.Executable):
   __slots__ = [
       "xla_executable", "_unsafe_call", "build_unsafe_call", "in_avals",
       "out_avals", "_in_shardings", "_out_shardings", "_auto_spmd_lowering",
@@ -3158,7 +3158,7 @@ class MeshExecutable(stages.XlaExecutable):
       self._unsafe_call = self.build_unsafe_call()
     return self._unsafe_call  # type: ignore
 
-  # -- stages.XlaExecutable overrides
+  # -- stages.Executable overrides
 
   def xla_extension_executable(self):
     return self.xla_executable
@@ -3185,20 +3185,6 @@ class MeshExecutable(stages.XlaExecutable):
         args_after_dce, self._in_shardings, self._xla_in_layouts, debug_info,
         self._kept_var_idx)
     return self.unsafe_call(*args)  # pylint: disable=not-callable
-
-  def input_shardings(self) -> Sequence[JSharding]:
-    return self._in_shardings
-
-  def output_shardings(self) -> Sequence[JSharding]:
-    return self._out_shardings
-
-  def input_layouts(self):
-    return [Layout(l, s)
-            for l, s in safe_zip(self._xla_in_layouts, self._in_shardings)]
-
-  def output_layouts(self):
-    return [Layout(l, s)
-            for l, s in safe_zip(self._xla_out_layouts, self._out_shardings)]
 
   def create_cpp_call(self, no_kwargs, in_tree, out_tree):
     if not (isinstance(self.unsafe_call, ExecuteReplicated) and

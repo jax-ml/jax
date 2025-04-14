@@ -37,6 +37,7 @@ import weakref
 import numpy as np
 from contextlib import contextmanager
 
+from jax._src import deprecations
 from jax._src import linear_util as lu
 from jax._src import stages
 from jax._src.tree_util import (
@@ -147,8 +148,39 @@ config.debug_infs._add_hooks(_update_debug_special_global,
 float0 = dtypes.float0
 
 
+# TODO(jakevdp): remove this for v0.7.0 (~July 2025)
+def _allow_deprecated_jit_signature(f: F) -> F:
+  """Temporary decorator for the jit signature deprecation."""
+  @wraps(f)
+  def wrapped(*args, **kwargs):
+    if len(args) == 1 or deprecations.is_accelerated('jax-jit-positional-args'):
+      # Fast path for typical usage.
+      return f(*args, **kwargs)
+    if 'fun' in kwargs:
+      deprecations.warn(
+        'jax-jit-positional-args',
+        ('jax.jit: passing fun by keyword is deprecated.'
+         ' Pass it by position to silence this warning.'),
+        stacklevel=2
+      )
+      return f(kwargs.pop('fun'), **kwargs)
+    if len(args) > 1:
+      deprecations.warn(
+        'jax-jit-positional-args',
+        ('jax.jit: passing optional arguments by position is deprecated. '
+         ' Pass them by keyword to silence this warning.'),
+        stacklevel=2
+      )
+      sig = inspect.signature(f)
+      kwds = dict(unsafe_zip((p.name for p in sig.parameters.values()), args))
+      return f(kwds.pop('fun'), **kwds, **kwargs)
+    return f(*args, **kwargs)
+  return cast(F, wrapped)
+
+
+@_allow_deprecated_jit_signature
 def jit(
-  fun: Callable,
+  fun: Callable, /, *,
   in_shardings: Any = sharding_impls.UNSPECIFIED,
   out_shardings: Any = sharding_impls.UNSPECIFIED,
   static_argnums: int | Sequence[int] | None = None,
@@ -288,16 +320,19 @@ def jit(
     Array([   0,    1,  256, 6561], dtype=int32)
   """
   return pjit.make_jit(
-        fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
-        static_argnums, static_argnames, device, backend, abstracted_axes,
-        keep_unused, inline, compiler_options, use_resource_env=False)
+      fun, in_shardings=in_shardings, out_shardings=out_shardings,
+      static_argnums=static_argnums, static_argnames=static_argnames,
+      donate_argnums=donate_argnums, donate_argnames=donate_argnames,
+      keep_unused=keep_unused, device=device, backend=backend, inline=inline,
+      abstracted_axes=abstracted_axes, compiler_options=compiler_options,
+      use_resource_env=False)
 
 
 @contextmanager
 def disable_jit(disable: bool = True):
   """Context manager that disables :py:func:`jit` behavior under its dynamic context.
 
-  For debugging it is useful to have a mechanism that disables :py:func:`jit`
+  For debugging, it is useful to have a mechanism that disables :py:func:`jit`
   everywhere in a dynamic context. Note that this not only disables explicit
   uses of :func:`jit` by the user, but will also remove any implicit JIT compilation
   used by the JAX library: this includes implicit JIT computation of `body` and
@@ -1569,11 +1604,13 @@ def _cpp_pmap(
       out_axes)
   del static_broadcasted_argnums, donate_argnums
 
+  prepare_pmap_fn = partial(_prepare_pmap,
+        fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
+        devices, backend, axis_size)
+
   @api_boundary
   def cache_miss(*args, **kwargs):
-    p = _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
-                      donate_tuple, devices, backend,
-                      axis_size, args, kwargs)
+    p = prepare_pmap_fn(args, kwargs)
     for arg in p.flat_args:
       dispatch.check_arg(arg)
 
@@ -1650,48 +1687,56 @@ def _cpp_pmap(
   _pmap_cache_clears.add(cpp_mapped_f)
 
   pmap_f = wraps(fun)(cpp_mapped_f)
+  # Store some data for the `lower` and `trace` methods
   pmap_f._fun = fun
+  pmap_f._prepare_pmap = prepare_pmap_fn
+  pmap_f._backend = backend
+  pmap_f._axis_name = axis_name
+  pmap_f._donate_tuple = donate_tuple
 
-  @api_boundary
-  def lower(*args, **kwargs):
-    return trace(*args, **kwargs).lower()
-
-  @api_boundary
-  def trace(*args, **kwargs):
-    p = _prepare_pmap(
-        fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
-        devices, backend, axis_size, args, kwargs)
-    abstract_args = list(map(shaped_abstractify, p.flat_args))
-    closed_jaxpr, xc_backend, replicas, shards, pci = pxla.get_pmap_jaxpr(
-        p.flat_fun, backend, axis_name,
-        axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
-        devices=p.devices,
-        name=p.flat_fun.__name__,
-        in_axes=p.in_axes_flat,
-        out_axes_thunk=p.out_axes_thunk,
-        avals=abstract_args)
-    lower_callable = partial(
-        pxla.lower_parallel_callable, p.flat_fun, axis_name,
-        axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
-        devices=p.devices,
-        name=p.flat_fun.__name__,
-        in_axes=p.in_axes_flat,
-        donated_invars=p.donated_invars,
-        is_explicit_global_axis_size=p.is_explicit_global_axis_size,
-        avals=abstract_args,
-        closed_jaxpr=closed_jaxpr,
-        backend=xc_backend,
-        replicas=replicas,
-        shards=shards,
-        pci=pci)
-    args_info = stages.make_args_info(p.in_tree, abstract_args, donate_tuple)
-    return stages.Traced(closed_jaxpr, args_info, p.flat_fun.__name__,
-                         p.out_tree(), lower_callable)
-
-  pmap_f.lower = lower
-  pmap_f.trace = trace
-
+  # TODO(necula): move these to top-level; we don't need to do this for
+  # every pmap
+  cpp_mapped_f_class = type(pmap_f)
+  cpp_mapped_f_class.lower = _cpp_mapped_lower
+  cpp_mapped_f_class.trace = _cpp_mapped_trace
+  # We return directly the function produced by pmap_lib.pmap, because we do not
+  # want to have Python in the dispatch path.
   return pmap_f
+
+@api_boundary
+def _cpp_mapped_trace(pmap_f, *args, **kwargs):
+  p = pmap_f._prepare_pmap(args, kwargs)
+  abstract_args = list(map(shaped_abstractify, p.flat_args))
+  closed_jaxpr, xc_backend, replicas, shards, pci = pxla.get_pmap_jaxpr(
+      p.flat_fun, pmap_f._backend, pmap_f._axis_name,
+      axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
+      devices=p.devices,
+      name=p.flat_fun.__name__,
+      in_axes=p.in_axes_flat,
+      out_axes_thunk=p.out_axes_thunk,
+      avals=abstract_args)
+  lower_callable = partial(
+      pxla.lower_parallel_callable, p.flat_fun, pmap_f._axis_name,
+      axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
+      devices=p.devices,
+      name=p.flat_fun.__name__,
+      in_axes=p.in_axes_flat,
+      donated_invars=p.donated_invars,
+      is_explicit_global_axis_size=p.is_explicit_global_axis_size,
+      avals=abstract_args,
+      closed_jaxpr=closed_jaxpr,
+      backend=xc_backend,
+      replicas=replicas,
+      shards=shards,
+      pci=pci)
+  args_info = stages.make_args_info(p.in_tree, abstract_args, pmap_f._donate_tuple)
+  return stages.Traced(closed_jaxpr, args_info, p.flat_fun.__name__,
+                       p.out_tree(), lower_callable)
+
+@api_boundary
+def _cpp_mapped_lower(pmap_f, *args, **kwargs):
+  return _cpp_mapped_trace(pmap_f, *args, **kwargs).lower()
+
 
 _pmap_cache_clears = weakref.WeakSet()  # type: ignore
 

@@ -83,8 +83,17 @@ def ref_ragged_paged_attention(
     soft_cap: float | None = None,
     mask_value: float | None = DEFAULT_MASK_VALUE,
 ):
-  validate_static_inputs(
-      queries, kv_pages, kv_lens, page_indices, cu_q_lens, num_seqs, sliding_window, soft_cap
+  static_validate_inputs(
+      queries,
+      kv_pages,
+      kv_lens,
+      page_indices,
+      cu_q_lens,
+      num_seqs,
+      sm_scale=sm_scale,
+      sliding_window=sliding_window,
+      soft_cap=soft_cap,
+      mask_value=mask_value,
   )
   if mask_value is None:
     mask_value = DEFAULT_MASK_VALUE
@@ -130,17 +139,39 @@ def ref_ragged_paged_attention(
 
 
 # Expect to run these checks during runtime.
-def validate_dynamic_inputs(
+def dynamic_validate_inputs(
     q: jax.Array,  # [max_num_batched_tokens, num_q_heads, head_dim]
     kv_pages: jax.Array,  # [total_num_pages, page_size, num_combined_kv_heads, head_dim]
     kv_lens: jax.Array,  # i32[max_num_seqs]
     page_indices: jax.Array,  # i32[max_num_seqs, pages_per_seq]
     cu_q_lens: jax.Array,  # i32[max_num_seqs + 1]
-    num_seqs,  # i32[1]
+    num_seqs: jax.Array,  # i32[1]
+    *,
+    # These inputs are optional. If not specified, we will not validate them.
+    sm_scale: float | None = None,
     sliding_window: int | None = None,
     soft_cap: float | None = None,
+    mask_value: float | None = None,
+    # Kernel specific params.
+    num_kv_pages_per_block: int | None = None,
+    num_queries_per_block: int | None = None,
+    vmem_limit_bytes: int | None = None,
 ):
-  validate_static_inputs(q, kv_pages, kv_lens, page_indices, cu_q_lens, num_seqs, sliding_window, soft_cap)
+  static_validate_inputs(
+      q,
+      kv_pages,
+      kv_lens,
+      page_indices,
+      cu_q_lens,
+      num_seqs,
+      sm_scale=sm_scale,
+      sliding_window=sliding_window,
+      soft_cap=soft_cap,
+      mask_value=mask_value,
+      num_kv_pages_per_block=num_kv_pages_per_block,
+      num_queries_per_block=num_queries_per_block,
+      vmem_limit_bytes=vmem_limit_bytes,
+  )
   max_num_batched_tokens = q.shape[0]
   page_size = kv_pages.shape[1]
   max_num_seqs, pages_per_seq = page_indices.shape
@@ -168,15 +199,23 @@ def validate_dynamic_inputs(
 
 
 # Expect to run these checks during compile time.
-def validate_static_inputs(
+def static_validate_inputs(
     q: jax.Array,  # [max_num_batched_tokens, num_q_heads, head_dim]
     kv_pages: jax.Array,  # [total_num_pages, page_size, num_combined_kv_heads, head_dim]
     kv_lens: jax.Array,  # i32[max_num_seqs]
     page_indices: jax.Array,  # i32[max_num_seqs, pages_per_seq]
     cu_q_lens: jax.Array,  # i32[max_num_seqs + 1]
-    num_seqs,  # i32[1]
+    num_seqs: jax.Array,  # i32[1]
+    *,
+    # These inputs are optional. If not specified, we will not validate them.
+    sm_scale: float | None = None,
     sliding_window: int | None = None,
     soft_cap: float | None = None,
+    mask_value: float | None = None,
+    # Kernel specific params.
+    num_kv_pages_per_block: int | None = None,
+    num_queries_per_block: int | None = None,
+    vmem_limit_bytes: int | None = None,
 ):
   _, num_q_heads, head_dim = q.shape
   _, _, num_combined_kv_heads, head_dim_k = kv_pages.shape
@@ -215,6 +254,14 @@ def validate_static_inputs(
     raise ValueError(f"{sliding_window=} must be positive.")
   if soft_cap is not None and soft_cap == 0.0:
     raise ValueError(f"{soft_cap=} must not be 0.0.")
+  if num_kv_pages_per_block is not None and num_kv_pages_per_block <= 0:
+    raise ValueError(f"{num_kv_pages_per_block=} must be positive.")
+  if num_queries_per_block is not None and num_queries_per_block <= 0:
+    raise ValueError(f"{num_queries_per_block=} must be positive.")
+  if vmem_limit_bytes is not None and vmem_limit_bytes <= 0:
+    raise ValueError(f"{vmem_limit_bytes=} must be positive.")
+  del sm_scale  # No constraints on sm_scale.
+  del mask_value  # No consstraints on mask_value.
 
 
 def ragged_paged_attention_kernel(
@@ -676,7 +723,21 @@ def ragged_paged_attention(
   Returns:
     The output of the attention.
   """
-  validate_static_inputs(q, kv_pages, kv_lens, page_indices, cu_q_lens, num_seqs, sliding_window, soft_cap)
+  static_validate_inputs(
+      q,
+      kv_pages,
+      kv_lens,
+      page_indices,
+      cu_q_lens,
+      num_seqs,
+      sm_scale=sm_scale,
+      sliding_window=sliding_window,
+      soft_cap=soft_cap,
+      mask_value=mask_value,
+      num_kv_pages_per_block=num_kv_pages_per_block,
+      num_queries_per_block=num_queries_per_block,
+      vmem_limit_bytes=vmem_limit_bytes,
+  )
   if mask_value is None:
     mask_value = DEFAULT_MASK_VALUE
   num_q_tokens, num_q_heads, head_dim = q.shape

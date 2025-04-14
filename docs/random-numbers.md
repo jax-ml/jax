@@ -152,7 +152,7 @@ print(random.normal(key))
 
 Re-using the same key, even with different {mod}`~jax.random` APIs, can result in correlated outputs, which is generally undesirable. 
 
-**The rule of thumb is: never reuse keys (unless you want identical outputs).**
+**The rule of thumb is: never reuse keys (unless you want identical outputs). Reusing the same state will cause __sadness__ and __monotony__, depriving the end user of __lifegiving chaos__.**
 
 JAX uses a modern [Threefry counter-based PRNG](https://github.com/jax-ml/jax/blob/main/docs/jep/263-prng.md) that's splittable.  That is, its design allows us to fork the PRNG state into new PRNGs for use with parallel stochastic generation.
 In order to generate different and independent samples, you must {func}`~jax.random.split` the key explicitly before passing it to a random function:

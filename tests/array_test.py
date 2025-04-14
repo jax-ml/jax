@@ -899,7 +899,7 @@ class ShardingTest(jtu.JaxTestCase):
     shape = (8, 4)
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     mps = jax.sharding.NamedSharding(mesh, pspec)
-    ops = jax.sharding.GSPMDSharding(
+    ops = GSPMDSharding(
         list(mesh.devices.flat), mps._to_xla_hlo_sharding(len(shape)))
     self.assertDictEqual(
         ops.devices_indices_map(shape), mps.devices_indices_map(shape))
@@ -975,7 +975,7 @@ class ShardingTest(jtu.JaxTestCase):
     op.tile_assignment_dimensions = [4, 1, 2]
     op.tile_assignment_devices = [0, 1, 2, 3, 4, 5, 6, 7]
     op.replicate_on_last_tile_dim = True
-    s = jax.sharding.GSPMDSharding(jax.devices(), op)
+    s = GSPMDSharding(jax.devices(), op)
     # memory kind also appears in the repr but only for TPU.
     self.assertIn(
         'GSPMDSharding({devices=[4,1,2]0,1,2,3,4,5,6,7 '
@@ -983,7 +983,7 @@ class ShardingTest(jtu.JaxTestCase):
 
     op2 = xc.OpSharding()
     op2.type = xc.OpSharding.Type.REPLICATED
-    s2 = jax.sharding.GSPMDSharding(jax.devices(), op2)
+    s2 = GSPMDSharding(jax.devices(), op2)
     # memory kind also appears in the repr but only for TPU.
     self.assertIn('GSPMDSharding({replicated}', repr(s2))
 
@@ -1008,7 +1008,7 @@ class ShardingTest(jtu.JaxTestCase):
     mps = jax.sharding.NamedSharding(mesh, pspec)
     devices = jax.local_devices()[:8] # Taking up to 8 devices
 
-    devices_sharding = jax.sharding.PositionalSharding(devices)
+    devices_sharding = PositionalSharding(devices)
     devices_sharding = devices_sharding.reshape(shape).replicate(axes)
     if transpose:
       devices_sharding = devices_sharding.T
@@ -1110,7 +1110,7 @@ class ShardingTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((4, 2), ('x', 'y'))
     mps = jax.sharding.NamedSharding(mesh, P('x', 'y'))
 
-    devices_sharding = jax.sharding.PositionalSharding(mesh.devices)
+    devices_sharding = PositionalSharding(mesh.devices)
 
     op1 = mps._to_xla_hlo_sharding(len(value_shape))
     op2 = devices_sharding._to_xla_hlo_sharding(len(value_shape))
@@ -1129,7 +1129,7 @@ class ShardingTest(jtu.JaxTestCase):
   def test_positional_sharding_repr(self):
     if jax.device_count() < 2:
       self.skipTest('Test needs >= 2 devices.')
-    s = jax.sharding.PositionalSharding(jax.devices()).reshape(jax.device_count(), 1)
+    s = PositionalSharding(jax.devices()).reshape(jax.device_count(), 1)
     repr(s)  # doesn't crash
     str(s)  # doesn't crash
 
@@ -1200,9 +1200,9 @@ class ShardingTest(jtu.JaxTestCase):
 
     op1 = xc.OpSharding()
     op1.type = xc.OpSharding.Type.REPLICATED
-    s6 = jax.sharding.GSPMDSharding([jax.devices()[0]], op1)
+    s6 = GSPMDSharding([jax.devices()[0]], op1)
 
-    s7 = jax.sharding.GSPMDSharding(jax.devices(), op1)
+    s7 = GSPMDSharding(jax.devices(), op1)
 
     # The OpSharding is replicated but the Sharding itself are on different
     # devices.
@@ -1212,7 +1212,7 @@ class ShardingTest(jtu.JaxTestCase):
     op2.type = xc.OpSharding.Type.OTHER
     op2.tile_assignment_devices = [0, 1]
     op2.tile_assignment_dimensions = [2, 1]
-    s8 = jax.sharding.GSPMDSharding(list(mesh2.devices.flat), op2)
+    s8 = GSPMDSharding(list(mesh2.devices.flat), op2)
 
     self.assertTrue(s1.is_equivalent_to(s6, 2))
     self.assertTrue(s5.is_equivalent_to(s8, 2))
@@ -1225,7 +1225,7 @@ class ShardingTest(jtu.JaxTestCase):
     op3.tile_assignment_devices = [0, 1]
     op3.tile_assignment_dimensions = [1, 1, 2]
     op3.replicate_on_last_tile_dim = True
-    s10 = jax.sharding.GSPMDSharding(list(mesh2.devices.flat), op3)
+    s10 = GSPMDSharding(list(mesh2.devices.flat), op3)
 
     self.assertTrue(s9.is_equivalent_to(s10, 2))
 
@@ -1444,6 +1444,13 @@ class ShardingTest(jtu.JaxTestCase):
         ValueError, 'Got invalid memory kind'):
       NamedSharding(abstract_mesh, P(), memory_kind='weird_device')
 
+  def test_pos_gspmd_sharding_warnings(self):
+    with self.assertWarns(DeprecationWarning):
+      jax.sharding.PositionalSharding(jax.devices())
+
+    with self.assertWarns(DeprecationWarning):
+      jax.sharding.GSPMDSharding.get_replicated(jax.devices())
+
 
 @jtu.with_config(jax_use_shardy_partitioner=True)
 class ShardyShardingTest(jtu.JaxTestCase):
@@ -1457,9 +1464,9 @@ class ShardyShardingTest(jtu.JaxTestCase):
         SdyArraySharding(
             mesh.shape_tuple,
             [SdyDimSharding(
-             ('sequence', 'data'), True),
-             SdyDimSharding(('model',), True),
-             SdyDimSharding([], True)]))
+             ('sequence', 'data'), False),
+             SdyDimSharding(('model',), False),
+             SdyDimSharding([], False)]))
     with ir.Context() as ctx:
       dialects.sdy.register_dialect(ctx)
       self.assertEqual(
@@ -1476,9 +1483,9 @@ class ShardyShardingTest(jtu.JaxTestCase):
         sdy_sharding,
         SdyArraySharding(
             mesh.shape_tuple,
-            [SdyDimSharding([], True),
-             SdyDimSharding([], False),
-             SdyDimSharding(('x',), True)]))
+            [SdyDimSharding([], False),
+             SdyDimSharding([], True),
+             SdyDimSharding(('x',), False)]))
     with ir.Context() as ctx:
       dialects.sdy.register_dialect(ctx)
       self.assertEqual(

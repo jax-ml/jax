@@ -297,12 +297,17 @@ class DebugInfoTest(jtu.JaxTestCase):
     # built-in function "max" does not have an inspect.Signature
     dbg = api_util.debug_info("jit", max, (1,), {})
     self.assertEqual(dbg.func_src_info, "max")
+    self.assertEqual(dbg.func_name, "max")
+    self.assertEqual(dbg.func_filename, None)
+    self.assertEqual(dbg.func_lineno, None)
     self.assertEqual(dbg.arg_names, ("args[0]",))
 
   def test_debug_info_lambda(self):
     # built-in function "int" does not have an inspect.Signature
     dbg = api_util.debug_info("jit", lambda my_arg: False, (1,), {})
     self.assertRegex(dbg.func_src_info, r"^<lambda> at .*debug_info_test.py:\d+")
+    self.assertEndsWith(dbg.func_filename, "debug_info_test.py")
+    self.assertIsNotNone(dbg.func_lineno)
     self.assertEqual(dbg.arg_names, ("my_arg",))
 
   def test_debug_info_save_wrapped_fun_source_info(self):
@@ -386,66 +391,6 @@ class DebugInfoTest(jtu.JaxTestCase):
     # Jax type objects aren't valid data arguments.
     with self.assertRaisesRegex(TypeError, err_str):
       jax.jit(f)(jnp.int32)
-
-  @jtu.thread_unsafe_test()  # logging is not thread-safe
-  def test_arg_names_cache_miss_explanations(self):
-    @jax.jit
-    def f(x, y):
-      return jnp.sin(x) * y['hi']
-
-    x = jnp.float32(1.)
-    y = {'hi': jnp.arange(3., dtype='float32')}
-
-    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
-
-    # print on first miss, not on hit
-    with config.explain_cache_misses(True):
-      with self.assertLogs(level='WARNING') as cm:
-        f(x, y)
-        f(x, y)
-    self.assertLen(cm.output, expected_log_len)
-    msg = cm.output[0]
-    self.assertIn('TRACING CACHE MISS', msg)
-    self.assertIn('never seen function', msg)
-
-    # shape change
-    y_ = {'hi': jnp.arange(4, dtype='float32')}
-    with config.explain_cache_misses(True):
-      with self.assertLogs(level='WARNING') as cm:
-        f(x, y_)
-    self.assertLen(cm.output, expected_log_len)
-    msg = cm.output[0]
-    self.assertIn('never seen input type signature', msg)
-    self.assertIn('closest seen input type signature has 1 mismatches', msg)
-    self.assertIn('seen f32[3], but now given f32[4]', msg)
-
-    # weak type change (assuming no x64)
-    if not config.enable_x64.value:
-      with config.explain_cache_misses(True):
-        with self.assertLogs(level='WARNING') as cm:
-          f(1., y)
-      self.assertLen(cm.output, expected_log_len)
-      msg = cm.output[0]
-      self.assertIn('weak_type=True', msg)
-      self.assertIn('https://docs.jax.dev/en/latest/type_promotion.html#weak-types', msg)
-
-    # kwarg change
-    with config.explain_cache_misses(True):
-      with self.assertLogs(level='WARNING') as cm:
-        f(1, y=y)
-    self.assertLen(cm.output, expected_log_len)
-    msg = cm.output[0]
-    self.assertIn('never seen passing 1 positional args and 1 keyword args', msg)
-
-    # tracing config change
-    with config.explain_cache_misses(True):
-      with self.assertLogs(level='WARNING') as cm:
-        with jax.numpy_rank_promotion('warn'):
-          f(x, y)
-    # depending on the backend, we may or may not get persistent cache warnings
-    self.assertTrue(1 <= len(cm.output) <= expected_log_len)
-    msg = cm.output[0]
-    self.assertIn("tracing context doesn't match", msg)
 
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_arg_names_cache_miss_explanations_new_function_in_loop(self):

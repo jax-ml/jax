@@ -96,7 +96,6 @@ IrValues = Union[ir.Value, tuple[ir.Value, ...]]
 
 
 def _is_not_block_argument(x: IrValues) -> bool:
-  """Returns true if `x` is not a block argument."""
   return not isinstance(x, ir.BlockArgument)
 
 
@@ -1796,7 +1795,7 @@ def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
     s = SdyArraySharding(
         mesh_shape=None,
         dimension_shardings=[
-            sharding_impls.SdyDimSharding(axes=[], is_closed=i >= aval.ndim)
+            sharding_impls.SdyDimSharding(axes=[], is_open=i < aval.ndim)
             for i in range(physical_ndim)
         ])
     return wrap_with_sharding_op(ctx, val, aval, s)
@@ -2334,17 +2333,17 @@ register_lowering(core.call_p, partial(core_call_lowering, name="core_call"))
 register_lowering(core.closed_call_p,
                   partial(core_call_lowering, name=None))
 
-def map_compute_type(c_type):
-  if c_type == 'device_host':
-    return 'host'
-  elif c_type == 'device':
-    return 'dense'
-  elif c_type == 'tpu_sparsecore':
-    return 'sparse'
-  raise ValueError(f'Invalid compute type {c_type}. Current supported values '
-                   'are `device_host`, `device` and `tpu_sparsecore')
+def map_compute_type(c_type: str) -> str:
+  if c_type == "device_host":
+    return "host"
+  elif c_type == "device":
+    return "dense"
+  elif c_type == "tpu_sparsecore":
+    return "sparse"
+  raise ValueError(f"Invalid compute type {c_type}. Current supported values "
+                   "are `device_host`, `device` and `tpu_sparsecore`")
 
-def wrap_compute_type_in_place(ctx, op):
+def wrap_compute_type_in_place(ctx: LoweringRuleContext, op: ir.Operation) -> None:
   if ctx.jaxpr_eqn_ctx is not None and ctx.jaxpr_eqn_ctx.compute_type is not None:
     if ctx.jaxpr_eqn_ctx.compute_type.startswith("gpu_stream:"):
       stream = ctx.jaxpr_eqn_ctx.compute_type.split(":")[1]
@@ -2359,7 +2358,7 @@ def wrap_compute_type_in_place(ctx, op):
       op.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
 
 
-def wrap_xla_metadata_in_place(ctx, op):
+def wrap_xla_metadata_in_place(ctx: LoweringRuleContext, op: ir.Operation) -> None:
   ctx_attributes = {}
   existing_attributes = {}
   if ctx.jaxpr_eqn_ctx is not None and ctx.jaxpr_eqn_ctx.xla_metadata:

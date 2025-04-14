@@ -14,7 +14,7 @@
 
 from collections import OrderedDict, namedtuple
 import re
-from functools import partial
+from functools import partial, wraps
 import logging
 import json
 import math
@@ -939,6 +939,18 @@ class PJitTest(jtu.BufferDonationTestCase):
     key = prng.random_seed(87, impl=prng.rbg_prng_impl)
     # Make sure this doesn't crash
     pjit(lambda x: x, in_shardings=None, out_shardings=None)(key)
+
+  def test_lower_with_wrapper_error(self):
+    @jax.jit
+    def f(x):
+      return x
+
+    self.assertAllClose(1., f(1.))
+    self.assertAllClose(1., f.lower(1.).compile()(1.))
+    wrapped_f = wraps(f)(lambda x: f(x + 1))
+
+    with self.assertRaisesRegex(AttributeError, "has no attribute 'lower'"):
+      wrapped_f.lower(1.)
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompile(self):
@@ -3455,9 +3467,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
         f(x_, y)
     self.assertLen(cm.output, expected_log_len)
     msg = cm.output[0]
-    self.assertIn('never seen input type signature', msg)
-    self.assertIn('closest seen input type signature has 1 mismatches', msg)
-    self.assertIn("seen f32[8]({}), but now given f32[8]({Auto: ('x',)})", msg)
+    self.assertIn("different input types", msg)
+    self.assertIn("at x, now f32[8]({Auto: ('x',)}) and before f32[8]({})", msg)
 
   def test_pjit_function_cache_cpp(self):
     def f(x):
@@ -8176,8 +8187,8 @@ class ShardyTest(jtu.JaxTestCase):
     sharding = sharding_impls.SdyArraySharding(
         mesh_shape=(('data', 4), ('model', 8), ('expert', 2)),
         dimension_shardings=[
-            sharding_impls.SdyDimSharding(axes=['data', 'expert'], is_closed=True),
-            sharding_impls.SdyDimSharding(axes=['model'], is_closed=False, priority=2)])
+            sharding_impls.SdyDimSharding(axes=['data', 'expert'], is_open=False),
+            sharding_impls.SdyDimSharding(axes=['model'], is_open=True, priority=2)])
     self.assertEqual(repr(sharding), "SdyArraySharding([{'data', 'expert'}, {'model', ?}p2])")
 
   def test_array_sharding_repr_with_logical_ids(self):
@@ -8190,7 +8201,7 @@ class ShardyTest(jtu.JaxTestCase):
 
   def test_dimension_sharding_repr(self):
     dim_sharding = sharding_impls.SdyDimSharding(
-        axes=['data', 'model'], is_closed=False, priority=2)
+        axes=['data', 'model'], is_open=True, priority=2)
     self.assertEqual(repr(dim_sharding),
                      "SdyDimSharding({'data', 'model', ?}p2)")
 

@@ -177,7 +177,7 @@ print(numpy_array)
 
 +++ {"id": "go3L4x3w4-9p"}
 
-If we try to update a JAX device array in-place, however, we get an __error__!  (☉_☉)
+If we try to do in-place indexed updating on a `jax.Array`, however, we get an __error__!  (☉_☉)
 
 ```{code-cell} ipython3
 :id: iOscaa_GecEK
@@ -196,6 +196,27 @@ jax_array = jnp.zeros((3,3), dtype=jnp.float32)
 # In place update of JAX's array will yield an error!
 jax_array[1, :] = 1.0
 ```
+
+And if we try to do `__iadd__`-style in-place updating, we get __different behavior than NumPy__!  (☉_☉)  (☉_☉)
+
+```{code-cell} ipython3
+jax_array = jnp.array([10, 20])
+jax_array_new = jax_array
+jax_array_new += 10
+print(jax_array_new)  # `jax_array_new` is rebound to a new value [20, 30], but...
+print(jax_array)      # the original value is unodified as [10, 20] !
+
+numpy_array = np.array([10, 20])
+numpy_array_new = numpy_array
+numpy_array_new += 10
+print(numpy_array_new)  # `numpy_array_new is numpy_array`, and it was updated
+print(numpy_array)      # in-place, so both are [20, 30] !
+```
+
+That's because NumPy defines `__iadd__` to perform in-place mutation. In
+contrast, `jax.Array` doesn't define an `__iadd__`, so Python treats
+`jax_array_new += 10` as syntactic sugar for `jax_array_new = jax_array_new +
+10`, rebinding the variable without mutating any arrays.
 
 +++ {"id": "7mo76sS25Wco"}
 
@@ -219,6 +240,7 @@ For example, the update above can be written as:
 :id: PBGI-HIeCP_s
 :outputId: de13f19a-2066-4df1-d503-764c34585529
 
+jax_array = jnp.zeros((3,3), dtype=jnp.float32)
 updated_array = jax_array.at[1, :].set(1.0)
 print("updated array:\n", updated_array)
 ```

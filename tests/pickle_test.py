@@ -28,6 +28,7 @@ from jax import numpy as jnp
 from jax.interpreters import pxla
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
+from jax._src.sharding_impls import GSPMDSharding
 
 import numpy as np
 
@@ -182,7 +183,7 @@ class PickleTest(jtu.JaxTestCase):
     self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
   def test_pickle_gspmd_sharding(self):
-    s = jax.sharding.GSPMDSharding.get_replicated(jax.devices())
+    s = GSPMDSharding.get_replicated(jax.devices())
     self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
   @unittest.skipIf(cloudpickle is None, "Requires cloudpickle")

@@ -1086,14 +1086,8 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "cu_threefry2x32_ffi",
     # Triton IR does not guarantee stability.
     # "__gpu$xla.gpu.triton",
-    # cholesky on CPU
-    "lapack_spotrf", "lapack_dpotrf", "lapack_cpotrf", "lapack_zpotrf",
     # eigh on TPU
     "Eigh",
-    # eig on CPU
-    "lapack_sgeev", "lapack_dgeev", "lapack_cgeev", "lapack_zgeev",
-    # svd on CPU
-    "lapack_sgesdd", "lapack_dgesdd", "lapack_cgesdd", "lapack_zgesdd",
     # qr and svd on TPU
     "Qr", "ProductOfElementaryHouseholderReflectors",
     # triangular_solve on CPU
@@ -1102,8 +1096,6 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "lapack_sgees", "lapack_dgees", "lapack_cgees", "lapack_zgees",
     # tridiagonal on CPU
     "lapack_ssytrd", "lapack_dsytrd", "lapack_chetrd", "lapack_zhetrd",
-    # hessenberg on CPU
-    "lapack_sgehrd", "lapack_dgehrd", "lapack_cgehrd", "lapack_zgehrd",
     # lu on TPU
     "LuDecomposition",
     # ApproxTopK on TPU
@@ -1220,10 +1212,11 @@ def _hlo_sharding_to_xla_compatible_sharding(
 
 def _hlo_sharding_to_gspmd_sharding(
     hlo_sharding: HloSharding | None,
-    device_assignment: Sequence[jax.Device]) -> sharding.GSPMDSharding | None:
+    device_assignment: Sequence[jax.Device]
+    ) -> sharding_impls.GSPMDSharding | None:
   if hlo_sharding is None:
     return None
-  return sharding.GSPMDSharding(device_assignment, hlo_sharding)
+  return sharding_impls.GSPMDSharding(device_assignment, hlo_sharding)
 
 
 def _hlo_sharding_to_named_sharding(

@@ -52,6 +52,7 @@ from jax._src import array
 from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
+from jax._src import deprecations
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -4466,64 +4467,214 @@ class APITest(jtu.JaxTestCase):
       self.assertEqual(tracing_add_count, 2)
 
   @jtu.thread_unsafe_test()  # logging is not thread-safe
-  def test_cache_miss_explanations(self):
-    @jax.jit
-    def f(x, y):
-      return jnp.sin(x) * y['hi']
+  def test_cache_miss_explanations_skip_internals(self):
+    if is_persistent_cache_enabled():
+      self.skipTest('With persistent cache, we see the cache misses')
 
+    with config.explain_cache_misses(True):
+      with self.assertNoLogs(level='WARNING'):
+        for i in range(2):
+          jnp.sin(jnp.arange(i + 1, dtype=np.float32))
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_first_miss(self):
+    @jax.jit
+    def f(x): return x
     x = jnp.float32(1.)
-    y = {'hi': jnp.arange(3., dtype='float32')}
 
     expected_log_len = 1 if not is_persistent_cache_enabled() else 3
-
     # print on first miss, not on hit
     with config.explain_cache_misses(True):
-      with self.assertLogs(level='WARNING') as cm:
-        f(x, y)
-        f(x, y)
+      with self.assertLogs(level="WARNING") as cm:
+        f(x)
+        f(x)
     self.assertLen(cm.output, expected_log_len)
     msg = cm.output[0]
-    self.assertIn('TRACING CACHE MISS', msg)
-    self.assertIn('never seen function', msg)
+    self.assertIn("TRACING CACHE MISS", msg)
+    self.assertIn("never seen function", msg)
+    self.assertNotIn("explanation unavailable!", msg)
 
-    # shape change
-    y_ = {'hi': jnp.arange(4, dtype='float32')}
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_in_tree(self):
+    @jax.jit
+    def f(*args, **kwargs): return args[0]
+
+    f(0., 1., y=(2., 2.1))
+
     with config.explain_cache_misses(True):
-      with self.assertLogs(level='WARNING') as cm:
-        f(x, y_)
-    self.assertLen(cm.output, expected_log_len)
+      with self.assertLogs(level="WARNING") as cm:
+        # Same number of leaves but different trees
+        f(0., (1., 1.1), y=2.)
+    self.assertLen(cm.output, 1)
     msg = cm.output[0]
-    self.assertIn('never seen input type signature', msg)
-    self.assertIn('closest seen input type signature has 1 mismatches', msg)
-    self.assertIn('seen f32[3], but now given f32[4]', msg)
+    self.assertIn("different input pytree", msg)
+    self.assertNotIn("explanation unavailable!", msg)
 
-    # weak type change (assuming no x64)
-    if not config.enable_x64.value:
-      with config.explain_cache_misses(True):
-        with self.assertLogs(level='WARNING') as cm:
-          f(1., y)
-      self.assertLen(cm.output, expected_log_len)
-      msg = cm.output[0]
-      self.assertIn('weak_type=True', msg)
-      self.assertIn('https://docs.jax.dev/en/latest/type_promotion.html#weak-types', msg)
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_arg_passed_as_kwarg(self):
+    @jax.jit
+    def f(x, y): return jnp.sin(x) + y
+
+    f(0., 1.)
 
     # kwarg change
     with config.explain_cache_misses(True):
-      with self.assertLogs(level='WARNING') as cm:
-        f(1, y=y)
-    self.assertLen(cm.output, expected_log_len)
-    msg = cm.output[0]
-    self.assertIn('never seen passing 1 positional args and 1 keyword args', msg)
+      with self.assertLogs(level="WARNING") as cm:
+        f(0., y=1.)
 
-    # tracing config change
+    self.assertLen(cm.output, 1)
+    msg = cm.output[0]
+    self.assertIn("different number of args and kwargs, but same total number", msg)
+    self.assertIn("now 1 args and kwargs with keys ['y']", msg)
+    self.assertIn("before 1 args and kwargs with keys []", msg)
+    self.assertNotIn("explanation unavailable!", msg)
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_static_argnums(self):
+    @partial(jax.jit, static_argnums=(0, 2))
+    def f(x, y, z):
+      return y
+
+    f(1., 2., "foo")
+
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        f(1., 2., "bar")
+    self.assertLen(cm.output, 1)
+    msg = cm.output[0]
+    self.assertIn("different value of static args", msg)
+    self.assertIn("now 1.0, 'bar' and before 1.0, 'foo'", msg)
+    self.assertNotIn("explanation unavailable!", msg)
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_static_argnames(self):
+    @partial(jax.jit, static_argnames="foo")
+    def f(*, foo):
+      return 1
+
+    f(foo="foo")
+
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        f(foo="bar")
+    self.assertLen(cm.output, 1)
+    msg = cm.output[0]
+    self.assertIn("different value of static kwargs", msg)
+    self.assertIn("now {foo: 'bar'} and before {foo: 'foo'}", msg)
+    self.assertNotIn('explanation unavailable!', msg)
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_dtype(self):
+    @jax.jit
+    def f(x, y): return x
+    f(np.float32(0), np.float32(1))
+
     with config.explain_cache_misses(True):
       with self.assertLogs(level='WARNING') as cm:
-        with jax.numpy_rank_promotion('warn'):
-          f(x, y)
-    # depending on the backend, we may or may not get persistent cache warnings
+        f(np.float32(0), np.int32(1))
+    self.assertLen(cm.output, 1)
+    msg = cm.output[0]
+    self.assertIn("different input types", msg)
+    self.assertIn("at y, now i32[] and before f32[]", msg)
+    self.assertNotIn("explanation unavailable!", msg)
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_weak_type(self):
+    @jax.jit
+    def f(x, y): return jnp.sin(x) + y
+
+    y = jnp.arange(4, dtype="float32")
+    f(jnp.float32(0.), y)
+    # weak type change (assuming no x64)
+    if config.enable_x64.value:
+      self.skipTest("Work only for 32 bit mode")
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        f(0., y)
+    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
+    self.assertLen(cm.output, expected_log_len)
+    msg = cm.output[0]
+    self.assertIn("different input types", msg)
+    self.assertIn("at x, now f32[]{weak_type=True} and before f32[]{weak_type=False}", msg)
+    self.assertIn("https://docs.jax.dev/en/latest/type_promotion.html#weak-types", msg)
+    self.assertNotIn("explanation unavailable!", msg)
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_shape(self):
+    @jax.jit
+    def f(x, y): return jnp.sin(x) + y
+    f(np.float32(0), np.arange(1, dtype=np.float32))
+
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level='WARNING') as cm:
+        f(np.float32(0), np.arange(2, dtype=np.float32))
+    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
+    self.assertLen(cm.output, expected_log_len)
+    msg = cm.output[0]
+    self.assertIn("different input types", msg)
+    self.assertIn("at y, now f32[2] and before f32[1]", msg)
+    self.assertNotIn("explanation unavailable!", msg)
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_shape_explain_closest(self):
+    @jax.jit
+    def f(x): return x
+    f(np.ones((1, 2), dtype=np.float32))
+    f(np.ones((10, 20, 30), dtype=np.float32))
+    f(np.ones((1, 2, 3), dtype=np.float32))
+
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level='WARNING') as cm:
+        f(np.ones((10, 2, 30), dtype=np.float32))
+    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
+    self.assertLen(cm.output, expected_log_len)
+    msg = cm.output[0]
+    self.assertIn("key with different input types", msg)
+    self.assertIn("at x, now f32[10,2,30] and before f32[10,20,30]", msg)
+    self.assertNotIn("explanation unavailable!", msg)
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_other_tracing_config(self):
+    @jax.jit
+    def f(x, y): return jnp.sin(x) + y
+
+    f(0., 1.)
+    # tracing config change
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        with jax.numpy_rank_promotion("warn"):
+          with jax.default_matmul_precision("high"):
+            f(0., 1.)
+
+    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
     self.assertTrue(1 <= len(cm.output) <= expected_log_len)
     msg = cm.output[0]
-    self.assertIn("tracing context doesn't match", msg)
+    self.assertIn("key with different tracing context", msg)
+    self.assertIn("now warn and before", msg)
+    self.assertIn("now high and before", msg)
+    self.assertNotIn("explanation unavailable!", msg)
+
+  @jtu.thread_unsafe_test()  # logging is not thread-safe
+  def test_cache_miss_explanations_multiple_changes(self):
+    @jax.jit
+    def f(x): return jnp.sin(x)
+
+    call_1 = f(np.arange(4, dtype=np.float32))
+    with jax.numpy_rank_promotion("warn"):
+      call_2 = f(np.arange(8, dtype=np.float32))
+
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level='WARNING') as cm:
+        # Matches call_2 in shape but not context, and call_1 in context but
+        # not in shape.
+        f(np.arange(8, dtype=np.float32))
+
+    self.assertLen(cm.output, 1)
+    msg = cm.output[0]
+    self.assertIn("key with different input types", msg)
+    self.assertIn("at x, now f32[8] and before f32[4]", msg)
+    self.assertIn("key with different tracing context", msg)
+    self.assertNotIn("explanation unavailable!", msg)
 
   @jtu.thread_unsafe_test()  # logging is not thread-safe
   def test_cache_miss_explanations_new_function_in_loop(self):
@@ -4546,28 +4697,6 @@ class APITest(jtu.JaxTestCase):
       self.assertLen(cm.output, 2)
       _, msg = cm.output
       self.assertIn('another function defined on the same line', msg)
-
-  @jtu.thread_unsafe_test()  # logging is not thread-safe
-  def test_cache_miss_explanations_unpacks_transforms(self):
-    # Tests that the explain_tracing_cache_miss() function does not throw an
-    # error when unpacking `transforms` with a length greater than 3.
-    @jax.jit
-    def f(key):
-      return jax.random.truncated_normal(key, 1, 1, dtype=jax.numpy.float32)
-
-    with config.explain_cache_misses(True):
-      with self.assertLogs(level="WARNING") as cm:
-        f(jax.random.key(seed=123))
-
-    if is_persistent_cache_enabled():
-      # 5 warnings from tracing cache, 5-10 from persistent cache depending on
-      # the backend
-      self.assertTrue(10 <= len(cm.output) <= 15)
-      self.assertTrue(any("TRACING CACHE MISS" in msg for msg in cm.output))
-    else:
-      self.assertLen(cm.output, 5)
-      for msg in cm.output:
-        self.assertIn("TRACING CACHE MISS", msg)
 
   def test_cache_miss_explanations_no_source_info(self):
     # ``operator.add`` is a built-in function and does not have source info.
@@ -10387,6 +10516,19 @@ class CustomTransposeTest(jtu.JaxTestCase):
     self.assertAllClose(f_t(x), jax.jit(f_t)(x))
     self.assertAllClose(f_(x), g_(x))
     self.assertAllClose(f_t(x), g_t(x))
+
+  def test_jit_signature_deprecation(self):
+    fun = lambda x: x
+    if deprecations.is_accelerated('jax-jit-positional-args'):
+      with self.assertRaisesRegex(TypeError, r'jit\(\) got some positional-only arguments passed as keyword arguments.*'):
+        jax.jit(fun=fun)
+      with self.assertRaisesRegex(TypeError, r'jit\(\) takes 1 positional argument but 2 were given.*'):
+        jax.jit(fun, None)
+    else:
+      with self.assertWarnsRegex(DeprecationWarning, r'jax\.jit: passing fun by keyword is deprecated.*'):
+        jax.jit(fun=fun)
+      with self.assertWarnsRegex(DeprecationWarning, r'jax\.jit: passing optional arguments by position is deprecated.*'):
+        jax.jit(fun, None)
 
   def test_cond(self):
     def f(x, y):

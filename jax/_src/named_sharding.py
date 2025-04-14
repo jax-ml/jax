@@ -42,7 +42,7 @@ class AUTO:
     self.mesh = mesh
 
   def _to_sdy_sharding(self, ndim: int) -> SdyArraySharding:
-    dim_shardings = [SdyDimSharding(axes=[], is_closed=False)
+    dim_shardings = [SdyDimSharding(axes=[], is_open=True)
                      for _ in range(ndim)]
     return SdyArraySharding(self.mesh.shape_tuple, dim_shardings)
 
@@ -242,11 +242,11 @@ class NamedSharding(JSharding.Sharding):
     return named_sharding_to_xla_hlo_sharding(self, num_dimensions)
 
   def _to_sdy_sharding(self, num_dimensions: int) -> SdyArraySharding:
-    dim_shardings = [SdyDimSharding(axes=[], is_closed=True)
+    dim_shardings = [SdyDimSharding(axes=[], is_open=False)
                      for _ in range(num_dimensions)]
     for i, dim_spec in enumerate(self.spec):
       if dim_spec is PartitionSpec.UNCONSTRAINED:
-        dim_shardings[i].is_closed = False
+        dim_shardings[i].is_open = True
       elif dim_spec is None:
         # Already empty and closed sharding.
         pass
@@ -274,14 +274,13 @@ def get_array_mapping(
 @dataclasses.dataclass
 class SdyDimSharding:
   axes: Sequence[str]
-  is_closed: bool
+  is_open: bool
   priority: int | None = None
 
   def build(self) -> sdy.DimensionShardingAttr:
     return sdy.DimensionShardingAttr.get(
         [sdy.AxisRefAttr.get(axis) for axis in self.axes],
-        is_closed=self.is_closed,
-        priority=self.priority)
+        is_closed=not self.is_open, priority=self.priority)
 
   def __repr__(self):
     return f'SdyDimSharding({self._custom_repr()})'
@@ -289,7 +288,7 @@ class SdyDimSharding:
   def _custom_repr(self):
     axes_repr = ', '.join(f"'{a}'" for a in self.axes)
     open_repr = ''
-    if not self.is_closed:
+    if self.is_open:
       open_repr = ', ?' if self.axes else '?'
     priority_repr = '' if self.priority is None else f'p{self.priority}'
     return f'{{{axes_repr}{open_repr}}}{priority_repr}'

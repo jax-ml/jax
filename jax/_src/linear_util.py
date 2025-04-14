@@ -67,6 +67,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from functools import partial
 import re
+import time
 from typing import Any, Hashable, NamedTuple
 import warnings
 import weakref
@@ -326,6 +327,18 @@ class DebugInfo(NamedTuple):
     func_src_comps[0] = name
     return self._replace(func_src_info=" ".join(func_src_comps))
 
+  @property
+  def func_filename(self) -> str | None:
+    m = _re_func_src_info.match(self.func_src_info)
+    if not m: return None
+    return m.group(3)
+
+  @property
+  def func_lineno(self) -> int | None:
+    m = _re_func_src_info.match(self.func_src_info)
+    if not m or m.group(4) is None: return None
+    return int(m.group(4))
+
   def safe_arg_names(self, expected: int) -> tuple[str, ...]:
     """Get the arg_names with a safety check."""
     if len(self.arg_names) == expected:
@@ -352,6 +365,7 @@ class DebugInfo(NamedTuple):
     assert self.result_paths is not None and not callable(self.result_paths), self
     return tuple(v for v, b in zip(self.safe_result_paths(len(keep)), keep) if b)
 
+_re_func_src_info = re.compile(r"([^ ]+)( at (.+):(\d+))?$")
 
 def _missing_debug_info(for_what: str) -> DebugInfo:
   warnings.warn(
@@ -433,7 +447,7 @@ def _check_input_type(in_type: core.InputType) -> None:
 
 
 def cache(call: Callable, *,
-          explain: Callable[[WrappedFun, bool, dict, tuple], None] | None = None):
+          explain: Callable[[WrappedFun, bool, dict, tuple, float], None] | None = None):
   """Memoization decorator for functions taking a WrappedFun as first argument.
 
   Args:
@@ -442,7 +456,8 @@ def cache(call: Callable, *,
       memoization cache key.
 
     explain: a function that is invoked upon cache misses to log an explanation
-      of the miss. Invoked with `(fun, is_cache_first_use, cache, key)`.
+      of the miss.
+      Invoked with `(fun, is_cache_first_use, cache, key, elapsed_sec)`.
 
   Returns:
      A memoized version of ``call``.
@@ -457,9 +472,11 @@ def cache(call: Callable, *,
       ans, stores = result
       fun.populate_stores(stores)
     else:
+      if do_explain := explain and config.explain_cache_misses.value:
+        start = time.time()
       ans = call(fun, *args)
-      if explain and config.explain_cache_misses.value:
-        explain(fun, cache is new_cache, cache, key)
+      if do_explain:
+        explain(fun, cache is new_cache, cache, key, time.time() - start)  # type: ignore
       cache[key] = (ans, fun.stores)
 
     return ans

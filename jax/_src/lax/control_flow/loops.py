@@ -1467,13 +1467,12 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   # efficiency wins: if e.g. we vmap the loop with a batched predicate, we batch
   # the carry too, but not the body consts.
   body_fwd = pe._jaxpr_forwarding(body_jaxpr.jaxpr)
-  _, carry_fwd = split_list(body_fwd, [len(body_consts)])
+  carry_nofwd = [len(body_consts) + i != f for i, f in enumerate(body_fwd)]
   cond_jaxpr_, keep_cond = pe.dce_jaxpr(
-      cond_jaxpr.jaxpr, [True],
-      [True] * len(cond_consts) + [i != f for i, f in enumerate(body_fwd)])
+      cond_jaxpr.jaxpr, [True], [True] * len(cond_consts) + carry_nofwd)
   _, keep_cond_carry = split_list(keep_cond, [len(cond_consts)])
-  move_to_const = [i == f and not k for i, (f, k)
-                   in enumerate(zip(body_fwd, keep_cond_carry))]
+  move_to_const = _map(operator.not_, keep_cond_carry)
+
   if any(move_to_const):
     cond_jaxpr = pe.close_jaxpr(cond_jaxpr_)
     body_jaxpr = pe.prune_closed_jaxpr_outputs(
@@ -1489,6 +1488,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
 
   if any(move_to_const):
     outs = pe.merge_lists(move_to_const, outs, new_body_consts)
+
   return tree_unflatten(body_tree, outs)
 
 

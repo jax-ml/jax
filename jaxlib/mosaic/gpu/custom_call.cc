@@ -32,6 +32,7 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "absl/base/call_once.h"
 #include "absl/base/optimization.h"
 #include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_map.h"
@@ -105,6 +106,16 @@ namespace ffi = xla::ffi;
 using MosaicInitFunc = void(void****);
 using MosaicHostFunc = void(void**);
 
+void EnsureLLVMNVPTXTargetIsRegistered() {
+  static absl::once_flag register_nvptx_target_flag;
+  absl::call_once(register_nvptx_target_flag, []() {
+    LLVMInitializeNVPTXTarget();
+    LLVMInitializeNVPTXTargetInfo();
+    LLVMInitializeNVPTXTargetMC();
+    LLVMInitializeNVPTXAsmPrinter();
+  });
+}
+
 absl::StatusOr<std::pair<std::string, std::string>> GetSmAndPtxIsaVersion() {
   // Assumes driver has been initialized and a context exists. XLA already has
   // some utilities to query this, but we try to stay runtime-agnostic, so we
@@ -123,13 +134,18 @@ absl::StatusOr<std::pair<std::string, std::string>> GetSmAndPtxIsaVersion() {
                            device) != CUDA_SUCCESS) {
     return absl::InternalError("Failed to get minor compute capability");
   }
+  EnsureLLVMNVPTXTargetIsRegistered();
   return mosaic::gpu::GetSmAndPtxIsaVersion(major, minor);
 }
+
 
 mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::MLIRContext* ctx, mlir::gpu::CompilationTarget target,
     const std::string& sm, const std::string& ptx_isa, const std::string& nvshmem_path) {
-  static bool register_once = []() {
+  static absl::once_flag register_passes_flag;
+  absl::call_once(register_passes_flag, []() {
+    EnsureLLVMNVPTXTargetIsRegistered();
+
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
@@ -157,8 +173,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mosaic::gpu::registerByvalInsertionPass();
     mlir::arith::registerArithExpandOpsPass();
     return true;
-  }();
-  (void)register_once;
+  });
   return mlir::parsePassPipeline(absl::StrCat(
       R"(
       builtin.module(

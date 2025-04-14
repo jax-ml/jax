@@ -233,6 +233,11 @@ class VectorLayout {
         implicit_dim_(implicit_dim) {
     // TODO(b/275751535): Allow more bitwidths.
     CHECK(llvm::has_single_bit<unsigned>(bitwidth_) && bitwidth_ <= 32);
+    CHECK_GT(tiling_[0], 0);
+    CHECK_GT(tiling_[1], 0);
+    CHECK_GE(offsets_[0].value_or(0), 0);
+    CHECK_GE(offsets_[1].value_or(0), 0);
+    CHECK_LT(offsets_[0].value_or(0), tiling_[0]);
   }
 
   static int num_implicit_dims(const ImplicitDim implicit_dim) {

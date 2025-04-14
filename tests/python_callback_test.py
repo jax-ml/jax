@@ -1041,25 +1041,10 @@ class PureCallbackTest(jtu.JaxTestCase):
   def test_vmap_method_raise(self):
     @jax.vmap
     def f(x):
-      # Setting vectorized to None disables the current default behavior of
-      # falling back on sequential.
-      return jax.pure_callback(np.sin, x, x, vectorized=None)
+      return jax.pure_callback(np.sin, x, x)
 
     with self.assertRaisesRegex(NotImplementedError, "vmap is only supported"):
       f(jnp.arange(4.))
-
-  def test_deprecated_vectorized(self):
-    def f(x, **kwargs):
-      return jax.pure_callback(np.sin, x, x, **kwargs)
-
-    with self.assertWarnsRegex(DeprecationWarning, "The default behavior"):
-      jax.vmap(f)(jnp.arange(4.0))
-
-    with self.assertWarnsRegex(DeprecationWarning, "The vectorized argument"):
-      f(jnp.arange(4.0), vectorized=True)
-
-    with self.assertWarnsRegex(DeprecationWarning, "The vectorized argument"):
-      f(jnp.arange(4.0), vectorized=False)
 
   def test_vmap_method_expand_dims(self):
     def callback(x, y):

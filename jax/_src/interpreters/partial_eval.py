@@ -1559,10 +1559,14 @@ def _move_binders_to_front(closed_jaxpr: ClosedJaxpr, to_move: tuple[bool, ...]
                            ) -> ClosedJaxpr:
   assert len(closed_jaxpr.in_avals) == len(to_move)
   new_invars = _move_to_front(closed_jaxpr.jaxpr.invars, to_move)
+  id_map = {id(v): i for i, v in enumerate(new_invars)}
+  idx_map = {i: id_map[id(v)] for i, v in enumerate(closed_jaxpr.jaxpr.invars)}
+  new_effs = {e.replace(input_index=idx_map[e.input_index])
+              if isinstance(e, effects.JaxprInputEffect) else e
+              for e in closed_jaxpr.jaxpr.effects}
   new_jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, new_invars,
                     closed_jaxpr.jaxpr.outvars, closed_jaxpr.jaxpr.eqns,
-                    closed_jaxpr.jaxpr.effects,
-                    closed_jaxpr.jaxpr.debug_info)
+                    new_effs, closed_jaxpr.jaxpr.debug_info)
   new_closed_jaxpr = core.ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
   return new_closed_jaxpr
 

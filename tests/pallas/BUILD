@@ -107,7 +107,7 @@ jax_multiplatform_test(
         "gpu_a100_x32",
         "gpu_h100",
         "gpu_h100_x32",
-        "tpu_v6e_1x1",
+        "tpu_v6e",
     ],
     shard_count = {
         "cpu": 16,
@@ -315,7 +315,7 @@ jax_multiplatform_test(
     ],
     enable_backends = [],
     enable_configs = [
-        "tpu_v5e_4x2",
+        "tpu_v5e_x8",
     ],
     deps = [
         "//jax:pallas_tpu_ops",
@@ -352,7 +352,7 @@ jax_multiplatform_test(
     enable_backends = ["tpu"],
     enable_configs = [
         "tpu_v5e",
-        "tpu_v5p_1x1",
+        "tpu_v5p",
     ],
     deps = [
         "//jax:extend",
@@ -383,10 +383,10 @@ jax_multiplatform_test(
     srcs = ["tpu_pallas_distributed_test.py"],
     enable_backends = ["tpu"],
     enable_configs = [
-        "tpu_v5e_4x2",
-        "tpu_v5p_2x2",
-        "tpu_v4_2x2",
-        "tpu_v3_2x2",
+        "tpu_v5e_x8",
+        "tpu_v5p_x4",
+        "tpu_v4_x4",
+        "tpu_v3_x4",
     ],
     deps = [
         "//jax:extend",
@@ -400,8 +400,8 @@ jax_multiplatform_test(
     srcs = ["tpu_pallas_pipeline_test.py"],
     enable_backends = ["tpu"],
     enable_configs = [
-        "tpu_v5e_4x2",
-        "tpu_v5p_1x1",
+        "tpu_v5e_x8",
+        "tpu_v5p",
     ],
     shard_count = 5,
     tags = [
@@ -421,8 +421,8 @@ jax_multiplatform_test(
     srcs = ["tpu_pallas_async_test.py"],
     enable_backends = ["tpu"],
     enable_configs = [
-        "tpu_v5e_4x2",
-        "tpu_v5p_1x1",
+        "tpu_v5e_x8",
+        "tpu_v5p",
     ],
     deps = [
         "//jax:pallas_tpu",
@@ -451,7 +451,7 @@ jax_multiplatform_test(
     ],
     enable_backends = ["tpu"],
     enable_configs = [
-        "tpu_v5p_2x2",
+        "tpu_v5p_x4",
     ],
     deps = [
         "//jax:pallas",
@@ -491,7 +491,7 @@ jax_multiplatform_test(
     name = "tpu_paged_attention_kernel_test",
     srcs = ["tpu_paged_attention_kernel_test.py"],
     disable_configs = [
-        "tpu_v5p_1x1",
+        "tpu_v5p",
     ],
     enable_backends = ["tpu"],
     shard_count = 5,
@@ -509,7 +509,7 @@ jax_multiplatform_test(
     name = "tpu_ragged_paged_attention_test",
     srcs = ["tpu_ragged_paged_attention_test.py"],
     disable_configs = [
-        "tpu_v5p_1x1",
+        "tpu_v5p",
     ],
     enable_backends = ["tpu"],
     shard_count = 24,
@@ -544,8 +544,8 @@ jax_multiplatform_test(
     name = "tpu_splash_attention_kernel_sharded_test",
     srcs = ["tpu_splash_attention_kernel_sharded_test.py"],
     enable_configs = [
-        "tpu_v5e_4x2",
-        "tpu_v5p_2x2",
+        "tpu_v5e_x8",
+        "tpu_v5p_x4",
     ],
     shard_count = 5,
     deps = [
@@ -705,7 +705,7 @@ jax_multiplatform_test(
     name = "tpu_fusable_matmul_test",
     srcs = ["tpu_fusable_matmul_test.py"],
     disable_configs = [
-        "tpu_v3_1x1",
+        "tpu_v3",
         "tpu_pjrt_c_api",
         "gpu_v100",
         "gpu_v100_x32",
@@ -719,10 +719,10 @@ jax_multiplatform_test(
     ],
     enable_backends = ["tpu"],
     enable_configs = [
-        "tpu_v4_1x1",
+        "tpu_v4",
         "tpu_v5e",
-        "tpu_v5p_1x1",
-        "tpu_v6e_1x1",
+        "tpu_v5p",
+        "tpu_v6e",
     ],
     shard_count = 4,
     tags = [

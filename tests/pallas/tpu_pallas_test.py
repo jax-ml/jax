@@ -2416,6 +2416,7 @@ class PallasCallPrintTest(PallasBaseTest):
 
 class PallasCallTraceTest(PallasBaseTest):
 
+  @jtu.thread_unsafe_test()  # stdout redirection is not thread safe
   def test_trace_start_stop_match(self):
     def kernel(o_ref):
       with jax.named_scope('scope1'):
@@ -2435,6 +2436,7 @@ class PallasCallTraceTest(PallasBaseTest):
     self.assertEqual(num_start, 1)
     self.assertEqual(num_stop, 1)
 
+  @jtu.thread_unsafe_test()  # stdout redirection is not thread safe
   def test_run_scoped(self):
     def kernel(o_ref):
       def scope1():

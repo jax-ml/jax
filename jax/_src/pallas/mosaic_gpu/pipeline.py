@@ -655,8 +655,10 @@ def emit_pipeline_warp_specialized(
           buf_slot = _get_slot(step, not bref.is_index_invariant)
           bref.copy_in(buf_slot, indices, barrier)
         return _inc_grid_by_1(indices, grid)
-      # TODO(apaszke): Unroll when grid is static (need support in lowering).
-      indices = jax.lax.fori_loop(0, prologue_steps, _init_step, indices)
+
+      indices = jax.lax.fori_loop(
+          0, prologue_steps, _init_step, indices, unroll=not has_dynamic_grid
+      )
 
       def memory_loop_body(step, carry):
         indices, = carry
@@ -687,8 +689,9 @@ def emit_pipeline_warp_specialized(
       def _epi_step(step, _):
         for barrier in consumed_barrier_refs:
           gpu_primitives.barrier_wait(barrier.at[step])
-      # TODO(apaszke): Unroll when grid is static (need support in lowering).
-      jax.lax.fori_loop(0, prologue_steps, _epi_step, None)
+      jax.lax.fori_loop(
+          0, prologue_steps, _epi_step, None, unroll=not has_dynamic_grid
+      )
 
     wg_idx = lax.axis_index(wg_axis)
     lax.cond(
