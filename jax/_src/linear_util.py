@@ -67,6 +67,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from functools import partial
 import re
+import time
 from typing import Any, Hashable, NamedTuple
 import warnings
 import weakref
@@ -446,7 +447,7 @@ def _check_input_type(in_type: core.InputType) -> None:
 
 
 def cache(call: Callable, *,
-          explain: Callable[[WrappedFun, bool, dict, tuple], None] | None = None):
+          explain: Callable[[WrappedFun, bool, dict, tuple, float], None] | None = None):
   """Memoization decorator for functions taking a WrappedFun as first argument.
 
   Args:
@@ -455,7 +456,8 @@ def cache(call: Callable, *,
       memoization cache key.
 
     explain: a function that is invoked upon cache misses to log an explanation
-      of the miss. Invoked with `(fun, is_cache_first_use, cache, key)`.
+      of the miss.
+      Invoked with `(fun, is_cache_first_use, cache, key, elapsed_sec)`.
 
   Returns:
      A memoized version of ``call``.
@@ -470,9 +472,11 @@ def cache(call: Callable, *,
       ans, stores = result
       fun.populate_stores(stores)
     else:
+      if do_explain := explain and config.explain_cache_misses.value:
+        start = time.time()
       ans = call(fun, *args)
-      if explain and config.explain_cache_misses.value:
-        explain(fun, cache is new_cache, cache, key)
+      if do_explain:
+        explain(fun, cache is new_cache, cache, key, time.time() - start)  # type: ignore
       cache[key] = (ans, fun.stores)
 
     return ans
