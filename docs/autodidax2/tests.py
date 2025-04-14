@@ -20,14 +20,31 @@ from absl.testing import parameterized
 
 
 
-from core import make_jaxpr, f32
+from core import make_jaxpr, f32, jit
 import ops
 
 class CoreTest(parameterized.TestCase):
   def test_make_jaxpr(self):
     def foo(x): return x * (x + 3.0)
-    str(make_jaxpr(foo, (f32[()],)))
+    expected = (
+      "(v1:f32[],) =>\n"
+      "  v2:f32[] = add(v1:f32[], 3.0:f32[])\n"
+      "  v3:f32[] = mul(v1:f32[], v2:f32[])\n"
+      "  return v3:f32[]\n")
+    jaxpr = make_jaxpr(foo, (f32[()],))
+    assert str(jaxpr) == expected
 
+  def test_jit(self):
+    @jit
+    def f(x):
+      return x + x
+
+    assert len(f.cache) == 0
+    assert f(1.0) == 2.0
+    assert len(f.cache) == 1
+    assert f(1) == 2
+    assert len(f.cache) == 2
+    assert f(2.0) == 4.0
 
 
 # # === Testing it out ===

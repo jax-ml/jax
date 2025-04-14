@@ -148,11 +148,19 @@ class Eqn:
     return p.render()
 
 # We call an IR function a "Jaxpr", for "JAX expression"
-@dataclass(frozen=True)
+@dataclass
 class Jaxpr:
   binders : list[Var]  # The function's formal parameters (arguments)
   eqns: list[Eqn]      # The body of the function, a list of instructions/equations
   result: Atom         # The function's return value
+
+  def __init__(self, binders, eqns, result):
+    assert all(isinstance(b, Var) for b in binders)
+    assert all(isinstance(eqn, Eqn) for eqn in eqns)
+    assert isinstance(result, Atom)
+    self.binders = binders
+    self.eqns = eqns
+    self.result = result
 
   def pretty_print(self, p:Printer):
     p.emit_line(f"{str(tuple(b for b in self.binders))} =>")
@@ -165,6 +173,15 @@ class Jaxpr:
     p = Printer()
     self.pretty_print(p)
     return p.render()
+
+
+@dataclass(frozen=True)
+class JaxprName:
+  name_stem : str
+  name_int  : int
+
+  def __repr__(self): return self.__str__()
+  def __str__(self): return f"{self.name_stem}_{self.name_int}"
 
 # === runtime values ===
 
@@ -277,17 +294,10 @@ def to_jax_dtype(numpy_dtype):
 
 # === array type ===
 
+@dataclass(frozen=True)
 class ArrayTy(Ty):
-  def __init__(self, shape, dtype):
-    assert isinstance(shape, tuple)
-    assert isinstance(dtype, DType)
-    self.shape = shape
-    self.dtype = dtype
-
-  def __eq__(self, other):
-    return (isinstance(other, ArrayTy) and
-            self.shape == other.shape and
-            self.dtype == other.dtype)
+  shape : tuple[int]
+  dtype: DType
 
   def __str__(self):
     return f"{self.dtype}[{",".join(self.shape)}]"
@@ -295,6 +305,28 @@ class ArrayTy(Ty):
   # dispatch path for "dunder" methods on values
   def _add_(self, x, y): return add(x, y)
   def _mul_(self, x, y): return mul(x, y)
+
+# === jaxpr interpreter ===
+
+def interpret_jaxpr(jaxpr:Jaxpr, args):
+  assert tuple(b.ty for b in jaxpr.binders) == tuple(map(typeof, args))
+
+  def interpret_atom(atom):
+    if isinstance(atom, Var):
+      return env[atom]
+    elif isinstance(atom, Literal):
+      return atom.val
+    else:
+      breakpoint()
+      raise Exception(f"Not an atom: {atom}")
+
+  env = dict(zip(jaxpr.binders, args))
+  for eqn in jaxpr.eqns:
+    eqn_args = tuple(interpret_atom(arg) for arg in eqn.args)
+    ans = emit_op(eqn.prim, eqn.binder.ty, eqn_args)
+    env[eqn.binder] = ans
+
+  return interpret_atom(jaxpr.result)
 
 # === evaluating interpreter ===
 
@@ -304,6 +336,9 @@ class EvalInterpreter(Interpreter):
 
   def interpret_op(self, op, ty, args):
     return op.eval(ty, *args)
+
+  def interpret_call(self, fun, args):
+    return interpret_app(fun.jaxpr, args)
 
 # === staging interpreter ===
 
@@ -373,6 +408,54 @@ def set_interpreter(new_interpreter):
 def emit_op(op: Op, result_ty: Ty, args: list[InterpreterVal]):
   args = tuple(current_interpreter.lift(arg) for arg in args)
   return current_interpreter.interpret_op(op, result_ty, args)
+
+# === jit ===
+
+@dataclass(frozen=True)
+class NamedJaxpr:
+  jaxpr : Jaxpr
+  name  : JaxprName
+
+jaxpr_names = {}
+
+def new_named_jaxpr(jaxpr, name_stem):
+  int_part = jaxpr_names.get(name_stem, 0)
+  jaxpr_names[name_stem] = int_part + 1
+  jaxpr_name = JaxprName(name_stem, int_part)
+  return NamedJaxpr(jaxpr, int_part)
+
+class Call(Op):
+  def __init__(self, fun: NamedJaxpr):
+    self.fun = fun
+
+  def eval(self, _, *args: RuntimeVal):
+    return interpret_jaxpr(self.fun.jaxpr, args)
+
+  def check(self, ty: Ty, *arg_tys, Ty):
+    assert False
+
+class JittedFunction:
+  f : Callable
+  cache : Dict[JitCacheKey, Jaxpr]
+
+  def __init__(self, f):
+    self.f = f
+    self.cache = {}
+
+  def __call__(self, *args):
+    arg_tys = tuple(map(typeof, args))
+    if arg_tys in self.cache:
+      named_jaxpr = self.cache[arg_tys]
+    else:
+      jaxpr = make_jaxpr(self.f, arg_tys)
+      named_jaxpr = new_named_jaxpr(jaxpr, self.f.__name__)
+      self.cache[arg_tys] = named_jaxpr
+
+    result_ty = named_jaxpr.jaxpr.result.ty
+    return emit_op(Call(named_jaxpr), result_ty, args)
+
+jit = JittedFunction
+
 
 # === Core array ops needed for __add__ and friends ===
 

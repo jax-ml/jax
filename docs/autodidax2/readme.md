@@ -22,3 +22,7 @@ organize rules by interpreter instead of by primitive, perhaps you're
 implementing a new experimental interpreter for example, then you can do that
 with monkey-patching.
 
+# Also
+  * Caches attached to `JittedFunction` object
+  * f32[2,3,5] syntax
+
