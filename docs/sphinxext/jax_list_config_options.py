@@ -46,7 +46,7 @@ def config_option_to_title_case(name: str) -> str:
       ("jax", "JAX"), ("xla", "XLA"), ("pgle", "PGLE"), ("cuda", "CUDA"), ("vjp", "VJP"), ("jvp", "JVP"),
       ("pjrt", "PJRT"), ("gpu", "GPU"), ("tpu", "TPU"), ("prng", "PRNG"), ("rocm", "ROCm"), ("spmd", "SPMD"),
       ("bcoo", "BCOO"), ("jit", "JIT"), ("cpu", "CPU"), ("cusparse", "cuSPARSE"), ("ir", "IR"),
-      ("pprint", "PPrint"), ("x64", "x64"),
+      ("pprint", "PPrint"), ("x64", "x64"), ("nan", "NaN")
   ]
   name = name.replace("jax_", "").replace("_", " ").title()
   for find, replace in capitalization_rules_list:
