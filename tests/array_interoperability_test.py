@@ -95,6 +95,10 @@ class DLPackTest(jtu.JaxTestCase):
       message="Calling from_dlpack with a DLPack tensor",
       category=DeprecationWarning,
   )
+  @jtu.ignore_warning(
+      message="jax.dlpack.to_dlpack was deprecated.*",
+      category=DeprecationWarning,
+  )
   def testJaxRoundTrip(self, shape, dtype, copy, use_stream):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
@@ -188,6 +192,10 @@ class DLPackTest(jtu.JaxTestCase):
     dtype=dlpack_dtypes,
   )
   @unittest.skipIf(not tf, "Test requires TensorFlow")
+  @jtu.ignore_warning(
+      message="jax.dlpack.to_dlpack was deprecated.*",
+      category=DeprecationWarning,
+  )
   def testJaxToTensorFlow(self, shape, dtype):
     if (not config.enable_x64.value and
         dtype in [jnp.int64, jnp.uint64, jnp.float64]):
