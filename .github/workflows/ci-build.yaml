@@ -5,6 +5,7 @@ name: CI
 # - 3.10 : Part of Matrix with NumPy dispatch
 # - 3.10 : Part of Matrix
 # - 3.11 : Part of Matrix
+# REMOVE THIS LINE
 
 on:
   # Trigger the workflow on push or pull request,
