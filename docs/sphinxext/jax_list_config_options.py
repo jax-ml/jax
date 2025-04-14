@@ -44,9 +44,9 @@ def config_option_to_title_case(name: str) -> str:
   # Define capitalization rules as a list of (string, replacement) tuples
   capitalization_rules_list = [
       ("jax", "JAX"), ("xla", "XLA"), ("pgle", "PGLE"), ("cuda", "CUDA"), ("vjp", "VJP"), ("jvp", "JVP"),
-      ("pjrt", "PjRT"), ("gpu", "GPU"), ("tpu", "TPU"), ("prng", "PRNG"), ("rocm", "ROCm"), ("spmd", "SPMD"),
-      ("bcoo", "BCOO"), ("jit", "JIT"), ("cpu", "CPU"), ("cusparse", "cuSPARSE"), ("ir", "IR"), ("dtype", "DType"),
-      ("pprint", "PPrint"), ("x64", "x64")
+      ("pjrt", "PJRT"), ("gpu", "GPU"), ("tpu", "TPU"), ("prng", "PRNG"), ("rocm", "ROCm"), ("spmd", "SPMD"),
+      ("bcoo", "BCOO"), ("jit", "JIT"), ("cpu", "CPU"), ("cusparse", "cuSPARSE"), ("ir", "IR"),
+      ("pprint", "PPrint"), ("x64", "x64"),
   ]
   name = name.replace("jax_", "").replace("_", " ").title()
   for find, replace in capitalization_rules_list:
@@ -96,7 +96,7 @@ class ConfigOptionDirective(SphinxDirective):
     result = []
 
     for name, (opt_type, meta_args, meta_kwargs) in config_options:
-      if name in _hidden_config_options:
+      if name.startswith("_") or name in _hidden_config_options:
         continue
 
       holder = jax_config._value_holders[name]
