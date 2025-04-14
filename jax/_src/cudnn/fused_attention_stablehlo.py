@@ -367,8 +367,9 @@ def check_is_flash_attention(
               f"Unsupported sequence length Q {T}, KV {S}."
           )
 
-        if is_packed and cudnn_version < 90600:
-          raise NotImplementedError("Packed layout requires cudnn version >= 9.6.")
+        if is_packed and (cudnn_version < 90600 or not check_compute_capability("9.0")):
+          raise NotImplementedError(
+            "Packed layout requires cudnn version >= 9.6 and at least hopper arch.")
 
 def check_cudnn_version():
   # check if cuDNN is installed
