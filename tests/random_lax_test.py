@@ -467,6 +467,12 @@ class DistributionsTest(RandomTestBase):
     samples = jax.random.bernoulli(key, p=1E-10, shape=int(1E8))
     self.assertEqual(samples.sum(), 0)
 
+  def testBernoulliFloat16(self):
+    # Regression test for https://github.com/jax-ml/jax/pull/28039
+    key = jax.random.key(0)
+    samples = jax.random.bernoulli(key, np.float16(0.5), 1000)
+    self.assertLess(samples.sum(), 1000)
+
   @jtu.sample_product(
     a=[0.2, 5.],
     b=[0.2, 5.],

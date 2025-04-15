@@ -948,6 +948,10 @@ def bernoulli(key: ArrayLike,
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
   p = lax.convert_element_type(p, dtype)
+  # Sample in at least float32 precision, because the method used below
+  # overflows for narrower float types.
+  if dtypes.finfo(p.dtype).bits < 32:
+    p = p.astype('float32')
   return _bernoulli(key, p, shape)
 
 @partial(jit, static_argnums=(2,))
