@@ -618,7 +618,7 @@ mlir.register_lowering(random_split_p, random_split_lowering)
 
 def random_fold_in(keys, msgs):
   msgs = jnp.asarray(msgs)
-  keys, msgs = core.standard_insert_pbroadcast(keys, msgs)
+  keys, msgs = core.standard_insert_pvary(keys, msgs)
   return random_fold_in_p.bind(keys, msgs)
 
 random_fold_in_p = core.Primitive('random_fold_in')

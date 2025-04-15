@@ -2026,7 +2026,7 @@ def _pvary_abstract_eval(*args, axes, axis_index_groups):
 pvary_p.def_abstract_eval(_pvary_abstract_eval)
 
 
-def standard_insert_pbroadcast(*args):
+def standard_insert_pvary(*args):
   if not config.varying_axes_in_types.value:
     return args
   if not config._check_rep.value:

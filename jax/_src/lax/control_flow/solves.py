@@ -310,7 +310,7 @@ def custom_linear_solve(
       matvec_jaxpr, vecmat_jaxpr, solve_jaxpr, tr_solve_jaxpr)
 
   args = _flatten(all_consts) + b_flat
-  args = core.standard_insert_pbroadcast(*args)
+  args = core.standard_insert_pvary(*args)
   out_flat = linear_solve_p.bind(*args, const_lengths=const_lengths, jaxprs=jaxprs)
 
   return tree_unflatten(out_tree, out_flat)
