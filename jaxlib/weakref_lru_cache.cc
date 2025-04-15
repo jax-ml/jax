@@ -349,8 +349,11 @@ void WeakrefLRUCache::Clear() {
 
 /*static*/ int WeakrefLRUCache::tp_traverse(PyObject* self, visitproc visit,
                                             void* arg) {
-  WeakrefLRUCache* cache = nb::inst_ptr<WeakrefLRUCache>(self);
   Py_VISIT(Py_TYPE(self));
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
+  WeakrefLRUCache* cache = nb::inst_ptr<WeakrefLRUCache>(self);
   Py_VISIT(cache->cache_context_fn_.ptr());
   Py_VISIT(cache->fn_.ptr());
   for (const auto& [wr_key, wr_value] : cache->entries_) {
