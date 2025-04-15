@@ -279,7 +279,7 @@ def _make_async_execution_fun(
   )
 
 
-@jax.util.cache(max_size=None)
+@jax._src.util.cache(max_size=None)
 def _get_specialized_func(
     info: FunctionInfo, specialization: Specialization
 ) -> Callable[..., Any]:

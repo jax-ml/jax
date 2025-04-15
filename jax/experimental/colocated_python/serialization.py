@@ -35,7 +35,7 @@ import numpy as np
 
 DeviceList = xc.DeviceList
 
-@jax.util.cache(max_size=None)
+@jax._src.util.cache(max_size=None)
 def _get_cpu_device_map() -> dict[int, jax.Device]:
   """Returns a map from a device id to a matching device."""
   cpu_device_map: dict[int, jax.Device] = {}

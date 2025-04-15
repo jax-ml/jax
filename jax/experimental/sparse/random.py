@@ -18,7 +18,7 @@ import operator
 from jax import dtypes
 from jax import vmap
 from jax import random
-from jax.util import split_list
+from jax._src.util import split_list
 import jax.numpy as jnp
 from jax.experimental import sparse
 

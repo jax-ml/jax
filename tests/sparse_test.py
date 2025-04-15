@@ -38,7 +38,7 @@ from jax import vmap
 from jax._src import test_util as jtu
 from jax.interpreters import mlir
 import jax.numpy as jnp
-from jax.util import split_list
+from jax._src.util import split_list
 import numpy as np
 import scipy.sparse
 

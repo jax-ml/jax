@@ -59,6 +59,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The deprecated use of {func}`jax.ffi.ffi_call` with inline arguments is no
     longer supported. {func}`~jax.ffi.ffi_call` now unconditionally returns a
     callable.
+  * The following internal APIs in `jax.util` are deprecated:
+    `HashableFunction`, `as_hashable_function`, `cache`, `safe_map`, `safe_zip`,
+    `split_dict`, `split_list`, `split_list_checked`, `split_merge`, `subvals`,
+    `toposort`, `unzip2`, `wrap_name`, and `wraps`.
   * `jax.dlpack.to_dlpack` has been deprecated. You can usually pass a JAX
     `Array` directly to the `from_dlpack` function of another framework. If you
     need the functionality of `to_dlpack`, use the `__dlpack__` attribute of an
