@@ -28,7 +28,7 @@ class FusionTest(jtu.JaxTestCase):
 
     @jax.jit
     @fuser.fuse
-    @fuser.fusable
+    @fuser.fusible
     def f(x_fn, y_fn):
       x = x_fn()
       if y_fn is None:
@@ -40,7 +40,7 @@ class FusionTest(jtu.JaxTestCase):
 
   def test_separate_output_fusions_trivial(self):
 
-    @fuser.fusable(output_fusion_prefix=(True, True))
+    @fuser.fusible(output_fusion_prefix=(True, True))
     def f(x_fn, y_fn, z_fns):
       x = x_fn()
       y = y_fn()
@@ -63,7 +63,7 @@ class FusionTest(jtu.JaxTestCase):
 
   def test_separate_output_fusions_should_error_if_not_disjoint(self):
 
-    @fuser.fusable(output_fusion_prefix=(True, True))
+    @fuser.fusible(output_fusion_prefix=(True, True))
     def f(x_fn, y_fn, z_fns):
       x = x_fn()
       y = y_fn()
@@ -89,7 +89,7 @@ class FusionTest(jtu.JaxTestCase):
 
   def test_separate_output_fusions_allows_permute(self):
 
-    @fuser.fusable(output_fusion_prefix=(True, True))
+    @fuser.fusible(output_fusion_prefix=(True, True))
     def f(x_fn, y_fn, z_fns):
       x = x_fn()
       y = y_fn()
@@ -112,7 +112,7 @@ class FusionTest(jtu.JaxTestCase):
 
   def test_separate_output_fusions_with_nesting(self):
 
-    @fuser.fusable(output_fusion_prefix=(True, True))
+    @fuser.fusible(output_fusion_prefix=(True, True))
     def f(x_fn, y_fn, z_fns):
       x = x_fn()
       y = y_fn()
@@ -136,7 +136,7 @@ class FusionTest(jtu.JaxTestCase):
 
   def test_separate_output_fusions_with_nesting_and_permutation(self):
 
-    @fuser.fusable(output_fusion_prefix=(True, True))
+    @fuser.fusible(output_fusion_prefix=(True, True))
     def f(x_fn, y_fn, z_fns):
       x = x_fn()
       y = y_fn()
@@ -160,7 +160,7 @@ class FusionTest(jtu.JaxTestCase):
 
   def test_separate_output_fusions_with_deep_output_mask(self):
 
-    @fuser.fusable(output_fusion_prefix=(True, (True, True)))
+    @fuser.fusible(output_fusion_prefix=(True, (True, True)))
     def f(x_fn, y_fn, z_fn, o_fns):
       x = x_fn()
       y = y_fn()
@@ -185,7 +185,8 @@ class FusionTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(z_out, z + z)
 
   def test_separate_output_fusions_with_reused_value(self):
-    @fuser.fusable(output_fusion_prefix=(True, True))
+
+    @fuser.fusible(output_fusion_prefix=(True, True))
     def f(x_fn, y_fn, z_fns):
       x = x_fn()
       y = y_fn()
@@ -209,7 +210,8 @@ class FusionTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(y_out, y + a)
 
   def test_empty_fusion(self):
-    @fuser.fusable
+
+    @fuser.fusible
     def f(x_fn, y_fn):
       x = x_fn()
       if y_fn is None:

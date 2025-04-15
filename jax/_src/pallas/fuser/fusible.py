@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fusable primitive."""
+"""Fusible primitive."""
 from typing import Any
 
 import jax
@@ -25,8 +25,8 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas.fuser import fusion as fusion_lib
 
-fusable_p = jax_core.Primitive('fusable')
-fusable_p.multiple_results = True
+fusible_p = jax_core.Primitive('fusible')
+fusible_p.multiple_results = True
 
 
 def _make_trivial_fusion(x: jax.Array) -> fusion_lib.Fusion:
@@ -37,7 +37,7 @@ def _make_trivial_fusion(x: jax.Array) -> fusion_lib.Fusion:
   )
 
 
-def fusable(f=None, *, output_fusion_prefix: Any = True):
+def fusible(f=None, *, output_fusion_prefix: Any = True):
   def decorator(f):
     def wrapper(*args):
       def wrapped(*args):
@@ -45,14 +45,14 @@ def fusable(f=None, *, output_fusion_prefix: Any = True):
         return f(*in_fusions, None)
 
       flat_args, in_tree = tree_util.tree_flatten(args)
-      debug_info = api_util.debug_info('fusable', wrapped, args, {})
+      debug_info = api_util.debug_info('fusible', wrapped, args, {})
       flat_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
           lu.wrap_init(wrapped, debug_info=debug_info), in_tree
       )
       flat_avals = [jax_core.get_aval(x) for x in flat_args]
       jaxpr, _, consts, _ = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
       out_tree = out_tree_thunk()
-      out = fusable_p.bind(
+      out = fusible_p.bind(
           *consts,
           *flat_args,
           jaxpr=jaxpr,
@@ -71,16 +71,16 @@ def fusable(f=None, *, output_fusion_prefix: Any = True):
   return decorator
 
 
-@fusable_p.def_impl
+@fusible_p.def_impl
 def _(*consts_and_args, jaxpr, num_consts, **_):
   consts, args = util.split_list(consts_and_args, [num_consts])
   return jax_core.eval_jaxpr(jaxpr, consts, *args)
 
 
-mlir.register_lowering(fusable_p, mlir.lower_fun(fusable_p.impl))
+mlir.register_lowering(fusible_p, mlir.lower_fun(fusible_p.impl))
 
 
-@fusable_p.def_abstract_eval
+@fusible_p.def_abstract_eval
 def _(*args, jaxpr, **kwargs):
   del args, kwargs
   return [v.aval for v in jaxpr.outvars]

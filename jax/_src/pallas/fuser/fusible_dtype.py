@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Custom fusable dtypes."""
+"""Custom fusible dtypes."""
 
 import abc
 import dataclasses
@@ -34,7 +34,7 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.fuser import block_spec
-from jax._src.pallas.fuser.fusable import fusable_p
+from jax._src.pallas.fuser.fusible import fusible_p
 from jax._src.state import discharge as state_discharge
 from jax._src.state import primitives as state_primitives
 from jax._src.util import foreach
@@ -54,7 +54,7 @@ pack_dtype_p = core.Primitive("pack_dtype")
 
 @pack_dtype_p.def_abstract_eval
 def pack_dtype_abstract_eval(*xs, dtype):
-  if dtypes.issubdtype(dtype, FusableElementDType):
+  if dtypes.issubdtype(dtype, fusibleElementDType):
     return dtype.abstract_pack(*xs)
   raise ValueError("Attempted to pack non-fusion dtype: {dtype}")
 
@@ -69,7 +69,7 @@ unpack_dtype_p.multiple_results = True
 
 @unpack_dtype_p.def_abstract_eval
 def unpack_dtype_abstract_eval(x):
-  if dtypes.issubdtype(x.dtype, FusableElementDType):
+  if dtypes.issubdtype(x.dtype, fusibleElementDType):
     return x.dtype.abstract_unpack(x)
   elif isinstance(x.dtype, pallas_core.AbstractMemoryRef):
     raise NotImplementedError()
@@ -80,20 +80,20 @@ def unpack(x):
   return unpack_dtype_p.bind(x)
 
 
-class FusableElementDType(dtypes.extended):
-  """Scalar dtype for fusable dtypes."""
+class fusibleElementDType(dtypes.extended):
+  """Scalar dtype for fusible dtypes."""
 
 
-class FusableTyRules:
+class fusibleTyRules:
   allow_conversion: bool = False
 
 
 class FusionDType(dtypes.ExtendedDType, metaclass=abc.ABCMeta):
-  """Base class for fusable extended dtypes."""
+  """Base class for fusible extended dtypes."""
 
   _op_registry = {}
-  _rules = FusableTyRules
-  type = FusableElementDType
+  _rules = fusibleTyRules
+  type = fusibleElementDType
 
   @abc.abstractmethod
   def abstract_unpack(self, x) -> Sequence[Any]:
@@ -124,7 +124,7 @@ class FusionDType(dtypes.ExtendedDType, metaclass=abc.ABCMeta):
 
 
 def physicalize(f):
-  """Runs a function that contains fusable extended dtypes."""
+  """Runs a function that contains fusible extended dtypes."""
 
   def wrapper(*args, **kwargs):
     if kwargs:
@@ -203,7 +203,7 @@ class Context:
 def physicalize_interp(
     jaxpr: core.Jaxpr, consts: Sequence[core.Value], *args: core.Value
 ):
-  """Physicalizes a jaxpr by replacing fusable dtypes with physical types."""
+  """Physicalizes a jaxpr by replacing fusible dtypes with physical types."""
   # TODO: Merge into JAX core.
   env: dict[core.Var, Any] = {}
 
@@ -446,12 +446,12 @@ def _pack_dtype_pull_rule(
   return dtype.pull_block_spec_one_step(block_spec)  # pytype: disable=attribute-error
 
 
-def _fusable_physicalize_rule(
+def _fusible_physicalize_rule(
     _, *consts_and_args, jaxpr, num_consts, in_tree, out_tree, func
 ):
   consts, _ = util.split_list(consts_and_args, [num_consts])
   new_jaxpr = physicalize_closed_jaxpr(core.ClosedJaxpr(jaxpr, consts))
-  return fusable_p.bind(
+  return fusible_p.bind(
       *consts_and_args,
       jaxpr=new_jaxpr.jaxpr,
       num_consts=num_consts,
@@ -461,4 +461,4 @@ def _fusable_physicalize_rule(
   )
 
 
-_physicalize_rules[fusable_p] = _fusable_physicalize_rule
+_physicalize_rules[fusible_p] = _fusible_physicalize_rule
