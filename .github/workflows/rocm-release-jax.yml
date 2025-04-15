@@ -1,0 +1,108 @@
+name: ROCm Release JAX
+
+on:
+  workflow_dispatch:
+    inputs:
+      jax_version:
+        required: true
+        type: string
+      rocm_version:
+        description: "ROCm version that wheels will be built against and that will be package in the Docker image"
+        required: true
+        type: string
+      rocm_build_job_name:
+        description: "If you want to use an AMD internal build of ROCm, set the name of the Jenkins job that built it"
+        required: false
+        type: string
+      rocm_build_job_num:
+        description: "If you want to use an AMD internal build of ROCm, set the build number of the job that built it"
+        required: false
+        type: string
+      python_version:
+        description: "Python version to include in Docker image"
+        required: true
+        type: string
+      base_docker:
+        description: "What docker image will the release image be built from?"
+        required: false
+        default: "ubuntu:22.04"
+        type: string
+      publish_wheels:
+        description: "Should this job publish wheels to PyPI at the end of its run?"
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test-jax:
+    runs-on: mi-250
+    env:
+      RELEASE_DOCKER_IMG_NAME: "rocm/jax-build:rocm${{ inputs.rocm_version}}-jax${{ inputs.jax_version }}-py${{ inputs.python_version }}-${{ github.sha }}"
+      WORKSPACE_DIR: workdir_release_${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}
+    steps:
+      - name: Strip . from ROCm version
+        id: strip-rocm-version
+        run: |
+          rocm_version=${{ inputs.rocm_version }}
+          echo "rocm_version=${rocm_version//./}" >> $GITHUB_ENV
+      - name: Clean up Docker and old run directories
+        run: |
+          # Remove old docker images
+          docker image rm jax-build-manylinux_2_28_x86_64_rocm${{ steps.strip-rocm-version.outputs.rocm_version }} || true
+          # Make sure we own all the files that we clean up
+          docker run -v "./:/jax" ubuntu /bin/bash -c "chown -R $UID /jax/workdir_release_* || true"
+          # Remove old work directories from this machine
+          rm -rf ./workdir_release_* || true
+      - name: Print system info
+        run: |
+          pwd
+          ls
+          echo RELEASE_DOCKER_IMAGE_NAME=$RELEASE_DOCKER_IMAGE_NAME
+          echo WORKSPACE_DIR=$WORKSPACE_DIR
+          whoami
+          df -h
+          rocm-smi
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          path: ${{ env.WORKSPACE_DIR }}
+      - name: Build plugin wheels and Docker image
+        run: |
+          pushd $WORKSPACE_DIR
+          # Let ci_build script do the build
+            python3 ./build/rocm/ci_build \
+            --compiler clang \
+            --base-docker ${{ inputs.base_docker }}
+            --python-versions ${{ inputs.python_version }} \
+            --rocm-version ${{ inputs.rocm_version }} \
+            --rocm-build-job ${{ inputs.rocm_build_job_name }} \
+            --rocm-build-num ${{ inputs.rocm_build_job_num }} \
+            dist_docker \
+            --image-tag $RELEASE_DOCKER_IMG_NAME
+      - name: Archive wheels to Github
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocm_jax_r${{ inputs.rocm_version }}_py${{ inputs.python_version }}_id${{ github.run_id }}
+          path: ./${{ env.WORKSPACE_DIR }}/wheelhouse/*.whl
+          if-no-files-found: error
+      - name: Test Docker image
+        run: |
+          pushd $WORKSPACE_DIR
+          # Let ci_build do the testing. By default, it runs run_single_gpu.py and run_multi_gpu.sh
+          # in ./build/rocm, which in turn run tests in ./tests with pytest.
+          python3 ./build/rocm/ci_build test $RELEASE_DOCKER_IMG_NAME
+      - name: Archive test summary JSON to Github
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocm_jax_test_summary.json
+          path: ./${{ env.WORKSPACE_DIR }}/logs/final_compiled_report.json
+          if-no-files-found: error
+      - name: Publish wheels to PyPI
+        if: ${{ inputs.publish_wheels }}
+        run: |
+          echo "Not implemeneted yet"
+
