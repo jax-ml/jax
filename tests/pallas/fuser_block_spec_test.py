@@ -769,6 +769,41 @@ class PullBlockSpecHOPTest(jtu.JaxTestCase):
         kernel_fn((0, 0, 0, 0), scalar_prefetch_values, (), x), relu_x
     )
 
+  def test_pull_block_spec_handles_closed_over_constants(self):
+    x = jnp.ones((2, 512, 512))
+    i = jnp.array(1)
+
+    def f():
+      return x[i]
+
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(f)
+    self.assertLen(new_values, 1)
+    self.assertLen(scalar_prefetch_values, 1)
+
+    block_spec = pl.BlockSpec(
+        (None, 1, 128, 128), lambda i, j, k, l, _: (i, j, k, l)
+    )
+    kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        grid=(2, 2, 4, 4),
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values)
+    self.assertLen(value_block_specs, 1)
+    scalar_prefetch_values = jax.tree.map(
+        lambda x: x[None], scalar_prefetch_values
+    )
+    fn = lambda x: kernel_fn((0, 0, 0, 0), scalar_prefetch_values, x)
+    new_values_type = (jax.ShapeDtypeStruct((1, 128, 128), jnp.float32),)
+    # Try pulling again
+    # This should not raise an error.
+    _ = block_spec_lib.pull_block_spec(
+        fn,
+        block_spec,
+        grid=(1,),
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values_type)
+
 
 class PushBlockSpecTest(parameterized.TestCase):
 
