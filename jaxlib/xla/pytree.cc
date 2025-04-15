@@ -420,8 +420,11 @@ nb::object PyTreeRegistry::FlattenOneLevelImpl(nb::handle x,
 
 /* static */ int PyTreeRegistry::tp_traverse(PyObject* self, visitproc visit,
                                              void* arg) {
-  PyTreeRegistry* registry = nb::inst_ptr<PyTreeRegistry>(self);
   Py_VISIT(Py_TYPE(self));
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
+  PyTreeRegistry* registry = nb::inst_ptr<PyTreeRegistry>(self);
   nb::ft_lock_guard lock(registry->mu_);
   for (const auto& [key, value] : registry->registrations_) {
     Py_VISIT(key.ptr());
@@ -1596,8 +1599,11 @@ int PyTreeDef::Node::tp_traverse(visitproc visit, void* arg) const {
 
 /* static */ int PyTreeDef::tp_traverse(PyObject* self, visitproc visit,
                                         void* arg) {
-  PyTreeDef* treedef = nb::inst_ptr<PyTreeDef>(self);
   Py_VISIT(Py_TYPE(self));
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
+  PyTreeDef* treedef = nb::inst_ptr<PyTreeDef>(self);
   Py_VISIT(treedef->registry_ref_.ptr());
   for (const auto& node : treedef->traversal_) {
     node.tp_traverse(visit, arg);
