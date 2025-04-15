@@ -221,7 +221,7 @@ def static_validate_inputs(
   _, _, num_combined_kv_heads, head_dim_k = kv_pages.shape
   assert num_combined_kv_heads % 2 == 0
   num_kv_heads = num_combined_kv_heads // 2
-  max_num_seqs, _ = page_indices.shape
+  max_num_seqs, pages_per_seq = page_indices.shape
   if num_seqs.shape != (1,):
     raise ValueError(f"{num_seqs.shape=} must be (1,)")
   if head_dim_k != head_dim:
@@ -254,8 +254,13 @@ def static_validate_inputs(
     raise ValueError(f"{sliding_window=} must be positive.")
   if soft_cap is not None and soft_cap == 0.0:
     raise ValueError(f"{soft_cap=} must not be 0.0.")
-  if num_kv_pages_per_block is not None and num_kv_pages_per_block <= 0:
-    raise ValueError(f"{num_kv_pages_per_block=} must be positive.")
+  if (
+      num_kv_pages_per_block is not None
+      and not 0 < num_kv_pages_per_block <= pages_per_seq
+  ):
+    raise ValueError(
+        f"{num_kv_pages_per_block=} must be in range (0, {pages_per_seq}]."
+    )
   if num_queries_per_block is not None and num_queries_per_block <= 0:
     raise ValueError(f"{num_queries_per_block=} must be positive.")
   if vmem_limit_bytes is not None and vmem_limit_bytes <= 0:
