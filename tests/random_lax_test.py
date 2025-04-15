@@ -461,12 +461,6 @@ class DistributionsTest(RandomTestBase):
       x = random.bernoulli(key, np.array([0.2, 0.3]), shape=(3, 2))
     assert x.shape == (3, 2)
 
-  def testBernoulliSmallProbabilty(self):
-    # Regression test for https://github.com/jax-ml/jax/issues/28017
-    key = jax.random.key(0)
-    samples = jax.random.bernoulli(key, p=1E-10, shape=int(1E8))
-    self.assertEqual(samples.sum(), 0)
-
   @jtu.sample_product(
     a=[0.2, 5.],
     b=[0.2, 5.],

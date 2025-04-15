@@ -958,13 +958,7 @@ def _bernoulli(key, p, shape) -> Array:
   else:
     _check_shape("bernoulli", shape, np.shape(p))
 
-  # we could return uniform(key, shape) < p. But uniform sacrifices some
-  # resolution, so instead we sample in the space of the generated bits.
-  nbits = dtypes.finfo(p.dtype).bits
-  unsigned_dtype = UINT_DTYPES[nbits]
-  samples = bits(key, shape, unsigned_dtype)
-  cutoff = (p * _lax_const(p, 1 << nbits)).astype(unsigned_dtype)
-  return (p > 0) & (samples < cutoff) | (p >= 1)
+  return uniform(key, shape, lax.dtype(p)) < p
 
 
 def beta(key: ArrayLike,
