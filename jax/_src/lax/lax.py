@@ -8929,13 +8929,13 @@ def optimization_barrier(operand, /):
     Array(0., dtype=float32, weak_type=True)
   """
   flat_args, treedef = tree_util.tree_flatten(operand)
-  # TODO(yashkatariya): Enable this
-  # flat_args = core.standard_insert_pvary(flat_args)
+  flat_args = core.standard_insert_pvary(*flat_args)
   out = optimization_barrier_p.bind(*flat_args)
   return tree_util.tree_unflatten(treedef, out)
 
 
 def _optimization_barrier_abstract_eval(*args):
+  core.standard_vma_rule('optimization_barrier', *args)
   return args
 
 def _optimization_barrier_lowering_rule(ctx, *args):
