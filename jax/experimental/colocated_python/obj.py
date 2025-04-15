@@ -58,7 +58,7 @@ class _InstanceRegistry:
 SINGLETON_INSTANCE_REGISTRY = _InstanceRegistry()
 
 
-@jax.util.cache(max_size=4096)
+@jax._src.util.cache(max_size=4096)
 def _update_instance_devices(
     uid: int, shardings: tuple[jax.sharding.Sharding, ...]
 ) -> None:

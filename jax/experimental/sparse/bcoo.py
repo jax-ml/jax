@@ -38,7 +38,7 @@ from jax.experimental.sparse.util import (
 from jax.experimental.sparse._lowerings import coo_spmv_p, coo_spmm_p
 from jax._src.interpreters import mlir
 import jax.numpy as jnp
-from jax.util import safe_zip, unzip2, split_list
+from jax._src.util import safe_zip, unzip2, split_list
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
