@@ -239,9 +239,7 @@ def pull_block_spec(
     jaxpr, consts, in_tree, out_tree_ = fuser_utils.make_jaxpr(
         f, *args, **kwargs
     )
-    # TODO(sharadmv): handle these consts better, they should correspond to
-    # scalar prefetch.
-    del consts, out_tree_
+    del out_tree_
     jaxpr_out_usages = [{Usage.REGULAR}] * len(jaxpr.outvars)
     block_specs_ = jax.tree.map(
         _unwrap_block_spec_scalar_prefetch, out_block_specs
@@ -263,6 +261,7 @@ def pull_block_spec(
     )
     kernel_fn = make_kernel_function(
         jaxpr,
+        consts,
         in_tree,
         out_tree,
         read_usage_env,
@@ -408,6 +407,7 @@ def _pull_block_spec(
 
 def make_kernel_function(
     jaxpr: core.Jaxpr,
+    consts,
     in_tree,
     out_tree,
     read_usage_env,
@@ -505,6 +505,8 @@ def make_kernel_function(
     def write_env(var, val):
       env[var] = val
 
+    for const, constvar in zip(consts, jaxpr.constvars):
+      env[constvar] = const
     for invar, arg, usage in zip(jaxpr.invars, flat_args, invar_usages):
       if Usage.REGULAR in usage:
         env[invar] = arg
@@ -1232,6 +1234,7 @@ def _jit_eval_rule(ctx: KernelEvalContext, *args, jaxpr, **kwargs):
   )
   kernel_fn = make_kernel_function(
       jaxpr,
+      (),
       in_tree,
       out_tree,
       read_usage_env,
@@ -1289,6 +1292,7 @@ def _custom_jvp_call_eval_rule(
   )
   kernel_fn = make_kernel_function(
       jaxpr,
+      (),
       in_tree,
       out_tree,
       read_usage_env,
