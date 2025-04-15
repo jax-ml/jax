@@ -927,14 +927,20 @@ def _mgpu_wgmma_op_lowering_rule(
 
 @_register_lowering(mgpu.ArriveExpectTxOp)
 def _mgpu_arrive_expect_tx_op_lowering_rule(
-    ctx: LoweringContext, arrive_expect_tx_op: mgpu.ArriveExpectTxOp
+    _: LoweringContext, arrive_expect_tx_op: mgpu.ArriveExpectTxOp
 ) -> Sequence[ir.Value]:
+  bytes = arrive_expect_tx_op.expect_tx.value
+  if bytes % utils.WARPGROUP_SIZE:
+    raise NotImplementedError("Only aligned copies are supported")
+  # We arrive uniformly from each thread in the WG, so we need to divide the
+  # number of bytes by the number of threads in the WG.
+  # TODO: dasenov - Relax this. We can just select the WG leader and have it
+  # arrive with the whole transfer size, while everyone else arrives with 0.
+  # But we should continue using this scheme as it's likely to be faster.
+  bytes //= utils.WARPGROUP_SIZE
 
   barrier = utils.BarrierRef.from_dialect_barrier_memref(arrive_expect_tx_op.barrier)
-  barrier.arrive_expect_tx(
-      arrive_expect_tx_op.expect_tx.value,
-      ctx.single_thread_per_warpgroup_predicate,
-  )
+  barrier.arrive_expect_tx(bytes, predicate=None)
 
   return []
 
