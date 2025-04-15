@@ -76,8 +76,12 @@ jobs:
       run: |
         pip install uv~=0.5.30
         uv pip install --system .[minimum-jaxlib] -r build/test-requirements.txt
-
+    - name: Print  the relvant connection details
+      run: |
+        echo("gcloud container clusters get-credentials $CONNECTION_CLUSTER --location $CONNECTION_LOCATION")
+        echo("kubectl exec -it --namespace=$CONNECTION_NS $CONNECTION_POD_NAME -- /bin/bash")
     - name: Run tests
+      continue-on-error: true
       env:
         JAX_NUM_GENERATED_CASES: ${{ matrix.num_generated_cases }}
         JAX_ENABLE_X64: ${{ matrix.enable-x64 }}
@@ -95,7 +99,8 @@ jobs:
         echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
         echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
         pytest -n auto --tb=short --maxfail=20 tests examples
-
+    - name: Sleep
+      run: sleep 100000
 
   documentation:
     name: Documentation - test code snippets
@@ -170,10 +175,6 @@ jobs:
       uses: actions/setup-python@8d9ed9ac5c53483de85588cdf95a591a75ab9f55  # v5.5.0
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Print  the relvant connection details
-      run: |
-        echo("gcloud container clusters get-credentials $CONNECTION_CLUSTER --location $CONNECTION_LOCATION")
-        echo("kubectl exec -it --namespace=$CONNECTION_NS $CONNECTION_POD_NAME -- /bin/bash")
     - name: Install dependencies
       run: |
         pip install uv~=0.5.30
@@ -194,8 +195,7 @@ jobs:
         echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
         echo "JAX_SKIP_SLOW_TESTS=$JAX_SKIP_SLOW_TESTS"
         pytest -n auto --tb=short --maxfail=20 jax/experimental/jax2tf/tests/jax2tf_test.py
-    - name: Sleep
-      run: sleep 100000
+
   ffi:
     name: FFI example
     runs-on: linux-x86-g2-16-l4-1gpu
