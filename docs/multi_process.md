@@ -15,8 +15,9 @@ The main idea
   the same JAX function to it, it's like programming against one big device.
 - **Use the same [unified sharding mechanism][unified_sharding]** as in
   single-controller JAX to control how data is distributed and computation is
-  parallelized. XLA automatically exploits high-speed networking links between
-  hosts, like TPU ICI or NVLink, when available.
+  parallelized. XLA automatically exploits high-speed networking links like TPU
+  ICI or NVLink between hosts when available, and otherwise uses available host
+  networking (e.g. Ethernet, InfiniBand).
 - **All processes (usually) run the same Python script**. You write this Python
   code almost exactly the same as you would for a single process — just run
   multiple instances of it and JAX takes care of the rest. In other words,
@@ -45,6 +46,7 @@ making a process-spanning {class}`jax.Array` of values and applying
 
 ```python
 # call this file toy.py, to be run in each process simultaneously
+
 import jax
 import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec as P
@@ -58,13 +60,16 @@ num_procs = int(sys.argv[2])
 # initialize the distributed system
 jax.distributed.initialize('localhost:10000', num_procs, proc_id)
 
-# make a mesh that refers to devices from all processes
-mesh = jax.make_mesh((num_procs, jax.local_device_count()), ('i', 'j'))
+# this example assumes 8 devices total
+assert jax.device_count() == 8
+
+# make a 2D mesh that refers to devices from all processes
+mesh = jax.make_mesh((4, 2), ('i', 'j'))
 
 # create some toy data
 global_data = np.arange(32).reshape((4, 8))
 
-# make a contoller- and device-spanning array from our toy data
+# make a process- and device-spanning array from our toy data
 sharding = NamedSharding(mesh, P('i', 'j'))
 global_array = jax.device_put(global_data, sharding)
 assert global_array.shape == global_data.shape
@@ -93,13 +98,17 @@ per process:
 
 ```bash
 export JAX_NUM_CPU_DEVICES=2
-for i in {0..3}; do
-  python toy.py $i 4 > /tmp/toy_$i.out &
+num_processes=4
+
+range=$(seq 0 $(($num_processes - 1)))
+
+for i in $range; do
+  python toy.py $i $num_processes > /tmp/toy_$i.out &
 done
 
 wait
 
-for i in {0..3}; do
+for i in $range; do
   echo "=================== process $i output ==================="
   cat /tmp/toy_$i.out
   echo
@@ -112,22 +121,22 @@ Outputs:
 =================== process 0 output ===================
 device TFRT_CPU_0 has local data [[0 1 2 3]]
 device TFRT_CPU_1 has local data [[4 5 6 7]]
-process=0 got result: -0.12398755550384521
+process=0 got result: -0.12398731708526611
 
 =================== process 1 output ===================
 device TFRT_CPU_131072 has local data [[ 8  9 10 11]]
 device TFRT_CPU_131073 has local data [[12 13 14 15]]
-process=1 got result: -0.12398755550384521
+process=1 got result: -0.12398731708526611
 
 =================== process 2 output ===================
 device TFRT_CPU_262144 has local data [[16 17 18 19]]
 device TFRT_CPU_262145 has local data [[20 21 22 23]]
-process=2 got result: -0.12398755550384521
+process=2 got result: -0.12398731708526611
 
 =================== process 3 output ===================
 device TFRT_CPU_393216 has local data [[24 25 26 27]]
 device TFRT_CPU_393217 has local data [[28 29 30 31]]
-process=3 got result: -0.12398755550384521
+process=3 got result: -0.12398731708526611
 ```
 
 This might not look so different from single-controller JAX code, and in fact,
@@ -137,25 +146,26 @@ for single-controller, but it doesn't hurt.) Let's run the same code from a
 single process:
 
 ```text
-JAX_NUM_CPU_DEVICES=2 python toy.py 0 1
+JAX_NUM_CPU_DEVICES=8 python toy.py 0 1
 ```
 
 Outputs:
 
 ```text
-device TFRT_CPU_0 has local data [[ 0  1  2  3]
- [ 8  9 10 11]
- [16 17 18 19]
- [24 25 26 27]]
-device TFRT_CPU_1 has local data [[ 4  5  6  7]
- [12 13 14 15]
- [20 21 22 23]
- [28 29 30 31]]
-process=0 got result: -0.12398755550384521
+device TFRT_CPU_0 has local data [[0 1 2 3]]
+device TFRT_CPU_1 has local data [[4 5 6 7]]
+device TFRT_CPU_2 has local data [[ 8  9 10 11]]
+device TFRT_CPU_3 has local data [[12 13 14 15]]
+device TFRT_CPU_4 has local data [[16 17 18 19]]
+device TFRT_CPU_5 has local data [[20 21 22 23]]
+device TFRT_CPU_6 has local data [[24 25 26 27]]
+device TFRT_CPU_7 has local data [[28 29 30 31]]
+process=0 got result: -0.12398731708526611
 ```
 
-The data is sharded differently, since we only ran over two devices total. But
-otherwise we're running the same operations over the same data.
+The data is sharded across eight devices on one process rather than eight
+devices across four devices, but otherwise we're running the same operations
+over the same data.
 
 ## Terminology
 
@@ -214,46 +224,17 @@ non-device-accessing functionality is ok.) {func}`jax.distributed.initialize`
 will raise an error if you accidentally call it after accessing any devices.
 ```
 
-For example, on [Cloud TPU][cloud_tpu], after creating a `v5litepod-16` (which
-has 4 host machines), we might want to test that we can connect the processes
-and list all devices:
+### GPU Example
 
-```text
-$ TPU_NAME=jax-demo
-$ EXTERNAL_IPS=$(gcloud compute tpus tpu-vm describe $TPU_NAME --zone 'us-central1-a' \
-                 | grep externalIp | cut -d: -f2)
-$ cat << EOF > demo.py
-import jax
-jax.distributed.initialize()
-if jax.process_index() == 0:
-  print(jax.devices())
-EOF
-$ echo $EXTERNAL_IPS | xargs -n 1 -P 0 bash -c '
-scp demo.py $0:
-ssh $0 "pip -q install -U jax[tpu]"
-ssh $0 "python demo.py" '
-```
-
-Here we're using `xargs` to run multiple `ssh` commands in parallel, each one
-running the same Python program on one of the TPU host machines. In the Python
-code, we use {func}`jax.process_index()` to print only on one process. Here's
-what it prints:
-
-```text
-[TpuDevice(id=0, process_index=0, coords=(0,0,0), core_on_chip=0), TpuDevice(id=1, process_index=0, coords=(1,0,0), core_on_chip=0), TpuDevice(id=4, process_index=0, coords=(0,1,0), core_on_chip=0), TpuDevice(id=5, process_index=0, coords=(1,1,0), core_on_chip=0), TpuDevice(id=2, process_index=1, coords=(2,0,0), core_on_chip=0), TpuDevice(id=3, process_index=1, coords=(3,0,0), core_on_chip=0), TpuDevice(id=6, process_index=1, coords=(2,1,0), core_on_chip=0), TpuDevice(id=7, process_index=1, coords=(3,1,0), core_on_chip=0), TpuDevice(id=8, process_index=2, coords=(0,2,0), core_on_chip=0), TpuDevice(id=9, process_index=2, coords=(1,2,0), core_on_chip=0), TpuDevice(id=12, process_index=2, coords=(0,3,0), core_on_chip=0), TpuDevice(id=13, process_index=2, coords=(1,3,0), core_on_chip=0), TpuDevice(id=10, process_index=3, coords=(2,2,0), core_on_chip=0), TpuDevice(id=11, process_index=3, coords=(3,2,0), core_on_chip=0), TpuDevice(id=14, process_index=3, coords=(2,3,0), core_on_chip=0), TpuDevice(id=15, process_index=3, coords=(3,3,0), core_on_chip=0)]
-```
-
-Woohoo, look at all those TPU cores!
-
-We can also run multi-controller JAX on a cluster of [GPU
-machines][gpu_machines]. For example, after creating four VMs on Google Cloud
-with two GPUs per VM, we can run the following JAX program on every VM. In this
-example, we provide arguments to {func}`jax.distributed.initialize` explicitly.
-The coordinator address, process id, and number of processes are read from the
-command line.
+We can run multi-controller JAX on a cluster of [GPU machines][gpu_machines].
+For example, after creating four VMs on Google Cloud with two GPUs per VM, we
+can run the following JAX program on every VM. In this example, we provide
+arguments to {func}`jax.distributed.initialize` explicitly.  The coordinator
+address, process id, and number of processes are read from the command line.
 
 ```python
 # In file gpu_example.py...
+
 import jax
 import sys
 
@@ -292,6 +273,39 @@ local devices = [CudaDevice(id=2), CudaDevice(id=3)]
 ```
 
 This VM sees the same global devices, but has a different set of local devices.
+
+### TPU Example
+
+As another example, we can run on [Cloud TPU][cloud_tpu]. After creating a
+`v5litepod-16` (which has 4 host machines), we might want to test that we can
+connect the processes and list all devices:
+
+```text
+$ TPU_NAME=jax-demo
+$ EXTERNAL_IPS=$(gcloud compute tpus tpu-vm describe $TPU_NAME --zone 'us-central1-a' \
+                 | grep externalIp | cut -d: -f2)
+$ cat << EOF > demo.py
+import jax
+jax.distributed.initialize()
+if jax.process_index() == 0:
+  print(jax.devices())
+EOF
+$ echo $EXTERNAL_IPS | xargs -n 1 -P 0 bash -c '
+scp demo.py $0:
+ssh $0 "pip -q install -U jax[tpu]"
+ssh $0 "python demo.py" '
+```
+
+Here we're using `xargs` to run multiple `ssh` commands in parallel, each one
+running the same Python program on one of the TPU host machines. In the Python
+code, we use {func}`jax.process_index()` to print only on one process. Here's
+what it prints:
+
+```text
+[TpuDevice(id=0, process_index=0, coords=(0,0,0), core_on_chip=0), TpuDevice(id=1, process_index=0, coords=(1,0,0), core_on_chip=0), TpuDevice(id=4, process_index=0, coords=(0,1,0), core_on_chip=0), TpuDevice(id=5, process_index=0, coords=(1,1,0), core_on_chip=0), TpuDevice(id=2, process_index=1, coords=(2,0,0), core_on_chip=0), TpuDevice(id=3, process_index=1, coords=(3,0,0), core_on_chip=0), TpuDevice(id=6, process_index=1, coords=(2,1,0), core_on_chip=0), TpuDevice(id=7, process_index=1, coords=(3,1,0), core_on_chip=0), TpuDevice(id=8, process_index=2, coords=(0,2,0), core_on_chip=0), TpuDevice(id=9, process_index=2, coords=(1,2,0), core_on_chip=0), TpuDevice(id=12, process_index=2, coords=(0,3,0), core_on_chip=0), TpuDevice(id=13, process_index=2, coords=(1,3,0), core_on_chip=0), TpuDevice(id=10, process_index=3, coords=(2,2,0), core_on_chip=0), TpuDevice(id=11, process_index=3, coords=(3,2,0), core_on_chip=0), TpuDevice(id=14, process_index=3, coords=(2,3,0), core_on_chip=0), TpuDevice(id=15, process_index=3, coords=(3,3,0), core_on_chip=0)]
+```
+
+Woohoo, look at all those TPU cores!
 
 Once the processes are set up, we can start building global {class}`jax.Array`s
 and running computations. The remaining Python code examples in this tutorial
@@ -432,14 +446,14 @@ included a `psum` over the `'b'` axis.
 ```{warning}
 When applying JAX computations to process-spanning arrays, to avoid deadlocks
 and hangs, **it's crucial that all processes with participating devices run the
-same computation at the same time**, or at least in the right order. That's
-because the computation may involve collective communication barriers. If a
-device over which an array is sharded does not join in the collective because
-its controller didn't issue the same computation, the other devices are left
-waiting. For example, if only the first three processes evaluated `x @ y`, while
-the last process evaluated `y @ x`, the computation would likely hang
-indefinitely. This assumption, computations on process-spanning arrays are run
-on all participating processes in the same order, is mostly unchecked.
+same computation in the same order**. That's because the computation may
+involve collective communication barriers. If a device over which an array is
+sharded does not join in the collective because its controller didn't issue the
+same computation, the other devices are left waiting. For example, if only the
+first three processes evaluated `x @ y`, while the last process evaluated `y @
+x`, the computation would likely hang indefinitely. This assumption,
+computations on process-spanning arrays are run on all participating processes
+in the same order, is mostly unchecked.
 
 So the easiest way to avoid deadlocks in multi-process JAX is to run the same
 Python code on every process, and beware of any control flow that depends on
@@ -532,8 +546,8 @@ assert global_batch.addressable_shards[0].data.shape[0] == per_device_batch_size
 
 {func}`jax.make_array_from_single_device_arrays` is the most general way to
 build a process-spanning array. It's often used after performing
-{func}`jax.device_put`s to send to each device its required data. It is the most
-low-level, since all data movement is performed manually (via e.g.
+{func}`jax.device_put`s to send each device its required data. This is the
+lowest-level option, since all data movement is performed manually (via e.g.
 {func}`jax.device_put`). Here's an example:
 
 ```python
