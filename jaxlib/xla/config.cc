@@ -291,6 +291,10 @@ void Config::SetGlobal(nb::object value) {
 
 /* static */ int Config::tp_traverse(PyObject* self, visitproc visit,
                                      void* arg) {
+  Py_VISIT(Py_TYPE(self));
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
   Config* c = nb::inst_ptr<Config>(self);
   // For the purposes of GC, we pretend that this object owns both the global
   // and any thread-local values corresponding to this key.
