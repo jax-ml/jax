@@ -33,7 +33,7 @@ pytype_strict_library(
     deps = [
         ":block_spec",
         ":custom_evaluate",
-        ":fusable",
+        ":fusible",
         ":fusion",
         ":jaxpr_fusion",
     ],
@@ -58,9 +58,9 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
-    name = "fusable",
+    name = "fusible",
     srcs = [
-        "fusable.py",
+        "fusible.py",
     ],
     deps = [
         ":fusion",
@@ -91,8 +91,8 @@ pytype_strict_library(
         "jaxpr_fusion.py",
     ],
     deps = [
-        ":fusable",
-        ":fusable_dtype",
+        ":fusible",
+        ":fusible_dtype",
         ":fusion",
         "//jax",
         "//jax:api_util",
@@ -104,13 +104,13 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
-    name = "fusable_dtype",
+    name = "fusible_dtype",
     srcs = [
-        "fusable_dtype.py",
+        "fusible_dtype.py",
     ],
     deps = [
         ":block_spec",
-        ":fusable",
+        ":fusible",
         "//jax",
         "//jax:api_util",
         "//jax:core",

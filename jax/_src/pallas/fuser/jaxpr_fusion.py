@@ -23,22 +23,22 @@ from jax._src import core as jax_core
 from jax._src import linear_util as lu
 from jax._src import tree_util
 from jax._src.interpreters import partial_eval as pe
-from jax._src.pallas.fuser import fusable_dtype
+from jax._src.pallas.fuser import fusible_dtype
 from jax._src.pallas.fuser import fusion as fusion_lib
-from jax._src.pallas.fuser.fusable import fusable_p
+from jax._src.pallas.fuser.fusible import fusible_p
 
 
 def fuse(f=None, *, physicalize: bool = False, debug: bool = False):
-  """Fuses a function into a single fusable.
+  """Fuses a function into a single fusible.
 
   Args:
     f: The function to fuse.
     physicalize: (experimental) whether to physicalize the function.
     debug: Whether to print debug information.
 
-  There should be a single call to a `fusable` inside the body of `f`. `fuse`
+  There should be a single call to a `fusible` inside the body of `f`. `fuse`
   returns a transformed function that will fuse the surrounding computation into
-  the fusable and invoke it.
+  the fusible and invoke it.
   """
 
   def decorator(f):
@@ -58,7 +58,7 @@ def fuse(f=None, *, physicalize: bool = False, debug: bool = False):
       return tree_util.tree_unflatten(out_tree, out_flat)
 
     if physicalize:
-      wrapper = fusable_dtype.physicalize(wrapper)
+      wrapper = fusible_dtype.physicalize(wrapper)
     return wrapper
 
   if f is not None:
@@ -66,7 +66,7 @@ def fuse(f=None, *, physicalize: bool = False, debug: bool = False):
   return decorator
 
 
-_fusable: dict[jax_core.Primitive, Any] = {}
+_fusible: dict[jax_core.Primitive, Any] = {}
 
 
 def _construct_fusion_jaxpr(
@@ -148,11 +148,11 @@ def _construct_output_fusions(
     jaxpr,
     out_tree,
     fusion_eqn_index,
-    fusion_eqn_outvars,  # Flat list of vars output by the fusable eqn
-    fusion_eqn_out_tree,  # Tree structure of the fusable eqn outputs
+    fusion_eqn_outvars,  # Flat list of vars output by the fusible eqn
+    fusion_eqn_out_tree,  # Tree structure of the fusible eqn outputs
     output_fusion_prefix,  # Pytree defining output groups
 ):
-  # 1. Create jaxpr_out: represents computation *after* the fusable
+  # 1. Create jaxpr_out: represents computation *after* the fusible
   #    Inputs: fusion_eqn_outvars
   #    Outputs: jaxpr.outvars
   jaxpr_out, all_values, _, _, _ = _construct_fusion_jaxpr(
@@ -164,15 +164,15 @@ def _construct_output_fusions(
       tree_util.tree_unflatten(out_tree, jaxpr.outvars),  # Original outputs
       tree_util.tree_unflatten(
           fusion_eqn_out_tree, fusion_eqn_outvars
-      ),  # Fusable outputs as inputs
+      ),  # Fusible outputs as inputs
   )
 
-  # 2. Group fusable outputs based on the mask
-  unflat_fusable_outvars = jax.tree.unflatten(
+  # 2. Group fusible outputs based on the mask
+  unflat_fusible_outvars = jax.tree.unflatten(
       fusion_eqn_out_tree, fusion_eqn_outvars
   )
   partial_flat = jax.tree.structure(output_fusion_prefix).flatten_up_to(
-      unflat_fusable_outvars
+      unflat_fusible_outvars
   )
 
   # 3. Calculate dependencies and check disjointness
@@ -180,10 +180,10 @@ def _construct_output_fusions(
   already_used_final_outputs = set()  # Indices of final outputs already claimed
   for outvars_group in partial_flat:
     # Identify vars in this group
-    used_fusable_outvars = set(jax.tree.leaves(outvars_group))
+    used_fusible_outvars = set(jax.tree.leaves(outvars_group))
     # Create mask for jaxpr_out inputs corresponding to this group
     in_used_mask = [
-        True if v in used_fusable_outvars else False for v in jaxpr_out.invars
+        True if v in used_fusible_outvars else False for v in jaxpr_out.invars
     ]
     # Trace dependencies through jaxpr_out to find which final outputs are affected
     downstream_used_mask = _find_downstream(
@@ -257,11 +257,11 @@ def fuse_jaxpr(
 
   # Collect input fusions
   for i, eqn in enumerate(jaxpr.eqns):
-    if eqn.primitive is fusable_p:
+    if eqn.primitive is fusible_p:
       fusion_eqn_index = i
       break
   if fusion_eqn_index is None:
-    raise ValueError("No fusable eqn found")
+    raise ValueError("No fusible eqn found")
   fusion_eqn = jaxpr.eqns[fusion_eqn_index]
 
   # Now let's check if we need to do any fusion at all, e.g. do the outputs of
@@ -269,13 +269,13 @@ def fuse_jaxpr(
   # with all the inputs and outputs to check if there is a dependence.
   dced_jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars),
                                instantiate=True)
-  if not any(eqn.primitive is fusable_p for eqn in dced_jaxpr.eqns):
+  if not any(eqn.primitive is fusible_p for eqn in dced_jaxpr.eqns):
     # Short circuit if there is nothing to fuse.
     return jax_core.eval_jaxpr(dced_jaxpr, consts, *args)
 
   candidate_values = [*consts, *args]
 
-  # Construct fusions for non-constant inputs to the fusable.
+  # Construct fusions for non-constant inputs to the fusible.
   in_fusions_flat = [
       construct_fusion(
           candidate_values,
