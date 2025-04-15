@@ -78,8 +78,8 @@ jobs:
         uv pip install --system .[minimum-jaxlib] -r build/test-requirements.txt
     - name: Print  the relvant connection details
       run: |
-        echo("gcloud container clusters get-credentials $CONNECTION_CLUSTER --location $CONNECTION_LOCATION")
-        echo("kubectl exec -it --namespace=$CONNECTION_NS $CONNECTION_POD_NAME -- /bin/bash")
+        echo "gcloud container clusters get-credentials $CONNECTION_CLUSTER --location $CONNECTION_LOCATION"
+        echo "kubectl exec -it --namespace=$CONNECTION_NS $CONNECTION_POD_NAME -- /bin/bash"
     - name: Run tests
       continue-on-error: true
       env:
