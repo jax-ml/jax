@@ -56,7 +56,7 @@ import jax
 import numpy as np
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P, AxisType, set_mesh, get_abstract_mesh
-from jax.experimental.shard import reshard, auto_axes
+from jax.experimental.shard import reshard, auto_axes, explicit_axes
 
 jax.config.update('jax_num_cpu_devices', 8)
 ```
@@ -402,6 +402,38 @@ f(some_x)
 +++ {"id": "_3sfJjRq8w9f"}
 
 As you can see, inside `g`, the type of `arr1` is `ShapedArray(float32[4,4@Y])` which indicates it's Explicit over `Y` mesh axis while auto over `X`.
+
+
+You can also use the `explicit_axes` API to drop into `Explicit` mode over some or all mesh axes.
+
+```{code-cell} ipython3
+auto_mesh = jax.make_mesh((2, 4), ("X", "Y"),
+                           axis_types=(AxisType.Auto, AxisType.Auto))
+
+@functools.partial(explicit_axes, axes=('X', 'Y'))
+def explicit_g(y):
+  print(f'mesh inside g: {get_abstract_mesh()}')
+  print(f'y.sharding inside g: {jax.typeof(y) = }')
+  z = y * 2
+  print(f'z.sharding inside g: {jax.typeof(z) = }', end='\n\n')
+  return z
+
+@jax.jit
+def f(arr1):
+  print(f'mesh inside f: {get_abstract_mesh()}', end='\n\n')
+  x = jnp.sin(arr1)
+
+  z = explicit_g(x, in_shardings=P("X", "Y"))
+
+  return z + 1
+
+with jax.sharding.use_mesh(auto_mesh):
+  some_x = jax.device_put(np.arange(16).reshape(4, 4), P("X", "Y"))
+  f(some_x)
+```
+
+As you can see, all axes of mesh inside `f` are of type `Auto` while inside `g`, they are of type `Explicit`.
+Because of that, sharding is visible on the type of arrays inside `g`.
 
 +++ {"id": "sJcWbfAh7UcO"}
 
