@@ -48,7 +48,6 @@ jobs:
     runs-on: linux-x86-n2-32
     container:
       image: index.docker.io/library/ubuntu@sha256:6d8d9799fe6ab3221965efac00b4c34a2bcc102c086a58dff9e19a08b913c7ef # ratchet:ubuntu:20.04
-    timeout-minutes: 60
     strategy:
       matrix:
         # Test the oldest and newest supported Python versions here.
