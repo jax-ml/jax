@@ -62,4 +62,5 @@ jobs:
       python: "3.10"
       libtpu-version-type: "nightly"
       gcs_download_uri: ${{ needs.build-jax-artifacts.outputs.gcs_upload_uri }}
+      halt-for-connection: ${{ inputs.halt-for-connection || false }}
     # End Presubmit Naming Check github-tpu-presubmits
