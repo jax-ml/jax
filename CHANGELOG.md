@@ -43,6 +43,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * {func}`jax.jit` now requires `fun` to be passed by position, and additional
     arguments to be passed by keyword. Doing otherwise will result in a
     DeprecationWarning in v0.6.X, and an error in starting in v0.7.X.
+  * {func}`jax.random.beroulli` now has higher resolution, and can correctly handle
+    values of `p` down to about `1E-10`. Previously results were incorrect for `p`
+    smaller than about `1E-7`. ({jax-issue}`#28022`)
 
 * Deprecations
 
