@@ -375,6 +375,13 @@ class BlockSpec:
   indexing_mode: IndexingMode = dataclasses.field(kw_only=True, default=blocked)
   pipeline_mode: Buffered | None = None
 
+  def __post_init__(self):
+    from jax._src.pallas.mosaic.core import TPUMemorySpace as TPUMemorySpace
+
+    if self.index_map is None and self.memory_space == TPUMemorySpace.VMEM:
+      # No sense in double-buffering without any windowing pattern.
+      self.pipeline_mode = Buffered(1)
+
   def to_block_mapping(
       self,
       origin: OriginStr,
