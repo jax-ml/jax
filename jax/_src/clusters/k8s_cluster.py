@@ -21,6 +21,7 @@ import socket
 import textwrap
 import warnings
 from jax._src import clusters
+from .util import wait_for_host
 
 
 class K8sCluster(clusters.ClusterEnv):
@@ -34,7 +35,7 @@ class K8sCluster(clusters.ClusterEnv):
     if 'KUBERNETES_SERVICE_HOST' in os.environ:
       try:
         import kubernetes as k8s  # pytype: disable=import-error
-      except ImportError as e:
+      except ImportError:
         warnings.warn(
           '\n'.join([
             textwrap.fill(
@@ -104,9 +105,17 @@ class K8sCluster(clusters.ClusterEnv):
 
   @classmethod
   def get_coordinator_address(cls, timeout_secs: int | None) -> str:
-    return '{job_name}-0.{jobset_name}:{port}'.format(
+    coordinator_hostname = '{job_name}-0.{jobset_name}'.format(
       job_name=cls._pod().metadata.labels['job-name'],
-      jobset_name=cls._job().metadata.labels['jobset.sigs.k8s.io/jobset-name'],
+      jobset_name=cls._job().metadata.labels['jobset.sigs.k8s.io/jobset-name']
+    )
+    if timeout_secs:
+        # The host pod may not be up before the other hosts try to
+        # communicate with it. We check for its existence with retries.
+        wait_for_host(coordinator_hostname, timeout_secs, retry_secs=0.1,
+        retry_exp=1.4, retry_max=5)
+    return '{hostname}:{port}'.format(
+      hostname=coordinator_hostname,
       port=cls._coordinator_port
     )
 
