@@ -24,6 +24,7 @@ import jax
 from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
+from jax.experimental.pallas.ops.tpu.ragged_paged_attention.tuned_block_sizes import get_tuned_block_sizes
 import jax.numpy as jnp
 
 DEFAULT_MASK_VALUE = -0.7 * float(jnp.finfo(jnp.dtype("float32")).max)
@@ -700,8 +701,8 @@ def ragged_paged_attention(
     sliding_window: int | None = None,
     soft_cap: float | None = None,
     mask_value: float | None = DEFAULT_MASK_VALUE,
-    num_kv_pages_per_block: int = 16,
-    num_queries_per_block: int = 128,
+    num_kv_pages_per_block: int | None = None,
+    num_queries_per_block: int | None = None,
     vmem_limit_bytes: int | None = None,
 ):
   """Ragged paged attention that supports mixed prefill and decode.
@@ -749,8 +750,13 @@ def ragged_paged_attention(
   _, page_size, num_combined_kv_heads, _ = kv_pages.shape
   assert num_combined_kv_heads % 2 == 0
   num_kv_heads = num_combined_kv_heads // 2
+  _, pages_per_seq = page_indices.shape
   num_q_per_blk = num_queries_per_block
   num_kv_pages_per_blk = num_kv_pages_per_block
+  if num_q_per_blk is None or num_kv_pages_per_blk is None:
+    num_kv_pages_per_blk, num_q_per_blk = get_tuned_block_sizes(
+        num_q_heads, num_kv_heads, num_q_tokens, page_size, pages_per_seq
+    )
   num_q_heads_per_kv_head = num_q_heads // num_kv_heads
   num_q_blks = cdiv(num_q_tokens, num_q_per_blk)
   num_q_heads_per_blk, num_combined_kv_heads_per_blk = get_min_heads_per_blk(
