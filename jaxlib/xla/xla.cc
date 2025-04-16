@@ -613,7 +613,11 @@ NB_MODULE(xla_extension, m) {
       .def("reached_sync_point",
            [](tsl::PreemptionSyncManager& manager, int step_counter) {
              return manager.ReachedSyncPoint(step_counter);
-           });
+           })
+      .def("shutdown", [](tsl::PreemptionSyncManager& manager) {
+        nb::gil_scoped_release gil_release;
+        manager.Shutdown();
+      });
   m.def("create_preemption_sync_manager",
         []() { return tsl::CreatePreemptionSyncManager(); });
 
