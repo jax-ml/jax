@@ -34,7 +34,7 @@ class K8sCluster(clusters.ClusterEnv):
     if 'KUBERNETES_SERVICE_HOST' in os.environ:
       try:
         import kubernetes as k8s  # pytype: disable=import-error
-      except ImportError as e:
+      except (ImportError, ModuleNotFoundError):
         warnings.warn(
           '\n'.join([
             textwrap.fill(
