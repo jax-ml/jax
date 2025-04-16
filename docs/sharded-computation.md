@@ -20,18 +20,34 @@ This tutorial serves as an introduction to device parallelism for Single-Program
 
 The tutorial covers three modes of parallel computation:
 
-- _Automatic parallelism via {func}`jax.jit`_: The compiler chooses the optimal computation strategy (a.k.a. "the compiler takes the wheel").
-- _Semi-automated parallelism_ using {func}`jax.jit` and {func}`jax.lax.with_sharding_constraint`
-- _Fully manual parallelism with manual control using {func}`jax.experimental.shard_map.shard_map`_: `shard_map` enables per-device code and explicit communication collectives
+- _Automatic sharding via {func}`jax.jit`_: The compiler chooses the optimal computation strategy (a.k.a. "the compiler takes the wheel").
+- *Explicit Sharding* (\*new\*) is similar to automatic sharding in that
+   you're writing a global-view program. The difference is that the sharding
+   of each array is part of the array's JAX-level type making it an explicit
+   part of the programming model. These shardings are propagated at the JAX
+   level and queryable at trace time. It's still the compiler's responsibility
+   to turn the whole-array program into per-device programs (turning `jnp.sum`
+   into `psum` for example) but the compiler is heavily constrained by the
+   user-supplied shardings.
+- _Fully manual sharding with manual control using {func}`jax.experimental.shard_map.shard_map`_: `shard_map` enables per-device code and explicit communication collectives
+
+A summary table:
+
+| Mode | Explicit sharding? | Explicit Collectives? |
+|---|---|---|
+| Auto | No | No |
+| Explicit (new) | Yes | No |
+| Manual | Yes | Yes |
 
 Using these schools of thought for SPMD, you can transform a function written for one device into a function that can run in parallel on multiple devices.
 
-If you are running these examples in a Google Colab notebook, make sure that your hardware accelerator is the latest Google TPU by checking your notebook settings: **Runtime** > **Change runtime type** > **Hardware accelerator** > **TPU v2** (which provides eight devices to work with).
+```{code-cell}
+import jax
+
+jax.config.update('jax_num_cpu_devices', 8)
+```
 
 ```{code-cell}
-:outputId: 18905ae4-7b5e-4bb9-acb4-d8ab914cb456
-
-import jax
 jax.devices()
 ```
 
@@ -46,7 +62,9 @@ In the simplest cases, arrays are sharded on a single device, as demonstrated be
 ```{code-cell}
 :outputId: 39fdbb79-d5c0-4ea6-8b20-88b2c502a27a
 
+import numpy as np
 import jax.numpy as jnp
+
 arr = jnp.arange(32.0).reshape(4, 8)
 arr.devices()
 ```
@@ -90,31 +108,6 @@ print(arr_sharded)
 jax.debug.visualize_array_sharding(arr_sharded)
 ```
 
-+++ {"id": "UEObolTqw4pp"}
-
-The device numbers here are not in numerical order, because the mesh reflects the underlying toroidal topology of the device.
-
-The {class}`~jax.sharding.NamedSharding` includes a parameter called `memory_kind`. This parameter determines the type of memory to be used and defaults to `device`. You can set this parameter to `pinned_host` if you prefer to place it on the host.
-
-To create a new sharding that only differs from an existing sharding in terms of its memory kind, you can use the `with_memory_kind` method on the existing sharding.
-
-```{code-cell}
----
-colab:
-  base_uri: https://localhost:8080/
-id: aKNeOHTJnqmS
-outputId: 847c53ec-8b2e-4be0-f993-7fde7d77c0f2
----
-s_host = jax.NamedSharding(mesh, P('x', 'y'), memory_kind='pinned_host')
-s_dev = s_host.with_memory_kind('device')
-arr_host = jax.device_put(arr, s_host)
-arr_dev = jax.device_put(arr, s_dev)
-print(arr_host.sharding.memory_kind)
-print(arr_dev.sharding.memory_kind)
-```
-
-+++ {"id": "jDHYnVqHwaST"}
-
 ## 1. Automatic parallelism via `jit`
 
 Once you have sharded data, the easiest way to do parallel computation is to simply pass the data to a {func}`jax.jit`-compiled function! In JAX, you need to only specify how you want the input and output of your code to be partitioned, and the compiler will figure out how to: 1) partition everything inside; and 2) compile inter-device communications.
@@ -156,69 +149,76 @@ print(result)
 
 The result is partially replicated: that is, the first two elements of the array are replicated on devices `0` and `6`, the second on `1` and `7`, and so on.
 
-### 1.1 Sharding transformation between memory types
+## 2. Explicit sharding
 
-The output sharding of a {func}`jax.jit` function can differ from the input sharding if you specify the output sharding using the `out_shardings` parameter. Specifically, the `memory_kind` of the output can be different from that of the input array.
-
-#### Example 1: Pinned host to device memory
-
-In the example below, the {func}`jax.jit` function `f` takes an array sharded in `pinned_host` memory and generates an array in `device` memory.
+The main idea behind explicit shardings, (a.k.a. sharding-in-types), is that
+the JAX-level _type_ of a value includes a description of how the value is sharded.
+We can query the JAX-level type of any JAX value (or Numpy array, or Python
+scalar) using `jax.typeof`:
 
 ```{code-cell}
----
-colab:
-  base_uri: https://localhost:8080/
-id: PXu3MhafyRHo
-outputId: 7bc6821f-a4a9-4cf8-8b21-e279d516d27b
----
-f = jax.jit(lambda x: x, out_shardings=s_dev)
-out_dev = f(arr_host)
-print(out_dev)
-print(out_dev.sharding.memory_kind)
+some_array = np.arange(8)
+print(f"JAX-level type of some_array: {jax.typeof(some_array)}")
 ```
 
-+++ {"id": "LuYFqpcBySiX"}
-
-#### Example 2: Device to pinned_host memory
-
-In the example below, the {func}`jax.jit` function `g` takes an array sharded in `device` memory and generates an array in `pinned_host` memory.
+Importantly, we can query the type even while tracing under a `jit` (the JAX-level type
+is almost _defined_ as "the information about a value we have access to while
+under a jit).
 
 ```{code-cell}
----
-colab:
-  base_uri: https://localhost:8080/
-id: qLsgNlKfybRw
-outputId: a16448b9-7e39-408f-b200-505f65ad4464
----
-g = jax.jit(lambda x: x, out_shardings=s_host)
-out_host = g(arr_dev)
-print(out_host)
-print(out_host.sharding.memory_kind)
+@jax.jit
+def foo(x):
+  print(f"JAX-level type of x during tracing: {jax.typeof(x)}")
+  return x + x
+
+foo(some_array)
 ```
 
-+++ {"id": "7BGD31-owaSU"}
-
-## 2. Semi-automated sharding with constraints
-
-If you'd like to have some control over the sharding used within a particular computation, JAX offers the {func}`~jax.lax.with_sharding_constraint` function. You can use {func}`jax.lax.with_sharding_constraint` (in place of {func}`jax.device_put()`) together with {func}`jax.jit` for more control over how the compiler constraints how the intermediate values and outputs are distributed.
-
-For example, suppose that within `f_contract` above, you'd prefer the output not to be partially-replicated, but rather to be fully sharded across the eight devices:
+To start seeing shardings in the type we need to set up an explicit-sharding mesh.
 
 ```{code-cell}
-:outputId: 8468f5c6-76ca-4367-c9f2-93c723687cfd
+from jax.sharding import AxisType
+
+mesh = jax.make_mesh((2, 4), ("X", "Y"),
+                     axis_types=(AxisType.Explicit, AxisType.Explicit))
+```
+
+Now we can create some sharded arrays:
+
+```{code-cell}
+replicated_array = np.arange(8).reshape(4, 2)
+sharded_array = jax.device_put(replicated_array, jax.NamedSharding(mesh, P("X", None)))
+
+print(f"replicated_array type: {jax.typeof(replicated_array)}")
+print(f"sharded_array type: {jax.typeof(sharded_array)}")
+```
+
+We should read the type `f32[4@X, 2]` as "a 4-by-2 array of 32-bit floats whose first dimension
+is sharded along mesh axis 'X'. The array is replicated along all other mesh
+axes"
+
+These shardings associated with JAX-level types propagate through operations. For example:
+
+```{code-cell}
+arg0 = jax.device_put(np.arange(4).reshape(4, 1),
+                      jax.NamedSharding(mesh, P("X", None)))
+arg1 = jax.device_put(np.arange(8).reshape(1, 8),
+                      jax.NamedSharding(mesh, P(None, "Y")))
 
 @jax.jit
-def f_contract_2(x):
-  out = x.sum(axis=0)
-  sharding = jax.sharding.NamedSharding(mesh, P('x'))
-  return jax.lax.with_sharding_constraint(out, sharding)
+def add_arrays(x, y):
+  ans = x + y
+  print(f"x sharding: {jax.typeof(x)}")
+  print(f"y sharding: {jax.typeof(y)}")
+  print(f"ans sharding: {jax.typeof(ans)}")
+  return ans
 
-result = f_contract_2(arr_sharded)
-jax.debug.visualize_array_sharding(result)
-print(result)
+with jax.sharding.use_mesh(mesh):
+  add_arrays(arg0, arg1)
 ```
 
-This gives you a function with the particular output sharding you'd like.
+That's the gist of it. Shardings propagate deterministically at trace time and
+we can query them at trace time.
 
 ## 3. Manual parallelism with `shard_map`
 
@@ -320,32 +320,38 @@ layer(x, weights, bias)
 
 You can automatically run this in a distributed manner using {func}`jax.jit` and passing appropriately sharded data.
 
-If you shard the leading axis of both `x` and `weights` in the same way, then the matrix multiplication will automatically happen in parallel:
+If you shard the leading axis of both `x` and make `weights` fully replicated,
+then the matrix multiplication will automatically happen in parallel:
 
 ```{code-cell}
 :outputId: 80be899e-8dbc-4bfc-acd2-0f3d554a0aa5
 
 mesh = jax.make_mesh((8,), ('x',))
-sharding = jax.sharding.NamedSharding(mesh, P('x'))
-
-x_sharded = jax.device_put(x, sharding)
-weights_sharded = jax.device_put(weights, sharding)
+x_sharded = jax.device_put(x, jax.NamedSharding(mesh, P('x')))
+weights_sharded = jax.device_put(weights, jax.NamedSharding(mesh, P()))
 
 layer(x_sharded, weights_sharded, bias)
 ```
 
-Alternatively, you can use {func}`jax.lax.with_sharding_constraint` in the function to automatically distribute unsharded inputs:
+Alternatively, you can use explicit sharding mode too:
 
 ```{code-cell}
-:outputId: bb63e8da-ff4f-4e95-f083-10584882daf4
+explicit_mesh = jax.make_mesh((8,), ('X',), axis_types=(AxisType.Explicit,))
+
+x_sharded = jax.device_put(x, jax.NamedSharding(explicit_mesh, P('X')))
+weights_sharded = jax.device_put(weights, jax.NamedSharding(explicit_mesh, P()))
 
 @jax.jit
 def layer_auto(x, weights, bias):
-  x = jax.lax.with_sharding_constraint(x, sharding)
-  weights = jax.lax.with_sharding_constraint(weights, sharding)
-  return layer(x, weights, bias)
+  print(f"x sharding: {jax.typeof(x)}")
+  print(f"weights sharding: {jax.typeof(weights)}")
+  print(f"bias sharding: {jax.typeof(bias)}")
+  out = layer(x, weights, bias)
+  print(f"out sharding: {jax.typeof(out)}")
+  return out
 
-layer_auto(x, weights, bias)  # pass in unsharded inputs
+with jax.sharding.use_mesh(explicit_mesh):
+  layer_auto(x_sharded, weights_sharded, bias)
 ```
 
 Finally, you can do the same thing with `shard_map`, using {func}`jax.lax.psum` to indicate the cross-shard collective required for the matrix product:
@@ -371,4 +377,5 @@ This tutorial serves as a brief introduction of sharded and parallel computation
 
 To learn about each SPMD method in-depth, check out these docs:
 - {doc}`../notebooks/Distributed_arrays_and_automatic_parallelization`
+- {doc}`../notebooks/explicit-sharding`
 - {doc}`../notebooks/shard_map`
