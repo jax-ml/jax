@@ -1040,7 +1040,7 @@ distributed_debug = bool_state(
 random_seed_offset = int_state(
     name='jax_random_seed_offset',
     default=0,
-    help=('Offset to all random seeds (e.g. argument to jax.random.key()).'),
+    help=('Offset to all random seeds (e.g. argument to `jax.random.key`).'),
     include_in_jit_key=True,
 )
 
@@ -1049,7 +1049,7 @@ legacy_prng_key = enum_state(
     enum_values=['allow', 'warn', 'error'],
     default='allow',
     help=('Specify the behavior when raw PRNG keys are passed to '
-          'jax.random APIs.')
+          '`jax.random` APIs.')
 )
 
 enable_custom_prng = bool_state(
@@ -1097,7 +1097,7 @@ varying_axes_in_types = bool_state(
     default=True,
     help=('Adds varying manual axes to ShapedArray to track which mesh axes the'
           ' array is varying over. This will help to remove the efficient'
-          ' transpose rewrite machinery in shard_map'),
+          ' transpose rewrite machinery in `shard_map`'),
     include_in_jit_key=True)
 
 # TODO make it so people don't use this, this is internal...
@@ -1220,7 +1220,7 @@ enable_pgle = bool_state(
     name='jax_enable_pgle',
     default=False,
     help=(
-      'If set to True and the property jax_pgle_profiling_runs is set to '
+      'If set to `True` and the property `"jax_pgle_profiling_runs"` is set to '
       'greater than 0, the modules will be recompiled after running specified '
       'number times with collected data provided to the profile guided latency '
       'estimator.'
@@ -1251,7 +1251,7 @@ enable_compilation_cache = bool_state(
     help=('If set to False, the compilation cache will be disabled regardless '
           'of whether set_cache_dir() was called. If set to True, the '
           'path could be set to a default value or via a call to '
-          'set_cache_dir().'),
+          '`set_cache_dir`.'),
 )
 
 compilation_cache_dir = optional_string_state(
@@ -1259,7 +1259,7 @@ compilation_cache_dir = optional_string_state(
     default=None,
     help=('Path for the cache. '
           'Precedence: '
-          '1. A call to compilation_cache.set_cache_dir(). '
+          '1. A call to `compilation_cache.set_cache_dir`. '
           '2. The value of this flag set in the command line or by default.'),
 )
 
@@ -1478,14 +1478,14 @@ traceback_filtering = enum_state(
                  "auto"],
     default="auto",
     help="Controls how JAX filters internal frames out of tracebacks. Valid values are:\n"
-         "- ``off``: disables traceback filtering.\n"
-         "- ``auto``: use ``tracebackhide`` if running under a sufficiently "
+         "* ``off``: disables traceback filtering.\n"
+         "* ``auto``: use ``tracebackhide`` if running under a sufficiently "
          "new IPython, or ``remove_frames`` otherwise.\n"
-         "- ``tracebackhide``: adds ``__tracebackhide__`` annotations to "
+         "* ``tracebackhide``: adds ``__tracebackhide__`` annotations to "
          "hidden stack frames, which some traceback printers support.\n"
-         "- ``remove_frames``: removes hidden frames from tracebacks, and adds "
+         "* ``remove_frames``: removes hidden frames from tracebacks, and adds "
          "the unfiltered traceback as a ``__cause__`` of the exception.\n"
-         "- ``quiet_remove_frames``: removes hidden frames from tracebacks, and adds "
+         "* ``quiet_remove_frames``: removes hidden frames from tracebacks, and adds "
          "a brief message (to the ``__cause__`` of the exception) describing that this has "
          "happened.\n\n")
 
@@ -1765,7 +1765,7 @@ use_shardy_partitioner = bool_state(
     help=(
         'Whether to lower to Shardy. Shardy is a new open sourced propagation '
         'framework for MLIR. Currently Shardy is experimental in JAX. See '
-        'www.github.com/openxla/shardy'
+        '`Shardy <www.github.com/openxla/shardy>_`.'
     ),
     include_in_jit_key=True,
 )
