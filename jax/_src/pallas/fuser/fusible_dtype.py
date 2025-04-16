@@ -54,7 +54,7 @@ pack_dtype_p = core.Primitive("pack_dtype")
 
 @pack_dtype_p.def_abstract_eval
 def pack_dtype_abstract_eval(*xs, dtype):
-  if dtypes.issubdtype(dtype, fusibleElementDType):
+  if dtypes.issubdtype(dtype, FusibleElementDType):
     return dtype.abstract_pack(*xs)
   raise ValueError("Attempted to pack non-fusion dtype: {dtype}")
 
@@ -69,7 +69,7 @@ unpack_dtype_p.multiple_results = True
 
 @unpack_dtype_p.def_abstract_eval
 def unpack_dtype_abstract_eval(x):
-  if dtypes.issubdtype(x.dtype, fusibleElementDType):
+  if dtypes.issubdtype(x.dtype, FusibleElementDType):
     return x.dtype.abstract_unpack(x)
   elif isinstance(x.dtype, pallas_core.AbstractMemoryRef):
     raise NotImplementedError()
@@ -80,11 +80,11 @@ def unpack(x):
   return unpack_dtype_p.bind(x)
 
 
-class fusibleElementDType(dtypes.extended):
+class FusibleElementDType(dtypes.extended):
   """Scalar dtype for fusible dtypes."""
 
 
-class fusibleTyRules:
+class FusibleTyRules:
   allow_conversion: bool = False
 
 
@@ -92,8 +92,8 @@ class FusionDType(dtypes.ExtendedDType, metaclass=abc.ABCMeta):
   """Base class for fusible extended dtypes."""
 
   _op_registry = {}
-  _rules = fusibleTyRules
-  type = fusibleElementDType
+  _rules = FusibleTyRules
+  type = FusibleElementDType
 
   @abc.abstractmethod
   def abstract_unpack(self, x) -> Sequence[Any]:
