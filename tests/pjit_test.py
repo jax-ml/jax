@@ -7034,6 +7034,18 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np.cumsum(np_inp))
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None)))
 
+    @jax.jit
+    def f(x):
+      x = jnp.expand_dims(x, 1)
+      self.assertEqual(x.aval.sharding.spec, P('x', None))
+      out = jnp.cumsum(x, axis=1)
+      self.assertEqual(out.aval.sharding.spec, P('x', None))
+      return out
+
+    arr2 = jax.device_put(np.arange(8), P('x'))
+    out = f(arr2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', None)))
+
   def test_device_put_under_use_mesh(self):
     mesh = jtu.create_mesh((2, 2), ('x', 'y'))
     x = jnp.zeros((4, 4), dtype=jnp.int32)
