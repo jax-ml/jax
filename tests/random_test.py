@@ -612,7 +612,7 @@ class KeyArrayTest(jtu.JaxTestCase):
 
   def test_numpy_construction(self):
     key = random.wrap_key_data(np.array([42, 173], dtype=np.uint32),
-                              impl='threefry2x32')
+                               impl='threefry2x32')
     self.assertIsInstance(key, prng_internal.PRNGKeyArray)
     self.assertIsInstance(key._base_array, jax.Array)
     self.assertEqual(key._base_array.device, jax.devices()[0])
