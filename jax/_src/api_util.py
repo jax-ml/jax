@@ -259,7 +259,7 @@ def argnums_partial_except(f: lu.WrappedFun, static_argnums: tuple[int, ...],
   dyn_args = tuple(args[i] for i in dyn_argnums)
 
   fixed_args = []
-  for i in static_argnums:
+  for i in sorted(static_argnums):
     # TODO(shoyer): set allow_invalid=True permanently after static_argnames.
     if allow_invalid and i >= len(args):
       continue
