@@ -85,6 +85,8 @@ For more information on how warp scheduling and instruction issue works, we reco
 The GPU features a few different memory spaces that can be totally ordered from largest (in
 terms of capacity) and slowest (in both total bandwidth and latency of a single access).
 
+<center><img alt="A diagram of memory spaces of an NVIDIA GPU" src="../../_static/pallas/gpu/memory_spaces.svg" style="width: 90%; min-width: 450px;"></center>
+
 The biggest memory space is `plgpu.GMEM`, for _global memory_. In recent data-center grade GPUs
 this memory space is often measured in tens or even hudreds of gigabytes, but it is also the
 slowest one.
