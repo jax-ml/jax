@@ -133,6 +133,7 @@ exclude_patterns = [
     # These are kept in sync using the jupytext pre-commit hook.
     'notebooks/*.md',
     'pallas/quickstart.md',
+    'pallas/pipelining.md',
     'pallas/tpu/pipelining.md',
     'pallas/tpu/distributed.md',
     'pallas/tpu/sparse.md',
@@ -228,6 +229,7 @@ nb_execution_excludepatterns = [
     'notebooks/convolutions.ipynb',
     # Requires accelerators
     'pallas/quickstart.*',
+    'pallas/pipelining.*',
     'pallas/tpu/pipelining.*',
     'pallas/tpu/distributed.*',
     'pallas/tpu/sparse.*',
