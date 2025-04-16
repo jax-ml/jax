@@ -166,7 +166,6 @@ class PRNGKeyArray(jax.Array):
     _check_prng_key_data(impl, key_data)
     self._impl = impl
     self._consumed = False  # TODO(jakevdp): default to True here?
-    # If key_data is a numpy array, convert it to an uncommitted CPU jax.Array
     if isinstance(key_data, np.ndarray):
       aval = core.get_aval(key_data)
       device = pxla.get_default_device()
