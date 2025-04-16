@@ -40,6 +40,16 @@ from jax.experimental.pallas import mosaic_gpu as plgpu
 import jax.numpy as jnp
 import numpy as np
 
+# For inlining
+from jax.experimental.mosaic.gpu import tcgen05
+from jax.experimental.mosaic.gpu import c, ds
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import arith as arith_dialect
+from jax._src.lib.mlir.dialects import llvm as llvm_dialect
+from jax._src.lib.mlir.dialects import memref as memref_dialect
+from jax._src.lib.mlir.dialects import gpu as gpu_dialect
+from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
+
 try:
   from jax._src.lib import mosaic_gpu as mosaic_gpu_lib
 except ImportError:
@@ -2069,6 +2079,88 @@ class PallasCallSm100ATest(PallasSm100ATest):
     # Test that this runs without errors.
     jax.block_until_ready(kernel())
 
+  @parameterized.parameters(
+      ((128, 128),)
+  )
+  def test_simple_matmul(self, shape):
+    # Test a matmul with a single block.
+    dtype = jnp.float16
+    swizzle = 128
+    elems_128b = swizzle // jnp.dtype(dtype).itemsize
+    transforms = (
+        plgpu.TilingTransform((8, elems_128b)),
+        plgpu.SwizzleTransform(128),
+    )
+    def kernel(a_smem, b_smem, out_ref, acc_tmem, scratch_smem, barrier_ref):
+      @plgpu.inline_mgpu(
+          arg_types=(plgpu.RefType(),) * 6,
+          return_type=None
+      )
+      def inline(ctx, a2, b2, out2, acc2, scratch2,
+                 mma_barrier: mgpu.BarrierRef):
+        i32 = ir.IntegerType.get_signless(32)
+        warp_idx = mgpu.warp_idx(sync=True)
+        is_warp_leader = mgpu.single_thread_predicate(
+            scope=mgpu.ThreadSubset.WARP)
+        is_warp = lambda i: arith_dialect.cmpi(
+            arith_dialect.CmpIPredicate.eq, warp_idx, c(i, i32))
+        is_leader_of = lambda i: arith_dialect.andi(is_warp(i), is_warp_leader)
+
+        # The presence of this (unused) branch causes the compiler to issue
+        # the WARPSYNC.ALL instruction after.
+        #with mgpu.when(is_leader_of(999)):
+        #  ctx.async_copy(
+        #    src_ref=scratch2,
+        #    dst_ref=out2,
+        #    gmem_slice=(ds(0, 128), ds(0, 128)),
+        #    gmem_transform=mgpu.TileTransform((8, 64)),
+        #    swizzle=swizzle,
+        #  )
+
+        with mgpu.when(is_leader_of(0)):
+          tcgen05.mma(acc2, a2,
+                      mgpu.memref_transpose(b2, (1, 0, 3, 2)),
+                      a_swizzle=128, b_swizzle=128, accumulate=True, collective=False)
+          tcgen05.commit_arrive(
+              mma_barrier.get_ptr(), collective=False, ctx=ctx)
+
+        # BAR.SYNC.DEFER_BLOCKING 0x0
+        gpu_dialect.barrier()
+
+        # BAR.SYNC.DEFER_BLOCKING 0x0 0x80
+        # mgpu.warpgroup_barrier()
+
+        # Compiles to SYNCS.PHASECHK.TRANS64.TRYWAIT
+        mma_barrier.wait(for_tensor_core=True)
+
+      inline(a_smem.ref, b_smem.ref, out_ref,
+             acc_tmem, scratch_smem.ref, barrier_ref)
+      scratch_smem[...] = acc_tmem[...].astype(jnp.float16)
+      plgpu.commit_smem()
+      plgpu.copy_smem_to_gmem(scratch_smem, out_ref)
+      plgpu.wait_smem_to_gmem(0)
+
+    f = self.pallas_call(
+        kernel,
+        in_specs=(
+            plgpu.GPUBlockSpec(transforms=transforms, memory_space=plgpu.SMEM),
+            plgpu.GPUBlockSpec(transforms=transforms, memory_space=plgpu.SMEM),
+        ),
+        out_specs=plgpu.GPUBlockSpec(memory_space=plgpu.GMEM),
+        out_shape=jax.ShapeDtypeStruct(shape, jnp.float16),
+        scratch_shapes=[
+            plgpu.TMEM((128, 128), jnp.float32),
+            plgpu.SMEM(shape, jnp.float16, transforms=transforms),
+            plgpu.Barrier(num_arrivals=1),
+        ],
+    )
+    x = jax.random.uniform(jax.random.key(0), shape=(128, 64), dtype=jnp.float16)
+    y = jax.random.uniform(jax.random.key(1), shape=(128, 64), dtype=jnp.float16)
+    result = f(x, y)
+    expected = x @ (y.T)
+    np.testing.assert_allclose(result, expected, rtol=1e-3)
+
+
 
 class PallasCallSm100AWGTest(
     PallasCallSm100ATest, lowering_semantics=plgpu.LoweringSemantics.Warpgroup
@@ -3121,4 +3213,4 @@ class ExamplesSm90AWGTest(
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(argv=["python"], testLoader=jtu.JaxTestLoader())

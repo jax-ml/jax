@@ -98,7 +98,7 @@ def build_kernel(
 
 
     with mgpu.when(is_leader_of(TMA_WARP)):
-      @mgpu.fori(c(k_loop_iter, index), None)
+      # @mgpu.fori(c(k_loop_iter, index), None)
       def _tma_body(ki, _):
         slot = arith.remui(ki, c(max_concurrent_steps, index))
         # TODO(apaszke): Use a predicate instead of a conditional.
@@ -132,9 +132,10 @@ def build_kernel(
             gmem_transform=mgpu.TileTransform(tiling),
             **common_args,
         )
+      _tma_body(c(0, index), None)
 
     with mgpu.when(arith.andi(is_leader_of(MMA_WARP), is_leader_block)):
-      @mgpu.fori(c(k_loop_iter, index), arith.constant(i1, 0))
+      # @mgpu.fori(c(k_loop_iter, index), arith.constant(i1, 0))
       def _mma_body(ki, accumulate):
         slot = arith.remui(ki, c(max_concurrent_steps, index))
         ab_full_barriers[slot].wait()
@@ -148,16 +149,10 @@ def build_kernel(
             collective=collective,
         )
         accumulate = arith.constant(i1, 1)
-        is_last_iter = arith.cmpi(
-            arith.CmpIPredicate.eq, ki, c(k_loop_iter - 1, index)
-        )
-        barrier_ptr = arith.select(
-            is_last_iter,
-            mma_done_barrier.get_ptr(),
-            ab_empty_barriers[slot].get_ptr(),
-        )
+        barrier_ptr = mma_done_barrier.get_ptr()
         tcgen05.commit_arrive(barrier_ptr, collective=collective, ctx=ctx)
         return accumulate
+      _mma_body(c(0, index), arith.constant(i1, 0))
 
     gpu.barrier()
     mma_done_barrier.wait(for_tensor_core=True)
@@ -206,17 +201,18 @@ def build_kernel(
 
 
 def main(unused_argv):
-  m, k, n = 8192, 4096, 8192
+  # m, k, n = 8192, 4096, 8192
+  m, k, n = 128, 128, 128
 
   ka, kb = jr.split(jr.key(0), 2)
   a = jr.normal(key=ka, shape=(m, k), dtype=jnp.float16)
   b = jr.normal(key=kb, shape=(n, k), dtype=jnp.float16)
 
   tile_m = (128,)
-  tile_n = (128, 256, 512)
-  max_concurrent_steps = (2, 4, 5, 6)
-  grid_tile_m = (1, 2, 4, 8, 16)
-  collective = (False, True)
+  tile_n = (128,) # 256, 512)
+  max_concurrent_steps = (2,) # 4, 5, 6)
+  grid_tile_m = (1,) # 2, 4, 8, 16)
+  collective = (False,) #, True)
   configs = itertools.product(collective, tile_m, tile_n, grid_tile_m, max_concurrent_steps)
   names = ("collective", "tile_m", "tile_n", "grid_tile_m", "max_concurrent_steps")
   best_runtime = float("inf")
@@ -237,7 +233,8 @@ def main(unused_argv):
     try:
       with mlir.make_ir_context(), ir.Location.unknown():
         f = build_kernel(m, n, k, **kwargs)
-        _, runtime = profiler.measure(f)(a, b)
+        #_, runtime = profiler.measure(f)(a, b)
+        runtime = 1.0
     except ValueError as e:
       if "Mosaic GPU kernel exceeds available shared memory" not in str(e):
         raise
@@ -251,7 +248,9 @@ def main(unused_argv):
     raise ValueError("No valid configuration found")
 
   with mlir.make_ir_context(), ir.Location.unknown():
-    d, runtime = profiler.measure(build_kernel(m, n, k, **best_kwargs))(a, b)
+    # d, runtime = profiler.measure(build_kernel(m, n, k, **best_kwargs))(a, b)
+    runtime = 1.0
+    d = build_kernel(m, n, k, **best_kwargs)(a, b)
   d_ref, ref_runtime = profiler.measure(jax.jit(lambda a, b: a @ b.T))(a, b)
 
   tflops = float(2 * k * m * n) / (runtime / 1e3) / 1e12

@@ -34,6 +34,7 @@ from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import llvm as llvm_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.lib.mlir.dialects import nvvm as nvvm_dialect
+from jax.experimental.mosaic.gpu import tcgen05
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering
@@ -1606,6 +1607,10 @@ def _inline_mgpu_discharge(*args, **kwargs):
 def _type_check_mgpu(v, ty):
   match (ty, v):
     case (RefType(), ir.Value()) if ir.MemRefType.isinstance(v.type):
+      pass
+    case (RefType(), tcgen05.TMEMRef()):
+      pass
+    case (RefType(), mgpu.BarrierRef()):
       pass
     case (GPUShapeDtypeStruct(), mgpu.FragmentedArray()):
       mlir_dtype = mgpu_utils.dtype_to_ir_type(ty.dtype)
