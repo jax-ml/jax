@@ -78,6 +78,17 @@ nonempty_nonscalar_array_shapes += [(3, 1), (1, 4), (2, 1, 4)]
 nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
 all_shapes = nonempty_array_shapes + empty_array_shapes
 
+class DlpackWrapper:
+  def __init__(self, value, copy=None):
+    self.value = value
+    self.copy = copy
+
+  def __dlpack__(self, stream=None):
+    return jax.dlpack.to_dlpack(self.value, copy=self.copy, stream=stream)
+
+  def __dlpack_device__(self):
+    return self.value.__dlpack_device__()
+
 class DLPackTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
@@ -115,17 +126,18 @@ class DLPackTest(jtu.JaxTestCase):
     jax.block_until_ready(y)
     dl_device = y.__dlpack_device__()
     if use_stream:
-      stream = tuple(y.devices())[0].get_stream_for_external_ready_events()
-      dlpack = jax.dlpack.to_dlpack(y, copy=copy, stream=stream)
+      # Define a wrapper so that we can pass in a stream to the dlpack.
+      dlpack = DlpackWrapper(y, copy=copy)
     else:
       dlpack = jax.dlpack.to_dlpack(y, copy=copy)
     z = jax.dlpack.from_dlpack(dlpack)
 
     self.assertEqual(z.devices(), {device})
     self.assertAllClose(np.astype(x.dtype), z)
-    self.assertRaisesRegex(RuntimeError,
-                          "DLPack tensor may be consumed at most once",
-                          lambda: jax.dlpack.from_dlpack(dlpack))
+    if not use_stream:
+      self.assertRaisesRegex(RuntimeError,
+                            "DLPack tensor may be consumed at most once",
+                            lambda: jax.dlpack.from_dlpack(dlpack))
 
     if shape in nonempty_array_shapes:
       _check_copy(y, z, bool(copy))
