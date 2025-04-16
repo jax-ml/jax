@@ -3264,6 +3264,17 @@ class ArrayPjitTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(g)(3)
     self.assertNotIn('pjit', str(jaxpr))
 
+  def test_pjit_inline_literal(self):
+    # https://github.com/jax-ml/jax/issues/27545
+    def bar(x):
+      return jnp.array(1)
+
+    def foo(x):
+      x = pjit(bar, inline=True)(x)
+      self.assertEqual(x.shape, ())
+
+    pjit(foo)(0)  # doesn't crash
+
   def test_pmap_in_axis_resources_error(self):
     pmap_out = jax.pmap(lambda x: x)(jnp.arange(jax.device_count()))
     self.assertIsInstance(pmap_out.sharding, jax.sharding.PmapSharding)
