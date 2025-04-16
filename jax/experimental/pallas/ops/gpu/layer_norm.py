@@ -247,7 +247,7 @@ def layer_norm_backward(
   grid_ = (pl.cdiv(reshaped_x.shape[1], block_n),)
   method = pl.pallas_call(
       kernel,
-      compiler_params=dict(triton=dict(num_warps=num_warps)),
+      compiler_params=plgpu.TritonCompilerParams(num_warps=num_warps),
       grid=grid_,
       out_shape=out_shape_dwbias,
       debug=False,
