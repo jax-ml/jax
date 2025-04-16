@@ -232,7 +232,6 @@ nb_execution_excludepatterns = [
     'pallas/tpu/distributed.*',
     'pallas/tpu/sparse.*',
     'pallas/tpu/matmul.*',
-    'sharded-computation.*',
     'distributed_data_loading.*'
 ]
 

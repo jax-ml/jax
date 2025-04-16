@@ -31,7 +31,7 @@ constraints? You could put them on every single intermediate but that's a lot
 of work and it's also easy to make mistakes that way because there's no way to
 check that the shardings make sense together. More commonly, people add just
 enough sharding annotations to constrain the compiler. But this is a slow
-iterative process. It's hard to know ahead of time what XLA's gSPMD pass will
+iterative process. It's hard to know ahead of time what XLA's GSPMD pass will
 do (it's a whole-program optimization) so all you can do is add annotations,
 inspect XLA's sharding choices to see what happened, and repeat.
 
