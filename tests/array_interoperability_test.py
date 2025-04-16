@@ -111,6 +111,8 @@ class DLPackTest(jtu.JaxTestCase):
     x = jax.device_put(np, jax.devices("cpu")[0])
     device = jax.devices("gpu")[0]
     y = jax.device_put(x, device)
+    # TODO(parkers): Remove after setting 'stream' properly below.
+    jax.block_until_ready(y)
     dl_device = y.__dlpack_device__()
     if use_stream:
       stream = tuple(y.devices())[0].get_stream_for_external_ready_events()
@@ -153,6 +155,8 @@ class DLPackTest(jtu.JaxTestCase):
       raise unittest.SkipTest("Skipping GPU test case on CPU")
     device = jax.devices("gpu" if gpu else "cpu")[0]
     x = jax.device_put(np, device)
+    # TODO(parkers): Remove after setting 'stream' properly.
+    jax.block_until_ready(x)
     y = jax.dlpack.from_dlpack(x)
     self.assertEqual(y.devices(), {device})
     self.assertAllClose(np.astype(x.dtype), y)
@@ -206,6 +210,8 @@ class DLPackTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
     x = jnp.array(np)
+    # TODO(parkers): Remove after setting 'stream' properly.
+    jax.block_until_ready(x)
     # TODO(b/171320191): this line works around a missing context initialization
     # bug in TensorFlow.
     _ = tf.add(1, 1)
@@ -327,6 +333,8 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
     y = jnp.array(x)
+    # TODO(parkers): Remove after setting 'stream' properly.
+    jax.block_until_ready(y)
     z = cupy.asarray(y)
     self.assertEqual(y.__cuda_array_interface__["data"][0],
                      z.__cuda_array_interface__["data"][0])
@@ -362,6 +370,8 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     device = jax.devices('cuda')[-1]
     with jax.default_device(device):
       y = jnp.array(x, dtype=dtype)
+      # TODO(parkers): Remove after setting 'stream' properly below.
+      jax.block_until_ready(y)
     self.assertEqual(y.dtype, dtype)
 
     # Using a jax array CAI provider support to construct an object
