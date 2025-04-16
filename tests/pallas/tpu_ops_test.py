@@ -487,6 +487,30 @@ class OpsTest(PallasBaseTest):
     expected = dot(x[:], jnp.ones((1, d), jnp.bfloat16))
     np.testing.assert_array_equal(output, expected)
 
+  # We need to manually run the test with the env variable
+  # `export LIBTPU_INIT_ARGS="--xla_jf_bounds_check=true"`
+  def test_disable_bounds_check(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 4, 16):
+      self.skipTest("Requires libtpu built after 2025-04-16")
+    if jtu.get_tpu_version() < 4:
+      self.skipTest("Requires TPUv4+")
+    src_shape = (8, 128)
+    tgt_shape = (16, 256)
+
+    def kernel(src, tgt):
+      tgt[:] = pl.load(src, tuple(pl.ds(0, d) for d in tgt.shape))
+
+    x = jnp.arange(np.prod(src_shape), dtype=jnp.float32).reshape(src_shape)
+    run = pl.pallas_call(
+        kernel,
+        jax.ShapeDtypeStruct(tgt_shape, jnp.float32),
+        compiler_params=pltpu.TPUCompilerParams(disable_bounds_checks=True),
+    )
+    output = run(x)
+    np.testing.assert_array_equal(
+        output[tuple(slice(0, d) for d in src_shape)], x
+    )
+
 
 @jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
 class OpsInterpretTest(OpsTest):
