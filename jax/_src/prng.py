@@ -51,7 +51,8 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.array_methods import (
     _array_operators, _set_array_base_attributes, _IndexUpdateHelper)
 from jax._src.sharding_impls import (
-    NamedSharding, PmapSharding, physical_sharding, logical_sharding)
+    NamedSharding, PmapSharding, SingleDeviceSharding, physical_sharding,
+    logical_sharding)
 from jax._src.typing import Array
 from jax._src.util import safe_map, safe_zip
 
@@ -156,7 +157,7 @@ class PRNGKeyArray(jax.Array):
   #    device_buffer, device_buffers, __cuda_interface__()
 
   _impl: PRNGImpl
-  _base_array: typing.Array
+  _base_array: jax.Array
   _consumed: bool | np.ndarray  # Used in jax.experimental.key_reuse.
   _source_info: None | source_info_util.SourceInfo = None
 
@@ -164,8 +165,14 @@ class PRNGKeyArray(jax.Array):
     assert not isinstance(key_data, core.Tracer)
     _check_prng_key_data(impl, key_data)
     self._impl = impl
-    self._base_array = key_data
     self._consumed = False  # TODO(jakevdp): default to True here?
+    # If key_data is a numpy array, convert it to an uncommitted CPU jax.Array
+    if isinstance(key_data, np.ndarray):
+      aval = core.get_aval(key_data)
+      device = pxla.get_default_device()
+      key_data = pxla.batched_device_put(aval, SingleDeviceSharding(device),
+                                         [key_data], [device], committed=False)
+    self._base_array = key_data
 
   def block_until_ready(self):
     _ = self._base_array.block_until_ready()
@@ -176,11 +183,8 @@ class PRNGKeyArray(jax.Array):
 
   @property
   def aval(self):
-    logical_sharding = (self.sharding if hasattr(self._base_array, 'sharding')
-                        else None)
-    vma = (self._base_array.aval.vma if hasattr(self._base_array, 'aval')
-           else frozenset())
-    return keys_shaped_array(self._impl, self.shape, logical_sharding, vma)
+    vma = self._base_array.aval.vma
+    return keys_shaped_array(self._impl, self.shape, self.sharding, vma)
 
   @property
   def shape(self):

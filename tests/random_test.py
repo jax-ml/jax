@@ -602,9 +602,25 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertEqual(key1.dtype, key2.dtype)
     self.assertArraysEqual(random.key_data(key1), random.key_data(key2))
 
+  def make_keys(self, *shape, seed=28):
+    seeds = seed + jnp.arange(math.prod(shape), dtype=jnp.uint32)
+    return jax.vmap(random.key)(seeds).reshape(shape)
+
   def test_construction(self):
     key = random.key(42)
     self.assertIsInstance(key, prng_internal.PRNGKeyArray)
+
+  def test_numpy_construction(self):
+    key = random.wrap_key_data(np.array([42, 173], dtype=np.uint32),
+                              impl='threefry2x32')
+    self.assertIsInstance(key, prng_internal.PRNGKeyArray)
+    self.assertIsInstance(key._base_array, jax.Array)
+    self.assertEqual(key._base_array.device, jax.devices()[0])
+    self.assertEqual(key.device, jax.devices()[0])
+
+  def test_device_property(self):
+    key = random.key(42)
+    self.assertEqual(key.device, key._base_array.device)
 
   def test_random_clone(self):
     # Here we test value semantics and compatibility with jit/vmap
@@ -631,10 +647,6 @@ class KeyArrayTest(jtu.JaxTestCase):
   def test_construction_upgrade_flag(self):
     key = random.PRNGKey(42)
     self.assertIsInstance(key, prng_internal.PRNGKeyArray)
-
-  def make_keys(self, *shape, seed=28):
-    seeds = seed + jnp.arange(math.prod(shape), dtype=jnp.uint32)
-    return jax.vmap(random.key)(seeds).reshape(shape)
 
   def test_key_as_seed(self):
     key = self.make_keys()
