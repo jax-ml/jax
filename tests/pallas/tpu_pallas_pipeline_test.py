@@ -716,20 +716,20 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
                 pl.BlockSpec(memory_space=memory_space),
                 pl.BlockSpec(memory_space=memory_space),
             ],
-            out_specs=[pl.BlockSpec(memory_space=memory_space),
-                       pl.BlockSpec(memory_space=memory_space)],
+            out_specs=[
+                pl.BlockSpec(memory_space=memory_space),
+                pl.BlockSpec(memory_space=memory_space),
+            ],
             grid=(outer_steps, 2),
-            scratch_shapes=[
-                pltpu.VMEM((tm, tn), jnp.float32)]
+            scratch_shapes=[pltpu.VMEM((tm, tn), jnp.float32)]
             + [pltpu.SemaphoreType.DMA] * 4
-            + inner_allocs
+            + inner_allocs,
         ),
-        compiler_params=dict(
-            mosaic=dict(collective_id=0,
-                        # must set scoped vmem flag *larger* than below! e.g.:
-                        # flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
-                        vmem_limit_bytes=int(134217728 * 0.9)  # 0.9 * 128MiB
-                       )
+        compiler_params=pltpu.TPUCompilerParams(
+            collective_id=0,
+            # must set scoped vmem flag *larger* than below! e.g.:
+            # flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
+            vmem_limit_bytes=int(134217728 * 0.9),  # 0.9 * 128MiB
         ),
     )
 
@@ -1006,15 +1006,13 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
             grid=(outer_steps, 2),
             scratch_shapes=[pltpu.VMEM((tm, tn), jnp.float32)]
             + [pltpu.SemaphoreType.DMA] * 4
-            +  inner_allocs
+            + inner_allocs,
         ),
-        compiler_params=dict(
-            mosaic=dict(
-                collective_id=0,
-                # must set scoped vmem flag *larger* than below!
-                # e.g. flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
-                vmem_limit_bytes=int(134217728 * 0.9)  # 0.9 * 128MiB
-            )
+        compiler_params=pltpu.TPUCompilerParams(
+            collective_id=0,
+            # must set scoped vmem flag *larger* than below!
+            # e.g. flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
+            vmem_limit_bytes=int(134217728 * 0.9),  # 0.9 * 128MiB
         ),
     )
 
@@ -1269,15 +1267,13 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
             grid=(outer_steps, 2),
             scratch_shapes=[pltpu.VMEM((tm, tn), jnp.float32)]
             + [pltpu.SemaphoreType.DMA] * 4
-            +  inner_allocs
+            + inner_allocs,
         ),
-        compiler_params=dict(
-            mosaic=dict(
-                collective_id=0,
-                # must set scoped vmem flag *larger* than below!
-                # e.g. flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
-                vmem_limit_bytes=int(134217728 * 0.9)  # 0.9 * 128MiB
-                )
+        compiler_params=pltpu.TPUCompilerParams(
+            collective_id=0,
+            # must set scoped vmem flag *larger* than below!
+            # e.g. flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
+            vmem_limit_bytes=int(134217728 * 0.9),  # 0.9 * 128MiB
         ),
     )
 
@@ -1358,7 +1354,9 @@ class PallasCallMegacoreTest(parameterized.TestCase):
             out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
             grid=(num_cores,),
         ),
-        compiler_params=dict(mosaic=dict(dimension_semantics=('parallel',))),
+        compiler_params=pltpu.TPUCompilerParams(
+            dimension_semantics=('parallel',)
+        ),
     )
     x = jax.random.uniform(jax.random.key(0), (640, 640))
     np.testing.assert_allclose(func(jnp.array([5]), x), x * 2)
@@ -1392,7 +1390,9 @@ class PallasCallMegacoreTest(parameterized.TestCase):
         ],
         out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
         grid=(num_cores,),
-        compiler_params=dict(mosaic=dict(dimension_semantics=('parallel',))),
+        compiler_params=pltpu.TPUCompilerParams(
+            dimension_semantics=('parallel',)
+        ),
     )
     np.testing.assert_allclose(func(x), x * 2)
 
@@ -1441,7 +1441,9 @@ class PallasCallMegacoreTest(parameterized.TestCase):
         ],
         out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
         grid=(num_cores,),
-        compiler_params=dict(mosaic=dict(dimension_semantics=('parallel',))),
+        compiler_params=pltpu.TPUCompilerParams(
+            dimension_semantics=('parallel',)
+        ),
     )
     np.testing.assert_allclose(func(x, y), x @ y, atol=7e-5)
 
