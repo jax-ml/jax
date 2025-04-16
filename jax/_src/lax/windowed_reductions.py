@@ -530,7 +530,7 @@ def reduce_window_sharding_rule(operand, window_dimensions, window_strides,
       base_dilation, window_dilation):
     if spec is None:
       continue
-    if not (wdim == 1 and ws == 1 and pd == 1 and bd == 1 and wdil == 1):
+    if not (wdim == 1 and ws == 1 and pd == (0, 0) and bd == 1 and wdil == 1):
       raise core.ShardingTypeError(
           "Only trivial windowing is supported along non-replicated"
           f" dimensions. Got {operand.sharding.spec=}")
@@ -639,7 +639,8 @@ def _reduce_window_lower(
 ):
 
   operand_aval, = ctx.avals_in
-  scalar_aval = operand_aval.update(shape=())
+  scalar_aval = operand_aval.update(
+      shape=(), sharding=operand_aval.sharding.with_spec(()))
 
   return mlir.reduce_window(
       ctx,
