@@ -243,6 +243,9 @@ jobs:
             ./wheelhouse
           key: ${{ runner.os }}-scipy-${{ matrix.python-version }}-${{ hashFiles('scipy/pyproject.toml') }}-${{ steps.get-date.outputs.date }}
 
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+
       - name: Build Jax and run tests
         timeout-minutes: 120
         env:
