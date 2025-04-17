@@ -68,7 +68,7 @@ from jax._src.api_util import flatten_fun_nokwargs
 from jax._src.lib import pytree
 from jax._src.interpreters import partial_eval as pe
 from jax.tree_util import tree_flatten, tree_map, tree_unflatten
-from jax.util import safe_map, safe_zip, split_list
+from jax._src.util import safe_map, safe_zip, split_list
 from jax._src.lax.control_flow import _check_tree_and_avals
 from jax._src.numpy import indexing as jnp_indexing
 from jax.experimental import sparse

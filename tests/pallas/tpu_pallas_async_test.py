@@ -398,7 +398,7 @@ def make_async_remote_copy(axis_name: str, direction: str = 'right',
 
     def copy_start_kernel(x_ref, aliased_x_ref, o_ref, send_sem, recv_sem):
       del aliased_x_ref
-      axis_size = jax.lax.psum(1, axis_name)
+      axis_size = jax.lax.axis_size(axis_name)
       left_neighbor = jax.lax.rem(
           jax.lax.axis_index(axis_name) - 1 + axis_size, axis_size
       )
@@ -492,7 +492,7 @@ def make_bidi_collective_permute(axis_name: str):
 
     def copy_start_kernel(x_ref, aliased_x_ref, o_ref, left_sems, right_sems):
       del aliased_x_ref
-      axis_size = jax.lax.psum(1, axis_name)
+      axis_size = jax.lax.axis_size(axis_name)
       left_neighbor = jax.lax.rem(
           jax.lax.axis_index(axis_name) - 1 + axis_size, axis_size
       )

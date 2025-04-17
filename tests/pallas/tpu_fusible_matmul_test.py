@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Fusable matmul test."""
+"""Fusible matmul test."""
 
 import functools
 from typing import Any
@@ -75,7 +75,7 @@ def matmul_kernel(
     jax.tree.map(lambda ref, x: ref.set(x), o_ref, out)
 
 
-def _fusable_matmul(
+def _fusible_matmul(
     x: fuser.Fusion[[], jax.Array],  # pytype: disable=invalid-annotation
     y: fuser.Fusion[[], jax.Array],  # pytype: disable=invalid-annotation
     z: fuser.Fusion[[jax.Array], jax.Array] | None,  # pytype: disable=invalid-annotation
@@ -191,7 +191,7 @@ def _fusable_matmul(
   )[0]
 
 
-def fusable_matmul(
+def fusible_matmul(
     x: jax.Array,
     y: jax.Array,
     *,
@@ -201,9 +201,9 @@ def fusable_matmul(
     debug: bool = False,
     interpret: bool = False,
 ) -> jax.Array:
-  return fuser.fusable(
+  return fuser.fusible(
       functools.partial(
-          _fusable_matmul,
+          _fusible_matmul,
           bm=bm,
           bk=bk,
           bn=bn,
@@ -213,7 +213,7 @@ def fusable_matmul(
   )(x, y)
 
 
-class FusableMatmulTest(jtu.JaxTestCase):
+class FusibleMatmulTest(jtu.JaxTestCase):
 
   def setUp(self):
     if not jtu.is_device_tpu_at_least(4):
@@ -226,7 +226,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
     x = jax.random.normal(k0, (512, 512), dtype)
     y = jax.random.normal(k1, (512, 512), dtype)
     np.testing.assert_allclose(
-        jax.jit(fusable_matmul)(x, y), mm_ref(x, y), atol=5e-5
+        jax.jit(fusible_matmul)(x, y), mm_ref(x, y), atol=5e-5
     )
 
   @parameterized.parameters('float32', 'bfloat16')
@@ -238,7 +238,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
     @jax.jit
     @fuser.fuse
     def matmul_relu(x, y):
-      x = fusable_matmul(x, y)
+      x = fusible_matmul(x, y)
       x = jnp.maximum(x, 0.0)
       return x
 
@@ -258,7 +258,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
     @jax.jit
     @fuser.fuse
     def matmul_bias(x, y, b):
-      x = fusable_matmul(x, y).astype(dtype) + b
+      x = fusible_matmul(x, y).astype(dtype) + b
       x = jnp.maximum(x, 0.0)
       return x
 
@@ -277,7 +277,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
     @jax.jit
     @fuser.fuse
     def matmul_slice(x, y):
-      x = fusable_matmul(x, y[1])
+      x = fusible_matmul(x, y[1])
       return x
 
     np.testing.assert_allclose(matmul_slice(x, y), mm_ref(x, y[1]), atol=5e-5)
@@ -291,7 +291,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
     @jax.jit
     @fuser.fuse
     def matmul_slice(x, y, i):
-      x = fusable_matmul(x, y[i])
+      x = fusible_matmul(x, y[i])
       return x
 
     np.testing.assert_allclose(
@@ -308,7 +308,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
     @jax.jit
     @fuser.fuse
     def matmul_slice(x, y, b, i, j):
-      x = fusable_matmul(x, y[j]).astype(dtype) + b[i]
+      x = fusible_matmul(x, y[j]).astype(dtype) + b[i]
       return x
 
     np.testing.assert_allclose(
@@ -326,7 +326,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
     @jax.jit
     @fuser.fuse
     def matmul_slice(x, y):
-      x = fusable_matmul(x, y[1, 1])
+      x = fusible_matmul(x, y[1, 1])
       return x
 
     np.testing.assert_allclose(
@@ -342,7 +342,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
     @jax.jit
     @fuser.fuse
     def matmul_slice(x, y):
-      x = fusable_matmul(x, y[1][1])
+      x = fusible_matmul(x, y[1][1])
       return x
 
     np.testing.assert_allclose(
@@ -358,7 +358,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
     @jax.jit
     @fuser.fuse
     def matmul_slice(x, y, i, j):
-      x = fusable_matmul(x, y[i][j])
+      x = fusible_matmul(x, y[i][j])
       return x
 
     for i in range(2):
@@ -376,7 +376,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
     @jax.jit
     @fuser.fuse
     def matmul_slice(x, y, i, j):
-      x = fusable_matmul(x, y[2][i, j])
+      x = fusible_matmul(x, y[2][i, j])
       return x
 
     for i in range(2):
@@ -397,7 +397,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
     @jax.jit
     @fuser.fuse
     def matmul_slice(x, y, b, i, j, k):
-      x = fusable_matmul(x[k][3], y[2][i, j]).astype(dtype)
+      x = fusible_matmul(x[k][3], y[2][i, j]).astype(dtype)
       return x + b[i, j]
 
     @jit_no_excess_precision
@@ -428,7 +428,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
     @fuser.fuse
     def matmul_concat(x, ys):
       y = jnp.concatenate(ys, axis=1)
-      x = fusable_matmul(x, y)
+      x = fusible_matmul(x, y)
       return x
 
     @jax.jit
@@ -454,7 +454,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
     @fuser.fuse
     def matmul_concat(x, ys):
       y = jnp.concatenate(ys, axis=0)
-      x = fusable_matmul(x, y)
+      x = fusible_matmul(x, y)
       return x
 
     @jit_no_excess_precision
@@ -482,7 +482,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
     def matmul_concat(x, ys, y3):
       y = jnp.concatenate(ys, axis=0)
       y = jnp.concatenate([y, y3], axis=1)
-      x = fusable_matmul(x, y)
+      x = fusible_matmul(x, y)
       return x
 
     @jit_no_excess_precision
@@ -509,7 +509,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
     @fuser.fuse
     def matmul_concat(x, y1, y2):
       y = jnp.concatenate([y1, y2[3]], axis=0)
-      x = fusable_matmul(x, y)
+      x = fusible_matmul(x, y)
       return x
 
     @jit_no_excess_precision
@@ -534,7 +534,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
     @fuser.fuse
     def matmul_concat(x, y1, y2):
       y = jnp.concatenate([y1, y2[3]], axis=1)[1]
-      x = fusable_matmul(x, y)
+      x = fusible_matmul(x, y)
       return x
 
     @jit_no_excess_precision
@@ -559,7 +559,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
     @fuser.fuse
     def matmul_concat(x, y1, y2, i, j):
       y = jnp.concatenate([y1, y2[i]], axis=1)[j]
-      x = fusable_matmul(x, y)
+      x = fusible_matmul(x, y)
       return x
 
     @jit_no_excess_precision
@@ -585,7 +585,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
       return z
 
     impl = fuser.fuse(
-        functools.partial(matmul, functools.partial(fusable_matmul, bn=256))
+        functools.partial(matmul, functools.partial(fusible_matmul, bn=256))
     )
     ref = functools.partial(matmul, mm_ref)
 
@@ -607,7 +607,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
       return z
 
     impl = fuser.fuse(
-        functools.partial(matmul, functools.partial(fusable_matmul, bn=256))
+        functools.partial(matmul, functools.partial(fusible_matmul, bn=256))
     )
     ref = functools.partial(matmul, mm_ref)
 
@@ -629,7 +629,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
       return z
 
     impl = fuser.fuse(
-        functools.partial(matmul, functools.partial(fusable_matmul, bn=256))
+        functools.partial(matmul, functools.partial(fusible_matmul, bn=256))
     )
     ref = functools.partial(matmul, mm_ref)
 
@@ -651,7 +651,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
       return z
 
     impl = fuser.fuse(
-        functools.partial(matmul, functools.partial(fusable_matmul, bn=256))
+        functools.partial(matmul, functools.partial(fusible_matmul, bn=256))
     )
     ref = functools.partial(matmul, mm_ref)
 
@@ -673,7 +673,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
       return z
 
     impl = fuser.fuse(
-        functools.partial(matmul, functools.partial(fusable_matmul, bn=256))
+        functools.partial(matmul, functools.partial(fusible_matmul, bn=256))
     )
     ref = functools.partial(matmul, mm_ref)
 
@@ -695,7 +695,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
       return z
 
     impl = fuser.fuse(
-        functools.partial(matmul, functools.partial(fusable_matmul, bn=256))
+        functools.partial(matmul, functools.partial(fusible_matmul, bn=256))
     )
     ref = functools.partial(matmul, mm_ref)
 
@@ -716,7 +716,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
       return z
 
     impl = fuser.fuse(
-        functools.partial(matmul, functools.partial(fusable_matmul, bn=256))
+        functools.partial(matmul, functools.partial(fusible_matmul, bn=256))
     )
     ref = functools.partial(matmul, mm_ref)
 
@@ -738,7 +738,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
       return z
 
     impl = fuser.fuse(
-        functools.partial(matmul, functools.partial(fusable_matmul, bm=256))
+        functools.partial(matmul, functools.partial(fusible_matmul, bm=256))
     )
     ref = functools.partial(matmul, mm_ref)
 
@@ -760,7 +760,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
       return z
 
     impl = fuser.fuse(
-        functools.partial(matmul, functools.partial(fusable_matmul, bm=256))
+        functools.partial(matmul, functools.partial(fusible_matmul, bm=256))
     )
     ref = functools.partial(matmul, mm_ref)
 
@@ -782,7 +782,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
       return z.T
 
     impl = fuser.fuse(
-        functools.partial(matmul, functools.partial(fusable_matmul, bn=256))
+        functools.partial(matmul, functools.partial(fusible_matmul, bn=256))
     )
     ref = functools.partial(matmul, mm_ref)
 
@@ -804,7 +804,7 @@ class FusableMatmulTest(jtu.JaxTestCase):
       return z.T * 2
 
     impl = fuser.fuse(
-        functools.partial(matmul, functools.partial(fusable_matmul, bn=256))
+        functools.partial(matmul, functools.partial(fusible_matmul, bn=256))
     )
     ref = functools.partial(matmul, mm_ref)
 
@@ -867,7 +867,7 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
     impl = fuser.fuse(
         functools.partial(
             matmul,
-            fusable_matmul,
+            fusible_matmul,
         )
     )
     ref = functools.partial(matmul, dot_ref)
@@ -893,7 +893,7 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
 
     out_ref = jit_no_excess_precision(ref)(x, y)
 
-    impl = fuser.fuse(functools.partial(matmul, fusable_matmul))
+    impl = fuser.fuse(functools.partial(matmul, fusible_matmul))
     out = jax.jit(impl)(x, y)
 
     self.assertAllClose(out, out_ref, atol=0)
@@ -917,7 +917,7 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
     impl = fuser.fuse(
         functools.partial(
             matmul,
-            functools.partial(fusable_matmul, bk=256, bn=128),
+            functools.partial(fusible_matmul, bk=256, bn=128),
         )
     )
     out = jax.jit(impl)(x, y)
@@ -953,7 +953,7 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
         functools.partial(
             matmul,
             functools.partial(
-                fusable_matmul,
+                fusible_matmul,
                 bm=bm,
                 bk=bk,
                 bn=bn,
@@ -990,7 +990,7 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
         functools.partial(
             matmul,
             functools.partial(
-                fusable_matmul,
+                fusible_matmul,
                 bm=bm,
                 bk=bk,
                 bn=bn,
@@ -1025,7 +1025,7 @@ class ExcessPrecisionTest(jtu.JaxTestCase):
         functools.partial(
             matmul,
             functools.partial(
-                fusable_matmul,
+                fusible_matmul,
                 bm=bm,
                 bk=bk,
                 bn=bn,

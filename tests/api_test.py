@@ -1483,7 +1483,7 @@ class JitTest(jtu.BufferDonationTestCase):
 
   def test_caches_depend_on_axis_env(self):
     # https://github.com/jax-ml/jax/issues/9187
-    f = lambda: lax.psum(1, "i")
+    f = lambda: lax.axis_size("i")
     g = jax.jit(f)
     expected = jax.vmap(f, axis_name="i", axis_size=2, out_axes=None)()
     ans = jax.vmap(g, axis_name="i", axis_size=2, out_axes=None)()
@@ -4312,6 +4312,21 @@ class APITest(jtu.JaxTestCase):
       return x * y
     for i in range(3):  # Loop verifies we exercise both Python and C++ dispatch
       self.assertEqual(2 * i, g(2, i), msg=i)
+
+  def test_make_jaxpr_static_argnums_order(self):
+    # https://github.com/jax-ml/jax/issues/28065
+    def f(a, b, c):
+      x = a + c
+      y = b * c
+      z = x - y
+      return z
+
+    for static_argnums in [(1, 0), (0, 1)]:
+      val = jax.jit(f, static_argnums=static_argnums)(1, 2, 3)
+      self.assertEqual(val, -2)
+      jaxpr = jax.make_jaxpr(f, static_argnums=static_argnums)(1, 2, 3)
+      self.assertEqual(jaxpr.eqns[0].invars[0].val, 1)
+      self.assertEqual(jaxpr.eqns[1].invars[0].val, 2)
 
   def test_fastpath_cache_confusion(self):
     # https://github.com/jax-ml/jax/issues/12542

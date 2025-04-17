@@ -32,11 +32,9 @@ import jax.numpy as jnp
 import numpy as np
 
 
-try:
-  import hypothesis as hp
-  import hypothesis.strategies as hps
-except (ModuleNotFoundError, ImportError):
-  raise unittest.SkipTest("these tests require hypothesis")
+import hypothesis as hp
+import hypothesis.strategies as hps
+
 
 jax.config.parse_flags_with_absl()
 jtu.setup_hypothesis(max_examples=5)
@@ -515,9 +513,9 @@ class SplashAttentionTest(PallasBaseTest):
     masks = data.draw(mha_mask_strategy(q_seq_len, kv_seq_len, 1))
     mask = jnp.array(masks[0].get_mask()[:, :])
     attn_logits_soft_cap = data.draw(attn_logits_soft_cap_strategy(),
-                                     label="logit_cap")
+                                    label="logit_cap")
     attn_ref = partial(splash.attention_reference, mask,
-                       attn_logits_soft_cap=attn_logits_soft_cap)
+                      attn_logits_soft_cap=attn_logits_soft_cap)
     attn_custom = partial(splash.attention_reference_custom, mask,
                           attn_logits_soft_cap=attn_logits_soft_cap)
     attn_custom_vanilla = partial(splash.attention_reference_custom, mask,
@@ -525,7 +523,7 @@ class SplashAttentionTest(PallasBaseTest):
                                   attn_logits_soft_cap=attn_logits_soft_cap)
     o_ref, attn_vjp_ref = jax.vjp(attn_ref, q, k, v, segment_ids)
     q32, k32, v32 = jax.tree.map(lambda x: x.astype(jnp.float32),
-                                       (q, k, v))
+                                      (q, k, v))
     o_custom = attn_custom(q32, k32, v32, segment_ids)
     _, attn_vjp = jax.vjp(attn_custom, q32, k32, v32, segment_ids)
     _, attn_vanilla_vjp = jax.vjp(attn_custom_vanilla, q32, k32, v32,
@@ -624,7 +622,7 @@ class SplashAttentionTest(PallasBaseTest):
       mask = jnp.array(mask[:, :, :])
     block_sizes = data.draw(
         block_sizes_strategy(q_seq_len, kv_seq_len, include_bwd_blocks=True,
-                             use_fused_bwd_kernel=use_fused_bwd_kernel)
+                            use_fused_bwd_kernel=use_fused_bwd_kernel)
     )
     if is_mqa:
       attn_ref = splash.make_masked_mqa_reference(mask, backward_impl="custom")

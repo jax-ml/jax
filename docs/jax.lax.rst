@@ -222,6 +222,7 @@ Parallel operators
     pshuffle
     pswapaxes
     axis_index
+    axis_size
 
 Sharding-related operators
 --------------------------

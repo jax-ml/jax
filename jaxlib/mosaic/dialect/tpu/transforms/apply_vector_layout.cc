@@ -5544,15 +5544,17 @@ Value rotateVregRows(OpBuilder &builder, Location loc, Value vreg,
     if (is_high) {
       auto shift_amt = builder.create<arith::ConstantOp>(
           loc,
-          builder.getIntegerAttr(builder.getI32Type(),
-                                 bits_per_row * within_sublane_rotate_amount));
+          DenseElementsAttr::get(
+              i32_vreg_ty, static_cast<int32_t>(bits_per_row *
+                                                within_sublane_rotate_amount)));
       vreg = builder.create<arith::ShLIOp>(loc, vreg, shift_amt);
     } else {
       auto shift_amt = builder.create<arith::ConstantOp>(
-          loc, builder.getIntegerAttr(
-                   builder.getI32Type(),
-                   bits_per_row *
-                       (rows_per_sublane - within_sublane_rotate_amount)));
+          loc,
+          DenseElementsAttr::get(
+              i32_vreg_ty, static_cast<int32_t>(
+                               bits_per_row * (rows_per_sublane -
+                                               within_sublane_rotate_amount))));
       vreg = builder.create<arith::ShRUIOp>(loc, vreg, shift_amt);
     }
     vreg = builder.create<tpu::BitcastVregOp>(loc, vreg_ty, vreg);

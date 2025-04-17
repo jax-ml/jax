@@ -1,5 +1,6 @@
-name: CI - Bazel Optional CUDA tests 
+name: CI - Bazel Optional B200 CUDA tests
 on:
+  # Runs on PR if label "CI Optional GPU Presubmit" is present.
   workflow_dispatch:
     inputs:
       halt-for-connection:
@@ -25,13 +26,9 @@ concurrency:
 jobs:
   run_tests:
     if: ${{ github.event.repository.fork == false && (github.event_name == 'schedule' || contains(github.event.pull_request.labels.*.name, 'CI Optional GPU Presubmit')) }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: linux-x86-a4-224-b200-1gpu
     container: 'us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build-cuda12.8-cudnn9.8:latest'
-    strategy:
-      matrix:
-        # Optional gpus to run against
-        runner: ["linux-x86-a4-224-b200-1gpu"]
-    name: "Bazel single accelerator CUDA tests (${{ matrix.runner }})"
+    name: "Bazel single B200 CUDA tests"
 # End Presubmit Naming Check github-cuda-presubmits
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2

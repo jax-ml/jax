@@ -78,7 +78,7 @@ def make_cpu_client(
     num_nodes=1,
     collectives=None,
     num_devices=None,
-) -> ...:
+) -> Client:
   register_custom_call_handler('cpu', _xla.register_custom_call_target)
   register_custom_type_id_handler('cpu', _xla.register_custom_type_id)
   return _xla.get_tfrt_cpu_client(

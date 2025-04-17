@@ -609,6 +609,7 @@ pytype_strict_library(
         ":dtypes",
         ":effects",
         ":layout",
+        ":mesh",
         ":op_shardings",
         ":partial_eval",
         ":partition_spec",
@@ -721,7 +722,7 @@ pytype_strict_library(
         ":pallas",  # build_cleaner: keep
         "//jax/_src/pallas/fuser:block_spec",
         "//jax/_src/pallas/fuser:custom_evaluate",
-        "//jax/_src/pallas/fuser:fusable",
+        "//jax/_src/pallas/fuser:fusible",
         "//jax/_src/pallas/fuser:fusion",
         "//jax/_src/pallas/fuser:jaxpr_fusion",
     ],

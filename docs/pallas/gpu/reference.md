@@ -27,7 +27,7 @@ but multiple warps can be assigned to the same SM subdivision. At each clock cyc
 warp scheduler from each subdivision tries to select one of its resident warps to execute
 the next instruction.
 
-<center><img alt="A diagram of one NVIDIA SM" src="../../_images/nvidia_sm.svg" style="width:60%; min-width: 400px;"></center>
+<center><img alt="A diagram of one NVIDIA SM" src="../../_static/pallas/gpu/nvidia_sm.svg" style="width:60%; min-width: 400px;"></center>
 
 Going further, recent CUDA versions also outline the concept of a _warpgroup_, which are
 4 consecutive warps. Knowing how the hardware looks like, we can see where this is comming
@@ -82,11 +82,212 @@ For more information on how warp scheduling and instruction issue works, we reco
 
 ### Memory spaces
 
-TODO: GMEM, SMEM, RMEM, (maybe TMEM)
+The GPU features a few different memory spaces that can be totally ordered from largest (in
+terms of capacity) and slowest (in both total bandwidth and latency of a single access).
 
-## Array layouts and reference transforms
+<center><img alt="A diagram of memory spaces of an NVIDIA GPU" src="../../_static/pallas/gpu/memory_spaces.svg" style="width: 90%; min-width: 450px;"></center>
 
-TODO
+The biggest memory space is `plgpu.GMEM`, for _global memory_. In recent data-center grade GPUs
+this memory space is often measured in tens or even hudreds of gigabytes, but it is also the
+slowest one.
+
+The next memory space, used for the L2 cache, is also more or less global in the
+sense that it is shared by the whole GPU, but its use can only be influenced indirectly through
+cache hints. As such, there's no way to manually place values in there and so this memory space
+is not exposed in Pallas:MGPU. While only about a 100MB in size, this memory has considerably
+higher bandwidth than GMEM, and so it is still often recommended to take advantage of it while
+writing high-performance kernels.
+
+Next in line is _shared memory_, or `plgpu.SMEM`. This memory is located directly inside each SM
+and so it is partitioned. Unless block clusters are used (see the section of clusters below),
+each block is only allowed to access its own SMEM allocations.
+
+Finally, the lowest level memory space is the _register memory_. This is where every single value
+(i.e. JAX array) in a Pallas kernel will be located. If the compiler runs out of registers to
+store those arrays, it will insert _spills_, meaning that it will periodically store and reload
+values to memory. Those spills often introduce other significant performance degradations and so
+we recommend avoiding them. The warning messages about spills can be clearly seen in the `ptxas`
+messages during kernel compilation. To make them visible, run with `MOSAIC_GPU_DUMP_PTXAS=1`
+in your environment.
+
+The Blackwell GPU generation, has one additional memory space called _tensor memory_ or `plgpu.TMEM`.
+TMEM is very similar to register memory, only it is explicitly allocated and managed by you.
+It is used to store the MMA accumulator, operand metadata (for sparsity or scaling),
+and optionally the left MMA operand. See the Blackwell MMA section for more information about TMEM.
+
+#### Requesting/allocating memory in specific memory spaces
+
+Kernel inputs or outputs are placed in SMEM by default. If you want to access them as GMEM references
+add `memory_space=plgpu.GMEM` to their `BlockSpec`. If you want the kernel to be called with the whole
+input or output array in GMEM, it is sufficient to specify `BlockSpec(memory_space=plgpu.GMEM)`.
+
+`SMEM` and `TMEM` can be allocated explicitly in the `scratch_shapes` argument of `pl.pallas_call`,
+or using `pl.run_scoped`. To allocate a reference, simply call the memory space object with the
+requested shape and dtype.  For example: `plgpu.SMEM((128, 128), jnp.float16)` will allocate a 128x128
+array of float16 elements in shared memory.
+
+#### Taking advantage of the L2 cache
+
+While the L2 cache cannot be managed manually, its noticeably higher bandwidth compared to global
+memory makes it worth thinking about. The simplest way to take advantage of it, is to reorder
+the parallel grid dimensions so that invocations that are scheduled in similar time periods also
+access the same input data.
+
+While the CUDA programming model does not guarantee anything about the order in which the blocks
+are assigned to SMs, in recent generations the heuristic seems to simply iterate over the
+`(x, y, z)` CUDA grids in column-major order (i.e. `x` is the fastest-changing dimension and
+`z` is the slowest). Similarly, Pallas:MGPU does not guarantee how a user-specified grid is mapped to
+the CUDA grid (Pallas supports grids of arbitrary rank, not just up to 3D). However, you can assume that
+the iteration will happen in _row-major_ order. That is, if a grid has dimensions `(a, b)`, then
+`b` will be the fastest-changing dimension and `a` will be the slower one.
+
+To give a practical example of this, consider a plain matrix multiplication kernel. There, one
+usually uses two parallel grid dimensions `(m, n)`, corresponding to tiling the two non-contracting
+dimensions.  If we use this simple scheme, in Pallas:MGPU all programs with id `(0, ...)` will be
+scheduled before any block with id `(1, ...)`. And, collectively, the programs with `m=0` have to
+read all of the `B` operand! If the `n` or `k` dimensions are very large, there is no chance that
+we'll be able to get cache hits from the `(1, ...)` programs from accesses made by the `(0, ...)`
+programs. For simplicity, assuming we can only run 16 blocks at a time, we see this access pattern
+from the first scheduled wave:
+
+<center>
+<object type="image/svg+xml" data="../../_static/pallas/gpu/grid_tiling_off.svg" style="padding-bottom: 10px;">
+    Your browser does not support SVGs or scripting is disabled.
+    This would be an image showing the access pattern of first 16 blocks without grid tiling.
+</object>
+</center>
+
+However, if we simply rearrange the grid to be `(m // mt, n, mt)` (and then replace `pl.program_id(0)`
+with `pl.program_id(0) * mt + pl.program_id(2)` in the kernel), it is straightforward to see that a
+band of programs along both dimensions will be scheduled concurrently (instead of scheduling a single
+row). This greatly increases the number of concurrent programs that load similar slices of data,
+usually significantly improves the L2 utilization and hence the overall performance of the kernel
+(if it was memory bound). Continuing our example with 16 blocks and using `mt=4`, we get the following
+access pattern:
+
+<center>
+<object type="image/svg+xml" data="../../_static/pallas/gpu/grid_tiling_on.svg" style="padding-bottom: 10px;">
+    Your browser does not support SVGs or scripting is disabled.
+    This would be an image showing the access pattern of first 16 blocks with grid tiling.
+</object>
+</center>
+
+Note that even though the number of active blocks hasn't changed, the total footprint of the data they
+access has halved! We get a much higher chance of getting L2 hits now.
+
+## Array layouts and memory reference transforms
+
+In Pallas, the data structures you work with (arrays and references) have a
+**logical shape** (e.g., a 128x128 matrix). This
+logical shape must be mapped to a **physical representation** (how the data is
+actually represented in the GPU's memory). The specific mapping depends on where the
+data resides:
+
+1.  **Array Layouts:** Arrays are stored in register memory and we call this mapping
+    a _layout_. Layouts define how the elements of an array are
+    distributed across the registers available to the CUDA lanes that form a Pallas thread.
+2.  **Memory Reference Transforms:** For mutable references pointing
+    to `SMEM`, this mapping is called a _transform_.
+    Transforms describe how the logical data structure is arranged within that
+    block of memory.
+
+These concepts are crucial for performance, especially when interacting with
+specialized hardware units like TensorCores or optimizing memory access
+patterns.
+
+> We are working on a mode that will deal with assigning layouts and transforms fully
+  automatically (although with way to provide hints and more control). The APIs listed
+  below will likely continue to function, but will become optional.
+
+### Memory reference transforms
+
+Transforms are applied when a memory reference is first allocated. Pallas
+primitives that operate on these references will automatically account for their
+associated transforms.
+
+```
+def body(..., scratch_ref):
+  # Asynchronous copy will reformat the GMEM data to match the SMEM transforms
+  plgpu.copy_gmem_to_smem(..., scratch_ref, barrier)
+  barrier.wait()
+  plgpu.wgmma(..., scratch_ref)  # wgmma only accepts properly transformed refs
+  ...
+```
+
+There are two ways in which references are allocated and each has a way to select
+the desired transforms:
+
+**1. Using `GPUBlockSpec`**
+
+```python
+transforms = (plgpu.TileTransform((8, 64)), plgpu.SwizzleTransform(128))
+f = pl.pallas_call(
+  in_specs=plgpu.GPUBlockSpec(in_block_shape, in_index_map, transforms=transforms),
+  out_specs=plgpu.GPUBlockSpec(out_block_shape, out_index_map, transforms=transforms),
+  ...
+)
+```
+
+**2. Specifying the `transforms` argument on the allocated `SMEM`**
+
+```python
+transforms = (plgpu.TileTransform((8, 64)), plgpu.SwizzleTransform(128))
+f = pl.pallas_call(
+  scratch_shapes=plgpu.SMEM((128, 128), jnp.float16, transforms=transforms),
+  ...
+)
+```
+
+The available transforms are:
+* `plgpu.TileTransform(tile_shape)`, which organizes the data into contiguous,
+  non-overlapping tiles of shape `tile_shape`.  The data of one tile is always
+  fully linearized (row-major), before another tile begins (tiles are also
+  traversed in row-major order). As an example, applying `TileTransform((8,
+  64))` to a `(128, 128)` reference means the data corresponding to the logical
+  slice `[0:8, 0:64]` will be stored first (row-major), followed by
+  `[0:8, 64:128], [8:16, 0:64], [8:16, 64:128]`, and so on. A different way to achieve
+  this would be to take the input array `x` and traverse
+  `x.reshape(128 // 8, 128 // 64, 8, 64).transpose(0, 2, 1, 3)` in row-major order.
+* `plgpu.SwizzleTransform(swizzle_in_bytes)`, which transforms the data as described in the
+  [PTX docs](https://docs.nvidia.com/cuda/parallel-thread-execution/#tensor-swizzling-modes) and
+  [CUDA docs](https://docs.nvidia.com/cuda/cuda-c-programming-guide/#the-swizzle-modes).
+  Swizzling is useful, because it allows transferring data in MMA-related layouts
+  between register and shared memory without bank conflicts. The exact details
+  of how the memory looks like after swizzling _are not that important_, since
+  all primitives will account for it automatically. Note that the swizzle amount
+  is specified in bytes (only 128, 64, 32 and 16 are supported), and is usually
+  accompanied by a `TileTransform` (which uses elements in its shape!).
+* `plgpu.TransposeTransform(permutation)`, which permutes the dimensions of the array before it is linearized.
+  This is primarily useful in that it lets you change the layout during the GMEM-SMEM copies (only
+  do keep in mind that changing the minormost/last dimension is not supported by the hardware).
+
+
+### Array layouts
+
+There are a few useful layouts we have defined for you so far:
+* `plgpu.Layout.WGMMA`, which is the layout in which the Hopper-generation TensorCore
+  expects the MMA accumulator or 16-bit input operands to have in registers.
+* `plgpu.Layout.WGMMA_ROW`, which is the layout obtained after the above after reducing
+  it along the rows. Re-broadcasting the rows is free and will produce a value with `WGMMA`
+  layout.
+* `plgpu.Layout.WGMMA_COL`, which is an analogue of the one above, only reduced along
+  columns instead of rows.
+* `plgpu.Layout.WG_STRIDED`, where the value is partitioned equally among the 128
+  CUDA lanes making up a Pallas thread. The consecutive elements (after vectorization)
+  are assigned to the lanes in a round-robin fashion. Very simple and effective when
+  no interaction with TensorCores is needed.
+* `plgpu.Layout.WG_SPLAT`, indicating that the value is constant. Each CUDA lane will
+  hold a single register that contains the value. You normally never have to interact
+  with this layout, as it is implicitly used when constant values are created and
+  is always implicitly convertible to other layouts.
+
+At the moment, in the default mode of operation, array layout propagation happens
+only in a forward direction and there is little implicit support for reconciling
+layout conflicts: only splat layouts can be implicitly converted into any other
+layout. If you e.g. try to add two arrays that have a different layout, the lowering
+will complain and fail. There are very limited facilities that let you convert between
+layouts, and we usually recommend storing the value to SMEM and reading it back in
+the target layout.
 
 ## MMA (TensorCore)
 

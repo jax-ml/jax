@@ -407,7 +407,7 @@ class BatchTracer(Tracer):
   def aval(self):
     aval = core.get_aval(self.val)
     if self._trace.axis_data.spmd_name is not None:
-      if config._check_rep.value and config.varying_axes_in_types.value:
+      if config._check_rep.value:
         aval = aval.update(
             vma=aval.vma - frozenset(self._trace.axis_data.spmd_name))
     if self.batch_dim is not_mapped:
@@ -776,7 +776,7 @@ def _batch_jaxpr2(
       aval = core.unmapped_aval(
           axis_data.size, b, aval, axis_data.explicit_mesh_axis)
       if axis_data.spmd_name is not None:
-        if config._check_rep.value and config.varying_axes_in_types.value:
+        if config._check_rep.value:
           aval = aval.update(vma=aval.vma | frozenset(axis_data.spmd_name))  # type: ignore
       avals_in2.append(aval)
   jaxpr_out, _, consts, () = pe.trace_to_jaxpr_dynamic(f, avals_in2)
@@ -1111,7 +1111,7 @@ def broadcast(x, sz, axis, mesh_axis=None):
   # out how to ensure jaxpr arguments always have the context mesh.
   with mesh_lib.use_abstract_mesh(sharding.mesh):
     x = jax.lax.broadcast_in_dim(x, shape, broadcast_dims, out_sharding=sharding)
-    if config._check_rep.value and config.varying_axes_in_types.value:
+    if config._check_rep.value:
       # TODO(yashkatariya,parkers): don't do this, fix during fixit week 2026
       spmd_names = core.get_axis_env().spmd_axis_names
       if len(spmd_names) > 1:

@@ -102,9 +102,6 @@ jax_multiplatform_test(
     enable_configs = [
         "gpu_h100x2",
     ],
-    env = {
-        "PYTHONWARNINGS": "default",  # TODO(b/394123878): protobuf, via TensorFlow, issues a Python warning under Python 3.12+ sometimes.
-    },
     tags = ["multiaccelerator"],
     deps = py_deps("tensorflow_core"),
 )

@@ -22,6 +22,7 @@ See also the :class:`jax.experimental.pallas` module API documentation.
    :maxdepth: 2
 
    quickstart
+   pipelining
    grid_blockspec
 
 

@@ -702,8 +702,8 @@ jax_multiplatform_test(
 )
 
 jax_multiplatform_test(
-    name = "tpu_fusable_matmul_test",
-    srcs = ["tpu_fusable_matmul_test.py"],
+    name = "tpu_fusible_matmul_test",
+    srcs = ["tpu_fusible_matmul_test.py"],
     disable_configs = [
         "tpu_v3",
         "tpu_pjrt_c_api",

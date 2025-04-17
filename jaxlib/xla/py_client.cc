@@ -662,6 +662,10 @@ absl::StatusOr<nb::object> PyClient::MakePythonCallbackUsingHostSendAndRecv(
 
 /* static */ int PyClient::tp_traverse(PyObject* self, visitproc visit,
                                        void* arg) {
+  Py_VISIT(Py_TYPE(self));
+  if (!nb::inst_ready(self)) {
+    return 0;
+  }
   PyClient* c = nb::inst_ptr<PyClient>(self);
   for (const auto& [ifrt_device, py_device] : c->devices_) {
     Py_VISIT(py_device.ptr());

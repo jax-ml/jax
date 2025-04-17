@@ -2515,7 +2515,7 @@ class CoreMapTest(PallasTest, jtu.CudaArchSpecificTest):
       xy_idx = jax.lax.axis_index(("x", "y"))
       yx_idx = jax.lax.axis_index(("y", "x"))
       wg_idx = jax.lax.axis_index("wg")
-      num_wgs = jax.lax.psum(1, "wg")
+      num_wgs = jax.lax.axis_size("wg")
       o_ref[xy_idx, wg_idx] = jnp.broadcast_to(
           yx_idx * num_wgs + wg_idx, (128,)
       )

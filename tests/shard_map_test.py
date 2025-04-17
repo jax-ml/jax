@@ -218,7 +218,7 @@ class ShardMapTest(jtu.JaxTestCase):
         shard_map, mesh=mesh, in_specs=(P('x', None),), out_specs=P('x', None)
     )
     def fwd(a):
-      axis_size = lax.psum(1, 'x')
+      axis_size = lax.axis_size('x')
       perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
       return lax.ppermute(a, 'x', perm=perm)
 
@@ -240,8 +240,8 @@ class ShardMapTest(jtu.JaxTestCase):
         out_specs=P('x', ('y', 'z')),
     )
     def fwd(a):
-      xy_axis_size = lax.psum(1, ('x', 'y'))
-      yz_axis_size = lax.psum(1, ('y', 'z'))
+      xy_axis_size = lax.axis_size(('x', 'y'))
+      yz_axis_size = lax.axis_size(('y', 'z'))
       xy_perm = [(j, (j + 1) % xy_axis_size) for j in range(xy_axis_size)]
       yz_perm = [(j, (j + 1) % yz_axis_size) for j in range(yz_axis_size)]
       return (
@@ -1665,7 +1665,6 @@ class ShardMapTest(jtu.JaxTestCase):
     dx, dy = example(x, y)
     self.assertEqual(dy.dtype, jax.dtypes.float0)
 
-  @config.varying_axes_in_types(True)
   def test_pvary(self):
     mesh = jtu.create_mesh((4,), ('x',))
 
@@ -2232,17 +2231,12 @@ class ShardMapTest(jtu.JaxTestCase):
       return x * x
 
     def h(x):
-      return shard_map(g, mesh,
-                    in_specs=P(None, 'j'),
-                    out_specs=P(None, 'j'))(x)
+      return shard_map(g, mesh, in_specs=P(None, 'j'), out_specs=P(None, 'j'))(x)
 
     @jax.jit
     def f(x):
-      return shard_map(h, mesh,
-                    in_specs=P('i', None),
-                    out_specs=P('i', None),
-                    check_rep=False,
-                    auto=frozenset({'j'}))(x)
+      return shard_map(h, mesh, in_specs=P('i', None), out_specs=P('i', None),
+                       check_rep=False, auto=frozenset({'j'}))(x)
 
     v = jnp.arange(32.).reshape(4, 8)
     v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
@@ -2743,7 +2737,6 @@ class ShardMapTest(jtu.JaxTestCase):
                   mesh=mesh, in_specs=P('i'), out_specs=P())(x)  # don't crash
     self.assertArraysEqual(y, np.array([6, 7], dtype=np.float32))
 
-  @config.varying_axes_in_types(True)
   def test_pmax_vma_in_types(self):
     mesh = jtu.create_mesh((4,), ('i',))
     x = jnp.arange(8., dtype=np.float32)
@@ -2753,7 +2746,6 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertIn("pvary[axes=('i',)", str(jaxpr))
     f(x)  # doesn't crash
 
-  @config.varying_axes_in_types(True)
   def test_mul_with_vma_in_types(self):
     mesh = jtu.create_mesh((2,), ('x',))
     x = np.arange(8.)
@@ -2775,7 +2767,6 @@ class ShardMapTest(jtu.JaxTestCase):
     #   return jnp.sum(f(x, y))
     # print(jax.jit(jax.grad(g)).trace(x, y).jaxpr)
 
-  @config.varying_axes_in_types(True)
   def test_all_gather_with_vma_in_types(self):
     mesh = jtu.create_mesh((2,), ('x',))
     x = np.arange(8.)
@@ -3392,7 +3383,7 @@ class SdyIntegrationTest(jtu.JaxTestCase):
         shard_map, mesh=mesh, in_specs=(P('x', None),), out_specs=P('x', None)
     )
     def fwd(a):
-      axis_size = lax.psum(1, 'x')
+      axis_size = lax.axis_size('x')
       perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
       return lax.ppermute(a, 'x', perm=perm)
 

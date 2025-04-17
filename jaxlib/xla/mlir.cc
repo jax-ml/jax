@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/pjrt/mlir_to_hlo.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/refine_polymorphic_shapes.h"
+#include "xla/service/hlo.pb.h"
 #include "xla/tsl/platform/errors.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"

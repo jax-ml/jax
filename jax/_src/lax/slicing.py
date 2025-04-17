@@ -173,7 +173,7 @@ def dynamic_slice(
   else:
     dynamic_sizes = []
     static_sizes = core.canonicalize_shape(slice_sizes)  # type: ignore
-  operand, *start_indices = core.standard_insert_pbroadcast(
+  operand, *start_indices = core.standard_insert_pvary(
       operand, *start_indices)
   return dynamic_slice_p.bind(operand, *start_indices, *dynamic_sizes,
                               slice_sizes=tuple(static_sizes))
@@ -236,7 +236,7 @@ def dynamic_update_slice(
   """
   start_indices = _dynamic_slice_indices(
       operand, start_indices, allow_negative_indices)
-  operand, update, *start_indices = core.standard_insert_pbroadcast(
+  operand, update, *start_indices = core.standard_insert_pvary(
       operand, update, *start_indices)
   return dynamic_update_slice_p.bind(operand, update, *start_indices)
 
@@ -420,7 +420,7 @@ def gather(operand: ArrayLike, start_indices: ArrayLike,
         raise ValueError(f"Unsupported dtype for gather fill_value {dtype}")
   else:
     fill_value = None
-  operand, start_indices = core.standard_insert_pbroadcast(operand, start_indices)
+  operand, start_indices = core.standard_insert_pvary(operand, start_indices)
   return gather_p.bind(
       operand, start_indices, dimension_numbers=dimension_numbers,
       slice_sizes=core.canonicalize_shape(slice_sizes),
@@ -510,7 +510,7 @@ def scatter_add(
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.add,
                                        core.get_aval(lax._const(operand, 0)))
-  operand, scatter_indices, updates = core.standard_insert_pbroadcast(
+  operand, scatter_indices, updates = core.standard_insert_pvary(
       operand, scatter_indices, updates)
   return scatter_add_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
@@ -566,7 +566,7 @@ def scatter_sub(
   jaxpr, consts = lax._reduction_jaxpr(
       lax.sub, core.get_aval(lax._const(operand, 0))
   )
-  operand, scatter_indices, updates = core.standard_insert_pbroadcast(
+  operand, scatter_indices, updates = core.standard_insert_pvary(
       operand, scatter_indices, updates)
   return scatter_sub_p.bind(
       operand,
@@ -622,7 +622,7 @@ def scatter_mul(
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.mul,
                                        core.get_aval(lax._const(operand, 1)))
-  operand, scatter_indices, updates = core.standard_insert_pbroadcast(
+  operand, scatter_indices, updates = core.standard_insert_pvary(
       operand, scatter_indices, updates)
   return scatter_mul_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
@@ -671,7 +671,7 @@ def scatter_min(
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.min,
                                        core.get_aval(lax._const(operand, 0)))
-  operand, scatter_indices, updates = core.standard_insert_pbroadcast(
+  operand, scatter_indices, updates = core.standard_insert_pvary(
       operand, scatter_indices, updates)
   return scatter_min_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
@@ -720,7 +720,7 @@ def scatter_max(
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.max,
                                        core.get_aval(lax._const(operand, 0)))
-  operand, scatter_indices, updates = core.standard_insert_pbroadcast(
+  operand, scatter_indices, updates = core.standard_insert_pvary(
       operand, scatter_indices, updates)
   return scatter_max_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
@@ -786,7 +786,7 @@ def scatter_apply(
     pass
   jaxpr, consts = lax._reduction_jaxpr(_apply, core.get_aval(lax._zero(operand)))
   # TODO: implement this via its own primitive so we can define appropriate autodiff rules.
-  operand, scatter_indices, unused = core.standard_insert_pbroadcast(
+  operand, scatter_indices, unused = core.standard_insert_pvary(
       operand, scatter_indices, unused)
   return scatter_p.bind(
       operand, scatter_indices, unused, update_jaxpr=jaxpr,
@@ -871,7 +871,7 @@ def scatter(
     ...             mode=lax.GatherScatterMode.PROMISE_IN_BOUNDS)
     Array([0., 2., 3., 0., 4.], dtype=float32)
   """
-  operand, scatter_indices, updates = core.standard_insert_pbroadcast(
+  operand, scatter_indices, updates = core.standard_insert_pvary(
       operand, scatter_indices, updates)
   return scatter_p.bind(
       operand, scatter_indices, updates, update_jaxpr=None,

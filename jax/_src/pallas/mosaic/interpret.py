@@ -1036,7 +1036,7 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
       value = Placeholder(value.shape, value.dtype)
     env[var] = value
 
-  jax.util.safe_map(write, jaxpr.constvars + jaxpr.invars, args)
+  jax._src.util.safe_map(write, jaxpr.constvars + jaxpr.invars, args)
 
   # Get the device ID.
   axis_sizes = jax_core.get_axis_env().axis_sizes
@@ -1062,7 +1062,7 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
       # not need to do any reads if `interpret_params.skip_floating_point_ops`
       # is True. If this is the case, we want to avoid materializing the read
       # array into the jaxpr when this function is traced.
-      deferred_invals = functools.partial(jax.util.safe_map, read, eqn.invars)
+      deferred_invals = functools.partial(jax._src.util.safe_map, read, eqn.invars)
 
       if prim is primitives.load_p:
         (ref, transforms, mask, _) = jax.tree.unflatten(
@@ -1337,9 +1337,9 @@ def _interpret_jaxpr(jaxpr, *args, compiler_params, interpret_params):
           out = prim.bind(*subfuns, *deferred_invals(), **bind_params)
 
       out = out if prim.multiple_results else [out]
-      jax.util.safe_map(write, eqn.outvars, out)
+      jax._src.util.safe_map(write, eqn.outvars, out)
 
-  return jax.util.safe_map(read, jaxpr.outvars)
+  return jax._src.util.safe_map(read, jaxpr.outvars)
 
 def _compute_start_indices(
     block_mapping, loop_idx, *args, compiler_params, interpret_params):

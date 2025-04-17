@@ -109,6 +109,8 @@ roofline.register_roofline(special.erf_p)(_unary_p_roofline)
 roofline.register_roofline(special.erfc_p)(_unary_p_roofline)
 roofline.register_roofline(special.lgamma_p)(_unary_p_roofline)
 
+roofline.register_standard_roofline(core.pvary_p)
+
 def _binary_p_roofline(
     ctx: roofline.RooflineRuleContext,
     *args,

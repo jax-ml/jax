@@ -97,7 +97,7 @@ def _reduce_window(
       raise ValueError(
         'reduce_window output must have the same tree structure as the operands'
         f' {operand_tree} vs. {out_tree}')
-    flat_operands = core.standard_insert_pbroadcast(*flat_operands)
+    flat_operands = core.standard_insert_pvary(*flat_operands)
     out_flat = reduce_window_p.bind(
         *flat_operands,
         *flat_init_values,
@@ -251,7 +251,7 @@ def _select_and_scatter(operand: Array, select: Callable,
     select, core.get_aval(init_value))
   scatter_jaxpr, scatter_consts = lax._reduction_jaxpr(
     scatter, core.get_aval(init_value))
-  operand, source, init_value = core.standard_insert_pbroadcast(
+  operand, source, init_value = core.standard_insert_pvary(
       operand, source, init_value)
   return select_and_scatter_p.bind(
       operand, source, init_value, select_jaxpr=select_jaxpr,
@@ -264,7 +264,7 @@ def _select_and_scatter_add(source: Array, operand: Array,
                             window_dimensions: core.Shape,
                             window_strides: Sequence[int],
                             padding: Sequence[tuple[int, int]]) -> Array:
-  source, operand = core.standard_insert_pbroadcast(source, operand)
+  source, operand = core.standard_insert_pvary(source, operand)
   return select_and_scatter_add_p.bind(
       source, operand, select_prim=select_prim,
       window_dimensions=tuple(window_dimensions),
@@ -300,7 +300,7 @@ def _select_and_gather_add(tangents: Array, operand: Array,
     An array containing the elements in `tangents` corresponding to the output
     of the reduction of `operand` fin each window.
   """
-  tangents, operand = core.standard_insert_pbroadcast(tangents, operand)
+  tangents, operand = core.standard_insert_pvary(tangents, operand)
   return select_and_gather_add_p.bind(
       tangents, operand, select_prim=select_prim,
       window_dimensions=tuple(window_dimensions),
@@ -530,7 +530,7 @@ def reduce_window_sharding_rule(operand, window_dimensions, window_strides,
       base_dilation, window_dilation):
     if spec is None:
       continue
-    if not (wdim == 1 and ws == 1 and pd == 1 and bd == 1 and wdil == 1):
+    if not (wdim == 1 and ws == 1 and pd == (0, 0) and bd == 1 and wdil == 1):
       raise core.ShardingTypeError(
           "Only trivial windowing is supported along non-replicated"
           f" dimensions. Got {operand.sharding.spec=}")
@@ -639,7 +639,8 @@ def _reduce_window_lower(
 ):
 
   operand_aval, = ctx.avals_in
-  scalar_aval = operand_aval.update(shape=())
+  scalar_aval = operand_aval.update(
+      shape=(), sharding=operand_aval.sharding.with_spec(()))
 
   return mlir.reduce_window(
       ctx,

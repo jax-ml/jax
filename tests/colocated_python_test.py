@@ -18,7 +18,6 @@ import tempfile
 import threading
 import time
 from typing import Sequence
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -36,8 +35,9 @@ jtu.request_cpu_devices(8)
 
 try:
   import cloudpickle  # noqa
+  HAS_CLOUDPICKLE = True
 except (ModuleNotFoundError, ImportError):
-  raise unittest.SkipTest("tests depend on cloudpickle library")
+  HAS_CLOUDPICKLE = False
 
 
 def _colocated_cpu_devices(
@@ -68,10 +68,14 @@ class ColocatedPythonTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    if not HAS_CLOUDPICKLE:
+      self.skipTest(
+        "ColocatedPythonTest depends on cloudpickle library"
+      )
     if np.lib.NumpyVersion(np.__version__) < "2.0.0":
       self.skipTest(
-          "Serialization in Colocated Python needs StringDType, and thus"
-          " requires NumPy 2.0.0 or later"
+        "Serialization in Colocated Python needs StringDType, and thus"
+        " requires NumPy 2.0.0 or later"
       )
 
   def testMakeColocatedPythonProgram(self):

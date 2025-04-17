@@ -618,6 +618,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       return
     if cudnn_version < 90600:
       self.skipTest("Requires >= cuDNN 9.6.0")
+    if not jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest("Requires at least Hopper arch")
     k1, k2, k3, k4 = jax.random.split(jax.random.key(0), 4)
     query = jax.random.normal(
         k1, (4, 512, 4, 64), dtype=jnp.bfloat16)

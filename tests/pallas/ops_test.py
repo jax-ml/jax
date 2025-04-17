@@ -48,13 +48,10 @@ else:
   plgpu_triton = None
   pltpu = None
 
-try:
-  import hypothesis as hp
-except (ModuleNotFoundError, ImportError):
-  raise unittest.SkipTest("tests depend on hypothesis library")
-
+import hypothesis as hp
 import hypothesis.extra.numpy as hnp
 import hypothesis.strategies as hps
+
 
 # There are many inherited redefinitions of _
 # ruff: noqa: F811
@@ -188,7 +185,7 @@ def select_n_strategy(
   else:
     pred_dtype = np.int32
   pred = draw(arrays(shape=pred_shape, dtype=pred_dtype,
-                     elements=allowed_elements))
+                    elements=allowed_elements))
   cases = (
       draw(
           arrays(shape=case_shape_dtype.shape, dtype=case_shape_dtype.dtype)
@@ -332,7 +329,7 @@ class OpsTest(PallasBaseTest):
 
     x = jnp.full((8, 128), 4, dtype=dtype)
     y = jnp.full((8, 128), 2 if jnp.issubdtype(dtype, jnp.integer) else 2.0,
-                 dtype=dtype)
+                dtype=dtype)
     np.testing.assert_allclose(kernel(x, y), fn(x, y))
 
   @parameterized.named_parameters(
@@ -1071,8 +1068,8 @@ class OpsTest(PallasBaseTest):
       (
           # fmt: off
           [jnp.expm1, jnp.log1p, jnp.cbrt, lax.rsqrt, jnp.tan, jnp.asin,
-           jnp.acos, jnp.atan, jnp.sinh, jnp.cosh, jnp.tanh, jnp.asinh,
-           jnp.acosh, jnp.atanh],
+          jnp.acos, jnp.atan, jnp.sinh, jnp.cosh, jnp.tanh, jnp.asinh,
+          jnp.acosh, jnp.atanh],
           # fmt: on
           ["bfloat16", "float32", "float64"],
       ),
@@ -1096,7 +1093,7 @@ class OpsTest(PallasBaseTest):
         self.skipTest("int16 and float16 are not supported on TPU")
       if (
           fn in (jnp.ceil, jnp.floor, jnp.negative, jnp.exp, jnp.exp2, jnp.log,
-                 jnp.sqrt, lax.rsqrt)
+                jnp.sqrt, lax.rsqrt)
           and dtype == "bfloat16"
           and not jtu.is_device_tpu_at_least(6)
       ):
@@ -1474,7 +1471,7 @@ class OpsTest(PallasBaseTest):
       (
           # fmt: off
           [jnp.bitwise_and, jnp.bitwise_or, jnp.bitwise_xor,
-           jnp.bitwise_left_shift, jnp.bitwise_right_shift],
+          jnp.bitwise_left_shift, jnp.bitwise_right_shift],
           # fmt: on
           ["int32", "uint32"],
       ),
@@ -1918,7 +1915,7 @@ class OpsTest(PallasBaseTest):
     # Pallas always accumulates in FP32, so we are explicit about
     # preferred_element_type here.
     expected = jnp.dot(x.T if trans_x else x, y.T if trans_y else y,
-                       preferred_element_type=jnp.float32).astype(dtype)
+                      preferred_element_type=jnp.float32).astype(dtype)
     np.testing.assert_allclose(
         out.astype(jnp.float32),
         expected.astype(jnp.float32),
@@ -2107,7 +2104,7 @@ class OpsTest(PallasBaseTest):
     @functools.partial(
         self.pallas_call,
         out_shape=(jax.ShapeDtypeStruct((n,), floatx),
-                   jax.ShapeDtypeStruct((m,), floatx)),
+                  jax.ShapeDtypeStruct((m,), floatx)),
         input_output_aliases={0: 0, 1: 1},
     )
     def masked_oob_swap_slice(_, _2, mask_ref, start_idx_ref, x_ref, y_ref):
@@ -2237,7 +2234,7 @@ class OpsTest(PallasBaseTest):
 
     lock, out = swap(init_value)
     np.testing.assert_allclose(lock, new_value if cmp == init_value else
-                               init_value)
+                              init_value)
     np.testing.assert_allclose(out, init_value)
 
   @parameterized.parameters(1, 2, 3, 4, 8)
@@ -2603,15 +2600,15 @@ class PallasPrimitivesTest(PallasBaseTest):
 
   @parameterized.parameters(*[
     (lambda: (pl.dslice(0, 4), slice(None), slice(None)),
-     "c:i32[4,3,2], a[:,:,:] <-"),
+    "c:i32[4,3,2], a[:,:,:] <-"),
     (lambda: (pl.dslice(0, 3), slice(None), slice(None)),
-     "c:i32[3,3,2], a[:3,:,:] <-"),
+    "c:i32[3,3,2], a[:3,:,:] <-"),
     (lambda: (pl.dslice(1, 3), slice(None), pl.dslice(0, 4)),
-     "c:i32[3,3,4], a[1:,:,:4] <-"),
+    "c:i32[3,3,4], a[1:,:,:4] <-"),
     (lambda: (jnp.arange(5), slice(None), pl.dslice(0, 4)),
-     "e:i32[5,3,4], a[b,:,:4] <-"),
+    "e:i32[5,3,4], a[b,:,:4] <-"),
     (lambda: (jnp.arange(5)[:, None], jnp.arange(3)[None], pl.dslice(4)),
-     "o:i32[5,3,4], a[m,n,:4] <-"),
+    "o:i32[5,3,4], a[m,n,:4] <-"),
   ])
   def test_swap_pretty_print(self, expr, expected):
     def body(x_ref):

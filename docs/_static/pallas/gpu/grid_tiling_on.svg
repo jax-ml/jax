@@ -1,0 +1,183 @@
+<svg width="400" height="335" xmlns="http://www.w3.org/2000/svg" font-family="sans-serif"> <defs>
+    <style>
+      /* <![CDATA[ */
+      .matrix-label {
+        font-size: 12px;
+        font-weight: bold;
+        text-anchor: middle; /* Center text */
+        fill: #333;
+      }
+      .cell {
+        stroke: #ccc; /* Light grey border */
+        stroke-width: 0.5;
+      }
+      .placeholder-cell {
+        fill: #f0f0f0; /* Default placeholder color */
+      }
+      .highlighted-result-cell { /* Using this for C block */
+         fill: hsl(270, 90%, 70%); /* Bright purple */
+         stroke: hsl(270, 50%, 50%); /* Darker purple stroke */
+      }
+      /* ]]> */
+    </style>
+  </defs>
+
+  <text id="label-a" class="matrix-label">A (6x16 tiles)</text>
+  <text id="label-b" class="matrix-label">B (16x16 tiles)</text>
+  <text id="label-c" class="matrix-label">C = A @ B (6x16 tiles)</text>
+
+  <g id="matrix-a"></g>
+  <g id="matrix-b"></g>
+  <g id="matrix-c"></g>
+
+  <script>
+    //<![CDATA[ // Start CDATA section marker
+
+    // --- Configuration ---
+    const rowsA = 6;
+    const colsA = 16;
+    const rowsB = 16;
+    const colsB = 16;
+    const rowsC = 6; // = rowsA
+    const colsC = 16; // = colsB
+
+    // Highlight dimensions
+    const highlightRowsA = 4;
+    const highlightColsB = 4;
+    const highlightRowsC = 4;
+    const highlightColsC = 4;
+
+
+    const cellSize = 12;
+    const gap = 10;
+    const labelHeight = 15;
+    const padding = 10;
+
+    // --- Calculate Block Dimensions ---
+    const matrixDimA_h = rowsA * cellSize;
+    const matrixDimA_w = colsA * cellSize;
+    const matrixDimB_h = rowsB * cellSize;
+    const matrixDimB_w = colsB * cellSize;
+    const matrixDimC_h = rowsC * cellSize;
+    const matrixDimC_w = colsC * cellSize;
+
+    // --- Gradient Color Calculation (Blue Scheme for A/B) ---
+    const startHue = 210; // Blue hue
+    const startSaturation = 100; // High saturation
+    const startLightness = 75; // Bright start (light blue)
+    const endLightness = 30; // Darker end (dark blue)
+    const lightnessRange = startLightness - endLightness;
+
+    // Function to get HSL color string for a step in the gradient
+    function getGradientColor(step, totalSteps) {
+        const safeStep = Math.min(step, totalSteps - 1);
+        const divisor = Math.max(1, totalSteps - 1); // Avoid division by zero
+        const currentLightness = startLightness - (safeStep / divisor) * lightnessRange;
+        return `hsl(${startHue}, ${startSaturation}%, ${currentLightness}%)`;
+    }
+
+
+    // --- Calculated Coordinates ---
+    const xA = padding;
+    const xBC = padding + matrixDimA_w + gap;
+    const yLabelB = padding + labelHeight / 2;
+    const yMatrixB = padding + labelHeight + gap;
+    const yLabelAC = yMatrixB + matrixDimB_h + gap + labelHeight / 2;
+    const yMatrixAC = yMatrixB + matrixDimB_h + gap + labelHeight + gap;
+
+    // --- Get Element References ---
+    const matrixAGroup = document.getElementById('matrix-a');
+    const matrixBGroup = document.getElementById('matrix-b');
+    const matrixCGroup = document.getElementById('matrix-c');
+    const labelA = document.getElementById('label-a');
+    const labelB = document.getElementById('label-b');
+    const labelC = document.getElementById('label-c');
+
+    // --- Set Label Positions ---
+    if (labelA) { labelA.setAttribute('x', String(xA + matrixDimA_w / 2)); labelA.setAttribute('y', String(yLabelAC)); }
+    if (labelB) { labelB.setAttribute('x', String(xBC + matrixDimB_w / 2)); labelB.setAttribute('y', String(yLabelB)); }
+    if (labelC) { labelC.setAttribute('x', String(xBC + matrixDimC_w / 2)); labelC.setAttribute('y', String(yLabelAC)); }
+
+    // --- Set Matrix Group Positions ---
+     if (matrixAGroup) { matrixAGroup.setAttribute('transform', 'translate(' + xA + ', ' + yMatrixAC + ')'); }
+     if (matrixBGroup) { matrixBGroup.setAttribute('transform', 'translate(' + xBC + ', ' + yMatrixB + ')'); }
+     if (matrixCGroup) { matrixCGroup.setAttribute('transform', 'translate(' + xBC + ', ' + yMatrixAC + ')'); }
+
+    // --- Populate Matrices with Styles ---
+    // Updated function to handle both class and inline style
+    function createRect(x, y, className, fillStyle) {
+        const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        rect.setAttribute('x', String(x));
+        rect.setAttribute('y', String(y));
+        rect.setAttribute('width', String(cellSize));
+        rect.setAttribute('height', String(cellSize));
+        rect.setAttribute('class', className);
+        if (fillStyle) {
+            rect.setAttribute('style', 'fill: ' + fillStyle + ';');
+        }
+        return rect;
+    }
+
+    // --- Populate Matrix A (6x16) ---
+    // Highlight first 'highlightRowsA' rows with horizontal gradient
+    if (matrixAGroup) {
+        for (let i = 0; i < rowsA; i++) {
+            for (let j = 0; j < colsA; j++) {
+                let rect;
+                 // Apply gradient if row index is less than highlightRowsA
+                if (i < highlightRowsA) {
+                    // Gradient color based on column index j
+                    const color = getGradientColor(j, colsA);
+                    rect = createRect(j * cellSize, i * cellSize, 'cell', color);
+                } else {
+                    // Otherwise, use placeholder class
+                    rect = createRect(j * cellSize, i * cellSize, 'cell placeholder-cell', null);
+                }
+                matrixAGroup.appendChild(rect);
+            }
+        }
+    }
+
+    // --- Populate Matrix B (16x16) ---
+    // Highlight first 'highlightColsB' columns with vertical gradient
+    if (matrixBGroup) {
+        for (let i = 0; i < rowsB; i++) {
+            for (let j = 0; j < colsB; j++) {
+                let rect;
+                 // Apply gradient if column index is less than highlightColsB
+                if (j < highlightColsB) {
+                    // Gradient color based on row index i
+                    const color = getGradientColor(i, rowsB);
+                    rect = createRect(j * cellSize, i * cellSize, 'cell', color);
+                } else {
+                     // Otherwise, use placeholder class
+                    rect = createRect(j * cellSize, i * cellSize, 'cell placeholder-cell', null);
+                }
+                matrixBGroup.appendChild(rect);
+            }
+        }
+    }
+
+    // --- Populate Matrix C (6x16) ---
+    // Highlight top-left 'highlightRowsC' x 'highlightColsC' block with solid color
+    if (matrixCGroup) {
+        for (let i = 0; i < rowsC; i++) {
+            for (let j = 0; j < colsC; j++) {
+                 let rect;
+                 // Highlight if both row and column index are within the block
+                 if (i < highlightRowsC && j < highlightColsC) {
+                     // Use the CSS class for the solid purple highlight
+                     rect = createRect(j * cellSize, i * cellSize, 'cell highlighted-result-cell', null);
+                 } else {
+                     // Otherwise, use placeholder class
+                     rect = createRect(j * cellSize, i * cellSize, 'cell placeholder-cell', null);
+                 }
+                 matrixCGroup.appendChild(rect);
+            }
+        }
+    }
+
+    //]]> // End CDATA section marker
+  </script>
+
+</svg>

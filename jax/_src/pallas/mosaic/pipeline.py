@@ -988,7 +988,7 @@ def _partition_grid(
     num_cores = pl.num_programs(core_axis)
     core_id = pl.program_id(core_axis)
   else:
-    num_cores = jax.lax.psum(1, core_axis)
+    num_cores = jax.lax.axis_size(core_axis)
     core_id = jax.lax.axis_index(core_axis)
   # Check that num_cores is statically known
   if not isinstance(num_cores, int):

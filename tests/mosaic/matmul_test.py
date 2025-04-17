@@ -15,12 +15,15 @@
 """Test different parameterizations of a matmul."""
 
 import os
-import unittest
 
 from absl.testing import absltest, parameterized
 from jax._src import config
 from jax._src import test_util as jtu
 import jax.numpy as jnp
+
+import hypothesis as hp
+import hypothesis.strategies as hps
+
 try:
   # We only import this to see if Mosaic is available.
   import jax.experimental.mosaic.gpu  # noqa: F401
@@ -28,11 +31,6 @@ except ImportError:
   matmul = None
 else:
   from jax.experimental.mosaic.gpu.examples import matmul
-try:
-  import hypothesis as hp
-  import hypothesis.strategies as hps
-except (ModuleNotFoundError, ImportError):
-  raise unittest.SkipTest("these tests require hypothesis")
 
 
 config.parse_flags_with_absl()

@@ -110,7 +110,7 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
         page_indices,
         cu_q_lens,
         num_seqs=num_seqs,
-        num_kv_pages_per_block=num_kv_pages_per_block,
+        num_kv_pages_per_block=min(num_kv_pages_per_block, pages_per_seq),
         num_queries_per_block=num_queries_per_block,
         vmem_limit_bytes=vmem_limit_bytes,
         sliding_window=sliding_window,

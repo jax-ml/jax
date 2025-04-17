@@ -463,7 +463,7 @@ rnn_fwd_p.def_impl(partial(xla.apply_primitive, rnn_fwd_p))
 rnn_fwd_p.def_abstract_eval(rnn_abstract_eval)
 if gpu_rnn:
   mlir.register_lowering(rnn_fwd_p, gpu_rnn.cudnn_rnn_lowering, platform='cuda')
-  if hasattr(gpu_rnn, "miopen_rnn_fwd_lowering"):
+  if hasattr(gpu_rnn, "miopen_rnn_lowering"):
     mlir.register_lowering(rnn_fwd_p, gpu_rnn.miopen_rnn_lowering, platform='rocm')
 
 

@@ -228,7 +228,7 @@ class ShmallasTest(jtu.JaxTestCase):
         x_ref, y_ref = refs
         @pl.core_map(mesh)
         def _():
-          num_cores = jax.lax.psum(1, "x")
+          num_cores = jax.lax.axis_size("x")
           slc_size = 16 // num_cores
           def alloc(x_vmem_ref, y_vmem_ref, sem):
             core_index = jax.lax.axis_index("x")

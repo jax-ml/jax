@@ -158,7 +158,7 @@ def conv_general_dilated(
   preferred_element_type = (
       None if preferred_element_type is None else
       dtypes.canonicalize_dtype(np.dtype(preferred_element_type)))
-  lhs, rhs = core.standard_insert_pbroadcast(lhs, rhs)
+  lhs, rhs = core.standard_insert_pvary(lhs, rhs)
   return conv_general_dilated_p.bind(
       lhs, rhs, window_strides=tuple(window_strides), padding=tuple(padding),
       lhs_dilation=tuple(lhs_dilation), rhs_dilation=tuple(rhs_dilation),

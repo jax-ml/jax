@@ -33,7 +33,7 @@ def colocated_cpu_devices(
   return _colocated_cpu_devices_cached(devices)
 
 
-@jax.util.cache(max_size=1024, trace_context_in_key=False)
+@jax._src.util.cache(max_size=1024, trace_context_in_key=False)
 def _colocated_cpu_devices_cached(
     devices: tuple[jax.Device, ...],
 ) -> Sequence[jax.Device]:
