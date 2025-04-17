@@ -37,6 +37,8 @@ def is_windows() -> bool:
 def create_wheel_sources_map(wheel_sources, root_packages):
   """Returns a map of paths relative to the root package to the full paths."""
   wheel_sources_map = {}
+  if not wheel_sources:
+    return wheel_sources_map
   for source in wheel_sources:
     for package in root_packages:
       if source.startswith("{}/".format(package)):
