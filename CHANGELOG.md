@@ -14,7 +14,9 @@ Remember to align the itemized text with the first line of an item within a list
 When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
-## JAX 0.6.0
+## Unreleased
+
+## JAX 0.6.0 (April 16, 2025)
 
 * Breaking changes
 
