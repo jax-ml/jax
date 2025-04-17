@@ -576,7 +576,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     @partial(shard_map, mesh=mesh,
              in_specs=(P('x', None),), out_specs=P('x', None))
     def f_jax(b):  # b: f32[2, 4]
-      axis_size = lax.psum(1, 'x')
+      axis_size = lax.axis_size('x')
       perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
       return lax.ppermute(b, 'x', perm=perm)
 
@@ -612,7 +612,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     @partial(shard_map, mesh=mesh,
              in_specs=(P('x', None),), out_specs=P('x', None))
     def f_jax(b):  # b: f32[2, 4]
-      axis_size = lax.psum(1, 'x')
+      axis_size = lax.axis_size('x')
       perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
       return lax.ppermute(b, 'x', perm=perm)
 

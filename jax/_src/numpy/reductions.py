@@ -796,7 +796,7 @@ def _axis_size(a: ArrayLike, axis: int | Sequence[int]):
   size = 1
   a_shape = np.shape(a)
   for a in axis_seq:
-    size *= maybe_named_axis(a, lambda i: a_shape[i], lambda name: lax.psum(1, name))
+    size *= maybe_named_axis(a, lambda i: a_shape[i], jax.lax.axis_size)
   return size
 
 

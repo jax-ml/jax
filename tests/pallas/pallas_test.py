@@ -2411,8 +2411,8 @@ class PallasCallNamedGridTest(PallasBaseTest):
   def test_can_query_named_grid_size_in_kernel_via_psum(self):
 
     def kernel(x_ref, y_ref):
-      self.assertEqual(lax.psum(1, "i"), 2)
-      self.assertEqual(lax.psum(1, "j"), 4)
+      self.assertEqual(lax.axis_size("i"), 2)
+      self.assertEqual(lax.axis_size("j"), 4)
       y_ref[...] = x_ref[...]
 
     x = jnp.arange(4 * 16 * 128, dtype=np.int32).reshape((4, 16, 128))
@@ -2432,8 +2432,8 @@ class PallasCallNamedGridTest(PallasBaseTest):
     self.skipTest("Not supported.")
 
     def kernel(x_ref, y_ref):
-      self.assertEqual(lax.psum(1, "i"), 2)
-      self.assertEqual(lax.psum(1, "j"), 4)
+      self.assertEqual(lax.axis_size("i"), 2)
+      self.assertEqual(lax.axis_size("j"), 4)
       y_ref[...] = x_ref[...]
 
     x = jnp.arange(4 * 8 * 128, dtype=np.int32).reshape((4, 8, 128))

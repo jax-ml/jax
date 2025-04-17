@@ -98,7 +98,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     def kernel(x_ref, y_ref):
       def body(ready_sem, send_sem, recv_sem):
         my_id = lax.axis_index('x')
-        num_devices = lax.psum(1, 'x')
+        num_devices = lax.axis_size('x')
         if direction == 'right':
           neighbor = lax.rem(my_id + 1, num_devices)
         else:
@@ -152,7 +152,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
       def body(ready_sem, send_sem, recv_sem):
         my_id = lax.axis_index('x')
         my_other_id = lax.axis_index('y')
-        axis_size = lax.psum(1, 'x')
+        axis_size = lax.axis_size('x')
         if direction == 'right':
           neighbor = lax.rem(my_id + 1, axis_size)
         else:
@@ -208,7 +208,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     def kernel(x_ref, y_ref):
       def body(ready_sem, send_sem, recv_sem):
         my_id = lax.axis_index('x')
-        num_devices = lax.psum(1, 'x')
+        num_devices = lax.axis_size('x')
         neighbor = lax.rem(my_id + 1, num_devices)
         barrier_sem = pltpu.get_barrier_semaphore()
         pltpu.semaphore_signal(barrier_sem, device_id=neighbor)

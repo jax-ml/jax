@@ -866,7 +866,7 @@ instance to each destination:
 ```{code-cell}
 @partial(shard_map, mesh=mesh1d, in_specs=P('i'), out_specs=P('i'))
 def f7(x_block):
-  sz = jax.lax.psum(1, 'i')
+  sz = jax.lax.axis_size('i')
   print('BEFORE:\n', x_block)
   y_block = jax.lax.ppermute(x_block, 'i', [(i, (i + 1) % sz) for i in range(sz)])
   print('AFTER:\n', y_block)
@@ -911,7 +911,7 @@ this iteration. In code, it might look like this:
 
 ```{code-cell}
 def psum_scatter(x, axis_name, *, tiled=False):
-  size = jax.lax.psum(1, axis_name)
+  size = jax.lax.axis_size(axis_name)
   idx = jax.lax.axis_index(axis_name)  # function instance index along axis_name
   if tiled:
     x = x.reshape(size, -1, *x.shape[1:])  # split leading axis
@@ -1084,7 +1084,7 @@ multiplies:
 @partial(shard_map, mesh=mesh, in_specs=(lhs_spec, rhs_spec),
          out_specs=rhs_spec)
 def matmul_allgather_overlapped(lhs_block, rhs_block):
-  size = jax.lax.psum(1, 'i')
+  size = jax.lax.axis_size('i')
   idx = jax.lax.axis_index('i')
   shift = partial(jax.lax.ppermute, axis_name='i',
                   perm=[(i, (i + 1) % size) for i in range(size)])
@@ -1115,7 +1115,7 @@ each half in each direction:
 @partial(shard_map, mesh=mesh, in_specs=(lhs_spec, rhs_spec),
          out_specs=rhs_spec)
 def matmul_allgather_overlapped_bidi(lhs_block, rhs_block):
-  size = jax.lax.psum(1, 'i')
+  size = jax.lax.axis_size('i')
   idx = jax.lax.axis_index('i')
   shift_up = partial(jax.lax.ppermute, axis_name='i',
                      perm=[(i, (i + 1) % size) for i in range(size)])
@@ -1182,7 +1182,7 @@ interleave the communication steps with local matrix multiplies:
 @partial(shard_map, mesh=mesh, in_specs=(lhs_spec, rhs_spec),
          out_specs=rhs_spec)
 def matmul_psumscatter_overlapped(lhs_block, rhs_block):
-  size = jax.lax.psum(1, 'i')
+  size = jax.lax.axis_size('i')
   idx = jax.lax.axis_index('i')
   shift = partial(jax.lax.ppermute, axis_name='i',
                   perm=[(i, (i - 1) % size) for i in range(size)])
@@ -1207,7 +1207,7 @@ bidirectional version:
 @partial(shard_map, mesh=mesh, in_specs=(lhs_spec, rhs_spec),
          out_specs=rhs_spec)
 def matmul_psumscatter_overlapped_bidi(lhs_block, rhs_block):
-  size = jax.lax.psum(1, 'i')
+  size = jax.lax.axis_size('i')
   idx = jax.lax.axis_index('i')
   shift_up = partial(jax.lax.ppermute, axis_name='i',
                      perm=[(i, (i + 1) % size) for i in range(size)])

@@ -805,7 +805,7 @@ class CompatTest(bctu.CompatTestBase):
     @partial(shard_map, mesh=mesh,
              in_specs=(P('a', None),), out_specs=P('a', None))
     def func(x):  # b: f32[2, 4]
-      axis_size = lax.psum(1, 'a')
+      axis_size = lax.axis_size('a')
       perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
       return lax.ppermute(x, 'a', perm=perm)
 
@@ -1001,7 +1001,7 @@ class ShardyCompatTest(bctu.CompatTestBase):
       @partial(shard_map, mesh=old_mesh,
               in_specs=(P('a', None),), out_specs=P('a', None))
       def shard_map_func(x):  # b: f32[2, 4]
-        axis_size = lax.psum(1, 'a')
+        axis_size = lax.axis_size('a')
         perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
         return lax.ppermute(x, 'a', perm=perm)
       x = jax.lax.with_sharding_constraint(x, NS(old_mesh, P('a', None)))
