@@ -12,6 +12,7 @@ kernelspec:
   name: python3
 ---
 
+(pallas_quickstart)=
 # Pallas Quickstart
 
 <!--* freshness: { reviewed: '2024-04-08' } *-->
