@@ -1016,19 +1016,6 @@ pmap_shmap_merge = bool_state(
     help='If True, pmap and shard_map API will be merged.')
 
 
-spmd_mode = enum_state(
-    name='jax_spmd_mode',
-    enum_values=['allow_all', 'allow_jit'],
-    default='allow_jit',
-    help=("Decides whether Math on ``jax.Array`` objects that are not fully addressable "
-          "(i.e. spans across multiple processes) is allowed. The options are:\n\n"
-          "* ``allow_jit``: Default, ``pjit`` and ``jax.jit`` computations are allowed "
-          "  to execute on non-fully addressable ``jax.Array`` objects\n"
-          "* ``allow_all``: ``jnp``, normal math (like ``a + b``, etc), ``pjit``, "
-          "  ``jax.jit`` and all other operations are allowed to "
-          "  execute on non-fully addressable ``jax.Array`` objects."))
-
-
 distributed_debug = bool_state(
     name='jax_distributed_debug',
     default=False,
