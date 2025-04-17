@@ -15,6 +15,16 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection?'
+        type: choice
+        required: true
+        default: 'no'
+        options:
+        - 'yes'
+        - 'no'
 
 permissions:
   contents: read  # to fetch code
@@ -27,18 +37,17 @@ concurrency:
 jobs:
   lint_and_typecheck:
     runs-on: ubuntu-latest
+    container:
+      image: index.docker.io/library/python@sha256:f1b2d06ef5b302a63c5e49d7c4842f1e32ce0c94b7d69acece00e31c4a736c53 # ratchet:python:3.12-bookworm
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-      - name: Set up Python 3.11
-        uses: actions/setup-python@8d9ed9ac5c53483de85588cdf95a591a75ab9f55  # v5.5.0
-        with:
-          python-version: 3.11
       - run: python -m pip install pre-commit
-      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+      - run: git config --global --add safe.directory '*'
+      - uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
         with:
           path: ~/.cache/pre-commit
-          key: pre-commit-${{ env.pythonLocation }}-${{ hashFiles('.pre-commit-config.yaml', 'setup.py') }}
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml', 'setup.py') }}
       - run: pre-commit run --show-diff-on-failure --color=always --all-files
 
   build:
@@ -47,7 +56,7 @@ jobs:
     name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ubuntu-20.04, x64=${{ matrix.enable-x64}})"
     runs-on: linux-x86-n2-32
     container:
-      image: index.docker.io/library/ubuntu@sha256:6d8d9799fe6ab3221965efac00b4c34a2bcc102c086a58dff9e19a08b913c7ef # ratchet:ubuntu:20.04
+      image: python:${{ matrix.python-version }}-bookworm
     timeout-minutes: 60
     strategy:
       matrix:
@@ -65,19 +74,14 @@ jobs:
             num_generated_cases: 1
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-    - name: Image Setup
-      run: |
-        apt update
-        apt install -y libssl-dev
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@8d9ed9ac5c53483de85588cdf95a591a75ab9f55  # v5.5.0
-      with:
-        python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
         pip install uv~=0.5.30
         uv pip install --system .[minimum-jaxlib] -r build/test-requirements.txt
-
+    - name: Wait For Connection
+      uses: google-ml-infra/actions/ci_connection@main
+      with:
+        halt-dispatch-input: ${{ inputs.halt-for-connection }}
     - name: Run tests
       env:
         JAX_NUM_GENERATED_CASES: ${{ matrix.num_generated_cases }}
@@ -102,15 +106,13 @@ jobs:
     name: Documentation - test code snippets
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    container:
+      image: python:${{ matrix.python-version }}-bookworm
     strategy:
       matrix:
         python-version: ['3.10']
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@8d9ed9ac5c53483de85588cdf95a591a75ab9f55  # v5.5.0
-      with:
-        python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
         pip install uv~=0.5.30
@@ -130,21 +132,12 @@ jobs:
     name: Documentation - render documentation
     runs-on: linux-x86-n2-16
     container:
-      image: index.docker.io/library/ubuntu@sha256:6d8d9799fe6ab3221965efac00b4c34a2bcc102c086a58dff9e19a08b913c7ef # ratchet:ubuntu:20.04
-    timeout-minutes: 10
+      image: python:${{ matrix.python-version }}-bookworm
     strategy:
       matrix:
         python-version: ['3.10']
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-    - name: Image Setup
-      run: |
-        apt update
-        apt install -y libssl-dev libsqlite3-dev build-essential
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@8d9ed9ac5c53483de85588cdf95a591a75ab9f55  # v5.5.0
-      with:
-        python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
         pip install uv~=0.5.30
@@ -156,6 +149,8 @@ jobs:
   jax2tf_test:
     name: "jax2tf_test (py ${{ matrix.python-version }} on ${{ matrix.os }}, x64=${{ matrix.enable-x64}})"
     runs-on: ${{ matrix.os }}
+    container:
+      image: python:${{ matrix.python-version }}-bookworm
     timeout-minutes: 30
     strategy:
       matrix:
@@ -167,10 +162,6 @@ jobs:
             num_generated_cases: 10
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@8d9ed9ac5c53483de85588cdf95a591a75ab9f55  # v5.5.0
-      with:
-        python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
         pip install uv~=0.5.30
@@ -200,10 +191,6 @@ jobs:
     timeout-minutes: 30
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-    - name: Set up Python
-      uses: actions/setup-python@8d9ed9ac5c53483de85588cdf95a591a75ab9f55  # v5.5.0
-      with:
-        python-version: 3.12
     - name: Install JAX
       run: |
         pip install uv~=0.5.30
