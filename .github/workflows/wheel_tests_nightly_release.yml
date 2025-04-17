@@ -87,6 +87,7 @@ jobs:
           libtpu-version-type: ["pypi_latest", "nightly", "oldest_supported_libtpu"]
           exclude:
             - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'nightly' }}
+            - libtpu-version-type: ${{ startsWith(github.ref_name, 'release/') && 'oldest_supported_libtpu' }}
             - libtpu-version-type: ${{ !startsWith(github.ref_name, 'release/') && 'pypi_latest' }}
             # Run a single Python version for v4-8
             - tpu-specs:
