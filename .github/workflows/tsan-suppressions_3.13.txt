@@ -67,6 +67,10 @@ race:gemm_oncopy
 # https://github.com/python/cpython/issues/130547
 # race:split_keys_entry_added
 
+# https://github.com/python/cpython/issues/132245
+race:split_keys_entry_added
+race_top:dict_dict_merge
+
 # https://github.com/python/cpython/issues/129547
 # Maybe fixed?
 # race:type_get_annotations
