@@ -27,29 +27,63 @@ from collections.abc import Sequence
 from jaxlib.tools import platform_tags
 
 
+MAIN_RUNFILES_DIR = "__main__/"
+
+
 def is_windows() -> bool:
   return sys.platform.startswith("win32")
+
+
+def create_wheel_sources_map(wheel_sources, root_packages):
+  """Returns a map of paths relative to the root package to the full paths."""
+  wheel_sources_map = {}
+  for source in wheel_sources:
+    for package in root_packages:
+      if source.startswith("{}/".format(package)):
+        wheel_sources_map[source] = source
+        continue
+      root_package_ind = source.find("/{}/".format(package))
+      if root_package_ind >= 0:
+        wheel_sources_map[source[root_package_ind + 1:]] = source
+  return wheel_sources_map
+
+
+# TODO(ybaturina): remove the method when we switch to the new wheel build rules
+# and the runfiles are not needed.
+def get_source_file_prefix(wheel_sources):
+  return "" if wheel_sources else MAIN_RUNFILES_DIR
 
 
 def copy_file(
     src_files: str | Sequence[str],
     dst_dir: pathlib.Path,
-    dst_filename = None,
-    runfiles = None,
+    dst_filename=None,
+    runfiles=None,
+    wheel_sources_map=None,
 ) -> None:
   dst_dir.mkdir(parents=True, exist_ok=True)
   if isinstance(src_files, str):
     src_files = [src_files]
   for src_file in src_files:
-    src_file_rloc = runfiles.Rlocation(src_file)
-    if src_file_rloc is None:
+    if wheel_sources_map:
+      src_file_loc = wheel_sources_map.get(src_file, None)
+    # TODO(ybaturina): remove the runfiles part when we switch to the new wheel
+    # build rules and the runfiles are not needed.
+    elif runfiles:
+      src_file_loc = runfiles.Rlocation(src_file)
+    else:
+      raise RuntimeError(
+          "Either runfiles or wheel_sources_map should be provided!"
+      )
+    if src_file_loc is None:
       raise ValueError(f"Unable to find wheel source file {src_file}")
-    src_filename = os.path.basename(src_file_rloc)
+
+    src_filename = os.path.basename(src_file_loc)
     dst_file = os.path.join(dst_dir, dst_filename or src_filename)
     if is_windows():
-      shutil.copyfile(src_file_rloc, dst_file)
+      shutil.copyfile(src_file_loc, dst_file)
     else:
-      shutil.copy(src_file_rloc, dst_file)
+      shutil.copy(src_file_loc, dst_file)
 
 
 def platform_tag(cpu: str) -> str:
