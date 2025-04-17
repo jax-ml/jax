@@ -522,8 +522,8 @@ def _shard_map_staging(
     jaxpr, out_avals_, consts, () = pe.trace_to_jaxpr_dynamic(f, in_avals_)
   _check_names(out_names_thunk(), out_avals_)
   if check_rep:
-    out_rep = [_vma_to_rep(mesh, auto, v.aval.vma) for v in jaxpr.outvars]
-    _check_reps(mesh, auto, out_names_thunk(), out_rep)
+    out_vma = [v.aval.vma for v in jaxpr.outvars]
+    _check_reps(mesh, auto, out_names_thunk(), out_vma)
   out_avals = map(_check_shapedarray, out_avals_)
   out_avals = [_check_shapedarray(_unshard_aval(mesh, check_rep, names, aval))
                for names, aval in zip(out_names_thunk(), out_avals)]
@@ -628,8 +628,8 @@ def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_names, out_names,
     out_rep = [_vma_to_rep(mesh, auto, v.aval.vma) for v in jaxpr.outvars]
     for rep, dst in zip(out_rep, out_names):
       if not _valid_repeats(mesh, auto, rep, dst):
-        raise core.JaxprTypeError("shard_map can't prove output is "
-                                  "sufficiently replicated")
+        raise core.JaxprTypeError(
+            "shard_map can't prove output is sufficiently replicated")
   out_avals_sharded = [x.aval for x in jaxpr.outvars]
   out_avals = map(partial(_unshard_aval, mesh, check_rep), out_names,
                   out_avals_sharded)
@@ -643,11 +643,6 @@ def _in_names_to_rep(mesh: Mesh, names: AxisNames) -> set[AxisName]:
 def _valid_repeats(mesh: Mesh, auto, rep: RepType, dst: AxisNames) -> bool:
   return rep is None or (set(_unmentioned(mesh, dst)) - auto).issubset(rep)
 
-def _rule_missing(prim: core.Primitive, *_, **__):
-  raise NotImplementedError(
-      f"No replication rule for {prim}. As a workaround, pass the "
-      "`check_rep=False` argument to `shard_map`. To get this fixed, open an "
-      "issue at https://github.com/jax-ml/jax/issues")
 
 # Lowering
 
@@ -808,12 +803,6 @@ def get_mesh_from_args(args_flat, mesh):
   assert isinstance(mesh, Mesh)
   return mesh
 
-def _rep_to_vma(mesh, auto, rep: frozenset[AxisName]) -> frozenset[AxisName]:
-  return frozenset((set(mesh.axis_names) - auto) - rep)
-
-def _rep_to_spec(mesh, auto, rep):
-  return _vma_to_spec(mesh, _rep_to_vma(mesh, auto, rep))
-
 def _vma_to_spec(mesh, vma):
   return P(tuple(i for i in mesh.axis_names if i in vma))
 
@@ -832,29 +821,29 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
   cur_mesh = get_abstract_mesh()
   args = map(partial(_unmatch_spec, mesh, check_rep, context_mesh=cur_mesh),
              in_names, args)
-  in_rep = map(partial(_in_names_to_rep, mesh), in_names)
-  outs, out_rep = _run_shmap(fun, mesh, auto, args, in_rep, check_rep, cur_mesh)
+  in_vma = map(_names_to_vma, in_names)
+  outs, out_vma = _run_shmap(fun, mesh, auto, args, in_vma, check_rep, cur_mesh)
   out_avals = [core.mapped_aval(x.shape[0], 0, core.get_aval(x)) for x in outs]
   _check_names(out_names_thunk(), out_avals)  # pytype: disable=wrong-arg-types
   if check_rep:
-    _check_reps(mesh, auto, out_names_thunk(), out_rep)
-    src_pspecs = tuple(_rep_to_spec(mesh, auto, r) for r in out_rep)
+    _check_reps(mesh, auto, out_names_thunk(), out_vma)
+    src_pspecs = tuple(_vma_to_spec(mesh, r) for r in out_vma)
   else:
-    src_pspecs = tuple(P(mesh.axis_names) for _ in out_rep)
+    src_pspecs = tuple(P(mesh.axis_names) for _ in out_vma)
   dst_pspecs = map(_names_to_pspec, out_names_thunk())
   return map(partial(_match_spec, mesh, check_rep), src_pspecs, dst_pspecs,
              outs)
 core.EvalTrace.process_shard_map = _shard_map_impl
 
-def _run_shmap(f, mesh, auto, args, reps, check_rep, context_mesh):
+def _run_shmap(f, mesh, auto, args, vmas, check_rep, context_mesh):
   trace = ShardMapTrace(mesh, auto, check_rep, context_mesh)
-  in_tracers = map(partial(ShardMapTracer, trace), reps, args)
+  in_tracers = map(partial(ShardMapTracer, trace), vmas, args)
   manual_mesh = _as_manual_mesh(mesh, auto)
   with (core.set_current_trace(trace), _extend_axis_env(mesh, auto),
         use_abstract_mesh(manual_mesh), config._check_rep(check_rep)):
     ans = f.call_wrapped(*in_tracers)
-    outs, out_rep = unzip2(map(trace.to_val_rep_pair, ans))
-  return outs, out_rep
+    outs, out_vma = unzip2(map(trace.to_val_vma_pair, ans))
+  return outs, out_vma
 
 def _names_to_pspec(names: AxisNames) -> PartitionSpec:
   ndmin = max(names) + 1 if names else 0
@@ -888,7 +877,8 @@ def _check_names(names: Sequence[AxisNames], avals: Sequence[core.ShapedArray]
 class _SpecError(Exception):
   pass
 
-def _check_reps(mesh, auto, names, reps):
+def _check_reps(mesh, auto, names, vmas):
+  reps = [_vma_to_rep(mesh, auto, v) for v in vmas]
   fail = [r if not _valid_repeats(mesh, auto, r, n) else no_fail
           for n, r in zip(names, reps)]
   if any(f is not no_fail for f in fail):
@@ -934,27 +924,25 @@ class ShardMapTrace(core.Trace):
     self.check = check
     self.context_mesh = context_mesh
 
-  def to_val_rep_pair(self, val):
+  def to_val_vma_pair(self, val):
     if isinstance(val, ShardMapTracer):
-      return val.val, val.rep
+      return val.val, val.vma
     elif isinstance(val, Tracer):
       raise Exception(f"Shouldn't have any non-shard_map tracers: {val}")
     else:
       val_ = _unmatch_spec(self.mesh, self.check, {}, val, self.context_mesh)
-      return val_, frozenset(self.mesh.axis_names) - self.auto
+      return val_, frozenset()
 
   def process_primitive(self, prim, tracers, params):
-    in_vals, in_rep = unzip2(map(self.to_val_rep_pair, tracers))
+    in_vals, in_vma = unzip2(map(self.to_val_vma_pair, tracers))
     if self.check:
-      in_vma  = tuple(map(partial(_rep_to_vma, self.mesh, self.auto), in_rep))
       out_avals, _ = prim.abstract_eval(*(typeof(t) for t in tracers), **params)
       out_avals = tuple(out_avals) if type(out_avals) is list else out_avals
       out_vma = tree_map(lambda a: a.vma, out_avals)
-      out_rep = tree_map(partial(_vma_to_rep, self.mesh, self.auto), out_vma)
       in_specs  = tuple(map(partial(_vma_to_spec, self.mesh), in_vma))
       out_specs = tree_map(partial(_vma_to_spec, self.mesh), out_vma)
     else:
-      out_rep = frozenset()
+      out_vma = frozenset()
       in_specs = out_specs = P(self.mesh.axis_names)
 
     eager_rule = eager_rules.get(prim)
@@ -969,10 +957,10 @@ class ShardMapTrace(core.Trace):
         out_vals = jax.jit(f)(*in_vals)
       _maybe_check_special(out_vals)
     if prim.multiple_results:
-      out_rep = (out_rep if isinstance(out_rep, (list, tuple))
-                 else [out_rep] * len(out_vals))
-      return map(partial(ShardMapTracer, self), out_rep, out_vals)
-    return ShardMapTracer(self, out_rep, out_vals)
+      out_vma = (out_vma if isinstance(out_vma, (list, tuple))
+                 else [out_vma] * len(out_vals))
+      return map(partial(ShardMapTracer, self), out_vma, out_vals)
+    return ShardMapTracer(self, out_vma, out_vals)
 
   def process_call(self, call_primitive, fun, tracers, params):
     raise NotImplementedError(
@@ -990,10 +978,10 @@ class ShardMapTrace(core.Trace):
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
     # Since ShardMapTrace is only used as a base main, we can drop the jvp.
     del prim, jvp, symbolic_zeros
-    in_vals, in_rep = unzip2(map(self.to_val_rep_pair, tracers))
-    out_vals, out_rep = _run_shmap(fun, self.mesh, self.auto, in_vals, in_rep, self.check,
-                                   self.context_mesh)
-    return map(partial(ShardMapTracer, self), out_rep, out_vals)
+    in_vals, in_vma = unzip2(map(self.to_val_vma_pair, tracers))
+    out_vals, out_vma = _run_shmap(fun, self.mesh, self.auto, in_vals, in_vma,
+                                   self.check, self.context_mesh)
+    return map(partial(ShardMapTracer, self), out_vma, out_vals)
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
                               symbolic_zeros):
@@ -1003,19 +991,22 @@ class ShardMapTrace(core.Trace):
              "https://github.com/jax-ml/jax/issues")
       raise NotImplementedError(msg)
     del prim, fwd, bwd, out_trees, symbolic_zeros
-    in_vals, in_rep = unzip2(map(self.to_val_rep_pair, tracers))
-    out_vals, out_rep = _run_shmap(fun, self.mesh, self.auto, in_vals, in_rep, self.check,
-                                   self.context_mesh)
-    return map(partial(ShardMapTracer, self), out_rep, out_vals)
+    in_vals, in_vma = unzip2(map(self.to_val_vma_pair, tracers))
+    out_vals, out_vma = _run_shmap(fun, self.mesh, self.auto, in_vals, in_vma,
+                                   self.check, self.context_mesh)
+    return map(partial(ShardMapTracer, self), out_vma, out_vals)
 
 
 class ShardMapTracer(core.Tracer):
-  rep: RepType
+  vma: frozenset[AxisName]
   val: JaxType
 
-  def __init__(self, trace, rep, val):
+  def __init__(self, trace, vma, val):
     self._trace = trace
-    self.rep = rep
+    if isinstance(vma, set):
+      vma = frozenset(vma)
+    assert isinstance(vma, frozenset)
+    self.vma = vma
     self.val = val
 
   @property
@@ -1025,21 +1016,18 @@ class ShardMapTracer(core.Tracer):
     new_sharding = NamedSharding(
         _as_manual_mesh(self._trace.mesh, self._trace.auto),
         out.sharding.spec)  # pytype: disable=attribute-error
-    manual_axes = set(self._trace.mesh.axis_names) - self._trace.auto
-    vma = (frozenset(manual_axes - self.rep) if config._check_rep.value else
-           frozenset())
+    vma = self.vma if config._check_rep.value else frozenset()
     return out.update(sharding=new_sharding, vma=vma)
 
   def to_concrete_value(self):
-    if self.rep == set(self._trace.mesh.axis_names):
+    if self.vma == frozenset():
       with core.eval_context(), use_abstract_mesh(self._trace.context_mesh):
         return core.to_concrete_value(self.val[0])
     else:
       return None
 
   def __str__(self) -> str:
-    pb_names = set(self._trace.mesh.axis_names) - _rep_to_vma(
-        self._trace.mesh, self._trace.auto, self.rep)
+    pb_names = set(self._trace.mesh.axis_names) - self.vma
     self = pvary(self, tuple(pb_names))
     with core.eval_context(), use_abstract_mesh(self._trace.context_mesh):
       blocks = list(self.val)
