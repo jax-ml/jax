@@ -235,7 +235,6 @@ def trace_context():
           threefry_partitionable.value,
           threefry_gpu_kernel_lowering.value,
           use_direct_linearize.value,
-          varying_axes_in_types.value,
           softmax_custom_jvp.value,
           disable_jit.value,
           debug_key_reuse.value,
@@ -1090,14 +1089,6 @@ use_direct_linearize = bool_state(
     name='jax_use_direct_linearize',
     default=False,
     help=('Use direct linearization instead JVP followed by partial eval'),
-    include_in_jit_key=True)
-
-varying_axes_in_types = bool_state(
-    name='jax_varying_axes_in_types',
-    default=True,
-    help=('Adds varying manual axes to ShapedArray to track which mesh axes the'
-          ' array is varying over. This will help to remove the efficient'
-          ' transpose rewrite machinery in shard_map'),
     include_in_jit_key=True)
 
 # TODO make it so people don't use this, this is internal...

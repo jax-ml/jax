@@ -1763,13 +1763,6 @@ class DebugInfoTest(jtu.JaxTestCase):
       tracer_spy.append(x)
       return jnp.sin(jnp.sin(x))
 
-    if config.varying_axes_in_types.value:
-      expected_tracer_debug_infos = [
-          "traced_for=shard_map, fun=my_f, arg_names=x, from x"
-      ]
-    else:
-      expected_tracer_debug_infos = ["None"]
-
     self._check_tracers_and_jaxprs(
         jax.jit(jax.grad(lambda x: my_f(x).sum())),
         jnp.arange(2, dtype=np.float32),
@@ -1781,7 +1774,9 @@ class DebugInfoTest(jtu.JaxTestCase):
             "traced_for=shard_map, fun=my_f, arg_names=x, result_paths=result",
             "traced_for=shard_map, fun=my_f, arg_names=,, result_paths=",
         ],
-        expected_tracer_debug_infos=expected_tracer_debug_infos)
+        expected_tracer_debug_infos=[
+          "traced_for=shard_map, fun=my_f, arg_names=x, from x"
+        ])
 
   def test_remat_saved_residuals(self):
     @functools.partial(jax.remat,

@@ -190,18 +190,13 @@ def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
         raise e('shard_map out_specs') from None
       return tuple(map(_canonicalize_spec, out_specs_flat))
 
-    rewrite = check_rep
-    if rewrite:
-      if config.varying_axes_in_types.value:
-        fun = _implicit_pvary_on_output(fun, out_names_thunk)
-      else:
-        fun = _efficient_transpose_rewrite(fun, mesh, in_names_flat, out_names_thunk)
+    if check_rep:
+      fun = _implicit_pvary_on_output(fun, out_names_thunk)
 
     try:
       out_flat = shard_map_p.bind(
           fun, *args_flat, mesh=mesh, in_names=in_names_flat,
-          out_names_thunk=out_names_thunk, check_rep=check_rep, rewrite=rewrite,
-          auto=auto)
+          out_names_thunk=out_names_thunk, check_rep=check_rep, auto=auto)
     except _SpecError as e:
       fails, = e.args
       if not callable(out_specs):
@@ -521,7 +516,6 @@ def _shard_map_staging(
     in_names: tuple[AxisNames, ...],
     out_names_thunk: Callable[[], tuple[AxisNames, ...]],
     check_rep: bool,
-    rewrite: bool,
     auto: frozenset,
   ) -> Sequence[pe.DynamicJaxprTracer]:
   in_tracers = map(trace.to_jaxpr_tracer, in_tracers)
@@ -550,7 +544,7 @@ def _shard_map_staging(
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
   params = dict(mesh=mesh, in_names=in_names_staged,
                 out_names=tuple(out_names_thunk()), jaxpr=jaxpr,
-                check_rep=check_rep, rewrite=rewrite, auto=auto)
+                check_rep=check_rep, auto=auto)
   effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
   eqn = pe.new_jaxpr_eqn([*constvars, *invars], outvars, prim, params,
                          effs, source_info)
@@ -586,7 +580,7 @@ def _shard_shaped_array(mesh: Mesh, auto: frozenset, check_rep, names: AxisNames
   manual_mesh = _as_manual_mesh(mesh, auto)
   new_sharding = NamedSharding(manual_mesh, aval.sharding.spec)
   vma = (frozenset({n for ns in names.values() for n in ns})
-         if config.varying_axes_in_types.value and check_rep else frozenset())
+         if check_rep else frozenset())
   return aval.update(shape=new_shape, sharding=new_sharding, vma=vma)
 core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
 
@@ -618,7 +612,7 @@ def _unshard_shaped_array(mesh: Mesh, check_rep, names: AxisNames,
   new_sharding = NamedSharding(new_mesh, out_spec)
   manual_axes = set(new_mesh.manual_axes)
   vma = (frozenset(v for v in aval.vma if v in manual_axes)
-         if config.varying_axes_in_types.value and check_rep else frozenset())
+         if check_rep else frozenset())
   return aval.update(shape=new_shape, sharding=new_sharding, vma=vma)
 core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
 
@@ -627,7 +621,7 @@ core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
 RepType = Any
 
 def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_names, out_names,
-                         check_rep, rewrite, auto):
+                         check_rep, auto):
   # TODO(mattjj,parkers): check auto
   for v, x, in_name in zip(jaxpr.invars, in_atoms, in_names):
     if not core.typecompat(v.aval, _shard_aval(
@@ -637,11 +631,7 @@ def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_names, out_names,
   with _extend_axis_env(mesh, auto), config._check_rep(check_rep):
     core.check_jaxpr(jaxpr)
   if check_rep:
-    if config.varying_axes_in_types.value:
-      out_rep = [_vma_to_rep(mesh, auto, v.aval.vma) for v in jaxpr.outvars]
-    else:
-      in_rep = map(partial(_in_names_to_rep, mesh), in_names)
-      out_rep = _check_rep(mesh, jaxpr, in_rep)
+    out_rep = [_vma_to_rep(mesh, auto, v.aval.vma) for v in jaxpr.outvars]
     for rep, dst in zip(out_rep, out_names):
       if not _valid_repeats(mesh, auto, rep, dst):
         raise core.JaxprTypeError("shard_map can't prove output is "
@@ -760,7 +750,7 @@ def _shard_map_lowering_shardy(
 
 
 def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
-                        check_rep, rewrite, auto):
+                        check_rep, auto):
   if config.use_shardy_partitioner.value:
     return _shard_map_lowering_shardy(
         ctx, in_nodes, jaxpr, mesh, in_names, out_names, auto, check_rep)
@@ -866,7 +856,7 @@ def _vma_to_rep(mesh, auto, vma):
   return frozenset((set(mesh.axis_names) - auto) - vma)
 
 def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
-                    check_rep, rewrite, auto):
+                    check_rep, auto):
   if auto: raise NotImplementedError
   del prim
   if isinstance(mesh, AbstractMesh):
@@ -878,7 +868,7 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
   outs, out_rep = _run_shmap(fun, mesh, auto, args, in_rep, check_rep, cur_mesh)
   out_avals = [core.mapped_aval(x.shape[0], 0, core.get_aval(x)) for x in outs]
   _check_names(out_names_thunk(), out_avals)  # pytype: disable=wrong-arg-types
-  if check_rep and config.varying_axes_in_types.value:
+  if check_rep:
     _check_reps(mesh, auto, out_names_thunk(), out_rep)
     src_pspecs = tuple(_rep_to_spec(mesh, auto, r) for r in out_rep)
   else:
@@ -912,7 +902,7 @@ def _unmatch_spec(mesh: Mesh, check_rep, src: AxisNames, x: JaxType,
 
 def _unmatch(mesh, check_rep, src_tup, x):
   src = _names_to_pspec(dict(src_tup))
-  if check_rep and config.varying_axes_in_types.value:
+  if check_rep:
     used_axes = {i for _, ns in src_tup for i in ns}
     dst = P(tuple(i for i in mesh.axis_names if i in used_axes))
   else:
@@ -951,8 +941,6 @@ def _match_spec(mesh: Mesh, check_rep, src_pspec: PartitionSpec,
     return jax.jit(fn, out_shardings=NamedSharding(mesh, dst_pspec))(x)
 
 def _match(mesh, check_rep, src_pspec, dst_pspec, x):
-  if not config.varying_axes_in_types.value:
-    check_rep = False
   return shard_map(_rem_singleton, mesh, src_pspec, dst_pspec,
                    check_rep=check_rep)(x)
 
@@ -990,29 +978,24 @@ class ShardMapTrace(core.Trace):
       raise Exception(f"Shouldn't have any non-shard_map tracers: {val}")
     else:
       val_ = _unmatch_spec(self.mesh, self.check, {}, val, self.context_mesh)
-      if self.check and config.varying_axes_in_types.value:
+      if self.check:
         return val_, frozenset(self.mesh.axis_names) - self.auto
       else:
         return val_, None
 
   def process_primitive(self, prim, tracers, params):
     in_vals, in_rep = unzip2(map(self.to_val_rep_pair, tracers))
-    if config.varying_axes_in_types.value:
-      if self.check:
-        in_vma  = tuple(map(partial(_rep_to_vma, self.mesh, self.auto), in_rep))
-        out_avals, _ = prim.abstract_eval(*(typeof(t) for t in tracers), **params)
-        out_avals = tuple(out_avals) if type(out_avals) is list else out_avals
-        out_vma = tree_map(lambda a: a.vma, out_avals)
-        out_rep = tree_map(partial(_vma_to_rep, self.mesh, self.auto), out_vma)
-        in_specs  = tuple(map(partial(_vma_to_spec, self.mesh), in_vma))
-        out_specs = tree_map(partial(_vma_to_spec, self.mesh), out_vma)
-      else:
-        out_rep = frozenset()
-        in_specs = out_specs = P(self.mesh.axis_names)
+    if self.check:
+      in_vma  = tuple(map(partial(_rep_to_vma, self.mesh, self.auto), in_rep))
+      out_avals, _ = prim.abstract_eval(*(typeof(t) for t in tracers), **params)
+      out_avals = tuple(out_avals) if type(out_avals) is list else out_avals
+      out_vma = tree_map(lambda a: a.vma, out_avals)
+      out_rep = tree_map(partial(_vma_to_rep, self.mesh, self.auto), out_vma)
+      in_specs  = tuple(map(partial(_vma_to_spec, self.mesh), in_vma))
+      out_specs = tree_map(partial(_vma_to_spec, self.mesh), out_vma)
     else:
+      out_rep = frozenset()
       in_specs = out_specs = P(self.mesh.axis_names)
-      rep_rule = _check_rules.get(prim, partial(_rule_missing, prim))
-      out_rep = rep_rule(self.mesh, *in_rep, **params) if self.check else set()
 
     eager_rule = eager_rules.get(prim)
     if eager_rule:
@@ -1083,9 +1066,8 @@ class ShardMapTracer(core.Tracer):
         _as_manual_mesh(self._trace.mesh, self._trace.auto),
         out.sharding.spec)  # pytype: disable=attribute-error
     manual_axes = set(self._trace.mesh.axis_names) - self._trace.auto
-    vma = (frozenset(manual_axes - self.rep)
-           if config.varying_axes_in_types.value and config._check_rep.value
-           else frozenset())
+    vma = (frozenset(manual_axes - self.rep) if config._check_rep.value else
+           frozenset())
     return out.update(sharding=new_sharding, vma=vma)
 
   def to_concrete_value(self):
@@ -1113,8 +1095,6 @@ def _prim_applier(prim, check_rep, params_tup, mesh, in_specs, out_specs, *args)
     outs = prim.bind(*map(_rem_singleton, args), **dict(params_tup))
     return tree_map(_add_singleton, outs)
   out_specs = list(out_specs) if type(out_specs) is tuple else out_specs
-  if not config.varying_axes_in_types.value:
-    check_rep = False
   return shard_map(apply, mesh, in_specs, out_specs, check_rep=check_rep)(*args)
 
 eager_rules: dict[core.Primitive, Callable] = {}
@@ -1578,7 +1558,6 @@ def _shard_map_batch(
     in_names: tuple[AxisNames, ...],
     out_names_thunk: Callable[[], tuple[AxisNames, ...]],
     check_rep: bool,
-    rewrite: bool,
     auto: frozenset) -> Sequence[batching.BatchTracer]:
   in_vals, in_dims = unzip2(map(trace.to_batch_info, in_tracers))
   if any(isinstance(d, batching.RaggedAxis) for d in in_dims):
@@ -1604,7 +1583,7 @@ def _shard_map_batch(
 
   new_params = dict(mesh=mesh, in_names=new_in_names,
                     out_names_thunk=new_out_names_thunk, check_rep=check_rep,
-                    rewrite=rewrite, auto=auto)
+                    auto=auto)
   with core.set_current_trace(trace.parent_trace):
     out_vals = prim.bind(fun, *in_vals, **new_params)
   make_tracer = partial(batching.BatchTracer, trace,
@@ -1627,7 +1606,7 @@ def _batch_out_names(spmd_axis_name, dims, out_names):
 # Autodiff
 
 def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_names,
-                   out_names_thunk, check_rep, rewrite, auto):
+                   out_names_thunk, check_rep, auto):
   primals, tangents = unzip2(map(trace.to_primal_tangent_pair, tracers))
   which_nz = [     type(t) is not ad.Zero           for t in tangents]
   tangents = [t if type(t) is not ad.Zero else None for t in tangents]
@@ -1642,7 +1621,7 @@ def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_names,
     return (*out_ax, *(ax for ax, nz in zip(out_ax, which_nz_out()) if nz))
   params = dict(mesh=mesh, in_names=(*in_names, *tangent_in_names),
                 out_names_thunk=new_out_names_thunk, check_rep=check_rep,
-                rewrite=rewrite, auto=auto)
+                auto=auto)
   f_jvp, out_tree = ad.traceable(f_jvp, in_tree)
   result = shard_map_p.bind_with_trace(trace.parent_trace, (f_jvp,) + tuple(args), params)
   primal_out, tangent_out = tree_unflatten(out_tree(), result)
@@ -1653,7 +1632,7 @@ ad.JVPTrace.process_shard_map = _shard_map_jvp
 
 def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
                             f: lu.WrappedFun, tracers, mesh, in_names,
-                            out_names_thunk, check_rep, rewrite, auto):
+                            out_names_thunk, check_rep, auto):
   tracers = map(trace.to_jaxpr_tracer, tracers)
   in_pvals = [t.pval for t in tracers]
   in_knowns, in_avals, in_consts = pe.partition_pvals(in_pvals)
@@ -1670,7 +1649,7 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
   def known_out_names():
     _, _, out_knowns, res_avals, _, _ = aux()
     _, out_known_names = pe.partition_list(out_knowns, out_names_thunk())
-    if check_rep and config.varying_axes_in_types.value:
+    if check_rep:
       res_names = [{0: tuple(i for i in mesh.axis_names if i in a.vma)}
                   for a in res_avals]
     else:
@@ -1679,7 +1658,7 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
 
   known_params = dict(mesh=mesh, in_names=(*known_in_names,),
                       out_names_thunk=known_out_names, check_rep=check_rep,
-                      rewrite=rewrite, auto=auto)
+                      auto=auto)
   out = shard_map_p.bind_with_trace(trace.parent_trace, (f_known, *in_consts),
                                     known_params)
   in_fwd, out_fwd, out_knowns, res_avals, jaxpr, env = aux()
@@ -1698,7 +1677,7 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
     elif f2 is not None:
       res_names.append(known_out_names_[f2])
     else:
-      if check_rep and config.varying_axes_in_types.value:
+      if check_rep:
         res_vma = next(res_avals_iter).vma
         res_names.append({0: tuple(n for n in mesh.axis_names if n in res_vma)})
       else:
@@ -1710,9 +1689,7 @@ def _shard_map_partial_eval(trace: pe.JaxprTrace, shard_map_p,
   out_avals_sharded = [v.aval for v in jaxpr.outvars]
   unk_params = dict(mesh=mesh, in_names=unk_in_names,
                     out_names=unk_out_names, jaxpr=jaxpr,
-                    check_rep=(check_rep if config.varying_axes_in_types.value
-                               else False),
-                    rewrite=rewrite, auto=auto)
+                    check_rep=check_rep, auto=auto)
   out_avals = map(partial(_unshard_aval, mesh, check_rep), unk_out_names,
                   out_avals_sharded)
   out_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(a), None)
@@ -1727,7 +1704,7 @@ pe.JaxprTrace.process_shard_map = _shard_map_partial_eval
 
 def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
                          tracers, mesh, in_names,
-                         out_names_thunk, check_rep, rewrite, auto):
+                         out_names_thunk, check_rep, auto):
   primals, tangents = unzip2(map(trace.to_primal_tangent_pair, tracers))
   nzs_in = tuple(type(t) is not ad.Zero for t in tangents)
   f_primal, linearize_outs_thunk = ad.linearize_subtrace(f, trace.tag, nzs_in, f.debug_info)
@@ -1738,7 +1715,7 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
   def fwd_out_names_thunk():
     res_avals, _, _, _, _, _ = linearize_outs_thunk()
     out_names = out_names_thunk()
-    if check_rep and config.varying_axes_in_types.value:
+    if check_rep:
       res_names = [{0: tuple(i for i in mesh.axis_names if i in a.vma)}
                    for a in res_avals]
     else:
@@ -1746,8 +1723,7 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
     return (*res_names, *out_names)
   fwd_params = dict(
       mesh=mesh, in_names=in_names,
-      out_names_thunk=fwd_out_names_thunk, check_rep=check_rep,
-      rewrite=rewrite, auto=auto)
+      out_names_thunk=fwd_out_names_thunk, check_rep=check_rep, auto=auto)
   all_fwd_results = shard_map_p.bind_with_trace(
       trace.parent_trace, (f_primal, *primals), fwd_params)
   res_avals, nzs_out, lin_jaxpr, env, in_fwd, out_fwd = linearize_outs_thunk()
@@ -1770,7 +1746,7 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
     elif f2 is not None:
       res_names.append(out_names[f2])
     else:
-      if check_rep and config.varying_axes_in_types.value:
+      if check_rep:
         res_vma = next(res_avals_iter).vma
         res_names.append({0: tuple(n for n in mesh.axis_names if n in res_vma)})
       else:
@@ -1783,8 +1759,7 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
     return tangent_out_names
   tangent_params = dict(
       mesh=mesh, in_names=new_in_names, out_names_thunk=tangent_out_names_thunk,
-      check_rep=(check_rep if config.varying_axes_in_types.value else False),
-      rewrite=rewrite, auto=auto)
+      check_rep=check_rep, auto=auto)
 
   # TODO(mattjj): avoid round-tripping the jaxpr through eval_jaxpr here
   def f_tangent(*args):
@@ -1846,11 +1821,11 @@ def _unmentioned2(mesh: Mesh, names: AxisNames,
 
 def _shard_map_transpose(out_cts, *args,
                          jaxpr: core.Jaxpr, mesh, in_names, out_names,
-                         check_rep, rewrite, auto):
+                         check_rep, auto):
   mb_div = lambda x, y: x / y if y != 1 else x
   out_cts = [
       ad.Zero(_shard_aval(mesh, auto, check_rep, ns, x.aval))
-      if type(x) is ad.Zero else x if rewrite or dtypes.dtype(x) == dtypes.float0
+      if type(x) is ad.Zero else x if check_rep or dtypes.dtype(x) == dtypes.float0
       else mb_div(x, prod(map(mesh.shape.get, _unmentioned2(mesh, ns, auto))))
       for ns, x in zip(out_names, out_cts)
   ]
@@ -1871,7 +1846,7 @@ def _shard_map_transpose(out_cts, *args,
     )[len(res_reshaped):]
     _, in_ct_names = partition_list(in_undef, in_names)
     in_cts = [ad.Zero(_unshard_aval(mesh, check_rep, ns, x.aval))
-              if type(x) is ad.Zero else x if rewrite
+              if type(x) is ad.Zero else x if check_rep
               else jax.lax.psum(x, tuple(_unmentioned2(mesh, ns, auto)))
               for ns, x in zip(in_ct_names, in_cts)]
     res_zeros = [ad_util.zero_from_primal(r) for r in res]
@@ -1891,7 +1866,7 @@ def _shard_map_transpose(out_cts, *args,
   try:
     out_flat = shard_map_p.bind(
         fun_trans_flat, *all_args, mesh=mesh, in_names=tuple(new_in_names),
-        out_names_thunk=new_out_names_thunk, check_rep=check_rep, rewrite=rewrite,
+        out_names_thunk=new_out_names_thunk, check_rep=check_rep,
         auto=auto)
   except (FloatingPointError, ZeroDivisionError) as e:
     print("Invalid nan value encountered in the backward pass of a shard_map "
@@ -1903,7 +1878,7 @@ def _shard_map_transpose(out_cts, *args,
         _ = shard_map_p.bind(
             fun_trans_flat, *all_args, mesh=mesh, in_names=tuple(new_in_names),
             out_names_thunk=new_out_names_thunk, check_rep=check_rep,
-            rewrite=rewrite, auto=auto)
+            auto=auto)
     except (FloatingPointError, ZeroDivisionError) as e2:
       raise e2 from None
     else:
@@ -1946,11 +1921,10 @@ def _partial_eval_jaxpr_custom_rule(
   for var, w in zip(jaxpr_staged.invars[:num_res], which):
     if w:
       rn = ({0: tuple(i for i in mesh.axis_names if i in var.aval.vma)}  # type: ignore
-            if check_rep and config.varying_axes_in_types.value
-            else {0: _all_newly_manual_mesh_names(mesh, auto)})
+            if check_rep else {0: _all_newly_manual_mesh_names(mesh, auto)})
       residuals.append(newvar(_unshard_aval(mesh, check_rep, rn, var.aval)))
       staged_in_res_names.append(rn)
-  if check_rep and config.varying_axes_in_types.value:
+  if check_rep:
     out_res_names_known = [
         {0: tuple(i for i in mesh.axis_names if i in var.aval.vma)}
         for var, o in zip(res_vars, out_fwd) if o is None
@@ -2028,8 +2002,6 @@ def _pe_custom_params(unks_in, inst_in, kept_outs_known, kept_outs_staged,
   _, out_names_staged = partition_list(kept_outs_staged, params_staged['out_names'])
   new_params_staged = dict(params_staged, in_names=tuple(in_names_staged),
                            out_names=tuple(out_names_staged))
-  if not config.varying_axes_in_types.value:
-    new_params_staged.update(check_rep=False)
   return new_params_known, new_params_staged
 
 # TODO(mattjj): remove this mechanism when we revise mesh scopes

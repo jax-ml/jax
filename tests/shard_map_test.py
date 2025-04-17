@@ -1665,7 +1665,6 @@ class ShardMapTest(jtu.JaxTestCase):
     dx, dy = example(x, y)
     self.assertEqual(dy.dtype, jax.dtypes.float0)
 
-  @config.varying_axes_in_types(True)
   def test_pvary(self):
     mesh = jtu.create_mesh((4,), ('x',))
 
@@ -2738,7 +2737,6 @@ class ShardMapTest(jtu.JaxTestCase):
                   mesh=mesh, in_specs=P('i'), out_specs=P())(x)  # don't crash
     self.assertArraysEqual(y, np.array([6, 7], dtype=np.float32))
 
-  @config.varying_axes_in_types(True)
   def test_pmax_vma_in_types(self):
     mesh = jtu.create_mesh((4,), ('i',))
     x = jnp.arange(8., dtype=np.float32)
@@ -2748,7 +2746,6 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertIn("pvary[axes=('i',)", str(jaxpr))
     f(x)  # doesn't crash
 
-  @config.varying_axes_in_types(True)
   def test_mul_with_vma_in_types(self):
     mesh = jtu.create_mesh((2,), ('x',))
     x = np.arange(8.)
@@ -2770,7 +2767,6 @@ class ShardMapTest(jtu.JaxTestCase):
     #   return jnp.sum(f(x, y))
     # print(jax.jit(jax.grad(g)).trace(x, y).jaxpr)
 
-  @config.varying_axes_in_types(True)
   def test_all_gather_with_vma_in_types(self):
     mesh = jtu.create_mesh((2,), ('x',))
     x = np.arange(8.)

@@ -2006,8 +2006,6 @@ pvary_p.multiple_results = True
 pvary_p.def_impl(lambda *args, axes, axis_index_groups: args)
 
 def _pvary_abstract_eval(*args, axes, axis_index_groups):
-  if not config.varying_axes_in_types.value:
-    return args
   if not config._check_rep.value:
     return args
   assert isinstance(axes, tuple)
@@ -2027,8 +2025,6 @@ pvary_p.def_abstract_eval(_pvary_abstract_eval)
 
 
 def standard_insert_pvary(*args):
-  if not config.varying_axes_in_types.value:
-    return args
   if not config._check_rep.value:
     return args
   if not args:
@@ -2040,8 +2036,6 @@ def standard_insert_pvary(*args):
           if out_vma - src else arg for arg, src in zip(args, in_vma)]
 
 def standard_vma_rule(prim_name, *avals, **kwargs) -> frozenset[AxisName]:
-  if not config.varying_axes_in_types.value:
-    return frozenset()
   if not config._check_rep.value:
     return frozenset()
   avals = tuple(a for a in avals if a is not abstract_token)
