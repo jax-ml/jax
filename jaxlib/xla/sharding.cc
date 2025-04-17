@@ -167,8 +167,6 @@ bool ShardingEqual(nb::handle a, nb::handle b) {
            a_named_sharding->spec().equal(b_named_sharding->spec()) &&
            a_named_sharding->memory_kind().equal(
                b_named_sharding->memory_kind()) &&
-           a_named_sharding->manual_axes().equal(
-               b_named_sharding->manual_axes()) &&
            a_named_sharding->logical_device_ids().equal(
                b_named_sharding->logical_device_ids());
   }
@@ -204,7 +202,7 @@ static const std::array<absl::string_view, 3> valid_memory_kinds = {
 };
 
 NamedSharding::NamedSharding(nb::object mesh, nb::object spec,
-                             nb::object memory_kind, nb::object manual_axes,
+                             nb::object memory_kind,
                              nb::object logical_device_ids)
     : Sharding(/*num_devices=*/[&mesh]() {
         return nb::cast<int>(mesh.attr("size"));
@@ -212,7 +210,6 @@ NamedSharding::NamedSharding(nb::object mesh, nb::object spec,
       mesh_(std::move(mesh)),
       spec_(std::move(spec)),
       memory_kind_(std::move(memory_kind)),
-      manual_axes_(std::move(manual_axes)),
       logical_device_ids_(std::move(logical_device_ids)) {
   if (spec_.is_none()) {
     throw nb::type_error(
@@ -261,7 +258,7 @@ NamedSharding::NamedSharding(nb::object mesh, nb::object spec,
     }
     return output;
   }();
-  (*check_pspec)(mesh_, spec_, manual_axes_);
+  (*check_pspec)(mesh_, spec_);
 }
 
 /*static*/ PyObject* NamedSharding::type_ = nullptr;
@@ -352,16 +349,13 @@ void RegisterSharding(nb::module_& m) {
   nb::class_<Sharding>(m, "Sharding").def(nb::init<>());
 
   nb::class_<NamedSharding, Sharding>(m, "NamedSharding", nb::dynamic_attr())
-      .def(nb::init<nb::object, nb::object, nb::object, nb::object,
-                    nb::object>(),
+      .def(nb::init<nb::object, nb::object, nb::object, nb::object>(),
            nb::arg("mesh"), nb::arg("spec").none(),
            nb::arg("memory_kind").none() = nb::none(),
-           nb::arg("_manual_axes") = nb::steal(PyFrozenSet_New(nullptr)),
            nb::arg("_logical_device_ids").none() = nb::none())
       .def_prop_ro("mesh", &NamedSharding::mesh)
       .def_prop_ro("spec", &NamedSharding::spec)
       .def_prop_ro("_memory_kind", &NamedSharding::memory_kind)
-      .def_prop_ro("_manual_axes", &NamedSharding::manual_axes)
       .def_prop_ro("_logical_device_ids", &NamedSharding::logical_device_ids)
       .def_prop_ro("_internal_device_list", [](const NamedSharding& s) {
         return xla::ValueOrThrow(s.internal_device_list());

@@ -75,13 +75,12 @@ bool ShardingEqual(nanobind::handle a, nanobind::handle b);
 class NamedSharding : public Sharding {
  public:
   NamedSharding(nanobind::object mesh, nanobind::object spec,
-                nanobind::object memory_kind, nanobind::object manual_axes,
+                nanobind::object memory_kind,
                 nanobind::object logical_device_ids);
 
   const nanobind::object& mesh() const { return mesh_; }
   const nanobind::object& spec() const { return spec_; }
   const nanobind::object& memory_kind() const { return memory_kind_; }
-  const nanobind::object& manual_axes() const { return manual_axes_; }
   const nanobind::object& logical_device_ids() const {
     return logical_device_ids_;
   }
@@ -102,7 +101,6 @@ class NamedSharding : public Sharding {
   nanobind::object mesh_;
   nanobind::object spec_;
   nanobind::object memory_kind_;
-  nanobind::object manual_axes_;
   nanobind::object logical_device_ids_;
   std::optional<xla::nb_class_ptr<PyDeviceList>> internal_device_list_;
   static PyObject* type_;

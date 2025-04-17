@@ -609,6 +609,7 @@ pytype_strict_library(
         ":dtypes",
         ":effects",
         ":layout",
+        ":mesh",
         ":op_shardings",
         ":partial_eval",
         ":partition_spec",

@@ -2234,17 +2234,12 @@ class ShardMapTest(jtu.JaxTestCase):
       return x * x
 
     def h(x):
-      return shard_map(g, mesh,
-                    in_specs=P(None, 'j'),
-                    out_specs=P(None, 'j'))(x)
+      return shard_map(g, mesh, in_specs=P(None, 'j'), out_specs=P(None, 'j'))(x)
 
     @jax.jit
     def f(x):
-      return shard_map(h, mesh,
-                    in_specs=P('i', None),
-                    out_specs=P('i', None),
-                    check_rep=False,
-                    auto=frozenset({'j'}))(x)
+      return shard_map(h, mesh, in_specs=P('i', None), out_specs=P('i', None),
+                       check_rep=False, auto=frozenset({'j'}))(x)
 
     v = jnp.arange(32.).reshape(4, 8)
     v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
