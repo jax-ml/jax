@@ -32,7 +32,6 @@ from jax._src import sharding_impls
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge as xb
-from jax._src.lib import jaxlib_extension_version
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -788,9 +787,6 @@ def emit_python_callback(
     if platform not in {"cpu", "cuda", "rocm"}:
       raise ValueError(
           f"Partitioned callback not supported on {platform} backend.")
-    if jaxlib_extension_version < 329:
-      raise ValueError(
-          "Partitioned callback not supported on jaxlib version < 329.")
     if result_avals:
       raise ValueError("Partitioned callback not supported with return values.")
   backend = ctx.module_context.get_backend()
@@ -855,98 +851,48 @@ def emit_python_callback(
         for result_aval in result_avals]
     return outputs, token, None
 
-  # TODO(dsuo): Remove this once we bump minimum_jaxlib_version to "0.5.4".
-  if jaxlib_extension_version <= 320:
-    result_types = mlir.flatten_ir_types([mlir.aval_to_ir_type(aval) for aval in result_avals])
-    if token:
-
-      callback_without_token = _wrapped_callback
-      def _wrapped_callback(token, *args):  # type: ignore  # pylint: disable=function-redefined
-        return (token, *callback_without_token(*args))
-
-      operand_shapes = [
-          _aval_to_xla_shape(core.abstract_token), *operand_shapes
-      ]
-      result_shapes = [
-          _aval_to_xla_shape(core.abstract_token), *result_shapes
-      ]
-      operands = [token, *operands]
-      result_types = [mlir.token_type(), *result_types]
-      operand_mlir_layouts = [_layout_to_mlir_layout(None), *operand_mlir_layouts]
-      result_mlir_layouts = [_layout_to_mlir_layout(None), *result_mlir_layouts]
-    callback_descriptor, ifrt_callback = (
-        backend.get_emit_python_callback_descriptor(_wrapped_callback,
-                                                    operand_shapes,
-                                                    result_shapes))
-    ctx.module_context.add_host_callback(ifrt_callback)
-    descriptor_operand = mlir.ir_constant(callback_descriptor)
-    callback_operands = [descriptor_operand, *operands]
-    if operand_mlir_layouts is not None:
-      operand_mlir_layouts = [_layout_to_mlir_layout([]), *operand_mlir_layouts]
-    result_type = ir.TupleType.get_tuple(result_types)
-    call_target_name = ("xla_python_gpu_callback"
-                      if platform in {"cuda", "rocm"} else "xla_python_cpu_callback")
-    result = hlo.CustomCallOp(
-        [result_type],
-        callback_operands,
-        call_target_name=ir.StringAttr.get(call_target_name),
-        has_side_effect=ir.BoolAttr.get(has_side_effect),
-        api_version=mlir.i32_attr(2),
-        called_computations=ir.ArrayAttr.get([]),
-        backend_config=ir.StringAttr.get(str(callback_descriptor)),
-        operand_layouts=(
-          None if operand_mlir_layouts is None
-          else ir.ArrayAttr.get(operand_mlir_layouts)),
-        result_layouts=(
-          None if result_mlir_layouts is None
-          else ir.ArrayAttr.get(result_mlir_layouts)))
-    if sharding is not None:
-      mlir.set_sharding(result, sharding)
-    results = [
-        hlo.get_tuple_element(result, mlir.i32_attr(i))
-        for i in range(len(result_types))
-    ]
-  else:
-    device = "gpu" if platform in {"cuda", "rocm"} else "cpu"
-    partition = "_partitioned" if partitioned else ""
-    call_target_name = f"xla_ffi{partition}_python_{device}_callback"
-    if token:
-      callback_without_token = _wrapped_callback
-      def _wrapped_callback(token, *args):  # type: ignore  # pylint: disable=function-redefined
-        return (token, *callback_without_token(*args))
-      operands = [token, *operands]
-      if (
-          config.use_shardy_partitioner.value
-          and sharding is not None
-          and len(ctx.avals_out) > 0
-          and isinstance(sharding, sharding_impls.SdyArrayShardingList)
-      ):
-        # Add a sharding annotation for the token if we have at least one
-        # output. Otherwise, the single shardy annotation required of all ops
-        # (even those without any results) can annotate the token.
-        sharding = sharding_impls.SdyArrayShardingList(
-            [*sharding.shardings, sharding.shardings[-1]]
-        )
-      ctx = dataclasses.replace(
-          ctx,
-          avals_in=[core.abstract_token, *ctx.avals_in],
-          avals_out=[core.abstract_token, *ctx.avals_out],
-      )
-
-    # TODO(dsuo): Remove this line once we deprecate the XLA custom call
-    # handler.
-    ifrt_callback = _wrapped_callback
-    ctx.module_context.add_host_callback(ifrt_callback)
-    index = np.uint64(len(ctx.module_context.host_callbacks) - 1)
-    result = ffi.build_ffi_lowering_function(  # type: ignore
-        call_target_name,
-        has_side_effect=has_side_effect,
-    )(ctx, *operands, index=np.uint64(index))
-
-    if sharding is not None:
-      mlir.set_sharding(result, sharding)
-
-    results = result.results  # type: ignore
+  device = "gpu" if platform in {"cuda", "rocm"} else "cpu"
+  partition = "_partitioned" if partitioned else ""
+  call_target_name = f"xla_ffi{partition}_python_{device}_callback"
   if token:
-    token, *results = results
-  return results, token, ifrt_callback
+    callback_without_token = _wrapped_callback
+    def _wrapped_callback(token, *args):  # type: ignore  # pylint: disable=function-redefined
+      return (token, *callback_without_token(*args))
+    operands = [token, *operands]
+    if (
+        config.use_shardy_partitioner.value
+        and sharding is not None
+        and len(ctx.avals_out) > 0
+        and isinstance(sharding, sharding_impls.SdyArrayShardingList)
+    ):
+      # Add a sharding annotation for the token if we have at least one
+      # output. Otherwise, the single shardy annotation required of all ops
+      # (even those without any results) can annotate the token.
+      sharding = sharding_impls.SdyArrayShardingList(
+          [*sharding.shardings, sharding.shardings[-1]]
+      )
+    ctx = dataclasses.replace(
+        ctx,
+        avals_in=[core.abstract_token, *ctx.avals_in],
+        avals_out=[core.abstract_token, *ctx.avals_out],
+    )
+
+  # TODO(dsuo): Remove this line once we deprecate the XLA custom call
+  # handler.
+  ifrt_callback = _wrapped_callback
+  ctx.module_context.add_host_callback(ifrt_callback)
+  index = np.uint64(len(ctx.module_context.host_callbacks) - 1)
+  result = ffi.build_ffi_lowering_function(  # type: ignore
+      call_target_name,
+      has_side_effect=has_side_effect,
+  )(ctx, *operands, index=np.uint64(index))
+
+  if sharding is not None:
+    mlir.set_sharding(result, sharding)
+
+  results = result.results  # type: ignore
+
+  if token:
+    token, *results = results  # type: ignore
+
+  return results, token, ifrt_callback  # type: ignore

@@ -44,7 +44,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
 from jax._src.layout import DeviceLocalLayout, Layout
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.monitoring import record_event_duration_secs, record_event_time_span
@@ -496,7 +495,7 @@ def _device_put_sharding_impl(x, aval, device, copy):
         return _DeferredShardArg(x, x.sharding, aval, x.committed, copy)
     elif is_single_device_sharding(x.sharding):
       device = x.sharding._device_assignment[0] if device is None else device
-      if copy == CopySemantics.COPY and jaxlib_extension_version >= 327:
+      if copy == CopySemantics.COPY:
         return xc.batched_device_put(aval, SingleDeviceSharding(device), [x],
                                      [device], True, True)
       return pxla.batched_device_put(aval, SingleDeviceSharding(device), [x],

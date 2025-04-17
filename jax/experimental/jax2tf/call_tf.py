@@ -40,9 +40,7 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import effects
 from jax._src import util
-from jax._src.lib import xla_client
 from jax._src.lib import xla_extension as _xla
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir.dialects import hlo
@@ -598,11 +596,7 @@ def _call_tf_lowering(
              "\n\nCaught TensorFlow exception: " + str(e))
       raise ValueError(msg) from e
 
-  if jaxlib_extension_version >= 324:
-    stablehlo = _xla.mlir.hlo_to_stablehlo(func_tf_hlo)
-  else:
-    xla_comp = xla_client.XlaComputation(func_tf_hlo)
-    stablehlo = _xla.mlir.xla_computation_to_mlir_module(xla_comp)
+  stablehlo = _xla.mlir.hlo_to_stablehlo(func_tf_hlo)
   submodule = ir.Module.parse(stablehlo)
   symtab = ir.SymbolTable(submodule.operation)
   callee_result_types = symtab["main"].type.results

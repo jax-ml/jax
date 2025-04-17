@@ -57,7 +57,6 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
-from jax._src.lib import jaxlib_extension_version
 from jax._src.layout import DeviceLocalLayout, AutoLayout, Layout
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
@@ -1315,10 +1314,7 @@ class ExecuteReplicated:
       out_ = []
       for i, o in zip(self.mut.out_mut, out):
         if i is not None:
-          if jaxlib_extension_version < 330:
-            args[i]._buf = o
-          else:
-            args[i]._buf._replace_with(o)
+          args[i]._buf._replace_with(o)
         else:
           out_.append(o)
       return out_
