@@ -7021,6 +7021,26 @@ class ShardingInTypesTest(jtu.JaxTestCase):
         "PartitionSpec passed to einsum cannot contain axis names.*Auto.*Manual"):
       f(arr, arr2)
 
+  def test_broadcasted_iota_mix_axes(self):
+    mesh = jtu.create_mesh(
+        (2, 2, 2), ('x', 'y', 'z'),
+        axis_types=(AxisType.Auto, AxisType.Explicit, AxisType.Explicit))
+    yz_sharding = NamedSharding(mesh, P(('y', 'z')))
+
+    @jax.jit
+    def iota():
+      out = jax.lax.broadcasted_iota(
+          dtype=jnp.int32,
+          shape=(16, 24),
+          dimension=1,
+          out_sharding=yz_sharding)
+      self.assertEqual(out.aval.sharding.spec, P(('y', 'z'), None))
+      return out
+
+    with jax.sharding.use_mesh(mesh):
+      out = iota()
+      self.assertEqual(out.sharding, yz_sharding)
+
   @jtu.with_user_mesh((2,), ('x',))
   def test_cumsum(self, mesh):
     np_inp = np.arange(16).reshape(8, 2)
