@@ -472,4 +472,5 @@ def sdy_sharding_rule_to_mlir(
   return sdy.OpShardingRuleAttr.get(
       factor_sizes=[item[1] for item in factors_to_indices_sizes.values()],
       operand_mappings=tensor_mappings[0:len(operand_types)],
-      result_mappings=tensor_mappings[len(operand_types):])
+      result_mappings=tensor_mappings[len(operand_types):],
+      is_custom=True)
