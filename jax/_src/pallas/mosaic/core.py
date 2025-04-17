@@ -59,6 +59,12 @@ _ENABLE_RUNTIME_ASSERT = config.bool_state(
 )
 
 
+class KernelType(enum.Enum):
+  TC = 0
+  SC_SCALAR_SUBCORE = 1
+  SC_VECTOR_SUBCORE = 2
+
+
 @dataclasses.dataclass(frozen=True)
 class TPUCompilerParams(pallas_core.CompilerParams):
   """Mosaic TPU compiler parameters.
@@ -79,7 +85,6 @@ class TPUCompilerParams(pallas_core.CompilerParams):
       Mosaic.
     flags: A dictionary of command line flags for the kernel.
     serialization_format: The serialization format for the kernel body.
-    device_type: The device type to compile for.
     disable_bounds_checks: Disable bounds checks in the kernel.
   """
   PLATFORM: ClassVar[str] = "mosaic"
@@ -93,7 +98,7 @@ class TPUCompilerParams(pallas_core.CompilerParams):
   flags: dict[str, Any] | None = None
   internal_scratch_in_bytes: int | None = None
   serialization_format: int = 1
-  device_type: str | None = None
+  kernel_type: KernelType = KernelType.TC
   disable_bounds_checks: bool = False
 
   # Replace is a method, not a field.

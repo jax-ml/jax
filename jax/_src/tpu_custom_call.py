@@ -566,7 +566,6 @@ def _lower_to_custom_call_config(
     module: ir.Module,
     *,
     backend: str,
-    device_type: str | None,
     vmem_limit_bytes: int | None,
     cost_estimate: CostEstimate | None,
     flags: dict[str, bool | int | float] | None,
@@ -579,6 +578,7 @@ def _lower_to_custom_call_config(
     ir_version: int | None = None,
     disable_bounds_checks: bool = False,
 ) -> CustomCallBackendConfig:
+  device_type = _get_device_type(module)
   lowered_module_asm, (
       has_communication,
       has_custom_barrier,
@@ -679,7 +679,6 @@ def lower_module_to_custom_call(
     has_side_effects: bool,
     serialization_format: int | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None,
-    device_type: str | None,
     disable_bounds_checks: bool = False,
 ) -> Sequence[ir.Value]:
   config = _lower_to_custom_call_config(
@@ -691,7 +690,6 @@ def lower_module_to_custom_call(
       allow_input_fusion=allow_input_fusion,
       internal_scratch_in_bytes=internal_scratch_in_bytes,
       collective_id=collective_id,
-      device_type=device_type,
       serialization_format=serialization_format,
       output_memory_spaces=output_memory_spaces,
       kernel_name=kernel_name,
@@ -728,11 +726,9 @@ def as_tpu_kernel(
     disable_bounds_checks: bool = False,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
-  device_type = _get_device_type(module)
   config = _lower_to_custom_call_config(
       module,
       backend=backend,
-      device_type=device_type,
       vmem_limit_bytes=vmem_limit_bytes,
       cost_estimate=cost_estimate,
       flags=flags,
@@ -761,7 +757,6 @@ def lowered_as_tpu_kernel(
     cost_estimate: CostEstimate | None = None,
     needs_hlo_passes: bool = False,
     needs_layout_passes: bool = False,
-    device_type: str | None = None,
     has_communication: bool = False,
     has_side_effects: bool = False,
     has_custom_barrier: bool = False,
@@ -774,6 +769,7 @@ def lowered_as_tpu_kernel(
     internal_scratch_in_bytes: int | None = None,
     disable_bounds_checks: bool = False,
 ) -> Callable[..., Any]:
+  device_type = _get_device_type(lowered_module)
   lowered_module_asm = lowered_module.operation.get_asm(
       binary=True, enable_debug_info=True
   )
