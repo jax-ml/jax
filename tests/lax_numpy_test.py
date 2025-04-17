@@ -6326,8 +6326,17 @@ class NumpyGradTests(jtu.JaxTestCase):
   )
   def testGradLdexp(self, n, dtype):
     rng = jtu.rand_default(self.rng())
-    x = rng((), dtype)
+    x = rng((10,), dtype)
     check_grads(lambda x: jnp.ldexp(x, n), (x,), 1)
+
+  @jtu.sample_product(
+    n=range(-4, 5),
+    dtype=[jnp.float32, jnp.float64],
+  )
+  def testGradFrexp(self, n, dtype):
+    rng = jtu.rand_default(self.rng())
+    x = rng((10,), dtype) * 2 ** n
+    check_grads(lambda x: jnp.frexp(x)[0], (x,), 1)
 
 
 class NumpySignaturesTest(jtu.JaxTestCase):
