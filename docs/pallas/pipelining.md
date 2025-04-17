@@ -42,7 +42,7 @@ It's reasonable to expect the latency to access SRAM to be on the order of 10x l
 
 
 <!-- d1eabbb4e925d283 -->
-![memory_hierarchy](../../_static/pallas/pipelining_mem_hierarchy.svg)
+![memory_hierarchy](../_static/pallas/pipelining_mem_hierarchy.svg)
 
 
 <!-- #endregion -->
@@ -125,7 +125,7 @@ Note that there is a data-dependence between steps 1-3, and we cannot trivially 
 
 <!-- #region id="8vCtShhBjzTd" -->
 
-![pipelining_example](../../_static/pallas/pipelining_example.svg)
+![pipelining_example](../_static/pallas/pipelining_example.svg)
 
 <!-- #endregion -->
 
@@ -565,7 +565,7 @@ In a **compute-bound** regime, a pipeline running $N$ iterations would take $(\a
 
 <!-- #region id="NDY4mcae_nMO" -->
 
-![pipelining_compute](../../_static/pallas/pipelining_compute_bound.svg)
+![pipelining_compute](../_static/pallas/pipelining_compute_bound.svg)
 
 <!-- #endregion -->
 
@@ -575,7 +575,7 @@ In a **memory-bound** regime it is useful to identify if the problem is the late
 
 <!-- #region id="gqcCDsGg_sca" -->
 
-![pipelining_bandwidth](../../_static/pallas/pipelining_bandwidth_bound.svg)
+![pipelining_bandwidth](../_static/pallas/pipelining_bandwidth_bound.svg)
 
 <!-- #endregion -->
 
@@ -586,7 +586,7 @@ If the bottleneck is specifically the latency and not the bandwidth, it is possi
 
 <!-- #region id="Sj5PFl0s_yc6" -->
 
-![pipelining_latency](../../_static/pallas/pipelining_latency_multistage.svg)
+![pipelining_latency](../_static/pallas/pipelining_latency_multistage.svg)
 
 <!-- #endregion -->
 
