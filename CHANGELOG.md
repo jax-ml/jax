@@ -16,6 +16,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+## JAX 0.6.0 (April 16, 2025)
+
 * Breaking changes
 
   * {func}`jax.numpy.array` no longer accepts `None`. This behavior was
