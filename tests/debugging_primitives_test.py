@@ -25,7 +25,6 @@ from jax._src import ad_checkpoint
 from jax._src import debugging
 from jax._src import dispatch
 from jax._src import test_util as jtu
-from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 import numpy as np
 
@@ -1221,11 +1220,6 @@ class PartitionedDebugCallbackTest(jtu.JaxTestCase):
     if (jtu.device_under_test() not in ("cpu", "gpu")):
       raise unittest.SkipTest(
           f"Test requires CPU or GPU devices. Got {jtu.device_under_test()}"
-      )
-    if jaxlib_extension_version < 329:
-      self.skipTest(
-          "Requires jaxlib_extension_version >= 329. Got"
-          f" {jaxlib_extension_version}."
       )
     if len(jax.devices()) < 2:
       raise unittest.SkipTest("Test requires >= 2 devices.")

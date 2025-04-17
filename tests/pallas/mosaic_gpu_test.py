@@ -26,7 +26,6 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import lax
-from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.pallas import pallas_call
 from jax._src.pallas import core as pallas_core
@@ -1399,10 +1398,6 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(f(x), expected)
 
   def test_layout_cast(self, shape=(256, 64)):
-    # TODO(dasenov): Remove this after the minimal jaxlib version is 0.5.4.
-    if jaxlib.version < (0, 5, 4):
-      self.skip_if_wg_semantics()
-
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
@@ -1620,10 +1615,6 @@ class PallasCallWGTest(
         lax.slice_p,
         pallas_core.core_map_p,
     }
-
-    # TODO(dasenov): Remove this after the minimal jaxlib version is 0.5.4.
-    if jaxlib.version < (0, 5, 4):
-      expected_missing_primitives.add(mgpu_primitives.layout_cast_p)
 
     self.assertSetEqual(actual_missing_primitives, expected_missing_primitives)
 

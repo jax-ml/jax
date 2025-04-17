@@ -21,7 +21,6 @@ from functools import partial
 import math
 from typing import cast
 
-from jax._src import lib as jaxlib
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
@@ -444,13 +443,11 @@ def _infer_reduction_op_layout(op: vector.ReductionOp) -> OptionalLayouts:
   return None
 
 
-# TODO(dasenov): Remove this after the minimal jaxlib version is 0.5.4.
-if jaxlib.version >= (0, 5, 4):
-  @partial(_add_layout_inference_rule, mgpu.LayoutCastOp)
-  def _infer_layout_cast_op_layout(
-      layout_cast_op: mgpu.LayoutCastOp,
-  ) -> OptionalLayouts:
-    return [layout_cast_op.new_layout], [layout_cast_op.new_layout]
+@partial(_add_layout_inference_rule, mgpu.LayoutCastOp)
+def _infer_layout_cast_op_layout(
+    layout_cast_op: mgpu.LayoutCastOp,
+) -> OptionalLayouts:
+  return [layout_cast_op.new_layout], [layout_cast_op.new_layout]
 
 
 @partial(_add_layout_inference_rule, mgpu.WGMMAOp)

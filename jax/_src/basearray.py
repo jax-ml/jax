@@ -16,12 +16,10 @@
 
 from __future__ import annotations
 
-import abc
 from collections.abc import Sequence
 import sys
 from typing import Any, Union
 
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.util import use_cpp_class
 import numpy as np
@@ -173,13 +171,7 @@ class Array:
     raise NotImplementedError
 
 
-if jaxlib_extension_version >= 325:
-  Array = use_cpp_class(xc.Array)(Array)
-else:
-  class Array(Array, metaclass=abc.ABCMeta):
-    ...
-
-
+Array = use_cpp_class(xc.Array)(Array)
 Array.__module__ = "jax"
 
 

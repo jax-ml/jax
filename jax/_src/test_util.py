@@ -54,7 +54,6 @@ from jax._src import util
 from jax._src import mesh as mesh_lib
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 from jax._src.interpreters import mlir
-from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.public_test_util import (  # noqa: F401
@@ -370,8 +369,6 @@ def supported_dtypes():
              _dtypes.bfloat16, np.float16, np.float32, np.complex64,
              _dtypes.float8_e4m3fn, _dtypes.float8_e4m3b11fnuz,
              _dtypes.float8_e5m2}
-    if jaxlib_extension_version < 327:
-      types -= {_dtypes.int4, _dtypes.uint4}
   elif device_under_test() == "gpu":
     types = {np.bool_, np.int8, np.int16, np.int32, np.int64,
              np.uint8, np.uint16, np.uint32, np.uint64,
@@ -385,8 +382,6 @@ def supported_dtypes():
              _dtypes.uint4, np.uint8, np.uint16, np.uint32, np.uint64,
              _dtypes.bfloat16, np.float16, np.float32, np.float64,
              np.complex64, np.complex128}
-    if jaxlib_extension_version < 327:
-      types -= {_dtypes.int4, _dtypes.uint4}
   if not config.enable_x64.value:
     types -= {np.uint64, np.int64, np.float64, np.complex128}
   return types

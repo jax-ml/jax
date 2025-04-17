@@ -585,11 +585,7 @@ def module_to_bytecode(module: ir.Module) -> bytes:
 
 # Create one global thread pool that can be shared between multiple ir.Contexts
 # and enabling multi-threading
-# TODO: remove this check after jaxlib 0.5.4
-if hasattr(ir, "ThreadPool"):
-  global_thread_pool = ir.ThreadPool()
-else:
-  global_thread_pool = None
+global_thread_pool = ir.ThreadPool()
 
 
 class JaxIrContext(ir.Context):
@@ -606,16 +602,7 @@ def make_ir_context() -> ir.Context:
   context.append_dialect_registry(upstream_dialects)
   context.load_all_available_dialects()
 
-  # TODO: remove this check after v0.5.4 jaxlib
-  if global_thread_pool is not None:
-    context.set_thread_pool(global_thread_pool)
-  else:
-    # If threading is enabled, each MLIR context will keep alive a thread pool.
-    # Since we cache MLIR modules (and hence contexts), this means we might keep
-    # several threads alive for each cache entry. This is a terrible idea. However
-    # we don't do any heavy computation on MLIR modules from Python anyway, so we
-    # just disable threading.
-    context.enable_multithreading(False)
+  context.set_thread_pool(global_thread_pool)
   dialects.sdy.register_dialect(context)
   dialects.mhlo.register_mhlo_dialect(context)
   dialects.chlo.register_dialect(context)

@@ -213,18 +213,11 @@ class RnnTest(jtu.JaxTestCase):
 
     k = jax.random.split(jax.random.PRNGKey(1), 4)
     stablehlo = jax.jit(f).lower(*k).as_text("stablehlo")
-    if jtu.jaxlib_version() <= (0, 5, 2):
-      self.assertIn('"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\00@\\03\\80\\00@\\01\\00\\00"',
-                    stablehlo)
-    else:
-      self.assertIn('"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\00@\\03\\80\\00\\00\\00\\00\\00@\\01\\00\\00\\00\\00\\00\\00"',
+    self.assertIn('"\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\01\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\00\\01\\00\\00\\00@\\03\\80\\00\\00\\00\\00\\00@\\01\\00\\00\\00\\00\\00\\00"',
                     stablehlo)
 
   @jtu.run_on_devices("cuda")
   def test_no_workspace_overflow(self):
-    if jtu.jaxlib_version() <= (0, 5, 2):
-      self.skipTest("Older versions fail because of integer overflow.")
-
     # Problem sizes known to cause overflows on older versions.
     batch_size, max_seq_length, input_size = 256, 500, 512
     num_layers, hidden_size = 1, 256
