@@ -221,6 +221,7 @@ def _construct_smem_reftree(
     dynamic_smem: ir.Value,
     smem_buffers: ShapeTree,
     delayed_warp_init: list[Callable[[], None]],  # Mutated by this function!
+    lowering_semantics: LoweringSemantics,
     dynamic_smem_offset: int = 0,
 ) -> Callable[[], RefTree]:
   index = ir.IndexType.get()
@@ -231,6 +232,12 @@ def _construct_smem_reftree(
       smem_buffers, is_leaf=lambda x: isinstance(x, Union)
   )
   smem_refs = []
+
+  arrival_count_multiplier = (
+    1
+    if lowering_semantics == LoweringSemantics.Lane
+    else utils.WARPGROUP_SIZE
+  )
   for ref_ty in flat_ref_tys:
     def get_barrier_ptr(num_barriers: int) -> ir.Value:
       nonlocal dynamic_smem_offset
@@ -254,6 +261,7 @@ def _construct_smem_reftree(
                 dynamic_smem,
                 m,
                 delayed_warp_init,
+                lowering_semantics,
                 dynamic_smem_offset,
             )
             for m in members
@@ -266,13 +274,15 @@ def _construct_smem_reftree(
 
       case TMABarrier(num_barriers):
         ref = utils.BarrierRef.initialize(
-            get_barrier_ptr(num_barriers), num_barriers, arrival_count=1
+            get_barrier_ptr(num_barriers),
+            num_barriers,
+            arrival_count=arrival_count_multiplier,
         )
       case Barrier(arrival_count, num_barriers):
         ref = utils.BarrierRef.initialize(
             get_barrier_ptr(num_barriers),
             num_barriers,
-            arrival_count=arrival_count,
+            arrival_count=arrival_count * arrival_count_multiplier,
         )
       case ClusterBarrier(collective_dims, num_barriers):
         ref = utils.CollectiveBarrierRef.initialize(
@@ -355,6 +365,7 @@ def _launch(
     block: tuple[int, int, int],
     scratch_arr,
     smem_buffers: ShapeTree | Union[ShapeTree],
+    lowering_semantics: LoweringSemantics,
     profiler_spec: profiler.ProfilerSpec | None = None,
     maybe_prof_buffer: ir.Value | None = None,
 ):
@@ -421,7 +432,11 @@ def _launch(
     with ctx.named_region("Init"):
       delayed_warp_init = []
       smem_ref_tree_thunk = _construct_smem_reftree(
-          cluster, dynamic_smem, smem_buffers, delayed_warp_init
+          cluster,
+          dynamic_smem,
+          smem_buffers,
+          delayed_warp_init,
+          lowering_semantics,
       )
       # TODO(apaszke): Skip fences if no barriers or TMEM is initialized.
       # TODO(apaszke): Only initialize cluster barriers before the cluster wait.
@@ -453,6 +468,7 @@ def _lower_as_gpu_kernel(
     in_shapes: tuple[Any, ...],
     out_shape,
     smem_scratch_shape: ShapeTree | Union[ShapeTree],
+    lowering_semantics: LoweringSemantics,
     module_name: str,
     kernel_name: str | None = None,
     prof_spec: profiler.ProfilerSpec | None = None,
@@ -514,7 +530,7 @@ def _lower_as_gpu_kernel(
       scratch_arr = llvm.load(empty_arr_ty, scratch_alloc.result)
       with _launch(
           token, grid, cluster, block, scratch_arr, smem_scratch_shape,
-          prof_spec, prof_buffer
+          lowering_semantics, prof_spec, prof_buffer
       ) as (_launch_ctx, smem_refs):
         nonlocal launch_ctx
         launch_ctx = _launch_ctx
@@ -596,7 +612,7 @@ def as_gpu_kernel(
     module_name: str = "unknown",
     kernel_name: str | None = None,
     ir_version: int | None = None,
-    thread_semantics: LoweringSemantics = LoweringSemantics.Lane,
+    lowering_semantics: LoweringSemantics = LoweringSemantics.Lane,
 ):
   if isinstance(in_shape, list):
     in_shape = tuple(in_shape)
@@ -606,11 +622,11 @@ def as_gpu_kernel(
   module, out_shape, unwrap_output_tuple, launch_ctx, scratch_arr = (
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape,
-          module_name, kernel_name, prof_spec
+          lowering_semantics, module_name, kernel_name, prof_spec
       )
   )
 
-  if thread_semantics == LoweringSemantics.Warpgroup and dialect is not None:
+  if lowering_semantics == LoweringSemantics.Warpgroup and dialect is not None:
     # Run Python lowering passes. The remaining passes will be run in C++ in
     # jax/jaxlib/mosaic/gpu/custom_call.cc
     layout_inference.infer_layout(module)  # pytype: disable=attribute-error
@@ -689,7 +705,7 @@ def as_torch_gpu_kernel(
   module, out_shape, unwrap_output_tuple, launch_ctx, scratch_arr = (
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape,
-          module_name, kernel_name, prof_spec
+          lowering_semantics, module_name, kernel_name, prof_spec
       )
   )
 
