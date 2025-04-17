@@ -1928,12 +1928,12 @@ def pjit_staging_rule(trace, *args, **params):
           trace, jaxpr.jaxpr, jaxpr.consts, *args)
 
   jaxpr = params['jaxpr']
+  source_info = source_info_util.current()
   if config.dynamic_shapes.value:
     jaxpr, in_fwd, out_shardings, out_layouts = _pjit_forwarding(
         jaxpr, params['out_shardings'], params['out_layouts'])
     params = dict(params, jaxpr=jaxpr, out_shardings=out_shardings,
                   out_layouts=out_layouts)
-    source_info = source_info_util.current()
     out_tracers = []
     for aval in _out_type(jaxpr):
       if type(aval) is core.DShapedArray:
@@ -1952,7 +1952,7 @@ def pjit_staging_rule(trace, *args, **params):
     assert next(out_tracers_, None) is None
   elif any(isinstance(c, core.MutableArray) for c in jaxpr.consts):
     jaxpr, consts = pxla._move_mutable_consts(jaxpr)
-    consts = map(trace.new_const, consts)
+    consts = map(partial(trace.new_const, source_info=source_info), consts)
     in_shardings = (*params['in_shardings'],) + (UNSPECIFIED,) * len(consts)
     in_layouts = (*params['in_layouts'],) + (None,) * len(consts)
     donated_invars = (*params['donated_invars'],) + (False,) * len(consts)

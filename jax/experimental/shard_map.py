@@ -512,7 +512,9 @@ def _shard_map_staging(
     check_rep: bool,
     auto: frozenset,
   ) -> Sequence[pe.DynamicJaxprTracer]:
-  in_tracers = map(trace.to_jaxpr_tracer, in_tracers)
+  source_info = source_info_util.current()
+  to_jaxpr_tracer = partial(trace.to_jaxpr_tracer, source_info=source_info)
+  in_tracers = map(to_jaxpr_tracer, in_tracers)
   in_avals = [t.aval for t in in_tracers]
   in_avals_ = map(partial(_shard_aval, mesh, auto, check_rep), in_names,
                   in_avals)
@@ -527,10 +529,9 @@ def _shard_map_staging(
   out_avals = map(_check_shapedarray, out_avals_)
   out_avals = [_check_shapedarray(_unshard_aval(mesh, check_rep, names, aval))
                for names, aval in zip(out_names_thunk(), out_avals)]
-  source_info = source_info_util.current()
   out_tracers = [pe.DynamicJaxprTracer(trace, a, source_info) for a in out_avals]
   invars = map(trace.getvar, in_tracers)
-  constvars = map(trace.getvar, map(trace.to_jaxpr_tracer, consts))
+  constvars = map(trace.getvar, map(to_jaxpr_tracer, consts))
   outvars = map(trace.makevar, out_tracers)
   in_names_staged = ({},) * len(consts) + tuple(in_names)  # type: ignore
   with (_extend_axis_env(mesh, auto), use_abstract_mesh(manual_mesh),
