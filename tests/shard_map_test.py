@@ -218,7 +218,7 @@ class ShardMapTest(jtu.JaxTestCase):
         shard_map, mesh=mesh, in_specs=(P('x', None),), out_specs=P('x', None)
     )
     def fwd(a):
-      axis_size = lax.psum(1, 'x')
+      axis_size = lax.axis_size('x')
       perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
       return lax.ppermute(a, 'x', perm=perm)
 
@@ -240,8 +240,8 @@ class ShardMapTest(jtu.JaxTestCase):
         out_specs=P('x', ('y', 'z')),
     )
     def fwd(a):
-      xy_axis_size = lax.psum(1, ('x', 'y'))
-      yz_axis_size = lax.psum(1, ('y', 'z'))
+      xy_axis_size = lax.axis_size(('x', 'y'))
+      yz_axis_size = lax.axis_size(('y', 'z'))
       xy_perm = [(j, (j + 1) % xy_axis_size) for j in range(xy_axis_size)]
       yz_perm = [(j, (j + 1) % yz_axis_size) for j in range(yz_axis_size)]
       return (
@@ -3381,7 +3381,7 @@ class SdyIntegrationTest(jtu.JaxTestCase):
         shard_map, mesh=mesh, in_specs=(P('x', None),), out_specs=P('x', None)
     )
     def fwd(a):
-      axis_size = lax.psum(1, 'x')
+      axis_size = lax.axis_size('x')
       perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
       return lax.ppermute(a, 'x', perm=perm)
 

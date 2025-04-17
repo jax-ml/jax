@@ -16,6 +16,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## Unreleased
 
+* New features:
+  * Added {func}`jax.lax.axis_size` which returns the size of the mapped axis
+    given its name.
+
 ## JAX 0.6.0 (April 16, 2025)
 
 * Breaking changes

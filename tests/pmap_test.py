@@ -499,7 +499,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testTrees(self):
     ptranspose = lambda x, axis_name: lax.all_to_all(x, axis_name, 0, 0)
     def protate(x, axis_name):
-      n = lax.psum(1, axis_name)
+      n = lax.axis_size(axis_name)
       return lax.ppermute(x, axis_name, [(i, (i + 1) % n) for i in range(n)])
 
     tree_f = lambda f: partial(jax.tree.map, f)
@@ -1395,7 +1395,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
   def testCollectiveConstant(self):
     device_count = jax.device_count()
-    f = self.pmap(lambda x: lax.psum(1, 'i'), 'i')
+    f = self.pmap(lambda x: lax.axis_size('i'), 'i')
     x = jnp.arange(device_count)
     ans = f(x)
     expected = np.repeat(device_count, device_count)
@@ -1408,9 +1408,9 @@ class PythonPmapTest(jtu.JaxTestCase):
     def f(x):
       @partial(self.pmap, axis_name='j')
       def g(y):
-        a = lax.psum(1, 'i')
-        b = lax.psum(1, 'j')
-        c = lax.psum(1, ('i', 'j'))
+        a = lax.axis_size('i')
+        b = lax.axis_size('j')
+        c = lax.axis_size(('i', 'j'))
         return a, b, c
       return g(x)
 

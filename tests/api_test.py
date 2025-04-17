@@ -1483,7 +1483,7 @@ class JitTest(jtu.BufferDonationTestCase):
 
   def test_caches_depend_on_axis_env(self):
     # https://github.com/jax-ml/jax/issues/9187
-    f = lambda: lax.psum(1, "i")
+    f = lambda: lax.axis_size("i")
     g = jax.jit(f)
     expected = jax.vmap(f, axis_name="i", axis_size=2, out_axes=None)()
     ans = jax.vmap(g, axis_name="i", axis_size=2, out_axes=None)()

@@ -43,6 +43,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.util import (canonicalize_axis, moveaxis, safe_map, safe_zip,
                            unzip2)
+import jax.numpy as jnp
 import numpy as np
 
 unsafe_map, map = map, safe_map  # type: ignore
@@ -195,7 +196,7 @@ def pmean(x, axis_name, *, axis_index_groups=None):
   [0.        0.6666667 1.3333334 2.       ]
   """
   x = psum(x, axis_name=axis_name, axis_index_groups=axis_index_groups)
-  n = psum(1, axis_name=axis_name, axis_index_groups=axis_index_groups)
+  n = _axis_size(axis_name, axis_index_groups)
   return tree_util.tree_map(lambda v: v / n, x)
 
 def pmax(x, axis_name, *, axis_index_groups=None):
@@ -446,14 +447,14 @@ def all_to_all(x, axis_name, split_axis, concat_axis, *, axis_index_groups=None,
       np.insert(np.delete(x.shape, split_axis), concat_axis, axis_size)
 
     where ``axis_size`` is the size of the mapped axis named ``axis_name`` in
-    the input ``x``, i.e. ``axis_size = lax.psum(1, axis_name)``.
+    the input ``x``.
 
     Otherwise array with shape similar to the input shape, except with split_axis
     divided by axis size and concat_axis multiplied by axis size.
   """
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   def bind(x, split_axis=split_axis, concat_axis=concat_axis):
-    group_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
+    group_size = _axis_size(axis_name, axis_index_groups)
     if tiled:
       if x.shape[split_axis] % group_size != 0:
         raise ValueError(f"The size of all_to_all split_axis ({x.shape[split_axis]}) "
@@ -638,7 +639,7 @@ def ragged_all_to_all(
                                   axis_index_groups=axis_index_groups)
 
 
-def axis_index(axis_name):
+def axis_index(axis_name: AxisName) -> jax.Array:
   """Return the index along the mapped axis ``axis_name``.
 
   Args:
@@ -654,16 +655,16 @@ def axis_index(axis_name):
   ... def f(_):
   ...   return lax.axis_index('i')
   ...
-  >>> f(np.zeros(4))
+  >>> f(jnp.zeros(4))
   Array([0, 1, 2, 3], dtype=int32)
-  >>> f(np.zeros(8))
+  >>> f(jnp.zeros(8))
   Array([0, 1, 2, 3, 4, 5, 6, 7], dtype=int32)
   >>> @partial(jax.pmap, axis_name='i')
   ... @partial(jax.pmap, axis_name='j')
   ... def f(_):
   ...   return lax.axis_index('i'), lax.axis_index('j')
   ...
-  >>> x, y = f(np.zeros((4, 2)))
+  >>> x, y = f(jnp.zeros((4, 2)))
   >>> print(x)
   [[0 0]
   [1 1]
@@ -679,11 +680,53 @@ def axis_index(axis_name):
     return axis_index_p.bind(axis_name=axis_name)
   else:
     inner_size = 1
-    index = 0
+    index = jnp.asarray(0)
     for name in reversed(axis_name):
       index += axis_index(name) * inner_size
-      inner_size *= psum(1, name)
+      inner_size *= axis_size(name)
     return index
+
+
+def axis_size(axis_name: AxisName) -> int:
+  """Return the size of the mapped axis ``axis_name``.
+
+  Args:
+    axis_name: hashable Python object used to name the mapped axis.
+
+  Returns:
+    An integer representing the size.
+
+  For example, with 8 XLA devices available:
+
+  >>> from functools import partial
+  >>> from jax.experimental.shard_map import shard_map
+  >>> from jax.sharding import PartitionSpec as P
+  >>> mesh = jax.make_mesh((8,), 'i')
+  >>> @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P())
+  ... def f(_):
+  ...   return lax.axis_size('i')
+  ...
+  >>> f(jnp.zeros(16))
+  Array(8, dtype=int32, weak_type=True)
+  >>> mesh = jax.make_mesh((4, 2), ('i', 'j'))
+  >>> @partial(shard_map, mesh=mesh, in_specs=P('i', 'j'), out_specs=P())
+  ... def f(_):
+  ...   return lax.axis_size(('i', 'j'))
+  ...
+  >>> f(jnp.zeros((16, 8)))
+  Array(8, dtype=int32, weak_type=True)
+  """
+  return _axis_size(axis_name)
+
+
+def _axis_size(
+    axis_name: AxisName,
+    axis_index_groups: Sequence[Sequence[int]] | None = None,
+    /,
+) -> int:
+  axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
+  return psum(1, axis_name, axis_index_groups=axis_index_groups)
+
 
 def pgather(src, idx, axes: int | AxisName):
   """Uses the last positional axis of idx to index into src's axes."""
@@ -691,7 +734,6 @@ def pgather(src, idx, axes: int | AxisName):
     axes = (axes,)
   # TODO: Canonicalize exes!
   return pgather_p.bind(src, idx, axes=tuple(axes))
-
 
 ### parallel primitives
 
@@ -1254,7 +1296,11 @@ def _all_to_all_effectful_abstract_eval(
     axis_name = (axis_name,)
   _check_axis_names(axis_name)
   shape = list(input_aval.shape)
-  axis_size = psum(1, axis_name) if axis_index_groups is None else len(axis_index_groups[0])
+  axis_size = (
+      _axis_size(axis_name)
+      if axis_index_groups is None
+      else len(axis_index_groups[0])
+  )
   assert shape[split_axis] % axis_size == 0, (shape[split_axis], axis_size)
   shape[split_axis] //= axis_size
   shape[concat_axis] *= axis_size
@@ -1487,7 +1533,7 @@ def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
   if not isinstance(axis_name, tuple):
     axis_name = axis_name,
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
-  axis_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
+  axis_size = _axis_size(axis_name, axis_index_groups)
   def bind(leaf):
     leaf = insert_collective_pvary(axis_name, leaf)
     return all_gather_p.bind(
@@ -1495,7 +1541,7 @@ def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
         all_gather_dimension=canonicalize_axis(
             axis, np.ndim(leaf) if tiled else np.ndim(leaf) + 1),
         axis_name=axis_name, axis_index_groups=axis_index_groups,
-        axis_size=int(axis_size), tiled=tiled)
+        axis_size=axis_size, tiled=tiled)
   return tree_util.tree_map(bind, x)
 
 def _all_gather_impl(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
@@ -1849,7 +1895,7 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
   """
   if not isinstance(axis_name, tuple):
     axis_name = axis_name,
-  axis_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
+  axis_size = _axis_size(axis_name, axis_index_groups)
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   def bind(leaf):
     leaf = insert_collective_pvary(axis_name, leaf)

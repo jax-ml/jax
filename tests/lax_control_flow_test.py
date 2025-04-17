@@ -2222,7 +2222,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def test_caches_depend_on_axis_env(self):
     # https://github.com/jax-ml/jax/issues/9187
-    scanned_f = lambda _, __: (lax.psum(1, 'i'), None)
+    scanned_f = lambda _, __: (lax.axis_size('i'), None)
     f = lambda: lax.scan(scanned_f, 0, None, length=1)[0]
     ans = jax.vmap(f, axis_name='i', axis_size=2, out_axes=None)()
     self.assertEqual(ans, 2)
