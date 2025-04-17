@@ -136,10 +136,10 @@ class VectorLayoutInferer {
 
       bool has_vector_io = false;
       for (auto op : any_op.getOperands()) {
-        has_vector_io |= op.getType().isa<VectorType>();
+        has_vector_io |= isa<VectorType>(op.getType());
       }
       for (auto r : any_op.getResults()) {
-        has_vector_io |= r.getType().isa<VectorType>();
+        has_vector_io |= isa<VectorType>(r.getType());
       }
       if (!has_vector_io && any_op.getRegions().empty()) {
         SmallVector<Layout, 4> in_layout(any_op.getNumOperands(), kNoLayout);
@@ -1293,7 +1293,7 @@ class VectorLayoutInferer {
           (*(offsets.end() - 1) + *input_layout->offsets()[1]) % vreg_slice[1];
     }
     for (auto stride : strides_attr) {
-      TPU_CHECK_OP(stride.cast<IntegerAttr>().getInt() == 1,
+      TPU_CHECK_OP(cast<IntegerAttr>(stride).getInt() == 1,
                    "Only trivial strides supported.");
     }
 

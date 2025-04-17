@@ -1096,7 +1096,7 @@ LogicalResult ConcatenateOp::verify() {
   if (getOperands().size() < 2) {
     return emitOpError("Expected at least 2 operands for concatenate op.");
   }
-  auto first_type = getOperand(0).getType().cast<VectorType>();
+  auto first_type = cast<VectorType>(getOperand(0).getType());
   auto first_shape = first_type.getShape();
   auto first_dtype = first_type.getElementType();
   for (auto operand : getOperands()) {

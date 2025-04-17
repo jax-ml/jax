@@ -257,7 +257,7 @@ LogicalResult tpu_matmul_rule(const CanonicalizeContext &ctx,
       auto matmul_res =
           dot_dim_matmul(sliced_lhs.getResult(), sliced_rhs.getResult(),
                          sliced_acc.getResult());
-      auto res_ty = matmul_res.getType().cast<VectorType>();
+      auto res_ty = cast<VectorType>(matmul_res.getType());
       auto res_shape = res_ty.getShape();
       // reshape to 1x[prior_shape]
       auto reshape_shape = llvm::to_vector(res_shape);
