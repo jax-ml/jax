@@ -157,6 +157,10 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "hyp1f1", 3, float_dtypes,
         functools.partial(jtu.rand_uniform, low=0.5, high=30), True
     ),
+    op_record(
+        "hyp2f1", 4, float_dtypes,
+        functools.partial(jtu.rand_uniform, low=0.5, high=30), False
+    ),
     op_record("log_softmax", 1, float_dtypes, jtu.rand_default, True),
     op_record("softmax", 1, float_dtypes, jtu.rand_default, True),
 ]
@@ -353,6 +357,19 @@ class LaxScipySpecialFunctionsTest(jtu.JaxTestCase):
     rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 5e-5
     self._CheckAgainstNumpy(osp_special.betainc, lsp_special.betainc, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.betainc, args_maker, rtol=rtol)
+
+  def testHyp2f1SpecialCases(self):
+    dtype = jax.dtypes.canonicalize_dtype(float)
+
+    a_samples = np.array([0, 1, 1, 1, 1, 5, 5, 0.245, 0.45, 0.45, 2, 0.4, 0.32, 4, 4], dtype=dtype)
+    b_samples = np.array([1, 0, 1, 1, 1, 1, 1, 3, 0.7, 0.7, 1, 0.7, 0.76, 2, 3], dtype=dtype)
+    c_samples = np.array([1, 1, 0, 1, -1, 3, 3, 3, 0.45, 0.45, 5, 0.3, 0.11, 7, 7], dtype=dtype)
+    x_samples = np.array([1, 1, 1, 0, 1, 0.5, 1, 0.35, 0.35, 1.5, 1, 0.4, 0.95, 0.95, 0.95], dtype=dtype)
+
+    args_maker = lambda: (a_samples, b_samples, c_samples, x_samples)
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 5e-5
+    self._CheckAgainstNumpy(osp_special.hyp2f1, lsp_special.hyp2f1, args_maker, rtol=rtol)
+    self._CompileAndCheck(lsp_special.hyp2f1, args_maker, rtol=rtol)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
