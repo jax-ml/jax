@@ -1572,6 +1572,9 @@ jax_multiplatform_test(
 jax_multiplatform_test(
     name = "export_back_compat_test",
     srcs = ["export_back_compat_test.py"],
+    enable_configs = [
+        "tpu_v3_x4_shardy",
+    ],
     tags = [],
     deps = [
         "//jax:internal_export_back_compat_test_data",
