@@ -24,23 +24,30 @@ import math
 
 import jax
 from jax import tree_util
-from jax._src import core
 from jax._src import config
+from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
-from jax._src.sharding_impls import (SPMDAxisContext, ShardingContext,
-                                     NamedSharding, PartitionSpec as P)
+from jax._src import effects
+from jax._src.core import abstract_token
 from jax._src.core import AxisName, ShapedArray
+from jax._src.core import pvary
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
-from jax._src.mesh import get_abstract_mesh
-from jax._src.core import pvary
 from jax._src.lax import lax
 from jax._src.lax import slicing
+from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.mesh import get_abstract_mesh
+from jax._src.sharding_impls import (
+    NamedSharding,
+    PartitionSpec as P,
+    SPMDAxisContext,
+    ShardingContext,
+)
 from jax._src.util import (canonicalize_axis, moveaxis, safe_map, safe_zip,
                            unzip2)
 import jax.numpy as jnp
@@ -354,6 +361,72 @@ def ppermute(x, axis_name, perm):
     leaf = insert_collective_pvary(axis_name, leaf)
     return ppermute_p.bind(leaf, axis_name=axis_name, perm=tuple(map(tuple, perm)))
   return tree_util.tree_map(bind, x)
+
+
+def psend(x, axis_name, perm):
+  """Perform a collective send according to the permutation ``perm``.
+
+  If ``x`` is a pytree then the result is equivalent to mapping this function to
+  each leaf in the tree.
+
+  This function is an analog of the Send HLO.
+
+  Args:
+    x: array(s) with a mapped axis named ``axis_name``.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      :func:`jax.pmap` documentation for more details).
+    perm: list of pairs of ints, representing ``(source_index,
+      destination_index)`` pairs that encode how the mapped axis named
+      ``axis_name`` should be shuffled. The integer values are treated as
+      indices into the mapped axis ``axis_name``. Any two pairs should not have
+      the same source index or the same destination index. For each index of the
+      axis ``axis_name`` that does not correspond to a destination index in
+      ``perm``, the corresponding values in the result are filled with zeros of
+      the appropriate type. The semantics here are platform-specific, and for
+      GPU they correspond to NCCL send.
+  """
+  if not isinstance(axis_name, (list, tuple)):
+    axis_name = (axis_name,)
+  return tree_util.tree_map(
+      partial(psend_p.bind, axis_name=axis_name, perm=tuple(map(tuple, perm))),
+      x,
+  )
+
+
+def precv(x, axis_name, perm):
+  """Perform a collective recv according to the permutation ``perm``.
+
+  If ``x`` is a pytree then the result is equivalent to mapping this function to
+  each leaf in the tree.
+
+  This function is an analog of the Recv HLO.
+
+  Args:
+    x: array(s) with a mapped axis named ``axis_name``. This is only used to
+      determine the shape of the result.
+    axis_name: hashable Python object used to name a pmapped axis (see the
+      :func:`jax.pmap` documentation for more details).
+    perm: list of pairs of ints, representing ``(source_index,
+      destination_index)`` pairs that encode how the mapped axis named
+      ``axis_name`` should be shuffled. The integer values are treated as
+      indices into the mapped axis ``axis_name``. Any two pairs should not have
+      the same source index or the same destination index. For each index of the
+      axis ``axis_name`` that does not correspond to a destination index in
+      ``perm``, the corresponding values in the result are filled with zeros of
+      the appropriate type. The semantics here are platform-specific, and for
+      GPU they correspond to NCCL recv.
+
+  Returns:
+    Array(s) with the same shape as ``x`` with slices along the axis
+    ``axis_name`` gathered from ``x`` according to the permutation ``perm``.
+  """
+  if not isinstance(axis_name, (list, tuple)):
+    axis_name = (axis_name,)
+  return tree_util.tree_map(
+      partial(precv_p.bind, axis_name=axis_name, perm=tuple(map(tuple, perm))),
+      x,
+  )
+
 
 def pshuffle(x, axis_name, perm):
   """Convenience wrapper of jax.lax.ppermute with alternate permutation encoding
@@ -1027,12 +1100,12 @@ batching.fancy_primitive_batchers[pmin_p] = \
 batching.skippable_batchers[pmin_p] = partial(_names_in_param, 'axes')
 
 
-def _ppermute_lowering(ctx, x, *, axis_name, perm):
+def _pcollectives_lowering_common(ctx, *, axis_name, perm, op_name):
   replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name, None)
   group_size = len(replica_groups[0])
   srcs, dsts = unzip2((src % group_size, dst % group_size) for src, dst in perm)
   if not (len(srcs) == len(set(srcs)) and len(dsts) == len(set(dsts))):
-    msg = "ppermute sources and destinations must be unique, got {}."
+    msg = f"{op_name} sources and destinations must be unique, got {{}}."
     raise ValueError(msg.format(perm))
 
   full_perm = np.zeros((len(replica_groups), len(perm), 2), np.int64)
@@ -1051,12 +1124,22 @@ def _ppermute_lowering(ctx, x, *, axis_name, perm):
   if is_manual:
     channel = ctx.module_context.new_channel()
     other_args = dict(
-        channel_handle=hlo.ChannelHandle.get(channel, mlir.DEVICE_TO_DEVICE_TYPE))
+        channel_handle=hlo.ChannelHandle.get(
+            channel, mlir.DEVICE_TO_DEVICE_TYPE
+        )
+    )
   else:
     other_args = {}
+  return full_perm, other_args
 
+
+def _ppermute_lowering(ctx, x, *, axis_name, perm):
+  full_perm, other_args = _pcollectives_lowering_common(
+      ctx, axis_name=axis_name, perm=perm, op_name="ppermute"
+  )
   return hlo.CollectivePermuteOp(
       x, mlir.dense_int_elements(full_perm), **other_args).results
+
 
 def _ppermute_transpose_rule(t, x, perm, axis_name):
   srcs, dsts = unzip2(perm)
@@ -1093,6 +1176,66 @@ ad.deflinear2(ppermute_p, _ppermute_transpose_rule)
 mlir.register_lowering(ppermute_p, _ppermute_lowering)
 batching.fancy_primitive_batchers[ppermute_p] = _ppermute_batcher
 batching.skippable_batchers[ppermute_p] = partial(_names_in_param, 'axis_name')
+
+
+def _psend_lowering(ctx, x, *, axis_name, perm):
+  full_perm, other_args = _pcollectives_lowering_common(
+      ctx, axis_name=axis_name, perm=perm, op_name="psend"
+  )
+  send_op = hlo.SendOp(
+      [x],
+      hlo.create_token(),
+      source_target_pairs=mlir.dense_int_elements(full_perm),
+      **other_args,
+  )
+  sharding = xc.OpSharding()
+  sharding.type = xc.OpSharding.Type.MANUAL
+  mlir.set_sharding(send_op, sharding)
+  return send_op.results
+
+
+class SingleSideCollectiveEffect(effects.Effect):
+  __str__ = lambda _: "one-sided communication"
+
+
+mlir.lowerable_effects.add_type(SingleSideCollectiveEffect)
+
+
+def _psend_abstract_eval(x, *, axis_name, **params):
+  _check_axis_names(axis_name)
+  return abstract_token, frozenset([SingleSideCollectiveEffect()])
+
+
+psend_p = core.Primitive("psend")
+psend_p.def_effectful_abstract_eval(_psend_abstract_eval)
+mlir.register_lowering(psend_p, _psend_lowering, platform="cuda")
+
+
+def _precv_lowering(ctx, x, *, axis_name, perm):
+  full_perm, other_args = _pcollectives_lowering_common(
+      ctx, axis_name=axis_name, perm=perm, op_name="precv"
+  )
+  token = hlo.create_token()
+  recv_op = hlo.RecvOp(
+      [x.type, token.type],
+      token,
+      source_target_pairs=mlir.dense_int_elements(full_perm),
+      **other_args,
+  )
+  sharding = xc.OpSharding()
+  sharding.type = xc.OpSharding.Type.MANUAL
+  mlir.set_sharding(recv_op, sharding)
+  return recv_op.results
+
+
+def _precv_abstract_eval(x, *, axis_name, **params):
+  return (x, abstract_token), frozenset([SingleSideCollectiveEffect()])
+
+
+precv_p = core.Primitive("precv")
+precv_p.multiple_results = True
+precv_p.def_effectful_abstract_eval(_precv_abstract_eval)
+mlir.register_lowering(precv_p, _precv_lowering, platform="cuda")
 
 def _pbroadcast_transpose_rule(t, x, source, axis_name):
   is_source = axis_index(axis_name) == source
