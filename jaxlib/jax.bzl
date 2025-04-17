@@ -23,7 +23,8 @@ load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_roc
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
 load("@rules_cc//cc:defs.bzl", _cc_proto_library = "cc_proto_library")
 load("@rules_python//python:defs.bzl", "py_test")
-load("@xla//xla/tsl:tsl.bzl", _if_windows = "if_windows", _pybind_extension = "tsl_pybind_extension_opensource")
+load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
+load("@xla//xla/tsl:tsl.bzl", "transitive_hdrs", _if_windows = "if_windows", _pybind_extension = "tsl_pybind_extension_opensource")
 load("@xla//xla/tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
 
 # Explicitly re-exports names to avoid "unused variable" warnings from .bzl
@@ -434,10 +435,9 @@ def _jax_wheel_impl(ctx):
 _jax_wheel = rule(
     attrs = {
         "wheel_binary": attr.label(
-            default = Label("//jaxlib/tools:build_wheel"),
+            default = Label("//jaxlib/tools:build_wheel_tool"),
             executable = True,
-            # b/365588895 Investigate cfg = "exec" for multi platform builds
-            cfg = "target",
+            cfg = "exec",
         ),
         "wheel_name": attr.string(mandatory = True),
         "no_abi": attr.bool(default = False),
@@ -585,3 +585,36 @@ def if_oss(oss_value, google_value = []):
     """
     _ = (google_value, oss_value)  # buildifier: disable=unused-variable
     return oss_value
+
+def wheel_sources(
+        name,
+        py_srcs = [],
+        data_srcs = [],
+        symlink_data_srcs = [],
+        hdr_srcs = [],
+        static_srcs = []):
+    """Create a filegroup containing the list of source files for a wheel.
+
+    The sources are collected from the static files and from the transitive dependencies of the
+    given srcs.
+
+    Args:
+      name: the target name
+      py_srcs: targets which transitive python dependencies should be included in the wheel
+      data_srcs: targets which platform-dependent data dependencies should be included in the wheel
+      symlink_data_srcs: targets which symlinked data dependencies should be included in the wheel
+      hdr_srcs: targets which transitive header dependencies should be included in the wheel
+      static_srcs: the platform-independent file dependencies of the wheel
+    """
+    transitive_py_deps(name = "{}_py".format(name), deps = py_srcs)
+    collect_data_files(
+        name = "{}_data".format(name),
+        deps = data_srcs,
+        symlink_deps = symlink_data_srcs,
+    )
+    transitive_hdrs(name = "{}_hdrs".format(name), deps = hdr_srcs)
+    native.filegroup(name = name, srcs = [
+        ":{}_py".format(name),
+        ":{}_data".format(name),
+        ":{}_hdrs".format(name),
+    ] + static_srcs)
