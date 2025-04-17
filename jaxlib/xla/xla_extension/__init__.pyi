@@ -926,14 +926,12 @@ class NamedSharding(Sharding):
       spec: Any,
       *,
       memory_kind: Optional[str] = None,
-      _manual_axes: frozenset[Any] = frozenset(),
       _logical_device_ids: tuple[int, ...] | None = None,
   ): ...
   mesh: Any
   spec: Any
   _memory_kind: Optional[str]
   _internal_device_list: DeviceList
-  _manual_axes: frozenset[Any]
   _logical_device_ids: tuple[int, ...] | None
 
 class SingleDeviceSharding(Sharding):

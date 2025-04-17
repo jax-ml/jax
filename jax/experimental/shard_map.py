@@ -785,13 +785,12 @@ mlir.register_lowering(shard_map_p, _shard_map_lowering)
 
 def _make_scoped_manual_sharding(ctx, mesh, axes):
   axis_ctx = ctx.module_context.axis_context
+  mesh = mesh.abstract_mesh
   if isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
-    manual_axes = axis_ctx.manual_axes
-  else:
-    manual_axes = frozenset({})
+    mesh = mesh.update_axis_types(
+        {a: AxisType.Manual for a in axis_ctx.manual_axes})
   return NamedSharding(
-      mesh, sharding_impls.array_mapping_to_axis_resources(axes),  # pytype: disable=wrong-arg-types
-      _manual_axes=manual_axes)
+      mesh, sharding_impls.array_mapping_to_axis_resources(axes))  # type: ignore
 
 def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
                aval_in, aval_out, x):
