@@ -690,7 +690,8 @@ def _select_and_scatter_lower(
     window_strides, padding):
   operand_aval, source_aval, init_value_aval = ctx.avals_in
   aval_out, = ctx.avals_out
-  scalar_aval = operand_aval.update(shape=())
+  scalar_aval = operand_aval.update(
+      shape=(), sharding=operand_aval.sharding.with_spec(()))
   scalar_type = mlir.aval_to_ir_type(scalar_aval)
   op = hlo.SelectAndScatterOp(
       mlir.aval_to_ir_type(aval_out),
