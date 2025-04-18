@@ -521,7 +521,8 @@ def _is_contiguous_slice(idx):
           (idx.stop is None or _is_integer_index(idx.stop)) and
           (idx.step is None or (_is_integer_index(idx.step) and idx.step == 1)))
 
-def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) -> Array | None:
+def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None,
+                                      out_sharding=None) -> Array | None:
   # attempt to compute _rewriting_take via lax.slice(); return None if not possible.
   idx = idx if isinstance(idx, tuple) else (idx,)
 
@@ -604,9 +605,12 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
     jnp_error._check_precondition_oob_dynamic_slice(
         arr.shape, start_indices, slice_sizes, allow_negative_indices
     )
-    arr = lax.dynamic_slice(
-        arr, start_indices=start_indices, slice_sizes=slice_sizes,
-        allow_negative_indices=allow_negative_indices)
+    internal_ds = partial(lax.dynamic_slice, slice_sizes=slice_sizes,
+                          allow_negative_indices=allow_negative_indices)
+    if out_sharding is not None:
+      arr = auto_axes(internal_ds, out_shardings=out_sharding)(arr, start_indices)
+    else:
+      arr = internal_ds(arr, start_indices)
   if int_indices:
     arr = lax.squeeze(arr, tuple(int_indices))
   return arr
@@ -621,7 +625,8 @@ def rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
   # For simplicity of generated primitives, we call lax.dynamic_slice in the
   # simplest cases: i.e. non-dynamic arrays indexed with integers and slices.
 
-  if (result := _attempt_rewriting_take_via_slice(arr, idx, mode)) is not None:
+  result = _attempt_rewriting_take_via_slice(arr, idx, mode, out_sharding)
+  if result is not None:
     return result
 
   # TODO(mattjj,dougalm): expand dynamic shape indexing support
