@@ -1957,8 +1957,8 @@ class ShardMapTest(jtu.JaxTestCase):
     v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
     if config.use_shardy_partitioner.value:
       self.assertIn(
-          'in_shardings=[<@mesh, [{"i"}, {?}]>]'
-          ' out_shardings=[<@mesh, [{"i"}, {?}]>] manual_axes={"i"}',
+          'in_shardings=[<@mesh, [{"i", ?}, {?}]>]'
+          ' out_shardings=[<@mesh, [{"i", ?}, {?}]>] manual_axes={"i"}',
           f.lower(v).as_text(),
       )
     else:
