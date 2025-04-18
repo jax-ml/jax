@@ -65,8 +65,6 @@ FORCE_FORWARD_COMPAT_LOWERING_PLATFORMS: set[str] = set()
 
 MIN_COMPUTE_CAPABILITY = 52
 
-_DEFAULT_CPU_COLLECTIVES_IMPL = 'gloo'
-
 # TODO(phawkins): Remove jax_xla_backend.
 _XLA_BACKEND = config.string_flag(
     'jax_xla_backend', '',
@@ -251,8 +249,6 @@ def make_cpu_client(
                       '"jax_cpu_collectives_implementation", "gloo")` instead.',
                       DeprecationWarning,
                       )
-    if collectives_impl is None:
-      collectives_impl = _DEFAULT_CPU_COLLECTIVES_IMPL
 
     if collectives_impl == 'gloo':
       collectives = xla_client._xla.make_gloo_tcp_collectives(
