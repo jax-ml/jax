@@ -287,7 +287,6 @@ key_reuse_signatures[prng.random_bits_p] = KeyReuseSignature(Sink(0))
 key_reuse_signatures[prng.random_fold_in_p] = KeyReuseSignature(Source(0))
 key_reuse_signatures[prng.random_seed_p] = KeyReuseSignature(Source(0))
 key_reuse_signatures[prng.random_split_p] = KeyReuseSignature(Sink(0), Source(0))
-key_reuse_signatures[random.random_gamma_p] = KeyReuseSignature(Sink(0))
 # TODO(jakevdp): broadcast should probably consume the input to avoid implicit duplication
 key_reuse_signatures[lax.broadcast_in_dim_p] = KeyReuseSignature(Forward(0, 0))
 key_reuse_signatures[lax.copy_p] = KeyReuseSignature(Forward(0, 0))
