@@ -94,7 +94,7 @@ _deprecations = {
             "jax.lib.xla_client.mlir_api_version was deprecated in JAX v0.6.0"
             " and will be removed in JAX v0.7.0"
         ),
-        _xc.mlir_api_version,
+        58,
     ),
     "Client": (
         (
@@ -152,7 +152,7 @@ import typing as _typing
 if _typing.TYPE_CHECKING:
   get_topology_for_devices = _xc.get_topology_for_devices
   heap_profile = _xc.heap_profile
-  mlir_api_version = _xc.mlir_api_version
+  mlir_api_version = 58
   Client = _xc.Client
   CompileOptions = _xc.CompileOptions
   DeviceAssignment = _xc.DeviceAssignment
