@@ -1,4 +1,4 @@
-/* Copyright 2022 The JAX Authors
+/* Copyright 2025 The JAX Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,18 +13,18 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAX_JAXLIB_GPU_PY_CLIENT_GPU_H_
-#define JAX_JAXLIB_GPU_PY_CLIENT_GPU_H_
+#ifndef JAXLIB_XLA_DLPACK_SUPPORT_H_
+#define JAXLIB_XLA_DLPACK_SUPPORT_H_
 
-#include "jaxlib/gpu/vendor.h"
-#include "xla/ffi/api/ffi.h"
+#include "absl/status/statusor.h"
+#include "include/dlpack/dlpack.h"
+#include "xla/xla_data.pb.h"
 
-namespace jax {
-namespace JAX_GPU_NAMESPACE {
-XLA_FFI_DECLARE_HANDLER_SYMBOL(kGpuTransposePlanCacheInstantiate);
-XLA_FFI_DECLARE_HANDLER_SYMBOL(kXlaFfiPythonGpuCallback);
-XLA_FFI_DECLARE_HANDLER_SYMBOL(kXlaBufferPythonGpuCallback);
-}  // namespace JAX_GPU_NAMESPACE
-}  // namespace jax
+namespace xla {
 
-#endif  // JAX_JAXLIB_GPU_PY_CLIENT_GPU_H_
+absl::StatusOr<DLDataType> PrimitiveTypeToDLDataType(PrimitiveType type);
+absl::StatusOr<PrimitiveType> DLDataTypeToPrimitiveType(DLDataType type);
+
+}  // namespace xla
+
+#endif  // JAXLIB_XLA_DLPACK_SUPPORT_H_

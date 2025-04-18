@@ -114,6 +114,18 @@ jax_multiplatform_test(
     },
 )
 
+jax_multiplatform_test(
+    name = "buffer_callback_test",
+    srcs = ["buffer_callback_test.py"],
+    enable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    deps = [
+        "//jax:experimental_buffer_callback",
+    ],
+)
+
 jax_py_test(
     name = "config_test",
     srcs = ["config_test.py"],
