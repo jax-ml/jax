@@ -146,7 +146,7 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
     rcond: Relative condition number of the fit. Default value is ``len(x) * eps``.
        It must be specified statically.
     full: Switch that controls the return value. Default is ``False`` which
-      restricts the return value to the array of polynomail coefficients ``p``.
+      restricts the return value to the array of polynomial coefficients ``p``.
       If ``True``, the function returns a tuple ``(p, resids, rank, s, rcond)``.
       It must be specified statically.
     w: Array of weights of shape ``(M,)``. If None, all data points are considered
@@ -154,8 +154,8 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
       unsquared residual of :math:`y_i - \widehat{y}_i` at :math:`x_i`, where
       :math:`\widehat{y}_i` is the fitted value of :math:`y_i`. Default is None.
     cov: Boolean or string. If ``True``, returns the covariance matrix scaled
-      by ``resids/(M-deg-1)`` along with ploynomial coefficients. If
-      ``cov='unscaled'``, returns the unscaaled version of covariance matrix.
+      by ``resids/(M-deg-1)`` along with polynomial coefficients. If
+      ``cov='unscaled'``, returns the unscaled version of covariance matrix.
       Default is ``False``. ``cov`` is ignored if ``full=True``. It must be
       specified statically.
 
@@ -224,7 +224,7 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
 
     >>> p, C = jnp.polyfit(x, y, 2, cov=True)
     >>> p.shape, C.shape
-    ((3, 3), (3, 3, 1))
+    ((3, 3), (3, 3, 3))
   """
   if w is None:
     x_arr, y_arr = ensure_arraylike("polyfit", x, y)
@@ -233,7 +233,6 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
   del x, y
   deg = core.concrete_or_error(int, deg, "deg must be int")
   order = deg + 1
-  # check arguments
   if deg < 0:
     raise ValueError("expected deg >= 0")
   if x_arr.ndim != 1:
@@ -245,7 +244,6 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
   if x_arr.shape[0] != y_arr.shape[0]:
     raise TypeError("expected x and y to have same length")
 
-  # set rcond
   if rcond is None:
     rcond = len(x_arr) * float(finfo(x_arr.dtype).eps)
   rcond = core.concrete_or_error(float, rcond, "rcond must be float")
@@ -268,9 +266,17 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
 
   # scale lhs to improve condition number and solve
   scale = sqrt((lhs*lhs).sum(axis=0))
-  lhs /= scale[np.newaxis,:]
+  lhs /= scale[np.newaxis, :]
   c, resids, rank, s = linalg.lstsq(lhs, rhs, rcond)
-  c = (c.T/scale).T  # broadcast scale coefficients
+
+  # Broadcasting scale coefficients
+  if c.ndim > 1:
+    # For multi-dimensional output, make scale (1, order) to divide
+    # across the c.T of shape (num_rhs, order)
+    c = (c.T / scale[np.newaxis, :]).T
+  else:
+    # Simple case for 1D output
+    c = c / scale
 
   if full:
     assert rcond is not None
@@ -278,21 +284,24 @@ def polyfit(x: ArrayLike, y: ArrayLike, deg: int, rcond: float | None = None,
   elif cov:
     Vbase = linalg.inv(dot(lhs.T, lhs))
     Vbase /= outer(scale, scale)
+
     if cov == "unscaled":
-      fac = 1
+      fac = array(1.0)
     else:
       if len(x_arr) <= order:
-        raise ValueError("the number of data points must exceed order "
-                            "to scale the covariance matrix")
+        raise ValueError("the number of data points must exceed order"
+                         " to scale the covariance matrix")
       fac = resids / (len(x_arr) - order)
-      fac = fac[0] #making np.array() of shape (1,) to int
+
     if y_arr.ndim == 1:
+      fac = atleast_1d(fac)[np.newaxis]
+      # For 1D output, simple scalar multiplication
       return c, Vbase * fac
     else:
-      return c, Vbase[:, :, np.newaxis] * fac
+      # For multiple rhs, broadcast fac to match shape
+      return c, Vbase[:, :, np.newaxis] * atleast_1d(fac)[np.newaxis, np.newaxis, :]
   else:
     return c
-
 
 @export
 @jit
