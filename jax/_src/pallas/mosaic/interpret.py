@@ -1347,18 +1347,23 @@ def _compute_start_indices(
   block_indices = _interpret_jaxpr(
       jaxpr.jaxpr, *jaxpr.consts, *loop_idx, *args,
       compiler_params=compiler_params, interpret_params=interpret_params)
-  if isinstance(block_mapping.indexing_mode, pallas_core.Blocked):
-    ret = jnp.array(
-        tuple(
-            i if b is pallas_core.mapped else b * i
-            for b, i in zip(block_mapping.block_shape, block_indices)
-        ),
-        dtype=jnp.int32,
-    )
-  elif isinstance(block_mapping.indexing_mode, pallas_core.Unblocked):
-    ret = block_indices
-  else:
-    raise RuntimeError(f"Unknown indexing mode: {block_mapping.indexing_mode}")
+  def _get_start_index(i, b):
+    match b:
+      case pallas_core.Squeezed():
+        return i
+      case pallas_core.Element():
+        return i
+      case pallas_core.Blocked():
+        return i * b.block_size
+      case _:
+        raise ValueError(f"Unsupported block dim type: {type(b)}")
+  ret = jnp.array(
+      tuple(
+          _get_start_index(i, b)
+          for i, b in zip(block_indices, block_mapping.block_shape)
+      ),
+      dtype=jnp.int32,
+  )
   return ret
 
 def _get_next_indices(grid, indices):
@@ -1548,13 +1553,13 @@ def interpret_pallas_call(
       ordered=True)
 
   # Pad input arguments.
-  is_indexing_dim = [
-      tuple(b is pallas_core.mapped for b in bm.block_shape)
+  is_squeeze_dim = [
+      tuple(isinstance(b, pallas_core.Squeezed) for b in bm.block_shape)
       for bm in grid_mapping.block_mappings
   ]
   block_shapes = [
-      tuple(1 if i else b for i, b in zip(iid, bm.block_shape))
-      for iid, bm in zip(is_indexing_dim, grid_mapping.block_mappings)
+      pallas_core._get_block_shape(bm.block_shape)
+      for bm in grid_mapping.block_mappings
   ]
   num_inputs = grid_mapping.num_inputs
   input_args = [
@@ -1745,7 +1750,7 @@ def interpret_pallas_call(
                 for st, sz, iid in zip(
                     cur_start_indices[index],
                     block_shapes[index],
-                    is_indexing_dim[index],
+                    is_squeeze_dim[index],
                 )
             ),
             shape=input_args[index].shape,
@@ -1813,7 +1818,7 @@ def interpret_pallas_call(
                 for st, sz, iid in zip(
                     cur_start_indices[num_inputs + index],
                     block_shapes[num_inputs + index],
-                    is_indexing_dim[num_inputs + index],
+                    is_squeeze_dim[num_inputs + index],
                 )
             ),
             shape=output_vals[index].shape,
