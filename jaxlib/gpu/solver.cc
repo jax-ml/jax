@@ -366,6 +366,10 @@ nb::dict Registrations() {
       EncapsulateFfiHandler(CsrlsvqrFfi);
 #endif  // JAX_GPU_CUDA
 
+#if JAX_HAVE_SOLVER_GEEV
+  dict[JAX_GPU_PREFIX "solver_geev_ffi"] = EncapsulateFfiHandler(GeevFfi);
+#endif  // JAX_GPU_HAVE_SOLVER_GEEV
+
   return dict;
 }
 
