@@ -1794,12 +1794,12 @@ memory_fitting_level = enum_state(
         'O2',
         'O3',
     ],
-    default='UNKNOWN',
+    default='O2',
     help=(
         'The degree to which the compiler should attempt to make the program'
         ' fit in memory'
     ),
-    include_in_jit_key=True
+    include_in_jit_key=True,
 )
 
 DEFAULT_CPU_COLLECTIVES_IMPL = "gloo"
