@@ -7499,6 +7499,23 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = vmap_where(batch_a, batch_b)
     self.assertEqual(out.sharding, xy_sharding)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_convert_element_type_vmap(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, P('x', 'y'))
+    am = mesh.abstract_mesh
+
+    @jax.jit
+    @jax.vmap
+    def f(x):
+      y = lax_internal._convert_element_type(
+          x, jnp.bfloat16, sharding=NamedSharding(am, P('y')))
+      self.assertEqual(y.aval.sharding.spec, P('y'))
+      return y
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
   @jtu.with_explicit_mesh((2,), ('x',))
   def test_scatter_gather(self, mesh):
     x = np.random.uniform(size=(mesh.size * 2, 3))

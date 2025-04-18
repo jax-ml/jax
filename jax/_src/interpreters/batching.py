@@ -1105,6 +1105,8 @@ def broadcast(x, sz, axis, mesh_axis=None):
   shape.insert(axis, sz)
   broadcast_dims = tuple(np.delete(np.arange(len(shape)), axis))
   x_aval = core.get_aval(x)
+  if x_aval.sharding.mesh.empty:
+    mesh_axis = None
   new_spec = P(*tuple_insert(x_aval.sharding.spec, axis, mesh_axis))
   sharding = x_aval.sharding.with_spec(new_spec)
   # TODO(dougalm, yashkatariya): Delete this context manager once we figure

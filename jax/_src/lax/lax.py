@@ -4888,7 +4888,16 @@ convert_element_type_p.def_abstract_eval(
             partial(core.standard_vma_rule, convert_element_type_p.name)))
 ad.defjvp2(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
-batching.defvectorized(convert_element_type_p)
+
+def _convert_element_type_batching_rule(
+    axis_data, batched_args, batch_dims, *, new_dtype, weak_type, sharding):
+  if sharding is not None:
+    sharding = batching.get_sharding_for_vmap(axis_data, sharding, 0)
+  new_params = dict(new_dtype=new_dtype, weak_type=weak_type, sharding=sharding)
+  return convert_element_type_p.bind(*batched_args, **new_params), batch_dims[0]
+batching.fancy_primitive_batchers[convert_element_type_p] = _convert_element_type_batching_rule
+batching.skippable_batchers[convert_element_type_p] = lambda _: ()
+
 pe.const_fold_rules[convert_element_type_p] = _convert_elt_type_folding_rule
 pe.forwarding_rules[convert_element_type_p] = _convert_elt_type_fwd_rule
 pe.def_trivial_padding(convert_element_type_p)
@@ -7336,7 +7345,8 @@ def _select_batch_rule(axis_data, batched_args, batch_dims, **unused_kwargs):
     else:
       # vmapped function had a scalar which with nonscalar args
       assert np.ndim(which) == 1
-      which = broadcast_in_dim(which, cases[0].shape, [which_bdim])
+      which = broadcast_in_dim(which, cases[0].shape, [which_bdim],
+                               out_sharding=core.typeof(cases[0]).sharding)
       return select_n(which, *cases), which_bdim
   elif np.ndim(which) == 0 and all(bdim is not None for bdim in case_bdims):
     if all(case_bdims[0] == bdim for bdim in case_bdims[1:]):
@@ -7347,8 +7357,9 @@ def _select_batch_rule(axis_data, batched_args, batch_dims, **unused_kwargs):
                      for c, c_bdim in zip(cases[1:], case_bdims[1:])]
       return select_n(which, cases[0], *other_cases), bdim
 
-  which = (batching.bdim_at_front(which, which_bdim, size) if np.shape(which)
-           else which)
+  which = (batching.bdim_at_front(which, which_bdim, size,
+                                  axis_data.explicit_mesh_axis)
+           if np.shape(which) else which)
   if not all(() == np.shape(c) for c in cases):
     cases = [batching.bdim_at_front(c, bdim, size, axis_data.explicit_mesh_axis)
              for c, bdim in zip(cases, case_bdims)]
@@ -7356,7 +7367,8 @@ def _select_batch_rule(axis_data, batched_args, batch_dims, **unused_kwargs):
   if 0 < np.ndim(which) < np.ndim(cases[0]):
     # vmapped function had a scalar which with nonscalar args
     assert np.ndim(which) == 1
-    which = broadcast_in_dim(which, cases[0].shape, [0])
+    which = broadcast_in_dim(which, cases[0].shape, [0],
+                             out_sharding=core.typeof(cases[0]).sharding)
   if np.ndim(which) > np.ndim(cases[0]):
     assert np.ndim(cases[0]) == 0
     cases = [broadcast(c, which.shape) for c in cases]
