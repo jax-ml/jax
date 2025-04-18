@@ -78,6 +78,7 @@ class _ProfileState:
     self.create_perfetto_link = False
     self.create_perfetto_trace = False
     self.lock = threading.Lock()
+    self.start_abs = None  # Will store the absolute start time (in nanoseconds)
 
   def reset(self):
     _profile_state.profile_session = None
@@ -131,6 +132,7 @@ def start_trace(log_dir: os.PathLike | str, create_perfetto_link: bool = False,
     _profile_state.create_perfetto_trace = (
         create_perfetto_trace or create_perfetto_link)
     _profile_state.log_dir = str(log_dir)
+    _profile_state.start_abs = time.time_ns()
 
 
 def _write_perfetto_trace_file(log_dir: os.PathLike | str):
@@ -151,6 +153,11 @@ def _write_perfetto_trace_file(log_dir: os.PathLike | str):
   with gzip.open(trace_json, "rb") as fp:
     trace = json.load(fp)
     del trace["metadata"]
+   # Convert relative timestamps to absolute by adding the start_abs offset.
+  if _profile_state.start_abs is not None:
+    for event in trace.get("traceEvents", []):
+      if "ts" in event:
+        event["ts"] = event["ts"] + _profile_state.start_abs
   perfetto_trace = latest_trace_folder / "perfetto_trace.json.gz"
   logger.info("Writing perfetto_trace.json.gz...")
   with gzip.open(perfetto_trace, "w") as fp:
