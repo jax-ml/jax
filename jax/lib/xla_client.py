@@ -150,8 +150,6 @@ _deprecations = {
 import typing as _typing
 
 if _typing.TYPE_CHECKING:
-  Shape = _xc.Shape
-  XlaComputation = _xc.XlaComputation
   get_topology_for_devices = _xc.get_topology_for_devices
   heap_profile = _xc.heap_profile
   mlir_api_version = _xc.mlir_api_version
