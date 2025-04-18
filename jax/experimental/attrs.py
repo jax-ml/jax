@@ -87,11 +87,10 @@ def _check_append_type_agreement(_, attr, curtype, valtype):
 
 def _ensure_tracked(trace: pe.DynamicJaxprTrace, obj: Any, attr: str):
   frame = trace.frame
-  source_info = source_info_util.current()
 
   def new_tracer(x):
     aval = core.get_aval(x)
-    tracer = pe.DynamicJaxprTracer(trace, aval, source_info)
+    tracer = pe.DynamicJaxprTracer(trace, aval, pe.source_info_util.current())
     var = frame.tracer_to_var[id(tracer)] = frame.newvar(aval)
     frame.attrs_vars.append(var)
     frame.tracers.append(tracer)
