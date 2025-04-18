@@ -67,8 +67,6 @@ class DLPackTest(jtu.JaxTestCase):
           y, client, client)
 
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
-  @jtu.ignore_warning(message="jax.dlpack.to_dlpack was deprecated.*",
-                      category=DeprecationWarning)
   def testJaxToTorch(self, shape, dtype):
     if not config.enable_x64.value and dtype in [
         jnp.int64,
@@ -79,8 +77,7 @@ class DLPackTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
     x = jnp.array(np)
-    dlpack = jax.dlpack.to_dlpack(x)
-    y = torch.utils.dlpack.from_dlpack(dlpack)
+    y = torch.utils.dlpack.from_dlpack(x)
     if dtype == jnp.bfloat16:
       # .numpy() doesn't work on Torch bfloat16 tensors.
       self.assertAllClose(np,
