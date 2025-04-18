@@ -43,6 +43,10 @@ def _format_multiline(text):
 
 foo = 2
 
+# This test is thread-unsafe because jax.effects_barrier() is global. This means
+# that we can create a deadlock if running tests in multiple threads because we
+# can introduce false dependencies via the effects barrier.
+@jtu.thread_unsafe_test_class()
 class CliDebuggerTest(jtu.JaxTestCase):
 
   def setUp(self):
