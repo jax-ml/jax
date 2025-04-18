@@ -51,8 +51,7 @@ namespace nb = nanobind;
 
 // Gets `jax::PyDeviceList` from a JAX Sharding.
 absl::StatusOr<xla::nb_class_ptr<jax::PyDeviceList>> GetPyDeviceList(
-    nb::handle sharding_py) {
-  nb::handle sharding(sharding_py.ptr());
+    nb::handle sharding) {
   if (sharding.type().is(jax::NamedSharding::type())) {
     TF_ASSIGN_OR_RETURN(
         auto ns_device_list,

@@ -1257,12 +1257,7 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
   options.allow_zero_copy =
       (!force_copy && (host_buffer_semantics ==
                        ifrt::Client::HostBufferSemantics::kImmutableZeroCopy));
-  if (!dst_devices.empty()) {
-    options.ifrt_user_context =
-        dst_devices.front()->client()->ifrt_client()->CreateUserContext();
-  }
 
-  nb::list owning_pylist;
   std::vector<tsl::RCReference<ifrt::Array>> ifrt_arrays;
 
   absl::InlinedVector<ifrt::Device*, 1> devices;
@@ -1270,12 +1265,9 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
   std::vector<xla::ifrt::Shape> shapes;
   shapes.reserve(n_devices);
 
-  ifrt::MemoryKind dst_memory_kind = xla::GetMemoryKind(sharding);
-
-  std::vector<DevicePutResultFn> device_put_fns;
-  device_put_fns.reserve(xs.size());
-  size_t i = 0;
-  for (auto& x : xs) {
+  std::vector<nb::handle> args;
+  args.reserve(xs.size());
+  for (const nb::object& x : xs) {
     if (PyArray::IsPyArray(x)) {
       TF_RETURN_IF_ERROR(
           jax::ApplyTransferGuardToDeviceToDevice(transfer_guard_formatter));
@@ -1283,63 +1275,23 @@ absl::StatusOr<PyArray> PyArray::BatchedDevicePut(
       TF_RETURN_IF_ERROR(
           jax::ApplyTransferGuardToHostToDevice(transfer_guard_formatter));
     }
-    TF_ASSIGN_OR_RETURN(
-        device_put_fns.emplace_back(),
-        DevicePut(x, dst_devices[i]->client()->ifrt_client(),
-                  dst_devices[i]->device(), options, dst_memory_kind));
-    ++i;
+    args.push_back(x);
   }
-  std::vector<DevicePutResult> device_puts;
-  device_puts.reserve(device_put_fns.size());
-  {
-    nb::gil_scoped_release gil_release;
-    for (auto& device_put_fn : device_put_fns) {
-      TF_ASSIGN_OR_RETURN(auto device_put, std::move(device_put_fn)());
-      device_puts.push_back(std::move(device_put));
-    }
-  }
-  for (auto& device_put : device_puts) {
-    ifrt_arrays.push_back(std::move(device_put.ifrt_array));
-    devices.push_back(
-        ifrt_arrays.back()->sharding().devices()->devices().front());
-    shapes.push_back(ifrt_arrays.back()->shape());
-    if (device_put.owning_pybuffer) {
-      owning_pylist.append(device_put.owning_pybuffer);
-    }
-  }
-
-  // TODO(phawkins): it's highly suspicious to me that owning_pylist isn't
-  // consumed here. Look into this.
-
   auto weak_type = nb::cast<bool>(aval.attr("weak_type"));
   auto dtype = aval.attr("dtype");
   auto shape = nb::cast<std::vector<int64_t>>(aval.attr("shape"));
+  TF_ASSIGN_OR_RETURN(nb_class_ptr<jax::PyDeviceList> py_device_list,
+                      jax::GetPyDeviceList(sharding));
 
   TF_ASSIGN_OR_RETURN(
-      auto ifrt_sharding,
-      sharding.type().is(jax::PmapSharding::type())
-          ? xla::GetIfrtConcreteSharding(sharding, ifrt::Shape(shape),
-                                         std::move(shapes))
-          : xla::GetIfrtHloSharding(sharding, ifrt::Shape(shape)));
-  TF_ASSIGN_OR_RETURN(auto ifrt_dtype, DtypeToIfRtDType(dtype));
-  // TODO(emilyaf): Remove the following and just use ifrt_dtype when tokens are
-  // supported.
-  ifrt::DType array_dtype =
-      ifrt_arrays.empty() ? ifrt_dtype : ifrt_arrays.front()->dtype();
-  TF_ASSIGN_OR_RETURN(auto py_device_list, jax::GetPyDeviceList(sharding));
-  TF_ASSIGN_OR_RETURN(
-      auto ifrt_array,
-      py_device_list->py_client()
-          ->ifrt_client()
-          ->AssembleArrayFromSingleDeviceArrays(
-              array_dtype, ifrt::Shape(shape), std::move(ifrt_sharding),
-              absl::MakeSpan(ifrt_arrays),
-              xla::ifrt::ArrayCopySemantics::kReuseInput,
-              xla::ifrt::SingleDeviceShardSemantics::kAddressableShards));
+      DevicePutResult device_put_result,
+      DevicePutWithSharding(args, py_device_list->py_client()->ifrt_client(),
+                            dtype, shape, sharding, options));
 
-  return PyArray(aval, weak_type, dtype, std::move(shape), sharding,
+  return PyArray(aval, weak_type, dtype, std::move(shape), std::move(sharding),
                  py_device_list->py_client(), Traceback::Get(),
-                 std::move(ifrt_array), committed, /*skip_checks=*/true);
+                 std::move(device_put_result.ifrt_array), committed,
+                 /*skip_checks=*/true);
 }
 
 absl::StatusOr<PyArray> PyArray::ReorderShards(
