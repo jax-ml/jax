@@ -7488,6 +7488,28 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = vmap_where(batch_a, batch_b)
     self.assertEqual(out.sharding, xy_sharding)
 
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_scatter_gather(self, mesh):
+    x = np.random.uniform(size=(mesh.size * 2, 3))
+    i = np.random.randint(0, x.shape[1], len(x))
+    j = np.random.randint(0, x.shape[1], len(x))
+    x = jax.device_put(x, P("x"))
+    i = jax.device_put(i, P("x"))
+    j = jax.device_put(j, P("x"))
+
+    @jax.jit
+    def f1(x, i, j):
+      x_a_j = x.at[:, j].get(out_sharding=jax.typeof(i).sharding)
+      return x.at[:, i].set(x_a_j)
+    f1(x,i,j)  # doesn't crash
+
+    @jax.jit
+    @jax.vmap
+    def f2(x, i, j):
+      x_j = x.at[j].get(out_sharding=jax.typeof(x).sharding)
+      return x.at[i].set(x_j)
+    f2(x,i,j)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Union
 import warnings
+from functools import partial
 
 import numpy as np
 
@@ -30,6 +31,7 @@ from jax._src import dtypes
 from jax._src import util
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy import indexing
+from jax._src.pjit import auto_axes
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import reductions
 from jax._src.numpy.util import check_arraylike, promote_dtypes
@@ -43,7 +45,8 @@ Scalar = Union[complex, float, int, np.number]
 
 
 def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
-                    unique_indices, mode=None, normalize_indices=True):
+                    unique_indices, mode=None, normalize_indices=True,
+                    out_sharding=None):
   """Helper for indexed updates.
 
   Computes the value of x that would result from computing::
@@ -74,15 +77,22 @@ def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
   # XLA gathers and scatters are very similar in structure; the scatter logic
   # is more or less a transpose of the gather equivalent.
   treedef, static_idx, dynamic_idx = indexing.split_index_for_jit(idx, x.shape)
-  return _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
-                       indices_are_sorted, unique_indices, mode,
-                       normalize_indices)
+
+  internal_scatter = partial(
+      _scatter_impl, scatter_op=scatter_op, treedef=treedef,
+      static_idx=static_idx, indices_are_sorted=indices_are_sorted,
+      unique_indices=unique_indices, mode=mode,
+      normalize_indices=normalize_indices)
+  if out_sharding is not None:
+    return auto_axes(internal_scatter, out_shardings=out_sharding
+                     )(x, y, dynamic_idx)
+  return internal_scatter(x, y, dynamic_idx)
 
 
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
 # @partial(jit, static_argnums=(2, 3, 4))
-def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
+def _scatter_impl(x, y, dynamic_idx, *, scatter_op, treedef, static_idx,
                   indices_are_sorted, unique_indices, mode,
                   normalize_indices):
   dtype = lax.dtype(x)
