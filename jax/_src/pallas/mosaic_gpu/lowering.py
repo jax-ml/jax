@@ -471,11 +471,13 @@ def _eval_index_map(
   )
   result = []
   for i, b in zip(block_indices, block_mapping.block_shape):
-    if b is pallas_core.mapped:
-      result.append(i)
-    else:
-      # TODO(slebedev): Use a type-agnostic multiplication wrapper.
-      result.append(arith_dialect.muli(_as_index(i), _as_index(b)))
+    match b:
+      case pallas_core.Squeezed() | pallas_core.Element():
+        result.append(i)
+      case pallas_core.Blocked():
+        result.append(arith_dialect.muli(_as_index(i), _as_index(b)))
+      case _:
+        raise ValueError(f"Unsupported block dim type: {b}")
   return tuple(result)
 
 
@@ -507,7 +509,7 @@ def _check_block_mappings(
           + err_details(bm)
       )
 
-    if not isinstance(bm.indexing_mode, pallas_core.Blocked):
+    if any(isinstance(b, pallas_core.Element) for b in bm.block_shape):
       raise NotImplementedError(
           "Only Blocked indexing mode is supported in Mosaic GPU lowering.\n\n"
           + err_details(bm)
@@ -548,7 +550,6 @@ def _block_spec_from_block_mapping(
       bm.block_shape,
       index_map,
       memory_space=bm.transformed_block_aval.memory_space,
-      indexing_mode=bm.indexing_mode,
       transforms=bm.transforms,
   )
 

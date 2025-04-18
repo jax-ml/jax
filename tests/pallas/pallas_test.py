@@ -866,14 +866,14 @@ class PallasCallInterpretTest(PallasCallTest):
   INTERPRET = True
 
 
-class PallasCallUnblockedIndexingTest(PallasBaseTest):
+class PallasCallElementIndexingTest(PallasBaseTest):
 
-  def test_block_spec_unblocked(self):
+  def test_block_spec_element(self):
     def show_program_ids(
-        *, shape, block_shape, grid, indexing_mode: pl.IndexingMode
+        *, shape, block_shape, grid,
     ):
       def kernel(o1_ref):
-        assert o1_ref.shape == block_shape
+        assert o1_ref.shape == (8, 128)
         o1_ref[...] = jnp.full(o1_ref.shape, pl.program_id(0))
 
       return self.pallas_call(
@@ -881,16 +881,15 @@ class PallasCallUnblockedIndexingTest(PallasBaseTest):
           jax.ShapeDtypeStruct(shape, dtype=np.int32),
           grid=grid,
           out_specs=pl.BlockSpec(
-              block_shape, lambda i: (8 * i, 0), indexing_mode=indexing_mode
+              block_shape, lambda i: (8 * i, 0),
           ),
       )()
 
     # No padding
     pids = show_program_ids(
         shape=(16, 128),
-        block_shape=(8, 128),
+        block_shape=(pl.Element(8), pl.Element(128)),
         grid=(2,),
-        indexing_mode=pl.Unblocked(),
     )
     expected_pids = np.array([[0] * 128] * 8 + [[1] * 128] * 8, dtype=np.int32)
     self.assertAllClose(pids, expected_pids)
@@ -901,9 +900,8 @@ class PallasCallUnblockedIndexingTest(PallasBaseTest):
     # Only high padding
     pids = show_program_ids(
         shape=(14, 128),
-        block_shape=(8, 128),
+        block_shape=(pl.Element(8, (0, 2)), pl.Element(128, (0, 0))),
         grid=(2,),
-        indexing_mode=pl.Unblocked(((0, 2), (0, 0))),
     )
     expected_pids = np.array([[0] * 128] * 8 + [[1] * 128] * 6, dtype=np.int32)
     self.assertAllClose(pids, expected_pids)
@@ -912,15 +910,14 @@ class PallasCallUnblockedIndexingTest(PallasBaseTest):
     self.skipTest("TODO: low padding not supported yet")
     pids = show_program_ids(
         shape=(11, 128),
-        block_shape=(8, 128),
+        block_shape=(pl.Element(8, (3, 2)), pl.Element(128, (0, 0))),
         grid=(2,),
-        indexing_mode=pl.Unblocked(((3, 2), (0, 0))),
     )
     expected_pids = np.array([[0] * 128] * 5 + [[1] * 128] * 6, dtype=np.int32)
     self.assertAllClose(pids, expected_pids)
 
   @parameterized.parameters("int32", "float32")
-  def test_block_spec_unblocked_padding_is_nan(self, dtype_name):
+  def test_block_spec_element_padding_is_nan(self, dtype_name):
     if not self.INTERPRET:
       self.skipTest("Only applicable for the interpret mode")
 
@@ -935,7 +932,7 @@ class PallasCallUnblockedIndexingTest(PallasBaseTest):
         grid=(1,),
         in_specs=[
             pl.BlockSpec(
-                (6,), lambda i: 0, indexing_mode=pl.Unblocked(((1, 2),))
+                (pl.Element(6, (1, 2)),), lambda i: 0,
             )
         ],
     )(np.full((3,), 42, dtype=dtype))
@@ -949,7 +946,7 @@ class PallasCallUnblockedIndexingTest(PallasBaseTest):
         ),
     )
 
-  def test_unblocked_indexing(self):
+  def test_element_indexing(self):
     shape = (16 * 8, 128)
     result_ty = jax.ShapeDtypeStruct((15 * 8, 128), jnp.float32)
 
@@ -962,11 +959,12 @@ class PallasCallUnblockedIndexingTest(PallasBaseTest):
         grid=(15,),
         in_specs=(
             pl.BlockSpec(
-                (2 * 8, 128), lambda i: (i * 8, 0), indexing_mode=pl.unblocked
+                (pl.Element(2 * 8), pl.Element(128)), lambda i: (i * 8, 0),
             ),
         ),
         out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
         out_shape=result_ty,
+        debug=True,
     )(x)
     ref = []
     for i in range(15):
@@ -991,9 +989,8 @@ class PallasCallUnblockedIndexingTest(PallasBaseTest):
         grid=(1,),
         in_specs=(
             pl.BlockSpec(
-                (2 * 8, 128),
+                (pl.Element(2 * 8, (0, 8)), pl.Element(128)),
                 lambda i: (0, 0),
-                indexing_mode=pl.Unblocked(((0, 8), (0, 0))),
             ),
         ),
         out_specs=pl.BlockSpec((8, 128), lambda i: (0, 0)),
@@ -1002,7 +999,7 @@ class PallasCallUnblockedIndexingTest(PallasBaseTest):
     np.testing.assert_array_equal(y, x)
 
 
-class PallasCallUnblockedIndexingInterpretTest(PallasCallUnblockedIndexingTest):
+class PallasCallElementIndexingInterpretTest(PallasCallElementIndexingTest):
   INTERPRET = True
 
 
