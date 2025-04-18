@@ -108,6 +108,7 @@ _py_deps = {
     "numpy": ["@pypi_numpy//:pkg"],
     "scipy": ["@pypi_scipy//:pkg"],
     "tensorflow_core": [],
+    "tensorstore": get_optional_dep("@pypi_tensorstore//:pkg"),
     "torch": [],
     "zstandard": get_zstandard(),
 }
