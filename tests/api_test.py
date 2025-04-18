@@ -6767,6 +6767,13 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr.eqns[0].primitive, debugging.debug_callback_p)
     self.assertStartsWith(str(jaxpr.eqns[0]), "debug_callback[", )
 
+  def test_unused_consts(self):
+    def f():
+      jnp.asarray(np.arange(5), dtype=np.float32)
+
+    jaxpr = jax.make_jaxpr(f)()
+    self.assertEmpty(jaxpr.consts)
+
 
 class DCETest(jtu.JaxTestCase):
 

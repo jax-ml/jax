@@ -2777,7 +2777,7 @@ def check_jaxpr(jaxpr: Jaxpr):
   def ctx_factory():
     ctx = JaxprPpContext()
     pp_settings = JaxprPpSettings()
-    try: pp_jaxpr(jaxpr, ctx, pp_settings)  # side-effect on ctx, build variable names
+    try: pp_jaxpr(jaxpr, ctx, pp_settings, drop_unused=False)  # side-effect on ctx, build variable names
     except: pass
     return ctx, pp_settings
 
@@ -3320,13 +3320,33 @@ def pp_shared_jaxpr(
   ])
 
 
+def drop_unused_vars(jaxpr: Jaxpr) -> Jaxpr:
+  def vars(atom: Atom) -> list[Var]:
+    if isinstance(atom, Literal):
+      return []
+    aval = atom.aval
+    if isinstance(aval, DShapedArray):
+      return [atom] + [d for d in aval.shape if isinstance(d, Var)]
+    return [atom]
+  used: set[Var] = {v for atom in jaxpr.outvars for v in vars(atom)}
+  new_eqns = []
+  for eqn in jaxpr.eqns[::-1]:
+    new_outvars = [v if v in used else DropVar(v.aval) for v in eqn.outvars]
+    new_eqns.append(eqn.replace(outvars=new_outvars))
+    used.update(v for atom in eqn.invars for v in vars(atom))
+  return jaxpr.replace(eqns=new_eqns[::-1])
+
+
 def pp_jaxpr(
     jaxpr: Jaxpr,
     context: JaxprPpContext,
     settings: JaxprPpSettings,
+    drop_unused: bool = True,
 ) -> pp.Doc:
   if name := context.shared_jaxprs.get(jaxpr):
     return pp.text(name)
+  if drop_unused:
+    jaxpr = drop_unused_vars(jaxpr)
   eqns_fn = lambda: pp_eqns(jaxpr.eqns, context, settings)
   return pp_jaxpr_skeleton(jaxpr, eqns_fn, context, settings)
 

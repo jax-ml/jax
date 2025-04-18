@@ -516,41 +516,6 @@ class JaxprTypeChecks(jtu.JaxTestCase):
         r"for let-binder of type f32\[2,3\]\n\nin equation:\n\nb:f32\[2,3\] = sin\ a",
         lambda: core.check_jaxpr(jaxpr))
 
-  def test_jaxpr_dropvar_from_jit_call(self):
-    def inner(x):
-      return x + 1, x + 2
-
-    def f(x):
-      _, y = jit(inner)(x)
-      return y + 3
-
-    jaxpr = make_jaxpr(f)(1).jaxpr
-    assert isinstance(jaxpr.eqns[0].outvars[0], core.DropVar)
-    core.check_jaxpr(jaxpr)
-
-  def test_jaxpr_dropvar_from_loop(self):
-    def f(x):
-      _, y = lax.while_loop(lambda s: s[0] < 0.,
-                            lambda s: (jnp.sin(s[0]), jnp.cos(s[1])),
-                            (x, x))
-      return y + 1.
-
-    jaxpr = make_jaxpr(f)(1.).jaxpr
-    assert isinstance(jaxpr.eqns[0].outvars[0], core.DropVar)
-    core.check_jaxpr(jaxpr)
-
-  def test_jaxpr_dropvar_from_cond(self):
-    def f(x):
-      _, y = lax.cond(x < 0.,
-                      lambda x: (jnp.sin(x), x + 1.),
-                      lambda x: (jnp.cos(x), x + 2.),
-                      x)
-      return y
-
-    jaxpr = make_jaxpr(f)(1.).jaxpr
-    assert isinstance(jaxpr.eqns[-1].outvars[0], core.DropVar)
-    core.check_jaxpr(jaxpr)
-
   @jtu.thread_unsafe_test()  # in-place mutation of possibly-cached jaxpr
   def test_jaxpr_undefined_eqn_invar(self):
     jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr

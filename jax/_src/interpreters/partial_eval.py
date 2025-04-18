@@ -1747,9 +1747,9 @@ class JaxprStackFrame:
     jaxpr_effects = make_jaxpr_effects(constvars, self.invars, explicit_outvars, self.eqns)
     jaxpr = Jaxpr(constvars, invars, outvars, self.eqns, jaxpr_effects,
                   debug_info)
-    jaxpr, constvals = _drop_unused_vars(jaxpr, constvals)
+    jaxpr, constvals = _drop_unused_consts(jaxpr, constvals)
     init_trees = [tree_structure(init_val) for init_val in self.attrs_inits]
-    return jaxpr, list(constvals), zip(init_trees, end_trees, self.attrs_tracked)
+    return jaxpr, constvals, zip(init_trees, end_trees, self.attrs_tracked)
 
   def to_jaxpr2(self, out_tracers: Sequence[core.Tracer],
                 debug_info: core.DebugInfo):
@@ -1762,8 +1762,7 @@ class JaxprStackFrame:
                                         self.eqns)
     jaxpr = Jaxpr(constvars, self.invars, expl_outvars, self.eqns,
                   jaxpr_effects, debug_info)
-    # We can't run check_jaxpr until after we normalize.
-    jaxpr, constvals = _drop_unused_vars(jaxpr, constvals)
+    jaxpr, constvals = _drop_unused_consts(jaxpr, constvals)
     jaxpr, out_type = _add_implicit_outputs(jaxpr)
     config.enable_checks.value and core.check_jaxpr(jaxpr)
     return jaxpr, out_type, constvals
@@ -1808,7 +1807,7 @@ ForwardingRule = Callable[
 forwarding_rules: dict[Primitive, ForwardingRule] = {}
 
 
-def _drop_unused_vars(
+def _drop_unused_consts(
     jaxpr: Jaxpr, constvals: Sequence[Any]
 ) -> tuple[Jaxpr, list[Any]]:
   def vars(atom: Atom) -> list[Var]:
@@ -1818,16 +1817,17 @@ def _drop_unused_vars(
     if isinstance(aval, DShapedArray):
       return [atom] + [d for d in aval.shape if isinstance(d, Var)]
     return [atom]
-  used: set[Var] = {v for atom in jaxpr.outvars for v in vars(atom)}
-  for eqn in jaxpr.eqns[::-1]:
-    eqn.outvars = [v if v in used else DropVar(v.aval) for v in eqn.outvars]
-    used.update(v for atom in eqn.invars for v in vars(atom))
-  cvars, constvals = unzip2(
+  constvars = set(jaxpr.constvars)
+  used: set[Var] = {
+      v for atom in jaxpr.outvars for v in vars(atom) if v in constvars}
+  for eqn in jaxpr.eqns:
+    used.update(v for atom in eqn.invars for v in vars(atom) if v in constvars)
+  new_constvars, new_constvals = unzip2(
       (v, val) for v, val in zip(jaxpr.constvars, constvals) if v in used)
-  jaxpr._constvars = list(cvars)
+  jaxpr._constvars = list(new_constvars)
   jaxpr._effects = make_jaxpr_effects(jaxpr.constvars, jaxpr.invars,
                                       jaxpr.outvars, jaxpr.eqns)
-  return jaxpr, list(constvals)
+  return jaxpr, list(new_constvals)
 
 
 class DynamicJaxprTrace(core.Trace):
