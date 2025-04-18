@@ -1921,11 +1921,12 @@ def pjit_staging_rule(trace, *args, **params):
       # shapes are enabled, use eval_jaxpr, which uses the tracing machinery,
       # but redundantly performs abstract evaluation again.
       with core.set_current_trace(trace):
-        return core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *args,
-                                      propagate_source_info=False)
+        out = core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *args,
+                              propagate_source_info=False)
     else:
-      return pe.inline_jaxpr_into_trace(
+      out = pe.inline_jaxpr_into_trace(
           trace, jaxpr.jaxpr, jaxpr.consts, *args)
+    return [trace.to_jaxpr_tracer(x) for x in out]
 
   jaxpr = params['jaxpr']
   if config.dynamic_shapes.value:
