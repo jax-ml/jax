@@ -135,6 +135,7 @@ class BlockSizes:
         "sm_scale",
         "block_sizes",
         "debug",
+        "attn_logits_soft_cap",
     ],
 )
 def flash_attention(
@@ -146,6 +147,7 @@ def flash_attention(
     *,
     causal: bool = False,
     sm_scale: float = 1.0,
+    attn_logits_soft_cap: float | None = None,
     block_sizes: BlockSizes | None = None,
     debug: bool = False,
 ):
@@ -197,7 +199,7 @@ def flash_attention(
         batch_size, num_heads, q_seq_len, kv_seq_len, d_model
     )
   return _flash_attention(
-      q, k, v, ab, segment_ids, False, causal, sm_scale, block_sizes, debug
+      q, k, v, ab, segment_ids, False, causal, sm_scale, attn_logits_soft_cap, block_sizes, debug
   )
 
 
@@ -211,6 +213,7 @@ def _flash_attention(
     save_residuals,
     causal,
     sm_scale,
+    attn_logits_soft_cap,
     block_sizes,
     debug,
 ):
@@ -223,6 +226,7 @@ def _flash_attention(
       save_residuals,
       causal,
       sm_scale,
+      attn_logits_soft_cap,
       block_sizes.block_b,
       block_sizes.block_q,
       block_sizes.block_k_major,
@@ -240,13 +244,14 @@ def _flash_attention_fwd(
     save_residuals,
     causal,
     sm_scale,
+    attn_logits_soft_cap,
     block_sizes,
     debug,
 ):
   if save_residuals:
     raise NotImplementedError("Higher-order AD not supported")
   o, l, m = _flash_attention(
-      q, k, v, ab, segment_ids, True, causal, sm_scale, block_sizes, debug
+      q, k, v, ab, segment_ids, True, causal, sm_scale, attn_logits_soft_cap, block_sizes, debug
   )
   return o, (q, k, v, ab, segment_ids, o, l, m)
 
@@ -356,6 +361,7 @@ def _flash_attention_kernel_single_batch(
     *,
     causal,
     sm_scale,
+    attn_logits_soft_cap,
     block_k,
     kv_seq_len,
     mask_value,
@@ -407,6 +413,11 @@ def _flash_attention_kernel_single_batch(
             (*batch_idx, pl.dslice(None), pl.dslice(start_k, block_k))
         ].astype(jnp.float32)
         s += ab
+
+      # Apply soft cap if provided
+      if attn_logits_soft_cap is not None:
+          capped_s = jnp.tanh(s / attn_logits_soft_cap)
+          s = capped_s * attn_logits_soft_cap
 
       if sm_scale != 1.0:
         s *= sm_scale
@@ -498,6 +509,7 @@ def _flash_attention_kernel_single_batch_single_step(
     *,
     causal,
     sm_scale,
+    attn_logits_soft_cap,
     block_k,
     kv_seq_len,
     mask_value,
@@ -515,6 +527,11 @@ def _flash_attention_kernel_single_batch_single_step(
 
   if ab_tile_ref is not None:
     s += ab_tile_ref[batch_idx].astype(jnp.float32)
+
+  if attn_logits_soft_cap is not None:
+    capped_s = jnp.tanh(s / attn_logits_soft_cap)
+    s = capped_s * attn_logits_soft_cap
+
   if sm_scale != 1.0:
     s *= sm_scale
 
@@ -573,12 +590,13 @@ def _fwd_cost_estimate(
     *,
     causal: bool,
     sm_scale: jax.Array | None,
+    attn_logits_soft_cap: float | None,
     kernel_inputs_specs,
     kernel_outputs_specs,
 ) -> pl.CostEstimate | None:
   body_cost = pl.estimate_cost(
     mha_reference,
-    q, k, v, ab, segment_ids, causal=causal, sm_scale=sm_scale
+    q, k, v, ab, segment_ids, causal=causal, sm_scale=sm_scale, attn_logits_soft_cap=attn_logits_soft_cap,
   )
   input_bytes = sum(_bytes(x) for x in jax.tree.leaves(kernel_inputs_specs))
   output_bytes = sum(_bytes(x) for x in jax.tree.leaves(kernel_outputs_specs))
@@ -598,6 +616,7 @@ def _flash_attention_impl(
     save_residuals,
     causal,
     sm_scale,
+    attn_logits_soft_cap,
     block_b,
     block_q,
     block_k_major,
@@ -667,6 +686,7 @@ def _flash_attention_impl(
       causal=causal,
       mask_value=DEFAULT_MASK_VALUE,
       sm_scale=sm_scale,
+      attn_logits_soft_cap=attn_logits_soft_cap,
       block_k=block_k,
       kv_seq_len=kv_seq_len,
   )
@@ -785,6 +805,7 @@ def _flash_attention_impl(
           segment_ids,
           causal=causal,
           sm_scale=sm_scale,
+          attn_logits_soft_cap=attn_logits_soft_cap,
           kernel_inputs_specs=(q, k, v, ab, q_segment_ids, kv_segment_ids),
           kernel_outputs_specs=out_shape,
       ),
@@ -1492,11 +1513,15 @@ def mha_reference_no_custom_vjp(
     causal: bool = False,
     mask_value: float = DEFAULT_MASK_VALUE,
     sm_scale: float = 1.0,
+    attn_logits_soft_cap: float | None = None,
     save_residuals: bool = False,
 ):
   logits = jnp.einsum("bhqc,bhkc->bhqk", q, k)
   if ab is not None:
     logits += ab
+  if attn_logits_soft_cap is not None:
+    capped_logits = jnp.tanh(logits / attn_logits_soft_cap)
+    logits = capped_logits * attn_logits_soft_cap
   if sm_scale != 1.0:
     logits *= sm_scale
 
@@ -1527,7 +1552,7 @@ def mha_reference_no_custom_vjp(
 
 
 @functools.partial(
-    jax.jit, static_argnames=["causal", "mask_value", "sm_scale"]
+    jax.jit, static_argnames=["causal", "mask_value", "sm_scale", "attn_logits_soft_cap"]
 )
 @jax.default_matmul_precision("bfloat16")
 def mha_reference(
@@ -1539,6 +1564,7 @@ def mha_reference(
     causal: bool = False,
     mask_value: float = DEFAULT_MASK_VALUE,
     sm_scale=1.0,
+    attn_logits_soft_cap: float | None = None,
 ):
   return _mha_reference(
       q,
@@ -1549,6 +1575,7 @@ def mha_reference(
       causal=causal,
       mask_value=mask_value,
       sm_scale=sm_scale,
+      attn_logits_soft_cap=attn_logits_soft_cap,
       save_residuals=False,
   )
 
@@ -1564,6 +1591,7 @@ def _mha_reference(
     mask_value: float,
     sm_scale: float,
     save_residuals: bool,
+    attn_logits_soft_cap: float | None = None,
 ):
   return mha_reference_no_custom_vjp(
       q,
@@ -1574,6 +1602,7 @@ def _mha_reference(
       causal=causal,
       mask_value=mask_value,
       sm_scale=sm_scale,
+      attn_logits_soft_cap=attn_logits_soft_cap,
       save_residuals=save_residuals,
   )
 
@@ -1588,6 +1617,7 @@ def _mha_reference_fwd(
     mask_value: float,
     sm_scale: float,
     save_residuals: bool,
+    attn_logits_soft_cap: float | None = None,
 ):
   if save_residuals:
     raise NotImplementedError
@@ -1600,6 +1630,7 @@ def _mha_reference_fwd(
       causal=causal,
       mask_value=mask_value,
       sm_scale=sm_scale,
+      attn_logits_soft_cap=attn_logits_soft_cap,
       save_residuals=True,
   )
   assert isinstance(res, tuple)
