@@ -7323,7 +7323,7 @@ def _select_transpose_rule(t, which, *cases):
           if ad.is_undefined_primal(case) else None for i, case in enumerate(cases)
       ]
 
-def _select_batch_rule(batched_args, batch_dims, **unused_kwargs):
+def _select_batch_rule(axis_data, batched_args, batch_dims, **unused_kwargs):
   which, *cases = batched_args
   which_bdim, *case_bdims = batch_dims
   size = next(x.shape[i] for x, i in zip(batched_args, batch_dims)
@@ -7350,7 +7350,7 @@ def _select_batch_rule(batched_args, batch_dims, **unused_kwargs):
   which = (batching.bdim_at_front(which, which_bdim, size) if np.shape(which)
            else which)
   if not all(() == np.shape(c) for c in cases):
-    cases = [batching.bdim_at_front(c, bdim, size)
+    cases = [batching.bdim_at_front(c, bdim, size, axis_data.explicit_mesh_axis)
              for c, bdim in zip(cases, case_bdims)]
   assert all(np.shape(cases[0]) == np.shape(c) for c in cases[1:])
   if 0 < np.ndim(which) < np.ndim(cases[0]):
@@ -7440,7 +7440,8 @@ select_n_p = standard_primitive(
     vma_rule=partial(core.standard_vma_rule, 'select_n'))
 ad.primitive_jvps[select_n_p] = _select_jvp
 ad.primitive_transposes[select_n_p] = _select_transpose_rule
-batching.primitive_batchers[select_n_p] = _select_batch_rule
+batching.fancy_primitive_batchers[select_n_p] = _select_batch_rule
+batching.skippable_batchers[select_n_p] = lambda _: ()
 mlir.register_lowering(select_n_p, _select_hlo_lowering)
 pe.def_trivial_padding(select_n_p)
 

@@ -7447,6 +7447,47 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     xs = jax.device_put(xs, sharding)
     scan(xs)
 
+  @jtu.with_user_mesh((2, 2), ('x', 'y'))
+  def test_select_batch(self, mesh):
+    y_sharding = NamedSharding(mesh, P('y', None))
+    xy_sharding = NamedSharding(mesh, P('x', 'y', None))
+    batch_a = jax.device_put(jnp.ones((4, 2, 3), dtype=jnp.float32), xy_sharding)
+    batch_b = jax.device_put(jnp.ones((4, 2, 2), dtype=jnp.int32), xy_sharding)
+
+    out_s = NamedSharding(mesh, P('x', 'y', None, None))
+
+    def select(a, b):
+      c = a.at[b].get(out_sharding=y_sharding)
+      return c
+
+    @jax.jit
+    def vmap_select(batch_a, batch_b):
+      out = jax.vmap(select)(batch_a, batch_b)
+      self.assertEqual(out.aval.sharding.spec, out_s.spec)
+      return out
+
+    out = vmap_select(batch_a, batch_b)
+    self.assertEqual(out.sharding, out_s)
+
+  @jtu.with_user_mesh((2, 2), ('x', 'y'))
+  def test_where_vmap(self, mesh):
+    xy_sharding = NamedSharding(mesh, P('x', 'y', None))
+    batch_a = jax.device_put(jnp.ones((4, 2, 3), dtype=jnp.float32), xy_sharding)
+    batch_b = jax.device_put(jnp.ones((4, 2, 3), dtype=jnp.bool), xy_sharding)
+
+    def where(a, b):
+      out = jnp.where(b, a, 0)
+      return out
+
+    @jax.jit
+    def vmap_where(batch_a, batch_b):
+      out = jax.vmap(where)(batch_a, batch_b)
+      self.assertEqual(out.aval.sharding.spec, xy_sharding.spec)
+      return out
+
+    out = vmap_where(batch_a, batch_b)
+    self.assertEqual(out.sharding, xy_sharding)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
