@@ -128,9 +128,6 @@ import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error  # noqa: F
 import jaxlib.mosaic.python.mosaic_gpu as mosaic_gpu_dialect  # pytype: disable=import-error  # noqa: F401
 import jaxlib.mosaic.python.tpu as tpu  # pytype: disable=import-error  # noqa: F401
 
-# Version number for MLIR:Python APIs, provided by jaxlib.
-mlir_api_version = xla_client.mlir_api_version
-
 # TODO(rocm): check if we need the same for rocm.
 
 def _cuda_path() -> str | None:

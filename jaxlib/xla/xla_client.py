@@ -58,9 +58,6 @@ _version = 330
 # In JAX, reference this via jax._src.lib.ifrt_version.
 _ifrt_version = _xla.ifrt_version_number
 
-# Version number for MLIR:Python components.
-mlir_api_version = 58
-
 xla_platform_names = {
     'cpu': 'Host',
     'gpu': 'CUDA',
