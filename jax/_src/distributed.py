@@ -37,8 +37,8 @@ _CHECK_PROXY_ENVS = config.bool_flag(
 class State:
   process_id: int = 0
   num_processes: int = 1
-  service: Any | None = None
-  client: Any | None = None
+  service: xla_extension.DistributedRuntimeService | Any | None = None
+  client: xla_extension.DistributedRuntimeClient | Any | None = None
   preemption_sync_manager: Any | None = None
   coordinator_address: str | None = None
   slice_index: int | None = None
