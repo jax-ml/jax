@@ -1466,6 +1466,12 @@ def _unique_indices_unbatched(indices, *, shape, return_inverse=False,
   out_of_bounds = (indices >= fill_value).any(-1, keepdims=True)
   indices = jnp.where(out_of_bounds, fill_value, indices)
   # TODO: check if `indices_sorted` is True.
+  def _indices_sorted(indices):
+    if indices.shape[0]==0:
+      return True
+    sorted_order = jnp.lexsort(indices.T[::-1])
+    return jnp.array_equal(sorted_order, jnp.arrange(indices.shape[0]))
+    
   out = _unique(indices, axis=0, return_inverse=return_inverse, return_index=return_index,
                 return_true_size=return_true_size, size=props.nse, fill_value=fill_value)
   if return_inverse:
