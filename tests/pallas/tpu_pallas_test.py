@@ -2938,6 +2938,46 @@ class MiscellaneousTest(PallasBaseTest):
         out, np.zeros((8, 8, 2, 128), dtype=jnp.float32)
     )
 
+  @parameterized.parameters(
+      (32, 16, 512, jnp.float32),
+      (24, 1, 512, jnp.uint32),
+      (3, 3, 256, jnp.uint32),
+      (9, 15, 256, jnp.float32),
+      (3, 2, 256, jnp.float32),
+  )
+  def test_reshape_two_minor_dims_to_R2(self, q, m, n, dtype):
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...].reshape(
+          x_ref.shape[0], x_ref.shape[1] * x_ref.shape[2]
+      )
+
+    x = np.arange(q * m * n, dtype=dtype).reshape(q, m, n)
+    out = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((q, m * n), dtype),
+    )(x)
+    np.testing.assert_array_equal(out, x.reshape([q, m * n]))
+
+  @parameterized.parameters(
+      (3, 8, 17, 512, jnp.float32),
+      (1, 8, 9, 256, jnp.float32),
+      (1, 8, 3, 256, jnp.uint32),
+      (10, 1, 4, 256, jnp.uint32),
+      (1, 2, 2, 256, jnp.float32),
+  )
+  def test_reshape_two_minor_dims_to_R3(self, q, m, n, k, dtype):
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...].reshape(
+          x_ref.shape[0], x_ref.shape[1], x_ref.shape[2] * x_ref.shape[3]
+      )
+
+    x = np.arange(q * m * n * k, dtype=dtype).reshape(q, m, n, k)
+    out = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((q, m, n * k), dtype),
+    )(x)
+    np.testing.assert_array_equal(out, x.reshape([q, m, n * k]))
+
 
 class MiscellaneousInterpretTest(MiscellaneousTest):
   INTERPRET: bool = True
