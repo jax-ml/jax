@@ -1802,10 +1802,12 @@ memory_fitting_level = enum_state(
     include_in_jit_key=True
 )
 
+DEFAULT_CPU_COLLECTIVES_IMPL = "gloo"
+
 cpu_collectives_implementation = optional_enum_state(
     name='jax_cpu_collectives_implementation',
     enum_values=["gloo", "mpi", "megascale"],
-    default=None,
+    default=DEFAULT_CPU_COLLECTIVES_IMPL,
     help=(
         "Cross-process collective implementation used on CPU. Must be one of "
         '("gloo", "mpi")'),
