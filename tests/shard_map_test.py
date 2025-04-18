@@ -1997,7 +1997,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('i', 'j')))
     self.assertAllClose(v * v, out, check_dtypes=False)
 
-  @jtu.with_user_mesh((2, 2), ('i', 'j'))
+  @jtu.with_explicit_mesh((2, 2), ('i', 'j'))
   def test_partial_auto_explicit(self, mesh):
     def g(x):
       self.assertDictEqual(x.aval.sharding.mesh._axis_types_dict,
@@ -2041,7 +2041,7 @@ class ShardMapTest(jtu.JaxTestCase):
     jax.grad(h)(v)  # doesn't crash
     jax.jit(jax.grad(h))(v)  # doesn't crash
 
-  @jtu.with_user_mesh((2, 1, 2, 2), ('i', 'j', 'k', 'l'))
+  @jtu.with_explicit_mesh((2, 1, 2, 2), ('i', 'j', 'k', 'l'))
   def test_partial_auto_explicit_multi_explicit(self, mesh):
     def g(x):
       self.assertDictEqual(x.aval.sharding.mesh._axis_types_dict,
