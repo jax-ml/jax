@@ -17,6 +17,8 @@
 import functools
 from absl.testing import absltest
 from absl.testing import parameterized
+import hypothesis as hp
+import hypothesis.strategies as hps
 import jax
 from jax import lax
 from jax._src import test_util as jtu
@@ -26,9 +28,6 @@ from jax.experimental import shard_map
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 import numpy as np
-
-import hypothesis as hp
-import hypothesis.strategies as hps
 
 
 hp.settings.register_profile(
@@ -75,10 +74,12 @@ def basic_matmul_kernel(
   k_index = pl.program_id(2)
   num_k = pl.num_programs(2)
   bk = lhs_ref.shape[1]
+
   @pl.when(k_index == 0)
   def _zero_acc():
     acc_scratch_ref[...] = jnp.zeros(
-        acc_scratch_ref.shape, acc_scratch_ref.dtype)
+        acc_scratch_ref.shape, acc_scratch_ref.dtype
+    )
 
   divisible_k = k % bk == 0
   if divisible_k:
@@ -88,6 +89,7 @@ def basic_matmul_kernel(
         preferred_element_type=acc_scratch_ref.dtype,
     )
   else:
+
     def _last_block():
       accum_dtype = acc_scratch_ref.dtype
       lhs_mask = (
@@ -104,16 +106,17 @@ def basic_matmul_kernel(
       rhs = rhs_ref[...].astype(accum_dtype)
       rhs = jnp.where(rhs_mask, rhs, 0).astype(dtype)
       acc_scratch_ref[...] += jnp.dot(
-          lhs, rhs, preferred_element_type=acc_scratch_ref.dtype)
+          lhs, rhs, preferred_element_type=acc_scratch_ref.dtype
+      )
+
     def _not_last_block():
       acc_scratch_ref[...] += jnp.dot(
           lhs_ref[...],
           rhs_ref[...],
           preferred_element_type=acc_scratch_ref.dtype,
       )
-    jax.lax.cond(
-       k_index == num_k - 1, _last_block, _not_last_block
-    )
+
+    jax.lax.cond(k_index == num_k - 1, _last_block, _not_last_block)
 
   @pl.when(k_index == num_k - 1)
   def _reduce_out():
@@ -243,7 +246,8 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
       ('hbm_float32_111', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 1, 1),
   )
   def test_pipeline_latency_optimized_allgather_matmul(
-      self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles):
+      self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles
+  ):
     input_dtype = jnp.float32
 
     num_devices = jax.local_device_count()
@@ -264,12 +268,15 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
 
     inner_allocs = [
         pltpu.BufferedRef.input(
-            pl.BlockSpec((tm, tk), lambda n, m, k: (m, k)), input_dtype),
+            pl.BlockSpec((tm, tk), lambda n, m, k: (m, k)), input_dtype
+        ),
         pltpu.BufferedRef.input(
-            pl.BlockSpec((tk, tn), lambda n, m, k: (k, n)), input_dtype),
+            pl.BlockSpec((tk, tn), lambda n, m, k: (k, n)), input_dtype
+        ),
         pltpu.BufferedRef.accumulator(
-            pl.BlockSpec((tm, tn), lambda n, m, k: (m, n)), out_dtype),
-        ]
+            pl.BlockSpec((tm, tn), lambda n, m, k: (m, n)), out_dtype
+        ),
+    ]
 
     def all_gather_lhs_matmul_kernel(
         # in refs:
@@ -287,7 +294,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
         fwd_send_sem,
         lhs_bref,
         rhs_bref,
-        out_bref
+        out_bref,
     ):
       # Outer Pipeline
       # Coordinates collective rDMAs and prefetching around the inner compute
@@ -420,6 +427,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
       @jax.named_scope('send_next_dma')
       def _send_next_dma():
         bwd_copy.start()
+
         @pl.when(jnp.logical_not(is_start))
         def _send_next_fwd_dma():
           fwd_copy.start()
@@ -440,26 +448,29 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
 
         # prefetch next loop's inputs
         prefetch_working_slot = jnp.where(
-            phase == 0, working_slot, buffering_slot)
+            phase == 0, working_slot, buffering_slot
+        )
         prefetch_step = jnp.where(phase == 0, outer_step, outer_step + 1)
         prefetch_phase = lax.rem(phase + 1, 2)
         scheduler.prefetch(
-            lhs_bref, lhs_scratch_ref.at[prefetch_phase, prefetch_working_slot])
+            lhs_bref, lhs_scratch_ref.at[prefetch_phase, prefetch_working_slot]
+        )
         scheduler.prefetch(
-            rhs_bref, rhs_ref.at[get_rhs_slice(prefetch_step, prefetch_phase)])
+            rhs_bref, rhs_ref.at[get_rhs_slice(prefetch_step, prefetch_phase)]
+        )
         scheduler.prefetch(out_bref, out_ref, accum_schedule)
 
       pltpu.emit_pipeline(inner_kernel, grid=inner_grid)(
-            lhs_scratch_ref.at[phase, working_slot],
-            rhs_ref.at[get_rhs_slice(outer_step, phase)],
-            out_ref,
-            allocations=[lhs_bref, rhs_bref, out_bref],
-            scratches=[acc_scratch_ref],
-            first_cycle=is_start,
-            last_cycle=is_end,
-            init_accumulators=is_start,
-            prefetch=prefetch,
-            schedule=[None, None, accum_schedule]
+          lhs_scratch_ref.at[phase, working_slot],
+          rhs_ref.at[get_rhs_slice(outer_step, phase)],
+          out_ref,
+          allocations=[lhs_bref, rhs_bref, out_bref],
+          scratches=[acc_scratch_ref],
+          first_cycle=is_start,
+          last_cycle=is_end,
+          init_accumulators=is_start,
+          prefetch=prefetch,
+          schedule=[None, None, accum_schedule],
       )
 
     kernel = pl.pallas_call(
@@ -474,19 +485,20 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
                 pl.BlockSpec(memory_space=memory_space),
                 pl.BlockSpec(memory_space=memory_space),
             ],
-            out_specs=[pl.BlockSpec(memory_space=memory_space),
-                       pl.BlockSpec(memory_space=memory_space)],
+            out_specs=[
+                pl.BlockSpec(memory_space=memory_space),
+                pl.BlockSpec(memory_space=memory_space),
+            ],
             grid=(outer_steps, 2),
-            scratch_shapes=[
-                pltpu.VMEM((tm, tn), jnp.float32)]
+            scratch_shapes=[pltpu.VMEM((tm, tn), jnp.float32)]
             + [pltpu.SemaphoreType.DMA] * 4
-            + inner_allocs
+            + inner_allocs,
         ),
         compiler_params=pltpu.TPUCompilerParams(
-                    collective_id=0,
-                    # must set scoped vmem flag *larger* than below! e.g.:
-                    # flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
-                    vmem_limit_bytes=int(134217728 * 0.9)  # 0.9 * 128MiB
+            collective_id=0,
+            # must set scoped vmem flag *larger* than below! e.g.:
+            # flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
+            vmem_limit_bytes=int(134217728 * 0.9),  # 0.9 * 128MiB
         ),
     )
 
@@ -510,11 +522,8 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
       return jnp.dot(x, y, preferred_element_type=out_dtype)
 
     k1, k2 = jax.random.split(jax.random.key(42))
-    x = jax.random.uniform(
-        k1, (m, k), dtype=input_dtype, minval=-1, maxval=1)
-    y = jax.random.uniform(
-        k2, (k, n), dtype=input_dtype, minval=-1, maxval=1
-    )
+    x = jax.random.uniform(k1, (m, k), dtype=input_dtype, minval=-1, maxval=1)
+    y = jax.random.uniform(k2, (k, n), dtype=input_dtype, minval=-1, maxval=1)
 
     out = jax.block_until_ready(test(x, y)[0])
     expected_out = jax.block_until_ready(reference(x, y))
@@ -533,7 +542,8 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
       ('hbm_float32_121', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 2, 1),
   )
   def test_pipeline_throughput_optimized_allgather_matmul(
-      self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles):
+      self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles
+  ):
     # TODO(b/358121809): Re-enable this test once the bug is fixed.
     self.skipTest('Broken test.')
     input_dtype = out_dtype
@@ -556,12 +566,15 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
 
     inner_allocs = [
         pltpu.BufferedRef.input(
-            pl.BlockSpec((tm, tk), lambda n, m, k: (m, k)), input_dtype),
+            pl.BlockSpec((tm, tk), lambda n, m, k: (m, k)), input_dtype
+        ),
         pltpu.BufferedRef.input(
-            pl.BlockSpec((tk, tn), lambda n, m, k: (k, n)), input_dtype),
+            pl.BlockSpec((tk, tn), lambda n, m, k: (k, n)), input_dtype
+        ),
         pltpu.BufferedRef.accumulator(
-            pl.BlockSpec((tm, tn), lambda n, m, k: (m, n)), out_dtype),
-        ]
+            pl.BlockSpec((tm, tn), lambda n, m, k: (m, n)), out_dtype
+        ),
+    ]
 
     def all_gather_lhs_matmul_kernel(
         # in refs:
@@ -579,7 +592,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
         fwd_send_sem,
         lhs_bref,
         rhs_bref,
-        out_bref
+        out_bref,
     ):
       outer_step = pl.program_id(0)  # range [0, steps-1]
       phase = pl.program_id(1)  # range [0, 1]  0 == BWD Matmul, 1 == FWD Matmul
@@ -601,7 +614,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
       # Initialize backwards stream by transfer of LHS chunks into local
       # working copies.
       initial_bwd_copy = pltpu.make_async_copy(
-          lhs_ref.at[make_ds(1, m//2)],
+          lhs_ref.at[make_ds(1, m // 2)],
           lhs_scratch_ref.at[0, working_slot],
           bwd_send_sem,
       )
@@ -609,7 +622,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
       # Initialize forwards stream by transfer of LHS chunks into local
       # working copies.
       initial_fwd_copy = pltpu.make_async_copy(
-          lhs_ref.at[make_ds(0, m//2)],
+          lhs_ref.at[make_ds(0, m // 2)],
           lhs_scratch_ref.at[1, working_slot],
           bwd_send_sem,
       )
@@ -642,7 +655,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
         return make_ds(offset, sharded_k)
 
       def get_half(phase):
-        return make_ds(jnp.where(phase, 0, 1), m//2)
+        return make_ds(jnp.where(phase, 0, 1), m // 2)
 
       # Loop Prologue
       @pl.when(is_start)
@@ -662,6 +675,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
       @jax.named_scope('send_next_dma')
       def _send_next_dma():
         bwd_copy.start()
+
         @pl.when(jnp.logical_not(is_start))
         def _send_next_fwd_dma():
           fwd_copy.start()
@@ -681,16 +695,16 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
           fwd_copy.wait()
 
         # prefetch next inputs
-        next_working_slot = jnp.where(
-            phase == 0, working_slot, buffering_slot)
+        next_working_slot = jnp.where(phase == 0, working_slot, buffering_slot)
         next_step = jnp.where(phase == 0, outer_step, outer_step + 1)
         next_phase = lax.rem(phase + 1, 2)
         scheduler.prefetch(
-            lhs_bref, lhs_scratch_ref.at[next_phase, next_working_slot])
+            lhs_bref, lhs_scratch_ref.at[next_phase, next_working_slot]
+        )
         scheduler.prefetch(
-            rhs_bref, rhs_ref.at[get_rhs_slice(next_step, next_phase)])
-        scheduler.prefetch(
-            out_bref, out_ref.at[get_half(next_phase)])
+            rhs_bref, rhs_ref.at[get_rhs_slice(next_step, next_phase)]
+        )
+        scheduler.prefetch(out_bref, out_ref.at[get_half(next_phase)])
 
       pltpu.emit_pipeline(inner_kernel, grid=inner_grid)(
           lhs_scratch_ref.at[phase, working_slot],
@@ -753,11 +767,8 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
       return jnp.dot(x, y, preferred_element_type=out_dtype)
 
     k1, k2 = jax.random.split(jax.random.key(42))
-    x = jax.random.uniform(
-        k1, (m, k), dtype=input_dtype, minval=-1, maxval=1)
-    y = jax.random.uniform(
-        k2, (k, n), dtype=input_dtype, minval=-1, maxval=1
-    )
+    x = jax.random.uniform(k1, (m, k), dtype=input_dtype, minval=-1, maxval=1)
+    y = jax.random.uniform(k2, (k, n), dtype=input_dtype, minval=-1, maxval=1)
 
     out = jax.block_until_ready(test(x, y)[0])
     expected_out = jax.block_until_ready(reference(x, y))
@@ -776,7 +787,8 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
       ('hbm_float32_111', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 1, 1),
   )
   def test_pipeline_latency_optimized_matmul_reducescatter(
-      self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles):
+      self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles
+  ):
     input_dtype = jnp.float32
     num_devices = jax.device_count()
 
@@ -803,17 +815,22 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
 
     inner_allocs = [
         pltpu.BufferedRef.input(
-            pl.BlockSpec((tm, tk), lambda n, m, k: (m, k)), input_dtype),
+            pl.BlockSpec((tm, tk), lambda n, m, k: (m, k)), input_dtype
+        ),
         pltpu.BufferedRef.input(
-            pl.BlockSpec((tk, tn), lambda n, m, k: (k, n)), input_dtype),
+            pl.BlockSpec((tk, tn), lambda n, m, k: (k, n)), input_dtype
+        ),
         pltpu.BufferedRef.accumulator(
-            pl.BlockSpec((tm, tn), lambda n, m, k: (m, n)), out_dtype),
+            pl.BlockSpec((tm, tn), lambda n, m, k: (m, n)), out_dtype
+        ),
         # only used for final addition of fwd + bwd streams.
         pltpu.BufferedRef.input(
-            pl.BlockSpec((tm, n), lambda m: (m, 0)), out_dtype),
+            pl.BlockSpec((tm, n), lambda m: (m, 0)), out_dtype
+        ),
         pltpu.BufferedRef.accumulator(
-            pl.BlockSpec((tm, n), lambda m: (m, 0)), out_dtype),
-        ]
+            pl.BlockSpec((tm, n), lambda m: (m, 0)), out_dtype
+        ),
+    ]
 
     def reduce_scatter_lhs_matmul_kernel(
         # in refs:
@@ -876,8 +893,8 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
 
       # Slice RHS slices in bwd/fwd phases for contractions.
       def get_lhs_slice(step, phase):
-        bwd_lhs_offset = mod(my_id + step + num_devices//2 + 1, num_devices)
-        fwd_lhs_offset = mod(my_id - step - num_devices//2, num_devices)
+        bwd_lhs_offset = mod(my_id + step + num_devices // 2 + 1, num_devices)
+        fwd_lhs_offset = mod(my_id - step - num_devices // 2, num_devices)
         offset = jnp.where(phase, bwd_lhs_offset, fwd_lhs_offset)
         return (
             pl.ds(pl.multiple_of(offset * sharded_m, sharded_m), sharded_m),
@@ -906,6 +923,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
           @jax.named_scope('send_prev_fwd_dma')
           def _send_prev_fwd_dma():
             fwd_copy.start()
+
           @pl.when(phase == 0)
           @jax.named_scope('send_prev_bwd_dma')
           def _send_prev_bwd_dma():
@@ -921,6 +939,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
             @jax.named_scope('send_prev_fwd_dma')
             def _send_prev_fwd_dma():
               fwd_copy.wait()
+
             @pl.when(phase == 0)
             @jax.named_scope('send_prev_bwd_dma')
             def _send_prev_bwd_dma():
@@ -932,8 +951,9 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
           def _prefetch():
             next_slot = jnp.where(phase == 0, working_slot, buffering_slot)
             next_phase = 1 - phase
-            scheduler.prefetch(out_bref,
-                                accumulator_ref.at[next_phase, next_slot])
+            scheduler.prefetch(
+                out_bref, accumulator_ref.at[next_phase, next_slot]
+            )
 
       # Prefetch next inputs on last step of our present cycle
       def prefetch(lhs_bref, rhs_bref, out_bref, scheduler):
@@ -943,6 +963,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
           @jax.named_scope('wait_prev_fwd_dma')
           def _wait_prev_fwd_dma():
             fwd_copy.wait()
+
           @pl.when(phase == 0)
           @jax.named_scope('wait_prev_bwd_dma')
           def _wait_prev_bwd_dma():
@@ -953,15 +974,18 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
         next_step = jnp.where(phase == 0, outer_step, outer_step + 1)
         next_phase = lax.rem(phase + 1, 2)
         scheduler.prefetch(
-            lhs_bref, lhs_ref.at[get_lhs_slice(next_step, next_phase)])
+            lhs_bref, lhs_ref.at[get_lhs_slice(next_step, next_phase)]
+        )
         scheduler.prefetch(rhs_bref, rhs_ref, rhs_schedule)
+
         # When the inner matmul loop consists of a single iteration, we need
         # to avoid optimistic prefetch to avoid a data race.
         # Don't prefetch when accums are being zeroed.
         @pl.when(~trivial_loop & ~is_start)
         def _prefetch_accum():
           scheduler.prefetch(
-              out_bref, accumulator_ref.at[next_phase, next_working_slot])
+              out_bref, accumulator_ref.at[next_phase, next_working_slot]
+          )
 
       # Run matmul pipeline
       pltpu.emit_pipeline(inner_kernel, grid=inner_grid)(
@@ -1020,7 +1044,8 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
         shard_map.shard_map,
         mesh=jax.sharding.Mesh(
             mesh_utils.create_device_mesh(
-                (num_devices,), jax.devices()[:num_devices]),
+                (num_devices,), jax.devices()[:num_devices]
+            ),
             ['x'],
         ),
         in_specs=(P(None, 'x'), P('x', None)),
@@ -1034,15 +1059,11 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
     @shard
     def reference(x, y):
       unreduced = jnp.dot(x, y, preferred_element_type=out_dtype)
-      return lax.psum_scatter(
-          unreduced, 'x', scatter_dimension=0, tiled=True)
+      return lax.psum_scatter(unreduced, 'x', scatter_dimension=0, tiled=True)
 
     k1, k2 = jax.random.split(jax.random.key(42))
-    x = jax.random.uniform(
-        k1, (m, k), dtype=input_dtype, minval=-1, maxval=1)
-    y = jax.random.uniform(
-        k2, (k, n), dtype=input_dtype, minval=-1, maxval=1
-    )
+    x = jax.random.uniform(k1, (m, k), dtype=input_dtype, minval=-1, maxval=1)
+    y = jax.random.uniform(k2, (k, n), dtype=input_dtype, minval=-1, maxval=1)
 
     out = jax.block_until_ready(test(x, y))
     expected_out = jax.block_until_ready(reference(x, y))
@@ -1063,7 +1084,8 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
       ('hbm_float32_111', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 2, 1),
   )
   def test_pipeline_throughput_optimized_matmul_reducescatter(
-      self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles):
+      self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles
+  ):
     # TODO(b/358121809): Re-enable this test once the bug is fixed.
     self.skipTest('Broken test.')
     input_dtype = jnp.float32
@@ -1085,12 +1107,15 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
 
     inner_allocs = [
         pltpu.BufferedRef.input(
-            pl.BlockSpec((tm, tk), lambda n, m, k: (m, k)), input_dtype),
+            pl.BlockSpec((tm, tk), lambda n, m, k: (m, k)), input_dtype
+        ),
         pltpu.BufferedRef.input(
-            pl.BlockSpec((tk, tn), lambda n, m, k: (k, n)), input_dtype),
+            pl.BlockSpec((tk, tn), lambda n, m, k: (k, n)), input_dtype
+        ),
         pltpu.BufferedRef.accumulator(
-            pl.BlockSpec((tm, tn), lambda n, m, k: (m, n)), out_dtype),
-        ]
+            pl.BlockSpec((tm, tn), lambda n, m, k: (m, n)), out_dtype
+        ),
+    ]
 
     def reduce_scatter_lhs_matmul_kernel(
         # in refs:
@@ -1158,6 +1183,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
             pl.ds(pl.multiple_of(offset * half_m, half_m), half_m),
             pl.ds(pl.multiple_of(0, sharded_k), sharded_k),
         )
+
       def get_accum_slice(phase, slot):
         return (slot, make_ds(phase, half_m))
 
@@ -1176,12 +1202,14 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
       # Writeback previous outputs on first step of our present cycle
       def postyeet(lhs_bref, rhs_bref, out_bref, scheduler):
         del lhs_bref, rhs_bref
+
         @pl.when(~is_start & ~is_end)
         def _rdmas():
           @pl.when(phase == 1)
           @jax.named_scope('send_prev_fwd_dma')
           def _send_prev_fwd_dma():
             fwd_copy.start()
+
           @pl.when(phase == 0)
           @jax.named_scope('send_prev_bwd_dma')
           def _send_prev_bwd_dma():
@@ -1197,20 +1225,26 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
             @jax.named_scope('wait_prev_fwd_dma')
             def _wait_prev_fwd_dma():
               fwd_copy.wait()
+
             @pl.when(phase == 0)
             @jax.named_scope('wait_prev_bwd_dma')
             def _wait_prev_bwd_dma():
               bwd_copy.wait()
+
           # deferred "prefetch"
           # Don't prefetch when accums are being zeroed.
           @pl.when(~is_start)
           def _prefetch():
             next_working_slot = jnp.where(
-                phase == 0, working_slot, buffering_slot)
+                phase == 0, working_slot, buffering_slot
+            )
             next_phase = 1 - phase
             scheduler.prefetch(
-                out_bref, rs_accum_scratch_ref.at[
-                    get_accum_slice(next_phase, next_working_slot)])
+                out_bref,
+                rs_accum_scratch_ref.at[
+                    get_accum_slice(next_phase, next_working_slot)
+                ],
+            )
 
       # Prefetch next inputs on last step of our present cycle
       def prefetch(lhs_bref, rhs_bref, out_bref, scheduler):
@@ -1220,6 +1254,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
           @jax.named_scope('wait_prev_fwd_dma')
           def _wait_prev_fwd_dma():
             fwd_copy.wait()
+
           @pl.when(phase == 0)
           @jax.named_scope('wait_prev_bwd_dma')
           def _wait_prev_bwd_dma():
@@ -1229,15 +1264,20 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
         next_working_slot = jnp.where(phase == 0, working_slot, buffering_slot)
         next_step = jnp.where(phase == 0, outer_step, outer_step + 1)
         next_phase = lax.rem(phase + 1, 2)
-        scheduler.prefetch(lhs_bref,
-                           lhs_ref.at[get_lhs_slice(next_step, next_phase)])
+        scheduler.prefetch(
+            lhs_bref, lhs_ref.at[get_lhs_slice(next_step, next_phase)]
+        )
         scheduler.prefetch(rhs_bref, rhs_ref, rhs_schedule)
+
         # Don't prefetch when accums are being zeroed.
         @pl.when(~trivial_loop & ~is_start)
         def _prefetch_accumulator():
           scheduler.prefetch(
-              out_bref, rs_accum_scratch_ref.at[
-                  get_accum_slice(next_phase, next_working_slot)])
+              out_bref,
+              rs_accum_scratch_ref.at[
+                  get_accum_slice(next_phase, next_working_slot)
+              ],
+          )
 
       # Run matmul pipeline
       pltpu.emit_pipeline(inner_kernel, grid=inner_grid)(
@@ -1281,7 +1321,8 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
         shard_map.shard_map,
         mesh=jax.sharding.Mesh(
             mesh_utils.create_device_mesh(
-                (num_devices,), jax.devices()[:num_devices]),
+                (num_devices,), jax.devices()[:num_devices]
+            ),
             ['x'],
         ),
         in_specs=(P(None, 'x'), P('x', None)),
@@ -1295,15 +1336,11 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
     @shard
     def reference(x, y):
       unreduced = jnp.dot(x, y, preferred_element_type=out_dtype)
-      return lax.psum_scatter(
-          unreduced, 'x', scatter_dimension=0, tiled=True)
+      return lax.psum_scatter(unreduced, 'x', scatter_dimension=0, tiled=True)
 
     k1, k2 = jax.random.split(jax.random.key(42))
-    x = jax.random.uniform(
-        k1, (m, k), dtype=input_dtype, minval=-1, maxval=1)
-    y = jax.random.uniform(
-        k2, (k, n), dtype=input_dtype, minval=-1, maxval=1
-    )
+    x = jax.random.uniform(k1, (m, k), dtype=input_dtype, minval=-1, maxval=1)
+    y = jax.random.uniform(k2, (k, n), dtype=input_dtype, minval=-1, maxval=1)
 
     out = jax.block_until_ready(test(x, y))
     expected_out = jax.block_until_ready(reference(x, y))
@@ -1378,7 +1415,7 @@ class PallasCallMegacoreTest(parameterized.TestCase):
           ],
           out_specs=pl.BlockSpec((128, 128), lambda i, j: (i, j)),
           core_axis=0,
-          dimension_semantics=(pltpu.ARBITRARY, pltpu.PARALLEL)
+          dimension_semantics=(pltpu.ARBITRARY, pltpu.PARALLEL),
       )(x_ref, y_ref)
 
     num_cores = jax.devices()[0].num_cores
@@ -1413,6 +1450,7 @@ class PallasCallMegacoreTest(parameterized.TestCase):
       @pl.when(pl.program_id(2) == 0)
       def _():
         z_ref[...] = jnp.zeros_like(z_ref)
+
       z_ref[...] += x_ref[...] @ y_ref[...]
 
     def matmul_kernel(x_ref, y_ref, z_ref, *, bm, bk, bn):
@@ -1428,7 +1466,7 @@ class PallasCallMegacoreTest(parameterized.TestCase):
           ],
           out_specs=pl.BlockSpec((bm, bn), lambda i, j, k: (i, j)),
           core_axis=0,
-          dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL, pltpu.ARBITRARY)
+          dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL, pltpu.ARBITRARY),
       )(x_ref, y_ref, z_ref)
 
     num_cores = jax.devices()[0].num_cores
@@ -1492,6 +1530,7 @@ def matmul(x: jax.Array, y: jax.Array, *, bm: int, bk: int, bn: int):
       grid=(num_cores,),
   )(x, y)
 
+
 @jtu.thread_unsafe_test_class()  # hypothesis is not thread safe
 class PaddedPipelineEmitterTest(parameterized.TestCase):
 
@@ -1545,6 +1584,129 @@ class PaddedPipelineEmitterTest(parameterized.TestCase):
       expected = expected.astype('float32')
       atol = rtol = 1e-2
     np.testing.assert_allclose(out, expected, atol=atol, rtol=rtol)
+
+
+class PallasCallBoundedSliceIndexingTest(parameterized.TestCase):
+
+  def test_block_spec_bounded_slice_invalid_index(self):
+    shape = (16, 8, 128)
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    def main(refs):
+      x_ref, y_ref = refs
+
+      @pl.core_map(pltpu.create_tensorcore_mesh('core'))
+      def _():
+        pltpu.emit_pipeline(
+            kernel,
+            grid=(1,),
+            in_specs=(
+                pl.BlockSpec(
+                    (pl.BoundedSlice(8), 8, 128),
+                    lambda i: (0, 0, 0),  # first index needs to be a pl.ds
+                ),
+            ),
+            out_specs=pl.BlockSpec(
+                (8, 8, 128),
+                lambda i: (0, 0, 0),
+            ),
+        )(x_ref, y_ref)
+
+    @jax.jit
+    def f(x):
+      y = jnp.ones((8, 8, 128), dtype=jnp.int32)
+      _, y = pl.run_state(main)((x, y))
+      return y
+    with self.assertRaisesRegex(ValueError, 'Must return a pl.ds'):
+      f.trace(jax.ShapeDtypeStruct(shape, jnp.int32))
+
+  def test_block_spec_bounded_slice_static(self):
+    shape = (16, 8, 128)
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    def main(refs):
+      x_ref, y_ref = refs
+
+      @pl.core_map(pltpu.create_tensorcore_mesh('core'))
+      def _():
+        pltpu.emit_pipeline(
+            kernel,
+            grid=(1,),
+            in_specs=(
+                pl.BlockSpec(
+                    (pl.BoundedSlice(8), 8, 128),
+                    lambda i: (pl.ds(4, 8), 0, 0),
+                ),
+            ),
+            out_specs=pl.BlockSpec(
+                (8, 8, 128),
+                lambda i: (0, 0, 0),
+            ),
+        )(x_ref, y_ref)
+
+    x = jnp.arange(np.prod(shape), dtype=np.int32).reshape(shape)
+
+    @jax.jit
+    def f(x):
+      y = jnp.ones((8, 8, 128), dtype=jnp.int32)
+      _, y = pl.run_state(main)((x, y))
+      return y
+
+    out = f(x)
+    np.testing.assert_allclose(out, x[4:12])
+
+  def test_block_spec_bounded_slice_dynamic(self):
+    shape = (16, 8, 128)
+
+    slices = jnp.array([[0, 3], [3, 8], [8, 11], [11, 16]], dtype=jnp.int32)[
+        ::-1
+    ]
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    def main(refs):
+      x_ref, y_ref, slices_ref = refs
+
+      @pl.core_map(pltpu.create_tensorcore_mesh('core'))
+      def _():
+
+        @functools.partial(
+            pl.run_scoped, slices_smem=pltpu.SMEM(slices.shape, slices.dtype)
+        )
+        def _(slices_smem):
+          pltpu.sync_copy(slices_ref, slices_smem)
+          def index_map(i):
+            return (
+                pl.ds(slices_smem[i, 0], slices_smem[i, 1] - slices_smem[i, 0]),
+                0,
+                0,
+            )
+          block_spec = pl.BlockSpec(
+              (pl.BoundedSlice(16), 8, 128),
+              index_map,
+          )
+          pltpu.emit_pipeline(
+              kernel,
+              grid=(slices.shape[0],),
+              in_specs=(block_spec,),
+              out_specs=block_spec,
+          )(x_ref, y_ref)
+
+    x = jnp.arange(np.prod(shape), dtype=np.int32).reshape(shape)
+
+    @jax.jit
+    def f(x, slices):
+      y = pl.empty_like(x)
+      _, y, _ = pl.run_state(main)((x, y, slices))
+      return y
+
+    out = f(x, slices)
+    np.testing.assert_allclose(out, x)
 
 
 if __name__ == '__main__':
