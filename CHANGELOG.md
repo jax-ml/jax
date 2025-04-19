@@ -120,6 +120,30 @@ Patch release of 0.5.1
 
 ## jax 0.5.1 (Feb 24, 2025)
 
+* Breaking changes
+  * The jit tracing cache now keys on input NamedShardings. Previously, the
+    tracing cache did not include sharding information at all
+    (although subsequent jit caches did like lowering and compilation caches),
+    so two equivalent shardings of different types would not retrace,
+    but now they do. For example:
+    ```python
+    @jax.jit
+    def f(x):
+      return x
+
+    # inp1.sharding is of type SingleDeviceSharding
+    inp1 = jnp.arange(8)
+    f(inp1)
+
+    mesh = jax.make_mesh((1,), ('x',))
+    # inp2.sharding is of type NamedSharding
+    inp2 = jax.device_put(jnp.arange(8), NamedSharding(mesh, P('x')))
+    f(inp2)  # tracing cache miss
+    ```
+    In the above example, calling `f(inp1)` and then `f(inp2)` will lead to a
+    tracing cache miss because the shardings have changed on the abstract values
+    while tracing.
+
 * New Features
   * Added an experimental {func}`jax.experimental.custom_dce.custom_dce`
     decorator to support customizing the behavior of opaque functions under
