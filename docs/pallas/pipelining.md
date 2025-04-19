@@ -1,6 +1,7 @@
 ---
 jupyter:
   jupytext:
+    formats: ipynb,md
     main_language: python
     text_representation:
       extension: .md
@@ -20,7 +21,7 @@ jupyter:
 
 Software pipelining is an important technique in performance optimization by overlapping multiple asynchronous operations even if there are data dependencies between them. In the context of kernel writing, the most common form of pipelining involves overlapping communication and memory transfers with compute such that the hardware accelerator never stalls while waiting for data to arrive. Therefore, we will solely focus on the problem of communication-compute pipelining in this tutorial. We will begin by covering the problem conceptually, outlining the Pallas API for writing pipelines, and going over some realistic examples using the API.
 
-This tutorial only covers the conceptual foundations of pipelining. For platform-specific references, please see {ref}`pallas_tpu_pipelining`, or GPU (coming soon!) specific pipelining references.
+This tutorial only covers the conceptual foundations of pipelining. For platform-specific references, please see {ref}`pallas_tpu_pipelining`, or {ref}`pallas_mgpu_pipelining`.
 
 <!-- #endregion -->
 
@@ -63,7 +64,7 @@ In order to perform computation on values X and Y that live in HBM, we need to:
 Let’s implement a Pallas function that does just that!
 <!-- #endregion -->
 
-```python id="IrPhDFnT3Nvw" executionInfo={"status": "ok", "timestamp": 1744764235906, "user_tz": 420, "elapsed": 108, "user": {"displayName": "Justin Fu", "userId": "17543197034567316452"}} outputId="8bc03872-fd9f-4610-9d53-d4b46be560f4"
+```python executionInfo={"elapsed": 108, "status": "ok", "timestamp": 1744764235906, "user": {"displayName": "Justin Fu", "userId": "17543197034567316452"}, "user_tz": 420} id="IrPhDFnT3Nvw" outputId="8bc03872-fd9f-4610-9d53-d4b46be560f4"
 # Note: This is a TPU example.
 
 def add_matrices_kernel(x_sram_ref, y_sram_ref, z_sram_ref):
@@ -481,7 +482,7 @@ As a concrete example, let's consider performing the following computation for r
 
 <!-- #endregion -->
 
-```python id="4qz1ET-_f9fJ" executionInfo={"status": "ok", "timestamp": 1744763773938, "user_tz": 420, "elapsed": 244, "user": {"displayName": "Justin Fu", "userId": "17543197034567316452"}} outputId="e43067ef-933a-45a5-912a-e224151cfa60"
+```python executionInfo={"elapsed": 244, "status": "ok", "timestamp": 1744763773938, "user": {"displayName": "Justin Fu", "userId": "17543197034567316452"}, "user_tz": 420} id="4qz1ET-_f9fJ" outputId="e43067ef-933a-45a5-912a-e224151cfa60"
 x = jnp.ones((8, 1024, 1024))
 jnp.sum(x, axis=0)
 ```
@@ -490,7 +491,7 @@ jnp.sum(x, axis=0)
 To do this using `pallas_call`, we could use a grid of size `(8,)` and in each iteration i load `x[i]` into SRAM. Then we could add `x[i]` to an output SRAM buffer. Let's implement this naively first.
 <!-- #endregion -->
 
-```python id="ZEi1_vQVf-81" executionInfo={"status": "ok", "timestamp": 1744763774254, "user_tz": 420, "elapsed": 79, "user": {"displayName": "Justin Fu", "userId": "17543197034567316452"}} outputId="581744b7-ddc1-4dc1-98ec-03c852772eda"
+```python executionInfo={"elapsed": 79, "status": "ok", "timestamp": 1744763774254, "user": {"displayName": "Justin Fu", "userId": "17543197034567316452"}, "user_tz": 420} id="ZEi1_vQVf-81" outputId="581744b7-ddc1-4dc1-98ec-03c852772eda"
 # Note: This is a TPU example.
 
 # Warning: this implementation is incorrect!
@@ -522,7 +523,7 @@ There are two errors inside this kernel. First, we are accumulating along the fi
 After fixing these two issues, we obtain the following corrected kernel. In this new kernel, we use `@pl.when` to create a conditional that checks when the program ID is `0` along the reduction axis, indicating we are beginning to accumulate into a new output block. We have also moved the reduction dimension to the last axis of the `grid`.
 <!-- #endregion -->
 
-```python id="XtgD4nMa9_Bd" executionInfo={"status": "ok", "timestamp": 1744763774523, "user_tz": 420, "elapsed": 104, "user": {"displayName": "Justin Fu", "userId": "17543197034567316452"}} outputId="9ef07cdf-9e22-4dc8-c17f-c96172639801"
+```python executionInfo={"elapsed": 104, "status": "ok", "timestamp": 1744763774523, "user": {"displayName": "Justin Fu", "userId": "17543197034567316452"}, "user_tz": 420} id="XtgD4nMa9_Bd" outputId="9ef07cdf-9e22-4dc8-c17f-c96172639801"
 # Note: This is a TPU example.
 
 def correct_sum_kernel(x_ref, o_ref):
