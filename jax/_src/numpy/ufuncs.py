@@ -3044,7 +3044,10 @@ def frexp(x: ArrayLike, /) -> tuple[Array, Array]:
   x, = promote_dtypes_inexact(x)
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     raise TypeError("frexp does not support complex-valued inputs")
+  return _frexp(x)
 
+@custom_jvp
+def _frexp(x):
   dtype = dtypes.dtype(x)
   info = dtypes.finfo(dtype)
   mask = (1 << info.nexp) - 1
@@ -3059,6 +3062,16 @@ def frexp(x: ArrayLike, /) -> tuple[Array, Array]:
   cond = isinf(x) | isnan(x) | (x == 0)
   x2 = _where(cond, lax._zeros(x2), x2)
   return _where(cond, x, x1), lax.convert_element_type(x2, np.int32)
+
+
+@_frexp.defjvp
+def _frexp_jvp(primals, tangents):
+  x, = primals
+  t, = tangents
+  m, e = frexp(x)
+  mdot = t * exp2(-e.astype(t.dtype))
+  edot = np.empty(e.shape, dtypes.float0)
+  return (m, e), (mdot, edot)
 
 
 @export
