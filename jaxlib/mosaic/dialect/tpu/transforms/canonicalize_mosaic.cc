@@ -14,6 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -65,6 +66,11 @@ struct CanonicalizeContext {
   bool compatibility_mode;
 
   int hardware_generation;
+
+  const std::array<int64_t, 2> target_shape_;
+
+  int64_t sublaneCount() const { return target_shape_[0]; }
+  int64_t laneCount() const { return target_shape_[1]; }
 };
 
 LogicalResult tpu_matmul_rule(const CanonicalizeContext &ctx,
@@ -672,6 +678,42 @@ LogicalResult canonicalize_repeat(const CanonicalizeContext &ctx,
   return success();
 }
 
+LogicalResult canonicalize_sublane_shuffle(const CanonicalizeContext &ctx,
+                                           Operation &raw_op) {
+  auto op = dyn_cast<tpu::SublaneShuffleOp>(raw_op);
+  if (!op) {
+    return failure();
+  }
+  auto lhs = op.getLhs();
+  auto rhs = op.getRhs();
+  auto pattern = op.getPattern();
+
+  // Check for simple cases: identity copy of lhs or rhs
+  // TODO(mvoz): Move some of these simplifications to canonicalization?
+  bool is_lhs_identity = true;
+  bool is_rhs_identity = true;
+  for (int i = 0; i < ctx.sublaneCount(); ++i) {
+    if (pattern[i] != i) {
+      is_lhs_identity = false;
+    }
+    if (pattern[i] != ctx.sublaneCount() + i) {
+      is_rhs_identity = false;
+    }
+  }
+  if (is_lhs_identity) {
+    op.replaceAllUsesWith(lhs);
+    op.erase();
+    return success();
+  }
+  if (is_rhs_identity) {
+    op.replaceAllUsesWith(rhs);
+    op.erase();
+    return success();
+  }
+
+  return success();
+}
+
 using canonicalize_rule_type =
     std::function<LogicalResult(const CanonicalizeContext &ctx, Operation &op)>;
 
@@ -684,7 +726,9 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
        canonicalize_multi_dim_reduction},
       {arith::SelectOp::getOperationName(), canonicalize_select},
       {arith::FPToSIOp::getOperationName(), canonicalize_fptosi},
-      {tpu::RepeatOp::getOperationName(), canonicalize_repeat}};
+      {tpu::RepeatOp::getOperationName(), canonicalize_repeat},
+      {tpu::SublaneShuffleOp::getOperationName(),
+       canonicalize_sublane_shuffle}};
   return *rules;
 }
 
@@ -704,12 +748,15 @@ bool need_elementwise_canonicalization(CanonicalizeContext ctx, Operation &op) {
 
 class MosaicCanonicalizer {
  public:
-  MosaicCanonicalizer(int hardware_generation, bool compatibility_mode)
+  MosaicCanonicalizer(int hardware_generation, bool compatibility_mode,
+                      std::array<int64_t, 2> target_shape)
       : hardware_generation_(hardware_generation),
-        compatibility_mode_(compatibility_mode) {}
+        compatibility_mode_(compatibility_mode),
+        target_shape_(target_shape) {}
 
   int hardware_generation_;
   bool compatibility_mode_;
+  std::array<int64_t, 2> target_shape_;
 
   LogicalResult canonicalize(func::FuncOp op) {
     if (!op.getBody().hasOneBlock()) {
@@ -730,7 +777,8 @@ class MosaicCanonicalizer {
   }
 
   LogicalResult canonicalizeOp(Operation &any_op) {
-    CanonicalizeContext ctx({compatibility_mode_, hardware_generation_});
+    CanonicalizeContext ctx(
+        {compatibility_mode_, hardware_generation_, target_shape_});
     // We must iterate over the op first, because canonicalization can cause
     // us to .erase() an op, and accessing getRegions on it after is not sound.
     // Invariant - top level ops with regions may never be invalidated.
@@ -755,28 +803,33 @@ class MosaicCanonicalizer {
 
 struct CanonicalizeMosaicPass
     : public impl::CanonicalizeMosaicPassBase<CanonicalizeMosaicPass> {
-  CanonicalizeMosaicPass(int hardware_generation_p, bool compatibility_mode_p)
-      : compatibility_mode_(compatibility_mode_p) {
+  CanonicalizeMosaicPass(int hardware_generation_p, bool compatibility_mode_p,
+                         std::array<int64_t, 2> target_shape)
+      : compatibility_mode_(compatibility_mode_p), target_shape_(target_shape) {
     this->hardware_generation = hardware_generation_p;
   }
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
-    MosaicCanonicalizer vlc(hardware_generation, compatibility_mode_);
+    MosaicCanonicalizer vlc(hardware_generation, compatibility_mode,
+                            target_shape_);
     if (vlc.canonicalize(func).failed()) {
       signalPassFailure();
     }
   };
 
   bool compatibility_mode_;
+
+  const std::array<int64_t, 2> target_shape_;
 };
 
 }  // namespace
 
 std::unique_ptr<OperationPass<func::FuncOp>> createCanonicalizeMosaicPass(
-    int hardware_generation, bool compatibility_mode) {
-  return std::make_unique<CanonicalizeMosaicPass>(hardware_generation,
-                                                  compatibility_mode);
+    int hardware_generation, bool compatibility_mode,
+    std::array<int64_t, 2> target_shape) {
+  return std::make_unique<CanonicalizeMosaicPass>(
+      hardware_generation, compatibility_mode, target_shape);
 }
 
 }  // namespace mlir::tpu
