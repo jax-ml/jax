@@ -322,5 +322,16 @@ class ProfilerTest(unittest.TestCase):
     thread_profiler.join()
     self._check_xspace_pb_exist(logdir)
 
+  def test_stop_profile_returns_xspace(self):
+    jax.profiler.start_trace("this/should/be/ignored/in/this/test")
+    x = jnp.ones((3,3))
+    y = x @ x
+    y.block_until_ready()
+    xspace = jax.profiler.stop_trace(return_xspace=True)
+    self.assertEqual(xspace, jax.profiler.ProfileData)
+
+
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
