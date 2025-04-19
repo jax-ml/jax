@@ -89,8 +89,12 @@ class _ProfileState:
 _profile_state = _ProfileState()
 
 
-def start_trace(log_dir: os.PathLike | str, create_perfetto_link: bool = False,
-                create_perfetto_trace: bool = False) -> None:
+def start_trace(
+    log_dir: os.PathLike | str,
+    create_perfetto_link: bool = False,
+    create_perfetto_trace: bool = False,
+    options: xla_client.profiler.ProfileOptions | None = None,
+) -> None:
   """Starts a profiler trace.
 
   The trace will capture CPU, GPU, and/or TPU activity, including Python
@@ -125,8 +129,12 @@ def start_trace(log_dir: os.PathLike | str, create_perfetto_link: bool = False,
     # creating the tracer, which will cause the TPU tracer initialization to
     # fail and no TPU operations will be included in the profile.
     xla_bridge.get_backend()
-
-    _profile_state.profile_session = xla_client.profiler.ProfilerSession()
+    if options is None:
+      _profile_state.profile_session = xla_client.profiler.ProfilerSession()
+    else:
+      _profile_state.profile_session = xla_client.profiler.ProfilerSession(
+          options
+      )
     _profile_state.create_perfetto_link = create_perfetto_link
     _profile_state.create_perfetto_trace = (
         create_perfetto_trace or create_perfetto_link)
@@ -225,7 +233,12 @@ def stop_and_get_fdo_profile() -> bytes | str:
 
 
 @contextmanager
-def trace(log_dir: os.PathLike | str, create_perfetto_link=False, create_perfetto_trace=False):
+def trace(
+    log_dir: os.PathLike | str,
+    create_perfetto_link=False,
+    create_perfetto_trace=False,
+    options=xla_client.profiler.ProfileOptions(),
+):
   """Context manager to take a profiler trace.
 
   The trace will capture CPU, GPU, and/or TPU activity, including Python
@@ -250,7 +263,7 @@ def trace(log_dir: os.PathLike | str, create_perfetto_link=False, create_perfett
       want to generate a Perfetto-compatible trace without blocking the
       process.
   """
-  start_trace(log_dir, create_perfetto_link, create_perfetto_trace)
+  start_trace(log_dir, create_perfetto_link, create_perfetto_trace, options)
   try:
     yield
   finally:
