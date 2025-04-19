@@ -370,7 +370,13 @@ def _launch(
 
   smem_bytes = user_smem_bytes
   if profiler_spec is not None:
-    smem_bytes += profiler_spec.smem_bytes(block=block)
+    # Profiler array stores values in 64 bit chunks (vectors of size 2
+    # of 32-bit elements), and so the starting address needs to be 64
+    # bit = 8 byte aligned.
+    # https://docs.nvidia.com/cuda/parallel-thread-execution/#addresses-as-operands:~:text=The%20address%20must%20be%20naturally%20aligned%20to%20a%20multiple%20of%20the%20access%20size.
+    align = 8
+    profiler_start = (smem_bytes + align - 1) & ~(align - 1)
+    smem_bytes = profiler_start + profiler_spec.smem_bytes(block=block)
 
   # TODO(cperivol): Query the shared memory size programmatically.
   if smem_bytes > 228 * 1024:
@@ -407,7 +413,7 @@ def _launch(
               (profiler_spec.smem_i32_elements(block=block),),
               i32, memory_space=smem,
           ),
-          dynamic_smem, c(user_smem_bytes, index), [],
+          dynamic_smem, c(profiler_start, index), [],
       )
       prof = profiler.OnDeviceProfiler(
           profiler_spec, prof_smem, maybe_prof_buffer
