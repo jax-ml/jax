@@ -1592,6 +1592,7 @@ def categorical(
   axis: int = -1,
   shape: Shape | None = None,
   replace: bool = True,
+  where: ArrayLike | None = None,
 ) -> Array:
   """Sample random values from categorical distributions.
 
@@ -1608,6 +1609,7 @@ def categorical(
       The default (None) produces a result shape equal to ``np.delete(logits.shape, axis)``.
     replace: If True (default), perform sampling with replacement. If False, perform
       sampling without replacement.
+    where: Elements to include in the sampling. The default (None) includes all of them.
 
   Returns:
     A random array with int dtype and shape given by ``shape`` if ``shape``
@@ -1622,6 +1624,8 @@ def categorical(
   key, _ = _check_prng_key("categorical", key)
   check_arraylike("categorical", logits)
   logits_arr = jnp.asarray(logits)
+  if where is not None:
+    logits_arr = jnp.where(where, logits_arr, -jnp.inf)
   batch_shape = tuple(np.delete(logits_arr.shape, axis))
   if shape is None:
     shape = batch_shape
