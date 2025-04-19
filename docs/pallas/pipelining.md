@@ -17,7 +17,7 @@ jupyter:
 
 Software pipelining is an important technique in performance optimization by overlapping multiple asynchronous operations even if there are data dependencies between them. In the context of kernel writing, the most common form of pipelining involves overlapping communication and memory transfers with compute such that the hardware accelerator never stalls while waiting for data to arrive. Therefore, we will solely focus on the problem of communication-compute pipelining in this tutorial. We will begin by covering the problem conceptually, outlining the Pallas API for writing pipelines, and going over some realistic examples using the API.
 
-This tutorial only covers the conceptual foundations of pipelining. For platform-specific references, please see the [TPU](https://docs.jax.dev/en/latest/pallas/tpu/pipelining.html), or GPU (coming soon!) specific pipelining references.
+This tutorial only covers the conceptual foundations of pipelining. For platform-specific references, please see the [TPU](https://docs.jax.dev/en/latest/pallas/tpu/pipelining.html), or [GPU](https://docs.jax.dev/en/latest/pallas/gpu/pipelining.html) specific pipelining references.
 
 <!-- #endregion -->
 
