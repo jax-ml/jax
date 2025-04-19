@@ -27,6 +27,7 @@ from jax import tree_util
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import callback
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
@@ -40,8 +41,8 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
-from jax._src.state import types as state_types
 from jax._src.state import primitives as sp
+from jax._src.state import types as state_types
 from jax.interpreters import mlir
 import jax.numpy as jnp
 
@@ -51,6 +52,7 @@ NDIndexer = indexing.NDIndexer
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
+
 
 program_id_p = jax_core.Primitive("program_id")
 batching.ragged_prop_rules[program_id_p] = batching.ragged_mask_no_op_rule
@@ -189,9 +191,10 @@ def _atomic_rmw(x_ref_or_view, idx, val, *, mask: Any | None = None,
       x_ref_or_view, idx, "atomic_rmw"
   )
   args_flat, args_tree = tree_util.tree_flatten((x_ref, transforms, val, mask))
-  return atomic_rmw_p.bind(
-      *args_flat, args_tree=args_tree, atomic_type=atomic_type
-  )
+  with config.enable_x64(True):
+    return atomic_rmw_p.bind(
+        *args_flat, args_tree=args_tree, atomic_type=atomic_type
+    )
 
 def atomic_xchg(x_ref_or_view, idx, val, *, mask: Any | None = None):
   """Atomically exchanges the given value with the value at the given index.
@@ -649,16 +652,20 @@ def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier=None,
     volatile: TO BE DOCUMENTED.
   """
   x_ref, transforms = sp.get_ref_and_transforms(x_ref_or_view, idx, "load")
+  if other is not None:
+    other = x_ref_or_view.dtype.type(other)
   args_flat, args_tree = tree_util.tree_flatten(
       (x_ref, transforms, mask, other)
   )
-  return load_p.bind(
-      *args_flat,
-      args_tree=args_tree,
-      cache_modifier=cache_modifier,
-      eviction_policy=eviction_policy,
-      is_volatile=volatile,
-  )
+  with config.enable_x64(True):
+    return load_p.bind(
+        *args_flat,
+        args_tree=args_tree,
+        cache_modifier=cache_modifier,
+        eviction_policy=eviction_policy,
+        is_volatile=volatile,
+    )
+
 
 def swap(x_ref_or_view, idx, val, *, mask=None, eviction_policy=None,
          _function_name="swap") -> jax.Array:
@@ -673,9 +680,10 @@ def swap(x_ref_or_view, idx, val, *, mask=None, eviction_policy=None,
       x_ref_or_view, idx, _function_name
   )
   args_flat, args_tree = tree_util.tree_flatten((x_ref, transforms, val, mask))
-  return swap_p.bind(
-      *args_flat, args_tree=args_tree, eviction_policy=eviction_policy
-  )
+  with config.enable_x64(True):
+    return swap_p.bind(
+        *args_flat, args_tree=args_tree, eviction_policy=eviction_policy
+    )
 
 def store(x_ref_or_view, idx, val, *, mask=None, eviction_policy=None) -> None:
   """Stores a value at the given index.
