@@ -154,7 +154,7 @@ absl::StatusOr<ShardArgResult> ShardArg(
         if (result.ifrt_array == nullptr) {
           return xla::InvalidArgument("Array has been deleted.");
         }
-        if (result.ifrt_array->sharding().devices()->devices() != devices) {
+        if (result.ifrt_array->sharding().devices()->AddressableDeviceList()->devices() != devices) {
           absl::InlinedVector<xla::ifrt::Device*, 1> ifrt_devices;
           ifrt_devices.reserve(devices.size());
           ifrt_devices.insert(ifrt_devices.end(), devices.begin(),

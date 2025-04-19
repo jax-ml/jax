@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import copy
-from functools import partial
+from functools import lru_cache, partial
 import logging
 import time
 from typing import Any, Callable
@@ -108,6 +108,12 @@ def log_persistent_cache_miss(module_name: str, cache_key: str) -> None:
   # all caps to match the tracing cache "TRACING CACHE MISS"
   logger.log(miss_log_priority, "PERSISTENT COMPILATION CACHE MISS for '%s' with key %r",
              module_name, cache_key)
+
+
+@lru_cache(maxsize=2048)
+def _create_da_object(  # pytype: disable=invalid-annotation
+    device_assignment: tuple[xc.Device, ...]) -> xc.DeviceList:
+  return xc.DeviceList(device_assignment)
 
 
 def get_compile_options(
@@ -288,6 +294,7 @@ def get_compile_options(
 def backend_compile(
     backend: xc.Client,
     module: ir.Module,
+    execution_devices: xc.DeviceList,
     options: xc.CompileOptions,
     host_callbacks: Sequence[Any],
 ) -> xc.LoadedExecutable:
@@ -312,16 +319,28 @@ def backend_compile(
     )
 
   try:
+    if lib.jaxlib_extension_version < 331:
+      if host_callbacks:
+        return backend.compile(  # type: ignore
+            built_c, compile_options=options, host_callbacks=host_callbacks
+        )
+      return backend.compile(built_c, compile_options=options)  # type: ignore
+
     # we use a separate function call to ensure that XLA compilation appears
     # separately in Python profiling results
     if host_callbacks:
       return backend.compile(
-          built_c, compile_options=options, host_callbacks=host_callbacks
+          built_c,
+          execution_devices=execution_devices,
+          compile_options=options,
+          host_callbacks=host_callbacks,
       )
     # Some backends don't have `host_callbacks` option yet
     # TODO(sharadmv): remove this fallback when all backends allow `compile`
     # to take in `host_callbacks`
-    return backend.compile(built_c, compile_options=options)
+    return backend.compile(
+        built_c, execution_devices=execution_devices, compile_options=options
+    )
   except xc.XlaRuntimeError as e:
     for error_handler in _XLA_RUNTIME_ERROR_HANDLERS:
       handler_result = error_handler(e)
@@ -361,6 +380,7 @@ def compile_or_get_cached(
 ) -> xc.LoadedExecutable:
   sym_name = computation.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value
+  execution_devices = _create_da_object(tuple(devices.flat))
 
   if dumped_to := mlir.dump_module_to_file(computation, "compile"):
     logging.info("Dumped the module to %s.", dumped_to)
@@ -385,14 +405,15 @@ def compile_or_get_cached(
   )
 
   if cache_key is None:
-    return backend_compile(backend, computation, compile_options,
-                           host_callbacks)
+    return backend_compile(
+        backend, computation, execution_devices, compile_options, host_callbacks
+    )
 
   monitoring.record_event('/jax/compilation_cache/compile_requests_use_cache')
 
   cache_retrieval_start = time.monotonic()
   retrieved_executable, retrieved_compile_time = _cache_read(
-      module_name, cache_key, compile_options, backend)
+      module_name, cache_key, compile_options, backend, execution_devices)
   cache_retrieval_time = time.monotonic() - cache_retrieval_start
 
   if retrieved_executable is not None:
@@ -420,18 +441,20 @@ def compile_or_get_cached(
     return _compile_and_share_module(
         backend,
         computation,
+        execution_devices,
         compile_options,
         host_callbacks,
         distributed.global_state.client,
         module_name,
         cache_key,
-        min_device_process_id
+        min_device_process_id,
     )
   else:
     log_persistent_cache_miss(module_name, cache_key)
     return _compile_and_write_cache(
         backend,
         computation,
+        execution_devices,
         compile_options,
         host_callbacks,
         module_name,
@@ -631,17 +654,19 @@ def _share_fdo_profiles(
 
 _share_fdo_profiles.modules_profiles = {}
 
+
 # The process with the first_process_id should compile the module and write it
 # to the K-V storage.
 def _compile_and_share_module(
     backend: xc.Client,
     computation: ir.Module,
+    execution_devices: xc.DeviceList,
     compile_options: xc.CompileOptions,
     host_callbacks: Sequence[Any],
     global_client: lib.xla_extension.DistributedRuntimeClient,
     module_name: str,
     cache_key: str,
-    first_process_id: int
+    first_process_id: int,
 ) -> xc.LoadedExecutable:
   share_timeout = config.share_binary_between_hosts_timeout_ms.value
 
@@ -654,6 +679,7 @@ def _compile_and_share_module(
     executable = _compile_and_write_cache(
         backend,
         computation,
+        execution_devices,
         compile_options,
         host_callbacks,
         module_name,
@@ -673,18 +699,26 @@ def _compile_and_share_module(
     serialized_executable = compilation_cache.decompress_executable(
         serialized_executable
     )
-    executable = backend.deserialize_executable(
-        serialized_executable, compile_options
-    )
+    if lib.jaxlib_extension_version < 331:
+      executable = backend.deserialize_executable(  # type: ignore
+          serialized_executable, compile_options
+      )
+    else:
+      executable = backend.deserialize_executable(
+          serialized_executable, execution_devices, compile_options
+      )
 
   _compile_and_share_module.modules_cache[cache_key] = executable
   return executable
 
+
 _compile_and_share_module.modules_cache = {}
+
 
 def _compile_and_write_cache(
     backend: xc.Client,
     computation: ir.Module,
+    execution_devices: xc.DeviceList,
     compile_options: xc.CompileOptions,
     host_callbacks: Sequence[Any],
     module_name: str,
@@ -692,13 +726,14 @@ def _compile_and_write_cache(
 ) -> xc.LoadedExecutable:
   start_time = time.monotonic()
   executable = backend_compile(
-      backend, computation, compile_options, host_callbacks
+      backend, computation, execution_devices, compile_options, host_callbacks
   )
   compile_time = time.monotonic() - start_time
   _cache_write(
       cache_key, compile_time, module_name, backend, executable, host_callbacks
   )
   return executable
+
 
 def _is_executable_in_cache(backend, cache_key) -> bool:
   """Checks if executable is presented in cache on a given key
@@ -716,14 +751,14 @@ def _is_executable_in_cache(backend, cache_key) -> bool:
 
 def _cache_read(
     module_name: str, cache_key: str, compile_options: xc.CompileOptions,
-    backend: xc.Client
+    backend: xc.Client, execution_devices: xc.DeviceList,
 ) -> tuple[xc.LoadedExecutable | None, int | None]:
   """Looks up the `computation` and it's compilation time in the persistent
   compilation cache repository.
   """
   try:
     return compilation_cache.get_executable_and_time(
-        cache_key, compile_options, backend)
+        cache_key, compile_options, backend, execution_devices)
   except Exception as ex:
     if config.raise_persistent_cache_errors.value:
       raise

@@ -84,7 +84,11 @@ class _JaxPjrtUnpickler(pickle.Unpickler):
 
   def persistent_load(self, pid):
     if pid[0] == 'exec':
-      return self.backend.deserialize_executable(pid[1])
+      if jax._src.lib.jaxlib_extension_version < 331:
+        return self.backend.deserialize_executable(pid[1])
+      return self.backend.deserialize_executable(
+          pid[1], execution_devices=xc.DeviceList(tuple(self.backend.devices()))
+      )
     if pid[0] == 'device':
       return self.devices_by_id[pid[1]]
     if pid[0] == 'client':

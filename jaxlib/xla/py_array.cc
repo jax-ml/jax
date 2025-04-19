@@ -1169,7 +1169,12 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
     ifrt::MemoryKind dst_memory_kind = ifrt::CanonicalizeMemoryKind(
         xla::GetMemoryKind(dst_sharding), dst_devices->devices().front());
 
-    if (*src_devices == *dst_devices && src_memory_kind == dst_memory_kind &&
+    const bool same_devices =
+        dst_sharding.type().is(jax::PmapSharding::type())
+            ? src_devices->AddressableDeviceList()->devices() ==
+                  dst_devices->devices()
+            : *src_devices == *dst_devices;
+    if (same_devices && src_memory_kind == dst_memory_kind &&
         array_cs == ifrt::ArrayCopySemantics::kReuseInput) {
       results[i] = py_arrays[i];
       continue;
