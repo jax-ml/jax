@@ -1633,17 +1633,26 @@ class VectorLayoutInferer {
     auto src_ty = op.getSourceVectorType();
     TPU_CHECK_OP(permutation.size() == src_ty.getRank(),
                  "Transpose permutation has incorrect rank");
-    for (auto dim : permutation.drop_back(2)) {
-      TPU_CHECK_OP(dim < src_ty.getRank() - 2,
-                   "Unsupported transpose permutation - minor dims into major");
-    }
-    for (auto dim : permutation.take_back(2)) {
-      TPU_CHECK_OP(dim >= src_ty.getRank() - 2,
-                   "Unsupported transpose permutation - major dims into minor");
+    bool major_minor_permute = false;
+    if (permutation.size() == 3 && permutation[0] == 1 && permutation[1] == 0) {
+      major_minor_permute = true;
+    } else {
+      for (auto dim : permutation.drop_back(2)) {
+        TPU_CHECK_OP(dim < src_ty.getRank() - 2,
+                     "Unsupported transpose permutation - minor dims into "
+                     "major > 3 dimensions");
+      }
+      for (auto dim : permutation.take_back(2)) {
+        TPU_CHECK_OP(dim >= src_ty.getRank() - 2,
+                     "Unsupported transpose permutation - major dims into "
+                     "minor > 3 dimensions");
+      }
     }
     Layout required_layout = some_layout;
-    // Require native tiling if we're going to use the XLU.
-    if (permutation[permutation.size() - 1] == permutation.size() - 2) {
+    // Require native tiling if we're going to use the XLU, or doing a
+    // major/minor permute.
+    if (major_minor_permute ||
+        permutation[permutation.size() - 1] == permutation.size() - 2) {
       auto native_tiling = nativeTiling(layout.bitwidth());
       required_layout = VectorLayout(layout.bitwidth(), LayoutOffsets{0, 0},
                                      native_tiling, ImplicitDim::kNone);

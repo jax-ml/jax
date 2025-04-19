@@ -2348,7 +2348,9 @@ lowering_rules[lax.gather_p] = _gather_lowering_rule
 
 
 def _transpose_lowering_rule(ctx: LoweringRuleContext, x, *, permutation):
-  if permutation != (1, 0):
+  minormost_transpose = (1, 0)
+  major_minor_transpose = (1, 0, 2)
+  if permutation not in (minormost_transpose, major_minor_transpose):
     raise NotImplementedError
   out_type = aval_to_ir_type(
       ctx.lowering_context.dynamic_shape_replacement_fn, ctx.avals_out[0]

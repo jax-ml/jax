@@ -4231,12 +4231,10 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
       // We pack the final result back into the original type.
       if (acc_layout.packing() > 1) {
         SmallVector<int32_t> positions(acc_layout.packing());
-            std::iota(positions.begin(), positions.end(),
-                      static_cast<int32_t>(0));
+        std::iota(positions.begin(), positions.end(), static_cast<int32_t>(0));
         SmallVector<Value> parts(acc_layout.packing(), *acc_vreg);
         acc_vreg = builder.create<tpu::PackSubelementsOp>(
-                loc, acc_vreg_ty, parts,
-                builder.getDenseI32ArrayAttr(positions),
+            loc, acc_vreg_ty, parts, builder.getDenseI32ArrayAttr(positions),
             tpu::PackFormat::kInterleaved);
       }
     }
@@ -4650,8 +4648,294 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
   const auto tile_perm = permutation.take_back(2);
   if (tile_perm != ArrayRef<int64_t>{rank - 2, rank - 1} &&
       tile_perm != ArrayRef<int64_t>{rank - 1, rank - 2}) {
-    return transpose_op->emitOpError(
-        "Not implemented: Unsupported permutation");
+    std::vector<int> changed_positions;
+    for (int i = 0; i < permutation.size(); ++i) {
+      if (permutation[i] != i) {
+        changed_positions.push_back(i);
+      }
+    }
+    if (changed_positions.size() != 2) {
+      return transpose_op->emitOpError(
+          "Not implemented: Permutation must have exactly 2 changed "
+          "positions.");
+    }
+    auto x_dim = changed_positions[0];
+    auto y_dim = changed_positions[1];
+    auto vec_shape = src_ty.getShape();
+    auto y_is_second_minor = y_dim == layout_in.layout_rank() - 1;
+    auto x_is_second_minor = x_dim == layout_in.layout_rank() - 1;
+    if (!y_is_second_minor && x_is_second_minor) {
+      // Swap
+      std::swap(x_dim, y_dim);
+    }
+    if (!x_is_second_minor && !y_is_second_minor) {
+      return transpose_op->emitOpError(
+          "Not implemented. Transpose only supported for swapping second minor "
+          "and an untiled dimension (a more leading one)");
+    }
+    auto y_dim_size = vec_shape[y_dim];
+    auto x_dim_size = vec_shape[x_dim];
+    // auto input_tiling = layout_in.tiling();
+    if (layout_in.offsets() != LayoutOffsets{0, 0}) {
+      return transpose_op->emitOpError(
+          "Not implemented: Layout with offset layout unsupported");
+    }
+    auto sublane_count = ctx.target_shape[0];
+    if (y_dim_size % sublane_count != 0 || x_dim_size % sublane_count != 0) {
+      // TODO(mvoz): Add support for smaller granularity sublanes, it should be
+      // trivial to skip other stages for other powers of 2, and mask for other
+      // sublane counts between those. 8 -> 3 stages 5-7 -> 3 stages + mask 4 ->
+      // 2 stages 3 -> 2 stages + mask 2 -> 1 stage 1 -> free reshape
+      return transpose_op->emitOpError(
+          "Not implemented: Swapping a leading dim and second minor dim must "
+          "be a multiple "
+          "of 8 in both dimensions.");
+    }
+    if (vec_shape.size() != 3) {
+      return transpose_op->emitOpError(
+          "Not implemented: Swapping a leading dim and second minor dim only "
+          "supported for 3D vectors.");
+    }
+    // enforce native tiling
+    if (!layout_in.hasNativeTiling(ctx.target_shape)) {
+      return transpose_op->emitOpError(
+          "Not implemented: Expected native tiling.");
+    }
+    if (!layout_out.hasNativeTiling(ctx.target_shape)) {
+      return transpose_op->emitOpError(
+          "Not implemented: Expected native tiling.");
+    }
+    // The out vregs are always the same input type.
+    xla::Array<Value> dst_vregs(
+        layout_out.tileArrayShape(dst_ty.getShape(), ctx.target_shape));
+
+    xla::Array<Value> current_vregs = src_vregs;
+    auto dtype = dyn_cast<VectorType>(src_ty).getElementType();
+    if (!dtype.isF32()) {
+      return transpose_op->emitOpError(
+          "Not implemented: Major minor transpose only supported for f32 "
+          "vectors. Canonicalize should have extended the vector to f32.");
+    }
+    auto vreg_dimensions = current_vregs.dimensions();
+    auto total_major_slice_positions = vreg_dimensions[x_dim] / sublane_count;
+    auto total_second_minor_slice_positions = vreg_dimensions[y_dim];
+    auto total_minormost_slice_positions = vreg_dimensions[2];
+
+    auto shuffle = [&](Value lhs_vreg, Value rhs_vreg,
+                       const std::vector<int> &pattern) {
+      auto lhs_vreg_type = lhs_vreg.getType();
+      auto pattern_attr = builder.getDenseI32ArrayAttr(pattern);
+      return builder
+          .create<tpu::SublaneShuffleOp>(op.getLoc(), lhs_vreg_type, lhs_vreg,
+                                         rhs_vreg, pattern_attr)
+          .getResult();
+    };
+
+    // We want a combine high, and a combine low
+    // so the sublane order should go from:
+    //
+    // |0, 1, 2, 3, |4, 5, 6, 7, |8, 9, 10, 11, |12, 13, 14, 15
+    // to
+    // |0, 1, 2, 3, |8, 9, 10, 11, |4, 5, 6, 7, |12, 13, 14, 15
+    auto combine_low = [&](Value lhs_vreg, Value rhs_vreg) {
+      auto pattern = std::vector<int>{0, 1, 2, 3, 8, 9, 10, 11};
+      return shuffle(lhs_vreg, rhs_vreg, pattern);
+    };
+    auto combine_high = [&](Value lhs_vreg, Value rhs_vreg) {
+      auto pattern = std::vector<int>{4, 5, 6, 7, 12, 13, 14, 15};
+      return shuffle(lhs_vreg, rhs_vreg, pattern);
+    };
+
+    // This is a 3 stage algorithm that uses combinations and shuffles
+    // to do a transposition
+    // If we think of each starting position as an 8x8 block:
+    // A0 -> A7
+    // B0 -> B7
+    // ...
+    // H0 -> H7
+    //
+    // Our correct end position is
+    // A0->H0
+    // ...
+    // A7->H7
+    //
+    // Stage 0 does a combine and shuffle to take the each pair of rows
+    // and combine the low and high elements, and then shuffle them into
+    // position for the subsequent stage.
+    //
+    // Before stage 0:
+    // A0, A1, A2, A3, A4, A5, A6, A7
+    // B0, B1, B2, B3, B4, B5, B6, B7
+    // (and so on for the other rows C,D, E,F, G,H)
+    //
+    // after, we have taken the low and high elements from the two rows
+    //
+    // A0, A1, A2, A3, B0, B1, B2, B3  (combine_low result for A,B)
+    // A4, A5, A6, A7, B4, B5, B6, B7  (combine_high result for A,B)
+    // ...
+    //
+    // And then we shuffle (permute pattern {0, 1, 4, 5, 2, 3, 6, 7})
+    // to prepare for the next stage
+    //
+    // A0, A1, B0, B1, A2, A3, B2, B3
+    // A4, A5, B4, B5, A6, A7, B6, B7
+    // C0, C1, D0, D1, C2, C3, D2, D3
+    // C4, C5, D4, D5, C6, C7, D6, D7
+    // ...
+    //
+    //
+    // Stage 1 does the same thing (combine low/high halves, then shuffle),
+    // but operating on groups of 4 rows from the Stage 0 output.
+    //
+    // Before Stage 1:
+    // A0, A1, B0, B1, A2, A3, B2, B3
+    // A4, A5, B4, B5, A6, A7, B6, B7
+    // C0, C1, D0, D1, C2, C3, D2, D3
+    // C4, C5, D4, D5, C6, C7, D6, D7
+    // ...
+    //
+    // after, we combine low/high halves across pairs of these rows
+    //
+    // A0, A1, B0, B1, C0, C1, D0, D1
+    // A2, A3, B2, B3, C2, C3, D2, D3
+    // A4, A5, B4, B5, C4, C5, D4, D5
+    // A6, A7, B6, B7, C6, C7, D6, D7
+    // ... (similar results from E,F,G,H rows)
+    //
+    // And then we shuffle (permute pattern {0, 2, 4, 6, 1, 3, 5, 7})
+    // to prepare for the next stage
+    //
+    // A0, B0, C0, D0, A1, B1, C1, D1
+    // A2, B2, C2, D2, A3, B3, C3, D3
+    // A4, B4, C4, D4, A5, B5, C5, D5
+    // A6, B6, C6, D6, A7, B7, C7, D7
+    // E0, F0, G0, H0, E1, F1, G1, H1
+    // E2, F2, G2, H2, E3, F3, G3, H3
+    // E4, F4, G4, H4, E5, F5, G5, H5
+    // E6, F6, G6, H6, E7, F7, G7, H7
+    //
+    //
+    // Before Stage 2:
+    // A0, B0, C0, D0, A1, B1, C1, D1
+    // A2, B2, C2, D2, A3, B3, C3, D3
+    // A4, B4, C4, D4, A5, B5, C5, D5
+    // A6, B6, C6, D6, A7, B7, C7, D7
+    // E0, F0, G0, H0, E1, F1, G1, H1
+    // E2, F2, G2, H2, E3, F3, G3, H3
+    // E4, F4, G4, H4, E5, F5, G5, H5
+    // E6, F6, G6, H6, E7, F7, G7, H7
+    //
+    // after, we combine the low/high halves across pairs of rows from the two
+    // groups:
+    //
+    // A0, B0, C0, D0, E0, F0, G0, H0
+    // A1, B1, C1, D1, E1, F1, G1, H1
+    // A2, B2, C2, D2, E2, F2, G2, H2
+    // A3, B3, C3, D3, E3, F3, G3, H3
+    // A4, B4, C4, D4, E4, F4, G4, H4
+    // A5, B5, C5, D5, E5, F5, G5, H5
+    // A6, B6, C6, D6, E6, F6, G6, H6
+    // A7, B7, C7, D7, E7, F7, G7, H7
+    //
+    // This results in the correctly transposed 8x8 block!
+    for (int m = 0; m < total_major_slice_positions; ++m) {
+      for (int s = 0; s < total_second_minor_slice_positions; ++s) {
+        for (int l = 0; l < total_minormost_slice_positions; ++l) {
+          auto num_parts = 2;
+          auto y_steps = 4;
+          std::vector<std::vector<Value>> combined_vregs_stage1(
+              y_steps, std::vector<Value>(num_parts));
+
+          std::vector<int> permute_pattern_stage1_low = {0, 1, 4, 5,
+                                                         2, 3, 6, 7};
+          std::vector<int> permute_pattern_stage1_high = {8,  9,  12, 13,
+                                                          10, 11, 14, 15};
+          for (int i = 0; i < y_steps; ++i) {
+            Value first_vreg =
+                current_vregs({(2 * i) + (sublane_count * m), s, l});
+            Value second_vreg =
+                current_vregs({(2 * i) + (sublane_count * m) + 1, s, l});
+
+            auto combined_low = combine_low(first_vreg, second_vreg);
+            auto combined_high = combine_high(first_vreg, second_vreg);
+
+            // Note(mvoz): Right now, we apply the shuffle pattern post combine,
+            // but with a more clever SublaneShuffleOp  we could
+            // do this in a single op.
+            // Today, we can think of the LHS as going from
+            // |0, 1, 2, 3, |4, 5, 6, 7
+            // to
+            // |0, 1, 2, 3, |8, 9, 10, 11
+            // and then we shuffle that again with the pattern of 0, 1, 4, 5, 2,
+            // 3, 6, 7 to get |0, 1, 8, 9, |2, 3, 10, 11 If we had eighth
+            // granualrity in permutations, this could be a single op, and
+            // probably save us a single shuffle.
+
+            // STAGE 1!
+            auto shuffled_low = shuffle(combined_low, combined_high,
+                                        permute_pattern_stage1_low);
+            auto shuffled_high = shuffle(combined_low, combined_high,
+                                         permute_pattern_stage1_high);
+
+            combined_vregs_stage1[i][0] = shuffled_low;
+            combined_vregs_stage1[i][1] = shuffled_high;
+          }
+          num_parts = 4;
+          y_steps = 2;
+          std::vector<std::vector<Value>> combined_vregs_stage2(
+              y_steps, std::vector<Value>(num_parts));
+          std::vector<int> permute_pattern_stage2_low = {0, 2, 4, 6,
+                                                         1, 3, 5, 7};
+          std::vector<int> permute_pattern_stage2_high = {8, 10, 12, 14,
+                                                          9, 11, 13, 15};
+
+          for (int i = 0; i < y_steps; ++i) {
+            // STAGE 2!
+            auto &current_pair = combined_vregs_stage1[2 * i];
+            auto &next_pair = combined_vregs_stage1[2 * i + 1];
+
+            auto combine_0_0_low = combine_low(current_pair[0], next_pair[0]);
+            auto combine_0_0_high = combine_high(current_pair[0], next_pair[0]);
+
+            auto shuffled_low_0_0 = shuffle(combine_0_0_low, combine_0_0_high,
+                                            permute_pattern_stage2_low);
+            auto shuffled_high_0_0 = shuffle(combine_0_0_low, combine_0_0_high,
+                                             permute_pattern_stage2_high);
+
+            combined_vregs_stage2[i][0] = shuffled_low_0_0;
+            combined_vregs_stage2[i][1] = shuffled_high_0_0;
+
+            auto combine_1_1_low = combine_low(current_pair[1], next_pair[1]);
+            auto combine_1_1_high = combine_high(current_pair[1], next_pair[1]);
+
+            auto shuffled_low_1_1 = shuffle(combine_1_1_low, combine_1_1_high,
+                                            permute_pattern_stage2_low);
+            auto shuffled_high_1_1 = shuffle(combine_1_1_low, combine_1_1_high,
+                                             permute_pattern_stage2_high);
+
+            combined_vregs_stage2[i][2] = shuffled_low_1_1;
+            combined_vregs_stage2[i][3] = shuffled_high_1_1;
+          }
+          std::vector<int64_t> output_idx{s * sublane_count, m, l};
+          for (int i = 0; i < num_parts; ++i) {
+            // STAGE 3!
+            auto lhs = combined_vregs_stage2[0][i];
+            auto rhs = combined_vregs_stage2[1][i];
+            auto combined_low = combine_low(lhs, rhs);
+            auto combined_high = combine_high(lhs, rhs);
+            dst_vregs(output_idx) = combined_low;
+            output_idx[0] += 1;
+            dst_vregs(output_idx) = combined_high;
+            output_idx[0] += 1;
+          }
+        }
+      }
+    }
+    auto assembled =
+        assemble(builder, dst_ty, layout_out, dst_vregs, ctx.target_shape);
+    transpose_op->replaceAllUsesWith(assembled);
+    transpose_op.erase();
+    return success();
   }
   {
     SmallVector<int64_t> p(permutation);
