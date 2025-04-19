@@ -1248,10 +1248,16 @@ def _gamma_grad(sample, a, *, log_space):
     # This requires computing exp(log_sample), which may be zero due to float roundoff.
     # In this case, correct it to smallest representable float.
     samples = lax.exp(samples)
-    zero = lax_internal._const(sample, 0)
-    tiny = lax.full_like(samples, jnp.finfo(samples.dtype).tiny)
-    samples = lax.select(lax.eq(samples, zero), tiny, samples)
-    gamma_grad = lambda alpha, sample: lax.random_gamma_grad(alpha, sample) / sample
+    def safe_gamma_grad(alpha, sample):
+      zero = lax_internal._const(sample, 0)
+
+      return jnp.where(
+        lax.eq(sample, zero),
+        zero,
+        lax.random_gamma_grad(alpha, sample) / sample
+      )
+
+    gamma_grad = safe_gamma_grad
   else:
     gamma_grad = lax.random_gamma_grad
   if xla_bridge.get_backend().platform == 'cpu':
