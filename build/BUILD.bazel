@@ -63,5 +63,5 @@ compile_pip_requirements(
 
 py_library(
     name = "all_py_deps",
-    deps = all_py_deps(["zstandard", "tensorstore"]]),
+    deps = all_py_deps(["zstandard", "tensorstore"]),
 )
