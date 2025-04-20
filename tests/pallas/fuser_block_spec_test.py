@@ -695,6 +695,43 @@ class PullBlockSpecTest(jtu.JaxTestCase):
         kernel_fn((0, 0, 3, 0), scalar_prefetch_values, (x,)), x
     )
 
+  def test_element_indexing(self):
+
+    x = np.zeros((512, 512), dtype=np.float32)
+
+    def f():
+      return x
+
+    f2, new_values, scalar_prefetch_values = block_spec_lib.get_fusion_values(f)
+    self.assertLen(new_values, 1)
+    self.assertEmpty(scalar_prefetch_values)
+
+    # Block spec with an offset on the first dimension
+    block_spec = pl.BlockSpec(
+        (pl.Element(128, (0, 16)), 128), lambda i, j, k: (128 * i + 16, j)
+    )
+    kernel_fn, (value_block_specs,), _ = block_spec_lib.pull_block_spec(
+        f2,
+        block_spec,
+        grid=(1, 1, 1),
+        scalar_prefetch_handler=block_spec_lib.make_scalar_prefetch_handler(),
+    )(new_values)
+    self.assertLen(value_block_specs, 1)
+    self.assertEmpty(scalar_prefetch_values)
+    self.assertEqual(value_block_specs[0].block_shape, (pl.Element(128, (0, 16)), 128))
+    self.assertEqual(value_block_specs[0].index_map(0, 1, 2), (16, 1))
+    self.assertEqual(value_block_specs[0].index_map(1, 1, 2), (128 + 16, 1))
+
+    x_block = np.ones((128, 128), dtype=np.float32)
+    np.testing.assert_array_equal(
+        kernel_fn(
+            (0, 0, 0),
+            scalar_prefetch_values,
+            (np.ones((128, 128), dtype=np.float32),),
+        ),
+        x_block,
+    )
+
 
 class PullBlockSpecHOPTest(jtu.JaxTestCase):
 

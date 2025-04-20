@@ -420,9 +420,17 @@ def make_kernel_function(
   invar_usages = util.safe_map(read_usage_env, jaxpr.invars)
   bs_env, scalar_prefetch_fn_env = block_spec_env
 
-  def _remove_nones(shape: tuple[int | None, ...] | None) -> tuple[int, ...]:
+  def _block_size(dim: pallas_core.Element | int | None) -> int | None:
+    if isinstance(dim, pallas_core.Element):
+      return dim.block_size
+    return dim
+
+  def _remove_nones(
+      shape: tuple[pallas_core.Element | int | None, ...] | None
+  ) -> tuple[int, ...]:
     assert shape is not None
-    return tuple(s for s in shape if s is not None)
+    new_shape = tuple(_block_size(s) for s in shape)
+    return tuple(s for s in new_shape if s is not None)
 
   _no_aval = object()
 
