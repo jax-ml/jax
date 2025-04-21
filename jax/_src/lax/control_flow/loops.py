@@ -1921,7 +1921,8 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
           name_stack=cond_name_stack,
           primitive=None,
           avals_in=[pred_aval],
-          avals_out=[pred_aval.update(shape=())],
+          avals_out=[pred_aval.update(
+              shape=(), sharding=pred_aval.sharding.with_spec(()))],
           tokens_in=mlir.TokenSet(),
           tokens_out=None)
       pred, = lax._unary_reduce_lower(

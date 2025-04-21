@@ -467,13 +467,12 @@ class RooflineTest(jtu.JaxTestCase):
   def test_unary_ops(self, f, dtype):
     data = jnp.zeros((3, 8), dtype=dtype)
     out, result = roofline.roofline(f)(data)
-    with self.subTest("flops"):
-      self.assertEqual(result.unfused_flops, 3 * 8)
-    with self.subTest("hbm_bytes"):
-      self.assertEqual(
-          result.unfused_hbm_bytes,
-          data.dtype.itemsize * 3 * 8 + out.dtype.itemsize * 3 * 8,
-      )
+
+    self.assertEqual(result.unfused_flops, 3 * 8)
+    self.assertEqual(
+        result.unfused_hbm_bytes,
+        data.dtype.itemsize * 3 * 8 + out.dtype.itemsize * 3 * 8,
+    )
 
   def test_binary_ops(self):
     for f in [

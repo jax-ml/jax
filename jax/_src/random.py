@@ -918,7 +918,8 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> Array:
 
 def bernoulli(key: ArrayLike,
               p: RealArray = np.float32(0.5),
-              shape: Shape | None = None) -> Array:
+              shape: Shape | None = None,
+              mode: str = 'low') -> Array:
   r"""Sample Bernoulli random values with given shape and mean.
 
   The values are distributed according to the probability mass function:
@@ -935,6 +936,10 @@ def bernoulli(key: ArrayLike,
     shape: optional, a tuple of nonnegative integers representing the result
       shape. Must be broadcast-compatible with ``p.shape``. The default (None)
       produces a result shape equal to ``p.shape``.
+    mode: optional, "high" or "low" for how many bits to use when sampling.
+      default='low'. Set to "high" for correct sampling at small values of
+      `p`. When sampling in float32, bernoulli samples with mode='low' produce
+      incorrect results for p < ~1E-7.
 
   Returns:
     A random array with boolean dtype and shape given by ``shape`` if ``shape``
@@ -942,23 +947,33 @@ def bernoulli(key: ArrayLike,
   """
   if shape is not None:
     shape = core.canonicalize_shape(shape)
+  if mode not in ['high', 'low']:
+    raise ValueError(f"got {mode=}, expected 'high' or 'low'")
   key, _ = _check_prng_key("bernoulli", key)
   dtype = dtypes.canonicalize_dtype(lax.dtype(p))
   if not jnp.issubdtype(dtype, np.floating):
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
   p = lax.convert_element_type(p, dtype)
-  return _bernoulli(key, p, shape)
+  return _bernoulli(key, p, shape, mode=mode)
 
-@partial(jit, static_argnums=(2,))
-def _bernoulli(key, p, shape) -> Array:
+
+@partial(jit, static_argnames=['shape', 'mode'])
+def _bernoulli(key: Array, p: Array, shape: Shape | None, mode: str) -> Array:
   if shape is None:
     # TODO: Use the named part of `p` as well
     shape = np.shape(p)
   else:
     _check_shape("bernoulli", shape, np.shape(p))
+  dtype = lax.dtype(p)
 
-  return uniform(key, shape, lax.dtype(p)) < p
+  if mode == 'high':
+    u1, u2 = uniform(key, (2, *shape), dtype)
+    # resolution of uniform samples is 2 ** -n_mantissa
+    u2 *= 2 ** -dtypes.finfo(dtype).nmant
+    return u2 < p - u1
+  else:
+    return uniform(key, shape, lax.dtype(p)) < p
 
 
 def beta(key: ArrayLike,

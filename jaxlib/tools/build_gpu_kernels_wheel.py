@@ -26,7 +26,7 @@ import tempfile
 from bazel_tools.tools.python.runfiles import runfiles
 from jaxlib.tools import build_utils
 
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(fromfile_prefix_chars="@")
 parser.add_argument(
     "--output_path",
     default=None,
@@ -61,6 +61,9 @@ parser.add_argument(
     "--enable-rocm",
     default=False,
     help="Should we build with ROCM enabled?")
+parser.add_argument(
+    "--srcs", help="source files for the wheel", action="append"
+)
 args = parser.parse_args()
 
 r = runfiles.Create()
@@ -79,77 +82,105 @@ plat_name={tag}
 
 
 def prepare_wheel_cuda(
-    sources_path: pathlib.Path, *, cpu, cuda_version
+    wheel_sources_path: pathlib.Path, *, cpu, cuda_version, wheel_sources
 ):
-  """Assembles a source tree for the cuda kernel wheel in `sources_path`."""
-  copy_runfiles = functools.partial(build_utils.copy_file, runfiles=r)
-
-  copy_runfiles(
-      "__main__/jax_plugins/cuda/plugin_pyproject.toml",
-      dst_dir=sources_path,
-      dst_filename="pyproject.toml",
-  )
-  copy_runfiles(
-      "__main__/jax_plugins/cuda/plugin_setup.py",
-      dst_dir=sources_path,
-      dst_filename="setup.py",
-  )
-  build_utils.update_setup_with_cuda_version(sources_path, cuda_version)
-  write_setup_cfg(sources_path, cpu)
-
-  plugin_dir = sources_path / f"jax_cuda{cuda_version}_plugin"
-  copy_runfiles(
-      dst_dir=plugin_dir,
-      src_files=[
-          f"__main__/jaxlib/cuda/_solver.{pyext}",
-          f"__main__/jaxlib/cuda/_linalg.{pyext}",
-          f"__main__/jaxlib/cuda/_prng.{pyext}",
-          f"__main__/jaxlib/cuda/_rnn.{pyext}",
-          f"__main__/jaxlib/cuda/_sparse.{pyext}",
-          f"__main__/jaxlib/cuda/_triton.{pyext}",
-          f"__main__/jaxlib/cuda/_hybrid.{pyext}",
-          f"__main__/jaxlib/cuda/_versions.{pyext}",
-          f"__main__/jaxlib/cuda/cuda_plugin_extension.{pyext}",
-          f"__main__/jaxlib/mosaic/gpu/_mosaic_gpu_ext.{pyext}",
-          "__main__/jaxlib/mosaic/gpu/libmosaic_gpu_runtime.so",
-          "__main__/jaxlib/version.py",
+  """Assembles a source tree for the cuda kernel wheel in `wheel_sources_path`."""
+  source_file_prefix = build_utils.get_source_file_prefix(wheel_sources)
+  wheel_sources_map = build_utils.create_wheel_sources_map(
+      wheel_sources,
+      root_packages=[
+          "jax_plugins",
+          f"jax_cuda{cuda_version}_plugin",
+          "jaxlib",
       ],
   )
+  copy_files = functools.partial(
+      build_utils.copy_file,
+      runfiles=r,
+      wheel_sources_map=wheel_sources_map,
+  )
+
+  copy_files(
+      f"{source_file_prefix}jax_plugins/cuda/plugin_pyproject.toml",
+      dst_dir=wheel_sources_path,
+      dst_filename="pyproject.toml",
+  )
+  copy_files(
+      f"{source_file_prefix}jax_plugins/cuda/plugin_setup.py",
+      dst_dir=wheel_sources_path,
+      dst_filename="setup.py",
+  )
+  build_utils.update_setup_with_cuda_version(wheel_sources_path, cuda_version)
+  write_setup_cfg(wheel_sources_path, cpu)
+
+  plugin_dir = wheel_sources_path / f"jax_cuda{cuda_version}_plugin"
+  copy_files(
+      dst_dir=plugin_dir,
+      src_files=[
+          f"{source_file_prefix}jaxlib/cuda/_solver.{pyext}",
+          f"{source_file_prefix}jaxlib/cuda/_linalg.{pyext}",
+          f"{source_file_prefix}jaxlib/cuda/_prng.{pyext}",
+          f"{source_file_prefix}jaxlib/cuda/_rnn.{pyext}",
+          f"{source_file_prefix}jaxlib/cuda/_sparse.{pyext}",
+          f"{source_file_prefix}jaxlib/cuda/_triton.{pyext}",
+          f"{source_file_prefix}jaxlib/cuda/_hybrid.{pyext}",
+          f"{source_file_prefix}jaxlib/cuda/_versions.{pyext}",
+          f"{source_file_prefix}jaxlib/cuda/cuda_plugin_extension.{pyext}",
+          f"{source_file_prefix}jaxlib/mosaic/gpu/_mosaic_gpu_ext.{pyext}",
+          f"{source_file_prefix}jaxlib/mosaic/gpu/libmosaic_gpu_runtime.so",
+          f"{source_file_prefix}jaxlib/version.py",
+      ],
+  )
+
 
 def prepare_wheel_rocm(
-    sources_path: pathlib.Path, *, cpu, rocm_version
+    wheel_sources_path: pathlib.Path, *, cpu, rocm_version, wheel_sources
 ):
-  """Assembles a source tree for the rocm kernel wheel in `sources_path`."""
-  copy_runfiles = functools.partial(build_utils.copy_file, runfiles=r)
-
-  copy_runfiles(
-      "__main__/jax_plugins/rocm/plugin_pyproject.toml",
-      dst_dir=sources_path,
-      dst_filename="pyproject.toml",
-  )
-  copy_runfiles(
-      "__main__/jax_plugins/rocm/plugin_setup.py",
-      dst_dir=sources_path,
-      dst_filename="setup.py",
-  )
-  build_utils.update_setup_with_rocm_version(sources_path, rocm_version)
-  write_setup_cfg(sources_path, cpu)
-
-  plugin_dir = sources_path / f"jax_rocm{rocm_version}_plugin"
-  copy_runfiles(
-      dst_dir=plugin_dir,
-      src_files=[
-          f"__main__/jaxlib/rocm/_linalg.{pyext}",
-          f"__main__/jaxlib/rocm/_prng.{pyext}",
-          f"__main__/jaxlib/rocm/_solver.{pyext}",
-          f"__main__/jaxlib/rocm/_sparse.{pyext}",
-          f"__main__/jaxlib/rocm/_hybrid.{pyext}",
-          f"__main__/jaxlib/rocm/_rnn.{pyext}",
-          f"__main__/jaxlib/rocm/_triton.{pyext}",
-          f"__main__/jaxlib/rocm/rocm_plugin_extension.{pyext}",
-          "__main__/jaxlib/version.py",
+  """Assembles a source tree for the rocm kernel wheel in `wheel_sources_path`."""
+  source_file_prefix = build_utils.get_source_file_prefix(wheel_sources)
+  wheel_sources_map = build_utils.create_wheel_sources_map(
+      wheel_sources,
+      root_packages=[
+          "jax_plugins",
+          f"jax_rocm{rocm_version}_plugin",
+          "jaxlib",
       ],
   )
+  copy_files = functools.partial(
+      build_utils.copy_file,
+      runfiles=r,
+      wheel_sources_map=wheel_sources_map,
+  )
+
+  copy_files(
+      f"{source_file_prefix}jax_plugins/rocm/plugin_pyproject.toml",
+      dst_dir=wheel_sources_path,
+      dst_filename="pyproject.toml",
+  )
+  copy_files(
+      f"{source_file_prefix}jax_plugins/rocm/plugin_setup.py",
+      dst_dir=wheel_sources_path,
+      dst_filename="setup.py",
+  )
+  build_utils.update_setup_with_rocm_version(wheel_sources_path, rocm_version)
+  write_setup_cfg(wheel_sources_path, cpu)
+
+  plugin_dir = wheel_sources_path / f"jax_rocm{rocm_version}_plugin"
+  copy_files(
+      dst_dir=plugin_dir,
+      src_files=[
+          f"{source_file_prefix}jaxlib/rocm/_linalg.{pyext}",
+          f"{source_file_prefix}jaxlib/rocm/_prng.{pyext}",
+          f"{source_file_prefix}jaxlib/rocm/_solver.{pyext}",
+          f"{source_file_prefix}jaxlib/rocm/_sparse.{pyext}",
+          f"{source_file_prefix}jaxlib/rocm/_hybrid.{pyext}",
+          f"{source_file_prefix}jaxlib/rocm/_rnn.{pyext}",
+          f"{source_file_prefix}jaxlib/rocm/_triton.{pyext}",
+          f"{source_file_prefix}jaxlib/rocm/rocm_plugin_extension.{pyext}",
+          f"{source_file_prefix}jaxlib/version.py",
+      ],
+  )
+
 
 # Build wheel for cuda kernels
 if args.enable_rocm:
@@ -161,12 +192,18 @@ try:
   os.makedirs(args.output_path, exist_ok=True)
   if args.enable_cuda:
     prepare_wheel_cuda(
-        pathlib.Path(sources_path), cpu=args.cpu, cuda_version=args.platform_version
+        pathlib.Path(sources_path),
+        cpu=args.cpu,
+        cuda_version=args.platform_version,
+        wheel_sources=args.srcs,
     )
     package_name = f"jax cuda{args.platform_version} plugin"
   elif args.enable_rocm:
     prepare_wheel_rocm(
-        pathlib.Path(sources_path), cpu=args.cpu, rocm_version=args.platform_version
+        pathlib.Path(sources_path),
+        cpu=args.cpu,
+        rocm_version=args.platform_version,
+        wheel_sources=args.srcs,
     )
     package_name = f"jax rocm{args.platform_version} plugin"
   if args.editable:

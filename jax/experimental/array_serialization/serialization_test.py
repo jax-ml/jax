@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# pylint: disable=g-importing-member
 import asyncio
-import math
 from functools import partial
+import math
 import os
 import pathlib
 import tracemalloc as tm
@@ -22,19 +23,29 @@ import tracemalloc as tm
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
-import jax.numpy as jnp
+from jax._src import array
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src import array
-from jax._src.sharding_impls import NamedSharding, GSPMDSharding, SingleDeviceSharding
-from jax.sharding import PartitionSpec as P
+from jax._src.layout import DeviceLocalLayout as DLL
+from jax._src.layout import Layout
 from jax.experimental.array_serialization import serialization
-from jax.experimental.layout import Layout, DeviceLocalLayout as DLL
+from jax.experimental.array_serialization import tensorstore_impl as ts_impl
+import jax.numpy as jnp
+
+from jax.sharding import NamedSharding
+from jax.sharding import PartitionSpec as P
+from jax.sharding import SingleDeviceSharding
 import numpy as np
 import tensorstore as ts
+# pylint: enable=g-importing-member
 
 jax.config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
+
+
+def _get_replicated_sharding(devices):
+  return NamedSharding(
+      jax.make_mesh(np.shape(devices), P('x'), devices=devices), P())
 
 
 class CheckpointTest(jtu.JaxTestCase):
@@ -93,13 +104,14 @@ class CheckpointTest(jtu.JaxTestCase):
     manager = serialization.GlobalAsyncCheckpointManager()
     manager.serialize(
         [inp], [tspec],
-        on_commit_callback=partial(self._on_commit_callback, ckpt_dir, ckpt_dir))
+        on_commit_callback=partial(
+            self._on_commit_callback, ckpt_dir, ckpt_dir))
     manager.wait_until_finished()
 
     async def deserialize_with_byte_limit():
       r = await serialization.async_deserialize(
-        sharding, tspec, inp_shape,
-        byte_limiter=serialization._LimitInFlightBytes(4_200_000))
+          sharding, tspec, inp_shape,
+          byte_limiter=serialization._LimitInFlightBytes(4_200_000))
       r.block_until_ready()
 
     tm.start()
@@ -133,24 +145,22 @@ class CheckpointTest(jtu.JaxTestCase):
         inp_shape, sharding, lambda idx: src[idx]
     )
     ckpt_dir = pathlib.Path(self.create_tempdir('memprofsave').full_path)
-    tspec = serialization.get_tensorstore_spec(str(ckpt_dir))
+    tspec = ts_impl.get_tensorstore_spec(str(ckpt_dir), ocdbt=False,
+                                         driver='zarr3')
     tspec['metadata'] = {
         'shape': inp.shape,
-        'compressor': None,
-        'chunks': inp.shape,
+        'data_type': jnp.dtype(inp.dtype).name,
+        'chunk_grid': {
+            'name': 'regular',
+            'configuration': {'chunk_shape': np.array(np.maximum(1, inp.shape))}
+        }
     }
-
     is_cpu = jtu.test_device_matches(['cpu'])
     tm.start()
     try:
       manager = serialization.GlobalAsyncCheckpointManager()
-      manager.serialize(
-          [inp],
-          [tspec],
-          on_commit_callback=partial(
-              self._on_commit_callback, ckpt_dir, ckpt_dir
-          ),
-      )
+      manager.serialize([inp], [tspec], on_commit_callback=partial(
+          self._on_commit_callback, ckpt_dir, ckpt_dir))
       manager.wait_until_finished()
       unused_current, peak = tm.get_traced_memory()
       self.assertLess(peak, src.nbytes * (1 * (not is_cpu) + 0.5))
@@ -176,7 +186,8 @@ class CheckpointTest(jtu.JaxTestCase):
     manager = serialization.GlobalAsyncCheckpointManager()
     manager.serialize_with_paths(
         [a1], ckpt_paths,
-        on_commit_callback=partial(self._on_commit_callback, ckpt_dir, ckpt_dir))
+        on_commit_callback=partial(
+            self._on_commit_callback, ckpt_dir, ckpt_dir))
     manager.wait_until_finished()
 
     m1, = manager.deserialize_with_paths(
@@ -201,7 +212,8 @@ class CheckpointTest(jtu.JaxTestCase):
         inp_shape, NamedSharding(global_mesh, pspec),
         lambda idx: global_input_data1[idx])
     ckpt_dir = pathlib.Path(self.create_tempdir('ckpt').full_path)
-    ckpt_path1 = pathlib.Path(self.create_tempdir(f'{ckpt_dir}/first').full_path)
+    ckpt_path1 = pathlib.Path(
+        self.create_tempdir(f'{ckpt_dir}/first').full_path)
 
     # Second Array
     global_input_data2 = np.arange(
@@ -209,7 +221,8 @@ class CheckpointTest(jtu.JaxTestCase):
     a2 = array.make_array_from_callback(
         inp_shape, NamedSharding(global_mesh, pspec),
         lambda idx: global_input_data2[idx])
-    ckpt_path2 = pathlib.Path(self.create_tempdir(f'{ckpt_dir}/second').full_path)
+    ckpt_path2 = pathlib.Path(
+        self.create_tempdir(f'{ckpt_dir}/second').full_path)
 
     # Third Array
     def cb3(_):
@@ -217,15 +230,17 @@ class CheckpointTest(jtu.JaxTestCase):
     global_mesh1d = jtu.create_mesh((8,), ('x',))
     a3 = array.make_array_from_callback(
         (0,), NamedSharding(global_mesh1d, P(None)), cb3)
-    ckpt_path3 = pathlib.Path(self.create_tempdir(f'{ckpt_dir}/third').full_path)
+    ckpt_path3 = pathlib.Path(
+        self.create_tempdir(f'{ckpt_dir}/third').full_path)
 
     ckpt_paths = [str(ckpt_path1), str(ckpt_path2), str(ckpt_path3)]
-    tspecs = jax.tree_util.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
+    tspecs = jax.tree.map(serialization.get_tensorstore_spec, ckpt_paths)
 
     manager = serialization.GlobalAsyncCheckpointManager()
     manager.serialize(
         [a1, a2, a3], tspecs,
-        on_commit_callback=partial(self._on_commit_callback, ckpt_dir, ckpt_dir))
+        on_commit_callback=partial(
+            self._on_commit_callback, ckpt_dir, ckpt_dir))
     manager.wait_until_finished()
 
     m1, m2, m3 = serialization.run_deserialization(
@@ -295,9 +310,8 @@ class CheckpointTest(jtu.JaxTestCase):
     ckpt_path3 = ckpt_dir / 'third'
 
     ckpt_paths = [str(ckpt_path1), str(ckpt_path2), str(ckpt_path3)]
-    tspecs = jax.tree_util.tree_map(
-        lambda p: serialization.get_tensorstore_spec(p, ocdbt=True), ckpt_paths
-    )
+    tspecs = jax.tree.map(partial(ts_impl.get_tensorstore_spec, ocdbt=True),
+                          ckpt_paths)
 
     manager = serialization.GlobalAsyncCheckpointManager()
     with ts.Transaction(atomic=True) as transaction:
@@ -312,13 +326,8 @@ class CheckpointTest(jtu.JaxTestCase):
     manager.wait_until_finished()
 
     m1, m2, m3 = serialization.run_deserialization(
-        [
-            NamedSharding(global_mesh, pspec),
-            NamedSharding(global_mesh, P('x')),
-            NamedSharding(global_mesh1d, P(None)),
-        ],
-        tspecs,
-    )
+        [NamedSharding(global_mesh, pspec), NamedSharding(global_mesh, P('x')),
+         NamedSharding(global_mesh1d, P(None))], tspecs)
 
     self.assertIsInstance(m1, array.ArrayImpl)
     self.assertArraysEqual(
@@ -367,12 +376,13 @@ class CheckpointTest(jtu.JaxTestCase):
     ckpt_dir = pathlib.Path(self.create_tempdir('first').full_path)
 
     ckpt_paths = [str(ckpt_dir)]
-    tspecs = jax.tree_util.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
+    tspecs = jax.tree.map(serialization.get_tensorstore_spec, ckpt_paths)
 
     manager = serialization.GlobalAsyncCheckpointManager()
     manager.serialize(
         [arr], tspecs,
-        on_commit_callback=partial(self._on_commit_callback, ckpt_dir, ckpt_dir))
+        on_commit_callback=partial(
+            self._on_commit_callback, ckpt_dir, ckpt_dir))
     manager.wait_until_finished()
 
     ds = NamedSharding(jtu.create_mesh((4, 2), ('x', 'y'), iota_order=True),
@@ -395,15 +405,16 @@ class CheckpointTest(jtu.JaxTestCase):
     for l in m1.addressable_shards:
       self.assertArraysEqual(np.asarray(l.data), expected_data[l.device.id])
 
-    new_ds = GSPMDSharding.get_replicated(list(global_mesh.devices.flat))
-    m2, = serialization.run_deserialization([new_ds], tspecs, [(8, 2)], [np.float32])
+    new_ds = _get_replicated_sharding(list(global_mesh.devices.flat))
+    m2, = serialization.run_deserialization([new_ds], tspecs, [(8, 2)],
+                                            [np.float32])
     for l in m2.addressable_shards:
       self.assertArraysEqual(l.data, global_input_data1.astype('float32'))
 
   @parameterized.product(input_dtype=[jnp.int4, jnp.int8])
   def test_checkpointing_with_int4(self, input_dtype):
     if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/376077396): Fix XlaRuntimeError: INVALID_ARGUMENT")
+      self.skipTest('TODO(b/376077396): Fix XlaRuntimeError: INVALID_ARGUMENT')
     global_mesh = jtu.create_mesh((2, 2), ('x', 'y'), iota_order=True)
     global_input_shape = (8, 2)
     num = math.prod(global_input_shape)
@@ -418,12 +429,13 @@ class CheckpointTest(jtu.JaxTestCase):
     ckpt_dir = pathlib.Path(self.create_tempdir('first').full_path)
 
     ckpt_paths = [str(ckpt_dir)]
-    tspecs = jax.tree_util.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
+    tspecs = jax.tree.map(serialization.get_tensorstore_spec, ckpt_paths)
 
     manager = serialization.GlobalAsyncCheckpointManager()
     manager.serialize(
         [arr], tspecs,
-        on_commit_callback=partial(self._on_commit_callback, ckpt_dir, ckpt_dir))
+        on_commit_callback=partial(
+            self._on_commit_callback, ckpt_dir, ckpt_dir))
     manager.wait_until_finished()
 
     ds = NamedSharding(jtu.create_mesh((4, 2), ('x', 'y'), iota_order=True),
@@ -448,8 +460,9 @@ class CheckpointTest(jtu.JaxTestCase):
     for l in m1.addressable_shards:
       self.assertArraysEqual(np.asarray(l.data), expected_data[l.device.id])
 
-    new_ds = GSPMDSharding.get_replicated(list(global_mesh.devices.flat))
-    m2, = serialization.run_deserialization([new_ds], tspecs, [(8, 2)], [target_dtype])
+    new_ds = _get_replicated_sharding(list(global_mesh.devices.flat))
+    m2, = serialization.run_deserialization([new_ds], tspecs, [(8, 2)],
+                                            [target_dtype])
     for l in m2.addressable_shards:
       self.assertArraysEqual(l.data, global_input_data.astype(target_dtype))
 
@@ -463,22 +476,17 @@ class CheckpointTest(jtu.JaxTestCase):
     ckpt_dir = pathlib.Path(self.create_tempdir('first').full_path)
 
     ckpt_paths = [str(ckpt_dir)]
-    tspecs = jax.tree_util.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
-
+    tspecs = jax.tree.map(serialization.get_tensorstore_spec, ckpt_paths)
     manager = serialization.GlobalAsyncCheckpointManager()
     manager.serialize(
         [array1], tspecs,
-        on_commit_callback=partial(self._on_commit_callback, ckpt_dir, ckpt_dir))
+        on_commit_callback=partial(
+            self._on_commit_callback, ckpt_dir, ckpt_dir))
     manager.wait_until_finished()
 
     ds = NamedSharding(jtu.create_mesh((2,), ('x')), P(None))
 
-    m1, = serialization.run_deserialization(
-        [ds],
-        tspecs,
-        [()],
-        [np.float32]
-    )
+    m1, = serialization.run_deserialization([ds], tspecs, [()], [np.float32])
 
     for l in m1.addressable_shards:
       self.assertArraysEqual(np.asarray(l.data), data.astype(np.float32))
@@ -488,9 +496,7 @@ class CheckpointTest(jtu.JaxTestCase):
     data = np.arange(1024)
     tspec = ts.array(data).spec()
     m1, = serialization.run_deserialization(
-        [NamedSharding(global_mesh, P(None))],
-        [tspec]
-    )
+        [NamedSharding(global_mesh, P(None))], [tspec])
     for l in m1.addressable_shards:
       self.assertArraysEqual(np.asarray(l.data), data)
 
@@ -507,9 +513,9 @@ class CheckpointTest(jtu.JaxTestCase):
         },
         'f': 4
     }
-    self.assertTrue(serialization._spec_has_metadata(spec))
+    self.assertTrue(ts_impl._spec_has_metadata(spec))
     self.assertTrue(
-        serialization._spec_has_metadata({
+        ts_impl._spec_has_metadata({
             'driver': 'zarr',
             'kvstore': 'gfile',
             'metadata': {
@@ -531,39 +537,40 @@ class CheckpointTest(jtu.JaxTestCase):
         },
         'f': 4
     }
-    self.assertFalse(serialization._spec_has_metadata(spec))
+    self.assertFalse(ts_impl._spec_has_metadata(spec))
 
   def test_empty_spec_has_no_metadata(self):
     spec = {}
-    self.assertFalse(serialization._spec_has_metadata(spec))
+    self.assertFalse(ts_impl._spec_has_metadata(spec))
 
   @parameterized.named_parameters(
       ('gcs', 'gs://my/ckpt/dir/path'),
       ('file', '/my/ckpt/dir/path')
   )
   def test_get_tensorstore_spec_ocdbt(self, path):
-    spec = serialization.get_tensorstore_spec(path, ocdbt=True)
+    spec = ts_impl.get_tensorstore_spec(path, ocdbt=True)
     is_gcs_path = path.startswith('gs://')
+    # for OCDBT the last part of the path is the key in the kvstore
+    expected_path = os.path.split(path)[0]
     if is_gcs_path:
-      self.assertEqual(spec['kvstore']['base'], os.path.dirname(path))
+      self.assertEqual(spec['kvstore']['base']['driver'], 'gcs')
+      self.assertTrue(expected_path.endswith(spec['kvstore']['base']['path']))
     else:
-      self.assertEqual(spec['kvstore']['base'],
-                       f'{serialization._DEFAULT_DRIVER}://{os.path.dirname(path)}')
-    self.assertEqual(spec['kvstore']['path'], 'path')
+      self.assertEqual(spec['kvstore']['base']['path'], expected_path)
 
   def test_get_tensorstore_spec_not_absolute_path(self):
     path = 'my/ckpt/path'
     with self.assertRaisesRegex(ValueError,
-                                "Checkpoint path should be absolute"):
-      serialization.get_tensorstore_spec(path, ocdbt=True)
+                                'Checkpoint path should be absolute'):
+      ts_impl.get_tensorstore_spec(path, ocdbt=True)
 
   def test_maybe_cloud_storage(self):
-    gs_path = 'gs://some-buck/path'
-    gs_spec = serialization.get_tensorstore_spec(gs_path, ocdbt=True)
+    gs_path = 'gs://some-buck/path/array_name'
+    gs_spec = ts_impl.get_tensorstore_spec(gs_path, ocdbt=True)
     self.assertTrue(serialization.is_remote_storage(gs_spec))
 
-    local_path = '/tmp/checkpoint'
-    local_spec = serialization.get_tensorstore_spec(local_path, ocdbt=True)
+    local_path = '/tmp/checkpoint/array_name'
+    local_spec = ts_impl.get_tensorstore_spec(local_path, ocdbt=True)
     self.assertFalse(serialization.is_remote_storage(local_spec))
 
     nested_tspec = {
@@ -571,7 +578,8 @@ class CheckpointTest(jtu.JaxTestCase):
         'dtype': 'int32',
         'base': {
             'driver': 'zarr',
-            'kvstore': {'driver': 'ocdbt', 'base': 's3://some-bucket/path'},
+            'kvstore': {'driver': 'ocdbt',
+                        'base': 's3://some-bucket/path/array_name'},
         },
     }
     self.assertTrue(serialization.is_remote_storage(nested_tspec))
@@ -592,12 +600,13 @@ class CheckpointTest(jtu.JaxTestCase):
 
     ckpt_dir = pathlib.Path(self.create_tempdir('ckpt').full_path)
     ckpt_path = pathlib.Path(self.create_tempdir(f'{ckpt_dir}/first').full_path)
-    tspecs = jax.tree_util.tree_map(serialization.get_tensorstore_spec, [ckpt_path])
+    tspecs = jax.tree.map(ts_impl.get_tensorstore_spec, [ckpt_path])
 
     manager = serialization.GlobalAsyncCheckpointManager()
     manager.serialize(
         [arr], tspecs,
-        on_commit_callback=partial(self._on_commit_callback, ckpt_dir, ckpt_dir))
+        on_commit_callback=partial(
+            self._on_commit_callback, ckpt_dir, ckpt_dir))
     manager.wait_until_finished()
 
     out, = serialization.run_deserialization([out_layout], tspecs)
@@ -610,7 +619,7 @@ class CheckpointTest(jtu.JaxTestCase):
 
   def test_deserialization_with_int4(self):
     if config.use_shardy_partitioner.value:
-      self.skipTest("TODO(b/376077396): Fix XlaRuntimeError: INVALID_ARGUMENT")
+      self.skipTest('TODO(b/376077396): Fix XlaRuntimeError: INVALID_ARGUMENT')
     if jtu.test_device_matches(['gpu']):
       self.skipTest("Fails on GPU. Enable after it's fixed")
     dtype = jnp.int4
@@ -620,10 +629,8 @@ class CheckpointTest(jtu.JaxTestCase):
     ckpt_dir = pathlib.Path(self.create_tempdir('test_ckpt').full_path)
 
     # Run serialization.
-    sharding = GSPMDSharding.get_replicated(jax.devices())
-    tspecs = jax.tree_util.tree_map(
-        serialization.get_tensorstore_spec, [ckpt_dir]
-    )
+    sharding = _get_replicated_sharding(list(jax.devices()))
+    tspecs = jax.tree.map(serialization.get_tensorstore_spec, [ckpt_dir])
     manager = serialization.GlobalAsyncCheckpointManager()
     manager.serialize(
         [arr],
@@ -634,11 +641,8 @@ class CheckpointTest(jtu.JaxTestCase):
 
     # Run deserialization.
     deserialized_arr, = serialization.run_deserialization(
-        shardings=[sharding],
-        tensorstore_specs=tspecs,
-        global_shapes=[shape],
-        dtypes=[dtype],
-    )
+        shardings=[sharding], tensorstore_specs=tspecs, global_shapes=[shape],
+        dtypes=[dtype])
 
     out = deserialized_arr.astype(jnp.int8)  # doesn't crash
     self.assertEqual(out.dtype, jnp.int8)
@@ -650,13 +654,14 @@ class TransferShardTest(jtu.JaxTestCase):
   @jtu.skip_on_devices('cpu')
   def test_transfer_shard_to_host(self):
     np_inp = np.arange(16).reshape((4, 4))
-    sharding = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
+    sharding = SingleDeviceSharding(jax.devices()[0], memory_kind='device')
     arr = jax.device_put(np_inp, sharding)
     shard = arr.addressable_shards[0]
 
-    np_out = asyncio.run(serialization.transfer_shard_to_host(shard))
+    np_out = asyncio.run(ts_impl._transfer_shard_to_host(shard))
 
     self.assertArraysEqual(np_out, np_inp)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

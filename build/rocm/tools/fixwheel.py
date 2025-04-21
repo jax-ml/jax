@@ -87,7 +87,7 @@ def fix_wheel(path):
     exclude = list(ext_libs.keys())
 
     # call auditwheel repair with excludes
-    cmd = ["auditwheel", "repair", "--plat", plat, "--only-plat"]
+    cmd = ["auditwheel", "-v", "repair", "--plat", plat, "--only-plat"]
 
     for ex in exclude:
         cmd.append("--exclude")

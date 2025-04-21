@@ -1105,6 +1105,8 @@ def broadcast(x, sz, axis, mesh_axis=None):
   shape.insert(axis, sz)
   broadcast_dims = tuple(np.delete(np.arange(len(shape)), axis))
   x_aval = core.get_aval(x)
+  if x_aval.sharding.mesh.empty:
+    mesh_axis = None
   new_spec = P(*tuple_insert(x_aval.sharding.spec, axis, mesh_axis))
   sharding = x_aval.sharding.with_spec(new_spec)
   # TODO(dougalm, yashkatariya): Delete this context manager once we figure
@@ -1153,9 +1155,9 @@ class SpecMatchError(Exception):
     self.src = src
     self.dst = dst
 
-def bdim_at_front(x, bdim, size):
+def bdim_at_front(x, bdim, size, mesh_axis=None):
   if bdim is not_mapped:
-    return broadcast(x, size, 0)
+    return broadcast(x, size, 0, mesh_axis=mesh_axis)
   else:
     return moveaxis(x, bdim, 0)
 

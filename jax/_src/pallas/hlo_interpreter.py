@@ -83,18 +83,19 @@ def _logical_aval_to_interpret_mode_aval(aval):
   return aval
 
 
-def _dynamic_slice(start_idx, block_shape, value, is_indexing):
+def _dynamic_slice(
+    start_idx, block_shape: tuple[int, ...], value, is_squeeze,
+):
   start_idx = tuple(jnp.asarray(s, dtype=jnp.int32) for s in start_idx)
   output = lax.dynamic_slice(value, start_idx, slice_sizes=block_shape)
-  squeeze_dims = tuple(np.arange(len(is_indexing))[np.array(is_indexing,
-                                                            dtype=np.bool_)])
-  return lax.squeeze(output, squeeze_dims)
+  squeeze_dims = tuple(np.arange(len(is_squeeze))[np.array(is_squeeze,
+                                                           dtype=np.bool_)])
+  return lax.squeeze(output, squeeze_dims)  # type: ignore[arg-type]
 
 
-def _dynamic_update_slice(start_idx, block_shape, value, update,
-                                is_indexing):
+def _dynamic_update_slice(start_idx, block_shape, value, update, is_squeeze):
   start_idx = tuple(jnp.asarray(s, dtype=jnp.int32) for s in start_idx)
-  broadcast_dims = tuple(i for i, b in enumerate(is_indexing)
+  broadcast_dims = tuple(i for i, b in enumerate(is_squeeze)
                          if not b)
   update = lax.broadcast_in_dim(update, block_shape, broadcast_dims)
   assert update.shape == block_shape
@@ -112,8 +113,7 @@ def _get_next_indices(grid, indices):
   return tuple(reversed(next_indices))
 
 
-def _pad_to_block_dimension(value,
-                            block_shape):
+def _pad_to_block_dimension(value, block_shape: tuple[int, ...]):
   """Pads values so the shape evenly divides into block dimensions.
 
   For example, if values has a shape of (33, 2, 5) with a block_shape of
@@ -121,8 +121,7 @@ def _pad_to_block_dimension(value,
 
   Args:
     value: Array to be padded.
-    block_shape: Block shapes to use for padding. If None, no padding will
-      be performed.
+    block_shape: Block shapes to use for padding.
 
   Returns:
     A padded array.
@@ -377,22 +376,20 @@ def pallas_call_hlo_interpret(
 
   carry = []
   for x, bm in zip(itertools.chain(block_args, out), grid_mapping.block_mappings):
-    if isinstance(bm.indexing_mode, pallas_core.Unblocked):
-      padding = bm.indexing_mode.padding
-      if padding is not None and any(p != (0, 0) for p in padding):
-        if input_output_aliases:
-          raise NotImplementedError("Padding with aliasing not supported.")
-        pad_value = primitives.uninitialized_value(shape=(), dtype=x.dtype)
-        x = lax.pad(x, pad_value, [(*p, 0) for p in padding])
+    padding = [bd.padding if isinstance(bd, pallas_core.Element) else (0, 0)
+               for bd in bm.block_shape]
+    if padding is not None and any(p != (0, 0) for p in padding):
+      if input_output_aliases:
+        raise NotImplementedError("Padding with aliasing not supported.")
+      pad_value = primitives.uninitialized_value(shape=(), dtype=x.dtype)
+      x = lax.pad(x, pad_value, [(*p, 0) for p in padding])
     carry.append(x)
 
-  is_indexing_dim = [
-      tuple(b is pallas_core.mapped for b in bm.block_shape)
+  block_shapes = [pallas_core._get_block_shape(bm.block_shape)
+                  for bm in grid_mapping.block_mappings]
+  is_squeeze_dim = [
+      tuple(isinstance(bd, pallas_core.Squeezed) for bd in bm.block_shape)
       for bm in grid_mapping.block_mappings
-  ]
-  block_shapes = [
-      tuple(1 if i else b for i, b in zip(iid, bm.block_shape))
-      for iid, bm in zip(is_indexing_dim, grid_mapping.block_mappings)
   ]
 
   # Pad values to evenly divide into block dimensions. This matches the
@@ -444,7 +441,7 @@ def pallas_call_hlo_interpret(
           for bm in grid_mapping.block_mappings
       ]
     blocks = map(_dynamic_slice, start_indices, block_shapes,
-                 carry_consts_ins, is_indexing_dim)
+                 carry_consts_ins, is_squeeze_dim)
     with pallas_core.grid_env(local_grid_env):
       assert len(discharged_jaxpr.invars) == len(scalars) + len(blocks) + len(
           scratch_values
@@ -462,7 +459,7 @@ def pallas_call_hlo_interpret(
     _, out_inout, out_scratch = split_list(
         blocks, [grid_mapping.num_index_operands, num_inout_blocks])
     out_carry = map(_dynamic_update_slice, start_indices, block_shapes,
-                    carry_consts_ins, out_inout, is_indexing_dim)
+                    carry_consts_ins, out_inout, is_squeeze_dim)
     return (i + 1, _get_next_indices(grid, loop_idx),
             *out_carry, *out_scratch)
 
@@ -473,14 +470,14 @@ def pallas_call_hlo_interpret(
   out_out = carry[len(block_args):len(block_args) + len(out)]
   out_nopad = []
   for o, bm in zip(out_out, grid_mapping.block_mappings_output):
-    if isinstance(bm.indexing_mode, pallas_core.Unblocked):
-      padding = bm.indexing_mode.padding
-      if padding is not None and any(p != (0, 0) for p in padding):
-        if input_output_aliases:
-          raise NotImplementedError("Padding with aliasing not supported.")
-        pad_low, pad_high = zip(*padding)
-        limit_indices = [s - p for s, p in zip(o.shape, pad_high)]
-        o = lax.slice(o, pad_low, limit_indices)
+    padding = [bd.padding if isinstance(bd, pallas_core.Element) else (0, 0)
+               for bd in bm.block_shape]
+    if padding is not None and any(p != (0, 0) for p in padding):
+      if input_output_aliases:
+        raise NotImplementedError("Padding with aliasing not supported.")
+      pad_low, pad_high = zip(*padding)
+      limit_indices = [s - p for s, p in zip(o.shape, pad_high)]
+      o = lax.slice(o, pad_low, limit_indices)
     if o.shape != bm.array_shape_dtype.shape:
       o = lax.slice(o, (0,) * o.ndim, bm.array_shape_dtype.shape)
     out_nopad.append(o)

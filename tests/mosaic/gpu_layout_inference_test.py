@@ -19,7 +19,6 @@
 from absl.testing import parameterized
 import jax
 from jax._src import config
-from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
@@ -214,9 +213,6 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertSequenceEqual(add.attributes["out_layouts"], [layout_attr])
 
   def test_infer_layout_cast_layout(self):
-    # TODO(dasenov): Remove this after the minimal jaxlib version is 0.5.4.
-    if jaxlib.version < (0, 5, 4):
-      self.skipTest("Test requires jaxlib version >= 0.5.4")
     add = cast = None
 
     shape = (128, 64)

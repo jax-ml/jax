@@ -113,35 +113,11 @@ class DLPackTest(jtu.JaxTestCase):
     y = jax.device_put(x, device)
     # TODO(parkers): Remove after setting 'stream' properly below.
     jax.block_until_ready(y)
-    dl_device = y.__dlpack_device__()
-    if use_stream:
-      stream = tuple(y.devices())[0].get_stream_for_external_ready_events()
-      dlpack = jax.dlpack.to_dlpack(y, copy=copy, stream=stream)
-    else:
-      dlpack = jax.dlpack.to_dlpack(y, copy=copy)
-    z = jax.dlpack.from_dlpack(dlpack)
+    z = jax.dlpack.from_dlpack(y)
 
     self.assertEqual(z.devices(), {device})
     self.assertAllClose(np.astype(x.dtype), z)
-    self.assertRaisesRegex(RuntimeError,
-                          "DLPack tensor may be consumed at most once",
-                          lambda: jax.dlpack.from_dlpack(dlpack))
 
-    if shape in nonempty_array_shapes:
-      _check_copy(y, z, bool(copy))
-
-    # Check if the destination device can be specified
-    make_dlpack = lambda: x.__dlpack__(dl_device=dl_device, copy=copy)
-    if copy == False:
-      self.assertRaisesRegex(ValueError, "copy=False", make_dlpack)
-      return
-
-    z = jax.dlpack.from_dlpack(make_dlpack())
-    self.assertEqual(z.devices(), {device})
-    self.assertAllClose(x, z)
-
-    if shape in nonempty_array_shapes:
-      _check_copy(x, z, True)
 
   @jtu.sample_product(
     shape=all_shapes,
@@ -215,8 +191,7 @@ class DLPackTest(jtu.JaxTestCase):
     # TODO(b/171320191): this line works around a missing context initialization
     # bug in TensorFlow.
     _ = tf.add(1, 1)
-    dlpack = jax.dlpack.to_dlpack(x)
-    y = tf.experimental.dlpack.from_dlpack(dlpack)
+    y = tf.experimental.dlpack.from_dlpack(x.__dlpack__())
     self.assertAllClose(np, y.numpy())
 
   @unittest.skipIf(not tf, "Test requires TensorFlow")

@@ -102,11 +102,7 @@ import jaxlib.xla_client as xla_client  # noqa: F401
 jaxlib_extension_version: int = getattr(xla_client, '_version', 0)
 ifrt_version: int = getattr(xla_client, '_ifrt_version', 0)
 
-# TODO(phawkins): remove type: ignore once the minimum jaxlib is bumped.
-if jaxlib_extension_version >= 328:
-  import jaxlib.weakref_lru_cache as weakref_lru_cache  # type: ignore  # noqa: F401
-else:
-  weakref_lru_cache = xla_extension  # type: ignore  # noqa: F401
+import jaxlib.weakref_lru_cache as weakref_lru_cache  # noqa: F401
 
 # XLA garbage collection: see https://github.com/jax-ml/jax/issues/14882
 def _xla_gc_callback(*args):
@@ -131,9 +127,6 @@ import jaxlib.gpu_triton as gpu_triton # pytype: disable=import-error  # noqa: F
 
 import jaxlib.mosaic.python.mosaic_gpu as mosaic_gpu_dialect  # pytype: disable=import-error  # noqa: F401
 import jaxlib.mosaic.python.tpu as tpu  # pytype: disable=import-error  # noqa: F401
-
-# Version number for MLIR:Python APIs, provided by jaxlib.
-mlir_api_version = xla_client.mlir_api_version
 
 # TODO(rocm): check if we need the same for rocm.
 

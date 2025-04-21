@@ -1808,7 +1808,7 @@ def _make_lengths_same(sharding, ndim):
   if ndim > len(sharding.spec):
     return sharding.with_spec(sharding.spec._normalized_spec_for_aval(ndim))
   if ndim < len(sharding.spec):
-    assert all(s is None for s in sharding.spec[ndim:])
+    assert all(s is None for s in sharding.spec[ndim:]), (ndim, sharding.spec)
     return sharding.with_spec(sharding.spec[:ndim])
   assert False, "unreachable"
 
@@ -1829,19 +1829,13 @@ def modify_spec_for_auto_manual(spec, mesh) -> P:
 
 def _maybe_modify_sharding(sharding, ndim):
   if len(sharding.spec) == 0 or all(s is None for s in sharding.spec):
-    if len(sharding.spec) != ndim:
-      return _make_lengths_same(sharding, ndim)
-    return sharding
-
-  if sharding.mesh._are_all_axes_explicit:
-    if ndim > len(sharding.spec):
-      return sharding.with_spec(sharding.spec._normalized_spec_for_aval(ndim))
-    return sharding
-
-  out = sharding.with_spec(modify_spec_for_auto_manual(
-      sharding.spec, sharding.mesh))
-  if (len(out.spec) != ndim and
-      (out.mesh.empty or out.mesh._are_all_axes_auto_or_manual)):
+    out = sharding
+  elif sharding.mesh._are_all_axes_explicit:
+    out = sharding
+  else:
+    out = sharding.with_spec(modify_spec_for_auto_manual(
+        sharding.spec, sharding.mesh))
+  if len(out.spec) != ndim:
     out = _make_lengths_same(out, ndim)
   return out
 

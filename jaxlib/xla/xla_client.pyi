@@ -60,8 +60,6 @@ _version: int
 
 _ifrt_version: int
 
-mlir_api_version: int
-
 XLA_ELEMENT_TYPE_TO_DTYPE: dict[PrimitiveType, numpy.dtype]
 
 _NameValueMapping = Mapping[str, Union[str, int, list[int], float, bool]]

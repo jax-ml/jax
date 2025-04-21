@@ -151,8 +151,7 @@ over the second axis:
 
 ```python
 >>> def show_program_ids(x_shape, block_shape, grid,
-...                      index_map=lambda i, j: (i, j),
-...                      indexing_mode=pl.Blocked()):
+...                      index_map=lambda i, j: (i, j)):
 ...   def program_ids_kernel(o_ref):  # Fill the output block with 10*program_id(1) + program_id(0)
 ...     axes = 0
 ...     for axis in range(len(grid)):
@@ -162,7 +161,7 @@ over the second axis:
 ...                        out_shape=jax.ShapeDtypeStruct(x_shape, dtype=np.int32),
 ...                        grid=grid,
 ...                        in_specs=[],
-...                        out_specs=pl.BlockSpec(block_shape, index_map, indexing_mode=indexing_mode),
+...                        out_specs=pl.BlockSpec(block_shape, index_map),
 ...                        interpret=True)()
 ...   print(res)
 
@@ -227,7 +226,8 @@ See {ref}`pallas_tpu_noteworthy_properties`.
 
 A `None` value appearing as a dimension value in the `block_shape` behaves
 as the value `1`, except that the corresponding
-block axis is squeezed. In the example below, observe that the
+block axis is squeezed (you could also pass in `pl.Squeezed()` instead of
+`None`). In the example below, observe that the
 shape of the `o_ref` is (2,) when the block shape was specified as
 `(None, 2)` (the leading dimension was squeezed).
 
@@ -269,27 +269,33 @@ used: `index_map=lambda *invocation_indices: (0,) * len(block_shape)`.
 
 ```
 
-### The "unblocked" indexing mode
+### The "element" indexing mode
 
-The behavior documented above applies to the `indexing_mode=pl.Blocked()`.
-When using the `pl.Unblocked` indexing mode the values returned by the
+The behavior documented above applies to the default "blocked" indexing mode.
+When integers are used in the `block_shape` tuple e.g. `(4, 8)`, it is
+equivalent to passing in a `pl.Blocked(block_size)` object instead, e.g.
+`(pl.Blocked(4), pl.Blocked(8))`. Blocked indexing mode means the indices
+returned by `index_map` are *block indices*. We can pass in objects other than
+`pl.Blocked` to change the semantics of `index_map`, most notably,
+`pl.Element(block_size)`..
+When using the `pl.Element` indexing mode the values returned by the
 index map function are used directly as the array indices, without first
 scaling them by the block size.
-When using the unblocked mode you can specify virtual padding
-of the array as a tuple of low-high paddings for each dimension: the
+When using the `pl.Element` mode you can specify virtual padding
+of the array as a tuple of low-high paddings for the dimension: the
 behavior is as if the overall array is padded on input. No guarantees
-are made for the padding values in the unblocked mode, similarly to the padding
+are made for the padding values in element mode, similarly to the padding
 values for the blocked indexing mode when the block shape does not divide the
 overall array shape.
 
-The unblocked mode is currently supported only on TPUs.
+The `Element` mode is currently supported only on TPUs.
 
 
 ```python
->>> # unblocked without padding
->>> show_program_ids(x_shape=(8, 6), block_shape=(2, 3), grid=(4, 2),
-...                  index_map=lambda i, j: (2*i, 3*j),
-...                  indexing_mode=pl.Unblocked())
+>>> # element without padding
+>>> show_program_ids(x_shape=(8, 6), block_shape=(pl.Element(2), pl.Element(3)),
+...                  grid=(4, 2),
+...                  index_map=lambda i, j: (2*i, 3*j))
     [[ 0  0  0  1  1  1]
      [ 0  0  0  1  1  1]
      [10 10 10 11 11 11]
@@ -299,10 +305,12 @@ The unblocked mode is currently supported only on TPUs.
      [30 30 30 31 31 31]
      [30 30 30 31 31 31]]
 
->>> # unblocked, first pad the array with 1 row and 2 columns.
->>> show_program_ids(x_shape=(7, 7), block_shape=(2, 3), grid=(4, 3),
-...                  index_map=lambda i, j: (2*i, 3*j),
-...                  indexing_mode=pl.Unblocked(((1, 0), (2, 0))))
+>>> # element, first pad the array with 1 row and 2 columns.
+>>> show_program_ids(x_shape=(7, 7),
+...                  block_shape=(pl.Element(2, (1, 0)),
+...                               pl.Element(3, (2, 0))),
+...                  grid=(4, 3),
+...                  index_map=lambda i, j: (2*i, 3*j))
     [[ 0  1  1  1  2  2  2]
      [10 11 11 11 12 12 12]
      [10 11 11 11 12 12 12]

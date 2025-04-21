@@ -90,7 +90,7 @@ class BlockInfo:
   full_shape_dtype: jax.ShapeDtypeStruct
   start_indices: Sequence[Any]
   start_indices_alignment: Sequence[int]
-  block_shape: tuple[int | pallas_core.Mapped, ...]
+  block_shape: tuple[int | pallas_core.Squeezed, ...]
 
 
 @dataclasses.dataclass
@@ -125,28 +125,39 @@ def _eval_index_map(
       _ensure_ir_value(i, jax_core.ShapedArray((), jnp.int32))
       for i in block_indices
   )
-  if isinstance(block_mapping.indexing_mode, pallas_core.Unblocked):
-    if block_mapping.indexing_mode.padding is not None:
-      raise NotImplementedError(
-          "Unblocked indexing with padding is not supported in Triton lowering."
-      )
-    if block_mapping.pipeline_mode is not None:
-      raise NotImplementedError(
-          "Pipeline mode is not supported in Triton lowering."
-      )
-    return tuple(block_indices)
+  if block_mapping.pipeline_mode is not None:
+    raise NotImplementedError(
+        "Pipeline mode is not supported in Triton lowering."
+    )
+  if any(
+      isinstance(b, pallas_core.Element) and b.padding != (0, 0)
+      for b in block_mapping.block_shape
+  ):
+    raise NotImplementedError(
+        "Unblocked indexing with padding is not supported in Triton lowering."
+    )
+  def _get_start_index(i, b):
+    match b:
+      case pallas_core.Squeezed() | pallas_core.Element():
+        return i
+      case pallas_core.Blocked():
+        return _mul(i, _ir_constant(b.block_size, i.type))
+      case _:
+        raise ValueError(f"Unsupported block dim type: {type(b)}")
   return tuple(
-      i if b is pallas_core.mapped else _mul(i, _ir_constant(b, i.type))
-      for i, b in zip(block_indices, block_mapping.block_shape)
+      _get_start_index(i, b) for i, b in
+      zip(block_indices, block_mapping.block_shape)
   )
 
 
 def _get_index_alignment(block_mapping: BlockMapping) -> tuple[int, ...]:
-  if isinstance(block_mapping.indexing_mode, pallas_core.Unblocked):
-    return (1,) * len(block_mapping.block_shape)
-  return tuple(
-      1 if b is pallas_core.mapped else b for b in block_mapping.block_shape
-  )
+  def _get_bdim_alignment(b: pallas_core.BlockDim):
+    match b:
+      case pallas_core.Squeezed() | pallas_core.Element():
+        return 1
+      case pallas_core.Blocked():
+        return b.block_size
+  return tuple(_get_bdim_alignment(b) for b in block_mapping.block_shape)
 
 
 def _bcast_to(a: ir.Value, shape: tuple[int, ...]) -> ir.Value:
@@ -274,8 +285,9 @@ def _new_ir_context() -> ir.Context:
 # this). This check is only needed to obtain a nicer error message; the
 # Triton lowering will fail anyway but it will crash with a C++ exception.
 # We currently apply this check only to load/store operations.
-def _check_tensor_size(shape: tuple[int | pallas_core.Mapped, ...]):
-  size = math.prod(1 if d is pallas_core.mapped else d for d in shape)
+def _check_tensor_size(shape: tuple[int | pallas_core.Squeezed, ...]):
+  size = math.prod(1 if isinstance(d, pallas_core.Squeezed) else d
+                   for d in shape)
   power_of_2 = (size & (size - 1)) == 0
   if not power_of_2:
     raise ValueError(
@@ -347,7 +359,9 @@ def lower_jaxpr_to_triton_module(
               block_mapping.array_shape_dtype,
               _eval_index_map(ctx, program_ids, block_mapping),
               _get_index_alignment(block_mapping),
-              block_mapping.block_shape,
+              tuple(pallas_core.squeezed if isinstance(b, pallas_core.Squeezed)
+                    else pallas_core._get_block_dim_size(b)
+                    for b in block_mapping.block_shape),
           )
           for block_mapping in grid_mapping.block_mappings
       ]
@@ -1833,7 +1847,8 @@ def _compute_offsets_from_indices(
     block_info: BlockInfo, nd_indexer: NDIndexer
 ) -> ir.Value:
   full_shape = block_info.full_shape_dtype.shape
-  num_mapped_dims = sum(b is pallas_core.mapped for b in block_info.block_shape)
+  num_squeezed_dims = sum(isinstance(b, pallas_core.Squeezed)
+                          for b in block_info.block_shape)
   strides = pallas_utils.strides_from_shape(full_shape)
   indexer_shape = nd_indexer.get_indexer_shape()
   int_indexer_shape = nd_indexer.int_indexer_shape
@@ -1841,7 +1856,7 @@ def _compute_offsets_from_indices(
   indices = nd_indexer.indices
   other_shape = indexer_shape[len(int_indexer_shape) :]
   other_shape_idx = 0
-  assert len(indices) + num_mapped_dims == len(full_shape)
+  assert len(indices) + num_squeezed_dims == len(full_shape)
   assert len(block_info.start_indices) == len(full_shape)
 
   array_dtype = jnp.dtype(block_info.full_shape_dtype.dtype)
@@ -1857,10 +1872,11 @@ def _compute_offsets_from_indices(
   for dim_stride, dim_block_size, start_offset in zip(
       strides, block_info.block_shape, block_info.start_indices
   ):
-    if dim_block_size is pallas_core.mapped:
-      index = _ir_constant(0, offset_eltype)
-    else:
-      index = next(indexer_iter)
+    match dim_block_size:
+      case pallas_core.Squeezed():
+        index = _ir_constant(0, offset_eltype)
+      case int():
+        index = next(indexer_iter)
 
     if isinstance(index, slice):
       index = primitives.Slice.from_slice(index, dim_block_size)

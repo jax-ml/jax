@@ -585,7 +585,7 @@ def _unshard_shaped_array(mesh: Mesh, check_rep, names: AxisNames,
                     for i, sz in enumerate(aval.shape))
   names_spec = _names_to_pspec(names)._normalized_spec_for_aval(aval.ndim)
   if aval.ndim == 0:
-    out_spec = names_spec
+    out_spec = P()
   else:
     out_spec = []  # type: ignore
     for name_s, aval_s in zip(names_spec, aval.sharding.spec):
@@ -657,9 +657,7 @@ def _shardy_shard_map_sharding(
   sdy_sharding = ns._to_sdy_sharding(aval_in.ndim)
   if auto:
     for dim_sharding in sdy_sharding.dimension_shardings:
-      # Only allow dimensions which have no sharding to be auto-sharded.
-      if not dim_sharding.axes:
-        dim_sharding.is_open = True
+      dim_sharding.is_open = True
   return sdy_sharding
 
 

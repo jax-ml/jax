@@ -162,7 +162,7 @@ class LoweringContext:
   grid_names: tuple[Hashable, ...] | None
   mapped_dims: tuple[int, ...]  # Indices of vmapped grid dimensions.
   user_grid_indices: Sequence[ir.Value] | None
-  block_shapes: list[tuple[int | pallas_core.Mapped, ...]]
+  block_shapes: list[tuple[int | pallas_core.Squeezed, ...]]
   name_stack: source_info_util.NameStack
   mesh_context: MeshContext | None
   replace = dataclasses.replace
@@ -197,7 +197,7 @@ class LoweringRuleContext:
   lowering_context: LoweringContext
   avals_in: Sequence[jax_core.AbstractValue]
   avals_out: Sequence[jax_core.AbstractValue]
-  block_shapes: Sequence[tuple[int | pallas_core.Mapped, ...] | None]
+  block_shapes: Sequence[tuple[int | pallas_core.Squeezed, ...] | None]
   replace = dataclasses.replace
 
   @property
@@ -354,7 +354,13 @@ def _get_arg_type(
         ),
         aval.shape,
     )
-  shape = tuple(1 if b is pallas_core.mapped else b for b in block_mapping.block_shape)
+  shape = pallas_core._get_block_shape(block_mapping.block_shape)
+  # Keep around squeezed as a sentinel for the lowering rules
+  block_shape = tuple(
+      pallas_core.squeezed if isinstance(b, pallas_core.Squeezed)
+      else pallas_core._get_block_dim_size(b)
+      for b in block_mapping.block_shape
+  )
   return (
       aval_to_ir_type(
           dynamic_shape_replacement_fn,
@@ -362,7 +368,7 @@ def _get_arg_type(
           shape=shape,
           memory_space=memory_space,
       ),
-      block_mapping.block_shape,
+      block_shape,
   )
 
 
@@ -589,8 +595,7 @@ def _check_block_mappings(
           "only blocks having the same block shape as the array shape "
           "and a trivial index_map (returning all 0s)." + err_details())
 
-    unmapped_bs = [
-        1 if bs is pallas_core.mapped else bs for bs in bm.block_shape]
+    unmapped_bs = pallas_core._get_block_shape(bm.block_shape)
     bs0, as0 = unmapped_bs[-1], bm.array_shape_dtype.shape[-1]
     if rank >= 2:
       bs1, as1 = unmapped_bs[-2], bm.array_shape_dtype.shape[-2]
@@ -735,9 +740,7 @@ def lower_jaxpr_to_module(
           dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
       )
       assert mlir_func.verify(), mlir_func
-      block_shape = [
-          1 if b is pallas_core.mapped else b for b in bm.block_shape
-      ]
+      block_shape = list(pallas_core._get_block_shape(bm.block_shape))
 
       # Force single-buffering pipelining for trivial windowing in VMEM.
       pipeline_mode = bm.pipeline_mode
@@ -756,11 +759,16 @@ def lower_jaxpr_to_module(
           window_bounds=window_shape,
           transform_indices=ir.FlatSymbolRefAttr.get(func_name),
       )
-      if isinstance(bm.indexing_mode, pallas_core.Unblocked):
-        if bm.indexing_mode.padding is None:
-          pad_low = pad_high = [0] * len(bm.block_shape)
-        else:
-          pad_low, pad_high = map(list, zip(*bm.indexing_mode.padding))
+      is_element_block = [isinstance(bd, pallas_core.Element)
+                          for bd in bm.block_shape]
+      if any(is_element_block):
+        if not all(is_element_block):
+          raise NotImplementedError(
+              "All block dimensions must be Elements or none of them can be"
+              " Elements."
+          )
+        padding = [bd.padding for bd in bm.block_shape]  # pytype: disable=attribute-error
+        pad_low, pad_high = map(list, zip(*padding))
         block_params["window_kind"] = ir.Attribute.parse(
             f"#tpu.element_window<{pad_low},{pad_high}>"
         )
@@ -1240,7 +1248,7 @@ def _index_to_start_size_stride(
 
 def _indexer_to_start_size_stride(
     indexer: NDIndexer,
-    ref_block_shape: tuple[int | pallas_core.Mapped, ...],
+    ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
     *,
     cast_to_index: bool,
 ) -> tuple[
@@ -1248,21 +1256,21 @@ def _indexer_to_start_size_stride(
     tuple[int | ir.Value, ...],
     tuple[int, ...],
     tuple[bool, ...],
-    tuple[int | pallas_core.Mapped, ...],
+    tuple[int | pallas_core.Squeezed, ...],
 ]:
   indices_iter = iter(indexer.indices)
   starts, sizes, strides, squeeze_dims = [], [], [], []
   for s in ref_block_shape:
-    start, size, stride, squeeze_dim = (
-        (
-            _maybe_cast_to_index(cast_to_index, 0),
-            1,
-            1,
-            True,
+    match s:
+      case pallas_core.Squeezed():
+        start = _maybe_cast_to_index(cast_to_index, 0)
+        size = 1
+        stride = 1
+        squeeze_dim = True
+      case _:
+        start, size, stride, squeeze_dim = _index_to_start_size_stride(
+            next(indices_iter), cast_to_index
         )
-        if s is pallas_core.mapped
-        else _index_to_start_size_stride(next(indices_iter), cast_to_index)
-    )
     starts.append(start)
     sizes.append(size)
     strides.append(stride)
@@ -1284,8 +1292,8 @@ def _slice_memref(
     ref: ir.Value,
     indexer: NDIndexer,
     ref_dtype: DTypeLike,
-    ref_block_shape: tuple[int | pallas_core.Mapped, ...],
-) -> tuple[ir.Value, tuple[int | pallas_core.Mapped, ...]]:
+    ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
+) -> tuple[ir.Value, tuple[int | pallas_core.Squeezed, ...]]:
   assert ref_block_shape is not None
   target_shape = indexer.get_indexer_shape()
   starts, sizes, strides, squeeze_dims, ref_block_shape = (
@@ -1324,8 +1332,8 @@ def _bitcast_memref(
     ref: ir.Value,
     bitcaster: RefBitcaster,
     ref_dtype: DTypeLike,
-    ref_block_shape: tuple[int | pallas_core.Mapped, ...],
-) -> tuple[ir.Value, DTypeLike, tuple[int | pallas_core.Mapped, ...]]:
+    ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
+) -> tuple[ir.Value, DTypeLike, tuple[int | pallas_core.Squeezed, ...]]:
   src_bitwidth = dtype_bitwidth(ref_dtype)
   dst_bitwidth = dtype_bitwidth(bitcaster.dtype)
   if src_bitwidth != dst_bitwidth:
@@ -1333,7 +1341,7 @@ def _bitcast_memref(
       raise NotImplementedError(
           "Bitcast 1D ref with bitwidth change is not supported."
       )
-    if ref_block_shape[-2] is pallas_core.mapped:
+    if ref_block_shape[-2] is pallas_core.squeezed:
       raise NotImplementedError(
           "Bitcast a ref whose 2nd minormost dimension is squeezed when"
           " bitwidth changes."
@@ -1347,7 +1355,7 @@ def _bitcast_memref(
   new_ref_block_shape = list(ref_block_shape)
   if (
       len(new_ref_block_shape) >= 2
-      and new_ref_block_shape[-2] is not pallas_core.mapped
+      and new_ref_block_shape[-2] is not pallas_core.squeezed
   ):
     new_ref_block_shape[-2] = (
         new_ref_block_shape[-2] * src_bitwidth // dst_bitwidth
@@ -1363,8 +1371,8 @@ def _reshape_memref(
     ref: ir.Value,
     reshaper: RefReshaper,
     ref_dtype: DTypeLike,
-    ref_block_shape: tuple[int | pallas_core.Mapped, ...],
-) -> tuple[ir.Value, DTypeLike, tuple[int | pallas_core.Mapped, ...]]:
+    ref_block_shape: tuple[int | pallas_core.Squeezed, ...],
+) -> tuple[ir.Value, DTypeLike, tuple[int | pallas_core.Squeezed, ...]]:
   if ref_dtype != reshaper.dtype:
     raise ValueError(
         f"Reshape a ref with dtype change: {reshaper.dtype} vs {ref_dtype}"
@@ -1372,8 +1380,8 @@ def _reshape_memref(
   if len(ref_block_shape) < 2:
     raise NotImplementedError("Reshape 1D ref is not supported.")
   if (
-      ref_block_shape[-2] is pallas_core.mapped
-      or ref_block_shape[-1] is pallas_core.mapped
+      ref_block_shape[-2] is pallas_core.squeezed
+      or ref_block_shape[-1] is pallas_core.squeezed
   ):
     raise NotImplementedError(
         "Reshape a ref with squeezed dimension on last two dimensions."
@@ -1677,7 +1685,7 @@ def _masked_swap_lowering_rule(
       mem_slice_shape.insert(i, 1)
   mem_slice_shape_iter = iter(mem_slice_shape)
   mem_slice_shape = [
-      1 if b is pallas_core.mapped else next(mem_slice_shape_iter)
+      1 if b is pallas_core.squeezed else next(mem_slice_shape_iter)
       for b in ref_block_shape
   ]
   mem_aval = aval_out.update(

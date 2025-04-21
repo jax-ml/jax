@@ -11,6 +11,15 @@ For the overall JAX change log see [here](https://docs.jax.dev/en/latest/changel
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
+## Released with jax 0.6.1
+
+* Changes
+
+  * {func}`jax.experimental.pallas.BlockSpec` now takes in special types in
+    addition to ints/None in the `block_shape`. `indexing_mode` has been
+    removed. To achieve "Unblocked", pass a `pl.Element(size)` into
+    `block_shape` for each entry that needs unblocked indexing.
+
 ## Released with jax 0.5.0
 
 * New functionality

@@ -1016,19 +1016,6 @@ pmap_shmap_merge = bool_state(
     help='If True, pmap and shard_map API will be merged.')
 
 
-spmd_mode = enum_state(
-    name='jax_spmd_mode',
-    enum_values=['allow_all', 'allow_jit'],
-    default='allow_jit',
-    help=("Decides whether Math on ``jax.Array`` objects that are not fully addressable "
-          "(i.e. spans across multiple processes) is allowed. The options are:\n\n"
-          "* ``allow_jit``: Default, ``pjit`` and ``jax.jit`` computations are allowed "
-          "  to execute on non-fully addressable ``jax.Array`` objects\n"
-          "* ``allow_all``: ``jnp``, normal math (like ``a + b``, etc), ``pjit``, "
-          "  ``jax.jit`` and all other operations are allowed to "
-          "  execute on non-fully addressable ``jax.Array`` objects."))
-
-
 distributed_debug = bool_state(
     name='jax_distributed_debug',
     default=False,
@@ -1807,18 +1794,20 @@ memory_fitting_level = enum_state(
         'O2',
         'O3',
     ],
-    default='UNKNOWN',
+    default='O2',
     help=(
         'The degree to which the compiler should attempt to make the program'
         ' fit in memory'
     ),
-    include_in_jit_key=True
+    include_in_jit_key=True,
 )
+
+DEFAULT_CPU_COLLECTIVES_IMPL = "gloo"
 
 cpu_collectives_implementation = optional_enum_state(
     name='jax_cpu_collectives_implementation',
     enum_values=["gloo", "mpi", "megascale"],
-    default=None,
+    default=DEFAULT_CPU_COLLECTIVES_IMPL,
     help=(
         "Cross-process collective implementation used on CPU. Must be one of "
         '("gloo", "mpi")'),

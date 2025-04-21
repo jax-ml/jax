@@ -257,10 +257,10 @@ def _batch_block_mapping(
       new_block_shape = shape
       stacked_axis = dim.stacked_axis
       new_block_shape = tuple_insert(
-          new_block_shape, stacked_axis, pallas_core.mapped
+          new_block_shape, stacked_axis, pallas_core.squeezed
       )
     else:
-      new_block_shape = tuple_insert(shape, dim, pallas_core.mapped)
+      new_block_shape = tuple_insert(shape, dim, pallas_core.squeezed)
 
     array_shape = block_mapping.array_shape_dtype.shape
     if isinstance(dim, batching.RaggedAxis):
@@ -663,7 +663,7 @@ def _pallas_call_batching_rule(
     for block_mapping in batched_grid_mapping.block_mappings:
       mapped_dim_idxs = []
       for i, d in enumerate(block_mapping.block_shape):
-        if d is pallas_core.mapped:
+        if isinstance(d, pallas_core.Squeezed):
           mapped_dim_idxs.append(i)
         else:
           mapped_dim_idxs.append(None)  # type: ignore[arg-type]
@@ -754,7 +754,7 @@ def _pallas_call_batching_rule(
           continue
         arg_i_idx = (
             primitives.program_id(ragged_axis_dim)
-            * block_shapes[i][ragged_axis_dim]
+            * pallas_core._get_block_dim_size(block_shapes[i][ragged_axis_dim])
         )
         run_kernel = jnp.logical_and(run_kernel, arg_i_idx < b_len)
 
@@ -800,7 +800,8 @@ def _pallas_call_batching_rule(
         nargs = list(rest_indexer_args)
 
         if ragged_axis_dim is not None:
-          val_at_ragged_dim = batched_block_mapping.block_shape[ragged_axis_dim]
+          val_at_ragged_dim = pallas_core._get_block_dim_size(
+              batched_block_mapping.block_shape[ragged_axis_dim])
 
           # The current index into the ragged dimension.
           # Invariant: There is only one ragged dimension, enforced above.
@@ -965,13 +966,12 @@ def pallas_call_checkify_oob_grid(error: checkify.Error,
     num_iterations = 1
 
   is_indexing_dim = [
-      tuple(b is pallas_core.mapped for b in bm.block_shape)
+      tuple(isinstance(b, pallas_core.Squeezed) for b in bm.block_shape)
       for bm in grid_mapping.block_mappings
   ]
   block_shapes = [
-      None if iid is None
-      else tuple(1 if i else b for i, b in zip(iid, bm.block_shape))
-      for iid, bm in zip(is_indexing_dim, grid_mapping.block_mappings)
+      pallas_core._get_block_shape(bm.block_shape)
+      for bm in grid_mapping.block_mappings
   ]
   # The scan carry: (i, loop_idx, *consts, *ins, *outs, *scratch)
   # i:int32 is the interation index

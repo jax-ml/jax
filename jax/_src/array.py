@@ -39,7 +39,6 @@ from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout, Layout
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension as xe
-from jax._src.lib import jaxlib_extension_version
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding,
@@ -1094,8 +1093,6 @@ def _get_aval_array(self):
   return core.update_aval_with_sharding(self.aval, self.sharding)
 core.pytype_aval_mappings[ArrayImpl] = _get_aval_array
 
-if jaxlib_extension_version < 325:
-  basearray.Array.register(ArrayImpl)
 
 def _array_mlir_constant_handler(val):
   try:

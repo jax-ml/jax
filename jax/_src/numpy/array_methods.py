@@ -795,9 +795,13 @@ class _IndexUpdateRef:
 
     See :mod:`jax.ops` for details.
     """
+    out_s = core.typeof(self.array).sharding
+    if out_s.mesh.empty or out_s.mesh._are_all_axes_auto_or_manual:
+      out_s = None
     return scatter._scatter_update(self.array, self.index, values, lax.scatter,
                                    indices_are_sorted=indices_are_sorted,
-                                   unique_indices=unique_indices, mode=mode)
+                                   unique_indices=unique_indices, mode=mode,
+                                   out_sharding=out_s)
 
   def apply(self, func, *, indices_are_sorted=False, unique_indices=False,
             mode=None):
