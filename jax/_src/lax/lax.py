@@ -7032,6 +7032,8 @@ def _merge_on_one_axis(operand, new_sizes):
 def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
   if sharding is not None:
     return sharding
+  if operand.sharding.is_fully_replicated:
+    return operand.sharding
   non_1s_op_shape = [s for s in operand.shape if s != 1]
   non_1s_new_shape = [s for s in new_sizes if s != 1]
   if non_1s_op_shape == non_1s_new_shape:
