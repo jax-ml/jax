@@ -5519,6 +5519,20 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     self.assertEqual(out[0].sharding, arr1.sharding)
     self.assertEqual(out[1].sharding, arr2.sharding)
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_fully_replicated_reshape(self, mesh):
+    np_inp = np.arange(64).reshape(64, 1)
+    arr = jax.device_put(np_inp, P(('x', 'y')))
+
+    @jax.jit
+    def f(x):
+      x = reshard(x, P(None, None))
+      return jax.lax.reshape(x, (2, 32, 1))
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, None, None)))
+    self.assertArraysEqual(out, np_inp.reshape(2, 32, 1))
+
   @parameterized.named_parameters(
       ('1', (16, 1), (1, 16, 1), P('x', None), P(None, 'x', None), False),
       ('2', (8, 2, 1), (1, 16, 1), P('x', None, None), P(None, 'x', None), True),
