@@ -259,6 +259,11 @@ class MutableArrayTest(jtu.JaxTestCase):
     v = core.mutable_array(jnp.array(0, dtype='bfloat16'))
     v[...] += 1.0  # don't crash
 
+  def test_rng_key(self):
+    key = core.mutable_array(jax.random.key(0))
+    # test read/write
+    key[...] = jax.random.fold_in(key[...], 1) # don't crash
+
 
 @jtu.with_config(jax_mutable_array_checks=True)
 class MutableArrayErrorsTest(jtu.JaxTestCase):
