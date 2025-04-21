@@ -691,7 +691,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
           [](ProgramShape* self, absl::Span<const Shape> params, Shape result) {
             new (self) ProgramShape();
             for (const Shape& param : params) {
-              *self->add_parameters() = param;
+              self->AddParameter(param, "");
             }
             *self->mutable_result() = result;
           })
