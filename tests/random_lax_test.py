@@ -372,11 +372,13 @@ class DistributionsTest(RandomTestBase):
   @jtu.sample_product(
     p=[0.1, 0.5, 0.9],
     dtype=jtu.dtypes.floating,
+    mode=[None, 'low', 'high'],
   )
-  def testBernoulli(self, p, dtype):
+  def testBernoulli(self, p, dtype, mode):
     key = lambda: self.make_key(0)
     p = np.array(p, dtype=dtype)
-    rand = lambda key, p: random.bernoulli(key, p, (10000,))
+    kwds = {} if mode is None else {'mode': mode}
+    rand = lambda key, p: random.bernoulli(key, p, (10000,), **kwds)
     crand = jax.jit(rand)
 
     uncompiled_samples = rand(key(), p)
@@ -460,6 +462,23 @@ class DistributionsTest(RandomTestBase):
     with jax.numpy_rank_promotion('allow'):
       x = random.bernoulli(key, np.array([0.2, 0.3]), shape=(3, 2))
     assert x.shape == (3, 2)
+
+  def testBernoulliSmallProbabilty(self):
+    # Regression test for https://github.com/jax-ml/jax/issues/28017
+    key = jax.random.key(0)
+
+    # Choose such that N * p is much less than 1.
+    p = jnp.float32(1E-10)
+    N = int(1E8)
+
+    # mode='low' fails for p<~1E-7 in float32
+    samples = jax.random.bernoulli(key, p=p, shape=N, mode='low')
+    self.assertNotEqual(samples.sum(), 0)
+
+    # mode='high' is good up to p<~1E-14 in float32
+    samples = jax.random.bernoulli(key, p=p, shape=N, mode='high')
+    self.assertEqual(samples.sum(), 0)
+
 
   @jtu.sample_product(
     a=[0.2, 5.],
