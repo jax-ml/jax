@@ -82,8 +82,11 @@ def _get_tpu_generation() -> int:
   kind = get_default_device().device_kind
   if kind.endswith(' lite'):
     kind = kind[:-len(' lite')]
-  assert kind[:5] == "TPU v", kind
-  return int(kind[5])
+  if kind.startswith("TPU v"):
+    return int(kind[5])
+  else:
+    assert "TPU7x" in kind
+    return 7
 
 def _make_tiling(shape: tuple[int, ...], dtype: np.dtype) -> tuple[int, ...]:
   # For a n-dimensional shape, returns (8, 128) for the last 2 dimensions
