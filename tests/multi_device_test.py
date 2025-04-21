@@ -102,7 +102,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
     self.assert_uncommitted_to_device(z3, devices[0])
 
 
-    # A jitted computation with an device specification behaves as if the
+    # A jitted computation with a device specification behaves as if the
     # arguments are first device_put to the specified device. The result
     # will be committed on the specified.
     # The `device` parameter is experimental, and subject to change.
