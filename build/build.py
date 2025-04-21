@@ -182,6 +182,12 @@ def add_artifact_subcommand_arguments(parser: argparse.ArgumentParser):
   )
 
   parser.add_argument(
+      "--copy_editable_wheel",
+      action="store_true",
+      help="Whether to copy the editable wheel to the output directory.",
+  )
+
+  parser.add_argument(
       "--output_path",
       type=str,
       default=os.path.join(os.getcwd(), "dist"),
@@ -743,7 +749,10 @@ async def main():
       if args.editable:
         src_dir = os.path.join(bazel_dir, wheel_dir)
         dst_dir = os.path.join(output_path, wheel_dir)
-        utils.copy_dir_recursively(src_dir, dst_dir)
+        if args.copy_editable_wheel:
+          utils.copy_dir_recursively(src_dir, dst_dir)
+        else:
+          logging.info("Editable wheel path: %s", src_dir)
       else:
         wheel_version_suffix = "dev0+selfbuilt"
         if wheel_type == "release":
