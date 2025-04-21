@@ -941,11 +941,11 @@ def _matchaxis_symzeros(axis_name, sz, mesh_axis, src, dst, x, sum_match=False):
       return x
     elif type(src) == type(dst) == int:
       aval = core.mapped_aval(sz, src, x.aval)
-      return Zero(core.unmapped_aval(sz, dst, aval, mesh_axis))
+      return type(x)(core.unmapped_aval(sz, dst, aval, mesh_axis))
     elif src is not_mapped and dst is not not_mapped:
-      return Zero(core.unmapped_aval(sz, dst, x.aval, mesh_axis))
+      return type(x)(core.unmapped_aval(sz, dst, x.aval, mesh_axis))
     elif dst is not_mapped and sum_match:
-      return Zero(core.mapped_aval(sz, src, x.aval))
+      return type(x)(core.mapped_aval(sz, src, x.aval))
     else:
       raise ValueError((axis_name, x, src, dst))
   else:
