@@ -209,3 +209,31 @@ def pprof_equation_profile(jaxpr: core.Jaxpr) -> bytes:
       for _, eqn in all_eqns(jaxpr)
   )
   return _pprof_profile(d)
+
+def eqns_using_var_with_invar_index(jaxpr: core.Jaxpr, invar: core.Var) -> Iterator[tuple[core.JaxprEqn, int]]:
+  """Find all the equations which use invar and the positional index of its binder"""
+  for eqn in jaxpr.eqns:
+    for invar_index, eqn_var in enumerate(eqn.invars):
+      if eqn_var == invar:
+        yield eqn, invar_index
+        break # we found the var, no need to keep looking in this eqn
+
+def jaxpr_and_binder_in_params(params, index: int) -> Iterator[tuple[core.Jaxpr, core.Var]]:
+  for val in params.values():
+    vals = val if isinstance(val, tuple) else (val,)
+    for v in vals:
+      if isinstance(v, core.Jaxpr):
+        yield v, v.invars[index]
+      elif isinstance(v, core.ClosedJaxpr):
+        yield v.jaxpr, v.jaxpr.invars[index]
+
+def eqns_using_var(jaxpr: core.Jaxpr, invar: core.Var) -> Iterator[core.JaxprEqn]:
+  """Find the leaf equations using a variable"""
+  # The complexity of this call is becauase the invar might originate from a nested jaxpr
+  for eqn, invar_index in eqns_using_var_with_invar_index(jaxpr, invar):
+    if (child_jaxprs_and_vars := tuple(jaxpr_and_binder_in_params(eqn.params, invar_index))):
+      for (jaxpr, invar) in child_jaxprs_and_vars:
+        yield from eqns_using_var(jaxpr, invar)
+    else:
+      # if the previous condition fails, there is no deeper jaxpr to explore =(
+      yield eqn

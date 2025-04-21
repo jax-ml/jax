@@ -227,6 +227,25 @@ class JaxJitTest(jtu.JaxTestCase):
     self.assertArraysEqual(v1, v1_expected)
     self.assertArraysEqual(v2, v2_expected)
 
+  def test_check_for_large_number_of_constants(self):
+    y = jnp.ones((128, 128))
+    x = jnp.zeros((128,))
+
+    def jit_maker(): # need to ensure we lower at each test
+      def func(x):
+        return x @ y
+      return jax.jit(func)
+
+    with self.assertWarnsRegex(UserWarning, "A large amount of constants were captured during lowering"):
+      with config.captured_constants_warn_bytes(y.nbytes):
+        jit_maker()(x)
+
+    with self.assertNoWarnings():
+      with config.captured_constants_warn_bytes(y.nbytes + 1):
+        jit_maker()(x)
+
+      with config.captured_constants_warn_bytes(-1):
+        jit_maker()(x)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
