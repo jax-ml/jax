@@ -2756,6 +2756,28 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @parameterized.parameters(*float_dtypes)
+  def testLdexpOverflow(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/28040
+    args_maker = lambda: [np.array(0.5, dtype), 1 << (dtypes.finfo(dtype).nexp - 1)]
+    def np_ldexp(x1, x2):
+      return np.ldexp(x1, x2).astype(x1.dtype)
+    self._CheckAgainstNumpy(np_ldexp, jnp.ldexp, args_maker)
+    self._CompileAndCheck(jnp.ldexp, args_maker)
+
+  @parameterized.parameters(*float_dtypes)
+  def testLdexpExtremeValues(self, dtype):
+    # Regression test for https://github.com/jax-ml/jax/issues/28040
+    def args_maker():
+      info = dtypes.finfo(dtype)
+      span = int(np.log2(float(info.max)) - np.log2(float(info.tiny))) - 1
+      return [np.array([info.tiny, info.max], dtype=dtype),
+              np.array([span, -span])]
+    def np_ldexp(x1, x2):
+      return np.ldexp(x1, x2).astype(x1.dtype)
+    self._CheckAgainstNumpy(np_ldexp, jnp.ldexp, args_maker)
+    self._CompileAndCheck(jnp.ldexp, args_maker)
+
   @jtu.sample_product(
       rng_factory=[
           jtu.rand_some_inf_and_nan,

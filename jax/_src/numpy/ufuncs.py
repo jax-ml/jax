@@ -3003,7 +3003,16 @@ def ldexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     raise ValueError(f"ldexp not supported for input types {(x1_dtype, x2_dtype)}")
   x1, = promote_args_inexact("ldexp", x1)
   x2 = lax.convert_element_type(x2, dtypes.dtype(x1))
-  x = x1 * (2 ** x2)
+
+  # Split off the exponent to avoid overflow for small x1 and large x2.
+  m, e = frexp(x1)
+  e = (e.astype(x2.dtype) + x2).astype(x1.dtype)
+
+  # exponent may overflow by 1 and still have a finite result.
+  m = _where(e > 0, m * 2, m)
+  e = _where(e > 0, e - 1, e)
+
+  x = m * (2 ** e.astype(m.dtype))
   return _where(isinf(x1) | (x1 == 0), x1, x)
 
 
