@@ -1986,12 +1986,6 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
           nreps, tuple_args, lowering_result.shape_poly_state)
 
 
-@lru_cache(maxsize=2048)
-def _create_da_object(  # pytype: disable=invalid-annotation
-    device_assignment: tuple[xc.Device, ...]) -> xc.DeviceList:
-  return xc.DeviceList(device_assignment)
-
-
 @weakref_lru_cache
 def jaxpr_transfer_mem_kinds(
     jaxpr: core.Jaxpr) -> Sequence[sharding_impls.TransferToMemoryKind]:
@@ -2325,7 +2319,7 @@ def lower_sharding_computation(
       or any(not isinstance(s, UnspecifiedValue) for s in it.chain(
           unique_in_shardings, unique_out_shardings, unique_intermediate_shardings)))
 
-  da_object = (_create_da_object(tuple(device_assignment))
+  da_object = (xc.DeviceList(tuple(device_assignment))
                if device_assignment is not None else None)
 
   transfer_mem_kind_in_jaxpr = jaxpr_transfer_mem_kinds(jaxpr)
@@ -2980,10 +2974,9 @@ class UnloadedMeshExecutable:
           " lower with an AbstractMesh and later compile with concrete devices.")
     if shape_poly_state is not None and shape_poly_state.uses_dim_vars:
       hlo = mlir.refine_polymorphic_shapes(hlo)
-    if isinstance(device_assignment, xc.DeviceList):
-      da = device_assignment
-    else:
-      da = _create_da_object(tuple(device_assignment))
+
+    da = (device_assignment if isinstance(device_assignment, xc.DeviceList)
+          else xc.DeviceList(tuple(device_assignment)))
     del device_assignment
 
     allow_prop_to_inputs, allow_prop_to_outputs = get_prop_to_input_output(
