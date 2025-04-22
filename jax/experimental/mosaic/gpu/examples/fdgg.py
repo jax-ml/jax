@@ -101,6 +101,7 @@ def build_kernel(
     tile_n: int = 128,
     max_concurrent_steps: int = 2,
     in_dtype = jnp.float16,
+    profiler_spec: profiler.ProfilerSpec | None = None,
 ):
   i1 = ir.IntegerType.get_signless(1)
   i32 = ir.IntegerType.get_signless(32)
@@ -135,7 +136,7 @@ def build_kernel(
                                   cx(1)),
                        y)
 
-  def kernel(ctx, a, w, group_sizes,  d, smem):
+  def fdgg(ctx, a, w, group_sizes, d, smem):
     ((a_smem, b_smem), d_smem), barriers, mma_done_barrier, acc = smem
     (ab_full_barriers, ab_empty_barriers) = barriers
 
@@ -186,8 +187,9 @@ def build_kernel(
           def _tma_body(ki, _):
             persistent_ki = get_persistent_ki(ki)
             slot = arith.remui(persistent_ki, c(max_concurrent_steps, index))
-            with mgpu.when(arith.cmpi(arith.CmpIPredicate.uge, persistent_ki, c(max_concurrent_steps, index))):
-              ab_empty_barriers[slot].wait()
+            with ctx.named_region("TMA wait for MMA"):
+              with mgpu.when(arith.cmpi(arith.CmpIPredicate.uge, persistent_ki, c(max_concurrent_steps, index))):
+                ab_empty_barriers[slot].wait()
             full_barrier = ab_full_barriers[slot]
             full_barrier.arrive_expect_tx(
                 bytecount((tile_m, tile_k), in_dtype) + bytecount((tile_n, tile_k), in_dtype)
@@ -240,38 +242,39 @@ def build_kernel(
             return accumulate
           tcgen05.commit_arrive(mma_done_barrier.get_ptr(), ctx=ctx)
 
-        gpu.barrier()
-        mma_done_barrier.wait(for_tensor_core=True)
+        with ctx.named_region("GMEM store"):
+          gpu.barrier()
+          mma_done_barrier.wait(for_tensor_core=True)
 
-        acc[:].astype(ir.F16Type.get()).store_tiled(d_smem, swizzle=128)
-        mgpu.commit_shared()
+          acc[:].astype(ir.F16Type.get()).store_tiled(d_smem, swizzle=128)
+          mgpu.commit_shared()
 
-        store_row = cx(0)
-        d_smem_2d_shape, _ = mma_utils.tiled_memref_shape(d_smem)
-        store_smem = mgpu.memref_reshape(d_smem, d_smem_2d_shape)
-        for i in range(math.ceil(math.log2(tile_m)) + 1):
-          num_rows = 1 << i
-          do_store = arith.cmpi(
-              arith.CmpIPredicate.ne, arith.andi(tile_m_count, cx(num_rows)), cx(0),
-          )
-          with mgpu.when(do_store):
-            gmem_off = arith.addi(tile_m_start, store_row)
-            out_smem_slice = mgpu.memref_slice(store_smem, ds(store_row, num_rows))
-            out_smem_slice = mgpu.memref_reshape(
-                out_smem_slice,
-                (num_rows, tile_n // swizzle_elems, swizzle_elems)
+          store_row = cx(0)
+          d_smem_2d_shape, _ = mma_utils.tiled_memref_shape(d_smem)
+          store_smem = mgpu.memref_reshape(d_smem, d_smem_2d_shape)
+          for i in range(math.ceil(math.log2(tile_m)) + 1):
+            num_rows = 1 << i
+            do_store = arith.cmpi(
+                arith.CmpIPredicate.ne, arith.andi(tile_m_count, cx(num_rows)), cx(0),
             )
-            ctx.async_copy(
-                src_ref=out_smem_slice,
-                dst_ref=d,
-                gmem_slice=(ds(gmem_off, num_rows), ds(o_n_start, tile_n)),
-                swizzle=swizzle,
-                gmem_transform=mgpu.TileTransform((swizzle_elems,)),
+            with mgpu.when(do_store):
+              gmem_off = arith.addi(tile_m_start, store_row)
+              out_smem_slice = mgpu.memref_slice(store_smem, ds(store_row, num_rows))
+              out_smem_slice = mgpu.memref_reshape(
+                  out_smem_slice,
+                  (num_rows, tile_n // swizzle_elems, swizzle_elems)
+              )
+              ctx.async_copy(
+                  src_ref=out_smem_slice,
+                  dst_ref=d,
+                  gmem_slice=(ds(gmem_off, num_rows), ds(o_n_start, tile_n)),
+                  swizzle=swizzle,
+                  gmem_transform=mgpu.TileTransform((swizzle_elems,)),
+              )
+            store_row = arith.select(
+                do_store, arith.addi(store_row, cx(num_rows)), store_row
             )
-          store_row = arith.select(
-              do_store, arith.addi(store_row, cx(num_rows)), store_row
-          )
-        ctx.await_async_copy(0)
+          ctx.await_async_copy(0)
         # subgroup_for
       work_id = subgroup_for_body
       work_id_group_start = work_id_group_end
@@ -303,7 +306,7 @@ def build_kernel(
   )
 
   f = mgpu.as_gpu_kernel(
-      kernel,
+      fdgg,
       (cta_count, 1, 1),  # persistent kernel
       (128, 1, 1),
       (
@@ -313,6 +316,7 @@ def build_kernel(
       ),
       jax.ShapeDtypeStruct((m, expert_n), jnp.float16),
       smem,
+      prof_spec=profiler_spec,
   )
 
   return f
@@ -338,10 +342,11 @@ def ref(activations, weights, group_sizes, expert_n):
 
 
 def main(unused_argv):
+  profile = False
   m = 4096  # seqlen
-  k = 1024
-  expert_count = 16
-  expert_n = 256
+  k = 4096
+  expert_count = 32
+  expert_n = 4096
   n = expert_count * expert_n
   in_dtype = jnp.float16
   # TODO(andportnoy) this leads to low occupancy, so unless each CTA
@@ -355,13 +360,16 @@ def main(unused_argv):
   activations = jr.normal(key=ka, shape=(m, k), dtype=in_dtype)
   weights     = jr.normal(key=kb, shape=(n, k), dtype=in_dtype)
   group_sizes = generate_group_sizes(expert_count, m, ke1, ke2)
+  #group_sizes = jnp.ones(expert_count, dtype=jnp.int32) * (m // expert_count)
+  print(f"{group_sizes=}")
   assert sum(group_sizes) == m
   # TODO(andportnoy) test different tile sizes
   tile_m = 128
   tile_n = 64  # 256, 512
 
   # TODO(andportnoy) test different stage counts
-  max_concurrent_steps = 2  # 4, 5, 6
+  max_concurrent_steps = 6  # 4, 5, 6
+  profiler_spec = profiler.ProfilerSpec(4096) if profile else None
   with mlir.make_ir_context(), ir.Location.unknown():
     f = build_kernel(
       m, n, k,
@@ -371,8 +379,21 @@ def main(unused_argv):
       tile_n=tile_n,
       max_concurrent_steps=max_concurrent_steps,
       in_dtype=in_dtype,
+      profiler_spec=profiler_spec,
     )
-  d = f(activations, weights, group_sizes)
+
+  if profile:
+    d = f(activations, weights, group_sizes)
+    exit()
+
+  d, runtime = profiler.measure(f, mode="events")(activations, weights, group_sizes)
+  print(f"{runtime=}")
+  tflops = (2 * m * expert_n * k / 1e12) / (runtime / 1e3)
+  print(f"{tflops=}")
+  group_chunk_count = jnp.sum(jnp.ceil(group_sizes / tile_m))
+  print(f"{group_chunk_count=}")
+  physical_tflops = (2 * group_chunk_count * tile_m * expert_n * k / 1e12) / (runtime / 1e3)
+  print(f"{physical_tflops=}")
   d_ref = ref(activations, weights, group_sizes, expert_n)
   np.testing.assert_allclose(d, d_ref, atol=1e-3, rtol=1e-3)
   # TODO(andportnoy) measure FLOPS
