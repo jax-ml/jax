@@ -227,6 +227,7 @@ def emit_pipeline(
         ],
         [len(in_specs)],
     )
+    arrival_count = sum(map(_in_smem, in_specs))
     return pl.run_scoped(
         functools.partial(
             scoped_pipeline,
@@ -235,9 +236,11 @@ def emit_pipeline(
         ),
         in_smem_refs=in_smem_refs,
         out_smem_refs=out_smem_refs,
-        barrier_ref=gpu_core.Barrier(
+        barrier_ref=None
+        if arrival_count == 0
+        else gpu_core.Barrier(
             # TODO(slebedev): Change this to arrive only once.
-            sum(map(_in_smem, in_specs)),
+            arrival_count,
             num_barriers=max_concurrent_steps,
         ),
     )
@@ -274,8 +277,8 @@ def emit_pipeline(
       slot = lax.rem(step, max_concurrent_steps)
       indices, fetch_indices, last_store_slices = carry
 
-      if in_specs:
-        # Wait for the current GMEM->SMEM copy to complete.
+      if barrier_ref is not None:
+        # Wait for the current GMEM->SMEM copy to complete, if any.
         gpu_primitives.barrier_wait(barrier_ref.at[slot])
       # Wait for the previous output SMEM->GMEM copy to complete.
       if copies_out_in_loop:
