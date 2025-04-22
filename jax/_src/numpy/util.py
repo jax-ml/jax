@@ -141,6 +141,10 @@ def _arraylike_asarray(x: Any) -> Array:
   return lax.asarray(x)
 
 
+def _check_jax_array_protocol(x: Any) -> Any:
+  return x.__jax_array__() if hasattr(x, '__jax_array__') else x
+
+
 @overload
 def ensure_arraylike(fun_name: str, /) -> tuple[()]: ...
 @overload
@@ -223,6 +227,7 @@ def check_for_prngkeys(fun_name: str, *args: Any):
 def promote_args(fun_name: str, *args: ArrayLike) -> list[Array]:
   """Convenience function to apply Numpy argument shape and dtype promotion."""
   check_arraylike(fun_name, *args)
+  args = tuple(_check_jax_array_protocol(arg) for arg in args)
   _check_no_float0s(fun_name, *args)
   check_for_prngkeys(fun_name, *args)
   return promote_shapes(fun_name, *promote_dtypes(*args))
@@ -230,6 +235,7 @@ def promote_args(fun_name: str, *args: ArrayLike) -> list[Array]:
 
 def promote_args_numeric(fun_name: str, *args: ArrayLike) -> list[Array]:
   check_arraylike(fun_name, *args)
+  args = tuple(_check_jax_array_protocol(arg) for arg in args)
   _check_no_float0s(fun_name, *args)
   check_for_prngkeys(fun_name, *args)
   return promote_shapes(fun_name, *promote_dtypes_numeric(*args))
@@ -240,6 +246,7 @@ def promote_args_inexact(fun_name: str, *args: ArrayLike) -> list[Array]:
 
   Promotes non-inexact types to an inexact type."""
   check_arraylike(fun_name, *args)
+  args = tuple(_check_jax_array_protocol(arg) for arg in args)
   _check_no_float0s(fun_name, *args)
   check_for_prngkeys(fun_name, *args)
   return promote_shapes(fun_name, *promote_dtypes_inexact(*args))
