@@ -1,0 +1,10 @@
+# Project: JAX
+name: ""
+g3doc: {
+  headerfooter: {
+    name: "solace"
+  }
+}
+freshness {
+  review_interval: "6 months"
+}
