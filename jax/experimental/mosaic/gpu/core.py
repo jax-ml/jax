@@ -142,7 +142,7 @@ def _mosaic_gpu_lowering_rule(
         operands=args,
         operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
         result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
-        backend_config=kernel_id + module,
+        backend_config=kernel_id + module_asm,
         operand_output_aliases=dict(input_output_aliases),
     )
   else:
