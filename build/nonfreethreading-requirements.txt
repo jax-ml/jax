@@ -1,0 +1,10 @@
+numpy~=2.0.0; python_version<="3.12"
+numpy~=2.1.0; python_version>="3.13"
+
+# These packages have not released free-threaded wheels.
+zstandard
+tensorstore
+
+# portpicker is architecture independent, but it depends on psutil which has not
+# released a 3.13-ft wheel.
+portpicker
