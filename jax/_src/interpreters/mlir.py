@@ -1122,13 +1122,14 @@ def check_jaxpr_constants(closed_jaxpr: core.ClosedJaxpr):
       "If this is intentional, disable this warning by setting JAX_CAPTURED_CONSTANTS_WARN_BYTES=-1. "
   )
 
-  if not (num_frames := config.captured_constants_report_frames.value):
-    message += (
-      "To obtain a report of where these constants were encountered, "
-      "set JAX_CAPTURED_CONSTANTS_REPORT_FRAMES=-1."
-    )
-    warnings.warn(message)
-    return
+  # if not (num_frames := config.captured_constants_report_frames.value):
+  #   message += (
+  #     "To obtain a report of where these constants were encountered, "
+  #     "set JAX_CAPTURED_CONSTANTS_REPORT_FRAMES=-1."
+  #   )
+  #   warnings.warn(message)
+  #   return
+  num_frames = config.captured_constants_report_frames.value  # REMOVE
 
   message += (
       "The subsequent report may be disabled by setting JAX_CAPTURED_CONSTANTS_REPORT_FRAMES=0.\n\n"
@@ -1142,7 +1143,7 @@ def check_jaxpr_constants(closed_jaxpr: core.ClosedJaxpr):
     for eqn in jaxpr_util.eqns_using_var(closed_jaxpr.jaxpr, var):
       call_frame_source_info = source_info_util.summarize(eqn.source_info, num_frames)
       message += "  " * 2 + call_frame_source_info.replace("\n", "\n" + "  " * 2)  + "\n\n"
-
+  raise RuntimeError(message) # REMOVE
   warnings.warn(message)
 
 
