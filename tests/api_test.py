@@ -4955,6 +4955,11 @@ class APITest(jtu.JaxTestCase):
     with config.use_direct_linearize(True):
       jax.grad(my_sin_p.bind)(1.0)  # doesn't crash
 
+  def test_ensure_compile_time_eval_no_leaks(self):
+    # https://github.com/jax-ml/jax/issues/25847
+    with jax.ensure_compile_time_eval():
+      jnp.linalg.solve(jnp.eye(3), jnp.ones(3))  # doesn't crash
+
 
 class RematTest(jtu.JaxTestCase):
 
