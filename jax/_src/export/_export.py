@@ -745,18 +745,29 @@ def _export_lowered(
   if _device_assignment_for_internal_jax2tf_use_only is not None:
     _device_assignment_for_internal_jax2tf_use_only[0] = device_assignment
 
-  mesh = None
+  cur_mesh = cur_arg = cur_k_path = None
+  # lowered.args_info is a tree of the args, but we need the out avals too to
+  # get the key paths for.
+  out_avals_tree = jax.tree_util.tree_unflatten(lowered.out_tree, out_avals_flat)
   if config.use_shardy_partitioner.value:
-    for sharding in itertools.chain.from_iterable(
-        [all_in_shardings, lowering.compile_args["out_shardings"]]):
+    for sharding, (k_path, arg) in zip(
+        itertools.chain.from_iterable([
+            all_in_shardings, lowering.compile_args["out_shardings"]]),
+        itertools.chain.from_iterable([
+            jax.tree.flatten_with_path(lowered.args_info)[0],
+            jax.tree.flatten_with_path(out_avals_tree)[0]])):
       if isinstance(sharding, sharding_impls.NamedSharding):
-        if mesh is not None and mesh.shape_tuple != sharding.mesh.shape_tuple:
+        if cur_mesh is None:
+          cur_mesh, cur_arg, cur_k_path = sharding.mesh, arg, k_path
+        elif cur_mesh.shape_tuple != sharding.mesh.shape_tuple:
           raise ValueError(
-              f'Mesh for all inputs should be equal. Got one mesh: {mesh} and'
-              f' another mesh: {sharding.mesh}')
-        mesh = sharding.mesh
-    if mesh and isinstance(mesh, mesh_lib.Mesh):
-      mesh = mesh.abstract_mesh
+              "Mesh for all inputs/outputs should be equal. Got one mesh "
+              f"{cur_mesh} on an array {cur_arg._aval} at "
+              f"{shape_poly.args_kwargs_path_to_str(cur_k_path)} and another mesh: "
+              f"{sharding.mesh}' on a tensor {arg._aval} at "
+              f"{shape_poly.args_kwargs_path_to_str(k_path)}")
+    if cur_mesh and isinstance(cur_mesh, mesh_lib.Mesh):
+      cur_mesh = cur_mesh.abstract_mesh
 
   def _get_exported_vjp(exp_primal: Exported) -> Exported:
     # Turn the primal jaxpr into a function, in preparation for exporting
@@ -774,7 +785,7 @@ def _export_lowered(
         device_assignment=device_assignment,
         apply_jit=True,
         flat_primal_fun=True,
-        mesh=mesh)  # type: ignore[arg-type]
+        mesh=cur_mesh)  # type: ignore[arg-type]
     return export(fun_vjp_jax,  # type: ignore[arg-type]
                   platforms=exp_primal.platforms,
                   disabled_checks=exp_primal.disabled_safety_checks)(*vjp_in_avals)
