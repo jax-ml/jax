@@ -1,0 +1,2 @@
+# Under free-threading, we need an up-to-date numpy at least for the moment.
+numpy~=2.2.5
