@@ -2063,7 +2063,8 @@ class DShapedArray(UnshapedArray):
   array_abstraction_level: int = 3
 
   def __init__(self, shape, dtype, weak_type=False):
-    self.shape = tuple(d.val if isinstance(d, Literal) else d for d in shape)
+    assert not any(isinstance(d, Literal) for d in shape)
+    self.shape = shape
     self.dtype = dtype
     self.weak_type = weak_type
 

@@ -1767,6 +1767,7 @@ class JaxprStackFrame:
       # this aval may have tracers in it, so we replace those with variables
       new_shape = [self.tracer_to_var[id(d)] if isinstance(d, Tracer) else d
                    for d in aval.shape]
+      new_shape = [d.val if isinstance(d, Literal) else d for d in new_shape]
       aval = aval.update(shape=tuple(new_shape))
     return self.gensym(aval)
 
