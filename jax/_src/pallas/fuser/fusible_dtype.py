@@ -300,9 +300,9 @@ _physicalize_rules[pallas_call.pallas_call_p] = _pallas_call_physicalize_rule
 
 def _cond_physicalize_rule(ctx: Context, *args, branches, **kwargs):
   _assert_no_fusion_types(ctx.avals_out)
-  physicalized_branches = [
+  physicalized_branches = tuple(
       physicalize_closed_jaxpr(branch) for branch in branches
-  ]
+  )
   flat_args = jax.tree.leaves(args)
   return conditionals.cond_p.bind(
       *flat_args, branches=physicalized_branches, **kwargs
