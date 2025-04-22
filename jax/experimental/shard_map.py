@@ -127,37 +127,85 @@ def shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
 
   .. _SPMD multi-device parallelism with shard_map: https://docs.jax.dev/en/latest/notebooks/shard_map.html
   """
-  return _shard_map(f, mesh, in_specs, out_specs, check_rep, auto)
+  axis_names = frozenset(mesh.axis_names) - auto
+  return shard_map2(f, mesh=mesh, in_specs=in_specs, out_specs=out_specs,
+                    check_vma=check_rep, axis_names=axis_names)
 
-def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
-               out_specs: Specs | Callable[[], Specs],
-               check_rep: bool, auto: frozenset[AxisName]):
+
+def shard_map2(f, /, *, out_specs: Specs,
+               axis_names: set[AxisName] | frozenset[AxisName] = set(),
+               in_specs: Specs | None = None,
+               mesh: Mesh | AbstractMesh | None = None, check_vma: bool = True):
+  return _shard_map(f, mesh=mesh, in_specs=in_specs, out_specs=out_specs,
+                    axis_names=axis_names, check_vma=check_vma)
+
+def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
+               in_specs: Specs, out_specs: Specs | Callable[[], Specs],
+               axis_names: set[AxisName] | frozenset[AxisName],
+               check_vma: bool):
   if not callable(f):
     raise TypeError("shard_map requires a callable for its first argument, "
                     f"but got {f} of type {type(f)}.")
+
+  if mesh is None:
+    mesh = get_abstract_mesh()
+    if mesh.empty:
+      raise ValueError(
+          "The context mesh cannot be empty. Either use"
+          " `jax.sharding.use_mesh(mesh)` to enter into a mesh context or pass"
+          " a mesh to `shard_map` via the `mesh` keyword argument.")
   if not isinstance(mesh, (Mesh, AbstractMesh)):
     raise TypeError("shard_map requires a `jax.sharding.Mesh` or a "
                     "`jax.sharding.AbstractMesh` instance for its "
                     f"second argument, but got {mesh} of type {type(mesh)}.")
+
+  if not isinstance(axis_names, (frozenset, set)):
+    raise TypeError(
+        "`axis_names` argument of shard_map should be of type `frozenset` or"
+        f" `set`. Got type: {type(axis_names)}")
+  if isinstance(axis_names, set):
+    axis_names = frozenset(axis_names)
+  if not axis_names:
+    axis_names = frozenset(mesh.axis_names)
+  auto = frozenset(mesh.axis_names) - frozenset(axis_names)
   if not auto.issubset(mesh.axis_names):
     raise ValueError(f"shard_map requires auto={auto} to be a subset of "
                      f"mesh.axis_names={mesh.axis_names}")
-  _check_specs(SpecErrorType.input, in_specs, auto)
+
+  if in_specs is not None:
+    _check_specs(SpecErrorType.input, in_specs, auto)
   if not callable(out_specs):
     _check_specs(SpecErrorType.out, out_specs, auto)
 
   @util.wraps(f)
   @traceback_util.api_boundary
   def wrapped(*args):
-    fun = lu.wrap_init(f,
-                       debug_info=api_util.debug_info("shard_map", f, args, {}))
+    fun = lu.wrap_init(
+        f, debug_info=api_util.debug_info("shard_map", f, args, {}))
     args_flat, in_tree = tree_flatten(args)
     fun, out_tree = api_util.flatten_fun_nokwargs(fun, in_tree)
-    try: in_specs_flat = broadcast_prefix(in_specs, args,
-                                          is_leaf=lambda x: x is None)
+
+    # TODO(yashkatariya): Maybe we don't have to be this strict?
+    if mesh._any_axis_auto and in_specs is None:
+      raise TypeError(
+          "shard_map in_specs argument must be a pytree of"
+          " `jax.sharding.PartitionSpec` instances, but it was None when mesh"
+          f" {mesh} has `Auto` axes.\n")
+
+    try:
+      in_specs_flat = broadcast_prefix(
+          in_specs, args, is_leaf=lambda x: x is None)
     except ValueError:
       e, *_ = prefix_errors(in_specs, args)
       raise e('shard_map in_specs') from None
+
+    # TODO(yashkatariya): Relax this and convert only `None`s in `in_specs_flat`
+    # and accept the other specs as is.
+    if mesh._are_all_axes_explicit and in_specs is None:
+      arg_s = [typeof(a).sharding for a in args_flat]
+      assert all(i is None for i in in_specs_flat), in_specs_flat
+      in_specs_flat = [_manual_spec(axis_names, s.spec) for s in arg_s]
+
     dyn_argnums, in_specs_flat = unzip2((i, s) for i, s in enumerate(in_specs_flat)
                                         if s is not None)
     fun, args_flat = api_util.argnums_partial(fun, dyn_argnums, args_flat, False)
@@ -172,19 +220,20 @@ def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
       else:
         out_specs_ = out_specs
       dummy = tree_unflatten(out_tree(), [object()] * out_tree().num_leaves)
-      try: out_specs_flat = broadcast_prefix(out_specs_, dummy)
+      try:
+        out_specs_flat = broadcast_prefix(out_specs_, dummy)
       except ValueError:
         e, *_ = prefix_errors(out_specs_, dummy)
         raise e('shard_map out_specs') from None
       return tuple(map(_canonicalize_spec, out_specs_flat))
 
-    if check_rep:
+    if check_vma:
       fun = _implicit_pvary_on_output(fun, out_names_thunk)
 
     try:
       out_flat = shard_map_p.bind(
           fun, *args_flat, mesh=mesh, in_names=in_names_flat,
-          out_names_thunk=out_names_thunk, check_rep=check_rep, auto=auto)
+          out_names_thunk=out_names_thunk, check_rep=check_vma, auto=auto)
     except _SpecError as e:
       fails, = e.args
       if not callable(out_specs):
@@ -202,6 +251,7 @@ def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
     return tree_unflatten(out_tree(), out_flat)
   return wrapped
 
+
 # Internally use AxisNames = dict[int, tuple[AxisName, ...]], not PartitionSpecs
 AxisNames = dict[int, tuple[AxisName, ...]]  # TODO(mattjj): make it hashable
 def _canonicalize_spec(spec: PartitionSpec) -> AxisNames:
@@ -210,6 +260,23 @@ def _canonicalize_spec(spec: PartitionSpec) -> AxisNames:
             for i, names in enumerate(spec) if names is not None}
   else:
     return spec
+
+def _manual_spec(manual_axes, spec: P) -> P:
+  out = []  # type: ignore
+  for s in spec:
+    if s is None:
+      out.append(s)
+    elif isinstance(s, tuple):
+      temp = [p if p in manual_axes else None for p in s]
+      while temp and temp[-1] is None:
+        temp.pop()
+      if None in temp:
+        raise ValueError(f"Invalid spec: {spec}")
+      out.append(None if len(temp) == 0 else tuple(temp))
+    else:
+      out.append(s if s in manual_axes else None)
+  return P(*out)
+
 
 # Error checking and messages
 
@@ -259,7 +326,7 @@ class NoFail: pass
 no_fail = NoFail()
 
 def _check_specs_vs_args(
-    f: Callable, mesh: Mesh, in_tree: PyTreeDef, in_specs: Specs,
+    f: Callable, mesh: Mesh | AbstractMesh, in_tree: PyTreeDef, in_specs: Specs,
     dyn_argnums: Sequence[int], in_specs_flat: Sequence[P],
     xs: Sequence) -> None:
   in_avals = map(core.shaped_abstractify, xs)
@@ -331,7 +398,7 @@ def _spec_rank_error(
   return msg
 
 def _spec_divisibility_error(
-    f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
+    f: Callable, mesh: Mesh | AbstractMesh, tree: PyTreeDef, specs: Specs,
     fails: list[core.ShapedArray | NoFail]) -> str:
   ba = _try_infer_args(f, tree)
   fun_name = getattr(f, '__name__', str(f))
@@ -377,8 +444,8 @@ def _spec_divisibility_error(
          f"padding the input and adapting '{fun_name}' appropriately.")
   return msg
 
-def _inout_rep_error(f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
-                     fails: list[set | NoFail]) -> str:
+def _inout_rep_error(f: Callable, mesh: Mesh | AbstractMesh, tree: PyTreeDef,
+                     specs: Specs, fails: list[set | NoFail]) -> str:
   fun_name = getattr(f, '__name__', str(f))
   msgs = []
   for (spec_key, spec), (fail_key, rep) in _iter_paths(tree, specs, fails):
@@ -413,7 +480,7 @@ def _inout_rep_error(f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
          "check_rep=False argument to shard_map.")
   return msg
 
-def _unmentioned(mesh: Mesh, names: AxisNames) -> list[AxisName]:
+def _unmentioned(mesh: Mesh | AbstractMesh, names: AxisNames) -> list[AxisName]:
   name_set = {n for ns in names.values() for n in ns}
   return [n for n in mesh.axis_names if n not in name_set]
 
@@ -1621,8 +1688,9 @@ def _cached_shard_map(flat_fun, mesh, in_axes_flat, out_axes_thunk, axis_name):
   in_specs = tuple(map(partial(_axis_to_spec, axis_name), in_axes_flat))
   out_specs = lambda: map(partial(_axis_to_spec, axis_name), out_axes_thunk())
   fun = _handle_reshapes(flat_fun, in_axes_flat, out_axes_thunk)
-  return (_shard_map(fun.call_wrapped, mesh, in_specs, out_specs,
-                     check_rep=False, auto=frozenset()),
+  return (_shard_map(fun.call_wrapped, mesh=mesh, in_specs=in_specs,
+                     out_specs=out_specs, check_vma=False,
+                     axis_names=set(mesh.axis_names)),
           in_specs, out_specs)
 
 @lu.transformation2

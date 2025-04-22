@@ -40,7 +40,7 @@ from jax._src import test_util as jtu
 from jax._src.lib.mlir.dialects import sdy
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
-from jax._src.mesh import AxisType
+from jax._src.mesh import AxisType, get_abstract_mesh
 from jax._src.interpreters import partial_eval as pe
 from jax._src import linear_util as lu
 from jax._src import tree_util
@@ -48,7 +48,7 @@ from jax.custom_derivatives import SymbolicZero
 import jax.numpy as jnp
 
 from jax.experimental.custom_partitioning import custom_partitioning
-from jax.experimental.shard_map import shard_map
+from jax.experimental.shard_map import shard_map, shard_map2
 
 
 config.parse_flags_with_absl()
@@ -2007,10 +2007,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      x = shard_map(g, mesh,
-                    in_specs=P('i', None),
-                    out_specs=P('i', None),
-                    auto=frozenset({'j'}))(x)
+      x = shard_map2(g, out_specs=P('i', None), axis_names=frozenset({'i'}))(x)
       self.assertEqual(x.aval.sharding.spec, P('i', 'j'))
       return x
 
@@ -2052,10 +2049,8 @@ class ShardMapTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      x = shard_map(g, mesh,
-                    in_specs=P('i', 'j', None, None),
-                    out_specs=P('i', 'j', None, None),
-                    auto=frozenset({'k', 'l'}))(x)
+      x = shard_map2(g, out_specs=P('i', 'j', None, None),
+                     axis_names=frozenset({'i', 'j'}))(x)
       self.assertEqual(x.aval.sharding.spec, P(('i', 'l'), ('j', 'k'), None, None))
       return x
 
@@ -2198,7 +2193,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     v = jnp.arange(32.).reshape(4, 8)
     v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
-    with self.assertRaisesRegex(ValueError, "to be a subset of mesh.axis_names"):
+    with self.assertRaisesRegex(ValueError, "contains a manual axes.*of mesh"):
       f(v)
 
   def test_partial_auto_error_wrong_in_specs(self):
@@ -2933,6 +2928,84 @@ class ShardMapTest(jtu.JaxTestCase):
       return carry
 
     g(x, y, z)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_shmap2_full_manual_context_explicit(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, P('x', 'y'))
+
+    @partial(shard_map2, out_specs=P('x', 'y'))
+    def f(x):
+      self.assertEqual(get_abstract_mesh().manual_axes, ('x', 'y'))
+      self.assertEqual(x.aval.vma, {'x', 'y'})
+      out = x * 2
+      self.assertEqual(out.aval.vma, {'x', 'y'})
+      return out
+
+    out = f(arr)
+    self.assertArraysEqual(out, np_inp * 2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+    jax.jit(f)(arr)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_shmap2_partial_manual_explicit(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, P('x', 'y'))
+
+    @partial(shard_map2, axis_names=frozenset('x'), out_specs=P('x'))
+    def f(x):
+      self.assertEqual(get_abstract_mesh().manual_axes, ('x',))
+      self.assertEqual(get_abstract_mesh().explicit_axes, ('y',))
+      self.assertEqual(x.aval.sharding.spec, P(None, 'y'))
+      self.assertEqual(x.aval.vma, {'x'})
+      out = x * 2
+      self.assertEqual(out.aval.sharding.spec, P(None, 'y'))
+      self.assertEqual(out.aval.vma, {'x'})
+      return out
+
+    out = jax.jit(f)(arr)
+    self.assertArraysEqual(out, np_inp * 2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
+  def test_shmap2_full_manual_context_auto(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, P('x', 'y'))
+
+    @partial(shard_map2, in_specs=P('x', 'y'), out_specs=P('x', 'y'))
+    def f(x):
+      self.assertEqual(get_abstract_mesh().manual_axes, ('x', 'y'))
+      self.assertEqual(x.aval.vma, {'x', 'y'})
+      out = x * 2
+      self.assertEqual(out.aval.vma, {'x', 'y'})
+      return out
+
+    out = f(arr)
+    self.assertArraysEqual(out, np_inp * 2)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y')))
+    jax.jit(f)(arr)  # doesn't crash
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
+  def test_shmap2_partial_manual_auto(self, mesh):
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, P('x', 'y'))
+
+    @partial(shard_map2, axis_names=frozenset('x'), in_specs=P('x'),
+             out_specs=P('x'))
+    def f(x):
+      self.assertEqual(get_abstract_mesh().manual_axes, ('x',))
+      self.assertEqual(get_abstract_mesh().auto_axes, ('y',))
+      self.assertEqual(x.aval.vma, {'x'})
+      out = x * 2
+      self.assertEqual(out.aval.vma, {'x'})
+      return out
+
+    out = jax.jit(f)(arr)
+    self.assertArraysEqual(out, np_inp * 2)
+
+  def test_no_mesh_context_error(self):
+    with self.assertRaisesRegex(ValueError, "The context mesh cannot be empty"):
+      shard_map2(lambda x: x, in_specs=P(), out_specs=P())(np.arange(8))
 
 
 class FunSpec(NamedTuple):
