@@ -7,26 +7,21 @@ spec:
   - name: workers
     template:
       spec:
-        parallelism: 2
-        completions: 2
+        parallelism: 8
+        completions: 8
         backoffLimit: 0
         template:
           spec:
-            serviceAccountName: jax-job-sa  # kubectl apply -f svc-acct.yaml
+            serviceAccountName: jax-job-sa
             restartPolicy: Never
-            imagePullSecrets:
-              # https://k8s.io/docs/tasks/configure-pod-container/pull-image-private-registry/
-            - name: null
             containers:
             - name: main
-              image: null  # e.g. ghcr.io/nvidia/jax:jax
-              imagePullPolicy: Always
+              image: local/jax:latest
+              imagePullPolicy: Never
               resources:
                 limits:
-                  cpu: 900m
-                  # https://k8s.io/docs/tasks/manage-gpus/scheduling-gpus/
-                  nvidia.com/gpu: null
-              command: 
+                  cpu: 100m
+              command:
                 - python
               args:
                 - -c

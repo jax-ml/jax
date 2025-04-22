@@ -31,18 +31,25 @@ jobs:
 
   distributed-initialize:
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        controller: [jobset, indexed-job]
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # ratchet:actions/checkout@v4
         with:
           path: jax
-
+          
       - name: Start Minikube cluster
         uses: medyagh/setup-minikube@cea33675329b799adccc9526aa5daccc26cd5052 # ratchet:medyagh/setup-minikube@v0.0.19
 
       - name: Install K8s Jobset
+        if: matrix.controller == 'jobset'
         run: |
-          kubectl apply --server-side -f https://github.com/kubernetes-sigs/jobset/releases/download/v0.6.0/manifests.yaml
+          kubectl apply --server-side -f https://github.com/kubernetes-sigs/jobset/releases/download/v0.8.0/manifests.yaml
+          kubectl wait --for=condition=established crd/jobsets.jobset.x-k8s.io --timeout=60s
+          kubectl rollout status -n jobset-system deploy/jobset-controller-manager --timeout=120s
 
       - name: Build image
         run: |
@@ -56,43 +63,44 @@ jobs:
           minikube image build -t local/jax:latest .
 
       - name: Create service account for K8s job introspection
-        run: |
-          kubectl apply -f jax/examples/k8s/svc-acct.yaml
-
-      - name: Prepare test job
-        run: |
-          export VERSION=v4.44.3
-          export BINARY=yq_linux_amd64
-          wget https://github.com/mikefarah/yq/releases/download/${VERSION}/${BINARY} -O /usr/bin/yq && chmod +x /usr/bin/yq
-
-          cat jax/examples/k8s/example.yaml |\
-            yq '.spec.replicatedJobs[0].template.spec.template.spec.containers[0].image = "local/jax:latest"' |\
-            yq '.spec.replicatedJobs[0].template.spec.template.spec.containers[0].imagePullPolicy = "Never"' |\
-            tee example.yaml
+        run: kubectl apply -f jax/examples/k8s/svc-acct.yaml
 
       - name: Submit test job
-        run: |
-          kubectl apply -f example.yaml
+        run: kubectl apply -f jax/.github/workflows/k8s/${{ matrix.controller }}.yaml
 
       - name: Check job status
         shell: bash -e -o pipefail {0}
         run: |
           while true; do
-            status=$(kubectl get jobset example -o yaml | yq .status.conditions[0].type)
+
+            completion_time=$(
+              kubectl get jobs -o yaml | \
+              yq '.items[] | select(.metadata.name | test("^jaxjob")) | .status.completionTime'
+            )
             timestamp=$(date +"%Y-%m-%d %H:%M:%S")
             echo "[$timestamp] Checking job status..."
 
-            if [ "$status" == "Completed" ]; then
-              echo "[$timestamp] Job has completed successfully!"
-              exit 0
-            elif [ "$status" == "Failed" ]; then
-              echo "[$timestamp] Job has failed!"
-              exit 1
-            else
+            if [ "$completion_time" == "null" ]; then
               echo "[$timestamp] Job is still running. Current pod status:"
               kubectl get pods --no-headers
               echo "[$timestamp] Waiting for 3 seconds before checking again..."
               sleep 3
+            else
+              succeeded=$(
+                kubectl get jobs -o yaml | \
+                yq '.items[] | select(.metadata.name | test("^jaxjob")) | .status.succeeded'
+              )
+              parallelism=$(
+                kubectl get jobs -o yaml | \
+                yq '.items[] | select(.metadata.name | test("^jaxjob")) | .spec.parallelism'
+              )
+              if [ "$succeeded" == "$parallelism" ]; then
+                echo "[$timestamp] Job has completed successfully!"
+                exit 0
+              else
+                echo "[$timestamp] Job has failed!"
+                exit 1
+              fi
             fi
           done
 
