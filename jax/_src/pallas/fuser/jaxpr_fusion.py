@@ -28,12 +28,13 @@ from jax._src.pallas.fuser import fusion as fusion_lib
 from jax._src.pallas.fuser.fusible import fusible_p
 
 
-def fuse(f=None, *, physicalize: bool = False, debug: bool = False):
+def fuse(f=None, *, resolve_fusion_dtypes: bool = True, debug: bool = False):
   """Fuses a function into a single fusible.
 
   Args:
     f: The function to fuse.
-    physicalize: (experimental) whether to physicalize the function.
+    resolve_fusion_dtypes: (experimental) whether or not to resolve fusion
+      dtypes (which don't correspond to physical dtypes)
     debug: Whether to print debug information.
 
   There should be a single call to a `fusible` inside the body of `f`. `fuse`
@@ -57,7 +58,7 @@ def fuse(f=None, *, physicalize: bool = False, debug: bool = False):
       out_flat = fuse_jaxpr(jaxpr, out_tree, consts, *flat_args)
       return tree_util.tree_unflatten(out_tree, out_flat)
 
-    if physicalize:
+    if resolve_fusion_dtypes:
       wrapper = fusible_dtype.physicalize(wrapper)
     return wrapper
 
