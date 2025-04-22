@@ -31,7 +31,6 @@
 #
 # Environment variables read by this script
 # WORKSPACE
-# XLA_CLONE_DIR
 # BUILD_TAG
 #
 
@@ -144,8 +143,6 @@ echo "Building container (${DOCKER_IMG_NAME})..."
 echo "Python Version (${PYTHON_VERSION})"
 echo "Building (runtime) container (${DOCKER_IMG_NAME}) with Dockerfile($DOCKERFILE_PATH)..."
 
-export XLA_CLONE_DIR="${XLA_CLONE_DIR:-}"
-
 # default to gcc
 JAX_COMPILER="gcc"
 if [ -n "$JAX_USE_CLANG" ]; then
@@ -160,7 +157,6 @@ fi
     --rocm-version $ROCM_VERSION \
     --base-docker $BASE_DOCKER \
     --python-versions $PYTHON_VERSION \
-    --xla-source-dir=$XLA_CLONE_DIR \
     --rocm-build-job=$ROCM_BUILD_JOB \
     --rocm-build-num=$ROCM_BUILD_NUM \
     --compiler=$JAX_COMPILER \
