@@ -80,7 +80,7 @@ def _(*consts_and_args, jaxpr, num_consts, **_):
 mlir.register_lowering(fusible_p, mlir.lower_fun(fusible_p.impl))
 
 
-@fusible_p.def_abstract_eval
+@fusible_p.def_effectful_abstract_eval
 def _(*args, jaxpr, **kwargs):
   del args, kwargs
-  return [v.aval for v in jaxpr.outvars]
+  return [v.aval for v in jaxpr.outvars], jaxpr.effects
