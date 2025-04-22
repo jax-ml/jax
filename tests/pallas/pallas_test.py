@@ -1100,7 +1100,6 @@ class ApiErrorTest(PallasBaseTest):
         "Currently returning 2 values."):
       f(dict(one=a, two=a))
 
-
   def test_pallas_call_index_map_wrong_return_type(self):
     a = np.arange(256, dtype=np.int32)
     def my_index_map(i):
@@ -1213,6 +1212,28 @@ class ApiErrorTest(PallasBaseTest):
       self.pallas_call(lambda x_ref, y_ref, o1_ref: None,
                        out_shape=[jax.ShapeDtypeStruct(x.shape, jnp.float32)],
                        input_output_aliases={1: 0})(x, x)
+
+  def test_pallas_error_for_ref_to_jax(self):
+    m, n, k = 8, 16, 32
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+    )
+    def dot_general_kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = jax.lax.dot_general(x_ref, y_ref, (((2), (1)), ((1,), (2,))))
+
+    key1, key2 = random.split(random.key(0))
+    x = random.normal(key1, (m, k), dtype=jnp.float32)
+    y = random.normal(key2, (k, n), dtype=jnp.float32)
+    with self.assertRaisesRegex(
+        ValueError,
+        r" Attempting to pass a Ref"
+        r" MemRef<None>{float32\[8,32\]}"
+        r" to a primitive: dot_general - did you forget to unpack \(\[...\]\)"
+        r" the ref?",
+    ):
+      dot_general_kernel(x, y)
 
 
 class ApiErrorInterpretTest(ApiErrorTest):
