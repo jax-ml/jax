@@ -102,6 +102,9 @@ struct PjitCacheEntry {
   std::vector<bool> kept_var_bitvec;
   std::vector<nb::object> in_device_local_layouts;
 
+  std::vector<xla::PyArray> in_mut;
+  std::vector<std::optional<int>> out_mut;
+
   // Ensures a single thread performs the compilation for a given executable.
   //
   // The first thread (holding the GIL) will create the CacheEntry associated to
@@ -759,6 +762,18 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
   execute_options.execution_stream_id =
       tsl::Env::Default()->GetCurrentThreadId();
 
+  if (!cache_entry->in_mut.empty()) {
+    num_args_arrays->reserve(num_args_arrays->size() +
+                             cache_entry->in_mut.size());
+    for (auto& a : cache_entry->in_mut) {
+      auto arr = tsl::FormRef(a.ifrt_array());
+      if (!arr) {
+        throw nb::value_error("in_mut is bad.");
+      }
+      num_args_arrays->push_back(tsl::FormRef(a.ifrt_array()));
+    }
+  }
+
   // A vector of [num_outputs].
   std::vector<tsl::RCReference<xla::ifrt::Array>> output_arrays;
   {
@@ -788,6 +803,41 @@ absl::StatusOr<nb::object> PjitFunction::Call(nb::handle callable,
         /*committed=*/cache_entry->out_committed.at(i), /*skip_checks=*/true);
 
     outputs.push_back(std::move(py_array));
+  }
+
+  if (!cache_entry->out_mut.empty()) {
+    if (cache_entry->out_mut.size() != outputs.size()) {
+      throw nb::value_error(
+          absl::StrCat("Mismatch between out_mut and outputs: ",
+                       cache_entry->out_mut.size(), " vs ", outputs.size())
+              .c_str());
+    }
+    size_t w_i = 0;
+    for (size_t i = 0; i < outputs.size(); ++i) {
+      auto mut_info = cache_entry->out_mut[i];
+      if (mut_info.has_value()) {
+        int idx = mut_info.value();
+        if (idx < 0) {
+          throw nb::value_error("Invalid idx");
+        }
+        if (idx < flat_dynamic_args.size()) {
+          xla::ThrowIfError(
+              nb::cast<xla::PyArray>(flat_dynamic_args[i])
+                  .ReplaceWithAlias(nb::cast<xla::PyArray>(outputs[i])));
+        } else if (idx <
+                   flat_dynamic_args.size() + cache_entry->in_mut.size()) {
+          xla::ThrowIfError(
+              cache_entry->in_mut[idx - flat_dynamic_args.size()]
+                  .ReplaceWithAlias(nb::cast<xla::PyArray>(outputs[i])));
+        } else {
+          throw nb::value_error("Invalid idx");
+        }
+      } else {
+        outputs[w_i] = outputs[i];
+        ++w_i;
+      }
+    }
+    outputs.resize(w_i);
   }
 
   nb::object out = nb::steal<nb::object>(
@@ -877,6 +927,19 @@ void PjitFunction::PopulateCacheEntry(PjitCacheEntry& cache_entry,
   }
 
   nb::tuple fastpath_data = nb::cast<nb::tuple>(out_and_fastpath_data[1]);
+
+  if (nb::hasattr(fastpath_data, "in_mut")) {
+    nb::object in_mut = fastpath_data.attr("in_mut");
+    if (!in_mut.is_none()) {
+      cache_entry.in_mut = nb::cast<std::vector<xla::PyArray>>(in_mut);
+    }
+  }
+  if (nb::hasattr(fastpath_data, "out_mut")) {
+    nb::object out_mut = fastpath_data.attr("out_mut");
+    if (!out_mut.is_none()) {
+      cache_entry.out_mut = nb::cast<std::vector<std::optional<int>>>(out_mut);
+    }
+  }
 
   cache_entry.executable = nb::cast<std::shared_ptr<xla::PyLoadedExecutable>>(
       fastpath_data.attr("xla_executable"));

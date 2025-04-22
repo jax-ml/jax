@@ -59,6 +59,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.mesh import AbstractMesh
@@ -279,7 +280,8 @@ def _get_fastpath_data(
       # no attr state effects
       and not attrs_tracked
       # no ref state effects
-      and not any(isinstance(e, RefEffect) for e in effects)
+      and (jaxlib_extension_version >= 331
+           or not any(isinstance(e, RefEffect) for e in effects))
       # no prng reuse checking
       and not (config.debug_key_reuse.value and any(
         hasattr(arg, 'dtype') and dtypes.issubdtype(arg.dtype, dtypes.prng_key)
@@ -288,6 +290,20 @@ def _get_fastpath_data(
       )
 
   if use_fastpath:
+    in_mut, out_mut = None, None
+    mut = executable.unsafe_call.mut
+    if mut is not None:
+      original_args = [*args_flat, *mut.in_mut]
+      in_mut = [a._buf for a in mut.in_mut]
+      out_mut = mut.out_mut
+      a = iter(out_reflattened)
+      out_reflattened = [(
+          next(a) if i is None else original_args[i]._buf) for i in out_mut]
+      if not (
+          all(isinstance(x, xc.ArrayImpl) for x in in_mut)
+          and all(isinstance(x, xc.ArrayImpl) for x in out_reflattened)):
+        return None
+
     out_avals = [o.aval for o in out_reflattened]
     out_committed = [o._committed for o in out_reflattened]
     kept_var_bitvec = [i in executable._kept_var_idx
@@ -301,7 +317,7 @@ def _get_fastpath_data(
     fastpath_data = pxla.MeshExecutableFastpathData(
         executable.xla_executable, out_tree, in_shardings,
         executable._out_shardings, out_avals, out_committed, kept_var_bitvec,
-        executable._dispatch_in_layouts)
+        executable._dispatch_in_layouts, in_mut, out_mut)
   else:
     fastpath_data = None
   return fastpath_data

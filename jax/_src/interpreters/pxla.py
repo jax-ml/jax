@@ -3079,6 +3079,8 @@ class MeshExecutableFastpathData(NamedTuple):
   out_committed: Sequence[bool]
   kept_var_bitvec: Iterable[bool]
   in_device_local_layouts: Sequence[DeviceLocalLayout | None]
+  in_mut: list[xc.ArrayImpl] | None
+  out_mut: list[int] | None
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -3209,7 +3211,7 @@ class MeshExecutable(stages.Executable):
         fastpath_data = MeshExecutableFastpathData(
             self.xla_executable, out_tree_dispatch, in_shardings,
             self._out_shardings, out_avals, out_committed, kept_var_bitvec,
-            self._dispatch_in_layouts)
+            self._dispatch_in_layouts, None, None)
       else:
         fastpath_data = None
       return outs, fastpath_data, False  # Do not remove cache entry
