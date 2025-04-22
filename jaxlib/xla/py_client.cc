@@ -57,6 +57,7 @@ limitations under the License.
 #include "jaxlib/xla/py_memory_space.h"
 #include "jaxlib/xla/py_values.h"
 #include "jaxlib/xla/python_ref_manager.h"
+#include "jaxlib/xla/sharding.h"
 #include "jaxlib/xla/traceback.h"
 #include "xla/literal.h"
 #include "xla/pjrt/exceptions.h"
@@ -66,6 +67,7 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/pjrt_layout.h"
 #include "xla/pjrt/status_casters.h"
+#include "xla/python/ifrt/array.h"
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
@@ -339,25 +341,19 @@ absl::Status PyClient::Defragment() {
   options.allow_zero_copy =
       (!force_copy && (host_buffer_semantics ==
                        ifrt::Client::HostBufferSemantics::kImmutableZeroCopy));
-  TF_ASSIGN_OR_RETURN(auto put_fn,
-                      DevicePut(argument, client->ifrt_client_.get(), device,
-                                options, ifrt::MemoryKind()));
-  TF_ASSIGN_OR_RETURN(auto put, [&]() {
-    // Must release the GIL before calling IFRT because backends may
-    // decide to block/sleep for device buffer allocation.
-    nb::gil_scoped_release gil_release;
-    return std::move(put_fn)();
-  }());
+  TF_ASSIGN_OR_RETURN(DevicePutResult device_put_result,
+                      DevicePutWithDevice(argument, client->ifrt_client_.get(),
+                                          device, ifrt::MemoryKind(), options));
+  auto sharding = make_nb_class<jax::SingleDeviceSharding>(
+      client, client->ifrt_client()->MakeDeviceList({device}),
+      /*memory_kind=*/nb::none());
 
-  if (put.ifrt_array) {
-    auto traceback = Traceback::Get();
-    return PyArray::MakeFromSingleDeviceArray(
-        std::move(client), std::move(traceback), std::move(put.ifrt_array),
-        /*weak_type=*/false,
-        /*committed=*/false);
-  } else {
-    return put.owning_pybuffer;
-  }
+  auto traceback = Traceback::Get();
+  return PyArray::MakeFromIfrtArrayAndSharding(
+      std::move(client), std::move(traceback),
+      std::move(device_put_result.ifrt_array), std::move(sharding),
+      /*weak_type=*/false, /*committed=*/false,
+      /*skip_checks=*/true);
 }
 
 namespace {
