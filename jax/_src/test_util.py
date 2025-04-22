@@ -442,13 +442,21 @@ def is_device_tpu_at_least(version: int) -> bool:
     return False
   return get_tpu_version() >= version
 
+def is_device_tpu_between(min_version: int, max_version: int) -> bool:
+  if device_under_test() != "tpu":
+    return False
+  return min_version <= get_tpu_version() <= max_version
+
 def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
   if device_under_test() != "tpu":
     return False
   if version is None:
     return True
   device_kind = jax.devices()[0].device_kind
-  expected_version = f"v{version}{variant}"
+  if version < 7:
+    expected_version = f"v{version}{variant}"
+  else:
+    expected_version = f"{version}x"
   # Special case v5e until the name is updated in device_kind
   if expected_version == "v5e":
     return "v5 lite" in device_kind
