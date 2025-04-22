@@ -751,17 +751,24 @@ def ragged_paged_attention(
   assert num_combined_kv_heads % 2 == 0
   num_kv_heads = num_combined_kv_heads // 2
   _, pages_per_seq = page_indices.shape
+  num_q_heads_per_blk, num_combined_kv_heads_per_blk = get_min_heads_per_blk(
+      num_q_heads, num_combined_kv_heads, q.dtype, kv_pages.dtype
+  )
   num_q_per_blk = num_queries_per_block
   num_kv_pages_per_blk = num_kv_pages_per_block
   if num_q_per_blk is None or num_kv_pages_per_blk is None:
     num_kv_pages_per_blk, num_q_per_blk = get_tuned_block_sizes(
-        num_q_heads, num_kv_heads, num_q_tokens, page_size, pages_per_seq
+        q.dtype,
+        kv_pages.dtype,
+        num_q_heads_per_blk,
+        num_combined_kv_heads_per_blk // 2,
+        head_dim,
+        page_size,
+        num_q_tokens,
+        pages_per_seq,
     )
   num_q_heads_per_kv_head = num_q_heads // num_kv_heads
   num_q_blks = cdiv(num_q_tokens, num_q_per_blk)
-  num_q_heads_per_blk, num_combined_kv_heads_per_blk = get_min_heads_per_blk(
-      num_q_heads, num_combined_kv_heads, q.dtype, kv_pages.dtype
-  )
   assert num_combined_kv_heads_per_blk % 2 == 0
   num_kv_heads_per_blk = num_combined_kv_heads_per_blk // 2
   assert num_q_heads_per_blk % num_q_heads_per_kv_head == 0
