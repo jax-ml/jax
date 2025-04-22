@@ -608,6 +608,7 @@ pytype_strict_library(
         ":core",
         ":dtypes",
         ":effects",
+        ":jaxpr_util",
         ":layout",
         ":op_shardings",
         ":partial_eval",
