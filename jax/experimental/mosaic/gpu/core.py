@@ -188,6 +188,12 @@ class Barrier:
   arrival_count: int
   num_barriers: int = 1
 
+  def __post_init__(self):
+    if self.arrival_count < 1:
+      raise ValueError(
+          f"Arrival count must be at least 1, but got {self.arrival_count}"
+      )
+
 @dataclasses.dataclass(frozen=True)
 class ClusterBarrier:
   collective_dims: Sequence[gpu.Dimension]

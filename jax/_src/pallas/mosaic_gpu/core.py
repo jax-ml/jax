@@ -624,6 +624,11 @@ class Barrier:
     )
     return AbstractMemoryRef(aval, SMEM)
 
+  def __post_init__(self):
+    if self.num_arrivals < 1:
+      raise ValueError(
+          f"Num arrivals must be at least 1, but got {self.num_arrivals}"
+      )
 
 @dataclasses.dataclass(frozen=True)
 class ClusterBarrier:
