@@ -25,10 +25,11 @@ from typing import ClassVar
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax import export
 from jax import lax
 from jax._src import test_util as jtu
-from jax._src.pallas import pallas_call
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import pallas_call
 from jax._src.pallas.mosaic_gpu import core as gpu_core
 from jax._src.pallas.mosaic_gpu import lowering as mgpu_lowering
 from jax._src.pallas.mosaic_gpu import pipeline as mgpu_pipeline
@@ -2805,6 +2806,23 @@ class PrettyPrintingTest(PallasTest):
             jax.ShapeDtypeStruct((128, 192), jnp.float16),
         )
     )
+
+
+class ExportTest(PallasTest):
+
+  def test_export_succeeds(self):
+    out_shape = jax.ShapeDtypeStruct([128], jnp.float32)
+
+    @functools.partial(self.pallas_call, out_shape=out_shape)
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1.0
+
+    _ = export.export(
+        kernel,
+        disabled_checks=[
+            export.DisabledSafetyCheck.custom_call("mosaic_gpu"),
+        ],
+    )(out_shape)
 
 
 class ExamplesTest(PallasTest):
