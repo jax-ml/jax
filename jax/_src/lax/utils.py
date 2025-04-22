@@ -22,9 +22,10 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import mesh as mesh_lib
-from jax._src.util import safe_zip
+from jax._src import state
+from jax._src.named_sharding import DuplicateSpecError, NamedSharding
 from jax._src.partition_spec import PartitionSpec as P
-from jax._src.named_sharding import NamedSharding, DuplicateSpecError
+from jax._src.util import safe_zip
 
 zip, unsafe_zip = safe_zip, zip
 
@@ -103,6 +104,17 @@ def call_shape_dtype_sharding_rule(prim, shape_rule, dtype_rule, sharding_rule,
 
 def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
                            sharding_rule, vma_rule, *avals, **kwargs):
+  for a in avals:
+    if isinstance(a, state.AbstractRef):
+      raise ValueError(
+          f' Attempting to pass a Ref {a} to a primitive:'
+          f' {prim} - did you forget to unpack ([...]) the ref?'
+      )
+    if not isinstance(a, core.UnshapedArray):
+      raise ValueError(
+          f'Attempting to pass an unexpected type {a} to a'
+          f' primitive: {prim}'
+      )
   assert all(isinstance(aval, core.UnshapedArray) for aval in avals), avals
   assert not prim.multiple_results
   weak_type = weak_type_rule(*avals, **kwargs)
