@@ -113,6 +113,7 @@ def build_kernel(
   swizzle = 128
   swizzle_elems = tile_k = swizzle // 2
   tiling = (8, swizzle_elems)
+  tmem_slot_count = 2
 
   k_loop_iter = k // tile_k
   max_concurrent_steps = min(max_concurrent_steps, k_loop_iter)
@@ -181,6 +182,17 @@ def build_kernel(
                                tile_n_start)
 
         local_work_id = arith.divui(work_id, worker_count)
+        tmem_slot = arith.remui(local_work_id, cx(tmem_slot_count))
+
+        tmem_address = arith.addi(acc.address,
+                                  arith.index_cast(i32,
+                                                   arith.muli(tmem_slot, cx(tile_n))))
+        acc_slot = tcgen05.TMEMRef(
+            address=tmem_address,
+            shape=(tile_m, tile_n),
+            layout=acc.layout,
+            dtype=acc.dtype,
+        )
         get_persistent_ki = lambda ki: arith.addi(ki, arith.muli(local_work_id, cx(k_loop_iter)))
         with mgpu.when(is_leader_of(TMA_WARP)):
           @mgpu.fori(cx(k_loop_iter), None)
@@ -230,7 +242,7 @@ def build_kernel(
             slot = arith.remui(persistent_ki, c(max_concurrent_steps, index))
             ab_full_barriers[slot].wait()
             tcgen05.mma(
-                acc,
+                acc_slot,
                 mgpu.memref_slice(a_smem, slot),
                 mgpu.memref_transpose(mgpu.memref_slice(b_smem, slot), (1, 0, 3, 2)),
                 a_swizzle=swizzle,
@@ -246,7 +258,7 @@ def build_kernel(
           gpu.barrier()
           mma_done_barrier.wait(for_tensor_core=True)
 
-          acc[:].astype(ir.F16Type.get()).store_tiled(d_smem, swizzle=128)
+          acc_slot[:].astype(ir.F16Type.get()).store_tiled(d_smem, swizzle=128)
           mgpu.commit_shared()
 
           store_row = cx(0)
@@ -298,11 +310,13 @@ def build_kernel(
       mgpu.tile_shape((tile_m, tile_n), (128, swizzle_elems)),
       jnp.float16)
   smem_buffers = mgpu.Union([compute_buffers, epilogue_buffer])
+  tmem_cols = tmem_slot_count * tile_n
+  assert tmem_cols.bit_count() == 1
   smem = (
       smem_buffers,
       [mgpu.Barrier(arrival_count=1, num_barriers=max_concurrent_steps)] * 2,
       mgpu.Barrier(arrival_count=1),
-      mgpu.TMEM((128, tile_n), jnp.float32),
+      mgpu.TMEM((128, tmem_cols), jnp.float32),
   )
 
   f = mgpu.as_gpu_kernel(
