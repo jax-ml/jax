@@ -75,13 +75,13 @@ jobs:
           # Let ci_build script do the build
             python3 ./build/rocm/ci_build \
             --compiler clang \
-            --base-docker ${{ inputs.base_docker }}
-            --python-versions ${{ inputs.python_version }} \
-            --rocm-version ${{ inputs.rocm_version }} \
-            --rocm-build-job ${{ inputs.rocm_build_job_name }} \
-            --rocm-build-num ${{ inputs.rocm_build_job_num }} \
+            --base-docker "${{ inputs.base_docker }}" \
+            --python-versions "${{ inputs.python_version }}" \
+            --rocm-version "${{ inputs.rocm_version }}" \
+            --rocm-build-job "${{ inputs.rocm_build_job_name }}" \
+            --rocm-build-num "${{ inputs.rocm_build_job_num }}" \
             dist_docker \
-            --image-tag $RELEASE_DOCKER_IMG_NAME
+            --image-tag "${{ env.RELEASE_DOCKER_IMG_NAME }}"
       - name: Archive wheels to Github
         uses: actions/upload-artifact@v4
         with:
