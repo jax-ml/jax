@@ -307,7 +307,7 @@ class GatherScatterMode(enum.Enum):
   ONE_HOT = enum.auto()
 
   @staticmethod
-  def from_any(s: str | GatherScatterMode | None):
+  def from_any(s: str | GatherScatterMode | None) -> GatherScatterMode:
     if isinstance(s, GatherScatterMode):
       return s
     if s == "clip":

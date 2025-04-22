@@ -26,7 +26,7 @@ __all__ = ['register_jax_array_methods']
 import abc
 from functools import partial, wraps
 import math
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import numpy as np
 import jax
@@ -740,13 +740,15 @@ class _IndexUpdateHelper:
   """
   __slots__ = ("array",)
 
-  def __init__(self, array):
+  array: Array
+
+  def __init__(self, array: Array):
     self.array = array
 
-  def __getitem__(self, index):
+  def __getitem__(self, index: scatter.Index) -> _IndexUpdateRef:
     return _IndexUpdateRef(self.array, index)
 
-  def __repr__(self):
+  def __repr__(self) -> str:
     return f"_IndexUpdateHelper({self.array!r})"
 
 
@@ -759,15 +761,19 @@ class _IndexUpdateRef:
   """
   __slots__ = ("array", "index")
 
-  def __init__(self, array, index):
+  array: Array
+  index: scatter.Index
+
+  def __init__(self, array: Array, index: scatter.Index):
     self.array = array
     self.index = index
 
   def __repr__(self) -> str:
     return f"_IndexUpdateRef({self.array!r}, {self.index!r})"
 
-  def get(self, *, indices_are_sorted=False, unique_indices=False,
-          mode=None, fill_value=None, out_sharding=None):
+  def get(self, *, indices_are_sorted: bool = False, unique_indices: bool = False,
+          mode: str | jax.lax.GatherScatterMode | None = None,
+          fill_value: ArrayLike | None = None, out_sharding: Sharding | None = None):
     """Equivalent to ``x[idx]``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -786,8 +792,9 @@ class _IndexUpdateRef:
                                    fill_value=fill_value,
                                    out_sharding=out_sharding)
 
-  def set(self, values, *, indices_are_sorted=False, unique_indices=False,
-          mode=None):
+  def set(self, values: ArrayLike, *, indices_are_sorted: bool = False,
+          unique_indices: bool = False,
+          mode: str | jax.lax.GatherScatterMode | None = None) -> None:
     """Pure equivalent of ``x[idx] = y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -803,8 +810,9 @@ class _IndexUpdateRef:
                                    unique_indices=unique_indices, mode=mode,
                                    out_sharding=out_s)
 
-  def apply(self, func, *, indices_are_sorted=False, unique_indices=False,
-            mode=None):
+  def apply(self, func: Callable[[ArrayLike], Array], *,
+            indices_are_sorted: bool = False, unique_indices: bool = False,
+            mode: str | jax.lax.GatherScatterMode | None = None) -> Array:
     """Pure equivalent of ``func.at(x, idx)`` for a unary ufunc ``func``.
 
     Returns the value of ``x`` that would result from applying the unary
@@ -826,8 +834,9 @@ class _IndexUpdateRef:
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode)
 
-  def add(self, values, *, indices_are_sorted=False, unique_indices=False,
-          mode=None):
+  def add(self, values: ArrayLike, *,
+          indices_are_sorted: bool = False, unique_indices: bool = False,
+          mode: str | jax.lax.GatherScatterMode | None = None) -> Array:
     """Pure equivalent of ``x[idx] += y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -840,8 +849,9 @@ class _IndexUpdateRef:
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode)
 
-  def subtract(self, values, *, indices_are_sorted=False, unique_indices=False,
-               mode=None):
+  def subtract(self, values: ArrayLike, *,
+               indices_are_sorted: bool = False, unique_indices: bool = False,
+               mode: str | jax.lax.GatherScatterMode | None = None) -> Array:
     """Pure equivalent of ``x[idx] -= y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -854,8 +864,9 @@ class _IndexUpdateRef:
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode)
 
-  def multiply(self, values, *, indices_are_sorted=False, unique_indices=False,
-               mode=None):
+  def multiply(self, values: ArrayLike, *,
+               indices_are_sorted: bool = False, unique_indices: bool = False,
+               mode: str | jax.lax.GatherScatterMode | None = None) -> Array:
     """Pure equivalent of ``x[idx] *= y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -870,8 +881,9 @@ class _IndexUpdateRef:
                                    mode=mode)
   mul = multiply
 
-  def divide(self, values, *, indices_are_sorted=False, unique_indices=False,
-             mode=None):
+  def divide(self, values: ArrayLike, *,
+             indices_are_sorted: bool = False, unique_indices: bool = False,
+             mode: str | jax.lax.GatherScatterMode | None = None) -> Array:
     """Pure equivalent of ``x[idx] /= y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -886,8 +898,9 @@ class _IndexUpdateRef:
                               indices_are_sorted=indices_are_sorted,
                               unique_indices=unique_indices, mode=mode))
 
-  def power(self, values, *, indices_are_sorted=False, unique_indices=False,
-            mode=None):
+  def power(self, values: ArrayLike, *,
+            indices_are_sorted: bool = False, unique_indices: bool = False,
+            mode: str | jax.lax.GatherScatterMode | None = None) -> Array:
     """Pure equivalent of ``x[idx] **= y``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -902,8 +915,9 @@ class _IndexUpdateRef:
                               indices_are_sorted=indices_are_sorted,
                               unique_indices=unique_indices, mode=mode))
 
-  def min(self, values, *, indices_are_sorted=False, unique_indices=False,
-          mode=None):
+  def min(self, values: ArrayLike, *,
+          indices_are_sorted: bool = False, unique_indices: bool = False,
+          mode: str | jax.lax.GatherScatterMode | None = None) -> Array:
     """Pure equivalent of ``x[idx] = minimum(x[idx], y)``.
 
     Returns the value of ``x`` that would result from the NumPy-style
@@ -917,8 +931,9 @@ class _IndexUpdateRef:
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode)
 
-  def max(self, values, *, indices_are_sorted=False, unique_indices=False,
-          mode=None):
+  def max(self, values: ArrayLike, *,
+          indices_are_sorted: bool = False, unique_indices: bool = False,
+          mode: str | jax.lax.GatherScatterMode | None = None) -> Array:
     """Pure equivalent of ``x[idx] = maximum(x[idx], y)``.
 
     Returns the value of ``x`` that would result from the NumPy-style
