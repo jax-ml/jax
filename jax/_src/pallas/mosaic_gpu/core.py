@@ -22,14 +22,15 @@ from collections.abc import Callable, Iterable, Sequence
 import dataclasses
 import enum
 import itertools as it
+import math
 from typing import Any, ClassVar, Literal, Union
 
 import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import tree_util
 from jax._src import pretty_printer as pp
+from jax._src import tree_util
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives as pallas_primitives
@@ -46,6 +47,11 @@ from jaxlib.mlir import ir
 AbstractMemoryRef = pallas_core.AbstractMemoryRef
 
 DimensionSemantics = Literal["parallel", "sequential"]
+
+# We align all our SMEM allocations to 1024 bytes. TMA and WGMMA are very
+# sensitive to alignment and while this is quite conservative, it gets the job
+# done. We should make this more refined in the future.
+SMEM_ALIGNMENT = 1024
 
 
 def is_trivial_index(idx, shape) -> bool:
@@ -220,6 +226,130 @@ class GPUMemoryRef(pallas_core.MemoryRef):
     if not ref.transforms:
       return ref.ref
     return ref
+
+
+def align_to(x: int, alignment: int):
+  if rem := x % alignment:
+    return x + alignment - rem
+  return x
+
+
+# A tree of `GPUMemoryRef`s.
+_GPUMemoryRefTree = Any
+
+
+def _ref_group_size(refs: _GPUMemoryRefTree) -> int:
+  if isinstance(refs, GPUMemoryRef):
+    refs = (refs,)
+  size = 0
+  for ref in jax.tree.leaves(refs):
+    # Make sure that the start of each ref is aligned with `SMEM_ALIGNMENT`.
+    size = align_to(size, SMEM_ALIGNMENT)
+    if jnp.issubdtype(ref.dtype, jnp.integer):
+      nbits = jnp.iinfo(ref.dtype).bits
+    elif jnp.issubdtype(ref.dtype, jnp.floating):
+      nbits = jnp.finfo(ref.dtype).bits
+    else:
+      raise NotImplementedError(f"Unsupported dtype: {ref.dtype}")
+    ref_bits = math.prod(ref.shape) * nbits
+    if ref_bits % 8:
+      raise ValueError("Only byte-aligned shapes are supported.")
+    size += ref_bits // 8
+  return size
+
+
+def flatten_ref_union(
+    ref_union: AbstractRefUnion,
+) -> tuple[pallas_core.AbstractMemoryRef | state_types.TransformedRef, ...]:
+  """Flattens a union of trees of references into a tuple of references.
+
+  This is the moral equivalent of `jax.tree.leaves` for aliased references.
+  """
+  flat_refs = []
+  union_bytes = 0
+  for ref_group in ref_union.refs:
+    byte_offset = 0
+    for ref in jax.tree.leaves(ref_group):
+      byte_offset = align_to(byte_offset, SMEM_ALIGNMENT)
+      assert isinstance(ref, pallas_core.AbstractMemoryRef) or isinstance(
+          ref, pallas_core.TransformedRef
+      )
+      if not isinstance(ref, pallas_core.TransformedRef):
+        ref = pallas_core.TransformedRef(ref, transforms=())
+      transform = ExtractAliasedRef.from_transformed_ref(ref, byte_offset)
+      flat_refs.append(
+          pallas_core.TransformedRef(
+              ref_union, transforms=(transform, *ref.transforms)
+          )
+      )
+      if jnp.issubdtype(ref.dtype, jnp.integer):
+        nbits = jnp.iinfo(ref.dtype).bits
+      elif jnp.issubdtype(ref.dtype, jnp.floating):
+        nbits = jnp.finfo(ref.dtype).bits
+      else:
+        raise NotImplementedError(f"Unsupported dtype: {ref.dtype}")
+      ref_bits = math.prod(ref.shape) * nbits
+      if ref_bits % 8:
+        raise ValueError("Only byte-aligned shapes are supported.")
+      byte_offset += ref_bits // 8
+    union_bytes = max(union_bytes, byte_offset)
+  assert union_bytes == ref_union.shape[0]
+  return tuple(flat_refs)
+
+
+class AbstractRefUnion(pallas_core.AbstractMemoryRef):
+  refs: Sequence[_GPUMemoryRefTree]
+
+  def __init__(
+      self,
+      aval,
+      refs: Sequence[_GPUMemoryRefTree],
+      memory_space,
+  ):
+    self.refs = refs
+    super().__init__(aval, memory_space=memory_space)
+
+  def _iter(self, tracer):
+    return iter(flatten_ref_union(tracer))
+
+  def _getitem(self, tracer, index):
+    return list(iter(tracer))[index]
+
+  def _setitem(self, tracer, index, value):
+    del tracer, index, value  # Unused.
+    raise ValueError("Ref unions can't be assigned to.")
+
+
+@dataclasses.dataclass(init=False, frozen=True)
+class RefUnion(GPUMemoryRef):
+  """A sequence of trees of refs that are allowed to reuse the same memory.
+
+  One should not make assumptions as to how each ref will map to the underlying
+  memory region, since arbitrary padding may be applied inbetween different
+  refs.
+
+  As such, ref unions are only safe to use when the groups of refs that we
+  intend to alias have disjoint lifetimes (i.e. one should never attempt to read
+  data using a different ref than the one that was used to write the data).
+  """
+  refs: Sequence[_GPUMemoryRefTree] = ()
+
+  def __init__(self, *refs: _GPUMemoryRefTree):
+    if any(ref.memory_space != SMEM for ref in jax.tree.leaves(refs)):
+      raise NotImplementedError("Only SMEM refs can be aliased.")
+    object.__setattr__(self, "refs", refs)
+    num_bytes = max(map(_ref_group_size, self.refs))
+    super().__init__(
+        shape=(num_bytes,),
+        dtype=jnp.int8,
+        memory_space=SMEM,
+        transforms=(),
+    )
+
+  def get_ref_aval(self) -> AbstractRefUnion:
+    inner_aval = jax.core.ShapedArray(self.shape, self.dtype)
+    refs_aval = jax.tree.map(lambda ref: ref.get_ref_aval(), self.refs)
+    return AbstractRefUnion(inner_aval, refs_aval, memory_space=SMEM)
 
 
 class MemoryRefTransform(pallas_core.MemoryRefTransform, abc.ABC):
@@ -456,6 +586,40 @@ def untile_ref(ref, tiling: tuple[int, ...]) -> pallas_core.TransformedRef:
 
 def unswizzle_ref(ref, swizzle: int) -> pallas_core.TransformedRef:
   return transform_ref(ref, UnswizzleRef(swizzle))
+
+
+@tree_util.register_pytree_node_class
+@dataclasses.dataclass(frozen=True)
+class ExtractAliasedRef(state_types.Transform):
+  """Bitcasts the underlying ref at the given offset to the given shape and dtype."""
+  dtype: dtypes.DType
+  shape: tuple[int, ...]
+  offset: int
+
+  @classmethod
+  def from_transformed_ref(
+      cls, ref: pallas_core.TransformedRef, byte_offset: int
+  ):
+    return cls(
+        dtypes.dtype(ref.dtype), ref.ref.shape, byte_offset
+    )
+
+  def transform_shape(self, shape):
+    if shape is None:
+      return None
+    return self.shape
+
+  def transform_dtype(self, dtype):
+    del dtype  # Unused.
+    return self.dtype
+
+  def tree_flatten(self):
+    return (), (self.dtype, self.shape, self.offset)
+
+  @classmethod
+  def tree_unflatten(cls, metadata, arrays):
+    assert not arrays
+    return cls(*metadata)
 
 
 @dataclasses.dataclass(frozen=True)

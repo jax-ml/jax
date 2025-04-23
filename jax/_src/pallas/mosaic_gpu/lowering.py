@@ -73,16 +73,7 @@ zip, unsafe_zip = util.safe_zip, zip
 
 partial = functools.partial
 SMEM = gpu_core.SMEM
-# We align all our SMEM allocations to 1024 bytes. TMA and WGMMA are very
-# sensitive to alignment and while this is quite conservative, it gets the job
-# done. We should make this more refined in the future.
-_SMEM_ALIGNMENT = 1024
 WARPGROUP_SIZE = 128
-
-def _align_to(x: int, alignment: int):
-  if (rem := x % alignment):
-    return x + alignment - rem
-  return x
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -114,13 +105,13 @@ class Resources:
     object.__setattr__(
         self,
         "smem_scratch_bytes",
-        _align_to(self.smem_scratch_bytes, _SMEM_ALIGNMENT),
+        gpu_core.align_to(self.smem_scratch_bytes, gpu_core.SMEM_ALIGNMENT),
     )
     object.__setattr__(
         self,
         "tmem_scratch_cols",
         # TMEM must be allocated in 128x8 chunks.
-        _align_to(self.tmem_scratch_cols, 8),
+        gpu_core.align_to(self.tmem_scratch_cols, 8),
     )
 
   @property
@@ -393,7 +384,7 @@ class ModuleContext:
       )
     views = []
     off = initial_used_bytes = self.smem_used_bytes
-    assert off % _SMEM_ALIGNMENT == 0
+    assert off % gpu_core.SMEM_ALIGNMENT == 0
     for s in structs:
       scratch_ty = ir.MemRefType.get(
           s.shape,
@@ -411,11 +402,12 @@ class ModuleContext:
         view = mgpu.dialect.slice_smem(scratch_ty, mgpu_utils.c(off, i32))
       views.append(view)
 
-      off += _align_to(
-          math.prod(s.shape) * jnp.dtype(s.dtype).itemsize, _SMEM_ALIGNMENT
+      off += gpu_core.align_to(
+          math.prod(s.shape) * jnp.dtype(s.dtype).itemsize,
+          gpu_core.SMEM_ALIGNMENT,
       )
     assert off <= self.smem_requested_bytes, "Ran out of scoped SMEM"
-    assert off % _SMEM_ALIGNMENT == 0
+    assert off % gpu_core.SMEM_ALIGNMENT == 0
 
     self.smem_used_bytes = off
     yield views
@@ -1066,6 +1058,93 @@ def _num_programs_lowering_rule(ctx: LoweringRuleContext, axis):
       gpu_dialect.block_dim(gpu_dialect.Dimension(axis)),
   )
 
+
+def _handle_dtype_bitcast(
+    ref: ir.Value, src_dtype: ir.Type, dst_dtype: ir.Type
+) -> ir.Value:
+  """Allows bitcasting a SMEM ref from one element type to another.
+
+  Args:
+    ref: the reference to bitcast.
+    src_dtype: the source element type.
+    dst_dtype: the destination element type.
+
+  Returns:
+    A bitcasted version of `ref` with element type `dst_dtype`.
+
+  Raises:
+    ValueError: if the source ref is not in SMEM.
+  """
+  if src_dtype == dst_dtype:
+    return ref
+  if src_dtype != ir.IntegerType.get_signless(8):
+    raise NotImplementedError(
+        "Data type bitcast is only supported from i8 to other types."
+    )
+  ref_ty = ir.MemRefType(ref.type)
+  if ref_ty.memory_space != ir.Attribute.parse("#gpu.address_space<workgroup>"):
+    raise ValueError(f"Only workgroup memory is supported but got {ref}.")
+  if len(ref_ty.shape) != 1:
+    raise NotImplementedError(
+        "Data type bitcast is only supported for 1D arrays."
+    )
+  [stride], _ = ref_ty.get_strides_and_offset()
+  if stride != 1:
+    raise ValueError(
+        "Data type bitcast is only supported for contiguous 1D arrays, but got "
+        f"stride={stride}."
+    )
+  [shape_bytes] = ref_ty.shape
+  shape_bitwidth = shape_bytes * 8
+  target_bitwidth = mgpu_utils.bitwidth(dst_dtype)
+
+  if shape_bitwidth % target_bitwidth:
+    raise ValueError(
+        f"Can not bitcast memory region of size {shape_bitwidth} bits to dtype "
+        f"with {target_bitwidth} bits."
+    )
+
+  result_type = ir.MemRefType.get(
+      shape=(shape_bitwidth // target_bitwidth,),
+      element_type=dst_dtype,
+      memory_space=ref_ty.memory_space,
+  )
+
+  # Do a memref_ptr/ptr_as_memref roundtrip instead of using `memref.view`,
+  # which refuses to take in our source ref. This is because `memref.view` only
+  # works on a super restricted set of `memref`s. E.g., it does not work if an
+  # offset is specified, which can be the case for our SMEM refs.
+  smem = mgpu_utils.WORKGROUP_NVPTX_ADDRESS_SPACE
+  ref = mgpu_utils.memref_ptr(ref, memory_space=smem)
+  return mgpu_utils.ptr_as_memref(ref, result_type, ptr_memory_space=smem)
+
+
+def _extract_aliased_ref(
+    ref: ir.Value, transforms: Sequence[gpu_core.Transform]
+) -> tuple[ir.Value, Sequence[gpu_core.Transform]]:
+  match transforms:
+    case (
+        gpu_core.ExtractAliasedRef(dtype, transformed_shape, offset),
+        *other_transforms,
+    ):
+      mlir_dtype = mgpu_utils.dtype_to_ir_type(dtype)
+      ref_bits = math.prod(transformed_shape) * mgpu_utils.bitwidth(mlir_dtype)
+      if ref_bits % 8:
+        raise NotImplementedError("Only byte-aligned bitcasts are supported.")
+      assert offset % gpu_core.SMEM_ALIGNMENT == 0
+      ref_bytes = ref_bits // 8
+      ref = mgpu.memref_slice(ref, slice(offset, offset + ref_bytes))
+      ref = _handle_dtype_bitcast(
+          ref,
+          ir.MemRefType(ref.type).element_type,
+          mgpu_utils.dtype_to_ir_type(dtype),
+      )
+      ref = mgpu.memref_reshape(ref, transformed_shape)
+      return ref, tuple(other_transforms)
+    case _:
+      return ref, transforms
+
+
 def _handle_transforms(
     ref: ir.Value,
     transforms: Sequence[gpu_core.Transform],
@@ -1073,6 +1152,9 @@ def _handle_transforms(
     handle_transposes=True,
     handle_reshapes=True,
 ) -> tuple[ir.Value, Sequence[gpu_core.Transform]]:
+  # Before we handle other transforms, we resolve any possible leading aliasing
+  # transform.
+  ref, transforms = _extract_aliased_ref(ref, transforms)
   transformed_ref = ref
   mlir_dtype = ir.MemRefType(ref.type).element_type
   new_transforms = []
@@ -1207,7 +1289,7 @@ def _swap_lowering_rule(
     raise TypeError(f"Can only store arrays (got {value}).")
   if not isinstance(x_smem, ir.Value) and ir.MemRefType.isinstance(x_smem):
     raise TypeError(f"Can only store to references (got {x_smem}).")
-  x_aval = ctx.avals_in[0]
+  v_aval = ctx.avals_in[1]
   transforms = jax.tree.unflatten(tree, leaves)
   transposed_value = value.layout == mgpu.WGMMA_TRANSPOSED_LAYOUT
   x_smem, transforms = _handle_transforms(
@@ -1219,7 +1301,7 @@ def _swap_lowering_rule(
         gpu_core.UntileRef(tiling),
         *maybe_transpose,
     ):
-      if tiling != (8, swizzle // x_aval.dtype.itemsize):
+      if tiling != (8, swizzle // v_aval.dtype.itemsize):
         raise NotImplementedError("Tiling does not fit swizzle")
 
       if transposed_value != bool(maybe_transpose):
@@ -1237,7 +1319,7 @@ def _swap_lowering_rule(
 
       old_value = mgpu.FragmentedArray.load_tiled(
           x_smem,
-          is_signed=mgpu_utils.is_signed(x_aval.dtype),
+          is_signed=mgpu_utils.is_signed(v_aval.dtype),
           swizzle=swizzle,
           layout=value.layout,
       )
@@ -1249,14 +1331,14 @@ def _swap_lowering_rule(
           old_value = mgpu.FragmentedArray.load_untiled(
               x_smem,
               layout=value.layout,
-              is_signed=mgpu_utils.is_signed(x_aval.dtype),
+              is_signed=mgpu_utils.is_signed(v_aval.dtype),
               optimized=False,
           )
           value.store_untiled(x_smem, optimized=False)
           return old_value
         case _:
           old_value = mgpu.FragmentedArray.load_strided(
-              x_smem, is_signed=mgpu_utils.is_signed(x_aval.dtype)
+              x_smem, is_signed=mgpu_utils.is_signed(v_aval.dtype)
           )
           value.store_untiled(x_smem)
           return old_value
