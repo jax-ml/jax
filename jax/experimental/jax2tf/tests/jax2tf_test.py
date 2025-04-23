@@ -38,7 +38,7 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
-from jax.experimental.shard_map import shard_map
+from jax._src.shard_map import shard_map
 from jax.experimental import pjit
 from jax.sharding import PartitionSpec as P
 
@@ -1472,7 +1472,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
               in_shardings=(sharding.NamedSharding(mesh, P("a")),),
               out_shardings=sharding.NamedSharding(mesh, P("a"))),
           shard_map=(
-              shard_map(func, mesh, in_specs=(P("a", None),),
+              shard_map(func, mesh=mesh, in_specs=(P("a", None),),
                         out_specs=P("a", None))),
           pmap=jax.pmap(func, in_axes=0, out_axes=0),
       )[transform]

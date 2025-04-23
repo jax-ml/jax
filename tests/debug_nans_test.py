@@ -22,7 +22,7 @@ from jax._src import api
 from jax._src import test_util as jtu
 from jax import numpy as jnp
 from jax.experimental import pjit
-from jax.experimental.shard_map import shard_map
+from jax._src.shard_map import shard_map
 from jax.sharding import PartitionSpec as P
 
 jax.config.parse_flags_with_absl()

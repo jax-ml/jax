@@ -22,6 +22,7 @@ from jax._src import core, util
 from jax._src import ops
 from jax._src import prng
 from jax._src import random
+from jax._src import shard_map
 from jax._src.lax import (
   ann,
   convolution,
@@ -34,7 +35,6 @@ from jax._src.lax import (
   windowed_reductions,
 )
 from jax.experimental import roofline
-from jax.experimental import shard_map
 
 # One FMA (Fused Multiply Add) takes 2 flops to compute.
 _FMA_FLOPS_FACTOR = 2

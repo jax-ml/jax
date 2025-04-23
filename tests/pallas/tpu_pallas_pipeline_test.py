@@ -22,7 +22,7 @@ from jax import lax
 from jax._src import test_util as jtu
 from jax.experimental import mesh_utils
 from jax.experimental import pallas as pl
-from jax.experimental import shard_map
+from jax._src import shard_map
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 import numpy as np
@@ -498,7 +498,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
         ),
         in_specs=(P(None, 'x'), P(None, None)),
         out_specs=P(None, None),
-        check_rep=False,
+        check_vma=False,
     )
 
     test = jax.jit(shard(kernel))
@@ -741,7 +741,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
         ),
         in_specs=(P(None, 'x'), P(None, None)),
         out_specs=P(None, None),
-        check_rep=False,
+        check_vma=False,
     )
 
     test = jax.jit(shard(kernel))
@@ -1025,7 +1025,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
         ),
         in_specs=(P(None, 'x'), P('x', None)),
         out_specs=P('x', None),
-        check_rep=False,
+        check_vma=False,
     )
 
     test = jax.jit(shard(lambda x, y: kernel(x, y)[0, 0]))
@@ -1286,7 +1286,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
         ),
         in_specs=(P(None, 'x'), P('x', None)),
         out_specs=P('x', None),
-        check_rep=False,
+        check_vma=False,
     )
 
     test = jax.jit(shard(lambda x, y: kernel(x, y)[1]))

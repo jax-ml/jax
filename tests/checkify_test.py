@@ -23,7 +23,7 @@ import jax
 from jax import lax
 from jax.experimental import checkify
 from jax.experimental import pjit
-from jax.experimental import shard_map
+from jax._src import shard_map
 from jax.sharding import NamedSharding, PartitionSpec as P
 from jax._src import array
 from jax._src import config
@@ -554,7 +554,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     self.assertStartsWith(b_err.get(), "division by zero")
 
   @parameterized.parameters(True, False)
-  def test_shard_map(self, check_rep):
+  def test_shard_map(self, check_vma):
     def f(x):
       # unary func
       return jax.lax.axis_index("dev") * x / x
@@ -571,12 +571,12 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     x = array.make_array_from_callback(inp.shape, ps, lambda idx: inp[idx])
 
     f = shard_map.shard_map(
-        f, mesh, in_specs=pspec, out_specs=pspec, check_rep=check_rep
+        f, mesh=mesh, in_specs=pspec, out_specs=pspec, check_vma=check_vma
     )
     f = jax.jit(f, in_shardings=ps, out_shardings=ps)
     f = checkify.checkify(f, errors=checkify.float_checks)
     g = shard_map.shard_map(
-        g, mesh, in_specs=(pspec, pspec), out_specs=pspec, check_rep=check_rep
+        g, mesh=mesh, in_specs=(pspec, pspec), out_specs=pspec, check_vma=check_vma
     )
     g = jax.jit(g, in_shardings=(ps, ps), out_shardings=ps)
     g = checkify.checkify(g, errors=checkify.float_checks)

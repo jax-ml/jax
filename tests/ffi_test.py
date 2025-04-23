@@ -35,7 +35,7 @@ from jax._src.layout import DeviceLocalLayout
 from jax._src.lib import lapack
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lax import linalg as lax_linalg_internal
-from jax.experimental.shard_map import shard_map
+from jax._src.shard_map import shard_map
 
 jax.config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -334,7 +334,7 @@ class BatchPartitioningTest(jtu.JaxTestCase):
     x = self.rng().randn(8, 4, 5).astype(np.float32)
 
     @partial(shard_map, mesh=mesh, in_specs=P("i"), out_specs=P("i"),
-             check_rep=False)
+             check_vma=False)
     def f(x):
       return batch_partitionable_ffi_call(x)
 

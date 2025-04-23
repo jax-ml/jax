@@ -574,8 +574,8 @@ def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
         'Scan carry input and output got mismatched varying manual axes '
         f'{in_carry_avals} and {out_carry_avals}. Please open an '
         'issue at https://github.com/jax-ml/jax/issues, and as a '
-        'temporary workaround pass the check_rep=False argument to '
-        'shard_map')
+        'temporary workaround pass the check_vma=False argument to '
+        '`jax.shard_map`')
   ys_avals = _map(partial(_prepend_dim_to_aval, length), y_avals)
   return out_carry_avals + ys_avals, jaxpr.effects
 

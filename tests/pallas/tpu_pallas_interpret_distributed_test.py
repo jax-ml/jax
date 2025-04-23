@@ -26,7 +26,7 @@ from jax import lax
 from jax._src import test_util as jtu
 import jax._src.pallas.mosaic.interpret as mosaic_interpret
 from jax.experimental import pallas as pl
-from jax.experimental import shard_map
+from jax._src import shard_map
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 
@@ -114,7 +114,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
             mesh=mesh,
             in_specs=partition,
             out_specs=partition,
-            check_rep=False,
+            check_vma=False,
         )
     )(input_arr)
 
@@ -237,7 +237,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         mesh=mesh,
         in_specs=partition,
         out_specs=partition,
-        check_rep=False
+        check_vma=False
       )
     )(input_arr)
 
@@ -396,7 +396,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         mesh=mesh,
         in_specs=partition,
         out_specs=partition,
-        check_rep=False,
+        check_vma=False,
       )
     )(input_arr)
     pallas_result = jax.block_until_ready(pallas_result)[0]
@@ -680,7 +680,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         mesh=mesh,
         in_specs=P(None, 'x'),
         out_specs=P('x', None),
-        check_rep=False,
+        check_vma=False,
       )
     )(input_arr)
     pallas_result = jax.block_until_ready(pallas_result)
@@ -984,7 +984,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         mesh=mesh,
         in_specs=P(None, 'x'),
         out_specs=P('x', None),
-        check_rep=False,
+        check_vma=False,
       )
     )(input_arr)
     pallas_result = jax.block_until_ready(pallas_result)
@@ -1069,7 +1069,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
           mesh=mesh,
           in_specs=(P(None), P('x', None)),
           out_specs=P('x', None),
-          check_rep=False,
+          check_vma=False,
       )(src_dst_ids, input_arr)
 
     run(jnp.array([[0, 1], [1, 2], [2, 3]], jnp.int32)).block_until_ready()

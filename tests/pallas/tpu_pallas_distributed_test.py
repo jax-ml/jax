@@ -22,7 +22,7 @@ from jax import lax
 from jax._src import test_util as jtu
 from jax.experimental import mesh_utils
 from jax.experimental import pallas as pl
-from jax.experimental import shard_map
+from jax._src import shard_map
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 import numpy as np
@@ -83,7 +83,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     mesh = jax.sharding.Mesh(devices, ['x'])
     y = jax.jit(
         shard_map.shard_map(
-            body, mesh, in_specs=P('x'), out_specs=P('x'), check_rep=False
+            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'), check_vma=False
         )
     )(x)
     expected = jnp.concatenate([x[8:], x[:8]])
@@ -136,7 +136,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     mesh = jax.sharding.Mesh(device_mesh, ['x'])
     y = jax.jit(
         shard_map.shard_map(
-            body, mesh, in_specs=P('x'), out_specs=P('x'), check_rep=False
+            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'), check_vma=False
         )
     )(x)
     if direction == 'right':
@@ -192,10 +192,10 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     y = jax.jit(
         shard_map.shard_map(
             body,
-            mesh,
+            mesh=mesh,
             in_specs=P('x', None),
             out_specs=P('x', None),
-            check_rep=False,
+            check_vma=False,
         )
     )(x)
     if direction == 'right':
@@ -243,7 +243,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     mesh = jax.sharding.Mesh(device_mesh, ['x'])
     y = jax.jit(
         shard_map.shard_map(
-            body, mesh, in_specs=P('x'), out_specs=P('x'), check_rep=False
+            body, mesh=mesh, in_specs=P('x'), out_specs=P('x'), check_vma=False
         )
     )(x)
     expected = jnp.concatenate([x[-8:], x[:-8]])
@@ -317,7 +317,7 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
       mesh=mesh,
       in_specs=P(None, 'x'),
       out_specs=P(None, 'x'),
-      check_rep=False))
+      check_vma=False))
     result = compiled_func(sharded_arr)
 
     perm = tuple((src, permute_fn(src)) for src in range(num_devices))
@@ -403,7 +403,7 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
       mesh=mesh,
       in_specs=P(None, 'x'),
       out_specs=P(None, 'x'),
-      check_rep=False))
+      check_vma=False))
     result_interpret = compiled_func(sharded_arr)
 
     kernel = pl.pallas_call(
@@ -416,7 +416,7 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
       mesh=mesh,
       in_specs=P(None, 'x'),
       out_specs=P(None, 'x'),
-      check_rep=False))
+      check_vma=False))
     result_noninterpret = compiled_func(sharded_arr)
     np.testing.assert_allclose(result_interpret,
                                result_noninterpret,
@@ -498,7 +498,7 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
       mesh=mesh,
       in_specs=P(None, 'x'),
       out_specs=P(None, 'x'),
-      check_rep=False))
+      check_vma=False))
     result_interpret = compiled_func(sharded_arr)
 
     kernel = pl.pallas_call(
@@ -511,7 +511,7 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
       mesh=mesh,
       in_specs=P(None, 'x'),
       out_specs=P(None, 'x'),
-      check_rep=False))
+      check_vma=False))
     result_noninterpret = compiled_func(sharded_arr)
     np.testing.assert_allclose(result_interpret,
                                result_noninterpret,
@@ -569,7 +569,7 @@ class VerificationTest(jtu.JaxTestCase):
       previous_config = jax.config.read('jax_pallas_dump_promela_to')
       jax.config.update('jax_pallas_dump_promela_to', tmpdir)
       shard_map.shard_map(
-          kernel, mesh=mesh, in_specs=P('x'), out_specs=P(None), check_rep=False
+          kernel, mesh=mesh, in_specs=P('x'), out_specs=P(None), check_vma=False
       )(jnp.ones((8, 128, 128), jnp.float32))
       jax.config.update('jax_pallas_dump_promela_to', previous_config)
       self.assertNotEmpty(os.listdir(tmpdir))

@@ -39,7 +39,7 @@ from jax._src.state import discharge as state_discharge
 from jax.experimental import mesh_utils
 from jax.experimental import mosaic
 from jax.experimental import pallas as pl
-from jax.experimental import shard_map
+from jax._src import shard_map
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas.ops.tpu import example_kernel
 from jax.extend import linear_util as lu
@@ -2584,7 +2584,7 @@ class PallasCallTPUBooleanTest(PallasBaseTest):
                 mesh=mesh,
                 in_specs=P(None, 'x'),
                 out_specs=P(None, 'x'),
-                check_rep=False
+                check_vma=False
             )
       )(input_arr)
 
