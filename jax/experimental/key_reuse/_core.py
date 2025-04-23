@@ -38,7 +38,7 @@ from jax._src.debugging import debug_callback_p
 from jax._src.interpreters import partial_eval as pe
 from jax._src.util import weakref_lru_cache
 
-from jax.experimental.shard_map import shard_map_p
+from jax._src.shard_map import shard_map_p
 import numpy as np
 
 

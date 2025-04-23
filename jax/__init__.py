@@ -131,6 +131,8 @@ from jax._src.api import vmap as vmap
 from jax._src.sharding_impls import NamedSharding as NamedSharding
 from jax._src.sharding_impls import make_mesh as make_mesh
 
+from jax._src.shard_map import shard_map as shard_map
+
 # Force import, allowing jax.interpreters.* to be used after import jax.
 from jax.interpreters import ad, batching, mlir, partial_eval, pxla, xla
 del ad, batching, mlir, partial_eval, pxla, xla
