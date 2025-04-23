@@ -22,7 +22,7 @@ from collections.abc import Callable, Iterable, Sequence
 import dataclasses
 import enum
 import itertools as it
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, Union
 
 import jax
 from jax._src import core as jax_core
@@ -240,7 +240,7 @@ class MemoryRefTransform(pallas_core.MemoryRefTransform, abc.ABC):
         shape=self.to_gpu_transform().transform_shape(aval.shape)
     )
 
-Index = mgpu.DynamicSlice | slice | int | ir.Value
+Index = Union[mgpu.DynamicSlice, slice, int, ir.Value]
 
 @dataclasses.dataclass(frozen=True)
 class TilingTransform(MemoryRefTransform):

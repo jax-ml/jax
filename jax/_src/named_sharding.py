@@ -349,7 +349,7 @@ def named_sharding_to_xla_hlo_sharding(
 
   last_tile_dims = []
   if replicated_mesh_axes:
-    axes_by_type = collections.defaultdict(list)
+    axes_by_type: dict[Any, list[int]] = collections.defaultdict(list)
     size_by_type = collections.defaultdict(lambda: 1)  # type: ignore
     assert {x[0] for x in replicated_mesh_axes}.issuperset(set(special_axes.keys()))
     for i, size in replicated_mesh_axes:
