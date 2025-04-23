@@ -206,8 +206,13 @@ def get_clangpp_path(clang_path):
   clang_path = pathlib.Path(clang_path)
   clang_exec_name = clang_path.name
   clangpp_exec_name = clang_exec_name
-  if "clang++" not in clang_exec_name:
-    clangpp_exec_name = clang_exec_name.replace("clang", "clang++")
+  clangpp_path = clang_path.parent / clang_exec_name
+  # Try and match what the user passed in (either clang-18 or clang)
+  if "clang++" not in clangpp_exec_name:
+    clangpp_exec_name = clangpp_exec_name.replace("clang", "clang++")
+    clangpp_path = clang_path.parent / clangpp_exec_name
+    if not clangpp_path.exists():
+      clangpp_exec_name = "clang++"
   clangpp_path = clang_path.parent / clangpp_exec_name
   if not clangpp_path.exists():
     raise FileNotFoundError(
