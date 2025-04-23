@@ -1053,7 +1053,7 @@ nb::list PyTreeDef::FlattenUpTo(nb::handle xs) const {
         auto* registration = registry_->Lookup(object.type());
         if (registration != node.custom) {
           throw std::invalid_argument(absl::StrFormat(
-              "Custom dataclasss node type mismatch: expected type: %s, value: "
+              "Custom dataclass node type mismatch: expected type: %s, value: "
               "%s.",
               nb::cast<absl::string_view>(nb::repr(node.custom->type)),
               nb::cast<absl::string_view>(nb::repr(std::move(object)))));
