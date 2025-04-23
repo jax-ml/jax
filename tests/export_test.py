@@ -29,7 +29,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax import export
 from jax.experimental import pjit
-from jax.experimental.shard_map import shard_map
+from jax._src.shard_map import shard_map
 from jax.sharding import NamedSharding
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P

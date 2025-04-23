@@ -22,7 +22,7 @@ import jax
 from jax._src import test_util as jtu
 from jax._src.state import discharge as state_discharge
 from jax.experimental import pallas as pl
-from jax.experimental import shard_map
+from jax._src import shard_map
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 import numpy as np
@@ -623,7 +623,7 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
     @jax.jit
     @partial(
         shard_map.shard_map, mesh=mesh, in_specs=(P('x'),), out_specs=P('x'),
-        check_rep=False,
+        check_vma=False,
     )
     def f(x):
       copy_start, send_done, recv_done = make_async_remote_copy('x')
@@ -646,7 +646,7 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
     @jax.jit
     @partial(
         shard_map.shard_map, mesh=mesh, in_specs=(P('x'),), out_specs=P('x'),
-        check_rep=False,
+        check_vma=False,
     )
     def f(x):
       copy_start, send_done, recv_done = make_async_remote_copy(
@@ -679,7 +679,7 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
     @jax.jit
     @partial(
         shard_map.shard_map, mesh=mesh, in_specs=(P('x'),), out_specs=P('x'),
-        check_rep=False,
+        check_vma=False,
     )
     def f(x):
       copy_start, send_done, recv_done = make_async_remote_copy('x')
@@ -704,7 +704,7 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
     @jax.jit
     @partial(
         shard_map.shard_map, mesh=mesh, in_specs=(P('x'),), out_specs=P('x'),
-        check_rep=False,
+        check_vma=False,
     )
     def f(x):
       assert x.shape[0] == 1
@@ -737,7 +737,7 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
     @jax.jit
     @partial(
         shard_map.shard_map, mesh=mesh, in_specs=(P('x'),), out_specs=P('x'),
-        check_rep=False,
+        check_vma=False,
     )
     def f(x):
       assert x.shape[0] == 1

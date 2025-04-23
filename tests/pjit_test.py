@@ -42,7 +42,7 @@ from jax.lax import with_sharding_constraint
 from jax._src import prng
 from jax.sharding import PartitionSpec as P, Mesh
 from jax.experimental import multihost_utils
-from jax.experimental.shard_map import shard_map
+from jax._src.shard_map import shard_map
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax.experimental.custom_partitioning import (
     custom_partitioning, SdyShardingRule, BATCHING)
@@ -4512,7 +4512,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return x + y[..., jnp.newaxis]
 
     f = jax.jit(shard_map(
-        _f, mesh, in_specs=(P(None, 'i'), P(None)),
+        _f, mesh=mesh, in_specs=(P(None, 'i'), P(None)),
         out_specs=P(None, 'i')))
     f(jnp.zeros((2, 16)), jnp.ones(2))
 
@@ -4530,7 +4530,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return x + y[..., jnp.newaxis]
 
     f = jax.jit(shard_map(
-        _f, mesh, in_specs=(P(None, 'i'), P(None)),
+        _f, mesh=mesh, in_specs=(P(None, 'i'), P(None)),
         out_specs=P(None, 'i')))
     f(jnp.zeros((2, 16)), jnp.ones(2))
 
@@ -6971,7 +6971,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return const * 2
 
     shmap_f = shard_map(f, mesh=mesh, in_specs=(), out_specs=P('x'),
-                        auto=frozenset({'y'}))
+                        axis_names={'x'})
     f = jax.jit(shmap_f)
     out = f()
     self.assertArraysEqual(out, jnp.concatenate([const * 2, const * 2]))

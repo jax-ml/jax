@@ -2011,7 +2011,7 @@ def _pvary_abstract_eval(*args, axes, axis_index_groups):
         f"non-device-varying type, but got {arg_vma} for collective acting "
         f"over axis name {axes}. Please open an issue at "
         "https://github.com/jax-ml/jax/issues, and as a temporary "
-        "workaround pass the check_rep=False argument to shard_map")
+        "workaround pass the check_vma=False argument to `jax.shard_map`")
   sharding = NamedSharding(mesh_lib.get_abstract_mesh(), P())
   return [a.update(sharding=sharding, vma=a.vma.union(frozenset(axes)))
           for a in args]
@@ -2041,7 +2041,7 @@ def standard_vma_rule(prim_name, *avals, **kwargs) -> frozenset[AxisName]:
         f'Primitive {prim_name} requires varying manual axes '
         f'to match, but got {[vma, *vmas]}. Please open an issue at '
         'https://github.com/jax-ml/jax/issues and as a temporary '
-        'workaround pass the check_rep=False argument to shard_map')
+        'workaround pass the check_vma=False argument to `jax.shard_map`')
   return vma
 
 # Dynamic shape stuff below here! We keep the abstract values distinct just so

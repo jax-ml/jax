@@ -19,7 +19,7 @@ from jax import random as jax_random
 from jax._src import test_util as jtu
 from jax._src.pallas.mosaic import random as plrandom
 from jax.experimental import pallas as pl
-from jax.experimental import shard_map
+from jax._src import shard_map
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas.ops.tpu.random import philox  # pylint: disable=unused-import  # noqa: F401
 from jax.experimental.pallas.ops.tpu.random import threefry  # pylint: disable=unused-import  # noqa: F401
@@ -306,7 +306,7 @@ class ThreefryTest(parameterized.TestCase):
           mesh=mesh,
           in_specs=partition,
           out_specs=partition,
-          check_rep=False,
+          check_vma=False,
       )
       jax_gen = generate(key_jax)
       pl_gen = generate(key_pallas)

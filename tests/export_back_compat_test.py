@@ -63,7 +63,7 @@ from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_d
 from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_approx_top_k
 
 from jax.experimental import pjit
-from jax.experimental.shard_map import shard_map
+from jax._src.shard_map import shard_map
 import jax.numpy as jnp
 
 from jax.sharding import Mesh

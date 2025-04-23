@@ -106,6 +106,31 @@ Automatic differentiation
     closure_convert
     checkpoint
 
+Vectorization (:code:`vmap`)
+----------------------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    vmap
+    numpy.vectorize
+
+Parallelization (:code:`pmap`)
+------------------------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    shard_map
+    pmap
+    devices
+    local_devices
+    process_index
+    device_count
+    local_device_count
+    process_count
+    process_indices
+
 Customization
 -------------
 
@@ -216,30 +241,6 @@ Array properties and methods
     Array.view
     Array.T
     Array.mT
-
-Vectorization (:code:`vmap`)
-----------------------------
-
-.. autosummary::
-  :toctree: _autosummary
-
-    vmap
-    numpy.vectorize
-
-Parallelization (:code:`pmap`)
-------------------------------
-
-.. autosummary::
-  :toctree: _autosummary
-
-    pmap
-    devices
-    local_devices
-    process_index
-    device_count
-    local_device_count
-    process_count
-    process_indices
 
 Callbacks
 ---------

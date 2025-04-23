@@ -35,7 +35,7 @@ from jax._src.sharding_impls import (NamedSharding, PositionalSharding,
                                      SingleDeviceSharding, GSPMDSharding,
                                      TransferToMemoryKind, PartitionSpec as P)
 from jax.experimental.compute_on import compute_on
-from jax.experimental.shard_map import shard_map
+from jax._src.shard_map import shard_map
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -665,7 +665,7 @@ class DevicePutTest(jtu.JaxTestCase):
 
     def write(x):
       return x.at[16 * 1024:].set(0)
-    x = shard_map(write, mesh, P(('x'),), P(('x')))(x)
+    x = shard_map(write, mesh=mesh, in_specs=P(('x'),), out_specs=P(('x')))(x)
 
     chunk_size = 8
     def inner(state):
@@ -686,8 +686,8 @@ class DevicePutTest(jtu.JaxTestCase):
       _, _, cpu_x = jax.lax.while_loop(cond, inner, (0, x, output))
       return cpu_x
 
-    fn = jax.jit(shard_map(foo, mesh, P(('x'),), P(('x')),
-                       check_rep=False),
+    fn = jax.jit(shard_map(foo, mesh=mesh, in_specs=P(('x'),),
+                           out_specs=P(('x')), check_vma=False),
                  out_shardings=cpu_sharding)
     y = fn(x)
     jax.block_until_ready(y)

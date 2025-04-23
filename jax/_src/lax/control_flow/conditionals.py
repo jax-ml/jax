@@ -448,8 +448,8 @@ def _cond_abstract_eval(*avals: core.AbstractValue,
       raise Exception("The branches of cond produced mismatched varying manual "
                       f"axes. Got {b0_vma} and {b_vma}. Please open an issue "
                       "at https://github.com/jax-ml/jax/issues, and as a "
-                      "temporary workaround pass the check_rep=False argument "
-                      "to shard_map")
+                      "temporary workaround pass the check_vma=False argument "
+                      "to `jax.shard_map`")
   return branches[0].out_avals, joined_effects
 
 def _bcast_select(pred, on_true, on_false):

@@ -32,7 +32,7 @@ Key concepts:
     of all devices across all processes.
   * Use standard JAX parallelism APIs like {func}`~jax.jit` (see
     {doc}`/sharded-computation` tutorial) and
-    {func}`~jax.experimental.shard_map.shard_map`. jax.jit only accepts
+    {func}`~jax.shard_map`. jax.jit only accepts
     globally shaped arrays. shard_map allows you to drop to per-device
     shape.
   * Make sure all processes run the same parallel computations in the same
@@ -128,7 +128,7 @@ global devices.
 So how do you actually run a computation involving cross-process communication?
 **Use the same parallel evaluation APIs that you would in a single process!**
 
-For example, {func}`~jax.experimental.shard_map.shard_map` can be used
+For example, {func}`~jax.shard_map` can be used
 to run a parallel computation across multiple processes. (If you’re
 not already familiar with how to use `shard_map` to run across
 multiple devices within a single process, check out the
