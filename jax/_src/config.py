@@ -239,7 +239,7 @@ def trace_context():
           disable_jit.value,
           debug_key_reuse.value,
           jax_xla_profile_version.value,
-          _check_rep.value,
+          _check_vma.value,
           # Technically this affects jaxpr->stablehlo lowering, not tracing.
           hlo_source_file_canonicalization_regex.value,
           pgle_profiling_runs.value,
@@ -1079,8 +1079,8 @@ use_direct_linearize = bool_state(
     include_in_jit_key=True)
 
 # TODO make it so people don't use this, this is internal...
-_check_rep = bool_state(
-    name='check_rep',
+_check_vma = bool_state(
+    name='check_vma',
     default=False,
     help='internal implementation detail of shard_map, DO NOT USE',
     include_in_jit_key=True)
