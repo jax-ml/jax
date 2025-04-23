@@ -176,6 +176,10 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
       self.skipTest("Test requires StableHLO v1.10.0 or higher.")
     if not jtu.is_device_tpu():
       self.skipTest("Skipping test on non TPU devices.")
+    # TODO(b/412112097): Enable this test on TPU version 7 and above once
+    # accuracy analysis is done.
+    if jtu.get_tpu_version() >= 7:
+      self.skipTest("Accuracy analysis is not yet done on TPU version 7 and above.")
     super().setUp()
 
   def test_result_accuracy_mode_attr(self):
