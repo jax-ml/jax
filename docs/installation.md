@@ -33,7 +33,7 @@ The table below shows all supported platforms and installation options. Check if
 | CPU              | {ref}`yes <install-cpu>`              | {ref}`yes <install-cpu>`        | {ref}`jax≤0.4.38 only <install-cpu>`  | {ref}`yes <install-cpu>`              | {ref}`yes <install-cpu>` | {ref}`yes <install-cpu>`                 |
 | NVIDIA GPU       | {ref}`yes <install-nvidia-gpu>`       | {ref}`yes <install-nvidia-gpu>` | no                                    | n/a                                   | no                       | {ref}`experimental <install-nvidia-gpu>` |
 | Google Cloud TPU | {ref}`yes <install-google-tpu>`       | n/a                             | n/a                                   | n/a                                   | n/a                      | n/a                                      |
-| AMD GPU          | {ref}`experimental <install-amd-gpu>` | no                              | {ref}`experimental <install-mac-gpu>` | n/a                                   | no                       | no                                       |
+| AMD GPU          | {ref}`yes <install-amd-gpu>`          | no                              | {ref}`experimental <install-mac-gpu>` | n/a                                   | no                       | no                                       |
 | Apple GPU        | n/a                                   | no                              | n/a                                   | {ref}`experimental <install-mac-gpu>` | n/a                      | n/a                                      |
 | Intel GPU        | {ref}`experimental <install-intel-gpu>`| n/a                            | n/a                                   | n/a                                     | no                       | no                                       |
 
@@ -226,10 +226,10 @@ refer to
 (install-amd-gpu)=
 ## AMD GPU (Linux)
 
-JAX has experimental ROCm support. There are two ways to install JAX:
+AMD GPU support is provided by a ROCm JAX plugin supported by AMD.
 
-* Use [AMD's Docker container](https://hub.docker.com/r/rocm/jax-community/tags); or
-* Build from source. Refer to the section [Additional notes for building a ROCm jaxlib for AMD GPUs](https://docs.jax.dev/en/latest/developer.html#additional-notes-for-building-a-rocm-jaxlib-for-amd-gpus).
+There are several ways to use JAX on AMDGPU devices.
+Please see [AMD's instructions](https://github.com/jax-ml/jax/blob/main/build/rocm/README.md) for details.
 
 (install-intel-gpu)=
 ## Intel GPU
