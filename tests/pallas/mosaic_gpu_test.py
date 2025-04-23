@@ -2817,12 +2817,7 @@ class ExportTest(PallasTest):
     def kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...] + 1.0
 
-    _ = export.export(
-        kernel,
-        disabled_checks=[
-            export.DisabledSafetyCheck.custom_call("mosaic_gpu"),
-        ],
-    )(out_shape)
+    _ = export.export(kernel)(out_shape)
 
 
 class ExamplesTest(PallasTest):
