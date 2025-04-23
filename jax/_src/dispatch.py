@@ -240,7 +240,7 @@ class SourceInfo(NamedTuple):
 def get_intermediate_shardings(
     jaxpr: core.Jaxpr) -> Sequence[tuple[Sharding, SourceInfo]]:
   from jax._src import pjit
-  from jax.experimental import shard_map
+  from jax._src import shard_map
 
   out = []
   for eqn in jaxpr.eqns:
