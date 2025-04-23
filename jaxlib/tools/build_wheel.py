@@ -102,41 +102,6 @@ def patch_copy_mlir_import(
     f.write(replaced)
 
 
-_XLA_EXTENSION_STUBS = [
-    "__init__.pyi",
-    "guard_lib.pyi",
-    "ifrt_programs.pyi",
-    "ifrt_proxy.pyi",
-    "jax_jit.pyi",
-    "ops.pyi",
-    "pmap_lib.pyi",
-    "profiler.pyi",
-    "pytree.pyi",
-    "transfer_guard_lib.pyi",
-]
-
-
-def patch_copy_xla_extension_stubs(
-    dst_dir, runfiles=None, wheel_sources_map=None
-):
-  xla_extension_dir = os.path.join(dst_dir, "xla_extension")
-  os.makedirs(xla_extension_dir)
-  for stub_name in _XLA_EXTENSION_STUBS:
-    stub_path = _get_file_path(
-        f"__main__/jaxlib/xla/xla_extension/{stub_name}",
-        runfiles,
-        wheel_sources_map,
-    )
-    stub_path = str(stub_path)  # Make pytype accept os.path.exists(stub_path).
-    with open(stub_path) as f:
-      src = f.read()
-    src = src.replace(
-        "from xla.python import xla_extension", "from .. import xla_extension"
-    )
-    with open(os.path.join(xla_extension_dir, stub_name), "w") as f:
-      f.write(src)
-
-
 def verify_mac_libraries_dont_reference_chkstack(
     runfiles=None, wheel_sources_map=None
 ):
@@ -240,7 +205,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/gpu_sparse.py",
           f"{source_file_prefix}jaxlib/plugin_support.py",
           f"{source_file_prefix}jaxlib/version.py",
-          f"{source_file_prefix}jaxlib/xla/xla_client.py",
+          f"{source_file_prefix}jaxlib/xla_client.py",
           f"{source_file_prefix}jaxlib/weakref_lru_cache.{pyext}",
           f"{source_file_prefix}jaxlib/weakref_lru_cache.pyi",
           f"{source_file_prefix}jaxlib/xla_extension.{pyext}",
@@ -250,9 +215,6 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
   # type stubs.
   with open(jaxlib_dir / "py.typed", "w"):
     pass
-  patch_copy_xla_extension_stubs(
-      jaxlib_dir, runfiles=r, wheel_sources_map=wheel_sources_map
-  )
 
   copy_files(
       dst_dir=jaxlib_dir / "cpu",

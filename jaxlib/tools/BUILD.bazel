@@ -66,8 +66,8 @@ py_binary(
         "//jaxlib:README.md",
         "//jaxlib:jaxlib_binaries",
         "//jaxlib:setup.py",
-        "//jaxlib/xla:xla_client.py",
-        "//jaxlib/xla:xla_extension",
+        "//jaxlib:xla_client.py",
+        "//jaxlib:xla_extension",
         "@xla//xla/ffi/api:api.h",
         "@xla//xla/ffi/api:c_api.h",
         "@xla//xla/ffi/api:ffi.h",
@@ -261,7 +261,7 @@ wheel_sources(
     data_srcs = [
         "//jaxlib",
         "//jaxlib:jaxlib_binaries",
-        "//jaxlib/xla:xla_extension",
+        "//jaxlib:xla_extension",
     ],
     hdr_srcs = [
         "@xla//xla/ffi/api:ffi",
@@ -273,7 +273,7 @@ wheel_sources(
         "//jaxlib:README.md",
         "LICENSE.txt",
         "//jaxlib:setup.py",
-        "//jaxlib/xla:xla_client.py",
+        "//jaxlib:xla_client.py",
     ],
     symlink_data_srcs = [
         "//jaxlib",
