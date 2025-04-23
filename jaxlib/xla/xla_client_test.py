@@ -141,7 +141,7 @@ def _Aligned(x, alignment=_XLA_CPU_MAX_ALIGNMENT):
 
 # Return an unaligned copy of `x`. The result buffer's memory address is
 # guaranteed to not be aligned to `alignment`. This function is useful for
-# testing failiures.
+# testing failures.
 def _Unaligned(x, alignment=_XLA_CPU_MIN_ALIGNMENT):
   if (x.ctypes.data % alignment) != 0:
     return x

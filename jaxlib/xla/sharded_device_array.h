@@ -34,7 +34,7 @@ namespace jax {
 // High level introduction.
 //
 // pmap and other parallel computation functions distribute some computation on
-// several devices. On December 2020, the devices mesh (i.e. N-dimentional array
+// several devices. On December 2020, the devices mesh (i.e. N-dimensional array
 // of devices on which we map the computation) is defined by the user.
 //
 // We describe how to shard the inputs, and how to map it to the mesh of devices
@@ -157,7 +157,7 @@ using MeshDimAssignment = std::variant<ShardedAxis, Replicated>;
 //    mesh_mapping = [ShardedAxis(0)]
 //
 // 2. With an input array of shape [6], that we want to chunk into [2, 3]
-//    Assuming an device mesh [3, 4, 2] of devices, we will have:
+//    Assuming a device mesh [3, 4, 2] of devices, we will have:
 //
 //    sharding = [Chunked([2, 3])]
 //    mesh_mapping = [ShardedAxis(1), Replicated, ShardedAxis(0)]
@@ -193,7 +193,7 @@ class ShardingSpec {
 
  private:
   //  `sharding` specifies how the array is supposed to get partitioned into
-  //  chunks. Its length matchs the rank of the array. See the docstring
+  //  chunks. Its length matches the rank of the array. See the docstring
   //  of `AvalDimSharding` for the supported partitioning schemes.
   std::vector<AvalDimSharding> sharding_;
   //  `mesh_mapping` describes an assignments of the array chunks created by

@@ -893,8 +893,7 @@ void BuildPmapSubmodule(nb::module_& m) {
            [](const NoSharding& self) { return nb::make_tuple(); })
       .def("__setstate__",
            [](NoSharding& self, nb::tuple t) { new (&self) NoSharding(); })
-      .def("__repr__",
-           [](const NoSharding& chuncked) { return "NoSharding()"; })
+      .def("__repr__", [](const NoSharding& self) { return "NoSharding()"; })
       .def("__eq__",
            [](const NoSharding& self, nb::object obj) {
              return nb::isinstance<NoSharding>(obj);
@@ -914,9 +913,9 @@ void BuildPmapSubmodule(nb::module_& m) {
            })
       .def_ro("chunks", &Chunked::chunks)
       .def("__repr__",
-           [](const Chunked& chuncked) {
-             return absl::StrCat("Chunked(",
-                                 absl::StrJoin(chuncked.chunks, ","), ")");
+           [](const Chunked& self) {
+             return absl::StrCat("Chunked(", absl::StrJoin(self.chunks, ","),
+                                 ")");
            })
       .def("__eq__", [](const Chunked& self, nb::object other) {
         if (!nb::isinstance<Chunked>(other)) {
