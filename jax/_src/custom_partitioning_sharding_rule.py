@@ -15,6 +15,7 @@
 """Implements SdyShardingRule."""
 
 from collections import OrderedDict
+from typing import Union
 
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import sdy
@@ -28,7 +29,7 @@ BATCHING: str = "…"
 _BATCHING_DIM_FACTOR_PREFIX = "?"
 
 # A Jax value in general corresponds to an ir.Type or a tuple of ir.Types.
-IrTypes = ir.Type | tuple[ir.Type, ...]
+IrTypes = Union[ir.Type, tuple[ir.Type, ...]]
 
 def _check_factor(factor:str):
   """Validates a factor.

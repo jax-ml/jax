@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-from mlir import ir
+from jaxlib.mlir import ir
 
 def sdy_round_trip_export_pipeline(
     module: ir.module

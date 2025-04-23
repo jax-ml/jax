@@ -19,11 +19,16 @@ from .plugin_support import import_from_plugin
 _cuda_prng = import_from_plugin("cuda", "_prng")
 _hip_prng = import_from_plugin("rocm", "_prng")
 
+
 def registrations() -> dict[str, list[tuple[str, Any, int]]]:
-  registrations = {"CUDA": [], "ROCM": []}
+  registrations: dict[str, list[tuple[str, Any, int]]] = {
+      "CUDA": [],
+      "ROCM": [],
+  }
   for platform, module in [("CUDA", _cuda_prng), ("ROCM", _hip_prng)]:
     if module:
       registrations[platform].extend(
           (name, value, int(name.endswith("_ffi")))
-          for name, value in module.registrations().items())
+          for name, value in module.registrations().items()
+      )
   return registrations

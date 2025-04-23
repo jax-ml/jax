@@ -22,11 +22,16 @@ _hipsparse = import_from_plugin("rocm", "_sparse")
 cuda_is_supported = bool(_cusparse and _cusparse.sparse_supported)
 rocm_is_supported = bool(_hipsparse and _hipsparse.sparse_supported)
 
+
 def registrations() -> dict[str, list[tuple[str, Any, int]]]:
-  registrations = {"CUDA": [], "ROCM": []}
+  registrations: dict[str, list[tuple[str, Any, int]]] = {
+      "CUDA": [],
+      "ROCM": [],
+  }
   for platform, module in [("CUDA", _cusparse), ("ROCM", _hipsparse)]:
     if module:
       registrations[platform].extend(
           (name, value, int(name.endswith("_ffi")))
-          for name, value in module.registrations().items())
+          for name, value in module.registrations().items()
+      )
   return registrations  # pytype: disable=bad-return-type

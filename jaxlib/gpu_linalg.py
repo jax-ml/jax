@@ -19,12 +19,17 @@ from .plugin_support import import_from_plugin
 _cuda_linalg = import_from_plugin("cuda", "_linalg")
 _hip_linalg = import_from_plugin("rocm", "_linalg")
 
+
 def registrations() -> dict[str, list[tuple[str, Any, int]]]:
-  registrations = {"CUDA": [], "ROCM": []}
+  registrations: dict[str, list[tuple[str, Any, int]]] = {
+      "CUDA": [],
+      "ROCM": [],
+  }
   for platform, module in [("CUDA", _cuda_linalg), ("ROCM", _hip_linalg)]:
     if module:
       registrations[platform].extend(
-          (*i, 1) for i in module.registrations().items())
+          (*i, 1) for i in module.registrations().items()
+      )
   return registrations  # pytype: disable=bad-return-type
 
 

@@ -18,11 +18,11 @@ from collections.abc import Callable, Sequence
 import enum
 from functools import partial
 import itertools
-from typing import cast
+from typing import cast, Union
 
 from jax._src.lib.mlir import ir
 
-MlirOperation = ir.Operation | ir.OpView
+MlirOperation = Union[ir.Operation, ir.OpView]
 
 def in_layouts(op: MlirOperation) -> Sequence[ir.Attribute]:
   """Returns the in_layouts attribute of the given operation.
