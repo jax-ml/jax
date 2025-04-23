@@ -7282,6 +7282,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out = reshard(np.arange(8), P('x'))
       self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
     finally:
+      self.assertIsNone(prev_mesh)
       jax.sharding.set_mesh(prev_mesh)
 
   @jtu.with_explicit_mesh((2,), ('x',))

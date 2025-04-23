@@ -45,6 +45,7 @@ from jax._src.partition_spec import PartitionSpec
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 import numpy as np
 
+config_ext = xc._xla.config
 
 Shape = tuple[int, ...]
 Device = xc.Device
@@ -1398,17 +1399,17 @@ def set_mesh(mesh: mesh_lib.Mesh | None) -> mesh_lib.Mesh | None:
   if mesh is not None and not isinstance(mesh, mesh_lib.Mesh):
     raise ValueError(
         f"Expected mesh of type `jax.sharding.Mesh`. Got {type(mesh)}")
+  assert mesh is None or isinstance(mesh, mesh_lib.Mesh)
   if not core.trace_state_clean():
     raise ValueError('`set_mesh` can only be used outside of `jax.jit`.')
 
   if mesh is None:
-    config.abstract_mesh_context_manager.set_global(mesh_lib.empty_abstract_mesh)  # type: ignore
+    config.abstract_mesh_context_manager.set_local(mesh_lib.empty_abstract_mesh)  # type: ignore
   else:
-    config.abstract_mesh_context_manager.set_global(mesh.abstract_mesh)  # type: ignore
+    config.abstract_mesh_context_manager.set_local(mesh.abstract_mesh)  # type: ignore
 
-  prev_mesh = config.device_context.get_global()
-  config.device_context.set_global(mesh)
-  return prev_mesh
+  prev_mesh = config.device_context.swap_local(mesh)
+  return None if prev_mesh is config_ext.unset else prev_mesh
 
 @contextlib.contextmanager
 def use_concrete_mesh(mesh: mesh_lib.Mesh | None):
