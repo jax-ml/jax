@@ -143,6 +143,7 @@ exclude_patterns = [
     'autodidax2_part1.md',
     'sharded-computation.md',
     'ffi.ipynb',
+    'notebooks/host-offloading.ipynb',
 ]
 
 # The name of the Pygments (syntax highlighting) style to use.
@@ -234,7 +235,8 @@ nb_execution_excludepatterns = [
     'pallas/tpu/distributed.*',
     'pallas/tpu/sparse.*',
     'pallas/tpu/matmul.*',
-    'distributed_data_loading.*'
+    'distributed_data_loading.*',
+    'notebooks/host-offloading.*',
 ]
 
 # -- Options for HTMLHelp output ---------------------------------------------
