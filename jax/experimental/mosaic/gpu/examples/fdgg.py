@@ -15,6 +15,7 @@
 """Grouped GEMM kernel for Blackwell."""
 
 from dataclasses import dataclass
+import contextlib
 import itertools
 import math
 
@@ -36,6 +37,12 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from cuda.bindings.runtime import cudaDeviceGetAttribute, cudaDeviceAttr, cudaGetDeviceCount, cudaError_t
+
+WARPSIZE = 32
+WARPGROUPSIZE = 4 * WARPSIZE
+# https://docs.nvidia.com/cuda/cuda-c-programming-guide/#features-and-technical-specifications-technical-specifications-per-compute-capability
+# Maximum x- or y-dimensionality of a block
+MAX_WARPS_PER_BLOCK_DIM = 32
 
 
 TMA_WARP = 1
@@ -91,6 +98,77 @@ def subgroup_for(work_id, work_id_group_end, worker_count):
 
 def bytecount(shape, dtype):
   return int(np.prod(shape) * dtype.dtype.itemsize)
+@dataclass
+class Warp:
+  x: int  # id of warp
+  def __repr__(self):
+    x = self.x
+    return f"Warp({x=}, range={x*WARPSIZE}-{(x+1)*WARPSIZE-1})"
+
+
+@dataclass
+class Warpgroup:
+  x: int  # id of first warp
+  def __repr__(self):
+    x = self.x
+    return f"Warpgroup({x=}, range={x*WARPSIZE}-{(x+4)*WARPSIZE-1})"
+
+
+@dataclass
+class WarpAllocator:
+  def __init__(self):
+    self.warp_free = MAX_WARPS_PER_BLOCK_DIM * [True]
+
+  def alloc_warp(self):
+    i = self.warp_free.index(True)
+    result = Warp(i)
+    self.warp_free[i] = False
+    return result
+
+  def alloc_warpgroup(self):
+    i = None
+    for j in range(0, len(self.warp_free), 4):
+      if all(self.warp_free[j:j+4]):
+        i = j
+        break
+    assert i is not None
+    result = Warpgroup(i)
+    for j in range(4):
+      self.warp_free[i+j] = False
+    return result
+
+  def block_size(self):
+    return WARPSIZE * (len(self.warp_free) - self.warp_free[::-1].index(False))
+
+
+@contextlib.contextmanager
+def _only(w, warpid):
+  index = ir.IndexType.get()
+  if isinstance(w, Warp):
+    is_warp_x = arith.cmpi(arith.CmpIPredicate.eq, warpid, c(w.x,index))
+    with ir.InsertionPoint(scf.IfOp(is_warp_x).then_block):
+      yield
+      scf.yield_([])
+  elif isinstance(w, Warpgroup):
+    a = w.x
+    b = a+4
+    gea = arith.cmpi(arith.CmpIPredicate.uge, warpid, c(a,index))
+    ltb = arith.cmpi(arith.CmpIPredicate.ult, warpid, c(b,index))
+    predicate = arith.andi(gea, ltb)
+    with ir.InsertionPoint(scf.IfOp(predicate).then_block):
+      yield
+      scf.yield_([])
+  else:
+    raise ValueError
+
+
+@contextlib.contextmanager
+def single_warp_thread():
+  i1 = ir.IntegerType.get_signless(1)
+  elected = nvvm.elect_sync(i1)
+  with ir.InsertionPoint(scf.IfOp(elected).then_block):
+    yield
+    scf.yield_([])
 
 
 def build_kernel(
@@ -137,13 +215,24 @@ def build_kernel(
                                   cx(1)),
                        y)
 
+  allocator = WarpAllocator()
+  warp = allocator.alloc_warp
+  warpgroup = allocator.alloc_warpgroup
+
+  tma_warp = warp()
+  mma_warp = warp()
+
+
   def fdgg(ctx, a, w, group_sizes, d, smem):
     ((a_smem, b_smem), d_smem), barriers, mma_done_barrier, acc = smem
     (ab_full_barriers, ab_empty_barriers) = barriers
 
-    warp_idx = mgpu.warp_idx(sync=True)
-    is_warp_leader = nvvm.elect_sync(i1)
-    is_leader_of = lambda i: arith.andi(arith.cmpi(arith.CmpIPredicate.eq, warp_idx, c(i, i32)), is_warp_leader)
+    warp_idx = arith.index_cast(index, mgpu.warp_idx(sync=True))
+
+    @contextlib.contextmanager
+    def only(w):
+      with _only(w, warp_idx):
+        yield
 
     worker_id = gpu.block_id(gpu.Dimension.x)
     worker_count = cx(cta_count)
@@ -194,7 +283,7 @@ def build_kernel(
             dtype=acc.dtype,
         )
         get_persistent_ki = lambda ki: arith.addi(ki, arith.muli(local_work_id, cx(k_loop_iter)))
-        with mgpu.when(is_leader_of(TMA_WARP)):
+        with only(tma_warp), single_warp_thread():
           @mgpu.fori(cx(k_loop_iter), None)
           def _tma_body(ki, _):
             persistent_ki = get_persistent_ki(ki)
@@ -235,7 +324,7 @@ def build_kernel(
                 **common_args,
             )
 
-        with mgpu.when(is_leader_of(MMA_WARP)):
+        with only(mma_warp), single_warp_thread():
           @mgpu.fori(c(k_loop_iter, index), arith.constant(i1, 0))
           def _mma_body(ki, accumulate):
             persistent_ki = get_persistent_ki(ki)
@@ -294,8 +383,7 @@ def build_kernel(
       carrys = [work_id, work_id_group_start, group_offset]
       return carrys
       # group_for
-    is_init_warp = arith.cmpi(arith.CmpIPredicate.eq, warp_idx, c(0, i32))
-    with mgpu.when(is_init_warp):
+    with only(mma_warp):
       tmem_dealloc(acc.address, acc.shape[1], collective=False)
 
   compute_buffers = (
