@@ -550,7 +550,7 @@ def lower_pipelined_jaxpr_to_module(
     grid_mapping: pallas_core.GridMapping,
     mesh: pallas_core.Mesh | None,
     jaxpr: jax_core.Jaxpr,
-    compiler_params: dict[str, Any],
+    params: gpu_core.GPUCompilerParams,
     cost_estimate: pallas_core.CostEstimate | None,
 ) -> LoweringResult:
   del cost_estimate  # Unused.
@@ -580,14 +580,11 @@ def lower_pipelined_jaxpr_to_module(
     block = (128, 1, 1)
     grid = grid_mapping.grid
 
-  params = compiler_params.get("mosaic_gpu", {})
-  dimension_semantics = params.get("dimension_semantics", None)
-  if dimension_semantics is None:
+  if params.dimension_semantics is None:
     which_parallel = [True] * len(grid)
   else:
-    assert len(dimension_semantics) == len(grid)
-    which_parallel = [ds == "parallel" for ds in dimension_semantics]
-  del dimension_semantics
+    assert len(params.dimension_semantics) == len(grid)
+    which_parallel = [ds == "parallel" for ds in params.dimension_semantics]
 
   sequential_grid = tuple(
       d for axis, d in enumerate(grid) if not which_parallel[axis]
@@ -662,8 +659,8 @@ def lower_pipelined_jaxpr_to_module(
             _block_spec_from_block_mapping(bm, which_parallel)
             for bm in out_block_mappings
         ],
-        max_concurrent_steps=params.pop("max_concurrent_steps", 1),
-        delay_release=params.pop("delay_release", 0),
+        max_concurrent_steps=params.max_concurrent_steps,
+        delay_release=params.delay_release,
     )(*refs)
 
   with grid_mapping.trace_env():
@@ -696,7 +693,7 @@ def lower_pipelined_jaxpr_to_module(
             for r in semaphore_ref_avals
         ],
         new_jaxpr,
-        compiler_params,
+        params,
         new_consts,
     )
 
@@ -710,15 +707,12 @@ def lower_jaxpr_to_module(
     out_shapes: Sequence[jax.ShapeDtypeStruct],
     gmem_scratch_shapes: Sequence[jax.ShapeDtypeStruct],
     jaxpr: jax_core.Jaxpr,
-    compiler_params: dict[str, Any],
+    params: gpu_core.GPUCompilerParams,
     consts=(),
 ) -> LoweringResult:
   debug_info = jaxpr.debug_info
-  params = compiler_params.get("mosaic_gpu", {})
-  approx_math = params.get("approx_math", False)
-  lowering_semantics = params.get(
-      "lowering_semantics", mgpu_core.LoweringSemantics.Lane
-  )
+  approx_math = params.approx_math
+  lowering_semantics = params.lowering_semantics
 
   if len(cluster) < 3:
     cluster = cluster + (1,) * (3 - len(cluster))
@@ -785,27 +779,25 @@ def lower_jaxpr_to_module(
       ),
       jaxpr,
   )
-  smem_scratch_bytes = params.get("smem_scratch_bytes")
-  if smem_scratch_bytes is None:
-    smem_scratch_bytes = rs.smem_scratch_bytes
-  tmem_scratch_cols = rs.tmem_scratch_cols
 
   scratch_buffers = [
-    jax.ShapeDtypeStruct(shape=[smem_scratch_bytes], dtype=np.int8),
-    rs.barriers,
+      jax.ShapeDtypeStruct(shape=[rs.smem_scratch_bytes], dtype=np.int8),
+      rs.barriers,
   ]
-  if tmem_scratch_cols > 0:
+  if rs.tmem_scratch_cols > 0:
     scratch_buffers.append(
-      mgpu.TMEM(shape=[tcgen05.TMEM_ROWS, tmem_scratch_cols], dtype=np.int32),
+        mgpu.TMEM(
+            shape=[tcgen05.TMEM_ROWS, rs.tmem_scratch_cols], dtype=np.int32
+        ),
     )
   else:
     scratch_buffers.append(None)
 
   prof_ctx = prof_spec = None
-  if prof_space := params.get("profile_space", 0):
+  if params.profile_space:
     # Each range is 2 events, each event is 4 bytes.
-    prof_spec = mgpu_profiler.ProfilerSpec(prof_space * 2 * 4)
-    prof_ctx = ProfilerContext(params["profile_dir"], prof_spec)
+    prof_spec = mgpu_profiler.ProfilerSpec(params.profile_space * 2 * 4)
+    prof_ctx = ProfilerContext(params.profile_dir, prof_spec)
   module, new_out_shapes, _, launch_ctx, scratch_arr = (
       mgpu_core._lower_as_gpu_kernel(
           body,

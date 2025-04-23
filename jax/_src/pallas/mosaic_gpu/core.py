@@ -90,7 +90,7 @@ class GPUCompilerParams(pallas_core.CompilerParams):
       events than this.
     profile_dir: The directory to which profiling traces will be written to.
   """
-  PLATFORM: ClassVar[str] = "mosaic_gpu"
+  BACKEND: ClassVar[pallas_core.Backend] = "mosaic_gpu"
   approx_math: bool = False
   dimension_semantics: Sequence[DimensionSemantics] | None = None
   max_concurrent_steps: int = 1

@@ -20,7 +20,7 @@ import gc
 import itertools
 import math
 import threading
-from typing import Any, Callable,Literal
+from typing import Any, Callable, Literal, cast
 
 import jax
 from jax import lax
@@ -35,6 +35,7 @@ from jax._src.pallas.mosaic import verification
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src import pjit
+from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as state_primitives
@@ -1292,7 +1293,7 @@ def _interpret_jaxpr(jaxpr, *args, mesh, compiler_params, interpret_params):
             get_barrier_semaphore,
             jax.ShapeDtypeStruct((), jnp.int16),
             device_id,
-            compiler_params['mosaic']['collective_id'],
+            _get_mosaic_params(compiler_params).collective_id,
             ordered=True)
 
       elif prim is primitives.semaphore_signal_p:
@@ -1383,16 +1384,22 @@ def _get_next_indices(grid, indices):
     next_indices.append(jnp.where(carry, 0, i))
   return tuple(reversed(next_indices))
 
+
+def _get_mosaic_params(compiler_params: dict[str, pallas_core.CompilerParams]) -> tpu_core.TPUCompilerParams:
+  try:
+    return cast(tpu_core.TPUCompilerParams, compiler_params['mosaic_tpu'])
+  except KeyError:
+    return tpu_core.TPUCompilerParams()
+
+
 def _get_parallel_dim_semantics(
     compiler_params: dict[str, Any], grid: tuple[int, ...]
 ) -> tuple[bool, ...]:
   """Returns a tuple of booleans indicating whether the corresponding dimension in `grid` is parallel."""
-  dimension_semantics = compiler_params.get('mosaic', {}).get(
-      'dimension_semantics', None
-  )
-  if dimension_semantics is None:
+  mosaic_params = _get_mosaic_params(compiler_params)
+  if mosaic_params.dimension_semantics is None:
     return (False,) * len(grid)
-  return tuple(ds == 'parallel' for ds in dimension_semantics)
+  return tuple(ds == 'parallel' for ds in mosaic_params.dimension_semantics)
 
 _GridPointCoordinatesPerDim = tuple[Array, ...]
 
@@ -1666,7 +1673,7 @@ def interpret_pallas_call(
               var.aval.shape, var.aval.dtype, interpret_params),
           ordered=True))
 
-  if compiler_params.get('mosaic', {}).get('collective_id', None) is None:
+  if _get_mosaic_params(compiler_params).collective_id is None:
     # The kernel doesn't specify its own barrier semaphore, so we do a global
     # barrier before running the first iteration of the kernel.
     callback.io_callback(_barrier, (), device_id, ordered=True)

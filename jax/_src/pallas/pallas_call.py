@@ -15,12 +15,11 @@
 """Module for calling pallas functions from JAX."""
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-import dataclasses
+from collections.abc import Callable, Mapping, Sequence
 import enum
 from functools import partial, reduce
 import types
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import jax
 from jax import lax
@@ -68,6 +67,8 @@ NoBlockSpec = pallas_core.NoBlockSpec
 no_block_spec = pallas_core.no_block_spec
 ScratchShapeTree = pallas_core.ScratchShapeTree
 CostEstimate = pallas_core.CostEstimate
+Backend = pallas_core.Backend
+CompilerParams = pallas_core.CompilerParams
 
 # See the docstring for GridMapping for the calling convention
 pallas_call_p = jax_core.Primitive('pallas_call')
@@ -125,7 +126,7 @@ def _pallas_call_jvp_rule(
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
-    backend: _Backend | None,
+    backend: Backend | None,
 ):
   debug_info = jaxpr.debug_info
   if grid_mapping.num_dynamic_grid_bounds:
@@ -328,7 +329,7 @@ def _batch_with_explicit_loop(
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
-    backend: _Backend | None,
+    backend: Backend | None,
 ):
   """Batch the pallas_call by calling it in loop over the batch size.
 
@@ -426,7 +427,7 @@ def _pallas_call_batching_rule(
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
-    backend: _Backend | None,
+    backend: Backend | None,
 ):
   if mesh is not None:
     raise NotImplementedError(
@@ -1237,14 +1238,12 @@ def _unsupported_lowering_error(platform: str) -> Exception:
       " https://docs.jax.dev/en/latest/installation.html."
   )
 
-_Backend = Literal["mosaic_tpu", "triton", "mosaic_gpu"]
-
 
 def _pallas_call_lowering(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
     interpret: bool,
-    backend: _Backend | None,
+    backend: Backend | None,
     **params,
 ):
   if params['jaxpr'].constvars:
@@ -1361,7 +1360,7 @@ def _pallas_call_state_discharge_rule(
     compiler_params: Any,
     cost_estimate: CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
-    backend: _Backend | None = None,
+    backend: Backend | None = None,
 ):
   del avals_out
   assert all(isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars)
@@ -1479,13 +1478,15 @@ def pallas_call(
     in_specs: BlockSpecTree = no_block_spec,
     out_specs: BlockSpecTree = no_block_spec,
     scratch_shapes: ScratchShapeTree = (),
-    input_output_aliases: dict[int, int] = {},
+    input_output_aliases: Mapping[int, int] = {},
     debug: bool = False,
     interpret: bool = False,
     name: str | None = None,
-    compiler_params: dict[str, Any] | pallas_core.CompilerParams | None = None,
+    compiler_params: (
+        Mapping[Backend, CompilerParams] | CompilerParams | None
+    ) = None,
     cost_estimate: CostEstimate | None = None,
-    backend: _Backend | None = None,
+    backend: Backend | None = None,
 ) -> Callable[..., Any]:
   """Invokes a Pallas kernel on some inputs.
 
@@ -1527,22 +1528,22 @@ def pallas_call(
       This is useful for debugging.
     name: if present, specifies the name to use for this kernel call in
       debugging and error messages. To this name we append the file and line
-      where the kernel function is defined, .e.g:
-      `{name} for kernel function {kernel_name} at {file}:{line}`.
-      If missing, then we use `{kernel_name} at {file}:{line}`.
-    compiler_params: Optional compiler parameters. If a dict is provided, it
-      should be of the form {platform: {param_name: param_value}}, where
-      platform is either 'mosaic' or 'triton'. It is also possible
-      to pass in `jax.experimental.pallas.tpu.TPUCompilerParams` for TPUs and
-      `jax.experimental.pallas.gpu.TritonCompilerParams` for Triton/GPUs.
-    backend: Optional string literal one of  "mosaic_tpu", "triton" or "mosaic_gpu"
-      determining the backend to be used. None means let pallas decide.
-
+      where the kernel function is defined, .e.g: `{name} for kernel function
+      {kernel_name} at {file}:{line}`. If missing, then we use `{kernel_name} at
+      {file}:{line}`.
+    compiler_params: Optional compiler parameters. The value should either be a
+      backend-specific dataclass
+      (:class:`jax.experimental.pallas.tpu.TPUCompilerParams`,
+      :class:`jax.experimental.pallas.triton.TritonCompilerParams`,
+      :class:`jax.experimental.pallas.mosaic_gpu.GPUCompilerParams`) or a dict
+      mapping backend name to the corresponding platform-specific dataclass.
+    backend: Optional string literal one of  ``"mosaic_tpu"``, ``"triton"`` or
+      ``"mosaic_gpu"`` determining the backend to be used. None means let Pallas
+      decide.
 
   Returns:
     A function that can be called on a number of positional array arguments to
     invoke the Pallas kernel.
-
   """
   if grid_spec is None:
     grid_spec = GridSpec(grid, in_specs, out_specs, scratch_shapes)
@@ -1578,30 +1579,46 @@ def pallas_call(
   )
 
 
+def _normalize_compiler_params(
+    compiler_params: Mapping[Backend, CompilerParams] | CompilerParams | None,
+) -> Mapping[Backend, CompilerParams]:
+  if compiler_params is None:
+    return {}
+  if isinstance(compiler_params, pallas_core.CompilerParams):
+    compiler_params = {compiler_params.BACKEND: compiler_params}
+  assert isinstance(compiler_params, Mapping)
+  for backend, params in compiler_params.items():
+    if backend not in ["mosaic_tpu", "mosaic_gpu", "triton"]:
+      raise ValueError(f"Unknown backend in compiler_params: {backend}")
+    if not isinstance(params, pallas_core.CompilerParams):
+      raise ValueError(
+          f"Unexpected compiler_params for backend {backend}: {params}"
+      )
+    if params.BACKEND != backend:
+      raise ValueError(
+          f"Inconsistent backend in compiler_params: {params.BACKEND} !="
+          f" {backend}"
+      )
+  return compiler_params
+
+
 def _pallas_call(
     kernel: Callable[..., None],
     out_shape: Any,
     *,
     grid_spec: GridSpec,
     mesh: pallas_core.Mesh | None = None,
-    input_output_aliases: dict[int, int] = {},
+    input_output_aliases: Mapping[int, int] = {},
     debug: bool = False,
     interpret: bool = False,
     name: str | None = None,
-    compiler_params: dict[str, Any] | pallas_core.CompilerParams | None = None,
+    compiler_params: (
+        Mapping[Backend, CompilerParams] | CompilerParams | None
+    ) = None,
     cost_estimate: CostEstimate | None = None,
-    backend: _Backend | None = None,
+    backend: Backend | None = None,
 ):
-  if compiler_params is None:
-    compiler_params = {}
-  if isinstance(compiler_params, pallas_core.CompilerParams):
-    if compiler_params.PLATFORM not in ["mosaic", "mosaic_gpu", "triton"]:
-      raise ValueError(
-          f"Unknown platform in compiler params: {compiler_params.PLATFORM}"
-      )
-    compiler_params = {
-        compiler_params.PLATFORM: dataclasses.asdict(compiler_params)
-    }
+  compiler_params = _normalize_compiler_params(compiler_params)
 
   if mesh is not None:
     if tuple(mesh.shape.values()) != grid_spec.grid:
@@ -1611,7 +1628,7 @@ def _pallas_call(
       )
     if backend is not None:
       raise ValueError("If `mesh` is specified, then `backend` must be `None`.")
-    backend = cast(_Backend, mesh.backend)
+    backend = cast(Backend, mesh.backend)
 
   grid_spec, dynamic_grid_bounds = pallas_core.unzip_dynamic_grid_bounds(grid_spec)
   # TODO(necula): this canonicalization may be convenient for some usage
