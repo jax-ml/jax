@@ -3007,6 +3007,19 @@ class ShardMapTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "The context mesh cannot be empty"):
       jax.shard_map(lambda x: x, in_specs=P(), out_specs=P())(np.arange(8))
 
+  def test_pvary_in_shmap_of_grad(self):
+    mesh = jtu.create_mesh((2,), 'x')
+
+    def g(x):
+      return jnp.mean(x ** 2)
+
+    def f(x):
+      val, grad =  jax.value_and_grad(g)(x)
+      return (jnp.atleast_1d(val), jnp.atleast_1d(grad))
+
+    jax.shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P('x')
+                  )(jnp.ones(2,))  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str
