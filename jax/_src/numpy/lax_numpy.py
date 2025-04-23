@@ -2596,7 +2596,7 @@ def isclose(a: ArrayLike, b: ArrayLike, rtol: ArrayLike = 1e-05, atol: ArrayLike
   a, b = util.promote_args_inexact("isclose", a, b)
   dtype = _dtype(a)
   if issubdtype(dtype, np.complexfloating):
-    dtype = util._complex_elem_type(dtype)
+    dtype = np.array(0, dtype).real.dtype
   rtol = lax.convert_element_type(rtol, dtype)
   atol = lax.convert_element_type(atol, dtype)
   out = lax.le(
