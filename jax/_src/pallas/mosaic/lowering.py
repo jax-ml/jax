@@ -1535,13 +1535,12 @@ def _prng_key_load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree
   ref_block_shape = aval_out.dtype._impl.key_shape
 
   if len(ref_block_shape) != 2:
-    raise NotImplementedError("Seed key_data must be 2D.")
-  if tuple(ref_block_shape) != (1, 1):
-    raise NotImplementedError(
-      f"Seed key_data of shape != (1, 1) not supported. Got: {ref_block_shape}")
+    raise NotImplementedError("Seed key_data must be 1D.")
+  if ref_block_shape[0] != 1:
+    raise NotImplementedError("Leading dimension of seed key_data must be 1.")
 
   load_ops = []
-  for i in range(ref_block_shape[0]):
+  for i in range(ref_block_shape[1]):
     idx = NDIndexer(indices=(0, i), shape=ref_block_shape,
                     int_indexer_shape=tuple())
     starts, _, _, _, _ = _indexer_to_start_size_stride(
@@ -3819,18 +3818,10 @@ def random_unwrap_lowering(ctx, key):
   impl = keys_aval.dtype._impl
   if not pl_random.is_pallas_impl(impl):
     return key
-  assert isinstance(key, KeyScalarBundle)
-  # Convert to a vector.
-  if tuple(key.key_shape) != (1, 1):
-    raise NotImplementedError(
-      "Seed key_data of shape != (1, 1) not supported. "
-      f"Got: {key.key_shape}")
-  scalar = key.scalars[0]
-  out_type = ir.VectorType.get(
-      key.key_shape, _dtype_to_ir_type(jnp.dtype('int32'))
+  raise ValueError(
+      "key_data not support for Pallas PRNG keys. Use"
+      " split_pallas_seed instead."
   )
-  val = vector.broadcast(out_type, scalar)
-  return val
 lowering_rules[prng.random_unwrap_p] = random_unwrap_lowering
 
 
@@ -3838,26 +3829,31 @@ def random_wrap_lowering(ctx, key_data, *, impl):
   del ctx
   if not pl_random.is_pallas_impl(impl):
     return key_data
-  if isinstance(key_data.type, ir.VectorType):
-    # If the key data lives in vregs, need to unpack it to sregs.
-    key_data_list = []
-    key_data_shape = key_data.type.shape
-    if len(key_data_shape) != 2:
-      raise NotImplementedError("Seed key_data must be 2D.")
-    if tuple(key_data_shape) != (1, 1):
-      raise NotImplementedError(
-        "Seed key_data of shape != (1, 1) not supported. "
-        f"Got: {key_data_shape}")
-    for i in range(key_data_shape[1]):
-      key_data_list.append(vector.ExtractOp(key_data, [], [0, i]))
-    return KeyScalarBundle(
-        scalars=key_data_list, key_shape=tuple(key_data_shape))
-  if isinstance(key_data, KeyScalarBundle):
-    return key_data
-  else:
-    raise NotImplementedError(f"key_data wrap {type(key_data)}")
+  raise ValueError(
+      "wrap_key_data not support for Pallas PRNG keys. Use"
+      " wrap_pallas_seed instead."
+  )
 
 lowering_rules[prng.random_wrap_p] = random_wrap_lowering
+
+
+def _split_key_lowering_rule(
+    ctx: LoweringRuleContext, key_data: KeyScalarBundle
+):
+  return key_data.scalars
+
+
+lowering_rules[tpu_primitives.split_key_p] = _split_key_lowering_rule
+
+
+def _join_key_lowering_rule(ctx: LoweringRuleContext, *scalars, impl):
+  if not pl_random.is_pallas_impl(impl):
+    return ValueError(f"Can only join Pallas keys. Got impl={impl}")
+  return KeyScalarBundle(scalars=scalars, key_shape=impl.key_shape)
+
+
+lowering_rules[tpu_primitives.join_key_p] = _join_key_lowering_rule
+
 
 def _checkify_lowering_rule(
     ctx: LoweringRuleContext, *err_args, err_tree, debug):
