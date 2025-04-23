@@ -77,7 +77,7 @@ def shard_map(f, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
               mesh: Mesh | AbstractMesh | None = None, check_vma: bool = True):
   """Map a function over shards of data using a mesh of devices.
 
-  See the docs at https://jax.readthedocs.io/en/latest/notebooks/shard_map.html.
+  See the docs at https://docs.jax.dev/en/latest/notebooks/shard_map.html.
 
   Args:
     f: callable to be mapped. Each application of ``f``, or "instance" of ``f``,
