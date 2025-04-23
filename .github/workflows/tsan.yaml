@@ -130,8 +130,10 @@ jobs:
           export PATH=${GITHUB_WORKSPACE}/cpython-tsan/bin/:$PATH
 
           python3 -m pip install uv~=0.5.30
-          # Make sure to install a compatible Cython version (master branch is best for now)
-          NO_CYTHON_COMPILE=true python3 -m uv pip install -U git+https://github.com/cython/cython
+
+          # Install Cython same as in numpy CI: https://github.com/numpy/numpy/blob/9ead596ce4f8df0189f9ba3d54937e22e2785a5e/.github/workflows/linux.yml#L75C21-L75C96
+          python3 -m uv pip install -i https://pypi.anaconda.org/scientific-python-nightly-wheels/simple cython
+
           python3 -m uv pip install -r requirements/build_requirements.txt
 
           CC=clang-18 CXX=clang++-18 python3 -m pip wheel --wheel-dir dist -v . --no-build-isolation -Csetup-args=-Db_sanitize=thread -Csetup-args=-Dbuildtype=debugoptimized
@@ -197,8 +199,10 @@ jobs:
           export PATH=${GITHUB_WORKSPACE}/cpython-tsan/bin/:$PATH
 
           python3 -m pip install uv~=0.5.30
-          # Make sure to install a compatible Cython version (master branch is best for now)
-          NO_CYTHON_COMPILE=true python3 -m uv pip install -U git+https://github.com/cython/cython
+
+          # Install Cython same as in numpy CI: https://github.com/numpy/numpy/blob/9ead596ce4f8df0189f9ba3d54937e22e2785a5e/.github/workflows/linux.yml#L75C21-L75C96
+          python3 -m uv pip install -i https://pypi.anaconda.org/scientific-python-nightly-wheels/simple cython
+
           python3 -m uv pip install -U --pre numpy --extra-index-url file://${GITHUB_WORKSPACE}/wheelhouse/
           python3 -m uv pip install pythran pybind11 meson-python ninja
 
