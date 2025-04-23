@@ -24,7 +24,7 @@ import enum
 import functools
 import itertools
 import threading
-from typing import Any, ClassVar, Hashable, Protocol, TypeAlias, Union, runtime_checkable
+from typing import Any, ClassVar, Hashable, Literal, Protocol, TypeAlias, Union, runtime_checkable
 
 import jax
 from jax._src import api_util
@@ -117,10 +117,12 @@ class BarrierSemaphore(AbstractSemaphoreTy):
   name = "barrier_semaphore"
   type = barrier_semaphore
 
+Backend = Literal["mosaic_tpu", "triton", "mosaic_gpu"]
+
 @runtime_checkable
 class CompilerParams(Protocol):
   """Base class for compiler parameters."""
-  PLATFORM: ClassVar[str]
+  BACKEND: ClassVar[Backend]
 
   # Subclasses must be dataclasses.
   __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]

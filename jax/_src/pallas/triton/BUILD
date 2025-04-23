@@ -76,12 +76,11 @@ pytype_strict_library(
     name = "pallas_call_registration",
     srcs = ["pallas_call_registration.py"],
     deps = [
+        ":core",
         ":lowering",
         "//jax",
-        "//jax:config",
         "//jax:core",
         "//jax:mlir",
-        "//jax:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
     ],

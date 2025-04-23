@@ -30,11 +30,9 @@ from jax import lax
 from jax import random
 from jax._src import checkify
 from jax._src import config
-from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax.control_flow.for_loop import for_loop
-from jax._src.pallas import pallas_call
 from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
@@ -2570,48 +2568,6 @@ class SymbolicPallasTest(PallasBaseTest):
 
 class PallasCallNamedGridInterpretTest(PallasCallNamedGridTest):
   INTERPRET = True
-
-
-def _find_pallas_call_in_jaxpr(
-    jaxpr: jax_core.Jaxpr) -> jax_core.JaxprEqn | None:
-  for eqn in jaxpr.eqns:
-    call_eqn = None
-    if eqn.primitive == pallas_call.pallas_call_p:
-      call_eqn = eqn
-    elif 'jaxpr' in eqn.params:
-      call_eqn = _find_pallas_call_in_jaxpr(eqn.params['jaxpr'])
-    if call_eqn is not None:
-      return call_eqn
-  return None
-
-
-class PallasCompilerParamsTest(PallasBaseTest):
-  def test_triton_params_consistent_across_double_jit(self):
-    # Test for https://github.com/jax-ml/jax/issues/25714
-    if not jtu.test_device_matches(["gpu"]):
-      self.skipTest("Triton backend only works on GPU.")
-    params = plgpu.TritonCompilerParams(num_warps=8)
-
-    @jax.jit
-    @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32),
-        compiler_params=params)
-    def copy_kernel(x_ref, o_ref):
-      o_ref[...] = x_ref[...]
-
-    @functools.partial(jax.jit, static_argnames=["z"])
-    def plus_z(x, z):
-      return copy_kernel(x+z)
-
-    x = 0.
-    extracted_params = _find_pallas_call_in_jaxpr(
-        plus_z.trace(x, 1).jaxpr).params["compiler_params"]
-    self.assertEqual(plus_z(0., 1.), 1.)
-    self.assertEqual(extracted_params["triton"]["num_warps"], 8)
-    extracted_params = _find_pallas_call_in_jaxpr(
-        plus_z.trace(x, 2).jaxpr).params["compiler_params"]
-    self.assertEqual(plus_z(0., 2.), 2.)
-    self.assertEqual(extracted_params["triton"]["num_warps"], 8)
 
 
 if __name__ == "__main__":

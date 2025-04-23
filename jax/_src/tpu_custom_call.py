@@ -139,7 +139,7 @@ class CustomCallBackendConfig:
   needs_layout_passes: bool
   vmem_limit_bytes: int | None
   flags: dict[str, bool | int | float] | None
-  allow_input_fusion: list[bool] | None
+  allow_input_fusion: Sequence[bool] | None
   serialization_format: int | None
   internal_scratch_in_bytes: int | None
   output_memory_spaces: tuple[MemorySpace | None, ...] | None
@@ -569,7 +569,7 @@ def _lower_to_custom_call_config(
     vmem_limit_bytes: int | None,
     cost_estimate: CostEstimate | None,
     flags: dict[str, bool | int | float] | None,
-    allow_input_fusion: list[bool] | None,
+    allow_input_fusion: Sequence[bool] | None,
     internal_scratch_in_bytes: int | None,
     collective_id: int | None,
     serialization_format: int | None,
@@ -616,7 +616,7 @@ def _lowered_to_custom_call_config(
     vmem_limit_bytes: int | None,
     cost_estimate: CostEstimate | None,
     flags: dict[str, bool | int | float] | None,
-    allow_input_fusion: list[bool] | None,
+    allow_input_fusion: Sequence[bool] | None,
     internal_scratch_in_bytes: int | None,
     collective_id: int | None,
     serialization_format: int | None,
@@ -672,7 +672,7 @@ def lower_module_to_custom_call(
     cost_estimate: CostEstimate | None,
     vmem_limit_bytes: int | None,
     flags: dict[str, bool | int | float] | None,
-    allow_input_fusion: list[bool] | None,
+    allow_input_fusion: Sequence[bool] | None,
     input_output_aliases: tuple[tuple[int, int], ...],
     internal_scratch_in_bytes: int | None,
     collective_id: int | None,
@@ -716,7 +716,7 @@ def as_tpu_kernel(
     kernel_name: str | None = None,
     vmem_limit_bytes: int | None = None,
     flags: dict[str, bool | int | float] | None = None,
-    allow_input_fusion: list[bool] | None = None,
+    allow_input_fusion: Sequence[bool] | None = None,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
     internal_scratch_in_bytes: int | None = None,
     collective_id: int | None = None,
@@ -763,7 +763,7 @@ def lowered_as_tpu_kernel(
     kernel_name: str | None = None,
     vmem_limit_bytes: int | None = None,
     flags: dict[str, bool | int | float] | None = None,
-    allow_input_fusion: list[bool] | None = None,
+    allow_input_fusion: Sequence[bool] | None = None,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
     serialization_format: int | None = None,
     internal_scratch_in_bytes: int | None = None,
