@@ -8755,15 +8755,19 @@ _zeros: Callable = partial(full_like, fill_value=0)
 
 def _zero(x):
   x_aval = core.get_aval(x)
-  return full_like(x, shape=(), fill_value=0,
-                   sharding=x_aval.sharding.with_spec(P()))
+  out = full_like(x, shape=(), fill_value=0,
+                  sharding=x_aval.sharding.with_spec(P()))
+  out = core.pvary(out, tuple(x_aval.vma))
+  return out
 
 _ones: Callable = partial(full_like, fill_value=1)
 
 def _one(x):
   x_aval = core.get_aval(x)
-  return full_like(x, shape=(), fill_value=1,
-                    sharding=x_aval.sharding.with_spec(P()))
+  out = full_like(x, shape=(), fill_value=1,
+                  sharding=x_aval.sharding.with_spec(P()))
+  out = core.pvary(out, tuple(x_aval.vma))
+  return out
 
 _twos: Callable = partial(full_like, fill_value=2)
 _two: Callable = partial(full_like, shape=(), fill_value=2)
