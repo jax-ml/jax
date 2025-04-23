@@ -30,7 +30,7 @@ from typing import Any, Protocol, Union
 import ml_dtypes
 import numpy as np
 
-from jaxlib import xla_extension as _xla
+from jaxlib import _jax as _xla
 
 # Note this module does *not* depend on any Python protocol buffers. The XLA
 # Python bindings are currently packaged both as part of jaxlib and as part

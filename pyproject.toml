@@ -31,7 +31,7 @@ module = [
     "jaxlib.triton.*",
     "jaxlib.utils",
     "jaxlib.version",
-    "jaxlib.xla_extension.utils",
+    "jaxlib._jax.utils",
     "jraph.*",
     "libtpu.*",
     "matplotlib.*",

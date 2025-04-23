@@ -46,7 +46,7 @@ py_library_providing_imports_info(
         "//jaxlib:utils",
         "//jaxlib:weakref_lru_cache",
         "//jaxlib:xla_client",
-        "//jaxlib:xla_extension",
+        "//jaxlib:_jax",
         "//jaxlib/triton",
         "//jaxlib/mlir/_mlir_libs:register_jax_dialects",
         "//jaxlib/mlir:arithmetic_dialect",

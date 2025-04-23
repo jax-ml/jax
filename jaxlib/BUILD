@@ -74,8 +74,8 @@ py_library_providing_imports_info(
         ":jax",
         ":utils",
         ":weakref_lru_cache",
+        "//jaxlib:_jax",
         "//jaxlib:xla_client",
-        "//jaxlib:xla_extension",
         "//jaxlib/cpu:_lapack",
         "//jaxlib/mlir",
         "//jaxlib/mlir:arithmetic_dialect",
@@ -133,9 +133,9 @@ pywrap_library(
         }),
     },
     deps = [
+        ":_jax",
         ":utils",
         ":weakref_lru_cache",
-        "//jaxlib:xla_extension",
         "//jaxlib/mlir/_mlir_libs:_chlo",
         "//jaxlib/mlir/_mlir_libs:_mlir",
         "//jaxlib/mlir/_mlir_libs:_mlirDialectsGPU",
@@ -275,10 +275,10 @@ nanobind_pywrap_extension(
 )
 
 nanobind_pywrap_extension(
-    name = "xla_extension",
+    name = "_jax",
     srcs = ["xla.cc"],
     pytype_deps = py_deps(["numpy"]),
-    pytype_srcs = glob(["xla_extension/*.pyi"]),
+    pytype_srcs = glob(["_jax/*.pyi"]),
     visibility = ["//visibility:public"],
     deps = [
         ":config",
@@ -1190,7 +1190,7 @@ pytype_strict_library(
     deps = py_deps([
         "numpy",
         "ml_dtypes",
-    ]) + [":xla_extension"],
+    ]) + [":_jax"],
 )
 
 py_strict_test(

@@ -21,40 +21,40 @@ from typing import Any, Union
 
 import numpy
 
-from jaxlib import xla_extension as _xla
-from jaxlib.xla_extension import ArrayImpl as ArrayImpl
-from jaxlib.xla_extension import AutotuneCacheMode as AutotuneCacheMode
-from jaxlib.xla_extension import Client as Client
-from jaxlib.xla_extension import CompileOptions as CompileOptions
-from jaxlib.xla_extension import Device as Device
-from jaxlib.xla_extension import DeviceAssignment as DeviceAssignment
-from jaxlib.xla_extension import DeviceList as DeviceList
-from jaxlib.xla_extension import DeviceTopology as DeviceTopology
-from jaxlib.xla_extension import DistributedRuntimeClient as DistributedRuntimeClient
-from jaxlib.xla_extension import FftType as FftType
-from jaxlib.xla_extension import Frame as Frame
-from jaxlib.xla_extension import GSPMDSharding as GSPMDSharding
-from jaxlib.xla_extension import HloSharding as HloSharding
-from jaxlib.xla_extension import HostBufferSemantics as HostBufferSemantics
-from jaxlib.xla_extension import ifrt_programs as ifrt_programs
-from jaxlib.xla_extension import Layout as Layout
-from jaxlib.xla_extension import LoadedExecutable as LoadedExecutable
-from jaxlib.xla_extension import Memory as Memory
-from jaxlib.xla_extension import NamedSharding as NamedSharding
-from jaxlib.xla_extension import ops as ops
-from jaxlib.xla_extension import OpSharding as OpSharding
-from jaxlib.xla_extension import PjRtLayout as PjRtLayout
-from jaxlib.xla_extension import PmapSharding as PmapSharding
-from jaxlib.xla_extension import PrimitiveType as PrimitiveType
-from jaxlib.xla_extension import ArrayCopySemantics as ArrayCopySemantics
-from jaxlib.xla_extension import profiler as profiler
-from jaxlib.xla_extension import Shape as Shape
-from jaxlib.xla_extension import Sharding as Sharding
-from jaxlib.xla_extension import SingleDeviceSharding as SingleDeviceSharding
-from jaxlib.xla_extension import Traceback as Traceback
-from jaxlib.xla_extension import XlaBuilder as XlaBuilder
-from jaxlib.xla_extension import XlaComputation as XlaComputation
-from jaxlib.xla_extension import XlaOp as XlaOp
+from jaxlib import _jax as _xla
+from jaxlib._jax import ArrayImpl as ArrayImpl
+from jaxlib._jax import AutotuneCacheMode as AutotuneCacheMode
+from jaxlib._jax import Client as Client
+from jaxlib._jax import CompileOptions as CompileOptions
+from jaxlib._jax import Device as Device
+from jaxlib._jax import DeviceAssignment as DeviceAssignment
+from jaxlib._jax import DeviceList as DeviceList
+from jaxlib._jax import DeviceTopology as DeviceTopology
+from jaxlib._jax import DistributedRuntimeClient as DistributedRuntimeClient
+from jaxlib._jax import FftType as FftType
+from jaxlib._jax import Frame as Frame
+from jaxlib._jax import GSPMDSharding as GSPMDSharding
+from jaxlib._jax import HloSharding as HloSharding
+from jaxlib._jax import HostBufferSemantics as HostBufferSemantics
+from jaxlib._jax import ifrt_programs as ifrt_programs
+from jaxlib._jax import Layout as Layout
+from jaxlib._jax import LoadedExecutable as LoadedExecutable
+from jaxlib._jax import Memory as Memory
+from jaxlib._jax import NamedSharding as NamedSharding
+from jaxlib._jax import ops as ops
+from jaxlib._jax import OpSharding as OpSharding
+from jaxlib._jax import PjRtLayout as PjRtLayout
+from jaxlib._jax import PmapSharding as PmapSharding
+from jaxlib._jax import PrimitiveType as PrimitiveType
+from jaxlib._jax import ArrayCopySemantics as ArrayCopySemantics
+from jaxlib._jax import profiler as profiler
+from jaxlib._jax import Shape as Shape
+from jaxlib._jax import Sharding as Sharding
+from jaxlib._jax import SingleDeviceSharding as SingleDeviceSharding
+from jaxlib._jax import Traceback as Traceback
+from jaxlib._jax import XlaBuilder as XlaBuilder
+from jaxlib._jax import XlaComputation as XlaComputation
+from jaxlib._jax import XlaOp as XlaOp
 
 _version: int
 

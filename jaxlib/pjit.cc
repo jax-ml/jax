@@ -1301,7 +1301,7 @@ void BuildPjitSubmodule(nb::module_& m) {
   }
   nb::object cfun = nb::borrow<nb::object>(PjitFunction_Type);
 
-  // Add PjitFunction to the xla_extension module so it can be pickled.
+  // Add PjitFunction to the _jax module so it can be pickled.
   m.attr("PjitFunction") = cfun;
   cfun.attr("__getstate__") = nb::cpp_function(
       [](const PjitFunction::object& self) {

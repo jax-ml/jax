@@ -67,7 +67,7 @@ py_binary(
         "//jaxlib:jaxlib_binaries",
         "//jaxlib:setup.py",
         "//jaxlib:xla_client.py",
-        "//jaxlib:xla_extension",
+        "//jaxlib:_jax",
         "@xla//xla/ffi/api:api.h",
         "@xla//xla/ffi/api:c_api.h",
         "@xla//xla/ffi/api:ffi.h",
@@ -261,7 +261,7 @@ wheel_sources(
     data_srcs = [
         "//jaxlib",
         "//jaxlib:jaxlib_binaries",
-        "//jaxlib:xla_extension",
+        "//jaxlib:_jax",
     ],
     hdr_srcs = [
         "@xla//xla/ffi/api:ffi",
