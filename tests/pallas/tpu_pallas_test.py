@@ -32,7 +32,7 @@ from jax._src import checkify
 from jax._src import state
 from jax._src import test_util as jtu
 from jax._src.interpreters import partial_eval as pe
-from jax._src.lib import xla_extension
+from jax._src.lib import _jax
 from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax._src.state import utils as state_utils
 from jax._src.state import discharge as state_discharge
@@ -1874,7 +1874,7 @@ class PallasCallTest(PallasBaseTest):
       y_ref[...] = x_ref[...]
 
     x = jnp.arange(np.prod(shape), dtype=np.float32).reshape(shape)
-    with self.assertRaises(xla_extension.XlaRuntimeError):
+    with self.assertRaises(_jax.XlaRuntimeError):
       self.pallas_call(
           kernel,
           out_shape=x,

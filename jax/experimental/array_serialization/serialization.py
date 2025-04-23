@@ -33,7 +33,7 @@ from jax._src import sharding
 from jax._src import typing
 from jax._src import util
 from jax._src.layout import Layout
-from jax._src.lib import xla_extension as xe
+from jax._src.lib import _jax
 from jax.experimental.array_serialization import tensorstore_impl as ts_impl
 # ruff: noqa: F401
 # pylint: disable=unused-import
@@ -248,7 +248,7 @@ class AsyncManager:
       # Clears self._exception so it is only raised once.
       exception = self._exception
       self._exception = None
-      if (isinstance(exception, xe.XlaRuntimeError) and
+      if (isinstance(exception, _jax.XlaRuntimeError) and
           'DEADLINE_EXCEEDED: Barrier timed out' in str(exception)):
         raise BarrierTimeoutError(
             '\n'.join([str(exception), _BARRIER_TIMED_OUT_MSG]))

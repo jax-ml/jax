@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src.lib import xla_extension as _xe
+from jax._src.lib import _jax
 
 _deprecations = {
     "ArrayImpl": (
@@ -35,100 +35,100 @@ _deprecations = {
             "jax.lib.xla_extension.DistributedRuntimeClient is"
             " deprecated; use jax.distributed instead."
         ),
-        _xe.DistributedRuntimeClient,
+        _jax.DistributedRuntimeClient,
     ),
     "get_distributed_runtime_client": (
         (
             "jax.lib.xla_extension.get_distributed_runtime_client is"
             " deprecated; use jax.distributed instead."
         ),
-        _xe.get_distributed_runtime_client,
+        _jax.get_distributed_runtime_client,
     ),
     "get_distributed_runtime_service": (
         (
             "jax.lib.xla_extension.get_distributed_runtime_service is"
             " deprecated; use jax.distributed instead."
         ),
-        _xe.get_distributed_runtime_service,
+        _jax.get_distributed_runtime_service,
     ),
     "Device": (
         "jax.lib.xla_extension.Device is deprecated; use jax.Device instead.",
-        _xe.Device,
+        _jax.Device,
     ),
     "PjitFunctionCache": (
         "jax.lib.xla_extension.PjitFunctionCache is deprecated.",
-        _xe.PjitFunctionCache,
+        _jax.PjitFunctionCache,
     ),
     "ifrt_proxy": (
         "jax.lib.xla_extension.ifrt_proxy is deprecated.",
-        _xe.ifrt_proxy,
+        _jax.ifrt_proxy,
     ),
     "jax_jit": (
         "jax.lib.xla_extension.jax_jit is deprecated.",
-        _xe.jax_jit,
+        _jax.jax_jit,
     ),
-    "mlir": ("jax.lib.xla_extension.mlir is deprecated.", _xe.mlir),
-    "pmap_lib": ("jax.lib.xla_extension.pmap_lib is deprecated.", _xe.pmap_lib),
+    "mlir": ("jax.lib.xla_extension.mlir is deprecated.", _jax.mlir),
+    "pmap_lib": ("jax.lib.xla_extension.pmap_lib is deprecated.", _jax.pmap_lib),
     "profiler": (
         "jax.lib.xla_extension.profiler is deprecated.",
-        _xe.profiler,
+        _jax.profiler,
     ),
     "pytree": (
         "jax.lib.xla_extension.pytree is deprecated.",
-        _xe.pytree,
+        _jax.pytree,
     ),
     "hlo_module_cost_analysis": (
         "jax.lib.xla_extension.hlo_module_cost_analysis is deprecated.",
-        _xe.hlo_module_cost_analysis,
+        _jax.hlo_module_cost_analysis,
     ),
     "hlo_module_to_dot_graph": (
         "jax.lib.xla_extension.hlo_module_to_dot_graph is deprecated.",
-        _xe.hlo_module_to_dot_graph,
+        _jax.hlo_module_to_dot_graph,
     ),
     "HloModule": (
         "jax.lib.xla_extension.HloModule is deprecated.",
-        _xe.HloModule,
+        _jax.HloModule,
     ),
     "HloPrintOptions": (
         "jax.lib.xla_extension.HloPrintOptions is deprecated.",
-        _xe.HloPrintOptions,
+        _jax.HloPrintOptions,
     ),
     "OpSharding": (
         "jax.lib.xla_extension.OpSharding is deprecated.",
-        _xe.OpSharding,
+        _jax.OpSharding,
     ),
     "PjitFunction": (
         "jax.lib.xla_extension.PjitFunction is deprecated.",
-        _xe.PjitFunction,
+        _jax.PjitFunction,
     ),
     "PmapFunction": (
         "jax.lib.xla_extension.PmapFunction is deprecated.",
-        _xe.PmapFunction,
+        _jax.PmapFunction,
     ),
 }
 
 import typing as _typing
 
 if _typing.TYPE_CHECKING:
-  Device = _xe.Device
-  DistributedRuntimeClient = _xe.DistributedRuntimeClient
-  HloModule = _xe.HloModule
-  HloPrintOptions = _xe.HloPrintOptions
-  OpSharding = _xe.OpSharding
-  PjitFunction = _xe.PjitFunction
-  PjitFunctionCache = _xe.PjitFunctionCache
-  PmapFunction = _xe.PmapFunction
+  Device = _jax.Device
+  DistributedRuntimeClient = _jax.DistributedRuntimeClient
+  HloModule = _jax.HloModule
+  HloPrintOptions = _jax.HloPrintOptions
+  OpSharding = _jax.OpSharding
+  PjitFunction = _jax.PjitFunction
+  PjitFunctionCache = _jax.PjitFunctionCache
+  PmapFunction = _jax.PmapFunction
 
-  get_distributed_runtime_client = _xe.get_distributed_runtime_client
-  get_distributed_runtime_service = _xe.get_distributed_runtime_service
-  hlo_module_cost_analysis = _xe.hlo_module_cost_analysis
-  hlo_module_to_dot_graph = _xe.hlo_module_to_dot_graph
-  ifrt_proxy = _xe.ifrt_proxy
-  jax_jit = _xe.jax_jit
-  mlir = _xe.mlir
-  pmap_lib = _xe.pmap_lib
-  profiler = _xe.profiler
-  pytree = _xe.pytree
+  get_distributed_runtime_client = _jax.get_distributed_runtime_client
+  get_distributed_runtime_service = _jax.get_distributed_runtime_service
+  hlo_module_cost_analysis = _jax.hlo_module_cost_analysis
+  hlo_module_to_dot_graph = _jax.hlo_module_to_dot_graph
+  ifrt_proxy = _jax.ifrt_proxy
+  jax_jit = _jax.jax_jit
+  mlir = _jax.mlir
+  pmap_lib = _jax.pmap_lib
+  profiler = _jax.profiler
+  pytree = _jax.pytree
 
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
@@ -136,4 +136,4 @@ else:
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del _typing
-del _xe
+del _jax

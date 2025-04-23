@@ -100,7 +100,7 @@ def trace(name):
         vtype = str(type(v))
         if "jax._src.xla_bridge._JaxComputationBuilder" in vtype:
             return "<JaxComputationBuilder>"
-        elif "jaxlib.xla_extension.XlaOp" in vtype:
+        elif "jaxlib._jax_.XlaOp" in vtype:
             return "<XlaOp at 0x{:x}>".format(id(v))
         elif ("partial_eval.JaxprTracer" in vtype or
               "batching.BatchTracer" in vtype or

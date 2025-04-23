@@ -1046,7 +1046,7 @@ void BuildPmapSubmodule(nb::module_& m) {
   }
   nb::object cfun = nb::borrow<nb::object>(JaxPmapFunction_Type);
 
-  // Add PmapFunction to the xla_extension module so it can be pickled.
+  // Add PmapFunction to the _jax module so it can be pickled.
   m.attr("PmapFunction") = cfun;
 
   cfun.attr("__signature__") =

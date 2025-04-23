@@ -171,7 +171,7 @@ bool IsSanitized() { return IsAsan() || IsMsan() || IsTsan(); }
 
 }  // namespace
 
-NB_MODULE(xla_extension, m) {
+NB_MODULE(_jax, m) {
   // Initialize ABSL logging because code within XLA uses it.
 #ifndef PLATFORM_GOOGLE
   InitializeAbslLogging();

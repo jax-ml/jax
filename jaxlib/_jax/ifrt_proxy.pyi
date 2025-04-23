@@ -15,10 +15,10 @@
 
 from typing import Any, Optional, Callable
 
-from jaxlib import xla_extension
+from jaxlib import _jax
 
 _Status = Any
-Client = xla_extension.Client
+Client = _jax.Client
 
 
 class ClientConnectionOptions:

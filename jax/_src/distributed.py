@@ -22,7 +22,7 @@ from typing import Any
 from jax._src import clusters
 from jax._src import config
 from jax._src import xla_bridge
-from jax._src.lib import xla_extension
+from jax._src.lib import _jax
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +37,8 @@ _CHECK_PROXY_ENVS = config.bool_flag(
 class State:
   process_id: int = 0
   num_processes: int = 1
-  service: xla_extension.DistributedRuntimeService | Any | None = None
-  client: xla_extension.DistributedRuntimeClient | Any | None = None
+  service: _jax.DistributedRuntimeService | Any | None = None
+  client: _jax.DistributedRuntimeClient | Any | None = None
   preemption_sync_manager: Any | None = None
   coordinator_address: str | None = None
   slice_index: int | None = None
@@ -132,7 +132,7 @@ class State:
       logger.info(
           'Starting JAX distributed service on %s', coordinator_bind_address
       )
-      self.service = xla_extension.get_distributed_runtime_service(
+      self.service = _jax.get_distributed_runtime_service(
           coordinator_bind_address, num_processes,
           heartbeat_interval=service_heartbeat_interval_seconds,
           max_missing_heartbeats=service_max_missing_heartbeats)
@@ -142,7 +142,7 @@ class State:
     if self.client is not None:
       raise RuntimeError('distributed.initialize should only be called once.')
 
-    self.client = xla_extension.get_distributed_runtime_client(
+    self.client = _jax.get_distributed_runtime_client(
         coordinator_address, process_id, init_timeout=initialization_timeout,
         heartbeat_interval=client_heartbeat_interval_seconds,
         max_missing_heartbeats=client_max_missing_heartbeats, use_compression=True)
@@ -170,7 +170,7 @@ class State:
       raise RuntimeError(
           'Preemption sync manager should only be initialized once.')
     self.preemption_sync_manager = (
-        xla_extension.create_preemption_sync_manager())
+        _jax.create_preemption_sync_manager())
     self.preemption_sync_manager.initialize(self.client)
 
 global_state = State()

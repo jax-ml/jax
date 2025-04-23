@@ -49,7 +49,7 @@ from jax._src import test_util as jtu
 from jax._src.internal_test_util import lax_test_util
 from jax._src.interpreters import pxla
 from jax._src.lax import parallel
-from jax._src.lib import xla_extension
+from jax._src.lib import _jax
 from jax._src.util import safe_map, safe_zip
 
 config.parse_flags_with_absl()
@@ -318,12 +318,12 @@ class PythonPmapTest(jtu.JaxTestCase):
     lowered = f.lower(x)
 
     self.assertRaisesRegex(
-        xla_extension.XlaRuntimeError, "No such compile option: 'invalid_key'",
+        _jax.XlaRuntimeError, "No such compile option: 'invalid_key'",
         lambda: lowered.compile(
             compiler_options={"invalid_key": "invalid_value"}))
 
     self.assertRaisesRegex(
-        xla_extension.XlaRuntimeError, "is not a valid bool value.",
+        _jax.XlaRuntimeError, "is not a valid bool value.",
         lambda: lowered.compile(
             compiler_options={"xla_embed_ir_in_executable": "invalid_value"}))
 
@@ -356,7 +356,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     # We should still error on invalid options after some valid compiles
     self.assertRaisesRegex(
-        xla_extension.XlaRuntimeError, "No such compile option: 'invalid_key'",
+        _jax.XlaRuntimeError, "No such compile option: 'invalid_key'",
         lambda: lowered.compile(
             compiler_options={"invalid_key": "invalid_value"}))
 

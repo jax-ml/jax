@@ -17,4 +17,4 @@
 # ruff: noqa: F401
 # ruff: noqa: F403
 
-from jaxlib.xla_extension import *  # pylint: disable=wildcard-import
+from jaxlib._jax import *  # pylint: disable=wildcard-import

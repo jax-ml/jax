@@ -43,7 +43,7 @@ from jax._src import mesh as mesh_lib
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension
+from jax._src.lib import _jax
 from jax._src.lib.mlir import ir, passmanager
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -691,7 +691,7 @@ def _export_lowered(
   # Shardy was used during lowering if we can find the Shardy mesh in the
   # module. Note that the mesh should have been lifted by the
   # `sdy-lift-inlined-meshes` pass in mlir.py.
-  shardy_enabled = xla_extension.sdy.lowered_with_shardy(
+  shardy_enabled = _jax.sdy.lowered_with_shardy(
       mlir.module_to_bytecode(mlir_module))
 
   mlir_module_serialized = _module_to_bytecode(mlir_module, shardy_enabled)
@@ -811,7 +811,7 @@ def _export_lowered(
 
 def _module_to_bytecode(module: ir.Module, shardy_enabled: bool) -> bytes:
   if shardy_enabled:
-    mlir_str = xla_extension.sdy.sdy_round_trip_export_pipeline(
+    mlir_str = _jax.sdy.sdy_round_trip_export_pipeline(
         mlir.module_to_bytecode(module))
   else:
     mlir_str = mlir.module_to_bytecode(module)
@@ -1443,10 +1443,10 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     ctx.module_context.shape_poly_state.uses_dim_vars = True
   submodule = ir.Module.parse(exported.mlir_module())
 
-  shardy_enabled = xla_extension.sdy.lowered_with_shardy(
+  shardy_enabled = _jax.sdy.lowered_with_shardy(
       mlir.module_to_bytecode(submodule))
   if shardy_enabled:
-    submodule = ir.Module.parse(xla_extension.sdy.sdy_round_trip_import_shardings(
+    submodule = ir.Module.parse(_jax.sdy.sdy_round_trip_import_shardings(
         mlir.module_to_bytecode(submodule)))
 
   with submodule.context:
@@ -1456,7 +1456,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
 
   mesh = None
   if shardy_enabled:
-    sdy_mesh_axes = xla_extension.sdy.get_mesh(mlir.module_to_bytecode(submodule))
+    sdy_mesh_axes = _jax.sdy.get_mesh(mlir.module_to_bytecode(submodule))
     mesh = (mesh_lib.AbstractMesh(*list(zip(*sdy_mesh_axes))[::-1])
             if sdy_mesh_axes else mesh_lib.empty_abstract_mesh)
 

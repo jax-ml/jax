@@ -47,6 +47,7 @@ from jax._src.sharding_impls import UnspecifiedValue, AUTO
 from jax._src.layout import Layout
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
+from jax._src.lib import _jax
 from jax._src.lib import xla_client as xc
 
 
@@ -54,7 +55,6 @@ source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
 
 
-xla_extension = xc._xla
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
@@ -121,7 +121,7 @@ class Executable:
       raise NotImplementedError(err_msg)
     try:
       return "\n\n".join([m.to_string() for m in xla_ext_exe.hlo_modules()])
-    except xla_extension.XlaRuntimeError as e:
+    except _jax.XlaRuntimeError as e:
       msg, *_ = e.args
       if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
         raise NotImplementedError(err_msg) from e
@@ -146,7 +146,7 @@ class Executable:
     if hasattr(xla_ext_exe, "cost_analysis"):
       try:
         return xla_ext_exe.cost_analysis()
-      except xla_extension.XlaRuntimeError as e:
+      except _jax.XlaRuntimeError as e:
         msg, *_ = e.args
         if not (type(msg) is str and msg.startswith("UNIMPLEMENTED")):
           raise
@@ -183,7 +183,7 @@ class Executable:
       raise NotImplementedError(err_msg)
     try:
       return xla_ext_exe.get_compiled_memory_stats()
-    except xla_extension.XlaRuntimeError as e:
+    except _jax.XlaRuntimeError as e:
       msg, *_ = e.args
       if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
         raise NotImplementedError(err_msg) from e
@@ -212,7 +212,7 @@ class Lowering:
     hlo = self.stablehlo()
     m: str | bytes
     m = mlir.module_to_bytecode(hlo)
-    return xla_extension.mlir.mlir_module_to_xla_computation(
+    return _jax.mlir.mlir_module_to_xla_computation(
         m, use_tuple_args=self.compile_args["tuple_args"])
 
   def stablehlo(self) -> ir.Module:

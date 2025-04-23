@@ -15,7 +15,7 @@
 
 from typing import Any, Sequence, Union
 
-from jaxlib import xla_extension
+from jaxlib import _jax
 
 class Program:  ...
 
@@ -26,7 +26,7 @@ def make_hlo_program(mlir_module: Union[str, bytes]) -> Program: ...
 def make_colocated_python_program(
     name : str,
     picked_function: bytes,
-    devices: Sequence[xla_extension.Device] | xla_extension.DeviceList,
+    devices: Sequence[_jax.Device] | _jax.DeviceList,
     input_avals: Sequence[Any],
     output_avals: Sequence[Any],
 ) -> Program: ...
@@ -36,7 +36,7 @@ def make_plugin_program(data: Union[str, bytes]) -> Program: ...
 def make_colocated_python_compile_options() -> CompileOptions: ...
 
 def make_xla_compile_options(
-    compile_options: xla_extension.CompileOptions,
+    compile_options: _jax.CompileOptions,
     host_callbacks: Sequence[Any]
 ) -> CompileOptions: ...
 

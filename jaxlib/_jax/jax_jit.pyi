@@ -16,12 +16,12 @@
 from typing import Any, Callable, Optional, Sequence, Tuple
 
 import numpy as np
-from jaxlib import xla_extension
+from jaxlib import _jax
 
 from . import pytree
 
-Client = xla_extension.Client
-Device = xla_extension.Device
+Client = _jax.Client
+Device = _jax.Device
 
 
 class JitState:

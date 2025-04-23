@@ -22,7 +22,7 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax import lax
-from jax._src.lib import xla_extension
+from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 import jax.numpy as jnp
@@ -373,7 +373,7 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
   )
   def test_low_tol(self, op, x, **kwargs):
     with self.assertRaisesRegex(
-        xla_extension.XlaRuntimeError, "impl_type.ok()"
+        _jax.XlaRuntimeError, "impl_type.ok()"
     ):
       op(x, accuracy=lax.Tolerance(atol=1e-60, rtol=1e-60, ulps=0))
 

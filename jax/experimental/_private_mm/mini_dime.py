@@ -49,8 +49,8 @@ except ImportError:
 
 import jax
 import jax.numpy as jnp
-import jaxlib.xla_extension as xe
 from jax._src import array
+from jax._src.lib import _jax
 from jax._src.op_shardings import are_op_shardings_equal
 
 
@@ -66,10 +66,10 @@ def _get_nccl_dtype_and_count(arr, count=None):
     return nccl_dtype, count
 
 
-def get_distributed_client() -> xe.DistributedRuntimeClient:
+def get_distributed_client() -> _jax.DistributedRuntimeClient:
     from jax._src.distributed import global_state
 
-    assert isinstance(global_state.client, xe.DistributedRuntimeClient)
+    assert isinstance(global_state.client, _jax.DistributedRuntimeClient)
     return global_state.client
 
 

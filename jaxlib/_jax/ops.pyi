@@ -16,17 +16,17 @@
 import enum
 from typing import Any, Optional, Sequence, overload
 
-from jaxlib import xla_extension
+from jaxlib import _jax
 
-FftType = xla_extension.FftType
-XlaBuilder = xla_extension.XlaBuilder
-XlaComputation = xla_extension.XlaComputation
-XlaOp = xla_extension.XlaOp
-PrecisionConfig_Precision = xla_extension.PrecisionConfig_Precision
-PrimitiveType = xla_extension.PrimitiveType
-Shape = xla_extension.Shape
-ShapeIndex = xla_extension.ShapeIndex
-ResultAccuracy = xla_extension.ResultAccuracy
+FftType = _jax.FftType
+XlaBuilder = _jax.XlaBuilder
+XlaComputation = _jax.XlaComputation
+XlaOp = _jax.XlaOp
+PrecisionConfig_Precision = _jax.PrecisionConfig_Precision
+PrimitiveType = _jax.PrimitiveType
+Shape = _jax.Shape
+ShapeIndex = _jax.ShapeIndex
+ResultAccuracy = _jax.ResultAccuracy
 
 _ChannelHandle = Any
 _ConvDimensionNumbers = Any

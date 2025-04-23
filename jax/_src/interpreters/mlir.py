@@ -56,7 +56,7 @@ from jax._src.sharding_impls import (AUTO, NamedSharding,
                                      SdyArraySharding, SdyArrayShardingList)
 from jax._src.util import foreach
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension
+from jax._src.lib import _jax
 from jax._src.lib.mlir import dialects, ir, passmanager
 from jax._src.lib.mlir.dialects import func as func_dialect, hlo
 from jax._src.lib.mlir import register_jax_dialects
@@ -3031,7 +3031,7 @@ def refine_polymorphic_shapes(module: ir.Module) -> ir.Module:
   Then verifies that there are no more dynamic shapes in the module.
   """
   try:
-    refine_polymorphic_shapes = partial(xla_extension.mlir.refine_polymorphic_shapes,
+    refine_polymorphic_shapes = partial(_jax.mlir.refine_polymorphic_shapes,
             mlir_module=module_to_bytecode(module),
             enable_shape_assertions=True,
             validate_static_shapes=True)

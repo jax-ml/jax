@@ -30,7 +30,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src.checkify import JaxRuntimeError, FailedCheckError, ErrorEffect, OOBError
-from jax._src.lib import xla_extension
+from jax._src.lib import _jax
 import jax.numpy as jnp
 
 config.parse_flags_with_absl()
@@ -1387,7 +1387,7 @@ class LowerableChecksTest(jtu.JaxTestCase):
       checkify.check(x > 0, "x needs to be positive")
       return x
 
-    with self.assertRaisesRegex(xla_extension.XlaRuntimeError,
+    with self.assertRaisesRegex(_jax.XlaRuntimeError,
                                 "x needs to be positive"):
       f(-1.)
 

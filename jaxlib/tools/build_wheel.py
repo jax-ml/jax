@@ -105,7 +105,7 @@ def patch_copy_mlir_import(
 def verify_mac_libraries_dont_reference_chkstack(
     runfiles=None, wheel_sources_map=None
 ):
-  """Verifies that xla_extension.so doesn't depend on ____chkstk_darwin.
+  """Verifies that _jax.so doesn't depend on ____chkstk_darwin.
 
   We don't entirely know why this happens, but in some build environments
   we seem to target the wrong Mac OS version.
@@ -116,7 +116,7 @@ def verify_mac_libraries_dont_reference_chkstack(
   if not _is_mac():
     return
   file_path = _get_file_path(
-      f"__main__/jaxlib/xla_extension.{pyext}", runfiles, wheel_sources_map
+      f"__main__/jaxlib/_jax.{pyext}", runfiles, wheel_sources_map
   )
   nm = subprocess.run(
       ["nm", "-g", file_path],
@@ -208,7 +208,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/xla_client.py",
           f"{source_file_prefix}jaxlib/weakref_lru_cache.{pyext}",
           f"{source_file_prefix}jaxlib/weakref_lru_cache.pyi",
-          f"{source_file_prefix}jaxlib/xla_extension.{pyext}",
+          f"{source_file_prefix}jaxlib/_jax.{pyext}",
       ],
   )
   # This file is required by PEP-561. It marks jaxlib as package containing

@@ -118,6 +118,6 @@ pytype_library(
     srcs = ["xla_extension.py"],
     visibility = [":xla_python"],
     deps = [
-        "//jaxlib:xla_extension",
+        "//jaxlib:_jax",
     ],
 )
