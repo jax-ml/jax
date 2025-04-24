@@ -32,14 +32,14 @@ from jax._src import checkify
 from jax._src import state
 from jax._src import test_util as jtu
 from jax._src.interpreters import partial_eval as pe
-from jax._src.lib import xla_extension
+from jax._src.lib import _jax
 from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax._src.state import utils as state_utils
 from jax._src.state import discharge as state_discharge
 from jax.experimental import mesh_utils
 from jax.experimental import mosaic
 from jax.experimental import pallas as pl
-from jax.experimental import shard_map
+from jax._src import shard_map
 from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.pallas.ops.tpu import example_kernel
 from jax.extend import linear_util as lu
@@ -1874,7 +1874,7 @@ class PallasCallTest(PallasBaseTest):
       y_ref[...] = x_ref[...]
 
     x = jnp.arange(np.prod(shape), dtype=np.float32).reshape(shape)
-    with self.assertRaises(xla_extension.XlaRuntimeError):
+    with self.assertRaises(_jax.XlaRuntimeError):
       self.pallas_call(
           kernel,
           out_shape=x,
@@ -1981,6 +1981,23 @@ class PallasCallTest(PallasBaseTest):
     jax_nans = jnp.isnan(expected).sum()
     mosaic_nans = jnp.isnan(run(x, w)).sum()
     self.assertEqual(jax_nans, mosaic_nans)
+
+  @parameterized.product(in_dtype=[jnp.int4, jnp.int8, jnp.int16, jnp.int32])
+  def test_scalar_load_upcast(self, in_dtype):
+    if not jtu.if_cloud_tpu_at_least(2025, 4, 25):
+      self.skipTest("Needs a newer libTPU")
+    if in_dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Triggers an XLA bug")
+    def kernel(x_ref, o_ref):
+      o_ref[0, 0] = x_ref[0, 0].astype(o_ref.dtype)
+    x = jnp.asarray([[-1]], dtype=in_dtype)
+    y = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+        out_shape=jax.ShapeDtypeStruct((1, 1), jnp.int32),
+    )(x)
+    self.assertEqual(y, x.astype(jnp.int32))
 
   def test_masked_store(self):
     shape = (16, 256)
@@ -2584,7 +2601,7 @@ class PallasCallTPUBooleanTest(PallasBaseTest):
                 mesh=mesh,
                 in_specs=P(None, 'x'),
                 out_specs=P(None, 'x'),
-                check_rep=False
+                check_vma=False
             )
       )(input_arr)
 

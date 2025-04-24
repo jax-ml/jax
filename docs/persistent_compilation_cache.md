@@ -264,10 +264,9 @@ However, if we were to wrap the layernorm primitive in shard_map and define a fu
 
 ```python
 import jax
-from jax.experimental.shard_map import shard_map
 
 def G(x1, x2, gamma, beta, mesh, ispecs, ospecs):
-   ln_out = shard_map(LayerNorm, mesh, in_specs=ispecs, out_specs=ospecs, check_rep=False)(x1, x2, gamma, beta)
+   ln_out = jax.shard_map(LayerNorm, mesh=mesh, in_specs=ispecs, out_specs=ospecs, check_vma=False)(x1, x2, gamma, beta)
    return ln_out @ x2
 
 ispecs = jax.sharding.PartitionSpec(...)

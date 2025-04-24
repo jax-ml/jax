@@ -38,7 +38,7 @@ from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout, Layout
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension as xe
+from jax._src.lib import _jax
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding,
@@ -554,7 +554,7 @@ class ArrayImpl(basearray.Array):
     try:
       return Layout(DeviceLocalLayout.from_pjrt_layout(self._pjrt_layout),
                     self.sharding)
-    except xe.XlaRuntimeError as e:
+    except _jax.XlaRuntimeError as e:
       msg, *_ = e.args
       if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
         return Layout(None, self.sharding)

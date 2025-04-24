@@ -24,7 +24,10 @@ _hiphybrid = import_from_plugin("rocm", "_hybrid")
 
 
 def registrations() -> dict[str, list[tuple[str, Any, int]]]:
-  registrations = {"CUDA": [], "ROCM": []}
+  registrations: dict[str, list[tuple[str, Any, int]]] = {
+      "CUDA": [],
+      "ROCM": [],
+  }
   for platform, module in [("CUDA", _cusolver), ("ROCM", _hipsolver)]:
     if module:
       registrations[platform].extend(
@@ -34,17 +37,17 @@ def registrations() -> dict[str, list[tuple[str, Any, int]]]:
   for platform, module in [("CUDA", _cuhybrid), ("ROCM", _hiphybrid)]:
     if module:
       registrations[platform].extend(
-          (*i, 1) for i in module.registrations().items())
+          (*i, 1) for i in module.registrations().items()
+      )
   return registrations  # pytype: disable=bad-return-type
 
 
 def batch_partitionable_targets() -> list[str]:
-  targets = []
+  targets: list[str] = []
   for module in [_cusolver, _hipsolver]:
     if module:
       targets.extend(
-          name for name in module.registrations()
-          if name.endswith("_ffi")
+          name for name in module.registrations() if name.endswith("_ffi")
       )
   for module in [_cuhybrid, _hiphybrid]:
     if module:

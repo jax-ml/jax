@@ -796,8 +796,67 @@ class BarrierRef:
         ptr, self.base_address, [self.offset], [DYNAMIC32], i64
     )
 
-  def as_dialect_barrier_memref(self) -> ir.Value:
-    shape = () if self.num_barriers == 1 else (self.num_barriers,)
+
+@dataclasses.dataclass(frozen=True)
+class DialectBarrierRef:
+  barrier_ref: BarrierRef
+
+  @staticmethod
+  def initialize(
+      address: ir.Value,
+      num_barriers: int,
+      arrival_count: int = 1,
+  ) -> "DialectBarrierRef":
+    if num_barriers > 32:
+      raise NotImplementedError("Only up to 32 barriers per group supported")
+
+    barrier_ty = ir.MemRefType.get(
+        (num_barriers,), ir.Type.parse("!mosaic_gpu.barrier")
+    )
+    dialect.InitializeBarrierOp(
+        barrier_ty, base_pointer=address, arrival_count=arrival_count
+    )
+
+    i32 = ir.IntegerType.get_signless(32)
+    phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
+    memref.store(c(0, i32), phases, [])
+    return DialectBarrierRef(
+        barrier_ref=BarrierRef(address, c(0, i32), phases, num_barriers)
+    )
+
+  def __iter__(self) -> Iterator["DialectBarrierRef"]:
+    if self.barrier_ref.num_barriers == 1:
+      yield self
+    else:
+      for offset in range(self.barrier_ref.num_barriers):
+        yield self[offset]
+
+  def __getitem__(self, offset: ir.Value | int) -> "DialectBarrierRef":
+    return DialectBarrierRef(self.barrier_ref[offset])
+
+  def wait_parity(self, parity, for_tensor_core=False):
+    self.barrier_ref.wait_parity(parity, for_tensor_core)
+
+  def wait(self, for_tensor_core: bool = False):
+    assert self.barrier_ref.phases is not None
+    self.barrier_ref.wait(for_tensor_core)
+
+  def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
+    return self.barrier_ref.update_parities(parities)
+
+  def arrive(self):
+    self.barrier_ref.arrive()
+
+  def arrive_expect_tx(self, bytes: int | ir.Value):
+    dialect.ArriveExpectTxOp(
+        barrier=self.as_barrier_memref(), expect_tx=bytes)
+
+  def get_ptr(self):
+    return self.barrier_ref.get_ptr()
+
+  def as_barrier_memref(self) -> ir.Value:
+    num_barriers = self.barrier_ref.num_barriers
+    shape = () if num_barriers == 1 else (num_barriers,)
     return ptr_as_memref(
         self.get_ptr(),
         ir.MemRefType.get(shape, ir.Type.parse("!mosaic_gpu.barrier")),
@@ -805,8 +864,8 @@ class BarrierRef:
     )
 
   @classmethod
-  def from_dialect_barrier_memref(cls, barrier: ir.Value):
-    """Creates a BarrierRef from a memref of a dialect barrier."""
+  def from_barrier_memref(cls, barrier: ir.Value):
+    """Creates a DialectBarrierRef from a memref of a dialect barrier."""
     memref_type = ir.MemRefType(barrier.type)
     if memref_type.rank > 1 or memref_type.element_type != ir.Type.parse(
         "!mosaic_gpu.barrier"
@@ -817,14 +876,15 @@ class BarrierRef:
       )
 
     return cls(
-        base_address=memref_ptr(
-            barrier, memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE
-        ),
-        offset=c(0, ir.IntegerType.get_signless(64)),
-        phases=None,
-        num_barriers=(1 if memref_type.rank == 0 else memref_type.shape[0]),
+        barrier_ref=BarrierRef(
+            base_address=memref_ptr(
+                barrier, memory_space=WORKGROUP_NVPTX_ADDRESS_SPACE
+            ),
+            offset=c(0, ir.IntegerType.get_signless(64)),
+            phases=None,
+            num_barriers=(1 if memref_type.rank == 0 else memref_type.shape[0]),
+        )
     )
-
 
 @dataclasses.dataclass(frozen=True)
 class CollectiveBarrierRef:

@@ -11,9 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""JAX APIs for exporting JAX functions for interoperation.
-
-"""
+"""JAX APIs for exporting JAX functions for interoperation."""
 
 from __future__ import annotations
 
@@ -43,7 +41,7 @@ from jax._src import mesh as mesh_lib
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension
+from jax._src.lib import _jax
 from jax._src.lib.mlir import ir, passmanager
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -691,7 +689,7 @@ def _export_lowered(
   # Shardy was used during lowering if we can find the Shardy mesh in the
   # module. Note that the mesh should have been lifted by the
   # `sdy-lift-inlined-meshes` pass in mlir.py.
-  shardy_enabled = xla_extension.sdy.lowered_with_shardy(
+  shardy_enabled = _jax.sdy.lowered_with_shardy(
       mlir.module_to_bytecode(mlir_module))
 
   mlir_module_serialized = _module_to_bytecode(mlir_module, shardy_enabled)
@@ -745,18 +743,29 @@ def _export_lowered(
   if _device_assignment_for_internal_jax2tf_use_only is not None:
     _device_assignment_for_internal_jax2tf_use_only[0] = device_assignment
 
-  mesh = None
+  cur_mesh = cur_arg = cur_k_path = None
+  # lowered.args_info is a tree of the args, but we need the out avals too to
+  # get the key paths for.
+  out_avals_tree = jax.tree_util.tree_unflatten(lowered.out_tree, out_avals_flat)
   if config.use_shardy_partitioner.value:
-    for sharding in itertools.chain.from_iterable(
-        [all_in_shardings, lowering.compile_args["out_shardings"]]):
+    for sharding, (k_path, arg) in zip(
+        itertools.chain.from_iterable([
+            all_in_shardings, lowering.compile_args["out_shardings"]]),
+        itertools.chain.from_iterable([
+            jax.tree.flatten_with_path(lowered.args_info)[0],
+            jax.tree.flatten_with_path(out_avals_tree)[0]])):
       if isinstance(sharding, sharding_impls.NamedSharding):
-        if mesh is not None and mesh.shape_tuple != sharding.mesh.shape_tuple:
+        if cur_mesh is None:
+          cur_mesh, cur_arg, cur_k_path = sharding.mesh, arg, k_path
+        elif cur_mesh.shape_tuple != sharding.mesh.shape_tuple:
           raise ValueError(
-              f'Mesh for all inputs should be equal. Got one mesh: {mesh} and'
-              f' another mesh: {sharding.mesh}')
-        mesh = sharding.mesh
-    if mesh and isinstance(mesh, mesh_lib.Mesh):
-      mesh = mesh.abstract_mesh
+              "Mesh for all inputs/outputs should be equal. Got one mesh "
+              f"{cur_mesh} on an array {cur_arg._aval} at "
+              f"{shape_poly.args_kwargs_path_to_str(cur_k_path)} and another mesh: "
+              f"{sharding.mesh}' on a tensor {arg._aval} at "
+              f"{shape_poly.args_kwargs_path_to_str(k_path)}")
+    if cur_mesh and isinstance(cur_mesh, mesh_lib.Mesh):
+      cur_mesh = cur_mesh.abstract_mesh
 
   def _get_exported_vjp(exp_primal: Exported) -> Exported:
     # Turn the primal jaxpr into a function, in preparation for exporting
@@ -774,7 +783,7 @@ def _export_lowered(
         device_assignment=device_assignment,
         apply_jit=True,
         flat_primal_fun=True,
-        mesh=mesh)  # type: ignore[arg-type]
+        mesh=cur_mesh)  # type: ignore[arg-type]
     return export(fun_vjp_jax,  # type: ignore[arg-type]
                   platforms=exp_primal.platforms,
                   disabled_checks=exp_primal.disabled_safety_checks)(*vjp_in_avals)
@@ -800,7 +809,7 @@ def _export_lowered(
 
 def _module_to_bytecode(module: ir.Module, shardy_enabled: bool) -> bytes:
   if shardy_enabled:
-    mlir_str = xla_extension.sdy.sdy_round_trip_export_pipeline(
+    mlir_str = _jax.sdy.sdy_round_trip_export_pipeline(
         mlir.module_to_bytecode(module))
   else:
     mlir_str = mlir.module_to_bytecode(module)
@@ -1107,6 +1116,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "ApproxTopK", "stablehlo.dynamic_approx_top_k",
     "tf.call_tf_function",  # From jax2tf.call_tf(func, call_tf_graph=True)
     "tpu_custom_call",  # Pallas/TPU kernels
+    "mosaic_gpu",  # Pallas Mosaic GPU kernels
     # TODO(burmako): maintain backwards compatibility for these, until they
     # are upstreamed to StableHLO.
     # See https://github.com/openxla/stablehlo/issues/8.
@@ -1203,16 +1213,6 @@ def expand_in_shardings(in_shardings: Sequence[LoweringSharding],
   for idx, in_s in zip(sorted(module_kept_var_idx), in_shardings):
     all_in_shardings[idx] = in_s
   return tuple(all_in_shardings)
-
-
-def _hlo_sharding_to_xla_compatible_sharding(
-    hlo_sharding: HloSharding | None,
-    mesh: sharding.Mesh) -> sharding.Sharding | None:
-  if hlo_sharding is None:
-    return None
-  return sharding_impls._gspmd_to_named_sharding_via_mesh(
-      _hlo_sharding_to_gspmd_sharding(hlo_sharding, tuple(mesh.devices.flat)),  # type: ignore[arg-type]
-      mesh)
 
 
 def _hlo_sharding_to_gspmd_sharding(
@@ -1431,11 +1431,12 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     ctx.module_context.shape_poly_state.uses_dim_vars = True
   submodule = ir.Module.parse(exported.mlir_module())
 
-  shardy_enabled = xla_extension.sdy.lowered_with_shardy(
-      mlir.module_to_bytecode(submodule))
+  submodule_bc = mlir.module_to_bytecode(submodule)
+  shardy_enabled = _jax.sdy.lowered_with_shardy(submodule_bc)
   if shardy_enabled:
-    submodule = ir.Module.parse(xla_extension.sdy.sdy_round_trip_import_shardings(
-        mlir.module_to_bytecode(submodule)))
+    submodule = ir.Module.parse(
+        _jax.sdy.sdy_round_trip_import_shardings(submodule_bc)
+    )
 
   with submodule.context:
     pipeline = passmanager.PassManager.parse(
@@ -1444,7 +1445,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
 
   mesh = None
   if shardy_enabled:
-    sdy_mesh_axes = xla_extension.sdy.get_mesh(mlir.module_to_bytecode(submodule))
+    sdy_mesh_axes = _jax.sdy.get_mesh(mlir.module_to_bytecode(submodule))
     mesh = (mesh_lib.AbstractMesh(*list(zip(*sdy_mesh_axes))[::-1])
             if sdy_mesh_axes else mesh_lib.empty_abstract_mesh)
 

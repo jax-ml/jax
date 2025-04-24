@@ -22,7 +22,7 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax import lax
-from jax._src.lib import xla_extension
+from jax._src.lib import _jax
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 import jax.numpy as jnp
@@ -176,6 +176,10 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
       self.skipTest("Test requires StableHLO v1.10.0 or higher.")
     if not jtu.is_device_tpu():
       self.skipTest("Skipping test on non TPU devices.")
+    # TODO(b/412112097): Enable this test on TPU version 7 and above once
+    # accuracy analysis is done.
+    if jtu.get_tpu_version() >= 7:
+      self.skipTest("Accuracy analysis is not yet done on TPU version 7 and above.")
     super().setUp()
 
   def test_result_accuracy_mode_attr(self):
@@ -369,7 +373,7 @@ class UnaryOpsAccuracyTest(jtu.JaxTestCase):
   )
   def test_low_tol(self, op, x, **kwargs):
     with self.assertRaisesRegex(
-        xla_extension.XlaRuntimeError, "impl_type.ok()"
+        _jax.XlaRuntimeError, "impl_type.ok()"
     ):
       op(x, accuracy=lax.Tolerance(atol=1e-60, rtol=1e-60, ulps=0))
 

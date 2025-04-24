@@ -22,7 +22,7 @@ import jax
 from jax._src import test_util as jtu
 from jax._src.state import discharge as state_discharge
 from jax.experimental import pallas as pl
-from jax.experimental import shard_map
+from jax._src import shard_map
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 import numpy as np
@@ -412,7 +412,7 @@ def make_async_remote_copy(axis_name: str, direction: str = 'right',
         src_neighbor = right_neighbor
         dst_neighbor = left_neighbor
       barrier_sem = pltpu.get_barrier_semaphore()
-      pltpu.semaphore_signal(barrier_sem, device_id=src_neighbor, core_index=0)
+      pltpu.semaphore_signal(barrier_sem, device_id=src_neighbor)
       pltpu.semaphore_wait(barrier_sem, 1)
       pltpu.make_async_remote_copy(
           x_ref, o_ref, send_sem, recv_sem, device_id=dst_neighbor,
@@ -500,10 +500,8 @@ def make_bidi_collective_permute(axis_name: str):
           jax.lax.axis_index(axis_name) + 1, axis_size
       )
       barrier_sem = pltpu.get_barrier_semaphore()
-      pltpu.semaphore_signal(barrier_sem, device_id=left_neighbor, core_index=0)
-      pltpu.semaphore_signal(
-          barrier_sem, device_id=right_neighbor, core_index=0
-      )
+      pltpu.semaphore_signal(barrier_sem, device_id=left_neighbor)
+      pltpu.semaphore_signal(barrier_sem, device_id=right_neighbor)
       pltpu.semaphore_wait(barrier_sem, 2)
       assert x.shape[0] % 2 == 0, x.shape
       pltpu.make_async_remote_copy(
@@ -625,7 +623,7 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
     @jax.jit
     @partial(
         shard_map.shard_map, mesh=mesh, in_specs=(P('x'),), out_specs=P('x'),
-        check_rep=False,
+        check_vma=False,
     )
     def f(x):
       copy_start, send_done, recv_done = make_async_remote_copy('x')
@@ -648,7 +646,7 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
     @jax.jit
     @partial(
         shard_map.shard_map, mesh=mesh, in_specs=(P('x'),), out_specs=P('x'),
-        check_rep=False,
+        check_vma=False,
     )
     def f(x):
       copy_start, send_done, recv_done = make_async_remote_copy(
@@ -681,7 +679,7 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
     @jax.jit
     @partial(
         shard_map.shard_map, mesh=mesh, in_specs=(P('x'),), out_specs=P('x'),
-        check_rep=False,
+        check_vma=False,
     )
     def f(x):
       copy_start, send_done, recv_done = make_async_remote_copy('x')
@@ -706,7 +704,7 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
     @jax.jit
     @partial(
         shard_map.shard_map, mesh=mesh, in_specs=(P('x'),), out_specs=P('x'),
-        check_rep=False,
+        check_vma=False,
     )
     def f(x):
       assert x.shape[0] == 1
@@ -739,7 +737,7 @@ class PallasCallRemoteAsyncCopyTest(parameterized.TestCase):
     @jax.jit
     @partial(
         shard_map.shard_map, mesh=mesh, in_specs=(P('x'),), out_specs=P('x'),
-        check_rep=False,
+        check_vma=False,
     )
     def f(x):
       assert x.shape[0] == 1

@@ -30,7 +30,7 @@ import jax.custom_derivatives
 from jax.experimental import checkify
 import jax.experimental.custom_dce
 from jax.experimental import pallas as pl
-from jax.experimental.shard_map import shard_map
+from jax._src.shard_map import shard_map
 import jax.numpy as jnp
 import jax.scipy as jsp
 

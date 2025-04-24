@@ -43,7 +43,7 @@ from jax._src import util
 from jax._src.cloud_tpu_init import get_tpu_library_path
 from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension
+from jax._src.lib import _jax
 
 logger = logging.getLogger(__name__)
 
@@ -888,7 +888,7 @@ def _suggest_missing_backends():
   assert _default_backend is not None
   default_platform = _default_backend.platform
   if "cuda" not in _backends and hardware_utils.has_visible_nvidia_gpu():
-    if hasattr(xla_extension, "GpuAllocatorConfig") and "cuda" in _backend_errors:
+    if hasattr(_jax, "GpuAllocatorConfig") and "cuda" in _backend_errors:
       err = _backend_errors["cuda"]
       warning_msg = f"CUDA backend failed to initialize: {err}."
       if "no supported devices found for platform CUDA." in err:
@@ -1030,7 +1030,7 @@ def devices(
 ) -> list[xla_client.Device]:
   """Returns a list of all devices for a given backend.
 
-  .. currentmodule:: jaxlib.xla_extension
+  .. currentmodule:: jaxlib._jax
 
   Each device is represented by a subclass of :class:`Device` (e.g.
   :class:`CpuDevice`, :class:`GpuDevice`). The length of the returned list is

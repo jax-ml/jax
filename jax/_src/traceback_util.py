@@ -24,7 +24,7 @@ from typing import Any, TypeVar, cast
 
 from jax._src import config
 from jax._src import util
-from jax._src.lib import xla_extension
+from jax._src.lib import _jax
 
 
 C = TypeVar("C", bound=Callable[..., Any])
@@ -200,10 +200,10 @@ def api_boundary(fun: C) -> C:
         # just setting __traceback__ is enough. Since it is no longer needed,
         # the XLA extension no longer defines a traceback-replacing method at
         # Python 3.11 and onward.
-        if hasattr(xla_extension, "replace_thread_exc_traceback"):
+        if hasattr(_jax, "replace_thread_exc_traceback"):
           # TODO(kidger): remove this line once Python 3.11 is the minimum supported
           # version.
-          xla_extension.replace_thread_exc_traceback(filtered_tb)
+          _jax.replace_thread_exc_traceback(filtered_tb)
         if sys.version_info >= (3, 11) and mode == "quiet_remove_frames":
           e.add_note("--------------------\n" + _simplified_tb_msg)
         else:

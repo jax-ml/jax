@@ -2169,6 +2169,34 @@ LogicalResult tpu_relayout_rule(RewriteContext &ctx, Operation &op,
   return op.emitOpError("Not implemented: unsupported layout change");
 }
 
+Value createSubelementMask(OpBuilder &builder, const Location loc,
+                           const int bitwidth, const int64_t from,
+                           const int64_t to,
+                           const std::array<int64_t, 2> target_shape) {
+  auto create_index_const = [&](const int64_t idx) {
+    return builder.create<arith::ConstantOp>(
+        loc, builder.getIntegerAttr(builder.getIndexType(), idx));
+  };
+  const int packing = 32 / bitwidth;
+  const VectorType vmask_ty =
+      getNativeVregOrVmaskType(builder.getI1Type(), bitwidth, target_shape);
+  // Prefer CreateMaskOp if possible - more efficient and supports unpacked
+  // TODO: b/412754162 - We can probably always use the CreateSubelementMaskOp
+  // if (1) optimize it on TPUv4 and (2) Add support for unpacked types in some
+  // of the invariants in lower_to_llo.
+  if (from % packing == 0 && to % packing == 0) {
+    const int64_t from_sublane = from / packing;
+    const int64_t to_sublane = to / packing;
+    return builder.create<tpu::CreateMaskOp>(
+        loc, vmask_ty,
+        ArrayRef<Value>{create_index_const(from_sublane),
+                        create_index_const(0)},
+        ArrayRef<Value>{create_index_const(to_sublane),
+                        create_index_const(target_shape[1])});
+  }
+  return builder.create<tpu::CreateSubelementMaskOp>(loc, vmask_ty, from, to);
+}
+
 // TODO(b/347016737): Deprecate tpu.rotate and only use tpu.dynamic_rotate. So
 // we do not need template for the op type and to explicitly force amount
 // argument to dynamic.
@@ -2698,23 +2726,9 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
           const VectorType vmask_ty = getNativeVregOrVmaskType(
               builder.getI1Type(), bitwidth, ctx.target_shape);
           if (tiling_dim.value() == 0) {  // sublane
-            if (operand_offset % packing != 0) {
-              // Packed case, degenerate where we have a half or quarter
-              // sublane.
-              // TODO(mvoz): We can probably always use the
-              // CreateSubelementMaskOp if (1) optimize it on TPUv4 and (2) Add
-              // support for unpacked types in some of the invariants in
-              // lower_to_llo.
-              mask = builder.create<tpu::CreateSubelementMaskOp>(
-                  op.getLoc(), vmask_ty, 0, operand_offset);
-            } else {
-              auto sublane_offset = operand_offset / packing;
-              mask = builder.create<tpu::CreateMaskOp>(
-                  op.getLoc(), vmask_ty,
-                  ArrayRef<Value>{boundIdxConst(0), boundIdxConst(0)},
-                  ArrayRef<Value>{boundIdxConst(sublane_offset),
-                                  boundIdxConst(layout->tiling()[1])});
-            }
+            mask = createSubelementMask(builder, op.getLoc(), bitwidth,
+                                        /*from=*/0, /*to=*/operand_offset,
+                                        ctx.target_shape);
           } else {  // lane
             mask = builder.create<tpu::CreateMaskOp>(
                 op.getLoc(), vmask_ty,
@@ -5305,182 +5319,6 @@ Value copy_one_sublane(OpBuilder &builder, Value src_vreg, int src_sl_idx,
   return src_vreg;
 }
 
-// This function is based on tpu_rotate_rule. It applies a shift of amount to
-// a given dim. A major difference is that it "overflows", i.e. if the shift
-// amount is such that it pushes us into a new vreg, we create a new vreg and
-// fill it in with the remaining rows.
-//
-// The shift is the difference between layout_in and layout_out, on the
-// given dim.
-FailureOr<xla::Array<Value>> tpu_rotate_with_overflow(
-    OpBuilder &builder, const std::array<int64_t, 2> target_shape,
-    const Location loc, const VectorType vty, xla::Array<Value> in_tiles,
-    int64_t dim, const VectorLayout &layout_in,
-    const LayoutOffsets offsets_out) {
-  if (!layout_in.hasNativeTiling(target_shape)) {
-    return emitError(loc, "Not implemented: non-native tiling for layout");
-  }
-  if (layout_in.bitwidth() != 32) {
-    return emitError(loc,
-                     "Not implemented: multi-row shift with "
-                     "bitwidth != 32");
-  }
-  // TODO(apaszke,mvoz): Just use offsets_out instead of this.
-  VectorLayout layout_out(layout_in.bitwidth(), offsets_out, layout_in.tiling(),
-                          layout_in.implicit_dim());
-
-  int64_t tiling_dim = dim - (in_tiles.num_dimensions() - 2);
-  if (tiling_dim != 0) {
-    return emitError(loc,
-                     "Rotate with overflow untested for "
-                     "dim != 0");
-  }
-  auto amount =
-      *layout_out.offsets()[tiling_dim] - *layout_in.offsets()[tiling_dim];
-
-  SmallVector<int64_t> dst_tiles_shape =
-      layout_out.tileArrayImplicitShape(vty.getShape(), target_shape);
-
-  const VectorType res_vreg_ty =
-      getNativeVregType(vty.getElementType(), target_shape);
-
-  xla::Array<Value> out_tiles(dst_tiles_shape);
-
-  // We update the result vregs in the following way:
-  //  - If the offset is positive, write the first tile as is, if the offset
-  //    is negative, blend it with the next tile.
-  //  - Blend the rest of the tiles with the prior (positive offset) or next
-  //    (negative offset) tile.
-  //  - (In positive cases, we can get an extra vreg (overflow)) we write the
-  //    remaining tiles.
-  //    This only happens if the original input vreg size is smaller than the
-  //    result vreg size (an offset) can "push" us into a new vreg.
-  //
-  //  Ex: (30, 128), starting offset 0, shift by 6, native tiling (8, 128)
-  //  The input is (4, 1), where the first 3 vregs are full (0-24)
-  //  and the last vreg is filled in rows 0-6. When we offset it by 6, we
-  //  need a 4th vreg, as now vreg 0 is filled in 6-8 (2 total), vreg 1, 2, 3
-  //  are filled in fully (8-16, 16-24, 24-32) (2 + 24 total), and vreg 4 is
-  //  filled in 0-4. (2 + 24 + 4 = 30).
-
-  // Negative offset amount means we:
-  //
-  //  Ex 1: (30, 128), input offset 6, shift by -2, native tiling (8, 128)
-  //  (The result of the last example, for simplicity). In this case, we have
-  //  (5, 1) vregs as decribed above. Because the shift does not cause us to
-  //  shift back from the 5th vreg, we still need it. In such a case, the result
-  //  vreg is still (5, 1).
-  //
-  //  - Write the first vreg as is.
-  //  - The next vregs are blended with the prior one (except the last),
-  //    where we blend by the shift amount. Ex: Vreg 1 goes from 6-8 to 4-8,
-  //    pulling 2 rows from the next vreg.
-  //  - The last tile is masked to only write the remaining rows.
-  //    Ex: Vreg 4 goes from 0-4 to 0-2.
-  //
-  //  Ex 2: (30, 128), starting offset 6, shift by -6, native tiling (8, 128)
-  //  In this case, we have (5, 1) vregs as described above. Because the shift
-  //  causes us to shift back from the 5th vreg, we don't need it anymore.
-  //  In such a case, the result vreg is (4, 1).
-  //
-  //  - All vregs are blended with the next one (except the last),
-  //    where we blend by the shift amount. Ex: Vreg 1 goes from 6-8 to 0-8,
-  //    pulling 6 rows from the next vreg.
-  //  - The last tile is discarded - it was fully subsumed by the prior blends.
-  //
-  //  Ex 3: (30, 128), starting offset 0, shift by -6, native tiling (8, 128)
-  //  In this case, we have (4, 1) vregs as described above.
-  //  In such a case, the result vreg is (4, 1), where the first vreg is filled
-  //  in rows 2-8 (6), and vregs 1 and 2 are filled in fully (8-16, 16-24), and
-  //  vreg 3 is filled in rows 0-6.
-  //
-  //  NOTE - in such cases, where the abs(shift) in a negative shift > starting
-  //  offset, we can actually implement this as a positive shift of the delta
-  //  from the native tile size.
-  //  in the example above, the delta is 8 - 6 + 0 = 2. The resulting vregs are
-  //  the same as if we had shifted by 2, starting at offset 0.
-  //
-  //  Another example to demonstrate the point:
-  //  Ex 4: (30, 128), starting offset 2, shift by -4, native tiling (8, 128)
-  //  In this case, we start with (4, 1) vregs as described above.
-  //  (2-8)(8-16)(16-24)(0-4). Shifting by -4 is the same as 8 - 4 + 2 = 6.
-  //  So we can just shift by 6, starting at offset 0.
-  //  Vreg 0 is filled in 6-8 (2 total), vreg 1, 2 and 3 are filled in fully
-  //  (8-16, 16-24, 24-32) (2 + 24 total = 26) vreg 4 is filled with the
-  //  remainder, 0-4 (30 total).
-  //
-  //  This means that no matter what the shift is, we should always
-  //  rotate and compute the shift amount in such a way that the first input
-  //  vreg is the first output vreg.
-
-  // Compute the mask for the blend.
-  // Positive blends blend "forward" and negative blends blend "backward".
-  auto mask_val = amount;
-  auto vreg_rot_amount = amount;
-  if (amount < 0) {
-    mask_val = layout_in.tiling()[tiling_dim] - std::abs(amount);
-    vreg_rot_amount += target_shape[tiling_dim];
-  }
-  auto boundIdxConst = std::bind(IdxConst, std::placeholders::_1, builder, loc);
-  auto mask = builder.create<tpu::CreateMaskOp>(
-      loc, VectorType::get(target_shape, builder.getI1Type()),
-      ValueRange{boundIdxConst(0), boundIdxConst(0)},
-      ValueRange{boundIdxConst(mask_val), boundIdxConst(target_shape[1])});
-
-  // Actually do the rotation.
-  in_tiles.Each([&](absl::Span<const int64_t> idxs, Value *v) {
-    if (dim >= in_tiles.num_dimensions() - 2) {
-      *v = builder.create<tpu::RotateOp>(loc, res_vreg_ty, in_tiles(idxs),
-                                         vreg_rot_amount, tiling_dim, nullptr,
-                                         nullptr);
-    }
-  });
-
-  // Walk the result tiles.
-  // TODO(mvoz): There is a micro-optimization here where we can avoid
-  // allocating blend indices per vreg.
-  out_tiles.Each([&](absl::Span<const int64_t> idxs, Value *v) {
-    if (idxs[dim] == 0) {
-      // A negative shift amount means we need to blend the first tile with the
-      // next one, but only if we're not at the end of the input.
-      if (amount < 0 && (idxs[dim] + 1 < in_tiles.dim(dim))) {
-        SmallVector<int64_t> next_idx = {idxs.begin(), idxs.end()};
-        next_idx[dim] = idxs[dim] + 1;
-        *v = builder.create<arith::SelectOp>(loc, mask, in_tiles(idxs),
-                                             in_tiles(next_idx));
-      } else {
-        // Positive shift, or negative shift at the end of the input.
-        *v = in_tiles(idxs);
-      }
-    } else if (idxs[dim] < in_tiles.dim(dim)) {
-      // write the rest as blended up to the end of the input
-      if (amount < 0) {
-        if (idxs[dim] + 1 < in_tiles.dim(dim)) {
-          SmallVector<int64_t> next_idx = {idxs.begin(), idxs.end()};
-          next_idx[dim] = idxs[dim] + 1;
-          *v = builder.create<arith::SelectOp>(loc, mask, in_tiles(idxs),
-                                               in_tiles(next_idx));
-        } else {
-          // Nothing to blend with, just write the last tile.
-          *v = in_tiles(idxs);
-        }
-      } else {
-        SmallVector<int64_t> prior_idx = {idxs.begin(), idxs.end()};
-        prior_idx[dim] = idxs[dim] - 1;
-        *v = builder.create<arith::SelectOp>(loc, mask, in_tiles(prior_idx),
-                                             in_tiles(idxs));
-      }
-    } else {
-      // write trailing if it's there (positive shift, increasing vreg count)
-      // Use the last prior
-      SmallVector<int64_t> prior_idx = {idxs.begin(), idxs.end()};
-      prior_idx[dim] = idxs[dim] - 1;
-      *v = in_tiles(prior_idx);
-    }
-  });
-
-  return out_tiles;
-}
 
 void rotateVregs(OpBuilder &builder, xla::Array<Value> &vregs,
                  const int64_t amount, const int dimension) {
@@ -5514,6 +5352,9 @@ void rotateLanes(OpBuilder &builder, xla::Array<Value> &vregs,
 // For these purposes, the vreg is considered to have shape (row_packing *
 // target_shape[0], target_shape[1])
 //
+// Note: When rotating by a whole number of sublanes, there are no low bits, so
+// null is returned when is_high is false.
+//
 // Args:
 //  vreg: The vreg to rotate
 //  rotate_amount: The amount to rotate the vreg by.
@@ -5530,12 +5371,11 @@ Value rotateVregRows(OpBuilder &builder, Location loc, Value vreg,
   CHECK_LT(0, rows_per_sublane);
   const int64_t bits_per_row = 32 / rows_per_sublane;
   const int64_t sublane_rotate_amount =
-      rotate_amount / rows_per_sublane + (is_high ? 0 : 1);
+      (rotate_amount / rows_per_sublane + (is_high ? 0 : 1)) % target_shape[0];
   const int64_t within_sublane_rotate_amount = rotate_amount % rows_per_sublane;
-  vreg = builder.create<tpu::RotateOp>(vreg.getLoc(), vreg,
-                                       /*amount=*/sublane_rotate_amount,
-                                       /*dimension=*/0, /*stride=*/nullptr,
-                                       /*stride_dimension=*/nullptr);
+  if (within_sublane_rotate_amount == 0 && !is_high) {
+    return nullptr;
+  }
   if (within_sublane_rotate_amount != 0) {
     const VectorType vreg_ty = cast<VectorType>(vreg.getType());
     const VectorType i32_vreg_ty =
@@ -5559,7 +5399,159 @@ Value rotateVregRows(OpBuilder &builder, Location loc, Value vreg,
     }
     vreg = builder.create<tpu::BitcastVregOp>(loc, vreg_ty, vreg);
   }
-  return vreg;
+  return builder.create<tpu::RotateOp>(vreg.getLoc(), vreg,
+                                       /*amount=*/sublane_rotate_amount,
+                                       /*dimension=*/0, /*stride=*/nullptr,
+                                       /*stride_dimension=*/nullptr);
+}
+
+FailureOr<xla::Array<Value>> doRowShiftRelayout(
+    OpBuilder &builder, const Location loc, const ArrayRef<int64_t> shape,
+    xla::Array<Value> src_vregs, const VectorLayout &src_layout,
+    const int64_t dst_row_offset, const std::array<int64_t, 2> target_shape) {
+  constexpr int32_t kNativeBitwidth = 32;
+  const std::array<int64_t, 2> tiling = src_layout.tiling();
+  const std::array<int64_t, 2> tiled_ishape =
+      src_layout.getImplicitTiledDims(shape, 1);
+  const int64_t sublanes_per_tile = src_layout.sublanesPerTile(target_shape);
+  const int64_t tiles_per_vreg = src_layout.tilesPerVreg(target_shape);
+  const LayoutOffsets &src_offsets = src_layout.offsets();
+  CHECK(src_offsets[0].has_value());
+  CHECK_GE(*src_offsets[0], 0);
+  CHECK_LT(*src_offsets[0], tiling[0]);
+  CHECK_GE(dst_row_offset, 0);
+  CHECK_LT(dst_row_offset, tiling[0]);
+  CHECK_EQ(tiling[0] % sublanes_per_tile, 0);
+  const int64_t rows_per_sublane = tiling[0] / sublanes_per_tile;
+  const int64_t bits_per_row = kNativeBitwidth / rows_per_sublane;
+  const int64_t row_shift_amount = dst_row_offset - *src_offsets[0];
+  // How many rows to shift (positive):
+  const int64_t shift_in_tile = (row_shift_amount + tiling[0]) % tiling[0];
+  // How many rows to shift within a single sublane:
+  const int64_t shift_in_sublane = shift_in_tile % rows_per_sublane;
+  CHECK(src_vregs.begin() != src_vregs.end());
+  const VectorType vreg_ty = cast<VectorType>(src_vregs.begin()->getType());
+  const VectorType int_vreg_ty =
+      getNativeVregType(builder.getIntegerType(bits_per_row), target_shape);
+
+  // The mask selects the first row_shift_amount full/half/quarter/etc-sublanes
+  // of each tile that contains data.
+  Value mask = nullptr;
+  for (int64_t i = 0; i < tiles_per_vreg; ++i) {
+    const int64_t start = i * sublanes_per_tile * rows_per_sublane;
+    // TODO: b/412753800 - Skip tiles that never contain data
+    Value tile_mask =
+        createSubelementMask(builder, loc, bits_per_row, /*from=*/start,
+                             /*to=*/start + shift_in_tile, target_shape);
+    mask = mask == nullptr ? tile_mask
+                           : builder.create<arith::OrIOp>(loc, mask, tile_mask);
+  }
+
+  xla::Array<Value> res_vregs(
+      VectorLayout(src_layout.bitwidth(), {dst_row_offset, src_offsets[1]},
+                   src_layout.tiling(), src_layout.implicit_dim())
+          .tileArrayImplicitShape(shape, target_shape));
+  // rotate_rows_and_blend returns the combined high and low bits of a vreg
+  // after rotation by shift_in_tile. data_start and data_end (exclusive) are
+  // the rows of interest in the resulting vreg.
+  auto rotate_rows_and_blend = [&](Value vreg, const int64_t data_start,
+                                   const int64_t data_end) -> Value {
+    CHECK(vreg != nullptr);
+    // The split between low and high bits is at shift_in_sublane rows.
+    Value low_bits, high_bits;
+    // start_sublane is the first sublane in a tile that contains data
+    const int64_t start_sublane = data_start / rows_per_sublane;
+    // end_sublane the last sublane in a tile that contains data, inclusive
+    const int64_t end_sublane = (data_end - 1) / rows_per_sublane;
+
+    // If data is in the high bits only, skip low bits
+    // This happens iff data is in a single sublane and begins after the split
+    if (start_sublane != end_sublane ||
+        data_start % rows_per_sublane < shift_in_sublane) {
+      // Note that if shift_in_sublane is 0, rotateVregRows will return null
+      // since there are no low bits.
+      low_bits =
+          rotateVregRows(builder, loc, vreg, shift_in_tile, rows_per_sublane,
+                         /*is_high=*/false, target_shape);
+    }
+    // If data is in the low bits only, skip high bits
+    // This happens iff data is in a single sublane and ends before the split
+    if (start_sublane != end_sublane ||
+        (data_end - 1) % rows_per_sublane >= shift_in_sublane) {
+      high_bits =
+          rotateVregRows(builder, loc, vreg, shift_in_tile, rows_per_sublane,
+                         /*is_high=*/true, target_shape);
+    }
+    if (low_bits != nullptr && high_bits != nullptr) {
+      return builder.create<arith::OrIOp>(loc, low_bits, high_bits);
+    } else if (low_bits != nullptr) {
+      return low_bits;
+    } else {
+      CHECK(high_bits != nullptr);
+      return high_bits;
+    }
+  };
+  const int64_t res_low_idx_delta = *src_offsets[0] < dst_row_offset ? -1 : 0;
+  const int64_t res_high_idx_delta = *src_offsets[0] < dst_row_offset ? 0 : 1;
+  res_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
+    // Each vreg of the result is (usually) a combination of two vregs from the
+    // source. If we are shifting *down* by 5 rows, the first 5 rows of result
+    // vreg i (along 2nd minor) will come from source vreg i-1, while the
+    // following rows will come from source vreg i.
+
+    // The split of data between low and high is at shift_in_tile rows.
+    Value low, high;
+    // The start row of data in the vreg
+    const int64_t res_data_start = *(idxs.end() - 2) == 0 ? dst_row_offset : 0;
+    // The end row of data in the vreg, exclusive
+    const int64_t res_data_end =
+        *(idxs.end() - 2) == *(res_vregs.dimensions().end() - 2) - 1
+            // -+ 1 before/after modulo so result is (1, tiling[0]) inclusive
+            ? (dst_row_offset + tiled_ishape[0] - 1) % tiling[0] + 1
+            : tiling[0];
+    // If data begins after the split, skip the low rows
+    if (res_data_start < shift_in_tile) {
+      SmallVector<int64_t> low_idxs(toArrayRef(idxs));
+      *(low_idxs.end() - 2) += res_low_idx_delta;
+      low = builder.create<tpu::BitcastVregOp>(loc, int_vreg_ty,
+                                               src_vregs(low_idxs));
+      low = rotate_rows_and_blend(
+          low, res_data_start,
+          /*data_end=*/std::min(res_data_end, shift_in_tile));
+      // By doing the tile rotate after, rotate_rows_and_blend can be CSE'd
+      // since the low part of this vreg is the high part of the previous vreg.
+      // If there is no next previous or there is no benefit in CSE (e.g. we
+      // only use high bits and next vreg only uses low bits), the rotates
+      // should get merged anyway.
+      // TODO(tlongeri): Think more about the order in which rotates happen.
+      //                 Doing OR before rotate may be better.
+      low = builder.create<tpu::RotateOp>(
+          loc, low, (tiles_per_vreg - 1) * sublanes_per_tile, 0, nullptr,
+          nullptr);
+    }
+    // If data ends before the split, skip high rows.
+    if (res_data_end > shift_in_tile) {
+      SmallVector<int64_t> high_idxs(toArrayRef(idxs));
+      *(high_idxs.end() - 2) += res_high_idx_delta;
+      high = builder.create<tpu::BitcastVregOp>(loc, int_vreg_ty,
+                                                src_vregs(high_idxs));
+      high = rotate_rows_and_blend(
+          high,
+          /*data_start=*/std::max(res_data_start, shift_in_tile), res_data_end);
+    }
+
+    if (low != nullptr && high != nullptr) {
+      *v = builder.create<arith::SelectOp>(loc, mask, low, high);
+    } else if (low != nullptr) {
+      *v = low;
+    } else {
+      CHECK(high != nullptr);
+      *v = high;
+    }
+    *v = builder.create<tpu::BitcastVregOp>(loc, vreg_ty, *v);
+  });
+
+  return res_vregs;
 }
 
 // Relayout src_vregs from layout src to layout dst, where dst is the same as
@@ -5819,8 +5811,6 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeOffsets(
   const auto &target_shape = ctx.target_shape;
   const VectorLayout dst(src.bitwidth(), dst_offsets, src.tiling(),
                          src.implicit_dim());
-  const int packing = src.packing();
-  const int8_t bitwidth = src.bitwidth();
 
   int row_diff;
   if (!src.offsets()[0].has_value()) {
@@ -5846,56 +5836,9 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeOffsets(
     }
     const SmallVector<int64_t> implicit_shape =
         src.implicitShape(vty.getShape());
-    if (implicit_shape[implicit_shape.size() - 2] != 1) {
-      // Multi row shift
-      // TODO(mvoz): This should take the vregs array, not the value.
-      FAILUREOR_ASSIGN_OR_RETURN(
-          vregs, tpu_rotate_with_overflow(
-                     builder, target_shape, loc, vty, std::move(vregs),
-                     /*dim*/ implicit_shape.size() - 2, src, dst_offsets));
-    } else {
-      // Single row case
-      // TODO(mvoz): The single row case has a broader set of supported
-      // operations: non-native tiling, packed types, implicit dim. We should
-      // support these cases in tpu_rotate_with_overflow and remove this
-      // branch.
-      const int64_t src_sublane = *src.offsets()[0] / packing;
-      const int64_t dst_sublane = *dst_offsets[0] / packing;
-      if (int64_t sublane_diff = dst_sublane - src_sublane) {
-        if (sublane_diff < 0) {
-          sublane_diff += target_shape[0];
-        }
-        rotateSublanes(builder, vregs, sublane_diff);
-      }
-      const int src_subelem = *src.offsets()[0] % packing;
-      const int dst_subelem = *dst.offsets()[0] % packing;
-      if (src_subelem != dst_subelem) {
-        const int subelem_diff = dst_subelem - src_subelem;
-        const int shift_bits = bitwidth * std::abs(subelem_diff);
-        VectorType bits_vreg_ty =
-            VectorType::get(target_shape, builder.getI32Type());
-        auto shift_vreg = builder.create<arith::ConstantOp>(
-            loc, bits_vreg_ty,
-            DenseElementsAttr::get(bits_vreg_ty, shift_bits));
-        vregs.Each([&](absl::Span<const int64_t> /*idx*/, Value *tile) {
-          auto bit_tile =
-              builder.create<tpu::BitcastVregOp>(loc, bits_vreg_ty, *tile);
-          Operation *shift_tile;
-          if (subelem_diff > 0) {
-            shift_tile =
-                builder.create<arith::ShLIOp>(loc, bit_tile, shift_vreg);
-          } else {  // subelem_diff < 0
-            CHECK_LT(subelem_diff, 0);
-            shift_tile =
-                builder.create<arith::ShRUIOp>(loc, bit_tile, shift_vreg);
-          }
-          *tile = builder
-                      .create<tpu::BitcastVregOp>(loc, tile->getType(),
-                                                  shift_tile->getResult(0))
-                      .getResult();
-        });
-      }
-    }
+    FAILUREOR_ASSIGN_OR_RETURN(
+        vregs, doRowShiftRelayout(builder, loc, vty.getShape(), vregs, src,
+                                  *dst_offsets[0], ctx.target_shape));
   }
 
   // Rows are now correctly aligned. Time to offset columns.

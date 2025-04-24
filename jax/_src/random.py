@@ -39,6 +39,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.lax import lax as lax_internal
+from jax._src.nn.functions import softmax
 from jax._src.numpy.lax_numpy import _convert_and_clip_integer
 from jax._src.numpy.util import _arraylike, check_arraylike, promote_dtypes_inexact
 from jax._src.pjit import auto_axes
@@ -1136,16 +1137,7 @@ def _dirichlet(key, alpha, shape, dtype) -> Array:
 
   # Compute gamma in log space, otherwise small alpha can lead to poor behavior.
   log_gamma_samples = loggamma(key, alpha, shape + np.shape(alpha)[-1:], dtype)
-  return _softmax(log_gamma_samples, -1)
-
-
-def _softmax(x, axis) -> Array:
-  """Utility to compute the softmax of x along a given axis."""
-  if not dtypes.issubdtype(x.dtype, np.floating):
-    raise TypeError(f"_softmax only accepts floating dtypes, got {x.dtype}")
-  x_max = jnp.max(x, axis, keepdims=True)
-  unnormalized = jnp.exp(x - lax.stop_gradient(x_max))
-  return unnormalized / unnormalized.sum(axis, keepdims=True)
+  return softmax(log_gamma_samples, -1)
 
 
 def exponential(key: ArrayLike,

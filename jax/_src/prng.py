@@ -173,6 +173,9 @@ class PRNGKeyArray(jax.Array):
                                          [key_data], [device], committed=False)
     self._base_array = key_data
 
+  def _replace_with(self, value: PRNGKeyArray):
+    self._base_array._replace_with(value._base_array)
+
   def block_until_ready(self):
     _ = self._base_array.block_until_ready()
     return self

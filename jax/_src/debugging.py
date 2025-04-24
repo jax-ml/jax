@@ -133,7 +133,6 @@ def debug_callback_transpose_rule(*flat_args, callback: Callable[..., Any],
 ad.primitive_transposes[debug_callback_p] = debug_callback_transpose_rule
 
 def _debug_callback_partial_auto(axis_context, *args, **params):
-  from jax.experimental.shard_map import shard_map
   partial_auto = list(set(axis_context.mesh.axis_names) - axis_context.manual_axes)
   def f():
     idx = jax.lax.with_sharding_constraint(
@@ -142,7 +141,7 @@ def _debug_callback_partial_auto(axis_context, *args, **params):
     return jax.lax.cond(idx == 0,
                         lambda: debug_callback_p.bind(*args, **params),
                         lambda: [])
-  return shard_map(f, axis_context.mesh, in_specs=(), out_specs=[])()
+  return jax.shard_map(f, mesh=axis_context.mesh, in_specs=(), out_specs=[])()
 
 def debug_callback_lowering(ctx, *args, effect, partitioned, callback, **params):
   axis_context = ctx.module_context.axis_context

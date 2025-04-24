@@ -1876,7 +1876,7 @@ def _raise_warnings_or_errors_for_jit_of_pmap(
          "input and output arrays onto a single device. "
          "Consider removing the outer jit unless you know what you're doing. "
          "See https://github.com/jax-ml/jax/issues/2926. Or "
-         "use jax.experimental.shard_map instead of pmap under jit compilation.")
+         "use jax.shard_map instead of pmap under jit compilation.")
 
   if nreps > xb.device_count(backend):
     raise ValueError(

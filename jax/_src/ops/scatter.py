@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Union
+from typing import Any, Union
 import warnings
 from functools import partial
 
@@ -28,6 +28,8 @@ from jax import lax
 from jax._src import config
 from jax._src import core
 from jax._src import dtypes
+from jax._src import sharding
+from jax._src import tree_util
 from jax._src import util
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy import indexing
@@ -44,9 +46,10 @@ Index = Union[SingleIndex, tuple[SingleIndex, ...]]
 Scalar = Union[complex, float, int, np.number]
 
 
-def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
-                    unique_indices, mode=None, normalize_indices=True,
-                    out_sharding=None):
+def _scatter_update(x: ArrayLike, idx: Index, y: ArrayLike, scatter_op: Callable[..., Array],
+                    indices_are_sorted: bool, unique_indices: bool,
+                    mode: lax.GatherScatterMode | str | None = None, normalize_indices: bool = True,
+                    out_sharding: sharding.Sharding | None = None):
   """Helper for indexed updates.
 
   Computes the value of x that would result from computing::
@@ -92,9 +95,11 @@ def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
 # TODO(phawkins): re-enable jit after fixing excessive recompilation for
 # slice indexes (e.g., slice(0, 5, None), slice(10, 15, None), etc.).
 # @partial(jit, static_argnums=(2, 3, 4))
-def _scatter_impl(x, y, dynamic_idx, *, scatter_op, treedef, static_idx,
-                  indices_are_sorted, unique_indices, mode,
-                  normalize_indices):
+def _scatter_impl(x: ArrayLike, y: ArrayLike, dynamic_idx: tuple[Any, ...], *,
+                  scatter_op: Callable[..., Array],
+                  treedef: tree_util.PyTreeDef, static_idx: tuple[Any, ...],
+                  indices_are_sorted: bool, unique_indices: bool,
+                  mode: lax.GatherScatterMode | str | None, normalize_indices: bool):
   dtype = lax.dtype(x)
   weak_type = dtypes.is_weakly_typed(x)
 
@@ -178,7 +183,7 @@ def _segment_update(name: str,
                     unique_indices: bool = False,
                     bucket_size: int | None = None,
                     reducer: Callable | None = None,
-                    mode: lax.GatherScatterMode | None = None) -> Array:
+                    mode: lax.GatherScatterMode | str | None = None) -> Array:
   check_arraylike(name, data, segment_ids)
   mode = lax.GatherScatterMode.FILL_OR_DROP if mode is None else mode
   data = jnp.asarray(data)
@@ -217,7 +222,7 @@ def segment_sum(data: ArrayLike,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
                 bucket_size: int | None = None,
-                mode: lax.GatherScatterMode | None = None) -> Array:
+                mode: lax.GatherScatterMode | str | None = None) -> Array:
   """Computes the sum within segments of an array.
 
   Similar to TensorFlow's `segment_sum
@@ -272,7 +277,7 @@ def segment_prod(data: ArrayLike,
                  indices_are_sorted: bool = False,
                  unique_indices: bool = False,
                  bucket_size: int | None = None,
-                 mode: lax.GatherScatterMode | None = None) -> Array:
+                 mode: lax.GatherScatterMode | str | None = None) -> Array:
   """Computes the product within segments of an array.
 
   Similar to TensorFlow's `segment_prod
@@ -327,7 +332,7 @@ def segment_max(data: ArrayLike,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
                 bucket_size: int | None = None,
-                mode: lax.GatherScatterMode | None = None) -> Array:
+                mode: lax.GatherScatterMode | str | None = None) -> Array:
   """Computes the maximum within segments of an array.
 
   Similar to TensorFlow's `segment_max
@@ -381,7 +386,7 @@ def segment_min(data: ArrayLike,
                 indices_are_sorted: bool = False,
                 unique_indices: bool = False,
                 bucket_size: int | None = None,
-                mode: lax.GatherScatterMode | None = None) -> Array:
+                mode: lax.GatherScatterMode | str | None = None) -> Array:
   """Computes the minimum within segments of an array.
 
   Similar to TensorFlow's `segment_min

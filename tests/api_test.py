@@ -63,7 +63,7 @@ from jax._src.interpreters import ad as ad_internal
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
-from jax._src.lib import xla_extension
+from jax._src.lib import _jax
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
@@ -1362,7 +1362,7 @@ class JitTest(jtu.BufferDonationTestCase):
             "exec_time_optimization_effort": 0.0,
         })(1.0)  # doesn't crash.
 
-    with self.assertRaisesRegex(xla_extension.XlaRuntimeError, "No such"):
+    with self.assertRaisesRegex(_jax.XlaRuntimeError, "No such"):
       f_jit = jit(
           f,
           compiler_options={
@@ -1403,12 +1403,12 @@ class JitTest(jtu.BufferDonationTestCase):
     lowered = f_jit.lower(1.)
 
     self.assertRaisesRegex(
-        xla_extension.XlaRuntimeError, "No such compile option: 'invalid_key'",
+        _jax.XlaRuntimeError, "No such compile option: 'invalid_key'",
         lambda: lowered.compile(
             compiler_options={"invalid_key": "invalid_value"}))
 
     self.assertRaisesRegex(
-        xla_extension.XlaRuntimeError, "is not a valid bool value.",
+        _jax.XlaRuntimeError, "is not a valid bool value.",
         lambda: lowered.compile(
             compiler_options={"xla_embed_ir_in_executable": "invalid_value"}))
 
@@ -1423,7 +1423,7 @@ class JitTest(jtu.BufferDonationTestCase):
 
     # We should still error on invalid options after some valid compiles
     with self.assertRaisesRegex(
-        xla_extension.XlaRuntimeError, "No such compile option: 'invalid_key'"):
+        _jax.XlaRuntimeError, "No such compile option: 'invalid_key'"):
       jit(f, compiler_options={"invalid_key": "invalid_value"})(1.)
 
   def test_lower_compile_with_compiler_options_multiple(self):
@@ -1448,7 +1448,7 @@ class JitTest(jtu.BufferDonationTestCase):
 
     # We should still error on invalid options after some valid compiles
     self.assertRaisesRegex(
-        xla_extension.XlaRuntimeError, "No such compile option: 'invalid_key'",
+        _jax.XlaRuntimeError, "No such compile option: 'invalid_key'",
         lambda: lowered.compile(
             compiler_options={"invalid_key": "invalid_value"}))
 
@@ -4955,6 +4955,11 @@ class APITest(jtu.JaxTestCase):
     with config.use_direct_linearize(True):
       jax.grad(my_sin_p.bind)(1.0)  # doesn't crash
 
+  def test_ensure_compile_time_eval_no_leaks(self):
+    # https://github.com/jax-ml/jax/issues/25847
+    with jax.ensure_compile_time_eval():
+      jnp.linalg.solve(jnp.eye(3), jnp.ones(3))  # doesn't crash
+
 
 class RematTest(jtu.JaxTestCase):
 
@@ -8374,6 +8379,22 @@ class CustomJVPTest(jtu.JaxTestCase):
       return f(x, f(x, 1.))
 
     jax.jvp(jax.vmap(g), (jnp.ones(3),), (jnp.ones(3),))  # don't crash
+
+  def test_symbolic_zero_under_vmap_of_jit(self):
+    # https://github.com/jax-ml/jax/issues/28144
+    @jax.custom_jvp
+    def f(x):
+        return x + 1
+
+    @f.defjvp
+    def f_jvp(x, t):
+        (x,) = x
+        (t,) = t
+        z = custom_derivatives_public.zero_from_primal(x, symbolic_zeros=True)
+        return f(x), z
+
+    x = jnp.arange(3.0)
+    jax.jvp(jax.vmap(jax.jit(f)), (x,), (x,))  # doesn't crash
 
 
 class CustomVJPTest(jtu.JaxTestCase):

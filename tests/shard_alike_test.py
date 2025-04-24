@@ -19,7 +19,7 @@ from absl.testing import absltest
 from jax._src import test_util as jtu
 from jax.sharding import NamedSharding, PartitionSpec as P
 from jax.experimental.shard_alike import shard_alike
-from jax.experimental.shard_map import shard_map
+from jax._src.shard_map import shard_map
 
 jax.config.parse_flags_with_absl()
 jtu.request_cpu_devices(8)
@@ -146,7 +146,7 @@ class ShardAlikeTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       y = x @ x.T
-      s_out = shard_map(g, mesh, in_specs=P('x', 'y'),
+      s_out = shard_map(g, mesh=mesh, in_specs=P('x', 'y'),
                         out_specs=P(None, 'y'))(y)
       z = s_out.T @ s_out
       return shard_alike(y, z)

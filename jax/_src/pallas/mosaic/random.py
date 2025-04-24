@@ -13,18 +13,18 @@
 # limitations under the License.
 
 from collections.abc import Callable
-
 import functools
 import jax
 from jax import numpy as jnp
 from jax import random as jax_api_random
 from jax._src import blocked_sampler
 from jax._src import dtypes
-from jax._src import typing
-from jax._src.pallas.mosaic.primitives import prng_seed
-from jax._src.pallas.mosaic.primitives import prng_random_bits
-from jax._src.pallas import primitives
 from jax._src import prng as jax_prng
+from jax._src import typing
+from jax._src.pallas import primitives
+from jax._src.pallas.mosaic import primitives as tpu_primitives
+from jax._src.pallas.mosaic.primitives import prng_random_bits
+from jax._src.pallas.mosaic.primitives import prng_seed
 
 
 Shape = jax_prng.Shape
@@ -32,8 +32,8 @@ SampleFnType = blocked_sampler.SampleFn
 KeylessSampleFnType = Callable[..., jax.Array]
 
 set_seed = prng_seed
-
-FOLD_IN_ROUNDS = 128
+unwrap_pallas_seed = tpu_primitives.unwrap_pallas_seed
+wrap_pallas_seed = tpu_primitives.wrap_pallas_seed
 
 
 def to_pallas_key(key: jax.Array) -> jax.Array:
@@ -63,7 +63,7 @@ def is_pallas_impl(impl: jax_prng.PRNGImpl) -> bool:
 
 def _seed_func(seed: jnp.int32):
   seed_data = jnp.zeros(tpu_key_impl.key_shape, dtype=jnp.int32)
-  return (seed_data + seed).astype(jnp.uint32)
+  return (seed_data + seed).astype(jnp.uint32)  # Broadcast the seed.
 
 def _random_bits(key: typing.Array, bit_width: int, shape: Shape):
   if bit_width != 32:
@@ -72,42 +72,26 @@ def _random_bits(key: typing.Array, bit_width: int, shape: Shape):
   return prng_random_bits(shape)
 
 def _fold_in(key: jax_prng.PRNGKeyArray, data: typing.Array):
-  # Roughly, we compute the new key as follows:
-  # new_key = random_bits(data)[..., 127] ^ random_bits(old_key)[..., 127]
-  # Because the TPU generates random numbers in (8, 128) blocks at once, we
-  # can generate that many values without additional cost which will reduce
-  # correlation between the old and new keys.
-
-  # TODO(justinfu): The underlying TPU hardware PRNG doesn't produce robust
-  # random bits when applied in rounds such as below (measured via crush).
-  # We should consider a different strategy for generating keys.
-  key_shape = tpu_key_impl.key_shape
-
-  prng_seed(data)
-  data_bits = prng_random_bits(
-      key_shape + (FOLD_IN_ROUNDS,)).astype(jnp.uint32)
-  prng_seed(key)
-  key_bits = prng_random_bits(
-      key_shape + (FOLD_IN_ROUNDS,)).astype(jnp.uint32)
-
-  mixed = key_bits[..., FOLD_IN_ROUNDS-1] ^ data_bits[..., FOLD_IN_ROUNDS-1]
-  assert mixed.shape == key_shape
-  return jax.random.wrap_key_data(mixed, impl="pallas_tpu")
+  key0, key1 = unwrap_pallas_seed(key)
+  # Perform a cheap mixing of data into the key.
+  key1 = key1 + data
+  [key0, key1] = jax_prng.apply_round([key0, key1], 13)
+  return wrap_pallas_seed(key0, key1, impl="pallas_tpu")
 
 def _split(key: typing.Array, shape: Shape):
   del key, shape
-  raise NotImplementedError()
+  raise NotImplementedError(
+      "Cannot split a Pallas key. Use fold_in instead to generate new keys."
+  )
 
 tpu_key_impl = jax_prng.PRNGImpl(
-   # Pallas currently only supports 2D+ windows, so set the key_shape
-   # to be 2D to have better compatibility with setting BlockSpecs.
-   key_shape=(1, 1),
-   seed=_seed_func,
-   split=_split,
-   random_bits=_random_bits,
-   fold_in=_fold_in,
-   name="pallas_tpu",
-   tag="pl"
+    key_shape=(1, 2),
+    seed=_seed_func,
+    split=_split,
+    random_bits=_random_bits,
+    fold_in=_fold_in,
+    name="pallas_tpu",
+    tag="pl",
 )
 jax_prng.register_prng(tpu_key_impl)
 

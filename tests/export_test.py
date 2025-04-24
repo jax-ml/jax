@@ -29,7 +29,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax import export
 from jax.experimental import pjit
-from jax.experimental.shard_map import shard_map
+from jax._src.shard_map import shard_map
 from jax.sharding import NamedSharding
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
@@ -2007,6 +2007,32 @@ class JaxExportTest(jtu.JaxTestCase):
 
     r = jax.jit(exp.call, out_shardings=NamedSharding(old_mesh_0, P("old_b")))(a, b)
     self.assertAllClose(a + b, r)
+
+  def test_lower_wth_different_meshes_axis_names(self):
+    mesh1 = jtu.create_mesh((4, 2), ("a", "b"))
+    mesh2 = jtu.create_mesh((4, 2), ("x", "y"))
+    @jax.jit
+    def f(tree):
+      return tree['foo'] + tree['bar']
+
+    args = {
+          'foo': jax.ShapeDtypeStruct(
+              (32, 32), dtype=np.float32,
+              sharding=NamedSharding(mesh1, P(None, "a"))),
+          'bar': jax.ShapeDtypeStruct(
+              (32, 32), dtype=np.float32,
+              sharding=NamedSharding(mesh2, P("y"))),
+      }
+
+    if config.use_shardy_partitioner.value:
+      with self.assertRaisesRegex(
+          ValueError,
+          r'Mesh for all inputs/outputs should be equal.*'
+          r"args\[0\]\['bar'\].*"):
+        get_exported(f)(args)
+    else:
+       get_exported(f)(args)
+
 
 
 if __name__ == "__main__":

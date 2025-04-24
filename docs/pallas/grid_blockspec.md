@@ -80,8 +80,14 @@ Not all block shapes are supported.
     must be equal to the array dimension, or be divisible by
     `128 * (32 / bitwidth(dtype))`.
 
-  * On GPU, the size of the blocks themselves is not restricted, but each
-    operation must operate on arrays whose size is a power of 2.
+  * On GPU, when using the Mosaic GPU backend, the size of the blocks is
+    unrestricted. However, due to hardware limitations, the size of the minormost
+    array dimension must by such that it is a multiple of 16 bytes. For example,
+    it must be a multiple of 8 if the input is `jnp.float16`.
+
+  * On GPU, when using the Triton backend, the size of the blocks themselves is
+    unrestricted, but each operation (including a load or store) must operate
+    on arrays whose size is a power of 2.
 ```
 
 If the block shape does not divide evenly the overall shape then the

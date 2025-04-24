@@ -17,6 +17,7 @@ See the export_back_compat_test_util module docstring for how to setup and
 update these tests.
 """
 
+import functools
 import math
 import unittest
 
@@ -25,6 +26,7 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
+from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosaic_gpu_add_one
 from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosaic_matmul
 from jax._src.internal_test_util.export_back_compat_test_data.pallas import mosaic_semaphore_dma
 from jax._src.internal_test_util.export_back_compat_test_data.pallas import triton_add_one
@@ -43,9 +45,6 @@ class CompatTest(bctu.CompatTestBase):
   def setUp(self):
     if jax.config.x64_enabled:
       self.skipTest("Only works in 32-bit")
-    if (jtu.test_device_matches(["cuda"]) and
-        not jtu.is_cuda_compute_capability_at_least("8.0")):
-      self.skipTest("Only works on GPUs with capability >= sm80")
     super().setUp()
 
   @unittest.skip("This test is checking backwards compatibility "
@@ -53,6 +52,9 @@ class CompatTest(bctu.CompatTestBase):
                  "compatibility for its IR, and we have since removed "
                  "the corresponding custom call from the guaranteed stable list.")
   def test_triton_add_one(self):
+    if not jtu.is_cuda_compute_capability_at_least("8.0"):
+      self.skipTest("Only works on GPUs with capability >= sm80")
+
     def func(x):
       def add_one(x_ref, o_ref):
         o_ref[0] = x_ref[0] + 1
@@ -64,6 +66,22 @@ class CompatTest(bctu.CompatTestBase):
     data = self.load_testdata(triton_add_one.data_2024_05_02)
 
     self.run_one_test(func, data)
+
+  def test_mosaic_gpu_add_one(self):
+    if not jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest("Only works on GPUs with capability >= sm90")
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((128 * 2,), jnp.float32),
+        grid=2,
+        backend="mosaic_gpu",
+    )
+    def add_one(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1
+
+    data = self.load_testdata(mosaic_gpu_add_one.data_2025_04_22)
+    self.run_one_test(add_one, data)
 
   @jax.default_matmul_precision("bfloat16")
   def test_mosaic_matmul(self):

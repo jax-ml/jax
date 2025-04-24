@@ -103,12 +103,110 @@ class K8sCluster(clusters.ClusterEnv):
       )
 
   @classmethod
-  def get_coordinator_address(cls, timeout_secs: int | None) -> str:
-    return '{job_name}-0.{jobset_name}:{port}'.format(
-      job_name=cls._pod().metadata.labels['job-name'],
-      jobset_name=cls._job().metadata.labels['jobset.sigs.k8s.io/jobset-name'],
-      port=cls._coordinator_port
+  @cache
+  def _headless_svc(cls):
+    with cls._handle_api_exception():
+      services = cls._core_api.list_namespaced_service(cls._namespace()).items
+
+    pod_labels = cls._pod().metadata.labels or {}
+    for svc in services:
+      if svc.spec.cluster_ip == "None":  # if headless service
+        svc_selector = svc.spec.selector or {}
+        if all(pod_labels.get(k) == v for k, v in svc_selector.items()):
+            return svc
+
+    # returns None if no headless service targets the current pod
+    return None
+
+  @classmethod
+  @cache
+  def _controller(cls):
+    # https://github.com/kubernetes/apimachinery/blob/7b4292b/pkg/apis/meta/v1/types.go#L235
+    # states that there cannot be more than one managing controller.
+    for owner in cls._pod().metadata.owner_references:
+      if owner.controller is True:
+        return owner
+
+    raise RuntimeError(
+      'Cannot automatically initialize distributed workload: '
+      f'pod {cls._pod().metadata.name} does not have a controller.'
     )
+
+  @classmethod
+  def get_coordinator_address(cls, timeout_secs: int | None) -> str:
+    controller = cls._controller()
+    job = cls._job()
+    pod = cls._pod()
+    if controller.kind == 'Job':
+      # if job belongs to a jobset
+      if 'jobset.sigs.k8s.io/jobset-name' in job.metadata.labels:
+        return '{job_name}-0.{subdomain}:{port}'.format(
+          job_name=job.metadata.name,
+          subdomain=job.metadata.labels['jobset.sigs.k8s.io/jobset-name'],
+          port=cls._coordinator_port
+        )
+      # if job is standalone
+      else:
+        # check if the job is associated with a headless service, which is
+        # necessary for pods to communicate with each other
+        if pod.spec.subdomain is None:
+          # check if a headless service exists but not specified as subdomain
+          svc = cls._headless_svc()
+          err_msg = (
+            "Pods within a job need a headless service in order to "
+            "communicate with each other. "
+          )
+          if svc:
+            err_msg += (
+              f"A headless service '{svc.metadata.name}' is found that "
+              "targets this job, but it is not specified as the job subdomain. "
+              "Please add the following to the job specification: "
+            )
+            fix_msg = [
+              "```",
+              "kind: Job",
+              "spec:",
+              "  ...",
+              "  template:",
+              "    spec:",
+              f"      subdomain: {svc.metadata.name}",
+              "```",
+            ]
+          else:
+            err_msg += "To fix, add the following to the job specification:"
+            fix_msg = [
+              "```",
+              "apiVersion: v1",
+              "kind: Service",
+              "metadata:",
+              "  name: jaxpods",
+              "spec:",
+              "  publishNotReadyAddresses: true",
+              "  clusterIP: None",
+              "  selector:",
+              f"    job-name: {job.metadata.name}",
+              "---",
+              "kind: Job",
+              "spec:",
+              "  ...",
+              "  template:",
+              "    spec:",
+              "      subdomain: jaxpods",
+              "```",
+            ]
+
+          raise RuntimeError('\n'.join([textwrap.fill(err_msg)] + fix_msg))
+
+        return '{job_name}-0.{subdomain}:{port}'.format(
+          job_name=job.metadata.name,
+          subdomain=pod.spec.subdomain,
+          port=cls._coordinator_port
+        )
+
+    else:
+      raise RuntimeError(
+        'In K8s, cluster automatic bootstrap only supports Job/JobSet.'
+      )
 
   @classmethod
   def get_process_count(cls) -> int:
@@ -122,5 +220,6 @@ class K8sCluster(clusters.ClusterEnv):
       return int(os.environ['JOB_COMPLETION_INDEX'])
     except KeyError:
       raise RuntimeError(
-        'K8s job must be run with `completionMode: "Indexed"`.'
+        'To enable automatic bootstrap in a K8s cluster, '
+        'jobs must be indexed by setting `completionMode: "Indexed"`.'
       )

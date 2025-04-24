@@ -17,11 +17,11 @@ kernelspec:
 
 # Distributed Computing in Pallas for TPUs
 
-In this tutorial, we will cover the basics of distributed computing in Pallas on TPUs. We will learn about TPU topologies, communication using the remote DMA primitive, and calling a distributed kernel from JAX using `shard_map`. We will also cover some more advanced kernel writing techniques, such as double-buffering, bi-directional bandwidth optimization, and nested pipelining. As educational examples, we will learn how to implement various collective primitives from JAX, such as `lax.ppermute`, `lax.all_gather`, `lax.psum`, and `lax.psum_scatter`.
+In this tutorial, we will cover the basics of distributed computing in Pallas on TPUs. We will learn about TPU topologies, communication using the remote DMA primitive, and calling a distributed kernel from JAX using `jax.shard_map`. We will also cover some more advanced kernel writing techniques, such as double-buffering, bi-directional bandwidth optimization, and nested pipelining. As educational examples, we will learn how to implement various collective primitives from JAX, such as `lax.ppermute`, `lax.all_gather`, `lax.psum`, and `lax.psum_scatter`.
 
 Some recommended readings beforehand:
  - [Pallas Pipelining on TPU](pallas_tpu_pipelining)
- - [Collectives with `shard_map`](shard_map_collectives_tutorial)
+ - [Collectives with `jax.shard_map`](shard_map_collectives_tutorial)
 
 ```{code-cell} ipython3
 ---
@@ -41,7 +41,6 @@ import jax
 from jax import lax
 from jax import numpy as jnp
 from jax.experimental import pallas as pl
-from jax.experimental import shard_map
 from jax.experimental.pallas import tpu as pltpu
 
 P = jax.sharding.PartitionSpec
@@ -251,12 +250,12 @@ right_permute = pl.pallas_call(
 )
 # Wrap the kernel within a shard_map to call.
 pallas_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         right_permute,
         mesh=mesh,
         in_specs=partition,
         out_specs=partition,
-        check_rep=False,
+        check_vma=False,
     )
 )(input_arr)
 
@@ -264,7 +263,7 @@ pallas_result = jax.jit(
 perm = tuple((src, (src + 1) % num_devices) for src in range(num_devices))
 
 xla_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         lambda x: lax.ppermute(x, 'x', perm),
         mesh=mesh, in_specs=partition, out_specs=partition)
 )(input_arr)
@@ -384,18 +383,18 @@ all_gather = pl.pallas_call(
 
 # Wrap the kernel within a shard_map to call.
 pallas_result = jax.jit(
-      shard_map.shard_map(
+      jax.shard_map(
           all_gather,
           mesh=mesh,
           in_specs=partition,
           out_specs=partition,
-          check_rep=False
+          check_vma=False
       )
 )(input_arr)
 
 # Compare Pallas result to XLA shard_map result.
 xla_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         lambda x: lax.all_gather(x, 'x'),
         mesh=mesh, in_specs=partition, out_specs=partition
     )
@@ -728,12 +727,12 @@ kernel = pl.pallas_call(
 )
 
 pallas_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         kernel,
         mesh=mesh,
         in_specs=partition,
         out_specs=partition,
-        check_rep=False,
+        check_vma=False,
     )
 )(input_arr)
 pallas_result = jax.block_until_ready(pallas_result)[0]
@@ -744,7 +743,7 @@ def lax_sum(x):
 
 
 xla_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         lax_sum, mesh=mesh, in_specs=P(None, 'x'), out_specs=P(None, 'x')
     )
 )(input_arr)
@@ -1048,12 +1047,12 @@ def pallas_reduce_scatter(input_arr):
 
 
 pallas_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         pallas_reduce_scatter,
         mesh=mesh,
         in_specs=P(None, 'x'),
         out_specs=P('x', None),
-        check_rep=False,
+        check_vma=False,
     )
 )(input_arr)
 
@@ -1080,7 +1079,7 @@ def lax_reduce_sum_scatter(x):
 
 
 xla_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         lax_reduce_sum_scatter,
         mesh=mesh,
         in_specs=P(None, 'x'),
@@ -1452,12 +1451,12 @@ def pallas_reduce_scatter(input_arr):
 
 
 pallas_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         pallas_reduce_scatter,
         mesh=mesh,
         in_specs=P(None, 'x'),
         out_specs=P('x', None),
-        check_rep=False,
+        check_vma=False,
     )
 )(input_arr)
 
@@ -1484,7 +1483,7 @@ def lax_reduce_sum_scatter(x):
 
 
 xla_result = jax.jit(
-    shard_map.shard_map(
+    jax.shard_map(
         lax_reduce_sum_scatter,
         mesh=mesh,
         in_specs=P(None, 'x'),

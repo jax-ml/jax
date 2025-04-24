@@ -408,26 +408,20 @@ class ChunkedCausalMask(_ComputableMask):
     ))
 
 
-class LocalMask(Mask):
+class LocalMask(_ComputableMask):
   """Lazy local mask, prevents model from attending to tokens outside window.
 
   Attributes:
-    _shape: Shape of the 2-dim mask: (q_seq_len, kv_seq_len).
     window_size: Size of the two sides of the local window (None identifes no
       limit for the given side).
     offset: Offset of q start wrt kv. A positive offset shifts the bottom
       triangle upward, a negative one shifts it downward. A negative offset
       makes the first 'offset' rows of the attention matrix all 0s which leads
       to undefined softmax.
-    _q_sequence: Important for performance.
   """
 
-  # TODO(amagni): Transform LocalMask into a _ComputableMask.
-
-  _shape: tuple[int, int]
   window_size: tuple[int | None, int | None]
   offset: int
-  _q_sequence: np.ndarray | None = None
 
   def __init__(
       self,
@@ -436,68 +430,50 @@ class LocalMask(Mask):
       offset: int,
       shard_count: int = 1,
   ):
-    self._shape = shape
     self.window_size = window_size
     self.offset = offset
 
-    if self.shape[0] % (shard_count * shard_count) != 0:
-      raise ValueError(
-          f'Shard count squared ({shard_count * shard_count}) must'
-          f' divide Q seq_len ({self.shape[0]}) evenly.'
-      )
+    def local_mask_function(q_ids, kv_ids):
+      """Computes the local attention mask for the given slice indices."""
+      left_size, right_size = self.window_size
 
-  @property
-  def shape(self) -> tuple[int, int]:
-    return self._shape
+      assert q_ids.ndim == 2
+      assert kv_ids.ndim == 2
 
-  def __getitem__(self, idx) -> np.ndarray:
-    if len(idx) != 2:
-      raise NotImplementedError(f'Unsupported slice: {idx}')
-    q_slice, kv_slice = idx
-    if not isinstance(q_slice, slice) or not isinstance(kv_slice, slice):
-      raise NotImplementedError(f'Unsupported slice: {idx}')
+      if left_size is None and right_size is None:
+        return np.ones((q_ids.shape[0], kv_ids.shape[1]), dtype=np.bool_)
 
-    q_slice = _fill_slice(q_slice, self.shape[0])
-    kv_slice = _fill_slice(kv_slice, self.shape[1])
-
-    if self._q_sequence is None:
-      rows = np.arange(q_slice.start, q_slice.stop)
-    else:
-      rows = self._q_sequence[q_slice]
-
-    cols = np.arange(kv_slice.start, kv_slice.stop)
-
-    left_size, right_size = self.window_size
-
-    if left_size is None and right_size is None:
-      return np.ones((rows.shape[0], cols.shape[0]), dtype=np.bool_)
-    else:
-      expanded_cols = cols[None, :]
-      if self.offset != 0:
-        expanded_rows = rows[:, None] + self.offset
+      # Avoid the addition when possible to avoid instantiating an actual array.
+      if offset != 0:
+        shifted_q_ids = q_ids + self.offset
       else:
-        expanded_rows = rows[:, None]
-      if left_size is not None and right_size is not None:
-        return (expanded_rows <= expanded_cols + left_size) & (
-            expanded_cols - right_size <= expanded_rows
-        )
+        shifted_q_ids = q_ids
 
-      elif left_size is not None and right_size is None:
-        return expanded_rows <= expanded_cols + left_size
-      else:
-        assert left_size is None and right_size is not None
-        return expanded_cols - right_size <= expanded_rows
+      mask = None
+      if left_size is not None:
+        mask = shifted_q_ids - left_size <= kv_ids
+      if right_size is not None:
+        if mask is None:
+          mask = shifted_q_ids + right_size >= kv_ids
+        else:
+          mask &= shifted_q_ids + right_size >= kv_ids
+      return mask
+
+    super().__init__(
+        shape=shape,
+        mask_function=local_mask_function,
+        shard_count=shard_count,
+    )
 
   def __eq__(self, other: object):
     if not isinstance(other, type(self)):
-      return NotImplemented
+      return False
 
     return (
         self.shape == other.shape
         and self.window_size == other.window_size
         and self.offset == other.offset
-        and (True if self._q_sequence is None else
-             np.array_equal(self._q_sequence, other._q_sequence))
+        and np.array_equal(self.q_sequence, other.q_sequence)
     )
 
   def __hash__(self):
@@ -506,7 +482,7 @@ class LocalMask(Mask):
         self.shape,
         self.window_size,
         self.offset,
-        self._q_sequence.tobytes() if self._q_sequence is not None else None,
+        self.q_sequence.tobytes() if self.q_sequence is not None else None,
     ))
 
 

@@ -526,7 +526,7 @@ def _copy_gmem_to_smem_lowering(
     indices, slice_lengths = _split_gmem_slice(copy_params["gmem_slice"])
   assert copy_params.get("swizzle") is None
   assert not copy_params.get("gmem_transform")
-  barrier_ref = barrier.as_dialect_barrier_memref()
+  barrier_ref = barrier.as_barrier_memref()
   mgpu.dialect.arrive_expect_tx(barrier_ref, bytes)
   mgpu.dialect.async_load(
       src,

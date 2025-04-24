@@ -574,8 +574,8 @@ def _scan_abstract_eval(*args, reverse, length, num_consts, num_carry, jaxpr,
         'Scan carry input and output got mismatched varying manual axes '
         f'{in_carry_avals} and {out_carry_avals}. Please open an '
         'issue at https://github.com/jax-ml/jax/issues, and as a '
-        'temporary workaround pass the check_rep=False argument to '
-        'shard_map')
+        'temporary workaround pass the check_vma=False argument to '
+        '`jax.shard_map`')
   ys_avals = _map(partial(_prepend_dim_to_aval, length), y_avals)
   return out_carry_avals + ys_avals, jaxpr.effects
 
@@ -2078,6 +2078,7 @@ xla.register_initial_style_primitive(while_p)
 ad.primitive_transposes[while_p] = _while_transpose_error
 batching.fancy_primitive_batchers[while_p] = _while_loop_batching_rule
 pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
+core.custom_typechecks[while_p] = _while_typecheck
 mlir.register_lowering(while_p, _while_lowering)
 state_discharge.register_partial_discharge_rule(while_p)(_while_partial_discharge_rule)
 

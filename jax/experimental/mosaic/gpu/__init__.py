@@ -68,6 +68,7 @@ from .fragmented_array import (
 )
 from .utils import (
     BarrierRef as BarrierRef,
+    DialectBarrierRef as DialectBarrierRef,
     CollectiveBarrierRef as CollectiveBarrierRef,
     DynamicSlice as DynamicSlice,
     Partition as Partition,

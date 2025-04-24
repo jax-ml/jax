@@ -2690,7 +2690,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     ):
       del ctx
       smem_ref, tma_barrier = smem
-      dialect_barrier = tma_barrier.as_dialect_barrier_memref()
+      dialect_barrier = tma_barrier.as_barrier_memref()
 
       elt_type = ir.MemRefType(in_gmem_ref.type).element_type
       memref_bytes = utils.bytewidth(elt_type) * math.prod(
@@ -2714,7 +2714,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
       )
       set_in_transforms(load_op, [test_case.transforms])
 
-      parities = memref.load(tma_barrier.phases, [])
+      parities = memref.load(tma_barrier.barrier_ref.phases, [])
       parity, _ = tma_barrier.update_parities(parities)
       mgpu_dialect.wait(dialect_barrier, parity)
 
@@ -2767,7 +2767,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
     ):
       del ctx
       a_smem_ref, b_smem_ref, result_smem_ref, tma_barrier = smem
-      dialect_barrier = tma_barrier.as_dialect_barrier_memref()
+      dialect_barrier = tma_barrier.as_barrier_memref()
 
       memref_type = ir.MemRefType(a_gmem_ref.type)
       shape = memref_type.shape
@@ -2799,7 +2799,7 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
           collective=ir.ArrayAttr.get([]),
       )
 
-      parities = memref.load(tma_barrier.phases, [])
+      parities = memref.load(tma_barrier.barrier_ref.phases, [])
       parity, _ = tma_barrier.update_parities(parities)
       mgpu_dialect.wait(dialect_barrier, parity)
 
@@ -2894,7 +2894,7 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
     ):
       del ctx
       lhs_smem_ref, rhs_smem_ref, result_smem_ref, tma_barrier = smem
-      dialect_barrier = tma_barrier.as_dialect_barrier_memref()
+      dialect_barrier = tma_barrier.as_barrier_memref()
 
       operand_elt_type = ir.MemRefType(lhs_gmem_ref.type).element_type
       bytes_a = utils.bytewidth(operand_elt_type) * math.prod(lhs_shape)
@@ -2924,7 +2924,7 @@ class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
           collective=ir.ArrayAttr.get([]),
       )
 
-      parities = memref.load(tma_barrier.phases, [])
+      parities = memref.load(tma_barrier.barrier_ref.phases, [])
       parity, _ = tma_barrier.update_parities(parities)
       mgpu_dialect.wait(dialect_barrier, parity)
 

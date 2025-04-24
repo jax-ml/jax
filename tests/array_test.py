@@ -1440,13 +1440,6 @@ class ShardingTest(jtu.JaxTestCase):
         ValueError, 'Got invalid memory kind'):
       NamedSharding(abstract_mesh, P(), memory_kind='weird_device')
 
-  def test_pos_gspmd_sharding_warnings(self):
-    with self.assertWarns(DeprecationWarning):
-      jax.sharding.PositionalSharding(jax.devices())
-
-    with self.assertWarns(DeprecationWarning):
-      jax.sharding.GSPMDSharding.get_replicated(jax.devices())
-
 
 @jtu.with_config(jax_use_shardy_partitioner=True)
 class ShardyShardingTest(jtu.JaxTestCase):

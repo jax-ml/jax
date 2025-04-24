@@ -24,7 +24,7 @@ import enum
 import functools
 import itertools
 import threading
-from typing import Any, ClassVar, Hashable, Protocol, TypeAlias, Union, runtime_checkable
+from typing import Any, ClassVar, Hashable, Literal, Protocol, TypeAlias, Union, runtime_checkable
 
 import jax
 from jax._src import api_util
@@ -117,10 +117,12 @@ class BarrierSemaphore(AbstractSemaphoreTy):
   name = "barrier_semaphore"
   type = barrier_semaphore
 
+Backend = Literal["mosaic_tpu", "triton", "mosaic_gpu"]
+
 @runtime_checkable
 class CompilerParams(Protocol):
   """Base class for compiler parameters."""
-  PLATFORM: ClassVar[str]
+  BACKEND: ClassVar[Backend]
 
   # Subclasses must be dataclasses.
   __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
@@ -197,7 +199,7 @@ mlir.ir_type_handlers[ShapedArrayWithMemorySpace] = mlir._array_ir_types
 class MemoryRef:
   """Like jax.ShapeDtypeStruct but with memory spaces."""
   shape: tuple[int, ...]
-  dtype: jnp.dtype
+  dtype: jnp.dtype | dtypes.ExtendedDType
   # TODO(b/368122763): Unify memory space types across backends
   memory_space: Any
 
@@ -1168,11 +1170,19 @@ def core_map(
 
 
 @core_map_p.def_effectful_abstract_eval
-def _core_map_abstract_eval(*args, jaxpr, mesh, **_):
+def _core_map_abstract_eval(*args, jaxpr, mesh, **kwargs):
   del args
   if jaxpr.outvars:
     raise ValueError("core_map must not return any outputs.")
+  interpret = kwargs.get('interpret', False)
   effs = set()
+  if interpret:
+    try:
+      from jax._src.pallas.mosaic import interpret as mosaic_tpu_interpret  # Avoid circular dependency.
+      if isinstance(interpret, mosaic_tpu_interpret.TPUInterpretParams):
+        effs = mosaic_tpu_interpret.get_interpret_effects()
+    except ImportError:
+      pass
   for eff in jaxpr.effects:
     if mesh.discharges_effect(eff):
       continue
@@ -1264,10 +1274,18 @@ def _core_map_discharge_rule(in_avals, out_avals, *args_flat, jaxpr, mesh, **kwa
 
 
 def _core_map_typecheck_rule(_, *in_atoms, jaxpr, mesh, **kwargs):
-  del in_atoms, kwargs
+  del in_atoms
   with jax_core.extend_axis_env_nd(tuple(mesh.shape.items())):
     jax_core.check_jaxpr(jaxpr)
+  interpret = kwargs.get('interpret', False)
   effs = set()
+  if interpret:
+    try:
+      from jax._src.pallas.mosaic import interpret as mosaic_tpu_interpret  # Avoid circular dependency.
+      if isinstance(interpret, mosaic_tpu_interpret.TPUInterpretParams):
+        effs = mosaic_tpu_interpret.get_interpret_effects()
+    except ImportError:
+      pass
   for eff in jaxpr.effects:
     if mesh.discharges_effect(eff):
       continue

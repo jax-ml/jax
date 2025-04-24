@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from typing import Any
+from typing import cast
 
 import jax
 from jax import dtypes
@@ -28,7 +28,6 @@ from jax._src import sharding_impls
 from jax._src import tpu_custom_call
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
-from jax._src.pallas import core
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import lowering
@@ -72,7 +71,7 @@ def _get_memory_space_from_aval(
 ) -> tpu_custom_call.MemorySpace | None:
   if not isinstance(out_aval, jax_core.ShapedArray):
     raise ValueError('Memory spaces not defined for non-ShapedArrays')
-  if not isinstance(out_aval, core.ShapedArrayWithMemorySpace):
+  if not isinstance(out_aval, pallas_core.ShapedArrayWithMemorySpace):
     # If we are passed a regular old ShapedArray, we don't constrain the
     # memory space
     return None
@@ -97,23 +96,24 @@ def _get_memory_spaces_from_avals(
 ) -> tuple[tpu_custom_call.MemorySpace | None, ...] | None:
   output_memory_spaces = None
   if any(
-      isinstance(out_aval, core.ShapedArrayWithMemorySpace)
+      isinstance(out_aval, pallas_core.ShapedArrayWithMemorySpace)
       for out_aval in out_avals
   ):
     output_memory_spaces = tuple(map(_get_memory_space_from_aval, out_avals))
   return output_memory_spaces
 
+
 def pallas_call_tpu_lowering_rule(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
     jaxpr: jax_core.Jaxpr,
-    grid_mapping: core.GridMapping,
+    grid_mapping: pallas_core.GridMapping,
     mesh: pallas_core.Mesh | None,
     input_output_aliases: tuple[tuple[int, int], ...],
     debug: bool,
     interpret: bool,
-    compiler_params: dict[str, Any],
-    cost_estimate: core.CostEstimate | None,
+    compiler_params: dict[str, pallas_core.CompilerParams],
+    cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
 ):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
@@ -123,10 +123,13 @@ def pallas_call_tpu_lowering_rule(
   if debug:
     print(f"\nThe kernel jaxpr for pallas_call {debug_info.func_src_info}:")
     print(jaxpr)
-  if "mosaic" in compiler_params:
-    mosaic_params = compiler_params["mosaic"]
+
+  if "mosaic_tpu" in compiler_params:
+    mosaic_params = cast(
+        tpu_core.TPUCompilerParams, compiler_params["mosaic_tpu"]
+    )
   else:
-    mosaic_params = {}
+    mosaic_params = tpu_core.TPUCompilerParams()
 
   jax_mesh = None
   axis_context = ctx.module_context.axis_context
@@ -142,13 +145,12 @@ def pallas_call_tpu_lowering_rule(
     if for_verification or tpu_core.runtime_assert_enabled():
       mlir_ctx.allow_unregistered_dialects = True
     with mlir_ctx, ir.Location.unknown(mlir_ctx):
-      dimension_semantics = mosaic_params.get("dimension_semantics", None)
       return lowering.lower_jaxpr_to_module(
           ctx,
           mlir_ctx,
           grid_mapping,
           jaxpr,
-          dimension_semantics=dimension_semantics,
+          dimension_semantics=mosaic_params.dimension_semantics,
           mesh=jax_mesh,
           for_verification=for_verification,
           dynamic_shape_replacement_enabled=pallas_core.dynamic_shapes_export_enabled(),
@@ -233,16 +235,16 @@ def pallas_call_tpu_lowering_rule(
       backend="tpu",
       kernel_name=mlir.sanitize_name(debug_info.func_name),
       cost_estimate=mosaic_cost_estimate,
-      vmem_limit_bytes=mosaic_params.get("vmem_limit_bytes"),
-      flags=mosaic_params.get("flags"),
-      allow_input_fusion=mosaic_params.get("allow_input_fusion"),
+      vmem_limit_bytes=mosaic_params.vmem_limit_bytes,
+      flags=mosaic_params.flags,
+      allow_input_fusion=mosaic_params.allow_input_fusion,
       input_output_aliases=input_output_aliases,
-      serialization_format=mosaic_params.get("serialization_format", 1),
-      internal_scratch_in_bytes=mosaic_params.get("internal_scratch_in_bytes"),
-      collective_id=mosaic_params.get("collective_id", None),
-      has_side_effects=mosaic_params.get("has_side_effects", False),
+      serialization_format=mosaic_params.serialization_format,
+      internal_scratch_in_bytes=mosaic_params.internal_scratch_in_bytes,
+      collective_id=mosaic_params.collective_id,
+      has_side_effects=mosaic_params.has_side_effects,
       output_memory_spaces=output_memory_spaces,
-      disable_bounds_checks=mosaic_params.get("disable_bounds_checks"),
+      disable_bounds_checks=mosaic_params.disable_bounds_checks,
   )
   _maybe_cast_to_bool = lambda x, aval: x.astype(
       jax.numpy.bool_) if aval.dtype == jax.numpy.bool_ else x

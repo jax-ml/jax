@@ -15,8 +15,8 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/jax-ml/jax/issues/7570
 
-from jax._src.lib import xla_extension as _xe
+from jax._src.lib import _jax
 
-ifrt_programs = _xe.ifrt_programs
+ifrt_programs = _jax.ifrt_programs
 
-del _xe
+del _jax

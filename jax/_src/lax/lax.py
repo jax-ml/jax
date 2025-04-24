@@ -7032,6 +7032,8 @@ def _merge_on_one_axis(operand, new_sizes):
 def _reshape_sharding_rule(operand, *, new_sizes, dimensions, sharding):
   if sharding is not None:
     return sharding
+  if operand.sharding.is_fully_replicated:
+    return operand.sharding
   non_1s_op_shape = [s for s in operand.shape if s != 1]
   non_1s_new_shape = [s for s in new_sizes if s != 1]
   if non_1s_op_shape == non_1s_new_shape:
@@ -8753,15 +8755,19 @@ _zeros: Callable = partial(full_like, fill_value=0)
 
 def _zero(x):
   x_aval = core.get_aval(x)
-  return full_like(x, shape=(), fill_value=0,
-                   sharding=x_aval.sharding.with_spec(P()))
+  out = full_like(x, shape=(), fill_value=0,
+                  sharding=x_aval.sharding.with_spec(P()))
+  out = core.pvary(out, tuple(x_aval.vma))
+  return out
 
 _ones: Callable = partial(full_like, fill_value=1)
 
 def _one(x):
   x_aval = core.get_aval(x)
-  return full_like(x, shape=(), fill_value=1,
-                    sharding=x_aval.sharding.with_spec(P()))
+  out = full_like(x, shape=(), fill_value=1,
+                  sharding=x_aval.sharding.with_spec(P()))
+  out = core.pvary(out, tuple(x_aval.vma))
+  return out
 
 _twos: Callable = partial(full_like, fill_value=2)
 _two: Callable = partial(full_like, shape=(), fill_value=2)

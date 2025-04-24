@@ -27,7 +27,7 @@ from jax._src import core
 from jax._src import source_info_util
 from jax._src import traceback_util
 import jax._src.mesh as mesh_lib
-from jax.experimental import shard_map
+from jax._src import shard_map
 import jax.export
 import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec as P

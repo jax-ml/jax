@@ -142,7 +142,7 @@ def _mosaic_gpu_lowering_rule(
         operands=args,
         operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
         result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out],
-        backend_config=kernel_id + module,
+        backend_config=kernel_id + module_asm,
         operand_output_aliases=dict(input_output_aliases),
     )
   else:
@@ -188,6 +188,12 @@ class Barrier:
   arrival_count: int
   num_barriers: int = 1
 
+  def __post_init__(self):
+    if self.arrival_count < 1:
+      raise ValueError(
+          f"Arrival count must be at least 1, but got {self.arrival_count}"
+      )
+
 @dataclasses.dataclass(frozen=True)
 class ClusterBarrier:
   collective_dims: Sequence[gpu.Dimension]
@@ -221,6 +227,7 @@ def _construct_smem_reftree(
     dynamic_smem: ir.Value,
     smem_buffers: ShapeTree,
     delayed_warp_init: list[Callable[[], None]],  # Mutated by this function!
+    lowering_semantics: LoweringSemantics,
     dynamic_smem_offset: int = 0,
 ) -> Callable[[], RefTree]:
   index = ir.IndexType.get()
@@ -231,6 +238,7 @@ def _construct_smem_reftree(
       smem_buffers, is_leaf=lambda x: isinstance(x, Union)
   )
   smem_refs = []
+
   for ref_ty in flat_ref_tys:
     def get_barrier_ptr(num_barriers: int) -> ir.Value:
       nonlocal dynamic_smem_offset
@@ -254,6 +262,7 @@ def _construct_smem_reftree(
                 dynamic_smem,
                 m,
                 delayed_warp_init,
+                lowering_semantics,
                 dynamic_smem_offset,
             )
             for m in members
@@ -265,11 +274,17 @@ def _construct_smem_reftree(
           return Union([t() for t in member_thunks])
 
       case TMABarrier(num_barriers):
-        ref = utils.BarrierRef.initialize(
+        init_fn = utils.DialectBarrierRef.initialize if (
+            lowering_semantics == LoweringSemantics.Warpgroup
+        ) else utils.BarrierRef.initialize
+        ref = init_fn(
             get_barrier_ptr(num_barriers), num_barriers, arrival_count=1
         )
       case Barrier(arrival_count, num_barriers):
-        ref = utils.BarrierRef.initialize(
+        init_fn = utils.DialectBarrierRef.initialize if (
+            lowering_semantics == LoweringSemantics.Warpgroup
+        ) else utils.BarrierRef.initialize
+        ref = init_fn(
             get_barrier_ptr(num_barriers),
             num_barriers,
             arrival_count=arrival_count,
@@ -355,6 +370,7 @@ def _launch(
     block: tuple[int, int, int],
     scratch_arr,
     smem_buffers: ShapeTree | Union[ShapeTree],
+    lowering_semantics: LoweringSemantics,
     profiler_spec: profiler.ProfilerSpec | None = None,
     maybe_prof_buffer: ir.Value | None = None,
 ):
@@ -370,7 +386,13 @@ def _launch(
 
   smem_bytes = user_smem_bytes
   if profiler_spec is not None:
-    smem_bytes += profiler_spec.smem_bytes(block=block)
+    # Profiler array stores values in 64 bit chunks (vectors of size 2
+    # of 32-bit elements), and so the starting address needs to be 64
+    # bit = 8 byte aligned.
+    # https://docs.nvidia.com/cuda/parallel-thread-execution/#addresses-as-operands:~:text=The%20address%20must%20be%20naturally%20aligned%20to%20a%20multiple%20of%20the%20access%20size.
+    align = 8
+    profiler_start = (smem_bytes + align - 1) & ~(align - 1)
+    smem_bytes = profiler_start + profiler_spec.smem_bytes(block=block)
 
   # TODO(cperivol): Query the shared memory size programmatically.
   if smem_bytes > 228 * 1024:
@@ -407,7 +429,7 @@ def _launch(
               (profiler_spec.smem_i32_elements(block=block),),
               i32, memory_space=smem,
           ),
-          dynamic_smem, c(user_smem_bytes, index), [],
+          dynamic_smem, c(profiler_start, index), [],
       )
       prof = profiler.OnDeviceProfiler(
           profiler_spec, prof_smem, maybe_prof_buffer
@@ -421,7 +443,11 @@ def _launch(
     with ctx.named_region("Init"):
       delayed_warp_init = []
       smem_ref_tree_thunk = _construct_smem_reftree(
-          cluster, dynamic_smem, smem_buffers, delayed_warp_init
+          cluster,
+          dynamic_smem,
+          smem_buffers,
+          delayed_warp_init,
+          lowering_semantics,
       )
       # TODO(apaszke): Skip fences if no barriers or TMEM is initialized.
       # TODO(apaszke): Only initialize cluster barriers before the cluster wait.
@@ -453,6 +479,7 @@ def _lower_as_gpu_kernel(
     in_shapes: tuple[Any, ...],
     out_shape,
     smem_scratch_shape: ShapeTree | Union[ShapeTree],
+    lowering_semantics: LoweringSemantics,
     module_name: str,
     kernel_name: str | None = None,
     prof_spec: profiler.ProfilerSpec | None = None,
@@ -514,7 +541,7 @@ def _lower_as_gpu_kernel(
       scratch_arr = llvm.load(empty_arr_ty, scratch_alloc.result)
       with _launch(
           token, grid, cluster, block, scratch_arr, smem_scratch_shape,
-          prof_spec, prof_buffer
+          lowering_semantics, prof_spec, prof_buffer
       ) as (_launch_ctx, smem_refs):
         nonlocal launch_ctx
         launch_ctx = _launch_ctx
@@ -606,7 +633,7 @@ def as_gpu_kernel(
   module, out_shape, unwrap_output_tuple, launch_ctx, scratch_arr = (
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape,
-          module_name, kernel_name, prof_spec
+          thread_semantics, module_name, kernel_name, prof_spec
       )
   )
 
@@ -689,7 +716,7 @@ def as_torch_gpu_kernel(
   module, out_shape, unwrap_output_tuple, launch_ctx, scratch_arr = (
       _lower_as_gpu_kernel(
           body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape,
-          module_name, kernel_name, prof_spec
+          lowering_semantics, module_name, kernel_name, prof_spec
       )
   )
 

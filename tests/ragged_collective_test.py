@@ -27,7 +27,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 import jax.numpy as jnp
 
-from jax.experimental.shard_map import shard_map
+from jax._src.shard_map import shard_map
 
 
 config.parse_flags_with_absl()
@@ -90,7 +90,7 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_rep=False,
+        check_vma=False,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -176,7 +176,7 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_rep=False,
+        check_vma=False,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -257,7 +257,7 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_rep=False,
+        check_vma=False,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -346,7 +346,7 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_rep=False,
+        check_vma=False,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -491,7 +491,7 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_rep=False,
+        check_vma=False,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes
@@ -555,7 +555,7 @@ class RaggedCollectiveTest(jtu.JaxTestCase):
             P(axis_name, None),
         ),
         out_specs=P(axis_name),
-        check_rep=False,
+        check_vma=False,
     )
     def fwd(
         operand, output, input_offsets, send_sizes, output_offsets, recv_sizes

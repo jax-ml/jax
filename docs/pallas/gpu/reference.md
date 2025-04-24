@@ -34,10 +34,12 @@ Going further, recent CUDA versions also outline the concept of a _warpgroup_, w
 from: 4 consecutive warps occupy the 4 quarters of an SM and let us issue instructions
 that utilize the whole SM.
 
-> A GPU can be viewed in many different ways and in here we want to focus on a slightly
-  simplified model that is very TensorCore-centric. This should help you navigate the
-  complexities of writing kernels involving the TensorCore, but keep in mind that the
-  real picture is more complicated.
+```{note}
+A GPU can be viewed in many different ways and in here we want to focus on a slightly
+simplified model that is very TensorCore-centric. This should help you navigate the
+complexities of writing kernels involving the TensorCore, but keep in mind that the
+real picture is more complicated.
+```
 
 For our purposes, TensorCore operations have grown so big that it no longer makes much
 sense to follow the CUDA model. As such, to us, a GPU is a collection of single-threaded cores
@@ -49,14 +51,18 @@ discuss later). One notable addition here is that we still allow you to co-sched
 of those Pallas-level threads on the same SM so that they can cooperate and communicate
 through shared memory (we relize that by putting them in the same CUDA block).
 
-> From now on, whenever we say "thread", we refer to the Pallas thread, not a CUDA thread/lane.
+```{note}
+From now on, whenever we say "thread", we refer to the Pallas thread, not a CUDA thread/lane.
+```
 
-> This is very similar to a programming model popularized by [Triton](https://triton-lang.org/),
-  but as you will see there are a few differences. Mosaic GPU tends to be more low level,
-  which usually means you will have to put in more work, but it also puts you more in control.
-  In our view both approaches have their merits and we encourage you to pick the backend that
-  suits your needs the best! Pallas supports and will continue to support Triton as an alternative
-  GPU backend.
+```{note}
+This is very similar to a programming model popularized by [Triton](https://triton-lang.org/),
+but as you will see there are a few differences. Mosaic GPU tends to be more low level,
+which usually means you will have to put in more work, but it also puts you more in control.
+In our view both approaches have their merits and we encourage you to pick the backend that
+suits your needs the best! Pallas supports and will continue to support Triton as an alternative
+GPU backend.
+```
 
 ### In-order execution & using multiple hardware units
 
@@ -195,9 +201,11 @@ These concepts are crucial for performance, especially when interacting with
 specialized hardware units like TensorCores or optimizing memory access
 patterns.
 
-> We are working on a mode that will deal with assigning layouts and transforms fully
-  automatically (although with way to provide hints and more control). The APIs listed
-  below will likely continue to function, but will become optional.
+```{note}
+We are working on a mode that will deal with assigning layouts and transforms fully
+automatically (although with way to provide hints and more control). The APIs listed
+below will likely continue to function, but will become optional.
+```
 
 ### Memory reference transforms
 
@@ -260,7 +268,6 @@ The available transforms are:
 * `plgpu.TransposeTransform(permutation)`, which permutes the dimensions of the array before it is linearized.
   This is primarily useful in that it lets you change the layout during the GMEM-SMEM copies (only
   do keep in mind that changing the minormost/last dimension is not supported by the hardware).
-
 
 ### Array layouts
 
@@ -502,27 +509,32 @@ plgpu.barrier_wait(barrier)
 
 There are three operations that can complete a barrier:
 
-> It is critical to ensure that the synchronization scheme makes it impossible for two
-  barrier completions to happen without a call to `plgpu.barrier_wait` in between them.
-  For example, if you use `Barrier`s to synchronize two producer/consumer threads, you
-  need to perform barrier synchronization going both ways to introduce "backpressure"
-  that will stop one thread from arriving twice before the other one had a chance to await.
-  Failing to satisfy this will corrupt the data structure and can cause surprising failures
-  (including CUDA runtime errors). See below for an example of a valid program with two threads.
+```{warning}
+It is critical to ensure that the synchronization scheme makes it impossible for two
+barrier completions to happen without a call to `plgpu.barrier_wait` in between them.
+For example, if you use `Barrier`s to synchronize two producer/consumer threads, you
+need to perform barrier synchronization going both ways to introduce "backpressure"
+that will stop one thread from arriving twice before the other one had a chance to await.
+Failing to satisfy this will corrupt the data structure and can cause surprising failures
+(including CUDA runtime errors). See below for an example of a valid program with two threads.
+```
 
-> Another critical restriction is that the number of barrier completions must equal the
-  number of barrier waits throughout the barrier's lifetime. It is not allowed to end a scoped
-  allocation of a barrier when it has an unawaited completion. Otherwise, when it is
-  reused by the compiler, leaving it in this state can cause problems downstream.
+```{warning}
+Another critical restriction is that the number of barrier completions must equal the
+number of barrier waits throughout the barrier's lifetime. It is not allowed to end a scoped
+allocation of a barrier when it has an unawaited completion. Otherwise, when it is
+reused by the compiler, leaving it in this state can cause problems downstream.
+```
 
-> Finally, it is crucial to ensure that each thread that ever waits on a `Barrier`
-  takes part in all `wait` operations on it. It is not allowed to e.g. await every
-  other completion of a barrier from one thread, and all other completions from another
-  one. Doing so will lead to deadlocks. To recap: when a `Barrier` is used to wait in
-  some thread, it must observe every single completion of that barrier (by waiting on it).
+```{warning}
+Finally, it is crucial to ensure that each thread that ever waits on a `Barrier`
+takes part in all `wait` operations on it. It is not allowed to e.g. await every
+other completion of a barrier from one thread, and all other completions from another
+one. Doing so will lead to deadlocks. To recap: when a `Barrier` is used to wait in
+some thread, it must observe every single completion of that barrier (by waiting on it).
 
-
-  Note that the `Barrier` can receive arrivals from any source, without restrictions.
+Note that the `Barrier` can receive arrivals from any source, without restrictions.
+```
 
 #### Asynchronous GMEM-to-SMEM copies
 

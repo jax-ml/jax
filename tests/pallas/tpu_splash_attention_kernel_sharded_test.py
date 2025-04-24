@@ -22,7 +22,7 @@ from jax import random
 from jax._src import test_util as jtu
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel as splash
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
-from jax.experimental.shard_map import shard_map
+from jax._src.shard_map import shard_map
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec
 import numpy as np
@@ -131,7 +131,7 @@ class SplashAttentionShardingTest(PallasBaseTest):
             kv_spec,
         ),
         out_specs=q_spec,
-        check_rep=False,
+        check_vma=False,
     )
     def f(kernel, q, k, v):
       return kernel(q, k, v)
@@ -199,7 +199,7 @@ class SplashAttentionShardingTest(PallasBaseTest):
             kv_spec,
         ),
         out_specs=q_spec,
-        check_rep=False,
+        check_vma=False,
     )
     def f(kernel, q, k, v):
       return kernel(q, k, v)

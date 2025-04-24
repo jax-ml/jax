@@ -58,7 +58,7 @@ setup(
     long_description_content_type='text/markdown',
     author='JAX team',
     author_email='jax-dev@google.com',
-    packages=['jaxlib', 'jaxlib.xla_extension'],
+    packages=['jaxlib'],
     python_requires='>=3.10',
     install_requires=[
         'scipy>=1.11.1',
@@ -107,7 +107,6 @@ setup(
             'triton/*.so',
             'include/xla/ffi/api/*.h',
         ],
-        'jaxlib.xla_extension': ['*.pyi'],
     },
     zip_safe=False,
     distclass=BinaryDistribution,

@@ -32,7 +32,7 @@ class TritonCompilerParams(pallas_core.CompilerParams):
     serialized_metadata: Additional compiler metadata. This field is unstable
       and may be removed in the future.
   """
-  PLATFORM: ClassVar[str] = "triton"
+  BACKEND: ClassVar[pallas_core.Backend] = "triton"
   num_warps: int | None = None
   num_stages: int | None = None
   serialized_metadata: bytes | None = None

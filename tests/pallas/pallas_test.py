@@ -30,11 +30,9 @@ from jax import lax
 from jax import random
 from jax._src import checkify
 from jax._src import config
-from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax.control_flow.for_loop import for_loop
-from jax._src.pallas import pallas_call
 from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
@@ -1100,7 +1098,6 @@ class ApiErrorTest(PallasBaseTest):
         "Currently returning 2 values."):
       f(dict(one=a, two=a))
 
-
   def test_pallas_call_index_map_wrong_return_type(self):
     a = np.arange(256, dtype=np.int32)
     def my_index_map(i):
@@ -1213,6 +1210,28 @@ class ApiErrorTest(PallasBaseTest):
       self.pallas_call(lambda x_ref, y_ref, o1_ref: None,
                        out_shape=[jax.ShapeDtypeStruct(x.shape, jnp.float32)],
                        input_output_aliases={1: 0})(x, x)
+
+  def test_pallas_error_for_ref_to_jax(self):
+    m, n, k = 8, 16, 32
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+    )
+    def dot_general_kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = jax.lax.dot_general(x_ref, y_ref, (((2), (1)), ((1,), (2,))))
+
+    key1, key2 = random.split(random.key(0))
+    x = random.normal(key1, (m, k), dtype=jnp.float32)
+    y = random.normal(key2, (k, n), dtype=jnp.float32)
+    with self.assertRaisesRegex(
+        ValueError,
+        r" Attempting to pass a Ref"
+        r" MemRef<None>{float32\[8,32\]}"
+        r" to a primitive: dot_general - did you forget to unpack \(\[...\]\)"
+        r" the ref?",
+    ):
+      dot_general_kernel(x, y)
 
 
 class ApiErrorInterpretTest(ApiErrorTest):
@@ -2549,48 +2568,6 @@ class SymbolicPallasTest(PallasBaseTest):
 
 class PallasCallNamedGridInterpretTest(PallasCallNamedGridTest):
   INTERPRET = True
-
-
-def _find_pallas_call_in_jaxpr(
-    jaxpr: jax_core.Jaxpr) -> jax_core.JaxprEqn | None:
-  for eqn in jaxpr.eqns:
-    call_eqn = None
-    if eqn.primitive == pallas_call.pallas_call_p:
-      call_eqn = eqn
-    elif 'jaxpr' in eqn.params:
-      call_eqn = _find_pallas_call_in_jaxpr(eqn.params['jaxpr'])
-    if call_eqn is not None:
-      return call_eqn
-  return None
-
-
-class PallasCompilerParamsTest(PallasBaseTest):
-  def test_triton_params_consistent_across_double_jit(self):
-    # Test for https://github.com/jax-ml/jax/issues/25714
-    if not jtu.test_device_matches(["gpu"]):
-      self.skipTest("Triton backend only works on GPU.")
-    params = plgpu.TritonCompilerParams(num_warps=8)
-
-    @jax.jit
-    @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32),
-        compiler_params=params)
-    def copy_kernel(x_ref, o_ref):
-      o_ref[...] = x_ref[...]
-
-    @functools.partial(jax.jit, static_argnames=["z"])
-    def plus_z(x, z):
-      return copy_kernel(x+z)
-
-    x = 0.
-    extracted_params = _find_pallas_call_in_jaxpr(
-        plus_z.trace(x, 1).jaxpr).params["compiler_params"]
-    self.assertEqual(plus_z(0., 1.), 1.)
-    self.assertEqual(extracted_params["triton"]["num_warps"], 8)
-    extracted_params = _find_pallas_call_in_jaxpr(
-        plus_z.trace(x, 2).jaxpr).params["compiler_params"]
-    self.assertEqual(plus_z(0., 2.), 2.)
-    self.assertEqual(extracted_params["triton"]["num_warps"], 8)
 
 
 if __name__ == "__main__":

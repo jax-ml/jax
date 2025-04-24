@@ -29,11 +29,11 @@ from jax._src.interpreters.partial_eval import dce_jaxpr
 from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.tree_util import broadcast_prefix, tree_flatten, tree_unflatten, tree_map
 from jax._src.util import foreach
-from jax.experimental import shard_map
+from jax._src.shard_map import shard_map, shard_map_p
 
 
 ShapeDtypeStructTree = Any
-
+Specs = Any
 
 map = util.safe_map
 
@@ -230,8 +230,8 @@ def _f_with_vjp(f: Callable):
 def roofline(
     f: Callable,
     mesh: Mesh | AbstractMesh | None = None,
-    in_specs: shard_map.Specs | None = None,
-    out_specs: shard_map.Specs | None = None,
+    in_specs: Specs | None = None,
+    out_specs: Specs | None = None,
     *,
     pin_lhs_in_vmem: bool = False,
     pin_rhs_in_vmem: bool = False,
@@ -243,14 +243,15 @@ def roofline(
   def wrapped(*args):
     wrapped_f = f
     if in_specs is not None and out_specs is not None and mesh is not None:
-      wrapped_f = shard_map.shard_map(wrapped_f, mesh, in_specs, out_specs)
+      wrapped_f = shard_map(wrapped_f, mesh=mesh, in_specs=in_specs,
+                            out_specs=out_specs)
     if vjp:
       wrapped_f = _f_with_vjp(wrapped_f)
 
     jaxpr, out_shapes = make_jaxpr(wrapped_f, return_shape=True)(*args)
 
     def make_sharded_shape_dtype_struct(
-      shape: api.ShapeDtypeStruct, out_spec: shard_map.Specs
+      shape: api.ShapeDtypeStruct, out_spec: Specs
     ) -> api.ShapeDtypeStruct:
       return api.ShapeDtypeStruct(
         shape.shape, shape.dtype, sharding=NamedSharding(mesh, out_spec)  # type: ignore
@@ -267,7 +268,7 @@ def roofline(
     used_outputs = (True,) * len(jaxpr.jaxpr.outvars)
     jaxpr, _ = dce_jaxpr(jaxpr.jaxpr, used_outputs)
     shard_map_eqns = [
-        e for e in jaxpr.eqns if e.primitive == shard_map.shard_map_p
+        e for e in jaxpr.eqns if e.primitive == shard_map_p
     ]
     if shard_map_eqns:
       try:
@@ -307,8 +308,8 @@ def register_standard_roofline(prim: core.Primitive):
 def roofline_and_grad(
   f: Callable,
   mesh: Mesh | AbstractMesh,
-  in_specs: shard_map.Specs,
-  out_specs: shard_map.Specs,
+  in_specs: Specs,
+  out_specs: Specs,
   *,
   pin_lhs_in_vmem: bool = False,
   pin_rhs_in_vmem: bool = False,

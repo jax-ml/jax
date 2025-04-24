@@ -575,7 +575,7 @@ def _share_fdo_profiles(
     devices: np.ndarray,
     compile_options: xc.CompileOptions,
     backend: xc.Client,
-    global_client: lib.xla_extension.DistributedRuntimeClient,
+    global_client: lib._jax.DistributedRuntimeClient,
     min_process_id
 ) -> bytes | None:
   sym_name = computation.operation.attributes['sym_name']
@@ -638,7 +638,7 @@ def _compile_and_share_module(
     computation: ir.Module,
     compile_options: xc.CompileOptions,
     host_callbacks: Sequence[Any],
-    global_client: lib.xla_extension.DistributedRuntimeClient,
+    global_client: lib._jax.DistributedRuntimeClient,
     module_name: str,
     cache_key: str,
     first_process_id: int

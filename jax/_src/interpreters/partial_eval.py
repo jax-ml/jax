@@ -1964,7 +1964,7 @@ class DynamicJaxprTrace(core.Trace):
     return self.frame.tracer_to_var.get(id(tracer)) is None
 
   def process_primitive(self, primitive, tracers, params):
-    if (config.eager_constant_folding.value and all(map(self.is_const, tracers))):
+    if config.eager_constant_folding.value and not any(isinstance(x, Tracer) for x in tracers):
       return primitive.bind_with_trace(core.eval_trace, tracers, params)
     jaxpr_tracers = map(self.to_jaxpr_tracer, tracers)
     if primitive in custom_staging_rules:

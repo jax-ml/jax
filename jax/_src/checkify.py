@@ -25,7 +25,10 @@ import jax.numpy as jnp
 from jax import dtypes
 from jax import lax
 
-from jax.experimental import shard_map
+# TODO(yashkatariya): Remove the experimental import after users are migrated
+# to `jax.shard_map`.
+from jax.experimental import shard_map  # noqa: F401
+from jax._src import shard_map as jshmap
 from jax._src import api
 from jax._src import api_util
 from jax._src import ad_checkpoint
@@ -966,15 +969,15 @@ def shard_map_error_check(
   new_vals_in = [*err_vals, *vals_in]
   in_avals = list(map(core.get_aval, new_vals_in))
   auto = kwargs.get('auto')
-  check_rep = kwargs.get('check_rep')
+  check_vma = kwargs.get('check_vma')
   for i, v in enumerate(in_avals):
     if not (sharder := core.shard_aval_handlers.get(type(v))):
       raise ValueError(f'Unsupported aval type: {type(v)}')
-    in_avals[i] = sharder(mesh, auto, check_rep, new_in_names[i], v)
+    in_avals[i] = sharder(mesh, auto, check_vma, new_in_names[i], v)
 
-  with (shard_map._extend_axis_env(mesh, auto),
-        mesh_lib.use_abstract_mesh(shard_map._as_manual_mesh(mesh, auto)),
-        config._check_rep(check_rep)):
+  with (jshmap._extend_axis_env(mesh, auto),
+        mesh_lib.use_abstract_mesh(jshmap._as_manual_mesh(mesh, auto)),
+        config._check_vma(check_vma)):
     # jaxpr to checked_jaxpr
     checked_jaxpr, out_tree, _ = jaxpr_to_checkify_jaxpr(
         pe.close_jaxpr(jaxpr), enabled_errors, err_tree, *in_avals
@@ -987,7 +990,7 @@ def shard_map_error_check(
     errs = [lax.expand_dims(e, [0]) for e in errs]
     return *errs, *outs
 
-  with core.extend_axis_env_nd(mesh.shape.items()), config._check_rep(check_rep):
+  with core.extend_axis_env_nd(mesh.shape.items()), config._check_vma(check_vma):
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
         lu.wrap_init(expand_errors_leading_dim,
                      debug_info=checked_jaxpr.jaxpr.debug_info),
@@ -1008,11 +1011,11 @@ def shard_map_error_check(
       out_names=new_out_names,
       **kwargs,
   )
-  _, new_params = shard_map.shard_map_p.get_bind_params(new_params)
+  _, new_params = jshmap.shard_map_p.get_bind_params(new_params)
 
-  err_and_out = shard_map.shard_map_p.bind(subfun, *new_vals_in, **new_params)
+  err_and_out = jshmap.shard_map_p.bind(subfun, *new_vals_in, **new_params)
   return tree_unflatten(out_tree, err_and_out)
-error_checks[shard_map.shard_map_p] = shard_map_error_check
+error_checks[jshmap.shard_map_p] = shard_map_error_check
 
 def custom_jvp_call_rule(in_err: Error,
                          enabled_errors: set, *in_vals, num_consts,

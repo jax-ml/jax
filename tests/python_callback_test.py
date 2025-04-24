@@ -30,7 +30,7 @@ from jax._src import test_util as jtu
 from jax._src import util
 from jax.experimental import io_callback
 from jax.experimental import pjit
-from jax.experimental.shard_map import shard_map
+from jax._src.shard_map import shard_map
 import jax.numpy as jnp
 from jax.sharding import Mesh
 import numpy as np

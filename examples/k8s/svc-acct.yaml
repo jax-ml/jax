@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: training-job-sa
+  name: jax-job-sa
   namespace: default
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -10,7 +10,7 @@ metadata:
   name: pod-reader
 rules:
   - apiGroups: [""]
-    resources: ["pods"]
+    resources: ["pods", "services"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
@@ -23,7 +23,7 @@ metadata:
   namespace: default
 subjects:
   - kind: ServiceAccount
-    name: training-job-sa
+    name: jax-job-sa
     namespace: default
 roleRef: 
   kind: Role

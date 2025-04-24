@@ -3003,7 +3003,16 @@ def ldexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     raise ValueError(f"ldexp not supported for input types {(x1_dtype, x2_dtype)}")
   x1, = promote_args_inexact("ldexp", x1)
   x2 = lax.convert_element_type(x2, dtypes.dtype(x1))
-  x = x1 * (2 ** x2)
+
+  # Split off the exponent to avoid overflow for small x1 and large x2.
+  m, e = frexp(x1)
+  e = (e.astype(x2.dtype) + x2).astype(x1.dtype)
+
+  # exponent may overflow by 1 and still have a finite result.
+  m = _where(e > 0, m * 2, m)
+  e = _where(e > 0, e - 1, e)
+
+  x = m * (2 ** e.astype(m.dtype))
   return _where(isinf(x1) | (x1 == 0), x1, x)
 
 
@@ -3044,7 +3053,10 @@ def frexp(x: ArrayLike, /) -> tuple[Array, Array]:
   x, = promote_dtypes_inexact(x)
   if dtypes.issubdtype(x.dtype, np.complexfloating):
     raise TypeError("frexp does not support complex-valued inputs")
+  return _frexp(x)
 
+@custom_jvp
+def _frexp(x):
   dtype = dtypes.dtype(x)
   info = dtypes.finfo(dtype)
   mask = (1 << info.nexp) - 1
@@ -3059,6 +3071,16 @@ def frexp(x: ArrayLike, /) -> tuple[Array, Array]:
   cond = isinf(x) | isnan(x) | (x == 0)
   x2 = _where(cond, lax._zeros(x2), x2)
   return _where(cond, x, x1), lax.convert_element_type(x2, np.int32)
+
+
+@_frexp.defjvp
+def _frexp_jvp(primals, tangents):
+  x, = primals
+  t, = tangents
+  m, e = frexp(x)
+  mdot = t * exp2(-e.astype(t.dtype))
+  edot = np.empty(e.shape, dtypes.float0)
+  return (m, e), (mdot, edot)
 
 
 @export

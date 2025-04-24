@@ -42,7 +42,7 @@ from jax.lax import with_sharding_constraint
 from jax._src import prng
 from jax.sharding import PartitionSpec as P, Mesh
 from jax.experimental import multihost_utils
-from jax.experimental.shard_map import shard_map
+from jax._src.shard_map import shard_map
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax.experimental.custom_partitioning import (
     custom_partitioning, SdyShardingRule, BATCHING)
@@ -61,7 +61,7 @@ from jax._src.mesh import AxisType
 from jax._src.interpreters import pxla
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension
+from jax._src.lib import _jax
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -4512,7 +4512,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return x + y[..., jnp.newaxis]
 
     f = jax.jit(shard_map(
-        _f, mesh, in_specs=(P(None, 'i'), P(None)),
+        _f, mesh=mesh, in_specs=(P(None, 'i'), P(None)),
         out_specs=P(None, 'i')))
     f(jnp.zeros((2, 16)), jnp.ones(2))
 
@@ -4530,7 +4530,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return x + y[..., jnp.newaxis]
 
     f = jax.jit(shard_map(
-        _f, mesh, in_specs=(P(None, 'i'), P(None)),
+        _f, mesh=mesh, in_specs=(P(None, 'i'), P(None)),
         out_specs=P(None, 'i')))
     f(jnp.zeros((2, 16)), jnp.ones(2))
 
@@ -5518,6 +5518,20 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     out = jax.jit(jax.grad(h2, argnums=(0, 1)))(arr1, arr2)
     self.assertEqual(out[0].sharding, arr1.sharding)
     self.assertEqual(out[1].sharding, arr2.sharding)
+
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'))
+  def test_fully_replicated_reshape(self, mesh):
+    np_inp = np.arange(64).reshape(64, 1)
+    arr = jax.device_put(np_inp, P(('x', 'y')))
+
+    @jax.jit
+    def f(x):
+      x = reshard(x, P(None, None))
+      return jax.lax.reshape(x, (2, 32, 1))
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, None, None)))
+    self.assertArraysEqual(out, np_inp.reshape(2, 32, 1))
 
   @parameterized.named_parameters(
       ('1', (16, 1), (1, 16, 1), P('x', None), P(None, 'x', None), False),
@@ -6957,7 +6971,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return const * 2
 
     shmap_f = shard_map(f, mesh=mesh, in_specs=(), out_specs=P('x'),
-                        auto=frozenset({'y'}))
+                        axis_names={'x'})
     f = jax.jit(shmap_f)
     out = f()
     self.assertArraysEqual(out, jnp.concatenate([const * 2, const * 2]))
@@ -7268,6 +7282,7 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       out = reshard(np.arange(8), P('x'))
       self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
     finally:
+      self.assertIsNone(prev_mesh)
       jax.sharding.set_mesh(prev_mesh)
 
   @jtu.with_explicit_mesh((2,), ('x',))
@@ -7964,12 +7979,12 @@ class UtilTest(jtu.JaxTestCase):
 
   def test_hlo_sharding_iota_tile_error(self):
     self.assertRaisesRegex(
-        xla_extension.XlaRuntimeError,
+        _jax.XlaRuntimeError,
         'INVALID_ARGUMENT: `dims` should not be empty.',
         lambda: xc.HloSharding.iota_tile(())
     )
     self.assertRaisesRegex(
-        xla_extension.XlaRuntimeError,
+        _jax.XlaRuntimeError,
         'INVALID_ARGUMENT: Cannot reshape from',
         lambda: xc.HloSharding.iota_tile(
             (2, 2),
@@ -7978,7 +7993,7 @@ class UtilTest(jtu.JaxTestCase):
         ),
     )
     self.assertRaisesRegex(
-        xla_extension.XlaRuntimeError,
+        _jax.XlaRuntimeError,
         'INVALID_ARGUMENT: `reshape_dims` and `transpose_perm` should have the'
         ' same size',
         lambda: xc.HloSharding.iota_tile(
@@ -7987,7 +8002,7 @@ class UtilTest(jtu.JaxTestCase):
         ),
     )
     self.assertRaisesWithLiteralMatch(
-        xla_extension.XlaRuntimeError,
+        _jax.XlaRuntimeError,
         'INVALID_ARGUMENT: `subgroup_types`(3) should not have more dimensions '
         'than `dims`(2).',
         lambda: xc.HloSharding.iota_tile(

@@ -22,6 +22,8 @@ import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import pretty_printer as pp
+from jax._src import prng as jax_prng
+from jax._src import random as jax_random
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
@@ -685,8 +687,9 @@ def delay(nanos):
 prng_seed_p = jax_core.Primitive("prng_seed")
 prng_seed_p.multiple_results = True
 
+
 @prng_seed_p.def_abstract_eval
-def _(*_):
+def _prng_seed_abstract_eval(*_):
   return []
 
 
@@ -703,9 +706,52 @@ def prng_seed(*seeds: int | jax.Array) -> None:
 prng_random_bits_p = jax_core.Primitive(
     'prng_random_bits')
 
+
 @prng_random_bits_p.def_abstract_eval
-def _(*, shape):
+def _prng_random_bits_abstract_eval(*, shape):
   return jax_core.ShapedArray(shape, jnp.dtype("int32"))
+
 
 def prng_random_bits(shape):
   return prng_random_bits_p.bind(shape=shape)
+
+# PRNG wrap/unwrap ops.
+# We cannot use JAX's key_data and wrap_key_data because they return
+# vectors, and Pallas keys are represented as lists of scalars.
+
+split_key_p = jax_core.Primitive("prng_split")
+split_key_p.multiple_results = True
+
+
+@split_key_p.def_abstract_eval
+def _split_key_scalar_abstract_eval(seed):
+  key_shape = seed.dtype._impl.key_shape
+  if len(key_shape) != 2 or key_shape[0] != 1:
+    raise ValueError(f"Key shape must be (1, N), got {key_shape}")
+  return [jax_core.ShapedArray((), jnp.dtype("uint32"))] * key_shape[1]
+
+
+def unwrap_pallas_seed(seed):
+  """Splits a PRNG key into it's scalar components."""
+  return split_key_p.bind(seed)
+
+
+join_key_p = jax_core.Primitive("prng_join")
+
+
+@join_key_p.def_abstract_eval
+def _join_key_scalar_abstract_eval(*seeds, impl):
+  if len(impl.key_shape) != 2 or impl.key_shape[0] != 1:
+    raise ValueError(f"Key shape must be (1, N), got {impl.key_shape}")
+  if len(seeds) != impl.key_shape[1]:
+    raise ValueError(
+        f"Number of seeds must match key shape, got {len(seeds)}"
+        f" != {impl.key_shape[1]}."
+    )
+  return jax_core.ShapedArray((), dtype=jax_prng.KeyTy(impl))
+
+
+def wrap_pallas_seed(*seeds, impl):
+  """Joins scalar into a single PRNG key."""
+  impl = jax_random.resolve_prng_impl(impl)
+  return join_key_p.bind(*seeds, impl=impl)

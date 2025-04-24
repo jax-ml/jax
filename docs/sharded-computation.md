@@ -29,7 +29,7 @@ The tutorial covers three modes of parallel computation:
    to turn the whole-array program into per-device programs (turning `jnp.sum`
    into `psum` for example) but the compiler is heavily constrained by the
    user-supplied shardings.
-- _Fully manual sharding with manual control using {func}`jax.experimental.shard_map.shard_map`_: `shard_map` enables per-device code and explicit communication collectives
+- _Fully manual sharding with manual control using {func}`jax.shard_map`_: `shard_map` enables per-device code and explicit communication collectives
 
 A summary table:
 
@@ -222,22 +222,21 @@ we can query them at trace time.
 
 ## 3. Manual parallelism with `shard_map`
 
-In the automatic parallelism methods explored above, you can write a function as if you're operating on the full dataset, and `jit` will split that computation across multiple devices. By contrast, with {func}`jax.experimental.shard_map.shard_map` you write the function that will handle a single shard of data, and `shard_map` will construct the full function.
+In the automatic parallelism methods explored above, you can write a function as if you're operating on the full dataset, and `jit` will split that computation across multiple devices. By contrast, with {func}`jax.shard_map` you write the function that will handle a single shard of data, and `shard_map` will construct the full function.
 
 `shard_map` works by mapping a function across a particular *mesh* of devices (`shard_map` maps over shards). In the example below:
 
 - As before, {class}`jax.sharding.Mesh` allows for precise device placement, with the axis names parameter for logical and physical axis names.
 - The `in_specs` argument determines the shard sizes. The `out_specs` argument identifies how the blocks are assembled back together.
 
-**Note:** {func}`jax.experimental.shard_map.shard_map` code can work inside {func}`jax.jit` if you need it.
+**Note:** {func}`jax.shard_map` code can work inside {func}`jax.jit` if you need it.
 
 ```{code-cell}
 :outputId: 435c32f3-557a-4676-c11b-17e6bab8c1e2
 
-from jax.experimental.shard_map import shard_map
 mesh = jax.make_mesh((8,), ('x',))
 
-f_elementwise_sharded = shard_map(
+f_elementwise_sharded = jax.shard_map(
     f_elementwise,
     mesh=mesh,
     in_specs=P('x'),
@@ -259,7 +258,7 @@ def f(x):
   print(f"device local shape: {x.shape=}")
   return x * 2
 
-y = shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P('x'))(x)
+y = jax.shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P('x'))(x)
 ```
 
 Because each of your functions only "sees" the device-local part of the data, it means that aggregation-like functions require some extra thought.
@@ -272,7 +271,7 @@ For example, here's what a `shard_map` of a {func}`jax.numpy.sum` looks like:
 def f(x):
   return jnp.sum(x, keepdims=True)
 
-shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P('x'))(x)
+jax.shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P('x'))(x)
 ```
 
 Your function `f` operates separately on each shard, and the resulting summation reflects this.
@@ -286,7 +285,7 @@ def f(x):
   sum_in_shard = x.sum()
   return jax.lax.psum(sum_in_shard, 'x')
 
-shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P())(x)
+jax.shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P())(x)
 ```
 
 Because the output no longer has a sharded dimension, set `out_specs=P()` (recall that the `out_specs` argument identifies how the blocks are assembled back together in `shard_map`).
@@ -362,7 +361,7 @@ Finally, you can do the same thing with `shard_map`, using {func}`jax.lax.psum` 
 from functools import partial
 
 @jax.jit
-@partial(shard_map, mesh=mesh,
+@partial(jax.shard_map, mesh=mesh,
          in_specs=(P('x'), P('x', None), P(None)),
          out_specs=P(None))
 def layer_sharded(x, weights, bias):

@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaxpods
+spec:
+  publishNotReadyAddresses: true
+  clusterIP: None
+  selector:
+    job-name: jaxjob
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: jaxjob
+spec:
+  parallelism: 8
+  completions: 8
+  completionMode: Indexed
+  backoffLimit: 0
+  template:
+    spec:
+      subdomain: jaxpods  # must match headless service name
+      serviceAccountName: jax-job-sa
+      restartPolicy: Never
+      containers:
+      - name: main
+        image: local/jax:latest
+        imagePullPolicy: IfNotPresent
+        resources:
+          limits:
+            cpu: 100m
+        command: 
+          - python
+        args:
+          - -c
+          - |
+            import jax
+            jax.distributed.initialize()
+            print(jax.devices())
+            print(jax.local_devices())
+            assert jax.process_count() > 1
+            assert len(jax.devices()) > len(jax.local_devices())

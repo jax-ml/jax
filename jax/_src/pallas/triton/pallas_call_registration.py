@@ -17,16 +17,17 @@
 from __future__ import annotations
 
 import io
-from typing import Any
+from typing import cast
 import zlib
 
 import jax
 import jax._src.core as jax_core
 from jax._src.interpreters import mlir
-from jax._src.lib import triton
 from jax._src.lib import gpu_triton as triton_kernel_call_lib
+from jax._src.lib import triton
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas.triton import core as triton_core
 from jax._src.pallas.triton import lowering
 
 
@@ -51,7 +52,7 @@ def pallas_call_lowering(
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: pallas_core.GridMapping,
     mesh: pallas_core.Mesh | None,
-    compiler_params: dict[str, Any],
+    compiler_params: dict[str, pallas_core.CompilerParams],
     cost_estimate: pallas_core.CostEstimate | None,
     out_avals: tuple[jax_core.AbstractValue, ...],
 ):
@@ -67,16 +68,17 @@ def pallas_call_lowering(
     )
   if mesh is not None:
     raise NotImplementedError("mesh is not supported in the Triton backend")
-  triton_params = compiler_params.get("triton", compiler_params)
-  num_warps = triton_params.get("num_warps", 4)
-  num_warps = 4 if num_warps is None else num_warps
+
   [lowering_platform] = ctx.platforms or ctx.module_context.platforms
-  if lowering_platform == "rocm":
-    num_stages = triton_params.get("num_stages", 1)
-    num_stages = 1 if num_stages is None else num_stages
+
+  if "triton" in compiler_params:
+    params = cast(triton_core.TritonCompilerParams, compiler_params["triton"])
   else:
-    num_stages = triton_params.get("num_stages", 3)
-    num_stages = 3 if num_stages is None else num_stages
+    params = triton_core.TritonCompilerParams()
+  num_warps = 4 if params.num_warps is None else params.num_warps
+  num_stages = params.num_stages
+  if num_stages is None:
+    num_stages = 1 if lowering_platform == "rocm" else 3
 
   if debug:
     print(f"\nThe kernel jaxpr for pallas_call {debug_info.func_src_info}:")
@@ -117,12 +119,11 @@ def pallas_call_lowering(
         grid_z=mlir.i32_attr(grid_z),
         debug=ir.BoolAttr.get(debug),
     )
-    if "serialized_metadata" in (triton_params or {}):
+    if params.serialized_metadata is not None:
       # This field is unstable and may be removed in the future.
-      if triton_params["serialized_metadata"] is not None:
-        backend_config["serialized_metadata"] = ir.StringAttr.get(
-            triton_params["serialized_metadata"]
-        )
+      backend_config["serialized_metadata"] = ir.StringAttr.get(
+          params.serialized_metadata
+      )
     return mlir.custom_call(
         call_target_name="__gpu$xla.gpu.triton",
         result_types=out_types,
@@ -178,10 +179,10 @@ def pallas_call_lowering(
       call_target_name="triton_kernel_call",
       result_types=[*map(mlir.aval_to_ir_type, ctx.avals_out)],
       operands=in_nodes,
-       backend_config=zlib.compress(
+      backend_config=zlib.compress(
           kernel_call.to_proto(
               debug_info.func_name,
-              triton_params.get("serialized_metadata") or b"",
+              params.serialized_metadata or b"",
           )
       ),
       operand_layouts=avals_to_layouts(ctx.avals_in),

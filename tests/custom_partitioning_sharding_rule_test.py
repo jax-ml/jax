@@ -383,7 +383,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
           [result.result.type,])
     self.assertEqual(
         str(mlir_rule),
-        "#sdy.op_sharding_rule<([ij])->([i, j]) {i=2, j=4}>")
+        "#sdy.op_sharding_rule<([ij])->([i, j]) {i=2, j=4}, custom>")
 
   def test_conversion_elementwise_rule_scalar_instance(self):
     opnd0 = self.create_tensor_value(())
@@ -399,7 +399,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         [result.result.type,])
     self.assertEqual(
         str(mlir_rule),
-        "#sdy.op_sharding_rule<([], [])->([])>")
+        "#sdy.op_sharding_rule<([], [])->([]), custom>")
 
   def test_conversion_elementwise_rule_2D_instance(self):
     opnd0 = self.create_tensor_value((16, 32))
@@ -415,7 +415,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         [result.result.type,])
     self.assertEqual(
         str(mlir_rule),
-        "#sdy.op_sharding_rule<([i, j], [i, j])->([i, j]) {i=16, j=32}>")
+        "#sdy.op_sharding_rule<([i, j], [i, j])->([i, j]) {i=16, j=32}, custom>")
 
   def test_conversion_vector_scalar_add_2D_instance(self):
     opnd0 = self.create_tensor_value((16, 32))
@@ -431,7 +431,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         [result.result.type,])
     self.assertEqual(
         str(mlir_rule),
-        "#sdy.op_sharding_rule<([i, j], [])->([i, j]) {i=16, j=32}>")
+        "#sdy.op_sharding_rule<([i, j], [])->([i, j]) {i=16, j=32}, custom>")
 
   def test_conversion_reshape_rule(self):
     opnd0 = self.create_tensor_value((2, 4))
@@ -446,7 +446,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         [result.result.type,])
     self.assertEqual(
         str(mlir_rule),
-        "#sdy.op_sharding_rule<([i, j])->([ij]) {i=2, j=4}>")
+        "#sdy.op_sharding_rule<([i, j])->([ij]) {i=2, j=4}, custom>")
 
   def test_conversion_contracting_dim_matmul(self):
     opnd0 = self.create_tensor_value((16, 32))
@@ -462,7 +462,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         [result.result.type,])
     self.assertEqual(
         str(mlir_rule),
-        "#sdy.op_sharding_rule<([i, j], [j, k])->([i, k]) {i=16, j=32, k=8}>")
+        "#sdy.op_sharding_rule<([i, j], [j, k])->([i, k]) {i=16, j=32, k=8}, custom>")
 
 
   def test_conversion_multiple_batching_groups(self):
@@ -479,7 +479,7 @@ class SdyShardingRuleConversionTest(jtu.JaxTestCase):
         [result.result.type,])
     self.assertEqual(
         str(mlir_rule),
-        "#sdy.op_sharding_rule<([i, j, k, l], [m, n, o, l, k])->([i, j, l, k]) {i=4, j=5, k=16, l=32, m=6, n=7, o=8}>")
+        "#sdy.op_sharding_rule<([i, j, k, l], [m, n, o, l, k])->([i, j, l, k]) {i=4, j=5, k=16, l=32, m=6, n=7, o=8}, custom>")
 
 
 if __name__ == "__main__":
