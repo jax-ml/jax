@@ -14,7 +14,8 @@
 # ==============================================================================
 
 import enum
-from typing import Any, Optional, Sequence, overload
+from typing import Any, overload
+from collections.abc import Sequence
 
 from jaxlib import _jax
 
@@ -68,15 +69,15 @@ def AllGather(
     all_gather_dimension: int,
     shard_count: int,
     replica_groups: Sequence[_ReplicaGroup] = ...,
-    channel_id: Optional[_ChannelHandle] = ...,
-    shape_with_layout: Optional[_Layout] = ...,
-    use_global_device_ids: Optional[bool] = ...) -> XlaOp: ...
+    channel_id: _ChannelHandle | None = ...,
+    shape_with_layout: _Layout | None = ...,
+    use_global_device_ids: bool | None = ...) -> XlaOp: ...
 def AllReduce(
     operand: XlaOp,
     computation: XlaComputation,
     replica_groups: Sequence[_ReplicaGroup] = ...,
-    channel_id: Optional[_ChannelHandle] = ...,
-    shape_with_layout: Optional[_Layout] = ...) -> XlaOp: ...
+    channel_id: _ChannelHandle | None = ...,
+    shape_with_layout: _Layout | None = ...) -> XlaOp: ...
 def ApproxTopK(
     builder: XlaBuilder,
     operands: Sequence[XlaOp],
@@ -84,9 +85,9 @@ def ApproxTopK(
     top_k: int,
     reduction_dim: int,
     comparator: XlaComputation,
-    recall_target: Optional[float],
-    aggregate_to_topk: Optional[bool],
-    reduction_input_size_override: Optional[int]) -> XlaOp: ...
+    recall_target: float | None,
+    aggregate_to_topk: bool | None,
+    reduction_input_size_override: int | None) -> XlaOp: ...
 def ApproxTopKFallback(
     builder: XlaBuilder,
     operands: Sequence[XlaOp],
@@ -94,33 +95,33 @@ def ApproxTopKFallback(
     top_k: int,
     reduction_dim: int,
     comparator: XlaComputation,
-    recall_target: Optional[float],
-    aggregate_to_topk: Optional[bool],
-    reduction_input_size_override: Optional[int]) -> XlaOp: ...
+    recall_target: float | None,
+    aggregate_to_topk: bool | None,
+    reduction_input_size_override: int | None) -> XlaOp: ...
 def ApproxTopKReductionOutputSize(
     input_size: int,
     rank: int,
     top_k: int,
     recall_target: float,
-    aggregate_to_topk: Optional[bool] = ...,
-    input_size_override: Optional[int] = ...) -> tuple[int, int]: ...
+    aggregate_to_topk: bool | None = ...,
+    input_size_override: int | None = ...) -> tuple[int, int]: ...
 def ReduceScatter(
     operand: XlaOp,
     computation: XlaComputation,
     scatter_dimension: int,
     shard_count: int,
     replica_groups: Sequence[_ReplicaGroup] = ...,
-    channel_id: Optional[_ChannelHandle] = ...,
-    layout: Optional[_Layout] = ...,
-    use_global_device_ids: Optional[bool] = ...) -> XlaOp: ...
+    channel_id: _ChannelHandle | None = ...,
+    layout: _Layout | None = ...,
+    use_global_device_ids: bool | None = ...) -> XlaOp: ...
 def AllToAll(
     operand: XlaOp,
     split_dimension: int,
     concat_dimension: int,
     split_count: int,
     replica_groups: Sequence[_ReplicaGroup] = ...,
-    layout: Optional[_Layout] = ...,
-    channel_id: Optional[_ChannelHandle] = ...) -> XlaOp: ...
+    layout: _Layout | None = ...,
+    channel_id: _ChannelHandle | None = ...) -> XlaOp: ...
 def BitcastConvertType(operand: XlaOp,
                        new_element_type: PrimitiveType) -> XlaOp: ...
 def Broadcast(operand: XlaOp, sizes: Sequence[int]) -> XlaOp: ...
@@ -136,7 +137,7 @@ def Collapse(operand: XlaOp, dimensions: Sequence[int]) -> XlaOp: ...
 def CollectivePermute(
     operand: XlaOp,
     source_target_pairs: Sequence[tuple[int, int]],
-    channel_id: Optional[_ChannelHandle] = ...,
+    channel_id: _ChannelHandle | None = ...,
     inplace: bool = ...) -> XlaOp: ...
 def ConcatInDim(builder: XlaBuilder,
                 operands: Sequence[XlaOp],
@@ -165,9 +166,9 @@ def ConvGeneralDilated(
     dimension_numbers: _ConvDimensionNumbers,
     feature_group_count: int = ...,
     batch_group_count: int = ...,
-    precision_config: Optional[PrecisionConfig_Precision] = ...,
-    preferred_element_type: Optional[PrimitiveType] = ...,
-    window_reversal: Optional[Sequence[bool]] = ...) -> XlaOp: ...
+    precision_config: PrecisionConfig_Precision | None = ...,
+    preferred_element_type: PrimitiveType | None = ...,
+    window_reversal: Sequence[bool] | None = ...) -> XlaOp: ...
 def ConvertElementType(
     operand: XlaOp,
     new_element_type: PrimitiveType) -> XlaOp: ...
@@ -209,14 +210,14 @@ def CustomCallWithAliasing(
 def Dot(
     lhs: XlaOp,
     rhs: XlaOp,
-    precision_config: Optional[PrecisionConfig_Precision] = ...,
-    preferred_element_type: Optional[PrimitiveType] = ...) -> XlaOp: ...
+    precision_config: PrecisionConfig_Precision | None = ...,
+    preferred_element_type: PrimitiveType | None = ...) -> XlaOp: ...
 def DotGeneral(
     lhs: XlaOp,
     rhs: XlaOp,
     dimensions_numbers: _DotDimensionNumbers,
-    precision_config: Optional[PrecisionConfig_Precision] = ...,
-    preferred_element_type: Optional[PrimitiveType] = ...) -> XlaOp: ...
+    precision_config: PrecisionConfig_Precision | None = ...,
+    preferred_element_type: PrimitiveType | None = ...) -> XlaOp: ...
 def DynamicReshape(
     operand: XlaOp,
     dim_sizes: Sequence[XlaOp],
@@ -251,7 +252,7 @@ def GetTupleElement(tuple_data: XlaOp, index: int) -> XlaOp: ...
 def InfeedWithToken(
     token: XlaOp,
     shape: Shape,
-    config: Optional[str] = ...) -> XlaOp: ...
+    config: str | None = ...) -> XlaOp: ...
 @overload
 def Iota(builder: XlaBuilder, shape: Shape, iota_dimension: int) -> XlaOp: ...
 @overload
@@ -266,14 +267,14 @@ def Map(
 def MultiCollectivePermute(
     operands: Sequence[XlaOp],
     source_target_pairs: Sequence[tuple[int, int]],
-    channel_id: Optional[_ChannelHandle] = ...,
+    channel_id: _ChannelHandle | None = ...,
     inplace: bool = ...) -> XlaOp: ...
 def NextAfter(__from: XlaOp, to: XlaOp) -> XlaOp: ...
 def OutfeedWithToken(
     operand: XlaOp,
     token: XlaOp,
     shape_with_layout: Shape,
-    outfeed_config: Optional[str] = ...) -> XlaOp: ...
+    outfeed_config: str | None = ...) -> XlaOp: ...
 def Pad(
     operand: XlaOp,
     padding_value: XlaOp,
@@ -368,7 +369,7 @@ def SliceInDim(
 def Sort(
     builder: XlaBuilder,
     operands: Sequence[XlaOp],
-    comparator: Optional[XlaComputation] = ...,
+    comparator: XlaComputation | None = ...,
     dimension: int = ...,
     is_stable: bool = ...) -> XlaOp: ...
 def SVD(

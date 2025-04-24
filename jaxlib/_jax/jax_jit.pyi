@@ -13,7 +13,8 @@
 # limitations under the License.
 # ==============================================================================
 
-from typing import Any, Callable, Optional, Sequence, Tuple
+from typing import Any
+from collections.abc import Callable, Sequence
 
 import numpy as np
 from jaxlib import _jax
@@ -25,11 +26,11 @@ Device = _jax.Device
 
 
 class JitState:
-  disable_jit: Optional[bool]
-  enable_x64: Optional[bool]
-  default_device: Optional[Any]
-  extra_jit_context: Optional[Any]
-  post_hook: Optional[Callable[..., Any]]
+  disable_jit: bool | None
+  enable_x64: bool | None
+  default_device: Any | None
+  extra_jit_context: Any | None
+  post_hook: Callable[..., Any] | None
 
 def global_state() -> JitState: ...
 def thread_local_state() -> JitState: ...
@@ -39,11 +40,11 @@ def set_thread_local_state_initialization_callback(
     function: Callable[[], None]): ...
 
 def swap_thread_local_state_disable_jit(
-    value: Optional[bool]) -> Optional[bool]: ...
+    value: bool | None) -> bool | None: ...
 
 class ArgSignature:
   dtype: np.dtype
-  shape: Tuple[int, ...]
+  shape: tuple[int, ...]
   weak_type: bool
 
 def _ArgSignatureOfValue(
@@ -69,7 +70,7 @@ class ArgumentSignature:
 def parse_arguments(
     positional_args: Sequence[Any],
     keyword_args: Sequence[Any],
-    kwnames: Tuple[str, ...],
+    kwnames: tuple[str, ...],
     static_argnums: Sequence[int],
     static_argnames: Sequence[str],
     pytree_registry: pytree.PyTreeRegistry,
