@@ -1248,7 +1248,8 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
     mask_info, mask_info_dkv, mask_function = self._process_mask(
         multi_head, block_shape
     )
-    self.assertIsNone(mask_function)
+    if is_lazy_mask:
+      self.assertIsNotNone(mask_function)
 
     expected_partial_mask_blocks = self._stack(
         [
@@ -1292,10 +1293,12 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
 
     expected_mask_info = mask_info_lib.MaskInfo(
         expected_local_data_next,
-        expected_local_mask_next,
+        expected_local_mask_next if not is_lazy_mask else None,
         expected_local_block_mask,
-        expected_partial_mask_blocks,
-        None,
+        expected_partial_mask_blocks if not is_lazy_mask else None,
+        np.arange(sequence_lengths[0], dtype=np.int32)
+        if is_lazy_mask
+        else None,
     )
 
     expected_local_data_next_dkv = np.array(
@@ -1327,10 +1330,14 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
 
     expected_mask_info_dkv = mask_info_lib.MaskInfo(
         expected_local_data_next_dkv,
-        expected_local_mask_next_dkv,
+        expected_local_mask_next_dkv if not is_lazy_mask else None,
         expected_local_block_mask_dkv,
-        expected_partial_mask_blocks.swapaxes(-1, -2),
-        None,
+        expected_partial_mask_blocks.swapaxes(-1, -2)
+        if not is_lazy_mask
+        else None,
+        np.arange(sequence_lengths[0], dtype=np.int32)
+        if is_lazy_mask
+        else None,
     )
 
     self._assert_mask_info_match(mask_info, expected_mask_info)
@@ -1359,7 +1366,9 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
     mask_info, mask_info_dkv, mask_function = self._process_mask(
         multi_head, block_shape
     )
-    self.assertIsNone(mask_function)
+
+    if is_lazy_mask:
+      self.assertIsNotNone(mask_function)
 
     expected_partial_mask_blocks = self._stack(
         [
@@ -1400,10 +1409,12 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
 
     expected_mask_info = mask_info_lib.MaskInfo(
         expected_local_data_next,
-        expected_local_mask_next,
+        expected_local_mask_next if not is_lazy_mask else None,
         expected_local_block_mask,
-        expected_partial_mask_blocks,
-        None,
+        expected_partial_mask_blocks if not is_lazy_mask else None,
+        np.arange(sequence_lengths[0], dtype=np.int32)
+        if is_lazy_mask
+        else None,
     )
 
     expected_local_data_next_dkv = np.array(
@@ -1432,10 +1443,14 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
 
     expected_mask_info_dkv = mask_info_lib.MaskInfo(
         expected_local_data_next_dkv,
-        expected_local_mask_next_dkv,
+        expected_local_mask_next_dkv if not is_lazy_mask else None,
         expected_local_block_mask_dkv,
-        expected_partial_mask_blocks.swapaxes(-1, -2),
-        None,
+        expected_partial_mask_blocks.swapaxes(-1, -2)
+        if not is_lazy_mask
+        else None,
+        np.arange(sequence_lengths[0], dtype=np.int32)
+        if is_lazy_mask
+        else None,
     )
 
     self._assert_mask_info_match(mask_info, expected_mask_info)
@@ -2250,11 +2265,12 @@ class SplashAttentionMaskInfoTest(jtu.JaxTestCase):
         multi_head, block_shape
     )
 
-    self.assertIsNone(mask_function)
+    self.assertIsNotNone(mask_function)
     self.assertIsNotNone(mask_info.block_mask)
     self.assertIsNotNone(mask_info.data_next)
-    self.assertIsNotNone(mask_info.mask_next)
-    self.assertIsNotNone(mask_info.partial_mask_blocks)
+    self.assertIsNone(mask_info.mask_next)
+    self.assertIsNone(mask_info.partial_mask_blocks)
+    self.assertIsNotNone(mask_info.q_sequence)
 
   def test_process_invalid_mask(self):
     """Masks with of an all-0 row causes undefined softmax, reject them."""
