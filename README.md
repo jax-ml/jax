@@ -189,6 +189,12 @@ explicit in JAX types, inspectable using `jax.typeof`;
 where you have a per-device view of data
 and computation, and can communicate with explicit collectives.
 
+| Mode | View? | Explicit sharding? | Explicit Collectives? |
+|---|---|---|---|
+| Auto | Global | ❌ | ❌ |
+| Explicit | Global | ✅ | ❌ |
+| Manual | Per-device | ✅ | ✅ |
+
 ```python
 from jax.sharding import set_mesh, AxisType, PartitionSpec as P
 mesh = jax.make_mesh((8,), ('data',), axis_types=(AxisType.Explicit,))
@@ -209,12 +215,6 @@ param_grads = gradfun(params, (inputs, targets))
 
 See the [tutorial](https://docs.jax.dev/en/latest/sharded-computation.html) and
 [advanced guides](https://docs.jax.dev/en/latest/advanced_guide.html) for more.
-
-| Mode | View? | Explicit sharding? | Explicit Collectives? |
-|---|---|---|---|
-| Auto | Global | ❌ | ❌ |
-| Explicit | Global | ✅ | ❌ |
-| Manual | Per-device | ✅ | ✅ |
 
 ## Gotchas and sharp bits
 
