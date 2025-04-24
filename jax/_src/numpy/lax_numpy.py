@@ -5559,6 +5559,26 @@ def canonicalize_device_to_sharding(device: xc.Device | Sharding | None
   return device
 
 
+def _get_platform(
+    device_or_sharding: xc.Device | Sharding | None | str) -> str:
+  """Get device_or_sharding platform or look up config.default_device.value."""
+  if isinstance(device_or_sharding, xc.Device):
+    return device_or_sharding.platform
+  elif isinstance(device_or_sharding, Sharding):
+    return list(device_or_sharding.device_set)[0].platform
+  elif isinstance(device_or_sharding, str):
+    return device_or_sharding
+  elif device_or_sharding is None:
+    if config.default_device.value is None:
+      return jax.default_backend()
+    else:
+      return _get_platform(config.default_device.value)
+  else:
+    raise ValueError(f"`{device_or_sharding = }` was passed to"
+                     "`canonicalize_or_get_default_platform`, only xc.Device,"
+                     " Sharding, None or str values are supported.")
+
+
 def _convert_to_array_if_dtype_fails(x: ArrayLike) -> ArrayLike:
   try:
     dtypes.dtype(x)
@@ -5703,11 +5723,11 @@ def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None,
   # the buffer protocol but a copy is required. Since array() supports the buffer protocol
   # via numpy, this is only the case when the default device is not 'cpu'
   if (copy is False and not isinstance(a, Array)
-      and jax.default_backend() != 'cpu'
+      and _get_platform(device) != "cpu"
       and _supports_buffer_protocol(a)):
     raise ValueError(f"jnp.asarray: cannot convert object of type {type(a)} to JAX Array "
-                     f"on backend={jax.default_backend()!r} with copy=False. "
-                      "Consider using copy=None or copy=True instead.")
+                     f"on platform={_get_platform(device)} with "
+                     "copy=False. Consider using copy=None or copy=True instead.")
   dtypes.check_user_dtype_supported(dtype, "asarray")
   if dtype is not None:
     dtype = dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True)  # type: ignore[assignment]
