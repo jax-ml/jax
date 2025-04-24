@@ -1480,13 +1480,6 @@ def _get_grid_point(
   return jnp.array(grid_point, dtype=np.int32)
 
 
-def _maybe_dynamic_slice(start_idx, block_shape, value, is_indexing):
-  start_idx = tuple(jnp.array(s, dtype=jnp.int32) for s in start_idx)
-  output = lax.dynamic_slice(value, start_idx, slice_sizes=block_shape)
-  squeeze_dims = tuple(np.arange(len(is_indexing))[np.array(is_indexing,
-                                                            dtype=np.bool_)])
-  return lax.squeeze(output, squeeze_dims)
-
 def _uninitialized_value(shape, dtype, interpret_params):
   if interpret_params.uninitialized_memory == 'nan':
     if jnp.issubdtype(dtype, jnp.floating):

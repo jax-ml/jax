@@ -11,9 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""JAX APIs for exporting JAX functions for interoperation.
-
-"""
+"""JAX APIs for exporting JAX functions for interoperation."""
 
 from __future__ import annotations
 
@@ -1215,16 +1213,6 @@ def expand_in_shardings(in_shardings: Sequence[LoweringSharding],
   for idx, in_s in zip(sorted(module_kept_var_idx), in_shardings):
     all_in_shardings[idx] = in_s
   return tuple(all_in_shardings)
-
-
-def _hlo_sharding_to_xla_compatible_sharding(
-    hlo_sharding: HloSharding | None,
-    mesh: sharding.Mesh) -> sharding.Sharding | None:
-  if hlo_sharding is None:
-    return None
-  return sharding_impls._gspmd_to_named_sharding_via_mesh(
-      _hlo_sharding_to_gspmd_sharding(hlo_sharding, tuple(mesh.devices.flat)),  # type: ignore[arg-type]
-      mesh)
 
 
 def _hlo_sharding_to_gspmd_sharding(

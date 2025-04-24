@@ -20,8 +20,6 @@ from contextlib import contextmanager
 import dataclasses
 import enum
 import functools
-import itertools
-import operator
 from typing import Any, Union
 
 import jax
@@ -158,19 +156,6 @@ def _grid_size(grid):
     size *= dim
   return size
 
-
-def _get_indices(step, grid, offsets):
-  """Get indices for a given step and grid."""
-  # TODO(enriqueps): Implement using bitwise ops, avoid div/rem since they are
-  # expensive.
-  extended_grid = grid + (1,)
-  strides = tuple(
-      itertools.accumulate(extended_grid[::-1], func=operator.mul))[::-1]
-  indices = tuple(
-      lax.div(lax.rem(step, a), b)
-      for a, b in zip(strides[:-1], strides[1:])
-  )
-  return tuple(a + b for a, b in zip(indices, offsets, strict=True))
 
 
 class BufferType(enum.Enum):
