@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-from typing import Any, List, Optional
+from typing import Any
 
 class TransferGuardLevel:
   ALLOW: Any
@@ -23,9 +23,9 @@ class TransferGuardLevel:
   DISALLOW_EXPLICIT: Any
 
 class TransferGuardState:
-  host_to_device: Optional[TransferGuardLevel]
-  device_to_device: Optional[TransferGuardLevel]
-  device_to_host: Optional[TransferGuardLevel]
+  host_to_device: TransferGuardLevel | None
+  device_to_device: TransferGuardLevel | None
+  device_to_host: TransferGuardLevel | None
 
   explicit_device_put: bool
   explicit_device_get: bool
@@ -36,4 +36,4 @@ def thread_local_state() -> TransferGuardState: ...
 class _TestingScopedLogSink:
   def __enter__(self) -> _TestingScopedLogSink: ...
   def __exit__(self, *args, **kwargs) -> None: ...
-  def logs(self) -> List[str]: ...
+  def logs(self) -> list[str]: ...
