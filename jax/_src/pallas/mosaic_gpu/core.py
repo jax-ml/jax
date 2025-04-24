@@ -168,7 +168,7 @@ def kernel(
     body: Callable[..., None],
     out_shape: object,
     *,
-    scratch_shapes: Sequence[pallas_core.ScratchShape] = (),
+    scratch_shapes: pallas_core.ScratchShapeTree = (),
     compiler_params: object | None = None,
     **mesh_kwargs: object,
 ):
