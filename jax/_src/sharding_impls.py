@@ -200,6 +200,7 @@ class SingleDeviceSharding(jsharding.Sharding):
       return xb.process_index(self._device.client) == self._device.process_index
     return True
 
+SingleDeviceSharding.__module__ = 'jax.sharding'
 
 @util.cache(max_size=4096, trace_context_in_key=False)
 def pmap_sharding_devices_indices_map(
@@ -368,6 +369,7 @@ class PmapSharding(jsharding.Sharding):
           f'the number of devices={len(self._device_assignment)}')
     return sharded_shape
 
+PmapSharding.__module__ = 'jax.sharding'
 
 def _op_sharding_to_pos_sharding(
     op_sharding: xc.OpSharding | xc.HloSharding,

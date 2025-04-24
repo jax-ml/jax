@@ -250,6 +250,7 @@ class NamedSharding(JSharding.Sharding):
     return SdyArraySharding(self.mesh.shape_tuple, dim_shardings,
                             self._logical_device_ids)
 
+NamedSharding.__module__ = 'jax.sharding'
 
 def get_array_mapping(
     axis_resources: PartitionSpec | AUTO | UnspecifiedValue
