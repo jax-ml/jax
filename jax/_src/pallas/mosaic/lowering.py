@@ -3696,8 +3696,8 @@ def _debug_print_rule(
 
   # Scalar case.
   if is_all_scalars:
-    primitives.check_debug_print_format(fmt, *args)
     if has_placeholders:
+      primitives.check_debug_print_format(fmt, *args)
       if not all(
           isinstance(arg.type, ir.IntegerType) and arg.type.width == 32
           for arg in args
