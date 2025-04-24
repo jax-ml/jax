@@ -1431,11 +1431,12 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     ctx.module_context.shape_poly_state.uses_dim_vars = True
   submodule = ir.Module.parse(exported.mlir_module())
 
-  shardy_enabled = _jax.sdy.lowered_with_shardy(
-      mlir.module_to_bytecode(submodule))
+  submodule_bc = mlir.module_to_bytecode(submodule)
+  shardy_enabled = _jax.sdy.lowered_with_shardy(submodule_bc)
   if shardy_enabled:
-    submodule = ir.Module.parse(_jax.sdy.sdy_round_trip_import_shardings(
-        mlir.module_to_bytecode(submodule)))
+    submodule = ir.Module.parse(
+        _jax.sdy.sdy_round_trip_import_shardings(submodule_bc)
+    )
 
   with submodule.context:
     pipeline = passmanager.PassManager.parse(
