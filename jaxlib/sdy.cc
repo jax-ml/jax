@@ -29,7 +29,6 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
-#include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/LLVM.h"
 #include "nanobind/nanobind.h"
@@ -125,14 +124,12 @@ void BuildSdySubmodule(nb::module_& m) {
         mlir::OwningOpRef<mlir::ModuleOp> module =
             xla::ValueOrThrow(ParseMlirModuleString(
                 absl::string_view(bytecode.c_str(), bytecode.size()), context));
-        auto mesh_op =
-            mlir::SymbolTable::lookupNearestSymbolFrom<mlir::sdy::MeshOp>(
-                module.get(), mlir::StringAttr::get(&context, "mesh"));
-        if (!mesh_op) {
+        auto mesh_attr = mlir::sdy::getMeshAttr(module.get(), "mesh");
+        if (!mesh_attr) {
           return {};
         }
         nb::list mesh_shape;
-        for (auto axis : mesh_op.getMeshAttr().getAxes()) {
+        for (auto axis : mesh_attr.getAxes()) {
           mesh_shape.append(
               nb::make_tuple(axis.getName().str(), axis.getSize()));
         }
