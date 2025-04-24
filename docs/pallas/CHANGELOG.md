@@ -2,7 +2,7 @@
 
 # Pallas Changelog
 
-<!--* freshness: { reviewed: '2024-07-11' } *-->
+<!--* freshness: { reviewed: '2025-04-24' } *-->
 
 This is the list of changes specific to {class}`jax.experimental.pallas`.
 For the overall JAX change log see [here](https://docs.jax.dev/en/latest/changelog.html).
@@ -11,7 +11,7 @@ For the overall JAX change log see [here](https://docs.jax.dev/en/latest/changel
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## Released with jax 0.6.1
+## Unreleased
 
 * Changes
 
@@ -19,6 +19,8 @@ Remember to align the itemized text with the first line of an item within a list
     addition to ints/None in the `block_shape`. `indexing_mode` has been
     removed. To achieve "Unblocked", pass a `pl.Element(size)` into
     `block_shape` for each entry that needs unblocked indexing.
+  * {func}`jax.experimental.pallas.pallas_call` now requires `compiler_params`
+    to be a backend-specific dataclass instead of a param to value mapping.
 
 ## Released with jax 0.5.0
 
