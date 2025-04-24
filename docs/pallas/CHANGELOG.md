@@ -13,6 +13,11 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## Unreleased
 
+* Removals
+
+  * Removed previously deprecated {mod}`jax.experimental.pallas.gpu`. To use
+    the Triton backend import {mod}`jax.experimental.pallas.triton`.
+
 * Changes
 
   * {func}`jax.experimental.pallas.BlockSpec` now takes in special types in

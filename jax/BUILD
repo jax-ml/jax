@@ -671,7 +671,6 @@ pytype_strict_library(
             "experimental/pallas/**/*.py",
         ],
         exclude = [
-            "experimental/pallas/gpu.py",
             "experimental/pallas/mosaic_gpu.py",
             "experimental/pallas/ops/gpu/**/*.py",
             "experimental/pallas/ops/tpu/**/*.py",
@@ -784,7 +783,6 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pallas_triton",
     srcs = [
-        "experimental/pallas/gpu.py",
         "experimental/pallas/triton.py",
     ],
     visibility = [
