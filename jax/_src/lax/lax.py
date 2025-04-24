@@ -2705,6 +2705,7 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
   See Also:
     jax.lax.broadcast : simpler interface to add new leading dimensions.
   """
+  # TODO(dfm): Re-write this as a "reshard" when only the sharding changes.
   out_sharding = canonicalize_sharding(out_sharding, 'broadcast_in_dim')
   if (np.ndim(operand) == len(shape) and not len(broadcast_dimensions) and
       isinstance(operand, Array) and out_sharding is None):
@@ -4850,11 +4851,11 @@ def _convert_elt_type_folding_rule(consts, eqn):
 
 def _convert_elt_type_fwd_rule(eqn):
   v, = eqn.invars
-  if (not dtypes.issubdtype(eqn.params['new_dtype'], dtypes.extended) and
+  if (v.aval.dtype == eqn.params['new_dtype'] and
+      v.aval.weak_type == eqn.params['weak_type'] and
       not dtypes.issubdtype(v.aval.dtype, dtypes.extended) and
-      v.aval.dtype == eqn.params['new_dtype'] and
-      v.aval.weak_type == eqn.params['weak_type']):
-    return [v], None
+      (eqn.params['sharding'] is None or eqn.params['sharding'] == v.aval.sharding)):
+    return [0], None
   else:
     return [None], eqn
 
@@ -6447,8 +6448,10 @@ def _broadcast_in_dim_batch_rule(axis_data, batched_args, batch_dims, shape,
 
 def _broadcast_in_dim_fwd_rule(eqn):
   v, *dyn = eqn.invars
-  if not dyn and core.definitely_equal_shape(eqn.params['shape'], v.aval.shape):
-    return [v], None
+  if (not dyn and core.definitely_equal_shape(eqn.params['shape'], v.aval.shape)
+      and (eqn.params['sharding'] is None or
+           eqn.params['sharding'] == v.aval.sharding)):
+    return [0], None
   else:
     return [None], eqn
 
