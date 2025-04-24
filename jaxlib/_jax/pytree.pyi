@@ -13,18 +13,9 @@
 # limitations under the License.
 # ==============================================================================
 
-from typing import (
-    Any,
-    Callable,
-    Hashable,
-    Iterable,
-    List,
-    Optional,
-    Sequence,
-    Tuple,
-    Type,
-    TypeVar,
-)
+from builtins import tuple as Tuple
+from typing import Any, TypeVar
+from collections.abc import Callable, Hashable, Iterable, Sequence
 
 _T = TypeVar("_T")
 
@@ -43,22 +34,22 @@ class PyTreeRegistry:
   def flatten(
       self,
       tree: Any,
-      leaf_predicate: Optional[Callable[[Any], bool]] = ...,
-  ) -> Tuple[List[Any], PyTreeDef]: ...
+      leaf_predicate: Callable[[Any], bool] | None = ...,
+  ) -> Tuple[list[Any], PyTreeDef]: ...
   def flatten_one_level(
       self, tree: Any
-  ) -> Optional[Tuple[Iterable[Any], Any]]: ...
+  ) -> Tuple[Iterable[Any], Any] | None: ...
   def flatten_one_level_with_keys(
       self, tree: Any
-  ) -> Optional[Tuple[Iterable[_KeyLeafPair], Any]]: ...
+  ) -> Tuple[Iterable[_KeyLeafPair], Any] | None: ...
   def flatten_with_path(
       self,
       tree: Any,
-      leaf_predicate: Optional[Callable[[Any], bool]] = ...,
-  ) -> Tuple[List[Tuple[_KeyPath, Any]], PyTreeDef]: ...
+      leaf_predicate: Callable[[Any], bool] | None = ...,
+  ) -> Tuple[list[Tuple[_KeyPath, Any]], PyTreeDef]: ...
   def register_node(
       self,
-      __type: Type[_T],
+      __type: type[_T],
       to_iterable: Callable[[_T], Tuple[_Children, _AuxData]],
       from_iterable: Callable[[_AuxData, _Children], _T],
       to_iterable_with_keys: (
@@ -66,7 +57,7 @@ class PyTreeRegistry:
       ) = ...,
   ) -> Any: ...
   def register_dataclass_node(
-      self, __type: Type[_T], meta_fields: List[str], data_fields: List[str]
+      self, __type: type[_T], meta_fields: list[str], data_fields: list[str]
   ) -> Any: ...
 
 def default_registry() -> PyTreeRegistry: ...
@@ -119,21 +110,21 @@ class FlattenedIndexKey(Hashable):
 
 class PyTreeDef:
   def unflatten(self, __leaves: Iterable[Any]) -> Any: ...
-  def flatten_up_to(self, __xs: Any) -> List[Any]: ...
+  def flatten_up_to(self, __xs: Any) -> list[Any]: ...
   def compose(self, __inner: PyTreeDef) -> PyTreeDef: ...
   def walk(
       self,
       __f_node: Callable[[Any, Any], Any],
-      __f_leaf: Optional[Callable[[_T], Any]],
+      __f_leaf: Callable[[_T], Any] | None,
       leaves: Iterable[Any],
   ) -> Any: ...
   def from_iterable_tree(self, __xs: Any): ...
-  def node_data(self) -> Optional[Tuple[Type, Any]]: ...
-  def children(self) -> List[PyTreeDef]: ...
+  def node_data(self) -> Tuple[type, Any] | None: ...
+  def children(self) -> list[PyTreeDef]: ...
   @staticmethod
   def make_from_node_data_and_children(
       registry: PyTreeRegistry,
-      node_data: Optional[Tuple[Type, Any]],
+      node_data: Tuple[type, Any] | None,
       children: Iterable[PyTreeDef],
   ) -> PyTreeDef: ...
 

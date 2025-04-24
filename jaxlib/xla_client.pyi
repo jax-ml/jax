@@ -160,7 +160,7 @@ class PaddingConfig:
   dimensions: list[PaddingConfigDimension]
 
 def make_padding_config(
-    padding_config: Union[PaddingConfig, Sequence[tuple[int, int, int]]],
+    padding_config: PaddingConfig | Sequence[tuple[int, int, int]],
 ) -> PaddingConfig:
   ...
 
@@ -175,10 +175,10 @@ class DotDimensionNumbers:
   rhs_batch_dimensions: list[int]
 
 def make_dot_dimension_numbers(
-    dimension_numbers: Union[
-        DotDimensionNumbers,
-        tuple[tuple[list[int], list[int]], tuple[list[int], list[int]]],
-    ],
+    dimension_numbers: (
+        DotDimensionNumbers |
+        tuple[tuple[list[int], list[int]], tuple[list[int], list[int]]]
+    ),
 ) -> DotDimensionNumbers:
   ...
 
@@ -194,9 +194,9 @@ class ConvolutionDimensionNumbers:
   output_spatial_dimensions: list[int]
 
 def make_convolution_dimension_numbers(
-    dimension_numbers: Union[
-        None, ConvolutionDimensionNumbers, tuple[str, str, str]
-    ],
+    dimension_numbers: (
+        None | ConvolutionDimensionNumbers | tuple[str, str, str]
+    ),
     num_spatial_dimensions: int,
 ) -> ConvolutionDimensionNumbers:
   ...
