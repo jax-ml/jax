@@ -33,11 +33,11 @@ The tutorial covers three modes of parallel computation:
 
 A summary table:
 
-| Mode | Explicit sharding? | Explicit Collectives? |
-|---|---|---|
-| Auto | No | No |
-| Explicit (new) | Yes | No |
-| Manual | Yes | Yes |
+| Mode | View? | Explicit sharding? | Explicit Collectives? |
+|---|---|---|---|
+| Auto | Global | ❌ | ❌ |
+| Explicit | Global | ✅ | ❌ |
+| Manual | Per-device | ✅ | ✅ |
 
 Using these schools of thought for SPMD, you can transform a function written for one device into a function that can run in parallel on multiple devices.
 
