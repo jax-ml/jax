@@ -764,12 +764,19 @@ def lower_jaxpr_to_module(
       is_element_block = [isinstance(bd, pallas_core.Element)
                           for bd in bm.block_shape]
       if any(is_element_block):
-        if not all(is_element_block):
+        is_element_or_squeezed_block = [
+            isinstance(bd, (pallas_core.Element, pallas_core.Squeezed))
+            for bd in bm.block_shape
+        ]
+        if not all(is_element_or_squeezed_block):
           raise NotImplementedError(
               "All block dimensions must be Elements or none of them can be"
               " Elements."
           )
-        padding = [bd.padding for bd in bm.block_shape]  # pytype: disable=attribute-error
+        padding = [
+            bd.padding if isinstance(bd, pallas_core.Element) else (0, 0)
+            for bd in bm.block_shape
+        ]
         pad_low, pad_high = map(list, zip(*padding))
         block_params["window_kind"] = ir.Attribute.parse(
             f"#tpu.element_window<{pad_low},{pad_high}>"

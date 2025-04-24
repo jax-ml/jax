@@ -94,6 +94,12 @@ def _wrap_eval_fn(primitive, eval_fn):
   return wrapped
 
 
+def _block_size(dim: pallas_core.Element | int | None) -> int | None:
+  if isinstance(dim, pallas_core.Element):
+    return dim.block_size
+  return dim
+
+
 @dataclasses.dataclass
 class UsageRuleContext:
   avals_in: tuple[core.AbstractValue, ...]
@@ -420,11 +426,6 @@ def make_kernel_function(
   invar_usages = util.safe_map(read_usage_env, jaxpr.invars)
   bs_env, scalar_prefetch_fn_env = block_spec_env
 
-  def _block_size(dim: pallas_core.Element | int | None) -> int | None:
-    if isinstance(dim, pallas_core.Element):
-      return dim.block_size
-    return dim
-
   def _remove_nones(
       shape: tuple[pallas_core.Element | int | None, ...] | None
   ) -> tuple[int, ...]:
@@ -727,7 +728,14 @@ def _bcast_block_spec(
     idx = util.tuple_update(idx, i, 0)
     return idx
 
-  new_block_shape = util.tuple_update(block_spec.block_shape, i, 1)
+  # TODO(wdvi): This is a hack needed since lowering rules require block shape
+  # to contain either all pl.Element or none
+  bcast_dim_block_shape = 1
+  if isinstance(block_spec.block_shape[i], pallas_core.Element):
+    bcast_dim_block_shape = pallas_core.Element(1)
+  new_block_shape = util.tuple_update(
+      block_spec.block_shape, i, bcast_dim_block_shape
+  )
   return pallas_core.BlockSpec(
       new_block_shape, functools.partial(new_index_map, i)
   )
@@ -876,10 +884,13 @@ def _slice_rule(
   ):
     if bs is None:
       continue
-    assert slice_start % bs == 0, (start_indices, block_spec.block_shape)
-    assert slice_size % bs == 0, (slice_sizes, block_spec.block_shape)
+    block_size = _block_size(bs)
+    assert (
+        slice_start % block_size == 0
+    ), (start_indices, block_spec.block_shape)
+    assert slice_size % block_size == 0, (slice_sizes, block_spec.block_shape)
   offsets = tuple(
-      slice_start // bs if bs is not None else slice_start
+      slice_start // _block_size(bs) if bs is not None else slice_start
       for slice_start, bs in zip(start_indices, block_spec.block_shape)
   )
 
@@ -957,7 +968,7 @@ def _dynamic_slice_rule(
     # We then add these block indices to block indices produced by the index
     # map.
     block_indices = tuple(
-        _offset(i, o, s)
+        _offset(i, o, _block_size(s))
         for i, o, s in zip(
             idx, slice_starts, block_spec.block_shape, strict=True
         )
@@ -976,6 +987,11 @@ def _concatenate_eval_rule(ctx: KernelEvalContext, *args, dimension):
   # divides the block size.
   block_spec = ctx.out_block_specs[0]
   block_shape = block_spec.block_shape
+  is_element_block = [isinstance(bd, pallas_core.Element) for bd in block_shape]
+  if any(is_element_block):
+    raise NotImplementedError(
+        "Concatenation with Element indexing is not yet supported."
+    )
   block_dim = block_shape[dimension]
   if block_dim is None:
     block_dim = 1
@@ -1019,6 +1035,11 @@ def _concatenate_rule(
     dimension: int,
 ):
   block_shape = block_spec.block_shape
+  is_element_block = [isinstance(bd, pallas_core.Element) for bd in block_shape]
+  if any(is_element_block):
+    raise NotImplementedError(
+        "Concatenation with Element indexing is not yet supported."
+    )
   num_blocks = []
   block_dim = block_shape[dimension]
   if block_dim is None:
@@ -1093,7 +1114,7 @@ def _broadcast_in_dim_eval_rule(
   if not eval_ctx.avals_in[0].shape:  # pytype: disable=attribute-error
     # Scalar -> Array broadcast
     block_spec = eval_ctx.out_block_specs[0]
-    shape = tuple(s for s in block_spec.block_shape if s is not None)
+    shape = tuple(_block_size(s) for s in block_spec.block_shape if s is not None)
     return jax.lax.broadcast_in_dim(x, broadcast_dimensions=(), shape=shape)
   return x
 
