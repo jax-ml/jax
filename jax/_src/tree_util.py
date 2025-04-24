@@ -529,7 +529,7 @@ class Partial(functools.partial):
   >>> print_zero()
   0
   >>> call_func(print_zero)  # doctest:+ELLIPSIS
-  Traced<ShapedArray(int32[], weak_type=True)>with<DynamicJaxprTrace...>
+  Traced<~int32[]>with<DynamicJaxprTrace...>
   """
 
   def __new__(klass, func, *args, **kw):

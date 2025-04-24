@@ -203,6 +203,13 @@ class CoreTest(jtu.JaxTestCase):
     else:
       self.assertFalse(core.valid_jaxtype(arr))
 
+  def test_str_aval(self):
+    aval = ShapedArray((8, 2), np.int32)
+    self.assertEqual(str(aval), "int32[8,2]")
+
+    aval = ShapedArray((8, 2), np.int32, weak_type=True)
+    self.assertEqual(str(aval), "~int32[8,2]")
+
   @parameterized.named_parameters(
       (str(i), *spec) for i, spec in enumerate(test_specs))
   def test_jit(self, f, args):

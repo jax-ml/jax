@@ -1941,7 +1941,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
   def testScanBodyOutputError(self):
     with self.assertRaisesRegex(
         TypeError,
-        re.escape("scan body output must be a pair, got ShapedArray(float32[]).")):
+        re.escape("scan body output must be a pair, got float32[].")):
       lax.scan(lambda c, x: np.float32(0.), 0, jnp.arange(5.))
 
   def testScanMetadataError(self):
