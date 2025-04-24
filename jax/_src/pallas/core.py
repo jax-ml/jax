@@ -199,7 +199,7 @@ mlir.ir_type_handlers[ShapedArrayWithMemorySpace] = mlir._array_ir_types
 class MemoryRef:
   """Like jax.ShapeDtypeStruct but with memory spaces."""
   shape: tuple[int, ...]
-  dtype: jnp.dtype
+  dtype: jnp.dtype | dtypes.ExtendedDType
   # TODO(b/368122763): Unify memory space types across backends
   memory_space: Any
 
