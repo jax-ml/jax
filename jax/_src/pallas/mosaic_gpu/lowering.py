@@ -280,7 +280,9 @@ class _AxisNames:
     )
 
 
-AnyBarrierRef = mgpu.BarrierRef | mgpu.CollectiveBarrierRef
+AnyBarrierRef = (
+    mgpu.BarrierRef | mgpu.DialectBarrierRef | mgpu.CollectiveBarrierRef
+)
 
 
 @dataclasses.dataclass
@@ -319,7 +321,9 @@ class ModuleContext:
         raise ValueError(f"Unknown semantics: {self.primitive_semantics}")
 
   @contextlib.contextmanager
-  def reserve_barrier(self, barrier: mgpu.Barrier) -> mgpu.BarrierRef:
+  def reserve_barrier(
+      self, barrier: mgpu.Barrier
+  ) -> mgpu.BarrierRef | mgpu.DialectBarrierRef | mgpu.CollectiveBarrierRef:
     """Reserves a barrier.
 
     Raises:
@@ -807,6 +811,7 @@ def lower_jaxpr_to_module(
           in_shapes=in_shapes,
           out_shape=(*out_shapes, *gmem_scratch_shapes),
           smem_scratch_shape=scratch_buffers,
+          lowering_semantics=lowering_semantics,
           module_name=mlir.sanitize_name(debug_info.func_name),
           prof_spec=prof_spec,
       )

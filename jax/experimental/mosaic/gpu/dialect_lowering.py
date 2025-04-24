@@ -188,10 +188,18 @@ def _initialize_barrier_op_lowering_rule(
 
   for i in range(num_barriers):
     nvvm.mbarrier_init_shared(
-        llvm.getelementptr(ptr_ty, initialize_barrier_op.base_pointer, [], [i],
-                           lowered_barrier_type),
-        utils.c(initialize_barrier_op.arrival_count.value, i32),
-        predicate=ctx.single_thread_per_block_predicate
+        llvm.getelementptr(
+            ptr_ty,
+            initialize_barrier_op.base_pointer,
+            [],
+            [i],
+            lowered_barrier_type,
+        ),
+        utils.c(
+            initialize_barrier_op.arrival_count.value * utils.WARPGROUP_SIZE,
+            i32,
+        ),
+        predicate=ctx.single_thread_per_block_predicate,
     )
 
   gpu.barrier()
@@ -596,7 +604,7 @@ def _mgpu_async_load_op_lowering_rule(
     ctx: LoweringContext, load_op: mgpu.AsyncLoadOp
 ) -> Sequence[ir.Value]:
   assert ctx.launch_context is not None
-  barrier = utils.BarrierRef.from_dialect_barrier_memref(load_op.barrier)
+  barrier = utils.DialectBarrierRef.from_barrier_memref(load_op.barrier)
 
   if inference_utils.has_in_transforms_set(load_op):
     [transforms] = inference_utils.in_transforms(load_op)
@@ -624,7 +632,7 @@ def _mgpu_async_load_op_lowering_rule(
       src_ref=load_op.source,
       dst_ref=reinterpret_smem_ref(load_op.destination, transforms),
       gmem_slice=tuple(gmem_slice),
-      barrier=barrier,
+      barrier=barrier.barrier_ref,
       arrive=False,
       uniform=True,
       swizzle=swizzle,
@@ -924,14 +932,25 @@ def _mgpu_wgmma_op_lowering_rule(
 
 @_register_lowering(mgpu.ArriveExpectTxOp)
 def _mgpu_arrive_expect_tx_op_lowering_rule(
-    ctx: LoweringContext, arrive_expect_tx_op: mgpu.ArriveExpectTxOp
+    _: LoweringContext, arrive_expect_tx_op: mgpu.ArriveExpectTxOp
 ) -> Sequence[ir.Value]:
+  bytes = arrive_expect_tx_op.expect_tx.value
+  if bytes % utils.WARPGROUP_SIZE:
+    raise NotImplementedError(
+        "Only copies of a multiple of 128 bytes are supported"
+    )
+  # We arrive uniformly from each thread in the WG, so we need to divide the
+  # number of bytes by the number of threads in the WG.
+  # TODO: dasenov - Relax this. We can just select the WG leader and have it
+  # arrive with the whole transfer size, while everyone else arrives with 0.
+  # But we should continue using this scheme as it's likely to be faster.
+  bytes //= utils.WARPGROUP_SIZE
+  bytes = utils.c(bytes, ir.IntegerType.get_signless(32))
 
-  barrier = utils.BarrierRef.from_dialect_barrier_memref(arrive_expect_tx_op.barrier)
-  barrier.arrive_expect_tx(
-      arrive_expect_tx_op.expect_tx.value,
-      ctx.single_thread_per_warpgroup_predicate,
+  barrier = utils.DialectBarrierRef.from_barrier_memref(
+      arrive_expect_tx_op.barrier
   )
+  nvvm.mbarrier_arrive_expect_tx_shared(barrier.get_ptr(), bytes)
 
   return []
 
@@ -941,7 +960,7 @@ def _mgpu_wait_op_lowering_rule(
     _: LoweringContext, wait_op: mgpu.WaitOp
 ) -> Sequence[ir.Value]:
 
-  barrier = utils.BarrierRef.from_dialect_barrier_memref(wait_op.barrier)
+  barrier = utils.DialectBarrierRef.from_barrier_memref(wait_op.barrier)
   barrier.wait_parity(wait_op.parity)
 
   return []

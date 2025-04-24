@@ -666,11 +666,14 @@ class DialectLoweringTest(MosaicGpuTest):
     # One nvvm.mbarrier_init_shared is issued per barrier.
     self.assertLen(all_mbarrier_init_shared_ops, num_shape_elements)
 
-    # Each barrier has its count equal to the arrival count.
+    # Each barrier has its count equal to the arrival count times the
+    # warpgroup size.
     for op in all_mbarrier_init_shared_ops:
       count = op.count.owner.opview
       self.assertIsInstance(count, arith.ConstantOp)
-      self.assertEqual(count.literal_value, arrival_count)
+      self.assertEqual(
+          count.literal_value, arrival_count * mgpu_utils.WARPGROUP_SIZE
+      )
 
   def test_lowering_vector_op_without_layout_fails(self):
     shape = (3, 4)
@@ -937,8 +940,6 @@ class DialectLoweringTest(MosaicGpuTest):
       self.assertEqual(ty_transformed.shape, [8, 2, 16, 32])
       strides, _ = ty_transformed.get_strides_and_offset()
       self.assertEqual(strides, [512, 4096, 1, 16])
-
-
 
 
 if __name__ == "__main__":
