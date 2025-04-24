@@ -2143,6 +2143,31 @@ def _convert_helper(x, *, to_dtype):
       return x.astype(to_dtype)
   raise NotImplementedError(f"Unsupported cast: {from_dtype} -> {to_dtype}")
 
+
+def fp32_to_ui32(x):
+  """Implement fp32 -> ui32 conversion using the signed integer casting path."""
+  assert x.dtype == jnp.float32
+  umax = np.uint32(2 ** 31)
+  fmax = np.float32(umax)
+  return jnp.where(
+      x < fmax,
+      jnp.where(x <= 0, 0, x.astype('int32').astype('uint32')),
+      (x - fmax).astype('int32').astype('uint32') + umax,
+  )
+
+
+def ui32_to_fp32(x):
+  """Implement ui32 -> fp32 conversion using the signed integer casting path."""
+  assert x.dtype == jnp.uint32
+  umax = np.uint32(2 ** 31)
+  fmax = np.float32(umax)
+  return jnp.where(
+      x < umax,
+      x.astype('int32').astype('float32'),
+      (x - umax).astype('int32').astype('float32') + fmax,
+  )
+
+
 def _convert_element_type_lowering_rule(
     ctx: LoweringRuleContext, x, *, new_dtype, weak_type, sharding
 ):
@@ -2166,6 +2191,7 @@ def _convert_element_type_lowering_rule(
   floating = jnp.floating
   integer = jnp.integer
   signed = jnp.signedinteger
+  unsigned = jnp.unsignedinteger
   both_32bit = old_dtype.itemsize == 4 and new_dtype.itemsize == 4
   if _from(floating) and _to(floating):
     if old_dtype.itemsize < new_dtype.itemsize and new_dtype.itemsize == 4:
@@ -2185,8 +2211,14 @@ def _convert_element_type_lowering_rule(
   # TODO(apaszke): Remove both_32bit constraints using the Mosaic canonicalizer.
   elif _from(floating) and _to(signed):
     return arith.fptosi(out_type, x)
+  elif _from(floating) and _to(unsigned) and both_32bit:
+    # return arith.fptoui(out_type, x)  # no llo lowering path.
+    return lower_fun(fp32_to_ui32, multiple_results=False)(ctx, x)
   elif _from(signed) and _to(floating) and both_32bit:
     return arith.sitofp(out_type, x)
+  elif _from(unsigned) and _to(floating) and both_32bit:
+    # return arith.uitofp(out_type, x)  # no llo lowering path.
+    return lower_fun(ui32_to_fp32, multiple_results=False)(ctx, x)
   elif old_dtype == jnp.bool_ and _to(integer) and new_dtype.itemsize == 4:
     return arith.extui(out_type, x)
   return lower_fun(functools.partial(_convert_helper, to_dtype=new_dtype),

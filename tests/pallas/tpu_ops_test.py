@@ -203,6 +203,24 @@ class OpsTest(PallasBaseTest):
     result = self.pallas_call(body, out_shape=out)(x)
     np.testing.assert_array_equal(result, x.astype(jnp.float32) + 1.0)
 
+  def test_tpu_f32_to_u32(self):
+    def body(x_ref, o_ref):
+      # Test cast from float32 -> uint32
+      o_ref[...] = lax.convert_element_type(x_ref[...], jnp.uint32)
+    out = jax.ShapeDtypeStruct((8, 128), jnp.uint32)
+    x = np.arange(0, 2 ** 32, 2 ** 22).reshape(8, 128).astype('float32')
+    result = self.pallas_call(body, out_shape=out)(x)
+    np.testing.assert_array_equal(result, x.astype(jnp.uint32))
+
+  def test_tpu_u32_to_f32(self):
+    def body(x_ref, o_ref):
+      # Test cast from uint32 -> float32
+      o_ref[...] = lax.convert_element_type(x_ref[...], jnp.float32)
+    out = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    x = np.arange(0, 2 ** 32, 2 ** 22, dtype='uint32').reshape(8, 128)
+    result = self.pallas_call(body, out_shape=out)(x)
+    np.testing.assert_array_equal(result, x.astype(jnp.float32))
+
   def test_tpu_signed_int_upcast(self):
     if not jtu.is_device_tpu_at_least(version=5):
       self.skipTest("TPUv5+ needed for integer matmuls")
