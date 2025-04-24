@@ -556,19 +556,18 @@ print(hlo.split("\n\n")[-1])
 
 This clearly (to us!) isn't the optimal partitioning of this function, but it's the best that JAX/XLA can do with the information given.
 
-To generate better partitioning logic, we can use {func}`~jax.experimental.shard_map.shard_map` or {func}`~jax.experimental.custom_partitioning.custom_partitioning`, and we discuss both options here.
+To generate better partitioning logic, we can use {func}`~jax.shard_map` or {func}`~jax.experimental.custom_partitioning.custom_partitioning`, and we discuss both options here.
 That being said, it's not straightforward to generate _optimal_ partitioning for all inputs, because sometimes this would require algorithmic changes.
 Specifically, let's add support for "batch partitioning", which handles the case where the data are sharded on batch dimensions, but sharding on the last dimension will always require in re-sharding.
 
 ### Using `shard_map`
 
-If you are using manual sharding control via {func}`~jax.experimental.shard_map.shard_map`, any FFI calls in your program should already partition appropriately:
+If you are using manual sharding control via {func}`~jax.shard_map`, any FFI calls in your program should already partition appropriately:
 
 ```{code-cell} ipython3
 from functools import partial
-from jax.experimental.shard_map import shard_map
 
-@partial(shard_map, mesh=mesh, in_specs=P("x", None), out_specs=P("x", None))
+@partial(jax.shard_map, mesh=mesh, in_specs=P("x", None), out_specs=P("x", None))
 def rms_norm_shmap(x):
   return rms_norm(x)
 
@@ -587,7 +586,7 @@ assert "all-to-all" in hlo_data_shmap
 
 ### Using `custom partitioning`
 
-If you can't use {func}`~jax.experimental.shard_map.shard_map`, an alternative approach is to use {func}`~jax.experimental.custom_partitioning.custom_partitioning`, which supports automatic parallelization via {func}`jax.jit`.
+If you can't use {func}`~jax.shard_map`, an alternative approach is to use {func}`~jax.experimental.custom_partitioning.custom_partitioning`, which supports automatic parallelization via {func}`jax.jit`.
 {func}`~jax.experimental.custom_partitioning.custom_partitioning` works by adding Python callbacks into the XLA compiler's partitioning pass, which allows very flexible logic, but also comes with some rough edges.
 We won't go into too much detail on the caveats here, but the main issues that you should be aware of are:
 
