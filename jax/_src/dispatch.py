@@ -51,7 +51,7 @@ from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     NamedSharding, SingleDeviceSharding, TransferToMemoryKind, GSPMDSharding,
-    PositionalSharding, is_single_device_sharding)
+    is_single_device_sharding)
 import numpy as np
 
 
@@ -132,7 +132,8 @@ class RuntimeTokenSet(threading.local):
       # TODO(yueshengys): This might still be buggy in a multi-process SPMD
       # scenario. Revise the logic later. A distributed shutdown barrier inside
       # the XLA program may be needed.
-      return jax.device_put(tok, PositionalSharding(devices))
+      return jax.device_put(
+          tok, NamedSharding(Mesh(devices, 'x'), PartitionSpec('x')))
 
     # We only use replicated sharding for the first time when the token for the
     # order effect hasn't been created.

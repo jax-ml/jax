@@ -68,7 +68,8 @@ from jax._src.mesh import (AbstractMesh, Mesh, get_abstract_mesh,
 from jax._src.sharding_impls import (
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, AUTO, UnspecifiedValue,
     get_array_mapping as _get_array_mapping, array_mapping_to_axis_resources,
-    SingleDeviceSharding, GSPMDSharding, NamedSharding, PositionalSharding)
+    SingleDeviceSharding, GSPMDSharding, NamedSharding, PositionalSharding,
+    PartitionSpec as P)
 from jax._src.util import (safe_map, safe_zip, partition_list, wrap_name,
                            tuple_update, tuple_delete, distributed_debug_log,
                            unzip2, HashableFunction, weakref_lru_cache)
@@ -1267,7 +1268,7 @@ class ExecuteReplicated:
         for token in token_buf:
           assert isinstance(token.sharding, sharding_impls.SingleDeviceSharding)
           token_devices.append(token.sharding._device_assignment[0])
-        s = PositionalSharding(token_devices)
+        s = NamedSharding(Mesh(token_devices, 'x'), P('x'))
         global_token_array = jax.make_array_from_single_device_arrays(
             (0,), s, token_buf
         )

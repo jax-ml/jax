@@ -16,13 +16,7 @@ Classes
 .. autoclass:: NamedSharding
    :members:
    :show-inheritance:
-.. autoclass:: PositionalSharding
-   :members:
-   :show-inheritance:
 .. autoclass:: PmapSharding
-   :members:
-   :show-inheritance:
-.. autoclass:: GSPMDSharding
    :members:
    :show-inheritance:
 .. autoclass:: PartitionSpec

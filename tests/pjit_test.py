@@ -3738,48 +3738,12 @@ class ArrayPjitTest(jtu.JaxTestCase):
       out = with_sharding_constraint(jnp.arange(8), P(['x']))
     self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
 
-  def test_sharding_preserved_trivial(self):
-    if config.use_shardy_partitioner.value:
-      raise unittest.SkipTest("Shardy doesn't support PositionalSharding")
-    mesh = jtu.create_mesh((2, 1), ('x', 'y'))
-    ns = NamedSharding(mesh, P('x'))
-    ps = PositionalSharding(jax.devices()[:2]).reshape(2, 1)
-
-    arr = jax.device_put(np.arange(8).reshape(8, 1), ns)
-    arr2 = jax.device_put(np.arange(8).reshape(8, 1), ps)
-
-    def identity(x):
-      return x
-
-    out = pjit(identity)(arr)
-    self.assertIsInstance(out.sharding, NamedSharding)
-
-    out2 = pjit(identity)(arr2)
-    self.assertIsInstance(out2.sharding, PositionalSharding)
-
   def test_wsc_error_on_none(self):
     with self.assertRaisesRegex(
         ValueError,
         'One of with_sharding_constraint arguments got sharding None which is'
         ' not allowed'):
       with_sharding_constraint(jnp.arange(8), None)
-
-  def test_sharding_preserved_aot(self):
-    mesh = jtu.create_mesh((2, 1), ('x', 'y'))
-    ns = NamedSharding(mesh, P('x'))
-    ps = PositionalSharding(jax.devices()[:2]).reshape(2, 1)
-
-    arr = jax.device_put(np.arange(8).reshape(8, 1), ns)
-    arr2 = jax.device_put(np.arange(8).reshape(8, 1), ps)
-
-    compiled = pjit(lambda x: x * 2).lower(arr).compile()
-    out = compiled(arr)
-    self.assertIsInstance(out.sharding, NamedSharding)
-
-    out2 = compiled(arr2)
-    # The sharding won't be PositionalSharding since the pjit was already
-    # Compiled which bakes in the output sharding.
-    self.assertIsInstance(out2.sharding, NamedSharding)
 
   def test_sharding_on_output_with_vmap(self):
     mesh = jtu.create_mesh((2, 1), ('x', 'y'))

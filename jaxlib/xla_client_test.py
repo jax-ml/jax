@@ -951,11 +951,6 @@ module @jit__lambda_ attributes {mhlo.num_partitions = 1 : i32,
       if self.backend.platform != "tpu":
         raise self.skipTest("mhlo.layout_mode only implemented on TPU")
 
-      # Hand-edited version of:
-      # sharding = PositionalSharding(mesh_utils.create_device_mesh((8,)))
-      # x = jax.device_put(np.ones((1024, 128)), sharding.reshape(4, 2))
-      # jax.jit(lambda x, y: x + y, out_shardings=sharding)(x, 1.)
-      #
       # This also lightly tests mixed default + user-specified input layouts.
       module_str = """
 module @jit__lambda_ attributes {mhlo.num_partitions = 8 : i32,
