@@ -189,6 +189,24 @@ explicit in JAX types, inspectable using `jax.typeof`;
 where you have a per-device view of data
 and computation, and can communicate with explicit collectives.
 
+```python
+from jax.sharding import set_mesh, AxisType, PartitionSpec as P
+mesh = jax.make_mesh((8,), ('data',), axis_types=(AxisType.Explicit,))
+set_mesh(mesh)
+
+# parameters are sharded for FSDP:
+for W, b in params:
+  print(f'{jax.typeof(W)}')  # f32[512@data,512]
+  print(f'{jax.typeof(b)}')  # f32[512]
+
+# shard data for batch parallelism:
+inputs, targets = jax.device_put((inputs, targets), P('data'))
+
+# evaluate gradients, automatically parallelized!
+gradfun = jax.jit(jax.grad(loss))
+param_grads = gradfun(params, (inputs, targets))
+```
+
 See the [tutorial](https://docs.jax.dev/en/latest/sharded-computation.html) and
 [advanced guides](https://docs.jax.dev/en/latest/advanced_guide.html) for more.
 
