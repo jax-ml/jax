@@ -477,7 +477,7 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
               ),
               grid=8,
           ),
-          compiler_params=pltpu.TPUCompilerParams(
+          compiler_params=pltpu.CompilerParams(
               allow_input_fusion=[False, True]
           ),
       )(s, x)
@@ -841,7 +841,7 @@ class PallasCallDMATest(PallasBaseTest):
         kernel,
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
-            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+            out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
         ),
         out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
     )()
@@ -861,7 +861,7 @@ class PallasCallDMATest(PallasBaseTest):
         kernel,
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
-            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+            out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
         ),
         out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
     )()
@@ -880,7 +880,7 @@ class PallasCallDMATest(PallasBaseTest):
         kernel,
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
-            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+            out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
         ),
         out_shape=jax.ShapeDtypeStruct((16, 128), jnp.int32),
     )()
@@ -899,7 +899,7 @@ class PallasCallDMATest(PallasBaseTest):
         kernel,
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
-            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+            out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
         ),
         out_shape=jax.ShapeDtypeStruct((17, 128), jnp.int32),
     )()
@@ -1099,7 +1099,7 @@ class PallasCallDMATest(PallasBaseTest):
     y = jax.block_until_ready(
         self.pallas_call(
             kernel,
-            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+            out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
             out_shape=jax.ShapeDtypeStruct((m, n), jnp.int32),
         )()
     )
@@ -1122,7 +1122,7 @@ class PallasCallDMATest(PallasBaseTest):
                 in_specs=[pl.BlockSpec(memory_space=pl.ANY)],
                 out_specs=[
                     pl.BlockSpec(memory_space=pl.ANY),
-                    pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+                    pl.BlockSpec(memory_space=pltpu.SMEM),
                 ],
                 scratch_shapes=[pltpu.SemaphoreType.DMA],
             ),
@@ -1378,7 +1378,7 @@ class PallasCallDMATest(PallasBaseTest):
     y = self.pallas_call(
         kernel,
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+            pl.BlockSpec(memory_space=pltpu.SMEM),
         ],
         out_specs=pl.BlockSpec(memory_space=pl.ANY),
         out_shape=jax.ShapeDtypeStruct((1, 2), jnp.float32),
@@ -1395,9 +1395,9 @@ class PallasCallDMATest(PallasBaseTest):
     y = self.pallas_call(
         kernel,
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
     np.testing.assert_allclose(y, x)
@@ -1420,7 +1420,7 @@ class PallasCallDMATest(PallasBaseTest):
         in_specs=[
             pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
         out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
     )(x)
     np.testing.assert_allclose(y, x)
@@ -1443,7 +1443,7 @@ class PallasCallDMATest(PallasBaseTest):
         in_specs=[
             pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
         out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
     )(x)
     np.testing.assert_allclose(y, x.reshape((16, 128)))
@@ -1472,7 +1472,7 @@ class PallasCallDMATest(PallasBaseTest):
         in_specs=[
             pl.BlockSpec(memory_space=pl.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
         out_shape=jax.ShapeDtypeStruct((3, 16, 128), jnp.float32),
     )(x)
     np.testing.assert_allclose(y, x.reshape((3, 16, 128)))
@@ -1499,7 +1499,7 @@ class PallasCallDMATest(PallasBaseTest):
           in_specs=[
               pl.BlockSpec(memory_space=pl.ANY),
           ],
-          out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
           out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
       )(x)
 
@@ -1571,7 +1571,7 @@ class PallasCallDMATest(PallasBaseTest):
             ],
             scratch_shapes=[pltpu.SemaphoreType.REGULAR,
                             pltpu.SemaphoreType.DMA],
-            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+            out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
         ),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
@@ -1878,12 +1878,12 @@ class PallasCallTest(PallasBaseTest):
       self.pallas_call(
           kernel,
           out_shape=x,
-          compiler_params=pltpu.TPUCompilerParams(vmem_limit_bytes=256),
+          compiler_params=pltpu.CompilerParams(vmem_limit_bytes=256),
       )(x)
     self.pallas_call(
         kernel,
         out_shape=x,
-        compiler_params=pltpu.TPUCompilerParams(vmem_limit_bytes=int(2**18)),
+        compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(2**18)),
     )(x)
 
   def test_allow_input_fusion(self):
@@ -1900,7 +1900,7 @@ class PallasCallTest(PallasBaseTest):
           in_specs=[pl.BlockSpec((1, 128, 128), lambda i: (i, 0, 0))],
           out_specs=pl.BlockSpec((1, 128, 128), lambda i: (i, 0, 0)),
           out_shape=x,
-          compiler_params=pltpu.TPUCompilerParams(allow_input_fusion=[True]),
+          compiler_params=pltpu.CompilerParams(allow_input_fusion=[True]),
       )(z)
 
     x = jnp.arange(np.prod(shape), dtype=np.float32).reshape(shape)
@@ -1928,7 +1928,7 @@ class PallasCallTest(PallasBaseTest):
       self.pallas_call(
           kernel,
           out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
-          compiler_params=pltpu.TPUCompilerParams(
+          compiler_params=pltpu.CompilerParams(
               internal_scratch_in_bytes=requested_bytes,
           ),
       )(x)
@@ -2579,8 +2579,8 @@ class PallasCallTPUBooleanTest(PallasBaseTest):
     output_shape = jax.ShapeDtypeStruct((8, 128), jnp.bool_)
     grid_spec = pltpu.PrefetchScalarGridSpec(
       num_scalar_prefetch=0,
-      in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM)],
-      out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+      in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+      out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
       grid=(1,),
       scratch_shapes=[pltpu.SemaphoreType.DMA] * 2,
     )

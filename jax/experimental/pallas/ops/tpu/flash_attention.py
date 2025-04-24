@@ -769,7 +769,7 @@ def _flash_attention_impl(
       ),
       out_shape=out_shape,
       debug=debug,
-      compiler_params=pltpu.TPUCompilerParams(
+      compiler_params=pltpu.CompilerParams(
           dimension_semantics=(
               "parallel",
               "parallel",
@@ -1132,7 +1132,7 @@ def _flash_attention_bwd_dkv(
         ),
         out_shape=out_shapes,
         debug=debug,
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
                 dimension_semantics=(
                     "parallel",
                     "parallel",
@@ -1467,7 +1467,7 @@ def _flash_attention_bwd_dq(
         ),
         out_shape=out_shapes,
         debug=debug,
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
                 dimension_semantics=(
                     "parallel",
                     "parallel",

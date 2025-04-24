@@ -542,7 +542,7 @@ def _block_spec_from_block_mapping(
     )
     return eval_index_map(*new_indices)
 
-  return gpu_core.GPUBlockSpec(
+  return gpu_core.BlockSpec(
       bm.block_shape,
       index_map,
       memory_space=bm.transformed_block_aval.memory_space,
@@ -554,7 +554,7 @@ def lower_pipelined_jaxpr_to_module(
     grid_mapping: pallas_core.GridMapping,
     mesh: pallas_core.Mesh | None,
     jaxpr: jax_core.Jaxpr,
-    params: gpu_core.GPUCompilerParams,
+    params: gpu_core.CompilerParams,
     cost_estimate: pallas_core.CostEstimate | None,
 ) -> LoweringResult:
   del cost_estimate  # Unused.
@@ -577,7 +577,7 @@ def lower_pipelined_jaxpr_to_module(
   )
 
   if mesh:
-    assert isinstance(mesh, gpu_core.GPUMesh)
+    assert isinstance(mesh, gpu_core.Mesh)
     block = (128 * (mesh.num_threads or 1), 1, 1)
     grid = mesh.grid
   else:
@@ -616,7 +616,7 @@ def lower_pipelined_jaxpr_to_module(
     aval = v.aval
     if (isinstance(aval, pallas_core.AbstractMemoryRef) and
         jnp.issubdtype(aval.dtype, pallas_core.semaphore_dtype)):
-      if aval.memory_space != gpu_core.GPUMemorySpace.GMEM:
+      if aval.memory_space != gpu_core.MemorySpace.GMEM:
         raise ValueError(
             "Only GMEM memory space is supported for semaphores in Mosaic GPU."
         )
@@ -711,7 +711,7 @@ def lower_jaxpr_to_module(
     out_shapes: Sequence[jax.ShapeDtypeStruct],
     gmem_scratch_shapes: Sequence[jax.ShapeDtypeStruct],
     jaxpr: jax_core.Jaxpr,
-    params: gpu_core.GPUCompilerParams,
+    params: gpu_core.CompilerParams,
     consts=(),
 ) -> LoweringResult:
   debug_info = jaxpr.debug_info
@@ -1944,7 +1944,7 @@ def _resolve_cluster_axis(axis_names: _AxisNames | None, axis_name: str):
   if not axis_names:
     raise LookupError(
         "No axis names are available. Make sure you are using `pl.core_map`"
-        " with a `plgpu.GPUMesh`."
+        " with a `plgpu.Mesh`."
     )
   if not axis_names or axis_name not in axis_names.cluster:
     raise LookupError(
@@ -1961,7 +1961,7 @@ def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
   if not axis_names:
     raise LookupError(
         "No axis names are available. Make sure you are using `pl.core_map`"
-        " with a `plgpu.GPUMesh`."
+        " with a `plgpu.Mesh`."
     )
   if axis_name not in axis_names:
     raise LookupError(

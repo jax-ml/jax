@@ -89,11 +89,11 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     out_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
     grid_spec = pltpu.PrefetchScalarGridSpec(
         num_scalar_prefetch=0,
-        # TPUMemorySpace.ANY will (usually) place the tensor in HBM.
+        # MemorySpace.ANY will (usually) place the tensor in HBM.
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+            pl.BlockSpec(memory_space=pltpu.ANY),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
         scratch_shapes=(
             # We allocate DMA semaphores in scratch memory.
             [pltpu.SemaphoreType.DMA] * 2
@@ -103,7 +103,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         right_permute_kernel,
         out_shape=out_shape,
         grid_spec=grid_spec,
-        compiler_params=pltpu.TPUCompilerParams(collective_id=13),
+        compiler_params=pltpu.CompilerParams(collective_id=13),
         interpret=mosaic_interpret.TPUInterpretParams(
             dma_execution_mode=dma_execution_mode, detect_races=detect_races),
     )
@@ -203,10 +203,10 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     grid_spec = pltpu.PrefetchScalarGridSpec(
       num_scalar_prefetch=0,
       in_specs=[
-        # TPUMemorySpace.ANY will (usually) place the tensor in HBM.
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        # MemorySpace.ANY will (usually) place the tensor in HBM.
+        pl.BlockSpec(memory_space=pltpu.ANY),
       ],
-      out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+      out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
       scratch_shapes=(
         # DMA semaphores are allocated in scratch memory.
         # We allocated one semaphore for a local HBM-VMEM copy,
@@ -227,7 +227,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       grid_spec=grid_spec,
       interpret=mosaic_interpret.TPUInterpretParams(
           dma_execution_mode=dma_execution_mode, detect_races=detect_races),
-      compiler_params=pltpu.TPUCompilerParams(collective_id=0),
+      compiler_params=pltpu.CompilerParams(collective_id=0),
     )
 
     # Wrap the kernel within a shard_map to call.
@@ -365,13 +365,13 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       num_scalar_prefetch=0,
       in_specs=[
         # Our input lives in VMEM
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.VMEM),
       ],
       out_specs=[
         # Our output lives in VMEM
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.VMEM),
         # Our double-buffer lives in HBM
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.ANY),
       ],
       grid=(num_devices,),
       scratch_shapes=(
@@ -387,7 +387,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
       grid_spec=grid_spec,
       interpret=mosaic_interpret.TPUInterpretParams(
           dma_execution_mode=dma_execution_mode, detect_races=detect_races),
-      compiler_params=pltpu.TPUCompilerParams(collective_id=0),
+      compiler_params=pltpu.CompilerParams(collective_id=0),
     )
 
     pallas_result = jax.jit(
@@ -647,11 +647,11 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     grid_spec = pltpu.PrefetchScalarGridSpec(
       num_scalar_prefetch=0,
       in_specs=[
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        pl.BlockSpec(memory_space=pltpu.VMEM),
       ],
       out_specs=[
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.VMEM),
+        pl.BlockSpec(memory_space=pltpu.ANY),
       ],
       grid=(num_devices, 2),
       scratch_shapes=(
@@ -671,7 +671,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         grid_spec=grid_spec,
         interpret=mosaic_interpret.TPUInterpretParams(
             dma_execution_mode=dma_execution_mode, detect_races=True),
-        compiler_params=pltpu.TPUCompilerParams(collective_id=7),
+        compiler_params=pltpu.CompilerParams(collective_id=7),
       )(input_arr)[0]
 
     pallas_result = jax.jit(
@@ -740,7 +740,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     inner_block_spec = pl.BlockSpec(
       index_map=lambda i, j: (i, j),
       block_shape=inner_block_size,
-      memory_space=pltpu.TPUMemorySpace.ANY,
+      memory_space=pltpu.ANY,
     )
 
     LEFT = 0
@@ -952,11 +952,11 @@ class InterpretDistributedTest(jtu.JaxTestCase):
     grid_spec = pltpu.PrefetchScalarGridSpec(
       num_scalar_prefetch=0,
       in_specs=[
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.ANY),
       ],
       out_specs=[
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.ANY),
+        pl.BlockSpec(memory_space=pltpu.ANY),
       ],
       grid=(num_devices, 2),
       scratch_shapes=(
@@ -975,7 +975,7 @@ class InterpretDistributedTest(jtu.JaxTestCase):
         grid_spec=grid_spec,
         interpret=mosaic_interpret.TPUInterpretParams(
             dma_execution_mode=dma_execution_mode, detect_races=detect_races),
-        compiler_params=pltpu.TPUCompilerParams(collective_id=19),
+        compiler_params=pltpu.CompilerParams(collective_id=19),
       )(input_arr)[0]
 
     pallas_result = jax.jit(
@@ -1056,10 +1056,10 @@ class InterpretDistributedTest(jtu.JaxTestCase):
               kernel,
               out_shape=jax.ShapeDtypeStruct((8, 128), input_arr.dtype),
               in_specs=[
-                  pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
-                  pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+                  pl.BlockSpec(memory_space=pltpu.SMEM),
+                  pl.BlockSpec(memory_space=pltpu.ANY),
               ],
-              out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+              out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
               scratch_shapes=[pltpu.SemaphoreType.DMA, pltpu.SemaphoreType.DMA],
               interpret=mosaic_interpret.TPUInterpretParams(
                   dma_execution_mode='eager',

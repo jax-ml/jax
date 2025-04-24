@@ -80,7 +80,7 @@ def softmax(
   kernel = functools.partial(_vmappable_softmax_kernel, block_row=block_row)
   f = pl.pallas_call(
       kernel,
-      compiler_params=plgpu.TritonCompilerParams(
+      compiler_params=plgpu.CompilerParams(
           num_warps=num_warps, num_stages=1),
       grid=(),
       out_shape=out_shape,

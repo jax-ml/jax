@@ -53,7 +53,7 @@ _Ref = pallas_core.AbstractMemoryRef | state_types.TransformedRef
 
 
 def _check_ref(
-    aval: object, name: str, memory_space: gpu_core.GPUMemorySpace
+    aval: object, name: str, memory_space: gpu_core.MemorySpace
 ) -> None:
   if not isinstance(aval, state_types.AbstractRef):
     raise TypeError(f"{name} must be a reference, got {aval}")

@@ -14,7 +14,7 @@
 
 """Triton-specific Pallas APIs."""
 
-from jax._src.pallas.triton.core import TritonCompilerParams as TritonCompilerParams
+from jax._src.pallas.triton.core import CompilerParams as CompilerParams
 from jax._src.pallas.triton.primitives import approx_tanh as approx_tanh
 from jax._src.pallas.triton.primitives import debug_barrier as debug_barrier
 from jax._src.pallas.triton.primitives import elementwise_inline_asm as elementwise_inline_asm
