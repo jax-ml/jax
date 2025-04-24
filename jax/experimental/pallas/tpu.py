@@ -23,8 +23,8 @@ from jax._src.pallas.mosaic.core import KernelType as KernelType
 from jax._src.pallas.mosaic.core import PARALLEL as PARALLEL
 from jax._src.pallas.mosaic.core import PrefetchScalarGridSpec as PrefetchScalarGridSpec
 from jax._src.pallas.mosaic.core import SemaphoreType as SemaphoreType
-from jax._src.pallas.mosaic.core import TPUMemorySpace as TPUMemorySpace
-from jax._src.pallas.mosaic.core import TPUCompilerParams as TPUCompilerParams
+from jax._src.pallas.mosaic.core import MemorySpace as MemorySpace
+from jax._src.pallas.mosaic.core import CompilerParams as CompilerParams
 from jax._src.pallas.mosaic.core import runtime_assert_enabled as runtime_assert_enabled
 from jax._src.pallas.mosaic.core import _ENABLE_RUNTIME_ASSERT as enable_runtime_assert  # noqa: F401
 from jax._src.pallas.mosaic.helpers import sync_copy as sync_copy
@@ -68,8 +68,12 @@ verification = types.SimpleNamespace(
 )
 del types, assume, pretend, skip, define_model  # Clean up.
 
-ANY = TPUMemorySpace.ANY
-CMEM = TPUMemorySpace.CMEM
-SMEM = TPUMemorySpace.SMEM
-VMEM = TPUMemorySpace.VMEM
-SEMAPHORE = TPUMemorySpace.SEMAPHORE
+ANY = MemorySpace.ANY
+CMEM = MemorySpace.CMEM
+SMEM = MemorySpace.SMEM
+VMEM = MemorySpace.VMEM
+SEMAPHORE = MemorySpace.SEMAPHORE
+
+# TODO(slebedev): Deprecate and remove these aliases.
+TPUCompilerParams = CompilerParams
+TPUMemorySpace = MemorySpace

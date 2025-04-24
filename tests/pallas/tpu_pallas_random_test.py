@@ -117,7 +117,7 @@ class PRNGTest(jtu.JaxTestCase):
     o_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
     result = pl.pallas_call(
         body,
-        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM)],
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
         out_shape=o_shape,
     )(key)
     self.assertGreaterEqual(jnp.min(result), 0)
@@ -135,7 +135,7 @@ class PRNGTest(jtu.JaxTestCase):
     o_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
     result = pl.pallas_call(
         body,
-        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM)],
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
         out_shape=o_shape,
     )(key)
     self.assertGreaterEqual(jnp.min(result), 0)
@@ -153,8 +153,8 @@ class PRNGTest(jtu.JaxTestCase):
                                    expected_key_data.dtype)
     result = pl.pallas_call(
         body,
-        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM)],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
         out_shape=o_shape,
     )(key)
     self.assertArraysEqual(result, expected_key_data)
@@ -177,7 +177,7 @@ class PRNGTest(jtu.JaxTestCase):
     o_shape = jax.ShapeDtypeStruct((2, 8, 128), jnp.float32)
     result = pl.pallas_call(
         body,
-        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM)],
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
         out_shape=o_shape,
     )(key)
     result_a = result[0]
@@ -211,7 +211,7 @@ class BlockInvarianceTest(parameterized.TestCase):
 
     global_key = jax_random.key(0, impl="pallas_tpu")
     o_shape = jnp.ones((64, 512), dtype=jnp.float32)
-    key_spec = pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM)
+    key_spec = pl.BlockSpec(memory_space=pltpu.SMEM)
     out_spec = pl.BlockSpec((16, 128), lambda i, j: (i, j))
     result_16x128 = pl.pallas_call(
         make_kernel_body(index_map=lambda i, j: (i, j)),
@@ -257,7 +257,7 @@ class ThreefryTest(parameterized.TestCase):
       # TODO(justinfu): support passing keys into VMEM.
       result = pl.pallas_call(
           body,
-          in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM)],
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
           out_shape=o_shape,
       )(jax.random.key_data(threefry_key))
       jax_result = jax_random.uniform(

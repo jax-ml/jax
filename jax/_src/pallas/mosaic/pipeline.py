@@ -36,8 +36,8 @@ import jax.numpy as jnp
 import numpy as np
 
 
-SMEM = tpu_core.TPUMemorySpace.SMEM
-VMEM = tpu_core.TPUMemorySpace.VMEM
+SMEM = tpu_core.MemorySpace.SMEM
+VMEM = tpu_core.MemorySpace.VMEM
 DMA = tpu_core.SemaphoreType.DMA
 REF = pallas_core.MemoryRef
 GridDimensionSemantics = tpu_core.GridDimensionSemantics

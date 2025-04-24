@@ -1118,7 +1118,7 @@ def _splash_attention_forward(
             out_specs=out_specs,
             grid=grid,
         ),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
           dimension_semantics=("parallel", "arbitrary", "arbitrary"),
         ),
         out_shape=out_shapes,
@@ -1577,7 +1577,7 @@ def _splash_attention_bwd_dq(
             grid=grid,
         ),
         out_shape=out_shapes,
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
           dimension_semantics=("arbitrary", "arbitrary", "arbitrary"),
         ),
         name=kernel_name,
@@ -2126,7 +2126,7 @@ def _splash_attention_bwd_dkv(
         #    megacore
         # 2) for heads, we are reducing over heads
         # 3) for q_seq_len, we are reducing over it to compute dkv
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
           dimension_semantics=("arbitrary", "arbitrary", "arbitrary"),
         ),
         name=kernel_name,

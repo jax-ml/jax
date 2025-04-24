@@ -193,7 +193,7 @@ def decode_attn_unbatched(
       pl.BlockSpec((None, block_h), lambda i, j: (j, i)),  # l
       pl.BlockSpec((None, block_h), lambda i, j: (j, i)),  # m
     ],
-    compiler_params=plgpu.TritonCompilerParams(
+    compiler_params=plgpu.CompilerParams(
       num_warps=num_warps_, num_stages=num_stages
     ),
     out_shape=[

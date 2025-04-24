@@ -784,7 +784,7 @@ def ragged_paged_attention(
   )
   in_specs = [
       q_block_spec,
-      pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+      pl.BlockSpec(memory_space=pltpu.ANY),
   ]
   out_specs = q_block_spec
   lm_scratch = pltpu.VMEM(
@@ -836,7 +836,7 @@ def ragged_paged_attention(
           grid=grid,
           scratch_shapes=scratch_shapes,
       ),
-      compiler_params=pltpu.TPUCompilerParams(
+      compiler_params=pltpu.CompilerParams(
           dimension_semantics=(
               "arbitrary",
               "arbitrary",

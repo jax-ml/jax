@@ -81,10 +81,10 @@ import numpy as np
 # mypy: ignore-errors
 
 NDIndexer = indexing.NDIndexer
-TPUMemorySpace = tpu_core.TPUMemorySpace
-MemorySpace = pallas_core.MemorySpace | TPUMemorySpace
-VMEM = tpu_core.TPUMemorySpace.VMEM
-SMEM = tpu_core.TPUMemorySpace.SMEM
+MemorySpace = tpu_core.MemorySpace
+MemorySpace = pallas_core.MemorySpace | MemorySpace
+VMEM = tpu_core.MemorySpace.VMEM
+SMEM = tpu_core.MemorySpace.SMEM
 # Booleans are stored as the following type in memrefs.
 BOOL_MEMREF_TYPE = np.dtype('int32')
 
@@ -206,18 +206,18 @@ class LoweringRuleContext:
 
 
 def _memory_space_to_tpu_memory_space(memory_space: MemorySpace | None
-                                     ) -> TPUMemorySpace:
+                                     ) -> MemorySpace:
   match memory_space:
     case None:
       # We pick VMEM as the default one when no memory space is
       # specified
-      return TPUMemorySpace.VMEM
+      return MemorySpace.VMEM
     case pallas_core.MemorySpace.ANY:
       # Map the general ANY memory space to TPU ANY memory space
-      return TPUMemorySpace.ANY
+      return MemorySpace.ANY
     case pallas_core.MemorySpace.ERROR | pallas_core.MemorySpace.INDEX:
-      return TPUMemorySpace.SMEM
-    case TPUMemorySpace():
+      return MemorySpace.SMEM
+    case MemorySpace():
       # Leave the memory space unchanged
       return memory_space
     case _:
@@ -267,14 +267,14 @@ def aval_to_ir_type(
       sem_type = ir.Type.parse("!tpu.semaphore")
     else:
       raise ValueError(f"Cannot allocate {aval.sem_type}.")
-    memspace = _memory_space_to_mosaic_attribute(TPUMemorySpace.SEMAPHORE)
+    memspace = _memory_space_to_mosaic_attribute(MemorySpace.SEMAPHORE)
     return ir.MemRefType.get((), sem_type, memory_space=memspace)
   if dtypes.issubdtype(aval.dtype, dtypes.prng_key):
     shape = aval.dtype._impl.key_shape
     if pl_random.is_pallas_impl(aval.dtype._impl):
       if memory_space is None:
-        memory_space = TPUMemorySpace.SMEM
-      if memory_space != TPUMemorySpace.SMEM:
+        memory_space = MemorySpace.SMEM
+      if memory_space != MemorySpace.SMEM:
         raise ValueError(
             f"PRNG keys must be stored in SMEM. Got {memory_space}"
         )
@@ -343,7 +343,7 @@ def _get_arg_type(
     memory_space = aval.memory_space
     # We assume unannotated memory refs are in VMEM
     if memory_space is None:
-      memory_space = TPUMemorySpace.VMEM
+      memory_space = MemorySpace.VMEM
   if isinstance(aval, tpu_core.AbstractSemaphore):
     return aval_to_ir_type(dynamic_shape_replacement_fn, aval), None
   # TODO(necula): clean this None block_mapping
@@ -571,10 +571,10 @@ def _check_block_mappings(
     rank = len(bm.block_shape)
     # TODO(necula): add tests for SMEM blocks with trivial windowing
     # We support scalars too
-    if (bm.block_aval.memory_space == tpu_core.TPUMemorySpace.SMEM and
+    if (bm.block_aval.memory_space == tpu_core.MemorySpace.SMEM and
         bm.has_trivial_window()):
       continue
-    if bm.block_aval.memory_space == tpu_core.TPUMemorySpace.SEMAPHORE:
+    if bm.block_aval.memory_space == tpu_core.MemorySpace.SEMAPHORE:
       continue
 
     def err_details():
@@ -590,7 +590,7 @@ def _check_block_mappings(
           "The Pallas TPU lowering currently supports only blocks of "
           "rank >= 1. " + err_details())
 
-    if (bm.block_aval.memory_space == tpu_core.TPUMemorySpace.ANY and
+    if (bm.block_aval.memory_space == tpu_core.MemorySpace.ANY and
         not bm.has_trivial_window()):
       raise ValueError(
           "The Pallas TPU lowering currently supports in memory space ANY "
@@ -724,8 +724,8 @@ def lower_jaxpr_to_module(
       tpu_memory_space = _memory_space_to_tpu_memory_space(
           bm.block_aval.memory_space)
       if (
-          tpu_memory_space == tpu_core.TPUMemorySpace.ANY
-          or tpu_memory_space == tpu_core.TPUMemorySpace.SEMAPHORE
+          tpu_memory_space == tpu_core.MemorySpace.ANY
+          or tpu_memory_space == tpu_core.MemorySpace.SEMAPHORE
       ):
         # We checked above that the block does not require windowing.
         window_params.append(ir.DictAttr.get())
@@ -747,7 +747,7 @@ def lower_jaxpr_to_module(
       # Force single-buffering pipelining for trivial windowing in VMEM.
       pipeline_mode = bm.pipeline_mode
       if (
-          tpu_memory_space == tpu_core.TPUMemorySpace.VMEM
+          tpu_memory_space == tpu_core.MemorySpace.VMEM
           and bm.has_trivial_window()
       ):
         pipeline_mode = pallas_core.Buffered(1)
@@ -1463,7 +1463,7 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
   ):
     if not is_smem_load:
       raise ValueError("PRNG keys must be loaded from SMEM. Did you set "
-                       "the memory space to TPUMemorySpace.SMEM in the "
+                       "the memory space to MemorySpace.SMEM in the "
                        "BlockSpec for the PRNG key input?")
     return _prng_key_load_lowering_rule(ctx, *args_flat, args_tree=args_tree)
   if not is_smem_load and not ref_block_shape:
@@ -3436,11 +3436,11 @@ def _alloc_value(
   if isinstance(aval, pallas_core.AbstractMemoryRef):
     memspace = _memory_space_to_mosaic_attribute(aval.memory_space)
     if jnp.issubdtype(aval.dtype, pallas_core.semaphore_dtype):
-      assert aval.memory_space == TPUMemorySpace.SEMAPHORE
+      assert aval.memory_space == MemorySpace.SEMAPHORE
       memref_type = aval_to_ir_type(
           ctx.lowering_context.dynamic_shape_replacement_fn,
           aval,
-          memory_space=TPUMemorySpace.SEMAPHORE,
+          memory_space=MemorySpace.SEMAPHORE,
       )
       return tpu.sem_alloc(memref_type)
     else:
@@ -3453,7 +3453,7 @@ def _alloc_value(
     memref_type = aval_to_ir_type(
         ctx.lowering_context.dynamic_shape_replacement_fn,
         aval,
-        memory_space=TPUMemorySpace.SEMAPHORE,
+        memory_space=MemorySpace.SEMAPHORE,
     )
     return tpu.sem_alloc(memref_type)
   raise NotImplementedError(f"Cannot allocate {type(aval)}.")

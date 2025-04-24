@@ -222,7 +222,7 @@ def paged_attention_unbatched(
       ],
       debug=debug,
       interpret=interpret,
-      compiler_params=plgpu.TritonCompilerParams(
+      compiler_params=plgpu.CompilerParams(
           num_warps=num_warps, num_stages=num_stages
       ),
       name=f"paged_attention_{block_h=}_{pages_per_compute_block=}",

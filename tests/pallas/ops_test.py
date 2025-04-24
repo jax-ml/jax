@@ -292,7 +292,7 @@ class PallasBaseTest(jtu.JaxTestCase):
   def pallas_call(cls, *args, **kwargs):
     if jtu.test_device_matches(["cuda"]) and use_mosaic_gpu:
       assert plgpu_mgpu is not None
-      compiler_params = plgpu_mgpu.GPUCompilerParams(
+      compiler_params = plgpu_mgpu.CompilerParams(
           lowering_semantics=plgpu_mgpu.LoweringSemantics.Warpgroup
       )
       kwargs["compiler_params"] = compiler_params
@@ -1517,10 +1517,10 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call,
-        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
-                  pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM),
+                  pl.BlockSpec(memory_space=pltpu.SMEM),
                   ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
         out_shape=jax.ShapeDtypeStruct((1,), dtype),
     )
     def kernel(x_ref, y_ref, o_ref):
@@ -1632,7 +1632,7 @@ class OpsTest(PallasBaseTest):
 
   @unittest.skipIf(
       sys.platform == "win32",
-      "plgpu_triton.TritonCompilerParams unavailable on Windows",
+      "plgpu_triton.CompilerParams unavailable on Windows",
   )
   def test_debug_print(self):
     self.skip_if_mosaic_gpu()
@@ -1647,7 +1647,7 @@ class OpsTest(PallasBaseTest):
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
-        compiler_params=plgpu_triton.TritonCompilerParams(
+        compiler_params=plgpu_triton.CompilerParams(
             num_warps=1, num_stages=1
         ),
     )
@@ -1663,7 +1663,7 @@ class OpsTest(PallasBaseTest):
 
   @unittest.skipIf(
       sys.platform == "win32",
-      "plgpu_triton.TritonCompilerParams unavailable on Windows",
+      "plgpu_triton.CompilerParams unavailable on Windows",
   )
   def test_debug_print_with_values(self):
     if jtu.test_device_matches(["tpu"]):
@@ -1676,7 +1676,7 @@ class OpsTest(PallasBaseTest):
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
-        compiler_params=plgpu_triton.TritonCompilerParams(
+        compiler_params=plgpu_triton.CompilerParams(
             num_warps=1, num_stages=1
         ),
     )

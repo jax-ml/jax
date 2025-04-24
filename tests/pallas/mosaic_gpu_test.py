@@ -90,14 +90,14 @@ class PallasTest(jtu.JaxTestCase, metaclass=PallasTestMetaclass):
 
   def kernel(self, *args, **kwargs):
     compiler_params = dataclasses.replace(
-        kwargs.pop("compiler_params", plgpu.GPUCompilerParams()),
+        kwargs.pop("compiler_params", plgpu.CompilerParams()),
         lowering_semantics=self.LOWERING_SEMANTICS,
     )
     return plgpu.kernel(*args, compiler_params=compiler_params, **kwargs)
 
   def pallas_call(self, *args, **kwargs):
     compiler_params = dataclasses.replace(
-        kwargs.pop("compiler_params", plgpu.GPUCompilerParams()),
+        kwargs.pop("compiler_params", plgpu.CompilerParams()),
         lowering_semantics=self.LOWERING_SEMANTICS,
     )
     return pl.pallas_call(*args, compiler_params=compiler_params, **kwargs)
@@ -147,7 +147,7 @@ class PallasCallTest(PallasTest):
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], dtype),
-        compiler_params=plgpu.GPUCompilerParams(approx_math=approx_math),
+        compiler_params=plgpu.CompilerParams(approx_math=approx_math),
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = op(x_ref[...])
@@ -295,7 +295,7 @@ class PallasCallTest(PallasTest):
         in_specs=[pl.BlockSpec((128, 16), lambda i, j: (i, j))],
         out_specs=pl.BlockSpec((128, 16), lambda i, j: (i, j)),
         out_shape=jax.ShapeDtypeStruct([128 * 2, 64], jnp.float32),
-        compiler_params=plgpu.GPUCompilerParams(
+        compiler_params=plgpu.CompilerParams(
             dimension_semantics=["parallel", "sequential"],
             max_concurrent_steps=max_concurrent_steps,
         ),
@@ -312,7 +312,7 @@ class PallasCallTest(PallasTest):
         self.pallas_call,
         out_specs=pl.BlockSpec((16, 16), lambda i, j: (i, j)),
         out_shape=jax.ShapeDtypeStruct([16, 64], jnp.int32),
-        compiler_params=plgpu.GPUCompilerParams(
+        compiler_params=plgpu.CompilerParams(
             dimension_semantics=["parallel", "sequential"],
             max_concurrent_steps=2,
         ),
@@ -333,7 +333,7 @@ class PallasCallTest(PallasTest):
         in_specs=[pl.BlockSpec((32, 16), lambda i, j: (i, j))],
         out_specs=pl.BlockSpec((32, 16), lambda i, j: (i, 0)),
         out_shape=jax.ShapeDtypeStruct([32 * 2, 64], jnp.float32),
-        compiler_params=plgpu.GPUCompilerParams(
+        compiler_params=plgpu.CompilerParams(
             dimension_semantics=["parallel", "sequential"],
             max_concurrent_steps=2,
         ),
@@ -593,7 +593,7 @@ class PallasCallTest(PallasTest):
         grid=(4, 4),
         out_shape=jax.ShapeDtypeStruct((256, 128), jnp.int32),
         in_specs=(
-            plgpu.GPUBlockSpec(
+            plgpu.BlockSpec(
                 block_shape=(128, 128),
                 index_map=lambda i, j: (i, j),
                 memory_space=plgpu.SMEM,
@@ -604,7 +604,7 @@ class PallasCallTest(PallasTest):
             ),
         ),
         out_specs=(
-            plgpu.GPUBlockSpec(
+            plgpu.BlockSpec(
                 block_shape=(64, 32),
                 index_map=lambda i, j: (i, j),
                 memory_space=plgpu.SMEM,
@@ -655,7 +655,7 @@ class PallasCallTest(PallasTest):
         plgpu.wait_smem_to_gmem(0)
 
     in_spec = pl.BlockSpec(memory_space=plgpu.GMEM)
-    out_spec = plgpu.GPUBlockSpec(
+    out_spec = plgpu.BlockSpec(
         transforms=(
             plgpu.TilingTransform((8, 32)),
             plgpu.SwizzleTransform(128),
@@ -686,7 +686,7 @@ class PallasCallTest(PallasTest):
       pl.run_scoped(body, plgpu.SMEM((128, 128), jnp.float32, transforms=ts))
 
     in_spec = pl.BlockSpec(memory_space=plgpu.GMEM)
-    out_spec = plgpu.GPUBlockSpec(transforms=ts, memory_space=plgpu.SMEM)
+    out_spec = plgpu.BlockSpec(transforms=ts, memory_space=plgpu.SMEM)
     f = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct([128, 128], jnp.float32),
@@ -726,7 +726,7 @@ class PallasCallTest(PallasTest):
         plgpu.barrier_wait(barrier_ref)
 
     in_spec = pl.BlockSpec(memory_space=plgpu.GMEM)
-    out_spec = plgpu.GPUBlockSpec(
+    out_spec = plgpu.BlockSpec(
         transforms=(
             plgpu.TilingTransform((8, 32)),
             plgpu.TransposeTransform((0, 2, 1, 3, 4)),
@@ -756,7 +756,7 @@ class PallasCallTest(PallasTest):
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct([2, 128], jnp.float32),
         in_specs=[pl.BlockSpec(memory_space=src_memory_space)],
-        out_specs=plgpu.GPUBlockSpec(memory_space=plgpu.SMEM),
+        out_specs=plgpu.BlockSpec(memory_space=plgpu.SMEM),
     )
     def kernel(x_ref, o_ref):
       for i in range(2):
@@ -778,7 +778,7 @@ class PallasCallTest(PallasTest):
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct([2, m], jnp.float32),
         in_specs=[pl.BlockSpec(memory_space=src_memory_space)],
-        out_specs=plgpu.GPUBlockSpec(memory_space=plgpu.SMEM),
+        out_specs=plgpu.BlockSpec(memory_space=plgpu.SMEM),
     )
     def kernel(x_ref, o_ref):
       for i in range(2):
@@ -824,14 +824,14 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct([m, n], jnp.float32),
         in_specs=(
             pl.BlockSpec(memory_space=src_memory_space),
-            plgpu.GPUBlockSpec(
+            plgpu.BlockSpec(
                 transforms=(
                     plgpu.TilingTransform((8, 64)),
                     plgpu.SwizzleTransform(128),
                 ),
             ),
         ),
-        out_specs=plgpu.GPUBlockSpec(memory_space=plgpu.SMEM),
+        out_specs=plgpu.BlockSpec(memory_space=plgpu.SMEM),
     )
 
     out_ref = (
@@ -850,7 +850,7 @@ class PallasCallTest(PallasTest):
         plgpu.barrier_wait(barrier_ref)
 
     in_spec = pl.BlockSpec(memory_space=plgpu.GMEM)
-    out_spec = plgpu.GPUBlockSpec(memory_space=plgpu.SMEM)
+    out_spec = plgpu.BlockSpec(memory_space=plgpu.SMEM)
     f = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct([2, 64, 2, 128], jnp.float32),
@@ -952,7 +952,7 @@ class PallasCallTest(PallasTest):
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
         in_specs=[
-            plgpu.GPUBlockSpec(
+            plgpu.BlockSpec(
                 transforms=(
                     plgpu.TilingTransform((8, 32)),
                     plgpu.SwizzleTransform(128),
@@ -1032,7 +1032,7 @@ class PallasCallTest(PallasTest):
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((128,), jnp.int32),
-        in_specs=[plgpu.GPUBlockSpec(memory_space=plgpu.GPUMemorySpace.GMEM)],
+        in_specs=[plgpu.BlockSpec(memory_space=plgpu.GMEM)],
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = jnp.broadcast_to(x_ref[10], (128,))
@@ -1062,8 +1062,8 @@ class PallasCallTest(PallasTest):
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
-        in_specs=[pl.BlockSpec(memory_space=plgpu.GPUMemorySpace.GMEM)],
-        out_specs=pl.BlockSpec(memory_space=plgpu.GPUMemorySpace.SMEM),
+        in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+        out_specs=pl.BlockSpec(memory_space=plgpu.SMEM),
     )
     def kernel(x_ref_gmem, o_ref):
       def scoped_kernel(barrier_ref):
@@ -1151,7 +1151,7 @@ class PallasCallTest(PallasTest):
   def test_swizzled_blockspec_shapes(self):
     self.skip_if_wg_semantics()
 
-    spec = plgpu.GPUBlockSpec(
+    spec = plgpu.BlockSpec(
         (128, 64),
         lambda *i: i,
         transforms=(
@@ -1339,7 +1339,7 @@ class PallasCallTest(PallasTest):
     self.skip_if_wg_semantics()
 
     shape = (256, 128)
-    block_spec = plgpu.GPUBlockSpec(
+    block_spec = plgpu.BlockSpec(
         transforms=(plgpu.TilingTransform((8, 64)), plgpu.SwizzleTransform(128))
     )
     @functools.partial(
@@ -1370,8 +1370,8 @@ class PallasCallTest(PallasTest):
     a = np.zeros((64, 64), dtype=jnp.float32)
     b = self.pallas_call(
         kernel,
-        in_specs=[plgpu.GPUBlockSpec(memory_space=plgpu.GPUMemorySpace.GMEM)],
-        out_specs=plgpu.GPUBlockSpec(memory_space=plgpu.GPUMemorySpace.GMEM),
+        in_specs=[plgpu.BlockSpec(memory_space=plgpu.GMEM)],
+        out_specs=plgpu.BlockSpec(memory_space=plgpu.GMEM),
         input_output_aliases={0: 0},
         out_shape=a,
     )(a)
@@ -1390,7 +1390,7 @@ class PallasCallTest(PallasTest):
       dst[lower, left] = src[lower, right]
 
     x = jnp.arange(128 * 128).astype(jnp.float16).reshape(128, 128)
-    spec = plgpu.GPUBlockSpec(
+    spec = plgpu.BlockSpec(
         transforms=(plgpu.TilingTransform((8, 64)), plgpu.SwizzleTransform(128))
     )
     f = self.pallas_call(rotate, out_shape=x, in_specs=[spec], out_specs=spec)
@@ -1467,7 +1467,7 @@ class PallasCallTest(PallasTest):
       y = self.pallas_call(
           kernel,
           out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
-          compiler_params=plgpu.GPUCompilerParams(
+          compiler_params=plgpu.CompilerParams(
               profile_space=16, profile_dir=tmpdir
           ),
       )(x)
@@ -1759,9 +1759,9 @@ class PallasCallSm90ATest(PallasSm90ATest):
       transforms = ()
     @functools.partial(
         self.pallas_call,
-        in_specs=[plgpu.GPUBlockSpec((64, 64), transforms=transforms)],
+        in_specs=[plgpu.BlockSpec((64, 64), transforms=transforms)],
         out_shape=jax.ShapeDtypeStruct((64, 64), jnp.float16),
-        out_specs=plgpu.GPUBlockSpec((64, 64)),
+        out_specs=plgpu.BlockSpec((64, 64)),
     )
     def kernel(i_ref, o_ref):
       def scope(acc_ref):
@@ -1828,7 +1828,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     )
 
     if self.LOWERING_SEMANTICS == plgpu.LoweringSemantics.Lane:
-      lhs_spec = plgpu.GPUBlockSpec(
+      lhs_spec = plgpu.BlockSpec(
           lhs_spec.block_shape,
           lhs_spec.index_map,
           transforms=(
@@ -1836,7 +1836,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
               plgpu.SwizzleTransform(128),
           ),
       )
-      rhs_spec = plgpu.GPUBlockSpec(
+      rhs_spec = plgpu.BlockSpec(
           rhs_spec.block_shape,
           rhs_spec.index_map,
           transforms=(
@@ -1844,7 +1844,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
               plgpu.SwizzleTransform(128),
           ),
       )
-      out_spec = plgpu.GPUBlockSpec(
+      out_spec = plgpu.BlockSpec(
           out_spec.block_shape,
           out_spec.index_map,
           transforms=(
@@ -1860,7 +1860,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
         out_shape=jax.ShapeDtypeStruct((m, n), jnp.float16),
         scratch_shapes=[plgpu.ACC((tile_m, tile_n), jnp.float32)],
         grid=(grid_m, grid_n, grid_k),
-        compiler_params=plgpu.GPUCompilerParams(
+        compiler_params=plgpu.CompilerParams(
             dimension_semantics=["parallel", "parallel", "sequential"],
             max_concurrent_steps=2,
             delay_release=1,
@@ -1901,7 +1901,7 @@ class PallasCallSm90ATest(PallasSm90ATest):
     res = self.pallas_call(
         kernel,
         in_specs=[
-            plgpu.GPUBlockSpec(
+            plgpu.BlockSpec(
                 (64, 128),
                 lambda i, j: (i, j),
                 transforms=(
@@ -1909,13 +1909,13 @@ class PallasCallSm90ATest(PallasSm90ATest):
                     plgpu.SwizzleTransform(128),
                 ),
             ),
-            plgpu.GPUBlockSpec(
+            plgpu.BlockSpec(
                 b_shape,
                 lambda *i: i,
                 transforms=(*rhs_transforms, plgpu.SwizzleTransform(128)),
             ),
         ],
-        out_specs=plgpu.GPUBlockSpec((64, 192), lambda *i: i),
+        out_specs=plgpu.BlockSpec((64, 192), lambda *i: i),
         out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float32),
         grid=(1, 1),
     )(a, b)
@@ -1940,8 +1940,8 @@ class PallasCallSm90ATest(PallasSm90ATest):
     res = self.pallas_call(
         kernel,
         in_specs=[
-            plgpu.GPUBlockSpec(transforms=transforms),
-            plgpu.GPUBlockSpec(transforms=transforms),
+            plgpu.BlockSpec(transforms=transforms),
+            plgpu.BlockSpec(transforms=transforms),
         ],
         out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float32),
     )(a, b)
@@ -1965,9 +1965,9 @@ class PallasCallSm90ATest(PallasSm90ATest):
     res = self.pallas_call(
         kernel,
         in_specs=[
-            plgpu.GPUBlockSpec(transforms=transforms),
-            plgpu.GPUBlockSpec(transforms=transforms),
-            plgpu.GPUBlockSpec(transforms=transforms),
+            plgpu.BlockSpec(transforms=transforms),
+            plgpu.BlockSpec(transforms=transforms),
+            plgpu.BlockSpec(transforms=transforms),
         ],
         out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float16),
     )(a, b, i)
@@ -1994,8 +1994,8 @@ class PallasCallSm90ATest(PallasSm90ATest):
     res = self.pallas_call(
         kernel,
         in_specs=[
-            plgpu.GPUBlockSpec(transforms=transforms),
-            plgpu.GPUBlockSpec(transforms=transforms),
+            plgpu.BlockSpec(transforms=transforms),
+            plgpu.BlockSpec(transforms=transforms),
         ],
         out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float32),
     )(a, b)
@@ -2025,14 +2025,14 @@ class PallasCallSm90ATest(PallasSm90ATest):
     res = self.pallas_call(
         kernel,
         in_specs=[
-            plgpu.GPUBlockSpec(
+            plgpu.BlockSpec(
                 (64, 128), lambda *ij: ij, transforms=transforms
             ),
-            plgpu.GPUBlockSpec(
+            plgpu.BlockSpec(
                 (128, 128), lambda *ij: ij, transforms=transforms
             ),
         ],
-        out_specs=plgpu.GPUBlockSpec((64, 128), lambda *ij: ij),
+        out_specs=plgpu.BlockSpec((64, 128), lambda *ij: ij),
         out_shape=jax.ShapeDtypeStruct((64, 128), jnp.float32),
         grid=(1, 1),
     )(a, b)
@@ -2192,12 +2192,12 @@ class PipelineTest(PallasTest):
         plgpu.emit_pipeline(
             kernel_body,
             in_specs=[
-                plgpu.GPUBlockSpec(
+                plgpu.BlockSpec(
                     (64, 64), lambda i: (0, i), transforms=transforms
                 )
             ],
             out_specs=[
-                plgpu.GPUBlockSpec(
+                plgpu.BlockSpec(
                     (64, 64), lambda i: (0, i), transforms=transforms
                 )
             ],
@@ -2386,10 +2386,10 @@ class PipelineSm90ATest(PallasSm90ATest):
       plgpu.emit_pipeline(
           kernel_body,
           in_specs=[
-              plgpu.GPUBlockSpec(
+              plgpu.BlockSpec(
                   (tile_m, tile_k), lambda k: (pid_m, k), transforms=transforms
               ),
-              plgpu.GPUBlockSpec(
+              plgpu.BlockSpec(
                   (tile_k, tile_n), lambda k: (k, pid_n), transforms=transforms
               ),
           ],
@@ -2410,7 +2410,7 @@ class PipelineSm90ATest(PallasSm90ATest):
             pl.BlockSpec(memory_space=plgpu.GMEM),
             pl.BlockSpec(memory_space=plgpu.GMEM),
         ],
-        out_specs=plgpu.GPUBlockSpec(
+        out_specs=plgpu.BlockSpec(
             (tile_m, tile_n), lambda m, n: (m, n), transforms=transforms
         ),
         out_shape=jax.ShapeDtypeStruct((m, n), jnp.float16),
@@ -2475,7 +2475,7 @@ class WarpSpecializedPipelineTest(PallasTest):
             jax.ShapeDtypeStruct((m, n), jnp.float16),
             jax.ShapeDtypeStruct((blk_m, blk_n), jnp.float16),
         ),
-        compiler_params=plgpu.GPUCompilerParams(approx_math=True),
+        compiler_params=plgpu.CompilerParams(approx_math=True),
         grid=(1,),
         grid_names=("_",),
         num_threads=3,
@@ -2520,7 +2520,7 @@ class WarpSpecializedPipelineTest(PallasTest):
     kernel = self.kernel(
         pipeline,
         out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
-        compiler_params=plgpu.GPUCompilerParams(approx_math=True),
+        compiler_params=plgpu.CompilerParams(approx_math=True),
         grid=(1,),
         grid_names=("_",),
         num_threads=num_compute_wgs + 1,
@@ -2539,7 +2539,7 @@ class WarpSpecializedPipelineTest(PallasTest):
         scratch_shapes=[
             plgpu.SMEM((blk_m, blk_n), jnp.float32),
         ],
-        compiler_params=plgpu.GPUCompilerParams(approx_math=True),
+        compiler_params=plgpu.CompilerParams(approx_math=True),
         grid=(1,),
         grid_names=("_",),
         num_threads=num_compute_wgs + 1,
@@ -2864,7 +2864,7 @@ class PrettyPrintingTest(PallasTest):
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct([2, 128], jnp.float32),
         in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
-        out_specs=plgpu.GPUBlockSpec(memory_space=plgpu.SMEM),
+        out_specs=plgpu.BlockSpec(memory_space=plgpu.SMEM),
     )
     def kernel(x_ref, o_ref):
       for i in range(2):
@@ -2912,8 +2912,8 @@ class PrettyPrintingTest(PallasTest):
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((64, 192), jnp.float32),
         in_specs=[
-            plgpu.GPUBlockSpec(transforms=transforms),
-            plgpu.GPUBlockSpec(transforms=transforms),
+            plgpu.BlockSpec(transforms=transforms),
+            plgpu.BlockSpec(transforms=transforms),
         ],
     )
     def kernel(a_ref, b_ref, o_ref):
@@ -3032,7 +3032,7 @@ class ExamplesTest(PallasTest):
       def compute(_, l_smem, r_smem, o_smem):
         o_smem[...] = l_smem[...] + r_smem[...]
       r = lax.axis_index("rows")
-      block = plgpu.GPUBlockSpec(
+      block = plgpu.BlockSpec(
           (row_block, col_block), lambda c: (r, c),
           transforms=(plgpu.TilingTransform((8, 32)), plgpu.SwizzleTransform(64)),
       )
@@ -3104,9 +3104,9 @@ class ExamplesSm90ATest(PallasSm90ATest):
       plgpu.emit_pipeline(
           compute,
           grid=(l_ref.shape[1] // k_block,),
-          in_specs=[plgpu.GPUBlockSpec((m_block, k_block), lambda k: (m, k), transforms=lo_transforms),
-                    plgpu.GPUBlockSpec((k_block, n_block), lambda k: (k, n), transforms=r_transforms)],
-          out_specs=[plgpu.GPUBlockSpec((m_block, n_block), lambda k: (m, n), transforms=lo_transforms)],
+          in_specs=[plgpu.BlockSpec((m_block, k_block), lambda k: (m, k), transforms=lo_transforms),
+                    plgpu.BlockSpec((k_block, n_block), lambda k: (k, n), transforms=r_transforms)],
+          out_specs=[plgpu.BlockSpec((m_block, n_block), lambda k: (m, n), transforms=lo_transforms)],
       )(l_ref, r_ref, o_ref)
 
     np.testing.assert_allclose(kernel(x, x), x @ x)

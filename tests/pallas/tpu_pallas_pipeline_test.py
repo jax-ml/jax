@@ -131,8 +131,8 @@ class PallasCallPipelineTest(parameterized.TestCase):
     super().setUp()
 
   @parameterized.named_parameters(
-      ('vmem', pltpu.TPUMemorySpace.VMEM),
-      ('hbm', pltpu.TPUMemorySpace.ANY),
+      ('vmem', pltpu.VMEM),
+      ('hbm', pltpu.ANY),
   )
   def test_pipeline_matmul(self, memory_space):
     # TODO(b/358121809): Re-enable this test once the bug is fixed.
@@ -178,8 +178,8 @@ class PallasCallPipelineTest(parameterized.TestCase):
     np.testing.assert_allclose(out, expected_out)
 
   @parameterized.named_parameters(
-      ('vmem', pltpu.TPUMemorySpace.VMEM),
-      ('hbm', pltpu.TPUMemorySpace.ANY),
+      ('vmem', pltpu.VMEM),
+      ('hbm', pltpu.ANY),
   )
   def test_double_pipeline_matmul(self, memory_space):
     # TODO(b/358121809): Re-enable this test once the bug is fixed.
@@ -236,11 +236,11 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
     super().setUp()
 
   @parameterized.named_parameters(
-      ('vmem', pltpu.TPUMemorySpace.VMEM, jnp.bfloat16, 2, 2, 2),
-      ('hbm', pltpu.TPUMemorySpace.ANY, jnp.bfloat16, 2, 2, 2),
-      ('hbm_float32', pltpu.TPUMemorySpace.ANY, jnp.float32, 2, 2, 2),
-      ('hbm_float32_112', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 1, 2),
-      ('hbm_float32_111', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 1, 1),
+      ('vmem', pltpu.VMEM, jnp.bfloat16, 2, 2, 2),
+      ('hbm', pltpu.ANY, jnp.bfloat16, 2, 2, 2),
+      ('hbm_float32', pltpu.ANY, jnp.float32, 2, 2, 2),
+      ('hbm_float32_112', pltpu.ANY, jnp.float32, 1, 1, 2),
+      ('hbm_float32_111', pltpu.ANY, jnp.float32, 1, 1, 1),
   )
   def test_pipeline_latency_optimized_allgather_matmul(
       self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles):
@@ -482,7 +482,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
             + [pltpu.SemaphoreType.DMA] * 4
             + inner_allocs
         ),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
                     collective_id=0,
                     # must set scoped vmem flag *larger* than below! e.g.:
                     # flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
@@ -526,11 +526,11 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
     )
 
   @parameterized.named_parameters(
-      ('vmem', pltpu.TPUMemorySpace.VMEM, jnp.bfloat16, 2, 2, 2),
-      ('hbm', pltpu.TPUMemorySpace.ANY, jnp.bfloat16, 2, 2, 2),
-      ('hbm_float32', pltpu.TPUMemorySpace.ANY, jnp.float32, 2, 2, 2),
-      ('hbm_float32_122', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 2, 2),
-      ('hbm_float32_121', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 2, 1),
+      ('vmem', pltpu.VMEM, jnp.bfloat16, 2, 2, 2),
+      ('hbm', pltpu.ANY, jnp.bfloat16, 2, 2, 2),
+      ('hbm_float32', pltpu.ANY, jnp.float32, 2, 2, 2),
+      ('hbm_float32_122', pltpu.ANY, jnp.float32, 1, 2, 2),
+      ('hbm_float32_121', pltpu.ANY, jnp.float32, 1, 2, 1),
   )
   def test_pipeline_throughput_optimized_allgather_matmul(
       self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles):
@@ -725,7 +725,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
             + [pltpu.SemaphoreType.DMA] * 4
             + inner_allocs,
         ),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
             collective_id=0,
             # must set scoped vmem flag *larger* than below! e.g.:
             # flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
@@ -769,11 +769,11 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
     )
 
   @parameterized.named_parameters(
-      ('vmem', pltpu.TPUMemorySpace.VMEM, jnp.bfloat16, 2, 2, 2),
-      ('hbm', pltpu.TPUMemorySpace.ANY, jnp.bfloat16, 2, 2, 2),
-      ('hbm_float32', pltpu.TPUMemorySpace.ANY, jnp.float32, 2, 4, 2),
-      ('hbm_float32_112', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 1, 2),
-      ('hbm_float32_111', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 1, 1),
+      ('vmem', pltpu.VMEM, jnp.bfloat16, 2, 2, 2),
+      ('hbm', pltpu.ANY, jnp.bfloat16, 2, 2, 2),
+      ('hbm_float32', pltpu.ANY, jnp.float32, 2, 4, 2),
+      ('hbm_float32_112', pltpu.ANY, jnp.float32, 1, 1, 2),
+      ('hbm_float32_111', pltpu.ANY, jnp.float32, 1, 1, 1),
   )
   def test_pipeline_latency_optimized_matmul_reducescatter(
       self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles):
@@ -1008,7 +1008,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
             + [pltpu.SemaphoreType.DMA] * 4
             + inner_allocs,
         ),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
             collective_id=0,
             # must set scoped vmem flag *larger* than below!
             # e.g. flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
@@ -1056,11 +1056,11 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
     np.mean(np.abs(out - expected_out))
 
   @parameterized.named_parameters(
-      ('vmem', pltpu.TPUMemorySpace.VMEM, jnp.bfloat16, 2, 2, 2),
-      ('hbm', pltpu.TPUMemorySpace.ANY, jnp.bfloat16, 2, 2, 2),
-      ('hbm_float32', pltpu.TPUMemorySpace.ANY, jnp.float32, 2, 4, 2),
-      ('hbm_float32_112', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 2, 2),
-      ('hbm_float32_111', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 2, 1),
+      ('vmem', pltpu.VMEM, jnp.bfloat16, 2, 2, 2),
+      ('hbm', pltpu.ANY, jnp.bfloat16, 2, 2, 2),
+      ('hbm_float32', pltpu.ANY, jnp.float32, 2, 4, 2),
+      ('hbm_float32_112', pltpu.ANY, jnp.float32, 1, 2, 2),
+      ('hbm_float32_111', pltpu.ANY, jnp.float32, 1, 2, 1),
   )
   def test_pipeline_throughput_optimized_matmul_reducescatter(
       self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles):
@@ -1269,7 +1269,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
             + [pltpu.SemaphoreType.DMA] * 4
             + inner_allocs,
         ),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
             collective_id=0,
             # must set scoped vmem flag *larger* than below!
             # e.g. flags.FLAGS.xla_tpu_scoped_vmem_limit_kib = 131072
@@ -1354,7 +1354,7 @@ class PallasCallMegacoreTest(parameterized.TestCase):
             out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
             grid=(num_cores,),
         ),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
             dimension_semantics=('parallel',)
         ),
     )
@@ -1390,7 +1390,7 @@ class PallasCallMegacoreTest(parameterized.TestCase):
         ],
         out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
         grid=(num_cores,),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
             dimension_semantics=('parallel',)
         ),
     )
@@ -1441,7 +1441,7 @@ class PallasCallMegacoreTest(parameterized.TestCase):
         ],
         out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
         grid=(num_cores,),
-        compiler_params=pltpu.TPUCompilerParams(
+        compiler_params=pltpu.CompilerParams(
             dimension_semantics=('parallel',)
         ),
     )

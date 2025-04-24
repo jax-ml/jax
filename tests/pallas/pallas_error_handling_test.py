@@ -53,9 +53,9 @@ class PallasErrorHandlingTest(jtu.JaxTestCase):
     grid_spec = pltpu.PrefetchScalarGridSpec(
         num_scalar_prefetch=0,
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
     )
 
     @functools.partial(pl.pallas_call, out_shape=out_shape, grid_spec=grid_spec)
@@ -101,9 +101,9 @@ class PallasErrorHandlingTest(jtu.JaxTestCase):
     grid_spec = pltpu.PrefetchScalarGridSpec(
         num_scalar_prefetch=0,
         in_specs=[
-            pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+            pl.BlockSpec(memory_space=pltpu.VMEM),
         ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
     )
 
     @functools.partial(pl.pallas_call, out_shape=out_shape, grid_spec=grid_spec)
