@@ -1894,7 +1894,10 @@ def str_short_aval(shape, dtype, mesh, spec, vma,
 def get_vma(vma, mesh):
   if mesh.empty:
     return vma
+  axis_env_names = get_axis_env().axis_names()
   for i in vma:
+    if i in axis_env_names and i not in mesh._name_to_type:
+      continue
     if mesh._name_to_type[i] != AxisType.Manual:
       raise ValueError(
           "Axes mentioned in `vma` field of ShapedArray should"

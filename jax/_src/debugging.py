@@ -459,6 +459,7 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
       mesh = mesh_lib.Mesh(np.array(devices).reshape(am.axis_sizes),
                            am.axis_names)
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
+    mesh = axis_context.mesh
     devices = axis_context.mesh._flat_devices_tuple
   else:
     raise NotImplementedError(type(axis_context))
@@ -470,7 +471,8 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
     if mesh.empty:
       return callback(
           sharding_impls._op_sharding_to_pos_sharding(hlo_sharding, devices))
-    pspec = parse_flatten_op_sharding(hlo_sharding, mesh)[0]
+    pspec = (P() if hlo_sharding.is_manual() else
+             parse_flatten_op_sharding(hlo_sharding, mesh)[0])
     return callback(NamedSharding(mesh, pspec))
 
   if len(devices) == 1:
