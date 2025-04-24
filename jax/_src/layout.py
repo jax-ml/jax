@@ -105,7 +105,7 @@ class Layout:
       raise ValueError(
           'Sharding has to be concrete when layout is of type'
           f' {type(device_local_layout)}. Please pass a'
-          ' `jax.sharding.NamedSharding`, `jax.sharding.PositionalSharding` or'
+          ' `jax.sharding.NamedSharding` or'
           ' `jax.sharding.SingleDeviceSharding` to the sharding argument. Got'
           f' sharding {sharding}'
       )

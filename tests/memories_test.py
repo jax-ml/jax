@@ -31,9 +31,9 @@ from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.numpy as jnp
 from jax.ad_checkpoint import Offloadable, remat, Recompute
 from jax._src.sharding import common_devices_indices_map
-from jax._src.sharding_impls import (NamedSharding, PositionalSharding,
-                                     SingleDeviceSharding, GSPMDSharding,
-                                     TransferToMemoryKind, PartitionSpec as P)
+from jax._src.sharding_impls import (
+    NamedSharding, SingleDeviceSharding, GSPMDSharding,
+    TransferToMemoryKind, PartitionSpec as P)
 from jax.experimental.compute_on import compute_on
 from jax._src.shard_map import shard_map
 import numpy as np
@@ -66,7 +66,6 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       ("named_sharding", "named_sharding"),
-      ("positional_sharding", "positional_sharding"),
       ("single_device_sharding", "single_device_sharding"),
       ("gspmd_sharding", "gspmd_sharding"),
   )
@@ -75,9 +74,6 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
       mesh = jtu.create_mesh((1,), "x")
       ns = NamedSharding(mesh, P("x"))
       self.assertEqual(ns.memory_kind, self._default_memory_kind)
-    elif name == "positional_sharding":
-      ps = PositionalSharding(jax.devices())
-      self.assertEqual(ps.memory_kind, self._default_memory_kind)
     elif name == "single_device_sharding":
       ss = SingleDeviceSharding(jax.devices()[0])
       self.assertEqual(ss.memory_kind, self._default_memory_kind)
@@ -88,7 +84,6 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       ("named_sharding", "named_sharding"),
-      ("positional_sharding", "positional_sharding"),
       ("single_device_sharding", "single_device_sharding"),
       ("gspmd_sharding", "gspmd_sharding"),
   )
@@ -99,11 +94,6 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
       ):
         mesh = jtu.create_mesh((1,), ("x",))
         NamedSharding(mesh, P("x"), memory_kind="hbm")
-    elif name == "positional_sharding":
-      with self.assertRaisesRegex(
-          ValueError, "Could not find memory addressable by device.*"
-      ):
-        PositionalSharding(jax.devices(), memory_kind="gpu_hbm")
     elif name == "single_device_sharding":
       with self.assertRaisesRegex(
           ValueError,
@@ -120,7 +110,6 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       ("named_sharding", "named_sharding"),
-      ("positional_sharding", "positional_sharding"),
       ("single_device_sharding", "single_device_sharding"),
       ("gspmd_sharding", "gspmd_sharding"),
   )
@@ -131,8 +120,6 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
     if name == "named_sharding":
       mesh = jtu.create_mesh((1,), ("x",))
       NamedSharding(mesh, P("x"), memory_kind=self._default_memory_kind)
-    elif name == "positional_sharding":
-      PositionalSharding(jax.devices(), memory_kind=self._default_memory_kind)
     elif name == "single_device_sharding":
       SingleDeviceSharding(jax.devices()[0], memory_kind="unpinned_host")
     else:
@@ -141,7 +128,6 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       ("named_sharding", "named_sharding"),
-      ("positional_sharding", "positional_sharding"),
       ("single_device_sharding", "single_device_sharding"),
       ("gspmd_sharding", "gspmd_sharding"),
   )
@@ -150,10 +136,6 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
       mesh = jtu.create_mesh((1,), ("x",))
       s1 = NamedSharding(mesh, P("x"))
       s2 = NamedSharding(mesh, P("x"), memory_kind=self._default_memory_kind)
-      self.assertEqual(s1, s2)
-    elif name == "positional_sharding":
-      s1 = PositionalSharding(jax.devices())
-      s2 = PositionalSharding(jax.devices(), memory_kind=self._default_memory_kind)
       self.assertEqual(s1, s2)
     elif name == "single_device_sharding":
       s1 = SingleDeviceSharding(jax.devices()[0])

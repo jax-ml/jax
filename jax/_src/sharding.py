@@ -192,10 +192,6 @@ class Sharding:
 
     Two shardings are equivalent if they place the same logical array shards on
     the same devices.
-
-    For example, a :class:`NamedSharding` may be equivalent
-    to a :class:`PositionalSharding` if both place the same shards of the array
-    on the same devices.
     """
     try:
       return (are_op_shardings_equal(self._to_xla_hlo_sharding(ndim),
