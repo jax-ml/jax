@@ -194,9 +194,9 @@ See the [tutorial](https://docs.jax.dev/en/latest/sharded-computation.html) and
 
 | Mode | View? | Explicit sharding? | Explicit Collectives? |
 |---|---|---|---|
-| Auto | Global | No | No |
-| Explicit | Global | Yes | No |
-| Manual | Per-device | Yes | Yes |
+| Auto | Global | ❌ | ❌ |
+| Explicit | Global | ✅ | ❌ |
+| Manual | Per-device | ✅ | ✅ |
 
 ## Gotchas and sharp bits
 
