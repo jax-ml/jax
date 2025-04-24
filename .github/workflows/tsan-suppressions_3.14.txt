@@ -8,9 +8,6 @@ race:dnnl_sgemm
 # https://github.com/python/cpython/issues/128050
 race:partial_vectorcall_fallback
 
-# Likely only happens when the process is crashing.
-race:dump_traceback
-
 # https://github.com/python/cpython/issues/129748
 race:mi_block_set_nextx
 
