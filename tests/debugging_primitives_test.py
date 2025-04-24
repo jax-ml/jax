@@ -25,6 +25,7 @@ from jax._src import ad_checkpoint
 from jax._src import debugging
 from jax._src import dispatch
 from jax._src import test_util as jtu
+from jax.sharding import PartitionSpec as P
 import jax.numpy as jnp
 import numpy as np
 
@@ -1119,6 +1120,28 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     └───────┘
     """)
     self.assertEqual(output(), expected)
+
+  def test_visualize_sharding_shard_map(self):
+    mesh = jtu.create_mesh((2,), 'x')
+
+    def f():
+      a = jnp.zeros(1000)
+      debugging.visualize_array_sharding(a)
+      return a
+
+    with jtu.capture_stdout() as output:
+      f()  # doesn't crash
+
+    with jtu.capture_stdout() as output:
+      jax.jit(f, out_shardings=jax.NamedSharding(mesh, P('x')))()  # doesn't crash
+
+    with jtu.capture_stdout() as output:
+      jax.shard_map(f, mesh=mesh, in_specs=P(None), out_specs=P("x"))()  # doesn't crash
+
+    with jtu.capture_stdout() as output:
+      jax.shard_map(f, mesh=mesh, in_specs=P(None), out_specs=P("x"),
+                    check_vma=False)()  # doesn't crash
+
 
 class InspectShardingTest(jtu.JaxTestCase):
 
