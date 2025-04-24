@@ -687,8 +687,6 @@ def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_names, out_names,
   return out_avals, effs
 core.custom_typechecks[shard_map_p] = _shard_map_typecheck
 
-def _in_names_to_rep(mesh: Mesh, names: AxisNames) -> set[AxisName]:
-  return set(mesh.axis_names) - {n for ns in names.values() for n in ns}
 
 def _valid_repeats(mesh: Mesh, auto, rep: RepType, dst: AxisNames) -> bool:
   return rep is None or (set(_unmentioned(mesh, dst)) - auto).issubset(rep)

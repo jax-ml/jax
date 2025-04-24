@@ -2078,6 +2078,7 @@ xla.register_initial_style_primitive(while_p)
 ad.primitive_transposes[while_p] = _while_transpose_error
 batching.fancy_primitive_batchers[while_p] = _while_loop_batching_rule
 pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
+core.custom_typechecks[while_p] = _while_typecheck
 mlir.register_lowering(while_p, _while_lowering)
 state_discharge.register_partial_discharge_rule(while_p)(_while_partial_discharge_rule)
 
