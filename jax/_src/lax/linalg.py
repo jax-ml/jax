@@ -2794,9 +2794,9 @@ def _column_major_matrix_layout(dim: int) -> tuple[int, ...]:
   return (dim - 2, dim - 1) + tuple(range(dim - 3, -1, -1))
 
 def _sdy_rule_for_aval(letters, num_batch_dims, aval):
-  return " ".join(
-      ("...", *(next(letters) for _ in range(len(aval.shape) - num_batch_dims)))
-  )
+  d = len(aval.shape) - num_batch_dims
+  preffix = "... " if num_batch_dims and d >= 0 else ""
+  return preffix + " ".join(next(letters) for _ in range(d))
 
 def _build_sdy_sharding_rule(num_batch_dims, avals_in, avals_out):
   letters = iter(string.ascii_letters)
