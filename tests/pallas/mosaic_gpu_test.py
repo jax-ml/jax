@@ -2531,8 +2531,6 @@ class WarpSpecializedPipelineTest(PallasTest):
     np.testing.assert_allclose(kernel(x, y), x + y, atol=1e-4)
 
   def test_carry_accumulate(self, m=256, n=256, num_compute_wgs=2):
-    self.skip_if_wg_semantics()  # `plgpu.layout_cast` is not supported.
-
     blk_m = blk_n = 64
 
     @functools.partial(

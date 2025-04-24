@@ -75,10 +75,6 @@ def MosaicGPU_InitializeBarrierOp : Op<MosaicGPU_Dialect, "initialize_barrier",
 
 def MosaicGPU_ArriveExpectTxOp : Op<MosaicGPU_Dialect, "arrive_expect_tx", []> {
   let summary = "Executes an arrive.expect_tx operation on the given barrier.";
-  let description = [{
-    A single thread in the warpgroup will execute an `arrive.expect_tx`
-    operation on the provided barrier with the provided `expect_tx`.
-  }];
 
   let arguments = (ins
     MemRefRankOf<[MosaicGPU_Barrier], [0]>:$barrier,
