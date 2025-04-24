@@ -27,8 +27,8 @@ from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import SingleDeviceSharding
 from jax._src.util import safe_zip, safe_map, set_module
-from jax._src.typing import (Array, ArrayLike, DimSize, DType, DTypeLike,
-                             Shape, SupportsNdim, SupportsShape, SupportsSize)
+from jax._src.typing import (
+    Array, ArrayLike, DimSize, Shape, SupportsNdim, SupportsShape, SupportsSize)
 from jax.sharding import Sharding
 
 import numpy as np
@@ -122,11 +122,6 @@ def promote_dtypes_complex(*args: ArrayLike) -> list[Array]:
   to_dtype_complex = dtypes.to_complex_dtype(to_dtype)
   return [lax._convert_element_type(x, to_dtype_complex, weak_type)
           for x in args]
-
-
-def _complex_elem_type(dtype: DTypeLike) -> DType:
-  """Returns the float type of the real/imaginary parts of a complex dtype."""
-  return np.abs(np.zeros((), dtype)).dtype
 
 
 def _arraylike(x: ArrayLike) -> bool:

@@ -30,7 +30,7 @@ from jax._src import core
 from jax._src import deprecations
 from jax._src import dtypes
 from jax._src.numpy.util import (
-    _broadcast_to, check_arraylike, _complex_elem_type, ensure_arraylike,
+    _broadcast_to, check_arraylike, ensure_arraylike,
     promote_dtypes_inexact, promote_dtypes_numeric, _where)
 from jax._src.lax import lax as lax_internal
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike, DeprecatedArg
@@ -1160,7 +1160,7 @@ def _var_promote_types(a_dtype: DTypeLike, dtype: DTypeLike | None) -> tuple[DTy
       dtype = dtypes.to_inexact_dtype(a_dtype)
       computation_dtype = dtype
     else:
-      dtype = _complex_elem_type(a_dtype)
+      dtype = np.array(0, a_dtype).real.dtype
       computation_dtype = a_dtype
   return _upcast_f16(computation_dtype), np.dtype(dtype)
 
