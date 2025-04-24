@@ -1982,6 +1982,23 @@ class PallasCallTest(PallasBaseTest):
     mosaic_nans = jnp.isnan(run(x, w)).sum()
     self.assertEqual(jax_nans, mosaic_nans)
 
+  @parameterized.product(in_dtype=[jnp.int4, jnp.int8, jnp.int16, jnp.int32])
+  def test_scalar_load_upcast(self, in_dtype):
+    if not jtu.if_cloud_tpu_at_least(2025, 4, 25):
+      self.skipTest("Needs a newer libTPU")
+    if in_dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Triggers an XLA bug")
+    def kernel(x_ref, o_ref):
+      o_ref[0, 0] = x_ref[0, 0].astype(o_ref.dtype)
+    x = jnp.asarray([[-1]], dtype=in_dtype)
+    y = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+        out_shape=jax.ShapeDtypeStruct((1, 1), jnp.int32),
+    )(x)
+    self.assertEqual(y, x.astype(jnp.int32))
+
   def test_masked_store(self):
     shape = (16, 256)
     mask_shape = (10, 130)
