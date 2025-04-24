@@ -3685,6 +3685,53 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.assertArraysEqual(x_jax, func(x_np), check_dtypes=False)
       self.assertArraysEqual(x_jax, func(x_buf), check_dtypes=False)
 
+  @jtu.sample_product(numpy_array=[True, False])
+  def testAsarrayWithCopyFalse(self, numpy_array):
+    x_jax = jnp.arange(4)
+    if numpy_array:
+      x = np.arange(4)
+    else:
+      x = make_python_array('l', [0, 1, 2, 3])
+    device_error_msg = ('jnp.asarray: cannot convert object of type .* to JAX'
+                        ' Array on platform={} with copy=False. Consider using'
+                        ' copy=None or copy=True instead.')
+
+    if jax.default_backend() != 'cpu':
+      # test accelerator devices - no support for copy=False
+      expected_platform = jax.local_devices()[0].platform
+      with self.assertRaisesRegex(
+          ValueError, device_error_msg.format(expected_platform)):
+        jnp.asarray(x, copy=False, device=jax.local_devices()[0])
+      sharding = SingleDeviceSharding(jax.local_devices()[0])
+      with self.assertRaisesRegex(
+          ValueError, device_error_msg.format(expected_platform)):
+        jnp.asarray(x, copy=False, device=sharding)
+
+      # test None defaults to default backend - no support for copy=False
+      with self.assertRaisesRegex(
+          ValueError, device_error_msg.format(expected_platform)):
+        jnp.asarray(x, copy=False, device=None)
+    else:
+      self.assertArraysEqual(jnp.asarray(x, copy=False, device=None), x_jax,
+                             check_dtypes=False)
+
+    # test explicit CPU device or default CPU device context managers overwrite the default backend
+    x = make_python_array('l', [0, 1, 2, 3])
+    for device in [jax.local_devices(backend='cpu')[0],
+                   SingleDeviceSharding(jax.local_devices(backend='cpu')[0])]:
+      self.assertArraysEqual(jnp.asarray(x, copy=False, device=device),
+                             x_jax, check_dtypes=False)
+    with jax.default_device('cpu'):
+      self.assertArraysEqual(jnp.asarray(x, copy=False), x_jax,
+                             check_dtypes=False)
+      self.assertArraysEqual(jnp.asarray(x, copy=False, device=None), x_jax,
+                             check_dtypes=False)
+    with jax.default_device(jax.local_devices(backend='cpu')[0]):
+      self.assertArraysEqual(jnp.asarray(x, copy=False), x_jax,
+                             check_dtypes=False)
+      self.assertArraysEqual(jnp.asarray(x, copy=False, device=None), x_jax,
+                             check_dtypes=False)
+
   @jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*")
   def testArrayDtypeInference(self):
     def _check(obj, out_dtype, weak_type):
