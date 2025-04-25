@@ -41,13 +41,11 @@ from jaxlib._jax import Layout as Layout
 from jaxlib._jax import LoadedExecutable as LoadedExecutable
 from jaxlib._jax import Memory as Memory
 from jaxlib._jax import NamedSharding as NamedSharding
-from jaxlib._jax import ops as ops
 from jaxlib._jax import OpSharding as OpSharding
 from jaxlib._jax import PjRtLayout as PjRtLayout
 from jaxlib._jax import PmapSharding as PmapSharding
 from jaxlib._jax import PrimitiveType as PrimitiveType
 from jaxlib._jax import ArrayCopySemantics as ArrayCopySemantics
-from jaxlib._jax import profiler as profiler
 from jaxlib._jax import Shape as Shape
 from jaxlib._jax import Sharding as Sharding
 from jaxlib._jax import SingleDeviceSharding as SingleDeviceSharding

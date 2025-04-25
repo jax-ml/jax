@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gzip as _gzip
 from jax._src.lib import xla_client as _xc
 
 _deprecations = {
@@ -87,7 +88,7 @@ _deprecations = {
             "jax.lib.xla_client.heap_profile was deprecated in JAX v0.6.0 and"
             " will be removed in JAX v0.7.0"
         ),
-        _xc.heap_profile,
+        lambda client: _gzip.compress(client.heap_profile()),
     ),
     "mlir_api_version": (
         (

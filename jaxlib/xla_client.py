@@ -20,7 +20,6 @@ import atexit
 from collections.abc import Mapping, Sequence
 import contextlib
 import enum
-import gzip
 import inspect
 import logging
 import os
@@ -45,12 +44,10 @@ from jaxlib import _jax as _xla
 # pylint: disable=invalid-sequence-index
 
 ifrt_programs = _xla.ifrt_programs
-ops = _xla.ops
-profiler = _xla.profiler
 
 # Just an internal arbitrary increasing number to help with backward-compatible
 # changes. In JAX, reference this via jax._src.lib.jaxlib_extension_version.
-_version = 330
+_version = 331
 
 # An internal increasing version number for protecting jaxlib code against
 # ifrt changes.
@@ -154,21 +151,6 @@ def make_c_api_client(
   if options is None:
     options = {}
   return _xla.get_c_api_client(plugin_name, options, distributed_client)
-
-
-def make_tpu_client(
-    library_path: str | None = None, options: _NameValueMapping | None = None
-):
-  """Returns a TPU client. Defaults to allowing 32 in-flight computations."""
-  if not pjrt_plugin_loaded('tpu'):
-    c_api = load_pjrt_plugin_dynamically('tpu', library_path or 'libtpu.so')
-    profiler.register_plugin_profiler(c_api)
-    assert pjrt_plugin_loaded('tpu')
-  if not pjrt_plugin_initialized('tpu'):
-    initialize_pjrt_plugin('tpu')
-  if options is None:
-    options = {}
-  return _xla.get_c_api_client('tpu', options)
 
 
 def generate_pjrt_gpu_plugin_options() -> _NameValueMapping:
@@ -957,11 +939,6 @@ def tracebacks(enabled=True):
     yield
   finally:
     Traceback.enabled = saved
-
-
-def heap_profile(client: Client) -> bytes:
-  """Returns a gzipped pprof protocol buffer containing a heap profile."""
-  return gzip.compress(client.heap_profile())
 
 
 XlaRuntimeError = _xla.XlaRuntimeError

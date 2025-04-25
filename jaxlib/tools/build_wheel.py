@@ -209,6 +209,7 @@ def prepare_wheel(wheel_sources_path: pathlib.Path, *, cpu, wheel_sources):
           f"{source_file_prefix}jaxlib/weakref_lru_cache.{pyext}",
           f"{source_file_prefix}jaxlib/weakref_lru_cache.pyi",
           f"{source_file_prefix}jaxlib/_jax.{pyext}",
+          f"{source_file_prefix}jaxlib/_profiler.{pyext}",
       ],
   )
   # This file is required by PEP-561. It marks jaxlib as package containing

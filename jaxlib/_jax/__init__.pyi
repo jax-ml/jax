@@ -20,7 +20,7 @@ import enum
 import inspect
 import types
 from typing import Any, ClassVar, TypeVar, overload
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Mapping, Iterator, Sequence
 
 import numpy as np
 
@@ -625,7 +625,7 @@ def get_mock_gpu_client(
 ) -> Client: ...
 def get_c_api_client(
     platform_name: str,
-    options: dict[str, str | int | list[int] | float | bool],
+    options: Mapping[str, str | int | list[int] | float | bool],
     distributed_client: DistributedRuntimeClient | None = ...,
 ) -> Client: ...
 def get_default_c_api_topology(
@@ -1027,3 +1027,11 @@ class TransferServer:
   def connect(self, address: str) -> TransferConnection: ...
 
 def start_transfer_server(client: Client, address: str = "", transport_addresses: list[str] = [], max_num_parallel_copies: int = 0, transfer_size: int = 0) -> TransferServer: ...
+
+def approx_top_k_reduction_output_size(
+    input_size: int,
+    rank: int,
+    top_k: int,
+    recall_target: float,
+    aggregate_to_topk: bool | None = ...,
+    input_size_override: int | None = ...) -> tuple[int, int]: ...

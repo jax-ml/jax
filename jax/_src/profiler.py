@@ -32,14 +32,14 @@ from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 from jax._src import xla_bridge
-from jax._src.lib import xla_client
+from jax._src.lib import _profiler
 
-_profiler_server: xla_client.profiler.ProfilerServer | None = None
+_profiler_server: _profiler.ProfilerServer | None = None
 
 logger = logging.getLogger(__name__)
 
 
-def start_server(port: int) -> xla_client.profiler.ProfilerServer:
+def start_server(port: int) -> _profiler.ProfilerServer:
   """Starts the profiler server on port `port`.
 
   Using the "TensorFlow profiler" feature in `TensorBoard
@@ -59,7 +59,7 @@ def start_server(port: int) -> xla_client.profiler.ProfilerServer:
   # is for start_trace), but I'm putting it here to be safe.
   xla_bridge.get_backend()
 
-  _profiler_server = xla_client.profiler.start_server(port)
+  _profiler_server = _profiler.start_server(port)
   return _profiler_server
 
 
@@ -126,7 +126,7 @@ def start_trace(log_dir: os.PathLike | str, create_perfetto_link: bool = False,
     # fail and no TPU operations will be included in the profile.
     xla_bridge.get_backend()
 
-    _profile_state.profile_session = xla_client.profiler.ProfilerSession()
+    _profile_state.profile_session = _profiler.ProfilerSession()
     _profile_state.create_perfetto_link = create_perfetto_link
     _profile_state.create_perfetto_trace = (
         create_perfetto_trace or create_perfetto_link)
@@ -219,7 +219,7 @@ def stop_and_get_fdo_profile() -> bytes | str:
     if _profile_state.profile_session is None:
       raise RuntimeError("No profile started")
     xspace = _profile_state.profile_session.stop()
-    fdo_profile = xla_client.profiler.get_fdo_profile(xspace)
+    fdo_profile = _profiler.get_fdo_profile(xspace)
     _profile_state.reset()
     return fdo_profile
 
@@ -257,7 +257,7 @@ def trace(log_dir: os.PathLike | str, create_perfetto_link=False, create_perfett
     stop_trace()
 
 
-class TraceAnnotation(xla_client.profiler.TraceMe):
+class TraceAnnotation(_profiler.TraceMe):
   """Context manager that generates a trace event in the profiler.
 
   The trace event spans the duration of the code enclosed by the context.
@@ -359,7 +359,8 @@ def device_memory_profile(backend: str | None = None) -> bytes:
   Returns:
     A byte string containing a binary `pprof`-format protocol buffer.
   """
-  return xla_client.heap_profile(xla_bridge.get_backend(backend))
+  client = xla_bridge.get_backend(backend)
+  return gzip.compress(client.heap_profile())
 
 
 def save_device_memory_profile(filename, backend: str | None = None) -> None:
@@ -389,7 +390,7 @@ class PGLEProfiler:
     self.collected_fdo: str | None = None
     self.called_times: int = 0
     self.fdo_profiles: list[Any] = []
-    self.current_session: xla_client.profiler.ProfilerSession | None = None
+    self.current_session: _profiler.ProfilerSession | None = None
 
   def consume_fdo_profile(self) -> str | None:
     if self.collected_fdo is not None:
@@ -398,7 +399,7 @@ class PGLEProfiler:
     if not self.is_enabled() or self.called_times != self.retries:
       return None
 
-    self.collected_fdo = xla_client.profiler.aggregate_profiled_instructions(
+    self.collected_fdo = _profiler.aggregate_profiled_instructions(
         self.fdo_profiles, self.percentile
     )
     return self.collected_fdo
@@ -422,17 +423,17 @@ class PGLEProfiler:
         or not runner.is_enabled() or runner.is_fdo_consumed()):
       yield
     else:
-      options = xla_client.profiler.ProfileOptions()
+      options = _profiler.ProfileOptions()
       options.enable_hlo_proto = True
       options.raise_error_on_start_failure = True
-      runner.current_session = xla_client.profiler.ProfilerSession(options)
+      runner.current_session = _profiler.ProfilerSession(options)
 
       try:
         yield
       finally:
         xspace = runner.current_session.stop()
         runner.fdo_profiles.append(
-            xla_client.profiler.get_fdo_profile(xspace)
+            _profiler.get_fdo_profile(xspace)
         )
         runner.current_session = None
 

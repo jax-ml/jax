@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import jax._src.lib
 from jax._src.lib import _jax
 
 _deprecations = {
@@ -71,7 +72,7 @@ _deprecations = {
     "pmap_lib": ("jax.lib.xla_extension.pmap_lib is deprecated.", _jax.pmap_lib),
     "profiler": (
         "jax.lib.xla_extension.profiler is deprecated.",
-        _jax.profiler,
+        jax._src.lib._profiler,
     ),
     "pytree": (
         "jax.lib.xla_extension.pytree is deprecated.",
@@ -127,7 +128,7 @@ if _typing.TYPE_CHECKING:
   jax_jit = _jax.jax_jit
   mlir = _jax.mlir
   pmap_lib = _jax.pmap_lib
-  profiler = _jax.profiler
+  profiler = jax._src.lib._profiler
   pytree = _jax.pytree
 
 else:
