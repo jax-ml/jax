@@ -3005,8 +3005,6 @@ class UnloadedMeshExecutable:
         allow_prop_to_outputs, tuple(host_callbacks), backend, da, pmap_nreps,
         compiler_options_kvs, pgle_profiler)
 
-    orig_out_shardings = out_shardings
-
     if auto_spmd_lowering:
       assert mesh is not None
       in_shardings_xla, out_shardings_xla = _get_mesh_pspec_shardings_from_executable(

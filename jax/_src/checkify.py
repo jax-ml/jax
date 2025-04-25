@@ -968,15 +968,15 @@ def shard_map_error_check(
   new_in_names = (*([{}] * num_error_vals), *in_names)
   new_vals_in = [*err_vals, *vals_in]
   in_avals = list(map(core.get_aval, new_vals_in))
-  auto = kwargs.get('auto')
+  manual_axes = kwargs.get('manual_axes')
   check_vma = kwargs.get('check_vma')
   for i, v in enumerate(in_avals):
     if not (sharder := core.shard_aval_handlers.get(type(v))):
       raise ValueError(f'Unsupported aval type: {type(v)}')
-    in_avals[i] = sharder(mesh, auto, check_vma, new_in_names[i], v)
+    in_avals[i] = sharder(mesh, manual_axes, check_vma, new_in_names[i], v)
 
-  with (jshmap._extend_axis_env(mesh, auto),
-        mesh_lib.use_abstract_mesh(jshmap._as_manual_mesh(mesh, auto)),
+  with (jshmap._extend_axis_env(mesh, manual_axes),
+        mesh_lib.use_abstract_mesh(jshmap._as_manual_mesh(mesh, manual_axes)),
         config._check_vma(check_vma)):
     # jaxpr to checked_jaxpr
     checked_jaxpr, out_tree, _ = jaxpr_to_checkify_jaxpr(
