@@ -576,8 +576,9 @@ def _check_output_dtype_revderiv(name, holomorphic, x):
 _check_output_dtype_grad = partial(_check_output_dtype_revderiv, "grad")
 
 def fwd_and_bwd(
-    fun: Callable, has_aux: bool = False, jitted: bool = True
-  ) -> tuple[Callable, Callable]:
+    fun: Callable, argnums: int | Sequence[int], has_aux: bool = False,
+    jitted: bool = True,
+) -> tuple[Callable, Callable]:
   """Creates functions ``fwd`` and ``bwd`` corresponding to the forward and
   backward pass of a given function ``fun``. The forward function ``fwd(*args)``
   functionally behaves much like ``y, fun_vjp = jax.vjp(fun, *args)``, but allows
@@ -598,7 +599,7 @@ def fwd_and_bwd(
   ...     cot_x, cot_W = f_vjp(cot_out)           # not jitted
   ...     cot_x, cot_W = jax.jit(f_vjp)(cot_out)  # recompiles on every iteration
   ...
-  >>> fwd, bwd = jax.fwd_and_bwd(f)
+  >>> fwd, bwd = jax.fwd_and_bwd(f, argnums=(0,1))
   >>> for i in range(3):
   ...     y, residuals = fwd(x, W)
   ...     cot_x, cot_W = bwd(residuals, cot_out)  # jitted, compiles once
@@ -606,6 +607,8 @@ def fwd_and_bwd(
 
   Args:
     fun: Function to produce a forward and backward of.
+    argnums: Integer or sequence of integers. Specifies which positional argument(s)
+      to differentiate with respect to.
     has_aux: Optional, bool. Indicates whether ``fun`` returns a pair where the
      first element is considered the output of the mathematical function to be
      differentiated and the second element is auxiliary data. Default False.
@@ -624,13 +627,22 @@ def fwd_and_bwd(
 
     ``bwd`` is a function from ``residuals`` and a cotangent vector with the same
     shape as ``primals_out`` to a tuple of cotangent vectors with the same number
-    and shapes as ``primals``, representing the vector-Jacobian product of ``fun``
-    evaluated at ``primals``.
+    and shapes as the ``primals`` designated by ``argnums``, representing the
+    vector-Jacobian product of ``fun`` evaluated at ``primals``.
   """
-  def fwd(*args):
-    return vjp(fun, *args, has_aux=has_aux)  # type: ignore
+  check_callable(fun)
+  argnums = _ensure_index(argnums)
+
+  def fwd(*args, **kwargs):
+    dbg = debug_info('fwd_and_bwd', fun, args, kwargs)
+    f = lu.wrap_init(fun, params=kwargs, debug_info=dbg)
+    f_partial, dyn_args = argnums_partial(
+        f, argnums, args, require_static_args_hashable=False)
+    return _vjp(f_partial, *dyn_args, has_aux=has_aux)  # type: ignore
   def bwd(f_vjp, outgrad):
-    return f_vjp(outgrad)
+    g = f_vjp(outgrad)
+    g = g[0] if isinstance(argnums, int) else g
+    return g
   if jitted:
     fwd = jit(fwd)
     bwd = jit(bwd)
