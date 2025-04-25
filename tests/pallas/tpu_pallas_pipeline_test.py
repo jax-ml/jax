@@ -131,8 +131,8 @@ class PallasCallPipelineTest(parameterized.TestCase):
     super().setUp()
 
   @parameterized.named_parameters(
-      ('vmem', pltpu.TPUMemorySpace.VMEM),
-      ('hbm', pltpu.TPUMemorySpace.ANY),
+      ('vmem', pltpu.VMEM),
+      ('hbm', pltpu.ANY),
   )
   def test_pipeline_matmul(self, memory_space):
     # TODO(b/358121809): Re-enable this test once the bug is fixed.
@@ -178,8 +178,8 @@ class PallasCallPipelineTest(parameterized.TestCase):
     np.testing.assert_allclose(out, expected_out)
 
   @parameterized.named_parameters(
-      ('vmem', pltpu.TPUMemorySpace.VMEM),
-      ('hbm', pltpu.TPUMemorySpace.ANY),
+      ('vmem', pltpu.VMEM),
+      ('hbm', pltpu.ANY),
   )
   def test_double_pipeline_matmul(self, memory_space):
     # TODO(b/358121809): Re-enable this test once the bug is fixed.
@@ -236,11 +236,11 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
     super().setUp()
 
   @parameterized.named_parameters(
-      ('vmem', pltpu.TPUMemorySpace.VMEM, jnp.bfloat16, 2, 2, 2),
-      ('hbm', pltpu.TPUMemorySpace.ANY, jnp.bfloat16, 2, 2, 2),
-      ('hbm_float32', pltpu.TPUMemorySpace.ANY, jnp.float32, 2, 2, 2),
-      ('hbm_float32_112', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 1, 2),
-      ('hbm_float32_111', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 1, 1),
+      ('vmem', pltpu.VMEM, jnp.bfloat16, 2, 2, 2),
+      ('hbm', pltpu.ANY, jnp.bfloat16, 2, 2, 2),
+      ('hbm_float32', pltpu.ANY, jnp.float32, 2, 2, 2),
+      ('hbm_float32_112', pltpu.ANY, jnp.float32, 1, 1, 2),
+      ('hbm_float32_111', pltpu.ANY, jnp.float32, 1, 1, 1),
   )
   def test_pipeline_latency_optimized_allgather_matmul(
       self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles):
@@ -526,11 +526,11 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
     )
 
   @parameterized.named_parameters(
-      ('vmem', pltpu.TPUMemorySpace.VMEM, jnp.bfloat16, 2, 2, 2),
-      ('hbm', pltpu.TPUMemorySpace.ANY, jnp.bfloat16, 2, 2, 2),
-      ('hbm_float32', pltpu.TPUMemorySpace.ANY, jnp.float32, 2, 2, 2),
-      ('hbm_float32_122', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 2, 2),
-      ('hbm_float32_121', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 2, 1),
+      ('vmem', pltpu.VMEM, jnp.bfloat16, 2, 2, 2),
+      ('hbm', pltpu.ANY, jnp.bfloat16, 2, 2, 2),
+      ('hbm_float32', pltpu.ANY, jnp.float32, 2, 2, 2),
+      ('hbm_float32_122', pltpu.ANY, jnp.float32, 1, 2, 2),
+      ('hbm_float32_121', pltpu.ANY, jnp.float32, 1, 2, 1),
   )
   def test_pipeline_throughput_optimized_allgather_matmul(
       self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles):
@@ -769,11 +769,11 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
     )
 
   @parameterized.named_parameters(
-      ('vmem', pltpu.TPUMemorySpace.VMEM, jnp.bfloat16, 2, 2, 2),
-      ('hbm', pltpu.TPUMemorySpace.ANY, jnp.bfloat16, 2, 2, 2),
-      ('hbm_float32', pltpu.TPUMemorySpace.ANY, jnp.float32, 2, 4, 2),
-      ('hbm_float32_112', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 1, 2),
-      ('hbm_float32_111', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 1, 1),
+      ('vmem', pltpu.VMEM, jnp.bfloat16, 2, 2, 2),
+      ('hbm', pltpu.ANY, jnp.bfloat16, 2, 2, 2),
+      ('hbm_float32', pltpu.ANY, jnp.float32, 2, 4, 2),
+      ('hbm_float32_112', pltpu.ANY, jnp.float32, 1, 1, 2),
+      ('hbm_float32_111', pltpu.ANY, jnp.float32, 1, 1, 1),
   )
   def test_pipeline_latency_optimized_matmul_reducescatter(
       self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles):
@@ -1056,11 +1056,11 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
     np.mean(np.abs(out - expected_out))
 
   @parameterized.named_parameters(
-      ('vmem', pltpu.TPUMemorySpace.VMEM, jnp.bfloat16, 2, 2, 2),
-      ('hbm', pltpu.TPUMemorySpace.ANY, jnp.bfloat16, 2, 2, 2),
-      ('hbm_float32', pltpu.TPUMemorySpace.ANY, jnp.float32, 2, 4, 2),
-      ('hbm_float32_112', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 2, 2),
-      ('hbm_float32_111', pltpu.TPUMemorySpace.ANY, jnp.float32, 1, 2, 1),
+      ('vmem', pltpu.VMEM, jnp.bfloat16, 2, 2, 2),
+      ('hbm', pltpu.ANY, jnp.bfloat16, 2, 2, 2),
+      ('hbm_float32', pltpu.ANY, jnp.float32, 2, 4, 2),
+      ('hbm_float32_112', pltpu.ANY, jnp.float32, 1, 2, 2),
+      ('hbm_float32_111', pltpu.ANY, jnp.float32, 1, 2, 1),
   )
   def test_pipeline_throughput_optimized_matmul_reducescatter(
       self, memory_space, out_dtype, n_tiles, m_tiles, k_tiles):

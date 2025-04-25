@@ -1517,10 +1517,10 @@ class OpsTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call,
-        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
-                  pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM),
+                  pl.BlockSpec(memory_space=pltpu.SMEM),
                   ],
-        out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
         out_shape=jax.ShapeDtypeStruct((1,), dtype),
     )
     def kernel(x_ref, y_ref, o_ref):
