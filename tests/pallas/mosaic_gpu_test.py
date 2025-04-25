@@ -1032,7 +1032,7 @@ class PallasCallTest(PallasTest):
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((128,), jnp.int32),
-        in_specs=[plgpu.GPUBlockSpec(memory_space=plgpu.GPUMemorySpace.GMEM)],
+        in_specs=[plgpu.GPUBlockSpec(memory_space=plgpu.GMEM)],
     )
     def kernel(x_ref, o_ref):
       o_ref[...] = jnp.broadcast_to(x_ref[10], (128,))
@@ -1062,8 +1062,8 @@ class PallasCallTest(PallasTest):
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.int32),
-        in_specs=[pl.BlockSpec(memory_space=plgpu.GPUMemorySpace.GMEM)],
-        out_specs=pl.BlockSpec(memory_space=plgpu.GPUMemorySpace.SMEM),
+        in_specs=[pl.BlockSpec(memory_space=plgpu.GMEM)],
+        out_specs=pl.BlockSpec(memory_space=plgpu.SMEM),
     )
     def kernel(x_ref_gmem, o_ref):
       def scoped_kernel(barrier_ref):
@@ -1370,8 +1370,8 @@ class PallasCallTest(PallasTest):
     a = np.zeros((64, 64), dtype=jnp.float32)
     b = self.pallas_call(
         kernel,
-        in_specs=[plgpu.GPUBlockSpec(memory_space=plgpu.GPUMemorySpace.GMEM)],
-        out_specs=plgpu.GPUBlockSpec(memory_space=plgpu.GPUMemorySpace.GMEM),
+        in_specs=[plgpu.GPUBlockSpec(memory_space=plgpu.GMEM)],
+        out_specs=plgpu.GPUBlockSpec(memory_space=plgpu.GMEM),
         input_output_aliases={0: 0},
         out_shape=a,
     )(a)

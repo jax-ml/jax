@@ -542,10 +542,10 @@ def paged_attention(
   if k_scales_pages is not None and v_scales_pages is not None:
     in_specs = [
         q_block_spec,
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.ANY),
+        pl.BlockSpec(memory_space=pltpu.ANY),
+        pl.BlockSpec(memory_space=pltpu.ANY),
+        pl.BlockSpec(memory_space=pltpu.ANY),
     ]
     scratch_shapes = (
         pltpu.VMEM(
@@ -589,9 +589,9 @@ def paged_attention(
   else:
     in_specs = [
         q_block_spec,
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.ANY),
         None,  # type: ignore[list-item]
-        pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+        pl.BlockSpec(memory_space=pltpu.ANY),
         None,  # type: ignore[list-item]
     ]
     scratch_shapes = (
