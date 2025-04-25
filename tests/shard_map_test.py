@@ -3028,6 +3028,34 @@ class ShardMapTest(jtu.JaxTestCase):
     jax.shard_map(f, mesh=mesh, in_specs=P('x'), out_specs=P('x')
                   )(jnp.ones(2,))  # doesn't crash
 
+  def test_shmap_linearize_and_linearize_transpose_error(self):
+    mesh = jtu.create_mesh((2,), ('x',))
+
+    def f(x):
+      return jnp.mean(x ** 2)
+
+    def m(p, t):
+      out_p, fwd = jax.linearize(f, p)
+      out_t = fwd(t)
+      bwd = jax.linear_transpose(fwd, p)
+      return bwd(out_t)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r"applying `jax.lax.pvary\(..., \('x',\)\)` to the primal value passed"):
+      shard_map(partial(m, jnp.array([1.])), mesh=mesh, in_specs=P('x'),
+                out_specs=P('x'))(jnp.ones((2,)))  # doesn't crash
+
+    def m2(p, t):
+      p = jax.lax.pvary(p, 'x')  # fixes the issue
+      out_p, fwd = jax.linearize(f, p)
+      out_t = fwd(t)
+      bwd = jax.linear_transpose(fwd, p)
+      return bwd(out_t)
+
+    shard_map(partial(m2, jnp.array([1.])), mesh=mesh, in_specs=P('x'),
+              out_specs=P('x'))(jnp.ones((2,)))  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str
