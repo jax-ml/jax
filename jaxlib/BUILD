@@ -1149,7 +1149,6 @@ cc_library(
         "@xla//xla/ffi",
         "@xla//xla/ffi:ffi_api",
         "@xla//xla/ffi/api:c_api",
-        "@xla//xla/hlo/builder:xla_builder",
         "@xla//xla/hlo/builder:xla_computation",
         "@xla//xla/hlo/ir:hlo",
         "@xla//xla/hlo/ir:hlo_module_group",

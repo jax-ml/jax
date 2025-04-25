@@ -902,8 +902,11 @@ class PJitTest(jtu.BufferDonationTestCase):
     def check_outfeed(x_fn):
       for didx, d in enumerate(devices):
         x = x_fn(didx)
-        y, = d.transfer_from_outfeed(
-            xc.shape_from_pyval((x,)).with_major_to_minor_layout_if_absent())
+        y = d.transfer_from_outfeed(
+            xc.Shape.array_shape(
+                xc.PrimitiveType.F32, x.shape
+            ).with_major_to_minor_layout_if_absent()
+        )
         self.assertAllClose(x, y, check_dtypes=True)
 
     logging.info('Transferring from outfeed for the pjit call')
