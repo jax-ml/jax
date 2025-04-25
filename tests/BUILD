@@ -378,6 +378,7 @@ jax_multiplatform_test(
     enable_backends = ["gpu"],
     enable_configs = [
         "gpu_h100",
+        "gpu_a100_shardy",
     ],
     tags = [
         "config-cuda-only",
