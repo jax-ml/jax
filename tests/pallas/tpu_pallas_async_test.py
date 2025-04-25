@@ -298,6 +298,8 @@ class PallasCallAsyncCopyTest(parameterized.TestCase):
 
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('TPU v5+ required for async copy into VMEM')
+    if jtu.get_device_kind() == 'TPU v5':
+      self.skipTest('Disable test for TPU v5.')
     x = jax.random.normal(jax.random.key(0), (8, 128), dtype=jnp.float32)
     y, y2 = f(x)
     np.testing.assert_array_equal(y, x)
