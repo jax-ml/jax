@@ -2046,12 +2046,19 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx: mlir.LoweringRuleContext,
     # TODO(b/228598865): inlined calls cannot have shardings set directly on the
     # inputs or outputs because they are lost during MLIR->HLO conversion.
     # using_sharding_annotation=False means we add an identity operation instead.
+    num_callbacks = len(mod_ctx.host_callbacks)
     func = mlir.lower_jaxpr_to_fun(
         mod_ctx, name, jaxpr, effects, ctx.name_stack,
         arg_shardings=arg_shardings, result_shardings=result_shardings,
         use_sharding_annotations=False, api_name=api_name,
         arg_layouts=in_layouts, result_layouts=out_layouts)
-    mod_ctx.cached_primitive_lowerings[key] = func
+
+    # If this Jaxpr includes callbacks, we can't cache the lowering because
+    # on TPU every callback must have a globally unique channel, but the
+    # channel gets assigned during lowering.
+    has_callbacks = len(mod_ctx.host_callbacks) > num_callbacks
+    if not has_callbacks or "tpu" not in mod_ctx.platforms:
+      mod_ctx.cached_primitive_lowerings[key] = func
   return func
 
 
