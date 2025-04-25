@@ -1559,17 +1559,21 @@ def move_binders_to_front(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]
 def _move_binders_to_front(closed_jaxpr: ClosedJaxpr, to_move: tuple[bool, ...]
                            ) -> ClosedJaxpr:
   assert len(closed_jaxpr.in_avals) == len(to_move)
-  new_invars = _move_to_front(closed_jaxpr.jaxpr.invars, to_move)
-  id_map = {id(v): i for i, v in enumerate(new_invars)}
-  idx_map = {i: id_map[id(v)] for i, v in enumerate(closed_jaxpr.jaxpr.invars)}
-  new_effs = {e.replace(input_index=idx_map[e.input_index])
-              if isinstance(e, effects.JaxprInputEffect) else e
-              for e in closed_jaxpr.jaxpr.effects}
-  new_jaxpr = Jaxpr(closed_jaxpr.jaxpr.constvars, new_invars,
-                    closed_jaxpr.jaxpr.outvars, closed_jaxpr.jaxpr.eqns,
-                    new_effs, closed_jaxpr.jaxpr.debug_info)
+  constvars, invars = closed_jaxpr.jaxpr.constvars, closed_jaxpr.jaxpr.invars
+  new_invars = _move_to_front(invars, to_move)
+  new_effs = _renumber_effects(
+      (*constvars, *new_invars), (*constvars, *invars), closed_jaxpr.jaxpr.effects)
+  new_jaxpr = Jaxpr(constvars, new_invars, closed_jaxpr.jaxpr.outvars,
+                    closed_jaxpr.jaxpr.eqns, new_effs,
+                    closed_jaxpr.jaxpr.debug_info)
   new_closed_jaxpr = core.ClosedJaxpr(new_jaxpr, closed_jaxpr.consts)
   return new_closed_jaxpr
+
+def _renumber_effects(new_vars, old_vars, effs):
+  newvar_idxs = {id(v): i for i, v in enumerate(new_vars)}
+  old_to_new = {i: newvar_idxs[id(v)] for i, v in enumerate(old_vars)}
+  return {e.replace(input_index=old_to_new[e.input_index])
+          if isinstance(e, effects.JaxprInputEffect) else e for e in effs}
 
 def _move_to_front(lst: Sequence, to_move: Sequence[bool]) -> Sequence:
   return ([elt for elt, move in zip(lst, to_move) if move] +
@@ -1588,7 +1592,6 @@ def _move_outvars_to_back(jaxpr, to_move):
   new_outvars = ([e for e, m in zip(jaxpr.jaxpr.outvars, to_move) if not m] +
                  [e for e, m in zip(jaxpr.jaxpr.outvars, to_move) if     m])
   return jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(outvars=new_outvars))
-
 
 
 class DynamicJaxprTracer(core.Tracer):
@@ -1671,16 +1674,19 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
               f"\n Equation: {eqn}\n"
               "\n Jaxpr: "
               f"{core.Jaxpr(constvars, invars, outvars, eqns, set())}")
-        invar = eqn.invars[eff.input_index]
-        if invar in mut_arrays:
+        eqn_invar = eqn.invars[eff.input_index]
+        if eqn_invar in mut_arrays:
           continue
-        if (input_index := all_vars.get(invar, sentinel)) is sentinel:
+        if (input_index := all_vars.get(eqn_invar, sentinel)) is sentinel:
+          # TODO(mattjj): ask for forgiveness
+          dbg = type('Fake', (), {'resolve_result_paths': lambda _: None})()
           raise ValueError(
                 f"`JaxprInputEffect` {eff} does not have "
-                f"corresponding input: {invar}."
+                f"corresponding jaxpr input: {eqn_invar=}."
                 f"\n Equation: {eqn}\n"
+                f"\n Effects: {eqn.effects}\n"
                 "\n Jaxpr: "
-                f"{core.Jaxpr(constvars, invars, outvars, eqns, set())}")
+                f"{core.Jaxpr(constvars, invars, outvars, eqns, set(), dbg)}")  # type: ignore
         eff = eff.replace(input_index=input_index)
       jaxpr_effects.add(eff)
   return jaxpr_effects
