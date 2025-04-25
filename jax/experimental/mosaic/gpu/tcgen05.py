@@ -288,6 +288,19 @@ def commit_arrive(
   )
 
 
+def _alloc_ncols(ncols: int, exact: bool):
+  if exact:
+    if ncols.bit_count() != 1 or not 32 <= ncols <= 512:
+      raise ValueError(f"ncols must be a power of 2 and within [32, 512], got: {ncols}")
+  else:
+    ncols = max(32, 1 << (ncols - 1).bit_length())
+    if ncols > 512:
+      raise ValueError(
+          f"After rounding up, got {ncols} columns, exceeding the limit of 512"
+      )
+  return ncols
+
+
 def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact: bool = True):
   if ir.MemRefType.isinstance(tmem_addr.type):
     ref_ty = ir.MemRefType(tmem_addr.type)
@@ -300,15 +313,7 @@ def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact:
     tmem_addr = utils.memref_ptr(tmem_addr, memory_space=3)
   elif tmem_addr.type != ir.Type.parse("!llvm.ptr<3>"):
     raise ValueError(f"tmem_addr must be an SMEM pointer or a memref, got: {tmem_addr.type}")
-  if exact:
-    if ncols.bit_count() != 1 or not 32 <= ncols <= 512:
-      raise ValueError(f"ncols must be a power of 2 and within [32, 512], got: {ncols}")
-  else:
-    ncols = max(32, 1 << (ncols - 1).bit_length())
-    if ncols > 512:
-      raise ValueError(
-          f"After rounding up, got {ncols} columns, exceeding the limit of 512"
-      )
+  ncols = _alloc_ncols(ncols, exact)
   num_cta = 2 if collective else 1
   return llvm.inline_asm(
       ir.Type.parse("!llvm.void"),
@@ -318,11 +323,27 @@ def tmem_alloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact:
       has_side_effects=True,
   )
 
-def tmem_relinquish_alloc_permit():
+
+def tmem_dealloc(tmem_addr: ir.Value, ncols: int, collective: bool = False, exact: bool = True):
+  if tmem_addr.type != ir.IntegerType.get_signless(32):
+    raise ValueError(f"tmem_addr must be an i32, got: {tmem_addr.type}")
+  ncols = _alloc_ncols(ncols, exact)
+  num_cta = 2 if collective else 1
+  return llvm.inline_asm(
+      ir.Type.parse("!llvm.void"),
+      [tmem_addr],
+      f"tcgen05.dealloc.cta_group::{num_cta}.sync.aligned.b32  $0, {ncols};",
+      "r",
+      has_side_effects=True,
+  )
+
+
+def tmem_relinquish_alloc_permit(collective: bool):
+  num_cta = 2 if collective else 1
   return llvm.inline_asm(
       ir.Type.parse("!llvm.void"),
       [],
-      "tcgen05.relinquish_alloc_permit.cta_group::1.sync.aligned;",
+      f"tcgen05.relinquish_alloc_permit.cta_group::{num_cta}.sync.aligned;",
       "",
       has_side_effects=True,
   )
@@ -633,10 +654,13 @@ def _transfer_32xcols(base_addr, cols):
   cols_per_num = 8  # Here we generate a plan compatible with tcgen05.LAYOUT.
   assert cols % cols_per_num == 0
   total_num = cols // cols_per_num
-  if total_num <= 32:
+  assert total_num.bit_count() == 1
+  # We artificially lower the instr_num compared to its limits, because higher
+  # values can lead to register spills..
+  if total_num <= 16:
     instr_num = total_num
-  elif total_num == 64:
-    instr_num = 32
+  elif 32 <= total_num <= 64:
+    instr_num = 16
   else:
     raise NotImplementedError(total_num)
   # We transfer 16 lanes at a time, but have 32 to deal with.

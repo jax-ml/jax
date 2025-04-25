@@ -18,7 +18,6 @@ import contextlib
 import ctypes
 import dataclasses
 import enum
-import functools
 import hashlib
 import math
 import os
@@ -222,11 +221,29 @@ class LoweringSemantics(enum.Enum):
   Warpgroup = enum.auto()
 
 
+@dataclasses.dataclass(frozen=True)
+class _TMEMAlloc:
+  addr_ref: ir.Value
+  num_cols: int
+  collective: bool
+
+  def alloc(self):
+    tcgen05.tmem_alloc(
+        self.addr_ref, self.num_cols, collective=self.collective, exact=False
+    )
+
+  def dealloc(self):
+    addr = memref.load(self.addr_ref, [])
+    tcgen05.tmem_dealloc(
+        addr, self.num_cols, collective=self.collective, exact=False
+    )
+
+
 def _construct_smem_reftree(
     cluster_shape: tuple[int, int, int],
     dynamic_smem: ir.Value,
     smem_buffers: ShapeTree,
-    delayed_warp_init: list[Callable[[], None]],  # Mutated by this function!
+    tmem_allocs: list[_TMEMAlloc],  # Mutated by this function!
     lowering_semantics: LoweringSemantics,
     dynamic_smem_offset: int = 0,
 ) -> Callable[[], RefTree]:
@@ -261,7 +278,7 @@ def _construct_smem_reftree(
                 cluster_shape,
                 dynamic_smem,
                 m,
-                delayed_warp_init,
+                tmem_allocs,
                 lowering_semantics,
                 dynamic_smem_offset,
             )
@@ -304,12 +321,7 @@ def _construct_smem_reftree(
         if layout is None:
           layout = tcgen05._infer_tmem_layout(shape, collective)
         num_cols = layout.cols_in_shape(shape)
-        delayed_warp_init.append(
-            functools.partial(
-                tcgen05.tmem_alloc,
-                addr_ref, num_cols, collective=collective, exact=False,
-            )
-        )
+        tmem_allocs.append(_TMEMAlloc(addr_ref, num_cols, collective))
         def ref(addr_ref=addr_ref, shape=shape, dtype=dtype, layout=layout):
           addr = memref.load(addr_ref, [])
           return tcgen05.TMEMRef(
@@ -441,13 +453,9 @@ def _launch(
     scratch_ptr = builtin.unrealized_conversion_cast([ptr_ty], [scratch_arr])
     ctx = launch_context.LaunchContext(launch_op, scratch_ptr, cluster, prof)
     with ctx.named_region("Init"):
-      delayed_warp_init = []
+      tmem_allocs: list[_TMEMAlloc] = []
       smem_ref_tree_thunk = _construct_smem_reftree(
-          cluster,
-          dynamic_smem,
-          smem_buffers,
-          delayed_warp_init,
-          lowering_semantics,
+          cluster, dynamic_smem, smem_buffers, tmem_allocs, lowering_semantics
       )
       # TODO(apaszke): Skip fences if no barriers or TMEM is initialized.
       # TODO(apaszke): Only initialize cluster barriers before the cluster wait.
@@ -455,17 +463,23 @@ def _launch(
       if math.prod(cluster) != 1:
         nvvm.cluster_arrive_relaxed(aligned=ir.UnitAttr.get())
         nvvm.cluster_wait(aligned=ir.UnitAttr.get())
-      if delayed_warp_init:
+      if tmem_allocs:
         eq = arith.CmpIPredicate.eq
         is_init_warp = arith.cmpi(eq, utils.warp_idx(sync=False), c(0, i32))
         with utils.when(is_init_warp):
-          for init in delayed_warp_init:
-            init()
-          tcgen05.tmem_relinquish_alloc_permit()
+          for alloc in tmem_allocs:
+            alloc.alloc()
+          if any(alloc.collective for alloc in tmem_allocs):
+            tcgen05.tmem_relinquish_alloc_permit(collective=True)
+          if any(not alloc.collective for alloc in tmem_allocs):
+            tcgen05.tmem_relinquish_alloc_permit(collective=False)
       gpu.barrier()  # Make sure the init is visible to all threads.
       smem_ref_tree = smem_ref_tree_thunk()
 
     yield ctx, smem_ref_tree
+
+    for alloc in tmem_allocs:
+      alloc.dealloc()
     if prof is not None:
       prof.finalize(grid=grid, block=block)
     gpu.terminator()
@@ -666,7 +680,7 @@ def as_gpu_kernel(
       *results, prof_buffer = bind(*args)
       def dump_profile(prof_buffer):
         out_file = os.path.join(
-            os.getenv("TEST_UNDECLARED_OUTPUTS_DIR"),
+            os.getenv("TEST_UNDECLARED_OUTPUTS_DIR", "/tmp"),
             f"{time.time_ns()}-trace.json",
         )
         try:
