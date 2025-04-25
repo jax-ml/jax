@@ -16,11 +16,49 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from functools import cache
+from itertools import chain
+import numpy as np
 import os
 import socket
+import time
 import textwrap
 import warnings
 from jax._src import clusters
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def retry(
+    func=None,
+    initial_delay=0,
+    wait=np.logspace(-1, 1, 5) * np.random.rand(5),
+    exceptions=Exception,
+):
+  def retry_decorator(func):
+    def retry_driver(*args, **kwargs):
+      # Retry the function call with exponential backoff
+      for i, t in enumerate(chain([initial_delay], wait)):
+        logger.debug(
+          f"Trying {func.__name__} in {t:.2f} seconds, attempt {i}/{len(wait)}"
+        )
+        time.sleep(t)
+        try:
+          return func(*args, **kwargs)
+        except exceptions as e:
+          if i == len(wait):
+            raise RuntimeError('Retry failed with all attempts exhausted') from e
+        finally:
+          logger.debug(
+            f"Finished {func.__name__} after {i+1} attempts"
+          )
+    return retry_driver
+
+  if func is None:
+    return retry_decorator
+  else:
+    return retry_decorator(func)
 
 
 class K8sCluster(clusters.ClusterEnv):
@@ -83,16 +121,16 @@ class K8sCluster(clusters.ClusterEnv):
 
   @classmethod
   @cache
+  # in case of latency for core DNS to update pod IP to etcd/API server
+  @retry(exceptions=ValueError)
   def _pod(cls):
+    ip = socket.gethostbyname(os.getenv('HOSTNAME'))
     with cls._handle_api_exception():
-      ip = socket.gethostbyname(os.getenv('HOSTNAME'))
-      pods = cls._core_api.list_namespaced_pod(
+      [pod] = cls._core_api.list_namespaced_pod(
         namespace=cls._namespace(),
         field_selector=f'status.podIP={ip}'
       ).items
-      assert len(pods) == 1, \
-        f"Exactly 1 Kubernetes pod should have IP {ip}, got {len(pods)}."
-      return pods[0]
+    return pod
 
   @classmethod
   @cache
@@ -140,10 +178,9 @@ class K8sCluster(clusters.ClusterEnv):
     if controller.kind == 'Job':
       # if job belongs to a jobset
       if 'jobset.sigs.k8s.io/jobset-name' in job.metadata.labels:
-        return '{job_name}-0.{subdomain}:{port}'.format(
+        coordinator_hostname = '{job_name}-0.{subdomain}'.format(
           job_name=job.metadata.name,
-          subdomain=job.metadata.labels['jobset.sigs.k8s.io/jobset-name'],
-          port=cls._coordinator_port
+          subdomain=job.metadata.labels['jobset.sigs.k8s.io/jobset-name']
         )
       # if job is standalone
       else:
@@ -197,11 +234,28 @@ class K8sCluster(clusters.ClusterEnv):
 
           raise RuntimeError('\n'.join([textwrap.fill(err_msg)] + fix_msg))
 
-        return '{job_name}-0.{subdomain}:{port}'.format(
+        coordinator_hostname = '{job_name}-0.{subdomain}'.format(
           job_name=job.metadata.name,
-          subdomain=pod.spec.subdomain,
-          port=cls._coordinator_port
+          subdomain=pod.spec.subdomain
         )
+
+      if timeout_secs:
+          # Ensure host pod is up before trying to communicate
+          # Retry in case of cached NXDOMAIN DNS failure (30 secs default)
+          @retry(
+            initial_delay=0.5,
+            wait=np.logspace(-1, 1.5, 8) * np.random.rand(8),
+            exceptions=socket.gaierror
+          )
+          def wait_for_host(hostname):
+            socket.gethostbyname(hostname)
+
+          wait_for_host(coordinator_hostname)
+
+      return '{hostname}:{port}'.format(
+        hostname=coordinator_hostname,
+        port=cls._coordinator_port
+      )
 
     else:
       raise RuntimeError(
