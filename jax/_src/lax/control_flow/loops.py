@@ -312,6 +312,9 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     init_flat, carry_avals, carry_avals_out, init_tree, *rest = _create_jaxpr(init)
   in_flat, jaxpr, consts, out_tree, out_tree_children, attrs_tracked = rest
   num_carry = len(init_flat)
+  num_xs = len(x_avals)
+  num_ys = len(jaxpr.out_avals) - num_carry
+  del init_flat
 
   _check_carry_type('scan body', f, init, out_tree_children[0], carry_avals_out)
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(jaxpr.effects)
@@ -327,22 +330,42 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     unroll = max(length, 1) if unroll else 1
   if unroll < 1:
     raise ValueError("`unroll` must be a `bool` or a positive `int`.")
+
   if attrs_tracked:
     in_state = _get_states(attrs_tracked)
     in_flat = [*in_state, *in_flat]
     num_carry += len(in_state)
+
+  # If the body forwards an input carry to an output carry, that input is
+  # read-only and can be moved to be a const. Doing so can lead to efficiency
+  # wins, e.g. if the scan is inside a cond with a batched predicate.
+  carry_fwd, _ = split_list(pe._jaxpr_forwarding(jaxpr.jaxpr), [num_carry])
+  move_to_const = [len(consts) + i == f for i, f in enumerate(carry_fwd)]
+  if any(move_to_const):
+    jaxpr = pe.prune_closed_jaxpr_outputs(
+        jaxpr, [not m for m in move_to_const] + [True] * num_ys)
+    jaxpr = pe.move_binders_to_front(
+        jaxpr, [False] * len(consts) + move_to_const + [False] * num_xs)
+    in_flat, new_consts = partition_list(move_to_const + [False] * num_xs, in_flat)
+    consts = [*new_consts, *consts]
+    num_carry -= len(new_consts)
+
   out = scan_p.bind(*consts, *in_flat,
                     reverse=reverse, length=length, jaxpr=jaxpr,
                     num_consts=len(consts), num_carry=num_carry,
                     linear=(False,) * (len(consts) + len(in_flat)),
-                    unroll=unroll,
-                    _split_transpose=_split_transpose)
+                    unroll=unroll, _split_transpose=_split_transpose)
+
+  if any(move_to_const):
+    out = pe.merge_lists(move_to_const + [False] * num_ys, out, new_consts)
+
   if attrs_tracked:
     num_ext = (len(out) - len(in_state)
                - sum(k is pe.Append for *_, (_, _, k) in attrs_tracked))
     out_state, out, out_append = split_list(out, [len(in_state), num_ext])
     out_attrs = _merge_attrs_out(attrs_tracked, out_state, out_append)
     _set_states(attrs_tracked, out_attrs)
+
   return tree_unflatten(out_tree, out)
 
 def _set_states(attrs_tracked, vals):
