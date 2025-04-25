@@ -16,11 +16,11 @@
 from __future__ import annotations
 
 import builtins
+from collections.abc import Callable, Iterator, Mapping, Sequence
 import enum
 import inspect
 import types
 from typing import Any, ClassVar, TypeVar, overload
-from collections.abc import Callable, Mapping, Iterator, Sequence
 
 import numpy as np
 
@@ -94,9 +94,12 @@ class Layout:
   @overload
   def __init__(self, minor_to_major: tuple[int, ...]): ...
   @overload
-  def __init__(self, minor_to_major: tuple[int, ...],
-               tiling: tuple[tuple[int, ...], ...],
-               element_size_in_bits: int): ...
+  def __init__(
+      self,
+      minor_to_major: tuple[int, ...],
+      tiling: tuple[tuple[int, ...], ...],
+      element_size_in_bits: int,
+  ): ...
   def minor_to_major(self) -> tuple[int, ...]: ...
   def tiling(self) -> Sequence[tuple[int, ...]]: ...
   def element_size_in_bits(self) -> int: ...
@@ -146,13 +149,6 @@ class ProgramShape:
   def __init__(self, params: Sequence[Shape], result: Shape) -> None: ...
   def parameter_shapes(self) -> list[Shape]: ...
   def result_shape(self) -> Shape: ...
-  def __repr__(self) -> str: ...
-
-class ShapeIndex:
-  def __init__(self, indices: list[int]) -> None: ...
-  def __eq__(self, other: Any) -> bool: ...
-  def __ne__(self, other: Any) -> bool: ...
-  def __hash__(self) -> int: ...
   def __repr__(self) -> str: ...
 
 class Literal:
@@ -253,7 +249,10 @@ class CompileOptions:
   env_option_overrides: list[tuple[str, str]]
 
 def register_custom_call_target(
-    fn_name: str, capsule: Any, platform: str, api_version: int = ...,
+    fn_name: str,
+    capsule: Any,
+    platform: str,
+    api_version: int = ...,
 ) -> _Status: ...
 def register_custom_call_partitioner(
     name: str,
@@ -268,7 +267,6 @@ def register_custom_call_as_batch_partitionable(
     target_name: str,
     c_api: Any | None = ...,
 ) -> None: ...
-
 def register_custom_type_id(type_name: str, type_id: Any) -> None: ...
 
 class AutotuneCacheMode(enum.IntEnum):
@@ -346,7 +344,9 @@ class ExecutableBuildOptions:
   auto_spmd_partitioning_mesh_shape: list[int]
   auto_spmd_partitioning_mesh_ids: list[int]
   use_shardy_partitioner: bool
-  def compilation_environments_from_serialized_proto(self, serialized_proto: bytes) -> None: ...
+  def compilation_environments_from_serialized_proto(
+      self, serialized_proto: bytes
+  ) -> None: ...
 
 class OpSharding_Type(enum.IntEnum):
   REPLICATED = ...
@@ -402,8 +402,8 @@ class HloSharding:
   def unknown() -> HloSharding: ...
   @staticmethod
   def subgroup_with_device_ordering(
-      tile_assignment: np.ndarray,
-      subgroup_types: Sequence[OpSharding_Type]) -> HloSharding: ...
+      tile_assignment: np.ndarray, subgroup_types: Sequence[OpSharding_Type]
+  ) -> HloSharding: ...
   def __eq__(self, other: Any) -> bool: ...
   def __hash__(self) -> int: ...
   def __repr__(self) -> str: ...
@@ -549,7 +549,6 @@ class MpiCollectives(CpuCollectives):
   def Finalize(self): ...
 
 def make_mpi_collectives() -> MpiCollectives: ...
-
 def get_tfrt_cpu_client(
     asynchronous: bool = ...,
     distributed_client: DistributedRuntimeClient | None = ...,
@@ -593,7 +592,9 @@ def get_c_api_topology(
     options: dict[str, str | int | list[int] | float],
 ) -> DeviceTopology: ...
 def get_topology_for_devices(devices: list[Device]) -> DeviceTopology: ...
-def load_pjrt_plugin(platform_name: str, library_path: str | None, c_api: Any | None) -> _Status: ...
+def load_pjrt_plugin(
+    platform_name: str, library_path: str | None, c_api: Any | None
+) -> _Status: ...
 def pjrt_plugin_loaded(plugin_name: str) -> bool: ...
 def pjrt_plugin_initialized(plugin_name: str) -> bool: ...
 def initialize_pjrt_plugin(platform_name: str) -> _Status: ...
@@ -634,9 +635,7 @@ def batched_copy_array_to_devices_with_sharding(
     sharding: Sequence[Any],
     array_copy_semantics: Sequence[ArrayCopySemantics],
 ) -> Sequence[ArrayImpl]: ...
-
 def batched_block_until_ready(x: Sequence[ArrayImpl]) -> None: ...
-
 def batched_device_put(
     aval: Any,
     sharding: Any,
@@ -644,13 +643,11 @@ def batched_device_put(
     devices: list[Device],
     committed: bool = True,
 ) -> ArrayImpl: ...
-
 def reorder_shards(
     x: ArrayImpl,
     dst_sharding: Any,
     array_copy_semantics: ArrayCopySemantics,
 ) -> ArrayImpl: ...
-
 def check_and_canonicalize_memory_kind(
     memory_kind: str | None, device_list: DeviceList
 ) -> str | None: ...
@@ -724,18 +721,23 @@ def dlpack_managed_tensor_to_buffer(
     tensor: Any, device: Device, stream: int | None
 ) -> ArrayImpl: ...
 @overload
-def dlpack_managed_tensor_to_buffer( # Legacy overload
+def dlpack_managed_tensor_to_buffer(  # Legacy overload
     tensor: Any,
     cpu_backend: Client | None = ...,
     gpu_backend: Client | None = ...,
 ) -> ArrayImpl: ...
-
 def cuda_array_interface_to_buffer(
-    cai: dict[str, (
-      str | int | None |
-      tuple[int, ...] | tuple[int, bool] |
-      list[tuple[str, str]] |
-      list[tuple[str, str, tuple[int, ...]]])
+    cai: dict[
+        str,
+        (
+            str
+            | int
+            | None
+            | tuple[int, ...]
+            | tuple[int, bool]
+            | list[tuple[str, str]]
+            | list[tuple[str, str, tuple[int, ...]]]
+        ),
     ],
     gpu_backend: Client | None = ...,
     device_id: int | None = None,
@@ -748,11 +750,13 @@ class Frame:
   function_name: str
   function_line_start: int
   line_num: int
-  def __init__(self,
-               file_name: str,
-               function_name: str,
-               function_line_start: int,
-               line_num: int): ...
+  def __init__(
+      self,
+      file_name: str,
+      function_name: str,
+      function_line_start: int,
+      line_num: int,
+  ): ...
   def __repr__(self) -> str: ...
 
 class Traceback:
@@ -790,13 +794,19 @@ class DistributedRuntimeClient:
   def key_value_try_get_bytes(self, key: str) -> _Status: ...
   def key_value_dir_get(self, key: str) -> _Status: ...
   def key_value_dir_get_bytes(self, key: str) -> _Status: ...
-  def key_value_set(self, key: str, value: str,
-                    allow_overwrite: bool = False) -> _Status: ...
-  def key_value_set_bytes(self, key: str, value: bytes,
-                          allow_overwrite: bool = False) -> _Status: ...
+  def key_value_set(
+      self, key: str, value: str, allow_overwrite: bool = False
+  ) -> _Status: ...
+  def key_value_set_bytes(
+      self, key: str, value: bytes, allow_overwrite: bool = False
+  ) -> _Status: ...
   def key_value_delete(self, key: str) -> _Status: ...
-  def wait_at_barrier(self, barrier_id: str, timeout_in_ms: int,
-                      process_ids: list[int] | None = None) -> _Status: ...
+  def wait_at_barrier(
+      self,
+      barrier_id: str,
+      timeout_in_ms: int,
+      process_ids: list[int] | None = None,
+  ) -> _Status: ...
   def get_live_nodes(self, process_ids: list[int]) -> _Status: ...
 
 def get_distributed_runtime_service(
@@ -970,22 +980,25 @@ def is_tsan() -> bool: ...
 def is_sanitized() -> bool: ...
 
 class TransferConnection:
-
   def address(self) -> str: ...
-
   def _pull_flat(self, uuid, backend, avals_flat) -> list[Any]: ...
 
 class TransferServer:
   def _await_pull_flat(self, uuid, args: list[ArrayImpl]): ...
-
   def connect(self, address: str) -> TransferConnection: ...
 
-def start_transfer_server(client: Client, address: str = "", transport_addresses: list[str] = [], max_num_parallel_copies: int = 0, transfer_size: int = 0) -> TransferServer: ...
-
+def start_transfer_server(
+    client: Client,
+    address: str = "",
+    transport_addresses: list[str] = [],
+    max_num_parallel_copies: int = 0,
+    transfer_size: int = 0,
+) -> TransferServer: ...
 def approx_top_k_reduction_output_size(
     input_size: int,
     rank: int,
     top_k: int,
     recall_target: float,
     aggregate_to_topk: bool | None = ...,
-    input_size_override: int | None = ...) -> tuple[int, int]: ...
+    input_size_override: int | None = ...,
+) -> tuple[int, int]: ...
