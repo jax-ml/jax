@@ -72,7 +72,7 @@ Specs = Any  # PyTree[PartitionSpec]
 AxisName = Hashable
 
 
-def shard_map(f, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
+def shard_map(f=None, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
               in_specs: Specs | None = None,
               mesh: Mesh | AbstractMesh | None = None, check_vma: bool = True):
   """Map a function over shards of data using a mesh of devices.
@@ -120,8 +120,11 @@ def shard_map(f, /, *, out_specs: Specs, axis_names: Set[AxisName] = set(),
     arguments corresponding to those of ``f`` and produces output corresponding
     to that of ``f``.
   """
-  return _shard_map(f, mesh=mesh, in_specs=in_specs, out_specs=out_specs,
-                    axis_names=axis_names, check_vma=check_vma)
+  kwargs = dict(mesh=mesh, in_specs=in_specs, out_specs=out_specs,
+                axis_names=axis_names, check_vma=check_vma)
+  if f is None:
+    return lambda g: _shard_map(g, **kwargs)
+  return _shard_map(f, **kwargs)
 
 def _shard_map(f: Callable, *, mesh: Mesh | AbstractMesh | None,
                in_specs: Specs, out_specs: Specs | Callable[[], Specs],
