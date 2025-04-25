@@ -111,7 +111,7 @@ def _round_up_to_nearest_multiple(s: int, multiple: int) -> int:
   return s - s % multiple + multiple
 
 
-def _make_ds(
+def _make_block_ds(
     idx: jax.Array | int, size: jax.Array | int
 ) -> pl.Slice:
   """Make a DMA slice with mosaic size hints."""
@@ -119,17 +119,41 @@ def _make_ds(
   assert isinstance(out, pl.Slice)
   return out
 
-
 def _make_block_slice(
-    block_index: jax.Array, block_size: int, size: int, tiling: int
+    block_index: jax.Array, block_size: pl.BlockDim | int | None, size: int,
+    tiling: int
 ) -> pl.Slice | slice:
   # Computes a slice given a block index and block size. In the default case,
   # we return slice(block_index * block_size, (block_index + 1) * block_size).
   # However, if the total size of the ref does not divide block size and we are
   # selecting the last block, we need to pick the lowest tiling size multiple
   # that contains the block.
+  match block_size:
+    case pl.Blocked():
+      block_start = block_size.block_size * block_index
+      block_size = block_size.block_size
+    case pl.Element():
+      block_start = block_index
+      block_size = block_size.block_size
+    case pl.BoundedSlice():
+      if not isinstance(block_index, pl.Slice):
+        raise ValueError(
+            "Must return a pl.ds from the index_map for a BoundedSlice"
+            " dimension."
+        )
+      block_start = block_index.start
+      block_size = block_index.size
+      return pl.ds(block_start, block_size)
+    case int():
+      # This is same as Blocked.
+      block_start = block_index * block_size
+    case None | pl.Squeezed():
+      block_start = block_index
+      block_size = 1
+    case _:
+      raise ValueError(f"Unsupported block dimension type: {block_size}")
   if size % block_size == 0:
-    return _make_ds(block_index, block_size)
+    return pl.ds(block_start, block_size)
   if block_size % tiling != 0:
     raise ValueError(f"Block size must divide tiling: {block_size=}, {tiling=}")
   num_blocks = pl.cdiv(size, block_size)
@@ -145,7 +169,7 @@ def _make_block_slice(
 
 def _tuples_differ(xs, ys):
   """Dynamic index-tuple comparison calculation."""
-  differences = jax.tree.map(lambda x, y: x != y, xs, ys)
+  differences = jax.tree.leaves(jax.tree.map(lambda x, y: x != y, xs, ys))
   return functools.reduce(lambda x, y: x | y, differences, False)
 
 
@@ -167,6 +191,26 @@ class BufferType(enum.Enum):
 
   MANUAL = 5
 
+def _get_block_shape(spec: pl.BlockSpec) -> tuple[int, ...]:
+  """Get the block shape for a given block spec."""
+  def _get_dim_size(bd):
+    match bd:
+      case pl.Blocked(block_size):
+        return block_size
+      case pl.Element():
+        return bd.block_size
+      case pl.BoundedSlice(block_size):
+        return block_size
+      case int():
+        return bd
+      case None:
+        return 1
+      case _:
+        raise ValueError(f"Unsupported block dimension type: {bd}")
+  if spec.block_shape is None:
+    raise ValueError("Block shape must be specified.")
+  block_shape = tuple(_get_dim_size(x) for x in spec.block_shape)
+  return block_shape
 
 @tree_util.register_pytree_node_class
 @dataclasses.dataclass(frozen=True)
@@ -236,7 +280,8 @@ class BufferedRef:
     return BufferType
 
   @classmethod
-  def create(cls, spec, dtype, buffer_type, needs_swap_ref=True) -> BufferedRef:
+  def create(cls, spec: pl.BlockSpec, dtype, buffer_type, needs_swap_ref=True
+            ) -> BufferedRef:
     """Create a BufferedRef.
 
     Args:
@@ -249,7 +294,7 @@ class BufferedRef:
     Returns:
       Initialized BufferedRef
     """
-    block_shape = tuple(1 if x is None else x for x in spec.block_shape)
+    block_shape = _get_block_shape(spec)
     if buffer_type is BufferType.ACCUMULATOR:
       accum_ref = VMEM(block_shape, dtype)
     else:
@@ -375,9 +420,22 @@ class BufferedRef:
 
   def compute_slice(self, grid_indices):
     """Compute DMA slice from grid indices."""
-    block_shape = tuple(1 if x is None else x for x in self.block_shape)
+    block_shape = []
+    for bd in self.block_shape:
+      if isinstance(bd, (pl.Element, pl.BoundedSlice)):
+        raise ValueError(
+            "Element and BoundedSlice block dimensions are not supported."
+        )
+      if bd is None:
+        block_shape.append(1)
+      elif isinstance(bd, pl.Blocked):
+        block_shape.append(bd.block_size)
+      elif isinstance(bd, int):
+        block_shape.append(bd)
+      else:
+        raise ValueError(f"Unsupported block dimension type: {type(bd)}")
     indices = self.compute_index(*grid_indices)
-    return jax.tree.map(_make_ds, indices, block_shape)
+    return jax.tree.map(_make_block_ds, indices, tuple(block_shape))
 
   def init_slots(self):
     """Initialize slot indices."""
@@ -444,10 +502,12 @@ class BufferedRef:
       raise NotImplementedError("Must use >1D values.")
 
     tiling = _make_tiling(src_shape, src_dtype)
-    block_shape = tuple(1 if b is None else b for b in self.block_shape)
     block_indices = self.compute_index(*grid_indices)
-    return jax.tree.map(
-        _make_block_slice, block_indices, block_shape, src_shape, tiling
+    return tuple(
+        _make_block_slice(bi, bs, ss, t)
+        for bi, bs, ss, t in zip(
+            block_indices, self.block_shape, src_shape, tiling, strict=True
+        )
     )
 
   def copy_in(self, src_ref, grid_indices):

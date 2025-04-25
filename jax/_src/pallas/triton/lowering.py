@@ -121,10 +121,12 @@ def _eval_index_map(
   block_indices = lower_jaxpr_to_triton_ir(
       ctx, block_mapping.index_map_jaxpr.jaxpr, None, *idx
   )
-  block_indices = (
+  block_indices = tuple(
       _ensure_ir_value(i, jax_core.ShapedArray((), jnp.int32))
       for i in block_indices
   )
+  block_indices = tree_util.tree_unflatten(
+      block_mapping.index_map_out_tree, block_indices)
   if block_mapping.pipeline_mode is not None:
     raise NotImplementedError(
         "Pipeline mode is not supported in Triton lowering."

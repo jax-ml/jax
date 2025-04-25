@@ -40,8 +40,9 @@ import jax.numpy as jnp
 map = util.safe_map
 zip = util.safe_zip
 
-def _get_block_size(bd: pl.Blocked | pl.Element | pl.Squeezed | int | None
-                    ) -> int:
+def _get_block_size(
+    bd: pl.Blocked | pl.Element | pl.Squeezed | pl.BoundedSlice | int | None,
+) -> int:
   match bd:
     case int():
       return bd

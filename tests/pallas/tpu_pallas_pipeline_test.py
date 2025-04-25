@@ -17,18 +17,17 @@
 import functools
 from absl.testing import absltest
 from absl.testing import parameterized
+import hypothesis as hp
+import hypothesis.strategies as hps
 import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax.experimental import mesh_utils
 from jax.experimental import pallas as pl
-from jax._src import shard_map
+from jax.experimental import shard_map
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 import numpy as np
-
-import hypothesis as hp
-import hypothesis.strategies as hps
 
 
 hp.settings.register_profile(
@@ -1545,6 +1544,142 @@ class PaddedPipelineEmitterTest(parameterized.TestCase):
       expected = expected.astype('float32')
       atol = rtol = 1e-2
     np.testing.assert_allclose(out, expected, atol=atol, rtol=rtol)
+
+
+class PallasCallBoundedSliceIndexingTest(parameterized.TestCase):
+
+  def test_block_spec_bounded_slice_invalid_index(self):
+    if not jtu.is_device_tpu():
+      self.skipTest('Only works on TPU.')
+    shape = (16, 8, 128)
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    def main(refs):
+      x_ref, y_ref = refs
+
+      @pl.core_map(pltpu.create_tensorcore_mesh('core'))
+      def _():
+        pltpu.emit_pipeline(
+            kernel,
+            grid=(1,),
+            in_specs=(
+                pl.BlockSpec(
+                    (pl.BoundedSlice(8), 8, 128),
+                    lambda i: (0, 0, 0),  # first index needs to be a pl.ds
+                ),
+            ),
+            out_specs=pl.BlockSpec(
+                (8, 8, 128),
+                lambda i: (0, 0, 0),
+            ),
+        )(x_ref, y_ref)
+
+    @jax.jit
+    def f(x):
+      y = jnp.ones((8, 8, 128), dtype=jnp.int32)
+      _, y = pl.run_state(main)((x, y))
+      return y
+    with self.assertRaisesRegex(
+        ValueError,
+        'Must return a pl.ds from the index_map for a BoundedSlice dimension.'
+    ):
+      f.trace(jax.ShapeDtypeStruct(shape, jnp.int32))
+
+  def test_block_spec_bounded_slice_static(self):
+    if not jtu.is_device_tpu():
+      self.skipTest('Only works on TPU.')
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works on TPU v4+')
+    shape = (16, 8, 128)
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    def main(refs):
+      x_ref, y_ref = refs
+
+      @pl.core_map(pltpu.create_tensorcore_mesh('core'))
+      def _():
+        pltpu.emit_pipeline(
+            kernel,
+            grid=(1,),
+            in_specs=(
+                pl.BlockSpec(
+                    (pl.BoundedSlice(8), 8, 128),
+                    lambda i: (pl.ds(4, 8), 0, 0),
+                ),
+            ),
+            out_specs=pl.BlockSpec(
+                (8, 8, 128),
+                lambda i: (0, 0, 0),
+            ),
+        )(x_ref, y_ref)
+
+    x = jnp.arange(np.prod(shape), dtype=np.int32).reshape(shape)
+
+    @jax.jit
+    def f(x):
+      y = jnp.ones((8, 8, 128), dtype=jnp.int32)
+      _, y = pl.run_state(main)((x, y))
+      return y
+
+    out = f(x)
+    np.testing.assert_allclose(out, x[4:12])
+
+  def test_block_spec_bounded_slice_dynamic(self):
+    if not jtu.is_device_tpu():
+      self.skipTest('Only works on TPU.')
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works on TPU v4+')
+    shape = (16, 8, 128)
+
+    slices = jnp.array([[0, 3], [3, 8], [8, 11], [11, 16]], dtype=jnp.int32)[
+        ::-1
+    ]
+
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    def main(refs):
+      x_ref, y_ref, slices_ref = refs
+
+      @pl.core_map(pltpu.create_tensorcore_mesh('core'))
+      def _():
+
+        @functools.partial(
+            pl.run_scoped, slices_smem=pltpu.SMEM(slices.shape, slices.dtype)
+        )
+        def _(slices_smem):
+          pltpu.sync_copy(slices_ref, slices_smem)
+          def index_map(i):
+            return (
+                pl.ds(slices_smem[i, 0], slices_smem[i, 1] - slices_smem[i, 0]),
+                0,
+                0,
+            )
+          block_spec = pl.BlockSpec(
+              (pl.BoundedSlice(16), 8, 128),
+              index_map,
+          )
+          pltpu.emit_pipeline(
+              kernel,
+              grid=(slices.shape[0],),
+              in_specs=(block_spec,),
+              out_specs=block_spec,
+          )(x_ref, y_ref)
+
+    x = jnp.arange(np.prod(shape), dtype=np.int32).reshape(shape)
+
+    @jax.jit
+    def f(x, slices):
+      y = pl.empty_like(x)
+      _, y, _ = pl.run_state(main)((x, y, slices))
+      return y
+
+    out = f(x, slices)
+    np.testing.assert_allclose(out, x)
 
 
 if __name__ == '__main__':
