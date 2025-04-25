@@ -21,7 +21,13 @@ import google_benchmark
 import jax
 from jax.experimental import sparse
 
-def _sparse_bcoo_fromdense(state, jit: bool = False, compile: bool = False):
+
+def _sparse_fromdense(
+    state,
+    bcsr: bool = False,
+    jit: bool = False,
+    compile: bool = False,
+):
   shape = (2000, 2000)
   nse = 10000
   size = math.prod(shape)
@@ -32,7 +38,7 @@ def _sparse_bcoo_fromdense(state, jit: bool = False, compile: bool = False):
   )
   mat = jnp.zeros(shape).at[indices].set(data)
 
-  f = sparse.BCOO.fromdense
+  f = sparse.BCSR.fromdense if bcsr else sparse.BCOO.fromdense
   if compile or jit:
     # Note: nse must be specified for JIT.
     f = jax.jit(partial(f, nse=nse))
@@ -49,22 +55,12 @@ def _sparse_bcoo_fromdense(state, jit: bool = False, compile: bool = False):
       f(mat).block_until_ready()
 
 
-@google_benchmark.register
-def sparse_bcoo_fromdense(state):
-  return _sparse_bcoo_fromdense(state)
-
-
-@google_benchmark.register
-def sparse_bcoo_fromdense_jit(state):
-  return _sparse_bcoo_fromdense(state, jit=True)
-
-
-@google_benchmark.register
-def sparse_bcoo_fromdense_compile(state):
-  return _sparse_bcoo_fromdense(state, compile=True)
-
-
-def _sparse_bcoo_todense(state, jit: bool = False, compile: bool = False):
+def _sparse_todense(
+    state,
+    bcsr: bool = False,
+    jit: bool = False,
+    compile: bool = False,
+):
   shape = (2000, 2000)
   nse = 10000
   size = math.prod(shape)
@@ -74,6 +70,8 @@ def _sparse_bcoo_todense(state, jit: bool = False, compile: bool = False):
       rng.choice(size, size=nse, replace=False), shape=shape
   )
   mat = sparse.BCOO((jnp.array(data), jnp.column_stack(indices)), shape=shape)
+  if bcsr:
+    mat = sparse.BCSR.from_bcoo(mat)
 
   f = lambda mat: mat.todense()
   if jit or compile:
@@ -91,22 +89,12 @@ def _sparse_bcoo_todense(state, jit: bool = False, compile: bool = False):
       f(mat).block_until_ready()
 
 
-@google_benchmark.register
-def sparse_bcoo_todense(state):
-  return _sparse_bcoo_todense(state)
-
-
-@google_benchmark.register
-def sparse_bcoo_todense_jit(state):
-  return _sparse_bcoo_todense(state, jit=True)
-
-
-@google_benchmark.register
-def sparse_bcoo_todense_compile(state):
-  return _sparse_bcoo_todense(state, compile=True)
-
-
-def _sparse_bcoo_matvec(state, jit: bool = False, compile: bool = False):
+def _sparse_matvec(
+    state,
+    bcsr: bool = False,
+    jit: bool = False,
+    compile: bool = False,
+):
   shape = (2000, 2000)
   nse = 10000
   key = jax.random.key(1701)
@@ -118,6 +106,9 @@ def _sparse_bcoo_matvec(state, jit: bool = False, compile: bool = False):
       indices_dtype=jnp.int32,
       sorted_indices=True,
   )
+  if bcsr:
+    mat = sparse.BCSR.from_bcoo(mat)
+
   vec = jax.random.uniform(key, shape=(shape[1],), dtype=jnp.float32)
 
   f = lambda mat, vec: mat @ vec
@@ -137,18 +128,93 @@ def _sparse_bcoo_matvec(state, jit: bool = False, compile: bool = False):
 
 
 @google_benchmark.register
+def sparse_bcoo_fromdense(state):
+  return _sparse_fromdense(state)
+
+
+@google_benchmark.register
+def sparse_bcoo_fromdense_jit(state):
+  return _sparse_fromdense(state, jit=True)
+
+
+@google_benchmark.register
+def sparse_bcoo_fromdense_compile(state):
+  return _sparse_fromdense(state, compile=True)
+
+
+@google_benchmark.register
+def sparse_bcoo_todense(state):
+  return _sparse_todense(state)
+
+
+@google_benchmark.register
+def sparse_bcoo_todense_jit(state):
+  return _sparse_todense(state, jit=True)
+
+
+@google_benchmark.register
+def sparse_bcoo_todense_compile(state):
+  return _sparse_todense(state, compile=True)
+
+
+@google_benchmark.register
 def sparse_bcoo_matvec(state):
-  return _sparse_bcoo_matvec(state)
+  return _sparse_matvec(state)
 
 
 @google_benchmark.register
 def sparse_bcoo_matvec_jit(state):
-  return _sparse_bcoo_matvec(state, jit=True)
+  return _sparse_matvec(state, jit=True)
 
 
 @google_benchmark.register
 def sparse_bcoo_matvec_compile(state):
-  return _sparse_bcoo_matvec(state, compile=True)
+  return _sparse_matvec(state, compile=True)
+
+
+@google_benchmark.register
+def sparse_bscr_fromdense(state):
+  return _sparse_fromdense(state, bcsr=True)
+
+
+@google_benchmark.register
+def sparse_bscr_fromdense_jit(state):
+  return _sparse_fromdense(state, bcsr=True, jit=True)
+
+
+@google_benchmark.register
+def sparse_bscr_fromdense_compile(state):
+  return _sparse_fromdense(state, bcsr=True, compile=True)
+
+
+@google_benchmark.register
+def sparse_bscr_todense(state):
+  return _sparse_todense(state, bcsr=True)
+
+
+@google_benchmark.register
+def sparse_bscr_todense_jit(state):
+  return _sparse_todense(state, bcsr=True, jit=True)
+
+
+@google_benchmark.register
+def sparse_bscr_todense_compile(state):
+  return _sparse_todense(state, bcsr=True, compile=True)
+
+
+@google_benchmark.register
+def sparse_bcsr_matvec(state):
+  return _sparse_matvec(state, bcsr=True)
+
+
+@google_benchmark.register
+def sparse_bcsr_matvec_jit(state):
+  return _sparse_matvec(state, bcsr=True, jit=True)
+
+
+@google_benchmark.register
+def sparse_bcsr_matvec_compile(state):
+  return _sparse_matvec(state, bcsr=True, compile=True)
 
 
 if __name__ == "__main__":
