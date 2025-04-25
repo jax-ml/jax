@@ -23,7 +23,6 @@ load(
     "proto_library",
     "py_deps",
     "py_library_providing_imports_info",
-    "py_strict_library",
     "py_strict_test",
     "pytype_library",
     "pytype_strict_library",
@@ -1191,72 +1190,6 @@ pytype_strict_library(
         "numpy",
         "ml_dtypes",
     ]) + [":_jax"],
-)
-
-py_strict_test(
-    name = "xla_client_backend_independent_test",
-    srcs = ["xla_client_backend_independent_test.py"],
-    deps = [
-        ":xla_client",
-    ] + py_deps([
-        "absl/testing",
-        "numpy",
-        "portpicker",
-    ]),
-)
-
-py_strict_library(
-    name = "xla_client_test",
-    testonly = 1,
-    srcs = ["xla_client_test.py"],
-    visibility = [":xla_python"],
-    deps = [
-        ":xla_client",
-        "//jax",
-        "//jax:test_util",
-        "//jaxlib",
-    ] + py_deps([
-        "absl/flags",
-        "absl/logging",
-        "absl/testing",
-        "ml_dtypes",
-        "numpy",
-    ]),
-)
-
-nanobind_extension(
-    name = "custom_calls_testlib",
-    testonly = 1,
-    srcs = ["custom_calls_testlib.cc"],
-    deps = [
-        "@com_google_absl//absl/status",
-        "@nanobind",
-        "@xla//xla/ffi/api:c_api",
-        "@xla//xla/ffi/api:ffi",
-    ],
-)
-
-py_strict_test(
-    name = "xla_client_test_cpu",
-    srcs = ["xla_client_test.py"],
-    args = ["--backend=cpu"],
-    env = {
-        "XLA_FLAGS": "--xla_force_host_platform_device_count=4",
-    },
-    main = "xla_client_test.py",
-    deps = [
-        ":custom_calls_testlib",
-        ":xla_client",
-        "//jax",
-        "//jax:test_util",
-        "//jaxlib",
-    ] + py_deps([
-        "absl/flags",
-        "absl/logging",
-        "absl/testing",
-        "ml_dtypes",
-        "numpy",
-    ]),
 )
 
 py_strict_test(
