@@ -21,7 +21,18 @@ import importlib.util
 import logging
 import string
 import sys
-from typing import Any, Union
+from types import (
+  CodeType,
+  FunctionType,
+  CellType)
+from typing import (
+  Any,
+  Union,
+  TypeVar,
+  ParamSpec,
+  Generic,
+  overload)
+from dataclasses import dataclass
 import weakref
 
 import numpy as np
@@ -49,8 +60,12 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     NamedSharding, PartitionSpec as P, parse_flatten_op_sharding)
 from jax._src.state import discharge as state_discharge
+from jax._src.tree_util import register_pytree_node_class
 
 logger = logging.getLogger(__name__)
+
+_P = ParamSpec('_P')
+_R = TypeVar('_R')
 
 class DebugEffect(effects.Effect):
   __str__ = lambda self: "Debug"
@@ -717,3 +732,217 @@ def visualize_array_sharding(arr, **kwargs):
   def _visualize(sharding):
     return visualize_sharding(arr.shape, sharding, **kwargs)
   inspect_array_sharding(arr, callback=_visualize)
+
+
+#===============================================================================
+@register_pytree_node_class
+@dataclass(frozen=True)
+class StaticFunction(Generic[_P, _R]):
+  code: CodeType
+  globals: dict
+  name: str
+  defaults: tuple | None
+
+  #-----------------------------------------------------------------------------
+  @property
+  def static_key(self) -> tuple[CodeType, int, str, int]:
+    return (
+      self.code,
+      id(self.globals),
+      self.name,
+      id(self.defaults))
+
+  #-----------------------------------------------------------------------------
+  def __hash__(self):
+    return hash(self.static_key)
+
+  #-----------------------------------------------------------------------------
+  def __eq__(self, other):
+    if type(other) is not type(self):
+      return NotImplemented
+
+    return self.static_key == other.static_key
+
+  #-----------------------------------------------------------------------------
+  def __call__(self, closure: tuple | None, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+    if closure is not None:
+      closure = tuple(CellType(v) for v in closure)
+
+    func = FunctionType(
+      self.code,
+      self.globals,
+      name = self.name,
+      argdefs = self.defaults,
+      closure = closure)
+
+    return func(*args, **kwargs)
+
+  #-----------------------------------------------------------------------------
+  @classmethod
+  def from_function(cls, func: Callable[_P, _R]) -> tuple[tuple | None, StaticFunction[_P, _R]]:
+    if type(func) is not FunctionType:
+      raise TypeError(
+        f"Expected 'FunctionType', got '{type(func).__name__}' object {func!r}")
+
+    if (closure := func.__closure__) is not None:
+      closure = tuple(c.cell_contents for c in closure)
+
+    return closure, StaticFunction(
+      code = func.__code__,
+      globals = func.__globals__,
+      name = func.__name__,
+      defaults = func.__defaults__)
+
+  #-----------------------------------------------------------------------------
+  def tree_flatten(self):
+    return (), self
+
+  #-----------------------------------------------------------------------------
+  @classmethod
+  def tree_unflatten(cls, static, dynamic):
+    return static
+
+#===============================================================================
+def _debug_capture_callback(static_func: StaticFunction, closure: tuple | None) -> None:
+  out = static_func(closure)
+
+  if out is not None:
+    if type(out) is not str:
+      out = repr(out)
+
+    sys.stdout.write(out + "\n")
+
+#===============================================================================
+@overload
+def debug_capture(*,
+    ordered: bool = False,
+    partitioned: bool = False
+) -> Callable[[FunctionType],None]:
+  ...
+
+@overload
+def debug_capture(
+    callback: FunctionType,
+    /, *,
+    ordered: bool = False,
+    partitioned: bool = False
+) -> None:
+  ...
+
+def debug_capture(
+    callback = None,
+    /, *,
+    ordered = False,
+    partitioned = False):
+  """Calls a stageable Python function capturing local variables.
+
+  ``jax.debug.capture`` enables accessing captured local variables for debug
+  callbacks or prints inside of a staged JAX program *without* explicitly passing
+  them as arguments.
+  This wraps ``jax.debug.callback`` by extracting captured values from
+  the callback's ``__closure__`` cells, treated intermediatly as the "arguments"
+  for the purpose of staging, and reconstructs the function closure with runtime
+  values.
+
+  If the function returns a string, the string is printed as-is:
+
+  ```python
+  jax.debug.capture(lambda: f"{a_local_variable:.2f}")
+  ```
+
+  If the function returns nothing (None), nothing is printed *by the wrapper*:
+
+  ```python
+  @jax.debug.capture(ordered=True)
+  def _():
+    # some "complicated" inspection of local variables
+    print(f"{a_local_variable}")
+  ```
+
+  Returning any other object will be printed using ``repr()``:
+
+  ```python
+  # equivalent
+  jax.debug.capture(lambda: a_local_variable)
+  jax.debug.capture(lambda: repr(a_local_variable))
+  ```
+
+  Args:
+    callback:
+      A local Python *function* with captured local variables (must be a builtin
+      ``FunctionType``).
+    ordered:
+    partitioned:
+      ``ordered`` and ``partitioned`` are passed directly to ``jax.debug.callback``.
+
+  Returns:
+    ``None`` if ``callback`` is given, otherwise returns partially applied arguments to
+    use as a decorator.
+
+  See Also:
+    - :func:`jax.debug.callback`: Implements the debug callback
+
+  Examples:
+
+  ```python
+  import jax
+  from jax import debug, numpy as jnp
+
+  @jax.jit
+  def my_func(x, y, z):
+    out = x+y+z
+
+    debug.capture(lambda: "nothing captured")
+
+    # captures 'x', 'y', and 'z'
+    debug.capture(lambda: f"inline: {x+y}, {2*x-y}, {[z, z-x]}")
+
+    @debug.capture
+    def f1():
+      print("callback:")
+      print(f" {x+y=}")
+      print(f" {2*x-y+jnp.pi=}")
+      print(f" {[z, z-x]=}")
+
+    @debug.capture(ordered=True)
+    def f2():
+      # captures 'out'
+      print(f"callback(ordered): {out=}")
+
+    return out
+
+  @jax.jit
+  def another_func(a_local_variable):
+    jax.debug.capture(lambda: f"{a_local_variable:.2f}")
+
+    @jax.debug.capture(ordered=True)
+    def _():
+      # some "complicated" inspection of local variables
+      print(f"{a_local_variable}")
+
+    # equivalent
+    jax.debug.capture(lambda: a_local_variable)
+    jax.debug.capture(lambda: repr(a_local_variable))
+
+  if __name__ == '__main__':
+    x = jnp.array(1.0)
+    y = jnp.array(2.0)
+    z = jnp.array(1234.0)
+
+    my_func(x, y, z)
+    another_func(z)
+  ```
+  """
+  if callback is None:
+    return partial(debug_capture, ordered=ordered, partitioned=partitioned)
+
+  closure, static_func = StaticFunction.from_function(callback)
+
+  debug_callback(
+    _debug_capture_callback,
+    static_func,
+    closure,
+    ordered=ordered,
+    partitioned=partitioned)
+
+  return None
