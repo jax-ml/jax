@@ -23,7 +23,6 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
-#include "absl/base/thread_annotations.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
 #include "absl/status/status.h"
@@ -32,7 +31,6 @@ limitations under the License.
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
-#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "nanobind/nanobind.h"
 #include "nanobind/ndarray.h"
@@ -51,7 +49,6 @@ limitations under the License.
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/ffi.h"
 #include "xla/ffi/ffi_api.h"
-#include "xla/hlo/builder/xla_builder.h"
 #include "xla/hlo/builder/xla_computation.h"
 #include "xla/hlo/ir/hlo_instruction.h"
 #include "xla/hlo/ir/hlo_module.h"
@@ -71,7 +68,6 @@ limitations under the License.
 #include "xla/pjrt/pjrt_executable.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/nb_absl_span.h"  // IWYU pragma: keep
-#include "xla/python/nb_helpers.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/types.h"
 #include "xla/service/call_inliner.h"
@@ -80,7 +76,6 @@ limitations under the License.
 #include "xla/service/hlo.pb.h"
 #include "xla/service/hlo_graph_dumper.h"
 #include "xla/service/hlo_module_config.h"
-#include "xla/service/name_uniquer.h"
 #include "xla/shape.h"
 #include "xla/shape_util.h"
 #include "xla/tsl/lib/strings/proto_serialization.h"
@@ -92,59 +87,10 @@ limitations under the License.
 #include "xla/xla.pb.h"
 #include "xla/xla_data.pb.h"
 
-namespace nanobind {
-namespace detail {
-
-template <>
-struct type_caster<xla::OpMetadata> {
- public:
-  NB_TYPE_CASTER_FROM_PYTHON_ONLY(xla::OpMetadata,
-                                  const_name("xla::OpMetadata"));
-
-  bool from_python(handle h, uint8_t, cleanup_list*) noexcept {
-    handle op_type = getattr(h, "op_type");
-    if (!op_type.is_none()) {
-      value.set_op_type(cast<std::string>(op_type));
-    }
-    handle op_name = getattr(h, "op_name");
-    if (!op_name.is_none()) {
-      value.set_op_name(cast<std::string>(op_name));
-    }
-    handle source_file = getattr(h, "source_file");
-    if (!source_file.is_none()) {
-      value.set_source_file(cast<std::string>(source_file));
-    }
-    handle source_line = getattr(h, "source_line");
-    if (!source_line.is_none()) {
-      value.set_source_line(cast<int32_t>(source_line));
-    }
-    return true;
-  }
-};
-
-}  // namespace detail
-}  // namespace nanobind
-
 namespace xla {
 namespace {
 
 namespace nb = nanobind;
-
-struct Uniquer {
-  absl::Mutex mu;
-  NameUniquer name_uniquer ABSL_GUARDED_BY(mu);
-};
-
-Uniquer* GetUniquer() {
-  static Uniquer* uniquer = new Uniquer;
-  return uniquer;
-}
-
-static std::string UniquifyName(const std::string& name) {
-  Uniquer* uniquer = GetUniquer();
-  absl::MutexLock lock(&uniquer->mu);
-  return uniquer->name_uniquer.GetUniqueName(name);
-}
 
 // Converts a computation to a serialized HloModuleProto.
 absl::StatusOr<nb::bytes> GetComputationSerializedProto(
@@ -945,54 +891,6 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
               return result;
             }));
 
-  nb::class_<XlaOp> xla_op_class(m, "XlaOp");
-
-  nb::class_<XlaBuilder>(m, "XlaBuilder")
-      .def("__init__",
-           [](XlaBuilder* self, const std::string& name) {
-             new (self) XlaBuilder(UniquifyName(name));
-           })
-      // TODO(phawkins): delete capitalized names after updating callers.
-      .def("Build",
-           xla::ValueOrThrowWrapper(
-               [](XlaBuilder& builder, std::optional<XlaOp> root) {
-                 return root ? builder.Build(*root) : builder.Build();
-               }),
-           "Builds a computation from the contents of the builder.",
-           nb::arg("root") = std::nullopt)
-      .def("GetShape", xla::ValueOrThrowWrapper(&XlaBuilder::GetShape))
-      .def("build",
-           xla::ValueOrThrowWrapper(
-               [](XlaBuilder& builder, std::optional<XlaOp> root) {
-                 return root ? builder.Build(*root) : builder.Build();
-               }),
-           "Builds a computation from the contents of the builder.",
-           nb::arg("root") = std::nullopt)
-      .def("clear_op_metadata", &XlaBuilder::ClearOpMetadata)
-      .def("get_shape", xla::ValueOrThrowWrapper(&XlaBuilder::GetShape))
-      .def(
-          "get_program_shape",
-          [](const XlaBuilder& builder,
-             std::optional<XlaOp> root) -> absl::StatusOr<ProgramShape> {
-            return root ? builder.GetProgramShape(*root)
-                        : builder.GetProgramShape();
-          },
-          nb::arg("root") = std::nullopt)
-      .def("is_constant", xla::ValueOrThrowWrapper(&XlaBuilder::IsConstant))
-      .def("set_op_metadata", &XlaBuilder::SetOpMetadata)
-      .def("set_sharding", &XlaBuilder::SetSharding)
-      .def("clear_sharding", &XlaBuilder::ClearSharding)
-      .def("set_frontend_attributes", &XlaBuilder::SetFrontendAttributes)
-      .def("clear_frontend_attributes", &XlaBuilder::ClearFrontendAttributes)
-      .def("setup_alias",
-           [](XlaBuilder& builder, const std::vector<int64_t>& output_index,
-              int64_t param_number, const std::vector<int64_t>& param_index) {
-             builder.SetUpAlias(
-                 ShapeIndex(output_index.begin(), output_index.end()),
-                 param_number,
-                 ShapeIndex(param_index.begin(), param_index.end()));
-           });
-
   // Device assignments
   nb::class_<DeviceAssignment>(m, "DeviceAssignment")
       .def_static(
@@ -1595,27 +1493,6 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
            [](const xla::HloSharding& self) { return self.ToString(); })
       .def("to_proto", &xla::HloSharding::ToProto);
 
-  nb::class_<FrontendAttributes> frontend_attributes(m, "FrontendAttributes");
-  frontend_attributes.def(nb::init<>())
-      .def("__setitem__",
-           [](FrontendAttributes* attr, std::string key, std::string value) {
-             (*attr->mutable_map())[key] = value;
-           });
-
-  nb::enum_<PrecisionConfig::Precision>(m, "PrecisionConfig_Precision")
-      .value("DEFAULT", PrecisionConfig::DEFAULT)
-      .value("HIGH", PrecisionConfig::HIGH)
-      .value("HIGHEST", PrecisionConfig::HIGHEST);
-
-  nb::enum_<ResultAccuracy::Mode>(m, "ResultAccuracy_Mode")
-      .value("DEFAULT", ResultAccuracy::DEFAULT)
-      .value("HIGHEST", ResultAccuracy::HIGHEST);
-
-  nb::enum_<FftType>(m, "FftType")
-      .value("FFT", FftType::FFT)
-      .value("IFFT", FftType::IFFT)
-      .value("RFFT", FftType::RFFT)
-      .value("IRFFT", FftType::IRFFT);
 
   // Hlo Module Passes
   nb::class_<HloPassInterface> hlo_pass_interface(m, "HloPassInterface");

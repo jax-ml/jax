@@ -36,7 +36,9 @@ class InfeedTest(jtu.JaxTestCase):
       raise SkipTest("infeed not implemented in PJRT C API")
     super().setUp()
 
-  @jax.numpy_rank_promotion("allow")  # Test explicitly exercises implicit rank promotion.
+  @jax.numpy_rank_promotion(
+      "allow"
+  )  # Test explicitly exercises implicit rank promotion.
   def testInfeed(self):
     raise SkipTest("skipping temporarily for stackless")
 
@@ -44,13 +46,17 @@ class InfeedTest(jtu.JaxTestCase):
     def f(x):
       token = lax.create_token(x)
       (y,), token = lax.infeed(
-          token, shape=(core.ShapedArray((3, 4), jnp.float32),))
+          token, shape=(core.ShapedArray((3, 4), jnp.float32),)
+      )
       (z,), _ = lax.infeed(
-          token, shape=(core.ShapedArray((3, 1, 1), jnp.float32),))
+          token, shape=(core.ShapedArray((3, 1, 1), jnp.float32),)
+      )
       return x + y + z
 
     x = np.float32(1.5)
-    y = np.reshape(np.arange(12, dtype=np.float32), (3, 4)) # self.rng().randn(3, 4).astype(np.float32)
+    y = np.reshape(
+        np.arange(12, dtype=np.float32), (3, 4)
+    )  # self.rng().randn(3, 4).astype(np.float32)
     z = self.rng().randn(3, 1, 1).astype(np.float32)
     device = jax.local_devices()[0]
     device.transfer_to_infeed((y,))
@@ -63,8 +69,11 @@ class InfeedTest(jtu.JaxTestCase):
     x = np.float32(1.5)
     y = np.reshape(np.arange(12, dtype=np.int16), (3, 4))
     to_infeed = dict(a=x, b=y)
-    to_infeed_shape = dict(a=core.ShapedArray((), dtype=np.float32),
-                           b=core.ShapedArray((3, 4), dtype=np.int16))
+    to_infeed_shape = dict(
+        a=core.ShapedArray((), dtype=np.float32),
+        b=core.ShapedArray((3, 4), dtype=np.int16),
+    )
+
     @jax.jit
     def f(x):
       token = lax.create_token(x)
@@ -77,16 +86,18 @@ class InfeedTest(jtu.JaxTestCase):
     device.transfer_to_infeed(tuple(flat_to_infeed))
     self.assertAllClose(f(x), to_infeed)
 
-  @jax.numpy_rank_promotion("allow")  # Test explicitly exercises implicit rank promotion.
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message=".*(infeed|outfeed) was deprecated.*")
+  @jax.numpy_rank_promotion(
+      "allow"
+  )  # Test explicitly exercises implicit rank promotion.
+  @jtu.ignore_warning(
+      category=DeprecationWarning, message=".*(infeed|outfeed) was deprecated.*"
+  )
   def testInfeedThenOutfeed(self):
 
     @jax.jit
     def f(x):
       token = lax.create_token(x)
-      y, token = lax.infeed(
-          token, shape=core.ShapedArray((3, 4), jnp.float32))
+      y, token = lax.infeed(token, shape=core.ShapedArray((3, 4), jnp.float32))
       token = lax.outfeed(token, y + np.float32(1))
       return x - 1
 
@@ -96,18 +107,21 @@ class InfeedTest(jtu.JaxTestCase):
     execution.start()
     device = jax.local_devices()[0]
     device.transfer_to_infeed((y,))
-    out, = device.transfer_from_outfeed(
-      xla_client.shape_from_pyval((y,)).with_major_to_minor_layout_if_absent())
+    out = device.transfer_from_outfeed(
+        xla_client.Shape.array_shape(
+            xla_client.PrimitiveType.F32, (3, 4)
+        ).with_major_to_minor_layout_if_absent()
+    )
     execution.join()
     self.assertAllClose(out, y + np.float32(1))
 
-  @jtu.ignore_warning(category=DeprecationWarning,
-                      message=".*(infeed|outfeed) was deprecated.*")
+  @jtu.ignore_warning(
+      category=DeprecationWarning, message=".*(infeed|outfeed) was deprecated.*"
+  )
   def testInfeedThenOutfeedInALoop(self):
 
     def doubler(_, token):
-      y, token = lax.infeed(
-          token, shape=core.ShapedArray((3, 4), jnp.float32))
+      y, token = lax.infeed(token, shape=core.ShapedArray((3, 4), jnp.float32))
       return lax.outfeed(token, y * np.float32(2))
 
     @jax.jit
@@ -123,11 +137,14 @@ class InfeedTest(jtu.JaxTestCase):
     for _ in range(n):
       x = self.rng().randn(3, 4).astype(np.float32)
       device.transfer_to_infeed((x,))
-      y, = device.transfer_from_outfeed(xla_client.shape_from_pyval((x,))
-                                        .with_major_to_minor_layout_if_absent())
+      y = device.transfer_from_outfeed(
+          xla_client.Shape.array_shape(
+              xla_client.PrimitiveType.F32, (3, 4)
+          ).with_major_to_minor_layout_if_absent()
+      )
       self.assertAllClose(y, x * np.float32(2))
     execution.join()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
