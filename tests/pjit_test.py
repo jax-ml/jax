@@ -7517,6 +7517,58 @@ class ShardingInTypesTest(jtu.JaxTestCase):
       return x.at[i].set(x_j)
     f2(x,i,j)  # doesn't crash
 
+  @jtu.with_explicit_mesh((4, 2), ('x', 'y'))
+  def test_conv_general_dilated(self, mesh):
+    arr = jax.device_put(np.zeros((16, 128, 8)), P('x', 'y'))
+
+    @jax.jit
+    def f(x):
+      # Conv1D across sharded y-axis:
+      out = jax.lax.conv_general_dilated(
+          x, np.zeros((5, 8, 10)),
+          window_strides=(1,), padding='SAME', feature_group_count=1,
+          lhs_dilation=(1,), rhs_dilation=(1,),
+          dimension_numbers=('NWC', 'WIO', 'NWC'))
+      self.assertEqual(out.aval.sharding.spec, P('x', 'y', None))
+      # Max pooling along sharded y-axis.
+      out2 = jax.lax.reduce_window(
+          out, -np.inf, jax.lax.max, (1,2,1), (1,2,1), 'SAME')
+      self.assertEqual(out2.aval.sharding.spec, P('x', 'y', None))
+      return out2
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x', 'y', None)))
+    self.check_wsc_in_lowered(f.lower(arr).as_text())
+
+    jax.jit(jax.grad(lambda x: f(x).sum()))(arr)  # doesn't crash
+
+    with self.assertRaises(core.ShardingTypeError):
+      arr2 = jax.device_put(np.zeros((16, 128, 8)), P('x', None, 'y'))
+      f(arr2)
+
+  @parameterized.named_parameters(
+      ('spec1', P('x', 'y', None)),
+      ('spec2', P('x', None, 'y')),
+      ('spec3', P(None, 'x', 'y')),
+      ('spec4', P(('x', 'y'), None, None))
+  )
+  @jtu.with_explicit_mesh((4, 2), ('x', 'y'))
+  def test_reduce_window(self, spec, mesh):
+    arr = jax.device_put(np.zeros((16, 128, 8)), spec)
+
+    @jax.jit
+    def f(x):
+      out = jax.lax.reduce_window(
+          x, -np.inf, jax.lax.max, (1,2,1), (1,2,1), 'SAME')
+      self.assertEqual(out.aval.sharding.spec, spec)
+      return out
+
+    out = f(arr)
+    self.assertEqual(out.sharding, NamedSharding(mesh, spec))
+    self.check_wsc_in_lowered(f.lower(arr).as_text())
+
+    jax.jit(jax.grad(lambda x: f(x).sum()))(arr)  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):

@@ -53,6 +53,8 @@ ConvGeneralDilatedDimensionNumbers = Union[
     None,
 ]
 
+# TODO(yashkatariya): conv_general_dilated should take `out_sharding` argument
+# similar to `dot_general`
 def conv_general_dilated(
   lhs: Array, rhs: Array, window_strides: Sequence[int],
   padding: str | Sequence[tuple[int, int]],
@@ -415,6 +417,26 @@ def _conv_general_dilated_shape_rule(
   return tuple(np.take(out_trans, np.argsort(out_perm)))
 
 
+def _conv_general_dilated_sharding_rule(
+    lhs: core.ShapedArray, rhs: core.ShapedArray, *, window_strides, padding,
+    lhs_dilation, rhs_dilation, dimension_numbers, feature_group_count,
+    batch_group_count, **unused_kwargs):
+  # Only allow if rhs is fully replicated and lhs's feature dim is not sharded
+  if ((rhs.sharding.mesh.empty or rhs.sharding.is_fully_replicated) and
+      lhs.sharding.spec[dimension_numbers.lhs_spec[1]] is None):
+    out_shape = _conv_general_dilated_shape_rule(
+        lhs, rhs, window_strides=window_strides, padding=padding,
+        lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation,
+        dimension_numbers=dimension_numbers,
+        feature_group_count=feature_group_count,
+        batch_group_count=batch_group_count)
+    return lax.slicing._get_sharding_for_varying_out_shape(
+        out_shape, lhs, "conv_general_dilated")
+  # TODO(yashkatariya): In this case, just let the user specify the out_sharding
+  # via `out_sharding` argument to `conv_general_dilated`.
+  raise core.ShardingTypeError(
+      "Please file an issue at https://github.com/jax-ml/jax/issues")
+
 def _conv_general_dilated_dtype_rule(
     lhs, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers, preferred_element_type, **unused_kwargs):
@@ -635,6 +657,7 @@ def _conv_general_dilated_batch_rule(
 conv_general_dilated_p = lax.standard_primitive(
     _conv_general_dilated_shape_rule, _conv_general_dilated_dtype_rule,
     'conv_general_dilated',
+    sharding_rule=_conv_general_dilated_sharding_rule,
     vma_rule=partial(core.standard_vma_rule, 'conv_general_dilated'))
 
 ad.defbilinear(conv_general_dilated_p,
@@ -713,21 +736,18 @@ def _conv_general_dilated_lower(
     # TODO(https://github.com/openxla/stablehlo/issues/1268)
     raise NotImplementedError("Convolutions with non-static strides, dilation, feature_group_count, or batch_group_count")
   if all(core.is_constant_shape(p) for p in padding):
-    return [
-        hlo.convolution(
-          mlir.aval_to_ir_type(aval_out),
-          lhs,
-          rhs,
-          dimension_numbers=dnums,
-          feature_group_count=mlir.i64_attr(feature_group_count),
-          batch_group_count=mlir.i64_attr(batch_group_count),
-          window_strides=mlir.dense_int_array(window_strides),
-          padding=mlir.dense_int_elements(padding),
-          lhs_dilation=mlir.dense_int_array(lhs_dilation),
-          rhs_dilation=mlir.dense_int_array(rhs_dilation),
-          window_reversal=window_reversal,
-          precision_config=lax.precision_attr(precision))
-    ]
+    out = hlo.convolution(
+        mlir.aval_to_ir_type(aval_out), lhs, rhs,
+        dimension_numbers=dnums,
+        feature_group_count=mlir.i64_attr(feature_group_count),
+        batch_group_count=mlir.i64_attr(batch_group_count),
+        window_strides=mlir.dense_int_array(window_strides),
+        padding=mlir.dense_int_elements(padding),
+        lhs_dilation=mlir.dense_int_array(lhs_dilation),
+        rhs_dilation=mlir.dense_int_array(rhs_dilation),
+        window_reversal=window_reversal,
+        precision_config=lax.precision_attr(precision))
+    return [mlir.lower_with_sharding_in_types(ctx, out, aval_out)]
   else:
     # d_padding will be an array i32[N, 2] with pad_lo and pad_hi for each
     # spatial dimension.
