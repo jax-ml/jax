@@ -55,6 +55,7 @@ jobs:
             --test_tag_filters=-multiaccelerator \
             --test_env=TF_CPP_MIN_LOG_LEVEL=0 \
             --test_env=JAX_SKIP_SLOW_TESTS=true \
+            --test_env=XLA_FLAGS="--xla_gpu_autotune_level=0" \
             --action_env=JAX_ENABLE_X64="1" \
             --action_env=NCCL_DEBUG=WARN \
             --color=yes \

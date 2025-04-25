@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-licenses(["notice"])
-
 load(
-  "//jaxlib:jax.bzl",
-  "if_windows",
-  "py_library_providing_imports_info",
-  "pytype_library",
+    "//jaxlib:jax.bzl",
+    "if_windows",
+    "py_library_providing_imports_info",
+    "pytype_library",
 )
+
+licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
@@ -41,7 +41,7 @@ py_library_providing_imports_info(
     ],
     data = if_windows(
         ["@xla//xla/pjrt/c/pjrt_c_api_gpu_plugin.pyd"],
-        ["@xla//xla/pjrt/c:pjrt_c_api_gpu_plugin.so"],
+        ["//jaxlib/tools:pjrt_c_api_gpu_plugin.so"],
     ),
     lib_rule = pytype_library,
 )
