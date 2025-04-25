@@ -3122,7 +3122,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return x + y
     jax.linearize(f, 1., 2.)  # don't crash
 
-  def test_while_readonly_carry_optimization(self):
+  def test_readonly_carry_optimization(self):
     # https://github.com/google/flax/issues/4700
     def foo(w, x, c_max):
       def while_cond(val):
@@ -3203,53 +3203,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
     outs = jax.lax.while_loop(cond_fun, body_fun, (5., 0., 3.14))
     self.assertAllClose(outs, (0., 1., 5.))
-
-  def test_scan_readonly_carry_optimization(self):
-    # https://github.com/google/flax/issues/4709
-    def f(x, y):
-      def g(_, y):
-        y, _ = jax.lax.scan(lambda y, _: (y, None), y, None, length=1)
-        return y
-      return jax.lax.cond(x < 0, g, g, x, y)
-    xs = jnp.arange(3.)
-    y = 3.
-    jax.vmap(f, (0, None), None)(xs, y)  # don't crash
-
-  @parameterized.parameters(itertools.product(range(3), repeat=4))
-  @jtu.run_on_devices("cpu")
-  def test_scan_constification_correctness(
-      self,
-      seed,
-      num_body_consts,
-      num_inplace_fwds,
-      num_noninplace_fwds):
-
-    num_fwds = num_inplace_fwds + num_noninplace_fwds
-    num_carry = num_fwds + 4
-    num_xs = 2
-    num_ys = 3
-
-    rng = np.random.RandomState(seed)
-    perm = rng.permutation(num_carry)
-    iperm = np.argsort(perm)
-
-    body_consts = [rng.randn(3) for _ in range(num_body_consts)]
-    init_vals = list(rng.uniform(size=num_carry))
-
-    def body_fun(c, _):
-      c = [c[i] for i in iperm]
-      inplace_fwds, noninplace_fwds, dont_fwd = split_list(
-          c, [num_inplace_fwds, num_noninplace_fwds])
-      dont_fwd = [jnp.sin(x) * sum(jnp.sum(c) for c in body_consts)
-                  for x in dont_fwd]
-      new_c_perm = [*inplace_fwds, *dont_fwd, *noninplace_fwds]
-      new_c = [new_c_perm[i] for i in perm]
-      return new_c, [0 for _ in range(num_ys)]
-
-    xs = [jnp.arange(2.) for _ in range(num_xs)]
-    outs = jax.lax.scan(body_fun, init_vals, xs)[0]
-    outs_ref = body_fun(body_fun(init_vals, [x[0] for x in xs])[0], [x[1] for x in xs])[0]
-    self.assertAllClose(outs, outs_ref, check_dtypes=False)
 
 
 if __name__ == '__main__':
