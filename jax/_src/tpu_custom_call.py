@@ -126,6 +126,7 @@ class CustomCallBackendConfig:
   output_memory_spaces: tuple[MemorySpace | None, ...] | None
   disable_bounds_checks: bool
   active_core_count: int | None
+  input_memory_spaces: tuple[MemorySpace | None, ...] | None
 
   # We omit the body while printing, because primitive params get embedded
   # in HLO metadata, and the body blows up its size.
@@ -169,12 +170,46 @@ class CustomCallBackendConfig:
       config.write(b', "internal_scratch_in_bytes": ')
       config.write(str(self.internal_scratch_in_bytes).encode("ascii"))
     if self.output_memory_spaces is not None:
-      config.write(b', "output_memory_colors": [')
-      for i, memory_space in enumerate(self.output_memory_spaces):
-        if i:
+      config.write(b', "output_memory_space_colors": [')
+      if len(self.output_memory_spaces) == 1:
+        output_memory_space = self.output_memory_spaces[0]
+        if output_memory_space is not None:
+          config.write(
+              f'{{"color":{output_memory_space.color}}}'.encode("ascii")
+          )
+      else:
+        comma = False
+        for i, output_memory_space in enumerate(self.output_memory_spaces):
+          if output_memory_space is None:
+            continue
+          if comma:
+            config.write(b",")
+          config.write(
+              f'{{"shape_index":[{i}],"color":{output_memory_space.color}}}'
+              .encode("ascii")
+          )
+          comma = True
+      config.write(b"]")
+    if self.input_memory_spaces is not None:
+      config.write(b', "input_memory_space_colors": [')
+      comma = False
+      for i, input_memory_space in enumerate(self.input_memory_spaces):
+        if input_memory_space is None:
+          continue
+        if input_memory_space not in (
+            MemorySpace.HBM,
+            MemorySpace.VMEM,
+        ):
+          raise NotImplementedError(
+              "input_memory_space_colors only supports HBM and VMEM"
+          )
+        if comma:
           config.write(b",")
-        color = memory_space.color if memory_space is not None else -1
-        config.write(str(color).encode("ascii"))
+        config.write(
+            f'{{"operand_index":{i},"color":{input_memory_space.color}}}'
+            .encode("ascii")
+        )
+        comma = True
       config.write(b"]")
     if self.disable_bounds_checks:
       config.write(b', "disable_bounds_checks": ')
@@ -456,6 +491,7 @@ def _lower_to_custom_call_config(
     kernel_name: str | None = None,
     ir_version: int | None = None,
     disable_bounds_checks: bool = False,
+    input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
 ) -> CustomCallBackendConfig:
   device_type = _get_device_type(module)
   lowered_module_asm, (
@@ -488,6 +524,7 @@ def _lower_to_custom_call_config(
       output_memory_spaces=output_memory_spaces,
       disable_bounds_checks=disable_bounds_checks,
       active_core_count=active_core_count,
+      input_memory_spaces=input_memory_spaces,
   )
 
 
@@ -509,6 +546,7 @@ def _lowered_to_custom_call_config(
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     disable_bounds_checks: bool = False,
     active_core_count: int | None = None,
+    input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
 ):
   if has_custom_barrier:
     if collective_id is None:
@@ -541,6 +579,7 @@ def _lowered_to_custom_call_config(
       output_memory_spaces,
       disable_bounds_checks,
       active_core_count=active_core_count,
+      input_memory_spaces=input_memory_spaces,
   )
   return config
 
@@ -563,6 +602,7 @@ def lower_module_to_custom_call(
     serialization_format: int | None,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None,
     disable_bounds_checks: bool = False,
+    input_memory_spaces: tuple[MemorySpace | None, ...] | None,
 ) -> Sequence[ir.Value]:
   config = _lower_to_custom_call_config(
       module,
@@ -578,6 +618,7 @@ def lower_module_to_custom_call(
       kernel_name=kernel_name,
       ir_version=get_ir_version(ctx),
       disable_bounds_checks=disable_bounds_checks,
+      input_memory_spaces=input_memory_spaces,
   )
   return _tpu_custom_call_lowering(
       ctx,
@@ -607,6 +648,7 @@ def as_tpu_kernel(
     serialization_format: int | None = 1,
     output_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
     disable_bounds_checks: bool = False,
+    input_memory_spaces: tuple[MemorySpace | None, ...] | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
   config = _lower_to_custom_call_config(
@@ -622,6 +664,7 @@ def as_tpu_kernel(
       output_memory_spaces=output_memory_spaces,
       kernel_name=kernel_name,
       disable_bounds_checks=disable_bounds_checks,
+      input_memory_spaces=input_memory_spaces,
   )
   return _as_jax_callable(
       config,
