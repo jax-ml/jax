@@ -947,9 +947,8 @@ class TCGen05Test(TestCase):
       n=(64, 128, 256, 512),  # TODO(apaszke): 192, other non-power-of-2
       swizzle=(32, 64, 128,),
   )
-  def test_mma_basic(self, *args, **kwargs):
+  def test_mma_basic(self, **kwargs):
     self._basic_mma_test(
-        *args,
         **kwargs,
         k_steps=2,  # Reducing to 1 can be helpful while debugging.
         lhs_transpose_tiles=False,
@@ -967,11 +966,10 @@ class TCGen05Test(TestCase):
       lhs_transpose_tiles=(False, True),
       rhs_transpose_tiles=(False, True),
   )
-  def test_mma_transposed_tiles(self, *args, **kwargs):
+  def test_mma_transposed_tiles(self, **kwargs):
     if not kwargs["lhs_transpose_tiles"] and not kwargs["rhs_transpose_tiles"]:
       self.skipTest("This is already tested in test_mma_basic")
     self._basic_mma_test(
-        *args,
         **kwargs,
         k_steps=2,  # Reducing to 1 can be helpful while debugging.
     )
