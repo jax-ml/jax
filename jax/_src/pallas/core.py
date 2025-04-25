@@ -432,6 +432,28 @@ def _get_ref_block_shape(block_shape: tuple[BlockDim, ...]) -> tuple[int, ...]:
       if not isinstance(dim, Squeezed)
   )
 
+
+class _IndexMapFunc:
+  """Helper class that checks for index_map equality."""
+
+  def __init__(self, index_map):
+    self.index_map = index_map
+    functools.update_wrapper(self, self.index_map)
+
+  def __eq__(self, other: object):
+    if not isinstance(other, _IndexMapFunc):
+      return NotImplemented
+    return self.index_map == other.index_map
+
+  def __call__(self, *args, **kwargs):
+    out_indices = self.index_map(*args, **kwargs)
+    if isinstance(out_indices, list):
+      out_indices = tuple(out_indices)
+    if not isinstance(out_indices, tuple):
+      out_indices = (out_indices,)
+    return out_indices
+
+
 @dataclasses.dataclass
 class BlockSpec:
   """Specifies how an array should be sliced for each invocation of a kernel.
@@ -463,16 +485,7 @@ class BlockSpec:
           " indexing."
       )
     if self.index_map is not None:
-      old_index_map = self.index_map
-      @functools.wraps(old_index_map)
-      def _wrapper_index_map(*args, **kwargs):
-        indices = old_index_map(*args, **kwargs)
-        if isinstance(indices, list):
-          indices = tuple(indices)
-        if not isinstance(indices, tuple):
-          indices = (indices,)
-        return indices
-      self.index_map = _wrapper_index_map
+      self.index_map = _IndexMapFunc(self.index_map)
 
   def to_block_mapping(
       self,
