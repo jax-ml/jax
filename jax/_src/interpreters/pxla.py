@@ -1064,6 +1064,7 @@ class UnloadedPmapExecutable:
         num_partitions=num_partitions,
         device_assignment=device_assignment,
         use_spmd_partitioning=False,
+        use_shardy_partitioner=config.use_shardy_partitioner.value,
         env_options_overrides=compiler_options,
         detailed_logging=compiler.use_detailed_logging(hlo),
         backend=pci.backend,
