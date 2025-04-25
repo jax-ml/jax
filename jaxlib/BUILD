@@ -150,6 +150,7 @@ pywrap_library(
         "//jaxlib/mlir/_mlir_libs:_tpu_ext",
         "//jaxlib/mlir/_mlir_libs:_triton_ext",
         "//jaxlib/mlir/_mlir_libs:register_jax_dialects",
+        "@xla//xla/python:_profiler",
     ],
 )
 
@@ -320,6 +321,7 @@ nanobind_pywrap_extension(
         "@xla//xla:util",
         "@xla//xla/backends/cpu/collectives:cpu_collectives",
         "@xla//xla/ffi:ffi_api",
+        "@xla//xla/hlo/builder/lib:approx_topk_shape",
         "@xla//xla/pjrt:exceptions",
         "@xla//xla/pjrt:mlir_to_hlo",
         "@xla//xla/pjrt:pjrt_api",
@@ -341,9 +343,7 @@ nanobind_pywrap_extension(
         "@xla//xla/python:logging",
         "@xla//xla/python:nb_absl_flat_hash_map",
         "@xla//xla/python:nb_absl_span",
-        "@xla//xla/python:ops",
         "@xla//xla/python:pprof_profile_builder",
-        "@xla//xla/python:profiler",
         "@xla//xla/python:refine_polymorphic_shapes",
         "@xla//xla/python:types",
         "@xla//xla/python:version",

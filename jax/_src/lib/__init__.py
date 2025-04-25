@@ -93,6 +93,7 @@ if version >= (0, 6, 1):
   from jaxlib._jax import pmap_lib as pmap_lib  # noqa: F401
   from jaxlib._jax import pytree as pytree  # noqa: F401
   from jaxlib._jax import Device as Device  # noqa: F401
+  from jaxlib import _profiler as _profiler  # noqa: F401
 else:
   import jaxlib.xla_extension as _jax  # type: ignore  # pytype: disable=import-error  # noqa: F401
   from jaxlib.xla_extension import guard_lib as guard_lib  # type: ignore  # pytype: disable=import-error  # noqa: F401
@@ -100,6 +101,7 @@ else:
   from jaxlib.xla_extension import pmap_lib as pmap_lib  # type: ignore  # pytype: disable=import-error  # noqa: F401
   from jaxlib.xla_extension import pytree as pytree  # type: ignore  # pytype: disable=import-error  # noqa: F401
   from jaxlib.xla_extension import Device as Device  # type: ignore  # pytype: disable=import-error  # noqa: F401
+  from jaxlib.xla_extension import profiler as _profiler  # type: ignore  # pytype: disable=import-error  # noqa: F401
 
 
 import jaxlib.xla_client as xla_client  # noqa: F401
