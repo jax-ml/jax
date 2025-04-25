@@ -573,5 +573,10 @@ class JaxArrayTests(jtu.JaxTestCase):
     self.assertAllClose(actual, expected, atol=0, rtol=0)
 
 
+@jtu.with_config(jax_disable_jit=True)
+class JaxArrayTestsNoJit(JaxArrayTests):
+  pass
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

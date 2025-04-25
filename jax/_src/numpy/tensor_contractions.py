@@ -284,7 +284,7 @@ def matvec(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     Array([[ 50, 122],
            [ 38,  92]], dtype=int32)
   """
-  util.check_arraylike("matvec", x1, x2)
+  x1, x2 = util.ensure_arraylike("matvec", x1, x2)
   return vectorize(matmul, signature="(n,m),(m)->(n)")(x1, x2)
 
 
@@ -326,7 +326,7 @@ def vecmat(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     Array([[ 40,  46],
            [ 94, 109]], dtype=int32)
   """
-  util.check_arraylike("matvec", x1, x2)
+  x1, x2 = util.ensure_arraylike("matvec", x1, x2)
   return vectorize(matmul, signature="(n),(n,m)->(m)")(ufuncs.conj(x1), x2)
 
 
@@ -372,7 +372,7 @@ def vdot(
     >>> jnp.dot(x, y)
     Array(0.+14.j, dtype=complex64)
   """
-  util.check_arraylike("vdot", a, b)
+  a, b = util.ensure_arraylike("vdot", a, b)
   if dtypes.issubdtype(dtypes.dtype(a, canonicalize=True), np.complexfloating):
     a = ufuncs.conj(a)
   return dot(jax.numpy.ravel(a), jax.numpy.ravel(b), precision=precision,
@@ -638,6 +638,6 @@ def outer(a: ArrayLike, b: ArrayLike, out: None = None) -> Array:
   """
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.outer is not supported.")
-  util.check_arraylike("outer", a, b)
+  a, b = util.ensure_arraylike("outer", a, b)
   a, b = util.promote_dtypes(a, b)
   return jax.numpy.ravel(a)[:, None] * jax.numpy.ravel(b)[None, :]
