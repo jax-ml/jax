@@ -364,15 +364,15 @@ class CoreTest(jtu.JaxTestCase):
   def test_dropvar_avals(self):
     def f(x):
       def body(c, _):
-        x1, x2 = c
-        return (2 * x1, 2 * x2), None
+        return c, None
       (x1, x2), _ = jax.lax.scan(body, (x, x), None, length=1)
       return [x2]
 
     aval = core.ShapedArray((), jnp.dtype('int32'))
     pval = pe.PartialVal.unknown(aval)
     jaxpr, _, _ = pe.trace_to_jaxpr_nounits(
-        lu.wrap_init(f, debug_info=debug_info("test", f, (0,), {})),
+        lu.wrap_init(f,
+                     debug_info=debug_info("test", f, (0,), {})),
         [pval], False)
     dropvar, b = jaxpr.eqns[0].outvars
     self.assertEqual(dropvar.aval, aval)
