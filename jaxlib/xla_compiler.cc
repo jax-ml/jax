@@ -647,19 +647,6 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def("result_shape", &ProgramShape::result)
       .def("__repr__", &ProgramShape::ToString);
 
-  nb::class_<ShapeIndex>(m, "ShapeIndex")
-      .def("__init__",
-           [](ShapeIndex* self, const std::vector<int64_t>& v) {
-             new (self) ShapeIndex(v.begin(), v.end());
-           })
-      .def("__repr__", &ShapeIndex::ToString)
-      .def("__eq__", [](const ShapeIndex& shape_ind,
-                        const ShapeIndex& other) { return shape_ind == other; })
-      .def("__ne__", [](const ShapeIndex& shape_ind,
-                        const ShapeIndex& other) { return shape_ind != other; })
-      .def("__hash__",
-           [](const ShapeIndex& shape_ind) { return absl::HashOf(shape_ind); });
-
   // Literals
   nb::class_<Literal>(m, "Literal")
       .def(nb::init<const Shape&>())
