@@ -201,7 +201,7 @@ def stop_trace():
     if _profile_state.profile_session is None:
       raise RuntimeError("No profile started")
     sess = _profile_state.profile_session
-    sess.export(sess.stop(), str(_profile_state.log_dir))
+    sess.stop_and_export(str(_profile_state.log_dir))
     if _profile_state.create_perfetto_trace:
       abs_filename = _write_perfetto_trace_file(_profile_state.log_dir)
       if _profile_state.create_perfetto_link:
