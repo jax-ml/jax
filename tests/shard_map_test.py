@@ -1756,7 +1756,7 @@ class ShardMapTest(jtu.JaxTestCase):
   def test_res_forwarding_optimization(self, jit, remat):
     mesh = jtu.create_mesh((4,), ('i',))
 
-    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    @shard_map(mesh=mesh, in_specs=P('i'), out_specs=P('i'))
     def f(x):
       return jax.lax.exp(x)
     if jit:
@@ -1779,7 +1779,7 @@ class ShardMapTest(jtu.JaxTestCase):
     # like the above test, but a different function `f`
     mesh = jtu.create_mesh((4,), ('i',))
 
-    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    @shard_map(mesh=mesh, in_specs=P('i'), out_specs=P('i'))
     def f(x):
       return jax.lax.exp(x.sum()) + x, jax.lax.exp(x)
     if jit:
@@ -1802,7 +1802,7 @@ class ShardMapTest(jtu.JaxTestCase):
     mesh = jtu.create_mesh((4,), ('i',))
 
     def loss(w, x):
-      @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P())
+      @shard_map(mesh=mesh, in_specs=P('i'), out_specs=P())
       def f(x):
         return jax.lax.psum(((w * x) ** 2).sum(), 'i')
       return f(x)
@@ -1818,8 +1818,8 @@ class ShardMapTest(jtu.JaxTestCase):
     dot = partial(lax.conv_general_dilated, window_strides=(),
                    padding='VALID', dimension_numbers=('NC', 'IO', 'NC'))
 
-    @partial(shard_map, mesh=mesh, in_specs=(P(None, 'i'), P('i', None)),
-             out_specs=P(None, None))
+    @shard_map(mesh=mesh, in_specs=(P(None, 'i'), P('i', None)),
+               out_specs=P(None, None))
     def f(x, y):
       return lax.psum(dot(x, y), 'i')
 
@@ -2458,8 +2458,7 @@ class ShardMapTest(jtu.JaxTestCase):
     args = [jnp.arange(6.).reshape(3, 2), jnp.arange(6.).reshape(3, 2, 1)]
 
     @partial(jax.remat, policy=lambda *_, **__: True)
-    @partial(shard_map, mesh=mesh, in_specs=(P('j'), P('i')),
-             out_specs=P('i', 'j'))
+    @shard_map(mesh=mesh, in_specs=(P('j'), P('i')), out_specs=P('i', 'j'))
     def f(x, y):
       return jnp.dot(x, y)
     jax.grad(lambda x, y: f(x, y).sum())(*args)
@@ -2468,7 +2467,7 @@ class ShardMapTest(jtu.JaxTestCase):
     # https://github.com/jax-ml/jax/pull/21032
     mesh = jtu.create_mesh((4, 2), ('i', 'j'))
 
-    @partial(shard_map, mesh=mesh, in_specs=P('j'), out_specs=P('j'))
+    @shard_map(mesh=mesh, in_specs=P('j'), out_specs=P('j'))
     def f(x):
       return jnp.sin(x)
 
