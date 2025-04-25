@@ -1987,7 +1987,7 @@ class PallasCallTest(PallasBaseTest):
     if not jtu.if_cloud_tpu_at_least(2025, 4, 25):
       self.skipTest("Needs a newer libTPU")
     if in_dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
-      self.skipTest("Triggers an XLA bug")
+      self.skipTest("Triggers an XLA bug")  # TODO(b/413602952)
     def kernel(x_ref, o_ref):
       o_ref[0, 0] = x_ref[0, 0].astype(o_ref.dtype)
     x = jnp.asarray([[-1]], dtype=in_dtype)
@@ -1998,6 +1998,23 @@ class PallasCallTest(PallasBaseTest):
         out_shape=jax.ShapeDtypeStruct((1, 1), jnp.int32),
     )(x)
     self.assertEqual(y, x.astype(jnp.int32))
+
+  @parameterized.product(in_dtype=[jnp.int4, jnp.int8, jnp.int16, jnp.int32])
+  def test_scalar_indirect_load(self, in_dtype):
+    if not jtu.if_cloud_tpu_at_least(2025, 4, 27):
+      self.skipTest("Needs a newer libTPU")
+    def kernel(x_ref, o_ref):
+      o_ref[0, 0] = x_ref[0, x_ref[0, 0].astype(jnp.int32)].astype(o_ref.dtype)
+    if in_dtype == jnp.int4 and not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Triggers an XLA bug")  # TODO(b/413602952)
+    x = jnp.asarray([[3, 0, 0, 1]], dtype=in_dtype)
+    y = pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+        out_shape=jax.ShapeDtypeStruct((1, 1), jnp.int32),
+    )(x)
+    self.assertEqual(y, x[0, x[0, 0]].astype(jnp.int32)[None, None])
 
   def test_masked_store(self):
     shape = (16, 256)
