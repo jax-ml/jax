@@ -89,7 +89,7 @@ namespace jax {
 
 template <typename T>
 inline absl::StatusOr<T> MaybeCastNoOverflow(
-    std::int64_t value, const std::string& source = __FILE__) {
+    std::int64_t value, std::string_view source = __FILE__) {
   if constexpr (sizeof(T) == sizeof(std::int64_t)) {
     return value;
   } else {
