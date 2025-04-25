@@ -15,7 +15,7 @@ limitations under the License.
 
 #include <algorithm>
 #include <cstdint>
-#include <functional>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -66,6 +66,9 @@ struct CanonicalizeContext {
 
   int hardware_generation;
 };
+
+bool need_elementwise_canonicalization(const CanonicalizeContext &ctx,
+                                       Operation &op);
 
 LogicalResult tpu_matmul_rule(const CanonicalizeContext &ctx,
                               tpu::MatmulOp op) {
@@ -351,21 +354,23 @@ LogicalResult canonicalize_elementwise(const CanonicalizeContext &ctx,
     }
   }
   if (should_rewrite_op) {
-    auto result_ty = dyn_cast<VectorType>(op.getResult(0).getType());
-    if (!result_ty) {
+    if (!res_ty) {
       op.emitOpError("Not implemented: Unexpected result type");
       return failure();
     }
-    auto result_element_type = result_ty.getElementType();
-    if (!result_element_type.isF32() && !result_element_type.isBF16()) {
-      op.emitOpError("Not implemented: Unexpected result element type");
-      return failure();
-    }
-    // Do the new op in f32, then truncate to the original element type.
+    // Do the new op in f32, then truncate to the original element type if
+    // needed. For example, result of arith::CmpF is i1 and doesn't need to be
+    // truncated.
+    bool should_truncate = !isa<arith::CmpFOp>(op);
+    auto new_res_ty =
+        VectorType::get(shape, should_truncate ? builder.getF32Type()
+                                               : res_ty.getElementType());
     auto new_op = builder.create(op.getLoc(), op.getName().getIdentifier(),
-                                 new_operands, target_f32_ty);
-    new_op = builder.create<arith::TruncFOp>(op.getLoc(), res_ty,
-                                             new_op->getResult(0));
+                                 new_operands, new_res_ty, op.getAttrs());
+    if (should_truncate) {
+      new_op = builder.create<arith::TruncFOp>(op.getLoc(), res_ty,
+                                               new_op->getResult(0));
+    }
     op.replaceAllUsesWith(new_op);
     op.erase();
   }
@@ -547,6 +552,9 @@ LogicalResult canonicalize_select(const CanonicalizeContext &ctx,
       op.getLoc(), cond, op.getTrueValue(), op.getFalseValue());
   op.replaceAllUsesWith(new_op.getResult());
   op.erase();
+  if (need_elementwise_canonicalization(ctx, *new_op.getOperation())) {
+    return canonicalize_elementwise(ctx, *new_op.getOperation());
+  }
   return success();
 }
 
@@ -688,18 +696,39 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
   return *rules;
 }
 
-bool need_elementwise_canonicalization(CanonicalizeContext ctx, Operation &op) {
-  if (isa<arith::DivFOp>(op)) {
-    auto vec_ty = dyn_cast<VectorType>(op.getOperand(0).getType());
-    if (vec_ty && vec_ty.getElementType().isBF16() &&
-        ctx.hardware_generation >= 4) {
-      return false;
-    }
-    return true;
+const llvm::StringMap<int> &bf16_upcast_min_supported_versions() {
+  constexpr int kAlwaysUpcast = std::numeric_limits<int>::max();
+  static const auto m = new llvm::StringMap<int>{
+      {arith::DivFOp::getOperationName(), 4},
+      {arith::SelectOp::getOperationName(), 5},
+      {arith::CmpFOp::getOperationName(), 5},
+      {arith::MulFOp::getOperationName(), kAlwaysUpcast},
+      {arith::AddFOp::getOperationName(), kAlwaysUpcast},
+      {arith::SubFOp::getOperationName(), kAlwaysUpcast},
+      {arith::MaximumFOp::getOperationName(), kAlwaysUpcast},
+      {arith::MinimumFOp::getOperationName(), kAlwaysUpcast},
+      {math::PowFOp::getOperationName(), kAlwaysUpcast},
+      {math::TanhOp::getOperationName(), kAlwaysUpcast},
+      {math::ExpOp::getOperationName(), kAlwaysUpcast},
+      {math::LogOp::getOperationName(), kAlwaysUpcast},
+  };
+  return *m;
+}
+
+bool need_elementwise_canonicalization(const CanonicalizeContext &ctx,
+                                       Operation &op) {
+  // Only rewrite when the hardware generation is below the minimum supported
+  // version.
+  auto it =
+      bf16_upcast_min_supported_versions().find(op.getName().getStringRef());
+  if (it == bf16_upcast_min_supported_versions().end() ||
+      ctx.hardware_generation >= it->second) {
+    return false;
   }
-  return isa<arith::MulFOp, arith::AddFOp, arith::SubFOp, arith::MaximumFOp,
-             arith::MinimumFOp, math::PowFOp, math::TanhOp, math::ExpOp,
-             math::LogOp>(op);
+  return llvm::any_of(op.getOperands(), [](Value operand) {
+    auto vty = dyn_cast<VectorType>(operand.getType());
+    return vty && vty.getElementType().isBF16();
+  });
 }
 
 class MosaicCanonicalizer {
