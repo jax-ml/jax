@@ -221,14 +221,19 @@ def _batch_block_mapping(
         block_mapping.index_map_jaxpr.consts,
         *drop_last_args,
     )
+    unflat_indices = tree_util.tree_unflatten(
+        block_mapping.index_map_out_tree, indices)
+    if not isinstance(unflat_indices, tuple):
+      unflat_indices = (unflat_indices,)
+    unflat_indices = list(unflat_indices)
     if dim is not batching.not_mapped:
       if isinstance(dim, batching.RaggedAxis):
         assert for_ragged, "Ragged axis not supported for non-ragged batching."
         stacked_axis = dim.stacked_axis
-        indices.insert(stacked_axis, new_idx)
+        unflat_indices.insert(stacked_axis, new_idx)
       else:
-        indices.insert(dim, new_idx)
-    return tuple(indices)
+        unflat_indices.insert(dim, new_idx)
+    return tuple(unflat_indices)
   idx_avals = [pallas_core.index_map_grid_aval, *block_mapping.index_map_jaxpr.in_avals]
 
   if for_ragged:
@@ -243,11 +248,15 @@ def _batch_block_mapping(
       )
       idx_avals = [*idx_avals, i32_aval_memref]
 
+  block_mapping_flat_fn, out_tree_thunk = api_util.flatten_fun_nokwargs(
+      lu.wrap_init(_block_map_function,
+                   debug_info=block_mapping.index_map_jaxpr.jaxpr.debug_info),
+      tree_util.tree_structure(idx_avals))
   with grid_mapping.trace_env():
     block_mapping_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
-        lu.wrap_init(_block_map_function,
-                     debug_info=block_mapping.index_map_jaxpr.jaxpr.debug_info),
+        block_mapping_flat_fn,
         idx_avals)
+  new_index_map_out_tree = out_tree_thunk()
   shape = block_mapping.block_shape
   if dim is batching.not_mapped:
     new_block_shape = shape
@@ -278,7 +287,8 @@ def _batch_block_mapping(
   jaxpr = jax_core.ClosedJaxpr(block_mapping_jaxpr, consts)
   return block_mapping.replace(block_shape=new_block_shape,
                                array_shape_dtype=new_array_shape_dtype,
-                               index_map_jaxpr=jaxpr)
+                               index_map_jaxpr=jaxpr,
+                               index_map_out_tree=new_index_map_out_tree)
 
 
 def _broadcast_input_output_aliases(

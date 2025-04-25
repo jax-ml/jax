@@ -39,6 +39,7 @@ from jax._src.export._export import export
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import discharge as state_discharge
+from jax._src.state import indexing
 from jax._src.state import types as state_types
 from jax._src.state.types import TransformedRef
 import jax.numpy as jnp
@@ -359,7 +360,20 @@ class Blocked:
   def __str__(self):
     return f"Blocked({self.block_size})"
 
-BlockDim: TypeAlias = Element | Squeezed | Blocked
+@dataclasses.dataclass(frozen=True)
+class BoundedSlice:
+  """Allows to specify a bounded slice of a dimension.
+
+  Specifically, the index_map need to return a `pl.Slice/pl.ds` for this
+  dimension. The start and size may be dynamic, as long as the size <=
+  block_size.
+  """
+  block_size: int
+
+  def __repr__(self):
+    return f"BoundedSlice({self.block_size})"
+
+BlockDim: TypeAlias = Element | Squeezed | Blocked | BoundedSlice
 
 
 def default_index_map(ndim: int) -> Callable:
@@ -372,7 +386,7 @@ def _canonicalize_block_dim(dim: BlockDim | int | None) -> BlockDim:
       return squeezed
     case int():
       return Blocked(int(dim))
-    case Squeezed() | Blocked() | Element():
+    case Squeezed() | Blocked() | Element() | BoundedSlice():
       return dim
     case _:
       # Handle case where the dim is a symbolic dimension so we assume it is
@@ -400,6 +414,8 @@ def _get_block_dim_size(dim: BlockDim) -> int:
       return block_size
     case Element():
       return dim.block_size
+    case BoundedSlice(block_size):
+      return block_size
     case _:
       raise ValueError(f"Unsupported block shape type: {type(dim)}")
 
@@ -420,7 +436,16 @@ def _get_ref_block_shape(block_shape: tuple[BlockDim, ...]) -> tuple[int, ...]:
 class BlockSpec:
   """Specifies how an array should be sliced for each invocation of a kernel.
 
-  See :ref:`pallas_blockspec` for more details.
+  The `block_shape` is a sequence of `int | None`s, or `BlockDim` types (e.g.
+  `pl.Element`, `pl.Squeezed`, `pl.Blocked`, `pl.BoundedSlice`). Each of these
+  types specify the size of the block dimension. `None` is used to specify a
+  dimension that is squeezed out of the kernel. The `BlockDim` types allow for
+  more fine-grained control over the indexing of the dimension. The `index_map`
+  needs to return a tuple of the same length as `block_shape`, which each entry
+  depending on the type of `BlockDim`.
+
+  See :ref:`pallas_blockspec` and the individual `BlockDim` type docstrings for
+  more details.
   """
   # An internal canonicalized version is in BlockMapping.
   block_shape: Sequence[BlockDim | int | None] | None = None
@@ -437,6 +462,17 @@ class BlockSpec:
           " block dimension in `block_shape` instead to enable 'Unblocked'"
           " indexing."
       )
+    if self.index_map is not None:
+      old_index_map = self.index_map
+      @functools.wraps(old_index_map)
+      def _wrapper_index_map(*args, **kwargs):
+        indices = old_index_map(*args, **kwargs)
+        if isinstance(indices, list):
+          indices = tuple(indices)
+        if not isinstance(indices, tuple):
+          indices = (indices,)
+        return indices
+      self.index_map = _wrapper_index_map
 
   def to_block_mapping(
       self,
@@ -497,14 +533,36 @@ class BlockSpec:
       jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(
           flat_index_map_fun, index_map_avals
       )
+    index_map_out_tree = index_map_out_tree_thunk()
+    unflat_avals = tree_util.tree_unflatten(index_map_out_tree, out_avals)
 
-    if len(out_avals) != len(block_shape):
+    if len(unflat_avals) != len(block_shape):
       raise ValueError(
           f"Index map function {debug.func_src_info} for "
           f"{origin} must return "
           f"{len(block_shape)} values to match {block_shape=}. "
-          f"Currently returning {len(out_avals)} values."
+          f"Currently returning {len(unflat_avals)} values:"
       )
+    # Verify types match
+    for i, (idx_aval, bd) in enumerate(zip(unflat_avals, block_shape)):
+      match bd:
+        case BoundedSlice():
+          if not isinstance(idx_aval, indexing.Slice):
+            raise ValueError(
+                "index_map returned a value of type"
+                f" {type(idx_aval)} at position {i} with block dimension"
+                f" {bd} when it should be pl.Slice"
+            )
+        case Blocked() | Element() | Squeezed() | int():
+          if (
+              not isinstance(idx_aval, jax_core.ShapedArray)
+              and not idx_aval.shape
+          ):
+            raise ValueError(
+                "index_map returned a value of type"
+                f" {type(idx_aval)} at position {i} with block dimension"
+                f" {bd} when it should be a scalar"
+            )
     for i, ov in enumerate(out_avals):
       if ov.shape or ov.dtype not in [jnp.int32, jnp.int64]:
         raise ValueError(
@@ -525,6 +583,7 @@ class BlockSpec:
         block_shape=block_shape,
         transformed_block_aval=block_aval,  # There are no transforms by default
         index_map_jaxpr=jax_core.ClosedJaxpr(jaxpr, consts),
+        index_map_out_tree=index_map_out_tree,
         array_shape_dtype=jax.ShapeDtypeStruct(
             array_aval_shape, array_aval.dtype
         ),
@@ -566,6 +625,7 @@ class BlockMapping:
   block_shape: tuple[BlockDim, ...]
   transformed_block_aval: AbstractMemoryRef
   index_map_jaxpr: jax_core.ClosedJaxpr
+  index_map_out_tree: tree_util.PyTreeDef
   array_shape_dtype: jax.ShapeDtypeStruct  # The whole array
   origin: OriginStr
   transforms: Sequence[MemoryRefTransform] = ()
@@ -582,10 +642,6 @@ class BlockMapping:
     )
 
     assert not self.index_map_jaxpr.consts
-    assert len(self.block_shape) == len(self.index_map_jaxpr.out_avals), (
-        self.block_shape,
-        self.index_map_jaxpr.out_avals,
-    )
     assert all(ov.shape == () and
                (ov.dtype == jnp.int32 or ov.dtype == jnp.int64)
                for ov in self.index_map_jaxpr.out_avals), (

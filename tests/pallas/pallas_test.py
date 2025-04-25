@@ -1001,6 +1001,35 @@ class PallasCallElementIndexingInterpretTest(PallasCallElementIndexingTest):
   INTERPRET = True
 
 
+class PallasCallBoundedSliceIndexingTest(PallasBaseTest):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.is_device_tpu():
+      self.skipTest("Only applicable for TPU")
+
+  def test_block_spec_bounded_slice_static(self):
+    shape = (16, 8, 128)
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    x = jnp.arange(np.prod(shape), dtype=np.int32).reshape(shape)
+    with self.assertRaisesRegex(NotImplementedError,
+                                "Unsupported block dimension type:"):
+      _ = self.pallas_call(
+          kernel,
+          jax.ShapeDtypeStruct((8, 8, 128), dtype=np.int32),
+          grid=(1,),
+          in_specs=(
+              pl.BlockSpec(
+                  (pl.BoundedSlice(8), 8, 128), lambda i: (pl.ds(4, 8), 0, 0),
+              ),
+          ),
+          out_specs=pl.BlockSpec(
+              (8, 8, 128), lambda i: (0, 0, 0),
+          ),
+      )(x)
+
 class ApiErrorTest(PallasBaseTest):
   def test_pallas_call_kernel_args_mismatch(self):
     a = np.arange(256, dtype=np.int32)
