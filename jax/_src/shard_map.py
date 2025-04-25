@@ -1288,7 +1288,9 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
 
   @as_hashable_function(closure=linearize_outs_thunk)
   def fwd_out_names_thunk():
-    res_avals, _, _, _, _, _ = linearize_outs_thunk()
+    res_avals, _, _, _, in_fwd, out_fwd = linearize_outs_thunk()
+    res_avals = [r for r, f1, f2 in zip(res_avals, in_fwd, out_fwd)
+                 if f1 is None and f2 is None]
     out_names = out_names_thunk()
     if check_vma:
       res_names = [{0: tuple(i for i in mesh.axis_names if i in a.vma)}
@@ -1313,7 +1315,9 @@ def _shard_map_linearize(trace, shard_map_p, f: lu.WrappedFun,
         config._check_vma(check_vma)):
     lin_jaxpr = _promote_scalar_residuals_jaxpr(lin_jaxpr, args_to_promote)
   out_names = out_names_thunk()
-  res_avals_iter = iter(res_avals)
+  res_avals2 = [r for r, f1, f2 in zip(res_avals, in_fwd, out_fwd)
+                if f1 is None and f2 is None]
+  res_avals_iter = iter(res_avals2)
   res_names = []
   for f1, f2 in zip(in_fwd, out_fwd):
     if f1 is not None:
