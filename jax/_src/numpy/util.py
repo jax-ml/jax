@@ -296,6 +296,7 @@ def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape, sharding=None
 # materialize the broadcast forms of scalar arguments.
 @api.jit
 def _where(condition: ArrayLike, x: ArrayLike, y: ArrayLike) -> Array:
+  condition, x, y = ensure_arraylike("where", condition, x, y)
   if x is None or y is None:
     raise ValueError("Either both or neither of the x and y arguments should "
                      "be provided to jax.numpy.where, got {} and {}."
