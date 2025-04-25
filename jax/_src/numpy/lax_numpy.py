@@ -3405,6 +3405,7 @@ def clip(
   Returns:
     An array containing values from ``arr``, with values smaller than ``min`` set
     to ``min``, and values larger than ``max`` set to ``max``.
+    Wherever ``min`` is larger than ``max``, the value of ``max`` is returned.
 
   See also:
     - :func:`jax.numpy.minimum`: Compute the element-wise minimum value of two arrays.
