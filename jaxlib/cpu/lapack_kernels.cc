@@ -22,10 +22,9 @@ limitations under the License.
 #include <cstdint>
 #include <cstring>
 #include <memory>
-#include <optional>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
+#include <string_view>
 
 #include "absl/algorithm/container.h"
 #include "absl/base/dynamic_annotations.h"
@@ -41,38 +40,19 @@ static_assert(sizeof(jax::lapack_int) == sizeof(int32_t),
 
 namespace ffi = xla::ffi;
 
-#define REGISTER_CHAR_ENUM_ATTR_DECODING(type)                                \
-  std::optional<type> xla::ffi::AttrDecoding<type>::Decode(                   \
-      XLA_FFI_AttrType attr_type, void* attr, DiagnosticEngine& diagnostic) { \
-    if (attr_type != XLA_FFI_AttrType_SCALAR) [[unlikely]] {                  \
-      return diagnostic.Emit("Wrong attribute type: expected ")               \
-             << XLA_FFI_AttrType_SCALAR << " but got" << attr_type;           \
-    }                                                                         \
-    auto* scalar = reinterpret_cast<XLA_FFI_Scalar*>(attr);                   \
-    if (scalar->dtype != XLA_FFI_DataType_U8) [[unlikely]] {                  \
-      return diagnostic.Emit("Wrong scalar data type: expected ")             \
-             << XLA_FFI_DataType_U8 << " but got " << scalar->dtype;          \
-    }                                                                         \
-    auto underlying =                                                         \
-        *reinterpret_cast<std::underlying_type_t<type>*>(scalar->value);      \
-    return static_cast<type>(underlying);                                     \
-  }
-
-REGISTER_CHAR_ENUM_ATTR_DECODING(jax::MatrixParams::Side);
-REGISTER_CHAR_ENUM_ATTR_DECODING(jax::MatrixParams::Transpose);
-REGISTER_CHAR_ENUM_ATTR_DECODING(jax::MatrixParams::Diag);
-REGISTER_CHAR_ENUM_ATTR_DECODING(jax::MatrixParams::UpLo);
-REGISTER_CHAR_ENUM_ATTR_DECODING(jax::svd::ComputationMode);
-REGISTER_CHAR_ENUM_ATTR_DECODING(jax::eig::ComputationMode);
-REGISTER_CHAR_ENUM_ATTR_DECODING(jax::schur::ComputationMode);
-REGISTER_CHAR_ENUM_ATTR_DECODING(jax::schur::Sort);
-
-#undef REGISTER_CHAR_ENUM_ATTR_DECODING
+XLA_FFI_REGISTER_ENUM_ATTR_DECODING(jax::MatrixParams::Side);
+XLA_FFI_REGISTER_ENUM_ATTR_DECODING(jax::MatrixParams::Transpose);
+XLA_FFI_REGISTER_ENUM_ATTR_DECODING(jax::MatrixParams::Diag);
+XLA_FFI_REGISTER_ENUM_ATTR_DECODING(jax::MatrixParams::UpLo);
+XLA_FFI_REGISTER_ENUM_ATTR_DECODING(jax::svd::ComputationMode);
+XLA_FFI_REGISTER_ENUM_ATTR_DECODING(jax::eig::ComputationMode);
+XLA_FFI_REGISTER_ENUM_ATTR_DECODING(jax::schur::ComputationMode);
+XLA_FFI_REGISTER_ENUM_ATTR_DECODING(jax::schur::Sort);
 
 namespace jax {
 
 template <typename T>
-inline T CastNoOverflow(int64_t value, const std::string& source = __FILE__) {
+inline T CastNoOverflow(int64_t value, std::string_view source = __FILE__) {
   auto result = MaybeCastNoOverflow<T>(value, source);
   if (!result.ok()) {
     throw std::overflow_error{std::string(result.status().message())};
