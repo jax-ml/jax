@@ -6853,13 +6853,13 @@ class DCETest(jtu.JaxTestCase):
     self.assert_dce_result(
         jaxpr,   used_outputs=used_outputs,
         expected_used_inputs=expected_used_inputs,
-        expected_num_eqns=1)  # 1 b/c scan doesn't have fwding rule
+        expected_num_eqns=0)
     used_outputs[7] = expected_used_inputs[7] = True
     used_outputs[6] = expected_used_inputs[6] = True
     self.assert_dce_result(
         jaxpr,   used_outputs=used_outputs,
         expected_used_inputs=expected_used_inputs,
-        expected_num_eqns=1)
+        expected_num_eqns=0)
 
     # If we use the value at index 3 only, some of the hidden sequence must be
     # kept but the rest pruned.
