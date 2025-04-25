@@ -16,7 +16,7 @@ import functools
 import textwrap
 import unittest
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 import jax
 from jax import lax
 from jax.experimental import pjit
@@ -274,6 +274,21 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.jit(f)(x)
       jax.effects_barrier()
     self.assertEqual(output(), "[1.23 2.35 0.  ]\n")
+
+  @parameterized.parameters([False, True])
+  def test_debug_print_in_unrolled_loop(self, use_jit):
+    def body(i, _):
+      jax.debug.print("{}", i)
+    if use_jit:
+      body = jax.jit(body)
+    @jax.jit
+    def f():
+      return jax.lax.fori_loop(0, 4, body, None, unroll=2)
+    with jtu.capture_stdout() as output:
+      f()
+      jax.effects_barrier()
+    actual = tuple(sorted(map(int, output().splitlines())))
+    self.assertEqual(actual, tuple(range(4)))
 
 
 @jtu.thread_unsafe_test_class()  # printing isn't thread-safe
