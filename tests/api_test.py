@@ -1636,7 +1636,7 @@ class APITest(jtu.JaxTestCase):
     expected_y, f_vjp = api.vjp(f, x, W)
     expected_cot_x, expected_cot_W = f_vjp(cot_out)
 
-    fwd, bwd = api.fwd_and_bwd(f)
+    fwd, bwd = api.fwd_and_bwd(f, argnums=(0,1))
     y, residuals = fwd(x, W)
     cot_x, cot_W = bwd(residuals, cot_out)
 
