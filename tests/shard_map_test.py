@@ -943,6 +943,19 @@ class ShardMapTest(jtu.JaxTestCase):
     g = shard_map(f, mesh=mesh, in_specs=(pspec,), out_specs=pspec)
     _ = g(sharded_rng)  # don't crash!
 
+  def test_vma_out_specs_error_check(self):
+    mesh = jtu.create_mesh((2, 2, 2), ('x', 'y', 'z'))
+    @shard_map(mesh=mesh, in_specs=P('x', 'y', 'z'), out_specs=P('x'))
+    def f(x):
+      return x * 2
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r".*out_specs is PartitionSpec\('x',\) which implies that the.*"
+        r' output value is only varying across mesh axes \{x\} and not \{y,z\},'
+        r' but it was inferred to be possibly varying over \{x,y,z\}.*'):
+      f(np.arange(16).reshape(4, 2, 2))
+
   def test_functools_partial_rank_error(self):
     mesh = jtu.create_mesh((4,), ('x',))
 
