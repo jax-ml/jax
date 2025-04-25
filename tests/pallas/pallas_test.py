@@ -962,7 +962,6 @@ class PallasCallElementIndexingTest(PallasBaseTest):
         ),
         out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
         out_shape=result_ty,
-        debug=True,
     )(x)
     ref = []
     for i in range(15):

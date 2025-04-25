@@ -1548,7 +1548,6 @@ class PallasCallDMATest(PallasBaseTest):
             out_specs=pl.BlockSpec((None, 8, 128), lambda i: (i, 0, 0)),
             grid=(2,),
         ),
-        debug=True,
         out_shape=jax.ShapeDtypeStruct((2, 8, 128), jnp.int32),
     )()
     expected = jnp.broadcast_to(jnp.arange(2, dtype=jnp.int32)[..., None, None],
@@ -2097,7 +2096,6 @@ class PallasMegacoreTest(PallasBaseTest):
                     pl.BlockSpec((128, 128), lambda i, j, k: (k, j)),
                 ],
                 out_specs=pl.BlockSpec((128, 128), lambda i, j, k: (i, j)),
-                debug=True,
             )
         )
     )(x, y)
