@@ -2738,12 +2738,6 @@ def where(condition: ArrayLike, x: ArrayLike, y: ArrayLike, / ,*,
           fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
           ) -> Array: ...
 
-@overload
-def where(condition: ArrayLike, x: ArrayLike | None = None,
-          y: ArrayLike | None = None, /, *, size: int | None = None,
-          fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
-          ) -> Array | tuple[Array, ...]: ...
-
 
 @export
 def where(condition, x=None, y=None, /, *, size=None, fill_value=None):

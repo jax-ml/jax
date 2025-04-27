@@ -602,7 +602,7 @@ def _softmax(
     x: ArrayLike,
     axis: int | tuple[int, ...] | None = -1,
     where: ArrayLike | None = None,
-    initial: ArrayLike | None = -jnp.inf) -> Array:
+    initial: ArrayLike = -jnp.inf) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   x_safe = x if where is None else jnp.where(where, x, initial)
   unnormalized = jnp.exp(x_safe - x_max)
@@ -621,7 +621,7 @@ def _softmax_deprecated(
     x: ArrayLike,
     axis: int | tuple[int, ...] | None = -1,
     where: ArrayLike | None = None,
-    initial: ArrayLike | None = -jnp.inf) -> Array:
+    initial: ArrayLike = -jnp.inf) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   x_safe = x if where is None else jnp.where(where, x, initial)
   unnormalized = jnp.exp(x_safe - lax.stop_gradient(x_max))
