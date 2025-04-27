@@ -1395,11 +1395,11 @@ def _lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None, *,
     x = jnp.empty((n, *b.shape[1:]), dtype=a.dtype)
   else:
     if rcond is None:
-      rcond = float(jnp.finfo(dtype).eps) * max(n, m)
+      rcond_ = jnp.finfo(dtype).eps * max(n, m)
     else:
-      rcond = jnp.where(rcond < 0, jnp.finfo(dtype).eps, rcond)
+      rcond_ = jnp.where(rcond < 0, jnp.finfo(dtype).eps, rcond)
     u, s, vt = svd(a, full_matrices=False)
-    mask = s >= jnp.array(rcond, dtype=s.dtype) * s[0]
+    mask = s >= jnp.array(rcond_, dtype=s.dtype) * s[0]
     rank = mask.sum()
     safe_s = jnp.where(mask, s, 1).astype(a.dtype)
     s_inv = jnp.where(mask, 1 / safe_s, 0)[:, np.newaxis]
