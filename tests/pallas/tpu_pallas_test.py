@@ -1776,6 +1776,23 @@ class PallasCallTest(PallasBaseTest):
     reduce_value = jnp.sum(jnp.full(shape, x), dtype=dty)
     np.testing.assert_allclose(z, reduce_value)
 
+  def test_sum_in_smem(self):
+    if not jtu.if_cloud_tpu_at_least(2025, 4, 30):
+      self.skipTest("Needs a newer libTPU")
+    def kernel(x, out):
+      a = jnp.array(0, dtype=jnp.int32)
+      for i in range(4):
+        for j in range(4):
+          out[i, j] = a.astype(out.dtype)
+          a += x[i, j].astype(jnp.int32)
+
+    x = jnp.ones((4, 4), jnp.int16)
+    spec = pl.BlockSpec(memory_space=pltpu.SMEM)
+    y = pl.pallas_call(kernel, in_specs=[spec], out_specs=spec, out_shape=x)(x)
+    np.testing.assert_array_equal(
+        y, jnp.arange(16, dtype=jnp.int32).reshape(4, 4)
+    )
+
   @parameterized.parameters([
       dict(
           m=m,
