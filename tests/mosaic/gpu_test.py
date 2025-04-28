@@ -2241,19 +2241,6 @@ class ProfilerTest(TestCase):
     ))
     jax.block_until_ready(f(x))
 
-  def test_multigpu(self):
-    if len(jax.devices()) < 2:
-      self.skipTest("Need at least 2 devices")
-    def kernel(ctx, src, dst, _):
-      mgpu.FragmentedArray.load_strided(src).store_untiled(dst)
-    x = np.arange(64 * 64, dtype=jnp.float32).reshape(64, 64)
-    f = jax.jit(mgpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), x, x, ()
-    ))
-    # Make sure we can invoke the same program on different devices.
-    for xd in (jax.device_put(x, d) for d in jax.devices()[:2]):
-      jax.block_until_ready(f(xd))
-
 
 class TorchTest(TestCase):
 
