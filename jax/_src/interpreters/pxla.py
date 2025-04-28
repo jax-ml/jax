@@ -1099,9 +1099,14 @@ class UnloadedPmapExecutable:
     with dispatch.log_elapsed_time(
         "Finished XLA compilation of {fun_name} in {elapsed_time:.9f} sec",
         fun_name=pci.name, event=dispatch.BACKEND_COMPILE_EVENT):
+      # `executable_devices` contains devices for output shardings of a pmapped
+      # function. It contains only local devices for correspondence with
+      # `PmapSharding`s, which also contain only local devices.
+      executable_devices = _create_da_object(
+          tuple(local_device_assignment.flat))
       compiled = compiler.compile_or_get_cached(
           pci.backend, hlo, device_assignment, compile_options,
-          host_callbacks)
+          host_callbacks, executable_devices)
 
     return UnloadedPmapExecutable(
         compiled=compiled,
@@ -2792,7 +2797,7 @@ def _cached_compilation(computation, name, mesh, spmd_lowering,
       fun_name=name, event=dispatch.BACKEND_COMPILE_EVENT):
     xla_executable = compiler.compile_or_get_cached(
         backend, computation, dev, compile_options, host_callbacks,
-        pgle_profiler)
+        da, pgle_profiler)
   return xla_executable
 
 

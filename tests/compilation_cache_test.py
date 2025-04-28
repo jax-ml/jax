@@ -134,7 +134,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
     backend = xla_bridge.get_backend()
     key = cc.get_cache_key(computation, devices, compile_options, backend)
     executable, compile_time = cc.get_executable_and_time(
-        key, compile_options, backend)
+        key, compile_options, backend, xc.DeviceList(tuple(devices.flat)))
     self.assertIsNone(executable)
     self.assertIsNone(compile_time)
 
@@ -145,15 +145,24 @@ class CompilationCacheTest(CompilationCacheTestCase):
         num_replicas=1, num_partitions=1
     )
     backend = xla_bridge.get_backend()
-    executable1 = backend.compile(computation1, compile_options)
-    executable2 = backend.compile(computation2, compile_options)
+    executable_devices = xc.DeviceList(tuple(backend.local_devices()))
+    if jax._src.lib.jaxlib_extension_version < 331:
+      executable1 = backend.compile(computation1, compile_options)
+      executable2 = backend.compile(computation2, compile_options)
+    else:
+      executable1 = backend.compile(
+          computation1, executable_devices, compile_options)
+      executable2 = backend.compile(
+          computation2, executable_devices, compile_options)
     cc.put_executable_and_time(
         "key1", "computation1", executable1, backend, FAKE_COMPILE_TIME)
     cc.put_executable_and_time(
         "key2", "computation2", executable2, backend, FAKE_COMPILE_TIME)
     self.assertNotEqual(
-        cc.get_executable_and_time("key1", compile_options, backend)[0],
-        cc.get_executable_and_time("key2", compile_options, backend)[0]
+        cc.get_executable_and_time(
+            "key1", compile_options, backend, executable_devices)[0],
+        cc.get_executable_and_time(
+            "key2", compile_options, backend, executable_devices)[0]
     )
 
   def test_put_executable(self):
@@ -167,12 +176,17 @@ class CompilationCacheTest(CompilationCacheTestCase):
         num_replicas=1, num_partitions=1
     )
     backend = xla_bridge.get_backend()
-    executable = backend.compile(str(computation), compile_options)
+    executable_devices = xc.DeviceList(tuple(devices.flat))
+    if jax._src.lib.jaxlib_extension_version < 331:
+      executable = backend.compile(str(computation), compile_options)
+    else:
+      executable = backend.compile(
+          str(computation), executable_devices, compile_options)
     key = cc.get_cache_key(computation, devices, compile_options, backend)
     cc.put_executable_and_time(
         key, "alambda", executable, backend, FAKE_COMPILE_TIME)
     executable_retrieved, compile_time_retrieved = cc.get_executable_and_time(
-        key, compile_options, backend)
+        key, compile_options, backend, executable_devices)
     inputs_to_executable = (
         jnp.array(1, dtype=np.int32),
         jnp.array(2, dtype=np.int32),
@@ -562,8 +576,13 @@ class CompilationCacheTest(CompilationCacheTestCase):
         .runtime_executable()
     )
     serialized_executable = backend.serialize_executable(executable)
-    deserialized_executable = backend.deserialize_executable(
-        serialized_executable, None)
+    if jax._src.lib.jaxlib_extension_version < 331:
+      deserialized_executable = backend.deserialize_executable(  # type: ignore
+          serialized_executable, None)
+    else:
+      deserialized_executable = backend.deserialize_executable(  # type: ignore
+          serialized_executable,
+          xc.DeviceList(tuple(jax.local_devices(backend=backend))), None)
     self.assertEqual(
         executable.fingerprint, deserialized_executable.fingerprint)
 

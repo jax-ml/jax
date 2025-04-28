@@ -31,6 +31,7 @@ from jax._src import cache_key
 from jax._src import config
 from jax._src import monitoring
 from jax._src.compilation_cache_interface import CacheInterface
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lru_cache import LRUCache
@@ -207,7 +208,7 @@ def is_executable_in_cache(backend, cache_key: str) -> bool:
 
 
 def get_executable_and_time(
-    cache_key: str, compile_options, backend
+    cache_key: str, compile_options, backend, executable_devices
 ) -> tuple[xla_client.LoadedExecutable | None, int | None]:
   """Returns the cached executable and its compilation time if present, or None
   otherwise.
@@ -223,8 +224,12 @@ def get_executable_and_time(
   executable_and_time = decompress_executable(executable_and_time)
   serialized_executable, compile_time = extract_executable_and_time(
       executable_and_time)
-  xla_executable_deserialized = backend.deserialize_executable(
-      serialized_executable, compile_options)
+  if jaxlib_extension_version < 332:
+    xla_executable_deserialized = backend.deserialize_executable(
+        serialized_executable, compile_options)
+  else:
+    xla_executable_deserialized = backend.deserialize_executable(
+        serialized_executable, executable_devices, compile_options)
   return xla_executable_deserialized, compile_time
 
 

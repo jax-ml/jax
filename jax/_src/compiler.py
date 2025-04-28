@@ -35,6 +35,7 @@ from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
+from jax._src.lib import jaxlib_extension_version
 from jax._src.lib.mlir import ir
 import numpy as np
 
@@ -288,6 +289,7 @@ def get_compile_options(
 def backend_compile(
     backend: xc.Client,
     module: ir.Module,
+    executable_devices: xc.DeviceList,
     options: xc.CompileOptions,
     host_callbacks: Sequence[Any],
 ) -> xc.LoadedExecutable:
@@ -312,16 +314,26 @@ def backend_compile(
     )
 
   try:
+    if jaxlib_extension_version < 332:
+      if host_callbacks:
+        return backend.compile(
+            built_c, compile_options=options, host_callbacks=host_callbacks)  # type: ignore
+      return backend.compile(built_c, compile_options=options)  # type: ignore
+
     # we use a separate function call to ensure that XLA compilation appears
     # separately in Python profiling results
     if host_callbacks:
       return backend.compile(
-          built_c, compile_options=options, host_callbacks=host_callbacks
+          built_c,
+          executable_devices=executable_devices,  # type: ignore
+          compile_options=options,
+          host_callbacks=host_callbacks,
       )
     # Some backends don't have `host_callbacks` option yet
     # TODO(sharadmv): remove this fallback when all backends allow `compile`
     # to take in `host_callbacks`
-    return backend.compile(built_c, compile_options=options)
+    return backend.compile(
+        built_c, executable_devices=executable_devices, compile_options=options)  # type: ignore
   except xc.XlaRuntimeError as e:
     for error_handler in _XLA_RUNTIME_ERROR_HANDLERS:
       handler_result = error_handler(e)
@@ -357,6 +369,7 @@ def compile_or_get_cached(
     devices: np.ndarray,
     compile_options: xc.CompileOptions,
     host_callbacks: Sequence[Any],
+    executable_devices: xc.DeviceList,
     pgle_profiler: profiler.PGLEProfiler | None = None,
 ) -> xc.LoadedExecutable:
   sym_name = computation.operation.attributes['sym_name']
@@ -385,14 +398,15 @@ def compile_or_get_cached(
   )
 
   if cache_key is None:
-    return backend_compile(backend, computation, compile_options,
-                           host_callbacks)
+    return backend_compile(
+        backend, computation, executable_devices, compile_options,
+        host_callbacks)
 
   monitoring.record_event('/jax/compilation_cache/compile_requests_use_cache')
 
   cache_retrieval_start = time.monotonic()
   retrieved_executable, retrieved_compile_time = _cache_read(
-      module_name, cache_key, compile_options, backend)
+      module_name, cache_key, compile_options, backend, executable_devices)
   cache_retrieval_time = time.monotonic() - cache_retrieval_start
 
   if retrieved_executable is not None:
@@ -420,6 +434,7 @@ def compile_or_get_cached(
     return _compile_and_share_module(
         backend,
         computation,
+        executable_devices,
         compile_options,
         host_callbacks,
         distributed.global_state.client,
@@ -432,6 +447,7 @@ def compile_or_get_cached(
     return _compile_and_write_cache(
         backend,
         computation,
+        executable_devices,
         compile_options,
         host_callbacks,
         module_name,
@@ -631,11 +647,13 @@ def _share_fdo_profiles(
 
 _share_fdo_profiles.modules_profiles = {}
 
+
 # The process with the first_process_id should compile the module and write it
 # to the K-V storage.
 def _compile_and_share_module(
     backend: xc.Client,
     computation: ir.Module,
+    executable_devices: xc.DeviceList,
     compile_options: xc.CompileOptions,
     host_callbacks: Sequence[Any],
     global_client: lib._jax.DistributedRuntimeClient,
@@ -654,6 +672,7 @@ def _compile_and_share_module(
     executable = _compile_and_write_cache(
         backend,
         computation,
+        executable_devices,
         compile_options,
         host_callbacks,
         module_name,
@@ -673,18 +692,24 @@ def _compile_and_share_module(
     serialized_executable = compilation_cache.decompress_executable(
         serialized_executable
     )
-    executable = backend.deserialize_executable(
-        serialized_executable, compile_options
-    )
+    if jaxlib_extension_version < 332:
+      executable = backend.deserialize_executable(
+          serialized_executable, compile_options)  # type: ignore
+    else:
+      executable = backend.deserialize_executable(
+          serialized_executable, executable_devices, compile_options)  # type: ignore
 
   _compile_and_share_module.modules_cache[cache_key] = executable
   return executable
 
+
 _compile_and_share_module.modules_cache = {}
+
 
 def _compile_and_write_cache(
     backend: xc.Client,
     computation: ir.Module,
+    executable_devices: xc.DeviceList,
     compile_options: xc.CompileOptions,
     host_callbacks: Sequence[Any],
     module_name: str,
@@ -692,13 +717,14 @@ def _compile_and_write_cache(
 ) -> xc.LoadedExecutable:
   start_time = time.monotonic()
   executable = backend_compile(
-      backend, computation, compile_options, host_callbacks
+      backend, computation, executable_devices, compile_options, host_callbacks
   )
   compile_time = time.monotonic() - start_time
   _cache_write(
       cache_key, compile_time, module_name, backend, executable, host_callbacks
   )
   return executable
+
 
 def _is_executable_in_cache(backend, cache_key) -> bool:
   """Checks if executable is presented in cache on a given key
@@ -716,14 +742,14 @@ def _is_executable_in_cache(backend, cache_key) -> bool:
 
 def _cache_read(
     module_name: str, cache_key: str, compile_options: xc.CompileOptions,
-    backend: xc.Client
+    backend: xc.Client, executable_devices: xc.DeviceList,
 ) -> tuple[xc.LoadedExecutable | None, int | None]:
   """Looks up the `computation` and it's compilation time in the persistent
   compilation cache repository.
   """
   try:
     return compilation_cache.get_executable_and_time(
-        cache_key, compile_options, backend)
+        cache_key, compile_options, backend, executable_devices)
   except Exception as ex:
     if config.raise_persistent_cache_errors.value:
       raise

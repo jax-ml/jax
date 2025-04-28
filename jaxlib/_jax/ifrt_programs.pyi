@@ -38,6 +38,7 @@ def make_colocated_python_compile_options() -> CompileOptions: ...
 
 def make_xla_compile_options(
     compile_options: _jax.CompileOptions,
+    executable_devices: _jax.DeviceList,
     host_callbacks: Sequence[Any]
 ) -> CompileOptions: ...
 
