@@ -22,7 +22,7 @@ load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", 
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
 load("@python_version_repo//:py_version.bzl", "HERMETIC_PYTHON_VERSION")
 load("@rules_cc//cc:defs.bzl", _cc_proto_library = "cc_proto_library")
-load("@rules_python//python:defs.bzl", "py_test")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
 load("@xla//third_party/py:python_wheel.bzl", "collect_data_files", "transitive_py_deps")
 load("@xla//xla/tsl:tsl.bzl", "transitive_hdrs", _if_windows = "if_windows", _pybind_extension = "tsl_pybind_extension_opensource")
 load("@xla//xla/tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
@@ -144,17 +144,17 @@ jax2tf_deps = []
 
 def pytype_library(name, pytype_srcs = None, **kwargs):
     _ = pytype_srcs  # @unused
-    native.py_library(name = name, **kwargs)
+    py_library(name = name, **kwargs)
 
 def pytype_strict_library(name, pytype_srcs = [], **kwargs):
     data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
-    native.py_library(name = name, data = data, **new_kwargs)
+    py_library(name = name, data = data, **new_kwargs)
 
-py_strict_library = native.py_library
-py_strict_test = native.py_test
+py_strict_library = py_library
+py_strict_test = py_test
 
-def py_library_providing_imports_info(*, name, lib_rule = native.py_library, pytype_srcs = [], **kwargs):
+def py_library_providing_imports_info(*, name, lib_rule = py_library, pytype_srcs = [], **kwargs):
     data = pytype_srcs + (kwargs["data"] if "data" in kwargs else [])
     new_kwargs = {k: v for k, v in kwargs.items() if k != "data"}
     lib_rule(name = name, data = data, **new_kwargs)
