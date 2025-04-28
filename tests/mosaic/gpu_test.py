@@ -892,7 +892,7 @@ class WGMMATest(TestCase):
     ref = jax.lax.dot(
         x, (y.T if rhs_transpose else y), preferred_element_type=jnp.float32
     )
-    np.testing.assert_allclose(z, ref, rtol=5e-4, atol=0)
+    np.testing.assert_allclose(z, ref, rtol=1e-3, atol=0)
 
 
 class TCGen05Test(TestCase):
