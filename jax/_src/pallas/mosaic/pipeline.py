@@ -949,7 +949,7 @@ def skip_input_copies_when_init_accumulators(schedule) -> Any:
     def new_pred(original_pred_fn, *a):
       pred = original_pred_fn(*a)
       if a[1].is_accumulator or a[1].is_input_output:
-        pred &= ~a[0].init_accumulators
+        pred &= not a[0].init_accumulators
       return pred
 
     new_schedule[k] = functools.partial(
