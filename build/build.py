@@ -573,7 +573,6 @@ async def main():
 
   if "cuda" in args.wheels:
     wheel_build_command_base.append("--config=cuda")
-    wheel_build_command_base.append("--config=cuda_libraries_from_stubs")
     if args.use_clang:
       wheel_build_command_base.append(
           f"--action_env=CLANG_CUDA_COMPILER_PATH=\"{clang_path}\""
@@ -640,9 +639,6 @@ async def main():
       if "ML_WHEEL_GIT_HASH" in option:
         wheel_git_hash = option.split("=")[-1][:9]
 
-    if "cuda" in args.wheels:
-      wheel_build_command_base.append("--config=cuda_libraries_from_stubs")
-
   with open(".jax_configure.bazelrc", "w") as f:
     jax_configure_options = utils.get_jax_configure_bazel_options(wheel_build_command_base.get_command_as_list(), args.use_new_wheel_build_rule)
     if not jax_configure_options:
@@ -677,7 +673,9 @@ async def main():
         )
         sys.exit(1)
 
-      wheel_build_command = copy.deepcopy(wheel_build_command_base)
+      wheel_build_command = copy.deepcopy(bazel_command_base)
+      if "cuda" in args.wheels:
+        wheel_build_command.append("--config=cuda_libraries_from_stubs")
       print("\n")
       logger.info(
         "Building %s for %s %s...",
