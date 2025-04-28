@@ -506,6 +506,7 @@ class Client:
   def compile(
       self,
       computation: str | bytes,
+      executable_devices: DeviceList | Sequence[Device],
       compile_options: CompileOptions = ...,
       host_callbacks: Sequence[Any] = ...,
   ) -> LoadedExecutable: ...
@@ -518,6 +519,7 @@ class Client:
   def deserialize_executable(
       self,
       serialized: bytes,
+      executable_devices: DeviceList | Sequence[Device],
       options: CompileOptions | None,
       host_callbacks: Sequence[Any] = ...,
   ) -> LoadedExecutable: ...

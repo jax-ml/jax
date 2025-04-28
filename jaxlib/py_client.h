@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/python/ifrt/client.h"
 #include "xla/python/ifrt/compiler.h"
 #include "xla/python/ifrt/device.h"
+#include "xla/python/ifrt/device_list.h"
 #include "xla/python/ifrt/program.h"
 #include "xla/python/pjrt_ifrt/pjrt_client.h"
 #include "xla/shape.h"
@@ -168,16 +169,19 @@ class PyClient {
 
   static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> Compile(
       nb_class_ptr<PyClient> client, std::string mlir_module,
-      CompileOptions options, std::vector<nanobind::capsule> host_callbacks);
+      ifrt::DeviceListRef executable_devices, CompileOptions options,
+      std::vector<nanobind::capsule> host_callbacks);
 
   static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> Compile(
       nb_class_ptr<PyClient> client, std::string mlir_module,
-      CompileOptions options, std::vector<nanobind::callable> host_callbacks);
+      ifrt::DeviceListRef executable_devices, CompileOptions options,
+      std::vector<nanobind::callable> host_callbacks);
 
   absl::StatusOr<nanobind::bytes> SerializeExecutable(
       const PyLoadedExecutable& executable) const;
   static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> DeserializeExecutable(
       nb_class_ptr<PyClient> client, nanobind::bytes serialized,
+      ifrt::DeviceListRef executable_devices,
       std::optional<CompileOptions> options,
       std::vector<nanobind::capsule> host_callbacks);
 

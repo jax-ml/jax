@@ -59,6 +59,7 @@ limitations under the License.
 #include "xla/python/pjrt_ifrt/xla_compiler.h"
 #include "xla/python/pjrt_ifrt/xla_sharding.h"
 #include "xla/python/types.h"
+#include "xla/python/version.h"
 #include "xla/tsl/concurrency/ref_count.h"
 #include "xla/tsl/platform/statusor.h"
 
@@ -223,7 +224,8 @@ absl::StatusOr<std::unique_ptr<ifrt::Program>> MakeHloProgramFromBytes(
 }
 
 absl::StatusOr<std::unique_ptr<ifrt::CompileOptions>> MakeXlaCompileOptions(
-    CompileOptions options, std::vector<nb::capsule> host_callbacks) {
+    CompileOptions options, jax::PyDeviceList& py_executable_devices,
+    std::vector<nb::capsule> host_callbacks) {
   std::vector<tsl::RCReference<ifrt::LoadedHostCallback>>
       ifrt_loaded_host_callbacks;
   ifrt_loaded_host_callbacks.reserve(host_callbacks.size());
@@ -234,8 +236,16 @@ absl::StatusOr<std::unique_ptr<ifrt::CompileOptions>> MakeXlaCompileOptions(
     ifrt_loaded_host_callbacks.push_back(tsl::FormRef(
         static_cast<ifrt::LoadedHostCallback*>(host_callback.data())));
   }
+#if JAX_IFRT_VERSION_NUMBER >= 6
+  TF_ASSIGN_OR_RETURN(ifrt::DeviceListRef executable_devices,
+                      py_executable_devices.ifrt_device_list());
+  return std::make_unique<ifrt::XlaCompileOptions>(
+      std::move(options), std::move(executable_devices),
+      std::move(ifrt_loaded_host_callbacks));
+#else
   return std::make_unique<ifrt::XlaCompileOptions>(
       std::move(options), std::move(ifrt_loaded_host_callbacks));
+#endif
 }
 
 constexpr absl::string_view kColocatedPythonProgramType =
@@ -281,7 +291,7 @@ void BuildIfrtProgramsSubmodule(nanobind::module_& m) {
            ValueOrThrowWrapper(MakePluginProgramFromBytes), nb::arg("data"))
       .def("make_xla_compile_options",
            ValueOrThrowWrapper(MakeXlaCompileOptions), nb::arg("options"),
-           nb::arg("host_callbacks"))
+           nb::arg("executable_devices"), nb::arg("host_callbacks"))
       .def("make_colocated_python_compile_options",
            ValueOrThrowWrapper(MakeColocatedPythonCompileOptions))
       .def("make_plugin_compile_options",
