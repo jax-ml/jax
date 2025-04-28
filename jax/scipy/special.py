@@ -37,6 +37,7 @@ from jax._src.scipy.special import (
   gammaln as gammaln,
   gammasgn as gammasgn,
   hyp1f1 as hyp1f1,
+  hyp2f1 as hyp2f1,
   i0 as i0,
   i0e as i0e,
   i1 as i1,
