@@ -33,16 +33,24 @@ jax_multiplatform_test(
     name = "gpu_test",
     srcs = ["gpu_test.py"],
     enable_backends = [],
-    enable_configs = [
-        "gpu_h100",
-        "gpu_h100x2",
-    ],
+    enable_configs = ["gpu_h100"],
     env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
     shard_count = 16,
     tags = [
-        "multiaccelerator",
         "noasan",  # Times out.
     ],
+    deps = [
+        "//jax:mosaic_gpu",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_multiplatform_test(
+    name = "gpu_test_multidevice",
+    srcs = ["gpu_test_multidevice.py"],
+    enable_backends = [],
+    enable_configs = ["gpu_h100x2"],
+    env = {"XLA_FLAGS": "--xla_gpu_autotune_level=0"},
+    tags = ["multiaccelerator"],
     deps = [
         "//jax:mosaic_gpu",
     ] + py_deps("absl/testing") + py_deps("numpy"),
