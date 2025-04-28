@@ -76,6 +76,9 @@ fi
 
 export XLA_PYTHON_CLIENT_ALLOCATOR=platform
 export XLA_FLAGS=--xla_gpu_force_compilation_parallelism=1
+
+env
+unset KUBERNETES_SERVICE_HOST
 # End of test environment variable setup
 
 echo "Running CUDA tests..."
