@@ -2909,6 +2909,51 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         jax.jit(kernel)(), jax.lax.broadcast_in_dim(x, output_shape, bcast_dims)
     )
 
+  @parameterized.parameters(fa.WGMMA_ROW_LAYOUT, fa.WGMMA_COL_LAYOUT)
+  def test_wgmma_row_col_store(self, in_layout):
+    element_value = 42.0
+    shape = (64, )
+    def body(ctx, result_gmem_ref, smem):
+      del ctx
+      result_smem_ref = smem[0]
+
+      f32 = ir.F32Type.get()
+      zero_index = arith.constant(ir.IndexType.get(), 0)
+
+      # Create input in registers
+      x_type = ir.VectorType.get(shape, f32)
+      c = arith.constant(f32, element_value)
+      x = vector.splat(x_type, c)
+      cast = mgpu_dialect.layout_cast(x, layouts.to_layout_attr(in_layout))
+
+      # Registers -> SMEM
+      vector.store(cast, result_smem_ref, [zero_index])
+
+      # SMEM -> GMEM
+      zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
+      mgpu_dialect.async_store(
+          source=result_smem_ref,
+          destination=result_gmem_ref,
+          indices=[zero_i32],
+          slice_lengths=shape,
+      )
+      nvvm.cp_async_bulk_wait_group(0)
+      utils.warpgroup_barrier()
+
+    dtype = jnp.float32
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(),
+        out_shape=jax.ShapeDtypeStruct(shape, dtype),
+        smem_scratch_shape=[jax.ShapeDtypeStruct(shape, dtype)],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+
+    x = np.full(shape, element_value, dtype=dtype)
+    self.assertArraysEqual(jax.jit(kernel)(), x)
+
 
 class MosaicGpuDialectSm90ATest(Sm90ATestCase, jtu.JaxTestCase):
 
