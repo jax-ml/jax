@@ -2628,7 +2628,9 @@ def isclose(a: ArrayLike, b: ArrayLike, rtol: ArrayLike = 1e-05, atol: ArrayLike
 def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
            left: ArrayLike | str | None = None,
            right: ArrayLike | str | None = None,
-           period: ArrayLike | None = None) -> Array:
+           period: ArrayLike | None = None,
+           search_method: str = 'scan',
+           use_dot_product: bool = False) -> Array:
   util.check_arraylike("interp", x, xp, fp)
   if np.shape(xp) != np.shape(fp) or np.ndim(xp) != 1:
     raise ValueError("xp and fp must be one-dimensional arrays of equal size")
@@ -2664,7 +2666,22 @@ def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
     xp_arr = concatenate([xp_arr[-1:] - period, xp_arr, xp_arr[:1] + period])
     fp_arr = concatenate([fp_arr[-1:], fp_arr, fp_arr[:1]])
 
-  i = clip(searchsorted(xp_arr, x_arr, side='right'), 1, len(xp_arr) - 1)
+  if use_dot_product:
+    if np.ndim(x_arr) == 0:
+      return reshape(_dot_interp(x_arr, xp_arr, fp_arr, search_method),
+                     np.shape(x_arr))
+    if np.ndim(x_arr) > 1:
+      return reshape(jax.vmap(_interp, in_axes=(0, None, None, None,
+                                                None, None, None, None))(
+        x_arr, xp_arr, fp_arr, None, None, None, search_method, use_dot_product
+      ), np.shape(x_arr))
+
+    return reshape(jax.vmap(_dot_interp, in_axes=(0, None, None, None))(
+      x_arr, xp_arr, fp_arr, search_method
+    ), np.shape(x_arr))
+
+  i = clip(searchsorted(xp_arr, x_arr, side='right', method=search_method),
+           1, len(xp_arr) - 1)
   df = fp_arr[i] - fp_arr[i - 1]
   dx = xp_arr[i] - xp_arr[i - 1]
   delta = x_arr - xp_arr[i - 1]
@@ -2687,11 +2704,37 @@ def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
   return f
 
 
+def _dot_interp(x, xp, fp, search_method):
+  """Interpolate with a dot product instead of indexing.
+
+  This is often much faster than the default jnp.interp on TPUs.
+
+  Note: This function expects a scalar `x`. If you need multiple `x`
+  values, use vmap over the first argument.
+  """
+  n = len(xp)
+  i = arange(n)
+  dx = xp[1:] - xp[:-1]
+  delta = x - xp[:-1]
+  w = delta / dx
+  w_left = pad(1 - w, [(0, 1)])
+  w_right = pad(w, [(1, 0)])
+  u = searchsorted(xp, x, side='right', method=search_method)
+  u = clip(u, 1, n - 1)
+  weights = w_left * (i == (u - 1)).astype(np.float32)
+  weights += w_right * (i == u).astype(np.float32)
+  weights = where(x < xp[0], (i == 0).astype(np.float32), weights)
+  weights = where(x > xp[-1], (i == (n - 1)).astype(np.float32), weights)
+  return tensor_contractions.dot(weights, fp, precision='highest')
+
+
 @export
 def interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
            left: ArrayLike | str | None = None,
            right: ArrayLike | str | None = None,
-           period: ArrayLike | None = None) -> Array:
+           period: ArrayLike | None = None,
+           search_method: str = 'scan',
+           use_dot_product: bool = False) -> Array:
   """One-dimensional linear interpolation.
 
   JAX implementation of :func:`numpy.interp`.
@@ -2703,13 +2746,18 @@ def interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
     left: specify how to handle points ``x < xp[0]``. Default is to return ``fp[0]``.
       If ``left`` is a scalar value, it will return this value. if ``left`` is the string
       ``"extrapolate"``, then the value will be determined by linear extrapolation.
-      ``left`` is ignored if ``period`` is specified.
+      ``left`` is ignored if ``period`` is specified or if ``use_dot_product`` is ``True``.
     right: specify how to handle points ``x > xp[-1]``. Default is to return ``fp[-1]``.
       If ``right`` is a scalar value, it will return this value. if ``right`` is the string
       ``"extrapolate"``, then the value will be determined by linear extrapolation.
-      ``right`` is ignored if ``period`` is specified.
+      ``right`` is ignored if ``period`` is specified or if ``use_dot_product`` is ``True``.
     period: optionally specify the period for the *x* coordinates, for e.g. interpolation
       in angular space.
+    search_method: one of ``'scan'`` (default), ``'scan_unrolled'``, ``'sort'`` or
+      ``'compare_all'``; controls the algorithm used to compute the insertion indices.
+    use_dot_product: if ``False`` (default), use array indexing to compute the linear
+      interpolation; if ``True``, use a dot product. This tends to be more performant on
+      TPU's.
 
   Returns:
     an array of shape ``x.shape`` containing the interpolated function at values ``x``.
@@ -2747,8 +2795,11 @@ def interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
     static_argnames.append('right')
   if period is None:
     static_argnames.append('period')
+  if isinstance(search_method, str) or search_method is None:
+    static_argnames.append('search_method')
+  static_argnames.append('use_dot_product')
   jitted_interp = jit(_interp, static_argnames=static_argnames)
-  return jitted_interp(x, xp, fp, left, right, period)
+  return jitted_interp(x, xp, fp, left, right, period, search_method, use_dot_product)
 
 
 @overload

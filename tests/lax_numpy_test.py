@@ -2663,12 +2663,36 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # Note: skip 8-bit and 16-bit types due to insufficient precision.
     dtype=jtu.dtypes.integer + jtu.dtypes.floating,
     target_dtype=jtu.dtypes.inexact,
+    search_method=['scan', 'scan_unrolled', 'sort', 'compare_all'],
   )
-  def testInterp(self, shape, dtype, period, left, right, target_dtype):
+  def testInterp(self, shape, dtype, period, left, right, target_dtype, search_method):
     rng = jtu.rand_default(self.rng(), scale=10)
-    kwds = dict(period=period, left=left, right=right)
-    np_fun = partial(np.interp, **kwds)
-    jnp_fun = partial(jnp.interp, **kwds)
+    np_kwds = dict(period=period, left=left, right=right)
+    jnp_kwds = dict(period=period, left=left, right=right, search_method=search_method)
+    np_fun = partial(np.interp, **np_kwds)
+    jnp_fun = partial(jnp.interp, **jnp_kwds)
+
+    args_maker = lambda: [rng(shape, dtype), np.unique(rng((100,), dtype))[:20],
+                          rng((20,), target_dtype)]
+
+    with jtu.strict_promotion_if_dtypes_match([dtype, target_dtype]):
+      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
+                              rtol=3e-3, atol=1e-3)
+      self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    shape=nonempty_shapes,
+    period=[None, 0.59],
+    #Note: skip 8-bit and 16-bit types due to insufficient precision.
+    dtype=jtu.dtypes.integer + jtu.dtypes.floating,
+    target_dtype=jtu.dtypes.inexact,
+  )
+  def testInterpDotProduct(self, shape, period, dtype, target_dtype):
+    rng = jtu.rand_default(self.rng(), scale=10)
+    np_kwds = dict(period=period)
+    jnp_kwds = dict(period=period, search_method='compare_all', use_dot_product=True)
+    np_fun = partial(np.interp, **np_kwds)
+    jnp_fun = partial(jnp.interp, **jnp_kwds)
 
     args_maker = lambda: [rng(shape, dtype), np.unique(rng((100,), dtype))[:20],
                           rng((20,), target_dtype)]
