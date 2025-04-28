@@ -24,8 +24,6 @@ import dataclasses
 import enum
 import functools
 import io
-import os
-import time
 from typing import Any
 
 import jax
@@ -38,7 +36,6 @@ from jax._src.lib import tpu
 from jax._src.lib import xla_client
 from jax.interpreters import xla
 from jaxlib.mlir import ir
-from jaxlib.mlir.dialects import stablehlo
 from jaxlib.mlir.passmanager import PassManager
 
 try:
@@ -46,16 +43,6 @@ try:
   FLAGS = flags.FLAGS
 except ImportError:
   FLAGS = {}
-
-_MOSAIC_USE_PYTHON_PIPELINE = config.bool_state(
-    name="mosaic_use_python_pipeline",
-    default=False,
-    help=(
-        "Run the initial Mosaic MLIR passes from Python, when as_tpu_kernel"
-        " is called (for Pallas, this happens at JAX lowering time), instead of"
-        " later within XLA."
-    ),
-)
 
 _MOSAIC_ALLOW_HLO = config.bool_state(
     name="jax_mosaic_allow_hlo",
@@ -86,12 +73,6 @@ tpu_custom_call_p = core.Primitive("tpu_custom_call")
 tpu_custom_call_p.def_impl(
     functools.partial(xla.apply_primitive, tpu_custom_call_p))
 tpu_custom_call_p.multiple_results = True
-
-
-def get_target_shape(hardware_generation: int) -> tuple[int, int]:
-  """Returns the target shape for the given hardware generation."""
-  del hardware_generation
-  return (8, 128)
 
 
 class MemorySpace(enum.Enum):
@@ -305,166 +286,6 @@ mlir.register_lowering(tpu_custom_call_p, _tpu_custom_call_lowering,
                        platform="tpu")
 
 
-def _lower_tpu_kernel(
-    module: ir.Module,
-    hardware_generation: int,
-    target_shape: tuple[int, int],
-    kernel_name: str | None = None,
-) -> ir.Module:
-  """Runs MLIR passes lowering the given module to an MLIR module.
-
-  Uses Python versions of canonicalize-mosaic,infer-memref-layout and
-    apply-vector-layout.
-
-  Args:
-    module: The MLIR module to lower.
-    hardware_generation: The TPU hardware generation to target.
-    target_shape: The target shape of (sublane_count, lane_count).
-
-  Returns:
-    An MLIR module implementing the kernel.
-  """
-  try:
-    module.operation.verify()
-  except ir.MLIRError as e:
-    raise ValueError("The compiled module fails MLIR verification") from e
-
-  timestamp = time.time_ns()
-  dump_cnt = [0]
-
-  def get_dump_file_prefix() -> str:
-    s = f"{timestamp}-{dump_cnt[0]:04}"
-    dump_cnt[0] += 1
-    return s
-
-  with module.context as ctx, module.operation.location as _:
-    ctx.append_dialect_registry(mlir.upstream_dialects)
-    ctx.load_all_available_dialects()
-    tpu.register_dialect(ctx)
-    stablehlo.register_dialect(ctx)
-    dump_mlir(module, "original", get_dump_file_prefix(), kernel_name)
-
-    if _MOSAIC_ALLOW_HLO.value:
-      # Run dialect conversion: StableHLO -> linalg -> vector.
-      pipeline = [
-          "func.func(stablehlo-legalize-to-linalg)",
-          "func.func(linalg-vectorization)",
-      ]
-      pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-      pipeline.run(module.operation)
-      dump_mlir(module, "post-hlo-conversion", get_dump_file_prefix(), kernel_name)
-
-    sl_cnt, l_cnt = target_shape
-    # Note: we don't pass the TpuTilingFlags here, since we don't know the
-    # tiling decisions made by the compiler / what flags are enabled at this
-    # point, so we assume everything can be tiled up to default tiling.
-    pipeline = [
-        "func.func(tpu-infer-memref-layout{"
-        f" hardware-generation={hardware_generation}"
-        f" sublane-count={sl_cnt}"
-        f" lane-count={l_cnt}"
-        "})"
-    ]
-    pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-    pipeline.run(module.operation)
-    dump_mlir(module, "post-infer-memref-layout", get_dump_file_prefix(), kernel_name)
-
-    pipeline = [
-        "canonicalize",
-        "cse",
-    ]
-    pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-    pipeline.run(module.operation)
-    dump_mlir(
-        module,
-        "post-infer-memref-layout-simplify",
-        get_dump_file_prefix(),
-        kernel_name,
-    )
-
-    try:
-      on_device_checks = FLAGS["xla_mosaic_on_device_checks"].value
-    except KeyError:
-      on_device_checks = False
-
-    if checks := on_device_checks:
-      checks = set(checks.split(","))
-      if checks == {"bounds"}:  # We only support one kind of checks now.
-        pipeline = PassManager.parse(
-            "builtin.module(func.func(debug-assert-insertion))"
-        )
-        pipeline.run(module.operation)
-        dump_mlir(module, "post-assert-insertion", get_dump_file_prefix(), kernel_name)
-      elif checks:
-        checks.discard("bounds")
-        raise ValueError(
-            f"Unrecognized on-device check categories: {', '.join(checks)}"
-        )
-
-    # Legacy pipeline always runs in compatibility mode.
-    compatibility_mode = True
-    pipeline = [
-        (
-            f"func.func(tpu-canonicalize-mosaic{{hardware-generation={hardware_generation} compatibility-mode={compatibility_mode}}})"
-        ),
-    ]
-    pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-    pipeline.run(module.operation)
-    dump_mlir(module, "post-canonicalize-mosaic", get_dump_file_prefix(), kernel_name)
-
-    pipeline = [
-        (
-            "func.func(tpu-infer-vector-layout{"
-            f" hardware-generation={hardware_generation}"
-            f" sublane-count={sl_cnt} lane-count={l_cnt}"
-            "})"
-        ),
-    ]
-    pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-    pipeline.run(module.operation)
-    dump_mlir(module, "post-infer-vector-layout", get_dump_file_prefix(), kernel_name)
-
-    pipeline = [
-        (
-            "func.func(tpu-relayout-insertion{"
-            f" sublane-count={sl_cnt} lane-count={l_cnt}"
-            f" hardware-generation={hardware_generation}"
-            "})"
-        ),
-    ]
-    pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-    pipeline.run(module.operation)
-    dump_mlir(module, "post-relayout-insertion", get_dump_file_prefix(), kernel_name)
-
-    mxu_size = 128 if hardware_generation < 6 else 256
-    pipeline = [
-        "func.func(tpu-apply-vector-layout{"
-        f" sublane-count={sl_cnt} lane-count={l_cnt}"
-        f" hardware-generation={hardware_generation}"
-        f" mxu-contracting-size={mxu_size} mxu-noncontracting-size={mxu_size}"
-        f" max-sublanes-in-scratch={sl_cnt * (sl_cnt + 1)}"
-        "})"
-    ]
-    pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-    pipeline.run(module.operation)
-    dump_mlir(module, "post-apply-vector-layout", get_dump_file_prefix(), kernel_name)
-
-    pipeline = [
-        "canonicalize",
-        "cse",
-    ]
-    pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
-    pipeline.run(module.operation)
-    dump_mlir(
-        module,
-        "post-apply-vector-layout-simplify",
-        get_dump_file_prefix(),
-        kernel_name,
-    )
-
-    return module
-
-
 def _lower_mosaic_module_to_asm(
     module: ir.Module,
     *,
@@ -480,27 +301,7 @@ def _lower_mosaic_module_to_asm(
   needs_layout_passes = not device_type
   # We'll mutate the module, so clone it
   with module.context as ctx, module.operation.location as _:
-    if needs_layout_passes and _MOSAIC_USE_PYTHON_PIPELINE.value:
-      module = ir.Module.parse(
-          module.operation.get_asm(binary=True, enable_debug_info=True)
-      )
-      module_op = module.operation
-      some_tpu = jax.devices(backend)[0]
-      device_kind = some_tpu.device_kind
-      if not device_kind.startswith("TPU v"):
-        raise ValueError(
-            f"Unrecognized TPU device kind: {device_kind}. "
-            "tpu_custom_call cannot be lowered on a machine without TPUs "
-            "when mosaic_use_python_pipeline=True.")
-      hardware_generation = int(device_kind[len("TPU v")])
-      target_shape = get_target_shape(hardware_generation)
-      module = _lower_tpu_kernel(
-          module, hardware_generation, target_shape=target_shape, kernel_name=kernel_name,
-      )
-      needs_hlo_passes = False
-      needs_layout_passes = False
-    else:
-      module_op = module.operation.clone()
+    module_op = module.operation.clone()
     prev_allow_unregistered_dialects = ctx.allow_unregistered_dialects
     ctx.allow_unregistered_dialects = True
     target_version = (
@@ -825,21 +626,3 @@ def _as_jax_callable(
     return result[0] if unpack else result
 
   return jax.jit(apply_kernel)
-
-
-def dump_mlir(
-    module: ir.Module, name: str, prefix: str, kernel_name: str | None = None
-):
-  """A helper function to dump mosaic mlir module"""
-  try:
-    should_dump = FLAGS["xla_mosaic_dump_to"].value
-  except KeyError:
-    return
-  if should_dump == "sponge":
-    outdir = os.environ.get("TEST_UNDECLARED_OUTPUTS_DIR", None)
-    if outdir:
-      if kernel_name:
-        name = f"{kernel_name}-{name}"
-      path = os.path.join(outdir, f"{prefix}-mosaic-dump-{name}-py.txt")
-      with open(path, "w") as f:
-        f.write(str(module))
