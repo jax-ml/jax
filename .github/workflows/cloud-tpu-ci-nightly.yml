@@ -88,14 +88,14 @@ jobs:
 
           elif [ "${{ matrix.jaxlib-version }}" == "nightly" ]; then
             $PYTHON -m uv pip install \
-              --pre . -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html \
+              --pre . -i https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/ \
               libtpu -f https://storage.googleapis.com/jax-releases/libtpu_releases.html \
               requests
 
           elif [ "${{ matrix.jaxlib-version }}" == "nightly+oldest_supported_libtpu" ]; then
             # TODO(phawkins): switch to libtpu, when the oldest release we support is a libtpu release.
             $PYTHON -m uv pip install \
-              --pre . -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html \
+              --pre . -i https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/ \
               libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html \
               requests
