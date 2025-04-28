@@ -144,18 +144,15 @@ def _check_output_dims(
     out = func(*args)
     out_shapes = map(np.shape, out if isinstance(out, tuple) else [out])
 
-    if expected_output_core_dims is None:
-      output_core_dims = [()] * len(out_shapes)
-    else:
-      output_core_dims = expected_output_core_dims
-      if len(output_core_dims) > 1 and not isinstance(out, tuple):
-        raise TypeError(
-            "output must be a tuple when multiple outputs are expected, "
-            "got: {!r}\n{}".format(out, error_context))
-      if len(out_shapes) != len(output_core_dims):
-        raise TypeError(
-            'wrong number of output arguments: expected %r, got %r %s'
-            % (len(output_core_dims), len(out_shapes), error_context))
+    output_core_dims = expected_output_core_dims
+    if len(output_core_dims) > 1 and not isinstance(out, tuple):
+      raise TypeError(
+          "output must be a tuple when multiple outputs are expected, "
+          "got: {!r}\n{}".format(out, error_context))
+    if len(out_shapes) != len(output_core_dims):
+      raise TypeError(
+          'wrong number of output arguments: expected %r, got %r %s'
+          % (len(output_core_dims), len(out_shapes), error_context))
 
     sizes = dict(dim_sizes)
     for shape, core_dims in zip(out_shapes, output_core_dims):
@@ -215,7 +212,8 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
       ``(m,n),(n)->(m)`` for vectorized matrix-vector multiplication. If
       provided, ``pyfunc`` will be called with (and expected to return) arrays
       with shapes given by the size of corresponding core dimensions. By
-      default, pyfunc is assumed to take scalars arrays as input and output.
+      default, pyfunc is assumed to take scalar arrays as input, and if
+      ``signature`` is ``None``, ``pyfunc`` can produce outputs of any shape.
 
   Returns:
     Vectorized version of the given function.
@@ -294,8 +292,11 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
     broadcast_shape, dim_sizes = _parse_input_dimensions(
         args, input_core_dims, error_context)
 
-    checked_func = _check_output_dims(
-        excluded_func, dim_sizes, output_core_dims, error_context)
+    if output_core_dims is None:
+      checked_func = excluded_func
+    else:
+      checked_func = _check_output_dims(
+          excluded_func, dim_sizes, output_core_dims, error_context)
 
     # Detect implicit rank promotion:
     if config.numpy_rank_promotion.value != "allow":
