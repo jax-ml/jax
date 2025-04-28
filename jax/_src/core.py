@@ -480,6 +480,12 @@ class Literal:
       return f'{self.val}'
 
   def __repr__(self):
+    if hasattr(self, 'hash'):
+      return f'{self.val}'
+    else:
+      return f'{self.val}'
+
+  def __repr__(self):
     return f'{self.val}'
 
 literalable_types: set[type] = set()
