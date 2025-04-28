@@ -145,7 +145,7 @@ def _bcsr_to_bcoo(indices: jax.Array, indptr: jax.Array, *,
 
 
 def _bcoo_to_bcsr(indices: Array, *, shape: Sequence[int],
-                  index_dtype: DTypeLike = jnp.int32) -> tuple[Array, Array]:
+                  index_dtype: DTypeLike) -> tuple[Array, Array]:
   """Given BCOO (indices), return BCSR (indices, indptr).
 
   Note: this assumes that ``indices`` are lexicographically sorted within each batch.
@@ -238,7 +238,9 @@ def _bcsr_fromdense_impl(mat, *, nse, n_batch, n_dense, index_dtype):
     raise ValueError("bcsr_fromdense: must have 2 sparse dimensions.")
   bcoo_mat = bcoo.bcoo_fromdense(mat, nse=nse, index_dtype=index_dtype,
                                  n_dense=n_dense, n_batch=n_batch)
-  indices, indptr = _bcoo_to_bcsr(bcoo_mat.indices, shape=mat.shape)
+  indices, indptr = _bcoo_to_bcsr(
+      bcoo_mat.indices, shape=mat.shape, index_dtype=index_dtype
+  )
   return bcoo_mat.data, indices, indptr
 
 
@@ -867,7 +869,9 @@ class BCSR(JAXSparse):
       raise NotImplementedError(f"BSCR.from_bcoo requires n_sparse=2; got {arr.n_sparse=}")
     if not arr.indices_sorted:
       arr = arr.sort_indices()
-    indices, indptr = _bcoo_to_bcsr(arr.indices, shape=arr.shape)
+    indices, indptr = _bcoo_to_bcsr(
+        arr.indices, shape=arr.shape, index_dtype=arr.indices.dtype
+    )
     return cls((arr.data, indices, indptr), shape=arr.shape)
 
   @classmethod
