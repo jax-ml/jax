@@ -3618,6 +3618,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
     if jtu.is_device_tpu(5, 'e'):
       self.skipTest('TPU v5e does not support computations that run on a '
                     'non-singleton subset of cores.')
+    if jtu.is_device_tpu(6, 'e'):
+      self.skipTest('TPU v6e does not support computations that run on a '
+                    'non-singleton subset of cores.')
 
     def _test(fun, inp, np_inp, in_s):
       out = fun(inp)
