@@ -34,6 +34,7 @@ _TPU_V4 = 'TPU v4'
 _TPU_V5_LITE = "TPU v5 lite"
 _TPU_V5E = "TPU v5e"
 _TPU_V5P = "TPU v5p"
+_TPU_V6_LITE = "TPU v6 lite"
 
 # Maps physical topology -> mesh shape -> transpose to use for jekbradbury's
 # famous contiguous mesh trick.
@@ -190,6 +191,7 @@ device_kind_handler_dict: dict[
     _TPU_V3: _tpu_v2_v3_create_device_mesh,
     _TPU_V5_LITE: _v5e_create_device_mesh,
     _TPU_V5P: _v5p_create_device_mesh,
+    _TPU_V6_LITE: _v5e_create_device_mesh,
 }
 
 
