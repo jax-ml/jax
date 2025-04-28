@@ -30,6 +30,7 @@ import jax
 from jax import api_util
 from jax import lax
 from jax._src import core as jax_core
+from jax._src import lib as jaxlib
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import source_info_util
@@ -1456,21 +1457,34 @@ def _broadcast_in_dim_lowering_rule(
     lax.broadcast_in_dim_p, mgpu.LoweringSemantics.Warpgroup)
 def _broadcast_in_dim_lowering_rule_wg(
     ctx: LoweringRuleContext,
-    x: ir.Value,
+    x,
     *,
     broadcast_dimensions,
     shape,
     sharding,
 ):
   del sharding
-  if broadcast_dimensions:
-    raise NotImplementedError
+
   [x_aval] = ctx.avals_in
-  x = _ensure_ir_value(x, x_aval.dtype)
-  return vector_dialect.splat(
-      ir.VectorType.get(shape, mgpu_utils.dtype_to_ir_type(x_aval.dtype)),
-      x,
-  )
+
+  if not broadcast_dimensions:
+    # Even though we could implement this case by passing a 0D vector as input
+    # to mgpu.dialect.BroadcastInDimOp we don't want that. 0D vectors are
+    # generally problematic and so we avoid them by specializing that case
+    # directly here.
+    x = _ensure_ir_value(x, x_aval.dtype)
+    return vector_dialect.splat(
+        ir.VectorType.get(shape, mgpu_utils.dtype_to_ir_type(x_aval.dtype)),
+        x,
+    )
+
+  # TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.1.
+  if jaxlib.version < (0, 6, 1):
+    raise NotImplementedError()
+
+  mlir_type = mgpu_utils.dtype_to_ir_type(x_aval.dtype)
+  result_ty = ir.VectorType.get(shape, mlir_type)
+  return mgpu.dialect.broadcast_in_dim(result_ty, x, broadcast_dimensions)
 
 
 @register_lowering_rule(lax.convert_element_type_p, mgpu.LoweringSemantics.Lane)

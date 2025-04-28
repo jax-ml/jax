@@ -22,6 +22,7 @@ import math
 import operator
 from typing import Any, Sequence, Type, cast
 
+from jax._src import lib as jaxlib
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
@@ -482,6 +483,36 @@ def _mgpu_layout_cast_op_lowering_rule(
     _: LoweringContext, layout_cast_op: mgpu.LayoutCastOp
 ) -> Sequence[ir.Value]:
   return [layout_cast_op.x]
+
+
+# TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.1.
+if jaxlib.version >= (0, 6, 1):
+  @_register_lowering(mgpu.BroadcastInDimOp)
+  def _mgpu_broadcast_in_dim_op_lowering_rule(
+      _: LoweringContext, op: mgpu.BroadcastInDimOp
+  ) -> Sequence[ir.Value]:
+    in_ty = ir.VectorType(op.operand.type)
+    out_ty = ir.VectorType(op.result.type)
+    if len(in_ty.shape) != 1 or len(out_ty.shape) != 2:
+      raise NotImplementedError(
+          "Broadcast in dim with non-trivial broadcast dimensions is not"
+          f" supported: {op}"
+      )
+
+    broadcast_dims = list(op.broadcast_dimensions)
+    in_layout = inference_utils.in_layouts(op)[0]
+    operand_fa = _fragmented_array_from_ir(op.operand, in_layout)
+
+    if (operand_fa.layout == fa.WGMMA_ROW_LAYOUT and broadcast_dims == [0]):
+      out = operand_fa.broadcast_minor(out_ty.shape[1])
+    elif (operand_fa.layout == fa.WGMMA_COL_LAYOUT and broadcast_dims == [1]):
+      out = operand_fa.broadcast_major(out_ty.shape[0])
+    else:
+      raise NotImplementedError(
+          "Broadcast in dim with non-trivial broadcast dimensions is not"
+          f" supported: {op}"
+      )
+    return [_fragmented_array_to_ir(out, out_ty)]
 
 
 def swizzle_and_transforms_from_transforms_attr(

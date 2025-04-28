@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"  // IWYU pragma: keep
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -402,6 +403,47 @@ llvm::LogicalResult CustomPrimitiveOp::verify() {
 
   if (getResults().size() != getOutLayouts().size()) {
     return emitOpError("Custom primitive must have a layout for each result.");
+  }
+
+  return llvm::success();
+}
+
+llvm::LogicalResult BroadcastInDimOp::verify() {
+  auto error = [this](auto... params) {
+    return emitOpError(llvm::formatv(params...));
+  };
+
+  auto operand_type = mlir::cast<mlir::VectorType>(getOperand().getType());
+  auto result_type = mlir::cast<mlir::VectorType>(getResult().getType());
+
+  if (operand_type.getRank() == 0) {
+    return error("The input vector must have rank > 0.");
+  }
+
+  if (operand_type.getRank() > result_type.getRank()) {
+    return error(
+        "The rank of the input vector must be smaller or equal to the rank "
+        "of the result vector.");
+  }
+
+  if (operand_type.getRank() != getBroadcastDimensions().size()) {
+    return error(
+        "The size of the `broadcast_dimensions` attribute must be equal to "
+        "the rank of the input vector.");
+  }
+  auto dims = llvm::to_vector(getBroadcastDimensions());
+  for (int i = 0; i < dims.size(); ++i) {
+    if (dims[i] < 0 || dims[i] >= result_type.getRank()) {
+      return error(
+          "The values in the `broadcast_dimensions` attribute must be in the "
+          "range [0, result.shape.rank={0}).",
+          result_type.getRank());
+    }
+    if (i > 0 && dims[i] <= dims[i - 1]) {
+      return error(
+          "The values in the `broadcast_dimensions` attribute must be stricly "
+          "increasing.");
+    }
   }
 
   return llvm::success();
