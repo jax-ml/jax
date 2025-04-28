@@ -22,7 +22,6 @@ import math
 import operator
 from typing import Any, Sequence, Type, cast
 
-from jax._src import lib as jaxlib
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib import mosaic_gpu_dialect as mgpu
 from jax._src.lib.mlir import ir
@@ -488,7 +487,7 @@ def _mgpu_layout_cast_op_lowering_rule(
 
 
 # TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.1.
-if jaxlib.version >= (0, 6, 1):
+if hasattr(mgpu, "BroadcastInDimOp"):
   @_register_lowering(mgpu.BroadcastInDimOp)
   def _mgpu_broadcast_in_dim_op_lowering_rule(
       _: LoweringContext, op: mgpu.BroadcastInDimOp
