@@ -135,9 +135,9 @@ jobs:
           $JAXCI_PYTHON -m uv pip install -r build/test-requirements.txt
 
           # CPU Pytests crash with NumPy 2.2+ on Linux Aarch64; b/399168632
-          if [[ $OS == "linux" && $ARCH == "aarch64" ]]; then
-            $JAXCI_PYTHON -m uv pip install numpy~=2.1.0
-          fi
+          # if [[ $OS == "linux" && $ARCH == "aarch64" ]]; then
+          #   $JAXCI_PYTHON -m uv pip install numpy~=2.1.0
+          # fi
       # Halt for testing
       - name: Wait For Connection
         uses: google-ml-infra/actions/ci_connection@main
