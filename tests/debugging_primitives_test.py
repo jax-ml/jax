@@ -290,6 +290,13 @@ class DebugPrintTest(jtu.JaxTestCase):
     actual = tuple(sorted(map(int, output().splitlines())))
     self.assertEqual(actual, tuple(range(4)))
 
+  def test_debug_print_extended_dtype(self):
+    def f(k):
+      jax.debug.print("{}", k)
+    with jtu.capture_stdout():
+      f(jax.random.key(0))  # doesn't crash
+      jax.effects_barrier()
+
 
 @jtu.thread_unsafe_test_class()  # printing isn't thread-safe
 class DebugPrintTransformationTest(jtu.JaxTestCase):

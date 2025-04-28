@@ -286,6 +286,11 @@ class FfiTest(jtu.JaxTestCase):
   def test_extend_import_shim(self):
     ffi_call_geqrf(jnp.ones((4, 5), dtype=np.float32), _use_extend=True)
 
+  def test_extended_dtype_lowering(self):
+    def f(x):
+      return jax.ffi.ffi_call("edtype", (), has_side_effect=True)(x)
+    jax.jit(f).lower(jax.random.key(0))   # doesn't crash
+
 
 def ffi_call_geqrf(x, _use_extend=False, **kwargs):
   if jtu.test_device_matches(["cpu"]):
