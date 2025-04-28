@@ -49,7 +49,11 @@ some other features along the way. An example:
 
 >>> # Print the specialized, staged-out representation (as Jaxpr IR)
 >>> print(traced.jaxpr)
-{ lambda ; a:i32[] b:i32[]. let c:i32[] = mul 2 a; d:i32[] = add c b in (d,) }
+{ lambda ; a:i32[] b:i32[]. let
+    c:i32[] = mul 2:i32 a
+    d:i32[] = add c b
+  in (d,) }
+
 
 >>> lowered = traced.lower()
 

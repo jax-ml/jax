@@ -427,6 +427,10 @@ class Var:
   def __repr__(self):
     return f'Var(id={id(self)}){self.suffix}:{self.aval.str_short()}'
 
+  def pretty_print(self, context: JaxprPpContext, *, print_dtype: bool = True):
+    del print_dtype  # unused
+    return f"{context.var_names[self]}{self.suffix}"
+
 
 def gensym(suffix: str = '') -> Callable[[AbstractValue], Var]:
   """Produce distinct variables, printed with the optional suffix."""
@@ -440,6 +444,9 @@ class DropVar(Var):
   def __init__(self, aval: AbstractValue):
     super().__init__('', aval)
   def __repr__(self): return '_'
+  def pretty_print(self, context: JaxprPpContext, *, print_dtype: bool = True):
+    del context, print_dtype  # unused
+    return '_'
 
 class Literal:
   __slots__ = ["val", "aval", "hash"]
@@ -461,6 +468,14 @@ class Literal:
           self.hash = None
 
   __hash__ = None  # type: ignore
+
+  def pretty_print(self, context: JaxprPpContext, *, print_dtype: bool = True):
+    del context  # unused
+    dtype = getattr(self.aval, 'dtype', None)
+    if print_dtype and dtype:
+      return f'{self.val}:{dtypes.short_dtype_name(dtype)}'
+    else:
+      return f'{self.val}'
 
   def __repr__(self):
     if hasattr(self, 'hash'):
@@ -3152,9 +3167,9 @@ class JaxprPpContext:
         self.var_names[for_v] = pp_var(like_v, self)
 
 
-def pp_var(v: Var | Literal, context: JaxprPpContext) -> str:
-  if isinstance(v, (Literal, DropVar)): return str(v)
-  return f"{context.var_names[v]}{v.suffix}"
+def pp_var(v: Var | Literal, context: JaxprPpContext, *,
+           print_literal_dtype: bool = True) -> str:
+  return v.pretty_print(context, print_dtype=print_literal_dtype)
 
 def pp_aval(a: AbstractValue, context: JaxprPpContext) -> str:
   if isinstance(a, DShapedArray):

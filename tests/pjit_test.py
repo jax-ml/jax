@@ -1274,7 +1274,7 @@ class PJitTest(jtu.BufferDonationTestCase):
                 b:f32[1] = pjit[
                   name=<lambda>
                   jaxpr={ lambda ; a:f32[1] c:f32[]. let b:f32[1] = mul a c in (b,) }
-                ] a 1.0
+                ] a 1.0:f32
               in (b,) }
         """).strip(),
     )
@@ -1308,7 +1308,7 @@ class PJitTest(jtu.BufferDonationTestCase):
             { lambda ; a:f32[1]. let
                 b:i32[] c:f32[1] = pjit[
                   name=<lambda>
-                  jaxpr={ lambda ; a:f32[1]. let  in (2, a) }
+                  jaxpr={ lambda ; a:f32[1]. let  in (2:i32, a) }
                 ] a
               in (b, c) }
         """).strip(),
