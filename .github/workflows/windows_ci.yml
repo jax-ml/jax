@@ -1,10 +1,12 @@
 name: CI - Windows CPU
-on:
-  schedule:
-    - cron: "0 12 * * *" # Daily at 12:00 UTC
-  workflow_dispatch: # allows triggering the workflow run manually
-  pull_request:
-    types: [ labeled ] # allow force-windows-run label
+# Disable the schedule; Slated for removal, the new test workflows are in
+# "wheel_tests_nightly_release.yml" and "wheel_tests_continuous.yml"
+# on:
+#   schedule:
+#     - cron: "0 12 * * *" # Daily at 12:00 UTC
+#   workflow_dispatch: # allows triggering the workflow run manually
+#   pull_request:
+#     types: [ labeled ] # allow force-windows-run label
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
