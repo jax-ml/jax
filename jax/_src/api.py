@@ -2396,7 +2396,7 @@ def make_jaxpr(
       c:f32[] = sin a
       _:f32[] = sin b
       d:f32[] = cos b
-      e:f32[] = mul 1.0 d
+      e:f32[] = mul 1.0:f32 d
       f:f32[] = neg e
       g:f32[] = mul f c
     in (g,) }
