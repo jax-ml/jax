@@ -1,6 +1,7 @@
 name: Wheel build - Windows CPU x86_64
-on:
-  workflow_dispatch: # allows triggering the workflow run manually
+# Slated for removal, Windows release/nightly wheels are now built in the internal CI system.
+# on:
+#   workflow_dispatch: # allows triggering the workflow run manually
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
