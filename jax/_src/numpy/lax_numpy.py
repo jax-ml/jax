@@ -1352,7 +1352,7 @@ def rot90(m: ArrayLike, k: int = 1, axes: tuple[int, int] = (0, 1)) -> Array:
             [11,  8],
             [12,  9]]], dtype=int32)
   """
-  util.check_arraylike("rot90", m)
+  m = util.ensure_arraylike("rot90", m)
   if np.ndim(m) < 2:
     raise ValueError("rot90 requires its first argument to have ndim at least "
                      f"two, but got first argument of shape {np.shape(m)}, "
@@ -1588,6 +1588,7 @@ def angle(z: ArrayLike, deg: bool = False) -> Array:
     [[ 71.57 -68.2 ]
      [-36.87  33.69]]
   """
+  z = util.ensure_arraylike('angle', z)
   re = ufuncs.real(z)
   im = ufuncs.imag(z)
   dtype = _dtype(re)
@@ -2073,7 +2074,7 @@ def ravel(a: ArrayLike, order: str = "C") -> Array:
     >>> x.ravel()
     Array([1, 2, 3, 4, 5, 6], dtype=int32)
   """
-  util.check_arraylike("ravel", a)
+  a = util.ensure_arraylike("ravel", a)
   if order == "K":
     raise NotImplementedError("Ravel not implemented for order='K'.")
   return reshape(a, (np.size(a),), order)
@@ -2138,8 +2139,7 @@ def ravel_multi_index(multi_index: Sequence[ArrayLike], dims: Sequence[int],
   """
   assert len(multi_index) == len(dims), f"len(multi_index)={len(multi_index)} != len(dims)={len(dims)}"
   dims = tuple(core.concrete_or_error(operator.index, d, "in `dims` argument of ravel_multi_index().") for d in dims)
-  util.check_arraylike("ravel_multi_index", *multi_index)
-  multi_index_arr = [asarray(i) for i in multi_index]
+  multi_index_arr = list(util.ensure_arraylike_tuple("ravel_multi_index", multi_index))
   for index in multi_index_arr:
     if mode == 'raise':
       core.concrete_or_error(array, index,
@@ -2470,7 +2470,7 @@ def swapaxes(a: ArrayLike, axis1: int, axis2: int) -> Array:
     >>> a.transpose(0, 3, 2, 1).shape
     (2, 5, 4, 3)
   """
-  util.check_arraylike("swapaxes", a)
+  a = util.ensure_arraylike("swapaxes", a)
   perm = np.arange(np.ndim(a))
   perm[axis1], perm[axis2] = perm[axis2], perm[axis1]
   return lax.transpose(a, list(perm))
@@ -2629,7 +2629,7 @@ def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
            left: ArrayLike | str | None = None,
            right: ArrayLike | str | None = None,
            period: ArrayLike | None = None) -> Array:
-  util.check_arraylike("interp", x, xp, fp)
+  x, xp, fp = util.ensure_arraylike("interp", x, xp, fp)
   if np.shape(xp) != np.shape(fp) or np.ndim(xp) != 1:
     raise ValueError("xp and fp must be one-dimensional arrays of equal size")
   x_arr, xp_arr = util.promote_dtypes_inexact(x, xp)
@@ -3091,6 +3091,7 @@ def broadcast_arrays(*args: ArrayLike) -> list[Array]:
 
   .. _NumPy broadcasting: https://numpy.org/doc/stable/user/basics.broadcasting.html
   """
+  args = util.ensure_arraylike_tuple("broadcast_arrays", args)
   return util._broadcast_arrays(*args)
 
 
@@ -3553,7 +3554,7 @@ def fix(x: ArrayLike, out: None = None) -> Array:
            [-0.,  0., -3.],
            [-1.,  1.,  2.]], dtype=float32)
   """
-  util.check_arraylike("fix", x)
+  x = util.ensure_arraylike("fix", x)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.fix is not supported.")
   zero = _lax_const(x, 0)
@@ -3771,7 +3772,7 @@ def nonzero(a: ArrayLike, *, size: int | None = None,
     return tuple(zeros(calculated_size, int) for dim in arr.shape)
   flat_indices = reductions.cumsum(
       bincount(reductions.cumsum(mask), length=calculated_size))
-  strides: np.ndarray = (np.cumprod(arr.shape[::-1])[::-1] // arr.shape).astype(dtypes.int_)
+  strides: np.ndarray = (np.cumprod(arr.shape[::-1])[::-1] // arr.shape).astype(flat_indices.dtype)
   out = tuple((flat_indices // stride) % size for stride, size in zip(strides, arr.shape))
   if fill_value is not None:
     fill_value_tup = fill_value if isinstance(fill_value, tuple) else arr.ndim * (fill_value,)
@@ -6816,11 +6817,11 @@ def trapezoid(y: ArrayLike, x: ArrayLike | None = None, dx: ArrayLike = 1.0,
   # TODO(phawkins): remove this annotation after fixing jnp types.
   dx_array: Array
   if x is None:
-    util.check_arraylike('trapezoid', y)
+    y = util.ensure_arraylike('trapezoid', y)
     y_arr, = util.promote_dtypes_inexact(y)
     dx_array = asarray(dx)
   else:
-    util.check_arraylike('trapezoid', y, x)
+    y, x = util.ensure_arraylike('trapezoid', y, x)
     y_arr, x_arr = util.promote_dtypes_inexact(y, x)
     if x_arr.ndim == 1:
       dx_array = diff(x_arr)
@@ -6941,7 +6942,7 @@ def tril(m: ArrayLike, k: int = 0) -> Array:
            [[5, 0],
             [7, 8]]], dtype=int32)
   """
-  util.check_arraylike("tril", m)
+  m = util.ensure_arraylike("tril", m)
   m_shape = np.shape(m)
   if len(m_shape) < 2:
     raise ValueError("Argument to jax.numpy.tril must be at least 2D")
@@ -7008,7 +7009,7 @@ def triu(m: ArrayLike, k: int = 0) -> Array:
            [[5, 6],
             [0, 8]]], dtype=int32)
   """
-  util.check_arraylike("triu", m)
+  m = util.ensure_arraylike("triu", m)
   m_shape = np.shape(m)
   if len(m_shape) < 2:
     raise ValueError("Argument to jax.numpy.triu must be at least 2D")
@@ -7065,7 +7066,7 @@ def trace(a: ArrayLike, offset: int | ArrayLike = 0, axis1: int = 0, axis2: int 
     >>> jnp.trace(x, offset=1, axis1=1, axis2=2)
     Array([2, 6], dtype=int32)
   """
-  util.check_arraylike("trace", a)
+  a = util.ensure_arraylike("trace", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.trace is not supported.")
 
@@ -7582,7 +7583,7 @@ def diagonal(a: ArrayLike, offset: int = 0, axis1: int = 0,
     >>> jnp.diagonal(x, offset=-1)
     Array([4, 8], dtype=int32)
   """
-  util.check_arraylike("diagonal", a)
+  a = util.ensure_arraylike("diagonal", a)
 
   if np.ndim(a) < 2:
     raise ValueError("diagonal requires an array of at least two dimensions.")
@@ -7668,11 +7669,11 @@ def diag(v: ArrayLike, k: int = 0) -> Array:
     >>> jnp.diag(x)
     Array([1, 5, 9], dtype=int32)
   """
+  v = util.ensure_arraylike("diag", v)
   return _diag(v, operator.index(k))
 
 @partial(jit, static_argnames=('k',))
-def _diag(v, k):
-  util.check_arraylike("diag", v)
+def _diag(v: Array, k: int):
   v_shape = np.shape(v)
   if len(v_shape) == 1:
     zero = lambda x: lax.full_like(x, shape=(), fill_value=0)
@@ -8655,12 +8656,12 @@ def nanargmax(
   """
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanargmax is not supported.")
+  a = util.ensure_arraylike("nanargmax", a)
   return _nanargmax(a, None if axis is None else operator.index(axis), keepdims=bool(keepdims))
 
 
 @partial(jit, static_argnames=('axis', 'keepdims'))
-def _nanargmax(a, axis: int | None = None, keepdims: bool = False):
-  util.check_arraylike("nanargmax", a)
+def _nanargmax(a: Array, axis: int | None = None, keepdims: bool = False):
   if not issubdtype(_dtype(a), np.inexact):
     return argmax(a, axis=axis, keepdims=keepdims)
   nan_mask = ufuncs.isnan(a)
@@ -8716,12 +8717,12 @@ def nanargmin(
   """
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanargmin is not supported.")
+  a = util.ensure_arraylike("nanargmin", a)
   return _nanargmin(a, None if axis is None else operator.index(axis), keepdims=bool(keepdims))
 
 
 @partial(jit, static_argnames=('axis', 'keepdims'))
-def _nanargmin(a, axis: int | None = None, keepdims : bool = False):
-  util.check_arraylike("nanargmin", a)
+def _nanargmin(a: Array, axis: int | None = None, keepdims : bool = False):
   if not issubdtype(_dtype(a), np.inexact):
     return argmin(a, axis=axis, keepdims=keepdims)
   nan_mask = ufuncs.isnan(a)
@@ -8864,7 +8865,7 @@ def rollaxis(a: ArrayLike, axis: int, start: int = 0) -> Array:
     >>> jnp.moveaxis(a, 1, -1).shape
     (2, 4, 5, 3)
   """
-  util.check_arraylike("rollaxis", a)
+  a = util.ensure_arraylike("rollaxis", a)
   start = core.concrete_or_error(operator.index, start, "'start' argument of jnp.rollaxis()")
   a_ndim = np.ndim(a)
   axis = _canonicalize_axis(axis, a_ndim)
@@ -8941,7 +8942,7 @@ def packbits(a: ArrayLike, axis: int | None = None, bitorder: str = "big") -> Ar
     raise TypeError('Expected an input array of integer or boolean data type')
   if bitorder not in ['little', 'big']:
     raise ValueError("'order' must be either 'little' or 'big'")
-  arr = lax.gt(arr, _lax_const(a, 0)).astype('uint8')
+  arr = lax.gt(arr, _lax_const(arr, 0)).astype('uint8')
   bits = arange(8, dtype='uint8')
   if bitorder == 'big':
     bits = bits[::-1]
@@ -9101,7 +9102,7 @@ def gcd(x1: ArrayLike, x2: ArrayLike) -> Array:
     >>> jnp.gcd(x1, x2)
     Array([ 6,  3, 12], dtype=int32)
   """
-  util.check_arraylike("gcd", x1, x2)
+  x1, x2 = util.ensure_arraylike("gcd", x1, x2)
   x1, x2 = util.promote_dtypes(x1, x2)
   if not issubdtype(_dtype(x1), np.integer):
     raise ValueError("Arguments to jax.numpy.gcd must be integers.")
@@ -9148,7 +9149,7 @@ def lcm(x1: ArrayLike, x2: ArrayLike) -> Array:
     >>> jnp.lcm(x1, x2)
     Array([12, 36, 12], dtype=int32)
   """
-  util.check_arraylike("lcm", x1, x2)
+  x1, x2 = util.ensure_arraylike("lcm", x1, x2)
   x1, x2 = util.promote_dtypes(x1, x2)
   x1, x2 = ufuncs.abs(x1), ufuncs.abs(x2)
   if not issubdtype(_dtype(x1), np.integer):
@@ -9667,9 +9668,9 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
     Array([0, 2, 5, 1, 1], dtype=int32)
   """
   if sorter is None:
-    util.check_arraylike("searchsorted", a, v)
+    a, v = util.ensure_arraylike("searchsorted", a, v)
   else:
-    util.check_arraylike("searchsorted", a, v, sorter)
+    a, v, sorter = util.ensure_arraylike("searchsorted", a, v, sorter)
   if side not in ['left', 'right']:
     raise ValueError(f"{side!r} is an invalid value for keyword 'side'. "
                      "Expected one of ['left', 'right'].")
