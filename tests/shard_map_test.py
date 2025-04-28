@@ -3068,6 +3068,15 @@ class ShardMapTest(jtu.JaxTestCase):
     shard_map(partial(m2, jnp.array([1.])), mesh=mesh, in_specs=P('x'),
               out_specs=P('x'))(jnp.ones((2,)))  # doesn't crash
 
+  @jtu.with_explicit_mesh((2, 2), ('x', 'y'), axis_types=(AxisType.Auto,) * 2)
+  def test_argmax_pvary(self, mesh):
+    @jax.shard_map(in_specs=P('x', 'y'), out_specs=P('x', 'y'))
+    def argmax_impl(x):
+      y = x.argmax(axis=-1, keepdims=1)
+      return y
+
+    argmax_impl(jax.random.normal(jax.random.key(0), (1024, 1024)))  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str

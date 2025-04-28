@@ -2964,6 +2964,8 @@ def reduce(operands: Any,
     flat_init_avals = safe_map(core.get_aval, flat_init_values)
     closed_jaxpr, out_tree = _variadic_reduction_jaxpr(
         computation, comp_debug, tuple(flat_init_avals), init_value_tree)
+    flat_operands = core.standard_insert_pvary(*flat_operands)
+    flat_init_avals = core.standard_insert_pvary(*flat_init_values)
     out = reduce_p.bind(*flat_operands, *flat_init_values, computation=computation,
                         jaxpr=closed_jaxpr, dimensions=tuple(dimensions))
     return tree_util.tree_unflatten(out_tree, out)
