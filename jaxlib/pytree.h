@@ -240,7 +240,8 @@ class PyTreeDef {
 
   void FlattenWithPath(
       nanobind::handle handle, nanobind::list& leaves,
-      std::optional<nanobind::callable> leaf_predicate = std::nullopt);
+      std::optional<nanobind::callable> leaf_predicate = std::nullopt,
+      std::optional<nanobind::callable> leaf_key_predicate = std::nullopt);
 
   // Tests whether the given list is a flat list of leaves.
   static bool AllLeaves(PyTreeRegistry* registry, const nanobind::iterable& x);
@@ -367,9 +368,11 @@ class PyTreeDef {
       const;
 
   template <typename T>
-  void FlattenImpl(nanobind::handle handle, T& leaves,
-                   const std::optional<nanobind::callable>& leaf_predicate,
-                   std::optional<std::vector<nanobind::object>>& keypath);
+  void FlattenImpl(
+      nanobind::handle handle, T& leaves,
+      std::optional<std::vector<nanobind::object>>& keypath,
+      const std::optional<nanobind::callable>& leaf_predicate,
+      const std::optional<nanobind::callable>& leaf_key_predicate);
 
   template <typename T>
   nanobind::object UnflattenImpl(T leaves) const;

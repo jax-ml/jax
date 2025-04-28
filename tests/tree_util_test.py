@@ -26,6 +26,7 @@ from jax import flatten_util
 from jax import tree_util
 from jax._src import test_util as jtu
 from jax._src.tree_util import flatten_one_level, prefix_errors
+from jax._src.lib import jaxlib_extension_version
 import jax.numpy as jnp
 
 # Easier to read.
@@ -777,6 +778,36 @@ class TreeTest(jtu.JaxTestCase):
         ],
     )
 
+  def testTreeFlattenWithPathWithIsLeafWithPathArgument(self):
+    if jaxlib_extension_version < 333:
+      self.skipTest("Requires jaxlib version >= 333")
+    x = ((1, 2), [3, {4: 4, 5: 5}])
+    check_max_depth = lambda kp, _: len(kp) >= 2
+    flattened, _ = tree_util.tree_flatten_with_path(
+        x, is_leaf_with_path=check_max_depth
+    )
+    self.assertEqual(
+        flattened,
+        [
+            ((SequenceKey(0), SequenceKey(0),), 1),
+            ((SequenceKey(0), SequenceKey(1),), 2),
+            ((SequenceKey(1), SequenceKey(0),), 3),
+            ((SequenceKey(1), SequenceKey(1)), {4: 4, 5: 5}),
+        ],
+    )
+
+  def testTreeMapWithPathWithIsLeafWithPathArgument(self):
+    if jaxlib_extension_version < 333:
+      self.skipTest("Requires jaxlib version >= 333")
+    x = ((1, 2), [3, 4, 5])
+    y = (([3], jnp.array(0)), ([0], 7, [5, 6]))
+    out = tree_util.tree_map_with_path(
+        lambda kp, *xs: (kp[0].idx, *xs), x, y,
+        is_leaf_with_path=lambda kp, n: isinstance(n, list))
+    self.assertEqual(out, (((0, 1, [3]),
+                            (0, 2, jnp.array(0))),
+                           (1, [3, 4, 5], ([0], 7, [5, 6]))))
+
   def testTreeFlattenWithPathBuiltin(self):
     x = (1, {"a": 2, "b": 3})
     flattened = tree_util.tree_flatten_with_path(x)
@@ -1452,6 +1483,18 @@ class TreeAliasTest(jtu.JaxTestCase):
     self.assertEqual(
         jax.tree.flatten_with_path(obj, is_leaf=is_leaf),
         tree_util.tree_flatten_with_path(obj, is_leaf=is_leaf),
+    )
+
+  def test_tree_flatten_with_path_is_leaf_with_path(self):
+    if jaxlib_extension_version < 333:
+      self.skipTest("Test requires jaxlib version >= 333")
+    obj = [1, 2, (3, 4)]
+    is_leaf_with_path = lambda kp, x: ("2" in str(kp))
+    self.assertEqual(
+        jax.tree.flatten_with_path(obj, is_leaf_with_path=is_leaf_with_path),
+        tree_util.tree_flatten_with_path(
+            obj, is_leaf_with_path=is_leaf_with_path
+        ),
     )
 
   def test_tree_leaves_with_path(self):

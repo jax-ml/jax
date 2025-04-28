@@ -46,6 +46,7 @@ class PyTreeRegistry:
       self,
       tree: Any,
       leaf_predicate: Callable[[Any], bool] | None = ...,
+      leaf_key_predicate: Callable[[_KeyPath, Any], bool] | None = ...,
   ) -> Tuple[list[Tuple[_KeyPath, Any]], PyTreeDef]: ...
   def register_node(
       self,

@@ -17,6 +17,7 @@ from collections.abc import Callable, Iterable
 from typing import Any, TypeVar, overload
 
 from jax._src import tree_util
+from jax._src.lib import jaxlib_extension_version
 
 T = TypeVar("T")
 
@@ -287,7 +288,8 @@ def unflatten(treedef: tree_util.PyTreeDef,
 
 
 def flatten_with_path(
-    tree: Any, is_leaf: Callable[[Any], bool] | None = None
+    tree: Any, is_leaf: Callable[[Any], bool] | None = None,
+    is_leaf_with_path: Callable[[tree_util.KeyPath, Any], bool] | None = None,
 ) -> tuple[list[tuple[tree_util.KeyPath, Any]], tree_util.PyTreeDef]:
   """Flattens a pytree like ``tree_flatten``, but also returns each leaf's key path.
 
@@ -313,11 +315,14 @@ def flatten_with_path(
     - :func:`jax.tree.map_with_path`
     - :func:`jax.tree_util.register_pytree_with_keys`
   """
-  return tree_util.tree_flatten_with_path(tree, is_leaf)
+  if jaxlib_extension_version < 333:
+    return tree_util.tree_flatten_with_path(tree, is_leaf)
+  return tree_util.tree_flatten_with_path(tree, is_leaf, is_leaf_with_path)
 
 
 def leaves_with_path(
-    tree: Any, is_leaf: Callable[[Any], bool] | None = None
+    tree: Any, is_leaf: Callable[[Any], bool] | None = None,
+    is_leaf_with_path: Callable[[tree_util.KeyPath, Any], bool] | None = None,
 ) -> list[tuple[tree_util.KeyPath, Any]]:
   """Gets the leaves of a pytree like ``tree_leaves`` and returns each leaf's key path.
 
@@ -338,7 +343,9 @@ def leaves_with_path(
     - :func:`jax.tree.flatten_with_path`
     - :func:`jax.tree_util.register_pytree_with_keys`
   """
-  return tree_util.tree_leaves_with_path(tree, is_leaf)
+  if jaxlib_extension_version < 333:
+    return tree_util.tree_leaves_with_path(tree, is_leaf)
+  return tree_util.tree_leaves_with_path(tree, is_leaf, is_leaf_with_path)
 
 
 def map_with_path(
@@ -346,6 +353,7 @@ def map_with_path(
     tree: Any,
     *rest: Any,
     is_leaf: Callable[[Any], bool] | None = None,
+    is_leaf_with_path: Callable[[tree_util.KeyPath, Any], bool] | None = None,
 ) -> Any:
   """Maps a multi-input function over pytree key path and args to produce a new pytree.
 
@@ -377,4 +385,8 @@ def map_with_path(
     - :func:`jax.tree.leaves_with_path`
     - :func:`jax.tree_util.register_pytree_with_keys`
   """
-  return tree_util.tree_map_with_path(f, tree, *rest, is_leaf=is_leaf)
+  if jaxlib_extension_version < 333:
+    return tree_util.tree_map_with_path(f, tree, *rest, is_leaf=is_leaf)
+  return tree_util.tree_map_with_path(
+      f, tree, *rest, is_leaf=is_leaf, is_leaf_with_path=is_leaf_with_path
+  )
