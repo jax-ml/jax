@@ -736,11 +736,11 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
 
     k1, k2 = jax.random.split(jax.random.key(0), 2)
     a = cast_to_representable(
-        jax.random.uniform(k1, a_shape, minval=-1.0),
+        jax.random.uniform(k1, a_shape, minval=-1.0, dtype=jnp.float32),
         self.block_scale_configs[0].data_type,
     )
     b = cast_to_representable(
-        jax.random.uniform(k2, b_shape, minval=-1.0),
+        jax.random.uniform(k2, b_shape, minval=-1.0, dtype=jnp.float32),
         self.block_scale_configs[1].data_type,
     )
 
@@ -771,10 +771,6 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
 
       j_train = jax.jit(jax.value_and_grad(partial(fwd), argnums=[0, 1]),
                         in_shardings=input_shardings)
-      hlo_text = j_train.lower(a, b).compile().as_text()
-      hlo_pattern = re.compile(
-          r".*".join([re.escape(x) for x in ("custom-call", c_name)])
-      )
 
       j_train_ref = jax.jit(
           jax.value_and_grad(partial(fwd, is_ref=True), argnums=[0, 1]),
@@ -808,11 +804,11 @@ class ScaledDotGeneralTest(jtu.JaxTestCase):
     dimension_numbers = (([1], [1]), ([], []))
 
     a = cast_to_representable(
-        jax.random.uniform(k1, a_shape, minval=-1.0),
+        jax.random.uniform(k1, a_shape, minval=-1.0, dtype=jnp.float32),
         self.block_scale_configs[0].data_type,
     )
     b = cast_to_representable(
-        jax.random.uniform(k2, b_shape, minval=-1.0),
+        jax.random.uniform(k2, b_shape, minval=-1.0, dtype=jnp.float32),
         self.block_scale_configs[1].data_type,
     )
 
