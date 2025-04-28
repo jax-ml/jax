@@ -641,9 +641,9 @@ def _primal_tangent_shapes_match(primal, tangent):
   if type(tangent) is not Zero:
     primal_aval = get_aval(primal).strip_weak_type()
     tangent_aval = get_aval(tangent).strip_weak_type()
-    assert core.definitely_equal_shape(primal_aval.shape, tangent_aval.shape), (primal_aval.shape, tangent_aval.shape)
-    expected_tangent_dtype = core.primal_dtype_to_tangent_dtype(primal_aval.dtype)
-    assert expected_tangent_dtype == tangent_aval.dtype, (expected_tangent_dtype, tangent_aval.dtype)
+    assert core.definitely_equal_shape(primal_aval.shape, tangent_aval.shape), (primal_aval.shape, tangent_aval.shape)  # pytype: disable=attribute-error  # jax-aval-types
+    expected_tangent_dtype = core.primal_dtype_to_tangent_dtype(primal_aval.dtype)  # pytype: disable=attribute-error  # jax-aval-types
+    assert expected_tangent_dtype == tangent_aval.dtype, (expected_tangent_dtype, tangent_aval.dtype)  # pytype: disable=attribute-error  # jax-aval-types
 
 call_param_updaters: dict[core.Primitive, Callable] = {}
 call_linearize_param_updaters: dict[core.Primitive, Callable] = {}

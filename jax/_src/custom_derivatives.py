@@ -353,7 +353,7 @@ def _flatten_jvp(f, store, primal_name, jvp_name, in_tree, maybe_out_type, *args
                        for t in tangents_out]
   if expected_tangent_avals_out != tangent_avals_out:
     if len(expected_tangent_avals_out) == 1:
-      (av_p,), (av_et,), (av_t,) = primal_avals_out, expected_tangent_avals_out, tangent_avals_out
+      (av_p,), (av_et,), (av_t,) = primal_avals_out, expected_tangent_avals_out, tangent_avals_out  # pytype: disable=bad-unpacking  # jax-aval-types
       msg = ("Custom JVP rule must produce primal and tangent outputs with "
              "corresponding shapes and dtypes. Expected {} (tangent type of {}) but got {}.")
       raise TypeError(msg.format(av_et.str_short(), av_p.str_short(), av_t.str_short()))

@@ -224,9 +224,9 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   xs_avals = [core.get_aval(x) for x in xs_flat]
 
-  if not all(a.sharding.spec[0] is None for a in xs_avals):
+  if not all(a.sharding.spec[0] is None for a in xs_avals):  # pytype: disable=attribute-error  # jax-aval-types
     raise ValueError('0th dimension of all xs should be replicated. Got '
-                     f'{", ".join(str(a.sharding.spec) for a in xs_avals)}')
+                     f'{", ".join(str(a.sharding.spec) for a in xs_avals)}')  # pytype: disable=attribute-error  # jax-aval-types
 
   if length is not None:
     try:

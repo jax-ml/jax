@@ -1544,7 +1544,7 @@ def update_aval_with_sharding(aval, sharding):
 #
 # TODO(jakevdp): can these be unified further?
 
-def shaped_abstractify(x):
+def shaped_abstractify(x: Any) -> AbstractValue:
   typ = type(x)
   if (aval_fn := pytype_aval_mappings.get(typ)):  # fast path
     return aval_fn(x)
@@ -1564,13 +1564,13 @@ def shaped_abstractify(x):
       "does not have a dtype attribute")
 
 
-def abstractify(x):
+def abstractify(x: Any) -> AbstractValue:
   if isinstance(x, Tracer):
     raise TypeError(f"Argument '{x}' of type '{type(x)}' is not a valid JAX type")
   return get_aval(x)
 
 
-def get_aval(x):
+def get_aval(x: Any) -> AbstractValue:
   typ = type(x)
   if (aval_fn := pytype_aval_mappings.get(typ)):  # fast path
     return aval_fn(x)

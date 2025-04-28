@@ -3015,7 +3015,7 @@ def _get_monoid_reducer(monoid_op: Callable,
   x, = xs
   aval = core.get_aval(x)
   dtype = _dtype(x)
-  if core.is_concrete(x) and aval.shape == ():
+  if core.is_concrete(x) and aval.shape == ():  # pytype: disable=attribute-error  # jax-aval-types
     val = core.to_concrete_value(x)
     # allow bitwise reductions for boolean and integer types
     _is_intlike = dtype == np.bool_ or dtypes.issubdtype(dtype, np.integer)
@@ -3476,7 +3476,7 @@ def stop_gradient(x: T) -> T:
   """
   def stop(x):
     # only bind primitive on inexact dtypes, to avoid some staging
-    if dtypes.issubdtype(core.get_aval(x).dtype, dtypes.extended):
+    if dtypes.issubdtype(core.get_aval(x).dtype, dtypes.extended):  # pytype: disable=attribute-error  # jax-aval-types
       return x
     elif (dtypes.issubdtype(_dtype(x), np.floating) or
         dtypes.issubdtype(_dtype(x), np.complexfloating)):
@@ -4848,7 +4848,7 @@ def _convert_elt_type_folding_rule(consts, eqn):
     if not o.aval.weak_type:
       return [out], None
     out = out.item()
-    if core.get_aval(out).dtype is o.aval.dtype:
+    if core.get_aval(out).dtype is o.aval.dtype:  # pytype: disable=attribute-error  # jax-aval-types
       return [out], None
   return [None], eqn
 
@@ -6534,7 +6534,7 @@ def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions,
                                     sharding):
   if (not dyn_shape and
       not any(isinstance(d, core.DArray) and
-              type(core.get_aval(d).dtype) is core.bint for d in shape)):
+              type(core.get_aval(d).dtype) is core.bint for d in shape)):  # pytype: disable=attribute-error  # jax-aval-types
     shape = _broadcast_in_dim_shape_rule(  # error checking
         x, shape=shape, broadcast_dimensions=broadcast_dimensions, sharding=None)
     new_sharding = _broadcast_in_dim_sharding_rule(
@@ -6696,12 +6696,12 @@ def _concatenate_transpose_rule(t, *operands, dimension):
 def _concatenate_batch_rule(batched_args, batch_dims, *, dimension):
   size = next(op.shape[bdim] for op, bdim in zip(batched_args, batch_dims)
               if bdim is not None)
-  spec = next(core.get_aval(op).sharding.spec[bdim]
+  spec = next(core.get_aval(op).sharding.spec[bdim]  # pytype: disable=attribute-error  # jax-aval-types
               for op, bdim in zip(batched_args, batch_dims) if bdim is not None)
   operands = [batching.moveaxis(op, bdim, 0) if bdim is not None
               else broadcast(
-                  op, (size,), out_sharding=core.get_aval(op).sharding.with_spec(
-                      (spec, *core.get_aval(op).sharding.spec)))
+                  op, (size,), out_sharding=core.get_aval(op).sharding.with_spec(  # pytype: disable=attribute-error  # jax-aval-types
+                      (spec, *core.get_aval(op).sharding.spec)))  # pytype: disable=attribute-error  # jax-aval-types
               for op, bdim in zip(batched_args, batch_dims)]
   return concatenate(operands, dimension + 1), 0
 
@@ -7350,7 +7350,7 @@ def _select_batch_rule(axis_data, batched_args, batch_dims, **unused_kwargs):
       # vmapped function had a scalar which with nonscalar args
       assert np.ndim(which) == 1
       which = broadcast_in_dim(which, cases[0].shape, [which_bdim],
-                               out_sharding=core.typeof(cases[0]).sharding)
+                               out_sharding=core.typeof(cases[0]).sharding)  # pytype: disable=attribute-error  # jax-aval-types
       return select_n(which, *cases), which_bdim
   elif np.ndim(which) == 0 and all(bdim is not None for bdim in case_bdims):
     if all(case_bdims[0] == bdim for bdim in case_bdims[1:]):
@@ -7372,7 +7372,7 @@ def _select_batch_rule(axis_data, batched_args, batch_dims, **unused_kwargs):
     # vmapped function had a scalar which with nonscalar args
     assert np.ndim(which) == 1
     which = broadcast_in_dim(which, cases[0].shape, [0],
-                             out_sharding=core.typeof(cases[0]).sharding)
+                             out_sharding=core.typeof(cases[0]).sharding)  # pytype: disable=attribute-error  # jax-aval-types
   if np.ndim(which) > np.ndim(cases[0]):
     assert np.ndim(cases[0]) == 0
     cases = [broadcast(c, which.shape) for c in cases]
@@ -8508,7 +8508,7 @@ def _iota_abstract_eval(*dyn_shape, dtype, shape, dimension, sharding):
                      f"{dimension=} for {shape=}")
   if (not dyn_shape and
       not any(isinstance(d, core.DArray) and
-              type(core.get_aval(d).dtype) is core.bint for d in shape)):
+              type(core.get_aval(d).dtype) is core.bint for d in shape)):  # pytype: disable=attribute-error  # jax-aval-types
     if sharding is None:
       sharding = core.get_cur_mesh_sharding(spec=core.P(*[None] * len(shape)))
     return ShapedArray(shape, dtype, sharding=sharding)
@@ -8758,8 +8758,8 @@ _zeros: Callable = partial(full_like, fill_value=0)
 def _zero(x):
   x_aval = core.get_aval(x)
   out = full_like(x, shape=(), fill_value=0,
-                  sharding=x_aval.sharding.with_spec(P()))
-  out = core.pvary(out, tuple(x_aval.vma))
+                  sharding=x_aval.sharding.with_spec(P()))  # pytype: disable=attribute-error  # jax-aval-types
+  out = core.pvary(out, tuple(x_aval.vma))  # pytype: disable=attribute-error  # jax-aval-types
   return out
 
 _ones: Callable = partial(full_like, fill_value=1)
@@ -8767,8 +8767,8 @@ _ones: Callable = partial(full_like, fill_value=1)
 def _one(x):
   x_aval = core.get_aval(x)
   out = full_like(x, shape=(), fill_value=1,
-                  sharding=x_aval.sharding.with_spec(P()))
-  out = core.pvary(out, tuple(x_aval.vma))
+                  sharding=x_aval.sharding.with_spec(P()))  # pytype: disable=attribute-error  # jax-aval-types
+  out = core.pvary(out, tuple(x_aval.vma))  # pytype: disable=attribute-error  # jax-aval-types
   return out
 
 _twos: Callable = partial(full_like, fill_value=2)

@@ -169,7 +169,7 @@ class PRNGKeyArray(jax.Array):
     if isinstance(key_data, np.ndarray):
       aval = core.get_aval(key_data)
       device = pxla.get_default_device()
-      key_data = pxla.batched_device_put(aval, SingleDeviceSharding(device),
+      key_data = pxla.batched_device_put(aval, SingleDeviceSharding(device),  # pytype: disable=wrong-arg-types  # jax-aval-types
                                          [key_data], [device], committed=False)
     self._base_array = key_data
 

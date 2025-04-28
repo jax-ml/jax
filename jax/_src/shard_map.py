@@ -318,7 +318,7 @@ def _check_specs_vs_args(
     dyn_argnums: Sequence[int], in_specs_flat: Sequence[P],
     xs: Sequence) -> None:
   in_avals = map(core.shaped_abstractify, xs)
-  fail = [a if not len(p) <= a.ndim else no_fail
+  fail = [a if not len(p) <= a.ndim else no_fail  # pytype: disable=attribute-error  # jax-aval-types
           for p, a in zip(in_specs_flat, in_avals)]
   if any(f is not no_fail for f in fail):
     fail = _expand_fail(in_tree, dyn_argnums, fail)
@@ -498,7 +498,7 @@ def _iter_paths(tree: PyTreeDef, specs: Specs, fails: list[T | NoFail]
 @lu.transformation2
 def _implicit_pvary_on_output(f, out_names_thunk, *args, **kwargs):
   out_flat = f(*args, **kwargs)
-  return [pvary(o, tuple(_names_to_vma(n) - typeof(o).vma))
+  return [pvary(o, tuple(_names_to_vma(n) - typeof(o).vma))  # pytype: disable=attribute-error  # jax-aval-types
           for o, n in zip(out_flat, out_names_thunk())]
 
 JaxType = Any

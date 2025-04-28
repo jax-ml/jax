@@ -159,7 +159,7 @@ def bind_psum_invariant(leaves, *, axes, axis_index_groups):
   axes_ = frozenset(axes)
   args_ = []
   for x in leaves:
-    in_vma = core.get_aval(x).vma
+    in_vma = core.get_aval(x).vma  # pytype: disable=attribute-error  # jax-aval-types
     args_.append(pvary(x, tuple(pbroadcast_names))
                  if (pbroadcast_names := axes_ - in_vma) else x)
   return psum_invariant_p.bind(*args_, axes=axes,
@@ -1461,8 +1461,8 @@ def insert_collective_pvary(axis_name, x):
 
   axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   aval = core.get_aval(x)
-  names_union = set(axis_name) | aval.vma
-  x = pvary(x, tuple(n for n in names_union if n not in aval.vma))
+  names_union = set(axis_name) | aval.vma  # pytype: disable=attribute-error  # jax-aval-types
+  x = pvary(x, tuple(n for n in names_union if n not in aval.vma))  # pytype: disable=attribute-error  # jax-aval-types
   return x
 
 def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):

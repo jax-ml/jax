@@ -77,8 +77,8 @@ def _extendattr_impl(_, obj, attr, val):
 core.EvalTrace.process_extendattr = _extendattr_impl
 
 def _check_append_type_agreement(_, attr, curtype, valtype):
-  expected = core.mapped_aval(curtype.shape[0], 0, curtype)
-  got = core.mapped_aval(valtype.shape[0], 0, valtype)
+  expected = core.mapped_aval(curtype.shape[0], 0, curtype)  # pytype: disable=attribute-error  # jax-aval-types
+  got = core.mapped_aval(valtype.shape[0], 0, valtype)  # pytype: disable=attribute-error  # jax-aval-types
   if not core.typematch(expected, got):
     raise TypeError(
         f"can only append to attr {attr} with values of trailing shape "

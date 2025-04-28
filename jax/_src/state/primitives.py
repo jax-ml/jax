@@ -155,11 +155,11 @@ def ref_swap(
 #     value == np.array(value, dtype).item()): return cast
 def _maybe_implicit_cast(dtype, value):
   aval = core.typeof(value)
-  if (aval.weak_type and
+  if (aval.weak_type and  # pytype: disable=attribute-error  # jax-aval-types
       (dtypes.issubdtype(dtype, np.floating) and
-       dtypes.issubdtype(aval.dtype, np.floating)) or
+       dtypes.issubdtype(aval.dtype, np.floating)) or  # pytype: disable=attribute-error  # jax-aval-types
       (dtypes.issubdtype(dtype, np.integer) and
-       dtypes.issubdtype(aval.dtype, np.integer))):
+       dtypes.issubdtype(aval.dtype, np.integer))):  # pytype: disable=attribute-error  # jax-aval-types
     return lax.convert_element_type(value, dtype)
   return value
 

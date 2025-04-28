@@ -3079,7 +3079,7 @@ def auto_axes(fun, *, axes: str | tuple[str, ...] | None = None,
         error_on_manual_to_auto_explicit=True)
     with mesh_lib.use_abstract_mesh(new_mesh):
       in_specs = tree_map(lambda a: core.modify_spec_for_auto_manual(
-          core.get_aval(a).sharding.spec, new_mesh), args)
+          core.get_aval(a).sharding.spec, new_mesh), args)  # pytype: disable=attribute-error  # jax-aval-types
       args = mesh_cast(args, in_specs)
       out = fun(*args, **kwargs)
     return mesh_cast(out, _out_shardings)
@@ -3108,7 +3108,7 @@ def explicit_axes(fun, *, axes: str | tuple[str, ...] | None = None,
       args = mesh_cast(args, _in_shardings)
       out = fun(*args, **kwargs)
     out_specs = tree_map(lambda o: core.modify_spec_for_auto_manual(
-        core.get_aval(o).sharding.spec, mesh_lib.get_abstract_mesh()), out)
+        core.get_aval(o).sharding.spec, mesh_lib.get_abstract_mesh()), out)  # pytype: disable=attribute-error  # jax-aval-types
     return mesh_cast(out, out_specs)
   return decorator
 

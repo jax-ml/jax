@@ -499,7 +499,7 @@ def _device_put_sharding_impl(x, aval, device, copy):
       if copy == CopySemantics.COPY:
         return xc.batched_device_put(aval, SingleDeviceSharding(device), [x],
                                      [device], True, True)
-      return pxla.batched_device_put(aval, SingleDeviceSharding(device), [x],
+      return pxla.batched_device_put(aval, SingleDeviceSharding(device), [x],  # pytype: disable=wrong-arg-types  # jax-aval-types
                                      [device])
 
   sh = SingleDeviceSharding(pxla.get_default_device()

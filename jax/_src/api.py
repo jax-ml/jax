@@ -537,40 +537,40 @@ def _check_input_dtype_revderiv(name, holomorphic, allow_int, x):
   dispatch.check_arg(x)
   aval = core.get_aval(x)
   if holomorphic:
-    if not dtypes.issubdtype(aval.dtype, np.complexfloating):
+    if not dtypes.issubdtype(aval.dtype, np.complexfloating):  # pytype: disable=attribute-error  # jax-aval-types
       raise TypeError(f"{name} with holomorphic=True requires inputs with complex dtype, "
-                      f"but got {aval.dtype.name}.")
-  if (dtypes.issubdtype(aval.dtype, dtypes.extended) or
-      dtypes.issubdtype(aval.dtype, np.integer) or
-      dtypes.issubdtype(aval.dtype, np.bool_)):
+                      f"but got {aval.dtype.name}.")  # pytype: disable=attribute-error  # jax-aval-types
+  if (dtypes.issubdtype(aval.dtype, dtypes.extended) or  # pytype: disable=attribute-error  # jax-aval-types
+      dtypes.issubdtype(aval.dtype, np.integer) or  # pytype: disable=attribute-error  # jax-aval-types
+      dtypes.issubdtype(aval.dtype, np.bool_)):  # pytype: disable=attribute-error  # jax-aval-types
     if not allow_int:
       raise TypeError(f"{name} requires real- or complex-valued inputs (input dtype "
-                      f"that is a sub-dtype of np.inexact), but got {aval.dtype.name}. "
+                      f"that is a sub-dtype of np.inexact), but got {aval.dtype.name}. "  # pytype: disable=attribute-error  # jax-aval-types
                       "If you want to use Boolean- or integer-valued inputs, use vjp "
                       "or set allow_int to True.")
-  elif not dtypes.issubdtype(aval.dtype, np.inexact):
+  elif not dtypes.issubdtype(aval.dtype, np.inexact):  # pytype: disable=attribute-error  # jax-aval-types
     raise TypeError(f"{name} requires numerical-valued inputs (input dtype that is a "
-                    f"sub-dtype of np.bool_ or np.number), but got {aval.dtype.name}.")
+                    f"sub-dtype of np.bool_ or np.number), but got {aval.dtype.name}.")  # pytype: disable=attribute-error  # jax-aval-types
 _check_input_dtype_grad = partial(_check_input_dtype_revderiv, "grad")
 
 def _check_output_dtype_revderiv(name, holomorphic, x):
   aval = core.get_aval(x)
-  if dtypes.issubdtype(aval.dtype, dtypes.extended):
+  if dtypes.issubdtype(aval.dtype, dtypes.extended):  # pytype: disable=attribute-error  # jax-aval-types
     raise TypeError(
-        f"{name} with output element type {aval.dtype.name}")
+        f"{name} with output element type {aval.dtype.name}")  # pytype: disable=attribute-error  # jax-aval-types
   if holomorphic:
-    if not dtypes.issubdtype(aval.dtype, np.complexfloating):
+    if not dtypes.issubdtype(aval.dtype, np.complexfloating):  # pytype: disable=attribute-error  # jax-aval-types
       raise TypeError(f"{name} with holomorphic=True requires outputs with complex dtype, "
-                      f"but got {aval.dtype.name}.")
-  elif dtypes.issubdtype(aval.dtype, np.complexfloating):
+                      f"but got {aval.dtype.name}.")  # pytype: disable=attribute-error  # jax-aval-types
+  elif dtypes.issubdtype(aval.dtype, np.complexfloating):  # pytype: disable=attribute-error  # jax-aval-types
     raise TypeError(f"{name} requires real-valued outputs (output dtype that is "
-                    f"a sub-dtype of np.floating), but got {aval.dtype.name}. "
+                    f"a sub-dtype of np.floating), but got {aval.dtype.name}. "  # pytype: disable=attribute-error  # jax-aval-types
                     "For holomorphic differentiation, pass holomorphic=True. "
                     "For differentiation of non-holomorphic functions involving complex "
                     "outputs, use jax.vjp directly.")
-  elif not dtypes.issubdtype(aval.dtype, np.floating):
+  elif not dtypes.issubdtype(aval.dtype, np.floating):  # pytype: disable=attribute-error  # jax-aval-types
     raise TypeError(f"{name} requires real-valued outputs (output dtype that is "
-                    f"a sub-dtype of np.floating), but got {aval.dtype.name}. "
+                    f"a sub-dtype of np.floating), but got {aval.dtype.name}. "  # pytype: disable=attribute-error  # jax-aval-types
                     "For differentiation of functions with integer outputs, use "
                     "jax.vjp directly.")
 _check_output_dtype_grad = partial(_check_output_dtype_revderiv, "grad")
@@ -706,16 +706,16 @@ def jacfwd(fun: Callable, argnums: int | Sequence[int] = 0,
 def _check_input_dtype_jacfwd(holomorphic: bool, x: Any) -> None:
   dispatch.check_arg(x)
   aval = core.get_aval(x)
-  if dtypes.issubdtype(aval.dtype, dtypes.extended):
+  if dtypes.issubdtype(aval.dtype, dtypes.extended):  # pytype: disable=attribute-error  # jax-aval-types
     raise TypeError(
-        f"jacfwd with input element type {aval.dtype.name}")
+        f"jacfwd with input element type {aval.dtype.name}")  # pytype: disable=attribute-error  # jax-aval-types
   if holomorphic:
-    if not dtypes.issubdtype(aval.dtype, np.complexfloating):
+    if not dtypes.issubdtype(aval.dtype, np.complexfloating):  # pytype: disable=attribute-error  # jax-aval-types
       raise TypeError("jacfwd with holomorphic=True requires inputs with complex "
-                      f"dtype, but got {aval.dtype.name}.")
-  elif not dtypes.issubdtype(aval.dtype, np.floating):
+                      f"dtype, but got {aval.dtype.name}.")  # pytype: disable=attribute-error  # jax-aval-types
+  elif not dtypes.issubdtype(aval.dtype, np.floating):  # pytype: disable=attribute-error  # jax-aval-types
     raise TypeError("jacfwd requires real-valued inputs (input dtype that is "
-                    f"a sub-dtype of np.floating), but got {aval.dtype.name}. "
+                    f"a sub-dtype of np.floating), but got {aval.dtype.name}. "  # pytype: disable=attribute-error  # jax-aval-types
                     "For holomorphic differentiation, pass holomorphic=True. "
                     "For differentiation of non-holomorphic functions involving "
                     "complex inputs or integer inputs, use jax.jvp directly.")
@@ -723,9 +723,9 @@ def _check_input_dtype_jacfwd(holomorphic: bool, x: Any) -> None:
 def _check_output_dtype_jacfwd(holomorphic, x):
   aval = core.get_aval(x)
   if holomorphic:
-    if not dtypes.issubdtype(aval.dtype, np.complexfloating):
+    if not dtypes.issubdtype(aval.dtype, np.complexfloating):  # pytype: disable=attribute-error  # jax-aval-types
       raise TypeError("jacfwd with holomorphic=True requires outputs with complex dtype, "
-                      f"but got {aval.dtype.name}.")
+                      f"but got {aval.dtype.name}.")  # pytype: disable=attribute-error  # jax-aval-types
 
 def jacrev(fun: Callable, argnums: int | Sequence[int] = 0,
            has_aux: bool = False, holomorphic: bool = False, allow_int: bool = False) -> Callable:
@@ -1131,7 +1131,7 @@ def _mapped_axis_spec(args_flat, in_axes_flat):
   def _get_spec(arg, i):
     try:
       # Duck type arrays like BCOO arrays can be passed to vmap.
-      return shaped_abstractify(arg).sharding.spec[i]
+      return shaped_abstractify(arg).sharding.spec[i]  # pytype: disable=attribute-error  # jax-aval-types
     except (IndexError, TypeError):
       return None
 
@@ -2640,7 +2640,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
                     if a1 != a2)
       raise ValueError("the shards passed to device_put_sharded must have "
                        f"consistent shape and dtype, but got {a1} and {a2}.")
-    stacked_aval = avals[0].update(shape=(len(devices),) + avals[0].shape)
+    stacked_aval = avals[0].update(shape=(len(devices),) + avals[0].shape)  # pytype: disable=attribute-error  # jax-aval-types
     sharding_spec = sharding_specs.create_pmap_sharding_spec(stacked_aval.shape)
     sharding = PmapSharding(np.array(devices), sharding_spec)
     if dtypes.issubdtype(stacked_aval.dtype, dtypes.extended):

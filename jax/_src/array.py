@@ -1150,7 +1150,7 @@ def shard_device_array(x, devices, indices, sharding):
     with _internal_use_concrete_mesh(None):
       shards = x._multi_slice(start_indices, limit_indices, removed_dims)
   aval = core.shaped_abstractify(x)
-  return pxla.batched_device_put(aval, sharding, shards, devices)
+  return pxla.batched_device_put(aval, sharding, shards, devices)  # pytype: disable=wrong-arg-types  # jax-aval-types
 
 
 def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
@@ -1269,7 +1269,7 @@ def _token_shard_arg(xs, shardings, layouts, copy_semantics):
     x = np.array([], dtype=bool)
     aval = core.get_aval(x)
     devices = sharding._addressable_device_assignment
-    results.append(pxla.batched_device_put(
+    results.append(pxla.batched_device_put(  # pytype: disable=wrong-arg-types  # jax-aval-types
         aval, sharding, [x] * len(devices), devices))
   return results
 pxla.shard_arg_handlers[core.Token] = _token_shard_arg

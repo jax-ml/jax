@@ -247,7 +247,7 @@ class NDIndexer:
     if any(is_int_indexing):
       int_indexers: Sequence[Any]
       other_indexers, int_indexers = partition_list(is_int_indexing, indices)
-      indexer_shapes = tuple(core.get_aval(i).shape for i in int_indexers)
+      indexer_shapes = tuple(core.get_aval(i).shape for i in int_indexers)  # pytype: disable=attribute-error  # jax-aval-types
       try:
         int_indexer_shape = np.broadcast_shapes(*indexer_shapes)
       except ValueError as e:

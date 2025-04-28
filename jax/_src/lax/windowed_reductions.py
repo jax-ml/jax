@@ -145,15 +145,15 @@ def _get_monoid_window_reducer(
     return None
   x, = xs
   aval = core.get_aval(x)
-  if core.is_concrete(x) and aval.shape == ():
+  if core.is_concrete(x) and aval.shape == ():  # pytype: disable=attribute-error  # jax-aval-types
     val = core.to_concrete_value(x)
     if monoid_op is lax.add:
       return val == 0 and _reduce_window_sum
     elif monoid_op is lax.max:
-      return (val == lax._get_max_identity(aval.dtype)
+      return (val == lax._get_max_identity(aval.dtype)  # pytype: disable=attribute-error  # jax-aval-types
               and _reduce_window_max)
     elif monoid_op is lax.min:
-      return (val == lax._get_min_identity(aval.dtype)
+      return (val == lax._get_min_identity(aval.dtype)  # pytype: disable=attribute-error  # jax-aval-types
               and _reduce_window_min)
   return None
 

@@ -214,7 +214,7 @@ def _shard_np_array(xs, shardings, layouts, copy_semantics):
       else:
         indices = tuple(sharding.addressable_devices_indices_map(x.shape).values())
         shards = [x[i] for i in indices]
-      results.append(batched_device_put(aval, sharding, shards, devices))
+      results.append(batched_device_put(aval, sharding, shards, devices))  # pytype: disable=wrong-arg-types  # jax-aval-types
   return results
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_np_array
@@ -603,7 +603,7 @@ class MapTracer(core.Tracer):
     aval = core.abstractify(self.val)
     shard_axes = dict(self.shard_axes)
     for axis_idx in sorted(shard_axes.values())[::-1]:
-      aval = core.mapped_aval(aval.shape[axis_idx], axis_idx, aval)
+      aval = core.mapped_aval(aval.shape[axis_idx], axis_idx, aval)  # pytype: disable=attribute-error  # jax-aval-types
     return aval
 
   def full_lower(self):
@@ -3241,7 +3241,7 @@ def check_arg_avals_for_call(ref_avals, arg_avals,
     # Don't compare shardings of avals because you can lower with
     # numpy arrays + in_shardings and call compiled executable with
     # sharded arrays. We also have sharding checks downstream.
-    if (ref_aval.shape, ref_aval.dtype) != (arg_aval.shape, arg_aval.dtype):
+    if (ref_aval.shape, ref_aval.dtype) != (arg_aval.shape, arg_aval.dtype):  # pytype: disable=attribute-error  # jax-aval-types
       errors.append(
           f"Argument {name} compiled with {ref_aval.str_short()} and called "
           f"with {arg_aval.str_short()}")

@@ -519,7 +519,7 @@ def shape_and_dtype_jax_array(a) -> tuple[Sequence[int | None], DType]:
   if isinstance(a, jax.ShapeDtypeStruct):
     return a.shape, a.dtype
   aval = core.get_aval(a)
-  return aval.shape, aval.dtype
+  return aval.shape, aval.dtype  # pytype: disable=attribute-error  # jax-aval-types
 
 
 def export(

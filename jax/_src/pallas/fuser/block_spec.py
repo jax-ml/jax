@@ -484,17 +484,17 @@ def make_kernel_function(
       if y is _no_aval:
         return
       x_aval, y_aval = core.get_aval(x), core.get_aval(y)
-      if x_aval.shape != y_aval.shape:
+      if x_aval.shape != y_aval.shape:  # pytype: disable=attribute-error  # jax-aval-types
         raise ValueError(
-            f'Shapes do not match: actual={x_aval.shape} !='
-            f' expected={y_aval.shape}. Path:'
+            f'Shapes do not match: actual={x_aval.shape} !='  # pytype: disable=attribute-error  # jax-aval-types
+            f' expected={y_aval.shape}. Path:'  # pytype: disable=attribute-error  # jax-aval-types
             f' {prefix}{jax.tree_util.keystr(path)}. Expected type:'
             f' {kernel_in_type}. Actual args: {(args, kwargs)}'
         )
-      if x_aval.dtype != y_aval.dtype:
+      if x_aval.dtype != y_aval.dtype:  # pytype: disable=attribute-error  # jax-aval-types
         raise ValueError(
-            f'DTypes do not match: actual={x_aval.dtype} !='
-            f' expected={y_aval.dtype}. Path:'
+            f'DTypes do not match: actual={x_aval.dtype} !='  # pytype: disable=attribute-error  # jax-aval-types
+            f' expected={y_aval.dtype}. Path:'  # pytype: disable=attribute-error  # jax-aval-types
             f' {prefix}{jax.tree_util.keystr(path)}. Expected type:'
             f' {kernel_in_type}. Actual args: {(args, kwargs)}'
         )
