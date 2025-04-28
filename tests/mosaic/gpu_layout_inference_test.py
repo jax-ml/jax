@@ -19,6 +19,7 @@
 from absl.testing import parameterized
 import jax
 from jax._src import config
+from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir as mlir_interpreter
 from jax._src.lib.mlir import ir
@@ -234,6 +235,49 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertSequenceEqual(add.attributes["out_layouts"], [splat_layout])
     self.assertSequenceEqual(cast.attributes["in_layouts"], [wgmma_layout])
     self.assertSequenceEqual(cast.attributes["out_layouts"], [wgmma_layout])
+
+  @parameterized.parameters(
+      (0, mgpu.WGMMA_ROW_LAYOUT, None, mgpu.WGMMA_ROW_LAYOUT, mgpu.WGMMA_LAYOUT),
+      (1, mgpu.WGMMA_COL_LAYOUT, None, mgpu.WGMMA_COL_LAYOUT, mgpu.WGMMA_LAYOUT),
+      (0, None, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_ROW_LAYOUT, mgpu.WGMMA_LAYOUT),
+      (1, None, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_COL_LAYOUT, mgpu.WGMMA_LAYOUT),
+  )
+  def test_infer_broadcast_in_dim_layout(
+      self, broadcast_dim, in_cast, out_cast, in_layout, out_layout
+  ):
+    # TODO(dasenov): Remove this after the minimal jaxlib version is 0.6.1.
+    if jaxlib.version < (0, 6, 1):
+      self.skipTest("Test requires jaxlib version >= 0.6.1")
+
+    bcast = None
+
+    in_shape = (64,)
+    out_shape = (64, 64)
+
+    def body(x):
+      nonlocal bcast
+      if in_cast is not None:
+        x = mgpu.dialect.LayoutCastOp(x, layouts.to_layout_attr(in_cast))
+
+      out_type = ir.VectorType.get(out_shape, ir.F32Type.get())
+      bcast = mgpu.dialect.BroadcastInDimOp(out_type, x, [broadcast_dim])
+
+      if out_cast is not None:
+        mgpu.dialect.LayoutCastOp(
+            bcast.result, layouts.to_layout_attr(out_cast)
+        )
+
+    with ir.InsertionPoint(self.module.body):
+      ty = ir.VectorType.get(in_shape, ir.F32Type.get())
+      func.FuncOp.from_py_func(ty)(body)
+
+    mgpu.infer_layout(self.module)
+    self.assertSequenceEqual(
+        bcast.attributes["in_layouts"], [layouts.to_layout_attr(in_layout)]
+    )
+    self.assertSequenceEqual(
+        bcast.attributes["out_layouts"], [layouts.to_layout_attr(out_layout)]
+    )
 
   def test_infer_layout_traverses_ops_correctly(self):
     shape = (16, 8)

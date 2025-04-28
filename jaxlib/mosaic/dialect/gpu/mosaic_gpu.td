@@ -374,6 +374,29 @@ def MosaicGPU_LayoutCastOp : Op<MosaicGPU_Dialect, "layout_cast",
 }
 
 
+def MosaicGPU_BroadcastInDimOp : Op<MosaicGPU_Dialect, "broadcast_in_dim", []> {
+  let summary = "Broadcasts a vector to a new shape.";
+  let description = [{
+    `broadcast_dimensions` must have the same size as the rank of the input
+    vector and for each input dimension, specifies which output dimension it
+    corresponds to.
+  }];
+
+  let arguments = (ins
+    AnyVectorOfAnyRank:$operand,
+
+    // Attributes
+    DenseI64ArrayAttr:$broadcast_dimensions
+  );
+
+  let results = (outs AnyVectorOfAnyRank);
+  let assemblyFormat = [{
+    `(` $operand `:` type($operand) `)` attr-dict `->` type(results)
+  }];
+  let hasVerifier = 1;
+}
+
+
 def MosaicGPU_SliceSMEMOp : Op<MosaicGPU_Dialect, "slice_smem", []> {
   let summary = "Constructs an SMEM MemRef with the requested type that begins at the specified SMEM offset address.";
 
