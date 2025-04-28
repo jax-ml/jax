@@ -179,8 +179,12 @@ def _infer_vector_load_store_transforms(
     layout_transforms = infer_transforms_for_wgmma_ref(
         ir.MemRefType(op.base.type)
     )
-  elif (isinstance(layout, fa.WGStridedFragLayout) or
-        isinstance(layout, fa.WGSplatFragLayout)):
+  elif (
+      layout == fa.WGMMA_ROW_LAYOUT
+      or layout == fa.WGMMA_COL_LAYOUT
+      or isinstance(layout, fa.WGStridedFragLayout)
+      or isinstance(layout, fa.WGSplatFragLayout)
+  ):
     layout_transforms = None
   else:
     raise NotImplementedError(

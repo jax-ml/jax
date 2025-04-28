@@ -408,7 +408,9 @@ def _vector_store_op_lowering_rule(
     fragmented_array.store_tiled(
         reinterpret_smem_ref(vector_store_op.base, transforms), swizzle
     )
-  elif (isinstance(fragmented_array.layout, fa.WGStridedFragLayout) or
+  elif (fragmented_array.layout == fa.WGMMA_ROW_LAYOUT or
+        fragmented_array.layout == fa.WGMMA_COL_LAYOUT or
+        isinstance(fragmented_array.layout, fa.WGStridedFragLayout) or
         isinstance(fragmented_array.layout, fa.WGSplatFragLayout)):
     fragmented_array.store_untiled(vector_store_op.base)
   else:
