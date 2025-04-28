@@ -299,6 +299,7 @@ class GpuLaunchLoweringPass : public ::mlir::OperationPass<mlir::ModuleOp> {
         init_func->setAttr(mlir::LLVM::LLVMDialect::getEmitCWrapperAttrName(),
                            mlir::UnitAttr::get(func->getContext()));
         bool had_launch = false;
+        mlir::Operation *gpu_binary = nullptr;
         auto result = getOperation()->walk([&](mlir::gpu::LaunchFuncOp launch)
                                                -> mlir::WalkResult {
           if (had_launch) {
@@ -314,6 +315,7 @@ class GpuLaunchLoweringPass : public ::mlir::OperationPass<mlir::ModuleOp> {
                 << launch.getKernelModuleName();
             return mlir::WalkResult::interrupt();
           }
+          gpu_binary = binary.getOperation();
           if (binary.getObjects().size() != 1) {
             binary.emitOpError("Expected exactly one object in the binary.");
             return mlir::WalkResult::interrupt();
@@ -351,6 +353,13 @@ class GpuLaunchLoweringPass : public ::mlir::OperationPass<mlir::ModuleOp> {
         });
         if (!had_launch) {
           init_func.erase();
+        }
+        if (gpu_binary) {
+          // This deletion is load-bearing: the conversion of `gpu.binary` to
+          // LLVM is side-effecting, as it creates module constructors and
+          // destructors which create an assumption that symbols from the MLIR
+          // runtime are available.
+          gpu_binary->erase();
         }
         if (result == mlir::WalkResult::interrupt()) {
           signalPassFailure();
