@@ -102,7 +102,7 @@ jobs:
               python: "3.10"
             - tpu-specs:
                 type: "v6e-8"
-                python: "3.11"
+              python: "3.11"
             # Run min and max Python versions for v5e-8
             - tpu-specs:
                 type: "v5e-8"
