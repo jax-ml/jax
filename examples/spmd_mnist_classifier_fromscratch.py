@@ -12,33 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""An MNIST example with single-program multiple-data (SPMD) data parallelism.
-
-The aim here is to illustrate how to use JAX's `pmap` to express and execute
-SPMD programs for data parallelism along a batch dimension, while also
-minimizing dependencies by avoiding the use of higher-level layers and
-optimizers libraries.
-"""
-
-
-from functools import partial
 import time
 
 import numpy as np
 import numpy.random as npr
 
 import jax
-from jax import jit, grad, pmap
+from jax import jit, grad
+from jax.sharding import PartitionSpec as P, NamedSharding
 from jax.scipy.special import logsumexp
 from jax.tree_util import tree_map
-from jax import lax
 import jax.numpy as jnp
-from examples import datasets
+import datasets
 
 
 def init_random_params(scale, layer_sizes, rng=npr.RandomState(0)):
-  return [(scale * rng.randn(m, n), scale * rng.randn(n))
-          for m, n, in zip(layer_sizes[:-1], layer_sizes[1:])]
+  return [
+    (scale * rng.randn(m, n), scale * rng.randn(n))
+    for m, n in zip(layer_sizes[:-1], layer_sizes[1:])
+  ]
+
 
 def predict(params, inputs):
   activations = inputs
@@ -50,10 +43,19 @@ def predict(params, inputs):
   logits = jnp.dot(activations, final_w) + final_b
   return logits - logsumexp(logits, axis=1, keepdims=True)
 
+
 def loss(params, batch):
   inputs, targets = batch
   preds = predict(params, inputs)
   return -jnp.mean(jnp.sum(preds * targets, axis=1))
+
+
+def train_step(params, batch):
+  grads = grad(loss)(params, batch)
+  return [
+    (w - step_size * dw, b - step_size * db) for (w, b), (dw, db) in zip(params, grads)
+  ]
+
 
 @jit
 def accuracy(params, batch):
@@ -72,57 +74,71 @@ if __name__ == "__main__":
 
   train_images, train_labels, test_images, test_labels = datasets.mnist()
   num_train = train_images.shape[0]
+
+  num_devices = jax.device_count()
+  print(f"Using {num_devices} devices")
+
+  if batch_size % num_devices != 0:
+    batch_size = (batch_size // num_devices) * num_devices
+    print(f"Adjusting batch size to {batch_size} for divisibility")
+
   num_complete_batches, leftover = divmod(num_train, batch_size)
   num_batches = num_complete_batches + bool(leftover)
 
-  # For this manual SPMD example, we get the number of devices (e.g. GPUs or
-  # TPU cores) that we're using, and use it to reshape data minibatches.
-  num_devices = jax.device_count()
+  devices = np.array(jax.devices())
+  mesh = jax.make_mesh((jax.device_count(),), ("batch",))
+
+  replicated_sharding = NamedSharding(mesh, P())
+  data_sharding = NamedSharding(mesh, P("batch"))
+
   def data_stream():
     rng = npr.RandomState(0)
     while True:
       perm = rng.permutation(num_train)
       for i in range(num_batches):
-        batch_idx = perm[i * batch_size:(i + 1) * batch_size]
-        images, labels = train_images[batch_idx], train_labels[batch_idx]
-        # For this SPMD example, we reshape the data batch dimension into two
-        # batch dimensions, one of which is mapped over parallel devices.
-        batch_size_per_device, ragged = divmod(images.shape[0], num_devices)
-        if ragged:
-          msg = "batch size must be divisible by device count, got {} and {}."
-          raise ValueError(msg.format(batch_size, num_devices))
-        shape_prefix = (num_devices, batch_size_per_device)
-        images = images.reshape(shape_prefix + images.shape[1:])
-        labels = labels.reshape(shape_prefix + labels.shape[1:])
+        batch_idx = perm[i * batch_size : (i + 1) * batch_size]
+        images_np, labels_np = train_images[batch_idx], train_labels[batch_idx]
+
+        current_batch_size = images_np.shape[0]
+        if current_batch_size < batch_size:
+          pad_len = batch_size - current_batch_size
+          images_np = np.concatenate([images_np, images_np[:pad_len]], axis=0)
+          labels_np = np.concatenate([labels_np, labels_np[:pad_len]], axis=0)
+
+        images = jax.device_put(images_np, data_sharding)
+        labels = jax.device_put(labels_np, data_sharding)
         yield images, labels
+
   batches = data_stream()
 
-  @partial(pmap, axis_name='batch')
-  def spmd_update(params, batch):
-    grads = grad(loss)(params, batch)
-    # We compute the total gradients, summing across the device-mapped axis,
-    # using the `lax.psum` SPMD primitive, which does a fast all-reduce-sum.
-    grads = [(lax.psum(dw, 'batch'), lax.psum(db, 'batch')) for dw, db in grads]
-    return [(w - step_size * dw, b - step_size * db)
-            for (w, b), (dw, db) in zip(params, grads)]
+  params = init_random_params(param_scale, layer_sizes)
 
-  # We replicate the parameters so that the constituent arrays have a leading
-  # dimension of size equal to the number of devices we're pmapping over.
-  init_params = init_random_params(param_scale, layer_sizes)
-  replicate_array = lambda x: np.broadcast_to(x, (num_devices,) + x.shape)
-  replicated_params = tree_map(replicate_array, init_params)
+  param_shardings = tree_map(lambda x: replicated_sharding, params)
+  params = jax.device_put(params, param_shardings)
+  batch_shardings = (data_sharding, data_sharding)
+
+  jitted_train_step = jax.jit(
+    train_step,
+    out_shardings=param_shardings,
+    donate_argnums=(0,),
+  )
 
   for epoch in range(num_epochs):
     start_time = time.time()
-    for _ in range(num_batches):
-      replicated_params = spmd_update(replicated_params, next(batches))
+    for i in range(num_batches - 1):
+      print(f"Batch no {i+1} of {num_batches}")
+      batch = next(batches)
+      with jax.sharding.use_mesh(mesh):
+        params = jitted_train_step(params, batch)
     epoch_time = time.time() - start_time
 
-    # We evaluate using the jitted `accuracy` function (not using pmap) by
-    # grabbing just one of the replicated parameter values.
-    params = tree_map(lambda x: x[0], replicated_params)
     train_acc = accuracy(params, (train_images, train_labels))
     test_acc = accuracy(params, (test_images, test_labels))
     print(f"Epoch {epoch} in {epoch_time:0.2f} sec")
     print(f"Training set accuracy {train_acc}")
     print(f"Test set accuracy {test_acc}")
+
+    if epoch < num_epochs - 1:
+      batches = data_stream()
+      print(f"Batch no {0} of {num_batches}")
+      params = jitted_train_step(params, next(batches))
