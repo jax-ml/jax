@@ -75,9 +75,9 @@ py_binary(
     deps = [
         ":build_utils",
         "@bazel_tools//tools/python/runfiles",
-        "@pypi_build//:pkg",
-        "@pypi_setuptools//:pkg",
-        "@pypi_wheel//:pkg",
+        "@pypi//build",
+        "@pypi//setuptools",
+        "@pypi//wheel",
     ],
 )
 
@@ -133,9 +133,9 @@ py_binary(
     deps = [
         ":build_utils",
         "@bazel_tools//tools/python/runfiles",
-        "@pypi_build//:pkg",
-        "@pypi_setuptools//:pkg",
-        "@pypi_wheel//:pkg",
+        "@pypi//build",
+        "@pypi//setuptools",
+        "@pypi//wheel",
     ],
 )
 
@@ -162,9 +162,9 @@ py_binary(
     deps = [
         ":build_utils",
         "@bazel_tools//tools/python/runfiles",
-        "@pypi_build//:pkg",
-        "@pypi_setuptools//:pkg",
-        "@pypi_wheel//:pkg",
+        "@pypi//build",
+        "@pypi//setuptools",
+        "@pypi//wheel",
     ],
 )
 
@@ -250,9 +250,9 @@ py_binary(
     deps = [
         ":build_utils",
         "@bazel_tools//tools/python/runfiles",
-        "@pypi_build//:pkg",
-        "@pypi_setuptools//:pkg",
-        "@pypi_wheel//:pkg",
+        "@pypi//build",
+        "@pypi//setuptools",
+        "@pypi//wheel",
     ],
 )
 
@@ -309,9 +309,9 @@ py_binary(
     deps = [
         ":build_utils",
         "@bazel_tools//tools/python/runfiles",
-        "@pypi_build//:pkg",
-        "@pypi_setuptools//:pkg",
-        "@pypi_wheel//:pkg",
+        "@pypi//build",
+        "@pypi//setuptools",
+        "@pypi//wheel",
     ],
 )
 
@@ -399,9 +399,9 @@ py_binary(
     deps = [
         ":build_utils",
         "@bazel_tools//tools/python/runfiles",
-        "@pypi_build//:pkg",
-        "@pypi_setuptools//:pkg",
-        "@pypi_wheel//:pkg",
+        "@pypi//build",
+        "@pypi//setuptools",
+        "@pypi//wheel",
     ],
 )
 
