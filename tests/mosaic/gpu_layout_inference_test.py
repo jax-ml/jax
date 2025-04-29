@@ -279,6 +279,53 @@ class LayoutInferenceTest(parameterized.TestCase):
         bcast.attributes["out_layouts"], [layouts.to_layout_attr(out_layout)]
     )
 
+  @parameterized.parameters(
+      (1, mgpu.WGMMA_LAYOUT, None, None, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_ROW_LAYOUT),
+      (0, mgpu.WGMMA_LAYOUT, None, None, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_COL_LAYOUT),
+      (1, None, None, mgpu.WGMMA_ROW_LAYOUT, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_ROW_LAYOUT),
+      (0, None, None, mgpu.WGMMA_COL_LAYOUT, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_COL_LAYOUT),
+      (1, None, mgpu.WGMMA_ROW_LAYOUT, None, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_ROW_LAYOUT),
+      (0, None, mgpu.WGMMA_COL_LAYOUT, None, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_COL_LAYOUT),
+      (1, None, mgpu.WGMMA_ROW_LAYOUT, mgpu.WGMMA_ROW_LAYOUT, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_ROW_LAYOUT),
+      (0, None, mgpu.WGMMA_COL_LAYOUT, mgpu.WGMMA_COL_LAYOUT, mgpu.WGMMA_LAYOUT, mgpu.WGMMA_COL_LAYOUT),
+  )
+  def test_infer_multi_reduce_layout(
+      self, reduce_dim, in_cast, acc_cast, out_cast, in_layout, out_layout
+  ):
+    red = None
+
+    in_shape = (64, 64)
+    out_shape = (64,)
+
+    def body(x, acc):
+      nonlocal red
+      if in_cast is not None:
+        x = mgpu.dialect.LayoutCastOp(x, layouts.to_layout_attr(in_cast))
+      if acc_cast is not None:
+        acc = mgpu.dialect.LayoutCastOp(acc, layouts.to_layout_attr(acc_cast))
+
+      kind = vector.CombiningKind.MAXIMUMF
+      red = vector.MultiDimReductionOp(kind, x, acc, [reduce_dim])
+
+      if out_cast is not None:
+        mgpu.dialect.LayoutCastOp(
+            red.result, layouts.to_layout_attr(out_cast)
+        )
+
+    with ir.InsertionPoint(self.module.body):
+      in_ty = ir.VectorType.get(in_shape, ir.F32Type.get())
+      acc_ty = ir.VectorType.get(out_shape, ir.F32Type.get())
+      func.FuncOp.from_py_func(in_ty, acc_ty)(body)
+
+    mgpu.infer_layout(self.module)
+    self.assertSequenceEqual(
+        red.attributes["in_layouts"],
+        [layouts.to_layout_attr(in_layout), layouts.to_layout_attr(out_layout)],
+    )
+    self.assertSequenceEqual(
+        red.attributes["out_layouts"], [layouts.to_layout_attr(out_layout)]
+    )
+
   def test_infer_layout_traverses_ops_correctly(self):
     shape = (16, 8)
     elt_type = ir.BF16Type.get()

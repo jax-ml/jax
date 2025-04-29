@@ -2896,6 +2896,93 @@ class MosaicGpuDialectTest(TestCase, jtu.JaxTestCase):
         jax.jit(kernel)(), jax.lax.broadcast_in_dim(x, output_shape, bcast_dims)
     )
 
+  @parameterized.parameters(
+      (jnp.float32, 5.0, 2.0, vector.CombiningKind.ADD),
+      (jnp.float32, 5.0, 2.0, vector.CombiningKind.MAXIMUMF),
+      (jnp.float32, 5.0, 7.0, vector.CombiningKind.MAXIMUMF),
+      (jnp.int32, 5, 2, vector.CombiningKind.MAXSI),
+      (jnp.int32, -5, -2, vector.CombiningKind.MAXSI),
+      (jnp.int32, -2, -5, vector.CombiningKind.MAXSI),
+      (jnp.uint32, 5, 2, vector.CombiningKind.MAXUI),
+      (jnp.uint32, 2, 5, vector.CombiningKind.MAXUI),
+      #
+      # TODO(dasenov): Add tests for wgmma_col_layout output once
+      # fragmented_array.reduce supports that.
+  )
+  def test_vector_multi_dim_reduction(
+      self,
+      dtype,
+      input_value,
+      init_value,
+      kind,
+  ):
+    input_shape = (128, 64)
+    output_shape = (128,)
+    red_dims = [1]
+
+    def body(ctx, result_gmem_ref, smem):
+      del ctx
+      result_smem_ref = smem[0]
+
+      el_type = utils.dtype_to_ir_type(dtype)
+      zero_index = arith.constant(ir.IndexType.get(), 0)
+
+      # Create source in registers
+      source_type = ir.VectorType.get(input_shape, el_type)
+      c = arith.constant(el_type, input_value)
+      source = vector.splat(source_type, c)
+
+      # Create accumulator in registers
+      acc_type = ir.VectorType.get(output_shape, el_type)
+      c = arith.constant(el_type, init_value)
+      acc = vector.splat(acc_type, c)
+
+      # Cast inputs
+      source = mgpu_dialect.layout_cast(
+          source, layouts.to_layout_attr(fa.WGMMA_LAYOUT)
+      )
+      acc_layout = (
+          fa.WGMMA_ROW_LAYOUT if red_dims[0] == 1 else fa.WGMMA_COL_LAYOUT
+      )
+      acc = mgpu_dialect.layout_cast(acc, layouts.to_layout_attr(acc_layout))
+
+      # Computation
+      reduced = vector.multi_reduction(kind, source, acc, red_dims)
+
+      # Registers -> SMEM
+      vector.store(reduced, result_smem_ref, [zero_index] * len(output_shape))
+
+      # SMEM -> GMEM
+      zero_i32 = arith.constant(ir.IntegerType.get_signless(32), 0)
+      mgpu_dialect.async_store(
+          source=result_smem_ref,
+          destination=result_gmem_ref,
+          indices=[zero_i32] * len(output_shape),
+          slice_lengths=output_shape,
+      )
+      nvvm.cp_async_bulk_wait_group(0)
+      utils.warpgroup_barrier()
+
+    kernel = mgpu.as_gpu_kernel(
+        body,
+        grid=(1, 1, 1),
+        block=(128, 1, 1),
+        in_shape=(),
+        out_shape=jax.ShapeDtypeStruct(output_shape, dtype),
+        smem_scratch_shape=[jax.ShapeDtypeStruct(output_shape, dtype)],
+        thread_semantics=mgpu.LoweringSemantics.Warpgroup,
+    )
+
+    source = np.full(input_shape, input_value, dtype=dtype)
+    acc = np.full(output_shape, init_value, dtype=dtype)
+    if kind == vector.CombiningKind.ADD:
+      red = jax.lax.reduce_sum(source, red_dims)
+      red = red + acc
+    else:
+      red = jax.lax.reduce_max(source, red_dims)
+      red = jax.lax.max(red, acc)
+    self.assertArraysEqual(jax.jit(kernel)(), red)
+
   @parameterized.parameters(fa.WGMMA_ROW_LAYOUT, fa.WGMMA_COL_LAYOUT)
   def test_wgmma_row_col_store(self, in_layout):
     element_value = 42.0

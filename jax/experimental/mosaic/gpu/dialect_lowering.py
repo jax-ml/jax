@@ -478,6 +478,49 @@ def _vector_reduction_op_lowering_rule(
       raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
   return [_fragmented_array_to_ir(result, op.result.type)]
 
+@_register_lowering(vector.MultiDimReductionOp)
+def _vector_multi_dim_reduction_op_lowering_rule(
+    ctx: LoweringContext, op: vector.MultiDimReductionOp
+) -> Sequence[ir.Value]:
+  del ctx
+
+  [in_layout, acc_layout] = inference_utils.in_layouts(op)
+  [out_layout] = inference_utils.out_layouts(op)
+  if layouts.from_layout_attr(in_layout) != fa.WGMMA_LAYOUT:
+    raise NotImplementedError(f"Unsupported input layout: {in_layout}")
+  if layouts.from_layout_attr(out_layout) not in {
+      fa.WGMMA_ROW_LAYOUT,
+      fa.WGMMA_COL_LAYOUT,
+  }:
+    raise NotImplementedError(f"Unsupported output layout: {out_layout}")
+  if out_layout != acc_layout:
+    raise ValueError(
+        f"Output layout {out_layout} must match the accumulator layout"
+        f" {acc_layout}"
+    )
+
+  element_type = ir.VectorType(op.source.type).element_type
+
+  is_signed = False if ir.IntegerType.isinstance(element_type) else None
+  source_fa = _fragmented_array_from_ir(op.source, in_layout, is_signed)
+  acc_fa = _fragmented_array_from_ir(op.acc, acc_layout, is_signed)
+  match vector.CombiningKind[
+      str(op.kind).removeprefix("#vector.kind<").removesuffix(">").upper()
+  ]:
+    case vector.CombiningKind.ADD:
+      result = source_fa.reduce("add", op.reduction_dims[0])
+      result += acc_fa
+    case (
+        vector.CombiningKind.MAXIMUMF
+        | vector.CombiningKind.MAXSI
+        | vector.CombiningKind.MAXUI
+    ):
+      result = source_fa.reduce("max", op.reduction_dims[0])
+      result = result.max(acc_fa)
+    case _:
+      raise NotImplementedError(f"Unsupported reduction kind: {op.kind}")
+  return [_fragmented_array_to_ir(result, op.result.type)]
+
 
 @_register_lowering(mgpu.LayoutCastOp)
 def _mgpu_layout_cast_op_lowering_rule(
