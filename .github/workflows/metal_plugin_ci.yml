@@ -39,7 +39,7 @@ jobs:
           uv pip install -U pip numpy wheel absl-py pytest
           if [[ "${{ matrix.jaxlib-version }}" == "nightly" ]]; then
             uv pip install --pre jaxlib \
-              -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
+              -i https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/
           fi;
           cd jax
           uv pip install . jax-metal
