@@ -20,6 +20,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * Added {func}`jax.lax.axis_size` which returns the size of the mapped axis
     given its name.
 
+* Changes
+  * JAX nightly packages are now published to artifact registry. To install
+    these packages, see the [JAX installation guide](https://docs.jax.dev/en/latest/installation.html#jax-nightly-installation).
+
 ## JAX 0.6.0 (April 16, 2025)
 
 * Breaking changes
