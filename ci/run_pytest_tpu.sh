@@ -95,3 +95,5 @@ else
     tests/pjit_test.py \
     tests/pallas/tpu_pallas_distributed_test.py
 fi
+
+echo("A malformated command")
