@@ -68,6 +68,7 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
           attention_mgpu.attention_with_pipeline_emitter,
       ),
       save_residuals=(True,),
+      dtype=(jnp.float16, jnp.bfloat16),
   )
   def test_flash_attention(
       self,
@@ -81,9 +82,9 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
   ):
     num_q_heads, num_kv_heads = num_q_and_kv_heads
     k1, k2, k3 = jax.random.split(jax.random.key(42), 3)
-    q = jax.random.normal(k1, (batch_size, q_seq_len, num_q_heads, head_dim), jnp.float16)
-    k = jax.random.normal(k2, (batch_size, kv_seq_len, num_kv_heads, head_dim), jnp.float16)
-    v = jax.random.normal(k3, (batch_size, kv_seq_len, num_kv_heads, head_dim), jnp.float16)
+    q = jax.random.normal(k1, (batch_size, q_seq_len, num_q_heads, head_dim), dtype)
+    k = jax.random.normal(k2, (batch_size, kv_seq_len, num_kv_heads, head_dim), dtype)
+    v = jax.random.normal(k3, (batch_size, kv_seq_len, num_kv_heads, head_dim), dtype)
     out, *res = attention_impl(
         q,
         k,
