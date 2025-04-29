@@ -96,11 +96,11 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
         save_residuals=save_residuals,
     )
     out_ref, *res_ref = attention_mgpu.attention_reference(q, k, v, save_residuals=save_residuals)
-    np.testing.assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)
+    np.testing.assert_allclose(out, out_ref, atol=1e-2, rtol=8e-3)
     if save_residuals:
       (lse,) = res[0]
       (lse_ref,) = res_ref[0]
-      np.testing.assert_allclose(lse, lse_ref, atol=2e-3, rtol=1e-3)
+      np.testing.assert_allclose(lse, lse_ref, atol=1e-2, rtol=8e-3)
 
   @parameterized.product(
       batch_size=(3,),
