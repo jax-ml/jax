@@ -1482,7 +1482,8 @@ def _partial_eval_jaxpr_custom_rule(
            list[core.Var]]:
   jaxpr, mesh = eqn.params['jaxpr'], eqn.params['mesh']
   check_vma, manual_axes = eqn.params['check_vma'], eqn.params['manual_axes']
-  with _extend_axis_env(mesh, manual_axes), config._check_vma(check_vma):
+  with (_extend_axis_env(mesh, manual_axes), config._check_vma(check_vma),
+        use_abstract_mesh(_as_manual_mesh(mesh, manual_axes))):
     jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res = \
         pe.partial_eval_jaxpr_custom(jaxpr, unks_in, inst_in, False, False, saveable)
   num_out_primals = len(jaxpr_known.outvars) - num_res
