@@ -60,6 +60,7 @@ limitations under the License.
 #include "xla/python/ifrt/user_context.h"
 #include "xla/python/nb_numpy.h"
 #include "xla/python/pjrt_ifrt/pjrt_dtype.h"
+#include "xla/python/safe_static_init.h"
 #include "xla/python/types.h"
 #include "xla/shape.h"
 #include "xla/tsl/concurrency/ref_count.h"
@@ -591,9 +592,11 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
                                     ifrt::Device* to_device,
                                     ifrt::MemoryKind to_memory_kind,
                                     const DevicePutOptions& options) {
-  static const absl::flat_hash_map<PyObject*,
-                                   DevicePutHandler>* const handlers = [] {
-    auto p = new absl::flat_hash_map<PyObject*, DevicePutHandler>();
+  using PyObjectDeviceHandlerMap = absl::flat_hash_map<PyObject*, DevicePutHandler>;
+
+  auto init_fn = [](){
+    std::unique_ptr<PyObjectDeviceHandlerMap> p = std::make_unique<PyObjectDeviceHandlerMap>();
+
     const NumpyScalarTypes& dtypes = GetNumpyScalarTypes();
     // Python scalar types.
     static_assert(sizeof(bool) == 1, "Conversion code assumes bool is 1 byte");
@@ -660,20 +663,20 @@ absl::StatusOr<ShardFn> MakeShardFn(nb::handle arg, ifrt::Client* client,
     static_assert(sizeof(int) == sizeof(int32_t),
                   "int must be the same size as int32_t");
     (*p)[dtypes.np_intc.ptr()] = HandleNumpyScalar<int32_t>;
-
     return p;
-  }();
+  };
+  const PyObjectDeviceHandlerMap& handlers = xla::SafeStaticInit<PyObjectDeviceHandlerMap>(init_fn);
 
   if (arg.type().ptr() == PyArray::type().ptr()) {
     auto array = nb::borrow<PyArray>(arg);
     return HandlePyArray(arg, client, to_device, to_memory_kind, options);
   }
 
-  auto res = handlers->find(arg.type().ptr());
-  if (res == handlers->end()) {
+  auto res = handlers.find(arg.type().ptr());
+  if (res == handlers.end()) {
     for (auto base_class : arg.type().attr("__mro__")) {
-      res = handlers->find(base_class.ptr());
-      if (res != handlers->end()) {
+      res = handlers.find(base_class.ptr());
+      if (res != handlers.end()) {
         return res->second(arg, client, to_device, to_memory_kind, options);
       }
     }

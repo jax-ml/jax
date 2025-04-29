@@ -898,6 +898,7 @@ cc_library(
         "@xla//xla/python/pjrt_ifrt",
         "@xla//xla/python/pjrt_ifrt:pjrt_dtype",
         "@xla//xla/python/pjrt_ifrt:xla_ifrt",
+        "@xla//xla/python:safe_static_init",
         "@xla//xla/service:platform_util",
         "@xla//xla/tsl/concurrency:ref_count",
         "@xla//xla/tsl/framework:allocator",
