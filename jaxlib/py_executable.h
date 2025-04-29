@@ -215,7 +215,7 @@ class PyLoadedExecutable {
   const ifrt::ExecuteOptions& options() const { return options_; }
 
   // Returns a unique launch ID to use for the next execution.
-  int64_t GetNextLaunchId();
+  int32_t GetNextLaunchId();
 
   const std::optional<std::string>& fingerprint() const { return fingerprint_; }
 
@@ -235,7 +235,7 @@ class PyLoadedExecutable {
   std::optional<std::string> fingerprint_;
 
   // Launch ID to use for the next execution.
-  std::atomic<int64_t> next_launch_id_;
+  std::atomic<uint32_t> next_launch_id_;
 
   // The options to pass to `executable_.Execute`.
   ifrt::ExecuteOptions options_;
