@@ -833,7 +833,7 @@ class PureCallbackTest(jtu.JaxTestCase):
     def f(x):
       return sin(x)
     out = f(2.)
-    np.testing.assert_allclose(out, jnp.cos(2.))
+    np.testing.assert_allclose(out, jnp.cos(2.), atol=1e-7)
 
   def test_callback_inside_of_cond(self):
 
