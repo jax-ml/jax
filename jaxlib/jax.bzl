@@ -67,21 +67,21 @@ PLATFORM_TAGS_DICT = {
 
 _GPU_PYPI_WHEEL_DEPS = [
     "//:jax_wheel_with_internal_test_util",
-    "@pypi_jaxlib//:pkg",
-    "@pypi_jax_cuda12_plugin//:pkg",
-    "@pypi_jax_cuda12_pjrt//:pkg",
+    "@pypi//jaxlib",
+    "@pypi//jax_cuda12_plugin",
+    "@pypi//jax_cuda12_pjrt",
 ]
 
 _CPU_PYPI_WHEEL_DEPS = [
     "//:jax_wheel_with_internal_test_util",
-    "@pypi_jaxlib//:pkg",
+    "@pypi//jaxlib",
 ]
 
 # TODO(vam): remove this once zstandard builds against Python >3.13
 def get_zstandard():
     if HERMETIC_PYTHON_VERSION in ("3.13", "3.13-ft", "3.14", "3.14-ft"):
         return []
-    return ["@pypi_zstandard//:pkg"]
+    return ["@pypi//zstandard"]
 
 def get_optional_dep(package, excluded_py_versions=["3.14", "3.14-ft"]):
     if HERMETIC_PYTHON_VERSION in excluded_py_versions:
@@ -89,26 +89,26 @@ def get_optional_dep(package, excluded_py_versions=["3.14", "3.14-ft"]):
     return [package]
 
 _py_deps = {
-    "absl/logging": ["@pypi_absl_py//:pkg"],
-    "absl/testing": ["@pypi_absl_py//:pkg"],
-    "absl/flags": ["@pypi_absl_py//:pkg"],
-    "cloudpickle": get_optional_dep("@pypi_cloudpickle//:pkg"),
-    "colorama": get_optional_dep("@pypi_colorama//:pkg"),
-    "epath": get_optional_dep("@pypi_etils//:pkg"),  # etils.epath
-    "filelock": get_optional_dep("@pypi_filelock//:pkg"),
-    "flatbuffers": ["@pypi_flatbuffers//:pkg"],
-    "hypothesis": ["@pypi_hypothesis//:pkg"],
+    "absl/logging": ["@pypi//absl_py"],
+    "absl/testing": ["@pypi//absl_py"],
+    "absl/flags": ["@pypi//absl_py"],
+    "cloudpickle": get_optional_dep("@pypi//cloudpickle"),
+    "colorama": get_optional_dep("@pypi//colorama"),
+    "epath": get_optional_dep("@pypi//etils"),  # etils.epath
+    "filelock": get_optional_dep("@pypi//filelock"),
+    "flatbuffers": ["@pypi//flatbuffers"],
+    "hypothesis": ["@pypi//hypothesis"],
     "magma": [],
-    "matplotlib": get_optional_dep("@pypi_matplotlib//:pkg"),
+    "matplotlib": get_optional_dep("@pypi//matplotlib"),
     "mpmath": [],
-    "opt_einsum": ["@pypi_opt_einsum//:pkg"],
-    "pil": get_optional_dep("@pypi_pillow//:pkg"),
-    "portpicker": get_optional_dep("@pypi_portpicker//:pkg"),
-    "ml_dtypes": ["@pypi_ml_dtypes//:pkg"],
-    "numpy": ["@pypi_numpy//:pkg"],
-    "scipy": ["@pypi_scipy//:pkg"],
+    "opt_einsum": ["@pypi//opt_einsum"],
+    "pil": get_optional_dep("@pypi//pillow"),
+    "portpicker": get_optional_dep("@pypi//portpicker"),
+    "ml_dtypes": ["@pypi//ml_dtypes"],
+    "numpy": ["@pypi//numpy"],
+    "scipy": ["@pypi//scipy"],
     "tensorflow_core": [],
-    "tensorstore": get_optional_dep("@pypi_tensorstore//:pkg"),
+    "tensorstore": get_optional_dep("@pypi//tensorstore"),
     "torch": [],
     "zstandard": get_zstandard(),
 }

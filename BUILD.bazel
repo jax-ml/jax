@@ -71,9 +71,9 @@ py_binary(
     srcs = ["build_wheel.py"],
     deps = [
         "//jaxlib/tools:build_utils",
-        "@pypi_build//:pkg",
-        "@pypi_setuptools//:pkg",
-        "@pypi_wheel//:pkg",
+        "@pypi//build",
+        "@pypi//setuptools",
+        "@pypi//wheel",
     ],
 )
 
