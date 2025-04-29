@@ -1738,7 +1738,7 @@ pmap_no_rank_reduction = bool_state(
 
 use_shardy_partitioner = bool_state(
     name='jax_use_shardy_partitioner',
-    default=False,
+    default=True,
     upgrade=True,
     help=(
         'Whether to lower to Shardy. Shardy is a new open sourced propagation '
