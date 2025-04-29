@@ -1153,6 +1153,7 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
   };
   absl::flat_hash_map<BatchedCopyToDeviceWithShardingKey, Batch> batches;
 
+  auto traceback = Traceback::Get();
   for (int i = 0; i < py_arrays.size(); ++i) {
     const auto& py_array = py_arrays[i];
     const auto& dst_sharding = dst_shardings[i];
@@ -1171,7 +1172,20 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
 
     if (*src_devices == *dst_devices && src_memory_kind == dst_memory_kind &&
         array_cs == ifrt::ArrayCopySemantics::kReuseInput) {
-      results[i] = py_arrays[i];
+      if (jax::ShardingEqual(py_array.sharding(), dst_sharding)) {
+        results[i] = py_arrays[i];
+      } else {
+        absl::Span<const int64_t> shape_span = py_array.shape();
+        // We can reuse the input array despite the sharding being different.
+        // This is because this code expects no resharding is necessary, which
+        // has been verified by the code invoking this method.
+        results[i] =
+            PyArray(py_array.aval(), py_array.weak_type(), py_array.dtype(),
+                    std::vector<int64_t>(shape_span.begin(), shape_span.end()),
+                    dst_sharding, py_array.py_client(), traceback,
+                    tsl::FormRef(ifrt_array_ptr), py_array.committed(),
+                    /*skip_checks=*/true, py_array.result_status());
+      }
       continue;
     }
 
@@ -1212,7 +1226,6 @@ absl::StatusOr<std::vector<PyArray>> PyArray::BatchedCopyToDeviceWithSharding(
     }
   }
 
-  auto traceback = Traceback::Get();
   for (auto& [i, ifrt_array] : ifrt_arrays) {
     const auto& py_array = py_arrays[i];
     absl::Span<const int64_t> shape_span = py_array.shape();
