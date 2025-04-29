@@ -252,6 +252,9 @@ def jax_multiplatform_test(
         else:
             fail("Must set a main file to test multiple source files.")
 
+    env = dict(env)
+    env.setdefault("PYTHONWARNINGS", "error")
+
     for backend in ALL_BACKENDS:
         if shard_count == None or type(shard_count) == type(0):
             test_shards = shard_count
@@ -565,8 +568,7 @@ def jax_py_test(
         env = {},
         **kwargs):
     env = dict(env)
-    if "PYTHONWARNINGS" not in env:
-        env["PYTHONWARNINGS"] = "error"
+    env.setdefault("PYTHONWARNINGS", "error")
     deps = kwargs.get("deps", [])
     test_deps = _get_test_deps(deps, backend_independent = True)
     kwargs["deps"] = test_deps
