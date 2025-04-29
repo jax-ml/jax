@@ -554,12 +554,12 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
   )(q, k, v, do, lse, delta)
 
   k_scratch = plgpu.SMEM(
-          (compute_wgs, config.block_kv_dkv, head_dim), k_ref.dtype,
+          (compute_wgs, config.block_kv_dkv, head_dim), k.dtype,
           transforms=(tiling, swizzle),
       )
   v_scratch = k_scratch
   out_shape_kv = jax.ShapeDtypeStruct(
-      (batch_size, kv_seq_len, num_q_heads, head_dim), k_ref.dtype)
+      (batch_size, kv_seq_len, num_q_heads, head_dim), k.dtype)
   dk, dv = plgpu.kernel(
     partial(kernel_dkv, block_q=config.block_q_dkv, block_kv=config.block_kv_dkv),
     out_shape=[out_shape_kv, out_shape_kv],
