@@ -202,12 +202,16 @@ class ClusterBarrier:
 class TMEM:
   shape: tuple[int, int]
   dtype: Any
+  _: dataclasses.KW_ONLY
   layout: tcgen05.TMEMLayout | None = None
   collective: bool = False
+  packing: int | None = None
 
   def __post_init__(self):
     if self.layout is not None:
-      self.layout.check_shape(self.shape)
+      self.layout.check_type(self.shape, utils.dtype_to_ir_type(self.dtype))
+      if self.packing is not None:
+        raise ValueError("Cannot specify both layout and packing")
 
 
 def _count_buffer_bytes(shape_dtype: jax.ShapeDtypeStruct) -> int:
@@ -313,13 +317,15 @@ def _construct_smem_reftree(
             collective_dims,
             cluster_shape,
         )
-      case TMEM(shape, dtype, layout, collective):
+      case TMEM(shape, dtype, layout=layout, collective=collective, packing=packing):
         addr_ref = memref.view(
             ir.MemRefType.get([], i32, memory_space=smem),
             dynamic_smem, c(dynamic_smem_offset, index), [],
         )
         if layout is None:
-          layout = tcgen05._infer_tmem_layout(shape, collective)
+          layout = tcgen05._infer_tmem_layout(
+              shape, collective, 1 if packing is None else packing
+          )
         num_cols = layout.cols_in_shape(shape)
         tmem_allocs.append(_TMEMAlloc(addr_ref, num_cols, collective))
         def ref(addr_ref=addr_ref, shape=shape, dtype=dtype, layout=layout):
@@ -478,8 +484,10 @@ def _launch(
 
     yield ctx, smem_ref_tree
 
-    for alloc in tmem_allocs:
-      alloc.dealloc()
+    if tmem_allocs:
+      gpu.barrier()  # Make sure everyone is done before we release TMEM.
+      for alloc in tmem_allocs:
+        alloc.dealloc()
     if prof is not None:
       prof.finalize(grid=grid, block=block)
     gpu.terminator()

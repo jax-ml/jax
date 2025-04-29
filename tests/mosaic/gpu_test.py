@@ -903,8 +903,8 @@ class TCGen05Test(TestCase):
     if not any(jtu.is_cuda_compute_capability_equal(sm) for sm in capabilities):
       self.skipTest("Only works on GPU with capability sm_100a or sm_101a")
 
-  @parameterized.parameters([jnp.float32, jnp.float16])
-  def test_load_store_tmem(self, jax_dtype):
+  @parameterized.parameters([(jnp.float32, 1), (jnp.float16, 1), (jnp.float16, 2)])
+  def test_load_store_tmem(self, jax_dtype, packing):
     swizzle = 128
     in_mlir_dtype = utils.dtype_to_ir_type(jax_dtype)
     swizzle_elems = swizzle // bytewidth(in_mlir_dtype)
@@ -933,7 +933,7 @@ class TCGen05Test(TestCase):
     scratch_shape = [
         jax.ShapeDtypeStruct(tile_shape(x.shape, tiling), jax_dtype),
         mgpu.TMABarrier(),
-        mgpu.TMEM(x.shape, jax_dtype),
+        mgpu.TMEM(x.shape, jax_dtype, packing=packing),
     ]
     y = mgpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), x, x, scratch_shape
