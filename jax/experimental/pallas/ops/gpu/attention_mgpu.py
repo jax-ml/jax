@@ -533,7 +533,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
     pipeline(q_ref, do_ref, lse_ref, delta_ref)
 
   q_scratch = plgpu.SMEM(
-      (compute_wgs, config.block_q_dq, head_dim), q_ref.dtype,
+      (compute_wgs, config.block_q_dq, head_dim), q.dtype,
       transforms=(tiling, swizzle),
   )
   do_scratch = q_scratch

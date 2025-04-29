@@ -79,6 +79,7 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
       head_dim,
       attention_impl,
       save_residuals,
+      dtype,
   ):
     num_q_heads, num_kv_heads = num_q_and_kv_heads
     k1, k2, k3 = jax.random.split(jax.random.key(42), 3)
