@@ -181,7 +181,7 @@ class PyClient {
       const PyLoadedExecutable& executable) const;
   static absl::StatusOr<nb_class_ptr<PyLoadedExecutable>> DeserializeExecutable(
       nb_class_ptr<PyClient> client, nanobind::bytes serialized,
-      ifrt::DeviceListRef executable_devices,
+      std::optional<ifrt::DeviceListRef> executable_devices,
       std::optional<CompileOptions> options,
       std::vector<nanobind::capsule> host_callbacks);
 

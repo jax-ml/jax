@@ -519,7 +519,7 @@ class Client:
   def deserialize_executable(
       self,
       serialized: bytes,
-      executable_devices: DeviceList | Sequence[Device],
+      executable_devices: DeviceList | Sequence[Device] | None,
       options: CompileOptions | None,
       host_callbacks: Sequence[Any] = ...,
   ) -> LoadedExecutable: ...

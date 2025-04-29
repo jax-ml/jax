@@ -389,7 +389,7 @@ std::unique_ptr<ifrt::CompileOptions> MakeIfrtCompileOptions(
 // optional host callbacks.
 std::unique_ptr<ifrt::DeserializeExecutableOptions>
 MakeIfrtDeserializeExecutableOptions(std::optional<CompileOptions> options,
-                                     ifrt::DeviceListRef executable_devices,
+                                     std::optional<ifrt::DeviceListRef> executable_devices,
                                      std::vector<nb::capsule> host_callbacks) {
   std::vector<tsl::RCReference<ifrt::LoadedHostCallback>>
       ifrt_loaded_host_callbacks;
@@ -526,7 +526,7 @@ absl::StatusOr<nb::bytes> PyClient::SerializeExecutable(
 /* static */ absl::StatusOr<nb_class_ptr<PyLoadedExecutable>>
 PyClient::DeserializeExecutable(nb_class_ptr<PyClient> client,
                                 nb::bytes serialized,
-                                ifrt::DeviceListRef executable_devices,
+                                std::optional<ifrt::DeviceListRef> executable_devices,
                                 std::optional<CompileOptions> options,
                                 std::vector<nb::capsule> host_callbacks) {
   std::unique_ptr<ifrt::LoadedExecutable> ifrt_loaded_executable;
@@ -888,6 +888,16 @@ PyType_Slot PyClient::slots_[] = {
           },
           nb::arg("serialized"), nb::arg("executable_devices"),
           nb::arg("compile_options").none() = nb::none())
+      // The following overload uses an executable device list derived from the
+      // deserialized executable's device assignment.
+      .def(
+          "deserialize_executable",
+          [](nb_class_ptr<PyClient> client, nb::bytes serialized) {
+            return ValueOrThrow(PyClient::DeserializeExecutable(
+                std::move(client), std::move(serialized),
+                std::nullopt, std::nullopt, std::vector<nb::capsule>()));
+          },
+          nb::arg("serialized"))
       .def("heap_profile", xla::ValueOrThrowWrapper(&PyClient::HeapProfile))
       // TODO(zhangqiaorjc): Experimental.
       .def("defragment",
