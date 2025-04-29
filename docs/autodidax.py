@@ -1548,6 +1548,7 @@ import io
 from jax.extend.mlir import ir
 from jax.extend.mlir.dialects import func
 from jax.extend.mlir.dialects import stablehlo as hlo
+import jax._src.lib
 from jax._src import xla_bridge as xb
 
 class MlirContext(NamedTuple):
@@ -1582,8 +1583,11 @@ def xla_callable(hashable_jaxpr: IDHashable,
   output = io.StringIO()
   c.module.operation.print(file=output)
   backend = xb.get_backend(None)
-  compiled = backend.compile(
-    output.getvalue(), backend.devices()[:1])
+  if jax._src.lib.version >= (0, 6, 1):
+    compiled = backend.compile(
+      output.getvalue(), backend.devices()[:1])
+  else:
+    compiled = backend.compile(output.getvalue())
   return partial(execute_compiled, compiled, [v.aval for v in jaxpr.outs])
 
 def _mlir_dtype(dtype: np.dtype) -> ir.Type:
