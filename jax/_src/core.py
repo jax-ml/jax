@@ -442,33 +442,35 @@ class DropVar(Var):
   def __repr__(self): return '_'
 
 class Literal:
-  __slots__ = ["val", "aval", "hash"]
+  __slots__ = ["val", "aval"]
 
   val: Any
   aval: AbstractValue
-  hash: int | None
 
   def __init__(self, val, aval):
     self.val = val
     self.aval = aval
+
+  @property
+  def hash(self):
     try:
-      self.hash = hash(val)
+      return hash(self.val)
     except TypeError:
-      if type(val) in literalable_types:
+      if type(self.val) in literalable_types:
         try:
-          self.hash = hash((val.item(), val.dtype))
+          return hash((self.val.item(), self.val.dtype))
         except (TypeError, AttributeError, ValueError):
-          self.hash = None
+          return None
 
   __hash__ = None  # type: ignore
 
   def __repr__(self):
-    if hasattr(self, 'hash'):
-      return f'{self.val}'
-    else:
-      return f'Literal(val={self.val})'
+    return f'{self.val}'
 
 literalable_types: set[type] = set()
+
+def is_literalable(x: Any) -> bool:
+  return type(x) in dtypes.python_scalar_dtypes or (type(x) in literalable_types and not np.shape(x))
 
 Atom = Union[Var, Literal]
 
@@ -2067,6 +2069,7 @@ class DShapedArray(UnshapedArray):
   array_abstraction_level: int = 3
 
   def __init__(self, shape, dtype, weak_type=False):
+    assert not any(isinstance(d, Literal) for d in shape)
     self.shape = shape
     self.dtype = dtype
     self.weak_type = weak_type
