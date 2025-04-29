@@ -31,6 +31,7 @@ limitations under the License.
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
@@ -95,7 +96,7 @@ PyLoadedExecutable::PyLoadedExecutable(
   CHECK(PyGILState_Check());
   if (fingerprint_) {
     VLOG(1) << "Fingerprint for executable " << ifrt_loaded_executable_->name()
-            << ": " << *fingerprint_;
+            << ": " << absl::BytesToHexString(*fingerprint_);
   }
   nb::ft_lock_guard lock(client_->executables_mutex_);
   next_ = client_->executables_;
@@ -203,6 +204,7 @@ void PopulateExecuteShardedResults(
 absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
     const ifrt::ExecuteOptions& options, const nb_class_ptr<PyClient>& client,
     ifrt::LoadedExecutable* ifrt_loaded_executable,
+    const std::optional<std::string>& fingerprint,
     absl::Span<const ExecuteShardedArg> args,
     std::optional<std::vector<PjRtFuture<>>>& returned_futures) {
   std::vector<tsl::RCReference<ifrt::Array>> output_arrays;
@@ -228,6 +230,16 @@ absl::StatusOr<PyExecuteResults> ExecuteShardedOnLocalDevicesInternal(
                       [&](const ExecuteShardedArg& arg) mutable {
                         return GetIfRtArray(arg);
                       });
+    VLOG(2) << "Dispatching execution '" << ifrt_loaded_executable->name()
+            << "' (launch id: " << options.launch_id << ", fingerprint: "
+            << absl::BytesToHexString(fingerprint.value_or(""))
+            << ") on devices ["
+            << absl::StrJoin(ifrt_loaded_executable->addressable_devices(),
+                             ", ",
+                             [](std::string* out, xla::ifrt::Device* device) {
+                               absl::StrAppend(out, device->Id().value());
+                             })
+            << "]";
     TF_ASSIGN_OR_RETURN(auto result, ifrt_loaded_executable->Execute(
                                          absl::MakeSpan(arg_arrays), options,
                                          /*devices=*/std::nullopt));
@@ -375,9 +387,9 @@ absl::StatusOr<PyExecuteResults> PyLoadedExecutable::ExecuteSharded(
     returned_futures.emplace();
   }
   absl::Span<const ExecuteShardedArg> span_args = args;
-  return ExecuteShardedOnLocalDevicesInternal(options, client_,
-                                              ifrt_loaded_executable_.get(),
-                                              span_args, returned_futures);
+  return ExecuteShardedOnLocalDevicesInternal(
+      options, client_, ifrt_loaded_executable_.get(), fingerprint_, span_args,
+      returned_futures);
 }
 
 absl::StatusOr<std::vector<std::shared_ptr<HloModule>>>
