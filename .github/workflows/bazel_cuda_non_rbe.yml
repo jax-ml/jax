@@ -36,9 +36,9 @@ on:
         type: string
       halt-for-connection:
         description: 'Should this workflow run wait for a remote connection?'
-        type: boolean
+        type: string
         required: false
-        default: false
+        default: 'no'
 
 jobs:
   run-tests:

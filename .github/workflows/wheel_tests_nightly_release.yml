@@ -17,12 +17,17 @@ on:
       gcs_download_uri:
         description: "GCS location URI from where the artifacts should be downloaded"
         required: true
-        default: 'gs://jax-nightly-release-transient/nightly/latest'
+        default: 'gs://jax-nightly-artifacts/latest'
         type: string
       download-jax-only-from-gcs:
         description: "Whether to download only the jax wheel from GCS (e.g for testing a jax only release)"
         required: true
         default: '0'
+        type: string
+      halt-for-connection:
+        description: 'Should this workflow run wait for a remote connection? (yes/no)'
+        required: false
+        default: 'no'
         type: string
 
 concurrency:
@@ -50,6 +55,7 @@ jobs:
       enable-x64:  ${{ matrix.enable-x64 }}
       download-jax-only-from-gcs: ${{inputs.download-jax-only-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
+      halt-for-connection: ${{inputs.halt-for-connection}}
 
   run-pytest-cuda:
     uses: ./.github/workflows/pytest_cuda.yml
@@ -70,6 +76,7 @@ jobs:
       enable-x64:  ${{ matrix.enable-x64 }}
       download-jax-only-from-gcs: ${{inputs.download-jax-only-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
+      halt-for-connection: ${{inputs.halt-for-connection}}
 
   run-pytest-tpu:
     uses: ./.github/workflows/pytest_tpu.yml
@@ -117,6 +124,7 @@ jobs:
       libtpu-version-type: ${{ matrix.libtpu-version-type }}
       download-jax-only-from-gcs: ${{inputs.download-jax-only-from-gcs}}
       gcs_download_uri: ${{inputs.gcs_download_uri}}
+      halt-for-connection: ${{inputs.halt-for-connection}}
 
   verify-release-wheels-install:
     if: ${{ startsWith(github.ref_name, 'release/')}}
