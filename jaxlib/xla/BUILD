@@ -29,8 +29,8 @@ package_group(
     name = "xla_python",
     includes = [
         "//jax:internal",
+        "@xla//xla/python:__subpackages__",
     ],
-    packages = ["@xla//xla/python/..."],
 )
 
 cc_library(
