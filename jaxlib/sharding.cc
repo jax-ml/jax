@@ -41,6 +41,7 @@ limitations under the License.
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/ifrt/device_list.h"
 #include "xla/python/nb_numpy.h"
+#include "xla/python/safe_static_init.h"
 #include "xla/tsl/platform/logging.h"
 #include "xla/tsl/platform/statusor.h"
 #include "xla/xla_data.pb.h"
@@ -240,24 +241,12 @@ NamedSharding::NamedSharding(nb::object mesh, nb::object spec,
   // TODO(phawkins): this leaks a reference to the check_pspec function.
   // A better way to fix this would be to move PartitionSpec and this check into
   // C++.
-  nb::object* check_pspec = []() {
-    static absl::Mutex mu;
-    static nb::object* output = nullptr;
-    {
-      absl::MutexLock lock(&mu);
-      if (output) {
-        return output;
-      }
-    }
+  auto init_fn = [](){
     nb::module_ si = nb::module_::import_("jax._src.named_sharding");
-    nb::object attr = si.attr("check_pspec");
-    absl::MutexLock lock(&mu);
-    if (!output) {
-      output = new nb::object(attr);
-    }
-    return output;
-  }();
-  (*check_pspec)(mesh_, spec_);
+    return std::make_unique<nb::object>(si.attr("check_pspec"));
+  };
+  nb::object& check_pspec = xla::SafeStaticInit<nb::object>(init_fn);
+  check_pspec(mesh_, spec_);
 }
 
 /*static*/ PyObject* NamedSharding::type_ = nullptr;
