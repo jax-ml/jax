@@ -68,6 +68,7 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
           attention_mgpu.attention_with_pipeline_emitter,
       ),
       save_residuals=(True,),
+      causal=(True, False),
   )
   def test_flash_attention(
       self,
@@ -78,7 +79,11 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
       head_dim,
       attention_impl,
       save_residuals,
+      causal,
   ):
+    if causal and attention_impl == attention_mgpu.attention_with_pipeline_emitter:
+      self.skipTest("Pipeline emitter does not support causal attention.")
+
     num_q_heads, num_kv_heads = num_q_and_kv_heads
     k1, k2, k3 = jax.random.split(jax.random.key(42), 3)
     q = jax.random.normal(k1, (batch_size, q_seq_len, num_q_heads, head_dim), jnp.float16)
@@ -89,11 +94,12 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
         k,
         v,
         attention_mgpu.TuningConfig(
-            block_q=64, block_kv=64, max_concurrent_steps=2
+            block_q=64, block_kv=64, max_concurrent_steps=2, causal=causal
         ),
         save_residuals=save_residuals,
     )
-    out_ref, *res_ref = attention_mgpu.attention_reference(q, k, v, save_residuals=save_residuals)
+    out_ref, *res_ref = attention_mgpu.attention_reference(
+        q, k, v, causal=causal, save_residuals=save_residuals)
     np.testing.assert_allclose(out, out_ref, atol=2e-3, rtol=1e-3)
     if save_residuals:
       (lse,) = res[0]
@@ -153,7 +159,7 @@ class FlashAttentionTestCase(jtu.JaxTestCase):
       dq, dk, dv = jax.grad(f, argnums=(0, 1, 2))(q, k, v)
       dq_ref, dk_ref, dv_ref = jax.grad(f_ref, argnums=(0, 1, 2))(q, k, v)
 
-      self.assertAllClose(dq, dq_ref, atol=7e-2)
+      self.assertAllClose(dq, dq_ref, atol=5e-2)
       self.assertAllClose(dk, dk_ref, atol=7e-2)
       self.assertAllClose(dv, dv_ref, atol=5e-2)
 
