@@ -28,6 +28,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/algorithm/container.h"
+#include "absl/base/casts.h"
 #include "absl/container/inlined_vector.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
@@ -416,8 +417,9 @@ std::optional<std::vector<OpSharding>> PyLoadedExecutable::GetOutputShardings()
   return ifrt_loaded_executable_->GetOutputShardings();
 }
 
-int64_t PyLoadedExecutable::GetNextLaunchId() {
-  return next_launch_id_.fetch_add(1, std::memory_order_relaxed);
+int32_t PyLoadedExecutable::GetNextLaunchId() {
+  return absl::bit_cast<int32_t>(
+      next_launch_id_.fetch_add(1, std::memory_order_relaxed));
 }
 
 void PyLoadedExecutable::KeepAlive(nb::object obj) {
