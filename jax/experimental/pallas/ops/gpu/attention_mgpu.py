@@ -221,15 +221,15 @@ def _attention_forward(q, k, v, config: TuningConfig, save_residuals: bool = Fal
     tiling = plgpu.TilingTransform((8, 64))
     swizzle = plgpu.SwizzleTransform(128)
     qo_scratch = plgpu.SMEM(
-        (compute_wgs, block_q, head_dim), jnp.float16,
+        (compute_wgs, block_q, head_dim), q_ref.dtype,
         transforms=(tiling, swizzle),
     )
     k_scratch = plgpu.SMEM(
-        (max_concurrent_steps, block_kv, head_dim), jnp.float16,
+        (max_concurrent_steps, block_kv, head_dim), k_ref.dtype,
         transforms=(tiling, swizzle),
     )
     v_scratch = plgpu.SMEM(
-        (max_concurrent_steps, block_kv, head_dim), jnp.float16,
+        (max_concurrent_steps, block_kv, head_dim), v_ref.dtype,
         transforms=(tiling, swizzle),
     )
     scratch = [qo_scratch, k_scratch, v_scratch, None]
@@ -533,7 +533,7 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
     pipeline(q_ref, do_ref, lse_ref, delta_ref)
 
   q_scratch = plgpu.SMEM(
-      (compute_wgs, config.block_q_dq, head_dim), jnp.float16,
+      (compute_wgs, config.block_q_dq, head_dim), q_ref.dtype,
       transforms=(tiling, swizzle),
   )
   do_scratch = q_scratch
@@ -554,12 +554,12 @@ def _attention_bwd(config: TuningConfig, save_residuals: bool, res, do):
   )(q, k, v, do, lse, delta)
 
   k_scratch = plgpu.SMEM(
-          (compute_wgs, config.block_kv_dkv, head_dim), jnp.float16,
+          (compute_wgs, config.block_kv_dkv, head_dim), k_ref.dtype,
           transforms=(tiling, swizzle),
       )
   v_scratch = k_scratch
   out_shape_kv = jax.ShapeDtypeStruct(
-      (batch_size, kv_seq_len, num_q_heads, head_dim), dtype=jnp.float16)
+      (batch_size, kv_seq_len, num_q_heads, head_dim), k_ref.dtype)
   dk, dv = plgpu.kernel(
     partial(kernel_dkv, block_q=config.block_q_dkv, block_kv=config.block_kv_dkv),
     out_shape=[out_shape_kv, out_shape_kv],
@@ -737,7 +737,7 @@ def attention_with_pipeline_emitter(q, k, v, config: TuningConfig, save_residual
                  )
     def _kernel_entry():
       qo_scratch = plgpu.SMEM(
-          (compute_wgs, block_q, head_dim), jnp.float16,
+          (compute_wgs, block_q, head_dim), q_ref.dtype,
           transforms=(tiling, swizzle),
       )
       scratch = [qo_scratch, None]
