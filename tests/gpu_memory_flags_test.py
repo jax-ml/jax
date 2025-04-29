@@ -40,7 +40,7 @@ class GpuMemoryAllocationTest(absltest.TestCase):
     device = jax.devices()[0]
     mem_stats = device.memory_stats()
     self.assertEqual(mem_stats["pool_bytes"], 0)
-    x = jax.lax.add(1, 2)
+    x = jax.lax.add(1, 2).block_until_ready()
 
     mem_stats = device.memory_stats()
     if preallocate:
