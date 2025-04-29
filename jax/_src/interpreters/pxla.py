@@ -1890,7 +1890,7 @@ def _raise_warnings_or_errors_for_jit_of_pmap(
         f"compiling computation `{name}` that requires {nreps} replicas, but "
         f"only {xb.device_count(backend)} XLA devices are available.")
 
-  if xb.process_count() > 1 and (
+  if xb.process_count(backend) > 1 and (
       nreps > 1 or dispatch.jaxpr_has_primitive(jaxpr, "xla_pmap")
   ):
     raise NotImplementedError(
