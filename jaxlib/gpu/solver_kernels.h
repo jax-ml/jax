@@ -48,59 +48,6 @@ void Csrlsvqr(gpuStream_t stream, void** buffers, const char* opaque,
 
 #endif  // JAX_GPU_CUDA
 
-// Symmetric (Hermitian) eigendecomposition, QR algorithm: syevd/heevd
-
-struct SyevdDescriptor {
-  SolverType type;
-  gpusolverFillMode_t uplo;
-  int batch, n;  // batch may be -1 in which case it is passed as operand.
-  int lwork;
-};
-
-void Syevd(gpuStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len, XlaCustomCallStatus* status);
-
-// Symmetric (Hermitian) eigendecomposition, Jacobi algorithm: syevj/heevj
-// Supports batches of matrices up to size 32.
-
-struct SyevjDescriptor {
-  SolverType type;
-  gpusolverFillMode_t uplo;
-  int batch, n;
-  int lwork;
-};
-
-void Syevj(gpuStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len, XlaCustomCallStatus* status);
-
-// Singular value decomposition using QR algorithm: gesvd
-
-struct GesvdDescriptor {
-  SolverType type;
-  int batch, m, n;
-  int lwork;
-  signed char jobu, jobvt;
-};
-
-void Gesvd(gpuStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len, XlaCustomCallStatus* status);
-
-#ifdef JAX_GPU_CUDA
-
-// Singular value decomposition using Jacobi algorithm: gesvdj
-
-struct GesvdjDescriptor {
-  SolverType type;
-  int batch, m, n;
-  int lwork;
-  gpusolverEigMode_t jobz;
-  int econ;
-};
-
-void Gesvdj(gpuStream_t stream, void** buffers, const char* opaque,
-            size_t opaque_len, XlaCustomCallStatus* status);
-#endif  // JAX_GPU_CUDA
-
 // sytrd/hetrd: Reduction of a symmetric (Hermitian) matrix to tridiagonal form.
 struct SytrdDescriptor {
   SolverType type;

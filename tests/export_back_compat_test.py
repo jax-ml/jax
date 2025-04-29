@@ -321,38 +321,6 @@ class CompatTest(bctu.CompatTestBase):
                       check_results=partial(self.check_eigh_results, operand))
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dtype={dtype_name}_{variant}",
-           dtype_name=dtype_name, variant=variant)
-      for dtype_name in ("f32", "f64")
-      # We use different custom calls for sizes <= 32
-      for variant in ["syevj", "syevd"])
-  def test_gpu_eigh_solver_syev_legacy(self, dtype_name="f32", variant="syevj"):
-    if not config.enable_x64.value and dtype_name == "f64":
-      self.skipTest("Test disabled for x32 mode")
-    if jtu.test_device_matches(["rocm"]):
-      data = self.load_testdata(rocm_eigh_hipsolver_syev.data_2024_08_05[f"{dtype_name}_{variant}"])
-      prefix = "hip"
-    elif jtu.test_device_matches(["cuda"]):
-      if _is_required_cusolver_version_satisfied(11600):
-        # The underlying problem is that this test assumes the workspace size can be
-        # queried from an older version of cuSOLVER and then be used in a newer one.
-        self.skipTest("Newer cuSOLVER expects a larger workspace than was serialized")
-      data = self.load_testdata(cuda_eigh_cusolver_syev.data_2023_03_17[f"{dtype_name}_{variant}"])
-      prefix = "cu"
-    else:
-      self.skipTest("Unsupported platform")
-    # For lax.linalg.eigh
-    dtype = dict(f32=np.float32, f64=np.float64)[dtype_name]
-    size = dict(syevj=8, syevd=36)[variant]
-    rtol = dict(f32=1e-3, f64=1e-5)[dtype_name]
-    atol = dict(f32=1e-2, f64=1e-10)[dtype_name]
-    operand = CompatTest.eigh_input((size, size), dtype)
-    func = lambda: CompatTest.eigh_harness((size, size), dtype)
-    self.run_one_test(func, data, rtol=rtol, atol=atol,
-                      check_results=partial(self.check_eigh_results, operand),
-                      expect_current_custom_calls=[f"{prefix}solver_syevd_ffi"])
-
-  @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_gpu_eigh_solver_syev(self, dtype_name="f32"):
