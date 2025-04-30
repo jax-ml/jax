@@ -15,10 +15,14 @@ concurrency:
 jobs:
   build:
 
-    runs-on: ubuntu-latest
+    runs-on: linux-x86-n2-16
+    container: us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/ml-build:latest
     strategy:
       matrix:
         python-version: [3.11]
+
+    env:
+      PYTHON: "python${{ matrix.python-version }}"
 
     steps:
     - name: Checkout jax
@@ -31,18 +35,13 @@ jobs:
         ref: 'c48410f96fc58e02eea844e6b7f6cc01680f77ce'  # Latest commit as of 2025-04-02
         submodules: 'true'
         path: 'array-api-tests'
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
-      with:
-        python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        pip install uv~=0.5.30
-        uv pip install --system .[ci] pytest-xdist -r array-api-tests/requirements.txt
+        $PYTHON -m uv pip install --system .[ci] pytest-xdist -r array-api-tests/requirements.txt
     - name: Run the test suite
       env:
         ARRAY_API_TESTS_MODULE: jax.numpy
         JAX_ENABLE_X64: 'true'
       run: |
         cd ${GITHUB_WORKSPACE}/array-api-tests
-        pytest -n auto array_api_tests --derandomize --disable-deadline --skips-file ${GITHUB_WORKSPACE}/tests/array_api_skips.txt
+        $PYTHON -m pytest -n auto array_api_tests --derandomize --disable-deadline --skips-file ${GITHUB_WORKSPACE}/tests/array_api_skips.txt
