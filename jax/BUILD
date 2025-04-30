@@ -18,6 +18,7 @@ load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
+    "buffer_callback_internal_users",
     "if_building_jaxlib",
     "jax_export_file_visibility",
     "jax_extend_internal_users",
@@ -134,6 +135,12 @@ package_group(
     packages = serialize_executable_internal_users,
 )
 
+package_group(
+    name = "buffer_callback_users",
+    includes = [":internal"],
+    packages = buffer_callback_internal_users,
+)
+
 # JAX-private test utilities.
 py_library(
     # This build target is required in order to use private test utilities in jax._src.test_util,
@@ -230,6 +237,7 @@ py_library_providing_imports_info(
         "_src/api.py",
         "_src/array.py",
         "_src/blocked_sampler.py",
+        "_src/buffer_callback.py",
         "_src/callback.py",
         "_src/checkify.py",
         "_src/custom_batching.py",
@@ -1155,6 +1163,9 @@ py_library_providing_imports_info(
             "experimental/*.py",
             "example_libraries/*.py",
         ],
+        [
+            "experimental/buffer_callback.py",
+        ],
     ),
     visibility = ["//visibility:public"],
     deps = [
@@ -1324,4 +1335,15 @@ pytype_library(
         "//jax/_src/lib",
         "//jax/extend:ifrt_programs",
     ] + py_deps("numpy") + py_deps("cloudpickle"),
+)
+
+pytype_library(
+    name = "experimental_buffer_callback",
+    srcs = [
+        "experimental/buffer_callback.py",
+    ],
+    visibility = [":buffer_callback_users"],
+    deps = [
+        ":jax",
+    ],
 )
