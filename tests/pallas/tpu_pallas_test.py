@@ -1776,6 +1776,25 @@ class PallasCallTest(PallasBaseTest):
     reduce_value = jnp.sum(jnp.full(shape, x), dtype=dty)
     np.testing.assert_allclose(z, reduce_value)
 
+  def test_scalar_any_input(self):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest("Needs a newer TPU")
+    if not jtu.if_cloud_tpu_at_least(2025, 5, 1):
+      self.skipTest("Needs a newer libTPU")
+    def kernel(src, dst, sem):
+      pltpu.async_copy(src, dst, sem).wait()
+
+    def run(src):
+      return pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(src.shape, jnp.float32),
+          in_specs=[pl.BlockSpec(memory_space=pltpu.ANY)],
+          scratch_shapes=[pltpu.SemaphoreType.DMA],
+          out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+      )(src)
+    x = jnp.full((1,), 3.1415, dtype=jnp.float32)
+    np.testing.assert_array_equal(run(x), x)
+
   def test_sum_in_smem(self):
     if not jtu.if_cloud_tpu_at_least(2025, 4, 30):
       self.skipTest("Needs a newer libTPU")
