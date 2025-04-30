@@ -191,16 +191,16 @@ JAX is laser-focused on program transformations and accelerator-backed NumPy, so
 :id: 94PjXZ8y3dVF
 
 import numpy as np
-from jax.tree_util import tree_map
-from torch.utils.data import DataLoader, default_collate
+from torch.utils.data import DataLoader
 from torchvision.datasets import MNIST
 
 def numpy_collate(batch):
   """
-  Collate function specifies how to combine a list of data samples into a batch.
-  default_collate creates pytorch tensors, then tree_map converts them into numpy arrays.
+  Collate function specifies how to combine a list of (input, label) tuples into a batch.
+  Separates the inputs and labels, then stacks them into NumPy arrays along a new leading batch dimension.
   """
-  return tree_map(np.asarray, default_collate(batch))
+  inputs, labels = zip(*batch)
+  return np.stack(inputs), np.stack(labels)
 
 def flatten_and_cast(pic):
   """Convert PIL image to flat (1-dimensional) numpy array."""
