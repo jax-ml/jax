@@ -21,6 +21,7 @@ import io
 import jax
 from jax._src.lib import jaxlib_extension_version
 from jax._src.lib import xla_client as xc
+from typing import Sequence
 
 
 def serialize(compiled: jax.stages.Compiled):
@@ -44,14 +45,27 @@ def serialize(compiled: jax.stages.Compiled):
 def deserialize_and_load(serialized,
                          in_tree,
                          out_tree,
-                         backend: str | xc.Client | None = None):
+                         backend: str | xc.Client | None = None,
+                         execution_devices: Sequence[xc.Device] | None = None):
   """Constructs a jax.stages.Compiled from a serialized executable."""
 
   if backend is None or isinstance(backend, str):
     backend = jax.devices(backend)[0].client
 
+  if execution_devices is None:
+    execution_devices = backend.devices()
+  else:
+    device_backend = execution_devices[0].client
+    if device_backend != backend:
+      raise ValueError(
+          'Execution devices belong to a client other than `backend`. Got '
+          f'backend client: {(backend.platform, backend.platform_version)} and '
+          'execution devices client: '
+          f'{(device_backend.platform, device_backend.platform_version)}')
+
   (unloaded_executable, args_info_flat,
-   no_kwargs) = _JaxPjrtUnpickler(io.BytesIO(serialized), backend).load()
+   no_kwargs) = _JaxPjrtUnpickler(
+       io.BytesIO(serialized), backend, execution_devices).load()
 
   args_info = in_tree.unflatten(args_info_flat)
 
@@ -78,19 +92,28 @@ class _JaxPjrtPickler(pickle.Pickler):
 
 class _JaxPjrtUnpickler(pickle.Unpickler):
 
-  def __init__(self, file, backend):
+  def __init__(self, file, backend, execution_devices=None):
     super().__init__(file)
     self.backend = backend
-    self.devices_by_id = {d.id: d for d in backend.devices()}
+    if execution_devices is None:
+      execution_devices = backend.devices()
+    else:
+      device_backend = execution_devices[0].client
+      if device_backend != backend:
+        raise ValueError(
+            'Execution devices belong to a client other than `backend`. Got '
+            f'backend client: {(backend.platform, backend.platform_version)} '
+            'and execution devices client: '
+            f'{(device_backend.platform, device_backend.platform_version)}')
+    self.devices_by_id = {d.id: d for d in execution_devices}
+    self.execution_devices = xc.DeviceList(tuple(execution_devices))
 
   def persistent_load(self, pid):
     if pid[0] == 'exec':
       if jaxlib_extension_version < 332:
         return self.backend.deserialize_executable(pid[1])
       return self.backend.deserialize_executable(
-          pid[1],
-          executable_devices=xc.DeviceList(tuple(self.backend.devices()))
-      )
+          pid[1], executable_devices=self.execution_devices)
     if pid[0] == 'device':
       return self.devices_by_id[pid[1]]
     if pid[0] == 'client':
