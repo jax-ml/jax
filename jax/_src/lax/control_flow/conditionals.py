@@ -353,7 +353,7 @@ def _check_branch_outputs(
         f'to the output of {n}{component(p)}'
         for p, aval1, aval2 in zip(paths, out_avals1, out_avals2)
         for n, a1, a2 in [(name1, aval2, aval1), (name2, aval1, aval2)]
-        if not core.typematch(a1, a2) and 
+        if not core.typematch(a1, a2) and
         isinstance(a1, core.ShapedArray) and isinstance(a2, core.ShapedArray)
         and a1.vma != a2.vma and a2.vma - a1.vma]
 
