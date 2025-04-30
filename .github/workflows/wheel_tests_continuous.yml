@@ -174,8 +174,18 @@ jobs:
           tpu-specs: [
             # {type: "v3-8", cores: "4"}, # Enable when we have the v3 type available
             {type: "v4-8", cores: "4", runner: "linux-x86-ct4p-240-4tpu"},
-            {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"}
+            {type: "v5e-8", cores: "8", runner: "linux-x86-ct5lp-224-8tpu"},
+            {type: "v6e-8", cores: "8", runner: "linux-x86-ct6e-180-8tpu"}
           ]
+          libtpu-version-type: ["nightly", "oldest_supported_libtpu"]
+          exclude:
+            # Run a single config for oldest_supported_libtpu
+            - libtpu-version-type: "oldest_supported_libtpu"
+              tpu-specs:
+                type: "v4-8"
+            - libtpu-version-type: "oldest_supported_libtpu"
+              tpu-specs:
+                type: "v6e-8"
     name: "Pytest TPU (JAX artifacts version =  ${{ format('{0}', 'head') }})"
     with:
       runner: ${{ matrix.tpu-specs.runner }}
@@ -183,5 +193,5 @@ jobs:
       tpu-type: ${{ matrix.tpu-specs.type }}
       python: ${{ matrix.python }}
       run-full-tpu-test-suite: "1"
-      libtpu-version-type: "nightly"
+      libtpu-version-type: ${{ matrix.libtpu-version-type }}
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}

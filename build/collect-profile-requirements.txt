@@ -1,4 +1,5 @@
-tensorflow
+# TF hasn't released 3.13 wheels yet (b/402590302)
+tensorflow; python_version<"3.13"
 tensorboard-plugin-profile<=2.19.0
 # Needed for the profile plugin to work without error
 protobuf
