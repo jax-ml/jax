@@ -29,6 +29,11 @@ on:
         type: string
         required: true
         default: "0"
+      jaxlib-version:
+        description: "Which jaxlib version to test? (head/pypi_latest)"
+        type: string
+        required: true
+        default: "head"
       gcs_download_uri:
         description: "GCS location URI from where the artifacts should be downloaded"
         required: true
@@ -55,7 +60,7 @@ jobs:
       # Enable writing to the Bazel remote cache bucket.
       JAXCI_WRITE_TO_BAZEL_REMOTE_CACHE: "1"
 
-    name: "Bazel single accelerator and multi-accelerator CUDA tests (${{ inputs.runner }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
+    name: "Bazel single accelerator and multi-accelerator CUDA tests (jaxlib version=${{ inputs.jaxlib-version }}, ${{ inputs.runner }}, Python ${{ inputs.python }}, x64=${{ inputs.enable-x64 }})"
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -77,12 +82,21 @@ jobs:
         # fails. Instead, we verify the outcome in the next step so that we can print a more
         # informative error message.
         continue-on-error: true
-        run: >-
-          mkdir -p $(pwd)/dist &&
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/ &&
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
-          gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
+        run: |
+          mkdir -p $(pwd)/dist
+          gsutil -m cp -r "${{ inputs.gcs_download_uri }}"/jax*py3*none*any.whl $(pwd)/dist/
+
+          if [[ ${{ inputs.jaxlib-version }} == "head" ]]; then
+            gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jaxlib*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
+            gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*plugin*${PYTHON_MAJOR_MINOR}*${OS}*${ARCH}*.whl" $(pwd)/dist/ &&
+            gsutil -m cp -r "${{ inputs.gcs_download_uri }}/jax*cuda*pjrt*${OS}*${ARCH}*.whl" $(pwd)/dist/
+          elif [[ ${{ inputs.jaxlib-version }} == "pypi_latest" ]]; then
+            PYTHON=python${{ inputs.python }}
+            $PYTHON -m pip download jaxlib jax-cuda12-pjrt jax-cuda12-plugin --dest $(pwd)/dist/
+          else
+            echo "Invalid jaxlib version: ${{ inputs.jaxlib-version }}"
+            exit 1
+          fi
       - name: Skip the test run if the wheel artifacts were not downloaded successfully
         if: steps.download-wheel-artifacts.outcome == 'failure'
         run: |

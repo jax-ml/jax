@@ -149,12 +149,14 @@ jobs:
           # Python values need to match the matrix stategy in the build artifacts job above
           runner: ["linux-x86-g2-48-l4-4gpu",]
           python: ["3.10",]
+          jaxlib-version: ["head", "pypi_latest"]
           enable-x64: [1, 0]
-    name: "Bazel CUDA Non-RBE (JAX artifacts version =  ${{ format('{0}', 'head') }})"
+    name: "Bazel CUDA Non-RBE (jax version = ${{ format('{0}', 'head') }})"
     with:
       runner: ${{ matrix.runner }}
       python: ${{ matrix.python }}
       enable-x64:  ${{ matrix.enable-x64 }}
+      jaxlib-version: ${{ matrix.jaxlib-version }}
       # GCS upload URI is the same for both artifact build jobs
       gcs_download_uri: ${{ needs.build-jaxlib-artifact.outputs.gcs_upload_uri }}
 
