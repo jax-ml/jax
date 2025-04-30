@@ -745,7 +745,7 @@ def _bcast_block_spec(
   bcast_dim_block_shape = 1
   if isinstance(block_spec.block_shape[i], pallas_core.Element):
     bcast_dim_block_shape = pallas_core.Element(1)
-  new_block_shape = util.tuple_update(
+  new_block_shape = util.tuple_update(  # pytype: disable=wrong-arg-types
       block_spec.block_shape, i, bcast_dim_block_shape
   )
   return pallas_core.BlockSpec(
@@ -1128,7 +1128,7 @@ def _concatenate_rule(
     # Handle special case if the block contains all of the concatenated
     # array.
     new_shapes = [
-        util.tuple_update(
+        util.tuple_update(  # pytype: disable=wrong-arg-types
             block_spec.block_shape, dimension, aval.shape[dimension]  # pytype: disable=attribute-error
         )
         for aval in ctx.avals_in

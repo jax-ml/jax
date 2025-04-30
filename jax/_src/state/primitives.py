@@ -537,7 +537,7 @@ def _batch_indexer(
             idx = lax.broadcast_in_dim(idx, new_integer_indexer_shape,
                                        bcast_dims)
           else:
-            idx = batching.moveaxis(idx, dim, 0)
+            idx = batching.moveaxis(idx, dim, 0)  # type: ignore[arg-type]
           new_indices.append(idx)
     else:
       if ref_dim is not batching.not_mapped:
