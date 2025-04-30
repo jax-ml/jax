@@ -85,9 +85,42 @@ cc_library(
     deps = [
         ":lapack_kernels",
         ":lapack_kernels_using_lapack",
+        ":sparse_kernels",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_target_registry",
     ],
     alwayslink = 1,
+)
+
+cc_library(
+    name = "sparse_kernels",
+    srcs = ["sparse_kernels.cc"],
+    hdrs = ["sparse_kernels.h"],
+    deps = [
+        "@eigen_archive//:eigen3",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
+
+nanobind_extension(
+    name = "_sparse",
+    srcs = ["sparse.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    enable_stub_generation = False,
+    features = ["-use_header_modules"],
+    module_name = "_sparse",
+    pytype_srcs = [
+        "_sparse/__init__.pyi",
+    ],
+    deps = [
+        ":sparse_kernels",
+        "//jaxlib:kernel_nanobind_helpers",
+        "@com_google_absl//absl/base",
+        "@nanobind",
+        "@xla//xla/ffi/api:ffi",
+    ],
 )

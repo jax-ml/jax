@@ -52,6 +52,7 @@ package_group(
 py_library_providing_imports_info(
     name = "jaxlib",
     srcs = [
+        "cpu_sparse.py",
         "gpu_common_utils.py",
         "gpu_linalg.py",
         "gpu_prng.py",
@@ -76,6 +77,7 @@ py_library_providing_imports_info(
         "//jaxlib:_jax",
         "//jaxlib:xla_client",
         "//jaxlib/cpu:_lapack",
+        "//jaxlib/cpu:_sparse",
         "//jaxlib/mlir",
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:builtin_dialect",
