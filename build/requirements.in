@@ -6,4 +6,21 @@ scipy>=1.15.2; python_version>="3.13"
 
 ml_dtypes>=0.4.0
 etils[epath]
+opt-einsum
+
+# Needed to build wheels
+build
 setuptools
+wheel
+
+# JAX's own libraries. We include these in the requirements so you can
+# bazel test without building jaxlib and without manually updating the
+# the requirements files.
+jaxlib
+
+# The with-cuda extra also includes NVIDIA's pip packages.
+jax-cuda12-plugin[with-cuda]
+jax-cuda12-pjrt
+
+# TPU dependencies
+libtpu ; sys_platform == "linux" and platform_machine == "x86_64"
