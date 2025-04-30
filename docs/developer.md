@@ -466,16 +466,16 @@ requirements = {
 Then you can build and test different combinations of stuff without changing
 anything in your environment:
 ```
-# To build with scenario1 dependendencies:
+# To build with scenario1 dependencies:
 bazel test <target> --repo_env=HERMETIC_PYTHON_VERSION=3.13-scenario1
 
-# To build with scenario2 dependendencies:
+# To build with scenario2 dependencies:
 bazel test <target> --repo_env=HERMETIC_PYTHON_VERSION=3.13-scenario2
 
-# To build with default dependendencies:
+# To build with default dependencies:
 bazel test <target> --repo_env=HERMETIC_PYTHON_VERSION=3.13
 
-# To build with scenario1 dependendencies and custom Python 3.13 interpreter:
+# To build with scenario1 dependencies and custom Python 3.13 interpreter:
 bazel test <target>
   --repo_env=HERMETIC_PYTHON_VERSION=3.13-scenario1
   --repo_env=HERMETIC_PYTHON_URL="file:///path/to/cpython.tar.gz"
@@ -526,27 +526,28 @@ bazel test //tests:cpu_tests //tests:backend_independent_tests
 `//tests:gpu_tests` and `//tests:tpu_tests` are also available, if you have the
 necessary hardware.
 
-To use the preinstalled `jax` and `jaxlib` instead of building them you first
-need to make them available in the hermetic Python. To install the specific
-versions of `jax` and `jaxlib` within hermetic Python run (using `jax >= 0.4.26`
-and `jaxlib >= 0.4.26` as an example):
+You need to configure `cuda` to run `gpu` tests:
+```
+python build/build.py build --wheels=jaxlib,jax-cuda-plugin,jax-cuda-pjrt --configure_only
+```
+
+To use a preinstalled `jaxlib` instead of building it you first need to
+make it available in the hermetic Python. To install a specific version of
+`jaxlib` within hermetic Python run (using `jaxlib >= 0.4.26` as an example):
 
 ```
-echo -e "\njax >= 0.4.26" >> build/requirements.in
 echo -e "\njaxlib >= 0.4.26" >> build/requirements.in
 python build/build.py requirements_update
 ```
 
-Alternatively, to install `jax` and `jaxlib` from the local wheels
-(assuming Python 3.12):
+Alternatively, to install `jaxlib` from a local wheel (assuming Python 3.12):
 
 ```
-echo -e "\n$(realpath jax-0.4.26-py3-none-any.whl)" >> build/requirements.in
 echo -e "\n$(realpath jaxlib-0.4.26-cp312-cp312-manylinux2014_x86_64.whl)" >> build/requirements.in
 python build/build.py requirements_update --python_version=3.12
 ```
 
-Once you have `jax` and `jaxlib` installed hermetically, run:
+Once you have `jaxlib` installed hermetically, run:
 
 ```
 bazel test --//jax:build_jaxlib=false //tests:cpu_tests //tests:backend_independent_tests
