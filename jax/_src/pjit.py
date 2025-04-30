@@ -481,7 +481,8 @@ def _parse_jit_arguments(fun: Callable, *, in_shardings: Any,
   out_layouts, out_shardings = _split_layout_and_sharding(out_shardings)
 
   in_shardings = prepare_axis_resources(in_shardings, 'in_shardings')
-  out_shardings = prepare_axis_resources(out_shardings, 'out_shardings')
+  out_shardings = prepare_axis_resources(out_shardings, 'out_shardings',
+                                         allow_unconstrained_dims=True)
 
   user_specified_in_shardings = (in_shardings is not None and
                                  not isinstance(in_shardings, UnspecifiedValue))

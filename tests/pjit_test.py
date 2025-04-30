@@ -4468,6 +4468,14 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertLen(traced.in_avals[0], 1)
     self.assertLen(traced.in_avals[1], 0)  # empty kwarg
 
+  def test_in_out_shardings_unconstrained_error(self):
+    mesh = jtu.create_mesh((1,), ('x',))
+
+    with self.assertRaisesRegex(
+        ValueError, "Unconstrained dims are not allowed"):
+      jax.jit(lambda x: x,
+              in_shardings=NamedSharding(mesh, P(P.UNCONSTRAINED, 'x')))
+
   def test_empty_io_callback_under_shard_map(self):
     if config.use_shardy_partitioner.value:
       self.skipTest("TODO(b/384938613): Failing under shardy.")
