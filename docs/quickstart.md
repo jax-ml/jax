@@ -50,8 +50,8 @@ including using NumPy-style array creation functions, Python functions and opera
 array attributes and methods:
 
 ```{code-cell}
-def selu(x, alpha=1.67, lmbda=1.05):
-  return lmbda * jnp.where(x > 0, x, alpha * jnp.exp(x) - alpha)
+def selu(x, alpha=1.67, lambda=1.05):
+  return lambda * jnp.where(x > 0, x, alpha * jnp.exp(x) - alpha)
 
 x = jnp.arange(5.0)
 print(selu(x))
