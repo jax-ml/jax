@@ -77,6 +77,6 @@ def shard_map(
   .. _SPMD multi-device parallelism with shard_map: https://docs.jax.dev/en/latest/notebooks/shard_map.html
   """
   axis_names = frozenset(mesh.axis_names) - auto
-  return jshmap.shard_map(
+  return jshmap._shard_map(
       f, mesh=mesh, in_specs=in_specs, out_specs=out_specs,
-      check_vma=check_rep, axis_names=axis_names)
+      check_vma=check_rep, axis_names=axis_names, _skip_mesh_check=True)
