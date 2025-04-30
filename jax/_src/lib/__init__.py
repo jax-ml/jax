@@ -103,7 +103,6 @@ else:
   from jaxlib.xla_extension import Device as Device  # type: ignore  # pytype: disable=import-error  # noqa: F401
   from jaxlib.xla_extension import profiler as _profiler  # type: ignore  # pytype: disable=import-error  # noqa: F401
 
-
 import jaxlib.xla_client as xla_client  # noqa: F401
 
 # Jaxlib code is split between the Jax and the XLA repositories.
@@ -112,6 +111,9 @@ import jaxlib.xla_client as xla_client  # noqa: F401
 # branch on the Jax github.
 jaxlib_extension_version: int = getattr(xla_client, '_version', 0)
 ifrt_version: int = getattr(xla_client, '_ifrt_version', 0)
+
+if jaxlib_extension_version >= 334:
+  from jaxlib._jax import ffi as ffi  # noqa: F401
 
 import jaxlib.weakref_lru_cache as weakref_lru_cache  # noqa: F401
 

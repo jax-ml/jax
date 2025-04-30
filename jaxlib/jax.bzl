@@ -50,6 +50,7 @@ pallas_tpu_internal_users = []
 pallas_fuser_users = []
 mosaic_extension_deps = []
 serialize_executable_internal_users = []
+buffer_callback_internal_users = []
 
 jax_internal_export_back_compat_test_util_visibility = []
 jax_internal_test_harnesses_visibility = []

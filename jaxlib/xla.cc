@@ -47,6 +47,7 @@ limitations under the License.
 #include "nanobind/stl/unique_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/variant.h"  // IWYU pragma: keep
 #include "nanobind/stl/vector.h"  // IWYU pragma: keep
+#include "jaxlib/ffi.h"
 #include "jaxlib/ifrt_proxy.h"
 #include "jaxlib/py_client.h"
 #include "jaxlib/py_program.h"
@@ -587,6 +588,7 @@ NB_MODULE(_jax, m) {
   BuildMlirSubmodule(m);
   BuildSdySubmodule(m);
   BuildCustomCallShardingPybindAPI(m);
+  jax::BuildFfiSubmodule(m);
 #if defined(__linux__)
   aux::RegisterTransferServerTypes(m);
 #endif  // defined(__linux__)

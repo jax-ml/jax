@@ -25,6 +25,7 @@ from typing import Any, ClassVar, TypeVar, overload
 import numpy as np
 
 from . import config as config
+from . import ffi as ffi
 from . import guard_lib as guard_lib
 from . import ifrt_programs as ifrt_programs
 from . import ifrt_proxy as ifrt_proxy
