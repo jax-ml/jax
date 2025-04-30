@@ -202,7 +202,8 @@ class PgleTest(jtu.JaxTestCase):
 
     f_lowered = f.lower(x)
     serialized, in_tree, out_tree = serialize(f_lowered.compile())
-    compiled = deserialize_and_load(serialized, in_tree, out_tree)
+    compiled = deserialize_and_load(
+        serialized, in_tree, out_tree, execution_devices=jax.devices()[:1])
 
     with config.pgle_profiling_runs(1), config.enable_pgle(True):
       # Run 1
