@@ -22,7 +22,7 @@ jobs:
     strategy:
       matrix:
         python: ["3.10.13"]
-        rocm: ["6.2.4", "6.3.3"]
+        rocm: ["6.3.3"] # TODO: Add 6.2.4 back after XLA is fixed
     env:
       BASE_IMAGE: "ubuntu:22.04"
       TEST_IMAGE: ubuntu-jax-${{ github.run_id }}_${{ github.run_number }}_${{ github.run_attempt }}
