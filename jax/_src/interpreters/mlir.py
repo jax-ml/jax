@@ -1097,7 +1097,7 @@ class UnconstrainedVariants(NamedTuple):
 
 def _get_unconstrained_variants(s, aval) -> UnconstrainedVariants:
   us = contains_unconstrained(s)
-  unconstrained_dims = ({i for i, p in enumerate(s.spec)
+  unconstrained_dims = ({i for i, p in enumerate(s.spec)  # pytype: disable=attribute-error
                          if p is PartitionSpec.UNCONSTRAINED} if us else None)
   return UnconstrainedVariants(
       contains_unconstrained=us, all_unconstrained=all_unconstrained(s, aval),

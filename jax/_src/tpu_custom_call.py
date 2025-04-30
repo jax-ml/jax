@@ -222,7 +222,7 @@ def _tpu_custom_call_abstract_eval(*_, out_avals, **__):
 
 
 def _avals_to_layouts(avals) -> Sequence[Sequence[int]]:
-  return [tuple(range(a.ndim - 1, -1, -1)) for a in avals]
+  return [tuple(range(a.ndim - 1, -1, -1)) for a in avals]  # pytype: disable=attribute-error
 
 
 def _tpu_custom_call_lowering(

@@ -2047,7 +2047,7 @@ def standard_insert_pvary(*args):
   if not args:
     return args
   in_vma = [frozenset() if (aval := get_aval(a)) is abstract_token
-            else aval.vma for a in args]
+            else aval.vma for a in args]  # pytype: disable=attribute-error
   out_vma = frozenset.union(*in_vma)
   return [pvary(arg, tuple(n for n in out_vma if n not in src))
           if out_vma - src else arg for arg, src in zip(args, in_vma)]
