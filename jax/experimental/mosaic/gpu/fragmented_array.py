@@ -1167,7 +1167,7 @@ class FragmentedArray:
     if ir.FloatType.isinstance(self.mlir_dtype):
       pred = functools.partial(arith.cmpf, f_pred)
     elif ir.IntegerType.isinstance(self.mlir_dtype):
-      if ir.IntegerType(self.mlir_dtype).is_signed:
+      if self.is_signed:
         pred = functools.partial(arith.cmpi, si_pred)
       else:
         pred = functools.partial(arith.cmpi, ui_pred)

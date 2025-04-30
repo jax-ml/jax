@@ -1713,7 +1713,7 @@ def _comparison_lowering_rule_wg(
   x, y = _bcast_wg(x, y, *ctx.avals_in, *ctx.avals_out)
   if jnp.issubdtype(x_aval, jnp.signedinteger):
     return arith_dialect.cmpi(si_pred, x, y)
-  elif jnp.issubdtype(x_aval, jnp.integer) or jnp.issubdtype(x_aval, jnp.bool):
+  elif jnp.issubdtype(x_aval, jnp.unsignedinteger) or jnp.issubdtype(x_aval, jnp.bool):
     return arith_dialect.cmpi(ui_pred, x, y)
   elif jnp.issubdtype(x_aval, jnp.floating):
     return arith_dialect.cmpf(f_pred, x, y)
